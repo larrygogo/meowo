@@ -1,4 +1,4 @@
-use cc_store::{ProjectOverview, Store, TaskCard};
+use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
@@ -30,6 +30,12 @@ fn get_overview(state: State<AppState>) -> Result<Vec<ProjectOverview>, String> 
 fn get_project_tasks(state: State<AppState>, project_id: i64) -> Result<Vec<TaskCard>, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     store.project_tasks(project_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveSession>, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    store.live_sessions().map_err(|e| e.to_string())
 }
 
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
@@ -69,7 +75,7 @@ pub fn run() {
     let store = Store::open(&path).expect("打开 board.db 失败");
     tauri::Builder::default()
         .manage(AppState { store: Mutex::new(store) })
-        .invoke_handler(tauri::generate_handler![get_overview, get_project_tasks])
+        .invoke_handler(tauri::generate_handler![get_overview, get_project_tasks, get_live_sessions])
         .setup(move |app| {
             spawn_db_watcher(app.handle().clone(), path.clone());
             Ok(())

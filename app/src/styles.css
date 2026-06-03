@@ -34,3 +34,24 @@ body {
 .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,0.1); margin-top: 9px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#34d399,#22d3ee); }
 .empty { color: #5b5b63; font-size: 12px; }
+
+.nav { display: flex; gap: 18px; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.tab {
+  cursor: pointer; font-size: 14px; padding: 6px 2px 10px; color: #8a8a92;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: #e8e8ea; }
+.tab-active { color: #e8e8ea; border-bottom-color: #34d399; font-weight: 600; }
+
+.live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.live-card {
+  background: rgba(24,24,28,0.92); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 14px 16px;
+}
+.live-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.live-proj { font-weight: 600; }
+.live-status { margin-left: auto; font-size: 11px; color: #8a8a92; }
+.live-title { font-size: 13px; margin-top: 9px; }
+.dot-run { background: #34d399; box-shadow: 0 0 8px #34d399; }
+.dot-wait { background: #fbbf24; }
+.dot-stale { background: #5b5b63; }

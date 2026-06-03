@@ -52,6 +52,30 @@ export function getProjectTasks(projectId: number): Promise<TaskCard[]> {
   return invoke("get_project_tasks", { projectId });
 }
 
+export type Session = {
+  id: number;
+  project_id: number;
+  cc_session_id: string;
+  status: "running" | "waiting" | "ended" | "stale";
+  started_at: number;
+  last_event_at: number;
+  ended_at: number | null;
+};
+
+export type LiveSession = {
+  session: Session;
+  project_name: string;
+  task_title: string;
+  current_activity: string | null;
+  column: "todo" | "doing" | "done";
+  todo_done: number;
+  todo_total: number;
+};
+
+export function getLiveSessions(): Promise<LiveSession[]> {
+  return invoke("get_live_sessions");
+}
+
 // 纯函数：根据 todo 列表算完成度。
 export function todoProgress(todos: Todo[]): { done: number; total: number; percent: number } {
   const total = todos.length;
