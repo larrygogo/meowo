@@ -112,6 +112,29 @@ impl Store {
         Ok((sid, tid))
     }
 
+    pub fn find_session_id_pub(&self, cc_session_id: &str) -> Result<Option<i64>, StoreError> {
+        self.find_session_id(cc_session_id)
+    }
+
+    pub fn task_id_of_session_pub(&self, session_id: i64) -> Result<i64, StoreError> {
+        self.task_id_of_session(session_id)
+    }
+
+    pub fn set_current_activity(
+        &self,
+        session_id: i64,
+        activity: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let tid = self.task_id_of_session(session_id)?;
+        self.conn.execute(
+            "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![activity, now_ms, tid],
+        )?;
+        self.touch_session(session_id, now_ms)?;
+        Ok(())
+    }
+
     pub(crate) fn find_session_id(&self, cc_session_id: &str) -> Result<Option<i64>, StoreError> {
         let mut stmt = self
             .conn
