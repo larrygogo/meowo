@@ -93,22 +93,37 @@ impl Store {
         cc_session_id: &str,
         now_ms: i64,
     ) -> Result<(i64, i64), StoreError> {
-        if let Some(sid) = self.find_session_id(cc_session_id)? {
-            let tid = self.task_id_of_session(sid)?;
-            return Ok((sid, tid));
-        }
+        // 幂等插入会话：并发下败者不报错，只是 DO NOTHING。
         self.conn.execute(
             "INSERT INTO sessions (project_id, cc_session_id, status, started_at, last_event_at)
-             VALUES (?1, ?2, 'running', ?3, ?3)",
+             VALUES (?1, ?2, 'running', ?3, ?3)
+             ON CONFLICT(cc_session_id) DO NOTHING",
             rusqlite::params![project_id, cc_session_id, now_ms],
         )?;
-        let sid = self.conn.last_insert_rowid();
-        self.conn.execute(
-            "INSERT INTO tasks (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
-             VALUES (?1, ?2, '(未命名会话)', 'todo', 0, ?3, ?3)",
-            rusqlite::params![project_id, sid, now_ms],
-        )?;
-        let tid = self.conn.last_insert_rowid();
+        let sid = self
+            .find_session_id(cc_session_id)?
+            .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
+
+        // 若该会话还没有占位任务，则建一张。
+        let existing_task: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM tasks WHERE session_id = ?1 ORDER BY id LIMIT 1",
+                [sid],
+                |r| r.get(0),
+            )
+            .ok();
+        let tid = match existing_task {
+            Some(t) => t,
+            None => {
+                self.conn.execute(
+                    "INSERT INTO tasks (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
+                     VALUES (?1, ?2, '(未命名会话)', 'todo', 0, ?3, ?3)",
+                    rusqlite::params![project_id, sid, now_ms],
+                )?;
+                self.conn.last_insert_rowid()
+            }
+        };
         Ok((sid, tid))
     }
 

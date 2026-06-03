@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS todos (
     order_idx INTEGER NOT NULL
 );
 
+-- events: 预留给后续计划的事件审计流，当前管线尚未写入。
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER REFERENCES sessions(id),

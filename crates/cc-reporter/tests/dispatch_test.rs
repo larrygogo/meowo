@@ -84,3 +84,20 @@ fn unknown_session_for_prompt_is_ignored_gracefully() {
     let r = dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"ghost","prompt":"x"}"#), 100);
     assert!(r.is_ok());
 }
+
+#[test]
+fn posttooluse_bash_sets_current_activity() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"b1","cwd":"/tmp/p"}"#), 100).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"b1","tool_name":"Bash","tool_input":{"command":"cargo build"}}"#), 200).unwrap();
+    let sid = store.find_session_id_pub("b1").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    assert_eq!(store.get_task(tid).unwrap().current_activity.as_deref(), Some("› cargo build"));
+}
+
+#[test]
+fn stop_and_end_for_unknown_session_are_ignored() {
+    let store = Store::open_in_memory().unwrap();
+    assert!(dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"nope"}"#), 100).is_ok());
+    assert!(dispatch(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"nope"}"#), 100).is_ok());
+}
