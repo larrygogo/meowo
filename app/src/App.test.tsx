@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, cleanup, waitFor } from "@testing-library/react";
 
 const getLiveSessions = vi.fn();
 let emitBoardChanged: () => void = () => {};
@@ -25,9 +25,8 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("App", () => {
-  it("挂载时渲染标题并拉取一次活跃会话", async () => {
+  it("挂载时拉取一次活跃会话", async () => {
     render(<App />);
-    expect(screen.getByText("当前活跃")).toBeTruthy();
     await waitFor(() => expect(getLiveSessions).toHaveBeenCalledTimes(1));
   });
 

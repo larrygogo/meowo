@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getLiveSessions, LiveSession } from "./api";
-import { LiveView } from "./views/LiveView";
+import { Sticker } from "./views/Sticker";
 
 export function App() {
   const [live, setLive] = useState<LiveSession[]>([]);
@@ -21,10 +21,5 @@ export function App() {
     };
   }, [refresh]);
 
-  return (
-    <div className="app">
-      <div className="h1">当前活跃</div>
-      <LiveView data={live} />
-    </div>
-  );
+  return <Sticker data={live} />;
 }
