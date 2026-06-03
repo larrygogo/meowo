@@ -48,7 +48,8 @@ impl Store {
             )?;
             let col_count = |col: &str| -> Result<i64, StoreError> {
                 let n: i64 = self.conn.query_row(
-                    "SELECT count(*) FROM tasks WHERE project_id = ?1 AND column_name = ?2",
+                    "SELECT count(*) FROM tasks WHERE project_id = ?1 AND column_name = ?2
+                       AND (title <> '(未命名会话)' OR EXISTS (SELECT 1 FROM todos WHERE todos.task_id = tasks.id))",
                     rusqlite::params![pid, col],
                     |r| r.get(0),
                 )?;
@@ -79,7 +80,9 @@ impl Store {
     pub fn project_tasks(&self, project_id: i64) -> Result<Vec<TaskCard>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, session_id, title, column_name, column_locked, current_activity, created_at, updated_at
-             FROM tasks WHERE project_id = ?1 ORDER BY updated_at DESC, id DESC",
+             FROM tasks WHERE project_id = ?1
+               AND (title <> '(未命名会话)' OR EXISTS (SELECT 1 FROM todos WHERE todos.task_id = tasks.id))
+             ORDER BY updated_at DESC, id DESC",
         )?;
         let tasks = stmt
             .query_map([project_id], |r| {
