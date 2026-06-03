@@ -31,19 +31,20 @@ if (existsSync(settingsPath)) {
 settings.hooks ??= {};
 
 const EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"];
-// 幂等识别：command 字段包含此字串即视为我们加的条目
-const MARKER = "cc-reporter";
+// 写入的 command：双引号包住路径以防空格
+const command = `"${reporter}"`;
 
 for (const event of EVENTS) {
   settings.hooks[event] ??= [];
-  // 过滤掉我们之前写入的条目（command 含 MARKER），保留其它条目
+  // 幂等识别：只移除 command 与本次**完全相同**的旧条目。
+  // 不用子串匹配——避免误删用户自有的、command 里恰好含 "cc-reporter" 字样的无关 hook。
   settings.hooks[event] = settings.hooks[event].filter(
-    (entry) => !(entry.hooks ?? []).some((h) => (h.command ?? "").includes(MARKER)),
+    (entry) => !(entry.hooks ?? []).some((h) => h.command === command),
   );
-  // 追加新条目，command 用双引号包住路径以防空格
+  // 追加新条目；timeout=5s 给 Claude Code 一个上限，万一 reporter 卡住也不会无限阻塞会话
   settings.hooks[event].push({
     matcher: "*",
-    hooks: [{ type: "command", command: `"${reporter}"` }],
+    hooks: [{ type: "command", command, timeout: 5 }],
   });
 }
 
