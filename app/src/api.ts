@@ -70,6 +70,7 @@ export type LiveSession = {
   column: "todo" | "doing" | "done";
   todo_done: number;
   todo_total: number;
+  todos: Todo[];
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {

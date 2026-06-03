@@ -55,3 +55,17 @@ body {
 .dot-run { background: #34d399; box-shadow: 0 0 8px #34d399; }
 .dot-wait { background: #fbbf24; }
 .dot-stale { background: #5b5b63; }
+
+.density { display: flex; gap: 8px; margin-bottom: 14px; }
+.chip {
+  cursor: pointer; font-size: 12px; padding: 4px 12px; border-radius: 999px;
+  background: rgba(255,255,255,0.05); color: #8a8a92; border: 1px solid rgba(255,255,255,0.06);
+}
+.chip:hover { color: #e8e8ea; }
+.chip-active { background: rgba(52,211,153,0.16); color: #34d399; border-color: rgba(52,211,153,0.4); }
+
+.checklist { margin-top: 9px; display: flex; flex-direction: column; gap: 3px; }
+.chk { font-size: 11.5px; color: #b9b9c0; display: flex; gap: 6px; align-items: baseline; }
+.chk-box { color: #8a8a92; flex: none; }
+.chk-done { color: #6b6b73; text-decoration: line-through; }
+.chk-done .chk-box { color: #34d399; }
