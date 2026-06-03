@@ -45,4 +45,6 @@ CREATE TABLE IF NOT EXISTS events (
     payload    TEXT,
     created_at INTEGER NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_session ON tasks(session_id) WHERE session_id IS NOT NULL;
 "#;

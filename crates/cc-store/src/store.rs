@@ -16,7 +16,7 @@ impl Store {
         }
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "busy_timeout", 5000)?;
+        conn.pragma_update(None, "busy_timeout", 3000)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Store { conn })
@@ -93,37 +93,28 @@ impl Store {
         cc_session_id: &str,
         now_ms: i64,
     ) -> Result<(i64, i64), StoreError> {
-        // 幂等插入会话：并发下败者不报错，只是 DO NOTHING。
+        // 会话幂等：已存在则复活为 running（resume/--continue 场景），清掉 ended_at。
         self.conn.execute(
             "INSERT INTO sessions (project_id, cc_session_id, status, started_at, last_event_at)
              VALUES (?1, ?2, 'running', ?3, ?3)
-             ON CONFLICT(cc_session_id) DO NOTHING",
+             ON CONFLICT(cc_session_id) DO UPDATE SET
+                 status = 'running',
+                 last_event_at = excluded.last_event_at,
+                 ended_at = NULL",
             rusqlite::params![project_id, cc_session_id, now_ms],
         )?;
         let sid = self
             .find_session_id(cc_session_id)?
             .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
 
-        // 若该会话还没有占位任务，则建一张。
-        let existing_task: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT id FROM tasks WHERE session_id = ?1 ORDER BY id LIMIT 1",
-                [sid],
-                |r| r.get(0),
-            )
-            .ok();
-        let tid = match existing_task {
-            Some(t) => t,
-            None => {
-                self.conn.execute(
-                    "INSERT INTO tasks (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
-                     VALUES (?1, ?2, '(未命名会话)', 'todo', 0, ?3, ?3)",
-                    rusqlite::params![project_id, sid, now_ms],
-                )?;
-                self.conn.last_insert_rowid()
-            }
-        };
+        // 占位任务幂等：靠 tasks(session_id) 唯一索引 + INSERT OR IGNORE 防并发重复建卡。
+        self.conn.execute(
+            "INSERT OR IGNORE INTO tasks
+                (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
+             VALUES (?1, ?2, '(未命名会话)', 'todo', 0, ?3, ?3)",
+            rusqlite::params![project_id, sid, now_ms],
+        )?;
+        let tid = self.task_id_of_session(sid)?;
         Ok((sid, tid))
     }
 
@@ -248,32 +239,41 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         let tid = self.task_id_of_session(session_id)?;
-        self.conn.execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
-        for (i, t) in todos.iter().enumerate() {
-            self.conn.execute(
-                "INSERT INTO todos (task_id, content, status, order_idx) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![tid, t.content, t.status.as_str(), i as i64],
-            )?;
-        }
-
         let locked: bool = self.conn.query_row(
             "SELECT column_locked FROM tasks WHERE id = ?1",
             [tid],
             |r| Ok(r.get::<_, i64>(0)? != 0),
         )?;
+
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
+        for (i, t) in todos.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO todos (task_id, content, status, order_idx) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![tid, t.content, t.status.as_str(), i as i64],
+            )?;
+        }
         if !locked {
             let col = derive_column(todos);
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tasks SET column_name = ?1, updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![col.as_str(), now_ms, tid],
             )?;
         } else {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tasks SET updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now_ms, tid],
             )?;
         }
-        self.touch_session(session_id, now_ms)?;
+        // touch_session 等价逻辑（事务内）：刷新 last_event_at，waiting/stale 复活为 running
+        tx.execute(
+            "UPDATE sessions
+             SET last_event_at = ?1,
+                 status = CASE WHEN status IN ('waiting','stale') THEN 'running' ELSE status END
+             WHERE id = ?2",
+            rusqlite::params![now_ms, session_id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -361,7 +361,7 @@ impl Store {
     pub fn mark_stale(&self, threshold_ms: i64, now_ms: i64) -> Result<usize, StoreError> {
         let n = self.conn.execute(
             "UPDATE sessions SET status = 'stale'
-             WHERE status = 'running' AND (?1 - last_event_at) > ?2",
+             WHERE status IN ('running','waiting') AND (?1 - last_event_at) > ?2",
             rusqlite::params![now_ms, threshold_ms],
         )?;
         Ok(n)
