@@ -54,6 +54,9 @@ impl TodoStatus {
             TodoStatus::Completed => "completed",
         }
     }
+    /// 从 TodoWrite 的 status 字符串映射；无副作用、未知值降级为 Pending，
+    /// 故用中缀方法而非 fallible 的 std FromStr。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> TodoStatus {
         match s {
             "in_progress" => TodoStatus::InProgress,
