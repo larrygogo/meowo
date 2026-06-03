@@ -10,7 +10,7 @@ fn open_in_memory_creates_tables() {
 }
 
 // == Task 4 ==
-use cc_store::Project;
+use cc_store::{Project, Task};
 
 #[test]
 fn upsert_project_is_idempotent_by_root() {
@@ -23,4 +23,22 @@ fn upsert_project_is_idempotent_by_root() {
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].name, "proj");
     assert_eq!(projects[0].updated_at, 2000);
+}
+
+// == Task 5 ==
+#[test]
+fn start_session_creates_session_and_placeholder_task() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(pid, "cc-abc", 200).unwrap();
+    assert!(sid > 0 && tid > 0);
+
+    let (sid2, tid2) = store.start_session(pid, "cc-abc", 300).unwrap();
+    assert_eq!(sid, sid2);
+    assert_eq!(tid, tid2);
+
+    let task: Task = store.get_task(tid).unwrap();
+    assert_eq!(task.title, "(未命名会话)");
+    assert_eq!(task.column, "todo");
+    assert_eq!(task.session_id, Some(sid));
 }
