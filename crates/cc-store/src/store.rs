@@ -203,23 +203,24 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         let tid = self.task_id_of_session(session_id)?;
-        let title: String = self.conn.query_row(
-            "SELECT title FROM tasks WHERE id = ?1",
-            [tid],
-            |r| r.get(0),
-        )?;
-        let activity = truncate_chars(prompt.trim(), 60);
-        if title == "(未命名会话)" {
-            let new_title = truncate_chars(prompt.trim(), 60);
-            self.conn.execute(
-                "UPDATE tasks SET title = ?1, current_activity = ?2, updated_at = ?3 WHERE id = ?4",
-                rusqlite::params![new_title, activity, now_ms, tid],
+        let cleaned = truncate_chars(&sanitize_prompt(prompt), 60);
+        if !cleaned.is_empty() {
+            let title: String = self.conn.query_row(
+                "SELECT title FROM tasks WHERE id = ?1",
+                [tid],
+                |r| r.get(0),
             )?;
-        } else {
-            self.conn.execute(
-                "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![activity, now_ms, tid],
-            )?;
+            if title == "(未命名会话)" {
+                self.conn.execute(
+                    "UPDATE tasks SET title = ?1, current_activity = ?2, updated_at = ?3 WHERE id = ?4",
+                    rusqlite::params![cleaned, cleaned, now_ms, tid],
+                )?;
+            } else {
+                self.conn.execute(
+                    "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
+                    rusqlite::params![cleaned, now_ms, tid],
+                )?;
+            }
         }
         self.touch_session(session_id, now_ms)?;
         Ok(())
@@ -370,6 +371,27 @@ impl Store {
 /// 按字符（非字节）截断，避免切坏多字节中文。
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+/// 移除形如 `[Image #N]`（以及任意 `[Image ...]`）的占位标记。
+fn strip_image_markers(s: &str) -> String {
+    let mut result = s.to_string();
+    while let Some(start) = result.find("[Image") {
+        if let Some(rel_end) = result[start..].find(']') {
+            result.replace_range(start..start + rel_end + 1, "");
+        } else {
+            break; // 没有闭合 ] 就停，避免死循环
+        }
+    }
+    result
+}
+
+/// 清洗 prompt：剔除图片标记 + 折叠空白 + 去首尾空白。
+fn sanitize_prompt(s: &str) -> String {
+    strip_image_markers(s)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// 无 todo -> todo；有 in_progress 或部分完成 -> doing；全 completed -> done。

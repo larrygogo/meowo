@@ -184,3 +184,34 @@ fn set_current_activity_updates_task() {
     store.set_current_activity(sid, "› cargo test", 300).unwrap();
     assert_eq!(store.get_task(tid).unwrap().current_activity.as_deref(), Some("› cargo test"));
 }
+
+#[test]
+fn prompt_with_image_marker_is_cleaned_for_title() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(pid, "cc-img", 200).unwrap();
+    store.on_user_prompt(sid, "[Image #4] 把路径放在最前面", 300).unwrap();
+    let t = store.get_task(tid).unwrap();
+    assert_eq!(t.title, "把路径放在最前面");
+    assert_eq!(t.current_activity.as_deref(), Some("把路径放在最前面"));
+}
+
+#[test]
+fn multiple_image_markers_and_whitespace_collapsed() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(pid, "cc-img2", 200).unwrap();
+    store.on_user_prompt(sid, "[Image #1]  改这个   [Image #2] 和那个 ", 300).unwrap();
+    assert_eq!(store.get_task(tid).unwrap().title, "改这个 和那个");
+}
+
+#[test]
+fn image_only_prompt_keeps_placeholder_title() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(pid, "cc-img3", 200).unwrap();
+    store.on_user_prompt(sid, "[Image #1]", 300).unwrap();
+    let t = store.get_task(tid).unwrap();
+    assert_eq!(t.title, "(未命名会话)");
+    assert_eq!(t.current_activity, None);
+}
