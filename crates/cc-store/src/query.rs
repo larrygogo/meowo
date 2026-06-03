@@ -62,9 +62,7 @@ impl Store {
         out.sort_by_key(|b| std::cmp::Reverse(b.last_activity_at));
         Ok(out)
     }
-}
 
-impl Store {
     /// 某项目的所有任务卡，按 updated_at 倒序。
     pub fn project_tasks(&self, project_id: i64) -> Result<Vec<TaskCard>, StoreError> {
         let mut stmt = self.conn.prepare(
@@ -102,3 +100,4 @@ impl Store {
         Ok(out)
     }
 }
+
