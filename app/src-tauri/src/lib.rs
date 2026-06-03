@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, State};
 
 struct AppState {
     store: Mutex<Store>,
