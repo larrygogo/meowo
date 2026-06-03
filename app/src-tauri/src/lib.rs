@@ -54,7 +54,7 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
             if res.is_err() {
                 continue;
             }
-            let due = last_emit.map_or(true, |t| t.elapsed() >= debounce);
+            let due = last_emit.is_none_or(|t| t.elapsed() >= debounce);
             if due {
                 let _ = app.emit("board-changed", ());
                 last_emit = Some(Instant::now());
