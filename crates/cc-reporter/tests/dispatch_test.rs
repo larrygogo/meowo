@@ -40,3 +40,47 @@ fn parse_tolerates_unknown_fields() {
     let ev = HookEvent::parse(json).expect("parse");
     assert_eq!(ev.hook_event_name, "Stop");
 }
+
+use cc_reporter::dispatch::dispatch;
+use cc_store::Store;
+
+fn ev(json: &str) -> HookEvent { HookEvent::parse(json).unwrap() }
+
+#[test]
+fn session_start_then_prompt_then_todos_flow() {
+    let store = Store::open_in_memory().unwrap();
+
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"s1","cwd":"/home/me/proj"}"#), 100).unwrap();
+    let projects = store.list_projects().unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].name, "proj");
+
+    dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"实现登录"}"#), 200).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"a","status":"in_progress"}]}}"#), 300).unwrap();
+
+    let sid = store.find_session_id_pub("s1").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    let t = store.get_task(tid).unwrap();
+    assert_eq!(t.title, "实现登录");
+    assert_eq!(t.column, "doing");
+    assert_eq!(store.list_todos(tid).unwrap().len(), 1);
+}
+
+#[test]
+fn stop_then_end_updates_session_status() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"s2","cwd":"/p"}"#), 100).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"s2"}"#), 200).unwrap();
+    let sid = store.find_session_id_pub("s2").unwrap().unwrap();
+    assert_eq!(store.get_session(sid).unwrap().status, "waiting");
+
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"s2"}"#), 300).unwrap();
+    assert_eq!(store.get_session(sid).unwrap().status, "ended");
+}
+
+#[test]
+fn unknown_session_for_prompt_is_ignored_gracefully() {
+    let store = Store::open_in_memory().unwrap();
+    let r = dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"ghost","prompt":"x"}"#), 100);
+    assert!(r.is_ok());
+}
