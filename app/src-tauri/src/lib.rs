@@ -2,16 +2,18 @@ use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
-use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, State};
 
-struct AppState {
-    store: Mutex<Store>,
-}
-
-/// stale 阈值：超过此时长无事件的 running 会话标记为 stale。
+/// stale 阈值：超过此时长无事件的会话标记为 stale。
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
+
+/// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
+/// 无权限）时只让该次刷新返回错误，不会在启动时 panic 把整个 app 打挂；
+/// 下次 board-changed 事件刷新即自动恢复。
+struct AppState {
+    db_path: PathBuf,
+}
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -30,21 +32,25 @@ fn db_path() -> PathBuf {
     PathBuf::from(home).join(".cc-kanban").join("board.db")
 }
 
+fn open_store(path: &PathBuf) -> Result<Store, String> {
+    Store::open(path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_overview(state: State<AppState>) -> Result<Vec<ProjectOverview>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let store = open_store(&state.db_path)?;
     store.overview().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_project_tasks(state: State<AppState>, project_id: i64) -> Result<Vec<TaskCard>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let store = open_store(&state.db_path)?;
     store.project_tasks(project_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveSession>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let store = open_store(&state.db_path)?;
     store.live_sessions().map_err(|e| e.to_string())
 }
 
@@ -64,7 +70,6 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
             return;
         }
         let debounce = Duration::from_millis(300);
-        // None 表示「还没发过」，首个事件立即发；避免 Instant 减法在进程刚启动时下溢。
         let mut last_emit: Option<Instant> = None;
         for res in rx {
             if res.is_err() {
@@ -79,17 +84,12 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 周期性把超时无事件的 running 会话标记为 stale，让「当前活跃」状态诚实
-/// （终端被强杀时收不到 SessionEnd）。有变更时触发前端刷新。
-fn spawn_stale_sweeper(app: tauri::AppHandle) {
+/// 每 60s 把超时无事件的会话标记为 stale，让活跃状态诚实。自开短连接，库不可用时跳过本轮。
+fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || loop {
-        let changed = {
-            let state = app.state::<AppState>();
-            let guard = state.store.lock();
-            match guard {
-                Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now_ms()).unwrap_or(0),
-                Err(_) => 0,
-            }
+        let changed = match Store::open(&db_path) {
+            Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now_ms()).unwrap_or(0),
+            Err(_) => 0,
         };
         if changed > 0 {
             let _ = app.emit("board-changed", ());
@@ -101,13 +101,16 @@ fn spawn_stale_sweeper(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let path = db_path();
-    let store = Store::open(&path).expect("打开 board.db 失败");
     tauri::Builder::default()
-        .manage(AppState { store: Mutex::new(store) })
-        .invoke_handler(tauri::generate_handler![get_overview, get_project_tasks, get_live_sessions])
+        .manage(AppState { db_path: path.clone() })
+        .invoke_handler(tauri::generate_handler![
+            get_overview,
+            get_project_tasks,
+            get_live_sessions
+        ])
         .setup(move |app| {
             spawn_db_watcher(app.handle().clone(), path.clone());
-            spawn_stale_sweeper(app.handle().clone());
+            spawn_stale_sweeper(app.handle().clone(), path.clone());
             Ok(())
         })
         .run(tauri::generate_context!())
