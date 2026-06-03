@@ -3,7 +3,10 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{Emitter, State};
+use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 
 /// stale 阈值：超过此时长无事件的会话标记为 stale。
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
@@ -98,10 +101,58 @@ fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
+/// 构建系统托盘：显示/隐藏贴纸、开机自启开关、退出。
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let toggle = MenuItemBuilder::with_id("toggle", "显示/隐藏贴纸").build(app)?;
+    let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
+    let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自启")
+        .checked(autostart_on)
+        .build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+    let menu = MenuBuilder::new(app).items(&[&toggle, &autostart, &quit]).build()?;
+
+    let autostart_item = autostart.clone();
+    TrayIconBuilder::with_id("cc-kanban-tray")
+        .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("cc-kanban")
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "toggle" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    if w.is_visible().unwrap_or(false) {
+                        let _ = w.hide();
+                    } else {
+                        let _ = w.show();
+                    }
+                }
+            }
+            "autostart" => {
+                let mgr = app.autolaunch();
+                let now_on = if mgr.is_enabled().unwrap_or(false) {
+                    let _ = mgr.disable();
+                    false
+                } else {
+                    let _ = mgr.enable();
+                    true
+                };
+                let _ = autostart_item.set_checked(now_on);
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let path = db_path();
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(AppState { db_path: path.clone() })
         .invoke_handler(tauri::generate_handler![
             get_overview,
@@ -109,6 +160,7 @@ pub fn run() {
             get_live_sessions
         ])
         .setup(move |app| {
+            setup_tray(app)?;
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_stale_sweeper(app.handle().clone(), path.clone());
             Ok(())
