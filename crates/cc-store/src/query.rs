@@ -1,5 +1,5 @@
 use crate::error::StoreError;
-use crate::models::{Project, Task, Todo};
+use crate::models::{Project, Session, Task, Todo};
 use crate::store::Store;
 use serde::Serialize;
 
@@ -20,6 +20,18 @@ pub struct TaskCard {
     pub task: Task,
     pub todos: Vec<Todo>,
     pub session_status: Option<String>,
+}
+
+/// 当前活跃区的一张会话卡。
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveSession {
+    pub session: Session,
+    pub project_name: String,
+    pub task_title: String,
+    pub current_activity: Option<String>,
+    pub column: String,
+    pub todo_done: i64,
+    pub todo_total: i64,
 }
 
 impl Store {
@@ -96,6 +108,69 @@ impl Store {
                 None => None,
             };
             out.push(TaskCard { task, todos, session_status });
+        }
+        Ok(out)
+    }
+
+    /// 活跃区：status 为 running/waiting/stale 的会话，附项目名、任务标题、进度。
+    /// 按 last_event_at 倒序（最近活跃在前）。
+    pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
+                    p.name, t.id, t.title, t.current_activity, t.column_name
+             FROM sessions s
+             JOIN projects p ON p.id = s.project_id
+             LEFT JOIN tasks t ON t.session_id = s.id
+             WHERE s.status IN ('running','waiting','stale')
+             ORDER BY s.last_event_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                let session = Session {
+                    id: r.get(0)?,
+                    project_id: r.get(1)?,
+                    cc_session_id: r.get(2)?,
+                    status: r.get(3)?,
+                    started_at: r.get(4)?,
+                    last_event_at: r.get(5)?,
+                    ended_at: r.get(6)?,
+                };
+                let project_name: String = r.get(7)?;
+                let task_id: Option<i64> = r.get(8)?;
+                let task_title: Option<String> = r.get(9)?;
+                let current_activity: Option<String> = r.get(10)?;
+                let column: Option<String> = r.get(11)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (session, project_name, task_id, task_title, current_activity, column) in rows {
+            let (todo_done, todo_total) = match task_id {
+                Some(tid) => {
+                    let total: i64 = self.conn.query_row(
+                        "SELECT count(*) FROM todos WHERE task_id = ?1",
+                        [tid],
+                        |r| r.get(0),
+                    )?;
+                    let done: i64 = self.conn.query_row(
+                        "SELECT count(*) FROM todos WHERE task_id = ?1 AND status = 'completed'",
+                        [tid],
+                        |r| r.get(0),
+                    )?;
+                    (done, total)
+                }
+                None => (0, 0),
+            };
+            out.push(LiveSession {
+                session,
+                project_name,
+                task_title: task_title.unwrap_or_default(),
+                current_activity,
+                column: column.unwrap_or_else(|| "todo".to_string()),
+                todo_done,
+                todo_total,
+            });
         }
         Ok(out)
     }

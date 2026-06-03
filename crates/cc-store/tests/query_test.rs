@@ -58,3 +58,81 @@ fn project_tasks_empty_for_unknown_project() {
     let store = Store::open_in_memory().unwrap();
     assert_eq!(store.project_tasks(999).unwrap().len(), 0);
 }
+
+// ===== Task 1: live_sessions =====
+
+use cc_store::SessionStatus;
+
+#[test]
+fn live_sessions_includes_running_waiting_stale_excludes_ended() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+
+    let (s1, _) = store.start_session(pid, "r", 100).unwrap();
+    store.on_user_prompt(s1, "活的", 110).unwrap();
+    let (s2, _) = store.start_session(pid, "w", 200).unwrap();
+    store.set_session_status(s2, SessionStatus::Waiting, 210).unwrap();
+    let (s3, _) = store.start_session(pid, "st", 300).unwrap();
+    store.set_session_status(s3, SessionStatus::Stale, 310).unwrap();
+    let (s4, _) = store.start_session(pid, "e", 400).unwrap();
+    store.end_session(s4, 410).unwrap();
+
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live.len(), 3);
+    let statuses: Vec<&str> = live.iter().map(|l| l.session.status.as_str()).collect();
+    assert!(statuses.contains(&"running"));
+    assert!(statuses.contains(&"waiting"));
+    assert!(statuses.contains(&"stale"));
+    assert!(!statuses.contains(&"ended"));
+}
+
+#[test]
+fn live_session_carries_project_name_title_and_progress() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "proj", 100).unwrap();
+    let (s1, _t1) = store.start_session(pid, "r", 100).unwrap();
+    store.on_user_prompt(s1, "实现登录", 110).unwrap();
+    store.sync_todos(s1, &[
+        cc_store::TodoInput { content: "a".into(), status: cc_store::TodoStatus::Completed },
+        cc_store::TodoInput { content: "b".into(), status: cc_store::TodoStatus::InProgress },
+    ], 120).unwrap();
+
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live.len(), 1);
+    let l = &live[0];
+    assert_eq!(l.project_name, "proj");
+    assert_eq!(l.task_title, "实现登录");
+    assert_eq!(l.column, "doing");
+    assert_eq!(l.todo_total, 2);
+    assert_eq!(l.todo_done, 1);
+}
+
+// ===== Task 2: 过滤未命名空卡 =====
+
+#[test]
+fn project_tasks_hides_unnamed_empty_placeholder() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (s1, _) = store.start_session(pid, "s1", 100).unwrap();
+    store.on_user_prompt(s1, "真任务", 110).unwrap();
+    // s2 从没发 prompt、无 todo -> 未命名空卡，应被隐藏
+    let (_s2, _) = store.start_session(pid, "s2", 200).unwrap();
+
+    let cards = store.project_tasks(pid).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].task.title, "真任务");
+}
+
+#[test]
+fn overview_counts_exclude_unnamed_empty_placeholder() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    // 真任务（有 prompt，无 todo -> todo 列）
+    let (s1, _) = store.start_session(pid, "s1", 100).unwrap();
+    store.on_user_prompt(s1, "真任务", 110).unwrap();
+    // 未命名空卡（应不计入）
+    let (_s2, _) = store.start_session(pid, "s2", 200).unwrap();
+
+    let o = &store.overview().unwrap()[0];
+    assert_eq!(o.todo_count, 1); // 只数真任务，不数未命名空卡
+}
