@@ -32,6 +32,7 @@ pub struct LiveSession {
     pub column: String,
     pub todo_done: i64,
     pub todo_total: i64,
+    pub todos: Vec<Todo>,
 }
 
 impl Store {
@@ -149,22 +150,12 @@ impl Store {
 
         let mut out = Vec::with_capacity(rows.len());
         for (session, project_name, task_id, task_title, current_activity, column) in rows {
-            let (todo_done, todo_total) = match task_id {
-                Some(tid) => {
-                    let total: i64 = self.conn.query_row(
-                        "SELECT count(*) FROM todos WHERE task_id = ?1",
-                        [tid],
-                        |r| r.get(0),
-                    )?;
-                    let done: i64 = self.conn.query_row(
-                        "SELECT count(*) FROM todos WHERE task_id = ?1 AND status = 'completed'",
-                        [tid],
-                        |r| r.get(0),
-                    )?;
-                    (done, total)
-                }
-                None => (0, 0),
+            let todos = match task_id {
+                Some(tid) => self.list_todos(tid)?,
+                None => Vec::new(),
             };
+            let todo_total = todos.len() as i64;
+            let todo_done = todos.iter().filter(|t| t.status == "completed").count() as i64;
             out.push(LiveSession {
                 session,
                 project_name,
@@ -173,6 +164,7 @@ impl Store {
                 column: column.unwrap_or_else(|| "todo".to_string()),
                 todo_done,
                 todo_total,
+                todos,
             });
         }
         Ok(out)

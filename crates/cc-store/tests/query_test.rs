@@ -105,6 +105,8 @@ fn live_session_carries_project_name_title_and_progress() {
     assert_eq!(l.column, "doing");
     assert_eq!(l.todo_total, 2);
     assert_eq!(l.todo_done, 1);
+    assert_eq!(l.todos.len(), 2);
+    assert_eq!(l.todos[0].content, "a");
 }
 
 // ===== Task 2: 过滤未命名空卡 =====
