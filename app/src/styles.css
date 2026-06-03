@@ -69,3 +69,8 @@ body {
 .chk-box { color: #8a8a92; flex: none; }
 .chk-done { color: #6b6b73; text-decoration: line-through; }
 .chk-done .chk-box { color: #34d399; }
+
+.muted { color: #5b5b63; font-style: italic; }
+.live-time { font-size: 10.5px; color: #6b6b73; margin-top: 8px; }
+.lc-minimal { padding: 10px 14px; }
+.lc-minimal .live-title { margin-top: 6px; }

@@ -51,33 +51,55 @@ export function LiveView({ data }: { data: LiveSession[] }) {
   );
 }
 
+function fmtAgo(ts: number): string {
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 1) return "刚刚";
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
+}
+
+function box(s: string): string {
+  return s === "completed" ? "✔" : s === "in_progress" ? "▸" : "☐";
+}
+
 function Card({ l, density }: { l: LiveSession; density: Density }) {
   const st = STATUS[l.session.status] ?? { cls: "dot-idle", label: l.session.status };
   const unnamed = !l.task_title || l.task_title === "(未命名会话)";
-  const percent = l.todo_total === 0 ? 0 : Math.round((l.todo_done / l.todo_total) * 100);
-  const showBar = density !== "minimal" && l.todo_total > 0;
-  const showRich = density === "rich";
-  const box = (s: string) => (s === "completed" ? "✔" : s === "in_progress" ? "▸" : "☐");
+  const hasTodos = l.todo_total > 0;
+  const percent = hasTodos ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
+  const detailed = density !== "minimal";
+
   return (
-    <div className="live-card">
+    <div className={"live-card lc-" + density}>
       <div className="live-head">
         <span className={"dot " + st.cls} />
         <span className="live-proj">{l.project_name}</span>
-        <span className="live-status">{st.label}</span>
+        {detailed && <span className="live-status">{st.label}</span>}
       </div>
+
       <div className="live-title">{unnamed ? "等待首次输入…" : l.task_title}</div>
-      {showRich && l.current_activity && <div className="task-act">{l.current_activity}</div>}
-      {showBar && (
-        <>
-          <div className="bar">
-            <i style={{ width: `${percent}%` }} />
-          </div>
-          <div className="task-act">
-            {l.todo_done}/{l.todo_total} · {percent}%
-          </div>
-        </>
+
+      {detailed && l.current_activity && !unnamed && (
+        <div className="task-act">{l.current_activity}</div>
       )}
-      {showRich && l.todos.length > 0 && (
+
+      {detailed &&
+        (hasTodos ? (
+          <>
+            <div className="bar">
+              <i style={{ width: `${percent}%` }} />
+            </div>
+            <div className="task-act">
+              {l.todo_done}/{l.todo_total} · {percent}%
+            </div>
+          </>
+        ) : (
+          <div className="task-act muted">暂无子任务</div>
+        ))}
+
+      {density === "rich" && hasTodos && (
         <div className="checklist">
           {l.todos.map((t) => (
             <div className={"chk " + (t.status === "completed" ? "chk-done" : "")} key={t.id}>
@@ -86,6 +108,10 @@ function Card({ l, density }: { l: LiveSession; density: Density }) {
             </div>
           ))}
         </div>
+      )}
+
+      {density === "rich" && (
+        <div className="live-time">最近活跃 · {fmtAgo(l.session.last_event_at)}</div>
       )}
     </div>
   );
