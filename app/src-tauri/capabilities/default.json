@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "默认窗口能力",
   "windows": ["main"],
-  "permissions": ["core:default", "core:event:default", "core:window:default"]
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-start-dragging"
+  ]
 }

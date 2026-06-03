@@ -10,3 +10,5 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 notify = "6"
+tauri-plugin-window-state = "2"
+tauri-plugin-autostart = "2"

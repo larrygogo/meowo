@@ -11,7 +11,22 @@
   },
   "app": {
     "windows": [
-      { "title": "cc-kanban", "width": 1100, "height": 720, "resizable": true }
+      {
+        "label": "main",
+        "title": "cc-kanban",
+        "width": 280,
+        "height": 220,
+        "minWidth": 200,
+        "minHeight": 80,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "focus": false,
+        "shadow": false,
+        "visible": true
+      }
     ],
     "security": { "csp": null }
   },
