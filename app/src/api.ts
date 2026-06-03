@@ -48,6 +48,7 @@ export function getOverview(): Promise<ProjectOverview[]> {
 }
 
 export function getProjectTasks(projectId: number): Promise<TaskCard[]> {
+  // JS 传 projectId，Tauri 自动转成 Rust 命令的 project_id 参数。
   return invoke("get_project_tasks", { projectId });
 }
 

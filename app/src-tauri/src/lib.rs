@@ -48,14 +48,16 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
             return;
         }
         let debounce = Duration::from_millis(300);
-        let mut last_emit = Instant::now() - debounce;
+        // None 表示「还没发过」，首个事件立即发；避免 Instant 减法在进程刚启动时下溢。
+        let mut last_emit: Option<Instant> = None;
         for res in rx {
             if res.is_err() {
                 continue;
             }
-            if last_emit.elapsed() >= debounce {
+            let due = last_emit.map_or(true, |t| t.elapsed() >= debounce);
+            if due {
                 let _ = app.emit("board-changed", ());
-                last_emit = Instant::now();
+                last_emit = Some(Instant::now());
             }
         }
     });
