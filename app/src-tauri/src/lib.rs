@@ -3,11 +3,21 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
-use tauri::{Emitter, State};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{Emitter, Manager, State};
 
 struct AppState {
     store: Mutex<Store>,
+}
+
+/// stale 阈值：超过此时长无事件的 running 会话标记为 stale。
+const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn db_path() -> PathBuf {
@@ -69,6 +79,25 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
+/// 周期性把超时无事件的 running 会话标记为 stale，让「当前活跃」状态诚实
+/// （终端被强杀时收不到 SessionEnd）。有变更时触发前端刷新。
+fn spawn_stale_sweeper(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        let changed = {
+            let state = app.state::<AppState>();
+            let guard = state.store.lock();
+            match guard {
+                Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now_ms()).unwrap_or(0),
+                Err(_) => 0,
+            }
+        };
+        if changed > 0 {
+            let _ = app.emit("board-changed", ());
+        }
+        std::thread::sleep(Duration::from_secs(60));
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let path = db_path();
@@ -78,6 +107,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![get_overview, get_project_tasks, get_live_sessions])
         .setup(move |app| {
             spawn_db_watcher(app.handle().clone(), path.clone());
+            spawn_stale_sweeper(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
