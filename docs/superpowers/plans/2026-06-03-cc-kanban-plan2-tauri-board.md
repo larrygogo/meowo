@@ -1112,3 +1112,19 @@ git add -A && git commit -m "chore(app): 端到端验证通过" --allow-empty
 - **类型一致**：Rust DTO `ProjectOverview { project, active_sessions, todo_count, doing_count, done_count, last_activity_at }` 与 TS 同名同字段；`TaskCard { task, todos, session_status }` 一致；命令名 `get_overview`/`get_project_tasks` 在 B2 定义、C1 调用一致；参数 `project_id`(Rust)↔`projectId`(JS) 由 Tauri 转换。
 - **桌面贴纸 / 拖拽改列**：不在本计划，属计划 3。
 - **YAGNI**：本计划只读，不做拖拽、不做贴纸、不做手机端。
+
+---
+
+## 实现调整记录（2026-06-03，验收反馈后）
+
+计划执行中根据真实使用反馈做了如下调整（均已实现并验证）：
+
+1. **视图收敛为单一「当前活跃」**：去掉了顶部导航、项目总览、看板钻入的路由。`Overview.tsx` / `ProjectBoard.tsx` 与 `overview()` / `project_tasks()` / `get_overview` / `get_project_tasks` 代码**保留备用**，只是前端不再路由进去。App 即「当前活跃」会话列表。
+2. **新增活跃区查询 `live_sessions()`**：返回 running/waiting/stale 会话 + 项目名 + 任务标题 + 当前动作 + 进度 + todo 列表（`LiveSession` DTO）。
+3. **卡片密度切换（极简 / 进度卡 / 信息丰富）**：localStorage 持久化。三档即使无 todo 也明显区分——极简只有标题；进度卡加状态/当前动作/进度条（无 todo 显示「暂无子任务」）；信息丰富再加 todo 勾选清单 + 最近活跃时间。
+4. **隐藏未命名空占位卡**：`project_tasks()` 与 `overview()` 计数过滤 `title='(未命名会话)' 且无 todo` 的噪音卡。
+5. **stale 巡检线程**：Tauri app 每 60s 调 `mark_stale`，把 10 分钟无事件的 running 会话标为 stale，让活跃状态诚实（终端被强杀收不到 SessionEnd 的场景）。
+
+**端到端验证**：真实 reporter 二进制 → 临时 SQLite → notify → 界面，进度条从 50% 自动跳 100%（约 300ms，无需手动刷新），实时闭环通过。
+
+**留待计划 3**：桌面贴纸（透明置顶悬浮窗）、看板拖拽改列、（如需）重新启用总览/看板视图入口。
