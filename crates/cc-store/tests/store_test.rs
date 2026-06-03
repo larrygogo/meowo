@@ -215,3 +215,31 @@ fn image_only_prompt_keeps_placeholder_title() {
     assert_eq!(t.title, "(未命名会话)");
     assert_eq!(t.current_activity, None);
 }
+
+// == 审计修复测试 ==
+
+#[test]
+fn session_start_revives_ended_session() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _t) = store.start_session(pid, "s", 100).unwrap();
+    store.end_session(sid, 200).unwrap();
+    assert_eq!(store.get_session(sid).unwrap().status, "ended");
+    // resume：同 session_id 再次 SessionStart 应复活为 running 且清空 ended_at
+    let (sid2, _t2) = store.start_session(pid, "s", 300).unwrap();
+    assert_eq!(sid2, sid);
+    let s = store.get_session(sid).unwrap();
+    assert_eq!(s.status, "running");
+    assert_eq!(s.ended_at, None);
+}
+
+#[test]
+fn mark_stale_also_flags_idle_waiting() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "w", 1000).unwrap();
+    store.set_session_status(sid, cc_store::SessionStatus::Waiting, 1000).unwrap();
+    let n = store.mark_stale(2000, 10000).unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(store.get_session(sid).unwrap().status, "stale");
+}
