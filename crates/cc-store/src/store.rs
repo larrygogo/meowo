@@ -275,6 +275,7 @@ impl Store {
 
     // == Task 8: 会话状态变更与 stale 标记 ==
 
+    /// 手动设置会话状态（如 waiting / stale），同时更新 last_event_at。
     pub fn set_session_status(
         &self,
         session_id: i64,
@@ -288,6 +289,7 @@ impl Store {
         Ok(())
     }
 
+    /// 结束会话：状态设为 ended，记录 ended_at。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET status = 'ended', ended_at = ?1, last_event_at = ?1 WHERE id = ?2",
