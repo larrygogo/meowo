@@ -17,9 +17,10 @@ const DENSITIES: { key: Density; label: string }[] = [
 ];
 
 export function LiveView({ data }: { data: LiveSession[] }) {
-  const [density, setDensity] = useState<Density>(
-    () => (localStorage.getItem(KEY) as Density) || "progress",
-  );
+  const [density, setDensity] = useState<Density>(() => {
+    const saved = localStorage.getItem(KEY);
+    return saved === "minimal" || saved === "progress" || saved === "rich" ? saved : "progress";
+  });
   const pick = (d: Density) => {
     setDensity(d);
     localStorage.setItem(KEY, d);
