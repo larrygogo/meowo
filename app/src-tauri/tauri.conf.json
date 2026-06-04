@@ -16,7 +16,7 @@
         "title": "cc-kanban",
         "width": 300,
         "height": 440,
-        "minWidth": 200,
+        "minWidth": 260,
         "minHeight": 80,
         "transparent": true,
         "decorations": false,
