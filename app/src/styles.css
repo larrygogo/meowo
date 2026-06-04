@@ -161,9 +161,15 @@ html, body {
   border: 1px solid var(--cc-border);
   transition: background 0.12s, border-color 0.12s;
   border-radius: 9px;
+  display: flex;
+  align-items: center;        /* 徽标垂直居中，跨越整个文字块 */
+  gap: 10px;
 }
 .stk-card:last-child { margin-bottom: 0; }
 .stk-card:hover { background: var(--cc-surface-hover); border-color: var(--cc-accent-border); }
+/* 前导状态徽标列：固定宽度居中，使圆点/转圈垂直对齐两行文字中央 */
+.stk-ind { flex: none; width: 12px; display: flex; align-items: center; justify-content: center; }
+.stk-body { flex: 1; min-width: 0; }
 .stk-line1 { display: flex; align-items: center; gap: 7px; }
 .stk-line1 .stk-title { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk-time { flex: none; font-size: 10px; color: var(--cc-text-faint); }

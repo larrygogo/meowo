@@ -136,31 +136,33 @@ export function Sticker({ data }: { data: Item[] }) {
                 onClick={() => { if (l.pid) invoke("focus_session", { pid: l.pid }).catch(() => {}); }}
                 style={{ cursor: l.pid ? "pointer" : "default" }}
               >
-                <div className="stk-line1">
-                  {indicator}
-                  <span className="stk-title">{title}</span>
-                  <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
-                  <span
-                    className="stk-arch"
-                    title={l.archived ? "取消归档" : "归档"}
-                    onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
-                  >{l.archived ? "↩" : "▾"}</span>
-                </div>
-                <div className="stk-line2">
-                  <ConnBadge connected={l.connected} />
-                  <span className="stk-repo">{l.project_name}</span>
-                </div>
-                {sub && <div className="stk-sub">{sub}</div>}
-                {l.todo_total > 0 && (
-                  <div className="stk-prog">
-                    <div className="bar">
-                      <i style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="stk-prog-txt">
-                      {l.todo_done}/{l.todo_total}
-                    </span>
+                <span className="stk-ind">{indicator}</span>
+                <div className="stk-body">
+                  <div className="stk-line1">
+                    <span className="stk-title">{title}</span>
+                    <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
+                    <span
+                      className="stk-arch"
+                      title={l.archived ? "取消归档" : "归档"}
+                      onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
+                    >{l.archived ? "↩" : "▾"}</span>
                   </div>
-                )}
+                  <div className="stk-line2">
+                    <ConnBadge connected={l.connected} />
+                    <span className="stk-repo">{l.project_name}</span>
+                  </div>
+                  {sub && <div className="stk-sub">{sub}</div>}
+                  {l.todo_total > 0 && (
+                    <div className="stk-prog">
+                      <div className="bar">
+                        <i style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="stk-prog-txt">
+                        {l.todo_done}/{l.todo_total}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })
