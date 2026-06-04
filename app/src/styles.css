@@ -1,7 +1,9 @@
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
-body {
+html, body {
   margin: 0;
+  height: 100%;
+  overflow: hidden; /* 贴纸窗口高度自适应内容，禁止外层（透明区）滚动条 */
   font-family: -apple-system, "Segoe UI", sans-serif;
   background: transparent;
   color: #e8e8ea;
@@ -80,11 +82,17 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   padding: 4px 10px 8px;
-  margin: 4px;
+  margin: 0;
+  max-height: 600px; /* 固定上限，不用 100vh，避免与窗口自适应高度形成死锁 */
+  overflow-y: auto;
   -webkit-user-select: none;
   user-select: none;
   backdrop-filter: blur(6px);
 }
+/* 内部细滚动条（仅会话过多超出上限时出现，落在圆角卡内部） */
+.sticker::-webkit-scrollbar { width: 6px; }
+.sticker::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+.sticker::-webkit-scrollbar-track { background: transparent; }
 .drag {
   height: 12px;
   cursor: move;
@@ -95,30 +103,63 @@ body {
 }
 .stk-row {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  padding: 3px 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
 }
-.stk-proj {
+.stk-main {
+  flex: 1;
+  min-width: 0;
+}
+.stk-title {
+  font-size: 12.5px;
   font-weight: 600;
-  flex: none;
-  max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.stk-act {
-  color: #8a8a92;
-  font-size: 11px;
-  margin-left: auto;
-  max-width: 130px;
+.stk-sub {
+  font-size: 10.5px;
+  color: #76767e;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-top: 1px;
+}
+.stk-tag {
+  flex: none;
+  align-self: center;
+  font-size: 10px;
+  color: #b9b9c0;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 5px;
+  padding: 1px 6px;
 }
 .stk-empty {
   font-size: 12px;
   color: #5b5b63;
   padding: 6px 2px;
+}
+/* 运行中：转动的缺口圆环 */
+.spinner {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid rgba(52, 211, 153, 0.25);
+  border-top-color: #34d399;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.stk-row .dot {
+  margin-top: 4px;
 }
