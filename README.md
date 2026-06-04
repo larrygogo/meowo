@@ -1,5 +1,8 @@
 # cc-kanban
 
+[![CI](https://github.com/larrygogo/cc-kanban/actions/workflows/ci.yml/badge.svg)](https://github.com/larrygogo/cc-kanban/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > 一个常驻桌面的「贴纸」，实时显示你所有 Claude Code 会话的进度——哪个在跑、哪个在等你回复、各自做到哪一步，一眼看全。
 
 cc-kanban 通过 Claude Code 的 hooks 捕获每个会话的事件，落进本地 SQLite，再用一个半透明、可吸边的 Tauri 小窗口（贴纸）实时呈现。无需切来切去找终端，进度自动浮现在屏幕角落。
@@ -139,8 +142,12 @@ bunx vitest run
 
 ## 路线
 
-- [ ] CI（GitHub Actions：cargo test/clippy + 前端 tsc/vitest）
+- [x] CI（GitHub Actions：cargo test/clippy + 前端 tsc/vitest，windows-latest）
 - [ ] 在线更新（`tauri-plugin-updater` + GitHub Releases）
 - [ ] macOS / Linux 打包
 
 设计与实现细节见 [`docs/superpowers/`](docs/superpowers/)。
+
+## License
+
+[MIT](LICENSE) © larrygogo

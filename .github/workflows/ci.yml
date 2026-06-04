@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: 安装 Rust(含 clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust 构建缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 安装前端依赖
+        working-directory: app
+        run: bun install --frozen-lockfile
+
+      - name: 前端单测
+        working-directory: app
+        run: bunx vitest run
+
+      # 必须先构建前端产出 app/dist：cc-app 的 tauri-build 会校验 frontendDist 存在。
+      - name: 构建前端(tsc + vite build)
+        working-directory: app
+        run: bun run build
+
+      - name: Rust 测试
+        run: cargo test --workspace
+
+      - name: Rust clippy
+        run: cargo clippy --workspace -- -D warnings
