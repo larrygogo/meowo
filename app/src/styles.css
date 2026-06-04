@@ -161,15 +161,23 @@ html, body {
   border: 1px solid var(--cc-border);
   transition: background 0.12s, border-color 0.12s;
   border-radius: 9px;
-  display: flex;
-  align-items: center;        /* 徽标垂直居中，跨越整个文字块 */
-  gap: 10px;
 }
 .stk-card:last-child { margin-bottom: 0; }
 .stk-card:hover { background: var(--cc-surface-hover); border-color: var(--cc-accent-border); }
-/* 前导状态徽标列：固定宽度居中，使圆点/转圈垂直对齐两行文字中央 */
-.stk-ind { flex: none; width: 12px; display: flex; align-items: center; justify-content: center; }
-.stk-body { flex: 1; min-width: 0; }
+/* 顶部组：徽标块 + 标题/状态两行；stretch 让徽标块自动撑满这两行的高度 */
+.stk-top { display: flex; align-items: stretch; gap: 9px; }
+.stk-top-body { flex: 1; min-width: 0; }
+/* 前导状态徽标：圆角方块，跨标题+状态两行，圆点/转圈在块内居中 */
+.stk-ind {
+  flex: none;
+  width: 30px;
+  border-radius: 8px;
+  background: var(--cc-surface-hover);
+  border: 1px solid var(--cc-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .stk-line1 { display: flex; align-items: center; gap: 7px; }
 .stk-line1 .stk-title { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk-time { flex: none; font-size: 10px; color: var(--cc-text-faint); }
@@ -179,7 +187,7 @@ html, body {
 .conn-on { color: var(--cc-ok); }
 .conn-off { color: var(--cc-text-faint); }
 .stk-repo { font-size: 10.5px; color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stk-sub { font-size: 10.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
+.stk-sub { font-size: 10.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 7px; }
 
 /* 等待用户输入：琥珀色脉冲点 */
 .needs {
@@ -197,7 +205,7 @@ html, body {
 }
 
 /* 贴纸卡片里的 todo 进度条 */
-.stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+.stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
 .stk-prog .bar { flex: 1; height: 4px; margin: 0; }
 .stk-prog-txt { flex: none; font-size: 10px; color: var(--cc-text-faint); }
 
