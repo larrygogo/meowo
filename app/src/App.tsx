@@ -45,7 +45,15 @@ export function App() {
     return s === "left" || s === "right" || s === "top" ? s : null;
   });
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
-  const { status: upStatus, version: updateVersion, progress: upProgress, apply: applyUpdate } = useUpdate();
+  const {
+    status: upStatus,
+    version: updateVersion,
+    progress: upProgress,
+    apply: applyUpdate,
+    recheck,
+  } = useUpdate();
+  const upStatusRef = useRef(upStatus);
+  upStatusRef.current = upStatus;
 
   const connectedCount = live.filter((l) => !l.archived && l.connected).length;
 
@@ -75,13 +83,16 @@ export function App() {
     };
   }, [refresh]);
 
-  // 托盘「更新」点击 → 执行更新（安装逻辑的单一来源）。
+  // 托盘「更新/检查更新」点击 → 有新版则安装，否则重新检查。
   useEffect(() => {
-    const un = listen("trigger-update", () => void applyUpdate());
+    const un = listen("tray-update-clicked", () => {
+      if (upStatusRef.current === "available") void applyUpdate();
+      else if (upStatusRef.current !== "downloading") void recheck();
+    });
     return () => {
       un.then((f) => f());
     };
-  }, [applyUpdate]);
+  }, [applyUpdate, recheck]);
 
   // 折叠成缩略条：厚度固定，主轴长度贴合当前点数。
   const doCollapse = useCallback(

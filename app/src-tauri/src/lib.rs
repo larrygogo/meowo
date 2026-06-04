@@ -404,11 +404,10 @@ fn set_update_menu(app: tauri::AppHandle, state: State<AppState>, version: Optio
         app.run_on_main_thread(move || match &version {
             Some(v) => {
                 let _ = item.set_text(format!("⬇ 更新到 v{v}"));
-                let _ = item.set_enabled(true);
             }
             None => {
-                let _ = item.set_text("已是最新版本");
-                let _ = item.set_enabled(false);
+                // 无更新/检查失败：保留为可点的「检查更新」，便于手动重试。
+                let _ = item.set_text("检查更新");
             }
         })
         .map_err(|e| e.to_string())?;
@@ -519,9 +518,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .build(app)?;
     let ver = app.package_info().version.to_string();
     let about = MenuItemBuilder::with_id("about", format!("关于 v{ver}")).build(app)?;
-    let update = MenuItemBuilder::with_id("update", "检查更新…")
-        .enabled(false)
-        .build(app)?;
+    let update = MenuItemBuilder::with_id("update", "检查更新").build(app)?;
     // 存句柄：前端检查到结果后通过 set_update_menu 回写文案/可用性。
     app.state::<AppState>()
         .update_item
@@ -577,11 +574,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 }
             }
             "update" => {
-                // 安装逻辑在前端（单一来源）：显示主窗并通知它执行更新。
+                // 显示主窗并通知它处理（有新版→安装；否则→重新检查）。单一来源在前端。
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                 }
-                let _ = app.emit("trigger-update", ());
+                let _ = app.emit("tray-update-clicked", ());
             }
             "quit" => app.exit(0),
             _ => {}

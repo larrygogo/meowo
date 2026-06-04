@@ -8,42 +8,43 @@ type UpdateHandle = {
 
 export type UpdateStatus = "checking" | "latest" | "available" | "downloading" | "error";
 
-/// 启动后台检查更新；把结果回写托盘菜单，并对外暴露状态/版本/下载进度与 apply()。
-/// 非 Tauri 环境（测试/浏览器）或网络失败一律降级，不抛错。
+/// 检查更新并把结果回写托盘菜单；对外暴露状态/版本/进度、手动重检 recheck() 与安装 apply()。
+/// 非 Tauri 环境（测试/浏览器）或网络失败一律降级为 error，不抛错。
 export function useUpdate() {
   const [status, setStatus] = useState<UpdateStatus>("checking");
   const [version, setVersion] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const handleRef = useRef<UpdateHandle | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { check } = await import("@tauri-apps/plugin-updater");
-        const up = await check();
-        if (cancelled) return;
-        if (up) {
-          handleRef.current = up as unknown as UpdateHandle;
-          setVersion(up.version);
-          setStatus("available");
-        } else {
-          setStatus("latest");
-        }
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("set_update_menu", { version: up ? up.version : null });
-        } catch {
-          /* 回写托盘失败无所谓 */
-        }
-      } catch {
-        if (!cancelled) setStatus("error");
+  const recheck = useCallback(async () => {
+    setStatus("checking");
+    let found: string | null = null;
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const up = await check();
+      if (up) {
+        handleRef.current = up as unknown as UpdateHandle;
+        setVersion(up.version);
+        setStatus("available");
+        found = up.version;
+      } else {
+        setStatus("latest");
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    } catch {
+      setStatus("error");
+    }
+    // 无论有无更新/失败，都同步托盘文案（失败→保持「检查更新」可点）。
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_update_menu", { version: found });
+    } catch {
+      /* 忽略 */
+    }
   }, []);
+
+  useEffect(() => {
+    recheck();
+  }, [recheck]);
 
   const apply = useCallback(async () => {
     const up = handleRef.current;
@@ -68,5 +69,5 @@ export function useUpdate() {
     }
   }, []);
 
-  return { status, version, progress, apply };
+  return { status, version, progress, apply, recheck };
 }
