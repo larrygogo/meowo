@@ -1,5 +1,22 @@
+use cc_reporter::dispatch::owner_repo_from_url_pub;
 use cc_reporter::hook::HookEvent;
 use std::io::Write as _;
+
+#[test]
+fn owner_repo_parsing() {
+    assert_eq!(
+        owner_repo_from_url_pub("https://github.com/larrygogo/autopilot.git").as_deref(),
+        Some("larrygogo/autopilot")
+    );
+    assert_eq!(
+        owner_repo_from_url_pub("git@github.com:larrygogo/autopilot.git").as_deref(),
+        Some("larrygogo/autopilot")
+    );
+    assert_eq!(
+        owner_repo_from_url_pub("https://gitlab.com/grp/sub/repo.git").as_deref(),
+        Some("sub/repo")
+    );
+}
 
 #[test]
 fn parse_user_prompt_event() {

@@ -59,7 +59,7 @@ impl Store {
         self.conn.execute(
             "INSERT INTO projects (root_path, name, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?3)
-             ON CONFLICT(root_path) DO UPDATE SET updated_at = ?3",
+             ON CONFLICT(root_path) DO UPDATE SET updated_at = ?3, name = ?2",
             rusqlite::params![root_path, name, now_ms],
         )?;
         let id: i64 = self.conn.query_row(

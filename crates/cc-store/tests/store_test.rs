@@ -23,6 +23,15 @@ fn upsert_project_is_idempotent_by_root() {
     assert_eq!(projects[0].updated_at, 2000);
 }
 
+#[test]
+fn upsert_project_updates_name_on_conflict() {
+    let store = Store::open_in_memory().unwrap();
+    let id1 = store.upsert_project_by_root("/r", "old-name", 100).unwrap();
+    let id2 = store.upsert_project_by_root("/r", "owner/repo", 200).unwrap();
+    assert_eq!(id1, id2);
+    assert_eq!(store.list_projects().unwrap()[0].name, "owner/repo");
+}
+
 // == Task 5 ==
 #[test]
 fn start_session_creates_session_and_placeholder_task() {
