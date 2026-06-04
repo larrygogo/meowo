@@ -228,5 +228,6 @@ html, body {
 .sdot-off { background: var(--cc-text-faint); }
 
 /* 归档/取消归档按钮 */
-.stk-arch { flex: none; font-size: 11px; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; margin-left: 4px; }
+.stk-arch { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; margin-left: 4px; }
+.stk-arch svg { display: block; }
 .stk-arch:hover { color: var(--cc-accent); }

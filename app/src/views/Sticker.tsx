@@ -25,6 +25,17 @@ function ConnBadge({ connected }: { connected: boolean }) {
   );
 }
 
+function ArchiveIcon({ archived }: { archived: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      {archived ? <path d="m9 15 3-3 3 3" /> /* 还原：向上箭头 */ : <path d="M10 12h4" /> /* 归档：把手 */}
+    </svg>
+  );
+}
+
 type Item = LiveSession & { connected: boolean };
 type Tab = "all" | "waiting" | "running" | "archived";
 
@@ -146,7 +157,7 @@ export function Sticker({ data }: { data: Item[] }) {
                         className="stk-arch"
                         title={l.archived ? "取消归档" : "归档"}
                         onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
-                      >{l.archived ? "↩" : "▾"}</span>
+                      ><ArchiveIcon archived={l.archived} /></span>
                     </div>
                     <div className="stk-line2">
                       <ConnBadge connected={l.connected} />
