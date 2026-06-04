@@ -131,6 +131,7 @@ html, body {
 .stk-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 .stk-scroll::-webkit-scrollbar-track { background: transparent; }
 .resize-grip { position: fixed; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
+  z-index: 60; /* 高于更新提示条(50)，更新时仍可从右下角缩放 */
   opacity: 0; transition: opacity 0.15s;
   background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.25) 60%, transparent 60%, transparent 70%, rgba(255,255,255,0.25) 70%, rgba(255,255,255,0.25) 80%, transparent 80%); }
 .sticker:hover .resize-grip { opacity: 1; }

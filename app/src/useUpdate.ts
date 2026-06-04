@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
+
+// 仅主窗负责回写托盘菜单，避免关于窗口的独立检查覆盖主窗结果。
+function isMainWindow(): boolean {
+  try {
+    return getCurrentWindow().label === "main";
+  } catch {
+    return false;
+  }
+}
 
 type UpdateHandle = {
   version: string;
@@ -33,12 +43,14 @@ export function useUpdate() {
     } catch {
       setStatus("error");
     }
-    // 无论有无更新/失败，都同步托盘文案（失败→保持「检查更新」可点）。
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("set_update_menu", { version: found });
-    } catch {
-      /* 忽略 */
+    // 无论有无更新/失败，都同步托盘文案（失败→保持「检查更新」可点）。仅主窗回写。
+    if (isMainWindow()) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("set_update_menu", { version: found });
+      } catch {
+        /* 忽略 */
+      }
     }
   }, []);
 

@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { emit } from "@tauri-apps/api/event";
 import { useUpdate } from "../useUpdate";
 
 const REPO = "github.com/larrygogo/cc-kanban";
 
 export function About() {
   const [version, setVersion] = useState("");
-  const { status, version: newVersion, progress, apply, recheck } = useUpdate();
+  const [triggered, setTriggered] = useState(false);
+  // 关于窗口只用于「显示状态」；检查不写托盘、安装委托主窗，避免双窗口竞态。
+  const { status, version: newVersion, recheck } = useUpdate();
 
   useEffect(() => {
     getVersion()
@@ -17,18 +20,20 @@ export function About() {
   const statusText: Record<typeof status, string> = {
     checking: "正在检查更新…",
     latest: "已是最新版本",
-    available: `发现新版本 v${newVersion}`,
-    downloading: `下载安装中 ${progress}%`,
+    available: triggered ? "已在主窗口开始更新…" : `发现新版本 v${newVersion}`,
+    downloading: "更新中…",
     error: "检查更新失败，可重试",
   };
 
-  // 有新版 → 安装按钮；其余 → 常驻「检查更新」（失败/最新都能手动重试）。
+  // 有新版 → 交给主窗安装；其余 → 常驻「检查更新」可手动重试。
+  const onAvailable = () => {
+    setTriggered(true);
+    emit("trigger-update").catch(() => {});
+  };
   const btn =
     status === "available"
-      ? { label: `更新到 v${newVersion}`, onClick: apply, disabled: false }
-      : status === "downloading"
-        ? { label: `下载中 ${progress}%`, onClick: undefined, disabled: true }
-        : { label: "检查更新", onClick: recheck, disabled: status === "checking" };
+      ? { label: `更新到 v${newVersion}`, onClick: onAvailable, disabled: triggered }
+      : { label: "检查更新", onClick: recheck, disabled: status === "checking" };
 
   return (
     <div className="about">
