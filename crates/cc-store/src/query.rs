@@ -117,8 +117,8 @@ impl Store {
         Ok(out)
     }
 
-    /// 活跃区：status 为 running/waiting/stale 的会话，附项目名、任务标题、进度。
-    /// 按 last_event_at 倒序（最近活跃在前），最多返回 20 条。
+    /// 活跃区：所有会话（含已结束），附项目名、任务标题、进度。
+    /// 按 last_event_at 倒序（最近活跃在前），最多返回 100 条（cc-app 会再过滤截断）。
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
@@ -126,9 +126,8 @@ impl Store {
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
-             WHERE s.status IN ('running','waiting','stale')
              ORDER BY s.last_event_at DESC
-             LIMIT 20",
+             LIMIT 100",
         )?;
         let rows = stmt
             .query_map([], |r| {

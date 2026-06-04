@@ -13,9 +13,6 @@ use tauri_plugin_autostart::ManagerExt;
 /// stale 阈值：超过此时长无事件的会话标记为 stale。
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 
-/// 超过此时长无事件的 live 会话视为废弃，直接 end。
-const ABANDON_IDLE_MS: i64 = 2 * 60 * 60 * 1000;
-
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
 /// 无权限）时只让该次刷新返回错误，不会在启动时 panic 把整个 app 打挂；
 /// 下次 board-changed 事件刷新即自动恢复。
@@ -79,11 +76,15 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
             };
             LiveItem { inner: s, connected }
         })
-        // 清噪声：隐藏「未命名 + 无 todo + 已断开」的卡（旧僵尸残留）；
-        // 连接中的即便未命名也保留（显示「等待首次输入」）。
+        // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留
         .filter(|item| {
-            let unnamed =
-                item.inner.task_title.is_empty() || item.inner.task_title == "(未命名会话)";
+            let t = item.inner.task_title.trim();
+            // 连通性测试等噪声：标题就是 "ping"
+            if t.eq_ignore_ascii_case("ping") {
+                return false;
+            }
+            // 未命名 + 无 todo + 已断开 的旧残留隐藏；连接中的保留
+            let unnamed = t.is_empty() || t == "(未命名会话)";
             item.connected || !(unnamed && item.inner.todos.is_empty())
         })
         .collect();
@@ -92,6 +93,7 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
             .cmp(&a.connected)
             .then(b.inner.session.last_event_at.cmp(&a.inner.session.last_event_at))
     });
+    items.truncate(20);
     Ok(items)
 }
 
@@ -217,19 +219,16 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 每 60s：清理超过 6 小时无事件的废弃会话，再把超时会话标记为 stale。
-/// PID 已死的会话不再强制结束，保留并在 get_live_sessions 中标记为 disconnected。
+/// 每 60s：把超时会话标记为 stale（空闲停转圈）。
+/// 不再自动 end 关闭的会话，保留历史会话供贴纸持久显示。
 fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || loop {
         let now = now_ms();
-        let (ended, staled) = match Store::open(&db_path) {
-            Ok(store) => (
-                store.end_abandoned(ABANDON_IDLE_MS, now).unwrap_or(0),
-                store.mark_stale(STALE_THRESHOLD_MS, now).unwrap_or(0),
-            ),
-            Err(_) => (0, 0),
+        let staled = match Store::open(&db_path) {
+            Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now).unwrap_or(0),
+            Err(_) => 0,
         };
-        if ended > 0 || staled > 0 {
+        if staled > 0 {
             let _ = app.emit("board-changed", ());
         }
         std::thread::sleep(Duration::from_secs(60));

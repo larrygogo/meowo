@@ -64,7 +64,7 @@ fn project_tasks_empty_for_unknown_project() {
 use cc_store::SessionStatus;
 
 #[test]
-fn live_sessions_includes_running_waiting_stale_excludes_ended() {
+fn live_sessions_includes_ended_sessions() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
 
@@ -78,12 +78,13 @@ fn live_sessions_includes_running_waiting_stale_excludes_ended() {
     store.end_session(s4, 410).unwrap();
 
     let live = store.live_sessions().unwrap();
-    assert_eq!(live.len(), 3);
+    // 四个都在（ended 也保留）
+    assert_eq!(live.len(), 4);
     let statuses: Vec<&str> = live.iter().map(|l| l.session.status.as_str()).collect();
     assert!(statuses.contains(&"running"));
     assert!(statuses.contains(&"waiting"));
     assert!(statuses.contains(&"stale"));
-    assert!(!statuses.contains(&"ended"));
+    assert!(statuses.contains(&"ended"));
 }
 
 #[test]
