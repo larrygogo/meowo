@@ -116,3 +116,30 @@ error: could not compile `cc-store` (lib) due to 1 previous error
                                                             
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.98s
      Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
+[2m14:13:48[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Sticker.tsx[22m
+[2m14:14:17[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Sticker.tsx[22m
+[2m14:16:21[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/styles.css[22m
+        Info `tauri-build` dependency has workspace inheritance enabled. The features array won't be automatically rewritten. Expected features: []
+        Info `tauri` dependency has workspace inheritance enabled. The features array won't be automatically rewritten. Expected features: []
+        Info File src-tauri\tauri.conf.json changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+   Compiling cc-app v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\app\src-tauri)
+    Building [=======================> ] 407/410: cc-app(…
+    Building [=======================> ] 408/410: cc-app  
+    Building [=======================> ] 409/410: cc-app(…
+                                                            
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.13s
+     Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
+        Info `tauri-build` dependency has workspace inheritance enabled. The features array won't be automatically rewritten. Expected features: []
+        Info `tauri` dependency has workspace inheritance enabled. The features array won't be automatically rewritten. Expected features: []
+        Info File src-tauri\tauri.conf.json changed. Rebuilding application...
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+   Compiling cc-app v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\app\src-tauri)
+    Building [=======================> ] 407/410: cc-app(…
+    Building [=======================> ] 408/410: cc-app  
+    Building [=======================> ] 409/410: cc-app(…
+                                                            
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.45s
+     Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
+[2m14:22:08[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/styles.css[22m
+[2m14:22:35[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/styles.css[22m
