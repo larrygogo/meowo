@@ -117,7 +117,7 @@ html, body {
 .stab { cursor: pointer; font-size: 11px; color: var(--cc-text-dim); padding: 2px 5px; border-radius: var(--r-md); display: inline-flex; align-items: center; gap: 3px; }
 .stab svg { display: block; flex: none; opacity: 0.85; }
 .stab:hover { color: var(--cc-text); }
-.stab-on { color: var(--cc-accent); background: var(--cc-accent-soft); }
+.stab-on { color: var(--cc-accent); background: #000; }
 .stab-n { font-size: 9.5px; color: var(--cc-text-faint); }
 .stab-on .stab-n { color: var(--cc-accent); }
 /* 负边距+内边距：滚动条落到贴纸右边缘，卡片内容左右仍对称(各 8px) */
@@ -172,7 +172,7 @@ html, body {
   background: var(--cc-surface);
   border: 1px solid var(--cc-border);
   transition: background 0.12s, border-color 0.12s;
-  border-radius: var(--r-lg);
+  border-radius: 12px;
 }
 .stk-card:last-child { margin-bottom: 0; }
 .stk-card:hover { background: var(--cc-surface-hover); border-color: var(--cc-accent-border); }
