@@ -136,3 +136,18 @@ html, body {
 .conn-off { color: #6b6b73; }
 .stk-repo { font-size: 10.5px; color: #8a8a92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk-sub { font-size: 10.5px; color: #76767e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
+
+/* 等待用户输入：琥珀色脉冲点 */
+.needs {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: #fbbf24;
+  animation: needs-pulse 1.6s ease-out infinite;
+}
+@keyframes needs-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(251, 191, 36, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+}

@@ -35,11 +35,16 @@ export function Sticker({ data }: { data: Item[] }) {
           const unnamed = !l.task_title || l.task_title === "(未命名会话)";
           const title = unnamed ? "等待首次输入" : l.task_title;
           const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
-          const spinning = l.session.status === "running" && l.connected;
+          const indicator =
+            l.connected && l.session.status === "running" ? (
+              <span className="spinner" />
+            ) : l.connected && l.session.status === "waiting" ? (
+              <span className="needs" title="等待输入" />
+            ) : null;
           return (
             <div className="stk-card" key={l.session.id}>
               <div className="stk-line1">
-                {spinning && <span className="spinner" />}
+                {indicator}
                 <span className="stk-title">{title}</span>
                 <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
               </div>
