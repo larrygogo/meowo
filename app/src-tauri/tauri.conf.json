@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "cc-kanban",
-        "width": 280,
-        "height": 220,
+        "width": 300,
+        "height": 440,
         "minWidth": 200,
         "minHeight": 80,
         "transparent": true,

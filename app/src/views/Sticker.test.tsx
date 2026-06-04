@@ -20,9 +20,9 @@ function mk(over: Partial<Item> = {}): Item {
 afterEach(() => cleanup());
 
 describe("Sticker", () => {
-  it("空数据显示无活跃会话", () => {
+  it("空数据显示（空）", () => {
     const { container } = render(<Sticker data={[]} />);
-    expect(screen.getByText("无活跃会话")).toBeTruthy();
+    expect(screen.getByText("（空）")).toBeTruthy();
     expect(container.querySelector("[data-tauri-drag-region]")).toBeTruthy();
   });
 

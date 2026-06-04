@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LiveSession } from "../api";
 
 function fmtAgo(ms: number): string {
@@ -24,59 +26,111 @@ function ConnBadge({ connected }: { connected: boolean }) {
 }
 
 type Item = LiveSession & { connected: boolean };
+type Tab = "all" | "waiting" | "running" | "archived";
+
+const TAB_KEY = "cc-kanban-tab";
+const TABS: { key: Tab; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "waiting", label: "待交互" },
+  { key: "running", label: "运行中" },
+  { key: "archived", label: "已归档" },
+];
+
+function match(tab: Tab, l: Item): boolean {
+  if (tab === "all") return true;
+  if (tab === "waiting") return l.connected && l.session.status === "waiting";
+  if (tab === "running") return l.connected && l.session.status === "running";
+  return !l.connected; // archived
+}
 
 export function Sticker({ data }: { data: Item[] }) {
+  const [tab, setTab] = useState<Tab>(() => {
+    const s = localStorage.getItem(TAB_KEY);
+    return s === "waiting" || s === "running" || s === "archived" ? s : "all";
+  });
+
+  const pick = (t: Tab) => {
+    setTab(t);
+    localStorage.setItem(TAB_KEY, t);
+  };
+
+  const shown = data.filter((l) => match(tab, l));
+
   return (
     <div className="sticker">
       <div className="drag" data-tauri-drag-region />
-      {data.length === 0 ? (
-        <div className="stk-empty">无活跃会话</div>
-      ) : (
-        data.map((l) => {
-          const unnamed = !l.task_title || l.task_title === "(未命名会话)";
-          const title = unnamed ? "等待首次输入" : l.task_title;
-          const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
-          const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
-          const indicator = !l.connected ? (
-            <span className="sdot sdot-off" title="已断开" />
-          ) : l.session.status === "running" ? (
-            <span className="spinner" />
-          ) : l.session.status === "waiting" ? (
-            <span className="needs" title="等待输入" />
-          ) : (
-            <span className="sdot sdot-on" title="在线" />
-          );
+      <div className="tabs">
+        {TABS.map((t) => {
+          const n = data.filter((l) => match(t.key, l)).length;
           return (
-            <div
-              className="stk-card"
-              key={l.session.id}
-              onClick={() => { if (l.pid) invoke("focus_session", { pid: l.pid }).catch(() => {}); }}
-              style={{ cursor: l.pid ? "pointer" : "default" }}
+            <span
+              key={t.key}
+              className={"stab " + (tab === t.key ? "stab-on" : "")}
+              onClick={() => pick(t.key)}
             >
-              <div className="stk-line1">
-                {indicator}
-                <span className="stk-title">{title}</span>
-                <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
-              </div>
-              <div className="stk-line2">
-                <ConnBadge connected={l.connected} />
-                <span className="stk-repo">{l.project_name}</span>
-              </div>
-              {sub && <div className="stk-sub">{sub}</div>}
-              {l.todo_total > 0 && (
-                <div className="stk-prog">
-                  <div className="bar">
-                    <i style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="stk-prog-txt">
-                    {l.todo_done}/{l.todo_total}
-                  </span>
-                </div>
-              )}
-            </div>
+              {t.label}
+              <span className="stab-n">{n}</span>
+            </span>
           );
-        })
-      )}
+        })}
+      </div>
+      <div className="stk-scroll">
+        {shown.length === 0 ? (
+          <div className="stk-empty">（空）</div>
+        ) : (
+          shown.map((l) => {
+            const unnamed = !l.task_title || l.task_title === "(未命名会话)";
+            const title = unnamed ? "等待首次输入" : l.task_title;
+            const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
+            const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
+            const indicator = !l.connected ? (
+              <span className="sdot sdot-off" title="已断开" />
+            ) : l.session.status === "running" ? (
+              <span className="spinner" />
+            ) : l.session.status === "waiting" ? (
+              <span className="needs" title="等待输入" />
+            ) : (
+              <span className="sdot sdot-on" title="在线" />
+            );
+            return (
+              <div
+                className="stk-card"
+                key={l.session.id}
+                onClick={() => { if (l.pid) invoke("focus_session", { pid: l.pid }).catch(() => {}); }}
+                style={{ cursor: l.pid ? "pointer" : "default" }}
+              >
+                <div className="stk-line1">
+                  {indicator}
+                  <span className="stk-title">{title}</span>
+                  <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
+                </div>
+                <div className="stk-line2">
+                  <ConnBadge connected={l.connected} />
+                  <span className="stk-repo">{l.project_name}</span>
+                </div>
+                {sub && <div className="stk-sub">{sub}</div>}
+                {l.todo_total > 0 && (
+                  <div className="stk-prog">
+                    <div className="bar">
+                      <i style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="stk-prog-txt">
+                      {l.todo_done}/{l.todo_total}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div
+        className="resize-grip"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
+        }}
+      />
     </div>
   );
 }

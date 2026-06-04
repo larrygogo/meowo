@@ -83,16 +83,27 @@ html, body {
   border-radius: 12px;
   padding: 4px 10px 8px;
   margin: 0;
-  max-height: 600px; /* 固定上限，不用 100vh，避免与窗口自适应高度形成死锁 */
-  overflow-y: auto;
+  height: 100vh;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
   -webkit-user-select: none;
   user-select: none;
   backdrop-filter: blur(6px);
 }
-/* 内部细滚动条（仅会话过多超出上限时出现，落在圆角卡内部） */
-.sticker::-webkit-scrollbar { width: 6px; }
-.sticker::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
-.sticker::-webkit-scrollbar-track { background: transparent; }
+.tabs { display: flex; gap: 4px; padding: 2px 0 6px; flex: none; }
+.stab { cursor: pointer; font-size: 11px; color: #8a8a92; padding: 2px 7px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; }
+.stab:hover { color: #e8e8ea; }
+.stab-on { color: #e8e8ea; background: rgba(255,255,255,0.08); }
+.stab-n { font-size: 9.5px; color: #76767e; }
+.stab-on .stab-n { color: #b9b9c0; }
+.stk-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.stk-scroll::-webkit-scrollbar { width: 6px; }
+.stk-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
+.stk-scroll::-webkit-scrollbar-track { background: transparent; }
+.resize-grip { position: fixed; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.25) 60%, transparent 60%, transparent 70%, rgba(255,255,255,0.25) 70%, rgba(255,255,255,0.25) 80%, transparent 80%); }
 .drag {
   height: 12px;
   cursor: move;
