@@ -8,9 +8,10 @@ const unlisten = vi.fn();
 vi.mock("./api", () => ({
   getLiveSessions: () => getLiveSessions(),
 }));
+// 按事件名分别路由：board-changed → emitBoardChanged；snap-changed 忽略（Tauri 吸边，无法在 jsdom 中测试）
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: (_event: string, cb: () => void) => {
-    emitBoardChanged = cb;
+  listen: (event: string, cb: () => void) => {
+    if (event === "board-changed") emitBoardChanged = cb;
     return Promise.resolve(unlisten);
   },
 }));
