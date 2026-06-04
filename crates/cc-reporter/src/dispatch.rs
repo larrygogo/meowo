@@ -22,6 +22,10 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
                 if let Some(prompt) = ev.prompt.as_deref() {
                     store.on_user_prompt(sid, prompt, now_ms)?;
                 }
+                // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
+                if let Some(p) = crate::proc::owner_pid() {
+                    store.set_session_pid(sid, p as i64, now_ms)?;
+                }
                 apply_title(store, ev, sid, now_ms)?;
             }
         }
