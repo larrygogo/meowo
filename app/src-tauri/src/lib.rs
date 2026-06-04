@@ -13,7 +13,7 @@ use tauri_plugin_autostart::ManagerExt;
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 
 /// 超过此时长无事件的 live 会话视为废弃，直接 end。
-const ABANDON_IDLE_MS: i64 = 6 * 60 * 60 * 1000;
+const ABANDON_IDLE_MS: i64 = 2 * 60 * 60 * 1000;
 
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
 /// 无权限）时只让该次刷新返回错误，不会在启动时 panic 把整个 app 打挂；
@@ -77,6 +77,13 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
                 _ => false,
             };
             LiveItem { inner: s, connected }
+        })
+        // 清噪声：隐藏「未命名 + 无 todo + 已断开」的卡（旧僵尸残留）；
+        // 连接中的即便未命名也保留（显示「等待首次输入」）。
+        .filter(|item| {
+            let unnamed =
+                item.inner.task_title.is_empty() || item.inner.task_title == "(未命名会话)";
+            item.connected || !(unnamed && item.inner.todos.is_empty())
         })
         .collect();
     items.sort_by(|a, b| {

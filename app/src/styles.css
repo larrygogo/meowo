@@ -151,3 +151,8 @@ html, body {
   70% { box-shadow: 0 0 0 5px rgba(251, 191, 36, 0); }
   100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
 }
+
+/* 贴纸卡片里的 todo 进度条 */
+.stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+.stk-prog .bar { flex: 1; height: 4px; margin: 0; }
+.stk-prog-txt { flex: none; font-size: 10px; color: #76767e; }

@@ -35,6 +35,7 @@ export function Sticker({ data }: { data: Item[] }) {
           const unnamed = !l.task_title || l.task_title === "(未命名会话)";
           const title = unnamed ? "等待首次输入" : l.task_title;
           const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
+          const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
           const indicator =
             l.connected && l.session.status === "running" ? (
               <span className="spinner" />
@@ -53,6 +54,16 @@ export function Sticker({ data }: { data: Item[] }) {
                 <span className="stk-repo">{l.project_name}</span>
               </div>
               {sub && <div className="stk-sub">{sub}</div>}
+              {l.todo_total > 0 && (
+                <div className="stk-prog">
+                  <div className="bar">
+                    <i style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="stk-prog-txt">
+                    {l.todo_done}/{l.todo_total}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })
