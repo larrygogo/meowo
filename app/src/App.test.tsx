@@ -15,6 +15,17 @@ vi.mock("@tauri-apps/api/event", () => ({
     return Promise.resolve(unlisten);
   },
 }));
+// 吸边相关的 Tauri 命令/窗口 API：jsdom 无后端，给空实现避免报错。
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    setAlwaysOnTop: vi.fn(() => Promise.resolve()),
+    outerSize: vi.fn(() => Promise.resolve({ width: 340, height: 440 })),
+    scaleFactor: vi.fn(() => Promise.resolve(1)),
+  }),
+}));
 
 import { App } from "./App";
 

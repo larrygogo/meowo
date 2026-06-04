@@ -255,33 +255,52 @@ html, body {
 .stk-arch svg { display: block; }
 .stk-arch:hover { color: var(--cc-accent); }
 
-/* 吸边竖条 */
+/* 吸边缩略条：左/右为竖条，顶为横条 */
 .cstrip {
   height: 100vh;
   width: 100%;
   background: var(--cc-bg);
   border: 1px solid var(--cc-border);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 6px 0;
+  justify-content: center;
   overflow: hidden;
   backdrop-filter: blur(6px);
 }
 .cstrip-left { border-radius: 0 var(--r-lg) var(--r-lg) 0; }
 .cstrip-right { border-radius: var(--r-lg) 0 0 var(--r-lg); }
-.cstrip-drag { width: 100%; height: 14px; flex: none; }
+.cstrip-top { border-radius: 0 0 var(--r-lg) var(--r-lg); }
 .cstrip-dots {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 7px;
-  overflow-y: auto;
+  overflow: auto;
+  padding: 4px 0;
+  scrollbar-width: none; /* Firefox：隐藏滚动条 */
 }
-.cstrip-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.cstrip-on { background: var(--cc-accent, #4ade80); }
-.cstrip-running { background: var(--cc-text-dim); animation: cstrip-pulse 1.2s ease-in-out infinite; }
-.cstrip-waiting { background: #f5a623; }
-.cstrip-stop { background: transparent; border: 1.5px solid var(--cc-text-faint); }
+.cstrip-top .cstrip-dots {
+  flex-direction: row;
+  padding: 0 4px;
+}
+.cstrip-dots::-webkit-scrollbar { display: none; } /* Chromium/WebView2：隐藏滚动条 */
+.cstrip-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+/* 在线/闲置=绿实心，运行中=Claude 橙(脉动)，等待确认=警告黄(实心) */
+.cstrip-on { background: var(--cc-ok); }
+.cstrip-running { background: var(--cc-accent); animation: cstrip-pulse 1.2s ease-in-out infinite; }
+.cstrip-waiting { background: var(--cc-warn); }
 @keyframes cstrip-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* 拖拽靠近边缘时，对应一侧发光提示（内容不变，松手才折叠） */
+.snap-glow {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  background: var(--cc-accent);
+  box-shadow: 0 0 14px 3px var(--cc-accent);
+  animation: snap-glow-pulse 0.9s ease-in-out infinite;
+}
+.snap-glow-left { top: 0; bottom: 0; left: 0; width: 4px; border-radius: 0 3px 3px 0; }
+.snap-glow-right { top: 0; bottom: 0; right: 0; width: 4px; border-radius: 3px 0 0 3px; }
+.snap-glow-top { left: 0; right: 0; top: 0; height: 4px; border-radius: 0 0 3px 3px; }
+@keyframes snap-glow-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }

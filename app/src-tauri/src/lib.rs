@@ -16,7 +16,7 @@ const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 /// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
 const SNAP_THRESHOLD: i32 = 20;
 /// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
-const STRIP_W_LOGICAL: f64 = 14.0;
+const STRIP_W_LOGICAL: f64 = 20.0;
 
 /// 矩形（物理像素），用于吸边判定的纯计算。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,26 +27,32 @@ pub struct Rect {
     pub h: i32,
 }
 
-/// 吸附的边（仅左/右）。JS 侧序列化为 "left"/"right"。
+/// 吸附的边（左/右/顶）。JS 侧序列化为 "left"/"right"/"top"。
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Edge {
     Left,
     Right,
+    Top,
 }
 
-/// 判定窗口 `win` 是否贴在工作区 `work` 的左或右边缘（阈值 `threshold`）。
-/// 两边都在阈值内时取更近的一边；都不满足返回 None。纯函数，便于单测。
+/// 判定窗口 `win` 是否贴在工作区 `work` 的左/右/顶边缘（阈值 `threshold`）。
+/// 取在阈值内且最近的一边（平局按 左>右>顶 优先）；都不满足返回 None。纯函数，便于单测。
 pub fn edge_for_rect(win: Rect, work: Rect, threshold: i32) -> Option<Edge> {
     let left_gap = (win.x - work.x).abs();
     let right_gap = ((work.x + work.w) - (win.x + win.w)).abs();
-    if left_gap <= threshold && left_gap <= right_gap {
-        return Some(Edge::Left);
+    let top_gap = (win.y - work.y).abs();
+    let mut best: Option<(Edge, i32)> = None;
+    for (edge, gap) in [
+        (Edge::Left, left_gap),
+        (Edge::Right, right_gap),
+        (Edge::Top, top_gap),
+    ] {
+        if gap <= threshold && best.is_none_or(|(_, b)| gap < b) {
+            best = Some((edge, gap));
+        }
     }
-    if right_gap <= threshold {
-        return Some(Edge::Right);
-    }
-    None
+    best.map(|(e, _)| e)
 }
 
 /// snap-changed 事件负载：当前检测到的吸附边（None 表示不贴边）。
@@ -60,60 +66,94 @@ fn strip_width_phys(scale: f64) -> i32 {
     ((STRIP_W_LOGICAL * scale).round() as i32).max(1)
 }
 
-/// 折叠成竖条：贴到指定边、宽度缩为竖条、高度与 y 保持不变。
+/// 折叠成缩略条：贴到指定边，左/右为竖条、顶为横条。
+/// `extent` 是沿条主轴的逻辑长度（竖条=高，横条=宽），由前端按内容（连接中会话数）给出。
 #[tauri::command]
-fn snap_collapse(window: tauri::WebviewWindow, edge: Edge) -> Result<(), String> {
+fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Result<(), String> {
     let m = window
         .current_monitor()
         .map_err(|e| e.to_string())?
         .ok_or("no monitor")?;
     let wa = m.work_area();
-    let strip_w = strip_width_phys(m.scale_factor());
+    let scale = m.scale_factor();
+    let strip = strip_width_phys(scale); // 条的厚度（物理像素）
+    let ext = ((extent * scale).round() as i32).max(1); // 条的主轴长度
     let pos = window.outer_position().map_err(|e| e.to_string())?;
-    let size = window.outer_size().map_err(|e| e.to_string())?;
-    let x = match edge {
-        Edge::Left => wa.position.x,
-        Edge::Right => wa.position.x + wa.size.width as i32 - strip_w,
+    // (min_w, min_h, w, h, x, y)
+    let (min_w, min_h, w, h, x, y) = match edge {
+        Edge::Left => (strip, 0, strip, ext, wa.position.x, pos.y),
+        Edge::Right => (
+            strip,
+            0,
+            strip,
+            ext,
+            wa.position.x + wa.size.width as i32 - strip,
+            pos.y,
+        ),
+        Edge::Top => (0, strip, ext, strip, pos.x, wa.position.y),
     };
+    // 放开最小宽高限制（tauri.conf 配了 minWidth=320/minHeight=80），否则缩不到缩略条尺寸。
     window
-        .set_size(tauri::PhysicalSize::new(strip_w as u32, size.height))
+        .set_min_size(Some(tauri::PhysicalSize::new(min_w as u32, min_h as u32)))
         .map_err(|e| e.to_string())?;
     window
-        .set_position(tauri::PhysicalPosition::new(x, pos.y))
+        .set_size(tauri::PhysicalSize::new(w as u32, h as u32))
         .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    // 吸附态强制置顶，保证缩略条始终可见。
+    window.set_always_on_top(true).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 展开成全宽（仍贴边）：宽度恢复为记住的逻辑宽度，y 与高度不变。
+/// 偷看展开成全尺寸（仍贴边、保持置顶）：宽高恢复为记住的正常尺寸。
 #[tauri::command]
-fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64) -> Result<(), String> {
+fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64) -> Result<(), String> {
     let m = window
         .current_monitor()
         .map_err(|e| e.to_string())?
         .ok_or("no monitor")?;
     let wa = m.work_area();
-    let phys_w = ((width * m.scale_factor()).round() as i32).max(1);
+    let scale = m.scale_factor();
+    let phys_w = ((width * scale).round() as i32).max(1);
+    let phys_h = ((height * scale).round() as u32).max(1);
     let pos = window.outer_position().map_err(|e| e.to_string())?;
-    let size = window.outer_size().map_err(|e| e.to_string())?;
-    let x = match edge {
-        Edge::Left => wa.position.x,
-        Edge::Right => wa.position.x + wa.size.width as i32 - phys_w,
+    let (x, y) = match edge {
+        Edge::Left => (wa.position.x, pos.y),
+        Edge::Right => (wa.position.x + wa.size.width as i32 - phys_w, pos.y),
+        Edge::Top => (pos.x, wa.position.y),
     };
+    // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开。
     window
-        .set_size(tauri::PhysicalSize::new(phys_w as u32, size.height))
+        .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
         .map_err(|e| e.to_string())?;
     window
-        .set_position(tauri::PhysicalPosition::new(x, pos.y))
+        .set_size(tauri::PhysicalSize::new(phys_w as u32, phys_h))
         .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    window.set_always_on_top(true).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// 恢复正常浮动：尺寸设回记住的逻辑宽高，位置维持用户当前拖到的地方。
 #[tauri::command]
-fn snap_restore(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+fn snap_restore(
+    window: tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    pinned: bool,
+) -> Result<(), String> {
+    // 恢复正常最小尺寸限制，再设回记住的宽高，置顶还原为用户的 pin 偏好。
+    window
+        .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
+        .map_err(|e| e.to_string())?;
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| e.to_string())?;
+    window.set_always_on_top(pinned).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -526,16 +566,23 @@ mod tests {
 
     const WORK: Rect = Rect { x: 0, y: 0, w: 1920, h: 1040 };
 
+    // L/R 用例统一用 y=400（远离顶部），避免被顶部判定干扰。
     #[test]
     fn left_within_threshold() {
-        let win = Rect { x: 5, y: 0, w: 300, h: 400 };
+        let win = Rect { x: 5, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
     }
 
     #[test]
     fn right_within_threshold() {
-        let win = Rect { x: 1920 - 300 - 5, y: 0, w: 300, h: 400 };
+        let win = Rect { x: 1920 - 300 - 5, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Right));
+    }
+
+    #[test]
+    fn top_within_threshold() {
+        let win = Rect { x: 800, y: 8, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Top));
     }
 
     #[test]
@@ -546,27 +593,35 @@ mod tests {
 
     #[test]
     fn threshold_boundary_inclusive() {
-        let win = Rect { x: 20, y: 0, w: 300, h: 400 };
+        let win = Rect { x: 20, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
     }
 
     #[test]
     fn just_outside_threshold_none() {
-        let win = Rect { x: 21, y: 0, w: 300, h: 400 };
+        let win = Rect { x: 21, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, WORK, 20), None);
     }
 
     #[test]
     fn picks_nearer_edge() {
-        let work = Rect { x: 0, y: 0, w: 320, h: 400 };
-        let win = Rect { x: 5, y: 0, w: 305, h: 400 };
+        // 左距 5 < 右距 10，y 远离顶部 → 取左。
+        let work = Rect { x: 0, y: 0, w: 320, h: 1040 };
+        let win = Rect { x: 5, y: 400, w: 305, h: 400 };
         assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
+    }
+
+    #[test]
+    fn top_nearer_than_left() {
+        // 左上角附近：顶距 3 < 左距 10 → 取顶。
+        let win = Rect { x: 10, y: 3, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Top));
     }
 
     #[test]
     fn respects_work_area_offset() {
         let work = Rect { x: 100, y: 0, w: 1000, h: 1040 };
-        let win = Rect { x: 110, y: 0, w: 300, h: 400 };
+        let win = Rect { x: 110, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
     }
 }
