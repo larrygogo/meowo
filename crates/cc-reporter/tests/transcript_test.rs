@@ -44,3 +44,14 @@ fn none_when_no_title_or_missing_file() {
     let _ = std::fs::remove_file(p);
     assert_eq!(title_from_transcript("Z:/nope/none.jsonl"), None);
 }
+
+#[test]
+fn reconstruct_path_encodes_cwd_and_session() {
+    use cc_reporter::transcript::reconstruct_transcript_path;
+    let p = reconstruct_transcript_path(r"C:\Users\me\proj", "abc-123").unwrap();
+    let s = p.to_string_lossy().replace('\\', "/");
+    assert!(
+        s.ends_with("/.claude/projects/C--Users-me-proj/abc-123.jsonl"),
+        "got {s}"
+    );
+}

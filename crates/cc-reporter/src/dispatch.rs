@@ -1,6 +1,6 @@
 use cc_store::{SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
-use crate::transcript::title_from_transcript;
+
 use std::path::Path;
 
 /// 把一个 hook 事件落到库。未知/缺字段一律降级为「无操作」，绝不报错冒泡。
@@ -60,10 +60,13 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
 }
 
 fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64) -> Result<(), StoreError> {
-    if let Some(tp) = ev.transcript_path.as_deref() {
-        if let Some(title) = title_from_transcript(tp) {
-            store.set_session_title(sid, &title, now_ms)?;
-        }
+    // 优先用 hook 给的 transcript_path；真实 payload 常缺它，则用 cwd+session_id 重建路径。
+    if let Some(title) = crate::transcript::resolve_title(
+        ev.transcript_path.as_deref(),
+        ev.cwd.as_deref(),
+        &ev.session_id,
+    ) {
+        store.set_session_title(sid, &title, now_ms)?;
     }
     Ok(())
 }
