@@ -12,6 +12,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
             let (root, name) = project_root_and_name(cwd);
             let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
             let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
+            store.set_session_cwd(sid, cwd, now_ms)?;
             if let Some(p) = crate::proc::owner_pid() {
                 store.set_session_pid(sid, p as i64, now_ms)?;
             }
@@ -47,6 +48,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         "Stop" => {
             if let Some(sid) = lookup_session(store, ev)? {
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
+                apply_title(store, ev, sid, now_ms)?;
             }
         }
         "SessionEnd" => {
@@ -60,10 +62,14 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
 }
 
 fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64) -> Result<(), StoreError> {
-    // 优先用 hook 给的 transcript_path；真实 payload 常缺它，则用 cwd+session_id 重建路径。
+    // cwd 优先用事件携带的，否则回退到 SessionStart 时存进库的 cwd。
+    let cwd_owned: Option<String> = match ev.cwd.clone() {
+        Some(c) => Some(c),
+        None => store.session_cwd(sid).ok().flatten(),
+    };
     if let Some(title) = crate::transcript::resolve_title(
         ev.transcript_path.as_deref(),
-        ev.cwd.as_deref(),
+        cwd_owned.as_deref(),
         &ev.session_id,
     ) {
         store.set_session_title(sid, &title, now_ms)?;

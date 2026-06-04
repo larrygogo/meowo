@@ -35,6 +35,7 @@ impl Store {
     /// 幂等迁移：给已存在的库补列。重复执行安全（列已存在的错误忽略）。
     fn migrate(conn: &rusqlite::Connection) {
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN pid INTEGER", []);
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", []);
     }
 
     /// 测试辅助：统计用户表数量。
@@ -376,6 +377,25 @@ impl Store {
             },
         )?;
         Ok(s)
+    }
+
+    /// 记录会话启动时的 cwd（用于重建 transcript 路径取标题）。
+    pub fn set_session_cwd(&self, session_id: i64, cwd: &str, now_ms: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET cwd = ?1, last_event_at = ?2 WHERE id = ?3",
+            rusqlite::params![cwd, now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 取会话存的 cwd。
+    pub fn session_cwd(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        let r = self.conn.query_row(
+            "SELECT cwd FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get::<_, Option<String>>(0),
+        )?;
+        Ok(r)
     }
 
     /// 记录会话所属进程 PID（来自 reporter 在 SessionStart 抓取的 claude.exe 父进程）。

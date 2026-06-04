@@ -145,6 +145,59 @@ fn session_start_with_transcript_sets_ai_title() {
     let _ = std::fs::remove_file(tp);
 }
 
+/// Stop 事件无 cwd，但 SessionStart 时已存进库，应能用存的 cwd 重建路径并刷新标题。
+#[test]
+fn stop_refreshes_title_via_stored_cwd() {
+    let store = Store::open_in_memory().unwrap();
+    // 先 SessionStart（不带 transcript_path），把 cwd 存进库
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st3","cwd":"/tmp/z"}"#), 100).unwrap();
+
+    // 写 transcript（用真实路径直接传给下方 Stop）
+    let tp = write_transcript(
+        "cc_disp_stop.jsonl",
+        b"{\"type\":\"ai-title\",\"aiTitle\":\"Stop\xe5\x88\xb7\xe6\x96\xb0\",\"sessionId\":\"s\"}\n",
+    );
+    let tps = tp.to_str().unwrap().replace('\\', "\\\\");
+
+    // Stop 带 transcript_path 但不带 cwd——由 store 里的 cwd 兜底
+    let json = format!(
+        r#"{{"hook_event_name":"Stop","session_id":"st3","transcript_path":"{tps}"}}"#
+    );
+    dispatch(&store, &ev(&json), 200).unwrap();
+
+    let sid = store.find_session_id_pub("st3").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    // 标题已从 transcript 刷新
+    assert_eq!(store.get_task(tid).unwrap().title, "Stop刷新");
+    // 状态应为 waiting
+    assert_eq!(store.get_session(sid).unwrap().status, "waiting");
+    let _ = std::fs::remove_file(tp);
+}
+
+/// UserPromptSubmit 不带 cwd，但 SessionStart 存了，apply_title 应用存的 cwd 重建路径。
+#[test]
+fn prompt_without_cwd_uses_stored_cwd_for_title() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st4","cwd":"/tmp/w"}"#), 100).unwrap();
+
+    let tp = write_transcript(
+        "cc_disp_nocwd.jsonl",
+        b"{\"type\":\"custom-title\",\"customTitle\":\"NoCwd\xe5\x85\x9c\xe5\xba\x95\",\"sessionId\":\"s\"}\n",
+    );
+    let tps = tp.to_str().unwrap().replace('\\', "\\\\");
+
+    // UserPromptSubmit 不带 cwd，但带 transcript_path
+    let json = format!(
+        r#"{{"hook_event_name":"UserPromptSubmit","session_id":"st4","prompt":"hello","transcript_path":"{tps}"}}"#
+    );
+    dispatch(&store, &ev(&json), 200).unwrap();
+
+    let sid = store.find_session_id_pub("st4").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    assert_eq!(store.get_task(tid).unwrap().title, "NoCwd兜底");
+    let _ = std::fs::remove_file(tp);
+}
+
 #[test]
 fn user_prompt_with_transcript_overrides_prompt_title() {
     let store = Store::open_in_memory().unwrap();

@@ -225,6 +225,17 @@ fn image_only_prompt_keeps_placeholder_title() {
     assert_eq!(t.current_activity, None);
 }
 
+// == session cwd ==
+#[test]
+fn set_and_get_session_cwd() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    assert_eq!(store.session_cwd(sid).unwrap(), None);
+    store.set_session_cwd(sid, "C:\\proj", 110).unwrap();
+    assert_eq!(store.session_cwd(sid).unwrap().as_deref(), Some("C:\\proj"));
+}
+
 // == set_session_title ==
 #[test]
 fn set_session_title_overrides_placeholder_and_prompt_title() {
