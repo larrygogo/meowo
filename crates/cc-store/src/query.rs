@@ -33,6 +33,7 @@ pub struct LiveSession {
     pub todo_done: i64,
     pub todo_total: i64,
     pub todos: Vec<Todo>,
+    pub pid: Option<i64>,
 }
 
 impl Store {
@@ -117,16 +118,17 @@ impl Store {
     }
 
     /// 活跃区：status 为 running/waiting/stale 的会话，附项目名、任务标题、进度。
-    /// 按 last_event_at 倒序（最近活跃在前）。
+    /// 按 last_event_at 倒序（最近活跃在前），最多返回 20 条。
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-                    p.name, t.id, t.title, t.current_activity, t.column_name
+                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
              WHERE s.status IN ('running','waiting','stale')
-             ORDER BY s.last_event_at DESC",
+             ORDER BY s.last_event_at DESC
+             LIMIT 20",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -144,12 +146,13 @@ impl Store {
                 let task_title: Option<String> = r.get(9)?;
                 let current_activity: Option<String> = r.get(10)?;
                 let column: Option<String> = r.get(11)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column))
+                let pid: Option<i64> = r.get(12)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid) in rows {
             let todos = match task_id {
                 Some(tid) => self.list_todos(tid)?,
                 None => Vec::new(),
@@ -165,9 +168,20 @@ impl Store {
                 todo_done,
                 todo_total,
                 todos,
+                pid,
             });
         }
         Ok(out)
+    }
+
+    /// 结束「超过 idle_ms 无事件」的 live 会话（真正废弃的，清理用）。返回受影响数。
+    pub fn end_abandoned(&self, idle_ms: i64, now_ms: i64) -> Result<usize, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE sessions SET status='ended', ended_at=?1
+             WHERE status IN ('running','waiting','stale') AND (?1 - last_event_at) > ?2",
+            rusqlite::params![now_ms, idle_ms],
+        )?;
+        Ok(n)
     }
 }
 

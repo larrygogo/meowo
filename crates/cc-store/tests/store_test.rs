@@ -252,6 +252,33 @@ fn ended_session_not_in_liveness() {
     assert!(live.is_empty());
 }
 
+// == live_sessions pid + end_abandoned ==
+
+#[test]
+fn live_sessions_carries_pid() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    store.set_session_pid(sid, 1234, 110).unwrap();
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].pid, Some(1234));
+}
+
+#[test]
+fn end_abandoned_ends_old_idle_sessions() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (s1, _) = store.start_session(pid, "old", 1000).unwrap();
+    let (s2, _) = store.start_session(pid, "new", 1000).unwrap();
+    store.touch_session(s2, 9000).unwrap();
+    // now=10000, idle阈值=2000：old(last=1000)超 -> ended；new(last=9000)不变
+    let n = store.end_abandoned(2000, 10000).unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(store.get_session(s1).unwrap().status, "ended");
+    assert_eq!(store.get_session(s2).unwrap().status, "running");
+}
+
 // == 审计修复测试 ==
 
 #[test]

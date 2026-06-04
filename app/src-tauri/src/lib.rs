@@ -12,6 +12,9 @@ use tauri_plugin_autostart::ManagerExt;
 /// stale 阈值：超过此时长无事件的会话标记为 stale。
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 
+/// 超过此时长无事件的 live 会话视为废弃，直接 end。
+const ABANDON_IDLE_MS: i64 = 6 * 60 * 60 * 1000;
+
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
 /// 无权限）时只让该次刷新返回错误，不会在启动时 panic 把整个 app 打挂；
 /// 下次 board-changed 事件刷新即自动恢复。
@@ -52,10 +55,36 @@ fn get_project_tasks(state: State<AppState>, project_id: i64) -> Result<Vec<Task
     store.project_tasks(project_id).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+struct LiveItem {
+    #[serde(flatten)]
+    inner: LiveSession,
+    connected: bool,
+}
+
 #[tauri::command]
-fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveSession>, String> {
+fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
     let store = open_store(&state.db_path)?;
-    store.live_sessions().map_err(|e| e.to_string())
+    let sessions = store.live_sessions().map_err(|e| e.to_string())?;
+    let sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+    );
+    let mut items: Vec<LiveItem> = sessions
+        .into_iter()
+        .map(|s| {
+            let connected = match s.pid {
+                Some(p) if p > 0 => sys.process(Pid::from_u32(p as u32)).is_some(),
+                _ => false,
+            };
+            LiveItem { inner: s, connected }
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        b.connected
+            .cmp(&a.connected)
+            .then(b.inner.session.last_event_at.cmp(&a.inner.session.last_event_at))
+    });
+    Ok(items)
 }
 
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
@@ -88,46 +117,19 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 结束 PID 已死的 live 会话（终端关了/被杀）；另把无 pid 且 stale 超过 30 分钟的也判定结束（清历史僵尸）。
-fn reap_dead_sessions(db_path: &PathBuf, now_ms: i64) -> usize {
-    let store = match Store::open(db_path) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let live = match store.live_session_liveness() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    if live.is_empty() {
-        return 0;
-    }
-    let sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-    );
-    let no_pid_stale_cutoff: i64 = 30 * 60 * 1000;
-    let mut reaped = 0;
-    for (sid, pid, last_event_at) in live {
-        let dead = match pid {
-            Some(p) if p > 0 => sys.process(Pid::from_u32(p as u32)).is_none(),
-            _ => (now_ms - last_event_at) > no_pid_stale_cutoff,
-        };
-        if dead && store.end_session(sid, now_ms).is_ok() {
-            reaped += 1;
-        }
-    }
-    reaped
-}
-
-/// 每 60s：先结束 PID 已死的会话，再把超时会话标记为 stale。
+/// 每 60s：清理超过 6 小时无事件的废弃会话，再把超时会话标记为 stale。
+/// PID 已死的会话不再强制结束，保留并在 get_live_sessions 中标记为 disconnected。
 fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || loop {
         let now = now_ms();
-        let reaped = reap_dead_sessions(&db_path, now);
-        let staled = match Store::open(&db_path) {
-            Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now).unwrap_or(0),
-            Err(_) => 0,
+        let (ended, staled) = match Store::open(&db_path) {
+            Ok(store) => (
+                store.end_abandoned(ABANDON_IDLE_MS, now).unwrap_or(0),
+                store.mark_stale(STALE_THRESHOLD_MS, now).unwrap_or(0),
+            ),
+            Err(_) => (0, 0),
         };
-        if reaped > 0 || staled > 0 {
+        if ended > 0 || staled > 0 {
             let _ = app.emit("board-changed", ());
         }
         std::thread::sleep(Duration::from_secs(60));
