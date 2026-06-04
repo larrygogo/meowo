@@ -90,6 +90,62 @@ function match(tab: Tab, l: Item): boolean {
   return true;
 }
 
+const EMPTY: Record<Tab, { title: string; hint: string | null }> = {
+  all: { title: "还没有会话", hint: "在终端运行 Claude Code，进度会自动出现在这里" },
+  waiting: { title: "没有等待交互的会话", hint: "有会话需要你回复时会出现在这里" },
+  running: { title: "当前没有运行中的会话", hint: null },
+  archived: { title: "没有归档的会话", hint: "点卡片右上角按钮可收纳会话" },
+};
+
+function EmptyIcon({ tab }: { tab: Tab }) {
+  const common = {
+    width: 28, height: 28, viewBox: "0 0 24 24", fill: "none",
+    stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round",
+    strokeLinejoin: "round", "aria-hidden": true,
+  } as const;
+  switch (tab) {
+    case "all": // 显示器
+      return (
+        <svg {...common}>
+          <rect width="20" height="14" x="2" y="3" rx="2" />
+          <line x1="8" y1="21" x2="16" y2="21" />
+          <line x1="12" y1="17" x2="12" y2="21" />
+        </svg>
+      );
+    case "waiting": // 对话气泡
+      return (
+        <svg {...common}>
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    case "running": // 播放
+      return (
+        <svg {...common}>
+          <polygon points="6 3 20 12 6 21 6 3" />
+        </svg>
+      );
+    case "archived": // 归档盒
+      return (
+        <svg {...common}>
+          <rect width="20" height="5" x="2" y="3" rx="1" />
+          <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+          <path d="M10 12h4" />
+        </svg>
+      );
+  }
+}
+
+export function EmptyState({ tab }: { tab: Tab }) {
+  const { title, hint } = EMPTY[tab];
+  return (
+    <div className="stk-empty">
+      <span className="stk-empty-icon"><EmptyIcon tab={tab} /></span>
+      <div className="stk-empty-title">{title}</div>
+      {hint && <div className="stk-empty-hint">{hint}</div>}
+    </div>
+  );
+}
+
 export function Sticker({ data }: { data: Item[] }) {
   const [tab, setTab] = useState<Tab>(() => {
     const s = localStorage.getItem(TAB_KEY);
@@ -124,7 +180,7 @@ export function Sticker({ data }: { data: Item[] }) {
       </div>
       <div className="stk-scroll">
         {shown.length === 0 ? (
-          <div className="stk-empty">（空）</div>
+          <EmptyState tab={tab} />
         ) : (
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";

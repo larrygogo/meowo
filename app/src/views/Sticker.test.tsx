@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import { Sticker } from "./Sticker";
+import { Sticker, EmptyState } from "./Sticker";
 import type { LiveSession } from "../api";
 
 type Item = LiveSession & { connected: boolean };
@@ -20,9 +20,9 @@ function mk(over: Partial<Item> = {}): Item {
 afterEach(() => cleanup());
 
 describe("Sticker", () => {
-  it("空数据显示（空）", () => {
+  it("空数据显示 all 空态主文案", () => {
     const { container } = render(<Sticker data={[]} />);
-    expect(screen.getByText("（空）")).toBeTruthy();
+    expect(screen.getByText("还没有会话")).toBeTruthy();
     expect(container.querySelector("[data-tauri-drag-region]")).toBeTruthy();
   });
 
@@ -50,5 +50,23 @@ describe("Sticker", () => {
   it("stale + disconnected 显示 Disconnected", () => {
     render(<Sticker data={[mk({ session: { id: 2, project_id: 1, cc_session_id: "x", status: "stale", started_at: 0, last_event_at: Date.now(), ended_at: null }, connected: false })]} />);
     expect(screen.getByText("Disconnected")).toBeTruthy();
+  });
+
+  it.each([
+    ["all", "还没有会话", "在终端运行 Claude Code，进度会自动出现在这里"],
+    ["waiting", "没有等待交互的会话", "有会话需要你回复时会出现在这里"],
+    ["running", "当前没有运行中的会话", null],
+    ["archived", "没有归档的会话", "点卡片右上角按钮可收纳会话"],
+  ] as const)("EmptyState[%s] 渲染主文案与提示", (tab, title, hint) => {
+    render(<EmptyState tab={tab} />);
+    expect(screen.getByText(title)).toBeTruthy();
+    if (hint) {
+      expect(screen.getByText(hint)).toBeTruthy();
+    }
+  });
+
+  it("EmptyState[running] 不渲染提示文案", () => {
+    const { container } = render(<EmptyState tab="running" />);
+    expect(container.querySelector(".stk-empty-hint")).toBeNull();
   });
 });
