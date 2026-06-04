@@ -19,6 +19,7 @@ impl Store {
         conn.pragma_update(None, "busy_timeout", 3000)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn);
         Ok(Store { conn })
     }
 
@@ -27,7 +28,13 @@ impl Store {
         let conn = Connection::open_in_memory()?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn);
         Ok(Store { conn })
+    }
+
+    /// 幂等迁移：给已存在的库补列。重复执行安全（列已存在的错误忽略）。
+    fn migrate(conn: &rusqlite::Connection) {
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN pid INTEGER", []);
     }
 
     /// 测试辅助：统计用户表数量。
@@ -369,6 +376,28 @@ impl Store {
             },
         )?;
         Ok(s)
+    }
+
+    /// 记录会话所属进程 PID（来自 reporter 在 SessionStart 抓取的 claude.exe 父进程）。
+    pub fn set_session_pid(&self, session_id: i64, pid: i64, now_ms: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3",
+            rusqlite::params![pid, now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 取所有 live(running/waiting/stale) 会话的 (id, pid, last_event_at)，供 app 做存活清理。
+    pub fn live_session_liveness(&self) -> Result<Vec<(i64, Option<i64>, i64)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, pid, last_event_at FROM sessions WHERE status IN ('running','waiting','stale')",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     /// 把 running 且 (now - last_event_at) > threshold_ms 的会话标记为 stale，返回受影响行数。

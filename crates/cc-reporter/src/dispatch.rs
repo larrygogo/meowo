@@ -12,6 +12,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
             let (root, name) = project_root_and_name(cwd);
             let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
             let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
+            if let Some(p) = crate::proc::owner_pid() {
+                store.set_session_pid(sid, p as i64, now_ms)?;
+            }
             apply_title(store, ev, sid, now_ms)?;
         }
         "UserPromptSubmit" => {

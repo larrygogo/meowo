@@ -228,6 +228,30 @@ fn set_session_title_overrides_placeholder_and_prompt_title() {
     assert_eq!(store.get_task(tid).unwrap().title, "Claude Code 看板");
 }
 
+// == PID 存活检测 ==
+#[test]
+fn set_pid_and_liveness_query() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    store.set_session_pid(sid, 4242, 110).unwrap();
+    let live = store.live_session_liveness().unwrap();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].0, sid);
+    assert_eq!(live[0].1, Some(4242));
+}
+
+#[test]
+fn ended_session_not_in_liveness() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s2", 100).unwrap();
+    store.set_session_pid(sid, 9999, 110).unwrap();
+    store.end_session(sid, 200).unwrap();
+    let live = store.live_session_liveness().unwrap();
+    assert!(live.is_empty());
+}
+
 // == 审计修复测试 ==
 
 #[test]

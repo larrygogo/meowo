@@ -18,3 +18,4 @@ tauri-plugin-autostart = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
+sysinfo = "0.32"

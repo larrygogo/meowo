@@ -7,6 +7,7 @@ edition = "2021"
 cc-store = { path = "../cc-store" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sysinfo = "0.32"
 
 [lib]
 path = "src/lib.rs"

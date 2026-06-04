@@ -3,6 +3,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State};
@@ -87,14 +88,46 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 每 60s 把超时无事件的会话标记为 stale，让活跃状态诚实。自开短连接，库不可用时跳过本轮。
+/// 结束 PID 已死的 live 会话（终端关了/被杀）；另把无 pid 且 stale 超过 30 分钟的也判定结束（清历史僵尸）。
+fn reap_dead_sessions(db_path: &PathBuf, now_ms: i64) -> usize {
+    let store = match Store::open(db_path) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let live = match store.live_session_liveness() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    if live.is_empty() {
+        return 0;
+    }
+    let sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+    );
+    let no_pid_stale_cutoff: i64 = 30 * 60 * 1000;
+    let mut reaped = 0;
+    for (sid, pid, last_event_at) in live {
+        let dead = match pid {
+            Some(p) if p > 0 => sys.process(Pid::from_u32(p as u32)).is_none(),
+            _ => (now_ms - last_event_at) > no_pid_stale_cutoff,
+        };
+        if dead && store.end_session(sid, now_ms).is_ok() {
+            reaped += 1;
+        }
+    }
+    reaped
+}
+
+/// 每 60s：先结束 PID 已死的会话，再把超时会话标记为 stale。
 fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || loop {
-        let changed = match Store::open(&db_path) {
-            Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now_ms()).unwrap_or(0),
+        let now = now_ms();
+        let reaped = reap_dead_sessions(&db_path, now);
+        let staled = match Store::open(&db_path) {
+            Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now).unwrap_or(0),
             Err(_) => 0,
         };
-        if changed > 0 {
+        if reaped > 0 || staled > 0 {
             let _ = app.emit("board-changed", ());
         }
         std::thread::sleep(Duration::from_secs(60));

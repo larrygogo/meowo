@@ -1,5 +1,6 @@
 pub mod dispatch;
 pub mod hook;
+pub mod proc;
 pub mod transcript;
 
 use std::path::PathBuf;
