@@ -36,6 +36,7 @@ impl Store {
     fn migrate(conn: &rusqlite::Connection) {
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN pid INTEGER", []);
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", []);
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", []);
     }
 
     /// 测试辅助：统计用户表数量。
@@ -418,6 +419,15 @@ impl Store {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// 手动归档/取消归档某会话。不更新 last_event_at，避免排序乱跳。
+    pub fn set_session_archived(&self, session_id: i64, archived: bool) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET archived = ?1 WHERE id = ?2",
+            rusqlite::params![archived as i64, session_id],
+        )?;
+        Ok(())
     }
 
     /// 把 running 且 (now - last_event_at) > threshold_ms 的会话标记为 stale，返回受影响行数。

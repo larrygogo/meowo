@@ -316,6 +316,17 @@ fn session_start_revives_ended_session() {
     assert_eq!(s.ended_at, None);
 }
 
+// == archived ==
+#[test]
+fn archive_flag_roundtrip_in_live_sessions() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    assert!(!store.live_sessions().unwrap()[0].archived);
+    store.set_session_archived(sid, true).unwrap();
+    assert!(store.live_sessions().unwrap()[0].archived);
+}
+
 #[test]
 fn mark_stale_also_flags_idle_waiting() {
     let store = Store::open_in_memory().unwrap();

@@ -37,10 +37,12 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 function match(tab: Tab, l: Item): boolean {
+  if (tab === "archived") return l.archived;
+  if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
   if (tab === "waiting") return l.connected && l.session.status === "waiting";
   if (tab === "running") return l.connected && l.session.status === "running";
-  return !l.connected; // archived
+  return true;
 }
 
 export function Sticker({ data }: { data: Item[] }) {
@@ -103,6 +105,11 @@ export function Sticker({ data }: { data: Item[] }) {
                   {indicator}
                   <span className="stk-title">{title}</span>
                   <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
+                  <span
+                    className="stk-arch"
+                    title={l.archived ? "取消归档" : "归档"}
+                    onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
+                  >{l.archived ? "↩" : "▾"}</span>
                 </div>
                 <div className="stk-line2">
                   <ConnBadge connected={l.connected} />

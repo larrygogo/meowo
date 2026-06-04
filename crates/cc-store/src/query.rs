@@ -34,6 +34,7 @@ pub struct LiveSession {
     pub todo_total: i64,
     pub todos: Vec<Todo>,
     pub pid: Option<i64>,
+    pub archived: bool,
 }
 
 impl Store {
@@ -122,7 +123,7 @@ impl Store {
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid
+                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
@@ -146,12 +147,13 @@ impl Store {
                 let current_activity: Option<String> = r.get(10)?;
                 let column: Option<String> = r.get(11)?;
                 let pid: Option<i64> = r.get(12)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid))
+                let archived: i64 = r.get(13)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived) in rows {
             let todos = match task_id {
                 Some(tid) => self.list_todos(tid)?,
                 None => Vec::new(),
@@ -168,6 +170,7 @@ impl Store {
                 todo_total,
                 todos,
                 pid,
+                archived: archived != 0,
             });
         }
         Ok(out)

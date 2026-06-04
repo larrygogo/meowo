@@ -238,6 +238,12 @@ fn focus_session(pid: i64) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Result<(), String> {
+    let store = open_store(&state.db_path)?;
+    store.set_session_archived(session_id, archived).map_err(|e| e.to_string())
+}
+
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
 fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
@@ -341,7 +347,8 @@ pub fn run() {
             get_overview,
             get_project_tasks,
             get_live_sessions,
-            focus_session
+            focus_session,
+            set_archived
         ])
         .setup(move |app| {
             setup_tray(app)?;
