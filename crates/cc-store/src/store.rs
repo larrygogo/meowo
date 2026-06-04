@@ -360,6 +360,44 @@ impl Store {
         Ok(())
     }
 
+    /// 导入一条历史会话：以 ended 状态写入，started_at=ended_at=last_event_at=mtime。
+    /// 用 ON CONFLICT(cc_session_id) DO NOTHING 保证绝不覆盖已存在的真实会话。
+    /// 返回 true 表示新插入；false 表示 cc_session_id 已存在被跳过。
+    pub fn import_session(
+        &self,
+        cc_session_id: &str,
+        project_id: i64,
+        title: &str,
+        cwd: Option<&str>,
+        last_event_at: i64,
+    ) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "INSERT INTO sessions
+                (project_id, cc_session_id, status, started_at, last_event_at, ended_at, cwd)
+             VALUES (?1, ?2, 'ended', ?3, ?3, ?3, ?4)
+             ON CONFLICT(cc_session_id) DO NOTHING",
+            rusqlite::params![project_id, cc_session_id, last_event_at, cwd],
+        )?;
+        if n == 0 {
+            return Ok(false); // 已存在，绝不覆盖
+        }
+        let sid = self
+            .find_session_id(cc_session_id)?
+            .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
+        let mut t = truncate_chars(title.trim(), 80);
+        if t.is_empty() {
+            t = "(未命名会话)".to_string();
+        }
+        // 历史已结束会话的任务卡固定放 done 列，不导入 todo。
+        self.conn.execute(
+            "INSERT OR IGNORE INTO tasks
+                (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'done', 0, ?4, ?4)",
+            rusqlite::params![project_id, sid, t, last_event_at],
+        )?;
+        Ok(true)
+    }
+
     pub fn get_session(&self, session_id: i64) -> Result<Session, StoreError> {
         let s = self.conn.query_row(
             "SELECT id, project_id, cc_session_id, status, started_at, last_event_at, ended_at

@@ -337,3 +337,49 @@ fn mark_stale_also_flags_idle_waiting() {
     assert_eq!(n, 1);
     assert_eq!(store.get_session(sid).unwrap().status, "stale");
 }
+
+#[test]
+fn import_session_inserts_ended_and_skips_existing() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1000).unwrap();
+
+    let inserted = store
+        .import_session("hist1", pid, "历史标题", Some("/p"), 5000)
+        .unwrap();
+    assert!(inserted);
+
+    let sid = store.find_session_id_pub("hist1").unwrap().unwrap();
+    let s = store.get_session(sid).unwrap();
+    assert_eq!(s.status, "ended");
+    assert_eq!(s.started_at, 5000);
+    assert_eq!(s.last_event_at, 5000);
+    assert_eq!(s.ended_at, Some(5000));
+    assert_eq!(store.session_cwd(sid).unwrap(), Some("/p".to_string()));
+
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    let t = store.get_task(tid).unwrap();
+    assert_eq!(t.title, "历史标题");
+    assert_eq!(t.column, "done");
+
+    let again = store
+        .import_session("hist1", pid, "改标题", Some("/p"), 9000)
+        .unwrap();
+    assert!(!again);
+    let s2 = store.get_session(sid).unwrap();
+    assert_eq!(s2.last_event_at, 5000);
+    let t2 = store.get_task(tid).unwrap();
+    assert_eq!(t2.title, "历史标题");
+}
+
+#[test]
+fn import_session_does_not_resurrect_real_session() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1000).unwrap();
+    let (sid, _) = store.start_session(pid, "live1", 2000).unwrap();
+
+    let inserted = store
+        .import_session("live1", pid, "x", None, 8000)
+        .unwrap();
+    assert!(!inserted);
+    assert_eq!(store.get_session(sid).unwrap().status, "running");
+}
