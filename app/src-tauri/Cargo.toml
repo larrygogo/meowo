@@ -12,6 +12,7 @@ tauri-build = { workspace = true }
 
 [dependencies]
 cc-store = { path = "../../crates/cc-store" }
+cc-reporter = { path = "../../crates/cc-reporter" }
 tauri = { workspace = true, features = ["tray-icon"] }
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-autostart = { workspace = true }

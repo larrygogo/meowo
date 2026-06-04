@@ -298,6 +298,34 @@ fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
+/// 首次启动：~/.cc-kanban/imported.json 不存在时，后台导入近 7 天历史会话并写标记文件。
+/// 出错仅静默（下次启动重试），绝不阻塞窗口创建。
+fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
+    std::thread::spawn(move || {
+        let Some(dir) = db_path.parent().map(|p| p.to_path_buf()) else {
+            return;
+        };
+        let marker = dir.join("imported.json");
+        if marker.exists() {
+            return; // 已导入过，跳过
+        }
+        let store = match Store::open(&db_path) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let now = now_ms();
+        if let Ok(count) =
+            cc_reporter::import::import_recent(&store, now, cc_reporter::import::ImportOpts::default())
+        {
+            let body = format!("{{\"imported\":{count},\"at\":{now}}}");
+            let _ = std::fs::write(&marker, body);
+            if count > 0 {
+                let _ = app.emit("board-changed", ());
+            }
+        }
+    });
+}
+
 /// 构建系统托盘：显示/隐藏贴纸、开机自启开关、退出。
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let toggle = MenuItemBuilder::with_id("toggle", "显示/隐藏贴纸").build(app)?;
@@ -362,6 +390,7 @@ pub fn run() {
             setup_tray(app)?;
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_stale_sweeper(app.handle().clone(), path.clone());
+            spawn_first_import(app.handle().clone(), path.clone());
             Ok(())
         })
         .run(tauri::generate_context!())
