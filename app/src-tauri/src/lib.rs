@@ -10,9 +10,6 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-/// stale 阈值：超过此时长无事件的会话标记为 stale。
-const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
-
 /// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
 const SNAP_THRESHOLD: i32 = 20;
 /// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
@@ -426,19 +423,39 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 每 60s：把超时会话标记为 stale（空闲停转圈）。
-/// 不再自动 end 关闭的会话，保留历史会话供贴纸持久显示。
-fn spawn_stale_sweeper(app: tauri::AppHandle, db_path: PathBuf) {
-    std::thread::spawn(move || loop {
-        let now = now_ms();
-        let staled = match Store::open(&db_path) {
-            Ok(store) => store.mark_stale(STALE_THRESHOLD_MS, now).unwrap_or(0),
-            Err(_) => 0,
-        };
-        if staled > 0 {
-            let _ = app.emit("board-changed", ());
+/// 取当前 live(running/waiting) 会话里进程仍存活的 session id（升序）。
+/// 只查「进程在不在」这个外部事实，不按时间臆测状态。
+fn alive_session_ids(store: &Store) -> Vec<i64> {
+    let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+    let mut ids: Vec<i64> = store
+        .live_session_liveness()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, pid, _)| match pid {
+            Some(p) if *p > 0 => sys.process(Pid::from_u32(*p as u32)).is_some(),
+            _ => false,
+        })
+        .map(|(id, _, _)| id)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// 周期轮询进程存活：存活集合变化（有会话进程退出）时才发 board-changed，
+/// 让前端重算 connected。进程退出不改 DB、notify 监听不到，故需这个轮询兜底。
+fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
+    std::thread::spawn(move || {
+        let mut last: Vec<i64> = Vec::new();
+        loop {
+            if let Ok(store) = Store::open(&db_path) {
+                let alive = alive_session_ids(&store);
+                if alive != last {
+                    let _ = app.emit("board-changed", ());
+                    last = alive;
+                }
+            }
+            std::thread::sleep(Duration::from_secs(5));
         }
-        std::thread::sleep(Duration::from_secs(60));
     });
 }
 
@@ -552,7 +569,7 @@ pub fn run() {
         .setup(move |app| {
             setup_tray(app)?;
             spawn_db_watcher(app.handle().clone(), path.clone());
-            spawn_stale_sweeper(app.handle().clone(), path.clone());
+            spawn_liveness_watch(app.handle().clone(), path.clone());
             spawn_first_import(app.handle().clone(), path.clone());
             Ok(())
         })

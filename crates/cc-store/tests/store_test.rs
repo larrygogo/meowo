@@ -135,20 +135,6 @@ fn stop_sets_waiting_and_end_sets_ended() {
 }
 
 #[test]
-fn mark_stale_flags_idle_running_sessions() {
-    let store = Store::open_in_memory().unwrap();
-    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
-    let (sid_old, _) = store.start_session(pid, "old", 1000).unwrap();
-    let (sid_new, _) = store.start_session(pid, "new", 1000).unwrap();
-    store.touch_session(sid_new, 9000).unwrap();
-
-    let n = store.mark_stale(2000, 10000).unwrap();
-    assert_eq!(n, 1);
-    assert_eq!(store.get_session(sid_old).unwrap().status, "stale");
-    assert_eq!(store.get_session(sid_new).unwrap().status, "running");
-}
-
-#[test]
 fn empty_todos_resets_column_to_todo() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
@@ -325,17 +311,6 @@ fn archive_flag_roundtrip_in_live_sessions() {
     assert!(!store.live_sessions().unwrap()[0].archived);
     store.set_session_archived(sid, true).unwrap();
     assert!(store.live_sessions().unwrap()[0].archived);
-}
-
-#[test]
-fn mark_stale_also_flags_idle_waiting() {
-    let store = Store::open_in_memory().unwrap();
-    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
-    let (sid, _) = store.start_session(pid, "w", 1000).unwrap();
-    store.set_session_status(sid, cc_store::SessionStatus::Waiting, 1000).unwrap();
-    let n = store.mark_stale(2000, 10000).unwrap();
-    assert_eq!(n, 1);
-    assert_eq!(store.get_session(sid).unwrap().status, "stale");
 }
 
 #[test]

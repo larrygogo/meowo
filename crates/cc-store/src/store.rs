@@ -467,16 +467,6 @@ impl Store {
         )?;
         Ok(())
     }
-
-    /// 把 running 且 (now - last_event_at) > threshold_ms 的会话标记为 stale，返回受影响行数。
-    pub fn mark_stale(&self, threshold_ms: i64, now_ms: i64) -> Result<usize, StoreError> {
-        let n = self.conn.execute(
-            "UPDATE sessions SET status = 'stale'
-             WHERE status IN ('running','waiting') AND (?1 - last_event_at) > ?2",
-            rusqlite::params![now_ms, threshold_ms],
-        )?;
-        Ok(n)
-    }
 }
 
 /// 按字符（非字节）截断，避免切坏多字节中文。
