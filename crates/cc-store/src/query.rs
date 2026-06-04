@@ -35,6 +35,8 @@ pub struct LiveSession {
     pub todos: Vec<Todo>,
     pub pid: Option<i64>,
     pub archived: bool,
+    /// 会话工作目录，cc-app 用它重建 transcript 路径以实时解析 AI 标题。
+    pub cwd: Option<String>,
 }
 
 impl Store {
@@ -123,7 +125,7 @@ impl Store {
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived
+                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
@@ -148,12 +150,13 @@ impl Store {
                 let column: Option<String> = r.get(11)?;
                 let pid: Option<i64> = r.get(12)?;
                 let archived: i64 = r.get(13)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived))
+                let cwd: Option<String> = r.get(14)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd) in rows {
             let todos = match task_id {
                 Some(tid) => self.list_todos(tid)?,
                 None => Vec::new(),
@@ -171,6 +174,7 @@ impl Store {
                 todos,
                 pid,
                 archived: archived != 0,
+                cwd,
             });
         }
         Ok(out)

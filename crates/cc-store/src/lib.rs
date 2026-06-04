@@ -3,6 +3,7 @@ pub mod migrations;
 pub mod models;
 pub mod query;
 pub mod store;
+pub mod title;
 
 pub use error::StoreError;
 pub use models::*;

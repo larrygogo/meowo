@@ -69,11 +69,19 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
     );
     let mut items: Vec<LiveItem> = sessions
         .into_iter()
-        .map(|s| {
+        .map(|mut s| {
             let connected = match s.pid {
                 Some(p) if p > 0 => sys.process(Pid::from_u32(p as u32)).is_some(),
                 _ => false,
             };
+            // 展示时实时从 transcript 解析 AI 标题：断开/历史会话不会触发 hook，
+            // DB 里可能还是旧的首条 prompt。cwd 可能为空（旧会话），resolve_title
+            // 会兜底按 session_id 全局查找 transcript 文件。
+            if let Some(t) =
+                cc_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
+            {
+                s.task_title = t;
+            }
             LiveItem { inner: s, connected }
         })
         // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留
