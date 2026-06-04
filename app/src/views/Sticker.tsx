@@ -121,7 +121,7 @@ export function Sticker({ data }: { data: Item[] }) {
             const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
             const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
             const indicator = !l.connected ? (
-              <span className="sdot sdot-off" title="已断开" />
+              <span className="ring-stop" title="已断开/已停止" />
             ) : l.session.status === "running" ? (
               <span className="spinner" />
             ) : l.session.status === "waiting" ? (
