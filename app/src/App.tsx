@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLiveSessions, LiveSession } from "./api";
 import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
+import { useUpdate } from "./useUpdate";
 
 type Item = LiveSession & { connected: boolean };
 type Edge = "left" | "right" | "top";
@@ -44,6 +45,7 @@ export function App() {
     return s === "left" || s === "right" || s === "top" ? s : null;
   });
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
+  const { version: updateVersion, updating, apply: applyUpdate } = useUpdate();
 
   const connectedCount = live.filter((l) => !l.archived && l.connected).length;
 
@@ -225,6 +227,15 @@ export function App() {
       onMouseLeave={mode === "expanded" ? onExpandedLeave : undefined}
     >
       {glow && <div className={"snap-glow snap-glow-" + glow} />}
+      {updateVersion && (
+        <div
+          className="update-bar"
+          title="点击下载并安装新版本"
+          onClick={updating ? undefined : applyUpdate}
+        >
+          {updating ? "正在更新…" : `有新版本 v${updateVersion} · 点击更新`}
+        </div>
+      )}
       <Sticker data={live} />
     </div>
   );

@@ -304,3 +304,54 @@ html, body {
 .snap-glow-right { top: 0; bottom: 0; right: 0; width: 4px; border-radius: 3px 0 0 3px; }
 .snap-glow-top { left: 0; right: 0; top: 0; height: 4px; border-radius: 0 0 3px 3px; }
 @keyframes snap-glow-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+/* 更新提示条：固定在窗口底部，点击下载安装新版 */
+.update-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: var(--cc-accent);
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+  padding: 5px 8px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.update-bar:hover { filter: brightness(1.08); }
+
+/* 关于窗口（独立窗口，不透明背景覆盖整窗） */
+.about {
+  height: 100vh;
+  background: #262624;
+  color: var(--cc-text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 20px;
+  text-align: center;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.about-title { font-size: 20px; font-weight: 600; }
+.about-ver { font-size: 12px; color: var(--cc-text-dim); }
+.about-desc { font-size: 12px; color: var(--cc-text-dim); line-height: 1.6; margin: 4px 0; max-width: 260px; }
+.about-repo { font-size: 11px; color: var(--cc-text-faint); user-select: text; -webkit-user-select: text; }
+.about-btn {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #fff;
+  background: var(--cc-accent);
+  border: none;
+  border-radius: var(--r-md);
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.about-btn:hover { filter: brightness(1.08); }
+.about-status { font-size: 11px; color: var(--cc-text-dim); min-height: 14px; }
+.about-license { font-size: 10.5px; color: var(--cc-text-faint); margin-top: 4px; }

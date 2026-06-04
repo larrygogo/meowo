@@ -26,6 +26,9 @@ vi.mock("@tauri-apps/api/window", () => ({
     scaleFactor: vi.fn(() => Promise.resolve(1)),
   }),
 }));
+// 更新检查相关插件：jsdom 无后端，给空实现（check 返回无更新）。
+vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(() => Promise.resolve()) }));
 
 import { App } from "./App";
 

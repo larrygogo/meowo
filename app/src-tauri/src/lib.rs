@@ -494,8 +494,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自启")
         .checked(autostart_on)
         .build(app)?;
+    let about = MenuItemBuilder::with_id("about", "关于").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&toggle, &autostart, &quit]).build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&toggle, &autostart, &about, &quit])
+        .build()?;
 
     let autostart_item = autostart.clone();
     TrayIconBuilder::with_id("cc-kanban-tray")
@@ -523,6 +526,23 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 };
                 let _ = autostart_item.set_checked(now_on);
             }
+            "about" => {
+                if let Some(w) = app.get_webview_window("about") {
+                    let _ = w.set_focus();
+                } else if let Err(e) = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "about",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .title("关于 cc-kanban")
+                .inner_size(340.0, 400.0)
+                .resizable(false)
+                .center()
+                .build()
+                {
+                    eprintln!("创建关于窗口失败: {e}");
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -539,6 +559,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState { db_path: path.clone() })
         .invoke_handler(tauri::generate_handler![
             get_overview,
