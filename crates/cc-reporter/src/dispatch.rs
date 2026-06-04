@@ -86,7 +86,7 @@ fn lookup_session(store: &Store, ev: &HookEvent) -> Result<Option<i64>, StoreErr
 
 /// cwd 的 git 根（向上找 .git）作为项目 root；无 git 则用 cwd 本身。
 /// name 优先取 git remote origin 的 owner/repo，否则用末段目录名。
-fn project_root_and_name(cwd: &str) -> (String, String) {
+pub(crate) fn project_root_and_name(cwd: &str) -> (String, String) {
     let root = find_git_root(cwd).unwrap_or_else(|| cwd.to_string());
     let name = owner_repo_from_git(&root).unwrap_or_else(|| {
         Path::new(&root)
