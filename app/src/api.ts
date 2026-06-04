@@ -71,6 +71,8 @@ export type LiveSession = {
   todo_done: number;
   todo_total: number;
   todos: Todo[];
+  pid: number | null;
+  connected: boolean;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {

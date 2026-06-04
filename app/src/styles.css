@@ -101,44 +101,6 @@ html, body {
 .drag:hover {
   background: rgba(255, 255, 255, 0.06);
 }
-.stk-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 5px 0;
-}
-.stk-main {
-  flex: 1;
-  min-width: 0;
-}
-.stk-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.stk-sub {
-  font-size: 10.5px;
-  color: #76767e;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-top: 1px;
-}
-.stk-tag {
-  flex: none;
-  align-self: center;
-  font-size: 10px;
-  color: #b9b9c0;
-  max-width: 88px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 5px;
-  padding: 1px 6px;
-}
 .stk-empty {
   font-size: 12px;
   color: #5b5b63;
@@ -149,7 +111,6 @@ html, body {
   width: 11px;
   height: 11px;
   flex: none;
-  margin-top: 2px;
   border-radius: 50%;
   border: 2px solid rgba(52, 211, 153, 0.25);
   border-top-color: #34d399;
@@ -160,6 +121,18 @@ html, body {
     transform: rotate(360deg);
   }
 }
-.stk-row .dot {
-  margin-top: 4px;
+.stk-card {
+  padding: 7px 2px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
+.stk-card:last-child { border-bottom: none; }
+.stk-line1 { display: flex; align-items: center; gap: 7px; }
+.stk-line1 .stk-title { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stk-time { flex: none; font-size: 10px; color: #76767e; }
+.stk-line2 { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.conn { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 500; flex: none; }
+.conn svg { display: block; }
+.conn-on { color: #34d399; }
+.conn-off { color: #6b6b73; }
+.stk-repo { font-size: 10.5px; color: #8a8a92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stk-sub { font-size: 10.5px; color: #76767e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }

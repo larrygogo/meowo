@@ -16,6 +16,8 @@ function mk(over: Partial<LiveSession> = {}): LiveSession {
       { id: 1, task_id: 1, content: "甲", status: "completed", order_idx: 0 },
       { id: 2, task_id: 1, content: "乙", status: "in_progress", order_idx: 1 },
     ],
+    pid: null,
+    connected: false,
     ...over,
   };
 }

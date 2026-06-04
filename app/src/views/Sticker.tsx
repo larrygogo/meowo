@@ -1,17 +1,30 @@
 import { LiveSession } from "../api";
 
-const DOT: Record<string, string> = {
-  waiting: "dot-wait",
-  stale: "dot-stale",
-};
-
-function Indicator({ status }: { status: string }) {
-  // 运行中：转动的缺口圆环；其余：静态圆点
-  if (status === "running") return <span className="spinner" />;
-  return <span className={"dot " + (DOT[status] ?? "dot-idle")} />;
+function fmtAgo(ms: number): string {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
 }
 
-export function Sticker({ data }: { data: LiveSession[] }) {
+function ConnBadge({ connected }: { connected: boolean }) {
+  return (
+    <span className={"conn " + (connected ? "conn-on" : "conn-off")}>
+      <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="1.5" y="2.5" width="13" height="9" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <line x1="5.5" y1="14" x2="10.5" y2="14" stroke="currentColor" strokeWidth="1.4" />
+        {!connected && <line x1="2" y1="13.5" x2="14" y2="2.5" stroke="currentColor" strokeWidth="1.4" />}
+      </svg>
+      {connected ? "Connected" : "Disconnected"}
+    </span>
+  );
+}
+
+type Item = LiveSession & { connected: boolean };
+
+export function Sticker({ data }: { data: Item[] }) {
   return (
     <div className="sticker">
       <div className="drag" data-tauri-drag-region />
@@ -21,16 +34,20 @@ export function Sticker({ data }: { data: LiveSession[] }) {
         data.map((l) => {
           const unnamed = !l.task_title || l.task_title === "(未命名会话)";
           const title = unnamed ? "等待首次输入" : l.task_title;
-          const sub =
-            l.current_activity && l.current_activity !== title ? l.current_activity : null;
+          const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
+          const spinning = l.session.status === "running" && l.connected;
           return (
-            <div className="stk-row" key={l.session.id}>
-              <Indicator status={l.session.status} />
-              <div className="stk-main">
-                <div className="stk-title">{title}</div>
-                {sub && <div className="stk-sub">{sub}</div>}
+            <div className="stk-card" key={l.session.id}>
+              <div className="stk-line1">
+                {spinning && <span className="spinner" />}
+                <span className="stk-title">{title}</span>
+                <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
               </div>
-              <span className="stk-tag">{l.project_name}</span>
+              <div className="stk-line2">
+                <ConnBadge connected={l.connected} />
+                <span className="stk-repo">{l.project_name}</span>
+              </div>
+              {sub && <div className="stk-sub">{sub}</div>}
             </div>
           );
         })
