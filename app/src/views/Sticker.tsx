@@ -37,12 +37,15 @@ export function Sticker({ data }: { data: Item[] }) {
           const title = unnamed ? "等待首次输入" : l.task_title;
           const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
           const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
-          const indicator =
-            l.connected && l.session.status === "running" ? (
-              <span className="spinner" />
-            ) : l.connected && l.session.status === "waiting" ? (
-              <span className="needs" title="等待输入" />
-            ) : null;
+          const indicator = !l.connected ? (
+            <span className="sdot sdot-off" title="已断开" />
+          ) : l.session.status === "running" ? (
+            <span className="spinner" />
+          ) : l.session.status === "waiting" ? (
+            <span className="needs" title="等待输入" />
+          ) : (
+            <span className="sdot sdot-on" title="在线" />
+          );
           return (
             <div
               className="stk-card"

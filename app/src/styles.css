@@ -159,3 +159,8 @@ html, body {
 .stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
 .stk-prog .bar { flex: 1; height: 4px; margin: 0; }
 .stk-prog-txt { flex: none; font-size: 10px; color: #76767e; }
+
+/* 卡片左侧状态圆点：在线绿 / 断开灰 */
+.sdot { width: 9px; height: 9px; flex: none; border-radius: 50%; }
+.sdot-on { background: #34d399; }
+.sdot-off { background: #5b5b63; }
