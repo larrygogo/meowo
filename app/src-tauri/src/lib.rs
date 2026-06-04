@@ -13,6 +13,44 @@ use tauri_plugin_autostart::ManagerExt;
 /// stale 阈值：超过此时长无事件的会话标记为 stale。
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 
+/// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
+#[allow(dead_code)]
+const SNAP_THRESHOLD: i32 = 20;
+/// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
+#[allow(dead_code)]
+const STRIP_W_LOGICAL: f64 = 14.0;
+
+/// 矩形（物理像素），用于吸边判定的纯计算。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+/// 吸附的边（仅左/右）。JS 侧序列化为 "left"/"right"。
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Edge {
+    Left,
+    Right,
+}
+
+/// 判定窗口 `win` 是否贴在工作区 `work` 的左或右边缘（阈值 `threshold`）。
+/// 两边都在阈值内时取更近的一边；都不满足返回 None。纯函数，便于单测。
+pub fn edge_for_rect(win: Rect, work: Rect, threshold: i32) -> Option<Edge> {
+    let left_gap = (win.x - work.x).abs();
+    let right_gap = ((work.x + work.w) - (win.x + win.w)).abs();
+    if left_gap <= threshold && left_gap <= right_gap {
+        return Some(Edge::Left);
+    }
+    if right_gap <= threshold {
+        return Some(Edge::Right);
+    }
+    None
+}
+
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
 /// 无权限）时只让该次刷新返回错误，不会在启动时 panic 把整个 app 打挂；
 /// 下次 board-changed 事件刷新即自动恢复。
@@ -395,4 +433,55 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{edge_for_rect, Edge, Rect};
+
+    const WORK: Rect = Rect { x: 0, y: 0, w: 1920, h: 1040 };
+
+    #[test]
+    fn left_within_threshold() {
+        let win = Rect { x: 5, y: 0, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
+    }
+
+    #[test]
+    fn right_within_threshold() {
+        let win = Rect { x: 1920 - 300 - 5, y: 0, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Right));
+    }
+
+    #[test]
+    fn center_is_none() {
+        let win = Rect { x: 800, y: 400, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), None);
+    }
+
+    #[test]
+    fn threshold_boundary_inclusive() {
+        let win = Rect { x: 20, y: 0, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
+    }
+
+    #[test]
+    fn just_outside_threshold_none() {
+        let win = Rect { x: 21, y: 0, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, WORK, 20), None);
+    }
+
+    #[test]
+    fn picks_nearer_edge() {
+        let work = Rect { x: 0, y: 0, w: 320, h: 400 };
+        let win = Rect { x: 5, y: 0, w: 305, h: 400 };
+        assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
+    }
+
+    #[test]
+    fn respects_work_area_offset() {
+        let work = Rect { x: 100, y: 0, w: 1000, h: 1040 };
+        let win = Rect { x: 110, y: 0, w: 300, h: 400 };
+        assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
+    }
 }
