@@ -123,8 +123,8 @@ html, body {
 /* 负边距+内边距：滚动条落到贴纸右边缘，卡片内容左右仍对称(各 8px) */
 .stk-scroll { flex: 1; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 8px; padding-bottom: 6px; }
 .stk-scroll::-webkit-scrollbar { width: 6px; }
-.stk-scroll::-webkit-scrollbar-thumb { background: rgba(217,119,87,0.3); border-radius: 3px; }
-.stk-scroll::-webkit-scrollbar-thumb:hover { background: rgba(217,119,87,0.5); }
+.stk-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
+.stk-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 .stk-scroll::-webkit-scrollbar-track { background: transparent; }
 .resize-grip { position: fixed; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
   opacity: 0; transition: opacity 0.15s;
