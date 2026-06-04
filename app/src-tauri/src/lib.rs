@@ -129,19 +129,16 @@ fn console_group_pids(root_pid: u32) -> HashSet<u32> {
         }
         cur = parent;
     }
-    // 子孙（BFS：反复扫描，把 parent 在 set 里的进程加入）
-    loop {
-        let mut added = false;
+    // 子孙：只从 root 自身往下 BFS（不经过祖先），否则会把终端宿主的「其它标签页」全抓进来。
+    let mut frontier = vec![root_pid];
+    while let Some(x) = frontier.pop() {
         for (pid, proc_) in sys.processes() {
-            if let Some(parent) = proc_.parent() {
-                if set.contains(&parent.as_u32()) && !set.contains(&pid.as_u32()) {
-                    set.insert(pid.as_u32());
-                    added = true;
+            if proc_.parent().map(|p| p.as_u32()) == Some(x) {
+                let u = pid.as_u32();
+                if set.insert(u) {
+                    frontier.push(u);
                 }
             }
-        }
-        if !added {
-            break;
         }
     }
     set
