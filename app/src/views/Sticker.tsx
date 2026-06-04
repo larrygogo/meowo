@@ -28,6 +28,40 @@ function ConnBadge({ connected }: { connected: boolean }) {
 type Item = LiveSession & { connected: boolean };
 type Tab = "all" | "waiting" | "running" | "archived";
 
+function TabIcon({ tab }: { tab: Tab }) {
+  const common = { width: 11, height: 11, viewBox: "0 0 16 16", "aria-hidden": true } as const;
+  switch (tab) {
+    case "all": // 列表
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <line x1="3" y1="4.5" x2="13" y2="4.5" />
+          <line x1="3" y1="8" x2="13" y2="8" />
+          <line x1="3" y1="11.5" x2="13" y2="11.5" />
+        </svg>
+      );
+    case "waiting": // 对话气泡（待交互）
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+          <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />
+        </svg>
+      );
+    case "running": // 播放（运行中）
+      return (
+        <svg {...common} fill="currentColor">
+          <path d="M5 3.2 12.5 8 5 12.8z" />
+        </svg>
+      );
+    case "archived": // 归档盒
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+          <rect x="2.5" y="3" width="11" height="3" rx="0.5" />
+          <path d="M3.5 6v6.5h9V6" />
+          <line x1="6.5" y1="9" x2="9.5" y2="9" strokeLinecap="round" />
+        </svg>
+      );
+  }
+}
+
 const TAB_KEY = "cc-kanban-tab";
 const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "全部" },
@@ -70,6 +104,7 @@ export function Sticker({ data }: { data: Item[] }) {
               className={"stab " + (tab === t.key ? "stab-on" : "")}
               onClick={() => pick(t.key)}
             >
+              <TabIcon tab={t.key} />
               {t.label}
               <span className="stab-n">{n}</span>
             </span>

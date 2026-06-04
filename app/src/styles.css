@@ -92,8 +92,9 @@ html, body {
   user-select: none;
   backdrop-filter: blur(6px);
 }
-.tabs { display: flex; gap: 4px; padding: 2px 0 6px; flex: none; }
-.stab { cursor: pointer; font-size: 11px; color: #8a8a92; padding: 2px 7px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; }
+.tabs { display: flex; gap: 2px; padding: 2px 0 6px; flex: none; }
+.stab { cursor: pointer; font-size: 11px; color: #8a8a92; padding: 2px 5px; border-radius: 6px; display: inline-flex; align-items: center; gap: 3px; }
+.stab svg { display: block; flex: none; opacity: 0.85; }
 .stab:hover { color: #e8e8ea; }
 .stab-on { color: #e8e8ea; background: rgba(255,255,255,0.08); }
 .stab-n { font-size: 9.5px; color: #76767e; }
