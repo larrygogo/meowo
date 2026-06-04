@@ -139,9 +139,28 @@ html, body {
   background: rgba(255, 255, 255, 0.06);
 }
 .stk-empty {
-  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 100%;
+  padding: 24px 16px;
+  text-align: center;
+}
+.stk-empty-icon {
   color: var(--cc-text-faint);
-  padding: 6px 2px;
+  display: inline-flex;
+}
+.stk-empty-title {
+  font-size: 13px;
+  color: var(--cc-text-dim);
+}
+.stk-empty-hint {
+  font-size: 11px;
+  color: var(--cc-text-faint);
+  line-height: 1.5;
+  max-width: 220px;
 }
 /* 运行中：转动的灰色缺口圆环 */
 .spinner {
