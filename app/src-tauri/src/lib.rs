@@ -14,10 +14,8 @@ use tauri_plugin_autostart::ManagerExt;
 const STALE_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 
 /// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
-#[allow(dead_code)]
 const SNAP_THRESHOLD: i32 = 20;
 /// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
-#[allow(dead_code)]
 const STRIP_W_LOGICAL: f64 = 14.0;
 
 /// 矩形（物理像素），用于吸边判定的纯计算。
@@ -49,6 +47,74 @@ pub fn edge_for_rect(win: Rect, work: Rect, threshold: i32) -> Option<Edge> {
         return Some(Edge::Right);
     }
     None
+}
+
+/// snap-changed 事件负载：当前检测到的吸附边（None 表示不贴边）。
+#[derive(Clone, serde::Serialize)]
+struct SnapPayload {
+    edge: Option<Edge>,
+}
+
+/// 竖条物理宽度：逻辑宽度 * 显示器缩放，至少 1px。
+fn strip_width_phys(scale: f64) -> i32 {
+    ((STRIP_W_LOGICAL * scale).round() as i32).max(1)
+}
+
+/// 折叠成竖条：贴到指定边、宽度缩为竖条、高度与 y 保持不变。
+#[tauri::command]
+fn snap_collapse(window: tauri::WebviewWindow, edge: Edge) -> Result<(), String> {
+    let m = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("no monitor")?;
+    let wa = m.work_area();
+    let strip_w = strip_width_phys(m.scale_factor());
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let x = match edge {
+        Edge::Left => wa.position.x,
+        Edge::Right => wa.position.x + wa.size.width as i32 - strip_w,
+    };
+    window
+        .set_size(tauri::PhysicalSize::new(strip_w as u32, size.height))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(x, pos.y))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 展开成全宽（仍贴边）：宽度恢复为记住的逻辑宽度，y 与高度不变。
+#[tauri::command]
+fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64) -> Result<(), String> {
+    let m = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("no monitor")?;
+    let wa = m.work_area();
+    let phys_w = ((width * m.scale_factor()).round() as i32).max(1);
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let x = match edge {
+        Edge::Left => wa.position.x,
+        Edge::Right => wa.position.x + wa.size.width as i32 - phys_w,
+    };
+    window
+        .set_size(tauri::PhysicalSize::new(phys_w as u32, size.height))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(x, pos.y))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 恢复正常浮动：尺寸设回记住的逻辑宽高，位置维持用户当前拖到的地方。
+#[tauri::command]
+fn snap_restore(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
@@ -422,8 +488,27 @@ pub fn run() {
             get_project_tasks,
             get_live_sessions,
             focus_session,
-            set_archived
+            set_archived,
+            snap_collapse,
+            snap_expand,
+            snap_restore
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Moved(pos) = event {
+                if let (Ok(Some(m)), Ok(size)) = (window.current_monitor(), window.outer_size()) {
+                    let wa = m.work_area();
+                    let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
+                    let work = Rect {
+                        x: wa.position.x,
+                        y: wa.position.y,
+                        w: wa.size.width as i32,
+                        h: wa.size.height as i32,
+                    };
+                    let edge = edge_for_rect(win, work, SNAP_THRESHOLD);
+                    let _ = window.emit("snap-changed", SnapPayload { edge });
+                }
+            }
+        })
         .setup(move |app| {
             setup_tray(app)?;
             spawn_db_watcher(app.handle().clone(), path.clone());
