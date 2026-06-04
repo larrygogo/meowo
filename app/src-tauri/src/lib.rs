@@ -104,16 +104,30 @@ fn console_group_pids(root_pid: u32) -> HashSet<u32> {
     );
     let mut set: HashSet<u32> = HashSet::new();
     set.insert(root_pid);
-    // 祖先
+    // 祖先：向上到「终端宿主」为止。遇到桌面壳/系统进程(explorer/sihost/...)就停，
+    // 否则会把桌面、任务栏的窗口也算进来，点击时误聚焦到桌面。
+    let boundary = [
+        "explorer.exe", "sihost.exe", "svchost.exe", "services.exe", "wininit.exe",
+        "winlogon.exe", "csrss.exe", "runtimebroker.exe", "dwm.exe",
+    ];
+    let terminal_host = [
+        "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe",
+    ];
     let mut cur = Pid::from_u32(root_pid);
     for _ in 0..32 {
-        match sys.process(cur).and_then(|p| p.parent()) {
-            Some(parent) => {
-                set.insert(parent.as_u32());
-                cur = parent;
-            }
-            None => break,
+        let Some(parent) = sys.process(cur).and_then(|p| p.parent()) else { break };
+        let pname = sys
+            .process(parent)
+            .map(|p| p.name().to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if boundary.iter().any(|s| pname == *s) {
+            break; // 到桌面/系统边界，停止上溯且不纳入
         }
+        set.insert(parent.as_u32());
+        if terminal_host.iter().any(|s| pname == *s) {
+            break; // 已纳入终端宿主，不再继续上溯
+        }
+        cur = parent;
     }
     // 子孙（BFS：反复扫描，把 parent 在 set 里的进程加入）
     loop {
