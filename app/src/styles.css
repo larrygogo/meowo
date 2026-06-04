@@ -81,7 +81,7 @@ html, body {
   background: rgba(18, 18, 22, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
-  padding: 4px 10px 8px;
+  padding: 4px 3px 0 12px; /* 右侧留窄，让滚动条贴边 */
   margin: 0;
   height: 100vh;
   max-height: none;
@@ -103,7 +103,9 @@ html, body {
 .stk-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
 .stk-scroll::-webkit-scrollbar-track { background: transparent; }
 .resize-grip { position: fixed; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
+  opacity: 0; transition: opacity 0.15s;
   background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.25) 60%, transparent 60%, transparent 70%, rgba(255,255,255,0.25) 70%, rgba(255,255,255,0.25) 80%, transparent 80%); }
+.sticker:hover .resize-grip { opacity: 1; }
 .drag {
   height: 12px;
   cursor: move;
