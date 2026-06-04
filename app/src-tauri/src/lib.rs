@@ -1,5 +1,6 @@
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -92,6 +93,98 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
             .then(b.inner.session.last_event_at.cmp(&a.inner.session.last_event_at))
     });
     Ok(items)
+}
+
+/// 收集与 root_pid 同控制台组的进程 pid：root + 所有祖先 + 所有子孙。
+fn console_group_pids(root_pid: u32) -> HashSet<u32> {
+    let sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+    );
+    let mut set: HashSet<u32> = HashSet::new();
+    set.insert(root_pid);
+    // 祖先
+    let mut cur = Pid::from_u32(root_pid);
+    for _ in 0..32 {
+        match sys.process(cur).and_then(|p| p.parent()) {
+            Some(parent) => {
+                set.insert(parent.as_u32());
+                cur = parent;
+            }
+            None => break,
+        }
+    }
+    // 子孙（BFS：反复扫描，把 parent 在 set 里的进程加入）
+    loop {
+        let mut added = false;
+        for (pid, proc_) in sys.processes() {
+            if let Some(parent) = proc_.parent() {
+                if set.contains(&parent.as_u32()) && !set.contains(&pid.as_u32()) {
+                    set.insert(pid.as_u32());
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    set
+}
+
+/// 枚举可见顶层窗口，返回第一个进程 pid 命中 targets 的窗口 HWND。
+#[cfg(target_os = "windows")]
+fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Foundation::HWND> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible};
+
+    struct Ctx<'a> {
+        targets: &'a HashSet<u32>,
+        found: Option<HWND>,
+    }
+
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &mut *(lparam as *mut Ctx);
+        if IsWindowVisible(hwnd) == 0 {
+            return TRUE;
+        }
+        let mut wpid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut wpid);
+        if ctx.targets.contains(&wpid) {
+            ctx.found = Some(hwnd);
+            return 0; // FALSE：停止枚举
+        }
+        TRUE
+    }
+
+    let mut ctx = Ctx { targets, found: None };
+    unsafe {
+        EnumWindows(Some(cb), &mut ctx as *mut Ctx as LPARAM);
+    }
+    ctx.found
+}
+
+#[tauri::command]
+fn focus_session(pid: i64) -> Result<(), String> {
+    if pid <= 0 {
+        return Err("无效 pid".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{BringWindowToTop, SetForegroundWindow, ShowWindow, SW_RESTORE};
+        let targets = console_group_pids(pid as u32);
+        let hwnd = find_window_for_pids(&targets).ok_or("未找到该会话的窗口".to_string())?;
+        unsafe {
+            ShowWindow(hwnd, SW_RESTORE);
+            BringWindowToTop(hwnd);
+            SetForegroundWindow(hwnd);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = pid;
+        return Err("仅支持 Windows".into());
+    }
+    Ok(())
 }
 
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
@@ -199,7 +292,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_project_tasks,
-            get_live_sessions
+            get_live_sessions,
+            focus_session
         ])
         .setup(move |app| {
             setup_tray(app)?;

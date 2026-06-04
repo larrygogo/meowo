@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { LiveSession } from "../api";
 
 function fmtAgo(ms: number): string {
@@ -43,7 +44,12 @@ export function Sticker({ data }: { data: Item[] }) {
               <span className="needs" title="等待输入" />
             ) : null;
           return (
-            <div className="stk-card" key={l.session.id}>
+            <div
+              className="stk-card"
+              key={l.session.id}
+              onClick={() => { if (l.pid) invoke("focus_session", { pid: l.pid }).catch(() => {}); }}
+              style={{ cursor: l.pid ? "pointer" : "default" }}
+            >
               <div className="stk-line1">
                 {indicator}
                 <span className="stk-title">{title}</span>
