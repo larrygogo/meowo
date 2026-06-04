@@ -1,0 +1,46 @@
+use cc_reporter::transcript::title_from_transcript;
+use std::io::Write;
+
+fn write_tmp(name: &str, body: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(name);
+    let mut f = std::fs::File::create(&p).unwrap();
+    f.write_all(body.as_bytes()).unwrap();
+    p
+}
+
+#[test]
+fn custom_title_wins_over_ai_title() {
+    let body = r#"{"type":"ai-title","aiTitle":"AI Named","sessionId":"s"}
+{"type":"user","message":"hi"}
+{"type":"custom-title","customTitle":"我的标题","sessionId":"s"}
+"#;
+    let p = write_tmp("cc_tt_1.jsonl", body);
+    assert_eq!(title_from_transcript(p.to_str().unwrap()).as_deref(), Some("我的标题"));
+    let _ = std::fs::remove_file(p);
+}
+
+#[test]
+fn falls_back_to_ai_title() {
+    let body = "{\"type\":\"ai-title\",\"aiTitle\":\"Build dashboard\",\"sessionId\":\"s\"}\n";
+    let p = write_tmp("cc_tt_2.jsonl", body);
+    assert_eq!(title_from_transcript(p.to_str().unwrap()).as_deref(), Some("Build dashboard"));
+    let _ = std::fs::remove_file(p);
+}
+
+#[test]
+fn latest_of_each_kind_wins() {
+    let body = r#"{"type":"ai-title","aiTitle":"old","sessionId":"s"}
+{"type":"ai-title","aiTitle":"new","sessionId":"s"}
+"#;
+    let p = write_tmp("cc_tt_3.jsonl", body);
+    assert_eq!(title_from_transcript(p.to_str().unwrap()).as_deref(), Some("new"));
+    let _ = std::fs::remove_file(p);
+}
+
+#[test]
+fn none_when_no_title_or_missing_file() {
+    let p = write_tmp("cc_tt_4.jsonl", "{\"type\":\"user\"}\n");
+    assert_eq!(title_from_transcript(p.to_str().unwrap()), None);
+    let _ = std::fs::remove_file(p);
+    assert_eq!(title_from_transcript("Z:/nope/none.jsonl"), None);
+}

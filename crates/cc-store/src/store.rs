@@ -141,6 +141,20 @@ impl Store {
         Ok(())
     }
 
+    /// 直接设置会话任务标题（来自 CC ai-title/custom-title），覆盖占位/旧标题。空标题忽略。
+    pub fn set_session_title(&self, session_id: i64, title: &str, now_ms: i64) -> Result<(), StoreError> {
+        let t = truncate_chars(title.trim(), 80);
+        if t.is_empty() {
+            return Ok(());
+        }
+        let tid = self.task_id_of_session(session_id)?;
+        self.conn.execute(
+            "UPDATE tasks SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![t, now_ms, tid],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn find_session_id(&self, cc_session_id: &str) -> Result<Option<i64>, StoreError> {
         let mut stmt = self
             .conn

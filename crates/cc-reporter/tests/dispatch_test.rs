@@ -1,4 +1,5 @@
 use cc_reporter::hook::HookEvent;
+use std::io::Write as _;
 
 #[test]
 fn parse_user_prompt_event() {
@@ -45,6 +46,13 @@ use cc_reporter::dispatch::dispatch;
 use cc_store::Store;
 
 fn ev(json: &str) -> HookEvent { HookEvent::parse(json).unwrap() }
+
+fn write_transcript(name: &str, body: &[u8]) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(name);
+    let mut f = std::fs::File::create(&p).unwrap();
+    f.write_all(body).unwrap();
+    p
+}
 
 #[test]
 fn session_start_then_prompt_then_todos_flow() {
@@ -100,4 +108,45 @@ fn stop_and_end_for_unknown_session_are_ignored() {
     let store = Store::open_in_memory().unwrap();
     assert!(dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"nope"}"#), 100).is_ok());
     assert!(dispatch(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"nope"}"#), 100).is_ok());
+}
+
+#[test]
+fn session_start_with_transcript_sets_ai_title() {
+    let store = Store::open_in_memory().unwrap();
+    let tp = write_transcript(
+        "cc_disp_start.jsonl",
+        b"{\"type\":\"ai-title\",\"aiTitle\":\"\xe5\x81\x9a\xe7\x9c\x8b\xe6\x9d\xbf\",\"sessionId\":\"s\"}\n",
+    );
+    let tps = tp.to_str().unwrap().replace('\\', "\\\\");
+    let json = format!(
+        r#"{{"hook_event_name":"SessionStart","session_id":"st1","cwd":"/tmp/x","transcript_path":"{tps}"}}"#
+    );
+    dispatch(&store, &ev(&json), 100).unwrap();
+    let sid = store.find_session_id_pub("st1").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    assert_eq!(store.get_task(tid).unwrap().title, "做看板");
+    let _ = std::fs::remove_file(tp);
+}
+
+#[test]
+fn user_prompt_with_transcript_overrides_prompt_title() {
+    let store = Store::open_in_memory().unwrap();
+    let tp = write_transcript(
+        "cc_disp_prompt.jsonl",
+        b"{\"type\":\"custom-title\",\"customTitle\":\"My Custom Title\",\"sessionId\":\"s\"}\n",
+    );
+    let tps = tp.to_str().unwrap().replace('\\', "\\\\");
+
+    // 先 SessionStart（无 transcript）
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st2","cwd":"/tmp/y"}"#), 100).unwrap();
+    // 再 UserPromptSubmit（带 transcript）
+    let json = format!(
+        r#"{{"hook_event_name":"UserPromptSubmit","session_id":"st2","prompt":"首条prompt兜底","transcript_path":"{tps}"}}"#
+    );
+    dispatch(&store, &ev(&json), 200).unwrap();
+    let sid = store.find_session_id_pub("st2").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    // transcript custom-title 覆盖了 prompt 兜底标题
+    assert_eq!(store.get_task(tid).unwrap().title, "My Custom Title");
+    let _ = std::fs::remove_file(tp);
 }

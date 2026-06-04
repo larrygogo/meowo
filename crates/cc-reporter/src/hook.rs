@@ -9,6 +9,8 @@ pub struct HookEvent {
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
+    pub transcript_path: Option<String>,
+    #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
     pub tool_name: Option<String>,

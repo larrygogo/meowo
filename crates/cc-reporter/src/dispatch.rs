@@ -1,5 +1,6 @@
 use cc_store::{SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
+use crate::transcript::title_from_transcript;
 use std::path::Path;
 
 /// 把一个 hook 事件落到库。未知/缺字段一律降级为「无操作」，绝不报错冒泡。
@@ -10,13 +11,15 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
             if ev.session_id.is_empty() { return Ok(()); }
             let (root, name) = project_root_and_name(cwd);
             let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
-            store.start_session(pid, &ev.session_id, now_ms)?;
+            let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
+            apply_title(store, ev, sid, now_ms)?;
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_session(store, ev)? {
                 if let Some(prompt) = ev.prompt.as_deref() {
                     store.on_user_prompt(sid, prompt, now_ms)?;
                 }
+                apply_title(store, ev, sid, now_ms)?;
             }
         }
         "PostToolUse" => {
@@ -45,6 +48,15 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64) -> Result<(), StoreError> {
+    if let Some(tp) = ev.transcript_path.as_deref() {
+        if let Some(title) = title_from_transcript(tp) {
+            store.set_session_title(sid, &title, now_ms)?;
+        }
     }
     Ok(())
 }

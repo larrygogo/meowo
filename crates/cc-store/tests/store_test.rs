@@ -216,6 +216,18 @@ fn image_only_prompt_keeps_placeholder_title() {
     assert_eq!(t.current_activity, None);
 }
 
+// == set_session_title ==
+#[test]
+fn set_session_title_overrides_placeholder_and_prompt_title() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(pid, "s", 100).unwrap();
+    store.on_user_prompt(sid, "继续", 110).unwrap(); // 首条填充词当了标题
+    assert_eq!(store.get_task(tid).unwrap().title, "继续");
+    store.set_session_title(sid, "Claude Code 看板", 120).unwrap();
+    assert_eq!(store.get_task(tid).unwrap().title, "Claude Code 看板");
+}
+
 // == 审计修复测试 ==
 
 #[test]
