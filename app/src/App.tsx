@@ -45,7 +45,7 @@ export function App() {
     return s === "left" || s === "right" || s === "top" ? s : null;
   });
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
-  const { version: updateVersion, updating, apply: applyUpdate } = useUpdate();
+  const { status: upStatus, version: updateVersion, progress: upProgress, apply: applyUpdate } = useUpdate();
 
   const connectedCount = live.filter((l) => !l.archived && l.connected).length;
 
@@ -74,6 +74,14 @@ export function App() {
       un.then((f) => f());
     };
   }, [refresh]);
+
+  // 托盘「更新」点击 → 执行更新（安装逻辑的单一来源）。
+  useEffect(() => {
+    const un = listen("trigger-update", () => void applyUpdate());
+    return () => {
+      un.then((f) => f());
+    };
+  }, [applyUpdate]);
 
   // 折叠成缩略条：厚度固定，主轴长度贴合当前点数。
   const doCollapse = useCallback(
@@ -227,13 +235,15 @@ export function App() {
       onMouseLeave={mode === "expanded" ? onExpandedLeave : undefined}
     >
       {glow && <div className={"snap-glow snap-glow-" + glow} />}
-      {updateVersion && (
+      {(upStatus === "available" || upStatus === "downloading") && (
         <div
           className="update-bar"
           title="点击下载并安装新版本"
-          onClick={updating ? undefined : applyUpdate}
+          onClick={upStatus === "downloading" ? undefined : applyUpdate}
         >
-          {updating ? "正在更新…" : `有新版本 v${updateVersion} · 点击更新`}
+          {upStatus === "downloading"
+            ? `下载更新中 ${upProgress}%`
+            : `有新版本 v${updateVersion} · 点击更新`}
         </div>
       )}
       <Sticker data={live} />

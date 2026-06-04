@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
+use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -159,6 +159,8 @@ fn snap_restore(
 /// 下次 board-changed 事件刷新即自动恢复。
 struct AppState {
     db_path: PathBuf,
+    /// 托盘「更新」菜单项句柄，供前端检查到新版后回写文案（在主线程上 set_text）。
+    update_item: std::sync::Mutex<Option<MenuItem<tauri::Wry>>>,
 }
 
 fn now_ms() -> i64 {
@@ -393,6 +395,27 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived).map_err(|e| e.to_string())
 }
 
+/// 前端检查更新后回写托盘「更新」菜单项：有新版 → 可点击「更新到 vX」；无 → 「已是最新版本」(禁用)。
+/// 菜单变更必须在主线程执行。
+#[tauri::command]
+fn set_update_menu(app: tauri::AppHandle, state: State<AppState>, version: Option<String>) -> Result<(), String> {
+    let item = state.update_item.lock().unwrap().clone();
+    if let Some(item) = item {
+        app.run_on_main_thread(move || match &version {
+            Some(v) => {
+                let _ = item.set_text(format!("⬇ 更新到 v{v}"));
+                let _ = item.set_enabled(true);
+            }
+            None => {
+                let _ = item.set_text("已是最新版本");
+                let _ = item.set_enabled(false);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
 fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
@@ -494,10 +517,20 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自启")
         .checked(autostart_on)
         .build(app)?;
-    let about = MenuItemBuilder::with_id("about", "关于").build(app)?;
+    let ver = app.package_info().version.to_string();
+    let about = MenuItemBuilder::with_id("about", format!("关于 v{ver}")).build(app)?;
+    let update = MenuItemBuilder::with_id("update", "检查更新…")
+        .enabled(false)
+        .build(app)?;
+    // 存句柄：前端检查到结果后通过 set_update_menu 回写文案/可用性。
+    app.state::<AppState>()
+        .update_item
+        .lock()
+        .unwrap()
+        .replace(update.clone());
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
     let menu = MenuBuilder::new(app)
-        .items(&[&toggle, &autostart, &about, &quit])
+        .items(&[&toggle, &autostart, &about, &update, &quit])
         .build()?;
 
     let autostart_item = autostart.clone();
@@ -543,6 +576,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     eprintln!("创建关于窗口失败: {e}");
                 }
             }
+            "update" => {
+                // 安装逻辑在前端（单一来源）：显示主窗并通知它执行更新。
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                }
+                let _ = app.emit("trigger-update", ());
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -561,13 +601,17 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(AppState { db_path: path.clone() })
+        .manage(AppState {
+            db_path: path.clone(),
+            update_item: std::sync::Mutex::new(None),
+        })
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_project_tasks,
             get_live_sessions,
             focus_session,
             set_archived,
+            set_update_menu,
             snap_collapse,
             snap_expand,
             snap_restore
