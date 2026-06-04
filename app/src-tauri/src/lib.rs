@@ -165,6 +165,49 @@ fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Fo
     ctx.found
 }
 
+/// 用 AttachThreadInput 绕过 Windows 后台进程 SetForegroundWindow 限制，可靠置顶目标窗口。
+#[cfg(target_os = "windows")]
+fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+    unsafe {
+        let target_thread = GetWindowThreadProcessId(hwnd, null_mut());
+        let fg = GetForegroundWindow();
+        let fg_thread = if fg.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(fg, null_mut())
+        };
+        let cur = GetCurrentThreadId();
+
+        if fg_thread != 0 && fg_thread != cur {
+            AttachThreadInput(cur, fg_thread, 1);
+        }
+        if target_thread != 0 && target_thread != cur {
+            AttachThreadInput(cur, target_thread, 1);
+        }
+
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            ShowWindow(hwnd, SW_SHOW);
+        }
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+
+        if target_thread != 0 && target_thread != cur {
+            AttachThreadInput(cur, target_thread, 0);
+        }
+        if fg_thread != 0 && fg_thread != cur {
+            AttachThreadInput(cur, fg_thread, 0);
+        }
+    }
+}
+
 #[tauri::command]
 fn focus_session(pid: i64) -> Result<(), String> {
     if pid <= 0 {
@@ -172,14 +215,9 @@ fn focus_session(pid: i64) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{BringWindowToTop, SetForegroundWindow, ShowWindow, SW_RESTORE};
         let targets = console_group_pids(pid as u32);
         let hwnd = find_window_for_pids(&targets).ok_or("未找到该会话的窗口".to_string())?;
-        unsafe {
-            ShowWindow(hwnd, SW_RESTORE);
-            BringWindowToTop(hwnd);
-            SetForegroundWindow(hwnd);
-        }
+        force_foreground(hwnd);
     }
     #[cfg(not(target_os = "windows"))]
     {
