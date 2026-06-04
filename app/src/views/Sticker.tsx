@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LiveSession } from "../api";
@@ -73,7 +73,19 @@ function TabIcon({ tab }: { tab: Tab }) {
   }
 }
 
+function PinIcon({ pinned }: { pinned: boolean }) {
+  // lucide pin：未置顶描边、置顶时填充以示激活
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"}
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  );
+}
+
 const TAB_KEY = "cc-kanban-tab";
+const PIN_KEY = "cc-kanban-pinned";
 const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "waiting", label: "待交互" },
@@ -157,6 +169,24 @@ export function Sticker({ data }: { data: Item[] }) {
     localStorage.setItem(TAB_KEY, t);
   };
 
+  // 置顶开关：默认不置顶，激活后才把窗口设为 alwaysOnTop，状态持久化。
+  const [pinned, setPinned] = useState<boolean>(() => localStorage.getItem(PIN_KEY) === "1");
+  useEffect(() => {
+    // 非 Tauri 环境（测试/浏览器）下 getCurrentWindow 会抛错，吞掉即可。
+    try {
+      getCurrentWindow().setAlwaysOnTop(pinned).catch(() => {});
+    } catch {
+      /* noop */
+    }
+  }, [pinned]);
+  const togglePin = () => {
+    setPinned((p) => {
+      const next = !p;
+      localStorage.setItem(PIN_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
+
   const shown = data.filter((l) => match(tab, l));
 
   return (
@@ -177,6 +207,13 @@ export function Sticker({ data }: { data: Item[] }) {
             </span>
           );
         })}
+        <span
+          className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
+          title={pinned ? "已置顶：点击取消" : "置顶窗口"}
+          onClick={togglePin}
+        >
+          <PinIcon pinned={pinned} />
+        </span>
       </div>
       <div className="stk-scroll">
         {shown.length === 0 ? (
