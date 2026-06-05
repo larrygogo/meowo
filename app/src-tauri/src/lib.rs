@@ -873,6 +873,97 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 用 Win32 窗口子类化在「移动生效前」硬约束贴纸位置，彻底拖不出屏幕（零抖动，
+/// 优于事后 set_position 拉回）。拦截 WM_WINDOWPOSCHANGING，把目标坐标钳进所有显示器
+/// 工作区的并集包围盒。
+#[cfg(target_os = "windows")]
+mod win_constrain {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+    };
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, WINDOWPOS, WM_WINDOWPOSCHANGING};
+
+    const SUBCLASS_ID: usize = 0x00CC_4A0B;
+
+    /// 累积所有显示器工作区(rcWork)的并集包围盒。
+    struct Bbox {
+        has: bool,
+        l: i32,
+        t: i32,
+        r: i32,
+        b: i32,
+    }
+
+    unsafe extern "system" fn enum_proc(
+        hmon: HMONITOR,
+        _hdc: HDC,
+        _rc: *mut RECT,
+        data: LPARAM,
+    ) -> i32 {
+        let bb = &mut *(data as *mut Bbox);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(hmon, &mut mi) != 0 {
+            let w = mi.rcWork;
+            if !bb.has {
+                (bb.l, bb.t, bb.r, bb.b, bb.has) = (w.left, w.top, w.right, w.bottom, true);
+            } else {
+                bb.l = bb.l.min(w.left);
+                bb.t = bb.t.min(w.top);
+                bb.r = bb.r.max(w.right);
+                bb.b = bb.b.max(w.bottom);
+            }
+        }
+        1 // TRUE：继续枚举
+    }
+
+    fn virtual_work_bbox() -> Option<(i32, i32, i32, i32)> {
+        let mut bb = Bbox { has: false, l: 0, t: 0, r: 0, b: 0 };
+        unsafe {
+            EnumDisplayMonitors(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                Some(enum_proc),
+                &mut bb as *mut Bbox as LPARAM,
+            );
+        }
+        bb.has.then_some((bb.l, bb.t, bb.r, bb.b))
+    }
+
+    unsafe extern "system" fn subclass_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _ref: usize,
+    ) -> LRESULT {
+        if msg == WM_WINDOWPOSCHANGING {
+            let wp = &mut *(lparam as *mut WINDOWPOS);
+            // 仅在真正移动时约束（SWP_NOMOVE 表示这次不改位置）。
+            if (wp.flags & SWP_NOMOVE) == 0 {
+                if let Some((l, t, r, b)) = virtual_work_bbox() {
+                    // 钳进包围盒；窗口比包围盒还大时左上对齐。
+                    let max_x = (r - wp.cx).max(l);
+                    let max_y = (b - wp.cy).max(t);
+                    wp.x = wp.x.clamp(l, max_x);
+                    wp.y = wp.y.clamp(t, max_y);
+                }
+            }
+        }
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+
+    /// 给窗口装上位置约束子类（重复调用安全：同 id 覆盖）。`hwnd` 取自 tauri 的 window.hwnd()。
+    pub fn install(hwnd: isize) {
+        unsafe {
+            SetWindowSubclass(hwnd as HWND, Some(subclass_proc), SUBCLASS_ID, 0);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let path = db_path();
@@ -954,6 +1045,10 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 pull_on_screen(&w, false);
+                // 装上位置约束子类：在移动生效前硬钳坐标，彻底拖不出屏幕。
+                if let Ok(h) = w.hwnd() {
+                    win_constrain::install(h.0 as isize);
+                }
             }
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone());
