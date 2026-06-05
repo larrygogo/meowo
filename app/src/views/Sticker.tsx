@@ -237,8 +237,17 @@ export function Sticker({ data }: { data: Item[] }) {
               <div
                 className="stk-card"
                 key={l.session.id}
-                onClick={() => { if (l.pid) invoke("focus_session", { pid: l.pid }).catch(() => {}); }}
-                style={{ cursor: l.pid ? "pointer" : "default" }}
+                onClick={() => {
+                  if (l.connected) {
+                    // 连接中：跳转到对应 WT 标签页。
+                    if (l.pid) invoke("focus_session", { pid: l.pid, title: l.task_title }).catch(() => {});
+                  } else {
+                    // 已断开：开新 WT 标签页跑 claude --resume 恢复会话。
+                    invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id }).catch(() => {});
+                  }
+                }}
+                style={{ cursor: "pointer" }}
+                title={l.connected ? "点击跳转到该会话的终端" : "点击新建终端恢复该会话"}
               >
                 <div className="stk-top">
                   <span className="stk-ind">{indicator}</span>

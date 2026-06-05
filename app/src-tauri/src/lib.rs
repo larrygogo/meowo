@@ -327,6 +327,128 @@ fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Fo
     ctx.found
 }
 
+/// claude 会把任务标题写进 Windows Terminal 标签页，并加一个**会随状态变化**的前缀符号：
+/// 运行时是 braille spinner(⠐⠂…)，空闲/待输入时是 ✳(U+2733)，可能还有其它符号。
+/// 归一化：剥掉开头所有「非字母数字」字符（覆盖任意状态符号 + 空格；任务标题几乎总以
+/// 字母/数字/CJK 开头），并去掉尾部空白与截断省略号(…/...)。纯函数，便于单测。
+fn normalize_tab_title(s: &str) -> &str {
+    s.trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim_end()
+        .trim_end_matches(['…', '.'])
+        .trim_end()
+}
+
+/// 标签页标题 `tab_name` 与会话标题 `want` 的匹配强度：2=精确(归一化后相等)，1=单向包含，0=不匹配。
+/// 包含是**双向**的：兼容 claude 对长标题的截断(tab 标题是 want 的前缀)与轻微漂移。
+/// `want` 为空或占位("(未命名会话)")时不参与匹配(返回 0)，避免误命中无关标签页。纯函数。
+fn tab_match_score(tab_name: &str, want: &str) -> u8 {
+    let want = want.trim();
+    if want.is_empty() || want == "(未命名会话)" {
+        return 0;
+    }
+    let norm = normalize_tab_title(tab_name);
+    if norm.is_empty() {
+        return 0;
+    }
+    if norm == want {
+        2
+    } else if norm.contains(want) || want.contains(norm) {
+        1
+    } else {
+        0
+    }
+}
+
+/// 用 UI Automation 把对应会话的 Windows Terminal 标签页切到前台。
+///
+/// WT 单进程托管多标签/多窗口，按进程 PID 无法区分标签页（所有标签页同一个 HWND）。
+/// 但 claude 会把任务标题写进标签页标题，故按标题精确定位标签页：枚举所有 WT 窗口的
+/// TabItem，取匹配分最高的标签页，`Select` 选中后置前其窗口。命中返回 true；失败/无匹配返回 false。
+///
+/// 性能：仅当出现「多个同分标签页」需要消歧时，才用 `console_group_pids(root_pid)` 做一次进程扫描
+/// (昂贵，要枚举系统所有进程)；常见的唯一精确匹配走纯 UIA 路径(~十几 ms)，不扫进程。
+///
+/// 注意：本函数必须在「干净 COM apartment 的线程」上调用（见 `focus_session` 的后台线程）。
+/// `UIAutomation::new()` 会 CoInitialize 当前线程，Tauri 主线程已是 STA，复用会因 apartment 冲突失败。
+#[cfg(target_os = "windows")]
+fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
+    use uiautomation::patterns::UISelectionItemPattern;
+    use uiautomation::types::{ControlType, TreeScope, UIProperty};
+    use uiautomation::variants::Variant;
+    use uiautomation::{UIAutomation, UIElement};
+
+    let Ok(automation) = UIAutomation::new() else { return false };
+    let Ok(root) = automation.get_root_element() else { return false };
+
+    // 所有 Windows Terminal 顶层窗口（窗口类名固定）。timeout(0) 避免无匹配时阻塞重试。
+    let Ok(wt_windows) = automation
+        .create_matcher()
+        .from(root)
+        .classname("CASCADIA_HOSTING_WINDOW_CLASS")
+        .timeout(0)
+        .find_all()
+    else {
+        return false;
+    };
+
+    // 用 UIA 原生 FindAll(Descendants, ControlType==TabItem)：进程内优化执行，快且不会爬进
+    // 终端文本树（crate 的 matcher 是 Rust 侧手动遍历，深度大时可能很慢）。
+    let Ok(tab_cond) = automation.create_property_condition(
+        UIProperty::ControlType,
+        Variant::from(ControlType::TabItem as i32),
+        None,
+    ) else {
+        return false;
+    };
+
+    // 收集所有命中标签页：(匹配分, 所属窗口 pid, 标签页元素, 所属窗口元素)。先不算进程组。
+    let mut matches: Vec<(u8, u32, UIElement, UIElement)> = Vec::new();
+    for win in wt_windows {
+        let win_pid = win
+            .get_property_value(UIProperty::ProcessId)
+            .ok()
+            .and_then(|v| TryInto::<i32>::try_into(v).ok())
+            .map(|i| i as u32)
+            .unwrap_or(0);
+        let Ok(tabs) = win.find_all(TreeScope::Descendants, &tab_cond) else {
+            continue;
+        };
+        for tab in tabs {
+            let score = tab_match_score(&tab.get_name().unwrap_or_default(), want);
+            if score > 0 {
+                matches.push((score, win_pid, tab, win.clone()));
+            }
+        }
+    }
+
+    let max_score = matches.iter().map(|m| m.0).max().unwrap_or(0);
+    if max_score == 0 {
+        return false;
+    }
+    // 只保留最高分候选。
+    matches.retain(|m| m.0 == max_score);
+    // 唯一候选直接用；多个同分时才扫进程组，优先选与本会话同进程组的窗口。
+    let idx = if matches.len() == 1 {
+        0
+    } else {
+        let group = console_group_pids(root_pid);
+        matches.iter().position(|m| group.contains(&m.1)).unwrap_or(0)
+    };
+    let (_, _, tab, win) = &matches[idx];
+
+    // 选中该标签页（即使其窗口当前在后台也会切换激活标签页）。
+    if let Ok(p) = tab.get_pattern::<UISelectionItemPattern>() {
+        let _ = p.select();
+    }
+    // 置前其所属窗口（这一步也解决了多 WT 窗口共用 PID 时聚焦错窗口的问题）。
+    if let Ok(handle) = win.get_native_window_handle() {
+        let hwnd_isize: isize = handle.into();
+        force_foreground(hwnd_isize as windows_sys::Win32::Foundation::HWND);
+        return true;
+    }
+    false
+}
+
 /// 用 AttachThreadInput 绕过 Windows 后台进程 SetForegroundWindow 限制，可靠置顶目标窗口。
 #[cfg(target_os = "windows")]
 fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
@@ -371,19 +493,94 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
 }
 
 #[tauri::command]
-fn focus_session(pid: i64) -> Result<(), String> {
+fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
     if pid <= 0 {
         return Err("无效 pid".into());
     }
     #[cfg(target_os = "windows")]
     {
-        let targets = console_group_pids(pid as u32);
-        let hwnd = find_window_for_pids(&targets).ok_or("未找到该会话的窗口".to_string())?;
-        force_foreground(hwnd);
+        // 全部放后台线程并 fire-and-forget（前端本就忽略返回），原因有二：
+        // 1) 干净 COM apartment：Tauri 同步命令在主线程执行，主线程已是 STA，
+        //    复用会让 `UIAutomation::new()` 因 apartment 冲突失败。
+        // 2) 不阻塞主线程：若 join 等待，`force_foreground` 的 AttachThreadInput 会附着到
+        //    「被阻塞、不再泵消息」的主线程（贴纸窗口正是当前前台）→ 死锁卡死。
+        //    立即返回让主线程继续泵消息，后台线程再 AttachThreadInput 才安全。
+        std::thread::spawn(move || {
+            // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
+            // 此路径不做进程扫描，仅靠标题匹配，快。
+            if let Some(t) = title.as_deref() {
+                if focus_terminal_tab(pid as u32, t) {
+                    return;
+                }
+            }
+            // 兜底：传统 conhost（每窗口独立进程）等场景，才扫进程组按 PID 找顶层窗口置前。
+            let targets = console_group_pids(pid as u32);
+            if let Some(hwnd) = find_window_for_pids(&targets) {
+                force_foreground(hwnd);
+            }
+        });
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = pid;
+        let _ = (pid, title);
+        return Err("仅支持 Windows".into());
+    }
+    Ok(())
+}
+
+/// 会话 id 是否为合法 UUID 形态（仅十六进制与连字符，长度 36）。
+/// 用于命令注入防护：通过校验即保证 id 不含引号/分号/空格等任何 shell/wt 元字符。纯函数。
+fn is_session_id(s: &str) -> bool {
+    s.len() == 36 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+}
+
+/// 把 `cwd` 收敛成「可安全传给 wt -d」的目录：必须非空、真实存在的目录，且不含会破坏 wt
+/// 命令行解析的元字符(`;` `"`)。不满足则返回 None（调用方退化为不带 -d）。
+#[cfg(target_os = "windows")]
+fn safe_cwd(cwd: Option<&str>) -> Option<String> {
+    let d = cwd?.trim();
+    if d.is_empty() || d.contains([';', '"']) {
+        return None;
+    }
+    std::path::Path::new(d).is_dir().then(|| d.to_string())
+}
+
+/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个 Windows Terminal 标签页，跑
+/// `claude --resume <session_id>`。`cwd` 缺失/非法(旧会话)时不带 `-d`，尽力按 id 恢复。
+///
+/// 安全：`session_id` 严格校验为 UUID 形态，`claude`/`--resume`/id 作为**独立 argv** 传给 wt
+/// (不拼接 shell 命令字符串)，从源头杜绝命令注入；`cwd` 经 `safe_cwd` 校验为真实目录且无元字符。
+#[tauri::command]
+fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String> {
+    if !is_session_id(&session_id) {
+        return Err("无效 session_id".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
+        // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
+        let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+        // wt -w 0 nt [-d <cwd>] claude --resume <id>
+        //   -w 0 nt：在最近的 WT 窗口新开标签页(无则自动建)；-d：在会话原目录打开。
+        //   claude 是 PATH 上的 claude.exe，直接拉起，--resume 与 id 各为独立参数。
+        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+        if let Some(dir) = safe_cwd(resolved_cwd.as_deref()) {
+            args.push("-d".into());
+            args.push(dir);
+        }
+        args.push("claude".into());
+        args.push("--resume".into());
+        args.push(session_id);
+
+        Command::new("wt")
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = cwd;
         return Err("仅支持 Windows".into());
     }
     Ok(())
@@ -607,6 +804,7 @@ pub fn run() {
             get_project_tasks,
             get_live_sessions,
             focus_session,
+            resume_session,
             set_archived,
             set_update_menu,
             snap_collapse,
@@ -642,7 +840,65 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{edge_for_rect, Edge, Rect};
+    use super::{edge_for_rect, is_session_id, normalize_tab_title, tab_match_score, Edge, Rect};
+
+    #[test]
+    fn session_id_accepts_uuid() {
+        assert!(is_session_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
+        assert!(is_session_id("00000000-0000-0000-0000-000000000000"));
+    }
+
+    #[test]
+    fn session_id_rejects_injection_and_malformed() {
+        // 含 shell/wt 元字符 → 拒绝（命令注入防护）。
+        assert!(!is_session_id("'; calc; '")); // 注入尝试
+        assert!(!is_session_id("abc --resume x; calc"));
+        assert!(!is_session_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890 ")); // 尾空格
+        assert!(!is_session_id("")); // 空
+        assert!(!is_session_id("g1b2c3d4-e5f6-7890-abcd-ef1234567890")); // 'g' 非 hex
+        assert!(!is_session_id("a1b2c3d4-e5f6-7890-abcd-ef123456789")); // 长度 35
+    }
+
+    #[test]
+    fn tab_title_strips_spinner_prefix() {
+        // claude 写入的标题：状态符号 + 空格 + 任务标题。前缀符号会随状态变化。
+        assert_eq!(normalize_tab_title("⠐ 修复贴纸窗口跳转"), "修复贴纸窗口跳转"); // braille spinner
+        assert_eq!(normalize_tab_title("✳ 修复贴纸窗口跳转"), "修复贴纸窗口跳转"); // 空闲 ✳
+        assert_eq!(normalize_tab_title("⠙ Allow editing titles"), "Allow editing titles");
+        // 无前缀也应原样（仅去首尾空白）。
+        assert_eq!(normalize_tab_title("  纯标题  "), "纯标题");
+        // 尾部截断省略号应去掉。
+        assert_eq!(normalize_tab_title("✳ 修复贴纸窗口…"), "修复贴纸窗口");
+    }
+
+    #[test]
+    fn tab_match_exact_after_normalize() {
+        // 不论前缀是 spinner 还是 ✳，剥离后都应精确命中(=2)，这是修「时好时坏」的关键。
+        assert_eq!(tab_match_score("⠐ 修复贴纸窗口跳转", "修复贴纸窗口跳转"), 2);
+        assert_eq!(tab_match_score("✳ 修复贴纸窗口跳转", "修复贴纸窗口跳转"), 2);
+        assert_eq!(tab_match_score("修复贴纸窗口跳转", "修复贴纸窗口跳转"), 2);
+    }
+
+    #[test]
+    fn tab_match_contains_is_weaker() {
+        // 标签页标题含会话标题但不完全相等（如 claude 追加了后缀）→ 弱匹配。
+        assert_eq!(tab_match_score("⠐ 修复贴纸窗口跳转 - done", "修复贴纸窗口跳转"), 1);
+        // 长标题被 claude 截断：tab 标题是 want 的前缀 → 双向包含命中(=1)。
+        assert_eq!(tab_match_score("✳ 修复贴纸连接中会话窗口…", "修复贴纸连接中会话窗口跳转问题"), 1);
+    }
+
+    #[test]
+    fn tab_match_no_match() {
+        assert_eq!(tab_match_score("npm run build", "修复贴纸窗口跳转"), 0);
+    }
+
+    #[test]
+    fn tab_match_empty_or_unnamed_never_matches() {
+        // 空标题/未命名占位不参与匹配，避免误命中任意标签页。
+        assert_eq!(tab_match_score("⠐ 任意标题", ""), 0);
+        assert_eq!(tab_match_score("⠐ 任意标题", "  "), 0);
+        assert_eq!(tab_match_score("⠐ (未命名会话)", "(未命名会话)"), 0);
+    }
 
     const WORK: Rect = Rect { x: 0, y: 0, w: 1920, h: 1040 };
 

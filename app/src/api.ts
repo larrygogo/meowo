@@ -74,6 +74,7 @@ export type LiveSession = {
   pid: number | null;
   connected: boolean;
   archived: boolean;
+  cwd: string | null;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {

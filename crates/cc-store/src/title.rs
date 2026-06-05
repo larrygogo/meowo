@@ -78,6 +78,39 @@ pub fn find_transcript_by_session(session_id: &str) -> Option<std::path::PathBuf
     None
 }
 
+/// 从 transcript JSONL 里读出会话工作目录(cwd)：取第一条带非空 "cwd" 字段的记录。
+/// cwd 在文件靠前的消息记录里，故逐行读、命中即返回，避免把大文件整体读入。
+pub fn cwd_from_transcript(path: &str) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line.ok()?;
+        if !line.contains("\"cwd\"") {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(c) = v.get("cwd").and_then(|x| x.as_str()) {
+            if !c.trim().is_empty() {
+                return Some(c.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 解析会话工作目录：优先用已知 cwd（DB 里有就直接用），否则按 session_id 全局找 transcript
+/// 再从中读出 cwd。用于「恢复会话」——claude --resume 必须在正确的项目目录下运行才找得到会话。
+pub fn resolve_cwd(cwd: Option<&str>, session_id: &str) -> Option<String> {
+    if let Some(c) = cwd.filter(|c| !c.trim().is_empty()) {
+        return Some(c.to_string());
+    }
+    let p = find_transcript_by_session(session_id)?;
+    cwd_from_transcript(p.to_str()?)
+}
+
 /// 解析会话标题，依次尝试：
 /// 1) hook 给的 transcript_path；2) cwd+session_id 重建路径；3) 按 session_id 全局查找。
 pub fn resolve_title(
@@ -116,5 +149,28 @@ mod tests {
     #[test]
     fn encode_cwd_unix_path() {
         assert_eq!(encode_cwd("/tmp/x y"), "-tmp-x-y");
+    }
+
+    #[test]
+    fn cwd_from_transcript_skips_metadata_takes_message() {
+        // 模拟真实 transcript：开头元数据无 cwd，消息记录才带 cwd。
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("cc_cwd_test_{}.jsonl", std::process::id()));
+        let content = concat!(
+            "{\"type\":\"leafUuid\",\"sessionId\":\"s\"}\n",
+            "{\"type\":\"permissionMode\",\"sessionId\":\"s\"}\n",
+            "{\"type\":\"user\",\"cwd\":\"C:\\\\Users\\\\me\\\\proj\",\"sessionId\":\"s\"}\n",
+        );
+        std::fs::write(&path, content).unwrap();
+        let got = cwd_from_transcript(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        assert_eq!(got.as_deref(), Some(r"C:\Users\me\proj"));
+    }
+
+    #[test]
+    fn resolve_cwd_prefers_known() {
+        // 已有 cwd 时直接用，不读文件。
+        assert_eq!(resolve_cwd(Some(r"C:\a\b"), "anyid").as_deref(), Some(r"C:\a\b"));
+        assert_eq!(resolve_cwd(Some("  "), "no-such-session-id-xxx"), None); // 空 cwd 且找不到 transcript
     }
 }

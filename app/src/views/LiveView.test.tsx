@@ -19,6 +19,7 @@ function mk(over: Partial<LiveSession> = {}): LiveSession {
     pid: null,
     connected: false,
     archived: false,
+    cwd: null,
     ...over,
   };
 }
