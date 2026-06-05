@@ -902,9 +902,41 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Moved(pos) = event {
-                if let (Ok(Some(m)), Ok(size)) = (window.current_monitor(), window.outer_size()) {
+                let Ok(size) = window.outer_size() else { return };
+                let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
+
+                // 限制贴纸不被拖出屏幕：把窗口钳进「所有显示器工作区的并集包围盒」。
+                // 越界就立刻拉回，拖到边缘即停（吸边仍在界内，不受影响）。多显示器下可在并集内自由移动。
+                let vwork = window.available_monitors().ok().and_then(|ms| {
+                    let mut it = ms.iter().map(|m| {
+                        let wa = m.work_area();
+                        (
+                            wa.position.x,
+                            wa.position.y,
+                            wa.position.x + wa.size.width as i32,
+                            wa.position.y + wa.size.height as i32,
+                        )
+                    });
+                    let (mut ax, mut ay, mut bx, mut by) = it.next()?;
+                    for (x0, y0, x1, y1) in it {
+                        ax = ax.min(x0);
+                        ay = ay.min(y0);
+                        bx = bx.max(x1);
+                        by = by.max(y1);
+                    }
+                    Some(Rect { x: ax, y: ay, w: bx - ax, h: by - ay })
+                });
+                if let Some(vwork) = vwork {
+                    let (cx, cy) = clamp_xy_to_work(win, vwork);
+                    if (cx, cy) != (win.x, win.y) {
+                        let _ = window.set_position(tauri::PhysicalPosition::new(cx, cy));
+                        return; // 钳正后会再触发一次 Moved（已在界内），那次再算吸附边
+                    }
+                }
+
+                // 贴边检测（用当前显示器工作区）。
+                if let Ok(Some(m)) = window.current_monitor() {
                     let wa = m.work_area();
-                    let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
                     let work = Rect {
                         x: wa.position.x,
                         y: wa.position.y,
