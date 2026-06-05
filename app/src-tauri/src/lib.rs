@@ -683,6 +683,23 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
+/// 设置/关于页用：在默认浏览器打开本项目链接。仅允许本仓库的 https 链接（白名单），
+/// 用 explorer 打开（不经 shell），杜绝被滥用打开任意/恶意目标。
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/larrygogo/cc-kanban") {
+        return Err("不允许的链接".into());
+    }
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    let _ = url;
+    Ok(())
+}
+
 /// 前端检查更新后回写托盘「更新」菜单项：有新版 → 可点击「更新到 vX」；无 → 「已是最新版本」(禁用)。
 /// 菜单变更必须在主线程执行。
 #[tauri::command]
@@ -826,8 +843,10 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     tauri::WebviewUrl::App("index.html".into()),
                 )
                 .title("设置")
-                .inner_size(360.0, 460.0)
+                .inner_size(620.0, 460.0)
+                .min_inner_size(620.0, 460.0)
                 .resizable(false)
+                .decorations(false)
                 .center()
                 .build()
                 {
@@ -972,6 +991,7 @@ pub fn run() {
             set_archived,
             get_autostart,
             set_autostart,
+            open_url,
             set_update_menu,
             snap_collapse,
             snap_expand,
