@@ -356,5 +356,17 @@ html, body {
   cursor: pointer;
 }
 .about-btn:hover { filter: brightness(1.08); }
+/* 设置项一行：左标签右开关 */
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 200px;
+  font-size: 12px;
+  color: var(--cc-text-dim);
+  cursor: pointer;
+}
+.set-row input { cursor: pointer; accent-color: var(--cc-accent); }
 .about-status { font-size: 11px; color: var(--cc-text-dim); min-height: 14px; }
 .about-license { font-size: 10.5px; color: var(--cc-text-faint); margin-top: 4px; }

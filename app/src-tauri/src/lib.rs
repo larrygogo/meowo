@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -667,6 +667,22 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived).map_err(|e| e.to_string())
 }
 
+/// 设置窗口用：读取/切换开机自启（原来只在托盘，托盘精简后搬到设置页）。
+#[tauri::command]
+fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(app.autolaunch().is_enabled().unwrap_or(false))
+}
+
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let mgr = app.autolaunch();
+    if enabled {
+        mgr.enable().map_err(|e| e.to_string())
+    } else {
+        mgr.disable().map_err(|e| e.to_string())
+    }
+}
+
 /// 前端检查更新后回写托盘「更新」菜单项：有新版 → 可点击「更新到 vX」；无 → 「已是最新版本」(禁用)。
 /// 菜单变更必须在主线程执行。
 #[tauri::command]
@@ -790,66 +806,18 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
 
 /// 构建系统托盘：显示/隐藏贴纸、开机自启开关、退出。
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let toggle = MenuItemBuilder::with_id("toggle", "显示/隐藏贴纸").build(app)?;
-    let recenter = MenuItemBuilder::with_id("recenter", "回到屏幕").build(app)?;
-    let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
-    let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自启")
-        .checked(autostart_on)
-        .build(app)?;
-    let ver = app.package_info().version.to_string();
-    let about = MenuItemBuilder::with_id("about", format!("关于 v{ver}")).build(app)?;
-    let update = MenuItemBuilder::with_id("update", "检查更新").build(app)?;
-    // 存句柄：前端检查到结果后通过 set_update_menu 回写文案/可用性。
-    app.state::<AppState>()
-        .update_item
-        .lock()
-        .unwrap()
-        .replace(update.clone());
+    // 托盘只保留两项：设置（打开设置窗口）、退出。其余（开机自启等）搬进设置窗口。
+    let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&toggle, &recenter, &autostart, &about, &update, &quit])
-        .build()?;
+    let menu = MenuBuilder::new(app).items(&[&settings, &quit]).build()?;
 
-    let autostart_item = autostart.clone();
     TrayIconBuilder::with_id("cc-kanban-tray")
         .icon(app.default_window_icon().unwrap().clone())
         .tooltip("cc-kanban")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id().as_ref() {
-            "toggle" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                        // 显示时若贴纸在屏外则救回，否则「显示」对丢失的窗口没用。
-                        #[cfg(target_os = "windows")]
-                        pull_on_screen(&w, false);
-                        let _ = w.set_focus();
-                    }
-                }
-            }
-            "recenter" => {
-                // 显式找回：强制把贴纸钳进可视区并显示置前，无论它当前在不在屏内。
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    #[cfg(target_os = "windows")]
-                    pull_on_screen(&w, true);
-                    let _ = w.set_focus();
-                }
-            }
-            "autostart" => {
-                let mgr = app.autolaunch();
-                let now_on = if mgr.is_enabled().unwrap_or(false) {
-                    let _ = mgr.disable();
-                    false
-                } else {
-                    let _ = mgr.enable();
-                    true
-                };
-                let _ = autostart_item.set_checked(now_on);
-            }
-            "about" => {
+            "settings" => {
+                // 窗口 label 仍叫 "about"（main.tsx 按此 label 路由到设置页），仅标题/入口改名为「设置」。
                 if let Some(w) = app.get_webview_window("about") {
                     let _ = w.set_focus();
                 } else if let Err(e) = tauri::WebviewWindowBuilder::new(
@@ -857,21 +825,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     "about",
                     tauri::WebviewUrl::App("index.html".into()),
                 )
-                .title("关于 cc-kanban")
+                .title("设置")
                 .inner_size(340.0, 400.0)
                 .resizable(false)
                 .center()
                 .build()
                 {
-                    eprintln!("创建关于窗口失败: {e}");
+                    eprintln!("创建设置窗口失败: {e}");
                 }
-            }
-            "update" => {
-                // 显示主窗并通知它处理（有新版→安装；否则→重新检查）。单一来源在前端。
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                }
-                let _ = app.emit("tray-update-clicked", ());
             }
             "quit" => app.exit(0),
             _ => {}
@@ -1009,6 +970,8 @@ pub fn run() {
             focus_session,
             resume_session,
             set_archived,
+            get_autostart,
+            set_autostart,
             set_update_menu,
             snap_collapse,
             snap_expand,
