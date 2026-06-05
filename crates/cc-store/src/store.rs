@@ -443,9 +443,12 @@ impl Store {
     /// （它们已被 /clear、resume、或同进程开新会话取代），否则旧会话会因进程仍存活而一直
     /// 误显示「已连接」。pid 复用（旧进程退出、号被新 claude 占用）也由此一并纠正。
     pub fn set_session_pid(&self, session_id: i64, pid: i64, now_ms: i64) -> Result<(), StoreError> {
+        // 被同一进程的新会话顶替的旧会话：直接收尾为 ended（pid 清空、记 ended_at），
+        // 这样 /clear 一发生旧会话立刻从 live 列表消失，而不是只摘 pid 留个空壳。
         self.conn.execute(
-            "UPDATE sessions SET pid = NULL WHERE pid = ?1 AND id <> ?2",
-            rusqlite::params![pid, session_id],
+            "UPDATE sessions SET pid = NULL, status = 'ended', ended_at = ?2 \
+             WHERE pid = ?1 AND id <> ?3 AND status <> 'ended'",
+            rusqlite::params![pid, now_ms, session_id],
         )?;
         self.conn.execute(
             "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3",

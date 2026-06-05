@@ -717,33 +717,40 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 取当前 live(running/waiting) 会话里进程仍存活的 session id（升序）。
-/// 只查「进程在不在」这个外部事实，不按时间臆测状态。
-fn alive_session_ids(store: &Store) -> Vec<i64> {
+/// 轮询一次：把「记录了 pid、但该进程已死」的 live 会话收尾为 ended（self-heal），
+/// 并返回仍存活的 session id（升序）与本轮收尾的数量。
+///
+/// 终端被关/被 /clear 打断时 SessionEnd 往往不触发，会话状态会永远卡在 running/waiting；
+/// 进程都没了就该收尾。pid 为空的不动（可能是刚启动还没抓到 pid，宁可不臆测）。
+fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
     let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
-    let mut ids: Vec<i64> = store
-        .live_session_liveness()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, pid, _)| match pid {
-            Some(p) if *p > 0 => sys.process(Pid::from_u32(*p as u32)).is_some(),
-            _ => false,
-        })
-        .map(|(id, _, _)| id)
-        .collect();
-    ids.sort_unstable();
-    ids
+    let mut alive: Vec<i64> = Vec::new();
+    let mut reaped = 0usize;
+    for (id, pid, _) in store.live_session_liveness().unwrap_or_default() {
+        match pid {
+            Some(p) if p > 0 => {
+                if sys.process(Pid::from_u32(p as u32)).is_some() {
+                    alive.push(id);
+                } else if store.end_session(id, now_ms).is_ok() {
+                    reaped += 1; // 进程已死 → 收尾
+                }
+            }
+            _ => {} // pid 未知：不臆测，留给 SessionEnd / 同进程新会话驱逐处理
+        }
+    }
+    alive.sort_unstable();
+    (alive, reaped)
 }
 
-/// 周期轮询进程存活：存活集合变化（有会话进程退出）时才发 board-changed，
-/// 让前端重算 connected。进程退出不改 DB、notify 监听不到，故需这个轮询兜底。
+/// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
+/// 进程退出不改 DB、notify 也监听不到，故需这个轮询兜底。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || {
         let mut last: Vec<i64> = Vec::new();
         loop {
             if let Ok(store) = Store::open(&db_path) {
-                let alive = alive_session_ids(&store);
-                if alive != last {
+                let (alive, reaped) = reap_and_alive_ids(&store, now_ms());
+                if alive != last || reaped > 0 {
                     let _ = app.emit("board-changed", ());
                     last = alive;
                 }
@@ -883,7 +890,9 @@ mod win_constrain {
         EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
     };
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, WINDOWPOS, WM_WINDOWPOSCHANGING};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_WINDOWPOSCHANGING,
+    };
 
     const SUBCLASS_ID: usize = 0x00CC_4A0B;
 
@@ -944,12 +953,26 @@ mod win_constrain {
             let wp = &mut *(lparam as *mut WINDOWPOS);
             // 仅在真正移动时约束（SWP_NOMOVE 表示这次不改位置）。
             if (wp.flags & SWP_NOMOVE) == 0 {
-                if let Some((l, t, r, b)) = virtual_work_bbox() {
-                    // 钳进包围盒；窗口比包围盒还大时左上对齐。
-                    let max_x = (r - wp.cx).max(l);
-                    let max_y = (b - wp.cy).max(t);
-                    wp.x = wp.x.clamp(l, max_x);
-                    wp.y = wp.y.clamp(t, max_y);
+                // 取窗口尺寸：SWP_NOSIZE（纯移动，拖拽就是这种）下 wp.cx/cy 无效，
+                // 必须用 GetWindowRect 取真实尺寸，否则右/下边界算错、能拖出屏幕。
+                let (w, h) = if (wp.flags & SWP_NOSIZE) != 0 {
+                    let mut rc: RECT = std::mem::zeroed();
+                    if GetWindowRect(hwnd, &mut rc) != 0 {
+                        (rc.right - rc.left, rc.bottom - rc.top)
+                    } else {
+                        (0, 0)
+                    }
+                } else {
+                    (wp.cx, wp.cy)
+                };
+                if w > 0 && h > 0 {
+                    if let Some((l, t, r, b)) = virtual_work_bbox() {
+                        // 钳进包围盒；窗口比包围盒还大时左上对齐。
+                        let max_x = (r - w).max(l);
+                        let max_y = (b - h).max(t);
+                        wp.x = wp.x.clamp(l, max_x);
+                        wp.y = wp.y.clamp(t, max_y);
+                    }
                 }
             }
         }

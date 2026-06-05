@@ -283,13 +283,13 @@ fn set_pid_evicts_same_pid_from_other_sessions() {
     store.set_session_pid(new, 7777, 210).unwrap(); // 同一进程认领新会话
 
     let live = store.live_sessions().unwrap();
-    let pid_of = |cc: &str| {
-        live.iter()
-            .find(|s| s.session.cc_session_id == cc)
-            .map(|s| s.pid)
-    };
-    assert_eq!(pid_of("old"), Some(None)); // 旧会话 pid 被摘除 → 不再误判已连接
-    assert_eq!(pid_of("new"), Some(Some(7777))); // 新会话持有 pid
+    let of = |cc: &str| live.iter().find(|s| s.session.cc_session_id == cc).unwrap();
+    // 旧会话被收尾：pid 摘除 + 状态 ended → 不再误判已连接、状态也收尾。
+    assert_eq!(of("old").pid, None);
+    assert_eq!(of("old").session.status, "ended");
+    // 新会话持有 pid，状态仍 live。
+    assert_eq!(of("new").pid, Some(7777));
+    assert_ne!(of("new").session.status, "ended");
 }
 
 #[test]
