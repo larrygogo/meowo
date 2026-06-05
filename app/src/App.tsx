@@ -39,10 +39,15 @@ function isPinned(): boolean {
 
 export function App() {
   const [live, setLive] = useState<Item[]>([]);
-  const [mode, setMode] = useState<Mode>("normal");
   const [edge, setEdge] = useState<Edge | null>(() => {
     const s = localStorage.getItem(SNAP_KEY);
     return s === "left" || s === "right" || s === "top" ? s : null;
+  });
+  // mode 初值与 edge 同源：上次在吸附态关闭（window-state 会把窗口恢复成缩略条尺寸），
+  // 首屏就渲染缩略条，避免在细条窗口里显示完整贴纸的脱节。
+  const [mode, setMode] = useState<Mode>(() => {
+    const s = localStorage.getItem(SNAP_KEY);
+    return s === "left" || s === "right" || s === "top" ? "collapsed" : "normal";
   });
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
   const {
