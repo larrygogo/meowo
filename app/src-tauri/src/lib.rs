@@ -52,6 +52,81 @@ pub fn edge_for_rect(win: Rect, work: Rect, threshold: i32) -> Option<Edge> {
     best.map(|(e, _)| e)
 }
 
+/// 两个矩形的相交面积（无重叠为 0）。用于判断窗口是否还落在某个显示器工作区内。纯函数。
+pub fn intersection_area(a: Rect, b: Rect) -> i64 {
+    let w = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+    let h = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
+    if w <= 0 || h <= 0 {
+        0
+    } else {
+        w as i64 * h as i64
+    }
+}
+
+/// 把窗口左上角最小幅度地钳进工作区，使窗口完整落在 `work` 内，返回钳制后的 (x, y)。
+/// 窗口比工作区还大时，左上角对齐工作区原点。纯函数，便于单测。
+pub fn clamp_xy_to_work(win: Rect, work: Rect) -> (i32, i32) {
+    let clamp_axis = |pos: i32, size: i32, wpos: i32, wsize: i32| -> i32 {
+        if size >= wsize {
+            wpos
+        } else {
+            pos.clamp(wpos, wpos + wsize - size)
+        }
+    };
+    (
+        clamp_axis(win.x, win.w, work.x, work.w),
+        clamp_axis(win.y, win.h, work.y, work.h),
+    )
+}
+
+/// 把窗口拉回可视区，防止「多显示器拔插/分辨率变化/拖到屏外」后贴纸消失在所有屏幕之外。
+/// - `force=false`（救援）：仅当窗口与所有显示器工作区**完全无交集**时才移回主显示器，不打扰正常摆放。
+/// - `force=true`（显式找回）：钳进「相交面积最大／主」显示器工作区，确保完整可见。
+#[cfg(target_os = "windows")]
+fn pull_on_screen(window: &tauri::WebviewWindow, force: bool) {
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
+    let Ok(monitors) = window.available_monitors() else { return };
+    if monitors.is_empty() {
+        return;
+    }
+    let to_work = |m: &tauri::window::Monitor| {
+        let wa = m.work_area();
+        Rect { x: wa.position.x, y: wa.position.y, w: wa.size.width as i32, h: wa.size.height as i32 }
+    };
+    // 找与窗口相交面积最大的显示器工作区。
+    let mut best: Option<(i64, Rect)> = None;
+    for m in &monitors {
+        let work = to_work(m);
+        let area = intersection_area(win, work);
+        if best.is_none_or(|(a, _)| area > a) {
+            best = Some((area, work));
+        }
+    }
+    let (best_area, best_work) = best.unwrap();
+    // 救援模式下，只要还跟某个屏有交集就不动。
+    if !force && best_area > 0 {
+        return;
+    }
+    // 目标工作区：有交集就用相交最大的那个；完全在屏外则用主显示器（兜底用第一个）。
+    let target = if best_area > 0 {
+        best_work
+    } else {
+        window
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map(|m| to_work(&m))
+            .unwrap_or(best_work)
+    };
+    let (x, y) = clamp_xy_to_work(win, target);
+    if (x, y) != (win.x, win.y) {
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+}
+
 /// snap-changed 事件负载：当前检测到的吸附边（None 表示不贴边）。
 #[derive(Clone, serde::Serialize)]
 struct SnapPayload {
@@ -709,6 +784,7 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
 /// 构建系统托盘：显示/隐藏贴纸、开机自启开关、退出。
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let toggle = MenuItemBuilder::with_id("toggle", "显示/隐藏贴纸").build(app)?;
+    let recenter = MenuItemBuilder::with_id("recenter", "回到屏幕").build(app)?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自启")
         .checked(autostart_on)
@@ -724,7 +800,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .replace(update.clone());
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
     let menu = MenuBuilder::new(app)
-        .items(&[&toggle, &autostart, &about, &update, &quit])
+        .items(&[&toggle, &recenter, &autostart, &about, &update, &quit])
         .build()?;
 
     let autostart_item = autostart.clone();
@@ -739,7 +815,20 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                         let _ = w.hide();
                     } else {
                         let _ = w.show();
+                        // 显示时若贴纸在屏外则救回，否则「显示」对丢失的窗口没用。
+                        #[cfg(target_os = "windows")]
+                        pull_on_screen(&w, false);
+                        let _ = w.set_focus();
                     }
+                }
+            }
+            "recenter" => {
+                // 显式找回：强制把贴纸钳进可视区并显示置前，无论它当前在不在屏内。
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    #[cfg(target_os = "windows")]
+                    pull_on_screen(&w, true);
+                    let _ = w.set_focus();
                 }
             }
             "autostart" => {
@@ -829,6 +918,11 @@ pub fn run() {
         })
         .setup(move |app| {
             setup_tray(app)?;
+            // window-state 恢复后，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
+            #[cfg(target_os = "windows")]
+            if let Some(w) = app.get_webview_window("main") {
+                pull_on_screen(&w, false);
+            }
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone());
             spawn_first_import(app.handle().clone(), path.clone());
@@ -840,7 +934,43 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{edge_for_rect, is_session_id, normalize_tab_title, tab_match_score, Edge, Rect};
+    use super::{
+        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
+        tab_match_score, Edge, Rect,
+    };
+
+    const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
+
+    #[test]
+    fn intersection_area_overlap_and_disjoint() {
+        let win = Rect { x: 100, y: 100, w: 400, h: 300 };
+        assert_eq!(intersection_area(win, WORK1), 400 * 300); // 完全在内
+        // 完全在屏外（第二屏被拔掉的旧坐标）
+        let off = Rect { x: 3000, y: 200, w: 400, h: 300 };
+        assert_eq!(intersection_area(off, WORK1), 0);
+        // 部分相交
+        let partial = Rect { x: 2400, y: 0, w: 400, h: 300 };
+        assert_eq!(intersection_area(partial, WORK1), (2556 - 2400) * 300);
+    }
+
+    #[test]
+    fn clamp_brings_offscreen_window_fully_in() {
+        // 在屏右外 → 钳到右边界内（x = 2556 - 400）
+        let off = Rect { x: 3000, y: 200, w: 400, h: 300 };
+        assert_eq!(clamp_xy_to_work(off, WORK1), (2556 - 400, 200));
+        // 负坐标（屏左上外）→ 钳到原点
+        let neg = Rect { x: -50, y: -30, w: 400, h: 300 };
+        assert_eq!(clamp_xy_to_work(neg, WORK1), (0, 0));
+        // 已在屏内 → 不动
+        let inside = Rect { x: 100, y: 100, w: 400, h: 300 };
+        assert_eq!(clamp_xy_to_work(inside, WORK1), (100, 100));
+    }
+
+    #[test]
+    fn clamp_window_larger_than_work_aligns_origin() {
+        let big = Rect { x: 500, y: 500, w: 3000, h: 2000 };
+        assert_eq!(clamp_xy_to_work(big, WORK1), (0, 0));
+    }
 
     #[test]
     fn session_id_accepts_uuid() {
