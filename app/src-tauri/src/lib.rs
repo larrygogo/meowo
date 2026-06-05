@@ -826,7 +826,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     tauri::WebviewUrl::App("index.html".into()),
                 )
                 .title("设置")
-                .inner_size(340.0, 400.0)
+                .inner_size(360.0, 460.0)
                 .resizable(false)
                 .center()
                 .build()
