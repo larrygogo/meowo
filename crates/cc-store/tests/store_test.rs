@@ -272,6 +272,27 @@ fn live_sessions_carries_pid() {
 }
 
 #[test]
+fn set_pid_evicts_same_pid_from_other_sessions() {
+    // /clear 等会在同一进程上开新会话：新会话认领 pid 后，旧会话的 pid 应被摘除，
+    // 否则旧会话会因进程仍存活而一直误显示「已连接」。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (old, _) = store.start_session(pid, "old", 100).unwrap();
+    store.set_session_pid(old, 7777, 110).unwrap();
+    let (new, _) = store.start_session(pid, "new", 200).unwrap();
+    store.set_session_pid(new, 7777, 210).unwrap(); // 同一进程认领新会话
+
+    let live = store.live_sessions().unwrap();
+    let pid_of = |cc: &str| {
+        live.iter()
+            .find(|s| s.session.cc_session_id == cc)
+            .map(|s| s.pid)
+    };
+    assert_eq!(pid_of("old"), Some(None)); // 旧会话 pid 被摘除 → 不再误判已连接
+    assert_eq!(pid_of("new"), Some(Some(7777))); // 新会话持有 pid
+}
+
+#[test]
 fn end_abandoned_ends_old_idle_sessions() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();

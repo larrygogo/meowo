@@ -438,7 +438,15 @@ impl Store {
     }
 
     /// 记录会话所属进程 PID（来自 reporter 在 SessionStart 抓取的 claude.exe 父进程）。
+    ///
+    /// 一个 claude 进程同一时刻只属于一个会话：故先把这个 pid 从**其它**会话上摘掉
+    /// （它们已被 /clear、resume、或同进程开新会话取代），否则旧会话会因进程仍存活而一直
+    /// 误显示「已连接」。pid 复用（旧进程退出、号被新 claude 占用）也由此一并纠正。
     pub fn set_session_pid(&self, session_id: i64, pid: i64, now_ms: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET pid = NULL WHERE pid = ?1 AND id <> ?2",
+            rusqlite::params![pid, session_id],
+        )?;
         self.conn.execute(
             "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![pid, now_ms, session_id],
