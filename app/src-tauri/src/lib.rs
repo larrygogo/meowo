@@ -867,14 +867,13 @@ fn pid_is_claude(sys: &System, pid: i64) -> bool {
 ///
 /// 终端被关/被 /clear 打断时 SessionEnd 往往不触发，会话状态会永远卡在 running/waiting；
 /// 进程都没了就该收尾。pid 为空的不动（可能是刚启动还没抓到 pid，宁可不臆测）。
-fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
-    let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+fn reap_and_alive_ids(store: &Store, sys: &System, now_ms: i64) -> (Vec<i64>, usize) {
     let mut alive: Vec<i64> = Vec::new();
     let mut reaped = 0usize;
     for (id, pid, _) in store.live_session_liveness().unwrap_or_default() {
         match pid {
             Some(p) if p > 0 => {
-                if pid_is_claude(&sys, p) {
+                if pid_is_claude(sys, p) {
                     alive.push(id);
                 } else if store.end_session(id, now_ms).is_ok() {
                     reaped += 1; // 进程已死 / pid 被复用 → 收尾
@@ -911,23 +910,24 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
         let mut seeded = false;
         loop {
             if let Ok(store) = Store::open(&db_path) {
+                let sys = System::new_with_specifics(
+                    RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+                );
                 let orphaned = store.end_orphaned_idle(ORPHAN_IDLE_MS, now_ms()).unwrap_or(0);
-                let (alive, reaped) = reap_and_alive_ids(&store, now_ms());
+                let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
                     let _ = app.emit("board-changed", ());
                     last = alive;
                 }
 
                 // 错误检测 + 去重通知：仅扫连接中的会话（活跃，数量少）。
-                let sys = System::new_with_specifics(
-                    RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-                );
                 let mut present: HashMap<String, String> = HashMap::new();
                 for s in store.live_sessions().unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
                         continue;
                     }
                     let sid = s.session.cc_session_id.clone();
+                    present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
                     let err = cc_store::title::resolve_transcript_path(
                         None, s.cwd.as_deref(), &sid,
                     )
@@ -936,7 +936,6 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
 
                     match err {
                         Some(e) => {
-                            present.insert(sid.clone(), e.fingerprint.clone());
                             let prev = notified.get(&sid).map(|s| s.as_str());
                             if seeded && should_notify(prev, Some(&e.fingerprint)) {
                                 let _ = app
@@ -953,7 +952,8 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                         }
                     }
                 }
-                // 清掉已不在连接中集合里的残留条目，防止 map 无限增长。
+                // 清掉本轮彻底消失（已结束/超出 100 条上限）的残留条目，防止 map 无限增长。
+                // 边缘情况：会话彻底消失后又带着完全相同的未解决错误重新出现，会再弹一次——可接受。
                 notified.retain(|k, _| present.contains_key(k));
                 seeded = true;
             }
