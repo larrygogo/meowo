@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings } from "../api";
+import { getSettings, setSettings, type Settings } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 
 const HIDE_OPTIONS = [
@@ -132,8 +132,7 @@ function GeneralSection() {
     invoke("set_autostart", { enabled: next }).catch(() => setAutostart(!next));
   };
   // 设置项写库统一发送完整 Settings（后端 set_settings 接收整个对象）。
-  const persist = (next: { archive_hide_days: number; notifications_enabled: boolean }) =>
-    setSettings(next);
+  const persist = (next: Settings) => setSettings(next);
   const changeHideDays = (days: number) => {
     const prev = hideDays;
     setHideDays(days);
