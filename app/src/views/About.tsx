@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getSettings, setSettings } from "../api";
 import { useUpdate } from "../useUpdate";
+
+const HIDE_OPTIONS = [
+  { value: 0, label: "永不" },
+  { value: 1, label: "1 天" },
+  { value: 7, label: "7 天" },
+  { value: 30, label: "30 天" },
+];
 
 const REPO = "github.com/larrygogo/cc-kanban";
 const REPO_URL = "https://github.com/larrygogo/cc-kanban";
@@ -37,15 +45,90 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: () => void 
   );
 }
 
+function Dropdown({
+  value,
+  options,
+  onChange,
+}: {
+  value: number;
+  options: { value: number; label: string }[];
+  onChange: (v: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // 菜单用 fixed 定位（脱离 .row-card/.main-body 的 overflow 裁剪），按钮坐标实时测量。
+  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const close = () => setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+  const toggle = () => {
+    if (!open) {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 6, right: Math.max(0, window.innerWidth - r.right) });
+    }
+    setOpen((v) => !v);
+  };
+  const cur = options.find((o) => o.value === value);
+  return (
+    <div className="dd" ref={ref}>
+      <button ref={btnRef} type="button" className={"dd-btn" + (open ? " open" : "")} onClick={toggle}>
+        <span>{cur?.label ?? ""}</span>
+        <svg className="dd-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div className="dd-menu" role="listbox" style={{ position: "fixed", top: pos.top, right: pos.right }}>
+          {options.map((o) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={o.value === value}
+              key={o.value}
+              className={"dd-item" + (o.value === value ? " sel" : "")}
+              onClick={() => { onChange(o.value); setOpen(false); }}
+            >
+              <span>{o.label}</span>
+              {o.value === value && (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
+  const [hideDays, setHideDays] = useState(0);
   useEffect(() => {
     invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
+    getSettings().then((s) => setHideDays(s.archive_hide_days)).catch(() => {});
   }, []);
   const toggleAutostart = () => {
     const next = !autostart;
     setAutostart(next);
     invoke("set_autostart", { enabled: next }).catch(() => setAutostart(!next));
+  };
+  const changeHideDays = (days: number) => {
+    const prev = hideDays;
+    setHideDays(days);
+    setSettings({ archive_hide_days: days }).catch(() => setHideDays(prev));
   };
   return (
     <>
@@ -57,6 +140,13 @@ function GeneralSection() {
             <div className="row-desc">登录系统后自动启动 cc-kanban</div>
           </div>
           <Switch checked={autostart} onChange={toggleAutostart} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">归档自动隐藏</div>
+            <div className="row-desc">归档超过所选时长后，自动从「已归档」中隐藏</div>
+          </div>
+          <Dropdown value={hideDays} options={HIDE_OPTIONS} onChange={changeHideDays} />
         </div>
       </div>
       <div className="sec-hint">更多设置项陆续补充中…</div>
@@ -82,8 +172,10 @@ function AboutSection() {
       ? { label: triggered ? "更新中…" : `更新到 v${newVersion}`, onClick: onAvailable, disabled: triggered, primary: true }
       : { label: status === "checking" ? "检查中…" : "检查更新", onClick: recheck, disabled: status === "checking", primary: false };
 
-  const verSub =
-    status === "available" ? `发现新版本 v${newVersion}` : status === "latest" ? "已是最新版本" : `v${version || "—"}`;
+  const verText = `v${version || "—"}`;
+  const verStatus =
+    status === "available" ? `发现新版本 v${newVersion}` : status === "latest" ? "已是最新版本" : "";
+  const verSub = verStatus ? `${verText} · ${verStatus}` : verText;
 
   return (
     <>
