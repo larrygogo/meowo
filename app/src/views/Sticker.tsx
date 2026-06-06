@@ -117,8 +117,8 @@ function match(tab: Tab, l: Item, hideDays = 0): boolean {
   }
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
-  if (tab === "waiting") return l.connected && l.session.status === "waiting";
-  if (tab === "running") return l.connected && l.session.status === "running";
+  if (tab === "waiting") return l.connected && (l.session.status === "waiting" || l.errored);
+  if (tab === "running") return l.connected && l.session.status === "running" && !l.errored;
   return true;
 }
 
@@ -275,10 +275,16 @@ export function Sticker({ data }: { data: Item[] }) {
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
             const title = unnamed ? "等待首次输入" : l.task_title;
-            const sub = l.current_activity && l.current_activity !== title ? l.current_activity : null;
+            const sub = l.errored && l.error_label
+              ? l.error_label
+              : l.current_activity && l.current_activity !== title
+              ? l.current_activity
+              : null;
             const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
             const indicator = !l.connected ? (
               <span className="ring-stop" title="已断开/已停止" />
+            ) : l.errored ? (
+              <span className="needs-error" title={l.error_raw ?? "会话出错"} />
             ) : l.session.status === "running" ? (
               <span className="spinner" />
             ) : l.session.status === "waiting" ? (
@@ -347,7 +353,7 @@ export function Sticker({ data }: { data: Item[] }) {
                     </div>
                   </div>
                 </div>
-                {sub && <div className="stk-sub">{sub}</div>}
+                {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.errored ? l.error_raw ?? undefined : undefined}>{sub}</div>}
                 {l.todo_total > 0 && (
                   <div className="stk-prog">
                     <div className="bar">

@@ -14,6 +14,7 @@
   --cc-text-faint: #847f78;
   --cc-ok: #4ec9a5;
   --cc-warn: #e0a23c;
+  --cc-err: #e0584c;
   /* 圆角规范(对齐 Claude Code / shadcn)：容器 rounded-lg=8，控件 rounded-md=6，小 rounded-sm=4 */
   --r-lg: 8px;
   --r-md: 6px;
@@ -241,6 +242,23 @@ html, body {
   100% { box-shadow: 0 0 0 0 rgba(224, 162, 60, 0); }
 }
 
+/* 会话出错：红色脉冲点 */
+.needs-error {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--cc-err);
+  animation: needs-pulse-err 1.6s ease-out infinite;
+}
+@keyframes needs-pulse-err {
+  0% { box-shadow: 0 0 0 0 rgba(224, 88, 76, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(224, 88, 76, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(224, 88, 76, 0); }
+}
+/* 出错时的 sub 行文案用红色 */
+.stk-sub-err { color: var(--cc-err); }
+
 /* 贴纸卡片里的 todo 进度条 */
 .stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
 .stk-prog .bar { flex: 1; height: 4px; margin: 0; }
@@ -309,6 +327,7 @@ html, body {
 .cstrip-on { background: var(--cc-ok); }
 .cstrip-running { background: var(--cc-accent); animation: cstrip-pulse 1.2s ease-in-out infinite; }
 .cstrip-waiting { background: var(--cc-warn); }
+.cstrip-error { background: var(--cc-err); animation: cstrip-pulse 1.2s ease-in-out infinite; }
 @keyframes cstrip-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* 拖拽靠近边缘时，对应一侧发光提示（内容不变，松手才折叠） */

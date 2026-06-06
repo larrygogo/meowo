@@ -76,6 +76,9 @@ export type LiveSession = {
   archived: boolean;
   archived_at: number | null;
   cwd: string | null;
+  errored: boolean;
+  error_label: string | null;
+  error_raw: string | null;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {

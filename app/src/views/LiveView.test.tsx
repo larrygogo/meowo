@@ -21,6 +21,9 @@ function mk(over: Partial<LiveSession> = {}): LiveSession {
     archived: false,
     archived_at: null,
     cwd: null,
+    errored: false,
+    error_label: null,
+    error_raw: null,
     ...over,
   };
 }
