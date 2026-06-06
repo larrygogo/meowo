@@ -82,6 +82,7 @@ describe("Sticker", () => {
     expect(runningTab.querySelector(".stab-n")!.textContent).toBe("0");
     expect(container.querySelector(".needs-error")).toBeTruthy();
     expect(screen.getByText("工具调用解析失败")).toBeTruthy();
+    expect(screen.getByText("工具调用解析失败").closest(".stk-sub-err")).toBeTruthy();
   });
 
   it("断开优先于 errored：只显示断开环", () => {
