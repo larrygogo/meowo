@@ -274,6 +274,9 @@ struct LiveItem {
     #[serde(flatten)]
     inner: LiveSession,
     connected: bool,
+    errored: bool,
+    error_label: Option<String>,
+    error_raw: Option<String>,
 }
 
 /// 贴纸最多展示的会话数。
@@ -311,13 +314,26 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
         if items.len() >= LIVE_LIMIT {
             break;
         }
-        // 展示时实时从 transcript 解析 AI 标题：断开/历史会话不会触发 hook，
-        // DB 里可能还是旧的首条 prompt。cwd 可能为空（旧会话），resolve_title
-        // 会兜底按 session_id 全局查找 transcript 文件。
-        if let Some(t) =
-            cc_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
-        {
-            s.task_title = t;
+        // 一次读 transcript 同时拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
+        let mut errored = false;
+        let mut error_label: Option<String> = None;
+        let mut error_raw: Option<String> = None;
+        if let Some(path) = cc_store::title::resolve_transcript_path(
+            None,
+            s.cwd.as_deref(),
+            &s.session.cc_session_id,
+        ) {
+            if let Some(p) = path.to_str() {
+                let info = cc_store::analyze_transcript(p);
+                if let Some(t) = info.title {
+                    s.task_title = t;
+                }
+                if let Some(e) = info.error {
+                    errored = true;
+                    error_label = Some(e.label);
+                    error_raw = Some(e.raw);
+                }
+            }
         }
         // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
         let t = s.task_title.trim();
@@ -328,7 +344,7 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
         if !connected && unnamed && s.todos.is_empty() {
             continue;
         }
-        items.push(LiveItem { inner: s, connected });
+        items.push(LiveItem { inner: s, connected, errored, error_label, error_raw });
     }
     Ok(items)
 }
