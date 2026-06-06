@@ -258,7 +258,7 @@ fn ended_session_not_in_liveness() {
     assert!(live.is_empty());
 }
 
-// == live_sessions pid + end_abandoned ==
+// == live_sessions pid + end_orphaned_idle ==
 
 #[test]
 fn live_sessions_carries_pid() {
@@ -293,17 +293,24 @@ fn set_pid_evicts_same_pid_from_other_sessions() {
 }
 
 #[test]
-fn end_abandoned_ends_old_idle_sessions() {
+fn end_orphaned_idle_only_reaps_pidless_stale_sessions() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
-    let (s1, _) = store.start_session(pid, "old", 1000).unwrap();
-    let (s2, _) = store.start_session(pid, "new", 1000).unwrap();
+    // s1：无 pid 且空闲超阈值 → 应被收尾。
+    let (s1, _) = store.start_session(pid, "orphan-idle", 1000).unwrap();
+    // s2：无 pid 但最近有事件（未超阈值）→ 保留。
+    let (s2, _) = store.start_session(pid, "orphan-fresh", 1000).unwrap();
     store.touch_session(s2, 9000).unwrap();
-    // now=10000, idle阈值=2000：old(last=1000)超 -> ended；new(last=9000)不变
-    let n = store.end_abandoned(2000, 10000).unwrap();
+    // s3：带 pid 且空闲很久（claude 在等用户输入）→ 绝不能误杀。
+    let (s3, _) = store.start_session(pid, "connected-idle", 1000).unwrap();
+    store.set_session_pid(s3, 1234, 1000).unwrap();
+
+    // now=10000, idle阈值=2000。
+    let n = store.end_orphaned_idle(2000, 10000).unwrap();
     assert_eq!(n, 1);
     assert_eq!(store.get_session(s1).unwrap().status, "ended");
     assert_eq!(store.get_session(s2).unwrap().status, "running");
+    assert_ne!(store.get_session(s3).unwrap().status, "ended"); // 带 pid 不受空闲超时影响
 }
 
 // == 审计修复测试 ==

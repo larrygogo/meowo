@@ -1,15 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
-
-// 仅主窗负责回写托盘菜单，避免关于窗口的独立检查覆盖主窗结果。
-function isMainWindow(): boolean {
-  try {
-    return getCurrentWindow().label === "main";
-  } catch {
-    return false;
-  }
-}
 
 type UpdateHandle = {
   version: string;
@@ -18,7 +8,7 @@ type UpdateHandle = {
 
 export type UpdateStatus = "checking" | "latest" | "available" | "downloading" | "error";
 
-/// 检查更新并把结果回写托盘菜单；对外暴露状态/版本/进度、手动重检 recheck() 与安装 apply()。
+/// 检查更新；对外暴露状态/版本/进度、手动重检 recheck() 与安装 apply()。
 /// 非 Tauri 环境（测试/浏览器）或网络失败一律降级为 error，不抛错。
 export function useUpdate() {
   const [status, setStatus] = useState<UpdateStatus>("checking");
@@ -28,7 +18,6 @@ export function useUpdate() {
 
   const recheck = useCallback(async () => {
     setStatus("checking");
-    let found: string | null = null;
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
       const up = await check();
@@ -36,21 +25,11 @@ export function useUpdate() {
         handleRef.current = up as unknown as UpdateHandle;
         setVersion(up.version);
         setStatus("available");
-        found = up.version;
       } else {
         setStatus("latest");
       }
     } catch {
       setStatus("error");
-    }
-    // 无论有无更新/失败，都同步托盘文案（失败→保持「检查更新」可点）。仅主窗回写。
-    if (isMainWindow()) {
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("set_update_menu", { version: found });
-      } catch {
-        /* 忽略 */
-      }
     }
   }, []);
 

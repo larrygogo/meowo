@@ -79,7 +79,7 @@ pub fn import_from_dir(
             .to_str()
             .and_then(cc_store::title::title_from_transcript)
             .unwrap_or_else(|| "(未命名会话)".to_string());
-        let cwd = cwd_from_transcript(&path);
+        let cwd = path.to_str().and_then(cc_store::title::cwd_from_transcript);
         let (root, name) = match cwd.as_deref() {
             Some(c) => project_root_and_name(c),
             None => fallback_project(&dir_name),
@@ -103,27 +103,6 @@ fn claude_projects_dir() -> Option<std::path::PathBuf> {
 fn mtime_ms(path: &Path) -> Option<i64> {
     let mt = std::fs::metadata(path).ok()?.modified().ok()?;
     Some(mt.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64)
-}
-
-/// 逐行找含顶层 "cwd" 字段的条目，取最后一个非空值。
-fn cwd_from_transcript(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut cwd: Option<String> = None;
-    for line in content.lines() {
-        if !line.contains("\"cwd\"") {
-            continue;
-        }
-        let v: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if let Some(s) = v.get("cwd").and_then(|x| x.as_str()) {
-            if !s.is_empty() {
-                cwd = Some(s.to_string());
-            }
-        }
-    }
-    cwd
 }
 
 /// 无 cwd 兜底：root 用编码目录名本身，name 取其 '-' 分隔的末段非空片段。

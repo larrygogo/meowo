@@ -88,7 +88,7 @@ export function App() {
     };
   }, [refresh]);
 
-  // 安装的单一来源：托盘「更新」与关于窗口的更新按钮都发 trigger-update，统一由主窗处理。
+  // 安装的单一来源：关于窗口的更新按钮发 trigger-update，统一由主窗处理。
   // 有新版则安装，否则重新检查；先把主窗显示出来好看进度。
   useEffect(() => {
     const handle = () => {
@@ -96,9 +96,9 @@ export function App() {
       if (upStatusRef.current === "available") void applyUpdate();
       else if (upStatusRef.current !== "downloading") void recheck();
     };
-    const uns = [listen("tray-update-clicked", handle), listen("trigger-update", handle)];
+    const un = listen("trigger-update", handle);
     return () => {
-      uns.forEach((u) => u.then((f) => f()));
+      un.then((f) => f());
     };
   }, [applyUpdate, recheck]);
 

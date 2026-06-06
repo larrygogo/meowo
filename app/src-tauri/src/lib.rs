@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -234,8 +234,6 @@ fn snap_restore(
 /// 下次 board-changed 事件刷新即自动恢复。
 struct AppState {
     db_path: PathBuf,
-    /// 托盘「更新」菜单项句柄，供前端检查到新版后回写文案（在主线程上 set_text）。
-    update_item: std::sync::Mutex<Option<MenuItem<tauri::Wry>>>,
 }
 
 fn now_ms() -> i64 {
@@ -278,6 +276,9 @@ struct LiveItem {
     connected: bool,
 }
 
+/// 贴纸最多展示的会话数。
+const LIVE_LIMIT: usize = 20;
+
 #[tauri::command]
 fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
     let store = open_store(&state.db_path)?;
@@ -285,41 +286,50 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
     let sys = System::new_with_specifics(
         RefreshKind::new().with_processes(ProcessRefreshKind::new()),
     );
-    let mut items: Vec<LiveItem> = sessions
+
+    // 先算 connected（廉价，仅查进程表）并据此排序，再只对「将要展示」的会话解析
+    // transcript 标题——标题解析要 read_to_string 整个 JSONL（可达数 MB），对最多 100 个
+    // 会话全做一遍再截断到 20 是巨大的无谓 I/O（每 ~300ms 一次）。
+    let mut ranked: Vec<(LiveSession, bool)> = sessions
         .into_iter()
-        .map(|mut s| {
+        .map(|s| {
             // 已结束(ended)的会话一律视为断开；并校验 pid 确属 claude，
             // 防 Windows pid 复用（旧 pid 被 esbuild 等占用）误判为「连接中」。
             let connected =
                 s.session.status != "ended" && pid_is_claude(&sys, s.pid.unwrap_or(0));
-            // 展示时实时从 transcript 解析 AI 标题：断开/历史会话不会触发 hook，
-            // DB 里可能还是旧的首条 prompt。cwd 可能为空（旧会话），resolve_title
-            // 会兜底按 session_id 全局查找 transcript 文件。
-            if let Some(t) =
-                cc_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
-            {
-                s.task_title = t;
-            }
-            LiveItem { inner: s, connected }
-        })
-        // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留
-        .filter(|item| {
-            let t = item.inner.task_title.trim();
-            // 连通性测试等噪声：标题就是 "ping"
-            if t.eq_ignore_ascii_case("ping") {
-                return false;
-            }
-            // 未命名 + 无 todo + 已断开 的旧残留隐藏；连接中的保留
-            let unnamed = t.is_empty() || t == "(未命名会话)";
-            item.connected || !(unnamed && item.inner.todos.is_empty())
+            (s, connected)
         })
         .collect();
-    items.sort_by(|a, b| {
-        b.connected
-            .cmp(&a.connected)
-            .then(b.inner.session.last_event_at.cmp(&a.inner.session.last_event_at))
-    });
-    items.truncate(20);
+    // 连接中优先，其次最近活跃。live_sessions() 已按 last_event_at DESC 返回，
+    // 稳定排序按 connected 分组即保留组内的时间序。
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
+
+    // 逐条解析标题并过滤，凑满 LIVE_LIMIT 即停。连接中的会话排在最前、必然保留，
+    // 故它们（正在活跃、文件确实在变）总能拿到实时标题；断开的只解析到补满列表为止。
+    let mut items: Vec<LiveItem> = Vec::with_capacity(LIVE_LIMIT);
+    for (mut s, connected) in ranked {
+        if items.len() >= LIVE_LIMIT {
+            break;
+        }
+        // 展示时实时从 transcript 解析 AI 标题：断开/历史会话不会触发 hook，
+        // DB 里可能还是旧的首条 prompt。cwd 可能为空（旧会话），resolve_title
+        // 会兜底按 session_id 全局查找 transcript 文件。
+        if let Some(t) =
+            cc_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
+        {
+            s.task_title = t;
+        }
+        // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
+        let t = s.task_title.trim();
+        if t.eq_ignore_ascii_case("ping") {
+            continue;
+        }
+        let unnamed = t.is_empty() || t == "(未命名会话)";
+        if !connected && unnamed && s.todos.is_empty() {
+            continue;
+        }
+        items.push(LiveItem { inner: s, connected });
+    }
     Ok(items)
 }
 
@@ -790,26 +800,6 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 前端检查更新后回写托盘「更新」菜单项：有新版 → 可点击「更新到 vX」；无 → 「已是最新版本」(禁用)。
-/// 菜单变更必须在主线程执行。
-#[tauri::command]
-fn set_update_menu(app: tauri::AppHandle, state: State<AppState>, version: Option<String>) -> Result<(), String> {
-    let item = state.update_item.lock().unwrap().clone();
-    if let Some(item) = item {
-        app.run_on_main_thread(move || match &version {
-            Some(v) => {
-                let _ = item.set_text(format!("⬇ 更新到 v{v}"));
-            }
-            None => {
-                // 无更新/检查失败：保留为可点的「检查更新」，便于手动重试。
-                let _ = item.set_text("检查更新");
-            }
-        })
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
 fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
@@ -878,6 +868,10 @@ fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
     (alive, reaped)
 }
 
+/// 无 pid 会话的「空闲废弃」阈值：超过这么久没有任何事件即兜底收尾（终端被直接关掉、
+/// SessionEnd 丢失的孤儿会话）。取 30 分钟——足够保守，活跃会话每个事件都会刷新计时，绝不会触及。
+const ORPHAN_IDLE_MS: i64 = 30 * 60 * 1000;
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 进程退出不改 DB、notify 也监听不到，故需这个轮询兜底。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
@@ -885,8 +879,11 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
         let mut last: Vec<i64> = Vec::new();
         loop {
             if let Ok(store) = Store::open(&db_path) {
+                // 先兜底收尾无 pid 的空闲孤儿会话（带 pid 的交给下面的进程存活判定，
+                // 它们空闲再久只要进程在就保留，不在此处误杀）。
+                let orphaned = store.end_orphaned_idle(ORPHAN_IDLE_MS, now_ms()).unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, now_ms());
-                if alive != last || reaped > 0 {
+                if alive != last || reaped > 0 || orphaned > 0 {
                     let _ = app.emit("board-changed", ());
                     last = alive;
                 }
@@ -1083,7 +1080,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
             db_path: path.clone(),
-            update_item: std::sync::Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_overview,
@@ -1098,7 +1094,6 @@ pub fn run() {
             get_settings,
             set_settings,
             open_url,
-            set_update_menu,
             snap_collapse,
             snap_expand,
             snap_restore

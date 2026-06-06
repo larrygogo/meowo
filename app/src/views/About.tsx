@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings } from "../api";
-import { useUpdate } from "../useUpdate";
+import { useUpdate, type UpdateStatus } from "../useUpdate";
 
 const HIDE_OPTIONS = [
   { value: 0, label: "永不" },
@@ -154,10 +154,17 @@ function GeneralSection() {
   );
 }
 
-function AboutSection() {
+function AboutSection({
+  status,
+  newVersion,
+  recheck,
+}: {
+  status: UpdateStatus;
+  newVersion: string | null;
+  recheck: () => void;
+}) {
   const [version, setVersion] = useState("");
   const [triggered, setTriggered] = useState(false);
-  const { status, version: newVersion, recheck } = useUpdate();
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
@@ -218,6 +225,8 @@ function AboutSection() {
 export function About() {
   const [sec, setSec] = useState<Section>("general");
   const close = () => getCurrentWindow().close().catch(() => {});
+  // 在不随标签切换卸载的父组件里检查更新：每次打开设置窗口只查一次（避免反复点「关于」标签重复请求）。
+  const { status, version: newVersion, recheck } = useUpdate();
 
   return (
     <div className="settings">
@@ -245,7 +254,11 @@ export function About() {
           </button>
         </div>
         <div className="main-body" key={sec}>
-          {sec === "general" ? <GeneralSection /> : <AboutSection />}
+          {sec === "general" ? (
+            <GeneralSection />
+          ) : (
+            <AboutSection status={status} newVersion={newVersion} recheck={recheck} />
+          )}
         </div>
       </main>
     </div>

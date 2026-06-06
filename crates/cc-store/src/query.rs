@@ -184,11 +184,17 @@ impl Store {
         Ok(out)
     }
 
-    /// 结束「超过 idle_ms 无事件」的 live 会话（真正废弃的，清理用）。返回受影响数。
-    pub fn end_abandoned(&self, idle_ms: i64, now_ms: i64) -> Result<usize, StoreError> {
+    /// 兜底收尾「没有 pid、且超过 idle_ms 无任何事件」的 live 会话。返回受影响数。
+    ///
+    /// 带 pid 的会话由进程存活校验处理（进程在就保留，哪怕空闲很久——那是 claude 在等用户输入，
+    /// 仍是连接中，绝不能因空闲误杀）。但 pid 为空（reporter 没抓到 owner pid）的会话无法做存活校验，
+    /// 若终端被直接关掉（SessionEnd 丢失），就会永远卡在 live。对这类会话退化为「空闲超时」清理：
+    /// 真正活跃的会话每个事件都会刷新 last_event_at，到不了这个阈值。
+    pub fn end_orphaned_idle(&self, idle_ms: i64, now_ms: i64) -> Result<usize, StoreError> {
         let n = self.conn.execute(
             "UPDATE sessions SET status='ended', ended_at=?1
-             WHERE status IN ('running','waiting','stale') AND (?1 - last_event_at) > ?2",
+             WHERE pid IS NULL AND status IN ('running','waiting','stale')
+               AND (?1 - last_event_at) > ?2",
             rusqlite::params![now_ms, idle_ms],
         )?;
         Ok(n)
