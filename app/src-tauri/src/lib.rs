@@ -749,12 +749,25 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Settings {
     /// 归档条目自动隐藏的天数；0 = 永不隐藏。
     #[serde(default)]
     archive_hide_days: u32,
+    /// 桌面通知总开关（待交互 + 错误）。缺省为开启，兼容老 settings.json。
+    #[serde(default = "default_true")]
+    notifications_enabled: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { archive_hide_days: 0, notifications_enabled: true }
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -1244,7 +1257,7 @@ pub fn run() {
 mod tests {
     use super::{
         clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        pid_is_claude, should_notify, tab_match_score, Edge, Rect,
+        pid_is_claude, should_notify, tab_match_score, Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -1419,5 +1432,20 @@ mod tests {
         assert!(!should_notify(Some("a"), Some("a")));  // 同一错误 → 不弹
         assert!(should_notify(Some("a"), Some("b")));   // 换了新错误 → 弹
         assert!(!should_notify(Some("a"), None));       // 错误消失 → 不弹（由清除处理）
+    }
+
+    #[test]
+    fn settings_defaults_notifications_on() {
+        // 空文件 / 老文件缺字段 → 默认开启（向后兼容）
+        let empty: Settings = serde_json::from_str("{}").unwrap();
+        assert!(empty.notifications_enabled);
+        let legacy: Settings = serde_json::from_str(r#"{"archive_hide_days":7}"#).unwrap();
+        assert!(legacy.notifications_enabled);
+        assert_eq!(legacy.archive_hide_days, 7);
+        // 显式关闭可被尊重
+        let off: Settings = serde_json::from_str(r#"{"notifications_enabled":false}"#).unwrap();
+        assert!(!off.notifications_enabled);
+        // 整文件缺失/解析失败时用 Default，也应为 ON
+        assert!(Settings::default().notifications_enabled);
     }
 }
