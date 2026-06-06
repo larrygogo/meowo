@@ -315,24 +315,21 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
             break;
         }
         // 一次读 transcript 同时拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
-        let mut errored = false;
         let mut error_label: Option<String> = None;
         let mut error_raw: Option<String> = None;
-        if let Some(path) = cc_store::title::resolve_transcript_path(
+        if let Some(info) = cc_store::title::resolve_transcript_path(
             None,
             s.cwd.as_deref(),
             &s.session.cc_session_id,
-        ) {
-            if let Some(p) = path.to_str() {
-                let info = cc_store::analyze_transcript(p);
-                if let Some(t) = info.title {
-                    s.task_title = t;
-                }
-                if let Some(e) = info.error {
-                    errored = true;
-                    error_label = Some(e.label);
-                    error_raw = Some(e.raw);
-                }
+        )
+        .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+        {
+            if let Some(t) = info.title {
+                s.task_title = t;
+            }
+            if let Some(e) = info.error {
+                error_label = Some(e.label);
+                error_raw = Some(e.raw);
             }
         }
         // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
@@ -344,7 +341,13 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
         if !connected && unnamed && s.todos.is_empty() {
             continue;
         }
-        items.push(LiveItem { inner: s, connected, errored, error_label, error_raw });
+        items.push(LiveItem {
+            inner: s,
+            connected,
+            errored: error_label.is_some(),
+            error_label,
+            error_raw,
+        });
     }
     Ok(items)
 }
