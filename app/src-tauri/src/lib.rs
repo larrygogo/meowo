@@ -661,6 +661,59 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
     Ok(())
 }
 
+/// 在贴纸上重命名会话：往该会话 transcript 追加一条 custom-title 记录
+/// （与 Claude Code `/rename` 写入格式完全一致），并同步更新 DB 标题。
+/// custom-title 优先级高于 ai-title，故贴纸与 Claude Code `/resume` 列表都会显示新名字。
+///
+/// 安全：session_id 严格校验为 UUID 形态（同时杜绝路径穿越），title 经 trim + 截断；
+/// 写入用 serde_json 序列化，转义由库保证。
+#[tauri::command]
+fn rename_session(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    cwd: Option<String>,
+    session_id: String,
+    title: String,
+) -> Result<(), String> {
+    if !is_session_id(&session_id) {
+        return Err("无效 session_id".into());
+    }
+    let title: String = title.trim().chars().take(80).collect();
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+
+    // 定位 transcript：优先用 cwd 重建路径，否则按 session_id 全局查找。
+    let path = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id)
+        .and_then(|c| cc_store::title::reconstruct_transcript_path(&c, &session_id))
+        .filter(|p| p.exists())
+        .or_else(|| cc_store::title::find_transcript_by_session(&session_id))
+        .ok_or("找不到该会话的 transcript")?;
+
+    let record = serde_json::json!({
+        "type": "custom-title",
+        "customTitle": title,
+        "sessionId": session_id,
+    });
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("打开 transcript 失败：{e}"))?;
+        writeln!(f, "{record}").map_err(|e| format!("写入 transcript 失败：{e}"))?;
+    }
+
+    // 同步 DB 标题，让总览等非贴纸视图也一致（best-effort）。
+    if let Ok(store) = open_store(&state.db_path) {
+        if let Ok(Some(sid)) = store.find_session_id_pub(&session_id) {
+            let _ = store.set_session_title(sid, &title, now_ms());
+        }
+    }
+    let _ = app.emit("board-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Result<(), String> {
     let store = open_store(&state.db_path)?;
@@ -1038,6 +1091,7 @@ pub fn run() {
             get_live_sessions,
             focus_session,
             resume_session,
+            rename_session,
             set_archived,
             get_autostart,
             set_autostart,

@@ -39,6 +39,16 @@ function ArchiveIcon({ archived }: { archived: boolean }) {
   );
 }
 
+function PencilIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
 type Item = LiveSession & { connected: boolean };
 type Tab = "all" | "waiting" | "running" | "archived";
 
@@ -214,6 +224,22 @@ export function Sticker({ data }: { data: Item[] }) {
     });
   };
 
+  // 重命名：editingId 为正在编辑的会话 id，draft 为输入内容。
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const startRename = (l: Item) => {
+    const cur = l.task_title && l.task_title !== "(未命名会话)" ? l.task_title : "";
+    setDraft(cur);
+    setEditingId(l.session.id);
+  };
+  const submitRename = (l: Item) => {
+    const t = draft.trim();
+    if (t && t !== l.task_title) {
+      invoke("rename_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, title: t }).catch(() => {});
+    }
+    setEditingId(null);
+  };
+
   const shown = data.filter((l) => match(tab, l, hideDays));
 
   return (
@@ -281,14 +307,40 @@ export function Sticker({ data }: { data: Item[] }) {
                   <span className="stk-ind">{indicator}</span>
                   <div className="stk-top-body">
                     <div className="stk-line1">
-                      <span className="stk-title">{title}</span>
-                      <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
-                      <span
-                        className="stk-arch"
-                        title={l.archived ? "取消归档" : "归档"}
-                        onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
-                      ><ArchiveIcon archived={l.archived} /></span>
+                      {editingId === l.session.id ? (
+                        <input
+                          className="stk-edit"
+                          autoFocus
+                          value={draft}
+                          placeholder="输入名称，回车保存"
+                          onChange={(e) => setDraft(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") submitRename(l);
+                            else if (e.key === "Escape") setEditingId(null);
+                          }}
+                          onBlur={() => setEditingId(null)}
+                        />
+                      ) : (
+                        <>
+                          <span className="stk-title">{title}</span>
+                          <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
+                          <span
+                            className="stk-rename"
+                            title="重命名（同步到 Claude）"
+                            onClick={(e) => { e.stopPropagation(); startRename(l); }}
+                          ><PencilIcon /></span>
+                          <span
+                            className="stk-arch"
+                            title={l.archived ? "取消归档" : "归档"}
+                            onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
+                          ><ArchiveIcon archived={l.archived} /></span>
+                        </>
+                      )}
                     </div>
+                    {editingId === l.session.id && l.connected && (
+                      <div className="stk-edit-hint">运行中：改名后需在该终端 /resume 才生效</div>
+                    )}
                     <div className="stk-line2">
                       <ConnBadge connected={l.connected} />
                       <span className="stk-repo">{l.project_name}</span>
