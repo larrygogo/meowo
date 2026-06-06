@@ -63,12 +63,13 @@ export function CollapsedStrip({
           </span>
         ) : (
           items.map((l) => {
-            const cls =
-              l.session.status === "running"
-                ? "cstrip-running"
-                : l.session.status === "waiting"
-                ? "cstrip-waiting"
-                : "cstrip-on";
+            const cls = l.errored
+              ? "cstrip-error"
+              : l.session.status === "running"
+              ? "cstrip-running"
+              : l.session.status === "waiting"
+              ? "cstrip-waiting"
+              : "cstrip-on";
             return <span key={l.session.id} className={"cstrip-dot " + cls} />;
           })
         )}

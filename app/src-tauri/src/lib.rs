@@ -274,6 +274,9 @@ struct LiveItem {
     #[serde(flatten)]
     inner: LiveSession,
     connected: bool,
+    errored: bool,
+    error_label: Option<String>,
+    error_raw: Option<String>,
 }
 
 /// 贴纸最多展示的会话数。
@@ -311,13 +314,23 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
         if items.len() >= LIVE_LIMIT {
             break;
         }
-        // 展示时实时从 transcript 解析 AI 标题：断开/历史会话不会触发 hook，
-        // DB 里可能还是旧的首条 prompt。cwd 可能为空（旧会话），resolve_title
-        // 会兜底按 session_id 全局查找 transcript 文件。
-        if let Some(t) =
-            cc_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
+        // 一次读 transcript 同时拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
+        let mut error_label: Option<String> = None;
+        let mut error_raw: Option<String> = None;
+        if let Some(info) = cc_store::title::resolve_transcript_path(
+            None,
+            s.cwd.as_deref(),
+            &s.session.cc_session_id,
+        )
+        .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
         {
-            s.task_title = t;
+            if let Some(t) = info.title {
+                s.task_title = t;
+            }
+            if let Some(e) = info.error {
+                error_label = Some(e.label);
+                error_raw = Some(e.raw);
+            }
         }
         // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
         let t = s.task_title.trim();
@@ -328,7 +341,13 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
         if !connected && unnamed && s.todos.is_empty() {
             continue;
         }
-        items.push(LiveItem { inner: s, connected });
+        items.push(LiveItem {
+            inner: s,
+            connected,
+            errored: error_label.is_some(),
+            error_label,
+            error_raw,
+        });
     }
     Ok(items)
 }
@@ -848,14 +867,13 @@ fn pid_is_claude(sys: &System, pid: i64) -> bool {
 ///
 /// 终端被关/被 /clear 打断时 SessionEnd 往往不触发，会话状态会永远卡在 running/waiting；
 /// 进程都没了就该收尾。pid 为空的不动（可能是刚启动还没抓到 pid，宁可不臆测）。
-fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
-    let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+fn reap_and_alive_ids(store: &Store, sys: &System, now_ms: i64) -> (Vec<i64>, usize) {
     let mut alive: Vec<i64> = Vec::new();
     let mut reaped = 0usize;
     for (id, pid, _) in store.live_session_liveness().unwrap_or_default() {
         match pid {
             Some(p) if p > 0 => {
-                if pid_is_claude(&sys, p) {
+                if pid_is_claude(sys, p) {
                     alive.push(id);
                 } else if store.end_session(id, now_ms).is_ok() {
                     reaped += 1; // 进程已死 / pid 被复用 → 收尾
@@ -872,21 +890,72 @@ fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
 /// SessionEnd 丢失的孤儿会话）。取 30 分钟——足够保守，活跃会话每个事件都会刷新计时，绝不会触及。
 const ORPHAN_IDLE_MS: i64 = 30 * 60 * 1000;
 
+/// 是否应为「当前错误指纹」弹通知：仅当当前有错误且指纹与上次通知过的不同。
+/// 同一错误不反复弹；错误消失（cur=None）不弹（清除条目交给调用方）。纯函数，便于单测。
+fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
+    match cur {
+        None => false,
+        Some(c) => prev != Some(c),
+    }
+}
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
-/// 进程退出不改 DB、notify 也监听不到，故需这个轮询兜底。
+/// 同时对「连接中且出错」的会话做去重桌面通知（同一错误只弹一次，启动首扫只播种不弹）。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
+    use std::collections::HashMap;
+    use tauri_plugin_notification::NotificationExt;
     std::thread::spawn(move || {
         let mut last: Vec<i64> = Vec::new();
+        let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次通知指纹
+        let mut seeded = false;
         loop {
             if let Ok(store) = Store::open(&db_path) {
-                // 先兜底收尾无 pid 的空闲孤儿会话（带 pid 的交给下面的进程存活判定，
-                // 它们空闲再久只要进程在就保留，不在此处误杀）。
+                let sys = System::new_with_specifics(
+                    RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+                );
                 let orphaned = store.end_orphaned_idle(ORPHAN_IDLE_MS, now_ms()).unwrap_or(0);
-                let (alive, reaped) = reap_and_alive_ids(&store, now_ms());
+                let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
                     let _ = app.emit("board-changed", ());
                     last = alive;
                 }
+
+                // 错误检测 + 去重通知：仅扫连接中的会话（活跃，数量少）。
+                let mut present: HashMap<String, String> = HashMap::new();
+                for s in store.live_sessions().unwrap_or_default() {
+                    if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
+                        continue;
+                    }
+                    let sid = s.session.cc_session_id.clone();
+                    present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
+                    let err = cc_store::title::resolve_transcript_path(
+                        None, s.cwd.as_deref(), &sid,
+                    )
+                    .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+                    .and_then(|info| info.error);
+
+                    match err {
+                        Some(e) => {
+                            let prev = notified.get(&sid).map(|s| s.as_str());
+                            if seeded && should_notify(prev, Some(&e.fingerprint)) {
+                                let _ = app
+                                    .notification()
+                                    .builder()
+                                    .title("会话出错")
+                                    .body(format!("{} · {}", s.project_name, e.label))
+                                    .show();
+                            }
+                            notified.insert(sid, e.fingerprint);
+                        }
+                        None => {
+                            notified.remove(&sid); // 错误消失：下次再错会重新通知
+                        }
+                    }
+                }
+                // 清掉本轮彻底消失（已结束/超出 100 条上限）的残留条目，防止 map 无限增长。
+                // 边缘情况：会话彻底消失后又带着完全相同的未解决错误重新出现，会再弹一次——可接受。
+                notified.retain(|k, _| present.contains_key(k));
+                seeded = true;
             }
             std::thread::sleep(Duration::from_secs(5));
         }
@@ -1078,6 +1147,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             db_path: path.clone(),
         })
@@ -1174,7 +1244,7 @@ pub fn run() {
 mod tests {
     use super::{
         clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        pid_is_claude, tab_match_score, Edge, Rect,
+        pid_is_claude, should_notify, tab_match_score, Edge, Rect,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -1340,5 +1410,14 @@ mod tests {
         let work = Rect { x: 100, y: 0, w: 1000, h: 1040 };
         let win = Rect { x: 110, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
+    }
+
+    #[test]
+    fn should_notify_only_on_new_error() {
+        assert!(!should_notify(None, None));            // 无错 → 不弹
+        assert!(should_notify(None, Some("a")));        // 新错 → 弹
+        assert!(!should_notify(Some("a"), Some("a")));  // 同一错误 → 不弹
+        assert!(should_notify(Some("a"), Some("b")));   // 换了新错误 → 弹
+        assert!(!should_notify(Some("a"), None));       // 错误消失 → 不弹（由清除处理）
     }
 }

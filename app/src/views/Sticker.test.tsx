@@ -12,7 +12,7 @@ function mk(over: Partial<Item> = {}): Item {
     task_title: "做点事",
     current_activity: "正在做点事",
     column: "doing", todo_done: 0, todo_total: 0, todos: [],
-    pid: 1234, connected: true, archived: false, cwd: null,
+    pid: 1234, connected: true, archived: false, cwd: null, errored: false, error_label: null, error_raw: null,
     ...over,
   } as Item;
 }
@@ -68,5 +68,27 @@ describe("Sticker", () => {
   it("EmptyState[running] 不渲染提示文案", () => {
     const { container } = render(<EmptyState tab="running" />);
     expect(container.querySelector(".stk-empty-hint")).toBeNull();
+  });
+
+  it("errored 会话归入待交互、显示红点与错误文案", () => {
+    const item = mk({
+      session: { id: 9, project_id: 1, cc_session_id: "s9", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null },
+      errored: true, error_label: "工具调用解析失败", error_raw: "The model's tool call could not be parsed (retry also failed).",
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    const waitingTab = screen.getByText("待交互").closest(".stab")!;
+    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("1");
+    const runningTab = screen.getByText("运行中").closest(".stab")!;
+    expect(runningTab.querySelector(".stab-n")!.textContent).toBe("0");
+    expect(container.querySelector(".needs-error")).toBeTruthy();
+    expect(screen.getByText("工具调用解析失败")).toBeTruthy();
+    expect(screen.getByText("工具调用解析失败").closest(".stk-sub-err")).toBeTruthy();
+  });
+
+  it("断开优先于 errored：只显示断开环", () => {
+    const item = mk({ connected: false, errored: true, error_label: "认证失败" });
+    const { container } = render(<Sticker data={[item]} />);
+    expect(container.querySelector(".ring-stop")).toBeTruthy();
+    expect(container.querySelector(".needs-error")).toBeFalsy();
   });
 });
