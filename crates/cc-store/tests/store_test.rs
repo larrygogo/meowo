@@ -330,8 +330,15 @@ fn archive_flag_roundtrip_in_live_sessions() {
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     assert!(!store.live_sessions().unwrap()[0].archived);
-    store.set_session_archived(sid, true).unwrap();
-    assert!(store.live_sessions().unwrap()[0].archived);
+    assert!(store.live_sessions().unwrap()[0].archived_at.is_none());
+    store.set_session_archived(sid, true, 1234).unwrap();
+    let s = store.live_sessions().unwrap();
+    assert!(s[0].archived);
+    assert_eq!(s[0].archived_at, Some(1234)); // 归档记录时间戳
+    store.set_session_archived(sid, false, 5678).unwrap();
+    let s2 = store.live_sessions().unwrap();
+    assert!(!s2[0].archived);
+    assert!(s2[0].archived_at.is_none()); // 取消归档清空时间戳
 }
 
 #[test]

@@ -74,11 +74,25 @@ export type LiveSession = {
   pid: number | null;
   connected: boolean;
   archived: boolean;
+  archived_at: number | null;
   cwd: string | null;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {
   return invoke("get_live_sessions");
+}
+
+export type Settings = {
+  /** 归档条目自动隐藏的天数；0 = 永不隐藏。 */
+  archive_hide_days: number;
+};
+
+export function getSettings(): Promise<Settings> {
+  return invoke("get_settings");
+}
+
+export function setSettings(settings: Settings): Promise<void> {
+  return invoke("set_settings", { settings });
 }
 
 // 纯函数：根据 todo 列表算完成度。

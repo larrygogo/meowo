@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LiveSession } from "../api";
+import { listen } from "@tauri-apps/api/event";
+import { LiveSession, Settings, getSettings } from "../api";
+
+const DAY_MS = 86_400_000;
 
 function fmtAgo(ms: number): string {
   const m = Math.floor((Date.now() - ms) / 60000);
@@ -93,8 +96,15 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "archived", label: "已归档" },
 ];
 
-function match(tab: Tab, l: Item): boolean {
-  if (tab === "archived") return l.archived;
+function match(tab: Tab, l: Item, hideDays = 0): boolean {
+  if (tab === "archived") {
+    if (!l.archived) return false;
+    // 归档超过 hideDays 天自动隐藏；archived_at 缺失的旧条目不隐藏。
+    if (hideDays > 0 && l.archived_at && Date.now() - l.archived_at > hideDays * DAY_MS) {
+      return false;
+    }
+    return true;
+  }
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
   if (tab === "waiting") return l.connected && l.session.status === "waiting";
@@ -169,6 +179,23 @@ export function Sticker({ data }: { data: Item[] }) {
     localStorage.setItem(TAB_KEY, t);
   };
 
+  // 归档自动隐藏天数：启动时读设置，并监听设置窗口的实时变更。
+  const [hideDays, setHideDays] = useState(0);
+  useEffect(() => {
+    getSettings().then((s) => setHideDays(s.archive_hide_days)).catch(() => {});
+    let un: (() => void) | undefined;
+    try {
+      listen<Settings>("settings-changed", (e) => setHideDays(e.payload.archive_hide_days))
+        .then((f) => { un = f; })
+        .catch(() => {});
+    } catch {
+      /* 非 Tauri 环境（测试/浏览器） */
+    }
+    return () => {
+      try { un?.(); } catch { /* noop */ }
+    };
+  }, []);
+
   // 置顶开关：默认不置顶，激活后才把窗口设为 alwaysOnTop，状态持久化。
   const [pinned, setPinned] = useState<boolean>(() => localStorage.getItem(PIN_KEY) === "1");
   useEffect(() => {
@@ -187,14 +214,14 @@ export function Sticker({ data }: { data: Item[] }) {
     });
   };
 
-  const shown = data.filter((l) => match(tab, l));
+  const shown = data.filter((l) => match(tab, l, hideDays));
 
   return (
     <div className="sticker">
       <div className="drag" data-tauri-drag-region />
       <div className="tabs">
         {TABS.map((t) => {
-          const n = data.filter((l) => match(t.key, l)).length;
+          const n = data.filter((l) => match(t.key, l, hideDays)).length;
           return (
             <span
               key={t.key}
@@ -241,13 +268,14 @@ export function Sticker({ data }: { data: Item[] }) {
                   if (l.connected) {
                     // 连接中：跳转到对应 WT 标签页。
                     if (l.pid) invoke("focus_session", { pid: l.pid, title: l.task_title }).catch(() => {});
-                  } else {
-                    // 已断开：开新 WT 标签页跑 claude --resume 恢复会话。
+                  } else if (!l.archived) {
+                    // 已断开且未归档：开新 WT 标签页跑 claude --resume 恢复会话。
+                    // 归档的会话点击不恢复（归档即收纳，避免误开终端）。
                     invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id }).catch(() => {});
                   }
                 }}
-                style={{ cursor: "pointer" }}
-                title={l.connected ? "点击跳转到该会话的终端" : "点击新建终端恢复该会话"}
+                style={{ cursor: l.connected || !l.archived ? "pointer" : "default" }}
+                title={l.connected ? "点击跳转到该会话的终端" : l.archived ? "" : "点击新建终端恢复该会话"}
               >
                 <div className="stk-top">
                   <span className="stk-ind">{indicator}</span>

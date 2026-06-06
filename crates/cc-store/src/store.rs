@@ -37,6 +37,7 @@ impl Store {
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN pid INTEGER", []);
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", []);
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN archived_at INTEGER", []);
     }
 
     /// 测试辅助：统计用户表数量。
@@ -471,10 +472,17 @@ impl Store {
     }
 
     /// 手动归档/取消归档某会话。不更新 last_event_at，避免排序乱跳。
-    pub fn set_session_archived(&self, session_id: i64, archived: bool) -> Result<(), StoreError> {
+    /// 归档时记录 archived_at（用于「归档超过 N 天自动隐藏」）；取消归档清空。
+    pub fn set_session_archived(
+        &self,
+        session_id: i64,
+        archived: bool,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let archived_at: Option<i64> = if archived { Some(now_ms) } else { None };
         self.conn.execute(
-            "UPDATE sessions SET archived = ?1 WHERE id = ?2",
-            rusqlite::params![archived as i64, session_id],
+            "UPDATE sessions SET archived = ?1, archived_at = ?2 WHERE id = ?3",
+            rusqlite::params![archived as i64, archived_at, session_id],
         )?;
         Ok(())
     }

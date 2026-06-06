@@ -35,6 +35,8 @@ pub struct LiveSession {
     pub todos: Vec<Todo>,
     pub pid: Option<i64>,
     pub archived: bool,
+    /// 归档时间戳（ms）；未归档为 None。用于「归档超过 N 天自动隐藏」。
+    pub archived_at: Option<i64>,
     /// 会话工作目录，cc-app 用它重建 transcript 路径以实时解析 AI 标题。
     pub cwd: Option<String>,
 }
@@ -125,7 +127,7 @@ impl Store {
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd
+                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
@@ -151,12 +153,13 @@ impl Store {
                 let pid: Option<i64> = r.get(12)?;
                 let archived: i64 = r.get(13)?;
                 let cwd: Option<String> = r.get(14)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd))
+                let archived_at: Option<i64> = r.get(15)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at) in rows {
             let todos = match task_id {
                 Some(tid) => self.list_todos(tid)?,
                 None => Vec::new(),
@@ -174,6 +177,7 @@ impl Store {
                 todos,
                 pid,
                 archived: archived != 0,
+                archived_at,
                 cwd,
             });
         }
