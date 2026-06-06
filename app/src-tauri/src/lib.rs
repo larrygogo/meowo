@@ -901,20 +901,61 @@ fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
 }
 
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
-/// 进程退出不改 DB、notify 也监听不到，故需这个轮询兜底。
+/// 同时对「连接中且出错」的会话做去重桌面通知（同一错误只弹一次，启动首扫只播种不弹）。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
+    use std::collections::HashMap;
+    use tauri_plugin_notification::NotificationExt;
     std::thread::spawn(move || {
         let mut last: Vec<i64> = Vec::new();
+        let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次通知指纹
+        let mut seeded = false;
         loop {
             if let Ok(store) = Store::open(&db_path) {
-                // 先兜底收尾无 pid 的空闲孤儿会话（带 pid 的交给下面的进程存活判定，
-                // 它们空闲再久只要进程在就保留，不在此处误杀）。
                 let orphaned = store.end_orphaned_idle(ORPHAN_IDLE_MS, now_ms()).unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
                     let _ = app.emit("board-changed", ());
                     last = alive;
                 }
+
+                // 错误检测 + 去重通知：仅扫连接中的会话（活跃，数量少）。
+                let sys = System::new_with_specifics(
+                    RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+                );
+                let mut present: HashMap<String, String> = HashMap::new();
+                for s in store.live_sessions().unwrap_or_default() {
+                    if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
+                        continue;
+                    }
+                    let sid = s.session.cc_session_id.clone();
+                    let err = cc_store::title::resolve_transcript_path(
+                        None, s.cwd.as_deref(), &sid,
+                    )
+                    .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+                    .and_then(|info| info.error);
+
+                    match err {
+                        Some(e) => {
+                            present.insert(sid.clone(), e.fingerprint.clone());
+                            let prev = notified.get(&sid).map(|s| s.as_str());
+                            if seeded && should_notify(prev, Some(&e.fingerprint)) {
+                                let _ = app
+                                    .notification()
+                                    .builder()
+                                    .title("会话出错")
+                                    .body(format!("{} · {}", s.project_name, e.label))
+                                    .show();
+                            }
+                            notified.insert(sid, e.fingerprint);
+                        }
+                        None => {
+                            notified.remove(&sid); // 错误消失：下次再错会重新通知
+                        }
+                    }
+                }
+                // 清掉已不在连接中集合里的残留条目，防止 map 无限增长。
+                notified.retain(|k, _| present.contains_key(k));
+                seeded = true;
             }
             std::thread::sleep(Duration::from_secs(5));
         }
@@ -1106,6 +1147,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             db_path: path.clone(),
         })
