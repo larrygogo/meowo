@@ -288,10 +288,10 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
     let mut items: Vec<LiveItem> = sessions
         .into_iter()
         .map(|mut s| {
-            let connected = match s.pid {
-                Some(p) if p > 0 => sys.process(Pid::from_u32(p as u32)).is_some(),
-                _ => false,
-            };
+            // 已结束(ended)的会话一律视为断开；并校验 pid 确属 claude，
+            // 防 Windows pid 复用（旧 pid 被 esbuild 等占用）误判为「连接中」。
+            let connected =
+                s.session.status != "ended" && pid_is_claude(&sys, s.pid.unwrap_or(0));
             // 展示时实时从 transcript 解析 AI 标题：断开/历史会话不会触发 hook，
             // DB 里可能还是旧的首条 prompt。cwd 可能为空（旧会话），resolve_title
             // 会兜底按 session_id 全局查找 transcript 文件。
@@ -664,7 +664,44 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
 #[tauri::command]
 fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Result<(), String> {
     let store = open_store(&state.db_path)?;
-    store.set_session_archived(session_id, archived).map_err(|e| e.to_string())
+    store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
+}
+
+/// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+struct Settings {
+    /// 归档条目自动隐藏的天数；0 = 永不隐藏。
+    #[serde(default)]
+    archive_hide_days: u32,
+}
+
+fn settings_path() -> PathBuf {
+    db_path().with_file_name("settings.json")
+}
+
+fn load_settings() -> Settings {
+    std::fs::read_to_string(settings_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn get_settings() -> Settings {
+    load_settings()
+}
+
+#[tauri::command]
+fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+    let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    let path = settings_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    // 通知贴纸窗口实时套用新设置。
+    let _ = app.emit("settings-changed", settings);
+    Ok(())
 }
 
 /// 设置窗口用：读取/切换开机自启（原来只在托盘，托盘精简后搬到设置页）。
@@ -750,6 +787,19 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
+/// pid 对应的进程是否确实是 claude。
+///
+/// Windows 会复用 pid：会话结束后它的旧 pid 可能被别的进程（如 esbuild）占用，
+/// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。按进程名含 "claude" 甄别。
+fn pid_is_claude(sys: &System, pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    sys.process(Pid::from_u32(pid as u32))
+        .map(|p| p.name().to_string_lossy().to_ascii_lowercase().contains("claude"))
+        .unwrap_or(false)
+}
+
 /// 轮询一次：把「记录了 pid、但该进程已死」的 live 会话收尾为 ended（self-heal），
 /// 并返回仍存活的 session id（升序）与本轮收尾的数量。
 ///
@@ -762,10 +812,10 @@ fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
     for (id, pid, _) in store.live_session_liveness().unwrap_or_default() {
         match pid {
             Some(p) if p > 0 => {
-                if sys.process(Pid::from_u32(p as u32)).is_some() {
+                if pid_is_claude(&sys, p) {
                     alive.push(id);
                 } else if store.end_session(id, now_ms).is_ok() {
-                    reaped += 1; // 进程已死 → 收尾
+                    reaped += 1; // 进程已死 / pid 被复用 → 收尾
                 }
             }
             _ => {} // pid 未知：不臆测，留给 SessionEnd / 同进程新会话驱逐处理
@@ -991,6 +1041,8 @@ pub fn run() {
             set_archived,
             get_autostart,
             set_autostart,
+            get_settings,
+            set_settings,
             open_url,
             set_update_menu,
             snap_collapse,
@@ -999,6 +1051,10 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Moved(pos) = event {
+                // 出屏约束与吸附只作用于贴纸主窗口；设置等其它窗口不受限制。
+                if window.label() != "main" {
+                    return;
+                }
                 let Ok(size) = window.outer_size() else { return };
                 let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
 
@@ -1069,10 +1125,23 @@ pub fn run() {
 mod tests {
     use super::{
         clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        tab_match_score, Edge, Rect,
+        pid_is_claude, tab_match_score, Edge, Rect,
     };
+    use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
     const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
+
+    #[test]
+    fn pid_is_claude_rejects_non_claude_and_dead() {
+        let sys =
+            System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+        // 当前测试进程存在但不叫 claude → 不算连接（pid 复用防护）
+        assert!(!pid_is_claude(&sys, std::process::id() as i64));
+        // 非法 / 已死的 pid
+        assert!(!pid_is_claude(&sys, 0));
+        assert!(!pid_is_claude(&sys, -1));
+        assert!(!pid_is_claude(&sys, 4_000_000_000));
+    }
 
     #[test]
     fn intersection_area_overlap_and_disjoint() {

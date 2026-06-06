@@ -116,6 +116,12 @@ export function App() {
       window.clearTimeout(settleRef.current);
       settleRef.current = null;
     }
+    // 取消悬停偷看的「收回竖条」定时器：否则它会在松手还原后滞后触发，
+    // 与本次 restore/collapse 抢命令，导致窗口卡在缩略尺寸（吸附条漂在屏幕中间）。
+    if (leaveRef.current) {
+      window.clearTimeout(leaveRef.current);
+      leaveRef.current = null;
+    }
     setGlow(null);
     const d = lastEdgeRef.current;
     const m = modeRef.current;
@@ -177,7 +183,18 @@ export function App() {
     const onDown = (ev: MouseEvent) => {
       const t = ev.target as HTMLElement | null;
       if (t && t.closest("[data-tauri-drag-region]")) {
+        // 双击拖拽区会触发 Tauri 默认的窗口最大化，贴纸不该被最大化 → 在 capture 阶段拦掉。
+        if (ev.detail >= 2) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
         draggingRef.current = true;
+        // 开始拖动即取消悬停偷看的收回定时器，避免拖动期间/松手后误折叠。
+        if (leaveRef.current) {
+          window.clearTimeout(leaveRef.current);
+          leaveRef.current = null;
+        }
       }
     };
     const onUp = () => {
