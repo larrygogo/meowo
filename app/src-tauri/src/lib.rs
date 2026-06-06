@@ -891,6 +891,15 @@ fn reap_and_alive_ids(store: &Store, now_ms: i64) -> (Vec<i64>, usize) {
 /// SessionEnd 丢失的孤儿会话）。取 30 分钟——足够保守，活跃会话每个事件都会刷新计时，绝不会触及。
 const ORPHAN_IDLE_MS: i64 = 30 * 60 * 1000;
 
+/// 是否应为「当前错误指纹」弹通知：仅当当前有错误且指纹与上次通知过的不同。
+/// 同一错误不反复弹；错误消失（cur=None）不弹（清除条目交给调用方）。纯函数，便于单测。
+fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
+    match cur {
+        None => false,
+        Some(c) => prev != Some(c),
+    }
+}
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 进程退出不改 DB、notify 也监听不到，故需这个轮询兜底。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
@@ -1193,7 +1202,7 @@ pub fn run() {
 mod tests {
     use super::{
         clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        pid_is_claude, tab_match_score, Edge, Rect,
+        pid_is_claude, should_notify, tab_match_score, Edge, Rect,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -1359,5 +1368,14 @@ mod tests {
         let work = Rect { x: 100, y: 0, w: 1000, h: 1040 };
         let win = Rect { x: 110, y: 400, w: 300, h: 400 };
         assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
+    }
+
+    #[test]
+    fn should_notify_only_on_new_error() {
+        assert!(!should_notify(None, None));            // 无错 → 不弹
+        assert!(should_notify(None, Some("a")));        // 新错 → 弹
+        assert!(!should_notify(Some("a"), Some("a")));  // 同一错误 → 不弹
+        assert!(should_notify(Some("a"), Some("b")));   // 换了新错误 → 弹
+        assert!(!should_notify(Some("a"), None));       // 错误消失 → 不弹（由清除处理）
     }
 }
