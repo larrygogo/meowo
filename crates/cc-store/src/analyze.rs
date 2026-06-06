@@ -18,7 +18,7 @@ pub struct TranscriptInfo {
 
 /// 把 assistant 正文归类为「卡死错误」短标签；非卡死返回 None。
 /// 刻意排除 529/500/ECONNRESET 等临时错误（多数自愈，标红会误报）。
-pub fn classify_error(text: &str) -> Option<&'static str> {
+pub(crate) fn classify_error(text: &str) -> Option<&'static str> {
     let t = text.trim();
     if t.contains("could not be parsed (retry also failed)") {
         return Some("工具调用解析失败");

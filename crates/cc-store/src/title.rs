@@ -113,6 +113,8 @@ pub fn resolve_cwd(cwd: Option<&str>, session_id: &str) -> Option<String> {
 
 /// 解析 transcript 文件路径，依次尝试：1) hook 给的 path；2) cwd+session_id 重建；
 /// 3) 按 session_id 全局查找。供「同时要标题+错误」的调用方先拿路径再 analyze。
+/// 注意：与 resolve_title 不同，本函数只做路径定位，不保证文件内含有标题；
+/// 第一个候选文件存在即返回，不会因「文件无标题」继续回落。
 pub fn resolve_transcript_path(
     transcript_path: Option<&str>,
     cwd: Option<&str>,
