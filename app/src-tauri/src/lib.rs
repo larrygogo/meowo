@@ -925,9 +925,10 @@ fn waiting_fingerprint(errored: bool, status: &str, last_event_at: i64) -> Optio
     }
 }
 
-/// 弹一条「点击即聚焦该会话终端」的桌面通知。构建+show 放主线程（winrt toast 的 on_activated
-/// 回调需要有消息泵的 COM apartment 才能可靠投递，Tauri 主线程最稳）；回调里调
-/// focus_session_terminal（它自己 spawn 干净线程做 UIA，不阻塞主线程）。app 仅 Windows。
+/// 弹一条「点击即聚焦该会话终端」的桌面通知。构建+show 放主线程：winrt toast 的 show() 需在
+/// COM STA 上调用，Tauri 主线程即 STA；on_activated 回调由 OS 经 COM 激活机制投递（与消息泵无关），
+/// show() 后 Rust 端 Toast 可安全释放（OS 持有通知引用）。回调里调 focus_session_terminal
+/// （它自己 spawn 干净线程做 UIA，不阻塞主线程）。app 仅 Windows。
 #[cfg(target_os = "windows")]
 fn show_session_notification(
     app: &tauri::AppHandle,
@@ -938,7 +939,8 @@ fn show_session_notification(
 ) {
     use tauri_winrt_notification::Toast;
     // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 cc-kanban+图标 + 点击可激活）；
-    // dev 下 AUMID 未注册，退回 PowerShell 的 AUMID 仅保证 toast 能弹出（dev 点击不跳转）。
+    // dev 下 AUMID 未注册，退回 PowerShell 的 AUMID 仅保证 toast 能弹出；此时 on_activated 回调
+    // 根本不会触发（OS 把激活事件投递给 PowerShell 进程而非本进程），点击跳转只在安装版生效。
     let app_id = if tauri::is_dev() {
         Toast::POWERSHELL_APP_ID.to_string()
     } else {
