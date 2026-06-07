@@ -47,13 +47,40 @@ function IconUser() {
   );
 }
 
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg className={spinning ? "spin" : undefined} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
+
 function fmtResetIn(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "";
-  const min = Math.round((t - Date.now()) / 60000);
-  if (min <= 0) return "即将重置";
-  if (min < 60) return `${min} 分钟后重置`;
-  return `${Math.floor(min / 60)} 小时 ${min % 60} 分后重置`;
+  const now = Date.now();
+  const diffMs = t - now;
+  if (diffMs <= 0) return "即将重置";
+  // 按自然日差判断：今天显示小时/分钟，明天/后天用相对词，再往后给具体日期。
+  const startOf = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const dayDiff = Math.round((startOf(t) - startOf(now)) / 86_400_000);
+  if (dayDiff <= 0) {
+    const min = Math.round(diffMs / 60000);
+    if (min < 60) return `${min} 分钟后重置`;
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m > 0 ? `${h} 小时 ${m} 分后重置` : `${h} 小时后重置`;
+  }
+  if (dayDiff === 1) return "明天重置";
+  if (dayDiff === 2) return "后天重置";
+  const r = new Date(t);
+  return `${r.getMonth() + 1} 月 ${r.getDate()} 日重置`;
 }
 
 function UsageBar({ label, win }: { label: string; win: { utilization: number; resets_at: string } | null }) {
@@ -144,12 +171,14 @@ function AccountSection() {
       <div className="row-card usage-card">
         <div className="usage-bar-head">
           <span className="usage-card-title">配额</span>
-          <button className="sbtn" disabled={refreshing} onClick={doRefresh}>{refreshing ? "刷新中…" : "刷新"}</button>
+          <button className="icon-btn" title="刷新" aria-label="刷新" disabled={refreshing} onClick={doRefresh}>
+            <RefreshIcon spinning={refreshing} />
+          </button>
         </div>
         {usage ? (
           <>
-            <UsageBar label="5 小时窗口" win={usage.five_hour} />
-            <UsageBar label="7 天窗口" win={usage.seven_day} />
+            <UsageBar label="5 小时配额" win={usage.five_hour} />
+            <UsageBar label="7 天配额" win={usage.seven_day} />
             <UsageBar label="Opus · 7 天" win={usage.seven_day_opus} />
             <UsageBar label="Sonnet · 7 天" win={usage.seven_day_sonnet} />
             {usage.extra_usage_enabled && <div className="usage-extra">已开启超额用量</div>}
