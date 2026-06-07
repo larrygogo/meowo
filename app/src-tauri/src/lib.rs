@@ -6,7 +6,7 @@ use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -1040,9 +1040,30 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// 构建系统托盘：显示/隐藏贴纸、开机自启开关、退出。
+/// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
+/// 托盘左键点击与右键菜单「设置」共用此逻辑。
+fn open_settings_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("about") {
+        let _ = w.set_focus();
+    } else if let Err(e) = tauri::WebviewWindowBuilder::new(
+        app,
+        "about",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("设置")
+    .inner_size(620.0, 460.0)
+    .min_inner_size(620.0, 460.0)
+    .resizable(false)
+    .decorations(false)
+    .center()
+    .build()
+    {
+        eprintln!("创建设置窗口失败: {e}");
+    }
+}
+
+/// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    // 托盘只保留两项：设置（打开设置窗口）、退出。其余（开机自启等）搬进设置窗口。
     let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
     let menu = MenuBuilder::new(app).items(&[&settings, &quit]).build()?;
@@ -1051,29 +1072,23 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .icon(app.default_window_icon().unwrap().clone())
         .tooltip("cc-kanban")
         .menu(&menu)
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "settings" => {
-                // 窗口 label 仍叫 "about"（main.tsx 按此 label 路由到设置页），仅标题/入口改名为「设置」。
-                if let Some(w) = app.get_webview_window("about") {
-                    let _ = w.set_focus();
-                } else if let Err(e) = tauri::WebviewWindowBuilder::new(
-                    app,
-                    "about",
-                    tauri::WebviewUrl::App("index.html".into()),
-                )
-                .title("设置")
-                .inner_size(620.0, 460.0)
-                .min_inner_size(620.0, 460.0)
-                .resizable(false)
-                .decorations(false)
-                .center()
-                .build()
-                {
-                    eprintln!("创建设置窗口失败: {e}");
-                }
-            }
+        // 左键留给「打开设置」，菜单仅在右键弹出。
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "settings" => open_settings_window(app),
             "quit" => app.exit(0),
             _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // 仅左键「抬起」时触发，避免按下+抬起各触发一次。
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                open_settings_window(tray.app_handle());
+            }
         })
         .build(app)?;
     Ok(())
