@@ -1,3 +1,5 @@
+mod account;
+
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -1087,6 +1089,19 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
+#[tauri::command]
+fn get_account() -> account::AccountPayload {
+    account::get_account_payload()
+}
+
+#[tauri::command]
+async fn refresh_usage() -> Result<account::Usage, String> {
+    // 阻塞 HTTP 放到 blocking 线程，避免占用异步运行时。
+    tauri::async_runtime::spawn_blocking(account::refresh_usage_payload)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
 /// 托盘左键点击与右键菜单「设置」共用此逻辑。
 fn open_settings_window(app: &tauri::AppHandle) {
@@ -1277,7 +1292,9 @@ pub fn run() {
             open_url,
             snap_collapse,
             snap_expand,
-            snap_restore
+            snap_restore,
+            get_account,
+            refresh_usage
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Moved(pos) = event {

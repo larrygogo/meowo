@@ -22,6 +22,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
 sysinfo = "0.32"
+# ureq 跨平台：account 模块无条件使用，放普通依赖让 workspace 在非 Windows 也能编译。
+ureq = { version = "2", features = ["json"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }

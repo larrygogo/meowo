@@ -21,6 +21,19 @@
   --r-sm: 4px;
 }
 * { box-sizing: border-box; }
+
+/* 自定义滚动条（WebView2/Chromium）：细、半透明、配深色主题；Firefox 用 scrollbar-* 兜底。 */
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.16) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 html, body {
   margin: 0;
   height: 100%;
@@ -608,3 +621,39 @@ html, body {
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* 账号分区 */
+.acc-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--cc-accent, #6b8afd); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
+.usage-card { display: block; padding: 14px 16px; }
+.cal-card { padding: 14px 16px; }
+/* 账号区多张卡片连续排列时补间距（去掉了卡片外的 sec-title）。 */
+.row-card + .row-card { margin-top: 14px; }
+.usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+/* 图标按钮（如配额刷新）：透明底、悬停高亮，刷新中图标旋转。 */
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; background: transparent; color: var(--cc-text-dim); cursor: pointer; border-radius: var(--r-md); }
+.icon-btn:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
+.icon-btn:disabled { cursor: default; }
+.icon-btn svg { display: block; }
+.icon-btn svg.spin { animation: spin 0.8s linear infinite; }
+.usage-card-title { font-size: 12.5px; font-weight: 600; }
+.usage-row { margin: 10px 0; }
+.usage-head { display: flex; justify-content: space-between; font-size: 11.5px; }
+.usage-label { color: var(--cc-text-dim); }
+.usage-pct { font-weight: 600; }
+.usage-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; margin: 4px 0 2px; }
+.usage-track > i { display: block; height: 100%; background: var(--cc-accent, #6b8afd); border-radius: 3px; }
+.usage-reset { font-size: 10px; color: var(--cc-text-faint); }
+.usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
+.usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+/* 每日用量热力图（GitHub 贡献图风格：7 行 × N 列周，色越深 token 越多） */
+/* 固定约 18 周列，1fr 自适应填满整宽；格子保持正方块（aspect-ratio:1，宽随列、高随宽）。 */
+.cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, auto); grid-auto-columns: 1fr; gap: 3px; }
+.cal-cell { width: 100%; aspect-ratio: 1; border-radius: 2px; }
+.cal-pad { background: transparent; }
+.cal-l0 { background: rgba(255,255,255,0.06); }
+.cal-l1 { background: rgba(217,119,87,0.30); }
+.cal-l2 { background: rgba(217,119,87,0.52); }
+.cal-l3 { background: rgba(217,119,87,0.76); }
+.cal-l4 { background: var(--cc-accent); }
+.cal-legend { display: flex; align-items: center; gap: 3px; margin-top: 8px; font-size: 10px; color: var(--cc-text-faint); }
+.cal-legend .cal-cell { width: 10px; height: 10px; }
