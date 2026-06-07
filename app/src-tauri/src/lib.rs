@@ -596,6 +596,26 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
     }
 }
 
+/// 聚焦某会话的终端：优先按标题用 UIA 精确切到对应 WT 标签页，否则按进程组找窗口置前。
+/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。
+/// 供 focus_session 命令与「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
+#[cfg(target_os = "windows")]
+fn focus_session_terminal(pid: i64, title: Option<String>) {
+    std::thread::spawn(move || {
+        // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
+        if let Some(t) = title.as_deref() {
+            if focus_terminal_tab(pid as u32, t) {
+                return;
+            }
+        }
+        // 兜底：传统 conhost（每窗口独立进程）等场景，扫进程组按 PID 找顶层窗口置前。
+        let targets = console_group_pids(pid as u32);
+        if let Some(hwnd) = find_window_for_pids(&targets) {
+            force_foreground(hwnd);
+        }
+    });
+}
+
 #[tauri::command]
 fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
     if pid <= 0 {
@@ -603,33 +623,14 @@ fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        // 全部放后台线程并 fire-and-forget（前端本就忽略返回），原因有二：
-        // 1) 干净 COM apartment：Tauri 同步命令在主线程执行，主线程已是 STA，
-        //    复用会让 `UIAutomation::new()` 因 apartment 冲突失败。
-        // 2) 不阻塞主线程：若 join 等待，`force_foreground` 的 AttachThreadInput 会附着到
-        //    「被阻塞、不再泵消息」的主线程（贴纸窗口正是当前前台）→ 死锁卡死。
-        //    立即返回让主线程继续泵消息，后台线程再 AttachThreadInput 才安全。
-        std::thread::spawn(move || {
-            // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
-            // 此路径不做进程扫描，仅靠标题匹配，快。
-            if let Some(t) = title.as_deref() {
-                if focus_terminal_tab(pid as u32, t) {
-                    return;
-                }
-            }
-            // 兜底：传统 conhost（每窗口独立进程）等场景，才扫进程组按 PID 找顶层窗口置前。
-            let targets = console_group_pids(pid as u32);
-            if let Some(hwnd) = find_window_for_pids(&targets) {
-                force_foreground(hwnd);
-            }
-        });
+        focus_session_terminal(pid, title);
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (pid, title);
-        return Err("仅支持 Windows".into());
+        Err("仅支持 Windows".into())
     }
-    Ok(())
 }
 
 /// 会话 id 是否为合法 UUID 形态（仅十六进制与连字符，长度 36）。
@@ -922,13 +923,55 @@ fn waiting_fingerprint(errored: bool, status: &str, last_event_at: i64) -> Optio
     }
 }
 
+/// 弹一条「点击即聚焦该会话终端」的桌面通知。构建+show 放主线程：winrt toast 的 show() 需在
+/// COM STA 上调用，Tauri 主线程即 STA；on_activated 回调由 OS 经 COM 激活机制投递（与消息泵无关），
+/// show() 后 Rust 端 Toast 可安全释放（OS 持有通知引用）。回调里调 focus_session_terminal
+/// （它自己 spawn 干净线程做 UIA，不阻塞主线程）。app 仅 Windows。
+#[cfg(target_os = "windows")]
+fn show_session_notification(
+    app: &tauri::AppHandle,
+    title: String,
+    body: String,
+    pid: i64,
+    focus_title: String,
+) {
+    use tauri_winrt_notification::Toast;
+    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 cc-kanban+图标 + 点击可激活）；
+    // dev 下 AUMID 未注册，退回 PowerShell 的 AUMID 仅保证 toast 能弹出；此时 on_activated 回调
+    // 根本不会触发（OS 把激活事件投递给 PowerShell 进程而非本进程），点击跳转只在安装版生效。
+    let app_id = if tauri::is_dev() {
+        Toast::POWERSHELL_APP_ID.to_string()
+    } else {
+        app.config().identifier.clone()
+    };
+    let _ = app.run_on_main_thread(move || {
+        let _ = Toast::new(&app_id)
+            .title(&title)
+            .text1(&body)
+            .on_activated(move |_| {
+                focus_session_terminal(pid, Some(focus_title.clone()));
+                Ok(())
+            })
+            .show();
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_session_notification(
+    _app: &tauri::AppHandle,
+    _title: String,
+    _body: String,
+    _pid: i64,
+    _focus_title: String,
+) {
+}
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
 /// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
 /// 故中途打开开关不会把积压的旧错误/待交互一次性炸出来。启动首扫只播种不弹。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
     use std::collections::HashMap;
-    use tauri_plugin_notification::NotificationExt;
     std::thread::spawn(move || {
         let mut last: Vec<i64> = Vec::new();
         let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
@@ -962,17 +1005,23 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                         cc_store::title::resolve_transcript_path(None, s.cwd.as_deref(), &sid)
                             .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
                             .unwrap_or_default();
+                    // 会话标题：通知正文用，也作点击聚焦时匹配 WT 标签页的标题。transcript 标题优先，否则 DB 标题。
+                    let display_title = title
+                        .filter(|t| !t.trim().is_empty())
+                        .unwrap_or_else(|| s.task_title.clone());
+                    let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
 
                     // 错误通知（优先）。
                     if let Some(e) = &error {
                         let prev = notified.get(&sid).map(|s| s.as_str());
                         if seeded && notify_on && should_notify(prev, Some(&e.fingerprint)) {
-                            let _ = app
-                                .notification()
-                                .builder()
-                                .title("会话出错")
-                                .body(format!("{} · {}", s.project_name, e.label))
-                                .show();
+                            show_session_notification(
+                                &app,
+                                "会话出错".into(),
+                                format!("{} · {}", s.project_name, e.label),
+                                pid,
+                                display_title.clone(),
+                            );
                         }
                         notified.insert(sid.clone(), e.fingerprint.clone());
                     } else {
@@ -984,15 +1033,13 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                         Some(fp) => {
                             let prev = notified_waiting.get(&sid).map(|s| s.as_str());
                             if seeded && notify_on && should_notify(prev, Some(&fp)) {
-                                let body_title = title
-                                    .filter(|t| !t.trim().is_empty())
-                                    .unwrap_or_else(|| s.task_title.clone());
-                                let _ = app
-                                    .notification()
-                                    .builder()
-                                    .title("等待你回复")
-                                    .body(format!("{} · {}", s.project_name, body_title))
-                                    .show();
+                                show_session_notification(
+                                    &app,
+                                    "等待你回复".into(),
+                                    format!("{} · {}", s.project_name, display_title),
+                                    pid,
+                                    display_title.clone(),
+                                );
                             }
                             notified_waiting.insert(sid.clone(), fp);
                         }
@@ -1212,7 +1259,6 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             db_path: path.clone(),
         })

@@ -18,7 +18,6 @@ tauri-plugin-window-state = { workspace = true }
 tauri-plugin-autostart = { workspace = true }
 tauri-plugin-updater = { workspace = true }
 tauri-plugin-process = { workspace = true }
-tauri-plugin-notification = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
@@ -27,3 +26,4 @@ sysinfo = "0.32"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }
 uiautomation = "0.25"
+tauri-winrt-notification = "0.7"
