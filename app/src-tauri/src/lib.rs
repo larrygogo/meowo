@@ -1,3 +1,6 @@
+#[allow(dead_code)] // Task 2 接入 I/O 后消费这些项
+mod account;
+
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
