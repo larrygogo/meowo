@@ -1,6 +1,8 @@
 //! Claude Code 账号、实时用量、每日用量的读取与解析。
 //! 纯解析/判定/合并函数在此可单测；I/O 与网络见同文件后半部分。
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Account {
@@ -158,9 +160,6 @@ pub fn merge_credentials(
     out
 }
 
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
 /// Claude Code 公开 OAuth client id。
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -194,7 +193,7 @@ fn usage_cache_path() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".cc-kanban").join("usage-cache.json"))
 }
 
-fn read_json(path: &PathBuf) -> Option<serde_json::Value> {
+fn read_json(path: &Path) -> Option<serde_json::Value> {
     let s = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&s).ok()
 }
@@ -228,11 +227,14 @@ fn write_cached_usage(usage: &Usage) {
 }
 
 /// 原子写回 credentials 文件（临时文件 + rename）。
-fn write_credentials_atomic(path: &PathBuf, value: &serde_json::Value) -> Result<(), String> {
+fn write_credentials_atomic(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
+        return Err(e.to_string());
+    }
     Ok(())
 }
 
@@ -262,7 +264,10 @@ fn ensure_valid_token() -> Result<String, String> {
     let body: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
     let new_access = body.get("access_token").and_then(|v| v.as_str()).ok_or("刷新响应缺 access_token")?.to_string();
     let new_refresh = body.get("refresh_token").and_then(|v| v.as_str()).unwrap_or(&refresh).to_string();
-    let expires_in = body.get("expires_in").and_then(|v| v.as_i64()).unwrap_or(3600);
+    let expires_in = body
+        .get("expires_in")
+        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        .unwrap_or(3600);
     let new_expires_at = now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
