@@ -749,12 +749,25 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Settings {
     /// 归档条目自动隐藏的天数；0 = 永不隐藏。
     #[serde(default)]
     archive_hide_days: u32,
+    /// 桌面通知总开关（待交互 + 错误）。缺省为开启，兼容老 settings.json。
+    #[serde(default = "default_true")]
+    notifications_enabled: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { archive_hide_days: 0, notifications_enabled: true }
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -899,14 +912,27 @@ fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
     }
 }
 
+/// 待交互通知指纹：errored 时不发（None，错误优先）；status==waiting 且未出错时用
+/// last_event_at 作指纹（每个新的等待回合是新指纹）；其它状态返回 None。纯函数，便于单测。
+fn waiting_fingerprint(errored: bool, status: &str, last_event_at: i64) -> Option<String> {
+    if errored || status != "waiting" {
+        None
+    } else {
+        Some(last_event_at.to_string())
+    }
+}
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
-/// 同时对「连接中且出错」的会话做去重桌面通知（同一错误只弹一次，启动首扫只播种不弹）。
+/// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
+/// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
+/// 故中途打开开关不会把积压的旧错误/待交互一次性炸出来。启动首扫只播种不弹。
 fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
     use std::collections::HashMap;
     use tauri_plugin_notification::NotificationExt;
     std::thread::spawn(move || {
         let mut last: Vec<i64> = Vec::new();
-        let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次通知指纹
+        let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
+        let mut notified_waiting: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待交互指纹
         let mut seeded = false;
         loop {
             if let Ok(store) = Store::open(&db_path) {
@@ -920,7 +946,10 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                     last = alive;
                 }
 
-                // 错误检测 + 去重通知：仅扫连接中的会话（活跃，数量少）。
+                // 通知总开关：每轮读一次（文件读极廉价；设置改动 5s 内生效）。
+                let notify_on = load_settings().notifications_enabled;
+
+                // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。
                 let mut present: HashMap<String, String> = HashMap::new();
                 for s in store.live_sessions().unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
@@ -928,33 +957,54 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                     }
                     let sid = s.session.cc_session_id.clone();
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
-                    let err = cc_store::title::resolve_transcript_path(
-                        None, s.cwd.as_deref(), &sid,
-                    )
-                    .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
-                    .and_then(|info| info.error);
 
-                    match err {
-                        Some(e) => {
-                            let prev = notified.get(&sid).map(|s| s.as_str());
-                            if seeded && should_notify(prev, Some(&e.fingerprint)) {
+                    let cc_store::TranscriptInfo { title, error } =
+                        cc_store::title::resolve_transcript_path(None, s.cwd.as_deref(), &sid)
+                            .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+                            .unwrap_or_default();
+
+                    // 错误通知（优先）。
+                    if let Some(e) = &error {
+                        let prev = notified.get(&sid).map(|s| s.as_str());
+                        if seeded && notify_on && should_notify(prev, Some(&e.fingerprint)) {
+                            let _ = app
+                                .notification()
+                                .builder()
+                                .title("会话出错")
+                                .body(format!("{} · {}", s.project_name, e.label))
+                                .show();
+                        }
+                        notified.insert(sid.clone(), e.fingerprint.clone());
+                    } else {
+                        notified.remove(&sid); // 错误消失：下次再错会重新通知
+                    }
+
+                    // 待交互通知（errored 时 waiting_fingerprint 返回 None，自动让位给错误）。
+                    match waiting_fingerprint(error.is_some(), &s.session.status, s.session.last_event_at) {
+                        Some(fp) => {
+                            let prev = notified_waiting.get(&sid).map(|s| s.as_str());
+                            if seeded && notify_on && should_notify(prev, Some(&fp)) {
+                                let body_title = title
+                                    .filter(|t| !t.trim().is_empty())
+                                    .unwrap_or_else(|| s.task_title.clone());
                                 let _ = app
                                     .notification()
                                     .builder()
-                                    .title("会话出错")
-                                    .body(format!("{} · {}", s.project_name, e.label))
+                                    .title("等待你回复")
+                                    .body(format!("{} · {}", s.project_name, body_title))
                                     .show();
                             }
-                            notified.insert(sid, e.fingerprint);
+                            notified_waiting.insert(sid.clone(), fp);
                         }
                         None => {
-                            notified.remove(&sid); // 错误消失：下次再错会重新通知
+                            notified_waiting.remove(&sid);
                         }
                     }
                 }
                 // 清掉本轮彻底消失（已结束/超出 100 条上限）的残留条目，防止 map 无限增长。
-                // 边缘情况：会话彻底消失后又带着完全相同的未解决错误重新出现，会再弹一次——可接受。
+                // 边缘情况：会话彻底消失后又带着完全相同的未解决错误/待交互重新出现，会再弹一次——可接受。
                 notified.retain(|k, _| present.contains_key(k));
+                notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
             }
             std::thread::sleep(Duration::from_secs(5));
@@ -1244,7 +1294,7 @@ pub fn run() {
 mod tests {
     use super::{
         clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        pid_is_claude, should_notify, tab_match_score, Edge, Rect,
+        pid_is_claude, should_notify, tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -1419,5 +1469,36 @@ mod tests {
         assert!(!should_notify(Some("a"), Some("a")));  // 同一错误 → 不弹
         assert!(should_notify(Some("a"), Some("b")));   // 换了新错误 → 弹
         assert!(!should_notify(Some("a"), None));       // 错误消失 → 不弹（由清除处理）
+    }
+
+    #[test]
+    fn waiting_fingerprint_rules() {
+        // 连接中、待交互、未出错 → 用 last_event_at 作指纹
+        assert_eq!(waiting_fingerprint(false, "waiting", 123), Some("123".to_string()));
+        // 出错优先：errored 时不发待交互
+        assert_eq!(waiting_fingerprint(true, "waiting", 123), None);
+        // 非 waiting 状态不发
+        assert_eq!(waiting_fingerprint(false, "running", 123), None);
+        assert_eq!(waiting_fingerprint(false, "ended", 123), None);
+        // 指纹随 last_event_at 变化（新的等待回合 → 新指纹 → 会再弹一次）
+        assert_ne!(
+            waiting_fingerprint(false, "waiting", 1),
+            waiting_fingerprint(false, "waiting", 2)
+        );
+    }
+
+    #[test]
+    fn settings_defaults_notifications_on() {
+        // 空文件 / 老文件缺字段 → 默认开启（向后兼容）
+        let empty: Settings = serde_json::from_str("{}").unwrap();
+        assert!(empty.notifications_enabled);
+        let legacy: Settings = serde_json::from_str(r#"{"archive_hide_days":7}"#).unwrap();
+        assert!(legacy.notifications_enabled);
+        assert_eq!(legacy.archive_hide_days, 7);
+        // 显式关闭可被尊重
+        let off: Settings = serde_json::from_str(r#"{"notifications_enabled":false}"#).unwrap();
+        assert!(!off.notifications_enabled);
+        // 整文件缺失/解析失败时用 Default，也应为 ON
+        assert!(Settings::default().notifications_enabled);
     }
 }

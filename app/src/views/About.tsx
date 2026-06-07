@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings } from "../api";
+import { getSettings, setSettings, type Settings } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 
 const HIDE_OPTIONS = [
@@ -116,19 +116,32 @@ function Dropdown({
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [hideDays, setHideDays] = useState(0);
+  const [notifyOn, setNotifyOn] = useState(true);
   useEffect(() => {
     invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
-    getSettings().then((s) => setHideDays(s.archive_hide_days)).catch(() => {});
+    getSettings()
+      .then((s) => {
+        setHideDays(s.archive_hide_days);
+        setNotifyOn(s.notifications_enabled);
+      })
+      .catch(() => {});
   }, []);
   const toggleAutostart = () => {
     const next = !autostart;
     setAutostart(next);
     invoke("set_autostart", { enabled: next }).catch(() => setAutostart(!next));
   };
+  // 设置项写库统一发送完整 Settings（后端 set_settings 接收整个对象）。
+  const persist = (next: Settings) => setSettings(next);
   const changeHideDays = (days: number) => {
     const prev = hideDays;
     setHideDays(days);
-    setSettings({ archive_hide_days: days }).catch(() => setHideDays(prev));
+    persist({ archive_hide_days: days, notifications_enabled: notifyOn }).catch(() => setHideDays(prev));
+  };
+  const toggleNotify = () => {
+    const next = !notifyOn;
+    setNotifyOn(next);
+    persist({ archive_hide_days: hideDays, notifications_enabled: next }).catch(() => setNotifyOn(!next));
   };
   return (
     <>
@@ -140,6 +153,13 @@ function GeneralSection() {
             <div className="row-desc">登录系统后自动启动 cc-kanban</div>
           </div>
           <Switch checked={autostart} onChange={toggleAutostart} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">桌面通知</div>
+            <div className="row-desc">会话需要你回复或出错时弹系统通知</div>
+          </div>
+          <Switch checked={notifyOn} onChange={toggleNotify} />
         </div>
         <div className="row">
           <div className="row-text">

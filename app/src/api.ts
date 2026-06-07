@@ -88,6 +88,8 @@ export function getLiveSessions(): Promise<LiveSession[]> {
 export type Settings = {
   /** 归档条目自动隐藏的天数；0 = 永不隐藏。 */
   archive_hide_days: number;
+  /** 桌面通知总开关（待交互 + 错误）。 */
+  notifications_enabled: boolean;
 };
 
 export function getSettings(): Promise<Settings> {
