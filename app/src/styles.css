@@ -611,7 +611,8 @@ html, body {
 
 /* 账号分区 */
 .acc-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--cc-accent, #6b8afd); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
-.usage-card { display: block; }
+.usage-card { display: block; padding: 14px 16px; }
+.cal-card { padding: 14px 16px; }
 .usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .usage-card-title { font-size: 12.5px; font-weight: 600; }
 .usage-row { margin: 10px 0; }
@@ -628,9 +629,9 @@ html, body {
 .cal-cell { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
 .cal-pad { background: transparent; }
 .cal-l0 { background: rgba(255,255,255,0.06); }
-.cal-l1 { background: rgba(107,138,253,0.35); }
-.cal-l2 { background: rgba(107,138,253,0.55); }
-.cal-l3 { background: rgba(107,138,253,0.78); }
-.cal-l4 { background: var(--cc-accent, #6b8afd); }
+.cal-l1 { background: rgba(217,119,87,0.30); }
+.cal-l2 { background: rgba(217,119,87,0.52); }
+.cal-l3 { background: rgba(217,119,87,0.76); }
+.cal-l4 { background: var(--cc-accent); }
 .cal-legend { display: flex; align-items: center; gap: 3px; margin-top: 8px; font-size: 10px; color: var(--cc-text-faint); }
 .cal-legend .cal-cell { width: 10px; height: 10px; }

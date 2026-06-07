@@ -157,7 +157,7 @@ function AccountSection() {
       {daily && daily.days.length > 0 && (
         <>
           <div className="sec-title">每日用量</div>
-          <div className="row-card">
+          <div className="row-card cal-card">
             <div className="cal-grid">
               {buildDailyGrid(daily.days).map((c, i) =>
                 c.pad ? (
