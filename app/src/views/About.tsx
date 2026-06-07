@@ -165,7 +165,7 @@ function AccountSection() {
           </div>
         </div>
       ) : (
-        <div className="row-card"><div className="row"><div className="row-text"><div className="row-desc">未检测到 Claude Code 登录信息</div></div></div></div>
+        <div className="row-card"><div className="row"><div className="row-text"><div className="row-label">未登录 Claude Code</div><div className="row-desc">在终端运行 <code>claude</code> 登录后即可查看账号与用量</div></div></div></div>
       )}
 
       <div className="row-card usage-card">
@@ -185,7 +185,7 @@ function AccountSection() {
             {usageErr && <div className="usage-stale">最新数据刷新失败，显示的是缓存值</div>}
           </>
         ) : usageErr ? (
-          <div className="usage-stale">用量暂不可用（需在终端用一次 Claude Code 或检查网络）</div>
+          <div className="usage-stale">用量暂不可用，请确认已登录 Claude Code（终端运行 claude）或检查网络</div>
         ) : (
           <div className="usage-stale">加载中…</div>
         )}
