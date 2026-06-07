@@ -623,9 +623,14 @@ html, body {
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
-.daily-list { display: flex; flex-direction: column; gap: 6px; }
-.daily-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
-.daily-date { width: 40px; color: var(--cc-text-dim); flex: none; }
-.daily-track { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
-.daily-track > i { display: block; height: 100%; background: var(--cc-accent, #6b8afd); }
-.daily-val { width: 96px; text-align: right; color: var(--cc-text-faint); flex: none; }
+/* 每日用量热力图（GitHub 贡献图风格：7 行 × N 列周，色越深 token 越多） */
+.cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; justify-content: start; }
+.cal-cell { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+.cal-pad { background: transparent; }
+.cal-l0 { background: rgba(255,255,255,0.06); }
+.cal-l1 { background: rgba(107,138,253,0.35); }
+.cal-l2 { background: rgba(107,138,253,0.55); }
+.cal-l3 { background: rgba(107,138,253,0.78); }
+.cal-l4 { background: var(--cc-accent, #6b8afd); }
+.cal-legend { display: flex; align-items: center; gap: 3px; margin-top: 8px; font-size: 10px; color: var(--cc-text-faint); }
+.cal-legend .cal-cell { width: 10px; height: 10px; }

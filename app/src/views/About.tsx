@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, type Settings } from "../api";
-import { getAccount, refreshUsage, type AccountPayload, type Usage } from "../api";
+import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 
 const HIDE_OPTIONS = [
@@ -71,6 +71,24 @@ function UsageBar({ label, win }: { label: string; win: { utilization: number; r
   );
 }
 
+// 每日用量热力图的一个格子：占位（补齐周对齐）或某天的数据 + 着色档位 0-4。
+type GridCell = { pad: true } | { pad: false; date: string; tokens: number; messages: number; level: number };
+
+/// 把按日升序的每日数据排成贡献图格子序列：首日按星期补空格（周日为列起点），
+/// 配合 CSS grid-auto-flow:column + 7 行，自动按「每列一周」竖向填充。
+function buildDailyGrid(days: DailyEntry[]): GridCell[] {
+  if (days.length === 0) return [];
+  const max = Math.max(1, ...days.map((d) => d.tokens));
+  const cells: GridCell[] = [];
+  const firstDow = new Date(days[0].date + "T00:00:00").getDay(); // 0=周日
+  for (let i = 0; i < firstDow; i++) cells.push({ pad: true });
+  for (const d of days) {
+    const level = d.tokens === 0 ? 0 : Math.min(4, Math.ceil((d.tokens / max) * 4));
+    cells.push({ pad: false, date: d.date, tokens: d.tokens, messages: d.message_count, level });
+  }
+  return cells;
+}
+
 function AccountSection() {
   const [data, setData] = useState<AccountPayload | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -96,7 +114,6 @@ function AccountSection() {
 
   const acc = data?.account ?? null;
   const daily = data?.daily ?? null;
-  const maxTok = daily ? Math.max(1, ...daily.days.map((d) => d.tokens)) : 1;
 
   return (
     <>
@@ -141,14 +158,26 @@ function AccountSection() {
         <>
           <div className="sec-title">每日用量</div>
           <div className="row-card">
-            <div className="daily-list">
-              {daily.days.map((d) => (
-                <div className="daily-row" key={d.date}>
-                  <span className="daily-date">{d.date.slice(5)}</span>
-                  <div className="daily-track"><i style={{ width: `${Math.round((d.tokens / maxTok) * 100)}%` }} /></div>
-                  <span className="daily-val">{(d.tokens / 1000).toFixed(0)}k · {d.message_count} 条</span>
-                </div>
-              ))}
+            <div className="cal-grid">
+              {buildDailyGrid(daily.days).map((c, i) =>
+                c.pad ? (
+                  <span key={i} className="cal-cell cal-pad" />
+                ) : (
+                  <span
+                    key={i}
+                    className={`cal-cell cal-l${c.level}`}
+                    title={`${c.date} · ${(c.tokens / 1000).toFixed(1)}k token · ${c.messages} 条`}
+                  />
+                )
+              )}
+            </div>
+            <div className="cal-legend">
+              <span>少</span>
+              <i className="cal-cell cal-l1" />
+              <i className="cal-cell cal-l2" />
+              <i className="cal-cell cal-l3" />
+              <i className="cal-cell cal-l4" />
+              <span>多</span>
             </div>
             <div className="sec-hint">数据截至 {daily.last_computed_date || "—"}，在终端运行 /stats 可刷新</div>
           </div>

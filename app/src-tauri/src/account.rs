@@ -203,9 +203,9 @@ pub fn read_account() -> Option<Account> {
     parse_account(&read_json(&claude_json_path()?)?)
 }
 
-/// 读每日用量（stats-cache.json，最近 14 天）。
+/// 读每日用量（stats-cache.json，最近 8 周 = 56 天，供贡献图热力图展示）。
 pub fn read_daily() -> Option<DailyStats> {
-    parse_daily(&read_json(&stats_cache_path()?)?, 14)
+    parse_daily(&read_json(&stats_cache_path()?)?, 56)
 }
 
 /// 读上次缓存的用量快照（~/.cc-kanban/usage-cache.json 的 `usage` 字段）。
