@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "cc-app"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "cc-reporter",
  "cc-store",
