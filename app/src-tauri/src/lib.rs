@@ -596,6 +596,28 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
     }
 }
 
+/// 聚焦某会话的终端：优先按标题用 UIA 精确切到对应 WT 标签页，否则按进程组找窗口置前。
+/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。仅 Windows 有实际行为。
+/// 供 focus_session 命令与「点击通知」回调共用。
+fn focus_session_terminal(pid: i64, title: Option<String>) {
+    #[cfg(target_os = "windows")]
+    std::thread::spawn(move || {
+        // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
+        if let Some(t) = title.as_deref() {
+            if focus_terminal_tab(pid as u32, t) {
+                return;
+            }
+        }
+        // 兜底：传统 conhost（每窗口独立进程）等场景，扫进程组按 PID 找顶层窗口置前。
+        let targets = console_group_pids(pid as u32);
+        if let Some(hwnd) = find_window_for_pids(&targets) {
+            force_foreground(hwnd);
+        }
+    });
+    #[cfg(not(target_os = "windows"))]
+    let _ = (pid, title);
+}
+
 #[tauri::command]
 fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
     if pid <= 0 {
@@ -603,33 +625,14 @@ fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        // 全部放后台线程并 fire-and-forget（前端本就忽略返回），原因有二：
-        // 1) 干净 COM apartment：Tauri 同步命令在主线程执行，主线程已是 STA，
-        //    复用会让 `UIAutomation::new()` 因 apartment 冲突失败。
-        // 2) 不阻塞主线程：若 join 等待，`force_foreground` 的 AttachThreadInput 会附着到
-        //    「被阻塞、不再泵消息」的主线程（贴纸窗口正是当前前台）→ 死锁卡死。
-        //    立即返回让主线程继续泵消息，后台线程再 AttachThreadInput 才安全。
-        std::thread::spawn(move || {
-            // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
-            // 此路径不做进程扫描，仅靠标题匹配，快。
-            if let Some(t) = title.as_deref() {
-                if focus_terminal_tab(pid as u32, t) {
-                    return;
-                }
-            }
-            // 兜底：传统 conhost（每窗口独立进程）等场景，才扫进程组按 PID 找顶层窗口置前。
-            let targets = console_group_pids(pid as u32);
-            if let Some(hwnd) = find_window_for_pids(&targets) {
-                force_foreground(hwnd);
-            }
-        });
+        focus_session_terminal(pid, title);
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (pid, title);
-        return Err("仅支持 Windows".into());
+        Err("仅支持 Windows".into())
     }
-    Ok(())
 }
 
 /// 会话 id 是否为合法 UUID 形态（仅十六进制与连字符，长度 36）。
