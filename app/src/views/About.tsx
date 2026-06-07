@@ -74,15 +74,19 @@ function UsageBar({ label, win }: { label: string; win: { utilization: number; r
 // 每日用量热力图的一个格子：占位（补齐周对齐）或某天的数据 + 着色档位 0-4。
 type GridCell = { pad: true } | { pad: false; date: string; tokens: number; messages: number; level: number };
 
-/// 把按日升序的每日数据排成贡献图格子序列：补全首日→末日的**每一天**（无活动的日期
-/// stats-cache 里没有，需填 0 档淡色格子表示空），首日按星期补占位（周日为列起点），
-/// 配合 CSS grid-auto-flow:column + 7 行，自动按「每列一周」竖向填充。
+// 固定显示的周数：用足够多的日期（含无活动的空白日）把整宽铺满（设置窗为固定宽）。
+const GRID_WEEKS = 18;
+
+/// 排成贡献图格子序列：以末日为终点回溯固定 GRID_WEEKS 周，逐日补全（stats-cache 里没有的
+/// 无活动日期填 0 档淡色格子表示空），首日按星期补占位（周日为列起点）；
+/// 配合 CSS grid-auto-flow:column + 7 行 + 1fr 列，自动按「每列一周」竖排并铺满整宽。
 function buildDailyGrid(days: DailyEntry[]): GridCell[] {
   if (days.length === 0) return [];
   const byDate = new Map(days.map((d) => [d.date, d]));
   const max = Math.max(1, ...days.map((d) => d.tokens));
-  const start = new Date(days[0].date + "T00:00:00");
   const end = new Date(days[days.length - 1].date + "T00:00:00");
+  const start = new Date(end);
+  start.setDate(end.getDate() - (GRID_WEEKS * 7 - 1)); // 回溯固定周数，不足的早期日期以空白格补满
   const cells: GridCell[] = [];
   for (let i = 0; i < start.getDay(); i++) cells.push({ pad: true }); // 首列按星期补空格对齐
   for (const t = new Date(start); t <= end; t.setDate(t.getDate() + 1)) {
