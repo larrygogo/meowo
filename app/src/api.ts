@@ -107,3 +107,28 @@ export function todoProgress(todos: Todo[]): { done: number; total: number; perc
   const percent = total === 0 ? 0 : Math.round((done / total) * 100);
   return { done, total, percent };
 }
+
+export type UsageWindow = { utilization: number; resets_at: string };
+export type Usage = {
+  five_hour: UsageWindow | null;
+  seven_day: UsageWindow | null;
+  seven_day_opus: UsageWindow | null;
+  seven_day_sonnet: UsageWindow | null;
+  extra_usage_enabled: boolean;
+};
+export type Account = {
+  email: string;
+  display_name: string;
+  organization: string | null;
+  plan: string | null;
+};
+export type DailyEntry = { date: string; message_count: number; session_count: number; tokens: number };
+export type DailyStats = { days: DailyEntry[]; last_computed_date: string };
+export type AccountPayload = { account: Account | null; daily: DailyStats | null; usage: Usage | null };
+
+export function getAccount(): Promise<AccountPayload> {
+  return invoke("get_account");
+}
+export function refreshUsage(): Promise<Usage> {
+  return invoke("refresh_usage");
+}

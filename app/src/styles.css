@@ -608,3 +608,24 @@ html, body {
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* 账号分区 */
+.acc-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--cc-accent, #6b8afd); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
+.usage-card { display: block; }
+.usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.usage-card-title { font-size: 12.5px; font-weight: 600; }
+.usage-row { margin: 10px 0; }
+.usage-head { display: flex; justify-content: space-between; font-size: 11.5px; }
+.usage-label { color: var(--cc-text-dim); }
+.usage-pct { font-weight: 600; }
+.usage-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; margin: 4px 0 2px; }
+.usage-track > i { display: block; height: 100%; background: var(--cc-accent, #6b8afd); border-radius: 3px; }
+.usage-reset { font-size: 10px; color: var(--cc-text-faint); }
+.usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
+.usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+.daily-list { display: flex; flex-direction: column; gap: 6px; }
+.daily-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.daily-date { width: 40px; color: var(--cc-text-dim); flex: none; }
+.daily-track { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.daily-track > i { display: block; height: 100%; background: var(--cc-accent, #6b8afd); }
+.daily-val { width: 96px; text-align: right; color: var(--cc-text-faint); flex: none; }

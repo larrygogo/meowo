@@ -4,6 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, type Settings } from "../api";
+import { getAccount, refreshUsage, type AccountPayload, type Usage } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 
 const HIDE_OPTIONS = [
@@ -17,7 +18,7 @@ const REPO = "github.com/larrygogo/cc-kanban";
 const REPO_URL = "https://github.com/larrygogo/cc-kanban";
 const openExt = (url: string) => invoke("open_url", { url }).catch(() => {});
 
-type Section = "general" | "about";
+type Section = "general" | "account" | "about";
 
 function IconGear() {
   return (
@@ -34,6 +35,126 @@ function IconInfo() {
       <line x1="12" y1="11" x2="12" y2="16" />
       <line x1="12" y1="8" x2="12" y2="8" />
     </svg>
+  );
+}
+
+function IconUser() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+    </svg>
+  );
+}
+
+function fmtResetIn(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const min = Math.round((t - Date.now()) / 60000);
+  if (min <= 0) return "即将重置";
+  if (min < 60) return `${min} 分钟后重置`;
+  return `${Math.floor(min / 60)} 小时 ${min % 60} 分后重置`;
+}
+
+function UsageBar({ label, win }: { label: string; win: { utilization: number; resets_at: string } | null }) {
+  if (!win) return null;
+  const pct = Math.max(0, Math.min(100, win.utilization));
+  return (
+    <div className="usage-row">
+      <div className="usage-head">
+        <span className="usage-label">{label}</span>
+        <span className="usage-pct">{pct.toFixed(0)}%</span>
+      </div>
+      <div className="usage-track"><i style={{ width: `${pct}%` }} /></div>
+      <div className="usage-reset">{fmtResetIn(win.resets_at)}</div>
+    </div>
+  );
+}
+
+function AccountSection() {
+  const [data, setData] = useState<AccountPayload | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [usageErr, setUsageErr] = useState(false);
+
+  const doRefresh = () => {
+    setRefreshing(true);
+    setUsageErr(false);
+    refreshUsage()
+      .then((u) => setUsage(u))
+      .catch(() => setUsageErr(true))
+      .finally(() => setRefreshing(false));
+  };
+
+  useEffect(() => {
+    // 先缓存后请求：getAccount 立即给账号/每日/缓存用量，再 refreshUsage 联网刷新。
+    getAccount()
+      .then((d) => { setData(d); setUsage(d.usage); })
+      .catch(() => {});
+    doRefresh();
+  }, []);
+
+  const acc = data?.account ?? null;
+  const daily = data?.daily ?? null;
+  const maxTok = daily ? Math.max(1, ...daily.days.map((d) => d.tokens)) : 1;
+
+  return (
+    <>
+      <div className="sec-title">账号</div>
+      {acc ? (
+        <div className="row-card">
+          <div className="row">
+            <div className="row-icon"><div className="acc-avatar">{(acc.display_name || acc.email).slice(0, 1).toUpperCase()}</div></div>
+            <div className="row-text">
+              <div className="row-label">{acc.display_name}</div>
+              <div className="row-desc">{acc.email}{acc.plan ? ` · ${acc.plan}` : ""}{acc.organization ? ` · ${acc.organization}` : ""}</div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="row-card"><div className="row"><div className="row-text"><div className="row-desc">未检测到 Claude Code 登录信息</div></div></div></div>
+      )}
+
+      <div className="sec-title">用量</div>
+      <div className="row-card usage-card">
+        <div className="usage-bar-head">
+          <span className="usage-card-title">配额</span>
+          <button className="sbtn" disabled={refreshing} onClick={doRefresh}>{refreshing ? "刷新中…" : "刷新"}</button>
+        </div>
+        {usage ? (
+          <>
+            <UsageBar label="5 小时窗口" win={usage.five_hour} />
+            <UsageBar label="7 天窗口" win={usage.seven_day} />
+            <UsageBar label="Opus · 7 天" win={usage.seven_day_opus} />
+            <UsageBar label="Sonnet · 7 天" win={usage.seven_day_sonnet} />
+            {usage.extra_usage_enabled && <div className="usage-extra">已开启超额用量</div>}
+            {usageErr && <div className="usage-stale">最新数据刷新失败，显示的是缓存值</div>}
+          </>
+        ) : usageErr ? (
+          <div className="usage-stale">用量暂不可用（需在终端用一次 Claude Code 或检查网络）</div>
+        ) : (
+          <div className="usage-stale">加载中…</div>
+        )}
+      </div>
+
+      {daily && daily.days.length > 0 && (
+        <>
+          <div className="sec-title">每日用量</div>
+          <div className="row-card">
+            <div className="daily-list">
+              {daily.days.map((d) => (
+                <div className="daily-row" key={d.date}>
+                  <span className="daily-date">{d.date.slice(5)}</span>
+                  <div className="daily-track"><i style={{ width: `${Math.round((d.tokens / maxTok) * 100)}%` }} /></div>
+                  <span className="daily-val">{(d.tokens / 1000).toFixed(0)}k · {d.message_count} 条</span>
+                </div>
+              ))}
+            </div>
+            <div className="sec-hint">数据截至 {daily.last_computed_date || "—"}，在终端运行 /stats 可刷新</div>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -257,6 +378,10 @@ export function About() {
             <IconGear />
             <span>通用</span>
           </button>
+          <button className={"nav-item" + (sec === "account" ? " on" : "")} onClick={() => setSec("account")}>
+            <IconUser />
+            <span>账号</span>
+          </button>
           <button className={"nav-item" + (sec === "about" ? " on" : "")} onClick={() => setSec("about")}>
             <IconInfo />
             <span>关于</span>
@@ -276,6 +401,8 @@ export function About() {
         <div className="main-body" key={sec}>
           {sec === "general" ? (
             <GeneralSection />
+          ) : sec === "account" ? (
+            <AccountSection />
           ) : (
             <AboutSection status={status} newVersion={newVersion} recheck={recheck} />
           )}
