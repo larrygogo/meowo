@@ -74,17 +74,23 @@ function UsageBar({ label, win }: { label: string; win: { utilization: number; r
 // 每日用量热力图的一个格子：占位（补齐周对齐）或某天的数据 + 着色档位 0-4。
 type GridCell = { pad: true } | { pad: false; date: string; tokens: number; messages: number; level: number };
 
-/// 把按日升序的每日数据排成贡献图格子序列：首日按星期补空格（周日为列起点），
+/// 把按日升序的每日数据排成贡献图格子序列：补全首日→末日的**每一天**（无活动的日期
+/// stats-cache 里没有，需填 0 档淡色格子表示空），首日按星期补占位（周日为列起点），
 /// 配合 CSS grid-auto-flow:column + 7 行，自动按「每列一周」竖向填充。
 function buildDailyGrid(days: DailyEntry[]): GridCell[] {
   if (days.length === 0) return [];
+  const byDate = new Map(days.map((d) => [d.date, d]));
   const max = Math.max(1, ...days.map((d) => d.tokens));
+  const start = new Date(days[0].date + "T00:00:00");
+  const end = new Date(days[days.length - 1].date + "T00:00:00");
   const cells: GridCell[] = [];
-  const firstDow = new Date(days[0].date + "T00:00:00").getDay(); // 0=周日
-  for (let i = 0; i < firstDow; i++) cells.push({ pad: true });
-  for (const d of days) {
-    const level = d.tokens === 0 ? 0 : Math.min(4, Math.ceil((d.tokens / max) * 4));
-    cells.push({ pad: false, date: d.date, tokens: d.tokens, messages: d.message_count, level });
+  for (let i = 0; i < start.getDay(); i++) cells.push({ pad: true }); // 首列按星期补空格对齐
+  for (const t = new Date(start); t <= end; t.setDate(t.getDate() + 1)) {
+    const iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    const d = byDate.get(iso);
+    const tokens = d?.tokens ?? 0;
+    const level = tokens === 0 ? 0 : Math.min(4, Math.ceil((tokens / max) * 4));
+    cells.push({ pad: false, date: iso, tokens, messages: d?.message_count ?? 0, level });
   }
   return cells;
 }
