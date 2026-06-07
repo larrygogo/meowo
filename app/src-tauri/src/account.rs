@@ -158,6 +158,157 @@ pub fn merge_credentials(
     out
 }
 
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Claude Code 公开 OAuth client id。
+const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+const OAUTH_BETA: &str = "oauth-2025-04-20";
+const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
+
+/// get_account 命令返回给前端的整体载荷。
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountPayload {
+    pub account: Option<Account>,
+    pub daily: Option<DailyStats>,
+    pub usage: Option<Usage>,
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().map(PathBuf::from)
+}
+
+fn claude_json_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude.json")) }
+fn credentials_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join(".credentials.json")) }
+fn stats_cache_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join("stats-cache.json")) }
+fn usage_cache_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("CC_KANBAN_DB") {
+        return Some(PathBuf::from(p).with_file_name("usage-cache.json"));
+    }
+    home_dir().map(|h| h.join(".cc-kanban").join("usage-cache.json"))
+}
+
+fn read_json(path: &PathBuf) -> Option<serde_json::Value> {
+    let s = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&s).ok()
+}
+
+/// 读账号（~/.claude.json）。
+pub fn read_account() -> Option<Account> {
+    parse_account(&read_json(&claude_json_path()?)?)
+}
+
+/// 读每日用量（stats-cache.json，最近 14 天）。
+pub fn read_daily() -> Option<DailyStats> {
+    parse_daily(&read_json(&stats_cache_path()?)?, 14)
+}
+
+/// 读上次缓存的用量快照（~/.cc-kanban/usage-cache.json 的 `usage` 字段）。
+pub fn read_cached_usage() -> Option<Usage> {
+    let v = read_json(&usage_cache_path()?)?;
+    serde_json::from_value(v.get("usage")?.clone()).ok()
+}
+
+fn write_cached_usage(usage: &Usage) {
+    if let Some(p) = usage_cache_path() {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let body = serde_json::json!({ "usage": usage, "fetched_at": now_ms() });
+        if let Ok(s) = serde_json::to_string(&body) {
+            let _ = std::fs::write(&p, s);
+        }
+    }
+}
+
+/// 原子写回 credentials 文件（临时文件 + rename）。
+fn write_credentials_atomic(path: &PathBuf, value: &serde_json::Value) -> Result<(), String> {
+    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 确保有有效 access token：未过期直接返回；过期则刷新并原子写回，再返回新 token。
+fn ensure_valid_token() -> Result<String, String> {
+    let path = credentials_path().ok_or("无 HOME")?;
+    let root = read_json(&path).ok_or("读不到 .credentials.json（未登录 Claude Code？）")?;
+    let oauth = root.get("claudeAiOauth").ok_or("凭据缺 claudeAiOauth")?;
+    let access = oauth.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    if !access.is_empty() && !is_token_expired(expires_at, now_ms()) {
+        return Ok(access);
+    }
+    if refresh.is_empty() {
+        return Err("token 已过期且无 refreshToken".into());
+    }
+    let resp = ureq::post(TOKEN_URL)
+        .timeout(HTTP_TIMEOUT)
+        .send_json(serde_json::json!({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh,
+            "client_id": CLIENT_ID,
+        }))
+        .map_err(|e| format!("刷新 token 失败：{e}"))?;
+    let body: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+    let new_access = body.get("access_token").and_then(|v| v.as_str()).ok_or("刷新响应缺 access_token")?.to_string();
+    let new_refresh = body.get("refresh_token").and_then(|v| v.as_str()).unwrap_or(&refresh).to_string();
+    let expires_in = body.get("expires_in").and_then(|v| v.as_i64()).unwrap_or(3600);
+    let new_expires_at = now_ms() + expires_in * 1000;
+
+    let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
+    write_credentials_atomic(&path, &merged)?;
+    Ok(new_access)
+}
+
+/// 联网拉实时用量（含按需刷新 token），成功则写缓存。
+pub fn fetch_usage_live() -> Result<Usage, String> {
+    let token = ensure_valid_token()?;
+    let resp = ureq::get(USAGE_URL)
+        .timeout(HTTP_TIMEOUT)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("anthropic-beta", OAUTH_BETA)
+        .call()
+        .map_err(|e| format!("请求用量失败：{e}"))?;
+    let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+    let usage = parse_usage(&v);
+    write_cached_usage(&usage);
+    Ok(usage)
+}
+
+/// 距上次缓存写入是否在 fresh_ms 内（60s 限频）。
+fn cache_is_fresh(fresh_ms: i64) -> bool {
+    usage_cache_path()
+        .and_then(|p| read_json(&p))
+        .and_then(|v| v.get("fetched_at").and_then(|x| x.as_i64()))
+        .map(|t| now_ms() - t < fresh_ms)
+        .unwrap_or(false)
+}
+
+/// get_account：账号 + 每日 + 缓存用量（瞬时，不联网）。
+pub fn get_account_payload() -> AccountPayload {
+    AccountPayload { account: read_account(), daily: read_daily(), usage: read_cached_usage() }
+}
+
+/// refresh_usage：60s 内有新鲜缓存则直接返回缓存，否则联网拉取。
+pub fn refresh_usage_payload() -> Result<Usage, String> {
+    if cache_is_fresh(60_000) {
+        if let Some(u) = read_cached_usage() {
+            return Ok(u);
+        }
+    }
+    fetch_usage_live()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
