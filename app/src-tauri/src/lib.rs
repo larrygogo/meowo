@@ -597,10 +597,10 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
 }
 
 /// 聚焦某会话的终端：优先按标题用 UIA 精确切到对应 WT 标签页，否则按进程组找窗口置前。
-/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。仅 Windows 有实际行为。
-/// 供 focus_session 命令与「点击通知」回调共用。
+/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。
+/// 供 focus_session 命令与「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
+#[cfg(target_os = "windows")]
 fn focus_session_terminal(pid: i64, title: Option<String>) {
-    #[cfg(target_os = "windows")]
     std::thread::spawn(move || {
         // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
         if let Some(t) = title.as_deref() {
@@ -614,8 +614,6 @@ fn focus_session_terminal(pid: i64, title: Option<String>) {
             force_foreground(hwnd);
         }
     });
-    #[cfg(not(target_os = "windows"))]
-    let _ = (pid, title);
 }
 
 #[tauri::command]
