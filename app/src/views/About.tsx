@@ -303,7 +303,6 @@ function GeneralSection() {
   };
   return (
     <>
-      <div className="sec-title">通用</div>
       <div className="row-card">
         <div className="row">
           <div className="row-text">
@@ -364,8 +363,6 @@ function AboutSection({
 
   return (
     <>
-      <div className="sec-title">关于 cc-kanban</div>
-
       <div className="row-card">
         <div className="row">
           <div className="row-icon"><div className="pmark"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><line x1="7" y1="7" x2="7" y2="17" /><line x1="12" y1="7" x2="12" y2="14" /><line x1="17" y1="7" x2="17" y2="12" /></svg></div></div>
