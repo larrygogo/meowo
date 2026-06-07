@@ -127,7 +127,6 @@ function AccountSection() {
 
   return (
     <>
-      <div className="sec-title">账号</div>
       {acc ? (
         <div className="row-card">
           <div className="row">
@@ -142,7 +141,6 @@ function AccountSection() {
         <div className="row-card"><div className="row"><div className="row-text"><div className="row-desc">未检测到 Claude Code 登录信息</div></div></div></div>
       )}
 
-      <div className="sec-title">用量</div>
       <div className="row-card usage-card">
         <div className="usage-bar-head">
           <span className="usage-card-title">配额</span>
@@ -166,8 +164,8 @@ function AccountSection() {
 
       {daily && daily.days.length > 0 && (
         <>
-          <div className="sec-title">每日用量</div>
           <div className="row-card cal-card">
+            <div className="usage-bar-head"><span className="usage-card-title">每日用量</span></div>
             <div className="cal-grid">
               {buildDailyGrid(daily.days).map((c, i) =>
                 c.pad ? (

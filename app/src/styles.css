@@ -613,6 +613,8 @@ html, body {
 .acc-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--cc-accent, #6b8afd); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
 .usage-card { display: block; padding: 14px 16px; }
 .cal-card { padding: 14px 16px; }
+/* 账号区多张卡片连续排列时补间距（去掉了卡片外的 sec-title）。 */
+.row-card + .row-card { margin-top: 14px; }
 .usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .usage-card-title { font-size: 12.5px; font-weight: 600; }
 .usage-row { margin: 10px 0; }
