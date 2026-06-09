@@ -640,19 +640,31 @@ fn focus_session_terminal(pid: i64, title: Option<String>) {
 }
 
 #[tauri::command]
-fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
+fn focus_session(
+    pid: i64,
+    title: Option<String>,
+    cwd: Option<String>,
+    session_id: Option<String>,
+) -> Result<(), String> {
     if pid <= 0 {
         return Err("无效 pid".into());
     }
     #[cfg(target_os = "windows")]
     {
+        let _ = (cwd, session_id);
         focus_session_terminal(pid, title);
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = (pid, title);
-        Err("仅支持 Windows".into())
+        let _ = title;
+        crate::macos::terminal::focus_session_terminal(pid, cwd.as_deref(), session_id.as_deref());
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (pid, title, cwd, session_id);
+        Err("当前平台不支持".into())
     }
 }
 
@@ -707,10 +719,17 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
             .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
+        let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+        crate::macos::terminal::resume_session_mac(resolved.as_deref(), &session_id);
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = cwd;
-        Err("仅支持 Windows".into())
+        Err("当前平台不支持".into())
     }
 }
 

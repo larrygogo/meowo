@@ -331,7 +331,13 @@ export function Sticker({ data }: { data: Item[] }) {
                 onClick={() => {
                   if (l.connected) {
                     // 连接中：跳转到对应 WT 标签页。
-                    if (l.pid) invoke("focus_session", { pid: l.pid, title: l.task_title }).catch(() => {});
+                    if (l.pid)
+                      invoke("focus_session", {
+                        pid: l.pid,
+                        title: l.task_title,
+                        cwd: l.cwd,
+                        sessionId: l.session.cc_session_id,
+                      }).catch(() => {});
                   } else if (!l.archived) {
                     // 已断开且未归档：开新 WT 标签页跑 claude --resume 恢复会话。
                     // 归档的会话点击不恢复（归档即收纳，避免误开终端）。
