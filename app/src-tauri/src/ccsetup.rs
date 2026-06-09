@@ -1,6 +1,7 @@
 //! 无感适配：cc-app 启动时幂等地把 cc-reporter 接入 Claude Code 的 `~/.claude/settings.json`：
 //!   1) 确保 5 个 hook 事件指向 cc-reporter（缺则补、路径变则更新）；
 //!   2) 把 statusLine 包成「先写库再跑原 statusLine」的脚本，让 Context 百分比自动有准确数据。
+//!
 //! 全程：解析失败即放弃、先备份、原子写、已正确则一字不改（幂等）。核心合并逻辑为纯函数，便于测试。
 
 use serde_json::{json, Value};
@@ -41,7 +42,7 @@ pub fn reporter_path_from_hooks(settings: &Value) -> Option<String> {
 }
 
 /// 某 hook 事件的数组里是否已有指向 cc-reporter 的条目。返回该 hook 的可变引用（用于更新路径）。
-fn find_reporter_hook<'a>(event_arr: &'a mut Vec<Value>) -> Option<&'a mut Value> {
+fn find_reporter_hook(event_arr: &mut [Value]) -> Option<&mut Value> {
     for entry in event_arr.iter_mut() {
         if let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) {
             for h in hs.iter_mut() {
@@ -100,6 +101,7 @@ pub fn ensure_hooks(settings: &mut Value, reporter_native: &str) -> bool {
 /// 返回值：
 ///   - Some(inner)：本次需要（重新）生成脚本，inner 是要内嵌的原 statusLine 命令（无则空串）；
 ///   - None：已是我们的包装，幂等跳过，不重生成脚本（避免把包装再包一层导致递归）。
+///
 /// `script_marker` 为我们脚本的实际路径（必出现在 `script_invocation` 里）；用它判定幂等，
 /// 杜绝「把自己的包装再当 inner 捕获」的递归。
 pub fn ensure_statusline(settings: &mut Value, script_invocation: &str, script_marker: &str) -> Option<String> {
