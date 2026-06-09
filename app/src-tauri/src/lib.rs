@@ -639,6 +639,37 @@ fn focus_session_terminal(pid: i64, title: Option<String>) {
     });
 }
 
+/// iTerm2 是否安装（任意常见位置）：先查标准路径，再用 mdfind 按 bundle id 兜底。
+#[cfg(target_os = "macos")]
+fn iterm_installed() -> bool {
+    use std::path::Path;
+    if Path::new("/Applications/iTerm.app").exists() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if Path::new(&home).join("Applications/iTerm.app").exists() {
+            return true;
+        }
+    }
+    std::process::Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'com.googlecode.iterm2'")
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// 读设置得出「打开未连接会话」用的终端宿主（macOS）。缺省 Terminal.app；
+/// 选了 iTerm2 但未安装时回退 Terminal.app（避免 AppleScript 静默失败）。
+#[cfg(target_os = "macos")]
+fn resume_terminal_kind() -> crate::term_script::TermKind {
+    use crate::term_script::TermKind;
+    match crate::term_script::resume_kind_from_setting(&load_settings().resume_terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    }
+}
+
 #[tauri::command]
 fn focus_session(
     pid: i64,
@@ -658,7 +689,12 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        crate::macos::terminal::focus_session_terminal(pid, cwd.as_deref(), session_id.as_deref());
+        crate::macos::terminal::focus_session_terminal(
+            pid,
+            cwd.as_deref(),
+            session_id.as_deref(),
+            resume_terminal_kind(),
+        );
         Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -676,6 +712,16 @@ fn is_session_id(s: &str) -> bool {
 
 /// 把 `cwd` 收敛成「可安全传给 wt -d」的目录：必须非空、真实存在的目录，且不含会破坏 wt
 /// 命令行解析的元字符(`;` `"`)。不满足则返回 None（调用方退化为不带 -d）。
+/// Windows Terminal（wt.exe）是否在 PATH 上。
+#[cfg(target_os = "windows")]
+fn wt_available() -> bool {
+    std::process::Command::new("where")
+        .arg("wt")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "windows")]
 fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     let d = cwd?.trim();
@@ -685,11 +731,12 @@ fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     std::path::Path::new(d).is_dir().then(|| d.to_string())
 }
 
-/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个 Windows Terminal 标签页，跑
-/// `claude --resume <session_id>`。`cwd` 缺失/非法(旧会话)时不带 `-d`，尽力按 id 恢复。
+/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
+/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/powershell/cmd；macOS：Terminal/iTerm2。
+/// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
 ///
-/// 安全：`session_id` 严格校验为 UUID 形态，`claude`/`--resume`/id 作为**独立 argv** 传给 wt
-/// (不拼接 shell 命令字符串)，从源头杜绝命令注入；`cwd` 经 `safe_cwd` 校验为真实目录且无元字符。
+/// 安全：`session_id` 严格校验为 UUID 形态（无空格/元字符）；wt 分支把 claude/--resume/id 作为**独立 argv**
+/// 传入；powershell/cmd 分支用 `current_dir` 传工作目录（不进命令串）、命令串只含已校验的 id，从源头杜绝注入。
 #[tauri::command]
 fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String> {
     if !is_session_id(&session_id) {
@@ -697,33 +744,72 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
+
         // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
         // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
         let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
-        // wt -w 0 nt [-d <cwd>] claude --resume <id>
-        //   -w 0 nt：在最近的 WT 窗口新开标签页(无则自动建)；-d：在会话原目录打开。
-        //   claude 是 PATH 上的 claude.exe，直接拉起，--resume 与 id 各为独立参数。
-        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
-        if let Some(dir) = safe_cwd(resolved_cwd.as_deref()) {
-            args.push("-d".into());
-            args.push(dir);
+        let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
+        // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
+        let eff = match load_settings().resume_terminal.as_str() {
+            "powershell" => "powershell",
+            "cmd" => "cmd",
+            _ if wt_available() => "wt",
+            _ => "powershell",
+        };
+        match eff {
+            // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
+            "powershell" => {
+                let mut c = Command::new("powershell");
+                c.args(["-NoExit", "-Command", &format!("claude --resume {session_id}")]);
+                if let Some(d) = &dir {
+                    c.current_dir(d);
+                }
+                c.creation_flags(CREATE_NEW_CONSOLE)
+                    .spawn()
+                    .map_err(|e| format!("启动 PowerShell 失败：{e}"))?;
+            }
+            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+            "cmd" => {
+                let mut c = Command::new("cmd");
+                c.args(["/k", &format!("claude --resume {session_id}")]);
+                if let Some(d) = &dir {
+                    c.current_dir(d);
+                }
+                c.creation_flags(CREATE_NEW_CONSOLE)
+                    .spawn()
+                    .map_err(|e| format!("启动命令提示符失败：{e}"))?;
+            }
+            // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
+            // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
+            _ => {
+                let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+                if let Some(d) = &dir {
+                    args.push("-d".into());
+                    args.push(d.clone());
+                }
+                args.push("claude".into());
+                args.push("--resume".into());
+                args.push(session_id.clone());
+                Command::new("wt")
+                    .args(&args)
+                    .spawn()
+                    .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
+            }
         }
-        args.push("claude".into());
-        args.push("--resume".into());
-        args.push(session_id);
-
-        Command::new("wt")
-            .args(&args)
-            .spawn()
-            .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
         Ok(())
     }
     #[cfg(target_os = "macos")]
     {
         // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
         let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
-        crate::macos::terminal::resume_session_mac(resolved.as_deref(), &session_id);
+        crate::macos::terminal::resume_session_mac(
+            resolved.as_deref(),
+            &session_id,
+            resume_terminal_kind(),
+        );
         Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -805,6 +891,9 @@ fn default_opacity() -> u32 {
 fn default_ui_scale() -> u32 {
     100
 }
+fn default_resume_terminal() -> String {
+    "terminal".to_string()
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -824,6 +913,9 @@ struct Settings {
     /// 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。
     #[serde(default = "default_ui_scale")]
     ui_scale: u32,
+    /// 打开未连接会话用的终端（macOS）：terminal = Terminal.app，iterm = iTerm2。缺省 terminal，兼容老 settings.json。
+    #[serde(default = "default_resume_terminal")]
+    resume_terminal: String,
 }
 
 impl Default for Settings {
@@ -834,6 +926,7 @@ impl Default for Settings {
             theme: default_theme(),
             opacity: default_opacity(),
             ui_scale: default_ui_scale(),
+            resume_terminal: default_resume_terminal(),
         }
     }
 }
@@ -1063,24 +1156,6 @@ fn show_session_notification(
 ) {
 }
 
-/// 连接中会话按状态计数 → macOS 菜单栏图标标题（仅非零项；全零返回 None = 只显示图标）。
-/// 🟢 在线空闲 / 🟠 运行中 / 🔴 待交互或出错（需关注）。纯函数，便于单测。
-/// 仅 macOS 菜单栏用到，其它平台 dead_code 放行。
-#[allow(dead_code)]
-fn format_tray_title(idle: usize, running: usize, waiting: usize) -> Option<String> {
-    let mut parts = Vec::new();
-    if idle > 0 {
-        parts.push(format!("🟢{idle}"));
-    }
-    if running > 0 {
-        parts.push(format!("🟠{running}"));
-    }
-    if waiting > 0 {
-        parts.push(format!("🔴{waiting}"));
-    }
-    (!parts.is_empty()).then(|| parts.join(" "))
-}
-
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
 /// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
@@ -1096,6 +1171,9 @@ fn spawn_liveness_watch(
         let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
         let mut notified_waiting: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待交互指纹
         let mut seeded = false;
+        // 菜单栏图标只在 (运行,待办) 变化时重画，避免每轮无谓刷新。
+        #[cfg(target_os = "macos")]
+        let mut last_tray: Option<(usize, usize)> = None;
         loop {
             if let Ok(store) = Store::open(&db_path) {
                 let sys = System::new_with_specifics(
@@ -1113,7 +1191,7 @@ fn spawn_liveness_watch(
 
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
-                let (mut tray_idle, mut tray_running, mut tray_waiting) = (0usize, 0usize, 0usize);
+                let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
                 for s in store.live_sessions().unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
                         continue;
@@ -1134,13 +1212,11 @@ fn spawn_liveness_watch(
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
 
-                    // 菜单栏摘要计数：出错或待交互 → 需关注(🔴)，运行中 → 🟠，其余连接中 → 🟢。
+                    // 菜单栏摘要计数：出错或待交互 → 需关注(●)，运行中 → ○；在线空闲不计入。
                     if error.is_some() || s.session.status == "waiting" {
                         tray_waiting += 1;
                     } else if s.session.status == "running" {
                         tray_running += 1;
-                    } else {
-                        tray_idle += 1;
                     }
 
                     // 错误通知（优先）。
@@ -1188,13 +1264,12 @@ fn spawn_liveness_watch(
 
                 // macOS：把连接中会话的状态摘要写到菜单栏图标标题旁（一眼可见，弥补无吸边缩略条）。
                 #[cfg(target_os = "macos")]
-                if let Some(tray) = app.tray_by_id("cc-kanban-tray") {
-                    let _ = tray.set_title(
-                        format_tray_title(tray_idle, tray_running, tray_waiting).as_deref(),
-                    );
+                if last_tray != Some((tray_running, tray_waiting)) {
+                    crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting);
+                    last_tray = Some((tray_running, tray_waiting));
                 }
                 #[cfg(not(target_os = "macos"))]
-                let _ = (tray_idle, tray_running, tray_waiting);
+                let _ = (tray_running, tray_waiting);
             }
             std::thread::sleep(Duration::from_secs(5));
         }
@@ -1256,6 +1331,34 @@ fn host_os() -> String {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         "other".into()
+    }
+}
+
+/// 「打开未连接会话」可选且本机确实可用的终端 key（供设置页过滤下拉项）。
+/// macOS：terminal 必有，iterm 视安装情况；Windows：powershell/cmd 必有，wt 视是否在 PATH。
+#[tauri::command]
+fn available_terminals() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut v = vec!["terminal".to_string()];
+        if iterm_installed() {
+            v.push("iterm".to_string());
+        }
+        v
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut v = Vec::new();
+        if wt_available() {
+            v.push("wt".to_string());
+        }
+        v.push("powershell".to_string());
+        v.push("cmd".to_string());
+        v
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Vec::<String>::new()
     }
 }
 
@@ -1483,7 +1586,8 @@ pub fn run() {
             snap_restore,
             get_account,
             refresh_usage,
-            host_os
+            host_os,
+            available_terminals
         ])
         .on_window_event(|window, event| {
             // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
@@ -1583,7 +1687,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_xy_to_work, edge_for_rect, format_tray_title, intersection_area, is_session_id,
+        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id,
         normalize_tab_title, pid_is_claude, should_notify, tab_match_score, waiting_fingerprint,
         Edge, Rect, Settings,
     };
@@ -1601,15 +1705,6 @@ mod tests {
         assert!(!pid_is_claude(&sys, 0));
         assert!(!pid_is_claude(&sys, -1));
         assert!(!pid_is_claude(&sys, 4_000_000_000));
-    }
-
-    #[test]
-    fn tray_title_only_nonzero_else_none() {
-        assert_eq!(format_tray_title(0, 0, 0), None);
-        assert_eq!(format_tray_title(2, 1, 1).as_deref(), Some("🟢2 🟠1 🔴1"));
-        assert_eq!(format_tray_title(0, 3, 0).as_deref(), Some("🟠3"));
-        assert_eq!(format_tray_title(0, 0, 1).as_deref(), Some("🔴1"));
-        assert_eq!(format_tray_title(5, 0, 0).as_deref(), Some("🟢5"));
     }
 
     #[test]

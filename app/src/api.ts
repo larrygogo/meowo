@@ -102,7 +102,16 @@ export type Settings = {
   opacity: number;
   /** 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。 */
   ui_scale: number;
+  /** 打开未连接会话用的终端。macOS：terminal/iterm；Windows：wt/powershell/cmd。 */
+  resume_terminal: ResumeTerminal;
 };
+
+export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
+
+/** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
+export function availableTerminals(): Promise<ResumeTerminal[]> {
+  return invoke("available_terminals");
+}
 
 export function getSettings(): Promise<Settings> {
   return invoke("get_settings");

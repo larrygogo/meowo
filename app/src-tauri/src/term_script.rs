@@ -41,6 +41,15 @@ pub fn detect_term_kind(ancestor_names_root_first: &[String]) -> TermKind {
     TermKind::Other
 }
 
+/// 设置里的字符串 → 打开未连接会话用的终端宿主：含 "iterm" → iTerm2，其余（含 "terminal"/未知/空）→ Terminal。
+pub fn resume_kind_from_setting(s: &str) -> TermKind {
+    if s.to_ascii_lowercase().contains("iterm") {
+        TermKind::ITerm2
+    } else {
+        TermKind::Terminal
+    }
+}
+
 /// 返回按 tty 定位并置前的 AppleScript（tty 通过 osascript argv 传入）。未知宿主返回 None。
 pub fn focus_script(kind: TermKind) -> Option<&'static str> {
     match kind {
@@ -174,6 +183,15 @@ mod tests {
 
         let names3 = vec!["claude".into(), "zsh".into(), "WezTerm".into()];
         assert_eq!(detect_term_kind(&names3), TermKind::Other);
+    }
+
+    #[test]
+    fn resume_kind_from_setting_maps() {
+        assert_eq!(resume_kind_from_setting("iterm"), TermKind::ITerm2);
+        assert_eq!(resume_kind_from_setting("iTerm2"), TermKind::ITerm2);
+        assert_eq!(resume_kind_from_setting("terminal"), TermKind::Terminal);
+        assert_eq!(resume_kind_from_setting(""), TermKind::Terminal); // 缺省/未知 → Terminal
+        assert_eq!(resume_kind_from_setting("wezterm"), TermKind::Terminal);
     }
 
     #[test]
