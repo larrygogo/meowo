@@ -1,4 +1,5 @@
 mod account;
+mod term_script;
 
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
