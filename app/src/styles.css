@@ -498,6 +498,10 @@ html, body {
 :root.platform-macos .settings {
   border-radius: 14px;
 }
+/* macOS：贴纸面板用更大的圆角，配合原生毛玻璃(NSVisualEffectView)的 radius(见 panel.rs GLASS_RADIUS)，二者须一致。 */
+:root.platform-macos .sticker {
+  border-radius: 16px;
+}
 
 /* 左侧栏 */
 .side {

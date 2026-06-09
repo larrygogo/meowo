@@ -14,15 +14,15 @@ const MENUBAR_ICON_SIZE: u32 = 36;
 // 渲染成定高 36 的 alpha 掩码并拼接成图集；运行时按计数切片拼接，set_icon 动态更新。
 const GLYPH_H: usize = 36;
 /// 各字形宽度，顺序：0-9、运行、待办。须与 menubar-glyphs.bin 的生成顺序一致。
-const GLYPH_W: [usize; 12] = [18, 10, 16, 18, 19, 17, 18, 16, 17, 18, 31, 21];
+const GLYPH_W: [usize; 12] = [15, 9, 14, 14, 15, 14, 15, 13, 15, 15, 31, 21];
 const GLYPH_RUN: usize = 10;
 const GLYPH_WAIT: usize = 11;
 /// 定高 alpha 图集（按 GLYPH_W 顺序拼接，每字形 GLYPH_H*W 字节）。
 const GLYPH_ATLAS: &[u8] = include_bytes!("../../icons/menubar-glyphs.bin");
 
-const SYM_NUM_GAP: usize = 2; // 图标与其数字之间
+const SYM_NUM_GAP: usize = 5; // 图标与其数字之间（留一点呼吸间隔）
 const DIGIT_GAP: usize = 1; // 数字之间
-const PAIR_GAP: usize = 9; // 运行组与待办组之间
+const PAIR_GAP: usize = 16; // 运行组与待办组之间（两个状态间留明显间隔）
 
 fn glyph_offset(idx: usize) -> usize {
     (0..idx).map(|i| GLYPH_H * GLYPH_W[i]).sum()

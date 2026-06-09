@@ -13,12 +13,26 @@ const NS_NONACTIVATING_PANEL: i32 = 1 << 7; // NSWindowStyleMaskNonActivatingPan
 
 const RESIGN_EVENT: &str = "menubar_panel_did_resign_key";
 
+/// 贴纸毛玻璃圆角，须与 CSS `:root.platform-macos .sticker` 的 border-radius 一致。
+const GLASS_RADIUS: f64 = 16.0;
+
 /// 把已存在的 main 窗口原地转成 NonactivatingPanel，并接好失焦 -> emit 事件。
 pub fn convert_main_to_panel(app: &AppHandle) {
     let window = match app.get_webview_window("main") {
         Some(w) => w,
         None => return,
     };
+
+    // 玻璃质感：在透明窗后垫一层 NSVisualEffectView(毛玻璃)，圆角与 CSS .sticker 一致。
+    // backdrop-filter 在透明 Tauri 窗里模糊不到桌面，必须用原生特效。state=Active：非激活面板也保持磨砂
+    // (不随失焦变暗)；降低贴纸不透明度(--cc-opacity)时即透出磨砂玻璃而非桌面。转 panel 前应用，特效随 contentView 保留。
+    let _ = window.set_effects(tauri::utils::config::WindowEffectsConfig {
+        effects: vec![tauri::utils::WindowEffect::HudWindow],
+        state: Some(tauri::utils::WindowEffectState::Active),
+        radius: Some(GLASS_RADIUS),
+        color: None,
+    });
+
     let panel = match window.to_panel() {
         Ok(p) => p,
         Err(_) => return,
