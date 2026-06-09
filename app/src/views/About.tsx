@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, type Settings } from "../api";
+import { getSettings, setSettings, type Settings, type ThemeMode } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 
@@ -18,7 +18,46 @@ const REPO = "github.com/larrygogo/cc-kanban";
 const REPO_URL = "https://github.com/larrygogo/cc-kanban";
 const openExt = (url: string) => invoke("open_url", { url }).catch(() => {});
 
-type Section = "general" | "account" | "about";
+type Section = "general" | "appearance" | "account" | "about";
+
+const SETTINGS_DEFAULTS: Settings = {
+  archive_hide_days: 0,
+  notifications_enabled: true,
+  theme: "dark",
+  opacity: 94,
+  ui_scale: 100,
+};
+
+// 设置读写：本地保留完整对象，每次只 patch 改动字段后整对象写回（后端 set_settings 收整对象，
+// 漏字段会被 serde 默认值覆盖 → 必须整对象提交）。写失败则回读后端保持一致。
+function useSettingsState() {
+  const [settings, setSettingsState] = useState<Settings | null>(null);
+  const ref = useRef<Settings>(SETTINGS_DEFAULTS);
+  useEffect(() => {
+    getSettings()
+      .then((s) => {
+        ref.current = s;
+        setSettingsState(s);
+      })
+      .catch(() => {});
+  }, []);
+  const patch = (p: Partial<Settings>) => {
+    // 真实设置尚未回填（首帧到 get_settings resolve 之间）时忽略：避免用默认值整对象覆盖磁盘。
+    if (settings === null) return;
+    const next = { ...ref.current, ...p };
+    ref.current = next;
+    setSettingsState(next);
+    setSettings(next).catch(() => {
+      getSettings()
+        .then((s) => {
+          ref.current = s;
+          setSettingsState(s);
+        })
+        .catch(() => {});
+    });
+  };
+  return [settings, patch] as const;
+}
 
 function IconGear() {
   return (
@@ -43,6 +82,16 @@ function IconUser() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="4" />
       <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+    </svg>
+  );
+}
+
+// 半填充对比圆：外观/主题的经典图标。
+function IconAppearance() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -304,34 +353,19 @@ function Dropdown({
 
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
-  const [hideDays, setHideDays] = useState(0);
-  const [notifyOn, setNotifyOn] = useState(true);
+  const [settings, patch] = useSettingsState();
   useEffect(() => {
     invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
-    getSettings()
-      .then((s) => {
-        setHideDays(s.archive_hide_days);
-        setNotifyOn(s.notifications_enabled);
-      })
-      .catch(() => {});
   }, []);
   const toggleAutostart = () => {
     const next = !autostart;
     setAutostart(next);
     invoke("set_autostart", { enabled: next }).catch(() => setAutostart(!next));
   };
-  // 设置项写库统一发送完整 Settings（后端 set_settings 接收整个对象）。
-  const persist = (next: Settings) => setSettings(next);
-  const changeHideDays = (days: number) => {
-    const prev = hideDays;
-    setHideDays(days);
-    persist({ archive_hide_days: days, notifications_enabled: notifyOn }).catch(() => setHideDays(prev));
-  };
-  const toggleNotify = () => {
-    const next = !notifyOn;
-    setNotifyOn(next);
-    persist({ archive_hide_days: hideDays, notifications_enabled: next }).catch(() => setNotifyOn(!next));
-  };
+  const hideDays = settings?.archive_hide_days ?? 0;
+  const notifyOn = settings?.notifications_enabled ?? true;
+  const changeHideDays = (days: number) => patch({ archive_hide_days: days });
+  const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
   return (
     <>
       <div className="row-card">
@@ -358,6 +392,97 @@ function GeneralSection() {
         </div>
       </div>
       <div className="sec-hint">更多设置项陆续补充中…</div>
+    </>
+  );
+}
+
+// 一排互斥的分段按钮（外观模式 / 界面密度）：语义上是单选，用 radiogroup/radio。
+function Segmented<T extends string | number>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  label: string;
+}) {
+  return (
+    <div className="seg" role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          key={String(o.value)}
+          className={"seg-btn" + (o.value === value ? " on" : "")}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
+  { value: "dark", label: "深色" },
+  { value: "light", label: "浅色" },
+  { value: "system", label: "跟随系统" },
+];
+const DENSITY_OPTIONS: { value: number; label: string }[] = [
+  { value: 90, label: "紧凑" },
+  { value: 100, label: "标准" },
+  { value: 112, label: "宽松" },
+];
+const OPACITY_MIN = 60;
+const OPACITY_MAX = 100;
+
+function AppearanceSection() {
+  const [settings, patch] = useSettingsState();
+  const theme = settings?.theme ?? "dark";
+  const opacity = settings?.opacity ?? 94;
+  const uiScale = settings?.ui_scale ?? 100;
+  const fill = ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100;
+  return (
+    <>
+      <div className="row-card">
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">外观模式</div>
+            <div className="row-desc">深色、浅色，或跟随系统</div>
+          </div>
+          <Segmented value={theme} options={THEME_OPTIONS} onChange={(v) => patch({ theme: v })} label="外观模式" />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">界面密度</div>
+            <div className="row-desc">调整贴纸卡片的字号与间距</div>
+          </div>
+          <Segmented value={uiScale} options={DENSITY_OPTIONS} onChange={(v) => patch({ ui_scale: v })} label="界面密度" />
+        </div>
+        <div className="row row-col">
+          <div className="row-head">
+            <div className="row-text">
+              <div className="row-label">贴纸不透明度</div>
+              <div className="row-desc">调整桌面贴纸的背景透明度</div>
+            </div>
+            <span className="row-val">{opacity}%</span>
+          </div>
+          <input
+            type="range"
+            className="slider"
+            min={OPACITY_MIN}
+            max={OPACITY_MAX}
+            value={opacity}
+            style={{ background: `linear-gradient(90deg, var(--cc-accent) ${fill}%, var(--cc-border) ${fill}%)` }}
+            onChange={(e) => patch({ opacity: Number(e.target.value) })}
+            aria-label="贴纸不透明度"
+          />
+        </div>
+      </div>
+      <div className="sec-hint">外观更改即时生效，并保存到本地。</div>
     </>
   );
 }
@@ -443,6 +568,10 @@ export function About() {
             <IconGear />
             <span>通用</span>
           </button>
+          <button className={"nav-item" + (sec === "appearance" ? " on" : "")} onClick={() => setSec("appearance")}>
+            <IconAppearance />
+            <span>外观</span>
+          </button>
           <button className={"nav-item" + (sec === "account" ? " on" : "")} onClick={() => setSec("account")}>
             <IconUser />
             <span>账号</span>
@@ -466,6 +595,8 @@ export function About() {
         <div className="main-body" key={sec}>
           {sec === "general" ? (
             <GeneralSection />
+          ) : sec === "appearance" ? (
+            <AppearanceSection />
           ) : sec === "account" ? (
             <AccountSection />
           ) : (

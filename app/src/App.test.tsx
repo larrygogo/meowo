@@ -7,7 +7,8 @@ const unlisten = vi.fn();
 
 vi.mock("./api", () => ({
   getLiveSessions: () => getLiveSessions(),
-  getSettings: () => Promise.resolve({ archive_hide_days: 0, notifications_enabled: true }),
+  getSettings: () =>
+    Promise.resolve({ archive_hide_days: 0, notifications_enabled: true, theme: "dark", opacity: 94, ui_scale: 100 }),
 }));
 // 按事件名分别路由：board-changed → emitBoardChanged；snap-changed 忽略（Tauri 吸边，无法在 jsdom 中测试）
 vi.mock("@tauri-apps/api/event", () => ({

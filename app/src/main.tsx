@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { About } from "./views/About";
 import { lockdownInProduction } from "./devtools-guard";
+import { bootAppearance } from "./appearance";
 import "./styles.css";
 
 // 正式构建下封死右键菜单与 DevTools 快捷键（dev 放行）。
@@ -17,6 +18,9 @@ const label = (() => {
     return "main";
   }
 })();
+
+// 套用外观设置（明暗/不透明度两窗都套；界面密度仅贴纸窗口）。
+bootAppearance({ scale: label !== "about" });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>{label === "about" ? <About /> : <App />}</React.StrictMode>,

@@ -89,11 +89,19 @@ export function getLiveSessions(): Promise<LiveSession[]> {
   return invoke("get_live_sessions");
 }
 
+export type ThemeMode = "dark" | "light" | "system";
+
 export type Settings = {
   /** 归档条目自动隐藏的天数；0 = 永不隐藏。 */
   archive_hide_days: number;
   /** 桌面通知总开关（待交互 + 错误）。 */
   notifications_enabled: boolean;
+  /** 外观模式：深色 / 浅色 / 跟随系统。 */
+  theme: ThemeMode;
+  /** 贴纸背景不透明度（百分比 60–100）。 */
+  opacity: number;
+  /** 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。 */
+  ui_scale: number;
 };
 
 export function getSettings(): Promise<Settings> {

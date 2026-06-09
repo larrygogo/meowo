@@ -764,6 +764,16 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
 fn default_true() -> bool {
     true
 }
+/// 外观默认值（与前端 appearance.ts / styles.css 的初值保持一致）。
+fn default_theme() -> String {
+    "dark".to_string()
+}
+fn default_opacity() -> u32 {
+    94
+}
+fn default_ui_scale() -> u32 {
+    100
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -774,11 +784,26 @@ struct Settings {
     /// 桌面通知总开关（待交互 + 错误）。缺省为开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     notifications_enabled: bool,
+    /// 外观模式：dark / light / system（跟随系统）。缺省 dark，兼容老 settings.json。
+    #[serde(default = "default_theme")]
+    theme: String,
+    /// 贴纸背景不透明度（百分比 60–100）。缺省 94，与原视觉一致。
+    #[serde(default = "default_opacity")]
+    opacity: u32,
+    /// 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。
+    #[serde(default = "default_ui_scale")]
+    ui_scale: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { archive_hide_days: 0, notifications_enabled: true }
+        Settings {
+            archive_hide_days: 0,
+            notifications_enabled: true,
+            theme: default_theme(),
+            opacity: default_opacity(),
+            ui_scale: default_ui_scale(),
+        }
     }
 }
 
@@ -1599,5 +1624,25 @@ mod tests {
         assert!(!off.notifications_enabled);
         // 整文件缺失/解析失败时用 Default，也应为 ON
         assert!(Settings::default().notifications_enabled);
+    }
+
+    #[test]
+    fn settings_appearance_defaults_and_back_compat() {
+        // 老文件缺外观字段 → 用缺省（dark / 94 / 100），不报错。
+        let legacy: Settings = serde_json::from_str(r#"{"archive_hide_days":7}"#).unwrap();
+        assert_eq!(legacy.theme, "dark");
+        assert_eq!(legacy.opacity, 94);
+        assert_eq!(legacy.ui_scale, 100);
+        // 显式外观值被尊重。
+        let custom: Settings =
+            serde_json::from_str(r#"{"theme":"light","opacity":80,"ui_scale":112}"#).unwrap();
+        assert_eq!(custom.theme, "light");
+        assert_eq!(custom.opacity, 80);
+        assert_eq!(custom.ui_scale, 112);
+        // Default 与缺省函数一致。
+        let d = Settings::default();
+        assert_eq!(d.theme, "dark");
+        assert_eq!(d.opacity, 94);
+        assert_eq!(d.ui_scale, 100);
     }
 }
