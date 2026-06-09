@@ -1,4 +1,6 @@
 mod account;
+#[cfg(target_os = "macos")]
+mod macos;
 mod term_script;
 
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
@@ -1144,29 +1146,70 @@ async fn refresh_usage() -> Result<account::Usage, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// 返回宿主操作系统标识，供前端按平台调整 UI / 交互。
+#[tauri::command]
+fn host_os() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "macos".into()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows".into()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "other".into()
+    }
+}
+
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
 /// 托盘左键点击与右键菜单「设置」共用此逻辑。
-fn open_settings_window(app: &tauri::AppHandle) {
+pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
+    // macOS：打开设置窗口前临时切到 Regular 激活策略，否则纯托盘 App 的窗口无法获焦。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_focus();
-    } else if let Err(e) = tauri::WebviewWindowBuilder::new(
-        app,
-        "about",
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("设置")
-    .inner_size(620.0, 460.0)
-    .min_inner_size(620.0, 460.0)
-    .resizable(false)
-    .decorations(false)
-    .center()
-    .build()
-    {
-        eprintln!("创建设置窗口失败: {e}");
+    } else {
+        match tauri::WebviewWindowBuilder::new(
+            app,
+            "about",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("设置")
+        .inner_size(620.0, 460.0)
+        .min_inner_size(620.0, 460.0)
+        .resizable(false)
+        .decorations(false)
+        .center()
+        .build()
+        {
+            Ok(_about_window) => {
+                // macOS：设置窗口关闭后切回 Accessory，重新隐藏 Dock 图标。
+                #[cfg(target_os = "macos")]
+                {
+                    let app_handle = app.clone();
+                    _about_window.on_window_event(move |e| {
+                        if matches!(
+                            e,
+                            tauri::WindowEvent::CloseRequested { .. }
+                                | tauri::WindowEvent::Destroyed
+                        ) {
+                            crate::macos::menubar::settings_window_did_close(&app_handle);
+                        }
+                    });
+                }
+            }
+            Err(e) => eprintln!("创建设置窗口失败: {e}"),
+        }
     }
 }
 
 /// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。
+/// macOS 走 `macos::menubar::setup_tray`（面板模式），故此实现仅用于非 macOS 平台。
+#[cfg(not(target_os = "macos"))]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
@@ -1318,6 +1361,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_positioner::init())
         .manage(AppState {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
@@ -1339,7 +1383,8 @@ pub fn run() {
             snap_expand,
             snap_restore,
             get_account,
-            refresh_usage
+            refresh_usage,
+            host_os
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Moved(pos) = event {
@@ -1394,7 +1439,19 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            setup_tray(app)?;
+            // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
+            #[cfg(target_os = "macos")]
+            {
+                app.handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+                crate::macos::panel::convert_main_to_panel(app.handle());
+                crate::macos::panel::setup_resign_listener(app.handle());
+                crate::macos::menubar::setup_tray(app.handle())?;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                setup_tray(app)?;
+            }
             // window-state 恢复后，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
