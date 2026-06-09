@@ -6,7 +6,7 @@ pub mod query;
 pub mod store;
 pub mod title;
 
-pub use analyze::{analyze_transcript, TranscriptInfo, TurnError};
+pub use analyze::{analyze_transcript, TranscriptCache, TranscriptInfo, TurnError};
 pub use error::StoreError;
 pub use models::*;
 pub use query::{LiveSession, ProjectOverview, TaskCard};

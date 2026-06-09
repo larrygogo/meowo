@@ -5,6 +5,9 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
+
+pub mod ccsetup;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -236,6 +239,8 @@ fn snap_restore(
 /// 下次 board-changed 事件刷新即自动恢复。
 struct AppState {
     db_path: PathBuf,
+    /// transcript 增量解析缓存（与后台轮询线程共享 Arc）：避免每次刷新重读整文件。
+    tx_cache: Arc<Mutex<cc_store::TranscriptCache>>,
 }
 
 fn now_ms() -> i64 {
@@ -279,6 +284,7 @@ struct LiveItem {
     errored: bool,
     error_label: Option<String>,
     error_raw: Option<String>,
+    // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
 }
 
 /// 贴纸最多展示的会话数。
@@ -316,16 +322,19 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
         if items.len() >= LIVE_LIMIT {
             break;
         }
-        // 一次读 transcript 同时拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
+        // 一次读 transcript 拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
+        // 走增量缓存：只解析新追加的行，避免每轮重读整文件（大 transcript 可达数百 ms，会拖慢整窗）。
+        // 上下文百分比不在这里算——它由 statusline 写库、随 LiveSession flatten 输出。
         let mut error_label: Option<String> = None;
         let mut error_raw: Option<String> = None;
-        if let Some(info) = cc_store::title::resolve_transcript_path(
+        let info = cc_store::title::resolve_transcript_path(
             None,
             s.cwd.as_deref(),
             &s.session.cc_session_id,
         )
-        .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
-        {
+        .and_then(|p| p.to_str().map(str::to_string))
+        .map(|path| state.tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path));
+        if let Some(info) = info {
             if let Some(t) = info.title {
                 s.task_title = t;
             }
@@ -972,7 +981,11 @@ fn show_session_notification(
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
 /// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
 /// 故中途打开开关不会把积压的旧错误/待交互一次性炸出来。启动首扫只播种不弹。
-fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
+fn spawn_liveness_watch(
+    app: tauri::AppHandle,
+    db_path: PathBuf,
+    tx_cache: Arc<Mutex<cc_store::TranscriptCache>>,
+) {
     use std::collections::HashMap;
     std::thread::spawn(move || {
         let mut last: Vec<i64> = Vec::new();
@@ -1003,9 +1016,12 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                     let sid = s.session.cc_session_id.clone();
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
-                    let cc_store::TranscriptInfo { title, error } =
+                    let cc_store::TranscriptInfo { title, error, .. } =
                         cc_store::title::resolve_transcript_path(None, s.cwd.as_deref(), &sid)
-                            .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+                            .and_then(|p| p.to_str().map(str::to_string))
+                            .map(|path| {
+                                tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path)
+                            })
                             .unwrap_or_default();
                     // 会话标题：通知正文用，也作点击聚焦时匹配 WT 标签页的标题。transcript 标题优先，否则 DB 标题。
                     let display_title = title
@@ -1266,6 +1282,8 @@ mod win_constrain {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let path = db_path();
+    let tx_cache: Arc<Mutex<cc_store::TranscriptCache>> =
+        Arc::new(Mutex::new(cc_store::TranscriptCache::new()));
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_autostart::init(
@@ -1276,6 +1294,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
             db_path: path.clone(),
+            tx_cache: tx_cache.clone(),
         })
         .invoke_handler(tauri::generate_handler![
             get_overview,
@@ -1359,8 +1378,10 @@ pub fn run() {
                     win_constrain::install(h.0 as isize);
                 }
             }
+            // 无感适配：幂等把 cc-reporter 接入 Claude Code 设置（hooks + statusLine）。后台跑，失败不影响启动。
+            std::thread::spawn(ccsetup::apply);
             spawn_db_watcher(app.handle().clone(), path.clone());
-            spawn_liveness_watch(app.handle().clone(), path.clone());
+            spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
             spawn_first_import(app.handle().clone(), path.clone());
             Ok(())
         })

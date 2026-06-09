@@ -79,6 +79,10 @@ export type LiveSession = {
   errored: boolean;
   error_label: string | null;
   error_raw: string | null;
+  /** 上下文已用百分比（来自 Claude Code statusline，准确）；无 statusline 数据为 null。 */
+  context_pct: number | null;
+  /** 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 null。 */
+  context_window: number | null;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {

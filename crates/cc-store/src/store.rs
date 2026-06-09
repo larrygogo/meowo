@@ -73,6 +73,26 @@ impl Store {
         Ok(id)
     }
 
+    /// 写入/更新某会话的上下文用量（来自 Claude Code statusline 的准确百分比与窗口）。
+    pub fn set_session_context(
+        &self,
+        cc_session_id: &str,
+        used_pct: Option<i64>,
+        window_size: Option<i64>,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO session_context (cc_session_id, used_pct, window_size, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(cc_session_id) DO UPDATE SET
+                 used_pct = excluded.used_pct,
+                 window_size = excluded.window_size,
+                 updated_at = excluded.updated_at",
+            rusqlite::params![cc_session_id, used_pct, window_size, now_ms],
+        )?;
+        Ok(())
+    }
+
     pub fn list_projects(&self) -> Result<Vec<Project>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, root_path, name, created_at, updated_at FROM projects ORDER BY id",

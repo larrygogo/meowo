@@ -39,6 +39,10 @@ pub struct LiveSession {
     pub archived_at: Option<i64>,
     /// 会话工作目录，cc-app 用它重建 transcript 路径以实时解析 AI 标题。
     pub cwd: Option<String>,
+    /// 上下文已用百分比（来自 Claude Code statusline，准确）；无 statusline 数据为 None。
+    pub context_pct: Option<i64>,
+    /// 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 None。
+    pub context_window: Option<i64>,
 }
 
 impl Store {
@@ -127,10 +131,12 @@ impl Store {
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at
+                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
+                    sc.used_pct, sc.window_size
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
+             LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
              ORDER BY s.last_event_at DESC
              LIMIT 100",
         )?;
@@ -154,12 +160,14 @@ impl Store {
                 let archived: i64 = r.get(13)?;
                 let cwd: Option<String> = r.get(14)?;
                 let archived_at: Option<i64> = r.get(15)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at))
+                let context_pct: Option<i64> = r.get(16)?;
+                let context_window: Option<i64> = r.get(17)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window) in rows {
             let todos = match task_id {
                 Some(tid) => self.list_todos(tid)?,
                 None => Vec::new(),
@@ -179,6 +187,8 @@ impl Store {
                 archived: archived != 0,
                 archived_at,
                 cwd,
+                context_pct,
+                context_window,
             });
         }
         Ok(out)

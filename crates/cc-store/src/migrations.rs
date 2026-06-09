@@ -47,4 +47,13 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_session ON tasks(session_id) WHERE session_id IS NOT NULL;
+
+-- session_context: 来自 Claude Code statusline 的上下文用量（准确窗口与百分比）。
+-- 按 cc_session_id 主键 upsert；statusline 每次渲染刷新。
+CREATE TABLE IF NOT EXISTS session_context (
+    cc_session_id TEXT PRIMARY KEY,
+    used_pct      INTEGER,
+    window_size   INTEGER,
+    updated_at    INTEGER NOT NULL
+);
 "#;

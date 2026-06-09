@@ -97,6 +97,35 @@ function PinIcon({ pinned }: { pinned: boolean }) {
   );
 }
 
+/** 状态徽标：圆角矩形边框上流动的亮线（conic 渐变 + transform 旋转，纯 GPU 合成，
+ *  拖动窗口不占主线程）+ 中心实心圆，圆内显示 Content 已用百分比。
+ *  tone：running=绿（运行中），waiting=黄（待交互），结构一致仅换色。 */
+function RunBadge({
+  pct,
+  tone = "running",
+}: {
+  pct: number | null;
+  tone?: "running" | "waiting";
+}) {
+  const what = tone === "waiting" ? "等待输入" : "运行中";
+  const label = pct != null ? `${what} · Content 已用 ${pct}%` : what;
+  return (
+    <span
+      className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : "")}
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      {/* 旋转的亮段（被 .run-badge 的圆角裁剪 → 光点沿边框跑） */}
+      <span className="run-sweep" />
+      {/* 遮住中心黑底，只露出外圈一圈边框 */}
+      <span className="run-mask" />
+      {/* 中心实心圆 + 百分比 */}
+      <span className="run-core">{pct != null ? `${pct}%` : ""}</span>
+    </span>
+  );
+}
+
 const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
 const TABS: { key: Tab; label: string }[] = [
@@ -286,9 +315,9 @@ export function Sticker({ data }: { data: Item[] }) {
             ) : l.errored ? (
               <span className="needs-error" title={l.error_raw ?? "会话出错"} />
             ) : l.session.status === "running" ? (
-              <span className="spinner" />
+              <RunBadge pct={l.context_pct} />
             ) : l.session.status === "waiting" ? (
-              <span className="needs" title="等待输入" />
+              <RunBadge pct={l.context_pct} tone="waiting" />
             ) : (
               <span className="sdot sdot-on" title="在线" />
             );

@@ -6,7 +6,8 @@ fn open_in_memory_creates_tables() {
     let count: i64 = store
         .raw_table_count()
         .expect("count tables");
-    assert_eq!(count, 5);
+    // projects / sessions / tasks / todos / events / session_context
+    assert_eq!(count, 6);
 }
 
 // == Task 4 ==

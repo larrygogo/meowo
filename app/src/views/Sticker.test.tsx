@@ -85,6 +85,27 @@ describe("Sticker", () => {
     expect(screen.getByText("工具调用解析失败").closest(".stk-sub-err")).toBeTruthy();
   });
 
+  it("运行中卡片在徽标圆内显示 Content 已用百分比", () => {
+    const { container } = render(<Sticker data={[mk({ context_pct: 47 })]} />);
+    expect(container.querySelector(".run-badge")).toBeTruthy();
+    expect(screen.getByText("47%")).toBeTruthy();
+  });
+
+  it("无 context_pct 时只渲染绿圆、不渲染百分比文字", () => {
+    const { container } = render(<Sticker data={[mk({ context_pct: null })]} />);
+    expect(container.querySelector(".run-badge")).toBeTruthy();
+    expect(container.querySelector(".run-core")?.textContent).toBe("");
+  });
+
+  it("待交互卡片用黄色徽标 run-badge--waiting，且同样显示百分比", () => {
+    const { container } = render(<Sticker data={[mk({
+      session: { id: 3, project_id: 1, cc_session_id: "w", status: "waiting", started_at: 0, last_event_at: Date.now(), ended_at: null },
+      connected: true, context_pct: 30,
+    })]} />);
+    expect(container.querySelector(".run-badge--waiting")).toBeTruthy();
+    expect(screen.getByText("30%")).toBeTruthy();
+  });
+
   it("断开优先于 errored：只显示断开环", () => {
     const item = mk({ connected: false, errored: true, error_label: "认证失败" });
     const { container } = render(<Sticker data={[item]} />);

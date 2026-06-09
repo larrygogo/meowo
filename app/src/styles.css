@@ -181,20 +181,61 @@ html, body {
   line-height: 1.5;
   max-width: 220px;
 }
-/* 运行中：转动的灰色缺口圆环 */
-.spinner {
-  width: 15px;
-  height: 15px;
-  flex: none;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.18);
-  border-top-color: #d4d0c6;
-  animation: spin 0.8s linear infinite;
+/* 状态徽标：圆角矩形边框上流动的亮线 + 中心实心圆（圆内显示 Content 已用百分比）。
+   亮线用 conic 渐变 + transform 旋转实现：动画走 GPU 合成层，不触发逐帧重绘/重栅格化，
+   故即便多张卡同时跑、拖动窗口也不卡（旧的 SVG stroke-dashoffset + drop-shadow 会卡）。
+   颜色由 --bc* 变量驱动：默认绿（运行中），.run-badge--waiting 切黄（待交互）。 */
+.run-badge {
+  --bc: var(--cc-ok); /* 主色 */
+  --bc-track: rgba(78, 201, 165, 0.22); /* 边框淡轨道 */
+  --bc-fade: rgba(78, 201, 165, 0); /* 主色 0 透明度（conic 渐变收尾，避免灰边） */
+  --bc-text: #06281f; /* 圆内百分比文字 */
+  position: absolute;
+  inset: 0;
+  border-radius: 5px; /* 比 .stk-ind 的 6px 略小，扣掉 1px 边框 */
+  overflow: hidden; /* 裁掉旋转亮段的圆角外溢 → 光点贴着圆角矩形边框跑 */
+  background: var(--bc-track);
 }
-@keyframes spin {
+.run-badge--waiting {
+  --bc: var(--cc-warn);
+  --bc-track: rgba(224, 162, 60, 0.22);
+  --bc-fade: rgba(224, 162, 60, 0);
+  --bc-text: #2a1d02;
+}
+.run-sweep {
+  position: absolute;
+  inset: -50%; /* 放大到 200%，旋转时始终盖满含四角 */
+  background: conic-gradient(from 0deg, var(--bc) 0deg, var(--bc-fade) 42deg 360deg);
+  will-change: transform;
+  animation: run-spin 1.5s linear infinite;
+}
+@keyframes run-spin {
   to {
     transform: rotate(360deg);
   }
+}
+.run-mask {
+  position: absolute;
+  inset: 1.6px;
+  border-radius: 4px;
+  background: #000; /* 与 .stk-ind 黑底一致，只留外圈 1.6px 边框可见 */
+}
+.run-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--bc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--bc-text);
 }
 /* 停止/已断开：静态虚线圆环 */
 .ring-stop {
@@ -219,6 +260,7 @@ html, body {
 .stk-top-body { flex: 1; min-width: 0; }
 /* 前导状态徽标：正方形黑底圆角块(rounded-md)，状态图标在块内居中 */
 .stk-ind {
+  position: relative; /* 运行中徽标 .run-badge 绝对定位铺满 */
   flex: none;
   width: 36px;
   height: 36px;

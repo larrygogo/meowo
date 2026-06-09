@@ -12,6 +12,18 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = String::new();
     std::io::stdin().read_to_string(&mut buf)?;
+
+    // statusline 子命令：解析 CC statusline JSON 写入上下文用量，再把 stdin 原样透传到 stdout，
+    // 供管道下游（claude-hud）照常渲染。解析/写库失败都不影响透传。
+    if std::env::args().nth(1).as_deref() == Some("statusline") {
+        if let Ok(store) = Store::open(db_path()) {
+            cc_reporter::statusline::record(&store, &buf, now_ms());
+        }
+        // 无下游时这行就是状态栏；被包装脚本链下游时其 stdout 会被丢弃，仅写库生效。
+        print!("{}", cc_reporter::statusline::minimal_line(&buf));
+        return Ok(());
+    }
+
     let ev = HookEvent::parse(&buf)?;
     let store = Store::open(db_path())?;
     let now = now_ms();
