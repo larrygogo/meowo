@@ -184,6 +184,8 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn claude_json_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude.json")) }
+/// 非 macOS：Claude Code 把 OAuth 凭据写在此文件。macOS 改存 Keychain（见 keychain_* 函数）。
+#[cfg(not(target_os = "macos"))]
 fn credentials_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join(".credentials.json")) }
 fn stats_cache_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join("stats-cache.json")) }
 fn usage_cache_path() -> Option<PathBuf> {
@@ -226,7 +228,8 @@ fn write_cached_usage(usage: &Usage) {
     }
 }
 
-/// 原子写回 credentials 文件（临时文件 + rename）。
+/// 原子写回 credentials 文件（临时文件 + rename）。仅非 macOS（macOS 写 Keychain）。
+#[cfg(not(target_os = "macos"))]
 fn write_credentials_atomic(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
@@ -238,10 +241,108 @@ fn write_credentials_atomic(path: &Path, value: &serde_json::Value) -> Result<()
     Ok(())
 }
 
-/// 确保有有效 access token：未过期直接返回；过期则刷新并原子写回，再返回新 token。
-fn ensure_valid_token() -> Result<String, String> {
+/// macOS 上 Claude Code 把 OAuth 凭据存在登录 Keychain 的这条通用密码里（不写 .credentials.json）。
+#[cfg(target_os = "macos")]
+const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+
+/// 从 `security find-generic-password -g` 的属性输出里抠出 account（"acct"<blob>=...）。
+/// 形如 `"acct"<blob>="root"`，或 non-UTF8 时 `0x726F6F74  "root"`（hex + 可读串）→ 取引号内。
+/// 纯函数便于单测；仅 macOS 调用，其它平台放行 dead_code。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn parse_keychain_account(attrs: &str) -> Option<String> {
+    let key = "\"acct\"<blob>=";
+    for line in attrs.lines() {
+        let Some(idx) = line.find(key) else { continue };
+        let rest = line[idx + key.len()..].trim();
+        if rest == "<NULL>" {
+            return None;
+        }
+        let after = &rest[rest.find('"')? + 1..];
+        let v = &after[..after.find('"')?];
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+/// 读 Keychain 里那条凭据的密码（即 `{"claudeAiOauth":{...}}` 的 JSON 字符串）。
+#[cfg(target_os = "macos")]
+fn keychain_read_password() -> Option<String> {
+    let out = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(out.stdout).ok()?;
+    let s = s.trim_end_matches(['\r', '\n']).to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// 读 Keychain 条目的 account 名（写回时按同名更新；读不到则上层退回默认 "root"）。
+#[cfg(target_os = "macos")]
+fn keychain_read_account() -> Option<String> {
+    // `-g`：属性打到 stdout、密码打到 stderr，这里只取属性。
+    let out = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-g"])
+        .output()
+        .ok()?;
+    parse_keychain_account(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// 写回 Keychain（-U：条目存在则更新）。password 经 argv 传入，仅同用户进程可见，与本仓既有 shell-out 一致。
+#[cfg(target_os = "macos")]
+fn keychain_write_password(account: &str, password: &str) -> Result<(), String> {
+    let status = std::process::Command::new("security")
+        .args([
+            "add-generic-password",
+            "-U",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            account,
+            "-w",
+            password,
+        ])
+        .status()
+        .map_err(|e| format!("写回 Keychain 失败：{e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("写回 Keychain 失败（security add-generic-password 非零退出）".into())
+    }
+}
+
+/// 读 Claude Code 的 OAuth 凭据根 JSON（形如 `{"claudeAiOauth": {...}}`）。
+/// macOS 取自登录 Keychain，其它平台取自 ~/.claude/.credentials.json。
+#[cfg(target_os = "macos")]
+fn read_credentials_root() -> Option<serde_json::Value> {
+    serde_json::from_str(&keychain_read_password()?).ok()
+}
+#[cfg(not(target_os = "macos"))]
+fn read_credentials_root() -> Option<serde_json::Value> {
+    read_json(&credentials_path()?)
+}
+
+/// 刷新 token 后把新凭据写回原存储（保留其余字段）。macOS → Keychain，其它平台 → 原子写文件。
+#[cfg(target_os = "macos")]
+fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
+    let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    let account = keychain_read_account().unwrap_or_else(|| "root".to_string());
+    keychain_write_password(&account, &body)
+}
+#[cfg(not(target_os = "macos"))]
+fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
     let path = credentials_path().ok_or("无 HOME")?;
-    let root = read_json(&path).ok_or("读不到 .credentials.json（未登录 Claude Code？）")?;
+    write_credentials_atomic(&path, value)
+}
+
+/// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
+fn ensure_valid_token() -> Result<String, String> {
+    let root = read_credentials_root()
+        .ok_or("读不到 Claude Code 凭据（未登录？macOS 看 Keychain，其它平台看 ~/.claude/.credentials.json）")?;
     let oauth = root.get("claudeAiOauth").ok_or("凭据缺 claudeAiOauth")?;
     let access = oauth.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -271,7 +372,7 @@ fn ensure_valid_token() -> Result<String, String> {
     let new_expires_at = now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
-    write_credentials_atomic(&path, &merged)?;
+    write_credentials_root(&merged)?;
     Ok(new_access)
 }
 
@@ -388,6 +489,18 @@ mod tests {
         assert!(is_token_expired(now, now));
         assert!(is_token_expired(now + 30_000, now));
         assert!(!is_token_expired(now + 120_000, now));
+    }
+
+    #[test]
+    fn parse_keychain_account_extracts_acct() {
+        let attrs = "keychain: \"/Users/x/Library/Keychains/login.keychain-db\"\n    \"acct\"<blob>=\"root\"\n    \"svce\"<blob>=\"Claude Code-credentials\"\n";
+        assert_eq!(parse_keychain_account(attrs).as_deref(), Some("root"));
+        // non-UTF8 时 security 打成 hex + 可读串，取引号内。
+        let hexed = "    \"acct\"<blob>=0x726F6F74  \"root\"\n";
+        assert_eq!(parse_keychain_account(hexed).as_deref(), Some("root"));
+        // 没有 acct 行 / NULL → None。
+        assert_eq!(parse_keychain_account("nothing here"), None);
+        assert_eq!(parse_keychain_account("    \"acct\"<blob>=<NULL>\n"), None);
     }
 
     #[test]
