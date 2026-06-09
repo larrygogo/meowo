@@ -493,6 +493,11 @@ html, body {
   -webkit-user-select: none;
   user-select: none;
 }
+/* macOS：无边框窗口不会被系统自动圆角（Windows 由 DWM 自动处理）。配合 Rust 端把 about 窗口设为
+   transparent，让窗角透明、由这里的 border-radius 呈现圆角卡片（系统按不透明内容自动绘制阴影）。 */
+:root.platform-macos .settings {
+  border-radius: 14px;
+}
 
 /* 左侧栏 */
 .side {

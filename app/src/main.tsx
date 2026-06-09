@@ -10,6 +10,11 @@ import "./styles.css";
 // 正式构建下封死右键菜单与 DevTools 快捷键（dev 放行）。
 lockdownInProduction();
 
+// 平台标记（同步，供 CSS 做平台差异，如 macOS 无边框设置窗需自行圆角）。WKWebView 的 UA 含 "Mac"。
+if (/Mac/i.test(navigator.userAgent)) {
+  document.documentElement.classList.add("platform-macos");
+}
+
 // 同一份前端按窗口 label 分流：about 窗口渲染关于页，其余渲染主贴纸。
 const label = (() => {
   try {

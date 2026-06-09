@@ -1063,6 +1063,24 @@ fn show_session_notification(
 ) {
 }
 
+/// 连接中会话按状态计数 → macOS 菜单栏图标标题（仅非零项；全零返回 None = 只显示图标）。
+/// 🟢 在线空闲 / 🟠 运行中 / 🔴 待交互或出错（需关注）。纯函数，便于单测。
+/// 仅 macOS 菜单栏用到，其它平台 dead_code 放行。
+#[allow(dead_code)]
+fn format_tray_title(idle: usize, running: usize, waiting: usize) -> Option<String> {
+    let mut parts = Vec::new();
+    if idle > 0 {
+        parts.push(format!("🟢{idle}"));
+    }
+    if running > 0 {
+        parts.push(format!("🟠{running}"));
+    }
+    if waiting > 0 {
+        parts.push(format!("🔴{waiting}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
 /// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
@@ -1093,8 +1111,9 @@ fn spawn_liveness_watch(
                 // 通知总开关：每轮读一次（文件读极廉价；设置改动 5s 内生效）。
                 let notify_on = load_settings().notifications_enabled;
 
-                // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。
+                // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
+                let (mut tray_idle, mut tray_running, mut tray_waiting) = (0usize, 0usize, 0usize);
                 for s in store.live_sessions().unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
                         continue;
@@ -1114,6 +1133,15 @@ fn spawn_liveness_watch(
                         .filter(|t| !t.trim().is_empty())
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
+
+                    // 菜单栏摘要计数：出错或待交互 → 需关注(🔴)，运行中 → 🟠，其余连接中 → 🟢。
+                    if error.is_some() || s.session.status == "waiting" {
+                        tray_waiting += 1;
+                    } else if s.session.status == "running" {
+                        tray_running += 1;
+                    } else {
+                        tray_idle += 1;
+                    }
 
                     // 错误通知（优先）。
                     if let Some(e) = &error {
@@ -1157,6 +1185,16 @@ fn spawn_liveness_watch(
                 notified.retain(|k, _| present.contains_key(k));
                 notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
+
+                // macOS：把连接中会话的状态摘要写到菜单栏图标标题旁（一眼可见，弥补无吸边缩略条）。
+                #[cfg(target_os = "macos")]
+                if let Some(tray) = app.tray_by_id("cc-kanban-tray") {
+                    let _ = tray.set_title(
+                        format_tray_title(tray_idle, tray_running, tray_waiting).as_deref(),
+                    );
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (tray_idle, tray_running, tray_waiting);
             }
             std::thread::sleep(Duration::from_secs(5));
         }
@@ -1231,7 +1269,7 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_focus();
     } else {
-        match tauri::WebviewWindowBuilder::new(
+        let builder = tauri::WebviewWindowBuilder::new(
             app,
             "about",
             tauri::WebviewUrl::App("index.html".into()),
@@ -1241,9 +1279,12 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
         .min_inner_size(620.0, 460.0)
         .resizable(false)
         .decorations(false)
-        .center()
-        .build()
-        {
+        .center();
+        // macOS：无边框窗口不会自动圆角，故设为透明，由前端 .settings 的 border-radius 呈现圆角
+        // （系统会按不透明内容自动绘制圆角阴影）。Windows 由 DWM 自动圆角，保持不透明不变。
+        #[cfg(target_os = "macos")]
+        let builder = builder.transparent(true);
+        match builder.build() {
             Ok(_about_window) => {
                 // macOS：设置窗口关闭后切回 Accessory，重新隐藏 Dock 图标。
                 #[cfg(target_os = "macos")]
@@ -1542,8 +1583,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        pid_is_claude, should_notify, tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
+        clamp_xy_to_work, edge_for_rect, format_tray_title, intersection_area, is_session_id,
+        normalize_tab_title, pid_is_claude, should_notify, tab_match_score, waiting_fingerprint,
+        Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -1559,6 +1601,15 @@ mod tests {
         assert!(!pid_is_claude(&sys, 0));
         assert!(!pid_is_claude(&sys, -1));
         assert!(!pid_is_claude(&sys, 4_000_000_000));
+    }
+
+    #[test]
+    fn tray_title_only_nonzero_else_none() {
+        assert_eq!(format_tray_title(0, 0, 0), None);
+        assert_eq!(format_tray_title(2, 1, 1).as_deref(), Some("🟢2 🟠1 🔴1"));
+        assert_eq!(format_tray_title(0, 3, 0).as_deref(), Some("🟠3"));
+        assert_eq!(format_tray_title(0, 0, 1).as_deref(), Some("🔴1"));
+        assert_eq!(format_tray_title(5, 0, 0).as_deref(), Some("🟢5"));
     }
 
     #[test]
