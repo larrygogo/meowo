@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { LiveSession, Settings, getSettings } from "../api";
+import { isMacPanel } from "../platform";
 
 const DAY_MS = 86_400_000;
 
@@ -273,7 +274,7 @@ export function Sticker({ data }: { data: Item[] }) {
 
   return (
     <div className="sticker">
-      <div className="drag" data-tauri-drag-region />
+      {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
       <div className="tabs">
         {TABS.map((t) => {
           const n = data.filter((l) => match(t.key, l, hideDays)).length;
@@ -289,13 +290,15 @@ export function Sticker({ data }: { data: Item[] }) {
             </span>
           );
         })}
-        <span
-          className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
-          title={pinned ? "已置顶：点击取消" : "置顶窗口"}
-          onClick={togglePin}
-        >
-          <PinIcon pinned={pinned} />
-        </span>
+        {!isMacPanel() && (
+          <span
+            className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
+            title={pinned ? "已置顶：点击取消" : "置顶窗口"}
+            onClick={togglePin}
+          >
+            <PinIcon pinned={pinned} />
+          </span>
+        )}
       </div>
       <div className="stk-scroll">
         {shown.length === 0 ? (
@@ -398,13 +401,15 @@ export function Sticker({ data }: { data: Item[] }) {
           })
         )}
       </div>
-      <div
-        className="resize-grip"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
-        }}
-      />
+      {!isMacPanel() && (
+        <div
+          className="resize-grip"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 }
