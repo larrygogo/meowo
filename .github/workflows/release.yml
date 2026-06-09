@@ -9,7 +9,15 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target universal-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -18,6 +26,8 @@ jobs:
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust 构建缓存
         uses: Swatinem/rust-cache@v2
@@ -26,16 +36,26 @@ jobs:
         working-directory: app
         run: bun install --frozen-lockfile
 
-      - name: 构建并发布(NSIS 安装包 + 更新清单)
+      - name: 构建并发布(签名公证 + 自动更新产物)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 下面两个 Secret 配好后，自动更新的签名与 latest.json 才会生成（见 README/spec）。
+          # 自动更新（minisign，复用现有密钥）
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS 代码签名（CI 自动建临时 keychain）
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          # macOS 公证（App Store Connect API key，推荐）
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
         with:
           projectPath: app
           tagName: ${{ github.ref_name }}
           releaseName: cc-kanban ${{ github.ref_name }}
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}
