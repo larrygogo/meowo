@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, type Settings, type ThemeMode } from "../api";
+import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 
@@ -26,7 +26,21 @@ const SETTINGS_DEFAULTS: Settings = {
   theme: "dark",
   opacity: 94,
   ui_scale: 100,
+  resume_terminal: "terminal",
 };
+
+// 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
+const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+const IS_WIN = typeof navigator !== "undefined" && /Win/i.test(navigator.userAgent);
+const RESUME_TERM_OPTIONS_MAC: { value: ResumeTerminal; label: string }[] = [
+  { value: "terminal", label: "Terminal" },
+  { value: "iterm", label: "iTerm2" },
+];
+const RESUME_TERM_OPTIONS_WIN: { value: ResumeTerminal; label: string }[] = [
+  { value: "wt", label: "Windows Terminal" },
+  { value: "powershell", label: "PowerShell" },
+  { value: "cmd", label: "命令提示符" },
+];
 
 // 设置读写：本地保留完整对象，每次只 patch 改动字段后整对象写回（后端 set_settings 收整对象，
 // 漏字段会被 serde 默认值覆盖 → 必须整对象提交）。写失败则回读后端保持一致。
@@ -283,14 +297,14 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: () => void 
   );
 }
 
-function Dropdown({
+function Dropdown<T extends string | number>({
   value,
   options,
   onChange,
 }: {
-  value: number;
-  options: { value: number; label: string }[];
-  onChange: (v: number) => void;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
 }) {
   const [open, setOpen] = useState(false);
   // 菜单用 fixed 定位（脱离 .row-card/.main-body 的 overflow 裁剪），按钮坐标实时测量。
@@ -354,8 +368,10 @@ function Dropdown({
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [settings, patch] = useSettingsState();
+  const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
   useEffect(() => {
     invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
+    availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
   }, []);
   const toggleAutostart = () => {
     const next = !autostart;
@@ -366,6 +382,15 @@ function GeneralSection() {
   const notifyOn = settings?.notifications_enabled ?? true;
   const changeHideDays = (days: number) => patch({ archive_hide_days: days });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
+  // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
+  const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : RESUME_TERM_OPTIONS_WIN;
+  const termOptions = platformOpts.filter((o) => (availTerms ?? []).includes(o.value));
+  // 保存值若不在可用项内（如未装 iTerm 仍存着 "iterm"，或 Windows 上残留 macOS 默认 "terminal"），显示退回首项。
+  const storedTerm = settings?.resume_terminal ?? "terminal";
+  const resumeTerm = termOptions.some((o) => o.value === storedTerm) ? storedTerm : (termOptions[0]?.value ?? "terminal");
+  const changeResumeTerm = (v: ResumeTerminal) => patch({ resume_terminal: v });
+  // 至少两个可用终端才有选择意义；只有一个（如 macOS 没装 iTerm）就不显示这一行。
+  const showTermRow = (IS_MAC || IS_WIN) && termOptions.length >= 2;
   return (
     <>
       <div className="row-card">
@@ -390,6 +415,15 @@ function GeneralSection() {
           </div>
           <Dropdown value={hideDays} options={HIDE_OPTIONS} onChange={changeHideDays} />
         </div>
+        {showTermRow && (
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">未连接会话打开终端</div>
+              <div className="row-desc">点开已断开的会话时，用哪个终端运行 claude --resume</div>
+            </div>
+            <Dropdown value={resumeTerm} options={termOptions} onChange={changeResumeTerm} />
+          </div>
+        )}
       </div>
       <div className="sec-hint">更多设置项陆续补充中…</div>
     </>

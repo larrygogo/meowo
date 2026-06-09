@@ -1,7 +1,12 @@
 mod account;
+#[cfg(target_os = "macos")]
+mod macos;
+mod term_script;
 
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+// HashSet 仅被 Windows 专属的终端窗口枚举使用（console_group_pids / find_window_for_pids）。
+#[cfg(target_os = "windows")]
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
@@ -9,13 +14,18 @@ use std::sync::{Arc, Mutex};
 
 pub mod ccsetup;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+#[cfg(target_os = "windows")]
+use sysinfo::Pid;
+#[cfg(not(target_os = "macos"))]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
+#[cfg(not(target_os = "macos"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 /// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
+#[cfg(not(target_os = "macos"))]
 const SNAP_THRESHOLD: i32 = 20;
 /// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
 const STRIP_W_LOGICAL: f64 = 20.0;
@@ -133,6 +143,7 @@ fn pull_on_screen(window: &tauri::WebviewWindow, force: bool) {
 }
 
 /// snap-changed 事件负载：当前检测到的吸附边（None 表示不贴边）。
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, serde::Serialize)]
 struct SnapPayload {
     edge: Option<Edge>,
@@ -364,6 +375,7 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
 }
 
 /// 收集与 root_pid 同控制台组的进程 pid：root + 所有祖先 + 所有子孙。
+#[cfg(target_os = "windows")]
 fn console_group_pids(root_pid: u32) -> HashSet<u32> {
     let sys = System::new_with_specifics(
         RefreshKind::new().with_processes(ProcessRefreshKind::new()),
@@ -446,6 +458,7 @@ fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Fo
 /// 运行时是 braille spinner(⠐⠂…)，空闲/待输入时是 ✳(U+2733)，可能还有其它符号。
 /// 归一化：剥掉开头所有「非字母数字」字符（覆盖任意状态符号 + 空格；任务标题几乎总以
 /// 字母/数字/CJK 开头），并去掉尾部空白与截断省略号(…/...)。纯函数，便于单测。
+#[allow(dead_code)] // 跨平台纯函数：非 Windows 上无运行时调用方，仅单测使用
 fn normalize_tab_title(s: &str) -> &str {
     s.trim_start_matches(|c: char| !c.is_alphanumeric())
         .trim_end()
@@ -456,6 +469,7 @@ fn normalize_tab_title(s: &str) -> &str {
 /// 标签页标题 `tab_name` 与会话标题 `want` 的匹配强度：2=精确(归一化后相等)，1=单向包含，0=不匹配。
 /// 包含是**双向**的：兼容 claude 对长标题的截断(tab 标题是 want 的前缀)与轻微漂移。
 /// `want` 为空或占位("(未命名会话)")时不参与匹配(返回 0)，避免误命中无关标签页。纯函数。
+#[allow(dead_code)] // 同上：跨平台纯函数，仅单测调用
 fn tab_match_score(tab_name: &str, want: &str) -> u8 {
     let want = want.trim();
     if want.is_empty() || want == "(未命名会话)" {
@@ -627,20 +641,68 @@ fn focus_session_terminal(pid: i64, title: Option<String>) {
     });
 }
 
+/// iTerm2 是否安装（任意常见位置）：先查标准路径，再用 mdfind 按 bundle id 兜底。
+#[cfg(target_os = "macos")]
+fn iterm_installed() -> bool {
+    use std::path::Path;
+    if Path::new("/Applications/iTerm.app").exists() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if Path::new(&home).join("Applications/iTerm.app").exists() {
+            return true;
+        }
+    }
+    std::process::Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'com.googlecode.iterm2'")
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// 读设置得出「打开未连接会话」用的终端宿主（macOS）。缺省 Terminal.app；
+/// 选了 iTerm2 但未安装时回退 Terminal.app（避免 AppleScript 静默失败）。
+#[cfg(target_os = "macos")]
+fn resume_terminal_kind() -> crate::term_script::TermKind {
+    use crate::term_script::TermKind;
+    match crate::term_script::resume_kind_from_setting(&load_settings().resume_terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    }
+}
+
 #[tauri::command]
-fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
+fn focus_session(
+    pid: i64,
+    title: Option<String>,
+    cwd: Option<String>,
+    session_id: Option<String>,
+) -> Result<(), String> {
     if pid <= 0 {
         return Err("无效 pid".into());
     }
     #[cfg(target_os = "windows")]
     {
+        let _ = (cwd, session_id);
         focus_session_terminal(pid, title);
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = (pid, title);
-        Err("仅支持 Windows".into())
+        let _ = title;
+        crate::macos::terminal::focus_session_terminal(
+            pid,
+            cwd.as_deref(),
+            session_id.as_deref(),
+            resume_terminal_kind(),
+        );
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (pid, title, cwd, session_id);
+        Err("当前平台不支持".into())
     }
 }
 
@@ -652,6 +714,16 @@ fn is_session_id(s: &str) -> bool {
 
 /// 把 `cwd` 收敛成「可安全传给 wt -d」的目录：必须非空、真实存在的目录，且不含会破坏 wt
 /// 命令行解析的元字符(`;` `"`)。不满足则返回 None（调用方退化为不带 -d）。
+/// Windows Terminal（wt.exe）是否在 PATH 上。
+#[cfg(target_os = "windows")]
+fn wt_available() -> bool {
+    std::process::Command::new("where")
+        .arg("wt")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "windows")]
 fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     let d = cwd?.trim();
@@ -661,11 +733,12 @@ fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     std::path::Path::new(d).is_dir().then(|| d.to_string())
 }
 
-/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个 Windows Terminal 标签页，跑
-/// `claude --resume <session_id>`。`cwd` 缺失/非法(旧会话)时不带 `-d`，尽力按 id 恢复。
+/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
+/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/powershell/cmd；macOS：Terminal/iTerm2。
+/// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
 ///
-/// 安全：`session_id` 严格校验为 UUID 形态，`claude`/`--resume`/id 作为**独立 argv** 传给 wt
-/// (不拼接 shell 命令字符串)，从源头杜绝命令注入；`cwd` 经 `safe_cwd` 校验为真实目录且无元字符。
+/// 安全：`session_id` 严格校验为 UUID 形态（无空格/元字符）；wt 分支把 claude/--resume/id 作为**独立 argv**
+/// 传入；powershell/cmd 分支用 `current_dir` 传工作目录（不进命令串）、命令串只含已校验的 id，从源头杜绝注入。
 #[tauri::command]
 fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String> {
     if !is_session_id(&session_id) {
@@ -673,33 +746,79 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
+
         // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
         // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
         let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
-        // wt -w 0 nt [-d <cwd>] claude --resume <id>
-        //   -w 0 nt：在最近的 WT 窗口新开标签页(无则自动建)；-d：在会话原目录打开。
-        //   claude 是 PATH 上的 claude.exe，直接拉起，--resume 与 id 各为独立参数。
-        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
-        if let Some(dir) = safe_cwd(resolved_cwd.as_deref()) {
-            args.push("-d".into());
-            args.push(dir);
+        let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
+        // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
+        let eff = match load_settings().resume_terminal.as_str() {
+            "powershell" => "powershell",
+            "cmd" => "cmd",
+            _ if wt_available() => "wt",
+            _ => "powershell",
+        };
+        match eff {
+            // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
+            "powershell" => {
+                let mut c = Command::new("powershell");
+                c.args(["-NoExit", "-Command", &format!("claude --resume {session_id}")]);
+                if let Some(d) = &dir {
+                    c.current_dir(d);
+                }
+                c.creation_flags(CREATE_NEW_CONSOLE)
+                    .spawn()
+                    .map_err(|e| format!("启动 PowerShell 失败：{e}"))?;
+            }
+            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+            "cmd" => {
+                let mut c = Command::new("cmd");
+                c.args(["/k", &format!("claude --resume {session_id}")]);
+                if let Some(d) = &dir {
+                    c.current_dir(d);
+                }
+                c.creation_flags(CREATE_NEW_CONSOLE)
+                    .spawn()
+                    .map_err(|e| format!("启动命令提示符失败：{e}"))?;
+            }
+            // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
+            // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
+            _ => {
+                let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+                if let Some(d) = &dir {
+                    args.push("-d".into());
+                    args.push(d.clone());
+                }
+                args.push("claude".into());
+                args.push("--resume".into());
+                args.push(session_id.clone());
+                Command::new("wt")
+                    .args(&args)
+                    .spawn()
+                    .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
+            }
         }
-        args.push("claude".into());
-        args.push("--resume".into());
-        args.push(session_id);
-
-        Command::new("wt")
-            .args(&args)
-            .spawn()
-            .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
+        Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
+        let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+        crate::macos::terminal::resume_session_mac(
+            resolved.as_deref(),
+            &session_id,
+            resume_terminal_kind(),
+        );
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = cwd;
-        return Err("仅支持 Windows".into());
+        Err("当前平台不支持".into())
     }
-    Ok(())
 }
 
 /// 在贴纸上重命名会话：往该会话 transcript 追加一条 custom-title 记录
@@ -774,6 +893,9 @@ fn default_opacity() -> u32 {
 fn default_ui_scale() -> u32 {
     100
 }
+fn default_resume_terminal() -> String {
+    "terminal".to_string()
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -793,6 +915,9 @@ struct Settings {
     /// 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。
     #[serde(default = "default_ui_scale")]
     ui_scale: u32,
+    /// 打开未连接会话用的终端（macOS）：terminal = Terminal.app，iterm = iTerm2。缺省 terminal，兼容老 settings.json。
+    #[serde(default = "default_resume_terminal")]
+    resume_terminal: String,
 }
 
 impl Default for Settings {
@@ -803,6 +928,7 @@ impl Default for Settings {
             theme: default_theme(),
             opacity: default_opacity(),
             ui_scale: default_ui_scale(),
+            resume_terminal: default_resume_terminal(),
         }
     }
 }
@@ -907,9 +1033,28 @@ fn pid_is_claude(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    sys.process(Pid::from_u32(pid as u32))
-        .map(|p| p.name().to_string_lossy().to_ascii_lowercase().contains("claude"))
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        sys.process(Pid::from_u32(pid as u32))
+            .map(|p| p.name().to_string_lossy().to_ascii_lowercase().contains("claude"))
+            .unwrap_or(false)
+    }
+    // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
+    // 最小刷新下 name 是否可靠也无保证），改用 ps 校验，与 cc-reporter::owner_pid 一致。
+    // 仅对「非 ended 的活跃会话」调用，每轮就几个，ps 开销可忽略。
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = sys;
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-o", "comm=", "-p", &pid.to_string()])
+            .output()
+        else {
+            return false;
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .to_ascii_lowercase()
+            .contains("claude")
+    }
 }
 
 /// 轮询一次：把「记录了 pid、但该进程已死」的 live 会话收尾为 ended（self-heal），
@@ -992,7 +1137,18 @@ fn show_session_notification(
     });
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn show_session_notification(
+    _app: &tauri::AppHandle,
+    title: String,
+    body: String,
+    pid: i64,
+    _focus_title: String, // macOS 按 pid->tty 定位终端，标题用不上
+) {
+    crate::macos::notify::post(crate::macos::notify::NotifyJob { title, body, pid });
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn show_session_notification(
     _app: &tauri::AppHandle,
     _title: String,
@@ -1017,6 +1173,9 @@ fn spawn_liveness_watch(
         let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
         let mut notified_waiting: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待交互指纹
         let mut seeded = false;
+        // 菜单栏图标只在 (运行,待办) 变化时重画，避免每轮无谓刷新。
+        #[cfg(target_os = "macos")]
+        let mut last_tray: Option<(usize, usize)> = None;
         loop {
             if let Ok(store) = Store::open(&db_path) {
                 let sys = System::new_with_specifics(
@@ -1032,8 +1191,9 @@ fn spawn_liveness_watch(
                 // 通知总开关：每轮读一次（文件读极廉价；设置改动 5s 内生效）。
                 let notify_on = load_settings().notifications_enabled;
 
-                // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。
+                // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
+                let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
                 for s in store.live_sessions().unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
                         continue;
@@ -1053,6 +1213,13 @@ fn spawn_liveness_watch(
                         .filter(|t| !t.trim().is_empty())
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
+
+                    // 菜单栏摘要计数：出错或待交互 → 需关注(●)，运行中 → ○；在线空闲不计入。
+                    if error.is_some() || s.session.status == "waiting" {
+                        tray_waiting += 1;
+                    } else if s.session.status == "running" {
+                        tray_running += 1;
+                    }
 
                     // 错误通知（优先）。
                     if let Some(e) = &error {
@@ -1096,6 +1263,15 @@ fn spawn_liveness_watch(
                 notified.retain(|k, _| present.contains_key(k));
                 notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
+
+                // macOS：把连接中会话的状态摘要写到菜单栏图标标题旁（一眼可见，弥补无吸边缩略条）。
+                #[cfg(target_os = "macos")]
+                if last_tray != Some((tray_running, tray_waiting)) {
+                    crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting);
+                    last_tray = Some((tray_running, tray_waiting));
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (tray_running, tray_waiting);
             }
             std::thread::sleep(Duration::from_secs(5));
         }
@@ -1143,29 +1319,101 @@ async fn refresh_usage() -> Result<account::Usage, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// 返回宿主操作系统标识，供前端按平台调整 UI / 交互。
+#[tauri::command]
+fn host_os() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "macos".into()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows".into()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "other".into()
+    }
+}
+
+/// 「打开未连接会话」可选且本机确实可用的终端 key（供设置页过滤下拉项）。
+/// macOS：terminal 必有，iterm 视安装情况；Windows：powershell/cmd 必有，wt 视是否在 PATH。
+#[tauri::command]
+fn available_terminals() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut v = vec!["terminal".to_string()];
+        if iterm_installed() {
+            v.push("iterm".to_string());
+        }
+        v
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut v = Vec::new();
+        if wt_available() {
+            v.push("wt".to_string());
+        }
+        v.push("powershell".to_string());
+        v.push("cmd".to_string());
+        v
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Vec::<String>::new()
+    }
+}
+
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
 /// 托盘左键点击与右键菜单「设置」共用此逻辑。
-fn open_settings_window(app: &tauri::AppHandle) {
+pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
+    // macOS：打开设置窗口前临时切到 Regular 激活策略，否则纯托盘 App 的窗口无法获焦。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_focus();
-    } else if let Err(e) = tauri::WebviewWindowBuilder::new(
-        app,
-        "about",
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("设置")
-    .inner_size(620.0, 460.0)
-    .min_inner_size(620.0, 460.0)
-    .resizable(false)
-    .decorations(false)
-    .center()
-    .build()
-    {
-        eprintln!("创建设置窗口失败: {e}");
+    } else {
+        let builder = tauri::WebviewWindowBuilder::new(
+            app,
+            "about",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("设置")
+        .inner_size(620.0, 460.0)
+        .min_inner_size(620.0, 460.0)
+        .resizable(false)
+        .decorations(false)
+        .center();
+        // macOS：无边框窗口不会自动圆角，故设为透明，由前端 .settings 的 border-radius 呈现圆角
+        // （系统会按不透明内容自动绘制圆角阴影）。Windows 由 DWM 自动圆角，保持不透明不变。
+        #[cfg(target_os = "macos")]
+        let builder = builder.transparent(true);
+        match builder.build() {
+            Ok(_about_window) => {
+                // macOS：设置窗口关闭后切回 Accessory，重新隐藏 Dock 图标。
+                #[cfg(target_os = "macos")]
+                {
+                    let app_handle = app.clone();
+                    _about_window.on_window_event(move |e| {
+                        if matches!(
+                            e,
+                            tauri::WindowEvent::CloseRequested { .. }
+                                | tauri::WindowEvent::Destroyed
+                        ) {
+                            crate::macos::menubar::settings_window_did_close(&app_handle);
+                        }
+                    });
+                }
+            }
+            Err(e) => eprintln!("创建设置窗口失败: {e}"),
+        }
     }
 }
 
 /// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。
+/// macOS 走 `macos::menubar::setup_tray`（面板模式），故此实现仅用于非 macOS 平台。
+#[cfg(not(target_os = "macos"))]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
@@ -1317,6 +1565,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_positioner::init())
         .manage(AppState {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
@@ -1338,9 +1587,15 @@ pub fn run() {
             snap_expand,
             snap_restore,
             get_account,
-            refresh_usage
+            refresh_usage,
+            host_os,
+            available_terminals
         ])
         .on_window_event(|window, event| {
+            // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
+            #[cfg(target_os = "macos")]
+            let _ = (window, event);
+            #[cfg(not(target_os = "macos"))]
             if let tauri::WindowEvent::Moved(pos) = event {
                 // 出屏约束与吸附只作用于贴纸主窗口；设置等其它窗口不受限制。
                 if window.label() != "main" {
@@ -1393,7 +1648,24 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            setup_tray(app)?;
+            // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
+            #[cfg(target_os = "macos")]
+            {
+                app.handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+                // nspanel 插件必须先注册（它 manage(WebviewPanelManager)），to_panel()/get_webview_panel()
+                // 才能取到该托管状态；漏注册会在启动时 panic：state() called before manage()。
+                // nspanel 是 macOS-only crate，无法放进跨平台 Builder 链，故在此运行时注册。
+                app.handle().plugin(tauri_nspanel::init())?;
+                crate::macos::panel::convert_main_to_panel(app.handle());
+                crate::macos::panel::setup_resign_listener(app.handle());
+                crate::macos::menubar::setup_tray(app.handle())?;
+                crate::macos::notify::init(app.handle());
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                setup_tray(app)?;
+            }
             // window-state 恢复后，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
@@ -1417,8 +1689,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        pid_is_claude, should_notify, tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
+        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id,
+        normalize_tab_title, pid_is_claude, should_notify, tab_match_score, waiting_fingerprint,
+        Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 

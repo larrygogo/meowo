@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { LiveSession, Settings, getSettings } from "../api";
+import { isMacPanel } from "../platform";
 
 const DAY_MS = 86_400_000;
 
@@ -69,10 +70,14 @@ function TabIcon({ tab }: { tab: Tab }) {
           <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />
         </svg>
       );
-    case "running": // 播放（运行中）
+    case "running": // 循环箭头（运行中）
       return (
-        <svg {...common} fill="currentColor">
-          <path d="M5 3.2 12.5 8 5 12.8z" />
+        <svg {...common} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+          <path d="M3 21v-5h5" />
         </svg>
       );
     case "archived": // 归档盒
@@ -179,10 +184,13 @@ function EmptyIcon({ tab }: { tab: Tab }) {
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
       );
-    case "running": // 播放
+    case "running": // 循环箭头
       return (
         <svg {...common}>
-          <polygon points="6 3 20 12 6 21 6 3" />
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+          <path d="M3 21v-5h5" />
         </svg>
       );
     case "archived": // 归档盒
@@ -273,7 +281,7 @@ export function Sticker({ data }: { data: Item[] }) {
 
   return (
     <div className="sticker">
-      <div className="drag" data-tauri-drag-region />
+      {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
       <div className="tabs">
         {TABS.map((t) => {
           const n = data.filter((l) => match(t.key, l, hideDays)).length;
@@ -289,13 +297,15 @@ export function Sticker({ data }: { data: Item[] }) {
             </span>
           );
         })}
-        <span
-          className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
-          title={pinned ? "已置顶：点击取消" : "置顶窗口"}
-          onClick={togglePin}
-        >
-          <PinIcon pinned={pinned} />
-        </span>
+        {!isMacPanel() && (
+          <span
+            className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
+            title={pinned ? "已置顶：点击取消" : "置顶窗口"}
+            onClick={togglePin}
+          >
+            <PinIcon pinned={pinned} />
+          </span>
+        )}
       </div>
       <div className="stk-scroll">
         {shown.length === 0 ? (
@@ -328,7 +338,13 @@ export function Sticker({ data }: { data: Item[] }) {
                 onClick={() => {
                   if (l.connected) {
                     // 连接中：跳转到对应 WT 标签页。
-                    if (l.pid) invoke("focus_session", { pid: l.pid, title: l.task_title }).catch(() => {});
+                    if (l.pid)
+                      invoke("focus_session", {
+                        pid: l.pid,
+                        title: l.task_title,
+                        cwd: l.cwd,
+                        sessionId: l.session.cc_session_id,
+                      }).catch(() => {});
                   } else if (!l.archived) {
                     // 已断开且未归档：开新 WT 标签页跑 claude --resume 恢复会话。
                     // 归档的会话点击不恢复（归档即收纳，避免误开终端）。
@@ -398,13 +414,15 @@ export function Sticker({ data }: { data: Item[] }) {
           })
         )}
       </div>
-      <div
-        className="resize-grip"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
-        }}
-      />
+      {!isMacPanel() && (
+        <div
+          className="resize-grip"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,49 @@
+use std::sync::mpsc::{self, Sender};
+use std::sync::OnceLock;
+
+use mac_notification_sys::{
+    get_bundle_identifier_or_default, send_notification, set_application, NotificationResponse,
+};
+use tauri::AppHandle;
+
+/// 一条待弹通知；点击后用 pid->tty 切到对应终端（通知场景无需 resume，故不带 cwd/id）。
+pub struct NotifyJob {
+    pub title: String,
+    pub body: String,
+    pub pid: i64,
+}
+
+static TX: OnceLock<Sender<NotifyJob>> = OnceLock::new();
+
+/// 启动一次：设应用归属 + 起串行通知线程。5s 轮询线程只投递、绝不阻塞（避免在轮询里同步等回调致 CPU 飙升）。
+pub fn init(_app: &AppHandle) {
+    let bundle = get_bundle_identifier_or_default("cc-kanban");
+    let _ = set_application(&bundle);
+
+    let (tx, rx) = mpsc::channel::<NotifyJob>();
+    std::thread::spawn(move || {
+        // 串行：每条通知同步等待用户交互，阻塞仅限本线程。
+        for job in rx {
+            if let Ok(NotificationResponse::Click) =
+                send_notification(&job.title, None, &job.body, None)
+            {
+                // 点通知正文 -> 按 pid->tty 切到该会话所在终端。无 session_id，不会走 resume 回退，
+                // resume_kind 仅占位（仍按设置取，保持一致）。
+                crate::macos::terminal::focus_session_terminal(
+                    job.pid,
+                    None,
+                    None,
+                    crate::resume_terminal_kind(),
+                );
+            }
+        }
+    });
+    let _ = TX.set(tx);
+}
+
+/// 投递一条通知任务（非阻塞）。OnceLock 未初始化时静默丢弃。
+pub fn post(job: NotifyJob) {
+    if let Some(tx) = TX.get() {
+        let _ = tx.send(job);
+    }
+}

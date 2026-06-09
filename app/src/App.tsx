@@ -6,6 +6,7 @@ import { getLiveSessions, LiveSession } from "./api";
 import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
+import { detectHostOs, isMacPanel } from "./platform";
 
 type Item = LiveSession & { connected: boolean };
 type Edge = "left" | "right" | "top";
@@ -40,12 +41,16 @@ function isPinned(): boolean {
 export function App() {
   const [live, setLive] = useState<Item[]>([]);
   const [edge, setEdge] = useState<Edge | null>(() => {
+    // macOS 面板模式：无吸边，edge 固定为 null。
+    if (isMacPanel()) return null;
     const s = localStorage.getItem(SNAP_KEY);
     return s === "left" || s === "right" || s === "top" ? s : null;
   });
   // mode 初值与 edge 同源：上次在吸附态关闭（window-state 会把窗口恢复成缩略条尺寸），
   // 首屏就渲染缩略条，避免在细条窗口里显示完整贴纸的脱节。
   const [mode, setMode] = useState<Mode>(() => {
+    // macOS 面板模式：始终以普通态启动。
+    if (isMacPanel()) return "normal";
     const s = localStorage.getItem(SNAP_KEY);
     return s === "left" || s === "right" || s === "top" ? "collapsed" : "normal";
   });
@@ -78,7 +83,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    let cancelled = false;
+    (async () => {
+      await detectHostOs();
+      if (!cancelled) refresh();
+    })();
+    return () => { cancelled = true; };
   }, [refresh]);
 
   useEffect(() => {
@@ -109,7 +119,9 @@ export function App() {
   );
 
   // 拖拽松手处理：靠边→折叠（从 normal 先存正常尺寸）；离边→若在吸附态则还原普通窗口。
+  // macOS 面板模式：直接返回，不处理吸边逻辑。
   const handleDragRelease = useCallback(async () => {
+    if (isMacPanel()) return;
     if (!draggingRef.current) return;
     draggingRef.current = false;
     if (settleRef.current) {
@@ -161,7 +173,9 @@ export function App() {
   }, [doCollapse]);
 
   // 监听窗口移动：拖拽中靠近边缘则发光；停止移动 SETTLE_MS 作为松手兜底。
+  // macOS 面板模式无吸边，不注册此监听器。
   useEffect(() => {
+    if (isMacPanel()) return;
     const un = listen<{ edge: Edge | null }>("snap-changed", (e) => {
       const d = e.payload.edge;
       lastEdgeRef.current = d;
@@ -179,7 +193,9 @@ export function App() {
   }, [handleDragRelease]);
 
   // 拖拽开始/结束检测：mousedown 命中拖拽区 → 标记拖拽；mouseup → 处理松手。
+  // macOS 面板模式：无拖拽/吸边，不注册此监听器。
   useEffect(() => {
+    if (isMacPanel()) return;
     const onDown = (ev: MouseEvent) => {
       const t = ev.target as HTMLElement | null;
       if (t && t.closest("[data-tauri-drag-region]")) {
@@ -217,8 +233,9 @@ export function App() {
     }
   }, []);
 
-  // 重启沿用：若上次是吸附态，启动后折叠回竖条。
+  // 重启沿用：若上次是吸附态，启动后折叠回竖条。macOS 面板模式跳过。
   useEffect(() => {
+    if (isMacPanel()) return;
     const e = edgeRef.current;
     if (e) {
       doCollapse(e)
@@ -229,8 +246,9 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 偷看：悬停竖条 → 展开成全尺寸（仍贴边）。
+  // 偷看：悬停竖条 → 展开成全尺寸（仍贴边）。macOS 面板模式：无此操作。
   const onExpand = useCallback(() => {
+    if (isMacPanel()) return;
     if (leaveRef.current) {
       window.clearTimeout(leaveRef.current);
       leaveRef.current = null;
@@ -261,7 +279,7 @@ export function App() {
     }
   }, []);
 
-  if (mode === "collapsed" && edge) {
+  if (!isMacPanel() && mode === "collapsed" && edge) {
     return <CollapsedStrip data={live} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
   }
   return (
@@ -270,7 +288,7 @@ export function App() {
       onMouseEnter={mode === "expanded" ? onExpandedEnter : undefined}
       onMouseLeave={mode === "expanded" ? onExpandedLeave : undefined}
     >
-      {glow && <div className={"snap-glow snap-glow-" + glow} />}
+      {!isMacPanel() && glow && <div className={"snap-glow snap-glow-" + glow} />}
       {(upStatus === "available" || upStatus === "downloading") && (
         <div
           className="update-bar"

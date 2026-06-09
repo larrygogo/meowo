@@ -1,6 +1,6 @@
 [package]
 name = "cc-app"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
@@ -13,7 +13,8 @@ tauri-build = { workspace = true }
 [dependencies]
 cc-store = { path = "../../crates/cc-store" }
 cc-reporter = { path = "../../crates/cc-reporter" }
-tauri = { workspace = true, features = ["tray-icon"] }
+tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-autostart = { workspace = true }
 tauri-plugin-updater = { workspace = true }
@@ -29,3 +30,12 @@ ureq = { version = "2", features = ["json"] }
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
+mac-notification-sys = "0.6"
+
+[lints.rust]
+# tauri-nspanel 的 panel_delegate! 宏展开含 #[cfg(feature = "cargo-clippy")]，新 rustc 下触发
+# unexpected_cfgs；该 cfg 来自上游宏、无法在调用处消除，整体放行（仅影响本 crate）。
+unexpected_cfgs = "allow"
