@@ -1023,7 +1023,18 @@ fn show_session_notification(
     });
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn show_session_notification(
+    _app: &tauri::AppHandle,
+    title: String,
+    body: String,
+    pid: i64,
+    _focus_title: String, // macOS 按 pid->tty 定位终端，标题用不上
+) {
+    crate::macos::notify::post(crate::macos::notify::NotifyJob { title, body, pid });
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn show_session_notification(
     _app: &tauri::AppHandle,
     _title: String,
@@ -1479,6 +1490,7 @@ pub fn run() {
                 crate::macos::panel::convert_main_to_panel(app.handle());
                 crate::macos::panel::setup_resign_listener(app.handle());
                 crate::macos::menubar::setup_tray(app.handle())?;
+                crate::macos::notify::init(app.handle());
             }
             #[cfg(not(target_os = "macos"))]
             {
