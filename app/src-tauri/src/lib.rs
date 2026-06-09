@@ -1387,6 +1387,10 @@ pub fn run() {
             host_os
         ])
         .on_window_event(|window, event| {
+            // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
+            #[cfg(target_os = "macos")]
+            let _ = (window, event);
+            #[cfg(not(target_os = "macos"))]
             if let tauri::WindowEvent::Moved(pos) = event {
                 // 出屏约束与吸附只作用于贴纸主窗口；设置等其它窗口不受限制。
                 if window.label() != "main" {
