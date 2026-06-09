@@ -14,7 +14,9 @@ use std::sync::{Arc, Mutex};
 
 pub mod ccsetup;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+#[cfg(target_os = "windows")]
+use sysinfo::Pid;
 #[cfg(not(target_os = "macos"))]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(not(target_os = "macos"))]
