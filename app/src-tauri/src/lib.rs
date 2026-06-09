@@ -5,6 +5,8 @@ mod term_script;
 
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+// HashSet 仅被 Windows 专属的终端窗口枚举使用（console_group_pids / find_window_for_pids）。
+#[cfg(target_os = "windows")]
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
