@@ -938,9 +938,28 @@ fn pid_is_claude(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    sys.process(Pid::from_u32(pid as u32))
-        .map(|p| p.name().to_string_lossy().to_ascii_lowercase().contains("claude"))
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        sys.process(Pid::from_u32(pid as u32))
+            .map(|p| p.name().to_string_lossy().to_ascii_lowercase().contains("claude"))
+            .unwrap_or(false)
+    }
+    // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
+    // 最小刷新下 name 是否可靠也无保证），改用 ps 校验，与 cc-reporter::owner_pid 一致。
+    // 仅对「非 ended 的活跃会话」调用，每轮就几个，ps 开销可忽略。
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = sys;
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-o", "comm=", "-p", &pid.to_string()])
+            .output()
+        else {
+            return false;
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .to_ascii_lowercase()
+            .contains("claude")
+    }
 }
 
 /// 轮询一次：把「记录了 pid、但该进程已死」的 live 会话收尾为 ended（self-heal），
