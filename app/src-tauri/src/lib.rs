@@ -13,12 +13,15 @@ use std::sync::{Arc, Mutex};
 pub mod ccsetup;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+#[cfg(not(target_os = "macos"))]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
+#[cfg(not(target_os = "macos"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 /// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
+#[cfg(not(target_os = "macos"))]
 const SNAP_THRESHOLD: i32 = 20;
 /// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
 const STRIP_W_LOGICAL: f64 = 20.0;
@@ -136,6 +139,7 @@ fn pull_on_screen(window: &tauri::WebviewWindow, force: bool) {
 }
 
 /// snap-changed 事件负载：当前检测到的吸附边（None 表示不贴边）。
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, serde::Serialize)]
 struct SnapPayload {
     edge: Option<Edge>,
@@ -367,6 +371,7 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
 }
 
 /// 收集与 root_pid 同控制台组的进程 pid：root + 所有祖先 + 所有子孙。
+#[cfg(target_os = "windows")]
 fn console_group_pids(root_pid: u32) -> HashSet<u32> {
     let sys = System::new_with_specifics(
         RefreshKind::new().with_processes(ProcessRefreshKind::new()),
@@ -449,6 +454,7 @@ fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Fo
 /// 运行时是 braille spinner(⠐⠂…)，空闲/待输入时是 ✳(U+2733)，可能还有其它符号。
 /// 归一化：剥掉开头所有「非字母数字」字符（覆盖任意状态符号 + 空格；任务标题几乎总以
 /// 字母/数字/CJK 开头），并去掉尾部空白与截断省略号(…/...)。纯函数，便于单测。
+#[cfg(target_os = "windows")]
 fn normalize_tab_title(s: &str) -> &str {
     s.trim_start_matches(|c: char| !c.is_alphanumeric())
         .trim_end()
@@ -459,6 +465,7 @@ fn normalize_tab_title(s: &str) -> &str {
 /// 标签页标题 `tab_name` 与会话标题 `want` 的匹配强度：2=精确(归一化后相等)，1=单向包含，0=不匹配。
 /// 包含是**双向**的：兼容 claude 对长标题的截断(tab 标题是 want 的前缀)与轻微漂移。
 /// `want` 为空或占位("(未命名会话)")时不参与匹配(返回 0)，避免误命中无关标签页。纯函数。
+#[cfg(target_os = "windows")]
 fn tab_match_score(tab_name: &str, want: &str) -> u8 {
     let want = want.trim();
     if want.is_empty() || want == "(未命名会话)" {
@@ -696,13 +703,13 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
             .args(&args)
             .spawn()
             .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = cwd;
-        return Err("仅支持 Windows".into());
+        Err("仅支持 Windows".into())
     }
-    Ok(())
 }
 
 /// 在贴纸上重命名会话：往该会话 transcript 追加一条 custom-title 记录

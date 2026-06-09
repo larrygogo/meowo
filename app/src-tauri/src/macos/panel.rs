@@ -1,3 +1,6 @@
+// tauri-nspanel v2 分支基于已弃用的 cocoa crate；其常量与 panel_delegate! 宏在 -D warnings 下会触发
+// deprecated 与 unexpected_cfgs(cargo-clippy) 告警。这些来自上游、我们无法消除，按需放行。
+#![allow(deprecated, unexpected_cfgs)]
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use tauri_nspanel::{
     cocoa::appkit::{NSMainMenuWindowLevel, NSWindowCollectionBehavior},
