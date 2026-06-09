@@ -14,6 +14,8 @@
   --cc-accent-dim: #e8956f;
   --cc-accent-soft: rgba(217, 119, 87, 0.16);
   --cc-accent-border: rgba(217, 119, 87, 0.4);
+  /* 强调色「当前景文字/图标」时用此色（需对比度）；当填充/高亮时用 --cc-accent（品牌色）。 */
+  --cc-accent-text: #d97757;
   --cc-text: #f5f4ef;
   --cc-text-dim: #b0aaa2;
   --cc-text-faint: #847f78;
@@ -40,10 +42,11 @@
   --cc-surface-hover: rgba(0, 0, 0, 0.065);
   --cc-border: rgba(0, 0, 0, 0.1);
   /* 强调色/文字色整体比深色板压暗一档，确保小字号在近白底（及卡片叠层）上达到 WCAG AA。 */
-  --cc-accent: #b0532f;
+  --cc-accent: #d97757;
   --cc-accent-dim: #d97757;
-  --cc-accent-soft: rgba(176, 83, 47, 0.13);
-  --cc-accent-border: rgba(176, 83, 47, 0.38);
+  --cc-accent-soft: rgba(217, 119, 87, 0.16);
+  --cc-accent-border: rgba(217, 119, 87, 0.42);
+  --cc-accent-text: #b0532f;
   --cc-text: #2a2823;
   --cc-text-dim: #5f5a51;
   --cc-text-faint: #76716a;
@@ -82,8 +85,6 @@
 }
 /* 热力图最低档：浅色下白色叠层会与近白底融为一体（隐形）→ 换成淡黑叠层。 */
 :root[data-theme="light"] .cal-l0 { background: rgba(0, 0, 0, 0.05); }
-/* 页脚链接：浅色板的 --cc-accent-dim 偏亮、对比不足 → 改用更深的主强调色。 */
-:root[data-theme="light"] .about-foot a { color: var(--cc-accent); }
 * { box-sizing: border-box; }
 
 /* 自定义滚动条（WebView2/Chromium）：细、半透明、配深色主题；Firefox 用 scrollbar-* 兜底。 */
@@ -195,13 +196,13 @@ html, body {
 .stab { cursor: pointer; font-size: calc(11px * var(--cc-ui)); color: var(--cc-text-dim); padding: 2px 5px; border-radius: var(--r-md); display: inline-flex; align-items: center; gap: 3px; }
 .stab svg { display: block; flex: none; opacity: 0.85; }
 .stab:hover { color: var(--cc-text); }
-.stab-on { color: var(--cc-accent); background: #000; }
+.stab-on { color: var(--cc-accent-text); background: #000; }
 .stab-n { font-size: 9.5px; color: var(--cc-text-faint); }
-.stab-on .stab-n { color: var(--cc-accent); }
+.stab-on .stab-n { color: var(--cc-accent-text); }
 .stk-pin { margin-left: auto; cursor: pointer; color: var(--cc-text-faint); display: inline-flex; align-items: center; padding: 2px 4px; border-radius: var(--r-md); }
 .stk-pin svg { display: block; }
 .stk-pin:hover { color: var(--cc-text); }
-.stk-pin-on { color: var(--cc-accent); background: #000; }
+.stk-pin-on { color: var(--cc-accent-text); background: #000; }
 /* 负边距+内边距：滚动条落到贴纸右边缘，卡片内容左右仍对称(各 8px) */
 .stk-scroll { flex: 1; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 8px; padding-bottom: 6px; display: flex; flex-direction: column; }
 .stk-scroll::-webkit-scrollbar { width: 6px; }
@@ -522,7 +523,7 @@ html, body {
 .nav-item svg { color: var(--cc-text-faint); transition: color 0.14s; }
 .nav-item:hover { background: var(--cc-surface); color: var(--cc-text); }
 .nav-item.on { background: var(--cc-surface-hover); color: var(--cc-text); }
-.nav-item.on svg { color: var(--cc-accent); }
+.nav-item.on svg { color: var(--cc-accent-text); }
 
 /* 右内容 */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -670,7 +671,7 @@ html, body {
   transition: background 0.12s, color 0.12s;
 }
 .dd-item:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
-.dd-item.sel { color: var(--cc-accent); }
+.dd-item.sel { color: var(--cc-accent-text); }
 
 .sec-hint { font-size: 12px; color: var(--cc-text-faint); margin-top: 14px; padding-left: 2px; opacity: 0.75; }
 
@@ -724,7 +725,7 @@ html, body {
   transition: background 0.14s, color 0.14s;
 }
 .seg-btn:hover { color: var(--cc-text); }
-.seg-btn.on { background: var(--cc-accent-soft); color: var(--cc-accent); }
+.seg-btn.on { background: var(--cc-accent-soft); color: var(--cc-accent-text); }
 
 /* 行内滑块（贴纸不透明度）：整行竖排，标签 + 数值在上，滑块铺满在下 */
 .row-col { flex-direction: column; align-items: stretch; gap: 12px; }
@@ -778,7 +779,7 @@ html, body {
   font-size: 12px;
   color: var(--cc-text-dim);
 }
-.about-foot a { color: var(--cc-accent-dim); cursor: pointer; }
+.about-foot a { color: var(--cc-accent-text); cursor: pointer; }
 .about-foot a:hover { text-decoration: underline; }
 .about-foot .dot { color: var(--cc-text-faint); opacity: 0.6; }
 .about-foot .copy {
