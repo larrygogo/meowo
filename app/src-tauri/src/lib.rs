@@ -1487,6 +1487,10 @@ pub fn run() {
             {
                 app.handle()
                     .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+                // nspanel 插件必须先注册（它 manage(WebviewPanelManager)），to_panel()/get_webview_panel()
+                // 才能取到该托管状态；漏注册会在启动时 panic：state() called before manage()。
+                // nspanel 是 macOS-only crate，无法放进跨平台 Builder 链，故在此运行时注册。
+                app.handle().plugin(tauri_nspanel::init())?;
                 crate::macos::panel::convert_main_to_panel(app.handle());
                 crate::macos::panel::setup_resign_listener(app.handle());
                 crate::macos::menubar::setup_tray(app.handle())?;
