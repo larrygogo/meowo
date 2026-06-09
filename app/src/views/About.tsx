@@ -64,7 +64,7 @@ function fmtResetIn(iso: string): string {
   const now = Date.now();
   const diffMs = t - now;
   if (diffMs <= 0) return "即将重置";
-  // 按自然日差判断：今天显示小时/分钟，明天/后天用相对词，再往后给具体日期。
+  // 按自然日差判断：今天显示剩余小时/分钟，跨天则用相对词/日期并精确到钟点。
   const startOf = (ms: number) => {
     const d = new Date(ms);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
@@ -77,10 +77,12 @@ function fmtResetIn(iso: string): string {
     const m = min % 60;
     return m > 0 ? `${h} 小时 ${m} 分后重置` : `${h} 小时后重置`;
   }
-  if (dayDiff === 1) return "明天重置";
-  if (dayDiff === 2) return "后天重置";
   const r = new Date(t);
-  return `${r.getMonth() + 1} 月 ${r.getDate()} 日重置`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const clock = `${pad(r.getHours())}:${pad(r.getMinutes())}`;
+  if (dayDiff === 1) return `明天 ${clock} 重置`;
+  if (dayDiff === 2) return `后天 ${clock} 重置`;
+  return `${r.getMonth() + 1} 月 ${r.getDate()} 日 ${clock} 重置`;
 }
 
 function UsageBar({ label, win }: { label: string; win: { utilization: number; resets_at: string } | null }) {
