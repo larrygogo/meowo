@@ -17,10 +17,10 @@
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| **Windows** | [cc-kanban_0.2.0_x64-setup.exe](https://github.com/larrygogo/cc-kanban/releases/download/v0.2.0/cc-kanban_0.2.0_x64-setup.exe) | NSIS 安装包 |
-| **macOS** | [cc-kanban_0.2.0_universal.dmg](https://github.com/larrygogo/cc-kanban/releases/download/v0.2.0/cc-kanban_0.2.0_universal.dmg) | universal(Intel / Apple Silicon 通用),需 macOS ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
+| **Windows** | [最新版 x64 安装包](https://github.com/larrygogo/cc-kanban/releases/latest)(`cc-kanban_x.y.z_x64-setup.exe`) | NSIS 安装包 |
+| **macOS** | [最新版 universal DMG](https://github.com/larrygogo/cc-kanban/releases/latest)(`cc-kanban_x.y.z_universal.dmg`) | universal(Intel / Apple Silicon 通用),需 macOS ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
 
-也可到 [Releases](https://github.com/larrygogo/cc-kanban/releases/latest) 获取最新版本。装好后支持应用内(设置 → 关于)检查更新,两个平台均可自动升级到后续版本。
+链接指向最新 Release 页,进入后下载对应平台的安装包即可。装好后支持应用内(设置 → 关于)检查更新,两个平台均可自动升级到后续版本。
 
 ## 特性
 
