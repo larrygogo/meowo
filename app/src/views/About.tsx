@@ -6,12 +6,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
+import { useT } from "../i18n";
+import type { Dict } from "../i18n/zh";
 
-const HIDE_OPTIONS = [
-  { value: 0, label: "永不" },
-  { value: 1, label: "1 天" },
-  { value: 7, label: "7 天" },
-  { value: 30, label: "30 天" },
+const hideOptions = (t: Dict) => [
+  { value: 0, label: t.settings.hideNever },
+  { value: 1, label: t.settings.hideDays(1) },
+  { value: 7, label: t.settings.hideDays(7) },
+  { value: 30, label: t.settings.hideDays(30) },
 ];
 
 const REPO = "github.com/larrygogo/cc-kanban";
@@ -27,6 +29,7 @@ const SETTINGS_DEFAULTS: Settings = {
   opacity: 94,
   ui_scale: 100,
   resume_terminal: "terminal",
+  language: "auto",
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -36,10 +39,10 @@ const RESUME_TERM_OPTIONS_MAC: { value: ResumeTerminal; label: string }[] = [
   { value: "terminal", label: "Terminal" },
   { value: "iterm", label: "iTerm2" },
 ];
-const RESUME_TERM_OPTIONS_WIN: { value: ResumeTerminal; label: string }[] = [
+const resumeTermOptionsWin = (t: Dict): { value: ResumeTerminal; label: string }[] => [
   { value: "wt", label: "Windows Terminal" },
   { value: "powershell", label: "PowerShell" },
-  { value: "cmd", label: "命令提示符" },
+  { value: "cmd", label: t.settings.cmdPrompt },
 ];
 
 // 设置读写：本地保留完整对象，每次只 patch 改动字段后整对象写回（后端 set_settings 收整对象，
@@ -121,34 +124,35 @@ function RefreshIcon({ spinning }: { spinning?: boolean }) {
   );
 }
 
-function fmtResetIn(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "";
+function fmtResetIn(iso: string, t: Dict): string {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "";
   const now = Date.now();
-  const diffMs = t - now;
-  if (diffMs <= 0) return "即将重置";
+  const diffMs = ts - now;
+  if (diffMs <= 0) return t.account.resetSoon;
   // 按自然日差判断：今天显示剩余小时/分钟，跨天则用相对词/日期并精确到钟点。
   const startOf = (ms: number) => {
     const d = new Date(ms);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   };
-  const dayDiff = Math.round((startOf(t) - startOf(now)) / 86_400_000);
+  const dayDiff = Math.round((startOf(ts) - startOf(now)) / 86_400_000);
   if (dayDiff <= 0) {
     const min = Math.round(diffMs / 60000);
-    if (min < 60) return `${min} 分钟后重置`;
+    if (min < 60) return t.account.resetInMin(min);
     const h = Math.floor(min / 60);
     const m = min % 60;
-    return m > 0 ? `${h} 小时 ${m} 分后重置` : `${h} 小时后重置`;
+    return m > 0 ? t.account.resetInHourMin(h, m) : t.account.resetInHour(h);
   }
-  const r = new Date(t);
+  const r = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
   const clock = `${pad(r.getHours())}:${pad(r.getMinutes())}`;
-  if (dayDiff === 1) return `明天 ${clock} 重置`;
-  if (dayDiff === 2) return `后天 ${clock} 重置`;
-  return `${r.getMonth() + 1} 月 ${r.getDate()} 日 ${clock} 重置`;
+  if (dayDiff === 1) return t.account.resetTomorrow(clock);
+  if (dayDiff === 2) return t.account.resetDayAfter(clock);
+  return t.account.resetOnDate(r.getMonth() + 1, r.getDate(), clock);
 }
 
 function UsageBar({ label, win }: { label: string; win: { utilization: number; resets_at: string } | null }) {
+  const t = useT();
   if (!win) return null;
   const pct = Math.max(0, Math.min(100, win.utilization));
   return (
@@ -158,7 +162,7 @@ function UsageBar({ label, win }: { label: string; win: { utilization: number; r
         <span className="usage-pct">{pct.toFixed(0)}%</span>
       </div>
       <div className="usage-track"><i style={{ width: `${pct}%` }} /></div>
-      <div className="usage-reset">{fmtResetIn(win.resets_at)}</div>
+      <div className="usage-reset">{fmtResetIn(win.resets_at, t)}</div>
     </div>
   );
 }
@@ -192,6 +196,7 @@ function buildDailyGrid(days: DailyEntry[]): GridCell[] {
 }
 
 function AccountSection() {
+  const t = useT();
   const [data, setData] = useState<AccountPayload | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -230,36 +235,36 @@ function AccountSection() {
           </div>
         </div>
       ) : (
-        <div className="row-card"><div className="row"><div className="row-text"><div className="row-label">未登录 Claude Code</div><div className="row-desc">在终端运行 <code>claude</code> 登录后即可查看账号与用量</div></div></div></div>
+        <div className="row-card"><div className="row"><div className="row-text"><div className="row-label">{t.account.notLoggedIn}</div><div className="row-desc">{t.account.notLoggedInDesc}</div></div></div></div>
       )}
 
       <div className="row-card usage-card">
         <div className="usage-bar-head">
-          <span className="usage-card-title">配额</span>
-          <button className="icon-btn" title="刷新" aria-label="刷新" disabled={refreshing} onClick={doRefresh}>
+          <span className="usage-card-title">{t.account.quota}</span>
+          <button className="icon-btn" title={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
             <RefreshIcon spinning={refreshing} />
           </button>
         </div>
         {usage ? (
           <>
-            <UsageBar label="5 小时配额" win={usage.five_hour} />
-            <UsageBar label="7 天配额" win={usage.seven_day} />
-            <UsageBar label="Opus · 7 天" win={usage.seven_day_opus} />
-            <UsageBar label="Sonnet · 7 天" win={usage.seven_day_sonnet} />
-            {usage.extra_usage_enabled && <div className="usage-extra">已开启超额用量</div>}
-            {usageErr && <div className="usage-stale">最新数据刷新失败，显示的是缓存值</div>}
+            <UsageBar label={t.account.quota5h} win={usage.five_hour} />
+            <UsageBar label={t.account.quota7d} win={usage.seven_day} />
+            <UsageBar label={t.account.quotaOpus} win={usage.seven_day_opus} />
+            <UsageBar label={t.account.quotaSonnet} win={usage.seven_day_sonnet} />
+            {usage.extra_usage_enabled && <div className="usage-extra">{t.account.extraUsage}</div>}
+            {usageErr && <div className="usage-stale">{t.account.refreshFailed}</div>}
           </>
         ) : usageErr ? (
-          <div className="usage-stale">用量暂不可用，请确认已登录 Claude Code（终端运行 claude）或检查网络</div>
+          <div className="usage-stale">{t.account.usageUnavailable}</div>
         ) : (
-          <div className="usage-stale">加载中…</div>
+          <div className="usage-stale">{t.account.loading}</div>
         )}
       </div>
 
       {daily && daily.days.length > 0 && (
         <>
           <div className="row-card cal-card">
-            <div className="usage-bar-head"><span className="usage-card-title">每日用量</span></div>
+            <div className="usage-bar-head"><span className="usage-card-title">{t.account.dailyUsage}</span></div>
             <div className="cal-grid">
               {buildDailyGrid(daily.days).map((c, i) =>
                 c.pad ? (
@@ -268,20 +273,20 @@ function AccountSection() {
                   <span
                     key={i}
                     className={`cal-cell cal-l${c.level}`}
-                    title={`${c.date} · ${(c.tokens / 1000).toFixed(1)}k token · ${c.messages} 条`}
+                    title={t.account.cellTitle(c.date, (c.tokens / 1000).toFixed(1), c.messages)}
                   />
                 )
               )}
             </div>
             <div className="cal-legend">
-              <span>少</span>
+              <span>{t.account.less}</span>
               <i className="cal-cell cal-l1" />
               <i className="cal-cell cal-l2" />
               <i className="cal-cell cal-l3" />
               <i className="cal-cell cal-l4" />
-              <span>多</span>
+              <span>{t.account.more}</span>
             </div>
-            <div className="sec-hint">数据截至 {daily.last_computed_date || "—"}，在终端运行 /stats 可刷新</div>
+            <div className="sec-hint">{t.account.dataAsOf(daily.last_computed_date || "—")}</div>
           </div>
         </>
       )}
@@ -366,6 +371,7 @@ function Dropdown<T extends string | number>({
 }
 
 function GeneralSection() {
+  const t = useT();
   const [autostart, setAutostart] = useState(false);
   const [settings, patch] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
@@ -383,7 +389,7 @@ function GeneralSection() {
   const changeHideDays = (days: number) => patch({ archive_hide_days: days });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
-  const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : RESUME_TERM_OPTIONS_WIN;
+  const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
   const termOptions = platformOpts.filter((o) => (availTerms ?? []).includes(o.value));
   // 保存值若不在可用项内（如未装 iTerm 仍存着 "iterm"，或 Windows 上残留 macOS 默认 "terminal"），显示退回首项。
   const storedTerm = settings?.resume_terminal ?? "terminal";
@@ -396,36 +402,51 @@ function GeneralSection() {
       <div className="row-card">
         <div className="row">
           <div className="row-text">
-            <div className="row-label">开机自启</div>
-            <div className="row-desc">登录系统后自动启动 cc-kanban</div>
+            <div className="row-label">{t.settings.autostart}</div>
+            <div className="row-desc">{t.settings.autostartDesc}</div>
           </div>
           <Switch checked={autostart} onChange={toggleAutostart} />
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">桌面通知</div>
-            <div className="row-desc">会话需要你回复或出错时弹系统通知</div>
+            <div className="row-label">{t.settings.notify}</div>
+            <div className="row-desc">{t.settings.notifyDesc}</div>
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} />
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">归档自动隐藏</div>
-            <div className="row-desc">归档超过所选时长后，自动从「已归档」中隐藏</div>
+            <div className="row-label">{t.settings.language}</div>
+            <div className="row-desc">{t.settings.languageDesc}</div>
           </div>
-          <Dropdown value={hideDays} options={HIDE_OPTIONS} onChange={changeHideDays} />
+          <Dropdown
+            value={settings?.language ?? "auto"}
+            options={[
+              { value: "auto" as const, label: t.settings.langAuto },
+              { value: "zh" as const, label: "中文" },
+              { value: "en" as const, label: "English" },
+            ]}
+            onChange={(v) => patch({ language: v })}
+          />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.archiveHide}</div>
+            <div className="row-desc">{t.settings.archiveHideDesc}</div>
+          </div>
+          <Dropdown value={hideDays} options={hideOptions(t)} onChange={changeHideDays} />
         </div>
         {showTermRow && (
           <div className="row">
             <div className="row-text">
-              <div className="row-label">未连接会话打开终端</div>
-              <div className="row-desc">点开已断开的会话时，用哪个终端运行 claude --resume</div>
+              <div className="row-label">{t.settings.resumeTerm}</div>
+              <div className="row-desc">{t.settings.resumeTermDesc}</div>
             </div>
             <Dropdown value={resumeTerm} options={termOptions} onChange={changeResumeTerm} />
           </div>
         )}
       </div>
-      <div className="sec-hint">更多设置项陆续补充中…</div>
+      <div className="sec-hint">{t.settings.moreSoon}</div>
     </>
   );
 }
@@ -460,20 +481,21 @@ function Segmented<T extends string | number>({
   );
 }
 
-const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
-  { value: "dark", label: "深色" },
-  { value: "light", label: "浅色" },
-  { value: "system", label: "跟随系统" },
+const themeOptions = (t: Dict): { value: ThemeMode; label: string }[] => [
+  { value: "dark", label: t.settings.themeDark },
+  { value: "light", label: t.settings.themeLight },
+  { value: "system", label: t.settings.themeSystem },
 ];
-const DENSITY_OPTIONS: { value: number; label: string }[] = [
-  { value: 90, label: "紧凑" },
-  { value: 100, label: "标准" },
-  { value: 112, label: "宽松" },
+const densityOptions = (t: Dict): { value: number; label: string }[] => [
+  { value: 90, label: t.settings.densityCompact },
+  { value: 100, label: t.settings.densityNormal },
+  { value: 112, label: t.settings.densityLoose },
 ];
 const OPACITY_MIN = 60;
 const OPACITY_MAX = 100;
 
 function AppearanceSection() {
+  const t = useT();
   const [settings, patch] = useSettingsState();
   const theme = settings?.theme ?? "dark";
   const opacity = settings?.opacity ?? 94;
@@ -484,23 +506,23 @@ function AppearanceSection() {
       <div className="row-card">
         <div className="row">
           <div className="row-text">
-            <div className="row-label">外观模式</div>
-            <div className="row-desc">深色、浅色，或跟随系统</div>
+            <div className="row-label">{t.settings.theme}</div>
+            <div className="row-desc">{t.settings.themeDesc}</div>
           </div>
-          <Segmented value={theme} options={THEME_OPTIONS} onChange={(v) => patch({ theme: v })} label="外观模式" />
+          <Segmented value={theme} options={themeOptions(t)} onChange={(v) => patch({ theme: v })} label={t.settings.theme} />
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">界面密度</div>
-            <div className="row-desc">调整贴纸卡片的字号与间距</div>
+            <div className="row-label">{t.settings.density}</div>
+            <div className="row-desc">{t.settings.densityDesc}</div>
           </div>
-          <Segmented value={uiScale} options={DENSITY_OPTIONS} onChange={(v) => patch({ ui_scale: v })} label="界面密度" />
+          <Segmented value={uiScale} options={densityOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.density} />
         </div>
         <div className="row row-col">
           <div className="row-head">
             <div className="row-text">
-              <div className="row-label">贴纸不透明度</div>
-              <div className="row-desc">调整桌面贴纸的背景透明度</div>
+              <div className="row-label">{t.settings.opacity}</div>
+              <div className="row-desc">{t.settings.opacityDesc}</div>
             </div>
             <span className="row-val">{opacity}%</span>
           </div>
@@ -512,11 +534,11 @@ function AppearanceSection() {
             value={opacity}
             style={{ background: `linear-gradient(90deg, var(--cc-accent) ${fill}%, var(--cc-border) ${fill}%)` }}
             onChange={(e) => patch({ opacity: Number(e.target.value) })}
-            aria-label="贴纸不透明度"
+            aria-label={t.settings.opacity}
           />
         </div>
       </div>
-      <div className="sec-hint">外观更改即时生效，并保存到本地。</div>
+      <div className="sec-hint">{t.settings.appearanceHint}</div>
     </>
   );
 }
@@ -530,6 +552,7 @@ function AboutSection({
   newVersion: string | null;
   recheck: () => void;
 }) {
+  const t = useT();
   const [version, setVersion] = useState("");
   const [triggered, setTriggered] = useState(false);
 
@@ -543,12 +566,12 @@ function AboutSection({
   };
   const updateBtn =
     status === "available"
-      ? { label: triggered ? "更新中…" : `更新到 v${newVersion}`, onClick: onAvailable, disabled: triggered, primary: true }
-      : { label: status === "checking" ? "检查中…" : "检查更新", onClick: recheck, disabled: status === "checking", primary: false };
+      ? { label: triggered ? t.about.updating : t.about.updateTo(newVersion ?? ""), onClick: onAvailable, disabled: triggered, primary: true }
+      : { label: status === "checking" ? t.about.checking : t.about.checkUpdate, onClick: recheck, disabled: status === "checking", primary: false };
 
   const verText = `v${version || "—"}`;
   const verStatus =
-    status === "available" ? `发现新版本 v${newVersion}` : status === "latest" ? "已是最新版本" : "";
+    status === "available" ? t.about.foundNew(newVersion ?? "") : status === "latest" ? t.about.upToDate : "";
   const verSub = verStatus ? `${verText} · ${verStatus}` : verText;
 
   return (
@@ -557,7 +580,7 @@ function AboutSection({
         <div className="row">
           <div className="row-icon"><div className="pmark"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><line x1="7" y1="7" x2="7" y2="17" /><line x1="12" y1="7" x2="12" y2="14" /><line x1="17" y1="7" x2="17" y2="12" /></svg></div></div>
           <div className="row-text">
-            <div className="row-label">版本信息</div>
+            <div className="row-label">{t.about.versionInfo}</div>
             <div className="row-desc">{verSub}</div>
           </div>
           <button className={"sbtn" + (updateBtn.primary ? " primary" : "")} disabled={updateBtn.disabled} onClick={updateBtn.onClick}>
@@ -566,21 +589,21 @@ function AboutSection({
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">项目主页</div>
+            <div className="row-label">{t.about.homepage}</div>
             <div className="row-desc">{REPO}</div>
           </div>
           <button className="sbtn" onClick={() => openExt(REPO_URL)}>
-            打开
+            {t.about.open}
           </button>
         </div>
       </div>
 
-      <p className="about-blurb">常驻桌面贴纸，实时显示所有 Claude Code 会话的进度。</p>
+      <p className="about-blurb">{t.about.blurb}</p>
 
       <div className="about-foot">
-        <a onClick={() => openExt(REPO_URL + "/issues")}>意见反馈</a>
+        <a onClick={() => openExt(REPO_URL + "/issues")}>{t.about.feedback}</a>
         <span className="dot">·</span>
-        <a onClick={() => openExt(REPO_URL + "/releases")}>更新日志</a>
+        <a onClick={() => openExt(REPO_URL + "/releases")}>{t.about.changelog}</a>
         <div className="copy">MIT License · © 2026 larrygogo</div>
       </div>
     </>
@@ -588,6 +611,7 @@ function AboutSection({
 }
 
 export function About() {
+  const t = useT();
   const [sec, setSec] = useState<Section>("general");
   const close = () => getCurrentWindow().close().catch(() => {});
   // 在不随标签切换卸载的父组件里检查更新：每次打开设置窗口只查一次（避免反复点「关于」标签重复请求）。
@@ -600,26 +624,26 @@ export function About() {
         <nav className="side-nav">
           <button className={"nav-item" + (sec === "general" ? " on" : "")} onClick={() => setSec("general")}>
             <IconGear />
-            <span>通用</span>
+            <span>{t.settings.nav.general}</span>
           </button>
           <button className={"nav-item" + (sec === "appearance" ? " on" : "")} onClick={() => setSec("appearance")}>
             <IconAppearance />
-            <span>外观</span>
+            <span>{t.settings.nav.appearance}</span>
           </button>
           <button className={"nav-item" + (sec === "account" ? " on" : "")} onClick={() => setSec("account")}>
             <IconUser />
-            <span>账号</span>
+            <span>{t.settings.nav.account}</span>
           </button>
           <button className={"nav-item" + (sec === "about" ? " on" : "")} onClick={() => setSec("about")}>
             <IconInfo />
-            <span>关于</span>
+            <span>{t.settings.nav.about}</span>
           </button>
         </nav>
       </aside>
 
       <main className="main">
         <div className="main-bar" data-tauri-drag-region>
-          <button className="winclose" title="关闭" onClick={close} aria-label="关闭">
+          <button className="winclose" title={t.settings.close} onClick={close} aria-label={t.settings.close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />

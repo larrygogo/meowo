@@ -104,9 +104,12 @@ export type Settings = {
   ui_scale: number;
   /** 打开未连接会话用的终端。macOS：terminal/iterm；Windows：wt/powershell/cmd。 */
   resume_terminal: ResumeTerminal;
+  /** 界面/通知语言：auto（跟随系统）/ zh / en。 */
+  language: LangSetting;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
+export type LangSetting = "auto" | "zh" | "en";
 
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
 export function availableTerminals(): Promise<ResumeTerminal[]> {

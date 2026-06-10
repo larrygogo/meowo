@@ -90,11 +90,16 @@ pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
     let _ = tray.set_title(None::<&str>);
 }
 
+/// 托盘右键菜单（设置 / 退出），按语言构建；切语言时由 lib.rs 的 apply_language 重建。
+pub fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let settings = MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", crate::tr(lang, "tray.quit")).build(app)?;
+    MenuBuilder::new(app).items(&[&settings, &quit]).build()
+}
+
 /// 创建 macOS 状态栏托盘：左键切换面板，右键弹「设置 / 退出」菜单。
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&settings, &quit]).build()?;
+    let menu = build_tray_menu(app, crate::ui_lang(&crate::load_settings()))?;
 
     // 菜单栏用单色模板图标（彩色 app 图标在菜单栏里偏花，且不随明暗反色）；Dock/设置页仍用彩色图标。
     let icon = tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);

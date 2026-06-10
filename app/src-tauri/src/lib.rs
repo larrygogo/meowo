@@ -907,6 +907,9 @@ fn default_ui_scale() -> u32 {
 fn default_resume_terminal() -> String {
     "terminal".to_string()
 }
+fn default_language() -> String {
+    "auto".to_string()
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -929,6 +932,9 @@ struct Settings {
     /// 打开未连接会话用的终端（macOS）：terminal = Terminal.app，iterm = iTerm2。缺省 terminal，兼容老 settings.json。
     #[serde(default = "default_resume_terminal")]
     resume_terminal: String,
+    /// 界面/通知语言：auto（跟随系统）/ zh / en。缺省 auto，兼容老 settings.json。
+    #[serde(default = "default_language")]
+    language: String,
 }
 
 impl Default for Settings {
@@ -940,7 +946,40 @@ impl Default for Settings {
             opacity: default_opacity(),
             ui_scale: default_ui_scale(),
             resume_terminal: default_resume_terminal(),
+            language: default_language(),
         }
+    }
+}
+
+/// 解析生效语言：settings.language 为 zh/en 用之；auto 按系统 locale（zh* → zh，其余 en）。
+fn ui_lang(settings: &Settings) -> &'static str {
+    match settings.language.as_str() {
+        "zh" => "zh",
+        "en" => "en",
+        _ => {
+            if sys_locale::get_locale().map(|l| l.starts_with("zh")).unwrap_or(false) {
+                "zh"
+            } else {
+                "en"
+            }
+        }
+    }
+}
+
+/// Rust 侧用户可见文案（仅通知/托盘/窗口标题数条，不引 i18n 库）。
+fn tr(lang: &str, key: &str) -> &'static str {
+    match (lang, key) {
+        ("en", "notify.error") => "Session error",
+        ("en", "notify.waiting") => "Waiting for your reply",
+        ("en", "tray.settings") => "Settings",
+        ("en", "tray.quit") => "Quit",
+        ("en", "window.settings") => "Settings",
+        (_, "notify.error") => "会话出错",
+        (_, "notify.waiting") => "等待你回复",
+        (_, "tray.settings") => "设置",
+        (_, "tray.quit") => "退出",
+        (_, "window.settings") => "设置",
+        _ => "",
     }
 }
 
@@ -968,6 +1007,8 @@ fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String>
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
+    apply_language(&app, ui_lang(&settings));
     // 通知贴纸窗口实时套用新设置。
     let _ = app.emit("settings-changed", settings);
     Ok(())
@@ -1199,8 +1240,10 @@ fn spawn_liveness_watch(
                     last = alive;
                 }
 
-                // 通知总开关：每轮读一次（文件读极廉价；设置改动 5s 内生效）。
-                let notify_on = load_settings().notifications_enabled;
+                // 通知总开关 + 语言：每轮读一次（文件读极廉价；设置改动 5s 内生效）。
+                let settings = load_settings();
+                let notify_on = settings.notifications_enabled;
+                let lang = ui_lang(&settings);
 
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
@@ -1238,7 +1281,7 @@ fn spawn_liveness_watch(
                         if seeded && notify_on && should_notify(prev, Some(&e.fingerprint)) {
                             show_session_notification(
                                 &app,
-                                "会话出错".into(),
+                                tr(lang, "notify.error").into(),
                                 format!("{} · {}", s.project_name, e.label),
                                 pid,
                                 display_title.clone(),
@@ -1256,7 +1299,7 @@ fn spawn_liveness_watch(
                             if seeded && notify_on && should_notify(prev, Some(&fp)) {
                                 show_session_notification(
                                     &app,
-                                    "等待你回复".into(),
+                                    tr(lang, "notify.waiting").into(),
                                     format!("{} · {}", s.project_name, display_title),
                                     pid,
                                     display_title.clone(),
@@ -1392,7 +1435,7 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
             "about",
             tauri::WebviewUrl::App("index.html".into()),
         )
-        .title("设置")
+        .title(tr(ui_lang(&load_settings()), "window.settings"))
         .inner_size(620.0, 460.0)
         .min_inner_size(620.0, 460.0)
         .resizable(false)
@@ -1424,13 +1467,36 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     }
 }
 
+/// 托盘右键菜单（设置 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
+#[cfg(not(target_os = "macos"))]
+fn build_tray_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", tr(lang, "tray.quit")).build(app)?;
+    MenuBuilder::new(app).items(&[&settings, &quit]).build()
+}
+
+/// 切语言后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
+fn apply_language(app: &tauri::AppHandle, lang: &str) {
+    if let Some(tray) = app.tray_by_id("cc-kanban-tray") {
+        #[cfg(not(target_os = "macos"))]
+        if let Ok(menu) = build_tray_menu(app, lang) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        #[cfg(target_os = "macos")]
+        if let Ok(menu) = crate::macos::menubar::build_tray_menu(app, lang) {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+    if let Some(w) = app.get_webview_window("about") {
+        let _ = w.set_title(tr(lang, "window.settings"));
+    }
+}
+
 /// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。
 /// macOS 走 `macos::menubar::setup_tray`（面板模式），故此实现仅用于非 macOS 平台。
 #[cfg(not(target_os = "macos"))]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let settings = MenuItemBuilder::with_id("settings", "设置").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&settings, &quit]).build()?;
+    let menu = build_tray_menu(app.handle(), ui_lang(&load_settings()))?;
 
     TrayIconBuilder::with_id("cc-kanban-tray")
         .icon(app.default_window_icon().unwrap().clone())

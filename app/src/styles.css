@@ -348,21 +348,6 @@ html, body {
 .stk-repo { font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk-sub { font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 7px; }
 
-/* 等待用户输入：琥珀色脉冲点 */
-.needs {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--cc-warn-vivid);
-  animation: needs-pulse 1.6s ease-out infinite;
-}
-@keyframes needs-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(224, 162, 60, 0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(224, 162, 60, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(224, 162, 60, 0); }
-}
-
 /* 会话出错：红色脉冲点 */
 .needs-error {
   width: 9px;

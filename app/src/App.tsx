@@ -7,6 +7,7 @@ import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
 import { detectHostOs, isMacPanel } from "./platform";
+import { useT } from "./i18n";
 
 type Item = LiveSession & { connected: boolean };
 type Edge = "left" | "right" | "top";
@@ -39,6 +40,7 @@ function isPinned(): boolean {
 }
 
 export function App() {
+  const t = useT();
   const [live, setLive] = useState<Item[]>([]);
   const [edge, setEdge] = useState<Edge | null>(() => {
     // macOS 面板模式：无吸边，edge 固定为 null。
@@ -292,12 +294,12 @@ export function App() {
       {(upStatus === "available" || upStatus === "downloading") && (
         <div
           className="update-bar"
-          title="点击下载并安装新版本"
+          title={t.update.clickToInstall}
           onClick={upStatus === "downloading" ? undefined : applyUpdate}
         >
           {upStatus === "downloading"
-            ? `下载更新中 ${upProgress}%`
-            : `有新版本 v${updateVersion} · 点击更新`}
+            ? t.update.downloading(upProgress)
+            : t.update.newVersion(updateVersion ?? "")}
         </div>
       )}
       <Sticker data={live} />
