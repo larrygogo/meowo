@@ -574,7 +574,17 @@ html, body {
 .row-icon { flex: none; }
 .row-text { flex: 1; min-width: 0; }
 .row-label { font-size: 13.5px; color: var(--cc-text); }
-.row-desc { font-size: 12px; color: var(--cc-text-faint); margin-top: 3px; line-height: 1.4; }
+.row-desc {
+  font-size: 12px;
+  color: var(--cc-text-faint);
+  margin-top: 3px;
+  line-height: 1.4;
+  /* 描述钳制 3 行：右侧控件宽（如英文下拉）会压窄文字列，不钳制时整行高度失控 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 .pmark {
   width: 38px;
@@ -685,16 +695,18 @@ html, body {
 .pswitch.on { background: var(--cc-accent); }
 .pswitch-knob {
   position: absolute;
-  top: 2px;
+  /* 50% + translateY：非整数 DPI 缩放（125%/150%）下固定 px 偏移会取整跑偏，百分比定位始终精确居中 */
+  top: 50%;
   left: 2px;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translateY(-50%);
   transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.pswitch.on .pswitch-knob { transform: translateX(16px); }
+.pswitch.on .pswitch-knob { transform: translate(16px, -50%); }
 
 /* 分段控件（外观模式 / 界面密度）：一排互斥的胶囊按钮 */
 .seg {

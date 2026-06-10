@@ -61,7 +61,7 @@ export const zh = {
     hideNever: "永不",
     hideDays: (d: number) => `${d} 天`,
     resumeTerm: "未连接会话打开终端",
-    resumeTermDesc: "点开已断开的会话时，用哪个终端运行 claude --resume",
+    resumeTermDesc: "用哪个终端恢复已断开的会话",
     cmdPrompt: "命令提示符",
     language: "语言",
     languageDesc: "界面与系统通知的显示语言",
