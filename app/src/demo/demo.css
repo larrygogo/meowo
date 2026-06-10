@@ -1,0 +1,120 @@
+/* ===== demo 舞台(仅 demo.html 引入,不影响 App) ===== */
+.demo-desktop {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(1100px 600px at 18% -10%, #2e2a26 0%, transparent 55%),
+    radial-gradient(900px 560px at 105% 110%, #26221f 0%, transparent 60%),
+    linear-gradient(160deg, #211e1b 0%, #1b1917 55%, #171513 100%);
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.demo-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.16;
+}
+.demo-blob-a { width: 420px; height: 420px; left: -90px; top: 240px; background: #d97757; }
+.demo-blob-b { width: 380px; height: 380px; right: -60px; top: -120px; background: #4ec9a5; opacity: 0.1; }
+/* 细噪点:遮 GIF 量化色带;静态内容帧间差分为透明,不增体积 */
+.demo-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='7'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+}
+
+/* 贴纸窗口:340×430 居中偏上;dock 时滑向右缘;strip 时变 14px 竖条 */
+.demo-window {
+  position: absolute;
+  left: 270px;
+  top: 52px;
+  width: 340px;
+  height: 430px;
+  border-radius: 9px;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: left 0.7s cubic-bezier(0.4, 0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.3s ease, height 0.3s ease;
+}
+.demo-mode-docking { left: 539px; top: 52px; }
+.demo-mode-strip {
+  left: 866px;
+  top: 120px;
+  width: 14px;
+  height: 96px;
+  border-radius: 8px 0 0 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.demo-mode-expanded { left: 539px; top: 52px; }
+/* 贴纸/缩略条原样式按窗口高度 100vh 铺;demo 里改成跟随容器 */
+.demo-window .sticker,
+.demo-window .cstrip { height: 100%; }
+.demo-window .resize-grip { display: none; }
+
+/* 字幕:底部居中胶囊,换字幕时重新淡入 */
+.demo-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  padding: 9px 22px;
+  border-radius: 999px;
+  background: rgba(20, 18, 16, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f5f4ef;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  animation: demo-cap-in 0.45s ease both;
+}
+@keyframes demo-cap-in {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* 收尾:logo + 名字 + slogan */
+.demo-finale {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(23, 21, 19, 0.55);
+  backdrop-filter: blur(3px);
+  animation: demo-fin-in 0.8s ease both;
+}
+.demo-finale img { border-radius: 20px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5); }
+.demo-finale-name { font-size: 26px; font-weight: 700; color: #f5f4ef; letter-spacing: 0.5px; }
+.demo-finale-slogan { font-size: 13.5px; color: #b0aaa2; }
+@keyframes demo-fin-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 假光标 + 点击涟漪 */
+#demo-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+.demo-ripple {
+  position: fixed;
+  z-index: 999;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  border: 2px solid #d97757;
+  pointer-events: none;
+  animation: demo-ripple 0.5s ease-out both;
+}
+@keyframes demo-ripple {
+  from { opacity: 0.9; transform: scale(0.25); }
+  to { opacity: 0; transform: scale(1); }
+}
