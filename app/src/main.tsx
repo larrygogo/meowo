@@ -5,6 +5,7 @@ import { App } from "./App";
 import { About } from "./views/About";
 import { lockdownInProduction } from "./devtools-guard";
 import { bootAppearance } from "./appearance";
+import { I18nProvider } from "./i18n";
 import "./styles.css";
 
 // 正式构建下封死右键菜单与 DevTools 快捷键（dev 放行）。
@@ -28,5 +29,7 @@ const label = (() => {
 bootAppearance({ scale: label !== "about" });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{label === "about" ? <About /> : <App />}</React.StrictMode>,
+  <React.StrictMode>
+    <I18nProvider>{label === "about" ? <About /> : <App />}</I18nProvider>
+  </React.StrictMode>,
 );
