@@ -1,0 +1,78 @@
+// demo 专用:确定性时间轴。录制脚本逐帧调 seek(n),同一分镜每次产出逐帧一致:
+//   - at(sec, fn) 一次性动作,按时间序执行且只执行一次;
+//   - tween(from, to, apply) 区间插值,每帧调用、区间结束后钉在 k=1;
+//   - seek 执行完动作后等两次 rAF 让 React 落地,再把页面全部 CSS 动画
+//     钉到「相对各自首次出现时刻」的统一时间(新挂载动画从 0 播,无真实时钟参与)。
+type Action = { at: number; run: () => void | Promise<void> };
+type Ease = (x: number) => number;
+type Tween = { from: number; to: number; apply: (k: number) => void; ease: Ease };
+type Hooks = { paint: () => Promise<void>; sync: (ms: number) => void };
+
+export const easeInOut: Ease = (x) =>
+  x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+
+export class Timeline {
+  readonly fps: number;
+  duration = 0;
+  private actions: Action[] = [];
+  private tweens: Tween[] = [];
+  private done = new Set<Action>();
+  private hooks: Hooks;
+
+  constructor(fps: number, hooks?: Hooks) {
+    this.fps = fps;
+    this.hooks = hooks ?? { paint: nextPaint, sync: syncAnimations };
+  }
+
+  at(sec: number, run: Action["run"]): void {
+    this.actions.push({ at: sec, run });
+    this.duration = Math.max(this.duration, sec);
+  }
+
+  tween(from: number, to: number, apply: (k: number) => void, ease: Ease = easeInOut): void {
+    this.tweens.push({ from, to, apply, ease });
+    this.duration = Math.max(this.duration, to);
+  }
+
+  /** 跳到第 n 帧(只向前)。 */
+  async seek(frame: number): Promise<void> {
+    const t = frame / this.fps;
+    const due = this.actions
+      .filter((a) => a.at <= t && !this.done.has(a))
+      .sort((a, b) => a.at - b.at);
+    for (const a of due) {
+      this.done.add(a);
+      await a.run();
+    }
+    for (const w of this.tweens) {
+      if (t < w.from) continue;
+      const k = Math.min(1, (t - w.from) / Math.max(w.to - w.from, 1e-9));
+      w.apply(w.ease(k));
+    }
+    await this.hooks.paint();
+    this.hooks.sync(t * 1000);
+    await this.hooks.paint();
+  }
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+}
+
+/** 把页面全部 CSS 动画钉到「相对首次出现时刻」的统一时间轴(逐帧确定)。 */
+const seen = new Map<Animation, number>();
+function syncAnimations(ms: number): void {
+  for (const a of document.getAnimations()) {
+    let t0 = seen.get(a);
+    if (t0 === undefined) {
+      seen.set(a, ms);
+      t0 = ms;
+    }
+    try {
+      a.pause();
+      a.currentTime = Math.max(0, ms - t0);
+    } catch {
+      /* 个别动画不可 seek,忽略 */
+    }
+  }
+}
