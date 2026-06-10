@@ -7,6 +7,7 @@ import { getSettings, setSettings, availableTerminals, type Settings, type Theme
 import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
+import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
 
 const hideOptions = (t: Dict) => [
@@ -589,7 +590,7 @@ function AboutSection({
     <>
       <div className="row-card">
         <div className="row">
-          <div className="row-icon"><div className="pmark"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><line x1="7" y1="7" x2="7" y2="17" /><line x1="12" y1="7" x2="12" y2="14" /><line x1="17" y1="7" x2="17" y2="12" /></svg></div></div>
+          <div className="row-icon"><img className="pmark" src={logoUrl} width={38} height={38} alt="" /></div>
           <div className="row-text">
             <div className="row-label">{t.about.versionInfo}</div>
             <div className="row-desc">{verSub}</div>
