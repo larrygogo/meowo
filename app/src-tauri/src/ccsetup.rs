@@ -139,6 +139,12 @@ pub fn build_script(reporter_bash: &str, inner: &str) -> String {
     s
 }
 
+/// 解析 settings.json 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的
+/// JSON 带 BOM，serde_json 会直接报错，曾导致无感接线静默失败。
+fn parse_settings(text: &str) -> Option<Value> {
+    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+}
+
 /// `~/.claude/settings.json`（尊重 CLAUDE_CONFIG_DIR）。
 fn claude_settings_path() -> std::path::PathBuf {
     let base = std::env::var("CLAUDE_CONFIG_DIR")
@@ -177,10 +183,19 @@ fn resolve_reporter_native(settings: &Value) -> Option<String> {
 /// 全程 best-effort：读不到 / 解析失败 / 找不到二进制都静默返回，绝不影响应用启动，绝不写坏文件。
 pub fn apply() {
     let settings_path = claude_settings_path();
-    let Ok(text) = std::fs::read_to_string(&settings_path) else {
-        return; // 没有 settings.json（少见）→ 不主动创建，放弃
+    let text = match std::fs::read_to_string(&settings_path) {
+        Ok(t) => t,
+        // 没有 settings.json：从空配置创建（刚装 Claude Code、没改过设置的用户就没有这个文件，
+        // 以前直接放弃导致接线永远不发生）。仅当 ~/.claude 目录已存在（CC 确实装过）才创建，
+        // 避免在没装 CC 的机器上凭空造目录和文件。
+        Err(_) => {
+            if !settings_path.parent().is_some_and(|p| p.is_dir()) {
+                return;
+            }
+            "{}".to_string()
+        }
     };
-    let Ok(mut settings) = serde_json::from_str::<Value>(&text) else {
+    let Some(mut settings) = parse_settings(&text) else {
         return; // 解析失败 → 绝不覆盖用户文件
     };
     let orig = settings.clone();
@@ -335,6 +350,17 @@ mod tests {
         assert_eq!(v["statusLine"]["command"], inv);
         // 再跑一次幂等：不再重复捕获
         assert!(ensure_statusline(&mut v, &inv, marker).is_none());
+    }
+
+    #[test]
+    fn parse_settings_tolerates_utf8_bom() {
+        let with_bom = "\u{feff}{\"hooks\":{}}";
+        let v = parse_settings(with_bom).expect("带 BOM 的 JSON 应能解析");
+        assert!(v["hooks"].is_object());
+        // 无 BOM 照常
+        assert!(parse_settings("{}").is_some());
+        // 真正的坏 JSON 仍拒绝
+        assert!(parse_settings("{not json").is_none());
     }
 
     #[test]

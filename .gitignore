@@ -6,6 +6,8 @@ dist/
 *.db-wal
 *.db-shm
 app/src-tauri/gen/
+# prepare-sidecar.mjs 生成的 sidecar 产物（构建时按 target triple 重新生成）
+app/src-tauri/binaries/
 
 # macOS 签名材料(私钥/证书/p12),绝不提交
 .signing/
