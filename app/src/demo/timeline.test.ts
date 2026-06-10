@@ -6,8 +6,12 @@ const noopHooks = { paint: async () => {}, sync: (_ms: number) => {} };
 test("seek 按时间序执行到期动作,且只执行一次", async () => {
   const tl = new Timeline(10, noopHooks);
   const log: string[] = [];
-  tl.at(0.3, () => log.push("b"));
-  tl.at(0.1, () => log.push("a"));
+  tl.at(0.3, () => {
+    log.push("b");
+  });
+  tl.at(0.1, () => {
+    log.push("a");
+  });
   await tl.seek(3); // t=0.3
   expect(log).toEqual(["a", "b"]);
   await tl.seek(4);
