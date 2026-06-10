@@ -30,6 +30,12 @@ if (triple === "universal-apple-darwin") {
   const arches = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
   for (const t of arches) {
     run(`cargo build --release -p cc-reporter --target ${t}`);
+    // universal 构建会按各架构分别编译 cc-app，tauri_build 编译期按当前
+    // TARGET triple 校验 externalBin，单架构文件也必须在 binaries/ 在场
+    copyFileSync(
+      join(root, "target", t, "release", "cc-reporter"),
+      join(outDir, `cc-reporter-${t}`),
+    );
   }
   const out = join(outDir, "cc-reporter-universal-apple-darwin");
   const slices = arches
