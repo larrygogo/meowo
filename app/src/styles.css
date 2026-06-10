@@ -586,14 +586,11 @@ html, body {
   overflow: hidden;
 }
 
+/* 关于区的 app LOGO（图标 PNG 自带深底圆角方块，仅定尺寸与块级化） */
 .pmark {
   width: 38px;
   height: 38px;
-  border-radius: 11px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(145deg, var(--cc-accent), #c25f3f);
-  box-shadow: 0 5px 14px rgba(217, 119, 87, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  display: block;
 }
 
 /* 行内按钮（默认次要、可 primary） */
