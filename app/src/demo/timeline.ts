@@ -5,7 +5,7 @@
 //     钉到「相对各自首次出现时刻」的统一时间(新挂载动画从 0 播,无真实时钟参与)。
 type Action = { at: number; run: () => void | Promise<void> };
 type Ease = (x: number) => number;
-type Tween = { from: number; to: number; apply: (k: number) => void; ease: Ease };
+type Tween = { from: number; to: number; apply: (k: number) => void; ease: Ease; finished?: boolean };
 type Hooks = { paint: () => Promise<void>; sync: (ms: number) => void };
 
 export const easeInOut: Ease = (x) =>
@@ -45,9 +45,11 @@ export class Timeline {
       await a.run();
     }
     for (const w of this.tweens) {
-      if (t < w.from) continue;
+      // 完成后不再 apply:终值只钉一次,避免覆盖后续 at() 对同一目标的修改。
+      if (w.finished || t < w.from) continue;
       const k = Math.min(1, (t - w.from) / Math.max(w.to - w.from, 1e-9));
       w.apply(w.ease(k));
+      if (k >= 1) w.finished = true;
     }
     await this.hooks.paint();
     this.hooks.sync(t * 1000);

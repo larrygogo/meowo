@@ -18,13 +18,14 @@ test("seek 按时间序执行到期动作,且只执行一次", async () => {
   expect(log).toEqual(["a", "b"]);
 });
 
-test("tween 在区间内插值、区间后钉在 1", async () => {
+test("tween 在区间内插值、区间后钉在 1 且只钉一次(不覆盖后续动作)", async () => {
   const tl = new Timeline(10, noopHooks);
   const ks: number[] = [];
   tl.tween(0.0, 1.0, (k) => ks.push(k), (x) => x);
   await tl.seek(0); // k=0
   await tl.seek(5); // k=0.5
-  await tl.seek(20); // k=1(超出区间)
+  await tl.seek(20); // k=1(超出区间,钉一次)
+  await tl.seek(21); // 已完成,不再 apply
   expect(ks).toEqual([0, 0.5, 1]);
 });
 
