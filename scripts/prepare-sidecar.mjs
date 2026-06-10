@@ -10,7 +10,7 @@
 //   --universal —— macOS 双架构分别编译后 lipo 合并为 cc-reporter-universal-apple-darwin
 //                 （CI 的 --target universal-apple-darwin 构建用）。
 import { execSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +36,7 @@ if (triple === "universal-apple-darwin") {
     .map((t) => `"${join(root, "target", t, "release", "cc-reporter")}"`)
     .join(" ");
   run(`lipo -create -output "${out}" ${slices}`);
+  chmodSync(out, 0o755); // lipo 按 umask 建文件，不保证可执行位
   console.log(`sidecar 就绪: ${out}`);
 } else {
   run(`cargo build --release -p cc-reporter --target ${triple}`);

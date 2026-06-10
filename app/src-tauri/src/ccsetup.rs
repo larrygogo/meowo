@@ -188,12 +188,15 @@ pub fn apply() {
         // 没有 settings.json：从空配置创建（刚装 Claude Code、没改过设置的用户就没有这个文件，
         // 以前直接放弃导致接线永远不发生）。仅当 ~/.claude 目录已存在（CC 确实装过）才创建，
         // 避免在没装 CC 的机器上凭空造目录和文件。
-        Err(_) => {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if !settings_path.parent().is_some_and(|p| p.is_dir()) {
                 return;
             }
             "{}".to_string()
         }
+        // 其它读取失败（权限、非 UTF-8 编码如 UTF-16 等）：文件存在但读不了，
+        // 绝不能当「不存在」处理——否则会拿空配置覆盖用户文件。
+        Err(_) => return,
     };
     let Some(mut settings) = parse_settings(&text) else {
         return; // 解析失败 → 绝不覆盖用户文件
