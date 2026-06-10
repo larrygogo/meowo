@@ -6,3 +6,6 @@ dist/
 *.db-wal
 *.db-shm
 app/src-tauri/gen/
+
+# macOS 签名材料(私钥/证书/p12),绝不提交
+.signing/
