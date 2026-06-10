@@ -646,6 +646,9 @@ html, body {
   flex-direction: column;
   gap: 1px;
   padding: 4px;
+  /* 极端兜底：两个方向都放不下时菜单内部滚动，不被窗口边缘裁掉 */
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
   background: #2e2e2c;
   border: 1px solid var(--cc-border);
   border-radius: var(--r-md);
