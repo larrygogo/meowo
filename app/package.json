@@ -22,7 +22,10 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4",
+    "fast-png": "^8.0.0",
+    "gifenc": "^1.0.3",
     "jsdom": "^29.1.1",
+    "playwright": "^1.60.0",
     "typescript": "^5",
     "vite": "^5",
     "vitest": "^2"
