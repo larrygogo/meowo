@@ -8,12 +8,13 @@
 - `APPLE_SIGNING_IDENTITY`：如 `Developer ID Application: Your Name (TEAMID)`（`security find-identity -v -p codesigning`）
 - `KEYCHAIN_PASSWORD`：任意强随机串（CI 临时钥匙串用）
 
-## 公证（App Store Connect API key，推荐此方案）
-- `APPLE_API_ISSUER`：Issuer ID
-- `APPLE_API_KEY`：Key ID
-- `APPLE_API_KEY_PATH`：.p8 私钥在 runner 上的路径（需在 workflow 里先把 secret 内容写成文件，再把该路径传给此变量）
+## 公证（Apple ID + App 专用密码，当前 workflow 采用）
+- `APPLE_ID`：Apple 开发者账号邮箱
+- `APPLE_PASSWORD`：App 专用密码（appleid.apple.com → 登录与安全 → App 专用密码 生成）
+- `APPLE_TEAM_ID`：开发者 Team ID（如 `JPHJRUCS88`，可从签名证书 `security find-identity` 的括号里看）
 
-> 备选公证方式（Apple ID）：`APPLE_ID` / `APPLE_PASSWORD`(App 专用密码) / `APPLE_TEAM_ID`。
+> tauri-action 直接支持这套,无需把 .p8 写到 runner 文件。
+> 备选公证方式（App Store Connect API key）：`APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH`，但需在 workflow 里加一步把 .p8 secret 落盘后再传路径。
 
 ## 自动更新（已存在，复用）
 - `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
