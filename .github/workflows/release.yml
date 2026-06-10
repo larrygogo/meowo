@@ -36,6 +36,12 @@ jobs:
         working-directory: app
         run: bun install --frozen-lockfile
 
+      # Windows 由 beforeBuildCommand 里的 prepare-sidecar.mjs 覆盖（宿主 triple）；
+      # macOS 是 universal 构建，需要双架构 lipo 合并的 sidecar，提前显式准备。
+      - name: 准备 cc-reporter sidecar (macOS universal)
+        if: matrix.platform == 'macos-latest'
+        run: bun scripts/prepare-sidecar.mjs --universal
+
       - name: 构建并发布(签名公证 + 自动更新产物)
         uses: tauri-apps/tauri-action@v0
         env:

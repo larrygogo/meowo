@@ -29,6 +29,9 @@ jobs:
       - name: 构建前端(tsc + vite build)
         working-directory: app
         run: bun run build
+      # tauri_build 在编译期校验 externalBin 文件存在，编译 cc-app 前必须先备好 sidecar
+      - name: 准备 cc-reporter sidecar
+        run: bun scripts/prepare-sidecar.mjs
       - name: Rust 测试
         run: cargo test --workspace
       - name: Rust clippy
