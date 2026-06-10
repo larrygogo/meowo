@@ -714,14 +714,25 @@ fn is_session_id(s: &str) -> bool {
 
 /// 把 `cwd` 收敛成「可安全传给 wt -d」的目录：必须非空、真实存在的目录，且不含会破坏 wt
 /// 命令行解析的元字符(`;` `"`)。不满足则返回 None（调用方退化为不带 -d）。
-/// Windows Terminal（wt.exe）是否在 PATH 上。
+/// 在 PATH 各目录中查找指定文件是否存在。不 spawn `where` 子进程——GUI 进程冷启动后
+/// 首次 spawn 控制台子进程要数秒（新建 conhost + 杀软扫描），而同步命令跑在主线程，
+/// 会把整个事件循环（所有窗口）堵死，这正是 0.2.0 设置页在 Windows 上"卡死"的根因。
+/// 用 symlink_metadata 而非 exists()：wt.exe 通常是 App Execution Alias
+/// （APPEXECLINK reparse point），fs::metadata 跟随它会失败、误判为不存在。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn path_has_exe(path_var: &std::ffi::OsStr, exe: &str) -> bool {
+    std::env::split_paths(path_var).any(|dir| dir.join(exe).symlink_metadata().is_ok())
+}
+
+/// Windows Terminal（wt.exe）是否在 PATH 上。进程内缓存：安装状态运行期间基本不变，
+/// 而 resume_session（同步命令、主线程）每次恢复会话都要查询，必须保持微秒级。
 #[cfg(target_os = "windows")]
 fn wt_available() -> bool {
-    std::process::Command::new("where")
-        .arg("wt")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    use std::sync::OnceLock;
+    static WT_ON_PATH: OnceLock<bool> = OnceLock::new();
+    *WT_ON_PATH.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "wt.exe"))
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -1338,8 +1349,10 @@ fn host_os() -> String {
 
 /// 「打开未连接会话」可选且本机确实可用的终端 key（供设置页过滤下拉项）。
 /// macOS：terminal 必有，iterm 视安装情况；Windows：powershell/cmd 必有，wt 视是否在 PATH。
+/// async：丢到线程池跑。同步命令内联在主线程，探测一旦变慢（如 macOS 的 mdfind）
+/// 会冻结整个事件循环；设置页每次打开都调它，绝不能赌探测耗时。
 #[tauri::command]
-fn available_terminals() -> Vec<String> {
+async fn available_terminals() -> Vec<String> {
     #[cfg(target_os = "macos")]
     {
         let mut v = vec!["terminal".to_string()];
@@ -1690,12 +1703,31 @@ pub fn run() {
 mod tests {
     use super::{
         clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id,
-        normalize_tab_title, pid_is_claude, should_notify, tab_match_score, waiting_fingerprint,
-        Edge, Rect, Settings,
+        normalize_tab_title, path_has_exe, pid_is_claude, should_notify, tab_match_score,
+        waiting_fingerprint, Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
     const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
+
+    #[test]
+    fn path_has_exe_scans_path_dirs_without_spawning() {
+        let dir = std::env::temp_dir().join("cc-kanban-test-path-has-exe");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("wt.exe"), b"stub").unwrap();
+        // 单目录命中 / 未命中
+        let single = std::env::join_paths([dir.clone()]).unwrap();
+        assert!(path_has_exe(&single, "wt.exe"));
+        assert!(!path_has_exe(&single, "definitely-absent.exe"));
+        // 多目录：前面的目录不存在也不影响后面命中
+        let multi =
+            std::env::join_paths([std::env::temp_dir().join("cc-kanban-no-such-dir"), dir.clone()])
+                .unwrap();
+        assert!(path_has_exe(&multi, "wt.exe"));
+        // 空 PATH → 找不到
+        assert!(!path_has_exe(std::ffi::OsStr::new(""), "wt.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn pid_is_claude_rejects_non_claude_and_dead() {
