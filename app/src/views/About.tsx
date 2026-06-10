@@ -313,7 +313,8 @@ function Dropdown<T extends string | number>({
 }) {
   const [open, setOpen] = useState(false);
   // 菜单用 fixed 定位（脱离 .row-card/.main-body 的 overflow 裁剪），按钮坐标实时测量。
-  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+  // WebView 内容无法超出原生窗口 → 按钮靠近窗口底部、下方放不下时向上翻转弹出。
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number }>({ top: 0, right: 0 });
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -332,7 +333,17 @@ function Dropdown<T extends string | number>({
   const toggle = () => {
     if (!open) {
       const r = btnRef.current?.getBoundingClientRect();
-      if (r) setPos({ top: r.bottom + 6, right: Math.max(0, window.innerWidth - r.right) });
+      if (r) {
+        const right = Math.max(0, window.innerWidth - r.right);
+        // 估算菜单高（项高约 30px + 容器内边距），下方放不下且上方空间更充裕时向上弹。
+        const estHeight = options.length * 30 + 10;
+        const fitsBelow = r.bottom + 6 + estHeight <= window.innerHeight;
+        if (!fitsBelow && r.top > window.innerHeight - r.bottom) {
+          setPos({ bottom: window.innerHeight - r.top + 6, right });
+        } else {
+          setPos({ top: r.bottom + 6, right });
+        }
+      }
     }
     setOpen((v) => !v);
   };
@@ -346,7 +357,7 @@ function Dropdown<T extends string | number>({
         </svg>
       </button>
       {open && (
-        <div className="dd-menu" role="listbox" style={{ position: "fixed", top: pos.top, right: pos.right }}>
+        <div className="dd-menu" role="listbox" style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
           {options.map((o) => (
             <button
               type="button"
