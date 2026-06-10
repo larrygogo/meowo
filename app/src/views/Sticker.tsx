@@ -4,19 +4,22 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { LiveSession, Settings, getSettings } from "../api";
 import { isMacPanel } from "../platform";
+import { useT } from "../i18n";
+import type { Dict } from "../i18n/zh";
 
 const DAY_MS = 86_400_000;
 
-function fmtAgo(ms: number): string {
+function fmtAgo(ms: number, t: Dict): string {
   const m = Math.floor((Date.now() - ms) / 60000);
-  if (m < 1) return "now";
-  if (m < 60) return `${m} 分钟前`;
+  if (m < 1) return t.time.now;
+  if (m < 60) return t.time.minAgo(m);
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.floor(h / 24)} 天前`;
+  if (h < 24) return t.time.hourAgo(h);
+  return t.time.dayAgo(Math.floor(h / 24));
 }
 
 function ConnBadge({ connected }: { connected: boolean }) {
+  const t = useT();
   return (
     <span className={"conn " + (connected ? "conn-on" : "conn-off")}>
       <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
@@ -24,7 +27,7 @@ function ConnBadge({ connected }: { connected: boolean }) {
         <line x1="5.5" y1="14" x2="10.5" y2="14" stroke="currentColor" strokeWidth="1.4" />
         {!connected && <line x1="2" y1="13.5" x2="14" y2="2.5" stroke="currentColor" strokeWidth="1.4" />}
       </svg>
-      {connected ? "Connected" : "Disconnected"}
+      {connected ? t.conn.on : t.conn.off}
     </span>
   );
 }
@@ -116,8 +119,9 @@ function RunBadge({
   pct: number | null;
   tone?: "running" | "waiting";
 }) {
-  const what = tone === "waiting" ? "等待输入" : "运行中";
-  const label = pct != null ? `${what} · Content 已用 ${pct}%` : what;
+  const t = useT();
+  const what = tone === "waiting" ? t.badge.waiting : t.badge.running;
+  const label = pct != null ? t.badge.full(what, pct) : what;
   return (
     <span
       className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : "")}
@@ -137,12 +141,7 @@ function RunBadge({
 
 const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
-const TABS: { key: Tab; label: string }[] = [
-  { key: "all", label: "全部" },
-  { key: "waiting", label: "待交互" },
-  { key: "running", label: "运行中" },
-  { key: "archived", label: "已归档" },
-];
+const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
 
 function match(tab: Tab, l: Item, hideDays = 0): boolean {
   if (tab === "archived") {
@@ -160,12 +159,14 @@ function match(tab: Tab, l: Item, hideDays = 0): boolean {
   return true;
 }
 
-const EMPTY: Record<Tab, { title: string; hint: string | null }> = {
-  all: { title: "还没有会话", hint: "在终端运行 Claude Code，进度会自动出现在这里" },
-  waiting: { title: "没有等待交互的会话", hint: "有会话需要你回复时会出现在这里" },
-  running: { title: "当前没有运行中的会话", hint: null },
-  archived: { title: "没有归档的会话", hint: "点卡片右上角按钮可收纳会话" },
-};
+function emptyCopy(tab: Tab, t: Dict): { title: string; hint: string | null } {
+  switch (tab) {
+    case "all": return { title: t.empty.allTitle, hint: t.empty.allHint };
+    case "waiting": return { title: t.empty.waitingTitle, hint: t.empty.waitingHint };
+    case "running": return { title: t.empty.runningTitle, hint: null };
+    case "archived": return { title: t.empty.archivedTitle, hint: t.empty.archivedHint };
+  }
+}
 
 function EmptyIcon({ tab }: { tab: Tab }) {
   const common = {
@@ -212,7 +213,8 @@ function EmptyIcon({ tab }: { tab: Tab }) {
 }
 
 export function EmptyState({ tab }: { tab: Tab }) {
-  const { title, hint } = EMPTY[tab];
+  const t = useT();
+  const { title, hint } = emptyCopy(tab, t);
   return (
     <div className="stk-empty">
       <span className="stk-empty-icon"><EmptyIcon tab={tab} /></span>
@@ -223,6 +225,7 @@ export function EmptyState({ tab }: { tab: Tab }) {
 }
 
 export function Sticker({ data }: { data: Item[] }) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>(() => {
     const s = localStorage.getItem(TAB_KEY);
     return s === "waiting" || s === "running" || s === "archived" ? s : "all";
@@ -290,16 +293,16 @@ export function Sticker({ data }: { data: Item[] }) {
     <div className="sticker">
       {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
       <div className="tabs">
-        {TABS.map((t) => {
-          const n = data.filter((l) => match(t.key, l, hideDays)).length;
+        {TAB_KEYS.map((k) => {
+          const n = data.filter((l) => match(k, l, hideDays)).length;
           return (
             <span
-              key={t.key}
-              className={"stab " + (tab === t.key ? "stab-on" : "")}
-              onClick={() => pick(t.key)}
+              key={k}
+              className={"stab " + (tab === k ? "stab-on" : "")}
+              onClick={() => pick(k)}
             >
-              <TabIcon tab={t.key} />
-              {t.label}
+              <TabIcon tab={k} />
+              {t.tabs[k]}
               <span className="stab-n">{n}</span>
             </span>
           );
@@ -307,7 +310,7 @@ export function Sticker({ data }: { data: Item[] }) {
         {!isMacPanel() && (
           <span
             className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
-            title={pinned ? "已置顶：点击取消" : "置顶窗口"}
+            title={pinned ? t.sticker.pinOn : t.sticker.pinOff}
             onClick={togglePin}
           >
             <PinIcon pinned={pinned} />
@@ -320,23 +323,23 @@ export function Sticker({ data }: { data: Item[] }) {
         ) : (
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
-            const title = unnamed ? "等待首次输入" : l.task_title;
+            const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
             const sub = l.errored && l.error_label
-              ? l.error_label
+              ? t.errorLabels[l.error_label] ?? l.error_label
               : l.current_activity && l.current_activity !== title
               ? l.current_activity
               : null;
             const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
             const indicator = !l.connected ? (
-              <span className="ring-stop" title="已断开/已停止" />
+              <span className="ring-stop" title={t.sticker.stopped} />
             ) : l.errored ? (
-              <span className="needs-error" title={l.error_raw ?? "会话出错"} />
+              <span className="needs-error" title={l.error_raw ?? t.sticker.sessionError} />
             ) : l.session.status === "running" ? (
               <RunBadge pct={l.context_pct} />
             ) : l.session.status === "waiting" ? (
               <RunBadge pct={l.context_pct} tone="waiting" />
             ) : (
-              <span className="sdot sdot-on" title="在线" />
+              <span className="sdot sdot-on" title={t.sticker.online} />
             );
             return (
               <div
@@ -359,7 +362,7 @@ export function Sticker({ data }: { data: Item[] }) {
                   }
                 }}
                 style={{ cursor: l.connected || !l.archived ? "pointer" : "default" }}
-                title={l.connected ? "点击跳转到该会话的终端" : l.archived ? "" : "点击新建终端恢复该会话"}
+                title={l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
               >
                 <div className="stk-top">
                   <span className="stk-ind">{indicator}</span>
@@ -370,7 +373,7 @@ export function Sticker({ data }: { data: Item[] }) {
                           className="stk-edit"
                           autoFocus
                           value={draft}
-                          placeholder="输入名称，回车保存"
+                          placeholder={t.sticker.renamePlaceholder}
                           onChange={(e) => setDraft(e.target.value)}
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => {
@@ -382,22 +385,22 @@ export function Sticker({ data }: { data: Item[] }) {
                       ) : (
                         <>
                           <span className="stk-title">{title}</span>
-                          <span className="stk-time">{fmtAgo(l.session.last_event_at)}</span>
+                          <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
                           <span
                             className="stk-rename"
-                            title="重命名（同步到 Claude）"
+                            title={t.sticker.renameTitle}
                             onClick={(e) => { e.stopPropagation(); startRename(l); }}
                           ><PencilIcon /></span>
                           <span
                             className="stk-arch"
-                            title={l.archived ? "取消归档" : "归档"}
+                            title={l.archived ? t.sticker.unarchive : t.sticker.archive}
                             onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
                           ><ArchiveIcon archived={l.archived} /></span>
                         </>
                       )}
                     </div>
                     {editingId === l.session.id && l.connected && (
-                      <div className="stk-edit-hint">运行中：改名后需在该终端 /resume 才生效</div>
+                      <div className="stk-edit-hint">{t.sticker.renameHint}</div>
                     )}
                     <div className="stk-line2">
                       <ConnBadge connected={l.connected} />

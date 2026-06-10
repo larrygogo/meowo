@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { Sticker, EmptyState } from "./Sticker";
 import type { LiveSession } from "../api";
+import { zh } from "../i18n/zh";
 
 type Item = LiveSession & { connected: boolean };
 
@@ -22,7 +23,7 @@ afterEach(() => cleanup());
 describe("Sticker", () => {
   it("空数据显示 all 空态主文案", () => {
     const { container } = render(<Sticker data={[]} />);
-    expect(screen.getByText("还没有会话")).toBeTruthy();
+    expect(screen.getByText(zh.empty.allTitle)).toBeTruthy();
     expect(container.querySelector("[data-tauri-drag-region]")).toBeTruthy();
   });
 
@@ -34,29 +35,29 @@ describe("Sticker", () => {
 
   it("unnamed 会话且无动作时显示等待首次输入", () => {
     render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
-    expect(screen.getByText("等待首次输入")).toBeTruthy();
+    expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();
   });
 
-  it("connected 时显示 Connected 徽标", () => {
+  it("connected 时显示已连接徽标", () => {
     render(<Sticker data={[mk({ connected: true })]} />);
-    expect(screen.getByText("Connected")).toBeTruthy();
+    expect(screen.getByText(zh.conn.on)).toBeTruthy();
   });
 
-  it("disconnected 时显示 Disconnected 徽标", () => {
+  it("disconnected 时显示已断开徽标", () => {
     render(<Sticker data={[mk({ connected: false })]} />);
-    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.getByText(zh.conn.off)).toBeTruthy();
   });
 
-  it("stale + disconnected 显示 Disconnected", () => {
+  it("stale + disconnected 显示已断开", () => {
     render(<Sticker data={[mk({ session: { id: 2, project_id: 1, cc_session_id: "x", status: "stale", started_at: 0, last_event_at: Date.now(), ended_at: null }, connected: false })]} />);
-    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.getByText(zh.conn.off)).toBeTruthy();
   });
 
   it.each([
-    ["all", "还没有会话", "在终端运行 Claude Code，进度会自动出现在这里"],
-    ["waiting", "没有等待交互的会话", "有会话需要你回复时会出现在这里"],
-    ["running", "当前没有运行中的会话", null],
-    ["archived", "没有归档的会话", "点卡片右上角按钮可收纳会话"],
+    ["all", zh.empty.allTitle, zh.empty.allHint],
+    ["waiting", zh.empty.waitingTitle, zh.empty.waitingHint],
+    ["running", zh.empty.runningTitle, null],
+    ["archived", zh.empty.archivedTitle, zh.empty.archivedHint],
   ] as const)("EmptyState[%s] 渲染主文案与提示", (tab, title, hint) => {
     render(<EmptyState tab={tab} />);
     expect(screen.getByText(title)).toBeTruthy();
@@ -76,9 +77,9 @@ describe("Sticker", () => {
       errored: true, error_label: "工具调用解析失败", error_raw: "The model's tool call could not be parsed (retry also failed).",
     });
     const { container } = render(<Sticker data={[item]} />);
-    const waitingTab = screen.getByText("待交互").closest(".stab")!;
+    const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
     expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("1");
-    const runningTab = screen.getByText("运行中").closest(".stab")!;
+    const runningTab = screen.getByText(zh.tabs.running).closest(".stab")!;
     expect(runningTab.querySelector(".stab-n")!.textContent).toBe("0");
     expect(container.querySelector(".needs-error")).toBeTruthy();
     expect(screen.getByText("工具调用解析失败")).toBeTruthy();

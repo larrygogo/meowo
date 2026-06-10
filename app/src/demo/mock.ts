@@ -22,6 +22,7 @@ export const store: Store = {
     opacity: 97,
     ui_scale: 100,
     resume_terminal: "wt",
+    language: "zh",
   },
 };
 
