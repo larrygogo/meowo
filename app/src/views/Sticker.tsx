@@ -240,17 +240,30 @@ export function Sticker({ data }: { data: Item[] }) {
   const [hideDays, setHideDays] = useState(0);
   useEffect(() => {
     getSettings().then((s) => setHideDays(s.archive_hide_days)).catch(() => {});
+    // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
+    let cancelled = false;
     let un: (() => void) | undefined;
     try {
       listen<Settings>("settings-changed", (e) => setHideDays(e.payload.archive_hide_days))
-        .then((f) => { un = f; })
+        .then((f) => {
+          if (cancelled) f();
+          else un = f;
+        })
         .catch(() => {});
     } catch {
       /* 非 Tauri 环境（测试/浏览器） */
     }
     return () => {
+      cancelled = true;
       try { un?.(); } catch { /* noop */ }
     };
+  }, []);
+
+  // 相对时间（fmtAgo）每分钟重算：递增计数触发轻量重渲染。
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
   }, []);
 
   // 置顶开关：默认不置顶，激活后才把窗口设为 alwaysOnTop，状态持久化。

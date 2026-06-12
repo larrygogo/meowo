@@ -34,15 +34,27 @@ export function I18nProvider({ children, initial }: { children: ReactNode; initi
   useEffect(() => {
     if (initial) return; // 测试注入固定语言时不订阅
     let eventApplied = false;
+    // cleanup 可能先于 listen resolve：cancelled 标记保证 resolve 后立即注销，防监听器泄漏。
+    let cancelled = false;
+    let un: (() => void) | undefined;
     const apply = (s: Settings) => {
       const l = resolveLang(s.language);
       setLang(l);
       try { localStorage.setItem(CACHE_KEY, l); } catch { /* ignore */ }
     };
     try {
-      listen<Settings>("settings-changed", (e) => { eventApplied = true; apply(e.payload); }).catch(() => {});
+      listen<Settings>("settings-changed", (e) => { eventApplied = true; apply(e.payload); })
+        .then((f) => {
+          if (cancelled) f();
+          else un = f;
+        })
+        .catch(() => {});
     } catch { /* 非 Tauri 环境 */ }
     getSettings().then((s) => { if (!eventApplied) apply(s); }).catch(() => {});
+    return () => {
+      cancelled = true;
+      un?.();
+    };
   }, [initial]);
   return <I18nCtx.Provider value={DICTS[lang]}>{children}</I18nCtx.Provider>;
 }

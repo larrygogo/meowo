@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal } from "../api";
@@ -139,6 +139,7 @@ function fmtResetIn(iso: string, t: Dict): string {
   const dayDiff = Math.round((startOf(ts) - startOf(now)) / 86_400_000);
   if (dayDiff <= 0) {
     const min = Math.round(diffMs / 60000);
+    if (min < 1) return t.account.resetSoon; // 剩余不足半分钟时 round 得 0，归入「即将重置」
     if (min < 60) return t.account.resetInMin(min);
     const h = Math.floor(min / 60);
     const m = min % 60;
@@ -202,12 +203,14 @@ function AccountSection() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [usageErr, setUsageErr] = useState(false);
+  // 联网新值是否已落地：getAccount 的缓存 usage 仅在此前回填，防止慢 resolve 用缓存覆盖新值。
+  const freshApplied = useRef(false);
 
   const doRefresh = () => {
     setRefreshing(true);
     setUsageErr(false);
     refreshUsage()
-      .then((u) => setUsage(u))
+      .then((u) => { freshApplied.current = true; setUsage(u); })
       .catch(() => setUsageErr(true))
       .finally(() => setRefreshing(false));
   };
@@ -215,7 +218,10 @@ function AccountSection() {
   useEffect(() => {
     // 先缓存后请求：getAccount 立即给账号/每日/缓存用量，再 refreshUsage 联网刷新。
     getAccount()
-      .then((d) => { setData(d); setUsage(d.usage); })
+      .then((d) => {
+        setData(d);
+        if (!freshApplied.current) setUsage(d.usage);
+      })
       .catch(() => {});
     doRefresh();
   }, []);
@@ -570,6 +576,22 @@ function AboutSection({
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
+  }, []);
+
+  // 主窗安装失败会广播 update-failed：复位按钮允许重试（cancelled 标记防 resolve 前卸载的泄漏）。
+  useEffect(() => {
+    let cancelled = false;
+    let un: (() => void) | undefined;
+    listen("update-failed", () => setTriggered(false))
+      .then((f) => {
+        if (cancelled) f();
+        else un = f;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      un?.();
+    };
   }, []);
 
   const onAvailable = () => {
