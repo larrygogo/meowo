@@ -27,8 +27,12 @@ pub struct TranscriptInfo {
 
 /// 把 assistant 正文归类为「卡死错误」短标签；非卡死返回 None。
 /// 刻意排除 529/500/ECONNRESET 等临时错误（多数自愈，标红会误报）。
+/// 真实卡死错误都是独立短文案；长正文（如讨论/引用错误日志的正常回答）不判错，避免误报。
 pub(crate) fn classify_error(text: &str) -> Option<&'static str> {
     let t = text.trim();
+    if t.chars().count() > 200 {
+        return None;
+    }
     if t.contains("could not be parsed (retry also failed)") {
         return Some("工具调用解析失败");
     }
@@ -146,14 +150,26 @@ pub fn analyze_transcript(path: &str) -> TranscriptInfo {
     st.to_info()
 }
 
+/// 单条缓存：已解析到的字节偏移 + 上次解析时的 mtime + 累积状态 + 最近使用刻度（淘汰用）。
+struct CacheEntry {
+    offset: u64,
+    mtime: Option<std::time::SystemTime>,
+    state: ParseState,
+    last_used: u64,
+}
+
 /// transcript 增量解析缓存：transcript 是只追加的 JSONL，没必要每轮把整文件重读重解析
 /// （几十 MB → 数百 ms，多个会话叠加可达数秒，每 ~300ms 一次会打满 CPU、拖慢整窗）。
 /// 这里按文件路径缓存「已解析到的字节偏移 + 累积状态」，每轮只读+解析新追加的完整行，
 /// 把每次刷新从 O(整文件) 降到 O(新增字节) ≈ 接近 0。
 #[derive(Default)]
 pub struct TranscriptCache {
-    entries: std::collections::HashMap<String, (u64, ParseState)>, // path -> (偏移, 状态)
+    entries: std::collections::HashMap<String, CacheEntry>,
+    tick: u64, // 单调递增的访问刻度，供 LRU 淘汰
 }
+
+/// 缓存条目上限：超出时淘汰最久未访问的条目，防长期运行无界增长。
+const MAX_CACHE_ENTRIES: usize = 256;
 
 impl TranscriptCache {
     pub fn new() -> Self {
@@ -161,43 +177,64 @@ impl TranscriptCache {
     }
 
     /// 增量解析 path：只处理上次偏移之后新追加的「完整行」（末尾未结束的半行留到下次）。
-    /// 文件被截断/替换（len < 偏移）→ 从头重解析。打开/读失败 → 返回当前累积结果。
+    /// 失效检测用 len + mtime 双重校验：len < 偏移（截断）或 len == 偏移但 mtime 变了
+    /// （等长重写）→ 从头重解析。打开/读失败 → 返回当前累积结果。
     pub fn analyze(&mut self, path: &str) -> TranscriptInfo {
         use std::io::{Read, Seek, SeekFrom};
-        let entry = self
-            .entries
-            .entry(path.to_string())
-            .or_insert_with(|| (0, ParseState::default()));
-        let offset = &mut entry.0;
-        let state = &mut entry.1;
+        self.tick += 1;
+        // 容量上限：插入新 key 前先淘汰最久未访问的条目。
+        if !self.entries.contains_key(path) && self.entries.len() >= MAX_CACHE_ENTRIES {
+            if let Some(k) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| k.clone())
+            {
+                self.entries.remove(&k);
+            }
+        }
+        let tick = self.tick;
+        let entry = self.entries.entry(path.to_string()).or_insert_with(|| CacheEntry {
+            offset: 0,
+            mtime: None,
+            state: ParseState::default(),
+            last_used: tick,
+        });
+        entry.last_used = tick;
 
         let Ok(mut f) = std::fs::File::open(path) else {
-            return state.to_info();
+            return entry.state.to_info();
         };
-        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-        if len < *offset {
-            *offset = 0;
-            *state = ParseState::default();
+        let (len, mtime) = match f.metadata() {
+            Ok(m) => (m.len(), m.modified().ok()),
+            Err(_) => (0, None),
+        };
+        if len < entry.offset || (len == entry.offset && mtime != entry.mtime) {
+            // 被截断，或等长但 mtime 变了（同长度重写）→ 重头解析。
+            entry.offset = 0;
+            entry.state = ParseState::default();
         }
-        if len == *offset {
-            return state.to_info(); // 无新增，直接复用
+        if len == entry.offset {
+            entry.mtime = mtime;
+            return entry.state.to_info(); // 无新增，直接复用
         }
-        if f.seek(SeekFrom::Start(*offset)).is_err() {
-            return state.to_info();
+        if f.seek(SeekFrom::Start(entry.offset)).is_err() {
+            return entry.state.to_info();
         }
         let mut buf = Vec::new();
         if f.read_to_end(&mut buf).is_err() {
-            return state.to_info();
+            return entry.state.to_info();
         }
         // 只吃到最后一个换行为止，保证按完整行解析；其后半行（writer 可能正写一半）留到下次。
         if let Some(nl) = buf.iter().rposition(|&b| b == b'\n') {
-            *offset += (nl + 1) as u64;
+            entry.offset += (nl + 1) as u64;
             let chunk = String::from_utf8_lossy(&buf[..=nl]);
             for line in chunk.lines() {
-                state.fold_line(line);
+                entry.state.fold_line(line);
             }
         }
-        state.to_info()
+        entry.mtime = mtime;
+        entry.state.to_info()
     }
 }
 
@@ -229,6 +266,13 @@ mod tests {
         assert_eq!(classify_error("API Error: 500 status code (no body)"), None);
         assert_eq!(classify_error("Unable to connect to API (ECONNRESET)"), None);
         assert_eq!(classify_error("这是一段正常的助手回答。"), None);
+    }
+
+    #[test]
+    fn classify_ignores_long_text_quoting_error() {
+        // 正常长回答里引用错误文案（如调试 API 的会话）不应被判为卡死。
+        let long = format!("{}先看日志里的 API Error: 403 Request not allowed，这是因为……", "分析：".repeat(100));
+        assert_eq!(classify_error(&long), None);
     }
 
     fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
@@ -363,6 +407,23 @@ mod tests {
         // 再次调用、无新增 → 结果稳定。
         let i3 = cache.analyze(p.to_str().unwrap());
         assert_eq!(i3.context_tokens, Some(40000));
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn cache_detects_same_length_rewrite_by_mtime() {
+        // 等长重写：len 不变但 mtime 变了 → 应从头重解析，而不是沿用旧状态。
+        let line_a = r#"{"type":"ai-title","aiTitle":"AAAA"}"#;
+        let line_b = r#"{"type":"ai-title","aiTitle":"BBBB"}"#;
+        assert_eq!(line_a.len(), line_b.len());
+        let p = write_tmp("cache_rewrite", &format!("{line_a}\n"));
+        let mut cache = TranscriptCache::new();
+        assert_eq!(cache.analyze(p.to_str().unwrap()).title.as_deref(), Some("AAAA"));
+
+        // 隔开 mtime 粒度后等长重写。
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&p, format!("{line_b}\n")).unwrap();
+        assert_eq!(cache.analyze(p.to_str().unwrap()).title.as_deref(), Some("BBBB"));
         std::fs::remove_file(&p).ok();
     }
 

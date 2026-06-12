@@ -37,10 +37,11 @@ pub fn title_from_transcript(path: &str) -> Option<String> {
 }
 
 /// 把 cwd 编码成 Claude Code 在 ~/.claude/projects 下的子目录名：
-/// 把 `\ / : . 空格` 都换成 `-`（与 CC 的编码一致）。
+/// 非 ASCII 字母数字的字符一律换成 `-`（与 CC 的 `[^a-zA-Z0-9] -> '-'` 规则一致，
+/// 含下划线、中文、括号等）。
 fn encode_cwd(cwd: &str) -> String {
     cwd.chars()
-        .map(|c| if matches!(c, '\\' | '/' | ':' | '.' | ' ') { '-' } else { c })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
 }
 
@@ -84,7 +85,8 @@ pub fn cwd_from_transcript(path: &str) -> Option<String> {
     use std::io::BufRead;
     let file = std::fs::File::open(path).ok()?;
     for line in std::io::BufReader::new(file).lines() {
-        let line = line.ok()?;
+        // 单行读失败（如非 UTF-8 字节）只跳过该行，不放弃整个文件。
+        let Ok(line) = line else { continue };
         if !line.contains("\"cwd\"") {
             continue;
         }
@@ -174,6 +176,12 @@ mod tests {
     #[test]
     fn encode_cwd_unix_path() {
         assert_eq!(encode_cwd("/tmp/x y"), "-tmp-x-y");
+    }
+
+    #[test]
+    fn encode_cwd_replaces_all_non_alphanumeric() {
+        // CC 规则是 [^a-zA-Z0-9] 全替换：下划线、中文、括号都变 '-'。
+        assert_eq!(encode_cwd(r"C:\a_b\my(中文)"), "C--a-b-my----");
     }
 
     #[test]
