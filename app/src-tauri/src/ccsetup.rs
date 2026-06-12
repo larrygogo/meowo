@@ -201,6 +201,9 @@ pub fn apply() {
     let Some(mut settings) = parse_settings(&text) else {
         return; // 解析失败 → 绝不覆盖用户文件
     };
+    if !settings.is_object() {
+        return; // 顶层不是对象（数组/标量）：后续按键索引赋值会 panic，直接放弃
+    }
     let orig = settings.clone();
 
     let Some(reporter_native) = resolve_reporter_native(&settings) else {

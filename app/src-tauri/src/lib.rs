@@ -13,7 +13,7 @@ use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
 pub mod ccsetup;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 #[cfg(target_os = "windows")]
 use sysinfo::Pid;
@@ -302,12 +302,33 @@ struct LiveItem {
 const LIVE_LIMIT: usize = 20;
 
 #[tauri::command]
-fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
-    let store = open_store(&state.db_path)?;
+async fn get_live_sessions(state: State<'_, AppState>) -> Result<Vec<LiveItem>, String> {
+    // 重逻辑（SQLite、进程枚举、transcript 解析）放 blocking 线程池，不占主线程事件循环。
+    let db_path = state.db_path.clone();
+    let tx_cache = state.tx_cache.clone();
+    tauri::async_runtime::spawn_blocking(move || live_sessions_blocking(&db_path, &tx_cache))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn live_sessions_blocking(
+    db_path: &PathBuf,
+    tx_cache: &Mutex<cc_store::TranscriptCache>,
+) -> Result<Vec<LiveItem>, String> {
+    let store = open_store(db_path)?;
     let sessions = store.live_sessions().map_err(|e| e.to_string())?;
+    // connected 校验：Windows 走 sysinfo 进程表；macOS/Unix 一次 ps 批量快照
+    // （sysinfo 在 macOS 上不可靠，逐 pid spawn ps 又太慢——一批会话只扫一次）。
+    #[cfg(target_os = "windows")]
     let sys = System::new_with_specifics(
         RefreshKind::new().with_processes(ProcessRefreshKind::new()),
     );
+    #[cfg(target_os = "windows")]
+    let is_claude = |pid: i64| pid_is_claude(&sys, pid);
+    #[cfg(not(target_os = "windows"))]
+    let claude_pids = claude_pids_snapshot();
+    #[cfg(not(target_os = "windows"))]
+    let is_claude = |pid: i64| pid > 0 && claude_pids.contains(&pid);
 
     // 先算 connected（廉价，仅查进程表）并据此排序，再只对「将要展示」的会话解析
     // transcript 标题——标题解析要 read_to_string 整个 JSONL（可达数 MB），对最多 100 个
@@ -318,7 +339,7 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
             // 已结束(ended)的会话一律视为断开；并校验 pid 确属 claude，
             // 防 Windows pid 复用（旧 pid 被 esbuild 等占用）误判为「连接中」。
             let connected =
-                s.session.status != "ended" && pid_is_claude(&sys, s.pid.unwrap_or(0));
+                s.session.status != "ended" && is_claude(s.pid.unwrap_or(0));
             (s, connected)
         })
         .collect();
@@ -344,7 +365,7 @@ fn get_live_sessions(state: State<AppState>) -> Result<Vec<LiveItem>, String> {
             &s.session.cc_session_id,
         )
         .and_then(|p| p.to_str().map(str::to_string))
-        .map(|path| state.tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path));
+        .map(|path| tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path));
         if let Some(info) = info {
             if let Some(t) = info.title {
                 s.task_title = t;
@@ -691,12 +712,16 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        crate::macos::terminal::focus_session_terminal(
-            pid,
-            cwd.as_deref(),
-            session_id.as_deref(),
-            resume_terminal_kind(),
-        );
+        // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
+        // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
+        std::thread::spawn(move || {
+            crate::macos::terminal::focus_session_terminal(
+                pid,
+                cwd.as_deref(),
+                session_id.as_deref(),
+                resume_terminal_kind(),
+            );
+        });
         Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -725,7 +750,7 @@ fn path_has_exe(path_var: &std::ffi::OsStr, exe: &str) -> bool {
 }
 
 /// Windows Terminal（wt.exe）是否在 PATH 上。进程内缓存：安装状态运行期间基本不变，
-/// 而 resume_session（同步命令、主线程）每次恢复会话都要查询，必须保持微秒级。
+/// resume_session 每次恢复会话都要查询，保持微秒级。
 #[cfg(target_os = "windows")]
 fn wt_available() -> bool {
     use std::sync::OnceLock;
@@ -757,72 +782,75 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
     }
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        use std::process::Command;
-        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
+        // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
+        // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。spawn 失败仅打印日志。
+        std::thread::spawn(move || {
+            use std::os::windows::process::CommandExt;
+            use std::process::Command;
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
 
-        // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
-        // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
-        let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
-        let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
-        // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
-        let eff = match load_settings().resume_terminal.as_str() {
-            "powershell" => "powershell",
-            "cmd" => "cmd",
-            _ if wt_available() => "wt",
-            _ => "powershell",
-        };
-        match eff {
-            // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
-            "powershell" => {
-                let mut c = Command::new("powershell");
-                c.args(["-NoExit", "-Command", &format!("claude --resume {session_id}")]);
-                if let Some(d) = &dir {
-                    c.current_dir(d);
+            // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
+            // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
+            let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+            let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
+            // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
+            let eff = match load_settings().resume_terminal.as_str() {
+                "powershell" => "powershell",
+                "cmd" => "cmd",
+                _ if wt_available() => "wt",
+                _ => "powershell",
+            };
+            let spawned = match eff {
+                // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
+                "powershell" => {
+                    let mut c = Command::new("powershell");
+                    c.args(["-NoExit", "-Command", &format!("claude --resume {session_id}")]);
+                    if let Some(d) = &dir {
+                        c.current_dir(d);
+                    }
+                    c.creation_flags(CREATE_NEW_CONSOLE).spawn()
                 }
-                c.creation_flags(CREATE_NEW_CONSOLE)
-                    .spawn()
-                    .map_err(|e| format!("启动 PowerShell 失败：{e}"))?;
-            }
-            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
-            "cmd" => {
-                let mut c = Command::new("cmd");
-                c.args(["/k", &format!("claude --resume {session_id}")]);
-                if let Some(d) = &dir {
-                    c.current_dir(d);
+                // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+                "cmd" => {
+                    let mut c = Command::new("cmd");
+                    c.args(["/k", &format!("claude --resume {session_id}")]);
+                    if let Some(d) = &dir {
+                        c.current_dir(d);
+                    }
+                    c.creation_flags(CREATE_NEW_CONSOLE).spawn()
                 }
-                c.creation_flags(CREATE_NEW_CONSOLE)
-                    .spawn()
-                    .map_err(|e| format!("启动命令提示符失败：{e}"))?;
-            }
-            // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
-            // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
-            _ => {
-                let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
-                if let Some(d) = &dir {
-                    args.push("-d".into());
-                    args.push(d.clone());
+                // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
+                // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
+                _ => {
+                    let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+                    if let Some(d) = &dir {
+                        args.push("-d".into());
+                        args.push(d.clone());
+                    }
+                    args.push("claude".into());
+                    args.push("--resume".into());
+                    args.push(session_id.clone());
+                    Command::new("wt").args(&args).spawn()
                 }
-                args.push("claude".into());
-                args.push("--resume".into());
-                args.push(session_id.clone());
-                Command::new("wt")
-                    .args(&args)
-                    .spawn()
-                    .map_err(|e| format!("启动 Windows Terminal 失败：{e}"))?;
+            };
+            if let Err(e) = spawned {
+                eprintln!("恢复会话：启动 {eff} 失败：{e}");
             }
-        }
+        });
         Ok(())
     }
     #[cfg(target_os = "macos")]
     {
         // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
-        let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
-        crate::macos::terminal::resume_session_mac(
-            resolved.as_deref(),
-            &session_id,
-            resume_terminal_kind(),
-        );
+        // resolve_cwd 读 transcript、osascript 可能等 TCC 授权，整段放后台线程不挡主线程。
+        std::thread::spawn(move || {
+            let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+            crate::macos::terminal::resume_session_mac(
+                resolved.as_deref(),
+                &session_id,
+                resume_terminal_kind(),
+            );
+        });
         Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -1006,7 +1034,13 @@ fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String>
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    // 原子写（tmp + rename）：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
+        return Err(e.to_string());
+    }
     // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
     apply_language(&app, ui_lang(&settings));
     // 通知贴纸窗口实时套用新设置。
@@ -1031,7 +1065,7 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
 }
 
 /// 设置/关于页用：在默认浏览器打开本项目链接。仅允许本仓库的 https 链接（白名单），
-/// 用 explorer 打开（不经 shell），杜绝被滥用打开任意/恶意目标。
+/// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     if !url.starts_with("https://github.com/larrygogo/cc-kanban") {
@@ -1042,7 +1076,12 @@ fn open_url(url: String) -> Result<(), String> {
         .arg(&url)
         .spawn()
         .map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "windows"))]
+    // macOS：open 偶发慢（默认浏览器冷启动），放后台线程不挡主线程。
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    });
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = url;
     Ok(())
 }
@@ -1053,6 +1092,12 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
+    // 只关心 db 本体及其 -wal/-shm/-journal 等伴生文件；同目录的 settings.json、
+    // usage-cache.json 写入不应触发看板刷新。
+    let db_name = db_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "board.db".to_string());
     std::thread::spawn(move || {
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
@@ -1062,16 +1107,35 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
         if watcher.watch(&watch_dir, RecursiveMode::NonRecursive).is_err() {
             return;
         }
+        let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
+            let Ok(ev) = res else { return false };
+            ev.paths.iter().any(|p| {
+                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                    n.strip_prefix(db_name.as_str())
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+                })
+            })
+        };
+        // trailing debounce：收到相关事件后 drain 到 300ms 静默再 emit。SQLite 提交是
+        // db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件、让前端停在旧数据。
         let debounce = Duration::from_millis(300);
-        let mut last_emit: Option<Instant> = None;
-        for res in rx {
-            if res.is_err() {
-                continue;
+        loop {
+            let Ok(first) = rx.recv() else { return }; // watcher 关闭 → 线程退出
+            let mut relevant = is_board(&first);
+            loop {
+                match rx.recv_timeout(debounce) {
+                    Ok(ev) => relevant = relevant || is_board(&ev),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        if relevant {
+                            let _ = app.emit("board-changed", ());
+                        }
+                        return;
+                    }
+                }
             }
-            let due = last_emit.is_none_or(|t| t.elapsed() >= debounce);
-            if due {
+            if relevant {
                 let _ = app.emit("board-changed", ());
-                last_emit = Some(Instant::now());
             }
         }
     });
@@ -1107,6 +1171,29 @@ fn pid_is_claude(sys: &System, pid: i64) -> bool {
             .to_ascii_lowercase()
             .contains("claude")
     }
+}
+
+/// macOS/Unix：一次 `ps -axo pid=,comm=` 批量取「进程名含 claude」的 pid 集合，
+/// 供 live_sessions_blocking 整批校验 connected，替代逐 pid spawn ps。
+#[cfg(not(target_os = "windows"))]
+fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
+    let mut set = std::collections::HashSet::new();
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,comm="])
+        .output()
+    else {
+        return set;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut it = line.split_whitespace();
+        let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
+        // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
+        let comm = it.collect::<Vec<_>>().join(" ");
+        if comm.to_ascii_lowercase().contains("claude") {
+            set.insert(pid);
+        }
+    }
+    set
 }
 
 /// 轮询一次：把「记录了 pid、但该进程已死」的 live 会话收尾为 ended（self-heal），
@@ -1398,11 +1485,16 @@ fn host_os() -> String {
 async fn available_terminals() -> Vec<String> {
     #[cfg(target_os = "macos")]
     {
-        let mut v = vec!["terminal".to_string()];
-        if iterm_installed() {
-            v.push("iterm".to_string());
-        }
-        v
+        // iterm_installed 可能跑 mdfind（秒级），包 spawn_blocking 以免占住 tokio worker。
+        tauri::async_runtime::spawn_blocking(|| {
+            let mut v = vec!["terminal".to_string()];
+            if iterm_installed() {
+                v.push("iterm".to_string());
+            }
+            v
+        })
+        .await
+        .unwrap_or_else(|_| vec!["terminal".to_string()])
     }
     #[cfg(target_os = "windows")]
     {
