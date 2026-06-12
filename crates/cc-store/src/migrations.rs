@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at  INTEGER NOT NULL
 );
 
+-- pid/cwd/archived/archived_at 新库直接建在表里；旧库由 Store::migrate 的 ALTER 补齐。
 CREATE TABLE IF NOT EXISTS sessions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id    INTEGER NOT NULL REFERENCES projects(id),
@@ -14,7 +15,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     status        TEXT NOT NULL,
     started_at    INTEGER NOT NULL,
     last_event_at INTEGER NOT NULL,
-    ended_at      INTEGER
+    ended_at      INTEGER,
+    pid           INTEGER,
+    cwd           TEXT,
+    archived      INTEGER NOT NULL DEFAULT 0,
+    archived_at   INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

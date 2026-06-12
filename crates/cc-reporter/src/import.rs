@@ -106,6 +106,10 @@ fn mtime_ms(path: &Path) -> Option<i64> {
 }
 
 /// 无 cwd 兜底：root 用编码目录名本身，name 取其 '-' 分隔的末段非空片段。
+///
+/// 权衡：编码目录名无法还原真实路径（`-` 与原字符不可逆），用它当 root_path 可能与
+/// 同一项目的真实路径并存为两个项目行；但 sessions.project_id 为 NOT NULL，跳过项目
+/// 创建就得整条丢弃该会话。无 cwd 的 transcript 很罕见，宁可多一行兜底项目也不丢历史会话。
 fn fallback_project(dir_name: &str) -> (String, String) {
     let name = dir_name.rsplit('-').find(|s| !s.is_empty()).unwrap_or(dir_name);
     (dir_name.to_string(), name.to_string())

@@ -6,7 +6,7 @@ import { getLiveSessions, LiveSession } from "./api";
 import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
-import { detectHostOs, isMacPanel } from "./platform";
+import { isMacPanel } from "./platform";
 import { useT } from "./i18n";
 
 type Item = LiveSession & { connected: boolean };
@@ -84,13 +84,9 @@ export function App() {
     setLive((await getLiveSessions()) as Item[]);
   }, []);
 
+  // 平台探测已提前到 main.tsx 渲染前完成，这里只负责首次拉取。
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      await detectHostOs();
-      if (!cancelled) refresh();
-    })();
-    return () => { cancelled = true; };
+    refresh();
   }, [refresh]);
 
   useEffect(() => {
@@ -298,7 +294,9 @@ export function App() {
           onClick={upStatus === "downloading" ? undefined : applyUpdate}
         >
           {upStatus === "downloading"
-            ? t.update.downloading(upProgress)
+            ? upProgress == null
+              ? t.update.downloadingNoPct
+              : t.update.downloading(upProgress)
             : t.update.newVersion(updateVersion ?? "")}
         </div>
       )}

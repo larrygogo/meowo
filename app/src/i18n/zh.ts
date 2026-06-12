@@ -41,6 +41,7 @@ export const zh = {
   update: {
     clickToInstall: "点击下载并安装新版本",
     downloading: (pct: number) => `下载更新中 ${pct}%`,
+    downloadingNoPct: "下载更新中…",
     newVersion: (v: string) => `有新版本 v${v} · 点击更新`,
   },
   errorLabels: {

@@ -42,6 +42,7 @@ export const en: Dict = {
   update: {
     clickToInstall: "Click to download and install the update",
     downloading: (pct) => `Downloading update ${pct}%`,
+    downloadingNoPct: "Downloading update…",
     newVersion: (v) => `v${v} available · click to update`,
   },
   errorLabels: {

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "cc-kanban",
+        "width": 340,
+        "height": 440,
+        "minWidth": 320,
+        "minHeight": 80,
+        "transparent": true,
+        "decorations": false,
+        "maximizable": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": true,
+        "resizable": true,
+        "focus": false,
+        "shadow": false,
+        "visible": false
+      }
+    ]
+  }
+}

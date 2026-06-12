@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { emit } from "@tauri-apps/api/event";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 
 type UpdateHandle = {
@@ -13,7 +14,8 @@ export type UpdateStatus = "checking" | "latest" | "available" | "downloading" |
 export function useUpdate() {
   const [status, setStatus] = useState<UpdateStatus>("checking");
   const [version, setVersion] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
+  // null = 总大小未知（响应无 Content-Length），UI 显示不带百分比的「下载中…」。
+  const [progress, setProgress] = useState<number | null>(0);
   const handleRef = useRef<UpdateHandle | null>(null);
 
   const recheck = useCallback(async () => {
@@ -46,8 +48,10 @@ export function useUpdate() {
       let total = 0;
       let got = 0;
       await up.downloadAndInstall((e) => {
-        if (e.event === "Started") total = e.data.contentLength ?? 0;
-        else if (e.event === "Progress") {
+        if (e.event === "Started") {
+          total = e.data.contentLength ?? 0;
+          if (total === 0) setProgress(null);
+        } else if (e.event === "Progress") {
           got += e.data.chunkLength;
           if (total > 0) setProgress(Math.min(100, Math.round((got / total) * 100)));
         } else if (e.event === "Finished") setProgress(100);
@@ -57,6 +61,8 @@ export function useUpdate() {
     } catch (err) {
       console.error("[update] 安装失败：", err);
       setStatus("error");
+      // 广播给其它窗口（设置页据此复位「更新中…」按钮）。
+      emit("update-failed").catch(() => {});
     }
   }, []);
 

@@ -5,6 +5,7 @@ import { App } from "./App";
 import { About } from "./views/About";
 import { lockdownInProduction } from "./devtools-guard";
 import { bootAppearance } from "./appearance";
+import { detectHostOs } from "./platform";
 import { I18nProvider } from "./i18n";
 import "./styles.css";
 
@@ -28,8 +29,13 @@ const label = (() => {
 // 套用外观设置（明暗/不透明度两窗都套；界面密度仅贴纸窗口）。
 bootAppearance({ scale: label !== "about" });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <I18nProvider>{label === "about" ? <About /> : <App />}</I18nProvider>
-  </React.StrictMode>,
-);
+// 渲染前先探测宿主平台：isMacPanel 等同步判定在首帧与各 effect 中即正确，
+// 消除「effect 跑在探测 resolve 前、guard 固化为 false」的竞态。
+// detectHostOs 内部兜底（非 Tauri 环境立即落为 other），不会悬挂。
+void detectHostOs().then(() => {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <I18nProvider>{label === "about" ? <About /> : <App />}</I18nProvider>
+    </React.StrictMode>,
+  );
+});

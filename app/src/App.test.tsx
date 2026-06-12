@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/api/event", () => ({
     if (event === "board-changed") emitBoardChanged = cb;
     return Promise.resolve(unlisten);
   },
+  emit: vi.fn(() => Promise.resolve()),
 }));
 // 吸边相关的 Tauri 命令/窗口 API：jsdom 无后端，给空实现避免报错。
 vi.mock("@tauri-apps/api/core", () => ({

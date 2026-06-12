@@ -15,8 +15,9 @@ impl Store {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // busy_timeout 必须先于 journal_mode：否则并发首次建库时 WAL 切换以 0 超时直接 BUSY。
         conn.pragma_update(None, "busy_timeout", 3000)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         Self::migrate(&conn);
@@ -32,12 +33,22 @@ impl Store {
         Ok(Store { conn })
     }
 
-    /// 幂等迁移：给已存在的库补列。重复执行安全（列已存在的错误忽略）。
+    /// 幂等迁移：给旧库补列（新库这些列已在 SCHEMA 里）。
+    /// 只忽略「列已存在」，其余失败（BUSY、I/O 等）输出 stderr 便于排查，不中断。
     fn migrate(conn: &rusqlite::Connection) {
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN pid INTEGER", []);
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT", []);
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN archived_at INTEGER", []);
+        const ALTERS: [&str; 4] = [
+            "ALTER TABLE sessions ADD COLUMN pid INTEGER",
+            "ALTER TABLE sessions ADD COLUMN cwd TEXT",
+            "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN archived_at INTEGER",
+        ];
+        for sql in ALTERS {
+            if let Err(e) = conn.execute(sql, []) {
+                if !e.to_string().contains("duplicate column name") {
+                    eprintln!("cc-store migrate 失败: {sql}: {e}");
+                }
+            }
+        }
     }
 
     /// 测试辅助：统计用户表数量。
@@ -62,7 +73,7 @@ impl Store {
         self.conn.execute(
             "INSERT INTO projects (root_path, name, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?3)
-             ON CONFLICT(root_path) DO UPDATE SET updated_at = ?3, name = ?2",
+             ON CONFLICT(root_path) DO UPDATE SET updated_at = MAX(updated_at, ?3), name = ?2",
             rusqlite::params![root_path, name, now_ms],
         )?;
         let id: i64 = self.conn.query_row(
@@ -85,8 +96,8 @@ impl Store {
             "INSERT INTO session_context (cc_session_id, used_pct, window_size, updated_at)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(cc_session_id) DO UPDATE SET
-                 used_pct = excluded.used_pct,
-                 window_size = excluded.window_size,
+                 used_pct = COALESCE(excluded.used_pct, used_pct),
+                 window_size = COALESCE(excluded.window_size, window_size),
                  updated_at = excluded.updated_at",
             rusqlite::params![cc_session_id, used_pct, window_size, now_ms],
         )?;
@@ -123,8 +134,10 @@ impl Store {
         cc_session_id: &str,
         now_ms: i64,
     ) -> Result<(i64, i64), StoreError> {
+        // 事务保证「会话 + 占位任务」原子落库，避免中途失败留下无任务卡的半态会话。
+        let tx = self.conn.unchecked_transaction()?;
         // 会话幂等：已存在则复活为 running（resume/--continue 场景），清掉 ended_at。
-        self.conn.execute(
+        tx.execute(
             "INSERT INTO sessions (project_id, cc_session_id, status, started_at, last_event_at)
              VALUES (?1, ?2, 'running', ?3, ?3)
              ON CONFLICT(cc_session_id) DO UPDATE SET
@@ -138,13 +151,14 @@ impl Store {
             .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
 
         // 占位任务幂等：靠 tasks(session_id) 唯一索引 + INSERT OR IGNORE 防并发重复建卡。
-        self.conn.execute(
+        tx.execute(
             "INSERT OR IGNORE INTO tasks
                 (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
              VALUES (?1, ?2, '(未命名会话)', 'todo', 0, ?3, ?3)",
             rusqlite::params![project_id, sid, now_ms],
         )?;
         let tid = self.task_id_of_session(sid)?;
+        tx.commit()?;
         Ok((sid, tid))
     }
 
@@ -163,6 +177,8 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         let tid = self.task_id_of_session(session_id)?;
+        // 按字符截断，防超大 Bash 命令整条进库并随轮询全量下发。
+        let activity = truncate_chars(activity, 200);
         self.conn.execute(
             "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![activity, now_ms, tid],
@@ -392,7 +408,9 @@ impl Store {
         cwd: Option<&str>,
         last_event_at: i64,
     ) -> Result<bool, StoreError> {
-        let n = self.conn.execute(
+        // 事务保证「会话 + 任务卡」原子落库：DO NOTHING 的幂等判断使半态永不重试，必须避免。
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute(
             "INSERT INTO sessions
                 (project_id, cc_session_id, status, started_at, last_event_at, ended_at, cwd)
              VALUES (?1, ?2, 'ended', ?3, ?3, ?3, ?4)
@@ -400,7 +418,7 @@ impl Store {
             rusqlite::params![project_id, cc_session_id, last_event_at, cwd],
         )?;
         if n == 0 {
-            return Ok(false); // 已存在，绝不覆盖
+            return Ok(false); // 已存在，绝不覆盖（事务随 drop 回滚，无写入）
         }
         let sid = self
             .find_session_id(cc_session_id)?
@@ -410,12 +428,13 @@ impl Store {
             t = "(未命名会话)".to_string();
         }
         // 历史已结束会话的任务卡固定放 done 列，不导入 todo。
-        self.conn.execute(
+        tx.execute(
             "INSERT OR IGNORE INTO tasks
                 (project_id, session_id, title, column_name, column_locked, created_at, updated_at)
              VALUES (?1, ?2, ?3, 'done', 0, ?4, ?4)",
             rusqlite::params![project_id, sid, t, last_event_at],
         )?;
+        tx.commit()?;
         Ok(true)
     }
 
@@ -464,17 +483,22 @@ impl Store {
     /// （它们已被 /clear、resume、或同进程开新会话取代），否则旧会话会因进程仍存活而一直
     /// 误显示「已连接」。pid 复用（旧进程退出、号被新 claude 占用）也由此一并纠正。
     pub fn set_session_pid(&self, session_id: i64, pid: i64, now_ms: i64) -> Result<(), StoreError> {
-        // 被同一进程的新会话顶替的旧会话：直接收尾为 ended（pid 清空、记 ended_at），
-        // 这样 /clear 一发生旧会话立刻从 live 列表消失，而不是只摘 pid 留个空壳。
-        self.conn.execute(
-            "UPDATE sessions SET pid = NULL, status = 'ended', ended_at = ?2 \
-             WHERE pid = ?1 AND id <> ?3 AND status <> 'ended'",
-            rusqlite::params![pid, now_ms, session_id],
-        )?;
-        self.conn.execute(
+        // 事务保证「本会话认领 + 旧会话收尾」原子完成，避免交错留下两个会话同持一个 pid。
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![pid, now_ms, session_id],
         )?;
+        // 被同一进程的新会话顶替的旧会话：直接收尾为 ended（pid 清空、记 ended_at），
+        // 这样 /clear 一发生旧会话立刻从 live 列表消失，而不是只摘 pid 留个空壳。
+        // 时间戳保护：只收尾 last_event_at 更旧的会话，迟到的旧会话 hook 无法反杀更活跃的新会话。
+        tx.execute(
+            "UPDATE sessions SET pid = NULL, status = 'ended', ended_at = ?2 \
+             WHERE pid = ?1 AND id <> ?3 AND status <> 'ended' \
+               AND last_event_at < (SELECT last_event_at FROM sessions WHERE id = ?3)",
+            rusqlite::params![pid, now_ms, session_id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
