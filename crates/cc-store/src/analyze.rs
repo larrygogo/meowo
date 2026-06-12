@@ -420,9 +420,16 @@ mod tests {
         let mut cache = TranscriptCache::new();
         assert_eq!(cache.analyze(p.to_str().unwrap()).title.as_deref(), Some("AAAA"));
 
-        // 隔开 mtime 粒度后等长重写。
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(&p, format!("{line_b}\n")).unwrap();
+        // 等长重写，循环到 mtime 确认变化为止（兼容粗粒度文件系统，NTFS/APFS 首轮即过）。
+        let mtime0 = std::fs::metadata(&p).unwrap().modified().unwrap();
+        for _ in 0..120 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            std::fs::write(&p, format!("{line_b}\n")).unwrap();
+            if std::fs::metadata(&p).unwrap().modified().unwrap() != mtime0 {
+                break;
+            }
+        }
+        assert_ne!(std::fs::metadata(&p).unwrap().modified().unwrap(), mtime0, "mtime 未变化，无法验证缓存失效");
         assert_eq!(cache.analyze(p.to_str().unwrap()).title.as_deref(), Some("BBBB"));
         std::fs::remove_file(&p).ok();
     }

@@ -582,15 +582,19 @@ function AboutSection({
   useEffect(() => {
     let cancelled = false;
     let un: (() => void) | undefined;
-    listen("update-failed", () => setTriggered(false))
-      .then((f) => {
-        if (cancelled) f();
-        else un = f;
-      })
-      .catch(() => {});
+    try {
+      listen("update-failed", () => setTriggered(false))
+        .then((f) => {
+          if (cancelled) f();
+          else un = f;
+        })
+        .catch(() => {});
+    } catch {
+      /* 非 Tauri 环境（测试/浏览器） */
+    }
     return () => {
       cancelled = true;
-      un?.();
+      try { un?.(); } catch { /* noop */ }
     };
   }, []);
 
