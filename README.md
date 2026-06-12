@@ -34,6 +34,7 @@
 
 - 点**连接中**的会话直达它所在的终端——Windows 精确切到 Windows Terminal 对应标签页并置前窗口(正确处理一个 WT 进程托管多标签/多窗口的情况),macOS 通过 AppleScript 精确聚焦 Terminal / iTerm2 中对应的标签页。
 - 点**已断开**的会话,在其原项目目录新开终端并 `claude --resume` 把对话续上;所用终端可在设置中指定——Windows 支持 Windows Terminal / PowerShell / 命令提示符,macOS 支持 Terminal / iTerm2(按本机实际安装自动过滤)。
+- 跳转与恢复均在后台执行,点完立即返回,贴纸不卡顿。
 
 ### 🔔 不漏掉任何等待
 
@@ -60,7 +61,7 @@ macOS 为状态栏(菜单栏)App——无独立浮窗/吸边/pin,应用不显示
 <details>
 <summary>macOS 首次使用的权限授权</summary>
 
-首次点击「跳转/恢复终端」会触发 macOS「自动化」授权(系统设置 → 隐私与安全性 → 自动化),需允许 cc-kanban 控制 Terminal/iTerm2;首次通知会请求通知权限。
+首次点击「跳转/恢复终端」会触发 macOS「自动化」授权(系统设置 → 隐私与安全性 → 自动化),需允许 cc-kanban 控制 Terminal/iTerm2;首次通知会请求通知权限。授权弹窗期间应用保持响应,不影响贴纸正常使用。
 
 </details>
 
