@@ -760,6 +760,102 @@ fn wt_available() -> bool {
     })
 }
 
+/// 定位 Windows Terminal 的 settings.json（Store 版 / Preview / 未打包版三处）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn wt_settings_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    [
+        r"Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+        r"Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+        r"Microsoft\Windows Terminal\settings.json",
+    ]
+    .into_iter()
+    .map(|rel| base.join(rel))
+    .find(|p| p.is_file())
+}
+
+/// 去掉 JSONC 注释（WT settings.json 允许 // 与 /* */，且字符串里常有 URL 的 //）。
+/// 按字节扫描、正确跳过字符串与转义，不破坏多字节 UTF-8（profile 名可能含中文）。纯函数便于单测。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn strip_jsonc_comments(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let mut in_str = false;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            out.push(c);
+            if c == b'\\' && i + 1 < b.len() {
+                out.push(b[i + 1]); // 保留转义字符，避免把 \" 误判为字符串结束
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+            i += 1;
+        } else if c == b'"' {
+            in_str = true;
+            out.push(c);
+            i += 1;
+        } else if c == b'/' && i + 1 < b.len() && b[i + 1] == b'/' {
+            i += 2;
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+        } else if c == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
+}
+
+/// 从 WT settings.json 的 JSON 取默认 profile 名：defaultProfile 为 GUID 时在 profiles.list
+/// 按 guid 找 name（大小写不敏感）；本身是名字则直接用。找不到则 None。纯函数便于单测。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_wt_default_profile(v: &serde_json::Value) -> Option<String> {
+    let def = v.get("defaultProfile").and_then(|x| x.as_str())?.trim();
+    if def.is_empty() {
+        return None;
+    }
+    if !def.starts_with('{') {
+        return Some(def.to_string()); // 直接配的是 profile 名
+    }
+    // 新格式 profiles.list 是数组；老格式 profiles 直接是数组。
+    let list = v
+        .get("profiles")
+        .and_then(|p| p.get("list").and_then(|l| l.as_array()).or_else(|| p.as_array()))?;
+    list.iter().find_map(|prof| {
+        let guid = prof.get("guid").and_then(|g| g.as_str())?;
+        guid.eq_ignore_ascii_case(def)
+            .then(|| prof.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .flatten()
+    })
+}
+
+/// 用户 WT 默认 profile 名（多为 PowerShell）。进程内缓存：与 wt_available 一致，运行期基本不变
+/// （改了默认 profile 需重启 app 才生效）。读不到/解析失败/无匹配 → None，调用方退化为不带 -p。
+#[cfg(target_os = "windows")]
+fn wt_default_profile() -> Option<String> {
+    use std::sync::OnceLock;
+    static PROFILE: OnceLock<Option<String>> = OnceLock::new();
+    PROFILE
+        .get_or_init(|| {
+            let raw = std::fs::read_to_string(wt_settings_path()?).ok()?;
+            let v: serde_json::Value = serde_json::from_str(&strip_jsonc_comments(&raw)).ok()?;
+            parse_wt_default_profile(&v)
+        })
+        .clone()
+}
+
 #[cfg(target_os = "windows")]
 fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     let d = cwd?.trim();
@@ -823,6 +919,12 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
                 // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
                 _ => {
                     let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+                    // 用用户默认 profile（多为 PowerShell）渲染标签：否则 WT 对裸命令行套用 cmd
+                    // 基础配置，图标/配色/环境都是 cmd，看起来"还是 cmd"。读不到则不带 -p，沿用旧行为。
+                    if let Some(p) = wt_default_profile() {
+                        args.push("-p".into());
+                        args.push(p);
+                    }
                     if let Some(d) = &dir {
                         args.push("-d".into());
                         args.push(d.clone());
@@ -1860,9 +1962,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id,
-        normalize_tab_title, path_has_exe, pid_is_claude, should_notify, tab_match_score,
-        waiting_fingerprint, Edge, Rect, Settings,
+        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
+        parse_wt_default_profile, path_has_exe, pid_is_claude, should_notify, strip_jsonc_comments,
+        tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -1928,6 +2030,44 @@ mod tests {
     fn clamp_window_larger_than_work_aligns_origin() {
         let big = Rect { x: 500, y: 500, w: 3000, h: 2000 };
         assert_eq!(clamp_xy_to_work(big, WORK1), (0, 0));
+    }
+
+    #[test]
+    fn strip_jsonc_keeps_strings_and_drops_comments() {
+        let src = r#"{
+          // 行注释
+          "defaultProfile": "{guid}", /* 块注释 */
+          "url": "https://example.com/a//b",
+          "name": "含 // 的中文 \" 引号"
+        }"#;
+        let v: serde_json::Value = serde_json::from_str(&strip_jsonc_comments(src)).unwrap();
+        assert_eq!(v["defaultProfile"], "{guid}");
+        assert_eq!(v["url"], "https://example.com/a//b"); // 字符串里的 // 不能被当注释删掉
+        assert_eq!(v["name"], "含 // 的中文 \" 引号"); // 多字节 UTF-8 与转义引号保留
+    }
+
+    #[test]
+    fn wt_default_profile_resolves_guid_to_name() {
+        // GUID 大小写不敏感匹配到 name。
+        let v = serde_json::json!({
+            "defaultProfile": "{574E775E-4F2A-5B96-AC1E-A2962A402336}",
+            "profiles": { "list": [
+                {"guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}", "name": "命令提示符"},
+                {"guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}", "name": "PowerShell"}
+            ]}
+        });
+        assert_eq!(parse_wt_default_profile(&v).as_deref(), Some("PowerShell"));
+        // defaultProfile 直接是名字。
+        let named = serde_json::json!({"defaultProfile": "Ubuntu"});
+        assert_eq!(parse_wt_default_profile(&named).as_deref(), Some("Ubuntu"));
+        // 老格式 profiles 为数组。
+        let legacy = serde_json::json!({
+            "defaultProfile": "{abc}", "profiles": [{"guid": "{abc}", "name": "Legacy"}]
+        });
+        assert_eq!(parse_wt_default_profile(&legacy).as_deref(), Some("Legacy"));
+        // 无匹配 / 缺字段 → None。
+        assert!(parse_wt_default_profile(&serde_json::json!({"defaultProfile": "{zzz}", "profiles": {"list": []}})).is_none());
+        assert!(parse_wt_default_profile(&serde_json::json!({})).is_none());
     }
 
     #[test]
