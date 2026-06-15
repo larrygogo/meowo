@@ -17,7 +17,6 @@ const SNAP_KEY = "cc-kanban-snap-edge";
 const SIZE_KEY = "cc-kanban-normal-size";
 const PIN_KEY = "cc-kanban-pinned"; // 与 Sticker 的置顶偏好共用
 const SETTLE_MS = 600; // 拖拽松手兜底（mouseup 未触发时）
-const LEAVE_MS = 350; // 偷看展开后鼠标离开收回的防抖
 
 // 缩略条主轴逻辑长度：按 connected 点数贴合内容（点 10px + 间距 7px = 17，两端留白 26），最小 48。
 // 仅作折叠初值，CollapsedStrip 挂载后会按真实 DOM 尺寸精确校正。
@@ -57,6 +56,8 @@ export function App() {
     return s === "left" || s === "right" || s === "top" ? "collapsed" : "normal";
   });
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
+  // 展开过渡中：缩放期间强制不渲染缩略条（三个圆点），落地后再恢复按 mode 判定。
+  const [expanding, setExpanding] = useState(false);
   const {
     status: upStatus,
     version: updateVersion,
@@ -78,7 +79,7 @@ export function App() {
   const draggingRef = useRef(false); // 是否正在拖拽窗口（mousedown 命中拖拽区）
   const lastEdgeRef = useRef<Edge | null>(null); // 最近一次 Moved 检测到的边
   const settleRef = useRef<number | null>(null);
-  const leaveRef = useRef<number | null>(null);
+  const preResizeEdgeRef = useRef<Edge | null>(null); // 拖角缩放前的吸附边，缩放结束后据此恢复
 
   const refresh = useCallback(async () => {
     setLive((await getLiveSessions()) as Item[]);
@@ -126,12 +127,6 @@ export function App() {
       window.clearTimeout(settleRef.current);
       settleRef.current = null;
     }
-    // 取消悬停偷看的「收回竖条」定时器：否则它会在松手还原后滞后触发，
-    // 与本次 restore/collapse 抢命令，导致窗口卡在缩略尺寸（吸附条漂在屏幕中间）。
-    if (leaveRef.current) {
-      window.clearTimeout(leaveRef.current);
-      leaveRef.current = null;
-    }
     setGlow(null);
     const d = lastEdgeRef.current;
     const m = modeRef.current;
@@ -170,6 +165,45 @@ export function App() {
     }
   }, [doCollapse]);
 
+  // 用户拖边框缩放窗口（后端 WM_SIZING/WM_EXITSIZEMOVE 检测）：
+  // - 缩放开始(user-resized)：暂解除吸附变普通窗口，避免缩放中被吸附逻辑误折叠抖动；记住原吸附边。
+  // - 缩放结束(user-resize-end)：若缩放前是吸附的，按新尺寸重新吸回原来那条边（保留新尺寸）。
+  useEffect(() => {
+    if (isMacPanel()) return;
+    const unStart = listen("user-resized", () => {
+      if (modeRef.current === "normal") return; // 本就普通态，无吸附可解
+      preResizeEdgeRef.current = edgeRef.current; // 记住缩放前的吸附边
+      invoke("unsnap", { pinned: isPinned() }).catch(() => {});
+      localStorage.removeItem(SNAP_KEY);
+      setEdge(null);
+      setMode("normal");
+    });
+    const unEnd = listen("user-resize-end", async () => {
+      const e = preResizeEdgeRef.current;
+      preResizeEdgeRef.current = null;
+      if (!e) return; // 缩放前非吸附态 → 保持普通窗口
+      // 把缩放后的尺寸记为新的常用尺寸，再按它重新吸回原边（snap_expand 会贴边定位）。
+      try {
+        const sz = await getCurrentWindow().outerSize();
+        const sf = await getCurrentWindow().scaleFactor();
+        localStorage.setItem(SIZE_KEY, JSON.stringify({ w: sz.width / sf, h: sz.height / sf }));
+      } catch {
+        /* ignore */
+      }
+      const { w, h } = loadSize();
+      localStorage.setItem(SNAP_KEY, e);
+      setEdge(e);
+      setMode("expanded");
+      invoke("snap_expand", { edge: e, width: w, height: h }).catch((err) =>
+        console.error("[snap] 缩放后重新吸附失败：", err)
+      );
+    });
+    return () => {
+      unStart.then((f) => f());
+      unEnd.then((f) => f());
+    };
+  }, []);
+
   // 监听窗口移动：拖拽中靠近边缘则发光；停止移动 SETTLE_MS 作为松手兜底。
   // macOS 面板模式无吸边，不注册此监听器。
   useEffect(() => {
@@ -204,11 +238,6 @@ export function App() {
           return;
         }
         draggingRef.current = true;
-        // 开始拖动即取消悬停偷看的收回定时器，避免拖动期间/松手后误折叠。
-        if (leaveRef.current) {
-          window.clearTimeout(leaveRef.current);
-          leaveRef.current = null;
-        }
       }
     };
     const onUp = () => {
@@ -244,47 +273,54 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 偷看：悬停竖条 → 展开成全尺寸（仍贴边）。macOS 面板模式：无此操作。
+  // 偷看：悬停缩略条 → 就地放大成全尺寸（仍贴边）。先切看板视图再放大，避免放大瞬间渲染缩略条。
+  // macOS 面板模式：无此操作。收回由下方光标轮询负责（不用 DOM mouseleave，缩放时会误报）。
   const onExpand = useCallback(() => {
     if (isMacPanel()) return;
-    if (leaveRef.current) {
-      window.clearTimeout(leaveRef.current);
-      leaveRef.current = null;
-    }
     if (modeRef.current !== "collapsed" || !edgeRef.current) return;
     const { w, h } = loadSize();
-    invoke("snap_expand", { edge: edgeRef.current, width: w, height: h })
-      .then(() => setMode("expanded"))
-      .catch((err) => console.error("[snap] snap_expand 失败：", err));
+    const e = edgeRef.current;
+    setExpanding(true);
+    setMode("expanded");
+    invoke("snap_expand", { edge: e, width: w, height: h })
+      .catch((err) => console.error("[snap] snap_expand 失败：", err))
+      .finally(() => setExpanding(false));
   }, []);
 
-  // 离开展开态 → 防抖后收回竖条；正在拖窗时不收（拖离边缘由松手处理）。
-  const onExpandedLeave = useCallback(() => {
-    if (leaveRef.current) window.clearTimeout(leaveRef.current);
-    leaveRef.current = window.setTimeout(() => {
-      if (modeRef.current === "expanded" && edgeRef.current && !draggingRef.current) {
-        doCollapse(edgeRef.current)
-          .then(() => setMode("collapsed"))
-          .catch((err) => console.error("[snap] 收回竖条失败：", err));
+  // 展开态收回：不用 DOM 的 mouseleave（窗口缩放时会误报一串假 leave/enter → 抖动死循环），
+  // 改为轮询真实光标坐标，连续两次确认在窗口外才收回（给短暂掠出一点容差）。
+  useEffect(() => {
+    if (isMacPanel() || mode !== "expanded") return;
+    let outCount = 0;
+    const id = window.setInterval(() => {
+      if (draggingRef.current) {
+        outCount = 0;
+        return;
       }
-    }, LEAVE_MS);
-  }, [doCollapse]);
+      invoke<boolean>("cursor_over_window")
+        .then((over) => {
+          if (over) {
+            outCount = 0;
+            return;
+          }
+          outCount += 1;
+          if (outCount >= 2 && modeRef.current === "expanded" && edgeRef.current) {
+            doCollapse(edgeRef.current)
+              .then(() => setMode("collapsed"))
+              .catch((err) => console.error("[snap] 收回竖条失败：", err));
+          }
+        })
+        .catch(() => {});
+    }, 180);
+    return () => window.clearInterval(id);
+  }, [mode, doCollapse]);
 
-  const onExpandedEnter = useCallback(() => {
-    if (leaveRef.current) {
-      window.clearTimeout(leaveRef.current);
-      leaveRef.current = null;
-    }
-  }, []);
-
-  if (!isMacPanel() && mode === "collapsed" && edge) {
+  if (!isMacPanel() && mode === "collapsed" && edge && !expanding) {
     return <CollapsedStrip data={live} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
   }
   return (
     <div
       style={{ height: "100vh" }}
-      onMouseEnter={mode === "expanded" ? onExpandedEnter : undefined}
-      onMouseLeave={mode === "expanded" ? onExpandedLeave : undefined}
     >
       {!isMacPanel() && glow && <div className={"snap-glow snap-glow-" + glow} />}
       {(upStatus === "available" || upStatus === "downloading") && (

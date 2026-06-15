@@ -154,6 +154,43 @@ fn strip_width_phys(scale: f64) -> i32 {
     ((STRIP_W_LOGICAL * scale).round() as i32).max(1)
 }
 
+/// 仅在置顶状态实际变化时调用 set_always_on_top：避免在透明窗口上重复 SetWindowPos
+/// 触发额外重绘闪烁（展开/收起/重测尺寸会反复进入这些命令，但置顶状态多数时候没变）。
+fn set_top_if_changed(window: &tauri::WebviewWindow, desired: bool) -> Result<(), String> {
+    if window.is_always_on_top().map_err(|e| e.to_string())? != desired {
+        window.set_always_on_top(desired).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 真实光标是否在主窗口外接矩形内。用于展开态下判定是否该收回——DOM 的 mouseleave 在
+/// 窗口缩放时会误报一串假 leave/enter，不可信；改问 GetCursorPos vs 窗口物理矩形。
+/// 取不到坐标/尺寸时一律当作"在内"，避免误折叠。非 Windows 暂恒为 true（不收回）。
+#[tauri::command]
+fn cursor_over_window(window: tauri::WebviewWindow) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        let mut p = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut p) } == 0 {
+            return true;
+        }
+        let (Ok(pos), Ok(sz)) = (window.outer_position(), window.outer_size()) else {
+            return true;
+        };
+        p.x >= pos.x
+            && p.x < pos.x + sz.width as i32
+            && p.y >= pos.y
+            && p.y < pos.y + sz.height as i32
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        true
+    }
+}
+
 /// 折叠成缩略条：贴到指定边，左/右为竖条、顶为横条。
 /// `extent` 是沿条主轴的逻辑长度（竖条=高，横条=宽），由前端按内容（连接中会话数）给出。
 #[tauri::command]
@@ -190,8 +227,8 @@ fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Resul
     window
         .set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
-    // 吸附态强制置顶，保证缩略条始终可见。
-    window.set_always_on_top(true).map_err(|e| e.to_string())?;
+    // 吸附态强制置顶，保证缩略条始终可见（仅状态变化时设，避免重复触发重绘闪烁）。
+    set_top_if_changed(&window, true)?;
     Ok(())
 }
 
@@ -212,7 +249,7 @@ fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64
         Edge::Right => (wa.position.x + wa.size.width as i32 - phys_w, pos.y),
         Edge::Top => (pos.x, wa.position.y),
     };
-    // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开。
+    // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开，就地放大到贴边位置。
     window
         .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
         .map_err(|e| e.to_string())?;
@@ -222,7 +259,7 @@ fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64
     window
         .set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
-    window.set_always_on_top(true).map_err(|e| e.to_string())?;
+    set_top_if_changed(&window, true)?;
     Ok(())
 }
 
@@ -241,7 +278,18 @@ fn snap_restore(
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| e.to_string())?;
-    window.set_always_on_top(pinned).map_err(|e| e.to_string())?;
+    set_top_if_changed(&window, pinned)?;
+    Ok(())
+}
+
+/// 拖角缩放触发的「解除吸附」：保留用户当前拖出的尺寸/位置，只复位最小尺寸与置顶（按 pin 偏好）。
+/// 解除后窗口即普通浮动窗口，再拖到屏幕边缘仍会被吸附逻辑重新吸附。
+#[tauri::command]
+fn unsnap(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
+    window
+        .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
+        .map_err(|e| e.to_string())?;
+    set_top_if_changed(&window, pinned)?;
     Ok(())
 }
 
@@ -1729,10 +1777,21 @@ mod win_constrain {
     };
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_WINDOWPOSCHANGING,
+        GetWindowRect, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_EXITSIZEMOVE, WM_SIZING,
+        WM_WINDOWPOSCHANGING,
     };
 
     const SUBCLASS_ID: usize = 0x00CC_4A0B;
+
+    /// 用户拖边框缩放时通知前端用的 AppHandle（启动时注入）。
+    static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+    /// 本次缩放手势是否已通知过（一次拖拽只发一次 user-resized）。
+    static RESIZE_EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// 注入 AppHandle（在装子类时一并调用）。
+    pub fn set_app(app: tauri::AppHandle) {
+        let _ = APP.set(app);
+    }
 
     /// 累积所有显示器工作区(rcWork)的并集包围盒。
     struct Bbox {
@@ -1813,6 +1872,26 @@ mod win_constrain {
                     }
                 }
             }
+        } else if msg == WM_SIZING {
+            // WM_SIZING 仅在用户拖边框缩放时发（程序 set_size 不发）→ 通知前端解除吸附。
+            // 一次拖拽手势只发一次，避免刷屏。
+            use std::sync::atomic::Ordering;
+            if !RESIZE_EMITTED.swap(true, Ordering::Relaxed) {
+                if let Some(app) = APP.get() {
+                    use tauri::Emitter;
+                    let _ = app.emit("user-resized", ());
+                }
+            }
+        } else if msg == WM_EXITSIZEMOVE {
+            // 缩放/移动手势结束：若本次确实缩放过（发过 user-resized），通知前端"缩放结束"，
+            // 供其按缩放前的吸附状态重新吸回。复位标志，下次拖拽可再次通知。
+            use std::sync::atomic::Ordering;
+            if RESIZE_EMITTED.swap(false, Ordering::Relaxed) {
+                if let Some(app) = APP.get() {
+                    use tauri::Emitter;
+                    let _ = app.emit("user-resize-end", ());
+                }
+            }
         }
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
@@ -1859,6 +1938,8 @@ pub fn run() {
             snap_collapse,
             snap_expand,
             snap_restore,
+            unsnap,
+            cursor_over_window,
             get_account,
             refresh_usage,
             host_os,
@@ -1945,6 +2026,7 @@ pub fn run() {
                 pull_on_screen(&w, false);
                 // 装上位置约束子类：在移动生效前硬钳坐标，彻底拖不出屏幕。
                 if let Ok(h) = w.hwnd() {
+                    win_constrain::set_app(app.handle().clone()); // 供子类拖边框缩放时通知前端
                     win_constrain::install(h.0 as isize);
                 }
             }
