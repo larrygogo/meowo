@@ -94,6 +94,7 @@ export const en: Dict = {
     extraUsage: "Extra usage enabled",
     refreshFailed: "Refresh failed; showing cached values",
     usageUnavailable: "Usage unavailable. Make sure you're signed in to Claude Code (run claude) or check your network",
+    usageUnsupported: "Usage isn't available for your current sign-in (only official Claude Code accounts are supported)",
     loading: "Loading…",
     dailyUsage: "Daily usage",
     less: "Less",

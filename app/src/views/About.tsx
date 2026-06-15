@@ -203,15 +203,21 @@ function AccountSection() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [usageErr, setUsageErr] = useState(false);
+  // 第三方/非官方登录：后端读不到 OAuth 凭据，用量接口不适用（区别于网络等真实失败）。
+  const [usageUnsupported, setUsageUnsupported] = useState(false);
   // 联网新值是否已落地：getAccount 的缓存 usage 仅在此前回填，防止慢 resolve 用缓存覆盖新值。
   const freshApplied = useRef(false);
 
   const doRefresh = () => {
     setRefreshing(true);
     setUsageErr(false);
+    setUsageUnsupported(false);
     refreshUsage()
       .then((u) => { freshApplied.current = true; setUsage(u); })
-      .catch(() => setUsageErr(true))
+      .catch((e) => {
+        if (String(e).includes("USAGE_UNSUPPORTED")) setUsageUnsupported(true);
+        else setUsageErr(true);
+      })
       .finally(() => setRefreshing(false));
   };
 
@@ -261,6 +267,8 @@ function AccountSection() {
             {usage.extra_usage_enabled && <div className="usage-extra">{t.account.extraUsage}</div>}
             {usageErr && <div className="usage-stale">{t.account.refreshFailed}</div>}
           </>
+        ) : usageUnsupported ? (
+          <div className="usage-stale">{t.account.usageUnsupported}</div>
         ) : usageErr ? (
           <div className="usage-stale">{t.account.usageUnavailable}</div>
         ) : (

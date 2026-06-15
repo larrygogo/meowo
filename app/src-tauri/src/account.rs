@@ -160,6 +160,21 @@ pub fn merge_credentials(
     out
 }
 
+/// 用量不可查的标记码：读不到可用的 Anthropic OAuth 凭据（多为第三方/中转登录，
+/// 或尚未在终端登录）。前端据此显示「当前登录方式不支持用量查询」而非通用报错。
+pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
+
+/// 凭据根是否缺少可用的 Anthropic OAuth（→ 第三方/非官方登录，用量接口不适用）。
+/// 判定：根缺失、缺 claudeAiOauth、或 access+refresh 双空。纯函数便于单测。
+pub fn oauth_credentials_missing(root: Option<&serde_json::Value>) -> bool {
+    let Some(oauth) = root.and_then(|r| r.get("claudeAiOauth")) else {
+        return true;
+    };
+    let access = oauth.get("accessToken").and_then(|v| v.as_str()).unwrap_or("");
+    let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("");
+    access.is_empty() && refresh.is_empty()
+}
+
 /// Claude Code 公开 OAuth client id。
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -341,8 +356,12 @@ fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
 
 /// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
 fn ensure_valid_token() -> Result<String, String> {
-    let root = read_credentials_root()
-        .ok_or("读不到 Claude Code 凭据（未登录？macOS 看 Keychain，其它平台看 ~/.claude/.credentials.json）")?;
+    let root = read_credentials_root();
+    // 读不到可用 OAuth 凭据 → 视为第三方/非官方登录，用量接口不适用，返回标记码。
+    if oauth_credentials_missing(root.as_ref()) {
+        return Err(USAGE_UNSUPPORTED.into());
+    }
+    let root = root.expect("credentials present: oauth_credentials_missing 已排除 None");
     let oauth = root.get("claudeAiOauth").ok_or("凭据缺 claudeAiOauth")?;
     let access = oauth.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -501,6 +520,24 @@ mod tests {
         // 没有 acct 行 / NULL → None。
         assert_eq!(parse_keychain_account("nothing here"), None);
         assert_eq!(parse_keychain_account("    \"acct\"<blob>=<NULL>\n"), None);
+    }
+
+    #[test]
+    fn oauth_credentials_missing_detects_third_party() {
+        // 无根、缺 claudeAiOauth、access+refresh 双空 → 缺失（第三方/未登录）。
+        assert!(oauth_credentials_missing(None));
+        assert!(oauth_credentials_missing(Some(&json!({"mcpOAuth": {}}))));
+        assert!(oauth_credentials_missing(Some(&json!({"claudeAiOauth": {}}))));
+        assert!(oauth_credentials_missing(Some(
+            &json!({"claudeAiOauth": {"accessToken": "", "refreshToken": ""}})
+        )));
+        // 有 access 或有 refresh → 视为官方 OAuth 凭据，不缺失。
+        assert!(!oauth_credentials_missing(Some(
+            &json!({"claudeAiOauth": {"accessToken": "a", "refreshToken": ""}})
+        )));
+        assert!(!oauth_credentials_missing(Some(
+            &json!({"claudeAiOauth": {"accessToken": "", "refreshToken": "r"}})
+        )));
     }
 
     #[test]
