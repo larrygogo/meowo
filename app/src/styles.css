@@ -190,7 +190,7 @@ html, body {
   overflow-y: hidden;
   -webkit-user-select: none;
   user-select: none;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(16px);
 }
 .tabs { display: flex; gap: 2px; padding: 2px 0 6px; flex: none; }
 .stab { cursor: pointer; font-size: calc(11px * var(--cc-ui)); color: var(--cc-text-dim); padding: 2px 5px; border-radius: var(--r-md); display: inline-flex; align-items: center; gap: 3px; }
@@ -208,7 +208,8 @@ html, body {
 .stk-scroll::-webkit-scrollbar { width: 6px; }
 .stk-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
 .stk-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
-.stk-scroll::-webkit-scrollbar-track { background: transparent; }
+/* 底部留出缩放手柄(.resize-grip 约 16px)的高度，滑块不再与右下角手柄重叠（内容仍可滚到底）。 */
+.stk-scroll::-webkit-scrollbar-track { background: transparent; margin-bottom: 18px; }
 .resize-grip { position: fixed; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
   z-index: 60; /* 高于更新提示条(50)，更新时仍可从右下角缩放 */
   opacity: 0; transition: opacity 0.15s;
@@ -258,7 +259,7 @@ html, body {
   --bc-text: #06281f; /* 圆内百分比文字 */
   position: absolute;
   inset: 0;
-  border-radius: 5px; /* 比 .stk-ind 的 6px 略小，扣掉 1px 边框 */
+  border-radius: 13px; /* 比 .stk-ind 的 14px 略小，扣掉 1px 边框 */
   overflow: hidden; /* 裁掉旋转亮段的圆角外溢 → 光点贴着圆角矩形边框跑 */
   background: var(--bc-track);
 }
@@ -271,7 +272,7 @@ html, body {
 .run-sweep {
   position: absolute;
   inset: -50%; /* 放大到 200%，旋转时始终盖满含四角 */
-  background: conic-gradient(from 0deg, var(--bc) 0deg, var(--bc-fade) 42deg 360deg);
+  background: conic-gradient(from 0deg, var(--bc-fade) 0deg, var(--bc) 110deg, var(--bc-fade) 110deg 360deg);
   will-change: transform;
   animation: run-spin 1.5s linear infinite;
 }
@@ -283,7 +284,7 @@ html, body {
 .run-mask {
   position: absolute;
   inset: 1.6px;
-  border-radius: 4px;
+  border-radius: 11.5px;
   background: #000; /* 与 .stk-ind 黑底一致，只留外圈 1.6px 边框可见 */
 }
 .run-core {
@@ -317,7 +318,7 @@ html, body {
   background: var(--cc-surface);
   border: 1px solid var(--cc-border);
   transition: background 0.12s, border-color 0.12s;
-  border-radius: 12px;
+  border-radius: 16px;
 }
 .stk-card:last-child { margin-bottom: 0; }
 .stk-card:hover { background: var(--cc-surface-hover); border-color: var(--cc-accent-border); }
@@ -330,7 +331,7 @@ html, body {
   flex: none;
   width: 36px;
   height: 36px;
-  border-radius: var(--r-md);
+  border-radius: 14px;
   background: #000;
   border: 1px solid var(--cc-border);
   display: flex;
@@ -407,7 +408,7 @@ html, body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(16px);
 }
 .cstrip-left { border-radius: 0 var(--r-lg) var(--r-lg) 0; }
 .cstrip-right { border-radius: var(--r-lg) 0 0 var(--r-lg); }
