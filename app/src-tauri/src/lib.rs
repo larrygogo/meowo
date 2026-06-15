@@ -191,8 +191,15 @@ fn cursor_over_window(window: tauri::WebviewWindow) -> bool {
     }
 }
 
-/// 折叠成缩略条：贴到指定边，左/右为竖条、顶为横条。
-/// `extent` 是沿条主轴的逻辑长度（竖条=高，横条=宽），由前端按内容（连接中会话数）给出。
+/// 交叉轴居中：让新长度 `new_len` 的窗以原窗口（起点 prev_start、长度 prev_len）中心对齐，
+/// 再夹进工作区 [work_start, work_start+work_len) 内，避免居中后越界。纯函数便于单测。
+fn center_on(prev_start: i32, prev_len: i32, new_len: i32, work_start: i32, work_len: i32) -> i32 {
+    let centered = prev_start + (prev_len - new_len) / 2;
+    centered.clamp(work_start, (work_start + work_len - new_len).max(work_start))
+}
+
+/// 折叠成缩略条：贴到指定边，左/右为竖条、顶为横条。交叉轴以原窗口中心对齐
+/// （吸顶=水平居中，吸左/右=垂直居中）。`extent` 是沿条主轴的逻辑长度，由前端按内容给出。
 #[tauri::command]
 fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Result<(), String> {
     let m = window
@@ -204,18 +211,35 @@ fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Resul
     let strip = strip_width_phys(scale); // 条的厚度（物理像素）
     let ext = ((extent * scale).round() as i32).max(1); // 条的主轴长度
     let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let sz = window.outer_size().map_err(|e| e.to_string())?;
+    let (cur_w, cur_h) = (sz.width as i32, sz.height as i32);
+    let (ww, wh) = (wa.size.width as i32, wa.size.height as i32);
     // (min_w, min_h, w, h, x, y)
     let (min_w, min_h, w, h, x, y) = match edge {
-        Edge::Left => (strip, 0, strip, ext, wa.position.x, pos.y),
+        Edge::Left => (
+            strip,
+            0,
+            strip,
+            ext,
+            wa.position.x,
+            center_on(pos.y, cur_h, ext, wa.position.y, wh),
+        ),
         Edge::Right => (
             strip,
             0,
             strip,
             ext,
-            wa.position.x + wa.size.width as i32 - strip,
-            pos.y,
+            wa.position.x + ww - strip,
+            center_on(pos.y, cur_h, ext, wa.position.y, wh),
         ),
-        Edge::Top => (0, strip, ext, strip, pos.x, wa.position.y),
+        Edge::Top => (
+            0,
+            strip,
+            ext,
+            strip,
+            center_on(pos.x, cur_w, ext, wa.position.x, ww),
+            wa.position.y,
+        ),
     };
     // 放开最小宽高限制（tauri.conf 配了 minWidth=320/minHeight=80），否则缩不到缩略条尺寸。
     window
@@ -244,10 +268,17 @@ fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64
     let phys_w = ((width * scale).round() as i32).max(1);
     let phys_h = ((height * scale).round() as u32).max(1);
     let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let sz = window.outer_size().map_err(|e| e.to_string())?;
+    let (cur_w, cur_h) = (sz.width as i32, sz.height as i32);
+    let (ww, wh) = (wa.size.width as i32, wa.size.height as i32);
+    // 交叉轴以当前（缩略条）中心对齐展开，与折叠态保持同一中心，不跳回左/上对齐。
     let (x, y) = match edge {
-        Edge::Left => (wa.position.x, pos.y),
-        Edge::Right => (wa.position.x + wa.size.width as i32 - phys_w, pos.y),
-        Edge::Top => (pos.x, wa.position.y),
+        Edge::Left => (wa.position.x, center_on(pos.y, cur_h, phys_h as i32, wa.position.y, wh)),
+        Edge::Right => (
+            wa.position.x + ww - phys_w,
+            center_on(pos.y, cur_h, phys_h as i32, wa.position.y, wh),
+        ),
+        Edge::Top => (center_on(pos.x, cur_w, phys_w, wa.position.x, ww), wa.position.y),
     };
     // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开，就地放大到贴边位置。
     window
@@ -2044,9 +2075,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id, normalize_tab_title,
-        parse_wt_default_profile, path_has_exe, pid_is_claude, should_notify, strip_jsonc_comments,
-        tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
+        center_on, clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id,
+        normalize_tab_title, parse_wt_default_profile, path_has_exe, pid_is_claude, should_notify,
+        strip_jsonc_comments, tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
     };
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
@@ -2150,6 +2181,18 @@ mod tests {
         // 无匹配 / 缺字段 → None。
         assert!(parse_wt_default_profile(&serde_json::json!({"defaultProfile": "{zzz}", "profiles": {"list": []}})).is_none());
         assert!(parse_wt_default_profile(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn center_on_centers_clamps_and_preserves_center() {
+        // 基本居中：300 长里放 60 → 起点 +120。
+        assert_eq!(center_on(100, 300, 60, 0, 1000), 220);
+        // 右/下越界 → 夹到工作区末尾内。
+        assert_eq!(center_on(950, 300, 60, 0, 1000), 940);
+        // 左/上越界（负） → 夹到工作区起点。
+        assert_eq!(center_on(-50, 100, 60, 0, 1000), 0);
+        // 重测一致：换长度后中心不变（220 中心=250 → 新起点 210，中心仍 250）。
+        assert_eq!(center_on(220, 60, 80, 0, 1000) + 80 / 2, 220 + 60 / 2);
     }
 
     #[test]
