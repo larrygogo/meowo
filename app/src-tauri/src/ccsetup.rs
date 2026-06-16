@@ -274,14 +274,15 @@ mod tests {
     #[test]
     fn reporter_exe_path_strict_matches_only_our_exe() {
         // 我们写入的形态：带引号的单可执行路径，无参数。
+        // 路径用正斜杠：Windows/macOS 均把 `/` 当分隔符，file_name 跨平台一致（避免 macOS 上 `\` 不被当分隔符）。
         assert_eq!(
-            reporter_exe_path("\"C:\\x\\cc-reporter.exe\"").as_deref(),
-            Some("C:\\x\\cc-reporter.exe")
+            reporter_exe_path("\"C:/x/cc-reporter.exe\"").as_deref(),
+            Some("C:/x/cc-reporter.exe")
         );
         assert_eq!(reporter_exe_path("/usr/local/bin/cc-reporter").as_deref(), Some("/usr/local/bin/cc-reporter"));
         // 不能误伤用户自有 hook：带参数、是别的脚本、或只是路径里含子串。
         assert_eq!(reporter_exe_path("node tools/cc-reporter-notify.js"), None);
-        assert_eq!(reporter_exe_path("\"C:\\x\\cc-reporter.exe\" --flag"), None);
+        assert_eq!(reporter_exe_path("\"C:/x/cc-reporter.exe\" --flag"), None);
         assert_eq!(reporter_exe_path("/opt/cc-reporter/run.sh"), None);
         assert_eq!(reporter_exe_path("cc-reporter-wrapper"), None);
         assert_eq!(reporter_exe_path(""), None);
@@ -293,13 +294,13 @@ mod tests {
     #[test]
     fn ensure_hooks_adds_all_events_when_empty() {
         let mut v = json!({});
-        assert!(ensure_hooks(&mut v, r"C:\x\cc-reporter.exe"));
+        assert!(ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
         for e in HOOK_EVENTS {
             let cmd = v["hooks"][e][0]["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(cmd, "\"C:\\x\\cc-reporter.exe\"");
+            assert_eq!(cmd, "\"C:/x/cc-reporter.exe\"");
         }
         // 再跑一次：幂等，无改动。
-        assert!(!ensure_hooks(&mut v, r"C:\x\cc-reporter.exe"));
+        assert!(!ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
     }
 
     #[test]
@@ -309,17 +310,17 @@ mod tests {
             "hooks": {
                 "SessionStart": [
                     { "matcher": "*", "hooks": [{ "type": "command", "command": "node other.js" }] },
-                    { "matcher": "*", "hooks": [{ "type": "command", "command": "\"C:\\old\\cc-reporter.exe\"", "timeout": 5 }] }
+                    { "matcher": "*", "hooks": [{ "type": "command", "command": "\"C:/old/cc-reporter.exe\"", "timeout": 5 }] }
                 ]
             }
         });
-        assert!(ensure_hooks(&mut v, r"C:\new\cc-reporter.exe"));
+        assert!(ensure_hooks(&mut v, "C:/new/cc-reporter.exe"));
         // 别的 hook 还在
         assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "node other.js");
         // cc-reporter 路径被更新
         assert_eq!(
             v["hooks"]["SessionStart"][1]["hooks"][0]["command"],
-            "\"C:\\new\\cc-reporter.exe\""
+            "\"C:/new/cc-reporter.exe\""
         );
         // 没有重复追加（该事件仍是 2 条）
         assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 2);
@@ -380,7 +381,7 @@ mod tests {
     #[test]
     fn real_shape_user_settings_merge() {
         // 精确复刻用户 settings.json 结构：PreToolUse(node) + 5 个 cc-reporter 事件 + claude-hud statusLine。
-        let ccr = r"C:\Users\larry\Desktop\workspace\cc-kanban\target\release\cc-reporter.exe";
+        let ccr = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe";
         let ccr_cmd = format!("\"{ccr}\"");
         let mut v = json!({
             "hooks": {
@@ -421,9 +422,9 @@ mod tests {
     fn reporter_path_extracted_from_hooks() {
         let v = json!({
             "hooks": { "Stop": [{ "matcher": "*", "hooks": [
-                { "type": "command", "command": "\"C:\\a\\b\\cc-reporter.exe\"", "timeout": 5 }
+                { "type": "command", "command": "\"C:/a/b/cc-reporter.exe\"", "timeout": 5 }
             ] }] }
         });
-        assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some(r"C:\a\b\cc-reporter.exe"));
+        assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some("C:/a/b/cc-reporter.exe"));
     }
 }
