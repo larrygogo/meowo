@@ -40,6 +40,9 @@ export const zh = {
     previewMark: "最近",
     star: "星标置顶",
     unstar: "取消星标",
+    noteAdd: "添加便签",
+    noteEdit: "编辑便签",
+    notePlaceholder: "写点备忘…（回车保存，Esc 取消）",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",

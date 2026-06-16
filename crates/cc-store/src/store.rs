@@ -32,7 +32,9 @@ impl Store {
     }
 
     /// schema 版本：升 schema/加迁移时 +1。
-    const USER_VERSION: i64 = 1;
+    /// v2: 新增 session_notes 表（会话便签）。旧库 version<2 时 init 会重跑
+    /// `CREATE TABLE IF NOT EXISTS` 把新表补上，再 bump。
+    const USER_VERSION: i64 = 2;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -128,6 +130,30 @@ impl Store {
                  updated_at = excluded.updated_at",
             rusqlite::params![cc_session_id, used_pct, window_size, now_ms],
         )?;
+        Ok(())
+    }
+
+    /// 写入/清除某会话的便签：trim 后非空则 upsert，空则删除该行（便签清空即移除）。
+    pub fn set_session_note(
+        &self,
+        cc_session_id: &str,
+        note: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let trimmed = note.trim();
+        if trimmed.is_empty() {
+            self.conn.execute(
+                "DELETE FROM session_notes WHERE cc_session_id = ?1",
+                [cc_session_id],
+            )?;
+        } else {
+            self.conn.execute(
+                "INSERT INTO session_notes (cc_session_id, note, updated_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(cc_session_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at",
+                rusqlite::params![cc_session_id, trimmed, now_ms],
+            )?;
+        }
         Ok(())
     }
 

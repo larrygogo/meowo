@@ -81,6 +81,8 @@ export type LiveSession = {
   error_raw: string | null;
   /** 最近一条 AI 正文的轻推预览（清洗+截断），hover 卡片时速览；无正文回合为 null。 */
   preview: string | null;
+  /** 用户给会话挂的便签（手写备忘，存本地 DB）；无便签为 null。 */
+  note: string | null;
   /** 上下文已用百分比（来自 Claude Code statusline，准确）；无 statusline 数据为 null。 */
   context_pct: number | null;
   /** 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 null。 */

@@ -112,6 +112,28 @@ describe("Sticker", () => {
     localStorage.removeItem("cc-kanban-starred");
   });
 
+  it("有便签时渲染便签块", () => {
+    const { container } = render(<Sticker data={[mk({ note: "记得 review PR" })]} />);
+    expect(screen.getByText("记得 review PR")).toBeTruthy();
+    expect(container.querySelector(".stk-note")).toBeTruthy();
+  });
+
+  it("无便签时点击便签按钮打开编辑框", () => {
+    const { container } = render(<Sticker data={[mk({ note: null })]} />);
+    expect(container.querySelector(".stk-note-edit")).toBeNull();
+    fireEvent.click(screen.getByTitle(zh.sticker.noteAdd));
+    const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.placeholder).toBe(zh.sticker.notePlaceholder);
+  });
+
+  it("编辑已有便签时预填原文", () => {
+    const { container } = render(<Sticker data={[mk({ note: "旧便签" })]} />);
+    fireEvent.click(container.querySelector(".stk-noteb")!);
+    const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
+    expect(input.value).toBe("旧便签");
+  });
+
   it("unnamed 会话且无动作时显示等待首次输入", () => {
     render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

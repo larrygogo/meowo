@@ -41,6 +41,9 @@ export const en: Dict = {
     previewMark: "Latest",
     star: "Star to top",
     unstar: "Unstar",
+    noteAdd: "Add note",
+    noteEdit: "Edit note",
+    notePlaceholder: "Jot a memo… (Enter to save, Esc to cancel)",
   },
   update: {
     clickToInstall: "Click to download and install the update",

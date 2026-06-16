@@ -1115,6 +1115,27 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
 }
 
+/// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；
+/// session_id 严格校验 UUID 形态，正文截断到 500 字符（store 内 trim 后空则删除该行）。
+#[tauri::command]
+fn set_session_note(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    session_id: String,
+    note: String,
+) -> Result<(), String> {
+    if !is_session_id(&session_id) {
+        return Err("无效 session_id".into());
+    }
+    let note: String = note.chars().take(500).collect();
+    let store = open_store(&state.db_path)?;
+    store
+        .set_session_note(&session_id, &note, now_ms())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("board-changed", ());
+    Ok(())
+}
+
 fn default_true() -> bool {
     true
 }
@@ -2024,6 +2045,7 @@ pub fn run() {
             resume_session,
             rename_session,
             set_archived,
+            set_session_note,
             get_autostart,
             set_autostart,
             get_settings,

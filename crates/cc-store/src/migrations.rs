@@ -61,4 +61,12 @@ CREATE TABLE IF NOT EXISTS session_context (
     window_size   INTEGER,
     updated_at    INTEGER NOT NULL
 );
+
+-- session_notes: 用户给会话挂的本地便签（手写备忘），按 cc_session_id 主键 upsert；
+-- 清空便签即删除该行。与 transcript 标题/CC 数据无关，纯用户私有。
+CREATE TABLE IF NOT EXISTS session_notes (
+    cc_session_id TEXT PRIMARY KEY,
+    note          TEXT NOT NULL,
+    updated_at    INTEGER NOT NULL
+);
 "#;

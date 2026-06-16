@@ -417,6 +417,32 @@ html, body {
 .stk-star-on { color: var(--cc-warn); }
 /* 星标卡片：左侧金色描边 + 略强边框，与普通卡片区分 */
 .stk-card.is-star { border-color: color-mix(in srgb, var(--cc-warn) 45%, var(--cc-border)); box-shadow: inset 2px 0 0 0 var(--cc-warn); }
+
+/* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
+.stk-noteb { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
+.stk-noteb svg { display: block; }
+.stk-noteb:hover { color: var(--cc-warn); }
+.stk-noteb-on { color: var(--cc-warn); }
+/* 会话便签：用户手写备忘，常显。琥珀底区别于 AI 预览/活动行，点击进入编辑。 */
+.stk-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin-top: 7px; padding: 5px 8px;
+  font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5;
+  color: var(--cc-text); cursor: text; word-break: break-word;
+  background: color-mix(in srgb, var(--cc-warn) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cc-warn) 30%, transparent);
+  border-radius: 9px;
+}
+.stk-note-icon { flex: none; color: var(--cc-warn); margin-top: 1px; }
+.stk-note-icon svg { display: block; }
+.stk-note-txt { flex: 1; min-width: 0; white-space: pre-wrap; }
+/* 便签编辑输入框 */
+.stk-note-edit {
+  width: 100%; box-sizing: border-box; margin-top: 7px; padding: 5px 8px;
+  font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5; font-family: inherit;
+  color: var(--cc-text); background: var(--cc-surface-hover);
+  border: 1px solid var(--cc-accent-border); border-radius: 9px; outline: none;
+}
 .stk-edit {
   flex: 1;
   min-width: 0;

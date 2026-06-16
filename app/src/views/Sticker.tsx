@@ -53,6 +53,17 @@ function PencilIcon() {
   );
 }
 
+function NoteIcon() {
+  // lucide sticky-note：折角便签纸，区别于 rename 的铅笔
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2z" />
+      <path d="M15 21v-5a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
 function StarIcon({ starred }: { starred: boolean }) {
   // lucide star：未星标描边、星标时填充金色以示激活
   return (
@@ -356,6 +367,21 @@ export function Sticker({ data }: { data: Item[] }) {
     setEditingId(null);
   };
 
+  // 便签编辑：notingId 为正在编辑便签的会话 id，noteDraft 为输入内容。与重命名互斥（同卡只开一个）。
+  const [notingId, setNotingId] = useState<number | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const startNote = (l: Item) => {
+    setEditingId(null);
+    setNoteDraft(l.note ?? "");
+    setNotingId(l.session.id);
+  };
+  const submitNote = (l: Item) => {
+    if (noteDraft !== (l.note ?? "")) {
+      invoke("set_session_note", { sessionId: l.session.cc_session_id, note: noteDraft }).catch(() => {});
+    }
+    setNotingId(null);
+  };
+
   // 先按当前 tab 过滤，再排序：星标恒在最前；「待交互」标签内按等待最久优先（先处理被晾最久的）；
   // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
   const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
@@ -473,6 +499,11 @@ export function Sticker({ data }: { data: Item[] }) {
                             onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
                           ><StarIcon starred={isStarred(l)} /></span>
                           <span
+                            className={"stk-noteb" + (l.note ? " stk-noteb-on" : "")}
+                            title={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
+                            onClick={(e) => { e.stopPropagation(); startNote(l); }}
+                          ><NoteIcon /></span>
+                          <span
                             className="stk-rename"
                             title={t.sticker.renameTitle}
                             onClick={(e) => { e.stopPropagation(); startRename(l); }}
@@ -494,6 +525,30 @@ export function Sticker({ data }: { data: Item[] }) {
                     </div>
                   </div>
                 </div>
+                {notingId === l.session.id ? (
+                  <input
+                    className="stk-note-edit"
+                    autoFocus
+                    value={noteDraft}
+                    placeholder={t.sticker.notePlaceholder}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitNote(l);
+                      else if (e.key === "Escape") setNotingId(null);
+                    }}
+                    onBlur={() => setNotingId(null)}
+                  />
+                ) : l.note ? (
+                  <div
+                    className="stk-note"
+                    title={t.sticker.noteEdit}
+                    onClick={(e) => { e.stopPropagation(); startNote(l); }}
+                  >
+                    <span className="stk-note-icon"><NoteIcon /></span>
+                    <span className="stk-note-txt">{l.note}</span>
+                  </div>
+                ) : null}
                 {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</div>}
                 {previewId === l.session.id && l.preview && (
                   <div className="stk-preview">
