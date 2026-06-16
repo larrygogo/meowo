@@ -338,11 +338,19 @@ function Dropdown<T extends string | number>({
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const close = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("resize", close);
+    // 菜单是 fixed 定位、坐标在打开时一次性测量；滚动 .main-body 后会与按钮错位 → 滚动即关（capture 捕获内层滚动）。
+    window.addEventListener("scroll", close, true);
+    document.addEventListener("keydown", onKey); // Esc 关闭
     return () => {
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      document.removeEventListener("keydown", onKey);
     };
   }, [open]);
   const toggle = () => {
@@ -526,7 +534,8 @@ function AppearanceSection() {
   const theme = settings?.theme ?? "dark";
   const opacity = settings?.opacity ?? 94;
   const uiScale = settings?.ui_scale ?? 100;
-  const fill = ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100;
+  // 钳到 [0,100]：手改 settings.json 为越界值时，避免算出负/超界的 linear-gradient 填充宽度。
+  const fill = Math.max(0, Math.min(100, ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100));
   return (
     <>
       <div className="row-card">
