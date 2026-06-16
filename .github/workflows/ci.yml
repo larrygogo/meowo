@@ -42,10 +42,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Rust 依赖漏洞审计 (cargo-audit)
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 安装 cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+      - name: Rust 依赖漏洞审计 (cargo audit)
+        # 直接调用 cargo audit：仅在出现「漏洞(vulnerabilities)」时失败；unmaintained/unsound
+        # 等 informational 告警不阻断（多为无法立即修的传递依赖）。
+        # 不用 rustsec/audit-check action——它在 push 事件需 Checks API 写权限，
+        # 而默认 GITHUB_TOKEN 只读 → 报「Resource not accessible by integration」。
+        run: cargo audit
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2
       - name: 前端依赖漏洞审计 (bun audit)
