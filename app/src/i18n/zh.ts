@@ -37,6 +37,7 @@ export const zh = {
     renameHint: "运行中：改名后需在该终端 /resume 才生效",
     archive: "归档",
     unarchive: "取消归档",
+    previewMark: "最近",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",

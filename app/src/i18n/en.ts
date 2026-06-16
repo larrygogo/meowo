@@ -38,6 +38,7 @@ export const en: Dict = {
     renameHint: "Running: rename takes effect after /resume in that terminal",
     archive: "Archive",
     unarchive: "Unarchive",
+    previewMark: "Latest",
   },
   update: {
     clickToInstall: "Click to download and install the update",

@@ -422,6 +422,12 @@ export function Sticker({ data }: { data: Item[] }) {
                   </div>
                 </div>
                 {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</div>}
+                {l.preview && (
+                  <div className="stk-preview">
+                    <span className="stk-preview-mark">{t.sticker.previewMark}</span>
+                    <span className="stk-preview-txt">{l.preview}</span>
+                  </div>
+                )}
                 {l.todo_total > 0 && (
                   <div className="stk-prog">
                     <div className="bar">

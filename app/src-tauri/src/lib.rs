@@ -376,6 +376,8 @@ struct LiveItem {
     errored: bool,
     error_label: Option<String>,
     error_raw: Option<String>,
+    // 最近一条 AI 正文的轻推预览（清洗+截断），卡片 hover 速览用。
+    preview: Option<String>,
     // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
 }
 
@@ -440,6 +442,7 @@ fn live_sessions_blocking(
         // 上下文百分比不在这里算——它由 statusline 写库、随 LiveSession flatten 输出。
         let mut error_label: Option<String> = None;
         let mut error_raw: Option<String> = None;
+        let mut preview: Option<String> = None;
         let info = cc_store::title::resolve_transcript_path(
             None,
             s.cwd.as_deref(),
@@ -455,6 +458,7 @@ fn live_sessions_blocking(
                 error_label = Some(e.label);
                 error_raw = Some(e.raw);
             }
+            preview = info.preview;
         }
         // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
         let t = s.task_title.trim();
@@ -471,6 +475,7 @@ fn live_sessions_blocking(
             errored: error_label.is_some(),
             error_label,
             error_raw,
+            preview,
         });
     }
     Ok(items)

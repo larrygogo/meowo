@@ -33,6 +33,18 @@ describe("Sticker", () => {
     expect(screen.getByText("正在做点事")).toBeTruthy();
   });
 
+  it("有 preview 时渲染轻推预览块（最近一条 AI 正文）", () => {
+    const { container } = render(<Sticker data={[mk({ preview: "需要你确认下一步" })]} />);
+    expect(screen.getByText("需要你确认下一步")).toBeTruthy();
+    expect(screen.getByText(zh.sticker.previewMark)).toBeTruthy();
+    expect(container.querySelector(".stk-preview")).toBeTruthy();
+  });
+
+  it("无 preview 时不渲染预览块", () => {
+    const { container } = render(<Sticker data={[mk({ preview: null })]} />);
+    expect(container.querySelector(".stk-preview")).toBeNull();
+  });
+
   it("unnamed 会话且无动作时显示等待首次输入", () => {
     render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

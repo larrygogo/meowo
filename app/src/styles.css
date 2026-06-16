@@ -367,6 +367,28 @@ html, body {
 /* 出错时的 sub 行文案用红色 */
 .stk-sub-err { color: var(--cc-err); }
 
+/* hover 轻推预览：浮现最近一条 AI 正文，不切终端即可速览。
+   用 display 即时切换、不做高度过渡，避免逐帧重排的卡顿感。 */
+.stk-preview {
+  display: none;
+  margin-top: 7px;
+  font-size: calc(10.5px * var(--cc-ui));
+  line-height: 1.55;
+  color: var(--cc-text-dim);
+  word-break: break-word;
+}
+.stk-card:hover .stk-preview { display: block; }
+.stk-preview-mark {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: calc(9px * var(--cc-ui));
+  font-weight: 600;
+  color: var(--cc-text-faint);
+  background: var(--cc-surface-hover);
+}
+
 /* 贴纸卡片里的 todo 进度条 */
 .stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
 .stk-prog .bar { flex: 1; height: 4px; margin: 0; }
