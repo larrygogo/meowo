@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal } from "../api";
+import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -31,6 +31,7 @@ const SETTINGS_DEFAULTS: Settings = {
   ui_scale: 100,
   resume_terminal: "terminal",
   language: "auto",
+  terminal_open_mode: "card",
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -447,6 +448,20 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.notifyDesc}</div>
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.terminalOpen}</div>
+            <div className="row-desc">{t.settings.terminalOpenDesc}</div>
+          </div>
+          <Dropdown
+            value={settings?.terminal_open_mode ?? "card"}
+            options={[
+              { value: "card" as const, label: t.settings.openModeCard },
+              { value: "button" as const, label: t.settings.openModeButton },
+            ]}
+            onChange={(v: TerminalOpenMode) => patch({ terminal_open_mode: v })}
+          />
         </div>
         <div className="row">
           <div className="row-text">

@@ -23,6 +23,7 @@ export const store: Store = {
     ui_scale: 100,
     resume_terminal: "wt",
     language: "zh",
+    terminal_open_mode: "card",
   },
 };
 

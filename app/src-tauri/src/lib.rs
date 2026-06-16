@@ -1155,6 +1155,10 @@ fn default_resume_terminal() -> String {
 fn default_language() -> String {
     "auto".to_string()
 }
+/// 打开终端的方式：card = 点击卡片直接打开（默认），button = 卡片上单独的打开按钮。
+fn default_terminal_open_mode() -> String {
+    "card".to_string()
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1180,6 +1184,9 @@ struct Settings {
     /// 界面/通知语言：auto（跟随系统）/ zh / en。缺省 auto，兼容老 settings.json。
     #[serde(default = "default_language")]
     language: String,
+    /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
+    #[serde(default = "default_terminal_open_mode")]
+    terminal_open_mode: String,
 }
 
 impl Default for Settings {
@@ -1192,6 +1199,7 @@ impl Default for Settings {
             ui_scale: default_ui_scale(),
             resume_terminal: default_resume_terminal(),
             language: default_language(),
+            terminal_open_mode: default_terminal_open_mode(),
         }
     }
 }

@@ -428,6 +428,10 @@ html, body {
    给标题让出空间、消除每张卡 4 图标的拥挤。星标态有金边、便签有便签块，藏图标不丢信息。 */
 .stk-actions { display: none; align-items: center; gap: 2px; flex: none; }
 .stk-card:hover .stk-actions { display: inline-flex; }
+/* 「打开终端」按钮（按钮模式常驻）：accent 色，作为卡片主操作，醒目于 hover 次级图标 */
+.stk-open { flex: none; display: inline-flex; align-items: center; color: var(--cc-accent-text); cursor: pointer; padding: 0 3px; }
+.stk-open svg { display: block; }
+.stk-open:hover { color: var(--cc-accent); }
 
 /* 会话星标按钮：未星标 faint、hover 转金色；已星标常显金色填充 */
 .stk-star { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }

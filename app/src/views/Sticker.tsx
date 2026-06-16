@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { LiveSession, Settings, getSettings } from "../api";
+import { LiveSession, Settings, TerminalOpenMode, getSettings } from "../api";
 import { isMacPanel } from "../platform";
 import { useT } from "../i18n";
 import type { Dict } from "../i18n/zh";
@@ -49,6 +49,18 @@ function PencilIcon() {
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function OpenIcon() {
+  // lucide square-arrow-out-up-right：从方框向外跳出的箭头，表达「打开/跳转终端」
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="m10 14 11-11" />
     </svg>
   );
 }
@@ -271,15 +283,20 @@ export function Sticker({ data }: { data: Item[] }) {
     localStorage.setItem(TAB_KEY, t);
   };
 
-  // 归档自动隐藏天数：启动时读设置，并监听设置窗口的实时变更。
+  // 归档自动隐藏天数 + 打开终端方式：启动时读设置，并监听设置窗口的实时变更。
   const [hideDays, setHideDays] = useState(0);
+  const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
   useEffect(() => {
-    getSettings().then((s) => setHideDays(s.archive_hide_days)).catch(() => {});
+    const apply = (s: Settings) => {
+      setHideDays(s.archive_hide_days);
+      setOpenMode(s.terminal_open_mode);
+    };
+    getSettings().then(apply).catch(() => {});
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
     let cancelled = false;
     let un: (() => void) | undefined;
     try {
-      listen<Settings>("settings-changed", (e) => setHideDays(e.payload.archive_hide_days))
+      listen<Settings>("settings-changed", (e) => apply(e.payload))
         .then((f) => {
           if (cancelled) f();
           else un = f;
@@ -383,6 +400,23 @@ export function Sticker({ data }: { data: Item[] }) {
     setNotingId(null);
   };
 
+  // 打开终端：连接中→跳转 WT 标签页；已断开未归档→新建终端 resume；归档不开。
+  const buttonMode = openMode === "button";
+  const canOpen = (l: Item) => l.connected || !l.archived;
+  const openTerminal = (l: Item) => {
+    if (l.connected) {
+      if (l.pid)
+        invoke("focus_session", {
+          pid: l.pid,
+          title: l.task_title,
+          cwd: l.cwd,
+          sessionId: l.session.cc_session_id,
+        }).catch(() => {});
+    } else if (!l.archived) {
+      invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id }).catch(() => {});
+    }
+  };
+
   // 先按当前 tab 过滤，再排序：星标恒在最前；「待交互」标签内按等待最久优先（先处理被晾最久的）；
   // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
   const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
@@ -461,23 +495,12 @@ export function Sticker({ data }: { data: Item[] }) {
                     setNotingId(null);
                     return;
                   }
-                  if (l.connected) {
-                    // 连接中：跳转到对应 WT 标签页。
-                    if (l.pid)
-                      invoke("focus_session", {
-                        pid: l.pid,
-                        title: l.task_title,
-                        cwd: l.cwd,
-                        sessionId: l.session.cc_session_id,
-                      }).catch(() => {});
-                  } else if (!l.archived) {
-                    // 已断开且未归档：开新 WT 标签页跑 claude --resume 恢复会话。
-                    // 归档的会话点击不恢复（归档即收纳，避免误开终端）。
-                    invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id }).catch(() => {});
-                  }
+                  // 按钮模式：点击卡片不开终端，改由卡片上的打开按钮触发。
+                  if (buttonMode) return;
+                  openTerminal(l);
                 }}
-                style={{ cursor: l.connected || !l.archived ? "pointer" : "default" }}
-                title={l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
+                style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
+                title={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
               >
                 <div className="stk-top">
                   <span className="stk-ind">{indicator}</span>
@@ -513,6 +536,14 @@ export function Sticker({ data }: { data: Item[] }) {
                         <>
                           <span className="stk-title">{title}</span>
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
+                          {/* 按钮模式：常驻的「打开终端」按钮（点卡片不再开终端） */}
+                          {buttonMode && canOpen(l) && (
+                            <span
+                              className="stk-open"
+                              title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                              onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
+                            ><OpenIcon /></span>
+                          )}
                           {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
                               星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}
                           <span className="stk-actions">

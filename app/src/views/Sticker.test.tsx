@@ -170,6 +170,11 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-edit")).toBeNull();
   });
 
+  it("默认(点击卡片模式)不渲染独立打开按钮", () => {
+    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    expect(container.querySelector(".stk-open")).toBeNull();
+  });
+
   it("unnamed 会话且无动作时显示等待首次输入", () => {
     render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

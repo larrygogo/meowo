@@ -110,10 +110,13 @@ export type Settings = {
   resume_terminal: ResumeTerminal;
   /** 界面/通知语言：auto（跟随系统）/ zh / en。 */
   language: LangSetting;
+  /** 打开终端方式：card = 点击卡片（默认）/ button = 卡片上单独的打开按钮。 */
+  terminal_open_mode: TerminalOpenMode;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";
+export type TerminalOpenMode = "card" | "button";
 
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
 export function availableTerminals(): Promise<ResumeTerminal[]> {
