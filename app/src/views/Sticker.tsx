@@ -355,6 +355,7 @@ export function Sticker({ data }: { data: Item[] }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const startRename = (l: Item) => {
+    setNotingId(null); // 与便签编辑互斥，同卡只开一个编辑器
     const cur = l.task_title && l.task_title !== "(未命名会话)" ? l.task_title : "";
     setDraft(cur);
     setEditingId(l.session.id);
@@ -453,6 +454,13 @@ export function Sticker({ data }: { data: Item[] }) {
                 onMouseEnter={() => onCardEnter(l.session.id)}
                 onMouseLeave={onCardLeave}
                 onClick={() => {
+                  // 编辑态(重命名/便签)下，点击卡片仅用于关闭编辑器（失焦），绝不导航开终端。
+                  // 注：编辑输入框已 stopPropagation，这里只会被「点击卡片空白处」触发。
+                  if (editingId !== null || notingId !== null) {
+                    setEditingId(null);
+                    setNotingId(null);
+                    return;
+                  }
                   if (l.connected) {
                     // 连接中：跳转到对应 WT 标签页。
                     if (l.pid)
@@ -476,19 +484,31 @@ export function Sticker({ data }: { data: Item[] }) {
                   <div className="stk-top-body">
                     <div className="stk-line1">
                       {editingId === l.session.id ? (
-                        <input
-                          className="stk-edit"
-                          autoFocus
-                          value={draft}
-                          placeholder={t.sticker.renamePlaceholder}
-                          onChange={(e) => setDraft(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") submitRename(l);
-                            else if (e.key === "Escape") setEditingId(null);
-                          }}
-                          onBlur={() => setEditingId(null)}
-                        />
+                        <div className="stk-edit-row" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            className="stk-edit"
+                            autoFocus
+                            value={draft}
+                            placeholder={t.sticker.renamePlaceholder}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") submitRename(l);
+                              else if (e.key === "Escape") setEditingId(null);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="stk-btn-save"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => submitRename(l)}
+                          >{t.sticker.noteSave}</button>
+                          <button
+                            type="button"
+                            className="stk-btn-cancel"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => setEditingId(null)}
+                          >{t.sticker.noteCancel}</button>
+                        </div>
                       ) : (
                         <>
                           <span className="stk-title">{title}</span>
@@ -546,13 +566,13 @@ export function Sticker({ data }: { data: Item[] }) {
                       {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
                       <button
                         type="button"
-                        className="stk-note-save"
+                        className="stk-btn-save"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => submitNote(l)}
                       >{t.sticker.noteSave}</button>
                       <button
                         type="button"
-                        className="stk-note-cancel"
+                        className="stk-btn-cancel"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => setNotingId(null)}
                       >{t.sticker.noteCancel}</button>

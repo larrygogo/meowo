@@ -151,6 +151,25 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-note-edit")).toBeNull();
   });
 
+  it("重命名编辑器有保存/取消按钮，点取消关闭", () => {
+    const { container } = render(<Sticker data={[mk()]} />);
+    fireEvent.click(container.querySelector(".stk-rename")!);
+    expect(container.querySelector(".stk-edit-row")).toBeTruthy();
+    expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
+    fireEvent.click(screen.getByText(zh.sticker.noteCancel));
+    expect(container.querySelector(".stk-edit")).toBeNull();
+  });
+
+  it("编辑态下点击卡片只关闭编辑器、不导航开终端", () => {
+    // 守卫成立的可观察证据：点击卡片后编辑器关闭（setEditingId(null) 只在早返回分支执行）；
+    // 若无守卫，onClick 会走 focus_session 分支、editingId 不变、编辑器仍在。
+    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    fireEvent.click(container.querySelector(".stk-rename")!);
+    expect(container.querySelector(".stk-edit")).toBeTruthy();
+    fireEvent.click(container.querySelector(".stk-card")!);
+    expect(container.querySelector(".stk-edit")).toBeNull();
+  });
+
   it("unnamed 会话且无动作时显示等待首次输入", () => {
     render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

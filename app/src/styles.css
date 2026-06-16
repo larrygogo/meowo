@@ -450,15 +450,18 @@ html, body {
   border: 1px solid var(--cc-accent-border); border-radius: 9px; outline: none;
 }
 .stk-note-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
-.stk-note-save, .stk-note-cancel {
-  font-family: inherit; font-size: calc(10.5px * var(--cc-ui)); line-height: 1.4;
-  padding: 3px 14px; border-radius: 7px; cursor: pointer; appearance: none;
+/* 通用保存/取消按钮（便签与重命名共用） */
+.stk-btn-save, .stk-btn-cancel {
+  flex: none; font-family: inherit; font-size: calc(10.5px * var(--cc-ui)); line-height: 1.4;
+  padding: 3px 14px; border-radius: 7px; cursor: pointer; appearance: none; white-space: nowrap;
   border: 1px solid transparent;
 }
-.stk-note-save { background: var(--cc-accent); color: #fff; border-color: var(--cc-accent); }
-.stk-note-save:hover { background: var(--cc-accent-dim); border-color: var(--cc-accent-dim); }
-.stk-note-cancel { background: transparent; color: var(--cc-text-dim); border-color: var(--cc-border); }
-.stk-note-cancel:hover { color: var(--cc-text); border-color: var(--cc-text-faint); }
+.stk-btn-save { background: var(--cc-accent); color: #fff; border-color: var(--cc-accent); }
+.stk-btn-save:hover { background: var(--cc-accent-dim); border-color: var(--cc-accent-dim); }
+.stk-btn-cancel { background: transparent; color: var(--cc-text-dim); border-color: var(--cc-border); }
+.stk-btn-cancel:hover { color: var(--cc-text); border-color: var(--cc-text-faint); }
+/* 重命名编辑行：输入框占满 + 行内保存/取消按钮 */
+.stk-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
 .stk-edit {
   flex: 1;
   min-width: 0;
