@@ -112,6 +112,8 @@ export type Settings = {
   language: LangSetting;
   /** 打开终端方式：card = 点击卡片（默认）/ button = 卡片上单独的打开按钮。 */
   terminal_open_mode: TerminalOpenMode;
+  /** 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启。 */
+  preview_enabled: boolean;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";

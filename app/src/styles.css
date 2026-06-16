@@ -314,6 +314,7 @@ html, body {
   border: 1.5px dashed var(--cc-text-faint);
 }
 .stk-card {
+  position: relative; /* 右下角打开按钮(.stk-open)绝对定位的包含块 */
   padding: calc(10px * var(--cc-ui)) calc(11px * var(--cc-ui));
   margin-bottom: calc(6px * var(--cc-ui));
   background: var(--cc-surface);
@@ -321,6 +322,8 @@ html, body {
   transition: background 0.12s, border-color 0.12s;
   border-radius: 16px;
 }
+/* 按钮模式：底部预留一条带，供右下角打开按钮落座，确保不压住正文 */
+.stk-card--btn { padding-bottom: calc(34px * var(--cc-ui)); }
 .stk-card:last-child { margin-bottom: 0; }
 .stk-card:hover { background: var(--cc-surface-hover); border-color: var(--cc-accent-border); }
 /* 顶部组：徽标方块 + 标题/状态两行，徽标垂直居中 */
@@ -428,10 +431,20 @@ html, body {
    给标题让出空间、消除每张卡 4 图标的拥挤。星标态有金边、便签有便签块，藏图标不丢信息。 */
 .stk-actions { display: none; align-items: center; gap: 2px; flex: none; }
 .stk-card:hover .stk-actions { display: inline-flex; }
-/* 「打开终端」按钮（按钮模式常驻）：accent 色，作为卡片主操作，醒目于 hover 次级图标 */
-.stk-open { flex: none; display: inline-flex; align-items: center; color: var(--cc-accent-text); cursor: pointer; padding: 0 3px; }
+/* 「打开终端」按钮（按钮模式常驻）：卡片右下角悬浮 accent 小方钮，作为卡片主操作 */
+.stk-open {
+  position: absolute;
+  right: calc(9px * var(--cc-ui));
+  bottom: calc(7px * var(--cc-ui));
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(24px * var(--cc-ui)); height: calc(24px * var(--cc-ui));
+  border-radius: 8px; cursor: pointer; appearance: none;
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
+  border: 1px solid var(--cc-accent-border);
+}
 .stk-open svg { display: block; }
-.stk-open:hover { color: var(--cc-accent); }
+.stk-open:hover { color: #fff; background: var(--cc-accent); border-color: var(--cc-accent); }
 
 /* 会话星标按钮：未星标 faint、hover 转金色；已星标常显金色填充 */
 .stk-star { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }

@@ -74,6 +74,8 @@ export const en: Dict = {
     cmdPrompt: "Command Prompt",
     language: "Language",
     languageDesc: "Interface and notification language",
+    preview: "Hover preview",
+    previewDesc: "Show the latest AI message when hovering a card",
     terminalOpen: "Open terminal by",
     terminalOpenDesc: "Click the card directly, or use a separate open button on the card",
     openModeCard: "Click card",

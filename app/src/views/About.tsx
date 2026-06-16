@@ -32,6 +32,7 @@ const SETTINGS_DEFAULTS: Settings = {
   resume_terminal: "terminal",
   language: "auto",
   terminal_open_mode: "card",
+  preview_enabled: true,
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -421,8 +422,10 @@ function GeneralSection() {
   };
   const hideDays = settings?.archive_hide_days ?? 0;
   const notifyOn = settings?.notifications_enabled ?? true;
+  const previewOn = settings?.preview_enabled ?? true;
   const changeHideDays = (days: number) => patch({ archive_hide_days: days });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
+  const togglePreview = () => patch({ preview_enabled: !previewOn });
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
   const termOptions = platformOpts.filter((o) => (availTerms ?? []).includes(o.value));
@@ -448,6 +451,13 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.notifyDesc}</div>
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.preview}</div>
+            <div className="row-desc">{t.settings.previewDesc}</div>
+          </div>
+          <Switch checked={previewOn} onChange={togglePreview} />
         </div>
         <div className="row">
           <div className="row-text">

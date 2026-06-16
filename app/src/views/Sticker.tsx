@@ -286,10 +286,12 @@ export function Sticker({ data }: { data: Item[] }) {
   // 归档自动隐藏天数 + 打开终端方式：启动时读设置，并监听设置窗口的实时变更。
   const [hideDays, setHideDays] = useState(0);
   const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
+  const [previewEnabled, setPreviewEnabled] = useState(true);
   useEffect(() => {
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
       setOpenMode(s.terminal_open_mode);
+      setPreviewEnabled(s.preview_enabled);
     };
     getSettings().then(apply).catch(() => {});
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
@@ -341,6 +343,7 @@ export function Sticker({ data }: { data: Item[] }) {
   const [previewId, setPreviewId] = useState<number | null>(null);
   const previewTimer = useRef<number | undefined>(undefined);
   const onCardEnter = (id: number) => {
+    if (!previewEnabled) return; // 预览关闭时不排程，连 hover 意图都不触发
     if (previewTimer.current !== undefined) clearTimeout(previewTimer.current);
     previewTimer.current = window.setTimeout(() => setPreviewId(id), PREVIEW_DELAY);
   };
@@ -483,7 +486,7 @@ export function Sticker({ data }: { data: Item[] }) {
             );
             return (
               <div
-                className={"stk-card" + (isStarred(l) ? " is-star" : "")}
+                className={"stk-card" + (isStarred(l) ? " is-star" : "") + (buttonMode && canOpen(l) ? " stk-card--btn" : "")}
                 key={l.session.id}
                 onMouseEnter={() => onCardEnter(l.session.id)}
                 onMouseLeave={onCardLeave}
@@ -536,14 +539,6 @@ export function Sticker({ data }: { data: Item[] }) {
                         <>
                           <span className="stk-title">{title}</span>
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
-                          {/* 按钮模式：常驻的「打开终端」按钮（点卡片不再开终端） */}
-                          {buttonMode && canOpen(l) && (
-                            <span
-                              className="stk-open"
-                              title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
-                              onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
-                            ><OpenIcon /></span>
-                          )}
                           {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
                               星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}
                           <span className="stk-actions">
@@ -620,7 +615,7 @@ export function Sticker({ data }: { data: Item[] }) {
                   </div>
                 ) : null}
                 {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</div>}
-                {previewId === l.session.id && l.preview && (
+                {previewEnabled && previewId === l.session.id && l.preview && (
                   <div className="stk-preview">
                     <span className="stk-preview-mark">{t.sticker.previewMark}</span>
                     <span className="stk-preview-txt">{l.preview}</span>
@@ -635,6 +630,15 @@ export function Sticker({ data }: { data: Item[] }) {
                       {l.todo_done}/{l.todo_total}
                     </span>
                   </div>
+                )}
+                {/* 按钮模式：右下角常驻「打开终端」按钮（卡片底部已预留 .stk-card--btn 让位带，不压正文） */}
+                {buttonMode && canOpen(l) && (
+                  <button
+                    type="button"
+                    className="stk-open"
+                    title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                    onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
+                  ><OpenIcon /></button>
                 )}
               </div>
             );

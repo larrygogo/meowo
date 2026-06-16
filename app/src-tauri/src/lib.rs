@@ -1187,6 +1187,9 @@ struct Settings {
     /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
     #[serde(default = "default_terminal_open_mode")]
     terminal_open_mode: String,
+    /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
+    #[serde(default = "default_true")]
+    preview_enabled: bool,
 }
 
 impl Default for Settings {
@@ -1200,6 +1203,7 @@ impl Default for Settings {
             resume_terminal: default_resume_terminal(),
             language: default_language(),
             terminal_open_mode: default_terminal_open_mode(),
+            preview_enabled: true,
         }
     }
 }

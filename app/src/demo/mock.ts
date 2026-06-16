@@ -24,6 +24,7 @@ export const store: Store = {
     resume_terminal: "wt",
     language: "zh",
     terminal_open_mode: "card",
+    preview_enabled: true,
   },
 };
 
