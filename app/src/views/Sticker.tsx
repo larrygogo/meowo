@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -175,9 +175,6 @@ function RunBadge({
 const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
 const STAR_KEY = "cc-kanban-starred";
-/** 轻推预览的悬停意图延迟(ms)：光标需在卡片上停留这么久才浮现，
- *  快速划过列表不触发，避免一串卡片预览瞬开瞬关的闪烁。 */
-const PREVIEW_DELAY = 250;
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
 
 /** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
@@ -338,27 +335,6 @@ export function Sticker({ data }: { data: Item[] }) {
     });
   };
 
-  // 轻推预览的悬停意图：只有「停留」在某卡片上超过 PREVIEW_DELAY 才显示其预览，
-  // 快速划过不触发（避免连串闪烁）；移开即时隐藏。previewId 存停留卡片的 session.id。
-  const [previewId, setPreviewId] = useState<number | null>(null);
-  const previewTimer = useRef<number | undefined>(undefined);
-  const onCardEnter = (id: number) => {
-    if (!previewEnabled) return; // 预览关闭时不排程，连 hover 意图都不触发
-    if (previewTimer.current !== undefined) clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => setPreviewId(id), PREVIEW_DELAY);
-  };
-  const onCardLeave = () => {
-    if (previewTimer.current !== undefined) {
-      clearTimeout(previewTimer.current);
-      previewTimer.current = undefined;
-    }
-    setPreviewId(null);
-  };
-  // 卸载时清掉悬而未决的定时器，防泄漏。
-  useEffect(() => () => {
-    if (previewTimer.current !== undefined) clearTimeout(previewTimer.current);
-  }, []);
-
   // 会话星标：星标的会话永远排到列表最前（跨重启保留）。与「置顶窗口(pin)」是两回事。
   const [starred, setStarred] = useState<Set<string>>(loadStarred);
   const toggleStar = (sid: string) => {
@@ -467,11 +443,14 @@ export function Sticker({ data }: { data: Item[] }) {
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
             const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
+            // 活动行统一显示「最近一条 AI 正文」(preview)；出错优先显示错误标签；
+            // previewEnabled 关闭则不显示 AI 正文（仅保留错误）。不再显示底层 Bash 命令。
             const sub = l.errored && l.error_label
               ? t.errorLabels[l.error_label] ?? l.error_label
-              : l.current_activity && l.current_activity !== title
-              ? l.current_activity
+              : previewEnabled && l.preview
+              ? l.preview
               : null;
+            const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
             const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
             const indicator = !l.connected ? (
               <span className="ring-stop" title={t.sticker.stopped} />
@@ -488,8 +467,6 @@ export function Sticker({ data }: { data: Item[] }) {
               <div
                 className={"stk-card" + (isStarred(l) ? " is-star" : "")}
                 key={l.session.id}
-                onMouseEnter={() => onCardEnter(l.session.id)}
-                onMouseLeave={onCardLeave}
                 onClick={() => {
                   // 编辑态(重命名/便签)下，点击卡片仅用于关闭编辑器（失焦），绝不导航开终端。
                   // 注：编辑输入框已 stopPropagation，这里只会被「点击卡片空白处」触发。
@@ -616,8 +593,9 @@ export function Sticker({ data }: { data: Item[] }) {
                 ) : null}
                 {(sub || (buttonMode && canOpen(l))) && (
                   <div className="stk-subrow">
-                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</span>}
-                    {/* 按钮模式：打开终端按钮内联在「轻推预览上面这行」的末尾，不突兀 */}
+                    {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
+                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={subTitle}>{sub}</span>}
+                    {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
                     {buttonMode && canOpen(l) && (
                       <button
                         type="button"
@@ -626,12 +604,6 @@ export function Sticker({ data }: { data: Item[] }) {
                         onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
                       ><OpenIcon /></button>
                     )}
-                  </div>
-                )}
-                {previewEnabled && previewId === l.session.id && l.preview && (
-                  <div className="stk-preview">
-                    <span className="stk-preview-mark">{t.sticker.previewMark}</span>
-                    <span className="stk-preview-txt">{l.preview}</span>
                   </div>
                 )}
                 {l.todo_total > 0 && (
