@@ -190,7 +190,7 @@ html, body {
   overflow-y: hidden;
   -webkit-user-select: none;
   user-select: none;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(30px);
 }
 .tabs { display: flex; gap: 2px; padding: 2px 0 6px; flex: none; }
 .stab { cursor: pointer; font-size: calc(11px * var(--cc-ui)); color: var(--cc-text-dim); padding: 2px 5px; border-radius: var(--r-md); display: inline-flex; align-items: center; gap: 3px; }
@@ -203,13 +203,14 @@ html, body {
 .stk-pin svg { display: block; }
 .stk-pin:hover { color: var(--cc-text); }
 .stk-pin-on { color: var(--cc-accent-text); background: #000; }
-/* 负边距+内边距：滚动条落到贴纸右边缘，卡片内容左右仍对称(各 8px) */
-.stk-scroll { flex: 1; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 8px; padding-bottom: 6px; display: flex; flex-direction: column; }
+/* 负边距+内边距：滚动条落到贴纸右边缘，卡片内容左右仍对称(各 8px)。
+   margin-bottom 让滚动区(连同其滚动条)整体上移 18px，给右下角缩放手柄(.resize-grip 约 16px)
+   让出空间——滑块永远到不了手柄区，彻底不重叠（内容仍可滚到底，只是滚动条视觉短一截）。 */
+.stk-scroll { flex: 1; overflow-y: auto; min-height: 0; margin-right: -8px; margin-bottom: 18px; padding-right: 8px; padding-bottom: 6px; display: flex; flex-direction: column; }
 .stk-scroll::-webkit-scrollbar { width: 6px; }
 .stk-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
 .stk-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
-/* 底部留出缩放手柄(.resize-grip 约 16px)的高度，滑块不再与右下角手柄重叠（内容仍可滚到底）。 */
-.stk-scroll::-webkit-scrollbar-track { background: transparent; margin-bottom: 18px; }
+.stk-scroll::-webkit-scrollbar-track { background: transparent; }
 .resize-grip { position: fixed; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
   z-index: 60; /* 高于更新提示条(50)，更新时仍可从右下角缩放 */
   opacity: 0; transition: opacity 0.15s;
@@ -408,7 +409,7 @@ html, body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(30px);
 }
 .cstrip-left { border-radius: 0 var(--r-lg) var(--r-lg) 0; }
 .cstrip-right { border-radius: var(--r-lg) 0 0 var(--r-lg); }

@@ -517,7 +517,7 @@ const densityOptions = (t: Dict): { value: number; label: string }[] => [
   { value: 100, label: t.settings.densityNormal },
   { value: 112, label: t.settings.densityLoose },
 ];
-const OPACITY_MIN = 60;
+const OPACITY_MIN = 25;
 const OPACITY_MAX = 100;
 
 function AppearanceSection() {

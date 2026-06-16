@@ -33,8 +33,9 @@ function apply(a: Appearance): void {
   current = a;
   const root = document.documentElement;
   root.setAttribute("data-theme", resolveTheme(a.theme));
-  // 不透明度下限与 UI 一致（60–100）：手改 settings.json 为极小值也不会渲染出全透明的空底板。
-  root.style.setProperty("--cc-opacity", String(clampPct(a.opacity, 60, 100) / 100));
+  // 不透明度下限与 UI 一致（25–100）：放低下限以便配合系统 acrylic 透出更明显的模糊桌面；
+  // 仍留 25% 底，避免手改 settings.json 为极小值时渲染出全透明的空底板。
+  root.style.setProperty("--cc-opacity", String(clampPct(a.opacity, 25, 100) / 100));
   if (scaleEnabled) {
     root.style.setProperty("--cc-ui", String(clampPct(a.ui_scale, 50, 200) / 100));
   }
