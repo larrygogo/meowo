@@ -53,6 +53,16 @@ function PencilIcon() {
   );
 }
 
+function StarIcon({ starred }: { starred: boolean }) {
+  // lucide star：未星标描边、星标时填充金色以示激活
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill={starred ? "currentColor" : "none"}
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.79 21.55a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.554 10.34a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
+    </svg>
+  );
+}
+
 type Item = LiveSession & { connected: boolean };
 type Tab = "all" | "waiting" | "running" | "archived";
 
@@ -141,7 +151,18 @@ function RunBadge({
 
 const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
+const STAR_KEY = "cc-kanban-starred";
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
+
+/** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
+function loadStarred(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STAR_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function match(tab: Tab, l: Item, hideDays = 0): boolean {
   if (tab === "archived") {
@@ -284,6 +305,18 @@ export function Sticker({ data }: { data: Item[] }) {
     });
   };
 
+  // 会话星标：星标的会话永远排到列表最前（跨重启保留）。与「置顶窗口(pin)」是两回事。
+  const [starred, setStarred] = useState<Set<string>>(loadStarred);
+  const toggleStar = (sid: string) => {
+    setStarred((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      localStorage.setItem(STAR_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   // 重命名：editingId 为正在编辑的会话 id，draft 为输入内容。
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -300,7 +333,11 @@ export function Sticker({ data }: { data: Item[] }) {
     setEditingId(null);
   };
 
-  const shown = data.filter((l) => match(tab, l, hideDays));
+  // 先按当前 tab 过滤，再把星标会话稳定排到最前（Array.sort 稳定，组内保留服务端顺序）。
+  const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
+  const shown = data
+    .filter((l) => match(tab, l, hideDays))
+    .sort((a, b) => Number(isStarred(b)) - Number(isStarred(a)));
 
   return (
     <div className="sticker">
@@ -356,7 +393,7 @@ export function Sticker({ data }: { data: Item[] }) {
             );
             return (
               <div
-                className="stk-card"
+                className={"stk-card" + (isStarred(l) ? " is-star" : "")}
                 key={l.session.id}
                 onClick={() => {
                   if (l.connected) {
@@ -399,6 +436,11 @@ export function Sticker({ data }: { data: Item[] }) {
                         <>
                           <span className="stk-title">{title}</span>
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
+                          <span
+                            className={"stk-star" + (isStarred(l) ? " stk-star-on" : "")}
+                            title={isStarred(l) ? t.sticker.unstar : t.sticker.star}
+                            onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
+                          ><StarIcon starred={isStarred(l)} /></span>
                           <span
                             className="stk-rename"
                             title={t.sticker.renameTitle}

@@ -39,6 +39,8 @@ export const en: Dict = {
     archive: "Archive",
     unarchive: "Unarchive",
     previewMark: "Latest",
+    star: "Star to top",
+    unstar: "Unstar",
   },
   update: {
     clickToInstall: "Click to download and install the update",

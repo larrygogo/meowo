@@ -38,6 +38,8 @@ export const zh = {
     archive: "归档",
     unarchive: "取消归档",
     previewMark: "最近",
+    star: "星标置顶",
+    unstar: "取消星标",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",

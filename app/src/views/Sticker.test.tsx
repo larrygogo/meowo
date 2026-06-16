@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { Sticker, EmptyState } from "./Sticker";
 import type { LiveSession } from "../api";
 import { zh } from "../i18n/zh";
@@ -43,6 +43,27 @@ describe("Sticker", () => {
   it("无 preview 时不渲染预览块", () => {
     const { container } = render(<Sticker data={[mk({ preview: null })]} />);
     expect(container.querySelector(".stk-preview")).toBeNull();
+  });
+
+  it("点击星标切换状态并持久化到 localStorage", () => {
+    localStorage.removeItem("cc-kanban-starred");
+    const { container } = render(<Sticker data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
+    fireEvent.click(screen.getByTitle(zh.sticker.star));
+    expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem("cc-kanban-starred") ?? "[]")).toContain("star-me");
+    localStorage.removeItem("cc-kanban-starred");
+  });
+
+  it("已星标会话排到列表最前", () => {
+    localStorage.setItem("cc-kanban-starred", JSON.stringify(["b"]));
+    const { container } = render(<Sticker data={[
+      mk({ task_title: "甲", current_activity: null, session: { id: 1, project_id: 1, cc_session_id: "a", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
+      mk({ task_title: "乙", current_activity: null, session: { id: 2, project_id: 1, cc_session_id: "b", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
+    ]} />);
+    const cards = container.querySelectorAll(".stk-card");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("乙");
+    expect(cards[0].classList.contains("is-star")).toBe(true);
+    localStorage.removeItem("cc-kanban-starred");
   });
 
   it("unnamed 会话且无动作时显示等待首次输入", () => {

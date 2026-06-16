@@ -406,6 +406,14 @@ html, body {
 .stk-rename { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
 .stk-rename svg { display: block; }
 .stk-rename:hover { color: var(--cc-accent); }
+
+/* 会话星标按钮：未星标 faint、hover 转金色；已星标常显金色填充 */
+.stk-star { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
+.stk-star svg { display: block; }
+.stk-star:hover { color: var(--cc-warn); }
+.stk-star-on { color: var(--cc-warn); }
+/* 星标卡片：左侧金色描边 + 略强边框，与普通卡片区分 */
+.stk-card.is-star { border-color: color-mix(in srgb, var(--cc-warn) 45%, var(--cc-border)); box-shadow: inset 2px 0 0 0 var(--cc-warn); }
 .stk-edit {
   flex: 1;
   min-width: 0;
