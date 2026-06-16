@@ -493,26 +493,30 @@ export function Sticker({ data }: { data: Item[] }) {
                         <>
                           <span className="stk-title">{title}</span>
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
-                          <span
-                            className={"stk-star" + (isStarred(l) ? " stk-star-on" : "")}
-                            title={isStarred(l) ? t.sticker.unstar : t.sticker.star}
-                            onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
-                          ><StarIcon starred={isStarred(l)} /></span>
-                          <span
-                            className={"stk-noteb" + (l.note ? " stk-noteb-on" : "")}
-                            title={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
-                            onClick={(e) => { e.stopPropagation(); startNote(l); }}
-                          ><NoteIcon /></span>
-                          <span
-                            className="stk-rename"
-                            title={t.sticker.renameTitle}
-                            onClick={(e) => { e.stopPropagation(); startRename(l); }}
-                          ><PencilIcon /></span>
-                          <span
-                            className="stk-arch"
-                            title={l.archived ? t.sticker.unarchive : t.sticker.archive}
-                            onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
-                          ><ArchiveIcon archived={l.archived} /></span>
+                          {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
+                              星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}
+                          <span className="stk-actions">
+                            <span
+                              className={"stk-star" + (isStarred(l) ? " stk-star-on" : "")}
+                              title={isStarred(l) ? t.sticker.unstar : t.sticker.star}
+                              onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
+                            ><StarIcon starred={isStarred(l)} /></span>
+                            <span
+                              className={"stk-noteb" + (l.note ? " stk-noteb-on" : "")}
+                              title={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
+                              onClick={(e) => { e.stopPropagation(); startNote(l); }}
+                            ><NoteIcon /></span>
+                            <span
+                              className="stk-rename"
+                              title={t.sticker.renameTitle}
+                              onClick={(e) => { e.stopPropagation(); startRename(l); }}
+                            ><PencilIcon /></span>
+                            <span
+                              className="stk-arch"
+                              title={l.archived ? t.sticker.unarchive : t.sticker.archive}
+                              onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
+                            ><ArchiveIcon archived={l.archived} /></span>
+                          </span>
                         </>
                       )}
                     </div>
@@ -526,19 +530,34 @@ export function Sticker({ data }: { data: Item[] }) {
                   </div>
                 </div>
                 {notingId === l.session.id ? (
-                  <input
-                    className="stk-note-edit"
-                    autoFocus
-                    value={noteDraft}
-                    placeholder={t.sticker.notePlaceholder}
-                    onChange={(e) => setNoteDraft(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") submitNote(l);
-                      else if (e.key === "Escape") setNotingId(null);
-                    }}
-                    onBlur={() => setNotingId(null)}
-                  />
+                  <div className="stk-note-editbox" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      className="stk-note-edit"
+                      autoFocus
+                      value={noteDraft}
+                      placeholder={t.sticker.notePlaceholder}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitNote(l);
+                        else if (e.key === "Escape") setNotingId(null);
+                      }}
+                    />
+                    <div className="stk-note-actions">
+                      {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
+                      <button
+                        type="button"
+                        className="stk-note-save"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => submitNote(l)}
+                      >{t.sticker.noteSave}</button>
+                      <button
+                        type="button"
+                        className="stk-note-cancel"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setNotingId(null)}
+                      >{t.sticker.noteCancel}</button>
+                    </div>
+                  </div>
                 ) : l.note ? (
                   <div
                     className="stk-note"

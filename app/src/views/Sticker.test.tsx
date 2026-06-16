@@ -134,6 +134,23 @@ describe("Sticker", () => {
     expect(input.value).toBe("旧便签");
   });
 
+  it("便签编辑框有保存/取消按钮，点取消关闭且保留原文", () => {
+    const { container } = render(<Sticker data={[mk({ note: "保留我" })]} />);
+    fireEvent.click(container.querySelector(".stk-noteb")!);
+    expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
+    fireEvent.click(screen.getByText(zh.sticker.noteCancel));
+    expect(container.querySelector(".stk-note-edit")).toBeNull();
+    expect(screen.getByText("保留我")).toBeTruthy(); // 便签块仍在
+  });
+
+  it("点便签保存按钮关闭编辑框", () => {
+    const { container } = render(<Sticker data={[mk({ note: null })]} />);
+    fireEvent.click(screen.getByTitle(zh.sticker.noteAdd));
+    fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
+    fireEvent.click(screen.getByText(zh.sticker.noteSave));
+    expect(container.querySelector(".stk-note-edit")).toBeNull();
+  });
+
   it("unnamed 会话且无动作时显示等待首次输入", () => {
     render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

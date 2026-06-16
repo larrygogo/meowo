@@ -410,6 +410,11 @@ html, body {
 .stk-rename svg { display: block; }
 .stk-rename:hover { color: var(--cc-accent); }
 
+/* 卡片操作按钮组（星标/便签/重命名/归档）：默认收起，hover 卡片才浮现，
+   给标题让出空间、消除每张卡 4 图标的拥挤。星标态有金边、便签有便签块，藏图标不丢信息。 */
+.stk-actions { display: none; align-items: center; gap: 2px; flex: none; }
+.stk-card:hover .stk-actions { display: inline-flex; }
+
 /* 会话星标按钮：未星标 faint、hover 转金色；已星标常显金色填充 */
 .stk-star { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
 .stk-star svg { display: block; }
@@ -436,13 +441,24 @@ html, body {
 .stk-note-icon { flex: none; color: var(--cc-warn); margin-top: 1px; }
 .stk-note-icon svg { display: block; }
 .stk-note-txt { flex: 1; min-width: 0; white-space: pre-wrap; }
-/* 便签编辑输入框 */
+/* 便签编辑器：输入框 + 保存/取消按钮 */
+.stk-note-editbox { margin-top: 7px; }
 .stk-note-edit {
-  width: 100%; box-sizing: border-box; margin-top: 7px; padding: 5px 8px;
+  width: 100%; box-sizing: border-box; padding: 5px 8px;
   font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5; font-family: inherit;
   color: var(--cc-text); background: var(--cc-surface-hover);
   border: 1px solid var(--cc-accent-border); border-radius: 9px; outline: none;
 }
+.stk-note-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.stk-note-save, .stk-note-cancel {
+  font-family: inherit; font-size: calc(10.5px * var(--cc-ui)); line-height: 1.4;
+  padding: 3px 14px; border-radius: 7px; cursor: pointer; appearance: none;
+  border: 1px solid transparent;
+}
+.stk-note-save { background: var(--cc-accent); color: #fff; border-color: var(--cc-accent); }
+.stk-note-save:hover { background: var(--cc-accent-dim); border-color: var(--cc-accent-dim); }
+.stk-note-cancel { background: transparent; color: var(--cc-text-dim); border-color: var(--cc-border); }
+.stk-note-cancel:hover { color: var(--cc-text); border-color: var(--cc-text-faint); }
 .stk-edit {
   flex: 1;
   min-width: 0;
