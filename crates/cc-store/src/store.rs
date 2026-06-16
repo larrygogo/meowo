@@ -19,8 +19,7 @@ impl Store {
         conn.pragma_update(None, "busy_timeout", 3000)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
-        Self::migrate(&conn);
+        Self::init(&conn)?;
         Ok(Store { conn })
     }
 
@@ -28,14 +27,26 @@ impl Store {
     pub fn open_in_memory() -> Result<Store, StoreError> {
         let conn = Connection::open_in_memory()?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
-        Self::migrate(&conn);
+        Self::init(&conn)?;
         Ok(Store { conn })
     }
 
-    /// 幂等迁移：给旧库补列（新库这些列已在 SCHEMA 里）。
-    /// 只忽略「列已存在」，其余失败（BUSY、I/O 等）输出 stderr 便于排查，不中断。
-    fn migrate(conn: &rusqlite::Connection) {
+    /// schema 版本：升 schema/加迁移时 +1。
+    const USER_VERSION: i64 = 1;
+
+    /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
+    /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
+    /// 迁移/建索引若遇非「列已存在」错误（BUSY/IO）则**不**bump 版本，下次 open 自动重试，
+    /// 不再把瞬时错误永久吞掉。
+    fn init(conn: &rusqlite::Connection) -> Result<(), StoreError> {
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap_or(0);
+        if version >= Self::USER_VERSION {
+            return Ok(());
+        }
+        conn.execute_batch(SCHEMA)?;
+        // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
         const ALTERS: [&str; 4] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
@@ -46,9 +57,25 @@ impl Store {
             if let Err(e) = conn.execute(sql, []) {
                 if !e.to_string().contains("duplicate column name") {
                     eprintln!("cc-store migrate 失败: {sql}: {e}");
+                    return Ok(()); // 非「列已存在」（BUSY/IO）：不 bump，下次 open 重试
                 }
             }
         }
+        // 索引：加速按 project / task / pid 的查询与「驱逐旧会话」（小库无感，大库防全表扫）。
+        const INDEXES: [&str; 4] = [
+            "CREATE INDEX IF NOT EXISTS ix_sessions_project ON sessions(project_id)",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_pid ON sessions(pid)",
+            "CREATE INDEX IF NOT EXISTS ix_tasks_project_col ON tasks(project_id, column_name)",
+            "CREATE INDEX IF NOT EXISTS ix_todos_task ON todos(task_id)",
+        ];
+        for sql in INDEXES {
+            if let Err(e) = conn.execute(sql, []) {
+                eprintln!("cc-store 建索引失败: {sql}: {e}");
+                return Ok(()); // 同上：不 bump，下次重试
+            }
+        }
+        let _ = conn.pragma_update(None, "user_version", Self::USER_VERSION);
+        Ok(())
     }
 
     /// 测试辅助：统计用户表数量。
