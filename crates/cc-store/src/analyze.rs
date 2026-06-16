@@ -28,16 +28,39 @@ pub struct TranscriptInfo {
     pub preview: Option<String>,
 }
 
-/// 把 assistant 正文清洗成卡片轻推预览：合并所有空白为单空格、按**字符**截断到 ~180。
+/// 把 assistant 正文清洗成卡片预览：合并所有空白为单空格、按**字符**截断到 ~180。
+/// 单次遍历完成「折叠空白 + 计数截断」，命中上限即提前返回——大消息不再整条 collapse/分配。
 pub(crate) fn preview_text(s: &str) -> Option<String> {
-    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    let t = collapsed.trim();
-    if t.is_empty() {
-        return None;
-    }
     const MAX: usize = 180;
-    let out: String = t.chars().take(MAX).collect();
-    Some(if t.chars().count() > MAX { format!("{out}…") } else { out })
+    let mut out = String::new();
+    let mut count = 0usize; // out 中的字符数
+    let mut pending_space = false; // 词间是否有待补的单空格（行首/行尾不补）
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if count > 0 {
+                pending_space = true;
+            }
+            continue;
+        }
+        // 写入该非空白字符（连同可能的前导空格）前先判断是否会超限。
+        let need = if pending_space { 2 } else { 1 };
+        if count + need > MAX {
+            out.push('…');
+            return Some(out);
+        }
+        if pending_space {
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// 把 assistant 正文归类为「卡死错误」短标签；非卡死返回 None。

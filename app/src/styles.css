@@ -391,6 +391,10 @@ html, body {
    给标题让出空间、消除每张卡 4 图标的拥挤。星标态有金边、便签有便签块，藏图标不丢信息。 */
 .stk-actions { display: none; align-items: center; gap: 2px; flex: none; }
 .stk-card:hover .stk-actions { display: inline-flex; }
+/* 无 hover 的环境（触屏/手写笔）：hover 永不触发，否则星标/便签/重命名/归档点不到 → 常显兜底 */
+@media (hover: none) {
+  .stk-actions { display: inline-flex; }
+}
 /* 「打开终端」按钮（按钮模式）：内联在 sub 行末尾的 accent 小图标钮，低调不突兀 */
 .stk-open {
   flex: none;
