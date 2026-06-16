@@ -1511,8 +1511,8 @@ fn spawn_liveness_watch(
         let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
         let mut notified_waiting: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待交互指纹
         let mut seeded = false;
-        // 菜单栏图标只在 (运行,待办) 变化时重画，避免每轮无谓刷新。
-        #[cfg(target_os = "macos")]
+        // 托盘状态摘要只在 (运行,待交互) 变化时刷新，避免每轮无谓重画/重设提示。
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let mut last_tray: Option<(usize, usize)> = None;
         loop {
             if let Ok(store) = Store::open(&db_path) {
@@ -1610,7 +1610,13 @@ fn spawn_liveness_watch(
                     crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting);
                     last_tray = Some((tray_running, tray_waiting));
                 }
-                #[cfg(not(target_os = "macos"))]
+                // Windows：把摘要写到托盘悬浮提示，鼠标移到托盘一眼可见，不必打开窗口。
+                #[cfg(target_os = "windows")]
+                if last_tray != Some((tray_running, tray_waiting)) {
+                    update_tray_tooltip(&app, tray_running, tray_waiting, lang);
+                    last_tray = Some((tray_running, tray_waiting));
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                 let _ = (tray_running, tray_waiting);
             }
             std::thread::sleep(Duration::from_secs(5));
@@ -1817,6 +1823,41 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// Windows：把待交互/运行中会话数摘要写进托盘悬浮提示，鼠标移到托盘一眼可见，
+/// 弥补桌面端无菜单栏标题。计数为 0 时回落到纯品牌名。
+#[cfg(target_os = "windows")]
+fn update_tray_tooltip(app: &tauri::AppHandle, running: usize, waiting: usize, lang: &str) {
+    let Some(tray) = app.tray_by_id("cc-kanban-tray") else {
+        return;
+    };
+    let _ = tray.set_tooltip(Some(tray_tooltip_text(lang, running, waiting)));
+}
+
+/// 构建托盘提示文案（本地化）。待交互更紧急，排在运行中之前。
+#[cfg(target_os = "windows")]
+fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> String {
+    if running == 0 && waiting == 0 {
+        return "cc-kanban".into();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if lang == "en" {
+        if waiting > 0 {
+            parts.push(format!("{waiting} waiting"));
+        }
+        if running > 0 {
+            parts.push(format!("{running} running"));
+        }
+    } else {
+        if waiting > 0 {
+            parts.push(format!("{waiting} 个待交互"));
+        }
+        if running > 0 {
+            parts.push(format!("{running} 个运行中"));
+        }
+    }
+    format!("cc-kanban · {}", parts.join(" · "))
 }
 
 /// 用 Win32 窗口子类化在「移动生效前」硬约束贴纸位置，彻底拖不出屏幕（零抖动，
@@ -2104,6 +2145,18 @@ mod tests {
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
     const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tray_tooltip_text_localizes_and_orders_waiting_first() {
+        use super::tray_tooltip_text;
+        // 入参顺序：(lang, running, waiting)。待交互更紧急，排在运行中之前。
+        assert_eq!(tray_tooltip_text("zh", 0, 0), "cc-kanban");
+        assert_eq!(tray_tooltip_text("zh", 2, 3), "cc-kanban · 3 个待交互 · 2 个运行中");
+        assert_eq!(tray_tooltip_text("zh", 2, 0), "cc-kanban · 2 个运行中");
+        assert_eq!(tray_tooltip_text("en", 0, 2), "cc-kanban · 2 waiting");
+        assert_eq!(tray_tooltip_text("en", 1, 1), "cc-kanban · 1 waiting · 1 running");
+    }
 
     #[test]
     fn path_has_exe_scans_path_dirs_without_spawning() {

@@ -18,7 +18,10 @@ function mk(over: Partial<Item> = {}): Item {
   } as Item;
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  localStorage.clear(); // 防 tab/star 等持久化状态跨用例泄漏
+});
 
 describe("Sticker", () => {
   it("空数据显示 all 空态主文案", () => {
@@ -81,6 +84,20 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
     expect(JSON.parse(localStorage.getItem("cc-kanban-starred") ?? "[]")).toContain("star-me");
     localStorage.removeItem("cc-kanban-starred");
+  });
+
+  it("待交互标签页按等待最久优先排序", () => {
+    localStorage.setItem("cc-kanban-tab", "waiting");
+    const base = (id: number, cc: string, last: number) =>
+      mk({ task_title: cc, current_activity: null, connected: true,
+        session: { id, project_id: 1, cc_session_id: cc, status: "waiting", started_at: 0, last_event_at: last, ended_at: null } });
+    const now = Date.now();
+    const { container } = render(<Sticker data={[
+      base(1, "新", now - 60_000),   // 1 分钟前
+      base(2, "旧", now - 600_000),  // 10 分钟前(等待最久)
+    ]} />);
+    const cards = container.querySelectorAll(".stk-card");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("旧");
   });
 
   it("已星标会话排到列表最前", () => {

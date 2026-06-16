@@ -356,11 +356,17 @@ export function Sticker({ data }: { data: Item[] }) {
     setEditingId(null);
   };
 
-  // 先按当前 tab 过滤，再把星标会话稳定排到最前（Array.sort 稳定，组内保留服务端顺序）。
+  // 先按当前 tab 过滤，再排序：星标恒在最前；「待交互」标签内按等待最久优先（先处理被晾最久的）；
+  // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
   const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
   const shown = data
     .filter((l) => match(tab, l, hideDays))
-    .sort((a, b) => Number(isStarred(b)) - Number(isStarred(a)));
+    .sort((a, b) => {
+      const star = Number(isStarred(b)) - Number(isStarred(a));
+      if (star !== 0) return star;
+      if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
+      return 0;
+    });
 
   return (
     <div className="sticker">
