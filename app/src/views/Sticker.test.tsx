@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 import { Sticker, EmptyState } from "./Sticker";
 import type { LiveSession } from "../api";
 import { zh } from "../i18n/zh";
@@ -33,16 +33,45 @@ describe("Sticker", () => {
     expect(screen.getByText("正在做点事")).toBeTruthy();
   });
 
-  it("有 preview 时渲染轻推预览块（最近一条 AI 正文）", () => {
-    const { container } = render(<Sticker data={[mk({ preview: "需要你确认下一步" })]} />);
-    expect(screen.getByText("需要你确认下一步")).toBeTruthy();
-    expect(screen.getByText(zh.sticker.previewMark)).toBeTruthy();
-    expect(container.querySelector(".stk-preview")).toBeTruthy();
+  it("hover 停留后浮现轻推预览块（最近一条 AI 正文）", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<Sticker data={[mk({ preview: "需要你确认下一步" })]} />);
+      expect(container.querySelector(".stk-preview")).toBeNull(); // 未停留不显示
+      fireEvent.mouseEnter(container.querySelector(".stk-card")!);
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(screen.getByText("需要你确认下一步")).toBeTruthy();
+      expect(screen.getByText(zh.sticker.previewMark)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("无 preview 时不渲染预览块", () => {
-    const { container } = render(<Sticker data={[mk({ preview: null })]} />);
-    expect(container.querySelector(".stk-preview")).toBeNull();
+  it("快速划过（停留不足 PREVIEW_DELAY）不浮现预览", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<Sticker data={[mk({ preview: "x" })]} />);
+      const card = container.querySelector(".stk-card")!;
+      fireEvent.mouseEnter(card);
+      act(() => { vi.advanceTimersByTime(100); });
+      fireEvent.mouseLeave(card);
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(container.querySelector(".stk-preview")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("无 preview 时即便停留也不渲染预览块", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<Sticker data={[mk({ preview: null })]} />);
+      fireEvent.mouseEnter(container.querySelector(".stk-card")!);
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(container.querySelector(".stk-preview")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("点击星标切换状态并持久化到 localStorage", () => {

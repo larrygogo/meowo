@@ -367,17 +367,20 @@ html, body {
 /* 出错时的 sub 行文案用红色 */
 .stk-sub-err { color: var(--cc-err); }
 
-/* hover 轻推预览：浮现最近一条 AI 正文，不切终端即可速览。
-   用 display 即时切换、不做高度过渡，避免逐帧重排的卡顿感。 */
+/* hover 轻推预览：停留卡片上超过 PREVIEW_DELAY 才由 React 条件渲染浮现（悬停意图，
+   避免划过列表时一串瞬开瞬关的闪烁）。只对 opacity 做一次淡入，不动高度 → 无逐帧重排卡顿。 */
 .stk-preview {
-  display: none;
   margin-top: 7px;
   font-size: calc(10.5px * var(--cc-ui));
   line-height: 1.55;
   color: var(--cc-text-dim);
   word-break: break-word;
+  animation: stk-preview-in 0.14s ease;
 }
-.stk-card:hover .stk-preview { display: block; }
+@keyframes stk-preview-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .stk-preview-mark {
   display: inline-block;
   margin-right: 6px;

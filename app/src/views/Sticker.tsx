@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -152,6 +152,9 @@ function RunBadge({
 const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
 const STAR_KEY = "cc-kanban-starred";
+/** 轻推预览的悬停意图延迟(ms)：光标需在卡片上停留这么久才浮现，
+ *  快速划过列表不触发，避免一串卡片预览瞬开瞬关的闪烁。 */
+const PREVIEW_DELAY = 250;
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
 
 /** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
@@ -305,6 +308,26 @@ export function Sticker({ data }: { data: Item[] }) {
     });
   };
 
+  // 轻推预览的悬停意图：只有「停留」在某卡片上超过 PREVIEW_DELAY 才显示其预览，
+  // 快速划过不触发（避免连串闪烁）；移开即时隐藏。previewId 存停留卡片的 session.id。
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const previewTimer = useRef<number | undefined>(undefined);
+  const onCardEnter = (id: number) => {
+    if (previewTimer.current !== undefined) clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => setPreviewId(id), PREVIEW_DELAY);
+  };
+  const onCardLeave = () => {
+    if (previewTimer.current !== undefined) {
+      clearTimeout(previewTimer.current);
+      previewTimer.current = undefined;
+    }
+    setPreviewId(null);
+  };
+  // 卸载时清掉悬而未决的定时器，防泄漏。
+  useEffect(() => () => {
+    if (previewTimer.current !== undefined) clearTimeout(previewTimer.current);
+  }, []);
+
   // 会话星标：星标的会话永远排到列表最前（跨重启保留）。与「置顶窗口(pin)」是两回事。
   const [starred, setStarred] = useState<Set<string>>(loadStarred);
   const toggleStar = (sid: string) => {
@@ -395,6 +418,8 @@ export function Sticker({ data }: { data: Item[] }) {
               <div
                 className={"stk-card" + (isStarred(l) ? " is-star" : "")}
                 key={l.session.id}
+                onMouseEnter={() => onCardEnter(l.session.id)}
+                onMouseLeave={onCardLeave}
                 onClick={() => {
                   if (l.connected) {
                     // 连接中：跳转到对应 WT 标签页。
@@ -464,7 +489,7 @@ export function Sticker({ data }: { data: Item[] }) {
                   </div>
                 </div>
                 {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</div>}
-                {l.preview && (
+                {previewId === l.session.id && l.preview && (
                   <div className="stk-preview">
                     <span className="stk-preview-mark">{t.sticker.previewMark}</span>
                     <span className="stk-preview-txt">{l.preview}</span>
