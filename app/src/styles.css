@@ -434,17 +434,15 @@ html, body {
 .stk-star svg { display: block; }
 .stk-star:hover { color: var(--cc-warn); }
 .stk-star-on { color: var(--cc-warn); }
-/* 星标卡片：金色边框 + 加粗左金条 + 卡片外侧柔和金色发光。
-   发光在外圈、不在文字后铺底色，醒目但不干扰阅读。 */
+/* 星标卡片：沿用普通卡片的 1px 圆角描边语言，仅把描边换成金色 + 极淡外发光，
+   与整体风格一致（不用生硬的左侧竖条）。 */
 .stk-card.is-star {
-  border-color: color-mix(in srgb, var(--cc-warn) 48%, var(--cc-border));
-  box-shadow: inset 3px 0 0 0 var(--cc-warn),
-              0 0 12px -3px color-mix(in srgb, var(--cc-warn) 26%, transparent);
+  border-color: color-mix(in srgb, var(--cc-warn) 55%, var(--cc-border));
+  box-shadow: 0 0 10px -3px color-mix(in srgb, var(--cc-warn) 20%, transparent);
 }
 .stk-card.is-star:hover {
-  border-color: color-mix(in srgb, var(--cc-warn) 62%, var(--cc-border));
-  box-shadow: inset 3px 0 0 0 var(--cc-warn),
-              0 0 14px -2px color-mix(in srgb, var(--cc-warn) 34%, transparent);
+  border-color: color-mix(in srgb, var(--cc-warn) 70%, var(--cc-border));
+  box-shadow: 0 0 13px -2px color-mix(in srgb, var(--cc-warn) 28%, transparent);
 }
 
 /* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
