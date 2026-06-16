@@ -434,8 +434,17 @@ html, body {
 .stk-star svg { display: block; }
 .stk-star:hover { color: var(--cc-warn); }
 .stk-star-on { color: var(--cc-warn); }
-/* 星标卡片：左侧金色描边 + 略强边框，与普通卡片区分 */
-.stk-card.is-star { border-color: color-mix(in srgb, var(--cc-warn) 45%, var(--cc-border)); box-shadow: inset 2px 0 0 0 var(--cc-warn); }
+/* 星标卡片：从置顶左缘溢出的暖金渐变薄底 + 金色边条 + 金边，醒目而不刺眼。
+   渐变在左缘最浓、约 58% 处淡出为常规底色，呼应左侧的金色 inset 边条。 */
+.stk-card.is-star {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cc-warn) 13%, var(--cc-surface)), var(--cc-surface) 58%);
+  border-color: color-mix(in srgb, var(--cc-warn) 38%, var(--cc-border));
+  box-shadow: inset 3px 0 0 0 var(--cc-warn);
+}
+.stk-card.is-star:hover {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cc-warn) 18%, var(--cc-surface-hover)), var(--cc-surface-hover) 58%);
+  border-color: color-mix(in srgb, var(--cc-warn) 52%, var(--cc-border));
+}
 
 /* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
 .stk-noteb { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
