@@ -486,7 +486,7 @@ export function Sticker({ data }: { data: Item[] }) {
             );
             return (
               <div
-                className={"stk-card" + (isStarred(l) ? " is-star" : "") + (buttonMode && canOpen(l) ? " stk-card--btn" : "")}
+                className={"stk-card" + (isStarred(l) ? " is-star" : "")}
                 key={l.session.id}
                 onMouseEnter={() => onCardEnter(l.session.id)}
                 onMouseLeave={onCardLeave}
@@ -614,7 +614,20 @@ export function Sticker({ data }: { data: Item[] }) {
                     <span className="stk-note-txt">{l.note}</span>
                   </div>
                 ) : null}
-                {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</div>}
+                {(sub || (buttonMode && canOpen(l))) && (
+                  <div className="stk-subrow">
+                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</span>}
+                    {/* 按钮模式：打开终端按钮内联在「轻推预览上面这行」的末尾，不突兀 */}
+                    {buttonMode && canOpen(l) && (
+                      <button
+                        type="button"
+                        className="stk-open"
+                        title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                        onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
+                      ><OpenIcon /></button>
+                    )}
+                  </div>
+                )}
                 {previewEnabled && previewId === l.session.id && l.preview && (
                   <div className="stk-preview">
                     <span className="stk-preview-mark">{t.sticker.previewMark}</span>
@@ -630,15 +643,6 @@ export function Sticker({ data }: { data: Item[] }) {
                       {l.todo_done}/{l.todo_total}
                     </span>
                   </div>
-                )}
-                {/* 按钮模式：右下角常驻「打开终端」按钮（卡片底部已预留 .stk-card--btn 让位带，不压正文） */}
-                {buttonMode && canOpen(l) && (
-                  <button
-                    type="button"
-                    className="stk-open"
-                    title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
-                    onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
-                  ><OpenIcon /></button>
                 )}
               </div>
             );
