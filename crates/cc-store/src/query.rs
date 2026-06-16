@@ -43,6 +43,8 @@ pub struct LiveSession {
     pub context_pct: Option<i64>,
     /// 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 None。
     pub context_window: Option<i64>,
+    /// 用户给会话挂的便签（手写备忘）；无便签为 None。
+    pub note: Option<String>,
 }
 
 impl Store {
@@ -132,11 +134,12 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
                     p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
-                    sc.used_pct, sc.window_size
+                    sc.used_pct, sc.window_size, sn.note
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
              LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
+             LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id
              ORDER BY s.last_event_at DESC
              LIMIT 100",
         )?;
@@ -162,12 +165,13 @@ impl Store {
                 let archived_at: Option<i64> = r.get(15)?;
                 let context_pct: Option<i64> = r.get(16)?;
                 let context_window: Option<i64> = r.get(17)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window))
+                let note: Option<String> = r.get(18)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, note))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, note) in rows {
             let todos = match task_id {
                 Some(tid) => self.list_todos(tid)?,
                 None => Vec::new(),
@@ -189,6 +193,7 @@ impl Store {
                 cwd,
                 context_pct,
                 context_window,
+                note,
             });
         }
         Ok(out)

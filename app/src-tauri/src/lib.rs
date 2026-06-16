@@ -202,6 +202,7 @@ fn center_on(prev_start: i32, prev_len: i32, new_len: i32, work_start: i32, work
 /// （吸顶=水平居中，吸左/右=垂直居中）。`extent` 是沿条主轴的逻辑长度，由前端按内容给出。
 #[tauri::command]
 fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Result<(), String> {
+    let extent = extent.clamp(1.0, 20000.0); // 钳上界，防 *scale 后 f64→i32 回绕
     let m = window
         .current_monitor()
         .map_err(|e| e.to_string())?
@@ -259,6 +260,7 @@ fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Resul
 /// 偷看展开成全尺寸（仍贴边、保持置顶）：宽高恢复为记住的正常尺寸。
 #[tauri::command]
 fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64) -> Result<(), String> {
+    let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0)); // 钳上界防回绕
     let m = window
         .current_monitor()
         .map_err(|e| e.to_string())?
@@ -374,6 +376,8 @@ struct LiveItem {
     errored: bool,
     error_label: Option<String>,
     error_raw: Option<String>,
+    // 最近一条 AI 正文的轻推预览（清洗+截断），卡片 hover 速览用。
+    preview: Option<String>,
     // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
 }
 
@@ -438,6 +442,7 @@ fn live_sessions_blocking(
         // 上下文百分比不在这里算——它由 statusline 写库、随 LiveSession flatten 输出。
         let mut error_label: Option<String> = None;
         let mut error_raw: Option<String> = None;
+        let mut preview: Option<String> = None;
         let info = cc_store::title::resolve_transcript_path(
             None,
             s.cwd.as_deref(),
@@ -453,6 +458,7 @@ fn live_sessions_blocking(
                 error_label = Some(e.label);
                 error_raw = Some(e.raw);
             }
+            preview = info.preview;
         }
         // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
         let t = s.task_title.trim();
@@ -469,6 +475,7 @@ fn live_sessions_blocking(
             errored: error_label.is_some(),
             error_label,
             error_raw,
+            preview,
         });
     }
     Ok(items)
@@ -782,6 +789,13 @@ fn focus_session(
     if pid <= 0 {
         return Err("无效 pid".into());
     }
+    // 与 resume_session 同一契约：凡可能进入 `claude --resume <id>` 路径的 session_id 一律先校验
+    // 为 UUID 形态，杜绝注入（macOS 分支会把 id 经 osascript 注入 AppleScript）。
+    if let Some(id) = session_id.as_deref() {
+        if !is_session_id(id) {
+            return Err("无效 session_id".into());
+        }
+    }
     #[cfg(target_os = "windows")]
     {
         let _ = (cwd, session_id);
@@ -938,7 +952,8 @@ fn wt_default_profile() -> Option<String> {
 #[cfg(target_os = "windows")]
 fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     let d = cwd?.trim();
-    if d.is_empty() || d.contains([';', '"']) {
+    // 含 ; " 会破坏命令行解析；以 - 开头会被 wt 当成选项（真实 Windows 路径不会以 - 开头）。
+    if d.is_empty() || d.contains([';', '"']) || d.starts_with('-') {
         return None;
     }
     std::path::Path::new(d).is_dir().then(|| d.to_string())
@@ -1100,6 +1115,27 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
 }
 
+/// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；
+/// session_id 严格校验 UUID 形态，正文截断到 500 字符（store 内 trim 后空则删除该行）。
+#[tauri::command]
+fn set_session_note(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    session_id: String,
+    note: String,
+) -> Result<(), String> {
+    if !is_session_id(&session_id) {
+        return Err("无效 session_id".into());
+    }
+    let note: String = note.chars().take(500).collect();
+    let store = open_store(&state.db_path)?;
+    store
+        .set_session_note(&session_id, &note, now_ms())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("board-changed", ());
+    Ok(())
+}
+
 fn default_true() -> bool {
     true
 }
@@ -1118,6 +1154,10 @@ fn default_resume_terminal() -> String {
 }
 fn default_language() -> String {
     "auto".to_string()
+}
+/// 打开终端的方式：card = 点击卡片直接打开（默认），button = 卡片上单独的打开按钮。
+fn default_terminal_open_mode() -> String {
+    "card".to_string()
 }
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
@@ -1144,6 +1184,12 @@ struct Settings {
     /// 界面/通知语言：auto（跟随系统）/ zh / en。缺省 auto，兼容老 settings.json。
     #[serde(default = "default_language")]
     language: String,
+    /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
+    #[serde(default = "default_terminal_open_mode")]
+    terminal_open_mode: String,
+    /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
+    #[serde(default = "default_true")]
+    preview_enabled: bool,
 }
 
 impl Default for Settings {
@@ -1156,6 +1202,8 @@ impl Default for Settings {
             ui_scale: default_ui_scale(),
             resume_terminal: default_resume_terminal(),
             language: default_language(),
+            terminal_open_mode: default_terminal_open_mode(),
+            preview_enabled: true,
         }
     }
 }
@@ -1209,7 +1257,10 @@ fn get_settings() -> Settings {
 }
 
 #[tauri::command]
-fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
+    // 后端兜底钳值（与前端 appearance.ts 一致），防越界值落盘后被 5s 轮询线程读到。
+    settings.opacity = settings.opacity.clamp(25, 100);
+    settings.ui_scale = settings.ui_scale.clamp(50, 200);
     let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     let path = settings_path();
     if let Some(dir) = path.parent() {
@@ -1493,8 +1544,8 @@ fn spawn_liveness_watch(
         let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
         let mut notified_waiting: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待交互指纹
         let mut seeded = false;
-        // 菜单栏图标只在 (运行,待办) 变化时重画，避免每轮无谓刷新。
-        #[cfg(target_os = "macos")]
+        // 托盘状态摘要只在 (运行,待交互) 变化时刷新，避免每轮无谓重画/重设提示。
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let mut last_tray: Option<(usize, usize)> = None;
         loop {
             if let Ok(store) = Store::open(&db_path) {
@@ -1592,7 +1643,13 @@ fn spawn_liveness_watch(
                     crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting);
                     last_tray = Some((tray_running, tray_waiting));
                 }
-                #[cfg(not(target_os = "macos"))]
+                // Windows：把摘要写到托盘悬浮提示，鼠标移到托盘一眼可见，不必打开窗口。
+                #[cfg(target_os = "windows")]
+                if last_tray != Some((tray_running, tray_waiting)) {
+                    update_tray_tooltip(&app, tray_running, tray_waiting, lang);
+                    last_tray = Some((tray_running, tray_waiting));
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                 let _ = (tray_running, tray_waiting);
             }
             std::thread::sleep(Duration::from_secs(5));
@@ -1771,8 +1828,12 @@ fn apply_language(app: &tauri::AppHandle, lang: &str) {
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = build_tray_menu(app.handle(), ui_lang(&load_settings()))?;
 
-    TrayIconBuilder::with_id("cc-kanban-tray")
-        .icon(app.default_window_icon().unwrap().clone())
+    let mut builder = TrayIconBuilder::with_id("cc-kanban-tray");
+    // 图标恒由打包提供，但缺失时不该 unwrap panic 把启动打挂——没图标就建无图标托盘。
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder
         .tooltip("cc-kanban")
         .menu(&menu)
         // 左键留给「打开设置」，菜单仅在右键弹出。
@@ -1795,6 +1856,41 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// Windows：把待交互/运行中会话数摘要写进托盘悬浮提示，鼠标移到托盘一眼可见，
+/// 弥补桌面端无菜单栏标题。计数为 0 时回落到纯品牌名。
+#[cfg(target_os = "windows")]
+fn update_tray_tooltip(app: &tauri::AppHandle, running: usize, waiting: usize, lang: &str) {
+    let Some(tray) = app.tray_by_id("cc-kanban-tray") else {
+        return;
+    };
+    let _ = tray.set_tooltip(Some(tray_tooltip_text(lang, running, waiting)));
+}
+
+/// 构建托盘提示文案（本地化）。待交互更紧急，排在运行中之前。
+#[cfg(target_os = "windows")]
+fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> String {
+    if running == 0 && waiting == 0 {
+        return "cc-kanban".into();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if lang == "en" {
+        if waiting > 0 {
+            parts.push(format!("{waiting} waiting"));
+        }
+        if running > 0 {
+            parts.push(format!("{running} running"));
+        }
+    } else {
+        if waiting > 0 {
+            parts.push(format!("{waiting} 个待交互"));
+        }
+        if running > 0 {
+            parts.push(format!("{running} 个运行中"));
+        }
+    }
+    format!("cc-kanban · {}", parts.join(" · "))
 }
 
 /// 用 Win32 窗口子类化在「移动生效前」硬约束贴纸位置，彻底拖不出屏幕（零抖动，
@@ -1961,6 +2057,7 @@ pub fn run() {
             resume_session,
             rename_session,
             set_archived,
+            set_session_note,
             get_autostart,
             set_autostart,
             get_settings,
@@ -2082,6 +2179,18 @@ mod tests {
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
     const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tray_tooltip_text_localizes_and_orders_waiting_first() {
+        use super::tray_tooltip_text;
+        // 入参顺序：(lang, running, waiting)。待交互更紧急，排在运行中之前。
+        assert_eq!(tray_tooltip_text("zh", 0, 0), "cc-kanban");
+        assert_eq!(tray_tooltip_text("zh", 2, 3), "cc-kanban · 3 个待交互 · 2 个运行中");
+        assert_eq!(tray_tooltip_text("zh", 2, 0), "cc-kanban · 2 个运行中");
+        assert_eq!(tray_tooltip_text("en", 0, 2), "cc-kanban · 2 waiting");
+        assert_eq!(tray_tooltip_text("en", 1, 1), "cc-kanban · 1 waiting · 1 running");
+    }
 
     #[test]
     fn path_has_exe_scans_path_dirs_without_spawning() {

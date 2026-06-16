@@ -110,6 +110,29 @@ fn live_session_carries_project_name_title_and_progress() {
     assert_eq!(l.todos[0].content, "a");
 }
 
+#[test]
+fn session_note_upsert_delete_and_surfaces_in_live() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (s1, _) = store.start_session(pid, "sess-a", 100).unwrap();
+    store.on_user_prompt(s1, "标题", 110).unwrap();
+
+    // 初始无便签
+    assert_eq!(store.live_sessions().unwrap()[0].note, None);
+
+    // 写入便签 → live_sessions 带出（前后空白被 trim）
+    store.set_session_note("sess-a", "  记得 review  ", 120).unwrap();
+    assert_eq!(store.live_sessions().unwrap()[0].note.as_deref(), Some("记得 review"));
+
+    // upsert 覆盖旧便签
+    store.set_session_note("sess-a", "改主意了", 130).unwrap();
+    assert_eq!(store.live_sessions().unwrap()[0].note.as_deref(), Some("改主意了"));
+
+    // 清空（trim 后为空）→ 删除该行，回到 None
+    store.set_session_note("sess-a", "   ", 140).unwrap();
+    assert_eq!(store.live_sessions().unwrap()[0].note, None);
+}
+
 // ===== Task 2: 过滤未命名空卡 =====
 
 #[test]

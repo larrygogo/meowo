@@ -356,6 +356,13 @@ fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
 
 /// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
 fn ensure_valid_token() -> Result<String, String> {
+    use std::sync::Mutex;
+    // 串行化刷新：并发刷新（多窗口/连点）会各自用旋转后失效的 refresh_token 重复请求、互相覆盖。
+    // 持锁后下面会重读凭据并重新判过期（双检）——若刚被另一调用方刷新过，直接走 fast-path 返回新
+    // token，不再重复刷新。
+    static REFRESH_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let root = read_credentials_root();
     // 读不到可用 OAuth 凭据 → 视为第三方/非官方登录，用量接口不适用，返回标记码。
     if oauth_credentials_missing(root.as_ref()) {
@@ -384,10 +391,12 @@ fn ensure_valid_token() -> Result<String, String> {
     let body: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
     let new_access = body.get("access_token").and_then(|v| v.as_str()).ok_or("刷新响应缺 access_token")?.to_string();
     let new_refresh = body.get("refresh_token").and_then(|v| v.as_str()).unwrap_or(&refresh).to_string();
+    // 钳下限 600s：服务端若异常返回 0/负/极小值，避免写回一个立刻过期的 expiresAt 而陷入每次都刷新。
     let expires_in = body
         .get("expires_in")
         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
-        .unwrap_or(3600);
+        .unwrap_or(3600)
+        .max(600);
     let new_expires_at = now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);

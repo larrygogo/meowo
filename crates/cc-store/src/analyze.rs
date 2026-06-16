@@ -23,6 +23,44 @@ pub struct TranscriptInfo {
     pub context_tokens: Option<u64>,
     /// 上下文已用百分比（相对 200k 标准窗口，封顶 100）。
     pub context_pct: Option<u8>,
+    /// 最近一条 assistant 正文的轻推预览（合并空白、截断）——供卡片 hover 速览，
+    /// 不切终端就能判断该会话在问什么/说了什么。无正文回合（纯 tool_use）时为 None。
+    pub preview: Option<String>,
+}
+
+/// 把 assistant 正文清洗成卡片预览：合并所有空白为单空格、按**字符**截断到 ~180。
+/// 单次遍历完成「折叠空白 + 计数截断」，命中上限即提前返回——大消息不再整条 collapse/分配。
+pub(crate) fn preview_text(s: &str) -> Option<String> {
+    const MAX: usize = 180;
+    let mut out = String::new();
+    let mut count = 0usize; // out 中的字符数
+    let mut pending_space = false; // 词间是否有待补的单空格（行首/行尾不补）
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if count > 0 {
+                pending_space = true;
+            }
+            continue;
+        }
+        // 写入该非空白字符（连同可能的前导空格）前先判断是否会超限。
+        let need = if pending_space { 2 } else { 1 };
+        if count + need > MAX {
+            out.push('…');
+            return Some(out);
+        }
+        if pending_space {
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// 把 assistant 正文归类为「卡死错误」短标签；非卡死返回 None。
@@ -133,6 +171,7 @@ impl ParseState {
             error,
             context_tokens: self.last_usage,
             context_pct,
+            preview: self.last_text.as_ref().and_then(|(t, _)| preview_text(t)),
         }
     }
 }
@@ -207,7 +246,9 @@ impl TranscriptCache {
         };
         let (len, mtime) = match f.metadata() {
             Ok(m) => (m.len(), m.modified().ok()),
-            Err(_) => (0, None),
+            // metadata 偶发失败（I/O 抖动等）时**沿用已累积状态**，不要用 len=0 当真实长度——
+            // 否则会被下面误判为「截断」而清空已解析的标题/错误，导致瞬时丢失（与 File::open 失败一致处理）。
+            Err(_) => return entry.state.to_info(),
         };
         if len < entry.offset || (len == entry.offset && mtime != entry.mtime) {
             // 被截断，或等长但 mtime 变了（同长度重写）→ 重头解析。
@@ -334,6 +375,29 @@ mod tests {
         let info = analyze_transcript(p.to_str().unwrap());
         std::fs::remove_file(&p).ok();
         assert_eq!(info.error.map(|e| e.label), Some("需要重新登录".to_string()));
+    }
+
+    #[test]
+    fn preview_text_collapses_and_truncates() {
+        assert_eq!(preview_text("  hi\n\n  there  "), Some("hi there".to_string()));
+        assert_eq!(preview_text("   \n\t  "), None);
+        let long: String = "あ".repeat(200);
+        let p = preview_text(&long).unwrap();
+        // 按字符截断到 180 + 省略号；多字节字符不会被截半。
+        assert_eq!(p.chars().count(), 181);
+        assert!(p.ends_with('…'));
+    }
+
+    #[test]
+    fn analyze_exposes_last_assistant_preview() {
+        let content = concat!(
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"first turn"}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u2","message":{"role":"assistant","content":[{"type":"text","text":"  need your\n  confirmation  "}]}}"#, "\n",
+        );
+        let p = write_tmp("preview", content);
+        let info = analyze_transcript(p.to_str().unwrap());
+        std::fs::remove_file(&p).ok();
+        assert_eq!(info.preview.as_deref(), Some("need your confirmation"));
     }
 
     #[test]

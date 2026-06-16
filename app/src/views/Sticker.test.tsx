@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { Sticker, EmptyState } from "./Sticker";
 import type { LiveSession } from "../api";
 import { zh } from "../i18n/zh";
@@ -18,7 +18,10 @@ function mk(over: Partial<Item> = {}): Item {
   } as Item;
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  localStorage.clear(); // 防 tab/star 等持久化状态跨用例泄漏
+});
 
 describe("Sticker", () => {
   it("空数据显示 all 空态主文案", () => {
@@ -27,10 +30,120 @@ describe("Sticker", () => {
     expect(container.querySelector("[data-tauri-drag-region]")).toBeTruthy();
   });
 
-  it("渲染会话行：项目名 + 当前动作", () => {
-    render(<Sticker data={[mk()]} />);
+  it("渲染会话行：项目名 + 最近 AI 正文", () => {
+    render(<Sticker data={[mk({ preview: "最近这条 AI 正文" })]} />);
     expect(screen.getByText("proj")).toBeTruthy();
-    expect(screen.getByText("正在做点事")).toBeTruthy();
+    expect(screen.getByText("最近这条 AI 正文")).toBeTruthy();
+  });
+
+  it("活动行常显最近 AI 正文(preview)，title 带完整文本", () => {
+    const { container } = render(<Sticker data={[mk({ preview: "需要你确认下一步" })]} />);
+    const subEl = container.querySelector(".stk-sub") as HTMLElement;
+    expect(subEl?.textContent).toBe("需要你确认下一步");
+    expect(subEl?.getAttribute("title")).toBe("需要你确认下一步");
+  });
+
+  it("无 preview 且无错误时不渲染活动行", () => {
+    const { container } = render(<Sticker data={[mk({ preview: null })]} />);
+    expect(container.querySelector(".stk-sub")).toBeNull();
+  });
+
+  it("点击星标切换状态并持久化到 localStorage", () => {
+    localStorage.removeItem("cc-kanban-starred");
+    const { container } = render(<Sticker data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
+    fireEvent.click(screen.getByTitle(zh.sticker.star));
+    expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem("cc-kanban-starred") ?? "[]")).toContain("star-me");
+    localStorage.removeItem("cc-kanban-starred");
+  });
+
+  it("待交互标签页按等待最久优先排序", () => {
+    localStorage.setItem("cc-kanban-tab", "waiting");
+    const base = (id: number, cc: string, last: number) =>
+      mk({ task_title: cc, current_activity: null, connected: true,
+        session: { id, project_id: 1, cc_session_id: cc, status: "waiting", started_at: 0, last_event_at: last, ended_at: null } });
+    const now = Date.now();
+    const { container } = render(<Sticker data={[
+      base(1, "新", now - 60_000),   // 1 分钟前
+      base(2, "旧", now - 600_000),  // 10 分钟前(等待最久)
+    ]} />);
+    const cards = container.querySelectorAll(".stk-card");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("旧");
+  });
+
+  it("已星标会话排到列表最前", () => {
+    localStorage.setItem("cc-kanban-starred", JSON.stringify(["b"]));
+    const { container } = render(<Sticker data={[
+      mk({ task_title: "甲", current_activity: null, session: { id: 1, project_id: 1, cc_session_id: "a", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
+      mk({ task_title: "乙", current_activity: null, session: { id: 2, project_id: 1, cc_session_id: "b", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
+    ]} />);
+    const cards = container.querySelectorAll(".stk-card");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("乙");
+    expect(cards[0].classList.contains("is-star")).toBe(true);
+    localStorage.removeItem("cc-kanban-starred");
+  });
+
+  it("有便签时渲染便签块", () => {
+    const { container } = render(<Sticker data={[mk({ note: "记得 review PR" })]} />);
+    expect(screen.getByText("记得 review PR")).toBeTruthy();
+    expect(container.querySelector(".stk-note")).toBeTruthy();
+  });
+
+  it("无便签时点击便签按钮打开编辑框", () => {
+    const { container } = render(<Sticker data={[mk({ note: null })]} />);
+    expect(container.querySelector(".stk-note-edit")).toBeNull();
+    fireEvent.click(screen.getByTitle(zh.sticker.noteAdd));
+    const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.placeholder).toBe(zh.sticker.notePlaceholder);
+  });
+
+  it("编辑已有便签时预填原文", () => {
+    const { container } = render(<Sticker data={[mk({ note: "旧便签" })]} />);
+    fireEvent.click(container.querySelector(".stk-noteb")!);
+    const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
+    expect(input.value).toBe("旧便签");
+  });
+
+  it("便签编辑框有保存/取消按钮，点取消关闭且保留原文", () => {
+    const { container } = render(<Sticker data={[mk({ note: "保留我" })]} />);
+    fireEvent.click(container.querySelector(".stk-noteb")!);
+    expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
+    fireEvent.click(screen.getByText(zh.sticker.noteCancel));
+    expect(container.querySelector(".stk-note-edit")).toBeNull();
+    expect(screen.getByText("保留我")).toBeTruthy(); // 便签块仍在
+  });
+
+  it("点便签保存按钮关闭编辑框", () => {
+    const { container } = render(<Sticker data={[mk({ note: null })]} />);
+    fireEvent.click(screen.getByTitle(zh.sticker.noteAdd));
+    fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
+    fireEvent.click(screen.getByText(zh.sticker.noteSave));
+    expect(container.querySelector(".stk-note-edit")).toBeNull();
+  });
+
+  it("重命名编辑器有保存/取消按钮，点取消关闭", () => {
+    const { container } = render(<Sticker data={[mk()]} />);
+    fireEvent.click(container.querySelector(".stk-rename")!);
+    expect(container.querySelector(".stk-edit-row")).toBeTruthy();
+    expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
+    fireEvent.click(screen.getByText(zh.sticker.noteCancel));
+    expect(container.querySelector(".stk-edit")).toBeNull();
+  });
+
+  it("编辑态下点击卡片只关闭编辑器、不导航开终端", () => {
+    // 守卫成立的可观察证据：点击卡片后编辑器关闭（setEditingId(null) 只在早返回分支执行）；
+    // 若无守卫，onClick 会走 focus_session 分支、editingId 不变、编辑器仍在。
+    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    fireEvent.click(container.querySelector(".stk-rename")!);
+    expect(container.querySelector(".stk-edit")).toBeTruthy();
+    fireEvent.click(container.querySelector(".stk-card")!);
+    expect(container.querySelector(".stk-edit")).toBeNull();
+  });
+
+  it("默认(点击卡片模式)不渲染独立打开按钮", () => {
+    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    expect(container.querySelector(".stk-open")).toBeNull();
   });
 
   it("unnamed 会话且无动作时显示等待首次输入", () => {

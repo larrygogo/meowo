@@ -348,7 +348,9 @@ html, body {
 .conn-on { color: var(--cc-ok); }
 .conn-off { color: var(--cc-text-faint); }
 .stk-repo { font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stk-sub { font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 7px; }
+/* sub 行：活动/错误文案 + （按钮模式）末尾的打开按钮 */
+.stk-subrow { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+.stk-sub { flex: 1; min-width: 0; font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 会话出错：红色脉冲点 */
 .needs-error {
@@ -384,6 +386,81 @@ html, body {
 .stk-rename { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
 .stk-rename svg { display: block; }
 .stk-rename:hover { color: var(--cc-accent); }
+
+/* 卡片操作按钮组（星标/便签/重命名/归档）：默认收起，hover 卡片才浮现，
+   给标题让出空间、消除每张卡 4 图标的拥挤。星标态有金边、便签有便签块，藏图标不丢信息。 */
+.stk-actions { display: none; align-items: center; gap: 2px; flex: none; }
+.stk-card:hover .stk-actions { display: inline-flex; }
+/* 无 hover 的环境（触屏/手写笔）：hover 永不触发，否则星标/便签/重命名/归档点不到 → 常显兜底 */
+@media (hover: none) {
+  .stk-actions { display: inline-flex; }
+}
+/* 「打开终端」按钮（按钮模式）：内联在 sub 行末尾的 accent 小图标钮，低调不突兀 */
+.stk-open {
+  flex: none;
+  margin-left: auto; /* 推到行末（无 sub 文本时也靠右） */
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 2px 5px; border-radius: 6px; cursor: pointer; appearance: none;
+  color: var(--cc-accent-text); background: transparent; border: none;
+}
+.stk-open svg { display: block; }
+.stk-open:hover { background: var(--cc-accent-soft); }
+
+/* 会话星标按钮：未星标 faint、hover 转金色；已星标常显金色填充 */
+.stk-star { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
+.stk-star svg { display: block; }
+.stk-star:hover { color: var(--cc-warn); }
+.stk-star-on { color: var(--cc-warn); }
+/* 星标卡片：沿用普通卡片的 1px 圆角描边语言，仅把描边换成金色 + 极淡外发光，
+   与整体风格一致（不用生硬的左侧竖条）。 */
+.stk-card.is-star {
+  border-color: color-mix(in srgb, var(--cc-warn) 55%, var(--cc-border));
+  box-shadow: 0 0 10px -3px color-mix(in srgb, var(--cc-warn) 20%, transparent);
+}
+.stk-card.is-star:hover {
+  border-color: color-mix(in srgb, var(--cc-warn) 70%, var(--cc-border));
+  box-shadow: 0 0 13px -2px color-mix(in srgb, var(--cc-warn) 28%, transparent);
+}
+
+/* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
+.stk-noteb { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
+.stk-noteb svg { display: block; }
+.stk-noteb:hover { color: var(--cc-warn); }
+.stk-noteb-on { color: var(--cc-warn); }
+/* 会话便签：用户手写备忘，常显。琥珀底区别于 AI 预览/活动行，点击进入编辑。 */
+.stk-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin-top: 7px; padding: 5px 8px;
+  font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5;
+  color: var(--cc-text); cursor: text; word-break: break-word;
+  background: color-mix(in srgb, var(--cc-warn) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cc-warn) 30%, transparent);
+  border-radius: 9px;
+}
+.stk-note-icon { flex: none; color: var(--cc-warn); margin-top: 1px; }
+.stk-note-icon svg { display: block; }
+.stk-note-txt { flex: 1; min-width: 0; white-space: pre-wrap; }
+/* 便签编辑器：输入框 + 保存/取消按钮 */
+.stk-note-editbox { margin-top: 7px; }
+.stk-note-edit {
+  width: 100%; box-sizing: border-box; padding: 5px 8px;
+  font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5; font-family: inherit;
+  color: var(--cc-text); background: var(--cc-surface-hover);
+  border: 1px solid var(--cc-accent-border); border-radius: 9px; outline: none;
+}
+.stk-note-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+/* 通用保存/取消按钮（便签与重命名共用） */
+.stk-btn-save, .stk-btn-cancel {
+  flex: none; font-family: inherit; font-size: calc(10.5px * var(--cc-ui)); line-height: 1.4;
+  padding: 3px 14px; border-radius: 7px; cursor: pointer; appearance: none; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.stk-btn-save { background: var(--cc-accent); color: #fff; border-color: var(--cc-accent); }
+.stk-btn-save:hover { background: var(--cc-accent-dim); border-color: var(--cc-accent-dim); }
+.stk-btn-cancel { background: transparent; color: var(--cc-text-dim); border-color: var(--cc-border); }
+.stk-btn-cancel:hover { color: var(--cc-text); border-color: var(--cc-text-faint); }
+/* 重命名编辑行：输入框占满 + 行内保存/取消按钮 */
+.stk-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
 .stk-edit {
   flex: 1;
   min-width: 0;

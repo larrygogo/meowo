@@ -20,19 +20,40 @@ pub fn to_bash_path(p: &str) -> String {
     p.replace('\\', "/")
 }
 
-/// 从 settings 的 hooks 里找出已配置的 cc-reporter 可执行路径（去掉外层引号）。
+/// 严格判定一条 hook command 是否是「我们写入的 cc-reporter 可执行」并返回其路径：
+/// 必须是单个（可带引号的）可执行路径、**无额外参数**，且文件名恰为 cc-reporter[.exe]。
+/// 不用裸 contains —— 否则会误伤用户自有 hook（如 `node tools/cc-reporter-notify.js`，
+/// 或路径里恰好含 cc-reporter 目录），把人家的命令静默改写坏。纯函数便于单测。
+pub fn reporter_exe_path(cmd: &str) -> Option<String> {
+    let c = cmd.trim();
+    let path = if let Some(rest) = c.strip_prefix('"') {
+        // 形如 "<path>"：取首尾引号之间，引号后不能再有内容（否则是带参数）。
+        let inner = rest.strip_suffix('"')?;
+        if inner.contains('"') {
+            return None;
+        }
+        inner
+    } else {
+        // 裸路径：不能含空白（含空白 = 带参数/是命令而非单可执行）。
+        if c.chars().any(char::is_whitespace) {
+            return None;
+        }
+        c
+    };
+    let name = std::path::Path::new(path).file_name()?.to_str()?;
+    (name.eq_ignore_ascii_case("cc-reporter") || name.eq_ignore_ascii_case("cc-reporter.exe"))
+        .then(|| path.to_string())
+}
+
+/// 从 settings 的 hooks 里找出已配置的 cc-reporter 可执行路径。
 pub fn reporter_path_from_hooks(settings: &Value) -> Option<String> {
     let hooks = settings.get("hooks")?.as_object()?;
     for (_event, arr) in hooks {
         for entry in arr.as_array().into_iter().flatten() {
             for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
                 if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
-                    if cmd.contains("cc-reporter") {
-                        // hook 的 command 就是带引号的可执行路径（无参数）。
-                        let p = cmd.trim().trim_matches('"').to_string();
-                        if !p.is_empty() {
-                            return Some(p);
-                        }
+                    if let Some(p) = reporter_exe_path(cmd) {
+                        return Some(p);
                     }
                 }
             }
@@ -46,7 +67,11 @@ fn find_reporter_hook(event_arr: &mut [Value]) -> Option<&mut Value> {
     for entry in event_arr.iter_mut() {
         if let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) {
             for h in hs.iter_mut() {
-                if h.get("command").and_then(|x| x.as_str()).is_some_and(|c| c.contains("cc-reporter")) {
+                if h.get("command")
+                    .and_then(|x| x.as_str())
+                    .and_then(reporter_exe_path)
+                    .is_some()
+                {
                     return Some(h);
                 }
             }
@@ -228,8 +253,12 @@ pub fn apply() {
         return; // 已是目标状态 → 一字不改
     }
 
-    // 备份原文件，再原子写（先写临时文件后 rename）。
-    let _ = std::fs::copy(&settings_path, settings_path.with_extension("json.cckb-bak"));
+    // 备份原文件，再原子写（先写临时文件后 rename）。备份只在不存在时写一次——
+    // 保留**最初**那份用户原始配置，避免连续启动用（可能已被我们改过的）当前文件覆盖原始备份。
+    let backup = settings_path.with_extension("json.cckb-bak");
+    if !backup.exists() {
+        let _ = std::fs::copy(&settings_path, &backup);
+    }
     if let Ok(pretty) = serde_json::to_string_pretty(&settings) {
         let tmp = settings_path.with_extension("json.cckb-tmp");
         if std::fs::write(&tmp, format!("{pretty}\n")).is_ok() {
@@ -243,15 +272,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reporter_exe_path_strict_matches_only_our_exe() {
+        // 我们写入的形态：带引号的单可执行路径，无参数。
+        // 路径用正斜杠：Windows/macOS 均把 `/` 当分隔符，file_name 跨平台一致（避免 macOS 上 `\` 不被当分隔符）。
+        assert_eq!(
+            reporter_exe_path("\"C:/x/cc-reporter.exe\"").as_deref(),
+            Some("C:/x/cc-reporter.exe")
+        );
+        assert_eq!(reporter_exe_path("/usr/local/bin/cc-reporter").as_deref(), Some("/usr/local/bin/cc-reporter"));
+        // 不能误伤用户自有 hook：带参数、是别的脚本、或只是路径里含子串。
+        assert_eq!(reporter_exe_path("node tools/cc-reporter-notify.js"), None);
+        assert_eq!(reporter_exe_path("\"C:/x/cc-reporter.exe\" --flag"), None);
+        assert_eq!(reporter_exe_path("/opt/cc-reporter/run.sh"), None);
+        assert_eq!(reporter_exe_path("cc-reporter-wrapper"), None);
+        assert_eq!(reporter_exe_path(""), None);
+        // find_reporter_hook 不应认领「事件内、命令含 cc-reporter 子串的用户 hook」。
+        let mut arr = vec![json!({"hooks":[{"type":"command","command":"node tools/cc-reporter-notify.js"}]})];
+        assert!(find_reporter_hook(&mut arr).is_none());
+    }
+
+    #[test]
     fn ensure_hooks_adds_all_events_when_empty() {
         let mut v = json!({});
-        assert!(ensure_hooks(&mut v, r"C:\x\cc-reporter.exe"));
+        assert!(ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
         for e in HOOK_EVENTS {
             let cmd = v["hooks"][e][0]["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(cmd, "\"C:\\x\\cc-reporter.exe\"");
+            assert_eq!(cmd, "\"C:/x/cc-reporter.exe\"");
         }
         // 再跑一次：幂等，无改动。
-        assert!(!ensure_hooks(&mut v, r"C:\x\cc-reporter.exe"));
+        assert!(!ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
     }
 
     #[test]
@@ -261,17 +310,17 @@ mod tests {
             "hooks": {
                 "SessionStart": [
                     { "matcher": "*", "hooks": [{ "type": "command", "command": "node other.js" }] },
-                    { "matcher": "*", "hooks": [{ "type": "command", "command": "\"C:\\old\\cc-reporter.exe\"", "timeout": 5 }] }
+                    { "matcher": "*", "hooks": [{ "type": "command", "command": "\"C:/old/cc-reporter.exe\"", "timeout": 5 }] }
                 ]
             }
         });
-        assert!(ensure_hooks(&mut v, r"C:\new\cc-reporter.exe"));
+        assert!(ensure_hooks(&mut v, "C:/new/cc-reporter.exe"));
         // 别的 hook 还在
         assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "node other.js");
         // cc-reporter 路径被更新
         assert_eq!(
             v["hooks"]["SessionStart"][1]["hooks"][0]["command"],
-            "\"C:\\new\\cc-reporter.exe\""
+            "\"C:/new/cc-reporter.exe\""
         );
         // 没有重复追加（该事件仍是 2 条）
         assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 2);
@@ -332,7 +381,7 @@ mod tests {
     #[test]
     fn real_shape_user_settings_merge() {
         // 精确复刻用户 settings.json 结构：PreToolUse(node) + 5 个 cc-reporter 事件 + claude-hud statusLine。
-        let ccr = r"C:\Users\larry\Desktop\workspace\cc-kanban\target\release\cc-reporter.exe";
+        let ccr = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe";
         let ccr_cmd = format!("\"{ccr}\"");
         let mut v = json!({
             "hooks": {
@@ -373,9 +422,9 @@ mod tests {
     fn reporter_path_extracted_from_hooks() {
         let v = json!({
             "hooks": { "Stop": [{ "matcher": "*", "hooks": [
-                { "type": "command", "command": "\"C:\\a\\b\\cc-reporter.exe\"", "timeout": 5 }
+                { "type": "command", "command": "\"C:/a/b/cc-reporter.exe\"", "timeout": 5 }
             ] }] }
         });
-        assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some(r"C:\a\b\cc-reporter.exe"));
+        assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some("C:/a/b/cc-reporter.exe"));
     }
 }

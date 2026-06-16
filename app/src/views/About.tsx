@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal } from "../api";
+import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -31,6 +31,8 @@ const SETTINGS_DEFAULTS: Settings = {
   ui_scale: 100,
   resume_terminal: "terminal",
   language: "auto",
+  terminal_open_mode: "card",
+  preview_enabled: true,
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -338,11 +340,19 @@ function Dropdown<T extends string | number>({
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const close = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("resize", close);
+    // 菜单是 fixed 定位、坐标在打开时一次性测量；滚动 .main-body 后会与按钮错位 → 滚动即关（capture 捕获内层滚动）。
+    window.addEventListener("scroll", close, true);
+    document.addEventListener("keydown", onKey); // Esc 关闭
     return () => {
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      document.removeEventListener("keydown", onKey);
     };
   }, [open]);
   const toggle = () => {
@@ -412,8 +422,10 @@ function GeneralSection() {
   };
   const hideDays = settings?.archive_hide_days ?? 0;
   const notifyOn = settings?.notifications_enabled ?? true;
+  const previewOn = settings?.preview_enabled ?? true;
   const changeHideDays = (days: number) => patch({ archive_hide_days: days });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
+  const togglePreview = () => patch({ preview_enabled: !previewOn });
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
   const termOptions = platformOpts.filter((o) => (availTerms ?? []).includes(o.value));
@@ -439,6 +451,27 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.notifyDesc}</div>
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.preview}</div>
+            <div className="row-desc">{t.settings.previewDesc}</div>
+          </div>
+          <Switch checked={previewOn} onChange={togglePreview} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.terminalOpen}</div>
+            <div className="row-desc">{t.settings.terminalOpenDesc}</div>
+          </div>
+          <Dropdown
+            value={settings?.terminal_open_mode ?? "card"}
+            options={[
+              { value: "card" as const, label: t.settings.openModeCard },
+              { value: "button" as const, label: t.settings.openModeButton },
+            ]}
+            onChange={(v: TerminalOpenMode) => patch({ terminal_open_mode: v })}
+          />
         </div>
         <div className="row">
           <div className="row-text">
@@ -526,7 +559,8 @@ function AppearanceSection() {
   const theme = settings?.theme ?? "dark";
   const opacity = settings?.opacity ?? 94;
   const uiScale = settings?.ui_scale ?? 100;
-  const fill = ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100;
+  // 钳到 [0,100]：手改 settings.json 为越界值时，避免算出负/超界的 linear-gradient 填充宽度。
+  const fill = Math.max(0, Math.min(100, ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100));
   return (
     <>
       <div className="row-card">

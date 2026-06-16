@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { LiveSession, Settings, getSettings } from "../api";
+import { LiveSession, Settings, TerminalOpenMode, getSettings } from "../api";
 import { isMacPanel } from "../platform";
 import { useT } from "../i18n";
 import type { Dict } from "../i18n/zh";
@@ -49,6 +49,39 @@ function PencilIcon() {
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function OpenIcon() {
+  // lucide square-arrow-out-up-right：从方框向外跳出的箭头，表达「打开/跳转终端」
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="m10 14 11-11" />
+    </svg>
+  );
+}
+
+function NoteIcon() {
+  // lucide sticky-note：折角便签纸，区别于 rename 的铅笔
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2z" />
+      <path d="M15 21v-5a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
+function StarIcon({ starred }: { starred: boolean }) {
+  // lucide star：未星标描边、星标时填充金色以示激活
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill={starred ? "currentColor" : "none"}
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.79 21.55a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.554 10.34a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
     </svg>
   );
 }
@@ -141,7 +174,18 @@ function RunBadge({
 
 const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
+const STAR_KEY = "cc-kanban-starred";
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
+
+/** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
+function loadStarred(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STAR_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function match(tab: Tab, l: Item, hideDays = 0): boolean {
   if (tab === "archived") {
@@ -236,15 +280,22 @@ export function Sticker({ data }: { data: Item[] }) {
     localStorage.setItem(TAB_KEY, t);
   };
 
-  // 归档自动隐藏天数：启动时读设置，并监听设置窗口的实时变更。
+  // 归档自动隐藏天数 + 打开终端方式：启动时读设置，并监听设置窗口的实时变更。
   const [hideDays, setHideDays] = useState(0);
+  const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
+  const [previewEnabled, setPreviewEnabled] = useState(true);
   useEffect(() => {
-    getSettings().then((s) => setHideDays(s.archive_hide_days)).catch(() => {});
+    const apply = (s: Settings) => {
+      setHideDays(s.archive_hide_days);
+      setOpenMode(s.terminal_open_mode);
+      setPreviewEnabled(s.preview_enabled);
+    };
+    getSettings().then(apply).catch(() => {});
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
     let cancelled = false;
     let un: (() => void) | undefined;
     try {
-      listen<Settings>("settings-changed", (e) => setHideDays(e.payload.archive_hide_days))
+      listen<Settings>("settings-changed", (e) => apply(e.payload))
         .then((f) => {
           if (cancelled) f();
           else un = f;
@@ -284,10 +335,23 @@ export function Sticker({ data }: { data: Item[] }) {
     });
   };
 
+  // 会话星标：星标的会话永远排到列表最前（跨重启保留）。与「置顶窗口(pin)」是两回事。
+  const [starred, setStarred] = useState<Set<string>>(loadStarred);
+  const toggleStar = (sid: string) => {
+    setStarred((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      localStorage.setItem(STAR_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   // 重命名：editingId 为正在编辑的会话 id，draft 为输入内容。
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const startRename = (l: Item) => {
+    setNotingId(null); // 与便签编辑互斥，同卡只开一个编辑器
     const cur = l.task_title && l.task_title !== "(未命名会话)" ? l.task_title : "";
     setDraft(cur);
     setEditingId(l.session.id);
@@ -300,7 +364,49 @@ export function Sticker({ data }: { data: Item[] }) {
     setEditingId(null);
   };
 
-  const shown = data.filter((l) => match(tab, l, hideDays));
+  // 便签编辑：notingId 为正在编辑便签的会话 id，noteDraft 为输入内容。与重命名互斥（同卡只开一个）。
+  const [notingId, setNotingId] = useState<number | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const startNote = (l: Item) => {
+    setEditingId(null);
+    setNoteDraft(l.note ?? "");
+    setNotingId(l.session.id);
+  };
+  const submitNote = (l: Item) => {
+    if (noteDraft !== (l.note ?? "")) {
+      invoke("set_session_note", { sessionId: l.session.cc_session_id, note: noteDraft }).catch(() => {});
+    }
+    setNotingId(null);
+  };
+
+  // 打开终端：连接中→跳转 WT 标签页；已断开未归档→新建终端 resume；归档不开。
+  const buttonMode = openMode === "button";
+  const canOpen = (l: Item) => l.connected || !l.archived;
+  const openTerminal = (l: Item) => {
+    if (l.connected) {
+      if (l.pid)
+        invoke("focus_session", {
+          pid: l.pid,
+          title: l.task_title,
+          cwd: l.cwd,
+          sessionId: l.session.cc_session_id,
+        }).catch(() => {});
+    } else if (!l.archived) {
+      invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id }).catch(() => {});
+    }
+  };
+
+  // 先按当前 tab 过滤，再排序：星标恒在最前；「待交互」标签内按等待最久优先（先处理被晾最久的）；
+  // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
+  const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
+  const shown = data
+    .filter((l) => match(tab, l, hideDays))
+    .sort((a, b) => {
+      const star = Number(isStarred(b)) - Number(isStarred(a));
+      if (star !== 0) return star;
+      if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
+      return 0;
+    });
 
   return (
     <div className="sticker">
@@ -337,11 +443,14 @@ export function Sticker({ data }: { data: Item[] }) {
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
             const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
+            // 活动行统一显示「最近一条 AI 正文」(preview)；出错优先显示错误标签；
+            // previewEnabled 关闭则不显示 AI 正文（仅保留错误）。不再显示底层 Bash 命令。
             const sub = l.errored && l.error_label
               ? t.errorLabels[l.error_label] ?? l.error_label
-              : l.current_activity && l.current_activity !== title
-              ? l.current_activity
+              : previewEnabled && l.preview
+              ? l.preview
               : null;
+            const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
             const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
             const indicator = !l.connected ? (
               <span className="ring-stop" title={t.sticker.stopped} />
@@ -356,59 +465,81 @@ export function Sticker({ data }: { data: Item[] }) {
             );
             return (
               <div
-                className="stk-card"
+                className={"stk-card" + (isStarred(l) ? " is-star" : "")}
                 key={l.session.id}
                 onClick={() => {
-                  if (l.connected) {
-                    // 连接中：跳转到对应 WT 标签页。
-                    if (l.pid)
-                      invoke("focus_session", {
-                        pid: l.pid,
-                        title: l.task_title,
-                        cwd: l.cwd,
-                        sessionId: l.session.cc_session_id,
-                      }).catch(() => {});
-                  } else if (!l.archived) {
-                    // 已断开且未归档：开新 WT 标签页跑 claude --resume 恢复会话。
-                    // 归档的会话点击不恢复（归档即收纳，避免误开终端）。
-                    invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id }).catch(() => {});
+                  // 编辑态(重命名/便签)下，点击卡片仅用于关闭编辑器（失焦），绝不导航开终端。
+                  // 注：编辑输入框已 stopPropagation，这里只会被「点击卡片空白处」触发。
+                  if (editingId !== null || notingId !== null) {
+                    setEditingId(null);
+                    setNotingId(null);
+                    return;
                   }
+                  // 按钮模式：点击卡片不开终端，改由卡片上的打开按钮触发。
+                  if (buttonMode) return;
+                  openTerminal(l);
                 }}
-                style={{ cursor: l.connected || !l.archived ? "pointer" : "default" }}
-                title={l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
+                style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
+                title={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
               >
                 <div className="stk-top">
                   <span className="stk-ind">{indicator}</span>
                   <div className="stk-top-body">
                     <div className="stk-line1">
                       {editingId === l.session.id ? (
-                        <input
-                          className="stk-edit"
-                          autoFocus
-                          value={draft}
-                          placeholder={t.sticker.renamePlaceholder}
-                          onChange={(e) => setDraft(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") submitRename(l);
-                            else if (e.key === "Escape") setEditingId(null);
-                          }}
-                          onBlur={() => setEditingId(null)}
-                        />
+                        <div className="stk-edit-row" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            className="stk-edit"
+                            autoFocus
+                            value={draft}
+                            placeholder={t.sticker.renamePlaceholder}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") submitRename(l);
+                              else if (e.key === "Escape") setEditingId(null);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="stk-btn-save"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => submitRename(l)}
+                          >{t.sticker.noteSave}</button>
+                          <button
+                            type="button"
+                            className="stk-btn-cancel"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => setEditingId(null)}
+                          >{t.sticker.noteCancel}</button>
+                        </div>
                       ) : (
                         <>
                           <span className="stk-title">{title}</span>
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
-                          <span
-                            className="stk-rename"
-                            title={t.sticker.renameTitle}
-                            onClick={(e) => { e.stopPropagation(); startRename(l); }}
-                          ><PencilIcon /></span>
-                          <span
-                            className="stk-arch"
-                            title={l.archived ? t.sticker.unarchive : t.sticker.archive}
-                            onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
-                          ><ArchiveIcon archived={l.archived} /></span>
+                          {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
+                              星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}
+                          <span className="stk-actions">
+                            <span
+                              className={"stk-star" + (isStarred(l) ? " stk-star-on" : "")}
+                              title={isStarred(l) ? t.sticker.unstar : t.sticker.star}
+                              onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
+                            ><StarIcon starred={isStarred(l)} /></span>
+                            <span
+                              className={"stk-noteb" + (l.note ? " stk-noteb-on" : "")}
+                              title={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
+                              onClick={(e) => { e.stopPropagation(); startNote(l); }}
+                            ><NoteIcon /></span>
+                            <span
+                              className="stk-rename"
+                              title={t.sticker.renameTitle}
+                              onClick={(e) => { e.stopPropagation(); startRename(l); }}
+                            ><PencilIcon /></span>
+                            <span
+                              className="stk-arch"
+                              title={l.archived ? t.sticker.unarchive : t.sticker.archive}
+                              onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
+                            ><ArchiveIcon archived={l.archived} /></span>
+                          </span>
                         </>
                       )}
                     </div>
@@ -421,7 +552,60 @@ export function Sticker({ data }: { data: Item[] }) {
                     </div>
                   </div>
                 </div>
-                {sub && <div className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={l.error_raw ?? undefined}>{sub}</div>}
+                {notingId === l.session.id ? (
+                  <div className="stk-note-editbox" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      className="stk-note-edit"
+                      autoFocus
+                      value={noteDraft}
+                      placeholder={t.sticker.notePlaceholder}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitNote(l);
+                        else if (e.key === "Escape") setNotingId(null);
+                      }}
+                    />
+                    <div className="stk-note-actions">
+                      {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
+                      <button
+                        type="button"
+                        className="stk-btn-save"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => submitNote(l)}
+                      >{t.sticker.noteSave}</button>
+                      <button
+                        type="button"
+                        className="stk-btn-cancel"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setNotingId(null)}
+                      >{t.sticker.noteCancel}</button>
+                    </div>
+                  </div>
+                ) : l.note ? (
+                  <div
+                    className="stk-note"
+                    title={t.sticker.noteEdit}
+                    onClick={(e) => { e.stopPropagation(); startNote(l); }}
+                  >
+                    <span className="stk-note-icon"><NoteIcon /></span>
+                    <span className="stk-note-txt">{l.note}</span>
+                  </div>
+                ) : null}
+                {(sub || (buttonMode && canOpen(l))) && (
+                  <div className="stk-subrow">
+                    {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
+                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={subTitle}>{sub}</span>}
+                    {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
+                    {buttonMode && canOpen(l) && (
+                      <button
+                        type="button"
+                        className="stk-open"
+                        title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                        onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
+                      ><OpenIcon /></button>
+                    )}
+                  </div>
+                )}
                 {l.todo_total > 0 && (
                   <div className="stk-prog">
                     <div className="bar">

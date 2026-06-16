@@ -79,6 +79,10 @@ export type LiveSession = {
   errored: boolean;
   error_label: string | null;
   error_raw: string | null;
+  /** 最近一条 AI 正文的轻推预览（清洗+截断），hover 卡片时速览；无正文回合为 null。 */
+  preview: string | null;
+  /** 用户给会话挂的便签（手写备忘，存本地 DB）；无便签为 null。 */
+  note: string | null;
   /** 上下文已用百分比（来自 Claude Code statusline，准确）；无 statusline 数据为 null。 */
   context_pct: number | null;
   /** 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 null。 */
@@ -106,10 +110,15 @@ export type Settings = {
   resume_terminal: ResumeTerminal;
   /** 界面/通知语言：auto（跟随系统）/ zh / en。 */
   language: LangSetting;
+  /** 打开终端方式：card = 点击卡片（默认）/ button = 卡片上单独的打开按钮。 */
+  terminal_open_mode: TerminalOpenMode;
+  /** 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启。 */
+  preview_enabled: boolean;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";
+export type TerminalOpenMode = "card" | "button";
 
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
 export function availableTerminals(): Promise<ResumeTerminal[]> {

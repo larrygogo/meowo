@@ -36,3 +36,20 @@ jobs:
         run: cargo test --workspace
       - name: Rust clippy
         run: cargo clippy --workspace -- -D warnings
+
+  # 依赖漏洞审计：第三方 crate / npm 包出现已知 CVE 时给出门禁/告警。
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rust 依赖漏洞审计 (cargo-audit)
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+      - name: 前端依赖漏洞审计 (bun audit)
+        working-directory: app
+        # npm 生态常有无法立即修的传递性低危告警，先告警不阻断（continue-on-error）。
+        continue-on-error: true
+        run: bun install --frozen-lockfile && bun audit
