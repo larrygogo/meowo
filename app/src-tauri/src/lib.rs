@@ -202,6 +202,7 @@ fn center_on(prev_start: i32, prev_len: i32, new_len: i32, work_start: i32, work
 /// （吸顶=水平居中，吸左/右=垂直居中）。`extent` 是沿条主轴的逻辑长度，由前端按内容给出。
 #[tauri::command]
 fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Result<(), String> {
+    let extent = extent.clamp(1.0, 20000.0); // 钳上界，防 *scale 后 f64→i32 回绕
     let m = window
         .current_monitor()
         .map_err(|e| e.to_string())?
@@ -259,6 +260,7 @@ fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Resul
 /// 偷看展开成全尺寸（仍贴边、保持置顶）：宽高恢复为记住的正常尺寸。
 #[tauri::command]
 fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64) -> Result<(), String> {
+    let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0)); // 钳上界防回绕
     let m = window
         .current_monitor()
         .map_err(|e| e.to_string())?
@@ -782,6 +784,13 @@ fn focus_session(
     if pid <= 0 {
         return Err("无效 pid".into());
     }
+    // 与 resume_session 同一契约：凡可能进入 `claude --resume <id>` 路径的 session_id 一律先校验
+    // 为 UUID 形态，杜绝注入（macOS 分支会把 id 经 osascript 注入 AppleScript）。
+    if let Some(id) = session_id.as_deref() {
+        if !is_session_id(id) {
+            return Err("无效 session_id".into());
+        }
+    }
     #[cfg(target_os = "windows")]
     {
         let _ = (cwd, session_id);
@@ -938,7 +947,8 @@ fn wt_default_profile() -> Option<String> {
 #[cfg(target_os = "windows")]
 fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     let d = cwd?.trim();
-    if d.is_empty() || d.contains([';', '"']) {
+    // 含 ; " 会破坏命令行解析；以 - 开头会被 wt 当成选项（真实 Windows 路径不会以 - 开头）。
+    if d.is_empty() || d.contains([';', '"']) || d.starts_with('-') {
         return None;
     }
     std::path::Path::new(d).is_dir().then(|| d.to_string())
@@ -1209,7 +1219,10 @@ fn get_settings() -> Settings {
 }
 
 #[tauri::command]
-fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
+    // 后端兜底钳值（与前端 appearance.ts 一致），防越界值落盘后被 5s 轮询线程读到。
+    settings.opacity = settings.opacity.clamp(25, 100);
+    settings.ui_scale = settings.ui_scale.clamp(50, 200);
     let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     let path = settings_path();
     if let Some(dir) = path.parent() {
@@ -1771,8 +1784,12 @@ fn apply_language(app: &tauri::AppHandle, lang: &str) {
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = build_tray_menu(app.handle(), ui_lang(&load_settings()))?;
 
-    TrayIconBuilder::with_id("cc-kanban-tray")
-        .icon(app.default_window_icon().unwrap().clone())
+    let mut builder = TrayIconBuilder::with_id("cc-kanban-tray");
+    // 图标恒由打包提供，但缺失时不该 unwrap panic 把启动打挂——没图标就建无图标托盘。
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder
         .tooltip("cc-kanban")
         .menu(&menu)
         // 左键留给「打开设置」，菜单仅在右键弹出。
