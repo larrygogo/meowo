@@ -1,7 +1,12 @@
 mod account;
 #[cfg(target_os = "macos")]
 mod macos;
+mod settings;
 mod term_script;
+
+use settings::{
+    get_autostart, get_settings, load_settings, open_url, set_autostart, set_settings, tr, ui_lang,
+};
 
 use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -22,7 +27,6 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(not(target_os = "macos"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
-use tauri_plugin_autostart::ManagerExt;
 
 /// 吸边判定阈值（物理像素）：窗口边缘距工作区边缘不超过此值即认为贴边。
 #[cfg(not(target_os = "macos"))]
@@ -342,7 +346,7 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn db_path() -> PathBuf {
+pub(crate) fn db_path() -> PathBuf {
     if let Ok(p) = std::env::var("CC_KANBAN_DB") {
         return PathBuf::from(p);
     }
@@ -1150,188 +1154,6 @@ fn set_session_note(
     Ok(())
 }
 
-fn default_true() -> bool {
-    true
-}
-/// 外观默认值（与前端 appearance.ts / styles.css 的初值保持一致）。
-fn default_theme() -> String {
-    "dark".to_string()
-}
-fn default_opacity() -> u32 {
-    94
-}
-fn default_ui_scale() -> u32 {
-    100
-}
-fn default_resume_terminal() -> String {
-    "terminal".to_string()
-}
-fn default_language() -> String {
-    "auto".to_string()
-}
-/// 打开终端的方式：card = 点击卡片直接打开（默认），button = 卡片上单独的打开按钮。
-fn default_terminal_open_mode() -> String {
-    "card".to_string()
-}
-
-/// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct Settings {
-    /// 归档条目自动隐藏的天数；0 = 永不隐藏。
-    #[serde(default)]
-    archive_hide_days: u32,
-    /// 桌面通知总开关（待交互 + 错误）。缺省为开启，兼容老 settings.json。
-    #[serde(default = "default_true")]
-    notifications_enabled: bool,
-    /// 外观模式：dark / light / system（跟随系统）。缺省 dark，兼容老 settings.json。
-    #[serde(default = "default_theme")]
-    theme: String,
-    /// 贴纸背景不透明度（百分比 60–100）。缺省 94，与原视觉一致。
-    #[serde(default = "default_opacity")]
-    opacity: u32,
-    /// 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。
-    #[serde(default = "default_ui_scale")]
-    ui_scale: u32,
-    /// 打开未连接会话用的终端（macOS）：terminal = Terminal.app，iterm = iTerm2。缺省 terminal，兼容老 settings.json。
-    #[serde(default = "default_resume_terminal")]
-    resume_terminal: String,
-    /// 界面/通知语言：auto（跟随系统）/ zh / en。缺省 auto，兼容老 settings.json。
-    #[serde(default = "default_language")]
-    language: String,
-    /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
-    #[serde(default = "default_terminal_open_mode")]
-    terminal_open_mode: String,
-    /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
-    #[serde(default = "default_true")]
-    preview_enabled: bool,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            archive_hide_days: 0,
-            notifications_enabled: true,
-            theme: default_theme(),
-            opacity: default_opacity(),
-            ui_scale: default_ui_scale(),
-            resume_terminal: default_resume_terminal(),
-            language: default_language(),
-            terminal_open_mode: default_terminal_open_mode(),
-            preview_enabled: true,
-        }
-    }
-}
-
-/// 解析生效语言：settings.language 为 zh/en 用之；auto 按系统 locale（zh* → zh，其余 en）。
-fn ui_lang(settings: &Settings) -> &'static str {
-    match settings.language.as_str() {
-        "zh" => "zh",
-        "en" => "en",
-        _ => {
-            if sys_locale::get_locale().map(|l| l.starts_with("zh")).unwrap_or(false) {
-                "zh"
-            } else {
-                "en"
-            }
-        }
-    }
-}
-
-/// Rust 侧用户可见文案（仅通知/托盘/窗口标题数条，不引 i18n 库）。
-fn tr(lang: &str, key: &str) -> &'static str {
-    match (lang, key) {
-        ("en", "notify.error") => "Session error",
-        ("en", "notify.waiting") => "Waiting for your reply",
-        ("en", "tray.settings") => "Settings",
-        ("en", "tray.quit") => "Quit",
-        ("en", "window.settings") => "Settings",
-        (_, "notify.error") => "会话出错",
-        (_, "notify.waiting") => "等待你回复",
-        (_, "tray.settings") => "设置",
-        (_, "tray.quit") => "退出",
-        (_, "window.settings") => "设置",
-        _ => "",
-    }
-}
-
-fn settings_path() -> PathBuf {
-    db_path().with_file_name("settings.json")
-}
-
-fn load_settings() -> Settings {
-    std::fs::read_to_string(settings_path())
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-#[tauri::command]
-fn get_settings() -> Settings {
-    load_settings()
-}
-
-#[tauri::command]
-fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
-    // 后端兜底钳值（与前端 appearance.ts 一致），防越界值落盘后被 5s 轮询线程读到。
-    settings.opacity = settings.opacity.clamp(25, 100);
-    settings.ui_scale = settings.ui_scale.clamp(50, 200);
-    let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    let path = settings_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    // 原子写（tmp + rename）：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
-        return Err(e.to_string());
-    }
-    // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
-    apply_language(&app, ui_lang(&settings));
-    // 通知贴纸窗口实时套用新设置。
-    let _ = app.emit("settings-changed", settings);
-    Ok(())
-}
-
-/// 设置窗口用：读取/切换开机自启（原来只在托盘，托盘精简后搬到设置页）。
-#[tauri::command]
-fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
-    Ok(app.autolaunch().is_enabled().unwrap_or(false))
-}
-
-#[tauri::command]
-fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    let mgr = app.autolaunch();
-    if enabled {
-        mgr.enable().map_err(|e| e.to_string())
-    } else {
-        mgr.disable().map_err(|e| e.to_string())
-    }
-}
-
-/// 设置/关于页用：在默认浏览器打开本项目链接。仅允许本仓库的 https 链接（白名单），
-/// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
-#[tauri::command]
-fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://github.com/larrygogo/cc-kanban") {
-        return Err("不允许的链接".into());
-    }
-    #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer")
-        .arg(&url)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    // macOS：open 偶发慢（默认浏览器冷启动），放后台线程不挡主线程。
-    #[cfg(target_os = "macos")]
-    std::thread::spawn(move || {
-        let _ = std::process::Command::new("open").arg(&url).spawn();
-    });
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let _ = url;
-    Ok(())
-}
-
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
 fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
@@ -1820,7 +1642,7 @@ fn build_tray_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<tauri::m
 }
 
 /// 切语言后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
-fn apply_language(app: &tauri::AppHandle, lang: &str) {
+pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
     if let Some(tray) = app.tray_by_id("cc-kanban-tray") {
         #[cfg(not(target_os = "macos"))]
         if let Ok(menu) = build_tray_menu(app, lang) {
@@ -2188,8 +2010,9 @@ mod tests {
     use super::{
         center_on, clamp_xy_to_work, edge_for_rect, intersection_area, is_session_id,
         normalize_tab_title, parse_wt_default_profile, path_has_exe, pid_is_claude, should_notify,
-        strip_jsonc_comments, tab_match_score, waiting_fingerprint, Edge, Rect, Settings,
+        strip_jsonc_comments, tab_match_score, waiting_fingerprint, Edge, Rect,
     };
+    use crate::settings::Settings;
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
     const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
