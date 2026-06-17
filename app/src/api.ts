@@ -102,7 +102,7 @@ export type Settings = {
   notifications_enabled: boolean;
   /** 外观模式：深色 / 浅色 / 跟随系统。 */
   theme: ThemeMode;
-  /** 贴纸背景不透明度（百分比 60–100）。 */
+  /** 贴纸背景不透明度（百分比 25–100）。 */
   opacity: number;
   /** 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。 */
   ui_scale: number;
