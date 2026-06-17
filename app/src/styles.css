@@ -31,6 +31,11 @@
   --r-lg: 8px;
   --r-md: 6px;
   --r-sm: 4px;
+  /* 卡片立体投影：接触阴影(贴边) + 柔和远投影(浮起) + 顶部内高光(受光面)，营造实体浮起感。 */
+  --card-elev: 0 1px 2px rgba(0, 0, 0, 0.22), 0 5px 14px -4px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --card-elev-hover: 0 2px 5px rgba(0, 0, 0, 0.26), 0 10px 24px -5px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 /* ===== 浅色主题：覆盖调色板 + 少量硬编码深色值（其余走 --cc-* 自动适配）。
@@ -58,6 +63,11 @@
   --cc-warn-vivid: #d99a1a;
   --cc-err-vivid: #db453a;
   --cc-run-vivid: #d9622f;
+  /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上。 */
+  --card-elev: 0 1px 2px rgba(0, 0, 0, 0.05), 0 5px 14px -4px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --card-elev-hover: 0 2px 5px rgba(0, 0, 0, 0.07), 0 10px 24px -5px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
 :root[data-theme="light"] body { color: var(--cc-text); }
@@ -331,11 +341,17 @@ html, body {
   margin-bottom: calc(6px * var(--cc-ui));
   background: var(--cc-surface);
   border: 1px solid var(--cc-border);
-  transition: background 0.12s, border-color 0.12s;
+  box-shadow: var(--card-elev);
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.15s, transform 0.15s;
   border-radius: 16px;
 }
 .stk-card:last-child { margin-bottom: 0; }
-.stk-card:hover { background: var(--cc-surface-hover); border-color: var(--cc-accent-border); }
+.stk-card:hover {
+  background: var(--cc-surface-hover);
+  border-color: var(--cc-accent-border);
+  box-shadow: var(--card-elev-hover);
+  transform: translateY(-1px); /* 微上浮，强化「拿起一张卡」的物理感 */
+}
 /* 顶部组：徽标方块 + 标题/状态两行，徽标垂直居中 */
 .stk-top { display: flex; align-items: center; gap: 9px; }
 .stk-top-body { flex: 1; min-width: 0; }
@@ -428,11 +444,12 @@ html, body {
    与整体风格一致（不用生硬的左侧竖条）。 */
 .stk-card.is-star {
   border-color: color-mix(in srgb, var(--cc-warn) 55%, var(--cc-border));
-  box-shadow: 0 0 10px -3px color-mix(in srgb, var(--cc-warn) 20%, transparent);
+  /* 立体投影叠加金色外发光：既浮起又点亮 */
+  box-shadow: var(--card-elev), 0 0 10px -3px color-mix(in srgb, var(--cc-warn) 20%, transparent);
 }
 .stk-card.is-star:hover {
   border-color: color-mix(in srgb, var(--cc-warn) 70%, var(--cc-border));
-  box-shadow: 0 0 13px -2px color-mix(in srgb, var(--cc-warn) 28%, transparent);
+  box-shadow: var(--card-elev-hover), 0 0 13px -2px color-mix(in srgb, var(--cc-warn) 28%, transparent);
 }
 
 /* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
