@@ -32,6 +32,44 @@ fn overview_empty_when_no_projects() {
 }
 
 #[test]
+fn overview_keeps_per_project_counts_separate() {
+    // 合并为全局聚合查询后，最易出错的是跨项目串数据——本测试锁住按项目分组的正确性。
+    let store = Store::open_in_memory().unwrap();
+    let p1 = store.upsert_project_by_root("/p1", "p1", 100).unwrap();
+    let p2 = store.upsert_project_by_root("/p2", "p2", 100).unwrap();
+
+    // p1：一个活跃会话（doing），最近活动 250
+    let (s1, _) = store.start_session(p1, "s1", 200).unwrap();
+    store.on_user_prompt(s1, "p1 任务", 210).unwrap();
+    store.sync_todos(s1, &[TodoInput { content: "a".into(), status: TodoStatus::InProgress }], 250).unwrap();
+
+    // p2：两个会话，其一已结束（done），最近活动 500
+    let (s2, _) = store.start_session(p2, "s2", 300).unwrap();
+    store.on_user_prompt(s2, "p2 任务一", 310).unwrap();
+    let (s3, _) = store.start_session(p2, "s3", 400).unwrap();
+    store.on_user_prompt(s3, "p2 任务二", 410).unwrap();
+    store.sync_todos(s3, &[TodoInput { content: "b".into(), status: TodoStatus::Completed }], 500).unwrap();
+    store.end_session(s3, 500).unwrap();
+
+    let ov = store.overview().unwrap();
+    assert_eq!(ov.len(), 2);
+    // 按 last_activity_at 倒序：p2(500) 在前，p1(250) 在后
+    assert_eq!(ov[0].project.name, "p2");
+    assert_eq!(ov[0].active_sessions, 1); // s2 running，s3 ended
+    assert_eq!(ov[0].doing_count, 0);
+    assert_eq!(ov[0].done_count, 1);
+    assert_eq!(ov[0].todo_count, 1); // p2 任务一（有 prompt 无 todo → todo 列）
+    assert_eq!(ov[0].last_activity_at, 500);
+
+    assert_eq!(ov[1].project.name, "p1");
+    assert_eq!(ov[1].active_sessions, 1);
+    assert_eq!(ov[1].doing_count, 1);
+    assert_eq!(ov[1].done_count, 0);
+    assert_eq!(ov[1].todo_count, 0);
+    assert_eq!(ov[1].last_activity_at, 250);
+}
+
+#[test]
 fn project_tasks_returns_cards_with_todos_and_session_status() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();

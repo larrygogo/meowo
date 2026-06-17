@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -68,7 +68,10 @@ export function App() {
   const upStatusRef = useRef(upStatus);
   upStatusRef.current = upStatus;
 
-  const connectedCount = live.filter((l) => !l.archived && l.connected).length;
+  const connectedCount = useMemo(
+    () => live.filter((l) => !l.archived && l.connected).length,
+    [live]
+  );
 
   const modeRef = useRef(mode);
   modeRef.current = mode;

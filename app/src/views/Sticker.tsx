@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -398,22 +398,36 @@ export function Sticker({ data }: { data: Item[] }) {
 
   // 先按当前 tab 过滤，再排序：星标恒在最前；「待交互」标签内按等待最久优先（先处理被晾最久的）；
   // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
+  // useMemo 缓存：编辑便签/重命名时每次按键都会重渲染，不必每次重跑 filter+sort。
   const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
-  const shown = data
-    .filter((l) => match(tab, l, hideDays))
-    .sort((a, b) => {
-      const star = Number(isStarred(b)) - Number(isStarred(a));
-      if (star !== 0) return star;
-      if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
-      return 0;
-    });
+  const shown = useMemo(
+    () =>
+      data
+        .filter((l) => match(tab, l, hideDays))
+        .sort((a, b) => {
+          const star =
+            Number(starred.has(b.session.cc_session_id)) -
+            Number(starred.has(a.session.cc_session_id));
+          if (star !== 0) return star;
+          if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
+          return 0;
+        }),
+    [data, tab, hideDays, starred]
+  );
+
+  // 各标签角标计数：同样随每次按键重渲染，缓存避免对 4 个标签各跑一遍全量 filter。
+  const counts = useMemo(() => {
+    const c = {} as Record<Tab, number>;
+    for (const k of TAB_KEYS) c[k] = data.filter((l) => match(k, l, hideDays)).length;
+    return c;
+  }, [data, hideDays]);
 
   return (
     <div className="sticker">
       {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
       <div className="tabs">
         {TAB_KEYS.map((k) => {
-          const n = data.filter((l) => match(k, l, hideDays)).length;
+          const n = counts[k];
           return (
             <span
               key={k}
