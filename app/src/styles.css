@@ -31,12 +31,11 @@
   --r-lg: 8px;
   --r-md: 6px;
   --r-sm: 4px;
-  /* 卡片立体投影：拆成「向下投影(--card-drop)」+「顶部内高光」两段，
-     星标卡可单独换高光颜色而复用同一份向下投影，确保凸起方向感一致。 */
-  --card-drop: 0 1px 2px rgba(0, 0, 0, 0.22), 0 5px 14px -4px rgba(0, 0, 0, 0.38);
-  --card-drop-hover: 0 2px 5px rgba(0, 0, 0, 0.26), 0 10px 24px -5px rgba(0, 0, 0, 0.46);
-  --card-elev: var(--card-drop), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  --card-elev-hover: var(--card-drop-hover), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  /* 卡片立体投影：接触阴影(贴边) + 柔和远投影(浮起) + 顶部内高光(受光面)。 */
+  --card-elev: 0 1px 2px rgba(0, 0, 0, 0.22), 0 5px 14px -4px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --card-elev-hover: 0 2px 5px rgba(0, 0, 0, 0.26), 0 10px 24px -5px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 /* ===== 浅色主题：覆盖调色板 + 少量硬编码深色值（其余走 --cc-* 自动适配）。
@@ -65,10 +64,10 @@
   --cc-err-vivid: #db453a;
   --cc-run-vivid: #d9622f;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上。 */
-  --card-drop: 0 1px 2px rgba(0, 0, 0, 0.05), 0 5px 14px -4px rgba(0, 0, 0, 0.1);
-  --card-drop-hover: 0 2px 5px rgba(0, 0, 0, 0.07), 0 10px 24px -5px rgba(0, 0, 0, 0.14);
-  --card-elev: var(--card-drop), inset 0 1px 0 rgba(255, 255, 255, 0.75);
-  --card-elev-hover: var(--card-drop-hover), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --card-elev: 0 1px 2px rgba(0, 0, 0, 0.05), 0 5px 14px -4px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --card-elev-hover: 0 2px 5px rgba(0, 0, 0, 0.07), 0 10px 24px -5px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
 :root[data-theme="light"] body { color: var(--cc-text); }
@@ -338,6 +337,8 @@ html, body {
   border: 1.5px dashed var(--cc-text-faint);
 }
 .stk-card {
+  position: relative; /* 供星标角标绝对定位 */
+  overflow: hidden; /* 让角标三角被卡片圆角裁切、贴合右上角 */
   padding: calc(10px * var(--cc-ui)) calc(11px * var(--cc-ui));
   margin-bottom: calc(6px * var(--cc-ui));
   background: var(--cc-surface);
@@ -349,7 +350,6 @@ html, body {
 .stk-card:last-child { margin-bottom: 0; }
 .stk-card:hover {
   background: var(--cc-surface-hover);
-  border-color: var(--cc-accent-border);
   box-shadow: var(--card-elev-hover);
   transform: translateY(-1px); /* 微上浮，强化「拿起一张卡」的物理感 */
 }
@@ -441,17 +441,18 @@ html, body {
 .stk-star svg { display: block; }
 .stk-star:hover { color: var(--cc-warn); }
 .stk-star-on { color: var(--cc-warn); }
-/* 星标卡片：复用普通卡的向下投影(凸起方向感一致)，金色只落在描边 + 顶部受光高光，
-   不再用四周均匀外发光——那会无方向地填掉底部投影间隙、把「浮起」冲淡成「发光的平面」。 */
-.stk-card.is-star {
-  border-color: color-mix(in srgb, var(--cc-warn) 55%, var(--cc-border));
-  box-shadow: var(--card-drop),
-    inset 0 1px 0 color-mix(in srgb, var(--cc-warn) 50%, rgba(255, 255, 255, 0.5));
-}
-.stk-card.is-star:hover {
-  border-color: color-mix(in srgb, var(--cc-warn) 70%, var(--cc-border));
-  box-shadow: var(--card-drop-hover),
-    inset 0 1px 0 color-mix(in srgb, var(--cc-warn) 62%, rgba(255, 255, 255, 0.55));
+/* 星标卡片：边框/投影与普通卡完全一致(不再特殊描边)，仅在右上角嵌一个金色折角三角作标识，
+   被卡片的 overflow:hidden + 圆角裁成贴合右上角的小斜角。 */
+.stk-card.is-star::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 16px solid var(--cc-warn);
+  border-left: 16px solid transparent;
+  pointer-events: none; /* 不挡卡片点击 */
 }
 
 /* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
