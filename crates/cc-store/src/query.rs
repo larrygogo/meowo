@@ -2,6 +2,7 @@ use crate::error::StoreError;
 use crate::models::{Project, Session, Task, Todo};
 use crate::store::Store;
 use serde::Serialize;
+use std::collections::HashMap;
 
 /// 总览里每个项目一行的聚合。
 #[derive(Debug, Clone, Serialize)]
@@ -48,41 +49,98 @@ pub struct LiveSession {
 }
 
 impl Store {
+    /// 批量取多个 task 的 todos，按 task_id 分组——替代逐 task 调 `list_todos` 的 N+1。
+    /// task_id 列表为空时直接返回空表（不发查询）。
+    fn todos_by_task(&self, task_ids: &[i64]) -> Result<HashMap<i64, Vec<Todo>>, StoreError> {
+        let mut map: HashMap<i64, Vec<Todo>> = HashMap::new();
+        if task_ids.is_empty() {
+            return Ok(map);
+        }
+        let placeholders = vec!["?"; task_ids.len()].join(",");
+        let sql = format!(
+            "SELECT id, task_id, content, status, order_idx FROM todos
+             WHERE task_id IN ({placeholders}) ORDER BY task_id, order_idx"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(task_ids), |r| {
+            Ok(Todo {
+                id: r.get(0)?,
+                task_id: r.get(1)?,
+                content: r.get(2)?,
+                status: r.get(3)?,
+                order_idx: r.get(4)?,
+            })
+        })?;
+        for row in rows {
+            let todo = row?;
+            map.entry(todo.task_id).or_default().push(todo);
+        }
+        Ok(map)
+    }
+
     /// 所有项目的总览聚合，按 last_activity_at 倒序。
     pub fn overview(&self) -> Result<Vec<ProjectOverview>, StoreError> {
         let projects = self.list_projects()?;
+        if projects.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 活跃会话数：一次按项目分组取回（替代逐项目 count）。
+        let mut active: HashMap<i64, i64> = HashMap::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT project_id, count(*) FROM sessions
+                 WHERE status IN ('running','waiting') GROUP BY project_id",
+            )?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+            for row in rows {
+                let (pid, n) = row?;
+                active.insert(pid, n);
+            }
+        }
+        // 各列任务数（排除未命名空卡）：一次按 (项目, 列) 分组取回。
+        let mut cols: HashMap<(i64, String), i64> = HashMap::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT project_id, column_name, count(*) FROM tasks
+                 WHERE (title <> '(未命名会话)' OR EXISTS (SELECT 1 FROM todos WHERE todos.task_id = tasks.id))
+                 GROUP BY project_id, column_name",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+            })?;
+            for row in rows {
+                let (pid, col, n) = row?;
+                cols.insert((pid, col), n);
+            }
+        }
+        // 最近活动时间：一次按项目取 MAX(last_event_at)；无会话的项目回退 project.updated_at。
+        let mut last_evt: HashMap<i64, i64> = HashMap::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT project_id, MAX(last_event_at) FROM sessions GROUP BY project_id")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+            })?;
+            for row in rows {
+                let (pid, m) = row?;
+                if let Some(v) = m {
+                    last_evt.insert(pid, v);
+                }
+            }
+        }
+        let col_count = |pid: i64, col: &str| cols.get(&(pid, col.to_string())).copied().unwrap_or(0);
         let mut out = Vec::with_capacity(projects.len());
         for project in projects {
             let pid = project.id;
-            let active_sessions: i64 = self.conn.query_row(
-                "SELECT count(*) FROM sessions WHERE project_id = ?1 AND status IN ('running','waiting')",
-                [pid],
-                |r| r.get(0),
-            )?;
-            let col_count = |col: &str| -> Result<i64, StoreError> {
-                let n: i64 = self.conn.query_row(
-                    "SELECT count(*) FROM tasks WHERE project_id = ?1 AND column_name = ?2
-                       AND (title <> '(未命名会话)' OR EXISTS (SELECT 1 FROM todos WHERE todos.task_id = tasks.id))",
-                    rusqlite::params![pid, col],
-                    |r| r.get(0),
-                )?;
-                Ok(n)
-            };
-            let todo_count = col_count("todo")?;
-            let doing_count = col_count("doing")?;
-            let done_count = col_count("done")?;
-            let last_activity_at: i64 = self.conn.query_row(
-                "SELECT COALESCE(MAX(last_event_at), ?2) FROM sessions WHERE project_id = ?1",
-                rusqlite::params![pid, project.updated_at],
-                |r| r.get(0),
-            )?;
+            let last_activity_at = last_evt.get(&pid).copied().unwrap_or(project.updated_at);
             out.push(ProjectOverview {
-                project,
-                active_sessions,
-                todo_count,
-                doing_count,
-                done_count,
+                active_sessions: active.get(&pid).copied().unwrap_or(0),
+                todo_count: col_count(pid, "todo"),
+                doing_count: col_count(pid, "doing"),
+                done_count: col_count(pid, "done"),
                 last_activity_at,
+                project,
             });
         }
         out.sort_by_key(|b| std::cmp::Reverse(b.last_activity_at));
@@ -91,15 +149,19 @@ impl Store {
 
     /// 某项目的所有任务卡，按 updated_at 倒序。
     pub fn project_tasks(&self, project_id: i64) -> Result<Vec<TaskCard>, StoreError> {
+        // session_status 用 LEFT JOIN 一次取回（替代逐任务 query_row）。
         let mut stmt = self.conn.prepare(
-            "SELECT id, project_id, session_id, title, column_name, column_locked, current_activity, created_at, updated_at
-             FROM tasks WHERE project_id = ?1
-               AND (title <> '(未命名会话)' OR EXISTS (SELECT 1 FROM todos WHERE todos.task_id = tasks.id))
-             ORDER BY updated_at DESC, id DESC",
+            "SELECT t.id, t.project_id, t.session_id, t.title, t.column_name, t.column_locked,
+                    t.current_activity, t.created_at, t.updated_at, s.status
+             FROM tasks t
+             LEFT JOIN sessions s ON s.id = t.session_id
+             WHERE t.project_id = ?1
+               AND (t.title <> '(未命名会话)' OR EXISTS (SELECT 1 FROM todos WHERE todos.task_id = t.id))
+             ORDER BY t.updated_at DESC, t.id DESC",
         )?;
-        let tasks = stmt
+        let rows = stmt
             .query_map([project_id], |r| {
-                Ok(Task {
+                let task = Task {
                     id: r.get(0)?,
                     project_id: r.get(1)?,
                     session_id: r.get(2)?,
@@ -109,20 +171,18 @@ impl Store {
                     current_activity: r.get(6)?,
                     created_at: r.get(7)?,
                     updated_at: r.get(8)?,
-                })
+                };
+                let session_status: Option<String> = r.get(9)?;
+                Ok((task, session_status))
             })?
-            .collect::<Result<Vec<Task>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let mut out = Vec::with_capacity(tasks.len());
-        for task in tasks {
-            let todos = self.list_todos(task.id)?;
-            let session_status = match task.session_id {
-                Some(sid) => self
-                    .conn
-                    .query_row("SELECT status FROM sessions WHERE id = ?1", [sid], |r| r.get(0))
-                    .ok(),
-                None => None,
-            };
+        // todos 批量取回，按 task 分组（替代逐任务 list_todos 的 N+1）。
+        let task_ids: Vec<i64> = rows.iter().map(|(t, _)| t.id).collect();
+        let mut todos_map = self.todos_by_task(&task_ids)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (task, session_status) in rows {
+            let todos = todos_map.remove(&task.id).unwrap_or_default();
             out.push(TaskCard { task, todos, session_status });
         }
         Ok(out)
@@ -170,12 +230,14 @@ impl Store {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
+        // todos 批量取回（替代逐会话 list_todos 的 N+1）。
+        let task_ids: Vec<i64> = rows.iter().filter_map(|r| r.2).collect();
+        let mut todos_map = self.todos_by_task(&task_ids)?;
         let mut out = Vec::with_capacity(rows.len());
         for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, note) in rows {
-            let todos = match task_id {
-                Some(tid) => self.list_todos(tid)?,
-                None => Vec::new(),
-            };
+            let todos = task_id
+                .and_then(|tid| todos_map.remove(&tid))
+                .unwrap_or_default();
             let todo_total = todos.len() as i64;
             let todo_done = todos.iter().filter(|t| t.status == "completed").count() as i64;
             out.push(LiveSession {

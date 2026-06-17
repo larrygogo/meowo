@@ -357,15 +357,29 @@ fn open_store(path: &PathBuf) -> Result<Store, String> {
 }
 
 #[tauri::command]
-fn get_overview(state: State<AppState>) -> Result<Vec<ProjectOverview>, String> {
-    let store = open_store(&state.db_path)?;
-    store.overview().map_err(|e| e.to_string())
+async fn get_overview(state: State<'_, AppState>) -> Result<Vec<ProjectOverview>, String> {
+    // 与 get_live_sessions 一致：SQLite I/O 放 blocking 线程池，不占主线程事件循环。
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_store(&db_path)?.overview().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn get_project_tasks(state: State<AppState>, project_id: i64) -> Result<Vec<TaskCard>, String> {
-    let store = open_store(&state.db_path)?;
-    store.project_tasks(project_id).map_err(|e| e.to_string())
+async fn get_project_tasks(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> Result<Vec<TaskCard>, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_store(&db_path)?
+            .project_tasks(project_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(serde::Serialize)]
