@@ -68,7 +68,8 @@
 :root[data-theme="light"] .stk-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
 :root[data-theme="light"] .stab-on,
 :root[data-theme="light"] .stk-pin-on { background: var(--cc-accent-soft); }
-:root[data-theme="light"] .drag:hover { background: rgba(0, 0, 0, 0.05); }
+:root[data-theme="light"] .drag::after { background: rgba(0, 0, 0, 0.16); }
+:root[data-theme="light"] .drag:hover::after { background: rgba(0, 0, 0, 0.3); }
 :root[data-theme="light"] .sbtn:hover:not(:disabled),
 :root[data-theme="light"] .dd-btn:hover { background: rgba(0, 0, 0, 0.06); }
 :root[data-theme="light"] .winclose:hover { background: rgba(0, 0, 0, 0.07); }
@@ -216,13 +217,25 @@ html, body {
   opacity: 0; transition: opacity 0.15s;
   background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.25) 60%, transparent 60%, transparent 70%, rgba(255,255,255,0.25) 70%, rgba(255,255,255,0.25) 80%, transparent 80%); }
 .sticker:hover .resize-grip { opacity: 1; }
+/* 顶部拖拽区：全宽热区保证拖拽手感，中央画一条 Apple 风短横条（grabber）。 */
 .drag {
-  height: 12px;
+  height: 14px;
   cursor: move;
-  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.drag:hover {
-  background: rgba(255, 255, 255, 0.06);
+.drag::after {
+  content: "";
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  transition: background 0.15s, width 0.15s;
+}
+.drag:hover::after {
+  width: 44px;
+  background: rgba(255, 255, 255, 0.34);
 }
 .stk-empty {
   display: flex;
