@@ -50,30 +50,32 @@ pub struct LiveSession {
 
 impl Store {
     /// 批量取多个 task 的 todos，按 task_id 分组——替代逐 task 调 `list_todos` 的 N+1。
-    /// task_id 列表为空时直接返回空表（不发查询）。
+    /// 按固定块大小分批拼 `IN (...)`：单条 `IN` 的占位符数不能超过 SQLite 绑定参数上限
+    /// （旧版默认 999），单项目任务很多时一次性塞进去会 `too many SQL variables`。
+    /// task_id 唯一（一个 task 只属一个会话），不跨块，故每个分组内仍按 order_idx 有序。
     fn todos_by_task(&self, task_ids: &[i64]) -> Result<HashMap<i64, Vec<Todo>>, StoreError> {
+        const CHUNK: usize = 900;
         let mut map: HashMap<i64, Vec<Todo>> = HashMap::new();
-        if task_ids.is_empty() {
-            return Ok(map);
-        }
-        let placeholders = vec!["?"; task_ids.len()].join(",");
-        let sql = format!(
-            "SELECT id, task_id, content, status, order_idx FROM todos
-             WHERE task_id IN ({placeholders}) ORDER BY task_id, order_idx"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(task_ids), |r| {
-            Ok(Todo {
-                id: r.get(0)?,
-                task_id: r.get(1)?,
-                content: r.get(2)?,
-                status: r.get(3)?,
-                order_idx: r.get(4)?,
-            })
-        })?;
-        for row in rows {
-            let todo = row?;
-            map.entry(todo.task_id).or_default().push(todo);
+        for chunk in task_ids.chunks(CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT id, task_id, content, status, order_idx FROM todos
+                 WHERE task_id IN ({placeholders}) ORDER BY task_id, order_idx"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk), |r| {
+                Ok(Todo {
+                    id: r.get(0)?,
+                    task_id: r.get(1)?,
+                    content: r.get(2)?,
+                    status: r.get(3)?,
+                    order_idx: r.get(4)?,
+                })
+            })?;
+            for row in rows {
+                let todo = row?;
+                map.entry(todo.task_id).or_default().push(todo);
+            }
         }
         Ok(map)
     }
