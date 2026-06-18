@@ -1,6 +1,6 @@
 [package]
 name = "cc-app"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2021"
 
 [lib]
@@ -29,7 +29,7 @@ ureq = { version = "2", features = ["json"] }
 sys-locale = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
 

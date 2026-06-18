@@ -34,9 +34,18 @@
   height: 430px;
   border-radius: 9px;
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35);
-  transition: left 0.7s cubic-bezier(0.4, 0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.3s ease, height 0.3s ease;
+  /* 位移与宽高收缩同时同速 → 窗口"滑向边缘的同时收成细条",而非先缩后到(更像真实吸附)。 */
+  transition: left 0.55s cubic-bezier(0.5, 0, 0.2, 1), top 0.55s cubic-bezier(0.5, 0, 0.2, 1),
+    width 0.55s cubic-bezier(0.5, 0, 0.2, 1), height 0.55s cubic-bezier(0.5, 0, 0.2, 1),
+    border-radius 0.55s ease;
 }
+/* 假光标不触发 :hover，用 .demo-hover 镜像卡片 hover(抬起 + 浮现操作按钮),让 GIF 里能看到 hover 效果。 */
+.demo-window .stk-card.demo-hover {
+  background: var(--cc-surface-hover);
+  box-shadow: var(--card-elev-hover);
+  transform: translateY(-1px);
+}
+.demo-window .stk-card.demo-hover .stk-actions { display: inline-flex; }
 .demo-mode-docking { left: 539px; top: 52px; }
 .demo-mode-strip {
   left: 866px;

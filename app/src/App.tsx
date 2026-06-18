@@ -7,7 +7,6 @@ import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
 import { isMacPanel } from "./platform";
-import { useT } from "./i18n";
 
 type Item = LiveSession & { connected: boolean };
 type Edge = "left" | "right" | "top";
@@ -16,7 +15,7 @@ type Mode = "normal" | "collapsed" | "expanded";
 const SNAP_KEY = "cc-kanban-snap-edge";
 const SIZE_KEY = "cc-kanban-normal-size";
 const PIN_KEY = "cc-kanban-pinned"; // 与 Sticker 的置顶偏好共用
-const SETTLE_MS = 600; // 拖拽松手兜底（mouseup 未触发时）
+const RELEASE_POLL_MS = 90; // 拖拽中轮询鼠标左键的间隔（检测真正松手）
 
 // 缩略条主轴逻辑长度：按 connected 点数贴合内容（点 10px + 间距 7px = 17，两端留白 26），最小 48。
 // 仅作折叠初值，CollapsedStrip 挂载后会按真实 DOM 尺寸精确校正。
@@ -31,7 +30,7 @@ function loadSize(): { w: number; h: number } {
   } catch {
     /* ignore */
   }
-  return { w: 340, h: 440 }; // 与 tauri.conf.json 默认一致
+  return { w: 360, h: 440 }; // 与 tauri.conf.json 默认 width/minWidth(360) 一致；否则吸附还原时会被 set_min_size 钳大
 }
 
 function isPinned(): boolean {
@@ -39,7 +38,6 @@ function isPinned(): boolean {
 }
 
 export function App() {
-  const t = useT();
   const [live, setLive] = useState<Item[]>([]);
   const [edge, setEdge] = useState<Edge | null>(() => {
     // macOS 面板模式：无吸边，edge 固定为 null。
@@ -58,13 +56,7 @@ export function App() {
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
   // 展开过渡中：缩放期间强制不渲染缩略条（三个圆点），落地后再恢复按 mode 判定。
   const [expanding, setExpanding] = useState(false);
-  const {
-    status: upStatus,
-    version: updateVersion,
-    progress: upProgress,
-    apply: applyUpdate,
-    recheck,
-  } = useUpdate();
+  const { status: upStatus, apply: applyUpdate, recheck } = useUpdate();
   const upStatusRef = useRef(upStatus);
   upStatusRef.current = upStatus;
 
@@ -126,8 +118,9 @@ export function App() {
     if (isMacPanel()) return;
     if (!draggingRef.current) return;
     draggingRef.current = false;
+    document.documentElement.classList.remove("win-dragging");
     if (settleRef.current) {
-      window.clearTimeout(settleRef.current);
+      window.clearInterval(settleRef.current);
       settleRef.current = null;
     }
     setGlow(null);
@@ -207,7 +200,9 @@ export function App() {
     };
   }, []);
 
-  // 监听窗口移动：拖拽中靠近边缘则发光；停止移动 SETTLE_MS 作为松手兜底。
+  // 监听窗口移动：拖拽中靠近边缘则发光，并轮询鼠标左键——真正松手才吸附。
+  // data-tauri-drag-region 的 OS 拖动循环里 webview 收不到 mouseup，故问后端键状态；
+  // 用 setInterval(而非定时兜底)，即使停在边缘不动也会持续轮询、松手即触发，不会因停顿误吸。
   // macOS 面板模式无吸边，不注册此监听器。
   useEffect(() => {
     if (isMacPanel()) return;
@@ -219,8 +214,22 @@ export function App() {
         return;
       }
       setGlow(d);
-      if (settleRef.current) window.clearTimeout(settleRef.current);
-      settleRef.current = window.setTimeout(() => void handleDragRelease(), SETTLE_MS);
+      if (settleRef.current) return; // 轮询已在跑，无需重复启动
+      settleRef.current = window.setInterval(() => {
+        if (!draggingRef.current) {
+          if (settleRef.current) window.clearInterval(settleRef.current);
+          settleRef.current = null;
+          return;
+        }
+        invoke<boolean>("pointer_left_down")
+          .then((down) => {
+            if (down) return; // 仍按着，继续等
+            if (settleRef.current) window.clearInterval(settleRef.current);
+            settleRef.current = null;
+            void handleDragRelease();
+          })
+          .catch(() => {});
+      }, RELEASE_POLL_MS);
     });
     return () => {
       un.then((f) => f());
@@ -241,6 +250,8 @@ export function App() {
           return;
         }
         draggingRef.current = true;
+        // 拖拽全程给 <html> 挂 class，驱动拖拽条放大——:active 在 OS 拖动接管后会丢失，不可靠。
+        document.documentElement.classList.add("win-dragging");
       }
     };
     const onUp = () => {
@@ -321,25 +332,12 @@ export function App() {
   if (!isMacPanel() && mode === "collapsed" && edge && !expanding) {
     return <CollapsedStrip data={live} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
   }
+  // 有新版本：贴纸不再弹浮动条，改为齿轮按钮上的红点提示(安装入口在设置→关于)。
+  const hasUpdate = upStatus === "available";
   return (
-    <div
-      style={{ height: "100vh" }}
-    >
+    <div style={{ height: "100%" }}>
       {!isMacPanel() && glow && <div className={"snap-glow snap-glow-" + glow} />}
-      {(upStatus === "available" || upStatus === "downloading") && (
-        <div
-          className="update-bar"
-          title={t.update.clickToInstall}
-          onClick={upStatus === "downloading" ? undefined : applyUpdate}
-        >
-          {upStatus === "downloading"
-            ? upProgress == null
-              ? t.update.downloadingNoPct
-              : t.update.downloading(upProgress)
-            : t.update.newVersion(updateVersion ?? "")}
-        </div>
-      )}
-      <Sticker data={live} />
+      <Sticker data={live} hasUpdate={hasUpdate} />
     </div>
   );
 }

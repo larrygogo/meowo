@@ -34,6 +34,15 @@ export function moveToEl(tl: Timeline, from: number, to: number, sel: string): v
   });
 }
 
+/** 模拟卡片 hover:假光标不触发 CSS :hover，故给目标卡片加 .demo-hover 镜像(抬起 + 浮现操作按钮)。
+   传 null 清除所有。sel 命中卡片本身或其子元素均可(向上找最近的 .stk-card)。 */
+export function hoverEl(sel: string | null): void {
+  document.querySelectorAll(".stk-card.demo-hover").forEach((el) => el.classList.remove("demo-hover"));
+  if (!sel) return;
+  const el = document.querySelector(sel)?.closest(".stk-card");
+  if (el) el.classList.add("demo-hover");
+}
+
 /** 点击 sel:光标钉到元素中心、出涟漪、派发真实 click。 */
 export function clickEl(sel: string): void {
   const el = document.querySelector<HTMLElement>(sel);
