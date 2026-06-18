@@ -102,7 +102,6 @@
 :root[data-theme="light"] .sbtn:not(.primary):hover:not(:disabled),
 :root[data-theme="light"] .dd-btn:hover { background: rgba(0, 0, 0, 0.06); }
 :root[data-theme="light"] .winclose:hover { background: rgba(0, 0, 0, 0.07); }
-:root[data-theme="light"] .bar,
 :root[data-theme="light"] .usage-track { background: rgba(0, 0, 0, 0.08); }
 :root[data-theme="light"] .settings { background: #faf9f5; }
 :root[data-theme="light"] .side { background: rgba(0, 0, 0, 0.035); }
@@ -167,8 +166,6 @@ html, body {
 }
 .task-title { font-size: 13px; font-weight: 600; }
 .task-act { font-size: 11.5px; color: #8a8a92; margin-top: 5px; }
-.bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,0.1); margin-top: 9px; overflow: hidden; }
-.bar > i { display: block; height: 100%; background: linear-gradient(90deg,var(--cc-accent),var(--cc-accent-dim)); }
 .empty { color: #5b5b63; font-size: 12px; }
 
 .nav { display: flex; gap: 18px; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
@@ -593,10 +590,6 @@ html, body {
 /* 出错时的 sub 行文案用红色 */
 .stk-sub-err { color: var(--cc-err); }
 
-/* 贴纸卡片里的 todo 进度条 */
-.stk-prog { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
-.stk-prog .bar { flex: 1; height: 4px; margin: 0; }
-.stk-prog-txt { flex: none; font-size: calc(10px * var(--cc-ui)); color: var(--cc-text-faint); }
 
 /* 卡片左侧状态圆点：在线绿 / 断开灰 */
 .sdot { width: 9px; height: 9px; flex: none; border-radius: 50%; }
@@ -728,6 +721,8 @@ html, body {
   justify-content: center;
   overflow: hidden;
   backdrop-filter: blur(30px);
+  /* 物理感:外投影(像贴在屏幕边的实体小条) + 内沿顶高光。 */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 .cstrip-left { border-radius: 0 var(--r-lg) var(--r-lg) 0; }
 .cstrip-right { border-radius: var(--r-lg) 0 0 var(--r-lg); }
@@ -746,7 +741,11 @@ html, body {
   padding: 0 4px;
 }
 .cstrip-dots::-webkit-scrollbar { display: none; } /* Chromium/WebView2：隐藏滚动条 */
-.cstrip-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.cstrip-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none;
+  /* LED 珠:顶部高光做出光泽 + 细描边定边,比扁平实心圆精致。 */
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.55), 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+}
 /* 无活跃会话占位：淡色 app 图标，仍可点/悬停展开 */
 .cstrip-empty { display: inline-flex; color: var(--cc-text-faint); flex: none; }
 /* 在线/闲置=绿实心，运行中=Claude 橙(脉动)，等待确认=警告黄(实心) */

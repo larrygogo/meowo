@@ -27,12 +27,12 @@ export const store: Store = {
     terminal_open_mode: "card",
     preview_enabled: true,
   },
-  // 底栏用量屏的假数据：5h 偏黄、7d / Opus 偏绿，展示随档变色的发光液柱(固定值，确定性)。
+  // 底栏用量屏的假数据：5h 偏黄、7d / Sonnet 偏绿(Opus 无数据→不显示，与常见实际一致)。
   usage: {
     five_hour: { utilization: 62, resets_at: "2026-06-18T20:00:00Z" },
     seven_day: { utilization: 38, resets_at: "2026-06-24T08:00:00Z" },
-    seven_day_opus: { utilization: 14, resets_at: "2026-06-24T08:00:00Z" },
-    seven_day_sonnet: null,
+    seven_day_opus: null,
+    seven_day_sonnet: { utilization: 18, resets_at: "2026-06-24T08:00:00Z" },
     extra_usage_enabled: false,
   },
 };
@@ -74,6 +74,13 @@ export function installMocks(): void {
           s.archived = a.archived;
           s.archived_at = a.archived ? Date.now() : null;
         }
+        notify();
+        return null;
+      }
+      case "set_session_note": {
+        const a = args as { sessionId: string; note: string };
+        const s = store.sessions.find((x) => x.session.cc_session_id === a.sessionId);
+        if (s) s.note = a.note;
         notify();
         return null;
       }

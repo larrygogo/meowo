@@ -645,7 +645,6 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
               ? l.preview
               : null;
             const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
-            const pct = l.todo_total > 0 ? Math.round((l.todo_done / l.todo_total) * 100) : 0;
             const indicator = !l.connected ? (
               <span className="ring-stop" title={t.sticker.stopped} />
             ) : l.errored ? (
@@ -798,16 +797,6 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                         onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
                       ><OpenIcon /></button>
                     )}
-                  </div>
-                )}
-                {l.todo_total > 0 && (
-                  <div className="stk-prog">
-                    <div className="bar">
-                      <i style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="stk-prog-txt">
-                      {l.todo_done}/{l.todo_total}
-                    </span>
                   </div>
                 )}
               </div>
