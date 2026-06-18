@@ -321,8 +321,8 @@ function usageSev(pct: number): string {
 
 function UsageScreen({ wins }: { wins: (UsageWindow | null)[] }) {
   const t = useT();
-  // 标签多语言；顺序对应 wins = [five_hour, seven_day, seven_day_opus]
-  const labels = [t.sticker.usage5h, t.sticker.usage7d, t.sticker.usageOpus];
+  // 标签多语言；顺序对应 wins = [five_hour, seven_day, seven_day_opus, seven_day_sonnet]
+  const labels = [t.sticker.usage5h, t.sticker.usage7d, t.sticker.usageOpus, t.sticker.usageSonnet];
   const rows = labels.map((label, i) => ({ label, pct: usagePct(wins[i]) })).filter(
     (r): r is { label: string; pct: number } => r.pct != null
   );
@@ -845,9 +845,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           </div>
         ) : (
           <>
-            {usage && (usage.five_hour || usage.seven_day || usage.seven_day_opus) && (
-              <UsageScreen wins={[usage.five_hour, usage.seven_day, usage.seven_day_opus]} />
-            )}
+            {usage &&
+              (usage.five_hour || usage.seven_day || usage.seven_day_opus || usage.seven_day_sonnet) && (
+                <UsageScreen
+                  wins={[usage.five_hour, usage.seven_day, usage.seven_day_opus, usage.seven_day_sonnet]}
+                />
+              )}
             <div className="stk-bar-actions">
               <span className="stk-act" title={t.sticker.search} onClick={() => setSearchOpen(true)}>
                 <SearchIcon />
