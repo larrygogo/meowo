@@ -168,6 +168,23 @@ pub(crate) fn cursor_over_window(window: tauri::WebviewWindow) -> bool {
     }
 }
 
+/// 鼠标左键当前是否按下。用于吸边：data-tauri-drag-region 的 OS 拖动循环里 webview 收不到
+/// mouseup，前端改轮询此命令——真正松手(false)才吸附，避免拖拽中停顿被误判为松手。
+/// 非 Windows 恒为 false（macOS 走 nspanel 无吸边）。
+#[tauri::command]
+pub(crate) fn pointer_left_down() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+        // VK_LBUTTON = 0x01；返回值高位置 1（i16 为负）表示当前按下。
+        unsafe { GetAsyncKeyState(0x01) < 0 }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 /// 交叉轴居中：让新长度 `new_len` 的窗以原窗口（起点 prev_start、长度 prev_len）中心对齐，
 /// 再夹进工作区 [work_start, work_start+work_len) 内，避免居中后越界。纯函数便于单测。
 pub(crate) fn center_on(
@@ -225,7 +242,7 @@ pub(crate) fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f6
             wa.position.y,
         ),
     };
-    // 放开最小宽高限制（tauri.conf 配了 minWidth=320/minHeight=80），否则缩不到缩略条尺寸。
+    // 放开最小宽高限制（tauri.conf 配了 minWidth=360/minHeight=240），否则缩不到缩略条尺寸。
     window
         .set_min_size(Some(tauri::PhysicalSize::new(min_w as u32, min_h as u32)))
         .map_err(|e| e.to_string())?;
@@ -267,7 +284,7 @@ pub(crate) fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, 
     };
     // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开，就地放大到贴边位置。
     window
-        .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
+        .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
         .map_err(|e| e.to_string())?;
     window
         .set_size(tauri::PhysicalSize::new(phys_w as u32, phys_h))
@@ -289,7 +306,7 @@ pub(crate) fn snap_restore(
 ) -> Result<(), String> {
     // 恢复正常最小尺寸限制，再设回记住的宽高，置顶还原为用户的 pin 偏好。
     window
-        .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
+        .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
         .map_err(|e| e.to_string())?;
     window
         .set_size(tauri::LogicalSize::new(width, height))
@@ -303,7 +320,7 @@ pub(crate) fn snap_restore(
 #[tauri::command]
 pub(crate) fn unsnap(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
     window
-        .set_min_size(Some(tauri::LogicalSize::new(320.0, 80.0)))
+        .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
         .map_err(|e| e.to_string())?;
     set_top_if_changed(&window, pinned)?;
     Ok(())

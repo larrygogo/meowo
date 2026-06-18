@@ -155,11 +155,19 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
 /// 设置窗口用：读取/切换开机自启（原来只在托盘，托盘精简后搬到设置页）。
 #[tauri::command]
 pub(crate) fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    // dev 下自启会注册 dev 二进制(开机连不上 dev server → 白屏)，一律视为关闭，避免误导。
+    if tauri::is_dev() {
+        return Ok(false);
+    }
     Ok(app.autolaunch().is_enabled().unwrap_or(false))
 }
 
 #[tauri::command]
 pub(crate) fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    // dev 下拒绝写入：否则会把 target/debug 的调试二进制注册进开机自启，开机白屏。仅安装版可用。
+    if tauri::is_dev() {
+        return Err("开机自启仅在安装版可用（dev 下会注册调试二进制，开机连不上 dev server）".into());
+    }
     let mgr = app.autolaunch();
     if enabled {
         mgr.enable().map_err(|e| e.to_string())

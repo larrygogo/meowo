@@ -311,9 +311,16 @@ function AccountSection() {
   );
 }
 
-function Switch({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled?: boolean }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} className={"pswitch" + (checked ? " on" : "")} onClick={onChange}>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      className={"pswitch" + (checked ? " on" : "")}
+      onClick={onChange}
+    >
       <span className="pswitch-knob" />
     </button>
   );
@@ -411,11 +418,14 @@ function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [settings, patch] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
+  // dev 下开机自启会注册调试二进制(开机连不上 dev server → 白屏)，故禁用此开关，仅安装版可用。
+  const autostartDisabled = import.meta.env.DEV;
   useEffect(() => {
-    invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
+    if (!autostartDisabled) invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
     availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
-  }, []);
+  }, [autostartDisabled]);
   const toggleAutostart = () => {
+    if (autostartDisabled) return;
     const next = !autostart;
     setAutostart(next);
     invoke("set_autostart", { enabled: next }).catch(() => setAutostart(!next));
@@ -441,9 +451,9 @@ function GeneralSection() {
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.autostart}</div>
-            <div className="row-desc">{t.settings.autostartDesc}</div>
+            <div className="row-desc">{autostartDisabled ? t.settings.autostartDevNote : t.settings.autostartDesc}</div>
           </div>
-          <Switch checked={autostart} onChange={toggleAutostart} />
+          <Switch checked={autostart} onChange={toggleAutostart} disabled={autostartDisabled} />
         </div>
         <div className="row">
           <div className="row-text">
@@ -717,6 +727,7 @@ export function About() {
           <button className={"nav-item" + (sec === "about" ? " on" : "")} onClick={() => setSec("about")}>
             <IconInfo />
             <span>{t.settings.nav.about}</span>
+            {status === "available" && <span className="nav-tag">{t.settings.updateTag}</span>}
           </button>
         </nav>
       </aside>

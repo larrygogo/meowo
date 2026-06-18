@@ -1,8 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { LiveSession, Settings, TerminalOpenMode, getSettings } from "../api";
+import {
+  LiveSession,
+  Settings,
+  TerminalOpenMode,
+  Usage,
+  UsageWindow,
+  getSettings,
+  getAccount,
+  refreshUsage,
+} from "../api";
 import { isMacPanel } from "../platform";
 import { useT } from "../i18n";
 import type { Dict } from "../i18n/zh";
@@ -54,13 +63,12 @@ function PencilIcon() {
 }
 
 function OpenIcon() {
-  // lucide square-arrow-out-up-right：从方框向外跳出的箭头，表达「打开/跳转终端」
+  // lucide terminal：命令行 >_ 符号，明确表达「打开/跳转终端」（原 share 样图标易误读为分享）
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
-      <path d="M15 3h6v6" />
-      <path d="m10 14 11-11" />
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
     </svg>
   );
 }
@@ -132,12 +140,45 @@ function TabIcon({ tab }: { tab: Tab }) {
 }
 
 function PinIcon({ pinned }: { pinned: boolean }) {
-  // lucide pin：未置顶描边、置顶时填充以示激活
+  // lucide pin：未置顶描边、置顶时填充以示激活（尺寸与搜索/设置图标统一为 13）
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"}
+    <svg width="13" height="13" viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"}
       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 17v5" />
       <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  // lucide settings：齿轮，打开设置
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  // lucide search：放大镜
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  // lucide x：关闭搜索
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
@@ -268,7 +309,43 @@ export function EmptyState({ tab }: { tab: Tab }) {
   );
 }
 
-export function Sticker({ data }: { data: Item[] }) {
+/** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——黑屏(复刻卡片徽标 .stk-ind 材质)内每个窗口一行：
+   标签 + 凹槽里的发光液柱 + 百分比；与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
+function usagePct(win: UsageWindow | null): number | null {
+  return win ? Math.max(0, Math.min(100, win.utilization)) : null;
+}
+// 利用率档位 → 复用应用既有状态色(绿/黄/红)，与卡片状态点同语义；越满越红即预警。
+function usageSev(pct: number): string {
+  return pct >= 80 ? "is-high" : pct >= 50 ? "is-warn" : "is-ok";
+}
+
+function UsageScreen({ wins }: { wins: (UsageWindow | null)[] }) {
+  const t = useT();
+  // 标签多语言；顺序对应 wins = [five_hour, seven_day, seven_day_opus]
+  const labels = [t.sticker.usage5h, t.sticker.usage7d, t.sticker.usageOpus];
+  const rows = labels.map((label, i) => ({ label, pct: usagePct(wins[i]) })).filter(
+    (r): r is { label: string; pct: number } => r.pct != null
+  );
+  if (!rows.length) return null;
+  return (
+    <div className="stk-uscreen" role="group" aria-label="用量">
+      {rows.map((r) => {
+        const sev = usageSev(r.pct);
+        return (
+          <div className="stk-urow" key={r.label}>
+            <span className="stk-ulabel">{r.label}</span>
+            <span className="stk-utrack">
+              <i className={"stk-ufill " + sev} style={{ width: `${r.pct}%` }} />
+            </span>
+            <span className="stk-uval">{Math.round(r.pct)}%</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean }) {
   const t = useT();
   const [tab, setTab] = useState<Tab>(() => {
     const s = localStorage.getItem(TAB_KEY);
@@ -278,6 +355,15 @@ export function Sticker({ data }: { data: Item[] }) {
   const pick = (t: Tab) => {
     setTab(t);
     localStorage.setItem(TAB_KEY, t);
+    closeSearch(); // 切 tab 即退出搜索，避免 tab 高亮与过滤结果不一致
+  };
+
+  // 会话搜索：激活时底栏整条变成输入框；按标题 + 仓库名跨所有 tab 即时过滤。
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setQuery("");
   };
 
   // 归档自动隐藏天数 + 打开终端方式：启动时读设置，并监听设置窗口的实时变更。
@@ -400,20 +486,35 @@ export function Sticker({ data }: { data: Item[] }) {
   // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
   // useMemo 缓存：编辑便签/重命名时每次按键都会重渲染，不必每次重跑 filter+sort。
   const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
-  const shown = useMemo(
-    () =>
-      data
-        .filter((l) => match(tab, l, hideDays))
-        .sort((a, b) => {
-          const star =
-            Number(starred.has(b.session.cc_session_id)) -
-            Number(starred.has(a.session.cc_session_id));
-          if (star !== 0) return star;
-          if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
-          return 0;
-        }),
-    [data, tab, hideDays, starred]
-  );
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    // 搜索激活：按标题 + 仓库名过滤，按星标优先排序。归档 tab 搜归档、其余 tab 搜活跃
+    // (否则站在归档 tab 怎么搜都搜不到归档会话)。
+    if (q) {
+      const wantArchived = tab === "archived";
+      return data
+        .filter(
+          (l) =>
+            (wantArchived ? l.archived : !l.archived) &&
+            ((l.task_title ?? "").toLowerCase().includes(q) ||
+              (l.project_name ?? "").toLowerCase().includes(q))
+        )
+        .sort(
+          (a, b) =>
+            Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
+        );
+    }
+    return data
+      .filter((l) => match(tab, l, hideDays))
+      .sort((a, b) => {
+        const star =
+          Number(starred.has(b.session.cc_session_id)) -
+          Number(starred.has(a.session.cc_session_id));
+        if (star !== 0) return star;
+        if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
+        return 0;
+      });
+  }, [data, tab, hideDays, starred, query]);
 
   // 各标签角标计数：同样随每次按键重渲染，缓存避免对 4 个标签各跑一遍全量 filter。
   const counts = useMemo(() => {
@@ -422,35 +523,114 @@ export function Sticker({ data }: { data: Item[] }) {
     return c;
   }, [data, hideDays]);
 
+  // 自绘 overlay 滚动条：原生滚动条全程隐藏(不占布局→无抖动)，这里按滚动位置算出
+  // thumb 的高度/位置，浮在内容右侧。null = 内容未超出、不需要滚动条。
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [sb, setSb] = useState<{ top: number; height: number } | null>(null);
+  const [sbDrag, setSbDrag] = useState(false);
+  // 滚动边缘淡出：仅当该方向确有被遮内容时才淡(滚到顶/底则对应边不淡，首/末卡保持清晰)。
+  const [edge, setEdge] = useState({ top: false, bottom: false });
+
+  // 底部用量：首屏用 getAccount 缓存秒显(仅在还没有联网值时填充，避免缓存晚到覆盖更新的联网值)，
+  // 联网用 refreshUsage 为准、每 5 分钟刷一次。
+  const [usage, setUsage] = useState<Usage | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getAccount()
+      .then((p) => { if (!cancelled && p.usage) setUsage((cur) => cur ?? p.usage); })
+      .catch(() => {});
+    const refresh = () => {
+      refreshUsage()
+        .then((u) => { if (!cancelled) setUsage(u); })
+        .catch(() => {}); // 第三方账号 USAGE_UNSUPPORTED 等：保持无用量，不显示用量条
+    };
+    refresh();
+    const id = window.setInterval(refresh, 5 * 60_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, []);
+  const syncSb = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight, offsetTop } = el;
+    if (scrollHeight <= clientHeight + 1) {
+      setSb(null);
+      setEdge((p) => (p.top || p.bottom ? { top: false, bottom: false } : p));
+      return;
+    }
+    const canUp = scrollTop > 1;
+    const canDown = scrollTop + clientHeight < scrollHeight - 1;
+    setEdge((p) => (p.top === canUp && p.bottom === canDown ? p : { top: canUp, bottom: canDown }));
+    const thumbH = Math.max(28, (clientHeight * clientHeight) / scrollHeight);
+    const top = offsetTop + (clientHeight - thumbH) * (scrollTop / (scrollHeight - clientHeight));
+    setSb({ top, height: thumbH });
+  };
+  // 列表内容(shown)或可视尺寸变化时重算 thumb。
+  useEffect(() => {
+    syncSb();
+    const el = scrollRef.current;
+    // 测试/非浏览器环境无 ResizeObserver：仅同步一次即可。
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(syncSb);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown.length]);
+
+  // 拖拽 thumb 滚动列表。
+  const onSbDown = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = scrollRef.current;
+    if (!el) return;
+    setSbDrag(true);
+    const startY = e.clientY;
+    const startScroll = el.scrollTop;
+    const { scrollHeight, clientHeight } = el;
+    const thumbH = Math.max(28, (clientHeight * clientHeight) / scrollHeight);
+    const move = (ev: MouseEvent) => {
+      const ratio = (ev.clientY - startY) / (clientHeight - thumbH);
+      el.scrollTop = startScroll + ratio * (scrollHeight - clientHeight);
+    };
+    const up = () => {
+      setSbDrag(false);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   return (
     <div className="sticker">
       {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
       <div className="tabs">
-        {TAB_KEYS.map((k) => {
-          const n = counts[k];
-          return (
-            <span
-              key={k}
-              className={"stab " + (tab === k ? "stab-on" : "")}
-              onClick={() => pick(k)}
-            >
-              <TabIcon tab={k} />
-              {t.tabs[k]}
-              <span className="stab-n">{n}</span>
-            </span>
-          );
-        })}
-        {!isMacPanel() && (
+        <div className="tabseg">
+          {/* 选中态立体滑块：切换时平滑滑到目标 tab(translateX 动画) */}
           <span
-            className={"stk-pin " + (pinned ? "stk-pin-on" : "")}
-            title={pinned ? t.sticker.pinOn : t.sticker.pinOff}
-            onClick={togglePin}
-          >
-            <PinIcon pinned={pinned} />
-          </span>
-        )}
+            className="tabseg-slider"
+            style={{ transform: `translateX(${TAB_KEYS.indexOf(tab) * 100}%)` }}
+          />
+          {TAB_KEYS.map((k) => {
+            const n = counts[k];
+            return (
+              <span
+                key={k}
+                className={"stab " + (tab === k ? "stab-on" : "")}
+                onClick={() => pick(k)}
+              >
+                <TabIcon tab={k} />
+                {t.tabs[k]}
+                <span className="stab-n">{n}</span>
+              </span>
+            );
+          })}
+        </div>
       </div>
-      <div className="stk-scroll">
+      <div
+        className={"stk-scroll" + (edge.top ? " fade-top" : "") + (edge.bottom ? " fade-bottom" : "")}
+        ref={scrollRef}
+        onScroll={syncSb}
+      >
         {shown.length === 0 ? (
           <EmptyState tab={tab} />
         ) : (
@@ -635,15 +815,64 @@ export function Sticker({ data }: { data: Item[] }) {
           })
         )}
       </div>
-      {!isMacPanel() && (
+      {sb && (
         <div
-          className="resize-grip"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
-          }}
+          className={"stk-sb" + (sbDrag ? " is-drag" : "")}
+          style={{ top: sb.top, height: sb.height }}
+          onMouseDown={onSbDown}
         />
       )}
+      {/* 底栏:用量(左) + 搜索/设置/固定(右)聚为一处;搜索激活时整条变输入框。 */}
+      <div className="stk-bar">
+        {searchOpen ? (
+          <div className="stk-search">
+            <span className="stk-search-ic">
+              <SearchIcon />
+            </span>
+            <input
+              className="stk-search-in"
+              autoFocus
+              value={query}
+              placeholder={t.sticker.searchPlaceholder}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") closeSearch();
+              }}
+            />
+            <span className="stk-act stk-search-x" title={t.sticker.searchClose} onClick={closeSearch}>
+              <CloseIcon />
+            </span>
+          </div>
+        ) : (
+          <>
+            {usage && (usage.five_hour || usage.seven_day || usage.seven_day_opus) && (
+              <UsageScreen wins={[usage.five_hour, usage.seven_day, usage.seven_day_opus]} />
+            )}
+            <div className="stk-bar-actions">
+              <span className="stk-act" title={t.sticker.search} onClick={() => setSearchOpen(true)}>
+                <SearchIcon />
+              </span>
+              <span
+                className="stk-act"
+                title={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
+                onClick={() => invoke("open_settings").catch(() => {})}
+              >
+                <GearIcon />
+                {hasUpdate && <span className="stk-dot" aria-hidden="true" />}
+              </span>
+              {!isMacPanel() && (
+                <span
+                  className={"stk-act " + (pinned ? "stk-pin-on" : "")}
+                  title={pinned ? t.sticker.pinOn : t.sticker.pinOff}
+                  onClick={togglePin}
+                >
+                  <PinIcon pinned={pinned} />
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

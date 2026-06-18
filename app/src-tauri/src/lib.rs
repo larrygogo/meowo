@@ -8,7 +8,9 @@ mod term_script;
 use settings::{
     get_autostart, get_settings, load_settings, open_url, set_autostart, set_settings, tr, ui_lang,
 };
-use snap::{cursor_over_window, snap_collapse, snap_expand, snap_restore, unsnap};
+use snap::{
+    cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
+};
 // 出屏约束/吸边检测（run 的窗口事件闭包）只在非 macOS 用这些几何符号。
 #[cfg(not(target_os = "macos"))]
 use snap::{clamp_xy_to_work, edge_for_rect, Rect, SnapPayload, SNAP_THRESHOLD};
@@ -1291,6 +1293,15 @@ async fn available_terminals() -> Vec<String> {
     }
 }
 
+/// 前端调用：打开设置窗口（贴纸 tab 栏的设置按钮）。
+/// 必须在子线程创建：同步 command 跑在主线程，直接 build() 会阻塞主线程消息泵，
+/// 而 WebView2 初始化依赖消息泵运转 → 卡在初始化 → 白屏。子线程里 build() 把创建
+/// dispatch 回主线程异步执行，泵不被阻塞。
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) {
+    std::thread::spawn(move || open_settings_window(&app));
+}
+
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
 /// 托盘左键点击与右键菜单「设置」共用此逻辑。
 pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
@@ -1603,12 +1614,14 @@ pub fn run() {
             set_autostart,
             get_settings,
             set_settings,
+            open_settings,
             open_url,
             snap_collapse,
             snap_expand,
             snap_restore,
             unsnap,
             cursor_over_window,
+            pointer_left_down,
             get_account,
             refresh_usage,
             host_os,

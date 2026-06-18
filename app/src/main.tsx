@@ -7,6 +7,11 @@ import { lockdownInProduction } from "./devtools-guard";
 import { bootAppearance } from "./appearance";
 import { detectHostOs } from "./platform";
 import { I18nProvider } from "./i18n";
+import "@fontsource-variable/inter"; // 内置 Inter 可变字体做西文（自托管，全平台一致）
+// 内置 Noto Sans SC 做中文（思源黑体）：按 Unicode 子集切分、本地按需加载，不联网。
+// 只取 400(正文)/600(标题)两档控制体积；500 等会自动回退到最近档。
+import "@fontsource/noto-sans-sc/400.css";
+import "@fontsource/noto-sans-sc/600.css";
 import "./styles.css";
 
 // 正式构建下封死右键菜单与 DevTools 快捷键（dev 放行）。
