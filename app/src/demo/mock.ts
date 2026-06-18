@@ -1,7 +1,7 @@
 // demo 专用:用 @tauri-apps/api/mocks 拦截全部 IPC,数据源是内存 store。
 // 舞台状态(窗口形态/字幕/收尾)也放这里,分镜动作改完 notify() 即驱动 React 重渲染。
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import { Settings } from "../api";
+import { Settings, Usage } from "../api";
 import { Item } from "./data";
 
 export type StageMode = "normal" | "docking" | "strip" | "expanded";
@@ -10,6 +10,7 @@ export type Store = {
   sessions: Item[];
   stage: { mode: StageMode; caption: string | null; finale: boolean };
   settings: Settings;
+  usage: Usage;
 };
 
 export const store: Store = {
@@ -25,6 +26,14 @@ export const store: Store = {
     language: "zh",
     terminal_open_mode: "card",
     preview_enabled: true,
+  },
+  // 底栏用量屏的假数据：5h 偏黄、7d / Opus 偏绿，展示随档变色的发光液柱(固定值，确定性)。
+  usage: {
+    five_hour: { utilization: 62, resets_at: "2026-06-18T20:00:00Z" },
+    seven_day: { utilization: 38, resets_at: "2026-06-24T08:00:00Z" },
+    seven_day_opus: { utilization: 14, resets_at: "2026-06-24T08:00:00Z" },
+    seven_day_sonnet: null,
+    extra_usage_enabled: false,
   },
 };
 
@@ -45,6 +54,10 @@ export function installMocks(): void {
         return "windows";
       case "get_settings":
         return store.settings;
+      case "get_account":
+        return { account: null, daily: null, usage: store.usage };
+      case "refresh_usage":
+        return store.usage;
       case "get_live_sessions":
         return store.sessions;
       case "rename_session": {

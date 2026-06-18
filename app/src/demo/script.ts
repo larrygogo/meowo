@@ -1,6 +1,6 @@
 // demo 分镜:五个场景,约 20s @12fps。
-// 选择器对应 Sticker.tsx 现有 DOM:tab=.tabs .stab:nth-child(n)(1 全部/2 待交互/3 运行中/4 已归档),
-// 卡片=.stk-scroll .stk-card:nth-child(n),铅笔=.stk-rename,归档=.stk-arch,重命名输入框=.stk-edit。
+// 选择器对应 Sticker.tsx 现有 DOM:.tabseg 首子是 .tabseg-slider(立体滑块),故 tab 从 nth-child(2) 起
+// (2 全部 / 3 待交互 / 4 运行中 / 5 已归档);卡片=.stk-scroll .stk-card:nth-child(n),铅笔=.stk-rename,归档=.stk-arch,重命名输入框=.stk-edit。
 import { Timeline } from "./timeline";
 import { store, notify } from "./mock";
 import { makeSession } from "./data";
@@ -36,10 +36,10 @@ export function buildScript(): Timeline {
     s2.session.status = "waiting";
     s2.current_activity = "等待回复:是否应用这 3 处修改?";
   }));
-  moveToEl(tl, 5.4, 6.1, ".tabs .stab:nth-child(2)");
-  tl.at(6.2, () => clickEl(".tabs .stab:nth-child(2)"));
-  moveToEl(tl, 7.2, 7.7, ".tabs .stab:nth-child(1)");
-  tl.at(7.8, () => clickEl(".tabs .stab:nth-child(1)"));
+  moveToEl(tl, 5.4, 6.1, ".tabs .stab:nth-child(3)"); // 待交互(滑块占 nth-child(1)，故 +1)
+  tl.at(6.2, () => clickEl(".tabs .stab:nth-child(3)"));
+  moveToEl(tl, 7.2, 7.7, ".tabs .stab:nth-child(2)"); // 回到 全部
+  tl.at(7.8, () => clickEl(".tabs .stab:nth-child(2)"));
 
   // ── 场景 3(8.5–13s):重命名 + 归档 ──
   tl.at(8.7, mut(() => { store.stage.caption = "重命名、归档,即点即管"; }));
@@ -50,17 +50,25 @@ export function buildScript(): Timeline {
   moveToEl(tl, 11.2, 11.8, ".stk-scroll .stk-card:nth-child(4) .stk-arch");
   tl.at(11.9, () => clickEl(".stk-scroll .stk-card:nth-child(4) .stk-arch"));
 
-  // ── 场景 4(13–17.5s):吸边缩略 + 偷看 ──
-  tl.at(13.2, mut(() => { store.stage.caption = "吸边缩成一根状态条,不占地方"; }));
-  tl.at(13.4, mut(() => { store.stage.mode = "docking"; }));
-  tl.at(14.2, mut(() => { store.stage.mode = "strip"; }));
-  moveToEl(tl, 14.6, 15.2, ".demo-window .cstrip");
-  tl.at(15.4, mut(() => { store.stage.mode = "expanded"; }));
-  tl.at(16.0, () => setCursor(500, 300)); // 光标移开
-  tl.at(16.8, mut(() => { store.stage.mode = "strip"; }));
+  // ── 场景 4(13–17s):底栏搜索过滤 ──
+  tl.at(13.0, mut(() => { store.stage.caption = "搜索任意会话:标题 / 仓库名即时过滤"; }));
+  moveToEl(tl, 13.2, 13.9, ".stk-bar-actions .stk-act:first-child");
+  tl.at(14.0, () => clickEl(".stk-bar-actions .stk-act:first-child")); // 打开搜索
+  typeText(tl, 14.3, ".stk-search-in", "tauri", 8); // 过滤到「升级 tauri 到 2.3」
+  moveToEl(tl, 16.2, 16.6, ".stk-search-x");
+  tl.at(16.7, () => clickEl(".stk-search-x")); // 关闭搜索，列表还原
 
-  // ── 场景 5(17.5–20s):收尾 ──
-  tl.at(17.6, mut(() => { store.stage.caption = null; store.stage.finale = true; }));
-  tl.at(19.6, () => {}); // 钉住总时长 ≈ 20s
+  // ── 场景 5(17–21.5s):吸边缩略 + 偷看 ──
+  tl.at(17.2, mut(() => { store.stage.caption = "吸边缩成一根状态条,不占地方"; }));
+  tl.at(17.4, mut(() => { store.stage.mode = "docking"; }));
+  tl.at(18.2, mut(() => { store.stage.mode = "strip"; }));
+  moveToEl(tl, 18.6, 19.2, ".demo-window .cstrip");
+  tl.at(19.4, mut(() => { store.stage.mode = "expanded"; }));
+  tl.at(20.0, () => setCursor(500, 300)); // 光标移开
+  tl.at(20.8, mut(() => { store.stage.mode = "strip"; }));
+
+  // ── 场景 6(21.5–24s):收尾 ──
+  tl.at(21.6, mut(() => { store.stage.caption = null; store.stage.finale = true; }));
+  tl.at(23.6, () => {}); // 钉住总时长 ≈ 24s
   return tl;
 }
