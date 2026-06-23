@@ -94,4 +94,17 @@ describe("App", () => {
       )
     );
   });
+
+  // 回归：SIZE_KEY 异常大值/非有限数(localStorage 被改坏)不能直接喂给 set_size，否则设出极端窗口。
+  // loadSize 须校验上界(<=20000)与有限数，超界则回落默认 {360,440}。
+  it("SIZE_KEY 异常大值时，loadSize 回落默认 {360,440}，不设出极端窗口", async () => {
+    localStorage.setItem("cc-kanban-normal-size", JSON.stringify({ w: 999999, h: 999999 }));
+    render(<App />);
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+        "snap_restore",
+        expect.objectContaining({ width: 360, height: 440 })
+      )
+    );
+  });
 });

@@ -315,6 +315,8 @@ pub(crate) fn snap_restore(
     height: f64,
     pinned: bool,
 ) -> Result<(), String> {
+    // 与 snap_collapse/snap_expand 一致地钳制上界，防异常大值(localStorage 被改坏)经 set_size 设出极端窗口。
+    let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0));
     // 恢复正常最小尺寸限制，再设回记住的宽高，置顶还原为用户的 pin 偏好。
     window
         .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))

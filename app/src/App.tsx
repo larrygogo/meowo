@@ -27,14 +27,20 @@ function stripExtent(count: number): number {
 // 不应低于此（低于即被细条尺寸毒化）。
 const SIZE_MIN_W = 360;
 const SIZE_MIN_H = 240;
+const SIZE_MAX = 20000; // 上界：与后端 snap_* 命令的 clamp 上限一致（防 f64→i32 回绕/异常大值）
 const SIZE_DEFAULT = { w: 360, h: 440 }; // 与 tauri.conf.json 默认 width/height 一致
+
+const sizeOk = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v);
 
 function loadSize(): { w: number; h: number } {
   try {
     const s = JSON.parse(localStorage.getItem(SIZE_KEY) || "");
-    // 低于最小尺寸视为被「吸附态拖角缩成细条」的尺寸毒化（实测出现过 {80,240}/{136,20}），
-    // 一律回落默认，避免毒化基准让启动对账判不出遗留细条而救不回。
-    if (typeof s?.w === "number" && typeof s?.h === "number" && s.w >= SIZE_MIN_W && s.h >= SIZE_MIN_H) {
+    // 校验有限数 + 落在 [最小, 最大] 内才采用；否则回落默认。低于最小=被「吸附态拖角缩成细条」的尺寸
+    // 毒化(实测 {80,240}/{136,20})；非有限数/超大值=localStorage 被改坏，直接 set_size 会设出极端窗口。
+    if (sizeOk(s?.w) && sizeOk(s?.h)
+      && s.w >= SIZE_MIN_W && s.h >= SIZE_MIN_H
+      && s.w <= SIZE_MAX && s.h <= SIZE_MAX) {
       return s;
     }
   } catch {
@@ -43,12 +49,14 @@ function loadSize(): { w: number; h: number } {
   return { ...SIZE_DEFAULT };
 }
 
-// 写入「正常尺寸」基准：钳到最小尺寸。吸附态下 min_size 被放开（snap_collapse），拖角可把窗缩成
-// 细条；若把细条尺寸当正常尺寸存入会毒化 loadSize 基准，令启动对账无法救回遗留细条。
+// 写入「正常尺寸」基准：钳到 [最小, 最大]、非有限数回落默认。吸附态下 min_size 被放开（snap_collapse），
+// 拖角可把窗缩成细条；若把细条/异常尺寸当正常尺寸存入会毒化 loadSize 基准，令启动还原异常。
 function saveSize(w: number, h: number) {
+  const clamp = (v: number, min: number, def: number) =>
+    Number.isFinite(v) ? Math.min(SIZE_MAX, Math.max(min, v)) : def;
   localStorage.setItem(
     SIZE_KEY,
-    JSON.stringify({ w: Math.max(SIZE_MIN_W, w), h: Math.max(SIZE_MIN_H, h) })
+    JSON.stringify({ w: clamp(w, SIZE_MIN_W, SIZE_DEFAULT.w), h: clamp(h, SIZE_MIN_H, SIZE_DEFAULT.h) })
   );
 }
 
