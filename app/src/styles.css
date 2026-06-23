@@ -560,7 +560,9 @@ html, body {
   align-items: center;
   justify-content: center;
 }
-.stk-line1 { display: flex; align-items: center; gap: 7px; }
+/* min-height 预留按钮组(22px)行高：操作按钮 hover 才浮现，否则行高会从标题文本行(~17px)
+   跳到按钮高度(22px)，撑高卡片产生抖动。预留后行高恒定，hover 显隐按钮不再改变高度。 */
+.stk-line1 { display: flex; align-items: center; gap: 7px; min-height: calc(22px * var(--cc-ui)); }
 .stk-line1 .stk-title { flex: 1; min-width: 0; font-size: calc(12.5px * var(--cc-ui)); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk-time { flex: none; font-size: calc(10px * var(--cc-ui)); color: var(--cc-text-faint); }
 .stk-line2 { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
