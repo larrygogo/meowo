@@ -170,9 +170,43 @@ pub(crate) fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), 
     }
     let mgr = app.autolaunch();
     if enabled {
-        mgr.enable().map_err(|e| e.to_string())
+        mgr.enable().map_err(|e| e.to_string())?;
+        // auto-launch 写 Run 项用 format!("{} {}", path, args)——路径不加引号。路径含空格(如用户名
+        // "First Last" → C:\Users\First Last\...)会被 Windows 拆成「程序+参数」，开机自启直接失败。
+        // enable 成功后把该 Run 值重写为带引号的可执行路径修正（值名与插件一致 = package_info().name）。
+        #[cfg(target_os = "windows")]
+        quote_autostart_run_value(&app);
+        Ok(())
     } else {
         mgr.disable().map_err(|e| e.to_string())
+    }
+}
+
+/// 把 HKCU\...\Run 下本应用的自启项值重写为带引号的可执行路径，修正 auto-launch 不加引号、
+/// 含空格路径开机自启失败的问题。失败不致命（仅日志），不影响开关状态。
+#[cfg(target_os = "windows")]
+fn quote_autostart_run_value(app: &tauri::AppHandle) {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+    use winreg::RegKey;
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[autostart] current_exe 失败，跳过路径加引号: {e}");
+            return;
+        }
+    };
+    let name = app.package_info().name.clone(); // 与 tauri-plugin-autostart 的 Run 项名一致
+    let value = format!("\"{}\"", exe.display());
+    let run = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", KEY_SET_VALUE);
+    match run {
+        Ok(run) => {
+            if let Err(e) = run.set_value(&name, &value) {
+                eprintln!("[autostart] 重写带引号路径失败: {e}");
+            }
+        }
+        Err(e) => eprintln!("[autostart] 打开 Run 注册表键失败: {e}"),
     }
 }
 

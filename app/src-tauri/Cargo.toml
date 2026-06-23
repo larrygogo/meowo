@@ -32,6 +32,8 @@ sys-locale = "0.3"
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
+# 修正 auto-launch 写 Run 项时路径不加引号的问题（含空格路径会失败）：enable 后重写为带引号路径。
+winreg = "0.55"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
