@@ -23,14 +23,33 @@ function stripExtent(count: number): number {
   return Math.max(48, count * 17 + 26);
 }
 
+// 正常窗口最小尺寸：与 tauri.conf.json 的 minWidth/minHeight 对齐。SIZE_KEY 是「正常尺寸」基准，
+// 不应低于此（低于即被细条尺寸毒化）。
+const SIZE_MIN_W = 360;
+const SIZE_MIN_H = 240;
+const SIZE_DEFAULT = { w: 360, h: 440 }; // 与 tauri.conf.json 默认 width/height 一致
+
 function loadSize(): { w: number; h: number } {
   try {
     const s = JSON.parse(localStorage.getItem(SIZE_KEY) || "");
-    if (typeof s?.w === "number" && typeof s?.h === "number") return s;
+    // 低于最小尺寸视为被「吸附态拖角缩成细条」的尺寸毒化（实测出现过 {80,240}/{136,20}），
+    // 一律回落默认，避免毒化基准让启动对账判不出遗留细条而救不回。
+    if (typeof s?.w === "number" && typeof s?.h === "number" && s.w >= SIZE_MIN_W && s.h >= SIZE_MIN_H) {
+      return s;
+    }
   } catch {
     /* ignore */
   }
-  return { w: 360, h: 440 }; // 与 tauri.conf.json 默认 width/minWidth(360) 一致；否则吸附还原时会被 set_min_size 钳大
+  return { ...SIZE_DEFAULT };
+}
+
+// 写入「正常尺寸」基准：钳到最小尺寸。吸附态下 min_size 被放开（snap_collapse），拖角可把窗缩成
+// 细条；若把细条尺寸当正常尺寸存入会毒化 loadSize 基准，令启动对账无法救回遗留细条。
+function saveSize(w: number, h: number) {
+  localStorage.setItem(
+    SIZE_KEY,
+    JSON.stringify({ w: Math.max(SIZE_MIN_W, w), h: Math.max(SIZE_MIN_H, h) })
+  );
 }
 
 function isPinned(): boolean {
@@ -132,7 +151,7 @@ export function App() {
         try {
           const sz = await getCurrentWindow().outerSize();
           const sf = await getCurrentWindow().scaleFactor();
-          localStorage.setItem(SIZE_KEY, JSON.stringify({ w: sz.width / sf, h: sz.height / sf }));
+          saveSize(sz.width / sf, sz.height / sf);
         } catch {
           /* ignore */
         }
@@ -177,12 +196,24 @@ export function App() {
     const unEnd = listen("user-resize-end", async () => {
       const e = preResizeEdgeRef.current;
       preResizeEdgeRef.current = null;
-      if (!e) return; // 缩放前非吸附态 → 保持普通窗口
+      if (!e) {
+        // 缩放前非吸附态 → 保持普通窗口；把新尺寸记为常用尺寸，供启动对账/还原沿用，
+        // 避免用户自定义的小窗口被误判为「吸附遗留细条」而被强行放大。
+        try {
+          const sz = await getCurrentWindow().outerSize();
+          const sf = await getCurrentWindow().scaleFactor();
+          saveSize(sz.width / sf, sz.height / sf);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       // 把缩放后的尺寸记为新的常用尺寸，再按它重新吸回原边（snap_expand 会贴边定位）。
+      // saveSize 会钳到最小尺寸：吸附态下 min 被放开，拖角可把窗缩成细条，不能让细条尺寸污染基准。
       try {
         const sz = await getCurrentWindow().outerSize();
         const sf = await getCurrentWindow().scaleFactor();
-        localStorage.setItem(SIZE_KEY, JSON.stringify({ w: sz.width / sf, h: sz.height / sf }));
+        saveSize(sz.width / sf, sz.height / sf);
       } catch {
         /* ignore */
       }
@@ -274,7 +305,7 @@ export function App() {
     }
   }, []);
 
-  // 重启沿用：若上次是吸附态，启动后折叠回竖条。macOS 面板模式跳过。
+  // 重启沿用：上次吸附态→折叠回竖条；否则按 SIZE_KEY 还原正常尺寸。macOS 面板模式跳过。
   useEffect(() => {
     if (isMacPanel()) return;
     const e = edgeRef.current;
@@ -282,7 +313,20 @@ export function App() {
       doCollapse(e)
         .then(() => setMode("collapsed"))
         .catch((err) => console.error("[snap] 启动沿用折叠失败：", err));
+      return;
     }
+    // 非吸附态启动：main 窗口尺寸由 localStorage(SIZE_KEY) 单一持有——window-state 已配置为不恢复尺寸
+    // (见 lib.rs)，窗口此刻是 tauri.conf 默认尺寸、位置则由 window-state 恢复。无条件按 SIZE_KEY 还原
+    // 成用户上次的正常尺寸(snap_restore 保留位置并拉回工作区内)。这样 window-state 永不持有「细条几何」，
+    // 从根上消除「window-state 几何 ↔ SNAP_KEY 吸附态」不同步导致的「细条大小+完整内容+没真正吸附」。
+    (async () => {
+      try {
+        const { w, h } = loadSize();
+        await invoke("snap_restore", { width: w, height: h, pinned: isPinned() });
+      } catch {
+        /* 非 Tauri 环境（测试/浏览器）忽略 */
+      }
+    })();
     // 仅启动跑一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -1589,7 +1589,18 @@ pub fn run() {
     let tx_cache: Arc<Mutex<cc_store::TranscriptCache>> =
         Arc::new(Mutex::new(cc_store::TranscriptCache::new()));
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // window-state 只持久化/恢复「位置」等，不恢复「尺寸」：main 窗口尺寸改由前端 localStorage
+        // (SIZE_KEY) 单独持有。否则吸附态退出会把「细条几何」存进 window-state，与 localStorage 的吸附态
+        // (SNAP_KEY) 两套持久化不同步——重启读不到 SNAP_KEY 却被还原成细条尺寸，渲染完整贴纸而没真正吸附。
+        // about 设置窗口固定尺寸(resizable=false)，不受影响；折叠/正常尺寸均由前端 snap 逻辑权威设定。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        .difference(tauri_plugin_window_state::StateFlags::SIZE),
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -1706,6 +1717,24 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 pull_on_screen(&w, false);
+                // 开机自启安全网：OS 刚登录时显示器/工作区可能尚未枚举完（多屏、副屏在负坐标、外接屏后上电），
+                // 此刻 available_monitors() 为空会让上面的 pull_on_screen 直接跳过救援；而贴纸 skipTaskbar 不进
+                // 任务栏，窗口若停在上次副屏(未就绪)的坐标就完全不可见、用户以为「没启动」。这里后台等显示器
+                // 就绪后强制(force=true)把窗口钳进相交最大/主显示器工作区，保证可见——且不依赖前端 JS 是否跑起来。
+                // clamp 对已在屏内的窗口是 no-op，不会无故移动正常摆放的窗口。
+                {
+                    let wc = w.clone();
+                    std::thread::spawn(move || {
+                        for _ in 0..40 {
+                            // ~6s
+                            if wc.available_monitors().map(|m| !m.is_empty()).unwrap_or(false) {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                        }
+                        pull_on_screen(&wc, true);
+                    });
+                }
                 // 装上位置约束子类：在移动生效前硬钳坐标，彻底拖不出屏幕。
                 if let Ok(h) = w.hwnd() {
                     win_constrain::set_app(app.handle().clone()); // 供子类拖边框缩放时通知前端
