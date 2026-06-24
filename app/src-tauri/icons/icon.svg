@@ -1,0 +1,38 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- cc-kanban 应用图标母图：深色圆角面板 + 绿/琥珀/陶土三柱（对应运行/待交互/状态色，看板识别）。
+       颜色对齐应用 token：--cc-ok #4ec9a5 / --cc-warn #e0a23c / --cc-accent #d97757。
+       精修：基线对齐(底 740)、统一圆角(rx42)、左右对称留白(193)、面板微渐变+顶部细高光、柱体柔和投影。 -->
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d1d20"/>
+      <stop offset="1" stop-color="#0c0c0d"/>
+    </linearGradient>
+    <linearGradient id="barGreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fd4b2"/>
+      <stop offset="1" stop-color="#4ec9a5"/>
+    </linearGradient>
+    <linearGradient id="barAmber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ecb45a"/>
+      <stop offset="1" stop-color="#e0a23c"/>
+    </linearGradient>
+    <linearGradient id="barTerra" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e58c6e"/>
+      <stop offset="1" stop-color="#d97757"/>
+    </linearGradient>
+    <filter id="barShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+
+  <!-- 圆角面板（squircle 近似，rx≈23.8%） -->
+  <rect x="24" y="24" width="976" height="976" rx="232" fill="url(#panel)"/>
+  <!-- 顶部一圈细高光，营造「抬起的玻璃面板」质感 -->
+  <rect x="25" y="25" width="974" height="974" rx="231" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
+
+  <!-- 三柱：底部对齐基线 740，统一圆角，左右对称 -->
+  <g filter="url(#barShadow)">
+    <rect x="217" y="380" width="150" height="360" rx="42" fill="url(#barGreen)"/>
+    <rect x="437" y="490" width="150" height="250" rx="42" fill="url(#barAmber)"/>
+    <rect x="657" y="300" width="150" height="440" rx="42" fill="url(#barTerra)"/>
+  </g>
+</svg>

@@ -140,6 +140,23 @@ fn set_top_if_changed(window: &tauri::WebviewWindow, desired: bool) -> Result<()
     Ok(())
 }
 
+/// 取窗口当前所在显示器。开机自启早期 OS 可能尚未枚举完显示器，current_monitor() 会暂时返回 None，
+/// 导致折叠/展开命令硬失败且前端无重试。回退顺序：当前屏 → 主屏 → 首个可用屏，尽量让 snap 命令仍能算位置。
+fn window_monitor(window: &tauri::WebviewWindow) -> Result<tauri::window::Monitor, String> {
+    if let Ok(Some(m)) = window.current_monitor() {
+        return Ok(m);
+    }
+    if let Ok(Some(m)) = window.primary_monitor() {
+        return Ok(m);
+    }
+    window
+        .available_monitors()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no monitor".to_string())
+}
+
 /// 真实光标是否在主窗口外接矩形内。用于展开态下判定是否该收回——DOM 的 mouseleave 在
 /// 窗口缩放时会误报一串假 leave/enter，不可信；改问 GetCursorPos vs 窗口物理矩形。
 /// 取不到坐标/尺寸时一律当作"在内"，避免误折叠。非 Windows 暂恒为 true（不收回）。
@@ -203,10 +220,7 @@ pub(crate) fn center_on(
 #[tauri::command]
 pub(crate) fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Result<(), String> {
     let extent = extent.clamp(1.0, 20000.0); // 钳上界，防 *scale 后 f64→i32 回绕
-    let m = window
-        .current_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or("no monitor")?;
+    let m = window_monitor(&window)?;
     let wa = m.work_area();
     let scale = m.scale_factor();
     let strip = strip_width_phys(scale); // 条的厚度（物理像素）
@@ -261,10 +275,7 @@ pub(crate) fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f6
 #[tauri::command]
 pub(crate) fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64) -> Result<(), String> {
     let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0)); // 钳上界防回绕
-    let m = window
-        .current_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or("no monitor")?;
+    let m = window_monitor(&window)?;
     let wa = m.work_area();
     let scale = m.scale_factor();
     let phys_w = ((width * scale).round() as i32).max(1);
@@ -304,6 +315,8 @@ pub(crate) fn snap_restore(
     height: f64,
     pinned: bool,
 ) -> Result<(), String> {
+    // 与 snap_collapse/snap_expand 一致地钳制上界，防异常大值(localStorage 被改坏)经 set_size 设出极端窗口。
+    let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0));
     // 恢复正常最小尺寸限制，再设回记住的宽高，置顶还原为用户的 pin 偏好。
     window
         .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
@@ -312,6 +325,10 @@ pub(crate) fn snap_restore(
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| e.to_string())?;
     set_top_if_changed(&window, pinned)?;
+    // set_size 走 SetWindowPos(SWP_NOMOVE)：位置约束子类(WM_WINDOWPOSCHANGING)与 Moved 钳位都不触发。
+    // 从右/顶边「遗留细条几何」还原放大后(宽/高变大、左上角不动)窗口可能越界出屏；显式拉回工作区内。
+    #[cfg(target_os = "windows")]
+    pull_on_screen(&window, true);
     Ok(())
 }
 
