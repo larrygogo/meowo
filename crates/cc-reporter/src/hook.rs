@@ -16,6 +16,8 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_input: Option<serde_json::Value>,
+    #[serde(default, alias = "assistant_message")]
+    pub last_assistant_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

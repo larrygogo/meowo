@@ -174,6 +174,15 @@ fn stop_refreshes_title_via_stored_cwd() {
     let _ = std::fs::remove_file(tp);
 }
 
+#[test]
+fn hookevent_parses_last_assistant_message_and_alias() {
+    let a = ev(r#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"结论更微妙"}"#);
+    assert_eq!(a.last_assistant_message.as_deref(), Some("结论更微妙"));
+    // 官方文档另称 assistant_message,alias 也要能接住。
+    let b = ev(r#"{"hook_event_name":"Stop","session_id":"s","assistant_message":"另一种字段名"}"#);
+    assert_eq!(b.last_assistant_message.as_deref(), Some("另一种字段名"));
+}
+
 /// UserPromptSubmit 不带 cwd，但 SessionStart 存了，apply_title 应用存的 cwd 重建路径。
 #[test]
 fn prompt_without_cwd_uses_stored_cwd_for_title() {
