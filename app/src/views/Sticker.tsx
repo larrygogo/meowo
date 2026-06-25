@@ -642,8 +642,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
             const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
-            // 活动行统一显示「最近一条 AI 正文」(preview)；出错优先显示错误标签；
-            // previewEnabled 关闭则不显示 AI 正文（仅保留错误）。不再显示底层 Bash 命令。
+            // AI 活动行显示「最近一条 AI 正文」(last_ai_text，回退 transcript preview)；出错优先显示错误标签；
+            // previewEnabled（对话预览开关）关闭则不显示 AI 正文（仅保留错误）；用户行同受该开关门控。
             const sub = l.errored && l.error_label
               ? t.errorLabels[l.error_label] ?? l.error_label
               : previewEnabled && (l.last_ai_text ?? l.preview)
@@ -796,7 +796,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                     <span className="stk-note-txt">{l.note}</span>
                   </div>
                 ) : null}
-                {l.last_user_text && (
+                {previewEnabled && l.last_user_text && (
                   <div className="stk-subrow stk-userrow">
                     <span className="stk-msg-tag">{t.sticker.youPrefix}</span>
                     <span className="stk-sub" title={l.last_user_text}>{l.last_user_text}</span>
