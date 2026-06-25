@@ -55,7 +55,7 @@ export function installMocks(): void {
       case "get_settings":
         return store.settings;
       case "get_account":
-        return { account: null, daily: null, usage: store.usage };
+        return { account: null, usage: store.usage };
       case "refresh_usage":
         return store.usage;
       case "get_live_sessions":
