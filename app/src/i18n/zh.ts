@@ -8,7 +8,6 @@ export const zh = {
     hourAgo: (h: number) => `${h} 小时前`,
     dayAgo: (d: number) => `${d} 天前`,
   },
-  conn: { on: "已连接", off: "已断开" },
   badge: {
     waiting: "等待输入",
     running: "运行中",

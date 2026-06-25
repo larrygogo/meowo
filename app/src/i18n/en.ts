@@ -9,7 +9,6 @@ export const en: Dict = {
     hourAgo: (h) => `${h} hr ago`,
     dayAgo: (d) => `${d} d ago`,
   },
-  conn: { on: "Connected", off: "Disconnected" },
   badge: {
     waiting: "Waiting for input",
     running: "Running",

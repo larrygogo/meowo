@@ -151,19 +151,21 @@ describe("Sticker", () => {
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();
   });
 
-  it("connected 时显示已连接徽标", () => {
-    render(<Sticker data={[mk({ connected: true })]} />);
-    expect(screen.getByText(zh.conn.on)).toBeTruthy();
+  it("connected 时 agent 图标高亮（非灰）", () => {
+    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    const agent = container.querySelector(".stk-agent");
+    expect(agent).toBeTruthy();
+    expect(agent?.classList.contains("stk-agent-off")).toBe(false);
   });
 
-  it("disconnected 时显示已断开徽标", () => {
-    render(<Sticker data={[mk({ connected: false })]} />);
-    expect(screen.getByText(zh.conn.off)).toBeTruthy();
+  it("disconnected 时 agent 图标变灰（stk-agent-off）", () => {
+    const { container } = render(<Sticker data={[mk({ connected: false })]} />);
+    expect(container.querySelector(".stk-agent.stk-agent-off")).toBeTruthy();
   });
 
-  it("stale + disconnected 显示已断开", () => {
-    render(<Sticker data={[mk({ session: { id: 2, project_id: 1, cc_session_id: "x", status: "stale", started_at: 0, last_event_at: Date.now(), ended_at: null }, connected: false })]} />);
-    expect(screen.getByText(zh.conn.off)).toBeTruthy();
+  it("stale + disconnected 时 agent 图标变灰", () => {
+    const { container } = render(<Sticker data={[mk({ session: { id: 2, project_id: 1, cc_session_id: "x", status: "stale", started_at: 0, last_event_at: Date.now(), ended_at: null }, connected: false })]} />);
+    expect(container.querySelector(".stk-agent.stk-agent-off")).toBeTruthy();
   });
 
   it.each([

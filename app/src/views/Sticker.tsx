@@ -27,20 +27,6 @@ function fmtAgo(ms: number, t: Dict): string {
   return t.time.dayAgo(Math.floor(h / 24));
 }
 
-function ConnBadge({ connected }: { connected: boolean }) {
-  const t = useT();
-  return (
-    <span className={"conn " + (connected ? "conn-on" : "conn-off")}>
-      <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
-        <rect x="1.5" y="2.5" width="13" height="9" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        <line x1="5.5" y1="14" x2="10.5" y2="14" stroke="currentColor" strokeWidth="1.4" />
-        {!connected && <line x1="2" y1="13.5" x2="14" y2="2.5" stroke="currentColor" strokeWidth="1.4" />}
-      </svg>
-      {connected ? t.conn.on : t.conn.off}
-    </span>
-  );
-}
-
 function ArchiveIcon({ archived }: { archived: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -761,14 +747,15 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       <div className="stk-edit-hint">{t.sticker.renameHint}</div>
                     )}
                     <div className="stk-line2">
-                      <ConnBadge connected={l.connected} />
-                      <span className="stk-repo">{l.project_name}</span>
-                      <span className="stk-agentmodel">
-                        <span className="stk-agent" title={t.sticker.agentClaudeCode} aria-label={t.sticker.agentClaudeCode}>
-                          <AgentMark />
-                        </span>
-                        {l.model && <span className="stk-model">{l.model}</span>}
+                      <span
+                        className={"stk-agent" + (l.connected ? "" : " stk-agent-off")}
+                        title={t.sticker.agentClaudeCode}
+                        aria-label={t.sticker.agentClaudeCode}
+                      >
+                        <AgentMark />
                       </span>
+                      <span className="stk-repo">{l.project_name}</span>
+                      {l.model && <span className="stk-model">{l.model}</span>}
                     </div>
                   </div>
                 </div>
