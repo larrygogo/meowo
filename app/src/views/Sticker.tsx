@@ -185,20 +185,20 @@ function CloseIcon() {
 
 /** 状态徽标：圆角矩形边框上流动的亮线（conic 渐变 + transform 旋转，纯 GPU 合成，
  *  拖动窗口不占主线程）+ 中心实心圆，圆内显示 Content 已用百分比。
- *  tone：running=绿（运行中），waiting=黄（待交互），结构一致仅换色。 */
+ *  tone：running=绿（运行中），waiting=黄（待交互），pending=琥珀（待审批）。 */
 function RunBadge({
   pct,
   tone = "running",
 }: {
   pct: number | null;
-  tone?: "running" | "waiting";
+  tone?: "running" | "waiting" | "pending";
 }) {
   const t = useT();
   const what = tone === "waiting" ? t.badge.waiting : t.badge.running;
   const label = pct != null ? t.badge.full(what, pct) : what;
   return (
     <span
-      className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : "")}
+      className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : tone === "pending" ? " run-badge--pending" : "")}
       role="img"
       aria-label={label}
       title={label}
@@ -654,6 +654,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
               <span className="ring-stop" title={t.sticker.stopped} />
             ) : l.errored ? (
               <span className="needs-error" title={l.error_raw ?? t.sticker.sessionError} />
+            ) : l.pending_review ? (
+              <RunBadge pct={l.context_pct} tone="pending" />
             ) : l.session.status === "running" ? (
               <RunBadge pct={l.context_pct} />
             ) : l.session.status === "waiting" ? (
@@ -713,6 +715,11 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       ) : (
                         <>
                           <span className="stk-title">{title}</span>
+                          {l.pending_review && (
+                            <span className={"pending-pill pending-" + l.pending_review}>
+                              {t.pending[l.pending_review]}
+                            </span>
+                          )}
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
                           {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
                               星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}

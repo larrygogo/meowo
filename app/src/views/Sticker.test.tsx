@@ -244,4 +244,18 @@ describe("Sticker", () => {
     const cards = container.querySelectorAll(".stk-card");
     expect(cards[0].querySelector(".stk-title")?.textContent).toBe("待批准");
   });
+
+  it("pending 会话显示琥珀 pill 与 pending 徽标", () => {
+    const item = mk({
+      task_title: "审批中",
+      connected: true,
+      pending_review: "approval",
+      context_pct: 30,
+      session: { id: 5, project_id: 1, cc_session_id: "pp", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null },
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    expect(screen.getByText(zh.pending.approval)).toBeTruthy();     // pill 文字「待批准」
+    expect(container.querySelector(".pending-pill")).toBeTruthy();  // pill 元素
+    expect(container.querySelector(".run-badge--pending")).toBeTruthy(); // 琥珀徽标
+  });
 });
