@@ -268,3 +268,26 @@ fn stop_sets_last_ai_text_and_prompt_sets_last_user_text() {
     assert_eq!(s.last_user_text.as_deref(), Some("切到这个任务"));
     assert_eq!(s.last_ai_text.as_deref(), Some("调研完成,结论更微妙"));
 }
+
+#[test]
+fn pending_review_cleared_by_next_event() {
+    for (i, clear_ev) in [
+        r#"{"hook_event_name":"PostToolUse","session_id":"c1","tool_name":"Read"}"#,
+        r#"{"hook_event_name":"UserPromptSubmit","session_id":"c1","prompt":"继续"}"#,
+        r#"{"hook_event_name":"Stop","session_id":"c1"}"#,
+        r#"{"hook_event_name":"SessionEnd","session_id":"c1"}"#,
+    ].iter().enumerate() {
+        let store = Store::open_in_memory().unwrap();
+        dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"c1","cwd":"/p"}"#), 100).unwrap();
+        dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"c1","tool_name":"Bash"}"#), 200).unwrap();
+        // 置位后确认非空。
+        let pending = store.live_sessions().unwrap().into_iter()
+            .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
+        assert_eq!(pending.as_deref(), Some("approval"), "case {i} 置位前提");
+        // 下一个事件清除。
+        dispatch(&store, &ev(clear_ev), 300).unwrap();
+        let pending = store.live_sessions().unwrap().into_iter()
+            .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
+        assert_eq!(pending, None, "case {i} 应被清除");
+    }
+}

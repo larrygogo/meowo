@@ -20,6 +20,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 if let Some(prompt) = ev.prompt.as_deref() {
                     store.on_user_prompt(sid, prompt, now_ms)?;
                     store.set_last_user_text(sid, prompt)?;
@@ -33,6 +34,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "PostToolUse" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 match ev.tool_name.as_deref() {
                     Some("TodoWrite") => {
                         store.sync_todos(sid, &ev.todo_items(), now_ms)?;
@@ -48,6 +50,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "Stop" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 if let Some(msg) = ev.last_assistant_message.as_deref() {
                     store.set_last_ai_text(sid, msg)?;
@@ -57,6 +60,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "SessionEnd" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 store.end_session(sid, now_ms)?;
             }
         }
