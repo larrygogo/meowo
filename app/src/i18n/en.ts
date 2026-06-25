@@ -58,6 +58,7 @@ export const en: Dict = {
     noteCancel: "Cancel",
     youPrefix: "You",
     aiPrefix: "AI",
+    agentClaudeCode: "Claude Code",
   },
   update: {
     clickToInstall: "Click to download and install the update",

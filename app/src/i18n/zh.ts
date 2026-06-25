@@ -57,6 +57,7 @@ export const zh = {
     noteCancel: "取消",
     youPrefix: "你",
     aiPrefix: "AI",
+    agentClaudeCode: "Claude Code",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",

@@ -87,6 +87,8 @@ export type LiveSession = {
   context_pct: number | null;
   /** 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 null。 */
   context_window: number | null;
+  /** 模型展示名（Claude Code statusline 的 model.display_name，如 "Opus"）；无则 null。 */
+  model: string | null;
   /** 待审批子态:回合中途等用户介入(批准工具/回答提问/批准计划);无则 null。 */
   pending_review: "approval" | "question" | "plan" | null;
   /** 最近一条 AI 正文(锚 Stop hook);无则 null,卡片回退 preview。 */

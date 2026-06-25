@@ -307,4 +307,16 @@ describe("Sticker", () => {
     const tagTexts = Array.from(tags).map((el) => el.textContent);
     expect(tagTexts).not.toContain(zh.sticker.aiPrefix);
   });
+
+  it("有 model 时渲染模型胶囊与 agent 图标", () => {
+    const { container } = render(<Sticker data={[mk({ model: "Opus" })]} />);
+    expect(container.querySelector(".stk-model")?.textContent).toBe("Opus");
+    expect(container.querySelector(".stk-agent")).toBeTruthy();
+  });
+
+  it("无 model 时只渲染 agent 图标、不渲染模型胶囊", () => {
+    const { container } = render(<Sticker data={[mk({ model: null })]} />);
+    expect(container.querySelector(".stk-agent")).toBeTruthy();
+    expect(container.querySelector(".stk-model")).toBeNull();
+  });
 });

@@ -53,5 +53,6 @@ export function makeSession(p: {
     pending_review: null,
     last_ai_text: null,
     last_user_text: null,
+    model: null,
   };
 }

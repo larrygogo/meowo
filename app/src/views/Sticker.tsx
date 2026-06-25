@@ -94,6 +94,15 @@ function StarIcon({ starred }: { starred: boolean }) {
   );
 }
 
+function AgentMark() {
+  // 通用 AI 标记（4 角 spark），accent 色；未来按 provider 换此图标。
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2c.5 4.5 2.5 6.5 7 7-4.5.5-6.5 2.5-7 7-.5-4.5-2.5-6.5-7-7 4.5-.5 6.5-2.5 7-7z" />
+    </svg>
+  );
+}
+
 type Item = LiveSession & { connected: boolean };
 type Tab = "all" | "waiting" | "running" | "archived";
 
@@ -754,6 +763,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                     <div className="stk-line2">
                       <ConnBadge connected={l.connected} />
                       <span className="stk-repo">{l.project_name}</span>
+                      <span className="stk-agentmodel">
+                        <span className="stk-agent" title={t.sticker.agentClaudeCode} aria-label={t.sticker.agentClaudeCode}>
+                          <AgentMark />
+                        </span>
+                        {l.model && <span className="stk-model">{l.model}</span>}
+                      </span>
                     </div>
                   </div>
                 </div>
