@@ -230,6 +230,31 @@ fn user_prompt_with_transcript_overrides_prompt_title() {
     let _ = std::fs::remove_file(tp);
 }
 
+// == Task 6: PermissionRequest / PreToolUse 置 pending_review ==
+#[test]
+fn permission_and_pretooluse_set_pending_review() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"p1","cwd":"/p"}"#), 100).unwrap();
+
+    let kind = |cc: &str| {
+        store.live_sessions().unwrap().into_iter()
+            .find(|l| l.session.cc_session_id == cc).unwrap().pending_review
+    };
+
+    // PermissionRequest:无 tool_name/普通工具 → approval。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"Bash"}"#), 200).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("approval"));
+    // PermissionRequest:ExitPlanMode → plan。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"ExitPlanMode"}"#), 210).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("plan"));
+    // PreToolUse:AskUserQuestion → question。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"AskUserQuestion"}"#), 220).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("question"));
+    // PreToolUse:其它工具 → 无操作(保持上一个 question)。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"Read"}"#), 230).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("question"));
+}
+
 // == Task 5: Stop 落 last_ai_text、UserPromptSubmit 落 last_user_text ==
 #[test]
 fn stop_sets_last_ai_text_and_prompt_sets_last_user_text() {

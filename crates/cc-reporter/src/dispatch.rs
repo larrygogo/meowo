@@ -1,4 +1,4 @@
-use cc_store::{SessionStatus, Store, StoreError};
+use cc_store::{PendingReview, SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
 
 use std::path::Path;
@@ -58,6 +58,28 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         "SessionEnd" => {
             if let Some(sid) = lookup_session(store, ev)? {
                 store.end_session(sid, now_ms)?;
+            }
+        }
+        "PermissionRequest" => {
+            if let Some(sid) = lookup_session(store, ev)? {
+                let kind = match ev.tool_name.as_deref() {
+                    Some("ExitPlanMode") => PendingReview::Plan,
+                    Some("AskUserQuestion") => PendingReview::Question,
+                    _ => PendingReview::Approval,
+                };
+                store.set_pending_review(sid, kind, now_ms)?;
+            }
+        }
+        "PreToolUse" => {
+            if let Some(sid) = lookup_session(store, ev)? {
+                let kind = match ev.tool_name.as_deref() {
+                    Some("AskUserQuestion") => Some(PendingReview::Question),
+                    Some("ExitPlanMode") => Some(PendingReview::Plan),
+                    _ => None, // 安装侧已用 matcher 限定;这里再兜一层防御
+                };
+                if let Some(kind) = kind {
+                    store.set_pending_review(sid, kind, now_ms)?;
+                }
             }
         }
         _ => {}
