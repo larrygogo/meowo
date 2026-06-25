@@ -44,6 +44,8 @@ pub struct LiveSession {
     pub context_pct: Option<i64>,
     /// 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 None。
     pub context_window: Option<i64>,
+    /// 模型展示名（来自 Claude Code statusline 的 model.display_name，如 "Opus"）；无则 None。
+    pub model: Option<String>,
     /// 用户给会话挂的便签（手写备忘）；无便签为 None。
     pub note: Option<String>,
     /// 待审批子态：NULL/approval/question/plan(回合中途等用户介入)。
@@ -202,7 +204,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
                     p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
-                    sc.used_pct, sc.window_size, sn.note,
+                    sc.used_pct, sc.window_size, sc.model, sn.note,
                     s.pending_review, s.last_ai_text, s.last_user_text
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
@@ -234,11 +236,12 @@ impl Store {
                 let archived_at: Option<i64> = r.get(15)?;
                 let context_pct: Option<i64> = r.get(16)?;
                 let context_window: Option<i64> = r.get(17)?;
-                let note: Option<String> = r.get(18)?;
-                let pending_review: Option<String> = r.get(19)?;
-                let last_ai_text: Option<String> = r.get(20)?;
-                let last_user_text: Option<String> = r.get(21)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, note, pending_review, last_ai_text, last_user_text))
+                let model: Option<String> = r.get(18)?;
+                let note: Option<String> = r.get(19)?;
+                let pending_review: Option<String> = r.get(20)?;
+                let last_ai_text: Option<String> = r.get(21)?;
+                let last_user_text: Option<String> = r.get(22)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -246,7 +249,7 @@ impl Store {
         let task_ids: Vec<i64> = rows.iter().filter_map(|r| r.2).collect();
         let mut todos_map = self.todos_by_task(&task_ids)?;
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, note, pending_review, last_ai_text, last_user_text) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text) in rows {
             let todos = task_id
                 .and_then(|tid| todos_map.remove(&tid))
                 .unwrap_or_default();
@@ -267,6 +270,7 @@ impl Store {
                 cwd,
                 context_pct,
                 context_window,
+                model,
                 note,
                 pending_review,
                 last_ai_text,

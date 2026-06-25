@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS session_context (
     cc_session_id TEXT PRIMARY KEY,
     used_pct      INTEGER,
     window_size   INTEGER,
+    model         TEXT,
     updated_at    INTEGER NOT NULL
 );
 

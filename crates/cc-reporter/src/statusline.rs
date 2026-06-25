@@ -21,7 +21,11 @@ pub fn record(store: &Store, input: &str, now_ms: i64) {
     let window = cw
         .and_then(|c| c.get("context_window_size"))
         .and_then(|x| x.as_i64());
-    let _ = store.set_session_context(sid, used_pct, window, now_ms);
+    let model = v
+        .get("model")
+        .and_then(|m| m.get("display_name"))
+        .and_then(|x| x.as_str());
+    let _ = store.set_session_context(sid, used_pct, window, model, now_ms);
 }
 
 /// 无下游 statusLine 时 cc-reporter 自渲染的极简状态栏：`<模型> · NN% ctx`。
@@ -93,5 +97,30 @@ mod tests {
         // 不 panic、不写入即可。
         record(&store, "not json at all", 1);
         record(&store, r#"{"no_session":true}"#, 1);
+    }
+
+    #[test]
+    fn record_writes_model_for_session() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let _ = store.start_session(pid, "sm-1", 1).unwrap();
+        let json = r#"{"session_id":"sm-1","model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}"#;
+        record(&store, json, 100);
+        let live = store.live_sessions().unwrap();
+        let s = live.iter().find(|l| l.session.cc_session_id == "sm-1").unwrap();
+        assert_eq!(s.model.as_deref(), Some("Opus"));
+    }
+
+    #[test]
+    fn record_missing_model_keeps_previous() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let _ = store.start_session(pid, "sm-2", 1).unwrap();
+        record(&store, r#"{"session_id":"sm-2","model":{"display_name":"Sonnet"}}"#, 1);
+        // 后续 statusline 不带 model（仅上下文）→ 不应抹掉已存的模型
+        record(&store, r#"{"session_id":"sm-2","context_window":{"used_percentage":20}}"#, 2);
+        let live = store.live_sessions().unwrap();
+        let s = live.iter().find(|l| l.session.cc_session_id == "sm-2").unwrap();
+        assert_eq!(s.model.as_deref(), Some("Sonnet"));
     }
 }
