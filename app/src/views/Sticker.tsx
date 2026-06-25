@@ -754,7 +754,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       >
                         <AgentMark />
                       </span>
-                      <span className="stk-repo">{l.project_name}</span>
+                      <span className="stk-repo" title={l.project_name}>{l.project_name.split("/").pop()}</span>
                       {l.model && <span className="stk-model">{l.model}</span>}
                     </div>
                   </div>

@@ -321,4 +321,11 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-agent")).toBeTruthy();
     expect(container.querySelector(".stk-model")).toBeNull();
   });
+
+  it("项目名只显示仓库/文件夹名（去 owner 前缀），title 保留全名", () => {
+    const { container } = render(<Sticker data={[mk({ project_name: "larrygogo/autopilot" })]} />);
+    const repo = container.querySelector(".stk-repo") as HTMLElement;
+    expect(repo?.textContent).toBe("autopilot");
+    expect(repo?.getAttribute("title")).toBe("larrygogo/autopilot");
+  });
 });
