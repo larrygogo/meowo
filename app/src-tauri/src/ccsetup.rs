@@ -6,13 +6,17 @@
 
 use serde_json::{json, Value};
 
-/// cc-reporter 负责的 5 个 hook 事件（PreToolUse 等其它 hook 一律不碰）。
-const HOOK_EVENTS: [&str; 5] = [
-    "SessionStart",
-    "UserPromptSubmit",
-    "PostToolUse",
-    "Stop",
-    "SessionEnd",
+/// cc-reporter 负责的 hook 事件 + matcher。PreToolUse 用 matcher 限定只在两种工具触发,
+/// 与用户自有 PreToolUse(如 Bash 预检)按 matcher 区分共存。
+const HOOK_SPECS: [(&str, &str); 8] = [
+    ("SessionStart", "*"),
+    ("UserPromptSubmit", "*"),
+    ("PostToolUse", "*"),
+    ("Stop", "*"),
+    ("SessionEnd", "*"),
+    ("PermissionRequest", "*"),
+    ("PreToolUse", "AskUserQuestion"),
+    ("PreToolUse", "ExitPlanMode"),
 ];
 
 /// Windows 路径转 bash 可用形式：`C:\a\b` -> `C:/a/b`（Git Bash 接受 `C:/...`）。
@@ -62,26 +66,37 @@ pub fn reporter_path_from_hooks(settings: &Value) -> Option<String> {
     None
 }
 
-/// 某 hook 事件的数组里是否已有指向 cc-reporter 的条目。返回该 hook 的可变引用（用于更新路径）。
-fn find_reporter_hook(event_arr: &mut [Value]) -> Option<&mut Value> {
+/// 在某 hook 事件数组里找「matcher 等于 target_matcher 且含 cc-reporter 命令」的 entry。
+/// 返回整个 entry 的可变引用(用于更新其内部 hook 的路径)。matcher 感知:
+/// 同一事件下可有多条按 matcher 区分的条目(如 PreToolUse 的 Bash 预检与本程序的 AskUserQuestion)。
+fn find_reporter_entry_with_matcher<'a>(
+    event_arr: &'a mut [Value],
+    target_matcher: &str,
+) -> Option<&'a mut Value> {
     for entry in event_arr.iter_mut() {
-        if let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) {
-            for h in hs.iter_mut() {
-                if h.get("command")
+        if entry.get("matcher").and_then(|m| m.as_str()) != Some(target_matcher) {
+            continue;
+        }
+        let has_reporter = entry
+            .get("hooks")
+            .and_then(|x| x.as_array())
+            .into_iter()
+            .flatten()
+            .any(|h| {
+                h.get("command")
                     .and_then(|x| x.as_str())
                     .and_then(reporter_exe_path)
                     .is_some()
-                {
-                    return Some(h);
-                }
-            }
+            });
+        if has_reporter {
+            return Some(entry);
         }
     }
     None
 }
 
-/// 确保 5 个事件都挂上 cc-reporter（`reporter_native` 为本机路径，hook 的 command 用 `"<path>"`）。
-/// 返回是否有改动。保留事件上的其它 hook（如 PreToolUse 的 node 预检不在管辖事件内，天然不动）。
+/// 确保 8 条 (event, matcher) 规格都挂上 cc-reporter（`reporter_native` 为本机路径，hook 的 command 用 `"<path>"`）。
+/// 返回是否有改动。按 matcher 区分定位/追加，保留同一事件下用户自有的其他 matcher 条目（如 PreToolUse:Bash 预检）。
 pub fn ensure_hooks(settings: &mut Value, reporter_native: &str) -> bool {
     let desired_cmd = format!("\"{reporter_native}\"");
     let mut changed = false;
@@ -90,7 +105,7 @@ pub fn ensure_hooks(settings: &mut Value, reporter_native: &str) -> bool {
         settings["hooks"] = json!({});
         changed = true;
     }
-    for event in HOOK_EVENTS {
+    for (event, matcher) in HOOK_SPECS {
         let arr = settings["hooks"]
             .as_object_mut()
             .unwrap()
@@ -103,16 +118,28 @@ pub fn ensure_hooks(settings: &mut Value, reporter_native: &str) -> bool {
                 arr.as_array_mut().unwrap()
             }
         };
-        match find_reporter_hook(arr) {
-            Some(h) => {
-                if h.get("command").and_then(|x| x.as_str()) != Some(desired_cmd.as_str()) {
-                    h["command"] = json!(desired_cmd);
-                    changed = true;
+        match find_reporter_entry_with_matcher(arr, matcher) {
+            Some(entry) => {
+                // 升级该 entry 内 cc-reporter hook 的路径(matcher 不动)。
+                if let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) {
+                    for h in hs.iter_mut() {
+                        let is_reporter = h
+                            .get("command")
+                            .and_then(|x| x.as_str())
+                            .and_then(reporter_exe_path)
+                            .is_some();
+                        if is_reporter
+                            && h.get("command").and_then(|x| x.as_str()) != Some(desired_cmd.as_str())
+                        {
+                            h["command"] = json!(desired_cmd);
+                            changed = true;
+                        }
+                    }
                 }
             }
             None => {
                 arr.push(json!({
-                    "matcher": "*",
+                    "matcher": matcher,
                     "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }]
                 }));
                 changed = true;
@@ -286,16 +313,16 @@ mod tests {
         assert_eq!(reporter_exe_path("/opt/cc-reporter/run.sh"), None);
         assert_eq!(reporter_exe_path("cc-reporter-wrapper"), None);
         assert_eq!(reporter_exe_path(""), None);
-        // find_reporter_hook 不应认领「事件内、命令含 cc-reporter 子串的用户 hook」。
+        // find_reporter_entry_with_matcher 不应认领「事件内、命令含 cc-reporter 子串的用户 hook」。
         let mut arr = vec![json!({"hooks":[{"type":"command","command":"node tools/cc-reporter-notify.js"}]})];
-        assert!(find_reporter_hook(&mut arr).is_none());
+        assert!(find_reporter_entry_with_matcher(&mut arr, "*").is_none());
     }
 
     #[test]
     fn ensure_hooks_adds_all_events_when_empty() {
         let mut v = json!({});
         assert!(ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
-        for e in HOOK_EVENTS {
+        for e in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"] {
             let cmd = v["hooks"][e][0]["hooks"][0]["command"].as_str().unwrap();
             assert_eq!(cmd, "\"C:/x/cc-reporter.exe\"");
         }
@@ -394,10 +421,18 @@ mod tests {
             },
             "statusLine": { "type":"command", "command":"bash -c 'claude-hud stuff'" }
         });
-        // hooks 已全部正确 → 幂等无改动
-        assert!(!ensure_hooks(&mut v, ccr));
+        // fixture 缺少 PermissionRequest / PreToolUse(AskUserQuestion|ExitPlanMode) → 首次追加 3 条，返回 true
+        assert!(ensure_hooks(&mut v, ccr));
         // PreToolUse 的 node 预检原封不动
         assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "node \"x/pre-commit-check.cjs\"");
+        // PreToolUse 下已追加 AskUserQuestion / ExitPlanMode 两条 cc-reporter
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
+        assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
+        // PermissionRequest 也已追加
+        assert_eq!(v["hooks"]["PermissionRequest"][0]["matcher"], "*");
+        // 再跑一次：此时才幂等
+        assert!(!ensure_hooks(&mut v, ccr));
         // statusLine 被包装，捕获到原 claude-hud
         let marker = "C:/Users/larry/.cc-kanban/statusline.sh";
         let inv = format!("bash \"{marker}\"");
@@ -426,5 +461,41 @@ mod tests {
             ] }] }
         });
         assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some("C:/a/b/cc-reporter.exe"));
+    }
+
+    #[test]
+    fn ensure_hooks_adds_all_specs_including_pretooluse_matchers() {
+        let mut v = json!({});
+        assert!(ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
+        // 5 个老事件 + PermissionRequest:matcher "*"。
+        for e in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
+            assert_eq!(v["hooks"][e][0]["matcher"], "*", "{e} matcher");
+            assert_eq!(v["hooks"][e][0]["hooks"][0]["command"], "\"C:/x/cc-reporter.exe\"");
+        }
+        // PreToolUse:两条,matcher 分别 AskUserQuestion / ExitPlanMode。
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        let matchers: Vec<&str> = pre.iter().map(|e| e["matcher"].as_str().unwrap()).collect();
+        assert!(matchers.contains(&"AskUserQuestion"));
+        assert!(matchers.contains(&"ExitPlanMode"));
+        // 幂等。
+        assert!(!ensure_hooks(&mut v, "C:/x/cc-reporter.exe"));
+    }
+
+    #[test]
+    fn ensure_hooks_preserves_user_pretooluse_bash() {
+        // 用户自有 PreToolUse:Bash node 预检,不是 cc-reporter。
+        let mut v = json!({
+            "hooks": { "PreToolUse": [
+                { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"x/pre-check.cjs\"" }] }
+            ]}
+        });
+        ensure_hooks(&mut v, "C:/x/cc-reporter.exe");
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        // 原 Bash 条目原封保留。
+        let bash = pre.iter().find(|e| e["matcher"] == "Bash").unwrap();
+        assert_eq!(bash["hooks"][0]["command"], "node \"x/pre-check.cjs\"");
+        // 且新增了 AskUserQuestion / ExitPlanMode 两条 cc-reporter。
+        assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
+        assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
     }
 }
