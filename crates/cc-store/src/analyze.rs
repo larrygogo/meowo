@@ -131,19 +131,19 @@ impl ParseState {
                         self.last_usage = Some(used);
                     }
                 }
-                // 取该 assistant 消息 content 数组里第一个 text 块；无 text 块则跳过（如纯 tool_use）。
+                // 取该 assistant 消息 content 数组里所有 text 块，空格拼接（对齐 moshi）；无 text 块则 None（如纯 tool_use）。
                 let text = v
                     .get("message")
                     .and_then(|m| m.get("content"))
                     .and_then(|c| c.as_array())
                     .and_then(|arr| {
-                        arr.iter().find_map(|x| {
-                            if x.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                x.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                            } else {
-                                None
-                            }
-                        })
+                        let joined = arr
+                            .iter()
+                            .filter(|x| x.get("type").and_then(|t| t.as_str()) == Some("text"))
+                            .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if joined.is_empty() { None } else { Some(joined) }
                     });
                 if let Some(text) = text {
                     let uuid = v.get("uuid").and_then(|u| u.as_str()).unwrap_or("").to_string();
@@ -386,6 +386,17 @@ mod tests {
         // 按字符截断到 180 + 省略号；多字节字符不会被截半。
         assert_eq!(p.chars().count(), 181);
         assert!(p.ends_with('…'));
+    }
+
+    #[test]
+    fn analyze_concatenates_multiple_text_blocks_in_one_assistant() {
+        let content = concat!(
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"先说开场白"},{"type":"tool_use","id":"t","name":"Bash","input":{}},{"type":"text","text":"再说结论"}]}}"#, "\n",
+        );
+        let p = write_tmp("concat", content);
+        let info = analyze_transcript(p.to_str().unwrap());
+        std::fs::remove_file(&p).ok();
+        assert_eq!(info.preview.as_deref(), Some("先说开场白 再说结论"));
     }
 
     #[test]
