@@ -581,7 +581,23 @@ html, body {
 .stk-subrow { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
 .stk-sub { flex: 1; min-width: 0; font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk-userrow { margin-top: 5px; }
-.stk-msg-tag { flex: none; font-size: calc(9.5px * var(--cc-ui)); font-weight: 600; color: var(--cc-text-dim); }
+/* 对话双行的「你/AI」前缀小胶囊：你=中性灰软底，AI=品牌赤陶软底；等宽 min-width 对齐成一列。 */
+.stk-msg-tag {
+  flex: none;
+  min-width: calc(20px * var(--cc-ui));
+  text-align: center;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: calc(9px * var(--cc-ui));
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--cc-text-faint);
+  background: var(--cc-surface-hover);
+}
+.stk-msg-tag.is-ai {
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
+}
 
 /* 会话出错：红色脉冲点 */
 .needs-error {

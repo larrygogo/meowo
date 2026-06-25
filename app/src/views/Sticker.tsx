@@ -805,7 +805,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                 {(sub || (buttonMode && canOpen(l))) && (
                   <div className="stk-subrow">
                     {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
-                    {sub && !l.errored && <span className="stk-msg-tag">{t.sticker.aiPrefix}</span>}
+                    {sub && !l.errored && <span className="stk-msg-tag is-ai">{t.sticker.aiPrefix}</span>}
                     {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={subTitle}>{sub}</span>}
                     {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
                     {buttonMode && canOpen(l) && (

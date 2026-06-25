@@ -286,6 +286,11 @@ describe("Sticker", () => {
     const tagTexts = Array.from(tags).map((el) => el.textContent);
     expect(tagTexts).toContain(zh.sticker.aiPrefix);  // AI 前缀
     expect(tagTexts).toContain(zh.sticker.youPrefix); // 你 前缀，两行对称
+    // AI 标签带品牌色 is-ai 修饰类，用户标签不带（视觉区分主角/用户）
+    const aiTag = Array.from(tags).find((el) => el.textContent === zh.sticker.aiPrefix)!;
+    const youTag = Array.from(tags).find((el) => el.textContent === zh.sticker.youPrefix)!;
+    expect(aiTag.classList.contains("is-ai")).toBe(true);
+    expect(youTag.classList.contains("is-ai")).toBe(false);
   });
 
   it("errored 活动行不显示 aiPrefix 标签", () => {
