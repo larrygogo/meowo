@@ -468,6 +468,34 @@ impl Store {
         Ok(())
     }
 
+    /// 落最近一条 AI 正文:折叠空白 + 截断 200 字符;空/全空白不覆盖旧值。
+    /// 不动 last_event_at——Stop 的兄弟 set_session_status 已刷新它。
+    pub fn set_last_ai_text(&self, session_id: i64, text: &str) -> Result<(), StoreError> {
+        let cleaned = truncate_chars(&sanitize_prompt(text), 200);
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE sessions SET last_ai_text = ?1 WHERE id = ?2",
+            rusqlite::params![cleaned, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 落最近一条用户消息:复用 sanitize_prompt(剥图片标记 + 折叠空白) + 截断 200;空不覆盖。
+    /// 不动 last_event_at——UserPromptSubmit 的 on_user_prompt(touch_session) 已刷新它。
+    pub fn set_last_user_text(&self, session_id: i64, text: &str) -> Result<(), StoreError> {
+        let cleaned = truncate_chars(&sanitize_prompt(text), 200);
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE sessions SET last_user_text = ?1 WHERE id = ?2",
+            rusqlite::params![cleaned, session_id],
+        )?;
+        Ok(())
+    }
+
     /// 结束会话：状态设为 ended，记录 ended_at。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(

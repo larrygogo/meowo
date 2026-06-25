@@ -395,6 +395,29 @@ fn import_session_does_not_resurrect_real_session() {
     assert_eq!(store.get_session(sid).unwrap().status, "running");
 }
 
+// == Task 3: last_ai_text / last_user_text ==
+#[test]
+fn last_ai_and_user_text_set_with_cleaning() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "cc1", 100).unwrap();
+
+    // 折叠空白;不动 last_event_at(仍是建会话时的 100)。
+    store.set_last_ai_text(sid, "  调研   完成。\n结论更微妙  ").unwrap();
+    store.set_last_user_text(sid, "切到这个 [Image #1] 任务").unwrap();
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
+    assert_eq!(s.last_ai_text.as_deref(), Some("调研 完成。 结论更微妙"));
+    assert_eq!(s.last_user_text.as_deref(), Some("切到这个 任务")); // [Image #1] 被 sanitize 剥除
+    assert_eq!(s.session.last_event_at, 100);
+
+    // 空串/全空白不覆盖旧值。
+    store.set_last_ai_text(sid, "   ").unwrap();
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
+    assert_eq!(s.last_ai_text.as_deref(), Some("调研 完成。 结论更微妙"));
+}
+
 // == Task 2: PendingReview ==
 #[test]
 fn pending_review_set_and_clear() {
