@@ -273,4 +273,33 @@ describe("Sticker", () => {
     expect(screen.getByText("切到这个任务")).toBeTruthy();         // 用户消息行
     expect(screen.getByText(zh.sticker.youPrefix)).toBeTruthy();   // 「你」前缀
   });
+
+  it("显示 AI 正文时有 aiPrefix 标签，与用户行对称", () => {
+    const item = mk({
+      connected: true,
+      last_ai_text: "完成了代码审查",
+      last_user_text: "帮我看这个 PR",
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    // 「AI」前缀标签存在
+    const tags = container.querySelectorAll(".stk-msg-tag");
+    const tagTexts = Array.from(tags).map((el) => el.textContent);
+    expect(tagTexts).toContain(zh.sticker.aiPrefix);  // AI 前缀
+    expect(tagTexts).toContain(zh.sticker.youPrefix); // 你 前缀，两行对称
+  });
+
+  it("errored 活动行不显示 aiPrefix 标签", () => {
+    const item = mk({
+      connected: true,
+      errored: true,
+      error_label: "工具调用解析失败",
+      error_raw: "parse error",
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    // 错误标签行存在（红色错误文案），但无 aiPrefix
+    expect(container.querySelector(".stk-sub-err")).toBeTruthy();
+    const tags = container.querySelectorAll(".stk-msg-tag");
+    const tagTexts = Array.from(tags).map((el) => el.textContent);
+    expect(tagTexts).not.toContain(zh.sticker.aiPrefix);
+  });
 });
