@@ -226,4 +226,22 @@ describe("Sticker", () => {
     expect(container.querySelector(".ring-stop")).toBeTruthy();
     expect(container.querySelector(".needs-error")).toBeFalsy();
   });
+
+  it("pending_review 会话归入待交互并置顶", () => {
+    localStorage.setItem("cc-kanban-tab", "waiting");
+    const sess = (id: number, cc: string, status: "running" | "waiting", last: number) =>
+      ({ id, project_id: 1, cc_session_id: cc, status, started_at: 0, last_event_at: last, ended_at: null });
+    const now = Date.now();
+    const items = [
+      mk({ task_title: "等待最久的纯waiting", connected: true, session: sess(1, "w1", "waiting", now - 600_000) }),
+      mk({ task_title: "待批准", connected: true, pending_review: "approval", session: sess(2, "p1", "running", now - 60_000) }),
+    ];
+    const { container } = render(<Sticker data={items} />);
+    // 待交互 tab 计数含 pending(2)。
+    const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
+    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("2");
+    // pending 组置顶:第一张卡是「待批准」,即便它 last_event_at 更晚。
+    const cards = container.querySelectorAll(".stk-card");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("待批准");
+  });
 });

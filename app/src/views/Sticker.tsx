@@ -239,8 +239,8 @@ function match(tab: Tab, l: Item, hideDays = 0): boolean {
   }
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
-  if (tab === "waiting") return l.connected && (l.session.status === "waiting" || l.errored);
-  if (tab === "running") return l.connected && l.session.status === "running" && !l.errored;
+  if (tab === "waiting") return l.connected && (l.session.status === "waiting" || l.errored || l.pending_review != null);
+  if (tab === "running") return l.connected && l.session.status === "running" && !l.errored && l.pending_review == null;
   return true;
 }
 
@@ -511,7 +511,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           Number(starred.has(b.session.cc_session_id)) -
           Number(starred.has(a.session.cc_session_id));
         if (star !== 0) return star;
-        if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
+        if (tab === "waiting") {
+          const ap = a.pending_review != null ? 0 : 1;
+          const bp = b.pending_review != null ? 0 : 1;
+          if (ap !== bp) return ap - bp; // pending 整组置顶
+          return a.session.last_event_at - b.session.last_event_at; // 组内等最久优先
+        }
         return 0;
       });
   }, [data, tab, hideDays, starred, query]);
