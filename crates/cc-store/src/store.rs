@@ -34,7 +34,8 @@ impl Store {
     /// schema 版本：升 schema/加迁移时 +1。
     /// v2: 新增 session_notes 表（会话便签）。旧库 version<2 时 init 会重跑
     /// `CREATE TABLE IF NOT EXISTS` 把新表补上，再 bump。
-    const USER_VERSION: i64 = 2;
+    /// v3: sessions 加 pending_review / last_ai_text / last_user_text 三列。
+    const USER_VERSION: i64 = 3;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -49,11 +50,14 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 4] = [
+        const ALTERS: [&str; 7] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN archived_at INTEGER",
+            "ALTER TABLE sessions ADD COLUMN pending_review TEXT",
+            "ALTER TABLE sessions ADD COLUMN last_ai_text TEXT",
+            "ALTER TABLE sessions ADD COLUMN last_user_text TEXT",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {

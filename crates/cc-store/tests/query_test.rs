@@ -200,3 +200,17 @@ fn overview_counts_exclude_unnamed_empty_placeholder() {
     let o = &store.overview().unwrap()[0];
     assert_eq!(o.todo_count, 1); // 只数真任务，不数未命名空卡
 }
+
+#[test]
+fn live_sessions_returns_new_columns_as_none_by_default() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "cc1", 100).unwrap();
+    let _ = sid;
+
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
+    assert_eq!(s.pending_review, None);
+    assert_eq!(s.last_ai_text, None);
+    assert_eq!(s.last_user_text, None);
+}

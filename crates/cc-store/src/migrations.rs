@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     pid           INTEGER,
     cwd           TEXT,
     archived      INTEGER NOT NULL DEFAULT 0,
-    archived_at   INTEGER
+    archived_at   INTEGER,
+    pending_review TEXT,
+    last_ai_text   TEXT,
+    last_user_text TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
