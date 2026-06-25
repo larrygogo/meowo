@@ -1150,10 +1150,30 @@ html, body {
   -webkit-user-select: text;
 }
 
-/* 账号分区 */
-.acc-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--cc-accent, #6b8afd); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
-.usage-card { display: block; padding: 14px 16px; }
-/* 账号区多张卡片连续排列时补间距（去掉了卡片外的 sec-title）。 */
+/* 账号分区：一张卡 = 一个 AI 提供方，卡顶标 provider，卡内含账号与用量。 */
+.acc-block { display: flex; align-items: center; gap: 13px; padding: 15px 16px; }
+.acc-avatar {
+  flex: none;
+  width: 42px; height: 42px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 600; font-size: 17px; color: #fff;
+  background: linear-gradient(135deg, var(--cc-accent-dim), var(--cc-accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 6px -1px var(--cc-accent-soft);
+}
+/* 未登录占位头像：中性底 + 描边 + 人形图标 */
+.acc-avatar-empty { color: var(--cc-text-faint); background: var(--cc-surface-hover); box-shadow: inset 0 0 0 1px var(--cc-border); }
+.acc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.acc-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.acc-name { font-size: 14px; font-weight: 600; color: var(--cc-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 套餐徽标（max/pro → 首字母大写的胶囊）。 */
+.acc-plan { flex: none; font-size: 10px; font-weight: 600; line-height: 16px; padding: 0 8px; border-radius: 999px; color: var(--cc-accent-text); background: var(--cc-accent-soft); border: 1px solid var(--cc-accent-border); text-transform: capitalize; letter-spacing: 0.02em; }
+.acc-sub { font-size: 12px; color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-sub-wrap { white-space: normal; line-height: 1.4; }
+.acc-org { font-size: 11.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-head { display: flex; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--cc-border); }
+.provider-name { font-size: 13px; font-weight: 600; color: var(--cc-text); }
+.provider-usage { padding: 14px 16px; border-top: 1px solid var(--cc-border); }
+/* 多张卡片连续排列时补间距（未来多 AI 时每个 provider 各占一张卡）。 */
 .row-card + .row-card { margin-top: 14px; }
 .usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 /* 图标按钮（如配额刷新）：透明底、悬停高亮，刷新中图标旋转。 */

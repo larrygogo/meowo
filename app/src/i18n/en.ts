@@ -75,8 +75,7 @@ export const en: Dict = {
     updateTag: "Update",
     close: "Close",
     autostart: "Launch at login",
-    autostartDesc: "Start cc-kanban at sign-in",
-    autostartDevNote: "Installed build only (dev registers the debug binary → blank on boot)",
+    autostartDesc: "Starts automatically when the system boots",
     notify: "Desktop notifications",
     notifyDesc: "Notify when a session needs your reply or errors out",
     archiveHide: "Auto-hide archived",
@@ -111,6 +110,7 @@ export const en: Dict = {
     appearanceHint: "Appearance changes apply instantly and are saved locally.",
   },
   account: {
+    providerClaudeCode: "Claude Code",
     notLoggedIn: "Not signed in to Claude Code",
     notLoggedInDesc: "Run claude in a terminal to sign in and see account & usage",
     quota: "Quota",

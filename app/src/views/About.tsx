@@ -209,22 +209,35 @@ function AccountSection() {
   const acc = data?.account ?? null;
 
   return (
-    <>
+    // 一张卡 = 一个 AI 提供方：卡顶标注 provider，卡内含账号与用量。后续接入其他 AI 时各占一张同结构的卡。
+    <div className="row-card provider-card">
+      <div className="provider-head">
+        <span className="provider-name">{t.account.providerClaudeCode}</span>
+      </div>
+
       {acc ? (
-        <div className="row-card">
-          <div className="row">
-            <div className="row-icon"><div className="acc-avatar">{(acc.display_name || acc.email).slice(0, 1).toUpperCase()}</div></div>
-            <div className="row-text">
-              <div className="row-label">{acc.display_name}</div>
-              <div className="row-desc">{acc.email}{acc.plan ? ` · ${acc.plan}` : ""}{acc.organization ? ` · ${acc.organization}` : ""}</div>
+        <div className="acc-block">
+          <div className="acc-avatar">{(acc.display_name || acc.email).slice(0, 1).toUpperCase()}</div>
+          <div className="acc-info">
+            <div className="acc-name-row">
+              <span className="acc-name">{acc.display_name}</span>
+              {acc.plan && <span className="acc-plan">{acc.plan}</span>}
             </div>
+            {acc.display_name !== acc.email && <div className="acc-sub">{acc.email}</div>}
+            {acc.organization && <div className="acc-org">{acc.organization}</div>}
           </div>
         </div>
       ) : (
-        <div className="row-card"><div className="row"><div className="row-text"><div className="row-label">{t.account.notLoggedIn}</div><div className="row-desc">{t.account.notLoggedInDesc}</div></div></div></div>
+        <div className="acc-block">
+          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
+          <div className="acc-info">
+            <div className="acc-name">{t.account.notLoggedIn}</div>
+            <div className="acc-sub acc-sub-wrap">{t.account.notLoggedInDesc}</div>
+          </div>
+        </div>
       )}
 
-      <div className="row-card usage-card">
+      <div className="provider-usage">
         <div className="usage-bar-head">
           <span className="usage-card-title">{t.account.quota}</span>
           <button className="icon-btn" title={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
@@ -248,8 +261,7 @@ function AccountSection() {
           <div className="usage-stale">{t.account.loading}</div>
         )}
       </div>
-
-    </>
+    </div>
   );
 }
 
@@ -393,7 +405,7 @@ function GeneralSection() {
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.autostart}</div>
-            <div className="row-desc">{autostartDisabled ? t.settings.autostartDevNote : t.settings.autostartDesc}</div>
+            <div className="row-desc">{t.settings.autostartDesc}</div>
           </div>
           <Switch checked={autostart} onChange={toggleAutostart} disabled={autostartDisabled} />
         </div>
