@@ -22,6 +22,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
             if let Some(sid) = lookup_session(store, ev)? {
                 if let Some(prompt) = ev.prompt.as_deref() {
                     store.on_user_prompt(sid, prompt, now_ms)?;
+                    store.set_last_user_text(sid, prompt)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
                 if let Some(p) = crate::proc::owner_pid() {
@@ -48,6 +49,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         "Stop" => {
             if let Some(sid) = lookup_session(store, ev)? {
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
+                if let Some(msg) = ev.last_assistant_message.as_deref() {
+                    store.set_last_ai_text(sid, msg)?;
+                }
                 apply_title(store, ev, sid, now_ms)?;
             }
         }

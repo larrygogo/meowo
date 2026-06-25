@@ -229,3 +229,17 @@ fn user_prompt_with_transcript_overrides_prompt_title() {
     assert_eq!(store.get_task(tid).unwrap().title, "My Custom Title");
     let _ = std::fs::remove_file(tp);
 }
+
+// == Task 5: Stop 落 last_ai_text、UserPromptSubmit 落 last_user_text ==
+#[test]
+fn stop_sets_last_ai_text_and_prompt_sets_last_user_text() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"m1","cwd":"/p"}"#), 100).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"m1","prompt":"切到这个任务"}"#), 200).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"m1","last_assistant_message":"调研完成,结论更微妙"}"#), 300).unwrap();
+
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "m1").unwrap();
+    assert_eq!(s.last_user_text.as_deref(), Some("切到这个任务"));
+    assert_eq!(s.last_ai_text.as_deref(), Some("调研完成,结论更微妙"));
+}

@@ -303,7 +303,7 @@ impl Store {
 
     // == Task 6: on_user_prompt + touch_session ==
 
-    /// 收到用户 prompt：占位标题则替换为截断后的 prompt；当前动作总是更新为该 prompt。
+    /// 收到用户 prompt：仅当占位标题时替换为截断后的 prompt(不再写 current_activity，那已由 last_user_text 承担)。
     pub fn on_user_prompt(
         &self,
         session_id: i64,
@@ -320,15 +320,11 @@ impl Store {
             )?;
             if title == "(未命名会话)" {
                 self.conn.execute(
-                    "UPDATE tasks SET title = ?1, current_activity = ?2, updated_at = ?3 WHERE id = ?4",
-                    rusqlite::params![cleaned, cleaned, now_ms, tid],
-                )?;
-            } else {
-                self.conn.execute(
-                    "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
+                    "UPDATE tasks SET title = ?1, updated_at = ?2 WHERE id = ?3",
                     rusqlite::params![cleaned, now_ms, tid],
                 )?;
             }
+            // 非占位标题:不再把 prompt 写进 current_activity(改由 last_user_text 承担)。
         }
         self.touch_session(session_id, now_ms)?;
         Ok(())

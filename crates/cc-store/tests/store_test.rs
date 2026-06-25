@@ -53,7 +53,7 @@ fn start_session_creates_session_and_placeholder_task() {
 
 // == Task 6 ==
 #[test]
-fn first_prompt_sets_title_then_later_prompts_only_update_activity() {
+fn first_prompt_sets_title_then_later_prompts_keep_title() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, tid) = store.start_session(pid, "cc-1", 200).unwrap();
@@ -61,12 +61,10 @@ fn first_prompt_sets_title_then_later_prompts_only_update_activity() {
     store.on_user_prompt(sid, "实现登录功能并写测试", 300).unwrap();
     let t = store.get_task(tid).unwrap();
     assert_eq!(t.title, "实现登录功能并写测试");
-    assert_eq!(t.current_activity.as_deref(), Some("实现登录功能并写测试"));
 
     store.on_user_prompt(sid, "再加个登出按钮", 400).unwrap();
     let t2 = store.get_task(tid).unwrap();
     assert_eq!(t2.title, "实现登录功能并写测试");
-    assert_eq!(t2.current_activity.as_deref(), Some("再加个登出按钮"));
 }
 
 #[test]
@@ -189,7 +187,6 @@ fn prompt_with_image_marker_is_cleaned_for_title() {
     store.on_user_prompt(sid, "[Image #4] 把路径放在最前面", 300).unwrap();
     let t = store.get_task(tid).unwrap();
     assert_eq!(t.title, "把路径放在最前面");
-    assert_eq!(t.current_activity.as_deref(), Some("把路径放在最前面"));
 }
 
 #[test]
@@ -438,4 +435,18 @@ fn pending_review_set_and_clear() {
     let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
     assert_eq!(s.pending_review, None);
     assert_eq!(s.session.last_event_at, 500);
+}
+
+// == Task 5: on_user_prompt 不再写 current_activity ==
+#[test]
+fn on_user_prompt_no_longer_writes_current_activity() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "cc1", 100).unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+
+    store.on_user_prompt(sid, "实现登录功能", 200).unwrap();
+    let t = store.get_task(tid).unwrap();
+    assert_eq!(t.title, "实现登录功能");          // 占位标题被首句替换(保留)
+    assert_eq!(t.current_activity, None);          // 不再把 prompt 写进 current_activity
 }
