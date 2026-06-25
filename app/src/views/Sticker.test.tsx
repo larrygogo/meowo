@@ -258,4 +258,19 @@ describe("Sticker", () => {
     expect(container.querySelector(".pending-pill")).toBeTruthy();  // pill 元素
     expect(container.querySelector(".run-badge--pending")).toBeTruthy(); // 琥珀徽标
   });
+
+  it("卡片优先显示 last_ai_text,并显示用户消息行", () => {
+    const item = mk({
+      connected: true,
+      preview: "transcript 兜底的旧预览",
+      last_ai_text: "调研完成,结论更微妙",
+      last_user_text: "切到这个任务",
+      session: { id: 7, project_id: 1, cc_session_id: "uai", status: "waiting", started_at: 0, last_event_at: Date.now(), ended_at: null },
+    });
+    render(<Sticker data={[item]} />);
+    expect(screen.getByText("调研完成,结论更微妙")).toBeTruthy(); // AI 行用 last_ai_text 而非 preview
+    expect(screen.queryByText("transcript 兜底的旧预览")).toBeNull();
+    expect(screen.getByText("切到这个任务")).toBeTruthy();         // 用户消息行
+    expect(screen.getByText(zh.sticker.youPrefix)).toBeTruthy();   // 「你」前缀
+  });
 });

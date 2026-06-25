@@ -646,8 +646,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
             // previewEnabled 关闭则不显示 AI 正文（仅保留错误）。不再显示底层 Bash 命令。
             const sub = l.errored && l.error_label
               ? t.errorLabels[l.error_label] ?? l.error_label
-              : previewEnabled && l.preview
-              ? l.preview
+              : previewEnabled && (l.last_ai_text ?? l.preview)
+              ? (l.last_ai_text ?? l.preview)
               : null;
             const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
             const indicator = !l.connected ? (
@@ -796,6 +796,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                     <span className="stk-note-txt">{l.note}</span>
                   </div>
                 ) : null}
+                {l.last_user_text && (
+                  <div className="stk-subrow stk-userrow">
+                    <span className="stk-msg-tag">{t.sticker.youPrefix}</span>
+                    <span className="stk-sub" title={l.last_user_text}>{l.last_user_text}</span>
+                  </div>
+                )}
                 {(sub || (buttonMode && canOpen(l))) && (
                   <div className="stk-subrow">
                     {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
