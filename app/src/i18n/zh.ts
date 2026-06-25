@@ -14,6 +14,7 @@ export const zh = {
     running: "运行中",
     full: (what: string, pct: number) => `${what} · Context 已用 ${pct}%`,
   },
+  pending: { approval: "待批准", question: "待回答", plan: "待批计划" },
   empty: {
     allTitle: "还没有会话",
     allHint: "在终端运行 Claude Code，进度会自动出现在这里",
@@ -54,6 +55,8 @@ export const zh = {
     notePlaceholder: "写点备忘…",
     noteSave: "保存",
     noteCancel: "取消",
+    youPrefix: "你",
+    aiPrefix: "AI",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",
