@@ -1,4 +1,4 @@
-use cc_store::{Project, Session, SessionStatus, Store, Task, TaskColumn, Todo, TodoInput, TodoStatus};
+use cc_store::{PendingReview, Project, Session, SessionStatus, Store, Task, TaskColumn, Todo, TodoInput, TodoStatus};
 
 #[test]
 fn open_in_memory_creates_tables() {
@@ -393,4 +393,26 @@ fn import_session_does_not_resurrect_real_session() {
         .unwrap();
     assert!(!inserted);
     assert_eq!(store.get_session(sid).unwrap().status, "running");
+}
+
+// == Task 2: PendingReview ==
+#[test]
+fn pending_review_set_and_clear() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "cc1", 100).unwrap();
+
+    // set:写入子态并刷新 last_event_at。
+    store.set_pending_review(sid, PendingReview::Approval, 500).unwrap();
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
+    assert_eq!(s.pending_review.as_deref(), Some("approval"));
+    assert_eq!(s.session.last_event_at, 500);
+
+    // clear:置 NULL,且不改 last_event_at。
+    store.clear_pending_review(sid).unwrap();
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
+    assert_eq!(s.pending_review, None);
+    assert_eq!(s.session.last_event_at, 500);
 }

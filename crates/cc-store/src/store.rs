@@ -1,6 +1,6 @@
 use crate::error::StoreError;
 use crate::migrations::SCHEMA;
-use crate::models::{Project, Session, SessionStatus, Task, TaskColumn, Todo, TodoInput, TodoStatus};
+use crate::models::{PendingReview, Project, Session, SessionStatus, Task, TaskColumn, Todo, TodoInput, TodoStatus};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -441,6 +441,29 @@ impl Store {
         self.conn.execute(
             "UPDATE sessions SET status = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![status.as_str(), now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 设置待审批子态,同时刷新 last_event_at(让卡片排到最近活跃,并作为去重指纹)。
+    pub fn set_pending_review(
+        &self,
+        session_id: i64,
+        kind: PendingReview,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET pending_review = ?1, last_event_at = ?2 WHERE id = ?3",
+            rusqlite::params![kind.as_str(), now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 清除待审批子态(置 NULL)。不动 last_event_at——由同回合的兄弟调用负责时间戳。
+    pub fn clear_pending_review(&self, session_id: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET pending_review = NULL WHERE id = ?1",
+            rusqlite::params![session_id],
         )?;
         Ok(())
     }
