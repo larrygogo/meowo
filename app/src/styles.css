@@ -109,8 +109,6 @@
 :root[data-theme="light"] .pswitch { background: rgba(0, 0, 0, 0.16); }
 /* 开启态强调色轨道必须比上面的 off 覆盖更具体，否则被盖成灰色 → 看不出开关。 */
 :root[data-theme="light"] .pswitch.on { background: var(--cc-accent); }
-/* 热力图最低档：浅色下白色叠层会与近白底融为一体（隐形）→ 换成淡黑叠层。 */
-:root[data-theme="light"] .cal-l0 { background: rgba(0, 0, 0, 0.05); }
 * { box-sizing: border-box; }
 
 /* 自定义滚动条（WebView2/WKWebView 均为 webkit 内核）：细、半透明、配深色主题。
@@ -1155,7 +1153,6 @@ html, body {
 /* 账号分区 */
 .acc-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--cc-accent, #6b8afd); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
 .usage-card { display: block; padding: 14px 16px; }
-.cal-card { padding: 14px 16px; }
 /* 账号区多张卡片连续排列时补间距（去掉了卡片外的 sec-title）。 */
 .row-card + .row-card { margin-top: 14px; }
 .usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -1175,15 +1172,3 @@ html, body {
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
-/* 每日用量热力图（GitHub 贡献图风格：7 行 × N 列周，色越深 token 越多） */
-/* 固定约 18 周列，1fr 自适应填满整宽；格子保持正方块（aspect-ratio:1，宽随列、高随宽）。 */
-.cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, auto); grid-auto-columns: 1fr; gap: 3px; }
-.cal-cell { width: 100%; aspect-ratio: 1; border-radius: 2px; }
-.cal-pad { background: transparent; }
-.cal-l0 { background: rgba(255,255,255,0.06); }
-.cal-l1 { background: rgba(217,119,87,0.30); }
-.cal-l2 { background: rgba(217,119,87,0.52); }
-.cal-l3 { background: rgba(217,119,87,0.76); }
-.cal-l4 { background: var(--cc-accent); }
-.cal-legend { display: flex; align-items: center; gap: 3px; margin-top: 8px; font-size: 10px; color: var(--cc-text-faint); }
-.cal-legend .cal-cell { width: 10px; height: 10px; }

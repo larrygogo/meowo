@@ -1,4 +1,4 @@
-//! Claude Code 账号、实时用量、每日用量的读取与解析。
+//! Claude Code 账号、实时用量的读取与解析。
 //! 纯解析/判定/合并函数在此可单测；I/O 与网络见同文件后半部分。
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -25,20 +25,6 @@ pub struct Usage {
     pub seven_day_opus: Option<UsageWindow>,
     pub seven_day_sonnet: Option<UsageWindow>,
     pub extra_usage_enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct DailyEntry {
-    pub date: String,
-    pub message_count: i64,
-    pub session_count: i64,
-    pub tokens: i64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct DailyStats {
-    pub days: Vec<DailyEntry>,
-    pub last_computed_date: String,
 }
 
 /// 从 ~/.claude.json 的根 JSON 解析账号（取 oauthAccount）。无则 None。
@@ -90,47 +76,6 @@ pub fn parse_usage(v: &serde_json::Value) -> Usage {
         seven_day_sonnet: win(v, "seven_day_sonnet"),
         extra_usage_enabled,
     }
-}
-
-/// 从 stats-cache.json 根 JSON 取最近 max_days 天（dailyActivity ⨝ dailyModelTokens by date）。
-pub fn parse_daily(root: &serde_json::Value, max_days: usize) -> Option<DailyStats> {
-    let activity = root.get("dailyActivity")?.as_array()?;
-    let last_computed_date = root
-        .get("lastComputedDate")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    // date -> 该日各模型 token 求和
-    let mut tokens_by_date: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    if let Some(dmt) = root.get("dailyModelTokens").and_then(|v| v.as_array()) {
-        for e in dmt {
-            let date = e.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let sum: i64 = e
-                .get("tokensByModel")
-                .and_then(|m| m.as_object())
-                .map(|m| m.values().filter_map(|x| x.as_i64()).sum())
-                .unwrap_or(0);
-            *tokens_by_date.entry(date).or_insert(0) += sum;
-        }
-    }
-    let mut days: Vec<DailyEntry> = activity
-        .iter()
-        .map(|e| {
-            let date = e.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let tokens = tokens_by_date.get(&date).copied().unwrap_or(0);
-            DailyEntry {
-                message_count: e.get("messageCount").and_then(|v| v.as_i64()).unwrap_or(0),
-                session_count: e.get("sessionCount").and_then(|v| v.as_i64()).unwrap_or(0),
-                tokens,
-                date,
-            }
-        })
-        .collect();
-    // 取最近 max_days（数组按日期升序，取末尾）。
-    if days.len() > max_days {
-        days = days.split_off(days.len() - max_days);
-    }
-    Some(DailyStats { days, last_computed_date })
 }
 
 /// token 是否需要刷新：到期前留 60s 余量。
@@ -186,7 +131,6 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountPayload {
     pub account: Option<Account>,
-    pub daily: Option<DailyStats>,
     pub usage: Option<Usage>,
 }
 
@@ -202,7 +146,6 @@ fn claude_json_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude.js
 /// 非 macOS：Claude Code 把 OAuth 凭据写在此文件。macOS 改存 Keychain（见 keychain_* 函数）。
 #[cfg(not(target_os = "macos"))]
 fn credentials_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join(".credentials.json")) }
-fn stats_cache_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join("stats-cache.json")) }
 fn usage_cache_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("CC_KANBAN_DB") {
         return Some(PathBuf::from(p).with_file_name("usage-cache.json"));
@@ -218,11 +161,6 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 /// 读账号（~/.claude.json）。
 pub fn read_account() -> Option<Account> {
     parse_account(&read_json(&claude_json_path()?)?)
-}
-
-/// 读每日用量（stats-cache.json，最近 8 周 = 56 天，供贡献图热力图展示）。
-pub fn read_daily() -> Option<DailyStats> {
-    parse_daily(&read_json(&stats_cache_path()?)?, 56)
 }
 
 /// 读上次缓存的用量快照（~/.cc-kanban/usage-cache.json 的 `usage` 字段）。
@@ -428,9 +366,9 @@ fn cache_is_fresh(fresh_ms: i64) -> bool {
         .unwrap_or(false)
 }
 
-/// get_account：账号 + 每日 + 缓存用量（瞬时，不联网）。
+/// get_account：账号 + 缓存用量（瞬时，不联网）。
 pub fn get_account_payload() -> AccountPayload {
-    AccountPayload { account: read_account(), daily: read_daily(), usage: read_cached_usage() }
+    AccountPayload { account: read_account(), usage: read_cached_usage() }
 }
 
 /// refresh_usage：60s 内有新鲜缓存则直接返回缓存，否则联网拉取。
@@ -485,30 +423,6 @@ mod tests {
     fn parse_usage_missing_fields_degrade() {
         let u = parse_usage(&json!({}));
         assert!(u.five_hour.is_none() && u.seven_day.is_none() && !u.extra_usage_enabled);
-    }
-
-    #[test]
-    fn parse_daily_joins_and_limits() {
-        let root = json!({
-            "lastComputedDate":"2026-05-17",
-            "dailyActivity":[
-                {"date":"2026-05-15","messageCount":10,"sessionCount":1,"toolCallCount":5},
-                {"date":"2026-05-16","messageCount":20,"sessionCount":2,"toolCallCount":8},
-                {"date":"2026-05-17","messageCount":40,"sessionCount":4,"toolCallCount":34}
-            ],
-            "dailyModelTokens":[
-                {"date":"2026-05-16","tokensByModel":{"opus":100,"sonnet":50}},
-                {"date":"2026-05-17","tokensByModel":{"opus":8568}}
-            ]
-        });
-        let d = parse_daily(&root, 2).unwrap();
-        assert_eq!(d.last_computed_date, "2026-05-17");
-        assert_eq!(d.days.len(), 2);
-        assert_eq!(d.days[0].date, "2026-05-16");
-        assert_eq!(d.days[0].tokens, 150);
-        assert_eq!(d.days[1].date, "2026-05-17");
-        assert_eq!(d.days[1].tokens, 8568);
-        assert_eq!(d.days[1].message_count, 40);
     }
 
     #[test]

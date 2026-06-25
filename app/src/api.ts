@@ -161,9 +161,7 @@ export type Account = {
   organization: string | null;
   plan: string | null;
 };
-export type DailyEntry = { date: string; message_count: number; session_count: number; tokens: number };
-export type DailyStats = { days: DailyEntry[]; last_computed_date: string };
-export type AccountPayload = { account: Account | null; daily: DailyStats | null; usage: Usage | null };
+export type AccountPayload = { account: Account | null; usage: Usage | null };
 
 export function getAccount(): Promise<AccountPayload> {
   return invoke("get_account");

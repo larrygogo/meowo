@@ -4,7 +4,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode } from "../api";
-import { getAccount, refreshUsage, type AccountPayload, type Usage, type DailyEntry } from "../api";
+import { getAccount, refreshUsage, type AccountPayload, type Usage } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
@@ -171,34 +171,6 @@ function UsageBar({ label, win }: { label: string; win: { utilization: number; r
   );
 }
 
-// 每日用量热力图的一个格子：占位（补齐周对齐）或某天的数据 + 着色档位 0-4。
-type GridCell = { pad: true } | { pad: false; date: string; tokens: number; messages: number; level: number };
-
-// 固定显示的周数：用足够多的日期（含无活动的空白日）把整宽铺满（设置窗为固定宽）。
-const GRID_WEEKS = 18;
-
-/// 排成贡献图格子序列：以末日为终点回溯固定 GRID_WEEKS 周，逐日补全（stats-cache 里没有的
-/// 无活动日期填 0 档淡色格子表示空），首日按星期补占位（周日为列起点）；
-/// 配合 CSS grid-auto-flow:column + 7 行 + 1fr 列，自动按「每列一周」竖排并铺满整宽。
-function buildDailyGrid(days: DailyEntry[]): GridCell[] {
-  if (days.length === 0) return [];
-  const byDate = new Map(days.map((d) => [d.date, d]));
-  const max = Math.max(1, ...days.map((d) => d.tokens));
-  const end = new Date(days[days.length - 1].date + "T00:00:00");
-  const start = new Date(end);
-  start.setDate(end.getDate() - (GRID_WEEKS * 7 - 1)); // 回溯固定周数，不足的早期日期以空白格补满
-  const cells: GridCell[] = [];
-  for (let i = 0; i < start.getDay(); i++) cells.push({ pad: true }); // 首列按星期补空格对齐
-  for (const t = new Date(start); t <= end; t.setDate(t.getDate() + 1)) {
-    const iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-    const d = byDate.get(iso);
-    const tokens = d?.tokens ?? 0;
-    const level = tokens === 0 ? 0 : Math.min(4, Math.ceil((tokens / max) * 4));
-    cells.push({ pad: false, date: iso, tokens, messages: d?.message_count ?? 0, level });
-  }
-  return cells;
-}
-
 function AccountSection() {
   const t = useT();
   const [data, setData] = useState<AccountPayload | null>(null);
@@ -224,7 +196,7 @@ function AccountSection() {
   };
 
   useEffect(() => {
-    // 先缓存后请求：getAccount 立即给账号/每日/缓存用量，再 refreshUsage 联网刷新。
+    // 先缓存后请求：getAccount 立即给账号/缓存用量，再 refreshUsage 联网刷新。
     getAccount()
       .then((d) => {
         setData(d);
@@ -235,7 +207,6 @@ function AccountSection() {
   }, []);
 
   const acc = data?.account ?? null;
-  const daily = data?.daily ?? null;
 
   return (
     <>
@@ -278,35 +249,6 @@ function AccountSection() {
         )}
       </div>
 
-      {daily && daily.days.length > 0 && (
-        <>
-          <div className="row-card cal-card">
-            <div className="usage-bar-head"><span className="usage-card-title">{t.account.dailyUsage}</span></div>
-            <div className="cal-grid">
-              {buildDailyGrid(daily.days).map((c, i) =>
-                c.pad ? (
-                  <span key={i} className="cal-cell cal-pad" />
-                ) : (
-                  <span
-                    key={i}
-                    className={`cal-cell cal-l${c.level}`}
-                    title={t.account.cellTitle(c.date, (c.tokens / 1000).toFixed(1), c.messages)}
-                  />
-                )
-              )}
-            </div>
-            <div className="cal-legend">
-              <span>{t.account.less}</span>
-              <i className="cal-cell cal-l1" />
-              <i className="cal-cell cal-l2" />
-              <i className="cal-cell cal-l3" />
-              <i className="cal-cell cal-l4" />
-              <span>{t.account.more}</span>
-            </div>
-            <div className="sec-hint">{t.account.dataAsOf(daily.last_computed_date || "—")}</div>
-          </div>
-        </>
-      )}
     </>
   );
 }
