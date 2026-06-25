@@ -1008,14 +1008,23 @@ fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
     }
 }
 
-/// 待交互通知指纹：errored 时不发（None，错误优先）；status==waiting 且未出错时用
-/// last_event_at 作指纹（每个新的等待回合是新指纹）；其它状态返回 None。纯函数，便于单测。
-fn waiting_fingerprint(errored: bool, status: &str, last_event_at: i64) -> Option<String> {
-    if errored || status != "waiting" {
+/// 待交互通知指纹:errored 或 has_pending 时不发(None,让位错误/待审批);
+/// status==waiting 且无错无 pending 时用 last_event_at 作指纹;其它状态 None。纯函数。
+fn waiting_fingerprint(errored: bool, has_pending: bool, status: &str, last_event_at: i64) -> Option<String> {
+    if errored || has_pending || status != "waiting" {
         None
     } else {
         Some(last_event_at.to_string())
     }
+}
+
+/// 待审批通知指纹:errored 时 None(错误优先);pending 为 Some(kind) 时 "{kind}:{last_event_at}";
+/// 否则 None。纯函数,便于单测。
+fn pending_fingerprint(errored: bool, pending_review: Option<&str>, last_event_at: i64) -> Option<String> {
+    if errored {
+        return None;
+    }
+    pending_review.map(|kind| format!("{kind}:{last_event_at}"))
 }
 
 /// 弹一条「点击即聚焦该会话终端」的桌面通知。构建+show 放主线程：winrt toast 的 show() 需在
@@ -1086,6 +1095,7 @@ fn spawn_liveness_watch(
         let mut last: Vec<i64> = Vec::new();
         let mut notified: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次错误指纹
         let mut notified_waiting: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待交互指纹
+        let mut notified_pending: HashMap<String, String> = HashMap::new(); // cc_session_id -> 上次待审批指纹
         let mut seeded = false;
         // 托盘状态摘要只在 (运行,待交互) 变化时刷新，避免每轮无谓重画/重设提示。
         #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1130,8 +1140,8 @@ fn spawn_liveness_watch(
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
 
-                    // 菜单栏摘要计数：出错或待交互 → 需关注(●)，运行中 → ○；在线空闲不计入。
-                    if error.is_some() || s.session.status == "waiting" {
+                    // 菜单栏摘要计数:出错/待交互/待审批 → 需关注(●),运行中 → ○;在线空闲不计入。
+                    if error.is_some() || s.session.status == "waiting" || s.pending_review.is_some() {
                         tray_waiting += 1;
                     } else if s.session.status == "running" {
                         tray_running += 1;
@@ -1154,8 +1164,33 @@ fn spawn_liveness_watch(
                         notified.remove(&sid); // 错误消失：下次再错会重新通知
                     }
 
+                    // 待审批通知(错误之后、待交互之前;errored 时 pending_fingerprint 返回 None 自动让位)。
+                    match pending_fingerprint(error.is_some(), s.pending_review.as_deref(), s.session.last_event_at) {
+                        Some(fp) => {
+                            let prev = notified_pending.get(&sid).map(|s| s.as_str());
+                            if seeded && notify_on && should_notify(prev, Some(&fp)) {
+                                let key = match s.pending_review.as_deref() {
+                                    Some("question") => "notify.pending.question",
+                                    Some("plan") => "notify.pending.plan",
+                                    _ => "notify.pending.approval",
+                                };
+                                show_session_notification(
+                                    &app,
+                                    tr(lang, key).into(),
+                                    format!("{} · {}", s.project_name, display_title),
+                                    pid,
+                                    display_title.clone(),
+                                );
+                            }
+                            notified_pending.insert(sid.clone(), fp);
+                        }
+                        None => {
+                            notified_pending.remove(&sid);
+                        }
+                    }
+
                     // 待交互通知（errored 时 waiting_fingerprint 返回 None，自动让位给错误）。
-                    match waiting_fingerprint(error.is_some(), &s.session.status, s.session.last_event_at) {
+                    match waiting_fingerprint(error.is_some(), s.pending_review.is_some(), &s.session.status, s.session.last_event_at) {
                         Some(fp) => {
                             let prev = notified_waiting.get(&sid).map(|s| s.as_str());
                             if seeded && notify_on && should_notify(prev, Some(&fp)) {
@@ -1177,6 +1212,7 @@ fn spawn_liveness_watch(
                 // 清掉本轮彻底消失（已结束/超出 100 条上限）的残留条目，防止 map 无限增长。
                 // 边缘情况：会话彻底消失后又带着完全相同的未解决错误/待交互重新出现，会再弹一次——可接受。
                 notified.retain(|k, _| present.contains_key(k));
+                notified_pending.retain(|k, _| present.contains_key(k));
                 notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
 
@@ -1755,8 +1791,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_session_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pid_is_claude,
-        should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
+        is_session_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
+        pid_is_claude, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
     use crate::snap::{
@@ -2019,19 +2055,27 @@ mod tests {
     }
 
     #[test]
+    fn pending_fingerprint_rules() {
+        // errored 优先 → None(让位错误)。
+        assert_eq!(pending_fingerprint(true, Some("approval"), 100), None);
+        // pending 为 Some 且未出错 → Some("{kind}:{last_event_at}")。
+        assert_eq!(pending_fingerprint(false, Some("question"), 100).as_deref(), Some("question:100"));
+        // 无 pending → None。
+        assert_eq!(pending_fingerprint(false, None, 100), None);
+        // 指纹随 last_event_at 变化(新回合新指纹)。
+        assert_ne!(pending_fingerprint(false, Some("approval"), 100), pending_fingerprint(false, Some("approval"), 200));
+    }
+
+    #[test]
     fn waiting_fingerprint_rules() {
-        // 连接中、待交互、未出错 → 用 last_event_at 作指纹
-        assert_eq!(waiting_fingerprint(false, "waiting", 123), Some("123".to_string()));
-        // 出错优先：errored 时不发待交互
-        assert_eq!(waiting_fingerprint(true, "waiting", 123), None);
-        // 非 waiting 状态不发
-        assert_eq!(waiting_fingerprint(false, "running", 123), None);
-        assert_eq!(waiting_fingerprint(false, "ended", 123), None);
-        // 指纹随 last_event_at 变化（新的等待回合 → 新指纹 → 会再弹一次）
-        assert_ne!(
-            waiting_fingerprint(false, "waiting", 1),
-            waiting_fingerprint(false, "waiting", 2)
-        );
+        // 错误优先:无指纹。
+        assert_eq!(waiting_fingerprint(true, false, "waiting", 100), None);
+        // pending 优先:无 waiting 指纹(让位 pending)。
+        assert_eq!(waiting_fingerprint(false, true, "waiting", 100), None);
+        // 纯 waiting:用 last_event_at 作指纹。
+        assert_eq!(waiting_fingerprint(false, false, "waiting", 100).as_deref(), Some("100"));
+        // 非 waiting 状态:None。
+        assert_eq!(waiting_fingerprint(false, false, "running", 100), None);
     }
 
     #[test]
