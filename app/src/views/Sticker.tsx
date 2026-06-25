@@ -185,20 +185,20 @@ function CloseIcon() {
 
 /** 状态徽标：圆角矩形边框上流动的亮线（conic 渐变 + transform 旋转，纯 GPU 合成，
  *  拖动窗口不占主线程）+ 中心实心圆，圆内显示 Content 已用百分比。
- *  tone：running=绿（运行中），waiting=黄（待交互），结构一致仅换色。 */
+ *  tone：running=绿（运行中），waiting=黄（待交互），pending=琥珀（待审批）。 */
 function RunBadge({
   pct,
   tone = "running",
 }: {
   pct: number | null;
-  tone?: "running" | "waiting";
+  tone?: "running" | "waiting" | "pending";
 }) {
   const t = useT();
   const what = tone === "waiting" ? t.badge.waiting : t.badge.running;
   const label = pct != null ? t.badge.full(what, pct) : what;
   return (
     <span
-      className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : "")}
+      className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : tone === "pending" ? " run-badge--pending" : "")}
       role="img"
       aria-label={label}
       title={label}
@@ -239,8 +239,8 @@ function match(tab: Tab, l: Item, hideDays = 0): boolean {
   }
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
-  if (tab === "waiting") return l.connected && (l.session.status === "waiting" || l.errored);
-  if (tab === "running") return l.connected && l.session.status === "running" && !l.errored;
+  if (tab === "waiting") return l.connected && (l.session.status === "waiting" || l.errored || l.pending_review != null);
+  if (tab === "running") return l.connected && l.session.status === "running" && !l.errored && l.pending_review == null;
   return true;
 }
 
@@ -511,7 +511,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           Number(starred.has(b.session.cc_session_id)) -
           Number(starred.has(a.session.cc_session_id));
         if (star !== 0) return star;
-        if (tab === "waiting") return a.session.last_event_at - b.session.last_event_at;
+        if (tab === "waiting") {
+          const ap = a.pending_review != null ? 0 : 1;
+          const bp = b.pending_review != null ? 0 : 1;
+          if (ap !== bp) return ap - bp; // pending 整组置顶
+          return a.session.last_event_at - b.session.last_event_at; // 组内等最久优先
+        }
         return 0;
       });
   }, [data, tab, hideDays, starred, query]);
@@ -637,18 +642,20 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
             const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
-            // 活动行统一显示「最近一条 AI 正文」(preview)；出错优先显示错误标签；
-            // previewEnabled 关闭则不显示 AI 正文（仅保留错误）。不再显示底层 Bash 命令。
+            // AI 活动行显示「最近一条 AI 正文」(last_ai_text，回退 transcript preview)；出错优先显示错误标签；
+            // previewEnabled（对话预览开关）关闭则不显示 AI 正文（仅保留错误）；用户行同受该开关门控。
             const sub = l.errored && l.error_label
               ? t.errorLabels[l.error_label] ?? l.error_label
-              : previewEnabled && l.preview
-              ? l.preview
+              : previewEnabled && (l.last_ai_text ?? l.preview)
+              ? (l.last_ai_text ?? l.preview)
               : null;
             const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
             const indicator = !l.connected ? (
               <span className="ring-stop" title={t.sticker.stopped} />
             ) : l.errored ? (
               <span className="needs-error" title={l.error_raw ?? t.sticker.sessionError} />
+            ) : l.pending_review ? (
+              <RunBadge pct={l.context_pct} tone="pending" />
             ) : l.session.status === "running" ? (
               <RunBadge pct={l.context_pct} />
             ) : l.session.status === "waiting" ? (
@@ -708,6 +715,11 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       ) : (
                         <>
                           <span className="stk-title">{title}</span>
+                          {l.pending_review && (
+                            <span className={"pending-pill pending-" + l.pending_review}>
+                              {t.pending[l.pending_review]}
+                            </span>
+                          )}
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
                           {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
                               星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}
@@ -784,9 +796,16 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                     <span className="stk-note-txt">{l.note}</span>
                   </div>
                 ) : null}
+                {previewEnabled && l.last_user_text && (
+                  <div className="stk-subrow stk-userrow">
+                    <span className="stk-msg-tag">{t.sticker.youPrefix}</span>
+                    <span className="stk-sub" title={l.last_user_text}>{l.last_user_text}</span>
+                  </div>
+                )}
                 {(sub || (buttonMode && canOpen(l))) && (
                   <div className="stk-subrow">
                     {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
+                    {sub && !l.errored && <span className="stk-msg-tag is-ai">{t.sticker.aiPrefix}</span>}
                     {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={subTitle}>{sub}</span>}
                     {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
                     {buttonMode && canOpen(l) && (

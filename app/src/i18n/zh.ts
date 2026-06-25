@@ -14,6 +14,7 @@ export const zh = {
     running: "运行中",
     full: (what: string, pct: number) => `${what} · Context 已用 ${pct}%`,
   },
+  pending: { approval: "待批准", question: "待回答", plan: "待批计划" },
   empty: {
     allTitle: "还没有会话",
     allHint: "在终端运行 Claude Code，进度会自动出现在这里",
@@ -54,6 +55,8 @@ export const zh = {
     notePlaceholder: "写点备忘…",
     noteSave: "保存",
     noteCancel: "取消",
+    youPrefix: "你",
+    aiPrefix: "AI",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",
@@ -85,8 +88,8 @@ export const zh = {
     cmdPrompt: "命令提示符",
     language: "语言",
     languageDesc: "界面与系统通知的显示语言",
-    preview: "最近 AI 正文",
-    previewDesc: "在卡片活动行显示会话最近一条 AI 正文",
+    preview: "对话预览",
+    previewDesc: "在卡片显示会话最近对话（你的提问 + AI 回复）",
     terminalOpen: "打开终端方式",
     terminalOpenDesc: "点击卡片直接打开，或在卡片上用单独的打开按钮",
     openModeCard: "点击卡片",

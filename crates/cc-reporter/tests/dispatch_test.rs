@@ -174,6 +174,15 @@ fn stop_refreshes_title_via_stored_cwd() {
     let _ = std::fs::remove_file(tp);
 }
 
+#[test]
+fn hookevent_parses_last_assistant_message_and_alias() {
+    let a = ev(r#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"结论更微妙"}"#);
+    assert_eq!(a.last_assistant_message.as_deref(), Some("结论更微妙"));
+    // 官方文档另称 assistant_message,alias 也要能接住。
+    let b = ev(r#"{"hook_event_name":"Stop","session_id":"s","assistant_message":"另一种字段名"}"#);
+    assert_eq!(b.last_assistant_message.as_deref(), Some("另一种字段名"));
+}
+
 /// UserPromptSubmit 不带 cwd，但 SessionStart 存了，apply_title 应用存的 cwd 重建路径。
 #[test]
 fn prompt_without_cwd_uses_stored_cwd_for_title() {
@@ -219,4 +228,66 @@ fn user_prompt_with_transcript_overrides_prompt_title() {
     // transcript custom-title 覆盖了 prompt 兜底标题
     assert_eq!(store.get_task(tid).unwrap().title, "My Custom Title");
     let _ = std::fs::remove_file(tp);
+}
+
+// == Task 6: PermissionRequest / PreToolUse 置 pending_review ==
+#[test]
+fn permission_and_pretooluse_set_pending_review() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"p1","cwd":"/p"}"#), 100).unwrap();
+
+    let kind = |cc: &str| {
+        store.live_sessions().unwrap().into_iter()
+            .find(|l| l.session.cc_session_id == cc).unwrap().pending_review
+    };
+
+    // PermissionRequest:无 tool_name/普通工具 → approval。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"Bash"}"#), 200).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("approval"));
+    // PermissionRequest:ExitPlanMode → plan。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"ExitPlanMode"}"#), 210).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("plan"));
+    // PreToolUse:AskUserQuestion → question。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"AskUserQuestion"}"#), 220).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("question"));
+    // PreToolUse:其它工具 → 无操作(保持上一个 question)。
+    dispatch(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"Read"}"#), 230).unwrap();
+    assert_eq!(kind("p1").as_deref(), Some("question"));
+}
+
+// == Task 5: Stop 落 last_ai_text、UserPromptSubmit 落 last_user_text ==
+#[test]
+fn stop_sets_last_ai_text_and_prompt_sets_last_user_text() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"m1","cwd":"/p"}"#), 100).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"m1","prompt":"切到这个任务"}"#), 200).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"m1","last_assistant_message":"调研完成,结论更微妙"}"#), 300).unwrap();
+
+    let live = store.live_sessions().unwrap();
+    let s = live.iter().find(|l| l.session.cc_session_id == "m1").unwrap();
+    assert_eq!(s.last_user_text.as_deref(), Some("切到这个任务"));
+    assert_eq!(s.last_ai_text.as_deref(), Some("调研完成,结论更微妙"));
+}
+
+#[test]
+fn pending_review_cleared_by_next_event() {
+    for (i, clear_ev) in [
+        r#"{"hook_event_name":"PostToolUse","session_id":"c1","tool_name":"Read"}"#,
+        r#"{"hook_event_name":"UserPromptSubmit","session_id":"c1","prompt":"继续"}"#,
+        r#"{"hook_event_name":"Stop","session_id":"c1"}"#,
+        r#"{"hook_event_name":"SessionEnd","session_id":"c1"}"#,
+    ].iter().enumerate() {
+        let store = Store::open_in_memory().unwrap();
+        dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"c1","cwd":"/p"}"#), 100).unwrap();
+        dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"c1","tool_name":"Bash"}"#), 200).unwrap();
+        // 置位后确认非空。
+        let pending = store.live_sessions().unwrap().into_iter()
+            .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
+        assert_eq!(pending.as_deref(), Some("approval"), "case {i} 置位前提");
+        // 下一个事件清除。
+        dispatch(&store, &ev(clear_ev), 300).unwrap();
+        let pending = store.live_sessions().unwrap().into_iter()
+            .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
+        assert_eq!(pending, None, "case {i} 应被清除");
+    }
 }

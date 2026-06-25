@@ -1,4 +1,4 @@
-use cc_store::{SessionStatus, Store, StoreError};
+use cc_store::{PendingReview, SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
 
 use std::path::Path;
@@ -20,8 +20,10 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 if let Some(prompt) = ev.prompt.as_deref() {
                     store.on_user_prompt(sid, prompt, now_ms)?;
+                    store.set_last_user_text(sid, prompt)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
                 if let Some(p) = crate::proc::owner_pid() {
@@ -32,6 +34,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "PostToolUse" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 match ev.tool_name.as_deref() {
                     Some("TodoWrite") => {
                         store.sync_todos(sid, &ev.todo_items(), now_ms)?;
@@ -47,13 +50,40 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
         }
         "Stop" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
+                if let Some(msg) = ev.last_assistant_message.as_deref() {
+                    store.set_last_ai_text(sid, msg)?;
+                }
                 apply_title(store, ev, sid, now_ms)?;
             }
         }
         "SessionEnd" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid)?;
                 store.end_session(sid, now_ms)?;
+            }
+        }
+        "PermissionRequest" => {
+            if let Some(sid) = lookup_session(store, ev)? {
+                let kind = match ev.tool_name.as_deref() {
+                    Some("ExitPlanMode") => PendingReview::Plan,
+                    Some("AskUserQuestion") => PendingReview::Question,
+                    _ => PendingReview::Approval,
+                };
+                store.set_pending_review(sid, kind, now_ms)?;
+            }
+        }
+        "PreToolUse" => {
+            if let Some(sid) = lookup_session(store, ev)? {
+                let kind = match ev.tool_name.as_deref() {
+                    Some("AskUserQuestion") => Some(PendingReview::Question),
+                    Some("ExitPlanMode") => Some(PendingReview::Plan),
+                    _ => None, // 安装侧已用 matcher 限定;这里再兜一层防御
+                };
+                if let Some(kind) = kind {
+                    store.set_pending_review(sid, kind, now_ms)?;
+                }
             }
         }
         _ => {}

@@ -50,5 +50,8 @@ export function makeSession(p: {
     note: p.note ?? null,
     context_pct: p.ctx ?? null,
     context_window: p.ctx != null ? 200_000 : null,
+    pending_review: null,
+    last_ai_text: null,
+    last_user_text: null,
   };
 }

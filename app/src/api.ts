@@ -87,6 +87,12 @@ export type LiveSession = {
   context_pct: number | null;
   /** 上下文窗口大小（200000 或 1000000）；无 statusline 数据为 null。 */
   context_window: number | null;
+  /** 待审批子态:回合中途等用户介入(批准工具/回答提问/批准计划);无则 null。 */
+  pending_review: "approval" | "question" | "plan" | null;
+  /** 最近一条 AI 正文(锚 Stop hook);无则 null,卡片回退 preview。 */
+  last_ai_text: string | null;
+  /** 最近一条用户消息(锚 UserPromptSubmit);独立字段,不被工具活动覆盖。 */
+  last_user_text: string | null;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {
@@ -112,7 +118,7 @@ export type Settings = {
   language: LangSetting;
   /** 打开终端方式：card = 点击卡片（默认）/ button = 卡片上单独的打开按钮。 */
   terminal_open_mode: TerminalOpenMode;
-  /** 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启。 */
+  /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
 };
 

@@ -66,6 +66,25 @@ impl TodoStatus {
     }
 }
 
+/// 待审批子态:回合中途等用户介入的三种情形。NULL 态在 store 层用 Option 表达,枚举不含 None 变体。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PendingReview {
+    Approval,
+    Question,
+    Plan,
+}
+
+impl PendingReview {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PendingReview::Approval => "approval",
+            PendingReview::Question => "question",
+            PendingReview::Plan => "plan",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Project {
     pub id: i64,

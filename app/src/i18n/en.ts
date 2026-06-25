@@ -15,6 +15,7 @@ export const en: Dict = {
     running: "Running",
     full: (what, pct) => `${what} · Context ${pct}% used`,
   },
+  pending: { approval: "Approve", question: "Question", plan: "Review plan" },
   empty: {
     allTitle: "No sessions yet",
     allHint: "Run Claude Code in a terminal and progress shows up here",
@@ -55,6 +56,8 @@ export const en: Dict = {
     notePlaceholder: "Jot a memo…",
     noteSave: "Save",
     noteCancel: "Cancel",
+    youPrefix: "You",
+    aiPrefix: "AI",
   },
   update: {
     clickToInstall: "Click to download and install the update",
@@ -85,8 +88,8 @@ export const en: Dict = {
     cmdPrompt: "Command Prompt",
     language: "Language",
     languageDesc: "Interface and notification language",
-    preview: "Latest AI message",
-    previewDesc: "Show the session's latest AI message on the card",
+    preview: "Conversation preview",
+    previewDesc: "Show the session's latest exchange (your prompt + AI reply) on the card",
     terminalOpen: "Open terminal by",
     terminalOpenDesc: "Click the card directly, or use a separate open button on the card",
     openModeCard: "Click card",

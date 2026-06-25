@@ -478,6 +478,12 @@ html, body {
   --bc-fade: rgba(224, 162, 60, 0);
   --bc-text: #2a1d02;
 }
+.run-badge--pending {
+  --bc: #f0883e; /* 琥珀:区别于运行绿/待交互黄/错误红 */
+  --bc-track: rgba(240, 136, 62, 0.22);
+  --bc-fade: rgba(240, 136, 62, 0);
+  --bc-text: #2a1402;
+}
 .run-sweep {
   position: absolute;
   inset: -50%; /* 放大到 200%，旋转时始终盖满含四角 */
@@ -574,6 +580,24 @@ html, body {
 /* sub 行：活动/错误文案 + （按钮模式）末尾的打开按钮 */
 .stk-subrow { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
 .stk-sub { flex: 1; min-width: 0; font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stk-userrow { margin-top: 5px; }
+/* 对话双行的「你/AI」前缀小胶囊：你=中性灰软底，AI=品牌赤陶软底；等宽 min-width 对齐成一列。 */
+.stk-msg-tag {
+  flex: none;
+  min-width: calc(20px * var(--cc-ui));
+  text-align: center;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: calc(9px * var(--cc-ui));
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--cc-text-faint);
+  background: var(--cc-surface-hover);
+}
+.stk-msg-tag.is-ai {
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
+}
 
 /* 会话出错：红色脉冲点 */
 .needs-error {
@@ -592,6 +616,22 @@ html, body {
 /* 出错时的 sub 行文案用红色 */
 .stk-sub-err { color: var(--cc-err); }
 
+/* 待审批醒目 pill:琥珀脉冲,标题行内 */
+.pending-pill {
+  flex: none;
+  font-size: calc(9.5px * var(--cc-ui));
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #2a1402;
+  background: #f0883e;
+  animation: needs-pulse-pending 1.6s ease-out infinite;
+}
+@keyframes needs-pulse-pending {
+  0% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(240, 136, 62, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0); }
+}
 
 /* 卡片左侧状态圆点：在线绿 / 断开灰 */
 .sdot { width: 9px; height: 9px; flex: none; border-radius: 50%; }

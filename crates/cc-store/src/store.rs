@@ -1,6 +1,6 @@
 use crate::error::StoreError;
 use crate::migrations::SCHEMA;
-use crate::models::{Project, Session, SessionStatus, Task, TaskColumn, Todo, TodoInput, TodoStatus};
+use crate::models::{PendingReview, Project, Session, SessionStatus, Task, TaskColumn, Todo, TodoInput, TodoStatus};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -34,7 +34,8 @@ impl Store {
     /// schema 版本：升 schema/加迁移时 +1。
     /// v2: 新增 session_notes 表（会话便签）。旧库 version<2 时 init 会重跑
     /// `CREATE TABLE IF NOT EXISTS` 把新表补上，再 bump。
-    const USER_VERSION: i64 = 2;
+    /// v3: sessions 加 pending_review / last_ai_text / last_user_text 三列。
+    const USER_VERSION: i64 = 3;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -49,11 +50,14 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 4] = [
+        const ALTERS: [&str; 7] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN archived_at INTEGER",
+            "ALTER TABLE sessions ADD COLUMN pending_review TEXT",
+            "ALTER TABLE sessions ADD COLUMN last_ai_text TEXT",
+            "ALTER TABLE sessions ADD COLUMN last_user_text TEXT",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -299,7 +303,7 @@ impl Store {
 
     // == Task 6: on_user_prompt + touch_session ==
 
-    /// 收到用户 prompt：占位标题则替换为截断后的 prompt；当前动作总是更新为该 prompt。
+    /// 收到用户 prompt：仅当占位标题时替换为截断后的 prompt(不再写 current_activity，那已由 last_user_text 承担)。
     pub fn on_user_prompt(
         &self,
         session_id: i64,
@@ -316,15 +320,11 @@ impl Store {
             )?;
             if title == "(未命名会话)" {
                 self.conn.execute(
-                    "UPDATE tasks SET title = ?1, current_activity = ?2, updated_at = ?3 WHERE id = ?4",
-                    rusqlite::params![cleaned, cleaned, now_ms, tid],
-                )?;
-            } else {
-                self.conn.execute(
-                    "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
+                    "UPDATE tasks SET title = ?1, updated_at = ?2 WHERE id = ?3",
                     rusqlite::params![cleaned, now_ms, tid],
                 )?;
             }
+            // 非占位标题:不再把 prompt 写进 current_activity(改由 last_user_text 承担)。
         }
         self.touch_session(session_id, now_ms)?;
         Ok(())
@@ -437,6 +437,57 @@ impl Store {
         self.conn.execute(
             "UPDATE sessions SET status = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![status.as_str(), now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 设置待审批子态,同时刷新 last_event_at(让卡片排到最近活跃,并作为去重指纹)。
+    pub fn set_pending_review(
+        &self,
+        session_id: i64,
+        kind: PendingReview,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET pending_review = ?1, last_event_at = ?2 WHERE id = ?3",
+            rusqlite::params![kind.as_str(), now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 清除待审批子态(置 NULL)。不动 last_event_at——由同回合的兄弟调用负责时间戳。
+    pub fn clear_pending_review(&self, session_id: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET pending_review = NULL WHERE id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 落最近一条 AI 正文:折叠空白 + 截断 200 字符;空/全空白不覆盖旧值。
+    /// 不动 last_event_at——Stop 的兄弟 set_session_status 已刷新它。
+    pub fn set_last_ai_text(&self, session_id: i64, text: &str) -> Result<(), StoreError> {
+        let cleaned = truncate_chars(&sanitize_prompt(text), 200);
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE sessions SET last_ai_text = ?1 WHERE id = ?2",
+            rusqlite::params![cleaned, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 落最近一条用户消息:复用 sanitize_prompt(剥图片标记 + 折叠空白) + 截断 200;空不覆盖。
+    /// 不动 last_event_at——UserPromptSubmit 的 on_user_prompt(touch_session) 已刷新它。
+    pub fn set_last_user_text(&self, session_id: i64, text: &str) -> Result<(), StoreError> {
+        let cleaned = truncate_chars(&sanitize_prompt(text), 200);
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE sessions SET last_user_text = ?1 WHERE id = ?2",
+            rusqlite::params![cleaned, session_id],
         )?;
         Ok(())
     }

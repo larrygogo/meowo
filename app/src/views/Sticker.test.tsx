@@ -226,4 +226,85 @@ describe("Sticker", () => {
     expect(container.querySelector(".ring-stop")).toBeTruthy();
     expect(container.querySelector(".needs-error")).toBeFalsy();
   });
+
+  it("pending_review 会话归入待交互并置顶", () => {
+    localStorage.setItem("cc-kanban-tab", "waiting");
+    const sess = (id: number, cc: string, status: "running" | "waiting", last: number) =>
+      ({ id, project_id: 1, cc_session_id: cc, status, started_at: 0, last_event_at: last, ended_at: null });
+    const now = Date.now();
+    const items = [
+      mk({ task_title: "等待最久的纯waiting", connected: true, session: sess(1, "w1", "waiting", now - 600_000) }),
+      mk({ task_title: "待批准", connected: true, pending_review: "approval", session: sess(2, "p1", "running", now - 60_000) }),
+    ];
+    const { container } = render(<Sticker data={items} />);
+    // 待交互 tab 计数含 pending(2)。
+    const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
+    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("2");
+    // pending 组置顶:第一张卡是「待批准」,即便它 last_event_at 更晚。
+    const cards = container.querySelectorAll(".stk-card");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("待批准");
+  });
+
+  it("pending 会话显示琥珀 pill 与 pending 徽标", () => {
+    const item = mk({
+      task_title: "审批中",
+      connected: true,
+      pending_review: "approval",
+      context_pct: 30,
+      session: { id: 5, project_id: 1, cc_session_id: "pp", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null },
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    expect(screen.getByText(zh.pending.approval)).toBeTruthy();     // pill 文字「待批准」
+    expect(container.querySelector(".pending-pill")).toBeTruthy();  // pill 元素
+    expect(container.querySelector(".run-badge--pending")).toBeTruthy(); // 琥珀徽标
+  });
+
+  it("卡片优先显示 last_ai_text,并显示用户消息行", () => {
+    const item = mk({
+      connected: true,
+      preview: "transcript 兜底的旧预览",
+      last_ai_text: "调研完成,结论更微妙",
+      last_user_text: "切到这个任务",
+      session: { id: 7, project_id: 1, cc_session_id: "uai", status: "waiting", started_at: 0, last_event_at: Date.now(), ended_at: null },
+    });
+    render(<Sticker data={[item]} />);
+    expect(screen.getByText("调研完成,结论更微妙")).toBeTruthy(); // AI 行用 last_ai_text 而非 preview
+    expect(screen.queryByText("transcript 兜底的旧预览")).toBeNull();
+    expect(screen.getByText("切到这个任务")).toBeTruthy();         // 用户消息行
+    expect(screen.getByText(zh.sticker.youPrefix)).toBeTruthy();   // 「你」前缀
+  });
+
+  it("显示 AI 正文时有 aiPrefix 标签，与用户行对称", () => {
+    const item = mk({
+      connected: true,
+      last_ai_text: "完成了代码审查",
+      last_user_text: "帮我看这个 PR",
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    // 「AI」前缀标签存在
+    const tags = container.querySelectorAll(".stk-msg-tag");
+    const tagTexts = Array.from(tags).map((el) => el.textContent);
+    expect(tagTexts).toContain(zh.sticker.aiPrefix);  // AI 前缀
+    expect(tagTexts).toContain(zh.sticker.youPrefix); // 你 前缀，两行对称
+    // AI 标签带品牌色 is-ai 修饰类，用户标签不带（视觉区分主角/用户）
+    const aiTag = Array.from(tags).find((el) => el.textContent === zh.sticker.aiPrefix)!;
+    const youTag = Array.from(tags).find((el) => el.textContent === zh.sticker.youPrefix)!;
+    expect(aiTag.classList.contains("is-ai")).toBe(true);
+    expect(youTag.classList.contains("is-ai")).toBe(false);
+  });
+
+  it("errored 活动行不显示 aiPrefix 标签", () => {
+    const item = mk({
+      connected: true,
+      errored: true,
+      error_label: "工具调用解析失败",
+      error_raw: "parse error",
+    });
+    const { container } = render(<Sticker data={[item]} />);
+    // 错误标签行存在（红色错误文案），但无 aiPrefix
+    expect(container.querySelector(".stk-sub-err")).toBeTruthy();
+    const tags = container.querySelectorAll(".stk-msg-tag");
+    const tagTexts = Array.from(tags).map((el) => el.textContent);
+    expect(tagTexts).not.toContain(zh.sticker.aiPrefix);
+  });
 });
