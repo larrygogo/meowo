@@ -72,8 +72,7 @@ export const zh = {
     updateTag: "新版本",
     close: "关闭",
     autostart: "开机自启",
-    autostartDesc: "登录系统后自动启动 cc-kanban",
-    autostartDevNote: "仅安装版可用（dev 调试版会注册调试二进制，开机白屏）",
+    autostartDesc: "系统开机后自动启动",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
     archiveHide: "归档自动隐藏",
@@ -108,6 +107,7 @@ export const zh = {
     appearanceHint: "外观更改即时生效，并保存到本地。",
   },
   account: {
+    providerClaudeCode: "Claude Code",
     notLoggedIn: "未登录 Claude Code",
     notLoggedInDesc: "在终端运行 claude 登录后即可查看账号与用量",
     quota: "配额",
