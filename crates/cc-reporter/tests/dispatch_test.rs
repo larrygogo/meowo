@@ -324,3 +324,20 @@ fn provider_defaults_claude_and_kimi_is_tagged() {
     assert_eq!(prov("cl1"), "claude");
     assert_eq!(prov("km1"), "kimi");
 }
+
+#[test]
+fn lazy_creates_session_on_prompt_when_session_start_missing() {
+    // 模拟「hooks 中途装上」：没有 SessionStart，直接来 UserPromptSubmit（带 cwd）→ 应就地建会话。
+    let store = Store::open_in_memory().unwrap();
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"mid1","cwd":"/p","prompt":"中途接入"}"#),
+        100,
+        "kimi",
+    )
+    .unwrap();
+    let l = store.live_sessions().unwrap();
+    let s = l.iter().find(|l| l.session.cc_session_id == "mid1").expect("应懒创建出会话");
+    assert_eq!(s.provider, "kimi");
+    assert_eq!(s.task_title, "中途接入");
+}

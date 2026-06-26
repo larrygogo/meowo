@@ -10,20 +10,11 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         "SessionStart" => {
             let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
             if ev.session_id.is_empty() { return Ok(()); }
-            let (root, name) = project_root_and_name(cwd);
-            let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
-            let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
-            if provider != "claude" {
-                store.set_session_provider(sid, provider)?;
-            }
-            store.set_session_cwd(sid, cwd, now_ms)?;
-            if let Some(p) = crate::proc::owner_pid() {
-                store.set_session_pid(sid, p as i64, now_ms)?;
-            }
+            let sid = create_session(store, ev, cwd, provider, now_ms)?;
             apply_title(store, ev, sid, now_ms, provider)?;
         }
         "UserPromptSubmit" => {
-            if let Some(sid) = lookup_session(store, ev)? {
+            if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
                 if let Some(prompt) = ev.prompt_text() {
                     store.on_user_prompt(sid, &prompt, now_ms)?;
@@ -37,7 +28,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             }
         }
         "PostToolUse" => {
-            if let Some(sid) = lookup_session(store, ev)? {
+            if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
                 match ev.tool_name.as_deref() {
                     Some("TodoWrite") => {
@@ -53,7 +44,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             }
         }
         "Stop" => {
-            if let Some(sid) = lookup_session(store, ev)? {
+            if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 if let Some(msg) = ev.last_assistant_message.as_deref() {
@@ -116,11 +107,41 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &
     Ok(())
 }
 
+/// 建会话（项目 upsert + 会话 + provider + cwd + 抓 PID），返回 sid。SessionStart 与懒创建共用。
+fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: &str, now_ms: i64) -> Result<i64, StoreError> {
+    let (root, name) = project_root_and_name(cwd);
+    let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
+    let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
+    if provider != "claude" {
+        store.set_session_provider(sid, provider)?;
+    }
+    store.set_session_cwd(sid, cwd, now_ms)?;
+    if let Some(p) = crate::proc::owner_pid() {
+        store.set_session_pid(sid, p as i64, now_ms)?;
+    }
+    Ok(sid)
+}
+
 fn lookup_session(store: &Store, ev: &HookEvent) -> Result<Option<i64>, StoreError> {
     if ev.session_id.is_empty() {
         return Ok(None);
     }
     store.find_session_id_pub(&ev.session_id)
+}
+
+/// 查会话；查不到且事件带 cwd 时就地懒创建——让「hooks 中途装上 / SessionStart 漏掉（压缩等）」
+/// 的会话在下一条带 cwd 的活动事件（UserPromptSubmit/PostToolUse/Stop）上也能补建上板，不必重开。
+fn lookup_or_create(store: &Store, ev: &HookEvent, provider: &str, now_ms: i64) -> Result<Option<i64>, StoreError> {
+    if ev.session_id.is_empty() {
+        return Ok(None);
+    }
+    if let Some(sid) = store.find_session_id_pub(&ev.session_id)? {
+        return Ok(Some(sid));
+    }
+    match ev.cwd.as_deref() {
+        Some(cwd) => Ok(Some(create_session(store, ev, cwd, provider, now_ms)?)),
+        None => Ok(None),
+    }
 }
 
 /// cwd 的 git 根（向上找 .git）作为项目 root；无 git 则用 cwd 本身。
