@@ -514,10 +514,11 @@ fn focus_session(
     if pid <= 0 {
         return Err("无效 pid".into());
     }
-    // 与 resume_session 同一契约：凡可能进入 `claude --resume <id>` 路径的 session_id 一律先校验
-    // 为 UUID 形态，杜绝注入（macOS 分支会把 id 经 osascript 注入 AppleScript）。
+    // session_id 经 is_safe_id 校验（仅 `[A-Za-z0-9_-]`，杜绝注入：macOS 分支会把 id 注入 AppleScript）。
+    // 必须用宽松校验——kimi 的 `session_<uuid>` 不合 UUID 形态，用严格 is_session_id 会把连接态的
+    // kimi 卡挡在定位之前（Windows 上 session_id 实际并不参与 focus，仅 pid+title）。
     if let Some(id) = session_id.as_deref() {
-        if !is_session_id(id) {
+        if !is_safe_id(id) {
             return Err("无效 session_id".into());
         }
     }
