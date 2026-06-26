@@ -698,13 +698,6 @@ fn focus_session(
     }
 }
 
-/// 会话 id 是否为合法 UUID 形态（仅十六进制与连字符，长度 36）。claude 专属操作（如 rename 写
-/// transcript）用此严格校验：kimi 的 `session_<uuid>` 不合 UUID 形态会被挡下、安全 no-op，不会误写
-/// claude transcript。用于命令注入防护：通过校验即保证 id 不含引号/分号/空格等任何 shell/wt 元字符。纯函数。
-fn is_session_id(s: &str) -> bool {
-    s.len() == 36 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
-}
-
 /// 可安全作为命令参数的会话 id：非空、≤128、仅 `[A-Za-z0-9_-]`（无引号/分号/空格等 shell/wt 元字符，
 /// 也无 `/`\`.` 杜绝路径穿越）。兼容 claude 的 UUID 与 kimi 的 `session_<uuid>`。resume 用此宽松校验。纯函数。
 fn is_safe_id(s: &str) -> bool {
@@ -986,8 +979,8 @@ fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Resu
     store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
 }
 
-/// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；
-/// session_id 严格校验 UUID 形态，正文截断到 500 字符（store 内 trim 后空则删除该行）。
+/// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；session_id 用 is_safe_id
+/// 校验（兼容 kimi 的 session_<uuid>、仍杜绝注入），正文截断到 500 字符（store 内 trim 后空则删除该行）。
 #[tauri::command]
 fn set_session_note(
     app: tauri::AppHandle,
@@ -995,7 +988,7 @@ fn set_session_note(
     session_id: String,
     note: String,
 ) -> Result<(), String> {
-    if !is_session_id(&session_id) {
+    if !is_safe_id(&session_id) {
         return Err("无效 session_id".into());
     }
     let note: String = note.chars().take(500).collect();
@@ -1977,7 +1970,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_session_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
+        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
         pid_is_agent, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
@@ -2113,20 +2106,24 @@ mod tests {
     }
 
     #[test]
-    fn session_id_accepts_uuid() {
-        assert!(is_session_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
-        assert!(is_session_id("00000000-0000-0000-0000-000000000000"));
+    fn safe_id_accepts_uuid_and_kimi() {
+        // claude 的 UUID 与 kimi 的 session_<uuid> 都应通过（focus/resume/rename/note 共用此校验）。
+        assert!(is_safe_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
+        assert!(is_safe_id("00000000-0000-0000-0000-000000000000"));
+        assert!(is_safe_id("session_a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
     }
 
     #[test]
-    fn session_id_rejects_injection_and_malformed() {
-        // 含 shell/wt 元字符 → 拒绝（命令注入防护）。
-        assert!(!is_session_id("'; calc; '")); // 注入尝试
-        assert!(!is_session_id("abc --resume x; calc"));
-        assert!(!is_session_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890 ")); // 尾空格
-        assert!(!is_session_id("")); // 空
-        assert!(!is_session_id("g1b2c3d4-e5f6-7890-abcd-ef1234567890")); // 'g' 非 hex
-        assert!(!is_session_id("a1b2c3d4-e5f6-7890-abcd-ef123456789")); // 长度 35
+    fn safe_id_rejects_injection_and_malformed() {
+        // 含 shell/wt 元字符、空格、路径分隔符/点 → 拒绝（命令注入 + 路径穿越防护）。
+        assert!(!is_safe_id("'; calc; '")); // 注入尝试
+        assert!(!is_safe_id("abc --resume x; calc"));
+        assert!(!is_safe_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890 ")); // 尾空格
+        assert!(!is_safe_id("../../etc/passwd")); // 路径穿越
+        assert!(!is_safe_id("a/b")); // 路径分隔符
+        assert!(!is_safe_id("a.b")); // 点（穿越/扩展名）
+        assert!(!is_safe_id("")); // 空
+        assert!(!is_safe_id(&"a".repeat(129))); // 超长 >128
     }
 
     #[test]
