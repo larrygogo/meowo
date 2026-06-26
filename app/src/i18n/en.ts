@@ -58,6 +58,7 @@ export const en: Dict = {
     aiPrefix: "AI",
     agentClaudeCode: "Claude Code",
     agentKimiCode: "Kimi Code",
+    agentCodex: "Codex",
   },
   update: {
     clickToInstall: "Click to download and install the update",

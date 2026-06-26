@@ -57,6 +57,7 @@ export const zh = {
     aiPrefix: "AI",
     agentClaudeCode: "Claude Code",
     agentKimiCode: "Kimi Code",
+    agentCodex: "Codex",
   },
   update: {
     clickToInstall: "点击下载并安装新版本",
