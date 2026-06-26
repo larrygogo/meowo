@@ -40,10 +40,30 @@ fn session_dir(session_id: &str) -> Option<PathBuf> {
     None
 }
 
-/// 纯解析：从 wire.jsonl 文本取「最后一条用户输入之后」的 AI 文本（拼接各 text 片段，跳过 think）。
+/// 从 wire.jsonl 提取的会话摘要。
+#[derive(Debug, Default, PartialEq)]
+pub struct WireSummary {
+    /// 最近一条 AI 正文（最后一条用户输入之后拼接的 text 片段）。
+    pub last_ai: Option<String>,
+    /// 模型展示名（由模型 alias 映射，见 model_display）。
+    pub model: Option<String>,
+}
+
+/// 模型 alias → 展示名。alias 形如 "kimi-code/kimi-for-coding"；取末段，已知模型映射成 kimi
+/// 自己显示的名字，未知则用末段本身（不致空白）。
+fn model_display(alias: &str) -> String {
+    let last = alias.rsplit('/').next().unwrap_or(alias);
+    match last {
+        "kimi-for-coding" => "K2.7 Code".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 纯解析：从 wire.jsonl 文本取最近 AI 文本（拼接最后一回合的 text 片段、跳过 think）+ 模型展示名。
 /// 便于单测，不碰文件系统。
-pub fn last_ai_text_from_wire(content: &str) -> Option<String> {
+pub fn parse_wire(content: &str) -> WireSummary {
     let mut buf = String::new();
+    let mut model: Option<String> = None;
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -58,6 +78,11 @@ pub fn last_ai_text_from_wire(content: &str) -> Option<String> {
                     .and_then(|r| r.as_str());
                 if role == Some("user") {
                     buf.clear();
+                }
+            }
+            "config.update" => {
+                if let Some(a) = v.get("modelAlias").and_then(|m| m.as_str()) {
+                    model = Some(model_display(a));
                 }
             }
             "context.append_loop_event" => {
@@ -75,17 +100,20 @@ pub fn last_ai_text_from_wire(content: &str) -> Option<String> {
         }
     }
     let s = buf.trim();
-    (!s.is_empty()).then(|| s.to_string())
+    WireSummary {
+        last_ai: (!s.is_empty()).then(|| s.to_string()),
+        model,
+    }
 }
 
-/// 取某 kimi 会话最近一条 AI 正文（定位 wire.jsonl 后调纯解析）。任一步失败均返回 None。
-pub fn last_ai_text(session_id: &str) -> Option<String> {
+/// 读某 kimi 会话的 wire.jsonl 并解析（定位失败/读失败返回 None）。
+pub fn read_summary(session_id: &str) -> Option<WireSummary> {
     let wire = session_dir(session_id)?
         .join("agents")
         .join("main")
         .join("wire.jsonl");
     let content = std::fs::read_to_string(wire).ok()?;
-    last_ai_text_from_wire(&content)
+    Some(parse_wire(&content))
 }
 
 #[cfg(test)]
@@ -93,9 +121,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_last_ai_text_skipping_think_and_prior_turns() {
-        // 两个回合；应只取第二回合的 text，跳过 think、忽略第一回合。
+    fn extracts_last_ai_text_and_model_skipping_think_and_prior_turns() {
+        // 两个回合；应只取第二回合的 text，跳过 think、忽略第一回合；模型由 alias 映射。
         let wire = r#"
+{"type":"config.update","modelAlias":"kimi-code/kimi-for-coding"}
 {"type":"turn.prompt","input":"hi"}
 {"type":"context.append_message","message":{"role":"user","content":"hi"}}
 {"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"think","think":"想一下"}}}
@@ -105,13 +134,15 @@ mod tests {
 {"type":"context.append_message","message":{"role":"user","content":"再见"}}
 {"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"再见！"}}}
 "#;
-        assert_eq!(last_ai_text_from_wire(wire).as_deref(), Some("再见！"));
+        let s = parse_wire(wire);
+        assert_eq!(s.last_ai.as_deref(), Some("再见！"));
+        assert_eq!(s.model.as_deref(), Some("K2.7 Code"));
     }
 
     #[test]
     fn none_when_no_text_parts() {
         let wire = r#"{"type":"turn.prompt","input":"hi"}
 {"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"think","think":"only thinking"}}}"#;
-        assert_eq!(last_ai_text_from_wire(wire), None);
+        assert_eq!(parse_wire(wire).last_ai, None);
     }
 }

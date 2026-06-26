@@ -49,14 +49,19 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
-                // Claude 的 Stop hook 直接带 AI 正文；kimi 不带 → 从会话的 wire.jsonl 读最近一条。
-                let ai = if provider == "claude" {
-                    ev.last_assistant_message.clone()
-                } else {
-                    crate::kimi::last_ai_text(&ev.session_id)
-                };
-                if let Some(msg) = ai {
-                    store.set_last_ai_text(sid, &msg)?;
+                // Claude 的 Stop hook 直接带 AI 正文；kimi 不带且无 statusline → 从会话的 wire.jsonl
+                // 一次读出最近 AI 正文 + 模型（kimi 模型也无 statusline，顺便补进 session_context）。
+                if provider == "claude" {
+                    if let Some(msg) = ev.last_assistant_message.as_deref() {
+                        store.set_last_ai_text(sid, msg)?;
+                    }
+                } else if let Some(sum) = crate::kimi::read_summary(&ev.session_id) {
+                    if let Some(msg) = sum.last_ai {
+                        store.set_last_ai_text(sid, &msg)?;
+                    }
+                    if let Some(model) = sum.model {
+                        store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
+                    }
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
             }
