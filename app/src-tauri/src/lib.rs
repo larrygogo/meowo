@@ -407,7 +407,6 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     use uiautomation::variants::Variant;
     use uiautomation::{UIAutomation, UIElement};
 
-    let t0 = std::time::Instant::now();
     let Ok(automation) = UIAutomation::new() else { return false };
 
     // WT 顶层窗口：先用纯 Win32 EnumWindows+GetClassNameW 直接拿 HWND（进程内、微秒级），再
@@ -419,13 +418,6 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
         .into_iter()
         .filter_map(|h| automation.element_from_handle(Handle::from(h)).ok().map(|el| (h, el)))
         .collect();
-    if cfg!(debug_assertions) {
-        eprintln!(
-            "[focus-timing] find_wt_windows {} wins {:?}",
-            wt_windows.len(),
-            t0.elapsed()
-        );
-    }
     if wt_windows.is_empty() {
         return false;
     }
@@ -488,10 +480,10 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
             .collect()
     };
 
-    let t1 = std::time::Instant::now();
     // 收集所有命中标签页：(匹配分, 窗口 HWND, 窗口 pid, 标签元素)。【不短路】——同一标题在多个窗口/标签
-    // 出现时（用户有两个同名终端），必须按 console_group_pids(root_pid) 消歧到本会话所属窗口，否则会
-    // 聚焦到错的同名标签（先前 score==2 立即返回的短路正是「点同名终端跳错」的根因）。
+    // 出现时，按 console_group_pids(root_pid) 消歧到本会话所属窗口，否则会聚焦到错的同名标签。
+    // 注：仅 claude 走到这里（它把任务标题写进 WT 标签）；codex/kimi 不写标签标题，由 focus_session_terminal
+    // 直接走窗口级兜底，不进本函数。
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
     let mut matches: Vec<(u8, isize, u32, UIElement)> = Vec::new();
@@ -508,14 +500,6 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
         }
     }
     let max_score = matches.iter().map(|m| m.0).max().unwrap_or(0);
-    if cfg!(debug_assertions) {
-        eprintln!(
-            "[focus-timing] enum_tabs done, {} matches(max={}) {:?}",
-            matches.len(),
-            max_score,
-            t1.elapsed()
-        );
-    }
     if max_score == 0 {
         return false;
     }
@@ -581,28 +565,25 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
     }
 }
 
-/// 聚焦某会话的终端：优先按标题用 UIA 精确切到对应 WT 标签页，否则按进程组找窗口置前。
-/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。
-/// 供 focus_session 命令与「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
+/// 聚焦某会话的终端。`title_based`=该 agent 是否把任务标题写进 WT 标签（claude 写→可按标题精确切标签；
+/// codex/kimi 不写→跳过标题匹配，否则会错抓同名无关标签）。无论哪种，最终都能按进程组找到宿主窗口置前。
+/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。供 focus_session 命令与
+/// 「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
 #[cfg(target_os = "windows")]
-fn focus_session_terminal(pid: i64, title: Option<String>) {
+fn focus_session_terminal(pid: i64, title: Option<String>, title_based: bool) {
     std::thread::spawn(move || {
-        // 首选：按标题用 UIA 精确切到对应 WT 标签页（解决单进程多标签/多窗口下按 PID 对应不上）。
-        if let Some(t) = title.as_deref() {
-            if focus_terminal_tab(pid as u32, t) {
-                return;
+        // 仅会写标签标题的 agent（claude）走按标题精确切 WT 标签；codex/kimi 标签是默认目录名/命令名，
+        // 按任务标题找会错抓同名无关标签，跳过此步直接走窗口级定位。
+        if title_based {
+            if let Some(t) = title.as_deref() {
+                if focus_terminal_tab(pid as u32, t) {
+                    return;
+                }
             }
         }
-        // 兜底：传统 conhost（每窗口独立进程）等场景，扫进程组按 PID 找顶层窗口置前。
-        let tf = std::time::Instant::now();
+        // 窗口级定位（codex/kimi 主路径，也是 claude 的兜底）：扫进程组按 PID 找宿主顶层窗口置前。
+        // 宿主 WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
         let targets = console_group_pids(pid as u32);
-        if cfg!(debug_assertions) {
-            eprintln!(
-                "[focus-timing] fallback console_group_pids {} pids {:?}",
-                targets.len(),
-                tf.elapsed()
-            );
-        }
         if let Some(hwnd) = find_window_for_pids(&targets) {
             force_foreground(hwnd);
         }
@@ -646,6 +627,7 @@ fn focus_session(
     title: Option<String>,
     cwd: Option<String>,
     session_id: Option<String>,
+    provider: Option<String>,
 ) -> Result<(), String> {
     if pid <= 0 {
         return Err("无效 pid".into());
@@ -661,9 +643,14 @@ fn focus_session(
     #[cfg(target_os = "windows")]
     {
         let _ = (cwd, session_id);
-        focus_session_terminal(pid, title);
+        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是窗口级定位。缺省 claude。
+        let title_based = cc_reporter::agent::for_provider(provider.as_deref().unwrap_or("claude"))
+            .sets_terminal_tab_title();
+        focus_session_terminal(pid, title, title_based);
         Ok(())
     }
+    #[cfg(not(target_os = "windows"))]
+    let _ = provider;
     #[cfg(target_os = "macos")]
     {
         let _ = title;
@@ -1165,6 +1152,7 @@ fn show_session_notification(
     body: String,
     pid: i64,
     focus_title: String,
+    title_based: bool,
 ) {
     use tauri_winrt_notification::Toast;
     // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 cc-kanban+图标 + 点击可激活）；
@@ -1180,7 +1168,7 @@ fn show_session_notification(
             .title(&title)
             .text1(&body)
             .on_activated(move |_| {
-                focus_session_terminal(pid, Some(focus_title.clone()));
+                focus_session_terminal(pid, Some(focus_title.clone()), title_based);
                 Ok(())
             })
             .show();
@@ -1194,6 +1182,7 @@ fn show_session_notification(
     body: String,
     pid: i64,
     _focus_title: String, // macOS 按 pid->tty 定位终端，标题用不上
+    _title_based: bool,
 ) {
     crate::macos::notify::post(crate::macos::notify::NotifyJob { title, body, pid });
 }
@@ -1205,6 +1194,7 @@ fn show_session_notification(
     _body: String,
     _pid: i64,
     _focus_title: String,
+    _title_based: bool,
 ) {
 }
 
@@ -1266,6 +1256,9 @@ fn spawn_liveness_watch(
                         .filter(|t| !t.trim().is_empty())
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
+                    // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
+                    let title_based =
+                        cc_reporter::agent::for_provider(&s.provider).sets_terminal_tab_title();
 
                     // 菜单栏摘要计数:出错/待交互/待审批 → 需关注(●),运行中 → ○;在线空闲不计入。
                     if error.is_some() || s.session.status == "waiting" || s.pending_review.is_some() {
@@ -1284,6 +1277,7 @@ fn spawn_liveness_watch(
                                 format!("{} · {}", s.project_name, e.label),
                                 pid,
                                 display_title.clone(),
+                                title_based,
                             );
                         }
                         notified.insert(sid.clone(), e.fingerprint.clone());
@@ -1307,6 +1301,7 @@ fn spawn_liveness_watch(
                                     format!("{} · {}", s.project_name, display_title),
                                     pid,
                                     display_title.clone(),
+                                    title_based,
                                 );
                             }
                             notified_pending.insert(sid.clone(), fp);
@@ -1327,6 +1322,7 @@ fn spawn_liveness_watch(
                                     format!("{} · {}", s.project_name, display_title),
                                     pid,
                                     display_title.clone(),
+                                    title_based,
                                 );
                             }
                             notified_waiting.insert(sid.clone(), fp);

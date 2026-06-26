@@ -20,6 +20,10 @@ pub trait Agent: Sync {
     fn stop_outputs(&self, ev: &HookEvent) -> StopOutputs;
     /// 是否由 transcript 解析标题（claude 是；kimi 否，靠首条 prompt 命名）。
     fn resolves_transcript_title(&self) -> bool;
+    /// 该 agent 是否把任务标题写进终端标签页标题。claude 写 → cc-app 可按标题精确切到对应 WT 标签；
+    /// codex/kimi 不写（标签是默认目录名/命令名）→ 按任务标题找标签会错抓同名无关标签，cc-app 应改走
+    /// 窗口级定位（按 root_pid 祖先/进程组找宿主窗口置前，不强选标签）。
+    fn sets_terminal_tab_title(&self) -> bool;
     /// 恢复断开会话的命令 argv（[可执行名, 参数...]）。如 ["claude","--resume",id] / ["kimi","-r",id]。
     fn resume_args(&self, session_id: &str) -> Vec<String>;
     /// 把重命名同步到该 agent 自己的持久层，使 agent 自身的会话列表/恢复(resume)列表也显示新名字：
@@ -41,6 +45,9 @@ impl Agent for ClaudeAgent {
         StopOutputs { last_ai: ev.last_assistant_message.clone(), model: None }
     }
     fn resolves_transcript_title(&self) -> bool {
+        true
+    }
+    fn sets_terminal_tab_title(&self) -> bool {
         true
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
@@ -67,6 +74,9 @@ impl Agent for KimiAgent {
         }
     }
     fn resolves_transcript_title(&self) -> bool {
+        false
+    }
+    fn sets_terminal_tab_title(&self) -> bool {
         false
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
@@ -97,6 +107,10 @@ impl Agent for CodexAgent {
     }
     fn resolves_transcript_title(&self) -> bool {
         // 标题靠首条 prompt 命名：rollout 首条 user 文本被 AGENTS.md/指令包裹，不适合解析。
+        false
+    }
+    fn sets_terminal_tab_title(&self) -> bool {
+        // codex 不改 WT 标签标题（标签是默认目录名，如 pwsh 的 "larry"）→ 走窗口级定位。
         false
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {

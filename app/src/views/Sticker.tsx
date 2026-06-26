@@ -483,6 +483,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           title: l.task_title,
           cwd: l.cwd,
           sessionId: l.session.cc_session_id,
+          provider: l.provider,
         }).catch(() => {});
     } else if (!l.archived) {
       invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, provider: l.provider }).catch(() => {});
