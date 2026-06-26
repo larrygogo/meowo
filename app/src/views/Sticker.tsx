@@ -81,11 +81,15 @@ function StarIcon({ starred }: { starred: boolean }) {
 }
 
 function AgentMark({ provider }: { provider?: string }) {
-  // Kimi(Moonshot)：用月牙贴合「月之暗面」品牌，不冒用具体 logo；同走 accent 色。
+  // Kimi 品牌「K」字标 + 右上圆点；与 Claude logomark 一样走 accent 单色（随连接状态着色）。
   if (provider === "kimi") {
     return (
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M7.5 4v16" />
+        <path d="M7.5 12.5 15 5" />
+        <path d="M7.5 11.5 16.5 20.5" />
+        <circle cx="17.6" cy="4.4" r="1.8" fill="currentColor" stroke="none" />
       </svg>
     );
   }
