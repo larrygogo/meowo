@@ -10,8 +10,10 @@ pub struct HookEvent {
     pub cwd: Option<String>,
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// 用户输入。Claude 为纯字符串；kimi-code 为内容块数组 `[{"type":"text","text":...}]`。
+    /// 存成 Value 兼容两者（否则 kimi 的数组会让整个事件反序列化失败），取文本走 `prompt_text()`。
     #[serde(default)]
-    pub prompt: Option<String>,
+    pub prompt: Option<serde_json::Value>,
     #[serde(default)]
     pub tool_name: Option<String>,
     #[serde(default)]
@@ -45,6 +47,22 @@ impl HookEvent {
                 status: TodoStatus::from_str(&t.status),
             })
             .collect()
+    }
+
+    /// 把用户输入规整成纯文本：Claude 的字符串原样；kimi 的内容块数组拼接各 text 块（忽略图片等非文本块）。
+    pub fn prompt_text(&self) -> Option<String> {
+        match self.prompt.as_ref()? {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Array(arr) => {
+                let s = arr
+                    .iter()
+                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("");
+                (!s.is_empty()).then_some(s)
+            }
+            _ => None,
+        }
     }
 
     /// 取 Bash 工具的 command 字段（用于「当前动作」显示）。

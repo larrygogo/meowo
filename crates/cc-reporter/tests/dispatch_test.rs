@@ -30,7 +30,20 @@ fn parse_user_prompt_event() {
     assert_eq!(ev.session_id, "abc");
     assert_eq!(ev.cwd.as_deref(), Some("/home/me/proj"));
     assert_eq!(ev.hook_event_name, "UserPromptSubmit");
-    assert_eq!(ev.prompt.as_deref(), Some("写个登录"));
+    assert_eq!(ev.prompt_text().as_deref(), Some("写个登录"));
+}
+
+#[test]
+fn parse_kimi_user_prompt_array_form() {
+    // kimi-code 的 prompt 是内容块数组（非字符串）；旧的 Option<String> 会解析失败，现应规整成文本。
+    let json = r#"{
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "k",
+        "cwd": "/p",
+        "prompt": [{"type":"text","text":"实现"},{"type":"text","text":"登录"}]
+    }"#;
+    let ev = HookEvent::parse(json).expect("kimi 数组形式应能解析");
+    assert_eq!(ev.prompt_text().as_deref(), Some("实现登录"));
 }
 
 #[test]

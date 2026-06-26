@@ -25,9 +25,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_session(store, ev)? {
                 store.clear_pending_review(sid)?;
-                if let Some(prompt) = ev.prompt.as_deref() {
-                    store.on_user_prompt(sid, prompt, now_ms)?;
-                    store.set_last_user_text(sid, prompt)?;
+                if let Some(prompt) = ev.prompt_text() {
+                    store.on_user_prompt(sid, &prompt, now_ms)?;
+                    store.set_last_user_text(sid, &prompt)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
                 if let Some(p) = crate::proc::owner_pid() {
