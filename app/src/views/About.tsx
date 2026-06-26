@@ -3,8 +3,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode } from "../api";
+import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type StickerStyle } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage } from "../api";
+import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
@@ -33,6 +34,8 @@ const SETTINGS_DEFAULTS: Settings = {
   language: "auto",
   terminal_open_mode: "card",
   preview_enabled: true,
+  sticker_style: "elevated",
+  sticker_color: "classic",
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -249,7 +252,6 @@ function AccountSection() {
             <UsageBar label={t.account.quota5h} win={usage.five_hour} />
             <UsageBar label={t.account.quota7d} win={usage.seven_day} />
             <UsageBar label={t.account.quotaOpus} win={usage.seven_day_opus} />
-            <UsageBar label={t.account.quotaSonnet} win={usage.seven_day_sonnet} />
             {usage.extra_usage_enabled && <div className="usage-extra">{t.account.extraUsage}</div>}
             {usageErr && <div className="usage-stale">{t.account.refreshFailed}</div>}
           </>
@@ -504,10 +506,45 @@ function Segmented<T extends string | number>({
   );
 }
 
+// 贴纸颜色色板：一排圆色块（鲜亮代表色），选中加高亮描边圈；点选即换。语义上单选，用 radiogroup/radio。
+function SwatchPicker({
+  value,
+  onChange,
+  label,
+  names,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  names: Record<string, string>;
+}) {
+  return (
+    <div className="swatches" role="radiogroup" aria-label={label}>
+      {STICKER_COLOR_KEYS.map((k) => (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={k === value}
+          key={k}
+          className={"swatch" + (k === value ? " sel" : "")}
+          style={{ background: STICKER_COLORS[k].swatch }}
+          title={names[k] ?? k}
+          aria-label={names[k] ?? k}
+          onClick={() => onChange(k)}
+        />
+      ))}
+    </div>
+  );
+}
+
 const themeOptions = (t: Dict): { value: ThemeMode; label: string }[] => [
   { value: "dark", label: t.settings.themeDark },
   { value: "light", label: t.settings.themeLight },
   { value: "system", label: t.settings.themeSystem },
+];
+const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] => [
+  { value: "elevated", label: t.settings.styleElevated },
+  { value: "flat", label: t.settings.styleFlat },
 ];
 const densityOptions = (t: Dict): { value: number; label: string }[] => [
   { value: 90, label: t.settings.densityCompact },
@@ -523,6 +560,8 @@ function AppearanceSection() {
   const theme = settings?.theme ?? "dark";
   const opacity = settings?.opacity ?? 94;
   const uiScale = settings?.ui_scale ?? 100;
+  const stickerStyle = settings?.sticker_style ?? "elevated";
+  const stickerColor = settings?.sticker_color ?? "classic";
   // 钳到 [0,100]：手改 settings.json 为越界值时，避免算出负/超界的 linear-gradient 填充宽度。
   const fill = Math.max(0, Math.min(100, ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100));
   return (
@@ -541,6 +580,20 @@ function AppearanceSection() {
             <div className="row-desc">{t.settings.densityDesc}</div>
           </div>
           <Segmented value={uiScale} options={densityOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.density} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.stickerStyle}</div>
+            <div className="row-desc">{t.settings.stickerStyleDesc}</div>
+          </div>
+          <Segmented value={stickerStyle} options={stickerStyleOptions(t)} onChange={(v) => patch({ sticker_style: v })} label={t.settings.stickerStyle} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.stickerColor}</div>
+            <div className="row-desc">{t.settings.stickerColorDesc}</div>
+          </div>
+          <SwatchPicker value={stickerColor} onChange={(v) => patch({ sticker_color: v })} label={t.settings.stickerColor} names={t.settings.colorNames} />
         </div>
         <div className="row row-col">
           <div className="row-head">

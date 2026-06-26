@@ -26,6 +26,8 @@ export const store: Store = {
     language: "zh",
     terminal_open_mode: "card",
     preview_enabled: true,
+    sticker_style: "elevated",
+    sticker_color: "classic",
   },
   // 底栏用量屏的假数据：5h 偏黄、7d / Sonnet 偏绿(Opus 无数据→不显示，与常见实际一致)。
   usage: {
