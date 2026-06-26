@@ -1207,6 +1207,7 @@ html, body {
   transition: transform 0.12s, border-color 0.12s;
 }
 .swatch:hover { transform: scale(1.12); }
+.swatch:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 .swatch.sel { border-color: var(--cc-accent); }
 
 /* ===== 扁平风（data-sticker-style="flat"）：抹平所有立体投影/内高光/凹凸，仅留 1px 描边 + 纯色面。
