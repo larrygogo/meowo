@@ -28,6 +28,14 @@ fn default_language() -> String {
 fn default_terminal_open_mode() -> String {
     "card".to_string()
 }
+/// 贴纸风格：elevated = 立体感（默认），flat = 扁平。
+fn default_sticker_style() -> String {
+    "elevated".to_string()
+}
+/// 贴纸底色预设 key（classic = 经典原色，默认）。
+fn default_sticker_color() -> String {
+    "classic".to_string()
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -59,6 +67,12 @@ pub(crate) struct Settings {
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) preview_enabled: bool,
+    /// 贴纸风格：elevated = 立体感（默认），flat = 扁平。缺省 elevated，兼容老 settings.json。
+    #[serde(default = "default_sticker_style")]
+    pub(crate) sticker_style: String,
+    /// 贴纸底色预设 key（classic/slate/moss/plum/rose/amber）。缺省 classic，兼容老 settings.json。
+    #[serde(default = "default_sticker_color")]
+    pub(crate) sticker_color: String,
 }
 
 impl Default for Settings {
@@ -73,6 +87,8 @@ impl Default for Settings {
             language: default_language(),
             terminal_open_mode: default_terminal_open_mode(),
             preview_enabled: true,
+            sticker_style: default_sticker_style(),
+            sticker_color: default_sticker_color(),
         }
     }
 }
@@ -103,6 +119,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "notify.pending.approval") => "Approve a tool call?",
         ("en", "notify.pending.question") => "Claude is asking you a question",
         ("en", "notify.pending.plan") => "Plan awaiting approval",
+        ("en", "tray.recall") => "Recall sticker",
         ("en", "tray.settings") => "Settings",
         ("en", "tray.quit") => "Quit",
         ("en", "window.settings") => "Settings",
@@ -111,6 +128,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "notify.pending.approval") => "需要你批准工具调用",
         (_, "notify.pending.question") => "Claude 在问你问题",
         (_, "notify.pending.plan") => "计划待批准",
+        (_, "tray.recall") => "找回贴纸",
         (_, "tray.settings") => "设置",
         (_, "tray.quit") => "退出",
         (_, "window.settings") => "设置",

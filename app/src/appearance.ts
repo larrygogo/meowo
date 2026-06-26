@@ -5,12 +5,45 @@
 // 数据源是 ~/.cc-kanban/settings.json，经 get_settings 读取；任一窗口改设置后后端广播
 // settings-changed，这里实时重套用（顺带做了设置窗口里的明暗即时预览）。
 import { listen } from "@tauri-apps/api/event";
-import { getSettings, type Settings, type ThemeMode } from "./api";
+import { getSettings, type Settings, type StickerStyle, type ThemeMode } from "./api";
 
-type Appearance = { theme: ThemeMode; opacity: number; ui_scale: number };
+/** 贴纸底色预设：swatch = 设置页色板里显示的鲜亮代表色（小圆点便于区分）；
+ *  dark/light = 该色在深/浅主题下实际套用的贴纸底色 RGB（低饱和微染，配合不透明+毛玻璃才不刺眼）。 */
+export type StickerColorPreset = { swatch: string; dark: string; light: string };
+export const STICKER_COLORS: Record<string, StickerColorPreset> = {
+  classic: { swatch: "#d97757", dark: "38, 38, 36", light: "250, 249, 245" }, // 经典原色（默认）
+  slate: { swatch: "#5b8db8", dark: "29, 37, 47", light: "239, 244, 250" }, // 石青
+  moss: { swatch: "#6fae6a", dark: "30, 41, 33", light: "239, 248, 240" }, // 苔绿
+  plum: { swatch: "#a87cc8", dark: "43, 34, 48", light: "248, 242, 251" }, // 暮紫
+  rose: { swatch: "#d7748f", dark: "47, 34, 39", light: "251, 241, 244" }, // 玫粉
+  amber: { swatch: "#d9a441", dark: "46, 40, 27", light: "251, 246, 232" }, // 琥珀
+};
+export const STICKER_COLOR_KEYS = Object.keys(STICKER_COLORS);
+const DEFAULT_STICKER_COLOR = "classic";
+const DEFAULT_STICKER_STYLE: StickerStyle = "elevated";
+
+/** 把（颜色预设 key × 生效主题）解析为贴纸底色 RGB；未知 key 回退经典原色。纯函数，便于单测。 */
+export function stickerBgRgb(color: string, theme: "dark" | "light"): string {
+  const p = STICKER_COLORS[color] ?? STICKER_COLORS[DEFAULT_STICKER_COLOR];
+  return theme === "light" ? p.light : p.dark;
+}
+
+type Appearance = {
+  theme: ThemeMode;
+  opacity: number;
+  ui_scale: number;
+  sticker_style: StickerStyle;
+  sticker_color: string;
+};
 
 const CACHE_KEY = "cc-kanban-appearance";
-const DEFAULTS: Appearance = { theme: "dark", opacity: 94, ui_scale: 100 };
+const DEFAULTS: Appearance = {
+  theme: "dark",
+  opacity: 94,
+  ui_scale: 100,
+  sticker_style: DEFAULT_STICKER_STYLE,
+  sticker_color: DEFAULT_STICKER_COLOR,
+};
 
 let current: Appearance = DEFAULTS;
 let scaleEnabled = false;
@@ -32,7 +65,12 @@ function resolveTheme(t: ThemeMode): "dark" | "light" {
 function apply(a: Appearance): void {
   current = a;
   const root = document.documentElement;
-  root.setAttribute("data-theme", resolveTheme(a.theme));
+  const theme = resolveTheme(a.theme);
+  root.setAttribute("data-theme", theme);
+  // 贴纸风格（立体感/扁平）：CSS 用 [data-sticker-style="flat"] 抹平所有立体效果。
+  root.setAttribute("data-sticker-style", a.sticker_style);
+  // 贴纸底色：内联设 --cc-bg-rgb（天然盖过 :root[data-theme=light] 的默认值），随生效主题取深/浅一套。
+  root.style.setProperty("--cc-bg-rgb", stickerBgRgb(a.sticker_color, theme));
   // 不透明度下限与 UI 一致（25–100）：放低下限以便配合系统 acrylic 透出更明显的模糊桌面；
   // 仍留 25% 底，避免手改 settings.json 为极小值时渲染出全透明的空底板。
   root.style.setProperty("--cc-opacity", String(clampPct(a.opacity, 25, 100) / 100));
@@ -46,6 +84,8 @@ function pick(s: Partial<Settings> | null | undefined): Appearance {
     theme: s?.theme ?? DEFAULTS.theme,
     opacity: s?.opacity ?? DEFAULTS.opacity,
     ui_scale: s?.ui_scale ?? DEFAULTS.ui_scale,
+    sticker_style: s?.sticker_style ?? DEFAULTS.sticker_style,
+    sticker_color: s?.sticker_color ?? DEFAULTS.sticker_color,
   };
 }
 

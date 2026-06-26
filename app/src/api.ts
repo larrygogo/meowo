@@ -122,11 +122,16 @@ export type Settings = {
   terminal_open_mode: TerminalOpenMode;
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
+  /** 贴纸风格：elevated = 立体感（默认）/ flat = 扁平。 */
+  sticker_style: StickerStyle;
+  /** 贴纸底色预设 key（classic/slate/moss/plum/rose/amber）。 */
+  sticker_color: string;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";
 export type TerminalOpenMode = "card" | "button";
+export type StickerStyle = "elevated" | "flat";
 
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
 export function availableTerminals(): Promise<ResumeTerminal[]> {

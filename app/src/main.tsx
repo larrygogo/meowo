@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { About } from "./views/About";
+import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
 import { bootAppearance } from "./appearance";
 import { detectHostOs } from "./platform";
@@ -40,7 +41,10 @@ bootAppearance({ scale: label !== "about" });
 void detectHostOs().then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
-      <I18nProvider>{label === "about" ? <About /> : <App />}</I18nProvider>
+      <I18nProvider>
+        {label === "about" ? <About /> : <App />}
+        <TooltipLayer />
+      </I18nProvider>
     </React.StrictMode>,
   );
 });

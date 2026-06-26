@@ -1385,12 +1385,50 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     }
 }
 
-/// 托盘右键菜单（设置 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
+/// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/置顶/聚焦。
+/// 折叠态的「展开 + 还原正常尺寸」由前端在调用本命令前完成（snap_restore），故这里只按当前尺寸居中。
+#[tauri::command]
+fn recall_center(window: tauri::WebviewWindow) -> Result<(), String> {
+    let _ = window.unminimize();
+    let _ = window.show();
+    // 优先主显示器（找回的「家」最可预期）；取不到回退当前屏。
+    let monitor = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.current_monitor().ok().flatten());
+    if let Some(m) = monitor {
+        let wa = m.work_area();
+        let sz = window.outer_size().map_err(|e| e.to_string())?;
+        let x = wa.position.x + (wa.size.width as i32 - sz.width as i32) / 2;
+        let y = wa.position.y + (wa.size.height as i32 - sz.height as i32) / 2;
+        window
+            .set_position(tauri::PhysicalPosition::new(x, y))
+            .map_err(|e| e.to_string())?;
+    }
+    window.set_always_on_top(true).map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// 托盘「找回贴纸」：唤起主窗口并通知前端执行完整找回（展开折叠 + 居中到主屏 + 置顶）。
+#[cfg(not(target_os = "macos"))]
+fn recall_sticker(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.emit("recall-sticker", ());
+    }
+}
+
+/// 托盘右键菜单（找回贴纸 / 设置 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
 #[cfg(not(target_os = "macos"))]
 fn build_tray_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let recall = MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "tray.quit")).build(app)?;
-    MenuBuilder::new(app).items(&[&settings, &quit]).build()
+    MenuBuilder::new(app).items(&[&recall, &settings, &quit]).build()
 }
 
 /// 切语言后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
@@ -1427,6 +1465,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         // 左键留给「打开设置」，菜单仅在右键弹出。
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
+            "recall" => recall_sticker(app),
             "settings" => open_settings_window(app),
             "quit" => app.exit(0),
             _ => {}
@@ -1662,6 +1701,7 @@ pub fn run() {
             get_settings,
             set_settings,
             open_settings,
+            recall_center,
             open_url,
             snap_collapse,
             snap_expand,

@@ -496,9 +496,11 @@ html, body {
 }
 .run-mask {
   position: absolute;
-  inset: 1.6px;
-  border-radius: 11.5px;
-  background: #000; /* 与 .stk-ind 黑底一致，只留外圈 1.6px 边框可见 */
+  /* 与 .run-badge(圆角 13) 严格同心：内圆角 = 外圆角 − inset = 13 − 2 = 11，光环四周等宽、
+     拐角圆润度与外框一致（旧值 inset 1.6 / r 11.5 非整数，拐角发胖且小数在非整 DPI 下渲染发糊）。 */
+  inset: 2px;
+  border-radius: 11px;
+  background: #000; /* 与 .stk-ind 黑底一致，只留外圈 2px 边框可见 */
 }
 .run-core {
   position: absolute;
@@ -1192,3 +1194,123 @@ html, body {
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+
+/* 贴纸颜色色板：一排可点圆色块（鲜亮代表色），选中加 accent 描边圈。在设置窗渲染，
+   不受 data-sticker-style 影响，外观恒定。 */
+.swatches { flex: none; display: inline-flex; gap: 8px; }
+.swatch {
+  width: 22px; height: 22px; flex: none;
+  border-radius: 50%; padding: 0; appearance: none; cursor: pointer;
+  border: 2px solid transparent;
+  /* 细内描边：浅色 swatch 落在深色设置底上也有边界，不糊成一团。 */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  transition: transform 0.12s, border-color 0.12s;
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+.swatch.sel { border-color: var(--cc-accent); }
+
+/* ===== 扁平风（data-sticker-style="flat"）：抹平所有立体投影/内高光/凹凸，仅留 1px 描边 + 纯色面。
+   均为贴纸专属类，天然不波及设置窗口的 .row-card 等。带 light 变体的元素需用
+   [data-theme="light"][data-sticker-style="flat"] 双属性选择器（特异度 0,4,0）盖过
+   :root[data-theme="light"] X 的材质覆盖（0,3,0）。 ===== */
+/* 卡片/底栏立体投影：直接清零驱动变量（含 hover）。双属性版盖过浅色主题对该变量的重定义。 */
+:root[data-sticker-style="flat"],
+:root[data-sticker-style="flat"][data-theme="light"] {
+  --card-elev: none;
+  --card-elev-hover: none;
+}
+/* 卡片 hover 不再上浮 */
+:root[data-sticker-style="flat"] .stk-card:hover { transform: none; }
+/* 状态徽标黑块：去渐变/凹陷阴影，改半透明纯色面 + 描边（RunBadge 仍铺满其上，运行态不受影响）。 */
+:root[data-sticker-style="flat"] .stk-ind,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-ind {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--cc-border);
+  box-shadow: none;
+}
+:root[data-sticker-style="flat"][data-theme="light"] .stk-ind { background: rgba(0, 0, 0, 0.08); }
+/* tab 分段槽 + 滑块：去内凹/凸起立体，改纯色面 */
+:root[data-sticker-style="flat"] .tabseg,
+:root[data-sticker-style="flat"][data-theme="light"] .tabseg {
+  background: var(--cc-surface);
+  box-shadow: none;
+}
+:root[data-sticker-style="flat"] .tabseg-slider,
+:root[data-sticker-style="flat"][data-theme="light"] .tabseg-slider {
+  background: var(--cc-surface-hover);
+  box-shadow: none;
+}
+/* 底栏图标按钮：去凸起；按下/置顶激活态改纯色面（不再凹陷阴影） */
+:root[data-sticker-style="flat"] .stk-act,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-act {
+  background: var(--cc-surface);
+  box-shadow: none;
+}
+:root[data-sticker-style="flat"] .stk-act:active,
+:root[data-sticker-style="flat"] .stk-pin-on,
+:root[data-sticker-style="flat"] .stk-pin-on:hover,
+:root[data-sticker-style="flat"] .stk-pin-on:active,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-act:active,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-pin-on,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-pin-on:hover,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-pin-on:active {
+  background: var(--cc-surface-hover);
+  box-shadow: none;
+}
+/* 用量读数屏 + 液柱轨道：去内陷，改纯色凹槽面 */
+:root[data-sticker-style="flat"] .stk-uscreen,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-uscreen {
+  background: var(--cc-surface);
+  box-shadow: none;
+}
+:root[data-sticker-style="flat"] .stk-utrack,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-utrack {
+  background: var(--cc-border);
+  box-shadow: none;
+}
+:root[data-sticker-style="flat"] .stk-ufill { box-shadow: none; }
+/* 雕刻质感文字阴影（tab / 用量读数）：去掉，纯平文字 */
+:root[data-sticker-style="flat"] .stab,
+:root[data-sticker-style="flat"][data-theme="light"] .stab,
+:root[data-sticker-style="flat"] .stk-ulabel,
+:root[data-sticker-style="flat"] .stk-uval,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-ulabel,
+:root[data-sticker-style="flat"][data-theme="light"] .stk-uval {
+  text-shadow: none;
+}
+/* 吸边缩略条：去外投影/内高光；LED 圆点去顶部高光 */
+:root[data-sticker-style="flat"] .cstrip {
+  box-shadow: none;
+  border: 1px solid var(--cc-border);
+}
+:root[data-sticker-style="flat"] .cstrip-dot { box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25); }
+
+/* ===== 全局自定义提示框（替代原生 title）：主题表面色软框，圆角 + 细描边 + 柔阴影 + 淡入。
+   由 Tooltip.tsx 控制位置，position:fixed 穿透 overflow。底色取不透明表面（同下拉菜单 .dd-menu），
+   不用半透明 --cc-surface 以免透出底下内容。 ===== */
+.tip {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  max-width: 240px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--cc-text);
+  background: #2e2e2c;
+  border: 1px solid var(--cc-border);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+  white-space: normal;
+  word-break: break-word;
+  animation: tip-in 0.12s ease-out;
+}
+:root[data-theme="light"] .tip {
+  background: #fff;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.16);
+}
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}

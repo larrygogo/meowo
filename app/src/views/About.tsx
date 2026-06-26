@@ -3,8 +3,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode } from "../api";
+import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type StickerStyle } from "../api";
 import { getAccount, refreshUsage, type AccountPayload, type Usage } from "../api";
+import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
@@ -33,6 +34,8 @@ const SETTINGS_DEFAULTS: Settings = {
   language: "auto",
   terminal_open_mode: "card",
   preview_enabled: true,
+  sticker_style: "elevated",
+  sticker_color: "classic",
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -240,7 +243,7 @@ function AccountSection() {
       <div className="provider-usage">
         <div className="usage-bar-head">
           <span className="usage-card-title">{t.account.quota}</span>
-          <button className="icon-btn" title={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
+          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
             <RefreshIcon spinning={refreshing} />
           </button>
         </div>
@@ -249,7 +252,6 @@ function AccountSection() {
             <UsageBar label={t.account.quota5h} win={usage.five_hour} />
             <UsageBar label={t.account.quota7d} win={usage.seven_day} />
             <UsageBar label={t.account.quotaOpus} win={usage.seven_day_opus} />
-            <UsageBar label={t.account.quotaSonnet} win={usage.seven_day_sonnet} />
             {usage.extra_usage_enabled && <div className="usage-extra">{t.account.extraUsage}</div>}
             {usageErr && <div className="usage-stale">{t.account.refreshFailed}</div>}
           </>
@@ -504,10 +506,67 @@ function Segmented<T extends string | number>({
   );
 }
 
+// 贴纸颜色色板：一排圆色块（鲜亮代表色），选中加高亮描边圈；点选即换。语义上单选，用 radiogroup/radio。
+function SwatchPicker({
+  value,
+  onChange,
+  label,
+  names,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  names: Record<string, string>;
+}) {
+  return (
+    <div className="swatches" role="radiogroup" aria-label={label}>
+      {STICKER_COLOR_KEYS.map((k) => (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={k === value}
+          tabIndex={k === value ? 0 : -1}
+          key={k}
+          className={"swatch" + (k === value ? " sel" : "")}
+          style={{ background: STICKER_COLORS[k].swatch }}
+          data-tip={names[k] ?? k}
+          aria-label={names[k] ?? k}
+          onClick={() => onChange(k)}
+          onKeyDown={(e) => {
+            const handledKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", " ", "Enter"];
+            if (!handledKeys.includes(e.key)) return;
+            e.preventDefault();
+
+            const cur = STICKER_COLOR_KEYS.indexOf(k);
+            const next =
+              e.key === "Home"
+                ? 0
+                : e.key === "End"
+                  ? STICKER_COLOR_KEYS.length - 1
+                  : e.key === "ArrowLeft" || e.key === "ArrowUp"
+                    ? (cur - 1 + STICKER_COLOR_KEYS.length) % STICKER_COLOR_KEYS.length
+                    : (cur + 1) % STICKER_COLOR_KEYS.length;
+
+            const nextKey = STICKER_COLOR_KEYS[next];
+            if (nextKey) onChange(nextKey);
+
+            const radios = Array.from(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[role=radio]") ?? []);
+            radios[next]?.focus();
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 const themeOptions = (t: Dict): { value: ThemeMode; label: string }[] => [
   { value: "dark", label: t.settings.themeDark },
   { value: "light", label: t.settings.themeLight },
   { value: "system", label: t.settings.themeSystem },
+];
+const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] => [
+  { value: "elevated", label: t.settings.styleElevated },
+  { value: "flat", label: t.settings.styleFlat },
 ];
 const densityOptions = (t: Dict): { value: number; label: string }[] => [
   { value: 90, label: t.settings.densityCompact },
@@ -523,6 +582,8 @@ function AppearanceSection() {
   const theme = settings?.theme ?? "dark";
   const opacity = settings?.opacity ?? 94;
   const uiScale = settings?.ui_scale ?? 100;
+  const stickerStyle = settings?.sticker_style ?? "elevated";
+  const stickerColor = settings?.sticker_color ?? "classic";
   // 钳到 [0,100]：手改 settings.json 为越界值时，避免算出负/超界的 linear-gradient 填充宽度。
   const fill = Math.max(0, Math.min(100, ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100));
   return (
@@ -541,6 +602,20 @@ function AppearanceSection() {
             <div className="row-desc">{t.settings.densityDesc}</div>
           </div>
           <Segmented value={uiScale} options={densityOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.density} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.stickerStyle}</div>
+            <div className="row-desc">{t.settings.stickerStyleDesc}</div>
+          </div>
+          <Segmented value={stickerStyle} options={stickerStyleOptions(t)} onChange={(v) => patch({ sticker_style: v })} label={t.settings.stickerStyle} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.stickerColor}</div>
+            <div className="row-desc">{t.settings.stickerColorDesc}</div>
+          </div>
+          <SwatchPicker value={stickerColor} onChange={(v) => patch({ sticker_color: v })} label={t.settings.stickerColor} names={t.settings.colorNames} />
         </div>
         <div className="row row-col">
           <div className="row-head">
@@ -688,7 +763,7 @@ export function About() {
 
       <main className="main">
         <div className="main-bar" data-tauri-drag-region>
-          <button className="winclose" title={t.settings.close} onClick={close} aria-label={t.settings.close}>
+          <button className="winclose" data-tip={t.settings.close} onClick={close} aria-label={t.settings.close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />

@@ -1,0 +1,103 @@
+// 全局自定义提示框：替代原生 title 那个迟钝又难看的系统提示。
+// 单例挂在文档根，position:fixed 穿透 .stk-scroll/.sticker 等 overflow 裁剪；事件委托读元素的
+// data-tip 文案，悬停 ~320ms 后在元素附近淡入，默认下方、放不下翻上方，左右夹在窗口内。
+// 两个窗口（贴纸 main、设置 about）在 main.tsx 各挂一个即可。
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+
+const SHOW_DELAY = 320; // 悬停多久才弹：原生 title 约 500ms 偏迟钝，这里稍快更跟手
+const GAP = 7; // 提示框与锚点元素的垂直间距
+const MARGIN = 6; // 距窗口边的最小余量（贴纸窗仅 360px 宽，需夹边防溢出）
+
+type Tip = { text: string; rect: DOMRect } | null;
+
+export function TooltipLayer() {
+  const [tip, setTip] = useState<Tip>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLElement | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const clear = () => {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = undefined;
+      }
+    };
+    const hide = () => {
+      clear();
+      anchor.current = null;
+      setTip(null);
+    };
+    // 最近的带非空 data-tip 的祖先（嵌套 data-tip 时内层优先）。
+    const tipEl = (t: EventTarget | null): HTMLElement | null => {
+      if (!(t instanceof Element)) return null;
+      const el = t.closest<HTMLElement>("[data-tip]");
+      return el && el.getAttribute("data-tip") ? el : null;
+    };
+    const onOver = (e: MouseEvent) => {
+      const el = tipEl(e.target);
+      if (!el || el === anchor.current) return;
+      anchor.current = el;
+      clear();
+      setTip(null); // 先撤掉上一个，切换元素时不串显旧文案
+      timer.current = window.setTimeout(() => {
+        if (anchor.current !== el) return;
+        setTip({ text: el.getAttribute("data-tip") || "", rect: el.getBoundingClientRect() });
+      }, SHOW_DELAY);
+    };
+    const onOut = (e: MouseEvent) => {
+      const el = tipEl(e.target);
+      if (!el || el !== anchor.current) return;
+      const to = e.relatedTarget;
+      if (to instanceof Node && el.contains(to)) return; // 移入自身子节点不算离开
+      hide();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") hide();
+    };
+    document.addEventListener("mouseover", onOver);
+    document.addEventListener("mouseout", onOut);
+    document.addEventListener("keydown", onKey);
+    // 位置是一次性测量的：滚动/点击/窗口失焦后会与锚点错位，直接收起。
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("blur", hide);
+    document.addEventListener("mousedown", hide);
+    return () => {
+      clear();
+      document.removeEventListener("mouseover", onOver);
+      document.removeEventListener("mouseout", onOut);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("blur", hide);
+      document.removeEventListener("mousedown", hide);
+    };
+  }, []);
+
+  // 量好提示框尺寸后定位（useLayoutEffect 在绘制前执行，首帧即落到正确位置，无左上角闪现）：
+  // 默认锚点下方居中，下方放不下且上方够则翻到上方，最后左右上下都夹在窗口内。
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!tip || !box) return;
+    const { rect } = tip;
+    const bw = box.offsetWidth;
+    const bh = box.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = rect.left + rect.width / 2 - bw / 2;
+    left = Math.max(MARGIN, Math.min(left, vw - bw - MARGIN));
+    const below = rect.bottom + GAP;
+    const above = rect.top - GAP - bh;
+    let top = below;
+    if (below + bh > vh - MARGIN && above >= MARGIN) top = above;
+    top = Math.max(MARGIN, Math.min(top, vh - bh - MARGIN));
+    box.style.left = `${Math.round(left)}px`;
+    box.style.top = `${Math.round(top)}px`;
+  }, [tip]);
+
+  if (!tip) return null;
+  return (
+    <div ref={boxRef} className="tip" role="tooltip" style={{ left: 0, top: 0 }}>
+      {tip.text}
+    </div>
+  );
+}
