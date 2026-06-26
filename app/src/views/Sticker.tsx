@@ -81,18 +81,18 @@ function StarIcon({ starred }: { starred: boolean }) {
 }
 
 function AgentMark({ provider }: { provider?: string }) {
-  // Moonshot（Kimi 母公司）球体标：横条纹组成球体、右上一道缺口；与 Claude logomark 一样
-  // 走 accent 单色，随连接状态着色。条宽沿圆周变化（圆心 12,12 / r≈10），上两条右端缩短成缺口。
+  // Kimi 官方 logo：黑圆角方块 + 白「K」+ 右上亮蓝点。固定品牌色（不随主题/连接态变），
+  // 像枚迷你 app 图标——连接状态由卡片左侧状态块表达，这里只作 provider 品牌标识。
   if (provider === "kimi") {
     return (
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-        <line x1="6" y1="4.8" x2="14" y2="4.8" />
-        <line x1="3.2" y1="7.9" x2="17.5" y2="7.9" />
-        <line x1="2.1" y1="11" x2="21.9" y2="11" />
-        <line x1="2.1" y1="13.8" x2="21.9" y2="13.8" />
-        <line x1="3.6" y1="16.6" x2="20.4" y2="16.6" />
-        <line x1="6.6" y1="19.6" x2="18" y2="19.6" />
+      <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#0a0a0c" />
+        <g fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 6.5v11" />
+          <path d="M8 12.5 14 7" />
+          <path d="M8 11.5 15.5 17.5" />
+        </g>
+        <circle cx="16.6" cy="6.6" r="1.7" fill="#1478f0" />
       </svg>
     );
   }
