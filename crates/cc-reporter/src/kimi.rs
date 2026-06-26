@@ -22,6 +22,26 @@ fn kimi_share_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".kimi-code"))
 }
 
+/// kimi 可执行的绝对路径（~/.kimi-code/bin/kimi[.exe]）；找不到回退裸名 "kimi"（依赖 PATH）。
+/// resume 用：cc-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先用绝对路径，
+/// 避免 wt/powershell「系统找不到指定的文件」。
+pub fn kimi_exe() -> String {
+    let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
+    let mut cands: Vec<PathBuf> = Vec::new();
+    if let Some(d) = kimi_share_dir() {
+        cands.push(d.join("bin").join(bin));
+    }
+    // KIMI_SHARE_DIR 可能改了数据目录，但 bin 通常仍在 ~/.kimi-code/bin，单列一条兜底。
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        cands.push(PathBuf::from(home).join(".kimi-code").join("bin").join(bin));
+    }
+    cands
+        .into_iter()
+        .find(|p| p.exists())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "kimi".to_string())
+}
+
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
 fn session_dir(session_id: &str) -> Option<PathBuf> {
     let idx = kimi_share_dir()?.join("session_index.jsonl");

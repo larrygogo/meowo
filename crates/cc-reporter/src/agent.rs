@@ -63,7 +63,8 @@ impl Agent for KimiAgent {
         false
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
-        vec!["kimi".into(), "-r".into(), session_id.into()]
+        // 用 kimi 可执行绝对路径（spawned 终端 PATH 未必含 kimi）。
+        vec![crate::kimi::kimi_exe(), "-r".into(), session_id.into()]
     }
 }
 
@@ -121,6 +122,9 @@ mod tests {
     #[test]
     fn resume_args_per_provider() {
         assert_eq!(for_provider("claude").resume_args("ID"), vec!["claude", "--resume", "ID"]);
-        assert_eq!(for_provider("kimi").resume_args("ID"), vec!["kimi", "-r", "ID"]);
+        // kimi 首元素是可执行(绝对路径或回退裸名)，参数固定 -r <id>。
+        let kimi = for_provider("kimi").resume_args("ID");
+        assert_eq!(&kimi[1..], ["-r".to_string(), "ID".to_string()]);
+        assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
     }
 }
