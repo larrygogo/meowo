@@ -1,9 +1,9 @@
-/// 抓取「拥有本进程的 Claude Code 会话」PID。
+/// 抓取「拥有本进程的 agent 会话」PID（claude 或 kimi-code）。
 ///
-/// hook 由 claude 触发，但 reporter 的直接父进程往往是一闪而过的包装进程
+/// hook 由 agent 触发，但 reporter 的直接父进程往往是一闪而过的包装进程
 /// （Windows: cmd/conhost/某 launcher；Unix: 可能经 sh -c）。hook 跑完就退出——它的 PID 不稳定。
-/// 所以**向上遍历进程树，返回第一个进程名为 claude 的祖先**（= 会话本体 claude，终端关掉才会退出）。
-/// 精确匹配进程名（非子串），避免名字恰好含 "claude" 的包装进程被误认。
+/// 所以**向上遍历进程树，返回第一个进程名为 claude/kimi 的祖先**（= 会话本体，终端关掉才会退出）。
+/// 精确匹配进程名（非子串），避免名字恰好含 "claude"/"kimi" 的包装进程被误认。
 /// 找不到则返回 None（宁可不记 PID，也不记错的）。
 #[cfg(target_os = "windows")]
 pub fn owner_pid() -> Option<u32> {
@@ -19,7 +19,7 @@ pub fn owner_pid() -> Option<u32> {
             .process(parent)
             .map(|p| p.name().to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
-        if is_claude_name(&name) {
+        if is_agent_name(&name) {
             return Some(parent.as_u32());
         }
         cur = parent;
@@ -27,10 +27,10 @@ pub fn owner_pid() -> Option<u32> {
     None
 }
 
-/// 进程名是否就是 claude 本体（取 basename 后精确比较，已小写）。
-fn is_claude_name(name: &str) -> bool {
+/// 进程名是否是受支持的 agent 本体（claude 或 kimi-code）。取 basename 后精确比较（已小写）。
+fn is_agent_name(name: &str) -> bool {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    base == "claude" || base == "claude.exe"
+    matches!(base, "claude" | "claude.exe" | "kimi" | "kimi.exe")
 }
 
 /// Unix（macOS/Linux）实现：用 `ps` 上溯进程树，而非 sysinfo。
@@ -46,7 +46,7 @@ pub fn owner_pid() -> Option<u32> {
         if pid <= 1 {
             return None; // 到 launchd/init 边界仍没找到 claude
         }
-        if ps_comm(pid).is_some_and(|c| is_claude_name(&c.to_ascii_lowercase())) {
+        if ps_comm(pid).is_some_and(|c| is_agent_name(&c.to_ascii_lowercase())) {
             return Some(pid);
         }
         pid = ps_ppid(pid)?;
