@@ -81,15 +81,18 @@ function StarIcon({ starred }: { starred: boolean }) {
 }
 
 function AgentMark({ provider }: { provider?: string }) {
-  // Kimi 品牌「K」字标 + 右上圆点；与 Claude logomark 一样走 accent 单色（随连接状态着色）。
+  // Moonshot（Kimi 母公司）球体标：横条纹组成球体、右上一道缺口；与 Claude logomark 一样
+  // 走 accent 单色，随连接状态着色。条宽沿圆周变化（圆心 12,12 / r≈10），上两条右端缩短成缺口。
   if (provider === "kimi") {
     return (
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M7.5 4v16" />
-        <path d="M7.5 12.5 15 5" />
-        <path d="M7.5 11.5 16.5 20.5" />
-        <circle cx="17.6" cy="4.4" r="1.8" fill="currentColor" stroke="none" />
+        strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <line x1="6" y1="4.8" x2="14" y2="4.8" />
+        <line x1="3.2" y1="7.9" x2="17.5" y2="7.9" />
+        <line x1="2.1" y1="11" x2="21.9" y2="11" />
+        <line x1="2.1" y1="13.8" x2="21.9" y2="13.8" />
+        <line x1="3.6" y1="16.6" x2="20.4" y2="16.6" />
+        <line x1="6.6" y1="19.6" x2="18" y2="19.6" />
       </svg>
     );
   }
