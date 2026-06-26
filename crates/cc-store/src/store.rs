@@ -498,6 +498,17 @@ impl Store {
         Ok(())
     }
 
+    /// 复活被误判收尾的会话：仅当当前为 ended 时，置回 running 并清 ended_at、刷新时间。
+    /// 用于「会话曾因 pid 未被认作存活而被 reap 成 ended，但用户其实还在该会话里继续发言」的自愈。
+    pub fn revive_if_ended(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET status='running', ended_at=NULL, last_event_at=?1 \
+             WHERE id=?2 AND status='ended'",
+            rusqlite::params![now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
     /// 结束会话：状态设为 ended，记录 ended_at。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(

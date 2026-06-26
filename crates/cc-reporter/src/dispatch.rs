@@ -15,6 +15,8 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
+                // 用户在已被误清成 ended 的会话里继续发言 → 复活（kimi 的 pid 曾不被 app 认作存活而被 reap）。
+                store.revive_if_ended(sid, now_ms)?;
                 store.clear_pending_review(sid)?;
                 if let Some(prompt) = ev.prompt_text() {
                     store.on_user_prompt(sid, &prompt, now_ms)?;

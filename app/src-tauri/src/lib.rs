@@ -132,7 +132,7 @@ fn live_sessions_blocking(
         RefreshKind::new().with_processes(ProcessRefreshKind::new()),
     );
     #[cfg(target_os = "windows")]
-    let is_claude = |pid: i64| pid_is_claude(&sys, pid);
+    let is_claude = |pid: i64| pid_is_agent(&sys, pid);
     #[cfg(not(target_os = "windows"))]
     let claude_pids = claude_pids_snapshot();
     #[cfg(not(target_os = "windows"))]
@@ -919,15 +919,20 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
 /// pid 对应的进程是否确实是 claude。
 ///
 /// Windows 会复用 pid：会话结束后它的旧 pid 可能被别的进程（如 esbuild）占用，
-/// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。按进程名含 "claude" 甄别。
-fn pid_is_claude(sys: &System, pid: i64) -> bool {
+/// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。按进程名含 "claude"/"kimi" 甄别
+/// （与 cc-reporter::owner_pid 认的 agent 一致——否则 kimi 会话的 kimi.exe pid 不被认，
+/// 既显示断开、又被 reap 误清成 ended）。
+fn pid_is_agent(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
     #[cfg(target_os = "windows")]
     {
         sys.process(Pid::from_u32(pid as u32))
-            .map(|p| p.name().to_string_lossy().to_ascii_lowercase().contains("claude"))
+            .map(|p| {
+                let n = p.name().to_string_lossy().to_ascii_lowercase();
+                n.contains("claude") || n.contains("kimi")
+            })
             .unwrap_or(false)
     }
     // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
@@ -942,9 +947,8 @@ fn pid_is_claude(sys: &System, pid: i64) -> bool {
         else {
             return false;
         };
-        String::from_utf8_lossy(&out.stdout)
-            .to_ascii_lowercase()
-            .contains("claude")
+        let c = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        c.contains("claude") || c.contains("kimi")
     }
 }
 
@@ -964,7 +968,8 @@ fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
         let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
         // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
         let comm = it.collect::<Vec<_>>().join(" ");
-        if comm.to_ascii_lowercase().contains("claude") {
+        let cl = comm.to_ascii_lowercase();
+        if cl.contains("claude") || cl.contains("kimi") {
             set.insert(pid);
         }
     }
@@ -982,7 +987,7 @@ fn reap_and_alive_ids(store: &Store, sys: &System, now_ms: i64) -> (Vec<i64>, us
     for (id, pid, _) in store.live_session_liveness().unwrap_or_default() {
         match pid {
             Some(p) if p > 0 => {
-                if pid_is_claude(sys, p) {
+                if pid_is_agent(sys, p) {
                     alive.push(id);
                 } else if store.end_session(id, now_ms).is_ok() {
                     reaped += 1; // 进程已死 / pid 被复用 → 收尾
@@ -1121,7 +1126,7 @@ fn spawn_liveness_watch(
                 let mut present: HashMap<String, String> = HashMap::new();
                 let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
                 for s in store.live_sessions().unwrap_or_default() {
-                    if s.session.status == "ended" || !pid_is_claude(&sys, s.pid.unwrap_or(0)) {
+                    if s.session.status == "ended" || !pid_is_agent(&sys, s.pid.unwrap_or(0)) {
                         continue;
                     }
                     let sid = s.session.cc_session_id.clone();
@@ -1832,7 +1837,7 @@ pub fn run() {
 mod tests {
     use super::{
         is_session_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
-        pid_is_claude, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
+        pid_is_agent, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
     use crate::snap::{
@@ -1874,15 +1879,15 @@ mod tests {
     }
 
     #[test]
-    fn pid_is_claude_rejects_non_claude_and_dead() {
+    fn pid_is_agent_rejects_non_claude_and_dead() {
         let sys =
             System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
         // 当前测试进程存在但不叫 claude → 不算连接（pid 复用防护）
-        assert!(!pid_is_claude(&sys, std::process::id() as i64));
+        assert!(!pid_is_agent(&sys, std::process::id() as i64));
         // 非法 / 已死的 pid
-        assert!(!pid_is_claude(&sys, 0));
-        assert!(!pid_is_claude(&sys, -1));
-        assert!(!pid_is_claude(&sys, 4_000_000_000));
+        assert!(!pid_is_agent(&sys, 0));
+        assert!(!pid_is_agent(&sys, -1));
+        assert!(!pid_is_agent(&sys, 4_000_000_000));
     }
 
     #[test]
