@@ -19,18 +19,12 @@ pub fn owner_pid() -> Option<u32> {
             .process(parent)
             .map(|p| p.name().to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
-        if is_agent_name(&name) {
+        if crate::agent::is_agent_process(&name) {
             return Some(parent.as_u32());
         }
         cur = parent;
     }
     None
-}
-
-/// 进程名是否是受支持的 agent 本体（claude 或 kimi-code）。取 basename 后精确比较（已小写）。
-fn is_agent_name(name: &str) -> bool {
-    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    matches!(base, "claude" | "claude.exe" | "kimi" | "kimi.exe")
 }
 
 /// Unix（macOS/Linux）实现：用 `ps` 上溯进程树，而非 sysinfo。
@@ -46,7 +40,7 @@ pub fn owner_pid() -> Option<u32> {
         if pid <= 1 {
             return None; // 到 launchd/init 边界仍没找到 claude
         }
-        if ps_comm(pid).is_some_and(|c| is_agent_name(&c.to_ascii_lowercase())) {
+        if ps_comm(pid).is_some_and(|c| crate::agent::is_agent_process(&c)) {
             return Some(pid);
         }
         pid = ps_ppid(pid)?;

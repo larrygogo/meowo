@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod dispatch;
 pub mod hook;
 pub mod import;

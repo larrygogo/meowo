@@ -12,7 +12,7 @@ function mk(over: Partial<Item> = {}): Item {
     task_title: "t",
     current_activity: null,
     column: "doing", todo_done: 0, todo_total: 0, todos: [],
-    pid: 1, connected: true, archived: false,
+    pid: 1, connected: true, archived: false, provider: "claude",
     ...over,
   } as Item;
 }

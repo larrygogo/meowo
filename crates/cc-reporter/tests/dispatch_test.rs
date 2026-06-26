@@ -326,6 +326,19 @@ fn provider_defaults_claude_and_kimi_is_tagged() {
 }
 
 #[test]
+fn activity_event_revives_mis_reaped_ended_session() {
+    // 会话被误清成 ended（如 app 的 reap 一度不认 kimi pid）后，任一活动事件都应复活，不只 UserPromptSubmit。
+    let store = Store::open_in_memory().unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"rv1","cwd":"/p"}"#), 100, "kimi").unwrap();
+    let sid = store.find_session_id_pub("rv1").unwrap().unwrap();
+    store.end_session(sid, 150).unwrap(); // 模拟被误 reap
+    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"rv1","cwd":"/p","tool_name":"Read"}"#), 200, "kimi").unwrap();
+    let s = store.live_sessions().unwrap().into_iter().find(|l| l.session.cc_session_id == "rv1").unwrap();
+    assert_eq!(s.session.status, "running");
+    assert_eq!(s.session.ended_at, None); // ended_at 被清，状态自洽
+}
+
+#[test]
 fn lazy_creates_session_on_prompt_when_session_start_missing() {
     // 模拟「hooks 中途装上」：没有 SessionStart，直接来 UserPromptSubmit（带 cwd）→ 应就地建会话。
     let store = Store::open_in_memory().unwrap();

@@ -575,7 +575,9 @@ html, body {
 .stk-repo { font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 元信息行：行首 agent 图标兼作连接状态指示（连接=accent，未连接=灰）；模型胶囊右对齐。 */
 .stk-agent { flex: none; display: inline-flex; align-items: center; color: var(--cc-accent-text); }
-.stk-agent-off { color: var(--cc-text-faint); }
+/* 断开态弱化：color 让 currentColor 的 Claude logomark 变灰；opacity 让固定品牌色的 kimi 徽标
+   也整体变暗（否则它不吃 color），两类图标离线观感一致。 */
+.stk-agent-off { color: var(--cc-text-faint); opacity: 0.5; }
 .stk-model { flex: none; margin-left: auto; font-size: calc(10px * var(--cc-ui)); line-height: 1.5; padding: 0 6px; border-radius: var(--r-sm); background: var(--cc-surface-hover); color: var(--cc-text-dim); white-space: nowrap; }
 /* sub 行：活动/错误文案 + （按钮模式）末尾的打开按钮 */
 .stk-subrow { display: flex; align-items: center; gap: 6px; margin-top: 7px; }

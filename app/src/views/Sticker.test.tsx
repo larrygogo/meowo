@@ -14,6 +14,7 @@ function mk(over: Partial<Item> = {}): Item {
     current_activity: "正在做点事",
     column: "doing", todo_done: 0, todo_total: 0, todos: [],
     pid: 1234, connected: true, archived: false, cwd: null, errored: false, error_label: null, error_raw: null,
+    provider: "claude",
     ...over,
   } as Item;
 }
@@ -327,5 +328,19 @@ describe("Sticker", () => {
     const repo = container.querySelector(".stk-repo") as HTMLElement;
     expect(repo?.textContent).toBe("autopilot");
     expect(repo?.getAttribute("data-tip")).toBe("larrygogo/autopilot");
+  });
+
+  it("kimi 会话用 Kimi Code 标签与 kimi 徽标(黑方块)，claude 用 Claude Code 标签且无方块", () => {
+    const { container } = render(<Sticker data={[mk({ provider: "kimi", project_name: "kimi-proj" })]} />);
+    const agent = container.querySelector(".stk-agent") as HTMLElement;
+    expect(agent.getAttribute("data-tip")).toBe(zh.sticker.agentKimiCode);
+    expect(agent.getAttribute("aria-label")).toBe(zh.sticker.agentKimiCode);
+    expect(agent.querySelector("svg rect")).toBeTruthy(); // kimi 徽标有黑圆角方块
+
+    cleanup();
+    const { container: c2 } = render(<Sticker data={[mk({ provider: "claude" })]} />);
+    const a2 = c2.querySelector(".stk-agent") as HTMLElement;
+    expect(a2.getAttribute("data-tip")).toBe(zh.sticker.agentClaudeCode);
+    expect(a2.querySelector("svg rect")).toBeNull(); // Claude logomark 无方块
   });
 });

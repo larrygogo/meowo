@@ -7,7 +7,7 @@
 //! 或 `type="context.append_message"` 且 `message.role="user"`——遇到即清空缓冲，使最终缓冲恰为
 //! 「最后一条用户输入之后的 AI 文本」。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// kimi 数据根：`KIMI_SHARE_DIR` 优先，否则 `~/.kimi-code`（迁移后的默认目录，非旧的 ~/.kimi）。
 fn kimi_share_dir() -> Option<PathBuf> {
@@ -106,14 +106,40 @@ pub fn parse_wire(content: &str) -> WireSummary {
     }
 }
 
+/// 小文件全量读的上限；超过则改头/尾有界读，避免长会话下每个 Stop 都全量读+解析（近 O(n²)）。
+const FULL_READ_CAP: u64 = 512 * 1024;
+/// 大文件时：头部读这么多取模型（config.update 在文件靠前），尾部读这么多取最近 AI 正文。
+const HEAD_BYTES: u64 = 16 * 1024;
+const TAIL_BYTES: u64 = 256 * 1024;
+
+/// 读文件 [offset, offset+len) 字节为 lossy UTF-8（边界处的半截行交给 parse_wire 跳过）。
+fn read_range(path: &Path, offset: u64, len: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let mut buf = Vec::with_capacity(len.min(TAIL_BYTES) as usize);
+    f.take(len).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// 读某 kimi 会话的 wire.jsonl 并解析（定位失败/读失败返回 None）。
+/// wire.jsonl 是只增的会话日志，长会话可达数 MB；模型在头部、最近 AI 正文在尾部，故大文件分别
+/// 头/尾有界读，small 文件仍一次全读。set_last_ai_text 本就截断 200 字，尾部窗口足够。
 pub fn read_summary(session_id: &str) -> Option<WireSummary> {
     let wire = session_dir(session_id)?
         .join("agents")
         .join("main")
         .join("wire.jsonl");
-    let content = std::fs::read_to_string(wire).ok()?;
-    Some(parse_wire(&content))
+    let size = std::fs::metadata(&wire).ok()?.len();
+    if size <= FULL_READ_CAP {
+        return Some(parse_wire(&std::fs::read_to_string(&wire).ok()?));
+    }
+    let head = read_range(&wire, 0, HEAD_BYTES).unwrap_or_default();
+    let tail = read_range(&wire, size.saturating_sub(TAIL_BYTES), TAIL_BYTES).unwrap_or_default();
+    Some(WireSummary {
+        model: parse_wire(&head).model,
+        last_ai: parse_wire(&tail).last_ai,
+    })
 }
 
 #[cfg(test)]

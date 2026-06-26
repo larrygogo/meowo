@@ -549,10 +549,19 @@ fn focus_session(
     }
 }
 
-/// 会话 id 是否为合法 UUID 形态（仅十六进制与连字符，长度 36）。
-/// 用于命令注入防护：通过校验即保证 id 不含引号/分号/空格等任何 shell/wt 元字符。纯函数。
+/// 会话 id 是否为合法 UUID 形态（仅十六进制与连字符，长度 36）。claude 专属操作（如 rename 写
+/// transcript）用此严格校验：kimi 的 `session_<uuid>` 不合 UUID 形态会被挡下、安全 no-op，不会误写
+/// claude transcript。用于命令注入防护：通过校验即保证 id 不含引号/分号/空格等任何 shell/wt 元字符。纯函数。
 fn is_session_id(s: &str) -> bool {
     s.len() == 36 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+}
+
+/// 可安全作为命令参数的会话 id：非空、≤128、仅 `[A-Za-z0-9_-]`（无引号/分号/空格等 shell/wt 元字符，
+/// 也无 `/`\`.` 杜绝路径穿越）。兼容 claude 的 UUID 与 kimi 的 `session_<uuid>`。resume 用此宽松校验。纯函数。
+fn is_safe_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// 把 `cwd` 收敛成「可安全传给 wt -d」的目录：必须非空、真实存在的目录，且不含会破坏 wt
@@ -688,11 +697,12 @@ fn safe_cwd(cwd: Option<&str>) -> Option<String> {
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
 ///
-/// 安全：`session_id` 严格校验为 UUID 形态（无空格/元字符）；wt 分支把 claude/--resume/id 作为**独立 argv**
-/// 传入；powershell/cmd 分支用 `current_dir` 传工作目录（不进命令串）、命令串只含已校验的 id，从源头杜绝注入。
+/// 恢复命令由 `provider` 决定（claude: `claude --resume <id>` / kimi: `kimi -r <id>`，见 agent::resume_args）。
+/// 安全：`session_id` 经 is_safe_id 校验（仅 `[A-Za-z0-9_-]`，无空格/元字符）；可执行名与参数来自受信的
+/// agent::resume_args（非用户输入）；wt 分支各 argv 独立传入，powershell/cmd 命令串只由这些受信片段拼成，从源头杜绝注入。
 #[tauri::command]
-fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String> {
-    if !is_session_id(&session_id) {
+fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> Result<(), String> {
+    if !is_safe_id(&session_id) {
         return Err("无效 session_id".into());
     }
     #[cfg(target_os = "windows")]
@@ -708,6 +718,8 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
             // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
             let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
             let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
+            // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
+            let resume = cc_reporter::agent::for_provider(&provider).resume_args(&session_id);
             // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
             let eff = match load_settings().resume_terminal.as_str() {
                 "powershell" => "powershell",
@@ -719,7 +731,7 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
                 // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
                 "powershell" => {
                     let mut c = Command::new("powershell");
-                    c.args(["-NoExit", "-Command", &format!("claude --resume {session_id}")]);
+                    c.args(["-NoExit", "-Command", &resume.join(" ")]);
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
@@ -728,7 +740,7 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
                 // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
                 "cmd" => {
                     let mut c = Command::new("cmd");
-                    c.args(["/k", &format!("claude --resume {session_id}")]);
+                    c.args(["/k", &resume.join(" ")]);
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
@@ -748,9 +760,7 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
                         args.push("-d".into());
                         args.push(d.clone());
                     }
-                    args.push("claude".into());
-                    args.push("--resume".into());
-                    args.push(session_id.clone());
+                    args.extend(resume.iter().cloned());
                     Command::new("wt").args(&args).spawn()
                 }
             };
@@ -762,6 +772,7 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
     }
     #[cfg(target_os = "macos")]
     {
+        let _ = &provider; // kimi 仅 Windows，macOS 恢复暂固定 claude；provider 留待未来 macOS 多 agent。
         // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
         // resolve_cwd 读 transcript、osascript 可能等 TCC 授权，整段放后台线程不挡主线程。
         std::thread::spawn(move || {
@@ -776,7 +787,7 @@ fn resume_session(cwd: Option<String>, session_id: String) -> Result<(), String>
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = cwd;
+        let _ = (cwd, provider);
         Err("当前平台不支持".into())
     }
 }
@@ -919,9 +930,9 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
 /// pid 对应的进程是否确实是 claude。
 ///
 /// Windows 会复用 pid：会话结束后它的旧 pid 可能被别的进程（如 esbuild）占用，
-/// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。按进程名含 "claude"/"kimi" 甄别
-/// （与 cc-reporter::owner_pid 认的 agent 一致——否则 kimi 会话的 kimi.exe pid 不被认，
-/// 既显示断开、又被 reap 误清成 ended）。
+/// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。故按进程名甄别是否仍是 agent 本体——
+/// 复用 cc_reporter::agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
+/// 与 owner_pid 写入侧同一事实源），避免子串误匹配（如名字恰含 kimi 的无关进程）。
 fn pid_is_agent(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
         return false;
@@ -929,10 +940,7 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
     #[cfg(target_os = "windows")]
     {
         sys.process(Pid::from_u32(pid as u32))
-            .map(|p| {
-                let n = p.name().to_string_lossy().to_ascii_lowercase();
-                n.contains("claude") || n.contains("kimi")
-            })
+            .map(|p| cc_reporter::agent::is_agent_process(&p.name().to_string_lossy()))
             .unwrap_or(false)
     }
     // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
@@ -947,8 +955,7 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
         else {
             return false;
         };
-        let c = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
-        c.contains("claude") || c.contains("kimi")
+        cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
     }
 }
 
@@ -968,8 +975,7 @@ fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
         let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
         // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
         let comm = it.collect::<Vec<_>>().join(" ");
-        let cl = comm.to_ascii_lowercase();
-        if cl.contains("claude") || cl.contains("kimi") {
+        if cc_reporter::agent::is_agent_process(&comm) {
             set.insert(pid);
         }
     }

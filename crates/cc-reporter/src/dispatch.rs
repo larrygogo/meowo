@@ -15,8 +15,6 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
-                // 用户在已被误清成 ended 的会话里继续发言 → 复活（kimi 的 pid 曾不被 app 认作存活而被 reap）。
-                store.revive_if_ended(sid, now_ms)?;
                 store.clear_pending_review(sid)?;
                 if let Some(prompt) = ev.prompt_text() {
                     store.on_user_prompt(sid, &prompt, now_ms)?;
@@ -49,19 +47,14 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
-                // Claude 的 Stop hook 直接带 AI 正文；kimi 不带且无 statusline → 从会话的 wire.jsonl
-                // 一次读出最近 AI 正文 + 模型（kimi 模型也无 statusline，顺便补进 session_context）。
-                if provider == "claude" {
-                    if let Some(msg) = ev.last_assistant_message.as_deref() {
-                        store.set_last_ai_text(sid, msg)?;
-                    }
-                } else if let Some(sum) = crate::kimi::read_summary(&ev.session_id) {
-                    if let Some(msg) = sum.last_ai {
-                        store.set_last_ai_text(sid, &msg)?;
-                    }
-                    if let Some(model) = sum.model {
-                        store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
-                    }
+                // 最近 AI 正文 + 模型由 agent 决定来源：claude 用 Stop hook 携带的正文（模型走 statusline）；
+                // kimi 的 Stop hook 不带，读会话 wire.jsonl 一次出正文 + 模型。
+                let out = crate::agent::for_provider(provider).stop_outputs(ev);
+                if let Some(msg) = out.last_ai {
+                    store.set_last_ai_text(sid, &msg)?;
+                }
+                if let Some(model) = out.model {
+                    store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
             }
@@ -100,9 +93,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
 }
 
 fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &str) -> Result<(), StoreError> {
-    // 非 Claude（如 kimi）暂不解析 transcript 标题：kimi 不给 transcript_path 且 JSONL 格式不同，
-    // 标题靠 UserPromptSubmit 的首条 prompt 命名（与 Claude 的占位回退同款）。kimi transcript 解析留 phase 2。
-    if provider != "claude" {
+    // 是否由 transcript 解析标题由 agent 决定：claude 是；kimi 否（不给 transcript_path 且 JSONL 格式不同，
+    // 标题靠 UserPromptSubmit 的首条 prompt 命名，与 Claude 的占位回退同款）。
+    if !crate::agent::for_provider(provider).resolves_transcript_title() {
         return Ok(());
     }
     // cwd 优先用事件携带的，否则回退到 SessionStart 时存进库的 cwd。
@@ -149,6 +142,9 @@ fn lookup_or_create(store: &Store, ev: &HookEvent, provider: &str, now_ms: i64) 
         return Ok(None);
     }
     if let Some(sid) = store.find_session_id_pub(&ev.session_id)? {
+        // 会话曾被误清成 ended（如 kimi 的 pid 一度不被 app 认作存活而被 reap），但仍有活动事件到来
+        // → 统一自愈复活（清 ended_at、置 running），不再只在 UserPromptSubmit 一条路径上修。
+        store.revive_if_ended(sid, now_ms)?;
         return Ok(Some(sid));
     }
     match ev.cwd.as_deref() {
