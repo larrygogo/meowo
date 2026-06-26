@@ -1,6 +1,7 @@
 pub mod dispatch;
 pub mod hook;
 pub mod import;
+pub mod kimi;
 pub mod proc;
 pub mod statusline;
 pub mod transcript;

@@ -49,8 +49,14 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
-                if let Some(msg) = ev.last_assistant_message.as_deref() {
-                    store.set_last_ai_text(sid, msg)?;
+                // Claude 的 Stop hook 直接带 AI 正文；kimi 不带 → 从会话的 wire.jsonl 读最近一条。
+                let ai = if provider == "claude" {
+                    ev.last_assistant_message.clone()
+                } else {
+                    crate::kimi::last_ai_text(&ev.session_id)
+                };
+                if let Some(msg) = ai {
+                    store.set_last_ai_text(sid, &msg)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
             }
