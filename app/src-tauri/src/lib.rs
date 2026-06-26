@@ -206,12 +206,51 @@ fn live_sessions_blocking(
     Ok(items)
 }
 
-/// 收集与 root_pid 同控制台组的进程 pid：root + 所有祖先 + 所有子孙。
+/// Toolhelp 进程快照：pid -> (父 pid, 可执行名小写)。只读元数据、不开任何进程句柄，数百进程通常
+/// 1-3ms。取代 sysinfo 全进程刷新——后者在 ProcessInner::new 里对每个进程无条件 OpenProcess+
+/// GetProcessTimes（与 ProcessRefreshKind 无关、关字段也省不掉），数百进程下 30-120ms。
+#[cfg(target_os = "windows")]
+fn snapshot_processes() -> std::collections::HashMap<u32, (u32, String)> {
+    use std::collections::HashMap;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut map: HashMap<u32, (u32, String)> = HashMap::new();
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return map;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                let end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name =
+                    String::from_utf16_lossy(&entry.szExeFile[..end]).to_ascii_lowercase();
+                map.insert(entry.th32ProcessID, (entry.th32ParentProcessID, name));
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    map
+}
+
+/// 收集与 root_pid 同控制台组的进程 pid：root + 所有祖先(上溯到终端宿主为止) + 所有子孙。
+/// 基于 Toolhelp 快照在内存里上溯/BFS，不做全进程句柄刷新（见 snapshot_processes）。
 #[cfg(target_os = "windows")]
 fn console_group_pids(root_pid: u32) -> HashSet<u32> {
-    let sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-    );
+    let snapshot = snapshot_processes();
     let mut set: HashSet<u32> = HashSet::new();
     set.insert(root_pid);
     // 祖先：向上到「终端宿主」为止。遇到桌面壳/系统进程(explorer/sihost/...)就停，
@@ -223,31 +262,28 @@ fn console_group_pids(root_pid: u32) -> HashSet<u32> {
     let terminal_host = [
         "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe",
     ];
-    let mut cur = Pid::from_u32(root_pid);
+    let mut cur = root_pid;
     for _ in 0..32 {
-        let Some(parent) = sys.process(cur).and_then(|p| p.parent()) else { break };
-        let pname = sys
-            .process(parent)
-            .map(|p| p.name().to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
+        let Some(&(ppid, _)) = snapshot.get(&cur) else { break };
+        if ppid == 0 {
+            break;
+        }
+        let pname = snapshot.get(&ppid).map(|(_, n)| n.as_str()).unwrap_or("");
         if boundary.iter().any(|s| pname == *s) {
             break; // 到桌面/系统边界，停止上溯且不纳入
         }
-        set.insert(parent.as_u32());
+        set.insert(ppid);
         if terminal_host.iter().any(|s| pname == *s) {
             break; // 已纳入终端宿主，不再继续上溯
         }
-        cur = parent;
+        cur = ppid;
     }
     // 子孙：只从 root 自身往下 BFS（不经过祖先），否则会把终端宿主的「其它标签页」全抓进来。
     let mut frontier = vec![root_pid];
     while let Some(x) = frontier.pop() {
-        for (pid, proc_) in sys.processes() {
-            if proc_.parent().map(|p| p.as_u32()) == Some(x) {
-                let u = pid.as_u32();
-                if set.insert(u) {
-                    frontier.push(u);
-                }
+        for (&pid, (ppid, _)) in &snapshot {
+            if *ppid == x && set.insert(pid) {
+                frontier.push(pid);
             }
         }
     }
@@ -284,6 +320,39 @@ fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Fo
         EnumWindows(Some(cb), &mut ctx as *mut Ctx as LPARAM);
     }
     ctx.found
+}
+
+/// 用纯 Win32 EnumWindows+GetClassNameW 收集所有可见的 Windows Terminal 顶层窗口 HWND(as isize)。
+/// 替代 UIA matcher 从桌面根逐节点跨进程爬树找窗口——后者默认 depth=7、每访问一个元素一次
+/// CurrentClassName RPC，几十~上百窗口累计可达数百 ms；本函数纯进程内，微秒级。
+#[cfg(target_os = "windows")]
+fn enum_wt_hwnds() -> Vec<isize> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, IsWindowVisible,
+    };
+
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        if IsWindowVisible(hwnd) == 0 {
+            return TRUE;
+        }
+        let mut buf = [0u16; 64];
+        let len = GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let cls = String::from_utf16_lossy(&buf[..len as usize]);
+            if cls == "CASCADIA_HOSTING_WINDOW_CLASS" {
+                let out = &mut *(lparam as *mut Vec<isize>);
+                out.push(hwnd as isize);
+            }
+        }
+        TRUE
+    }
+
+    let mut out: Vec<isize> = Vec::new();
+    unsafe {
+        EnumWindows(Some(cb), &mut out as *mut Vec<isize> as LPARAM);
+    }
+    out
 }
 
 /// claude 会把任务标题写进 Windows Terminal 标签页，并加一个**会随状态变化**的前缀符号：
@@ -334,26 +403,34 @@ fn tab_match_score(tab_name: &str, want: &str) -> u8 {
 #[cfg(target_os = "windows")]
 fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     use uiautomation::patterns::UISelectionItemPattern;
-    use uiautomation::types::{ControlType, TreeScope, UIProperty};
+    use uiautomation::types::{ControlType, Handle, TreeScope, UIProperty};
     use uiautomation::variants::Variant;
     use uiautomation::{UIAutomation, UIElement};
 
+    let t0 = std::time::Instant::now();
     let Ok(automation) = UIAutomation::new() else { return false };
-    let Ok(root) = automation.get_root_element() else { return false };
 
-    // 所有 Windows Terminal 顶层窗口（窗口类名固定）。timeout(0) 避免无匹配时阻塞重试。
-    let Ok(wt_windows) = automation
-        .create_matcher()
-        .from(root)
-        .classname("CASCADIA_HOSTING_WINDOW_CLASS")
-        .timeout(0)
-        .find_all()
-    else {
+    // WT 顶层窗口：先用纯 Win32 EnumWindows+GetClassNameW 直接拿 HWND（进程内、微秒级），再
+    // element_from_handle 只进入这几个窗口做 UIA。绕开 crate matcher 从桌面根逐节点 RPC 爬树
+    // （默认 depth=7、每节点一次 CurrentClassName 跨进程调用，几十~上百窗口下可达 50-300ms）。
+    let wt_windows: Vec<UIElement> = enum_wt_hwnds()
+        .into_iter()
+        .filter_map(|h| automation.element_from_handle(Handle::from(h)).ok())
+        .collect();
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[focus-timing] find_wt_windows {} wins {:?}",
+            wt_windows.len(),
+            t0.elapsed()
+        );
+    }
+    if wt_windows.is_empty() {
         return false;
-    };
+    }
 
-    // 用 UIA 原生 FindAll(Descendants, ControlType==TabItem)：进程内优化执行，快且不会爬进
-    // 终端文本树（crate 的 matcher 是 Rust 侧手动遍历，深度大时可能很慢）。
+    // 原生 FindAll(Descendants, ControlType==TabItem) 取标签页。注意：Descendants 的条件只过滤
+    // 返回集、不剪枝遍历，provider 仍会遍历整棵后代子树——若实测随终端滚动缓冲增长而变慢，可
+    // 进一步先定位 TabView 容器再 Children。当前主热点在窗口发现那步，故此处暂保持原生 FindAll。
     let Ok(tab_cond) = automation.create_property_condition(
         UIProperty::ControlType,
         Variant::from(ControlType::TabItem as i32),
@@ -362,52 +439,71 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
         return false;
     };
 
-    // 收集所有命中标签页：(匹配分, 所属窗口 pid, 标签页元素, 所属窗口元素)。先不算进程组。
-    let mut matches: Vec<(u8, u32, UIElement, UIElement)> = Vec::new();
-    for win in wt_windows {
-        let win_pid = win
-            .get_property_value(UIProperty::ProcessId)
-            .ok()
-            .and_then(|v| TryInto::<i32>::try_into(v).ok())
-            .map(|i| i as u32)
-            .unwrap_or(0);
+    // 选中标签页并置前其窗口；成功返回 true。复用于精确命中短路与消歧后命中。
+    let select_and_foreground = |tab: &UIElement, win: &UIElement| -> bool {
+        if let Ok(p) = tab.get_pattern::<UISelectionItemPattern>() {
+            let _ = p.select();
+        }
+        if let Ok(handle) = win.get_native_window_handle() {
+            let hwnd_isize: isize = handle.into();
+            force_foreground(hwnd_isize as windows_sys::Win32::Foundation::HWND);
+            return true;
+        }
+        false
+    };
+
+    let t1 = std::time::Instant::now();
+    // 收集 score==1 的弱候选用于消歧；遇到 score==2 唯一精确命中即立刻短路，不再遍历其余窗口/标签。
+    // 精确命中分支无需窗口 pid（省掉每窗口一次 ProcessId RPC），仅多个弱候选消歧时才取 pid。
+    let mut partial: Vec<(UIElement, UIElement)> = Vec::new();
+    for win in &wt_windows {
         let Ok(tabs) = win.find_all(TreeScope::Descendants, &tab_cond) else {
             continue;
         };
         for tab in tabs {
-            let score = tab_match_score(&tab.get_name().unwrap_or_default(), want);
-            if score > 0 {
-                matches.push((score, win_pid, tab, win.clone()));
+            match tab_match_score(&tab.get_name().unwrap_or_default(), want) {
+                2 => {
+                    if cfg!(debug_assertions) {
+                        eprintln!("[focus-timing] enum_tabs exact-hit {:?}", t1.elapsed());
+                    }
+                    if select_and_foreground(&tab, win) {
+                        return true;
+                    }
+                }
+                1 => partial.push((tab, win.clone())),
+                _ => {}
             }
         }
     }
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[focus-timing] enum_tabs done, {} partial {:?}",
+            partial.len(),
+            t1.elapsed()
+        );
+    }
 
-    let max_score = matches.iter().map(|m| m.0).max().unwrap_or(0);
-    if max_score == 0 {
+    // 无精确命中：唯一弱候选直接用；多个弱候选才扫进程组消歧（此时才付 ProcessId / 进程扫描代价）。
+    if partial.is_empty() {
         return false;
     }
-    // 只保留最高分候选。
-    matches.retain(|m| m.0 == max_score);
-    // 唯一候选直接用；多个同分时才扫进程组，优先选与本会话同进程组的窗口。
-    let idx = if matches.len() == 1 {
+    let idx = if partial.len() == 1 {
         0
     } else {
         let group = console_group_pids(root_pid);
-        matches.iter().position(|m| group.contains(&m.1)).unwrap_or(0)
+        partial
+            .iter()
+            .position(|(_, win)| {
+                win.get_property_value(UIProperty::ProcessId)
+                    .ok()
+                    .and_then(|v| TryInto::<i32>::try_into(v).ok())
+                    .map(|p| group.contains(&(p as u32)))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(0)
     };
-    let (_, _, tab, win) = &matches[idx];
-
-    // 选中该标签页（即使其窗口当前在后台也会切换激活标签页）。
-    if let Ok(p) = tab.get_pattern::<UISelectionItemPattern>() {
-        let _ = p.select();
-    }
-    // 置前其所属窗口（这一步也解决了多 WT 窗口共用 PID 时聚焦错窗口的问题）。
-    if let Ok(handle) = win.get_native_window_handle() {
-        let hwnd_isize: isize = handle.into();
-        force_foreground(hwnd_isize as windows_sys::Win32::Foundation::HWND);
-        return true;
-    }
-    false
+    let (tab, win) = &partial[idx];
+    select_and_foreground(tab, win)
 }
 
 /// 用 AttachThreadInput 绕过 Windows 后台进程 SetForegroundWindow 限制，可靠置顶目标窗口。
@@ -466,7 +562,15 @@ fn focus_session_terminal(pid: i64, title: Option<String>) {
             }
         }
         // 兜底：传统 conhost（每窗口独立进程）等场景，扫进程组按 PID 找顶层窗口置前。
+        let tf = std::time::Instant::now();
         let targets = console_group_pids(pid as u32);
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[focus-timing] fallback console_group_pids {} pids {:?}",
+                targets.len(),
+                tf.elapsed()
+            );
+        }
         if let Some(hwnd) = find_window_for_pids(&targets) {
             force_foreground(hwnd);
         }

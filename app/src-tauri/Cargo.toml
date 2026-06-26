@@ -29,7 +29,7 @@ ureq = { version = "2", features = ["json"] }
 sys-locale = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
 # 修正 auto-launch 写 Run 项时路径不加引号的问题（含空格路径会失败）：enable 后重写为带引号路径。
