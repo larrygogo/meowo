@@ -570,24 +570,40 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
 /// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。供 focus_session 命令与
 /// 「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
 #[cfg(target_os = "windows")]
-fn focus_session_terminal(pid: i64, title: Option<String>, title_based: bool) {
+fn focus_session_terminal(pid: i64, title: Option<String>, cwd: Option<String>, title_based: bool) {
     std::thread::spawn(move || {
-        // 仅会写标签标题的 agent（claude）走按标题精确切 WT 标签；codex/kimi 标签是默认目录名/命令名，
-        // 按任务标题找会错抓同名无关标签，跳过此步直接走窗口级定位。
-        if title_based {
-            if let Some(t) = title.as_deref() {
-                if focus_terminal_tab(pid as u32, t) {
-                    return;
-                }
+        // 按什么匹配 WT 标签：claude 把任务标题写进标签 → 用任务标题精确切；codex/kimi 不写标签标题，
+        // 其标签是 shell 默认显示的当前目录名 → 用 cwd 末段目录名匹配（如 cwd=C:\Users\larry → 标签
+        // "larry"）。focus_terminal_tab 内部仍按 root_pid 进程组消歧到本会话所属窗口。
+        let want = if title_based {
+            title
+        } else {
+            cwd_tab_hint(cwd.as_deref())
+        };
+        if let Some(w) = want.as_deref() {
+            if focus_terminal_tab(pid as u32, w) {
+                return;
             }
         }
-        // 窗口级定位（codex/kimi 主路径，也是 claude 的兜底）：扫进程组按 PID 找宿主顶层窗口置前。
-        // 宿主 WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
+        // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
+        // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
         let targets = console_group_pids(pid as u32);
         if let Some(hwnd) = find_window_for_pids(&targets) {
             force_foreground(hwnd);
         }
     });
+}
+
+/// 从 cwd 取末段目录名，作为「不写标签标题」的 agent(codex/kimi) 的 WT 标签匹配线索——这类会话的
+/// 标签默认显示当前目录名。空/根目录返回 None（退回窗口级定位）。
+#[cfg(target_os = "windows")]
+fn cwd_tab_hint(cwd: Option<&str>) -> Option<String> {
+    let c = cwd?.trim_end_matches(['/', '\\']);
+    std::path::Path::new(c)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// iTerm2 是否安装（任意常见位置）：先查标准路径，再用 mdfind 按 bundle id 兜底。
@@ -642,11 +658,11 @@ fn focus_session(
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = (cwd, session_id);
-        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是窗口级定位。缺省 claude。
+        let _ = session_id;
+        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。缺省 claude。
         let title_based = cc_reporter::agent::for_provider(provider.as_deref().unwrap_or("claude"))
             .sets_terminal_tab_title();
-        focus_session_terminal(pid, title, title_based);
+        focus_session_terminal(pid, title, cwd, title_based);
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]
@@ -1152,6 +1168,7 @@ fn show_session_notification(
     body: String,
     pid: i64,
     focus_title: String,
+    focus_cwd: Option<String>,
     title_based: bool,
 ) {
     use tauri_winrt_notification::Toast;
@@ -1168,7 +1185,7 @@ fn show_session_notification(
             .title(&title)
             .text1(&body)
             .on_activated(move |_| {
-                focus_session_terminal(pid, Some(focus_title.clone()), title_based);
+                focus_session_terminal(pid, Some(focus_title.clone()), focus_cwd.clone(), title_based);
                 Ok(())
             })
             .show();
@@ -1182,6 +1199,7 @@ fn show_session_notification(
     body: String,
     pid: i64,
     _focus_title: String, // macOS 按 pid->tty 定位终端，标题用不上
+    _focus_cwd: Option<String>,
     _title_based: bool,
 ) {
     crate::macos::notify::post(crate::macos::notify::NotifyJob { title, body, pid });
@@ -1194,6 +1212,7 @@ fn show_session_notification(
     _body: String,
     _pid: i64,
     _focus_title: String,
+    _focus_cwd: Option<String>,
     _title_based: bool,
 ) {
 }
@@ -1277,6 +1296,7 @@ fn spawn_liveness_watch(
                                 format!("{} · {}", s.project_name, e.label),
                                 pid,
                                 display_title.clone(),
+                                s.cwd.clone(),
                                 title_based,
                             );
                         }
@@ -1301,6 +1321,7 @@ fn spawn_liveness_watch(
                                     format!("{} · {}", s.project_name, display_title),
                                     pid,
                                     display_title.clone(),
+                                    s.cwd.clone(),
                                     title_based,
                                 );
                             }
@@ -1322,6 +1343,7 @@ fn spawn_liveness_watch(
                                     format!("{} · {}", s.project_name, display_title),
                                     pid,
                                     display_title.clone(),
+                                    s.cwd.clone(),
                                     title_based,
                                 );
                             }
