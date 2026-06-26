@@ -525,12 +525,34 @@ function SwatchPicker({
           type="button"
           role="radio"
           aria-checked={k === value}
+          tabIndex={k === value ? 0 : -1}
           key={k}
           className={"swatch" + (k === value ? " sel" : "")}
           style={{ background: STICKER_COLORS[k].swatch }}
           data-tip={names[k] ?? k}
           aria-label={names[k] ?? k}
           onClick={() => onChange(k)}
+          onKeyDown={(e) => {
+            const handledKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", " ", "Enter"];
+            if (!handledKeys.includes(e.key)) return;
+            e.preventDefault();
+
+            const cur = STICKER_COLOR_KEYS.indexOf(k);
+            const next =
+              e.key === "Home"
+                ? 0
+                : e.key === "End"
+                  ? STICKER_COLOR_KEYS.length - 1
+                  : e.key === "ArrowLeft" || e.key === "ArrowUp"
+                    ? (cur - 1 + STICKER_COLOR_KEYS.length) % STICKER_COLOR_KEYS.length
+                    : (cur + 1) % STICKER_COLOR_KEYS.length;
+
+            const nextKey = STICKER_COLOR_KEYS[next];
+            if (nextKey) onChange(nextKey);
+
+            const radios = Array.from(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[role=radio]") ?? []);
+            radios[next]?.focus();
+          }}
         />
       ))}
     </div>
