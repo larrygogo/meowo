@@ -6,6 +6,7 @@ pub mod import;
 pub mod kimi;
 pub mod proc;
 pub mod statusline;
+pub mod tabtitle;
 pub mod transcript;
 
 use std::path::PathBuf;

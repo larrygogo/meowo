@@ -401,7 +401,7 @@ fn tab_match_score(tab_name: &str, want: &str) -> u8 {
 /// 注意：本函数必须在「干净 COM apartment 的线程」上调用（见 `focus_session` 的后台线程）。
 /// `UIAutomation::new()` 会 CoInitialize 当前线程，Tauri 主线程已是 STA，复用会因 apartment 冲突失败。
 #[cfg(target_os = "windows")]
-fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
+fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>) -> bool {
     use uiautomation::patterns::UISelectionItemPattern;
     use uiautomation::types::{ControlType, Handle, TreeScope, UIProperty};
     use uiautomation::variants::Variant;
@@ -493,7 +493,12 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
             GetWindowThreadProcessId(*hwnd as HWND, &mut win_pid);
         }
         for (tab, name) in collect_tabs(win) {
-            let score = tab_match_score(&name, want);
+            // token(=session_id 末 8 位，cc-reporter 写进标签或 codex 原生 session_id 标题携带) 命中即
+            // 最高优先级 3、全局唯一——压倒按标题的语义匹配，且无需进程组消歧。否则退回标题匹配(0-2)。
+            let score = match token {
+                Some(t) if !t.is_empty() && name.contains(t) => 3,
+                _ => tab_match_score(&name, want),
+            };
             if score > 0 {
                 matches.push((score, *hwnd, win_pid, tab));
             }
@@ -578,20 +583,28 @@ fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
 /// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。供 focus_session 命令与
 /// 「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
 #[cfg(target_os = "windows")]
-fn focus_session_terminal(pid: i64, title: Option<String>, cwd: Option<String>, title_based: bool) {
+fn focus_session_terminal(
+    pid: i64,
+    title: Option<String>,
+    cwd: Option<String>,
+    token: Option<String>,
+    title_based: bool,
+) {
     std::thread::spawn(move || {
-        // 按什么匹配 WT 标签：claude 把任务标题写进标签 → 用任务标题精确切；codex/kimi 不写标签标题，
-        // 其标签是 shell 默认显示的当前目录名 → 用 cwd 末段目录名匹配（如 cwd=C:\Users\larry → 标签
-        // "larry"）。focus_terminal_tab 内部仍按 root_pid 进程组消歧到本会话所属窗口。
+        // 匹配 WT 标签优先级：token(session_id 末 8 位，cc-reporter 写进 kimi 标签 / codex 原生
+        // session_id 标题携带) > 任务标题(claude) > cwd 末段目录名(codex/kimi 无 token 时) > 窗口级兜底。
+        // token 全局唯一，能区分同窗口同目录的同名标签——这是精确聚焦的关键。
         let want = if title_based {
             title
         } else {
             cwd_tab_hint(cwd.as_deref())
         };
-        if let Some(w) = want.as_deref() {
-            if focus_terminal_tab(pid as u32, w) {
-                return;
-            }
+        let want_str = want.as_deref().unwrap_or("");
+        let has_token = token.as_deref().is_some_and(|t| !t.is_empty());
+        if (!want_str.is_empty() || has_token)
+            && focus_terminal_tab(pid as u32, want_str, token.as_deref())
+        {
+            return;
         }
         // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
         // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
@@ -666,11 +679,16 @@ fn focus_session(
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = session_id;
         // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。缺省 claude。
         let title_based = cc_reporter::agent::for_provider(provider.as_deref().unwrap_or("claude"))
             .sets_terminal_tab_title();
-        focus_session_terminal(pid, title, cwd, title_based);
+        // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(cc-reporter 写的 kimi 标签
+        // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
+        let token = session_id
+            .as_deref()
+            .map(cc_reporter::tabtitle::short_sid)
+            .filter(|s| !s.is_empty());
+        focus_session_terminal(pid, title, cwd, token, title_based);
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]
@@ -1177,6 +1195,7 @@ fn show_session_notification(
     pid: i64,
     focus_title: String,
     focus_cwd: Option<String>,
+    focus_token: Option<String>,
     title_based: bool,
 ) {
     use tauri_winrt_notification::Toast;
@@ -1193,7 +1212,13 @@ fn show_session_notification(
             .title(&title)
             .text1(&body)
             .on_activated(move |_| {
-                focus_session_terminal(pid, Some(focus_title.clone()), focus_cwd.clone(), title_based);
+                focus_session_terminal(
+                    pid,
+                    Some(focus_title.clone()),
+                    focus_cwd.clone(),
+                    focus_token.clone(),
+                    title_based,
+                );
                 Ok(())
             })
             .show();
@@ -1208,6 +1233,7 @@ fn show_session_notification(
     pid: i64,
     _focus_title: String, // macOS 按 pid->tty 定位终端，标题用不上
     _focus_cwd: Option<String>,
+    _focus_token: Option<String>,
     _title_based: bool,
 ) {
     crate::macos::notify::post(crate::macos::notify::NotifyJob { title, body, pid });
@@ -1221,6 +1247,7 @@ fn show_session_notification(
     _pid: i64,
     _focus_title: String,
     _focus_cwd: Option<String>,
+    _focus_token: Option<String>,
     _title_based: bool,
 ) {
 }
@@ -1286,6 +1313,11 @@ fn spawn_liveness_watch(
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
                     let title_based =
                         cc_reporter::agent::for_provider(&s.provider).sets_terminal_tab_title();
+                    // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
+                    let tab_token = {
+                        let t = cc_reporter::tabtitle::short_sid(&s.session.cc_session_id);
+                        (!t.is_empty()).then_some(t)
+                    };
 
                     // 菜单栏摘要计数:出错/待交互/待审批 → 需关注(●),运行中 → ○;在线空闲不计入。
                     if error.is_some() || s.session.status == "waiting" || s.pending_review.is_some() {
@@ -1305,6 +1337,7 @@ fn spawn_liveness_watch(
                                 pid,
                                 display_title.clone(),
                                 s.cwd.clone(),
+                                tab_token.clone(),
                                 title_based,
                             );
                         }
@@ -1330,6 +1363,7 @@ fn spawn_liveness_watch(
                                     pid,
                                     display_title.clone(),
                                     s.cwd.clone(),
+                                    tab_token.clone(),
                                     title_based,
                                 );
                             }
@@ -1352,6 +1386,7 @@ fn spawn_liveness_watch(
                                     pid,
                                     display_title.clone(),
                                     s.cwd.clone(),
+                                    tab_token.clone(),
                                     title_based,
                                 );
                             }

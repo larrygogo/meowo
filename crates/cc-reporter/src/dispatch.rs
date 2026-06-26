@@ -25,6 +25,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                     store.set_session_pid(sid, p as i64, now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
+                write_tab_token(ev, provider);
             }
         }
         "PostToolUse" => {
@@ -57,6 +58,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                     store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
+                write_tab_token(ev, provider);
             }
         }
         "SessionEnd" => {
@@ -111,6 +113,27 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &
         store.set_session_title(sid, &title, now_ms)?;
     }
     Ok(())
+}
+
+/// 仅当该 provider 需由 cc-reporter 补 token 时(kimi)，把 `<cwd 末段目录名> ·<sid8>` 写进本标签的 WT
+/// 标题——sid8=session_id 末 8 位、全局唯一，cc-app 据此精确切到该标签（解决同窗口同目录两会话标签
+/// 同名分不清）。cc-reporter 是 hook 子进程、继承本会话的 ConPTY，写 CONOUT$ 只影响自己这个标签。
+/// 非 Windows / 非 WT(CONOUT$ 打不开) 静默 no-op。
+fn write_tab_token(ev: &HookEvent, provider: &str) {
+    if !crate::agent::for_provider(provider).writes_tab_token() {
+        return;
+    }
+    let sid8 = crate::tabtitle::short_sid(&ev.session_id);
+    if sid8.is_empty() {
+        return;
+    }
+    let base = ev
+        .cwd
+        .as_deref()
+        .map(|c| c.trim_end_matches(['/', '\\']))
+        .and_then(|c| Path::new(c).file_name().and_then(|s| s.to_str()))
+        .unwrap_or("session");
+    crate::tabtitle::set_tab_title(&format!("{base} ·{sid8}"));
 }
 
 /// 建会话（项目 upsert + 会话 + provider + cwd + 抓 PID），返回 sid。SessionStart 与懒创建共用。

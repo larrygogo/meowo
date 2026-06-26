@@ -24,6 +24,13 @@ pub trait Agent: Sync {
     /// codex/kimi 不写（标签是默认目录名/命令名）→ 按任务标题找标签会错抓同名无关标签，cc-app 应改走
     /// 窗口级定位（按 root_pid 祖先/进程组找宿主窗口置前，不强选标签）。
     fn sets_terminal_tab_title(&self) -> bool;
+    /// cc-reporter 是否应在 hook 时往本标签 ConPTY 写 session_id token（让 cc-app 能按 token 精确切到
+    /// 该标签，解决同窗口同目录两会话标签同名分不清）。claude=false（自己写任务名，cc-app 按任务名匹配）；
+    /// codex=false（其 spinner 持续抢标题，应走原生 tui.terminal_title 配 session_id）；kimi=true
+    /// （不写标题且不抢 → 由我们补 token）。见 crate::tabtitle。
+    fn writes_tab_token(&self) -> bool {
+        false
+    }
     /// 恢复断开会话的命令 argv（[可执行名, 参数...]）。如 ["claude","--resume",id] / ["kimi","-r",id]。
     fn resume_args(&self, session_id: &str) -> Vec<String>;
     /// 把重命名同步到该 agent 自己的持久层，使 agent 自身的会话列表/恢复(resume)列表也显示新名字：
@@ -78,6 +85,10 @@ impl Agent for KimiAgent {
     }
     fn sets_terminal_tab_title(&self) -> bool {
         false
+    }
+    fn writes_tab_token(&self) -> bool {
+        // kimi 不写标签标题、也不抢 → 由 cc-reporter 在 hook 时补 session_id token。
+        true
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         // 用 kimi 可执行绝对路径（spawned 终端 PATH 未必含 kimi）。
