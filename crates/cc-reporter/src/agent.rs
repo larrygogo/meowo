@@ -22,6 +22,10 @@ pub trait Agent: Sync {
     fn resolves_transcript_title(&self) -> bool;
     /// 恢复断开会话的命令 argv（[可执行名, 参数...]）。如 ["claude","--resume",id] / ["kimi","-r",id]。
     fn resume_args(&self, session_id: &str) -> Vec<String>;
+    /// 把重命名同步到该 agent 自己的持久层，使 agent 自身的会话列表/恢复(resume)列表也显示新名字：
+    /// claude 往 transcript 追加 custom-title 记录；kimi 改写 session state.json 的 title+isCustomTitle。
+    /// 返回是否成功落地（失败不阻断调用方更新 DB 标题）。cwd 仅 claude 用于定位 transcript。
+    fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool;
 }
 
 struct ClaudeAgent;
@@ -41,6 +45,9 @@ impl Agent for ClaudeAgent {
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         vec!["claude".into(), "--resume".into(), session_id.into()]
+    }
+    fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool {
+        write_claude_custom_title(session_id, cwd, title)
     }
 }
 
@@ -66,6 +73,32 @@ impl Agent for KimiAgent {
         // 用 kimi 可执行绝对路径（spawned 终端 PATH 未必含 kimi）。
         vec![crate::kimi::kimi_exe(), "-r".into(), session_id.into()]
     }
+    fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
+        crate::kimi::set_custom_title(session_id, title)
+    }
+}
+
+/// claude：往会话 transcript 追加一条 custom-title 记录（与 Claude Code `/rename` 写入格式一致），
+/// 使 `claude --resume` 列表与贴纸都显示新名。定位失败/打开失败/写失败返回 false。
+/// session_id 已由命令层校验为安全形态（无路径分隔符/穿越），此处直接拼路径。
+fn write_claude_custom_title(session_id: &str, cwd: Option<&str>, title: &str) -> bool {
+    use std::io::Write;
+    let Some(path) = cc_store::title::resolve_cwd(cwd, session_id)
+        .and_then(|c| cc_store::title::reconstruct_transcript_path(&c, session_id))
+        .filter(|p| p.exists())
+        .or_else(|| cc_store::title::find_transcript_by_session(session_id))
+    else {
+        return false;
+    };
+    let record = serde_json::json!({
+        "type": "custom-title",
+        "customTitle": title,
+        "sessionId": session_id,
+    });
+    let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) else {
+        return false;
+    };
+    writeln!(f, "{record}").is_ok()
 }
 
 static CLAUDE: ClaudeAgent = ClaudeAgent;

@@ -452,7 +452,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
   const submitRename = (l: Item) => {
     const t = draft.trim();
     if (t && t !== l.task_title) {
-      invoke("rename_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, title: t }).catch(() => {});
+      invoke("rename_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, title: t, provider: l.provider }).catch(() => {});
     }
     setEditingId(null);
   };

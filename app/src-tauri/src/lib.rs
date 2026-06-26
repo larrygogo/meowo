@@ -941,12 +941,13 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
     }
 }
 
-/// 在贴纸上重命名会话：往该会话 transcript 追加一条 custom-title 记录
-/// （与 Claude Code `/rename` 写入格式完全一致），并同步更新 DB 标题。
-/// custom-title 优先级高于 ai-title，故贴纸与 Claude Code `/resume` 列表都会显示新名字。
+/// 在贴纸上重命名会话：把新名字落到该 agent 自己的持久层（claude 写 transcript custom-title、
+/// kimi 写 session state.json 的 title+isCustomTitle，见各 agent 的 write_rename），并同步更新 DB
+/// 标题让卡片/总览即时一致。agent 侧失败（找不到 transcript/state.json）不阻断 DB 更新——卡片仍
+/// 显示新名，仅 agent 自身列表可能不同步。
 ///
-/// 安全：session_id 严格校验为 UUID 形态（同时杜绝路径穿越），title 经 trim + 截断；
-/// 写入用 serde_json 序列化，转义由库保证。
+/// 安全：session_id 用 is_safe_id 校验（仅 [A-Za-z0-9_-]，杜绝注入与路径穿越，兼容 kimi 的
+/// session_<uuid>）；title 经 trim + 截断。
 #[tauri::command]
 fn rename_session(
     app: tauri::AppHandle,
@@ -954,8 +955,9 @@ fn rename_session(
     cwd: Option<String>,
     session_id: String,
     title: String,
+    provider: Option<String>,
 ) -> Result<(), String> {
-    if !is_session_id(&session_id) {
+    if !is_safe_id(&session_id) {
         return Err("无效 session_id".into());
     }
     let title: String = title.trim().chars().take(80).collect();
@@ -963,28 +965,12 @@ fn rename_session(
         return Err("标题不能为空".into());
     }
 
-    // 定位 transcript：优先用 cwd 重建路径，否则按 session_id 全局查找。
-    let path = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id)
-        .and_then(|c| cc_store::title::reconstruct_transcript_path(&c, &session_id))
-        .filter(|p| p.exists())
-        .or_else(|| cc_store::title::find_transcript_by_session(&session_id))
-        .ok_or("找不到该会话的 transcript")?;
+    // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）。
+    let provider = provider.as_deref().unwrap_or("claude");
+    let _ = cc_reporter::agent::for_provider(provider).write_rename(&session_id, cwd.as_deref(), &title);
 
-    let record = serde_json::json!({
-        "type": "custom-title",
-        "customTitle": title,
-        "sessionId": session_id,
-    });
-    {
-        use std::io::Write;
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .map_err(|e| format!("打开 transcript 失败：{e}"))?;
-        writeln!(f, "{record}").map_err(|e| format!("写入 transcript 失败：{e}"))?;
-    }
-
-    // 同步 DB 标题，让总览等非贴纸视图也一致（best-effort）。
+    // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
+    // claude 的 apply_title 会从 transcript 重读 custom-title（优先级高于 ai-title）维持一致。
     if let Ok(store) = open_store(&state.db_path) {
         if let Ok(Some(sid)) = store.find_session_id_pub(&session_id) {
             let _ = store.set_session_title(sid, &title, now_ms());

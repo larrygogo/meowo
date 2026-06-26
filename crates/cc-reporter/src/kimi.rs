@@ -162,6 +162,36 @@ pub fn read_summary(session_id: &str) -> Option<WireSummary> {
     })
 }
 
+/// 把某 kimi 会话改成自定义标题：改写 session `state.json` 的 `title` + `isCustomTitle=true`
+/// （后者阻止 kimi 之后用 AI 标题覆盖，与 claude 的 custom-title 同义），使 kimi 自身会话列表与
+/// `kimi -r` 列表也显示新名。其余字段原样保留。临时文件 + rename 原子写，避免与运行中的 kimi
+/// 并发写 state.json 撕裂。定位/读/解析/写失败返回 false。
+pub fn set_custom_title(session_id: &str, title: &str) -> bool {
+    let Some(dir) = session_dir(session_id) else {
+        return false;
+    };
+    let path = dir.join("state.json");
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(obj) = v.as_object_mut() else {
+        return false;
+    };
+    obj.insert("title".to_string(), serde_json::Value::String(title.to_string()));
+    obj.insert("isCustomTitle".to_string(), serde_json::Value::Bool(true));
+    let Ok(s) = serde_json::to_string(&v) else {
+        return false;
+    };
+    let tmp = path.with_extension("json.cckb-tmp");
+    if std::fs::write(&tmp, s).is_err() {
+        return false;
+    }
+    std::fs::rename(&tmp, &path).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
