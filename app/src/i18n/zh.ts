@@ -40,7 +40,7 @@ export const zh = {
     online: "在线",
     jumpToTerminal: "点击跳转到该会话的终端",
     resumeInTerminal: "点击新建终端恢复该会话",
-    renameTitle: "重命名（同步到 Claude）",
+    renameTitle: "重命名",
     renamePlaceholder: "输入名称，回车保存",
     renameHint: "运行中：改名后需在该终端 /resume 才生效",
     archive: "归档",

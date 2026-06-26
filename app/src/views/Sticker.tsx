@@ -196,7 +196,7 @@ function RunBadge({
       className={"run-badge" + (tone === "waiting" ? " run-badge--waiting" : tone === "pending" ? " run-badge--pending" : "")}
       role="img"
       aria-label={label}
-      title={label}
+      data-tip={label}
     >
       {/* 旋转的亮段（被 .run-badge 的圆角裁剪 → 光点沿边框跑） */}
       <span className="run-sweep" />
@@ -415,6 +415,26 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
       return next;
     });
   };
+
+  // 托盘「找回贴纸」：窗口居中/置顶由 App + 后端负责，这里把置顶按钮 UI 同步为已置顶。
+  useEffect(() => {
+    let cancelled = false;
+    let un: (() => void) | undefined;
+    try {
+      listen("recall-sticker", () => setPinned(true))
+        .then((f) => {
+          if (cancelled) f();
+          else un = f;
+        })
+        .catch(() => {});
+    } catch {
+      /* 非 Tauri 环境（测试/浏览器） */
+    }
+    return () => {
+      cancelled = true;
+      try { un?.(); } catch { /* noop */ }
+    };
+  }, []);
 
   // 会话星标：星标的会话永远排到列表最前（跨重启保留）。与「置顶窗口(pin)」是两回事。
   const [starred, setStarred] = useState<Set<string>>(loadStarred);
@@ -646,9 +666,9 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
               : null;
             const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
             const indicator = !l.connected ? (
-              <span className="ring-stop" title={t.sticker.stopped} />
+              <span className="ring-stop" data-tip={t.sticker.stopped} />
             ) : l.errored ? (
-              <span className="needs-error" title={l.error_raw ?? t.sticker.sessionError} />
+              <span className="needs-error" data-tip={l.error_raw ?? t.sticker.sessionError} />
             ) : l.pending_review ? (
               <RunBadge pct={l.context_pct} tone="pending" />
             ) : l.session.status === "running" ? (
@@ -656,7 +676,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
             ) : l.session.status === "waiting" ? (
               <RunBadge pct={l.context_pct} tone="waiting" />
             ) : (
-              <span className="sdot sdot-on" title={t.sticker.online} />
+              <span className="sdot sdot-on" data-tip={t.sticker.online} />
             );
             return (
               <div
@@ -675,7 +695,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                   openTerminal(l);
                 }}
                 style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
-                title={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
+                data-tip={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
               >
                 <div className="stk-top">
                   <span className="stk-ind">{indicator}</span>
@@ -721,22 +741,26 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                           <span className="stk-actions">
                             <span
                               className={"stk-star" + (isStarred(l) ? " stk-star-on" : "")}
-                              title={isStarred(l) ? t.sticker.unstar : t.sticker.star}
+                              data-tip={isStarred(l) ? t.sticker.unstar : t.sticker.star}
+                              aria-label={isStarred(l) ? t.sticker.unstar : t.sticker.star}
                               onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
                             ><StarIcon starred={isStarred(l)} /></span>
                             <span
                               className={"stk-noteb" + (l.note ? " stk-noteb-on" : "")}
-                              title={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
+                              data-tip={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
+                              aria-label={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
                               onClick={(e) => { e.stopPropagation(); startNote(l); }}
                             ><NoteIcon /></span>
                             <span
                               className="stk-rename"
-                              title={t.sticker.renameTitle}
+                              data-tip={t.sticker.renameTitle}
+                              aria-label={t.sticker.renameTitle}
                               onClick={(e) => { e.stopPropagation(); startRename(l); }}
                             ><PencilIcon /></span>
                             <span
                               className="stk-arch"
-                              title={l.archived ? t.sticker.unarchive : t.sticker.archive}
+                              data-tip={l.archived ? t.sticker.unarchive : t.sticker.archive}
+                              aria-label={l.archived ? t.sticker.unarchive : t.sticker.archive}
                               onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
                             ><ArchiveIcon archived={l.archived} /></span>
                           </span>
@@ -749,12 +773,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                     <div className="stk-line2">
                       <span
                         className={"stk-agent" + (l.connected ? "" : " stk-agent-off")}
-                        title={t.sticker.agentClaudeCode}
+                        data-tip={t.sticker.agentClaudeCode}
                         aria-label={t.sticker.agentClaudeCode}
                       >
                         <AgentMark />
                       </span>
-                      <span className="stk-repo" title={l.project_name}>{l.project_name.split("/").pop()}</span>
+                      <span className="stk-repo" data-tip={l.project_name}>{l.project_name.split("/").pop()}</span>
                       {l.model && <span className="stk-model">{l.model}</span>}
                     </div>
                   </div>
@@ -791,7 +815,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                 ) : l.note ? (
                   <div
                     className="stk-note"
-                    title={t.sticker.noteEdit}
+                    data-tip={t.sticker.noteEdit}
                     onClick={(e) => { e.stopPropagation(); startNote(l); }}
                   >
                     <span className="stk-note-icon"><NoteIcon /></span>
@@ -801,20 +825,21 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                 {previewEnabled && l.last_user_text && (
                   <div className="stk-subrow stk-userrow">
                     <span className="stk-msg-tag">{t.sticker.youPrefix}</span>
-                    <span className="stk-sub" title={l.last_user_text}>{l.last_user_text}</span>
+                    <span className="stk-sub" data-tip={l.last_user_text}>{l.last_user_text}</span>
                   </div>
                 )}
                 {(sub || (buttonMode && canOpen(l))) && (
                   <div className="stk-subrow">
                     {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
                     {sub && !l.errored && <span className="stk-msg-tag is-ai">{t.sticker.aiPrefix}</span>}
-                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} title={subTitle}>{sub}</span>}
+                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} data-tip={subTitle}>{sub}</span>}
                     {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
                     {buttonMode && canOpen(l) && (
                       <button
                         type="button"
                         className="stk-open"
-                        title={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                        data-tip={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                        aria-label={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
                         onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
                       ><OpenIcon /></button>
                     )}
@@ -849,7 +874,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                 if (e.key === "Escape") closeSearch();
               }}
             />
-            <span className="stk-act stk-search-x" title={t.sticker.searchClose} onClick={closeSearch}>
+            <span className="stk-act stk-search-x" data-tip={t.sticker.searchClose} aria-label={t.sticker.searchClose} onClick={closeSearch}>
               <CloseIcon />
             </span>
           </div>
@@ -862,12 +887,13 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                 />
               )}
             <div className="stk-bar-actions">
-              <span className="stk-act" title={t.sticker.search} onClick={() => setSearchOpen(true)}>
+              <span className="stk-act" data-tip={t.sticker.search} aria-label={t.sticker.search} onClick={() => setSearchOpen(true)}>
                 <SearchIcon />
               </span>
               <span
                 className="stk-act"
-                title={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
+                data-tip={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
+                aria-label={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
                 onClick={() => invoke("open_settings").catch(() => {})}
               >
                 <GearIcon />
@@ -876,7 +902,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
               {!isMacPanel() && (
                 <span
                   className={"stk-act " + (pinned ? "stk-pin-on" : "")}
-                  title={pinned ? t.sticker.pinOn : t.sticker.pinOff}
+                  data-tip={pinned ? t.sticker.pinOn : t.sticker.pinOff}
+                  aria-label={pinned ? t.sticker.pinOn : t.sticker.pinOff}
                   onClick={togglePin}
                 >
                   <PinIcon pinned={pinned} />

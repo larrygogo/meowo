@@ -243,7 +243,7 @@ function AccountSection() {
       <div className="provider-usage">
         <div className="usage-bar-head">
           <span className="usage-card-title">{t.account.quota}</span>
-          <button className="icon-btn" title={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
+          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
             <RefreshIcon spinning={refreshing} />
           </button>
         </div>
@@ -528,7 +528,7 @@ function SwatchPicker({
           key={k}
           className={"swatch" + (k === value ? " sel" : "")}
           style={{ background: STICKER_COLORS[k].swatch }}
-          title={names[k] ?? k}
+          data-tip={names[k] ?? k}
           aria-label={names[k] ?? k}
           onClick={() => onChange(k)}
         />
@@ -741,7 +741,7 @@ export function About() {
 
       <main className="main">
         <div className="main-bar" data-tauri-drag-region>
-          <button className="winclose" title={t.settings.close} onClick={close} aria-label={t.settings.close}>
+          <button className="winclose" data-tip={t.settings.close} onClick={close} aria-label={t.settings.close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />

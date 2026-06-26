@@ -133,6 +133,36 @@ export function App() {
     };
   }, [applyUpdate, recheck]);
 
+  // 托盘「找回贴纸」：把贴纸拉回主屏中央并置顶。折叠/吸附态先展开还原成正常窗口，再居中置顶。
+  // macOS 面板模式无吸边/托盘菜单项，跳过。
+  useEffect(() => {
+    if (isMacPanel()) return;
+    const recall = async () => {
+      // 置顶偏好（Sticker 的 pin 按钮也读此 key）；折叠态下 Sticker 未挂载，展开后据此初始化为置顶。
+      localStorage.setItem(PIN_KEY, "1");
+      if (modeRef.current !== "normal") {
+        const { w, h } = loadSize();
+        localStorage.removeItem(SNAP_KEY);
+        setEdge(null);
+        setMode("normal");
+        try {
+          await invoke("snap_restore", { width: w, height: h, pinned: true });
+        } catch (err) {
+          console.error("[recall] snap_restore 失败：", err);
+        }
+      }
+      try {
+        await invoke("recall_center");
+      } catch (err) {
+        console.error("[recall] recall_center 失败：", err);
+      }
+    };
+    const un = listen("recall-sticker", () => void recall());
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
   // 折叠成缩略条：厚度固定，主轴长度贴合当前点数。
   const doCollapse = useCallback(
     (d: Edge) => invoke("snap_collapse", { edge: d, extent: stripExtent(countRef.current) }),

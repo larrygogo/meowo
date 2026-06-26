@@ -41,7 +41,7 @@ export const en: Dict = {
     online: "Online",
     jumpToTerminal: "Click to jump to this session's terminal",
     resumeInTerminal: "Click to resume in a new terminal",
-    renameTitle: "Rename (syncs to Claude)",
+    renameTitle: "Rename",
     renamePlaceholder: "Type a name, Enter to save",
     renameHint: "Running: rename takes effect after /resume in that terminal",
     archive: "Archive",

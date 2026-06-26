@@ -36,11 +36,11 @@ describe("Sticker", () => {
     expect(screen.getByText("最近这条 AI 正文")).toBeTruthy();
   });
 
-  it("活动行常显最近 AI 正文(preview)，title 带完整文本", () => {
+  it("活动行常显最近 AI 正文(preview)，data-tip 带完整文本", () => {
     const { container } = render(<Sticker data={[mk({ preview: "需要你确认下一步" })]} />);
     const subEl = container.querySelector(".stk-sub") as HTMLElement;
     expect(subEl?.textContent).toBe("需要你确认下一步");
-    expect(subEl?.getAttribute("title")).toBe("需要你确认下一步");
+    expect(subEl?.getAttribute("data-tip")).toBe("需要你确认下一步");
   });
 
   it("无 preview 且无错误时不渲染活动行", () => {
@@ -51,7 +51,7 @@ describe("Sticker", () => {
   it("点击星标切换状态并持久化到 localStorage", () => {
     localStorage.removeItem("cc-kanban-starred");
     const { container } = render(<Sticker data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
-    fireEvent.click(screen.getByTitle(zh.sticker.star));
+    fireEvent.click(screen.getByLabelText(zh.sticker.star));
     expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
     expect(JSON.parse(localStorage.getItem("cc-kanban-starred") ?? "[]")).toContain("star-me");
     localStorage.removeItem("cc-kanban-starred");
@@ -92,7 +92,7 @@ describe("Sticker", () => {
   it("无便签时点击便签按钮打开编辑框", () => {
     const { container } = render(<Sticker data={[mk({ note: null })]} />);
     expect(container.querySelector(".stk-note-edit")).toBeNull();
-    fireEvent.click(screen.getByTitle(zh.sticker.noteAdd));
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteAdd));
     const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.placeholder).toBe(zh.sticker.notePlaceholder);
@@ -116,7 +116,7 @@ describe("Sticker", () => {
 
   it("点便签保存按钮关闭编辑框", () => {
     const { container } = render(<Sticker data={[mk({ note: null })]} />);
-    fireEvent.click(screen.getByTitle(zh.sticker.noteAdd));
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteAdd));
     fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
     fireEvent.click(screen.getByText(zh.sticker.noteSave));
     expect(container.querySelector(".stk-note-edit")).toBeNull();
@@ -322,10 +322,10 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-model")).toBeNull();
   });
 
-  it("项目名只显示仓库/文件夹名（去 owner 前缀），title 保留全名", () => {
+  it("项目名只显示仓库/文件夹名（去 owner 前缀），data-tip 保留全名", () => {
     const { container } = render(<Sticker data={[mk({ project_name: "larrygogo/autopilot" })]} />);
     const repo = container.querySelector(".stk-repo") as HTMLElement;
     expect(repo?.textContent).toBe("autopilot");
-    expect(repo?.getAttribute("title")).toBe("larrygogo/autopilot");
+    expect(repo?.getAttribute("data-tip")).toBe("larrygogo/autopilot");
   });
 });
