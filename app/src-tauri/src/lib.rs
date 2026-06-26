@@ -507,11 +507,19 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     matches.retain(|m| m.0 == max_score);
     // 唯一候选直接用；多个同分时按 console_group_pids(root_pid) 选与本会话同进程组的窗口（窗口宿主
     // WindowsTerminal.exe 是本会话进程的祖先，故其 pid 落在进程组里）——修「两个同名终端点击跳错」。
+    // 选出本会话所属窗口(进程组含其窗口 pid)的候选。同一窗口里多个同名标签无法区分（UIA 不暴露
+    // tab→进程），此时【不猜】——返回 false 让上层走窗口级定位，避免切到错的同名标签
+    // （如 codex/kimi 同在某目录、标签都显示该目录名时，点哪个都别误切到另一个）。
     let idx = if matches.len() == 1 {
         0
     } else {
         let group = console_group_pids(root_pid);
-        matches.iter().position(|m| group.contains(&m.2)).unwrap_or(0)
+        let in_group: Vec<usize> =
+            (0..matches.len()).filter(|&i| group.contains(&matches[i].2)).collect();
+        match in_group.as_slice() {
+            [i] => *i,         // 唯一属于本会话窗口的候选 → 精确命中
+            _ => return false, // 0 个或多个(同窗口多同名标签) → 不猜，退回窗口级
+        }
     };
     let (_, hwnd, _, tab) = &matches[idx];
     // 选中该标签页（即使其窗口当前在后台也会切换激活标签页），再置前其窗口（直接用 HWND，免再取 native handle）。
