@@ -64,6 +64,11 @@ use cc_store::Store;
 
 fn ev(json: &str) -> HookEvent { HookEvent::parse(json).unwrap() }
 
+/// 测试默认走 claude provider；provider 行为单独在 kimi_session_tagged_with_provider 覆盖。
+fn disp(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), cc_store::StoreError> {
+    dispatch(store, ev, now_ms, "claude")
+}
+
 fn write_transcript(name: &str, body: &[u8]) -> std::path::PathBuf {
     let p = std::env::temp_dir().join(name);
     let mut f = std::fs::File::create(&p).unwrap();
@@ -75,13 +80,13 @@ fn write_transcript(name: &str, body: &[u8]) -> std::path::PathBuf {
 fn session_start_then_prompt_then_todos_flow() {
     let store = Store::open_in_memory().unwrap();
 
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"s1","cwd":"/home/me/proj"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"s1","cwd":"/home/me/proj"}"#), 100).unwrap();
     let projects = store.list_projects().unwrap();
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].name, "proj");
 
-    dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"实现登录"}"#), 200).unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"a","status":"in_progress"}]}}"#), 300).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"实现登录"}"#), 200).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"a","status":"in_progress"}]}}"#), 300).unwrap();
 
     let sid = store.find_session_id_pub("s1").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
@@ -94,27 +99,27 @@ fn session_start_then_prompt_then_todos_flow() {
 #[test]
 fn stop_then_end_updates_session_status() {
     let store = Store::open_in_memory().unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"s2","cwd":"/p"}"#), 100).unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"s2"}"#), 200).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"s2","cwd":"/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"s2"}"#), 200).unwrap();
     let sid = store.find_session_id_pub("s2").unwrap().unwrap();
     assert_eq!(store.get_session(sid).unwrap().status, "waiting");
 
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"s2"}"#), 300).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"s2"}"#), 300).unwrap();
     assert_eq!(store.get_session(sid).unwrap().status, "ended");
 }
 
 #[test]
 fn unknown_session_for_prompt_is_ignored_gracefully() {
     let store = Store::open_in_memory().unwrap();
-    let r = dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"ghost","prompt":"x"}"#), 100);
+    let r = disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"ghost","prompt":"x"}"#), 100);
     assert!(r.is_ok());
 }
 
 #[test]
 fn posttooluse_bash_sets_current_activity() {
     let store = Store::open_in_memory().unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"b1","cwd":"/tmp/p"}"#), 100).unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"b1","tool_name":"Bash","tool_input":{"command":"cargo build"}}"#), 200).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"b1","cwd":"/tmp/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"b1","tool_name":"Bash","tool_input":{"command":"cargo build"}}"#), 200).unwrap();
     let sid = store.find_session_id_pub("b1").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
     assert_eq!(store.get_task(tid).unwrap().current_activity.as_deref(), Some("› cargo build"));
@@ -123,8 +128,8 @@ fn posttooluse_bash_sets_current_activity() {
 #[test]
 fn stop_and_end_for_unknown_session_are_ignored() {
     let store = Store::open_in_memory().unwrap();
-    assert!(dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"nope"}"#), 100).is_ok());
-    assert!(dispatch(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"nope"}"#), 100).is_ok());
+    assert!(disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"nope"}"#), 100).is_ok());
+    assert!(disp(&store, &ev(r#"{"hook_event_name":"SessionEnd","session_id":"nope"}"#), 100).is_ok());
 }
 
 #[test]
@@ -138,7 +143,7 @@ fn session_start_with_transcript_sets_ai_title() {
     let json = format!(
         r#"{{"hook_event_name":"SessionStart","session_id":"st1","cwd":"/tmp/x","transcript_path":"{tps}"}}"#
     );
-    dispatch(&store, &ev(&json), 100).unwrap();
+    disp(&store, &ev(&json), 100).unwrap();
     let sid = store.find_session_id_pub("st1").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
     assert_eq!(store.get_task(tid).unwrap().title, "做看板");
@@ -150,7 +155,7 @@ fn session_start_with_transcript_sets_ai_title() {
 fn stop_refreshes_title_via_stored_cwd() {
     let store = Store::open_in_memory().unwrap();
     // 先 SessionStart（不带 transcript_path），把 cwd 存进库
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st3","cwd":"/tmp/z"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st3","cwd":"/tmp/z"}"#), 100).unwrap();
 
     // 写 transcript（用真实路径直接传给下方 Stop）
     let tp = write_transcript(
@@ -163,7 +168,7 @@ fn stop_refreshes_title_via_stored_cwd() {
     let json = format!(
         r#"{{"hook_event_name":"Stop","session_id":"st3","transcript_path":"{tps}"}}"#
     );
-    dispatch(&store, &ev(&json), 200).unwrap();
+    disp(&store, &ev(&json), 200).unwrap();
 
     let sid = store.find_session_id_pub("st3").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
@@ -187,7 +192,7 @@ fn hookevent_parses_last_assistant_message_and_alias() {
 #[test]
 fn prompt_without_cwd_uses_stored_cwd_for_title() {
     let store = Store::open_in_memory().unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st4","cwd":"/tmp/w"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st4","cwd":"/tmp/w"}"#), 100).unwrap();
 
     let tp = write_transcript(
         "cc_disp_nocwd.jsonl",
@@ -199,7 +204,7 @@ fn prompt_without_cwd_uses_stored_cwd_for_title() {
     let json = format!(
         r#"{{"hook_event_name":"UserPromptSubmit","session_id":"st4","prompt":"hello","transcript_path":"{tps}"}}"#
     );
-    dispatch(&store, &ev(&json), 200).unwrap();
+    disp(&store, &ev(&json), 200).unwrap();
 
     let sid = store.find_session_id_pub("st4").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
@@ -217,12 +222,12 @@ fn user_prompt_with_transcript_overrides_prompt_title() {
     let tps = tp.to_str().unwrap().replace('\\', "\\\\");
 
     // 先 SessionStart（无 transcript）
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st2","cwd":"/tmp/y"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"st2","cwd":"/tmp/y"}"#), 100).unwrap();
     // 再 UserPromptSubmit（带 transcript）
     let json = format!(
         r#"{{"hook_event_name":"UserPromptSubmit","session_id":"st2","prompt":"首条prompt兜底","transcript_path":"{tps}"}}"#
     );
-    dispatch(&store, &ev(&json), 200).unwrap();
+    disp(&store, &ev(&json), 200).unwrap();
     let sid = store.find_session_id_pub("st2").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
     // transcript custom-title 覆盖了 prompt 兜底标题
@@ -234,7 +239,7 @@ fn user_prompt_with_transcript_overrides_prompt_title() {
 #[test]
 fn permission_and_pretooluse_set_pending_review() {
     let store = Store::open_in_memory().unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"p1","cwd":"/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"p1","cwd":"/p"}"#), 100).unwrap();
 
     let kind = |cc: &str| {
         store.live_sessions().unwrap().into_iter()
@@ -242,16 +247,16 @@ fn permission_and_pretooluse_set_pending_review() {
     };
 
     // PermissionRequest:无 tool_name/普通工具 → approval。
-    dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"Bash"}"#), 200).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"Bash"}"#), 200).unwrap();
     assert_eq!(kind("p1").as_deref(), Some("approval"));
     // PermissionRequest:ExitPlanMode → plan。
-    dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"ExitPlanMode"}"#), 210).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"p1","tool_name":"ExitPlanMode"}"#), 210).unwrap();
     assert_eq!(kind("p1").as_deref(), Some("plan"));
     // PreToolUse:AskUserQuestion → question。
-    dispatch(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"AskUserQuestion"}"#), 220).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"AskUserQuestion"}"#), 220).unwrap();
     assert_eq!(kind("p1").as_deref(), Some("question"));
     // PreToolUse:其它工具 → 无操作(保持上一个 question)。
-    dispatch(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"Read"}"#), 230).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"PreToolUse","session_id":"p1","tool_name":"Read"}"#), 230).unwrap();
     assert_eq!(kind("p1").as_deref(), Some("question"));
 }
 
@@ -259,9 +264,9 @@ fn permission_and_pretooluse_set_pending_review() {
 #[test]
 fn stop_sets_last_ai_text_and_prompt_sets_last_user_text() {
     let store = Store::open_in_memory().unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"m1","cwd":"/p"}"#), 100).unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"m1","prompt":"切到这个任务"}"#), 200).unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"m1","last_assistant_message":"调研完成,结论更微妙"}"#), 300).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"m1","cwd":"/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"m1","prompt":"切到这个任务"}"#), 200).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"m1","last_assistant_message":"调研完成,结论更微妙"}"#), 300).unwrap();
 
     let live = store.live_sessions().unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "m1").unwrap();
@@ -278,16 +283,31 @@ fn pending_review_cleared_by_next_event() {
         r#"{"hook_event_name":"SessionEnd","session_id":"c1"}"#,
     ].iter().enumerate() {
         let store = Store::open_in_memory().unwrap();
-        dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"c1","cwd":"/p"}"#), 100).unwrap();
-        dispatch(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"c1","tool_name":"Bash"}"#), 200).unwrap();
+        disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"c1","cwd":"/p"}"#), 100).unwrap();
+        disp(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"c1","tool_name":"Bash"}"#), 200).unwrap();
         // 置位后确认非空。
         let pending = store.live_sessions().unwrap().into_iter()
             .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
         assert_eq!(pending.as_deref(), Some("approval"), "case {i} 置位前提");
         // 下一个事件清除。
-        dispatch(&store, &ev(clear_ev), 300).unwrap();
+        disp(&store, &ev(clear_ev), 300).unwrap();
         let pending = store.live_sessions().unwrap().into_iter()
             .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
         assert_eq!(pending, None, "case {i} 应被清除");
     }
+}
+
+#[test]
+fn provider_defaults_claude_and_kimi_is_tagged() {
+    let store = Store::open_in_memory().unwrap();
+    // 默认 provider（不带 --provider）→ claude。
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"cl1","cwd":"/p"}"#), 100).unwrap();
+    // kimi provider 显式标记。
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"km1","cwd":"/p"}"#), 110, "kimi").unwrap();
+    let live = store.live_sessions().unwrap();
+    let prov = |sid: &str| {
+        live.iter().find(|l| l.session.cc_session_id == sid).unwrap().provider.clone()
+    };
+    assert_eq!(prov("cl1"), "claude");
+    assert_eq!(prov("km1"), "kimi");
 }

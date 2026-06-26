@@ -54,6 +54,8 @@ pub struct LiveSession {
     pub last_ai_text: Option<String>,
     /// 最近一条用户消息(锚 UserPromptSubmit.prompt)；独立字段,不被工具活动覆盖。
     pub last_user_text: Option<String>,
+    /// agent 提供方：claude（默认）/ kimi…，前端据此换图标/标签。
+    pub provider: String,
 }
 
 impl Store {
@@ -205,7 +207,7 @@ impl Store {
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
                     p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
                     sc.used_pct, sc.window_size, sc.model, sn.note,
-                    s.pending_review, s.last_ai_text, s.last_user_text
+                    s.pending_review, s.last_ai_text, s.last_user_text, s.provider
              FROM sessions s
              JOIN projects p ON p.id = s.project_id
              LEFT JOIN tasks t ON t.session_id = s.id
@@ -241,7 +243,8 @@ impl Store {
                 let pending_review: Option<String> = r.get(20)?;
                 let last_ai_text: Option<String> = r.get(21)?;
                 let last_user_text: Option<String> = r.get(22)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text))
+                let provider: String = r.get(23)?;
+                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text, provider))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -249,7 +252,7 @@ impl Store {
         let task_ids: Vec<i64> = rows.iter().filter_map(|r| r.2).collect();
         let mut todos_map = self.todos_by_task(&task_ids)?;
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text) in rows {
+        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text, provider) in rows {
             let todos = task_id
                 .and_then(|tid| todos_map.remove(&tid))
                 .unwrap_or_default();
@@ -275,6 +278,7 @@ impl Store {
                 pending_review,
                 last_ai_text,
                 last_user_text,
+                provider,
             });
         }
         Ok(out)

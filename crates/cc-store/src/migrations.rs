@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     archived_at   INTEGER,
     pending_review TEXT,
     last_ai_text   TEXT,
-    last_user_text TEXT
+    last_user_text TEXT,
+    -- agent provider：claude（默认）/ kimi…，驱动卡片图标/标签与 resume 命令。旧库由 migrate 的 ALTER 补齐。
+    provider       TEXT NOT NULL DEFAULT 'claude'
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

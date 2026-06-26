@@ -27,8 +27,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ev = HookEvent::parse(&buf)?;
     let store = Store::open(db_path())?;
     let now = now_ms();
-    dispatch(&store, &ev, now)?;
+    // agent 提供方：kimi 的 hook 命令带 `--provider kimi`；Claude 不带 → 默认 claude。
+    let provider = parse_provider();
+    dispatch(&store, &ev, now, &provider)?;
     Ok(())
+}
+
+/// 从命令行解析 `--provider <name>` / `--provider=<name>`，缺省 "claude"。
+fn parse_provider() -> String {
+    let args: Vec<String> = std::env::args().collect();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--provider" {
+            if let Some(v) = it.next() {
+                return v.clone();
+            }
+        } else if let Some(v) = a.strip_prefix("--provider=") {
+            return v.to_string();
+        }
+    }
+    "claude".to_string()
 }
 
 fn now_ms() -> i64 {

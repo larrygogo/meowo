@@ -54,5 +54,6 @@ export function makeSession(p: {
     last_ai_text: null,
     last_user_text: null,
     model: null,
+    provider: "claude",
   };
 }

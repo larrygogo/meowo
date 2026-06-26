@@ -95,6 +95,8 @@ export type LiveSession = {
   last_ai_text: string | null;
   /** 最近一条用户消息(锚 UserPromptSubmit);独立字段,不被工具活动覆盖。 */
   last_user_text: string | null;
+  /** agent 提供方：claude（默认）/ kimi…，决定卡片图标与标签。 */
+  provider: string;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {

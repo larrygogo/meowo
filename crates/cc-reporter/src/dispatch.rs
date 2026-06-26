@@ -4,7 +4,8 @@ use crate::hook::HookEvent;
 use std::path::Path;
 
 /// 把一个 hook 事件落到库。未知/缺字段一律降级为「无操作」，绝不报错冒泡。
-pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreError> {
+/// `provider` 为 agent 提供方（claude/kimi…）：仅在 SessionStart 标记到会话上，并决定标题解析路径。
+pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> Result<(), StoreError> {
     match ev.hook_event_name.as_str() {
         "SessionStart" => {
             let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
@@ -12,11 +13,14 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
             let (root, name) = project_root_and_name(cwd);
             let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
             let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
+            if provider != "claude" {
+                store.set_session_provider(sid, provider)?;
+            }
             store.set_session_cwd(sid, cwd, now_ms)?;
             if let Some(p) = crate::proc::owner_pid() {
                 store.set_session_pid(sid, p as i64, now_ms)?;
             }
-            apply_title(store, ev, sid, now_ms)?;
+            apply_title(store, ev, sid, now_ms, provider)?;
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_session(store, ev)? {
@@ -29,7 +33,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
                 if let Some(p) = crate::proc::owner_pid() {
                     store.set_session_pid(sid, p as i64, now_ms)?;
                 }
-                apply_title(store, ev, sid, now_ms)?;
+                apply_title(store, ev, sid, now_ms, provider)?;
             }
         }
         "PostToolUse" => {
@@ -55,7 +59,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
                 if let Some(msg) = ev.last_assistant_message.as_deref() {
                     store.set_last_ai_text(sid, msg)?;
                 }
-                apply_title(store, ev, sid, now_ms)?;
+                apply_title(store, ev, sid, now_ms, provider)?;
             }
         }
         "SessionEnd" => {
@@ -91,7 +95,12 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), StoreE
     Ok(())
 }
 
-fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64) -> Result<(), StoreError> {
+fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &str) -> Result<(), StoreError> {
+    // 非 Claude（如 kimi）暂不解析 transcript 标题：kimi 不给 transcript_path 且 JSONL 格式不同，
+    // 标题靠 UserPromptSubmit 的首条 prompt 命名（与 Claude 的占位回退同款）。kimi transcript 解析留 phase 2。
+    if provider != "claude" {
+        return Ok(());
+    }
     // cwd 优先用事件携带的，否则回退到 SessionStart 时存进库的 cwd。
     let cwd_owned: Option<String> = match ev.cwd.clone() {
         Some(c) => Some(c),

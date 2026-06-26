@@ -36,7 +36,8 @@ impl Store {
     /// `CREATE TABLE IF NOT EXISTS` 把新表补上，再 bump。
     /// v3: sessions 加 pending_review / last_ai_text / last_user_text 三列。
     /// v4: session_context 加 model 列（statusline 的模型展示名）。
-    const USER_VERSION: i64 = 4;
+    /// v5: sessions 加 provider 列（agent 提供方：claude/kimi…）。
+    const USER_VERSION: i64 = 5;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -51,7 +52,7 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 8] = [
+        const ALTERS: [&str; 9] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
@@ -60,6 +61,7 @@ impl Store {
             "ALTER TABLE sessions ADD COLUMN last_ai_text TEXT",
             "ALTER TABLE sessions ADD COLUMN last_user_text TEXT",
             "ALTER TABLE session_context ADD COLUMN model TEXT",
+            "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -571,6 +573,16 @@ impl Store {
         self.conn.execute(
             "UPDATE sessions SET cwd = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![cwd, now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 设置会话所属 agent provider（claude/kimi…）。仅在 SessionStart 由 reporter 按 --provider 写一次；
+    /// 不动 last_event_at（同回合的 set_session_cwd 等已刷新）。
+    pub fn set_session_provider(&self, session_id: i64, provider: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET provider = ?1 WHERE id = ?2",
+            rusqlite::params![provider, session_id],
         )?;
         Ok(())
     }
