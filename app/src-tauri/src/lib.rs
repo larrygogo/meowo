@@ -428,9 +428,7 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
         return false;
     }
 
-    // 原生 FindAll(Descendants, ControlType==TabItem) 取标签页。注意：Descendants 的条件只过滤
-    // 返回集、不剪枝遍历，provider 仍会遍历整棵后代子树——若实测随终端滚动缓冲增长而变慢，可
-    // 进一步先定位 TabView 容器再 Children。当前主热点在窗口发现那步，故此处暂保持原生 FindAll。
+    // 标签页条件(TabItem)；其容器条件(TabView=ControlType::Tab)用于把搜索根收窄到标签条子树。
     let Ok(tab_cond) = automation.create_property_condition(
         UIProperty::ControlType,
         Variant::from(ControlType::TabItem as i32),
@@ -438,6 +436,19 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     ) else {
         return false;
     };
+    let tabview_cond = automation
+        .create_property_condition(
+            UIProperty::ControlType,
+            Variant::from(ControlType::Tab as i32),
+            None,
+        )
+        .ok();
+    // 缓存请求：让 FindAll 随元素一次性带回 Name，用 get_cached_name 读取，免每个 TabItem 一次
+    // CurrentName 跨进程 RPC。
+    let cache_req = automation.create_cache_request().ok();
+    if let Some(ref cr) = cache_req {
+        let _ = cr.add_property(UIProperty::Name);
+    }
 
     // 选中标签页并置前其窗口；成功返回 true。复用于精确命中短路与消歧后命中。
     let select_and_foreground = |tab: &UIElement, win: &UIElement| -> bool {
@@ -452,16 +463,49 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
         false
     };
 
+    // 取某 WT 窗口的 (TabItem, name) 列表。关键提速：先 find_first 定位 TabView 容器(ControlType::Tab，
+    // 命中即停)，把 FindAll 的根从整窗收窄到标签条子树——避免对整窗 Descendants 全扫(含终端内容面板，
+    // 实测每窗口 ~20ms)。容器内优先直接子(Children)，拿不到再容器 Descendants(兼容 TabItem 嵌套)；
+    // 连容器都没有才退化为整窗 Descendants(异常布局兜底)。name 优先走缓存(get_cached_name)。
+    let collect_tabs = |win: &UIElement| -> Vec<(UIElement, String)> {
+        let find_tabitems = |root: &UIElement, scope: TreeScope| -> Vec<UIElement> {
+            match &cache_req {
+                Some(cr) => root.find_all_build_cache(scope, &tab_cond, cr).unwrap_or_default(),
+                None => root.find_all(scope, &tab_cond).unwrap_or_default(),
+            }
+        };
+        let mut tabs: Vec<UIElement> = Vec::new();
+        if let Some(tv) = tabview_cond
+            .as_ref()
+            .and_then(|c| win.find_first(TreeScope::Descendants, c).ok())
+        {
+            tabs = find_tabitems(&tv, TreeScope::Children);
+            if tabs.is_empty() {
+                tabs = find_tabitems(&tv, TreeScope::Descendants);
+            }
+        }
+        if tabs.is_empty() {
+            tabs = find_tabitems(win, TreeScope::Descendants);
+        }
+        tabs.into_iter()
+            .map(|t| {
+                let name = if cache_req.is_some() {
+                    t.get_cached_name().or_else(|_| t.get_name()).unwrap_or_default()
+                } else {
+                    t.get_name().unwrap_or_default()
+                };
+                (t, name)
+            })
+            .collect()
+    };
+
     let t1 = std::time::Instant::now();
     // 收集 score==1 的弱候选用于消歧；遇到 score==2 唯一精确命中即立刻短路，不再遍历其余窗口/标签。
     // 精确命中分支无需窗口 pid（省掉每窗口一次 ProcessId RPC），仅多个弱候选消歧时才取 pid。
     let mut partial: Vec<(UIElement, UIElement)> = Vec::new();
     for win in &wt_windows {
-        let Ok(tabs) = win.find_all(TreeScope::Descendants, &tab_cond) else {
-            continue;
-        };
-        for tab in tabs {
-            match tab_match_score(&tab.get_name().unwrap_or_default(), want) {
+        for (tab, name) in collect_tabs(win) {
+            match tab_match_score(&name, want) {
                 2 => {
                     if cfg!(debug_assertions) {
                         eprintln!("[focus-timing] enum_tabs exact-hit {:?}", t1.elapsed());
