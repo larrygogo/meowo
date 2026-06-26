@@ -413,9 +413,11 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     // WT 顶层窗口：先用纯 Win32 EnumWindows+GetClassNameW 直接拿 HWND（进程内、微秒级），再
     // element_from_handle 只进入这几个窗口做 UIA。绕开 crate matcher 从桌面根逐节点 RPC 爬树
     // （默认 depth=7、每节点一次 CurrentClassName 跨进程调用，几十~上百窗口下可达 50-300ms）。
-    let wt_windows: Vec<UIElement> = enum_wt_hwnds()
+    // 保留 HWND 与 UIElement 配对：HWND 用于 GetWindowThreadProcessId 取窗口 pid（消歧用）与置前，
+    // UIElement 用于 UIA 枚举标签页。
+    let wt_windows: Vec<(isize, UIElement)> = enum_wt_hwnds()
         .into_iter()
-        .filter_map(|h| automation.element_from_handle(Handle::from(h)).ok())
+        .filter_map(|h| automation.element_from_handle(Handle::from(h)).ok().map(|el| (h, el)))
         .collect();
     if cfg!(debug_assertions) {
         eprintln!(
@@ -449,19 +451,6 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     if let Some(ref cr) = cache_req {
         let _ = cr.add_property(UIProperty::Name);
     }
-
-    // 选中标签页并置前其窗口；成功返回 true。复用于精确命中短路与消歧后命中。
-    let select_and_foreground = |tab: &UIElement, win: &UIElement| -> bool {
-        if let Ok(p) = tab.get_pattern::<UISelectionItemPattern>() {
-            let _ = p.select();
-        }
-        if let Ok(handle) = win.get_native_window_handle() {
-            let hwnd_isize: isize = handle.into();
-            force_foreground(hwnd_isize as windows_sys::Win32::Foundation::HWND);
-            return true;
-        }
-        false
-    };
 
     // 取某 WT 窗口的 (TabItem, name) 列表。关键提速：先 find_first 定位 TabView 容器(ControlType::Tab，
     // 命中即停)，把 FindAll 的根从整窗收窄到标签条子树——避免对整窗 Descendants 全扫(含终端内容面板，
@@ -500,54 +489,53 @@ fn focus_terminal_tab(root_pid: u32, want: &str) -> bool {
     };
 
     let t1 = std::time::Instant::now();
-    // 收集 score==1 的弱候选用于消歧；遇到 score==2 唯一精确命中即立刻短路，不再遍历其余窗口/标签。
-    // 精确命中分支无需窗口 pid（省掉每窗口一次 ProcessId RPC），仅多个弱候选消歧时才取 pid。
-    let mut partial: Vec<(UIElement, UIElement)> = Vec::new();
-    for win in &wt_windows {
+    // 收集所有命中标签页：(匹配分, 窗口 HWND, 窗口 pid, 标签元素)。【不短路】——同一标题在多个窗口/标签
+    // 出现时（用户有两个同名终端），必须按 console_group_pids(root_pid) 消歧到本会话所属窗口，否则会
+    // 聚焦到错的同名标签（先前 score==2 立即返回的短路正是「点同名终端跳错」的根因）。
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let mut matches: Vec<(u8, isize, u32, UIElement)> = Vec::new();
+    for (hwnd, win) in &wt_windows {
+        let mut win_pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(*hwnd as HWND, &mut win_pid);
+        }
         for (tab, name) in collect_tabs(win) {
-            match tab_match_score(&name, want) {
-                2 => {
-                    if cfg!(debug_assertions) {
-                        eprintln!("[focus-timing] enum_tabs exact-hit {:?}", t1.elapsed());
-                    }
-                    if select_and_foreground(&tab, win) {
-                        return true;
-                    }
-                }
-                1 => partial.push((tab, win.clone())),
-                _ => {}
+            let score = tab_match_score(&name, want);
+            if score > 0 {
+                matches.push((score, *hwnd, win_pid, tab));
             }
         }
     }
+    let max_score = matches.iter().map(|m| m.0).max().unwrap_or(0);
     if cfg!(debug_assertions) {
         eprintln!(
-            "[focus-timing] enum_tabs done, {} partial {:?}",
-            partial.len(),
+            "[focus-timing] enum_tabs done, {} matches(max={}) {:?}",
+            matches.len(),
+            max_score,
             t1.elapsed()
         );
     }
-
-    // 无精确命中：唯一弱候选直接用；多个弱候选才扫进程组消歧（此时才付 ProcessId / 进程扫描代价）。
-    if partial.is_empty() {
+    if max_score == 0 {
         return false;
     }
-    let idx = if partial.len() == 1 {
+    // 只保留最高分候选。
+    matches.retain(|m| m.0 == max_score);
+    // 唯一候选直接用；多个同分时按 console_group_pids(root_pid) 选与本会话同进程组的窗口（窗口宿主
+    // WindowsTerminal.exe 是本会话进程的祖先，故其 pid 落在进程组里）——修「两个同名终端点击跳错」。
+    let idx = if matches.len() == 1 {
         0
     } else {
         let group = console_group_pids(root_pid);
-        partial
-            .iter()
-            .position(|(_, win)| {
-                win.get_property_value(UIProperty::ProcessId)
-                    .ok()
-                    .and_then(|v| TryInto::<i32>::try_into(v).ok())
-                    .map(|p| group.contains(&(p as u32)))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(0)
+        matches.iter().position(|m| group.contains(&m.2)).unwrap_or(0)
     };
-    let (tab, win) = &partial[idx];
-    select_and_foreground(tab, win)
+    let (_, hwnd, _, tab) = &matches[idx];
+    // 选中该标签页（即使其窗口当前在后台也会切换激活标签页），再置前其窗口（直接用 HWND，免再取 native handle）。
+    if let Ok(p) = tab.get_pattern::<UISelectionItemPattern>() {
+        let _ = p.select();
+    }
+    force_foreground(*hwnd as HWND);
+    true
 }
 
 /// 用 AttachThreadInput 绕过 Windows 后台进程 SetForegroundWindow 限制，可靠置顶目标窗口。
