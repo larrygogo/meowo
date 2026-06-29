@@ -119,13 +119,24 @@ async fn get_live_sessions(state: State<'_, AppState>) -> Result<Vec<LiveItem>, 
         .map_err(|e| e.to_string())?
 }
 
-/// 卡片「已连接」判定（纯函数，便于单测）：未结束 且（pid 是存活 agent 进程 ‖ pid 未知）。
-/// - pid 是存活 agent：严格校验防 Windows pid 复用（旧 pid 被 esbuild 等占用误判连接）。
-/// - pid 未知豁免：看板 resume 会乐观复活会话并清 pid（revive_for_resume），新进程首个 hook 才认领
-///   真 pid；codex 的 hook 要到首条消息才触发，期间 pid 一直空——若仍按 pid 校验会显示未连接（用户点
-///   resume 看着没反应）。pid 空的真死孤儿由 reaper 的 30 分钟 idle 兜底收尾(→ended→断开)，不会长期假连接。
-fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool) -> bool {
-    status != "ended" && (pid_alive || pid.is_none())
+/// 看板 resume 后「乐观连接」的宽限期(ms)。pid 未知(resume 清空待认领)的会话仅在此窗口内显示已连接，
+/// 给 codex 这类「resume 不发 hook、要到首条消息才触发」的 agent 留出「启动 + 用户发首条消息」的窗口；
+/// 超时仍无 hook 认领真 pid 则回落未连接——避免没真正起来的会话(终端没开/被秒关)长期假连接。
+const RESUME_GRACE_MS: i64 = 120_000;
+
+/// 卡片「已连接」判定（纯函数，便于单测）：
+/// - 已结束 → 断开。
+/// - pid 是存活 agent 进程 → 连接（严格校验防 Windows pid 复用，旧 pid 被 esbuild 等占用误判）。
+/// - pid 未知 → 仅 resume 宽限期内（last_event_at 距 now 在 RESUME_GRACE_MS 内）乐观连接，否则断开。
+///   pid 未知只可能是看板 resume 清空待认领（hook 一旦认领 pid 即走上一分支），故宽限即「刚 resume」。
+fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event_at: i64, now: i64) -> bool {
+    if status == "ended" {
+        return false;
+    }
+    if pid_alive {
+        return true;
+    }
+    pid.is_none() && now.saturating_sub(last_event_at) < RESUME_GRACE_MS
 }
 
 fn live_sessions_blocking(
@@ -150,12 +161,18 @@ fn live_sessions_blocking(
     // 先算 connected（廉价，仅查进程表）并据此排序，再只对「将要展示」的会话解析
     // transcript 标题——标题解析要 read_to_string 整个 JSONL（可达数 MB），对最多 100 个
     // 会话全做一遍再截断到 20 是巨大的无谓 I/O（每 ~300ms 一次）。
+    let now = now_ms();
     let mut ranked: Vec<(LiveSession, bool)> = sessions
         .into_iter()
         .map(|s| {
-            // 已结束=断开；pid 是存活 agent=连接(防 pid 复用)；pid 未知=连接(resume 乐观/codex 延迟 hook)。
-            let connected =
-                session_connected(&s.session.status, s.pid, is_claude(s.pid.unwrap_or(0)));
+            // 已结束=断开；pid 是存活 agent=连接(防 pid 复用)；pid 未知=仅 resume 宽限期内乐观连接。
+            let connected = session_connected(
+                &s.session.status,
+                s.pid,
+                is_claude(s.pid.unwrap_or(0)),
+                s.session.last_event_at,
+                now,
+            );
             (s, connected)
         })
         .collect();
@@ -2092,15 +2109,18 @@ mod tests {
 
     #[test]
     fn session_connected_logic() {
+        let now = 1_000_000i64;
         // 结束 → 断开（即使 pid 看着是活的）。
-        assert!(!session_connected("ended", Some(123), true));
-        // 活着的 agent 进程 → 连接。
-        assert!(session_connected("running", Some(123), true));
+        assert!(!session_connected("ended", Some(123), true, now, now));
+        // 活着的 agent 进程 → 连接（与时间无关）。
+        assert!(session_connected("running", Some(123), true, 0, now));
         // pid 有值但已死/被复用 → 断开（防 pid 复用误判）。
-        assert!(!session_connected("running", Some(123), false));
-        // pid 未知 → 连接：看板 resume 乐观复活清了 pid、codex 首个 hook 未到，期间也应显示已连接。
-        assert!(session_connected("running", None, false));
-        assert!(session_connected("waiting", None, false));
+        assert!(!session_connected("running", Some(123), false, now, now));
+        // pid 未知 + 在 resume 宽限期内 → 连接（刚 resume，等 codex 首个 hook）。
+        assert!(session_connected("running", None, false, now - 1_000, now));
+        assert!(session_connected("waiting", None, false, now - 1_000, now));
+        // pid 未知 + 超出宽限期 → 断开（终端没起来/被关的僵尸会话，不再假连接）。
+        assert!(!session_connected("running", None, false, now - 200_000, now));
     }
 
     #[test]

@@ -309,7 +309,7 @@ fn revive_for_resume_revives_ended_and_clears_pid() {
 
 #[test]
 fn revive_for_resume_noop_on_connected_session() {
-    // 已连接(非 ended)会话不命中 → pid 原样保留，避免误清活跃会话。
+    // hook 已认领 pid 的活跃会话(非 ended 且 pid 非空)不命中 → pid 原样保留，避免误清活跃会话。
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
@@ -317,6 +317,19 @@ fn revive_for_resume_noop_on_connected_session() {
     store.revive_for_resume(sid, 300).unwrap();
     let live = store.live_sessions().unwrap();
     assert_eq!(live[0].pid, Some(6666));
+}
+
+#[test]
+fn revive_for_resume_refreshes_pidless_running_session() {
+    // 宽限过期后用户再次点 resume：会话 status 仍 running、pid 空(从未被 hook 认领) → 应刷新 last_event_at
+    // 重启 app 侧乐观连接宽限，而不是因「非 ended」被跳过。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap(); // 默认 running、pid 空、last_event_at=100
+    store.revive_for_resume(sid, 500).unwrap();
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live[0].pid, None);
+    assert_eq!(live[0].session.last_event_at, 500); // 已刷新 → 宽限重启
 }
 
 #[test]
