@@ -291,6 +291,35 @@ fn set_pid_evicts_same_pid_from_other_sessions() {
 }
 
 #[test]
+fn revive_for_resume_revives_ended_and_clears_pid() {
+    // 看板 resume 一个已断开会话：应复活(脱离 ended)并清空 pid——旧进程已死，清 pid 让 reaper 不臆测收尾，
+    // 卡片即刻显示已连接，新进程首个 hook 再认领 pid。覆盖 codex「session_start 要到首个 turn 才触发」场景。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    store.set_session_pid(sid, 5555, 110).unwrap();
+    store.end_session(sid, 200).unwrap(); // 断开
+    store.revive_for_resume(sid, 300).unwrap();
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].session.cc_session_id, "s");
+    assert_ne!(live[0].session.status, "ended"); // 已复活
+    assert_eq!(live[0].pid, None); // pid 已清
+}
+
+#[test]
+fn revive_for_resume_noop_on_connected_session() {
+    // 已连接(非 ended)会话不命中 → pid 原样保留，避免误清活跃会话。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    store.set_session_pid(sid, 6666, 110).unwrap();
+    store.revive_for_resume(sid, 300).unwrap();
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live[0].pid, Some(6666));
+}
+
+#[test]
 fn end_orphaned_idle_only_reaps_pidless_stale_sessions() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();

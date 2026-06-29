@@ -524,6 +524,20 @@ impl Store {
         Ok(())
     }
 
+    /// 看板主动 resume 一个会话时调用：仅当当前为 ended(断开)，复活它(置 running、清 ended_at)并清空 pid。
+    /// 清 pid 是关键——旧进程已死，留着会被 reaper 当「pid 已死」立即再收尾；清空后 reaper「pid 未知不臆测」
+    /// 不动它(见 live_session_liveness 消费方)，等新进程首个 hook 用 set_session_pid 认领真实 pid。
+    /// 解决 codex 这类「session_start hook 要到首个 turn 才触发」的 agent：resume 后不必等发消息即显示已连接。
+    /// 当前未 ended(已连接)则整条不命中、不动 pid，避免误清活跃会话。
+    pub fn revive_for_resume(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET status='running', ended_at=NULL, pid=NULL, last_event_at=?1 \
+             WHERE id=?2 AND status='ended'",
+            rusqlite::params![now_ms, session_id],
+        )?;
+        Ok(())
+    }
+
     /// 结束会话：状态设为 ended，记录 ended_at。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(

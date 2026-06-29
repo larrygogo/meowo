@@ -865,6 +865,14 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
     if !is_safe_id(&session_id) {
         return Err("无效 session_id".into());
     }
+    // 乐观连接：resume 是看板主动发起的，已知恢复哪个会话——立即复活并清旧 pid，卡片即刻显示已连接，
+    // 不必等 hook。尤其 codex 的 session_start hook 要到首个 turn(用户发首条消息)才触发，否则终端开着
+    // 却一直显示未连接。清 pid 后 reaper 不会臆测收尾(见 revive_for_resume)，新进程首个 hook 再认领 pid。
+    if let Ok(store) = open_store(&db_path()) {
+        if let Ok(Some(sid)) = store.find_session_id_pub(&session_id) {
+            let _ = store.revive_for_resume(sid, now_ms());
+        }
+    }
     #[cfg(target_os = "windows")]
     {
         // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
