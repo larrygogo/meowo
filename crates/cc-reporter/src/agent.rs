@@ -124,6 +124,11 @@ impl Agent for CodexAgent {
         // codex 不改 WT 标签标题（标签是默认目录名，如 pwsh 的 "larry"）→ 走窗口级定位。
         false
     }
+    fn writes_tab_token(&self) -> bool {
+        // 实测 codex 默认不写 WT 标签标题(标签显示默认目录名 "larry"，未见 spinner 抢标题)
+        // → 由 cc-reporter 在 hook 时补 session_id token，cc-app 即可精确切到 codex 标签。
+        true
+    }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         // 必须走 node 包装(node <codex.js> resume)——直接拉原生 codex.exe 不会真正恢复会话(无 rollout/
         // 无 hook)。node 在系统 PATH、codex.js 用绝对路径；解析失败回退裸名 codex。
