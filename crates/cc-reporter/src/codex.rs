@@ -22,14 +22,12 @@ fn codex_home() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".codex"))
 }
 
-/// codex 原生可执行的绝对路径。npm 全局的 `codex` 是 shim(.cmd/.ps1，CreateProcess 拉不起)，真正的
-/// exe 在 `{npm}/node_modules/@openai/codex/node_modules/@openai/codex-<arch>/vendor/<triple>/bin/codex.exe`。
-/// resume 用：cc-app 拉起的终端 PATH 未必含 codex(裸名会报 0x80070002 系统找不到指定的文件)，故用绝对路径。
-/// 找不到回退裸名 "codex"。
-pub fn codex_exe() -> String {
-    let bin = if cfg!(windows) { "codex.exe" } else { "codex" };
-    let mut roots: Vec<PathBuf> = Vec::new();
-    // npm 全局前缀：%APPDATA%/npm（Windows 默认）。codex 包在其 node_modules/@openai/codex 下。
+/// codex npm 包的入口 `bin/codex.js` 绝对路径。npm 全局的 `codex` 是 shim，实为
+/// `node "{npm}/node_modules/@openai/codex/bin/codex.js" <args>`；【必须】走 node 包装，直接拉原生
+/// codex.exe 不会真正恢复会话(无 rollout/无 hook)。resume 用：拉起的终端 PATH 未必含 `codex`(裸名报
+/// 0x80070002)，但 `node` 在系统 PATH，故用 `node <此路径>`。路径是固定相对结构(无 arch 变量)，
+/// 不存在则返回 None(调用方回退裸名 codex)。
+pub fn codex_js() -> Option<String> {
     for var in ["APPDATA", "USERPROFILE"] {
         if let Ok(v) = std::env::var(var) {
             let base = if var == "APPDATA" {
@@ -37,21 +35,18 @@ pub fn codex_exe() -> String {
             } else {
                 PathBuf::from(v).join("AppData").join("Roaming").join("npm")
             };
-            roots.push(
-                base.join("node_modules")
-                    .join("@openai")
-                    .join("codex")
-                    .join("node_modules")
-                    .join("@openai"),
-            );
+            let js = base
+                .join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js");
+            if js.exists() {
+                return Some(js.to_string_lossy().into_owned());
+            }
         }
     }
-    for r in roots {
-        if let Some(p) = walk_find(&r, bin, 6) {
-            return p.to_string_lossy().into_owned();
-        }
-    }
-    "codex".to_string()
+    None
 }
 
 /// 在 `~/.codex/sessions` 下按 session_id 找 rollout 文件（文件名内嵌 uuid，以 `<uuid>.jsonl` 结尾）。

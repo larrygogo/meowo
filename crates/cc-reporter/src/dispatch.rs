@@ -11,7 +11,11 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
             if ev.session_id.is_empty() { return Ok(()); }
             let sid = create_session(store, ev, cwd, provider, now_ms)?;
+            // resume 一个已结束会话时，SessionStart 也要复活它（置 running、清 ended_at），否则卡片停在
+            // 断开态直到用户发首条消息才重连。
+            store.revive_if_ended(sid, now_ms)?;
             apply_title(store, ev, sid, now_ms, provider)?;
+            write_tab_token(ev, provider);
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {

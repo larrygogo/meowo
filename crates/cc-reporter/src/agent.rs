@@ -125,8 +125,12 @@ impl Agent for CodexAgent {
         false
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
-        // 用 codex 原生 exe 绝对路径（npm 全局是 shim、spawned 终端 PATH 未必含 codex）。
-        vec![crate::codex::codex_exe(), "resume".into(), session_id.into()]
+        // 必须走 node 包装(node <codex.js> resume)——直接拉原生 codex.exe 不会真正恢复会话(无 rollout/
+        // 无 hook)。node 在系统 PATH、codex.js 用绝对路径；解析失败回退裸名 codex。
+        match crate::codex::codex_js() {
+            Some(js) => vec!["node".into(), js, "resume".into(), session_id.into()],
+            None => vec!["codex".into(), "resume".into(), session_id.into()],
+        }
     }
     fn write_rename(&self, _session_id: &str, _cwd: Option<&str>, _title: &str) -> bool {
         // codex 自定义标题走 app-server JSON-RPC（成本高），暂不回写；重命名仅改 cc-kanban DB。
@@ -216,10 +220,10 @@ mod tests {
     #[test]
     fn resume_args_per_provider() {
         assert_eq!(for_provider("claude").resume_args("ID"), vec!["claude", "--resume", "ID"]);
-        // codex 首元素是可执行(原生 exe 绝对路径或回退裸名)，参数固定 resume <id>。
+        // codex：末两位固定 `resume <id>`；首元素是 node(走包装) 或回退裸名 codex；某元素含 "codex"。
         let codex = for_provider("codex").resume_args("ID");
-        assert_eq!(&codex[1..], ["resume".to_string(), "ID".to_string()]);
-        assert!(codex[0].to_ascii_lowercase().contains("codex"));
+        assert_eq!(codex[codex.len() - 2..], ["resume".to_string(), "ID".to_string()]);
+        assert!(codex.iter().any(|a| a.to_ascii_lowercase().contains("codex")));
         // kimi 首元素是可执行(绝对路径或回退裸名)，参数固定 -r <id>。
         let kimi = for_provider("kimi").resume_args("ID");
         assert_eq!(&kimi[1..], ["-r".to_string(), "ID".to_string()]);
