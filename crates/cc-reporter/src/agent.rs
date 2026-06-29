@@ -26,8 +26,8 @@ pub trait Agent: Sync {
     fn sets_terminal_tab_title(&self) -> bool;
     /// cc-reporter 是否应在 hook 时往本标签 ConPTY 写 session_id token（让 cc-app 能按 token 精确切到
     /// 该标签，解决同窗口同目录两会话标签同名分不清）。claude=false（自己写任务名，cc-app 按任务名匹配）；
-    /// codex=false（其 spinner 持续抢标题，应走原生 tui.terminal_title 配 session_id）；kimi=true
-    /// （不写标题且不抢 → 由我们补 token）。见 crate::tabtitle。
+    /// kimi=true（不写标题且不抢 → 由我们补 token，已验证可精确切标签）；codex=false（持续 SetWindowTitle
+    /// 抢标题、无法绕过，写了也被盖，详见其 impl）。见 crate::tabtitle。
     fn writes_tab_token(&self) -> bool {
         false
     }
@@ -125,10 +125,11 @@ impl Agent for CodexAgent {
         false
     }
     fn writes_tab_token(&self) -> bool {
-        // codex 默认用 tui.terminal_title 的 spinner 持续抢标签标题(如 "⠹ larry")，会盖掉我们写的 token。
-        // 需在用户 ~/.codex/config.toml 配 `tui.terminal_title = []`(codex 不再管理标题)，cc-reporter 写的
-        // session_id token 才能留住，cc-app 据此精确切到 codex 标签(与 kimi 同机制)。
-        true
+        // 暂关：codex 持续用 SetWindowTitle 管理标签标题(spinner+project，如 "⠹ larry")，会盖掉我们写的
+        // 任何 token，且无 session_id 组件、无禁用开关可绕过(实测 0.142.3=当前最新发布版)。其源码里
+        // 「tui.terminal_title=[] 关闭标题管理」只在未发布主干，已发布版 [] 反而 clear 成终端默认(路径)。
+        // 故 codex 的精确切标签暂不可达，cc-app 走窗口级兜底。待 codex 发布 [] 禁用后，置 true 即与 kimi 同。
+        false
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         // 优先用户实际在用的 codex(bun 全局 codex.exe，常是更新后的版本)，否则 npm 的 node 包装；
