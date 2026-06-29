@@ -119,6 +119,15 @@ async fn get_live_sessions(state: State<'_, AppState>) -> Result<Vec<LiveItem>, 
         .map_err(|e| e.to_string())?
 }
 
+/// 卡片「已连接」判定（纯函数，便于单测）：未结束 且（pid 是存活 agent 进程 ‖ pid 未知）。
+/// - pid 是存活 agent：严格校验防 Windows pid 复用（旧 pid 被 esbuild 等占用误判连接）。
+/// - pid 未知豁免：看板 resume 会乐观复活会话并清 pid（revive_for_resume），新进程首个 hook 才认领
+///   真 pid；codex 的 hook 要到首条消息才触发，期间 pid 一直空——若仍按 pid 校验会显示未连接（用户点
+///   resume 看着没反应）。pid 空的真死孤儿由 reaper 的 30 分钟 idle 兜底收尾(→ended→断开)，不会长期假连接。
+fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool) -> bool {
+    status != "ended" && (pid_alive || pid.is_none())
+}
+
 fn live_sessions_blocking(
     db_path: &PathBuf,
     tx_cache: &Mutex<cc_store::TranscriptCache>,
@@ -144,10 +153,9 @@ fn live_sessions_blocking(
     let mut ranked: Vec<(LiveSession, bool)> = sessions
         .into_iter()
         .map(|s| {
-            // 已结束(ended)的会话一律视为断开；并校验 pid 确属 claude，
-            // 防 Windows pid 复用（旧 pid 被 esbuild 等占用）误判为「连接中」。
+            // 已结束=断开；pid 是存活 agent=连接(防 pid 复用)；pid 未知=连接(resume 乐观/codex 延迟 hook)。
             let connected =
-                s.session.status != "ended" && is_claude(s.pid.unwrap_or(0));
+                session_connected(&s.session.status, s.pid, is_claude(s.pid.unwrap_or(0)));
             (s, connected)
         })
         .collect();
@@ -2029,7 +2037,7 @@ pub fn run() {
 mod tests {
     use super::{
         is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
-        pid_is_agent, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
+        pid_is_agent, session_connected, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
     use crate::snap::{
@@ -2080,6 +2088,19 @@ mod tests {
         assert!(!pid_is_agent(&sys, 0));
         assert!(!pid_is_agent(&sys, -1));
         assert!(!pid_is_agent(&sys, 4_000_000_000));
+    }
+
+    #[test]
+    fn session_connected_logic() {
+        // 结束 → 断开（即使 pid 看着是活的）。
+        assert!(!session_connected("ended", Some(123), true));
+        // 活着的 agent 进程 → 连接。
+        assert!(session_connected("running", Some(123), true));
+        // pid 有值但已死/被复用 → 断开（防 pid 复用误判）。
+        assert!(!session_connected("running", Some(123), false));
+        // pid 未知 → 连接：看板 resume 乐观复活清了 pid、codex 首个 hook 未到，期间也应显示已连接。
+        assert!(session_connected("running", None, false));
+        assert!(session_connected("waiting", None, false));
     }
 
     #[test]
