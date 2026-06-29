@@ -22,6 +22,25 @@ fn codex_home() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".codex"))
 }
 
+/// codex 的启动前缀 argv（不含 `resume <id>`）。优先用户【实际在用的】 bun 全局 codex.exe
+/// (`~/.bun/bin/codex.exe`)——用户多用 bun 装/更新，npm 那个常是过期副本(导致 resume 拉到旧版、
+/// 每次提示更新)。其次退回 npm 的 node 包装(`node <codex.js>`)。都没有则 None(调用方回退裸名 codex)。
+pub fn codex_launch_prefix() -> Option<Vec<String>> {
+    let bin = if cfg!(windows) { "codex.exe" } else { "codex" };
+    // 1) bun 全局 bin。
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        let bun = PathBuf::from(&home).join(".bun").join("bin").join(bin);
+        if bun.exists() {
+            return Some(vec![bun.to_string_lossy().into_owned()]);
+        }
+    }
+    // 2) npm 全局：node "<npm>/node_modules/@openai/codex/bin/codex.js"。
+    if let Some(js) = codex_js() {
+        return Some(vec!["node".into(), js]);
+    }
+    None
+}
+
 /// codex npm 包的入口 `bin/codex.js` 绝对路径。npm 全局的 `codex` 是 shim，实为
 /// `node "{npm}/node_modules/@openai/codex/bin/codex.js" <args>`；【必须】走 node 包装，直接拉原生
 /// codex.exe 不会真正恢复会话(无 rollout/无 hook)。resume 用：拉起的终端 PATH 未必含 `codex`(裸名报

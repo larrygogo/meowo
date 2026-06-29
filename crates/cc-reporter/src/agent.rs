@@ -130,10 +130,14 @@ impl Agent for CodexAgent {
         true
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
-        // 必须走 node 包装(node <codex.js> resume)——直接拉原生 codex.exe 不会真正恢复会话(无 rollout/
-        // 无 hook)。node 在系统 PATH、codex.js 用绝对路径；解析失败回退裸名 codex。
-        match crate::codex::codex_js() {
-            Some(js) => vec!["node".into(), js, "resume".into(), session_id.into()],
+        // 优先用户实际在用的 codex(bun 全局 codex.exe，常是更新后的版本)，否则 npm 的 node 包装；
+        // 直接拉 npm 旧版会每次提示更新。解析失败回退裸名 codex。
+        match crate::codex::codex_launch_prefix() {
+            Some(mut argv) => {
+                argv.push("resume".into());
+                argv.push(session_id.into());
+                argv
+            }
             None => vec!["codex".into(), "resume".into(), session_id.into()],
         }
     }
