@@ -121,12 +121,13 @@ impl Agent for CodexAgent {
         false
     }
     fn sets_terminal_tab_title(&self) -> bool {
-        // codex 不改 WT 标签标题（标签是默认目录名，如 pwsh 的 "larry"）→ 走窗口级定位。
+        // codex 不写「任务标题」式标签名（cc-app 无法按任务名匹配）→ 改由下面 writes_tab_token 补 token。
         false
     }
     fn writes_tab_token(&self) -> bool {
-        // 实测 codex 默认不写 WT 标签标题(标签显示默认目录名 "larry"，未见 spinner 抢标题)
-        // → 由 cc-reporter 在 hook 时补 session_id token，cc-app 即可精确切到 codex 标签。
+        // codex 默认用 tui.terminal_title 的 spinner 持续抢标签标题(如 "⠹ larry")，会盖掉我们写的 token。
+        // 需在用户 ~/.codex/config.toml 配 `tui.terminal_title = []`(codex 不再管理标题)，cc-reporter 写的
+        // session_id token 才能留住，cc-app 据此精确切到 codex 标签(与 kimi 同机制)。
         true
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {

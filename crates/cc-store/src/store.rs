@@ -264,6 +264,21 @@ impl Store {
         Ok(())
     }
 
+    /// 读会话当前任务标题（贴纸/卡片显示的那个）；无/空则 None。cc-reporter 给 WT 标签写 token 时
+    /// 用作可见前缀（比 cwd 目录名更贴合卡片）。
+    pub fn session_title(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        match self.conn.query_row(
+            "SELECT title FROM tasks WHERE session_id = ?1",
+            [session_id],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(t) if !t.trim().is_empty() => Ok(Some(t)),
+            Ok(_) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub(crate) fn find_session_id(&self, cc_session_id: &str) -> Result<Option<i64>, StoreError> {
         let mut stmt = self
             .conn

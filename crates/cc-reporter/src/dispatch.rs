@@ -15,7 +15,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
             // 断开态直到用户发首条消息才重连。
             store.revive_if_ended(sid, now_ms)?;
             apply_title(store, ev, sid, now_ms, provider)?;
-            write_tab_token(ev, provider);
+            write_tab_token(store, sid, ev, provider);
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
@@ -29,7 +29,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                     store.set_session_pid(sid, p as i64, now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
-                write_tab_token(ev, provider);
+                write_tab_token(store, sid, ev, provider);
             }
         }
         "PostToolUse" => {
@@ -62,7 +62,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                     store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
-                write_tab_token(ev, provider);
+                write_tab_token(store, sid, ev, provider);
             }
         }
         "SessionEnd" => {
@@ -123,7 +123,7 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &
 /// 标题——sid8=session_id 末 8 位、全局唯一，cc-app 据此精确切到该标签（解决同窗口同目录两会话标签
 /// 同名分不清）。cc-reporter 是 hook 子进程、继承本会话的 ConPTY，写 CONOUT$ 只影响自己这个标签。
 /// 非 Windows / 非 WT(CONOUT$ 打不开) 静默 no-op。
-fn write_tab_token(ev: &HookEvent, provider: &str) {
+fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: &str) {
     if !crate::agent::for_provider(provider).writes_tab_token() {
         return;
     }
@@ -131,12 +131,20 @@ fn write_tab_token(ev: &HookEvent, provider: &str) {
     if sid8.is_empty() {
         return;
     }
-    let base = ev
-        .cwd
-        .as_deref()
-        .map(|c| c.trim_end_matches(['/', '\\']))
-        .and_then(|c| Path::new(c).file_name().and_then(|s| s.to_str()))
-        .unwrap_or("session");
+    // 可见前缀优先用任务标题(贴合卡片，如 "hi")，无/占位则回退 cwd 末段目录名。
+    let base = store
+        .session_title(sid)
+        .ok()
+        .flatten()
+        .filter(|t| t != "(未命名会话)")
+        .or_else(|| {
+            ev.cwd
+                .as_deref()
+                .map(|c| c.trim_end_matches(['/', '\\']))
+                .and_then(|c| Path::new(c).file_name().and_then(|s| s.to_str()))
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "session".to_string());
     crate::tabtitle::set_tab_title(&format!("{base} ·{sid8}"));
 }
 
