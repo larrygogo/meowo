@@ -22,6 +22,38 @@ fn codex_home() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".codex"))
 }
 
+/// codex 原生可执行的绝对路径。npm 全局的 `codex` 是 shim(.cmd/.ps1，CreateProcess 拉不起)，真正的
+/// exe 在 `{npm}/node_modules/@openai/codex/node_modules/@openai/codex-<arch>/vendor/<triple>/bin/codex.exe`。
+/// resume 用：cc-app 拉起的终端 PATH 未必含 codex(裸名会报 0x80070002 系统找不到指定的文件)，故用绝对路径。
+/// 找不到回退裸名 "codex"。
+pub fn codex_exe() -> String {
+    let bin = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let mut roots: Vec<PathBuf> = Vec::new();
+    // npm 全局前缀：%APPDATA%/npm（Windows 默认）。codex 包在其 node_modules/@openai/codex 下。
+    for var in ["APPDATA", "USERPROFILE"] {
+        if let Ok(v) = std::env::var(var) {
+            let base = if var == "APPDATA" {
+                PathBuf::from(v).join("npm")
+            } else {
+                PathBuf::from(v).join("AppData").join("Roaming").join("npm")
+            };
+            roots.push(
+                base.join("node_modules")
+                    .join("@openai")
+                    .join("codex")
+                    .join("node_modules")
+                    .join("@openai"),
+            );
+        }
+    }
+    for r in roots {
+        if let Some(p) = walk_find(&r, bin, 6) {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    "codex".to_string()
+}
+
 /// 在 `~/.codex/sessions` 下按 session_id 找 rollout 文件（文件名内嵌 uuid，以 `<uuid>.jsonl` 结尾）。
 /// 递归 walk 年/月/日（限深，避免误入无关深目录）。仅作 transcript_path 缺失时的兜底。
 fn find_rollout(session_id: &str) -> Option<PathBuf> {
