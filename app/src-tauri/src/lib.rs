@@ -193,13 +193,17 @@ fn live_sessions_blocking(
         let mut error_label: Option<String> = None;
         let mut error_raw: Option<String> = None;
         let mut preview: Option<String> = None;
-        let info = cc_store::title::resolve_transcript_path(
-            None,
-            s.cwd.as_deref(),
-            &s.session.cc_session_id,
-        )
-        .and_then(|p| p.to_str().map(str::to_string))
-        .map(|path| tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path));
+        // 注：此处仅按 transcript() 是否存在解析；下方对 info.title 的覆盖不再单独 gate
+        // resolves_transcript_title。当前只有 claude 有 spec（且 resolves_transcript_title=true），
+        // codex/kimi transcript()=None 不进此分支，故零影响。将来若引入「有 spec 但标题走首条
+        // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
+        let info = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
+            .transcript()
+            .and_then(|spec| {
+                spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
+                    .and_then(|p| p.to_str().map(str::to_string))
+                    .map(|path| tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(spec, &path))
+            });
         if let Some(info) = info {
             if let Some(t) = info.title {
                 s.task_title = t;
@@ -1332,11 +1336,17 @@ fn spawn_liveness_watch(
                     let sid = s.session.cc_session_id.clone();
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
+                    // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
+                    // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
                     let cc_store::TranscriptInfo { title, error, .. } =
-                        cc_store::title::resolve_transcript_path(None, s.cwd.as_deref(), &sid)
-                            .and_then(|p| p.to_str().map(str::to_string))
-                            .map(|path| {
-                                tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path)
+                        cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
+                            .transcript()
+                            .and_then(|spec| {
+                                spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
+                                    .and_then(|p| p.to_str().map(str::to_string))
+                                    .map(|path| {
+                                        tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(spec, &path)
+                                    })
                             })
                             .unwrap_or_default();
                     // 会话标题：通知正文用，也作点击聚焦时匹配 WT 标签页的标题。transcript 标题优先，否则 DB 标题。

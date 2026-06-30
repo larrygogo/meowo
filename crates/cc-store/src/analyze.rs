@@ -1,6 +1,6 @@
 //! 从 Claude Code transcript 检测「致命卡死错误」并与标题解析共用一次文件读取。
 use serde::Serialize;
-use crate::transcript_spec::TranscriptParser;
+use crate::transcript_spec::{TranscriptParser, TranscriptSpec};
 
 /// 上下文窗口基准（标准 200k）。1M-context 变体无法从 transcript 的 model 字段可靠识别，
 /// 故统一按 200k 估算并封顶 100%；后续若需精确可按 model 调整。
@@ -207,11 +207,11 @@ pub fn claude_new_parser() -> Box<dyn TranscriptParser> {
     Box::new(ClaudeParser(ParseState::default()))
 }
 
-/// 单条缓存：已解析到的字节偏移 + 上次解析时的 mtime + 累积状态 + 最近使用刻度（淘汰用）。
+/// 单条缓存：已解析到的字节偏移 + 上次解析时的 mtime + 累积解析器 + 最近使用刻度（淘汰用）。
 struct CacheEntry {
     offset: u64,
     mtime: Option<std::time::SystemTime>,
-    state: ParseState,
+    parser: Box<dyn TranscriptParser>,
     last_used: u64,
 }
 
@@ -236,7 +236,8 @@ impl TranscriptCache {
     /// 增量解析 path：只处理上次偏移之后新追加的「完整行」（末尾未结束的半行留到下次）。
     /// 失效检测用 len + mtime 双重校验：len < 偏移（截断）或 len == 偏移但 mtime 变了
     /// （等长重写）→ 从头重解析。打开/读失败 → 返回当前累积结果。
-    pub fn analyze(&mut self, path: &str) -> TranscriptInfo {
+    /// `spec` 决定新建/重置条目时用哪种 provider 的解析器（claude 即 ClaudeParser）。
+    pub fn analyze(&mut self, spec: &dyn TranscriptSpec, path: &str) -> TranscriptInfo {
         use std::io::{Read, Seek, SeekFrom};
         self.tick += 1;
         // 容量上限：插入新 key 前先淘汰最久未访问的条目。
@@ -254,46 +255,44 @@ impl TranscriptCache {
         let entry = self.entries.entry(path.to_string()).or_insert_with(|| CacheEntry {
             offset: 0,
             mtime: None,
-            state: ParseState::default(),
+            parser: spec.new_parser(),
             last_used: tick,
         });
         entry.last_used = tick;
 
         let Ok(mut f) = std::fs::File::open(path) else {
-            return entry.state.to_info();
+            return entry.parser.to_info();
         };
         let (len, mtime) = match f.metadata() {
             Ok(m) => (m.len(), m.modified().ok()),
-            // metadata 偶发失败（I/O 抖动等）时**沿用已累积状态**，不要用 len=0 当真实长度——
-            // 否则会被下面误判为「截断」而清空已解析的标题/错误，导致瞬时丢失（与 File::open 失败一致处理）。
-            Err(_) => return entry.state.to_info(),
+            Err(_) => return entry.parser.to_info(),
         };
         if len < entry.offset || (len == entry.offset && mtime != entry.mtime) {
             // 被截断，或等长但 mtime 变了（同长度重写）→ 重头解析。
             entry.offset = 0;
-            entry.state = ParseState::default();
+            entry.parser = spec.new_parser();
         }
         if len == entry.offset {
             entry.mtime = mtime;
-            return entry.state.to_info(); // 无新增，直接复用
+            return entry.parser.to_info(); // 无新增，直接复用
         }
         if f.seek(SeekFrom::Start(entry.offset)).is_err() {
-            return entry.state.to_info();
+            return entry.parser.to_info();
         }
         let mut buf = Vec::new();
         if f.read_to_end(&mut buf).is_err() {
-            return entry.state.to_info();
+            return entry.parser.to_info();
         }
         // 只吃到最后一个换行为止，保证按完整行解析；其后半行（writer 可能正写一半）留到下次。
         if let Some(nl) = buf.iter().rposition(|&b| b == b'\n') {
             entry.offset += (nl + 1) as u64;
             let chunk = String::from_utf8_lossy(&buf[..=nl]);
             for line in chunk.lines() {
-                entry.state.fold_line(line);
+                entry.parser.fold_line(line);
             }
         }
         entry.mtime = mtime;
-        entry.state.to_info()
+        entry.parser.to_info()
     }
 }
 
@@ -471,7 +470,7 @@ mod tests {
             ),
         );
         let mut cache = TranscriptCache::new();
-        let i1 = cache.analyze(p.to_str().unwrap());
+        let i1 = cache.analyze(&crate::transcript_spec::ClaudeTranscript, p.to_str().unwrap());
         assert_eq!(i1.title.as_deref(), Some("标题A"));
         assert_eq!(i1.context_tokens, Some(1000));
 
@@ -489,7 +488,7 @@ mod tests {
         .unwrap();
         drop(f);
 
-        let i2 = cache.analyze(p.to_str().unwrap());
+        let i2 = cache.analyze(&crate::transcript_spec::ClaudeTranscript, p.to_str().unwrap());
         // 与全量解析结果一致
         let full = analyze_transcript(p.to_str().unwrap());
         assert_eq!(i2.title.as_deref(), Some("标题B")); // custom 覆盖 ai
@@ -498,7 +497,7 @@ mod tests {
         assert_eq!(i2.context_tokens, full.context_tokens);
 
         // 再次调用、无新增 → 结果稳定。
-        let i3 = cache.analyze(p.to_str().unwrap());
+        let i3 = cache.analyze(&crate::transcript_spec::ClaudeTranscript, p.to_str().unwrap());
         assert_eq!(i3.context_tokens, Some(40000));
         std::fs::remove_file(&p).ok();
     }
@@ -511,7 +510,7 @@ mod tests {
         assert_eq!(line_a.len(), line_b.len());
         let p = write_tmp("cache_rewrite", &format!("{line_a}\n"));
         let mut cache = TranscriptCache::new();
-        assert_eq!(cache.analyze(p.to_str().unwrap()).title.as_deref(), Some("AAAA"));
+        assert_eq!(cache.analyze(&crate::transcript_spec::ClaudeTranscript, p.to_str().unwrap()).title.as_deref(), Some("AAAA"));
 
         // 等长重写，循环到 mtime 确认变化为止（兼容粗粒度文件系统，NTFS/APFS 首轮即过）。
         let mtime0 = std::fs::metadata(&p).unwrap().modified().unwrap();
@@ -523,7 +522,7 @@ mod tests {
             }
         }
         assert_ne!(std::fs::metadata(&p).unwrap().modified().unwrap(), mtime0, "mtime 未变化，无法验证缓存失效");
-        assert_eq!(cache.analyze(p.to_str().unwrap()).title.as_deref(), Some("BBBB"));
+        assert_eq!(cache.analyze(&crate::transcript_spec::ClaudeTranscript, p.to_str().unwrap()).title.as_deref(), Some("BBBB"));
         std::fs::remove_file(&p).ok();
     }
 

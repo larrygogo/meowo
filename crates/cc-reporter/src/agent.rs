@@ -38,6 +38,11 @@ pub trait Agent: Sync {
     /// claude 往 transcript 追加 custom-title 记录；kimi 改写 session state.json 的 title+isCustomTitle。
     /// 返回是否成功落地（失败不阻断调用方更新 DB 标题）。cwd 仅 claude 用于定位 transcript。
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool;
+    /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。claude 返回 ClaudeTranscript；
+    /// codex/kimi 暂无（None）——它们的标题走首条 prompt、预览/模型走 stop_outputs，不读 transcript 分析。
+    fn transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec> {
+        None
+    }
 }
 
 struct ClaudeAgent;
@@ -63,6 +68,9 @@ impl Agent for ClaudeAgent {
     }
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool {
         write_claude_custom_title(session_id, cwd, title)
+    }
+    fn transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec> {
+        Some(&cc_store::CLAUDE_TRANSCRIPT)
     }
 }
 

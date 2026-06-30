@@ -99,17 +99,21 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
 }
 
 fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: ProviderKey) -> Result<(), StoreError> {
-    // 是否由 transcript 解析标题由 agent 决定：claude 是；kimi 否（不给 transcript_path 且 JSONL 格式不同，
-    // 标题靠 UserPromptSubmit 的首条 prompt 命名，与 Claude 的占位回退同款）。
-    if !crate::agent::for_provider(provider).resolves_transcript_title() {
+    // 是否由 transcript 解析标题由 agent 决定（claude 是；kimi/codex 否，靠首条 prompt 命名）。
+    let agent = crate::agent::for_provider(provider);
+    if !agent.resolves_transcript_title() {
         return Ok(());
     }
+    // 提供解析器的 transcript 规格（claude=ClaudeTranscript；无则不解析）。
+    let Some(spec) = agent.transcript() else {
+        return Ok(());
+    };
     // cwd 优先用事件携带的，否则回退到 SessionStart 时存进库的 cwd。
     let cwd_owned: Option<String> = match ev.cwd.clone() {
         Some(c) => Some(c),
         None => store.session_cwd(sid).ok().flatten(),
     };
-    if let Some(title) = crate::transcript::resolve_title(
+    if let Some(title) = spec.resolve_title(
         ev.transcript_path.as_deref(),
         cwd_owned.as_deref(),
         &ev.session_id,
