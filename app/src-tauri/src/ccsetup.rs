@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 /// cc-reporter 负责的 hook 事件 + matcher。PreToolUse 用 matcher 限定只在两种工具触发,
 /// 与用户自有 PreToolUse(如 Bash 预检)按 matcher 区分共存。
+/// 注意：此表须与 scripts/install-hooks.mjs 的 SPECS 保持一致。
 const HOOK_SPECS: [(&str, &str); 8] = [
     ("SessionStart", "*"),
     ("UserPromptSubmit", "*"),

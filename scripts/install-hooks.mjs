@@ -1,6 +1,8 @@
 // scripts/install-hooks.mjs
 // 用法：bun scripts/install-hooks.mjs <cc-reporter 可执行文件绝对路径> [settingsPath]
 // 把 cc-kanban 的 hooks 幂等合并进 settings.json，不破坏已有配置。
+// 仅装 Claude Code 的 hooks（写入 ~/.claude/settings.json；会话默认 provider=claude）。
+// codex / kimi 不经此脚本——它们由各自 CLI 的原生 hook 配置接入，hook 命令各带 --provider codex|kimi。
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -30,6 +32,7 @@ if (existsSync(settingsPath)) {
 }
 settings.hooks ??= {};
 
+// 注意：此表须与 app/src-tauri/src/ccsetup.rs 的 HOOK_SPECS 保持一致（两处各维护一份，改一处必同步另一处）。
 const SPECS = [
   ["SessionStart", "*"],
   ["UserPromptSubmit", "*"],
