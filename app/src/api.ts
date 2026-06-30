@@ -165,25 +165,33 @@ export function todoProgress(todos: Todo[]): { done: number; total: number; perc
   return { done, total, percent };
 }
 
-export type UsageWindow = { utilization: number; resets_at: string };
-export type Usage = {
-  five_hour: UsageWindow | null;
-  seven_day: UsageWindow | null;
-  seven_day_opus: UsageWindow | null;
-  seven_day_sonnet: UsageWindow | null;
-  extra_usage_enabled: boolean;
+export type UsageKind = "five_hour" | "seven_day" | "opus" | "weekly" | "balance" | "other";
+export type UsageLane = {
+  kind: UsageKind;
+  used_pct: number | null;
+  used: number | null;
+  limit: number | null;
+  unit: string | null;
+  resets_at: string | null;
 };
+export type ProviderUsage = { lanes: UsageLane[]; note: string | null };
 export type Account = {
-  email: string;
-  display_name: string;
+  email: string | null;
+  display_name: string | null;
   organization: string | null;
   plan: string | null;
+  login_label: string | null;
 };
-export type AccountPayload = { account: Account | null; usage: Usage | null };
+export type ProviderAccountPayload = {
+  provider: string;
+  account: Account | null;
+  usage: ProviderUsage | null;
+  usage_supported: boolean;
+};
 
-export function getAccount(): Promise<AccountPayload> {
-  return invoke("get_account");
+export function getAccounts(): Promise<ProviderAccountPayload[]> {
+  return invoke("get_accounts");
 }
-export function refreshUsage(): Promise<Usage> {
-  return invoke("refresh_usage");
+export function refreshUsage(provider: string): Promise<ProviderUsage> {
+  return invoke("refresh_usage", { provider });
 }

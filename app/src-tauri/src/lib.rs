@@ -1498,19 +1498,6 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-#[tauri::command]
-fn get_account() -> account::AccountPayload {
-    account::get_account_payload()
-}
-
-#[tauri::command]
-async fn refresh_usage() -> Result<account::Usage, String> {
-    // 阻塞 HTTP 放到 blocking 线程，避免占用异步运行时。
-    tauri::async_runtime::spawn_blocking(account::refresh_usage_payload)
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 /// 返回所有 provider 的账号 + 缓存用量（不联网）。供多 provider 账号面板使用。
 #[tauri::command]
 fn get_accounts() -> Vec<account::ProviderAccountPayload> {
@@ -1528,7 +1515,7 @@ fn get_accounts() -> Vec<account::ProviderAccountPayload> {
 /// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频）。
 /// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
 #[tauri::command]
-async fn refresh_usage_v2(provider: String) -> Result<account::ProviderUsage, String> {
+async fn refresh_usage(provider: String) -> Result<account::ProviderUsage, String> {
     let key = cc_store::ProviderKey::parse(Some(&provider));
     tauri::async_runtime::spawn_blocking(move || {
         let pa = account::for_provider(key);
@@ -1979,10 +1966,8 @@ pub fn run() {
             unsnap,
             cursor_over_window,
             pointer_left_down,
-            get_account,
-            refresh_usage,
             get_accounts,
-            refresh_usage_v2,
+            refresh_usage,
             host_os,
             available_terminals
         ])

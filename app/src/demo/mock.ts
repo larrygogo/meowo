@@ -1,7 +1,7 @@
 // demo 专用:用 @tauri-apps/api/mocks 拦截全部 IPC,数据源是内存 store。
 // 舞台状态(窗口形态/字幕/收尾)也放这里,分镜动作改完 notify() 即驱动 React 重渲染。
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import { Settings, Usage } from "../api";
+import { Settings, type ProviderAccountPayload, type ProviderUsage } from "../api";
 import { Item } from "./data";
 
 export type StageMode = "normal" | "docking" | "strip" | "expanded";
@@ -10,7 +10,6 @@ export type Store = {
   sessions: Item[];
   stage: { mode: StageMode; caption: string | null; finale: boolean };
   settings: Settings;
-  usage: Usage;
 };
 
 export const store: Store = {
@@ -28,14 +27,6 @@ export const store: Store = {
     preview_enabled: true,
     sticker_style: "elevated",
     sticker_color: "classic",
-  },
-  // 底栏用量屏的假数据：5h 偏黄、7d / Sonnet 偏绿(Opus 无数据→不显示，与常见实际一致)。
-  usage: {
-    five_hour: { utilization: 62, resets_at: "2026-06-18T20:00:00Z" },
-    seven_day: { utilization: 38, resets_at: "2026-06-24T08:00:00Z" },
-    seven_day_opus: null,
-    seven_day_sonnet: { utilization: 18, resets_at: "2026-06-24T08:00:00Z" },
-    extra_usage_enabled: false,
   },
 };
 
@@ -56,10 +47,42 @@ export function installMocks(): void {
         return "windows";
       case "get_settings":
         return store.settings;
-      case "get_account":
-        return { account: null, usage: store.usage };
-      case "refresh_usage":
-        return store.usage;
+      case "get_accounts": {
+        // demo 假数据：仅 claude 有账号与用量
+        const claudePayload: ProviderAccountPayload = {
+          provider: "claude",
+          account: {
+            email: "demo@example.com",
+            display_name: "Demo User",
+            organization: null,
+            plan: "Pro",
+            login_label: null,
+          },
+          usage: {
+            lanes: [
+              { kind: "five_hour", used_pct: 62, used: null, limit: null, unit: null, resets_at: "2026-06-18T20:00:00Z" },
+              { kind: "seven_day", used_pct: 38, used: null, limit: null, unit: null, resets_at: "2026-06-24T08:00:00Z" },
+            ],
+            note: null,
+          },
+          usage_supported: true,
+        };
+        return [claudePayload];
+      }
+      case "refresh_usage": {
+        const a = args as { provider: string };
+        if (a.provider === "claude") {
+          const claudeUsage: ProviderUsage = {
+            lanes: [
+              { kind: "five_hour", used_pct: 62, used: null, limit: null, unit: null, resets_at: "2026-06-18T20:00:00Z" },
+              { kind: "seven_day", used_pct: 38, used: null, limit: null, unit: null, resets_at: "2026-06-24T08:00:00Z" },
+            ],
+            note: null,
+          };
+          return claudeUsage;
+        }
+        return { lanes: [], note: null };
+      }
       case "get_live_sessions":
         return store.sessions;
       case "rename_session": {

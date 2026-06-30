@@ -272,11 +272,9 @@ pub fn cache_is_fresh(k: cc_store::ProviderKey, fresh_ms: i64) -> bool {
     false
 }
 
-// ═══ 6. 后向兼容 re-export（旧命令 get_account/refresh_usage 调用路径） ═══
+// ═══ 6. re-export（refresh_usage 调用路径） ═══
 
-pub use claude::{
-    get_account_payload, refresh_usage_payload, AccountPayload, Usage, USAGE_UNSUPPORTED,
-};
+pub use claude::USAGE_UNSUPPORTED;
 
 // ═══ 7. Tests ═══
 

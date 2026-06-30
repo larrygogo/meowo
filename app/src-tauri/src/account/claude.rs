@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
 
-/// Claude 账号原始信息（内部类型，供旧命令载荷 AccountPayload 使用）。
+/// Claude 账号原始信息（内部类型，供 ClaudeProvider::account() 转换使用）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ClaudeAccountInfo {
     pub email: String,
@@ -130,13 +130,6 @@ const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 
-/// get_account 命令返回给前端的整体载荷（旧命令格式，保持零回归）。
-#[derive(Debug, Clone, Serialize)]
-pub struct AccountPayload {
-    pub account: Option<ClaudeAccountInfo>,
-    pub usage: Option<Usage>,
-}
-
 fn claude_json_path() -> Option<PathBuf> {
     super::home_dir().map(|h| h.join(".claude.json"))
 }
@@ -154,12 +147,6 @@ fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
 /// 读账号（~/.claude.json）。
 pub fn read_account() -> Option<ClaudeAccountInfo> {
     parse_account(&read_json_file(&claude_json_path()?)?)
-}
-
-/// 读上次缓存的用量快照（usage-cache.json 的旧扁平 `usage` 字段，供旧命令使用）。
-pub fn read_cached_usage() -> Option<Usage> {
-    let v = super::read_json(&super::usage_cache_path()?)?;
-    serde_json::from_value(v.get("usage")?.clone()).ok()
 }
 
 fn write_cached_usage_flat(usage: &Usage) {
@@ -348,30 +335,6 @@ pub fn fetch_usage_live() -> Result<Usage, String> {
     let usage = parse_usage(&v);
     write_cached_usage_flat(&usage);
     Ok(usage)
-}
-
-/// 距上次缓存写入是否在 fresh_ms 内（60s 限频）。
-fn cache_is_fresh(fresh_ms: i64) -> bool {
-    super::usage_cache_path()
-        .and_then(|p| super::read_json(&p))
-        .and_then(|v| v.get("fetched_at").and_then(|x| x.as_i64()))
-        .map(|t| super::now_ms() - t < fresh_ms)
-        .unwrap_or(false)
-}
-
-/// get_account：账号 + 缓存用量（瞬时，不联网）。
-pub fn get_account_payload() -> AccountPayload {
-    AccountPayload { account: read_account(), usage: read_cached_usage() }
-}
-
-/// refresh_usage：60s 内有新鲜缓存则直接返回缓存，否则联网拉取。
-pub fn refresh_usage_payload() -> Result<Usage, String> {
-    if cache_is_fresh(60_000) {
-        if let Some(u) = read_cached_usage() {
-            return Ok(u);
-        }
-    }
-    fetch_usage_live()
 }
 
 /// 将旧 Usage 映射为通用 ProviderUsage 泳道格式。

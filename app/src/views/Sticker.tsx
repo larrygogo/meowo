@@ -6,11 +6,11 @@ import {
   LiveSession,
   Settings,
   TerminalOpenMode,
-  Usage,
-  UsageWindow,
   getSettings,
-  getAccount,
+  getAccounts,
   refreshUsage,
+  type ProviderUsage,
+  type UsageLane,
 } from "../api";
 import { isMacPanel } from "../platform";
 import { providerConfig } from "../providers";
@@ -298,28 +298,22 @@ export function EmptyState({ tab }: { tab: Tab }) {
 
 /** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——黑屏(复刻卡片徽标 .stk-ind 材质)内每个窗口一行：
    标签 + 凹槽里的发光液柱 + 百分比；与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
-function usagePct(win: UsageWindow | null): number | null {
-  return win ? Math.max(0, Math.min(100, win.utilization)) : null;
-}
 // 利用率档位 → 复用应用既有状态色(绿/黄/红)，与卡片状态点同语义；越满越红即预警。
 function usageSev(pct: number): string {
   return pct >= 80 ? "is-high" : pct >= 50 ? "is-warn" : "is-ok";
 }
 
-function UsageScreen({ wins }: { wins: (UsageWindow | null)[] }) {
-  const t = useT();
-  // 标签多语言；顺序对应 wins = [five_hour, seven_day, seven_day_opus]
-  const labels = [t.sticker.usage5h, t.sticker.usage7d, t.sticker.usageOpus];
-  const rows = labels.map((label, i) => ({ label, pct: usagePct(wins[i]) })).filter(
-    (r): r is { label: string; pct: number } => r.pct != null
-  );
-  if (!rows.length) return null;
+type UsageRow = { provider: string; label: string; pct: number | null; amount?: string };
+
+function UsageScreen({ rows }: { rows: UsageRow[] }) {
+  const visibleRows = rows.filter((r): r is UsageRow & { pct: number } => r.pct != null);
+  if (!visibleRows.length) return null;
   return (
     <div className="stk-uscreen" role="group" aria-label="用量">
-      {rows.map((r) => {
+      {visibleRows.map((r) => {
         const sev = usageSev(r.pct);
         return (
-          <div className="stk-urow" key={r.label}>
+          <div className="stk-urow" key={`${r.provider}-${r.label}`}>
             <span className="stk-ulabel">{r.label}</span>
             <span className="stk-utrack">
               <i className={"stk-ufill " + sev} style={{ width: `${r.pct}%` }} />
@@ -544,17 +538,31 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
   // 滚动边缘淡出：仅当该方向确有被遮内容时才淡(滚到顶/底则对应边不淡，首/末卡保持清晰)。
   const [edge, setEdge] = useState({ top: false, bottom: false });
 
-  // 底部用量：首屏用 getAccount 缓存秒显(仅在还没有联网值时填充，避免缓存晚到覆盖更新的联网值)，
+  // 底部用量：首屏用 getAccounts 缓存快速回填(仅在还没有联网值时填充，避免缓存晚到覆盖更新的联网值)，
   // 联网用 refreshUsage 为准、每 5 分钟刷一次。
-  const [usage, setUsage] = useState<Usage | null>(null);
+  const [usageRows, setUsageRows] = useState<UsageRow[]>([]);
   useEffect(() => {
     let cancelled = false;
-    getAccount()
-      .then((p) => { if (!cancelled && p.usage) setUsage((cur) => cur ?? p.usage); })
+    // 用缓存快速预填
+    getAccounts()
+      .then((ps) => {
+        if (cancelled) return;
+        const claudePayload = ps.find((p) => p.provider === "claude");
+        if (claudePayload?.usage) {
+          const fh = claudePayload.usage.lanes.find((l) => l.kind === "five_hour");
+          const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
+          if (pct != null) setUsageRows((cur) => cur.length ? cur : [{ provider: "claude", label: t.sticker.usage5h, pct }]);
+        }
+      })
       .catch(() => {});
     const refresh = () => {
-      refreshUsage()
-        .then((u) => { if (!cancelled) setUsage(u); })
+      refreshUsage("claude")
+        .then((u: ProviderUsage) => {
+          if (cancelled) return;
+          const fh = u.lanes.find((l: UsageLane) => l.kind === "five_hour");
+          const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
+          setUsageRows(pct != null ? [{ provider: "claude", label: t.sticker.usage5h, pct }] : []);
+        })
         .catch(() => {}); // 第三方账号 USAGE_UNSUPPORTED 等：保持无用量，不显示用量条
     };
     refresh();
@@ -875,12 +883,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           </div>
         ) : (
           <>
-            {usage &&
-              (usage.five_hour || usage.seven_day || usage.seven_day_opus) && (
-                <UsageScreen
-                  wins={[usage.five_hour, usage.seven_day, usage.seven_day_opus]}
-                />
-              )}
+            {usageRows.length > 0 && <UsageScreen rows={usageRows} />}
             <div className="stk-bar-actions">
               <span className="stk-act" data-tip={t.sticker.search} aria-label={t.sticker.search} onClick={() => setSearchOpen(true)}>
                 <SearchIcon />

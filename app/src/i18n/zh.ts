@@ -138,6 +138,11 @@ export const zh = {
     resetTomorrow: (clock: string) => `明天 ${clock} 重置`,
     resetDayAfter: (clock: string) => `后天 ${clock} 重置`,
     resetOnDate: (mo: number, d: number, clock: string) => `${mo} 月 ${d} 日 ${clock} 重置`,
+    laneFiveHour: "5 小时配额",
+    laneSevenDay: "7 天配额",
+    laneOpus: "Opus · 7 天",
+    laneWeekly: "每周配额",
+    laneBalance: "余额",
   },
   about: {
     updating: "更新中…",

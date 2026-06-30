@@ -4,7 +4,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type StickerStyle } from "../api";
-import { getAccount, refreshUsage, type AccountPayload, type Usage } from "../api";
+import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
+import { PROVIDERS } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -158,75 +159,72 @@ function fmtResetIn(iso: string, t: Dict): string {
   return t.account.resetOnDate(r.getMonth() + 1, r.getDate(), clock);
 }
 
-function UsageBar({ label, win }: { label: string; win: { utilization: number; resets_at: string } | null }) {
+function laneLabel(kind: string, t: Dict): string {
+  switch (kind) {
+    case "five_hour": return t.account.laneFiveHour;
+    case "seven_day": return t.account.laneSevenDay;
+    case "opus": return t.account.laneOpus;
+    case "weekly": return t.account.laneWeekly;
+    case "balance": return t.account.laneBalance;
+    default: return kind;
+  }
+}
+
+function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
   const t = useT();
-  if (!win) return null;
-  const pct = Math.max(0, Math.min(100, win.utilization));
+  if (lane.used_pct != null) {
+    const pct = Math.max(0, Math.min(100, lane.used_pct));
+    return (
+      <div className="usage-row">
+        <div className="usage-head">
+          <span className="usage-label">{label}</span>
+          <span className="usage-pct">{pct.toFixed(0)}%</span>
+        </div>
+        <div className="usage-track"><i style={{ width: `${pct}%` }} /></div>
+        {lane.resets_at && <div className="usage-reset">{fmtResetIn(lane.resets_at, t)}</div>}
+      </div>
+    );
+  }
+  // 余额型：显数值，不画进度条
+  const valText = lane.used != null ? `${lane.used}${lane.unit ? ` ${lane.unit}` : ""}` : "—";
   return (
     <div className="usage-row">
       <div className="usage-head">
         <span className="usage-label">{label}</span>
-        <span className="usage-pct">{pct.toFixed(0)}%</span>
+        <span className="usage-pct">{valText}</span>
       </div>
-      <div className="usage-track"><i style={{ width: `${pct}%` }} /></div>
-      <div className="usage-reset">{fmtResetIn(win.resets_at, t)}</div>
     </div>
   );
 }
 
-function AccountSection() {
+// 单个 provider 卡片：账号信息 + 用量泳道 + 刷新按钮
+function ProviderCard({ payload, usage, onRefresh, refreshing }: {
+  payload: ProviderAccountPayload;
+  usage: ProviderUsage | null;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
   const t = useT();
-  const [data, setData] = useState<AccountPayload | null>(null);
-  const [usage, setUsage] = useState<Usage | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [usageErr, setUsageErr] = useState(false);
-  // 第三方/非官方登录：后端读不到 OAuth 凭据，用量接口不适用（区别于网络等真实失败）。
-  const [usageUnsupported, setUsageUnsupported] = useState(false);
-  // 联网新值是否已落地：getAccount 的缓存 usage 仅在此前回填，防止慢 resolve 用缓存覆盖新值。
-  const freshApplied = useRef(false);
-
-  const doRefresh = () => {
-    setRefreshing(true);
-    setUsageErr(false);
-    setUsageUnsupported(false);
-    refreshUsage()
-      .then((u) => { freshApplied.current = true; setUsage(u); })
-      .catch((e) => {
-        if (String(e).includes("USAGE_UNSUPPORTED")) setUsageUnsupported(true);
-        else setUsageErr(true);
-      })
-      .finally(() => setRefreshing(false));
-  };
-
-  useEffect(() => {
-    // 先缓存后请求：getAccount 立即给账号/缓存用量，再 refreshUsage 联网刷新。
-    getAccount()
-      .then((d) => {
-        setData(d);
-        if (!freshApplied.current) setUsage(d.usage);
-      })
-      .catch(() => {});
-    doRefresh();
-  }, []);
-
-  const acc = data?.account ?? null;
+  const acc = payload.account;
+  const cfg = PROVIDERS[payload.provider];
+  const providerName = cfg ? cfg.label(t) : payload.provider;
 
   return (
-    // 一张卡 = 一个 AI 提供方：卡顶标注 provider，卡内含账号与用量。后续接入其他 AI 时各占一张同结构的卡。
     <div className="row-card provider-card">
       <div className="provider-head">
-        <span className="provider-name">{t.account.providerClaudeCode}</span>
+        {cfg && <span className="provider-icon"><cfg.Icon /></span>}
+        <span className="provider-name">{providerName}</span>
       </div>
 
       {acc ? (
         <div className="acc-block">
-          <div className="acc-avatar">{(acc.display_name || acc.email).slice(0, 1).toUpperCase()}</div>
+          <div className="acc-avatar">{((acc.display_name ?? acc.email) ?? "?").slice(0, 1).toUpperCase()}</div>
           <div className="acc-info">
             <div className="acc-name-row">
               <span className="acc-name">{acc.display_name}</span>
               {acc.plan && <span className="acc-plan">{acc.plan}</span>}
             </div>
-            {acc.display_name !== acc.email && <div className="acc-sub">{acc.email}</div>}
+            {acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
             {acc.organization && <div className="acc-org">{acc.organization}</div>}
           </div>
         </div>
@@ -240,30 +238,108 @@ function AccountSection() {
         </div>
       )}
 
-      <div className="provider-usage">
-        <div className="usage-bar-head">
-          <span className="usage-card-title">{t.account.quota}</span>
-          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={doRefresh}>
-            <RefreshIcon spinning={refreshing} />
-          </button>
+      {payload.usage_supported && (
+        <div className="provider-usage">
+          <div className="usage-bar-head">
+            <span className="usage-card-title">{t.account.quota}</span>
+            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={onRefresh}>
+              <RefreshIcon spinning={refreshing} />
+            </button>
+          </div>
+          {usage ? (
+            <>
+              {usage.lanes.map((lane) => (
+                <UsageBar key={lane.kind} lane={lane} label={laneLabel(lane.kind, t)} />
+              ))}
+              {usage.note && <div className="usage-extra">{usage.note}</div>}
+            </>
+          ) : (
+            <div className="usage-stale">{t.account.loading}</div>
+          )}
         </div>
-        {usage ? (
-          <>
-            <UsageBar label={t.account.quota5h} win={usage.five_hour} />
-            <UsageBar label={t.account.quota7d} win={usage.seven_day} />
-            <UsageBar label={t.account.quotaOpus} win={usage.seven_day_opus} />
-            {usage.extra_usage_enabled && <div className="usage-extra">{t.account.extraUsage}</div>}
-            {usageErr && <div className="usage-stale">{t.account.refreshFailed}</div>}
-          </>
-        ) : usageUnsupported ? (
-          <div className="usage-stale">{t.account.usageUnsupported}</div>
-        ) : usageErr ? (
-          <div className="usage-stale">{t.account.usageUnavailable}</div>
-        ) : (
-          <div className="usage-stale">{t.account.loading}</div>
-        )}
-      </div>
+      )}
     </div>
+  );
+}
+
+function AccountSection() {
+  const t = useT();
+  const [payloads, setPayloads] = useState<ProviderAccountPayload[]>([]);
+  // usageMap: provider key → 最新 ProviderUsage（缓存先填，联网值覆盖）
+  const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
+  const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
+
+  const doRefresh = (provider: string) => {
+    setRefreshingSet((s) => new Set([...s, provider]));
+    refreshUsage(provider)
+      .then((u) => {
+        setUsageMap((m) => ({ ...m, [provider]: u }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        setRefreshingSet((s) => { const n = new Set(s); n.delete(provider); return n; });
+      });
+  };
+
+  useEffect(() => {
+    // 先从 getAccounts 拿缓存数据快速渲染，再对每个 usage_supported provider 联网刷新
+    getAccounts()
+      .then((ps) => {
+        setPayloads(ps);
+        // 用缓存 usage 预填
+        const initial: Record<string, ProviderUsage> = {};
+        ps.forEach((p) => { if (p.usage) initial[p.provider] = p.usage; });
+        setUsageMap(initial);
+        // 对支持用量的 provider 发起联网刷新
+        ps.filter((p) => p.usage_supported).forEach((p) => doRefresh(p.provider));
+      })
+      .catch(() => {});
+  }, []);
+
+  // 有账号的 provider 列表；没有则显示未登录占位
+  const activePayloads = payloads.filter((p) => p.account != null);
+
+  if (payloads.length === 0) {
+    // 初始加载中
+    return (
+      <div className="row-card provider-card">
+        <div className="acc-block">
+          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
+          <div className="acc-info">
+            <div className="acc-name">{t.account.loading}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (activePayloads.length === 0) {
+    // 所有 provider 均未登录
+    return (
+      <div className="row-card provider-card">
+        <div className="acc-block">
+          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
+          <div className="acc-info">
+            <div className="acc-name">{t.account.notLoggedIn}</div>
+            <div className="acc-sub acc-sub-wrap">{t.account.notLoggedInDesc}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {activePayloads.map((p) => (
+        <ProviderCard
+          key={p.provider}
+          payload={p}
+          usage={usageMap[p.provider] ?? null}
+          onRefresh={() => doRefresh(p.provider)}
+          refreshing={refreshingSet.has(p.provider)}
+        />
+      ))}
+    </>
   );
 }
 

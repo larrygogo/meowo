@@ -138,6 +138,11 @@ export const en: Dict = {
     resetTomorrow: (clock) => `Resets tomorrow at ${clock}`,
     resetDayAfter: (clock) => `Resets the day after tomorrow at ${clock}`,
     resetOnDate: (mo, d, clock) => `Resets ${mo}/${d} at ${clock}`,
+    laneFiveHour: "5-hour quota",
+    laneSevenDay: "7-day quota",
+    laneOpus: "Opus · 7 days",
+    laneWeekly: "Weekly quota",
+    laneBalance: "Balance",
   },
   about: {
     updating: "Updating…",
