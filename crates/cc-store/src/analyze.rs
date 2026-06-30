@@ -1,5 +1,6 @@
 //! 从 Claude Code transcript 检测「致命卡死错误」并与标题解析共用一次文件读取。
 use serde::Serialize;
+use crate::transcript_spec::TranscriptParser;
 
 /// 上下文窗口基准（标准 200k）。1M-context 变体无法从 transcript 的 model 字段可靠识别，
 /// 故统一按 200k 估算并封顶 100%；后续若需精确可按 model 调整。
@@ -187,6 +188,23 @@ pub fn analyze_transcript(path: &str) -> TranscriptInfo {
         st.fold_line(line);
     }
     st.to_info()
+}
+
+/// ClaudeParser：把私有的 ParseState 包成 TranscriptParser trait 对象（逐字节等价，仅转发）。
+pub struct ClaudeParser(ParseState);
+
+impl TranscriptParser for ClaudeParser {
+    fn fold_line(&mut self, line: &str) {
+        self.0.fold_line(line);
+    }
+    fn to_info(&self) -> TranscriptInfo {
+        self.0.to_info()
+    }
+}
+
+/// 新建一个 claude 增量解析器（ClaudeTranscript::new_parser 委托此函数）。
+pub fn claude_new_parser() -> Box<dyn TranscriptParser> {
+    Box::new(ClaudeParser(ParseState::default()))
 }
 
 /// 单条缓存：已解析到的字节偏移 + 上次解析时的 mtime + 累积状态 + 最近使用刻度（淘汰用）。
