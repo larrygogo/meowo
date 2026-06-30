@@ -1509,6 +1509,42 @@ async fn refresh_usage() -> Result<account::Usage, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// 返回所有 provider 的账号 + 缓存用量（不联网）。供多 provider 账号面板使用。
+#[tauri::command]
+fn get_accounts() -> Vec<account::ProviderAccountPayload> {
+    account::all()
+        .iter()
+        .map(|pa| account::ProviderAccountPayload {
+            provider: pa.key().as_str().to_string(),
+            account: pa.account(),
+            usage: account::read_cached_usage(pa.key()),
+            usage_supported: pa.usage_supported(),
+        })
+        .collect()
+}
+
+/// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频）。
+/// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
+#[tauri::command]
+async fn refresh_usage_v2(provider: String) -> Result<account::ProviderUsage, String> {
+    let key = cc_store::ProviderKey::parse(Some(&provider));
+    tauri::async_runtime::spawn_blocking(move || {
+        let pa = account::for_provider(key);
+        match pa.usage(true) {
+            Some(u) => Ok(u),
+            None => {
+                if pa.usage_supported() {
+                    Err("UNAVAILABLE".into())
+                } else {
+                    Err(account::USAGE_UNSUPPORTED.into())
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 返回宿主操作系统标识，供前端按平台调整 UI / 交互。
 #[tauri::command]
 fn host_os() -> String {
@@ -1943,6 +1979,8 @@ pub fn run() {
             pointer_left_down,
             get_account,
             refresh_usage,
+            get_accounts,
+            refresh_usage_v2,
             host_os,
             available_terminals
         ])

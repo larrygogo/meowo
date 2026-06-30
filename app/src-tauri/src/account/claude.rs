@@ -1,11 +1,14 @@
 //! Claude Code 账号、实时用量的读取与解析。
 //! 纯解析/判定/合并函数在此可单测；I/O 与网络见同文件后半部分。
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
+use std::time::Duration;
 
+use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
+
+/// Claude 账号原始信息（内部类型，供旧命令载荷 AccountPayload 使用）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Account {
+pub struct ClaudeAccountInfo {
     pub email: String,
     pub display_name: String,
     pub organization: Option<String>,
@@ -28,7 +31,7 @@ pub struct Usage {
 }
 
 /// 从 ~/.claude.json 的根 JSON 解析账号（取 oauthAccount）。无则 None。
-pub fn parse_account(root: &serde_json::Value) -> Option<Account> {
+pub fn parse_account(root: &serde_json::Value) -> Option<ClaudeAccountInfo> {
     let a = root.get("oauthAccount")?;
     let email = a.get("emailAddress").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if email.is_empty() {
@@ -50,7 +53,7 @@ pub fn parse_account(root: &serde_json::Value) -> Option<Account> {
         .iter()
         .find_map(|k| a.get(*k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
         .map(|s| s.to_string());
-    Some(Account { email, display_name, organization, plan })
+    Some(ClaudeAccountInfo { email, display_name, organization, plan })
 }
 
 /// 解析 /api/oauth/usage 响应。各 bucket 可能为 null/缺失 → Option。
@@ -127,54 +130,44 @@ const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 
-/// get_account 命令返回给前端的整体载荷。
+/// get_account 命令返回给前端的整体载荷（旧命令格式，保持零回归）。
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountPayload {
-    pub account: Option<Account>,
+    pub account: Option<ClaudeAccountInfo>,
     pub usage: Option<Usage>,
 }
 
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+fn claude_json_path() -> Option<PathBuf> {
+    super::home_dir().map(|h| h.join(".claude.json"))
 }
 
-fn home_dir() -> Option<PathBuf> {
-    std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().map(PathBuf::from)
-}
-
-fn claude_json_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude.json")) }
 /// 非 macOS：Claude Code 把 OAuth 凭据写在此文件。macOS 改存 Keychain（见 keychain_* 函数）。
 #[cfg(not(target_os = "macos"))]
-fn credentials_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join(".credentials.json")) }
-fn usage_cache_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("CC_KANBAN_DB") {
-        return Some(PathBuf::from(p).with_file_name("usage-cache.json"));
-    }
-    home_dir().map(|h| h.join(".cc-kanban").join("usage-cache.json"))
+fn credentials_path() -> Option<PathBuf> {
+    super::home_dir().map(|h| h.join(".claude").join(".credentials.json"))
 }
 
-fn read_json(path: &Path) -> Option<serde_json::Value> {
-    let s = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&s).ok()
+fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
+    super::read_json(path)
 }
 
 /// 读账号（~/.claude.json）。
-pub fn read_account() -> Option<Account> {
-    parse_account(&read_json(&claude_json_path()?)?)
+pub fn read_account() -> Option<ClaudeAccountInfo> {
+    parse_account(&read_json_file(&claude_json_path()?)?)
 }
 
-/// 读上次缓存的用量快照（~/.cc-kanban/usage-cache.json 的 `usage` 字段）。
+/// 读上次缓存的用量快照（usage-cache.json 的旧扁平 `usage` 字段，供旧命令使用）。
 pub fn read_cached_usage() -> Option<Usage> {
-    let v = read_json(&usage_cache_path()?)?;
+    let v = super::read_json(&super::usage_cache_path()?)?;
     serde_json::from_value(v.get("usage")?.clone()).ok()
 }
 
-fn write_cached_usage(usage: &Usage) {
-    if let Some(p) = usage_cache_path() {
+fn write_cached_usage_flat(usage: &Usage) {
+    if let Some(p) = super::usage_cache_path() {
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let body = serde_json::json!({ "usage": usage, "fetched_at": now_ms() });
+        let body = serde_json::json!({ "usage": usage, "fetched_at": super::now_ms() });
         if let Ok(s) = serde_json::to_string(&body) {
             let _ = std::fs::write(&p, s);
         }
@@ -183,7 +176,7 @@ fn write_cached_usage(usage: &Usage) {
 
 /// 原子写回 credentials 文件（临时文件 + rename）。仅非 macOS（macOS 写 Keychain）。
 #[cfg(not(target_os = "macos"))]
-fn write_credentials_atomic(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+fn write_credentials_atomic(path: &std::path::Path, value: &serde_json::Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
@@ -202,7 +195,7 @@ const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 /// 形如 `"acct"<blob>="root"`，或 non-UTF8 时 `0x726F6F74  "root"`（hex + 可读串）→ 取引号内。
 /// 纯函数便于单测；仅 macOS 调用，其它平台放行 dead_code。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn parse_keychain_account(attrs: &str) -> Option<String> {
+pub fn parse_keychain_account(attrs: &str) -> Option<String> {
     let key = "\"acct\"<blob>=";
     for line in attrs.lines() {
         let Some(idx) = line.find(key) else { continue };
@@ -271,12 +264,12 @@ fn keychain_write_password(account: &str, password: &str) -> Result<(), String> 
 /// 读 Claude Code 的 OAuth 凭据根 JSON（形如 `{"claudeAiOauth": {...}}`）。
 /// macOS 取自登录 Keychain，其它平台取自 ~/.claude/.credentials.json。
 #[cfg(target_os = "macos")]
-fn read_credentials_root() -> Option<serde_json::Value> {
+pub(super) fn read_credentials_root() -> Option<serde_json::Value> {
     serde_json::from_str(&keychain_read_password()?).ok()
 }
 #[cfg(not(target_os = "macos"))]
-fn read_credentials_root() -> Option<serde_json::Value> {
-    read_json(&credentials_path()?)
+pub(super) fn read_credentials_root() -> Option<serde_json::Value> {
+    read_json_file(&credentials_path()?)
 }
 
 /// 刷新 token 后把新凭据写回原存储（保留其余字段）。macOS → Keychain，其它平台 → 原子写文件。
@@ -312,7 +305,7 @@ fn ensure_valid_token() -> Result<String, String> {
     let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
 
-    if !access.is_empty() && !is_token_expired(expires_at, now_ms()) {
+    if !access.is_empty() && !is_token_expired(expires_at, super::now_ms()) {
         return Ok(access);
     }
     if refresh.is_empty() {
@@ -335,7 +328,7 @@ fn ensure_valid_token() -> Result<String, String> {
         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
         .unwrap_or(3600)
         .max(600);
-    let new_expires_at = now_ms() + expires_in * 1000;
+    let new_expires_at = super::now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
     write_credentials_root(&merged)?;
@@ -353,16 +346,16 @@ pub fn fetch_usage_live() -> Result<Usage, String> {
         .map_err(|e| format!("请求用量失败：{e}"))?;
     let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
     let usage = parse_usage(&v);
-    write_cached_usage(&usage);
+    write_cached_usage_flat(&usage);
     Ok(usage)
 }
 
 /// 距上次缓存写入是否在 fresh_ms 内（60s 限频）。
 fn cache_is_fresh(fresh_ms: i64) -> bool {
-    usage_cache_path()
-        .and_then(|p| read_json(&p))
+    super::usage_cache_path()
+        .and_then(|p| super::read_json(&p))
         .and_then(|v| v.get("fetched_at").and_then(|x| x.as_i64()))
-        .map(|t| now_ms() - t < fresh_ms)
+        .map(|t| super::now_ms() - t < fresh_ms)
         .unwrap_or(false)
 }
 
@@ -379,6 +372,99 @@ pub fn refresh_usage_payload() -> Result<Usage, String> {
         }
     }
     fetch_usage_live()
+}
+
+/// 将旧 Usage 映射为通用 ProviderUsage 泳道格式。
+/// five_hour→FiveHour, seven_day→SevenDay, seven_day_opus→Opus（utilization→used_pct,
+/// unit "percent", resets_at 原样），extra_usage_enabled→note。seven_day_sonnet 忽略（保持现视觉）。
+pub fn map_to_provider_usage(u: &Usage) -> ProviderUsage {
+    let mut lanes: Vec<UsageLane> = Vec::new();
+
+    if let Some(w) = &u.five_hour {
+        lanes.push(UsageLane {
+            kind: UsageKind::FiveHour,
+            used_pct: Some(w.utilization),
+            used: None,
+            limit: None,
+            unit: Some("percent".to_string()),
+            resets_at: non_empty_str(&w.resets_at),
+        });
+    }
+    if let Some(w) = &u.seven_day {
+        lanes.push(UsageLane {
+            kind: UsageKind::SevenDay,
+            used_pct: Some(w.utilization),
+            used: None,
+            limit: None,
+            unit: Some("percent".to_string()),
+            resets_at: non_empty_str(&w.resets_at),
+        });
+    }
+    if let Some(w) = &u.seven_day_opus {
+        lanes.push(UsageLane {
+            kind: UsageKind::Opus,
+            used_pct: Some(w.utilization),
+            used: None,
+            limit: None,
+            unit: Some("percent".to_string()),
+            resets_at: non_empty_str(&w.resets_at),
+        });
+    }
+    // seven_day_sonnet 忽略（保持现视觉）
+
+    let note = u.extra_usage_enabled.then(|| "extra_usage_enabled".to_string());
+
+    ProviderUsage { lanes, note }
+}
+
+/// 空字符串→ None（resets_at 字段处理）。
+fn non_empty_str(s: &str) -> Option<String> {
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
+/// 当前凭据是否有效的 Anthropic OAuth（usage 接口是否可用）。
+pub fn has_oauth_credentials() -> bool {
+    !oauth_credentials_missing(read_credentials_root().as_ref())
+}
+
+/// Claude 的 ProviderAccount 实现：包装现有读取逻辑，映射到通用泳道类型。
+pub struct ClaudeProviderAccount;
+
+impl ProviderAccount for ClaudeProviderAccount {
+    fn key(&self) -> cc_store::ProviderKey {
+        cc_store::ProviderKey::Claude
+    }
+
+    fn account(&self) -> Option<Account> {
+        read_account().map(|a| Account {
+            email: Some(a.email),
+            display_name: Some(a.display_name),
+            organization: a.organization,
+            plan: a.plan,
+            login_label: None,
+        })
+    }
+
+    fn usage(&self, force: bool) -> Option<ProviderUsage> {
+        if !force {
+            // 从缓存读，不联网
+            return super::read_cached_usage(cc_store::ProviderKey::Claude);
+        }
+        // 60s 内有新鲜缓存则复用，否则联网拉取
+        match refresh_usage_payload() {
+            Ok(old_usage) => {
+                let pu = map_to_provider_usage(&old_usage);
+                // 同步写入新格式 provider 分键缓存（旧命令路径已写了旧格式）
+                super::write_cached_usage(cc_store::ProviderKey::Claude, &pu);
+                Some(pu)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn usage_supported(&self) -> bool {
+        has_oauth_credentials()
+    }
 }
 
 #[cfg(test)]
@@ -476,5 +562,37 @@ mod tests {
         assert_eq!(merged["claudeAiOauth"]["expiresAt"], 999);
         assert_eq!(merged["claudeAiOauth"]["scopes"][0], "a");
         assert_eq!(merged["claudeAiOauth"]["subscriptionType"], "max");
+    }
+
+    #[test]
+    fn map_to_provider_usage_maps_lanes_correctly() {
+        let u = Usage {
+            five_hour: Some(UsageWindow { utilization: 13.0, resets_at: "2026-06-07T08:50:01Z".into() }),
+            seven_day: Some(UsageWindow { utilization: 55.0, resets_at: "2026-06-11T12:00:00Z".into() }),
+            seven_day_opus: Some(UsageWindow { utilization: 30.0, resets_at: "2026-06-11T12:00:00Z".into() }),
+            seven_day_sonnet: Some(UsageWindow { utilization: 2.0, resets_at: "x".into() }),
+            extra_usage_enabled: true,
+        };
+        let pu = map_to_provider_usage(&u);
+        // 应有 3 条泳道（sonnet 忽略）。
+        assert_eq!(pu.lanes.len(), 3);
+        assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
+        assert_eq!(pu.lanes[0].used_pct, Some(13.0));
+        assert_eq!(pu.lanes[0].unit.as_deref(), Some("percent"));
+        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-06-07T08:50:01Z"));
+        assert_eq!(pu.lanes[1].kind, UsageKind::SevenDay);
+        assert_eq!(pu.lanes[2].kind, UsageKind::Opus);
+        // extra_usage_enabled → note。
+        assert_eq!(pu.note.as_deref(), Some("extra_usage_enabled"));
+    }
+
+    #[test]
+    fn map_to_provider_usage_empty_resets_at_becomes_none() {
+        let u = Usage {
+            five_hour: Some(UsageWindow { utilization: 1.0, resets_at: "".into() }),
+            ..Default::default()
+        };
+        let pu = map_to_provider_usage(&u);
+        assert!(pu.lanes[0].resets_at.is_none());
     }
 }
