@@ -224,7 +224,7 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
         <div className="acc-avatar">{((acc.display_name ?? acc.email ?? acc.login_label) ?? "?").slice(0, 1).toUpperCase()}</div>
         <div className="acc-info">
           <div className="acc-name-row">
-            <span className="acc-name">{acc.display_name}</span>
+            <span className="acc-name">{acc.display_name ?? acc.email ?? acc.login_label ?? ""}</span>
             {acc.plan && <span className="acc-plan">{acc.plan}</span>}
           </div>
           {acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
@@ -242,8 +242,8 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
         </div>
         {usage ? (
           <>
-            {usage.lanes.map((lane) => (
-              <UsageBar key={lane.kind} lane={lane} label={laneLabel(lane.kind, t)} />
+            {usage.lanes.map((lane, i) => (
+              <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
             ))}
             {usage.note && <div className="usage-extra">{usage.note}</div>}
             {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}

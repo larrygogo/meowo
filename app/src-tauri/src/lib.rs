@@ -1499,17 +1499,24 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
 }
 
 /// 返回所有 provider 的账号 + 缓存用量（不联网）。供多 provider 账号面板使用。
+/// async + spawn_blocking：account() / usage_supported() 的 claude 分支会调
+/// has_oauth_credentials() → read_credentials_root()，macOS 上可 spawn `security` 子进程；
+/// 与 refresh_usage 同款写法，确保不占主线程事件循环（防设置页卡死）。
 #[tauri::command]
-fn get_accounts() -> Vec<account::ProviderAccountPayload> {
-    account::all()
-        .iter()
-        .map(|pa| account::ProviderAccountPayload {
-            provider: pa.key().as_str().to_string(),
-            account: pa.account(),
-            usage: account::read_cached_usage(pa.key()),
-            usage_supported: pa.usage_supported(),
-        })
-        .collect()
+async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
+    tauri::async_runtime::spawn_blocking(|| {
+        account::all()
+            .iter()
+            .map(|pa| account::ProviderAccountPayload {
+                provider: pa.key().as_str().to_string(),
+                account: pa.account(),
+                usage: account::read_cached_usage(pa.key()),
+                usage_supported: pa.usage_supported(),
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频）。

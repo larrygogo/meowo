@@ -78,11 +78,8 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
                 .and_then(|v| v.as_str())?;
             let payload = decode_jwt_payload(id_token)?;
 
-            // email：顶层 claim
-            let email = payload.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
-            if email.as_deref().map(|s| s.is_empty()).unwrap_or(true) && email.is_none() {
-                // email 缺失不阻止返回 Account，允许仅有 plan
-            }
+            // email：顶层 claim（空串过滤同 plan/org，避免 Some("") 流出）
+            let email = payload.get("email").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
 
             // plan：https://api.openai.com/auth 命名空间
             let plan = payload

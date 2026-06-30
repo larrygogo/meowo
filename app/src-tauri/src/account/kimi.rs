@@ -107,9 +107,9 @@ fn parse_resets_at(v: &Value) -> Option<String> {
             }
         }
     }
-    // reset_in / ttl：从现在起的秒数偏移
+    // reset_in / ttl：从现在起的秒数偏移（兼容浮点秒，与 resetAt 数字分支一致）
     for key in &["reset_in", "ttl"] {
-        if let Some(secs) = v.get(key).and_then(|v| v.as_i64()) {
+        if let Some(secs) = v.get(key).and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))) {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
