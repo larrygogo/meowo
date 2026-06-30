@@ -2,6 +2,7 @@
 // （后端对应 cc-reporter::agent::Agent 一处），卡片按 provider 查表，不再散落 if 分支。
 import type { ReactElement } from "react";
 import type { Dict } from "./i18n/zh";
+import { DEFAULT_PROVIDER } from "./api";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst），currentColor → 随连接态着色（accent / 断开灰）。
@@ -53,7 +54,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
   codex: { label: (t) => t.sticker.agentCodex, Icon: CodexMark },
 };
 
-/** 取 provider 配置；未知回退 claude。 */
+/** 取 provider 配置；未知回退默认 provider。入参保持 string 以防御后端未知值。 */
 export function providerConfig(provider: string): ProviderConfig {
-  return PROVIDERS[provider] ?? PROVIDERS.claude;
+  return PROVIDERS[provider] ?? PROVIDERS[DEFAULT_PROVIDER];
 }

@@ -1,5 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/**
+ * agent 提供方 key——必须与 Rust 侧 cc_store::ProviderKey 保持一致。
+ * 新增 CLI 的同步点共 4 处：本联合类型、providers.tsx 的 PROVIDERS、
+ * providers.test.tsx 的 EXPECTED_KEYS、Rust cc_store::ProviderKey::ALL。
+ */
+export type ProviderKey = "claude" | "kimi" | "codex";
+/** 缺省 provider，无法识别时回退；与 Rust 侧 DEFAULT_PROVIDER 一致。 */
+export const DEFAULT_PROVIDER: ProviderKey = "claude";
+
 export type Todo = {
   id: number;
   task_id: number;
@@ -95,8 +104,8 @@ export type LiveSession = {
   last_ai_text: string | null;
   /** 最近一条用户消息(锚 UserPromptSubmit);独立字段,不被工具活动覆盖。 */
   last_user_text: string | null;
-  /** agent 提供方：claude（默认）/ kimi…，决定卡片图标与标签。 */
-  provider: string;
+  /** agent 提供方：claude（默认）/ kimi / codex，决定卡片图标与标签。 */
+  provider: ProviderKey;
 };
 
 export function getLiveSessions(): Promise<LiveSession[]> {
