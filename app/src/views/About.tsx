@@ -198,9 +198,10 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 }
 
 // 单个 provider 卡片：账号信息 + 用量泳道 + 刷新按钮
-function ProviderCard({ payload, usage, onRefresh, refreshing }: {
+function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
   payload: ProviderAccountPayload;
   usage: ProviderUsage | null;
+  err: "unsupported" | "error" | null;
   onRefresh: () => void;
   refreshing: boolean;
 }) {
@@ -209,6 +210,9 @@ function ProviderCard({ payload, usage, onRefresh, refreshing }: {
   const cfg = PROVIDERS[payload.provider];
   const providerName = cfg ? cfg.label(t) : payload.provider;
 
+  // activePayloads 已过滤，此处恒不触发（防御）
+  if (!acc) return null;
+
   return (
     <div className="row-card provider-card">
       <div className="provider-head">
@@ -216,48 +220,41 @@ function ProviderCard({ payload, usage, onRefresh, refreshing }: {
         <span className="provider-name">{providerName}</span>
       </div>
 
-      {acc ? (
-        <div className="acc-block">
-          <div className="acc-avatar">{((acc.display_name ?? acc.email) ?? "?").slice(0, 1).toUpperCase()}</div>
-          <div className="acc-info">
-            <div className="acc-name-row">
-              <span className="acc-name">{acc.display_name}</span>
-              {acc.plan && <span className="acc-plan">{acc.plan}</span>}
-            </div>
-            {acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
-            {acc.organization && <div className="acc-org">{acc.organization}</div>}
+      <div className="acc-block">
+        <div className="acc-avatar">{((acc.display_name ?? acc.email) ?? "?").slice(0, 1).toUpperCase()}</div>
+        <div className="acc-info">
+          <div className="acc-name-row">
+            <span className="acc-name">{acc.display_name}</span>
+            {acc.plan && <span className="acc-plan">{acc.plan}</span>}
           </div>
+          {acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
+          {acc.organization && <div className="acc-org">{acc.organization}</div>}
         </div>
-      ) : (
-        <div className="acc-block">
-          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
-          <div className="acc-info">
-            <div className="acc-name">{t.account.notLoggedIn}</div>
-            <div className="acc-sub acc-sub-wrap">{t.account.notLoggedInDesc}</div>
-          </div>
-        </div>
-      )}
+      </div>
 
-      {payload.usage_supported && (
-        <div className="provider-usage">
-          <div className="usage-bar-head">
-            <span className="usage-card-title">{t.account.quota}</span>
-            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={onRefresh}>
-              <RefreshIcon spinning={refreshing} />
-            </button>
-          </div>
-          {usage ? (
-            <>
-              {usage.lanes.map((lane) => (
-                <UsageBar key={lane.kind} lane={lane} label={laneLabel(lane.kind, t)} />
-              ))}
-              {usage.note && <div className="usage-extra">{usage.note}</div>}
-            </>
-          ) : (
-            <div className="usage-stale">{t.account.loading}</div>
-          )}
+      <div className="provider-usage">
+        <div className="usage-bar-head">
+          <span className="usage-card-title">{t.account.quota}</span>
+          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={onRefresh}>
+            <RefreshIcon spinning={refreshing} />
+          </button>
         </div>
-      )}
+        {usage ? (
+          <>
+            {usage.lanes.map((lane) => (
+              <UsageBar key={lane.kind} lane={lane} label={laneLabel(lane.kind, t)} />
+            ))}
+            {usage.note && <div className="usage-extra">{usage.note}</div>}
+            {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
+          </>
+        ) : !payload.usage_supported || err === "unsupported" ? (
+          <div className="usage-stale">{t.account.usageUnsupported}</div>
+        ) : err === "error" ? (
+          <div className="usage-stale">{t.account.usageUnavailable}</div>
+        ) : (
+          <div className="usage-stale">{t.account.loading}</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -268,14 +265,20 @@ function AccountSection() {
   // usageMap: provider key → 最新 ProviderUsage（缓存先填，联网值覆盖）
   const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
   const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
+  // errMap: provider key → 错误类型（unsupported/error/null）
+  const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
 
   const doRefresh = (provider: string) => {
     setRefreshingSet((s) => new Set([...s, provider]));
+    setErrMap((m) => ({ ...m, [provider]: null }));
     refreshUsage(provider)
       .then((u) => {
         setUsageMap((m) => ({ ...m, [provider]: u }));
       })
-      .catch(() => {})
+      .catch((e) => {
+        const unsupported = String(e).includes("USAGE_UNSUPPORTED");
+        setErrMap((m) => ({ ...m, [provider]: unsupported ? "unsupported" : "error" }));
+      })
       .finally(() => {
         setRefreshingSet((s) => { const n = new Set(s); n.delete(provider); return n; });
       });
@@ -335,6 +338,7 @@ function AccountSection() {
           key={p.provider}
           payload={p}
           usage={usageMap[p.provider] ?? null}
+          err={errMap[p.provider] ?? null}
           onRefresh={() => doRefresh(p.provider)}
           refreshing={refreshingSet.has(p.provider)}
         />

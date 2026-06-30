@@ -306,22 +306,26 @@ function usageSev(pct: number): string {
 type UsageRow = { provider: string; label: string; pct: number | null; amount?: string };
 
 function UsageScreen({ rows }: { rows: UsageRow[] }) {
-  const visibleRows = rows.filter((r): r is UsageRow & { pct: number } => r.pct != null);
+  const visibleRows = rows.filter((r) => r.pct != null || r.amount != null);
   if (!visibleRows.length) return null;
   return (
     <div className="stk-uscreen" role="group" aria-label="用量">
-      {visibleRows.map((r) => {
-        const sev = usageSev(r.pct);
-        return (
+      {visibleRows.map((r) =>
+        r.pct != null ? (
           <div className="stk-urow" key={`${r.provider}-${r.label}`}>
             <span className="stk-ulabel">{r.label}</span>
             <span className="stk-utrack">
-              <i className={"stk-ufill " + sev} style={{ width: `${r.pct}%` }} />
+              <i className={"stk-ufill " + usageSev(r.pct)} style={{ width: `${r.pct}%` }} />
             </span>
             <span className="stk-uval">{Math.round(r.pct)}%</span>
           </div>
-        );
-      })}
+        ) : (
+          <div className="stk-urow" key={`${r.provider}-${r.label}`}>
+            <span className="stk-ulabel">{r.label}</span>
+            <span className="stk-uval">{r.amount}</span>
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -539,20 +543,17 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
   const [edge, setEdge] = useState({ top: false, bottom: false });
 
   // 底部用量：首屏用 getAccounts 缓存快速回填(仅在还没有联网值时填充，避免缓存晚到覆盖更新的联网值)，
-  // 联网用 refreshUsage 为准、每 5 分钟刷一次。
-  const [usageRows, setUsageRows] = useState<UsageRow[]>([]);
+  // 联网用 refreshUsage 为准、每 5 分钟刷一次。只存百分比，label 在渲染时取当前语言，切换即时生效。
+  const [claudeUsagePct, setClaudeUsagePct] = useState<number | null>(null);
   useEffect(() => {
     let cancelled = false;
-    // 用缓存快速预填
+    // 用缓存快速预填（仅在还没有值时，避免慢缓存覆盖联网新值；0 为合法值不被覆盖）
     getAccounts()
       .then((ps) => {
         if (cancelled) return;
-        const claudePayload = ps.find((p) => p.provider === "claude");
-        if (claudePayload?.usage) {
-          const fh = claudePayload.usage.lanes.find((l) => l.kind === "five_hour");
-          const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
-          if (pct != null) setUsageRows((cur) => cur.length ? cur : [{ provider: "claude", label: t.sticker.usage5h, pct }]);
-        }
+        const fh = ps.find((p) => p.provider === "claude")?.usage?.lanes.find((l) => l.kind === "five_hour");
+        const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
+        if (pct != null) setClaudeUsagePct((cur) => cur ?? pct);
       })
       .catch(() => {});
     const refresh = () => {
@@ -561,7 +562,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           if (cancelled) return;
           const fh = u.lanes.find((l: UsageLane) => l.kind === "five_hour");
           const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
-          setUsageRows(pct != null ? [{ provider: "claude", label: t.sticker.usage5h, pct }] : []);
+          setClaudeUsagePct(pct);
         })
         .catch(() => {}); // 第三方账号 USAGE_UNSUPPORTED 等：保持无用量，不显示用量条
     };
@@ -569,6 +570,10 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     const id = window.setInterval(refresh, 5 * 60_000);
     return () => { cancelled = true; window.clearInterval(id); };
   }, []);
+  // 渲染时按当前语言构造行（label 不入 state，切换语言即时刷新）
+  const usageRows: UsageRow[] = claudeUsagePct != null
+    ? [{ provider: "claude", label: t.sticker.usage5h, pct: claudeUsagePct }]
+    : [];
   const syncSb = () => {
     const el = scrollRef.current;
     if (!el) return;
