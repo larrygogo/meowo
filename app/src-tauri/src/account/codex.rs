@@ -126,7 +126,8 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
 
 /// Unix 秒 → ISO 8601 UTC 字符串（如 "2025-06-30T12:00:00Z"）。
 /// 不使用 chrono，手写正确的格里历算法（Howard Hinnant civil_from_days）。
-fn unix_to_iso8601(ts: i64) -> String {
+/// pub(super)：kimi.rs 复用，避免重写同一函数。
+pub(super) fn unix_to_iso8601(ts: i64) -> String {
     let secs = ts.max(0) as u64;
     let (days_total, rem) = (secs / 86400, secs % 86400);
     let (h, rem2) = (rem / 3600, rem % 3600);

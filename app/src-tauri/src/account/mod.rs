@@ -5,6 +5,7 @@
 
 mod claude;
 mod codex;
+mod kimi;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -140,28 +141,10 @@ pub trait ProviderAccount: Sync {
     }
 }
 
-// ═══ 3. Kimi / Codex 存根（暂不支持用量，满足 enum↔registry 配对约束） ═══
-
-struct KimiProviderAccount;
-impl ProviderAccount for KimiProviderAccount {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Kimi
-    }
-    fn account(&self) -> Option<Account> {
-        None
-    }
-    fn usage(&self, _force: bool) -> Option<ProviderUsage> {
-        None
-    }
-    fn usage_supported(&self) -> bool {
-        false
-    }
-}
-
-// ═══ 4. 注册表 ═══
+// ═══ 3. 注册表 ═══
 
 static CLAUDE_PA: claude::ClaudeProviderAccount = claude::ClaudeProviderAccount;
-static KIMI_PA: KimiProviderAccount = KimiProviderAccount;
+static KIMI_PA: kimi::KimiProviderAccount = kimi::KimiProviderAccount;
 static CODEX_PA: codex::CodexProviderAccount = codex::CodexProviderAccount;
 static ALL_PA: &[&dyn ProviderAccount] = &[&CLAUDE_PA, &KIMI_PA, &CODEX_PA];
 
@@ -175,7 +158,7 @@ pub fn all() -> &'static [&'static dyn ProviderAccount] {
     ALL_PA
 }
 
-// ═══ 5. Provider 分键缓存 ═══
+// ═══ 4. Provider 分键缓存 ═══
 //
 // 新格式（本任务引入）：
 //   {"providers": {"claude": ProviderUsage, ...}, "fetched_at_map": {"claude": ms, ...}, ...}
@@ -257,11 +240,11 @@ pub fn cache_is_fresh(k: cc_store::ProviderKey, fresh_ms: i64) -> bool {
     false
 }
 
-// ═══ 6. re-export（refresh_usage 调用路径） ═══
+// ═══ 5. re-export（refresh_usage 调用路径） ═══
 
 pub use claude::USAGE_UNSUPPORTED;
 
-// ═══ 7. Tests ═══
+// ═══ 6. Tests ═══
 
 #[cfg(test)]
 mod tests {

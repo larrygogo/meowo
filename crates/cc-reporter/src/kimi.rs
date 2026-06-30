@@ -10,7 +10,8 @@
 use std::path::{Path, PathBuf};
 
 /// kimi 数据根：`KIMI_SHARE_DIR` 优先，否则 `~/.kimi-code`（迁移后的默认目录，非旧的 ~/.kimi）。
-fn kimi_share_dir() -> Option<PathBuf> {
+/// account/kimi.rs 复用此函数读取凭据/device_id/config.toml，故提升为 pub。
+pub fn kimi_share_dir() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("KIMI_SHARE_DIR") {
         if !d.is_empty() {
             return Some(PathBuf::from(d));
