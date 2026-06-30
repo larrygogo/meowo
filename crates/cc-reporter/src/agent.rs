@@ -3,6 +3,7 @@
 //! 共用同一套进程名/resume 定义（单一事实源），消除「一处精确一处子串」的口径漂移。
 
 use crate::hook::HookEvent;
+use cc_store::ProviderKey;
 
 /// Stop 时要落库的输出：最近一条 AI 正文 + 模型展示名（kimi 走 transcript，一次读出两者）。
 #[derive(Debug, Default, PartialEq)]
@@ -13,7 +14,7 @@ pub struct StopOutputs {
 
 pub trait Agent: Sync {
     /// provider key（与 DB sessions.provider / 前端一致）。
-    fn key(&self) -> &'static str;
+    fn key(&self) -> ProviderKey;
     /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + cc-app 判活共用。
     fn process_names(&self) -> &'static [&'static str];
     /// Stop 时取最近 AI 正文 + 模型（claude 用 hook 携带的，kimi 读 wire.jsonl 一次出两者）。
@@ -41,8 +42,8 @@ pub trait Agent: Sync {
 
 struct ClaudeAgent;
 impl Agent for ClaudeAgent {
-    fn key(&self) -> &'static str {
-        "claude"
+    fn key(&self) -> ProviderKey {
+        ProviderKey::Claude
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["claude", "claude.exe"]
@@ -67,8 +68,8 @@ impl Agent for ClaudeAgent {
 
 struct KimiAgent;
 impl Agent for KimiAgent {
-    fn key(&self) -> &'static str {
-        "kimi"
+    fn key(&self) -> ProviderKey {
+        ProviderKey::Kimi
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["kimi", "kimi.exe"]
@@ -101,8 +102,8 @@ impl Agent for KimiAgent {
 
 struct CodexAgent;
 impl Agent for CodexAgent {
-    fn key(&self) -> &'static str {
-        "codex"
+    fn key(&self) -> ProviderKey {
+        ProviderKey::Codex
     }
     fn process_names(&self) -> &'static [&'static str] {
         // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中
@@ -177,13 +178,10 @@ static KIMI: KimiAgent = KimiAgent;
 static CODEX: CodexAgent = CodexAgent;
 static ALL: &[&dyn Agent] = &[&CLAUDE, &KIMI, &CODEX];
 
-/// 按 provider key 取 agent；未知/缺省回退 claude。
-pub fn for_provider(key: &str) -> &'static dyn Agent {
-    match key {
-        "kimi" => &KIMI,
-        "codex" => &CODEX,
-        _ => &CLAUDE,
-    }
+/// 按 provider key 取 agent；遍历 ALL 注册表（单一事实源）。未知不会发生（入参已是强类型），
+/// find 失败时回退 claude 兜底。
+pub fn for_provider(key: ProviderKey) -> &'static dyn Agent {
+    ALL.iter().copied().find(|a| a.key() == key).unwrap_or(&CLAUDE)
 }
 
 /// 所有已知 agent（供 cc-app 收集全部进程名判活）。
@@ -203,12 +201,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn for_provider_falls_back_to_claude() {
-        assert_eq!(for_provider("kimi").key(), "kimi");
-        assert_eq!(for_provider("codex").key(), "codex");
-        assert_eq!(for_provider("claude").key(), "claude");
-        assert_eq!(for_provider("unknown").key(), "claude");
-        assert_eq!(for_provider("").key(), "claude");
+    fn for_provider_returns_matching_agent() {
+        assert_eq!(for_provider(ProviderKey::Kimi).key(), ProviderKey::Kimi);
+        assert_eq!(for_provider(ProviderKey::Codex).key(), ProviderKey::Codex);
+        assert_eq!(for_provider(ProviderKey::Claude).key(), ProviderKey::Claude);
+    }
+
+    #[test]
+    fn every_provider_key_has_agent_and_vice_versa() {
+        // enum↔registry 单一事实源守护：ProviderKey 每个 variant 必有一个 ALL 中的 Agent，
+        // 反之亦然；二者数量相等。加新 CLI 漏注册任一侧即在此处失败。
+        for &k in ProviderKey::ALL {
+            assert!(ALL.iter().any(|a| a.key() == k), "ProviderKey {k:?} 无对应 Agent");
+        }
+        for a in ALL {
+            assert!(ProviderKey::ALL.contains(&a.key()), "Agent {:?} 不在 ProviderKey::ALL", a.key());
+        }
+        assert_eq!(ALL.len(), ProviderKey::ALL.len());
     }
 
     #[test]
@@ -230,13 +239,13 @@ mod tests {
 
     #[test]
     fn resume_args_per_provider() {
-        assert_eq!(for_provider("claude").resume_args("ID"), vec!["claude", "--resume", "ID"]);
+        assert_eq!(for_provider(ProviderKey::Claude).resume_args("ID"), vec!["claude", "--resume", "ID"]);
         // codex：末两位固定 `resume <id>`；首元素是 node(走包装) 或回退裸名 codex；某元素含 "codex"。
-        let codex = for_provider("codex").resume_args("ID");
+        let codex = for_provider(ProviderKey::Codex).resume_args("ID");
         assert_eq!(codex[codex.len() - 2..], ["resume".to_string(), "ID".to_string()]);
         assert!(codex.iter().any(|a| a.to_ascii_lowercase().contains("codex")));
         // kimi 首元素是可执行(绝对路径或回退裸名)，参数固定 -r <id>。
-        let kimi = for_provider("kimi").resume_args("ID");
+        let kimi = for_provider(ProviderKey::Kimi).resume_args("ID");
         assert_eq!(&kimi[1..], ["-r".to_string(), "ID".to_string()]);
         assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
     }

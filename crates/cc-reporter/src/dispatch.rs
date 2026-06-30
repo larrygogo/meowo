@@ -1,11 +1,11 @@
-use cc_store::{PendingReview, SessionStatus, Store, StoreError};
+use cc_store::{PendingReview, ProviderKey, SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
 
 use std::path::Path;
 
 /// 把一个 hook 事件落到库。未知/缺字段一律降级为「无操作」，绝不报错冒泡。
 /// `provider` 为 agent 提供方（claude/kimi…）：仅在 SessionStart 标记到会话上，并决定标题解析路径。
-pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> Result<(), StoreError> {
+pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKey) -> Result<(), StoreError> {
     match ev.hook_event_name.as_str() {
         "SessionStart" => {
             let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
@@ -98,7 +98,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
     Ok(())
 }
 
-fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &str) -> Result<(), StoreError> {
+fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: ProviderKey) -> Result<(), StoreError> {
     // 是否由 transcript 解析标题由 agent 决定：claude 是；kimi 否（不给 transcript_path 且 JSONL 格式不同，
     // 标题靠 UserPromptSubmit 的首条 prompt 命名，与 Claude 的占位回退同款）。
     if !crate::agent::for_provider(provider).resolves_transcript_title() {
@@ -123,7 +123,7 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &
 /// 标题——sid8=session_id 末 8 位、全局唯一，cc-app 据此精确切到该标签（解决同窗口同目录两会话标签
 /// 同名分不清）。cc-reporter 是 hook 子进程、继承本会话的 ConPTY，写 CONOUT$ 只影响自己这个标签。
 /// 非 Windows / 非 WT(CONOUT$ 打不开) 静默 no-op。
-fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: &str) {
+fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: ProviderKey) {
     if !crate::agent::for_provider(provider).writes_tab_token() {
         return;
     }
@@ -149,11 +149,11 @@ fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: &str) {
 }
 
 /// 建会话（项目 upsert + 会话 + provider + cwd + 抓 PID），返回 sid。SessionStart 与懒创建共用。
-fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: &str, now_ms: i64) -> Result<i64, StoreError> {
+fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: ProviderKey, now_ms: i64) -> Result<i64, StoreError> {
     let (root, name) = project_root_and_name(cwd);
     let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
     let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
-    if provider != "claude" {
+    if !provider.is_default() {
         store.set_session_provider(sid, provider)?;
     }
     store.set_session_cwd(sid, cwd, now_ms)?;
@@ -172,7 +172,7 @@ fn lookup_session(store: &Store, ev: &HookEvent) -> Result<Option<i64>, StoreErr
 
 /// 查会话；查不到且事件带 cwd 时就地懒创建——让「hooks 中途装上 / SessionStart 漏掉（压缩等）」
 /// 的会话在下一条带 cwd 的活动事件（UserPromptSubmit/PostToolUse/Stop）上也能补建上板，不必重开。
-fn lookup_or_create(store: &Store, ev: &HookEvent, provider: &str, now_ms: i64) -> Result<Option<i64>, StoreError> {
+fn lookup_or_create(store: &Store, ev: &HookEvent, provider: ProviderKey, now_ms: i64) -> Result<Option<i64>, StoreError> {
     if ev.session_id.is_empty() {
         return Ok(None);
     }

@@ -706,7 +706,7 @@ fn focus_session(
     #[cfg(target_os = "windows")]
     {
         // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。缺省 claude。
-        let title_based = cc_reporter::agent::for_provider(provider.as_deref().unwrap_or("claude"))
+        let title_based = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(provider.as_deref()))
             .sets_terminal_tab_title();
         // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(cc-reporter 写的 kimi 标签
         // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
@@ -912,7 +912,7 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
             let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
             let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
             // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
-            let resume = cc_reporter::agent::for_provider(&provider).resume_args(&session_id);
+            let resume = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&provider))).resume_args(&session_id);
             // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
             let eff = match load_settings().resume_terminal.as_str() {
                 "powershell" => "powershell",
@@ -1010,7 +1010,7 @@ fn rename_session(
     }
 
     // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）。
-    let provider = provider.as_deref().unwrap_or("claude");
+    let provider = cc_store::ProviderKey::parse(provider.as_deref());
     let _ = cc_reporter::agent::for_provider(provider).write_rename(&session_id, cwd.as_deref(), &title);
 
     // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
@@ -1346,7 +1346,7 @@ fn spawn_liveness_watch(
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
                     let title_based =
-                        cc_reporter::agent::for_provider(&s.provider).sets_terminal_tab_title();
+                        cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider))).sets_terminal_tab_title();
                     // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
                     let tab_token = {
                         let t = cc_reporter::tabtitle::short_sid(&s.session.cc_session_id);

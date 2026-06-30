@@ -620,12 +620,12 @@ impl Store {
         Ok(())
     }
 
-    /// 设置会话所属 agent provider（claude/kimi…）。仅在 SessionStart 由 reporter 按 --provider 写一次；
-    /// 不动 last_event_at（同回合的 set_session_cwd 等已刷新）。
-    pub fn set_session_provider(&self, session_id: i64, provider: &str) -> Result<(), StoreError> {
+    /// 设置会话所属 agent provider（claude/kimi…）。仅在 SessionStart 由 reporter 写一次；
+    /// 不动 last_event_at（同回合的 set_session_cwd 等已刷新）。入参为强类型，写入端归一。
+    pub fn set_session_provider(&self, session_id: i64, provider: crate::ProviderKey) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET provider = ?1 WHERE id = ?2",
-            rusqlite::params![provider, session_id],
+            rusqlite::params![provider.as_str(), session_id],
         )?;
         Ok(())
     }

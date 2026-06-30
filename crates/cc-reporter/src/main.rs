@@ -1,5 +1,5 @@
 use cc_reporter::{db_path, dispatch::dispatch, hook::HookEvent};
-use cc_store::Store;
+use cc_store::{ProviderKey, Store};
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -29,24 +29,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let now = now_ms();
     // agent 提供方：kimi 的 hook 命令带 `--provider kimi`；Claude 不带 → 默认 claude。
     let provider = parse_provider();
-    dispatch(&store, &ev, now, &provider)?;
+    dispatch(&store, &ev, now, provider)?;
     Ok(())
 }
 
-/// 从命令行解析 `--provider <name>` / `--provider=<name>`，缺省 "claude"。
-fn parse_provider() -> String {
+/// 从命令行解析 `--provider <name>` / `--provider=<name>`，缺省 claude。
+fn parse_provider() -> ProviderKey {
     let args: Vec<String> = std::env::args().collect();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--provider" {
             if let Some(v) = it.next() {
-                return v.clone();
+                return ProviderKey::from_str(v);
             }
         } else if let Some(v) = a.strip_prefix("--provider=") {
-            return v.to_string();
+            return ProviderKey::from_str(v);
         }
     }
-    "claude".to_string()
+    ProviderKey::Claude
 }
 
 fn now_ms() -> i64 {
