@@ -129,7 +129,7 @@ export const en: Dict = {
     extraUsage: "Extra usage enabled",
     refreshFailed: "Refresh failed; showing cached values",
     usageUnavailable: "Usage unavailable. Make sure you're signed in to Claude Code (run claude) or check your network",
-    usageUnsupported: "Usage isn't available for your current sign-in (only official Claude Code accounts are supported)",
+    usageUnsupported: "Usage is not available for this account",
     loading: "Loading…",
     resetSoon: "Resets soon",
     resetInMin: (m) => `Resets in ${m} min`,

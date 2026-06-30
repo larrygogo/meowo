@@ -221,13 +221,14 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
       </div>
 
       <div className="acc-block">
-        <div className="acc-avatar">{((acc.display_name ?? acc.email) ?? "?").slice(0, 1).toUpperCase()}</div>
+        <div className="acc-avatar">{((acc.display_name ?? acc.email ?? acc.login_label) ?? "?").slice(0, 1).toUpperCase()}</div>
         <div className="acc-info">
           <div className="acc-name-row">
             <span className="acc-name">{acc.display_name}</span>
             {acc.plan && <span className="acc-plan">{acc.plan}</span>}
           </div>
           {acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
+          {!acc.email && acc.login_label && <div className="acc-sub">{acc.login_label}</div>}
           {acc.organization && <div className="acc-org">{acc.organization}</div>}
         </div>
       </div>
@@ -235,7 +236,7 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
       <div className="provider-usage">
         <div className="usage-bar-head">
           <span className="usage-card-title">{t.account.quota}</span>
-          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing} onClick={onRefresh}>
+          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!payload.usage_supported && !usage)} onClick={onRefresh}>
             <RefreshIcon spinning={refreshing} />
           </button>
         </div>

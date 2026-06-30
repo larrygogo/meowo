@@ -129,7 +129,7 @@ export const zh = {
     extraUsage: "已开启超额用量",
     refreshFailed: "最新数据刷新失败，显示的是缓存值",
     usageUnavailable: "用量暂不可用，请确认已登录 Claude Code（终端运行 claude）或检查网络",
-    usageUnsupported: "当前登录方式不支持用量查询（仅 Claude Code 官方账号可查）",
+    usageUnsupported: "当前账号不支持用量查询",
     loading: "加载中…",
     resetSoon: "即将重置",
     resetInMin: (m: number) => `${m} 分钟后重置`,

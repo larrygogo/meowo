@@ -296,11 +296,34 @@ export function EmptyState({ tab }: { tab: Tab }) {
   );
 }
 
-/** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——黑屏(复刻卡片徽标 .stk-ind 材质)内每个窗口一行：
-   标签 + 凹槽里的发光液柱 + 百分比；与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
+/** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——黑屏(复刻卡片徽标 .stk-ind 材质)内每个有主泳道的
+   provider 一行（最多 3 行）：迷你品牌图标 + 标签 + 凹槽里的发光液柱 + 百分比/金额；
+   与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
 // 利用率档位 → 复用应用既有状态色(绿/黄/红)，与卡片状态点同语义；越满越红即预警。
 function usageSev(pct: number): string {
   return pct >= 80 ? "is-high" : pct >= 50 ? "is-warn" : "is-ok";
+}
+
+// 主泳道选取：claude/codex 取 five_hour，kimi 及其他取 weekly 优先、其次 balance
+function primaryLane(provider: string, usage: ProviderUsage | undefined): UsageLane | null {
+  if (!usage) return null;
+  const { lanes } = usage;
+  if (provider === "claude" || provider === "codex") {
+    return lanes.find((l) => l.kind === "five_hour") ?? null;
+  }
+  return lanes.find((l) => l.kind === "weekly") ?? lanes.find((l) => l.kind === "balance") ?? null;
+}
+
+// lane.kind → 底栏标签（复用 account i18n 键）
+function laneLabel(kind: string, t: Dict): string {
+  switch (kind) {
+    case "five_hour": return t.account.laneFiveHour;
+    case "seven_day": return t.account.laneSevenDay;
+    case "opus": return t.account.laneOpus;
+    case "weekly": return t.account.laneWeekly;
+    case "balance": return t.account.laneBalance;
+    default: return kind;
+  }
 }
 
 type UsageRow = { provider: string; label: string; pct: number | null; amount?: string };
@@ -310,9 +333,11 @@ function UsageScreen({ rows }: { rows: UsageRow[] }) {
   if (!visibleRows.length) return null;
   return (
     <div className="stk-uscreen" role="group" aria-label="用量">
-      {visibleRows.map((r) =>
-        r.pct != null ? (
+      {visibleRows.map((r) => {
+        const { Icon } = providerConfig(r.provider);
+        return r.pct != null ? (
           <div className="stk-urow" key={`${r.provider}-${r.label}`}>
+            <span className="stk-uicon" aria-hidden="true"><Icon /></span>
             <span className="stk-ulabel">{r.label}</span>
             <span className="stk-utrack">
               <i className={"stk-ufill " + usageSev(r.pct)} style={{ width: `${r.pct}%` }} />
@@ -321,11 +346,12 @@ function UsageScreen({ rows }: { rows: UsageRow[] }) {
           </div>
         ) : (
           <div className="stk-urow" key={`${r.provider}-${r.label}`}>
+            <span className="stk-uicon" aria-hidden="true"><Icon /></span>
             <span className="stk-ulabel">{r.label}</span>
             <span className="stk-uval">{r.amount}</span>
           </div>
-        )
-      )}
+        );
+      })}
     </div>
   );
 }
@@ -542,38 +568,60 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
   // 滚动边缘淡出：仅当该方向确有被遮内容时才淡(滚到顶/底则对应边不淡，首/末卡保持清晰)。
   const [edge, setEdge] = useState({ top: false, bottom: false });
 
-  // 底部用量：首屏用 getAccounts 缓存快速回填(仅在还没有联网值时填充，避免缓存晚到覆盖更新的联网值)，
-  // 联网用 refreshUsage 为准、每 5 分钟刷一次。只存百分比，label 在渲染时取当前语言，切换即时生效。
-  const [claudeUsagePct, setClaudeUsagePct] = useState<number | null>(null);
+  // 底部用量：多 provider。先从 getAccounts() 拿缓存快速预填(仅在还没有联网值时填充，
+  // 避免缓存晚到覆盖更新的联网值)，再对有账号且 usage_supported 的 provider 定时刷新（5 min）。
+  // usageMap 只存原始 ProviderUsage，label 在渲染时取当前语言，切换即时生效。
+  const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
   useEffect(() => {
     let cancelled = false;
-    // 用缓存快速预填（仅在还没有值时，避免慢缓存覆盖联网新值；0 为合法值不被覆盖）
+    const timers: number[] = [];
     getAccounts()
       .then((ps) => {
         if (cancelled) return;
-        const fh = ps.find((p) => p.provider === "claude")?.usage?.lanes.find((l) => l.kind === "five_hour");
-        const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
-        if (pct != null) setClaudeUsagePct((cur) => cur ?? pct);
+        // 用缓存 usage 快速预填（保留已有的联网值不被缓存覆盖）
+        const cached: Record<string, ProviderUsage> = {};
+        ps.forEach((p) => { if (p.usage) cached[p.provider] = p.usage; });
+        setUsageMap((cur) => {
+          const next: Record<string, ProviderUsage> = { ...cached };
+          Object.keys(cur).forEach((k) => { if (cur[k]) next[k] = cur[k]; });
+          return next;
+        });
+        // 对有账号且支持用量的 provider：立即刷新 + 定时刷新
+        ps.filter((p) => p.account != null && p.usage_supported).forEach(({ provider }) => {
+          const doRefresh = () => {
+            if (cancelled) return;
+            refreshUsage(provider)
+              .then((u) => { if (!cancelled) setUsageMap((m) => ({ ...m, [provider]: u })); })
+              .catch(() => {}); // USAGE_UNSUPPORTED / 网络错误：保持无用量，不显示该行
+          };
+          doRefresh();
+          timers.push(window.setInterval(doRefresh, 5 * 60_000));
+        });
       })
       .catch(() => {});
-    const refresh = () => {
-      refreshUsage("claude")
-        .then((u: ProviderUsage) => {
-          if (cancelled) return;
-          const fh = u.lanes.find((l: UsageLane) => l.kind === "five_hour");
-          const pct = fh?.used_pct != null ? Math.max(0, Math.min(100, fh.used_pct)) : null;
-          setClaudeUsagePct(pct);
-        })
-        .catch(() => {}); // 第三方账号 USAGE_UNSUPPORTED 等：保持无用量，不显示用量条
+    return () => {
+      cancelled = true;
+      timers.forEach((id) => window.clearInterval(id));
     };
-    refresh();
-    const id = window.setInterval(refresh, 5 * 60_000);
-    return () => { cancelled = true; window.clearInterval(id); };
   }, []);
-  // 渲染时按当前语言构造行（label 不入 state，切换语言即时刷新）
-  const usageRows: UsageRow[] = claudeUsagePct != null
-    ? [{ provider: "claude", label: t.sticker.usage5h, pct: claudeUsagePct }]
-    : [];
+  // 渲染时按当前语言派生行：每个有主泳道的 provider 一行（最多 3 行），固定顺序 claude/codex/kimi
+  const usageRows: UsageRow[] = useMemo(() => {
+    const rows: UsageRow[] = [];
+    for (const provider of ["claude", "codex", "kimi"] as const) {
+      if (rows.length >= 3) break;
+      const lane = primaryLane(provider, usageMap[provider]);
+      if (!lane) continue;
+      const label = laneLabel(lane.kind, t);
+      if (lane.used_pct != null) {
+        rows.push({ provider, label, pct: Math.max(0, Math.min(100, lane.used_pct)) });
+      } else if (lane.used != null) {
+        const amount = lane.unit ? `${lane.used} ${lane.unit}` : String(lane.used);
+        rows.push({ provider, label, pct: null, amount });
+      }
+    }
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usageMap, t]);
   const syncSb = () => {
     const el = scrollRef.current;
     if (!el) return;
