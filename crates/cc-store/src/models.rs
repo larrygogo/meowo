@@ -134,9 +134,9 @@ pub struct TodoInput {
     pub status: TodoStatus,
 }
 
-/// 默认 agent provider 名。与 sessions.provider 列的 SQL DEFAULT 'claude'
-/// （migrations.rs 建表 + store.rs ALTER）必须一致——由 models 测试
-/// default_const_matches_claude_variant_and_schema 守护。
+/// 默认 agent provider 名，与 sessions.provider 列的 SQL DEFAULT 'claude'
+/// （migrations.rs 建表 + store.rs ALTER）必须保持一致。此常量改动时下方测试会变红、
+/// 提醒同步 SQL 字面量，但若只改 SQL 而不改此常量则无法被发现（单向绊线）。
 pub const DEFAULT_PROVIDER: &str = "claude";
 
 /// agent 提供方（CLI）。与 sessions.provider 列、前端 ProviderConfig key 对齐。
@@ -224,9 +224,9 @@ mod provider_key_tests {
 
     #[test]
     fn default_const_matches_claude_variant_and_schema() {
-        // DEFAULT_PROVIDER 必须与 ProviderKey::Claude 及 sessions.provider 列的
-        // SQL DEFAULT 'claude'（migrations.rs / store.rs ALTER）保持一致。
-        // 改默认 provider 时此断言守护三处不漂移。
+        // 单向绊线：改 DEFAULT_PROVIDER 常量时此断言变红，提醒同步 migrations.rs 的建表
+        // 默认值与 store.rs 的 ALTER 语句。但此测试**不会**检测「只改 SQL 字面量而不改常量」
+        // 的情况，需在 migrations.rs / store.rs 的 SQL 行旁记下关联注释自行守护。
         assert_eq!(DEFAULT_PROVIDER, "claude");
         assert_eq!(ProviderKey::Claude.as_str(), DEFAULT_PROVIDER);
     }

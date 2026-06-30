@@ -61,6 +61,8 @@ impl Store {
             "ALTER TABLE sessions ADD COLUMN last_ai_text TEXT",
             "ALTER TABLE sessions ADD COLUMN last_user_text TEXT",
             "ALTER TABLE session_context ADD COLUMN model TEXT",
+            // 此 'claude' 默认值与 migrations.rs 建表默认值、DEFAULT_PROVIDER 常量为同一事实，
+            // 改默认 provider 时需三处同步（models.rs 绊线测试会在改常量时红）。
             "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'",
         ];
         for sql in ALTERS {

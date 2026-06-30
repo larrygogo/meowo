@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_ai_text   TEXT,
     last_user_text TEXT,
     -- agent provider：claude（默认）/ kimi…，驱动卡片图标/标签与 resume 命令。旧库由 migrate 的 ALTER 补齐。
+    -- 此 'claude' 默认值须与 DEFAULT_PROVIDER 常量、store.rs ALTER 语句中的 'claude' 一致；
+    -- 改默认 provider 时三处都要改，models.rs 的绊线测试会在改常量时提醒。
     provider       TEXT NOT NULL DEFAULT 'claude'
 );
 
