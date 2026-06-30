@@ -1,3 +1,3 @@
-//! 会话标题解析。实现已统一到 cc-store::title（reporter 写入、cc-app 读取共享），
-//! 这里仅重导出供 dispatch 继续用 `crate::transcript::resolve_title`。
-pub use cc_store::title::{reconstruct_transcript_path, resolve_title, title_from_transcript};
+//! 会话标题相关函数的重导出。实现在 cc-store::title，dispatch 现经 TranscriptSpec::resolve_title
+//! 解析标题。本模块仅重导出 reconstruct_transcript_path 与 title_from_transcript 供测试使用。
+pub use cc_store::title::{reconstruct_transcript_path, title_from_transcript};
