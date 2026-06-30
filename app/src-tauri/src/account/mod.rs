@@ -4,6 +4,7 @@
 //! 设计模式镜像 cc-reporter/src/agent.rs：trait + ALL 静态注册表 + for_provider + enum↔registry 配对单测。
 
 mod claude;
+mod codex;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -157,27 +158,11 @@ impl ProviderAccount for KimiProviderAccount {
     }
 }
 
-struct CodexProviderAccount;
-impl ProviderAccount for CodexProviderAccount {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Codex
-    }
-    fn account(&self) -> Option<Account> {
-        None
-    }
-    fn usage(&self, _force: bool) -> Option<ProviderUsage> {
-        None
-    }
-    fn usage_supported(&self) -> bool {
-        false
-    }
-}
-
 // ═══ 4. 注册表 ═══
 
 static CLAUDE_PA: claude::ClaudeProviderAccount = claude::ClaudeProviderAccount;
 static KIMI_PA: KimiProviderAccount = KimiProviderAccount;
-static CODEX_PA: CodexProviderAccount = CodexProviderAccount;
+static CODEX_PA: codex::CodexProviderAccount = codex::CodexProviderAccount;
 static ALL_PA: &[&dyn ProviderAccount] = &[&CLAUDE_PA, &KIMI_PA, &CODEX_PA];
 
 /// 按 provider key 取 ProviderAccount 实现；遍历 ALL 注册表。未知回退 claude 兜底。

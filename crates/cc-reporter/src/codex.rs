@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 /// codex 数据根：`CODEX_HOME` 优先，否则 `~/.codex`。
-fn codex_home() -> Option<PathBuf> {
+pub fn codex_home() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("CODEX_HOME") {
         if !d.is_empty() {
             return Some(PathBuf::from(d));
