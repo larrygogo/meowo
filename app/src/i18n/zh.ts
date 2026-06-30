@@ -16,7 +16,7 @@ export const zh = {
   pending: { approval: "待批准", question: "待回答", plan: "待批计划" },
   empty: {
     allTitle: "还没有会话",
-    allHint: "在终端运行 Claude Code，进度会自动出现在这里",
+    allHint: "在终端运行 AI 编程会话，进度会自动出现在这里",
     waitingTitle: "没有等待交互的会话",
     waitingHint: "有会话需要你回复时会出现在这里",
     runningTitle: "当前没有运行中的会话",
@@ -149,7 +149,7 @@ export const zh = {
     versionInfo: "版本信息",
     homepage: "项目主页",
     open: "打开",
-    blurb: "常驻桌面贴纸，实时显示所有 Claude Code 会话的进度。",
+    blurb: "常驻桌面贴纸，实时显示所有 AI 编程会话的进度。",
     feedback: "意见反馈",
     changelog: "更新日志",
   },

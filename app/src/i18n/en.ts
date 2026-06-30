@@ -17,7 +17,7 @@ export const en: Dict = {
   pending: { approval: "Approve", question: "Question", plan: "Review plan" },
   empty: {
     allTitle: "No sessions yet",
-    allHint: "Run Claude Code in a terminal and progress shows up here",
+    allHint: "Run an AI coding session in a terminal and progress shows up here",
     waitingTitle: "No sessions waiting for you",
     waitingHint: "Sessions needing your reply will appear here",
     runningTitle: "No running sessions",
@@ -149,7 +149,7 @@ export const en: Dict = {
     versionInfo: "Version",
     homepage: "Project homepage",
     open: "Open",
-    blurb: "A desktop sticker showing live progress of all your Claude Code sessions.",
+    blurb: "A desktop sticker showing live progress of all your AI coding sessions.",
     feedback: "Feedback",
     changelog: "Changelog",
   },
