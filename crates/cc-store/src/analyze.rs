@@ -265,6 +265,8 @@ impl TranscriptCache {
         };
         let (len, mtime) = match f.metadata() {
             Ok(m) => (m.len(), m.modified().ok()),
+            // metadata 偶发失败（I/O 抖动等）时**沿用已累积状态**，不要用 len=0 当真实长度——
+            // 否则会被下面误判为「截断」而清空已解析的标题/错误，导致瞬时丢失（与 File::open 失败一致处理）。
             Err(_) => return entry.parser.to_info(),
         };
         if len < entry.offset || (len == entry.offset && mtime != entry.mtime) {
