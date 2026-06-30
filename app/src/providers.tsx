@@ -47,7 +47,7 @@ export type ProviderConfig = {
   Icon: () => ReactElement;
 };
 
-const PROVIDERS: Record<string, ProviderConfig> = {
+export const PROVIDERS: Record<string, ProviderConfig> = {
   claude: { label: (t) => t.sticker.agentClaudeCode, Icon: ClaudeMark },
   kimi: { label: (t) => t.sticker.agentKimiCode, Icon: KimiMark },
   codex: { label: (t) => t.sticker.agentCodex, Icon: CodexMark },
