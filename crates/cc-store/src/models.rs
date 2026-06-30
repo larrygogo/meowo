@@ -133,3 +133,109 @@ pub struct TodoInput {
     pub content: String,
     pub status: TodoStatus,
 }
+
+/// 默认 agent provider 名。与 sessions.provider 列的 SQL DEFAULT 'claude'
+/// （migrations.rs 建表 + store.rs ALTER）必须一致——由 models 测试
+/// default_const_matches_claude_variant_and_schema 守护。
+pub const DEFAULT_PROVIDER: &str = "claude";
+
+/// agent 提供方（CLI）。与 sessions.provider 列、前端 ProviderConfig key 对齐。
+/// 仿 SessionStatus/TodoStatus：as_str + 无副作用 from_str（未知/空降级默认），
+/// 作为全项目「provider 名」的单一强类型，取代散落的裸 &str 比较与 unwrap_or("claude")。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKey {
+    Claude,
+    Kimi,
+    Codex,
+}
+
+impl ProviderKey {
+    /// 全部已知 provider。新增 variant 必在此登记；cc-reporter 的 enum↔registry
+    /// 配对测试据此校验每个 key 都有对应 Agent 实现。
+    pub const ALL: &'static [ProviderKey] = &[ProviderKey::Claude, ProviderKey::Kimi, ProviderKey::Codex];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProviderKey::Claude => "claude",
+            ProviderKey::Kimi => "kimi",
+            ProviderKey::Codex => "codex",
+        }
+    }
+
+    /// 无副作用解析：未知 → 默认（Claude）。仿 TodoStatus::from_str。
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> ProviderKey {
+        match s {
+            "kimi" => ProviderKey::Kimi,
+            "codex" => ProviderKey::Codex,
+            _ => ProviderKey::Claude,
+        }
+    }
+
+    /// 唯一归一点：替代散落的 unwrap_or("claude") / != "claude"。None/未知 → 默认。
+    pub fn parse(s: Option<&str>) -> ProviderKey {
+        match s {
+            Some(v) => ProviderKey::from_str(v),
+            None => ProviderKey::Claude,
+        }
+    }
+
+    /// 是否为默认 provider（claude）。DB 把 NULL/缺省视作 claude，故默认 provider 不写库。
+    pub fn is_default(self) -> bool {
+        matches!(self, ProviderKey::Claude)
+    }
+}
+
+#[cfg(test)]
+mod provider_key_tests {
+    use super::*;
+
+    #[test]
+    fn as_str_roundtrips_known_keys() {
+        assert_eq!(ProviderKey::Claude.as_str(), "claude");
+        assert_eq!(ProviderKey::Kimi.as_str(), "kimi");
+        assert_eq!(ProviderKey::Codex.as_str(), "codex");
+    }
+
+    #[test]
+    fn from_str_falls_back_to_claude_on_unknown() {
+        assert_eq!(ProviderKey::from_str("kimi"), ProviderKey::Kimi);
+        assert_eq!(ProviderKey::from_str("codex"), ProviderKey::Codex);
+        assert_eq!(ProviderKey::from_str("claude"), ProviderKey::Claude);
+        assert_eq!(ProviderKey::from_str("nonsense"), ProviderKey::Claude);
+        assert_eq!(ProviderKey::from_str(""), ProviderKey::Claude);
+    }
+
+    #[test]
+    fn parse_normalizes_none_and_unknown_to_default() {
+        // 唯一归一点：替代散落的 unwrap_or("claude")。
+        assert_eq!(ProviderKey::parse(None), ProviderKey::Claude);
+        assert_eq!(ProviderKey::parse(Some("kimi")), ProviderKey::Kimi);
+        assert_eq!(ProviderKey::parse(Some("zzz")), ProviderKey::Claude);
+    }
+
+    #[test]
+    fn is_default_only_for_claude() {
+        assert!(ProviderKey::Claude.is_default());
+        assert!(!ProviderKey::Kimi.is_default());
+        assert!(!ProviderKey::Codex.is_default());
+    }
+
+    #[test]
+    fn default_const_matches_claude_variant_and_schema() {
+        // DEFAULT_PROVIDER 必须与 ProviderKey::Claude 及 sessions.provider 列的
+        // SQL DEFAULT 'claude'（migrations.rs / store.rs ALTER）保持一致。
+        // 改默认 provider 时此断言守护三处不漂移。
+        assert_eq!(DEFAULT_PROVIDER, "claude");
+        assert_eq!(ProviderKey::Claude.as_str(), DEFAULT_PROVIDER);
+    }
+
+    #[test]
+    fn all_lists_every_variant_once() {
+        assert_eq!(ProviderKey::ALL.len(), 3);
+        for v in [ProviderKey::Claude, ProviderKey::Kimi, ProviderKey::Codex] {
+            assert!(ProviderKey::ALL.contains(&v));
+        }
+    }
+}
