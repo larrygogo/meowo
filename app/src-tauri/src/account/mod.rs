@@ -45,6 +45,9 @@ pub enum UsageKind {
     Other,
 }
 
+// 供前端 serde 字段匹配/未来 lane 筛选用；as_str/from_str/ALL 已在单测 roundtrip 覆盖，
+// 但 dead_code lint 不计入 #[cfg(test)] 内的调用，故此处显式豁免。
+#[allow(dead_code)]
 impl UsageKind {
     pub fn as_str(self) -> &'static str {
         match self {

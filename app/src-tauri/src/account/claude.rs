@@ -446,16 +446,23 @@ impl ProviderAccount for ClaudeProviderAccount {
     }
 
     fn usage(&self, force: bool) -> Option<ProviderUsage> {
+        let key = self.key();
         if !force {
             // 从缓存读，不联网
-            return super::read_cached_usage(cc_store::ProviderKey::Claude);
+            return super::read_cached_usage(key);
         }
-        // 60s 内有新鲜缓存则复用，否则联网拉取
-        match refresh_usage_payload() {
+        // 尊重 60s 限频：新/旧两种缓存格式均支持；未过期直接返回，否则联网拉取。
+        // 使用 super::cache_is_fresh（mod.rs 通用版）而非私有版，消除死代码。
+        if super::cache_is_fresh(key, 60_000) {
+            if let Some(cached) = super::read_cached_usage(key) {
+                return Some(cached);
+            }
+        }
+        match fetch_usage_live() {
             Ok(old_usage) => {
                 let pu = map_to_provider_usage(&old_usage);
                 // 同步写入新格式 provider 分键缓存（旧命令路径已写了旧格式）
-                super::write_cached_usage(cc_store::ProviderKey::Claude, &pu);
+                super::write_cached_usage(key, &pu);
                 Some(pu)
             }
             Err(_) => None,

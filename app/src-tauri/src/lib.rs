@@ -298,11 +298,11 @@ fn console_group_pids(root_pid: u32) -> HashSet<u32> {
             break;
         }
         let pname = snapshot.get(&ppid).map(|(_, n)| n.as_str()).unwrap_or("");
-        if boundary.iter().any(|s| pname == *s) {
+        if boundary.contains(&pname) {
             break; // 到桌面/系统边界，停止上溯且不纳入
         }
         set.insert(ppid);
-        if terminal_host.iter().any(|s| pname == *s) {
+        if terminal_host.contains(&pname) {
             break; // 已纳入终端宿主，不再继续上溯
         }
         cur = ppid;
@@ -1226,6 +1226,8 @@ fn pending_fingerprint(errored: bool, pending_review: Option<&str>, last_event_a
 /// show() 后 Rust 端 Toast 可安全释放（OS 持有通知引用）。回调里调 focus_session_terminal
 /// （它自己 spawn 干净线程做 UIA，不阻塞主线程）。app 仅 Windows。
 #[cfg(target_os = "windows")]
+// 参数数量超限（8 个）是现有设计需要；重构签名风险大，暂以 allow 豁免。
+#[allow(clippy::too_many_arguments)]
 fn show_session_notification(
     app: &tauri::AppHandle,
     title: String,
