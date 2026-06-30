@@ -1,5 +1,5 @@
 //! 无感适配：cc-app 启动时幂等地把 cc-reporter 接入 Claude Code 的 `~/.claude/settings.json`：
-//!   1) 确保 5 个 hook 事件指向 cc-reporter（缺则补、路径变则更新）；
+//!   1) 确保 8 个 hook 事件指向 cc-reporter（缺则补、路径变则更新）；
 //!   2) 把 statusLine 包成「先写库再跑原 statusLine」的脚本，让 Context 百分比自动有准确数据。
 //!
 //! 全程：解析失败即放弃、先备份、原子写、已正确则一字不改（幂等）。核心合并逻辑为纯函数，便于测试。
