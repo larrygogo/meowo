@@ -297,6 +297,7 @@ function AccountSection() {
   const doRefresh = (provider: string) => {
     setRefreshingSet((s) => new Set([...s, provider]));
     setErrMap((m) => ({ ...m, [provider]: null }));
+    const startedAt = Date.now();
     refreshUsage(provider)
       .then((u) => {
         setUsageMap((m) => ({ ...m, [provider]: u }));
@@ -306,7 +307,11 @@ function AccountSection() {
         setErrMap((m) => ({ ...m, [provider]: unsupported ? "unsupported" : "error" }));
       })
       .finally(() => {
-        setRefreshingSet((s) => { const n = new Set(s); n.delete(provider); return n; });
+        // 最短转 500ms：本地(codex)/缓存(60s 内)刷新近乎瞬时，否则 spinner 一闪即逝、看不见动画。
+        const wait = Math.max(0, 500 - (Date.now() - startedAt));
+        setTimeout(() => {
+          setRefreshingSet((s) => { const n = new Set(s); n.delete(provider); return n; });
+        }, wait);
       });
   };
 
