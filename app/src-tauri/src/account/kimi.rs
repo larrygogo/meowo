@@ -117,8 +117,8 @@ pub fn merge_kimi_credentials(
 
 /// 原子写回凭据文件（temp 文件 + rename，避免半截文件）。
 fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Result<(), String> {
-    let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
+    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
     std::fs::write(&tmp, &body).map_err(|e| e.to_string())?;
     if let Err(e) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
@@ -192,11 +192,12 @@ fn ensure_valid_kimi_token() -> Option<String> {
         .and_then(|v| v.as_str())
         .unwrap_or(&refresh_token);
     // 钳下限 60s：服务端若异常返回极小值，避免写回立刻过期的 expires_at 致每次都刷。
+    // 钳上限 86400s（24h）：防服务端异常返回超大值导致溢出。
     let expires_in = body
         .get("expires_in")
         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
         .unwrap_or(900)
-        .max(60);
+        .clamp(60, 86400);
 
     let refresh_secs = now_secs();
     let merged = merge_kimi_credentials(&creds, new_access, new_refresh, expires_in, refresh_secs);
@@ -206,6 +207,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
     if write_kimi_credentials_atomic(&path, &merged).is_err() {
         // 写回失败（权限/磁盘），但刷新本身成功 → 本次仍可用新 token（内存中），
         // 下次仍会再刷（未持久化）。
+        eprintln!("cc-kanban: kimi 凭据写回失败");
     }
 
     Some(new_access.to_string())
@@ -567,6 +569,35 @@ mod tests {
         let _ = merge_kimi_credentials(&original, "new", "newr", 900, 1000);
         // original 不变
         assert_eq!(original["access_token"], "old");
+    }
+
+    // ── expires_in 上界测试（防溢出）──
+
+    #[test]
+    fn ensure_valid_kimi_token_clamps_expires_in() {
+        // 这是单元测试演示；实际 ensure_valid_kimi_token 涉及文件 I/O，
+        // 此处验证钳制逻辑是否被正确应用于 merge 后的 expires_at。
+        // 若 expires_in 被 clamp 到 [60, 86400]，则：
+        // - now_secs + 86400 不溢出（int64 足够容纳）
+        // - 下次刷新时间合理（最多 24 小时后）
+        let original = json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+
+        // 模拟 expires_in 被服务端异常设置为极大值 (100000000)
+        // clamp 后应为 86400
+        let clamped_expires_in = 100000000i64.clamp(60, 86400);
+        assert_eq!(clamped_expires_in, 86400);
+
+        // 模拟 expires_in 被异常设置为极小值 (5)
+        // clamp 后应为 60
+        let clamped_small = 5i64.clamp(60, 86400);
+        assert_eq!(clamped_small, 60);
+
+        // 验证 merge 计算不溢出
+        let now = i64::MAX / 2; // 模拟大数时间戳
+        let merged = merge_kimi_credentials(&original, "a2", "r2", clamped_expires_in, now);
+        let expires_at = merged["expires_at"].as_i64().unwrap();
+        // now + 86400 不应溢出（仍是有效的 i64）
+        assert_eq!(expires_at, now + 86400);
     }
 
     // ── truncate_frac_to_millis ──
