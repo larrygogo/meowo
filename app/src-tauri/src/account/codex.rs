@@ -197,19 +197,9 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
         lanes.push(lane);
     }
 
-    // note：plan_type + credits
-    let plan_type = rate_limits
-        .get("plan_type")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+    // note：仅承载别处未展示的额外信息(credits)；plan_type 已作为账号 plan 徽标展示，不重复进 note。
     let credits = payload.get("credits").and_then(|v| v.as_f64());
-    let note = match (plan_type, credits) {
-        (Some(p), Some(c)) => Some(format!("plan:{p} credits:{c}")),
-        (Some(p), None) => Some(format!("plan:{p}")),
-        (None, Some(c)) => Some(format!("credits:{c}")),
-        (None, None) => None,
-    };
+    let note = credits.map(|c| format!("credits:{c}"));
 
     ProviderUsage { lanes, note }
 }
@@ -538,7 +528,8 @@ mod tests {
         assert_eq!(weekly.kind, UsageKind::Weekly);
         assert_eq!(weekly.used_pct, Some(12.3));
 
-        assert_eq!(pu.note.as_deref(), Some("plan:pro"));
+        // plan_type 已作为账号 plan 徽标展示，不再进 note；无 credits 时 note 为空。
+        assert!(pu.note.is_none());
     }
 
     #[test]

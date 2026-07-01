@@ -235,7 +235,7 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, on
             <span className="acc-name">{acc.display_name ?? acc.email ?? acc.login_label ?? ""}</span>
             {acc.plan && <span className="acc-plan">{acc.plan}</span>}
           </div>
-          {acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
+          {acc.display_name && acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
           {!acc.email && acc.login_label && <div className="acc-sub">{acc.login_label}</div>}
           {acc.organization && <div className="acc-org">{acc.organization}</div>}
         </div>
