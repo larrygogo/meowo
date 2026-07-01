@@ -270,13 +270,22 @@ fn parse_resets_at(v: &Value) -> Option<String> {
     None
 }
 
+/// 从 JSON 值中提取数字，兼容字符串与数字两种格式。
+/// kimi /usages 的 used/limit/remaining 字段有时返回字符串 "100" 而非数字 100。
+fn num(v: &Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_i64().map(|i| i as f64))
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+}
+
 /// 从含 used/remaining/limit 的对象提取 (used, limit)。
 /// 字段漂移容错：优先 used；无 used 时从 remaining 反推（used = limit - remaining）。
+/// 数字格式容错：used/limit/remaining 可为字符串 "100" 或数字 100（kimi 真实响应为字符串）。
 fn extract_used_limit(v: &Value) -> Option<(f64, f64)> {
-    let limit = v.get("limit").and_then(|x| x.as_f64())?;
-    let used = if let Some(u) = v.get("used").and_then(|x| x.as_f64()) {
+    let limit = v.get("limit").and_then(num)?;
+    let used = if let Some(u) = v.get("used").and_then(num) {
         u
-    } else if let Some(r) = v.get("remaining").and_then(|x| x.as_f64()) {
+    } else if let Some(r) = v.get("remaining").and_then(num) {
         limit - r
     } else {
         return None;
@@ -967,6 +976,53 @@ mod tests {
             "limits": [{"window": {"duration": 5, "timeUnit": "HOUR"}}]
         });
         assert!(parse_kimi_usage(&v).is_none(), "无 used/limit 应跳过");
+    }
+
+    // ── 真实 /usages 响应回归测试（字符串数字 + 微秒精度 resetTime）──
+
+    #[test]
+    fn real_response_string_numbers_two_lanes() {
+        // 权威测试基准：kimi /usages 实测响应，used/limit/remaining 均为 JSON 字符串
+        let v = json!({
+            "user": {"userId":"XXX","region":"REGION_CN","membership":{"level":"LEVEL_INTERMEDIATE"}},
+            "usage": {"limit":"100","used":"8","remaining":"92","resetTime":"2026-07-06T02:00:13.307440Z"},
+            "limits": [{
+                "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                "detail": {"limit":"100","used":"10","remaining":"90","resetTime":"2026-07-01T10:00:13.307440Z"}
+            }],
+            "parallel": {"limit":"20"},
+            "totalQuota": {"limit":"100","remaining":"99"},
+            "authentication": {"method":"METHOD_ACCESS_TOKEN","scope":"FEATURE_CODING"},
+            "subType": "TYPE_PURCHASE"
+        });
+
+        let pu = parse_kimi_usage(&v).expect("真实响应应解析成功（字符串数字）");
+        // totalQuota/parallel/user 均非用量窗口，忽略 → 恰好 2 条 lane
+        assert_eq!(pu.lanes.len(), 2, "应产生 2 条 lane（Weekly + FiveHour）");
+
+        // Lane 0：Weekly（顶层 usage 对象）
+        let weekly = &pu.lanes[0];
+        assert_eq!(weekly.kind, UsageKind::Weekly, "顶层 usage → Weekly");
+        assert_eq!(weekly.used, Some(8.0), "used 字符串 '8' 解析为 8.0");
+        assert_eq!(weekly.limit, Some(100.0), "limit 字符串 '100' 解析为 100.0");
+        assert!((weekly.used_pct.unwrap() - 8.0).abs() < 0.01, "used_pct 应为 8%");
+        assert_eq!(
+            weekly.resets_at.as_deref(),
+            Some("2026-07-06T02:00:13.307Z"),
+            "微秒精度 .307440Z 截断到毫秒 .307Z"
+        );
+
+        // Lane 1：FiveHour（limits[0]，300 TIME_UNIT_MINUTE = 5 小时）
+        let five_hour = &pu.lanes[1];
+        assert_eq!(five_hour.kind, UsageKind::FiveHour, "300 MINUTE → FiveHour");
+        assert_eq!(five_hour.used, Some(10.0), "used 字符串 '10' 解析为 10.0");
+        assert_eq!(five_hour.limit, Some(100.0), "limit 字符串 '100' 解析为 100.0");
+        assert!((five_hour.used_pct.unwrap() - 10.0).abs() < 0.01, "used_pct 应为 10%");
+        assert_eq!(
+            five_hour.resets_at.as_deref(),
+            Some("2026-07-01T10:00:13.307Z"),
+            "微秒精度 .307440Z 截断到毫秒 .307Z"
+        );
     }
 
     // ── window_to_kind 内部分支全覆盖 ──
