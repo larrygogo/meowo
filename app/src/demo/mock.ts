@@ -27,6 +27,7 @@ export const store: Store = {
     preview_enabled: true,
     sticker_style: "elevated",
     sticker_color: "classic",
+    sticker_quota_providers: ["claude"],
   },
 };
 

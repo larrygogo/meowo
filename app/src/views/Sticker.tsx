@@ -296,62 +296,83 @@ export function EmptyState({ tab }: { tab: Tab }) {
   );
 }
 
-/** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——黑屏(复刻卡片徽标 .stk-ind 材质)内每个有主泳道的
-   provider 一行（最多 3 行）：迷你品牌图标 + 标签 + 凹槽里的发光液柱 + 百分比/金额；
-   与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
+/** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——标签式：一行品牌图标标签，点选后显示该
+   provider 的 5h + 7d/weekly 用量条；与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
 // 利用率档位 → 复用应用既有状态色(绿/黄/红)，与卡片状态点同语义；越满越红即预警。
 function usageSev(pct: number): string {
   return pct >= 80 ? "is-high" : pct >= 50 ? "is-warn" : "is-ok";
 }
 
-// 主泳道选取：claude/codex 取 five_hour，kimi 及其他取 weekly 优先、其次 balance
-function primaryLane(provider: string, usage: ProviderUsage | undefined): UsageLane | null {
-  if (!usage) return null;
-  const { lanes } = usage;
-  if (provider === "claude" || provider === "codex") {
-    return lanes.find((l) => l.kind === "five_hour") ?? null;
+// 单条用量泳道（进度条型或余额数值型）
+function LaneRow({ lane, label }: { lane: UsageLane; label: string }) {
+  if (lane.used_pct != null) {
+    const pct = Math.max(0, Math.min(100, lane.used_pct));
+    return (
+      <div className="stk-urow">
+        <span className="stk-ulabel">{label}</span>
+        <span className="stk-utrack">
+          <i className={"stk-ufill " + usageSev(pct)} style={{ width: `${pct}%` }} />
+        </span>
+        <span className="stk-uval">{Math.round(pct)}%</span>
+      </div>
+    );
   }
-  return lanes.find((l) => l.kind === "weekly") ?? lanes.find((l) => l.kind === "balance") ?? null;
+  // 余额型：显数值，不画进度条
+  const valText = lane.used != null ? `${lane.used}${lane.unit ? ` ${lane.unit}` : ""}` : "—";
+  return (
+    <div className="stk-urow">
+      <span className="stk-ulabel">{label}</span>
+      <span className="stk-uval">{valText}</span>
+    </div>
+  );
 }
 
-// lane.kind → 底栏标签（复用 account i18n 键）
-function laneLabel(kind: string, t: Dict): string {
-  switch (kind) {
-    case "five_hour": return t.account.laneFiveHour;
-    case "seven_day": return t.account.laneSevenDay;
-    case "opus": return t.account.laneOpus;
-    case "weekly": return t.account.laneWeekly;
-    case "balance": return t.account.laneBalance;
-    default: return kind;
-  }
-}
+/** 标签式用量屏：每个开启配额的 provider 一个图标标签，点选后显示其 5h + 7d/weekly 条。
+ *  符合条件 provider 为空 → 不渲染。 */
+function UsageScreen({
+  quotaProviders,
+  usageMap,
+}: {
+  quotaProviders: string[];
+  usageMap: Record<string, ProviderUsage>;
+}) {
+  const t = useT();
+  // 用户偏好选中的 provider（若不在当前活跃列表中则退回第一个）
+  const [selectedPref, setSelectedPref] = useState<string>("");
 
-type UsageRow = { provider: string; label: string; pct: number | null; amount?: string };
+  // 仅显示「在配额列表中且有用量数据」的 provider
+  const activeProviders = quotaProviders.filter((p) => !!usageMap[p]);
+  if (!activeProviders.length) return null;
 
-function UsageScreen({ rows }: { rows: UsageRow[] }) {
-  const visibleRows = rows.filter((r) => r.pct != null || r.amount != null);
-  if (!visibleRows.length) return null;
+  // 选中态：优先用户选择，其次第一个
+  const selected = activeProviders.includes(selectedPref) ? selectedPref : activeProviders[0];
+
+  const usage = usageMap[selected];
+  const fiveHourLane = usage?.lanes.find((l) => l.kind === "five_hour") ?? null;
+  const sevenDayLane = usage?.lanes.find((l) => l.kind === "seven_day" || l.kind === "weekly") ?? null;
+
   return (
     <div className="stk-uscreen" role="group" aria-label="用量">
-      {visibleRows.map((r) => {
-        const { Icon } = providerConfig(r.provider);
-        return r.pct != null ? (
-          <div className="stk-urow" key={`${r.provider}-${r.label}`}>
-            <span className="stk-uicon" aria-hidden="true"><Icon /></span>
-            <span className="stk-ulabel">{r.label}</span>
-            <span className="stk-utrack">
-              <i className={"stk-ufill " + usageSev(r.pct)} style={{ width: `${r.pct}%` }} />
-            </span>
-            <span className="stk-uval">{Math.round(r.pct)}%</span>
-          </div>
-        ) : (
-          <div className="stk-urow" key={`${r.provider}-${r.label}`}>
-            <span className="stk-uicon" aria-hidden="true"><Icon /></span>
-            <span className="stk-ulabel">{r.label}</span>
-            <span className="stk-uval">{r.amount}</span>
-          </div>
-        );
-      })}
+      {/* 品牌图标标签行（每个 provider 一个，点选切换） */}
+      <div className="stk-utabs">
+        {activeProviders.map((p) => {
+          const { Icon } = providerConfig(p);
+          return (
+            <button
+              key={p}
+              type="button"
+              className={"stk-utab" + (p === selected ? " on" : "")}
+              aria-pressed={p === selected}
+              onClick={() => setSelectedPref(p)}
+            >
+              <Icon />
+            </button>
+          );
+        })}
+      </div>
+      {/* 选中 provider 的 5h 和 7d/weekly 用量条 */}
+      {fiveHourLane && <LaneRow lane={fiveHourLane} label={t.account.laneFiveHour} />}
+      {sevenDayLane && <LaneRow lane={sevenDayLane} label={sevenDayLane.kind === "weekly" ? t.account.laneWeekly : t.account.laneSevenDay} />}
     </div>
   );
 }
@@ -377,15 +398,17 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     setQuery("");
   };
 
-  // 归档自动隐藏天数 + 打开终端方式：启动时读设置，并监听设置窗口的实时变更。
+  // 归档自动隐藏天数 + 打开终端方式 + 贴纸配额 provider 列表：启动时读设置，并监听实时变更。
   const [hideDays, setHideDays] = useState(0);
   const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
   const [previewEnabled, setPreviewEnabled] = useState(true);
+  const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   useEffect(() => {
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
       setOpenMode(s.terminal_open_mode);
       setPreviewEnabled(s.preview_enabled);
+      setQuotaProviders(s.sticker_quota_providers ?? ["claude"]);
     };
     getSettings().then(apply).catch(() => {});
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
@@ -604,24 +627,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
       timers.forEach((id) => window.clearInterval(id));
     };
   }, []);
-  // 渲染时按当前语言派生行：每个有主泳道的 provider 一行（最多 3 行），固定顺序 claude/codex/kimi
-  const usageRows: UsageRow[] = useMemo(() => {
-    const rows: UsageRow[] = [];
-    for (const provider of ["claude", "codex", "kimi"] as const) {
-      if (rows.length >= 3) break;
-      const lane = primaryLane(provider, usageMap[provider]);
-      if (!lane) continue;
-      const label = laneLabel(lane.kind, t);
-      if (lane.used_pct != null) {
-        rows.push({ provider, label, pct: Math.max(0, Math.min(100, lane.used_pct)) });
-      } else if (lane.used != null) {
-        const amount = lane.unit ? `${lane.used} ${lane.unit}` : String(lane.used);
-        rows.push({ provider, label, pct: null, amount });
-      }
-    }
-    return rows;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usageMap, t]);
+  // usageMap 与 quotaProviders 直接传入 UsageScreen，不再在父层预处理为行数组。
   const syncSb = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -936,7 +942,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           </div>
         ) : (
           <>
-            {usageRows.length > 0 && <UsageScreen rows={usageRows} />}
+            <UsageScreen quotaProviders={quotaProviders} usageMap={usageMap} />
             <div className="stk-bar-actions">
               <span className="stk-act" data-tip={t.sticker.search} aria-label={t.sticker.search} onClick={() => setSearchOpen(true)}>
                 <SearchIcon />

@@ -37,6 +37,7 @@ const SETTINGS_DEFAULTS: Settings = {
   preview_enabled: true,
   sticker_style: "elevated",
   sticker_color: "classic",
+  sticker_quota_providers: ["claude"],
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -197,18 +198,25 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
   );
 }
 
-// 单个 provider 卡片：账号信息 + 用量泳道 + 刷新按钮
-function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
+// 单个 provider 卡片：账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关
+function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, onToggleQuota }: {
   payload: ProviderAccountPayload;
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
   onRefresh: () => void;
   refreshing: boolean;
+  /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
+  settings: Settings | null;
+  /** 切换本 provider 的贴纸配额显示开关。 */
+  onToggleQuota: () => void;
 }) {
   const t = useT();
   const acc = payload.account;
   const cfg = PROVIDERS[payload.provider];
   const providerName = cfg ? cfg.label(t) : payload.provider;
+
+  // 当前 provider 是否在贴纸配额列表中
+  const inQuota = settings?.sticker_quota_providers?.includes(payload.provider) ?? false;
 
   // activePayloads 已过滤，此处恒不触发（防御）
   if (!acc) return null;
@@ -255,6 +263,11 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
         ) : (
           <div className="usage-stale">{t.account.loading}</div>
         )}
+        {/* 贴纸配额显示开关 */}
+        <div className="usage-sticker-row">
+          <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
+          <Switch checked={inQuota} onChange={onToggleQuota} />
+        </div>
       </div>
     </div>
   );
@@ -262,12 +275,24 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing }: {
 
 function AccountSection() {
   const t = useT();
+  // 读取/写入应用设置（用于贴纸配额开关）
+  const [settings, patchSettings] = useSettingsState();
   const [payloads, setPayloads] = useState<ProviderAccountPayload[]>([]);
   // usageMap: provider key → 最新 ProviderUsage（缓存先填，联网值覆盖）
   const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
   const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
   // errMap: provider key → 错误类型（unsupported/error/null）
   const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
+
+  // 切换某 provider 在贴纸配额列表中的开关状态
+  const toggleQuotaProvider = (provider: string) => {
+    if (!settings) return;
+    const list = settings.sticker_quota_providers ?? [];
+    const next = list.includes(provider)
+      ? list.filter((p) => p !== provider)
+      : [...list, provider];
+    patchSettings({ sticker_quota_providers: next });
+  };
 
   const doRefresh = (provider: string) => {
     setRefreshingSet((s) => new Set([...s, provider]));
@@ -342,6 +367,8 @@ function AccountSection() {
           err={errMap[p.provider] ?? null}
           onRefresh={() => doRefresh(p.provider)}
           refreshing={refreshingSet.has(p.provider)}
+          settings={settings}
+          onToggleQuota={() => toggleQuotaProvider(p.provider)}
         />
       ))}
     </>

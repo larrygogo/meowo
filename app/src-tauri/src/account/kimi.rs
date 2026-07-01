@@ -2,7 +2,7 @@
 //!
 //! **账号**：读 kimi_share_dir()/credentials/kimi-code.json 的 access_token，
 //!   尝试 decode_jwt_payload 取 email claim（只读、不打印 token）；无 email →
-//!   login_label="已登录 · managed:kimi-code"。凭据文件不存在 → None。
+//!   login_label="已登录"。凭据文件不存在 → None。
 //!
 //! **用量**：GET {base_url}/usages，8s 超时，**按需刷新 token**（过期才刷 + mutex 串行 + 原子写回）。
 //!   kimi access_token 寿命仅约 15 分钟，不刷新几乎每次都 401；刷新写回保持与 kimi 完全同格式
@@ -455,7 +455,7 @@ impl ProviderAccount for KimiProviderAccount {
                 display_name: None,
                 organization: None,
                 plan: None,
-                login_label: Some("已登录 · managed:kimi-code".to_string()),
+                login_label: Some("已登录".to_string()),
             })
         }
     }

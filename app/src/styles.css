@@ -388,6 +388,17 @@ html, body {
 .stk-ufill.is-warn { background: var(--cc-warn-vivid); }
 .stk-ufill.is-high { background: var(--cc-err-vivid); }
 .stk-uval { flex: none; min-width: calc(30px * var(--cc-ui)); text-align: right; font-weight: 700; font-family: ui-monospace, "Cascadia Code", Consolas, "Roboto Mono", monospace; font-variant-numeric: tabular-nums; }
+/* 底栏配额标签式：一排品牌图标小标签，点选切换显示对应 provider 的用量 */
+.stk-utabs { display: flex; gap: calc(3px * var(--cc-ui)); padding-bottom: calc(3px * var(--cc-ui)); }
+.stk-utab {
+  display: flex; align-items: center; justify-content: center;
+  padding: 2px 4px; border-radius: var(--r-sm);
+  opacity: 0.42; background: transparent; border: none; cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.stk-utab.on { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+.stk-utab:hover:not(.on) { opacity: 0.75; }
+:root[data-theme="light"] .stk-utab.on { background: rgba(0, 0, 0, 0.08); }
 /* 原生滚动条全程隐藏(width:0 不占布局 → 内容不会因滚动条出现/消失而抖动)；
    滚动条改由下面的 .stk-sb 自绘 overlay 承担(普通元素，opacity 显隐重绘可靠)。 */
 .stk-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
@@ -1174,8 +1185,11 @@ html, body {
 .acc-sub { font-size: 12px; color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc-sub-wrap { white-space: normal; line-height: 1.4; }
 .acc-org { font-size: 11.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.provider-head { display: flex; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--cc-border); }
+.provider-head { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--cc-border); }
 .provider-name { font-size: 13px; font-weight: 600; color: var(--cc-text); }
+/* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
+.usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
+.usage-sticker-label { font-size: 12px; color: var(--cc-text-dim); }
 .provider-usage { padding: 14px 16px; border-top: 1px solid var(--cc-border); }
 /* 多张卡片连续排列时补间距（未来多 AI 时每个 provider 各占一张卡）。 */
 .row-card + .row-card { margin-top: 14px; }

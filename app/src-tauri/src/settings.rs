@@ -36,6 +36,10 @@ fn default_sticker_style() -> String {
 fn default_sticker_color() -> String {
     "classic".to_string()
 }
+/// 在贴纸底栏显示配额的 provider key 列表，默认仅 claude。
+fn default_sticker_quota_providers() -> Vec<String> {
+    vec!["claude".to_string()]
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -73,6 +77,10 @@ pub(crate) struct Settings {
     /// 贴纸底色预设 key（classic/slate/moss/plum/rose/amber）。缺省 classic，兼容老 settings.json。
     #[serde(default = "default_sticker_color")]
     pub(crate) sticker_color: String,
+    /// 在贴纸底栏显示配额的 provider key 列表（如 "claude"/"kimi"/"codex"）。
+    /// 缺省 ["claude"]，旧 settings.json 无此字段时反序列化给默认，不 panic。
+    #[serde(default = "default_sticker_quota_providers")]
+    pub(crate) sticker_quota_providers: Vec<String>,
 }
 
 impl Default for Settings {
@@ -89,6 +97,7 @@ impl Default for Settings {
             preview_enabled: true,
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),
+            sticker_quota_providers: default_sticker_quota_providers(),
         }
     }
 }

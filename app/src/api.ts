@@ -137,6 +137,8 @@ export type Settings = {
   sticker_style: StickerStyle;
   /** 贴纸底色预设 key（classic/slate/moss/plum/rose/amber）。 */
   sticker_color: string;
+  /** 在贴纸底栏显示配额的 provider key 列表（默认 ["claude"]）。 */
+  sticker_quota_providers: string[];
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";

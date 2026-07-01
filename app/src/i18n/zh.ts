@@ -116,6 +116,7 @@ export const zh = {
     opacity: "贴纸不透明度",
     opacityDesc: "调整桌面贴纸的背景透明度",
     appearanceHint: "外观更改即时生效，并保存到本地。",
+    showQuotaOnSticker: "在贴纸显示配额",
   },
   account: {
     providerClaudeCode: "Claude Code",

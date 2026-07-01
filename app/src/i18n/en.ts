@@ -116,6 +116,7 @@ export const en: Dict = {
     opacity: "Sticker opacity",
     opacityDesc: "Adjust the background opacity of the desktop sticker",
     appearanceHint: "Appearance changes apply instantly and are saved locally.",
+    showQuotaOnSticker: "Show quota on sticker",
   },
   account: {
     providerClaudeCode: "Claude Code",
