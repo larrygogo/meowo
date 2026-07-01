@@ -1266,6 +1266,8 @@ fn show_session_notification(
 }
 
 #[cfg(target_os = "macos")]
+// 参数数量超限（8 个）是现有设计需要；重构签名风险大，暂以 allow 豁免。
+#[allow(clippy::too_many_arguments)]
 fn show_session_notification(
     _app: &tauri::AppHandle,
     title: String,
@@ -1280,6 +1282,8 @@ fn show_session_notification(
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+// 参数数量超限（8 个）是现有设计需要；重构签名风险大，暂以 allow 豁免。
+#[allow(clippy::too_many_arguments)]
 fn show_session_notification(
     _app: &tauri::AppHandle,
     _title: String,
