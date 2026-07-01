@@ -4,7 +4,9 @@
 //!   尝试 decode_jwt_payload 取 email claim（只读、不打印 token）；无 email →
 //!   login_label="已登录 · managed:kimi-code"。凭据文件不存在 → None。
 //!
-//! **用量**：GET {base_url}/usages，8s 超时，不刷新 token，不写回凭据。
+//! **用量**：GET {base_url}/usages，8s 超时，**按需刷新 token**（过期才刷 + mutex 串行 + 原子写回）。
+//!   kimi access_token 寿命仅约 15 分钟，不刷新几乎每次都 401；刷新写回保持与 kimi 完全同格式
+//!   （TokenInfoWire snake_case；expires_at = now_secs + expires_in），仅并发刷新窄窗有冲突风险。
 //!   任何非 2xx / 网络错 / 解析失败 → 安静降级 None，不崩溃、不影响其它 provider。
 //!   容错解析 parse_kimi_usage：支持多种推断 schema，字段漂移 used↔remaining、
 //!   resetAt/reset_at/resetTime/reset_time↔reset_in/resetIn/ttl/window(秒偏移)。
@@ -16,6 +18,10 @@ use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 const DEFAULT_BASE_URL: &str = "https://api.kimi.com/coding/v1";
+
+// kimi OAuth 刷新端点与 client_id（来源：kimi-code 开源包 packages/oauth/src/constants.ts）
+const KIMI_TOKEN_URL: &str = "https://auth.kimi.com/api/oauth/token";
+const KIMI_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 
 // ═══ 路径工具 ═══
 
@@ -71,6 +77,138 @@ fn read_config_base_url() -> Option<String> {
         }
     }
     None
+}
+
+// ═══ Token 刷新辅助（纯函数，便于单测） ═══
+
+/// 当前 Unix 秒时间戳。
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// token 是否过期（留 60s 余量）。
+/// `expires_at_secs` 是凭据文件中的 Unix 秒整数（与 kimi 写法相同）。
+pub fn is_kimi_token_expired(expires_at_secs: i64, now_secs: i64) -> bool {
+    now_secs >= expires_at_secs - 60
+}
+
+/// 把刷新结果合并进原凭据 JSON：**只更新** access_token/refresh_token/expires_in/expires_at，
+/// 其余字段（scope/token_type 等）原样保留。
+/// expires_at = now_secs + expires_in，与 kimi-code 源码 `Math.floor(Date.now()/1000)+expiresIn` 完全一致。
+pub fn merge_kimi_credentials(
+    original: &Value,
+    access_token: &str,
+    refresh_token: &str,
+    expires_in: i64,
+    now_secs: i64,
+) -> Value {
+    let mut out = original.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("access_token".into(), serde_json::json!(access_token));
+        obj.insert("refresh_token".into(), serde_json::json!(refresh_token));
+        obj.insert("expires_in".into(), serde_json::json!(expires_in));
+        obj.insert("expires_at".into(), serde_json::json!(now_secs + expires_in));
+    }
+    out
+}
+
+/// 原子写回凭据文件（temp 文件 + rename，避免半截文件）。
+fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Result<(), String> {
+    let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &body).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// 按需刷新 kimi token（过期才刷 + Mutex 串行化 + 双检 + 原子写回）。
+///
+/// 流程：
+/// 1. 读凭据；若 expires_at < now+60 → 需刷新。
+/// 2. 持 REFRESH_LOCK 后重读（双检）：若已被另一调用刷新则直接用新 token，不重复刷。
+/// 3. POST kimi 刷新端点（x-www-form-urlencoded）。
+/// 4. 成功 → 原子写回（仅更新 4 个字段，保留其余）；失败 → 不碰文件，返回 None。
+///
+/// 兜底：刷新失败（invalid_grant/网络错）→ 返回 None → 上层 usage 降级为 None；
+///         不打印/日志 token 原文。
+fn ensure_valid_kimi_token() -> Option<String> {
+    use std::sync::Mutex;
+    // 串行化并发刷新：kimi refresh_token 单次使用后即失效，并发刷新会互相覆盖。
+    // 持锁后下方重读凭据（双检）：若刚被另一线程刷新过则直接走 fast-path，不再重刷。
+    static REFRESH_LOCK: Mutex<()> = Mutex::new(());
+
+    let creds = read_kimi_credentials()?;
+    let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    // Fast path：token 仍有效，直接返回，不加锁。
+    if !access_token.is_empty() && !is_kimi_token_expired(expires_at, now_secs()) {
+        return Some(access_token);
+    }
+
+    // Token 可能过期 → 加锁后双检。
+    let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // 双检：持锁后重读文件，若已被并发刷新过，直接用新 token。
+    let creds = read_kimi_credentials()?;
+    let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let current_secs = now_secs();
+
+    if !access_token.is_empty() && !is_kimi_token_expired(expires_at, current_secs) {
+        return Some(access_token);
+    }
+
+    // 仍过期 → 执行刷新。
+    let refresh_token = creds.get("refresh_token").and_then(|v| v.as_str())?.to_string();
+    if refresh_token.is_empty() {
+        return None;
+    }
+
+    let resp = ureq::post(KIMI_TOKEN_URL)
+        .timeout(HTTP_TIMEOUT)
+        .set("Accept", "application/json")
+        .send_form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", KIMI_CLIENT_ID),
+            ("refresh_token", &refresh_token),
+        ])
+        .ok()?;
+
+    let body: Value = resp.into_json().ok()?;
+
+    let new_access = body.get("access_token").and_then(|v| v.as_str())?;
+    if new_access.is_empty() {
+        return None;
+    }
+    let new_refresh = body
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&refresh_token);
+    // 钳下限 60s：服务端若异常返回极小值，避免写回立刻过期的 expires_at 致每次都刷。
+    let expires_in = body
+        .get("expires_in")
+        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        .unwrap_or(900)
+        .max(60);
+
+    let refresh_secs = now_secs();
+    let merged = merge_kimi_credentials(&creds, new_access, new_refresh, expires_in, refresh_secs);
+
+    // 仅在刷新成功后写回（失败不碰文件）。
+    let path = kimi_credentials_path()?;
+    if write_kimi_credentials_atomic(&path, &merged).is_err() {
+        // 写回失败（权限/磁盘），但刷新本身成功 → 本次仍可用新 token（内存中），
+        // 下次仍会再刷（未持久化）。
+    }
+
+    Some(new_access.to_string())
 }
 
 // ═══ 用量解析（纯函数） ═══
@@ -250,12 +388,12 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
 
 // ═══ 联网取用量 ═══
 
-/// 联网拉 GET {base}/usages（不刷新 token，不写回凭据）。
-/// kimi-code 源码确认 /usages 只需 Authorization + Accept，无需设备头或 User-Agent。
+/// 联网拉 GET {base}/usages（按需刷新 token + 原子写回凭据）。
+/// kimi access_token 寿命仅约 15 分钟，过期前 60s 自动刷新；
+/// 刷新写回仅更新 access_token/refresh_token/expires_in/expires_at，其余字段不动。
 /// 任何非 2xx / 网络错 / 解析失败 → None（安静降级）。
 fn fetch_kimi_usage_live() -> Option<ProviderUsage> {
-    let creds = read_kimi_credentials()?;
-    let access_token = creds.get("access_token").and_then(|v| v.as_str())?.to_string();
+    let access_token = ensure_valid_kimi_token()?;
     let base = kimi_base_url();
     let url = format!("{base}/usages");
 
@@ -339,6 +477,97 @@ impl ProviderAccount for KimiProviderAccount {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── is_kimi_token_expired ──
+
+    #[test]
+    fn token_not_expired_when_well_before_buffer() {
+        // expires_at = 1000, now = 900 → 900 < 1000-60=940 → 未过期
+        assert!(!is_kimi_token_expired(1000, 900));
+    }
+
+    #[test]
+    fn token_expired_when_within_buffer() {
+        // expires_at = 1000, now = 945 → 945 >= 940 → 已过期（含 60s 余量）
+        assert!(is_kimi_token_expired(1000, 945));
+    }
+
+    #[test]
+    fn token_expired_when_past_expiry() {
+        // expires_at = 1000, now = 1100 → 已过期
+        assert!(is_kimi_token_expired(1000, 1100));
+    }
+
+    #[test]
+    fn token_not_expired_exactly_at_buffer_boundary() {
+        // expires_at = 1000, now = 939 → 939 < 940 → 未过期
+        assert!(!is_kimi_token_expired(1000, 939));
+    }
+
+    #[test]
+    fn token_expired_exactly_at_buffer() {
+        // expires_at = 1000, now = 940 → 940 >= 940 → 已过期
+        assert!(is_kimi_token_expired(1000, 940));
+    }
+
+    // ── merge_kimi_credentials ──
+
+    #[test]
+    fn merge_updates_token_fields_only() {
+        // 原凭据含 scope/token_type 等额外字段，merge 后应保留
+        let original = json!({
+            "access_token": "old_access",
+            "refresh_token": "old_refresh",
+            "expires_in": 900,
+            "expires_at": 1000000,
+            "scope": "openid profile",
+            "token_type": "Bearer"
+        });
+        let merged = merge_kimi_credentials(&original, "new_access", "new_refresh", 1800, 2000000);
+
+        assert_eq!(merged["access_token"], "new_access");
+        assert_eq!(merged["refresh_token"], "new_refresh");
+        assert_eq!(merged["expires_in"], 1800);
+        // expires_at = now_secs + expires_in = 2000000 + 1800
+        assert_eq!(merged["expires_at"], 2001800i64);
+        // 保留未涉及字段
+        assert_eq!(merged["scope"], "openid profile");
+        assert_eq!(merged["token_type"], "Bearer");
+    }
+
+    #[test]
+    fn merge_expires_at_calculation() {
+        // expires_at = now_secs + expires_in（Unix 秒），与 kimi 源码完全一致
+        let original = json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+        let merged = merge_kimi_credentials(&original, "a2", "r2", 900, 1751000000);
+        assert_eq!(merged["expires_at"], 1751000900i64);
+    }
+
+    #[test]
+    fn merge_preserves_extra_fields() {
+        // 凭据文件可能含 kimi 内部字段，不应被清除
+        let original = json!({
+            "access_token": "a",
+            "refresh_token": "r",
+            "expires_at": 0,
+            "expires_in": 900,
+            "scope": "openid",
+            "token_type": "Bearer",
+            "some_device_field": "device_value"
+        });
+        let merged = merge_kimi_credentials(&original, "a2", "r2", 900, 1000);
+        assert_eq!(merged["some_device_field"], "device_value");
+        assert_eq!(merged["scope"], "openid");
+        assert_eq!(merged["token_type"], "Bearer");
+    }
+
+    #[test]
+    fn merge_does_not_modify_original() {
+        let original = json!({"access_token": "old", "refresh_token": "oldr", "expires_at": 0, "expires_in": 0});
+        let _ = merge_kimi_credentials(&original, "new", "newr", 900, 1000);
+        // original 不变
+        assert_eq!(original["access_token"], "old");
+    }
 
     // ── truncate_frac_to_millis ──
 
