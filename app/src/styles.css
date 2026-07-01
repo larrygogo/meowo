@@ -392,7 +392,9 @@ html, body {
 .stk-utabs { display: flex; gap: calc(3px * var(--cc-ui)); padding-bottom: calc(3px * var(--cc-ui)); }
 .stk-utab {
   display: flex; align-items: center; justify-content: center;
-  padding: 2px 4px; border-radius: var(--r-sm);
+  padding: calc(2px * var(--cc-ui)) calc(4px * var(--cc-ui)); border-radius: var(--r-sm);
+  /* claude 徽标用 currentColor → 给 accent 色(与会话卡 .stk-agent 一致)；kimi/codex 是固定品牌色, 不受影响。 */
+  color: var(--cc-accent-text);
   opacity: 0.42; background: transparent; border: none; cursor: pointer;
   transition: opacity 0.15s ease;
 }
@@ -1186,6 +1188,8 @@ html, body {
 .acc-sub-wrap { white-space: normal; line-height: 1.4; }
 .acc-org { font-size: 11.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .provider-head { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--cc-border); }
+/* claude 徽标用 currentColor → 给 accent 色(与底栏标签/会话卡一致)；kimi/codex 固定品牌色不受影响。 */
+.provider-icon { display: inline-flex; color: var(--cc-accent-text); }
 .provider-name { font-size: 13px; font-weight: 600; color: var(--cc-text); }
 /* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
 .usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
