@@ -201,7 +201,10 @@ impl Store {
     }
 
     /// 活跃区：所有会话（含已结束），附项目名、任务标题、进度。
-    /// 按 last_event_at 倒序（最近活跃在前），最多返回 100 条（cc-app 会再过滤截断）。
+    /// 按 last_event_at 倒序（最近活跃在前）。截断规则：未结束(running/waiting/stale)的会话**全量保留**
+    /// ——上层「connected 优先、必然保留」的排序只能在本函数返回集内做，若这类会话也吃 100 条名额，
+    /// 一个长期挂在终端里的连接中会话会被更近活跃的已结束会话挤出、从看板凭空消失；
+    /// 已结束的只取最近 100 条兜底（未结束集合由 reaper 持续收尾，天然有界）。
     pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
@@ -213,8 +216,10 @@ impl Store {
              LEFT JOIN tasks t ON t.session_id = s.id
              LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
              LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id
-             ORDER BY s.last_event_at DESC
-             LIMIT 100",
+             WHERE s.status <> 'ended'
+                OR s.id IN (SELECT id FROM sessions WHERE status = 'ended'
+                            ORDER BY last_event_at DESC LIMIT 100)
+             ORDER BY s.last_event_at DESC",
         )?;
         let rows = stmt
             .query_map([], |r| {

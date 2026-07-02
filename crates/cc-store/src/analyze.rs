@@ -296,6 +296,140 @@ impl TranscriptCache {
         entry.mtime = mtime;
         entry.parser.to_info()
     }
+
+    /// 与 `analyze` 等价，但供多线程经 `Mutex` 共享缓存时调用：文件 IO（open/metadata/读新增字节）
+    /// 全部在锁外进行，只有「取快照」与「提交结果」两个短临界区持锁——避免大 transcript 首读
+    /// （数 MB、数百 ms）期间把其它调用方（如 get_live_sessions）一并阻塞在缓存锁上。
+    /// 两个线程并发分析同一文件时可能重复读取，但提交前校验偏移快照，只有一方生效，状态不会错乱。
+    pub fn analyze_shared(
+        cache: &std::sync::Mutex<TranscriptCache>,
+        spec: &dyn TranscriptSpec,
+        path: &str,
+    ) -> TranscriptInfo {
+        use std::io::{Read, Seek, SeekFrom};
+        let lock = || cache.lock().unwrap_or_else(|e| e.into_inner());
+        // 短临界区 1：确保条目存在，取（已解析偏移, 上次 mtime）快照。
+        let (offset, prev_mtime) = lock().snapshot(spec, path);
+
+        // 锁外做全部文件 IO。失败时与 analyze 同语义：返回当前累积结果。
+        let Ok(mut f) = std::fs::File::open(path) else {
+            return lock().current_info(path);
+        };
+        let (len, mtime) = match f.metadata() {
+            Ok(m) => (m.len(), m.modified().ok()),
+            Err(_) => return lock().current_info(path),
+        };
+        // 截断，或等长但 mtime 变了（同长度重写）→ 从头重读；否则只读快照偏移之后的新增。
+        let reset = len < offset || (len == offset && mtime != prev_mtime);
+        if !reset && len == offset {
+            return lock().touch_mtime(path, mtime); // 无新增
+        }
+        let base = if reset { 0 } else { offset };
+        if f.seek(SeekFrom::Start(base)).is_err() {
+            return lock().current_info(path);
+        }
+        let mut buf = Vec::new();
+        if f.read_to_end(&mut buf).is_err() {
+            return lock().current_info(path);
+        }
+        // 短临界区 2：偏移仍与快照一致才提交；其它线程已推进则弃用本次读取、复用其结果。
+        lock().commit(spec, path, offset, reset, &buf, mtime)
+    }
+
+    /// analyze_shared 临界区 1：确保条目存在（含 LRU 淘汰），返回（偏移, mtime）快照。不做文件 IO。
+    fn snapshot(
+        &mut self,
+        spec: &dyn TranscriptSpec,
+        path: &str,
+    ) -> (u64, Option<std::time::SystemTime>) {
+        self.tick += 1;
+        if !self.entries.contains_key(path) && self.entries.len() >= MAX_CACHE_ENTRIES {
+            if let Some(k) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| k.clone())
+            {
+                self.entries.remove(&k);
+            }
+        }
+        let tick = self.tick;
+        let entry = self.entries.entry(path.to_string()).or_insert_with(|| CacheEntry {
+            offset: 0,
+            mtime: None,
+            parser: spec.new_parser(),
+            last_used: tick,
+        });
+        entry.last_used = tick;
+        (entry.offset, entry.mtime)
+    }
+
+    /// 当前累积结果；条目不存在（锁外窗口内被 LRU 淘汰）时返回空结果。
+    fn current_info(&mut self, path: &str) -> TranscriptInfo {
+        self.entries
+            .get(path)
+            .map(|e| e.parser.to_info())
+            .unwrap_or_default()
+    }
+
+    /// 无新增时刷新 mtime 并返回累积结果。
+    fn touch_mtime(&mut self, path: &str, mtime: Option<std::time::SystemTime>) -> TranscriptInfo {
+        match self.entries.get_mut(path) {
+            Some(e) => {
+                e.mtime = mtime;
+                e.parser.to_info()
+            }
+            None => TranscriptInfo::default(),
+        }
+    }
+
+    /// analyze_shared 临界区 2：把锁外读到的字节合并进缓存。仅当条目偏移仍等于快照偏移
+    /// （期间无其它线程推进）时生效；否则弃用本次读取，直接返回已有结果。
+    fn commit(
+        &mut self,
+        spec: &dyn TranscriptSpec,
+        path: &str,
+        snap_offset: u64,
+        reset: bool,
+        buf: &[u8],
+        mtime: Option<std::time::SystemTime>,
+    ) -> TranscriptInfo {
+        self.tick += 1;
+        let tick = self.tick;
+        // buf 是否从文件头读起（reset 或条目本就是新建的 0 偏移）——只有这种读取才能安全灌入全新条目。
+        let from_zero = reset || snap_offset == 0;
+        let entry = match self.entries.get_mut(path) {
+            Some(e) => e,
+            None => {
+                // 条目在锁外窗口被 LRU 淘汰：从头读的可重建灌入；增量读的丢弃，下轮重来。
+                if !from_zero {
+                    return TranscriptInfo::default();
+                }
+                self.entries.insert(
+                    path.to_string(),
+                    CacheEntry { offset: 0, mtime: None, parser: spec.new_parser(), last_used: tick },
+                );
+                self.entries.get_mut(path).expect("刚插入的缓存条目必然存在")
+            }
+        };
+        entry.last_used = tick;
+        if entry.offset != snap_offset {
+            return entry.parser.to_info();
+        }
+        if reset {
+            entry.offset = 0;
+            entry.parser = spec.new_parser();
+        }
+        if let Some(nl) = buf.iter().rposition(|&b| b == b'\n') {
+            entry.offset += (nl + 1) as u64;
+            let chunk = String::from_utf8_lossy(&buf[..=nl]);
+            for line in chunk.lines() {
+                entry.parser.fold_line(line);
+            }
+        }
+        entry.mtime = mtime;
+        entry.parser.to_info()
+    }
 }
 
 #[cfg(test)]
@@ -538,5 +672,41 @@ mod tests {
         std::fs::remove_file(&p).ok();
         assert_eq!(info.context_tokens, None);
         assert_eq!(info.context_pct, None);
+    }
+
+    #[test]
+    fn analyze_shared_matches_analyze_on_append_truncate_and_missing() {
+        // 锁外 IO 版必须与 analyze 语义一致：首读、追加增量、截断重读、文件缺失四种路径。
+        use std::io::Write;
+        use std::sync::Mutex;
+        let spec = &crate::transcript_spec::ClaudeTranscript;
+        let p = write_tmp("cache_shared", concat!(r#"{"type":"ai-title","aiTitle":"标题A"}"#, "\n"));
+        let path = p.to_str().unwrap();
+        let cache = Mutex::new(TranscriptCache::new());
+
+        // 首读
+        let i1 = TranscriptCache::analyze_shared(&cache, spec, path);
+        assert_eq!(i1.title.as_deref(), Some("标题A"));
+
+        // 追加 → 增量读到
+        let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+        writeln!(f, r#"{{"type":"custom-title","customTitle":"标题B"}}"#).unwrap();
+        drop(f);
+        let i2 = TranscriptCache::analyze_shared(&cache, spec, path);
+        assert_eq!(i2.title.as_deref(), Some("标题B"));
+
+        // 无新增 → 结果稳定
+        let i3 = TranscriptCache::analyze_shared(&cache, spec, path);
+        assert_eq!(i3.title.as_deref(), Some("标题B"));
+
+        // 截断成更短内容 → 从头重解析
+        std::fs::write(&p, concat!(r#"{"type":"ai-title","aiTitle":"C"}"#, "\n")).unwrap();
+        let i4 = TranscriptCache::analyze_shared(&cache, spec, path);
+        assert_eq!(i4.title.as_deref(), Some("C"));
+
+        // 文件消失 → 沿用已累积结果（与 analyze 一致）
+        std::fs::remove_file(&p).ok();
+        let i5 = TranscriptCache::analyze_shared(&cache, spec, path);
+        assert_eq!(i5.title.as_deref(), Some("C"));
     }
 }

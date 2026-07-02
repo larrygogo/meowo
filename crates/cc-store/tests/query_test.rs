@@ -214,3 +214,29 @@ fn live_sessions_returns_new_columns_as_none_by_default() {
     assert_eq!(s.last_ai_text, None);
     assert_eq!(s.last_user_text, None);
 }
+
+#[test]
+fn live_sessions_keeps_all_non_ended_beyond_ended_cap() {
+    // 未结束(仍连接中)的会话必须全量保留：即便之后产生了 100+ 条更近活跃的已结束会话，
+    // 也不能把它从返回集挤掉——否则贴纸上连「已断开」卡片都没有、会话凭空消失。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    // 一个很旧但仍 running 的会话（挂在后台终端里数天未发消息的合法长连接）。
+    let (old_running, _) = store.start_session(pid, "old-running", 100).unwrap();
+    store.set_session_pid(old_running, 4242, 110).unwrap();
+    // 120 条更近活跃的已结束会话，把 100 条上限灌满。
+    for i in 0..120 {
+        let (s, _) = store.start_session(pid, &format!("ended-{i}"), 1000 + i).unwrap();
+        store.end_session(s, 2000 + i).unwrap();
+    }
+
+    let live = store.live_sessions().unwrap();
+    // 旧 running 会话仍在返回集内。
+    assert!(
+        live.iter().any(|s| s.session.cc_session_id == "old-running"),
+        "连接中的旧会话被已结束会话挤出了返回集"
+    );
+    // 已结束会话仍受 100 条上限约束（120 条只回最近 100 条）。
+    let ended = live.iter().filter(|s| s.session.status == "ended").count();
+    assert_eq!(ended, 100);
+}

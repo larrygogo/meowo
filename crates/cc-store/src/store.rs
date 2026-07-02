@@ -531,14 +531,17 @@ impl Store {
     /// 清 pid 是关键——旧进程已死，留着会被 reaper 当「pid 已死」立即再收尾；清空后 reaper「pid 未知不臆测」
     /// 不动它(见 live_session_liveness 消费方)，等新进程首个 hook 用 set_session_pid 认领真实 pid。
     /// 解决 codex 这类「session_start hook 要到首个 turn 才触发」的 agent：resume 后不必等发消息即显示已连接。
-    /// 命中条件「ended ‖ pid 为空」：pid 为空即没有任何 hook 认领过、不是真连接，可安全重置(含宽限过期后
-    /// 用户再次点 resume——此时 status 仍是 running 但 pid 空，须刷新 last_event_at 重启宽限)。pid 非空
-    /// (hook 已认领的活跃会话)不动，避免误清。
-    pub fn revive_for_resume(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
+    /// 命中条件「ended ‖ pid 为空 ‖ pid_dead」：pid 为空即没有任何 hook 认领过、不是真连接，可安全重置(含宽限
+    /// 过期后用户再次点 resume——此时 status 仍是 running 但 pid 空，须刷新 last_event_at 重启宽限)。
+    /// `pid_dead` 由调用方校验「记录的 pid 进程确已死亡」后传入——覆盖「进程刚死、reaper(5s 周期)尚未收尾」
+    /// 的窗口：此时 status 仍是 running 且 pid 非空，若不强制复活，本次 resume 会静默 0 行更新，随后被
+    /// reaper 收尾成 ended、卡片长期显示未连接(codex 要到首条消息 hook 才自愈)。pid 非空且进程存活的
+    /// 会话仍不动，避免误清真连接。
+    pub fn revive_for_resume(&self, session_id: i64, now_ms: i64, pid_dead: bool) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET status='running', ended_at=NULL, pid=NULL, last_event_at=?1 \
-             WHERE id=?2 AND (status='ended' OR pid IS NULL)",
-            rusqlite::params![now_ms, session_id],
+             WHERE id=?2 AND (status='ended' OR pid IS NULL OR ?3)",
+            rusqlite::params![now_ms, session_id, pid_dead],
         )?;
         Ok(())
     }
