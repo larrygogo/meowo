@@ -17,6 +17,7 @@ import {
   getSettings,
   getAccounts,
   refreshUsage,
+  type CardMenuMode,
   type ProviderUsage,
   type UsageLane,
 } from "../api";
@@ -75,6 +76,18 @@ function OpenIcon() {
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="4 17 10 11 4 5" />
       <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  // lucide ellipsis：卡片菜单按钮（card_menu_mode=button 时替代右键触发）
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
     </svg>
   );
 }
@@ -539,15 +552,17 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     setQuery("");
   };
 
-  // 归档自动隐藏天数 + 打开终端方式 + 贴纸配额 provider 列表：启动时读设置，并监听实时变更。
+  // 归档自动隐藏天数 + 打开终端方式 + 卡片菜单方式 + 贴纸配额 provider 列表：启动时读设置，并监听实时变更。
   const [hideDays, setHideDays] = useState(0);
   const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
+  const [menuMode, setMenuMode] = useState<CardMenuMode>("context");
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   useEffect(() => {
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
       setOpenMode(s.terminal_open_mode);
+      setMenuMode(s.card_menu_mode ?? "context");
       setPreviewEnabled(s.preview_enabled);
       setQuotaProviders(s.sticker_quota_providers ?? ["claude"]);
     };
@@ -910,8 +925,11 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                   openTerminal(l);
                 }}
                 onContextMenu={(e) => {
+                  // 与卡片菜单按钮二选一：button 模式下右键只吞掉默认 webview 菜单、不弹卡片菜单。
                   e.preventDefault();
-                  setCtxMenu({ sid: l.session.id, x: e.clientX, y: e.clientY });
+                  if (menuMode === "context") {
+                    setCtxMenu({ sid: l.session.id, x: e.clientX, y: e.clientY });
+                  }
                 }}
                 style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
                 data-tip={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
@@ -957,8 +975,22 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                             </span>
                           )}
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
-                          {/* 星标/便签/重命名/归档操作收进右键菜单（CardContextMenu），标题行不再挤 hover 图标。
-                              星标态由卡片金角、便签由便签块表达，收起入口不丢信息。 */}
+                          {/* 星标/便签/重命名/归档操作收进卡片菜单（CardContextMenu），标题行不再挤 hover 图标。
+                              默认右键触发；card_menu_mode=button（触屏等不便右键）时改为此处的常显菜单按钮，
+                              两种触发方式二选一。星标态由卡片金角、便签由便签块表达，收起入口不丢信息。 */}
+                          {menuMode === "button" && (
+                            <button
+                              type="button"
+                              className="stk-menu-btn"
+                              aria-label={t.sticker.cardMenu}
+                              data-tip={t.sticker.cardMenu}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const r = e.currentTarget.getBoundingClientRect();
+                                setCtxMenu({ sid: l.session.id, x: r.right, y: r.bottom + 4 });
+                              }}
+                            ><MoreIcon /></button>
+                          )}
                         </>
                       )}
                     </div>

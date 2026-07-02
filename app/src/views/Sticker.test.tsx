@@ -71,6 +71,13 @@ describe("Sticker", () => {
     expect(document.querySelector(".ctx-menu")).toBeNull();
   });
 
+  it("默认(右键菜单模式)不渲染卡片菜单按钮", () => {
+    // card_menu_mode=button 时按钮与右键二选一;按钮模式依赖设置注入,与 terminal_open_mode
+    // 的按钮模式一样走手动验证(测试环境 getSettings 不可用,仅锁默认形态)。
+    const { container } = render(<Sticker data={[mk()]} />);
+    expect(container.querySelector(".stk-menu-btn")).toBeNull();
+  });
+
   it("有 cwd 的会话菜单末尾多出「打开项目目录」,无 cwd 则隐藏", () => {
     const { container } = render(<Sticker data={[mk({ cwd: "C:\\proj" })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);

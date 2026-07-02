@@ -28,6 +28,11 @@ fn default_language() -> String {
 fn default_terminal_open_mode() -> String {
     "card".to_string()
 }
+/// 卡片菜单（星标/便签/重命名/归档等）触发方式：context = 右键菜单（默认），
+/// button = 卡片上的常显菜单按钮（触屏等右键不便的设备用），两者二选一。
+fn default_card_menu_mode() -> String {
+    "context".to_string()
+}
 /// 贴纸风格：elevated = 立体感（默认），flat = 扁平。
 fn default_sticker_style() -> String {
     "elevated".to_string()
@@ -68,6 +73,9 @@ pub(crate) struct Settings {
     /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
     #[serde(default = "default_terminal_open_mode")]
     pub(crate) terminal_open_mode: String,
+    /// 卡片菜单触发方式：context = 右键菜单（默认），button = 卡片菜单按钮。兼容老 settings.json。
+    #[serde(default = "default_card_menu_mode")]
+    pub(crate) card_menu_mode: String,
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) preview_enabled: bool,
@@ -94,6 +102,7 @@ impl Default for Settings {
             resume_terminal: default_resume_terminal(),
             language: default_language(),
             terminal_open_mode: default_terminal_open_mode(),
+            card_menu_mode: default_card_menu_mode(),
             preview_enabled: true,
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),

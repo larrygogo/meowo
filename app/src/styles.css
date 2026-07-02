@@ -694,6 +694,25 @@ html, body {
 .ctx-item:hover { background: var(--cc-surface-hover); }
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
 .ctx-sep { height: 1px; margin: 3px 6px; background: var(--cc-border); }
+/* 卡片菜单按钮（card_menu_mode=button 时替代右键触发）：常显小圆角图标钮——
+   为触屏等无 hover 环境而生，不能做 hover 才浮现。 */
+.stk-menu-btn {
+  flex: none;
+  width: calc(20px * var(--cc-ui));
+  height: calc(20px * var(--cc-ui));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cc-text-faint);
+  cursor: pointer;
+  appearance: none;
+  transition: background 0.12s, color 0.12s;
+}
+.stk-menu-btn:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
 /* 「打开终端」按钮（按钮模式）：内联在 sub 行末尾的 accent 小图标钮，低调不突兀 */
 .stk-open {
   flex: none;

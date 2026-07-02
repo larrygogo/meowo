@@ -24,6 +24,7 @@ export const store: Store = {
     resume_terminal: "wt",
     language: "zh",
     terminal_open_mode: "card",
+    card_menu_mode: "context",
     preview_enabled: true,
     sticker_style: "elevated",
     sticker_color: "classic",

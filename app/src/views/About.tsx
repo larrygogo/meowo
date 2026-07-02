@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type StickerStyle } from "../api";
+import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
 import { PROVIDERS } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
@@ -34,6 +34,7 @@ const SETTINGS_DEFAULTS: Settings = {
   resume_terminal: "terminal",
   language: "auto",
   terminal_open_mode: "card",
+  card_menu_mode: "context",
   preview_enabled: true,
   sticker_style: "elevated",
   sticker_color: "classic",
@@ -558,6 +559,20 @@ function GeneralSection() {
               { value: "button" as const, label: t.settings.openModeButton },
             ]}
             onChange={(v: TerminalOpenMode) => patch({ terminal_open_mode: v })}
+          />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.cardMenu}</div>
+            <div className="row-desc">{t.settings.cardMenuDesc}</div>
+          </div>
+          <Dropdown
+            value={settings?.card_menu_mode ?? "context"}
+            options={[
+              { value: "context" as const, label: t.settings.cardMenuContext },
+              { value: "button" as const, label: t.settings.cardMenuButton },
+            ]}
+            onChange={(v: CardMenuMode) => patch({ card_menu_mode: v })}
           />
         </div>
         <div className="row">

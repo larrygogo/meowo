@@ -131,6 +131,8 @@ export type Settings = {
   language: LangSetting;
   /** 打开终端方式：card = 点击卡片（默认）/ button = 卡片上单独的打开按钮。 */
   terminal_open_mode: TerminalOpenMode;
+  /** 卡片菜单触发方式：context = 右键菜单（默认）/ button = 卡片菜单按钮（触屏友好），二选一。 */
+  card_menu_mode: CardMenuMode;
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
   /** 贴纸风格：elevated = 立体感（默认）/ flat = 扁平。 */
@@ -144,6 +146,7 @@ export type Settings = {
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";
 export type TerminalOpenMode = "card" | "button";
+export type CardMenuMode = "context" | "button";
 export type StickerStyle = "elevated" | "flat";
 
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
