@@ -160,12 +160,10 @@ pub fn all() -> &'static [&'static dyn ProviderAccount] {
 
 // ═══ 4. Provider 分键缓存 ═══
 //
-// 新格式（本任务引入）：
+// 当前格式：
 //   {"providers": {"claude": ProviderUsage, ...}, "fetched_at_map": {"claude": ms, ...}, ...}
-// 旧扁平格式（容错读取，仅 claude）：
+// 旧扁平格式（仅容错读取，仅 claude；写入方已全部移除，保留一个版本周期后可删）：
 //   {"usage": Usage, "fetched_at": ms}
-//
-// 新格式写入与旧格式字段共存，旧 get_account/refresh_usage 命令写旧格式不受影响。
 
 /// 读某 provider 的缓存用量。
 /// 先试新格式 providers.{key}，再对 claude 兼容旧扁平 usage 字段。
@@ -189,13 +187,18 @@ pub fn read_cached_usage(k: cc_store::ProviderKey) -> Option<ProviderUsage> {
     None
 }
 
-/// 把某 provider 用量写入缓存（新格式，与旧扁平字段共存，不破坏旧命令读取）。
+/// write_cached_usage 的「读-合并-写」临界区锁：贴纸挂载/定时刷新会对多个 provider 同 tick 并发
+/// refresh_usage（各自 spawn_blocking），不串行化时后写者会用旧快照覆盖先写者刚落盘的条目（丢失更新）。
+static USAGE_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 把某 provider 用量写入缓存（providers 分键合并写入，唯一写入方）。
 pub fn write_cached_usage(k: cc_store::ProviderKey, usage: &ProviderUsage) {
     let Some(p) = usage_cache_path() else { return };
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    // 读现有文件合并，不覆盖旧 usage/fetched_at 字段（旧命令仍依赖它们）。
+    let _guard = USAGE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // 读现有文件合并：只更新本 provider 条目，其它 provider 的缓存原样保留。
     let mut root = read_json(&p).unwrap_or_else(|| serde_json::json!({}));
     let obj = match root.as_object_mut() {
         Some(o) => o,
@@ -213,8 +216,13 @@ pub fn write_cached_usage(k: cc_store::ProviderKey, usage: &ProviderUsage) {
     if let Some(fm) = fat.as_object_mut() {
         fm.insert(k.as_str().to_string(), serde_json::json!(now_ms()));
     }
+    // 原子写（tmp+rename，与 settings.rs 同款）：读端（get_accounts/cache_is_fresh）裸读本文件，
+    // 直写可能被读到半截而解析失败、整份缓存瞬时作废。
     if let Ok(s) = serde_json::to_string(&root) {
-        let _ = std::fs::write(&p, s);
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, s).is_ok() && std::fs::rename(&tmp, &p).is_err() {
+            let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
+        }
     }
 }
 

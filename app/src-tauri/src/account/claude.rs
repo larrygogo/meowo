@@ -149,18 +149,6 @@ pub fn read_account() -> Option<ClaudeAccountInfo> {
     parse_account(&read_json_file(&claude_json_path()?)?)
 }
 
-fn write_cached_usage_flat(usage: &Usage) {
-    if let Some(p) = super::usage_cache_path() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let body = serde_json::json!({ "usage": usage, "fetched_at": super::now_ms() });
-        if let Ok(s) = serde_json::to_string(&body) {
-            let _ = std::fs::write(&p, s);
-        }
-    }
-}
-
 /// 原子写回 credentials 文件（临时文件 + rename）。仅非 macOS（macOS 写 Keychain）。
 #[cfg(not(target_os = "macos"))]
 fn write_credentials_atomic(path: &std::path::Path, value: &serde_json::Value) -> Result<(), String> {
@@ -332,9 +320,10 @@ pub fn fetch_usage_live() -> Result<Usage, String> {
         .call()
         .map_err(|e| format!("请求用量失败：{e}"))?;
     let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
-    let usage = parse_usage(&v);
-    write_cached_usage_flat(&usage);
-    Ok(usage)
+    // 缓存统一由调用方经 mod.rs 的 write_cached_usage（providers.claude 合并写入）落盘。
+    // 这里绝不能整文件覆写旧扁平格式——那会清掉 kimi/codex 等其它 provider 的缓存条目，
+    // 且引用旧扁平格式的旧命令已全部移除（read_cached_usage 的容错读取保留一个版本周期即可）。
+    Ok(parse_usage(&v))
 }
 
 /// 将旧 Usage 映射为通用 ProviderUsage 泳道格式。
@@ -424,7 +413,7 @@ impl ProviderAccount for ClaudeProviderAccount {
         match fetch_usage_live() {
             Ok(old_usage) => {
                 let pu = map_to_provider_usage(&old_usage);
-                // 同步写入新格式 provider 分键缓存（旧命令路径已写了旧格式）
+                // 唯一写入方：mod.rs 的 write_cached_usage（providers.claude 分键合并写入）。
                 super::write_cached_usage(key, &pu);
                 Some(pu)
             }
