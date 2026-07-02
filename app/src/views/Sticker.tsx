@@ -304,17 +304,29 @@ function CardContextMenu({
     });
   }, [x, y]);
   useEffect(() => {
-    const down = (e: MouseEvent) => {
+    // 点菜单外关闭：用 click **捕获相**而非 mousedown——捕获相里 stopPropagation 把这次点击
+    // 整个拦下，不再传到卡片的 onClick（否则点外部关个菜单会顺手触发卡片点击、把终端打开）。
+    // 菜单项在 ref 内不受拦截；本监听在菜单挂载后才注册，打开菜单的那次点击不会误触发。
+    const clickAway = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    // 右键他处：只关闭本菜单、不拦事件——落在卡片上时让其 onContextMenu 原地弹出新菜单。
+    const ctxAway = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("mousedown", down);
+    document.addEventListener("click", clickAway, true);
+    document.addEventListener("contextmenu", ctxAway, true);
     document.addEventListener("keydown", key);
     window.addEventListener("blur", onClose);
     return () => {
-      document.removeEventListener("mousedown", down);
+      document.removeEventListener("click", clickAway, true);
+      document.removeEventListener("contextmenu", ctxAway, true);
       document.removeEventListener("keydown", key);
       window.removeEventListener("blur", onClose);
     };

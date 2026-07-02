@@ -71,6 +71,20 @@ describe("Sticker", () => {
     expect(document.querySelector(".ctx-menu")).toBeNull();
   });
 
+  it("点击菜单外部关闭菜单,且该次点击不触发卡片点击", () => {
+    const { container } = render(<Sticker data={[mk()]} />);
+    // 先打开重命名编辑器作观察哨:卡片 onClick 若被触发会关闭编辑器。
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.renameTitle));
+    expect(container.querySelector(".stk-edit")).toBeTruthy();
+    // 再开菜单,点击卡片(菜单外部)——菜单应关闭,但编辑器保持打开,证明点击被捕获相拦下。
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    expect(document.querySelector(".ctx-menu")).toBeTruthy();
+    fireEvent.click(container.querySelector(".stk-card")!);
+    expect(document.querySelector(".ctx-menu")).toBeNull();
+    expect(container.querySelector(".stk-edit")).toBeTruthy(); // 编辑器未被误关
+  });
+
   it("默认(右键菜单模式)不渲染卡片菜单按钮", () => {
     // card_menu_mode=button 时按钮与右键二选一;按钮模式依赖设置注入,与 terminal_open_mode
     // 的按钮模式一样走手动验证(测试环境 getSettings 不可用,仅锁默认形态)。
