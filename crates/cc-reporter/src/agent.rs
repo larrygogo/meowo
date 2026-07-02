@@ -178,7 +178,12 @@ fn write_claude_custom_title(session_id: &str, cwd: Option<&str>, title: &str) -
     let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) else {
         return false;
     };
-    writeln!(f, "{record}").is_ok()
+    // 先缓冲成完整一行再单次 write：该 transcript 同时被运行中的 claude 进程追加，
+    // writeln!(f, "{record}") 会经 Display 拆成多次小块写，与对方的追加交错时两边的行都会被撕裂成非法 JSON；
+    // append 模式下单次 write 在同一文件系统上是原子追加，消除交错窗口。
+    let mut line = record.to_string();
+    line.push('\n');
+    f.write_all(line.as_bytes()).is_ok()
 }
 
 static CLAUDE: ClaudeAgent = ClaudeAgent;
