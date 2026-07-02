@@ -107,14 +107,24 @@ pub fn cwd_from_transcript(path: &str) -> Option<String> {
     None
 }
 
-/// 解析会话工作目录：优先用已知 cwd（DB 里有就直接用），否则按 session_id 全局找 transcript
-/// 再从中读出 cwd。用于「恢复会话」——claude --resume 必须在正确的项目目录下运行才找得到会话。
+/// 解析会话工作目录。用于「恢复会话」——claude --resume 必须在正确的项目目录下运行才找得到会话。
+///
+/// 已知 cwd（DB 记录）不再盲信：先校验其对应目录下确有该会话的 transcript。DB 的 cwd 可能
+/// 失真——会话早于 hook 接线、SessionStart 丢失、项目目录事后被移动/重命名——盲信会让
+/// claude --resume 在错误目录下启动、报「No conversation found」，且只能靠用户在 Claude Code
+/// 里手动 resume 一次（SessionStart hook 重写 cwd）才自愈。校验不过则按 session_id 全局反查
+/// transcript、从其内容读出权威 cwd；全局也找不到（kimi/codex 会话没有 claude transcript、
+/// 或已被 Claude Code 按 cleanupPeriodDays 清理）时回退 DB cwd，维持非 claude 会话的原行为。
 pub fn resolve_cwd(cwd: Option<&str>, session_id: &str) -> Option<String> {
-    if let Some(c) = cwd.filter(|c| !c.trim().is_empty()) {
-        return Some(c.to_string());
+    let known = cwd.filter(|c| !c.trim().is_empty()).map(str::to_string);
+    if let Some(c) = &known {
+        if reconstruct_transcript_path(c, session_id).is_some_and(|p| p.exists()) {
+            return known;
+        }
     }
-    let p = find_transcript_by_session(session_id)?;
-    cwd_from_transcript(p.to_str()?)
+    find_transcript_by_session(session_id)
+        .and_then(|p| cwd_from_transcript(p.to_str()?))
+        .or(known)
 }
 
 /// 解析 transcript 文件路径，依次尝试：1) hook 给的 path；2) cwd+session_id 重建；
@@ -206,8 +216,36 @@ mod tests {
 
     #[test]
     fn resolve_cwd_prefers_known() {
-        // 已有 cwd 时直接用，不读文件。
+        // 已知 cwd 校验不过（其下无 transcript）且全局也找不到 → 回退已知 cwd（kimi/codex/已清理场景）。
         assert_eq!(resolve_cwd(Some(r"C:\a\b"), "anyid").as_deref(), Some(r"C:\a\b"));
         assert_eq!(resolve_cwd(Some("  "), "no-such-session-id-xxx"), None); // 空 cwd 且找不到 transcript
+    }
+
+    #[test]
+    fn resolve_cwd_corrects_stale_db_cwd_via_global_search() {
+        // DB 记录的 cwd 已失真（其对应目录下没有该会话的 transcript）时，应按 session_id 全局反查
+        // 并从 transcript 内容读出权威 cwd——否则 resume 会在错误目录下启动、报 No conversation found，
+        // 用户只能去 Claude Code 手动 resume 一次（hook 重写 cwd）才能自愈。
+        let sid = format!("resolve-cwd-stale-{}", std::process::id());
+        let home = std::env::temp_dir().join(format!("cc_home_{}", std::process::id()));
+        // encode_cwd(r"C:\real\proj") == "C--real-proj"
+        let proj = home.join(".claude").join("projects").join("C--real-proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(
+            proj.join(format!("{sid}.jsonl")),
+            format!("{{\"type\":\"user\",\"cwd\":\"C:\\\\real\\\\proj\",\"sessionId\":\"{sid}\"}}\n"),
+        )
+        .unwrap();
+        let old_home = std::env::var("USERPROFILE").ok();
+        std::env::set_var("USERPROFILE", &home);
+        let corrected = resolve_cwd(Some(r"C:\stale\gone"), &sid);
+        let verified_ok = resolve_cwd(Some(r"C:\real\proj"), &sid); // 校验通过 → 原样返回，不做全局扫描
+        match old_home {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(corrected.as_deref(), Some(r"C:\real\proj"));
+        assert_eq!(verified_ok.as_deref(), Some(r"C:\real\proj"));
     }
 }
