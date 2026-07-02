@@ -147,8 +147,8 @@ describe("Sticker", () => {
     const { container } = render(<Sticker data={[mk({ note: "保留我" })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.noteEdit));
-    expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
-    fireEvent.click(screen.getByText(zh.sticker.noteCancel));
+    expect(screen.getByLabelText(zh.sticker.noteSave)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteCancel));
     expect(container.querySelector(".stk-note-edit")).toBeNull();
     expect(screen.getByText("保留我")).toBeTruthy(); // 便签块仍在
   });
@@ -158,7 +158,7 @@ describe("Sticker", () => {
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.noteAdd));
     fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
-    fireEvent.click(screen.getByText(zh.sticker.noteSave));
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteSave));
     expect(container.querySelector(".stk-note-edit")).toBeNull();
   });
 
@@ -166,9 +166,9 @@ describe("Sticker", () => {
     const { container } = render(<Sticker data={[mk()]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.renameTitle));
-    expect(container.querySelector(".stk-edit-row")).toBeTruthy();
-    expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
-    fireEvent.click(screen.getByText(zh.sticker.noteCancel));
+    expect(container.querySelector(".stk-editbox")).toBeTruthy();
+    expect(screen.getByLabelText(zh.sticker.noteSave)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteCancel));
     expect(container.querySelector(".stk-edit")).toBeNull();
   });
 

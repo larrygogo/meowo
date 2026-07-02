@@ -735,43 +735,61 @@ html, body {
 .stk-note-icon { flex: none; color: var(--cc-warn); margin-top: 1px; }
 .stk-note-icon svg { display: block; }
 .stk-note-txt { flex: 1; min-width: 0; white-space: pre-wrap; }
-/* 便签编辑器：输入框 + 保存/取消按钮 */
-.stk-note-editbox { margin-top: 7px; }
-.stk-note-edit {
-  width: 100%; box-sizing: border-box; padding: 5px 8px;
-  font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5; font-family: inherit;
-  color: var(--cc-text); background: var(--cc-surface-hover);
-  border: 1px solid var(--cc-accent-border); border-radius: 9px; outline: none;
-  box-shadow: 0 0 0 3px var(--cc-accent-soft); /* 聚焦光环，同重命名输入 */
+/* 行内编辑器（重命名/便签共用）：输入框嵌进圆角容器，✓/✕ 图标钮收在框内右侧——
+   替代原「输入框粗光环 + 两枚文字按钮」的拥挤两段式排布，单行完成、不撑高卡片。
+   focus-within 才点亮 accent 边框，光环收细(2px)视觉安静；便签版带琥珀便签图标前缀，
+   与常显便签块视觉呼应。 */
+.stk-editbox {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 3px 2px 8px;
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-border);
+  border-radius: 8px;
+  transition: border-color 0.13s, box-shadow 0.13s;
 }
-.stk-note-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
-/* 通用保存/取消按钮（便签与重命名共用） */
-.stk-btn-save, .stk-btn-cancel {
-  flex: none; font-family: inherit; font-size: calc(10.5px * var(--cc-ui)); line-height: 1.4;
-  padding: 3px 14px; border-radius: 7px; cursor: pointer; appearance: none; white-space: nowrap;
-  border: 1px solid transparent;
+.stk-editbox:focus-within {
+  border-color: var(--cc-accent-border);
+  box-shadow: 0 0 0 2px var(--cc-accent-soft);
 }
-.stk-btn-save { background: var(--cc-accent); color: #fff; border-color: var(--cc-accent); }
-.stk-btn-save:hover { background: var(--cc-accent-dim); border-color: var(--cc-accent-dim); }
-.stk-btn-cancel { background: transparent; color: var(--cc-text-dim); border-color: var(--cc-border); }
-.stk-btn-cancel:hover { color: var(--cc-text); border-color: var(--cc-text-faint); }
-/* 重命名编辑行：输入框占满 + 行内保存/取消按钮 */
-.stk-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
-.stk-edit {
+.stk-editbox input {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--cc-text);
-  background: var(--cc-surface-hover);
-  border: 1px solid var(--cc-accent-border);
-  border-radius: var(--r-sm);
-  padding: 2px 7px;
+  padding: 3px 0;
+  border: none;
   outline: none;
+  background: transparent;
+  color: var(--cc-text);
   font-family: inherit;
-  box-shadow: 0 0 0 3px var(--cc-accent-soft); /* 聚焦光环：明确这是正在编辑的输入(box-shadow 不占布局，不致跳动) */
-  transition: box-shadow 0.13s, border-color 0.13s;
 }
+.stk-edit { font-size: 12.5px; font-weight: 600; } /* 重命名：与卡片标题同字号字重，所改即所见 */
+.stk-note-edit { font-size: calc(10.5px * var(--cc-ui)); line-height: 1.5; } /* 便签：与便签块一致 */
+.stk-editbox-note { margin-top: 7px; }
+.stk-editbox-ico { display: inline-flex; flex: none; color: var(--cc-warn); margin-right: 4px; }
+.stk-editbox-ico svg { display: block; }
+/* ✓/✕ 图标钮：确认 accent、取消 faint，hover 出淡背景填充 */
+.stk-ebtn {
+  flex: none;
+  width: calc(22px * var(--cc-ui));
+  height: calc(22px * var(--cc-ui));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cc-text-faint);
+  cursor: pointer;
+  appearance: none;
+  transition: background 0.12s, color 0.12s;
+}
+.stk-ebtn:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+.stk-ebtn-ok { color: var(--cc-accent-text); }
+.stk-ebtn-ok:hover { background: var(--cc-accent); color: #fff; }
 .stk-edit-hint { font-size: 10px; color: var(--cc-warn); margin-top: 4px; line-height: 1.3; }
 
 /* 吸边缩略条：左/右为竖条，顶为横条。

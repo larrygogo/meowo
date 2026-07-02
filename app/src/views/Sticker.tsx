@@ -79,6 +79,26 @@ function OpenIcon() {
   );
 }
 
+function CheckIcon() {
+  // lucide check：行内编辑器确认钮
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  // lucide x：行内编辑器取消钮
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
 function FolderIcon() {
   // lucide folder-open：右键菜单「打开项目目录」用
   return (
@@ -901,7 +921,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                   <div className="stk-top-body">
                     <div className="stk-line1">
                       {editingId === l.session.id ? (
-                        <div className="stk-edit-row" onClick={(e) => e.stopPropagation()}>
+                        <div className="stk-editbox" onClick={(e) => e.stopPropagation()}>
                           <input
                             className="stk-edit"
                             autoFocus
@@ -910,18 +930,23 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                             onChange={(e) => setDraft(e.target.value)}
                             onKeyDown={editorKeyDown(() => submitRename(l), () => setEditingId(null))}
                           />
+                          {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
                           <button
                             type="button"
-                            className="stk-btn-save"
+                            className="stk-ebtn stk-ebtn-ok"
+                            aria-label={t.sticker.noteSave}
+                            data-tip={t.sticker.noteSave}
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => submitRename(l)}
-                          >{t.sticker.noteSave}</button>
+                          ><CheckIcon /></button>
                           <button
                             type="button"
-                            className="stk-btn-cancel"
+                            className="stk-ebtn"
+                            aria-label={t.sticker.noteCancel}
+                            data-tip={t.sticker.noteCancel}
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => setEditingId(null)}
-                          >{t.sticker.noteCancel}</button>
+                          ><XIcon /></button>
                         </div>
                       ) : (
                         <>
@@ -954,7 +979,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                   </div>
                 </div>
                 {notingId === l.session.id ? (
-                  <div className="stk-note-editbox" onClick={(e) => e.stopPropagation()}>
+                  <div className="stk-editbox stk-editbox-note" onClick={(e) => e.stopPropagation()}>
+                    <span className="stk-editbox-ico"><NoteIcon /></span>
                     <input
                       className="stk-note-edit"
                       autoFocus
@@ -963,21 +989,23 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       onChange={(e) => setNoteDraft(e.target.value)}
                       onKeyDown={editorKeyDown(() => submitNote(l), () => setNotingId(null))}
                     />
-                    <div className="stk-note-actions">
-                      {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
-                      <button
-                        type="button"
-                        className="stk-btn-save"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => submitNote(l)}
-                      >{t.sticker.noteSave}</button>
-                      <button
-                        type="button"
-                        className="stk-btn-cancel"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => setNotingId(null)}
-                      >{t.sticker.noteCancel}</button>
-                    </div>
+                    {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
+                    <button
+                      type="button"
+                      className="stk-ebtn stk-ebtn-ok"
+                      aria-label={t.sticker.noteSave}
+                      data-tip={t.sticker.noteSave}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => submitNote(l)}
+                    ><CheckIcon /></button>
+                    <button
+                      type="button"
+                      className="stk-ebtn"
+                      aria-label={t.sticker.noteCancel}
+                      data-tip={t.sticker.noteCancel}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setNotingId(null)}
+                    ><XIcon /></button>
                   </div>
                 ) : l.note ? (
                   <div
