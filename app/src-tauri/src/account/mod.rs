@@ -216,13 +216,10 @@ pub fn write_cached_usage(k: cc_store::ProviderKey, usage: &ProviderUsage) {
     if let Some(fm) = fat.as_object_mut() {
         fm.insert(k.as_str().to_string(), serde_json::json!(now_ms()));
     }
-    // 原子写（tmp+rename，与 settings.rs 同款）：读端（get_accounts/cache_is_fresh）裸读本文件，
-    // 直写可能被读到半截而解析失败、整份缓存瞬时作废。
+    // 原子写：读端（get_accounts/cache_is_fresh）裸读本文件，直写可能被读到半截而解析失败、
+    // 整份缓存瞬时作废。
     if let Ok(s) = serde_json::to_string(&root) {
-        let tmp = p.with_extension("json.tmp");
-        if std::fs::write(&tmp, s).is_ok() && std::fs::rename(&tmp, &p).is_err() {
-            let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
-        }
+        let _ = crate::fsutil::write_atomic(&p, &s);
     }
 }
 

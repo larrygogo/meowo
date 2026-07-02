@@ -1,4 +1,11 @@
-import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -18,6 +25,17 @@ import { useT } from "../i18n";
 import type { Dict } from "../i18n/zh";
 
 const DAY_MS = 86_400_000;
+
+// 行内编辑器（重命名/便签）共用的键盘处理:IME 组字中的 Enter 不提交/Escape 不取消
+// （WKWebView 上上屏 Enter 派发 keyCode 229,compositionend 后 isComposing 可能已 false,
+// 故两条件都判）,Enter 提交、Escape 取消。
+const editorKeyDown =
+  (submit: () => void, cancel: () => void) =>
+  (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") submit();
+    else if (e.key === "Escape") cancel();
+  };
 
 function fmtAgo(ms: number, t: Dict): string {
   const m = Math.floor((Date.now() - ms) / 60000);
@@ -642,7 +660,9 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     setEdge((p) => (p.top === canUp && p.bottom === canDown ? p : { top: canUp, bottom: canDown }));
     const thumbH = Math.max(28, (clientHeight * clientHeight) / scrollHeight);
     const top = offsetTop + (clientHeight - thumbH) * (scrollTop / (scrollHeight - clientHeight));
-    setSb({ top, height: thumbH });
+    // 相等守卫(与 setEdge 同款):逐卡片 observe 后 RO 触发频度到每秒级,thumb 几何没变时
+    // 复用旧引用,避免每次数据刷新都强制整树重渲染。
+    setSb((p) => (p && p.top === top && p.height === thumbH ? p : { top, height: thumbH }));
   };
   // 列表内容(shown)或可视尺寸变化时重算 thumb。
   useEffect(() => {
@@ -654,10 +674,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     ro.observe(el);
     // 内容子元素高度变化(打开便签/重命名编辑器、内容行增减)时 scrollHeight 变而容器自身尺寸不变，
     // 仅观察容器不会触发重算——逐张卡片一并观察，任一高度变化即重算 thumb。
+    // 依赖必须是 shown 本身而非 shown.length：成员变化但数量不变时(一个会话结束同时另一个出现)
+    // React 按 key 新建的卡片 DOM 也要被重新 observe,否则该卡此后的高度变化不触发重算。
     for (const child of Array.from(el.children)) ro.observe(child);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown.length]);
+  }, [shown]);
 
   // 拖拽 thumb 滚动列表。
   const onSbDown = (e: ReactMouseEvent) => {
@@ -774,13 +796,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                             value={draft}
                             placeholder={t.sticker.renamePlaceholder}
                             onChange={(e) => setDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              // IME 组字中的 Enter 不提交（WKWebView 上上屏 Enter 派发 keyCode 229，
-                              // compositionend 后 isComposing 可能已 false，故两条件都判）。
-                              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                              if (e.key === "Enter") submitRename(l);
-                              else if (e.key === "Escape") setEditingId(null);
-                            }}
+                            onKeyDown={editorKeyDown(() => submitRename(l), () => setEditingId(null))}
                           />
                           <button
                             type="button"
@@ -859,12 +875,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       value={noteDraft}
                       placeholder={t.sticker.notePlaceholder}
                       onChange={(e) => setNoteDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        // IME 组字中的 Enter 不提交（同重命名输入框的守卫）。
-                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                        if (e.key === "Enter") submitNote(l);
-                        else if (e.key === "Escape") setNotingId(null);
-                      }}
+                      onKeyDown={editorKeyDown(() => submitNote(l), () => setNotingId(null))}
                     />
                     <div className="stk-note-actions">
                       {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}

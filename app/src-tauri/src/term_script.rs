@@ -138,13 +138,9 @@ pub fn resume_script_cwdless(kind: TermKind) -> &'static str {
     match kind {
         TermKind::ITerm2 => {
             r#"on run argv
-  set theCmd to ""
-  repeat with i from 1 to count of argv
-    if theCmd is "" then
-      set theCmd to quoted form of item i of argv
-    else
-      set theCmd to theCmd & " " & quoted form of item i of argv
-    end if
+  set theCmd to quoted form of item 1 of argv
+  repeat with i from 2 to count of argv
+    set theCmd to theCmd & " " & quoted form of item i of argv
   end repeat
   tell application "iTerm2"
     activate
@@ -155,13 +151,9 @@ end run"#
         }
         _ => {
             r#"on run argv
-  set theCmd to ""
-  repeat with i from 1 to count of argv
-    if theCmd is "" then
-      set theCmd to quoted form of item i of argv
-    else
-      set theCmd to theCmd & " " & quoted form of item i of argv
-    end if
+  set theCmd to quoted form of item 1 of argv
+  repeat with i from 2 to count of argv
+    set theCmd to theCmd & " " & quoted form of item i of argv
   end repeat
   tell application "Terminal"
     activate
@@ -230,10 +222,11 @@ mod tests {
             assert!(s.contains("quoted form of item i of argv"));
             // 命令由 agent::resume_args 按 provider 提供，脚本不得再硬编码 claude。
             assert!(!s.contains("claude"));
-            // 无 cwd：argv 全部是命令 argv，从 item 1 起拼接，且不 cd。
+            // 无 cwd：item 1 即命令首项，其余从 item 2 起拼接（与带 cwd 版同形），且不 cd。
             let c = resume_script_cwdless(kind);
             assert!(c.contains("on run argv"));
-            assert!(c.contains("repeat with i from 1 to count of argv"));
+            assert!(c.contains("set theCmd to quoted form of item 1 of argv"));
+            assert!(c.contains("repeat with i from 2 to count of argv"));
             assert!(!c.contains("claude"));
             assert!(!c.contains("cd "));
         }

@@ -37,7 +37,8 @@ impl Store {
     /// v3: sessions 加 pending_review / last_ai_text / last_user_text 三列。
     /// v4: session_context 加 model 列（statusline 的模型展示名）。
     /// v5: sessions 加 provider 列（agent 提供方：claude/kimi…）。
-    const USER_VERSION: i64 = 5;
+    /// v6: 加 sessions(status, last_event_at) 索引（live_sessions 的「已结束仅取最近 100 条」子查询）。
+    const USER_VERSION: i64 = 6;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -74,11 +75,13 @@ impl Store {
             }
         }
         // 索引：加速按 project / task / pid 的查询与「驱逐旧会话」（小库无感，大库防全表扫）。
-        const INDEXES: [&str; 4] = [
+        const INDEXES: [&str; 5] = [
             "CREATE INDEX IF NOT EXISTS ix_sessions_project ON sessions(project_id)",
             "CREATE INDEX IF NOT EXISTS ix_sessions_pid ON sessions(pid)",
             "CREATE INDEX IF NOT EXISTS ix_tasks_project_col ON tasks(project_id, column_name)",
             "CREATE INDEX IF NOT EXISTS ix_todos_task ON todos(task_id)",
+            // live_sessions 的「已结束仅取最近 100 条」子查询走此索引，避免每次调用全表扫描+排序。
+            "CREATE INDEX IF NOT EXISTS ix_sessions_status_lea ON sessions(status, last_event_at DESC)",
         ];
         for sql in INDEXES {
             if let Err(e) = conn.execute(sql, []) {
@@ -531,19 +534,31 @@ impl Store {
     /// 清 pid 是关键——旧进程已死，留着会被 reaper 当「pid 已死」立即再收尾；清空后 reaper「pid 未知不臆测」
     /// 不动它(见 live_session_liveness 消费方)，等新进程首个 hook 用 set_session_pid 认领真实 pid。
     /// 解决 codex 这类「session_start hook 要到首个 turn 才触发」的 agent：resume 后不必等发消息即显示已连接。
-    /// 命中条件「ended ‖ pid 为空 ‖ pid_dead」：pid 为空即没有任何 hook 认领过、不是真连接，可安全重置(含宽限
-    /// 过期后用户再次点 resume——此时 status 仍是 running 但 pid 空，须刷新 last_event_at 重启宽限)。
-    /// `pid_dead` 由调用方校验「记录的 pid 进程确已死亡」后传入——覆盖「进程刚死、reaper(5s 周期)尚未收尾」
-    /// 的窗口：此时 status 仍是 running 且 pid 非空，若不强制复活，本次 resume 会静默 0 行更新，随后被
-    /// reaper 收尾成 ended、卡片长期显示未连接(codex 要到首条消息 hook 才自愈)。pid 非空且进程存活的
-    /// 会话仍不动，避免误清真连接。
-    pub fn revive_for_resume(&self, session_id: i64, now_ms: i64, pid_dead: bool) -> Result<(), StoreError> {
-        self.conn.execute(
+    /// 命中条件「ended ‖ pid 为空 ‖ pid=已验证死亡的那个 pid」：pid 为空即没有任何 hook 认领过、不是真连接，
+    /// 可安全重置(含宽限过期后用户再次点 resume——此时 status 仍是 running 但 pid 空，须刷新 last_event_at
+    /// 重启宽限)。`dead_pid` 由调用方校验「记录的该 pid 进程确已死亡」后传入——覆盖「进程刚死、reaper(5s 周期)
+    /// 尚未收尾」的窗口：此时 status 仍是 running 且 pid 非空，若不强制复活，本次 resume 会静默 0 行更新，
+    /// 随后被 reaper 收尾成 ended、卡片长期显示未连接(codex 要到首条消息 hook 才自愈)。
+    /// SQL 里比对 `pid=?3` 而非无条件强制：调用方快照与本 UPDATE 之间若新进程 hook 已认领了新的存活 pid，
+    /// 行内 pid 已不等于快照校验过死亡的旧 pid，守卫不命中——「绝不清活连接」的不变量在 DB 层原子闭合，
+    /// 不依赖调用方时序。返回是否真的复活了(命中 0 行 = 会话实为连接中，调用方失败回滚时不得误收尾)。
+    pub fn revive_for_resume(&self, session_id: i64, now_ms: i64, dead_pid: Option<i64>) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
             "UPDATE sessions SET status='running', ended_at=NULL, pid=NULL, last_event_at=?1 \
-             WHERE id=?2 AND (status='ended' OR pid IS NULL OR ?3)",
-            rusqlite::params![now_ms, session_id, pid_dead],
+             WHERE id=?2 AND (status='ended' OR pid IS NULL OR pid=?3)",
+            rusqlite::params![now_ms, session_id, dead_pid],
         )?;
-        Ok(())
+        Ok(n > 0)
+    }
+
+    /// 取会话当前记录的 pid（resume 前校验死活用；不存在的会话报错）。
+    pub fn session_pid(&self, session_id: i64) -> Result<Option<i64>, StoreError> {
+        let r = self.conn.query_row(
+            "SELECT pid FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        Ok(r)
     }
 
     /// 结束会话：状态设为 ended，记录 ended_at。

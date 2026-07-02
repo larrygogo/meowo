@@ -228,6 +228,47 @@ pub struct TranscriptCache {
 /// 缓存条目上限：超出时淘汰最久未访问的条目，防长期运行无界增长。
 const MAX_CACHE_ENTRIES: usize = 256;
 
+/// read_transcript_delta 的结果：analyze 与 analyze_shared 共用的文件 IO 段。
+enum DeltaOutcome {
+    /// 打开/metadata/seek/读取失败：沿用已累积状态（不要用 len=0 当真实长度误判截断）。
+    Unreadable,
+    /// 无新增字节：仅需刷新 mtime。
+    NoChange(Option<std::time::SystemTime>),
+    /// 读到了新增（或需从头重读）的字节。
+    Data { reset: bool, buf: Vec<u8>, mtime: Option<std::time::SystemTime> },
+}
+
+/// 从 offset/prev_mtime 快照出发读取 transcript 的增量字节。纯文件 IO、不触碰缓存，
+/// 供 analyze（持锁调用）与 analyze_shared（锁外调用）共用。
+/// 失效检测：len < offset（截断）或 len == offset 但 mtime 变了（等长重写）→ reset 从头读。
+fn read_transcript_delta(
+    path: &str,
+    offset: u64,
+    prev_mtime: Option<std::time::SystemTime>,
+) -> DeltaOutcome {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return DeltaOutcome::Unreadable;
+    };
+    let (len, mtime) = match f.metadata() {
+        Ok(m) => (m.len(), m.modified().ok()),
+        Err(_) => return DeltaOutcome::Unreadable,
+    };
+    let reset = len < offset || (len == offset && mtime != prev_mtime);
+    if !reset && len == offset {
+        return DeltaOutcome::NoChange(mtime);
+    }
+    let base = if reset { 0 } else { offset };
+    if f.seek(SeekFrom::Start(base)).is_err() {
+        return DeltaOutcome::Unreadable;
+    }
+    let mut buf = Vec::new();
+    if f.read_to_end(&mut buf).is_err() {
+        return DeltaOutcome::Unreadable;
+    }
+    DeltaOutcome::Data { reset, buf, mtime }
+}
+
 impl TranscriptCache {
     pub fn new() -> Self {
         Self::default()
@@ -237,64 +278,17 @@ impl TranscriptCache {
     /// 失效检测用 len + mtime 双重校验：len < 偏移（截断）或 len == 偏移但 mtime 变了
     /// （等长重写）→ 从头重解析。打开/读失败 → 返回当前累积结果。
     /// `spec` 决定新建/重置条目时用哪种 provider 的解析器（claude 即 ClaudeParser）。
+    /// 与 analyze_shared 共用 snapshot/read_transcript_delta/commit 三段（单一事实源），
+    /// 差别仅在本方法独占 &mut self、无并发窗口。
     pub fn analyze(&mut self, spec: &dyn TranscriptSpec, path: &str) -> TranscriptInfo {
-        use std::io::{Read, Seek, SeekFrom};
-        self.tick += 1;
-        // 容量上限：插入新 key 前先淘汰最久未访问的条目。
-        if !self.entries.contains_key(path) && self.entries.len() >= MAX_CACHE_ENTRIES {
-            if let Some(k) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, e)| e.last_used)
-                .map(|(k, _)| k.clone())
-            {
-                self.entries.remove(&k);
+        let (offset, prev_mtime) = self.snapshot(spec, path);
+        match read_transcript_delta(path, offset, prev_mtime) {
+            DeltaOutcome::Unreadable => self.current_info(path),
+            DeltaOutcome::NoChange(mtime) => self.touch_mtime(path, mtime),
+            DeltaOutcome::Data { reset, buf, mtime } => {
+                self.commit(spec, path, offset, reset, &buf, mtime)
             }
         }
-        let tick = self.tick;
-        let entry = self.entries.entry(path.to_string()).or_insert_with(|| CacheEntry {
-            offset: 0,
-            mtime: None,
-            parser: spec.new_parser(),
-            last_used: tick,
-        });
-        entry.last_used = tick;
-
-        let Ok(mut f) = std::fs::File::open(path) else {
-            return entry.parser.to_info();
-        };
-        let (len, mtime) = match f.metadata() {
-            Ok(m) => (m.len(), m.modified().ok()),
-            // metadata 偶发失败（I/O 抖动等）时**沿用已累积状态**，不要用 len=0 当真实长度——
-            // 否则会被下面误判为「截断」而清空已解析的标题/错误，导致瞬时丢失（与 File::open 失败一致处理）。
-            Err(_) => return entry.parser.to_info(),
-        };
-        if len < entry.offset || (len == entry.offset && mtime != entry.mtime) {
-            // 被截断，或等长但 mtime 变了（同长度重写）→ 重头解析。
-            entry.offset = 0;
-            entry.parser = spec.new_parser();
-        }
-        if len == entry.offset {
-            entry.mtime = mtime;
-            return entry.parser.to_info(); // 无新增，直接复用
-        }
-        if f.seek(SeekFrom::Start(entry.offset)).is_err() {
-            return entry.parser.to_info();
-        }
-        let mut buf = Vec::new();
-        if f.read_to_end(&mut buf).is_err() {
-            return entry.parser.to_info();
-        }
-        // 只吃到最后一个换行为止，保证按完整行解析；其后半行（writer 可能正写一半）留到下次。
-        if let Some(nl) = buf.iter().rposition(|&b| b == b'\n') {
-            entry.offset += (nl + 1) as u64;
-            let chunk = String::from_utf8_lossy(&buf[..=nl]);
-            for line in chunk.lines() {
-                entry.parser.fold_line(line);
-            }
-        }
-        entry.mtime = mtime;
-        entry.parser.to_info()
     }
 
     /// 与 `analyze` 等价，但供多线程经 `Mutex` 共享缓存时调用：文件 IO（open/metadata/读新增字节）
@@ -306,37 +300,21 @@ impl TranscriptCache {
         spec: &dyn TranscriptSpec,
         path: &str,
     ) -> TranscriptInfo {
-        use std::io::{Read, Seek, SeekFrom};
         let lock = || cache.lock().unwrap_or_else(|e| e.into_inner());
         // 短临界区 1：确保条目存在，取（已解析偏移, 上次 mtime）快照。
         let (offset, prev_mtime) = lock().snapshot(spec, path);
-
         // 锁外做全部文件 IO。失败时与 analyze 同语义：返回当前累积结果。
-        let Ok(mut f) = std::fs::File::open(path) else {
-            return lock().current_info(path);
-        };
-        let (len, mtime) = match f.metadata() {
-            Ok(m) => (m.len(), m.modified().ok()),
-            Err(_) => return lock().current_info(path),
-        };
-        // 截断，或等长但 mtime 变了（同长度重写）→ 从头重读；否则只读快照偏移之后的新增。
-        let reset = len < offset || (len == offset && mtime != prev_mtime);
-        if !reset && len == offset {
-            return lock().touch_mtime(path, mtime); // 无新增
+        match read_transcript_delta(path, offset, prev_mtime) {
+            DeltaOutcome::Unreadable => lock().current_info(path),
+            DeltaOutcome::NoChange(mtime) => lock().touch_mtime(path, mtime),
+            // 短临界区 2：偏移仍与快照一致才提交；其它线程已推进则弃用本次读取、复用其结果。
+            DeltaOutcome::Data { reset, buf, mtime } => {
+                lock().commit(spec, path, offset, reset, &buf, mtime)
+            }
         }
-        let base = if reset { 0 } else { offset };
-        if f.seek(SeekFrom::Start(base)).is_err() {
-            return lock().current_info(path);
-        }
-        let mut buf = Vec::new();
-        if f.read_to_end(&mut buf).is_err() {
-            return lock().current_info(path);
-        }
-        // 短临界区 2：偏移仍与快照一致才提交；其它线程已推进则弃用本次读取、复用其结果。
-        lock().commit(spec, path, offset, reset, &buf, mtime)
     }
 
-    /// analyze_shared 临界区 1：确保条目存在（含 LRU 淘汰），返回（偏移, mtime）快照。不做文件 IO。
+    /// analyze / analyze_shared 临界区 1：确保条目存在（含 LRU 淘汰），返回（偏移, mtime）快照。不做文件 IO。
     fn snapshot(
         &mut self,
         spec: &dyn TranscriptSpec,
@@ -383,7 +361,7 @@ impl TranscriptCache {
         }
     }
 
-    /// analyze_shared 临界区 2：把锁外读到的字节合并进缓存。仅当条目偏移仍等于快照偏移
+    /// analyze / analyze_shared 临界区 2：把读到的字节合并进缓存。仅当条目偏移仍等于快照偏移
     /// （期间无其它线程推进）时生效；否则弃用本次读取，直接返回已有结果。
     fn commit(
         &mut self,

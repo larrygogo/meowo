@@ -149,17 +149,11 @@ pub fn read_account() -> Option<ClaudeAccountInfo> {
     parse_account(&read_json_file(&claude_json_path()?)?)
 }
 
-/// 原子写回 credentials 文件（临时文件 + rename）。仅非 macOS（macOS 写 Keychain）。
+/// 原子写回 credentials 文件。仅非 macOS（macOS 写 Keychain）。
 #[cfg(not(target_os = "macos"))]
 fn write_credentials_atomic(path: &std::path::Path, value: &serde_json::Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
-        return Err(e.to_string());
-    }
-    Ok(())
+    crate::fsutil::write_atomic(path, &body).map_err(|e| e.to_string())
 }
 
 /// macOS 上 Claude Code 把 OAuth 凭据存在登录 Keychain 的这条通用密码里（不写 .credentials.json）。

@@ -115,16 +115,10 @@ pub fn merge_kimi_credentials(
     out
 }
 
-/// 原子写回凭据文件（temp 文件 + rename，避免半截文件）。
+/// 原子写回凭据文件（避免半截文件）。
 fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
-    std::fs::write(&tmp, &body).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
-        return Err(e.to_string());
-    }
-    Ok(())
+    crate::fsutil::write_atomic(path, &body).map_err(|e| e.to_string())
 }
 
 /// 按需刷新 kimi token（过期才刷 + Mutex 串行化 + 双检 + 原子写回）。

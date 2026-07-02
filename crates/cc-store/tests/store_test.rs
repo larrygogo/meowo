@@ -299,7 +299,7 @@ fn revive_for_resume_revives_ended_and_clears_pid() {
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 5555, 110).unwrap();
     store.end_session(sid, 200).unwrap(); // 断开
-    store.revive_for_resume(sid, 300, false).unwrap();
+    assert!(store.revive_for_resume(sid, 300, None).unwrap()); // 真的复活了
     let live = store.live_sessions().unwrap();
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].session.cc_session_id, "s");
@@ -309,13 +309,13 @@ fn revive_for_resume_revives_ended_and_clears_pid() {
 
 #[test]
 fn revive_for_resume_noop_on_connected_session() {
-    // hook 已认领 pid 的活跃会话(非 ended 且 pid 非空、进程存活即 pid_dead=false)不命中 →
-    // pid 原样保留，避免误清活跃会话。
+    // hook 已认领 pid 的活跃会话(非 ended 且 pid 非空、未验证到死 pid)不命中 →
+    // pid 原样保留且返回 false，避免误清活跃会话/误触发失败回滚。
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 6666, 110).unwrap();
-    store.revive_for_resume(sid, 300, false).unwrap();
+    assert!(!store.revive_for_resume(sid, 300, None).unwrap());
     let live = store.live_sessions().unwrap();
     assert_eq!(live[0].pid, Some(6666));
 }
@@ -327,7 +327,7 @@ fn revive_for_resume_refreshes_pidless_running_session() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap(); // 默认 running、pid 空、last_event_at=100
-    store.revive_for_resume(sid, 500, false).unwrap();
+    assert!(store.revive_for_resume(sid, 500, None).unwrap());
     let live = store.live_sessions().unwrap();
     assert_eq!(live[0].pid, None);
     assert_eq!(live[0].session.last_event_at, 500); // 已刷新 → 宽限重启
@@ -336,17 +336,32 @@ fn revive_for_resume_refreshes_pidless_running_session() {
 #[test]
 fn revive_for_resume_forces_when_pid_confirmed_dead() {
     // 进程刚死、reaper(5s 周期)尚未收尾的窗口内点 resume：status 仍 running 且 pid 非空，
-    // 常规守卫不命中；调用方校验到进程确已死亡后以 pid_dead=true 强制复活，
+    // 常规守卫不命中；调用方校验到该 pid 进程确已死亡后以 dead_pid=Some(旧 pid) 强制复活，
     // 否则本次 resume 静默 0 行更新、随后被 reaper 收尾成 ended，卡片长期显示未连接。
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 5555, 110).unwrap(); // running + pid 非空(进程实际已死)
-    store.revive_for_resume(sid, 300, true).unwrap();
+    assert!(store.revive_for_resume(sid, 300, Some(5555)).unwrap());
     let live = store.live_sessions().unwrap();
     assert_eq!(live[0].pid, None); // 旧死 pid 已清，reaper 不再臆测收尾
     assert_eq!(live[0].session.last_event_at, 300); // 宽限期重启
     assert_ne!(live[0].session.status, "ended");
+}
+
+#[test]
+fn revive_for_resume_stale_dead_pid_does_not_clear_new_live_pid() {
+    // TOCTOU 守卫：调用方快照校验旧 pid(5555) 已死之后、UPDATE 之前，新进程 hook 认领了
+    // 新的存活 pid(7777)——dead_pid=Some(5555) 与行内当前 pid 不等，守卫必须不命中，
+    // 绝不能把刚认领的活 pid 清掉(否则 120s 宽限过期后活会话被 end_orphaned_idle 误收尾)。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
+    store.set_session_pid(sid, 7777, 200).unwrap(); // 新进程已认领新活 pid
+    assert!(!store.revive_for_resume(sid, 300, Some(5555)).unwrap()); // 持旧快照的迟到 UPDATE
+    let live = store.live_sessions().unwrap();
+    assert_eq!(live[0].pid, Some(7777)); // 新活 pid 原样保留
+    assert_eq!(live[0].session.last_event_at, 200); // 宽限未被重启
 }
 
 #[test]

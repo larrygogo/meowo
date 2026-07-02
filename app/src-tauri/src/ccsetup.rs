@@ -150,14 +150,17 @@ pub fn ensure_hooks(settings: &mut Value, reporter_native: &str) -> bool {
     changed
 }
 
-/// 确保 statusLine 包成我们的脚本。`script_invocation` 形如 `bash "C:/Users/.../statusline.sh"`。
-/// 返回值：
-///   - Some(inner)：本次需要（重新）生成脚本，inner 是要内嵌的原 statusLine 命令（无则空串）；
+/// 探测 statusLine 接线状态（只读不改）：
+///   - Some(inner)：尚未指向我们的脚本，需要生成脚本并改写 settings；inner 是要内嵌的原
+///     statusLine 命令（无则空串）；
 ///   - None：已是我们的包装，幂等跳过，不重生成脚本（避免把包装再包一层导致递归）。
 ///
-/// `script_marker` 为我们脚本的实际路径（必出现在 `script_invocation` 里）；用它判定幂等，
-/// 杜绝「把自己的包装再当 inner 捕获」的递归。
-pub fn ensure_statusline(settings: &mut Value, script_invocation: &str, script_marker: &str) -> Option<String> {
+/// 只探测不改写——settings 的实际改写由调用方在**脚本落盘成功之后**执行：先改 settings 再写脚本、
+/// 写失败再回滚的顺序会在回滚代码里反向编码本函数的副作用，脆弱且曾造成「settings 指向不存在的
+/// 脚本、原 statusLine 命令永久丢失」。
+///
+/// `script_marker` 为我们脚本的实际路径；用它判定幂等，杜绝「把自己的包装再当 inner 捕获」的递归。
+pub fn probe_statusline(settings: &Value, script_marker: &str) -> Option<String> {
     let cur = settings
         .get("statusLine")
         .and_then(|s| s.get("command"))
@@ -167,9 +170,7 @@ pub fn ensure_statusline(settings: &mut Value, script_invocation: &str, script_m
             return None; // 已引用我们的脚本 → 幂等，不动（也避免递归）
         }
     }
-    let inner = cur.unwrap_or("").to_string();
-    settings["statusLine"] = json!({ "type": "command", "command": script_invocation });
-    Some(inner)
+    Some(cur.unwrap_or("").to_string())
 }
 
 /// 生成包装脚本内容：读 stdin → 喂 cc-reporter 写库（丢弃其输出）→ 跑原 statusLine（如有）渲染状态栏。
@@ -277,22 +278,15 @@ pub fn apply() {
     let script_path = crate::db_path().with_file_name("statusline.sh");
     let script_bash = to_bash_path(&script_path.to_string_lossy());
     let invocation = format!("bash \"{script_bash}\"");
-    match ensure_statusline(&mut settings, &invocation, &script_bash) {
+    match probe_statusline(&settings, &script_bash) {
         Some(inner) => {
-            // 脚本必须先落盘成功，settings 才允许指向它：写失败（目录不可写/杀软拦截/磁盘满）时
-            // 回滚 statusLine 改动——否则 Claude Code 状态栏会指向不存在的脚本，用户原 statusLine
+            // 顺序关键：脚本先落盘，成功后 settings 才指向它。写失败（目录不可写/杀软拦截/磁盘满）
+            // 时 settings 原样不动——否则 Claude Code 状态栏会指向不存在的脚本，用户原 statusLine
             // 命令（inner）只存在于没写出去的脚本里而永久丢失，且后续启动因幂等判定命中 marker
-            // 而跳过重建、永不自愈。回滚后下次启动整段重试。
+            // 而跳过重建、永不自愈。settings 未动则下次启动整段重试。
             let script = build_script(&to_bash_path(&reporter_native), &inner);
-            if write_statusline_script(&script_path, &script).is_err() {
-                match orig.get("statusLine") {
-                    Some(sl) => settings["statusLine"] = sl.clone(),
-                    None => {
-                        if let Some(o) = settings.as_object_mut() {
-                            o.remove("statusLine");
-                        }
-                    }
-                }
+            if write_statusline_script(&script_path, &script).is_ok() {
+                settings["statusLine"] = json!({ "type": "command", "command": invocation });
             }
         }
         None => {
@@ -384,25 +378,25 @@ mod tests {
     }
 
     #[test]
-    fn ensure_statusline_wraps_existing_and_is_idempotent() {
+    fn probe_statusline_wraps_existing_and_is_idempotent() {
         let mut v = json!({ "statusLine": { "type": "command", "command": "bash -c 'claude-hud'" } });
         let marker = "C:/Users/me/.cc-kanban/statusline.sh";
         let inv = format!("bash \"{marker}\"");
-        let inner = ensure_statusline(&mut v, &inv, marker).expect("应需要生成脚本");
+        let inner = probe_statusline(&v, marker).expect("应需要生成脚本");
         assert_eq!(inner, "bash -c 'claude-hud'"); // 捕获到原命令
-        assert_eq!(v["statusLine"]["command"], inv);
-        // 再跑一次：已引用我们的脚本 → None（幂等，不再重复捕获/递归）
-        assert!(ensure_statusline(&mut v, &inv, marker).is_none());
+        assert_eq!(v["statusLine"]["command"], "bash -c 'claude-hud'"); // 探测不改写
+        // 模拟 apply：脚本落盘成功后才改写 settings。
+        v["statusLine"] = json!({ "type": "command", "command": inv });
+        // 再探测：已引用我们的脚本 → None（幂等，不再重复捕获/递归）
+        assert!(probe_statusline(&v, marker).is_none());
     }
 
     #[test]
-    fn ensure_statusline_handles_absent() {
-        let mut v = json!({});
+    fn probe_statusline_handles_absent() {
+        let v = json!({});
         let marker = "/home/me/.cc-kanban/statusline.sh";
-        let inv = format!("bash \"{marker}\"");
-        let inner = ensure_statusline(&mut v, &inv, marker).expect("无 statusLine 也应设置");
+        let inner = probe_statusline(&v, marker).expect("无 statusLine 也应接线");
         assert_eq!(inner, ""); // 无原命令
-        assert_eq!(v["statusLine"]["command"], inv);
     }
 
     #[test]
@@ -463,13 +457,13 @@ mod tests {
         assert_eq!(v["hooks"]["PermissionRequest"][0]["matcher"], "*");
         // 再跑一次：此时才幂等
         assert!(!ensure_hooks(&mut v, ccr));
-        // statusLine 被包装，捕获到原 claude-hud
+        // statusLine 探测捕获到原 claude-hud;模拟 apply 在脚本落盘成功后改写
         let marker = "C:/Users/larry/.cc-kanban/statusline.sh";
         let inv = format!("bash \"{marker}\"");
-        assert_eq!(ensure_statusline(&mut v, &inv, marker).as_deref(), Some("bash -c 'claude-hud stuff'"));
-        assert_eq!(v["statusLine"]["command"], inv);
-        // 再跑一次幂等：不再重复捕获
-        assert!(ensure_statusline(&mut v, &inv, marker).is_none());
+        assert_eq!(probe_statusline(&v, marker).as_deref(), Some("bash -c 'claude-hud stuff'"));
+        v["statusLine"] = json!({ "type": "command", "command": inv });
+        // 再探测幂等：不再重复捕获
+        assert!(probe_statusline(&v, marker).is_none());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod account;
+mod fsutil;
 #[cfg(target_os = "macos")]
 mod macos;
 mod settings;
@@ -891,60 +892,109 @@ fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     std::path::Path::new(d).is_dir().then(|| d.to_string())
 }
 
-/// 把 resume 命令 argv 拼成交给 `powershell -Command` / `cmd /k` 的单行命令串：含空白的参数加双引号
-/// ——kimi/codex 的可执行是 USERPROFILE 下的绝对路径，用户名含空格（如 C:\Users\First Last\...）时
-/// 裸 join 会在空格处断词、把 `C:\Users\First` 当命令执行。PowerShell 里带引号的命令路径必须以调用
-/// 运算符 `&` 前缀才会被当作命令执行。argv 来自受信的 agent::resume_args（无引号/元字符），只需处理
-/// 空白断词。纯函数便于单测。
+/// 把 resume 命令 argv 拼成交给 `powershell -Command` / `cmd /k` 的单行命令串。
+/// kimi/codex 的可执行是 USERPROFILE 下的绝对路径，用户名可含空格 / $ / ' / % 等合法字符：
+/// - PowerShell：含空白或 $ ` ' 的参数用**单引号字面量**包裹（内嵌单引号翻倍）——双引号内 $ 与反引号
+///   仍会被插值展开（如 C:\Users\a$b 被吞成 C:\Users\a），单引号内一切按字面处理；带引号的命令路径
+///   需以调用运算符 `&` 前缀。
+/// - cmd：含空白的参数加双引号。cmd 没有字面量引用机制，引号内成对的 %VAR% 仍会展开——属 cmd 本身
+///   限制，用户名含 % 的机器请改用 wt/powershell（此处不做 ^ 转义：引号内 ^ 会按字面残留）。
+///
+/// 纯函数便于单测。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn shell_join_for_windows(args: &[String], powershell: bool) -> String {
-    let quoted: Vec<String> = args
-        .iter()
-        .map(|a| {
-            if a.chars().any(char::is_whitespace) {
-                format!("\"{a}\"")
-            } else {
-                a.clone()
-            }
-        })
-        .collect();
-    let joined = quoted.join(" ");
-    if powershell && quoted.first().is_some_and(|f| f.starts_with('"')) {
-        format!("& {joined}")
+    if powershell {
+        let quoted: Vec<String> = args
+            .iter()
+            .map(|a| {
+                if a.chars().any(char::is_whitespace) || a.contains(['$', '`', '\'']) {
+                    format!("'{}'", a.replace('\'', "''"))
+                } else {
+                    a.clone()
+                }
+            })
+            .collect();
+        let joined = quoted.join(" ");
+        if quoted.first().is_some_and(|f| f.starts_with('\'')) {
+            format!("& {joined}")
+        } else {
+            joined
+        }
     } else {
-        joined
+        args.iter()
+            .map(|a| {
+                if a.chars().any(char::is_whitespace) {
+                    format!("\"{a}\"")
+                } else {
+                    a.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
-/// resume 前的乐观复活（须在后台线程调用：进程表快照在 Windows 上有数十 ms 开销）：
-/// 查 sid → 校验记录的旧 pid 是否确已死亡 → 复活（置 running、清 pid、重启宽限期）。
-/// pid 死活校验覆盖「进程刚死、reaper（5s 周期）尚未收尾」的窗口：此时 status 仍 running 且 pid 非空，
-/// 不带强制标志的 revive 会静默 0 行更新，随后被 reaper 收尾、卡片长期显示未连接（codex 要到首条消息
-/// hook 才自愈）。返回 sid 供 spawn 失败时回滚。
-fn revive_before_resume(session_id: &str) -> Option<i64> {
-    let store = open_store(&db_path()).ok()?;
-    let sid = store.find_session_id_pub(session_id).ok().flatten()?;
-    let stored_pid = store
-        .live_session_liveness()
-        .ok()
-        .and_then(|rows| rows.into_iter().find(|(id, _, _)| *id == sid))
-        .and_then(|(_, pid, _)| pid);
-    let pid_dead = match stored_pid {
-        Some(p) if p > 0 => {
-            let sys = System::new_with_specifics(
-                RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-            );
-            !pid_is_agent(&sys, p)
+/// 单 pid 判活（廉价版，resume 前奏专用）：Windows 走 Toolhelp 快照（1-3ms，避免 sysinfo 全进程
+/// OpenProcess 刷新的 30-120ms 拖慢「点下即显示已连接」），Unix 走一次 ps。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn pid_alive_agent_quick(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        snapshot_processes()
+            .get(&(pid as u32))
+            .map(|(_, name)| cc_reporter::agent::is_agent_process(name))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        pid_is_agent_ps(pid)
+    }
+}
+
+/// resume 的跨平台前奏（须在后台线程调用）：乐观复活 → 兜底刷新 → 解析 cwd → 按 provider 取
+/// resume 命令 argv。返回 (真的复活了才是 Some(sid)——供 spawn 失败回滚,绝不回滚未被本次复活的
+/// 真连接会话、resolved_cwd、resume_argv)。
+/// 乐观复活:resume 是看板主动发起的,已知恢复哪个会话——先复活并清旧 pid,卡片即刻显示已连接,
+/// 不必等 hook(尤其 codex 的 session_start hook 要到首个 turn 才触发)。旧 pid 死活经
+/// pid_alive_agent_quick 校验后以 dead_pid 传入,由 store 层 `pid=?` 守卫原子闭合 TOCTOU
+/// (见 revive_for_resume)。emit 兜底刷新,不依赖 db watcher 存活。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn prepare_resume(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    cwd: Option<&str>,
+    provider: &str,
+) -> (Option<i64>, Option<String>, Vec<String>) {
+    let revived = (|| {
+        let store = open_store(&db_path()).ok()?;
+        let sid = store.find_session_id_pub(session_id).ok().flatten()?;
+        let dead_pid = store
+            .session_pid(sid)
+            .ok()
+            .flatten()
+            .filter(|&p| p > 0 && !pid_alive_agent_quick(p));
+        match store.revive_for_resume(sid, now_ms(), dead_pid) {
+            Ok(true) => Some(sid),
+            _ => None,
         }
-        _ => false,
-    };
-    let _ = store.revive_for_resume(sid, now_ms(), pid_dead);
-    Some(sid)
+    })();
+    let _ = app.emit("board-changed", ());
+    // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
+    // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
+    let resolved = cc_store::title::resolve_cwd(cwd, session_id);
+    // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
+    let resume = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(provider)))
+        .resume_args(session_id);
+    (revived, resolved, resume)
 }
 
 /// resume 的终端 spawn 失败时回滚乐观复活（收尾回 ended）：GUI 构建下 stderr 不可见，
 /// 至少让卡片立即回落「已断开」，而不是假显示「已连接」直到 120s 宽限过期。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+/// 只对 prepare_resume 返回 Some(确实复活过)的会话调用——未被本次复活的真连接会话不得误收尾。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn rollback_failed_resume(sid: i64) {
     if let Ok(store) = open_store(&db_path()) {
         let _ = store.end_session(sid, now_ms());
@@ -971,24 +1021,15 @@ fn resume_session(
     #[cfg(target_os = "windows")]
     {
         // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
-        // transcript，复活前的进程表快照也有数十 ms；同步命令跑在主线程，整段挪后台线程，命令立即返回。
+        // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。
         std::thread::spawn(move || {
             use std::os::windows::process::CommandExt;
             use std::process::Command;
             const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
 
-            // 乐观连接：resume 是看板主动发起的，已知恢复哪个会话——先复活并清旧 pid，卡片即刻显示
-            // 已连接，不必等 hook（尤其 codex 的 session_start hook 要到首个 turn 才触发）。
-            // spawn 失败时用返回的 sid 回滚。emit 兜底刷新（不依赖 db watcher 存活）。
-            let sid = revive_before_resume(&session_id);
-            let _ = app.emit("board-changed", ());
-
-            // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
-            // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
-            let resolved_cwd = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+            let (revived, resolved_cwd, resume) =
+                prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
             let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
-            // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
-            let resume = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&provider))).resume_args(&session_id);
             // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
             let eff = match load_settings().resume_terminal.as_str() {
                 "powershell" => "powershell",
@@ -998,7 +1039,8 @@ fn resume_session(
             };
             let spawned = match eff {
                 // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
-                // 命令串经 shell_join_for_windows 加引号：kimi/codex 可执行路径含空格时裸拼会断词。
+                // 命令串经 shell_join_for_windows 引用：kimi/codex 可执行路径含空格时裸拼会断词。
+                // powershell.exe 按 CRT 规则解析自身命令行（\" 还原为字面引号），经 args() 传入即可。
                 "powershell" => {
                     let mut c = Command::new("powershell");
                     c.args(["-NoExit", "-Command", &shell_join_for_windows(&resume, true)]);
@@ -1008,9 +1050,11 @@ fn resume_session(
                     c.creation_flags(CREATE_NEW_CONSOLE).spawn()
                 }
                 // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+                // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
+                // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
                 "cmd" => {
                     let mut c = Command::new("cmd");
-                    c.args(["/k", &shell_join_for_windows(&resume, false)]);
+                    c.raw_arg("/k").raw_arg(shell_join_for_windows(&resume, false));
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
@@ -1038,7 +1082,7 @@ fn resume_session(
                 eprintln!("恢复会话：启动 {eff} 失败：{e}");
                 // 回滚乐观复活并刷新看板：release 构建（windows_subsystem="windows"）下 stderr 无处可看，
                 // 不回滚的话卡片会假显示「已连接」直到 120s 宽限过期，用户毫无反馈。
-                if let Some(sid) = sid {
+                if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
                 let _ = app.emit("board-changed", ());
@@ -1048,21 +1092,26 @@ fn resume_session(
     }
     #[cfg(target_os = "macos")]
     {
-        // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
         // resolve_cwd 读 transcript、osascript 可能等 TCC 授权，整段放后台线程不挡主线程。
+        // resume 命令按 provider 分发（与 Windows 同一事实源），不再硬编码 claude——
+        // 否则 macOS 上恢复 codex/kimi 会话会执行错误命令。
         std::thread::spawn(move || {
-            let _ = revive_before_resume(&session_id);
-            let _ = app.emit("board-changed", ());
-            let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
-            // resume 命令按 provider 分发（与 Windows 同一事实源），不再硬编码 claude——
-            // 否则 macOS 上恢复 codex/kimi 会话会执行错误命令。
-            let resume = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&provider)))
-                .resume_args(&session_id);
-            crate::macos::terminal::resume_session_mac(
+            let (revived, resolved, resume) =
+                prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
+            let ok = crate::macos::terminal::resume_session_mac(
                 resolved.as_deref(),
                 &resume,
                 resume_terminal_kind(),
             );
+            if !ok {
+                // 与 Windows spawn 失败同语义：osascript 失败（TCC 自动化被拒/脚本报错）时回滚
+                // 乐观复活并刷新，卡片立即回落「已断开」而非假连接 120s。
+                eprintln!("恢复会话：osascript 执行失败");
+                if let Some(sid) = revived {
+                    rollback_failed_resume(sid);
+                }
+                let _ = app.emit("board-changed", ());
+            }
         });
         Ok(())
     }
@@ -1257,14 +1306,25 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = sys;
-        let Ok(out) = std::process::Command::new("ps")
-            .args(["-o", "comm=", "-p", &pid.to_string()])
-            .output()
-        else {
-            return false;
-        };
-        cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
+        pid_is_agent_ps(pid)
     }
+}
+
+/// macOS/Unix：单 pid 的 agent 判活（一次 ps 按 comm 校验）。pid_is_agent 的 Unix 分支与
+/// macos::terminal 的 resume 回退守卫共用此单一实现，避免判活口径分叉（进程存活却被判死 →
+/// 回退 resume 对运行中会话 fork 出重复会话）。
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn pid_is_agent_ps(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-o", "comm=", "-p", &pid.to_string()])
+        .output()
+    else {
+        return false;
+    };
+    cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
 }
 
 /// macOS/Unix：一次 `ps -axo pid=,comm=` 批量取「进程名含 claude」的 pid 集合，
@@ -2256,11 +2316,12 @@ mod tests {
         let plain = to_vec(&["claude", "--resume", "ID"]);
         assert_eq!(shell_join_for_windows(&plain, true), "claude --resume ID");
         assert_eq!(shell_join_for_windows(&plain, false), "claude --resume ID");
-        // 可执行绝对路径含空格（kimi）：加引号；PowerShell 需 & 调用运算符，cmd 直接引号即可。
+        // 可执行绝对路径含空格（kimi）：PowerShell 用单引号字面量 + & 调用运算符（双引号内 $/` 会被
+        // 插值展开，单引号内一切按字面），cmd 用双引号。
         let spaced = to_vec(&[r"C:\Users\First Last\.kimi-code\bin\kimi.exe", "-r", "session_x"]);
         assert_eq!(
             shell_join_for_windows(&spaced, true),
-            r#"& "C:\Users\First Last\.kimi-code\bin\kimi.exe" -r session_x"#
+            r"& 'C:\Users\First Last\.kimi-code\bin\kimi.exe' -r session_x"
         );
         assert_eq!(
             shell_join_for_windows(&spaced, false),
@@ -2270,7 +2331,19 @@ mod tests {
         let node = to_vec(&["node", r"C:\Users\First Last\AppData\Roaming\npm\codex.js", "resume", "ID"]);
         assert_eq!(
             shell_join_for_windows(&node, true),
-            r#"node "C:\Users\First Last\AppData\Roaming\npm\codex.js" resume ID"#
+            r"node 'C:\Users\First Last\AppData\Roaming\npm\codex.js' resume ID"
+        );
+        // 用户名含 $（合法字符）：无空格也要单引号包裹，否则 PowerShell 变量插值把路径吞掉。
+        let dollar = to_vec(&[r"C:\Users\a$b\.kimi-code\bin\kimi.exe", "-r", "id"]);
+        assert_eq!(
+            shell_join_for_windows(&dollar, true),
+            r"& 'C:\Users\a$b\.kimi-code\bin\kimi.exe' -r id"
+        );
+        // 路径含单引号（如 O'Brien）：内嵌单引号翻倍。
+        let apos = to_vec(&[r"C:\Users\O'Brien\kimi.exe", "-r", "id"]);
+        assert_eq!(
+            shell_join_for_windows(&apos, true),
+            r"& 'C:\Users\O''Brien\kimi.exe' -r id"
         );
     }
 

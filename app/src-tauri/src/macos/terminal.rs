@@ -46,6 +46,8 @@ fn ancestor_names(pid: i64) -> Vec<String> {
 }
 
 /// 用 stdin 传脚本、argv 传参数地运行 osascript（防注入）。返回 stdout（trim）。
+/// osascript 非零退出（TCC 自动化权限被拒、AppleScript 报错）也算 Err——调用方据此
+/// 判定失败（如 resume 回滚），不能把报错当成功。
 fn run_osascript(script: &str, args: &[&str]) -> std::io::Result<String> {
     let mut child = Command::new("osascript")
         .arg("-") // 从 stdin 读脚本
@@ -63,21 +65,13 @@ fn run_osascript(script: &str, args: &[&str]) -> std::io::Result<String> {
     if let Some(e) = write_err {
         return Err(e);
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// pid 是否仍是存活的 agent 进程（ps 按 comm 校验，与 lib.rs pid_is_agent 的 macOS 分支同口径）。
-fn pid_alive_agent(pid: i64) -> bool {
-    if pid <= 0 {
-        return false;
+    if !out.status.success() {
+        return Err(std::io::Error::other(format!(
+            "osascript 退出码 {:?}",
+            out.status.code()
+        )));
     }
-    let Ok(out) = Command::new("ps")
-        .args(["-o", "comm=", "-p", &pid.to_string()])
-        .output()
-    else {
-        return false;
-    };
-    cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// 尝试切到 claude 进程所在的 Terminal.app/iTerm2 tab。命中返回 true。
@@ -98,29 +92,31 @@ pub fn focus_session_terminal(pid: i64, cwd: Option<&str>, resume_argv: &[String
     if focus_existing_tab(pid) {
         return;
     }
-    if resume_argv.is_empty() || pid_alive_agent(pid) {
+    // 判活走 crate::pid_is_agent_ps（与 reaper/看板同一口径）：口径分叉会让「进程存活却被判死 →
+    // 回退 resume 对运行中会话 fork 出重复会话」复发。
+    if resume_argv.is_empty() || crate::pid_is_agent_ps(pid) {
         return;
     }
-    resume_session_mac(cwd, resume_argv, resume_kind);
+    let _ = resume_session_mac(cwd, resume_argv, resume_kind); // 回退路径无乐观复活，无需回滚
 }
 
 /// 点已断开的卡片（或跳转回退）：按设置在 Terminal.app / iTerm2 新开窗口执行 resume 命令；有 cwd 则先 cd。
 /// `resume_argv` 来自 agent::resume_args（按 provider 分发：claude --resume / kimi -r / codex resume），
-/// 与 Windows 共用同一事实源，不再硬编码 claude。
-pub fn resume_session_mac(cwd: Option<&str>, resume_argv: &[String], kind: TermKind) {
+/// 与 Windows 共用同一事实源，不再硬编码 claude。返回 osascript 是否执行成功（失败时调用方回滚乐观复活）。
+pub fn resume_session_mac(cwd: Option<&str>, resume_argv: &[String], kind: TermKind) -> bool {
     if resume_argv.is_empty() {
-        return;
+        return false;
     }
     let mut args: Vec<&str> = Vec::with_capacity(resume_argv.len() + 1);
     match cwd {
         Some(dir) if !dir.trim().is_empty() => {
             args.push(dir);
             args.extend(resume_argv.iter().map(String::as_str));
-            let _ = run_osascript(resume_script(kind), &args);
+            run_osascript(resume_script(kind), &args).is_ok()
         }
         _ => {
             args.extend(resume_argv.iter().map(String::as_str));
-            let _ = run_osascript(resume_script_cwdless(kind), &args);
+            run_osascript(resume_script_cwdless(kind), &args).is_ok()
         }
     }
 }

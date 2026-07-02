@@ -171,13 +171,8 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    // 原子写（tmp + rename）：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp); // best-effort 清理，避免遗留 .tmp
-        return Err(e.to_string());
-    }
+    // 原子写：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
+    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())?;
     // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
     apply_language(&app, ui_lang(&settings));
     // 通知贴纸窗口实时套用新设置。
