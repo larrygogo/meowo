@@ -197,12 +197,14 @@ fn live_sessions_blocking(
         // resolves_transcript_title。当前只有 claude 有 spec（且 resolves_transcript_title=true），
         // codex/kimi transcript()=None 不进此分支，故零影响。将来若引入「有 spec 但标题走首条
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
+        // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
+        // liveness 线程/本函数互相阻塞在同一把锁上。
         let info = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
             .transcript()
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
                     .and_then(|p| p.to_str().map(str::to_string))
-                    .map(|path| tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(spec, &path))
+                    .map(|path| cc_store::TranscriptCache::analyze_shared(tx_cache, spec, &path))
             });
         if let Some(info) = info {
             if let Some(t) = info.title {
@@ -721,18 +723,25 @@ fn focus_session(
         focus_session_terminal(pid, title, cwd, token, title_based);
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = provider;
     #[cfg(target_os = "macos")]
     {
         let _ = title;
+        let provider_key = cc_store::ProviderKey::parse(provider.as_deref());
         // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
+            // resume 回退命令按 provider 分发（不再硬编码 claude）；是否允许回退由
+            // focus_session_terminal 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
+            let resume_argv = session_id
+                .as_deref()
+                .map(|id| cc_reporter::agent::for_provider(provider_key).resume_args(id))
+                .unwrap_or_default();
             crate::macos::terminal::focus_session_terminal(
                 pid,
                 cwd.as_deref(),
-                session_id.as_deref(),
+                &resume_argv,
                 resume_terminal_kind(),
             );
         });
@@ -882,6 +891,66 @@ fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     std::path::Path::new(d).is_dir().then(|| d.to_string())
 }
 
+/// 把 resume 命令 argv 拼成交给 `powershell -Command` / `cmd /k` 的单行命令串：含空白的参数加双引号
+/// ——kimi/codex 的可执行是 USERPROFILE 下的绝对路径，用户名含空格（如 C:\Users\First Last\...）时
+/// 裸 join 会在空格处断词、把 `C:\Users\First` 当命令执行。PowerShell 里带引号的命令路径必须以调用
+/// 运算符 `&` 前缀才会被当作命令执行。argv 来自受信的 agent::resume_args（无引号/元字符），只需处理
+/// 空白断词。纯函数便于单测。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn shell_join_for_windows(args: &[String], powershell: bool) -> String {
+    let quoted: Vec<String> = args
+        .iter()
+        .map(|a| {
+            if a.chars().any(char::is_whitespace) {
+                format!("\"{a}\"")
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    let joined = quoted.join(" ");
+    if powershell && quoted.first().is_some_and(|f| f.starts_with('"')) {
+        format!("& {joined}")
+    } else {
+        joined
+    }
+}
+
+/// resume 前的乐观复活（须在后台线程调用：进程表快照在 Windows 上有数十 ms 开销）：
+/// 查 sid → 校验记录的旧 pid 是否确已死亡 → 复活（置 running、清 pid、重启宽限期）。
+/// pid 死活校验覆盖「进程刚死、reaper（5s 周期）尚未收尾」的窗口：此时 status 仍 running 且 pid 非空，
+/// 不带强制标志的 revive 会静默 0 行更新，随后被 reaper 收尾、卡片长期显示未连接（codex 要到首条消息
+/// hook 才自愈）。返回 sid 供 spawn 失败时回滚。
+fn revive_before_resume(session_id: &str) -> Option<i64> {
+    let store = open_store(&db_path()).ok()?;
+    let sid = store.find_session_id_pub(session_id).ok().flatten()?;
+    let stored_pid = store
+        .live_session_liveness()
+        .ok()
+        .and_then(|rows| rows.into_iter().find(|(id, _, _)| *id == sid))
+        .and_then(|(_, pid, _)| pid);
+    let pid_dead = match stored_pid {
+        Some(p) if p > 0 => {
+            let sys = System::new_with_specifics(
+                RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+            );
+            !pid_is_agent(&sys, p)
+        }
+        _ => false,
+    };
+    let _ = store.revive_for_resume(sid, now_ms(), pid_dead);
+    Some(sid)
+}
+
+/// resume 的终端 spawn 失败时回滚乐观复活（收尾回 ended）：GUI 构建下 stderr 不可见，
+/// 至少让卡片立即回落「已断开」，而不是假显示「已连接」直到 120s 宽限过期。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn rollback_failed_resume(sid: i64) {
+    if let Ok(store) = open_store(&db_path()) {
+        let _ = store.end_session(sid, now_ms());
+    }
+}
+
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
@@ -890,26 +959,29 @@ fn safe_cwd(cwd: Option<&str>) -> Option<String> {
 /// 安全：`session_id` 经 is_safe_id 校验（仅 `[A-Za-z0-9_-]`，无空格/元字符）；可执行名与参数来自受信的
 /// agent::resume_args（非用户输入）；wt 分支各 argv 独立传入，powershell/cmd 命令串只由这些受信片段拼成，从源头杜绝注入。
 #[tauri::command]
-fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> Result<(), String> {
+fn resume_session(
+    app: tauri::AppHandle,
+    cwd: Option<String>,
+    session_id: String,
+    provider: String,
+) -> Result<(), String> {
     if !is_safe_id(&session_id) {
         return Err("无效 session_id".into());
-    }
-    // 乐观连接：resume 是看板主动发起的，已知恢复哪个会话——立即复活并清旧 pid，卡片即刻显示已连接，
-    // 不必等 hook。尤其 codex 的 session_start hook 要到首个 turn(用户发首条消息)才触发，否则终端开着
-    // 却一直显示未连接。清 pid 后 reaper 不会臆测收尾(见 revive_for_resume)，新进程首个 hook 再认领 pid。
-    if let Ok(store) = open_store(&db_path()) {
-        if let Ok(Some(sid)) = store.find_session_id_pub(&session_id) {
-            let _ = store.revive_for_resume(sid, now_ms());
-        }
     }
     #[cfg(target_os = "windows")]
     {
         // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
-        // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。spawn 失败仅打印日志。
+        // transcript，复活前的进程表快照也有数十 ms；同步命令跑在主线程，整段挪后台线程，命令立即返回。
         std::thread::spawn(move || {
             use std::os::windows::process::CommandExt;
             use std::process::Command;
             const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
+
+            // 乐观连接：resume 是看板主动发起的，已知恢复哪个会话——先复活并清旧 pid，卡片即刻显示
+            // 已连接，不必等 hook（尤其 codex 的 session_start hook 要到首个 turn 才触发）。
+            // spawn 失败时用返回的 sid 回滚。emit 兜底刷新（不依赖 db watcher 存活）。
+            let sid = revive_before_resume(&session_id);
+            let _ = app.emit("board-changed", ());
 
             // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
             // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
@@ -926,9 +998,10 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
             };
             let spawned = match eff {
                 // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
+                // 命令串经 shell_join_for_windows 加引号：kimi/codex 可执行路径含空格时裸拼会断词。
                 "powershell" => {
                     let mut c = Command::new("powershell");
-                    c.args(["-NoExit", "-Command", &resume.join(" ")]);
+                    c.args(["-NoExit", "-Command", &shell_join_for_windows(&resume, true)]);
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
@@ -937,7 +1010,7 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
                 // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
                 "cmd" => {
                     let mut c = Command::new("cmd");
-                    c.args(["/k", &resume.join(" ")]);
+                    c.args(["/k", &shell_join_for_windows(&resume, false)]);
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
@@ -963,20 +1036,31 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
             };
             if let Err(e) = spawned {
                 eprintln!("恢复会话：启动 {eff} 失败：{e}");
+                // 回滚乐观复活并刷新看板：release 构建（windows_subsystem="windows"）下 stderr 无处可看，
+                // 不回滚的话卡片会假显示「已连接」直到 120s 宽限过期，用户毫无反馈。
+                if let Some(sid) = sid {
+                    rollback_failed_resume(sid);
+                }
+                let _ = app.emit("board-changed", ());
             }
         });
         Ok(())
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = &provider; // kimi 仅 Windows，macOS 恢复暂固定 claude；provider 留待未来 macOS 多 agent。
         // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
         // resolve_cwd 读 transcript、osascript 可能等 TCC 授权，整段放后台线程不挡主线程。
         std::thread::spawn(move || {
+            let _ = revive_before_resume(&session_id);
+            let _ = app.emit("board-changed", ());
             let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+            // resume 命令按 provider 分发（与 Windows 同一事实源），不再硬编码 claude——
+            // 否则 macOS 上恢复 codex/kimi 会话会执行错误命令。
+            let resume = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&provider)))
+                .resume_args(&session_id);
             crate::macos::terminal::resume_session_mac(
                 resolved.as_deref(),
-                &session_id,
+                &resume,
                 resume_terminal_kind(),
             );
         });
@@ -984,7 +1068,7 @@ fn resume_session(cwd: Option<String>, session_id: String, provider: String) -> 
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = (cwd, provider);
+        let _ = (app, cwd, provider);
         Err("当前平台不支持".into())
     }
 }
@@ -1055,7 +1139,13 @@ fn set_session_note(
     Ok(())
 }
 
+/// watch 建立失败/监听死亡后的重建间隔。
+const WATCH_RETRY: Duration = Duration::from_secs(5);
+
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
+/// watch 建立失败（全新安装时 ~/.cc-kanban 由 ccsetup/liveness 等并发线程创建，watcher 可能抢先执行
+/// 而目录尚不存在）或监听中途死亡（目录被删、notify 后端出错）都不放弃：先确保目录存在、失败 5s 后
+/// 重建——否则首启一次失败会让 DB 变更监听在整个进程生命周期内静默失效，前端无轮询兜底、看板冻结。
 fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
         .parent()
@@ -1067,47 +1157,82 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "board.db".to_string());
-    std::thread::spawn(move || {
+    std::thread::spawn(move || loop {
+        let _ = std::fs::create_dir_all(&watch_dir);
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
             Ok(w) => w,
-            Err(_) => return,
+            Err(_) => {
+                std::thread::sleep(WATCH_RETRY);
+                continue;
+            }
         };
         if watcher.watch(&watch_dir, RecursiveMode::NonRecursive).is_err() {
-            return;
+            std::thread::sleep(WATCH_RETRY);
+            continue;
         }
-        let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
-            let Ok(ev) = res else { return false };
-            ev.paths.iter().any(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-                    n.strip_prefix(db_name.as_str())
-                        .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
-                })
+        run_db_watch_loop(&app, &rx, &db_name);
+        // 返回即监听已死（通道断开或错误事件）→ 稍后重建 watcher。
+        std::thread::sleep(WATCH_RETRY);
+    });
+}
+
+/// db watcher 的事件循环：trailing debounce（收到相关事件后 drain 到 300ms 静默再 emit——SQLite 提交
+/// 是 db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件），但设 1s 总上限：statusline/hook 以
+/// ~300ms 节奏持续写库、多会话事件流相位交错时可能永无静默间隙，无上限会让 board-changed 饥饿、
+/// 贴纸冻结在旧数据，恰恰是多会话高活跃期最需要刷新的时候。
+/// 返回即表示监听已死（通道断开或收到 notify 错误事件，如目录被删），由调用方重建。
+fn run_db_watch_loop(
+    app: &tauri::AppHandle,
+    rx: &std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
+    db_name: &str,
+) {
+    let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
+        let Ok(ev) = res else { return false };
+        ev.paths.iter().any(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.strip_prefix(db_name)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
             })
-        };
-        // trailing debounce：收到相关事件后 drain 到 300ms 静默再 emit。SQLite 提交是
-        // db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件、让前端停在旧数据。
-        let debounce = Duration::from_millis(300);
+        })
+    };
+    let debounce = Duration::from_millis(300);
+    let max_wait = Duration::from_millis(1000);
+    loop {
+        let Ok(first) = rx.recv() else { return }; // watcher 关闭/内部线程死亡 → 重建
+        if first.is_err() {
+            return; // notify 错误事件（目录被删等）→ 重建
+        }
+        let mut relevant = is_board(&first);
+        let mut broken = false;
+        let deadline = std::time::Instant::now() + max_wait;
         loop {
-            let Ok(first) = rx.recv() else { return }; // watcher 关闭 → 线程退出
-            let mut relevant = is_board(&first);
-            loop {
-                match rx.recv_timeout(debounce) {
-                    Ok(ev) => relevant = relevant || is_board(&ev),
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        if relevant {
-                            let _ = app.emit("board-changed", ());
-                        }
-                        return;
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break; // 事件持续不断也到点先 emit 一次，防饥饿
+            }
+            match rx.recv_timeout(debounce.min(remaining)) {
+                Ok(ev) => {
+                    if ev.is_err() {
+                        broken = true;
+                        break;
                     }
+                    relevant = relevant || is_board(&ev);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    broken = true;
+                    break;
                 }
             }
-            if relevant {
-                let _ = app.emit("board-changed", ());
-            }
         }
-    });
+        if relevant {
+            let _ = app.emit("board-changed", ());
+        }
+        if broken {
+            return;
+        }
+    }
 }
 
 /// pid 对应的进程是否确实是 claude。
@@ -1351,7 +1476,8 @@ fn spawn_liveness_watch(
                                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
                                     .and_then(|p| p.to_str().map(str::to_string))
                                     .map(|path| {
-                                        tx_cache.lock().unwrap_or_else(|e| e.into_inner()).analyze(spec, &path)
+                                        // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
+                                        cc_store::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
                                     })
                             })
                             .unwrap_or_default();
@@ -2100,7 +2226,8 @@ pub fn run() {
 mod tests {
     use super::{
         is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
-        pid_is_agent, session_connected, should_notify, strip_jsonc_comments, tab_match_score, waiting_fingerprint,
+        pid_is_agent, session_connected, shell_join_for_windows, should_notify, strip_jsonc_comments,
+        tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
     use crate::snap::{
@@ -2120,6 +2247,31 @@ mod tests {
         assert_eq!(tray_tooltip_text("zh", 2, 0), "cc-kanban · 2 个运行中");
         assert_eq!(tray_tooltip_text("en", 0, 2), "cc-kanban · 2 waiting");
         assert_eq!(tray_tooltip_text("en", 1, 1), "cc-kanban · 1 waiting · 1 running");
+    }
+
+    #[test]
+    fn shell_join_quotes_spaced_paths_for_powershell_and_cmd() {
+        let to_vec = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // 无空格（claude）：原样拼接，两种 shell 一致。
+        let plain = to_vec(&["claude", "--resume", "ID"]);
+        assert_eq!(shell_join_for_windows(&plain, true), "claude --resume ID");
+        assert_eq!(shell_join_for_windows(&plain, false), "claude --resume ID");
+        // 可执行绝对路径含空格（kimi）：加引号；PowerShell 需 & 调用运算符，cmd 直接引号即可。
+        let spaced = to_vec(&[r"C:\Users\First Last\.kimi-code\bin\kimi.exe", "-r", "session_x"]);
+        assert_eq!(
+            shell_join_for_windows(&spaced, true),
+            r#"& "C:\Users\First Last\.kimi-code\bin\kimi.exe" -r session_x"#
+        );
+        assert_eq!(
+            shell_join_for_windows(&spaced, false),
+            r#""C:\Users\First Last\.kimi-code\bin\kimi.exe" -r session_x"#
+        );
+        // node 包装（codex）：命令名无空格、脚本路径参数有空格 → 只 quote 参数，PowerShell 不需要 &。
+        let node = to_vec(&["node", r"C:\Users\First Last\AppData\Roaming\npm\codex.js", "resume", "ID"]);
+        assert_eq!(
+            shell_join_for_windows(&node, true),
+            r#"node "C:\Users\First Last\AppData\Roaming\npm\codex.js" resume ID"#
+        );
     }
 
     #[test]

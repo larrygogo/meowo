@@ -192,6 +192,14 @@ pub fn build_script(reporter_bash: &str, inner: &str) -> String {
     s
 }
 
+/// 写出 statusline 包装脚本（先建目录）。返回错误供调用方回滚 settings 的 statusLine 改动。
+fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, script)
+}
+
 /// 解析 settings.json 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的
 /// JSON 带 BOM，serde_json 会直接报错，曾导致无感接线静默失败。
 fn parse_settings(text: &str) -> Option<Value> {
@@ -269,12 +277,33 @@ pub fn apply() {
     let script_path = crate::db_path().with_file_name("statusline.sh");
     let script_bash = to_bash_path(&script_path.to_string_lossy());
     let invocation = format!("bash \"{script_bash}\"");
-    if let Some(inner) = ensure_statusline(&mut settings, &invocation, &script_bash) {
-        let script = build_script(&to_bash_path(&reporter_native), &inner);
-        if let Some(parent) = script_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+    match ensure_statusline(&mut settings, &invocation, &script_bash) {
+        Some(inner) => {
+            // 脚本必须先落盘成功，settings 才允许指向它：写失败（目录不可写/杀软拦截/磁盘满）时
+            // 回滚 statusLine 改动——否则 Claude Code 状态栏会指向不存在的脚本，用户原 statusLine
+            // 命令（inner）只存在于没写出去的脚本里而永久丢失，且后续启动因幂等判定命中 marker
+            // 而跳过重建、永不自愈。回滚后下次启动整段重试。
+            let script = build_script(&to_bash_path(&reporter_native), &inner);
+            if write_statusline_script(&script_path, &script).is_err() {
+                match orig.get("statusLine") {
+                    Some(sl) => settings["statusLine"] = sl.clone(),
+                    None => {
+                        if let Some(o) = settings.as_object_mut() {
+                            o.remove("statusLine");
+                        }
+                    }
+                }
+            }
         }
-        let _ = std::fs::write(&script_path, script);
+        None => {
+            // 幂等命中（settings 已指向我们的脚本）但脚本文件缺失：用户删 ~/.cc-kanban 重置数据时
+            // board.db 会被 Store::open 自动重建，本脚本却不会——不补建则状态栏每次渲染报
+            // No such file、Context% 永久断供。原 inner 已无从恢复，退化为自渲染版兜底。
+            if !script_path.exists() {
+                let script = build_script(&to_bash_path(&reporter_native), "");
+                let _ = write_statusline_script(&script_path, &script);
+            }
+        }
     }
 
     if settings == orig {

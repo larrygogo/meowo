@@ -96,14 +96,19 @@ end run"#,
     }
 }
 
-/// 返回新开终端执行 `cd <cwd> && claude --resume <id>` 的 AppleScript（cwd/id 通过 argv 传入，用 quoted form 防注入）。
+/// 返回新开终端执行 `cd <cwd> && <resume 命令>` 的 AppleScript。
+/// argv 约定：item 1 = cwd，item 2..N = resume 命令 argv（来自 agent::resume_args，逐项 quoted form
+/// 拼接防注入）——命令由调用方按 provider 分发（claude/kimi/codex 各异），本脚本不再硬编码 claude，
+/// 使 macOS 与 Windows 共用同一 provider 事实源。
 pub fn resume_script(kind: TermKind) -> &'static str {
     match kind {
         TermKind::ITerm2 => {
             r#"on run argv
   set targetDir to item 1 of argv
-  set sessionId to item 2 of argv
-  set theCmd to "cd " & quoted form of targetDir & " && claude --resume " & quoted form of sessionId
+  set theCmd to "cd " & quoted form of targetDir & " &&"
+  repeat with i from 2 to count of argv
+    set theCmd to theCmd & " " & quoted form of item i of argv
+  end repeat
   tell application "iTerm2"
     activate
     set newWindow to (create window with default profile)
@@ -115,8 +120,10 @@ end run"#
         _ => {
             r#"on run argv
   set targetDir to item 1 of argv
-  set sessionId to item 2 of argv
-  set theCmd to "cd " & quoted form of targetDir & " && claude --resume " & quoted form of sessionId
+  set theCmd to "cd " & quoted form of targetDir & " &&"
+  repeat with i from 2 to count of argv
+    set theCmd to theCmd & " " & quoted form of item i of argv
+  end repeat
   tell application "Terminal"
     activate
     do script theCmd
@@ -126,13 +133,19 @@ end run"#
     }
 }
 
-/// 无 cwd 时的恢复脚本（仅 `claude --resume <id>`，不 cd），镜像 Windows 在 cwd 缺失时不带 -d 的行为。
+/// 无 cwd 时的恢复脚本（argv 全部为 resume 命令 argv，不 cd），镜像 Windows 在 cwd 缺失时不带 -d 的行为。
 pub fn resume_script_cwdless(kind: TermKind) -> &'static str {
     match kind {
         TermKind::ITerm2 => {
             r#"on run argv
-  set sessionId to item 1 of argv
-  set theCmd to "claude --resume " & quoted form of sessionId
+  set theCmd to ""
+  repeat with i from 1 to count of argv
+    if theCmd is "" then
+      set theCmd to quoted form of item i of argv
+    else
+      set theCmd to theCmd & " " & quoted form of item i of argv
+    end if
+  end repeat
   tell application "iTerm2"
     activate
     set newWindow to (create window with default profile)
@@ -142,8 +155,14 @@ end run"#
         }
         _ => {
             r#"on run argv
-  set sessionId to item 1 of argv
-  set theCmd to "claude --resume " & quoted form of sessionId
+  set theCmd to ""
+  repeat with i from 1 to count of argv
+    if theCmd is "" then
+      set theCmd to quoted form of item i of argv
+    else
+      set theCmd to theCmd & " " & quoted form of item i of argv
+    end if
+  end repeat
   tell application "Terminal"
     activate
     do script theCmd
@@ -203,13 +222,20 @@ mod tests {
 
     #[test]
     fn resume_script_uses_argv_and_quoted_form() {
-        let s = resume_script(TermKind::Terminal);
-        assert!(s.contains("on run argv"));
-        assert!(s.contains("quoted form of"));
-        assert!(s.contains("claude --resume"));
-        let c = resume_script_cwdless(TermKind::Terminal);
-        assert!(c.contains("on run argv"));
-        assert!(c.contains("claude --resume"));
-        assert!(!c.contains("cd "));
+        for kind in [TermKind::Terminal, TermKind::ITerm2, TermKind::Other] {
+            // 带 cwd：item 1 是目录，命令 argv 从 item 2 起逐项 quoted form 拼接。
+            let s = resume_script(kind);
+            assert!(s.contains("on run argv"));
+            assert!(s.contains("repeat with i from 2 to count of argv"));
+            assert!(s.contains("quoted form of item i of argv"));
+            // 命令由 agent::resume_args 按 provider 提供，脚本不得再硬编码 claude。
+            assert!(!s.contains("claude"));
+            // 无 cwd：argv 全部是命令 argv，从 item 1 起拼接，且不 cd。
+            let c = resume_script_cwdless(kind);
+            assert!(c.contains("on run argv"));
+            assert!(c.contains("repeat with i from 1 to count of argv"));
+            assert!(!c.contains("claude"));
+            assert!(!c.contains("cd "));
+        }
     }
 }

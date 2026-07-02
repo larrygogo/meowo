@@ -256,9 +256,11 @@ pub(crate) fn open_url(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     // macOS：open 偶发慢（默认浏览器冷启动），放后台线程不挡主线程。
+    // status() 而非 spawn()：spawn 后不 wait，Unix 上 Child 被 drop 不会 reap，
+    // 常驻托盘的本进程会积累 <defunct> 僵尸；已在后台线程，阻塞等待无害。
     #[cfg(target_os = "macos")]
     std::thread::spawn(move || {
-        let _ = std::process::Command::new("open").arg(&url).spawn();
+        let _ = std::process::Command::new("open").arg(&url).status();
     });
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = url;

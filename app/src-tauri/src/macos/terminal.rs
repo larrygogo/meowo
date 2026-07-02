@@ -53,11 +53,31 @@ fn run_osascript(script: &str, args: &[&str]) -> std::io::Result<String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes())?;
-    }
+    // 写失败（osascript 异常秒退致 EPIPE 等）也必须走到下面的 wait——`?` 提前返回会让 child
+    // 无人回收、退出后成僵尸挂在常驻进程名下。先记下错误，wait 完再传播。
+    let write_err = match child.stdin.take() {
+        Some(mut stdin) => stdin.write_all(script.as_bytes()).err(),
+        None => None,
+    };
     let out = child.wait_with_output()?;
+    if let Some(e) = write_err {
+        return Err(e);
+    }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// pid 是否仍是存活的 agent 进程（ps 按 comm 校验，与 lib.rs pid_is_agent 的 macOS 分支同口径）。
+fn pid_alive_agent(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    let Ok(out) = Command::new("ps")
+        .args(["-o", "comm=", "-p", &pid.to_string()])
+        .output()
+    else {
+        return false;
+    };
+    cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
 }
 
 /// 尝试切到 claude 进程所在的 Terminal.app/iTerm2 tab。命中返回 true。
@@ -69,29 +89,38 @@ fn focus_existing_tab(pid: i64) -> bool {
     matches!(run_osascript(script, &[&tty]), Ok(r) if r == "FOUND")
 }
 
-/// 点连接中的卡片：切到该 claude 进程所在的终端 tab；未命中且有 session_id 则按 resume_kind 回退新开终端 resume。
-pub fn focus_session_terminal(
-    pid: i64,
-    cwd: Option<&str>,
-    session_id: Option<&str>,
-    resume_kind: TermKind,
-) {
+/// 点连接中的卡片：切到该 agent 进程所在的终端 tab；未命中时**仅当进程确已死亡**才回退新开终端 resume。
+/// 聚焦失败 ≠ 会话已断开：宿主可能是 VS Code/tmux/WezTerm 等无法脚本聚焦的终端（focus_script=None），
+/// 或自动化权限被拒——进程仍存活时绝不能回退 resume，否则会对运行中的会话 fork 出重复会话、看板多出
+/// 重复卡片（与 Windows 侧「聚焦失败只做窗口级置前、绝不 spawn 新进程」的语义对齐；macOS 无等价的
+/// 窗口级手段，宁可不动作）。`resume_argv` 为空表示调用方不允许 resume 回退（如通知点击）。
+pub fn focus_session_terminal(pid: i64, cwd: Option<&str>, resume_argv: &[String], resume_kind: TermKind) {
     if focus_existing_tab(pid) {
         return;
     }
-    if let Some(id) = session_id {
-        resume_session_mac(cwd, id, resume_kind);
+    if resume_argv.is_empty() || pid_alive_agent(pid) {
+        return;
     }
+    resume_session_mac(cwd, resume_argv, resume_kind);
 }
 
-/// 点已断开的卡片（或跳转回退）：按设置在 Terminal.app / iTerm2 新开窗口 claude --resume；有 cwd 则先 cd。
-pub fn resume_session_mac(cwd: Option<&str>, session_id: &str, kind: TermKind) {
+/// 点已断开的卡片（或跳转回退）：按设置在 Terminal.app / iTerm2 新开窗口执行 resume 命令；有 cwd 则先 cd。
+/// `resume_argv` 来自 agent::resume_args（按 provider 分发：claude --resume / kimi -r / codex resume），
+/// 与 Windows 共用同一事实源，不再硬编码 claude。
+pub fn resume_session_mac(cwd: Option<&str>, resume_argv: &[String], kind: TermKind) {
+    if resume_argv.is_empty() {
+        return;
+    }
+    let mut args: Vec<&str> = Vec::with_capacity(resume_argv.len() + 1);
     match cwd {
         Some(dir) if !dir.trim().is_empty() => {
-            let _ = run_osascript(resume_script(kind), &[dir, session_id]);
+            args.push(dir);
+            args.extend(resume_argv.iter().map(String::as_str));
+            let _ = run_osascript(resume_script(kind), &args);
         }
         _ => {
-            let _ = run_osascript(resume_script_cwdless(kind), &[session_id]);
+            args.extend(resume_argv.iter().map(String::as_str));
+            let _ = run_osascript(resume_script_cwdless(kind), &args);
         }
     }
 }

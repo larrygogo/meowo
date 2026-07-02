@@ -27,12 +27,12 @@ pub fn init(_app: &AppHandle) {
             if let Ok(NotificationResponse::Click) =
                 send_notification(&job.title, None, &job.body, None)
             {
-                // 点通知正文 -> 按 pid->tty 切到该会话所在终端。无 session_id，不会走 resume 回退，
+                // 点通知正文 -> 按 pid->tty 切到该会话所在终端。resume_argv 传空 = 不允许 resume 回退，
                 // resume_kind 仅占位（仍按设置取，保持一致）。
                 crate::macos::terminal::focus_session_terminal(
                     job.pid,
                     None,
-                    None,
+                    &[],
                     crate::resume_terminal_kind(),
                 );
             }
