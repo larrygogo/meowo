@@ -660,22 +660,39 @@ html, body {
 .sdot-on { background: var(--cc-ok-vivid); }
 .sdot-off { background: var(--cc-text-faint); }
 
-/* 归档/取消归档按钮 */
-.stk-arch { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; margin-left: 4px; }
-.stk-arch svg { display: block; }
-.stk-arch:hover { color: var(--cc-accent); }
-.stk-rename { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
-.stk-rename svg { display: block; }
-.stk-rename:hover { color: var(--cc-accent); }
-
-/* 卡片操作按钮组（星标/便签/重命名/归档）：默认收起，hover 卡片才浮现，
-   给标题让出空间、消除每张卡 4 图标的拥挤。星标态有金边、便签有便签块，藏图标不丢信息。 */
-.stk-actions { display: none; align-items: center; gap: 2px; flex: none; }
-.stk-card:hover .stk-actions { display: inline-flex; }
-/* 无 hover 的环境（触屏/手写笔）：hover 永不触发，否则星标/便签/重命名/归档点不到 → 常显兜底 */
-@media (hover: none) {
-  .stk-actions { display: inline-flex; }
+/* 卡片右键菜单：星标/便签/重命名/归档（替代原 hover 图标行）。不透明表面同 .dd-menu
+   （不用半透明 --cc-surface 以免透出卡片内容），fixed 定位由组件钳在窗口内。 */
+.ctx-menu {
+  position: fixed;
+  min-width: 132px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  background: #2e2e2c;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  animation: dd-pop 0.12s ease-out;
 }
+:root[data-theme="light"] .ctx-menu { background: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  color: var(--cc-text);
+  font-size: calc(11.5px * var(--cc-ui));
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.ctx-item:hover { background: var(--cc-surface-hover); }
+.ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
 /* 「打开终端」按钮（按钮模式）：内联在 sub 行末尾的 accent 小图标钮，低调不突兀 */
 .stk-open {
   flex: none;
@@ -689,11 +706,6 @@ html, body {
 .stk-open:hover { background: var(--cc-accent); color: #fff; } /* hover 填充 accent，清晰可点 */
 .stk-open:active { transform: translateY(1px); }              /* 按下微沉 */
 
-/* 会话星标按钮：未星标 faint、hover 转金色；已星标常显金色填充 */
-.stk-star { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
-.stk-star svg { display: block; }
-.stk-star:hover { color: var(--cc-warn-vivid); }
-.stk-star-on { color: var(--cc-warn-vivid); } /* 鲜亮金，浅色模式下不发黑 */
 /* 星标卡片：边框/投影与普通卡完全一致(不再特殊描边)，仅在右上角嵌一个金色折角作标识。
    稍稍内移(top/right 各 2px)，避免压住卡片右上角的顶部高光；右上小圆角、内侧大圆弧。 */
 .stk-card.is-star::after {
@@ -709,19 +721,6 @@ html, body {
   pointer-events: none; /* 不挡卡片点击 */
 }
 
-/* 便签按钮：未加便签 faint、hover 转琥珀；已有便签常显琥珀 */
-.stk-noteb { flex: none; display: inline-flex; align-items: center; color: var(--cc-text-faint); cursor: pointer; padding: 0 2px; }
-.stk-noteb svg { display: block; }
-.stk-noteb:hover { color: var(--cc-warn); }
-.stk-noteb-on { color: var(--cc-warn); }
-/* 卡片操作按钮组统一:四颗都收成等大的小圆角图标钮(覆盖各自 padding/margin),hover 出淡背景，
-   像紧凑工具栏，不再是裸图标挤一排。语义色(星标金/便签金/重命名·归档 accent)各自保留。 */
-.stk-star, .stk-noteb, .stk-rename, .stk-arch {
-  width: calc(22px * var(--cc-ui)); height: calc(22px * var(--cc-ui));
-  padding: 0; margin: 0; justify-content: center; border-radius: 6px;
-  transition: background 0.12s, color 0.12s;
-}
-.stk-star:hover, .stk-noteb:hover, .stk-rename:hover, .stk-arch:hover { background: var(--cc-surface-hover); }
 /* 会话便签：用户手写备忘，常显。琥珀底区别于 AI 预览/活动行，点击进入编辑。 */
 .stk-note {
   display: flex; align-items: flex-start; gap: 6px;

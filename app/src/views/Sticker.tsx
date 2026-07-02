@@ -2,6 +2,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -215,6 +216,86 @@ function RunBadge({
       {/* 中心实心圆 + 百分比 */}
       <span className="run-core">{pct != null ? `${pct}%` : ""}</span>
     </span>
+  );
+}
+
+// 卡片右键菜单：星标/便签/重命名/归档收拢于此（替代原 hover 图标行，卡片标题行更干净）。
+// fixed 定位 + useLayoutEffect 钳位：贴纸窗口小，菜单贴边时向内收、不被窗口边缘裁掉。
+// 关闭时机：点菜单外任意处 / Escape / 窗口失焦 / 任一菜单项执行后。
+function CardContextMenu({
+  x,
+  y,
+  starred,
+  hasNote,
+  archived,
+  onStar,
+  onNote,
+  onRename,
+  onArchive,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  starred: boolean;
+  hasNote: boolean;
+  archived: boolean;
+  onStar: () => void;
+  onNote: () => void;
+  onRename: () => void;
+  onArchive: () => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const pad = 4;
+    setPos({
+      left: Math.max(pad, Math.min(x, window.innerWidth - el.offsetWidth - pad)),
+      top: Math.max(pad, Math.min(y, window.innerHeight - el.offsetHeight - pad)),
+    });
+  }, [x, y]);
+  useEffect(() => {
+    const down = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", down);
+    document.addEventListener("keydown", key);
+    window.addEventListener("blur", onClose);
+    return () => {
+      document.removeEventListener("mousedown", down);
+      document.removeEventListener("keydown", key);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+  const act = (fn: () => void) => () => {
+    fn();
+    onClose();
+  };
+  return (
+    <div ref={ref} className="ctx-menu" role="menu" style={pos} onClick={(e) => e.stopPropagation()}>
+      <button type="button" role="menuitem" className="ctx-item" onClick={act(onStar)}>
+        <StarIcon starred={starred} />
+        {starred ? t.sticker.unstar : t.sticker.star}
+      </button>
+      <button type="button" role="menuitem" className="ctx-item" onClick={act(onNote)}>
+        <NoteIcon />
+        {hasNote ? t.sticker.noteEdit : t.sticker.noteAdd}
+      </button>
+      <button type="button" role="menuitem" className="ctx-item" onClick={act(onRename)}>
+        <PencilIcon />
+        {t.sticker.renameTitle}
+      </button>
+      <button type="button" role="menuitem" className="ctx-item" onClick={act(onArchive)}>
+        <ArchiveIcon archived={archived} />
+        {archived ? t.sticker.unarchive : t.sticker.archive}
+      </button>
+    </div>
   );
 }
 
@@ -522,6 +603,11 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     setEditingId(null);
   };
 
+  // 卡片右键菜单：记录目标会话 id 与打开坐标。item 每次渲染按 id 从 data 现查——
+  // 数据刷新后菜单内容(星标/便签/归档态)保持最新,会话消失则菜单自然不渲染。
+  const [ctxMenu, setCtxMenu] = useState<{ sid: number; x: number; y: number } | null>(null);
+  const ctxItem = ctxMenu ? data.find((l) => l.session.id === ctxMenu.sid) ?? null : null;
+
   // 便签编辑：notingId 为正在编辑便签的会话 id，noteDraft 为输入内容。与重命名互斥（同卡只开一个）。
   const [notingId, setNotingId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
@@ -781,6 +867,10 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                   if (buttonMode) return;
                   openTerminal(l);
                 }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu({ sid: l.session.id, x: e.clientX, y: e.clientY });
+                }}
                 style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
                 data-tip={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
               >
@@ -820,34 +910,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                             </span>
                           )}
                           <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
-                          {/* 操作按钮默认收起，hover 卡片才浮现，避免每张卡 4 个图标拥挤。
-                              星标态由卡片金边、便签由便签块表达，静止时藏图标不丢信息。 */}
-                          <span className="stk-actions">
-                            <span
-                              className={"stk-star" + (isStarred(l) ? " stk-star-on" : "")}
-                              data-tip={isStarred(l) ? t.sticker.unstar : t.sticker.star}
-                              aria-label={isStarred(l) ? t.sticker.unstar : t.sticker.star}
-                              onClick={(e) => { e.stopPropagation(); toggleStar(l.session.cc_session_id); }}
-                            ><StarIcon starred={isStarred(l)} /></span>
-                            <span
-                              className={"stk-noteb" + (l.note ? " stk-noteb-on" : "")}
-                              data-tip={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
-                              aria-label={l.note ? t.sticker.noteEdit : t.sticker.noteAdd}
-                              onClick={(e) => { e.stopPropagation(); startNote(l); }}
-                            ><NoteIcon /></span>
-                            <span
-                              className="stk-rename"
-                              data-tip={t.sticker.renameTitle}
-                              aria-label={t.sticker.renameTitle}
-                              onClick={(e) => { e.stopPropagation(); startRename(l); }}
-                            ><PencilIcon /></span>
-                            <span
-                              className="stk-arch"
-                              data-tip={l.archived ? t.sticker.unarchive : t.sticker.archive}
-                              aria-label={l.archived ? t.sticker.unarchive : t.sticker.archive}
-                              onClick={(e) => { e.stopPropagation(); invoke("set_archived", { sessionId: l.session.id, archived: !l.archived }).catch(() => {}); }}
-                            ><ArchiveIcon archived={l.archived} /></span>
-                          </span>
+                          {/* 星标/便签/重命名/归档操作收进右键菜单（CardContextMenu），标题行不再挤 hover 图标。
+                              星标态由卡片金角、便签由便签块表达，收起入口不丢信息。 */}
                         </>
                       )}
                     </div>
@@ -936,6 +1000,22 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           className={"stk-sb" + (sbDrag ? " is-drag" : "")}
           style={{ top: sb.top, height: sb.height }}
           onMouseDown={onSbDown}
+        />
+      )}
+      {ctxMenu && ctxItem && (
+        <CardContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          starred={isStarred(ctxItem)}
+          hasNote={!!ctxItem.note}
+          archived={ctxItem.archived}
+          onStar={() => toggleStar(ctxItem.session.cc_session_id)}
+          onNote={() => startNote(ctxItem)}
+          onRename={() => startRename(ctxItem)}
+          onArchive={() =>
+            invoke("set_archived", { sessionId: ctxItem.session.id, archived: !ctxItem.archived }).catch(() => {})
+          }
+          onClose={() => setCtxMenu(null)}
         />
       )}
       {/* 底栏:用量(左) + 搜索/设置/固定(右)聚为一处;搜索激活时整条变输入框。 */}

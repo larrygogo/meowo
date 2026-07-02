@@ -49,12 +49,35 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-sub")).toBeNull();
   });
 
-  it("点击星标切换状态并持久化到 localStorage", () => {
+  it("右键菜单星标切换状态并持久化到 localStorage,操作后菜单关闭", () => {
     localStorage.removeItem("cc-kanban-starred");
     const { container } = render(<Sticker data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
-    fireEvent.click(screen.getByLabelText(zh.sticker.star));
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.star));
     expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
     expect(JSON.parse(localStorage.getItem("cc-kanban-starred") ?? "[]")).toContain("star-me");
+    expect(document.querySelector(".ctx-menu")).toBeNull(); // 任一菜单项执行后菜单关闭
+    localStorage.removeItem("cc-kanban-starred");
+  });
+
+  it("右键打开菜单:含星标/便签/重命名/归档四项,Escape 关闭", () => {
+    const { container } = render(<Sticker data={[mk()]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    const menu = document.querySelector(".ctx-menu")!;
+    expect(menu).toBeTruthy();
+    const labels = Array.from(menu.querySelectorAll(".ctx-item")).map((el) => el.textContent);
+    expect(labels).toEqual([zh.sticker.star, zh.sticker.noteAdd, zh.sticker.renameTitle, zh.sticker.archive]);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.querySelector(".ctx-menu")).toBeNull();
+  });
+
+  it("已星标/有便签/已归档的会话,菜单项显示反向文案", () => {
+    localStorage.setItem("cc-kanban-tab", "archived");
+    localStorage.setItem("cc-kanban-starred", JSON.stringify(["s"]));
+    const { container } = render(<Sticker data={[mk({ archived: true, note: "有便签" })]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    const labels = Array.from(document.querySelectorAll(".ctx-item")).map((el) => el.textContent);
+    expect(labels).toEqual([zh.sticker.unstar, zh.sticker.noteEdit, zh.sticker.renameTitle, zh.sticker.unarchive]);
     localStorage.removeItem("cc-kanban-starred");
   });
 
@@ -90,25 +113,27 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-note")).toBeTruthy();
   });
 
-  it("无便签时点击便签按钮打开编辑框", () => {
+  it("无便签时经右键菜单打开编辑框", () => {
     const { container } = render(<Sticker data={[mk({ note: null })]} />);
     expect(container.querySelector(".stk-note-edit")).toBeNull();
-    fireEvent.click(screen.getByLabelText(zh.sticker.noteAdd));
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.noteAdd));
     const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.placeholder).toBe(zh.sticker.notePlaceholder);
   });
 
-  it("编辑已有便签时预填原文", () => {
+  it("点击便签块进入编辑并预填原文", () => {
     const { container } = render(<Sticker data={[mk({ note: "旧便签" })]} />);
-    fireEvent.click(container.querySelector(".stk-noteb")!);
+    fireEvent.click(container.querySelector(".stk-note")!);
     const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
     expect(input.value).toBe("旧便签");
   });
 
   it("便签编辑框有保存/取消按钮，点取消关闭且保留原文", () => {
     const { container } = render(<Sticker data={[mk({ note: "保留我" })]} />);
-    fireEvent.click(container.querySelector(".stk-noteb")!);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.noteEdit));
     expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
     fireEvent.click(screen.getByText(zh.sticker.noteCancel));
     expect(container.querySelector(".stk-note-edit")).toBeNull();
@@ -117,7 +142,8 @@ describe("Sticker", () => {
 
   it("点便签保存按钮关闭编辑框", () => {
     const { container } = render(<Sticker data={[mk({ note: null })]} />);
-    fireEvent.click(screen.getByLabelText(zh.sticker.noteAdd));
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.noteAdd));
     fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
     fireEvent.click(screen.getByText(zh.sticker.noteSave));
     expect(container.querySelector(".stk-note-edit")).toBeNull();
@@ -125,7 +151,8 @@ describe("Sticker", () => {
 
   it("重命名编辑器有保存/取消按钮，点取消关闭", () => {
     const { container } = render(<Sticker data={[mk()]} />);
-    fireEvent.click(container.querySelector(".stk-rename")!);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.renameTitle));
     expect(container.querySelector(".stk-edit-row")).toBeTruthy();
     expect(screen.getByText(zh.sticker.noteSave)).toBeTruthy();
     fireEvent.click(screen.getByText(zh.sticker.noteCancel));
@@ -136,7 +163,8 @@ describe("Sticker", () => {
     // 守卫成立的可观察证据：点击卡片后编辑器关闭（setEditingId(null) 只在早返回分支执行）；
     // 若无守卫，onClick 会走 focus_session 分支、editingId 不变、编辑器仍在。
     const { container } = render(<Sticker data={[mk({ connected: true })]} />);
-    fireEvent.click(container.querySelector(".stk-rename")!);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.renameTitle));
     expect(container.querySelector(".stk-edit")).toBeTruthy();
     fireEvent.click(container.querySelector(".stk-card")!);
     expect(container.querySelector(".stk-edit")).toBeNull();
