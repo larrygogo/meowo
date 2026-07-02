@@ -1313,6 +1313,9 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
 /// macOS/Unix：单 pid 的 agent 判活（一次 ps 按 comm 校验）。pid_is_agent 的 Unix 分支与
 /// macos::terminal 的 resume 回退守卫共用此单一实现，避免判活口径分叉（进程存活却被判死 →
 /// 回退 resume 对运行中会话 fork 出重复会话）。
+/// ps 自身 spawn 失败（瞬时故障）时保守地当「存活/未知」——调用方把 false 当「确认已死」：
+/// reaper 会误收尾、聚焦回退会对运行中会话 fork 重复 resume、resume 前奏会把活 pid 当死 pid
+/// 传给 revive。只有 ps 成功返回且 comm 不是 agent（含 pid 不存在时的空输出）才判死。
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn pid_is_agent_ps(pid: i64) -> bool {
     if pid <= 0 {
@@ -1322,7 +1325,7 @@ pub(crate) fn pid_is_agent_ps(pid: i64) -> bool {
         .args(["-o", "comm=", "-p", &pid.to_string()])
         .output()
     else {
-        return false;
+        return true; // 查不了 ≠ 已死：宁可暂当存活，等下一轮能查时再判
     };
     cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
 }
