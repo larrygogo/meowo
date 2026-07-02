@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLiveSessions, LiveSession } from "./api";
@@ -103,8 +103,12 @@ export function App() {
   const settleRef = useRef<number | null>(null);
   const preResizeEdgeRef = useRef<Edge | null>(null); // 拖角缩放前的吸附边，缩放结束后据此恢复
 
+  // 请求序号守卫：并发刷新时旧响应可能晚于新响应返回，仅当自己仍是最新一次请求才写入。
+  const refreshSeqRef = useRef(0);
   const refresh = useCallback(async () => {
-    setLive((await getLiveSessions()) as Item[]);
+    const seq = ++refreshSeqRef.current;
+    const items = (await getLiveSessions()) as Item[];
+    if (seq === refreshSeqRef.current) setLive(items);
   }, []);
 
   // 平台探测已提前到 main.tsx 渲染前完成，这里只负责首次拉取。
@@ -120,14 +124,23 @@ export function App() {
   }, [refresh]);
 
   // 安装的单一来源：关于窗口的更新按钮发 trigger-update，统一由主窗处理。
-  // 有新版则安装，否则重新检查；先把主窗显示出来好看进度。
+  // 先把主窗显示出来好看进度；下载中忽略重复请求；已有新版直接安装；
+  // 否则先重检，查到新版接着安装，仍无新版(latest/error)则回执 update-failed 让关于窗复位按钮，
+  // 避免关于窗「更新中…」永久卡死。
   useEffect(() => {
-    const handle = () => {
+    const handle = async () => {
       getCurrentWindow().show().catch(() => {});
-      if (upStatusRef.current === "available") void applyUpdate();
-      else if (upStatusRef.current !== "downloading") void recheck();
+      const cur = upStatusRef.current;
+      if (cur === "downloading") return;
+      if (cur === "available") {
+        void applyUpdate();
+        return;
+      }
+      const next = await recheck();
+      if (next === "available") void applyUpdate();
+      else emit("update-failed").catch(() => {});
     };
-    const un = listen("trigger-update", handle);
+    const un = listen("trigger-update", () => void handle());
     return () => {
       un.then((f) => f());
     };

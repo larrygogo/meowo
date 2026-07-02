@@ -18,7 +18,8 @@ export function useUpdate() {
   const [progress, setProgress] = useState<number | null>(0);
   const handleRef = useRef<UpdateHandle | null>(null);
 
-  const recheck = useCallback(async () => {
+  // 返回本次检查的结果状态：跨窗口 trigger-update 需据此决定是否接着安装（不能依赖异步 state）。
+  const recheck = useCallback(async (): Promise<UpdateStatus> => {
     setStatus("checking");
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
@@ -27,11 +28,13 @@ export function useUpdate() {
         handleRef.current = up as unknown as UpdateHandle;
         setVersion(up.version);
         setStatus("available");
-      } else {
-        setStatus("latest");
+        return "available";
       }
+      setStatus("latest");
+      return "latest";
     } catch {
       setStatus("error");
+      return "error";
     }
   }, []);
 

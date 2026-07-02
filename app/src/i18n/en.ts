@@ -128,6 +128,7 @@ export const en: Dict = {
     quota7d: "7-day quota",
     quotaOpus: "Opus · 7 days",
     extraUsage: "Extra usage enabled",
+    credits: (n) => `Credits: ${n}`,
     refreshFailed: "Refresh failed; showing cached values",
     usageUnavailable: "Usage unavailable. Make sure you're signed in or check your network",
     usageUnsupported: "Usage is not available for this account",

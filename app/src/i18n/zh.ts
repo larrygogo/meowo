@@ -128,6 +128,7 @@ export const zh = {
     quota7d: "7 天配额",
     quotaOpus: "Opus · 7 天",
     extraUsage: "已开启超额用量",
+    credits: (n: string) => `额度余额：${n}`,
     refreshFailed: "最新数据刷新失败，显示的是缓存值",
     usageUnavailable: "用量暂不可用，请确认已登录或检查网络",
     usageUnsupported: "当前账号不支持用量查询",

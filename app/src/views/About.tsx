@@ -171,6 +171,14 @@ function laneLabel(kind: string, t: Dict): string {
   }
 }
 
+// note 是后端机器哨兵串（claude 发 "extra_usage_enabled"、codex 发 "credits:45.5"），
+// 映射为本地化文案；未知格式原样显示以向后兼容。
+function renderNote(note: string, t: Dict): string {
+  if (note === "extra_usage_enabled") return t.account.extraUsage;
+  if (note.startsWith("credits:")) return t.account.credits(note.slice("credits:".length));
+  return note;
+}
+
 function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
   const t = useT();
   if (lane.used_pct != null) {
@@ -253,7 +261,7 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, on
             {usage.lanes.map((lane, i) => (
               <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
             ))}
-            {usage.note && <div className="usage-extra">{usage.note}</div>}
+            {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
             {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
           </>
         ) : !payload.usage_supported || err === "unsupported" ? (

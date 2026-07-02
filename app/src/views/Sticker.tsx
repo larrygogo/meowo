@@ -352,7 +352,7 @@ function UsageScreen({
   const sevenDayLane = usage?.lanes.find((l) => l.kind === "seven_day" || l.kind === "weekly") ?? null;
 
   return (
-    <div className="stk-uscreen" role="group" aria-label="用量">
+    <div className="stk-uscreen" role="group" aria-label={t.account.quota}>
       {/* 品牌图标标签行（每个 provider 一个，点选切换） */}
       <div className="stk-utabs">
         {activeProviders.map((p) => {
@@ -652,6 +652,9 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(syncSb);
     ro.observe(el);
+    // 内容子元素高度变化(打开便签/重命名编辑器、内容行增减)时 scrollHeight 变而容器自身尺寸不变，
+    // 仅观察容器不会触发重算——逐张卡片一并观察，任一高度变化即重算 thumb。
+    for (const child of Array.from(el.children)) ro.observe(child);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown.length]);
@@ -772,6 +775,9 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                             placeholder={t.sticker.renamePlaceholder}
                             onChange={(e) => setDraft(e.target.value)}
                             onKeyDown={(e) => {
+                              // IME 组字中的 Enter 不提交（WKWebView 上上屏 Enter 派发 keyCode 229，
+                              // compositionend 后 isComposing 可能已 false，故两条件都判）。
+                              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                               if (e.key === "Enter") submitRename(l);
                               else if (e.key === "Escape") setEditingId(null);
                             }}
@@ -854,6 +860,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                       placeholder={t.sticker.notePlaceholder}
                       onChange={(e) => setNoteDraft(e.target.value)}
                       onKeyDown={(e) => {
+                        // IME 组字中的 Enter 不提交（同重命名输入框的守卫）。
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                         if (e.key === "Enter") submitNote(l);
                         else if (e.key === "Escape") setNotingId(null);
                       }}
