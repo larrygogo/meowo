@@ -502,6 +502,13 @@ html, body {
   will-change: transform;
   animation: run-spin 1.5s linear infinite;
 }
+/* 待交互/待审批：AI 已停下等用户操作，边框亮线不再流动（流动是「正在干活」的信号）——
+   改为静态实心圆环，颜色与中心百分比保持不变，一眼区分「在跑」和「等你」。 */
+.run-badge--waiting .run-sweep,
+.run-badge--pending .run-sweep {
+  animation: none;
+  background: var(--bc);
+}
 @keyframes run-spin {
   to {
     transform: rotate(360deg);
