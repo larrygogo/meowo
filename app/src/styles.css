@@ -885,6 +885,101 @@ html, body {
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* ===== 软件更新窗口（label "updater"）：检查/下载/安装的唯一所有者。
+   两种形态：紧凑（检查中/已最新/失败，内容垂直居中）与增高（发现新版，更新说明滚动区吃掉
+   剩余高度），窗口高度由前端 setSize 随形态切换。 ===== */
+.updater {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #262624;
+  color: var(--cc-text);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+:root[data-theme="light"] .updater { background: #faf9f5; }
+/* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings 的处理）。 */
+:root.platform-macos .updater { border-radius: 12px; }
+.up-bar { flex: none; height: 32px; display: flex; align-items: center; justify-content: flex-end; padding: 0 8px; gap: 6px; }
+/* dev 专用 mock 切换钮（生产构建不渲染）：靠左低调小字 */
+.up-devmock {
+  margin-right: auto;
+  border: none;
+  background: transparent;
+  color: var(--cc-text-faint);
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.up-devmock:hover { color: var(--cc-text); }
+.up-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 24px 22px;
+}
+/* 紧凑态（无更新说明）：内容整体垂直居中，不再顶着上沿留一屁股空白 */
+.up-body.up-compact { justify-content: center; padding-top: 0; padding-bottom: 30px; }
+/* 头部：图标 + 名称/版本横排，信息密度高于竖排大图标 */
+.up-head { display: flex; align-items: center; gap: 12px; }
+.up-logo { border-radius: 11px; }
+.up-head-text { text-align: left; }
+.up-name { font-size: 15px; font-weight: 600; line-height: 1.3; }
+.up-cur { font-size: 11.5px; color: var(--cc-text-dim); margin-top: 2px; }
+.up-status { margin-top: 12px; font-size: 12.5px; color: var(--cc-text-dim); }
+.up-status.up-err { color: var(--cc-err, #e5534b); }
+.up-status.up-new { color: var(--cc-text); font-weight: 600; }
+.up-body .sbtn { margin-top: 8px; min-width: 108px; }
+/* 更新说明：滚动区吃掉剩余高度，按钮/进度恒在底部可见 */
+.up-notes {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  text-align: left;
+}
+.up-notes-title { flex: none; font-size: 11px; color: var(--cc-text-faint); margin-bottom: 4px; }
+.up-notes-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--cc-text-dim);
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* 下载区：进度条 + 百分比 + 重启提示 */
+.up-dl { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 8px; }
+.up-prog {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-border);
+  overflow: hidden;
+}
+.up-prog-fill { height: 100%; background: var(--cc-accent); border-radius: 3px; transition: width 0.2s ease; }
+/* 总大小未知：不确定进度的呼吸动画 */
+.up-prog-indet .up-prog-fill { animation: up-indet 1.2s ease-in-out infinite; }
+@keyframes up-indet { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.up-status-dl { font-size: 11.5px; color: var(--cc-text-dim); }
+.up-hint { font-size: 10.5px; color: var(--cc-text-faint); }
 /* macOS：无边框窗口不会被系统自动圆角（Windows 由 DWM 自动处理）。配合 Rust 端把 about 窗口设为
    transparent，让窗角透明、由这里的 border-radius 呈现圆角卡片（系统按不透明内容自动绘制阴影）。 */
 :root.platform-macos .settings {

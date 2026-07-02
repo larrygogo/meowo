@@ -1868,6 +1868,60 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     }
 }
 
+/// 前端调用：打开软件更新窗口（贴纸更新红点 / 设置页「更新到 vX」按钮）。
+/// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
+#[tauri::command]
+fn open_update_window(app: tauri::AppHandle) {
+    std::thread::spawn(move || open_update_window_impl(&app));
+}
+
+/// 打开（或聚焦）更新窗口。label 为 "updater"（main.tsx 按此 label 路由到更新页）。
+/// 更新窗口是检查/下载/安装的唯一所有者——主窗与设置窗只负责把它打开，
+/// 不再有跨窗口 trigger-update/update-failed 事件协议。
+fn open_update_window_impl(app: &tauri::AppHandle) {
+    // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
+    if let Some(w) = app.get_webview_window("updater") {
+        let _ = w.set_focus();
+        return;
+    }
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "updater",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title(tr(ui_lang(&load_settings()), "window.updater"))
+    // 紧凑初始高度（检查中/已最新/失败态）；发现新版带更新说明时由前端 setSize 增高。
+    .inner_size(400.0, 252.0)
+    .min_inner_size(400.0, 252.0)
+    .resizable(false)
+    .decorations(false)
+    .center();
+    // macOS：无边框窗口不自动圆角，设透明由前端 .updater 的 border-radius 呈现（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    match builder.build() {
+        Ok(_update_window) => {
+            // macOS：更新窗口关闭后切回 Accessory，重新隐藏 Dock 图标（同设置窗口）。
+            #[cfg(target_os = "macos")]
+            {
+                let app_handle = app.clone();
+                _update_window.on_window_event(move |e| {
+                    if matches!(
+                        e,
+                        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                    ) {
+                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                    }
+                });
+            }
+        }
+        Err(e) => eprintln!("创建更新窗口失败: {e}"),
+    }
+}
+
 /// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/置顶/聚焦。
 /// 折叠态的「展开 + 还原正常尺寸」由前端在调用本命令前完成（snap_restore），故这里只按当前尺寸居中。
 #[tauri::command]
@@ -1928,6 +1982,9 @@ pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
     }
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_title(tr(lang, "window.settings"));
+    }
+    if let Some(w) = app.get_webview_window("updater") {
+        let _ = w.set_title(tr(lang, "window.updater"));
     }
 }
 
@@ -2185,6 +2242,7 @@ pub fn run() {
             get_settings,
             set_settings,
             open_settings,
+            open_update_window,
             recall_center,
             open_url,
             snap_collapse,

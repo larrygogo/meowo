@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLiveSessions, LiveSession } from "./api";
@@ -83,9 +83,8 @@ export function App() {
   const [glow, setGlow] = useState<Edge | null>(null); // 拖拽中靠近边缘的发光提示
   // 展开过渡中：缩放期间强制不渲染缩略条（三个圆点），落地后再恢复按 mode 判定。
   const [expanding, setExpanding] = useState(false);
-  const { status: upStatus, apply: applyUpdate, recheck } = useUpdate();
-  const upStatusRef = useRef(upStatus);
-  upStatusRef.current = upStatus;
+  // 只读检查：仅驱动贴纸设置钮上的更新红点；下载/安装由更新窗口（views/Updater）全权负责。
+  const { status: upStatus } = useUpdate();
 
   const connectedCount = useMemo(
     () => live.filter((l) => !l.archived && l.connected).length,
@@ -122,29 +121,6 @@ export function App() {
       un.then((f) => f());
     };
   }, [refresh]);
-
-  // 安装的单一来源：关于窗口的更新按钮发 trigger-update，统一由主窗处理。
-  // 先把主窗显示出来好看进度；下载中忽略重复请求；已有新版直接安装；
-  // 否则先重检，查到新版接着安装，仍无新版(latest/error)则回执 update-failed 让关于窗复位按钮，
-  // 避免关于窗「更新中…」永久卡死。
-  useEffect(() => {
-    const handle = async () => {
-      getCurrentWindow().show().catch(() => {});
-      const cur = upStatusRef.current;
-      if (cur === "downloading") return;
-      if (cur === "available") {
-        void applyUpdate();
-        return;
-      }
-      const next = await recheck();
-      if (next === "available") void applyUpdate();
-      else emit("update-failed").catch(() => {});
-    };
-    const un = listen("trigger-update", () => void handle());
-    return () => {
-      un.then((f) => f());
-    };
-  }, [applyUpdate, recheck]);
 
   // 托盘「找回贴纸」：把贴纸拉回主屏中央并置顶。折叠/吸附态先展开还原成正常窗口，再居中置顶。
   // macOS 面板模式无吸边/托盘菜单项，跳过。

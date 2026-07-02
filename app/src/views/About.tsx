@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
@@ -781,48 +780,25 @@ function AppearanceSection() {
 function AboutSection({
   status,
   newVersion,
-  recheck,
 }: {
   status: UpdateStatus;
   newVersion: string | null;
-  recheck: () => void;
 }) {
   const t = useT();
   const [version, setVersion] = useState("");
-  const [triggered, setTriggered] = useState(false);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
 
-  // 主窗安装失败会广播 update-failed：复位按钮允许重试（cancelled 标记防 resolve 前卸载的泄漏）。
-  useEffect(() => {
-    let cancelled = false;
-    let un: (() => void) | undefined;
-    try {
-      listen("update-failed", () => setTriggered(false))
-        .then((f) => {
-          if (cancelled) f();
-          else un = f;
-        })
-        .catch(() => {});
-    } catch {
-      /* 非 Tauri 环境（测试/浏览器） */
-    }
-    return () => {
-      cancelled = true;
-      try { un?.(); } catch { /* noop */ }
-    };
-  }, []);
-
-  const onAvailable = () => {
-    setTriggered(true);
-    emit("trigger-update").catch(() => {});
-  };
+  // 「检查更新」与「更新到 vX」都直接打开更新窗口——检查/下载/安装全在那边完成并可视反馈
+  // （内联 recheck 在检查失败时界面毫无动静）。本节的后台检查只驱动按钮文案与导航角标。
+  // 旧的 trigger-update/update-failed 跨窗口协议已废除：曾因两窗状态分歧把按钮锁死在「更新中…」。
+  const openUpdater = () => invoke("open_update_window").catch(() => {});
   const updateBtn =
     status === "available"
-      ? { label: triggered ? t.about.updating : t.about.updateTo(newVersion ?? ""), onClick: onAvailable, disabled: triggered, primary: true }
-      : { label: status === "checking" ? t.about.checking : t.about.checkUpdate, onClick: recheck, disabled: status === "checking", primary: false };
+      ? { label: t.about.updateTo(newVersion ?? ""), primary: true }
+      : { label: t.about.checkUpdate, primary: false };
 
   const verText = `v${version || "—"}`;
   const verStatus =
@@ -838,7 +814,7 @@ function AboutSection({
             <div className="row-label">{t.about.versionInfo}</div>
             <div className="row-desc">{verSub}</div>
           </div>
-          <button className={"sbtn" + (updateBtn.primary ? " primary" : "")} disabled={updateBtn.disabled} onClick={updateBtn.onClick}>
+          <button className={"sbtn" + (updateBtn.primary ? " primary" : "")} onClick={openUpdater}>
             {updateBtn.label}
           </button>
         </div>
@@ -870,7 +846,7 @@ export function About() {
   const [sec, setSec] = useState<Section>("general");
   const close = () => getCurrentWindow().close().catch(() => {});
   // 在不随标签切换卸载的父组件里检查更新：每次打开设置窗口只查一次（避免反复点「关于」标签重复请求）。
-  const { status, version: newVersion, recheck } = useUpdate();
+  const { status, version: newVersion } = useUpdate();
 
   return (
     <div className="settings">
@@ -914,7 +890,7 @@ export function About() {
           ) : sec === "account" ? (
             <AccountSection />
           ) : (
-            <AboutSection status={status} newVersion={newVersion} recheck={recheck} />
+            <AboutSection status={status} newVersion={newVersion} />
           )}
         </div>
       </main>

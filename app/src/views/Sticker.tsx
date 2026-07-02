@@ -1147,7 +1147,8 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
                 className="stk-act"
                 data-tip={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
                 aria-label={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
-                onClick={() => invoke("open_settings").catch(() => {})}
+                // 有更新时红点按钮直达更新窗口，否则照常打开设置。
+                onClick={() => invoke(hasUpdate ? "open_update_window" : "open_settings").catch(() => {})}
               >
                 <GearIcon />
                 {hasUpdate && <span className="stk-dot" aria-hidden="true" />}

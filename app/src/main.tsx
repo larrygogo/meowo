@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { About } from "./views/About";
+import { Updater } from "./views/Updater";
 import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
 import { bootAppearance } from "./appearance";
@@ -23,7 +24,7 @@ if (/Mac/i.test(navigator.userAgent)) {
   document.documentElement.classList.add("platform-macos");
 }
 
-// 同一份前端按窗口 label 分流：about 窗口渲染关于页，其余渲染主贴纸。
+// 同一份前端按窗口 label 分流：about 窗口渲染设置页、updater 渲染更新页，其余渲染主贴纸。
 const label = (() => {
   try {
     return getCurrentWindow().label;
@@ -32,8 +33,8 @@ const label = (() => {
   }
 })();
 
-// 套用外观设置（明暗/不透明度两窗都套；界面密度仅贴纸窗口）。
-bootAppearance({ scale: label !== "about" });
+// 套用外观设置（明暗/不透明度各窗都套；界面密度仅贴纸窗口）。
+bootAppearance({ scale: label === "main" });
 
 // 渲染前先探测宿主平台：isMacPanel 等同步判定在首帧与各 effect 中即正确，
 // 消除「effect 跑在探测 resolve 前、guard 固化为 false」的竞态。
@@ -42,7 +43,7 @@ void detectHostOs().then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <I18nProvider>
-        {label === "about" ? <About /> : <App />}
+        {label === "about" ? <About /> : label === "updater" ? <Updater /> : <App />}
         <TooltipLayer />
       </I18nProvider>
     </React.StrictMode>,

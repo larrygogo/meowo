@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "默认窗口能力（主贴纸 + 关于窗口）",
-  "windows": ["main", "about"],
+  "description": "默认窗口能力（主贴纸 + 关于窗口 + 更新窗口）",
+  "windows": ["main", "about", "updater"],
   "permissions": [
     "core:default",
     "core:app:default",
@@ -12,6 +12,8 @@
     "core:window:allow-show",
     "core:window:allow-start-dragging",
     "core:window:allow-set-size",
+    "core:window:allow-set-resizable",
+    "core:window:allow-center",
     "core:window:allow-start-resize-dragging",
     "core:window:allow-set-always-on-top",
     "updater:default",
