@@ -79,6 +79,16 @@ function OpenIcon() {
   );
 }
 
+function FolderIcon() {
+  // lucide folder-open：右键菜单「打开项目目录」用
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
 function NoteIcon() {
   // lucide sticky-note：折角便签纸，区别于 rename 的铅笔
   return (
@@ -232,6 +242,7 @@ function CardContextMenu({
   onNote,
   onRename,
   onArchive,
+  onOpenDir,
   onClose,
 }: {
   x: number;
@@ -243,6 +254,8 @@ function CardContextMenu({
   onNote: () => void;
   onRename: () => void;
   onArchive: () => void;
+  /** 打开项目目录；会话无 cwd（旧数据）时传 null 隐藏该项。 */
+  onOpenDir: (() => void) | null;
   onClose: () => void;
 }) {
   const t = useT();
@@ -295,6 +308,15 @@ function CardContextMenu({
         <ArchiveIcon archived={archived} />
         {archived ? t.sticker.unarchive : t.sticker.archive}
       </button>
+      {onOpenDir && (
+        <>
+          <div className="ctx-sep" role="separator" />
+          <button type="button" role="menuitem" className="ctx-item" onClick={act(onOpenDir)}>
+            <FolderIcon />
+            {t.sticker.openProjectDir}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -1014,6 +1036,9 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           onRename={() => startRename(ctxItem)}
           onArchive={() =>
             invoke("set_archived", { sessionId: ctxItem.session.id, archived: !ctxItem.archived }).catch(() => {})
+          }
+          onOpenDir={
+            ctxItem.cwd ? () => invoke("open_project_dir", { cwd: ctxItem.cwd }).catch(() => {}) : null
           }
           onClose={() => setCtxMenu(null)}
         />

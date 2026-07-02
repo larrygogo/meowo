@@ -71,6 +71,19 @@ describe("Sticker", () => {
     expect(document.querySelector(".ctx-menu")).toBeNull();
   });
 
+  it("有 cwd 的会话菜单末尾多出「打开项目目录」,无 cwd 则隐藏", () => {
+    const { container } = render(<Sticker data={[mk({ cwd: "C:\\proj" })]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    expect(screen.getByText(zh.sticker.openProjectDir)).toBeTruthy();
+    expect(document.querySelector(".ctx-sep")).toBeTruthy(); // 与卡片管理操作以分隔线分组
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    cleanup();
+    const { container: c2 } = render(<Sticker data={[mk({ cwd: null })]} />);
+    fireEvent.contextMenu(c2.querySelector(".stk-card")!);
+    expect(screen.queryByText(zh.sticker.openProjectDir)).toBeNull();
+  });
+
   it("已星标/有便签/已归档的会话,菜单项显示反向文案", () => {
     localStorage.setItem("cc-kanban-tab", "archived");
     localStorage.setItem("cc-kanban-starred", JSON.stringify(["s"]));

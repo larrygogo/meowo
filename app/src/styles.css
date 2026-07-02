@@ -693,6 +693,7 @@ html, body {
 }
 .ctx-item:hover { background: var(--cc-surface-hover); }
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
+.ctx-sep { height: 1px; margin: 3px 6px; background: var(--cc-border); }
 /* 「打开终端」按钮（按钮模式）：内联在 sub 行末尾的 accent 小图标钮，低调不突兀 */
 .stk-open {
   flex: none;

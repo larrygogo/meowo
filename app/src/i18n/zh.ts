@@ -45,6 +45,7 @@ export const zh = {
     renameHint: "运行中：改名后需在该终端 /resume 才生效",
     archive: "归档",
     unarchive: "取消归档",
+    openProjectDir: "打开项目目录",
     previewMark: "最近",
     star: "星标置顶",
     unstar: "取消星标",

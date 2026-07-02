@@ -46,6 +46,7 @@ export const en: Dict = {
     renameHint: "Running: rename takes effect after /resume in that terminal",
     archive: "Archive",
     unarchive: "Unarchive",
+    openProjectDir: "Open project folder",
     previewMark: "Latest",
     star: "Star to top",
     unstar: "Unstar",

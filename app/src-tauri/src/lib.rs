@@ -755,6 +755,32 @@ fn focus_session(
     }
 }
 
+/// 在系统文件管理器中打开会话的项目目录（卡片右键菜单用）。
+/// 目录须真实存在——DB 记录的 cwd 可能过期（项目被移动/删除），不存在时明确报错而非静默无事发生。
+/// 不经 shell 直接 spawn 文件管理器，目录路径作为独立 argv 传入，无注入面。
+#[tauri::command]
+fn open_project_dir(cwd: String) -> Result<(), String> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !std::path::Path::new(dir).is_dir() {
+        return Err("目录不存在".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // kimi 等 provider 写入的 cwd 可能是正斜杠形式，explorer 对正斜杠路径会打开默认目录而非目标。
+        let dir = dir.replace('/', "\\");
+        std::process::Command::new("explorer").arg(&dir).spawn().map_err(|e| e.to_string())?;
+    }
+    // macOS：open 偶发慢（Finder 冷启动），放后台线程；status() 等待回收，避免僵尸进程。
+    #[cfg(target_os = "macos")]
+    {
+        let dir = dir.to_string();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("open").arg(&dir).status();
+        });
+    }
+    Ok(())
+}
+
 /// 可安全作为命令参数的会话 id：非空、≤128、仅 `[A-Za-z0-9_-]`（无引号/分号/空格等 shell/wt 元字符，
 /// 也无 `/`\`.` 杜绝路径穿越）。兼容 claude 的 UUID 与 kimi 的 `session_<uuid>`。resume 用此宽松校验。纯函数。
 fn is_safe_id(s: &str) -> bool {
@@ -2150,6 +2176,7 @@ pub fn run() {
             get_live_sessions,
             focus_session,
             resume_session,
+            open_project_dir,
             rename_session,
             set_archived,
             set_session_note,
