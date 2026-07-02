@@ -49,6 +49,11 @@
       "minimumSystemVersion": "14.0",
       "hardenedRuntime": true,
       "signingIdentity": null
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
     }
   },
   "plugins": {
