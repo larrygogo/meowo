@@ -5,6 +5,15 @@
 //! - 必须显式设 WEZTERM_UNIX_SOCKET 指向 gui-sock-<pid>,CLI 自动发现不可靠;
 //! - cli list 无 pid 字段,pane 匹配只能靠 title(token/任务标题)与 cwd(file:/// URL)。
 
+/// wezterm.exe 是否在 PATH(官方安装器/winget/scoop 均会加)。进程内缓存,同 wt_available。
+pub(crate) fn available() -> bool {
+    use std::sync::OnceLock;
+    static ON_PATH: OnceLock<bool> = OnceLock::new();
+    *ON_PATH.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|p| crate::path_has_exe(&p, "wezterm.exe"))
+    })
+}
+
 /// `wezterm cli list --format json` 里本模块关心的字段。cwd 保持 file:/// URL 原样,
 /// 比较时经 file_url_to_path 归一化。
 #[derive(Debug, PartialEq, serde::Deserialize)]

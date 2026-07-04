@@ -49,6 +49,7 @@ const RESUME_TERM_OPTIONS_MAC: { value: ResumeTerminal; label: string }[] = [
 ];
 const resumeTermOptionsWin = (t: Dict): { value: ResumeTerminal; label: string }[] => [
   { value: "wt", label: "Windows Terminal" },
+  { value: "wezterm", label: "WezTerm" },
   { value: "powershell", label: "PowerShell" },
   { value: "cmd", label: t.settings.cmdPrompt },
 ];
