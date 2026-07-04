@@ -5,6 +5,8 @@ mod macos;
 mod settings;
 pub mod snap;
 mod term_script;
+#[cfg(target_os = "windows")]
+mod wezterm;
 
 use settings::{
     get_autostart, get_settings, load_settings, open_url, set_autostart, set_settings, tr, ui_lang,
@@ -391,7 +393,7 @@ fn enum_wt_hwnds() -> Vec<isize> {
 /// 运行时是 braille spinner(⠐⠂…)，空闲/待输入时是 ✳(U+2733)，可能还有其它符号。
 /// 归一化：剥掉开头所有「非字母数字」字符（覆盖任意状态符号 + 空格；任务标题几乎总以
 /// 字母/数字/CJK 开头），并去掉尾部空白与截断省略号(…/...)。纯函数，便于单测。
-#[allow(dead_code)] // 跨平台纯函数：非 Windows 上无运行时调用方，仅单测使用
+#[allow(dead_code)] // 跨平台纯函数：Windows 上 WT/WezTerm 聚焦共用，非 Windows 仅单测使用
 fn normalize_tab_title(s: &str) -> &str {
     s.trim_start_matches(|c: char| !c.is_alphanumeric())
         .trim_end()
@@ -402,7 +404,7 @@ fn normalize_tab_title(s: &str) -> &str {
 /// 标签页标题 `tab_name` 与会话标题 `want` 的匹配强度：2=精确(归一化后相等)，1=单向包含，0=不匹配。
 /// 包含是**双向**的：兼容 claude 对长标题的截断(tab 标题是 want 的前缀)与轻微漂移。
 /// `want` 为空或占位("(未命名会话)")时不参与匹配(返回 0)，避免误命中无关标签页。纯函数。
-#[allow(dead_code)] // 同上：跨平台纯函数，仅单测调用
+#[allow(dead_code)] // 同上：Windows 上 WT/WezTerm 聚焦共用，非 Windows 仅单测调用
 fn tab_match_score(tab_name: &str, want: &str) -> u8 {
     let want = want.trim();
     if want.is_empty() || want == "(未命名会话)" {
