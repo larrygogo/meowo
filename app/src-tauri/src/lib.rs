@@ -1030,7 +1030,7 @@ fn rollback_failed_resume(sid: i64) {
 }
 
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
-/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/powershell/cmd；macOS：Terminal/iTerm2。
+/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
 ///
 /// 恢复命令由 `provider` 决定（claude: `claude --resume <id>` / kimi: `kimi -r <id>`，见 agent::resume_args）。
@@ -1062,10 +1062,12 @@ fn resume_session(
             let eff = match load_settings().resume_terminal.as_str() {
                 "powershell" => "powershell",
                 "cmd" => "cmd",
+                // 选了 wezterm 但已卸载 → 落回 wt/powershell 链,与 wt 缺失回退同理
+                "wezterm" if wezterm::available() => "wezterm",
                 _ if wt_available() => "wt",
                 _ => "powershell",
             };
-            let spawned = match eff {
+            let spawned: std::io::Result<()> = match eff {
                 // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
                 // 命令串经 shell_join_for_windows 引用：kimi/codex 可执行路径含空格时裸拼会断词。
                 // powershell.exe 按 CRT 规则解析自身命令行（\" 还原为字面引号），经 args() 传入即可。
@@ -1075,7 +1077,7 @@ fn resume_session(
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn()
+                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
                 }
                 // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
                 // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
@@ -1086,8 +1088,10 @@ fn resume_session(
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn()
+                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
                 }
+                // WezTerm：GUI 已开则 cli spawn 新 tab，否则 wezterm-gui start 新窗口(模块内回退)。
+                "wezterm" => wezterm::resume(dir.as_deref(), &resume),
                 // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
                 // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
                 _ => {
@@ -1103,7 +1107,7 @@ fn resume_session(
                         args.push(d.clone());
                     }
                     args.extend(resume.iter().cloned());
-                    Command::new("wt").args(&args).spawn()
+                    Command::new("wt").args(&args).spawn().map(|_| ())
                 }
             };
             if let Err(e) = spawned {

@@ -5,6 +5,12 @@
 //! - 必须显式设 WEZTERM_UNIX_SOCKET 指向 gui-sock-<pid>,CLI 自动发现不可靠;
 //! - cli list 无 pid 字段,pane 匹配只能靠 title(token/任务标题)与 cwd(file:/// URL)。
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+/// 从 GUI 进程 spawn console 程序(wezterm.exe)不弹黑窗。
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// wezterm.exe 是否在 PATH(官方安装器/winget/scoop 均会加)。进程内缓存,同 wt_available。
 pub(crate) fn available() -> bool {
     use std::sync::OnceLock;
@@ -98,6 +104,73 @@ fn match_pane(
         (Some(one), None) => Some(one),
         _ => None, // 并列:不猜,退窗口级
     }
+}
+
+/// wezterm 的 runtime 目录(Windows 上固定 $HOME/.local/share/wezterm,已实测)。
+fn runtime_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")?;
+    Some(PathBuf::from(home).join(".local").join("share").join("wezterm"))
+}
+
+/// pid 对应的 gui socket:文件存在才算(GUI 退出会残留旧 sock 文件,必须配进程校验,
+/// 因此本函数只接受「来自当前进程快照」的 pid)。
+fn sock_for(pid: u32) -> Option<PathBuf> {
+    let p = runtime_dir()?.join(format!("gui-sock-{pid}"));
+    p.is_file().then_some(p)
+}
+
+/// 任一存活的 wezterm-gui 实例及其 socket(resume 用:哪个窗口都行)。
+fn any_gui() -> Option<(u32, PathBuf)> {
+    crate::snapshot_processes()
+        .iter()
+        .filter(|(_, (_, name))| name == "wezterm-gui.exe")
+        .find_map(|(&pid, _)| sock_for(pid).map(|s| (pid, s)))
+}
+
+/// 会话进程组内的 wezterm-gui 实例(focus 用:必须是该会话的宿主,防止把 WT 里的
+/// 会话误切到 WezTerm 的同名 pane)。
+fn gui_in_group(group: &HashSet<u32>) -> Option<(u32, PathBuf)> {
+    crate::snapshot_processes()
+        .iter()
+        .filter(|(pid, (_, name))| group.contains(pid) && name == "wezterm-gui.exe")
+        .find_map(|(&pid, _)| sock_for(pid).map(|s| (pid, s)))
+}
+
+/// 跑 wezterm cli(--no-auto-start + 显式 socket,见模块头约束),成功返回 stdout。
+fn cli(sock: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("wezterm")
+        .args(["cli", "--no-auto-start"])
+        .args(args)
+        .env("WEZTERM_UNIX_SOCKET", sock)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// 在 WezTerm 中恢复会话:GUI 已开则在其中新建 tab(cli spawn),否则/失败则
+/// wezterm-gui start 新开窗口。argv 来自受信的 agent::resume_args,独立传参无 shell 拼接。
+pub(crate) fn resume(dir: Option<&str>, argv: &[String]) -> std::io::Result<()> {
+    if let Some((_, sock)) = any_gui() {
+        let mut args: Vec<&str> = vec!["spawn"];
+        if let Some(d) = dir {
+            args.extend(["--cwd", d]);
+        }
+        args.push("--");
+        args.extend(argv.iter().map(String::as_str));
+        if cli(&sock, &args).is_some() {
+            return Ok(());
+        }
+        // cli 失败(GUI 正在退出等竞态)→ 落到新窗口路径
+    }
+    let mut args: Vec<&str> = vec!["start"];
+    if let Some(d) = dir {
+        args.extend(["--cwd", d]);
+    }
+    args.push("--");
+    args.extend(argv.iter().map(String::as_str));
+    std::process::Command::new("wezterm-gui").args(&args).spawn().map(|_| ())
 }
 
 #[cfg(test)]
