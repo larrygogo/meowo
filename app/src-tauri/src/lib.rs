@@ -294,7 +294,7 @@ fn console_group_pids(root_pid: u32) -> HashSet<u32> {
         "winlogon.exe", "csrss.exe", "runtimebroker.exe", "dwm.exe",
     ];
     let terminal_host = [
-        "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe",
+        "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe", "wezterm-gui.exe",
     ];
     let mut cur = root_pid;
     for _ in 0..32 {
@@ -644,6 +644,11 @@ fn focus_session_terminal(
         // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
         // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
         let targets = console_group_pids(pid as u32);
+        // WezTerm 宿主：自绘 GUI 无 UIA TabItem，上面的 WT 标签定位必然不中；组内探到
+        // wezterm-gui 就走 wezterm cli 精确切 pane(内含窗口置前)，不再落通用兜底。
+        if wezterm::focus_pane(&targets, want_str, token.as_deref(), cwd.as_deref()) {
+            return;
+        }
         if let Some(hwnd) = find_window_for_pids(&targets) {
             force_foreground(hwnd);
         }

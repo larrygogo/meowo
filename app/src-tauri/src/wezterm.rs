@@ -173,6 +173,30 @@ pub(crate) fn resume(dir: Option<&str>, argv: &[String]) -> std::io::Result<()> 
     std::process::Command::new("wezterm-gui").args(&args).spawn().map(|_| ())
 }
 
+/// 会话宿主是 WezTerm 时精确切到其 pane 并置前窗口;宿主不是 WezTerm(组内无 gui)返回 false。
+/// pane 匹配不中时仍置前该 GUI 窗口(窗口级定位,与 WT 兜底同语义)——宿主已确认,
+/// 不能再落回通用兜底去猜别的窗口。
+pub(crate) fn focus_pane(
+    group: &HashSet<u32>,
+    want_title: &str,
+    token: Option<&str>,
+    cwd: Option<&str>,
+) -> bool {
+    let Some((gui_pid, sock)) = gui_in_group(group) else { return false };
+    let matched = cli(&sock, &["list", "--format", "json"])
+        .and_then(|out| String::from_utf8(out).ok())
+        .and_then(|json| match_pane(&parse_panes(&json), want_title, token, cwd));
+    if let Some(pane_id) = matched {
+        let _ = cli(&sock, &["activate-pane", "--pane-id", &pane_id.to_string()]);
+    }
+    let mut target = HashSet::new();
+    target.insert(gui_pid);
+    if let Some(hwnd) = crate::find_window_for_pids(&target) {
+        crate::force_foreground(hwnd);
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
