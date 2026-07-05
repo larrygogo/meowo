@@ -1,0 +1,9 @@
+# cargo audit 配置。CI 的 audit job 跑裸 `cargo audit`，会自动读取本文件。
+#
+# 忽略的两条 quick-xml XML DoS 漏洞（RUSTSEC-2026-0194 二次方复杂度、RUSTSEC-2026-0195
+# 命名空间声明无界分配）均来自传递依赖：Windows 通知（tauri-winrt-notification）与
+# tauri-utils 的 plist 解析。上游尚未发布修复版，`cargo update` 无解。
+# 本应用不解析任何外部/不可信 XML（仅系统通知与打包内部使用），实际攻击面极低。
+# 待上游发布跟进版后移除本忽略项。
+[advisories]
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
