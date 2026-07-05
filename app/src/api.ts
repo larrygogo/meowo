@@ -143,7 +143,7 @@ export type Settings = {
   sticker_quota_providers: string[];
 };
 
-export type ResumeTerminal = "terminal" | "iterm" | "wt" | "powershell" | "cmd";
+export type ResumeTerminal = "terminal" | "iterm" | "wt" | "wezterm" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";
 export type TerminalOpenMode = "card" | "button";
 export type CardMenuMode = "context" | "button";

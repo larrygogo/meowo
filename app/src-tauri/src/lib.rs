@@ -5,6 +5,8 @@ mod macos;
 mod settings;
 pub mod snap;
 mod term_script;
+#[cfg(target_os = "windows")]
+mod wezterm;
 
 use settings::{
     get_autostart, get_settings, load_settings, open_url, set_autostart, set_settings, tr, ui_lang,
@@ -292,7 +294,7 @@ fn console_group_pids(root_pid: u32) -> HashSet<u32> {
         "winlogon.exe", "csrss.exe", "runtimebroker.exe", "dwm.exe",
     ];
     let terminal_host = [
-        "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe",
+        "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe", "wezterm-gui.exe",
     ];
     let mut cur = root_pid;
     for _ in 0..32 {
@@ -391,7 +393,7 @@ fn enum_wt_hwnds() -> Vec<isize> {
 /// 运行时是 braille spinner(⠐⠂…)，空闲/待输入时是 ✳(U+2733)，可能还有其它符号。
 /// 归一化：剥掉开头所有「非字母数字」字符（覆盖任意状态符号 + 空格；任务标题几乎总以
 /// 字母/数字/CJK 开头），并去掉尾部空白与截断省略号(…/...)。纯函数，便于单测。
-#[allow(dead_code)] // 跨平台纯函数：非 Windows 上无运行时调用方，仅单测使用
+#[allow(dead_code)] // 跨平台纯函数：Windows 上 WT/WezTerm 聚焦共用，非 Windows 仅单测使用
 fn normalize_tab_title(s: &str) -> &str {
     s.trim_start_matches(|c: char| !c.is_alphanumeric())
         .trim_end()
@@ -402,7 +404,7 @@ fn normalize_tab_title(s: &str) -> &str {
 /// 标签页标题 `tab_name` 与会话标题 `want` 的匹配强度：2=精确(归一化后相等)，1=单向包含，0=不匹配。
 /// 包含是**双向**的：兼容 claude 对长标题的截断(tab 标题是 want 的前缀)与轻微漂移。
 /// `want` 为空或占位("(未命名会话)")时不参与匹配(返回 0)，避免误命中无关标签页。纯函数。
-#[allow(dead_code)] // 同上：跨平台纯函数，仅单测调用
+#[allow(dead_code)] // 同上：Windows 上 WT/WezTerm 聚焦共用，非 Windows 仅单测调用
 fn tab_match_score(tab_name: &str, want: &str) -> u8 {
     let want = want.trim();
     if want.is_empty() || want == "(未命名会话)" {
@@ -642,6 +644,11 @@ fn focus_session_terminal(
         // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
         // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
         let targets = console_group_pids(pid as u32);
+        // WezTerm 宿主：自绘 GUI 无 UIA TabItem，上面的 WT 标签定位必然不中；组内探到
+        // wezterm-gui 就走 wezterm cli 精确切 pane(内含窗口置前)，不再落通用兜底。
+        if wezterm::focus_pane(&targets, want_str, token.as_deref(), cwd.as_deref()) {
+            return;
+        }
         if let Some(hwnd) = find_window_for_pids(&targets) {
             force_foreground(hwnd);
         }
@@ -1028,7 +1035,7 @@ fn rollback_failed_resume(sid: i64) {
 }
 
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
-/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/powershell/cmd；macOS：Terminal/iTerm2。
+/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
 ///
 /// 恢复命令由 `provider` 决定（claude: `claude --resume <id>` / kimi: `kimi -r <id>`，见 agent::resume_args）。
@@ -1060,10 +1067,12 @@ fn resume_session(
             let eff = match load_settings().resume_terminal.as_str() {
                 "powershell" => "powershell",
                 "cmd" => "cmd",
+                // 选了 wezterm 但已卸载 → 落回 wt/powershell 链,与 wt 缺失回退同理
+                "wezterm" if wezterm::available() => "wezterm",
                 _ if wt_available() => "wt",
                 _ => "powershell",
             };
-            let spawned = match eff {
+            let spawned: std::io::Result<()> = match eff {
                 // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
                 // 命令串经 shell_join_for_windows 引用：kimi/codex 可执行路径含空格时裸拼会断词。
                 // powershell.exe 按 CRT 规则解析自身命令行（\" 还原为字面引号），经 args() 传入即可。
@@ -1073,7 +1082,7 @@ fn resume_session(
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn()
+                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
                 }
                 // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
                 // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
@@ -1084,8 +1093,10 @@ fn resume_session(
                     if let Some(d) = &dir {
                         c.current_dir(d);
                     }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn()
+                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
                 }
+                // WezTerm：GUI 已开则 cli spawn 新 tab，否则 wezterm-gui start 新窗口(模块内回退)。
+                "wezterm" => wezterm::resume(dir.as_deref(), &resume),
                 // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
                 // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
                 _ => {
@@ -1101,7 +1112,7 @@ fn resume_session(
                         args.push(d.clone());
                     }
                     args.extend(resume.iter().cloned());
-                    Command::new("wt").args(&args).spawn()
+                    Command::new("wt").args(&args).spawn().map(|_| ())
                 }
             };
             if let Err(e) = spawned {
@@ -1778,7 +1789,7 @@ fn host_os() -> String {
 }
 
 /// 「打开未连接会话」可选且本机确实可用的终端 key（供设置页过滤下拉项）。
-/// macOS：terminal 必有，iterm 视安装情况；Windows：powershell/cmd 必有，wt 视是否在 PATH。
+/// macOS：terminal 必有，iterm 视安装情况；Windows：powershell/cmd 必有，wt/wezterm 视是否在 PATH。
 /// async：丢到线程池跑。同步命令内联在主线程，探测一旦变慢（如 macOS 的 mdfind）
 /// 会冻结整个事件循环；设置页每次打开都调它，绝不能赌探测耗时。
 #[tauri::command]
@@ -1801,6 +1812,9 @@ async fn available_terminals() -> Vec<String> {
         let mut v = Vec::new();
         if wt_available() {
             v.push("wt".to_string());
+        }
+        if wezterm::available() {
+            v.push("wezterm".to_string());
         }
         v.push("powershell".to_string());
         v.push("cmd".to_string());
