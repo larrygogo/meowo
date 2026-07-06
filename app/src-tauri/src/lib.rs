@@ -2105,6 +2105,56 @@ fn open_update_window_impl(app: &tauri::AppHandle) {
     }
 }
 
+/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA）。
+/// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
+#[tauri::command]
+fn open_new_session_window(app: tauri::AppHandle) {
+    std::thread::spawn(move || open_new_session_window_impl(&app));
+}
+
+/// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
+fn open_new_session_window_impl(app: &tauri::AppHandle) {
+    // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
+    if let Some(w) = app.get_webview_window("new-session") {
+        let _ = w.set_focus();
+        return;
+    }
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "new-session",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title(tr(ui_lang(&load_settings()), "window.newSession"))
+    .inner_size(440.0, 380.0)
+    .min_inner_size(440.0, 380.0)
+    .resizable(false)
+    .decorations(false)
+    .center();
+    // macOS：无边框窗口不自动圆角，设透明由前端 .ns-window 的 border-radius 呈现（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    match builder.build() {
+        Ok(_win) => {
+            #[cfg(target_os = "macos")]
+            {
+                let app_handle = app.clone();
+                _win.on_window_event(move |e| {
+                    if matches!(
+                        e,
+                        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                    ) {
+                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                    }
+                });
+            }
+        }
+        Err(e) => eprintln!("创建新建会话窗口失败: {e}"),
+    }
+}
+
 /// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/置顶/聚焦。
 /// 折叠态的「展开 + 还原正常尺寸」由前端在调用本命令前完成（snap_restore），故这里只按当前尺寸居中。
 #[tauri::command]
@@ -2441,7 +2491,8 @@ pub fn run() {
             available_terminals,
             new_session,
             check_provider_hooks,
-            recent_cwds
+            recent_cwds,
+            open_new_session_window
         ])
         .on_window_event(|window, event| {
             // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。

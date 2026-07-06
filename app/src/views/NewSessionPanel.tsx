@@ -1,5 +1,7 @@
 import { type ReactElement, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type ProviderKey,
   type HooksStatus,
@@ -14,13 +16,8 @@ import {
 import { providerConfig } from "../providers";
 import { useT } from "../i18n";
 
-export function NewSessionPanel({
-  onClose,
-  onLaunched,
-}: {
-  onClose: () => void;
-  onLaunched: (msg: string) => void;
-}): ReactElement {
+/** 独立窗口页（label="new-session"）：新建一个全新会话。成功后 emit 通知主看板弹 toast 并自关。 */
+export function NewSessionPanel(): ReactElement {
   const t = useT();
   const [cwd, setCwd] = useState("");
   const [provider, setProvider] = useState<ProviderKey>("claude");
@@ -31,12 +28,13 @@ export function NewSessionPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 初始：默认 agent/终端来自设置；最近目录、可用终端、各 provider hooks 状态。
   useEffect(() => {
-    getSettings().then((s) => {
-      setProvider(s.default_agent);
-      setTerminal(s.resume_terminal);
-    });
+    getSettings()
+      .then((s) => {
+        setProvider(s.default_agent);
+        setTerminal(s.resume_terminal);
+      })
+      .catch(() => {});
     recentCwds(8).then(setRecent).catch(() => {});
     availableTerminals().then(setTerms).catch(() => {});
     PROVIDER_KEYS.forEach((p) =>
@@ -45,6 +43,10 @@ export function NewSessionPanel({
         .catch(() => {}),
     );
   }, []);
+
+  function closeWin() {
+    getCurrentWindow().close();
+  }
 
   async function pickDir() {
     const picked = await open({ directory: true });
@@ -62,7 +64,8 @@ export function NewSessionPanel({
         provider === "codex"
           ? t.newSession.launchedCodexToast(label)
           : t.newSession.launchedToast(label);
-      onLaunched(msg);
+      await emit("new-session-launched", msg);
+      closeWin();
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -72,10 +75,15 @@ export function NewSessionPanel({
   const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
 
   return (
-    <div className="ns-overlay" onMouseDown={onClose}>
-      <div className="ns-modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="ns-title">{t.newSession.title}</div>
+    <div className="ns-window">
+      <div className="ns-titlebar" data-tauri-drag-region>
+        <span className="ns-title">{t.newSession.title}</span>
+        <button type="button" className="ns-close" aria-label={t.newSession.cancel} onClick={closeWin}>
+          ×
+        </button>
+      </div>
 
+      <div className="ns-body">
         <label className="ns-field">
           <span className="ns-label">{t.newSession.dir}</span>
           <div className="ns-dir-row">
@@ -149,21 +157,21 @@ export function NewSessionPanel({
             {error}
           </div>
         )}
+      </div>
 
-        <div className="ns-actions">
-          <button type="button" className="ns-btn" onClick={onClose}>
-            {t.newSession.cancel}
-          </button>
-          <button
-            type="button"
-            className="ns-btn is-primary"
-            data-testid="ns-launch"
-            disabled={!cwd.trim() || busy}
-            onClick={launch}
-          >
-            {busy ? t.newSession.launching : t.newSession.launch}
-          </button>
-        </div>
+      <div className="ns-actions">
+        <button type="button" className="ns-btn" onClick={closeWin}>
+          {t.newSession.cancel}
+        </button>
+        <button
+          type="button"
+          className="ns-btn is-primary"
+          data-testid="ns-launch"
+          disabled={!cwd.trim() || busy}
+          onClick={launch}
+        >
+          {busy ? t.newSession.launching : t.newSession.launch}
+        </button>
       </div>
     </div>
   );

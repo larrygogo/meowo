@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "默认窗口能力（主贴纸 + 关于窗口 + 更新窗口）",
-  "windows": ["main", "about", "updater"],
+  "windows": ["main", "about", "updater", "new-session"],
   "permissions": [
     "core:default",
     "core:app:default",

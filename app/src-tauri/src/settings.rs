@@ -150,6 +150,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "tray.quit") => "Quit",
         ("en", "window.settings") => "Settings",
         ("en", "window.updater") => "Software Update",
+        ("en", "window.newSession") => "New Session",
         (_, "notify.error") => "会话出错",
         (_, "notify.waiting") => "等待你回复",
         (_, "notify.pending.approval") => "需要你批准工具调用",
@@ -160,6 +161,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "tray.quit") => "退出",
         (_, "window.settings") => "设置",
         (_, "window.updater") => "软件更新",
+        (_, "window.newSession") => "新建会话",
         _ => "",
     }
 }
