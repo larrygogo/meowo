@@ -107,6 +107,8 @@ export const zh = {
     resumeTerm: "未连接会话打开终端",
     resumeTermDesc: "用哪个终端恢复已断开的会话",
     cmdPrompt: "命令提示符",
+    defaultAgent: "新建会话默认 Agent",
+    defaultAgentDesc: "点「新建会话」时默认选中的 AI CLI",
     language: "语言",
     languageDesc: "界面与系统通知的显示语言",
     preview: "对话预览",

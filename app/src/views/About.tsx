@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
+import { getSettings, setSettings, availableTerminals, PROVIDER_KEYS, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
-import { PROVIDERS } from "../providers";
+import { PROVIDERS, providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -589,6 +589,17 @@ function GeneralSection() {
               { value: "en" as const, label: "English" },
             ]}
             onChange={(v) => patch({ language: v })}
+          />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.defaultAgent}</div>
+            <div className="row-desc">{t.settings.defaultAgentDesc}</div>
+          </div>
+          <Dropdown
+            value={settings?.default_agent ?? "claude"}
+            options={PROVIDER_KEYS.map((p) => ({ value: p, label: providerConfig(p).label(t) }))}
+            onChange={(v) => patch({ default_agent: v })}
           />
         </div>
         <div className="row">

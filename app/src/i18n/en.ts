@@ -107,6 +107,8 @@ export const en: Dict = {
     resumeTerm: "Resume terminal",
     resumeTermDesc: "Used to reopen disconnected sessions",
     cmdPrompt: "Command Prompt",
+    defaultAgent: "Default agent",
+    defaultAgentDesc: "Pre-selected AI CLI when creating a new session",
     language: "Language",
     languageDesc: "Interface and notification language",
     preview: "Conversation preview",
