@@ -1571,8 +1571,38 @@ html, body {
   letter-spacing: 0.02em;
 }
 
+/* 目录选择器：combobox 一体式——输入框 + 浏览按钮 + 最近项目列表包进一个面板，
+   整体 focus 时珊瑚橙描边；输入实时过滤下方最近项。 */
+.ns-picker {
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  background: var(--cc-surface);
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+.ns-picker:focus-within { border-color: var(--cc-accent-border); }
+.ns-dir-row { display: flex; align-items: center; }
+.ns-picker .ns-input {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+}
+.ns-picker .ns-input:focus { background: transparent; }
+.ns-browse {
+  flex: none;
+  border: none;
+  border-left: 1px solid var(--cc-border);
+  background: transparent;
+  color: var(--cc-text-dim);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.ns-browse:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+
 /* 文本输入 / 下拉：统一的深色控件，focus 时珊瑚橙描边。 */
-.ns-dir-row { display: flex; gap: 8px; }
 .ns-input {
   flex: 1;
   min-width: 0;
@@ -1625,19 +1655,15 @@ select.ns-input {
 }
 .ns-btn.is-primary:hover:not(:disabled) { background: var(--cc-accent-dim); }
 
-/* 最近项目：VS Code「Open Recent」风列表——每行 文件夹图标 + 项目名 + 完整路径，点选高亮。 */
-.ns-recent { display: flex; flex-direction: column; gap: 5px; }
-.ns-recent-lbl { font-size: 10px; color: var(--cc-text-faint); }
+/* 最近项目列表：融合在 picker 内，顶部一道分隔线接在输入行下方。每行 图标 + 名 + 完整路径。 */
 .ns-recent-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-height: 158px;
+  gap: 1px;
+  max-height: 172px;
   overflow-y: auto;
   padding: 3px;
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-md);
-  background: var(--cc-surface);
+  border-top: 1px solid var(--cc-border);
 }
 .ns-recent-item {
   display: flex;

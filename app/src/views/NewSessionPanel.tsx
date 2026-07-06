@@ -90,6 +90,12 @@ export function NewSessionPanel(): ReactElement {
     }
   }
 
+  // 输入框内容实时过滤最近项：空 / 已选中某项（完全匹配）时显示全部，输入片段时按 名+路径 过滤。
+  const q = cwd.trim().toLowerCase();
+  const shownRecent =
+    !q || recent.some((r) => r.toLowerCase() === q)
+      ? recent
+      : recent.filter((r) => r.toLowerCase().includes(q));
   const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
 
   return (
@@ -104,27 +110,26 @@ export function NewSessionPanel(): ReactElement {
       <div className="ns-body">
         <label className="ns-field">
           <span className="ns-label">{t.newSession.dir}</span>
-          <div className="ns-dir-row">
-            <input
-              className="ns-input"
-              data-testid="ns-dir"
-              value={cwd}
-              placeholder={t.newSession.dirPlaceholder}
-              onChange={(e) => setCwd(e.target.value)}
-            />
-            <button type="button" className="ns-btn" onClick={pickDir}>
-              {t.newSession.browse}
-            </button>
-          </div>
-          {recent.length > 0 && (
-            <div className="ns-recent">
-              <span className="ns-recent-lbl">{t.newSession.recent}</span>
+          <div className="ns-picker">
+            <div className="ns-dir-row">
+              <input
+                className="ns-input"
+                data-testid="ns-dir"
+                value={cwd}
+                placeholder={t.newSession.dirPlaceholder}
+                onChange={(e) => setCwd(e.target.value)}
+              />
+              <button type="button" className="ns-browse" onClick={pickDir}>
+                {t.newSession.browse}
+              </button>
+            </div>
+            {recent.length > 0 && shownRecent.length > 0 && (
               <div className="ns-recent-list">
-                {recent.map((r) => (
+                {shownRecent.map((r) => (
                   <button
                     key={r}
                     type="button"
-                    className={"ns-recent-item" + (cwd === r ? " is-on" : "")}
+                    className={"ns-recent-item" + (cwd.trim() === r ? " is-on" : "")}
                     title={r}
                     onClick={() => setCwd(r)}
                   >
@@ -134,8 +139,8 @@ export function NewSessionPanel(): ReactElement {
                   </button>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </label>
 
         <div className="ns-field">
