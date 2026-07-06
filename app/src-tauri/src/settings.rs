@@ -45,6 +45,10 @@ fn default_sticker_color() -> String {
 fn default_sticker_quota_providers() -> Vec<String> {
     vec!["claude".to_string()]
 }
+/// 新建会话默认选中的 agent（provider key）。缺省 claude。
+fn default_default_agent() -> String {
+    "claude".to_string()
+}
 
 /// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -89,6 +93,9 @@ pub(crate) struct Settings {
     /// 缺省 ["claude"]，旧 settings.json 无此字段时反序列化给默认，不 panic。
     #[serde(default = "default_sticker_quota_providers")]
     pub(crate) sticker_quota_providers: Vec<String>,
+    /// 「新建会话」面板默认选中的 agent（claude/kimi/codex）。缺省 claude，兼容老 settings.json。
+    #[serde(default = "default_default_agent")]
+    pub(crate) default_agent: String,
 }
 
 impl Default for Settings {
@@ -107,6 +114,7 @@ impl Default for Settings {
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),
             sticker_quota_providers: default_sticker_quota_providers(),
+            default_agent: default_default_agent(),
         }
     }
 }
@@ -271,4 +279,21 @@ pub(crate) fn open_url(url: String) -> Result<(), String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = url;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_agent_defaults_to_claude() {
+        assert_eq!(Settings::default().default_agent, "claude");
+    }
+
+    #[test]
+    fn old_settings_json_without_default_agent_deserializes() {
+        // 旧 settings.json 无 default_agent 字段：serde default 兜底 claude，不 panic。
+        let v: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(v.default_agent, "claude");
+    }
 }

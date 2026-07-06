@@ -141,6 +141,8 @@ export type Settings = {
   sticker_color: string;
   /** 在贴纸底栏显示配额的 provider key 列表（默认 ["claude"]）。 */
   sticker_quota_providers: string[];
+  /** 「新建会话」面板默认选中的 agent。缺省 "claude"。 */
+  default_agent: ProviderKey;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "wezterm" | "powershell" | "cmd";

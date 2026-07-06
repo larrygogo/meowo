@@ -38,6 +38,7 @@ const SETTINGS_DEFAULTS: Settings = {
   sticker_style: "elevated",
   sticker_color: "classic",
   sticker_quota_providers: ["claude"],
+  default_agent: "claude",
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
