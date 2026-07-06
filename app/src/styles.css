@@ -1504,148 +1504,156 @@ html, body {
   to { opacity: 1; transform: none; }
 }
 
-/* ===== 新建会话独立窗口 ===== */
+/* ===== 新建会话独立窗口（VS Code 深色风格：灰阶层次 + 蓝强调 + 扁平小圆角） ===== */
 .ns-window {
   width: 100vw;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #262624;
-  color: var(--cc-text);
+  background: #252526;
+  color: #cccccc;
   overflow: hidden;
   font-size: 13px;
 }
 :root[data-theme="light"] .ns-window {
-  background: #faf9f5;
+  background: #f3f3f3;
+  color: #333333;
 }
 /* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings/.updater 的处理）。
    Windows 端该窗口未设 transparent，若圆角仍生效会在四角露出 html/body 透明底的伪影，故仅 macOS 生效。 */
 :root.platform-macos .ns-window {
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
-/* 标题栏：底部一道分隔线拉开与内容的层次；整条可拖动。 */
+/* 标题栏：VS Code 顶栏——略深底色 + 底部分隔线，整条可拖动。 */
 .ns-titlebar {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--cc-border);
+  padding: 9px 12px;
+  background: #333333;
+  border-bottom: 1px solid #1e1e1e;
   user-select: none;
   -webkit-user-select: none;
 }
-.ns-title { font-weight: 600; font-size: 13px; letter-spacing: 0.01em; }
+:root[data-theme="light"] .ns-titlebar {
+  background: #e7e7e7;
+  border-bottom-color: #d0d0d0;
+}
+.ns-title { font-weight: 400; font-size: 12px; letter-spacing: 0.02em; }
 .ns-close {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
-  color: var(--cc-text-faint);
+  color: #c5c5c5;
   cursor: pointer;
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1;
-  border-radius: var(--r-md);
-  transition: background 0.12s, color 0.12s;
+  border-radius: 4px;
+  transition: background 0.1s;
 }
-.ns-close:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+.ns-close:hover { background: rgba(255, 255, 255, 0.1); }
+:root[data-theme="light"] .ns-close { color: #616161; }
+:root[data-theme="light"] .ns-close:hover { background: rgba(0, 0, 0, 0.08); }
 
 .ns-body {
   flex: 1;
   overflow-y: auto;
-  padding: 15px 16px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 16px;
 }
 
-.ns-field { display: flex; flex-direction: column; gap: 7px; }
-.ns-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--cc-text-dim);
-  letter-spacing: 0.02em;
-}
+.ns-field { display: flex; flex-direction: column; gap: 5px; }
+.ns-label { font-size: 11px; font-weight: 600; color: #cccccc; }
+:root[data-theme="light"] .ns-label { color: #444444; }
 
-/* 文本输入 / 下拉：统一的深色控件，focus 时珊瑚橙描边。 */
-.ns-dir-row { display: flex; gap: 8px; }
+/* 文本输入 / 下拉：VS Code 控件——深底细边，focus 蓝色描边。 */
+.ns-dir-row { display: flex; gap: 6px; }
 .ns-input {
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--cc-border);
-  background: var(--cc-surface);
-  color: var(--cc-text);
-  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 2px;
+  border: 1px solid #3c3c3c;
+  background: #3c3c3c;
+  color: #cccccc;
+  font-size: 13px;
   font-family: inherit;
-  transition: border-color 0.12s, background 0.12s;
+  transition: border-color 0.1s;
 }
-.ns-input::placeholder { color: var(--cc-text-faint); }
+.ns-input::placeholder { color: #a6a6a6; }
 .ns-input:focus {
-  outline: none;
-  border-color: var(--cc-accent-border);
-  background: var(--cc-surface-hover);
+  outline: 1px solid #007fd4;
+  outline-offset: -1px;
+  border-color: #007fd4;
 }
-/* 终端下拉：去掉原生外观 + 自绘箭头，融入深色面板（原生 select 的系统箭头/白底与面板格格不入）。 */
+:root[data-theme="light"] .ns-input { background: #ffffff; border-color: #cecece; color: #333333; }
+:root[data-theme="light"] .ns-input::placeholder { color: #767676; }
+:root[data-theme="light"] .ns-input:focus { outline-color: #0090f1; border-color: #0090f1; }
+/* 终端下拉：去原生外观 + 自绘箭头（VS Code 灰）。 */
 select.ns-input {
   appearance: none;
   -webkit-appearance: none;
-  padding-right: 30px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23847f78' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%23c5c5c5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 10px center;
+  background-position: right 8px center;
   cursor: pointer;
 }
 
-/* 次要按钮（浏览 / 取消）与主按钮（启动）。 */
+/* 按钮：VS Code 主（蓝）/ 次（灰）按钮。 */
 .ns-btn {
   flex: none;
-  padding: 8px 14px;
-  border: 1px solid var(--cc-border);
-  background: var(--cc-surface);
-  color: var(--cc-text);
-  border-radius: var(--r-md);
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  background: #313131;
+  color: #cccccc;
+  border-radius: 2px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   font-family: inherit;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.1s;
 }
-.ns-btn:hover:not(:disabled) { background: var(--cc-surface-hover); }
-.ns-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.ns-btn.is-primary {
-  background: var(--cc-accent);
-  border-color: transparent;
-  color: #fff;
-  font-weight: 500;
-}
-.ns-btn.is-primary:hover:not(:disabled) { background: var(--cc-accent-dim); }
+.ns-btn:hover:not(:disabled) { background: #3c3c3c; }
+.ns-btn:disabled { opacity: 0.4; cursor: default; }
+:root[data-theme="light"] .ns-btn { background: #e4e6eb; color: #333333; }
+:root[data-theme="light"] .ns-btn:hover:not(:disabled) { background: #d5d8dd; }
+.ns-btn.is-primary { background: #0e639c; color: #ffffff; border-color: transparent; }
+.ns-btn.is-primary:hover:not(:disabled) { background: #1177bb; }
+:root[data-theme="light"] .ns-btn.is-primary { background: #0066b8; color: #ffffff; }
+:root[data-theme="light"] .ns-btn.is-primary:hover:not(:disabled) { background: #0e70c0; }
 
-/* 最近目录：胶囊 chip，hover 珊瑚橙描边。 */
+/* 最近目录：小方角 chip，hover 蓝色描边。 */
 .ns-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.ns-recent-lbl { font-size: 10px; color: var(--cc-text-faint); margin-right: 1px; }
+.ns-recent-lbl { font-size: 11px; color: #a6a6a6; margin-right: 1px; }
 .ns-chip {
-  padding: 3px 9px;
-  border: 1px solid var(--cc-border);
-  background: var(--cc-surface);
-  color: var(--cc-text-dim);
-  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid #3c3c3c;
+  background: #3c3c3c;
+  color: #cccccc;
+  border-radius: 2px;
   cursor: pointer;
   font-size: 11px;
   max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition: background 0.1s, border-color 0.1s;
 }
-.ns-chip:hover { background: var(--cc-surface-hover); color: var(--cc-text); border-color: var(--cc-accent-border); }
+.ns-chip:hover { background: #4a4a4a; border-color: #007fd4; }
+:root[data-theme="light"] .ns-chip { background: #ffffff; border-color: #cecece; color: #333333; }
+:root[data-theme="light"] .ns-chip:hover { border-color: #0090f1; }
 
-/* Agent：等宽竖版选择卡（图标在上、名在下），选中珊瑚橙高亮。 */
-.ns-agents { display: flex; gap: 8px; }
+/* Agent：等宽选择卡（图标在上、名在下），选中 VS Code 蓝高亮。 */
+.ns-agents { display: flex; gap: 6px; }
 .ns-agent {
   flex: 1;
   display: flex;
@@ -1653,49 +1661,49 @@ select.ns-input {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 11px 6px;
-  border: 1px solid var(--cc-border);
-  background: var(--cc-surface);
-  color: var(--cc-text-dim);
-  border-radius: var(--r-md);
+  padding: 10px 6px;
+  border: 1px solid #3c3c3c;
+  background: #3c3c3c;
+  color: #cccccc;
+  border-radius: 2px;
   cursor: pointer;
   font-size: 11px;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background 0.1s, border-color 0.1s;
 }
-.ns-agent svg { opacity: 0.8; transition: opacity 0.12s; }
-.ns-agent:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+.ns-agent svg { opacity: 0.85; transition: opacity 0.1s; }
+.ns-agent:hover { background: #4a4a4a; }
 .ns-agent.is-on {
-  border-color: var(--cc-accent);
-  background: var(--cc-accent-soft);
-  color: var(--cc-text);
+  border-color: #007fd4;
+  background: rgba(0, 127, 212, 0.18);
+  color: #ffffff;
 }
 .ns-agent.is-on svg { opacity: 1; }
+:root[data-theme="light"] .ns-agent { background: #ffffff; border-color: #cecece; color: #333333; }
+:root[data-theme="light"] .ns-agent:hover { background: #f0f0f0; }
+:root[data-theme="light"] .ns-agent.is-on { border-color: #0090f1; background: rgba(0, 144, 241, 0.12); color: #0a0a0a; }
 
-/* 状态条：hooks 未装警告 / 启动错误，soft 底色 + 同色描边，比裸彩字更醒目。 */
+/* 状态条：hooks 未装警告 / 启动错误（VS Code 警告黄 / 错误红），soft 底色 + 同色描边。 */
 .ns-warn,
 .ns-error {
   padding: 7px 10px;
-  border-radius: var(--r-md);
-  font-size: 11px;
-  line-height: 1.45;
+  border-radius: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid;
 }
-.ns-warn {
-  color: var(--cc-warn);
-  background: rgba(224, 162, 60, 0.1);
-  border: 1px solid rgba(224, 162, 60, 0.25);
-}
-.ns-error {
-  color: var(--cc-err);
-  background: rgba(224, 88, 76, 0.1);
-  border: 1px solid rgba(224, 88, 76, 0.25);
-}
+.ns-warn { color: #cca700; background: rgba(204, 167, 0, 0.1); border-color: rgba(204, 167, 0, 0.4); }
+.ns-error { color: #f48771; background: rgba(244, 135, 113, 0.1); border-color: rgba(244, 135, 113, 0.4); }
+:root[data-theme="light"] .ns-warn { color: #855f00; background: rgba(191, 155, 0, 0.12); border-color: rgba(191, 155, 0, 0.4); }
+:root[data-theme="light"] .ns-error { color: #b5341a; background: rgba(229, 84, 68, 0.1); border-color: rgba(229, 84, 68, 0.4); }
 
-/* 底部操作栏：顶部分隔线，与标题栏对称。 */
+/* 底部操作栏：VS Code 底栏——顶部分隔线 + 略沉底色。 */
 .ns-actions {
   flex: none;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--cc-border);
+  padding: 10px 16px;
+  background: #252526;
+  border-top: 1px solid #1e1e1e;
 }
+:root[data-theme="light"] .ns-actions { background: #f3f3f3; border-top-color: #d0d0d0; }
