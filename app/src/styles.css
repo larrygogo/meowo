@@ -1479,3 +1479,65 @@ html, body {
   from { opacity: 0; transform: translateY(-2px); }
   to { opacity: 1; transform: none; }
 }
+
+/* ===== 新建会话面板（看板内模态弹层）：目录/agent/终端选择 + hooks 引导。
+   不透明表面同 .ctx-menu/.dd-menu（避免透出底下卡片），z-index 高于右键菜单(60)。 ===== */
+.ns-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.ns-modal {
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: #2e2e2c;
+  color: var(--cc-text);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-lg);
+  padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+:root[data-theme="light"] .ns-modal { background: #fff; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2); }
+.ns-title { font-weight: 600; font-size: 14px; }
+.ns-field { display: flex; flex-direction: column; gap: 6px; }
+.ns-label { font-size: 11px; color: var(--cc-text-dim); }
+.ns-dir-row { display: flex; gap: 6px; }
+.ns-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: inherit;
+  font-size: 12px;
+}
+.ns-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ns-recent-lbl { font-size: 10px; color: var(--cc-text-faint); }
+.ns-chip, .ns-btn, .ns-agent {
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: inherit;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 12px;
+}
+.ns-chip:hover, .ns-btn:hover:not(:disabled), .ns-agent:hover { background: var(--cc-surface-hover); }
+.ns-chip { padding: 3px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-btn { padding: 6px 12px; }
+.ns-btn.is-primary { background: var(--cc-accent); border-color: transparent; color: #fff; }
+.ns-btn.is-primary:hover:not(:disabled) { background: var(--cc-accent-dim); }
+.ns-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ns-agents { display: flex; gap: 6px; }
+.ns-agent { display: flex; align-items: center; gap: 6px; padding: 6px 10px; flex: 1; justify-content: center; }
+.ns-agent.is-on { border-color: var(--cc-accent); background: var(--cc-accent-soft); }
+.ns-warn { font-size: 11px; color: var(--cc-warn); }
+.ns-error { font-size: 11px; color: var(--cc-err); }
+.ns-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
