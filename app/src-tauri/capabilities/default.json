@@ -17,6 +17,7 @@
     "core:window:allow-start-resize-dragging",
     "core:window:allow-set-always-on-top",
     "updater:default",
-    "process:default"
+    "process:default",
+    "dialog:default"
   ]
 }

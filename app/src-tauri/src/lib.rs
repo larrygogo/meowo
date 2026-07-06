@@ -81,6 +81,17 @@ async fn get_overview(state: State<'_, AppState>) -> Result<Vec<ProjectOverview>
     .map_err(|e| e.to_string())?
 }
 
+/// 「新建会话」面板的最近目录（去重+倒序）。
+#[tauri::command]
+async fn recent_cwds(state: State<'_, AppState>, limit: usize) -> Result<Vec<String>, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_store(&db_path)?.recent_cwds(limit).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn get_project_tasks(
     state: State<'_, AppState>,
@@ -2395,6 +2406,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
@@ -2428,7 +2440,8 @@ pub fn run() {
             host_os,
             available_terminals,
             new_session,
-            check_provider_hooks
+            check_provider_hooks,
+            recent_cwds
         ])
         .on_window_event(|window, event| {
             // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
