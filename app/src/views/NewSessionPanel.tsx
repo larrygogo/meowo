@@ -14,7 +14,6 @@ import {
   getSettings,
 } from "../api";
 import { providerConfig } from "../providers";
-import { Dropdown } from "../Dropdown";
 import { useT } from "../i18n";
 
 function FolderIcon() {
@@ -170,16 +169,20 @@ export function NewSessionPanel(): ReactElement {
         </div>
 
         {terms.length >= 2 && (
-          <div className="ns-field">
+          <label className="ns-field">
             <span className="ns-label">{t.newSession.terminal}</span>
-            <div className="ns-term">
-              <Dropdown
-                value={terminal as ResumeTerminal}
-                options={terms.map((tm) => ({ value: tm, label: tm }))}
-                onChange={(v) => setTerminal(v)}
-              />
-            </div>
-          </div>
+            <select
+              className="ns-input"
+              value={terminal}
+              onChange={(e) => setTerminal(e.target.value as ResumeTerminal)}
+            >
+              {terms.map((tm) => (
+                <option key={tm} value={tm}>
+                  {tm}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
 
         {error && (
