@@ -1486,10 +1486,13 @@ html, body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--cc-surface, #2e2e2c);
+  background: #262624;
   color: var(--cc-text, #e8e8ea);
-  border-radius: var(--r-lg, 12px);
+  border-radius: 12px;
   overflow: hidden;
+}
+:root[data-theme="light"] .ns-window {
+  background: #faf9f5;
 }
 .ns-titlebar {
   display: flex;
