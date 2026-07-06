@@ -9,6 +9,9 @@ export type ProviderKey = "claude" | "kimi" | "codex";
 /** 缺省 provider，无法识别时回退；与 Rust 侧 DEFAULT_PROVIDER 一致。 */
 export const DEFAULT_PROVIDER: ProviderKey = "claude";
 
+/** 所有 provider key（渲染新建面板 agent 选项用；与 ProviderKey 联合类型同步）。 */
+export const PROVIDER_KEYS: ProviderKey[] = ["claude", "codex", "kimi"];
+
 export type Todo = {
   id: number;
   task_id: number;
@@ -201,4 +204,22 @@ export function getAccounts(): Promise<ProviderAccountPayload[]> {
 }
 export function refreshUsage(provider: string): Promise<ProviderUsage> {
   return invoke("refresh_usage", { provider });
+}
+
+/** 某 provider 的 cc-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */
+export type HooksStatus = "installed" | "missing" | "unknown";
+
+/** 新建一个全新会话：在 cwd 打开终端裸启动该 provider。terminal 省略则用设置里的默认终端。 */
+export function newSession(cwd: string, provider: ProviderKey, terminal?: string): Promise<void> {
+  return invoke("new_session", { cwd, provider, terminal });
+}
+
+/** 最近使用过的工作目录（新建面板快捷选择）。 */
+export function recentCwds(limit: number): Promise<string[]> {
+  return invoke("recent_cwds", { limit });
+}
+
+/** 检测某 provider 的 cc-reporter hooks 是否已接入（决定新建后会不会入库）。 */
+export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> {
+  return invoke("check_provider_hooks", { provider });
 }
