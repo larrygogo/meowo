@@ -34,6 +34,9 @@ pub trait Agent: Sync {
     }
     /// 恢复断开会话的命令 argv（[可执行名, 参数...]）。如 ["claude","--resume",id] / ["kimi","-r",id]。
     fn resume_args(&self, session_id: &str) -> Vec<String>;
+    /// 裸启动一个全新会话的命令 argv（[可执行名, 参数...]），不含 resume/id。
+    /// 如 ["claude"] / [kimi_exe()] / codex 启动前缀。看板「新建会话」用。
+    fn launch_args(&self) -> Vec<String>;
     /// 把重命名同步到该 agent 自己的持久层，使 agent 自身的会话列表/恢复(resume)列表也显示新名字：
     /// claude 往 transcript 追加 custom-title 记录；kimi 改写 session state.json 的 title+isCustomTitle。
     /// 返回是否成功落地（失败不阻断调用方更新 DB 标题）。cwd 仅 claude 用于定位 transcript。
@@ -65,6 +68,9 @@ impl Agent for ClaudeAgent {
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         vec!["claude".into(), "--resume".into(), session_id.into()]
+    }
+    fn launch_args(&self) -> Vec<String> {
+        vec!["claude".into()]
     }
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool {
         write_claude_custom_title(session_id, cwd, title)
@@ -102,6 +108,10 @@ impl Agent for KimiAgent {
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         // 用 kimi 可执行绝对路径（spawned 终端 PATH 未必含 kimi）。
         vec![crate::kimi::kimi_exe(), "-r".into(), session_id.into()]
+    }
+    fn launch_args(&self) -> Vec<String> {
+        // 绝对路径优先（spawned 终端 PATH 未必含 kimi），与 resume_args 同源。
+        vec![crate::kimi::kimi_exe()]
     }
     fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
         crate::kimi::set_custom_title(session_id, title)
@@ -151,6 +161,10 @@ impl Agent for CodexAgent {
             }
             None => vec!["codex".into(), "resume".into(), session_id.into()],
         }
+    }
+    fn launch_args(&self) -> Vec<String> {
+        // 与 resume_args 同款可执行解析，仅去掉 `resume <id>`：进入 codex TUI 新会话。
+        crate::codex::codex_launch_prefix().unwrap_or_else(|| vec!["codex".into()])
     }
     fn write_rename(&self, _session_id: &str, _cwd: Option<&str>, _title: &str) -> bool {
         // codex 自定义标题走 app-server JSON-RPC（成本高），暂不回写；重命名仅改 cc-kanban DB。
@@ -260,6 +274,20 @@ mod tests {
         // kimi 首元素是可执行(绝对路径或回退裸名)，参数固定 -r <id>。
         let kimi = for_provider(ProviderKey::Kimi).resume_args("ID");
         assert_eq!(&kimi[1..], ["-r".to_string(), "ID".to_string()]);
+        assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
+    }
+
+    #[test]
+    fn launch_args_per_provider() {
+        // claude：裸命令，无 resume/id。
+        assert_eq!(for_provider(ProviderKey::Claude).launch_args(), vec!["claude"]);
+        // codex：不含 resume/id；末元素不是 "resume"；某元素含 "codex"。
+        let codex = for_provider(ProviderKey::Codex).launch_args();
+        assert!(codex.iter().all(|a| a != "resume"));
+        assert!(codex.iter().any(|a| a.to_ascii_lowercase().contains("codex")));
+        // kimi：单元素可执行（绝对路径或回退裸名），无参数。
+        let kimi = for_provider(ProviderKey::Kimi).launch_args();
+        assert_eq!(kimi.len(), 1);
         assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
     }
 }
