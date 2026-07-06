@@ -16,6 +16,24 @@ import {
 import { providerConfig } from "../providers";
 import { useT } from "../i18n";
 
+function FolderIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
+  );
+}
+
 /** 独立窗口页（label="new-session"）：新建一个全新会话。成功后 emit 通知主看板弹 toast 并自关。 */
 export function NewSessionPanel(): ReactElement {
   const t = useT();
@@ -101,11 +119,21 @@ export function NewSessionPanel(): ReactElement {
           {recent.length > 0 && (
             <div className="ns-recent">
               <span className="ns-recent-lbl">{t.newSession.recent}</span>
-              {recent.map((r) => (
-                <button key={r} type="button" className="ns-chip" title={r} onClick={() => setCwd(r)}>
-                  {r.split(/[\\/]/).filter(Boolean).pop() ?? r}
-                </button>
-              ))}
+              <div className="ns-recent-list">
+                {recent.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={"ns-recent-item" + (cwd === r ? " is-on" : "")}
+                    title={r}
+                    onClick={() => setCwd(r)}
+                  >
+                    <FolderIcon />
+                    <span className="ns-recent-name">{r.split(/[\\/]/).filter(Boolean).pop() ?? r}</span>
+                    <span className="ns-recent-path">{r}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </label>

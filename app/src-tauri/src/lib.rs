@@ -2131,8 +2131,8 @@ fn open_new_session_window_impl(app: &tauri::AppHandle) {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title(tr(ui_lang(&load_settings()), "window.newSession"))
-    .inner_size(440.0, 420.0)
-    .min_inner_size(440.0, 420.0)
+    .inner_size(460.0, 500.0)
+    .min_inner_size(460.0, 500.0)
     .resizable(false)
     .decorations(false)
     .center();
