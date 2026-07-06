@@ -14,6 +14,7 @@ import {
   getSettings,
 } from "../api";
 import { providerConfig } from "../providers";
+import { Dropdown } from "../Dropdown";
 import { useT } from "../i18n";
 
 function FolderIcon() {
@@ -53,7 +54,7 @@ export function NewSessionPanel(): ReactElement {
         setTerminal(s.resume_terminal);
       })
       .catch(() => {});
-    recentCwds(8).then(setRecent).catch(() => {});
+    recentCwds(4).then(setRecent).catch(() => {});
     availableTerminals().then(setTerms).catch(() => {});
     PROVIDER_KEYS.forEach((p) =>
       checkProviderHooks(p)
@@ -169,20 +170,16 @@ export function NewSessionPanel(): ReactElement {
         </div>
 
         {terms.length >= 2 && (
-          <label className="ns-field">
+          <div className="ns-field">
             <span className="ns-label">{t.newSession.terminal}</span>
-            <select
-              className="ns-input"
-              value={terminal}
-              onChange={(e) => setTerminal(e.target.value as ResumeTerminal)}
-            >
-              {terms.map((tm) => (
-                <option key={tm} value={tm}>
-                  {tm}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="ns-term">
+              <Dropdown
+                value={terminal as ResumeTerminal}
+                options={terms.map((tm) => ({ value: tm, label: tm }))}
+                onChange={(v) => setTerminal(v)}
+              />
+            </div>
+          </div>
         )}
 
         {error && (
