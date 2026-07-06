@@ -69,6 +69,15 @@ function PencilIcon() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
 function OpenIcon() {
   // lucide terminal：命令行 >_ 符号，明确表达「打开/跳转终端」（原 share 样图标易误读为分享）
   return (
@@ -450,7 +459,7 @@ function EmptyIcon({ tab }: { tab: Tab }) {
   }
 }
 
-export function EmptyState({ tab }: { tab: Tab }) {
+export function EmptyState({ tab, onNew }: { tab: Tab; onNew?: () => void }) {
   const t = useT();
   const { title, hint } = emptyCopy(tab, t);
   return (
@@ -458,6 +467,11 @@ export function EmptyState({ tab }: { tab: Tab }) {
       <span className="stk-empty-icon"><EmptyIcon tab={tab} /></span>
       <div className="stk-empty-title">{title}</div>
       {hint && <div className="stk-empty-hint">{hint}</div>}
+      {onNew && (
+        <button type="button" className="stk-empty-cta" data-testid="empty-new-cta" onClick={onNew}>
+          {t.newSession.emptyCta}
+        </button>
+      )}
     </div>
   );
 }
@@ -860,6 +874,31 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     window.addEventListener("mouseup", up);
   };
 
+  // 独立「新建会话」窗口启动成功后（Task 13 emit）弹 toast 提示，4s 自动消失。
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
+    let cancelled = false;
+    let un: (() => void) | undefined;
+    try {
+      listen<string>("new-session-launched", (e) => {
+        setToast(e.payload);
+        window.setTimeout(() => setToast(null), 4000);
+      })
+        .then((f) => {
+          if (cancelled) f();
+          else un = f;
+        })
+        .catch(() => {});
+    } catch {
+      /* 非 Tauri 环境（测试/浏览器） */
+    }
+    return () => {
+      cancelled = true;
+      try { un?.(); } catch { /* noop */ }
+    };
+  }, []);
+
   return (
     <div className="sticker">
       {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
@@ -892,7 +931,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
         onScroll={syncSb}
       >
         {shown.length === 0 ? (
-          <EmptyState tab={tab} />
+          <EmptyState tab={tab} onNew={() => invoke("open_new_session_window").catch(() => {})} />
         ) : (
           shown.map((l) => {
             const unnamed = !l.task_title || l.task_title === "(未命名会话)";
@@ -1140,6 +1179,15 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           <>
             <UsageScreen quotaProviders={quotaProviders} usageMap={usageMap} />
             <div className="stk-bar-actions">
+              <span
+                className="stk-act"
+                data-tip={t.newSession.newButton}
+                aria-label={t.newSession.newButton}
+                data-testid="bar-new"
+                onClick={() => invoke("open_new_session_window").catch(() => {})}
+              >
+                <PlusIcon />
+              </span>
               <span className="stk-act" data-tip={t.sticker.search} aria-label={t.sticker.search} onClick={() => setSearchOpen(true)}>
                 <SearchIcon />
               </span>
@@ -1167,6 +1215,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           </>
         )}
       </div>
+      {toast && <div className="stk-toast" role="status">{toast}</div>}
     </div>
   );
 }
