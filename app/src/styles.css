@@ -1631,15 +1631,6 @@ select.ns-input {
   background-position: right 10px center;
   cursor: pointer;
 }
-/* 展开的 option 列表：给深色背景，避免系统默认白底（WebView2/Chromium 支持给 option 设配色）。 */
-select.ns-input option {
-  background: #262624;
-  color: var(--cc-text);
-}
-:root[data-theme="light"] select.ns-input option {
-  background: #faf9f5;
-  color: var(--cc-text);
-}
 
 /* 次要按钮（浏览 / 取消）与主按钮（启动）。 */
 .ns-btn {
