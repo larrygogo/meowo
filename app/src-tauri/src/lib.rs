@@ -1073,6 +1073,9 @@ fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool
             c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
         }
         "cmd" => {
+            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+            // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
+            // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
             let mut c = Command::new("cmd");
             c.raw_arg("/k").raw_arg(shell_join_for_windows(argv, false));
             if let Some(d) = &dir {

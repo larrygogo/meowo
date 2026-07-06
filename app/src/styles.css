@@ -1512,11 +1512,15 @@ html, body {
   flex-direction: column;
   background: #262624;
   color: var(--cc-text, #e8e8ea);
-  border-radius: 12px;
   overflow: hidden;
 }
 :root[data-theme="light"] .ns-window {
   background: #faf9f5;
+}
+/* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings/.updater 的处理）。
+   Windows 端该窗口未设 transparent，若圆角仍生效会在四角露出 html/body 透明底的伪影，故仅 macOS 生效。 */
+:root.platform-macos .ns-window {
+  border-radius: 12px;
 }
 .ns-titlebar {
   display: flex;
