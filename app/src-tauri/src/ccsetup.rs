@@ -241,17 +241,6 @@ fn resolve_reporter_native(settings: &Value) -> Option<String> {
     None
 }
 
-/// claude 的 cc-reporter hooks 是否已接入 ~/.claude/settings.json。读/解析失败即视为未装。
-pub fn claude_hooks_installed() -> bool {
-    let Ok(text) = std::fs::read_to_string(claude_settings_path()) else {
-        return false;
-    };
-    match parse_settings(&text) {
-        Some(v) => reporter_path_from_hooks(&v).is_some(),
-        None => false,
-    }
-}
-
 /// 启动时调用：幂等地把 cc-reporter 接入 Claude Code 的 settings.json（hooks + statusLine）。
 /// 全程 best-effort：读不到 / 解析失败 / 找不到二进制都静默返回，绝不影响应用启动，绝不写坏文件。
 pub fn apply() {

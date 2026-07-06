@@ -1189,6 +1189,28 @@ fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
     })
 }
 
+/// claude hooks 接入状态：读 claude settings.json 判断 cc-reporter hooks 是否登记。
+/// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
+/// 有 cc-reporter hook=Installed。
+fn claude_hooks_status() -> HooksStatus {
+    claude_hooks_status_at(&ccsetup::claude_settings_path())
+}
+
+/// 纯路径版，便于用临时文件单测三态（不碰真实 ~/.claude）。
+fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
+    if !path.exists() {
+        return HooksStatus::Missing;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HooksStatus::Unknown;
+    };
+    match ccsetup::parse_settings(&text) {
+        Some(v) if ccsetup::reporter_path_from_hooks(&v).is_some() => HooksStatus::Installed,
+        Some(_) => HooksStatus::Missing,
+        None => HooksStatus::Unknown,
+    }
+}
+
 /// codex hooks 接入状态：读 ~/.codex/hooks.json。文件不存在=Missing；读/解析失败=Unknown（不误报）。
 fn codex_hooks_status() -> HooksStatus {
     let Some(home) = cc_reporter::codex::codex_home() else {
@@ -1228,13 +1250,7 @@ fn kimi_hooks_status() -> HooksStatus {
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
     match cc_store::ProviderKey::parse(Some(&provider)) {
-        cc_store::ProviderKey::Claude => {
-            if ccsetup::claude_hooks_installed() {
-                HooksStatus::Installed
-            } else {
-                HooksStatus::Missing
-            }
-        }
+        cc_store::ProviderKey::Claude => claude_hooks_status(),
         cc_store::ProviderKey::Codex => codex_hooks_status(),
         cc_store::ProviderKey::Kimi => kimi_hooks_status(),
     }
@@ -2972,5 +2988,32 @@ timeout = 5\n";
         assert!(toml_text_has_reporter(toml, "kimi"));
         assert!(!toml_text_has_reporter(toml, "codex"));
         assert!(!toml_text_has_reporter("event = \"x\"\ncommand = \"node a.js\"", "kimi"));
+    }
+
+    #[test]
+    fn claude_hooks_status_three_way() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("cckb-claude-hooks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+
+        // Installed：command 用 ccsetup 认可的「带引号 cc-reporter 路径」格式（参照 ccsetup 既有
+        // 测试 reporter_exe_path_strict_matches_only_our_exe / ensure_hooks_* 里的 command 串）。
+        let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/cc-reporter.exe\""}]}]}}"#;
+        std::fs::File::create(&path).unwrap().write_all(installed.as_bytes()).unwrap();
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Installed));
+
+        let foreign = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node other.js"}]}]}}"#;
+        std::fs::File::create(&path).unwrap().write_all(foreign.as_bytes()).unwrap();
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+
+        // 损坏 JSON → Unknown（核心不变量：不误报 Missing）
+        std::fs::File::create(&path).unwrap().write_all(b"{not json").unwrap();
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Unknown));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
