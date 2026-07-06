@@ -1111,6 +1111,44 @@ fn spawn_in_terminal(_argv: &[String], _cwd: Option<&str>, _terminal: &str) -> b
     false
 }
 
+/// 校验并归一「新建会话」的工作目录：非空、真实存在的目录。返回 trim 后的路径。
+fn validate_new_session_cwd(cwd: &str) -> Result<String, String> {
+    let d = cwd.trim();
+    if d.is_empty() {
+        return Err("请选择工作目录".into());
+    }
+    if !std::path::Path::new(d).is_dir() {
+        return Err("目录不存在".into());
+    }
+    Ok(d.to_string())
+}
+
+/// 新建一个全新会话：在 `cwd` 打开终端裸启动指定 provider 的 CLI（无 session_id）。
+/// 会话入库仍靠该 CLI 自己的 hook（claude/kimi 秒级，codex 首条消息后）——本命令只负责 spawn。
+/// terminal 缺省用 settings.resume_terminal。spawn 放 blocking 线程池并 await，失败回传前端面板。
+#[tauri::command]
+async fn new_session(
+    cwd: String,
+    provider: String,
+    terminal: Option<String>,
+) -> Result<(), String> {
+    let dir = validate_new_session_cwd(&cwd)?;
+    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let argv = cc_reporter::agent::for_provider(key).launch_args();
+    let term = terminal
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| load_settings().resume_terminal);
+    // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环，同时能 await 结果回传。
+    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, Some(&dir), &term))
+        .await
+        .map_err(|e| e.to_string())?;
+    if ok {
+        Ok(())
+    } else {
+        Err("启动终端失败：请确认所选 agent 已安装并在 PATH 中".into())
+    }
+}
+
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
@@ -2281,7 +2319,8 @@ pub fn run() {
             get_accounts,
             refresh_usage,
             host_os,
-            available_terminals
+            available_terminals,
+            new_session
         ])
         .on_window_event(|window, event| {
             // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
@@ -2779,5 +2818,24 @@ mod tests {
         assert_eq!(d.theme, "dark");
         assert_eq!(d.opacity, 94);
         assert_eq!(d.ui_scale, 100);
+    }
+}
+
+#[cfg(test)]
+mod new_session_tests {
+    use super::*;
+
+    #[test]
+    fn validate_cwd_rejects_empty_and_missing() {
+        assert!(validate_new_session_cwd("").is_err());
+        assert!(validate_new_session_cwd("   ").is_err());
+        assert!(validate_new_session_cwd("C:/definitely/not/a/real/dir/xyz123").is_err());
+    }
+
+    #[test]
+    fn validate_cwd_accepts_existing_dir() {
+        let tmp = std::env::temp_dir();
+        let got = validate_new_session_cwd(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(got, tmp.to_str().unwrap().trim());
     }
 }
