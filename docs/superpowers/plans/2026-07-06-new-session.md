@@ -1542,4 +1542,612 @@ git commit -m "feat(new-session): 设置页默认 agent 下拉（可选增强）
   - codex：新建 → toast 提示「发首条消息后出现」；发一条消息后出卡。
 - [ ] **回归：** resume（恢复会话）三 provider 仍正常（Task 4 未回归）。
 - [ ] **错误路径：** 目录留空启动禁用；填不存在目录 → 面板报错；PATH 无该 agent → toast/面板报「未找到」。
+
+---
+
+# 修订 R1：改为独立窗口（替代 overlay）
+
+> 用户执行中途（T1–T10 完成后）决定把面板从「看板内模态弹层」改为**独立 WebviewWindow**。见 spec 修订 R1。
+> 原 Task 10 的 `NewSessionPanel`（overlay 版）由 Task 13 改造；原 Task 11（overlay 接线）作废，由 Task 14 替代。后端命令/api/i18n（Task 1–9）零改动。原 Task 12（设置页默认 agent）仍可选，编号顺延到最后。
+
+## Task 13: 独立窗口——开窗命令 + 面板改造
+
+**Files:**
+- Modify: `app/src-tauri/src/lib.rs`（`open_new_session_window` 命令 + impl + 注册）
+- Modify: `app/src-tauri/src/settings.rs`（`tr()` 加 `window.newSession` 中英）
+- Modify: `app/src-tauri/capabilities/default.json`（`windows` 加 `"new-session"`）
+- Modify: `app/src/main.tsx`（label 路由）
+- Modify: `app/src/views/NewSessionPanel.tsx`（overlay → 独立窗口页）
+- Modify: `app/src/views/NewSessionPanel.test.tsx`（改 mock：emit + getCurrentWindow().close）
+- Modify: `app/src/styles.css`（删 `.ns-overlay`/`.ns-modal`，加 `.ns-window`/`.ns-titlebar`/`.ns-close`/`.ns-body`；表单内部样式不动）
+
+**Interfaces:**
+- Produces: 命令 `open_new_session_window()`；窗口 label `"new-session"`；成功事件 `emit("new-session-launched", msg: string)`（Task 14 监听）。
+
+- [ ] **Step 1: 后端开窗命令**（`lib.rs`，仿 `open_settings`/`open_update_window`，放其附近）
+
+```rust
+/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA）。
+/// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
+#[tauri::command]
+fn open_new_session_window(app: tauri::AppHandle) {
+    std::thread::spawn(move || open_new_session_window_impl(&app));
+}
+
+/// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
+fn open_new_session_window_impl(app: &tauri::AppHandle) {
+    // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
+    if let Some(w) = app.get_webview_window("new-session") {
+        let _ = w.set_focus();
+        return;
+    }
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "new-session",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title(tr(ui_lang(&load_settings()), "window.newSession"))
+    .inner_size(440.0, 380.0)
+    .min_inner_size(440.0, 380.0)
+    .resizable(false)
+    .decorations(false)
+    .center();
+    // macOS：无边框窗口不自动圆角，设透明由前端 .ns-window 的 border-radius 呈现（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    match builder.build() {
+        Ok(_win) => {
+            #[cfg(target_os = "macos")]
+            {
+                let app_handle = app.clone();
+                _win.on_window_event(move |e| {
+                    if matches!(
+                        e,
+                        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                    ) {
+                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                    }
+                });
+            }
+        }
+        Err(e) => eprintln!("创建新建会话窗口失败: {e}"),
+    }
+}
+```
+
+在 `generate_handler!` 里加 `open_new_session_window`（放 `recent_cwds` 后）。
+
+- [ ] **Step 2: 窗口标题文案**（`settings.rs` 的 `tr()`）
+
+在 `window.updater` 的中英两行附近各加一行：
+
+```rust
+        ("en", "window.newSession") => "New Session",
+```
+（英文块内，与 `("en", "window.updater") => ...` 同处）
+
+```rust
+        (_, "window.newSession") => "新建会话",
+```
+（默认块内，与 `(_, "window.updater") => ...` 同处）
+
+- [ ] **Step 3: 授权新窗口**（`capabilities/default.json`）
+
+`windows` 数组从 `["main", "about", "updater"]` 改为：
+
+```json
+  "windows": ["main", "about", "updater", "new-session"],
+```
+
+- [ ] **Step 4: 前端路由**（`main.tsx`）
+
+顶部 import：
+
+```tsx
+import { NewSessionPanel } from "./views/NewSessionPanel";
+```
+
+渲染分支（`label === "updater" ? <Updater /> :` 之后加一支）：
+
+```tsx
+        {label === "about" ? (
+          <About />
+        ) : label === "updater" ? (
+          <Updater />
+        ) : label === "new-session" ? (
+          <NewSessionPanel />
+        ) : (
+          <App />
+        )}
+```
+
+- [ ] **Step 5: 面板改造为独立窗口页**（`NewSessionPanel.tsx` 整体替换）
+
+```tsx
+import { type ReactElement, useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  type ProviderKey,
+  type HooksStatus,
+  type ResumeTerminal,
+  PROVIDER_KEYS,
+  newSession,
+  recentCwds,
+  checkProviderHooks,
+  availableTerminals,
+  getSettings,
+} from "../api";
+import { providerConfig } from "../providers";
+import { useT } from "../i18n";
+
+/** 独立窗口页（label="new-session"）：新建一个全新会话。成功后 emit 通知主看板弹 toast 并自关。 */
+export function NewSessionPanel(): ReactElement {
+  const t = useT();
+  const [cwd, setCwd] = useState("");
+  const [provider, setProvider] = useState<ProviderKey>("claude");
+  const [terminal, setTerminal] = useState<ResumeTerminal | "">("");
+  const [terms, setTerms] = useState<ResumeTerminal[]>([]);
+  const [recent, setRecent] = useState<string[]>([]);
+  const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => {
+        setProvider(s.default_agent);
+        setTerminal(s.resume_terminal);
+      })
+      .catch(() => {});
+    recentCwds(8).then(setRecent).catch(() => {});
+    availableTerminals().then(setTerms).catch(() => {});
+    PROVIDER_KEYS.forEach((p) =>
+      checkProviderHooks(p)
+        .then((st) => setHooks((h) => ({ ...h, [p]: st })))
+        .catch(() => {}),
+    );
+  }, []);
+
+  function closeWin() {
+    getCurrentWindow().close();
+  }
+
+  async function pickDir() {
+    const picked = await open({ directory: true });
+    if (typeof picked === "string") setCwd(picked);
+  }
+
+  async function launch() {
+    if (!cwd.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await newSession(cwd.trim(), provider, terminal || undefined);
+      const label = providerConfig(provider).label(t);
+      const msg =
+        provider === "codex"
+          ? t.newSession.launchedCodexToast(label)
+          : t.newSession.launchedToast(label);
+      await emit("new-session-launched", msg);
+      closeWin();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  }
+
+  const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
+
+  return (
+    <div className="ns-window">
+      <div className="ns-titlebar" data-tauri-drag-region>
+        <span className="ns-title">{t.newSession.title}</span>
+        <button type="button" className="ns-close" aria-label={t.newSession.cancel} onClick={closeWin}>
+          ×
+        </button>
+      </div>
+
+      <div className="ns-body">
+        <label className="ns-field">
+          <span className="ns-label">{t.newSession.dir}</span>
+          <div className="ns-dir-row">
+            <input
+              className="ns-input"
+              data-testid="ns-dir"
+              value={cwd}
+              placeholder={t.newSession.dirPlaceholder}
+              onChange={(e) => setCwd(e.target.value)}
+            />
+            <button type="button" className="ns-btn" onClick={pickDir}>
+              {t.newSession.browse}
+            </button>
+          </div>
+          {recent.length > 0 && (
+            <div className="ns-recent">
+              <span className="ns-recent-lbl">{t.newSession.recent}</span>
+              {recent.map((r) => (
+                <button key={r} type="button" className="ns-chip" title={r} onClick={() => setCwd(r)}>
+                  {r.split(/[\\/]/).filter(Boolean).pop() ?? r}
+                </button>
+              ))}
+            </div>
+          )}
+        </label>
+
+        <div className="ns-field">
+          <span className="ns-label">{t.newSession.agent}</span>
+          <div className="ns-agents">
+            {PROVIDER_KEYS.map((p) => {
+              const cfg = providerConfig(p);
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  className={"ns-agent" + (provider === p ? " is-on" : "")}
+                  onClick={() => setProvider(p)}
+                >
+                  <cfg.Icon />
+                  <span>{cfg.label(t)}</span>
+                </button>
+              );
+            })}
+          </div>
+          {warn && (
+            <div className="ns-warn" data-testid="ns-hooks-warn">
+              {hooks[provider] === "unknown" ? t.newSession.hooksUnknown : t.newSession.hooksMissing}
+            </div>
+          )}
+        </div>
+
+        {terms.length >= 2 && (
+          <label className="ns-field">
+            <span className="ns-label">{t.newSession.terminal}</span>
+            <select
+              className="ns-input"
+              value={terminal}
+              onChange={(e) => setTerminal(e.target.value as ResumeTerminal)}
+            >
+              {terms.map((tm) => (
+                <option key={tm} value={tm}>
+                  {tm}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {error && (
+          <div className="ns-error" data-testid="ns-error">
+            {error}
+          </div>
+        )}
+      </div>
+
+      <div className="ns-actions">
+        <button type="button" className="ns-btn" onClick={closeWin}>
+          {t.newSession.cancel}
+        </button>
+        <button
+          type="button"
+          className="ns-btn is-primary"
+          data-testid="ns-launch"
+          disabled={!cwd.trim() || busy}
+          onClick={launch}
+        >
+          {busy ? t.newSession.launching : t.newSession.launch}
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 6: 测试改造**（`NewSessionPanel.test.tsx`）
+
+面板不再有 props；改为断言 `emit` + `getCurrentWindow().close`。保留 api mock（沿用 T10 已修好的 `vi.hoisted` + 原生断言 + `afterEach(cleanup)` 写法），新增 window/event mock：
+
+```tsx
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+
+const api = {
+  newSession: vi.fn(),
+  recentCwds: vi.fn(),
+  checkProviderHooks: vi.fn(),
+  availableTerminals: vi.fn(),
+  getSettings: vi.fn(),
+};
+vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), ...api }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+const closeMock = vi.fn();
+const emitMock = vi.fn();
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock }) }));
+vi.mock("@tauri-apps/api/event", () => ({ emit: (...a: unknown[]) => emitMock(...a) }));
+
+import { NewSessionPanel } from "./NewSessionPanel";
+
+beforeEach(() => {
+  Object.values(api).forEach((m) => m.mockReset());
+  closeMock.mockReset();
+  emitMock.mockReset();
+  api.recentCwds.mockResolvedValue([]);
+  api.checkProviderHooks.mockResolvedValue("installed");
+  api.availableTerminals.mockResolvedValue(["wt"]);
+  api.getSettings.mockResolvedValue({ default_agent: "claude", resume_terminal: "wt" });
+});
+afterEach(() => cleanup());
+
+describe("NewSessionPanel (独立窗口)", () => {
+  it("目录为空时启动禁用", async () => {
+    render(<NewSessionPanel />);
+    const launch = await screen.findByTestId("ns-launch");
+    expect((launch as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("填目录后启动调 newSession → emit → 关窗", async () => {
+    api.newSession.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
+    fireEvent.click(screen.getByTestId("ns-launch"));
+    await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/proj", "claude", "wt"));
+    await waitFor(() => expect(emitMock).toHaveBeenCalledWith("new-session-launched", expect.any(String)));
+    await waitFor(() => expect(closeMock).toHaveBeenCalled());
+  });
+
+  it("hooks 未装显示警告", async () => {
+    api.checkProviderHooks.mockResolvedValue("missing");
+    render(<NewSessionPanel />);
+    expect(await screen.findByTestId("ns-hooks-warn")).toBeTruthy();
+  });
+
+  it("启动失败显示错误，不 emit、不关窗", async () => {
+    api.newSession.mockRejectedValue("启动终端失败");
+    render(<NewSessionPanel />);
+    fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
+    fireEvent.click(screen.getByTestId("ns-launch"));
+    expect((await screen.findByTestId("ns-error")).textContent).toContain("启动终端失败");
+    expect(emitMock).not.toHaveBeenCalled();
+    expect(closeMock).not.toHaveBeenCalled();
+  });
+});
+```
+
+- [ ] **Step 7: 样式**（`styles.css`）
+
+删除 `.ns-overlay` 与 `.ns-modal` 两条规则；新增（表单内部 `.ns-field`/`.ns-input`/`.ns-recent`/`.ns-chip`/`.ns-btn`/`.ns-agents`/`.ns-agent`/`.ns-warn`/`.ns-error` **保持不变**）：
+
+```css
+/* 新建会话独立窗口 */
+.ns-window {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--cc-surface, #2e2e2c);
+  color: var(--cc-text, #e8e8ea);
+  border-radius: var(--r-lg, 12px);
+  overflow: hidden;
+}
+.ns-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ns-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ns-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: var(--r-md, 8px);
+}
+.ns-close:hover {
+  background: var(--cc-surface-hover, rgba(255, 255, 255, 0.08));
+}
+.ns-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ns-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+}
+```
+
+- [ ] **Step 8: 验证**
+
+Run: `cargo build -p cc-app`（若本机 cc-app.exe 在运行导致 exe 链接 os error 5，退而用 `cargo check -p cc-app` + `cargo build -p cc-app --lib`，report 注明）
+Run: `cd app && bunx vitest run src/views/NewSessionPanel.test.tsx && bunx tsc --noEmit`
+Expected: 后端编译通过；4 测试 PASS；tsc 无错误。
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add app/src-tauri/src/lib.rs app/src-tauri/src/settings.rs app/src-tauri/capabilities/default.json app/src/main.tsx app/src/views/NewSessionPanel.tsx app/src/views/NewSessionPanel.test.tsx app/src/styles.css
+git commit -m "feat(new-session): 新建会话改为独立窗口（开窗命令 + 面板页 + emit 反馈）"
+```
+
+---
+
+## Task 14: 主看板接线（入口 + toast）
+
+**Files:**
+- Modify: `app/src/views/Sticker.tsx`（EmptyState CTA + 底部栏按钮 + PlusIcon + toast 监听）
+- Create: `app/src/views/Sticker.newsession.test.tsx`
+- Modify: `app/src/styles.css`（`.stk-empty-cta` + `.stk-toast`）
+
+**Interfaces:**
+- Consumes: 命令 `open_new_session_window`（Task 13）；事件 `new-session-launched`（Task 13 emit）。
+
+- [ ] **Step 1: 写失败测试**（`Sticker.newsession.test.tsx`）
+
+```tsx
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+
+import { EmptyState } from "./Sticker";
+
+afterEach(() => cleanup());
+
+describe("EmptyState 新建 CTA", () => {
+  it("有 onNew 时渲染 CTA 且点击触发", () => {
+    const onNew = vi.fn();
+    render(<EmptyState tab="all" onNew={onNew} />);
+    fireEvent.click(screen.getByTestId("empty-new-cta"));
+    expect(onNew).toHaveBeenCalled();
+  });
+
+  it("无 onNew 时不渲染 CTA", () => {
+    render(<EmptyState tab="all" />);
+    expect(screen.queryByTestId("empty-new-cta")).toBeNull();
+  });
+});
+```
+
+Run: `cd app && bunx vitest run src/views/Sticker.newsession.test.tsx` → 应失败（`EmptyState` 无 `onNew`）。
+
+- [ ] **Step 2: EmptyState 加 onNew CTA**（`Sticker.tsx`，`EmptyState` 组件）
+
+```tsx
+export function EmptyState({ tab, onNew }: { tab: Tab; onNew?: () => void }) {
+  const t = useT();
+  const { title, hint } = emptyCopy(tab, t);
+  return (
+    <div className="stk-empty">
+      <span className="stk-empty-icon"><EmptyIcon tab={tab} /></span>
+      <div className="stk-empty-title">{title}</div>
+      {hint && <div className="stk-empty-hint">{hint}</div>}
+      {onNew && (
+        <button type="button" className="stk-empty-cta" data-testid="empty-new-cta" onClick={onNew}>
+          {t.newSession.emptyCta}
+        </button>
+      )}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 3: PlusIcon + 底部栏按钮 + toast**（`Sticker.tsx`）
+
+加 `PlusIcon`（图标区，如 `PencilIcon` 旁）：
+
+```tsx
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+```
+
+主 Sticker 组件（渲染 `.stk-bar` 的那个）内，`return` 前加 toast state + 监听（`listen`/`invoke` 已在文件顶部 import）：
+
+```tsx
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    const un = listen<string>("new-session-launched", (e) => {
+      setToast(e.payload);
+      window.setTimeout(() => setToast(null), 4000);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+```
+
+底栏 `.stk-bar-actions` 内、搜索按钮之前，加「新建」按钮：
+
+```tsx
+              <span
+                className="stk-act"
+                data-tip={t.newSession.newButton}
+                aria-label={t.newSession.newButton}
+                data-testid="bar-new"
+                onClick={() => invoke("open_new_session_window").catch(() => {})}
+              >
+                <PlusIcon />
+              </span>
+```
+
+组件根 `<div>` 末尾（底栏 `.stk-bar` 之后）加 toast：
+
+```tsx
+      {toast && <div className="stk-toast" role="status">{toast}</div>}
+```
+
+- [ ] **Step 4: 空状态渲染点传 onNew**
+
+Run: `cd app && grep -n "<EmptyState" src/views/Sticker.tsx`
+
+把渲染处 `<EmptyState tab={...} />` 改为：
+
+```tsx
+<EmptyState tab={...} onNew={() => invoke("open_new_session_window").catch(() => {})} />
+```
+
+- [ ] **Step 5: 样式**（`styles.css`）
+
+```css
+.stk-empty-cta {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--cc-accent, #c96442);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+.stk-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: var(--r-md, 8px);
+  font-size: 12px;
+  z-index: 200;
+  max-width: calc(100vw - 24px);
+  text-align: center;
+}
+```
+
+- [ ] **Step 6: 验证**
+
+Run: `cd app && bunx vitest run src/views/Sticker.newsession.test.tsx && bunx vitest run && bunx tsc --noEmit`
+Expected: EmptyState 两测试 PASS；全量前端测试不回归；tsc 无错误。
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/src/views/Sticker.tsx app/src/views/Sticker.newsession.test.tsx app/src/styles.css
+git commit -m "feat(new-session): 底部栏新建按钮 + 空状态 CTA → 开独立窗口，监听事件弹 toast"
+```
 ```

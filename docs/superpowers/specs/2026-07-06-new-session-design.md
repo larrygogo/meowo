@@ -139,3 +139,16 @@
 3. 终端复用 `resume_terminal`，不新增 `default_new_terminal`。
 4. 新增 `default_agent` 设置字段，默认 `claude`。
 5. hooks 检测对 claude 精确（复用 ccsetup 口径）；codex/kimi 的 hook 配置精确位置在 writing-plans 阶段定位，读取失败降级为 `Unknown` 不误报。
+
+## 修订 R1：改为独立窗口（2026-07-06，用户执行中途决定）
+
+原设计的「看板内模态弹层」改为**独立 WebviewWindow**（与设置/更新窗口同款多窗口机制）。表单内容、字段、hooks 检测、启动逻辑不变，仅**窗口形态**与**反馈流**调整。
+
+**变更点：**
+- **窗口**：新增后端命令 `open_new_session_window`（仿 `open_settings_window`：子线程建窗防消息泵白屏、单例 `get_webview_window("new-session")` 已开则聚焦、`WebviewUrl::App("index.html")` + label `"new-session"`、`inner_size` ~440×380、`resizable(false)`、`decorations(false)`、`center()`；macOS `transparent(true)` + `settings_window_will_open`/`did_close` 激活策略）。标题走 `tr(lang, "window.newSession")`。
+- **路由 & 权限**：`main.tsx` 加 `label === "new-session"` 分支渲染 `NewSessionPanel` 整页；`capabilities/default.json` 的 `windows` 加 `"new-session"`。
+- **面板**：`NewSessionPanel` 去掉 `onClose`/`onLaunched` props，改为独立窗口页——无边框故加可拖动标题区（`data-tauri-drag-region`）+ 关闭 X；`取消`/关闭 → `getCurrentWindow().close()`；启动**成功** → `emit("new-session-launched", msg)` 再 `close()`；**失败** → 窗内报错留窗重试。外壳从 `.ns-overlay`/`.ns-modal` 改为整页 `.ns-window`（表单内部样式不变）。
+- **入口 & 反馈**：底部栏 `+ 新建` 按钮 + 空状态 CTA 点击 → `invoke("open_new_session_window")`（不再显示 overlay）。主看板 `Sticker` 监听 `new-session-launched` 事件 → 弹 toast（claude/kimi 秒级出卡；codex 提示发首条消息），toast 停留主看板窗口。
+- **影响**：后端命令 `new_session`/`recent_cwds`/`check_provider_hooks`、前端 api、i18n 文案（原 Task 1–9）零改动；仅面板外壳 + 入口接线改，外加开窗基建。
+
+**取舍理由**：用户希望「新建会话」是可独立摆放、不遮挡看板的窗口，而非临时遮罩弹层；独立窗口也更贴合「离开看板、专注配置一个新会话」这一动作。
