@@ -1632,6 +1632,10 @@ select.ns-input {
   cursor: pointer;
 }
 
+/* 新建面板里的终端下拉撑满字段宽度（按钮 + 弹出菜单等宽）；设置页的 .dd 不在 .ns-field 内，不受影响。 */
+.ns-field .dd { width: 100%; }
+.ns-field .dd-btn { width: 100%; min-width: 0; }
+
 /* 次要按钮（浏览 / 取消）与主按钮（启动）。 */
 .ns-btn {
   flex: none;
