@@ -97,6 +97,15 @@ export function NewSessionPanel(): ReactElement {
     !q || recent.some((r) => r.toLowerCase() === q)
       ? recent
       : recent.filter((r) => r.toLowerCase().includes(q));
+  // 终端类型 key → 友好名（与设置页 About.tsx 的映射一致）。
+  const termLabel: Record<ResumeTerminal, string> = {
+    wt: "Windows Terminal",
+    wezterm: "WezTerm",
+    powershell: "PowerShell",
+    cmd: t.settings.cmdPrompt,
+    terminal: "Terminal",
+    iterm: "iTerm2",
+  };
   const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
 
   return (
@@ -174,7 +183,7 @@ export function NewSessionPanel(): ReactElement {
             <span className="ns-label">{t.newSession.terminal}</span>
             <Dropdown
               value={terminal as ResumeTerminal}
-              options={terms.map((tm) => ({ value: tm, label: tm }))}
+              options={terms.map((tm) => ({ value: tm, label: termLabel[tm] }))}
               onChange={(v) => setTerminal(v)}
             />
           </div>
