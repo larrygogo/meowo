@@ -41,7 +41,7 @@ describe("NewSessionPanel (独立窗口)", () => {
     render(<NewSessionPanel />);
     fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
     fireEvent.click(screen.getByTestId("ns-launch"));
-    await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/proj", "claude", "wt"));
+    await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/proj", "claude"));
     await waitFor(() => expect(emitMock).toHaveBeenCalledWith("new-session-launched", expect.any(String)));
     await waitFor(() => expect(closeMock).toHaveBeenCalled());
   });

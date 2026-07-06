@@ -5,16 +5,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type ProviderKey,
   type HooksStatus,
-  type ResumeTerminal,
   PROVIDER_KEYS,
   newSession,
   recentCwds,
   checkProviderHooks,
-  availableTerminals,
   getSettings,
 } from "../api";
 import { providerConfig } from "../providers";
-import { Dropdown } from "../Dropdown";
 import { useT } from "../i18n";
 
 function FolderIcon() {
@@ -40,8 +37,6 @@ export function NewSessionPanel(): ReactElement {
   const t = useT();
   const [cwd, setCwd] = useState("");
   const [provider, setProvider] = useState<ProviderKey>("claude");
-  const [terminal, setTerminal] = useState<ResumeTerminal | "">("");
-  const [terms, setTerms] = useState<ResumeTerminal[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
@@ -49,13 +44,9 @@ export function NewSessionPanel(): ReactElement {
 
   useEffect(() => {
     getSettings()
-      .then((s) => {
-        setProvider(s.default_agent);
-        setTerminal(s.resume_terminal);
-      })
+      .then((s) => setProvider(s.default_agent))
       .catch(() => {});
     recentCwds(4).then(setRecent).catch(() => {});
-    availableTerminals().then(setTerms).catch(() => {});
     PROVIDER_KEYS.forEach((p) =>
       checkProviderHooks(p)
         .then((st) => setHooks((h) => ({ ...h, [p]: st })))
@@ -77,7 +68,7 @@ export function NewSessionPanel(): ReactElement {
     setBusy(true);
     setError(null);
     try {
-      await newSession(cwd.trim(), provider, terminal || undefined);
+      await newSession(cwd.trim(), provider);
       const label = providerConfig(provider).label(t);
       const msg =
         provider === "codex"
@@ -97,15 +88,6 @@ export function NewSessionPanel(): ReactElement {
     !q || recent.some((r) => r.toLowerCase() === q)
       ? recent
       : recent.filter((r) => r.toLowerCase().includes(q));
-  // 终端类型 key → 友好名（与设置页 About.tsx 的映射一致）。
-  const termLabel: Record<ResumeTerminal, string> = {
-    wt: "Windows Terminal",
-    wezterm: "WezTerm",
-    powershell: "PowerShell",
-    cmd: t.settings.cmdPrompt,
-    terminal: "Terminal",
-    iterm: "iTerm2",
-  };
   const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
 
   return (
@@ -177,17 +159,6 @@ export function NewSessionPanel(): ReactElement {
             </div>
           )}
         </div>
-
-        {terms.length >= 2 && (
-          <div className="ns-field">
-            <span className="ns-label">{t.newSession.terminal}</span>
-            <Dropdown
-              value={terminal as ResumeTerminal}
-              options={terms.map((tm) => ({ value: tm, label: termLabel[tm] }))}
-              onChange={(v) => setTerminal(v)}
-            />
-          </div>
-        )}
 
         {error && (
           <div className="ns-error" data-testid="ns-error">
