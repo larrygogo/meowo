@@ -1034,6 +1034,83 @@ fn rollback_failed_resume(sid: i64) {
     }
 }
 
+/// 在 `cwd` 打开一个终端并运行 `argv`，终端类型由 `terminal`（同 settings.resume_terminal 取值）决定。
+/// resume（`claude --resume <id>`）与 new（裸 `claude`）共用——唯一区别是传入的 argv。成功返回 true。
+/// Windows：powershell/cmd/wezterm/wt，缺失回退链同 resume 旧逻辑；wt 分支独立传 argv 不拼 shell 串。
+#[cfg(target_os = "windows")]
+fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+    let dir = safe_cwd(cwd);
+    // 选了 wt/默认但没装 wt → 回退 PowerShell；选了 wezterm 但已卸载 → 落回 wt/powershell。
+    let eff = match terminal {
+        "powershell" => "powershell",
+        "cmd" => "cmd",
+        "wezterm" if wezterm::available() => "wezterm",
+        _ if wt_available() => "wt",
+        _ => "powershell",
+    };
+    let spawned: std::io::Result<()> = match eff {
+        "powershell" => {
+            let mut c = Command::new("powershell");
+            c.args(["-NoExit", "-Command", &shell_join_for_windows(argv, true)]);
+            if let Some(d) = &dir {
+                c.current_dir(d);
+            }
+            c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        }
+        "cmd" => {
+            let mut c = Command::new("cmd");
+            c.raw_arg("/k").raw_arg(shell_join_for_windows(argv, false));
+            if let Some(d) = &dir {
+                c.current_dir(d);
+            }
+            c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        }
+        "wezterm" => wezterm::resume(dir.as_deref(), argv),
+        _ => {
+            let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+            if let Some(p) = wt_default_profile() {
+                args.push("-p".into());
+                args.push(p);
+            }
+            if let Some(d) = &dir {
+                args.push("-d".into());
+                args.push(d.clone());
+            }
+            args.extend(argv.iter().cloned());
+            Command::new("wt").args(&args).spawn().map(|_| ())
+        }
+    };
+    match spawned {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("打开终端 {eff} 失败：{e}");
+            false
+        }
+    }
+}
+
+/// macOS 版：按 terminal 选 Terminal.app/iTerm2（iTerm2 未装回退 Terminal），走 AppleScript。成功 true。
+#[cfg(target_os = "macos")]
+fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+    use crate::term_script::TermKind;
+    let kind = match crate::term_script::resume_kind_from_setting(terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    };
+    crate::macos::terminal::resume_session_mac(cwd, argv, kind)
+}
+
+/// 其它平台无终端集成。
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn spawn_in_terminal(_argv: &[String], _cwd: Option<&str>, _terminal: &str) -> bool {
+    false
+}
+
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
@@ -1056,69 +1133,11 @@ fn resume_session(
         // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
         // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。
         std::thread::spawn(move || {
-            use std::os::windows::process::CommandExt;
-            use std::process::Command;
-            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
-
             let (revived, resolved_cwd, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
-            // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
-            let eff = match load_settings().resume_terminal.as_str() {
-                "powershell" => "powershell",
-                "cmd" => "cmd",
-                // 选了 wezterm 但已卸载 → 落回 wt/powershell 链,与 wt 缺失回退同理
-                "wezterm" if wezterm::available() => "wezterm",
-                _ if wt_available() => "wt",
-                _ => "powershell",
-            };
-            let spawned: std::io::Result<()> = match eff {
-                // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
-                // 命令串经 shell_join_for_windows 引用：kimi/codex 可执行路径含空格时裸拼会断词。
-                // powershell.exe 按 CRT 规则解析自身命令行（\" 还原为字面引号），经 args() 传入即可。
-                "powershell" => {
-                    let mut c = Command::new("powershell");
-                    c.args(["-NoExit", "-Command", &shell_join_for_windows(&resume, true)]);
-                    if let Some(d) = &dir {
-                        c.current_dir(d);
-                    }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
-                }
-                // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
-                // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
-                // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
-                "cmd" => {
-                    let mut c = Command::new("cmd");
-                    c.raw_arg("/k").raw_arg(shell_join_for_windows(&resume, false));
-                    if let Some(d) = &dir {
-                        c.current_dir(d);
-                    }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
-                }
-                // WezTerm：GUI 已开则 cli spawn 新 tab，否则 wezterm-gui start 新窗口(模块内回退)。
-                "wezterm" => wezterm::resume(dir.as_deref(), &resume),
-                // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
-                // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
-                _ => {
-                    let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
-                    // 用用户默认 profile（多为 PowerShell）渲染标签：否则 WT 对裸命令行套用 cmd
-                    // 基础配置，图标/配色/环境都是 cmd，看起来"还是 cmd"。读不到则不带 -p，沿用旧行为。
-                    if let Some(p) = wt_default_profile() {
-                        args.push("-p".into());
-                        args.push(p);
-                    }
-                    if let Some(d) = &dir {
-                        args.push("-d".into());
-                        args.push(d.clone());
-                    }
-                    args.extend(resume.iter().cloned());
-                    Command::new("wt").args(&args).spawn().map(|_| ())
-                }
-            };
-            if let Err(e) = spawned {
-                eprintln!("恢复会话：启动 {eff} 失败：{e}");
-                // 回滚乐观复活并刷新看板：release 构建（windows_subsystem="windows"）下 stderr 无处可看，
-                // 不回滚的话卡片会假显示「已连接」直到 120s 宽限过期，用户毫无反馈。
+            let ok = spawn_in_terminal(&resume, resolved_cwd.as_deref(), &load_settings().resume_terminal);
+            if !ok {
+                // GUI 构建 stderr 不可见：回滚乐观复活，卡片立即回落「已断开」而非假连接 120s。
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
@@ -1135,15 +1154,9 @@ fn resume_session(
         std::thread::spawn(move || {
             let (revived, resolved, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let ok = crate::macos::terminal::resume_session_mac(
-                resolved.as_deref(),
-                &resume,
-                resume_terminal_kind(),
-            );
+            let ok = spawn_in_terminal(&resume, resolved.as_deref(), &load_settings().resume_terminal);
             if !ok {
-                // 与 Windows spawn 失败同语义：osascript 失败（TCC 自动化被拒/脚本报错）时回滚
-                // 乐观复活并刷新，卡片立即回落「已断开」而非假连接 120s。
-                eprintln!("恢复会话：osascript 执行失败");
+                eprintln!("恢复会话：终端启动失败");
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
