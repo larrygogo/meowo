@@ -1149,6 +1149,97 @@ async fn new_session(
     }
 }
 
+/// provider 的 cc-reporter hooks 接入状态（供「新建会话」面板引导）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum HooksStatus {
+    Installed,
+    Missing,
+    Unknown,
+}
+
+/// claude/codex 同款 hooks JSON 里是否存在指向 cc-reporter 且带 `--provider <p>` 的 command。纯函数。
+/// 启发式：命令含 "cc-reporter"（basename）+ "--provider <p>"——该组合不会误配用户自有 hook。
+fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
+    let Some(hooks) = v.get("hooks").and_then(|h| h.as_object()) else {
+        return false;
+    };
+    let want = format!("--provider {provider}");
+    for (_event, arr) in hooks {
+        for entry in arr.as_array().into_iter().flatten() {
+            for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
+                if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
+                    if cmd.to_ascii_lowercase().contains("cc-reporter") && cmd.contains(&want) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// kimi config.toml 文本里是否有指向 cc-reporter 且带 `--provider kimi` 的 hook 命令行。纯函数。
+/// 无 TOML 解析库，按行文本启发式（cc-reporter + --provider kimi + command 键，足够可靠）。
+fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
+    let want = format!("--provider {provider}");
+    text.lines().any(|l| {
+        let low = l.to_ascii_lowercase();
+        low.contains("cc-reporter") && low.contains("command") && l.contains(&want)
+    })
+}
+
+/// codex hooks 接入状态：读 ~/.codex/hooks.json。文件不存在=Missing；读/解析失败=Unknown（不误报）。
+fn codex_hooks_status() -> HooksStatus {
+    let Some(home) = cc_reporter::codex::codex_home() else {
+        return HooksStatus::Unknown;
+    };
+    let path = home.join("hooks.json");
+    if !path.exists() {
+        return HooksStatus::Missing;
+    }
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return HooksStatus::Unknown;
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) if hooks_json_has_reporter(&v, "codex") => HooksStatus::Installed,
+        Ok(_) => HooksStatus::Missing,
+        Err(_) => HooksStatus::Unknown,
+    }
+}
+
+/// kimi hooks 接入状态：读 ~/.kimi-code/config.toml。文件不存在=Missing；读失败=Unknown。
+fn kimi_hooks_status() -> HooksStatus {
+    let Some(dir) = cc_reporter::kimi::kimi_share_dir() else {
+        return HooksStatus::Unknown;
+    };
+    let path = dir.join("config.toml");
+    if !path.exists() {
+        return HooksStatus::Missing;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(text) if toml_text_has_reporter(&text, "kimi") => HooksStatus::Installed,
+        Ok(_) => HooksStatus::Missing,
+        Err(_) => HooksStatus::Unknown,
+    }
+}
+
+/// 检测某 provider 的 cc-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
+#[tauri::command]
+fn check_provider_hooks(provider: String) -> HooksStatus {
+    match cc_store::ProviderKey::parse(Some(&provider)) {
+        cc_store::ProviderKey::Claude => {
+            if ccsetup::claude_hooks_installed() {
+                HooksStatus::Installed
+            } else {
+                HooksStatus::Missing
+            }
+        }
+        cc_store::ProviderKey::Codex => codex_hooks_status(),
+        cc_store::ProviderKey::Kimi => kimi_hooks_status(),
+    }
+}
+
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
@@ -2320,7 +2411,8 @@ pub fn run() {
             refresh_usage,
             host_os,
             available_terminals,
-            new_session
+            new_session,
+            check_provider_hooks
         ])
         .on_window_event(|window, event| {
             // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
@@ -2837,5 +2929,48 @@ mod new_session_tests {
         let tmp = std::env::temp_dir();
         let got = validate_new_session_cwd(tmp.to_str().unwrap()).unwrap();
         assert_eq!(got, tmp.to_str().unwrap().trim());
+    }
+}
+
+#[cfg(test)]
+mod hooks_check_tests {
+    use super::*;
+
+    #[test]
+    fn hooks_json_detects_reporter_with_provider() {
+        let v: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": { "SessionStart": [
+            { "matcher": "*", "hooks": [
+              { "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex", "timeout": 5 }
+            ]}
+          ]}
+        }"#).unwrap();
+        assert!(hooks_json_has_reporter(&v, "codex"));
+        assert!(!hooks_json_has_reporter(&v, "kimi")); // provider 不符
+    }
+
+    #[test]
+    fn hooks_json_ignores_foreign_hooks() {
+        let v: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "node other.js" }] }
+          ]}
+        }"#).unwrap();
+        assert!(!hooks_json_has_reporter(&v, "codex"));
+        // 无 hooks 键。
+        let empty: serde_json::Value = serde_json::from_str("{}").unwrap();
+        assert!(!hooks_json_has_reporter(&empty, "codex"));
+    }
+
+    #[test]
+    fn toml_text_detects_reporter_line() {
+        let toml = "\
+[[hooks]]\n\
+event = \"SessionStart\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n";
+        assert!(toml_text_has_reporter(toml, "kimi"));
+        assert!(!toml_text_has_reporter(toml, "codex"));
+        assert!(!toml_text_has_reporter("event = \"x\"\ncommand = \"node a.js\"", "kimi"));
     }
 }

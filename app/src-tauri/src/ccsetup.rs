@@ -203,12 +203,12 @@ fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Res
 
 /// 解析 settings.json 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的
 /// JSON 带 BOM，serde_json 会直接报错，曾导致无感接线静默失败。
-fn parse_settings(text: &str) -> Option<Value> {
+pub(crate) fn parse_settings(text: &str) -> Option<Value> {
     serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
 }
 
 /// `~/.claude/settings.json`（尊重 CLAUDE_CONFIG_DIR）。
-fn claude_settings_path() -> std::path::PathBuf {
+pub(crate) fn claude_settings_path() -> std::path::PathBuf {
     let base = std::env::var("CLAUDE_CONFIG_DIR")
         .ok()
         .map(std::path::PathBuf::from)
@@ -239,6 +239,17 @@ fn resolve_reporter_native(settings: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// claude 的 cc-reporter hooks 是否已接入 ~/.claude/settings.json。读/解析失败即视为未装。
+pub fn claude_hooks_installed() -> bool {
+    let Ok(text) = std::fs::read_to_string(claude_settings_path()) else {
+        return false;
+    };
+    match parse_settings(&text) {
+        Some(v) => reporter_path_from_hooks(&v).is_some(),
+        None => false,
+    }
 }
 
 /// 启动时调用：幂等地把 cc-reporter 接入 Claude Code 的 settings.json（hooks + statusLine）。
