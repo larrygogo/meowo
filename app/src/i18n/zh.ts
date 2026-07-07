@@ -94,7 +94,7 @@ export const zh = {
     "认证失败": "认证失败",
   } as Record<string, string>,
   settings: {
-    nav: { general: "通用", appearance: "外观", account: "账号", about: "关于" },
+    nav: { general: "通用", appearance: "外观", account: "模型", about: "关于" },
     updateTag: "新版本",
     close: "关闭",
     autostart: "开机自启",

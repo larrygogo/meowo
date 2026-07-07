@@ -94,7 +94,7 @@ export const en: Dict = {
     "认证失败": "Authentication failed",
   },
   settings: {
-    nav: { general: "General", appearance: "Appearance", account: "Account", about: "About" },
+    nav: { general: "General", appearance: "Appearance", account: "Agents", about: "About" },
     updateTag: "Update",
     close: "Close",
     autostart: "Launch at login",
