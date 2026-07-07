@@ -161,9 +161,80 @@ pub fn read_model(transcript_path: Option<&str>, session_id: &str) -> Option<Str
     parse_model(&head)
 }
 
+/// 从 rollout 文本取**最后一条 info 非 null** 的 token_count 的 (input_tokens, model_context_window)。
+/// codex 会话开头的 token_count `info` 为 null（只有 rate_limits），跳过。used 取 last_token_usage.input_tokens
+/// （最近一次请求的 context 输入量，已含 cached_input_tokens）。
+pub fn parse_context(content: &str) -> Option<(i64, i64)> {
+    let mut last: Option<(i64, i64)> = None;
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let payload = v.get("payload");
+        if payload.and_then(|p| p.get("type")).and_then(|t| t.as_str()) != Some("token_count") {
+            continue;
+        }
+        let Some(info) = payload.and_then(|p| p.get("info")).filter(|i| !i.is_null()) else {
+            continue;
+        };
+        let used = info
+            .get("last_token_usage")
+            .and_then(|l| l.get("input_tokens"))
+            .and_then(|x| x.as_i64());
+        let window = info.get("model_context_window").and_then(|x| x.as_i64());
+        if let (Some(u), Some(w)) = (used, window) {
+            last = Some((u, w));
+        }
+    }
+    last
+}
+
+/// 读文件尾部最多 max_bytes 字节为 lossy UTF-8（首个半截行交给 parse_context 跳过）。
+fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let size = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(size.saturating_sub(max_bytes))).ok()?;
+    let mut buf = Vec::new();
+    f.take(max_bytes).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// codex 会话最近上下文占用：定位 rollout（hook 的 transcript_path 优先，否则按 id 找），
+/// 尾部读取最后一条 token_count。定位/解析失败返回 None。
+pub fn read_context(transcript_path: Option<&str>, session_id: &str) -> Option<crate::agent::ContextUsage> {
+    let path = transcript_path
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+        .or_else(|| find_rollout(session_id))?;
+    const TAIL_BYTES: u64 = 256 * 1024;
+    let text = read_tail(&path, TAIL_BYTES)?;
+    let (used, window) = parse_context(&text)?;
+    if window <= 0 {
+        return None;
+    }
+    let pct = (used * 100 / window).clamp(0, 100);
+    Some(crate::agent::ContextUsage { used_pct: pct, window })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_context_takes_last_nonnull_token_count() {
+        let rollout = r#"
+{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":7.0}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":6766,"cached_input_tokens":4480},"model_context_window":258400}}}
+"#;
+        // 跳过 info=null 那条；取最后一条 info 非 null 的：input_tokens=6766, window=258400。
+        assert_eq!(parse_context(rollout), Some((6766, 258400)));
+    }
+
+    #[test]
+    fn parse_context_none_when_no_token_count() {
+        assert_eq!(parse_context(r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#), None);
+    }
 
     #[test]
     fn parse_model_takes_first_turn_context() {

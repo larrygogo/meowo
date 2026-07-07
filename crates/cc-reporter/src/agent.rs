@@ -179,6 +179,9 @@ impl Agent for CodexAgent {
             model: crate::codex::read_model(ev.transcript_path.as_deref(), &ev.session_id),
         }
     }
+    fn read_context(&self, ev: &HookEvent) -> Option<ContextUsage> {
+        crate::codex::read_context(ev.transcript_path.as_deref(), &ev.session_id)
+    }
     fn resolves_transcript_title(&self) -> bool {
         // 标题靠首条 prompt 命名：rollout 首条 user 文本被 AGENTS.md/指令包裹，不适合解析。
         false
