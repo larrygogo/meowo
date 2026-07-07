@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-pub mod ccsetup;
+pub mod setup;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
@@ -1327,7 +1327,7 @@ fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
 /// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
 /// 有 cc-reporter hook=Installed。
 fn claude_hooks_status() -> HooksStatus {
-    claude_hooks_status_at(&ccsetup::claude_settings_path())
+    claude_hooks_status_at(&setup::claude::claude_settings_path())
 }
 
 /// 纯路径版，便于用临时文件单测三态（不碰真实 ~/.claude）。
@@ -1338,8 +1338,8 @@ fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
     let Ok(text) = std::fs::read_to_string(path) else {
         return HooksStatus::Unknown;
     };
-    match ccsetup::parse_settings(&text) {
-        Some(v) if ccsetup::reporter_path_from_hooks(&v).is_some() => HooksStatus::Installed,
+    match setup::claude::parse_settings(&text) {
+        Some(v) if setup::claude::reporter_path_from_hooks(&v).is_some() => HooksStatus::Installed,
         Some(_) => HooksStatus::Missing,
         None => HooksStatus::Unknown,
     }
@@ -2756,8 +2756,8 @@ pub fn run() {
                     win_constrain::install(h.0 as isize);
                 }
             }
-            // 无感适配：幂等把 cc-reporter 接入 Claude Code 设置（hooks + statusLine）。后台跑，失败不影响启动。
-            std::thread::spawn(ccsetup::apply);
+            // 无感适配：幂等把 cc-reporter 接入各 AI CLI（claude: hooks+statusLine；codex/kimi: hooks）。后台跑，失败不影响启动。
+            std::thread::spawn(setup::apply_all);
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
             spawn_first_import(app.handle().clone(), path.clone());

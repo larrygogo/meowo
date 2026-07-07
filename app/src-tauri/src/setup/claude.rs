@@ -4,6 +4,22 @@
 //!
 //! 全程：解析失败即放弃、先备份、原子写、已正确则一字不改（幂等）。核心合并逻辑为纯函数，便于测试。
 
+/// Claude Code 的 ProviderSetup 实现：委托本文件原有 apply()（hooks + statusLine），零行为变更。
+pub struct ClaudeSetup;
+
+impl super::ProviderSetup for ClaudeSetup {
+    fn key(&self) -> cc_store::ProviderKey {
+        cc_store::ProviderKey::Claude
+    }
+    fn detect(&self) -> bool {
+        // 与 apply() 内部「~/.claude 目录存在才创建 settings」的守卫同源。
+        claude_settings_path().parent().is_some_and(|p| p.is_dir())
+    }
+    fn apply(&self) {
+        apply();
+    }
+}
+
 use serde_json::{json, Value};
 
 /// cc-reporter 负责的 hook 事件 + matcher。PreToolUse 用 matcher 限定只在两种工具触发,
