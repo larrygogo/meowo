@@ -1290,6 +1290,7 @@ fn emit_install_progress(app: &tauri::AppHandle, provider: &str, line: String) {
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
     let key = cc_store::ProviderKey::parse(Some(&provider));
+    let provider = key.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
     let script = cc_reporter::agent::for_provider(key)
         .install_script(cfg!(target_os = "windows"))
         .ok_or("该 agent 没有可用的一键安装命令")?;
@@ -3209,6 +3210,24 @@ mod tests {
         assert_eq!(d.opacity, 94);
         assert_eq!(d.ui_scale, 100);
     }
+
+    #[test]
+    fn is_progress_line_keeps_steps_filters_noise() {
+        // 有效步骤/失败行放行
+        assert!(is_progress_line("==> Installing Codex CLI"));
+        assert!(is_progress_line("  ==> Downloading Codex CLI")); // 前导空白也算
+        assert!(is_progress_line("Installing, please wait..."));
+        assert!(is_progress_line("Installation failed: something broke"));
+        // 噪声/空行滤掉
+        assert!(!is_progress_line(""));
+        assert!(!is_progress_line("   "));
+        assert!(!is_progress_line("#< CLIXML"));
+        assert!(!is_progress_line(
+            "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\">"
+        ));
+        assert!(!is_progress_line("random chatter"));
+        assert!(!is_progress_line("PS C:\\Users\\larry>"));
+    }
 }
 
 #[cfg(test)]
@@ -3297,23 +3316,5 @@ timeout = 5\n";
         assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Unknown));
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn is_progress_line_keeps_steps_filters_noise() {
-        // 有效步骤/失败行放行
-        assert!(is_progress_line("==> Installing Codex CLI"));
-        assert!(is_progress_line("  ==> Downloading Codex CLI")); // 前导空白也算
-        assert!(is_progress_line("Installing, please wait..."));
-        assert!(is_progress_line("Installation failed: something broke"));
-        // 噪声/空行滤掉
-        assert!(!is_progress_line(""));
-        assert!(!is_progress_line("   "));
-        assert!(!is_progress_line("#< CLIXML"));
-        assert!(!is_progress_line(
-            "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\">"
-        ));
-        assert!(!is_progress_line("random chatter"));
-        assert!(!is_progress_line("PS C:\\Users\\larry>"));
     }
 }
