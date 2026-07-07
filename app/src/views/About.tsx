@@ -331,8 +331,10 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
           ))}
       </div>
 
-      {installed === false && installState === "error" && step && (
-        <div className="provider-card-body agent-install-error">{step}</div>
+      {installed === false && installState === "error" && (
+        <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
+          {step || t.account.installFailed}
+        </div>
       )}
 
       {desc && <div className="provider-card-body">{desc}</div>}

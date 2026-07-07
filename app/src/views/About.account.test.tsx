@@ -89,4 +89,19 @@ describe("AccountSection agent 卡", () => {
     // 仍未装 → 按钮回来（文案为重试），testid 不变
     expect(screen.getByTestId("agent-install-kimi")).toBeTruthy();
   });
+
+  it("install-done 失败且无进度行：仍显示失败说明 + 重试按钮", async () => {
+    api.installAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-install-kimi"));
+    await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
+    // 不先 fireProgress，直接失败——step 为空，走 installFailed 兜底
+    fireDone("kimi", false);
+    await waitFor(() => expect(screen.queryByTestId("agent-installing-kimi")).toBeNull());
+    // 失败说明行可见且非空（不硬编码 i18n 文案，避免 locale 依赖）
+    const errLine = screen.getByTestId("agent-install-error-kimi");
+    expect(errLine.textContent?.trim().length).toBeGreaterThan(0);
+    // 重试按钮仍在（testid 与安装共用）
+    expect(screen.getByTestId("agent-install-kimi")).toBeTruthy();
+  });
 });
