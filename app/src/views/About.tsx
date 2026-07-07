@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, availableAgents, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
+import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
-import { PROVIDERS, providerConfig } from "../providers";
+import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -208,9 +208,12 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
   );
 }
 
-// 单个 provider 卡片：账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关
-function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, onToggleQuota }: {
-  payload: ProviderAccountPayload;
+// 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
+// 已装未登录 = 提示语；未装 = 一键安装按钮。
+function ProviderCard({ provider, installed, payload, usage, err, onRefresh, refreshing, settings, onToggleQuota }: {
+  provider: ProviderKey;
+  installed: boolean;
+  payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
   onRefresh: () => void;
@@ -221,70 +224,83 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, on
   onToggleQuota: () => void;
 }) {
   const t = useT();
-  const acc = payload.account;
-  const cfg = PROVIDERS[payload.provider];
-  const providerName = cfg ? cfg.label(t) : payload.provider;
+  const cfg = providerConfig(provider);
+  const acc = payload?.account ?? null;
 
   // 当前 provider 是否在贴纸配额列表中
-  const inQuota = settings?.sticker_quota_providers?.includes(payload.provider) ?? false;
-
-  // activePayloads 已过滤，此处恒不触发（防御）
-  if (!acc) return null;
+  const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
 
   return (
-    <div className="row-card provider-card">
+    <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
       <div className="provider-head">
-        {cfg && <span className="provider-icon"><cfg.Icon /></span>}
-        <span className="provider-name">{providerName}</span>
+        <span className="provider-icon"><cfg.Icon /></span>
+        <span className="provider-name">{cfg.label(t)}</span>
+        {!installed && <span className="agent-badge agent-badge-off">{t.account.notInstalled}</span>}
+        {installed && !acc && <span className="agent-badge">{t.account.notLoggedIn}</span>}
       </div>
-
-      <div className="acc-block">
-        <div className="acc-avatar">{((acc.display_name ?? acc.email ?? acc.login_label) ?? "?").slice(0, 1).toUpperCase()}</div>
-        <div className="acc-info">
-          <div className="acc-name-row">
-            <span className="acc-name">{acc.display_name ?? acc.email ?? acc.login_label ?? ""}</span>
-            {acc.plan && <span className="acc-plan">{acc.plan}</span>}
-          </div>
-          {acc.display_name && acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
-          {!acc.email && acc.login_label && <div className="acc-sub">{acc.login_label}</div>}
-          {acc.organization && <div className="acc-org">{acc.organization}</div>}
-        </div>
-      </div>
-
-      <div className="provider-usage">
-        <div className="usage-bar-head">
-          <span className="usage-card-title">{t.account.quota}</span>
-          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!payload.usage_supported && !usage)} onClick={onRefresh}>
-            <RefreshIcon spinning={refreshing} />
+      {!installed ? (
+        <div className="agent-install-row">
+          <button
+            type="button"
+            className="ns-btn is-primary"
+            data-testid={"agent-install-" + provider}
+            onClick={() => installAgent(provider).catch(() => {})}
+          >
+            {t.account.install}
           </button>
         </div>
-        {usage ? (
-          <>
-            {usage.lanes.map((lane, i) => (
-              <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
-            ))}
-            {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
-            {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
-          </>
-        ) : !payload.usage_supported || err === "unsupported" ? (
-          <div className="usage-stale">{t.account.usageUnsupported}</div>
-        ) : err === "error" ? (
-          <div className="usage-stale">{t.account.usageUnavailable}</div>
-        ) : (
-          <div className="usage-stale">{t.account.loading}</div>
-        )}
-        {/* 贴纸配额显示开关 */}
-        <div className="usage-sticker-row">
-          <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
-          <Switch checked={inQuota} onChange={onToggleQuota} />
-        </div>
-      </div>
+      ) : payload && acc ? (
+        <>
+          <div className="acc-block">
+            <div className="acc-avatar">{((acc.display_name ?? acc.email ?? acc.login_label) ?? "?").slice(0, 1).toUpperCase()}</div>
+            <div className="acc-info">
+              <div className="acc-name-row">
+                <span className="acc-name">{acc.display_name ?? acc.email ?? acc.login_label ?? ""}</span>
+                {acc.plan && <span className="acc-plan">{acc.plan}</span>}
+              </div>
+              {acc.display_name && acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
+              {!acc.email && acc.login_label && <div className="acc-sub">{acc.login_label}</div>}
+              {acc.organization && <div className="acc-org">{acc.organization}</div>}
+            </div>
+          </div>
+
+          <div className="provider-usage">
+            <div className="usage-bar-head">
+              <span className="usage-card-title">{t.account.quota}</span>
+              <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!payload.usage_supported && !usage)} onClick={onRefresh}>
+                <RefreshIcon spinning={refreshing} />
+              </button>
+            </div>
+            {usage ? (
+              <>
+                {usage.lanes.map((lane, i) => (
+                  <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
+                ))}
+                {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
+                {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
+              </>
+            ) : !payload.usage_supported || err === "unsupported" ? (
+              <div className="usage-stale">{t.account.usageUnsupported}</div>
+            ) : err === "error" ? (
+              <div className="usage-stale">{t.account.usageUnavailable}</div>
+            ) : (
+              <div className="usage-stale">{t.account.loading}</div>
+            )}
+            {/* 贴纸配额显示开关 */}
+            <div className="usage-sticker-row">
+              <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
+              <Switch checked={inQuota} onChange={onToggleQuota} />
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="agent-install-row">{t.account.notLoggedInHint}</div>
+      )}
     </div>
   );
 }
 
-function AccountSection() {
-  const t = useT();
+export function AccountSection() {
   // 读取/写入应用设置（用于贴纸配额开关）
   const [settings, patchSettings] = useSettingsState();
   const [payloads, setPayloads] = useState<ProviderAccountPayload[]>([]);
@@ -293,6 +309,15 @@ function AccountSection() {
   const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
   // errMap: provider key → 错误类型（unsupported/error/null）
   const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
+  // installed: 本机实际已装的 agent 集合——决定每张卡是「未安装」还是「已装/未登录」。
+  const [installed, setInstalled] = useState<Set<string>>(new Set());
+  useEffect(() => { availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {}); }, []);
+  // 窗口重新聚焦时重检安装状态（一键安装装完回来即更新）。
+  useEffect(() => {
+    const onFocus = () => availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {});
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   // 切换某 provider 在贴纸配额列表中的开关状态
   const toggleQuotaProvider = (provider: string) => {
@@ -340,52 +365,27 @@ function AccountSection() {
       .catch(() => {});
   }, []);
 
-  // 有账号的 provider 列表；没有则显示未登录占位
-  const activePayloads = payloads.filter((p) => p.account != null);
-
-  if (payloads.length === 0) {
-    // 初始加载中
-    return (
-      <div className="row-card provider-card">
-        <div className="acc-block">
-          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
-          <div className="acc-info">
-            <div className="acc-name">{t.account.loading}</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (activePayloads.length === 0) {
-    // 所有 provider 均未登录
-    return (
-      <div className="row-card provider-card">
-        <div className="acc-block">
-          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
-          <div className="acc-info">
-            <div className="acc-name">{t.account.notLoggedIn}</div>
-            <div className="acc-sub acc-sub-wrap">{t.account.notLoggedInDesc}</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // 以 PROVIDER_KEYS 为骨架遍历全部 agent（而非只 getAccounts 返回的有账号项），
+  // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
   return (
     <>
-      {activePayloads.map((p) => (
-        <ProviderCard
-          key={p.provider}
-          payload={p}
-          usage={usageMap[p.provider] ?? null}
-          err={errMap[p.provider] ?? null}
-          onRefresh={() => doRefresh(p.provider)}
-          refreshing={refreshingSet.has(p.provider)}
-          settings={settings}
-          onToggleQuota={() => toggleQuotaProvider(p.provider)}
-        />
-      ))}
+      {PROVIDER_KEYS.map((p) => {
+        const payload = payloads.find((x) => x.provider === p) ?? null;
+        return (
+          <ProviderCard
+            key={p}
+            provider={p}
+            installed={installed.has(p)}
+            payload={payload}
+            usage={usageMap[p] ?? null}
+            err={errMap[p] ?? null}
+            onRefresh={() => doRefresh(p)}
+            refreshing={refreshingSet.has(p)}
+            settings={settings}
+            onToggleQuota={() => toggleQuotaProvider(p)}
+          />
+        );
+      })}
     </>
   );
 }

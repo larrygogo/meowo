@@ -148,8 +148,12 @@ export const en: Dict = {
   },
   account: {
     providerClaudeCode: "Claude Code",
-    notLoggedIn: "Not signed in to any AI CLI",
+    installed: "Installed",
+    notInstalled: "Not installed",
+    notLoggedIn: "Not signed in",
+    notLoggedInHint: "Installed but not signed in — run the CLI in a terminal to log in",
     notLoggedInDesc: "Sign in to Claude Code / Codex / Kimi in a terminal to see account & usage",
+    install: "Install",
     quota: "Quota",
     refresh: "Refresh",
     quota5h: "5-hour quota",
