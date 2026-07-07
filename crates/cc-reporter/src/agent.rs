@@ -12,6 +12,15 @@ pub struct StopOutputs {
     pub model: Option<String>,
 }
 
+/// 会话上下文占用快照。kimi/codex 从会话日志读；claude 走 statusline，返回 None。
+#[derive(Debug, Default, PartialEq)]
+pub struct ContextUsage {
+    /// 已用百分比（0–100，已 clamp）。
+    pub used_pct: i64,
+    /// 上下文窗口大小（token）。
+    pub window: i64,
+}
+
 pub trait Agent: Sync {
     /// provider key（与 DB sessions.provider / 前端一致）。
     fn key(&self) -> ProviderKey;
@@ -19,6 +28,11 @@ pub trait Agent: Sync {
     fn process_names(&self) -> &'static [&'static str];
     /// Stop 时取最近 AI 正文 + 模型（claude 用 hook 携带的，kimi 读 wire.jsonl 一次出两者）。
     fn stop_outputs(&self, ev: &HookEvent) -> StopOutputs;
+    /// 从会话日志读最近一次上下文占用。claude 返回 None（走 statusline）；
+    /// kimi 读 wire.jsonl 的 usage.record，codex 读 rollout 的 token_count（各自覆写）。
+    fn read_context(&self, _ev: &HookEvent) -> Option<ContextUsage> {
+        None
+    }
     /// 是否由 transcript 解析标题（claude 是；kimi 否，靠首条 prompt 命名）。
     fn resolves_transcript_title(&self) -> bool;
     /// 该 agent 是否把任务标题写进终端标签页标题。claude 写 → cc-app 可按标题精确切到对应 WT 标签；
@@ -287,6 +301,12 @@ mod tests {
         assert_eq!(for_provider(ProviderKey::Kimi).key(), ProviderKey::Kimi);
         assert_eq!(for_provider(ProviderKey::Codex).key(), ProviderKey::Codex);
         assert_eq!(for_provider(ProviderKey::Claude).key(), ProviderKey::Claude);
+    }
+
+    #[test]
+    fn claude_read_context_defaults_none() {
+        let ev = HookEvent::parse(r#"{"hook_event_name":"Stop","session_id":"x"}"#).unwrap();
+        assert!(for_provider(ProviderKey::Claude).read_context(&ev).is_none());
     }
 
     #[test]
