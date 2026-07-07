@@ -125,6 +125,9 @@ impl Agent for KimiAgent {
             None => StopOutputs::default(),
         }
     }
+    fn read_context(&self, ev: &HookEvent) -> Option<ContextUsage> {
+        crate::kimi::read_context(&ev.session_id)
+    }
     fn resolves_transcript_title(&self) -> bool {
         false
     }
