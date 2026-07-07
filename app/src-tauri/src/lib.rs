@@ -1200,6 +1200,20 @@ async fn new_session(
     }
 }
 
+/// 判定安装脚本输出的一行是否是「有效步骤行」，用于过滤噪声后推给账号页卡片。
+/// 保守白名单：只放行明确的步骤/失败行；PowerShell 把进度/流对象序列化成的 CLIXML
+/// （`#< CLIXML` / `<Objs …>`）与空行一律不展示，避免刷屏。
+fn is_progress_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with("#< CLIXML") || t.contains("<Objs ") || t.contains("</Objs>") {
+        return false;
+    }
+    t.starts_with("==>") || t.starts_with("Installing") || t.starts_with("Installation failed:")
+}
+
 /// 一键安装某 agent：在一个终端窗口里跑其官方安装脚本，用户看进度、装完关终端、面板刷新即变已装。
 /// 安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
@@ -2770,9 +2784,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
-        pid_is_agent, session_connected, shell_join_for_windows, should_notify, strip_jsonc_comments,
-        tab_match_score, waiting_fingerprint,
+        is_progress_line, is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
+        pending_fingerprint, pid_is_agent, session_connected, shell_join_for_windows, should_notify,
+        strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
     use crate::snap::{
@@ -3238,5 +3252,23 @@ timeout = 5\n";
         assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Unknown));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_progress_line_keeps_steps_filters_noise() {
+        // 有效步骤/失败行放行
+        assert!(is_progress_line("==> Installing Codex CLI"));
+        assert!(is_progress_line("  ==> Downloading Codex CLI")); // 前导空白也算
+        assert!(is_progress_line("Installing, please wait..."));
+        assert!(is_progress_line("Installation failed: something broke"));
+        // 噪声/空行滤掉
+        assert!(!is_progress_line(""));
+        assert!(!is_progress_line("   "));
+        assert!(!is_progress_line("#< CLIXML"));
+        assert!(!is_progress_line(
+            "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\">"
+        ));
+        assert!(!is_progress_line("random chatter"));
+        assert!(!is_progress_line("PS C:\\Users\\larry>"));
     }
 }
