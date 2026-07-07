@@ -2,7 +2,8 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use crate::term_script::{
-    detect_term_kind, focus_script, normalize_tty, resume_script, resume_script_cwdless, TermKind,
+    detect_term_kind, focus_script, install_script_mac, normalize_tty, resume_script,
+    resume_script_cwdless, TermKind,
 };
 
 /// 由 PID 取控制终端 tty，规范化为 /dev/ttysNNN。
@@ -119,4 +120,9 @@ pub fn resume_session_mac(cwd: Option<&str>, resume_argv: &[String], kind: TermK
             run_osascript(resume_script_cwdless(kind), &args).is_ok()
         }
     }
+}
+
+/// 一键安装用：新窗口跑受信安装命令串（osascript 从 stdin 读脚本，命令经 argv 传入防脚本注入）。
+pub fn run_install_mac(cmd: &str, kind: TermKind) -> bool {
+    run_osascript(install_script_mac(kind), &[cmd]).is_ok()
 }

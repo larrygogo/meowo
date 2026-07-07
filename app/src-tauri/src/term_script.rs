@@ -164,6 +164,32 @@ end run"#
     }
 }
 
+/// 在 Terminal.app / iTerm2 新窗口里跑一条**受信命令串**（一键安装用；argv item 1 = 完整命令，
+/// 直接 do script 不做 quoted form —— 命令是硬编码官方安装脚本、含管道，需 shell 解析）。
+pub fn install_script_mac(kind: TermKind) -> &'static str {
+    match kind {
+        TermKind::ITerm2 => {
+            r#"on run argv
+  set theCmd to item 1 of argv
+  tell application "iTerm2"
+    activate
+    set newWindow to (create window with default profile)
+    tell current session of newWindow to write text theCmd
+  end tell
+end run"#
+        }
+        _ => {
+            r#"on run argv
+  set theCmd to item 1 of argv
+  tell application "Terminal"
+    activate
+    do script theCmd
+  end tell
+end run"#
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +255,16 @@ mod tests {
             assert!(c.contains("repeat with i from 2 to count of argv"));
             assert!(!c.contains("claude"));
             assert!(!c.contains("cd "));
+        }
+    }
+
+    #[test]
+    fn install_script_mac_runs_raw_command() {
+        for kind in [TermKind::Terminal, TermKind::ITerm2, TermKind::Other] {
+            let s = install_script_mac(kind);
+            assert!(s.contains("item 1 of argv"));
+            // 不得对命令做 quoted form（含管道要 shell 解析）。
+            assert!(!s.contains("quoted form"));
         }
     }
 }

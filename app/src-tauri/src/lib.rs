@@ -1163,6 +1163,60 @@ async fn new_session(
     }
 }
 
+/// 一键安装某 agent：在一个终端窗口里跑其官方安装脚本，用户看进度、装完关终端、面板刷新即变已装。
+/// 安装命令是受信硬编码串（Agent::install_script），非用户输入。
+#[tauri::command]
+async fn install_agent(provider: String) -> Result<(), String> {
+    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let windows = cfg!(target_os = "windows");
+    let script = cc_reporter::agent::for_provider(key)
+        .install_script(windows)
+        .ok_or("该 agent 没有可用的一键安装命令")?;
+    let terminal = load_settings().resume_terminal;
+    tauri::async_runtime::spawn_blocking(move || spawn_install(&script, &terminal))
+        .await
+        .map_err(|e| e.to_string())?
+        .then_some(())
+        .ok_or_else(|| "启动安装终端失败".into())
+}
+
+/// 在终端里跑安装命令串。Windows：powershell -NoExit -ExecutionPolicy Bypass -Command "<script>"
+/// （-NoExit 保留窗口看结果）；用户默认终端若是 wt 则在 wt 新标签跑，否则独立 PowerShell 窗口。
+#[cfg(target_os = "windows")]
+fn spawn_install(script: &str, terminal: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    let ps_args = ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", script];
+    let use_wt = terminal != "wezterm" && wt_available();
+    let spawned: std::io::Result<()> = if use_wt {
+        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into(), "powershell".into()];
+        args.extend(ps_args.iter().map(|s| s.to_string()));
+        Command::new("wt").args(&args).spawn().map(|_| ())
+    } else {
+        Command::new("powershell").args(ps_args).creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+    };
+    match spawned {
+        Ok(()) => true,
+        Err(e) => { eprintln!("一键安装启动失败：{e}"); false }
+    }
+}
+
+/// macOS：Terminal.app / iTerm2 新窗口 do script 跑安装命令串（按 resume_terminal 选宿主）。
+#[cfg(target_os = "macos")]
+fn spawn_install(script: &str, terminal: &str) -> bool {
+    use crate::term_script::TermKind;
+    let kind = match crate::term_script::resume_kind_from_setting(terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    };
+    crate::macos::terminal::run_install_mac(script, kind)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn spawn_install(_script: &str, _terminal: &str) -> bool { false }
+
 /// provider 的 cc-reporter hooks 接入状态（供「新建会话」面板引导）。
 #[derive(serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -2509,6 +2563,7 @@ pub fn run() {
             available_terminals,
             available_agents,
             new_session,
+            install_agent,
             check_provider_hooks,
             recent_cwds,
             open_new_session_window

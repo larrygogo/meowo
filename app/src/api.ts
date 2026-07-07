@@ -228,3 +228,8 @@ export function recentCwds(limit: number): Promise<string[]> {
 export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> {
   return invoke("check_provider_hooks", { provider });
 }
+
+/** 一键安装某 agent（在终端跑官方安装脚本）。装完在窗口重新聚焦/手动刷新时重检安装状态。 */
+export function installAgent(provider: ProviderKey): Promise<void> {
+  return invoke("install_agent", { provider });
+}
