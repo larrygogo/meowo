@@ -43,6 +43,12 @@ pub fn kimi_exe() -> String {
         .unwrap_or_else(|| "kimi".to_string())
 }
 
+/// kimi 可执行是否真实存在于 `~/.kimi-code/bin`（区别于 `kimi_exe` 找不到时回退裸名 "kimi"）。
+pub fn kimi_installed() -> bool {
+    let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
+    kimi_share_dir().map(|d| d.join("bin").join(bin).is_file()).unwrap_or(false)
+}
+
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
 fn session_dir(session_id: &str) -> Option<PathBuf> {
     let idx = kimi_share_dir()?.join("session_index.jsonl");

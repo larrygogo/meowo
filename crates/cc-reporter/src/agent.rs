@@ -37,6 +37,11 @@ pub trait Agent: Sync {
     /// 裸启动一个全新会话的命令 argv（[可执行名, 参数...]），不含 resume/id。
     /// 如 ["claude"] / [kimi_exe()] / codex 启动前缀。看板「新建会话」用。
     fn launch_args(&self) -> Vec<String>;
+    /// 该 agent 的可执行是否装在本机（决定各处是否列出/可选它）。
+    fn is_installed(&self) -> bool;
+    /// 官方一句话安装命令串（None = 无一键方案）。`windows` 决定返回 PowerShell 还是 curl 版。
+    /// 命令是受信硬编码串，调用方在终端里跑（Windows powershell -Command / macOS do script）。
+    fn install_script(&self, windows: bool) -> Option<String>;
     /// 把重命名同步到该 agent 自己的持久层，使 agent 自身的会话列表/恢复(resume)列表也显示新名字：
     /// claude 往 transcript 追加 custom-title 记录；kimi 改写 session state.json 的 title+isCustomTitle。
     /// 返回是否成功落地（失败不阻断调用方更新 DB 标题）。cwd 仅 claude 用于定位 transcript。
@@ -71,6 +76,17 @@ impl Agent for ClaudeAgent {
     }
     fn launch_args(&self) -> Vec<String> {
         vec!["claude".into()]
+    }
+    fn is_installed(&self) -> bool {
+        let bin = if cfg!(windows) { "claude.exe" } else { "claude" };
+        exe_on_path(bin) || in_local_bin(bin)
+    }
+    fn install_script(&self, windows: bool) -> Option<String> {
+        Some(if windows {
+            "irm https://claude.ai/install.ps1 | iex".into()
+        } else {
+            "curl -fsSL https://claude.ai/install.sh | bash".into()
+        })
     }
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool {
         write_claude_custom_title(session_id, cwd, title)
@@ -112,6 +128,17 @@ impl Agent for KimiAgent {
     fn launch_args(&self) -> Vec<String> {
         // 绝对路径优先（spawned 终端 PATH 未必含 kimi），与 resume_args 同源。
         vec![crate::kimi::kimi_exe()]
+    }
+    fn is_installed(&self) -> bool {
+        let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
+        crate::kimi::kimi_installed() || exe_on_path(bin)
+    }
+    fn install_script(&self, windows: bool) -> Option<String> {
+        Some(if windows {
+            "irm https://code.kimi.com/install.ps1 | iex".into()
+        } else {
+            "curl -LsSf https://code.kimi.com/install.sh | bash".into()
+        })
     }
     fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
         crate::kimi::set_custom_title(session_id, title)
@@ -166,6 +193,17 @@ impl Agent for CodexAgent {
         // 与 resume_args 同款可执行解析，仅去掉 `resume <id>`：进入 codex TUI 新会话。
         crate::codex::codex_launch_prefix().unwrap_or_else(|| vec!["codex".into()])
     }
+    fn is_installed(&self) -> bool {
+        let bin = if cfg!(windows) { "codex.exe" } else { "codex" };
+        crate::codex::codex_launch_prefix().is_some() || exe_on_path(bin)
+    }
+    fn install_script(&self, windows: bool) -> Option<String> {
+        Some(if windows {
+            "irm https://chatgpt.com/codex/install.ps1 | iex".into()
+        } else {
+            "curl -fsSL https://chatgpt.com/codex/install.sh | sh".into()
+        })
+    }
     fn write_rename(&self, _session_id: &str, _cwd: Option<&str>, _title: &str) -> bool {
         // codex 自定义标题走 app-server JSON-RPC（成本高），暂不回写；重命名仅改 cc-kanban DB。
         false
@@ -214,6 +252,23 @@ pub fn for_provider(key: ProviderKey) -> &'static dyn Agent {
 /// 所有已知 agent（供 cc-app 收集全部进程名判活）。
 pub fn all() -> &'static [&'static dyn Agent] {
     ALL
+}
+
+/// 可执行 `name`（Windows 传含 .exe 的名）是否能在 PATH 各目录找到。纯查文件存在，不 spawn。
+pub fn exe_on_path(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| dir.join(name).is_file())
+    })
+}
+
+/// USERPROFILE/HOME 下的 `~/.local/bin/<name>` 是否存在（claude native installer 默认装这里并加 PATH，
+/// 但 PATH 可能尚未在当前进程环境刷新，故兜底直查）。
+fn in_local_bin(name: &str) -> bool {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+        .map(|h| std::path::Path::new(&h).join(".local").join("bin").join(name).is_file())
+        .unwrap_or(false)
 }
 
 /// 进程名（可含路径、大小写不敏感）是否属于任一已知 agent 本体——取 basename **精确**比对。
@@ -289,5 +344,21 @@ mod tests {
         let kimi = for_provider(ProviderKey::Kimi).launch_args();
         assert_eq!(kimi.len(), 1);
         assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
+    }
+
+    #[test]
+    fn is_installed_reflects_executable_presence() {
+        // 在临时 PATH 下放一个假 claude 可执行，claude 应判已装；清空 PATH 后应判未装。
+        let dir = std::env::temp_dir().join(format!("cckb-agent-inst-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(if cfg!(windows) { "claude.exe" } else { "claude" });
+        std::fs::write(&exe, b"").unwrap();
+        let saved = std::env::var_os("PATH");
+        std::env::set_var("PATH", &dir);
+        assert!(exe_on_path(if cfg!(windows) { "claude.exe" } else { "claude" }));
+        std::env::set_var("PATH", ""); // 空 PATH
+        assert!(!exe_on_path(if cfg!(windows) { "claude.exe" } else { "claude" }));
+        if let Some(p) = saved { std::env::set_var("PATH", p); }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
