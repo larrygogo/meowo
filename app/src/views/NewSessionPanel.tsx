@@ -34,10 +34,15 @@ function FolderIcon() {
 }
 
 /** 独立窗口页（label="new-session"）：新建一个全新会话。成功后 emit 通知主看板弹 toast 并自关。 */
+
+const qs = new URLSearchParams(window.location.search);
+const initialCwd = qs.get("cwd") ?? "";
+const initialProvider = (qs.get("provider") as ProviderKey | null) ?? null;
+
 export function NewSessionPanel(): ReactElement {
   const t = useT();
-  const [cwd, setCwd] = useState("");
-  const [provider, setProvider] = useState<ProviderKey>("claude");
+  const [cwd, setCwd] = useState(initialCwd);
+  const [provider, setProvider] = useState<ProviderKey>(initialProvider ?? "claude");
   const [recent, setRecent] = useState<string[]>([]);
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
@@ -45,10 +50,13 @@ export function NewSessionPanel(): ReactElement {
   const [avail, setAvail] = useState<ProviderKey[] | null>(null);
 
   useEffect(() => {
-    getSettings()
-      .then((s) => setProvider(s.default_agent))
-      .catch(() => {});
-    recentCwds(4).then(setRecent).catch(() => {});
+    // 若从会话卡片菜单带 provider 参数打开，保留该参数；否则回退到设置里的默认 agent。
+    if (!initialProvider) {
+      getSettings()
+        .then((s) => setProvider(s.default_agent))
+        .catch(() => {});
+    }
+    recentCwds(8).then(setRecent).catch(() => {});
     PROVIDER_KEYS.forEach((p) =>
       checkProviderHooks(p)
         .then((st) => setHooks((h) => ({ ...h, [p]: st })))

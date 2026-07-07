@@ -10,10 +10,13 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   availableAgents,
   LiveSession,
+  LiveSessionCounts,
   Settings,
+  StickerFilter,
   TerminalOpenMode,
   getSettings,
   getAccounts,
@@ -285,6 +288,7 @@ function CardContextMenu({
   onNote,
   onRename,
   onArchive,
+  onNewSession,
   onOpenDir,
   onClose,
 }: {
@@ -297,6 +301,8 @@ function CardContextMenu({
   onNote: () => void;
   onRename: () => void;
   onArchive: () => void;
+  /** 用当前会话的路径和模型新建会话。 */
+  onNewSession: () => void;
   /** 打开项目目录；会话无 cwd（旧数据）时传 null 隐藏该项。 */
   onOpenDir: (() => void) | null;
   onClose: () => void;
@@ -363,6 +369,11 @@ function CardContextMenu({
         <ArchiveIcon archived={archived} />
         {archived ? t.sticker.unarchive : t.sticker.archive}
       </button>
+      <div className="ctx-sep" role="separator" />
+      <button type="button" role="menuitem" className="ctx-item" onClick={act(onNewSession)}>
+        <PlusIcon />
+        {t.sticker.newSession}
+      </button>
       {onOpenDir && (
         <>
           <div className="ctx-sep" role="separator" />
@@ -376,7 +387,6 @@ function CardContextMenu({
   );
 }
 
-const TAB_KEY = "cc-kanban-tab";
 const PIN_KEY = "cc-kanban-pinned";
 const STAR_KEY = "cc-kanban-starred";
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
@@ -402,8 +412,10 @@ function match(tab: Tab, l: Item, hideDays = 0): boolean {
   }
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
-  if (tab === "waiting") return l.connected && (l.session.status === "waiting" || l.errored || l.pending_review != null);
-  if (tab === "running") return l.connected && l.session.status === "running" && !l.errored && l.pending_review == null;
+  // running/waiting 不再用 connected 过滤，与后端 counts 语义保持一致；
+  // 卡片上仍会通过 connected 显示连接状态点。
+  if (tab === "waiting") return l.session.status === "waiting" || l.errored || l.pending_review != null;
+  if (tab === "running") return l.session.status === "running" && !l.errored && l.pending_review == null;
   return true;
 }
 
@@ -558,16 +570,37 @@ function UsageScreen({
   );
 }
 
-export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean }) {
+export function Sticker({
+  filter,
+  onFilterChange,
+  data,
+  counts: countsProp,
+  total,
+  hasMore: hasMoreProp,
+  loadMore,
+  loadingMore,
+  hasUpdate,
+}: {
+  filter: StickerFilter;
+  onFilterChange?: (f: StickerFilter) => void;
+  data: Item[];
+  counts?: LiveSessionCounts;
+  total?: number;
+  hasMore?: boolean;
+  loadMore?: () => void;
+  loadingMore?: boolean;
+  hasUpdate?: boolean;
+}) {
+  // hasMore 由父组件传入；未传入时退化为 data.length < total。
+  const totalCount = total ?? data.length;
+  const onLoadMore = loadMore ?? (() => {});
+  const isLoadingMore = loadingMore ?? false;
+  const hasMore = hasMoreProp ?? data.length < totalCount;
   const t = useT();
-  const [tab, setTab] = useState<Tab>(() => {
-    const s = localStorage.getItem(TAB_KEY);
-    return s === "waiting" || s === "running" || s === "archived" ? s : "all";
-  });
+  const tab = filter;
 
   const pick = (t: Tab) => {
-    setTab(t);
-    localStorage.setItem(TAB_KEY, t);
+    onFilterChange?.(t);
     closeSearch(); // 切 tab 即退出搜索，避免 tab 高亮与过滤结果不一致
   };
 
@@ -770,16 +803,53 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
       });
   }, [data, tab, hideDays, starred, query]);
 
-  // 各标签角标计数：同样随每次按键重渲染，缓存避免对 4 个标签各跑一遍全量 filter。
-  const counts = useMemo(() => {
+  // 贴纸会话虚拟列表：只挂载可视区 + overscan 内的卡片，避免大量 DOM。
+  // estimateSize 取常见卡片高度（无便签/preview 时约 76–84px），实际高度由 measureElement 动态测量。
+  const virtualizer = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 82,
+    overscan: 6,
+    // 贴纸窗口初始约 460×420，减去 tabs/底栏后可视区约 400×320；给 initialRect 避免首帧
+    // 没拿到 ResizeObserver 前渲染 0 条。后续真实尺寸进来会立即修正。
+    initialRect: { width: 400, height: 320 },
+    measureElement:
+      typeof window !== "undefined" && "ResizeObserver" in window
+        ? (el) => el.getBoundingClientRect().height
+        : undefined,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+
+  // 无限滚动触发：当可视区底部进入「已加载列表末尾前 10 条」且仍有数据时，通知父组件加载下一页。
+  useEffect(() => {
+    if (isLoadingMore || !hasMore || shown.length === 0) return;
+    const last = virtualItems[virtualItems.length - 1];
+    if (last && last.index >= shown.length - 10) {
+      onLoadMore();
+    }
+  }, [virtualItems, shown.length, isLoadingMore, hasMore, onLoadMore]);
+
+  // 各标签角标计数：优先用后端返回的总数（稳定、不随懒加载闪烁）；
+  // 未传入时（测试/旧调用）退化为按已加载 data 估算。
+  const counts = useMemo<Record<Tab, number>>(() => {
+    if (countsProp) {
+      return {
+        all: countsProp.total,
+        running: countsProp.running,
+        waiting: countsProp.waiting,
+        archived: countsProp.archived,
+      };
+    }
     const c = {} as Record<Tab, number>;
     for (const k of TAB_KEYS) c[k] = data.filter((l) => match(k, l, hideDays)).length;
     return c;
-  }, [data, hideDays]);
+  }, [countsProp, data, hideDays]);
 
   // 自绘 overlay 滚动条：原生滚动条全程隐藏(不占布局→无抖动)，这里按滚动位置算出
   // thumb 的高度/位置，浮在内容右侧。null = 内容未超出、不需要滚动条。
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollInnerRef = useRef<HTMLDivElement>(null);
   const [sb, setSb] = useState<{ top: number; height: number } | null>(null);
   const [sbDrag, setSbDrag] = useState(false);
   // 滚动边缘淡出：仅当该方向确有被遮内容时才淡(滚到顶/底则对应边不淡，首/末卡保持清晰)。
@@ -847,15 +917,15 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
   useEffect(() => {
     syncSb();
     const el = scrollRef.current;
+    const inner = scrollInnerRef.current;
     // 测试/非浏览器环境无 ResizeObserver：仅同步一次即可。
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(syncSb);
     ro.observe(el);
-    // 内容子元素高度变化(打开便签/重命名编辑器、内容行增减)时 scrollHeight 变而容器自身尺寸不变，
-    // 仅观察容器不会触发重算——逐张卡片一并观察，任一高度变化即重算 thumb。
-    // 依赖必须是 shown 本身而非 shown.length：成员变化但数量不变时(一个会话结束同时另一个出现)
-    // React 按 key 新建的卡片 DOM 也要被重新 observe,否则该卡此后的高度变化不触发重算。
-    for (const child of Array.from(el.children)) ro.observe(child);
+    // 虚拟列表下，滚动高度来自 inner 容器的总高；观察 inner 即可在 totalSize 或卡片高度变化时
+    // 触发重算。同时观察可见卡片 wrapper，确保单张卡展开便签/重命名编辑器时也能及时更新 thumb。
+    if (inner) ro.observe(inner);
+    for (const child of Array.from(inner?.children ?? el.children)) ro.observe(child);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown]);
@@ -929,7 +999,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
               >
                 <TabIcon tab={k} />
                 {t.tabs[k]}
-                <span className="stab-n">{n}</span>
+                {k !== "all" && <span className="stab-n">{n}</span>}
               </span>
             );
           })}
@@ -941,201 +1011,231 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
         onScroll={syncSb}
       >
         {shown.length === 0 ? (
-          <EmptyState tab={tab} onNew={() => invoke("open_new_session_window").catch(() => {})} />
+          isLoadingMore ? (
+            <div className="stk-loading">{t.sticker.loading}</div>
+          ) : (
+            <EmptyState tab={tab} onNew={() => invoke("open_new_session_window").catch(() => {})} />
+          )
         ) : (
-          shown.map((l) => {
-            const unnamed = !l.task_title || l.task_title === "(未命名会话)";
-            const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
-            const agentCfg = providerConfig(l.provider); // provider 品牌图标 + 标签，按表查
-            const agentLabel = agentCfg.label(t);
-            // AI 活动行显示「最近一条 AI 正文」(last_ai_text，回退 transcript preview)；出错优先显示错误标签；
-            // previewEnabled（对话预览开关）关闭则不显示 AI 正文（仅保留错误）；用户行同受该开关门控。
-            const sub = l.errored && l.error_label
-              ? t.errorLabels[l.error_label] ?? l.error_label
-              : previewEnabled && (l.last_ai_text ?? l.preview)
-              ? (l.last_ai_text ?? l.preview)
-              : null;
-            const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
-            const indicator = !l.connected ? (
-              <span className="ring-stop" data-tip={t.sticker.stopped} />
-            ) : l.errored ? (
-              <span className="needs-error" data-tip={l.error_raw ?? t.sticker.sessionError} />
-            ) : l.pending_review ? (
-              <RunBadge pct={l.context_pct} tone="pending" />
-            ) : l.session.status === "running" ? (
-              <RunBadge pct={l.context_pct} />
-            ) : l.session.status === "waiting" ? (
-              <RunBadge pct={l.context_pct} tone="waiting" />
-            ) : (
-              <span className="sdot sdot-on" data-tip={t.sticker.online} />
-            );
-            return (
-              <div
-                className={"stk-card" + (isStarred(l) ? " is-star" : "")}
-                key={l.session.id}
-                onClick={() => {
-                  // 编辑态(重命名/便签)下，点击卡片仅用于关闭编辑器（失焦），绝不导航开终端。
-                  // 注：编辑输入框已 stopPropagation，这里只会被「点击卡片空白处」触发。
-                  if (editingId !== null || notingId !== null) {
-                    setEditingId(null);
-                    setNotingId(null);
-                    return;
-                  }
-                  // 按钮模式：点击卡片不开终端，改由卡片上的打开按钮触发。
-                  if (buttonMode) return;
-                  openTerminal(l);
-                }}
-                onContextMenu={(e) => {
-                  // 与卡片菜单按钮二选一：button 模式下右键只吞掉默认 webview 菜单、不弹卡片菜单。
-                  e.preventDefault();
-                  if (menuMode === "context") {
-                    setCtxMenu({ sid: l.session.id, x: e.clientX, y: e.clientY });
-                  }
-                }}
-                style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
-                data-tip={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
-              >
-                <div className="stk-top">
-                  <span className="stk-ind">{indicator}</span>
-                  <div className="stk-top-body">
-                    <div className="stk-line1">
-                      {editingId === l.session.id ? (
-                        <div className="stk-editbox" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            className="stk-edit"
-                            autoFocus
-                            value={draft}
-                            placeholder={t.sticker.renamePlaceholder}
-                            onChange={(e) => setDraft(e.target.value)}
-                            onKeyDown={editorKeyDown(() => submitRename(l), () => setEditingId(null))}
-                          />
-                          {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
-                          <button
-                            type="button"
-                            className="stk-ebtn stk-ebtn-ok"
-                            aria-label={t.sticker.noteSave}
-                            data-tip={t.sticker.noteSave}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => submitRename(l)}
-                          ><CheckIcon /></button>
-                          <button
-                            type="button"
-                            className="stk-ebtn"
-                            aria-label={t.sticker.noteCancel}
-                            data-tip={t.sticker.noteCancel}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => setEditingId(null)}
-                          ><XIcon /></button>
+          <div
+            ref={scrollInnerRef}
+            style={{ height: totalSize, width: "100%", position: "relative" }}
+          >
+            {virtualItems.map((virtualItem) => {
+              const l = shown[virtualItem.index];
+              const unnamed = !l.task_title || l.task_title === "(未命名会话)";
+              const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
+              const agentCfg = providerConfig(l.provider); // provider 品牌图标 + 标签，按表查
+              const agentLabel = agentCfg.label(t);
+              // AI 活动行显示「最近一条 AI 正文」(last_ai_text，回退 transcript preview)；出错优先显示错误标签；
+              // previewEnabled（对话预览开关）关闭则不显示 AI 正文（仅保留错误）；用户行同受该开关门控。
+              const sub = l.errored && l.error_label
+                ? t.errorLabels[l.error_label] ?? l.error_label
+                : previewEnabled && (l.last_ai_text ?? l.preview)
+                ? (l.last_ai_text ?? l.preview)
+                : null;
+              const subTitle = l.errored ? l.error_raw ?? undefined : sub ?? undefined;
+              const indicator = !l.connected ? (
+                <span className="ring-stop" data-tip={t.sticker.stopped} />
+              ) : l.errored ? (
+                <span className="needs-error" data-tip={l.error_raw ?? t.sticker.sessionError} />
+              ) : l.pending_review ? (
+                <RunBadge pct={l.context_pct} tone="pending" />
+              ) : l.session.status === "running" ? (
+                <RunBadge pct={l.context_pct} />
+              ) : l.session.status === "waiting" ? (
+                <RunBadge pct={l.context_pct} tone="waiting" />
+              ) : (
+                <span className="sdot sdot-on" data-tip={t.sticker.online} />
+              );
+              return (
+                <div
+                  key={virtualItem.key}
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  className="stk-vitem"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  <div
+                    className={"stk-card" + (isStarred(l) ? " is-star" : "")}
+                    onClick={() => {
+                      // 编辑态(重命名/便签)下，点击卡片仅用于关闭编辑器（失焦），绝不导航开终端。
+                      // 注：编辑输入框已 stopPropagation，这里只会被「点击卡片空白处」触发。
+                      if (editingId !== null || notingId !== null) {
+                        setEditingId(null);
+                        setNotingId(null);
+                        return;
+                      }
+                      // 按钮模式：点击卡片不开终端，改由卡片上的打开按钮触发。
+                      if (buttonMode) return;
+                      openTerminal(l);
+                    }}
+                    onContextMenu={(e) => {
+                      // 与卡片菜单按钮二选一：button 模式下右键只吞掉默认 webview 菜单、不弹卡片菜单。
+                      e.preventDefault();
+                      if (menuMode === "context") {
+                        setCtxMenu({ sid: l.session.id, x: e.clientX, y: e.clientY });
+                      }
+                    }}
+                    style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
+                    data-tip={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
+                  >
+                    <div className="stk-top">
+                      <span className="stk-ind">{indicator}</span>
+                      <div className="stk-top-body">
+                        <div className="stk-line1">
+                          {editingId === l.session.id ? (
+                            <div className="stk-editbox" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                className="stk-edit"
+                                autoFocus
+                                value={draft}
+                                placeholder={t.sticker.renamePlaceholder}
+                                onChange={(e) => setDraft(e.target.value)}
+                                onKeyDown={editorKeyDown(() => submitRename(l), () => setEditingId(null))}
+                              />
+                              {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
+                              <button
+                                type="button"
+                                className="stk-ebtn stk-ebtn-ok"
+                                aria-label={t.sticker.noteSave}
+                                data-tip={t.sticker.noteSave}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => submitRename(l)}
+                              ><CheckIcon /></button>
+                              <button
+                                type="button"
+                                className="stk-ebtn"
+                                aria-label={t.sticker.noteCancel}
+                                data-tip={t.sticker.noteCancel}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => setEditingId(null)}
+                              ><XIcon /></button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="stk-title">{title}</span>
+                              {l.pending_review && (
+                                <span className={"pending-pill pending-" + l.pending_review}>
+                                  {t.pending[l.pending_review]}
+                                </span>
+                              )}
+                              <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
+                              {/* 星标/便签/重命名/归档操作收进卡片菜单（CardContextMenu），标题行不再挤 hover 图标。
+                                  默认右键触发；card_menu_mode=button（触屏等不便右键）时改为此处的常显菜单按钮，
+                                  两种触发方式二选一。星标态由卡片金角、便签由便签块表达，收起入口不丢信息。 */}
+                              {menuMode === "button" && (
+                                <button
+                                  type="button"
+                                  className="stk-menu-btn"
+                                  aria-label={t.sticker.cardMenu}
+                                  data-tip={t.sticker.cardMenu}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const r = e.currentTarget.getBoundingClientRect();
+                                    setCtxMenu({ sid: l.session.id, x: r.right, y: r.bottom + 4 });
+                                  }}
+                                ><MoreIcon /></button>
+                              )}
+                            </>
+                          )}
                         </div>
-                      ) : (
-                        <>
-                          <span className="stk-title">{title}</span>
-                          {l.pending_review && (
-                            <span className={"pending-pill pending-" + l.pending_review}>
-                              {t.pending[l.pending_review]}
-                            </span>
-                          )}
-                          <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
-                          {/* 星标/便签/重命名/归档操作收进卡片菜单（CardContextMenu），标题行不再挤 hover 图标。
-                              默认右键触发；card_menu_mode=button（触屏等不便右键）时改为此处的常显菜单按钮，
-                              两种触发方式二选一。星标态由卡片金角、便签由便签块表达，收起入口不丢信息。 */}
-                          {menuMode === "button" && (
-                            <button
-                              type="button"
-                              className="stk-menu-btn"
-                              aria-label={t.sticker.cardMenu}
-                              data-tip={t.sticker.cardMenu}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const r = e.currentTarget.getBoundingClientRect();
-                                setCtxMenu({ sid: l.session.id, x: r.right, y: r.bottom + 4 });
-                              }}
-                            ><MoreIcon /></button>
-                          )}
-                        </>
-                      )}
+                        {editingId === l.session.id && l.connected && (
+                          <div className="stk-edit-hint">{t.sticker.renameHint}</div>
+                        )}
+                        <div className="stk-line2">
+                          <span
+                            className={"stk-agent" + (l.connected ? "" : " stk-agent-off")}
+                            data-tip={agentLabel}
+                            aria-label={agentLabel}
+                          >
+                            <agentCfg.Icon />
+                          </span>
+                          <span className="stk-repo" data-tip={l.project_name}>{l.project_name.split("/").pop()}</span>
+                          {l.model && <span className="stk-model">{l.model}</span>}
+                        </div>
+                      </div>
                     </div>
-                    {editingId === l.session.id && l.connected && (
-                      <div className="stk-edit-hint">{t.sticker.renameHint}</div>
-                    )}
-                    <div className="stk-line2">
-                      <span
-                        className={"stk-agent" + (l.connected ? "" : " stk-agent-off")}
-                        data-tip={agentLabel}
-                        aria-label={agentLabel}
+                    {notingId === l.session.id ? (
+                      <div className="stk-editbox stk-editbox-note" onClick={(e) => e.stopPropagation()}>
+                        <span className="stk-editbox-ico"><NoteIcon /></span>
+                        <input
+                          className="stk-note-edit"
+                          autoFocus
+                          value={noteDraft}
+                          placeholder={t.sticker.notePlaceholder}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          onKeyDown={editorKeyDown(() => submitNote(l), () => setNotingId(null))}
+                        />
+                        {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
+                        <button
+                          type="button"
+                          className="stk-ebtn stk-ebtn-ok"
+                          aria-label={t.sticker.noteSave}
+                          data-tip={t.sticker.noteSave}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => submitNote(l)}
+                        ><CheckIcon /></button>
+                        <button
+                          type="button"
+                          className="stk-ebtn"
+                          aria-label={t.sticker.noteCancel}
+                          data-tip={t.sticker.noteCancel}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setNotingId(null)}
+                        ><XIcon /></button>
+                      </div>
+                    ) : l.note ? (
+                      <div
+                        className="stk-note"
+                        data-tip={t.sticker.noteEdit}
+                        onClick={(e) => { e.stopPropagation(); startNote(l); }}
                       >
-                        <agentCfg.Icon />
-                      </span>
-                      <span className="stk-repo" data-tip={l.project_name}>{l.project_name.split("/").pop()}</span>
-                      {l.model && <span className="stk-model">{l.model}</span>}
-                    </div>
+                        <span className="stk-note-icon"><NoteIcon /></span>
+                        <span className="stk-note-txt">{l.note}</span>
+                      </div>
+                    ) : null}
+                    {previewEnabled && l.last_user_text && (
+                      <div className="stk-subrow stk-userrow">
+                        <span className="stk-msg-tag">{t.sticker.youPrefix}</span>
+                        <span className="stk-sub" data-tip={l.last_user_text}>{l.last_user_text}</span>
+                      </div>
+                    )}
+                    {(sub || (buttonMode && canOpen(l))) && (
+                      <div className="stk-subrow">
+                        {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
+                        {sub && !l.errored && <span className="stk-msg-tag is-ai">{t.sticker.aiPrefix}</span>}
+                        {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} data-tip={subTitle}>{sub}</span>}
+                        {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
+                        {buttonMode && canOpen(l) && (
+                          <button
+                            type="button"
+                            className="stk-open"
+                            data-tip={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                            aria-label={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                            onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
+                          ><OpenIcon /></button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-                {notingId === l.session.id ? (
-                  <div className="stk-editbox stk-editbox-note" onClick={(e) => e.stopPropagation()}>
-                    <span className="stk-editbox-ico"><NoteIcon /></span>
-                    <input
-                      className="stk-note-edit"
-                      autoFocus
-                      value={noteDraft}
-                      placeholder={t.sticker.notePlaceholder}
-                      onChange={(e) => setNoteDraft(e.target.value)}
-                      onKeyDown={editorKeyDown(() => submitNote(l), () => setNotingId(null))}
-                    />
-                    {/* mousedown preventDefault：点按钮不抢走输入框焦点，避免触发其它失焦逻辑 */}
-                    <button
-                      type="button"
-                      className="stk-ebtn stk-ebtn-ok"
-                      aria-label={t.sticker.noteSave}
-                      data-tip={t.sticker.noteSave}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => submitNote(l)}
-                    ><CheckIcon /></button>
-                    <button
-                      type="button"
-                      className="stk-ebtn"
-                      aria-label={t.sticker.noteCancel}
-                      data-tip={t.sticker.noteCancel}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setNotingId(null)}
-                    ><XIcon /></button>
-                  </div>
-                ) : l.note ? (
-                  <div
-                    className="stk-note"
-                    data-tip={t.sticker.noteEdit}
-                    onClick={(e) => { e.stopPropagation(); startNote(l); }}
-                  >
-                    <span className="stk-note-icon"><NoteIcon /></span>
-                    <span className="stk-note-txt">{l.note}</span>
-                  </div>
-                ) : null}
-                {previewEnabled && l.last_user_text && (
-                  <div className="stk-subrow stk-userrow">
-                    <span className="stk-msg-tag">{t.sticker.youPrefix}</span>
-                    <span className="stk-sub" data-tip={l.last_user_text}>{l.last_user_text}</span>
-                  </div>
-                )}
-                {(sub || (buttonMode && canOpen(l))) && (
-                  <div className="stk-subrow">
-                    {/* 活动行：最近一条 AI 正文(或错误标签)，单行截断；title 给完整文本，hover 原生提示可读全文 */}
-                    {sub && !l.errored && <span className="stk-msg-tag is-ai">{t.sticker.aiPrefix}</span>}
-                    {sub && <span className={"stk-sub" + (l.errored ? " stk-sub-err" : "")} data-tip={subTitle}>{sub}</span>}
-                    {/* 按钮模式：打开终端按钮内联在该行末尾，不突兀 */}
-                    {buttonMode && canOpen(l) && (
-                      <button
-                        type="button"
-                        className="stk-open"
-                        data-tip={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
-                        aria-label={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
-                        onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
-                      ><OpenIcon /></button>
-                    )}
-                  </div>
-                )}
+              );
+            })}
+            {isLoadingMore && (
+              <div className="stk-loadmore" style={{ position: "absolute", top: totalSize, left: 0, width: "100%" }}>
+                <span className="stk-loadmore-dot" />
+                <span className="stk-loadmore-dot" />
+                <span className="stk-loadmore-dot" />
               </div>
-            );
-          })
+            )}
+          </div>
         )}
       </div>
       {sb && (
@@ -1157,6 +1257,12 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           onRename={() => startRename(ctxItem)}
           onArchive={() =>
             invoke("set_archived", { sessionId: ctxItem.session.id, archived: !ctxItem.archived }).catch(() => {})
+          }
+          onNewSession={() =>
+            invoke("open_new_session_window", {
+              cwd: ctxItem.cwd,
+              provider: ctxItem.provider,
+            }).catch(() => {})
           }
           onOpenDir={
             ctxItem.cwd ? () => invoke("open_project_dir", { cwd: ctxItem.cwd }).catch(() => {}) : null

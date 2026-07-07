@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 
 pub mod ccsetup;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 #[cfg(target_os = "windows")]
 use sysinfo::Pid;
@@ -120,17 +121,39 @@ struct LiveItem {
     // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
 }
 
-/// 贴纸最多展示的会话数。
-const LIVE_LIMIT: usize = 20;
+#[tauri::command]
+async fn get_live_sessions_counts(
+    state: State<'_, AppState>,
+) -> Result<cc_store::query::LiveSessionCounts, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_store(&db_path)?.live_sessions_counts().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
 #[tauri::command]
-async fn get_live_sessions(state: State<'_, AppState>) -> Result<Vec<LiveItem>, String> {
+async fn get_live_sessions_page(
+    state: State<'_, AppState>,
+    filter: String,
+    before_last_event_at: Option<i64>,
+    before_id: Option<i64>,
+    limit: usize,
+) -> Result<Vec<LiveItem>, String> {
     // 重逻辑（SQLite、进程枚举、transcript 解析）放 blocking 线程池，不占主线程事件循环。
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
-    tauri::async_runtime::spawn_blocking(move || live_sessions_blocking(&db_path, &tx_cache))
-        .await
-        .map_err(|e| e.to_string())?
+    let filter = if ["all", "running", "waiting", "archived"].contains(&filter.as_str()) {
+        filter
+    } else {
+        "all".into()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        live_sessions_blocking(&db_path, &tx_cache, &filter, before_last_event_at, before_id, limit)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 看板 resume 后「乐观连接」的宽限期(ms)。pid 未知(resume 清空待认领)的会话仅在此窗口内显示已连接，
@@ -156,9 +179,15 @@ fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event
 fn live_sessions_blocking(
     db_path: &PathBuf,
     tx_cache: &Mutex<cc_store::TranscriptCache>,
+    filter: &str,
+    before_last_event_at: Option<i64>,
+    before_id: Option<i64>,
+    limit: usize,
 ) -> Result<Vec<LiveItem>, String> {
     let store = open_store(db_path)?;
-    let sessions = store.live_sessions().map_err(|e| e.to_string())?;
+    let sessions = store
+        .live_sessions(Some(filter), before_last_event_at, before_id, limit)
+        .map_err(|e| e.to_string())?;
     // connected 校验：Windows 走 sysinfo 进程表；macOS/Unix 一次 ps 批量快照
     // （sysinfo 在 macOS 上不可靠，逐 pid spawn ps 又太慢——一批会话只扫一次）。
     #[cfg(target_os = "windows")]
@@ -172,9 +201,9 @@ fn live_sessions_blocking(
     #[cfg(not(target_os = "windows"))]
     let is_claude = |pid: i64| pid > 0 && claude_pids.contains(&pid);
 
-    // 先算 connected（廉价，仅查进程表）并据此排序，再只对「将要展示」的会话解析
-    // transcript 标题——标题解析要 read_to_string 整个 JSONL（可达数 MB），对最多 100 个
-    // 会话全做一遍再截断到 20 是巨大的无谓 I/O（每 ~300ms 一次）。
+    // 先算 connected（廉价，仅查进程表）并据此排序，再解析 transcript 标题。
+    // 标题解析要 read_to_string 整个 JSONL（可达数 MB）；走增量缓存后后续刷新接近 0 成本，
+    // 首次加载即使会话较多也能接受——前端用虚拟列表消化，不再做 20 条截断。
     let now = now_ms();
     let mut ranked: Vec<(LiveSession, bool)> = sessions
         .into_iter()
@@ -194,13 +223,10 @@ fn live_sessions_blocking(
     // 稳定排序按 connected 分组即保留组内的时间序。
     ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
 
-    // 逐条解析标题并过滤，凑满 LIVE_LIMIT 即停。连接中的会话排在最前、必然保留，
-    // 故它们（正在活跃、文件确实在变）总能拿到实时标题；断开的只解析到补满列表为止。
-    let mut items: Vec<LiveItem> = Vec::with_capacity(LIVE_LIMIT);
+    // 逐条解析标题并过滤，不再做 20 条截断。连接中的会话排在最前，
+    // 它们（正在活跃、文件确实在变）优先拿到实时标题；断开的会话继续解析并全部返回。
+    let mut items: Vec<LiveItem> = Vec::with_capacity(ranked.len());
     for (mut s, connected) in ranked {
-        if items.len() >= LIVE_LIMIT {
-            break;
-        }
         // 一次读 transcript 拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
         // 走增量缓存：只解析新追加的行，避免每轮重读整文件（大 transcript 可达数百 ms，会拖慢整窗）。
         // 上下文百分比不在这里算——它由 statusline 写库、随 LiveSession flatten 输出。
@@ -830,6 +856,17 @@ fn wt_available() -> bool {
     })
 }
 
+/// PowerShell 7（pwsh.exe）是否在 PATH 上。进程内缓存，同 wt_available。
+/// 一键安装用它优先于 Windows PowerShell 5.1（见 spawn_install 说明）。
+#[cfg(target_os = "windows")]
+fn pwsh_available() -> bool {
+    use std::sync::OnceLock;
+    static PWSH_ON_PATH: OnceLock<bool> = OnceLock::new();
+    *PWSH_ON_PATH.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "pwsh.exe"))
+    })
+}
+
 /// 定位 Windows Terminal 的 settings.json（Store 版 / Preview / 未打包版三处）。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn wt_settings_path() -> Option<PathBuf> {
@@ -1180,24 +1217,50 @@ async fn install_agent(provider: String) -> Result<(), String> {
         .ok_or_else(|| "启动安装终端失败".into())
 }
 
-/// 在终端里跑安装命令串。Windows：powershell -NoExit -ExecutionPolicy Bypass -Command "<script>"
-/// （-NoExit 保留窗口看结果）；仅当用户默认终端就是 wt 时才在 wt 新标签跑，其余设置
-/// （powershell/cmd/wezterm/未知）一律退到独立 PowerShell 窗口（安装命令是 PS 语法，无法真用 cmd 跑）。
+/// 在终端里跑安装命令串（Windows）。
+/// 安装命令是 PowerShell 脚本（`irm … | iex`），含 `|`/`;`/引号 —— 直接经 `-Command` 或 wt 命令行
+/// 传递都会被 shell/wt 解析器破坏，故写进临时 `.ps1` 用 `-File` 执行最稳。
+///
+/// 两个 Windows 坑都在这里绕开：
+/// 1) DefTerm 丢参：Win11 默认终端是 Windows Terminal 时，GUI 进程用 CREATE_NEW_CONSOLE 直接 spawn
+///    powershell 会触发 DefTerm 交接、丢掉 `-File` 参数，只剩空交互 shell（「窗口开了没装」）。
+///    装了 wt 就显式走 `wt -w 0 nt <shell> … -File`（与恢复会话同款、已验证路径）绕开交接；
+///    没 wt 的旧系统才退回独立窗口（旧 conhost 无交接，CREATE_NEW_CONSOLE 正常）。
+/// 2) PSModulePath 污染：装了 PS7 时，终端环境的 PSModulePath 常被 PS7 路径挤到 5.1 系统路径之前，
+///    此时用 Windows PowerShell 5.1（powershell.exe）会从 PS7 模块目录误加载不兼容的
+///    Microsoft.PowerShell.Utility，导致 `Get-FileHash` 等 cmdlet 丢失，安装脚本校验哈希时崩。
+///    故优先用 `pwsh`（PS7，与该环境一致、各家安装脚本也本就面向 PS7）；没装 pwsh 的机器不会有
+///    PS7 路径污染，退回 powershell 5.1 亦正常。
 #[cfg(target_os = "windows")]
-fn spawn_install(script: &str, terminal: &str) -> bool {
+fn spawn_install(script: &str, _terminal: &str) -> bool {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    let ps_args = ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", script];
-    // 仅当用户默认终端就是 wt 且本机装了 wt 时，在 wt 新标签跑 powershell；含 ;/" 的脚本会破坏
-    // wt 命令行解析（同 safe_cwd/is_safe_id 口径），退到独立 powershell 窗口（-Command 作单一 args 元素，免受 wt 分词影响）。
-    let use_wt = terminal == "wt" && wt_available() && !script.contains([';', '"']);
-    let spawned: std::io::Result<()> = if use_wt {
-        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into(), "powershell".into()];
-        args.extend(ps_args.iter().map(|s| s.to_string()));
+    // 脚本体：开始/结束提示 + 错误捕获。单引号避免引入双引号；-NoExit 保留窗口看结果，无需 Read-Host。
+    let body = format!(
+        "Write-Host 'Installing, please wait...'\r\n\
+         try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()) -ForegroundColor Red }}\r\n\
+         Write-Host 'Installation completed. You can close this window.'\r\n"
+    );
+    let ps1 = std::env::temp_dir().join("cc-kanban-install.ps1");
+    if let Err(e) = std::fs::write(&ps1, body) {
+        eprintln!("一键安装写临时脚本失败：{e}");
+        return false;
+    }
+    let ps1 = ps1.to_string_lossy().to_string();
+    let shell = if pwsh_available() { "pwsh" } else { "powershell" };
+    let ps_argv = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", &ps1];
+
+    let spawned: std::io::Result<()> = if wt_available() {
+        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+        args.extend(ps_argv.iter().map(|s| s.to_string()));
         Command::new("wt").args(&args).spawn().map(|_| ())
     } else {
-        Command::new("powershell").args(ps_args).creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        Command::new(shell)
+            .args(&ps_argv[1..])
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()
+            .map(|_| ())
     };
     match spawned {
         Ok(()) => true,
@@ -1789,7 +1852,7 @@ fn spawn_liveness_watch(
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
                 let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
-                for s in store.live_sessions().unwrap_or_default() {
+                for s in store.live_sessions(Some("all"), None, None, 1000).unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_agent(&sys, s.pid.unwrap_or(0)) {
                         continue;
                     }
@@ -2180,15 +2243,20 @@ fn open_update_window_impl(app: &tauri::AppHandle) {
     }
 }
 
-/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA）。
+/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
+/// 传入 cwd/provider 时，新建面板会预填该路径并选中该模型。
 /// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
 #[tauri::command]
-fn open_new_session_window(app: tauri::AppHandle) {
-    std::thread::spawn(move || open_new_session_window_impl(&app));
+fn open_new_session_window(app: tauri::AppHandle, cwd: Option<String>, provider: Option<String>) {
+    std::thread::spawn(move || open_new_session_window_impl(&app, cwd, provider));
 }
 
 /// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
-fn open_new_session_window_impl(app: &tauri::AppHandle) {
+fn open_new_session_window_impl(
+    app: &tauri::AppHandle,
+    cwd: Option<String>,
+    provider: Option<String>,
+) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app);
@@ -2197,14 +2265,27 @@ fn open_new_session_window_impl(app: &tauri::AppHandle) {
         let _ = w.set_focus();
         return;
     }
+    let url = match (&cwd, &provider) {
+        (None, None) => "index.html".to_string(),
+        _ => {
+            let mut params = Vec::new();
+            if let Some(c) = &cwd {
+                params.push(format!("cwd={}", percent_encode(c.as_bytes(), NON_ALPHANUMERIC)));
+            }
+            if let Some(p) = &provider {
+                params.push(format!("provider={}", percent_encode(p.as_bytes(), NON_ALPHANUMERIC)));
+            }
+            format!("index.html?{}", params.join("&"))
+        }
+    };
     let builder = tauri::WebviewWindowBuilder::new(
         app,
         "new-session",
-        tauri::WebviewUrl::App("index.html".into()),
+        tauri::WebviewUrl::App(url.into()),
     )
     .title(tr(ui_lang(&load_settings()), "window.newSession"))
-    .inner_size(460.0, 500.0)
-    .min_inner_size(460.0, 500.0)
+    .inner_size(460.0, 420.0)
+    .min_inner_size(460.0, 420.0)
     .resizable(false)
     .decorations(false)
     .center();
@@ -2539,7 +2620,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_project_tasks,
-            get_live_sessions,
+            get_live_sessions_counts,
+            get_live_sessions_page,
             focus_session,
             resume_session,
             open_project_dir,

@@ -1,4 +1,4 @@
-use cc_store::{Store, TodoInput, TodoStatus};
+use cc_store::{SessionStatus, Store, TodoInput, TodoStatus};
 
 #[test]
 fn overview_aggregates_counts_and_active_sessions() {
@@ -99,8 +99,6 @@ fn project_tasks_empty_for_unknown_project() {
 
 // ===== Task 1: live_sessions =====
 
-use cc_store::SessionStatus;
-
 #[test]
 fn live_sessions_includes_ended_sessions() {
     let store = Store::open_in_memory().unwrap();
@@ -115,7 +113,7 @@ fn live_sessions_includes_ended_sessions() {
     let (s4, _) = store.start_session(pid, "e", 400).unwrap();
     store.end_session(s4, 410).unwrap();
 
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     // 四个都在（ended 也保留）
     assert_eq!(live.len(), 4);
     let statuses: Vec<&str> = live.iter().map(|l| l.session.status.as_str()).collect();
@@ -136,7 +134,7 @@ fn live_session_carries_project_name_title_and_progress() {
         cc_store::TodoInput { content: "b".into(), status: cc_store::TodoStatus::InProgress },
     ], 120).unwrap();
 
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live.len(), 1);
     let l = &live[0];
     assert_eq!(l.project_name, "proj");
@@ -156,19 +154,19 @@ fn session_note_upsert_delete_and_surfaces_in_live() {
     store.on_user_prompt(s1, "标题", 110).unwrap();
 
     // 初始无便签
-    assert_eq!(store.live_sessions().unwrap()[0].note, None);
+    assert_eq!(store.live_sessions(None, None, None, 1000).unwrap()[0].note, None);
 
     // 写入便签 → live_sessions 带出（前后空白被 trim）
     store.set_session_note("sess-a", "  记得 review  ", 120).unwrap();
-    assert_eq!(store.live_sessions().unwrap()[0].note.as_deref(), Some("记得 review"));
+    assert_eq!(store.live_sessions(None, None, None, 1000).unwrap()[0].note.as_deref(), Some("记得 review"));
 
     // upsert 覆盖旧便签
     store.set_session_note("sess-a", "改主意了", 130).unwrap();
-    assert_eq!(store.live_sessions().unwrap()[0].note.as_deref(), Some("改主意了"));
+    assert_eq!(store.live_sessions(None, None, None, 1000).unwrap()[0].note.as_deref(), Some("改主意了"));
 
     // 清空（trim 后为空）→ 删除该行，回到 None
     store.set_session_note("sess-a", "   ", 140).unwrap();
-    assert_eq!(store.live_sessions().unwrap()[0].note, None);
+    assert_eq!(store.live_sessions(None, None, None, 1000).unwrap()[0].note, None);
 }
 
 // ===== Task 2: 过滤未命名空卡 =====
@@ -208,7 +206,7 @@ fn live_sessions_returns_new_columns_as_none_by_default() {
     let (sid, _) = store.start_session(pid, "cc1", 100).unwrap();
     let _ = sid;
 
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
     assert_eq!(s.pending_review, None);
     assert_eq!(s.last_ai_text, None);
@@ -216,27 +214,123 @@ fn live_sessions_returns_new_columns_as_none_by_default() {
 }
 
 #[test]
-fn live_sessions_keeps_all_non_ended_beyond_ended_cap() {
-    // 未结束(仍连接中)的会话必须全量保留：即便之后产生了 100+ 条更近活跃的已结束会话，
-    // 也不能把它从返回集挤掉——否则贴纸上连「已断开」卡片都没有、会话凭空消失。
+fn live_sessions_paginates_without_ended_cap() {
+    // 分页模式下不再对已结束会话做 100 条兜底截断；
+    // 旧但仍在 running 的会话会按 last_event_at 排序，可能落到后续页，但全量查询时一定存在。
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     // 一个很旧但仍 running 的会话（挂在后台终端里数天未发消息的合法长连接）。
     let (old_running, _) = store.start_session(pid, "old-running", 100).unwrap();
     store.set_session_pid(old_running, 4242, 110).unwrap();
-    // 120 条更近活跃的已结束会话，把 100 条上限灌满。
+    // 120 条更近活跃的已结束会话。
     for i in 0..120 {
         let (s, _) = store.start_session(pid, &format!("ended-{i}"), 1000 + i).unwrap();
         store.end_session(s, 2000 + i).unwrap();
     }
 
-    let live = store.live_sessions().unwrap();
-    // 旧 running 会话仍在返回集内。
+    // 第 0 页 100 条全是更近活跃的已结束会话，旧 running 不在其中。
+    let first_page = store.live_sessions(Some("all"), None, None, 100).unwrap();
+    assert_eq!(first_page.len(), 100);
     assert!(
-        live.iter().any(|s| s.session.cc_session_id == "old-running"),
-        "连接中的旧会话被已结束会话挤出了返回集"
+        !first_page.iter().any(|s| s.session.cc_session_id == "old-running"),
+        "旧 running 不应出现在全为已结束会话的首页"
     );
-    // 已结束会话仍受 100 条上限约束（120 条只回最近 100 条）。
-    let ended = live.iter().filter(|s| s.session.status == "ended").count();
-    assert_eq!(ended, 100);
+
+    // 用首页最后一条 cursor 取第二页：剩余 20 条已结束 + 1 条旧 running。
+    let last = first_page.last().unwrap();
+    let second_page = store
+        .live_sessions(Some("all"), Some(last.session.last_event_at), Some(last.session.id), 100)
+        .unwrap();
+    assert_eq!(second_page.len(), 21);
+    assert!(
+        second_page.iter().any(|s| s.session.cc_session_id == "old-running"),
+        "cursor 分页应把旧 running 带到第二页"
+    );
+
+    // 全量拉取时旧 running 仍存在，且已结束会话不再受 100 条限制。
+    let all = store.live_sessions(None, None, None, 1000).unwrap();
+    assert!(
+        all.iter().any(|s| s.session.cc_session_id == "old-running"),
+        "连接中的旧会话在全量结果中必须存在"
+    );
+    let ended = all.iter().filter(|s| s.session.status == "ended").count();
+    assert_eq!(ended, 120);
+}
+
+#[test]
+fn live_sessions_counts_matches_tabs() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+
+    // running ×2
+    let (r1, _) = store.start_session(pid, "r1", 100).unwrap();
+    store.set_session_status(r1, SessionStatus::Running, 110).unwrap();
+    let (r2, _) = store.start_session(pid, "r2", 200).unwrap();
+    store.set_session_status(r2, SessionStatus::Running, 210).unwrap();
+
+    // waiting ×1
+    let (w1, _) = store.start_session(pid, "w1", 300).unwrap();
+    store.set_session_status(w1, SessionStatus::Waiting, 310).unwrap();
+
+    // ended ×3，其中 1 条归档
+    let mut archived_id = None;
+    for i in 0..3 {
+        let (s, _) = store.start_session(pid, &format!("ended-{i}"), 400 + i).unwrap();
+        store.end_session(s, 500 + i).unwrap();
+        if i == 0 {
+            archived_id = Some(s);
+        }
+    }
+    store.set_session_archived(archived_id.unwrap(), true, 600).unwrap();
+
+    let c = store.live_sessions_counts().unwrap();
+    assert_eq!(c.total, 6);
+    assert_eq!(c.running, 2);
+    assert_eq!(c.waiting, 1);
+    assert_eq!(c.archived, 1);
+}
+
+#[test]
+fn live_sessions_cursor_loads_all_non_archived() {
+    // 验证 cursor 分页不会漏掉任何非归档会话。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+
+    // 250 条非归档会话，last_event_at 从 1000 递增到 3499
+    for i in 0..250 {
+        let (s, _) = store.start_session(pid, &format!("s-{i}"), 1000 + i).unwrap();
+        store.end_session(s, 2000 + i).unwrap();
+    }
+    // 50 条归档会话，last_event_at 更晚（4500..），确保不会被误算进 all
+    for i in 0..50 {
+        let (s, _) = store.start_session(pid, &format!("arch-{i}"), 4500 + i).unwrap();
+        store.end_session(s, 4600 + i).unwrap();
+        store.set_session_archived(s, true, 4700 + i).unwrap();
+    }
+
+    let counts = store.live_sessions_counts().unwrap();
+    assert_eq!(counts.total, 300);
+    assert_eq!(counts.archived, 50);
+
+    let mut loaded: Vec<i64> = Vec::new();
+    let mut cursor: Option<(i64, i64)> = None;
+    loop {
+        let page = match cursor {
+            Some((ts, id)) => store.live_sessions(Some("all"), Some(ts), Some(id), 80).unwrap(),
+            None => store.live_sessions(Some("all"), None, None, 80).unwrap(),
+        };
+        if page.is_empty() {
+            break;
+        }
+        loaded.extend(page.iter().map(|s| s.session.id));
+        let last = page.last().unwrap();
+        cursor = Some((last.session.last_event_at, last.session.id));
+        if page.len() < 80 {
+            break;
+        }
+    }
+
+    assert_eq!(loaded.len(), 250, "应加载全部 250 条非归档会话");
+    let loaded_set: std::collections::HashSet<_> = loaded.iter().copied().collect();
+    assert_eq!(loaded_set.len(), 250, "不应有重复 session");
 }

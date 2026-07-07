@@ -134,6 +134,16 @@ function RefreshIcon({ spinning }: { spinning?: boolean }) {
   );
 }
 
+function IconDownload() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
 function fmtResetIn(iso: string, t: Dict): string {
   const ts = Date.parse(iso);
   if (Number.isNaN(ts)) return "";
@@ -231,72 +241,83 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, ref
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
 
+  // 安装态优先：未安装时一律按未安装展示（即使本地缓存了旧账号信息），
+  // 只有「已安装且账号存在」才展示登录身份与用量。
+  const isInstalled = installed === true;
+  const isLoggedIn = isInstalled && acc != null;
+  const statusBadge = !isInstalled
+    ? installed === false
+      ? t.account.notInstalled
+      : null
+    : acc
+    ? null
+    : t.account.notLoggedIn;
+  const desc = isLoggedIn
+    ? [acc.display_name ?? acc.email ?? acc.login_label, acc.display_name && acc.display_name !== acc.email ? acc.email : null, acc.organization]
+        .filter(Boolean)
+        .join(" · ")
+    : installed === false
+    ? t.account.installHint
+    : isInstalled
+    ? t.account.notLoggedInHint
+    : "";
+
   return (
     <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
-      <div className="provider-head">
-        <span className="provider-icon"><cfg.Icon /></span>
-        <span className="provider-name">{cfg.label(t)}</span>
-        {installed === false && <span className="agent-badge agent-badge-off">{t.account.notInstalled}</span>}
-        {installed === true && !acc && <span className="agent-badge">{t.account.notLoggedIn}</span>}
-      </div>
-      {installed === false ? (
-        <div className="agent-install-row">
+      <div className="provider-card-head">
+        <div className={"provider-card-icon" + (provider === "claude" ? " provider-card-icon-claude" : "")}>
+          <cfg.Icon />
+        </div>
+        <div className="provider-card-title">
+          <span className="provider-name">{cfg.label(t)}</span>
+          {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
+          {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
+        </div>
+        {installed === false && (
           <button
             type="button"
-            className="ns-btn is-primary"
+            className="provider-card-action provider-card-action-primary"
             data-testid={"agent-install-" + provider}
             onClick={() => installAgent(provider).catch(() => {})}
           >
+            <IconDownload />
             {t.account.install}
           </button>
-        </div>
-      ) : payload && acc ? (
-        <>
-          <div className="acc-block">
-            <div className="acc-avatar">{((acc.display_name ?? acc.email ?? acc.login_label) ?? "?").slice(0, 1).toUpperCase()}</div>
-            <div className="acc-info">
-              <div className="acc-name-row">
-                <span className="acc-name">{acc.display_name ?? acc.email ?? acc.login_label ?? ""}</span>
-                {acc.plan && <span className="acc-plan">{acc.plan}</span>}
-              </div>
-              {acc.display_name && acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
-              {!acc.email && acc.login_label && <div className="acc-sub">{acc.login_label}</div>}
-              {acc.organization && <div className="acc-org">{acc.organization}</div>}
-            </div>
-          </div>
+        )}
+      </div>
 
-          <div className="provider-usage">
-            <div className="usage-bar-head">
-              <span className="usage-card-title">{t.account.quota}</span>
-              <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!payload.usage_supported && !usage)} onClick={onRefresh}>
-                <RefreshIcon spinning={refreshing} />
-              </button>
-            </div>
-            {usage ? (
-              <>
-                {usage.lanes.map((lane, i) => (
-                  <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
-                ))}
-                {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
-                {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
-              </>
-            ) : !payload.usage_supported || err === "unsupported" ? (
-              <div className="usage-stale">{t.account.usageUnsupported}</div>
-            ) : err === "error" ? (
-              <div className="usage-stale">{t.account.usageUnavailable}</div>
-            ) : (
-              <div className="usage-stale">{t.account.loading}</div>
-            )}
-            {/* 贴纸配额显示开关 */}
-            <div className="usage-sticker-row">
-              <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
-              <Switch checked={inQuota} onChange={onToggleQuota} />
-            </div>
+      {desc && <div className="provider-card-body">{desc}</div>}
+
+      {isLoggedIn && (
+        <div className="provider-usage">
+          <div className="usage-bar-head">
+            <span className="usage-card-title">{t.account.quota}</span>
+            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!(payload?.usage_supported ?? false) && !usage)} onClick={onRefresh}>
+              <RefreshIcon spinning={refreshing} />
+            </button>
           </div>
-        </>
-      ) : installed === true ? (
-        <div className="agent-install-row">{t.account.notLoggedInHint}</div>
-      ) : null}
+          {usage ? (
+            <>
+              {usage.lanes.map((lane, i) => (
+                <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
+              ))}
+              {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
+              {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
+            </>
+          ) : !(payload?.usage_supported ?? false) || err === "unsupported" ? (
+            <div className="usage-stale">{t.account.usageUnsupported}</div>
+          ) : err === "error" ? (
+            <div className="usage-stale">{t.account.usageUnavailable}</div>
+          ) : (
+            <div className="usage-stale">{t.account.loading}</div>
+          )}
+          {/* 贴纸配额显示开关 */}
+          <div className="usage-sticker-row">
+            <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
+            <Switch checked={inQuota} onChange={onToggleQuota} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -728,11 +749,50 @@ const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] 
   { value: "elevated", label: t.settings.styleElevated },
   { value: "flat", label: t.settings.styleFlat },
 ];
-const densityOptions = (t: Dict): { value: number; label: string }[] => [
-  { value: 90, label: t.settings.densityCompact },
-  { value: 100, label: t.settings.densityNormal },
-  { value: 112, label: t.settings.densityLoose },
+const fontSizeOptions = (t: Dict): { value: number; label: string }[] => [
+  { value: 90, label: t.settings.fontSizeSmall },
+  { value: 100, label: t.settings.fontSizeNormal },
+  { value: 112, label: t.settings.fontSizeLarge },
 ];
+
+// 三等分离散滑块（字体大小 小/中/大）：轨道 + 滑钮 + 底部标签。
+function FontSizeSlider({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: number;
+  options: { value: number; label: string }[];
+  onChange: (v: number) => void;
+  label: string;
+}) {
+  const index = Math.max(0, options.findIndex((o) => o.value === value));
+  return (
+    <div className="dslider" role="radiogroup" aria-label={label}>
+      <div className="dslider-track">
+        <div className="dslider-knob-wrap">
+          <div className="dslider-knob" style={{ left: `${(index / (options.length - 1)) * 100}%` }} />
+        </div>
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={o.value === value}
+            className="dslider-point"
+            onClick={() => onChange(o.value)}
+          />
+        ))}
+      </div>
+      <div className="dslider-labels">
+        {options.map((o) => (
+          <span key={o.value} className="dslider-label">{o.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 const OPACITY_MIN = 25;
 const OPACITY_MAX = 100;
 
@@ -758,10 +818,10 @@ function AppearanceSection() {
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">{t.settings.density}</div>
-            <div className="row-desc">{t.settings.densityDesc}</div>
+            <div className="row-label">{t.settings.fontSize}</div>
+            <div className="row-desc">{t.settings.fontSizeDesc}</div>
           </div>
-          <Segmented value={uiScale} options={densityOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.density} />
+          <FontSizeSlider value={uiScale} options={fontSizeOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.fontSize} />
         </div>
         <div className="row">
           <div className="row-text">

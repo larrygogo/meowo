@@ -1,8 +1,81 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+
+const invokeMock = vi.hoisted(() =>
+  vi.fn((cmd: string, _args?: unknown) => {
+    if (cmd === "get_settings") {
+      return Promise.resolve({
+        archive_hide_days: 0,
+        notifications_enabled: true,
+        theme: "dark",
+        opacity: 94,
+        ui_scale: 100,
+        resume_terminal: "wt",
+        language: "auto",
+        terminal_open_mode: "card",
+        card_menu_mode: "context",
+        preview_enabled: true,
+        sticker_style: "elevated",
+        sticker_color: "classic",
+        sticker_quota_providers: ["claude"],
+        default_agent: "claude",
+      });
+    }
+    if (cmd === "available_agents") return Promise.resolve(["claude"]);
+    return Promise.resolve();
+  })
+);
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
+}));
+
 import { Sticker, EmptyState } from "./Sticker";
 import type { LiveSession } from "../api";
 import { zh } from "../i18n/zh";
+
+// jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
+// mock 一个足够大的滚动容器，让测试里的卡片进入可视区并被挂载。
+const defaultRect: DOMRect = {
+  top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
+  toJSON: () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0 }),
+};
+vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement): DOMRect {
+  if (this.classList.contains("stk-scroll")) {
+    return {
+      ...defaultRect,
+      bottom: 600, right: 400, width: 400, height: 600,
+      toJSON: () => ({ ...defaultRect, bottom: 600, right: 400, width: 400, height: 600 }),
+    };
+  }
+  if (this.classList.contains("stk-vitem")) {
+    return {
+      ...defaultRect,
+      right: 400, width: 400, height: 82,
+      toJSON: () => ({ ...defaultRect, right: 400, width: 400, height: 82 }),
+    };
+  }
+  return defaultRect;
+});
+// 用同步触发 rect 的 ResizeObserver 替换原生实现，确保虚拟列表在测试查询前已完成尺寸计算。
+const mockScrollRect = { top: 0, left: 0, bottom: 600, right: 400, width: 400, height: 600, x: 0, y: 0 };
+const mockItemRect = { top: 0, left: 0, bottom: 82, right: 400, width: 400, height: 82, x: 0, y: 0 };
+class MockResizeObserver {
+  constructor(private cb: ResizeObserverCallback) {}
+  observe(target: Element) {
+    const isScroll = target.classList.contains("stk-scroll");
+    const rect = isScroll ? mockScrollRect : mockItemRect;
+    this.cb([{
+      target,
+      contentRect: rect as unknown as DOMRectReadOnly,
+      borderBoxSize: [{ inlineSize: rect.width, blockSize: rect.height } as unknown as ResizeObserverSize],
+      contentBoxSize: [{ inlineSize: rect.width, blockSize: rect.height } as unknown as ResizeObserverSize],
+      devicePixelContentBoxSize: [],
+    } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve() {}
+  disconnect() {}
+}
+vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
 type Item = LiveSession & { connected: boolean };
 
@@ -23,35 +96,38 @@ afterEach(() => {
   cleanup();
   localStorage.clear(); // 防 tab/star 等持久化状态跨用例泄漏
 });
+beforeEach(() => {
+  invokeMock.mockClear();
+});
 
 describe("Sticker", () => {
   it("空数据显示 all 空态主文案", () => {
-    const { container } = render(<Sticker data={[]} />);
+    const { container } = render(<Sticker filter="all" data={[]} />);
     expect(screen.getByText(zh.empty.allTitle)).toBeTruthy();
     expect(container.querySelector("[data-tauri-drag-region]")).toBeTruthy();
   });
 
   it("渲染会话行：项目名 + 最近 AI 正文", () => {
-    render(<Sticker data={[mk({ preview: "最近这条 AI 正文" })]} />);
+    render(<Sticker filter="all" data={[mk({ preview: "最近这条 AI 正文" })]} />);
     expect(screen.getByText("proj")).toBeTruthy();
     expect(screen.getByText("最近这条 AI 正文")).toBeTruthy();
   });
 
   it("活动行常显最近 AI 正文(preview)，data-tip 带完整文本", () => {
-    const { container } = render(<Sticker data={[mk({ preview: "需要你确认下一步" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ preview: "需要你确认下一步" })]} />);
     const subEl = container.querySelector(".stk-sub") as HTMLElement;
     expect(subEl?.textContent).toBe("需要你确认下一步");
     expect(subEl?.getAttribute("data-tip")).toBe("需要你确认下一步");
   });
 
   it("无 preview 且无错误时不渲染活动行", () => {
-    const { container } = render(<Sticker data={[mk({ preview: null })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ preview: null })]} />);
     expect(container.querySelector(".stk-sub")).toBeNull();
   });
 
   it("右键菜单星标切换状态并持久化到 localStorage,操作后菜单关闭", () => {
     localStorage.removeItem("cc-kanban-starred");
-    const { container } = render(<Sticker data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.star));
     expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
@@ -61,18 +137,18 @@ describe("Sticker", () => {
   });
 
   it("右键打开菜单:含星标/便签/重命名/归档四项,Escape 关闭", () => {
-    const { container } = render(<Sticker data={[mk()]} />);
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     const menu = document.querySelector(".ctx-menu")!;
     expect(menu).toBeTruthy();
     const labels = Array.from(menu.querySelectorAll(".ctx-item")).map((el) => el.textContent);
-    expect(labels).toEqual([zh.sticker.star, zh.sticker.noteAdd, zh.sticker.renameTitle, zh.sticker.archive]);
+    expect(labels).toEqual([zh.sticker.star, zh.sticker.noteAdd, zh.sticker.renameTitle, zh.sticker.archive, zh.sticker.newSession]);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(document.querySelector(".ctx-menu")).toBeNull();
   });
 
   it("点击菜单外部关闭菜单,且该次点击不触发卡片点击", () => {
-    const { container } = render(<Sticker data={[mk()]} />);
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
     // 先打开重命名编辑器作观察哨:卡片 onClick 若被触发会关闭编辑器。
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.renameTitle));
@@ -88,40 +164,45 @@ describe("Sticker", () => {
   it("默认(右键菜单模式)不渲染卡片菜单按钮", () => {
     // card_menu_mode=button 时按钮与右键二选一;按钮模式依赖设置注入,与 terminal_open_mode
     // 的按钮模式一样走手动验证(测试环境 getSettings 不可用,仅锁默认形态)。
-    const { container } = render(<Sticker data={[mk()]} />);
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
     expect(container.querySelector(".stk-menu-btn")).toBeNull();
   });
 
   it("有 cwd 的会话菜单末尾多出「打开项目目录」,无 cwd 则隐藏", () => {
-    const { container } = render(<Sticker data={[mk({ cwd: "C:\\proj" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ cwd: "C:\\proj" })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     expect(screen.getByText(zh.sticker.openProjectDir)).toBeTruthy();
     expect(document.querySelector(".ctx-sep")).toBeTruthy(); // 与卡片管理操作以分隔线分组
     fireEvent.keyDown(document, { key: "Escape" });
 
     cleanup();
-    const { container: c2 } = render(<Sticker data={[mk({ cwd: null })]} />);
+    const { container: c2 } = render(<Sticker filter="all" data={[mk({ cwd: null })]} />);
     fireEvent.contextMenu(c2.querySelector(".stk-card")!);
     expect(screen.queryByText(zh.sticker.openProjectDir)).toBeNull();
   });
 
   it("已星标/有便签/已归档的会话,菜单项显示反向文案", () => {
-    localStorage.setItem("cc-kanban-tab", "archived");
     localStorage.setItem("cc-kanban-starred", JSON.stringify(["s"]));
-    const { container } = render(<Sticker data={[mk({ archived: true, note: "有便签" })]} />);
+    const { container } = render(<Sticker filter="archived" data={[mk({ archived: true, note: "有便签" })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     const labels = Array.from(document.querySelectorAll(".ctx-item")).map((el) => el.textContent);
-    expect(labels).toEqual([zh.sticker.unstar, zh.sticker.noteEdit, zh.sticker.renameTitle, zh.sticker.unarchive]);
+    expect(labels).toEqual([zh.sticker.unstar, zh.sticker.noteEdit, zh.sticker.renameTitle, zh.sticker.unarchive, zh.sticker.newSession]);
     localStorage.removeItem("cc-kanban-starred");
   });
 
+  it("菜单「新建会话」用当前会话的 cwd 和 provider 打开新建窗口", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ cwd: "C:\\\\proj", provider: "kimi" })]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.newSession));
+    expect(invokeMock).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:\\\\proj", provider: "kimi" });
+  });
+
   it("待交互标签页按等待最久优先排序", () => {
-    localStorage.setItem("cc-kanban-tab", "waiting");
     const base = (id: number, cc: string, last: number) =>
       mk({ task_title: cc, current_activity: null, connected: true,
         session: { id, project_id: 1, cc_session_id: cc, status: "waiting", started_at: 0, last_event_at: last, ended_at: null } });
     const now = Date.now();
-    const { container } = render(<Sticker data={[
+    const { container } = render(<Sticker filter="waiting" data={[
       base(1, "新", now - 60_000),   // 1 分钟前
       base(2, "旧", now - 600_000),  // 10 分钟前(等待最久)
     ]} />);
@@ -131,7 +212,7 @@ describe("Sticker", () => {
 
   it("已星标会话排到列表最前", () => {
     localStorage.setItem("cc-kanban-starred", JSON.stringify(["b"]));
-    const { container } = render(<Sticker data={[
+    const { container } = render(<Sticker filter="all" data={[
       mk({ task_title: "甲", current_activity: null, session: { id: 1, project_id: 1, cc_session_id: "a", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
       mk({ task_title: "乙", current_activity: null, session: { id: 2, project_id: 1, cc_session_id: "b", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
     ]} />);
@@ -142,13 +223,13 @@ describe("Sticker", () => {
   });
 
   it("有便签时渲染便签块", () => {
-    const { container } = render(<Sticker data={[mk({ note: "记得 review PR" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ note: "记得 review PR" })]} />);
     expect(screen.getByText("记得 review PR")).toBeTruthy();
     expect(container.querySelector(".stk-note")).toBeTruthy();
   });
 
   it("无便签时经右键菜单打开编辑框", () => {
-    const { container } = render(<Sticker data={[mk({ note: null })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ note: null })]} />);
     expect(container.querySelector(".stk-note-edit")).toBeNull();
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.noteAdd));
@@ -158,14 +239,14 @@ describe("Sticker", () => {
   });
 
   it("点击便签块进入编辑并预填原文", () => {
-    const { container } = render(<Sticker data={[mk({ note: "旧便签" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ note: "旧便签" })]} />);
     fireEvent.click(container.querySelector(".stk-note")!);
     const input = container.querySelector(".stk-note-edit") as HTMLInputElement;
     expect(input.value).toBe("旧便签");
   });
 
   it("便签编辑框有保存/取消按钮，点取消关闭且保留原文", () => {
-    const { container } = render(<Sticker data={[mk({ note: "保留我" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ note: "保留我" })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.noteEdit));
     expect(screen.getByLabelText(zh.sticker.noteSave)).toBeTruthy();
@@ -175,7 +256,7 @@ describe("Sticker", () => {
   });
 
   it("点便签保存按钮关闭编辑框", () => {
-    const { container } = render(<Sticker data={[mk({ note: null })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ note: null })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.noteAdd));
     fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
@@ -184,7 +265,7 @@ describe("Sticker", () => {
   });
 
   it("重命名编辑器有保存/取消按钮，点取消关闭", () => {
-    const { container } = render(<Sticker data={[mk()]} />);
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.renameTitle));
     expect(container.querySelector(".stk-editbox")).toBeTruthy();
@@ -196,7 +277,7 @@ describe("Sticker", () => {
   it("编辑态下点击卡片只关闭编辑器、不导航开终端", () => {
     // 守卫成立的可观察证据：点击卡片后编辑器关闭（setEditingId(null) 只在早返回分支执行）；
     // 若无守卫，onClick 会走 focus_session 分支、editingId 不变、编辑器仍在。
-    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: true })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.renameTitle));
     expect(container.querySelector(".stk-edit")).toBeTruthy();
@@ -205,29 +286,29 @@ describe("Sticker", () => {
   });
 
   it("默认(点击卡片模式)不渲染独立打开按钮", () => {
-    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: true })]} />);
     expect(container.querySelector(".stk-open")).toBeNull();
   });
 
   it("unnamed 会话且无动作时显示等待首次输入", () => {
-    render(<Sticker data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
+    render(<Sticker filter="all" data={[mk({ task_title: "(未命名会话)", current_activity: null })]} />);
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();
   });
 
   it("connected 时 agent 图标高亮（非灰）", () => {
-    const { container } = render(<Sticker data={[mk({ connected: true })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: true })]} />);
     const agent = container.querySelector(".stk-agent");
     expect(agent).toBeTruthy();
     expect(agent?.classList.contains("stk-agent-off")).toBe(false);
   });
 
   it("disconnected 时 agent 图标变灰（stk-agent-off）", () => {
-    const { container } = render(<Sticker data={[mk({ connected: false })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: false })]} />);
     expect(container.querySelector(".stk-agent.stk-agent-off")).toBeTruthy();
   });
 
   it("stale + disconnected 时 agent 图标变灰", () => {
-    const { container } = render(<Sticker data={[mk({ session: { id: 2, project_id: 1, cc_session_id: "x", status: "stale", started_at: 0, last_event_at: Date.now(), ended_at: null }, connected: false })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ session: { id: 2, project_id: 1, cc_session_id: "x", status: "stale", started_at: 0, last_event_at: Date.now(), ended_at: null }, connected: false })]} />);
     expect(container.querySelector(".stk-agent.stk-agent-off")).toBeTruthy();
   });
 
@@ -254,7 +335,7 @@ describe("Sticker", () => {
       session: { id: 9, project_id: 1, cc_session_id: "s9", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null },
       errored: true, error_label: "工具调用解析失败", error_raw: "The model's tool call could not be parsed (retry also failed).",
     });
-    const { container } = render(<Sticker data={[item]} />);
+    const { container } = render(<Sticker filter="all" data={[item]} />);
     const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
     expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("1");
     const runningTab = screen.getByText(zh.tabs.running).closest(".stab")!;
@@ -265,19 +346,19 @@ describe("Sticker", () => {
   });
 
   it("运行中卡片在徽标圆内显示 Content 已用百分比", () => {
-    const { container } = render(<Sticker data={[mk({ context_pct: 47 })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ context_pct: 47 })]} />);
     expect(container.querySelector(".run-badge")).toBeTruthy();
     expect(screen.getByText("47%")).toBeTruthy();
   });
 
   it("无 context_pct 时只渲染绿圆、不渲染百分比文字", () => {
-    const { container } = render(<Sticker data={[mk({ context_pct: null })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ context_pct: null })]} />);
     expect(container.querySelector(".run-badge")).toBeTruthy();
     expect(container.querySelector(".run-core")?.textContent).toBe("");
   });
 
   it("待交互卡片用黄色徽标 run-badge--waiting，且同样显示百分比", () => {
-    const { container } = render(<Sticker data={[mk({
+    const { container } = render(<Sticker filter="all" data={[mk({
       session: { id: 3, project_id: 1, cc_session_id: "w", status: "waiting", started_at: 0, last_event_at: Date.now(), ended_at: null },
       connected: true, context_pct: 30,
     })]} />);
@@ -287,13 +368,12 @@ describe("Sticker", () => {
 
   it("断开优先于 errored：只显示断开环", () => {
     const item = mk({ connected: false, errored: true, error_label: "认证失败" });
-    const { container } = render(<Sticker data={[item]} />);
+    const { container } = render(<Sticker filter="all" data={[item]} />);
     expect(container.querySelector(".ring-stop")).toBeTruthy();
     expect(container.querySelector(".needs-error")).toBeFalsy();
   });
 
   it("pending_review 会话归入待交互并置顶", () => {
-    localStorage.setItem("cc-kanban-tab", "waiting");
     const sess = (id: number, cc: string, status: "running" | "waiting", last: number) =>
       ({ id, project_id: 1, cc_session_id: cc, status, started_at: 0, last_event_at: last, ended_at: null });
     const now = Date.now();
@@ -301,7 +381,7 @@ describe("Sticker", () => {
       mk({ task_title: "等待最久的纯waiting", connected: true, session: sess(1, "w1", "waiting", now - 600_000) }),
       mk({ task_title: "待批准", connected: true, pending_review: "approval", session: sess(2, "p1", "running", now - 60_000) }),
     ];
-    const { container } = render(<Sticker data={items} />);
+    const { container } = render(<Sticker filter="waiting" data={items} />);
     // 待交互 tab 计数含 pending(2)。
     const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
     expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("2");
@@ -318,7 +398,7 @@ describe("Sticker", () => {
       context_pct: 30,
       session: { id: 5, project_id: 1, cc_session_id: "pp", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null },
     });
-    const { container } = render(<Sticker data={[item]} />);
+    const { container } = render(<Sticker filter="all" data={[item]} />);
     expect(screen.getByText(zh.pending.approval)).toBeTruthy();     // pill 文字「待批准」
     expect(container.querySelector(".pending-pill")).toBeTruthy();  // pill 元素
     expect(container.querySelector(".run-badge--pending")).toBeTruthy(); // 琥珀徽标
@@ -332,7 +412,7 @@ describe("Sticker", () => {
       last_user_text: "切到这个任务",
       session: { id: 7, project_id: 1, cc_session_id: "uai", status: "waiting", started_at: 0, last_event_at: Date.now(), ended_at: null },
     });
-    render(<Sticker data={[item]} />);
+    render(<Sticker filter="all" data={[item]} />);
     expect(screen.getByText("调研完成,结论更微妙")).toBeTruthy(); // AI 行用 last_ai_text 而非 preview
     expect(screen.queryByText("transcript 兜底的旧预览")).toBeNull();
     expect(screen.getByText("切到这个任务")).toBeTruthy();         // 用户消息行
@@ -345,7 +425,7 @@ describe("Sticker", () => {
       last_ai_text: "完成了代码审查",
       last_user_text: "帮我看这个 PR",
     });
-    const { container } = render(<Sticker data={[item]} />);
+    const { container } = render(<Sticker filter="all" data={[item]} />);
     // 「AI」前缀标签存在
     const tags = container.querySelectorAll(".stk-msg-tag");
     const tagTexts = Array.from(tags).map((el) => el.textContent);
@@ -365,7 +445,7 @@ describe("Sticker", () => {
       error_label: "工具调用解析失败",
       error_raw: "parse error",
     });
-    const { container } = render(<Sticker data={[item]} />);
+    const { container } = render(<Sticker filter="all" data={[item]} />);
     // 错误标签行存在（红色错误文案），但无 aiPrefix
     expect(container.querySelector(".stk-sub-err")).toBeTruthy();
     const tags = container.querySelectorAll(".stk-msg-tag");
@@ -374,33 +454,33 @@ describe("Sticker", () => {
   });
 
   it("有 model 时渲染模型胶囊与 agent 图标", () => {
-    const { container } = render(<Sticker data={[mk({ model: "Opus" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ model: "Opus" })]} />);
     expect(container.querySelector(".stk-model")?.textContent).toBe("Opus");
     expect(container.querySelector(".stk-agent")).toBeTruthy();
   });
 
   it("无 model 时只渲染 agent 图标、不渲染模型胶囊", () => {
-    const { container } = render(<Sticker data={[mk({ model: null })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ model: null })]} />);
     expect(container.querySelector(".stk-agent")).toBeTruthy();
     expect(container.querySelector(".stk-model")).toBeNull();
   });
 
   it("项目名只显示仓库/文件夹名（去 owner 前缀），data-tip 保留全名", () => {
-    const { container } = render(<Sticker data={[mk({ project_name: "larrygogo/autopilot" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ project_name: "larrygogo/autopilot" })]} />);
     const repo = container.querySelector(".stk-repo") as HTMLElement;
     expect(repo?.textContent).toBe("autopilot");
     expect(repo?.getAttribute("data-tip")).toBe("larrygogo/autopilot");
   });
 
   it("kimi 会话用 Kimi Code 标签与 kimi 徽标(黑方块)，claude 用 Claude Code 标签且无方块", () => {
-    const { container } = render(<Sticker data={[mk({ provider: "kimi", project_name: "kimi-proj" })]} />);
+    const { container } = render(<Sticker filter="all" data={[mk({ provider: "kimi", project_name: "kimi-proj" })]} />);
     const agent = container.querySelector(".stk-agent") as HTMLElement;
     expect(agent.getAttribute("data-tip")).toBe(zh.sticker.agentKimiCode);
     expect(agent.getAttribute("aria-label")).toBe(zh.sticker.agentKimiCode);
     expect(agent.querySelector("svg rect")).toBeTruthy(); // kimi 徽标有黑圆角方块
 
     cleanup();
-    const { container: c2 } = render(<Sticker data={[mk({ provider: "claude" })]} />);
+    const { container: c2 } = render(<Sticker filter="all" data={[mk({ provider: "claude" })]} />);
     const a2 = c2.querySelector(".stk-agent") as HTMLElement;
     expect(a2.getAttribute("data-tip")).toBe(zh.sticker.agentClaudeCode);
     expect(a2.querySelector("svg rect")).toBeNull(); // Claude logomark 无方块

@@ -264,7 +264,7 @@ fn live_sessions_carries_pid() {
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 1234, 110).unwrap();
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].pid, Some(1234));
 }
@@ -280,7 +280,7 @@ fn set_pid_evicts_same_pid_from_other_sessions() {
     let (new, _) = store.start_session(pid, "new", 200).unwrap();
     store.set_session_pid(new, 7777, 210).unwrap(); // 同一进程认领新会话
 
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     let of = |cc: &str| live.iter().find(|s| s.session.cc_session_id == cc).unwrap();
     // 旧会话被收尾：pid 摘除 + 状态 ended → 不再误判已连接、状态也收尾。
     assert_eq!(of("old").pid, None);
@@ -300,7 +300,7 @@ fn revive_for_resume_revives_ended_and_clears_pid() {
     store.set_session_pid(sid, 5555, 110).unwrap();
     store.end_session(sid, 200).unwrap(); // 断开
     assert!(store.revive_for_resume(sid, 300, None).unwrap()); // 真的复活了
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].session.cc_session_id, "s");
     assert_ne!(live[0].session.status, "ended"); // 已复活
@@ -316,7 +316,7 @@ fn revive_for_resume_noop_on_connected_session() {
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 6666, 110).unwrap();
     assert!(!store.revive_for_resume(sid, 300, None).unwrap());
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live[0].pid, Some(6666));
 }
 
@@ -328,7 +328,7 @@ fn revive_for_resume_refreshes_pidless_running_session() {
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap(); // 默认 running、pid 空、last_event_at=100
     assert!(store.revive_for_resume(sid, 500, None).unwrap());
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live[0].pid, None);
     assert_eq!(live[0].session.last_event_at, 500); // 已刷新 → 宽限重启
 }
@@ -343,7 +343,7 @@ fn revive_for_resume_forces_when_pid_confirmed_dead() {
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 5555, 110).unwrap(); // running + pid 非空(进程实际已死)
     assert!(store.revive_for_resume(sid, 300, Some(5555)).unwrap());
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live[0].pid, None); // 旧死 pid 已清，reaper 不再臆测收尾
     assert_eq!(live[0].session.last_event_at, 300); // 宽限期重启
     assert_ne!(live[0].session.status, "ended");
@@ -359,7 +359,7 @@ fn revive_for_resume_stale_dead_pid_does_not_clear_new_live_pid() {
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
     store.set_session_pid(sid, 7777, 200).unwrap(); // 新进程已认领新活 pid
     assert!(!store.revive_for_resume(sid, 300, Some(5555)).unwrap()); // 持旧快照的迟到 UPDATE
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     assert_eq!(live[0].pid, Some(7777)); // 新活 pid 原样保留
     assert_eq!(live[0].session.last_event_at, 200); // 宽限未被重启
 }
@@ -408,14 +408,14 @@ fn archive_flag_roundtrip_in_live_sessions() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(pid, "s", 100).unwrap();
-    assert!(!store.live_sessions().unwrap()[0].archived);
-    assert!(store.live_sessions().unwrap()[0].archived_at.is_none());
+    assert!(!store.live_sessions(None, None, None, 1000).unwrap()[0].archived);
+    assert!(store.live_sessions(None, None, None, 1000).unwrap()[0].archived_at.is_none());
     store.set_session_archived(sid, true, 1234).unwrap();
-    let s = store.live_sessions().unwrap();
+    let s = store.live_sessions(None, None, None, 1000).unwrap();
     assert!(s[0].archived);
     assert_eq!(s[0].archived_at, Some(1234)); // 归档记录时间戳
     store.set_session_archived(sid, false, 5678).unwrap();
-    let s2 = store.live_sessions().unwrap();
+    let s2 = store.live_sessions(None, None, None, 1000).unwrap();
     assert!(!s2[0].archived);
     assert!(s2[0].archived_at.is_none()); // 取消归档清空时间戳
 }
@@ -476,7 +476,7 @@ fn last_ai_and_user_text_set_with_cleaning() {
     // 折叠空白;不动 last_event_at(仍是建会话时的 100)。
     store.set_last_ai_text(sid, "  调研   完成。\n结论更微妙  ").unwrap();
     store.set_last_user_text(sid, "切到这个 [Image #1] 任务").unwrap();
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
     assert_eq!(s.last_ai_text.as_deref(), Some("调研 完成。 结论更微妙"));
     assert_eq!(s.last_user_text.as_deref(), Some("切到这个 任务")); // [Image #1] 被 sanitize 剥除
@@ -484,7 +484,7 @@ fn last_ai_and_user_text_set_with_cleaning() {
 
     // 空串/全空白不覆盖旧值。
     store.set_last_ai_text(sid, "   ").unwrap();
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
     assert_eq!(s.last_ai_text.as_deref(), Some("调研 完成。 结论更微妙"));
 }
@@ -498,14 +498,14 @@ fn pending_review_set_and_clear() {
 
     // set:写入子态并刷新 last_event_at。
     store.set_pending_review(sid, PendingReview::Approval, 500).unwrap();
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
     assert_eq!(s.pending_review.as_deref(), Some("approval"));
     assert_eq!(s.session.last_event_at, 500);
 
     // clear:置 NULL,且不改 last_event_at。
     store.clear_pending_review(sid).unwrap();
-    let live = store.live_sessions().unwrap();
+    let live = store.live_sessions(None, None, None, 1000).unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "cc1").unwrap();
     assert_eq!(s.pending_review, None);
     assert_eq!(s.session.last_event_at, 500);

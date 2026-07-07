@@ -2,12 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 
-const getLiveSessions = vi.fn();
+const getLiveSessionsCounts = vi.fn();
+const getLiveSessionsPage = vi.fn();
 let emitBoardChanged: () => void = () => {};
 const unlisten = vi.fn();
 
 vi.mock("./api", () => ({
-  getLiveSessions: () => getLiveSessions(),
+  getLiveSessionsCounts: () => getLiveSessionsCounts(),
+  getLiveSessionsPage: (
+    filter: "all" | "running" | "waiting" | "archived",
+    cursor: { last_event_at: number; id: number } | null,
+    limit: number
+  ) => getLiveSessionsPage(filter, cursor, limit),
   getSettings: () =>
     Promise.resolve({ archive_hide_days: 0, notifications_enabled: true, theme: "dark", opacity: 94, ui_scale: 100 }),
   getAccounts: () => Promise.resolve([]),
@@ -40,8 +46,10 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(() => Promise.res
 import { App } from "./App";
 
 beforeEach(() => {
-  getLiveSessions.mockReset();
-  getLiveSessions.mockResolvedValue([]);
+  getLiveSessionsCounts.mockReset();
+  getLiveSessionsCounts.mockResolvedValue({ total: 0, running: 0, waiting: 0, archived: 0 });
+  getLiveSessionsPage.mockReset();
+  getLiveSessionsPage.mockResolvedValue([]);
   unlisten.mockReset();
   vi.mocked(invoke).mockClear();
   localStorage.clear();
@@ -49,16 +57,18 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("App", () => {
-  it("挂载时拉取一次活跃会话", async () => {
+  it("挂载时拉取 counts 和第 0 页", async () => {
     render(<App />);
-    await waitFor(() => expect(getLiveSessions).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, 100));
   });
 
-  it("收到 board-changed 后再次拉取", async () => {
+  it("收到 board-changed 后重新拉取 counts 和第 0 页", async () => {
     render(<App />);
-    await waitFor(() => expect(getLiveSessions).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
     emitBoardChanged();
-    await waitFor(() => expect(getLiveSessions).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, 100));
   });
 
   // 单一真相源：window-state 不再恢复尺寸(lib.rs)，main 窗口尺寸由 SIZE_KEY 持有。非吸附态启动

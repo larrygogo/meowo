@@ -24,7 +24,8 @@ pub fn codex_home() -> Option<PathBuf> {
 
 /// codex 的启动前缀 argv（不含 `resume <id>`）。优先用户【实际在用的】 bun 全局 codex.exe
 /// (`~/.bun/bin/codex.exe`)——用户多用 bun 装/更新，npm 那个常是过期副本(导致 resume 拉到旧版、
-/// 每次提示更新)。其次退回 npm 的 node 包装(`node <codex.js>`)。都没有则 None(调用方回退裸名 codex)。
+/// 每次提示更新)。其次退回 npm 的 node 包装(`node <codex.js>`)。再次官方独立安装的原生 codex.exe。
+/// 都没有则 None(调用方回退裸名 codex)。
 pub fn codex_launch_prefix() -> Option<Vec<String>> {
     let bin = if cfg!(windows) { "codex.exe" } else { "codex" };
     // 1) bun 全局 bin。
@@ -37,6 +38,21 @@ pub fn codex_launch_prefix() -> Option<Vec<String>> {
     // 2) npm 全局：node "<npm>/node_modules/@openai/codex/bin/codex.js"。
     if let Some(js) = codex_js() {
         return Some(vec!["node".into(), js]);
+    }
+    // 3) 官方独立安装(chatgpt.com/codex/install)：{CODEX_HOME}/packages/standalone/current/bin/codex(.exe)。
+    //    `current` 是指向当前 release 的 junction/symlink，跨平台稳定；原生二进制可直接 resume。
+    //    也是修「装完仍显示未安装」的关键：安装脚本只改持久 PATH，运行中的 cc-app 进程 PATH 是启动时旧快照、
+    //    看不到新目录，故直查此固定路径——装完聚焦/刷新即显示已装，且恢复会话走绝对路径不依赖 PATH。
+    if let Some(standalone) = codex_home() {
+        let exe = standalone
+            .join("packages")
+            .join("standalone")
+            .join("current")
+            .join("bin")
+            .join(bin);
+        if exe.exists() {
+            return Some(vec![exe.to_string_lossy().into_owned()]);
+        }
     }
     None
 }

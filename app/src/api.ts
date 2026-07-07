@@ -111,8 +111,30 @@ export type LiveSession = {
   provider: ProviderKey;
 };
 
-export function getLiveSessions(): Promise<LiveSession[]> {
-  return invoke("get_live_sessions");
+export type LiveSessionCounts = {
+  total: number;
+  running: number;
+  waiting: number;
+  archived: number;
+};
+
+export function getLiveSessionsCounts(): Promise<LiveSessionCounts> {
+  return invoke("get_live_sessions_counts");
+}
+
+export type StickerFilter = "all" | "running" | "waiting" | "archived";
+
+export function getLiveSessionsPage(
+  filter: StickerFilter,
+  cursor: { last_event_at: number; id: number } | null,
+  limit: number
+): Promise<LiveSession[]> {
+  return invoke("get_live_sessions_page", {
+    filter,
+    before_last_event_at: cursor?.last_event_at ?? null,
+    before_id: cursor?.id ?? null,
+    limit,
+  });
 }
 
 export type ThemeMode = "dark" | "light" | "system";

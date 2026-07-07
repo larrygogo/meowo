@@ -20,7 +20,7 @@ export function DemoStage() {
         {strip ? (
           <CollapsedStrip data={store.sessions} edge="right" onExpand={() => {}} />
         ) : (
-          <Sticker data={store.sessions} />
+          <Sticker filter="all" data={store.sessions} />
         )}
       </div>
       {caption && (

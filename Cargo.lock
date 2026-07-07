@@ -322,6 +322,7 @@ dependencies = [
  "cc-store",
  "mac-notification-sys",
  "notify",
+ "percent-encoding",
  "serde",
  "serde_json",
  "sys-locale",

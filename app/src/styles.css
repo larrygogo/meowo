@@ -258,7 +258,7 @@ html, body {
   flex: 1;
   min-width: 0;
   cursor: pointer;
-  font-size: calc(11px * var(--cc-ui));
+  font-size: 11px;
   color: var(--cc-text-dim);
   padding: 3px 2px;
   display: inline-flex;
@@ -582,6 +582,45 @@ html, body {
   border-radius: 16px;
 }
 .stk-card:last-child { margin-bottom: 0; }
+/* 虚拟列表 wrapper：用 padding-bottom 承担原卡片间距，确保 measureElement 测到的高度包含间隙，
+   同时避免 .stk-card:last-child 在 wrapper 内永远成立导致间距丢失。 */
+.stk-vitem {
+  padding-bottom: calc(6px * var(--cc-ui));
+}
+.stk-vitem > .stk-card {
+  margin-bottom: 0;
+}
+/* 列表空态加载提示 */
+.stk-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--cc-text-faint);
+  font-size: calc(12px * var(--cc-ui));
+}
+/* 底部加载更多动画 */
+.stk-loadmore {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding-bottom: 12px;
+}
+.stk-loadmore-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cc-text-faint);
+  animation: stk-loadmore-bounce 1s infinite ease-in-out;
+}
+.stk-loadmore-dot:nth-child(2) { animation-delay: 0.15s; }
+.stk-loadmore-dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes stk-loadmore-bounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
 .stk-card:hover {
   background: var(--cc-surface-hover);
   box-shadow: var(--card-elev-hover);
@@ -1271,6 +1310,62 @@ html, body {
 .seg-btn:hover { color: var(--cc-text); }
 .seg-btn.on { background: var(--cc-accent-soft); color: var(--cc-accent-text); }
 
+/* 字体大小离散滑块：轨道 + 滑钮 + 底部标签（小/中/大）。 */
+.dslider {
+  flex: none;
+  width: 140px;
+}
+.dslider-track {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 4px;
+  padding: 0 8px;
+  background: var(--cc-surface-hover);
+  border-radius: 2px;
+}
+.dslider-knob-wrap {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  height: 0;
+}
+.dslider-knob {
+  position: absolute;
+  top: -8px;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--cc-accent);
+  box-shadow: 0 2px 6px var(--cc-accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: left 0.2s cubic-bezier(0.34, 1.2, 0.5, 1);
+}
+.dslider-point {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  margin: -7px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.dslider-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding: 0 1px;
+}
+.dslider-label {
+  font-size: 12px;
+  color: var(--cc-text-dim);
+}
+
 /* 行内滑块（贴纸不透明度）：整行竖排，标签 + 数值在上，滑块铺满在下 */
 .row-col { flex-direction: column; align-items: stretch; gap: 12px; }
 .row-head { display: flex; align-items: center; gap: 13px; }
@@ -1334,41 +1429,125 @@ html, body {
   -webkit-user-select: text;
 }
 
-/* 账号分区：一张卡 = 一个 AI 提供方，卡顶标 provider，卡内含账号与用量。 */
-.acc-block { display: flex; align-items: center; gap: 13px; padding: 15px 16px; }
-.acc-avatar {
-  flex: none;
-  width: 42px; height: 42px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 600; font-size: 17px; color: #fff;
-  background: linear-gradient(135deg, var(--cc-accent-dim), var(--cc-accent));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 6px -1px var(--cc-accent-soft);
+/* 账号分区：一张卡 = 一个 AI 提供方，仿应用/集成卡片风格。 */
+.provider-card {
+  /* 卡片保持干净的边框面，无阴影/无 hover 效果 */
 }
-/* 未登录占位头像：中性底 + 描边 + 人形图标 */
-.acc-avatar-empty { color: var(--cc-text-faint); background: var(--cc-surface-hover); box-shadow: inset 0 0 0 1px var(--cc-border); }
-.acc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.acc-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.acc-name { font-size: 14px; font-weight: 600; color: var(--cc-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 套餐徽标（max/pro → 首字母大写的胶囊）。 */
-.acc-plan { flex: none; font-size: 10px; font-weight: 600; line-height: 16px; padding: 0 8px; border-radius: 999px; color: var(--cc-accent-text); background: var(--cc-accent-soft); border: 1px solid var(--cc-accent-border); text-transform: capitalize; letter-spacing: 0.02em; }
-.acc-sub { font-size: 12px; color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acc-sub-wrap { white-space: normal; line-height: 1.4; }
-.acc-org { font-size: 11.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.provider-head { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--cc-border); }
-/* agent 卡三态标识：未装/未登录徽标 + 安装按钮行。 */
-.agent-badge { font-size: 10px; padding: 1px 7px; border-radius: 999px; background: var(--cc-surface-hover); color: var(--cc-text-dim); margin-left: auto; }
-.agent-badge-off { color: var(--cc-warn); }
-.agent-install-row { padding: 10px 16px 12px; font-size: 12px; color: var(--cc-text-dim); }
-/* claude 徽标用 currentColor → 给 accent 色(与底栏标签/会话卡一致)；kimi/codex 固定品牌色不受影响。 */
-.provider-icon { display: inline-flex; color: var(--cc-accent-text); }
-.provider-name { font-size: 13px; font-weight: 600; color: var(--cc-text); }
-/* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
-.usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
-.usage-sticker-label { font-size: 12px; color: var(--cc-text-dim); }
-.provider-usage { padding: 14px 16px; border-top: 1px solid var(--cc-border); }
+.provider-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 12px;
+}
+.provider-card-icon {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-surface-hover);
+  box-shadow: inset 0 0 0 1px var(--cc-border);
+}
+.provider-card-icon svg {
+  width: 28px;
+  height: 28px;
+}
+.provider-card-icon-claude {
+  background: linear-gradient(135deg, var(--cc-accent-dim), var(--cc-accent));
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 8px -1px var(--cc-accent-soft);
+}
+/* kimi/codex 自带品牌色圆角方块底，铺满外框，不再套中性背景。 */
+.provider-card-icon:not(.provider-card-icon-claude) {
+  background: transparent;
+  box-shadow: none;
+}
+.provider-card-icon:not(.provider-card-icon-claude) svg {
+  width: 100%;
+  height: 100%;
+}
+.provider-card-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.provider-card-title .provider-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cc-text);
+}
+.provider-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--cc-text-dim);
+  background: var(--cc-surface-hover);
+  border: 1px solid var(--cc-border);
+  text-transform: capitalize;
+}
+.provider-badge-plan {
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
+  border-color: var(--cc-accent-border);
+}
+.provider-badge-off {
+  color: var(--cc-warn);
+  background: transparent;
+  border-color: var(--cc-warn);
+}
+.provider-card-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.provider-card-action:hover {
+  background: var(--cc-surface-hover);
+}
+.provider-card-action-primary {
+  background: var(--cc-accent);
+  border-color: var(--cc-accent);
+  color: #fff;
+  box-shadow: 0 2px 6px -1px var(--cc-accent-soft);
+}
+.provider-card-action-primary:hover {
+  background: var(--cc-accent-dim);
+  border-color: var(--cc-accent-dim);
+  transform: translateY(-1px);
+}
+.provider-card-body {
+  padding: 0 16px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cc-text-dim);
+}
+
+.provider-usage {
+  padding: 14px 16px;
+  border-top: 1px solid var(--cc-border);
+  background: rgba(0, 0, 0, 0.02);
+}
+:root[data-theme="light"] .provider-usage { background: rgba(0, 0, 0, 0.015); }
 /* 多张卡片连续排列时补间距（未来多 AI 时每个 provider 各占一张卡）。 */
 .row-card + .row-card { margin-top: 14px; }
-.usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.usage-card-title { font-size: 12.5px; font-weight: 600; color: var(--cc-text); }
 /* 图标按钮（如配额刷新）：透明底、悬停高亮，刷新中图标旋转。 */
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; background: transparent; color: var(--cc-text-dim); cursor: pointer; border-radius: var(--r-md); }
 .icon-btn:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
@@ -1377,16 +1556,35 @@ html, body {
 .icon-btn svg.spin { animation: spin 0.8s linear infinite; }
 /* 刷新按钮旋转动画：原引用的 @keyframes spin 未定义(只有 run-spin)导致图标不转，补上。 */
 @keyframes spin { to { transform: rotate(360deg); } }
-.usage-card-title { font-size: 12.5px; font-weight: 600; }
-.usage-row { margin: 10px 0; }
-.usage-head { display: flex; justify-content: space-between; font-size: 11.5px; }
+
+.usage-row { margin: 8px 0; }
+.usage-row:first-of-type { margin-top: 0; }
+.usage-row:last-of-type { margin-bottom: 0; }
+.usage-head { display: flex; justify-content: space-between; font-size: 11.5px; gap: 10px; }
 .usage-label { color: var(--cc-text-dim); }
-.usage-pct { font-weight: 600; }
-.usage-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; margin: 4px 0 2px; }
-.usage-track > i { display: block; height: 100%; background: var(--cc-accent, #6b8afd); border-radius: 3px; }
+.usage-pct { font-weight: 600; color: var(--cc-text); font-variant-numeric: tabular-nums; }
+.usage-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--cc-surface-hover);
+  overflow: hidden;
+  margin: 5px 0 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+.usage-track > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cc-accent-dim), var(--cc-accent));
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+
+/* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
+.usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
+.usage-sticker-label { font-size: 12px; color: var(--cc-text-dim); }
 
 /* 贴纸颜色色板：一排可点圆色块（鲜亮代表色），选中加 accent 描边圈。在设置窗渲染，
    不受 data-sticker-style 影响，外观恒定。 */
@@ -1678,7 +1876,7 @@ select.ns-input {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 3px 8px;
   border: none;
   background: transparent;
   color: var(--cc-text);

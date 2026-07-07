@@ -62,7 +62,7 @@ mod tests {
         let _ = store.start_session(pid, "sess-1", 1).unwrap();
         let json = r#"{"session_id":"sess-1","context_window":{"used_percentage":42,"context_window_size":1000000}}"#;
         record(&store, json, 100);
-        let live = store.live_sessions().unwrap();
+        let live = store.live_sessions(None, None, None, 1000).unwrap();
         let s = live.iter().find(|l| l.session.cc_session_id == "sess-1").unwrap();
         assert_eq!(s.context_pct, Some(42));
         assert_eq!(s.context_window, Some(1_000_000));
@@ -78,7 +78,7 @@ mod tests {
             r#"{"session_id":"s2","context_window":{"used_percentage":23.6,"context_window_size":200000}}"#,
             1,
         );
-        let live = store.live_sessions().unwrap();
+        let live = store.live_sessions(None, None, None, 1000).unwrap();
         let s = live.iter().find(|l| l.session.cc_session_id == "s2").unwrap();
         assert_eq!(s.context_pct, Some(24));
     }
@@ -106,7 +106,7 @@ mod tests {
         let _ = store.start_session(pid, "sm-1", 1).unwrap();
         let json = r#"{"session_id":"sm-1","model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}"#;
         record(&store, json, 100);
-        let live = store.live_sessions().unwrap();
+        let live = store.live_sessions(None, None, None, 1000).unwrap();
         let s = live.iter().find(|l| l.session.cc_session_id == "sm-1").unwrap();
         assert_eq!(s.model.as_deref(), Some("Opus"));
     }
@@ -119,7 +119,7 @@ mod tests {
         record(&store, r#"{"session_id":"sm-2","model":{"display_name":"Sonnet"}}"#, 1);
         // 后续 statusline 不带 model（仅上下文）→ 不应抹掉已存的模型
         record(&store, r#"{"session_id":"sm-2","context_window":{"used_percentage":20}}"#, 2);
-        let live = store.live_sessions().unwrap();
+        let live = store.live_sessions(None, None, None, 1000).unwrap();
         let s = live.iter().find(|l| l.session.cc_session_id == "sm-2").unwrap();
         assert_eq!(s.model.as_deref(), Some("Sonnet"));
     }
