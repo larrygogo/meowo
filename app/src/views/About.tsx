@@ -212,7 +212,8 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
 function ProviderCard({ provider, installed, payload, usage, err, onRefresh, refreshing, settings, onToggleQuota }: {
   provider: ProviderKey;
-  installed: boolean;
+  /** null = 安装状态检测中（availableAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
+  installed: boolean | null;
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
@@ -235,10 +236,10 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, ref
       <div className="provider-head">
         <span className="provider-icon"><cfg.Icon /></span>
         <span className="provider-name">{cfg.label(t)}</span>
-        {!installed && <span className="agent-badge agent-badge-off">{t.account.notInstalled}</span>}
-        {installed && !acc && <span className="agent-badge">{t.account.notLoggedIn}</span>}
+        {installed === false && <span className="agent-badge agent-badge-off">{t.account.notInstalled}</span>}
+        {installed === true && !acc && <span className="agent-badge">{t.account.notLoggedIn}</span>}
       </div>
-      {!installed ? (
+      {installed === false ? (
         <div className="agent-install-row">
           <button
             type="button"
@@ -293,9 +294,9 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, ref
             </div>
           </div>
         </>
-      ) : (
+      ) : installed === true ? (
         <div className="agent-install-row">{t.account.notLoggedInHint}</div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -310,7 +311,8 @@ export function AccountSection() {
   // errMap: provider key → 错误类型（unsupported/error/null）
   const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
   // installed: 本机实际已装的 agent 集合——决定每张卡是「未安装」还是「已装/未登录」。
-  const [installed, setInstalled] = useState<Set<string>>(new Set());
+  // 初值 null = 检测中：首帧不判定任何一张卡为未安装，避免 availableAgents() resolve 前误闪「未安装 + 安装按钮」。
+  const [installed, setInstalled] = useState<Set<string> | null>(null);
   useEffect(() => { availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {}); }, []);
   // 窗口重新聚焦时重检安装状态（一键安装装完回来即更新）。
   useEffect(() => {
@@ -375,7 +377,7 @@ export function AccountSection() {
           <ProviderCard
             key={p}
             provider={p}
-            installed={installed.has(p)}
+            installed={installed === null ? null : installed.has(p)}
             payload={payload}
             usage={usageMap[p] ?? null}
             err={errMap[p] ?? null}
@@ -528,6 +530,12 @@ function GeneralSection() {
   const changeResumeTerm = (v: ResumeTerminal) => patch({ resume_terminal: v });
   // 至少两个可用终端才有选择意义；只有一个（如 macOS 没装 iTerm）就不显示这一行。
   const showTermRow = (IS_MAC || IS_WIN) && termOptions.length >= 2;
+  // 默认 Agent 下拉：选项以已装 agent 为主；若保存值不在已装列表里（未装/尚未探测完成），
+  // 在最前面补一项，避免 Dropdown 内部 find 不到导致按钮标签空白。
+  const defaultAgent = settings?.default_agent ?? "claude";
+  const defaultAgentOptions = availAgents.includes(defaultAgent)
+    ? availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))
+    : [{ value: defaultAgent, label: providerConfig(defaultAgent).label(t) }, ...availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))];
   return (
     <>
       <div className="row-card">
@@ -601,8 +609,8 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.defaultAgentDesc}</div>
           </div>
           <Dropdown
-            value={settings?.default_agent ?? "claude"}
-            options={availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))}
+            value={defaultAgent}
+            options={defaultAgentOptions}
             onChange={(v) => patch({ default_agent: v })}
           />
         </div>

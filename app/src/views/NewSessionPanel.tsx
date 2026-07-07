@@ -54,7 +54,8 @@ export function NewSessionPanel(): ReactElement {
         .then((st) => setHooks((h) => ({ ...h, [p]: st })))
         .catch(() => {}),
     );
-    availableAgents().then(setAvail).catch(() => setAvail([]));
+    // 命令失败时按 spec §5 宁可多列（回退全量 PROVIDER_KEYS）也不空列表——空列表会显示「未检测到已安装」并禁用启动。
+    availableAgents().then(setAvail).catch(() => setAvail([...PROVIDER_KEYS]));
   }, []);
 
   // default_agent 若未装，则退到首个已装 agent（avail 加载后校正）

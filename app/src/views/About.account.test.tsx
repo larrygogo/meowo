@@ -23,8 +23,8 @@ describe("AccountSection agent 卡", () => {
     await waitFor(() => expect(screen.getByTestId("agent-card-kimi")).toBeTruthy());
     expect(screen.getByTestId("agent-card-claude")).toBeTruthy();
     expect(screen.getByTestId("agent-card-codex")).toBeTruthy();
-    // kimi 未装：有安装按钮
-    expect(screen.getByTestId("agent-install-kimi")).toBeTruthy();
+    // kimi 未装：availableAgents() resolve 后才出现安装按钮（首帧检测中不渲染，findByTestId 等待）
+    expect(await screen.findByTestId("agent-install-kimi")).toBeTruthy();
     // 已装的（claude/codex）无安装按钮
     expect(screen.queryByTestId("agent-install-claude")).toBeNull();
   });

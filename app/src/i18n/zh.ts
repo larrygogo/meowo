@@ -148,11 +148,9 @@ export const zh = {
   },
   account: {
     providerClaudeCode: "Claude Code",
-    installed: "已安装",
     notInstalled: "未安装",
     notLoggedIn: "未登录",
     notLoggedInHint: "已安装，未登录——在终端运行该 CLI 登录后这里会显示账号",
-    notLoggedInDesc: "在终端登录 Claude Code / Codex / Kimi 后即可查看账号与用量",
     install: "安装",
     quota: "配额",
     refresh: "刷新",
