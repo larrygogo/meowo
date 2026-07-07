@@ -77,6 +77,7 @@ export const en: Dict = {
     launchedCodexToast: (agent: string) => `Launched ${agent}; the card appears after the first message`,
     hooksMissing: "No hooks detected for this agent; the session may not appear on the board",
     hooksUnknown: "Can't confirm this agent's hooks status",
+    noAgents: "No installed AI CLI detected (claude / codex / kimi). Please install one first.",
     hooksHelp: "How to set up",
     newButton: "New session",
     emptyCta: "New session",

@@ -10,6 +10,7 @@ import {
   recentCwds,
   checkProviderHooks,
   getSettings,
+  availableAgents,
 } from "../api";
 import { providerConfig } from "../providers";
 import { useT } from "../i18n";
@@ -41,6 +42,7 @@ export function NewSessionPanel(): ReactElement {
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avail, setAvail] = useState<ProviderKey[] | null>(null);
 
   useEffect(() => {
     getSettings()
@@ -52,7 +54,13 @@ export function NewSessionPanel(): ReactElement {
         .then((st) => setHooks((h) => ({ ...h, [p]: st })))
         .catch(() => {}),
     );
+    availableAgents().then(setAvail).catch(() => setAvail([]));
   }, []);
+
+  // default_agent 若未装，则退到首个已装 agent（avail 加载后校正）
+  useEffect(() => {
+    if (avail && avail.length > 0 && !avail.includes(provider)) setProvider(avail[0]);
+  }, [avail, provider]);
 
   function closeWin() {
     getCurrentWindow().close();
@@ -137,23 +145,30 @@ export function NewSessionPanel(): ReactElement {
 
         <div className="ns-field">
           <span className="ns-label">{t.newSession.agent}</span>
-          <div className="ns-agents">
-            {PROVIDER_KEYS.map((p) => {
-              const cfg = providerConfig(p);
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  className={"ns-agent" + (provider === p ? " is-on" : "")}
-                  onClick={() => setProvider(p)}
-                >
-                  <cfg.Icon />
-                  <span>{cfg.label(t)}</span>
-                </button>
-              );
-            })}
-          </div>
-          {warn && (
+          {avail && avail.length === 0 ? (
+            <div className="ns-warn" data-testid="ns-no-agents">
+              {t.newSession.noAgents}
+            </div>
+          ) : (
+            <div className="ns-agents">
+              {(avail ?? []).map((p) => {
+                const cfg = providerConfig(p);
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    data-testid={"ns-agent-" + p}
+                    className={"ns-agent" + (provider === p ? " is-on" : "")}
+                    onClick={() => setProvider(p)}
+                  >
+                    <cfg.Icon />
+                    <span>{cfg.label(t)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {avail && avail.length > 0 && warn && (
             <div className="ns-warn" data-testid="ns-hooks-warn">
               {hooks[provider] === "unknown" ? t.newSession.hooksUnknown : t.newSession.hooksMissing}
             </div>
@@ -175,7 +190,7 @@ export function NewSessionPanel(): ReactElement {
           type="button"
           className="ns-btn is-primary"
           data-testid="ns-launch"
-          disabled={!cwd.trim() || busy}
+          disabled={!cwd.trim() || busy || (avail?.length ?? 0) === 0}
           onClick={launch}
         >
           {busy ? t.newSession.launching : t.newSession.launch}

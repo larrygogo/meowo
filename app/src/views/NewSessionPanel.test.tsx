@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   checkProviderHooks: vi.fn(),
   availableTerminals: vi.fn(),
   getSettings: vi.fn(),
+  availableAgents: vi.fn(),
 }));
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), ...api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -26,6 +27,7 @@ beforeEach(() => {
   api.checkProviderHooks.mockResolvedValue("installed");
   api.availableTerminals.mockResolvedValue(["wt"]);
   api.getSettings.mockResolvedValue({ default_agent: "claude", resume_terminal: "wt" });
+  api.availableAgents.mockResolvedValue(["claude", "codex", "kimi"]);
 });
 afterEach(() => cleanup());
 
@@ -60,5 +62,21 @@ describe("NewSessionPanel (独立窗口)", () => {
     expect((await screen.findByTestId("ns-error")).textContent).toContain("启动终端失败");
     expect(emitMock).not.toHaveBeenCalled();
     expect(closeMock).not.toHaveBeenCalled();
+  });
+
+  it("agent 选择只列已装的", async () => {
+    api.availableAgents.mockResolvedValue(["claude", "codex"]);
+    render(<NewSessionPanel />);
+    await screen.findByTestId("ns-launch");
+    expect(screen.queryByTestId("ns-agent-claude")).toBeTruthy();
+    expect(screen.queryByTestId("ns-agent-codex")).toBeTruthy();
+    expect(screen.queryByTestId("ns-agent-kimi")).toBeNull();
+  });
+
+  it("一个都没装时提示 + 启动禁用", async () => {
+    api.availableAgents.mockResolvedValue([]);
+    render(<NewSessionPanel />);
+    expect(await screen.findByTestId("ns-no-agents")).toBeTruthy();
+    expect((screen.getByTestId("ns-launch") as HTMLButtonElement).disabled).toBe(true);
   });
 });

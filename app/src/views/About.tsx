@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, PROVIDER_KEYS, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
+import { getSettings, setSettings, availableTerminals, availableAgents, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
 import { PROVIDERS, providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
@@ -497,12 +497,16 @@ function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [settings, patch] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
+  const [availAgents, setAvailAgents] = useState<ProviderKey[]>([]);
   // dev 下开机自启会注册调试二进制(开机连不上 dev server → 白屏)，故禁用此开关，仅安装版可用。
   const autostartDisabled = import.meta.env.DEV;
   useEffect(() => {
     if (!autostartDisabled) invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
     availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
   }, [autostartDisabled]);
+  useEffect(() => {
+    availableAgents().then(setAvailAgents).catch(() => {});
+  }, []);
   const toggleAutostart = () => {
     if (autostartDisabled) return;
     const next = !autostart;
@@ -598,7 +602,7 @@ function GeneralSection() {
           </div>
           <Dropdown
             value={settings?.default_agent ?? "claude"}
-            options={PROVIDER_KEYS.map((p) => ({ value: p, label: providerConfig(p).label(t) }))}
+            options={availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))}
             onChange={(v) => patch({ default_agent: v })}
           />
         </div>
