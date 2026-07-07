@@ -1998,6 +1998,21 @@ async fn available_terminals() -> Vec<String> {
     }
 }
 
+/// 本机实际已安装的 agent（provider key 列表），供各处按安装过滤展示。仿 available_terminals：
+/// 检测廉价（PATH/文件查询），仍放 blocking 池避免任何意外阻塞事件循环。
+#[tauri::command]
+async fn available_agents() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        cc_reporter::agent::all()
+            .iter()
+            .filter(|a| a.is_installed())
+            .map(|a| a.key().as_str().to_string())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// 前端调用：打开设置窗口（贴纸 tab 栏的设置按钮）。
 /// 必须在子线程创建：同步 command 跑在主线程，直接 build() 会阻塞主线程消息泵，
 /// 而 WebView2 初始化依赖消息泵运转 → 卡在初始化 → 白屏。子线程里 build() 把创建
@@ -2492,6 +2507,7 @@ pub fn run() {
             refresh_usage,
             host_os,
             available_terminals,
+            available_agents,
             new_session,
             check_provider_hooks,
             recent_cwds,

@@ -159,6 +159,11 @@ export function availableTerminals(): Promise<ResumeTerminal[]> {
   return invoke("available_terminals");
 }
 
+/** 本机实际已安装的 agent（provider key）；各处选/展示 agent 按此过滤。 */
+export function availableAgents(): Promise<ProviderKey[]> {
+  return invoke("available_agents");
+}
+
 export function getSettings(): Promise<Settings> {
   return invoke("get_settings");
 }
