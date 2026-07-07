@@ -197,6 +197,17 @@ fn build_install_command(script_path: &str) -> std::process::Command {
     c.arg(script_path);
     c
 }
+
+/// 过滤噪声后把一行安装输出作为进度事件 emit（stdout/stderr 两处读取共用，避免重复逻辑）。
+fn emit_install_progress(app: &tauri::AppHandle, provider: &str, line: String) {
+    use tauri::Emitter;
+    if is_progress_line(&line) {
+        let _ = app.emit(
+            "install-progress",
+            InstallProgress { provider: provider.to_string(), line },
+        );
+    }
+}
 ```
 
 - [ ] **Step 3: 重写 `install_agent`**
@@ -230,30 +241,20 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
         // 读输出 + 等退出 + emit done 放独立线程，让 spawn_blocking 尽快归还线程池。
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
-            use tauri::Emitter; // app.emit 需该 trait 在作用域内（本仓为函数级局部 use，非文件级）；覆盖下方嵌套 stderr 闭包
+            use tauri::Emitter; // 供本闭包末尾的 install-done emit（install-progress 走 emit_install_progress helper）
             // stderr 另起线程并行读，避免两个管道任一写满后互相阻塞。
             let err_handle = stderr.map(|e| {
                 let app = app.clone();
                 let provider = provider.clone();
                 std::thread::spawn(move || {
                     for line in BufReader::new(e).lines().map_while(Result::ok) {
-                        if is_progress_line(&line) {
-                            let _ = app.emit(
-                                "install-progress",
-                                InstallProgress { provider: provider.clone(), line },
-                            );
-                        }
+                        emit_install_progress(&app, &provider, line);
                     }
                 })
             });
             if let Some(o) = stdout {
                 for line in BufReader::new(o).lines().map_while(Result::ok) {
-                    if is_progress_line(&line) {
-                        let _ = app.emit(
-                            "install-progress",
-                            InstallProgress { provider: provider.clone(), line },
-                        );
-                    }
+                    emit_install_progress(&app, &provider, line);
                 }
             }
             if let Some(h) = err_handle {
@@ -272,7 +273,7 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
 }
 ```
 
-注：`app.emit` 需 `tauri::Emitter` trait；本仓是**函数级局部 use**（非文件顶部），故已在上面线程闭包首行加 `use tauri::Emitter;`，无需改文件顶部导入。
+注：`app.emit` 需 `tauri::Emitter` trait；本仓是**函数级局部 use**（非文件顶部）。install-progress 走 `emit_install_progress` helper（内含 `use tauri::Emitter;`）；install-done 的 emit 在线程闭包里，故该闭包首行也有 `use tauri::Emitter;`。无需改文件顶部导入。
 
 - [ ] **Step 4: 删除旧 `spawn_install` 三份 + 常量**
 
