@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
+  availableAgents,
   LiveSession,
   Settings,
   TerminalOpenMode,
@@ -584,6 +585,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
   const [menuMode, setMenuMode] = useState<CardMenuMode>("context");
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
+  const [availAgents, setAvailAgents] = useState<string[]>([]);
   useEffect(() => {
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
@@ -610,6 +612,11 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
       cancelled = true;
       try { un?.(); } catch { /* noop */ }
     };
+  }, []);
+
+  // 已装 provider 列表：用于过滤配额显示（只显示既在配额设置里、又已装的 provider）
+  useEffect(() => {
+    availableAgents().then(setAvailAgents).catch(() => {});
   }, []);
 
   // 相对时间（fmtAgo）每分钟重算：递增计数触发轻量重渲染。
@@ -815,6 +822,9 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
     };
   }, []);
   // usageMap 与 quotaProviders 直接传入 UsageScreen，不再在父层预处理为行数组。
+  // 交叉过滤：只显示既在配额设置里、又已装的 provider（availAgents 为空=未加载时不过滤，避免闪空）
+  const shownQuota = quotaProviders.filter((p) => availAgents.length === 0 || availAgents.includes(p));
+
   const syncSb = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -1177,7 +1187,7 @@ export function Sticker({ data, hasUpdate }: { data: Item[]; hasUpdate?: boolean
           </div>
         ) : (
           <>
-            <UsageScreen quotaProviders={quotaProviders} usageMap={usageMap} />
+            <UsageScreen quotaProviders={shownQuota} usageMap={usageMap} />
             <div className="stk-bar-actions">
               <span
                 className="stk-act"
