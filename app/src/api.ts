@@ -255,3 +255,8 @@ export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> 
 export function installAgent(provider: ProviderKey): Promise<void> {
   return invoke("install_agent", { provider });
 }
+
+/** 后台安装进度事件 payload（对应后端 install-progress）。 */
+export type InstallProgress = { provider: ProviderKey; line: string };
+/** 后台安装结束事件 payload（对应后端 install-done）。 */
+export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | null };

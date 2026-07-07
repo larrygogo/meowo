@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
+import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallProgress, type InstallDone } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
 import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
@@ -220,7 +221,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, installed, payload, usage, err, onRefresh, refreshing, settings, onToggleQuota }: {
+function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onInstalled, refreshing, settings, onToggleQuota }: {
   provider: ProviderKey;
   /** null = 安装状态检测中（availableAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
   installed: boolean | null;
@@ -228,6 +229,8 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, ref
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
   onRefresh: () => void;
+  /** 后台安装成功后重查安装检测（令卡片转「已装」）。 */
+  onInstalled: () => void;
   refreshing: boolean;
   /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
   settings: Settings | null;
@@ -237,6 +240,42 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, ref
   const t = useT();
   const cfg = providerConfig(provider);
   const acc = payload?.account ?? null;
+
+  // 后台安装态：idle=未装可点 / installing=转圈+步骤行 / error=失败可重试。
+  const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
+  const [step, setStep] = useState("");
+  // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
+  const onInstalledRef = useRef(onInstalled);
+  onInstalledRef.current = onInstalled;
+
+  const startInstall = () => {
+    setStep("");
+    setInstallState("installing");
+    installAgent(provider).catch((e) => {
+      setStep(String(e));
+      setInstallState("error");
+    });
+  };
+
+  useEffect(() => {
+    const unP = listen<InstallProgress>("install-progress", (e) => {
+      if (e.payload.provider === provider) setStep(e.payload.line);
+    });
+    const unD = listen<InstallDone>("install-done", (e) => {
+      if (e.payload.provider !== provider) return;
+      if (e.payload.ok) {
+        setInstallState("idle");
+        setStep("");
+        onInstalledRef.current();
+      } else {
+        setInstallState("error");
+      }
+    });
+    return () => {
+      unP.then((f) => f());
+      unD.then((f) => f());
+    };
+  }, [provider]);
 
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
@@ -273,18 +312,28 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, ref
           {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
           {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
         </div>
-        {installed === false && (
-          <button
-            type="button"
-            className="provider-card-action provider-card-action-primary"
-            data-testid={"agent-install-" + provider}
-            onClick={() => installAgent(provider).catch(() => {})}
-          >
-            <IconDownload />
-            {t.account.install}
-          </button>
-        )}
+        {installed === false &&
+          (installState === "installing" ? (
+            <div className="agent-install-progress" data-testid={"agent-installing-" + provider}>
+              <RefreshIcon spinning />
+              <span className="agent-install-step">{step || t.account.installing}</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="provider-card-action provider-card-action-primary"
+              data-testid={"agent-install-" + provider}
+              onClick={startInstall}
+            >
+              <IconDownload />
+              {installState === "error" ? t.account.installRetry : t.account.install}
+            </button>
+          ))}
       </div>
+
+      {installed === false && installState === "error" && step && (
+        <div className="provider-card-body agent-install-error">{step}</div>
+      )}
 
       {desc && <div className="provider-card-body">{desc}</div>}
 
@@ -334,10 +383,13 @@ export function AccountSection() {
   // installed: 本机实际已装的 agent 集合——决定每张卡是「未安装」还是「已装/未登录」。
   // 初值 null = 检测中：首帧不判定任何一张卡为未安装，避免 availableAgents() resolve 前误闪「未安装 + 安装按钮」。
   const [installed, setInstalled] = useState<Set<string> | null>(null);
-  useEffect(() => { availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {}); }, []);
-  // 窗口重新聚焦时重检安装状态（一键安装装完回来即更新）。
+  // 重查本机已装 agent 集合。挂载、窗口聚焦、后台安装成功各处复用。
+  const refreshInstalled = () => {
+    availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {});
+  };
+  useEffect(() => { refreshInstalled(); }, []);
   useEffect(() => {
-    const onFocus = () => availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {});
+    const onFocus = () => refreshInstalled();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
@@ -403,6 +455,7 @@ export function AccountSection() {
             usage={usageMap[p] ?? null}
             err={errMap[p] ?? null}
             onRefresh={() => doRefresh(p)}
+            onInstalled={refreshInstalled}
             refreshing={refreshingSet.has(p)}
             settings={settings}
             onToggleQuota={() => toggleQuotaProvider(p)}

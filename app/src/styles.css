@@ -1956,3 +1956,21 @@ select.ns-input {
   padding: 12px 16px;
   border-top: 1px solid var(--cc-border);
 }
+
+/* 账号页 agent 卡：后台安装进度（转圈 + 最新步骤行） */
+.agent-install-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--cc-text-dim);
+  max-width: 60%;
+}
+.agent-install-step {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-install-error {
+  color: var(--cc-err-vivid);
+}
