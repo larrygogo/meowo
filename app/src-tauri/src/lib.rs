@@ -857,7 +857,7 @@ fn wt_available() -> bool {
 }
 
 /// PowerShell 7（pwsh.exe）是否在 PATH 上。进程内缓存，同 wt_available。
-/// 一键安装用它优先于 Windows PowerShell 5.1（见 spawn_install 说明）。
+/// 一键安装用它优先于 Windows PowerShell 5.1（见 build_install_command 说明）。
 #[cfg(target_os = "windows")]
 fn pwsh_available() -> bool {
     use std::sync::OnceLock;
@@ -1214,88 +1214,133 @@ fn is_progress_line(line: &str) -> bool {
     t.starts_with("==>") || t.starts_with("Installing") || t.starts_with("Installation failed:")
 }
 
-/// 一键安装某 agent：在一个终端窗口里跑其官方安装脚本，用户看进度、装完关终端、面板刷新即变已装。
-/// 安装命令是受信硬编码串（Agent::install_script），非用户输入。
-#[tauri::command]
-async fn install_agent(provider: String) -> Result<(), String> {
-    let key = cc_store::ProviderKey::parse(Some(&provider));
-    let windows = cfg!(target_os = "windows");
-    let script = cc_reporter::agent::for_provider(key)
-        .install_script(windows)
-        .ok_or("该 agent 没有可用的一键安装命令")?;
-    let terminal = load_settings().resume_terminal;
-    tauri::async_runtime::spawn_blocking(move || spawn_install(&script, &terminal))
-        .await
-        .map_err(|e| e.to_string())?
-        .then_some(())
-        .ok_or_else(|| "启动安装终端失败".into())
+/// 后台安装的进度事件：一行有效步骤文本，按 provider 分发给对应卡片。
+#[derive(Clone, serde::Serialize)]
+struct InstallProgress {
+    provider: String,
+    line: String,
 }
 
-/// 在终端里跑安装命令串（Windows）。
-/// 安装命令是 PowerShell 脚本（`irm … | iex`），含 `|`/`;`/引号 —— 直接经 `-Command` 或 wt 命令行
-/// 传递都会被 shell/wt 解析器破坏，故写进临时 `.ps1` 用 `-File` 执行最稳。
-///
-/// 两个 Windows 坑都在这里绕开：
-/// 1) DefTerm 丢参：Win11 默认终端是 Windows Terminal 时，GUI 进程用 CREATE_NEW_CONSOLE 直接 spawn
-///    powershell 会触发 DefTerm 交接、丢掉 `-File` 参数，只剩空交互 shell（「窗口开了没装」）。
-///    装了 wt 就显式走 `wt -w 0 nt <shell> … -File`（与恢复会话同款、已验证路径）绕开交接；
-///    没 wt 的旧系统才退回独立窗口（旧 conhost 无交接，CREATE_NEW_CONSOLE 正常）。
-/// 2) PSModulePath 污染：装了 PS7 时，终端环境的 PSModulePath 常被 PS7 路径挤到 5.1 系统路径之前，
-///    此时用 Windows PowerShell 5.1（powershell.exe）会从 PS7 模块目录误加载不兼容的
-///    Microsoft.PowerShell.Utility，导致 `Get-FileHash` 等 cmdlet 丢失，安装脚本校验哈希时崩。
-///    故优先用 `pwsh`（PS7，与该环境一致、各家安装脚本也本就面向 PS7）；没装 pwsh 的机器不会有
-///    PS7 路径污染，退回 powershell 5.1 亦正常。
+/// 后台安装结束事件：ok=true 表示进程 0 退出；code 为退出码（无法取得时 None）。
+#[derive(Clone, serde::Serialize)]
+struct InstallDone {
+    provider: String,
+    ok: bool,
+    code: Option<i32>,
+}
+
+/// 把安装脚本写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
+/// Windows：try/catch 捕获终止错误，打印 `Installation failed: …` 并 exit 1。
 #[cfg(target_os = "windows")]
-fn spawn_install(script: &str, _terminal: &str) -> bool {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    // 脚本体：开始/结束提示 + 错误捕获。单引号避免引入双引号；-NoExit 保留窗口看结果，无需 Read-Host。
+fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
     let body = format!(
         "Write-Host 'Installing, please wait...'\r\n\
-         try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()) -ForegroundColor Red }}\r\n\
-         Write-Host 'Installation completed. You can close this window.'\r\n"
+         try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()); exit 1 }}\r\n"
     );
-    let ps1 = std::env::temp_dir().join("cc-kanban-install.ps1");
-    if let Err(e) = std::fs::write(&ps1, body) {
-        eprintln!("一键安装写临时脚本失败：{e}");
-        return false;
-    }
-    let ps1 = ps1.to_string_lossy().to_string();
+    let p = std::env::temp_dir().join(format!("cc-kanban-install-{provider}.ps1"));
+    std::fs::write(&p, body)?;
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// macOS/Linux：子 shell 跑安装串，失败打印统一行并以原退出码退出。
+#[cfg(not(target_os = "windows"))]
+fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
+    let body = format!(
+        "echo 'Installing, please wait...'\n\
+         ( {script} ) || {{ rc=$?; echo \"Installation failed: exit code $rc\"; exit $rc; }}\n"
+    );
+    let p = std::env::temp_dir().join(format!("cc-kanban-install-{provider}.sh"));
+    std::fs::write(&p, body)?;
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// 构造后台安装子进程（不弹窗口）。平台差异只在此：Windows 用 pwsh(优先)/powershell + CREATE_NO_WINDOW，
+/// 其它平台用 bash。stdin/stdout/stderr 由调用方统一设。
+#[cfg(target_os = "windows")]
+fn build_install_command(script_path: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let shell = if pwsh_available() { "pwsh" } else { "powershell" };
-    let ps_argv = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", &ps1];
+    let mut c = std::process::Command::new(shell);
+    c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path])
+        .creation_flags(CREATE_NO_WINDOW);
+    c
+}
 
-    let spawned: std::io::Result<()> = if wt_available() {
-        let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
-        args.extend(ps_argv.iter().map(|s| s.to_string()));
-        Command::new("wt").args(&args).spawn().map(|_| ())
-    } else {
-        Command::new(shell)
-            .args(&ps_argv[1..])
-            .creation_flags(CREATE_NEW_CONSOLE)
-            .spawn()
-            .map(|_| ())
-    };
-    match spawned {
-        Ok(()) => true,
-        Err(e) => { eprintln!("一键安装启动失败：{e}"); false }
+#[cfg(not(target_os = "windows"))]
+fn build_install_command(script_path: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("bash");
+    c.arg(script_path);
+    c
+}
+
+/// 过滤噪声后把一行安装输出作为进度事件 emit（stdout/stderr 两处读取共用，避免重复逻辑）。
+fn emit_install_progress(app: &tauri::AppHandle, provider: &str, line: String) {
+    use tauri::Emitter;
+    if is_progress_line(&line) {
+        let _ = app.emit(
+            "install-progress",
+            InstallProgress { provider: provider.to_string(), line },
+        );
     }
 }
 
-/// macOS：Terminal.app / iTerm2 新窗口 do script 跑安装命令串（按 resume_terminal 选宿主）。
-#[cfg(target_os = "macos")]
-fn spawn_install(script: &str, terminal: &str) -> bool {
-    use crate::term_script::TermKind;
-    let kind = match crate::term_script::resume_kind_from_setting(terminal) {
-        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
-        TermKind::ITerm2 => TermKind::Terminal,
-        other => other,
-    };
-    crate::macos::terminal::run_install_mac(script, kind)
-}
+/// 一键安装某 agent：后台跑其官方安装脚本（不弹终端窗口），逐行把有效步骤 emit 给账号页卡片，
+/// 装完 emit install-done、前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
+#[tauri::command]
+async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
+    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let script = cc_reporter::agent::for_provider(key)
+        .install_script(cfg!(target_os = "windows"))
+        .ok_or("该 agent 没有可用的一键安装命令")?;
+    let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn spawn_install(_script: &str, _terminal: &str) -> bool { false }
+    // spawn 放 blocking 线程：GUI 进程首次 spawn 子进程可能被杀软扫描拖慢，勿堵事件循环。
+    // spawn 成功即返回 Ok；进度/结果全走事件。spawn 失败回传 Err，前端立即显示错误。
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use std::process::Stdio;
+        let mut child = build_install_command(&path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("CODEX_NON_INTERACTIVE", "1")
+            .spawn()
+            .map_err(|e| format!("启动安装失败：{e}"))?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        // 读输出 + 等退出 + emit done 放独立线程，让 spawn_blocking 尽快归还线程池。
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            use tauri::Emitter; // 供本闭包末尾的 install-done emit（install-progress 走 emit_install_progress helper）
+            // stderr 另起线程并行读，避免两个管道任一写满后互相阻塞。
+            let err_handle = stderr.map(|e| {
+                let app = app.clone();
+                let provider = provider.clone();
+                std::thread::spawn(move || {
+                    for line in BufReader::new(e).lines().map_while(Result::ok) {
+                        emit_install_progress(&app, &provider, line);
+                    }
+                })
+            });
+            if let Some(o) = stdout {
+                for line in BufReader::new(o).lines().map_while(Result::ok) {
+                    emit_install_progress(&app, &provider, line);
+                }
+            }
+            if let Some(h) = err_handle {
+                let _ = h.join();
+            }
+            let code = child.wait().ok().and_then(|s| s.code());
+            let _ = app.emit(
+                "install-done",
+                InstallDone { provider, ok: code == Some(0), code },
+            );
+        });
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
 /// provider 的 cc-reporter hooks 接入状态（供「新建会话」面板引导）。
 #[derive(serde::Serialize)]
