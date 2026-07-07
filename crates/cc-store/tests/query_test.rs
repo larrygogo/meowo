@@ -268,9 +268,14 @@ fn live_sessions_counts_matches_tabs() {
     let (r2, _) = store.start_session(pid, "r2", 200).unwrap();
     store.set_session_status(r2, SessionStatus::Running, 210).unwrap();
 
-    // waiting ×1
+    // waiting ×1（status=waiting）
     let (w1, _) = store.start_session(pid, "w1", 300).unwrap();
     store.set_session_status(w1, SessionStatus::Waiting, 310).unwrap();
+
+    // pending_review ×1：status 仍是 running，但应被算进 waiting
+    let (p1, _) = store.start_session(pid, "p1", 320).unwrap();
+    store.set_session_status(p1, SessionStatus::Running, 330).unwrap();
+    store.set_pending_review(p1, cc_store::PendingReview::Question, 340).unwrap();
 
     // ended ×3，其中 1 条归档
     let mut archived_id = None;
@@ -284,9 +289,9 @@ fn live_sessions_counts_matches_tabs() {
     store.set_session_archived(archived_id.unwrap(), true, 600).unwrap();
 
     let c = store.live_sessions_counts().unwrap();
-    assert_eq!(c.total, 6);
+    assert_eq!(c.total, 7);
     assert_eq!(c.running, 2);
-    assert_eq!(c.waiting, 1);
+    assert_eq!(c.waiting, 2, "waiting 应包含 status=waiting 与 pending_review");
     assert_eq!(c.archived, 1);
 }
 
@@ -333,4 +338,26 @@ fn live_sessions_cursor_loads_all_non_archived() {
     assert_eq!(loaded.len(), 250, "应加载全部 250 条非归档会话");
     let loaded_set: std::collections::HashSet<_> = loaded.iter().copied().collect();
     assert_eq!(loaded_set.len(), 250, "不应有重复 session");
+}
+
+#[test]
+fn live_sessions_waiting_includes_pending_review() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+
+    let (running, _) = store.start_session(pid, "running", 100).unwrap();
+    store.set_session_status(running, SessionStatus::Running, 110).unwrap();
+
+    let (waiting, _) = store.start_session(pid, "waiting", 200).unwrap();
+    store.set_session_status(waiting, SessionStatus::Waiting, 210).unwrap();
+
+    let (pending, _) = store.start_session(pid, "pending", 300).unwrap();
+    store.set_session_status(pending, SessionStatus::Running, 310).unwrap();
+    store.set_pending_review(pending, cc_store::PendingReview::Question, 320).unwrap();
+
+    let waiting_page = store.live_sessions(Some("waiting"), None, None, 100).unwrap();
+    let ids: std::collections::HashSet<i64> = waiting_page.iter().map(|l| l.session.id).collect();
+    assert!(ids.contains(&waiting), "status=waiting 应在 waiting 分页");
+    assert!(ids.contains(&pending), "pending_review 应在 waiting 分页");
+    assert!(!ids.contains(&running), "纯 running 不应在 waiting 分页");
 }

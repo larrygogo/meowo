@@ -1,11 +1,54 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor } from "@testing-library/react";
+import { render, cleanup, waitFor, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 
 const getLiveSessionsCounts = vi.fn();
 const getLiveSessionsPage = vi.fn();
 let emitBoardChanged: () => void = () => {};
 const unlisten = vi.fn();
+
+// jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
+// mock 一个足够大的滚动容器，让测试里的卡片进入可视区并被挂载。
+const defaultRect: DOMRect = {
+  top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
+  toJSON: () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0 }),
+};
+vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement): DOMRect {
+  if (this.classList.contains("stk-scroll")) {
+    return {
+      ...defaultRect,
+      bottom: 600, right: 400, width: 400, height: 600,
+      toJSON: () => ({ ...defaultRect, bottom: 600, right: 400, width: 400, height: 600 }),
+    };
+  }
+  if (this.classList.contains("stk-vitem")) {
+    return {
+      ...defaultRect,
+      right: 400, width: 400, height: 82,
+      toJSON: () => ({ ...defaultRect, right: 400, width: 400, height: 82 }),
+    };
+  }
+  return defaultRect;
+});
+const mockScrollRect = { top: 0, left: 0, bottom: 600, right: 400, width: 400, height: 600, x: 0, y: 0 };
+const mockItemRect = { top: 0, left: 0, bottom: 82, right: 400, width: 400, height: 82, x: 0, y: 0 };
+class MockResizeObserver {
+  constructor(private cb: ResizeObserverCallback) {}
+  observe(target: Element) {
+    const isScroll = target.classList.contains("stk-scroll");
+    const rect = isScroll ? mockScrollRect : mockItemRect;
+    this.cb([{
+      target,
+      contentRect: rect as unknown as DOMRectReadOnly,
+      borderBoxSize: [{ inlineSize: rect.width, blockSize: rect.height } as unknown as ResizeObserverSize],
+      contentBoxSize: [{ inlineSize: rect.width, blockSize: rect.height } as unknown as ResizeObserverSize],
+      devicePixelContentBoxSize: [],
+    } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve() {}
+  disconnect() {}
+}
+vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
 vi.mock("./api", () => ({
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
@@ -15,7 +58,22 @@ vi.mock("./api", () => ({
     limit: number
   ) => getLiveSessionsPage(filter, cursor, limit),
   getSettings: () =>
-    Promise.resolve({ archive_hide_days: 0, notifications_enabled: true, theme: "dark", opacity: 94, ui_scale: 100 }),
+    Promise.resolve({
+      archive_hide_days: 0,
+      notifications_enabled: true,
+      theme: "dark",
+      opacity: 94,
+      ui_scale: 100,
+      resume_terminal: "wt",
+      language: "auto",
+      terminal_open_mode: "card",
+      card_menu_mode: "context",
+      preview_enabled: true,
+      sticker_style: "elevated",
+      sticker_color: "classic",
+      sticker_quota_providers: ["claude"],
+      default_agent: "claude",
+    }),
   getAccounts: () => Promise.resolve([]),
   refreshUsage: (_provider: string) => Promise.reject(new Error("USAGE_UNSUPPORTED")),
   availableAgents: () => Promise.resolve([]),
@@ -117,5 +175,59 @@ describe("App", () => {
         expect.objectContaining({ width: 360, height: 440 })
       )
     );
+  });
+
+  // 回归：running tab 下刷新时，若某会话已从 running 迁移到 waiting，后端 running 分页不再返回它；
+  // 旧合并逻辑会保留 prev 中的该会话（状态仍是旧 running），导致它错误地继续显示在 running tab 下。
+  it("running tab 刷新时，状态迁出 running 的会话应从列表移除", async () => {
+    localStorage.setItem("cc-kanban-tab", "running");
+    const mk = (id: number, status: "running" | "waiting", title: string) => ({
+      session: {
+        id,
+        cc_session_id: `s-${id}`,
+        status,
+        last_event_at: 1000 - id,
+        started_at: 0,
+        ended_at: null,
+        project_id: 1,
+      },
+      project_name: "p",
+      task_title: title,
+      current_activity: null,
+      column: "todo" as const,
+      todo_done: 0,
+      todo_total: 0,
+      todos: [],
+      pid: null,
+      connected: true,
+      archived: false,
+      archived_at: null,
+      cwd: "/p",
+      errored: false,
+      error_label: null,
+      error_raw: null,
+      preview: null,
+      note: null,
+      context_pct: null,
+      context_window: null,
+      model: null,
+      pending_review: null,
+      last_ai_text: null,
+      last_user_text: null,
+      provider: "claude" as const,
+    });
+
+    getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
+    getLiveSessionsPage
+      .mockResolvedValueOnce([mk(1, "running", "A"), mk(2, "running", "B")])
+      .mockResolvedValueOnce([mk(1, "running", "A")]); // B 已迁出 running
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("A")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("B")).toBeTruthy());
+
+    emitBoardChanged();
+    await waitFor(() => expect(screen.queryByText("B")).toBeFalsy());
+    expect(screen.getByText("A")).toBeTruthy();
   });
 });

@@ -330,16 +330,16 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-empty-hint")).toBeNull();
   });
 
-  it("errored 会话归入待交互、显示红点与错误文案", () => {
+  it("errored running 会话归入运行中、显示红点与错误文案", () => {
     const item = mk({
       session: { id: 9, project_id: 1, cc_session_id: "s9", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null },
       errored: true, error_label: "工具调用解析失败", error_raw: "The model's tool call could not be parsed (retry also failed).",
     });
     const { container } = render(<Sticker filter="all" data={[item]} />);
     const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
-    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("1");
+    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("0");
     const runningTab = screen.getByText(zh.tabs.running).closest(".stab")!;
-    expect(runningTab.querySelector(".stab-n")!.textContent).toBe("0");
+    expect(runningTab.querySelector(".stab-n")!.textContent).toBe("1");
     expect(container.querySelector(".needs-error")).toBeTruthy();
     expect(screen.getByText("工具调用解析失败")).toBeTruthy();
     expect(screen.getByText("工具调用解析失败").closest(".stk-sub-err")).toBeTruthy();
@@ -373,21 +373,23 @@ describe("Sticker", () => {
     expect(container.querySelector(".needs-error")).toBeFalsy();
   });
 
-  it("pending_review 会话归入待交互并置顶", () => {
+  it("pending_review running 会话归入待交互并正常排序", () => {
     const sess = (id: number, cc: string, status: "running" | "waiting", last: number) =>
       ({ id, project_id: 1, cc_session_id: cc, status, started_at: 0, last_event_at: last, ended_at: null });
     const now = Date.now();
     const items = [
-      mk({ task_title: "等待最久的纯waiting", connected: true, session: sess(1, "w1", "waiting", now - 600_000) }),
+      mk({ task_title: "运行更久的", connected: true, session: sess(1, "r1", "running", now - 600_000) }),
       mk({ task_title: "待批准", connected: true, pending_review: "approval", session: sess(2, "p1", "running", now - 60_000) }),
     ];
     const { container } = render(<Sticker filter="waiting" data={items} />);
-    // 待交互 tab 计数含 pending(2)。
+    // waiting tab 计数：status=waiting 与 pending_review 都计入
     const waitingTab = screen.getByText(zh.tabs.waiting).closest(".stab")!;
-    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("2");
-    // pending 组置顶:第一张卡是「待批准」,即便它 last_event_at 更晚。
-    const cards = container.querySelectorAll(".stk-card");
-    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("待批准");
+    expect(waitingTab.querySelector(".stab-n")!.textContent).toBe("1");
+    // pending_review 会话显示在 waiting tab 下
+    expect(container.querySelector(".stk-title")?.textContent).toBe("待批准");
+    // running tab 计数：只含无需用户介入的纯 running
+    const runningTab = screen.getByText(zh.tabs.running).closest(".stab")!;
+    expect(runningTab.querySelector(".stab-n")!.textContent).toBe("1");
   });
 
   it("pending 会话显示琥珀 pill 与 pending 徽标", () => {
@@ -465,11 +467,18 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-model")).toBeNull();
   });
 
-  it("项目名只显示仓库/文件夹名（去 owner 前缀），data-tip 保留全名", () => {
-    const { container } = render(<Sticker filter="all" data={[mk({ project_name: "larrygogo/autopilot" })]} />);
+  it("项目名使用 cwd 的文件夹名，data-tip 显示完整路径", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ cwd: "C:\\Users\\larry\\projects\\autopilot", project_name: "larrygogo/autopilot" })]} />);
     const repo = container.querySelector(".stk-repo") as HTMLElement;
     expect(repo?.textContent).toBe("autopilot");
-    expect(repo?.getAttribute("data-tip")).toBe("larrygogo/autopilot");
+    expect(repo?.getAttribute("data-tip")).toBe("C:\\Users\\larry\\projects\\autopilot");
+  });
+
+  it("无 cwd 时回退显示 github 项目名（去 owner 前缀）", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ cwd: null, project_name: "larrygogo/autopilot" })]} />);
+    const repo = container.querySelector(".stk-repo") as HTMLElement;
+    expect(repo?.textContent).toBe("autopilot");
+    expect(repo?.getAttribute("data-tip")).toBeNull();
   });
 
   it("kimi 会话用 Kimi Code 标签与 kimi 徽标(黑方块)，claude 用 Claude Code 标签且无方块", () => {

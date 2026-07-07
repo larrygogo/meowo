@@ -87,6 +87,8 @@ function totalFor(filter: StickerFilter, counts: LiveSessionCounts): number {
   }
 }
 
+
+
 export function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [counts, setCounts] = useState<LiveSessionCounts>({
@@ -163,8 +165,12 @@ export function App() {
             // 切换 tab / 首次加载：直接按服务端顺序
             return (page as Item[]).slice();
           }
-          // 按 id 合并，保留已加载会话；刷新时新会话插到最前，加载更多时追加到末尾
+          // 按 id 合并，保留已加载会话；刷新时新会话插到最前，加载更多时追加到末尾。
+          // 刷新/首页请求（cursor === null）时，后端 page 是当前 filter 的权威快照：
+          // 已加载列表中不在 page 里的会话（状态迁移、归档、删除）应被移除，
+          // 否则它们会继续停留在错误的 tab 下。
           const map = new Map(prev.map((l) => [l.session.id, l]));
+          const pageIds = new Set((page as Item[]).map((l) => l.session.id));
           const append: Item[] = [];
           const prepend: Item[] = [];
           for (const l of page as Item[]) {
@@ -180,7 +186,9 @@ export function App() {
           const merged: Item[] = [];
           for (const l of prev) {
             const updated = map.get(l.session.id);
-            if (updated) merged.push(updated);
+            if (!updated) continue;
+            if (cursor === null && !pageIds.has(l.session.id)) continue;
+            merged.push(updated);
           }
           return [...prepend, ...merged, ...append];
         });

@@ -412,10 +412,10 @@ function match(tab: Tab, l: Item, hideDays = 0): boolean {
   }
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
-  // running/waiting 不再用 connected 过滤，与后端 counts 语义保持一致；
-  // 卡片上仍会通过 connected 显示连接状态点。
-  if (tab === "waiting") return l.session.status === "waiting" || l.errored || l.pending_review != null;
-  if (tab === "running") return l.session.status === "running" && !l.errored && l.pending_review == null;
+  // running = AI 自主运行且无需用户介入；waiting = 等用户交互（status=waiting 或 pending_review）。
+  // 与后端 live_sessions 语义保持一致。
+  if (tab === "waiting") return l.session.status === "waiting" || l.pending_review != null;
+  if (tab === "running") return l.session.status === "running" && l.pending_review == null;
   return true;
 }
 
@@ -779,7 +779,7 @@ export function Sticker({
           (l) =>
             (wantArchived ? l.archived : !l.archived) &&
             ((l.task_title ?? "").toLowerCase().includes(q) ||
-              (l.project_name ?? "").toLowerCase().includes(q))
+              (l.cwd ?? l.project_name ?? "").toLowerCase().includes(q))
         )
         .sort(
           (a, b) =>
@@ -794,10 +794,7 @@ export function Sticker({
           Number(starred.has(a.session.cc_session_id));
         if (star !== 0) return star;
         if (tab === "waiting") {
-          const ap = a.pending_review != null ? 0 : 1;
-          const bp = b.pending_review != null ? 0 : 1;
-          if (ap !== bp) return ap - bp; // pending 整组置顶
-          return a.session.last_event_at - b.session.last_event_at; // 组内等最久优先
+          return a.session.last_event_at - b.session.last_event_at; // 等最久优先
         }
         return 0;
       });
@@ -999,7 +996,7 @@ export function Sticker({
               >
                 <TabIcon tab={k} />
                 {t.tabs[k]}
-                {k !== "all" && <span className="stab-n">{n}</span>}
+                {k !== "all" && k !== "archived" && <span className="stab-n">{n}</span>}
               </span>
             );
           })}
@@ -1157,7 +1154,11 @@ export function Sticker({
                           >
                             <agentCfg.Icon />
                           </span>
-                          <span className="stk-repo" data-tip={l.project_name}>{l.project_name.split("/").pop()}</span>
+                          <span className="stk-repo" data-tip={l.cwd ?? undefined}>
+                            {l.cwd
+                              ? l.cwd.split(/[\\/]/).filter(Boolean).pop() ?? l.cwd
+                              : l.project_name.split("/").pop()}
+                          </span>
                           {l.model && <span className="stk-model">{l.model}</span>}
                         </div>
                       </div>

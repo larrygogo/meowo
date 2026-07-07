@@ -233,8 +233,8 @@ impl Store {
         let mut conditions: Vec<String> = Vec::new();
         match filter {
             Some("all") => conditions.push("s.archived = 0".into()),
-            Some("running") => conditions.push("s.status = 'running' AND s.archived = 0".into()),
-            Some("waiting") => conditions.push("s.status = 'waiting' AND s.archived = 0".into()),
+            Some("running") => conditions.push("s.status = 'running' AND s.pending_review IS NULL AND s.archived = 0".into()),
+            Some("waiting") => conditions.push("(s.status = 'waiting' OR s.pending_review IS NOT NULL) AND s.archived = 0".into()),
             Some("archived") => conditions.push("s.archived = 1".into()),
             _ => {} // None 不过滤
         }
@@ -331,12 +331,12 @@ impl Store {
     pub fn live_sessions_counts(&self) -> Result<LiveSessionCounts, StoreError> {
         let total: i64 = self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
         let running: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status = 'running' AND archived = 0",
+            "SELECT COUNT(*) FROM sessions WHERE status = 'running' AND pending_review IS NULL AND archived = 0",
             [],
             |r| r.get(0),
         )?;
         let waiting: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status = 'waiting' AND archived = 0",
+            "SELECT COUNT(*) FROM sessions WHERE (status = 'waiting' OR pending_review IS NOT NULL) AND archived = 0",
             [],
             |r| r.get(0),
         )?;
