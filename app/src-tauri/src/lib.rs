@@ -1181,14 +1181,17 @@ async fn install_agent(provider: String) -> Result<(), String> {
 }
 
 /// 在终端里跑安装命令串。Windows：powershell -NoExit -ExecutionPolicy Bypass -Command "<script>"
-/// （-NoExit 保留窗口看结果）；用户默认终端若是 wt 则在 wt 新标签跑，否则独立 PowerShell 窗口。
+/// （-NoExit 保留窗口看结果）；仅当用户默认终端就是 wt 时才在 wt 新标签跑，其余设置
+/// （powershell/cmd/wezterm/未知）一律退到独立 PowerShell 窗口（安装命令是 PS 语法，无法真用 cmd 跑）。
 #[cfg(target_os = "windows")]
 fn spawn_install(script: &str, terminal: &str) -> bool {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     let ps_args = ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", script];
-    let use_wt = terminal != "wezterm" && wt_available();
+    // 仅当用户默认终端就是 wt 且本机装了 wt 时，在 wt 新标签跑 powershell；含 ;/" 的脚本会破坏
+    // wt 命令行解析（同 safe_cwd/is_safe_id 口径），退到独立 powershell 窗口（-Command 作单一 args 元素，免受 wt 分词影响）。
+    let use_wt = terminal == "wt" && wt_available() && !script.contains([';', '"']);
     let spawned: std::io::Result<()> = if use_wt {
         let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into(), "powershell".into()];
         args.extend(ps_args.iter().map(|s| s.to_string()));
