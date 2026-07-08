@@ -29,8 +29,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-pub mod ccsetup;
+pub mod setup;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 #[cfg(target_os = "windows")]
 use sysinfo::Pid;
@@ -81,6 +82,17 @@ async fn get_overview(state: State<'_, AppState>) -> Result<Vec<ProjectOverview>
     .map_err(|e| e.to_string())?
 }
 
+/// 「新建会话」面板的最近目录（去重+倒序）。
+#[tauri::command]
+async fn recent_cwds(state: State<'_, AppState>, limit: usize) -> Result<Vec<String>, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_store(&db_path)?.recent_cwds(limit).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn get_project_tasks(
     state: State<'_, AppState>,
@@ -109,22 +121,49 @@ struct LiveItem {
     // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
 }
 
-/// 贴纸最多展示的会话数。
-const LIVE_LIMIT: usize = 20;
+#[tauri::command]
+async fn get_live_sessions_counts(
+    state: State<'_, AppState>,
+) -> Result<cc_store::query::LiveSessionCounts, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_store(&db_path)?.live_sessions_counts().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
 #[tauri::command]
-async fn get_live_sessions(state: State<'_, AppState>) -> Result<Vec<LiveItem>, String> {
+async fn get_live_sessions_page(
+    state: State<'_, AppState>,
+    filter: String,
+    search: Option<String>,
+    before_last_event_at: Option<i64>,
+    before_id: Option<i64>,
+    limit: usize,
+) -> Result<Vec<LiveItem>, String> {
     // 重逻辑（SQLite、进程枚举、transcript 解析）放 blocking 线程池，不占主线程事件循环。
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
-    tauri::async_runtime::spawn_blocking(move || live_sessions_blocking(&db_path, &tx_cache))
-        .await
-        .map_err(|e| e.to_string())?
+    let filter = if ["all", "running", "waiting", "archived"].contains(&filter.as_str()) {
+        filter
+    } else {
+        "all".into()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        live_sessions_blocking(&db_path, &tx_cache, &filter, search.as_deref(), before_last_event_at, before_id, limit)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 看板 resume 后「乐观连接」的宽限期(ms)。pid 未知(resume 清空待认领)的会话仅在此窗口内显示已连接，
 /// 给 codex 这类「resume 不发 hook、要到首条消息才触发」的 agent 留出「启动 + 用户发首条消息」的窗口；
 /// 超时仍无 hook 认领真 pid 则回落未连接——避免没真正起来的会话(终端没开/被秒关)长期假连接。
+/// 同一阈值也驱动 spawn_liveness_watch 里的 end_orphaned_idle 兜底收尾（见该处调用）：
+/// 若只改「已连接」显示而不收尾 DB 的 status，会话会长期停在错误的运行中/待交互 tab 里——
+/// 卡片已显示断开、tab 分类却对不上（如 kimi 卸载后 resume 失败：终端进程本身起来了，
+/// spawn_in_terminal 判定为成功、不触发失败回滚，但 kimi 从未真正启动、永远不会有 hook 认领 pid）。
 const RESUME_GRACE_MS: i64 = 120_000;
 
 /// 卡片「已连接」判定（纯函数，便于单测）：
@@ -145,9 +184,16 @@ fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event
 fn live_sessions_blocking(
     db_path: &PathBuf,
     tx_cache: &Mutex<cc_store::TranscriptCache>,
+    filter: &str,
+    search: Option<&str>,
+    before_last_event_at: Option<i64>,
+    before_id: Option<i64>,
+    limit: usize,
 ) -> Result<Vec<LiveItem>, String> {
     let store = open_store(db_path)?;
-    let sessions = store.live_sessions().map_err(|e| e.to_string())?;
+    let sessions = store
+        .live_sessions(Some(filter), search, before_last_event_at, before_id, limit)
+        .map_err(|e| e.to_string())?;
     // connected 校验：Windows 走 sysinfo 进程表；macOS/Unix 一次 ps 批量快照
     // （sysinfo 在 macOS 上不可靠，逐 pid spawn ps 又太慢——一批会话只扫一次）。
     #[cfg(target_os = "windows")]
@@ -161,9 +207,9 @@ fn live_sessions_blocking(
     #[cfg(not(target_os = "windows"))]
     let is_claude = |pid: i64| pid > 0 && claude_pids.contains(&pid);
 
-    // 先算 connected（廉价，仅查进程表）并据此排序，再只对「将要展示」的会话解析
-    // transcript 标题——标题解析要 read_to_string 整个 JSONL（可达数 MB），对最多 100 个
-    // 会话全做一遍再截断到 20 是巨大的无谓 I/O（每 ~300ms 一次）。
+    // 先算 connected（廉价，仅查进程表）并据此排序，再解析 transcript 标题。
+    // 标题解析要 read_to_string 整个 JSONL（可达数 MB）；走增量缓存后后续刷新接近 0 成本，
+    // 首次加载即使会话较多也能接受——前端用虚拟列表消化，不再做 20 条截断。
     let now = now_ms();
     let mut ranked: Vec<(LiveSession, bool)> = sessions
         .into_iter()
@@ -183,13 +229,10 @@ fn live_sessions_blocking(
     // 稳定排序按 connected 分组即保留组内的时间序。
     ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
 
-    // 逐条解析标题并过滤，凑满 LIVE_LIMIT 即停。连接中的会话排在最前、必然保留，
-    // 故它们（正在活跃、文件确实在变）总能拿到实时标题；断开的只解析到补满列表为止。
-    let mut items: Vec<LiveItem> = Vec::with_capacity(LIVE_LIMIT);
+    // 逐条解析标题并过滤，不再做 20 条截断。连接中的会话排在最前，
+    // 它们（正在活跃、文件确实在变）优先拿到实时标题；断开的会话继续解析并全部返回。
+    let mut items: Vec<LiveItem> = Vec::with_capacity(ranked.len());
     for (mut s, connected) in ranked {
-        if items.len() >= LIVE_LIMIT {
-            break;
-        }
         // 一次读 transcript 拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
         // 走增量缓存：只解析新追加的行，避免每轮重读整文件（大 transcript 可达数百 ms，会拖慢整窗）。
         // 上下文百分比不在这里算——它由 statusline 写库、随 LiveSession flatten 输出。
@@ -819,6 +862,17 @@ fn wt_available() -> bool {
     })
 }
 
+/// PowerShell 7（pwsh.exe）是否在 PATH 上。进程内缓存，同 wt_available。
+/// 一键安装用它优先于 Windows PowerShell 5.1（见 build_install_command 说明）。
+#[cfg(target_os = "windows")]
+fn pwsh_available() -> bool {
+    use std::sync::OnceLock;
+    static PWSH_ON_PATH: OnceLock<bool> = OnceLock::new();
+    *PWSH_ON_PATH.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "pwsh.exe"))
+    })
+}
+
 /// 定位 Windows Terminal 的 settings.json（Store 版 / Preview / 未打包版三处）。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn wt_settings_path() -> Option<PathBuf> {
@@ -1034,6 +1088,358 @@ fn rollback_failed_resume(sid: i64) {
     }
 }
 
+/// 在 `cwd` 打开一个终端并运行 `argv`，终端类型由 `terminal`（同 settings.resume_terminal 取值）决定。
+/// resume（`claude --resume <id>`）与 new（裸 `claude`）共用——唯一区别是传入的 argv。成功返回 true。
+/// Windows：powershell/cmd/wezterm/wt，缺失回退链同 resume 旧逻辑；wt 分支独立传 argv 不拼 shell 串。
+#[cfg(target_os = "windows")]
+fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+    let dir = safe_cwd(cwd);
+    // 选了 wt/默认但没装 wt → 回退 PowerShell；选了 wezterm 但已卸载 → 落回 wt/powershell。
+    let eff = match terminal {
+        "powershell" => "powershell",
+        "cmd" => "cmd",
+        "wezterm" if wezterm::available() => "wezterm",
+        _ if wt_available() => "wt",
+        _ => "powershell",
+    };
+    let spawned: std::io::Result<()> = match eff {
+        "powershell" => {
+            let mut c = Command::new("powershell");
+            c.args(["-NoExit", "-Command", &shell_join_for_windows(argv, true)]);
+            if let Some(d) = &dir {
+                c.current_dir(d);
+            }
+            c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        }
+        "cmd" => {
+            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+            // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
+            // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
+            let mut c = Command::new("cmd");
+            c.raw_arg("/k").raw_arg(shell_join_for_windows(argv, false));
+            if let Some(d) = &dir {
+                c.current_dir(d);
+            }
+            c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        }
+        "wezterm" => wezterm::resume(dir.as_deref(), argv),
+        _ => {
+            let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+            if let Some(p) = wt_default_profile() {
+                args.push("-p".into());
+                args.push(p);
+            }
+            if let Some(d) = &dir {
+                args.push("-d".into());
+                args.push(d.clone());
+            }
+            args.extend(argv.iter().cloned());
+            Command::new("wt").args(&args).spawn().map(|_| ())
+        }
+    };
+    match spawned {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("打开终端 {eff} 失败：{e}");
+            false
+        }
+    }
+}
+
+/// macOS 版：按 terminal 选 Terminal.app/iTerm2（iTerm2 未装回退 Terminal），走 AppleScript。成功 true。
+#[cfg(target_os = "macos")]
+fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+    use crate::term_script::TermKind;
+    let kind = match crate::term_script::resume_kind_from_setting(terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    };
+    crate::macos::terminal::resume_session_mac(cwd, argv, kind)
+}
+
+/// 其它平台无终端集成。
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn spawn_in_terminal(_argv: &[String], _cwd: Option<&str>, _terminal: &str) -> bool {
+    false
+}
+
+/// 校验并归一「新建会话」的工作目录：非空、真实存在的目录。返回 trim 后的路径。
+fn validate_new_session_cwd(cwd: &str) -> Result<String, String> {
+    let d = cwd.trim();
+    if d.is_empty() {
+        return Err("请选择工作目录".into());
+    }
+    if !std::path::Path::new(d).is_dir() {
+        return Err("目录不存在".into());
+    }
+    Ok(d.to_string())
+}
+
+/// 新建一个全新会话：在 `cwd` 打开终端裸启动指定 provider 的 CLI（无 session_id）。
+/// 会话入库仍靠该 CLI 自己的 hook（claude/kimi 秒级，codex 首条消息后）——本命令只负责 spawn。
+/// terminal 缺省用 settings.resume_terminal。spawn 放 blocking 线程池并 await，失败回传前端面板。
+#[tauri::command]
+async fn new_session(
+    cwd: String,
+    provider: String,
+    terminal: Option<String>,
+) -> Result<(), String> {
+    let dir = validate_new_session_cwd(&cwd)?;
+    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let argv = cc_reporter::agent::for_provider(key).launch_args();
+    let term = terminal
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| load_settings().resume_terminal);
+    // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环，同时能 await 结果回传。
+    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, Some(&dir), &term))
+        .await
+        .map_err(|e| e.to_string())?;
+    if ok {
+        Ok(())
+    } else if cfg!(not(any(target_os = "windows", target_os = "macos"))) {
+        Err("当前平台不支持从看板新建会话".into())
+    } else {
+        Err("启动终端失败：请确认所选 agent 已安装并在 PATH 中".into())
+    }
+}
+
+/// 后台安装结束事件：ok=true 表示进程 0 退出；code 为退出码（无法取得时 None）。
+#[derive(Clone, serde::Serialize)]
+struct InstallDone {
+    provider: String,
+    ok: bool,
+    code: Option<i32>,
+}
+
+/// 把安装脚本写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
+/// Windows：try/catch 捕获终止错误，打印 `Installation failed: …` 并 exit 1。
+#[cfg(target_os = "windows")]
+fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
+    let body = format!(
+        "Write-Host 'Installing, please wait...'\r\n\
+         try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()); exit 1 }}\r\n"
+    );
+    let p = std::env::temp_dir().join(format!("cc-kanban-install-{provider}.ps1"));
+    std::fs::write(&p, body)?;
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// macOS/Linux：子 shell 跑安装串，失败打印统一行并以原退出码退出。
+#[cfg(not(target_os = "windows"))]
+fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
+    let body = format!(
+        "echo 'Installing, please wait...'\n\
+         ( {script} ) || {{ rc=$?; echo \"Installation failed: exit code $rc\"; exit $rc; }}\n"
+    );
+    let p = std::env::temp_dir().join(format!("cc-kanban-install-{provider}.sh"));
+    std::fs::write(&p, body)?;
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// 构造后台安装子进程（不弹窗口）。平台差异只在此：Windows 用 pwsh(优先)/powershell + CREATE_NO_WINDOW，
+/// 其它平台用 bash。stdin/stdout/stderr 由调用方统一设。
+#[cfg(target_os = "windows")]
+fn build_install_command(script_path: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let shell = if pwsh_available() { "pwsh" } else { "powershell" };
+    let mut c = std::process::Command::new(shell);
+    c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path])
+        .creation_flags(CREATE_NO_WINDOW);
+    c
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_install_command(script_path: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("bash");
+    c.arg(script_path);
+    c
+}
+
+/// 一键安装某 agent：后台跑其官方安装脚本（不弹终端窗口），装完 emit install-done、
+/// 前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
+#[tauri::command]
+async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
+    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let provider = key.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
+    let script = cc_reporter::agent::for_provider(key)
+        .install_script(cfg!(target_os = "windows"))
+        .ok_or("该 agent 没有可用的一键安装命令")?;
+    let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
+
+    // spawn 放 blocking 线程：GUI 进程首次 spawn 子进程可能被杀软扫描拖慢，勿堵事件循环。
+    // spawn 成功即返回 Ok；结果走 install-done 事件；spawn 失败回传 Err，前端立即显示错误。
+    // 进度不透传（前端只显示本地化「安装中…」），故 stdout/stderr 丢弃、不读管道。
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use std::process::Stdio;
+        let mut child = build_install_command(&path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .env("CODEX_NON_INTERACTIVE", "1")
+            .spawn()
+            .map_err(|e| format!("启动安装失败：{e}"))?;
+        // 等退出 + emit done 放独立线程，让 spawn_blocking 尽快归还线程池。
+        std::thread::spawn(move || {
+            use tauri::Emitter;
+            let code = child.wait().ok().and_then(|s| s.code());
+            let _ = app.emit(
+                "install-done",
+                InstallDone { provider, ok: code == Some(0), code },
+            );
+        });
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// provider 的 cc-reporter hooks 接入状态（供「新建会话」面板引导）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum HooksStatus {
+    Installed,
+    Missing,
+    Unknown,
+}
+
+/// claude/codex 同款 hooks JSON 里，`SessionStart` 事件下是否存在指向 cc-reporter 且带
+/// `--provider <p>` 的 command。纯函数。启发式：命令含 "cc-reporter"（basename）+
+/// "--provider <p>"——该组合不会误配用户自有 hook。
+/// 只看 SessionStart（而非扫描全部事件）：「新会话能否入库」只取决于 SessionStart 是否挂了钩子，
+/// 只在别的事件（如 Stop）挂了 cc-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
+fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
+    let Some(arr) = v
+        .get("hooks")
+        .and_then(|h| h.get("SessionStart"))
+        .and_then(|s| s.as_array())
+    else {
+        return false;
+    };
+    let want = format!("--provider {provider}");
+    for entry in arr {
+        for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
+            if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
+                if cmd.to_ascii_lowercase().contains("cc-reporter") && cmd.contains(&want) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// kimi config.toml 文本里，`event = "SessionStart"` 的 `[[hooks]]` 块内是否有指向 cc-reporter
+/// 且带 `--provider <p>` 的 command。纯函数，无 TOML 解析库，按行文本 + `[[hooks]]` 块边界的极简状态机
+/// （足够可靠：只在同一块内把 event/command 两行关联起来，不识别块内的具体行序）。
+/// 只看 SessionStart 块（而非任意行匹配）：与 hooks_json_has_reporter 同一根因——只在非 SessionStart
+/// 事件（如 Stop）挂了 cc-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
+fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
+    let want = format!("--provider {provider}");
+    let mut in_session_start = false;
+    let mut has_reporter = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t == "[[hooks]]" {
+            if in_session_start && has_reporter {
+                return true;
+            }
+            in_session_start = false;
+            has_reporter = false;
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("event") {
+            if let Some(v) = rest.trim_start().strip_prefix('=') {
+                if v.trim().trim_matches('"') == "SessionStart" {
+                    in_session_start = true;
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("command") {
+            if let Some(v) = rest.trim_start().strip_prefix('=') {
+                let low = v.to_ascii_lowercase();
+                if low.contains("cc-reporter") && v.contains(&want) {
+                    has_reporter = true;
+                }
+            }
+        }
+    }
+    in_session_start && has_reporter
+}
+
+/// claude hooks 接入状态：读 claude settings.json 判断 cc-reporter hooks 是否登记。
+/// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
+/// 有 cc-reporter hook=Installed。
+fn claude_hooks_status() -> HooksStatus {
+    claude_hooks_status_at(&setup::claude::claude_settings_path())
+}
+
+/// 纯路径版，便于用临时文件单测三态（不碰真实 ~/.claude）。
+fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
+    if !path.exists() {
+        return HooksStatus::Missing;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HooksStatus::Unknown;
+    };
+    match setup::claude::parse_settings(&text) {
+        Some(v) if setup::claude::session_start_has_reporter(&v) => HooksStatus::Installed,
+        Some(_) => HooksStatus::Missing,
+        None => HooksStatus::Unknown,
+    }
+}
+
+/// codex hooks 接入状态：读 ~/.codex/hooks.json。文件不存在=Missing；读/解析失败=Unknown（不误报）。
+fn codex_hooks_status() -> HooksStatus {
+    let Some(home) = cc_reporter::codex::codex_home() else {
+        return HooksStatus::Unknown;
+    };
+    let path = home.join("hooks.json");
+    if !path.exists() {
+        return HooksStatus::Missing;
+    }
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return HooksStatus::Unknown;
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) if hooks_json_has_reporter(&v, "codex") => HooksStatus::Installed,
+        Ok(_) => HooksStatus::Missing,
+        Err(_) => HooksStatus::Unknown,
+    }
+}
+
+/// kimi hooks 接入状态：读 ~/.kimi-code/config.toml。文件不存在=Missing；读失败=Unknown。
+fn kimi_hooks_status() -> HooksStatus {
+    let Some(dir) = cc_reporter::kimi::kimi_share_dir() else {
+        return HooksStatus::Unknown;
+    };
+    let path = dir.join("config.toml");
+    if !path.exists() {
+        return HooksStatus::Missing;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(text) if toml_text_has_reporter(&text, "kimi") => HooksStatus::Installed,
+        Ok(_) => HooksStatus::Missing,
+        Err(_) => HooksStatus::Unknown,
+    }
+}
+
+/// 检测某 provider 的 cc-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
+#[tauri::command]
+fn check_provider_hooks(provider: String) -> HooksStatus {
+    match cc_store::ProviderKey::parse(Some(&provider)) {
+        cc_store::ProviderKey::Claude => claude_hooks_status(),
+        cc_store::ProviderKey::Codex => codex_hooks_status(),
+        cc_store::ProviderKey::Kimi => kimi_hooks_status(),
+    }
+}
+
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
@@ -1056,69 +1462,11 @@ fn resume_session(
         // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
         // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。
         std::thread::spawn(move || {
-            use std::os::windows::process::CommandExt;
-            use std::process::Command;
-            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010; // 让 pwsh/cmd 各自独立成窗
-
             let (revived, resolved_cwd, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let dir = safe_cwd(resolved_cwd.as_deref()); // Option<String>：真实存在的目录
-            // 选了 wt（或默认/旧值映射到 wt）但机器上没装 wt 时，回退 PowerShell（Windows 必有）。
-            let eff = match load_settings().resume_terminal.as_str() {
-                "powershell" => "powershell",
-                "cmd" => "cmd",
-                // 选了 wezterm 但已卸载 → 落回 wt/powershell 链,与 wt 缺失回退同理
-                "wezterm" if wezterm::available() => "wezterm",
-                _ if wt_available() => "wt",
-                _ => "powershell",
-            };
-            let spawned: std::io::Result<()> = match eff {
-                // 新开独立控制台窗口跑 PowerShell；-NoExit 保留窗口，claude 在 current_dir 下启动。
-                // 命令串经 shell_join_for_windows 引用：kimi/codex 可执行路径含空格时裸拼会断词。
-                // powershell.exe 按 CRT 规则解析自身命令行（\" 还原为字面引号），经 args() 传入即可。
-                "powershell" => {
-                    let mut c = Command::new("powershell");
-                    c.args(["-NoExit", "-Command", &shell_join_for_windows(&resume, true)]);
-                    if let Some(d) = &dir {
-                        c.current_dir(d);
-                    }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
-                }
-                // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
-                // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
-                // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
-                "cmd" => {
-                    let mut c = Command::new("cmd");
-                    c.raw_arg("/k").raw_arg(shell_join_for_windows(&resume, false));
-                    if let Some(d) = &dir {
-                        c.current_dir(d);
-                    }
-                    c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
-                }
-                // WezTerm：GUI 已开则 cli spawn 新 tab，否则 wezterm-gui start 新窗口(模块内回退)。
-                "wezterm" => wezterm::resume(dir.as_deref(), &resume),
-                // eff == "wt"：Windows Terminal。wt -w 0 nt [-d <cwd>] claude --resume <id>，
-                // 在最近 WT 窗口新开标签页，独立 argv 不拼 shell 串。
-                _ => {
-                    let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
-                    // 用用户默认 profile（多为 PowerShell）渲染标签：否则 WT 对裸命令行套用 cmd
-                    // 基础配置，图标/配色/环境都是 cmd，看起来"还是 cmd"。读不到则不带 -p，沿用旧行为。
-                    if let Some(p) = wt_default_profile() {
-                        args.push("-p".into());
-                        args.push(p);
-                    }
-                    if let Some(d) = &dir {
-                        args.push("-d".into());
-                        args.push(d.clone());
-                    }
-                    args.extend(resume.iter().cloned());
-                    Command::new("wt").args(&args).spawn().map(|_| ())
-                }
-            };
-            if let Err(e) = spawned {
-                eprintln!("恢复会话：启动 {eff} 失败：{e}");
-                // 回滚乐观复活并刷新看板：release 构建（windows_subsystem="windows"）下 stderr 无处可看，
-                // 不回滚的话卡片会假显示「已连接」直到 120s 宽限过期，用户毫无反馈。
+            let ok = spawn_in_terminal(&resume, resolved_cwd.as_deref(), &load_settings().resume_terminal);
+            if !ok {
+                // GUI 构建 stderr 不可见：回滚乐观复活，卡片立即回落「已断开」而非假连接 120s。
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
@@ -1135,15 +1483,9 @@ fn resume_session(
         std::thread::spawn(move || {
             let (revived, resolved, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let ok = crate::macos::terminal::resume_session_mac(
-                resolved.as_deref(),
-                &resume,
-                resume_terminal_kind(),
-            );
+            let ok = spawn_in_terminal(&resume, resolved.as_deref(), &load_settings().resume_terminal);
             if !ok {
-                // 与 Windows spawn 失败同语义：osascript 失败（TCC 自动化被拒/脚本报错）时回滚
-                // 乐观复活并刷新，卡片立即回落「已断开」而非假连接 120s。
-                eprintln!("恢复会话：osascript 执行失败");
+                eprintln!("恢复会话：终端启动失败");
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
@@ -1414,10 +1756,6 @@ fn reap_and_alive_ids(store: &Store, sys: &System, now_ms: i64) -> (Vec<i64>, us
     (alive, reaped)
 }
 
-/// 无 pid 会话的「空闲废弃」阈值：超过这么久没有任何事件即兜底收尾（终端被直接关掉、
-/// SessionEnd 丢失的孤儿会话）。取 30 分钟——足够保守，活跃会话每个事件都会刷新计时，绝不会触及。
-const ORPHAN_IDLE_MS: i64 = 30 * 60 * 1000;
-
 /// 是否应为「当前错误指纹」弹通知：仅当当前有错误且指纹与上次通知过的不同。
 /// 同一错误不反复弹；错误消失（cur=None）不弹（清除条目交给调用方）。纯函数，便于单测。
 fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
@@ -1545,7 +1883,10 @@ fn spawn_liveness_watch(
                 let sys = System::new_with_specifics(
                     RefreshKind::new().with_processes(ProcessRefreshKind::new()),
                 );
-                let orphaned = store.end_orphaned_idle(ORPHAN_IDLE_MS, now_ms()).unwrap_or(0);
+                // 阈值与 session_connected 的 RESUME_GRACE_MS 对齐：pid 未知的会话「已连接」显示
+                // 在此窗口后回落断开，DB 的 status 也应同时收尾，否则会话会长期卡在错误的 tab 里
+                // （见 RESUME_GRACE_MS 文档：kimi 卸载后 resume「终端起来但命令失败」即命中此路径）。
+                let orphaned = store.end_orphaned_idle(RESUME_GRACE_MS, now_ms()).unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
                     let _ = app.emit("board-changed", ());
@@ -1560,7 +1901,7 @@ fn spawn_liveness_watch(
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
                 let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
-                for s in store.live_sessions().unwrap_or_default() {
+                for s in store.live_sessions(Some("all"), None, None, None, 1000).unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_agent(&sys, s.pid.unwrap_or(0)) {
                         continue;
                     }
@@ -1826,6 +2167,21 @@ async fn available_terminals() -> Vec<String> {
     }
 }
 
+/// 本机实际已安装的 agent（provider key 列表），供各处按安装过滤展示。仿 available_terminals：
+/// 检测廉价（PATH/文件查询），仍放 blocking 池避免任何意外阻塞事件循环。
+#[tauri::command]
+async fn available_agents() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        cc_reporter::agent::all()
+            .iter()
+            .filter(|a| a.is_installed())
+            .map(|a| a.key().as_str().to_string())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// 前端调用：打开设置窗口（贴纸 tab 栏的设置按钮）。
 /// 必须在子线程创建：同步 command 跑在主线程，直接 build() 会阻塞主线程消息泵，
 /// 而 WebView2 初始化依赖消息泵运转 → 卡在初始化 → 白屏。子线程里 build() 把创建
@@ -1933,6 +2289,79 @@ fn open_update_window_impl(app: &tauri::AppHandle) {
             }
         }
         Err(e) => eprintln!("创建更新窗口失败: {e}"),
+    }
+}
+
+/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
+/// 传入 cwd/provider 时，新建面板会预填该路径并选中该模型。
+/// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
+#[tauri::command]
+fn open_new_session_window(app: tauri::AppHandle, cwd: Option<String>, provider: Option<String>) {
+    std::thread::spawn(move || open_new_session_window_impl(&app, cwd, provider));
+}
+
+/// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
+fn open_new_session_window_impl(
+    app: &tauri::AppHandle,
+    cwd: Option<String>,
+    provider: Option<String>,
+) {
+    // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
+    if let Some(w) = app.get_webview_window("new-session") {
+        // 窗口已开：若从另一张卡片带了 cwd/provider 预填，通知面板更新表单（不重开窗口），再聚焦。
+        if cwd.is_some() || provider.is_some() {
+            use tauri::Emitter;
+            let _ = app.emit("ns-prefill", serde_json::json!({ "cwd": cwd, "provider": provider }));
+        }
+        let _ = w.set_focus();
+        return;
+    }
+    let url = match (&cwd, &provider) {
+        (None, None) => "index.html".to_string(),
+        _ => {
+            let mut params = Vec::new();
+            if let Some(c) = &cwd {
+                params.push(format!("cwd={}", percent_encode(c.as_bytes(), NON_ALPHANUMERIC)));
+            }
+            if let Some(p) = &provider {
+                params.push(format!("provider={}", percent_encode(p.as_bytes(), NON_ALPHANUMERIC)));
+            }
+            format!("index.html?{}", params.join("&"))
+        }
+    };
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "new-session",
+        tauri::WebviewUrl::App(url.into()),
+    )
+    .title(tr(ui_lang(&load_settings()), "window.newSession"))
+    .inner_size(460.0, 420.0)
+    .min_inner_size(460.0, 420.0)
+    .resizable(false)
+    .decorations(false)
+    .center();
+    // macOS：无边框窗口不自动圆角，设透明由前端 .ns-window 的 border-radius 呈现（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    match builder.build() {
+        Ok(_win) => {
+            #[cfg(target_os = "macos")]
+            {
+                let app_handle = app.clone();
+                _win.on_window_event(move |e| {
+                    if matches!(
+                        e,
+                        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                    ) {
+                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                    }
+                });
+            }
+        }
+        Err(e) => eprintln!("创建新建会话窗口失败: {e}"),
     }
 }
 
@@ -2237,6 +2666,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
@@ -2244,7 +2674,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_project_tasks,
-            get_live_sessions,
+            get_live_sessions_counts,
+            get_live_sessions_page,
             focus_session,
             resume_session,
             open_project_dir,
@@ -2268,7 +2699,13 @@ pub fn run() {
             get_accounts,
             refresh_usage,
             host_os,
-            available_terminals
+            available_terminals,
+            available_agents,
+            new_session,
+            install_agent,
+            check_provider_hooks,
+            recent_cwds,
+            open_new_session_window
         ])
         .on_window_event(|window, event| {
             // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
@@ -2373,8 +2810,8 @@ pub fn run() {
                     win_constrain::install(h.0 as isize);
                 }
             }
-            // 无感适配：幂等把 cc-reporter 接入 Claude Code 设置（hooks + statusLine）。后台跑，失败不影响启动。
-            std::thread::spawn(ccsetup::apply);
+            // 无感适配：幂等把 cc-reporter 接入各 AI CLI（claude: hooks+statusLine；codex/kimi: hooks）。后台跑，失败不影响启动。
+            std::thread::spawn(setup::apply_all);
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
             spawn_first_import(app.handle().clone(), path.clone());
@@ -2387,9 +2824,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe, pending_fingerprint,
-        pid_is_agent, session_connected, shell_join_for_windows, should_notify, strip_jsonc_comments,
-        tab_match_score, waiting_fingerprint,
+        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
+        pending_fingerprint, pid_is_agent, session_connected, shell_join_for_windows, should_notify,
+        strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
     use crate::settings::Settings;
     use crate::snap::{
@@ -2766,5 +3203,141 @@ mod tests {
         assert_eq!(d.theme, "dark");
         assert_eq!(d.opacity, 94);
         assert_eq!(d.ui_scale, 100);
+    }
+
+}
+
+#[cfg(test)]
+mod new_session_tests {
+    use super::*;
+
+    #[test]
+    fn validate_cwd_rejects_empty_and_missing() {
+        assert!(validate_new_session_cwd("").is_err());
+        assert!(validate_new_session_cwd("   ").is_err());
+        assert!(validate_new_session_cwd("C:/definitely/not/a/real/dir/xyz123").is_err());
+    }
+
+    #[test]
+    fn validate_cwd_accepts_existing_dir() {
+        let tmp = std::env::temp_dir();
+        let got = validate_new_session_cwd(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(got, tmp.to_str().unwrap().trim());
+    }
+}
+
+#[cfg(test)]
+mod hooks_check_tests {
+    use super::*;
+
+    #[test]
+    fn hooks_json_detects_reporter_with_provider() {
+        let v: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": { "SessionStart": [
+            { "matcher": "*", "hooks": [
+              { "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex", "timeout": 5 }
+            ]}
+          ]}
+        }"#).unwrap();
+        assert!(hooks_json_has_reporter(&v, "codex"));
+        assert!(!hooks_json_has_reporter(&v, "kimi")); // provider 不符
+    }
+
+    #[test]
+    fn hooks_json_ignores_foreign_hooks() {
+        let v: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "node other.js" }] }
+          ]}
+        }"#).unwrap();
+        assert!(!hooks_json_has_reporter(&v, "codex"));
+        // 无 hooks 键。
+        let empty: serde_json::Value = serde_json::from_str("{}").unwrap();
+        assert!(!hooks_json_has_reporter(&empty, "codex"));
+    }
+
+    #[test]
+    fn hooks_json_ignores_reporter_on_non_session_start_event() {
+        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
+        let v: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex" }] }
+          ]}
+        }"#).unwrap();
+        assert!(!hooks_json_has_reporter(&v, "codex"));
+        // SessionStart 与 Stop 并存：仍应命中。
+        let v2: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": {
+            "Stop": [{ "hooks": [{ "type": "command", "command": "node other.js" }] }],
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex" }] }]
+          }
+        }"#).unwrap();
+        assert!(hooks_json_has_reporter(&v2, "codex"));
+    }
+
+    #[test]
+    fn toml_text_detects_reporter_line() {
+        let toml = "\
+[[hooks]]\n\
+event = \"SessionStart\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n";
+        assert!(toml_text_has_reporter(toml, "kimi"));
+        assert!(!toml_text_has_reporter(toml, "codex"));
+        assert!(!toml_text_has_reporter("event = \"x\"\ncommand = \"node a.js\"", "kimi"));
+    }
+
+    #[test]
+    fn toml_text_ignores_reporter_on_non_session_start_event() {
+        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
+        let toml = "\
+[[hooks]]\n\
+event = \"Stop\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n";
+        assert!(!toml_text_has_reporter(toml, "kimi"));
+    }
+
+    #[test]
+    fn toml_text_detects_session_start_among_multiple_blocks() {
+        // Stop 块在前、SessionStart 块在后：应正确关联各自块内的 event/command，不串块。
+        let toml = "\
+[[hooks]]\n\
+event = \"Stop\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n\
+\n\
+[[hooks]]\n\
+event = \"SessionStart\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n";
+        assert!(toml_text_has_reporter(toml, "kimi"));
+    }
+
+    #[test]
+    fn claude_hooks_status_three_way() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("cckb-claude-hooks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+
+        // Installed：command 用 ccsetup 认可的「带引号 cc-reporter 路径」格式（参照 ccsetup 既有
+        // 测试 reporter_exe_path_strict_matches_only_our_exe / ensure_hooks_* 里的 command 串）。
+        let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/cc-reporter.exe\""}]}]}}"#;
+        std::fs::File::create(&path).unwrap().write_all(installed.as_bytes()).unwrap();
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Installed));
+
+        let foreign = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node other.js"}]}]}}"#;
+        std::fs::File::create(&path).unwrap().write_all(foreign.as_bytes()).unwrap();
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+
+        // 损坏 JSON → Unknown（核心不变量：不误报 Missing）
+        std::fs::File::create(&path).unwrap().write_all(b"{not json").unwrap();
+        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Unknown));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

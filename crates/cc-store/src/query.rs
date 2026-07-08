@@ -23,6 +23,15 @@ pub struct TaskCard {
     pub session_status: Option<String>,
 }
 
+/// 贴纸各分类总数（与前端 tab 一一对应，避免靠已加载数据估算导致闪烁）。
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveSessionCounts {
+    pub total: i64,
+    pub running: i64,
+    pub waiting: i64,
+    pub archived: i64,
+}
+
 /// 当前活跃区的一张会话卡。
 #[derive(Debug, Clone, Serialize)]
 pub struct LiveSession {
@@ -56,6 +65,18 @@ pub struct LiveSession {
     pub last_user_text: Option<String>,
     /// agent 提供方：claude（默认）/ kimi…，前端据此换图标/标签。
     pub provider: String,
+}
+
+/// 转义 SQL LIKE 通配符，使用户输入里的 `%` `_` `\` 作字面量匹配（配合 `LIKE … ESCAPE '\'`）。
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '%' || c == '_' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 impl Store {
@@ -200,29 +221,80 @@ impl Store {
         Ok(out)
     }
 
-    /// 活跃区：所有会话（含已结束），附项目名、任务标题、进度。
-    /// 按 last_event_at 倒序（最近活跃在前）。截断规则：未结束(running/waiting/stale)的会话**全量保留**
-    /// ——上层「connected 优先、必然保留」的排序只能在本函数返回集内做，若这类会话也吃 100 条名额，
-    /// 一个长期挂在终端里的连接中会话会被更近活跃的已结束会话挤出、从看板凭空消失；
-    /// 已结束的只取最近 100 条兜底（未结束集合由 reaper 持续收尾，天然有界）。
-    pub fn live_sessions(&self) -> Result<Vec<LiveSession>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-                    p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
-                    sc.used_pct, sc.window_size, sc.model, sn.note,
-                    s.pending_review, s.last_ai_text, s.last_user_text, s.provider
-             FROM sessions s
-             JOIN projects p ON p.id = s.project_id
-             LEFT JOIN tasks t ON t.session_id = s.id
-             LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
-             LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id
-             WHERE s.status <> 'ended'
-                OR s.id IN (SELECT id FROM sessions WHERE status = 'ended'
-                            ORDER BY last_event_at DESC LIMIT 100)
-             ORDER BY s.last_event_at DESC",
-        )?;
+    /// 活跃区：按 filter（+ 可选 search，作用于当前 tab 内）取会话，附项目名、任务标题、进度。
+    /// waiting tab 按 last_event_at ASC（等最久优先）、其它按 DESC；游标方向随排序翻转，cursor 为 null 取首页。
+    /// filter: "all" | "running" | "waiting" | "archived"；其它值按 "all"。search 去空白后非空才生效。
+    pub fn live_sessions(
+        &self,
+        filter: Option<&str>,
+        search: Option<&str>,
+        before_last_event_at: Option<i64>,
+        before_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<LiveSession>, StoreError> {
+        use rusqlite::types::Value;
+        const SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
+                p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
+                sc.used_pct, sc.window_size, sc.model, sn.note,
+                s.pending_review, s.last_ai_text, s.last_user_text, s.provider
+         FROM sessions s
+         JOIN projects p ON p.id = s.project_id
+         LEFT JOIN tasks t ON t.session_id = s.id
+         LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
+         LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id";
+
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Value> = Vec::new();
+
+        match filter {
+            Some("all") => conditions.push("s.archived = 0".into()),
+            Some("running") => conditions.push("s.status = 'running' AND s.pending_review IS NULL AND s.archived = 0".into()),
+            Some("waiting") => conditions.push("(s.status = 'waiting' OR s.pending_review IS NOT NULL) AND s.archived = 0".into()),
+            Some("archived") => conditions.push("s.archived = 1".into()),
+            _ => {} // None 不过滤
+        }
+
+        // 搜索（当前 tab 内 AND 搜索词）：title / cwd / project 名任一命中。%/_/\ 转义成字面量。
+        if let Some(q) = search.map(str::trim).filter(|s| !s.is_empty()) {
+            let pat = format!("%{}%", escape_like(q));
+            conditions.push(
+                "(t.title LIKE ? ESCAPE '\\' OR s.cwd LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\')".into(),
+            );
+            params.push(Value::Text(pat.clone()));
+            params.push(Value::Text(pat.clone()));
+            params.push(Value::Text(pat));
+        }
+
+        // waiting 等最久优先（ASC），游标取「更大」的；其它 DESC，游标取「更小」的。
+        let asc = matches!(filter, Some("waiting"));
+        if let (Some(ts), Some(id)) = (before_last_event_at, before_id) {
+            // 整体括起：AND 优先级高于 OR，不加括号第二个 OR 分支会绕过 filter（4035ec5 回归）。
+            if asc {
+                conditions.push("((s.last_event_at > ?) OR (s.last_event_at = ? AND s.id > ?))".into());
+            } else {
+                conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
+            }
+            params.push(Value::Integer(ts));
+            params.push(Value::Integer(ts));
+            params.push(Value::Integer(id));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let order = if asc {
+            "s.last_event_at ASC, s.id ASC"
+        } else {
+            "s.last_event_at DESC, s.id DESC"
+        };
+        let sql = format!("{} {} ORDER BY {} LIMIT ?", SELECT, where_clause, order);
+        params.push(Value::Integer(limit as i64));
+
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map([], |r| {
+            .query_map(rusqlite::params_from_iter(params.iter()), |r| {
                 let session = Session {
                     id: r.get(0)?,
                     project_id: r.get(1)?,
@@ -287,6 +359,30 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    /// 贴纸各分类总数（供 tab 角标 / 虚拟列表总高度，避免靠已加载数据估算导致闪烁）。
+    pub fn live_sessions_counts(&self) -> Result<LiveSessionCounts, StoreError> {
+        let total: i64 = self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+        let running: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE status = 'running' AND pending_review IS NULL AND archived = 0",
+            [],
+            |r| r.get(0),
+        )?;
+        let waiting: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE (status = 'waiting' OR pending_review IS NOT NULL) AND archived = 0",
+            [],
+            |r| r.get(0),
+        )?;
+        let archived: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions WHERE archived = 1", [], |r| r.get(0))?;
+        Ok(LiveSessionCounts {
+            total,
+            running,
+            waiting,
+            archived,
+        })
     }
 
     /// 兜底收尾「没有 pid、且超过 idle_ms 无任何事件」的 live 会话。返回受影响数。

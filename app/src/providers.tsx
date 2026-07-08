@@ -3,6 +3,9 @@
 import type { ReactElement } from "react";
 import type { Dict } from "./i18n/zh";
 import { DEFAULT_PROVIDER } from "./api";
+// Kimi 官方位图 logo（渐变颗粒纹理、非矢量友好）：作静态资源随打包分发（Vite 输出带哈希的文件），
+// 不再把整张 PNG 以超长 base64 内嵌进源码（增大 bundle/难 diff）。四角本就透明，无需圆角裁剪。
+import kimiLogo from "./assets/kimi.png";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst），currentColor → 随连接态着色（accent / 断开灰）。
@@ -14,17 +17,15 @@ function ClaudeMark() {
 }
 
 function KimiMark() {
-  // Kimi 官方 logo：黑圆角方块 + 白「K」+ 右上亮蓝点。固定品牌色（不随主题/连接态变），像枚迷你 app 图标。
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#0a0a0c" />
-      <g fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M8 6.5v11" />
-        <path d="M8 12.5 14 7" />
-        <path d="M8 11.5 15.5 17.5" />
-      </g>
-      <circle cx="16.6" cy="6.6" r="1.7" fill="#1478f0" />
-    </svg>
+    <img
+      src={kimiLogo}
+      width={13}
+      height={13}
+      alt=""
+      aria-hidden="true"
+      style={{ display: "block" }}
+    />
   );
 }
 

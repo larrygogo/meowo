@@ -9,6 +9,9 @@ export type ProviderKey = "claude" | "kimi" | "codex";
 /** 缺省 provider，无法识别时回退；与 Rust 侧 DEFAULT_PROVIDER 一致。 */
 export const DEFAULT_PROVIDER: ProviderKey = "claude";
 
+/** 所有 provider key（渲染新建面板 agent 选项用；与 ProviderKey 联合类型同步）。 */
+export const PROVIDER_KEYS: ProviderKey[] = ["claude", "codex", "kimi"];
+
 export type Todo = {
   id: number;
   task_id: number;
@@ -108,8 +111,32 @@ export type LiveSession = {
   provider: ProviderKey;
 };
 
-export function getLiveSessions(): Promise<LiveSession[]> {
-  return invoke("get_live_sessions");
+export type LiveSessionCounts = {
+  total: number;
+  running: number;
+  waiting: number;
+  archived: number;
+};
+
+export function getLiveSessionsCounts(): Promise<LiveSessionCounts> {
+  return invoke("get_live_sessions_counts");
+}
+
+export type StickerFilter = "all" | "running" | "waiting" | "archived";
+
+export function getLiveSessionsPage(
+  filter: StickerFilter,
+  search: string | null,
+  cursor: { last_event_at: number; id: number } | null,
+  limit: number
+): Promise<LiveSession[]> {
+  return invoke("get_live_sessions_page", {
+    filter,
+    search: search && search.trim() ? search : null,
+    before_last_event_at: cursor?.last_event_at ?? null,
+    before_id: cursor?.id ?? null,
+    limit,
+  });
 }
 
 export type ThemeMode = "dark" | "light" | "system";
@@ -141,6 +168,8 @@ export type Settings = {
   sticker_color: string;
   /** 在贴纸底栏显示配额的 provider key 列表（默认 ["claude"]）。 */
   sticker_quota_providers: string[];
+  /** 「新建会话」面板默认选中的 agent。缺省 "claude"。 */
+  default_agent: ProviderKey;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "wezterm" | "powershell" | "cmd";
@@ -152,6 +181,11 @@ export type StickerStyle = "elevated" | "flat";
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
 export function availableTerminals(): Promise<ResumeTerminal[]> {
   return invoke("available_terminals");
+}
+
+/** 本机实际已安装的 agent（provider key）；各处选/展示 agent 按此过滤。 */
+export function availableAgents(): Promise<ProviderKey[]> {
+  return invoke("available_agents");
 }
 
 export function getSettings(): Promise<Settings> {
@@ -200,3 +234,29 @@ export function getAccounts(): Promise<ProviderAccountPayload[]> {
 export function refreshUsage(provider: string): Promise<ProviderUsage> {
   return invoke("refresh_usage", { provider });
 }
+
+/** 某 provider 的 cc-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */
+export type HooksStatus = "installed" | "missing" | "unknown";
+
+/** 新建一个全新会话：在 cwd 打开终端裸启动该 provider。terminal 省略则用设置里的默认终端。 */
+export function newSession(cwd: string, provider: ProviderKey, terminal?: string): Promise<void> {
+  return invoke("new_session", { cwd, provider, terminal });
+}
+
+/** 最近使用过的工作目录（新建面板快捷选择）。 */
+export function recentCwds(limit: number): Promise<string[]> {
+  return invoke("recent_cwds", { limit });
+}
+
+/** 检测某 provider 的 cc-reporter hooks 是否已接入（决定新建后会不会入库）。 */
+export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> {
+  return invoke("check_provider_hooks", { provider });
+}
+
+/** 一键安装某 agent（在终端跑官方安装脚本）。装完在窗口重新聚焦/手动刷新时重检安装状态。 */
+export function installAgent(provider: ProviderKey): Promise<void> {
+  return invoke("install_agent", { provider });
+}
+
+/** 后台安装结束事件 payload（对应后端 install-done）。 */
+export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | null };

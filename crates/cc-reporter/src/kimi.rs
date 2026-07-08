@@ -43,6 +43,12 @@ pub fn kimi_exe() -> String {
         .unwrap_or_else(|| "kimi".to_string())
 }
 
+/// kimi 可执行是否真实存在于 `~/.kimi-code/bin`（区别于 `kimi_exe` 找不到时回退裸名 "kimi"）。
+pub fn kimi_installed() -> bool {
+    let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
+    kimi_share_dir().map(|d| d.join("bin").join(bin).is_file()).unwrap_or(false)
+}
+
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
 fn session_dir(session_id: &str) -> Option<PathBuf> {
     let idx = kimi_share_dir()?.join("session_index.jsonl");
@@ -163,6 +169,81 @@ pub fn read_summary(session_id: &str) -> Option<WireSummary> {
     })
 }
 
+/// 从 wire.jsonl 文本取**最后一条** usage.record 的 (used_input_tokens, model_alias)。
+/// used = inputOther + inputCacheRead + inputCacheCreation（≈ 该回合请求发送时的 context 输入量，
+/// 每次请求都把整个 context 作为 input 发送）；output 不计（本轮新生成，尚未进 context）。
+pub fn parse_context(content: &str) -> Option<(i64, String)> {
+    let mut last: Option<(i64, String)> = None;
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("usage.record") {
+            continue;
+        }
+        let Some(u) = v.get("usage") else { continue };
+        let field = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+        let used = field("inputOther") + field("inputCacheRead") + field("inputCacheCreation");
+        let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+        last = Some((used, model));
+    }
+    last
+}
+
+/// 读 config.toml 里 `[models."<alias>"]` 的 `max_context_size`；找不到回退 262144。
+/// 逐行启发式解析（不引 toml 依赖，同 account/kimi.rs 既有范式）。
+pub fn context_window(model_alias: &str) -> i64 {
+    const FALLBACK: i64 = 262_144;
+    let Some(dir) = kimi_share_dir() else { return FALLBACK };
+    let Ok(content) = std::fs::read_to_string(dir.join("config.toml")) else {
+        return FALLBACK;
+    };
+    let want = format!("[models.\"{model_alias}\"]");
+    let mut in_section = false;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t == want;
+            continue;
+        }
+        if !in_section || t.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("max_context_size") {
+            if let Some(after) = rest.trim_start().strip_prefix('=') {
+                if let Ok(n) = after.trim().parse::<i64>() {
+                    if n > 0 {
+                        return n;
+                    }
+                }
+            }
+        }
+    }
+    FALLBACK
+}
+
+/// 读某 kimi 会话最近的上下文占用：wire.jsonl 尾部取最后一条 usage.record，used/window 算百分比。
+/// 定位/读/解析失败返回 None。大文件尾部有界读（与 read_summary 同款）。
+pub fn read_context(session_id: &str) -> Option<crate::agent::ContextUsage> {
+    let wire = session_dir(session_id)?
+        .join("agents")
+        .join("main")
+        .join("wire.jsonl");
+    let size = std::fs::metadata(&wire).ok()?.len();
+    let text = if size <= FULL_READ_CAP {
+        std::fs::read_to_string(&wire).ok()?
+    } else {
+        read_range(&wire, size.saturating_sub(TAIL_BYTES), TAIL_BYTES)?
+    };
+    let (used, model) = parse_context(&text)?;
+    let window = context_window(&model);
+    if window <= 0 {
+        return None;
+    }
+    let pct = (used * 100 / window).clamp(0, 100);
+    Some(crate::agent::ContextUsage { used_pct: pct, window })
+}
+
 /// 把某 kimi 会话改成自定义标题：改写 session `state.json` 的 `title` + `isCustomTitle=true`
 /// （后者阻止 kimi 之后用 AI 标题覆盖，与 claude 的 custom-title 同义），使 kimi 自身会话列表与
 /// `kimi -r` 列表也显示新名。其余字段原样保留。临时文件 + rename 原子写，避免与运行中的 kimi
@@ -196,6 +277,23 @@ pub fn set_custom_title(session_id: &str, title: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_context_takes_last_usage_record_and_sums_inputs() {
+        let wire = r#"
+{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":100,"output":5,"inputCacheRead":200,"inputCacheCreation":0}}
+{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"hi"}}}
+{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":727,"output":815,"inputCacheRead":20480,"inputCacheCreation":13}}
+"#;
+        // 取最后一条：727 + 20480 + 13 = 21220；output 不计。
+        assert_eq!(parse_context(wire), Some((21220, "kimi-code/kimi-for-coding".to_string())));
+    }
+
+    #[test]
+    fn parse_context_none_when_no_usage_record() {
+        let wire = r#"{"type":"turn.prompt","input":"hi"}"#;
+        assert_eq!(parse_context(wire), None);
+    }
 
     #[test]
     fn extracts_last_ai_text_and_model_skipping_think_and_prior_turns() {

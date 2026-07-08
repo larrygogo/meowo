@@ -258,7 +258,7 @@ html, body {
   flex: 1;
   min-width: 0;
   cursor: pointer;
-  font-size: calc(11px * var(--cc-ui));
+  font-size: 11px;
   color: var(--cc-text-dim);
   padding: 3px 2px;
   display: inline-flex;
@@ -467,6 +467,16 @@ html, body {
   line-height: 1.5;
   max-width: 220px;
 }
+.stk-empty-cta {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--cc-accent, #c96442);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
 /* 状态徽标：圆角矩形边框上流动的亮线 + 中心实心圆（圆内显示 Content 已用百分比）。
    亮线用 conic 渐变 + transform 旋转实现：动画走 GPU 合成层，不触发逐帧重绘/重栅格化，
    故即便多张卡同时跑、拖动窗口也不卡（旧的 SVG stroke-dashoffset + drop-shadow 会卡）。
@@ -558,6 +568,45 @@ html, body {
   border-radius: 16px;
 }
 .stk-card:last-child { margin-bottom: 0; }
+/* 虚拟列表 wrapper：用 padding-bottom 承担原卡片间距，确保 measureElement 测到的高度包含间隙，
+   同时避免 .stk-card:last-child 在 wrapper 内永远成立导致间距丢失。 */
+.stk-vitem {
+  padding-bottom: calc(6px * var(--cc-ui));
+}
+.stk-vitem > .stk-card {
+  margin-bottom: 0;
+}
+/* 列表空态加载提示 */
+.stk-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--cc-text-faint);
+  font-size: calc(12px * var(--cc-ui));
+}
+/* 底部加载更多动画 */
+.stk-loadmore {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding-bottom: 12px;
+}
+.stk-loadmore-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cc-text-faint);
+  animation: stk-loadmore-bounce 1s infinite ease-in-out;
+}
+.stk-loadmore-dot:nth-child(2) { animation-delay: 0.15s; }
+.stk-loadmore-dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes stk-loadmore-bounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
 .stk-card:hover {
   background: var(--cc-surface-hover);
   box-shadow: var(--card-elev-hover);
@@ -853,11 +902,11 @@ html, body {
 }
 /* 无活跃会话占位：淡色 app 图标，仍可点/悬停展开 */
 .cstrip-empty { display: inline-flex; color: var(--cc-text-faint); flex: none; }
-/* 在线/闲置=绿实心，运行中=Claude 橙(脉动)，等待确认=警告黄(实心) */
+/* 在线/闲置=绿实心，运行中=绿脉动，等待确认=警告黄(实心) */
 .cstrip-on { background: var(--cc-ok-vivid); }
-.cstrip-running { background: var(--cc-run-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
+.cstrip-running { background: var(--cc-ok-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
 .cstrip-waiting { background: var(--cc-warn-vivid); }
-.cstrip-error { background: var(--cc-err-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
+.cstrip-error { background: var(--cc-err-vivid); }
 @keyframes cstrip-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* 拖拽靠近边缘时，对应一侧发光提示（内容不变，松手才折叠） */
@@ -1247,6 +1296,62 @@ html, body {
 .seg-btn:hover { color: var(--cc-text); }
 .seg-btn.on { background: var(--cc-accent-soft); color: var(--cc-accent-text); }
 
+/* 字体大小离散滑块：轨道 + 滑钮 + 底部标签（小/中/大）。 */
+.dslider {
+  flex: none;
+  width: 140px;
+}
+.dslider-track {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 4px;
+  padding: 0 8px;
+  background: var(--cc-surface-hover);
+  border-radius: 2px;
+}
+.dslider-knob-wrap {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  height: 0;
+}
+.dslider-knob {
+  position: absolute;
+  top: -8px;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--cc-accent);
+  box-shadow: 0 2px 6px var(--cc-accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: left 0.2s cubic-bezier(0.34, 1.2, 0.5, 1);
+}
+.dslider-point {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  margin: -7px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.dslider-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding: 0 1px;
+}
+.dslider-label {
+  font-size: 12px;
+  color: var(--cc-text-dim);
+}
+
 /* 行内滑块（贴纸不透明度）：整行竖排，标签 + 数值在上，滑块铺满在下 */
 .row-col { flex-direction: column; align-items: stretch; gap: 12px; }
 .row-head { display: flex; align-items: center; gap: 13px; }
@@ -1310,37 +1415,126 @@ html, body {
   -webkit-user-select: text;
 }
 
-/* 账号分区：一张卡 = 一个 AI 提供方，卡顶标 provider，卡内含账号与用量。 */
-.acc-block { display: flex; align-items: center; gap: 13px; padding: 15px 16px; }
-.acc-avatar {
-  flex: none;
-  width: 42px; height: 42px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 600; font-size: 17px; color: #fff;
-  background: linear-gradient(135deg, var(--cc-accent-dim), var(--cc-accent));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 6px -1px var(--cc-accent-soft);
+/* 账号分区：一张卡 = 一个 AI 提供方，仿应用/集成卡片风格。 */
+.provider-card {
+  /* 卡片保持干净的边框面，无阴影/无 hover 效果 */
 }
-/* 未登录占位头像：中性底 + 描边 + 人形图标 */
-.acc-avatar-empty { color: var(--cc-text-faint); background: var(--cc-surface-hover); box-shadow: inset 0 0 0 1px var(--cc-border); }
-.acc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.acc-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.acc-name { font-size: 14px; font-weight: 600; color: var(--cc-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 套餐徽标（max/pro → 首字母大写的胶囊）。 */
-.acc-plan { flex: none; font-size: 10px; font-weight: 600; line-height: 16px; padding: 0 8px; border-radius: 999px; color: var(--cc-accent-text); background: var(--cc-accent-soft); border: 1px solid var(--cc-accent-border); text-transform: capitalize; letter-spacing: 0.02em; }
-.acc-sub { font-size: 12px; color: var(--cc-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acc-sub-wrap { white-space: normal; line-height: 1.4; }
-.acc-org { font-size: 11.5px; color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.provider-head { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--cc-border); }
-/* claude 徽标用 currentColor → 给 accent 色(与底栏标签/会话卡一致)；kimi/codex 固定品牌色不受影响。 */
-.provider-icon { display: inline-flex; color: var(--cc-accent-text); }
-.provider-name { font-size: 13px; font-weight: 600; color: var(--cc-text); }
-/* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
-.usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
-.usage-sticker-label { font-size: 12px; color: var(--cc-text-dim); }
-.provider-usage { padding: 14px 16px; border-top: 1px solid var(--cc-border); }
+.provider-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 12px;
+}
+.provider-card-icon {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-surface-hover);
+  box-shadow: inset 0 0 0 1px var(--cc-border);
+}
+.provider-card-icon svg {
+  width: 28px;
+  height: 28px;
+}
+.provider-card-icon-claude {
+  background: linear-gradient(135deg, var(--cc-accent-dim), var(--cc-accent));
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 8px -1px var(--cc-accent-soft);
+}
+/* kimi/codex 自带品牌色圆角方块底，铺满外框，不再套中性背景。 */
+.provider-card-icon:not(.provider-card-icon-claude) {
+  background: transparent;
+  box-shadow: none;
+}
+.provider-card-icon:not(.provider-card-icon-claude) svg,
+.provider-card-icon:not(.provider-card-icon-claude) img {
+  width: 100%;
+  height: 100%;
+}
+.provider-card-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.provider-card-title .provider-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cc-text);
+}
+.provider-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--cc-text-dim);
+  background: var(--cc-surface-hover);
+  border: 1px solid var(--cc-border);
+  text-transform: capitalize;
+}
+.provider-badge-plan {
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
+  border-color: var(--cc-accent-border);
+}
+.provider-badge-off {
+  color: var(--cc-warn);
+  background: transparent;
+  border-color: var(--cc-warn);
+}
+.provider-card-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.provider-card-action:hover {
+  background: var(--cc-surface-hover);
+}
+.provider-card-action-primary {
+  background: var(--cc-accent);
+  border-color: var(--cc-accent);
+  color: #fff;
+  box-shadow: 0 2px 6px -1px var(--cc-accent-soft);
+}
+.provider-card-action-primary:hover {
+  background: var(--cc-accent-dim);
+  border-color: var(--cc-accent-dim);
+  transform: translateY(-1px);
+}
+.provider-card-body {
+  padding: 0 16px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cc-text-dim);
+}
+
+.provider-usage {
+  padding: 14px 16px;
+  border-top: 1px solid var(--cc-border);
+  background: rgba(0, 0, 0, 0.02);
+}
+:root[data-theme="light"] .provider-usage { background: rgba(0, 0, 0, 0.015); }
 /* 多张卡片连续排列时补间距（未来多 AI 时每个 provider 各占一张卡）。 */
 .row-card + .row-card { margin-top: 14px; }
-.usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.usage-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.usage-card-title { font-size: 12.5px; font-weight: 600; color: var(--cc-text); }
 /* 图标按钮（如配额刷新）：透明底、悬停高亮，刷新中图标旋转。 */
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; background: transparent; color: var(--cc-text-dim); cursor: pointer; border-radius: var(--r-md); }
 .icon-btn:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
@@ -1349,16 +1543,35 @@ html, body {
 .icon-btn svg.spin { animation: spin 0.8s linear infinite; }
 /* 刷新按钮旋转动画：原引用的 @keyframes spin 未定义(只有 run-spin)导致图标不转，补上。 */
 @keyframes spin { to { transform: rotate(360deg); } }
-.usage-card-title { font-size: 12.5px; font-weight: 600; }
-.usage-row { margin: 10px 0; }
-.usage-head { display: flex; justify-content: space-between; font-size: 11.5px; }
+
+.usage-row { margin: 8px 0; }
+.usage-row:first-of-type { margin-top: 0; }
+.usage-row:last-of-type { margin-bottom: 0; }
+.usage-head { display: flex; justify-content: space-between; font-size: 11.5px; gap: 10px; }
 .usage-label { color: var(--cc-text-dim); }
-.usage-pct { font-weight: 600; }
-.usage-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; margin: 4px 0 2px; }
-.usage-track > i { display: block; height: 100%; background: var(--cc-accent, #6b8afd); border-radius: 3px; }
+.usage-pct { font-weight: 600; color: var(--cc-text); font-variant-numeric: tabular-nums; }
+.usage-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--cc-surface-hover);
+  overflow: hidden;
+  margin: 5px 0 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+.usage-track > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cc-accent-dim), var(--cc-accent));
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+
+/* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
+.usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
+.usage-sticker-label { font-size: 12px; color: var(--cc-text-dim); }
 
 /* 贴纸颜色色板：一排可点圆色块（鲜亮代表色），选中加 accent 描边圈。在设置窗渲染，
    不受 data-sticker-style 影响，外观恒定。 */
@@ -1478,4 +1691,273 @@ html, body {
 @keyframes tip-in {
   from { opacity: 0; transform: translateY(-2px); }
   to { opacity: 1; transform: none; }
+}
+
+/* ===== 新建会话独立窗口 ===== */
+.ns-window {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #262624;
+  color: var(--cc-text);
+  overflow: hidden;
+  font-size: 13px;
+}
+:root[data-theme="light"] .ns-window {
+  background: #faf9f5;
+}
+/* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings/.updater 的处理）。
+   Windows 端该窗口未设 transparent，若圆角仍生效会在四角露出 html/body 透明底的伪影，故仅 macOS 生效。 */
+:root.platform-macos .ns-window {
+  border-radius: 12px;
+}
+
+/* 标题栏：底部一道分隔线拉开与内容的层次；整条可拖动。 */
+.ns-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--cc-border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ns-title { font-weight: 600; font-size: 13px; letter-spacing: 0.01em; }
+.ns-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--cc-text-faint);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  border-radius: var(--r-md);
+  transition: background 0.12s, color 0.12s;
+}
+.ns-close:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+
+.ns-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.ns-field { display: flex; flex-direction: column; gap: 7px; }
+.ns-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cc-text-dim);
+  letter-spacing: 0.02em;
+}
+
+/* 目录选择器：combobox 一体式——输入框 + 浏览按钮 + 最近项目列表包进一个面板，
+   整体 focus 时珊瑚橙描边；输入实时过滤下方最近项。 */
+.ns-picker {
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  background: var(--cc-surface);
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+.ns-picker:focus-within { border-color: var(--cc-accent-border); }
+.ns-dir-row { display: flex; align-items: center; }
+.ns-picker .ns-input {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+}
+.ns-picker .ns-input:focus { background: transparent; }
+.ns-browse {
+  flex: none;
+  border: none;
+  border-left: 1px solid var(--cc-border);
+  background: transparent;
+  color: var(--cc-text-dim);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.ns-browse:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+
+/* 文本输入 / 下拉：统一的深色控件，focus 时珊瑚橙描边。 */
+.ns-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: 12px;
+  font-family: inherit;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ns-input::placeholder { color: var(--cc-text-faint); }
+.ns-input:focus {
+  outline: none;
+  border-color: var(--cc-accent-border);
+  background: var(--cc-surface-hover);
+}
+/* 终端下拉：去掉原生外观 + 自绘箭头，融入深色面板（原生 select 的系统箭头/白底与面板格格不入）。 */
+select.ns-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23847f78' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+}
+
+/* 新建面板里的终端下拉撑满字段宽度（按钮 + 弹出菜单等宽）；设置页的 .dd 不在 .ns-field 内，不受影响。 */
+.ns-field .dd { width: 100%; }
+.ns-field .dd-btn { width: 100%; min-width: 0; }
+
+/* 次要按钮（浏览 / 取消）与主按钮（启动）。 */
+.ns-btn {
+  flex: none;
+  padding: 8px 14px;
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ns-btn:hover:not(:disabled) { background: var(--cc-surface-hover); }
+.ns-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ns-btn.is-primary {
+  background: var(--cc-accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+}
+.ns-btn.is-primary:hover:not(:disabled) { background: var(--cc-accent-dim); }
+
+/* 最近项目列表：融合在 picker 内，顶部一道分隔线接在输入行下方。每行 图标 + 名 + 完整路径。 */
+.ns-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 116px;
+  overflow-y: auto;
+  padding: 3px;
+  border-top: 1px solid var(--cc-border);
+}
+.ns-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  background: transparent;
+  color: var(--cc-text);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.ns-recent-item > svg { flex: none; color: var(--cc-text-faint); }
+.ns-recent-item:hover { background: var(--cc-surface-hover); }
+.ns-recent-item.is-on { background: var(--cc-accent-soft); }
+.ns-recent-item.is-on > svg,
+.ns-recent-item.is-on .ns-recent-name { color: var(--cc-accent-text); }
+.ns-recent-name { flex: none; font-size: 12px; font-weight: 500; }
+.ns-recent-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--cc-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Agent：等宽竖版选择卡（图标在上、名在下），选中珊瑚橙高亮。 */
+.ns-agents { display: flex; gap: 8px; }
+.ns-agent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px 6px;
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text-dim);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.ns-agent svg { opacity: 0.8; transition: opacity 0.12s; }
+.ns-agent:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+.ns-agent.is-on {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+  color: var(--cc-text);
+}
+.ns-agent.is-on svg { opacity: 1; }
+
+/* 状态条：hooks 未装警告 / 启动错误，soft 底色 + 同色描边，比裸彩字更醒目。 */
+.ns-warn,
+.ns-error {
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.ns-warn {
+  color: var(--cc-warn);
+  background: rgba(224, 162, 60, 0.1);
+  border: 1px solid rgba(224, 162, 60, 0.25);
+}
+.ns-error {
+  color: var(--cc-err);
+  background: rgba(224, 88, 76, 0.1);
+  border: 1px solid rgba(224, 88, 76, 0.25);
+}
+
+/* 底部操作栏：顶部分隔线，与标题栏对称。 */
+.ns-actions {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--cc-border);
+}
+
+/* 账号页 agent 卡：后台安装进度（转圈 + 最新步骤行） */
+.agent-install-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--cc-text-dim);
+  max-width: 60%;
+}
+.agent-install-step {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-install-error {
+  color: var(--cc-err-vivid);
 }

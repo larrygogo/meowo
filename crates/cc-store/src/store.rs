@@ -698,6 +698,23 @@ impl Store {
         Ok(out)
     }
 
+    /// 「新建会话」面板的最近目录：去重非空 cwd，按各目录最近一次 last_event_at 倒序取前 limit。
+    pub fn recent_cwds(&self, limit: usize) -> Result<Vec<String>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT cwd FROM sessions \
+             WHERE cwd IS NOT NULL AND cwd <> '' \
+             GROUP BY cwd \
+             ORDER BY MAX(last_event_at) DESC \
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// 手动归档/取消归档某会话。不更新 last_event_at，避免排序乱跳。
     /// 归档时记录 archived_at（用于「归档超过 N 天自动隐藏」）；取消归档清空。
     pub fn set_session_archived(
@@ -712,6 +729,31 @@ impl Store {
             rusqlite::params![archived as i64, archived_at, session_id],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod recent_cwds_tests {
+    use super::*;
+
+    #[test]
+    fn recent_cwds_dedups_orders_and_limits() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (id1, _) = store.start_session(pid, "s1", 100).unwrap();
+        store.set_session_cwd(id1, "C:/projA", 100).unwrap();
+        let (id2, _) = store.start_session(pid, "s2", 200).unwrap();
+        store.set_session_cwd(id2, "C:/projB", 300).unwrap();
+        let (id3, _) = store.start_session(pid, "s3", 400).unwrap();
+        store.set_session_cwd(id3, "C:/projA", 500).unwrap(); // projA 再次活跃至 500
+
+        // projA 最近活跃 500 > projB 300；projA 去重仅一条。
+        assert_eq!(
+            store.recent_cwds(10).unwrap(),
+            vec!["C:/projA".to_string(), "C:/projB".to_string()]
+        );
+        // limit 生效。
+        assert_eq!(store.recent_cwds(1).unwrap(), vec!["C:/projA".to_string()]);
     }
 }
 

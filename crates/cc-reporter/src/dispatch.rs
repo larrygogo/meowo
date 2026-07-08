@@ -46,6 +46,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
                     }
                     _ => { store.touch_session(sid, now_ms)?; }
                 }
+                if let Some(c) = crate::agent::for_provider(provider).read_context(ev) {
+                    store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
+                }
             }
         }
         "Stop" => {
@@ -63,6 +66,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
+                if let Some(c) = crate::agent::for_provider(provider).read_context(ev) {
+                    store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
+                }
             }
         }
         "SessionEnd" => {

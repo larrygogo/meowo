@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { About } from "./views/About";
 import { Updater } from "./views/Updater";
+import { NewSessionPanel } from "./views/NewSessionPanel";
 import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
 import { bootAppearance } from "./appearance";
@@ -43,7 +44,15 @@ void detectHostOs().then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <I18nProvider>
-        {label === "about" ? <About /> : label === "updater" ? <Updater /> : <App />}
+        {label === "about" ? (
+          <About />
+        ) : label === "updater" ? (
+          <Updater />
+        ) : label === "new-session" ? (
+          <NewSessionPanel />
+        ) : (
+          <App />
+        )}
         <TooltipLayer />
       </I18nProvider>
     </React.StrictMode>,

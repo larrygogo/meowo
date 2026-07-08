@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
+import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
-import { PROVIDERS } from "../providers";
+import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -38,6 +39,7 @@ const SETTINGS_DEFAULTS: Settings = {
   sticker_style: "elevated",
   sticker_color: "classic",
   sticker_quota_providers: ["claude"],
+  default_agent: "claude",
 };
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -133,6 +135,16 @@ function RefreshIcon({ spinning }: { spinning?: boolean }) {
   );
 }
 
+function IconDownload() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
 function fmtResetIn(iso: string, t: Dict): string {
   const ts = Date.parse(iso);
   if (Number.isNaN(ts)) return "";
@@ -207,12 +219,18 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
   );
 }
 
-// 单个 provider 卡片：账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关
-function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, onToggleQuota }: {
-  payload: ProviderAccountPayload;
+// 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
+// 已装未登录 = 提示语；未装 = 一键安装按钮。
+function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onInstalled, refreshing, settings, onToggleQuota }: {
+  provider: ProviderKey;
+  /** null = 安装状态检测中（availableAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
+  installed: boolean | null;
+  payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
   onRefresh: () => void;
+  /** 后台安装成功后重查安装检测（令卡片转「已装」）。 */
+  onInstalled: () => void;
   refreshing: boolean;
   /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
   settings: Settings | null;
@@ -220,70 +238,134 @@ function ProviderCard({ payload, usage, err, onRefresh, refreshing, settings, on
   onToggleQuota: () => void;
 }) {
   const t = useT();
-  const acc = payload.account;
-  const cfg = PROVIDERS[payload.provider];
-  const providerName = cfg ? cfg.label(t) : payload.provider;
+  const cfg = providerConfig(provider);
+  const acc = payload?.account ?? null;
+
+  // 后台安装态：idle=未装可点 / installing=转圈+本地化「安装中…」/ error=失败可重试。
+  // 不透传安装脚本的英文原始输出，进度只用 i18n 文案（随界面语言）。
+  const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
+  // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
+  const onInstalledRef = useRef(onInstalled);
+  onInstalledRef.current = onInstalled;
+
+  const startInstall = () => {
+    setInstallState("installing");
+    installAgent(provider).catch(() => setInstallState("error"));
+  };
+
+  useEffect(() => {
+    // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
+    const unD = listen<InstallDone>("install-done", (e) => {
+      if (e.payload.provider !== provider) return;
+      if (e.payload.ok) {
+        setInstallState("idle");
+        onInstalledRef.current();
+      } else {
+        setInstallState("error");
+      }
+    });
+    return () => {
+      unD.then((f) => f());
+    };
+  }, [provider]);
 
   // 当前 provider 是否在贴纸配额列表中
-  const inQuota = settings?.sticker_quota_providers?.includes(payload.provider) ?? false;
+  const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
 
-  // activePayloads 已过滤，此处恒不触发（防御）
-  if (!acc) return null;
+  // 安装态优先：未安装时一律按未安装展示（即使本地缓存了旧账号信息），
+  // 只有「已安装且账号存在」才展示登录身份与用量。
+  const isInstalled = installed === true;
+  const isLoggedIn = isInstalled && acc != null;
+  const statusBadge = !isInstalled
+    ? installed === false
+      ? t.account.notInstalled
+      : null
+    : acc
+    ? null
+    : t.account.notLoggedIn;
+  const desc = isLoggedIn
+    ? [acc.display_name ?? acc.email ?? acc.login_label, acc.display_name && acc.display_name !== acc.email ? acc.email : null, acc.organization]
+        .filter(Boolean)
+        .join(" · ")
+    : installed === false
+    ? t.account.installHint
+    : isInstalled
+    ? t.account.notLoggedInHint
+    : "";
 
   return (
-    <div className="row-card provider-card">
-      <div className="provider-head">
-        {cfg && <span className="provider-icon"><cfg.Icon /></span>}
-        <span className="provider-name">{providerName}</span>
+    <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
+      <div className="provider-card-head">
+        <div className={"provider-card-icon" + (provider === "claude" ? " provider-card-icon-claude" : "")}>
+          <cfg.Icon />
+        </div>
+        <div className="provider-card-title">
+          <span className="provider-name">{cfg.label(t)}</span>
+          {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
+          {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
+        </div>
+        {installed === false &&
+          (installState === "installing" ? (
+            <div className="agent-install-progress" data-testid={"agent-installing-" + provider}>
+              <RefreshIcon spinning />
+              <span className="agent-install-step">{t.account.installing}</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="provider-card-action provider-card-action-primary"
+              data-testid={"agent-install-" + provider}
+              onClick={startInstall}
+            >
+              <IconDownload />
+              {installState === "error" ? t.account.installRetry : t.account.install}
+            </button>
+          ))}
       </div>
 
-      <div className="acc-block">
-        <div className="acc-avatar">{((acc.display_name ?? acc.email ?? acc.login_label) ?? "?").slice(0, 1).toUpperCase()}</div>
-        <div className="acc-info">
-          <div className="acc-name-row">
-            <span className="acc-name">{acc.display_name ?? acc.email ?? acc.login_label ?? ""}</span>
-            {acc.plan && <span className="acc-plan">{acc.plan}</span>}
+      {installed === false && installState === "error" && (
+        <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
+          {t.account.installFailed}
+        </div>
+      )}
+
+      {desc && <div className="provider-card-body">{desc}</div>}
+
+      {isLoggedIn && (
+        <div className="provider-usage">
+          <div className="usage-bar-head">
+            <span className="usage-card-title">{t.account.quota}</span>
+            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!(payload?.usage_supported ?? false) && !usage)} onClick={onRefresh}>
+              <RefreshIcon spinning={refreshing} />
+            </button>
           </div>
-          {acc.display_name && acc.display_name !== acc.email && acc.email && <div className="acc-sub">{acc.email}</div>}
-          {!acc.email && acc.login_label && <div className="acc-sub">{acc.login_label}</div>}
-          {acc.organization && <div className="acc-org">{acc.organization}</div>}
+          {usage ? (
+            <>
+              {usage.lanes.map((lane, i) => (
+                <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
+              ))}
+              {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
+              {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
+            </>
+          ) : !(payload?.usage_supported ?? false) || err === "unsupported" ? (
+            <div className="usage-stale">{t.account.usageUnsupported}</div>
+          ) : err === "error" ? (
+            <div className="usage-stale">{t.account.usageUnavailable}</div>
+          ) : (
+            <div className="usage-stale">{t.account.loading}</div>
+          )}
+          {/* 贴纸配额显示开关 */}
+          <div className="usage-sticker-row">
+            <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
+            <Switch checked={inQuota} onChange={onToggleQuota} />
+          </div>
         </div>
-      </div>
-
-      <div className="provider-usage">
-        <div className="usage-bar-head">
-          <span className="usage-card-title">{t.account.quota}</span>
-          <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!payload.usage_supported && !usage)} onClick={onRefresh}>
-            <RefreshIcon spinning={refreshing} />
-          </button>
-        </div>
-        {usage ? (
-          <>
-            {usage.lanes.map((lane, i) => (
-              <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane.kind, t)} />
-            ))}
-            {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
-            {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
-          </>
-        ) : !payload.usage_supported || err === "unsupported" ? (
-          <div className="usage-stale">{t.account.usageUnsupported}</div>
-        ) : err === "error" ? (
-          <div className="usage-stale">{t.account.usageUnavailable}</div>
-        ) : (
-          <div className="usage-stale">{t.account.loading}</div>
-        )}
-        {/* 贴纸配额显示开关 */}
-        <div className="usage-sticker-row">
-          <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
-          <Switch checked={inQuota} onChange={onToggleQuota} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function AccountSection() {
-  const t = useT();
+export function AccountSection() {
   // 读取/写入应用设置（用于贴纸配额开关）
   const [settings, patchSettings] = useSettingsState();
   const [payloads, setPayloads] = useState<ProviderAccountPayload[]>([]);
@@ -292,6 +374,19 @@ function AccountSection() {
   const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
   // errMap: provider key → 错误类型（unsupported/error/null）
   const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
+  // installed: 本机实际已装的 agent 集合——决定每张卡是「未安装」还是「已装/未登录」。
+  // 初值 null = 检测中：首帧不判定任何一张卡为未安装，避免 availableAgents() resolve 前误闪「未安装 + 安装按钮」。
+  const [installed, setInstalled] = useState<Set<string> | null>(null);
+  // 重查本机已装 agent 集合。挂载、窗口聚焦、后台安装成功各处复用。
+  const refreshInstalled = () => {
+    availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {});
+  };
+  useEffect(() => { refreshInstalled(); }, []);
+  useEffect(() => {
+    const onFocus = () => refreshInstalled();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   // 切换某 provider 在贴纸配额列表中的开关状态
   const toggleQuotaProvider = (provider: string) => {
@@ -339,52 +434,28 @@ function AccountSection() {
       .catch(() => {});
   }, []);
 
-  // 有账号的 provider 列表；没有则显示未登录占位
-  const activePayloads = payloads.filter((p) => p.account != null);
-
-  if (payloads.length === 0) {
-    // 初始加载中
-    return (
-      <div className="row-card provider-card">
-        <div className="acc-block">
-          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
-          <div className="acc-info">
-            <div className="acc-name">{t.account.loading}</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (activePayloads.length === 0) {
-    // 所有 provider 均未登录
-    return (
-      <div className="row-card provider-card">
-        <div className="acc-block">
-          <div className="acc-avatar acc-avatar-empty"><IconUser /></div>
-          <div className="acc-info">
-            <div className="acc-name">{t.account.notLoggedIn}</div>
-            <div className="acc-sub acc-sub-wrap">{t.account.notLoggedInDesc}</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // 以 PROVIDER_KEYS 为骨架遍历全部 agent（而非只 getAccounts 返回的有账号项），
+  // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
   return (
     <>
-      {activePayloads.map((p) => (
-        <ProviderCard
-          key={p.provider}
-          payload={p}
-          usage={usageMap[p.provider] ?? null}
-          err={errMap[p.provider] ?? null}
-          onRefresh={() => doRefresh(p.provider)}
-          refreshing={refreshingSet.has(p.provider)}
-          settings={settings}
-          onToggleQuota={() => toggleQuotaProvider(p.provider)}
-        />
-      ))}
+      {PROVIDER_KEYS.map((p) => {
+        const payload = payloads.find((x) => x.provider === p) ?? null;
+        return (
+          <ProviderCard
+            key={p}
+            provider={p}
+            installed={installed === null ? null : installed.has(p)}
+            payload={payload}
+            usage={usageMap[p] ?? null}
+            err={errMap[p] ?? null}
+            onRefresh={() => doRefresh(p)}
+            onInstalled={refreshInstalled}
+            refreshing={refreshingSet.has(p)}
+            settings={settings}
+            onToggleQuota={() => toggleQuotaProvider(p)}
+          />
+        );
+      })}
     </>
   );
 }
@@ -496,12 +567,16 @@ function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [settings, patch] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
+  const [availAgents, setAvailAgents] = useState<ProviderKey[]>([]);
   // dev 下开机自启会注册调试二进制(开机连不上 dev server → 白屏)，故禁用此开关，仅安装版可用。
   const autostartDisabled = import.meta.env.DEV;
   useEffect(() => {
     if (!autostartDisabled) invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
     availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
   }, [autostartDisabled]);
+  useEffect(() => {
+    availableAgents().then(setAvailAgents).catch(() => {});
+  }, []);
   const toggleAutostart = () => {
     if (autostartDisabled) return;
     const next = !autostart;
@@ -523,6 +598,12 @@ function GeneralSection() {
   const changeResumeTerm = (v: ResumeTerminal) => patch({ resume_terminal: v });
   // 至少两个可用终端才有选择意义；只有一个（如 macOS 没装 iTerm）就不显示这一行。
   const showTermRow = (IS_MAC || IS_WIN) && termOptions.length >= 2;
+  // 默认 Agent 下拉：选项以已装 agent 为主；若保存值不在已装列表里（未装/尚未探测完成），
+  // 在最前面补一项，避免 Dropdown 内部 find 不到导致按钮标签空白。
+  const defaultAgent = settings?.default_agent ?? "claude";
+  const defaultAgentOptions = availAgents.includes(defaultAgent)
+    ? availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))
+    : [{ value: defaultAgent, label: providerConfig(defaultAgent).label(t) }, ...availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))];
   return (
     <>
       <div className="row-card">
@@ -588,6 +669,17 @@ function GeneralSection() {
               { value: "en" as const, label: "English" },
             ]}
             onChange={(v) => patch({ language: v })}
+          />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.defaultAgent}</div>
+            <div className="row-desc">{t.settings.defaultAgentDesc}</div>
+          </div>
+          <Dropdown
+            value={defaultAgent}
+            options={defaultAgentOptions}
+            onChange={(v) => patch({ default_agent: v })}
           />
         </div>
         <div className="row">
@@ -704,11 +796,50 @@ const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] 
   { value: "elevated", label: t.settings.styleElevated },
   { value: "flat", label: t.settings.styleFlat },
 ];
-const densityOptions = (t: Dict): { value: number; label: string }[] => [
-  { value: 90, label: t.settings.densityCompact },
-  { value: 100, label: t.settings.densityNormal },
-  { value: 112, label: t.settings.densityLoose },
+const fontSizeOptions = (t: Dict): { value: number; label: string }[] => [
+  { value: 90, label: t.settings.fontSizeSmall },
+  { value: 100, label: t.settings.fontSizeNormal },
+  { value: 112, label: t.settings.fontSizeLarge },
 ];
+
+// 三等分离散滑块（字体大小 小/中/大）：轨道 + 滑钮 + 底部标签。
+function FontSizeSlider({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: number;
+  options: { value: number; label: string }[];
+  onChange: (v: number) => void;
+  label: string;
+}) {
+  const index = Math.max(0, options.findIndex((o) => o.value === value));
+  return (
+    <div className="dslider" role="radiogroup" aria-label={label}>
+      <div className="dslider-track">
+        <div className="dslider-knob-wrap">
+          <div className="dslider-knob" style={{ left: `${(index / (options.length - 1)) * 100}%` }} />
+        </div>
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={o.value === value}
+            className="dslider-point"
+            onClick={() => onChange(o.value)}
+          />
+        ))}
+      </div>
+      <div className="dslider-labels">
+        {options.map((o) => (
+          <span key={o.value} className="dslider-label">{o.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 const OPACITY_MIN = 25;
 const OPACITY_MAX = 100;
 
@@ -734,10 +865,10 @@ function AppearanceSection() {
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">{t.settings.density}</div>
-            <div className="row-desc">{t.settings.densityDesc}</div>
+            <div className="row-label">{t.settings.fontSize}</div>
+            <div className="row-desc">{t.settings.fontSizeDesc}</div>
           </div>
-          <Segmented value={uiScale} options={densityOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.density} />
+          <FontSizeSlider value={uiScale} options={fontSizeOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.fontSize} />
         </div>
         <div className="row">
           <div className="row-text">

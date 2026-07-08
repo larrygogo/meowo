@@ -4,6 +4,22 @@
 //!
 //! 全程：解析失败即放弃、先备份、原子写、已正确则一字不改（幂等）。核心合并逻辑为纯函数，便于测试。
 
+/// Claude Code 的 ProviderSetup 实现：委托本文件原有 apply()（hooks + statusLine），零行为变更。
+pub struct ClaudeSetup;
+
+impl super::ProviderSetup for ClaudeSetup {
+    fn key(&self) -> cc_store::ProviderKey {
+        cc_store::ProviderKey::Claude
+    }
+    fn detect(&self) -> bool {
+        // 与 apply() 内部「~/.claude 目录存在才创建 settings」的守卫同源。
+        claude_settings_path().parent().is_some_and(|p| p.is_dir())
+    }
+    fn apply(&self) {
+        apply();
+    }
+}
+
 use serde_json::{json, Value};
 
 /// cc-reporter 负责的 hook 事件 + matcher。PreToolUse 用 matcher 限定只在两种工具触发,
@@ -48,6 +64,33 @@ pub fn reporter_exe_path(cmd: &str) -> Option<String> {
     let name = std::path::Path::new(path).file_name()?.to_str()?;
     (name.eq_ignore_ascii_case("cc-reporter") || name.eq_ignore_ascii_case("cc-reporter.exe"))
         .then(|| path.to_string())
+}
+
+/// settings 的 `hooks.SessionStart` 数组里是否有我们的 cc-reporter 可执行。
+/// 「新会话能否入库」只取决于 SessionStart 是否挂了钩子，故与下面 reporter_path_from_hooks
+/// （广扫全部事件、用于路径复用）语义不同，需单独判定，不能混用（审查发现：只在别的事件挂了
+/// cc-reporter 不能保证新会话会被记录，会被误判成已装）。
+pub fn session_start_has_reporter(settings: &Value) -> bool {
+    let Some(arr) = settings
+        .get("hooks")
+        .and_then(|h| h.get("SessionStart"))
+        .and_then(|s| s.as_array())
+    else {
+        return false;
+    };
+    arr.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|x| x.as_array())
+            .into_iter()
+            .flatten()
+            .any(|h| {
+                h.get("command")
+                    .and_then(|x| x.as_str())
+                    .and_then(reporter_exe_path)
+                    .is_some()
+            })
+    })
 }
 
 /// 从 settings 的 hooks 里找出已配置的 cc-reporter 可执行路径。
@@ -203,12 +246,12 @@ fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Res
 
 /// 解析 settings.json 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的
 /// JSON 带 BOM，serde_json 会直接报错，曾导致无感接线静默失败。
-fn parse_settings(text: &str) -> Option<Value> {
+pub(crate) fn parse_settings(text: &str) -> Option<Value> {
     serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
 }
 
 /// `~/.claude/settings.json`（尊重 CLAUDE_CONFIG_DIR）。
-fn claude_settings_path() -> std::path::PathBuf {
+pub(crate) fn claude_settings_path() -> std::path::PathBuf {
     let base = std::env::var("CLAUDE_CONFIG_DIR")
         .ok()
         .map(std::path::PathBuf::from)
@@ -485,6 +528,30 @@ mod tests {
             ] }] }
         });
         assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some("C:/a/b/cc-reporter.exe"));
+    }
+
+    #[test]
+    fn session_start_has_reporter_requires_session_start_event() {
+        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为「已装」（审查发现）。
+        // reporter_path_from_hooks（广扫，供路径复用）仍会命中这条，语义刻意不同。
+        let stop_only = json!({
+            "hooks": { "Stop": [{ "matcher": "*", "hooks": [
+                { "type": "command", "command": "\"C:/a/b/cc-reporter.exe\"", "timeout": 5 }
+            ] }] }
+        });
+        assert!(!session_start_has_reporter(&stop_only));
+        assert!(reporter_path_from_hooks(&stop_only).is_some());
+
+        // SessionStart 挂了：算已装。
+        let session_start = json!({
+            "hooks": { "SessionStart": [{ "matcher": "*", "hooks": [
+                { "type": "command", "command": "\"C:/a/b/cc-reporter.exe\"", "timeout": 5 }
+            ] }] }
+        });
+        assert!(session_start_has_reporter(&session_start));
+
+        // 无 hooks 键。
+        assert!(!session_start_has_reporter(&json!({})));
     }
 
     #[test]

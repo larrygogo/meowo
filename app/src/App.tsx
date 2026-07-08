@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getLiveSessions, LiveSession } from "./api";
+import {
+  getLiveSessionsCounts,
+  getLiveSessionsPage,
+  LiveSession,
+  LiveSessionCounts,
+  StickerFilter,
+} from "./api";
 import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
@@ -15,7 +21,9 @@ type Mode = "normal" | "collapsed" | "expanded";
 const SNAP_KEY = "cc-kanban-snap-edge";
 const SIZE_KEY = "cc-kanban-normal-size";
 const PIN_KEY = "cc-kanban-pinned"; // 与 Sticker 的置顶偏好共用
+const TAB_KEY = "cc-kanban-tab";
 const RELEASE_POLL_MS = 90; // 拖拽中轮询鼠标左键的间隔（检测真正松手）
+const PAGE_SIZE = 100; // 贴纸会话每页条数，与首屏一致
 
 // 缩略条主轴逻辑长度：按 connected 点数贴合内容（点 10px + 间距 7px = 17，两端留白 26），最小 48。
 // 仅作折叠初值，CollapsedStrip 挂载后会按真实 DOM 尺寸精确校正。
@@ -64,8 +72,42 @@ function isPinned(): boolean {
   return localStorage.getItem(PIN_KEY) === "1";
 }
 
+/** 当前 tab 对应的总会话数（用于 hasMore 与加载守卫，必须与后端 filter 语义一致）。 */
+function totalFor(filter: StickerFilter, counts: LiveSessionCounts): number {
+  switch (filter) {
+    case "archived":
+      return counts.archived;
+    case "running":
+      return counts.running;
+    case "waiting":
+      return counts.waiting;
+    case "all":
+      // "all" tab 后端过滤为 archived=0
+      return counts.total - counts.archived;
+  }
+}
+
+
+
 export function App() {
-  const [live, setLive] = useState<Item[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
+  const [counts, setCounts] = useState<LiveSessionCounts>({
+    total: 0,
+    running: 0,
+    waiting: 0,
+    archived: 0,
+  });
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [reachedEnd, setReachedEnd] = useState<boolean>(false);
+  const [filter, setFilter] = useState<StickerFilter>(() => {
+    const s = localStorage.getItem(TAB_KEY);
+    return s === "waiting" || s === "running" || s === "archived" ? s : "all";
+  });
+  const [search, setSearch] = useState("");
+  const pickFilter = useCallback((f: StickerFilter) => {
+    setFilter(f);
+    localStorage.setItem(TAB_KEY, f);
+  }, []);
   const [edge, setEdge] = useState<Edge | null>(() => {
     // macOS 面板模式：无吸边，edge 固定为 null。
     if (isMacPanel()) return null;
@@ -86,9 +128,28 @@ export function App() {
   // 只读检查：仅驱动贴纸设置钮上的更新红点；下载/安装由更新窗口（views/Updater）全权负责。
   const { status: upStatus } = useUpdate();
 
+  // 折叠条恒显示全部「连接中」会话（running + waiting），与当前选中 tab 无关——
+  // 故独立于分页 items 单独加载（按状态查，覆盖旧但仍连接的会话，不受 tab/分页窗口影响）。
+  const [stripSessions, setStripSessions] = useState<Item[]>([]);
+  const loadStrip = useCallback(() => {
+    Promise.all([
+      getLiveSessionsPage("running", null, null, 200),
+      getLiveSessionsPage("waiting", null, null, 200),
+    ])
+      .then(([r, w]) => {
+        const map = new Map<number, Item>();
+        [...r, ...w].forEach((s) => map.set(s.session.id, s as Item));
+        setStripSessions([...map.values()]);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadStrip();
+  }, [loadStrip]);
+
   const connectedCount = useMemo(
-    () => live.filter((l) => !l.archived && l.connected).length,
-    [live]
+    () => stripSessions.filter((l) => !l.archived && l.connected).length,
+    [stripSessions]
   );
 
   const modeRef = useRef(mode);
@@ -104,21 +165,113 @@ export function App() {
 
   // 请求序号守卫：并发刷新时旧响应可能晚于新响应返回，仅当自己仍是最新一次请求才写入。
   const refreshSeqRef = useRef(0);
-  const refresh = useCallback(async () => {
-    const seq = ++refreshSeqRef.current;
-    const items = (await getLiveSessions()) as Item[];
-    if (seq === refreshSeqRef.current) setLive(items);
-  }, []);
+  const loadPage = useCallback(
+    async (
+      filter: StickerFilter,
+      search: string,
+      cursor: { last_event_at: number; id: number } | null,
+      limit: number = PAGE_SIZE
+    ): Promise<{ page: Item[]; applied: boolean }> => {
+      const seq = ++refreshSeqRef.current;
+      // counts 只在首页/刷新（cursor === null）时才需要；loadMore 复用已有 counts，
+      // 避免频繁 loadMore 时对 counts 做纯重复的后端查询（审查发现）。
+      const needCounts = cursor === null;
+      try {
+        const [countsRes, page] = await Promise.all([
+          needCounts ? getLiveSessionsCounts() : Promise.resolve(null),
+          getLiveSessionsPage(filter, search, cursor, limit),
+        ]);
+        const applied = seq === refreshSeqRef.current;
+        if (!applied) return { page: page as Item[], applied };
+        if (countsRes) setCounts(countsRes);
 
-  // 平台探测已提前到 main.tsx 渲染前完成，这里只负责首次拉取。
+        setItems((prev) => {
+          if (cursor === null) {
+            // 首页请求（切 tab / 首次加载 / board-changed 刷新）：直接按服务端顺序整体替换。
+            // 服务端已按 last_event_at DESC 排序，天然反映既有会话的最新排序位置——
+            // 若只按 prev 数组旧位置合并、仅将全新会话插到最前，已存在会话（如恢复的旧会话）
+            // 排序键变化后不会移动，得等用户手动切 tab 才会跳到正确位置（回归 bug）。
+            // 不在 page 里的会话（状态迁移出当前 filter/归档/删除）也随整体替换自然被移除。
+            return (page as Item[]).slice();
+          }
+          // loadMore（cursor 非空）：按 id 合并，保留已加载会话原有顺序，新条目追加到末尾。
+          const map = new Map(prev.map((l) => [l.session.id, l]));
+          const append: Item[] = [];
+          for (const l of page as Item[]) {
+            if (!map.has(l.session.id)) append.push(l);
+            map.set(l.session.id, l);
+          }
+          return [...prev.map((l) => map.get(l.session.id)!), ...append];
+        });
+        return { page: page as Item[], applied };
+      } catch (err) {
+        console.error("[loadPage] 加载失败：", err);
+        throw err;
+      }
+    },
+    []
+  );
+
+  // board-changed 频繁触发：节流刷新，且重查「已加载窗口」大小（max(PAGE_SIZE, 当前条数)），
+  // 保住用户已滚动加载的会话、同时反映最新排序/状态，避免被打回第一页（P0）。
+  const itemsLenRef = useRef(0);
+  itemsLenRef.current = items.length;
+  const refreshThrottleRef = useRef<number | undefined>(undefined);
+  const refresh = useCallback(() => {
+    const run = () => {
+      setReachedEnd(false);
+      const w = Math.max(PAGE_SIZE, itemsLenRef.current);
+      loadPage(filter, search, null, w).then(({ page, applied }) => {
+        if (applied && page.length < w) setReachedEnd(true);
+      }).catch(() => {});
+      loadStrip(); // 折叠条数据独立刷新（不随 tab）
+    };
+    // 400ms trailing 节流：连续 board-changed 只在安静后跑一次。
+    window.clearTimeout(refreshThrottleRef.current);
+    refreshThrottleRef.current = window.setTimeout(run, 400);
+  }, [filter, search, loadPage, loadStrip]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || reachedEnd) return;
+    const last = items[items.length - 1];
+    if (!last) return;
+    setLoadingMore(true);
+    try {
+      const { page, applied } = await loadPage(filter, search, {
+        last_event_at: last.session.last_event_at,
+        id: last.session.id,
+      });
+      // 请求过程中若已被更新的请求（如切 tab/刷新）取代，本次结果不再代表当前 tab 的状态，
+      // reachedEnd 不应据此更新，否则可能把旧 tab 的「已到底」误写到新 tab 上（审查发现的竞态）。
+      if (applied && page.length < PAGE_SIZE) {
+        setReachedEnd(true);
+      }
+    } catch (err) {
+      console.error("[loadMore] 加载失败：", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [filter, search, loadingMore, reachedEnd, items, loadPage]);
+
+  // filter / search 变化：重置到首页（search 变化去抖 300ms，避免每次按键都打一次后端；
+  // filter 切换无需去抖，0ms 立即加载，含首次挂载）。取代原先仅 [filter, loadPage] 的切 tab effect。
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const t = window.setTimeout(() => {
+      setReachedEnd(false);
+      loadPage(filter, search, null)
+        .then(({ page, applied }) => {
+          if (applied && page.length < PAGE_SIZE) setReachedEnd(true);
+        })
+        .catch(() => {});
+    }, search ? 300 : 0);
+    return () => window.clearTimeout(t);
+  }, [filter, search, loadPage]);
 
   useEffect(() => {
     const un = listen("board-changed", () => refresh());
     return () => {
       un.then((f) => f());
+      window.clearTimeout(refreshThrottleRef.current);
     };
   }, [refresh]);
 
@@ -401,14 +554,26 @@ export function App() {
   }, [mode, doCollapse]);
 
   if (!isMacPanel() && mode === "collapsed" && edge && !expanding) {
-    return <CollapsedStrip data={live} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
+    return <CollapsedStrip data={stripSessions} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
   }
   // 有新版本：贴纸不再弹浮动条，改为齿轮按钮上的红点提示(安装入口在设置→关于)。
   const hasUpdate = upStatus === "available";
   return (
     <div style={{ height: "100%" }}>
       {!isMacPanel() && glow && <div className={"snap-glow snap-glow-" + glow} />}
-      <Sticker data={live} hasUpdate={hasUpdate} />
+      <Sticker
+        filter={filter}
+        onFilterChange={pickFilter}
+        data={items}
+        counts={counts}
+        total={totalFor(filter, counts)}
+        hasMore={!reachedEnd}
+        loadMore={loadMore}
+        loadingMore={loadingMore}
+        hasUpdate={hasUpdate}
+        search={search}
+        onSearchChange={setSearch}
+      />
     </div>
   );
 }

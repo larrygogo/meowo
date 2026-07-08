@@ -29,6 +29,7 @@ export const store: Store = {
     sticker_style: "elevated",
     sticker_color: "classic",
     sticker_quota_providers: ["claude"],
+    default_agent: "claude",
   },
 };
 
