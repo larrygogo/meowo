@@ -13,7 +13,7 @@ fn default_theme() -> String {
     "dark".to_string()
 }
 fn default_opacity() -> u32 {
-    94
+    100
 }
 fn default_ui_scale() -> u32 {
     100
@@ -28,18 +28,18 @@ fn default_language() -> String {
 fn default_terminal_open_mode() -> String {
     "card".to_string()
 }
-/// 卡片菜单（星标/便签/重命名/归档等）触发方式：context = 右键菜单（默认），
-/// button = 卡片上的常显菜单按钮（触屏等右键不便的设备用），两者二选一。
+/// 卡片菜单（星标/便签/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
+/// context = 右键菜单，两者二选一。
 fn default_card_menu_mode() -> String {
-    "context".to_string()
+    "button".to_string()
 }
-/// 贴纸风格：elevated = 立体感（默认），flat = 扁平。
+/// 贴纸风格：flat = 扁平（默认），elevated = 立体感。
 fn default_sticker_style() -> String {
-    "elevated".to_string()
+    "flat".to_string()
 }
-/// 贴纸底色预设 key（classic = 经典原色，默认）。
+/// 贴纸底色预设 key（neutral = 无色，默认）。
 fn default_sticker_color() -> String {
-    "classic".to_string()
+    "neutral".to_string()
 }
 /// 在贴纸底栏显示配额的 provider key 列表，默认仅 claude。
 fn default_sticker_quota_providers() -> Vec<String> {
@@ -50,7 +50,7 @@ fn default_default_agent() -> String {
     "claude".to_string()
 }
 
-/// 应用设置（持久化到 ~/.cc-kanban/settings.json）。
+/// 应用设置（持久化到 ~/.meowo/settings.json）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Settings {
     /// 归档条目自动隐藏的天数；0 = 永不隐藏。
@@ -62,7 +62,7 @@ pub(crate) struct Settings {
     /// 外观模式：dark / light / system（跟随系统）。缺省 dark，兼容老 settings.json。
     #[serde(default = "default_theme")]
     pub(crate) theme: String,
-    /// 贴纸背景不透明度（百分比 25–100）。缺省 94，与原视觉一致。
+    /// 贴纸背景不透明度（百分比 25–100）。缺省 100（完全不透明）。
     #[serde(default = "default_opacity")]
     pub(crate) opacity: u32,
     /// 界面密度/字号缩放（百分比，紧凑 90 / 标准 100 / 宽松 112）。
@@ -77,16 +77,16 @@ pub(crate) struct Settings {
     /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
     #[serde(default = "default_terminal_open_mode")]
     pub(crate) terminal_open_mode: String,
-    /// 卡片菜单触发方式：context = 右键菜单（默认），button = 卡片菜单按钮。兼容老 settings.json。
+    /// 卡片菜单触发方式：button = 卡片菜单按钮（默认），context = 右键菜单。兼容老 settings.json。
     #[serde(default = "default_card_menu_mode")]
     pub(crate) card_menu_mode: String,
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) preview_enabled: bool,
-    /// 贴纸风格：elevated = 立体感（默认），flat = 扁平。缺省 elevated，兼容老 settings.json。
+    /// 贴纸风格：flat = 扁平（默认），elevated = 立体感。缺省 flat，兼容老 settings.json。
     #[serde(default = "default_sticker_style")]
     pub(crate) sticker_style: String,
-    /// 贴纸底色预设 key（classic/slate/moss/plum/rose/amber）。缺省 classic，兼容老 settings.json。
+    /// 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。缺省 neutral，兼容老 settings.json。
     #[serde(default = "default_sticker_color")]
     pub(crate) sticker_color: String,
     /// 在贴纸底栏显示配额的 provider key 列表（如 "claude"/"kimi"/"codex"）。
@@ -263,7 +263,7 @@ fn quote_autostart_run_value(app: &tauri::AppHandle) {
 /// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
 #[tauri::command]
 pub(crate) fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://github.com/larrygogo/cc-kanban") {
+    if !url.starts_with("https://github.com/larrygogo/meowo") {
         return Err("不允许的链接".into());
     }
     #[cfg(target_os = "windows")]

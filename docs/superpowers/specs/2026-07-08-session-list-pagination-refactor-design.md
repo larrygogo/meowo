@@ -39,7 +39,7 @@
 | **搜索状态归属** | 搜索词 `query` 从 Sticker **提升到 App**（App 驱动 loadPage）；搜索框 UI（开合）留在 Sticker，值走 props。 |
 | **counts 随搜索** | 不变（角标=各 tab 总数，搜索只筛当前视图）。顺手修 `counts.all = total - archived`。 |
 
-## 后端 `crates/cc-store/src/query.rs`
+## 后端 `crates/meowo-store/src/query.rs`
 
 ### `live_sessions` 加 `search` 参数
 ```
@@ -103,7 +103,7 @@ pub fn live_sessions(
 
 ## 影响文件
 
-- `crates/cc-store/src/query.rs`：`live_sessions` 加 search + 排序/游标按 filter + 单测。
+- `crates/meowo-store/src/query.rs`：`live_sessions` 加 search + 排序/游标按 filter + 单测。
 - `app/src-tauri/src/lib.rs`：`get_live_sessions_page` 命令 + `live_sessions_blocking` 加 search；补 1954 caller。
 - `app/src/api.ts`：`getLiveSessionsPage` 加 search。
 - `app/src/App.tsx`：search 状态 + loadPage/loadMore/refresh（reachedEnd 驱动、W 窗口、节流）+ 传 props。

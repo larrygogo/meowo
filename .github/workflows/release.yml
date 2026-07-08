@@ -38,7 +38,7 @@ jobs:
 
       # Windows 由 beforeBuildCommand 里的 prepare-sidecar.mjs 覆盖（宿主 triple）；
       # macOS 是 universal 构建，需要双架构 lipo 合并的 sidecar，提前显式准备。
-      - name: 准备 cc-reporter sidecar (macOS universal)
+      - name: 准备 meowo-reporter sidecar (macOS universal)
         if: matrix.platform == 'macos-latest'
         run: bun scripts/prepare-sidecar.mjs --universal
 
@@ -61,7 +61,7 @@ jobs:
         with:
           projectPath: app
           tagName: ${{ github.ref_name }}
-          releaseName: cc-kanban ${{ github.ref_name }}
+          releaseName: Meowo ${{ github.ref_name }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

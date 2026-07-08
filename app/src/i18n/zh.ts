@@ -88,7 +88,7 @@ export const zh = {
     newVersion: (v: string) => `有新版本 v${v} · 点击更新`,
   },
   errorLabels: {
-    // key 为 cc-store 写库的中文 sentinel（数据值，不改库）；zh 原样、en 翻译。
+    // key 为 meowo-store 写库的中文 sentinel（数据值，不改库）；zh 原样、en 翻译。
     "工具调用解析失败": "工具调用解析失败",
     "需要重新登录": "需要重新登录",
     "认证失败": "认证失败",
@@ -140,7 +140,7 @@ export const zh = {
     styleFlat: "扁平",
     stickerColor: "贴纸颜色",
     stickerColorDesc: "贴纸背景的色调",
-    colorNames: { classic: "经典", slate: "石青", moss: "苔绿", plum: "暮紫", rose: "玫粉", amber: "琥珀" } as Record<string, string>,
+    colorNames: { neutral: "无色", classic: "经典", slate: "石青", moss: "苔绿", plum: "暮紫", rose: "玫粉", amber: "琥珀" } as Record<string, string>,
     opacity: "贴纸不透明度",
     opacityDesc: "调整桌面贴纸的背景透明度",
     appearanceHint: "外观更改即时生效，并保存到本地。",
@@ -204,7 +204,7 @@ export const zh = {
     versionInfo: "版本信息",
     homepage: "项目主页",
     open: "打开",
-    blurb: "常驻桌面贴纸，实时显示所有 AI 编程会话的进度。",
+    blurb: "喵呜——常驻桌面贴纸，实时显示所有 AI 编程会话的进度。",
     feedback: "意见反馈",
     changelog: "更新日志",
   },

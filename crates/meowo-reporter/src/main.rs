@@ -1,5 +1,5 @@
-use cc_reporter::{db_path, dispatch::dispatch, hook::HookEvent};
-use cc_store::{ProviderKey, Store};
+use meowo_reporter::{db_path, dispatch::dispatch, hook::HookEvent};
+use meowo_store::{ProviderKey, Store};
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,10 +17,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 供管道下游（claude-hud）照常渲染。解析/写库失败都不影响透传。
     if std::env::args().nth(1).as_deref() == Some("statusline") {
         if let Ok(store) = Store::open(db_path()) {
-            cc_reporter::statusline::record(&store, &buf, now_ms());
+            meowo_reporter::statusline::record(&store, &buf, now_ms());
         }
         // 无下游时这行就是状态栏；被包装脚本链下游时其 stdout 会被丢弃，仅写库生效。
-        print!("{}", cc_reporter::statusline::minimal_line(&buf));
+        print!("{}", meowo_reporter::statusline::minimal_line(&buf));
         return Ok(());
     }
 

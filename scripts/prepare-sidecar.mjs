@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
-// 编译 cc-reporter 并按 Tauri sidecar 命名规则放进 app/src-tauri/binaries/：
-//   cc-reporter-<target-triple>[.exe]
+// 编译 meowo-reporter 并按 Tauri sidecar 命名规则放进 app/src-tauri/binaries/：
+//   meowo-reporter-<target-triple>[.exe]
 // 这样 tauri.conf.json 的 bundle.externalBin 才能把它打进安装包（装到主程序同目录，
 // 供 ccsetup 无感接线时找到）。
 //
 // 用法：bun scripts/prepare-sidecar.mjs [--universal]
 //   默认       —— 构建目标 triple：优先 TAURI_ENV_TARGET_TRIPLE（tauri 的 before 钩子
 //                 会注入），否则取 rustc 宿主 triple（本地 dev / build）。
-//   --universal —— macOS 双架构分别编译后 lipo 合并为 cc-reporter-universal-apple-darwin
+//   --universal —— macOS 双架构分别编译后 lipo 合并为 meowo-reporter-universal-apple-darwin
 //                 （CI 的 --target universal-apple-darwin 构建用）。
 import { execSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync } from "node:fs";
@@ -29,26 +29,26 @@ const triple = process.argv.includes("--universal")
 if (triple === "universal-apple-darwin") {
   const arches = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
   for (const t of arches) {
-    run(`cargo build --release -p cc-reporter --target ${t}`);
-    // universal 构建会按各架构分别编译 cc-app，tauri_build 编译期按当前
+    run(`cargo build --release -p meowo-reporter --target ${t}`);
+    // universal 构建会按各架构分别编译 meowo-app，tauri_build 编译期按当前
     // TARGET triple 校验 externalBin，单架构文件也必须在 binaries/ 在场
     copyFileSync(
-      join(root, "target", t, "release", "cc-reporter"),
-      join(outDir, `cc-reporter-${t}`),
+      join(root, "target", t, "release", "meowo-reporter"),
+      join(outDir, `meowo-reporter-${t}`),
     );
   }
-  const out = join(outDir, "cc-reporter-universal-apple-darwin");
+  const out = join(outDir, "meowo-reporter-universal-apple-darwin");
   const slices = arches
-    .map((t) => `"${join(root, "target", t, "release", "cc-reporter")}"`)
+    .map((t) => `"${join(root, "target", t, "release", "meowo-reporter")}"`)
     .join(" ");
   run(`lipo -create -output "${out}" ${slices}`);
   chmodSync(out, 0o755); // lipo 按 umask 建文件，不保证可执行位
   console.log(`sidecar 就绪: ${out}`);
 } else {
-  run(`cargo build --release -p cc-reporter --target ${triple}`);
+  run(`cargo build --release -p meowo-reporter --target ${triple}`);
   const ext = triple.includes("windows") ? ".exe" : "";
-  const src = join(root, "target", triple, "release", `cc-reporter${ext}`);
-  const dst = join(outDir, `cc-reporter-${triple}${ext}`);
+  const src = join(root, "target", triple, "release", `meowo-reporter${ext}`);
+  const dst = join(outDir, `meowo-reporter-${triple}${ext}`);
   copyFileSync(src, dst);
   console.log(`sidecar 就绪: ${dst}`);
 }

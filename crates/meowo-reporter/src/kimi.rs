@@ -24,7 +24,7 @@ pub fn kimi_share_dir() -> Option<PathBuf> {
 }
 
 /// kimi 可执行的绝对路径（~/.kimi-code/bin/kimi[.exe]）；找不到回退裸名 "kimi"（依赖 PATH）。
-/// resume 用：cc-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先用绝对路径，
+/// resume 用：meowo-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先用绝对路径，
 /// 避免 wt/powershell「系统找不到指定的文件」。
 pub fn kimi_exe() -> String {
     let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };

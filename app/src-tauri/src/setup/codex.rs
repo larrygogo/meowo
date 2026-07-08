@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 pub const CODEX_EVENTS: [&str; 5] =
     ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "PermissionRequest"];
 
-/// 从 hooks.json 找出已配置的 cc-reporter 路径（复用现有路径优先的解析源）。
+/// 从 hooks.json 找出已配置的 meowo-reporter 路径（复用现有路径优先的解析源）。
 pub fn reporter_path_from_codex(root: &Value) -> Option<String> {
     let hooks = root.get("hooks")?.as_object()?;
     for (_ev, arr) in hooks {
@@ -27,7 +27,7 @@ pub fn reporter_path_from_codex(root: &Value) -> Option<String> {
     None
 }
 
-/// 幂等合并：CODEX_EVENTS 逐事件确保挂上 cc-reporter。已有认领条目 → 仅路径不符时更新
+/// 幂等合并：CODEX_EVENTS 逐事件确保挂上 meowo-reporter。已有认领条目 → 仅路径不符时更新
 /// （解析后内容判定，裸路径/引号形态视为等价，不无谓改写用户在用的配置）；缺 → 追加。
 /// 返回是否有改动。
 pub fn ensure_codex_hooks(root: &mut Value, reporter_native: &str) -> bool {
@@ -208,14 +208,14 @@ pub fn ensure_trusted_hashes(
 pub struct CodexSetup;
 
 impl super::ProviderSetup for CodexSetup {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Codex
+    fn key(&self) -> meowo_store::ProviderKey {
+        meowo_store::ProviderKey::Codex
     }
     fn detect(&self) -> bool {
-        cc_reporter::codex::codex_home().is_some_and(|d| d.is_dir())
+        meowo_reporter::codex::codex_home().is_some_and(|d| d.is_dir())
     }
     fn apply(&self) {
-        let Some(home) = cc_reporter::codex::codex_home() else {
+        let Some(home) = meowo_reporter::codex::codex_home() else {
             return;
         };
         let hooks_path = home.join("hooks.json");
@@ -277,20 +277,20 @@ mod tests {
     #[test]
     fn ensure_codex_hooks_adds_all_events_when_empty() {
         let mut v = json!({});
-        assert!(ensure_codex_hooks(&mut v, "C:/x/cc-reporter.exe"));
+        assert!(ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe"));
         for ev in CODEX_EVENTS {
             let cmd = v["hooks"][ev][0]["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(cmd, "\"C:/x/cc-reporter.exe\" --provider codex");
+            assert_eq!(cmd, "\"C:/x/meowo-reporter.exe\" --provider codex");
             assert_eq!(v["hooks"][ev][0]["hooks"][0]["timeout"], 5);
         }
         // 幂等：二跑无改动。
-        assert!(!ensure_codex_hooks(&mut v, "C:/x/cc-reporter.exe"));
+        assert!(!ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe"));
     }
 
     #[test]
     fn ensure_codex_hooks_adopts_manual_wiring_and_fills_missing() {
         // 精确复刻本机手工接线形态：裸路径命令、3 事件、Stop timeout=10。
-        let dev = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe";
+        let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
         let entry = |t: u64| json!({ "hooks": [{ "type": "command", "command": format!("{dev} --provider codex"), "timeout": t }] });
         let mut v = json!({ "hooks": {
             "SessionStart": [entry(5)], "UserPromptSubmit": [entry(5)], "Stop": [entry(10)]
@@ -309,11 +309,11 @@ mod tests {
     fn ensure_codex_hooks_updates_stale_path_keeps_user_hooks() {
         let mut v = json!({ "hooks": { "Stop": [
             { "hooks": [{ "type": "command", "command": "node my-notify.js" }] },
-            { "hooks": [{ "type": "command", "command": "\"C:/old/cc-reporter.exe\" --provider codex", "timeout": 5 }] }
+            { "hooks": [{ "type": "command", "command": "\"C:/old/meowo-reporter.exe\" --provider codex", "timeout": 5 }] }
         ]}});
-        assert!(ensure_codex_hooks(&mut v, "C:/new/cc-reporter.exe"));
+        assert!(ensure_codex_hooks(&mut v, "C:/new/meowo-reporter.exe"));
         assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], "node my-notify.js"); // 用户 hook 不动
-        assert_eq!(v["hooks"]["Stop"][1]["hooks"][0]["command"], "\"C:/new/cc-reporter.exe\" --provider codex");
+        assert_eq!(v["hooks"]["Stop"][1]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\" --provider codex");
         assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 2); // 不重复追加
     }
 
@@ -322,7 +322,7 @@ mod tests {
         // I1 回归：hooks 键存在但非 object（如手改坏形状）——对齐 kimi 哲学，放弃不写，
         // 绝不覆盖用户文件（既有实现会整体置 {}，无备份地清掉用户内容）。
         let mut v = json!({ "hooks": 5 });
-        assert!(!ensure_codex_hooks(&mut v, "C:/x/cc-reporter.exe"));
+        assert!(!ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe"));
         assert_eq!(v, json!({ "hooks": 5 }));
     }
 
@@ -330,7 +330,7 @@ mod tests {
     fn ensure_codex_hooks_skips_event_with_non_array_value() {
         // I1 回归：某事件值为畸形形状（非 array）——该事件原样跳过不动，其余事件正常补齐。
         let mut v = json!({ "hooks": { "Stop": "oops" } });
-        assert!(ensure_codex_hooks(&mut v, "C:/x/cc-reporter.exe")); // 其余 4 事件补齐 → 有改动
+        assert!(ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe")); // 其余 4 事件补齐 → 有改动
         assert_eq!(v["hooks"]["Stop"], json!("oops")); // 畸形事件原样不动
         for ev in CODEX_EVENTS.iter().filter(|&&e| e != "Stop") {
             let cmd = v["hooks"][ev][0]["hooks"][0]["command"].as_str().unwrap();
@@ -341,8 +341,8 @@ mod tests {
     #[test]
     fn reporter_path_and_claimed_entries_extraction() {
         let mut v = json!({});
-        ensure_codex_hooks(&mut v, "C:/x/cc-reporter.exe");
-        assert_eq!(reporter_path_from_codex(&v).as_deref(), Some("C:/x/cc-reporter.exe"));
+        ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe");
+        assert_eq!(reporter_path_from_codex(&v).as_deref(), Some("C:/x/meowo-reporter.exe"));
         let entries = claimed_codex_entries(&v);
         assert_eq!(entries.len(), 5);
         assert!(entries.iter().all(|e| e.command.contains("--provider codex") && e.timeout == 5));
@@ -355,18 +355,18 @@ mod tests {
     fn codex_hook_hash_matches_real_machine_vectors() {
         // 三条向量取自本机 ~/.codex/config.toml 的真实 trusted_hash（codex-cli 0.142.3），
         // 算法：canonical JSON（key 字母序、紧凑）SHA-256。codex 升级若改算法，此测试变红。
-        let cmd = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe --provider codex";
+        let cmd = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe --provider codex";
         assert_eq!(
             codex_hook_hash("session_start", cmd, 5),
-            "sha256:6a10ea73fc05fb9000b03c3a8d6f54375278aca7cb375d0915be8294fa29c95b"
+            "sha256:5e68ee84ac2076b424f12a7a1b346f5c1f5907d4829d6a30239bc49c0e76382c"
         );
         assert_eq!(
             codex_hook_hash("user_prompt_submit", cmd, 5),
-            "sha256:b304e91ff6e3b6baf2b37c64498582b9ea12d5847d773bc5a632da317ffb8564"
+            "sha256:aef30ddec757deff63f67240a9b859d1a63c669eaee6a5ee6a30404daaa81523"
         );
         assert_eq!(
             codex_hook_hash("stop", cmd, 10),
-            "sha256:e91f37fe561ddc6784ec8c3fe559f90590a708429a86aab477fb456dec9738d7"
+            "sha256:cd638b7a1c4a91cd28a5946fbbe5d7e7bf1f3c478d85f329ad95323a9323e403"
         );
     }
 
@@ -384,7 +384,7 @@ mod tests {
         // 从空 config.toml 起：写入 [hooks.state] 各键；已有等值哈希则不动；不碰无关内容。
         // 单组场景（无其他 handler 共存）：真实位置就是 0:0——本机真实向量断言一字不动。
         let mut doc: toml_edit::DocumentMut = "default_model = \"x\"\n".parse().unwrap();
-        let cmd = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe --provider codex";
+        let cmd = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe --provider codex";
         let entries = vec![ClaimedEntry {
             event: "SessionStart".to_string(),
             command: cmd.to_string(),
@@ -398,7 +398,7 @@ mod tests {
         assert!(out.contains("default_model = \"x\"")); // 无关内容原样
         // 键 = <display路径>:<snake事件>:0:0，值 = 本机验证过的真实哈希。
         assert!(out.contains(r"C:\Users\larry\.codex\hooks.json:session_start:0:0"));
-        assert!(out.contains("sha256:6a10ea73fc05fb9000b03c3a8d6f54375278aca7cb375d0915be8294fa29c95b"));
+        assert!(out.contains("sha256:5e68ee84ac2076b424f12a7a1b346f5c1f5907d4829d6a30239bc49c0e76382c"));
         // 幂等：二跑无改动。
         assert!(!ensure_trusted_hashes(&mut doc, hooks_path, &entries));
     }
@@ -422,7 +422,7 @@ mod tests {
     fn ensure_trusted_hashes_uses_real_group_index_when_user_group_precedes_ours() {
         // C1 回归：用户已有 Stop hook 组在 [0]（如 node my-notify.js），我方组在 [1]——
         // ensure_codex_hooks 只追加不重排，这正是真实机器上会出现的既有组形态。
-        let dev = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe";
+        let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
         let v = json!({ "hooks": { "Stop": [
             { "hooks": [{ "type": "command", "command": "node my-notify.js" }] },
             { "hooks": [{ "type": "command", "command": format!("{dev} --provider codex"), "timeout": 10 }] }
@@ -448,7 +448,7 @@ mod tests {
     fn claimed_codex_entries_skips_group_shared_with_other_handler() {
         // C1 回归：我方 handler 与他人 handler 挤在同一组里——canon 哈希公式只支持单 handler
         // 形态，算出来的哈希对不上 codex 真实校验对象，必须跳过不预信任。
-        let dev = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe";
+        let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
         let v = json!({ "hooks": { "Stop": [
             { "hooks": [
                 { "type": "command", "command": "node my-notify.js" },
@@ -465,7 +465,7 @@ mod tests {
     fn dryrun_codex() {
         use crate::setup::ProviderSetup;
         CodexSetup.apply();
-        let home = cc_reporter::codex::codex_home().unwrap();
+        let home = meowo_reporter::codex::codex_home().unwrap();
         eprintln!("=== hooks.json ===\n{}", std::fs::read_to_string(home.join("hooks.json")).unwrap());
         eprintln!("=== config.toml [hooks.state] ===\n{}", std::fs::read_to_string(home.join("config.toml")).unwrap());
     }

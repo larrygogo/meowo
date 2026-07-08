@@ -44,7 +44,7 @@ async function compose(page, spec) {
       ctx.fillStyle = "#f0efec";
       ctx.font = "600 15px 'Segoe UI', 'Microsoft YaHei', sans-serif";
       ctx.textBaseline = "middle";
-      ctx.fillText("cc-kanban", 16, h / 2 + 1);
+      ctx.fillText("Meowo", 16, h / 2 + 1);
     } else {
       // 侧图：logo 居中偏上 + 应用名 + 一行浅灰副标题。
       const s = 92;
@@ -52,10 +52,10 @@ async function compose(page, spec) {
       ctx.textAlign = "center";
       ctx.fillStyle = "#f4f3f0";
       ctx.font = "600 19px 'Segoe UI', 'Microsoft YaHei', sans-serif";
-      ctx.fillText("cc-kanban", w / 2, 192);
+      ctx.fillText("Meowo", w / 2, 192);
       ctx.fillStyle = "#9a958c";
       ctx.font = "12px 'Segoe UI', 'Microsoft YaHei', sans-serif";
-      ctx.fillText("Claude Code 会话看板", w / 2, 216);
+      ctx.fillText("AI 会话看板", w / 2, 216);
     }
 
     const rgba = Array.from(ctx.getImageData(0, 0, w, h).data);

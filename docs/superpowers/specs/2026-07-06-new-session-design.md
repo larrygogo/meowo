@@ -19,13 +19,13 @@
    - macOS `lib.rs:1130-1154`：`macos::terminal::resume_session_mac`，AppleScript 模板 `term_script.rs:99-165`，终端类型 `resume_terminal_kind` `lib.rs:691-699`。
    - ⇒ 新建会话与之只差**启动命令**，可把这段抽成共享 helper。
 2. **`session_id` 由 CLI 启动那刻生成，app 事先拿不到**：因此**无法**像 `resume_session` 那样预改 DB 行来立刻显示卡片（`prepare_resume` 的乐观 revive `lib.rs:997-1025` 依赖已知 `session_id`）。新卡片只能等真实 hook 上报后自然出现。
-3. **会话入库唯一的实时路径是 hooks（cc-reporter）**：`SessionStart` → `dispatch::create_session`（`cc-reporter/src/dispatch.rs:155-168`）→ `store.start_session`（`cc-store/src/store.rs:199-231`，插入占位 task，卡片由此产生）。任何带 cwd 的活动事件也会 `lookup_or_create`（`dispatch.rs:179-193`）兜底创建。
+3. **会话入库唯一的实时路径是 hooks（meowo-reporter）**：`SessionStart` → `dispatch::create_session`（`meowo-reporter/src/dispatch.rs:155-168`）→ `store.start_session`（`meowo-store/src/store.rs:199-231`，插入占位 task，卡片由此产生）。任何带 cwd 的活动事件也会 `lookup_or_create`（`dispatch.rs:179-193`）兜底创建。
 4. **出卡时机因 provider 而异**：claude/kimi 启动即 `SessionStart`（秒级出卡）；**codex 的 `SessionStart` 只在首个回合才 fire**（`lib.rs:126-128`），即 codex 卡片要等用户发第一条消息才出现。
 5. **hooks 自动安装目前仅覆盖 claude**：`ccsetup::apply`（`app/src-tauri/src/ccsetup.rs:244-319`，启动时 spawn `lib.rs:2377`）只写 `~/.claude/settings.json`。codex/kimi 的 hooks 不会被 app 自动安装（多 provider 自动装是未实现的 `provider-setup` spec）。⇒ 新建的 codex/kimi 会话若 hooks 未装，**永远不会入库**。
-6. **Agent 抽象已就位，但只有 resume 动词**：`Agent` trait（`cc-reporter/src/agent.rs:15-46`）有 `resume_args(id)`（claude `["claude","--resume",id]` `:66-68`、kimi `[kimi_exe(),"-r",id]` `:102-105`、codex `[prefix..., "resume", id]` `:143-154`），但**没有裸启动动词**。可执行文件解析器：`codex_launch_prefix`（`codex.rs:28-42`）、`kimi_exe`（`kimi.rs:29-44`）、claude 走 PATH。`for_provider`/`all` `:196-203`。
+6. **Agent 抽象已就位，但只有 resume 动词**：`Agent` trait（`meowo-reporter/src/agent.rs:15-46`）有 `resume_args(id)`（claude `["claude","--resume",id]` `:66-68`、kimi `[kimi_exe(),"-r",id]` `:102-105`、codex `[prefix..., "resume", id]` `:143-154`），但**没有裸启动动词**。可执行文件解析器：`codex_launch_prefix`（`codex.rs:28-42`）、`kimi_exe`（`kimi.rs:29-44`）、claude 走 PATH。`for_provider`/`all` `:196-203`。
 7. **前端现成件**：`resume`/`focus` 调用样板 `Sticker.tsx:698-711`；空状态 `Sticker.tsx:455-461`；底部栏 `Sticker.tsx:1118-1169`；provider 图标/标签 `PROVIDERS`/`providerConfig`（`providers.tsx:51-60`）；终端下拉取数 `available_terminals`（`api.ts:153-155`、`About.tsx:503,517-525`）；账号/安装检测 `get_accounts`/`account::all`（`lib.rs:1735-1750`、`account/mod.rs:157-159`）。
 8. **无目录选择器**：项目当前未引入 `tauri-plugin-dialog`，从未打开过系统文件夹选择器。
-9. **设置存储**：`Settings`（`settings.rs:49-92`）持久化到 `~/.cc-kanban/settings.json`；已有 `resume_terminal`（`:68-69`）；**无 `default_agent` 字段**。
+9. **设置存储**：`Settings`（`settings.rs:49-92`）持久化到 `~/.meowo/settings.json`；已有 `resume_terminal`（`:68-69`）；**无 `default_agent` 字段**。
 
 ## 方案取舍（关键决策，均已与用户确认）
 
@@ -56,7 +56,7 @@
 
 ### 组件与改动点
 
-#### 1. cc-reporter：Agent 新增裸启动动词
+#### 1. meowo-reporter：Agent 新增裸启动动词
 
 - `Agent` trait 增 `launch_args(&self) -> Vec<String>`（与 `resume_args` 对称，不含 resume/id）：
   - claude → `["claude"]`
@@ -69,13 +69,13 @@
 - **抽取 `spawn_in_terminal(app, argv, cwd, terminal_pref)`**：把 `resume_session`（`lib.rs:1044-1160`）中「终端选择 + spawn」那段（Windows 各分支、wezterm、macOS 分支）抽成独立 helper。`resume_session` 与 `new_session` 都调它——消除重复，保证 resume 行为不回归。resume 特有的乐观 revive / rollback（`prepare_resume`、`rollback_failed_resume`）**留在** `resume_session`，新建不涉及。
 - **新命令 `new_session(app, cwd, provider, terminal: Option<String>)`**：
   1. 校验 cwd 存在且是目录（不存在/无权限 → 返回 Err）。
-  2. `let argv = cc_reporter::agent::for_provider(provider).launch_args();`
+  2. `let argv = meowo_reporter::agent::for_provider(provider).launch_args();`
   3. `spawn_in_terminal(app, argv, cwd, terminal.unwrap_or(settings.resume_terminal))`。
   4. 无 `session_id`、不预改 DB、不做 rollback；spawn 失败直接返回 Err（前端面板展示）。
   注册进 invoke handler（`lib.rs:2244-2272` 同处）。
-- **`check_provider_hooks(provider) -> HooksStatus`**（轻量只读）：判断该 provider 的 cc-reporter hook 是否已登记。
+- **`check_provider_hooks(provider) -> HooksStatus`**（轻量只读）：判断该 provider 的 meowo-reporter hook 是否已登记。
   - claude：读 `~/.claude/settings.json` 的 `hooks` 段，比对 `ccsetup` 写入的条目是否存在（复用 `ccsetup.rs` 的读取/比对口径）。
-  - codex/kimi：读各自 hook 配置（配置文件的精确位置在 writing-plans 阶段依 `scripts/install-hooks.mjs` 与 `provider-setup` spec 定位），判断是否存在指向 cc-reporter 且带正确 `--provider` 的条目。
+  - codex/kimi：读各自 hook 配置（配置文件的精确位置在 writing-plans 阶段依 `scripts/install-hooks.mjs` 与 `provider-setup` spec 定位），判断是否存在指向 meowo-reporter 且带正确 `--provider` 的条目。
   - 返回枚举：`Installed` / `Missing` / `Unknown`（读取失败时降级为 `Unknown`，不误报）。
 - **`recent_cwds(limit) -> Vec<String>`**：从 board.db `sessions` 取 distinct 非空 `cwd`，按 `last_event_at` 倒序，取前 `limit`（默认 8）。
 - **引入 `tauri-plugin-dialog`**：加入依赖并在 builder 注册；前端直接用其 JS API `open({ directory: true })`，不新增后端目录命令。

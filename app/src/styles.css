@@ -1,24 +1,26 @@
 :root {
   color-scheme: dark;
-  /* Claude Code 视觉：暖色近黑底 + 珊瑚橙强调 */
+  /* 翡翠绿强调 + 中性近黑底（原 Claude Code 珊瑚橙已替换）*/
   /* 贴纸底色拆成 rgb + 不透明度，方便「外观设置」单独调透明度（仅影响走 --cc-bg 的贴纸/缩略条）。 */
-  --cc-bg-rgb: 38, 38, 36;
-  --cc-opacity: 0.94;
+  --cc-bg-rgb: 33, 33, 35;
+  --cc-opacity: 1;
   --cc-bg: rgba(var(--cc-bg-rgb), var(--cc-opacity));
   /* 界面密度乘子：外观设置驱动（紧凑 0.9 / 标准 1 / 宽松 1.12）；默认 1，与原视觉逐像素一致。 */
   --cc-ui: 1;
   --cc-surface: rgba(255, 255, 255, 0.05);
   --cc-surface-hover: rgba(255, 255, 255, 0.09);
   --cc-border: rgba(255, 255, 255, 0.09);
-  --cc-accent: #d97757;
-  --cc-accent-dim: #e8956f;
-  --cc-accent-soft: rgba(217, 119, 87, 0.16);
-  --cc-accent-border: rgba(217, 119, 87, 0.4);
+  --cc-accent: #2dd4a7;
+  --cc-accent-dim: #57ddb8;
+  --cc-accent-soft: rgba(45, 212, 167, 0.16);
+  --cc-accent-border: rgba(45, 212, 167, 0.4);
   /* 强调色「当前景文字/图标」时用此色（需对比度）；当填充/高亮时用 --cc-accent（品牌色）。 */
-  --cc-accent-text: #d97757;
-  --cc-text: #f5f4ef;
-  --cc-text-dim: #b0aaa2;
-  --cc-text-faint: #847f78;
+  --cc-accent-text: #3fdcac;
+  /* Claude 品牌赤陶色：仅 provider 徽标(ClaudeMark)专用，独立于全局强调色，换主题色不受影响。 */
+  --cc-claude: #d97757;
+  --cc-text: #eef1ef;
+  --cc-text-dim: #a7afab;
+  --cc-text-faint: #7a817c;
   --cc-ok: #4ec9a5;
   --cc-warn: #e0a23c;
   --cc-err: #e0584c;
@@ -26,7 +28,7 @@
   --cc-ok-vivid: #4ec9a5;
   --cc-warn-vivid: #e0a23c;
   --cc-err-vivid: #e0584c;
-  --cc-run-vivid: #d97757;
+  --cc-run-vivid: #38a8f0;
   /* 圆角规范(对齐 Claude Code / shadcn)：容器 rounded-lg=8，控件 rounded-md=6，小 rounded-sm=4 */
   --r-lg: 8px;
   --r-md: 6px;
@@ -42,19 +44,20 @@
    运行/待交互徽标坐落在黑色 .stk-ind 显示块上，两主题保持一致（像个小屏幕）。 ===== */
 :root[data-theme="light"] {
   color-scheme: light;
-  --cc-bg-rgb: 250, 249, 245;
+  --cc-bg-rgb: 247, 247, 249;
   --cc-surface: rgba(0, 0, 0, 0.035);
   --cc-surface-hover: rgba(0, 0, 0, 0.065);
   --cc-border: rgba(0, 0, 0, 0.1);
   /* 强调色/文字色整体比深色板压暗一档，确保小字号在近白底（及卡片叠层）上达到 WCAG AA。 */
-  --cc-accent: #d97757;
-  --cc-accent-dim: #d97757;
-  --cc-accent-soft: rgba(217, 119, 87, 0.16);
-  --cc-accent-border: rgba(217, 119, 87, 0.42);
-  --cc-accent-text: #b0532f;
-  --cc-text: #2a2823;
-  --cc-text-dim: #5f5a51;
-  --cc-text-faint: #76716a;
+  --cc-accent: #12a67f;
+  --cc-accent-dim: #12a67f;
+  --cc-accent-soft: rgba(18, 166, 127, 0.15);
+  --cc-accent-border: rgba(18, 166, 127, 0.42);
+  --cc-accent-text: #0b7c5c;
+  --cc-claude: #b0532f;
+  --cc-text: #23282a;
+  --cc-text-dim: #565f5a;
+  --cc-text-faint: #6f7873;
   --cc-ok: #1f8a63;
   --cc-warn: #946410;
   --cc-err: #cf4434;
@@ -62,7 +65,7 @@
   --cc-ok-vivid: #17ab77;
   --cc-warn-vivid: #d99a1a;
   --cc-err-vivid: #db453a;
-  --cc-run-vivid: #d9622f;
+  --cc-run-vivid: #1f8fd0;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上；底部一道极淡暗边强化厚度。 */
   --card-elev: 0 1px 2px rgba(0, 0, 0, 0.09), 0 6px 16px -3px rgba(0, 0, 0, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
@@ -103,7 +106,7 @@
 :root[data-theme="light"] .dd-btn:hover { background: rgba(0, 0, 0, 0.06); }
 :root[data-theme="light"] .winclose:hover { background: rgba(0, 0, 0, 0.07); }
 :root[data-theme="light"] .usage-track { background: rgba(0, 0, 0, 0.08); }
-:root[data-theme="light"] .settings { background: #faf9f5; }
+:root[data-theme="light"] .settings { background: #f6f6f7; }
 :root[data-theme="light"] .side { background: rgba(0, 0, 0, 0.035); }
 :root[data-theme="light"] .dd-menu { background: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
 :root[data-theme="light"] .pswitch { background: rgba(0, 0, 0, 0.16); }
@@ -393,8 +396,8 @@ html, body {
 .stk-utab {
   display: flex; align-items: center; justify-content: center;
   padding: calc(2px * var(--cc-ui)) calc(4px * var(--cc-ui)); border-radius: var(--r-sm);
-  /* claude 徽标用 currentColor → 给 accent 色(与会话卡 .stk-agent 一致)；kimi/codex 是固定品牌色, 不受影响。 */
-  color: var(--cc-accent-text);
+  /* Claude 徽标用 currentColor → 给 --cc-claude 品牌橙（kimi/codex 是固定品牌色, 不吃此 color）。 */
+  color: var(--cc-claude);
   opacity: 0.42; background: transparent; border: none; cursor: pointer;
   transition: opacity 0.15s ease;
 }
@@ -551,8 +554,8 @@ html, body {
 }
 /* 停止/已断开：静态虚线圆环 */
 .ring-stop {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   flex: none;
   border-radius: 50%;
   border: 1.5px dashed var(--cc-text-faint);
@@ -642,10 +645,10 @@ html, body {
 .stk-time { flex: none; font-size: calc(10px * var(--cc-ui)); color: var(--cc-text-faint); }
 .stk-line2 { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
 .stk-repo { font-size: calc(10.5px * var(--cc-ui)); color: var(--cc-text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 元信息行：行首 agent 图标兼作连接状态指示（连接=accent，未连接=灰）；模型胶囊右对齐。 */
-.stk-agent { flex: none; display: inline-flex; align-items: center; color: var(--cc-accent-text); }
-/* 断开态弱化：color 让 currentColor 的 Claude logomark 变灰；opacity 让固定品牌色的 kimi 徽标
-   也整体变暗（否则它不吃 color），两类图标离线观感一致。 */
+/* 元信息行：行首 agent 图标兼作连接状态指示（Claude 徽标连接=品牌橙 --cc-claude，未连接=灰）；模型胶囊右对齐。 */
+.stk-agent { flex: none; display: inline-flex; align-items: center; color: var(--cc-claude); }
+/* 断开态弱化：color 让 currentColor 的 Claude logomark 转灰；opacity 让 kimi/codex 固定色徽标
+   也整体变暗（它们不吃 color），三类图标离线观感一致。 */
 .stk-agent-off { color: var(--cc-text-faint); opacity: 0.5; }
 .stk-model { flex: none; margin-left: auto; font-size: calc(10px * var(--cc-ui)); line-height: 1.5; padding: 0 6px; border-radius: var(--r-sm); background: var(--cc-surface-hover); color: var(--cc-text-dim); white-space: nowrap; }
 /* sub 行：活动/错误文案 + （按钮模式）末尾的打开按钮 */
@@ -928,7 +931,7 @@ html, body {
 .settings {
   display: flex;
   height: 100vh;
-  background: #262624;
+  background: #1c1c1e;
   color: var(--cc-text);
   overflow: hidden;
   -webkit-user-select: none;
@@ -1044,7 +1047,6 @@ html, body {
   width: 168px;
   flex: none;
   background: rgba(0, 0, 0, 0.2);
-  border-right: 1px solid var(--cc-border);
   display: flex;
   flex-direction: column;
 }
@@ -1119,10 +1121,9 @@ html, body {
 
 .sec-title { font-size: 16px; font-weight: 600; margin: 4px 0 16px; }
 
-/* 行卡片（多行用分隔线） */
+/* 行卡片（多行用分隔线）：无外框，靠背景明暗从窗底浮出，更扁平现代。 */
 .row-card {
   background: var(--cc-surface);
-  border: 1px solid var(--cc-border);
   border-radius: var(--r-lg);
   overflow: hidden;
 }
@@ -1266,9 +1267,9 @@ html, body {
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   transform: translateY(-50%);
-  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: left 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.pswitch.on .pswitch-knob { transform: translate(16px, -50%); }
+.pswitch.on .pswitch-knob { left: 18px; }
 .pswitch:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 分段控件（外观模式 / 界面密度）：一排互斥的胶囊按钮 */
@@ -1327,7 +1328,7 @@ html, body {
   margin-left: -8px;
   border-radius: 50%;
   background: var(--cc-accent);
-  box-shadow: 0 2px 6px var(--cc-accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   transition: left 0.2s cubic-bezier(0.34, 1.2, 0.5, 1);
 }
 .dslider-point {
@@ -1369,21 +1370,21 @@ html, body {
 .slider::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--cc-accent);
   border: none;
-  box-shadow: 0 0 0 3px var(--cc-accent-soft), 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
 .slider::-moz-range-thumb {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--cc-accent);
   border: none;
-  box-shadow: 0 0 0 3px var(--cc-accent-soft), 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
 
@@ -1441,9 +1442,10 @@ html, body {
   height: 28px;
 }
 .provider-card-icon-claude {
-  background: linear-gradient(135deg, var(--cc-accent-dim), var(--cc-accent));
+  /* Claude 官方 app 图标样式：固定珊瑚橙方块底 + 白 sunburst（currentColor=#fff），与全局强调色无关。 */
+  background: linear-gradient(135deg, #e8956f, #d97757);
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 8px -1px var(--cc-accent-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 8px -1px rgba(217, 119, 87, 0.16);
 }
 /* kimi/codex 自带品牌色圆角方块底，铺满外框，不再套中性背景。 */
 .provider-card-icon:not(.provider-card-icon-claude) {
@@ -1579,14 +1581,28 @@ html, body {
 .swatch {
   width: 22px; height: 22px; flex: none;
   border-radius: 50%; padding: 0; appearance: none; cursor: pointer;
+  /* 未选中无外框；border 占位透明防选中时尺寸跳动，仅 .sel 时显 accent 描边环。 */
   border: 2px solid transparent;
-  /* 细内描边：浅色 swatch 落在深色设置底上也有边界，不糊成一团。 */
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
   transition: transform 0.12s, border-color 0.12s;
 }
 .swatch:hover { transform: scale(1.12); }
 .swatch:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 .swatch.sel { border-color: var(--cc-accent); }
+/* 「无色」swatch：中性圆 + 一道贯穿斜杠，示意「不染色」（禁止符号 ⊘）。 */
+.swatch-none { position: relative; }
+.swatch-none::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(
+    45deg,
+    transparent calc(50% - 1.25px),
+    var(--cc-err) calc(50% - 1.25px),
+    var(--cc-err) calc(50% + 1.25px),
+    transparent calc(50% + 1.25px)
+  );
+}
 
 /* ===== 扁平风（data-sticker-style="flat"）：抹平所有立体投影/内高光/凹凸，仅留 1px 描边 + 纯色面。
    均为贴纸专属类，天然不波及设置窗口的 .row-card 等。带 light 变体的元素需用
@@ -1761,7 +1777,7 @@ html, body {
 }
 
 /* 目录选择器：combobox 一体式——输入框 + 浏览按钮 + 最近项目列表包进一个面板，
-   整体 focus 时珊瑚橙描边；输入实时过滤下方最近项。 */
+   整体 focus 时翡翠绿描边；输入实时过滤下方最近项。 */
 .ns-picker {
   border: 1px solid var(--cc-border);
   border-radius: var(--r-md);
@@ -1791,7 +1807,7 @@ html, body {
 }
 .ns-browse:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
 
-/* 文本输入 / 下拉：统一的深色控件，focus 时珊瑚橙描边。 */
+/* 文本输入 / 下拉：统一的深色控件，focus 时翡翠绿描边。 */
 .ns-input {
   flex: 1;
   min-width: 0;
@@ -1888,7 +1904,7 @@ select.ns-input {
   white-space: nowrap;
 }
 
-/* Agent：等宽竖版选择卡（图标在上、名在下），选中珊瑚橙高亮。 */
+/* Agent：等宽竖版选择卡（图标在上、名在下），选中翡翠绿高亮。 */
 .ns-agents { display: flex; gap: 8px; }
 .ns-agent {
   flex: 1;

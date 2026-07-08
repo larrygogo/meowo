@@ -1,5 +1,5 @@
-use cc_reporter::import::{import_from_dir, ImportOpts};
-use cc_store::Store;
+use meowo_reporter::import::{import_from_dir, ImportOpts};
+use meowo_store::Store;
 use filetime::{set_file_mtime, FileTime};
 use std::fs;
 use std::path::Path;

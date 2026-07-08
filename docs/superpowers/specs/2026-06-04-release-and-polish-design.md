@@ -1,23 +1,23 @@
-# cc-kanban 发布与体验完善 设计文档
+# Meowo 发布与体验完善 设计文档
 
 **日期**：2026-06-04
 **状态**：已通过设计评审，待写实现计划
 
 ## 目标
 
-为已具备核心功能的 cc-kanban 桌面贴纸补齐发布管线与试用体验，共 4 个独立模块：发布管线（CI + 在线更新）、屏幕吸边缩略、首次本地会话导入、空态美化。
+为已具备核心功能的 Meowo 桌面贴纸补齐发布管线与试用体验，共 4 个独立模块：发布管线（CI + 在线更新）、屏幕吸边缩略、首次本地会话导入、空态美化。
 
 ## 背景与现状
 
-- Rust workspace：`cc-store`（SQLite 读写 + transcript 标题解析）、`cc-reporter`（CC hooks 上报，含 transcript 解析与项目命名，**是 lib + bin**）、`app/src-tauri`（cc-app，Tauri v2 贴纸）。
+- Rust workspace：`meowo-store`（SQLite 读写 + transcript 标题解析）、`meowo-reporter`（CC hooks 上报，含 transcript 解析与项目命名，**是 lib + bin**）、`app/src-tauri`（meowo-app，Tauri v2 贴纸）。
 - 前端：React 18 + Vite + TS，`app/src/views/Sticker.tsx` 单视图（tab：全部/待交互/运行中/已归档）。
-- 数据：`~/.cc-kanban/board.db`（WAL）；hooks → cc-reporter → DB ← cc-app（notify 文件监听刷新）。
+- 数据：`~/.meowo/board.db`（WAL）；hooks → meowo-reporter → DB ← meowo-app（notify 文件监听刷新）。
 - 已有 Tauri 插件：`tauri-plugin-window-state`、`tauri-plugin-autostart`。
 - **当前仓库仅本地 git，无远端、无 CI、无 updater。**
 
 ## 已确定的关键决策
 
-1. **发布/更新路线**：GitHub 仓库 `larrygogo/cc-kanban` + GitHub Actions + GitHub Releases + `tauri-plugin-updater`。
+1. **发布/更新路线**：GitHub 仓库 `larrygogo/meowo` + GitHub Actions + GitHub Releases + `tauri-plugin-updater`。
 2. **吸边缩略形态**：竖条（纵向状态色点 + 计数），悬停滑出完整列表；仅支持左/右两边。
 3. **首次导入范围**：近 7 天有活动、最多 30 条，全部标记为 `ended`（历史/已断开）。
 
@@ -40,9 +40,9 @@
 
 **测试**：`Sticker.test.tsx` 用 vitest + @testing-library，对四个 tab 在 `data=[]` 时断言渲染对应主文案。
 
-### C. 首次导入近期会话（cc-reporter lib + cc-app 启动钩子）
+### C. 首次导入近期会话（meowo-reporter lib + meowo-app 启动钩子）
 
-**导入器位置**：`cc-reporter/src/import.rs`，导出 `pub fn import_recent(store: &Store, now_ms: i64, opts: ImportOpts) -> Result<usize, ImportError>`。复用 cc-reporter 已有的 `transcript`（标题）与项目命名逻辑。
+**导入器位置**：`meowo-reporter/src/import.rs`，导出 `pub fn import_recent(store: &Store, now_ms: i64, opts: ImportOpts) -> Result<usize, ImportError>`。复用 meowo-reporter 已有的 `transcript`（标题）与项目命名逻辑。
 
 ```rust
 pub struct ImportOpts {
@@ -56,9 +56,9 @@ pub struct ImportOpts {
 2. 取每个文件 `mtime`，过滤 `now_ms - mtime <= within_ms`，按 mtime 倒序取前 `max_count`。
 3. 每个会话：
    - **cwd**：逐行 JSON 解析，取含顶层 `"cwd"` 字段的条目（取最后一个）。读不到则跳过项目派生，用编码目录名末段兜底作 `project_name`。
-   - **title**：`cc_store::title::title_from_transcript(path)`（custom > ai）。读不到则 `(未命名会话)`。
+   - **title**：`meowo_store::title::title_from_transcript(path)`（custom > ai）。读不到则 `(未命名会话)`。
    - **last_event_at**：文件 mtime（毫秒）。
-   - **project**：有 cwd 时复用 cc-reporter 的 `project_root_and_name(cwd)`（owner/repo 或目录名）；无 cwd 时用兜底名、root 用编码目录名。
+   - **project**：有 cwd 时复用 meowo-reporter 的 `project_root_and_name(cwd)`（owner/repo 或目录名）；无 cwd 时用兜底名、root 用编码目录名。
 
 **写入**：新增 store 方法
 ```rust
@@ -73,14 +73,14 @@ pub fn import_session(
 ```
 直接以 `status='ended'`、`pid=NULL`、`started_at = ended_at = last_event_at = <mtime>` 插入，`ON CONFLICT(cc_session_id) DO NOTHING`（绝不覆盖真实会话）。同时建对应 task（标题），不导入 todo。
 
-**触发（cc-app）**：启动时检查标记文件 `~/.cc-kanban/imported.json`：
-- 不存在 → 后台线程调用 `cc_reporter::import::import_recent(&store, now_ms, ImportOpts::default())` → 写标记文件（内容含导入条数与时间戳）→ `app.emit("board-changed", ())` 刷新 UI。
+**触发（meowo-app）**：启动时检查标记文件 `~/.meowo/imported.json`：
+- 不存在 → 后台线程调用 `meowo_reporter::import::import_recent(&store, now_ms, ImportOpts::default())` → 写标记文件（内容含导入条数与时间戳）→ `app.emit("board-changed", ())` 刷新 UI。
 - 存在 → 跳过。
 - 后台线程执行，不阻塞窗口创建；出错仅记日志不影响启动。
 
-**测试**：`cc-reporter/tests/import_test.rs`，临时 `HOME`/`USERPROFILE` 指向 tempdir，造 3 个 transcript（1 个超 7 天、1 个含 cwd+ai-title、1 个 cc_session_id 已存在于 DB），断言：仅近 7 天被导入、上限生效、已存在的不被覆盖、title/cwd/project 正确。
+**测试**：`meowo-reporter/tests/import_test.rs`，临时 `HOME`/`USERPROFILE` 指向 tempdir，造 3 个 transcript（1 个超 7 天、1 个含 cwd+ai-title、1 个 cc_session_id 已存在于 DB），断言：仅近 7 天被导入、上限生效、已存在的不被覆盖、title/cwd/project 正确。
 
-### B. 屏幕吸边缩略（cc-app Rust + 前端）
+### B. 屏幕吸边缩略（meowo-app Rust + 前端）
 
 **状态机**：
 - `normal`：浮动、全尺寸、可缩放（现状）。
@@ -118,7 +118,7 @@ pub fn import_session(
 - Windows runner（`windows-latest`）。
 
 #### A2 发布 + 在线更新
-1. 建 GitHub 仓库 `larrygogo/cc-kanban`，推送 main。
+1. 建 GitHub 仓库 `larrygogo/meowo`，推送 main。
 2. 加 `tauri-plugin-updater`（Rust crate + JS 包 + capability 权限）。
 3. `tauri signer generate` 生成密钥对；公钥写入 `tauri.conf.json` → `plugins.updater.pubkey`，`bundle.createUpdaterArtifacts: true`，`endpoints` 指向 GitHub Releases 的 `latest.json`。
 4. `.github/workflows/release.yml`：push tag `v*` → `tauri-apps/tauri-action` 在 `windows-latest` 构建、用 `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（仓库 Secrets）签名 → 创建 GitHub Release，上传 NSIS 安装包 + `latest.json`。

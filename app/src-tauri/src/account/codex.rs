@@ -281,19 +281,19 @@ fn auth_mode(auth_json: &Value) -> &str {
 pub struct CodexProviderAccount;
 
 impl ProviderAccount for CodexProviderAccount {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Codex
+    fn key(&self) -> meowo_store::ProviderKey {
+        meowo_store::ProviderKey::Codex
     }
 
     fn account(&self) -> Option<Account> {
-        let home = cc_reporter::codex::codex_home()?;
+        let home = meowo_reporter::codex::codex_home()?;
         let auth = read_auth_json(&home)?;
         parse_codex_account(&auth)
     }
 
     fn usage(&self, _force: bool) -> Option<ProviderUsage> {
         // 纯本地，无网络，force 参数忽略
-        let home = cc_reporter::codex::codex_home()?;
+        let home = meowo_reporter::codex::codex_home()?;
         let rollout = find_latest_rollout(&home)?;
         let payload = tail_scan_token_count(&rollout)?;
         Some(parse_codex_usage(&payload))
@@ -301,7 +301,7 @@ impl ProviderAccount for CodexProviderAccount {
 
     fn usage_supported(&self) -> bool {
         // 仅 chatgpt 模式（订阅）有 rate_limits
-        let Some(home) = cc_reporter::codex::codex_home() else { return false };
+        let Some(home) = meowo_reporter::codex::codex_home() else { return false };
         let Some(auth) = read_auth_json(&home) else { return false };
         auth_mode(&auth) == "chatgpt"
     }

@@ -1,6 +1,6 @@
-# cc-kanban 设计文档
+# Meowo 设计文档
 
-> 工作名 `cc-kanban`，可改。日期：2026-06-03。
+> 工作名 `Meowo`，可改。日期：2026-06-03。
 
 ## 1. 背景与目标
 
@@ -56,8 +56,8 @@ Tauri v2 桌面应用，三类界面：
 Claude Code 会话
   └─(hooks, 全局 ~/.claude/settings.json)
        SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd
-          └─► cc-reporter (Rust 单文件 exe，解析 hook 的 stdin JSON)
-                 └─► SQLite (~/.cc-kanban/board.db, WAL 模式)
+          └─► meowo-reporter (Rust 单文件 exe，解析 hook 的 stdin JSON)
+                 └─► SQLite (~/.meowo/board.db, WAL 模式)
                         ▲
                         └── Tauri 后端 read + notify 文件监听 → 实时刷新 UI
 ```
@@ -71,7 +71,7 @@ Claude Code 会话
 
 ## 4. 核心组件
 
-### 4.1 cc-reporter（Rust CLI）
+### 4.1 meowo-reporter（Rust CLI）
 
 - 被 hooks 调用，从 stdin 读取 Claude Code 传入的 hook JSON，upsert 进 SQLite。
 - 单文件静态 exe，轻、快、零运行时依赖。
@@ -122,7 +122,7 @@ events(id, session_id, kind, payload, created_at)
 
 ## 7. 测试与错误处理
 
-- **cc-reporter**：hook JSON 解析、并发写 SQLite（WAL）、自动建库——单元测试覆盖。出错静默退出码 0。
+- **meowo-reporter**：hook JSON 解析、并发写 SQLite（WAL）、自动建库——单元测试覆盖。出错静默退出码 0。
 - **Tauri core**：文件监听去抖、库读取容错（库损坏 / 缺失时降级提示而非崩溃）。
 - **前端**：拖拽改列写回库、乐观更新 + 失败回滚。
 
@@ -135,4 +135,4 @@ events(id, session_id, kind, payload, created_at)
 
 ## 9. 交付范围
 
-本 spec 为第一个可独立交付子项目：单机本地版，含 cc-reporter + SQLite + Tauri App（总览 / 项目看板 / 桌面贴纸）。手机端与多端同步留待后续独立立项。
+本 spec 为第一个可独立交付子项目：单机本地版，含 meowo-reporter + SQLite + Tauri App（总览 / 项目看板 / 桌面贴纸）。手机端与多端同步留待后续独立立项。

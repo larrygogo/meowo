@@ -100,7 +100,7 @@ const previewPng = await page.evaluate(
   },
   { SIZE, alpha: rgba }
 );
-const previewPath = path.join(tmpdir(), "cc-kanban-menubar-preview.png");
+const previewPath = path.join(tmpdir(), "meowo-menubar-preview.png");
 writeFileSync(previewPath, Buffer.from(previewPng));
 
 await browser.close();

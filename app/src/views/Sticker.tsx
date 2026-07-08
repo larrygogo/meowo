@@ -387,11 +387,11 @@ function CardContextMenu({
   );
 }
 
-const PIN_KEY = "cc-kanban-pinned";
-const STAR_KEY = "cc-kanban-starred";
+const PIN_KEY = "meowo-pinned";
+const STAR_KEY = "meowo-starred";
 // 用量屏选中的 provider 偏好：折叠/展开会卸载重挂 UsageScreen，持久化以记住上次选择
 // （该 provider 仍在活跃列表就沿用，被关/找不到才退回第一个——见 UsageScreen selected 计算）。
-const USAGE_KEY = "cc-kanban-usage-provider";
+const USAGE_KEY = "meowo-usage-provider";
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
 
 /** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
@@ -627,7 +627,7 @@ export function Sticker({
   // 归档自动隐藏天数 + 打开终端方式 + 卡片菜单方式 + 贴纸配额 provider 列表：启动时读设置，并监听实时变更。
   const [hideDays, setHideDays] = useState(0);
   const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
-  const [menuMode, setMenuMode] = useState<CardMenuMode>("context");
+  const [menuMode, setMenuMode] = useState<CardMenuMode>("button");
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   const [availAgents, setAvailAgents] = useState<string[]>([]);
@@ -635,7 +635,7 @@ export function Sticker({
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
       setOpenMode(s.terminal_open_mode);
-      setMenuMode(s.card_menu_mode ?? "context");
+      setMenuMode(s.card_menu_mode ?? "button");
       setPreviewEnabled(s.preview_enabled);
       setQuotaProviders(s.sticker_quota_providers ?? ["claude"]);
     };

@@ -9,17 +9,17 @@ $ vite
 [2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
      Running DevCommand (`cargo  run --no-default-features --color always --`)
         Info Watching C:\Users\larry\Desktop\workspace\cc-kanban\app\src-tauri for changes...
-        Info Watching C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store for changes...
+        Info Watching C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store for changes...
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s
      Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\title.rs changed. Rebuilding application...
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\title.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.35s
      Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\lib.rs changed. Rebuilding application...
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\lib.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
-   Compiling cc-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store)
-    Building [=======================> ] 407/410: cc-store
+   Compiling meowo-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store)
+    Building [=======================> ] 407/410: meowo-store
                                                             
    Compiling cc-app v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\app\src-tauri)
     Building [=======================> ] 408/410: cc-app  
@@ -27,61 +27,61 @@ $ vite
                                                             
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.95s
      Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\query.rs changed. Rebuilding application...
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\query.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
-   Compiling cc-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store)
-    Building [=======================> ] 407/410: cc-store
+   Compiling meowo-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store)
+    Building [=======================> ] 407/410: meowo-store
                                                             
 error[E0063]: missing field `cwd` in initializer of `LiveSession`
-   --> crates\cc-store\src\query.rs:165:22
+   --> crates\meowo-store\src\query.rs:165:22
     |
 165 |             out.push(LiveSession {
     |                      ^^^^^^^^^^^ missing `cwd`
 
-    Building [=======================> ] 407/410: cc-store
+    Building [=======================> ] 407/410: meowo-store
                                                             
 For more information about this error, try `rustc --explain E0063`.
-    Building [=======================> ] 407/410: cc-store
+    Building [=======================> ] 407/410: meowo-store
                                                             
-error: could not compile `cc-store` (lib) due to 1 previous error
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\query.rs changed. Rebuilding application...
+error: could not compile `meowo-store` (lib) due to 1 previous error
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\query.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
-   Compiling cc-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store)
-    Building [=======================> ] 407/410: cc-store
+   Compiling meowo-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store)
+    Building [=======================> ] 407/410: meowo-store
                                                             
 error[E0063]: missing field `cwd` in initializer of `LiveSession`
-   --> crates\cc-store\src\query.rs:165:22
+   --> crates\meowo-store\src\query.rs:165:22
     |
 165 |             out.push(LiveSession {
     |                      ^^^^^^^^^^^ missing `cwd`
 
-    Building [=======================> ] 407/410: cc-store
+    Building [=======================> ] 407/410: meowo-store
                                                             
 For more information about this error, try `rustc --explain E0063`.
-    Building [=======================> ] 407/410: cc-store
+    Building [=======================> ] 407/410: meowo-store
                                                             
-error: could not compile `cc-store` (lib) due to 1 previous error
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\query.rs changed. Rebuilding application...
+error: could not compile `meowo-store` (lib) due to 1 previous error
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\query.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
-   Compiling cc-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store)
-    Building [=======================> ] 407/410: cc-store
+   Compiling meowo-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store)
+    Building [=======================> ] 407/410: meowo-store
                                                             
 error[E0063]: missing field `cwd` in initializer of `LiveSession`
-   --> crates\cc-store\src\query.rs:166:22
+   --> crates\meowo-store\src\query.rs:166:22
     |
 166 |             out.push(LiveSession {
     |                      ^^^^^^^^^^^ missing `cwd`
 
-    Building [=======================> ] 407/410: cc-store
+    Building [=======================> ] 407/410: meowo-store
                                                             
 For more information about this error, try `rustc --explain E0063`.
-    Building [=======================> ] 407/410: cc-store
+    Building [=======================> ] 407/410: meowo-store
                                                             
-error: could not compile `cc-store` (lib) due to 1 previous error
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\query.rs changed. Rebuilding application...
+error: could not compile `meowo-store` (lib) due to 1 previous error
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\query.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
-   Compiling cc-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store)
-    Building [=======================> ] 407/410: cc-store
+   Compiling meowo-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store)
+    Building [=======================> ] 407/410: meowo-store
                                                             
    Compiling cc-app v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\app\src-tauri)
     Building [=======================> ] 408/410: cc-app  
@@ -97,10 +97,10 @@ error: could not compile `cc-store` (lib) due to 1 previous error
                                                             
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.98s
      Running `C:\Users\larry\Desktop\workspace\cc-kanban\target\debug\cc-app.exe`
-        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store\src\title.rs changed. Rebuilding application...
+        Info File C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store\src\title.rs changed. Rebuilding application...
      Running DevCommand (`cargo  run --no-default-features --color always --`)
-   Compiling cc-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\cc-store)
-    Building [=======================> ] 407/410: cc-store
+   Compiling meowo-store v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\crates\meowo-store)
+    Building [=======================> ] 407/410: meowo-store
                                                             
    Compiling cc-app v0.1.0 (C:\Users\larry\Desktop\workspace\cc-kanban\app\src-tauri)
     Building [=======================> ] 408/410: cc-app  

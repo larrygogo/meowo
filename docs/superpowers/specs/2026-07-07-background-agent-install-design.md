@@ -16,7 +16,7 @@
 
 ### 明确不做重启
 
-先前设想「装完需重启 cc-app 才生效」。经核实已不成立：检测（`CodexAgent::is_installed` 等）与
+先前设想「装完需重启 meowo-app 才生效」。经核实已不成立：检测（`CodexAgent::is_installed` 等）与
 启动会话（`launch_args`/`codex_launch_prefix`）均走 agent 的**绝对路径**，安装脚本落盘后立即可
 识别；且 `ccsetup::apply` 启动时只给 Claude Code 配 hooks、与新装 agent 无关。故**去掉一切重启
 提示与一键重启**，装完自动刷新即可。
@@ -68,7 +68,7 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
 流程：
 1. 解析 `ProviderKey` → `agent::for_provider(key).install_script(cfg!(windows))`，无脚本则返回 Err
    （沿用现有「该 agent 没有可用的一键安装命令」）。
-2. 写临时脚本到 `%TEMP%/cc-kanban-install-<provider>.ps1`（Windows）/ `.../…-<provider>.sh`（macOS），
+2. 写临时脚本到 `%TEMP%/meowo-install-<provider>.ps1`（Windows）/ `.../…-<provider>.sh`（macOS），
    内容为一层薄包装：`try { <script> } catch { 输出 "Installation failed: …" 一行 }`。
    按 provider 命名，允许不同 provider 并行安装、互不覆盖临时文件。
 3. 在 blocking 线程里 spawn shell 跑该脚本：

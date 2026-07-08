@@ -15,7 +15,7 @@
   filter: blur(90px);
   opacity: 0.16;
 }
-.demo-blob-a { width: 420px; height: 420px; left: -90px; top: 240px; background: #d97757; }
+.demo-blob-a { width: 420px; height: 420px; left: -90px; top: 240px; background: #2dd4a7; }
 .demo-blob-b { width: 380px; height: 380px; right: -60px; top: -120px; background: #4ec9a5; opacity: 0.1; }
 /* 细噪点:遮 GIF 量化色带;静态内容帧间差分为透明,不增体积 */
 .demo-grain {
@@ -119,7 +119,7 @@
   height: 34px;
   margin: -17px 0 0 -17px;
   border-radius: 50%;
-  border: 2px solid #d97757;
+  border: 2px solid #2dd4a7;
   pointer-events: none;
   animation: demo-ripple 0.5s ease-out both;
 }

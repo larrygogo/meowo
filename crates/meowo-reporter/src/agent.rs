@@ -1,9 +1,9 @@
-//! Agent（CLI 提供方）抽象。把散落在 dispatch/proc/cc-app 的 provider 专属逻辑收成一处，
-//! 加新 CLI 只需新增一个 `impl Agent` 并在 `ALL` 注册。cc-app 也依赖本 crate，故两个 Rust crate
+//! Agent（CLI 提供方）抽象。把散落在 dispatch/proc/meowo-app 的 provider 专属逻辑收成一处，
+//! 加新 CLI 只需新增一个 `impl Agent` 并在 `ALL` 注册。meowo-app 也依赖本 crate，故两个 Rust crate
 //! 共用同一套进程名/resume 定义（单一事实源），消除「一处精确一处子串」的口径漂移。
 
 use crate::hook::HookEvent;
-use cc_store::ProviderKey;
+use meowo_store::ProviderKey;
 
 /// Stop 时要落库的输出：最近一条 AI 正文 + 模型展示名（kimi 走 transcript，一次读出两者）。
 #[derive(Debug, Default, PartialEq)]
@@ -24,7 +24,7 @@ pub struct ContextUsage {
 pub trait Agent: Sync {
     /// provider key（与 DB sessions.provider / 前端一致）。
     fn key(&self) -> ProviderKey;
-    /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + cc-app 判活共用。
+    /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + meowo-app 判活共用。
     fn process_names(&self) -> &'static [&'static str];
     /// Stop 时取最近 AI 正文 + 模型（claude 用 hook 携带的，kimi 读 wire.jsonl 一次出两者）。
     fn stop_outputs(&self, ev: &HookEvent) -> StopOutputs;
@@ -35,12 +35,12 @@ pub trait Agent: Sync {
     }
     /// 是否由 transcript 解析标题（claude 是；kimi 否，靠首条 prompt 命名）。
     fn resolves_transcript_title(&self) -> bool;
-    /// 该 agent 是否把任务标题写进终端标签页标题。claude 写 → cc-app 可按标题精确切到对应 WT 标签；
-    /// codex/kimi 不写（标签是默认目录名/命令名）→ 按任务标题找标签会错抓同名无关标签，cc-app 应改走
+    /// 该 agent 是否把任务标题写进终端标签页标题。claude 写 → meowo-app 可按标题精确切到对应 WT 标签；
+    /// codex/kimi 不写（标签是默认目录名/命令名）→ 按任务标题找标签会错抓同名无关标签，meowo-app 应改走
     /// 窗口级定位（按 root_pid 祖先/进程组找宿主窗口置前，不强选标签）。
     fn sets_terminal_tab_title(&self) -> bool;
-    /// cc-reporter 是否应在 hook 时往本标签 ConPTY 写 session_id token（让 cc-app 能按 token 精确切到
-    /// 该标签，解决同窗口同目录两会话标签同名分不清）。claude=false（自己写任务名，cc-app 按任务名匹配）；
+    /// meowo-reporter 是否应在 hook 时往本标签 ConPTY 写 session_id token（让 meowo-app 能按 token 精确切到
+    /// 该标签，解决同窗口同目录两会话标签同名分不清）。claude=false（自己写任务名，meowo-app 按任务名匹配）；
     /// kimi=true（不写标题且不抢 → 由我们补 token，已验证可精确切标签）；codex=false（持续 SetWindowTitle
     /// 抢标题、无法绕过，写了也被盖，详见其 impl）。见 crate::tabtitle。
     fn writes_tab_token(&self) -> bool {
@@ -62,7 +62,7 @@ pub trait Agent: Sync {
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool;
     /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。claude 返回 ClaudeTranscript；
     /// codex/kimi 暂无（None）——它们的标题走首条 prompt、预览/模型走 stop_outputs，不读 transcript 分析。
-    fn transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec> {
+    fn transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec> {
         None
     }
 }
@@ -105,8 +105,8 @@ impl Agent for ClaudeAgent {
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool {
         write_claude_custom_title(session_id, cwd, title)
     }
-    fn transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec> {
-        Some(&cc_store::CLAUDE_TRANSCRIPT)
+    fn transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec> {
+        Some(&meowo_store::CLAUDE_TRANSCRIPT)
     }
 }
 
@@ -135,7 +135,7 @@ impl Agent for KimiAgent {
         false
     }
     fn writes_tab_token(&self) -> bool {
-        // kimi 不写标签标题、也不抢 → 由 cc-reporter 在 hook 时补 session_id token。
+        // kimi 不写标签标题、也不抢 → 由 meowo-reporter 在 hook 时补 session_id token。
         true
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
@@ -190,14 +190,14 @@ impl Agent for CodexAgent {
         false
     }
     fn sets_terminal_tab_title(&self) -> bool {
-        // codex 不写「任务标题」式标签名（cc-app 无法按任务名匹配）→ 改由下面 writes_tab_token 补 token。
+        // codex 不写「任务标题」式标签名（meowo-app 无法按任务名匹配）→ 改由下面 writes_tab_token 补 token。
         false
     }
     fn writes_tab_token(&self) -> bool {
         // 暂关：codex 持续用 SetWindowTitle 管理标签标题(spinner+project，如 "⠹ larry")，会盖掉我们写的
         // 任何 token，且无 session_id 组件、无禁用开关可绕过(实测 0.142.3=当前最新发布版)。其源码里
         // 「tui.terminal_title=[] 关闭标题管理」只在未发布主干，已发布版 [] 反而 clear 成终端默认(路径)。
-        // 故 codex 的精确切标签暂不可达，cc-app 走窗口级兜底。待 codex 发布 [] 禁用后，置 true 即与 kimi 同。
+        // 故 codex 的精确切标签暂不可达，meowo-app 走窗口级兜底。待 codex 发布 [] 禁用后，置 true 即与 kimi 同。
         false
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
@@ -228,7 +228,7 @@ impl Agent for CodexAgent {
         })
     }
     fn write_rename(&self, _session_id: &str, _cwd: Option<&str>, _title: &str) -> bool {
-        // codex 自定义标题走 app-server JSON-RPC（成本高），暂不回写；重命名仅改 cc-kanban DB。
+        // codex 自定义标题走 app-server JSON-RPC（成本高），暂不回写；重命名仅改 Meowo DB。
         false
     }
 }
@@ -238,10 +238,10 @@ impl Agent for CodexAgent {
 /// session_id 已由命令层校验为安全形态（无路径分隔符/穿越），此处直接拼路径。
 fn write_claude_custom_title(session_id: &str, cwd: Option<&str>, title: &str) -> bool {
     use std::io::Write;
-    let Some(path) = cc_store::title::resolve_cwd(cwd, session_id)
-        .and_then(|c| cc_store::title::reconstruct_transcript_path(&c, session_id))
+    let Some(path) = meowo_store::title::resolve_cwd(cwd, session_id)
+        .and_then(|c| meowo_store::title::reconstruct_transcript_path(&c, session_id))
         .filter(|p| p.exists())
-        .or_else(|| cc_store::title::find_transcript_by_session(session_id))
+        .or_else(|| meowo_store::title::find_transcript_by_session(session_id))
     else {
         return false;
     };
@@ -272,7 +272,7 @@ pub fn for_provider(key: ProviderKey) -> &'static dyn Agent {
     ALL.iter().copied().find(|a| a.key() == key).unwrap_or(&CLAUDE)
 }
 
-/// 所有已知 agent（供 cc-app 收集全部进程名判活）。
+/// 所有已知 agent（供 meowo-app 收集全部进程名判活）。
 pub fn all() -> &'static [&'static dyn Agent] {
     ALL
 }
@@ -295,7 +295,7 @@ fn in_local_bin(name: &str) -> bool {
 }
 
 /// 进程名（可含路径、大小写不敏感）是否属于任一已知 agent 本体——取 basename **精确**比对。
-/// owner_pid 上溯与 cc-app 判活/清理共用此函数，杜绝子串误匹配（如名字恰好含 kimi 的无关进程）。
+/// owner_pid 上溯与 meowo-app 判活/清理共用此函数，杜绝子串误匹配（如名字恰好含 kimi 的无关进程）。
 pub fn is_agent_process(name: &str) -> bool {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name).to_ascii_lowercase();
     ALL.iter().any(|a| a.process_names().contains(&base.as_str()))

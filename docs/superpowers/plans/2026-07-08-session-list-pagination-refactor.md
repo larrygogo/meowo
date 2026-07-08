@@ -22,8 +22,8 @@
 
 ## 文件结构
 
-- `crates/cc-store/src/query.rs`：`live_sessions` 加 search + 排序/游标按 filter；新增 `escape_like`。
-- `crates/cc-store/tests/query_test.rs`：14 处 `live_sessions(` 调用补 `None`；新增 search/排序单测。
+- `crates/meowo-store/src/query.rs`：`live_sessions` 加 search + 排序/游标按 filter；新增 `escape_like`。
+- `crates/meowo-store/tests/query_test.rs`：14 处 `live_sessions(` 调用补 `None`；新增 search/排序单测。
 - `app/src-tauri/src/lib.rs`：`get_live_sessions_page` 命令 + `live_sessions_blocking` 加 search；补 1954 内部调用。
 - `app/src/api.ts`：`getLiveSessionsPage` 加 search。
 - `app/src/App.tsx`：分页改 reachedEnd 驱动 + W 窗口 refresh + 节流（Task 3）；search 状态 + 传 props（Task 4）。
@@ -35,15 +35,15 @@
 ## Task 1: 后端 `live_sessions` 加 search + 按 filter 排序/游标
 
 **Files:**
-- Modify: `crates/cc-store/src/query.rs`（`live_sessions` 函数；新增 `escape_like`）
-- Modify: `crates/cc-store/tests/query_test.rs`（补 `None` + 新测试）
+- Modify: `crates/meowo-store/src/query.rs`（`live_sessions` 函数；新增 `escape_like`）
+- Modify: `crates/meowo-store/tests/query_test.rs`（补 `None` + 新测试）
 
 **Interfaces:**
 - Produces: `live_sessions(filter: Option<&str>, search: Option<&str>, before_last_event_at: Option<i64>, before_id: Option<i64>, limit: usize) -> Result<Vec<LiveSession>, StoreError>`（供 Task 2 的 `live_sessions_blocking` 调用）。
 
 - [ ] **Step 1: 补齐现有调用点（先让改签名后仍编译），写新测试**
 
-在 `crates/cc-store/tests/query_test.rs` 中，把所有 `live_sessions(` 调用补入 `None` search（在 filter 之后）。共 14 处（行号约 116/137/157/161/165/169/209/232/242/251/275/346/347/380），例如：
+在 `crates/meowo-store/tests/query_test.rs` 中，把所有 `live_sessions(` 调用补入 `None` search（在 filter 之后）。共 14 处（行号约 116/137/157/161/165/169/209/232/242/251/275/346/347/380），例如：
 - `store.live_sessions(None, None, None, 1000)` → `store.live_sessions(None, None, None, None, 1000)`
 - `store.live_sessions(Some("all"), None, None, 100)` → `store.live_sessions(Some("all"), None, None, None, 100)`
 - `store.live_sessions(Some("all"), Some(last.session.last_event_at), Some(last.session.id), 100)` → `store.live_sessions(Some("all"), None, Some(last.session.last_event_at), Some(last.session.id), 100)`
@@ -143,12 +143,12 @@ fn live_sessions_search_none_is_backcompat() {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cargo test -p cc-store live_sessions_search`
+Run: `cargo test -p meowo-store live_sessions_search`
 Expected: 编译失败（`live_sessions` 参数个数不匹配 / `escape_like` 未定义），或新测试断言失败。
 
 - [ ] **Step 3: 实现 `live_sessions` 新签名 + `escape_like`**
 
-在 `crates/cc-store/src/query.rs` 中，把整个 `pub fn live_sessions(...) { ... }`（从 `pub fn live_sessions` 到其对应的收尾 `Ok(out)\n    }`）替换为：
+在 `crates/meowo-store/src/query.rs` 中，把整个 `pub fn live_sessions(...) { ... }`（从 `pub fn live_sessions` 到其对应的收尾 `Ok(out)\n    }`）替换为：
 
 ```rust
     /// 活跃区：按 filter（+ 可选 search，作用于当前 tab 内）取会话，附项目名、任务标题、进度。
@@ -309,13 +309,13 @@ fn escape_like(s: &str) -> String {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `cargo test -p cc-store`
+Run: `cargo test -p meowo-store`
 Expected: 全绿（新 4 测试 + 既有测试补 None 后照常通过）。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add crates/cc-store/src/query.rs crates/cc-store/tests/query_test.rs
+git add crates/meowo-store/src/query.rs crates/meowo-store/tests/query_test.rs
 git commit -m "feat(session-list): live_sessions 加 search(当前tab内) + waiting ASC 排序/游标下沉后端"
 ```
 
@@ -338,7 +338,7 @@ git commit -m "feat(session-list): live_sessions 加 search(当前tab内) + wait
 ```rust
 fn live_sessions_blocking(
     db_path: &PathBuf,
-    tx_cache: &Mutex<cc_store::TranscriptCache>,
+    tx_cache: &Mutex<meowo_store::TranscriptCache>,
     filter: &str,
     search: Option<&str>,
     before_last_event_at: Option<i64>,
@@ -410,14 +410,14 @@ export function getLiveSessionsPage(
 
 - [ ] **Step 5: 编译检查**
 
-Run: `cargo check -p cc-app`
-Expected: `Finished`，无错误（注意：本机若有 cc-app.exe 运行，`cargo build` 链接会 os error 5，`cargo check` 不链接、应过）。
+Run: `cargo check -p meowo-app`
+Expected: `Finished`，无错误（注意：本机若有 meowo-app.exe 运行，`cargo build` 链接会 os error 5，`cargo check` 不链接、应过）。
 Run: `cd app && bunx tsc --noEmit`
 Expected: 报错——App.tsx 仍以旧 2 参调用 `getLiveSessionsPage`（Task 3 修）。**本步只需 `cargo check` 过**；tsc 待 Task 3。
 
 - [ ] **Step 6: clippy**
 
-Run: `cargo clippy -p cc-app`
+Run: `cargo clippy -p meowo-app`
 Expected: `Finished` 无 warning。
 
 - [ ] **Step 7: 提交**
@@ -736,4 +736,4 @@ git commit -m "feat(session-list): 搜索下沉后端(当前tab内全库搜) + c
 - **Spec 覆盖**：搜索下沉+当前tab内(T1/T2/T4)、reachedEnd 分页(T3)、W 窗口 refresh+节流(T3)、waiting ASC 下沉(T1)、counts.all 口径(T4)、去客户端搜索/waiting重排(T4)、starred 保留(T4)、P3 不含 —— 均有对应任务。
 - **无占位测试**：T3 不新增自动化测试（loadMore 属滚动触发的集成行为，闸口=不回归+tsc+手动，已显式说明）；T4 用真实的 onSearchChange RED→GREEN 测试；counts.all 是无展示出口的潜伏一行，评审核对而非单测。均非占位。
 - **类型一致**：`live_sessions(filter, search, cursor.., limit)`、`getLiveSessionsPage(filter, search, cursor, limit)`、`get_live_sessions_page(filter, search, ...)`、Sticker `search`/`onSearchChange` 前后一致。
-- **编译顺序**：T1 改签名后 cc-store 独立编译+测试通过；cc-app 待 T2 接；前端 tsc 待 T3/T4。各任务闸口已相应说明。
+- **编译顺序**：T1 改签名后 meowo-store 独立编译+测试通过；meowo-app 待 T2 接；前端 tsc 待 T3/T4。各任务闸口已相应说明。

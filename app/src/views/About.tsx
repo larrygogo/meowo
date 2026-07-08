@@ -19,8 +19,8 @@ const hideOptions = (t: Dict) => [
   { value: 30, label: t.settings.hideDays(30) },
 ];
 
-const REPO = "github.com/larrygogo/cc-kanban";
-const REPO_URL = "https://github.com/larrygogo/cc-kanban";
+const REPO = "github.com/larrygogo/meowo";
+const REPO_URL = "https://github.com/larrygogo/meowo";
 const openExt = (url: string) => invoke("open_url", { url }).catch(() => {});
 
 type Section = "general" | "appearance" | "account" | "about";
@@ -34,7 +34,7 @@ const SETTINGS_DEFAULTS: Settings = {
   resume_terminal: "terminal",
   language: "auto",
   terminal_open_mode: "card",
-  card_menu_mode: "context",
+  card_menu_mode: "button",
   preview_enabled: true,
   sticker_style: "elevated",
   sticker_color: "classic",
@@ -648,7 +648,7 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.cardMenuDesc}</div>
           </div>
           <Dropdown
-            value={settings?.card_menu_mode ?? "context"}
+            value={settings?.card_menu_mode ?? "button"}
             options={[
               { value: "context" as const, label: t.settings.cardMenuContext },
               { value: "button" as const, label: t.settings.cardMenuButton },
@@ -755,7 +755,7 @@ function SwatchPicker({
           aria-checked={k === value}
           tabIndex={k === value ? 0 : -1}
           key={k}
-          className={"swatch" + (k === value ? " sel" : "")}
+          className={"swatch" + (k === value ? " sel" : "") + (k === "neutral" ? " swatch-none" : "")}
           style={{ background: STICKER_COLORS[k].swatch }}
           data-tip={names[k] ?? k}
           aria-label={names[k] ?? k}

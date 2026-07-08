@@ -1,5 +1,5 @@
-use cc_reporter::dispatch::owner_repo_from_url_pub;
-use cc_reporter::hook::HookEvent;
+use meowo_reporter::dispatch::owner_repo_from_url_pub;
+use meowo_reporter::hook::HookEvent;
 use std::io::Write as _;
 
 #[test]
@@ -72,13 +72,13 @@ fn parse_tolerates_unknown_fields() {
     assert_eq!(ev.hook_event_name, "Stop");
 }
 
-use cc_reporter::dispatch::dispatch;
-use cc_store::{ProviderKey, Store};
+use meowo_reporter::dispatch::dispatch;
+use meowo_store::{ProviderKey, Store};
 
 fn ev(json: &str) -> HookEvent { HookEvent::parse(json).unwrap() }
 
 /// 测试默认走 claude provider；provider 行为单独在 kimi_session_tagged_with_provider 覆盖。
-fn disp(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), cc_store::StoreError> {
+fn disp(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), meowo_store::StoreError> {
     dispatch(store, ev, now_ms, ProviderKey::Claude)
 }
 

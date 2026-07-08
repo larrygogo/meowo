@@ -1,8 +1,8 @@
 //! 首次启动时导入 ~/.claude/projects 下近期的历史会话（标记为 ended）。
-//! 复用 cc-store 的标题解析与本 crate 的项目命名逻辑。
+//! 复用 meowo-store 的标题解析与本 crate 的项目命名逻辑。
 
 use crate::dispatch::project_root_and_name;
-use cc_store::{Store, StoreError};
+use meowo_store::{Store, StoreError};
 use std::path::Path;
 
 /// 导入参数。
@@ -77,9 +77,9 @@ pub fn import_from_dir(
     for (mtime, cc_session_id, path, dir_name) in found {
         let title = path
             .to_str()
-            .and_then(cc_store::title::title_from_transcript)
+            .and_then(meowo_store::title::title_from_transcript)
             .unwrap_or_else(|| "(未命名会话)".to_string());
-        let cwd = path.to_str().and_then(cc_store::title::cwd_from_transcript);
+        let cwd = path.to_str().and_then(meowo_store::title::cwd_from_transcript);
         let (root, name) = match cwd.as_deref() {
             Some(c) => project_root_and_name(c),
             None => fallback_project(&dir_name),

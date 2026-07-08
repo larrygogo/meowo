@@ -44,7 +44,7 @@ export function Updater() {
   }, [tall]);
 
   // dev 专用:一键切换「有可用更新」mock(见 useUpdate 的 devMockUpdate),生产构建剔除。
-  const MOCK_KEY = "cc-kanban-mock-update";
+  const MOCK_KEY = "meowo-mock-update";
   const toggleDevMock = () => {
     if (localStorage.getItem(MOCK_KEY)) localStorage.removeItem(MOCK_KEY);
     else localStorage.setItem(MOCK_KEY, "9.9.9");
@@ -70,7 +70,7 @@ export function Updater() {
         <div className="up-head">
           <img className="up-logo" src={logoUrl} width={48} height={48} alt="" />
           <div className="up-head-text">
-            <div className="up-name">cc-kanban</div>
+            <div className="up-name">Meowo</div>
             <div className="up-cur">{t.updater.current(current || "—")}</div>
           </div>
         </div>

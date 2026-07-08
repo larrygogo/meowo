@@ -10,7 +10,7 @@
 - 代码英文、注释中文。claude 之外零回归（claude 默认在列表里，底栏默认仍显 claude）。
 - Rust `Settings` 与 TS `Settings` 类型、demo mock 三者字段一致。
 - 分支：直接在 feat/kimi-code-cli-adapter-20260626（延续未推送的账号+用量特性）。
-- 验证：`node scripts/prepare-sidecar.mjs && cargo test -p cc-app`、`cargo clippy -p cc-app --all-targets -- -D warnings`、`cd app && bun run build && bun run test`。
+- 验证：`node scripts/prepare-sidecar.mjs && cargo test -p meowo-app`、`cargo clippy -p meowo-app --all-targets -- -D warnings`、`cd app && bun run build && bun run test`。
 
 ## 改动
 

@@ -16,7 +16,7 @@ function mut(fn: () => void): () => void {
 
 export function buildScript(): Timeline {
   const tl = new Timeline(12);
-  const s1 = makeSession({ title: "重构吸边状态机", project: "larrygogo/cc-kanban", activity: "▸ cargo clippy --workspace", ctx: 62, todoDone: 3, todoTotal: 5 });
+  const s1 = makeSession({ title: "重构吸边状态机", project: "larrygogo/meowo", activity: "▸ cargo clippy --workspace", ctx: 62, todoDone: 3, todoTotal: 5 });
   const s2 = makeSession({ title: "接入账号用量面板", project: "larrygogo/autopilot", activity: "▸ 编辑 src/views/Sticker.tsx", ctx: 41, todoDone: 1, todoTotal: 4 });
   const s3 = makeSession({ title: "升级 tauri 到 2.3", project: "larrygogo/cc-relay", status: "stale", agoMin: 12 });
   const s4 = makeSession({ title: "修复 statusline 兼容性", project: "larrygogo/clawmo-ios", status: "ended", connected: false, agoMin: 180 });

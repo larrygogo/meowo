@@ -16,14 +16,14 @@
 - 所有 `wezterm cli` 调用**必须**带 `--no-auto-start`(否则 GUI 未运行时会偷偷拉起 wezterm-mux-server 并永久阻塞——已实测)
 - 所有 `wezterm cli` 调用**必须**显式设置环境变量 `WEZTERM_UNIX_SOCKET=<runtime_dir>\gui-sock-<gui_pid>`(CLI 的自动发现不可靠,已实测连不上)
 - 从 GUI 进程 spawn `wezterm.exe`(console 程序)必须加 `CREATE_NO_WINDOW (0x0800_0000)`,否则闪黑窗;`wezterm-gui.exe` 是 GUI 程序,不需要
-- Rust 单测命令:仓库根目录 `cargo test -p cc-app --lib`;若 tauri_build 报 externalBin 缺失,先跑 `node scripts/prepare-sidecar.mjs`
+- Rust 单测命令:仓库根目录 `cargo test -p meowo-app --lib`;若 tauri_build 报 externalBin 缺失,先跑 `node scripts/prepare-sidecar.mjs`
 
 ## 已验证事实(执行者不必重新验证)
 
 在 larry 机器(WezTerm 20240203-110809,`C:\Program Files\WezTerm\`,已在 PATH)上实测:
 
 1. `wezterm cli list --format json` 返回数组,关键字段:`pane_id`(u64)、`tab_id`、`title`(string,ConPTY 透传的控制台标题)、`cwd`(**file:/// URL 格式**,如 `file:///C:/Users/larry/Desktop/workspace/`)。**没有 pid 字段**,`tty_name` 为 null → pane 匹配只能靠 title/cwd/token。
-2. pane 内进程用 console API 设置标题(SetConsoleTitle 路径)后,`title` 字段**立即**反映 → cc-reporter 写的 token 标签在 WezTerm 下可读,无需改 cc-reporter。
+2. pane 内进程用 console API 设置标题(SetConsoleTitle 路径)后,`title` 字段**立即**反映 → meowo-reporter 写的 token 标签在 WezTerm 下可读,无需改 meowo-reporter。
 3. 进程祖先链:`pwsh(会话) → …shell… → wezterm-gui.exe`;ConPTY 的 `OpenConsole.exe` 是 wezterm-gui 的**兄弟**子进程,不在祖先链上。
 4. socket 文件:`%USERPROFILE%\.local\share\wezterm\gui-sock-<gui pid>`;GUI 退出可能残留文件,必须配合「该 pid 的 wezterm-gui.exe 进程活着」校验。
 5. `wezterm cli spawn --cwd <dir> -- <argv>` 在已开 GUI 中新建 tab(stdout 输出新 pane_id);`wezterm cli activate-pane --pane-id N` 正常;GUI 未运行时 `wezterm-gui start --cwd <dir> -- <argv>` 新开窗口,cwd 正确。
@@ -60,7 +60,7 @@
 - [ ] **Step 1: 建分支**
 
 ```bash
-cd /c/Users/larry/Desktop/workspace/cc-kanban
+cd /c/Users/larry/Desktop/workspace/meowo
 git checkout -b feat/wezterm-terminal-support-20260704 main
 ```
 
@@ -246,7 +246,7 @@ mod wezterm;
 - [ ] **Step 3: 跑测试确认失败**
 
 ```powershell
-cargo test -p cc-app --lib wezterm
+cargo test -p meowo-app --lib wezterm
 ```
 
 Expected: FAIL(assert 失败,非编译错误。若编译错误,先修到能编译再看红)。
@@ -329,10 +329,10 @@ fn match_pane(
 - [ ] **Step 5: 跑测试确认通过**
 
 ```powershell
-cargo test -p cc-app --lib wezterm
+cargo test -p meowo-app --lib wezterm
 ```
 
-Expected: PASS(9 个测试)。再跑全量确认无回归:`cargo test -p cc-app --lib`。
+Expected: PASS(9 个测试)。再跑全量确认无回归:`cargo test -p meowo-app --lib`。
 
 - [ ] **Step 6: Commit**
 
@@ -416,7 +416,7 @@ const resumeTermOptionsWin = (t: Dict): { value: ResumeTerminal; label: string }
 - [ ] **Step 4: 验证编译与类型**
 
 ```powershell
-cargo check -p cc-app
+cargo check -p meowo-app
 cd app; bun run build; cd ..
 ```
 
@@ -582,10 +582,10 @@ spawned 匹配(line 1066-1106):三个现有分支的 `spawn()` 尾部统一补 `
 - [ ] **Step 3: 编译 + 全量单测**
 
 ```powershell
-cargo test -p cc-app --lib
+cargo test -p meowo-app --lib
 ```
 
-Expected: PASS,无警告级回归(`cargo check -p cc-app` 顺带确认)。
+Expected: PASS,无警告级回归(`cargo check -p meowo-app` 顺带确认)。
 
 - [ ] **Step 4: Commit**
 
@@ -673,7 +673,7 @@ lib.rs `focus_session_terminal`(line 642-647)的兜底段改为:
 - [ ] **Step 4: 编译 + 全量单测**
 
 ```powershell
-cargo test -p cc-app --lib
+cargo test -p meowo-app --lib
 ```
 
 Expected: PASS。

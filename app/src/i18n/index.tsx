@@ -9,7 +9,7 @@ import { en } from "./en";
 
 export type Lang = "zh" | "en";
 
-const CACHE_KEY = "cc-kanban-lang";
+const CACHE_KEY = "meowo-lang";
 
 export function resolveLang(setting: string | undefined): Lang {
   if (setting === "zh" || setting === "en") return setting;

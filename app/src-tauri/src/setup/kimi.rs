@@ -77,14 +77,14 @@ pub fn ensure_kimi_hooks(doc: &mut DocumentMut, reporter_native: &str) -> bool {
 pub struct KimiSetup;
 
 impl super::ProviderSetup for KimiSetup {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Kimi
+    fn key(&self) -> meowo_store::ProviderKey {
+        meowo_store::ProviderKey::Kimi
     }
     fn detect(&self) -> bool {
-        cc_reporter::kimi::kimi_share_dir().is_some_and(|d| d.is_dir())
+        meowo_reporter::kimi::kimi_share_dir().is_some_and(|d| d.is_dir())
     }
     fn apply(&self) {
-        let Some(dir) = cc_reporter::kimi::kimi_share_dir() else {
+        let Some(dir) = meowo_reporter::kimi::kimi_share_dir() else {
             return;
         };
         let cfg = dir.join("config.toml");
@@ -132,21 +132,21 @@ mod tests {
     fn ensure_kimi_hooks_adds_all_when_absent_and_preserves_content() {
         let src = "default_model = \"kimi-code/kimi-for-coding\"\n# 用户注释\n[loop_control]\nmax_steps_per_turn = 100\n";
         let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
-        assert!(ensure_kimi_hooks(&mut doc, "C:/x/cc-reporter.exe"));
+        assert!(ensure_kimi_hooks(&mut doc, "C:/x/meowo-reporter.exe"));
         let out = doc.to_string();
         assert!(out.contains("# 用户注释")); // 结构保持：注释仍在
         assert!(out.contains("max_steps_per_turn = 100"));
         for ev in KIMI_EVENTS {
             assert!(out.contains(&format!("event = \"{ev}\"")), "{ev} 未写入");
         }
-        assert!(out.contains(r#""C:/x/cc-reporter.exe" --provider kimi"#));
-        assert!(!ensure_kimi_hooks(&mut doc, "C:/x/cc-reporter.exe")); // 幂等
+        assert!(out.contains(r#""C:/x/meowo-reporter.exe" --provider kimi"#));
+        assert!(!ensure_kimi_hooks(&mut doc, "C:/x/meowo-reporter.exe")); // 幂等
     }
 
     #[test]
     fn ensure_kimi_hooks_adopts_manual_and_updates_stale_path() {
         // 复刻本机手工接线形态：裸路径命令、6 事件、timeout 5。
-        let dev = "C:/Users/larry/Desktop/workspace/cc-kanban/target/release/cc-reporter.exe";
+        let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
         let mut src = String::from("theme = \"light\"\n");
         for ev in KIMI_EVENTS {
             src.push_str(&format!("[[hooks]]\nevent = \"{ev}\"\ncommand = \"{dev} --provider kimi\"\ntimeout = 5\n\n"));
@@ -155,9 +155,9 @@ mod tests {
         // 路径仍存在时（解析等价）：无改动。
         assert!(!ensure_kimi_hooks(&mut doc, dev));
         // 路径失效换 sidecar：6 条 command 全部更新，用户键 theme 不动。
-        assert!(ensure_kimi_hooks(&mut doc, "C:/app/cc-reporter.exe"));
+        assert!(ensure_kimi_hooks(&mut doc, "C:/app/meowo-reporter.exe"));
         let out = doc.to_string();
-        assert_eq!(out.matches(r#""C:/app/cc-reporter.exe" --provider kimi"#).count(), 6);
+        assert_eq!(out.matches(r#""C:/app/meowo-reporter.exe" --provider kimi"#).count(), 6);
         assert!(out.contains("theme = \"light\""));
     }
 
@@ -165,7 +165,7 @@ mod tests {
     fn ensure_kimi_hooks_keeps_user_hook_entries() {
         let src = "[[hooks]]\nevent = \"Notification\"\ncommand = \"my-notify --ding\"\ntimeout = 3\n";
         let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
-        assert!(ensure_kimi_hooks(&mut doc, "C:/x/cc-reporter.exe"));
+        assert!(ensure_kimi_hooks(&mut doc, "C:/x/meowo-reporter.exe"));
         let out = doc.to_string();
         assert!(out.contains("my-notify --ding")); // 用户 hook 原样
         assert_eq!(out.matches("--provider kimi").count(), 6); // 我方 6 条已加
@@ -176,7 +176,7 @@ mod tests {
         // hooks 键存在但非 array-of-tables（inline array / 字符串）：放弃不写坏，返回 false、文档原样。
         for src in ["hooks = []\n", "hooks = \"oops\"\n"] {
             let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
-            assert!(!ensure_kimi_hooks(&mut doc, "C:/x/cc-reporter.exe"), "src={src:?}");
+            assert!(!ensure_kimi_hooks(&mut doc, "C:/x/meowo-reporter.exe"), "src={src:?}");
             assert_eq!(doc.to_string(), src);
         }
     }
@@ -188,7 +188,7 @@ mod tests {
     fn dryrun_kimi() {
         use crate::setup::ProviderSetup;
         KimiSetup.apply();
-        let dir = cc_reporter::kimi::kimi_share_dir().unwrap();
+        let dir = meowo_reporter::kimi::kimi_share_dir().unwrap();
         eprintln!("=== config.toml ===\n{}", std::fs::read_to_string(dir.join("config.toml")).unwrap());
     }
 }

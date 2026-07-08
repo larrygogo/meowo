@@ -1,4 +1,4 @@
-use cc_store::{TodoInput, TodoStatus};
+use meowo_store::{TodoInput, TodoStatus};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

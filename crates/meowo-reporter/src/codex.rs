@@ -41,7 +41,7 @@ pub fn codex_launch_prefix() -> Option<Vec<String>> {
     }
     // 3) 官方独立安装(chatgpt.com/codex/install)：{CODEX_HOME}/packages/standalone/current/bin/codex(.exe)。
     //    `current` 是指向当前 release 的 junction/symlink，跨平台稳定；原生二进制可直接 resume。
-    //    也是修「装完仍显示未安装」的关键：安装脚本只改持久 PATH，运行中的 cc-app 进程 PATH 是启动时旧快照、
+    //    也是修「装完仍显示未安装」的关键：安装脚本只改持久 PATH，运行中的 meowo-app 进程 PATH 是启动时旧快照、
     //    看不到新目录，故直查此固定路径——装完聚焦/刷新即显示已装，且恢复会话走绝对路径不依赖 PATH。
     if let Some(standalone) = codex_home() {
         let exe = standalone

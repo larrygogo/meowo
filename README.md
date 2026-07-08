@@ -1,24 +1,24 @@
 <div align="center">
-  <img src="docs/images/logo.png" width="104" alt="cc-kanban logo" />
-  <h1>cc-kanban</h1>
-  <p><b>一个常驻桌面的「贴纸」,你所有 AI 编程会话（Claude Code / Codex / Kimi）的进度,一眼看全。</b></p>
+  <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
+  <h1>Meowo / 喵呜</h1>
+  <p><b>一个常驻桌面的「贴纸」，把 Claude Code、Codex、Kimi 等 AI 编程会话的进度，一眼看全。</b></p>
   <p>
-    <a href="https://github.com/larrygogo/cc-kanban/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/cc-kanban/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://github.com/larrygogo/cc-kanban/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/cc-kanban?label=release&color=d97757" alt="Release" /></a>
-    <a href="https://github.com/larrygogo/cc-kanban/releases"><img src="https://img.shields.io/github/downloads/larrygogo/cc-kanban/total?color=4ec9a5" alt="Downloads" /></a>
+    <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
+    <a href="https://github.com/larrygogo/meowo/releases"><img src="https://img.shields.io/github/downloads/larrygogo/meowo/total?color=4ec9a5" alt="Downloads" /></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555" alt="Platform: Windows | macOS" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   </p>
   <p>哪个在跑、哪个在等你回复、各自做到哪一步——通过各 AI CLI 的 hooks 捕获每个会话的事件,<br/>落进本地 SQLite,再用一个半透明、可吸边的 Tauri 小窗口实时呈现。无需切来切去找终端。</p>
-  <img src="docs/images/demo.gif" alt="cc-kanban 演示:实时会话贴纸、待交互提醒、会话搜索、重命名归档、底栏用量、吸边缩略" width="760" />
+  <img src="docs/images/demo.gif" alt="Meowo 演示:实时会话贴纸、待交互提醒、会话搜索、重命名归档、底栏用量、吸边缩略" width="760" />
 </div>
 
 ## 下载
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| **Windows** | [最新版 x64 安装包](https://github.com/larrygogo/cc-kanban/releases/latest)(`cc-kanban_x.y.z_x64-setup.exe`) | NSIS 安装包 |
-| **macOS** | [最新版 universal DMG](https://github.com/larrygogo/cc-kanban/releases/latest)(`cc-kanban_x.y.z_universal.dmg`) | universal(Intel / Apple Silicon 通用),需 macOS ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
+| **Windows** | [最新版 x64 安装包](https://github.com/larrygogo/meowo/releases/latest)(`meowo_x.y.z_x64-setup.exe`) | NSIS 安装包 |
+| **macOS** | [最新版 universal DMG](https://github.com/larrygogo/meowo/releases/latest)(`meowo_x.y.z_universal.dmg`) | universal(Intel / Apple Silicon 通用),需 macOS ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
 
 链接指向最新 Release 页,进入后下载对应平台的安装包即可。装好后支持应用内(设置 → 关于)检查更新,两个平台均可自动升级到后续版本。
 
@@ -66,7 +66,7 @@ macOS 为状态栏(菜单栏)App——无独立浮窗/吸边/pin,应用不显示
 <details>
 <summary>macOS 首次使用的权限授权</summary>
 
-首次点击「跳转/恢复终端」会触发 macOS「自动化」授权(系统设置 → 隐私与安全性 → 自动化),需允许 cc-kanban 控制 Terminal/iTerm2;首次通知会请求通知权限。授权弹窗期间应用保持响应,不影响贴纸正常使用。
+首次点击「跳转/恢复终端」会触发 macOS「自动化」授权(系统设置 → 隐私与安全性 → 自动化),需允许 Meowo 控制 Terminal/iTerm2;首次通知会请求通知权限。授权弹窗期间应用保持响应,不影响贴纸正常使用。
 
 </details>
 
@@ -82,40 +82,48 @@ macOS 为状态栏(菜单栏)App——无独立浮窗/吸边/pin,应用不显示
 
 ### 🔌 零配置接入
 
-启动时自动把 cc-reporter 幂等接入 Claude Code 设置(hooks + statusLine),先备份、原子写、不破坏已有配置;装好即用,无需手动挂 hooks。
+启动时自动把 meowo-reporter 幂等接入 Claude Code 设置(hooks + statusLine),先备份、原子写、不破坏已有配置;装好即用,无需手动挂 hooks。
+
+## 为什么叫 Meowo?
+
+名字来自猫叫 **meow**，中文译作「喵呜」。
+
+Meowo 像一只猫蹲在屏幕角落：不吵不闹，却用那双发亮的眼睛盯着所有 AI 会话——哪个在跑、哪个在等你、哪个出了错，都逃不过它。
 
 ## 工作原理
+
+> 以 Claude Code 为例；Codex / Kimi 走各自 CLI 的 hook 机制，数据最终都汇聚到同一份本地数据库。
 
 ```
  Claude Code 会话
    │  触发 hooks(SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd …)
-   │  渲染 statusline(包装脚本把数据喂给 cc-reporter statusline,取得准确的 Context 百分比)
+   │  渲染 statusline(包装脚本把数据喂给 meowo-reporter statusline,取得准确的 Context 百分比)
    ▼
- cc-reporter(命令行,读 stdin 的事件 JSON)
+ meowo-reporter(命令行,读 stdin 的事件 JSON)
    │  解析事件、标题、项目、todo、Context 用量
    ▼
- ~/.cc-kanban/board.db(SQLite,WAL)
+ ~/.meowo/board.db(SQLite,WAL)
    ▲
    │  文件监听 + 去抖刷新(notify)
- cc-app(Tauri 贴纸,React 前端)
+ meowo-app(Tauri 贴纸,React 前端)
 ```
 
-- **cc-reporter** 是无状态的一次性进程:Claude Code 每次触发 hook 都会启动它,它读取事件、写库后立即退出,绝不阻塞会话。
-- **cc-app** 启动时监听 `~/.cc-kanban/` 目录变化,库一变就刷新 UI;同时跑后台任务标记空闲会话、首次导入历史会话。
-- 两端只通过这块 SQLite 通信,互不直接依赖运行时。
+- **meowo-reporter** 是无状态的一次性进程：Claude Code 每次触发 hook 都会启动它，它读取事件、写库后立即退出，绝不阻塞会话。
+- **meowo-app** 启动时监听 `~/.meowo/` 目录变化，库一变就刷新 UI；同时跑后台任务标记空闲会话、首次导入历史会话。
+- 两端只通过这块 SQLite 通信，互不直接依赖运行时。
 
 ## 项目结构
 
 ```
-cc-kanban/
+meowo/
 ├── crates/
-│   ├── cc-store/        # SQLite 读写 + transcript 标题解析(被 reporter 和 app 共用)
-│   └── cc-reporter/     # CC hooks 上报器(lib + bin)+ statusline 子命令 + 首次导入逻辑
+│   ├── meowo-store/        # SQLite 读写 + transcript 标题解析(被 reporter 和 app 共用)
+│   └── meowo-reporter/     # AI CLI hooks 上报器(lib + bin)+ statusline 子命令 + 首次导入逻辑
 ├── app/
 │   ├── src/             # React 前端(Sticker 贴纸视图、吸边状态机、设置页、平台分流)
-│   └── src-tauri/       # Tauri 桌面壳(窗口、托盘、吸边、账号用量、CC 自动接线;macos/ 为状态栏面板/托盘/终端跳转/通知)
+│   └── src-tauri/       # Tauri 桌面壳(窗口、托盘、吸边、账号用量、AI CLI 自动接线;macos/ 为状态栏面板/托盘/终端跳转/通知)
 ├── scripts/
-│   └── install-hooks.mjs  # 把 cc-reporter 幂等挂进 Claude Code 的 settings.json
+│   └── install-hooks.mjs  # 把 meowo-reporter 幂等挂进 Claude Code 的 settings.json
 └── docs/                # 设计文档与实现计划
 ```
 
@@ -150,27 +158,27 @@ bun run tauri build
 
 ## 接入 Claude Code
 
-贴纸要有数据,得把 `cc-reporter` 挂到 Claude Code 的 hooks 上。
+贴纸要有数据,得把 `meowo-reporter` 挂到 Claude Code 的 hooks 上。
 
-> **使用安装包时通常无需手动操作**:cc-app 每次启动会自动幂等地把 cc-reporter 接入 `~/.claude/settings.json`——补齐所需的若干 hook 事件,并把 statusLine 包装成 `~/.cc-kanban/statusline.sh` 以获取准确的 Context 百分比(你原有的 statusLine 会被保留并继续生效)。全程先备份、原子写、已正确则一字不改。前提是 `~/.claude/settings.json` 已存在(运行过一次 Claude Code 即会生成),应用不会代为创建。
+> **使用安装包时通常无需手动操作**:meowo-app 每次启动会自动幂等地把 meowo-reporter 接入 `~/.claude/settings.json`——补齐所需的若干 hook 事件,并把 statusLine 包装成 `~/.meowo/statusline.sh` 以获取准确的 Context 百分比(你原有的 statusLine 会被保留并继续生效)。全程先备份、原子写、已正确则一字不改。前提是 `~/.claude/settings.json` 已存在(运行过一次 Claude Code 即会生成),应用不会代为创建。
 
 <details>
 <summary>手动挂 hooks(可选:不启动 app 就先挂、或写入自定义 settings 路径)</summary>
 
 ```bash
-# 1. 编译 cc-reporter
-cargo build --release -p cc-reporter
-# 产物:target/release/cc-reporter.exe
+# 1. 编译 meowo-reporter
+cargo build --release -p meowo-reporter
+# 产物:target/release/meowo-reporter.exe
 
 # 2. 把它幂等写进 ~/.claude/settings.json 的 hooks(用绝对路径)
-bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/cc-reporter.exe"
+bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"
 ```
 
-脚本会把 cc-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加、也不破坏你已有的其它 hooks;若更换了 reporter 路径,旧条目需手动清理(或直接启动 app,由自动接线原地更新路径)。
+脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加、也不破坏你已有的其它 hooks;若更换了 reporter 路径,旧条目需手动清理(或直接启动 app,由自动接线原地更新路径)。
 
 > 此脚本仅用于 Claude Code（写入 `~/.claude/settings.json`）。codex / kimi 的接入走各自 CLI 的原生 hook 配置（其 hook 命令带 `--provider codex|kimi`），不经本脚本。
 
-也可指定写入别的 settings 文件:`bun scripts/install-hooks.mjs <reporter路径> <settings路径>`,或用环境变量 `CC_KANBAN_SETTINGS`。
+也可指定写入别的 settings 文件:`bun scripts/install-hooks.mjs <reporter路径> <settings路径>`,或用环境变量 `MEOWO_SETTINGS`。
 
 </details>
 
@@ -181,11 +189,11 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/cc-reporter.e
 <details>
 <summary>数据与配置文件位置</summary>
 
-- **数据库**:`~/.cc-kanban/board.db`(SQLite,WAL 模式)。可用环境变量 `CC_KANBAN_DB` 覆盖路径(reporter 与 app 都遵循)。
-- **应用设置**:`~/.cc-kanban/settings.json`(通知开关、主题、不透明度、界面密度、归档自动隐藏天数、恢复终端、打开终端方式、最近 AI 正文显示开关)。
-- **用量缓存**:`~/.cc-kanban/usage-cache.json`(账号用量数据的本地缓存)。
-- **statusLine 包装脚本**:`~/.cc-kanban/statusline.sh`(由 app 自动生成与维护,无需手改)。
-- **首次导入标记**:`~/.cc-kanban/imported.json`(存在即跳过再次导入)。删掉它可让下次启动重新导入近期历史会话。
+- **数据库**:`~/.meowo/board.db`(SQLite,WAL 模式)。可用环境变量 `MEOWO_DB` 覆盖路径(reporter 与 app 都遵循)。
+- **应用设置**:`~/.meowo/settings.json`(通知开关、主题、不透明度、界面密度、归档自动隐藏天数、恢复终端、打开终端方式、最近 AI 正文显示开关)。
+- **用量缓存**:`~/.meowo/usage-cache.json`(账号用量数据的本地缓存)。
+- **statusLine 包装脚本**:`~/.meowo/statusline.sh`(由 app 自动生成与维护,无需手改)。
+- **首次导入标记**:`~/.meowo/imported.json`(存在即跳过再次导入)。删掉它可让下次启动重新导入近期历史会话。
 - **前端本地状态**(localStorage):当前 tab、吸附边、记忆的正常窗口尺寸、置顶偏好、会话星标。
 
 </details>

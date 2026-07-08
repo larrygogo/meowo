@@ -1,14 +1,14 @@
-# cc-kanban 计划 2：Tauri 只读看板 Implementation Plan
+# Meowo 计划 2：Tauri 只读看板 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 一个 Tauri v2 桌面窗口，读取计划 1 落地的 `board.db`，展示「项目总览 + 项目看板（待办/进行中/完成三列）」，并在 Claude Code 上报新进度时通过文件监听自动实时刷新。
 
-**Architecture:** 三层。(A) 在 `cc-store` 加只读聚合查询（纯 Rust，可 TDD），返回 `#[derive(Serialize)]` 的 DTO。(B) `app/src-tauri` 是 Tauri v2 后端：用 `Mutex<Store>` 作托管状态暴露 `#[tauri::command]`，并用 `notify` 监听 `board.db` 变更后 `emit("board-changed")`。(C) React+Vite+TS 前端通过 `invoke` 调命令、`listen("board-changed")` 触发重新拉取，在总览与项目看板间切换。
+**Architecture:** 三层。(A) 在 `meowo-store` 加只读聚合查询（纯 Rust，可 TDD），返回 `#[derive(Serialize)]` 的 DTO。(B) `app/src-tauri` 是 Tauri v2 后端：用 `Mutex<Store>` 作托管状态暴露 `#[tauri::command]`，并用 `notify` 监听 `board.db` 变更后 `emit("board-changed")`。(C) React+Vite+TS 前端通过 `invoke` 调命令、`listen("board-changed")` 触发重新拉取，在总览与项目看板间切换。
 
 **Tech Stack:** Rust（rusqlite、serde、notify 6、tauri 2、tauri-build 2），前端 React 18 + Vite 5 + TypeScript + `@tauri-apps/api` 2，包管理 bun，测试 `cargo test` + `vitest`。
 
-**前置：** 计划 1 已合并 main。`cc-store` 导出 `Store` 及模型 `Project/Session/Task/Todo`（均 `#[derive(Serialize)]`）、枚举 `SessionStatus/TaskColumn/TodoStatus`。`Store` 持有 `pub(crate) conn: Connection`，已有 `open`/`open_in_memory`/`list_projects`/`get_task`/`get_session`/`list_todos` 等。模型字段：`Task { id, project_id, session_id: Option<i64>, title, column: String, column_locked: bool, current_activity: Option<String>, created_at, updated_at }`；SQL 表 `tasks` 里列名是 `column_name`。`Session { id, project_id, cc_session_id, status: String, started_at, last_event_at, ended_at: Option<i64> }`。
+**前置：** 计划 1 已合并 main。`meowo-store` 导出 `Store` 及模型 `Project/Session/Task/Todo`（均 `#[derive(Serialize)]`）、枚举 `SessionStatus/TaskColumn/TodoStatus`。`Store` 持有 `pub(crate) conn: Connection`，已有 `open`/`open_in_memory`/`list_projects`/`get_task`/`get_session`/`list_todos` 等。模型字段：`Task { id, project_id, session_id: Option<i64>, title, column: String, column_locked: bool, current_activity: Option<String>, created_at, updated_at }`；SQL 表 `tasks` 里列名是 `column_name`。`Session { id, project_id, cc_session_id, status: String, started_at, last_event_at, ended_at: Option<i64> }`。
 
 **开始前：** 先开一个功能分支 `feat/tauri-board-20260603`（`git checkout -b feat/tauri-board-20260603`，从 main 切出）。所有 commit 在该分支上。
 
@@ -17,8 +17,8 @@
 ## 文件结构
 
 ```
-cc-kanban/
-  crates/cc-store/
+meowo/
+  crates/meowo-store/
     src/query.rs               # 新增：只读聚合查询 + DTO（ProjectOverview/TaskCard）
     src/lib.rs                 # 导出 query 的 DTO
     tests/query_test.rs        # 新增：聚合查询测试
@@ -52,18 +52,18 @@ cc-kanban/
 
 ---
 
-## 阶段 A：cc-store 只读聚合查询（纯 Rust，TDD）
+## 阶段 A：meowo-store 只读聚合查询（纯 Rust，TDD）
 
 ### Task A1: ProjectOverview 聚合查询
 
 **Files:**
-- Create: `crates/cc-store/src/query.rs`
-- Modify: `crates/cc-store/src/lib.rs`
-- Create: `crates/cc-store/tests/query_test.rs`
+- Create: `crates/meowo-store/src/query.rs`
+- Modify: `crates/meowo-store/src/lib.rs`
+- Create: `crates/meowo-store/tests/query_test.rs`
 
 - [ ] **Step 1: 在 lib.rs 挂上 query 模块并导出 DTO**
 
-把 `crates/cc-store/src/lib.rs` 改为（在现有基础上加 `pub mod query;` 与 re-export）：
+把 `crates/meowo-store/src/lib.rs` 改为（在现有基础上加 `pub mod query;` 与 re-export）：
 ```rust
 pub mod error;
 pub mod migrations;
@@ -79,9 +79,9 @@ pub use store::Store;
 
 - [ ] **Step 2: 写失败测试**
 
-`crates/cc-store/tests/query_test.rs`：
+`crates/meowo-store/tests/query_test.rs`：
 ```rust
-use cc_store::{Store, TodoInput, TodoStatus};
+use meowo_store::{Store, TodoInput, TodoStatus};
 
 #[test]
 fn overview_aggregates_counts_and_active_sessions() {
@@ -119,13 +119,13 @@ fn overview_empty_when_no_projects() {
 
 - [ ] **Step 3: 运行确认失败**
 
-Run: `cargo test -p cc-store overview_aggregates_counts_and_active_sessions`
+Run: `cargo test -p meowo-store overview_aggregates_counts_and_active_sessions`
 Expected: FAIL，缺 `overview`。
 
 - [ ] **Step 4: 实现 query.rs**
 
 ```rust
-// crates/cc-store/src/query.rs
+// crates/meowo-store/src/query.rs
 use crate::error::StoreError;
 use crate::models::{Project, Task, Todo};
 use crate::store::Store;
@@ -195,13 +195,13 @@ impl Store {
 
 - [ ] **Step 5: 运行确认通过**
 
-Run: `cargo test -p cc-store overview`
+Run: `cargo test -p meowo-store overview`
 Expected: 两个 overview 测试 PASS。
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/cc-store
+git add crates/meowo-store
 git commit -m "feat(store): overview 项目总览聚合查询"
 ```
 
@@ -210,12 +210,12 @@ git commit -m "feat(store): overview 项目总览聚合查询"
 ### Task A2: project_tasks 看板卡片查询
 
 **Files:**
-- Modify: `crates/cc-store/src/query.rs`
-- Modify: `crates/cc-store/tests/query_test.rs`
+- Modify: `crates/meowo-store/src/query.rs`
+- Modify: `crates/meowo-store/tests/query_test.rs`
 
 - [ ] **Step 1: 写失败测试**
 
-追加到 `crates/cc-store/tests/query_test.rs`：
+追加到 `crates/meowo-store/tests/query_test.rs`：
 ```rust
 #[test]
 fn project_tasks_returns_cards_with_todos_and_session_status() {
@@ -224,8 +224,8 @@ fn project_tasks_returns_cards_with_todos_and_session_status() {
     let (s1, t1) = store.start_session(pid, "s1", 200).unwrap();
     store.on_user_prompt(s1, "卡一", 210).unwrap();
     store.sync_todos(s1, &[
-        cc_store::TodoInput { content: "x".into(), status: cc_store::TodoStatus::InProgress },
-        cc_store::TodoInput { content: "y".into(), status: cc_store::TodoStatus::Pending },
+        meowo_store::TodoInput { content: "x".into(), status: meowo_store::TodoStatus::InProgress },
+        meowo_store::TodoInput { content: "y".into(), status: meowo_store::TodoStatus::Pending },
     ], 220).unwrap();
 
     let cards = store.project_tasks(pid).unwrap();
@@ -248,7 +248,7 @@ fn project_tasks_empty_for_unknown_project() {
 
 - [ ] **Step 2: 运行确认失败**
 
-Run: `cargo test -p cc-store project_tasks`
+Run: `cargo test -p meowo-store project_tasks`
 Expected: FAIL，缺 `project_tasks`。
 
 - [ ] **Step 3: 实现（追加到 query.rs 的 `impl Store`）**
@@ -297,13 +297,13 @@ impl Store {
 
 - [ ] **Step 4: 运行确认通过**
 
-Run: `cargo test -p cc-store`
+Run: `cargo test -p meowo-store`
 Expected: 全部 PASS（含新 2 个）。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/cc-store
+git add crates/meowo-store
 git commit -m "feat(store): project_tasks 看板卡片查询（任务+子清单+会话状态）"
 ```
 
@@ -324,7 +324,7 @@ git commit -m "feat(store): project_tasks 看板卡片查询（任务+子清单+
 
 把根 `Cargo.toml` 的 `members` 改为：
 ```toml
-members = ["crates/cc-store", "crates/cc-reporter", "app/src-tauri"]
+members = ["crates/meowo-store", "crates/meowo-reporter", "app/src-tauri"]
 ```
 并在 `[workspace.dependencies]` 追加：
 ```toml
@@ -338,19 +338,19 @@ notify = "6"
 ```toml
 # app/src-tauri/Cargo.toml
 [package]
-name = "cc-app"
+name = "meowo-app"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "cc_app_lib"
+name = "meowo_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { workspace = true }
 
 [dependencies]
-cc-store = { path = "../../crates/cc-store" }
+meowo-store = { path = "../../crates/meowo-store" }
 tauri = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -371,9 +371,9 @@ fn main() {
 ```json
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "cc-kanban",
+  "productName": "Meowo",
   "version": "0.1.0",
-  "identifier": "com.larrygogo.cckanban",
+  "identifier": "com.larrygogo.meowo",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -383,7 +383,7 @@ fn main() {
   "app": {
     "windows": [
       {
-        "title": "cc-kanban",
+        "title": "Meowo",
         "width": 1100,
         "height": 720,
         "resizable": true
@@ -447,7 +447,7 @@ pub fn run() {
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    cc_app_lib::run();
+    meowo_app_lib::run();
 }
 ```
 
@@ -456,7 +456,7 @@ fn main() {
 ```json
 // app/package.json
 {
-  "name": "cc-kanban-frontend",
+  "name": "meowo-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -485,7 +485,7 @@ fn main() {
 <!-- app/index.html -->
 <!doctype html>
 <html lang="zh">
-  <head><meta charset="UTF-8" /><title>cc-kanban</title></head>
+  <head><meta charset="UTF-8" /><title>Meowo</title></head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
@@ -543,7 +543,7 @@ import ReactDOM from "react-dom/client";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <div>cc-kanban</div>
+    <div>Meowo</div>
   </React.StrictMode>,
 );
 ```
@@ -553,9 +553,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 Run:
 ```bash
 cd app && bun install
-cd .. && cargo build -p cc-app
+cd .. && cargo build -p meowo-app
 ```
-Expected: 前端依赖装好；`cargo build -p cc-app` 编译通过（Tauri 首次会拉不少依赖，耐心等）。
+Expected: 前端依赖装好；`cargo build -p meowo-app` 编译通过（Tauri 首次会拉不少依赖，耐心等）。
 
 - [ ] **Step 11: Commit**
 
@@ -575,7 +575,7 @@ git commit -m "feat(app): Tauri v2 应用骨架（可空运行）"
 
 ```rust
 // app/src-tauri/src/lib.rs
-use cc_store::{ProjectOverview, Store, TaskCard};
+use meowo_store::{ProjectOverview, Store, TaskCard};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -585,15 +585,15 @@ struct AppState {
     store: Mutex<Store>,
 }
 
-/// 库路径：环境变量 CC_KANBAN_DB 优先，否则 ~/.cc-kanban/board.db。
+/// 库路径：环境变量 MEOWO_DB 优先，否则 ~/.meowo/board.db。
 fn db_path() -> PathBuf {
-    if let Ok(p) = std::env::var("CC_KANBAN_DB") {
+    if let Ok(p) = std::env::var("MEOWO_DB") {
         return PathBuf::from(p);
     }
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".cc-kanban").join("board.db")
+    PathBuf::from(home).join(".meowo").join("board.db")
 }
 
 #[tauri::command]
@@ -622,7 +622,7 @@ pub fn run() {
 
 - [ ] **Step 2: 验证编译**
 
-Run: `cargo build -p cc-app`
+Run: `cargo build -p meowo-app`
 Expected: 编译通过。
 
 - [ ] **Step 3: Commit**
@@ -699,7 +699,7 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
 
 - [ ] **Step 2: 验证编译**
 
-Run: `cargo build -p cc-app`
+Run: `cargo build -p meowo-app`
 Expected: 编译通过。
 
 - [ ] **Step 3: Commit**
@@ -1067,11 +1067,11 @@ git commit -m "feat(app): 总览/项目看板视图 + board-changed 实时刷新
 
 - [ ] **Step 1: 准备种子数据**
 
-用计划 1 的 reporter 往一个临时库灌点数据，或直接用真实 `~/.cc-kanban/board.db`（里面已有真实会话）。临时库示例（bash）：
+用计划 1 的 reporter 往一个临时库灌点数据，或直接用真实 `~/.meowo/board.db`（里面已有真实会话）。临时库示例（bash）：
 ```bash
-export CC_KANBAN_DB="$(pwd)/dev-board.db"
+export MEOWO_DB="$(pwd)/dev-board.db"
 rm -f dev-board.db*
-BIN=./target/release/cc-reporter.exe
+BIN=./target/release/meowo-reporter.exe
 echo '{"hook_event_name":"SessionStart","session_id":"d1","cwd":"/tmp/projA"}' | $BIN
 echo '{"hook_event_name":"UserPromptSubmit","session_id":"d1","prompt":"实现登录页"}' | $BIN
 echo '{"hook_event_name":"PostToolUse","session_id":"d1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"画 UI","status":"completed"},{"content":"接接口","status":"in_progress"}]}}' | $BIN
@@ -1079,7 +1079,7 @@ echo '{"hook_event_name":"PostToolUse","session_id":"d1","tool_name":"TodoWrite"
 
 - [ ] **Step 2: 启动 dev（指向该库）**
 
-Run（保持上面的 `CC_KANBAN_DB` 环境变量）：
+Run（保持上面的 `MEOWO_DB` 环境变量）：
 ```bash
 cd app/src-tauri && cargo tauri dev
 ```
@@ -1091,9 +1091,9 @@ cd app/src-tauri && cargo tauri dev
 
 - [ ] **Step 4: 验证实时刷新**
 
-dev 运行时，另开终端再灌一条（同一个 `CC_KANBAN_DB`）：
+dev 运行时，另开终端再灌一条（同一个 `MEOWO_DB`）：
 ```bash
-echo '{"hook_event_name":"PostToolUse","session_id":"d1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"画 UI","status":"completed"},{"content":"接接口","status":"completed"}]}}' | ./target/release/cc-reporter.exe
+echo '{"hook_event_name":"PostToolUse","session_id":"d1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"画 UI","status":"completed"},{"content":"接接口","status":"completed"}]}}' | ./target/release/meowo-reporter.exe
 ```
 界面应在约 300ms 内自动把卡片移到「完成」列、进度变 2/2 · 100%——**无需手动刷新**。这验证了 notify→emit→listen 全链路。
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 cc-kanban 增加 macOS（≥14 Sonoma）构建产物（签名公证的 .dmg + 自动更新），并用顶部状态栏（Menu Bar）面板取代 Windows 上的浮窗+吸边交互，保留终端跳转/恢复与桌面通知。
+**Goal:** 为 Meowo 增加 macOS（≥14 Sonoma）构建产物（签名公证的 .dmg + 自动更新），并用顶部状态栏（Menu Bar）面板取代 Windows 上的浮窗+吸边交互，保留终端跳转/恢复与桌面通知。
 
 **Architecture:** 单一 Tauri v2 `main` 窗口在 macOS 上经 `tauri-nspanel` 原地转成 `NonactivatingPanel`，由托盘图标左键开/关、失焦自动隐藏、`tauri-plugin-positioner` 定位到图标下方；`ActivationPolicy::Accessory` + Info.plist `LSUIElement` 隐藏 Dock。终端跳转/恢复改用 `osascript` 控制 Terminal.app/iTerm2（按 tty 匹配），通知改用 `mac-notification-sys` 串行线程拿点击回调。所有平台相关副作用走 `#[cfg(target_os="macos")]`，可测纯逻辑抽成跨平台函数加单测。Windows 行为保持不变。
 
@@ -81,7 +81,7 @@ Run: `rg -n "pull_on_screen|win_constrain|\.hwnd\(\)" app/src-tauri/src/lib.rs`
 
 - [ ] **Step 3：Windows 编译仍绿**
 
-Run: `cargo clippy -p cc-app --target x86_64-pc-windows-msvc -- -D warnings`（或当前 Windows 默认 target：`cargo clippy --workspace -- -D warnings`）
+Run: `cargo clippy -p meowo-app --target x86_64-pc-windows-msvc -- -D warnings`（或当前 Windows 默认 target：`cargo clippy --workspace -- -D warnings`）
 预期：PASS，无新告警。
 
 - [ ] **Step 4：静态确认 macOS 无未定义引用**
@@ -122,7 +122,7 @@ mac-notification-sys = "0.6"
 
 - [ ] **Step 2：Windows 仍能解析依赖并编译**
 
-Run: `cargo build -p cc-app`（Windows 上；首次会拉 positioner）
+Run: `cargo build -p meowo-app`（Windows 上；首次会拉 positioner）
 预期：PASS。`tauri-nspanel`/`mac-notification-sys` 因 cfg target 不在 Windows 解析，不影响。
 
 - [ ] **Step 3：提交**
@@ -170,7 +170,7 @@ git commit -m "build(macos): 引入 nspanel/positioner/mac-notification-sys 与 
   <key>LSUIElement</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>cc-kanban 需要发送 Apple Event 来切换到你的 Claude Code 会话所在终端。</string>
+  <string>Meowo 需要发送 Apple Event 来切换到你的 Claude Code 会话所在终端。</string>
 </dict>
 </plist>
 ```
@@ -319,9 +319,9 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
     let menu = MenuBuilder::new(app).items(&[&settings, &quit]).build()?;
 
-    TrayIconBuilder::with_id("cc-kanban-tray")
+    TrayIconBuilder::with_id("meowo-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("cc-kanban")
+        .tooltip("Meowo")
         .menu(&menu)
         .show_menu_on_left_click(false) // 左键不弹菜单 => 留给右键
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -596,7 +596,7 @@ mod tests {
 
 - [ ] **Step 2：跑测试确认失败**
 
-Run: `cargo test -p cc-app term_script`
+Run: `cargo test -p meowo-app term_script`
 预期：FAIL（`normalize_tty` 等未定义 / 编译错误）。
 
 - [ ] **Step 3：实现纯逻辑**
@@ -752,7 +752,7 @@ end run"#
 
 - [ ] **Step 4：跑测试确认通过**
 
-Run: `cargo test -p cc-app term_script`
+Run: `cargo test -p meowo-app term_script`
 预期：PASS（4 个测试全过）。
 
 - [ ] **Step 5：clippy + 提交**
@@ -859,7 +859,7 @@ useEffect(() => {
 }, []);
 ```
 
-把 `snap-changed` 监听、`snap_collapse/expand/restore` 调用、`CollapsedStrip` 渲染、拖拽释放处理全部包一层：`if (isMacPanel()) return;` 或在 JSX 里 `{!isMacPanel() && <CollapsedStrip .../>}`。`mode` 在 macOS 固定为 `"normal"`，不读 `cc-kanban-snap-edge`/`cc-kanban-normal-size`。
+把 `snap-changed` 监听、`snap_collapse/expand/restore` 调用、`CollapsedStrip` 渲染、拖拽释放处理全部包一层：`if (isMacPanel()) return;` 或在 JSX 里 `{!isMacPanel() && <CollapsedStrip .../>}`。`mode` 在 macOS 固定为 `"normal"`，不读 `meowo-snap-edge`/`meowo-normal-size`。
 
 - [ ] **Step 6：Sticker.tsx 平台分流隐藏拖拽区/pin/resize**
 
@@ -1057,7 +1057,7 @@ if (l.pid)
 #[cfg(target_os = "macos")]
 {
     // 与 Windows 一致：DB 的 cwd 可能为空，用 resolve_cwd 从 transcript 兜底解析。
-    let resolved = cc_store::title::resolve_cwd(cwd.as_deref(), &session_id);
+    let resolved = meowo_store::title::resolve_cwd(cwd.as_deref(), &session_id);
     crate::macos::terminal::resume_session_mac(resolved.as_deref(), &session_id);
     return Ok(());
 }
@@ -1119,7 +1119,7 @@ static TX: OnceLock<Sender<NotifyJob>> = OnceLock::new();
 
 /// 启动一次：设应用归属 + 起串行通知线程。5s 轮询线程只投递、绝不阻塞。
 pub fn init(_app: &AppHandle) {
-    let bundle = get_bundle_identifier_or_default("cc-kanban");
+    let bundle = get_bundle_identifier_or_default("Meowo");
     let _ = set_application(&bundle);
 
     let (tx, rx) = mpsc::channel::<NotifyJob>();
@@ -1273,7 +1273,7 @@ jobs:
         with:
           projectPath: app
           tagName: ${{ github.ref_name }}
-          releaseName: cc-kanban ${{ github.ref_name }}
+          releaseName: Meowo ${{ github.ref_name }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -1346,7 +1346,7 @@ git commit -m "docs(macos): 发布所需 GitHub Secrets 清单"
 - 删除/改写 `README.md:10` 的「目前面向 Windows（macOS/Linux 打包暂未做）」。
 - 下载段补 macOS：`.dmg`（universal，≥ macOS 14 Sonoma），双击安装；已签名公证，直接打开。
 - 平台差异说明：macOS 为状态栏菜单栏 App（无浮窗/吸边/pin），左键图标开面板、右键设置/退出。
-- 权限说明：首次点击「跳转/恢复终端」会弹 macOS「自动化」授权（系统设置 → 隐私与安全性 → 自动化），需允许 cc-kanban 控制 Terminal/iTerm2；首次通知会请求通知权限。
+- 权限说明：首次点击「跳转/恢复终端」会弹 macOS「自动化」授权（系统设置 → 隐私与安全性 → 自动化），需允许 Meowo 控制 Terminal/iTerm2；首次通知会请求通知权限。
 - 路线图把 `- [ ] macOS / Linux 打包` 的 macOS 勾上。
 
 - [ ] **Step 2：提交**
@@ -1370,8 +1370,8 @@ git commit -m "docs(macos): README 增加 macOS 下载/交互差异/权限说明
 
 ## 安装与启动
 - [ ] dmg 双击安装，拖入 Applications；首次打开无 Gatekeeper 拦截（签名公证生效）
-- [ ] Dock 不出现 cc-kanban 图标（LSUIElement）
-- [ ] 顶部状态栏出现 cc-kanban 图标
+- [ ] Dock 不出现 Meowo 图标（LSUIElement）
+- [ ] 顶部状态栏出现 Meowo 图标
 
 ## 面板交互
 - [ ] 左键图标弹出面板，定位在图标正下方

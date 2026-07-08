@@ -111,7 +111,7 @@ export const zh = {
     newVersion: (v: string) => `有新版本 v${v} · 点击更新`,
   },
   errorLabels: {
-    // key 为 cc-store 写库的中文 sentinel（数据值，不改库）；zh 原样、en 翻译。
+    // key 为 meowo-store 写库的中文 sentinel（数据值，不改库）；zh 原样、en 翻译。
     "工具调用解析失败": "工具调用解析失败",
     "需要重新登录": "需要重新登录",
     "认证失败": "认证失败",
@@ -120,7 +120,7 @@ export const zh = {
     nav: { general: "通用", appearance: "外观", account: "账号", about: "关于" },
     close: "关闭",
     autostart: "开机自启",
-    autostartDesc: "登录系统后自动启动 cc-kanban",
+    autostartDesc: "登录系统后自动启动 Meowo",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
     archiveHide: "归档自动隐藏",
@@ -268,7 +268,7 @@ import { en } from "./en";
 export type LangSetting = "auto" | "zh" | "en";
 export type Lang = "zh" | "en";
 
-const CACHE_KEY = "cc-kanban-lang";
+const CACHE_KEY = "meowo-lang";
 
 export function resolveLang(setting: string | undefined): Lang {
   if (setting === "zh" || setting === "en") return setting;
@@ -435,7 +435,7 @@ fn tr(lang: &str, key: &str) -> &'static str {
 
 - [ ] **Step 2D.1: 通知标题走 tr**。liveness 轮询里（lib.rs:1203 已 load_settings）改为取整个 settings：`let settings = load_settings(); let notify_on = settings.notifications_enabled; let lang = ui_lang(&settings);`；两处 `"会话出错".into()` / `"等待你回复".into()` 改 `tr(lang, "notify.error").into()` / `tr(lang, "notify.waiting").into()`。
 - [ ] **Step 2D.2: 设置窗口标题**：`.title("设置")` 改 `.title(tr(ui_lang(&load_settings()), "window.settings"))`。
-- [ ] **Step 2D.3: 托盘菜单文案 + 切语言重建**。两处 setup_tray 的 `"设置"`/`"退出"` 改走 tr；抽出 `fn build_tray_menu(app, lang) -> tauri::Result<Menu>`（Win/macOS 各自文件内）；`set_settings` 在 emit 后调用 `rebuild_tray_menu(&app, ui_lang(&settings))`——用 `app.tray_by_id("cc-kanban-tray")` 拿托盘 `set_menu`。语言未变时跳过（比较旧值或无条件重建均可，菜单仅两项，无条件重建最简单）。
+- [ ] **Step 2D.3: 托盘菜单文案 + 切语言重建**。两处 setup_tray 的 `"设置"`/`"退出"` 改走 tr；抽出 `fn build_tray_menu(app, lang) -> tauri::Result<Menu>`（Win/macOS 各自文件内）；`set_settings` 在 emit 后调用 `rebuild_tray_menu(&app, ui_lang(&settings))`——用 `app.tray_by_id("meowo-tray")` 拿托盘 `set_menu`。语言未变时跳过（比较旧值或无条件重建均可，菜单仅两项，无条件重建最简单）。
 - [ ] **Step 2D.4: 验证**：`cargo clippy --workspace -- -D warnings` + `cargo test --workspace`。Windows 实机：切语言 → 托盘右键菜单立即变英文；通知在 5s 轮询后用新语言。
 - [ ] **Step 2D.5: Commit**：`feat(i18n): Rust 侧通知/托盘/窗口标题双语，切语言实时重建托盘菜单`
 

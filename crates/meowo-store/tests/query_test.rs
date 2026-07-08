@@ -1,4 +1,4 @@
-use cc_store::{SessionStatus, Store, TodoInput, TodoStatus};
+use meowo_store::{SessionStatus, Store, TodoInput, TodoStatus};
 
 #[test]
 fn overview_aggregates_counts_and_active_sessions() {
@@ -76,8 +76,8 @@ fn project_tasks_returns_cards_with_todos_and_session_status() {
     let (s1, t1) = store.start_session(pid, "s1", 200).unwrap();
     store.on_user_prompt(s1, "卡一", 210).unwrap();
     store.sync_todos(s1, &[
-        cc_store::TodoInput { content: "x".into(), status: cc_store::TodoStatus::InProgress },
-        cc_store::TodoInput { content: "y".into(), status: cc_store::TodoStatus::Pending },
+        meowo_store::TodoInput { content: "x".into(), status: meowo_store::TodoStatus::InProgress },
+        meowo_store::TodoInput { content: "y".into(), status: meowo_store::TodoStatus::Pending },
     ], 220).unwrap();
 
     let cards = store.project_tasks(pid).unwrap();
@@ -130,8 +130,8 @@ fn live_session_carries_project_name_title_and_progress() {
     let (s1, _t1) = store.start_session(pid, "r", 100).unwrap();
     store.on_user_prompt(s1, "实现登录", 110).unwrap();
     store.sync_todos(s1, &[
-        cc_store::TodoInput { content: "a".into(), status: cc_store::TodoStatus::Completed },
-        cc_store::TodoInput { content: "b".into(), status: cc_store::TodoStatus::InProgress },
+        meowo_store::TodoInput { content: "a".into(), status: meowo_store::TodoStatus::Completed },
+        meowo_store::TodoInput { content: "b".into(), status: meowo_store::TodoStatus::InProgress },
     ], 120).unwrap();
 
     let live = store.live_sessions(None, None, None, None, 1000).unwrap();
@@ -297,7 +297,7 @@ fn live_sessions_counts_matches_tabs() {
     // pending_review ×1：status 仍是 running，但应被算进 waiting
     let (p1, _) = store.start_session(pid, "p1", 320).unwrap();
     store.set_session_status(p1, SessionStatus::Running, 330).unwrap();
-    store.set_pending_review(p1, cc_store::PendingReview::Question, 340).unwrap();
+    store.set_pending_review(p1, meowo_store::PendingReview::Question, 340).unwrap();
 
     // ended ×3，其中 1 条归档
     let mut archived_id = None;
@@ -375,7 +375,7 @@ fn live_sessions_waiting_includes_pending_review() {
 
     let (pending, _) = store.start_session(pid, "pending", 300).unwrap();
     store.set_session_status(pending, SessionStatus::Running, 310).unwrap();
-    store.set_pending_review(pending, cc_store::PendingReview::Question, 320).unwrap();
+    store.set_pending_review(pending, meowo_store::PendingReview::Question, 320).unwrap();
 
     let waiting_page = store.live_sessions(Some("waiting"), None, None, None, 100).unwrap();
     let ids: std::collections::HashSet<i64> = waiting_page.iter().map(|l| l.session.id).collect();

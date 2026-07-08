@@ -26,7 +26,7 @@ const KIMI_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 // ═══ 路径工具 ═══
 
 fn kimi_credentials_path() -> Option<std::path::PathBuf> {
-    Some(cc_reporter::kimi::kimi_share_dir()?.join("credentials").join("kimi-code.json"))
+    Some(meowo_reporter::kimi::kimi_share_dir()?.join("credentials").join("kimi-code.json"))
 }
 
 fn read_kimi_credentials() -> Option<Value> {
@@ -52,7 +52,7 @@ fn kimi_base_url() -> String {
 /// 从 kimi_share_dir()/config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
 /// 不引入 toml 依赖，best-effort，失败返回 None。
 fn read_config_base_url() -> Option<String> {
-    let path = cc_reporter::kimi::kimi_share_dir()?.join("config.toml");
+    let path = meowo_reporter::kimi::kimi_share_dir()?.join("config.toml");
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_section = false;
     for line in content.lines() {
@@ -201,7 +201,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
     if write_kimi_credentials_atomic(&path, &merged).is_err() {
         // 写回失败（权限/磁盘），但刷新本身成功 → 本次仍可用新 token（内存中），
         // 下次仍会再刷（未持久化）。
-        eprintln!("cc-kanban: kimi 凭据写回失败");
+        eprintln!("Meowo: kimi 凭据写回失败");
     }
 
     Some(new_access.to_string())
@@ -417,8 +417,8 @@ fn fetch_kimi_usage_live() -> Option<ProviderUsage> {
 pub struct KimiProviderAccount;
 
 impl ProviderAccount for KimiProviderAccount {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Kimi
+    fn key(&self) -> meowo_store::ProviderKey {
+        meowo_store::ProviderKey::Kimi
     }
 
     /// best-effort 读账号：解 JWT email claim 或降级「已登录」标签。凭据不存在 → None。

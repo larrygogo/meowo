@@ -6,7 +6,7 @@
 
 **Architecture:** 模型沿用现有 statusline → `session_context` 表通道（新增 `model` 列），随 `live_sessions()` 经 `LiveItem` 的 `serde(flatten)` 自动带到前端；agent 类型恒为 Claude Code，纯前端常量（图标 + i18n hover 文案）。
 
-**Tech Stack:** Rust（cc-store / cc-reporter，rusqlite，workspace）、React + TypeScript（Vite，vitest）。
+**Tech Stack:** Rust（meowo-store / meowo-reporter，rusqlite，workspace）、React + TypeScript（Vite，vitest）。
 
 ## Global Constraints
 
@@ -21,10 +21,10 @@
 
 ## File Structure
 
-- `crates/cc-store/src/migrations.rs` — `session_context` 表加 `model TEXT` 列。
-- `crates/cc-store/src/store.rs` — `USER_VERSION` 3→4；ALTER 补 `model` 列；`set_session_context` 增 `model` 参数。
-- `crates/cc-store/src/query.rs` — `LiveSession.model` 字段；`live_sessions()` SELECT 带出 `sc.model`。
-- `crates/cc-reporter/src/statusline.rs` — `record` 解析 `model.display_name` 并传入；新增往返测试。
+- `crates/meowo-store/src/migrations.rs` — `session_context` 表加 `model TEXT` 列。
+- `crates/meowo-store/src/store.rs` — `USER_VERSION` 3→4；ALTER 补 `model` 列；`set_session_context` 增 `model` 参数。
+- `crates/meowo-store/src/query.rs` — `LiveSession.model` 字段；`live_sessions()` SELECT 带出 `sc.model`。
+- `crates/meowo-reporter/src/statusline.rs` — `record` 解析 `model.display_name` 并传入；新增往返测试。
 - `app/src/api.ts` — `LiveSession` 加 `model: string | null`。
 - `app/src/i18n/zh.ts` + `en.ts` — `sticker.agentClaudeCode`。
 - `app/src/views/Sticker.tsx` — `AgentMark` 组件 + `.stk-line2` 渲染。
@@ -35,13 +35,13 @@
 
 ---
 
-## Task 1: 后端 — model 采集、存储、带出（cc-store + cc-reporter）
+## Task 1: 后端 — model 采集、存储、带出（meowo-store + meowo-reporter）
 
 **Files:**
-- Modify: `crates/cc-reporter/src/statusline.rs:8-25`（record）、测试模块（文件末尾 `mod tests`）
-- Modify: `crates/cc-store/src/migrations.rs:61-66`（session_context 表）
-- Modify: `crates/cc-store/src/store.rs:38`（USER_VERSION）、`:53-61`（ALTERS）、`:121-138`（set_session_context）
-- Modify: `crates/cc-store/src/query.rs:28-55`（LiveSession）、`:201-277`（live_sessions）
+- Modify: `crates/meowo-reporter/src/statusline.rs:8-25`（record）、测试模块（文件末尾 `mod tests`）
+- Modify: `crates/meowo-store/src/migrations.rs:61-66`（session_context 表）
+- Modify: `crates/meowo-store/src/store.rs:38`（USER_VERSION）、`:53-61`（ALTERS）、`:121-138`（set_session_context）
+- Modify: `crates/meowo-store/src/query.rs:28-55`（LiveSession）、`:201-277`（live_sessions）
 
 **Interfaces:**
 - Produces:
@@ -50,7 +50,7 @@
 
 - [ ] **Step 1: 写失败测试（statusline.rs 测试模块内新增）**
 
-在 `crates/cc-reporter/src/statusline.rs` 的 `mod tests` 内追加：
+在 `crates/meowo-reporter/src/statusline.rs` 的 `mod tests` 内追加：
 
 ```rust
     #[test]
@@ -81,7 +81,7 @@
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cargo test -p cc-reporter`
+Run: `cargo test -p meowo-reporter`
 Expected: 编译失败 —— `LiveSession` 无 `model` 字段、`record` 内 `set_session_context` 参数不匹配（实现后才有）。
 
 - [ ] **Step 3: migrations.rs 加列**
@@ -225,13 +225,13 @@ pub fn record(store: &Store, input: &str, now_ms: i64) {
 
 - [ ] **Step 7: 运行后端测试确认通过**
 
-Run: `cargo test -p cc-store -p cc-reporter`
+Run: `cargo test -p meowo-store -p meowo-reporter`
 Expected: PASS（含新增两个 model 用例 + 既有 context 用例不回归）。
 
 - [ ] **Step 8: 提交**
 
 ```bash
-git add crates/cc-store/src/migrations.rs crates/cc-store/src/store.rs crates/cc-store/src/query.rs crates/cc-reporter/src/statusline.rs
+git add crates/meowo-store/src/migrations.rs crates/meowo-store/src/store.rs crates/meowo-store/src/query.rs crates/meowo-reporter/src/statusline.rs
 git commit -m "feat(store): session_context 存模型展示名并随 live_sessions 带出"
 ```
 

@@ -10,7 +10,7 @@
 非 claude 会话（kimi / codex）的卡片缺两类实时信息，本质是「靠 statusLine / PermissionRequest 上报的字段对 claude 之外没接」：
 
 1. **待交互状态不显示（症状1，kimi）**：kimi 会话在等命令审批（终端弹「Run this command?」）时，卡片仍显示成「运行中」空心圆环，而非琥珀色「待交互」。因 `pending_review` 只由 `PermissionRequest`/`PreToolUse` hook 写入（`dispatch.rs`），而 kimi 手工接线的 5 事件不含 `PermissionRequest`。provider-setup spec 明确标注「kimi PermissionRequest 待真实 payload 验证后再议」。
-2. **上下文百分比不显示（症状2，kimi + codex）**：卡片 `context_pct` 只来自 claude 专属的 statusLine（`cc-reporter statusline` 写 `session_context`）。kimi-code / codex 是 TUI，无此机制。provider-setup spec 标注「statusline/Context% 的 codex/kimi 对等物……另行立项」——即本 spec 的块 C。
+2. **上下文百分比不显示（症状2，kimi + codex）**：卡片 `context_pct` 只来自 claude 专属的 statusLine（`meowo-reporter statusline` 写 `session_context`）。kimi-code / codex 是 TUI，无此机制。provider-setup spec 标注「statusline/Context% 的 codex/kimi 对等物……另行立项」——即本 spec 的块 C。
 
 目标：让 kimi 的待交互、以及 kimi + codex 的上下文百分比，与 claude 卡片对齐显示。哲学同项目现状：best-effort、解析失败静默降级、不改 dispatch 的 provider 无关性（provider 差异封进 `Agent` trait 实现）。
 
@@ -54,7 +54,7 @@ MoonshotAI/kimi-code（TS 开源）确认：kimi 交互式等待用户审批时*
 
 ### 现状锚点
 
-- `Agent` trait（`cc-reporter/src/agent.rs`）：已有 `stop_outputs`/`resume_args` 等 provider 专属方法，是本 spec 加 `read_context` 的现成落点。
+- `Agent` trait（`meowo-reporter/src/agent.rs`）：已有 `stop_outputs`/`resume_args` 等 provider 专属方法，是本 spec 加 `read_context` 的现成落点。
 - `dispatch.rs`：`PermissionRequest` 分支已存在（按 `tool_name` 映射 `ExitPlanMode→Plan` / `AskUserQuestion→Question` / else→`Approval`）；`PostToolUse`、`Stop` 分支是块 C 的挂载点。dispatch 目前 provider 无关，靠 `for_provider(provider)` 取 agent。
 - `store.set_session_context(session_id, used_pct: Option<i64>, window: Option<i64>, model: Option<&str>, now)`：statusLine 与 dispatch Stop（更 model）共用的写库出口；块 C 复用它写 `used_pct + window`（model 传 None）。
 - `setup/kimi.rs`（块A 产出）：`KIMI_EVENTS: [&str; 5]` + `KIMI_EVENT_WHITELIST`（16 事件，含 `PermissionRequest`）。块 B 在此把 5→6。

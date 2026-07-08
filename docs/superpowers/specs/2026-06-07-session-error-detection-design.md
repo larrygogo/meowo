@@ -5,7 +5,7 @@
 
 ## 背景与问题
 
-cc-kanban 的会话状态**完全靠 5 个 Claude Code hook 推导**（`SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd`）。但 Claude Code **没有"出错"这个 hook 事件**。当 harness 发生致命错误（如"工具调用解析失败，重试也失败"、需要重新登录）时：
+Meowo 的会话状态**完全靠 5 个 Claude Code hook 推导**（`SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd`）。但 Claude Code **没有"出错"这个 hook 事件**。当 harness 发生致命错误（如"工具调用解析失败，重试也失败"、需要重新登录）时：
 
 - 该回合异常终止，但没有任何信号进库；
 - 经验证，致命 abort 时 `Stop` hook **大概率不触发**（abort 后 transcript 只有 `turn_duration`，无 `stop_hook_summary`）；
@@ -43,7 +43,7 @@ cc-kanban 的会话状态**完全靠 5 个 Claude Code hook 推导**（`SessionS
 核心决策：**错误状态走"实时计算"，不写 DB，不改 schema**。理由：①`Stop` abort 时不触发，写不进去；②写状态会和 reporter 的 `running/waiting` 互相覆盖；③会话标题本就是这么实时算的（见 `get_live_sessions`），保持一致。
 
 ```
-cc-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, error }
+meowo-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, error }
    │ 单次扫文件，同时产出标题和错误（替代现在只出标题的 title_from_transcript 读法，避免双读）
    │
    ├─► get_live_sessions（前端拉取时，每个展示中的会话）
@@ -56,9 +56,9 @@ cc-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, err
 
 ## 组件与改动点
 
-### 1. cc-store：`analyze_transcript`（新增纯函数）
+### 1. meowo-store：`analyze_transcript`（新增纯函数）
 
-- 位置：`crates/cc-store/src/title.rs`（或同模块新文件），与现有标题解析共用一次文件读取。
+- 位置：`crates/meowo-store/src/title.rs`（或同模块新文件），与现有标题解析共用一次文件读取。
 - 输入：transcript 路径。输出：
 
   ```rust
@@ -78,12 +78,12 @@ cc-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, err
 - 错误处理：读不到 / 解析失败 → 两者都为 `None`，绝不 panic（沿用 best-effort 风格）。
 - 保留 `resolve_title` 等现有 API；内部改为复用 `analyze_transcript`，对外行为不变。
 
-### 2. cc-app 后端：`get_live_sessions`（lib.rs）
+### 2. meowo-app 后端：`get_live_sessions`（lib.rs）
 
 - 现已对每个展示中的会话调 `resolve_title` 实时解析标题。改为：解析出 transcript 路径后调一次 `analyze_transcript`，同时拿到标题与错误。
 - `LiveItem` 增字段：`errored: bool`、`error_label: Option<String>`、`error_raw: Option<String>`。
 
-### 3. cc-app 后端：桌面通知（lib.rs + 依赖）
+### 3. meowo-app 后端：桌面通知（lib.rs + 依赖）
 
 - 引入 `tauri-plugin-notification`（加依赖、注册插件、配置 capability/权限）。
 - 在 `spawn_liveness_watch` 的 5s 轮询内：
@@ -96,7 +96,7 @@ cc-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, err
   - **启动首次扫描只播种 map、不弹**，避免历史 transcript 一上来炸一堆通知。
 - 通知文案：标题「会话出错」，正文「{项目名} · {error_label}」。
 
-### 4. cc-app 前端（api.ts + Sticker.tsx）
+### 4. meowo-app 前端（api.ts + Sticker.tsx）
 
 - `LiveSession` 类型增 `errored: boolean`、`error_label: string | null`、`error_raw: string | null`。
 - `Sticker.tsx`：
@@ -115,7 +115,7 @@ cc-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, err
 
 ## 测试计划
 
-- **cc-store `analyze_transcript`**（Rust 单测，喂构造 JSONL 片段）：
+- **meowo-store `analyze_transcript`**（Rust 单测，喂构造 JSONL 片段）：
   - parse-fail / login / auth 三类命中，标签正确；
   - 正常回合结尾不报；
   - recover 后（错误回合之后又有成功回合）不报；
@@ -128,5 +128,5 @@ cc-store 新增纯函数 analyze_transcript(path) -> TranscriptInfo { title, err
 
 - 不覆盖临时性 API 错误（529/500/网络抖动）。
 - 不做通知的点击跳转 / 声音 / 免打扰时段（后续若做通用通知功能再统一处理）。
-- 不改 DB schema、不新增 hook、不动 cc-reporter。
+- 不改 DB schema、不新增 hook、不动 meowo-reporter。
 - 不做独立「出错」tab。
