@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallProgress, type InstallDone } from "../api";
+import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
 import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
 import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
@@ -241,38 +241,30 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   const cfg = providerConfig(provider);
   const acc = payload?.account ?? null;
 
-  // 后台安装态：idle=未装可点 / installing=转圈+步骤行 / error=失败可重试。
+  // 后台安装态：idle=未装可点 / installing=转圈+本地化「安装中…」/ error=失败可重试。
+  // 不透传安装脚本的英文原始输出，进度只用 i18n 文案（随界面语言）。
   const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
-  const [step, setStep] = useState("");
   // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
 
   const startInstall = () => {
-    setStep("");
     setInstallState("installing");
-    installAgent(provider).catch((e) => {
-      setStep(String(e));
-      setInstallState("error");
-    });
+    installAgent(provider).catch(() => setInstallState("error"));
   };
 
   useEffect(() => {
-    const unP = listen<InstallProgress>("install-progress", (e) => {
-      if (e.payload.provider === provider) setStep(e.payload.line);
-    });
+    // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
     const unD = listen<InstallDone>("install-done", (e) => {
       if (e.payload.provider !== provider) return;
       if (e.payload.ok) {
         setInstallState("idle");
-        setStep("");
         onInstalledRef.current();
       } else {
         setInstallState("error");
       }
     });
     return () => {
-      unP.then((f) => f());
       unD.then((f) => f());
     };
   }, [provider]);
@@ -316,7 +308,7 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
           (installState === "installing" ? (
             <div className="agent-install-progress" data-testid={"agent-installing-" + provider}>
               <RefreshIcon spinning />
-              <span className="agent-install-step">{step || t.account.installing}</span>
+              <span className="agent-install-step">{t.account.installing}</span>
             </div>
           ) : (
             <button
@@ -333,7 +325,7 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
 
       {installed === false && installState === "error" && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
-          {step || t.account.installFailed}
+          {t.account.installFailed}
         </div>
       )}
 

@@ -6,20 +6,17 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 const api = vi.hoisted(() => ({ getAccounts: vi.fn(), availableAgents: vi.fn(), installAgent: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn() }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 
-// 收集所有 ProviderCard 注册的事件回调，测试里手动广播（模拟 Tauri emit 到全部监听者）
+// 收集所有 ProviderCard 注册的 install-done 回调，测试里手动广播（模拟 Tauri emit 到全部监听者）。
+// 进度不透传英文、前端不再订阅 install-progress，故只收集 done。
 const ev = vi.hoisted(() => ({
-  progressCbs: [] as Array<(e: unknown) => void>,
   doneCbs: [] as Array<(e: unknown) => void>,
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (event: string, cb: (e: unknown) => void) => {
-    if (event === "install-progress") ev.progressCbs.push(cb);
     if (event === "install-done") ev.doneCbs.push(cb);
     return Promise.resolve(() => {});
   },
 }));
-const fireProgress = (provider: string, line: string) =>
-  act(() => ev.progressCbs.forEach((cb) => cb({ payload: { provider, line } })));
 const fireDone = (provider: string, ok: boolean) =>
   act(() => ev.doneCbs.forEach((cb) => cb({ payload: { provider, ok, code: ok ? 0 : 1 } })));
 
@@ -31,7 +28,6 @@ beforeEach(() => {
   api.availableAgents.mockResolvedValue(["claude", "codex"]);
   api.refreshUsage.mockResolvedValue({ lanes: [], note: null });
   api.getSettings.mockResolvedValue({ sticker_quota_providers: [] });
-  ev.progressCbs.length = 0;
   ev.doneCbs.length = 0;
 });
 afterEach(() => cleanup());
@@ -55,16 +51,15 @@ describe("AccountSection agent 卡", () => {
     await waitFor(() => expect(api.installAgent).toHaveBeenCalledWith("kimi"));
   });
 
-  it("点安装进入安装中：转圈 + 最新步骤行", async () => {
+  it("点安装进入安装中：转圈 + 本地化「安装中…」（不透传脚本英文）", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
-    await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
-    fireProgress("kimi", "==> Downloading Kimi Code");
-    expect(screen.getByTestId("agent-installing-kimi").textContent).toContain("Downloading Kimi Code");
-    // 只更新本 provider：codex 的进度不影响 kimi
-    fireProgress("codex", "==> other");
-    expect(screen.getByTestId("agent-installing-kimi").textContent).toContain("Downloading Kimi Code");
+    // 安装中指示出现，且有非空本地化文案（不硬编码 i18n 串，避免 locale 依赖）
+    const installing = await screen.findByTestId("agent-installing-kimi");
+    expect(installing.textContent?.trim().length).toBeGreaterThan(0);
+    // 安装按钮已被安装中指示替换
+    expect(screen.queryByTestId("agent-install-kimi")).toBeNull();
   });
 
   it("install-done 成功后重查检测、卡片转已装", async () => {
@@ -90,12 +85,12 @@ describe("AccountSection agent 卡", () => {
     expect(screen.getByTestId("agent-install-kimi")).toBeTruthy();
   });
 
-  it("install-done 失败且无进度行：仍显示失败说明 + 重试按钮", async () => {
+  it("install-done 失败：显示本地化失败说明 + 重试按钮", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
-    // 不先 fireProgress，直接失败——step 为空，走 installFailed 兜底
+    // 失败——错误行始终显示本地化 installFailed 文案
     fireDone("kimi", false);
     await waitFor(() => expect(screen.queryByTestId("agent-installing-kimi")).toBeNull());
     // 失败说明行可见且非空（不硬编码 i18n 文案，避免 locale 依赖）
