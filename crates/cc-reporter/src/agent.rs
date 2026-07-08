@@ -151,10 +151,13 @@ impl Agent for KimiAgent {
         crate::kimi::kimi_installed() || exe_on_path(bin)
     }
     fn install_script(&self, windows: bool) -> Option<String> {
+        // 装当前 Node 版 Kimi Code（装到 ~/.kimi-code/bin/kimi.exe，与 kimi_installed 检测一致）。
+        // 注意路径里的 `/kimi-code/`——不带它的 code.kimi.com/install.ps1 装的是旧 Python `kimi-cli`
+        // （落到 ~/.local/bin/kimi-cli.exe，检测不到）。
         Some(if windows {
-            "irm https://code.kimi.com/install.ps1 | iex".into()
+            "irm https://code.kimi.com/kimi-code/install.ps1 | iex".into()
         } else {
-            "curl -LsSf https://code.kimi.com/install.sh | bash".into()
+            "curl -LsSf https://code.kimi.com/kimi-code/install.sh | bash".into()
         })
     }
     fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
