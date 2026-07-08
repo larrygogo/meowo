@@ -137,6 +137,7 @@ async fn get_live_sessions_counts(
 async fn get_live_sessions_page(
     state: State<'_, AppState>,
     filter: String,
+    search: Option<String>,
     before_last_event_at: Option<i64>,
     before_id: Option<i64>,
     limit: usize,
@@ -150,7 +151,7 @@ async fn get_live_sessions_page(
         "all".into()
     };
     tauri::async_runtime::spawn_blocking(move || {
-        live_sessions_blocking(&db_path, &tx_cache, &filter, before_last_event_at, before_id, limit)
+        live_sessions_blocking(&db_path, &tx_cache, &filter, search.as_deref(), before_last_event_at, before_id, limit)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -184,13 +185,14 @@ fn live_sessions_blocking(
     db_path: &PathBuf,
     tx_cache: &Mutex<cc_store::TranscriptCache>,
     filter: &str,
+    search: Option<&str>,
     before_last_event_at: Option<i64>,
     before_id: Option<i64>,
     limit: usize,
 ) -> Result<Vec<LiveItem>, String> {
     let store = open_store(db_path)?;
     let sessions = store
-        .live_sessions(Some(filter), before_last_event_at, before_id, limit)
+        .live_sessions(Some(filter), search, before_last_event_at, before_id, limit)
         .map_err(|e| e.to_string())?;
     // connected 校验：Windows 走 sysinfo 进程表；macOS/Unix 一次 ps 批量快照
     // （sysinfo 在 macOS 上不可靠，逐 pid spawn ps 又太慢——一批会话只扫一次）。
@@ -1951,7 +1953,7 @@ fn spawn_liveness_watch(
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
                 let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
-                for s in store.live_sessions(Some("all"), None, None, 1000).unwrap_or_default() {
+                for s in store.live_sessions(Some("all"), None, None, None, 1000).unwrap_or_default() {
                     if s.session.status == "ended" || !pid_is_agent(&sys, s.pid.unwrap_or(0)) {
                         continue;
                     }

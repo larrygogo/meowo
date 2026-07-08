@@ -126,11 +126,13 @@ export type StickerFilter = "all" | "running" | "waiting" | "archived";
 
 export function getLiveSessionsPage(
   filter: StickerFilter,
+  search: string | null,
   cursor: { last_event_at: number; id: number } | null,
   limit: number
 ): Promise<LiveSession[]> {
   return invoke("get_live_sessions_page", {
     filter,
+    search: search && search.trim() ? search : null,
     before_last_event_at: cursor?.last_event_at ?? null,
     before_id: cursor?.id ?? null,
     limit,
