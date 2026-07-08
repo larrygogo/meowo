@@ -67,6 +67,18 @@ pub struct LiveSession {
     pub provider: String,
 }
 
+/// 转义 SQL LIKE 通配符，使用户输入里的 `%` `_` `\` 作字面量匹配（配合 `LIKE … ESCAPE '\'`）。
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '%' || c == '_' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 impl Store {
     /// 批量取多个 task 的 todos，按 task_id 分组——替代逐 task 调 `list_todos` 的 N+1。
     /// 按固定块大小分批拼 `IN (...)`：单条 `IN` 的占位符数不能超过 SQLite 绑定参数上限
@@ -209,17 +221,18 @@ impl Store {
         Ok(out)
     }
 
-    /// 活跃区：按 filter 取会话（含已结束），附项目名、任务标题、进度。
-    /// 按 last_event_at DESC, id DESC 分页返回；cursor 为 null 时取首页。
-    /// 用 (last_event_at, id) 而非 OFFSET，避免数据实时变化时跳页/重复。
-    /// filter: "all" | "running" | "waiting" | "archived"；其它值按 "all" 处理。
+    /// 活跃区：按 filter（+ 可选 search，作用于当前 tab 内）取会话，附项目名、任务标题、进度。
+    /// waiting tab 按 last_event_at ASC（等最久优先）、其它按 DESC；游标方向随排序翻转，cursor 为 null 取首页。
+    /// filter: "all" | "running" | "waiting" | "archived"；其它值按 "all"。search 去空白后非空才生效。
     pub fn live_sessions(
         &self,
         filter: Option<&str>,
+        search: Option<&str>,
         before_last_event_at: Option<i64>,
         before_id: Option<i64>,
         limit: usize,
     ) -> Result<Vec<LiveSession>, StoreError> {
+        use rusqlite::types::Value;
         const SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
                 p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
                 sc.used_pct, sc.window_size, sc.model, sn.note,
@@ -231,6 +244,8 @@ impl Store {
          LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id";
 
         let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Value> = Vec::new();
+
         match filter {
             Some("all") => conditions.push("s.archived = 0".into()),
             Some("running") => conditions.push("s.status = 'running' AND s.pending_review IS NULL AND s.archived = 0".into()),
@@ -239,14 +254,29 @@ impl Store {
             _ => {} // None 不过滤
         }
 
-        let mut params: Vec<i64> = Vec::new();
+        // 搜索（当前 tab 内 AND 搜索词）：title / cwd / project 名任一命中。%/_/\ 转义成字面量。
+        if let Some(q) = search.map(str::trim).filter(|s| !s.is_empty()) {
+            let pat = format!("%{}%", escape_like(q));
+            conditions.push(
+                "(t.title LIKE ? ESCAPE '\\' OR s.cwd LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\')".into(),
+            );
+            params.push(Value::Text(pat.clone()));
+            params.push(Value::Text(pat.clone()));
+            params.push(Value::Text(pat));
+        }
+
+        // waiting 等最久优先（ASC），游标取「更大」的；其它 DESC，游标取「更小」的。
+        let asc = matches!(filter, Some("waiting"));
         if let (Some(ts), Some(id)) = (before_last_event_at, before_id) {
-            // 整体括起：join(" AND ") 会把本条件跟 filter 条件用 AND 拼接，SQL 里 AND 优先级
-            // 高于 OR，若不整体加括号，第二个 OR 分支会绕过 filter 条件（审查发现）。
-            conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
-            params.push(ts);
-            params.push(ts);
-            params.push(id);
+            // 整体括起：AND 优先级高于 OR，不加括号第二个 OR 分支会绕过 filter（4035ec5 回归）。
+            if asc {
+                conditions.push("((s.last_event_at > ?) OR (s.last_event_at = ? AND s.id > ?))".into());
+            } else {
+                conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
+            }
+            params.push(Value::Integer(ts));
+            params.push(Value::Integer(ts));
+            params.push(Value::Integer(id));
         }
 
         let where_clause = if conditions.is_empty() {
@@ -254,11 +284,13 @@ impl Store {
         } else {
             format!("WHERE {}", conditions.join(" AND "))
         };
-        let sql = format!(
-            "{} {} ORDER BY s.last_event_at DESC, s.id DESC LIMIT ?",
-            SELECT, where_clause
-        );
-        params.push(limit as i64);
+        let order = if asc {
+            "s.last_event_at ASC, s.id ASC"
+        } else {
+            "s.last_event_at DESC, s.id DESC"
+        };
+        let sql = format!("{} {} ORDER BY {} LIMIT ?", SELECT, where_clause, order);
+        params.push(Value::Integer(limit as i64));
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
