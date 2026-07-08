@@ -580,6 +580,8 @@ export function Sticker({
   loadMore,
   loadingMore,
   hasUpdate,
+  search,
+  onSearchChange,
 }: {
   filter: StickerFilter;
   onFilterChange?: (f: StickerFilter) => void;
@@ -590,6 +592,8 @@ export function Sticker({
   loadMore?: () => void;
   loadingMore?: boolean;
   hasUpdate?: boolean;
+  search?: string;
+  onSearchChange?: (q: string) => void;
 }) {
   // hasMore 由父组件传入；未传入时退化为 data.length < total。
   const totalCount = total ?? data.length;
@@ -604,12 +608,13 @@ export function Sticker({
     closeSearch(); // 切 tab 即退出搜索，避免 tab 高亮与过滤结果不一致
   };
 
-  // 会话搜索：激活时底栏整条变成输入框；按标题 + 仓库名跨所有 tab 即时过滤。
+  // 会话搜索：激活时底栏整条变成输入框；搜索词经 onSearchChange 交给父组件下沉到后端
+  // （当前 tab 内全库搜，覆盖未加载数据），本组件不再持有搜索词、不做客户端过滤。
   const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  const q = search ?? "";
   const closeSearch = () => {
     setSearchOpen(false);
-    setQuery("");
+    onSearchChange?.("");
   };
 
   // 归档自动隐藏天数 + 打开终端方式 + 卡片菜单方式 + 贴纸配额 provider 列表：启动时读设置，并监听实时变更。
@@ -764,41 +769,20 @@ export function Sticker({
     }
   };
 
-  // 先按当前 tab 过滤，再排序：星标恒在最前；「待交互」标签内按等待最久优先（先处理被晾最久的）；
-  // 其它标签保留服务端顺序（连接中优先 → 最近活跃）。Array.sort 稳定，组内次序不乱。
+  // 先按当前 tab 过滤，再排序：星标恒在最前。match(tab) 是安全网（后端已按 tab/search 过滤，
+  // 这里兜底防御性重过滤一遍）；搜索过滤已下沉后端（父组件按 search 请求当前 tab 内全库），
+  // 本组件不再做客户端搜索过滤。waiting「等最久优先」由后端 ASC 排序保证，客户端只做 starred 浮顶。
   // useMemo 缓存：编辑便签/重命名时每次按键都会重渲染，不必每次重跑 filter+sort。
   const isStarred = (l: Item) => starred.has(l.session.cc_session_id);
   const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    // 搜索激活：按标题 + 仓库名过滤，按星标优先排序。归档 tab 搜归档、其余 tab 搜活跃
-    // (否则站在归档 tab 怎么搜都搜不到归档会话)。
-    if (q) {
-      const wantArchived = tab === "archived";
-      return data
-        .filter(
-          (l) =>
-            (wantArchived ? l.archived : !l.archived) &&
-            ((l.task_title ?? "").toLowerCase().includes(q) ||
-              (l.cwd ?? l.project_name ?? "").toLowerCase().includes(q))
-        )
-        .sort(
-          (a, b) =>
-            Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
-        );
-    }
     return data
       .filter((l) => match(tab, l, hideDays))
-      .sort((a, b) => {
-        const star =
+      .sort(
+        (a, b) =>
           Number(starred.has(b.session.cc_session_id)) -
-          Number(starred.has(a.session.cc_session_id));
-        if (star !== 0) return star;
-        if (tab === "waiting") {
-          return a.session.last_event_at - b.session.last_event_at; // 等最久优先
-        }
-        return 0;
-      });
-  }, [data, tab, hideDays, starred, query]);
+          Number(starred.has(a.session.cc_session_id))
+      );
+  }, [data, tab, hideDays, starred]);
 
   // 贴纸会话虚拟列表：只挂载可视区 + overscan 内的卡片，避免大量 DOM。
   // estimateSize 取常见卡片高度（无便签/preview 时约 76–84px），实际高度由 measureElement 动态测量。
@@ -832,7 +816,7 @@ export function Sticker({
   const counts = useMemo<Record<Tab, number>>(() => {
     if (countsProp) {
       return {
-        all: countsProp.total,
+        all: countsProp.total - countsProp.archived,
         running: countsProp.running,
         waiting: countsProp.waiting,
         archived: countsProp.archived,
@@ -1256,9 +1240,9 @@ export function Sticker({
             <input
               className="stk-search-in"
               autoFocus
-              value={query}
+              value={q}
               placeholder={t.sticker.searchPlaceholder}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => onSearchChange?.(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") closeSearch();
               }}

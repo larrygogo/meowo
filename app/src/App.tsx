@@ -103,6 +103,7 @@ export function App() {
     const s = localStorage.getItem(TAB_KEY);
     return s === "waiting" || s === "running" || s === "archived" ? s : "all";
   });
+  const [search, setSearch] = useState("");
   const pickFilter = useCallback((f: StickerFilter) => {
     setFilter(f);
     localStorage.setItem(TAB_KEY, f);
@@ -148,6 +149,7 @@ export function App() {
   const loadPage = useCallback(
     async (
       filter: StickerFilter,
+      search: string,
       cursor: { last_event_at: number; id: number } | null,
       limit: number = PAGE_SIZE
     ): Promise<{ page: Item[]; applied: boolean }> => {
@@ -158,7 +160,7 @@ export function App() {
       try {
         const [countsRes, page] = await Promise.all([
           needCounts ? getLiveSessionsCounts() : Promise.resolve(null),
-          getLiveSessionsPage(filter, null, cursor, limit),
+          getLiveSessionsPage(filter, search, cursor, limit),
         ]);
         const applied = seq === refreshSeqRef.current;
         if (!applied) return { page: page as Item[], applied };
@@ -200,14 +202,14 @@ export function App() {
     const run = () => {
       setReachedEnd(false);
       const w = Math.max(PAGE_SIZE, itemsLenRef.current);
-      loadPage(filter, null, w).then(({ page, applied }) => {
+      loadPage(filter, search, null, w).then(({ page, applied }) => {
         if (applied && page.length < w) setReachedEnd(true);
       }).catch(() => {});
     };
     // 400ms trailing 节流：连续 board-changed 只在安静后跑一次。
     window.clearTimeout(refreshThrottleRef.current);
     refreshThrottleRef.current = window.setTimeout(run, 400);
-  }, [filter, loadPage]);
+  }, [filter, search, loadPage]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || reachedEnd) return;
@@ -215,7 +217,7 @@ export function App() {
     if (!last) return;
     setLoadingMore(true);
     try {
-      const { page, applied } = await loadPage(filter, {
+      const { page, applied } = await loadPage(filter, search, {
         last_event_at: last.session.last_event_at,
         id: last.session.id,
       });
@@ -229,17 +231,21 @@ export function App() {
     } finally {
       setLoadingMore(false);
     }
-  }, [filter, loadingMore, reachedEnd, items, loadPage]);
+  }, [filter, search, loadingMore, reachedEnd, items, loadPage]);
 
-  // tab 切换/首次挂载时重置并加载该分类首页
+  // filter / search 变化：重置到首页（search 变化去抖 300ms，避免每次按键都打一次后端；
+  // filter 切换无需去抖，0ms 立即加载，含首次挂载）。取代原先仅 [filter, loadPage] 的切 tab effect。
   useEffect(() => {
-    setReachedEnd(false);
-    loadPage(filter, null)
-      .then(({ page, applied }) => {
-        if (applied && page.length < PAGE_SIZE) setReachedEnd(true);
-      })
-      .catch(() => {});
-  }, [filter, loadPage]);
+    const t = window.setTimeout(() => {
+      setReachedEnd(false);
+      loadPage(filter, search, null)
+        .then(({ page, applied }) => {
+          if (applied && page.length < PAGE_SIZE) setReachedEnd(true);
+        })
+        .catch(() => {});
+    }, search ? 300 : 0);
+    return () => window.clearTimeout(t);
+  }, [filter, search, loadPage]);
 
   useEffect(() => {
     const un = listen("board-changed", () => refresh());
@@ -545,6 +551,8 @@ export function App() {
         loadMore={loadMore}
         loadingMore={loadingMore}
         hasUpdate={hasUpdate}
+        search={search}
+        onSearchChange={setSearch}
       />
     </div>
   );

@@ -119,7 +119,8 @@ describe("App", () => {
   it("挂载时拉取 counts 和第 0 页", async () => {
     render(<App />);
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, null, 100));
+    // search 初值为空字符串（App 自持有的真实搜索状态，非固定 null）。
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
   });
 
   it("收到 board-changed 后重新拉取 counts 和第 0 页", async () => {
@@ -127,7 +128,7 @@ describe("App", () => {
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
     emitBoardChanged();
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, null, 100));
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
   });
 
   // 单一真相源：window-state 不再恢复尺寸(lib.rs)，main 窗口尺寸由 SIZE_KEY 持有。非吸附态启动

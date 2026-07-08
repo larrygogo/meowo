@@ -197,14 +197,15 @@ describe("Sticker", () => {
     expect(invokeMock).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:\\\\proj", provider: "kimi" });
   });
 
-  it("待交互标签页按等待最久优先排序", () => {
+  it("待交互标签页保留后端顺序（等最久优先由后端 ASC 保证，客户端不再重排）", () => {
     const base = (id: number, cc: string, last: number) =>
       mk({ task_title: cc, current_activity: null, connected: true,
         session: { id, project_id: 1, cc_session_id: cc, status: "waiting", started_at: 0, last_event_at: last, ended_at: null } });
     const now = Date.now();
+    // data 已按后端 ASC（等待最久优先）顺序传入——Sticker 不再客户端按时间重排，只做 match 安全网 + starred 浮顶。
     const { container } = render(<Sticker filter="waiting" data={[
-      base(1, "新", now - 60_000),   // 1 分钟前
       base(2, "旧", now - 600_000),  // 10 分钟前(等待最久)
+      base(1, "新", now - 60_000),   // 1 分钟前
     ]} />);
     const cards = container.querySelectorAll(".stk-card");
     expect(cards[0].querySelector(".stk-title")?.textContent).toBe("旧");
@@ -491,5 +492,22 @@ describe("Sticker", () => {
     const a2 = c2.querySelector(".stk-agent") as HTMLElement;
     expect(a2.getAttribute("data-tip")).toBe(zh.sticker.agentClaudeCode);
     expect(a2.querySelector("svg rect")).toBeNull(); // Claude logomark 无方块
+  });
+
+  it("搜索走后端：输入调用 onSearchChange，且不客户端过滤已加载数据", () => {
+    const onSearchChange = vi.fn();
+    const { container } = render(
+      <Sticker filter="all" data={[mk({ task_title: "任务甲" })]} search="" onSearchChange={onSearchChange} />
+    );
+    const before = container.querySelectorAll(".stk-vitem").length;
+    expect(before).toBeGreaterThan(0);
+    // 打开搜索框并输入一个不匹配已加载标题的词
+    fireEvent.click(screen.getByLabelText(zh.sticker.search));
+    const input = container.querySelector(".stk-search-in") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "不匹配任何标题zzz" } });
+    // 搜索词经回调交后端处理
+    expect(onSearchChange).toHaveBeenCalledWith("不匹配任何标题zzz");
+    // 前端不再按搜索词过滤已加载数据（过滤由后端负责）→ 卡片数不变
+    expect(container.querySelectorAll(".stk-vitem").length).toBe(before);
   });
 });
