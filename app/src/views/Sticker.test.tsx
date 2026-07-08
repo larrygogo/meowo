@@ -484,7 +484,7 @@ describe("Sticker", () => {
     const agent = container.querySelector(".stk-agent") as HTMLElement;
     expect(agent.getAttribute("data-tip")).toBe(zh.sticker.agentKimiCode);
     expect(agent.getAttribute("aria-label")).toBe(zh.sticker.agentKimiCode);
-    expect(agent.querySelector("svg rect")).toBeTruthy(); // kimi 徽标有黑圆角方块
+    expect(agent.querySelector("img")).toBeTruthy(); // kimi 徽标内嵌官方 PNG（黑圆角方块已在图内）
 
     cleanup();
     const { container: c2 } = render(<Sticker filter="all" data={[mk({ provider: "claude" })]} />);
