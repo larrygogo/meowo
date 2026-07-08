@@ -255,7 +255,7 @@ fn permission_and_pretooluse_set_pending_review() {
     disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"p1","cwd":"/p"}"#), 100).unwrap();
 
     let kind = |cc: &str| {
-        store.live_sessions(None, None, None, 1000).unwrap().into_iter()
+        store.live_sessions(None, None, None, None, 1000).unwrap().into_iter()
             .find(|l| l.session.cc_session_id == cc).unwrap().pending_review
     };
 
@@ -281,7 +281,7 @@ fn stop_sets_last_ai_text_and_prompt_sets_last_user_text() {
     disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"m1","prompt":"切到这个任务"}"#), 200).unwrap();
     disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"m1","last_assistant_message":"调研完成,结论更微妙"}"#), 300).unwrap();
 
-    let live = store.live_sessions(None, None, None, 1000).unwrap();
+    let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     let s = live.iter().find(|l| l.session.cc_session_id == "m1").unwrap();
     assert_eq!(s.last_user_text.as_deref(), Some("切到这个任务"));
     assert_eq!(s.last_ai_text.as_deref(), Some("调研完成,结论更微妙"));
@@ -299,12 +299,12 @@ fn pending_review_cleared_by_next_event() {
         disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"c1","cwd":"/p"}"#), 100).unwrap();
         disp(&store, &ev(r#"{"hook_event_name":"PermissionRequest","session_id":"c1","tool_name":"Bash"}"#), 200).unwrap();
         // 置位后确认非空。
-        let pending = store.live_sessions(None, None, None, 1000).unwrap().into_iter()
+        let pending = store.live_sessions(None, None, None, None, 1000).unwrap().into_iter()
             .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
         assert_eq!(pending.as_deref(), Some("approval"), "case {i} 置位前提");
         // 下一个事件清除。
         disp(&store, &ev(clear_ev), 300).unwrap();
-        let pending = store.live_sessions(None, None, None, 1000).unwrap().into_iter()
+        let pending = store.live_sessions(None, None, None, None, 1000).unwrap().into_iter()
             .find(|l| l.session.cc_session_id == "c1").unwrap().pending_review;
         assert_eq!(pending, None, "case {i} 应被清除");
     }
@@ -317,7 +317,7 @@ fn provider_defaults_claude_and_kimi_is_tagged() {
     disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"cl1","cwd":"/p"}"#), 100).unwrap();
     // kimi provider 显式标记。
     dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"km1","cwd":"/p"}"#), 110, ProviderKey::Kimi).unwrap();
-    let live = store.live_sessions(None, None, None, 1000).unwrap();
+    let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     let prov = |sid: &str| {
         live.iter().find(|l| l.session.cc_session_id == sid).unwrap().provider.clone()
     };
@@ -333,7 +333,7 @@ fn activity_event_revives_mis_reaped_ended_session() {
     let sid = store.find_session_id_pub("rv1").unwrap().unwrap();
     store.end_session(sid, 150).unwrap(); // 模拟被误 reap
     dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"rv1","cwd":"/p","tool_name":"Read"}"#), 200, ProviderKey::Kimi).unwrap();
-    let s = store.live_sessions(None, None, None, 1000).unwrap().into_iter().find(|l| l.session.cc_session_id == "rv1").unwrap();
+    let s = store.live_sessions(None, None, None, None, 1000).unwrap().into_iter().find(|l| l.session.cc_session_id == "rv1").unwrap();
     assert_eq!(s.session.status, "running");
     assert_eq!(s.session.ended_at, None); // ended_at 被清，状态自洽
 }
@@ -349,7 +349,7 @@ fn lazy_creates_session_on_prompt_when_session_start_missing() {
         ProviderKey::Kimi,
     )
     .unwrap();
-    let l = store.live_sessions(None, None, None, 1000).unwrap();
+    let l = store.live_sessions(None, None, None, None, 1000).unwrap();
     let s = l.iter().find(|l| l.session.cc_session_id == "mid1").expect("应懒创建出会话");
     assert_eq!(s.provider, "kimi");
     assert_eq!(s.task_title, "中途接入");
