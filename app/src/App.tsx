@@ -150,15 +150,19 @@ export function App() {
       filter: StickerFilter,
       cursor: { last_event_at: number; id: number } | null,
       isRefresh: boolean
-    ): Promise<Item[]> => {
+    ): Promise<{ page: Item[]; applied: boolean }> => {
       const seq = ++refreshSeqRef.current;
+      // counts 只在首页/刷新（cursor === null）时才需要；loadMore 复用已有 counts，
+      // 避免频繁 loadMore 时对 counts 做纯重复的后端查询（审查发现）。
+      const needCounts = cursor === null;
       try {
         const [countsRes, page] = await Promise.all([
-          getLiveSessionsCounts(),
+          needCounts ? getLiveSessionsCounts() : Promise.resolve(null),
           getLiveSessionsPage(filter, cursor, PAGE_SIZE),
         ]);
-        if (seq !== refreshSeqRef.current) return page as Item[];
-        setCounts(countsRes);
+        const applied = seq === refreshSeqRef.current;
+        if (!applied) return { page: page as Item[], applied };
+        if (countsRes) setCounts(countsRes);
 
         setItems((prev) => {
           if (cursor === null && !isRefresh) {
@@ -192,7 +196,7 @@ export function App() {
           }
           return [...prepend, ...merged, ...append];
         });
-        return page as Item[];
+        return { page: page as Item[], applied };
       } catch (err) {
         console.error("[loadPage] 加载失败：", err);
         throw err;
@@ -212,12 +216,14 @@ export function App() {
     if (!last) return;
     setLoadingMore(true);
     try {
-      const page = await loadPage(
+      const { page, applied } = await loadPage(
         filter,
         { last_event_at: last.session.last_event_at, id: last.session.id },
         false
       );
-      if (page.length < PAGE_SIZE) {
+      // 请求过程中若已被更新的请求（如切 tab/刷新）取代，本次结果不再代表当前 tab 的状态，
+      // reachedEnd 不应据此更新，否则可能把旧 tab 的「已到底」误写到新 tab 上（审查发现的竞态）。
+      if (applied && page.length < PAGE_SIZE) {
         setReachedEnd(true);
       }
     } catch (err) {
@@ -231,8 +237,8 @@ export function App() {
   useEffect(() => {
     setReachedEnd(false);
     loadPage(filter, null, false)
-      .then((page) => {
-        if (page.length < PAGE_SIZE) setReachedEnd(true);
+      .then(({ page, applied }) => {
+        if (applied && page.length < PAGE_SIZE) setReachedEnd(true);
       })
       .catch(() => {});
   }, [filter, loadPage]);
