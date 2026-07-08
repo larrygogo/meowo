@@ -25,7 +25,7 @@ pub const KIMI_EVENT_WHITELIST: [&str; 16] = [
 /// 幂等合并 [[hooks]]：逐 KIMI_EVENTS 找认领条目（event 相符 + command 可认领），
 /// 路径不符则更新 command；缺则追加 {event, command, timeout=5}。用户条目一概不动。
 pub fn ensure_kimi_hooks(doc: &mut DocumentMut, reporter_native: &str) -> bool {
-    let desired_cmd = format!("\"{reporter_native}\" --provider kimi");
+    let desired_cmd = format!("{reporter_native} --provider kimi");
     let mut changed = false;
     if doc.get("hooks").and_then(|it| it.as_array_of_tables()).is_none() {
         // 不存在或非 array-of-tables（如 hooks = [] 的旧写法残留在新文件：实测 kimi-code
@@ -94,7 +94,8 @@ impl super::ProviderSetup for KimiSetup {
         let Ok(mut doc) = text.parse::<DocumentMut>() else {
             return; // 解析失败绝不写（kimi 自身对坏文件同样拒写）
         };
-        // reporter 路径：复用 [[hooks]] 里已认领且存在的 → 否则 sidecar。
+        // reporter 路径：复用 [[hooks]] 里已认领的 → 否则 sidecar。
+        // 不过滤存在性：历史 cc-reporter 路径可能已不存在，但仍需被更新为当前 meowo-reporter。
         let existing = doc
             .get("hooks")
             .and_then(|it| it.as_array_of_tables())
@@ -104,8 +105,7 @@ impl super::ProviderSetup for KimiSetup {
                 t.get("command")
                     .and_then(|v| v.as_str())
                     .and_then(|c| super::claim_provider_cmd(c, "kimi"))
-            })
-            .filter(|p| std::path::Path::new(p).exists());
+            });
         let Some(reporter) = existing.or_else(super::sibling_reporter) else {
             return;
         };
@@ -139,7 +139,7 @@ mod tests {
         for ev in KIMI_EVENTS {
             assert!(out.contains(&format!("event = \"{ev}\"")), "{ev} 未写入");
         }
-        assert!(out.contains(r#""C:/x/meowo-reporter.exe" --provider kimi"#));
+        assert!(out.contains(r#"command = "C:/x/meowo-reporter.exe --provider kimi""#));
         assert!(!ensure_kimi_hooks(&mut doc, "C:/x/meowo-reporter.exe")); // 幂等
     }
 
@@ -157,8 +157,26 @@ mod tests {
         // 路径失效换 sidecar：6 条 command 全部更新，用户键 theme 不动。
         assert!(ensure_kimi_hooks(&mut doc, "C:/app/meowo-reporter.exe"));
         let out = doc.to_string();
-        assert_eq!(out.matches(r#""C:/app/meowo-reporter.exe" --provider kimi"#).count(), 6);
+        assert_eq!(out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#).count(), 6);
         assert!(out.contains("theme = \"light\""));
+    }
+
+    #[test]
+    fn ensure_kimi_hooks_updates_legacy_cc_reporter_paths() {
+        // 项目改名后，旧 hooks 仍指向 cc-reporter.exe；应被认领并更新为 meowo-reporter。
+        let mut src = String::from("theme = \"light\"\n");
+        for ev in KIMI_EVENTS {
+            src.push_str(&format!(
+                "[[hooks]]\nevent = \"{ev}\"\ncommand = \"C:/x/cc-reporter.exe --provider kimi\"\ntimeout = 5\n\n"
+            ));
+        }
+        let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
+        assert!(ensure_kimi_hooks(&mut doc, "C:/app/meowo-reporter.exe"));
+        let out = doc.to_string();
+        assert_eq!(out.matches("cc-reporter").count(), 0);
+        assert_eq!(out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#).count(), 6);
+        assert!(out.contains("theme = \"light\""));
+        assert!(!ensure_kimi_hooks(&mut doc, "C:/app/meowo-reporter.exe")); // 幂等
     }
 
     #[test]

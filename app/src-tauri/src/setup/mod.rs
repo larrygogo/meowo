@@ -64,12 +64,15 @@ pub(crate) fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// 严格认领带 provider 参数的命令（codex/kimi 形态）：可执行文件名恰为 meowo-reporter[.exe]
-/// 且余参恰为 ["--provider", provider]。返回可执行路径。不裸 contains，不误伤用户 hook。
+///（或历史遗留 cc-reporter[.exe]）且余参恰为 ["--provider", provider]。返回可执行路径。
+/// 不裸 contains，不误伤用户 hook。
 pub(crate) fn claim_provider_cmd(cmd: &str, provider: &str) -> Option<String> {
     let (path, args) = parse_hook_command(cmd)?;
     let name = std::path::Path::new(&path).file_name()?.to_str()?;
-    let is_reporter =
-        name.eq_ignore_ascii_case("meowo-reporter") || name.eq_ignore_ascii_case("meowo-reporter.exe");
+    let is_reporter = matches!(
+        name.to_ascii_lowercase().as_str(),
+        "meowo-reporter" | "meowo-reporter.exe" | "cc-reporter" | "cc-reporter.exe"
+    );
     (is_reporter && args == ["--provider", provider]).then_some(path)
 }
 
@@ -89,9 +92,16 @@ mod tests {
             Some("C:/x/meowo-reporter.exe")
         );
         // 拒绝：provider 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
+        // 历史遗留 cc-reporter 也认领，便于升级时替换旧 hooks。
+        assert_eq!(
+            claim_provider_cmd("C:/x/cc-reporter.exe --provider kimi", "kimi").as_deref(),
+            Some("C:/x/cc-reporter.exe")
+        );
+        // 拒绝：provider 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
         assert!(claim_provider_cmd("C:/x/meowo-reporter.exe --provider codex", "kimi").is_none());
         assert!(claim_provider_cmd("\"C:/x/meowo-reporter.exe\"", "codex").is_none());
         assert!(claim_provider_cmd("C:/x/meowo-reporter.exe --provider codex --v", "codex").is_none());
         assert!(claim_provider_cmd("node meowo-reporter-notify.js --provider codex", "codex").is_none());
+        assert!(claim_provider_cmd("C:/x/cc-reporter-not-us.exe --provider codex", "codex").is_none());
     }
 }
