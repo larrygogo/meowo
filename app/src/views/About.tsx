@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
-import { getAccounts, refreshUsage, type ProviderAccountPayload, type ProviderUsage, type UsageLane } from "../api";
+import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus } from "../api";
 import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -244,9 +244,28 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   // 后台安装态：idle=未装可点 / installing=转圈+本地化「安装中…」/ error=失败可重试。
   // 不透传安装脚本的英文原始输出，进度只用 i18n 文案（随界面语言）。
   const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
+  const [hooksStatus, setHooksStatus] = useState<HooksStatus | null>(null);
+  const [repairingHooks, setRepairingHooks] = useState(false);
   // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
+
+  useEffect(() => {
+    let cancelled = false;
+    checkProviderHooks(provider)
+      .then((st) => { if (!cancelled) setHooksStatus(st); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [provider]);
+
+  const repairHooks = () => {
+    if (repairingHooks) return;
+    setRepairingHooks(true);
+    repairProviderHooks(provider)
+      .then((st) => setHooksStatus(st))
+      .catch(() => {})
+      .finally(() => setRepairingHooks(false));
+  };
 
   const startInstall = () => {
     setInstallState("installing");
@@ -321,6 +340,17 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
               {installState === "error" ? t.account.installRetry : t.account.install}
             </button>
           ))}
+        {isInstalled && hooksStatus && (hooksStatus === "missing" || hooksStatus === "unknown") && (
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"agent-repair-hooks-" + provider}
+            onClick={repairHooks}
+            disabled={repairingHooks}
+          >
+            {repairingHooks ? t.newSession.repairingHooks : t.newSession.repairHooks}
+          </button>
+        )}
       </div>
 
       {installed === false && installState === "error" && (
