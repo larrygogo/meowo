@@ -1,6 +1,5 @@
 import { type ReactElement, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type ProviderKey,
@@ -33,10 +32,25 @@ function FolderIcon() {
   );
 }
 
+/** 统一路径分隔符：Windows 路径用反斜杠，Unix 路径用正斜杠。
+ *  用于消除 URL 参数/前端输入与后端数据库中 cwd 的斜杠方向不一致。 */
+function normalizePath(p: string): string {
+  if (!p) return p;
+  if (/^[A-Za-z]:/.test(p)) {
+    return p.replace(/\//g, "\\");
+  }
+  return p.replace(/\\/g, "/");
+}
+
+/** 用于去重的路径 key：Windows 路径忽略大小写。 */
+function pathKey(p: string): string {
+  return /^[A-Za-z]:/.test(p) ? p.toLowerCase() : p;
+}
+
 /** 独立窗口页（label="new-session"）：新建一个全新会话。成功后 emit 通知主看板弹 toast 并自关。 */
 
 const qs = new URLSearchParams(window.location.search);
-const initialCwd = qs.get("cwd") ?? "";
+const initialCwd = normalizePath(qs.get("cwd") ?? "");
 const initialProvider = (qs.get("provider") as ProviderKey | null) ?? null;
 
 export function NewSessionPanel(): ReactElement {
@@ -56,7 +70,22 @@ export function NewSessionPanel(): ReactElement {
         .then((s) => setProvider(s.default_agent))
         .catch(() => {});
     }
-    recentCwds(8).then(setRecent).catch(() => {});
+    recentCwds(8)
+      .then((list) => {
+        // 后端按原始字符串去重；同一目录可能因历史数据斜杠方向不同而重复。
+        // 前端 normalize 后再按大小写不敏感（Windows）去重一次。
+        const seen = new Set<string>();
+        return list
+          .map(normalizePath)
+          .filter((p) => {
+            const key = pathKey(p);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      })
+      .then(setRecent)
+      .catch(() => {});
     PROVIDER_KEYS.forEach((p) =>
       checkProviderHooks(p)
         .then((st) => setHooks((h) => ({ ...h, [p]: st })))
@@ -77,7 +106,7 @@ export function NewSessionPanel(): ReactElement {
 
   async function pickDir() {
     const picked = await open({ directory: true });
-    if (typeof picked === "string") setCwd(picked);
+    if (typeof picked === "string") setCwd(normalizePath(picked));
   }
 
   async function launch() {
@@ -86,12 +115,6 @@ export function NewSessionPanel(): ReactElement {
     setError(null);
     try {
       await newSession(cwd.trim(), provider);
-      const label = providerConfig(provider).label(t);
-      const msg =
-        provider === "codex"
-          ? t.newSession.launchedCodexToast(label)
-          : t.newSession.launchedToast(label);
-      await emit("new-session-launched", msg);
       closeWin();
     } catch (e) {
       setError(String(e));
@@ -100,7 +123,9 @@ export function NewSessionPanel(): ReactElement {
   }
 
   // 输入框内容实时过滤最近项：空 / 已选中某项（完全匹配）时显示全部，输入片段时按 名+路径 过滤。
-  const q = cwd.trim().toLowerCase();
+  // 比较前统一 normalize 斜杠方向，避免 C:/proj 与 C:\proj 因分隔符不同而无法高亮/匹配。
+  const cwdNorm = normalizePath(cwd.trim());
+  const q = cwdNorm.toLowerCase();
   const shownRecent =
     !q || recent.some((r) => r.toLowerCase() === q)
       ? recent
@@ -138,7 +163,7 @@ export function NewSessionPanel(): ReactElement {
                   <button
                     key={r}
                     type="button"
-                    className={"ns-recent-item" + (cwd.trim() === r ? " is-on" : "")}
+                    className={"ns-recent-item" + (cwdNorm === r ? " is-on" : "")}
                     title={r}
                     onClick={() => setCwd(r)}
                   >

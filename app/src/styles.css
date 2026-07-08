@@ -477,20 +477,6 @@ html, body {
   cursor: pointer;
   font-size: 12px;
 }
-.stk-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.82);
-  color: #fff;
-  padding: 8px 14px;
-  border-radius: var(--r-md, 8px);
-  font-size: 12px;
-  z-index: 200;
-  max-width: calc(100vw - 24px);
-  text-align: center;
-}
 /* 状态徽标：圆角矩形边框上流动的亮线 + 中心实心圆（圆内显示 Content 已用百分比）。
    亮线用 conic 渐变 + transform 旋转实现：动画走 GPU 合成层，不触发逐帧重绘/重栅格化，
    故即便多张卡同时跑、拖动窗口也不卡（旧的 SVG stroke-dashoffset + drop-shadow 会卡）。

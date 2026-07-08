@@ -74,8 +74,6 @@ export const zh = {
     cancel: "取消",
     launch: "启动",
     launching: "正在启动…",
-    launchedToast: (agent: string) => `正在启动 ${agent} 会话，卡片稍后出现`,
-    launchedCodexToast: (agent: string) => `已启动 ${agent}，发送首条消息后卡片才会出现`,
     hooksMissing: "未检测到该 agent 的 hooks，新建后可能不会出现在看板",
     hooksUnknown: "无法确认该 agent 的 hooks 状态",
     noAgents: "未检测到已安装的 AI CLI（claude / codex / kimi），请先安装",

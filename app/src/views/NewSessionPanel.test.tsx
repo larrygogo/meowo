@@ -13,16 +13,14 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), ...api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-const { closeMock, emitMock } = vi.hoisted(() => ({ closeMock: vi.fn(), emitMock: vi.fn() }));
+const closeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock }) }));
-vi.mock("@tauri-apps/api/event", () => ({ emit: (...a: unknown[]) => emitMock(...a) }));
 
 import { NewSessionPanel } from "./NewSessionPanel";
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
   closeMock.mockReset();
-  emitMock.mockReset();
   api.recentCwds.mockResolvedValue([]);
   api.checkProviderHooks.mockResolvedValue("installed");
   api.availableTerminals.mockResolvedValue(["wt"]);
@@ -38,13 +36,12 @@ describe("NewSessionPanel (独立窗口)", () => {
     expect((launch as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("填目录后启动调 newSession → emit → 关窗", async () => {
+  it("填目录后启动调 newSession → 关窗", async () => {
     api.newSession.mockResolvedValue(undefined);
     render(<NewSessionPanel />);
     fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
     fireEvent.click(screen.getByTestId("ns-launch"));
     await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/proj", "claude"));
-    await waitFor(() => expect(emitMock).toHaveBeenCalledWith("new-session-launched", expect.any(String)));
     await waitFor(() => expect(closeMock).toHaveBeenCalled());
   });
 
@@ -54,13 +51,12 @@ describe("NewSessionPanel (独立窗口)", () => {
     expect(await screen.findByTestId("ns-hooks-warn")).toBeTruthy();
   });
 
-  it("启动失败显示错误，不 emit、不关窗", async () => {
+  it("启动失败显示错误，不关窗", async () => {
     api.newSession.mockRejectedValue("启动终端失败");
     render(<NewSessionPanel />);
     fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
     fireEvent.click(screen.getByTestId("ns-launch"));
     expect((await screen.findByTestId("ns-error")).textContent).toContain("启动终端失败");
-    expect(emitMock).not.toHaveBeenCalled();
     expect(closeMock).not.toHaveBeenCalled();
   });
 
@@ -78,5 +74,26 @@ describe("NewSessionPanel (独立窗口)", () => {
     render(<NewSessionPanel />);
     expect(await screen.findByTestId("ns-no-agents")).toBeTruthy();
     expect((screen.getByTestId("ns-launch") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("输入斜杠与最近项反斜杠方向不同时仍能高亮匹配", async () => {
+    api.recentCwds.mockResolvedValue(["C:\\Users\\larry\\proj"]);
+    const { container } = render(<NewSessionPanel />);
+    fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/Users/larry/proj" } });
+    await waitFor(() =>
+      expect(container.querySelector(".ns-recent-item.is-on")?.textContent).toContain("proj")
+    );
+  });
+
+  it("同一目录因斜杠方向不同重复时只保留一条", async () => {
+    api.recentCwds.mockResolvedValue([
+      "C:/Users/larry/proj",
+      "C:\\Users\\larry\\proj",
+      "C:\\Users\\larry\\other",
+    ]);
+    const { container } = render(<NewSessionPanel />);
+    await waitFor(() =>
+      expect(container.querySelectorAll(".ns-recent-item").length).toBe(2)
+    );
   });
 });
