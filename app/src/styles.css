@@ -1940,10 +1940,29 @@ select.ns-input {
   line-height: 1.45;
 }
 .ns-warn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   color: var(--cc-warn);
   background: rgba(224, 162, 60, 0.1);
   border: 1px solid rgba(224, 162, 60, 0.25);
 }
+.ns-repair {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0.9;
+  transition: opacity 0.12s, background 0.12s;
+}
+.ns-repair:hover:not(:disabled) { opacity: 1; background: rgba(224, 162, 60, 0.15); }
+.ns-repair:disabled { opacity: 0.5; cursor: not-allowed; }
 .ns-error {
   color: var(--cc-err);
   background: rgba(224, 88, 76, 0.1);

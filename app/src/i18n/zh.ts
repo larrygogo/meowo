@@ -78,6 +78,8 @@ export const zh = {
     hooksUnknown: "无法确认该 agent 的 hooks 状态",
     noAgents: "未检测到已安装的 AI CLI（claude / codex / kimi），请先安装",
     hooksHelp: "如何接入",
+    repairHooks: "修复连接",
+    repairingHooks: "修复中…",
     newButton: "新建会话",
     emptyCta: "新建会话",
   },

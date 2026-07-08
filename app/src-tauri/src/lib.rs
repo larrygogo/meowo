@@ -1475,6 +1475,21 @@ fn check_provider_hooks(provider: String) -> HooksStatus {
     }
 }
 
+/// 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，然后返回最新状态。
+/// 用于「新建会话」面板或设置里的「修复连接」按钮，无需重启 Meowo。
+#[tauri::command]
+fn repair_provider_hooks(provider: String) -> HooksStatus {
+    match meowo_store::ProviderKey::parse(Some(&provider)) {
+        meowo_store::ProviderKey::Claude
+        | meowo_store::ProviderKey::Codex
+        | meowo_store::ProviderKey::Kimi => {
+            let key = meowo_store::ProviderKey::parse(Some(&provider));
+            let _ = setup::apply_provider(key);
+            check_provider_hooks(provider)
+        }
+    }
+}
+
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
 /// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
 /// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
@@ -2740,6 +2755,7 @@ pub fn run() {
             new_session,
             install_agent,
             check_provider_hooks,
+            repair_provider_hooks,
             recent_cwds,
             open_new_session_window
         ])

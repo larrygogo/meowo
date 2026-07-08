@@ -28,6 +28,19 @@ pub fn apply_all() {
     }
 }
 
+/// 对指定 provider 强制执行一次接线（不管 detect 结果）。用于用户手动点击「修复连接」。
+/// 返回是否成功 apply（true = 数据目录存在并已尝试写入；false = 未安装/找不到 reporter）。
+pub fn apply_provider(key: meowo_store::ProviderKey) -> bool {
+    let Some(s) = ALL_SETUP.iter().find(|s| s.key() == key) else {
+        return false;
+    };
+    if !s.detect() {
+        return false;
+    }
+    s.apply();
+    true
+}
+
 /// app 可执行同目录的 meowo-reporter（打包态 sidecar 与 app 放一起）。
 pub(crate) fn sibling_reporter() -> Option<String> {
     let bin = if cfg!(windows) { "meowo-reporter.exe" } else { "meowo-reporter" };

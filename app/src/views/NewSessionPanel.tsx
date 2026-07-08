@@ -9,6 +9,7 @@ import {
   newSession,
   recentCwds,
   checkProviderHooks,
+  repairProviderHooks,
   getSettings,
   availableAgents,
 } from "../api";
@@ -61,6 +62,7 @@ export function NewSessionPanel(): ReactElement {
   const [recent, setRecent] = useState<string[]>([]);
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avail, setAvail] = useState<ProviderKey[] | null>(null);
 
@@ -131,6 +133,20 @@ export function NewSessionPanel(): ReactElement {
     } catch (e) {
       setError(String(e));
       setBusy(false);
+    }
+  }
+
+  async function repairHooks() {
+    if (repairing) return;
+    setRepairing(true);
+    setError(null);
+    try {
+      const st = await repairProviderHooks(provider);
+      setHooks((h) => ({ ...h, [provider]: st }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRepairing(false);
     }
   }
 
@@ -216,7 +232,16 @@ export function NewSessionPanel(): ReactElement {
           )}
           {avail && avail.length > 0 && warn && (
             <div className="ns-warn" data-testid="ns-hooks-warn">
-              {hooks[provider] === "unknown" ? t.newSession.hooksUnknown : t.newSession.hooksMissing}
+              <span>{hooks[provider] === "unknown" ? t.newSession.hooksUnknown : t.newSession.hooksMissing}</span>
+              <button
+                type="button"
+                className="ns-repair"
+                data-testid="ns-repair-hooks"
+                onClick={repairHooks}
+                disabled={repairing}
+              >
+                {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
+              </button>
             </div>
           )}
         </div>

@@ -79,6 +79,8 @@ export const en: Dict = {
     hooksUnknown: "Can't confirm this agent's hooks status",
     noAgents: "No installed AI CLI detected (claude / codex / kimi). Please install one first.",
     hooksHelp: "How to set up",
+    repairHooks: "Repair connection",
+    repairingHooks: "Repairing…",
     newButton: "New session",
     emptyCta: "New session",
   },
