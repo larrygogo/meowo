@@ -258,6 +258,28 @@ fn live_sessions_paginates_without_ended_cap() {
 }
 
 #[test]
+fn live_sessions_cursor_tie_respects_filter() {
+    // 回归（审查发现）：游标条件 `(last_event_at < ts) OR (last_event_at = ts AND id < id)`
+    // 若不整体加括号，与 filter 条件用 AND 拼接时，SQL 的 AND 优先级高于 OR，会让第二个
+    // OR 分支绕过 filter（如 archived=0），把不该出现的行混进分页结果。
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+
+    // a 与 b 的 last_event_at 相同（游标边界 tie）；a 先建 id 更小，且被归档，b 不归档。
+    let (a, _) = store.start_session(pid, "a1", 100).unwrap();
+    let (b, _) = store.start_session(pid, "b1", 100).unwrap();
+    store.set_session_archived(a, true, 200).unwrap();
+
+    // 以 b 的 (last_event_at, id) 为游标：a 的 last_event_at 与游标相等且 id 更小，
+    // 命中游标条件的第二分支；但 a 已归档，filter="all" 应把它排除，不能因游标 tie 而绕过。
+    let page = store.live_sessions(Some("all"), Some(100), Some(b), 100).unwrap();
+    assert!(
+        page.iter().all(|l| l.session.id != a),
+        "归档会话不应因游标边界 tie 绕过 filter 混入分页结果"
+    );
+}
+
+#[test]
 fn live_sessions_counts_matches_tabs() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();

@@ -241,7 +241,9 @@ impl Store {
 
         let mut params: Vec<i64> = Vec::new();
         if let (Some(ts), Some(id)) = (before_last_event_at, before_id) {
-            conditions.push("(s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?)".into());
+            // 整体括起：join(" AND ") 会把本条件跟 filter 条件用 AND 拼接，SQL 里 AND 优先级
+            // 高于 OR，若不整体加括号，第二个 OR 分支会绕过 filter 条件（审查发现）。
+            conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
             params.push(ts);
             params.push(ts);
             params.push(id);
