@@ -17,7 +17,7 @@ static TX: OnceLock<Sender<NotifyJob>> = OnceLock::new();
 
 /// 启动一次：设应用归属 + 起串行通知线程。5s 轮询线程只投递、绝不阻塞（避免在轮询里同步等回调致 CPU 飙升）。
 pub fn init(_app: &AppHandle) {
-    let bundle = get_bundle_identifier_or_default("cc-kanban");
+    let bundle = get_bundle_identifier_or_default("Meowo");
     let _ = set_application(&bundle);
 
     let (tx, rx) = mpsc::channel::<NotifyJob>();

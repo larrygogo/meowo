@@ -47,7 +47,7 @@ pub struct LiveSession {
     pub archived: bool,
     /// 归档时间戳（ms）；未归档为 None。用于「归档超过 N 天自动隐藏」。
     pub archived_at: Option<i64>,
-    /// 会话工作目录，cc-app 用它重建 transcript 路径以实时解析 AI 标题。
+    /// 会话工作目录，meowo-app 用它重建 transcript 路径以实时解析 AI 标题。
     pub cwd: Option<String>,
     /// 上下文已用百分比（来自 Claude Code statusline，准确）；无 statusline 数据为 None。
     pub context_pct: Option<i64>,

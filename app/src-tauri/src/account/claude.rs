@@ -377,8 +377,8 @@ pub fn has_oauth_credentials() -> bool {
 pub struct ClaudeProviderAccount;
 
 impl ProviderAccount for ClaudeProviderAccount {
-    fn key(&self) -> cc_store::ProviderKey {
-        cc_store::ProviderKey::Claude
+    fn key(&self) -> meowo_store::ProviderKey {
+        meowo_store::ProviderKey::Claude
     }
 
     fn account(&self) -> Option<Account> {

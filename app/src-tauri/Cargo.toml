@@ -1,18 +1,18 @@
 [package]
-name = "cc-app"
+name = "meowo-app"
 version = "0.4.2"
 edition = "2021"
 
 [lib]
-name = "cc_app_lib"
+name = "meowo_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { workspace = true }
 
 [dependencies]
-cc-store = { path = "../../crates/cc-store" }
-cc-reporter = { path = "../../crates/cc-reporter" }
+meowo-store = { path = "../../crates/meowo-store" }
+meowo-reporter = { path = "../../crates/meowo-reporter" }
 tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = { workspace = true }

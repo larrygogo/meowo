@@ -8,9 +8,9 @@ describe("stickerBgRgb", () => {
     expect(stickerBgRgb("amber", "dark")).toBe(STICKER_COLORS.amber.dark);
   });
 
-  it("未知 key 回退经典原色", () => {
-    expect(stickerBgRgb("does-not-exist", "dark")).toBe(STICKER_COLORS.classic.dark);
-    expect(stickerBgRgb("", "light")).toBe(STICKER_COLORS.classic.light);
+  it("未知 key 回退默认预设（无色）", () => {
+    expect(stickerBgRgb("does-not-exist", "dark")).toBe(STICKER_COLORS.neutral.dark);
+    expect(stickerBgRgb("", "light")).toBe(STICKER_COLORS.neutral.light);
   });
 
   it("经典预设的深色底与 styles.css 初值一致（升级零变化）", () => {

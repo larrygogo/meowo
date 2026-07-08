@@ -1,8 +1,8 @@
-# cc-kanban 计划 3：托盘 + 桌面贴纸 Implementation Plan
+# Meowo 计划 3：托盘 + 桌面贴纸 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 cc-kanban 从单窗 App 变成「系统托盘常驻 + 透明置顶桌面贴纸」：托盘控制显隐/退出/开机自启，贴纸极简紧凑实时显示当前活跃会话、可拖动且位置持久化。
+**Goal:** 把 Meowo 从单窗 App 变成「系统托盘常驻 + 透明置顶桌面贴纸」：托盘控制显隐/退出/开机自启，贴纸极简紧凑实时显示当前活跃会话、可拖动且位置持久化。
 
 **Architecture:** 方案 A——现有主窗口直接配置成贴纸（transparent/decorations:false/alwaysOnTop/skipTaskbar）。Rust 侧加 Tauri v2 TrayIcon + 菜单、`tauri-plugin-window-state`（位置持久化）、`tauri-plugin-autostart`（开机自启）；复用既有 `get_live_sessions` 命令、notify watcher、stale 巡检、按需开短连接。前端把渲染换成极简 `Sticker` 视图，复用 `getLiveSessions` + `listen("board-changed")`。
 
@@ -43,7 +43,7 @@ tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
 ```
 
-- [ ] **Step 2: cc-app 启用 tray-icon feature + 引入插件**
+- [ ] **Step 2: meowo-app 启用 tray-icon feature + 引入插件**
 
 把 `app/src-tauri/Cargo.toml` 的 `[dependencies]` 里 tauri 那行改为带 feature，并加两个插件：
 ```toml
@@ -51,7 +51,7 @@ tauri = { workspace = true, features = ["tray-icon"] }
 tauri-plugin-window-state = { workspace = true }
 tauri-plugin-autostart = { workspace = true }
 ```
-（其余依赖 cc-store/serde/serde_json/notify 不动。）
+（其余依赖 meowo-store/serde/serde_json/notify 不动。）
 
 - [ ] **Step 3: 窗口改贴纸配置**
 
@@ -60,7 +60,7 @@ tauri-plugin-autostart = { workspace = true }
     "windows": [
       {
         "label": "main",
-        "title": "cc-kanban",
+        "title": "Meowo",
         "width": 280,
         "height": 220,
         "minWidth": 200,
@@ -92,7 +92,7 @@ tauri-plugin-autostart = { workspace = true }
 
 - [ ] **Step 5: 验证编译（拉插件依赖）**
 
-Run: `cargo build -p cc-app`
+Run: `cargo build -p meowo-app`
 Expected: 拉取 tray-icon/两个插件依赖后编译通过（首次较慢）。**此时还没注册插件/托盘，只验证依赖与配置能编译。**
 
 - [ ] **Step 6: Commit**
@@ -138,9 +138,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .build()?;
 
     let autostart_item = autostart.clone();
-    TrayIconBuilder::with_id("cc-kanban-tray")
+    TrayIconBuilder::with_id("meowo-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("cc-kanban")
+        .tooltip("Meowo")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "toggle" => {
@@ -203,12 +203,12 @@ pub fn run() {
 
 - [ ] **Step 4: 验证编译**
 
-Run: `cargo build -p cc-app`
+Run: `cargo build -p meowo-app`
 Expected: 编译通过。若某 Tauri v2 API 名对不上（如菜单/托盘 builder 方法），**Read 已编译依赖的源或查 Tauri v2 文档（tray/menu/autostart）按真实 API 调整**，保持行为不变（显隐/自启/退出）。
 
 - [ ] **Step 5: clippy**
 
-Run: `cargo clippy -p cc-app`
+Run: `cargo clippy -p meowo-app`
 Expected: 无新 warning（清理未用 import）。
 
 - [ ] **Step 6: Commit**
@@ -443,20 +443,20 @@ git commit -m "test(app): Sticker 视图组件测试"
 
 - [ ] **Step 1: 用种子库启动 dev**
 
-Run（bash；先确认无 cc-app.exe 占用）：
+Run（bash；先确认无 meowo-app.exe 占用）：
 ```bash
-cd app && CC_KANBAN_DB="C:/Users/larry/Desktop/workspace/cc-kanban/demo-board.db" bunx tauri dev
+cd app && MEOWO_DB="C:/Users/larry/Desktop/workspace/meowo/demo-board.db" bunx tauri dev
 ```
 （demo-board.db 可用计划2验证时的种子方式灌几条；或指向真实 board.db。）
 
 - [ ] **Step 2: 人工核对清单**
 
-- 任务栏**不出现** cc-kanban（skipTaskbar 生效），但**系统托盘有图标**。
+- 任务栏**不出现** Meowo（skipTaskbar 生效），但**系统托盘有图标**。
 - 贴纸窗口**透明圆角、置顶**（盖在其它窗口之上）、显示活跃会话极简行（状态点颜色对：绿/黄/灰）。
 - 拖动顶部手柄能移动贴纸到任意角落。
-- 托盘菜单：「显示/隐藏贴纸」能切显隐；「开机自启」勾选状态可切换（勾上后查 Windows 启动项有 cc-kanban，取消则移除）；「退出」真的退出进程。
+- 托盘菜单：「显示/隐藏贴纸」能切显隐；「开机自启」勾选状态可切换（勾上后查 Windows 启动项有 Meowo，取消则移除）；「退出」真的退出进程。
 - **位置持久化**：拖到某处 → 退出 → 重开 → 贴纸回到上次位置。
-- **实时**：另开终端往同一 `CC_KANBAN_DB` 灌一条事件，贴纸约 300ms 内自动更新。
+- **实时**：另开终端往同一 `MEOWO_DB` 灌一条事件，贴纸约 300ms 内自动更新。
 
 - [ ] **Step 3: 标记交付**
 

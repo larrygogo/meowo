@@ -1,4 +1,4 @@
-use cc_store::{PendingReview, Project, Session, SessionStatus, Store, Task, TaskColumn, Todo, TodoInput, TodoStatus};
+use meowo_store::{PendingReview, Project, Session, SessionStatus, Store, Task, TaskColumn, Todo, TodoInput, TodoStatus};
 
 #[test]
 fn open_in_memory_creates_tables() {
@@ -139,7 +139,7 @@ fn empty_todos_resets_column_to_todo() {
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, tid) = store.start_session(pid, "cc-e", 200).unwrap();
     // 先 doing
-    store.sync_todos(sid, &[cc_store::TodoInput { content: "x".into(), status: cc_store::TodoStatus::InProgress }], 300).unwrap();
+    store.sync_todos(sid, &[meowo_store::TodoInput { content: "x".into(), status: meowo_store::TodoStatus::InProgress }], 300).unwrap();
     assert_eq!(store.get_task(tid).unwrap().column, "doing");
     // 清空 -> 回 todo
     store.sync_todos(sid, &[], 400).unwrap();
@@ -153,8 +153,8 @@ fn all_pending_todos_is_todo_column() {
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, tid) = store.start_session(pid, "cc-p", 200).unwrap();
     store.sync_todos(sid, &[
-        cc_store::TodoInput { content: "a".into(), status: cc_store::TodoStatus::Pending },
-        cc_store::TodoInput { content: "b".into(), status: cc_store::TodoStatus::Pending },
+        meowo_store::TodoInput { content: "a".into(), status: meowo_store::TodoStatus::Pending },
+        meowo_store::TodoInput { content: "b".into(), status: meowo_store::TodoStatus::Pending },
     ], 300).unwrap();
     assert_eq!(store.get_task(tid).unwrap().column, "todo");
 }
@@ -164,7 +164,7 @@ fn touch_session_revives_waiting_to_running() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _tid) = store.start_session(pid, "cc-r", 200).unwrap();
-    store.set_session_status(sid, cc_store::SessionStatus::Waiting, 300).unwrap();
+    store.set_session_status(sid, meowo_store::SessionStatus::Waiting, 300).unwrap();
     assert_eq!(store.get_session(sid).unwrap().status, "waiting");
     store.touch_session(sid, 400).unwrap();
     assert_eq!(store.get_session(sid).unwrap().status, "running");

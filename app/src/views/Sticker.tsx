@@ -387,11 +387,11 @@ function CardContextMenu({
   );
 }
 
-const PIN_KEY = "cc-kanban-pinned";
-const STAR_KEY = "cc-kanban-starred";
+const PIN_KEY = "meowo-pinned";
+const STAR_KEY = "meowo-starred";
 // 用量屏选中的 provider 偏好：折叠/展开会卸载重挂 UsageScreen，持久化以记住上次选择
 // （该 provider 仍在活跃列表就沿用，被关/找不到才退回第一个——见 UsageScreen selected 计算）。
-const USAGE_KEY = "cc-kanban-usage-provider";
+const USAGE_KEY = "meowo-usage-provider";
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
 
 /** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */

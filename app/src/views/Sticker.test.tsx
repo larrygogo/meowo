@@ -153,14 +153,14 @@ describe("Sticker", () => {
   });
 
   it("右键菜单星标切换状态并持久化到 localStorage,操作后菜单关闭", () => {
-    localStorage.removeItem("cc-kanban-starred");
+    localStorage.removeItem("meowo-starred");
     const { container } = render(<Sticker filter="all" data={[mk({ session: { id: 7, project_id: 1, cc_session_id: "star-me", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     fireEvent.click(screen.getByText(zh.sticker.star));
     expect(container.querySelector(".stk-card.is-star")).toBeTruthy();
-    expect(JSON.parse(localStorage.getItem("cc-kanban-starred") ?? "[]")).toContain("star-me");
+    expect(JSON.parse(localStorage.getItem("meowo-starred") ?? "[]")).toContain("star-me");
     expect(document.querySelector(".ctx-menu")).toBeNull(); // 任一菜单项执行后菜单关闭
-    localStorage.removeItem("cc-kanban-starred");
+    localStorage.removeItem("meowo-starred");
   });
 
   it("右键打开菜单:含星标/便签/重命名/归档四项,Escape 关闭", () => {
@@ -209,12 +209,12 @@ describe("Sticker", () => {
   });
 
   it("已星标/有便签/已归档的会话,菜单项显示反向文案", () => {
-    localStorage.setItem("cc-kanban-starred", JSON.stringify(["s"]));
+    localStorage.setItem("meowo-starred", JSON.stringify(["s"]));
     const { container } = render(<Sticker filter="archived" data={[mk({ archived: true, note: "有便签" })]} />);
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     const labels = Array.from(document.querySelectorAll(".ctx-item")).map((el) => el.textContent);
     expect(labels).toEqual([zh.sticker.unstar, zh.sticker.noteEdit, zh.sticker.renameTitle, zh.sticker.unarchive, zh.sticker.newSession]);
-    localStorage.removeItem("cc-kanban-starred");
+    localStorage.removeItem("meowo-starred");
   });
 
   it("菜单「新建会话」用当前会话的 cwd 和 provider 打开新建窗口", () => {
@@ -242,7 +242,7 @@ describe("Sticker", () => {
   });
 
   it("已星标会话排到列表最前", () => {
-    localStorage.setItem("cc-kanban-starred", JSON.stringify(["b"]));
+    localStorage.setItem("meowo-starred", JSON.stringify(["b"]));
     const { container } = render(<Sticker filter="all" data={[
       mk({ task_title: "甲", current_activity: null, session: { id: 1, project_id: 1, cc_session_id: "a", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
       mk({ task_title: "乙", current_activity: null, session: { id: 2, project_id: 1, cc_session_id: "b", status: "running", started_at: 0, last_event_at: Date.now(), ended_at: null } }),
@@ -250,7 +250,7 @@ describe("Sticker", () => {
     const cards = container.querySelectorAll(".stk-card");
     expect(cards[0].querySelector(".stk-title")?.textContent).toBe("乙");
     expect(cards[0].classList.contains("is-star")).toBe(true);
-    localStorage.removeItem("cc-kanban-starred");
+    localStorage.removeItem("meowo-starred");
   });
 
   it("有便签时渲染便签块", () => {

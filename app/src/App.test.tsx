@@ -145,7 +145,7 @@ describe("App", () => {
   });
 
   it("吸附态启动(SNAP_KEY 有边)走折叠分支，不触发尺寸还原", async () => {
-    localStorage.setItem("cc-kanban-snap-edge", "left");
+    localStorage.setItem("meowo-snap-edge", "left");
     render(<App />);
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith("snap_collapse", expect.anything())
@@ -156,7 +156,7 @@ describe("App", () => {
   // 回归：SIZE_KEY 曾被「吸附态拖角缩成细条」的尺寸毒化(实测 {80,240}/{136,20})。loadSize 须把低于
   // 最小尺寸的值回落默认 {360,440}，否则还原会用毒化的细条尺寸、把窗口缩成细条。
   it("SIZE_KEY 被细条尺寸毒化时，loadSize 回落默认 {360,440} 再 snap_restore", async () => {
-    localStorage.setItem("cc-kanban-normal-size", JSON.stringify({ w: 80, h: 37 }));
+    localStorage.setItem("meowo-normal-size", JSON.stringify({ w: 80, h: 37 }));
     render(<App />);
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith(
@@ -169,7 +169,7 @@ describe("App", () => {
   // 回归：SIZE_KEY 异常大值/非有限数(localStorage 被改坏)不能直接喂给 set_size，否则设出极端窗口。
   // loadSize 须校验上界(<=20000)与有限数，超界则回落默认 {360,440}。
   it("SIZE_KEY 异常大值时，loadSize 回落默认 {360,440}，不设出极端窗口", async () => {
-    localStorage.setItem("cc-kanban-normal-size", JSON.stringify({ w: 999999, h: 999999 }));
+    localStorage.setItem("meowo-normal-size", JSON.stringify({ w: 999999, h: 999999 }));
     render(<App />);
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith(
@@ -182,7 +182,7 @@ describe("App", () => {
   // 回归：running tab 下刷新时，若某会话已从 running 迁移到 waiting，后端 running 分页不再返回它；
   // 旧合并逻辑会保留 prev 中的该会话（状态仍是旧 running），导致它错误地继续显示在 running tab 下。
   it("running tab 刷新时，状态迁出 running 的会话应从列表移除", async () => {
-    localStorage.setItem("cc-kanban-tab", "running");
+    localStorage.setItem("meowo-tab", "running");
     const mk = (id: number, status: "running" | "waiting", title: string) => ({
       session: {
         id,
@@ -244,7 +244,7 @@ describe("App", () => {
   // 新顺序重排；旧合并逻辑按 prev 数组的原位置合并，只有全新会话才 prepend 到最前，已存在
   // 会话不会因排序键变化而移动——用户须手动切 tab 才能看到它跳到最前。
   it("board-changed 刷新时，已存在会话应按新 last_event_at 重新排序（如恢复的旧会话跳到最前）", async () => {
-    localStorage.setItem("cc-kanban-tab", "all");
+    localStorage.setItem("meowo-tab", "all");
     const mk = (id: number, lastEventAt: number, title: string) => ({
       session: {
         id,

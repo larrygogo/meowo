@@ -1,5 +1,5 @@
 //! 从 Claude Code transcript JSONL 解析会话标题。
-//! reporter 写入时用、cc-app 读取展示时也用，统一放在 store 里共享。
+//! reporter 写入时用、meowo-app 读取展示时也用，统一放在 store 里共享。
 
 /// 从 CC transcript JSONL 取会话标题：最后一条 custom-title 优先，否则最后一条 ai-title。
 /// 读不到/无标题返回 None。只解析含 "-title" 的行，避免全量 JSON 解析开销。

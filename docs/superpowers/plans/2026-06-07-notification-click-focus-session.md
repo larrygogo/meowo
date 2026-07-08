@@ -80,7 +80,7 @@ fn focus_session(pid: i64, title: Option<String>) -> Result<(), String> {
 
 - [ ] **Step 3: 编译 + 测试 + clippy**
 
-Run: `cargo build -p cc-app && cargo test -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo build -p meowo-app && cargo test -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: 全部通过，无警告（纯重构，行为不变）。
 
 - [ ] **Step 4: 提交**
@@ -149,7 +149,7 @@ fn show_session_notification(
     focus_title: String,
 ) {
     use tauri_winrt_notification::Toast;
-    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 cc-kanban+图标 + 点击可激活）；
+    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 Meowo+图标 + 点击可激活）；
     // dev 下 AUMID 未注册，退回 PowerShell 的 AUMID 仅保证 toast 能弹出（dev 点击不跳转）。
     let app_id = if tauri::is_dev() {
         Toast::POWERSHELL_APP_ID.to_string()
@@ -187,12 +187,12 @@ fn show_session_notification(
     use tauri_plugin_notification::NotificationExt;
 ```
 
-(b) 把会话循环里「错误通知 + 待交互通知」那段（当前约 961-1002 行，从 `let cc_store::TranscriptInfo { title, error } =` 到待交互的 `match ... { None => { notified_waiting.remove(&sid); } }` 结束）整体替换为：
+(b) 把会话循环里「错误通知 + 待交互通知」那段（当前约 961-1002 行，从 `let meowo_store::TranscriptInfo { title, error } =` 到待交互的 `match ... { None => { notified_waiting.remove(&sid); } }` 结束）整体替换为：
 
 ```rust
-                    let cc_store::TranscriptInfo { title, error } =
-                        cc_store::title::resolve_transcript_path(None, s.cwd.as_deref(), &sid)
-                            .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+                    let meowo_store::TranscriptInfo { title, error } =
+                        meowo_store::title::resolve_transcript_path(None, s.cwd.as_deref(), &sid)
+                            .and_then(|p| p.to_str().map(meowo_store::analyze_transcript))
                             .unwrap_or_default();
                     // 会话标题：通知正文用，也作点击聚焦时匹配 WT 标签页的标题。transcript 标题优先，否则 DB 标题。
                     let display_title = title
@@ -240,7 +240,7 @@ fn show_session_notification(
 
 - [ ] **Step 6: 编译 + 测试 + clippy**
 
-Run: `cargo build -p cc-app && cargo test -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo build -p meowo-app && cargo test -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: 通过，无警告。
 
 > 若 `tauri-winrt-notification` 的方法名与本计划不符（如 `title`/`text1`/`on_activated`/`POWERSHELL_APP_ID`），以 0.7.x 实际 API 为准微调；若 `on_activated` 闭包因 `FnMut` 不能 move `focus_title` 而报错，保持 `Some(focus_title.clone())`（已是 clone）。如遇 winrt/COM 相关编译或运行问题，STOP 并报告具体错误，不要擅自改成别的机制。
@@ -298,7 +298,7 @@ Expected: 无任何输出（插件引用已清干净）。
 
 - [ ] **Step 4: 手动冒烟（需安装版，可选）**
 
-Run: `cd app && bun run tauri build`，安装产物后验证：通知显示「cc-kanban」+ 图标；点击「等待你回复」/「会话出错」通知能切到该会话的 Windows Terminal 标签页并置前。
+Run: `cd app && bun run tauri build`，安装产物后验证：通知显示「Meowo」+ 图标；点击「等待你回复」/「会话出错」通知能切到该会话的 Windows Terminal 标签页并置前。
 
 > dev 模式（`bun run tauri dev`）下通知仍归在 powershell 且点击不跳转，属 AUMID 未注册的固有限制，以安装版为准。
 

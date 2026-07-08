@@ -1,4 +1,4 @@
-# cc-kanban 桌面贴纸 设计文档（计划 3）
+# Meowo 桌面贴纸 设计文档（计划 3）
 
 > 日期：2026-06-03。计划 1（数据管线）、计划 2（当前活跃看板）已合并 main 并通过审计修复。
 
@@ -33,11 +33,11 @@
 
 ## 3. 架构与改动（方案 A：单窗口即贴纸）
 
-把现有那个窗口直接配置成贴纸，托盘控制其显隐。复用现成数据层（cc-store 只读 + notify），前端把渲染换成极简贴纸视图。
+把现有那个窗口直接配置成贴纸，托盘控制其显隐。复用现成数据层（meowo-store 只读 + notify），前端把渲染换成极简贴纸视图。
 
 数据流不变：
 ```
-Claude Code hooks → cc-reporter → SQLite(board.db, WAL)
+Claude Code hooks → meowo-reporter → SQLite(board.db, WAL)
                                       ▲
         Tauri 后端(按需开短连接读) ──┘  notify 监听 → emit board-changed
                                       → 贴纸前端 listen 后 get_live_sessions 重渲染
@@ -66,7 +66,7 @@ Claude Code hooks → cc-reporter → SQLite(board.db, WAL)
 ## 5. 测试
 
 - **前端**：`Sticker.tsx` 组件测试（vitest + testing-library）——空态文案、running/waiting/stale 三种状态点、当前动作渲染、拖动手柄存在。沿用计划 2 的测试模式。
-- **Rust**：无新查询（复用 `live_sessions`，已测），故 cc-store 无新单测。托盘菜单/窗口显隐/置顶/持久化属 GUI 行为，靠**手动验证**（启动→托盘可见→贴纸置顶→拖动后重启位置恢复→托盘隐藏/显示/退出生效）。
+- **Rust**：无新查询（复用 `live_sessions`，已测），故 meowo-store 无新单测。托盘菜单/窗口显隐/置顶/持久化属 GUI 行为，靠**手动验证**（启动→托盘可见→贴纸置顶→拖动后重启位置恢复→托盘隐藏/显示/退出生效）。
 
 ## 6. 交付范围
 

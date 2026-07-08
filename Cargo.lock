@@ -315,60 +315,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-app"
-version = "0.4.2"
-dependencies = [
- "cc-reporter",
- "cc-store",
- "mac-notification-sys",
- "notify",
- "percent-encoding",
- "serde",
- "serde_json",
- "sha2",
- "sys-locale",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-nspanel",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-positioner",
- "tauri-plugin-process",
- "tauri-plugin-updater",
- "tauri-plugin-window-state",
- "tauri-winrt-notification",
- "toml_edit 0.22.27",
- "uiautomation",
- "ureq",
- "windows-sys 0.59.0",
- "winreg 0.55.0",
-]
-
-[[package]]
-name = "cc-reporter"
-version = "0.1.0"
-dependencies = [
- "cc-store",
- "filetime",
- "serde",
- "serde_json",
- "sysinfo",
- "tempfile",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "cc-store"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2097,6 +2043,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "meowo-app"
+version = "0.4.2"
+dependencies = [
+ "mac-notification-sys",
+ "meowo-reporter",
+ "meowo-store",
+ "notify",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sys-locale",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-nspanel",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-positioner",
+ "tauri-plugin-process",
+ "tauri-plugin-updater",
+ "tauri-plugin-window-state",
+ "tauri-winrt-notification",
+ "toml_edit 0.22.27",
+ "uiautomation",
+ "ureq",
+ "windows-sys 0.59.0",
+ "winreg 0.55.0",
+]
+
+[[package]]
+name = "meowo-reporter"
+version = "0.1.0"
+dependencies = [
+ "filetime",
+ "meowo-store",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "meowo-store"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

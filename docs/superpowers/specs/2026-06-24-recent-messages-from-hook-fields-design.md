@@ -6,22 +6,22 @@
 
 ## 背景与目标
 
-cc-kanban 卡片展示的「最近一条 AI 正文 / 用户那句话」不如 moshi 准。**根因不是数据，是取数方式**：cc-kanban 持续猜 transcript + 把用户那句话挤进一个会被覆盖的字段；moshi 在 hook 触发时直接取 Claude Code 给的现成字段，存成互不覆盖的稳定字段。
+Meowo 卡片展示的「最近一条 AI 正文 / 用户那句话」不如 moshi 准。**根因不是数据，是取数方式**：Meowo 持续猜 transcript + 把用户那句话挤进一个会被覆盖的字段；moshi 在 hook 触发时直接取 Claude Code 给的现成字段，存成互不覆盖的稳定字段。
 
 目标：把「AI 最近一条完整回答」「用户最近一条」改为在对应 hook 时刻用 CC payload 的现成字段落库展示，transcript 解析降为兜底。
 
 ## 真实数据核实（非凭文档）
 
 - **AI 侧**：
-  - cc-kanban（`crates/cc-store/src/analyze.rs:122-151`）每 5s 从 transcript 取「最新 text 块」，且每条 assistant 只取 `find_map` 命中的**第一个** text 块。
+  - Meowo（`crates/meowo-store/src/analyze.rs:122-151`）每 5s 从 transcript 取「最新 text 块」，且每条 assistant 只取 `find_map` 命中的**第一个** text 块。
   - moshi（`index.ts:682`）主源是 `input.last_assistant_message`（CC 在 Stop 时给的完整最终答复），transcript 解析仅兜底，且兜底时 `.filter(text).map(text).join(" ")` **拼接所有** text 块（`index.ts:178-184`）。
-  - 实证：抓取本会话进行中的一轮，cc-kanban 取到的是发工具前的**开场白**「切到这个。先按你的规矩…」；moshi 存的 `lastEventTitle` 是上一轮 Stop 的**完整答复**「调研完成。结论比表面更微妙…」。即 cc-kanban 回合中途显示半句中间话。
+  - 实证：抓取本会话进行中的一轮，Meowo 取到的是发工具前的**开场白**「切到这个。先按你的规矩…」；moshi 存的 `lastEventTitle` 是上一轮 Stop 的**完整答复**「调研完成。结论比表面更微妙…」。即 Meowo 回合中途显示半句中间话。
 - **用户侧**：
-  - cc-kanban（`crates/cc-store/src/store.rs:303` `on_user_prompt`）把用户那句话截到 60 字写进 `current_activity`，但该字段会被下一个 Bash 工具的 `「› 命令」` **覆盖**（`crates/cc-reporter/src/dispatch.rs:39-42`）。回合一开跑工具，「人说的话」就被命令盖掉。
+  - Meowo（`crates/meowo-store/src/store.rs:303` `on_user_prompt`）把用户那句话截到 60 字写进 `current_activity`，但该字段会被下一个 Bash 工具的 `「› 命令」` **覆盖**（`crates/meowo-reporter/src/dispatch.rs:39-42`）。回合一开跑工具，「人说的话」就被命令盖掉。
   - moshi 用独立稳定的 `lastUserPrompt`，不被工具活动覆盖。
 - **CC hook 字段**（待落地前以真实 payload 复核，见「诚实保留」）：
   - `Stop` hook payload 含本回合最终助手消息正文（moshi 实测字段名 `last_assistant_message`；官方文档另称 `assistant_message`——两者存疑）。
-  - `UserPromptSubmit` 的用户文本在 `prompt`（cc-kanban 已在读）。
+  - `UserPromptSubmit` 的用户文本在 `prompt`（Meowo 已在读）。
 
 ## 设计决策（已与用户确认）
 
@@ -32,7 +32,7 @@ cc-kanban 卡片展示的「最近一条 AI 正文 / 用户那句话」不如 mo
 
 ## 组件与改动点
 
-### 1. hook 解析（`crates/cc-reporter/src/hook.rs`）
+### 1. hook 解析（`crates/meowo-reporter/src/hook.rs`）
 
 - `HookEvent` 加字段，**用 serde alias 同时接受两种可能的字段名**以对冲不确定性：
   ```rust
@@ -41,7 +41,7 @@ cc-kanban 卡片展示的「最近一条 AI 正文 / 用户那句话」不如 mo
   ```
 - `prompt` 已存在，无需改。
 
-### 2. 数据层（`crates/cc-store`）
+### 2. 数据层（`crates/meowo-store`）
 
 - **schema**：`migrations.rs` 的 `SCHEMA` 在 `sessions` 加 `last_ai_text TEXT`、`last_user_text TEXT`。
 - **旧库迁移**：`Store::migrate` 沿用现有 ALTER 补列模式各加一列（已存在则忽略）。
@@ -50,7 +50,7 @@ cc-kanban 卡片展示的「最近一条 AI 正文 / 用户那句话」不如 mo
   - `set_last_user_text(sid, text)`：同上写 `last_user_text`，复用现有 `sanitize_prompt`（`store.rs:607`，剔图片标记+折叠空白）。
 - **query.rs**：`LiveSession` 加 `last_ai_text: Option<String>`、`last_user_text: Option<String>`；`live_sessions()` SELECT 增这两列并回填。
 
-### 3. 事件流转（`crates/cc-reporter/src/dispatch.rs`）
+### 3. 事件流转（`crates/meowo-reporter/src/dispatch.rs`）
 
 - **`"Stop"` 分支**：在现有 `set_session_status(Waiting)` + `apply_title` 旁，若 `ev.last_assistant_message` 为 Some 则 `store.set_last_ai_text(sid, msg, now)`。为 None（旧 CC / 字段名不符）→ 不写，留给 app 的 transcript 兜底。
 - **`"UserPromptSubmit"` 分支**：在现有 `on_user_prompt` 旁，`store.set_last_user_text(sid, prompt, now)`。
@@ -68,9 +68,9 @@ cc-kanban 卡片展示的「最近一条 AI 正文 / 用户那句话」不如 mo
 UserPromptSubmit ──prompt──▶ dispatch ─ set_last_user_text ─┐
 Stop ──last_assistant_message──▶ dispatch ─ set_last_ai_text ┤  写 sessions.{last_user_text,last_ai_text}
                                                             ▼
-                                                  ~/.cc-kanban/board.db
+                                                  ~/.meowo/board.db
                                                             ▲ live_sessions() 回带两字段
-cc-app 文件监听 ─▶ LiveItem ─▶ 前端卡片
+meowo-app 文件监听 ─▶ LiveItem ─▶ 前端卡片
    AI:  last_ai_text(DB, 锚Stop) ?? preview(live transcript 兜底, 已修为拼接所有 text 块)
    你:  last_user_text(DB, 独立, 不被工具覆盖)
    活动: current_activity(只表示在跑什么)

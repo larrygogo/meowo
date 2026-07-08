@@ -1,6 +1,6 @@
 // scripts/install-hooks.mjs
-// 用法：bun scripts/install-hooks.mjs <cc-reporter 可执行文件绝对路径> [settingsPath]
-// 把 cc-kanban 的 hooks 幂等合并进 settings.json，不破坏已有配置。
+// 用法：bun scripts/install-hooks.mjs <meowo-reporter 可执行文件绝对路径> [settingsPath]
+// 把 Meowo 的 hooks 幂等合并进 settings.json，不破坏已有配置。
 // 仅装 Claude Code 的 hooks（写入 ~/.claude/settings.json；会话默认 provider=claude）。
 // codex / kimi 不经此脚本——它们由各自 CLI 的原生 hook 配置接入，hook 命令各带 --provider codex|kimi。
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
@@ -9,14 +9,14 @@ import { join, dirname } from "node:path";
 
 const reporter = process.argv[2];
 if (!reporter) {
-  console.error("用法: bun scripts/install-hooks.mjs <cc-reporter 可执行文件绝对路径> [settingsPath]");
+  console.error("用法: bun scripts/install-hooks.mjs <meowo-reporter 可执行文件绝对路径> [settingsPath]");
   process.exit(1);
 }
 
 // 优先级：命令行第 2 参 > 环境变量 > 默认 ~/.claude/settings.json
 const settingsPath =
   process.argv[3] ||
-  process.env.CC_KANBAN_SETTINGS ||
+  process.env.MEOWO_SETTINGS ||
   join(homedir(), ".claude", "settings.json");
 
 mkdirSync(dirname(settingsPath), { recursive: true });

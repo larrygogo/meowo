@@ -47,7 +47,7 @@
 account 模块（app/src-tauri/src/account.rs，Windows 实现 + 非 Windows 桩）
   ├─ read_account() -> Option<Account>          读 ~/.claude.json oauthAccount
   ├─ read_daily() -> Option<DailyStats>         读 stats-cache.json（近 N 天 + lastComputedDate）
-  ├─ read_cached_usage() -> Option<Usage>       读 ~/.cc-kanban/usage-cache.json
+  ├─ read_cached_usage() -> Option<Usage>       读 ~/.meowo/usage-cache.json
   ├─ fetch_usage_live() -> Result<Usage>        ensure_token → GET /api/oauth/usage → 写缓存
   │    └─ ensure_valid_token() -> Result<String>  过期则刷新 + 原子写回 .credentials.json
   └─ 纯函数（可单测）：parse_usage / parse_daily / is_expired / merge_credentials
@@ -60,7 +60,7 @@ account 模块（app/src-tauri/src/account.rs，Windows 实现 + 非 Windows 桩
 ### 模块边界与职责
 
 - `account.rs` 独立承担「读 CC 账号/凭据/统计 + 调用量端点 + 刷新 token」，不与现有 sticker/通知逻辑耦合。HTTP 用轻量阻塞客户端 `ureq`（rustls），在 `tauri::async_runtime::spawn_blocking` 或独立线程里跑，3-5s 超时。
-- 用量缓存文件：`~/.cc-kanban/usage-cache.json`（与 board.db / settings.json 同目录），结构 = `{ usage: Usage, fetched_at: i64 }`。
+- 用量缓存文件：`~/.meowo/usage-cache.json`（与 board.db / settings.json 同目录），结构 = `{ usage: Usage, fetched_at: i64 }`。
 
 ### 类型（serde）
 

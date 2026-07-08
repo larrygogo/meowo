@@ -37,7 +37,7 @@
 - React context + `useT()` 钩子提供 `t(key)`；两个窗口入口（App / About）都包 Provider
 - 仿 `appearance.ts`（:74-99）：localStorage 缓存当前语言防首屏闪错，监听 `settings-changed` 实时切换
 
-**Rust 侧**（11 条）：`lib.rs` 内简单 `fn tr(lang, key) -> &'static str` 静态 match，不引库。消费点：通知标题（lib.rs:1241,1259，liveness 轮询每 5s 已 load_settings，顺带读语言）、托盘菜单（lib.rs:1431-1432 / menubar.rs:95-96，监听 settings-changed 重建菜单）、设置窗口标题（lib.rs:1395）、错误短标签（crates/cc-store/src/analyze.rs:33-39 产生的 sentinel 保留，展示层映射——见坑 1）。
+**Rust 侧**（11 条）：`lib.rs` 内简单 `fn tr(lang, key) -> &'static str` 静态 match，不引库。消费点：通知标题（lib.rs:1241,1259，liveness 轮询每 5s 已 load_settings，顺带读语言）、托盘菜单（lib.rs:1431-1432 / menubar.rs:95-96，监听 settings-changed 重建菜单）、设置窗口标题（lib.rs:1395）、错误短标签（crates/meowo-store/src/analyze.rs:33-39 产生的 sentinel 保留，展示层映射——见坑 1）。
 
 ### 语言设置
 

@@ -6,9 +6,9 @@
 
 ## 背景与目标
 
-现状：cc-kanban 的 `waiting` 仅由 `Stop` hook 写入 = **回合边界**（Claude 说完一轮、等你下一句）。但 Claude 真正**卡在回合中途等你介入**的三种情形——等你批准工具调用、等你回答提问（`AskUserQuestion`）、等你批准计划（`ExitPlanMode`）——此刻会话仍是 `running`，cc-kanban 完全无标记，而这恰恰是最该立刻处理的高价值信号。
+现状：Meowo 的 `waiting` 仅由 `Stop` hook 写入 = **回合边界**（Claude 说完一轮、等你下一句）。但 Claude 真正**卡在回合中途等你介入**的三种情形——等你批准工具调用、等你回答提问（`AskUserQuestion`）、等你批准计划（`ExitPlanMode`）——此刻会话仍是 `running`，Meowo 完全无标记，而这恰恰是最该立刻处理的高价值信号。
 
-目标：新增一个**正交子态** `pending_review`，把这三种「回合中途阻塞、等你介入」识别出来，在卡片上醒目标记、排到最顶、弹一条去重通知。这是对标 moshi-hook 的 `pendingPermissionAt` / `lastToolName=AskUserQuestion` 设计、cc-kanban 此前缺失的一环。
+目标：新增一个**正交子态** `pending_review`，把这三种「回合中途阻塞、等你介入」识别出来，在卡片上醒目标记、排到最顶、弹一条去重通知。这是对标 moshi-hook 的 `pendingPermissionAt` / `lastToolName=AskUserQuestion` 设计、Meowo 此前缺失的一环。
 
 ## 真实数据核实（非凭文档）
 
@@ -26,7 +26,7 @@
 
 ## 组件与改动点
 
-### 1. 数据层（`crates/cc-store`）
+### 1. 数据层（`crates/meowo-store`）
 
 - **schema**：`migrations.rs` 的 `SCHEMA` 在 `sessions` 表加 `pending_review TEXT`（默认 NULL）。
 - **旧库迁移**：`Store::migrate` 沿用现有 pid/cwd/archived 的 `ALTER TABLE sessions ADD COLUMN pending_review TEXT` 补列模式（`ADD COLUMN` 若已存在则忽略错误，与现状一致）。
@@ -36,7 +36,7 @@
   - `clear_pending_review(sid)`：`UPDATE sessions SET pending_review=NULL WHERE id=?`（不动 last_event_at——由同回合的兄弟调用负责时间戳）。
 - **query.rs**：`LiveSession` 加 `pending_review: Option<String>`；`live_sessions()` 的 SELECT 增 `s.pending_review` 并回填。`overview()` 的 `active_sessions`（`status IN ('running','waiting')`）无需改——pending 会话本就是 running，已计入。
 
-### 2. 事件流转（`crates/cc-reporter/src/dispatch.rs`）
+### 2. 事件流转（`crates/meowo-reporter/src/dispatch.rs`）
 
 `HookEvent` 已有 `tool_name`，**不改解析**。新增/调整分支：
 
@@ -49,7 +49,7 @@
 
 ### 3. Hook 接线（`app/src-tauri/src/ccsetup.rs` + `scripts/install-hooks.mjs`）
 
-当前 `ensure_hooks` 把 5 个事件各按 `matcher:"*"` 挂一条、且 `find_reporter_hook` 忽略 matcher。改为 **matcher 感知**以支持「同一事件下多条按 matcher 区分的 cc-reporter 条目」：
+当前 `ensure_hooks` 把 5 个事件各按 `matcher:"*"` 挂一条、且 `find_reporter_hook` 忽略 matcher。改为 **matcher 感知**以支持「同一事件下多条按 matcher 区分的 meowo-reporter 条目」：
 
 - `HOOK_EVENTS:[&str;5]` → `HOOK_SPECS:&[(event, matcher)]`：
   ```
@@ -58,11 +58,11 @@
   ("PermissionRequest","*"),
   ("PreToolUse","AskUserQuestion"), ("PreToolUse","ExitPlanMode"),
   ```
-- `find_reporter_hook` → `find_reporter_hook_with_matcher(event_arr, matcher)`：匹配「`entry["matcher"] == matcher` **且** 该 entry 的某 hook 命令是 cc-reporter（`reporter_exe_path` 命中）」。命中则更新路径，未命中则按该 matcher 追加 `{ matcher, hooks:[{type:command, command, timeout:5}] }`。
+- `find_reporter_hook` → `find_reporter_hook_with_matcher(event_arr, matcher)`：匹配「`entry["matcher"] == matcher` **且** 该 entry 的某 hook 命令是 meowo-reporter（`reporter_exe_path` 命中）」。命中则更新路径，未命中则按该 matcher 追加 `{ matcher, hooks:[{type:command, command, timeout:5}] }`。
 - **幂等/保留性**：
   - 老库 5 个 `*` 事件仍命中升级（matcher 同为 `*`）。
-  - 用户自有 `PreToolUse:Bash`（如 node 预检）matcher 不同且非 cc-reporter → 原封不动。
-  - `reporter_exe_path` 严格判定不变（不误伤 `node tools/cc-reporter-notify.js` 等）。
+  - 用户自有 `PreToolUse:Bash`（如 node 预检）matcher 不同且非 meowo-reporter → 原封不动。
+  - `reporter_exe_path` 严格判定不变（不误伤 `node tools/meowo-reporter-notify.js` 等）。
 - `install-hooks.mjs` 同步改：`EVENTS` → 同样的 `(event,matcher)` 列表；幂等过滤键从「`command` 完全相等」改为「`command` 相等 **且** `matcher` 相等」，避免同事件多 matcher 条目互相误删。
 
 ### 4. 应用层（`app/src-tauri/src/lib.rs`）
@@ -91,12 +91,12 @@
 Claude Code 会话（回合中途阻塞）
   │ PermissionRequest / PreToolUse(AskUserQuestion|ExitPlanMode)
   ▼
-cc-reporter dispatch → set_pending_review(kind)  ──┐
+meowo-reporter dispatch → set_pending_review(kind)  ──┐
   │ 下一个 PostToolUse/UserPromptSubmit/Stop/End   │  写 sessions.pending_review
   ▼ clear_pending_review                           ▼
-                                          ~/.cc-kanban/board.db
+                                          ~/.meowo/board.db
                                                     ▲ live_sessions() 回带 pending_review
-cc-app spawn_liveness_watch（5s 轮询，已存在）       │
+meowo-app spawn_liveness_watch（5s 轮询，已存在）       │
   ├─ error > pending > waiting 三级判定 + 各自去重 map（notified / notified_pending / notified_waiting）
   ├─ 总开关只门控 .show()，map 始终更新，seeded 首扫播种，retain 防增长
   └─ 前端：待交互 tab 纳入 pending、置顶、醒目徽标、点击跳终端
@@ -111,13 +111,13 @@ cc-app spawn_liveness_watch（5s 轮询，已存在）       │
 
 ## 测试计划
 
-- **dispatch（cc-reporter，in-memory store）**：
+- **dispatch（meowo-reporter，in-memory store）**：
   - 进入：`PermissionRequest`（tool=Bash→approval、tool=ExitPlanMode→plan）、`PreToolUse(AskUserQuestion)`→question、`PreToolUse(ExitPlanMode)`→plan 各置对应 `pending_review`。
   - 清除：置 pending 后，`PostToolUse` / `UserPromptSubmit` / `Stop` / `SessionEnd` 各能清回 NULL。
 - **store**：`set_pending_review` 刷新 last_event_at；`clear_pending_review` 置 NULL 不动 last_event_at；`live_sessions()` 回带 pending_review。
 - **ccsetup（纯函数）**：
   - 空配置 → 8 条 spec 全挂；二次幂等无改动。
-  - 用户已有 `PreToolUse:Bash` node 预检 → 原封不动，且 PreToolUse 下新增两条带 matcher 的 cc-reporter。
+  - 用户已有 `PreToolUse:Bash` node 预检 → 原封不动，且 PreToolUse 下新增两条带 matcher 的 meowo-reporter。
   - 老库 5 个 `*` 事件 + 路径变更 → 仅更新路径、新增 PermissionRequest/PreToolUse 三条。
 - **lib.rs 纯函数**：`pending_fingerprint` 覆盖 errored 优先、pending 出指纹（含 kind）、指纹随 last_event_at 变化。
 - **复用**：`should_notify` 去重四情形已有测试。
@@ -128,5 +128,5 @@ cc-app spawn_liveness_watch（5s 轮询，已存在）       │
 - 不做 `Notification`（`idle_prompt`/`permission_prompt`）hook —— 用更精确的 `PermissionRequest`+`PreToolUse` 三件套替代。
 - 不新开独立 tab、不做声音/免打扰时段/延迟弹。
 - 不区分「待批准」子开关——复用现有单一通知总开关。
-- 不改 cc-reporter 的网络/状态文件模型（仍无状态、单 SQLite）。
+- 不改 meowo-reporter 的网络/状态文件模型（仍无状态、单 SQLite）。
 - 不为 `pending_review` 单列 `pending_review_at` 列——`last_event_at` 已足够承担排序与去重指纹。

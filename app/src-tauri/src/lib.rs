@@ -20,7 +20,7 @@ use snap::{clamp_xy_to_work, edge_for_rect, Rect, SnapPayload, SNAP_THRESHOLD};
 #[cfg(target_os = "windows")]
 use snap::pull_on_screen;
 
-use cc_store::{LiveSession, ProjectOverview, Store, TaskCard};
+use meowo_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 // HashSet 仅被 Windows 专属的终端窗口枚举使用（console_group_pids / find_window_for_pids）。
 #[cfg(target_os = "windows")]
@@ -47,7 +47,7 @@ use tauri::{Emitter, Manager, State};
 struct AppState {
     db_path: PathBuf,
     /// transcript 增量解析缓存（与后台轮询线程共享 Arc）：避免每次刷新重读整文件。
-    tx_cache: Arc<Mutex<cc_store::TranscriptCache>>,
+    tx_cache: Arc<Mutex<meowo_store::TranscriptCache>>,
 }
 
 fn now_ms() -> i64 {
@@ -58,13 +58,48 @@ fn now_ms() -> i64 {
 }
 
 pub(crate) fn db_path() -> PathBuf {
-    if let Ok(p) = std::env::var("CC_KANBAN_DB") {
+    if let Ok(p) = std::env::var("MEOWO_DB") {
         return PathBuf::from(p);
     }
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".cc-kanban").join("board.db")
+    PathBuf::from(home).join(".meowo").join("board.db")
+}
+
+/// 从旧品牌 cc-kanban 迁移本地数据目录到 ~/.meowo。
+/// 仅在 MEOWO_DB 未覆盖、~/.meowo 不存在而 ~/.cc-kanban 存在时执行一次。
+pub(crate) fn migrate_legacy_data() {
+    if std::env::var("MEOWO_DB").is_ok() {
+        return;
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    let old_dir = PathBuf::from(&home).join(".cc-kanban");
+    let new_dir = PathBuf::from(&home).join(".meowo");
+    if !old_dir.exists() || new_dir.exists() {
+        return;
+    }
+    fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+            if path.is_dir() {
+                copy_dir_all(&path, &dest)?;
+            } else {
+                std::fs::copy(&path, &dest)?;
+            }
+        }
+        Ok(())
+    }
+    if let Err(e) = copy_dir_all(&old_dir, &new_dir) {
+        eprintln!("Meowo 迁移旧数据目录失败: {e}");
+    } else {
+        println!("Meowo 已迁移旧数据目录: {} -> {}", old_dir.display(), new_dir.display());
+    }
 }
 
 fn open_store(path: &PathBuf) -> Result<Store, String> {
@@ -124,7 +159,7 @@ struct LiveItem {
 #[tauri::command]
 async fn get_live_sessions_counts(
     state: State<'_, AppState>,
-) -> Result<cc_store::query::LiveSessionCounts, String> {
+) -> Result<meowo_store::query::LiveSessionCounts, String> {
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         open_store(&db_path)?.live_sessions_counts().map_err(|e| e.to_string())
@@ -183,7 +218,7 @@ fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event
 
 fn live_sessions_blocking(
     db_path: &PathBuf,
-    tx_cache: &Mutex<cc_store::TranscriptCache>,
+    tx_cache: &Mutex<meowo_store::TranscriptCache>,
     filter: &str,
     search: Option<&str>,
     before_last_event_at: Option<i64>,
@@ -245,12 +280,12 @@ fn live_sessions_blocking(
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
         // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
         // liveness 线程/本函数互相阻塞在同一把锁上。
-        let info = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
+        let info = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
             .transcript()
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
                     .and_then(|p| p.to_str().map(str::to_string))
-                    .map(|path| cc_store::TranscriptCache::analyze_shared(tx_cache, spec, &path))
+                    .map(|path| meowo_store::TranscriptCache::analyze_shared(tx_cache, spec, &path))
             });
         if let Some(info) = info {
             if let Some(t) = info.title {
@@ -570,7 +605,7 @@ fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>) -> bool {
             GetWindowThreadProcessId(*hwnd as HWND, &mut win_pid);
         }
         for (tab, name) in collect_tabs(win) {
-            // token(=session_id 末 8 位，cc-reporter 写进 kimi 标签) 命中即最高优先级 3、全局唯一——
+            // token(=session_id 末 8 位，meowo-reporter 写进 kimi 标签) 命中即最高优先级 3、全局唯一——
             // 压倒按标题的语义匹配，且无需进程组消歧。否则退回标题匹配(0-2，含 codex 的 project-name)。
             let score = match token {
                 Some(t) if !t.is_empty() && name.contains(t) => 3,
@@ -669,7 +704,7 @@ fn focus_session_terminal(
     title_based: bool,
 ) {
     std::thread::spawn(move || {
-        // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：cc-reporter 写进其标签) > 任务标题(claude)
+        // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：meowo-reporter 写进其标签) > 任务标题(claude)
         // > cwd 末段目录名(codex 匹配其 project-name 标题 / kimi 无 token 时) > 窗口级兜底。
         // token 全局唯一，能区分同窗口同目录的同名标签——这是 kimi 精确聚焦的关键；codex 暂无此手段(见 agent.rs)。
         let want = if title_based {
@@ -763,13 +798,13 @@ fn focus_session(
     #[cfg(target_os = "windows")]
     {
         // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。缺省 claude。
-        let title_based = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(provider.as_deref()))
+        let title_based = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(provider.as_deref()))
             .sets_terminal_tab_title();
-        // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(cc-reporter 写的 kimi 标签
+        // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
         // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
         let token = session_id
             .as_deref()
-            .map(cc_reporter::tabtitle::short_sid)
+            .map(meowo_reporter::tabtitle::short_sid)
             .filter(|s| !s.is_empty());
         focus_session_terminal(pid, title, cwd, token, title_based);
         Ok(())
@@ -779,7 +814,7 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        let provider_key = cc_store::ProviderKey::parse(provider.as_deref());
+        let provider_key = meowo_store::ProviderKey::parse(provider.as_deref());
         // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
@@ -787,7 +822,7 @@ fn focus_session(
             // focus_session_terminal 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
             let resume_argv = session_id
                 .as_deref()
-                .map(|id| cc_reporter::agent::for_provider(provider_key).resume_args(id))
+                .map(|id| meowo_reporter::agent::for_provider(provider_key).resume_args(id))
                 .unwrap_or_default();
             crate::macos::terminal::focus_session_terminal(
                 pid,
@@ -1032,7 +1067,7 @@ fn pid_alive_agent_quick(pid: i64) -> bool {
     {
         snapshot_processes()
             .get(&(pid as u32))
-            .map(|(_, name)| cc_reporter::agent::is_agent_process(name))
+            .map(|(_, name)| meowo_reporter::agent::is_agent_process(name))
             .unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
@@ -1071,9 +1106,9 @@ fn prepare_resume(
     let _ = app.emit("board-changed", ());
     // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
     // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
-    let resolved = cc_store::title::resolve_cwd(cwd, session_id);
+    let resolved = meowo_store::title::resolve_cwd(cwd, session_id);
     // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
-    let resume = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(provider)))
+    let resume = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(provider)))
         .resume_args(session_id);
     (revived, resolved, resume)
 }
@@ -1190,8 +1225,8 @@ async fn new_session(
     terminal: Option<String>,
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
-    let key = cc_store::ProviderKey::parse(Some(&provider));
-    let argv = cc_reporter::agent::for_provider(key).launch_args();
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    let argv = meowo_reporter::agent::for_provider(key).launch_args();
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
@@ -1224,7 +1259,7 @@ fn write_install_script(provider: &str, script: &str) -> std::io::Result<String>
         "Write-Host 'Installing, please wait...'\r\n\
          try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()); exit 1 }}\r\n"
     );
-    let p = std::env::temp_dir().join(format!("cc-kanban-install-{provider}.ps1"));
+    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.ps1"));
     std::fs::write(&p, body)?;
     Ok(p.to_string_lossy().into_owned())
 }
@@ -1236,7 +1271,7 @@ fn write_install_script(provider: &str, script: &str) -> std::io::Result<String>
         "echo 'Installing, please wait...'\n\
          ( {script} ) || {{ rc=$?; echo \"Installation failed: exit code $rc\"; exit $rc; }}\n"
     );
-    let p = std::env::temp_dir().join(format!("cc-kanban-install-{provider}.sh"));
+    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.sh"));
     std::fs::write(&p, body)?;
     Ok(p.to_string_lossy().into_owned())
 }
@@ -1265,9 +1300,9 @@ fn build_install_command(script_path: &str) -> std::process::Command {
 /// 前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
-    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
     let provider = key.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
-    let script = cc_reporter::agent::for_provider(key)
+    let script = meowo_reporter::agent::for_provider(key)
         .install_script(cfg!(target_os = "windows"))
         .ok_or("该 agent 没有可用的一键安装命令")?;
     let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
@@ -1299,7 +1334,7 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
     .map_err(|e| e.to_string())?
 }
 
-/// provider 的 cc-reporter hooks 接入状态（供「新建会话」面板引导）。
+/// provider 的 meowo-reporter hooks 接入状态（供「新建会话」面板引导）。
 #[derive(serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 enum HooksStatus {
@@ -1308,11 +1343,11 @@ enum HooksStatus {
     Unknown,
 }
 
-/// claude/codex 同款 hooks JSON 里，`SessionStart` 事件下是否存在指向 cc-reporter 且带
-/// `--provider <p>` 的 command。纯函数。启发式：命令含 "cc-reporter"（basename）+
+/// claude/codex 同款 hooks JSON 里，`SessionStart` 事件下是否存在指向 meowo-reporter 且带
+/// `--provider <p>` 的 command。纯函数。启发式：命令含 "meowo-reporter"（basename）+
 /// "--provider <p>"——该组合不会误配用户自有 hook。
 /// 只看 SessionStart（而非扫描全部事件）：「新会话能否入库」只取决于 SessionStart 是否挂了钩子，
-/// 只在别的事件（如 Stop）挂了 cc-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
+/// 只在别的事件（如 Stop）挂了 meowo-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
 fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
     let Some(arr) = v
         .get("hooks")
@@ -1325,7 +1360,7 @@ fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
     for entry in arr {
         for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
             if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
-                if cmd.to_ascii_lowercase().contains("cc-reporter") && cmd.contains(&want) {
+                if cmd.to_ascii_lowercase().contains("meowo-reporter") && cmd.contains(&want) {
                     return true;
                 }
             }
@@ -1334,11 +1369,11 @@ fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
     false
 }
 
-/// kimi config.toml 文本里，`event = "SessionStart"` 的 `[[hooks]]` 块内是否有指向 cc-reporter
+/// kimi config.toml 文本里，`event = "SessionStart"` 的 `[[hooks]]` 块内是否有指向 meowo-reporter
 /// 且带 `--provider <p>` 的 command。纯函数，无 TOML 解析库，按行文本 + `[[hooks]]` 块边界的极简状态机
 /// （足够可靠：只在同一块内把 event/command 两行关联起来，不识别块内的具体行序）。
 /// 只看 SessionStart 块（而非任意行匹配）：与 hooks_json_has_reporter 同一根因——只在非 SessionStart
-/// 事件（如 Stop）挂了 cc-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
+/// 事件（如 Stop）挂了 meowo-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
 fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
     let want = format!("--provider {provider}");
     let mut in_session_start = false;
@@ -1364,7 +1399,7 @@ fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
         if let Some(rest) = t.strip_prefix("command") {
             if let Some(v) = rest.trim_start().strip_prefix('=') {
                 let low = v.to_ascii_lowercase();
-                if low.contains("cc-reporter") && v.contains(&want) {
+                if low.contains("meowo-reporter") && v.contains(&want) {
                     has_reporter = true;
                 }
             }
@@ -1373,9 +1408,9 @@ fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
     in_session_start && has_reporter
 }
 
-/// claude hooks 接入状态：读 claude settings.json 判断 cc-reporter hooks 是否登记。
+/// claude hooks 接入状态：读 claude settings.json 判断 meowo-reporter hooks 是否登记。
 /// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
-/// 有 cc-reporter hook=Installed。
+/// 有 meowo-reporter hook=Installed。
 fn claude_hooks_status() -> HooksStatus {
     claude_hooks_status_at(&setup::claude::claude_settings_path())
 }
@@ -1397,7 +1432,7 @@ fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
 
 /// codex hooks 接入状态：读 ~/.codex/hooks.json。文件不存在=Missing；读/解析失败=Unknown（不误报）。
 fn codex_hooks_status() -> HooksStatus {
-    let Some(home) = cc_reporter::codex::codex_home() else {
+    let Some(home) = meowo_reporter::codex::codex_home() else {
         return HooksStatus::Unknown;
     };
     let path = home.join("hooks.json");
@@ -1416,7 +1451,7 @@ fn codex_hooks_status() -> HooksStatus {
 
 /// kimi hooks 接入状态：读 ~/.kimi-code/config.toml。文件不存在=Missing；读失败=Unknown。
 fn kimi_hooks_status() -> HooksStatus {
-    let Some(dir) = cc_reporter::kimi::kimi_share_dir() else {
+    let Some(dir) = meowo_reporter::kimi::kimi_share_dir() else {
         return HooksStatus::Unknown;
     };
     let path = dir.join("config.toml");
@@ -1430,13 +1465,13 @@ fn kimi_hooks_status() -> HooksStatus {
     }
 }
 
-/// 检测某 provider 的 cc-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
+/// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
-    match cc_store::ProviderKey::parse(Some(&provider)) {
-        cc_store::ProviderKey::Claude => claude_hooks_status(),
-        cc_store::ProviderKey::Codex => codex_hooks_status(),
-        cc_store::ProviderKey::Kimi => kimi_hooks_status(),
+    match meowo_store::ProviderKey::parse(Some(&provider)) {
+        meowo_store::ProviderKey::Claude => claude_hooks_status(),
+        meowo_store::ProviderKey::Codex => codex_hooks_status(),
+        meowo_store::ProviderKey::Kimi => kimi_hooks_status(),
     }
 }
 
@@ -1526,8 +1561,8 @@ fn rename_session(
     }
 
     // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）。
-    let provider = cc_store::ProviderKey::parse(provider.as_deref());
-    let _ = cc_reporter::agent::for_provider(provider).write_rename(&session_id, cwd.as_deref(), &title);
+    let provider = meowo_store::ProviderKey::parse(provider.as_deref());
+    let _ = meowo_reporter::agent::for_provider(provider).write_rename(&session_id, cwd.as_deref(), &title);
 
     // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
     // claude 的 apply_title 会从 transcript 重读 custom-title（优先级高于 ai-title）维持一致。
@@ -1571,7 +1606,7 @@ fn set_session_note(
 const WATCH_RETRY: Duration = Duration::from_secs(5);
 
 /// 监听 board.db 所在目录变更，去抖后向前端发 "board-changed"。
-/// watch 建立失败（全新安装时 ~/.cc-kanban 由 ccsetup/liveness 等并发线程创建，watcher 可能抢先执行
+/// watch 建立失败（全新安装时 ~/.meowo 由 ccsetup/liveness 等并发线程创建，watcher 可能抢先执行
 /// 而目录尚不存在）或监听中途死亡（目录被删、notify 后端出错）都不放弃：先确保目录存在、失败 5s 后
 /// 重建——否则首启一次失败会让 DB 变更监听在整个进程生命周期内静默失效，前端无轮询兜底、看板冻结。
 fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
@@ -1667,7 +1702,7 @@ fn run_db_watch_loop(
 ///
 /// Windows 会复用 pid：会话结束后它的旧 pid 可能被别的进程（如 esbuild）占用，
 /// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。故按进程名甄别是否仍是 agent 本体——
-/// 复用 cc_reporter::agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
+/// 复用 meowo_reporter::agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
 /// 与 owner_pid 写入侧同一事实源），避免子串误匹配（如名字恰含 kimi 的无关进程）。
 fn pid_is_agent(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
@@ -1676,11 +1711,11 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
     #[cfg(target_os = "windows")]
     {
         sys.process(Pid::from_u32(pid as u32))
-            .map(|p| cc_reporter::agent::is_agent_process(&p.name().to_string_lossy()))
+            .map(|p| meowo_reporter::agent::is_agent_process(&p.name().to_string_lossy()))
             .unwrap_or(false)
     }
     // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
-    // 最小刷新下 name 是否可靠也无保证），改用 ps 校验，与 cc-reporter::owner_pid 一致。
+    // 最小刷新下 name 是否可靠也无保证），改用 ps 校验，与 meowo-reporter::owner_pid 一致。
     // 仅对「非 ended 的活跃会话」调用，每轮就几个，ps 开销可忽略。
     #[cfg(not(target_os = "windows"))]
     {
@@ -1706,7 +1741,7 @@ pub(crate) fn pid_is_agent_ps(pid: i64) -> bool {
     else {
         return true; // 查不了 ≠ 已死：宁可暂当存活，等下一轮能查时再判
     };
-    cc_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
+    meowo_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
 }
 
 /// macOS/Unix：一次 `ps -axo pid=,comm=` 批量取「进程名含 claude」的 pid 集合，
@@ -1725,7 +1760,7 @@ fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
         let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
         // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
         let comm = it.collect::<Vec<_>>().join(" ");
-        if cc_reporter::agent::is_agent_process(&comm) {
+        if meowo_reporter::agent::is_agent_process(&comm) {
             set.insert(pid);
         }
     }
@@ -1802,7 +1837,7 @@ fn show_session_notification(
     title_based: bool,
 ) {
     use tauri_winrt_notification::Toast;
-    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 cc-kanban+图标 + 点击可激活）；
+    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 Meowo+图标 + 点击可激活）；
     // dev 下 AUMID 未注册，退回 PowerShell 的 AUMID 仅保证 toast 能弹出；此时 on_activated 回调
     // 根本不会触发（OS 把激活事件投递给 PowerShell 进程而非本进程），点击跳转只在安装版生效。
     let app_id = if tauri::is_dev() {
@@ -1866,7 +1901,7 @@ fn show_session_notification(
 fn spawn_liveness_watch(
     app: tauri::AppHandle,
     db_path: PathBuf,
-    tx_cache: Arc<Mutex<cc_store::TranscriptCache>>,
+    tx_cache: Arc<Mutex<meowo_store::TranscriptCache>>,
 ) {
     use std::collections::HashMap;
     std::thread::spawn(move || {
@@ -1910,15 +1945,15 @@ fn spawn_liveness_watch(
 
                     // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
                     // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-                    let cc_store::TranscriptInfo { title, error, .. } =
-                        cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
+                    let meowo_store::TranscriptInfo { title, error, .. } =
+                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
                             .transcript()
                             .and_then(|spec| {
                                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
                                     .and_then(|p| p.to_str().map(str::to_string))
                                     .map(|path| {
                                         // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
-                                        cc_store::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
+                                        meowo_store::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
                                     })
                             })
                             .unwrap_or_default();
@@ -1929,10 +1964,10 @@ fn spawn_liveness_watch(
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
                     let title_based =
-                        cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider))).sets_terminal_tab_title();
+                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider))).sets_terminal_tab_title();
                     // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
                     let tab_token = {
-                        let t = cc_reporter::tabtitle::short_sid(&s.session.cc_session_id);
+                        let t = meowo_reporter::tabtitle::short_sid(&s.session.cc_session_id);
                         (!t.is_empty()).then_some(t)
                     };
 
@@ -2041,7 +2076,7 @@ fn spawn_liveness_watch(
     });
 }
 
-/// 首次启动：~/.cc-kanban/imported.json 不存在时，后台导入近 7 天历史会话并写标记文件。
+/// 首次启动：~/.meowo/imported.json 不存在时，后台导入近 7 天历史会话并写标记文件。
 /// 出错仅静默（下次启动重试），绝不阻塞窗口创建。
 fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || {
@@ -2058,7 +2093,7 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
         };
         let now = now_ms();
         if let Ok(count) =
-            cc_reporter::import::import_recent(&store, now, cc_reporter::import::ImportOpts::default())
+            meowo_reporter::import::import_recent(&store, now, meowo_reporter::import::ImportOpts::default())
         {
             let body = format!("{{\"imported\":{count},\"at\":{now}}}");
             let _ = std::fs::write(&marker, body);
@@ -2094,7 +2129,7 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
 /// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
 #[tauri::command]
 async fn refresh_usage(provider: String) -> Result<account::ProviderUsage, String> {
-    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
     tauri::async_runtime::spawn_blocking(move || {
         let pa = account::for_provider(key);
         match pa.usage(true) {
@@ -2172,7 +2207,7 @@ async fn available_terminals() -> Vec<String> {
 #[tauri::command]
 async fn available_agents() -> Vec<String> {
     tauri::async_runtime::spawn_blocking(|| {
-        cc_reporter::agent::all()
+        meowo_reporter::agent::all()
             .iter()
             .filter(|a| a.is_installed())
             .map(|a| a.key().as_str().to_string())
@@ -2413,7 +2448,7 @@ fn build_tray_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<tauri::m
 
 /// 切语言后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
 pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
-    if let Some(tray) = app.tray_by_id("cc-kanban-tray") {
+    if let Some(tray) = app.tray_by_id("meowo-tray") {
         #[cfg(not(target_os = "macos"))]
         if let Ok(menu) = build_tray_menu(app, lang) {
             let _ = tray.set_menu(Some(menu));
@@ -2437,13 +2472,13 @@ pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = build_tray_menu(app.handle(), ui_lang(&load_settings()))?;
 
-    let mut builder = TrayIconBuilder::with_id("cc-kanban-tray");
+    let mut builder = TrayIconBuilder::with_id("meowo-tray");
     // 图标恒由打包提供，但缺失时不该 unwrap panic 把启动打挂——没图标就建无图标托盘。
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
     builder
-        .tooltip("cc-kanban")
+        .tooltip("Meowo")
         .menu(&menu)
         // 左键留给「打开设置」，菜单仅在右键弹出。
         .show_menu_on_left_click(false)
@@ -2472,7 +2507,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// 弥补桌面端无菜单栏标题。计数为 0 时回落到纯品牌名。
 #[cfg(target_os = "windows")]
 fn update_tray_tooltip(app: &tauri::AppHandle, running: usize, waiting: usize, lang: &str) {
-    let Some(tray) = app.tray_by_id("cc-kanban-tray") else {
+    let Some(tray) = app.tray_by_id("meowo-tray") else {
         return;
     };
     let _ = tray.set_tooltip(Some(tray_tooltip_text(lang, running, waiting)));
@@ -2482,7 +2517,7 @@ fn update_tray_tooltip(app: &tauri::AppHandle, running: usize, waiting: usize, l
 #[cfg(target_os = "windows")]
 fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> String {
     if running == 0 && waiting == 0 {
-        return "cc-kanban".into();
+        return "Meowo".into();
     }
     let mut parts: Vec<String> = Vec::new();
     if lang == "en" {
@@ -2500,7 +2535,7 @@ fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> String {
             parts.push(format!("{running} 个运行中"));
         }
     }
-    format!("cc-kanban · {}", parts.join(" · "))
+    format!("Meowo · {}", parts.join(" · "))
 }
 
 /// 用 Win32 窗口子类化在「移动生效前」硬约束贴纸位置，彻底拖不出屏幕（零抖动，
@@ -2643,9 +2678,10 @@ mod win_constrain {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    migrate_legacy_data();
     let path = db_path();
-    let tx_cache: Arc<Mutex<cc_store::TranscriptCache>> =
-        Arc::new(Mutex::new(cc_store::TranscriptCache::new()));
+    let tx_cache: Arc<Mutex<meowo_store::TranscriptCache>> =
+        Arc::new(Mutex::new(meowo_store::TranscriptCache::new()));
     tauri::Builder::default()
         // window-state 只持久化/恢复「位置」等，不恢复「尺寸」：main 窗口尺寸改由前端 localStorage
         // (SIZE_KEY) 单独持有。否则吸附态退出会把「细条几何」存进 window-state，与 localStorage 的吸附态
@@ -2810,7 +2846,7 @@ pub fn run() {
                     win_constrain::install(h.0 as isize);
                 }
             }
-            // 无感适配：幂等把 cc-reporter 接入各 AI CLI（claude: hooks+statusLine；codex/kimi: hooks）。后台跑，失败不影响启动。
+            // 无感适配：幂等把 meowo-reporter 接入各 AI CLI（claude: hooks+statusLine；codex/kimi: hooks）。后台跑，失败不影响启动。
             std::thread::spawn(setup::apply_all);
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
@@ -2841,11 +2877,11 @@ mod tests {
     fn tray_tooltip_text_localizes_and_orders_waiting_first() {
         use super::tray_tooltip_text;
         // 入参顺序：(lang, running, waiting)。待交互更紧急，排在运行中之前。
-        assert_eq!(tray_tooltip_text("zh", 0, 0), "cc-kanban");
-        assert_eq!(tray_tooltip_text("zh", 2, 3), "cc-kanban · 3 个待交互 · 2 个运行中");
-        assert_eq!(tray_tooltip_text("zh", 2, 0), "cc-kanban · 2 个运行中");
-        assert_eq!(tray_tooltip_text("en", 0, 2), "cc-kanban · 2 waiting");
-        assert_eq!(tray_tooltip_text("en", 1, 1), "cc-kanban · 1 waiting · 1 running");
+        assert_eq!(tray_tooltip_text("zh", 0, 0), "Meowo");
+        assert_eq!(tray_tooltip_text("zh", 2, 3), "Meowo · 3 个待交互 · 2 个运行中");
+        assert_eq!(tray_tooltip_text("zh", 2, 0), "Meowo · 2 个运行中");
+        assert_eq!(tray_tooltip_text("en", 0, 2), "Meowo · 2 waiting");
+        assert_eq!(tray_tooltip_text("en", 1, 1), "Meowo · 1 waiting · 1 running");
     }
 
     #[test]
@@ -2888,7 +2924,7 @@ mod tests {
 
     #[test]
     fn path_has_exe_scans_path_dirs_without_spawning() {
-        let dir = std::env::temp_dir().join("cc-kanban-test-path-has-exe");
+        let dir = std::env::temp_dir().join("meowo-test-path-has-exe");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("wt.exe"), b"stub").unwrap();
         // 单目录命中 / 未命中
@@ -2897,7 +2933,7 @@ mod tests {
         assert!(!path_has_exe(&single, "definitely-absent.exe"));
         // 多目录：前面的目录不存在也不影响后面命中
         let multi =
-            std::env::join_paths([std::env::temp_dir().join("cc-kanban-no-such-dir"), dir.clone()])
+            std::env::join_paths([std::env::temp_dir().join("meowo-no-such-dir"), dir.clone()])
                 .unwrap();
         assert!(path_has_exe(&multi, "wt.exe"));
         // 空 PATH → 找不到
@@ -3235,7 +3271,7 @@ mod hooks_check_tests {
         let v: serde_json::Value = serde_json::from_str(r#"{
           "hooks": { "SessionStart": [
             { "matcher": "*", "hooks": [
-              { "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex", "timeout": 5 }
+              { "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex", "timeout": 5 }
             ]}
           ]}
         }"#).unwrap();
@@ -3258,10 +3294,10 @@ mod hooks_check_tests {
 
     #[test]
     fn hooks_json_ignores_reporter_on_non_session_start_event() {
-        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
+        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
         let v: serde_json::Value = serde_json::from_str(r#"{
           "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex" }] }
+            { "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex" }] }
           ]}
         }"#).unwrap();
         assert!(!hooks_json_has_reporter(&v, "codex"));
@@ -3269,7 +3305,7 @@ mod hooks_check_tests {
         let v2: serde_json::Value = serde_json::from_str(r#"{
           "hooks": {
             "Stop": [{ "hooks": [{ "type": "command", "command": "node other.js" }] }],
-            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex" }] }]
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex" }] }]
           }
         }"#).unwrap();
         assert!(hooks_json_has_reporter(&v2, "codex"));
@@ -3280,7 +3316,7 @@ mod hooks_check_tests {
         let toml = "\
 [[hooks]]\n\
 event = \"SessionStart\"\n\
-command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
 timeout = 5\n";
         assert!(toml_text_has_reporter(toml, "kimi"));
         assert!(!toml_text_has_reporter(toml, "codex"));
@@ -3289,11 +3325,11 @@ timeout = 5\n";
 
     #[test]
     fn toml_text_ignores_reporter_on_non_session_start_event() {
-        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
+        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
         let toml = "\
 [[hooks]]\n\
 event = \"Stop\"\n\
-command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
 timeout = 5\n";
         assert!(!toml_text_has_reporter(toml, "kimi"));
     }
@@ -3304,12 +3340,12 @@ timeout = 5\n";
         let toml = "\
 [[hooks]]\n\
 event = \"Stop\"\n\
-command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
 timeout = 5\n\
 \n\
 [[hooks]]\n\
 event = \"SessionStart\"\n\
-command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
 timeout = 5\n";
         assert!(toml_text_has_reporter(toml, "kimi"));
     }
@@ -3324,9 +3360,9 @@ timeout = 5\n";
         let _ = std::fs::remove_file(&path);
         assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
 
-        // Installed：command 用 ccsetup 认可的「带引号 cc-reporter 路径」格式（参照 ccsetup 既有
+        // Installed：command 用 ccsetup 认可的「带引号 meowo-reporter 路径」格式（参照 ccsetup 既有
         // 测试 reporter_exe_path_strict_matches_only_our_exe / ensure_hooks_* 里的 command 串）。
-        let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/cc-reporter.exe\""}]}]}}"#;
+        let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/meowo-reporter.exe\""}]}]}}"#;
         std::fs::File::create(&path).unwrap().write_all(installed.as_bytes()).unwrap();
         assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Installed));
 

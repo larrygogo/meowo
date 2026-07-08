@@ -75,7 +75,7 @@ fn render_status_rgba(running: usize, waiting: usize) -> Option<(Vec<u8>, u32, u
 /// 按 (运行, 待办) 更新菜单栏图标：有计数 → 图标+数字模板图；全零 → 回落单色 logo。
 /// set_icon_with_as_template 原子换图标+模板态（避免闪烁）；清掉标题文字。
 pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
-    let Some(tray) = app.tray_by_id("cc-kanban-tray") else {
+    let Some(tray) = app.tray_by_id("meowo-tray") else {
         return;
     };
     match render_status_rgba(running, waiting) {
@@ -103,10 +103,10 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
     // 菜单栏用单色模板图标（彩色 app 图标在菜单栏里偏花，且不随明暗反色）；Dock/设置页仍用彩色图标。
     let icon = tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);
-    TrayIconBuilder::with_id("cc-kanban-tray")
+    TrayIconBuilder::with_id("meowo-tray")
         .icon(icon)
         .icon_as_template(true)
-        .tooltip("cc-kanban")
+        .tooltip("Meowo")
         .menu(&menu)
         .show_menu_on_left_click(false) // 左键不弹菜单 => 留给右键
         .on_menu_event(|app, event| match event.id().as_ref() {

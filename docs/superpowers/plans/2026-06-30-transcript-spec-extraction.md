@@ -2,60 +2,60 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** 把 cc-store 里「假设 transcript 永远是 Claude 格式」的最深耦合（title.rs/analyze.rs）收到一个 `TranscriptSpec` 接口后面，`ClaudeTranscript` 为唯一实现并**逐字节等价**委托现有代码；`Agent::transcript()` 接线，generic 调用点（dispatch apply_title、Tauri 增量缓存）改走接口；codex/kimi 仍返回 None（与现状一致）。完成「全做成接口」目标的最后一块，零行为变更。
+**Goal:** 把 meowo-store 里「假设 transcript 永远是 Claude 格式」的最深耦合（title.rs/analyze.rs）收到一个 `TranscriptSpec` 接口后面，`ClaudeTranscript` 为唯一实现并**逐字节等价**委托现有代码；`Agent::transcript()` 接线，generic 调用点（dispatch apply_title、Tauri 增量缓存）改走接口；codex/kimi 仍返回 None（与现状一致）。完成「全做成接口」目标的最后一块，零行为变更。
 
-**Architecture:** `TranscriptSpec`（定位 + 标题 + 增量解析器工厂）与 `TranscriptParser`（逐行 fold 的增量单元）两个 trait 定义在最底层 crate `cc-store`（与 `ProviderKey` 同层），cc-reporter（`Agent::transcript`）与 cc-app 单向引用、无循环依赖。`ClaudeTranscript` 委托现有 `crate::title::*`；`ClaudeParser` 包装现有未改动的 `analyze::ParseState`。性能热路径 `TranscriptCache` 改为持有 `Box<dyn TranscriptParser>`、`analyze(spec, path)`，逻辑（offset+mtime、半行、LRU、等长重写检测）一字不动。
+**Architecture:** `TranscriptSpec`（定位 + 标题 + 增量解析器工厂）与 `TranscriptParser`（逐行 fold 的增量单元）两个 trait 定义在最底层 crate `meowo-store`（与 `ProviderKey` 同层），meowo-reporter（`Agent::transcript`）与 meowo-app 单向引用、无循环依赖。`ClaudeTranscript` 委托现有 `crate::title::*`；`ClaudeParser` 包装现有未改动的 `analyze::ParseState`。性能热路径 `TranscriptCache` 改为持有 `Box<dyn TranscriptParser>`、`analyze(spec, path)`，逻辑（offset+mtime、半行、LRU、等长重写检测）一字不动。
 
-**Tech Stack:** Rust workspace（cc-store / cc-reporter / cc-app）。
+**Tech Stack:** Rust workspace（meowo-store / meowo-reporter / meowo-app）。
 
 ## Global Constraints
 
 - **零行为变更（最高优先）**：claude 路径产出逐字节一致——`ClaudeTranscript` 仅**委托**现有 `title::resolve_transcript_path/resolve_title` 与包装未改的 `ParseState`；`TranscriptCache` 内部失效/增量/半行/LRU 逻辑不得改动，只把 `state: ParseState` 换成 `parser: Box<dyn TranscriptParser>`、把 `analyze(path)` 换成 `analyze(spec, path)`。
 - **kimi/codex 等价**：`transcript()` 对它们返回 None → 调用点得 None/`unwrap_or_default()`。这与现状等价（现状对 kimi/codex 的 session_id 在 `~/.claude/projects` 查找本就失败返回 default），且更干净（跳过无谓的 claude 目录扫描）。
-- **依赖方向**：`TranscriptSpec`/`TranscriptParser`/`ClaudeTranscript`/`CLAUDE_TRANSCRIPT` 定义在 `cc-store`。**禁止**放 cc-reporter（会循环依赖）。`Agent::transcript()` 返回 `Option<&'static dyn cc_store::TranscriptSpec>`。
+- **依赖方向**：`TranscriptSpec`/`TranscriptParser`/`ClaudeTranscript`/`CLAUDE_TRANSCRIPT` 定义在 `meowo-store`。**禁止**放 meowo-reporter（会循环依赖）。`Agent::transcript()` 返回 `Option<&'static dyn meowo_store::TranscriptSpec>`。
 - **trait 约束**：`TranscriptParser: Send`（`TranscriptCache` 经 `Arc<Mutex<>>` 在 Tauri 主线程与轮询线程间共享）；`TranscriptSpec: Sync`（以 `&'static dyn` 共享）。
 - **保留 `resolves_transcript_title` cap**：它与 `transcript()` 概念不同——前者「是否用 transcript 标题命名卡片」，后者「是否提供解析器」。未来 codex 可能有 spec（做 context%/错误）但标题仍走首条 prompt（`resolves_transcript_title=false`）。`apply_title` 必须**两者都用**：先 gate `resolves_transcript_title`，再用 `transcript()` 提供的 spec 解析标题。
-- **不强行全 funnel**：claude-inherent 代码（`import.rs` 扫 `~/.claude`、`agent.rs::write_claude_custom_title`）保持直接调用 `cc_store::title::*` 自由函数（它们是 ClaudeTranscript 的实现building blocks，本就 claude 专属）。只有 provider 会变化的 generic 调用点（apply_title、Tauri 缓存×2）改走接口。
+- **不强行全 funnel**：claude-inherent 代码（`import.rs` 扫 `~/.claude`、`agent.rs::write_claude_custom_title`）保持直接调用 `meowo_store::title::*` 自由函数（它们是 ClaudeTranscript 的实现building blocks，本就 claude 专属）。只有 provider 会变化的 generic 调用点（apply_title、Tauri 缓存×2）改走接口。
 - `title.rs` 现有自由函数、`analyze::ParseState`/`fold_line`/`to_info`/`CONTEXT_WINDOW`/`analyze_transcript` 全部**保留不动**（= claude 实现）。`TranscriptInfo` 不加字段（它本就无 model，context 在 to_info 内部算 —— 对抗评审的 3 修正点天然满足）。
 - 代码英文、注释/commit message 中文。
 - 分支：`refactor/transcript-spec-extraction-20260630`（从 feat/kimi-code-cli-adapter-20260626 当前 HEAD 切出）。
 - 验证命令：
-  - `cargo test -p cc-store`、`cargo test -p cc-store -p cc-reporter`
-  - `cargo clippy -p cc-store -p cc-reporter --all-targets -- -D warnings`
-  - cc-app 编译（含 sidecar 前置）：`node scripts/prepare-sidecar.mjs && cargo check -p cc-app`
+  - `cargo test -p meowo-store`、`cargo test -p meowo-store -p meowo-reporter`
+  - `cargo clippy -p meowo-store -p meowo-reporter --all-targets -- -D warnings`
+  - meowo-app 编译（含 sidecar 前置）：`node scripts/prepare-sidecar.mjs && cargo check -p meowo-app`
 
 ---
 
 ## File Structure
 
-- `crates/cc-store/src/transcript_spec.rs` —— **新建**：`TranscriptParser` + `TranscriptSpec` traits、`ClaudeTranscript` + `CLAUDE_TRANSCRIPT`（委托 title::/analyze::）。
-- `crates/cc-store/src/analyze.rs` —— 加 `ClaudeParser`(包装 ParseState) + `claude_new_parser()`；`TranscriptCache` 参数化（`CacheEntry.parser: Box<dyn TranscriptParser>`、`analyze(spec, path)`）；更新 cache 测试。`ParseState`/`fold_line`/`to_info`/`analyze_transcript` 不动。
-- `crates/cc-store/src/lib.rs` —— `pub mod transcript_spec;` + 导出。
-- `crates/cc-reporter/src/agent.rs` —— `Agent::transcript()` 默认 None；`ClaudeAgent` 返回 `Some(&cc_store::CLAUDE_TRANSCRIPT)`。
-- `crates/cc-reporter/src/dispatch.rs` —— `apply_title` 改走 `transcript().resolve_title`（保留 `resolves_transcript_title` gate）。
+- `crates/meowo-store/src/transcript_spec.rs` —— **新建**：`TranscriptParser` + `TranscriptSpec` traits、`ClaudeTranscript` + `CLAUDE_TRANSCRIPT`（委托 title::/analyze::）。
+- `crates/meowo-store/src/analyze.rs` —— 加 `ClaudeParser`(包装 ParseState) + `claude_new_parser()`；`TranscriptCache` 参数化（`CacheEntry.parser: Box<dyn TranscriptParser>`、`analyze(spec, path)`）；更新 cache 测试。`ParseState`/`fold_line`/`to_info`/`analyze_transcript` 不动。
+- `crates/meowo-store/src/lib.rs` —— `pub mod transcript_spec;` + 导出。
+- `crates/meowo-reporter/src/agent.rs` —— `Agent::transcript()` 默认 None；`ClaudeAgent` 返回 `Some(&meowo_store::CLAUDE_TRANSCRIPT)`。
+- `crates/meowo-reporter/src/dispatch.rs` —— `apply_title` 改走 `transcript().resolve_title`（保留 `resolves_transcript_title` gate）。
 - `app/src-tauri/src/lib.rs` —— 2 处 `tx_cache...analyze(&path)` 调用点改走 `for_provider(...).transcript()` + `analyze(spec, &path)`。
 
 ---
 
-### Task 1: cc-store 新增 TranscriptSpec/TranscriptParser trait 脚手架（纯增量）
+### Task 1: meowo-store 新增 TranscriptSpec/TranscriptParser trait 脚手架（纯增量）
 
 **Files:**
-- Create: `crates/cc-store/src/transcript_spec.rs`
-- Modify: `crates/cc-store/src/analyze.rs`（仅**新增** ClaudeParser + claude_new_parser，不改既有项）
-- Modify: `crates/cc-store/src/lib.rs`（加 mod + 导出）
+- Create: `crates/meowo-store/src/transcript_spec.rs`
+- Modify: `crates/meowo-store/src/analyze.rs`（仅**新增** ClaudeParser + claude_new_parser，不改既有项）
+- Modify: `crates/meowo-store/src/lib.rs`（加 mod + 导出）
 
 **Interfaces:**
 - Produces:
-  - `cc_store::TranscriptParser`（`Send`；`fold_line(&mut self, &str)`、`to_info(&self) -> TranscriptInfo`）
-  - `cc_store::TranscriptSpec`（`Sync`；`new_parser(&self) -> Box<dyn TranscriptParser>`、`resolve_transcript_path(&self, Option<&str>, Option<&str>, &str) -> Option<PathBuf>`、`resolve_title(&self, Option<&str>, Option<&str>, &str) -> Option<String>`）
-  - `cc_store::ClaudeTranscript`、`static cc_store::CLAUDE_TRANSCRIPT: ClaudeTranscript`
-  - `cc_store::analyze::claude_new_parser() -> Box<dyn TranscriptParser>`
+  - `meowo_store::TranscriptParser`（`Send`；`fold_line(&mut self, &str)`、`to_info(&self) -> TranscriptInfo`）
+  - `meowo_store::TranscriptSpec`（`Sync`；`new_parser(&self) -> Box<dyn TranscriptParser>`、`resolve_transcript_path(&self, Option<&str>, Option<&str>, &str) -> Option<PathBuf>`、`resolve_title(&self, Option<&str>, Option<&str>, &str) -> Option<String>`）
+  - `meowo_store::ClaudeTranscript`、`static meowo_store::CLAUDE_TRANSCRIPT: ClaudeTranscript`
+  - `meowo_store::analyze::claude_new_parser() -> Box<dyn TranscriptParser>`
 
 - [ ] **Step 1: 新建 transcript_spec.rs（先放测试）+ 在 lib.rs 声明 mod**
 
-先在 `crates/cc-store/src/lib.rs` 的 `pub mod` 区加 `pub mod transcript_spec;`（按字母序，`pub mod title;` 附近）——**必须现在加**，否则新文件不在模块树、其测试不编译，下面的 RED 步骤会变成「0 tests run」而非真正的编译失败。
+先在 `crates/meowo-store/src/lib.rs` 的 `pub mod` 区加 `pub mod transcript_spec;`（按字母序，`pub mod title;` 附近）——**必须现在加**，否则新文件不在模块树、其测试不编译，下面的 RED 步骤会变成「0 tests run」而非真正的编译失败。
 
-新建 `crates/cc-store/src/transcript_spec.rs`，先只放测试模块（实现在 Step 3 补）：
+新建 `crates/meowo-store/src/transcript_spec.rs`，先只放测试模块（实现在 Step 3 补）：
 
 ```rust
 #[cfg(test)]
@@ -102,12 +102,12 @@ mod tests {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cargo test -p cc-store transcript_spec`
+Run: `cargo test -p meowo-store transcript_spec`
 Expected: 编译失败（`TranscriptSpec`/`CLAUDE_TRANSCRIPT`/`claude_new_parser` 未定义）。
 
 - [ ] **Step 3: 实现 traits + ClaudeTranscript（transcript_spec.rs）**
 
-在 `crates/cc-store/src/transcript_spec.rs` 顶部（测试模块**之前**）写：
+在 `crates/meowo-store/src/transcript_spec.rs` 顶部（测试模块**之前**）写：
 
 ```rust
 //! provider 无关的 transcript 抽象。把「定位 transcript + 标题解析 + 增量分析」收成 trait：
@@ -155,7 +155,7 @@ pub static CLAUDE_TRANSCRIPT: ClaudeTranscript = ClaudeTranscript;
 
 - [ ] **Step 4: 在 analyze.rs 新增 ClaudeParser + claude_new_parser（不改既有项）**
 
-在 `crates/cc-store/src/analyze.rs` 顶部 `use serde::Serialize;` 下加：
+在 `crates/meowo-store/src/analyze.rs` 顶部 `use serde::Serialize;` 下加：
 
 ```rust
 use crate::transcript_spec::TranscriptParser;
@@ -184,7 +184,7 @@ pub fn claude_new_parser() -> Box<dyn TranscriptParser> {
 
 - [ ] **Step 5: lib.rs 加导出**
 
-（`pub mod transcript_spec;` 已在 Step 1 声明。）在 `crates/cc-store/src/lib.rs` 的 `pub use` 区加：
+（`pub mod transcript_spec;` 已在 Step 1 声明。）在 `crates/meowo-store/src/lib.rs` 的 `pub use` 区加：
 
 ```rust
 pub use transcript_spec::{ClaudeTranscript, TranscriptParser, TranscriptSpec, CLAUDE_TRANSCRIPT};
@@ -192,37 +192,37 @@ pub use transcript_spec::{ClaudeTranscript, TranscriptParser, TranscriptSpec, CL
 
 - [ ] **Step 6: 运行测试确认通过 + clippy**
 
-Run: `cargo test -p cc-store transcript_spec`
+Run: `cargo test -p meowo-store transcript_spec`
 Expected: PASS（2 个委托/等价测试）。
 
-Run: `cargo test -p cc-store`
+Run: `cargo test -p meowo-store`
 Expected: 全绿（既有 analyze/title/store 测试不回归——本任务纯增量）。
 
-Run: `cargo clippy -p cc-store --all-targets -- -D warnings`
+Run: `cargo clippy -p meowo-store --all-targets -- -D warnings`
 Expected: 无警告。
 
 - [ ] **Step 7: 提交**
 
 ```bash
-git add crates/cc-store/src/transcript_spec.rs crates/cc-store/src/analyze.rs crates/cc-store/src/lib.rs
-git commit -m "feat(transcript): cc-store 新增 TranscriptSpec/TranscriptParser 接口与 ClaudeTranscript（纯增量）"
+git add crates/meowo-store/src/transcript_spec.rs crates/meowo-store/src/analyze.rs crates/meowo-store/src/lib.rs
+git commit -m "feat(transcript): meowo-store 新增 TranscriptSpec/TranscriptParser 接口与 ClaudeTranscript（纯增量）"
 ```
 
 ---
 
 ### Task 2: 参数化 TranscriptCache + Agent::transcript() 接线 + 调用点改走接口（原子）
 
-> `TranscriptCache::analyze` 的签名改动会波及 cc-app 的 2 个调用点，故本任务一次性覆盖 cc-store/cc-reporter/cc-app，提交一次保持全绿。
+> `TranscriptCache::analyze` 的签名改动会波及 meowo-app 的 2 个调用点，故本任务一次性覆盖 meowo-store/meowo-reporter/meowo-app，提交一次保持全绿。
 
 **Files:**
-- Modify: `crates/cc-store/src/analyze.rs`（TranscriptCache 参数化 + cache 测试）
-- Modify: `crates/cc-reporter/src/agent.rs`（Agent::transcript）
-- Modify: `crates/cc-reporter/src/dispatch.rs`（apply_title）
+- Modify: `crates/meowo-store/src/analyze.rs`（TranscriptCache 参数化 + cache 测试）
+- Modify: `crates/meowo-reporter/src/agent.rs`（Agent::transcript）
+- Modify: `crates/meowo-reporter/src/dispatch.rs`（apply_title）
 - Modify: `app/src-tauri/src/lib.rs`（2 处调用点）
 
 **Interfaces:**
-- Consumes: Task 1 的 `cc_store::{TranscriptSpec, TranscriptParser, CLAUDE_TRANSCRIPT}` + `analyze::claude_new_parser`。
-- Produces: `TranscriptCache::analyze(&mut self, spec: &dyn TranscriptSpec, path: &str) -> TranscriptInfo`；`Agent::transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec>`。
+- Consumes: Task 1 的 `meowo_store::{TranscriptSpec, TranscriptParser, CLAUDE_TRANSCRIPT}` + `analyze::claude_new_parser`。
+- Produces: `TranscriptCache::analyze(&mut self, spec: &dyn TranscriptSpec, path: &str) -> TranscriptInfo`；`Agent::transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec>`。
 
 - [ ] **Step 1: analyze.rs —— CacheEntry 持有 Box<dyn TranscriptParser>**
 
@@ -316,22 +316,22 @@ struct CacheEntry {
 
 （`analyze_transcript(...)` 一次性自由函数调用**不变**。）
 
-- [ ] **Step 4: 运行 cc-store 测试 + clippy**
+- [ ] **Step 4: 运行 meowo-store 测试 + clippy**
 
-Run: `cargo test -p cc-store`
+Run: `cargo test -p meowo-store`
 Expected: 全绿（cache 增量测试用 ClaudeTranscript spec，结果与 `analyze_transcript` 全量一致——证明逐字节等价）。
 
-Run: `cargo clippy -p cc-store --all-targets -- -D warnings`
+Run: `cargo clippy -p meowo-store --all-targets -- -D warnings`
 Expected: 无警告。
 
-- [ ] **Step 5: cc-reporter agent.rs —— Agent::transcript()**
+- [ ] **Step 5: meowo-reporter agent.rs —— Agent::transcript()**
 
 在 `Agent` trait 定义里（`write_rename` 方法之后）加默认实现：
 
 ```rust
     /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。claude 返回 ClaudeTranscript；
     /// codex/kimi 暂无（None）——它们的标题走首条 prompt、预览/模型走 stop_outputs，不读 transcript 分析。
-    fn transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec> {
+    fn transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec> {
         None
     }
 ```
@@ -339,14 +339,14 @@ Expected: 无警告。
 在 `ClaudeAgent` 的 impl 里加：
 
 ```rust
-    fn transcript(&self) -> Option<&'static dyn cc_store::TranscriptSpec> {
-        Some(&cc_store::CLAUDE_TRANSCRIPT)
+    fn transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec> {
+        Some(&meowo_store::CLAUDE_TRANSCRIPT)
     }
 ```
 
 （`KimiAgent`/`CodexAgent` 不实现，用默认 None。）
 
-- [ ] **Step 6: cc-reporter dispatch.rs —— apply_title 改走 transcript()**
+- [ ] **Step 6: meowo-reporter dispatch.rs —— apply_title 改走 transcript()**
 
 把 `apply_title`（约 101-120 行）替换为（保留 `resolves_transcript_title` gate，标题解析改走 spec）：
 
@@ -379,7 +379,7 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: P
 
 （这替换了原先的 `crate::transcript::resolve_title(...)` 直调。`crate::transcript` 的 `resolve_title` 重导出若因此变为未用，保持不动即可——pub 重导出不触发 dead_code 警告；import.rs 等仍可能用其它重导出项。）
 
-- [ ] **Step 7: cc-app lib.rs —— 2 处调用点改走 transcript() + analyze(spec, path)**
+- [ ] **Step 7: meowo-app lib.rs —— 2 处调用点改走 transcript() + analyze(spec, path)**
 
 把 `live_sessions_blocking` 里的调用点（约 196-202 行）替换为（注释说明本处只按 `transcript()` 门控、下方 `info.title` 覆盖标题不再额外查 `resolves_transcript_title`——当前 codex/kimi `transcript()=None` 故零影响；将来若有 `transcript()=Some` 但 `resolves_transcript_title=false` 的 provider，需在此重审是否仍覆盖标题）：
 
@@ -388,7 +388,7 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: P
         // resolves_transcript_title。当前只有 claude 有 spec（且 resolves_transcript_title=true），
         // codex/kimi transcript()=None 不进此分支，故零影响。将来若引入「有 spec 但标题走首条
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-        let info = cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
+        let info = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
             .transcript()
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
@@ -402,8 +402,8 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: P
 ```rust
                     // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
                     // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-                    let cc_store::TranscriptInfo { title, error, .. } =
-                        cc_reporter::agent::for_provider(cc_store::ProviderKey::parse(Some(&s.provider)))
+                    let meowo_store::TranscriptInfo { title, error, .. } =
+                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
                             .transcript()
                             .and_then(|spec| {
                                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
@@ -417,19 +417,19 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: P
 
 - [ ] **Step 8: 全栈编译 + 测试**
 
-Run: `cargo test -p cc-store -p cc-reporter`
+Run: `cargo test -p meowo-store -p meowo-reporter`
 Expected: 全绿。
 
-Run: `cargo clippy -p cc-store -p cc-reporter --all-targets -- -D warnings`
+Run: `cargo clippy -p meowo-store -p meowo-reporter --all-targets -- -D warnings`
 Expected: 无警告。
 
-Run: `node scripts/prepare-sidecar.mjs && cargo check -p cc-app`
+Run: `node scripts/prepare-sidecar.mjs && cargo check -p meowo-app`
 Expected: 编译通过（2 处调用点类型对齐：spec 为 `&'static dyn TranscriptSpec`，传入 `analyze`）。
 
 - [ ] **Step 9: 提交**
 
 ```bash
-git add crates/cc-store/src/analyze.rs crates/cc-reporter/src/agent.rs crates/cc-reporter/src/dispatch.rs app/src-tauri/src/lib.rs
+git add crates/meowo-store/src/analyze.rs crates/meowo-reporter/src/agent.rs crates/meowo-reporter/src/dispatch.rs app/src-tauri/src/lib.rs
 git commit -m "refactor(transcript): TranscriptCache 参数化 + Agent::transcript 接线，generic 调用点改走接口"
 ```
 
@@ -443,7 +443,7 @@ git commit -m "refactor(transcript): TranscriptCache 参数化 + Agent::transcri
 
 **3. 占位符扫描**：无 TBD；每步给确切文件、行号区间、完整代码、命令与预期。
 
-**4. 类型一致**：`TranscriptSpec`(Sync)/`TranscriptParser`(Send) 定义于 cc-store；`Agent::transcript()->Option<&'static dyn cc_store::TranscriptSpec>`；`TranscriptCache::analyze(spec,path)` 全调用点一致更新（cc-store 测试×5、cc-app×2）。
+**4. 类型一致**：`TranscriptSpec`(Sync)/`TranscriptParser`(Send) 定义于 meowo-store；`Agent::transcript()->Option<&'static dyn meowo_store::TranscriptSpec>`；`TranscriptCache::analyze(spec,path)` 全调用点一致更新（meowo-store 测试×5、meowo-app×2）。
 
 ## 本计划之外
 

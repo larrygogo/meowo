@@ -8,12 +8,12 @@
 
 会话卡片目前不显示「这个会话跑的是哪个 AI、哪个模型」。用户希望在卡片上**标明 agent 类型与模型**，并为后续接入其它 AI（呼应账号页「为多 AI 做准备」）预留结构。
 
-- **agent 类型**：指会话归属的 AI 工具/提供方。当前全部是 **Claude Code**（cc-reporter 本就是 CC 的 hook）；现在显示是前瞻性恒定标注，未来真接入 Codex/Gemini 等时再按数据来源区分。
+- **agent 类型**：指会话归属的 AI 工具/提供方。当前全部是 **Claude Code**（meowo-reporter 本就是 CC 的 hook）；现在显示是前瞻性恒定标注，未来真接入 Codex/Gemini 等时再按数据来源区分。
 - **模型**：会话当前使用的模型展示名（如 `Opus` / `Sonnet`）。
 
 ## 真实数据核实（非凭文档）
 
-- **模型数据已现成、只是没存**：Claude Code 每次渲染状态栏会把会话 JSON 通过 stdin 传给 statusline 命令，负载含 `model.display_name`（如 `"Opus"`）。`crates/cc-reporter/src/statusline.rs`：
+- **模型数据已现成、只是没存**：Claude Code 每次渲染状态栏会把会话 JSON 通过 stdin 传给 statusline 命令，负载含 `model.display_name`（如 `"Opus"`）。`crates/meowo-reporter/src/statusline.rs`：
   - `minimal_line`（行 29-48）已经在读 `v["model"]["display_name"]`，仅用于自渲染终端状态行字符串。
   - `record`（行 8-25）只把 `context_window.used_percentage` / `context_window_size` 写进 `session_context` 表，**没存 model**。
   - 测试样例证实字段路径：`{"model":{"display_name":"Opus"},...}`（statusline.rs:84）。
@@ -29,14 +29,14 @@
 
 ## 组件与改动点
 
-### 1. 数据层（`crates/cc-store`）
+### 1. 数据层（`crates/meowo-store`）
 
 - **schema**（`migrations.rs`）：`session_context` 表 `CREATE TABLE` 加 `model TEXT`。
 - **旧库迁移**（`store.rs` `init` 的 `ALTERS`，行 53-61）：加一条 `ALTER TABLE session_context ADD COLUMN model TEXT`（已存在则忽略 "duplicate column name"）；`USER_VERSION` 3 → 4（注释补 v4 说明）。
 - **store.rs `set_session_context`**（行 121-138）：增形参 `model: Option<&str>`；upsert 列加 `model`，`ON CONFLICT DO UPDATE SET model = COALESCE(excluded.model, model)`（模型缺失不覆盖已有值，与 used_pct/window_size 一致）。
 - **query.rs**：`LiveSession` 加 `model: Option<String>`（行 28-55 结构体）；`live_sessions()` SELECT 加 `sc.model`（行 205），row 解析与回填新增一列（行 235-241、249-274）。
 
-### 2. cc-reporter（`crates/cc-reporter/src/statusline.rs`）
+### 2. meowo-reporter（`crates/meowo-reporter/src/statusline.rs`）
 
 - `record`：解析 `v["model"]["display_name"]`（沿用 `minimal_line` 的取法），把 `Option<&str>` 传给 `set_session_context`。原 context 解析不变。
 
@@ -56,12 +56,12 @@
 ## 架构图
 
 ```
-CC statusline JSON ── model.display_name ──▶ cc-reporter statusline::record
+CC statusline JSON ── model.display_name ──▶ meowo-reporter statusline::record
                                                    │ set_session_context(..., model)
                                                    ▼
-                                    session_context.model (新列)  ~/.cc-kanban/board.db
+                                    session_context.model (新列)  ~/.meowo/board.db
                                                    ▲ live_sessions() LEFT JOIN sc.model
-cc-app 文件监听 ─▶ LiveSession.model ─▶ 前端卡片 .stk-line2（右对齐）
+meowo-app 文件监听 ─▶ LiveSession.model ─▶ 前端卡片 .stk-line2（右对齐）
         ◆(AgentMark, title=Claude Code)  +  [模型胶囊 Opus]
 agent 类型：前端常量（图标 + hover 文案），无后端字段
 ```

@@ -6,7 +6,7 @@
 
 **Architecture:** 后端加 `Agent::is_installed()`（可执行存在口径）与 `available_agents()` 命令（仿 `available_terminals`）；`Agent::install_script()` 存各 agent 官方一句话安装命令，`install_agent` 命令在终端跑它（Windows `powershell -Command`，macOS AppleScript `do script`）。前端各展示点按 `availableAgents()` 过滤；账号页 `AccountSection` 重构为遍历全部 agent 的卡。
 
-**Tech Stack:** Rust（tauri 2、cc-reporter Agent trait）+ React 18 + TypeScript（vitest）。基于 `feat/new-session-20260706`（PR #28）。
+**Tech Stack:** Rust（tauri 2、meowo-reporter Agent trait）+ React 18 + TypeScript（vitest）。基于 `feat/new-session-20260706`（PR #28）。
 
 ## Global Constraints
 
@@ -28,8 +28,8 @@
 ## File Structure
 
 **修改：**
-- `crates/cc-reporter/src/agent.rs` — `Agent` trait 增 `is_installed()`、`install_script(windows)`；`exe_on_path` helper；三 impl；测试。
-- `crates/cc-reporter/src/kimi.rs` — 增 `kimi_installed()`（检查可执行路径存在）。
+- `crates/meowo-reporter/src/agent.rs` — `Agent` trait 增 `is_installed()`、`install_script(windows)`；`exe_on_path` helper；三 impl；测试。
+- `crates/meowo-reporter/src/kimi.rs` — 增 `kimi_installed()`（检查可执行路径存在）。
 - `app/src-tauri/src/term_script.rs` — 增 `install_script_mac(kind)` AppleScript。
 - `app/src-tauri/src/lib.rs` — `available_agents` 命令、`install_agent` 命令 + Windows/macOS 安装 spawn、注册。
 - `app/src/api.ts` — `availableAgents()`、`installAgent()` wrapper。
@@ -43,11 +43,11 @@
 ## Task 1: Agent::is_installed（可执行存在检测）
 
 **Files:**
-- Modify: `crates/cc-reporter/src/agent.rs`（trait + 三 impl + helper + 测试）
-- Modify: `crates/cc-reporter/src/kimi.rs`（`kimi_installed`）
+- Modify: `crates/meowo-reporter/src/agent.rs`（trait + 三 impl + helper + 测试）
+- Modify: `crates/meowo-reporter/src/kimi.rs`（`kimi_installed`）
 
 **Interfaces:**
-- Produces: `Agent::is_installed(&self) -> bool`；`cc_reporter::kimi::kimi_installed() -> bool`。
+- Produces: `Agent::is_installed(&self) -> bool`；`meowo_reporter::kimi::kimi_installed() -> bool`。
 
 - [ ] **Step 1: 写失败测试**（`agent.rs` 的 `mod tests` 末尾）
 
@@ -71,7 +71,7 @@
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cargo test -p cc-reporter is_installed_reflects`
+Run: `cargo test -p meowo-reporter is_installed_reflects`
 Expected: 编译失败 `cannot find function 'exe_on_path'`。
 
 - [ ] **Step 3: 加 helper + kimi_installed + trait 方法 + 三 impl**
@@ -167,13 +167,13 @@ pub fn kimi_installed() -> bool {
 
 - [ ] **Step 4: 跑测试确认通过 + 编译**
 
-Run: `cargo test -p cc-reporter && cargo build -p cc-reporter`
+Run: `cargo test -p meowo-reporter && cargo build -p meowo-reporter`
 Expected: `is_installed_reflects_executable_presence` PASS；既有测试（`every_provider_key_has_agent` 等）全绿。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/cc-reporter/src/agent.rs crates/cc-reporter/src/kimi.rs
+git add crates/meowo-reporter/src/agent.rs crates/meowo-reporter/src/kimi.rs
 git commit -m "feat(agent-availability): Agent 增 is_installed / install_script（可执行存在口径 + 官方安装命令）"
 ```
 
@@ -197,7 +197,7 @@ git commit -m "feat(agent-availability): Agent 增 is_installed / install_script
 #[tauri::command]
 async fn available_agents() -> Vec<String> {
     tauri::async_runtime::spawn_blocking(|| {
-        cc_reporter::agent::all()
+        meowo_reporter::agent::all()
             .iter()
             .filter(|a| a.is_installed())
             .map(|a| a.key().as_str().to_string())
@@ -221,7 +221,7 @@ export function availableAgents(): Promise<ProviderKey[]> {
 
 - [ ] **Step 3: 编译 + 类型检查**
 
-Run: `cargo build -p cc-app && (cd app && bunx tsc --noEmit)`
+Run: `cargo build -p meowo-app && (cd app && bunx tsc --noEmit)`
 Expected: 通过。
 
 - [ ] **Step 4: Commit**
@@ -295,9 +295,9 @@ end run"#
 /// 安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
 async fn install_agent(provider: String) -> Result<(), String> {
-    let key = cc_store::ProviderKey::parse(Some(&provider));
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
     let windows = cfg!(target_os = "windows");
-    let script = cc_reporter::agent::for_provider(key)
+    let script = meowo_reporter::agent::for_provider(key)
         .install_script(windows)
         .ok_or("该 agent 没有可用的一键安装命令")?;
     let terminal = load_settings().resume_terminal;
@@ -368,8 +368,8 @@ export function installAgent(provider: ProviderKey): Promise<void> {
 
 - [ ] **Step 4: 编译 + term_script 测试**
 
-Run: `cargo test -p cc-app install_script_mac && cargo build -p cc-app && (cd app && bunx tsc --noEmit)`
-Expected: 测试 PASS；编译通过。（Windows 若 cc-app.exe 在跑致 exe 链接锁，退用 `cargo build -p cc-app --lib`，report 注明。）
+Run: `cargo test -p meowo-app install_script_mac && cargo build -p meowo-app && (cd app && bunx tsc --noEmit)`
+Expected: 测试 PASS；编译通过。（Windows 若 meowo-app.exe 在跑致 exe 链接锁，退用 `cargo build -p meowo-app --lib`，report 注明。）
 
 - [ ] **Step 5: Commit**
 

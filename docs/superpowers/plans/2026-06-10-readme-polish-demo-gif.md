@@ -21,7 +21,7 @@
 | 4.5–8.5s | 卡 2 转「待交互」(黄),光标点「待交互」tab 过滤,再切回「全部」 | 谁在等你回复,立刻知道 |
 | 8.5–13s | 卡 2 重命名(逐字输入+回车),卡 4 点归档收进「已归档」 | 重命名、归档,即点即管 |
 | 13–17.5s | 窗口滑向右缘缩成竖状态条(3 色点),hover 偷看展开再收回 | 吸边缩成一根状态条,不占地方 |
-| 17.5–20s | 桌面上 logo + cc-kanban + slogan 淡入 | — |
+| 17.5–20s | 桌面上 logo + Meowo + slogan 淡入 | — |
 
 **文件清单:**
 - Create: `app/demo.html` — demo 页入口
@@ -62,7 +62,7 @@ bunx playwright install chromium
 ```html
 <!doctype html>
 <html lang="zh">
-  <head><meta charset="UTF-8" /><title>cc-kanban demo</title></head>
+  <head><meta charset="UTF-8" /><title>Meowo demo</title></head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/demo/main.tsx"></script>
@@ -552,7 +552,7 @@ export function DemoStage() {
       {finale && (
         <div className="demo-finale">
           <img src={logoUrl} width={88} height={88} alt="" />
-          <div className="demo-finale-name">cc-kanban</div>
+          <div className="demo-finale-name">Meowo</div>
           <div className="demo-finale-slogan">你所有的 Claude Code 会话,一眼看全</div>
         </div>
       )}
@@ -741,7 +741,7 @@ import { makeSession } from "./data";
 export function buildScript(): Timeline {
   const tl = new Timeline(12);
   store.sessions = [
-    makeSession({ title: "重构吸边状态机", project: "larrygogo/cc-kanban", activity: "▸ cargo clippy --workspace", ctx: 62, todoDone: 3, todoTotal: 5 }),
+    makeSession({ title: "重构吸边状态机", project: "larrygogo/meowo", activity: "▸ cargo clippy --workspace", ctx: 62, todoDone: 3, todoTotal: 5 }),
     makeSession({ title: "接入账号用量面板", project: "larrygogo/autopilot", activity: "▸ 编辑 src/views/Sticker.tsx", ctx: 41, todoDone: 1, todoTotal: 4 }),
     makeSession({ title: "升级 tauri 到 2.3", project: "larrygogo/cc-relay", status: "stale", agoMin: 12 }),
     makeSession({ title: "修复 statusline 兼容性", project: "larrygogo/clawmo-ios", status: "ended", connected: false, agoMin: 180 }),
@@ -797,7 +797,7 @@ function mut(fn: () => void): () => void {
 
 export function buildScript(): Timeline {
   const tl = new Timeline(12);
-  const s1 = makeSession({ title: "重构吸边状态机", project: "larrygogo/cc-kanban", activity: "▸ cargo clippy --workspace", ctx: 62, todoDone: 3, todoTotal: 5 });
+  const s1 = makeSession({ title: "重构吸边状态机", project: "larrygogo/meowo", activity: "▸ cargo clippy --workspace", ctx: 62, todoDone: 3, todoTotal: 5 });
   const s2 = makeSession({ title: "接入账号用量面板", project: "larrygogo/autopilot", activity: "▸ 编辑 src/views/Sticker.tsx", ctx: 41, todoDone: 1, todoTotal: 4 });
   const s3 = makeSession({ title: "升级 tauri 到 2.3", project: "larrygogo/cc-relay", status: "stale", agoMin: 12 });
   const s4 = makeSession({ title: "修复 statusline 兼容性", project: "larrygogo/clawmo-ios", status: "ended", connected: false, agoMin: 180 });
@@ -1019,28 +1019,28 @@ cp app/src-tauri/icons/128x128@2x.png docs/images/logo.png
 
 ````markdown
 <div align="center">
-  <img src="docs/images/logo.png" width="104" alt="cc-kanban logo" />
-  <h1>cc-kanban</h1>
+  <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
+  <h1>Meowo</h1>
   <p><b>一个常驻桌面的「贴纸」,你所有 Claude Code 会话的进度,一眼看全。</b></p>
   <p>
-    <a href="https://github.com/larrygogo/cc-kanban/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/cc-kanban/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://github.com/larrygogo/cc-kanban/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/cc-kanban?label=release&color=d97757" alt="Release" /></a>
-    <a href="https://github.com/larrygogo/cc-kanban/releases"><img src="https://img.shields.io/github/downloads/larrygogo/cc-kanban/total?color=4ec9a5" alt="Downloads" /></a>
+    <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
+    <a href="https://github.com/larrygogo/meowo/releases"><img src="https://img.shields.io/github/downloads/larrygogo/meowo/total?color=4ec9a5" alt="Downloads" /></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555" alt="Platform" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT" /></a>
   </p>
   <p>哪个在跑、哪个在等你回复、各自做到哪一步——通过 Claude Code hooks 捕获事件,落进本地 SQLite,<br/>再用一个半透明、可吸边的 Tauri 小窗口实时呈现。无需切来切去找终端。</p>
-  <img src="docs/images/demo.gif" alt="cc-kanban 演示:实时会话贴纸、待交互提醒、重命名归档、吸边缩略" width="760" />
+  <img src="docs/images/demo.gif" alt="Meowo 演示:实时会话贴纸、待交互提醒、重命名归档、吸边缩略" width="760" />
 </div>
 
 ## 下载
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| **Windows** | [cc-kanban_0.2.0_x64-setup.exe](https://github.com/larrygogo/cc-kanban/releases/download/v0.2.0/cc-kanban_0.2.0_x64-setup.exe) | NSIS 安装包 |
-| **macOS** | [cc-kanban_0.2.0_universal.dmg](https://github.com/larrygogo/cc-kanban/releases/download/v0.2.0/cc-kanban_0.2.0_universal.dmg) | universal(Intel / Apple Silicon 通用),需 ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
+| **Windows** | [cc-kanban_0.2.0_x64-setup.exe](https://github.com/larrygogo/meowo/releases/download/v0.2.0/cc-kanban_0.2.0_x64-setup.exe) | NSIS 安装包 |
+| **macOS** | [cc-kanban_0.2.0_universal.dmg](https://github.com/larrygogo/meowo/releases/download/v0.2.0/cc-kanban_0.2.0_universal.dmg) | universal(Intel / Apple Silicon 通用),需 ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
 
-也可到 [Releases](https://github.com/larrygogo/cc-kanban/releases/latest) 获取最新版本。装好后支持应用内(设置 → 关于)检查更新,两个平台均可自动升级到后续版本。
+也可到 [Releases](https://github.com/larrygogo/meowo/releases/latest) 获取最新版本。装好后支持应用内(设置 → 关于)检查更新,两个平台均可自动升级到后续版本。
 
 ## 特性
 

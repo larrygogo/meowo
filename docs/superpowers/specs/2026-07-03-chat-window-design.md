@@ -15,7 +15,7 @@
 1. **transcript jsonl 是完整对话的实时事实源**：`~/.claude/projects/<slug>/<session-id>.jsonl` 按消息级逐行追加（user 行 / assistant 行含 text 与 tool_use 块 / user 行含 tool_result 块）。粒度为消息级而非 token 级。
 2. **`claude -p --resume <id>` 续聊：session ID 不变、上下文连续、追加写入原 transcript 文件**（实测三连：单轮拿 ID → resume 问前文 → 检查同一 jsonl 增长）。
 3. **stream-json 双向长驻可行**：`claude -p --input-format stream-json --output-format stream-json --verbose` 进程跨轮存活、多轮同 session、assistant 消息实时流出；与 `--resume` 组合同样保持 session ID。（早前一轮文档调研称"不能长驻"，被实测推翻——VS Code 官方插件即此架构：GUI 前端 + headless 子进程。）
-4. **headless 会话照常触发 hooks**：实测两个探针会话经 cc-reporter 正常写入 board.db（status=ended）。⇒ UI 续聊时看板状态同步免费获得。
+4. **headless 会话照常触发 hooks**：实测两个探针会话经 meowo-reporter 正常写入 board.db（status=ended）。⇒ UI 续聊时看板状态同步免费获得。
 5. **无官方机制向"普通启动的、正在终端运行的"交互式会话注入用户消息**：hooks 只能在会话自身活动时刻注入 context（非用户回合）；IDE 集成 WebSocket 只做上下文工具不做消息提交；remote control 走 CLI 内建的 Anthropic 云端通道，无本地入口。
 6. **Channels（v2.1.80+，research preview）是唯一官方"注入运行中会话"机制**：channel = MCP server，会话以 `claude --channels plugin:<name>` 启动后可接收推送消息并经 channel `reply` 工具回话，支持权限中继。官方 demo 插件 fakechat（localhost 聊天 UI ↔ 运行中会话）即本特性终态形态。硬约束：①必须启动时带 flag，覆盖不了随手 `claude` 起的会话；②preview 期 `--channels` 只认 Anthropic 官方 allowlist，自建 channel 需 `--dangerously-load-development-channels`，不适合面向公众发布；③官方声明 flag 语法与协议契约可能变。
 
@@ -26,7 +26,7 @@
 | 只读查看器 | 仅展示 + 跳终端 | 不满足"UI 上对话"核心诉求，弃 |
 | **分状态混合（选定，第一期）** | 已断开/空闲 → UI 直接 resume 续聊（官方路径、session 不变）；运行中/待交互 → 实时只读镜像 + 一键跳终端 | 全程官方支持路径，零启动要求，开箱即用 |
 | 终端按键注入 | 聚焦终端 + SendInput 模拟键盘触达运行中会话 | hacky（抢焦点/输入法/时序），被 Channels 取代，弃 |
-| Channels 真双向 | 自建 cc-kanban channel 插件，运行中会话真双向 + 权限中继 | **二期**：等 preview 毕业或进 allowlist；架构本期预留插槽 |
+| Channels 真双向 | 自建 Meowo channel 插件，运行中会话真双向 + 权限中继 | **二期**：等 preview 毕业或进 allowlist；架构本期预留插槽 |
 
 ## 第一期设计
 
@@ -38,7 +38,7 @@
 
 ### 组件与改动点
 
-#### 1. cc-store：消息级 transcript 解析（新模块 `chat.rs`）
+#### 1. meowo-store：消息级 transcript 解析（新模块 `chat.rs`）
 
 - `ChatItem` 枚举（serde 序列化直达前端）：
   - `UserText { text }`（过滤图片/粘贴占位标记，复用 sanitize 思路）
@@ -98,7 +98,7 @@ UI send ──▶ claude -p --resume(子进程) ──┘                       
 
 行业规律（VS Code 插件 / remote control / paseo 等同类调研结论）：不存在 attach「别人启动的裸交互会话」的路径，真双向必须占据会话进程的出生链路。两条候选，可并行评估：
 
-- **Channels 插件**：自建 `cc-kanban` channel（MCP server，参照官方 fakechat/telegram 源码），UI ↔ 运行中会话真双向 + 权限中继（在 UI 里批准权限提示）。触发条件：Channels 走出 research preview / 进入 allowlist（当前自建插件需 `--dangerously-load-development-channels`，不宜面向公众发布）。
+- **Channels 插件**：自建 `Meowo` channel（MCP server，参照官方 fakechat/telegram 源码），UI ↔ 运行中会话真双向 + 权限中继（在 UI 里批准权限提示）。触发条件：Channels 走出 research preview / 进入 allowlist（当前自建插件需 `--dangerously-load-development-channels`，不宜面向公众发布）。
 - **PTY wrapper（备选）**：`cck` 包装命令在用户终端与 claude 之间加一层伪终端（Windows ConPTY / Unix pty），终端照常用、UI 输入写入同一 PTY。渐进采纳点：看板「恢复已断开会话」的终端本来就由 app 拉起，该路径可先行替换为 wrapper——「由看板恢复的会话」即获终端+UI 真双向，不依赖 preview 协议；用户裸起的会话再由 Channels 覆盖。代价：ConPTY 转发工程量、结构化内容仍靠 transcript。
 - 本期预留：发送路径在前后端各收敛为单点（`send_chat_message` / 输入区状态机），二期无论走哪条只加分支不动骨架。
 

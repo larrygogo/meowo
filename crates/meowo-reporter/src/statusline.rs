@@ -1,7 +1,7 @@
 //! Claude Code statusline 集成：CC 每次渲染状态栏会把会话 JSON 传给 statusline 命令的 stdin，
 //! 其中 `context_window` 带有「准确的窗口大小与已用百分比」（transcript / hook 都拿不到）。
-//! 这里解析出来写入 `session_context` 表，供 cc-app 准确显示，再把原始 stdin 透传给下游 HUD。
-use cc_store::Store;
+//! 这里解析出来写入 `session_context` 表，供 meowo-app 准确显示，再把原始 stdin 透传给下游 HUD。
+use meowo_store::Store;
 
 /// 解析 statusline JSON 并写库（best-effort：任何字段缺失或解析失败都静默跳过，绝不影响透传）。
 /// 字段路径：`session_id`、`context_window.used_percentage`、`context_window.context_window_size`。
@@ -28,8 +28,8 @@ pub fn record(store: &Store, input: &str, now_ms: i64) {
     let _ = store.set_session_context(sid, used_pct, window, model, now_ms);
 }
 
-/// 无下游 statusLine 时 cc-reporter 自渲染的极简状态栏：`<模型> · NN% ctx`。
-/// 字段缺失则尽量降级；全缺则空串。用于「装了 cc-kanban 但没有其它 statusLine」的用户。
+/// 无下游 statusLine 时 meowo-reporter 自渲染的极简状态栏：`<模型> · NN% ctx`。
+/// 字段缺失则尽量降级；全缺则空串。用于「装了 Meowo 但没有其它 statusLine」的用户。
 pub fn minimal_line(input: &str) -> String {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(input) else {
         return String::new();

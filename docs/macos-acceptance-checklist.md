@@ -2,8 +2,8 @@
 
 ## 安装与启动
 - [ ] dmg 双击安装，拖入 Applications；首次打开无 Gatekeeper 拦截（签名公证生效）
-- [ ] Dock 不出现 cc-kanban 图标（LSUIElement）
-- [ ] 顶部状态栏出现 cc-kanban 图标
+- [ ] Dock 不出现 Meowo 图标（LSUIElement）
+- [ ] 顶部状态栏出现 Meowo 图标
 
 ## 面板交互
 - [ ] 左键图标弹出面板，定位在图标正下方

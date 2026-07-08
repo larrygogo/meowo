@@ -2,7 +2,7 @@
 // 两个窗口（贴纸 main、设置 about）都在 main.tsx 里 boot：
 //   - 明暗模式 + 不透明度：两窗都套用（不透明度只影响走 --cc-bg 的贴纸/缩略条，设置窗口无副作用）。
 //   - 界面密度（--cc-ui）：仅贴纸窗口套用（设置窗口固定尺寸，不缩放）。
-// 数据源是 ~/.cc-kanban/settings.json，经 get_settings 读取；任一窗口改设置后后端广播
+// 数据源是 ~/.meowo/settings.json，经 get_settings 读取；任一窗口改设置后后端广播
 // settings-changed，这里实时重套用（顺带做了设置窗口里的明暗即时预览）。
 import { listen } from "@tauri-apps/api/event";
 import { getSettings, type Settings, type StickerStyle, type ThemeMode } from "./api";
@@ -11,7 +11,8 @@ import { getSettings, type Settings, type StickerStyle, type ThemeMode } from ".
  *  dark/light = 该色在深/浅主题下实际套用的贴纸底色 RGB（低饱和微染，配合不透明+毛玻璃才不刺眼）。 */
 export type StickerColorPreset = { swatch: string; dark: string; light: string };
 export const STICKER_COLORS: Record<string, StickerColorPreset> = {
-  classic: { swatch: "#d97757", dark: "38, 38, 36", light: "250, 249, 245" }, // 经典原色（默认）
+  neutral: { swatch: "#ffffff", dark: "33, 33, 35", light: "247, 247, 249" }, // 无色（默认，中性不染色；swatch 白底红斜杠示意「无」）
+  classic: { swatch: "#d97757", dark: "38, 38, 36", light: "250, 249, 245" }, // 经典原色（暖褐）
   slate: { swatch: "#5b8db8", dark: "29, 37, 47", light: "239, 244, 250" }, // 石青
   moss: { swatch: "#6fae6a", dark: "30, 41, 33", light: "239, 248, 240" }, // 苔绿
   plum: { swatch: "#a87cc8", dark: "43, 34, 48", light: "248, 242, 251" }, // 暮紫
@@ -19,8 +20,8 @@ export const STICKER_COLORS: Record<string, StickerColorPreset> = {
   amber: { swatch: "#d9a441", dark: "46, 40, 27", light: "251, 246, 232" }, // 琥珀
 };
 export const STICKER_COLOR_KEYS = Object.keys(STICKER_COLORS);
-const DEFAULT_STICKER_COLOR = "classic";
-const DEFAULT_STICKER_STYLE: StickerStyle = "elevated";
+const DEFAULT_STICKER_COLOR = "neutral";
+const DEFAULT_STICKER_STYLE: StickerStyle = "flat";
 
 /** 把（颜色预设 key × 生效主题）解析为贴纸底色 RGB；未知 key 回退经典原色。纯函数，便于单测。 */
 export function stickerBgRgb(color: string, theme: "dark" | "light"): string {
@@ -36,10 +37,10 @@ type Appearance = {
   sticker_color: string;
 };
 
-const CACHE_KEY = "cc-kanban-appearance";
+const CACHE_KEY = "meowo-appearance";
 const DEFAULTS: Appearance = {
   theme: "dark",
-  opacity: 94,
+  opacity: 100,
   ui_scale: 100,
   sticker_style: DEFAULT_STICKER_STYLE,
   sticker_color: DEFAULT_STICKER_COLOR,

@@ -8,7 +8,7 @@
 
 两个观察：
 
-1. **通知显示成 powershell（图标/名字）** —— 经查 `tauri-plugin-notification` 源码（`desktop.rs:195-206`），它**只在非 `target/debug`、非 `target/release` 目录运行时**才给 toast 设 AUMID。`tauri dev` 跑在 `target/debug` → 不设 AUMID → Windows 归给启动进程（powershell）。**安装版（NSIS）会正常显示 cc-kanban + 图标。** 属 dev 固有限制，本身无需改代码。
+1. **通知显示成 powershell（图标/名字）** —— 经查 `tauri-plugin-notification` 源码（`desktop.rs:195-206`），它**只在非 `target/debug`、非 `target/release` 目录运行时**才给 toast 设 AUMID。`tauri dev` 跑在 `target/debug` → 不设 AUMID → Windows 归给启动进程（powershell）。**安装版（NSIS）会正常显示 Meowo + 图标。** 属 dev 固有限制，本身无需改代码。
 2. **点击通知无反应** —— `tauri-plugin-notification` 桌面端 `show()` 是 fire-and-forget，**不暴露任何点击/激活回调**，无法实现点击跳转。
 
 目标：**点击通知 = 跳到该会话的终端**（等同点击贴纸里的会话卡片：精确切到它的 Windows Terminal 标签页并置前）。
@@ -88,7 +88,7 @@ fn show_session_notification(
     focus_title: String,
 ) {
     use tauri_winrt_notification::Toast;
-    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 cc-kanban + 图标 + 点击可激活）；
+    // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 Meowo + 图标 + 点击可激活）；
     // dev 下 AUMID 未注册，退回 PowerShell 的 AUMID 仅保证 toast 能弹出（dev 点击不跳转）。
     let app_id = if tauri::is_dev() {
         Toast::POWERSHELL_APP_ID.to_string()
@@ -144,7 +144,7 @@ fn show_session_notification(
 ## 测试计划
 
 - `focus_session_terminal` 是对现有逻辑的纯抽取（命令复用它），靠编译 + 现有路径保证；通知点击为 UI 行为且仅安装版生效，无法单测。
-- 验证：`cargo build`/`clippy` 干净、现有测试不回归；**安装版手测**：弹通知显示 cc-kanban + 图标；点击通知切到该会话 WT 标签页并置前；待交互/出错两类均可点。
+- 验证：`cargo build`/`clippy` 干净、现有测试不回归；**安装版手测**：弹通知显示 Meowo + 图标；点击通知切到该会话 WT 标签页并置前；待交互/出错两类均可点。
 - 无新增可单测纯逻辑（去重/指纹已有测试，不动）。
 
 ## 非目标（YAGNI）

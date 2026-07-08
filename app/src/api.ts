@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /**
- * agent 提供方 key——必须与 Rust 侧 cc_store::ProviderKey 保持一致。
+ * agent 提供方 key——必须与 Rust 侧 meowo_store::ProviderKey 保持一致。
  * 新增 CLI 的同步点共 4 处：本联合类型、providers.tsx 的 PROVIDERS、
- * providers.test.tsx 的 EXPECTED_KEYS、Rust cc_store::ProviderKey::ALL。
+ * providers.test.tsx 的 EXPECTED_KEYS、Rust meowo_store::ProviderKey::ALL。
  */
 export type ProviderKey = "claude" | "kimi" | "codex";
 /** 缺省 provider，无法识别时回退；与 Rust 侧 DEFAULT_PROVIDER 一致。 */
@@ -164,7 +164,7 @@ export type Settings = {
   preview_enabled: boolean;
   /** 贴纸风格：elevated = 立体感（默认）/ flat = 扁平。 */
   sticker_style: StickerStyle;
-  /** 贴纸底色预设 key（classic/slate/moss/plum/rose/amber）。 */
+  /** 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。 */
   sticker_color: string;
   /** 在贴纸底栏显示配额的 provider key 列表（默认 ["claude"]）。 */
   sticker_quota_providers: string[];
@@ -235,7 +235,7 @@ export function refreshUsage(provider: string): Promise<ProviderUsage> {
   return invoke("refresh_usage", { provider });
 }
 
-/** 某 provider 的 cc-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */
+/** 某 provider 的 meowo-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */
 export type HooksStatus = "installed" | "missing" | "unknown";
 
 /** 新建一个全新会话：在 cwd 打开终端裸启动该 provider。terminal 省略则用设置里的默认终端。 */
@@ -248,7 +248,7 @@ export function recentCwds(limit: number): Promise<string[]> {
   return invoke("recent_cwds", { limit });
 }
 
-/** 检测某 provider 的 cc-reporter hooks 是否已接入（决定新建后会不会入库）。 */
+/** 检测某 provider 的 meowo-reporter hooks 是否已接入（决定新建后会不会入库）。 */
 export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> {
   return invoke("check_provider_hooks", { provider });
 }

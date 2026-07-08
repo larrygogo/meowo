@@ -30,7 +30,7 @@
 
 ### 1. 检测（后端）
 
-- **`Agent::is_installed(&self) -> bool`**（`cc-reporter/agent.rs`）：每个 agent 自检可执行（口径见上）。claude 的 PATH 查找在 cc-reporter 加一个小 helper（或复用现有 which 逻辑）；codex/kimi 用各自已有的解析器判存在。
+- **`Agent::is_installed(&self) -> bool`**（`meowo-reporter/agent.rs`）：每个 agent 自检可执行（口径见上）。claude 的 PATH 查找在 meowo-reporter 加一个小 helper（或复用现有 which 逻辑）；codex/kimi 用各自已有的解析器判存在。
 - **`available_agents()` 命令**（`app/src-tauri`）：遍历 `agent::all()`，返回 `is_installed()` 为真的 `ProviderKey[]`。轻量、无副作用，仿 `available_terminals`。
 - 前端 `availableAgents(): Promise<ProviderKey[]>` wrapper（`api.ts`）。
 
@@ -55,7 +55,7 @@
 
 未装 agent 卡上的「安装」按钮 → 后端 `install_agent(provider)` 命令在一个终端窗口里跑该 agent **官方的一句话安装脚本**，用户实时看进度、装完关终端、面板重新检测显示已装。
 
-`Agent::install_script(windows: bool) -> Option<String>`（cc-reporter），命令经 GitHub / 官方文档核实（2026-07）：
+`Agent::install_script(windows: bool) -> Option<String>`（meowo-reporter），命令经 GitHub / 官方文档核实（2026-07）：
 
 | agent | Windows (PowerShell) | macOS / Linux |
 |-------|----------------------|---------------|

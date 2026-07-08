@@ -69,7 +69,7 @@ impl Store {
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
                 if !e.to_string().contains("duplicate column name") {
-                    eprintln!("cc-store migrate 失败: {sql}: {e}");
+                    eprintln!("meowo-store migrate 失败: {sql}: {e}");
                     return Ok(()); // 非「列已存在」（BUSY/IO）：不 bump，下次 open 重试
                 }
             }
@@ -85,7 +85,7 @@ impl Store {
         ];
         for sql in INDEXES {
             if let Err(e) = conn.execute(sql, []) {
-                eprintln!("cc-store 建索引失败: {sql}: {e}");
+                eprintln!("meowo-store 建索引失败: {sql}: {e}");
                 return Ok(()); // 同上：不 bump，下次重试
             }
         }
@@ -269,7 +269,7 @@ impl Store {
         Ok(())
     }
 
-    /// 读会话当前任务标题（贴纸/卡片显示的那个）；无/空则 None。cc-reporter 给 WT 标签写 token 时
+    /// 读会话当前任务标题（贴纸/卡片显示的那个）；无/空则 None。meowo-reporter 给 WT 标签写 token 时
     /// 用作可见前缀（比 cwd 目录名更贴合卡片）。
     pub fn session_title(&self, session_id: i64) -> Result<Option<String>, StoreError> {
         match self.conn.query_row(

@@ -1,4 +1,4 @@
-use cc_reporter::hook::HookEvent;
+use meowo_reporter::hook::HookEvent;
 
 #[test]
 fn empty_and_truncated_json_is_err() {

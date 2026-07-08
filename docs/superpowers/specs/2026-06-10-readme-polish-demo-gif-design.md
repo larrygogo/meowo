@@ -38,7 +38,7 @@ gifenc 编码 → docs/images/demo.gif
 | 2 | 一个会话转黄色「待交互」,tab 计数跳动,自动切到「待交互」tab | 谁在等你回复,立刻知道 |
 | 3 | 卡片上演示重命名 + 归档,卡片收进「已归档」 | 重命名、归档,即点即管 |
 | 4 | 贴纸滑向右缘缩成竖状态条(CollapsedStrip),hover 偷看展开再收回 | 吸边缩成一根状态条,不占地方 |
-| 5 | 收尾:logo + cc-kanban + slogan 淡入 | — |
+| 5 | 收尾:logo + Meowo + slogan 淡入 | — |
 
 ### 输出规格
 

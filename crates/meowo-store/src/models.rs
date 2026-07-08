@@ -151,7 +151,7 @@ pub enum ProviderKey {
 }
 
 impl ProviderKey {
-    /// 全部已知 provider。新增 variant 必在此登记；cc-reporter 的 enum↔registry
+    /// 全部已知 provider。新增 variant 必在此登记；meowo-reporter 的 enum↔registry
     /// 配对测试据此校验每个 key 都有对应 Agent 实现。
     pub const ALL: &'static [ProviderKey] = &[ProviderKey::Claude, ProviderKey::Kimi, ProviderKey::Codex];
 

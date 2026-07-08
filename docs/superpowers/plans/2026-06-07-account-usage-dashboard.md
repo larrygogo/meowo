@@ -296,12 +296,12 @@ mod account;
 
 - [ ] **Step 3: 运行测试，确认通过**
 
-Run: `cargo test -p cc-app account`
+Run: `cargo test -p meowo-app account`
 Expected: 7 个 account 测试通过（首次会因 `mod account` 引入而编译）。
 
 - [ ] **Step 4: clippy**
 
-Run: `cargo clippy -p cc-app -- -D warnings`
+Run: `cargo clippy -p meowo-app -- -D warnings`
 Expected: 无警告。
 
 - [ ] **Step 5: 提交**
@@ -363,10 +363,10 @@ fn claude_json_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude.js
 fn credentials_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join(".credentials.json")) }
 fn stats_cache_path() -> Option<PathBuf> { home_dir().map(|h| h.join(".claude").join("stats-cache.json")) }
 fn usage_cache_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("CC_KANBAN_DB") {
+    if let Ok(p) = std::env::var("MEOWO_DB") {
         return Some(PathBuf::from(p).with_file_name("usage-cache.json"));
     }
-    home_dir().map(|h| h.join(".cc-kanban").join("usage-cache.json"))
+    home_dir().map(|h| h.join(".meowo").join("usage-cache.json"))
 }
 
 fn read_json(path: &PathBuf) -> Option<serde_json::Value> {
@@ -384,7 +384,7 @@ pub fn read_daily() -> Option<DailyStats> {
     parse_daily(&read_json(&stats_cache_path()?)?, 14)
 }
 
-/// 读上次缓存的用量快照（~/.cc-kanban/usage-cache.json 的 `usage` 字段）。
+/// 读上次缓存的用量快照（~/.meowo/usage-cache.json 的 `usage` 字段）。
 pub fn read_cached_usage() -> Option<Usage> {
     let v = read_json(&usage_cache_path()?)?;
     serde_json::from_value(v.get("usage")?.clone()).ok()
@@ -515,7 +515,7 @@ async fn refresh_usage() -> Result<account::Usage, String> {
 
 - [ ] **Step 4: 编译 + 测试 + clippy**
 
-Run: `cargo build -p cc-app && cargo test -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo build -p meowo-app && cargo test -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: 通过，无警告（首次会拉取 ureq 及其依赖）。
 
 - [ ] **Step 5: 提交**

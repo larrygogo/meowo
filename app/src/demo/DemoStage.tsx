@@ -31,7 +31,7 @@ export function DemoStage() {
       {finale && (
         <div className="demo-finale">
           <img src={logoUrl} width={88} height={88} alt="" />
-          <div className="demo-finale-name">cc-kanban</div>
+          <div className="demo-finale-name">Meowo</div>
           <div className="demo-finale-slogan">你所有的 Claude Code 会话,一眼看全</div>
         </div>
       )}

@@ -1,16 +1,16 @@
 //! 仅 Windows：hook 时把一个唯一 token 写进【本会话标签】的 Windows Terminal 标题。
 //!
-//! cc-reporter 是被 agent(claude/codex/kimi) 在它自己的标签/ConPTY 里 spawn 的 hook 子进程，默认
+//! meowo-reporter 是被 agent(claude/codex/kimi) 在它自己的标签/ConPTY 里 spawn 的 hook 子进程，默认
 //! 继承父进程的控制台。即使 agent 把 hook 的 stdout 重定向到管道抓 payload，子进程仍可用
 //! CreateFileW("CONOUT$") 拿到【本标签 active screen buffer】句柄（绕过 stdout 重定向），往里写一条
 //! OSC 2 标题序列 → conhost 解析更新标题 → 经 output pipe 转发给 WT → WT 改该标签标题。
 //!
 //! 用途：codex/kimi 这类不把任务标题写进标签的 CLI，其标签默认只显目录名；同窗口同目录两个会话标签
-//! 同名时 UIA 无法区分（WT 不把 tab→进程映射暴露出来）。让 cc-reporter 把【session_id 末 8 位】这个
-//! 全局唯一 token 写进标签，cc-app 即可按 token 精确匹配到正确标签（见 app 侧 focus_terminal_tab）。
+//! 同名时 UIA 无法区分（WT 不把 tab→进程映射暴露出来）。让 meowo-reporter 把【session_id 末 8 位】这个
+//! 全局唯一 token 写进标签，meowo-app 即可按 token 精确匹配到正确标签（见 app 侧 focus_terminal_tab）。
 
 /// 取 session_id 末 8 位十六进制作为 token（去掉非十六进制字符后取尾 8 个；不足则全取）。
-/// claude/codex 的 UUID、kimi 的 `session_<uuid>` 都能得到稳定唯一的短码。纯函数，cc-app 也复用它
+/// claude/codex 的 UUID、kimi 的 `session_<uuid>` 都能得到稳定唯一的短码。纯函数，meowo-app 也复用它
 /// 算出同一 token 做匹配。
 pub fn short_sid(session_id: &str) -> String {
     let hex: String = session_id.chars().filter(|c| c.is_ascii_hexdigit()).collect();
@@ -19,7 +19,7 @@ pub fn short_sid(session_id: &str) -> String {
 }
 
 /// 把 OSC 2 标题序列写进本标签的 ConPTY，设其标题为 `title`。失败（无 console / 非 WT / 被别的 PTY
-/// 包裹）一律静默放弃——cc-app 侧匹配不到该 token 时会自然回退到窗口级定位。
+/// 包裹）一律静默放弃——meowo-app 侧匹配不到该 token 时会自然回退到窗口级定位。
 #[cfg(target_os = "windows")]
 pub fn set_tab_title(title: &str) {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};

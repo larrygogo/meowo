@@ -4,7 +4,7 @@
 
 **Goal:** 让 harness 致命错误（工具调用解析失败 / 需要登录 / 认证失败）的会话在贴纸上以红色露出并归入「待交互」，且出错时弹一次去重的桌面通知。
 
-**Architecture:** 错误状态走"实时计算"——不写 DB、不改 schema、不加 hook。cc-store 新增纯函数 `analyze_transcript`，单次扫 transcript 同时产出标题与错误；cc-app 的 `get_live_sessions` 用它给每个展示会话算 `errored`，`spawn_liveness_watch`（5s 轮询）用它对连接中会话做去重通知。
+**Architecture:** 错误状态走"实时计算"——不写 DB、不改 schema、不加 hook。meowo-store 新增纯函数 `analyze_transcript`，单次扫 transcript 同时产出标题与错误；meowo-app 的 `get_live_sessions` 用它给每个展示会话算 `errored`，`spawn_liveness_watch`（5s 轮询）用它对连接中会话做去重通知。
 
 **Tech Stack:** Rust（rusqlite、serde_json、tauri v2 + tauri-plugin-notification）、React 18 + TypeScript（vitest）。
 
@@ -12,9 +12,9 @@
 
 ## 文件结构
 
-- `crates/cc-store/src/analyze.rs`（新建）：`TurnError` / `TranscriptInfo` 类型、`classify_error` 纯函数、`analyze_transcript` 单次扫描。
-- `crates/cc-store/src/title.rs`（改）：抽出 `resolve_transcript_path`，`resolve_title` 复用它（行为不变）。
-- `crates/cc-store/src/lib.rs`（改）：注册 `mod analyze` 并重导出。
+- `crates/meowo-store/src/analyze.rs`（新建）：`TurnError` / `TranscriptInfo` 类型、`classify_error` 纯函数、`analyze_transcript` 单次扫描。
+- `crates/meowo-store/src/title.rs`（改）：抽出 `resolve_transcript_path`，`resolve_title` 复用它（行为不变）。
+- `crates/meowo-store/src/lib.rs`（改）：注册 `mod analyze` 并重导出。
 - `app/src-tauri/src/lib.rs`（改）：`LiveItem` 增错误字段；`get_live_sessions` 改用 `analyze_transcript`；`spawn_liveness_watch` 加通知；新增 `should_notify` 纯函数；注册 notification 插件。
 - `app/src-tauri/Cargo.toml` + 根 `Cargo.toml`（改）：加 `tauri-plugin-notification`。
 - `app/src-tauri/capabilities/default.json`（改）：加 `notification:default` 权限。
@@ -26,17 +26,17 @@
 
 ---
 
-## Task 1: cc-store 错误检测纯函数 `analyze_transcript`
+## Task 1: meowo-store 错误检测纯函数 `analyze_transcript`
 
 **Files:**
-- Create: `crates/cc-store/src/analyze.rs`
-- Modify: `crates/cc-store/src/lib.rs`
-- Modify: `crates/cc-store/src/title.rs`
-- Test: `crates/cc-store/src/analyze.rs`（`#[cfg(test)]` 内联）
+- Create: `crates/meowo-store/src/analyze.rs`
+- Modify: `crates/meowo-store/src/lib.rs`
+- Modify: `crates/meowo-store/src/title.rs`
+- Test: `crates/meowo-store/src/analyze.rs`（`#[cfg(test)]` 内联）
 
 - [ ] **Step 1: 写失败测试（classify_error + analyze_transcript）**
 
-新建 `crates/cc-store/src/analyze.rs`，先只放类型骨架与测试：
+新建 `crates/meowo-store/src/analyze.rs`，先只放类型骨架与测试：
 
 ```rust
 //! 从 Claude Code transcript 检测「致命卡死错误」并与标题解析共用一次文件读取。
@@ -178,12 +178,12 @@ mod tests {
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `cargo test -p cc-store analyze`
+Run: `cargo test -p meowo-store analyze`
 Expected: 编译失败 —— `analyze_transcript` 未定义、`mod analyze` 未注册。
 
 - [ ] **Step 3: 实现 `analyze_transcript` 并注册模块**
 
-在 `crates/cc-store/src/analyze.rs` 的类型与测试之间加实现：
+在 `crates/meowo-store/src/analyze.rs` 的类型与测试之间加实现：
 
 ```rust
 /// 单次遍历 transcript：同时解析标题（custom-title 优先于 ai-title）与
@@ -255,7 +255,7 @@ pub fn analyze_transcript(path: &str) -> TranscriptInfo {
 }
 ```
 
-在 `crates/cc-store/src/lib.rs` 注册模块（与现有 `pub mod title;` 等同处）：
+在 `crates/meowo-store/src/lib.rs` 注册模块（与现有 `pub mod title;` 等同处）：
 
 ```rust
 pub mod analyze;
@@ -264,12 +264,12 @@ pub use analyze::{analyze_transcript, TranscriptInfo, TurnError};
 
 - [ ] **Step 4: 运行测试，确认通过**
 
-Run: `cargo test -p cc-store analyze`
+Run: `cargo test -p meowo-store analyze`
 Expected: PASS（全部 analyze 测试通过）。
 
 - [ ] **Step 5: 抽出 `resolve_transcript_path` 供后续复用**
 
-在 `crates/cc-store/src/title.rs` 新增（放在 `resolve_title` 上方）：
+在 `crates/meowo-store/src/title.rs` 新增（放在 `resolve_title` 上方）：
 
 ```rust
 /// 解析 transcript 文件路径，依次尝试：1) hook 给的 path；2) cwd+session_id 重建；
@@ -296,23 +296,23 @@ pub fn resolve_transcript_path(
 }
 ```
 
-> `resolve_title` 保持原样不动（仍可用）；本函数仅供 cc-app 新流程。
+> `resolve_title` 保持原样不动（仍可用）；本函数仅供 meowo-app 新流程。
 
 - [ ] **Step 6: 运行全 store 测试 + clippy**
 
-Run: `cargo test -p cc-store && cargo clippy -p cc-store -- -D warnings`
+Run: `cargo test -p meowo-store && cargo clippy -p meowo-store -- -D warnings`
 Expected: PASS，无 clippy 警告。
 
 - [ ] **Step 7: 提交**
 
 ```bash
-git add crates/cc-store/src/analyze.rs crates/cc-store/src/lib.rs crates/cc-store/src/title.rs
+git add crates/meowo-store/src/analyze.rs crates/meowo-store/src/lib.rs crates/meowo-store/src/title.rs
 git commit -m "feat(store): transcript 错误检测 analyze_transcript + 路径解析复用"
 ```
 
 ---
 
-## Task 2: cc-app 后端 `get_live_sessions` 接入错误字段
+## Task 2: meowo-app 后端 `get_live_sessions` 接入错误字段
 
 **Files:**
 - Modify: `app/src-tauri/src/lib.rs:272-334`（`LiveItem` 与 `get_live_sessions`）
@@ -339,7 +339,7 @@ struct LiveItem {
 
 ```rust
         if let Some(t) =
-            cc_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
+            meowo_store::title::resolve_title(None, s.cwd.as_deref(), &s.session.cc_session_id)
         {
             s.task_title = t;
         }
@@ -352,13 +352,13 @@ struct LiveItem {
         let mut errored = false;
         let mut error_label: Option<String> = None;
         let mut error_raw: Option<String> = None;
-        if let Some(path) = cc_store::title::resolve_transcript_path(
+        if let Some(path) = meowo_store::title::resolve_transcript_path(
             None,
             s.cwd.as_deref(),
             &s.session.cc_session_id,
         ) {
             if let Some(p) = path.to_str() {
-                let info = cc_store::analyze_transcript(p);
+                let info = meowo_store::analyze_transcript(p);
                 if let Some(t) = info.title {
                     s.task_title = t;
                 }
@@ -379,7 +379,7 @@ struct LiveItem {
 
 - [ ] **Step 3: 编译 + 现有测试 + clippy**
 
-Run: `cargo test -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo test -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: PASS（现有窗口/吸边等单测不受影响，新增字段编译通过）。
 
 - [ ] **Step 4: 提交**
@@ -416,7 +416,7 @@ git commit -m "feat(app): get_live_sessions 输出会话错误状态字段"
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `cargo test -p cc-app should_notify`
+Run: `cargo test -p meowo-app should_notify`
 Expected: 编译失败 —— `should_notify` 未定义。
 
 - [ ] **Step 3: 实现 `should_notify`**
@@ -436,7 +436,7 @@ fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `cargo test -p cc-app should_notify`
+Run: `cargo test -p meowo-app should_notify`
 Expected: PASS。
 
 - [ ] **Step 5: 提交（纯函数先落地）**
@@ -509,10 +509,10 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
                         continue;
                     }
                     let sid = s.session.cc_session_id.clone();
-                    let err = cc_store::title::resolve_transcript_path(
+                    let err = meowo_store::title::resolve_transcript_path(
                         None, s.cwd.as_deref(), &sid,
                     )
-                    .and_then(|p| p.to_str().map(cc_store::analyze_transcript))
+                    .and_then(|p| p.to_str().map(meowo_store::analyze_transcript))
                     .and_then(|info| info.error);
 
                     match err {
@@ -546,7 +546,7 @@ fn spawn_liveness_watch(app: tauri::AppHandle, db_path: PathBuf) {
 
 - [ ] **Step 10: 编译 + 全 app 测试 + clippy**
 
-Run: `cargo test -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo test -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: PASS。若 clippy 报 `tauri_plugin_notification` 未用导入，确认 Step 6 依赖已加。
 
 - [ ] **Step 11: 提交**

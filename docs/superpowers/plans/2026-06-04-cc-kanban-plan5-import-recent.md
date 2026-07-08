@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 首次启动 cc-app 时，把 `~/.claude/projects` 下近 7 天、最多 30 条历史会话以 `ended` 状态导入看板，让用户初次试用即有内容；用标记文件保证只导一次，绝不覆盖真实会话。
+**Goal:** 首次启动 meowo-app 时，把 `~/.claude/projects` 下近 7 天、最多 30 条历史会话以 `ended` 状态导入看板，让用户初次试用即有内容；用标记文件保证只导一次，绝不覆盖真实会话。
 
-**Architecture:** 三层：(1) cc-store 新增幂等 `import_session` 写入方法；(2) cc-reporter 新增 `import` 模块，扫描 transcript 目录、复用既有标题/项目命名逻辑，提供可注入目录的 `import_from_dir` 与从 HOME 解析的 `import_recent`；(3) cc-app 启动后台线程调用 `import_recent`，写 `imported.json` 标记并发 `board-changed` 刷新。
+**Architecture:** 三层：(1) meowo-store 新增幂等 `import_session` 写入方法；(2) meowo-reporter 新增 `import` 模块，扫描 transcript 目录、复用既有标题/项目命名逻辑，提供可注入目录的 `import_from_dir` 与从 HOME 解析的 `import_recent`；(3) meowo-app 启动后台线程调用 `import_recent`，写 `imported.json` 标记并发 `board-changed` 刷新。
 
-**Tech Stack:** Rust（workspace：crates/cc-store、crates/cc-reporter、app/src-tauri），rusqlite + serde_json，测试用 cargo test + tempfile + filetime。
+**Tech Stack:** Rust（workspace：crates/meowo-store、crates/meowo-reporter、app/src-tauri），rusqlite + serde_json，测试用 cargo test + tempfile + filetime。
 
 设计来源：`docs/superpowers/specs/2026-06-04-release-and-polish-design.md` 模块 C。
 
@@ -17,17 +17,17 @@
 
 ---
 
-### Task 1: cc-store 新增 `import_session` 写入方法
+### Task 1: meowo-store 新增 `import_session` 写入方法
 
 **Files:**
-- Modify: `crates/cc-store/src/store.rs`（在 `impl Store` 内、`end_session` 之后新增方法）
-- Test: `crates/cc-store/tests/store_test.rs`（追加两个测试）
+- Modify: `crates/meowo-store/src/store.rs`（在 `impl Store` 内、`end_session` 之后新增方法）
+- Test: `crates/meowo-store/tests/store_test.rs`（追加两个测试）
 
 > 背景：`sessions.cc_session_id` 有 `UNIQUE` 约束（`migrations.rs`），`tasks(session_id)` 有唯一索引。`import_session` 用 `ON CONFLICT(cc_session_id) DO NOTHING` 保证绝不覆盖真实会话；任务卡用 `INSERT OR IGNORE`。`truncate_chars` 是 `store.rs` 内已有私有函数，可直接复用做标题截断。`started_at = ended_at = last_event_at = mtime`，状态固定 `ended`，列固定 `done`（历史已结束会话）。
 
 - [ ] **Step 1: 追加失败测试**
 
-在 `crates/cc-store/tests/store_test.rs` 文件末尾追加：
+在 `crates/meowo-store/tests/store_test.rs` 文件末尾追加：
 
 ```rust
 #[test]
@@ -80,16 +80,16 @@ fn import_session_does_not_resurrect_real_session() {
 }
 ```
 
-确认 `store_test.rs` 顶部已 `use cc_store::Store;`（若用的是 `cc_store::*` 亦可）。若缺失则补 `use cc_store::Store;`。
+确认 `store_test.rs` 顶部已 `use meowo_store::Store;`（若用的是 `meowo_store::*` 亦可）。若缺失则补 `use meowo_store::Store;`。
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `cargo test -p cc-store import_session`
+Run: `cargo test -p meowo-store import_session`
 Expected: FAIL —— `no method named import_session found for struct Store`（编译错误）。
 
 - [ ] **Step 3: 实现 `import_session`**
 
-在 `crates/cc-store/src/store.rs` 的 `impl Store` 块内，紧接 `end_session`（约 355-361 行）之后插入：
+在 `crates/meowo-store/src/store.rs` 的 `impl Store` 块内，紧接 `end_session`（约 355-361 行）之后插入：
 
 ```rust
     /// 导入一条历史会话：以 ended 状态写入，started_at=ended_at=last_event_at=mtime。
@@ -133,32 +133,32 @@ Expected: FAIL —— `no method named import_session found for struct Store`（
 
 - [ ] **Step 4: 运行测试，确认通过**
 
-Run: `cargo test -p cc-store import_session`
+Run: `cargo test -p meowo-store import_session`
 Expected: PASS（2 个新测试 + 既有测试不受影响）。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add crates/cc-store/src/store.rs crates/cc-store/tests/store_test.rs
+git add crates/meowo-store/src/store.rs crates/meowo-store/tests/store_test.rs
 git commit -m "feat(store): 新增 import_session 幂等导入历史会话(ended/done,不覆盖真实会话)"
 ```
 
 ---
 
-### Task 2: cc-reporter 新增 `import` 模块
+### Task 2: meowo-reporter 新增 `import` 模块
 
 **Files:**
-- Modify: `crates/cc-reporter/src/dispatch.rs:89`（`fn project_root_and_name` → `pub(crate) fn`）
-- Create: `crates/cc-reporter/src/import.rs`
-- Modify: `crates/cc-reporter/src/lib.rs`（新增 `pub mod import;`）
-- Modify: `crates/cc-reporter/Cargo.toml`（新增 `[dev-dependencies]`）
-- Test: `crates/cc-reporter/tests/import_test.rs`（新建）
+- Modify: `crates/meowo-reporter/src/dispatch.rs:89`（`fn project_root_and_name` → `pub(crate) fn`）
+- Create: `crates/meowo-reporter/src/import.rs`
+- Modify: `crates/meowo-reporter/src/lib.rs`（新增 `pub mod import;`）
+- Modify: `crates/meowo-reporter/Cargo.toml`（新增 `[dev-dependencies]`）
+- Test: `crates/meowo-reporter/tests/import_test.rs`（新建）
 
-> 背景：`project_root_and_name(cwd) -> (String, String)`（root, name）现为 `dispatch.rs` 私有；import 模块需复用它，故提升为 `pub(crate)`。标题解析复用 `cc_store::title::title_from_transcript(path)`（已 pub）。cwd 需自行从 transcript 行解析（无现成函数）。集成测试 `tests/import_test.rs` 只能访问 pub API，故 `import_from_dir` 与 `ImportOpts` 必须 `pub`。
+> 背景：`project_root_and_name(cwd) -> (String, String)`（root, name）现为 `dispatch.rs` 私有；import 模块需复用它，故提升为 `pub(crate)`。标题解析复用 `meowo_store::title::title_from_transcript(path)`（已 pub）。cwd 需自行从 transcript 行解析（无现成函数）。集成测试 `tests/import_test.rs` 只能访问 pub API，故 `import_from_dir` 与 `ImportOpts` 必须 `pub`。
 
 - [ ] **Step 1: 提升 `project_root_and_name` 可见性**
 
-在 `crates/cc-reporter/src/dispatch.rs` 第 89 行，将：
+在 `crates/meowo-reporter/src/dispatch.rs` 第 89 行，将：
 
 ```rust
 fn project_root_and_name(cwd: &str) -> (String, String) {
@@ -172,7 +172,7 @@ pub(crate) fn project_root_and_name(cwd: &str) -> (String, String) {
 
 - [ ] **Step 2: 注册模块**
 
-在 `crates/cc-reporter/src/lib.rs` 顶部模块声明区（现有 `pub mod dispatch;` 等之后）追加一行：
+在 `crates/meowo-reporter/src/lib.rs` 顶部模块声明区（现有 `pub mod dispatch;` 等之后）追加一行：
 
 ```rust
 pub mod import;
@@ -180,7 +180,7 @@ pub mod import;
 
 - [ ] **Step 3: 加测试用 dev 依赖**
 
-在 `crates/cc-reporter/Cargo.toml` 末尾（`[[bin]]` 块之后）追加：
+在 `crates/meowo-reporter/Cargo.toml` 末尾（`[[bin]]` 块之后）追加：
 
 ```toml
 [dev-dependencies]
@@ -190,11 +190,11 @@ filetime = "0.2"
 
 - [ ] **Step 4: 写失败测试**
 
-新建 `crates/cc-reporter/tests/import_test.rs`：
+新建 `crates/meowo-reporter/tests/import_test.rs`：
 
 ```rust
-use cc_reporter::import::{import_from_dir, ImportOpts};
-use cc_store::Store;
+use meowo_reporter::import::{import_from_dir, ImportOpts};
+use meowo_store::Store;
 use filetime::{set_file_mtime, FileTime};
 use std::fs;
 use std::path::Path;
@@ -322,19 +322,19 @@ fn fallback_project_name_without_cwd() {
 
 - [ ] **Step 5: 运行测试，确认失败**
 
-Run: `cargo test -p cc-reporter --test import_test`
-Expected: FAIL —— `unresolved import cc_reporter::import`（`import.rs` 尚未创建）。
+Run: `cargo test -p meowo-reporter --test import_test`
+Expected: FAIL —— `unresolved import meowo_reporter::import`（`import.rs` 尚未创建）。
 
 - [ ] **Step 6: 实现 `import.rs`**
 
-新建 `crates/cc-reporter/src/import.rs`：
+新建 `crates/meowo-reporter/src/import.rs`：
 
 ```rust
 //! 首次启动时导入 ~/.claude/projects 下近期的历史会话（标记为 ended）。
-//! 复用 cc-store 的标题解析与本 crate 的项目命名逻辑。
+//! 复用 meowo-store 的标题解析与本 crate 的项目命名逻辑。
 
 use crate::dispatch::project_root_and_name;
-use cc_store::{Store, StoreError};
+use meowo_store::{Store, StoreError};
 use std::path::Path;
 
 /// 导入参数。
@@ -409,7 +409,7 @@ pub fn import_from_dir(
     for (mtime, cc_session_id, path, dir_name) in found {
         let title = path
             .to_str()
-            .and_then(cc_store::title::title_from_transcript)
+            .and_then(meowo_store::title::title_from_transcript)
             .unwrap_or_else(|| "(未命名会话)".to_string());
         let cwd = cwd_from_transcript(&path);
         let (root, name) = match cwd.as_deref() {
@@ -467,37 +467,37 @@ fn fallback_project(dir_name: &str) -> (String, String) {
 
 - [ ] **Step 7: 运行测试，确认通过**
 
-Run: `cargo test -p cc-reporter`
+Run: `cargo test -p meowo-reporter`
 Expected: PASS（4 个 import 测试 + 既有 dispatch/transcript 测试全绿）。
 
 - [ ] **Step 8: clippy 把关**
 
-Run: `cargo clippy -p cc-reporter -- -D warnings`
+Run: `cargo clippy -p meowo-reporter -- -D warnings`
 Expected: 无警告。（若 `found.sort_by` 被建议改 `sort_by_key`，按建议改为 `found.sort_by_key(|e| std::cmp::Reverse(e.0));`）
 
 - [ ] **Step 9: 提交**
 
 ```bash
-git add crates/cc-reporter/src/import.rs crates/cc-reporter/src/lib.rs crates/cc-reporter/src/dispatch.rs crates/cc-reporter/Cargo.toml crates/cc-reporter/tests/import_test.rs
+git add crates/meowo-reporter/src/import.rs crates/meowo-reporter/src/lib.rs crates/meowo-reporter/src/dispatch.rs crates/meowo-reporter/Cargo.toml crates/meowo-reporter/tests/import_test.rs
 git commit -m "feat(reporter): 新增 import 模块,扫描并导入近期历史会话(可注入目录,4 测试)"
 ```
 
 ---
 
-### Task 3: cc-app 启动钩子触发导入
+### Task 3: meowo-app 启动钩子触发导入
 
 **Files:**
-- Modify: `app/src-tauri/Cargo.toml`（dependencies 增加 cc-reporter）
+- Modify: `app/src-tauri/Cargo.toml`（dependencies 增加 meowo-reporter）
 - Modify: `app/src-tauri/src/lib.rs`（新增 `spawn_first_import`，在 `setup` 闭包中调用）
 
-> 背景：cc-app 当前仅依赖 cc-store，需新增对 cc-reporter 的路径依赖。已有 `db_path()`、`now_ms()`、`open_store`/`Store`、`spawn_db_watcher`/`spawn_stale_sweeper` 后台线程范式，以及 `app.emit("board-changed", ())` 刷新事件，全部直接复用。此 hook 是薄胶水层，导入逻辑已在 Task 2 充分测试，故本任务以 `cargo check` + clippy 编译验证为主，运行行为人工验证。
+> 背景：meowo-app 当前仅依赖 meowo-store，需新增对 meowo-reporter 的路径依赖。已有 `db_path()`、`now_ms()`、`open_store`/`Store`、`spawn_db_watcher`/`spawn_stale_sweeper` 后台线程范式，以及 `app.emit("board-changed", ())` 刷新事件，全部直接复用。此 hook 是薄胶水层，导入逻辑已在 Task 2 充分测试，故本任务以 `cargo check` + clippy 编译验证为主，运行行为人工验证。
 
-- [ ] **Step 1: 加 cc-reporter 依赖**
+- [ ] **Step 1: 加 meowo-reporter 依赖**
 
-在 `app/src-tauri/Cargo.toml` 的 `[dependencies]` 中，`cc-store` 那一行下方追加：
+在 `app/src-tauri/Cargo.toml` 的 `[dependencies]` 中，`meowo-store` 那一行下方追加：
 
 ```toml
-cc-reporter = { path = "../../crates/cc-reporter" }
+meowo-reporter = { path = "../../crates/meowo-reporter" }
 ```
 
 - [ ] **Step 2: 实现 `spawn_first_import` 并接入 setup**
@@ -505,7 +505,7 @@ cc-reporter = { path = "../../crates/cc-reporter" }
 在 `app/src-tauri/src/lib.rs` 中，于 `spawn_stale_sweeper` 函数（约 287-299 行）之后新增：
 
 ```rust
-/// 首次启动：~/.cc-kanban/imported.json 不存在时，后台导入近 7 天历史会话并写标记文件。
+/// 首次启动：~/.meowo/imported.json 不存在时，后台导入近 7 天历史会话并写标记文件。
 /// 出错仅静默（下次启动重试），绝不阻塞窗口创建。
 fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || {
@@ -522,7 +522,7 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
         };
         let now = now_ms();
         if let Ok(count) =
-            cc_reporter::import::import_recent(&store, now, cc_reporter::import::ImportOpts::default())
+            meowo_reporter::import::import_recent(&store, now, meowo_reporter::import::ImportOpts::default())
         {
             let body = format!("{{\"imported\":{count},\"at\":{now}}}");
             let _ = std::fs::write(&marker, body);
@@ -542,13 +542,13 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
 
 - [ ] **Step 3: 编译与静态检查**
 
-Run: `cargo check -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo check -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: 编译通过、无 clippy 警告。
 
 - [ ] **Step 4: 全 workspace 测试回归**
 
 Run: `cargo test --workspace`
-Expected: 全绿（cc-store + cc-reporter 全部测试）。
+Expected: 全绿（meowo-store + meowo-reporter 全部测试）。
 
 - [ ] **Step 5: 提交**
 

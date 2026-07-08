@@ -6,7 +6,7 @@
 
 **Architecture:** Rust 侧提供纯函数 `edge_for_rect`（可单测）判定窗口是否贴边，三个命令 `snap_collapse/snap_expand/snap_restore` 用物理像素直接 `set_size`/`set_position`，并在 `on_window_event` 的 `Moved` 上 emit `snap-changed { edge }`。前端 `App.tsx` 维护 `normal/collapsed/expanded` 状态机：用防抖计时器判定窗口"移动停止"后再触发吸附/恢复（避免在系统拖拽循环里 resize），折叠态渲染 `CollapsedStrip` 竖条、悬停展开。
 
-**Tech Stack:** Tauri v2.11（Rust）+ React 18/TS。Rust 单测 `cargo test -p cc-app`；前端 vitest。
+**Tech Stack:** Tauri v2.11（Rust）+ React 18/TS。Rust 单测 `cargo test -p meowo-app`；前端 vitest。
 
 设计来源：`docs/superpowers/specs/2026-06-04-release-and-polish-design.md` 模块 B。
 
@@ -22,7 +22,7 @@
 **Files:**
 - Modify: `app/src-tauri/src/lib.rs`（顶部常量区之后新增 `Rect`/`Edge`/`edge_for_rect` 与文件末尾 `#[cfg(test)] mod tests`）
 
-> 背景：`lib.rs` 现无测试模块。`Edge` 需 `Serialize`+`Deserialize`（既作 emit 负载又作命令入参，JS 侧用 `"left"`/`"right"` 字符串），`serde` 已是 cc-app 依赖。判定规则：窗口左边距工作区左边、或右边距工作区右边 ≤ threshold 即吸附；两边都在阈值内取更近的一边；都不满足返回 None。
+> 背景：`lib.rs` 现无测试模块。`Edge` 需 `Serialize`+`Deserialize`（既作 emit 负载又作命令入参，JS 侧用 `"left"`/`"right"` 字符串），`serde` 已是 meowo-app 依赖。判定规则：窗口左边距工作区左边、或右边距工作区右边 ≤ threshold 即吸附；两边都在阈值内取更近的一边；都不满足返回 None。
 
 - [ ] **Step 1: 写失败单测**
 
@@ -86,7 +86,7 @@ mod tests {
 
 - [ ] **Step 2: 运行确认失败**
 
-Run: `cargo test -p cc-app edge`
+Run: `cargo test -p meowo-app edge`
 Expected: FAIL —— `cannot find function edge_for_rect`（编译错误）。
 
 - [ ] **Step 3: 实现类型与纯函数**
@@ -133,12 +133,12 @@ pub fn edge_for_rect(win: Rect, work: Rect, threshold: i32) -> Option<Edge> {
 
 - [ ] **Step 4: 运行确认通过**
 
-Run: `cargo test -p cc-app`
+Run: `cargo test -p meowo-app`
 Expected: PASS（7 个 edge 测试）。
 
 - [ ] **Step 5: clippy**
 
-Run: `cargo clippy -p cc-app -- -D warnings`
+Run: `cargo clippy -p meowo-app -- -D warnings`
 Expected: 无警告。
 
 - [ ] **Step 6: 提交**
@@ -275,7 +275,7 @@ fn snap_restore(window: tauri::WebviewWindow, width: f64, height: f64) -> Result
 
 - [ ] **Step 3: 编译与静态检查**
 
-Run: `cargo check -p cc-app && cargo clippy -p cc-app -- -D warnings`
+Run: `cargo check -p meowo-app && cargo clippy -p meowo-app -- -D warnings`
 Expected: 编译通过、无警告。（若报 `no method work_area`，按本任务背景说明退回 `m.size()`/`m.position()` 方案：`work` 用整屏，`wa.position`→`m.position()`、`wa.size`→`m.size()`。）
 
 - [ ] **Step 4: 提交**
@@ -441,8 +441,8 @@ type Item = LiveSession & { connected: boolean };
 type Edge = "left" | "right";
 type Mode = "normal" | "collapsed" | "expanded";
 
-const SNAP_KEY = "cc-kanban-snap-edge";
-const SIZE_KEY = "cc-kanban-normal-size";
+const SNAP_KEY = "meowo-snap-edge";
+const SIZE_KEY = "meowo-normal-size";
 const SETTLE_MS = 250; // 移动停止判定
 const LEAVE_MS = 300; // 离开收回防抖
 
