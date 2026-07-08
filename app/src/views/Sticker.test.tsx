@@ -197,18 +197,21 @@ describe("Sticker", () => {
     expect(invokeMock).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:\\\\proj", provider: "kimi" });
   });
 
-  it("待交互标签页保留后端顺序（等最久优先由后端 ASC 保证，客户端不再重排）", () => {
+  it("待交互 tab 保留后端顺序，不客户端重排", () => {
     const base = (id: number, cc: string, last: number) =>
       mk({ task_title: cc, current_activity: null, connected: true,
         session: { id, project_id: 1, cc_session_id: cc, status: "waiting", started_at: 0, last_event_at: last, ended_at: null } });
     const now = Date.now();
-    // data 已按后端 ASC（等待最久优先）顺序传入——Sticker 不再客户端按时间重排，只做 match 安全网 + starred 浮顶。
+    // 故意传入「非等待最久优先」的顺序（更近的排前面、等待更久的排后面）——
+    // 若组件仍客户端按 last_event_at ASC 重排（旧实现），会把顺序翻成 [旧, 新]，断言会失败；
+    // 新实现应原样保留后端给的顺序（只做 starred 浮顶），断言才会通过。
     const { container } = render(<Sticker filter="waiting" data={[
-      base(2, "旧", now - 600_000),  // 10 分钟前(等待最久)
-      base(1, "新", now - 60_000),   // 1 分钟前
+      base(1, "新", now - 60_000),   // 1 分钟前(更近)
+      base(2, "旧", now - 600_000),  // 10 分钟前(等待更久)
     ]} />);
     const cards = container.querySelectorAll(".stk-card");
-    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("旧");
+    expect(cards[0].querySelector(".stk-title")?.textContent).toBe("新");
+    expect(cards[1].querySelector(".stk-title")?.textContent).toBe("旧");
   });
 
   it("已星标会话排到列表最前", () => {
