@@ -231,9 +231,20 @@ impl super::ProviderSetup for CodexSetup {
         if !root.is_object() {
             return;
         }
-        // reporter 路径：复用已配置且存在的 → 否则 app 同目录 sidecar。
+        // reporter 路径：复用已配置的当前 meowo-reporter → 否则 app 同目录 sidecar。
+        // 历史 cc-reporter 路径已废弃，即使可执行仍存在也不能复用，否则 ensure_codex_hooks
+        // 会把旧路径写回去，hooks 仍然指向不存在的 meowo 旧 reporter。
         let reporter = reporter_path_from_codex(&root)
-            .filter(|p| std::path::Path::new(p).exists())
+            .filter(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| {
+                        let n = n.to_ascii_lowercase();
+                        n == "meowo-reporter" || n == "meowo-reporter.exe"
+                    })
+                    .unwrap_or(false)
+            })
             .or_else(super::sibling_reporter);
         let Some(reporter) = reporter else {
             return;
@@ -467,6 +478,10 @@ mod tests {
         CodexSetup.apply();
         let home = meowo_reporter::codex::codex_home().unwrap();
         eprintln!("=== hooks.json ===\n{}", std::fs::read_to_string(home.join("hooks.json")).unwrap());
-        eprintln!("=== config.toml [hooks.state] ===\n{}", std::fs::read_to_string(home.join("config.toml")).unwrap());
+        if let Ok(cfg) = std::fs::read_to_string(home.join("config.toml")) {
+            eprintln!("=== config.toml [hooks.state] ===\n{cfg}");
+        } else {
+            eprintln!("=== config.toml not present ===");
+        }
     }
 }

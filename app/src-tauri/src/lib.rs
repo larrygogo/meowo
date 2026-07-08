@@ -1335,7 +1335,7 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
 }
 
 /// provider 的 meowo-reporter hooks 接入状态（供「新建会话」面板引导）。
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 enum HooksStatus {
     Installed,
