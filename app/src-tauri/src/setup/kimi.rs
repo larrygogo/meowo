@@ -94,8 +94,9 @@ impl super::ProviderSetup for KimiSetup {
         let Ok(mut doc) = text.parse::<DocumentMut>() else {
             return; // 解析失败绝不写（kimi 自身对坏文件同样拒写）
         };
-        // reporter 路径：复用 [[hooks]] 里已认领的 → 否则 sidecar。
-        // 不过滤存在性：历史 cc-reporter 路径可能已不存在，但仍需被更新为当前 meowo-reporter。
+        // reporter 路径：复用 [[hooks]] 里已认领的当前 meowo-reporter → 否则 sidecar。
+        // 历史 cc-reporter 路径已废弃，必须改用当前 meowo-reporter，否则 ensure_kimi_hooks
+        // 会把旧路径当成目标写回去，导致 hooks 仍然失效。
         let existing = doc
             .get("hooks")
             .and_then(|it| it.as_array_of_tables())
@@ -105,6 +106,16 @@ impl super::ProviderSetup for KimiSetup {
                 t.get("command")
                     .and_then(|v| v.as_str())
                     .and_then(|c| super::claim_provider_cmd(c, "kimi"))
+            })
+            .filter(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| {
+                        let n = n.to_ascii_lowercase();
+                        n == "meowo-reporter" || n == "meowo-reporter.exe"
+                    })
+                    .unwrap_or(false)
             });
         let Some(reporter) = existing.or_else(super::sibling_reporter) else {
             return;
