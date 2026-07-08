@@ -54,9 +54,10 @@ vi.mock("./api", () => ({
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
   getLiveSessionsPage: (
     filter: "all" | "running" | "waiting" | "archived",
+    search: string | null,
     cursor: { last_event_at: number; id: number } | null,
     limit: number
-  ) => getLiveSessionsPage(filter, cursor, limit),
+  ) => getLiveSessionsPage(filter, search, cursor, limit),
   getSettings: () =>
     Promise.resolve({
       archive_hide_days: 0,
@@ -118,7 +119,7 @@ describe("App", () => {
   it("挂载时拉取 counts 和第 0 页", async () => {
     render(<App />);
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, 100));
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, null, 100));
   });
 
   it("收到 board-changed 后重新拉取 counts 和第 0 页", async () => {
@@ -126,7 +127,7 @@ describe("App", () => {
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
     emitBoardChanged();
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, 100));
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", null, null, 100));
   });
 
   // 单一真相源：window-state 不再恢复尺寸(lib.rs)，main 窗口尺寸由 SIZE_KEY 持有。非吸附态启动

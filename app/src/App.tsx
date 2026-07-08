@@ -148,7 +148,8 @@ export function App() {
   const loadPage = useCallback(
     async (
       filter: StickerFilter,
-      cursor: { last_event_at: number; id: number } | null
+      cursor: { last_event_at: number; id: number } | null,
+      limit: number = PAGE_SIZE
     ): Promise<{ page: Item[]; applied: boolean }> => {
       const seq = ++refreshSeqRef.current;
       // counts 只在首页/刷新（cursor === null）时才需要；loadMore 复用已有 counts，
@@ -157,7 +158,7 @@ export function App() {
       try {
         const [countsRes, page] = await Promise.all([
           needCounts ? getLiveSessionsCounts() : Promise.resolve(null),
-          getLiveSessionsPage(filter, cursor, PAGE_SIZE),
+          getLiveSessionsPage(filter, null, cursor, limit),
         ]);
         const applied = seq === refreshSeqRef.current;
         if (!applied) return { page: page as Item[], applied };
@@ -190,13 +191,26 @@ export function App() {
     []
   );
 
+  // board-changed 频繁触发：节流刷新，且重查「已加载窗口」大小（max(PAGE_SIZE, 当前条数)），
+  // 保住用户已滚动加载的会话、同时反映最新排序/状态，避免被打回第一页（P0）。
+  const itemsLenRef = useRef(0);
+  itemsLenRef.current = items.length;
+  const refreshThrottleRef = useRef<number | undefined>(undefined);
   const refresh = useCallback(() => {
-    setReachedEnd(false);
-    return loadPage(filter, null);
+    const run = () => {
+      setReachedEnd(false);
+      const w = Math.max(PAGE_SIZE, itemsLenRef.current);
+      loadPage(filter, null, w).then(({ page, applied }) => {
+        if (applied && page.length < w) setReachedEnd(true);
+      }).catch(() => {});
+    };
+    // 400ms trailing 节流：连续 board-changed 只在安静后跑一次。
+    window.clearTimeout(refreshThrottleRef.current);
+    refreshThrottleRef.current = window.setTimeout(run, 400);
   }, [filter, loadPage]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || reachedEnd || items.length >= totalFor(filter, counts)) return;
+    if (loadingMore || reachedEnd) return;
     const last = items[items.length - 1];
     if (!last) return;
     setLoadingMore(true);
@@ -215,7 +229,7 @@ export function App() {
     } finally {
       setLoadingMore(false);
     }
-  }, [filter, loadingMore, reachedEnd, items, counts, loadPage]);
+  }, [filter, loadingMore, reachedEnd, items, loadPage]);
 
   // tab 切换/首次挂载时重置并加载该分类首页
   useEffect(() => {
@@ -231,6 +245,7 @@ export function App() {
     const un = listen("board-changed", () => refresh());
     return () => {
       un.then((f) => f());
+      window.clearTimeout(refreshThrottleRef.current);
     };
   }, [refresh]);
 
@@ -526,7 +541,7 @@ export function App() {
         data={items}
         counts={counts}
         total={totalFor(filter, counts)}
-        hasMore={!reachedEnd && items.length < totalFor(filter, counts)}
+        hasMore={!reachedEnd}
         loadMore={loadMore}
         loadingMore={loadingMore}
         hasUpdate={hasUpdate}
