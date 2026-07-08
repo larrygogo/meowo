@@ -28,10 +28,10 @@ fn default_language() -> String {
 fn default_terminal_open_mode() -> String {
     "card".to_string()
 }
-/// 卡片菜单（星标/便签/重命名/归档等）触发方式：context = 右键菜单（默认），
-/// button = 卡片上的常显菜单按钮（触屏等右键不便的设备用），两者二选一。
+/// 卡片菜单（星标/便签/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
+/// context = 右键菜单，两者二选一。
 fn default_card_menu_mode() -> String {
-    "context".to_string()
+    "button".to_string()
 }
 /// 贴纸风格：flat = 扁平（默认），elevated = 立体感。
 fn default_sticker_style() -> String {
@@ -77,7 +77,7 @@ pub(crate) struct Settings {
     /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
     #[serde(default = "default_terminal_open_mode")]
     pub(crate) terminal_open_mode: String,
-    /// 卡片菜单触发方式：context = 右键菜单（默认），button = 卡片菜单按钮。兼容老 settings.json。
+    /// 卡片菜单触发方式：button = 卡片菜单按钮（默认），context = 右键菜单。兼容老 settings.json。
     #[serde(default = "default_card_menu_mode")]
     pub(crate) card_menu_mode: String,
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。

@@ -627,7 +627,7 @@ export function Sticker({
   // 归档自动隐藏天数 + 打开终端方式 + 卡片菜单方式 + 贴纸配额 provider 列表：启动时读设置，并监听实时变更。
   const [hideDays, setHideDays] = useState(0);
   const [openMode, setOpenMode] = useState<TerminalOpenMode>("card");
-  const [menuMode, setMenuMode] = useState<CardMenuMode>("context");
+  const [menuMode, setMenuMode] = useState<CardMenuMode>("button");
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   const [availAgents, setAvailAgents] = useState<string[]>([]);
@@ -635,7 +635,7 @@ export function Sticker({
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
       setOpenMode(s.terminal_open_mode);
-      setMenuMode(s.card_menu_mode ?? "context");
+      setMenuMode(s.card_menu_mode ?? "button");
       setPreviewEnabled(s.preview_enabled);
       setQuotaProviders(s.sticker_quota_providers ?? ["claude"]);
     };
