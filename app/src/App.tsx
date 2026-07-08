@@ -148,8 +148,7 @@ export function App() {
   const loadPage = useCallback(
     async (
       filter: StickerFilter,
-      cursor: { last_event_at: number; id: number } | null,
-      isRefresh: boolean
+      cursor: { last_event_at: number; id: number } | null
     ): Promise<{ page: Item[]; applied: boolean }> => {
       const seq = ++refreshSeqRef.current;
       // counts 只在首页/刷新（cursor === null）时才需要；loadMore 复用已有 counts，
@@ -165,36 +164,22 @@ export function App() {
         if (countsRes) setCounts(countsRes);
 
         setItems((prev) => {
-          if (cursor === null && !isRefresh) {
-            // 切换 tab / 首次加载：直接按服务端顺序
+          if (cursor === null) {
+            // 首页请求（切 tab / 首次加载 / board-changed 刷新）：直接按服务端顺序整体替换。
+            // 服务端已按 last_event_at DESC 排序，天然反映既有会话的最新排序位置——
+            // 若只按 prev 数组旧位置合并、仅将全新会话插到最前，已存在会话（如恢复的旧会话）
+            // 排序键变化后不会移动，得等用户手动切 tab 才会跳到正确位置（回归 bug）。
+            // 不在 page 里的会话（状态迁移出当前 filter/归档/删除）也随整体替换自然被移除。
             return (page as Item[]).slice();
           }
-          // 按 id 合并，保留已加载会话；刷新时新会话插到最前，加载更多时追加到末尾。
-          // 刷新/首页请求（cursor === null）时，后端 page 是当前 filter 的权威快照：
-          // 已加载列表中不在 page 里的会话（状态迁移、归档、删除）应被移除，
-          // 否则它们会继续停留在错误的 tab 下。
+          // loadMore（cursor 非空）：按 id 合并，保留已加载会话原有顺序，新条目追加到末尾。
           const map = new Map(prev.map((l) => [l.session.id, l]));
-          const pageIds = new Set((page as Item[]).map((l) => l.session.id));
           const append: Item[] = [];
-          const prepend: Item[] = [];
           for (const l of page as Item[]) {
-            if (!map.has(l.session.id)) {
-              if (cursor != null) {
-                append.push(l);
-              } else {
-                prepend.push(l);
-              }
-            }
+            if (!map.has(l.session.id)) append.push(l);
             map.set(l.session.id, l);
           }
-          const merged: Item[] = [];
-          for (const l of prev) {
-            const updated = map.get(l.session.id);
-            if (!updated) continue;
-            if (cursor === null && !pageIds.has(l.session.id)) continue;
-            merged.push(updated);
-          }
-          return [...prepend, ...merged, ...append];
+          return [...prev.map((l) => map.get(l.session.id)!), ...append];
         });
         return { page: page as Item[], applied };
       } catch (err) {
@@ -207,7 +192,7 @@ export function App() {
 
   const refresh = useCallback(() => {
     setReachedEnd(false);
-    return loadPage(filter, null, true);
+    return loadPage(filter, null);
   }, [filter, loadPage]);
 
   const loadMore = useCallback(async () => {
@@ -216,11 +201,10 @@ export function App() {
     if (!last) return;
     setLoadingMore(true);
     try {
-      const { page, applied } = await loadPage(
-        filter,
-        { last_event_at: last.session.last_event_at, id: last.session.id },
-        false
-      );
+      const { page, applied } = await loadPage(filter, {
+        last_event_at: last.session.last_event_at,
+        id: last.session.id,
+      });
       // 请求过程中若已被更新的请求（如切 tab/刷新）取代，本次结果不再代表当前 tab 的状态，
       // reachedEnd 不应据此更新，否则可能把旧 tab 的「已到底」误写到新 tab 上（审查发现的竞态）。
       if (applied && page.length < PAGE_SIZE) {
@@ -236,7 +220,7 @@ export function App() {
   // tab 切换/首次挂载时重置并加载该分类首页
   useEffect(() => {
     setReachedEnd(false);
-    loadPage(filter, null, false)
+    loadPage(filter, null)
       .then(({ page, applied }) => {
         if (applied && page.length < PAGE_SIZE) setReachedEnd(true);
       })

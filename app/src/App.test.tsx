@@ -230,4 +230,65 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("B")).toBeFalsy());
     expect(screen.getByText("A")).toBeTruthy();
   });
+
+  // 回归：已存在会话的 last_event_at 变化时（如恢复断开的旧会话），board-changed 刷新应按
+  // 新顺序重排；旧合并逻辑按 prev 数组的原位置合并，只有全新会话才 prepend 到最前，已存在
+  // 会话不会因排序键变化而移动——用户须手动切 tab 才能看到它跳到最前。
+  it("board-changed 刷新时，已存在会话应按新 last_event_at 重新排序（如恢复的旧会话跳到最前）", async () => {
+    localStorage.setItem("cc-kanban-tab", "all");
+    const mk = (id: number, lastEventAt: number, title: string) => ({
+      session: {
+        id,
+        cc_session_id: `s-${id}`,
+        status: "running" as const,
+        last_event_at: lastEventAt,
+        started_at: 0,
+        ended_at: null,
+        project_id: 1,
+      },
+      project_name: "p",
+      task_title: title,
+      current_activity: null,
+      column: "todo" as const,
+      todo_done: 0,
+      todo_total: 0,
+      todos: [],
+      pid: null,
+      connected: true,
+      archived: false,
+      archived_at: null,
+      cwd: "/p",
+      errored: false,
+      error_label: null,
+      error_raw: null,
+      preview: null,
+      note: null,
+      context_pct: null,
+      context_window: null,
+      model: null,
+      pending_review: null,
+      last_ai_text: null,
+      last_user_text: null,
+      provider: "claude" as const,
+    });
+
+    getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
+    // 首页：B（last_event_at 更晚）排前，A（很久没活动，模拟断开的旧会话）排后。
+    getLiveSessionsPage
+      .mockResolvedValueOnce([mk(2, 2000, "B"), mk(1, 1000, "A")])
+      // A 被恢复：last_event_at 刷新为最新，后端按新顺序把 A 排到最前。
+      .mockResolvedValueOnce([mk(1, 3000, "A"), mk(2, 2000, "B")]);
+
+    render(<App />);
+    await waitFor(() => {
+      const titles = Array.from(document.querySelectorAll(".stk-title")).map((el) => el.textContent);
+      expect(titles).toEqual(["B", "A"]);
+    });
+
+    emitBoardChanged();
+    await waitFor(() => {
+      const titles = Array.from(document.querySelectorAll(".stk-title")).map((el) => el.textContent);
+      expect(titles).toEqual(["A", "B"]);
+    });
+  });
 });
