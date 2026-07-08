@@ -1195,6 +1195,8 @@ async fn new_session(
         .map_err(|e| e.to_string())?;
     if ok {
         Ok(())
+    } else if cfg!(not(any(target_os = "windows", target_os = "macos"))) {
+        Err("当前平台不支持从看板新建会话".into())
     } else {
         Err("启动终端失败：请确认所选 agent 已安装并在 PATH 中".into())
     }
@@ -1352,20 +1354,25 @@ enum HooksStatus {
     Unknown,
 }
 
-/// claude/codex 同款 hooks JSON 里是否存在指向 cc-reporter 且带 `--provider <p>` 的 command。纯函数。
-/// 启发式：命令含 "cc-reporter"（basename）+ "--provider <p>"——该组合不会误配用户自有 hook。
+/// claude/codex 同款 hooks JSON 里，`SessionStart` 事件下是否存在指向 cc-reporter 且带
+/// `--provider <p>` 的 command。纯函数。启发式：命令含 "cc-reporter"（basename）+
+/// "--provider <p>"——该组合不会误配用户自有 hook。
+/// 只看 SessionStart（而非扫描全部事件）：「新会话能否入库」只取决于 SessionStart 是否挂了钩子，
+/// 只在别的事件（如 Stop）挂了 cc-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
 fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
-    let Some(hooks) = v.get("hooks").and_then(|h| h.as_object()) else {
+    let Some(arr) = v
+        .get("hooks")
+        .and_then(|h| h.get("SessionStart"))
+        .and_then(|s| s.as_array())
+    else {
         return false;
     };
     let want = format!("--provider {provider}");
-    for (_event, arr) in hooks {
-        for entry in arr.as_array().into_iter().flatten() {
-            for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
-                if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
-                    if cmd.to_ascii_lowercase().contains("cc-reporter") && cmd.contains(&want) {
-                        return true;
-                    }
+    for entry in arr {
+        for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
+            if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
+                if cmd.to_ascii_lowercase().contains("cc-reporter") && cmd.contains(&want) {
+                    return true;
                 }
             }
         }
@@ -1373,14 +1380,43 @@ fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
     false
 }
 
-/// kimi config.toml 文本里是否有指向 cc-reporter 且带 `--provider kimi` 的 hook 命令行。纯函数。
-/// 无 TOML 解析库，按行文本启发式（cc-reporter + --provider kimi + command 键，足够可靠）。
+/// kimi config.toml 文本里，`event = "SessionStart"` 的 `[[hooks]]` 块内是否有指向 cc-reporter
+/// 且带 `--provider <p>` 的 command。纯函数，无 TOML 解析库，按行文本 + `[[hooks]]` 块边界的极简状态机
+/// （足够可靠：只在同一块内把 event/command 两行关联起来，不识别块内的具体行序）。
+/// 只看 SessionStart 块（而非任意行匹配）：与 hooks_json_has_reporter 同一根因——只在非 SessionStart
+/// 事件（如 Stop）挂了 cc-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
 fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
     let want = format!("--provider {provider}");
-    text.lines().any(|l| {
-        let low = l.to_ascii_lowercase();
-        low.contains("cc-reporter") && low.contains("command") && l.contains(&want)
-    })
+    let mut in_session_start = false;
+    let mut has_reporter = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t == "[[hooks]]" {
+            if in_session_start && has_reporter {
+                return true;
+            }
+            in_session_start = false;
+            has_reporter = false;
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("event") {
+            if let Some(v) = rest.trim_start().strip_prefix('=') {
+                if v.trim().trim_matches('"') == "SessionStart" {
+                    in_session_start = true;
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("command") {
+            if let Some(v) = rest.trim_start().strip_prefix('=') {
+                let low = v.to_ascii_lowercase();
+                if low.contains("cc-reporter") && v.contains(&want) {
+                    has_reporter = true;
+                }
+            }
+        }
+    }
+    in_session_start && has_reporter
 }
 
 /// claude hooks 接入状态：读 claude settings.json 判断 cc-reporter hooks 是否登记。
@@ -1399,7 +1435,7 @@ fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
         return HooksStatus::Unknown;
     };
     match setup::claude::parse_settings(&text) {
-        Some(v) if setup::claude::reporter_path_from_hooks(&v).is_some() => HooksStatus::Installed,
+        Some(v) if setup::claude::session_start_has_reporter(&v) => HooksStatus::Installed,
         Some(_) => HooksStatus::Missing,
         None => HooksStatus::Unknown,
     }
@@ -3280,6 +3316,25 @@ mod hooks_check_tests {
     }
 
     #[test]
+    fn hooks_json_ignores_reporter_on_non_session_start_event() {
+        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
+        let v: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex" }] }
+          ]}
+        }"#).unwrap();
+        assert!(!hooks_json_has_reporter(&v, "codex"));
+        // SessionStart 与 Stop 并存：仍应命中。
+        let v2: serde_json::Value = serde_json::from_str(r#"{
+          "hooks": {
+            "Stop": [{ "hooks": [{ "type": "command", "command": "node other.js" }] }],
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex" }] }]
+          }
+        }"#).unwrap();
+        assert!(hooks_json_has_reporter(&v2, "codex"));
+    }
+
+    #[test]
     fn toml_text_detects_reporter_line() {
         let toml = "\
 [[hooks]]\n\
@@ -3289,6 +3344,33 @@ timeout = 5\n";
         assert!(toml_text_has_reporter(toml, "kimi"));
         assert!(!toml_text_has_reporter(toml, "codex"));
         assert!(!toml_text_has_reporter("event = \"x\"\ncommand = \"node a.js\"", "kimi"));
+    }
+
+    #[test]
+    fn toml_text_ignores_reporter_on_non_session_start_event() {
+        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
+        let toml = "\
+[[hooks]]\n\
+event = \"Stop\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n";
+        assert!(!toml_text_has_reporter(toml, "kimi"));
+    }
+
+    #[test]
+    fn toml_text_detects_session_start_among_multiple_blocks() {
+        // Stop 块在前、SessionStart 块在后：应正确关联各自块内的 event/command，不串块。
+        let toml = "\
+[[hooks]]\n\
+event = \"Stop\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n\
+\n\
+[[hooks]]\n\
+event = \"SessionStart\"\n\
+command = \"/home/u/.local/cc-reporter --provider kimi\"\n\
+timeout = 5\n";
+        assert!(toml_text_has_reporter(toml, "kimi"));
     }
 
     #[test]

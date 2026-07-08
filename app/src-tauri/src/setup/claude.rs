@@ -66,6 +66,33 @@ pub fn reporter_exe_path(cmd: &str) -> Option<String> {
         .then(|| path.to_string())
 }
 
+/// settings 的 `hooks.SessionStart` 数组里是否有我们的 cc-reporter 可执行。
+/// 「新会话能否入库」只取决于 SessionStart 是否挂了钩子，故与下面 reporter_path_from_hooks
+/// （广扫全部事件、用于路径复用）语义不同，需单独判定，不能混用（审查发现：只在别的事件挂了
+/// cc-reporter 不能保证新会话会被记录，会被误判成已装）。
+pub fn session_start_has_reporter(settings: &Value) -> bool {
+    let Some(arr) = settings
+        .get("hooks")
+        .and_then(|h| h.get("SessionStart"))
+        .and_then(|s| s.as_array())
+    else {
+        return false;
+    };
+    arr.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|x| x.as_array())
+            .into_iter()
+            .flatten()
+            .any(|h| {
+                h.get("command")
+                    .and_then(|x| x.as_str())
+                    .and_then(reporter_exe_path)
+                    .is_some()
+            })
+    })
+}
+
 /// 从 settings 的 hooks 里找出已配置的 cc-reporter 可执行路径。
 pub fn reporter_path_from_hooks(settings: &Value) -> Option<String> {
     let hooks = settings.get("hooks")?.as_object()?;
@@ -501,6 +528,30 @@ mod tests {
             ] }] }
         });
         assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some("C:/a/b/cc-reporter.exe"));
+    }
+
+    #[test]
+    fn session_start_has_reporter_requires_session_start_event() {
+        // 只在 Stop 挂了 cc-reporter：不能保证新会话会入库，不应判定为「已装」（审查发现）。
+        // reporter_path_from_hooks（广扫，供路径复用）仍会命中这条，语义刻意不同。
+        let stop_only = json!({
+            "hooks": { "Stop": [{ "matcher": "*", "hooks": [
+                { "type": "command", "command": "\"C:/a/b/cc-reporter.exe\"", "timeout": 5 }
+            ] }] }
+        });
+        assert!(!session_start_has_reporter(&stop_only));
+        assert!(reporter_path_from_hooks(&stop_only).is_some());
+
+        // SessionStart 挂了：算已装。
+        let session_start = json!({
+            "hooks": { "SessionStart": [{ "matcher": "*", "hooks": [
+                { "type": "command", "command": "\"C:/a/b/cc-reporter.exe\"", "timeout": 5 }
+            ] }] }
+        });
+        assert!(session_start_has_reporter(&session_start));
+
+        // 无 hooks 键。
+        assert!(!session_start_has_reporter(&json!({})));
     }
 
     #[test]
