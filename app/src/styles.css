@@ -902,9 +902,9 @@ html, body {
 }
 /* 无活跃会话占位：淡色 app 图标，仍可点/悬停展开 */
 .cstrip-empty { display: inline-flex; color: var(--cc-text-faint); flex: none; }
-/* 在线/闲置=绿实心，运行中=Claude 橙(脉动)，等待确认=警告黄(实心) */
+/* 在线/闲置=绿实心，运行中=绿脉动，等待确认=警告黄(实心) */
 .cstrip-on { background: var(--cc-ok-vivid); }
-.cstrip-running { background: var(--cc-run-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
+.cstrip-running { background: var(--cc-ok-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
 .cstrip-waiting { background: var(--cc-warn-vivid); }
 .cstrip-error { background: var(--cc-err-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
 @keyframes cstrip-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
