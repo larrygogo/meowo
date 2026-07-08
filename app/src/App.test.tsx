@@ -220,9 +220,16 @@ describe("App", () => {
     });
 
     getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
-    getLiveSessionsPage
-      .mockResolvedValueOnce([mk(1, "running", "A"), mk(2, "running", "B")])
-      .mockResolvedValueOnce([mk(1, "running", "A")]); // B 已迁出 running
+    // tab 页按序返回；折叠条调用（search===null，独立于 tab）返回 []，不消耗序列。
+    const tabPages = [
+      [mk(1, "running", "A"), mk(2, "running", "B")],
+      [mk(1, "running", "A")], // B 已迁出 running
+    ];
+    let ti = 0;
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]);
+      return Promise.resolve(tabPages[Math.min(ti++, tabPages.length - 1)]);
+    });
 
     render(<App />);
     await waitFor(() => expect(screen.getByText("A")).toBeTruthy());
@@ -275,11 +282,17 @@ describe("App", () => {
     });
 
     getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
-    // 首页：B（last_event_at 更晚）排前，A（很久没活动，模拟断开的旧会话）排后。
-    getLiveSessionsPage
-      .mockResolvedValueOnce([mk(2, 2000, "B"), mk(1, 1000, "A")])
-      // A 被恢复：last_event_at 刷新为最新，后端按新顺序把 A 排到最前。
-      .mockResolvedValueOnce([mk(1, 3000, "A"), mk(2, 2000, "B")]);
+    // 首页：B（last_event_at 更晚）排前，A（旧）排后；board-changed 后 A 恢复排最前。
+    // tab 页按序返回；折叠条调用（search===null）返回 []，不消耗序列。
+    const tabPages = [
+      [mk(2, 2000, "B"), mk(1, 1000, "A")],
+      [mk(1, 3000, "A"), mk(2, 2000, "B")],
+    ];
+    let ti = 0;
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]);
+      return Promise.resolve(tabPages[Math.min(ti++, tabPages.length - 1)]);
+    });
 
     render(<App />);
     await waitFor(() => {

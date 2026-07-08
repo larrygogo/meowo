@@ -128,9 +128,28 @@ export function App() {
   // 只读检查：仅驱动贴纸设置钮上的更新红点；下载/安装由更新窗口（views/Updater）全权负责。
   const { status: upStatus } = useUpdate();
 
+  // 折叠条恒显示全部「连接中」会话（running + waiting），与当前选中 tab 无关——
+  // 故独立于分页 items 单独加载（按状态查，覆盖旧但仍连接的会话，不受 tab/分页窗口影响）。
+  const [stripSessions, setStripSessions] = useState<Item[]>([]);
+  const loadStrip = useCallback(() => {
+    Promise.all([
+      getLiveSessionsPage("running", null, null, 200),
+      getLiveSessionsPage("waiting", null, null, 200),
+    ])
+      .then(([r, w]) => {
+        const map = new Map<number, Item>();
+        [...r, ...w].forEach((s) => map.set(s.session.id, s as Item));
+        setStripSessions([...map.values()]);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadStrip();
+  }, [loadStrip]);
+
   const connectedCount = useMemo(
-    () => items.filter((l) => !l.archived && l.connected).length,
-    [items]
+    () => stripSessions.filter((l) => !l.archived && l.connected).length,
+    [stripSessions]
   );
 
   const modeRef = useRef(mode);
@@ -205,11 +224,12 @@ export function App() {
       loadPage(filter, search, null, w).then(({ page, applied }) => {
         if (applied && page.length < w) setReachedEnd(true);
       }).catch(() => {});
+      loadStrip(); // 折叠条数据独立刷新（不随 tab）
     };
     // 400ms trailing 节流：连续 board-changed 只在安静后跑一次。
     window.clearTimeout(refreshThrottleRef.current);
     refreshThrottleRef.current = window.setTimeout(run, 400);
-  }, [filter, search, loadPage]);
+  }, [filter, search, loadPage, loadStrip]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || reachedEnd) return;
@@ -534,7 +554,7 @@ export function App() {
   }, [mode, doCollapse]);
 
   if (!isMacPanel() && mode === "collapsed" && edge && !expanding) {
-    return <CollapsedStrip data={items} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
+    return <CollapsedStrip data={stripSessions} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
   }
   // 有新版本：贴纸不再弹浮动条，改为齿轮按钮上的红点提示(安装入口在设置→关于)。
   const hasUpdate = upStatus === "available";
