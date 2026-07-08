@@ -1208,27 +1208,6 @@ async fn new_session(
     }
 }
 
-/// 判定安装脚本输出的一行是否是「有效步骤行」，用于过滤噪声后推给账号页卡片。
-/// 保守白名单：只放行明确的步骤/失败行；PowerShell 把进度/流对象序列化成的 CLIXML
-/// （`#< CLIXML` / `<Objs …>`）与空行一律不展示，避免刷屏。
-fn is_progress_line(line: &str) -> bool {
-    let t = line.trim();
-    if t.is_empty() {
-        return false;
-    }
-    if t.starts_with("#< CLIXML") || t.contains("<Objs ") || t.contains("</Objs>") {
-        return false;
-    }
-    t.starts_with("==>") || t.starts_with("Installing") || t.starts_with("Installation failed:")
-}
-
-/// 后台安装的进度事件：一行有效步骤文本，按 provider 分发给对应卡片。
-#[derive(Clone, serde::Serialize)]
-struct InstallProgress {
-    provider: String,
-    line: String,
-}
-
 /// 后台安装结束事件：ok=true 表示进程 0 退出；code 为退出码（无法取得时 None）。
 #[derive(Clone, serde::Serialize)]
 struct InstallDone {
@@ -1282,19 +1261,8 @@ fn build_install_command(script_path: &str) -> std::process::Command {
     c
 }
 
-/// 过滤噪声后把一行安装输出作为进度事件 emit（stdout/stderr 两处读取共用，避免重复逻辑）。
-fn emit_install_progress(app: &tauri::AppHandle, provider: &str, line: String) {
-    use tauri::Emitter;
-    if is_progress_line(&line) {
-        let _ = app.emit(
-            "install-progress",
-            InstallProgress { provider: provider.to_string(), line },
-        );
-    }
-}
-
-/// 一键安装某 agent：后台跑其官方安装脚本（不弹终端窗口），逐行把有效步骤 emit 给账号页卡片，
-/// 装完 emit install-done、前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
+/// 一键安装某 agent：后台跑其官方安装脚本（不弹终端窗口），装完 emit install-done、
+/// 前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
     let key = cc_store::ProviderKey::parse(Some(&provider));
@@ -1305,40 +1273,20 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
     let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
 
     // spawn 放 blocking 线程：GUI 进程首次 spawn 子进程可能被杀软扫描拖慢，勿堵事件循环。
-    // spawn 成功即返回 Ok；进度/结果全走事件。spawn 失败回传 Err，前端立即显示错误。
+    // spawn 成功即返回 Ok；结果走 install-done 事件；spawn 失败回传 Err，前端立即显示错误。
+    // 进度不透传（前端只显示本地化「安装中…」），故 stdout/stderr 丢弃、不读管道。
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         use std::process::Stdio;
         let mut child = build_install_command(&path)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .env("CODEX_NON_INTERACTIVE", "1")
             .spawn()
             .map_err(|e| format!("启动安装失败：{e}"))?;
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        // 读输出 + 等退出 + emit done 放独立线程，让 spawn_blocking 尽快归还线程池。
+        // 等退出 + emit done 放独立线程，让 spawn_blocking 尽快归还线程池。
         std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            use tauri::Emitter; // 供本闭包末尾的 install-done emit（install-progress 走 emit_install_progress helper）
-            // stderr 另起线程并行读，避免两个管道任一写满后互相阻塞。
-            let err_handle = stderr.map(|e| {
-                let app = app.clone();
-                let provider = provider.clone();
-                std::thread::spawn(move || {
-                    for line in BufReader::new(e).lines().map_while(Result::ok) {
-                        emit_install_progress(&app, &provider, line);
-                    }
-                })
-            });
-            if let Some(o) = stdout {
-                for line in BufReader::new(o).lines().map_while(Result::ok) {
-                    emit_install_progress(&app, &provider, line);
-                }
-            }
-            if let Some(h) = err_handle {
-                let _ = h.join();
-            }
+            use tauri::Emitter;
             let code = child.wait().ok().and_then(|s| s.code());
             let _ = app.emit(
                 "install-done",
@@ -2871,7 +2819,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_progress_line, is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
+        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
         pending_fingerprint, pid_is_agent, session_connected, shell_join_for_windows, should_notify,
         strip_jsonc_comments, tab_match_score, waiting_fingerprint,
     };
@@ -3252,23 +3200,6 @@ mod tests {
         assert_eq!(d.ui_scale, 100);
     }
 
-    #[test]
-    fn is_progress_line_keeps_steps_filters_noise() {
-        // 有效步骤/失败行放行
-        assert!(is_progress_line("==> Installing Codex CLI"));
-        assert!(is_progress_line("  ==> Downloading Codex CLI")); // 前导空白也算
-        assert!(is_progress_line("Installing, please wait..."));
-        assert!(is_progress_line("Installation failed: something broke"));
-        // 噪声/空行滤掉
-        assert!(!is_progress_line(""));
-        assert!(!is_progress_line("   "));
-        assert!(!is_progress_line("#< CLIXML"));
-        assert!(!is_progress_line(
-            "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\">"
-        ));
-        assert!(!is_progress_line("random chatter"));
-        assert!(!is_progress_line("PS C:\\Users\\larry>"));
-    }
 }
 
 #[cfg(test)]
