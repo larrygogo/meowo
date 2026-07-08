@@ -1540,8 +1540,6 @@ fn spawn_liveness_watch(
         // 托盘状态摘要只在 (运行,待交互) 变化时刷新，避免每轮无谓重画/重设提示。
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let mut last_tray: Option<(usize, usize)> = None;
-        #[cfg(target_os = "macos")]
-        let mut last_dark: Option<bool> = None;
         loop {
             if let Ok(store) = Store::open(&db_path) {
                 let sys = System::new_with_specifics(
@@ -1682,16 +1680,11 @@ fn spawn_liveness_watch(
                 notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
 
-                // macOS：把连接中会话的状态摘要画成菜单栏彩色状态图标（一眼可见，弥补无吸边缩略条）。
-                // 明暗变化也要重渲染（数字随菜单栏反色），故 dark 也纳入变更判定。
+                // macOS：把连接中会话的状态摘要画成菜单栏彩色徽章（一眼可见，弥补无吸边缩略条）。
                 #[cfg(target_os = "macos")]
-                {
-                    let dark = crate::macos::menubar::system_is_dark();
-                    if last_tray != Some((tray_running, tray_waiting)) || last_dark != Some(dark) {
-                        crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting, dark);
-                        last_tray = Some((tray_running, tray_waiting));
-                        last_dark = Some(dark);
-                    }
+                if last_tray != Some((tray_running, tray_waiting)) {
+                    crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting);
+                    last_tray = Some((tray_running, tray_waiting));
                 }
                 // Windows：把摘要写到托盘悬浮提示，鼠标移到托盘一眼可见，不必打开窗口。
                 #[cfg(target_os = "windows")]
