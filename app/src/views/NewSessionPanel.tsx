@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import {
   type ProviderKey,
   type HooksStatus,
@@ -62,6 +63,17 @@ export function NewSessionPanel(): ReactElement {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avail, setAvail] = useState<ProviderKey[] | null>(null);
+
+  useEffect(() => {
+    // 窗口已开时从另一张卡片再点「新建会话」：后端发 ns-prefill 更新表单（不重开窗口）。
+    const un = listen<{ cwd?: string | null; provider?: string | null }>("ns-prefill", (e) => {
+      if (e.payload.cwd != null) setCwd(normalizePath(e.payload.cwd));
+      if (e.payload.provider != null) setProvider(e.payload.provider as ProviderKey);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   useEffect(() => {
     // 若从会话卡片菜单带 provider 参数打开，保留该参数；否则回退到设置里的默认 agent。

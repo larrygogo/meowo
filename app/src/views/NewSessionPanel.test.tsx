@@ -15,6 +15,7 @@ vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()),
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 const closeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock }) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
 import { NewSessionPanel } from "./NewSessionPanel";
 

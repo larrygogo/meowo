@@ -2311,6 +2311,11 @@ fn open_new_session_window_impl(
     crate::macos::menubar::settings_window_will_open(app);
 
     if let Some(w) = app.get_webview_window("new-session") {
+        // 窗口已开：若从另一张卡片带了 cwd/provider 预填，通知面板更新表单（不重开窗口），再聚焦。
+        if cwd.is_some() || provider.is_some() {
+            use tauri::Emitter;
+            let _ = app.emit("ns-prefill", serde_json::json!({ "cwd": cwd, "provider": provider }));
+        }
         let _ = w.set_focus();
         return;
     }
