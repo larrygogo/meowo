@@ -1464,7 +1464,8 @@ html, body {
   background: transparent;
   box-shadow: none;
 }
-.provider-card-icon:not(.provider-card-icon-claude) svg {
+.provider-card-icon:not(.provider-card-icon-claude) svg,
+.provider-card-icon:not(.provider-card-icon-claude) img {
   width: 100%;
   height: 100%;
 }
