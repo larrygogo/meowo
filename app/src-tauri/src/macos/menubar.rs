@@ -79,6 +79,21 @@ fn fill_round_rect(rgba: &mut [u8], total: usize, x0: usize, w: usize, color: [u
     }
 }
 
+/// straight-alpha 的 source-over：把不透明色 rgb（覆盖度 src_a∈[0,1]）叠加到 rgba[i..i+4] 上。
+/// out_a = src_a + dst_a·(1-src_a)；RGB 按输出 alpha 归一，避免徽章半透明边缘处 max/预乘导致发灰。
+fn blend_over(rgba: &mut [u8], i: usize, rgb: [u8; 3], src_a: f32) {
+    let dst_a = rgba[i + 3] as f32 / 255.0;
+    let out_a = src_a + dst_a * (1.0 - src_a);
+    if out_a <= 0.0 {
+        return;
+    }
+    for k in 0..3 {
+        let v = (rgb[k] as f32 * src_a + rgba[i + k] as f32 * dst_a * (1.0 - src_a)) / out_a;
+        rgba[i + k] = v.round().clamp(0.0, 255.0) as u8;
+    }
+    rgba[i + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
 /// 把一个数字字形（图集 alpha）以 rgb 墨色叠加到已画的徽章上（居中于定高 36 的格）。
 fn blit_glyph(rgba: &mut [u8], total: usize, x0: usize, idx: usize, rgb: [u8; 3]) {
     let off = glyph_offset(idx);
@@ -87,11 +102,7 @@ fn blit_glyph(rgba: &mut [u8], total: usize, x0: usize, idx: usize, rgb: [u8; 3]
         for c in 0..w {
             let ga = GLYPH_ATLAS[off + y * w + c] as f32 / 255.0;
             if ga > 0.0 {
-                let i = (y * total + x0 + c) * 4;
-                for k in 0..3 {
-                    rgba[i + k] = (rgb[k] as f32 * ga + rgba[i + k] as f32 * (1.0 - ga)) as u8;
-                }
-                rgba[i + 3] = rgba[i + 3].max((ga * 255.0) as u8);
+                blend_over(rgba, (y * total + x0 + c) * 4, rgb, ga);
             }
         }
     }
@@ -110,11 +121,7 @@ fn blit_plus(rgba: &mut [u8], total: usize, x0: usize, rgb: [u8; 3]) {
             let cov_v = (PLUS_TH + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_ARM + 0.5 - dy).clamp(0.0, 1.0);
             let a = cov_h.max(cov_v);
             if a > 0.0 {
-                let i = (y * total + px) * 4;
-                for k in 0..3 {
-                    rgba[i + k] = (rgb[k] as f32 * a + rgba[i + k] as f32 * (1.0 - a)) as u8;
-                }
-                rgba[i + 3] = rgba[i + 3].max((a * 255.0) as u8);
+                blend_over(rgba, (y * total + px) * 4, rgb, a);
             }
         }
     }

@@ -1,5 +1,9 @@
 # 菜单栏红绿灯状态图标 Implementation Plan
 
+> ⚠️ **已被实现阶段的设计演进取代（历史文档，勿据此实现）。** 本计划成文时的方案（橙=运行的彩色**圆点+数字**、数字随系统明暗**反色**、`defaults` 探测暗色）在实现中已改为
+> **数字内嵌彩色圆/胶囊徽章**：运行=绿 `#34d399`、待交互=黄 `#fbbf24`，数字用**固定深色墨**（不随明暗，故**无** `system_is_dark`/明暗自适应）。
+> 以最终 spec [`../specs/2026-07-08-menubar-traffic-light-design.md`](../specs/2026-07-08-menubar-traffic-light-design.md) 与 `app/src-tauri/src/macos/menubar.rs` 的实现为准；下方任务描述保留作演进记录。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 macOS 菜单栏状态图标从单色 `↻N ✋M` 模板字形改成彩色实心点+数字（橙=运行、黄=待交互），空闲回落 app logo。
