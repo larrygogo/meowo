@@ -159,6 +159,10 @@ async fn get_live_sessions_page(
 /// 看板 resume 后「乐观连接」的宽限期(ms)。pid 未知(resume 清空待认领)的会话仅在此窗口内显示已连接，
 /// 给 codex 这类「resume 不发 hook、要到首条消息才触发」的 agent 留出「启动 + 用户发首条消息」的窗口；
 /// 超时仍无 hook 认领真 pid 则回落未连接——避免没真正起来的会话(终端没开/被秒关)长期假连接。
+/// 同一阈值也驱动 spawn_liveness_watch 里的 end_orphaned_idle 兜底收尾（见该处调用）：
+/// 若只改「已连接」显示而不收尾 DB 的 status，会话会长期停在错误的运行中/待交互 tab 里——
+/// 卡片已显示断开、tab 分类却对不上（如 kimi 卸载后 resume 失败：终端进程本身起来了，
+/// spawn_in_terminal 判定为成功、不触发失败回滚，但 kimi 从未真正启动、永远不会有 hook 认领 pid）。
 const RESUME_GRACE_MS: i64 = 120_000;
 
 /// 卡片「已连接」判定（纯函数，便于单测）：
@@ -1802,10 +1806,6 @@ fn reap_and_alive_ids(store: &Store, sys: &System, now_ms: i64) -> (Vec<i64>, us
     (alive, reaped)
 }
 
-/// 无 pid 会话的「空闲废弃」阈值：超过这么久没有任何事件即兜底收尾（终端被直接关掉、
-/// SessionEnd 丢失的孤儿会话）。取 30 分钟——足够保守，活跃会话每个事件都会刷新计时，绝不会触及。
-const ORPHAN_IDLE_MS: i64 = 30 * 60 * 1000;
-
 /// 是否应为「当前错误指纹」弹通知：仅当当前有错误且指纹与上次通知过的不同。
 /// 同一错误不反复弹；错误消失（cur=None）不弹（清除条目交给调用方）。纯函数，便于单测。
 fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
@@ -1933,7 +1933,10 @@ fn spawn_liveness_watch(
                 let sys = System::new_with_specifics(
                     RefreshKind::new().with_processes(ProcessRefreshKind::new()),
                 );
-                let orphaned = store.end_orphaned_idle(ORPHAN_IDLE_MS, now_ms()).unwrap_or(0);
+                // 阈值与 session_connected 的 RESUME_GRACE_MS 对齐：pid 未知的会话「已连接」显示
+                // 在此窗口后回落断开，DB 的 status 也应同时收尾，否则会话会长期卡在错误的 tab 里
+                // （见 RESUME_GRACE_MS 文档：kimi 卸载后 resume「终端起来但命令失败」即命中此路径）。
+                let orphaned = store.end_orphaned_idle(RESUME_GRACE_MS, now_ms()).unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
                     let _ = app.emit("board-changed", ());
