@@ -389,6 +389,9 @@ function CardContextMenu({
 
 const PIN_KEY = "cc-kanban-pinned";
 const STAR_KEY = "cc-kanban-starred";
+// 用量屏选中的 provider 偏好：折叠/展开会卸载重挂 UsageScreen，持久化以记住上次选择
+// （该 provider 仍在活跃列表就沿用，被关/找不到才退回第一个——见 UsageScreen selected 计算）。
+const USAGE_KEY = "cc-kanban-usage-provider";
 const TAB_KEYS: Tab[] = ["all", "waiting", "running", "archived"];
 
 /** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
@@ -522,7 +525,7 @@ function LaneRow({ lane, label }: { lane: UsageLane; label: string }) {
 
 /** 标签式用量屏：每个开启配额的 provider 一个图标标签，点选后显示其 5h + 7d/weekly 条。
  *  符合条件 provider 为空 → 不渲染。 */
-function UsageScreen({
+export function UsageScreen({
   quotaProviders,
   usageMap,
 }: {
@@ -530,8 +533,12 @@ function UsageScreen({
   usageMap: Record<string, ProviderUsage>;
 }) {
   const t = useT();
-  // 用户偏好选中的 provider（若不在当前活跃列表中则退回第一个）
-  const [selectedPref, setSelectedPref] = useState<string>("");
+  // 用户偏好选中的 provider（持久化：折叠/展开重挂后记住；若不在当前活跃列表中则退回第一个）
+  const [selectedPref, setSelectedPref] = useState<string>(() => localStorage.getItem(USAGE_KEY) ?? "");
+  const pick = (p: string) => {
+    setSelectedPref(p);
+    localStorage.setItem(USAGE_KEY, p);
+  };
 
   // 仅显示「在配额列表中且有用量数据」的 provider
   const activeProviders = quotaProviders.filter((p) => !!usageMap[p]);
@@ -556,7 +563,7 @@ function UsageScreen({
               type="button"
               className={"stk-utab" + (p === selected ? " on" : "")}
               aria-pressed={p === selected}
-              onClick={() => setSelectedPref(p)}
+              onClick={() => pick(p)}
             >
               <Icon />
             </button>

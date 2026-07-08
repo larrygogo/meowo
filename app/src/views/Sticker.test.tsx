@@ -29,8 +29,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import { Sticker, EmptyState } from "./Sticker";
-import type { LiveSession } from "../api";
+import { Sticker, EmptyState, UsageScreen } from "./Sticker";
+import type { LiveSession, ProviderUsage } from "../api";
 import { zh } from "../i18n/zh";
 
 // jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
@@ -101,6 +101,25 @@ beforeEach(() => {
 });
 
 describe("Sticker", () => {
+  it("用量选择在卸载重挂后保留（记住上次选择，找不到才退第一个）", () => {
+    const usageMap: Record<string, ProviderUsage> = {
+      claude: { lanes: [], note: null } as ProviderUsage,
+      codex: { lanes: [], note: null } as ProviderUsage,
+    };
+    const props = { quotaProviders: ["claude", "codex"], usageMap };
+    const { unmount, container } = render(<UsageScreen {...props} />);
+    const tabs = container.querySelectorAll(".stk-utab");
+    expect(tabs.length).toBe(2);
+    expect(tabs[0].classList.contains("on")).toBe(true); // 默认第一个 claude
+    fireEvent.click(tabs[1]); // 选 codex
+    expect(tabs[1].classList.contains("on")).toBe(true);
+    unmount(); // 折叠 → 卸载
+    const { container: c2 } = render(<UsageScreen {...props} />); // 展开 → 重挂
+    const tabs2 = c2.querySelectorAll(".stk-utab");
+    expect(tabs2[1].classList.contains("on")).toBe(true); // 应记住 codex
+    expect(tabs2[0].classList.contains("on")).toBe(false);
+  });
+
   it("空数据显示 all 空态主文案", () => {
     const { container } = render(<Sticker filter="all" data={[]} />);
     expect(screen.getByText(zh.empty.allTitle)).toBeTruthy();
