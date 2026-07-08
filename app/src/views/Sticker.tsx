@@ -951,36 +951,6 @@ export function Sticker({
     window.addEventListener("mouseup", up);
   };
 
-  // 独立「新建会话」窗口启动成功后（Task 13 emit）弹 toast 提示，4s 自动消失。
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimerRef = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
-    let cancelled = false;
-    let un: (() => void) | undefined;
-    try {
-      listen<string>("new-session-launched", (e) => {
-        setToast(e.payload);
-        // 新 toast 到来先清旧计时器，避免旧计时器把新 toast 提前清掉；
-        // 卸载时也清理（见下方 cleanup），防止卸载后 4s 内触发 setState。
-        window.clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = window.setTimeout(() => setToast(null), 4000);
-      })
-        .then((f) => {
-          if (cancelled) f();
-          else un = f;
-        })
-        .catch(() => {});
-    } catch {
-      /* 非 Tauri 环境（测试/浏览器） */
-    }
-    return () => {
-      cancelled = true;
-      try { un?.(); } catch { /* noop */ }
-      window.clearTimeout(toastTimerRef.current);
-    };
-  }, []);
-
   return (
     <div className="sticker">
       {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
@@ -1337,7 +1307,6 @@ export function Sticker({
           </>
         )}
       </div>
-      {toast && <div className="stk-toast" role="status">{toast}</div>}
     </div>
   );
 }
