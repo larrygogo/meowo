@@ -953,6 +953,7 @@ export function Sticker({
 
   // 独立「新建会话」窗口启动成功后（Task 13 emit）弹 toast 提示，4s 自动消失。
   const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => {
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
     let cancelled = false;
@@ -960,7 +961,10 @@ export function Sticker({
     try {
       listen<string>("new-session-launched", (e) => {
         setToast(e.payload);
-        window.setTimeout(() => setToast(null), 4000);
+        // 新 toast 到来先清旧计时器，避免旧计时器把新 toast 提前清掉；
+        // 卸载时也清理（见下方 cleanup），防止卸载后 4s 内触发 setState。
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = window.setTimeout(() => setToast(null), 4000);
       })
         .then((f) => {
           if (cancelled) f();
@@ -973,6 +977,7 @@ export function Sticker({
     return () => {
       cancelled = true;
       try { un?.(); } catch { /* noop */ }
+      window.clearTimeout(toastTimerRef.current);
     };
   }, []);
 
@@ -1154,11 +1159,11 @@ export function Sticker({
                           >
                             <agentCfg.Icon />
                           </span>
-                          <span className="stk-repo" data-tip={l.cwd ?? undefined}>
-                            {l.cwd
-                              ? l.cwd.split(/[\\/]/).filter(Boolean).pop() ?? l.cwd
-                              : l.project_name.split("/").pop()}
-                          </span>
+                          {l.cwd && (
+                            <span className="stk-repo" data-tip={l.cwd}>
+                              {l.cwd.split(/[\\/]/).filter(Boolean).pop() ?? l.cwd}
+                            </span>
+                          )}
                           {l.model && <span className="stk-model">{l.model}</span>}
                         </div>
                       </div>

@@ -107,9 +107,9 @@ describe("Sticker", () => {
     expect(container.querySelector("[data-tauri-drag-region]")).toBeTruthy();
   });
 
-  it("渲染会话行：项目名 + 最近 AI 正文", () => {
-    render(<Sticker filter="all" data={[mk({ preview: "最近这条 AI 正文" })]} />);
-    expect(screen.getByText("proj")).toBeTruthy();
+  it("渲染会话行：文件夹名 + 最近 AI 正文", () => {
+    render(<Sticker filter="all" data={[mk({ cwd: "C:\\dev\\my-project", preview: "最近这条 AI 正文" })]} />);
+    expect(screen.getByText("my-project")).toBeTruthy();
     expect(screen.getByText("最近这条 AI 正文")).toBeTruthy();
   });
 
@@ -474,11 +474,9 @@ describe("Sticker", () => {
     expect(repo?.getAttribute("data-tip")).toBe("C:\\Users\\larry\\projects\\autopilot");
   });
 
-  it("无 cwd 时回退显示 github 项目名（去 owner 前缀）", () => {
+  it("无 cwd 时不显示项目名", () => {
     const { container } = render(<Sticker filter="all" data={[mk({ cwd: null, project_name: "larrygogo/autopilot" })]} />);
-    const repo = container.querySelector(".stk-repo") as HTMLElement;
-    expect(repo?.textContent).toBe("autopilot");
-    expect(repo?.getAttribute("data-tip")).toBeNull();
+    expect(container.querySelector(".stk-repo")).toBeNull();
   });
 
   it("kimi 会话用 Kimi Code 标签与 kimi 徽标(黑方块)，claude 用 Claude Code 标签且无方块", () => {
