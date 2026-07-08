@@ -120,6 +120,14 @@ describe("Sticker", () => {
     expect(tabs2[0].classList.contains("on")).toBe(false);
   });
 
+  it("待交互/运行中角标数字上限 99+", () => {
+    const counts = { total: 0, running: 150, waiting: 3, archived: 0 };
+    const { container } = render(<Sticker filter="all" data={[]} counts={counts} />);
+    const badges = Array.from(container.querySelectorAll(".stab-n")).map((e) => e.textContent);
+    expect(badges).toContain("99+"); // running=150 → 99+
+    expect(badges).toContain("3"); // waiting=3 → 原样
+  });
+
   it("空数据显示 all 空态主文案", () => {
     const { container } = render(<Sticker filter="all" data={[]} />);
     expect(screen.getByText(zh.empty.allTitle)).toBeTruthy();

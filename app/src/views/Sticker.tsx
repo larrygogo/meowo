@@ -962,7 +962,7 @@ export function Sticker({
               >
                 <TabIcon tab={k} />
                 {t.tabs[k]}
-                {k !== "all" && k !== "archived" && <span className="stab-n">{n}</span>}
+                {k !== "all" && k !== "archived" && <span className="stab-n">{n > 99 ? "99+" : n}</span>}
               </span>
             );
           })}
