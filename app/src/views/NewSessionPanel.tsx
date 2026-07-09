@@ -14,7 +14,7 @@ import {
   availableAgents,
 } from "../api";
 import { providerConfig } from "../providers";
-import { useT } from "../i18n";
+import { useT, repairFailMessage } from "../i18n";
 
 function FolderIcon() {
   return (
@@ -141,8 +141,11 @@ export function NewSessionPanel(): ReactElement {
     setRepairing(true);
     setError(null);
     try {
-      const st = await repairProviderHooks(provider);
-      setHooks((h) => ({ ...h, [provider]: st }));
+      const res = await repairProviderHooks(provider);
+      setHooks((h) => ({ ...h, [provider]: res.status }));
+      // 修复后仍非 installed → 接线没真正生效，别让用户以为「点了没反应」；
+      // 按后端 reason 给出精准提示（如 kimi 未登录 → 「请先登录」）。
+      if (res.status !== "installed") setError(repairFailMessage(t, res.reason));
     } catch (e) {
       setError(String(e));
     } finally {

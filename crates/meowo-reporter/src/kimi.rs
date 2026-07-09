@@ -9,7 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// kimi 数据根：`KIMI_SHARE_DIR` 优先，否则 `~/.kimi-code`（迁移后的默认目录，非旧的 ~/.kimi）。
+/// kimi 数据根，优先级：`KIMI_SHARE_DIR` env > 存在的新版 `~/.kimi-code` > 存在的旧版 `~/.kimi`
+/// （兼容旧 Python 版 kimi-cli，其数据目录为 `~/.kimi`、配置/hook 格式与新版一致）> 回退 `~/.kimi-code`
+/// （两者都不存在时的默认，供全新安装写入）。检测/接线/状态/账号凭据/会话读取都经此入口，改这一处即全链路生效。
 /// account/kimi.rs 复用此函数读取凭据/device_id/config.toml，故提升为 pub。
 pub fn kimi_share_dir() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("KIMI_SHARE_DIR") {
@@ -20,7 +22,20 @@ pub fn kimi_share_dir() -> Option<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .ok()?;
-    Some(PathBuf::from(home).join(".kimi-code"))
+    let home = PathBuf::from(home);
+    Some(pick_existing_share_dir(home.join(".kimi-code"), home.join(".kimi")))
+}
+
+/// 在新版目录 `code`（~/.kimi-code）与旧版目录 `legacy`（~/.kimi）间择一：新版存在优先用新版；
+/// 否则旧版存在则用旧版；都不存在回退新版默认。纯逻辑（只读 is_dir），便于单测目录优先级。
+fn pick_existing_share_dir(code: PathBuf, legacy: PathBuf) -> PathBuf {
+    if code.is_dir() {
+        code
+    } else if legacy.is_dir() {
+        legacy
+    } else {
+        code
+    }
 }
 
 /// kimi 可执行的绝对路径（~/.kimi-code/bin/kimi[.exe]）；找不到回退裸名 "kimi"（依赖 PATH）。
@@ -32,9 +47,12 @@ pub fn kimi_exe() -> String {
     if let Some(d) = kimi_share_dir() {
         cands.push(d.join("bin").join(bin));
     }
-    // KIMI_SHARE_DIR 可能改了数据目录，但 bin 通常仍在 ~/.kimi-code/bin，单列一条兜底。
+    // KIMI_SHARE_DIR 可能改了数据目录，但 bin 通常仍在 ~/.kimi-code/bin（新版）或 ~/.kimi/bin（旧版），
+    // 各列一条兜底。旧 Python 版常装在 ~/.local/bin，靠最后的裸名 "kimi" 走 PATH 兜住。
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        cands.push(PathBuf::from(home).join(".kimi-code").join("bin").join(bin));
+        let home = PathBuf::from(home);
+        cands.push(home.join(".kimi-code").join("bin").join(bin));
+        cands.push(home.join(".kimi").join("bin").join(bin));
     }
     cands
         .into_iter()
@@ -319,5 +337,27 @@ mod tests {
         let wire = r#"{"type":"turn.prompt","input":"hi"}
 {"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"think","think":"only thinking"}}}"#;
         assert_eq!(parse_wire(wire).last_ai, None);
+    }
+
+    #[test]
+    fn share_dir_prefers_kimi_code_then_legacy_kimi() {
+        // 用临时目录构造四种存在性组合，验证优先级：新版 > 旧版 > 回退新版默认。
+        let base = std::env::temp_dir().join(format!("cckb-kimi-share-{}", std::process::id()));
+        let code = base.join(".kimi-code");
+        let legacy = base.join(".kimi");
+        let _ = std::fs::remove_dir_all(&base);
+
+        // 两者都不存在 → 回退新版默认（供全新安装）。
+        assert_eq!(pick_existing_share_dir(code.clone(), legacy.clone()), code);
+
+        // 只有旧版存在 → 用旧版（兼容 Python 版 kimi-cli）。
+        std::fs::create_dir_all(&legacy).unwrap();
+        assert_eq!(pick_existing_share_dir(code.clone(), legacy.clone()), legacy);
+
+        // 两者都存在 → 新版优先。
+        std::fs::create_dir_all(&code).unwrap();
+        assert_eq!(pick_existing_share_dir(code.clone(), legacy.clone()), code);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

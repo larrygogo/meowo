@@ -3,7 +3,7 @@
 // settings-changed 实时切换并消除 fetch-vs-subscribe 竞态。
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getSettings, type Settings } from "../api";
+import { getSettings, type Settings, type RepairReason } from "../api";
 import { zh, type Dict } from "./zh";
 import { en } from "./en";
 
@@ -27,6 +27,20 @@ const I18nCtx = createContext<Dict>(zh);
 /** 取当前语言字典：const t = useT(); t.tabs.all */
 export function useT(): Dict {
   return useContext(I18nCtx);
+}
+
+/** 「修复连接」失败原因 → 本地化提示。reason=null 但仍失败（罕见边界）落到泛化文案。 */
+export function repairFailMessage(t: Dict, reason: RepairReason | null): string {
+  switch (reason) {
+    case "need-login":
+      return t.newSession.repairNeedLogin;
+    case "reporter-not-found":
+      return t.newSession.repairNoReporter;
+    case "not-detected":
+      return t.newSession.repairNotDetected;
+    default:
+      return t.newSession.repairFailed;
+  }
 }
 
 export function I18nProvider({ children, initial }: { children: ReactNode; initial?: Lang }) {

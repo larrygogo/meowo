@@ -253,8 +253,18 @@ export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> 
   return invoke("check_provider_hooks", { provider });
 }
 
-/** 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider 并返回最新状态。 */
-export function repairProviderHooks(provider: ProviderKey): Promise<HooksStatus> {
+/** 修复接线失败的原因（后端 setup::RepairReason），null = 成功/已是目标状态。 */
+export type RepairReason =
+  | "not-detected"
+  | "need-login"
+  | "reporter-not-found"
+  | "config-unreadable"
+  | "write-failed";
+
+export type RepairResult = { status: HooksStatus; reason: RepairReason | null };
+
+/** 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，返回最新状态与失败原因。 */
+export function repairProviderHooks(provider: ProviderKey): Promise<RepairResult> {
   return invoke("repair_provider_hooks", { provider });
 }
 

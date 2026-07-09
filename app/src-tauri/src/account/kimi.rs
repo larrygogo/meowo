@@ -159,21 +159,41 @@ fn ensure_valid_kimi_token() -> Option<String> {
         return Some(access_token);
     }
 
-    // 仍过期 → 执行刷新。
-    let refresh_token = creds.get("refresh_token").and_then(|v| v.as_str())?.to_string();
+    // 仍过期 → 执行刷新。expires_at 缺失/字段名不同会被读成 0 → 恒判过期而走到这里，
+    // 旧版鉴权若与新版 kimi-code 的刷新端点/client_id 不兼容，这里就会失败。
+    eprintln!("Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…");
+    let Some(refresh_token) = creds.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string) else {
+        eprintln!("Meowo usage[kimi]: 凭据缺 refresh_token 字段，无法刷新");
+        return None;
+    };
     if refresh_token.is_empty() {
+        eprintln!("Meowo usage[kimi]: refresh_token 为空，无法刷新");
         return None;
     }
 
-    let resp = ureq::post(KIMI_TOKEN_URL)
+    let resp = match ureq::post(KIMI_TOKEN_URL)
         .timeout(HTTP_TIMEOUT)
         .set("Accept", "application/json")
         .send_form(&[
             ("grant_type", "refresh_token"),
             ("client_id", KIMI_CLIENT_ID),
             ("refresh_token", &refresh_token),
-        ])
-        .ok()?;
+        ]) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, resp)) => {
+            // OAuth 错误体形如 {"error":"invalid_grant"|"invalid_client",...}——只含错误码不含 token，
+            // 可安全打印（截断防超长）。invalid_grant=refresh_token 失效（重登可解）；
+            // invalid_client=client_id 不匹配（需按旧版适配）。
+            let body = resp.into_string().unwrap_or_default();
+            let snippet: String = body.chars().take(200).collect();
+            eprintln!("Meowo usage[kimi]: 刷新 token 返回 HTTP {code}，响应体：{snippet}");
+            return None;
+        }
+        Err(e) => {
+            eprintln!("Meowo usage[kimi]: 刷新 token 网络错误：{e}");
+            return None;
+        }
+    };
 
     let body: Value = resp.into_json().ok()?;
 
@@ -204,6 +224,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
         eprintln!("Meowo: kimi 凭据写回失败");
     }
 
+    eprintln!("Meowo usage[kimi]: token 刷新成功");
     Some(new_access.to_string())
 }
 
@@ -398,18 +419,44 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
 /// 刷新写回仅更新 access_token/refresh_token/expires_in/expires_at，其余字段不动。
 /// 任何非 2xx / 网络错 / 解析失败 → None（安静降级）。
 fn fetch_kimi_usage_live() -> Option<ProviderUsage> {
-    let access_token = ensure_valid_kimi_token()?;
+    let Some(access_token) = ensure_valid_kimi_token() else {
+        eprintln!("Meowo usage[kimi]: 无有效 access_token（读不到或刷新失败），跳过取用量");
+        return None;
+    };
     let base = kimi_base_url();
     let url = format!("{base}/usages");
 
-    let resp = ureq::get(&url)
+    let resp = match ureq::get(&url)
         .timeout(HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .set("Accept", "application/json")
         .call()
-        .ok()?;
-    let v: Value = resp.into_json().ok()?;
-    parse_kimi_usage(&v)
+    {
+        Ok(r) => r,
+        // 4xx/5xx：ureq 归为 Error::Status。401 多为 token 失效/旧版鉴权不兼容；404 多为端点不对。
+        Err(ureq::Error::Status(code, _)) => {
+            eprintln!("Meowo usage[kimi]: GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）");
+            return None;
+        }
+        Err(e) => {
+            eprintln!("Meowo usage[kimi]: GET {url} 网络错误：{e}");
+            return None;
+        }
+    };
+    let v: Value = match resp.into_json() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Meowo usage[kimi]: /usages 响应不是合法 JSON：{e}");
+            return None;
+        }
+    };
+    match parse_kimi_usage(&v) {
+        Some(pu) => Some(pu),
+        None => {
+            eprintln!("Meowo usage[kimi]: /usages 解析不出任何用量 lane（响应 schema 可能与旧版不同）");
+            None
+        }
+    }
 }
 
 // ═══ ProviderAccount impl ═══

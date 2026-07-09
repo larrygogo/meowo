@@ -1449,7 +1449,8 @@ fn codex_hooks_status() -> HooksStatus {
     }
 }
 
-/// kimi hooks 接入状态：读 ~/.kimi-code/config.toml。文件不存在=Missing；读失败=Unknown。
+/// kimi hooks 接入状态：读 kimi_share_dir()/config.toml（新版 ~/.kimi-code 或旧版 ~/.kimi）。
+/// 文件不存在=Missing；读失败=Unknown。
 fn kimi_hooks_status() -> HooksStatus {
     let Some(dir) = meowo_reporter::kimi::kimi_share_dir() else {
         return HooksStatus::Unknown;
@@ -1475,17 +1476,28 @@ fn check_provider_hooks(provider: String) -> HooksStatus {
     }
 }
 
-/// 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，然后返回最新状态。
+/// 「修复连接」结果：最新接线状态 + 失败原因（None = 成功/已是目标状态）。
+/// reason 供前端给出精准提示（如 kimi 未登录 → 「请先登录」）而非泛化文案。
+#[derive(Debug, serde::Serialize)]
+struct RepairResult {
+    status: HooksStatus,
+    reason: Option<setup::RepairReason>,
+}
+
+/// 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，然后返回最新状态与失败原因。
 /// 用于「新建会话」面板或设置里的「修复连接」按钮，无需重启 Meowo。
 #[tauri::command]
-fn repair_provider_hooks(provider: String) -> HooksStatus {
-    match meowo_store::ProviderKey::parse(Some(&provider)) {
+fn repair_provider_hooks(provider: String) -> RepairResult {
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    match key {
         meowo_store::ProviderKey::Claude
         | meowo_store::ProviderKey::Codex
         | meowo_store::ProviderKey::Kimi => {
-            let key = meowo_store::ProviderKey::parse(Some(&provider));
-            let _ = setup::apply_provider(key);
-            check_provider_hooks(provider)
+            eprintln!("Meowo repair[{provider}]: 开始修复接线…");
+            let reason = setup::apply_provider(key);
+            let status = check_provider_hooks(provider.clone());
+            eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
+            RepairResult { status, reason }
         }
     }
 }
@@ -3239,10 +3251,10 @@ mod tests {
 
     #[test]
     fn settings_appearance_defaults_and_back_compat() {
-        // 老文件缺外观字段 → 用缺省（dark / 94 / 100），不报错。
+        // 老文件缺外观字段 → 用缺省（dark / 100 / 100），不报错。
         let legacy: Settings = serde_json::from_str(r#"{"archive_hide_days":7}"#).unwrap();
         assert_eq!(legacy.theme, "dark");
-        assert_eq!(legacy.opacity, 94);
+        assert_eq!(legacy.opacity, 100);
         assert_eq!(legacy.ui_scale, 100);
         // 显式外观值被尊重。
         let custom: Settings =
@@ -3253,7 +3265,7 @@ mod tests {
         // Default 与缺省函数一致。
         let d = Settings::default();
         assert_eq!(d.theme, "dark");
-        assert_eq!(d.opacity, 94);
+        assert_eq!(d.opacity, 100);
         assert_eq!(d.ui_scale, 100);
     }
 

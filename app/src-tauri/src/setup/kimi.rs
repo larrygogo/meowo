@@ -1,4 +1,5 @@
-//! kimi（kimi-code CLI）自动接线：结构保持地合并 `~/.kimi-code/config.toml` 顶层 [[hooks]]。
+//! kimi（kimi-code CLI）自动接线：结构保持地合并 config.toml 顶层 [[hooks]]。
+//! 目录经 kimi_share_dir() 解析——新版 `~/.kimi-code` 优先，旧 Python 版 `~/.kimi` 兼容（格式一致）。
 //! 纪律（源码调研 kimi-code 0.20）：kimi 自身会全量重写此文件（注释全丢）——幂等判定只按
 //! (event, command) 内容匹配，绝不依赖注释标记；一条非法 hook 会让 kimi 静默禁用全部
 //! hooks——事件名有白名单绊线测试；文件解析失败即放弃（与 kimi 自身写保护一致）。
@@ -28,11 +29,19 @@ pub fn ensure_kimi_hooks(doc: &mut DocumentMut, reporter_native: &str) -> bool {
     let desired_cmd = format!("{reporter_native} --provider kimi");
     let mut changed = false;
     if doc.get("hooks").and_then(|it| it.as_array_of_tables()).is_none() {
-        // 不存在或非 array-of-tables（如 hooks = [] 的旧写法残留在新文件：实测 kimi-code
-        // 默认无顶层 hooks 键；inline array 形态无法结构保持地转换，直接放弃不写坏）。
-        if doc.get("hooks").is_some() {
+        // 不是 array-of-tables。可安全替换的只有两种：
+        //   - 不存在：新版 kimi-code 默认无顶层 hooks 键。
+        //   - `hooks = []`：旧 Python 版 kimi-cli 的默认**空内联数组**——语义等价于「无 hooks」，
+        //     与 `[[hooks]]` array-of-tables 是同一 TOML 类型（空列表），替换无损，kimi 照常读取。
+        // 非空内联数组 / 字符串等畸形形态则保守放弃：无法结构保持地转换，绝不写坏用户配置。
+        let replaceable = match doc.get("hooks") {
+            None => true,
+            Some(it) => it.as_array().is_some_and(|a| a.is_empty()),
+        };
+        if !replaceable {
             return false;
         }
+        doc.remove("hooks");
         doc.insert("hooks", Item::ArrayOfTables(ArrayOfTables::new()));
         changed = true;
     }
@@ -83,16 +92,22 @@ impl super::ProviderSetup for KimiSetup {
     fn detect(&self) -> bool {
         meowo_reporter::kimi::kimi_share_dir().is_some_and(|d| d.is_dir())
     }
-    fn apply(&self) {
+    fn apply(&self) -> Option<super::RepairReason> {
+        use super::RepairReason;
         let Some(dir) = meowo_reporter::kimi::kimi_share_dir() else {
-            return;
+            eprintln!("Meowo repair[kimi]: 解析不到 kimi_share_dir，跳过");
+            return Some(RepairReason::NotDetected);
         };
         let cfg = dir.join("config.toml");
+        // config.toml 由 `kimi login` 生成——未登录时它不存在，接线无处可写。这不是错误，
+        // 而是「需要先登录」，据此给前端精准提示而非泛化的失败文案。
         let Ok(text) = std::fs::read_to_string(&cfg) else {
-            return;
+            eprintln!("Meowo repair[kimi]: config.toml 读取失败（缺失或不可读，需先完成 kimi login），跳过");
+            return Some(RepairReason::NeedLogin);
         };
         let Ok(mut doc) = text.parse::<DocumentMut>() else {
-            return; // 解析失败绝不写（kimi 自身对坏文件同样拒写）
+            eprintln!("Meowo repair[kimi]: config.toml 解析失败（非法 TOML），跳过（绝不写坏）");
+            return Some(RepairReason::ConfigUnreadable); // 解析失败绝不写（kimi 自身对坏文件同样拒写）
         };
         // reporter 路径：复用 [[hooks]] 里已认领的当前 meowo-reporter → 否则 sidecar。
         // 历史 cc-reporter 路径已废弃，必须改用当前 meowo-reporter，否则 ensure_kimi_hooks
@@ -118,11 +133,24 @@ impl super::ProviderSetup for KimiSetup {
                     .unwrap_or(false)
             });
         let Some(reporter) = existing.or_else(super::sibling_reporter) else {
-            return;
+            eprintln!("Meowo repair[kimi]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
+            return Some(RepairReason::ReporterNotFound);
         };
         if ensure_kimi_hooks(&mut doc, &reporter) {
             super::backup_once(&cfg);
-            let _ = crate::fsutil::write_atomic(&cfg, &doc.to_string());
+            match crate::fsutil::write_atomic(&cfg, &doc.to_string()) {
+                Ok(_) => {
+                    eprintln!("Meowo repair[kimi]: 已写入 hooks 到 {}", cfg.display());
+                    None
+                }
+                Err(e) => {
+                    eprintln!("Meowo repair[kimi]: config.toml 写入失败（{e}）");
+                    Some(RepairReason::WriteFailed)
+                }
+            }
+        } else {
+            eprintln!("Meowo repair[kimi]: config.toml 已是目标状态，无需改动");
+            None
         }
     }
 }
@@ -201,13 +229,55 @@ mod tests {
     }
 
     #[test]
-    fn ensure_kimi_hooks_abandons_on_non_array_hooks() {
-        // hooks 键存在但非 array-of-tables（inline array / 字符串）：放弃不写坏，返回 false、文档原样。
-        for src in ["hooks = []\n", "hooks = \"oops\"\n"] {
+    fn ensure_kimi_hooks_abandons_on_nonempty_or_malformed_hooks() {
+        // hooks 键存在但非 array-of-tables 且不可安全替换（非空内联数组 / 字符串）：
+        // 放弃不写坏，返回 false、文档原样。空的 `hooks = []` 不在此列（见下一个测试）。
+        for src in ["hooks = [1, 2]\n", "hooks = \"oops\"\n"] {
             let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
             assert!(!ensure_kimi_hooks(&mut doc, "C:/x/meowo-reporter.exe"), "src={src:?}");
             assert_eq!(doc.to_string(), src);
         }
+    }
+
+    #[test]
+    fn ensure_kimi_hooks_replaces_empty_inline_array_from_legacy_kimi() {
+        // 旧 Python 版 kimi-cli 的真实结构：顶层标量 + `hooks = []` 空内联数组 + 各 [section] 表。
+        // 空数组语义等价于无 hooks，应被替换为 [[hooks]] 并写入 6 条，且其余键/表原样保留。
+        let src = "\
+default_model = \"kimi-code/kimi-for-coding\"
+theme = \"dark\"
+hooks = []
+merge_all_available_skills = true
+
+[models.\"kimi-code/kimi-for-coding\"]
+provider = \"managed:kimi-code\"
+
+[providers.\"managed:kimi-code\"]
+type = \"managed\"
+api_key = \"secret-should-survive\"
+
+[loop_control]
+max_steps_per_turn = 100
+";
+        let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
+        assert!(ensure_kimi_hooks(&mut doc, "C:/app/meowo-reporter.exe"));
+        let out = doc.to_string();
+        // 输出必须仍是合法 TOML（array-of-tables 不能错位插到 section 里）。
+        let reparsed: toml_edit::DocumentMut = out.parse().expect("产物应为合法 TOML");
+        // 6 条 [[hooks]]，命令均为 meowo-reporter --provider kimi。
+        let arr = reparsed["hooks"].as_array_of_tables().expect("hooks 应为 array-of-tables");
+        assert_eq!(arr.len(), 6);
+        assert_eq!(out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#).count(), 6);
+        for ev in KIMI_EVENTS {
+            assert!(out.contains(&format!("event = \"{ev}\"")), "{ev} 未写入");
+        }
+        // 其余键与 [section] 表原样保留（含 api_key，绝不能丢）。
+        assert_eq!(reparsed["default_model"].as_str(), Some("kimi-code/kimi-for-coding"));
+        assert_eq!(reparsed["merge_all_available_skills"].as_bool(), Some(true));
+        assert_eq!(reparsed["providers"]["managed:kimi-code"]["api_key"].as_str(), Some("secret-should-survive"));
+        assert_eq!(reparsed["loop_control"]["max_steps_per_turn"].as_integer(), Some(100));
+        // 幂等：二跑无改动。
+        assert!(!ensure_kimi_hooks(&mut doc, "C:/app/meowo-reporter.exe"));
     }
 
     /// dry-run：KIMI_SHARE_DIR=<真实 ~/.kimi-code 的副本> 时跑 KimiSetup::apply，人工核对副本产物。

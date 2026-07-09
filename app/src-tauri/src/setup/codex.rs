@@ -214,22 +214,29 @@ impl super::ProviderSetup for CodexSetup {
     fn detect(&self) -> bool {
         meowo_reporter::codex::codex_home().is_some_and(|d| d.is_dir())
     }
-    fn apply(&self) {
+    fn apply(&self) -> Option<super::RepairReason> {
+        use super::RepairReason;
         let Some(home) = meowo_reporter::codex::codex_home() else {
-            return;
+            eprintln!("Meowo repair[codex]: 解析不到 codex_home，跳过");
+            return Some(RepairReason::NotDetected);
         };
         let hooks_path = home.join("hooks.json");
         // 1) hooks.json：不存在从空起；存在但读不了/解析失败 → 放弃（绝不覆盖用户文件）。
         let root_text = match std::fs::read_to_string(&hooks_path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{\"hooks\":{}}".to_string(),
-            Err(_) => return,
+            Err(e) => {
+                eprintln!("Meowo repair[codex]: hooks.json 读取失败（{e}），跳过");
+                return Some(RepairReason::ConfigUnreadable);
+            }
         };
         let Ok(mut root) = serde_json::from_str::<serde_json::Value>(root_text.trim_start_matches('\u{feff}')) else {
-            return;
+            eprintln!("Meowo repair[codex]: hooks.json 解析失败（非法 JSON），跳过");
+            return Some(RepairReason::ConfigUnreadable);
         };
         if !root.is_object() {
-            return;
+            eprintln!("Meowo repair[codex]: hooks.json 顶层非对象，跳过");
+            return Some(RepairReason::ConfigUnreadable);
         }
         // reporter 路径：复用已配置的当前 meowo-reporter → 否则 app 同目录 sidecar。
         // 历史 cc-reporter 路径已废弃，即使可执行仍存在也不能复用，否则 ensure_codex_hooks
@@ -247,28 +254,35 @@ impl super::ProviderSetup for CodexSetup {
             })
             .or_else(super::sibling_reporter);
         let Some(reporter) = reporter else {
-            return;
+            eprintln!("Meowo repair[codex]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
+            return Some(RepairReason::ReporterNotFound);
         };
         if ensure_codex_hooks(&mut root, &reporter) {
             let Ok(pretty) = serde_json::to_string_pretty(&root) else {
-                return;
+                eprintln!("Meowo repair[codex]: hooks 序列化失败，跳过");
+                return Some(RepairReason::WriteFailed);
             };
             if hooks_path.exists() {
                 super::backup_once(&hooks_path);
             }
             if crate::fsutil::write_atomic(&hooks_path, &format!("{pretty}\n")).is_err() {
-                return; // hooks.json 没写成，信任步骤跳过（下次启动整段重试）
+                eprintln!("Meowo repair[codex]: hooks.json 写入失败，跳过信任步骤（下次启动整段重试）");
+                return Some(RepairReason::WriteFailed); // hooks.json 没写成，信任步骤跳过（下次启动整段重试）
             }
+            eprintln!("Meowo repair[codex]: 已写入 hooks 到 {}", hooks_path.display());
+        } else {
+            eprintln!("Meowo repair[codex]: hooks.json 已是目标状态，无需改动");
         }
-        // 2) config.toml 预信任：解析失败只跳过信任（hooks 已接上，退化 = codex 弹一次 Trust all）。
+        // 2) config.toml 预信任：hooks 此时已接上，本步纯属锦上添花——任何失败都返回 None（视为成功），
+        // 退化 = codex 弹一次 Trust all，不影响入库。
         let cfg_path = home.join("config.toml");
         let cfg_text = match std::fs::read_to_string(&cfg_path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(_) => return,
+            Err(_) => return None,
         };
         let Ok(mut doc) = cfg_text.parse::<toml_edit::DocumentMut>() else {
-            return;
+            return None;
         };
         let entries = claimed_codex_entries(&root);
         if ensure_trusted_hashes(&mut doc, &hooks_path.display().to_string(), &entries) {
@@ -277,6 +291,7 @@ impl super::ProviderSetup for CodexSetup {
             }
             let _ = crate::fsutil::write_atomic(&cfg_path, &doc.to_string());
         }
+        None
     }
 }
 

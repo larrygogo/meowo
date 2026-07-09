@@ -15,8 +15,8 @@ impl super::ProviderSetup for ClaudeSetup {
         // 与 apply() 内部「~/.claude 目录存在才创建 settings」的守卫同源。
         claude_settings_path().parent().is_some_and(|p| p.is_dir())
     }
-    fn apply(&self) {
-        apply();
+    fn apply(&self) -> Option<super::RepairReason> {
+        apply()
     }
 }
 
@@ -286,7 +286,8 @@ fn resolve_reporter_native(settings: &Value) -> Option<String> {
 
 /// 启动时调用：幂等地把 meowo-reporter 接入 Claude Code 的 settings.json（hooks + statusLine）。
 /// 全程 best-effort：读不到 / 解析失败 / 找不到二进制都静默返回，绝不影响应用启动，绝不写坏文件。
-pub fn apply() {
+pub fn apply() -> Option<super::RepairReason> {
+    use super::RepairReason;
     let settings_path = claude_settings_path();
     let text = match std::fs::read_to_string(&settings_path) {
         Ok(t) => t,
@@ -295,24 +296,31 @@ pub fn apply() {
         // 避免在没装 CC 的机器上凭空造目录和文件。
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if !settings_path.parent().is_some_and(|p| p.is_dir()) {
-                return;
+                eprintln!("Meowo repair[claude]: ~/.claude 目录不存在，跳过");
+                return Some(RepairReason::NotDetected);
             }
             "{}".to_string()
         }
         // 其它读取失败（权限、非 UTF-8 编码如 UTF-16 等）：文件存在但读不了，
         // 绝不能当「不存在」处理——否则会拿空配置覆盖用户文件。
-        Err(_) => return,
+        Err(e) => {
+            eprintln!("Meowo repair[claude]: settings.json 读取失败（{e}），跳过");
+            return Some(RepairReason::ConfigUnreadable);
+        }
     };
     let Some(mut settings) = parse_settings(&text) else {
-        return; // 解析失败 → 绝不覆盖用户文件
+        eprintln!("Meowo repair[claude]: settings.json 解析失败（非法 JSON），跳过（绝不覆盖用户文件）");
+        return Some(RepairReason::ConfigUnreadable); // 解析失败 → 绝不覆盖用户文件
     };
     if !settings.is_object() {
-        return; // 顶层不是对象（数组/标量）：后续按键索引赋值会 panic，直接放弃
+        eprintln!("Meowo repair[claude]: settings.json 顶层非对象，跳过");
+        return Some(RepairReason::ConfigUnreadable); // 顶层不是对象（数组/标量）：后续按键索引赋值会 panic，直接放弃
     }
     let orig = settings.clone();
 
     let Some(reporter_native) = resolve_reporter_native(&settings) else {
-        return; // 找不到 meowo-reporter 二进制 → 无法接线
+        eprintln!("Meowo repair[claude]: 找不到 meowo-reporter 二进制（既有 hooks 无有效路径且 app 同目录无 sidecar），无法接线");
+        return Some(RepairReason::ReporterNotFound); // 找不到 meowo-reporter 二进制 → 无法接线
     };
 
     ensure_hooks(&mut settings, &reporter_native);
@@ -344,7 +352,8 @@ pub fn apply() {
     }
 
     if settings == orig {
-        return; // 已是目标状态 → 一字不改
+        eprintln!("Meowo repair[claude]: settings 已是目标状态，无需改动（若面板仍提示未接入，多半是 SessionStart 未挂 reporter 的判定差异，请反馈）");
+        return None; // 已是目标状态 → 一字不改
     }
 
     // 备份原文件，再原子写（先写临时文件后 rename）。备份只在不存在时写一次——
@@ -353,10 +362,23 @@ pub fn apply() {
     if !backup.exists() {
         let _ = std::fs::copy(&settings_path, &backup);
     }
-    if let Ok(pretty) = serde_json::to_string_pretty(&settings) {
-        let tmp = settings_path.with_extension("json.cckb-tmp");
-        if std::fs::write(&tmp, format!("{pretty}\n")).is_ok() {
-            let _ = std::fs::rename(&tmp, &settings_path);
+    let Ok(pretty) = serde_json::to_string_pretty(&settings) else {
+        eprintln!("Meowo repair[claude]: settings 序列化失败，跳过");
+        return Some(RepairReason::WriteFailed);
+    };
+    let tmp = settings_path.with_extension("json.cckb-tmp");
+    if std::fs::write(&tmp, format!("{pretty}\n")).is_err() {
+        eprintln!("Meowo repair[claude]: 写入临时文件失败（目录不可写/磁盘满/杀软拦截）");
+        return Some(RepairReason::WriteFailed);
+    }
+    match std::fs::rename(&tmp, &settings_path) {
+        Ok(_) => {
+            eprintln!("Meowo repair[claude]: 已写入 hooks 到 {}", settings_path.display());
+            None
+        }
+        Err(e) => {
+            eprintln!("Meowo repair[claude]: 写入 settings.json 失败（rename: {e}）");
+            Some(RepairReason::WriteFailed)
         }
     }
 }

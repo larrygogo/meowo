@@ -5,13 +5,31 @@ pub mod claude;
 pub mod codex;
 pub mod kimi;
 
+/// 接线失败的机器可读原因，回传前端以给出精准提示（如未登录 → 「请先登录」）。
+/// 序列化为 kebab-case 字符串；`None` 表示成功或已是目标状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RepairReason {
+    /// provider 数据目录不存在（视为未安装）。
+    NotDetected,
+    /// 承载 hooks 的配置文件尚未生成（如 kimi 的 config.toml 需先 `kimi login`）。
+    NeedLogin,
+    /// 找不到 meowo-reporter 二进制（既有 hooks 无有效路径且 app 同目录无 sidecar）。
+    ReporterNotFound,
+    /// 配置文件读取或解析失败（权限/编码/畸形），为保护用户文件放弃写入。
+    ConfigUnreadable,
+    /// 写入失败（目录不可写/磁盘满/杀软拦截）。
+    WriteFailed,
+}
+
 /// Provider 接线抽象。Sync：以 &'static dyn 静态注册表共享。
 pub trait ProviderSetup: Sync {
     fn key(&self) -> meowo_store::ProviderKey;
     /// 数据目录存在即视为已安装（各自尊重 env 覆盖）。不存在 → apply_all 跳过。
     fn detect(&self) -> bool;
-    /// 幂等接线。全程 best-effort：读不到/解析失败/找不到 reporter 均静默返回，绝不 panic。
-    fn apply(&self);
+    /// 幂等接线。全程 best-effort：绝不 panic。返回 `None` = 成功/已是目标状态；
+    /// `Some(reason)` = 无法接线（供「修复连接」把原因回传前端）。
+    fn apply(&self) -> Option<RepairReason>;
 }
 
 static CLAUDE_SETUP: claude::ClaudeSetup = claude::ClaudeSetup;
@@ -23,22 +41,24 @@ static ALL_SETUP: &[&dyn ProviderSetup] = &[&CLAUDE_SETUP, &CODEX_SETUP, &KIMI_S
 pub fn apply_all() {
     for s in ALL_SETUP {
         if s.detect() {
-            s.apply();
+            let _ = s.apply();
         }
     }
 }
 
 /// 对指定 provider 强制执行一次接线（不管 detect 结果）。用于用户手动点击「修复连接」。
 /// 返回是否成功 apply（true = 数据目录存在并已尝试写入；false = 未安装/找不到 reporter）。
-pub fn apply_provider(key: meowo_store::ProviderKey) -> bool {
+/// 返回 `None` = 已接线/已是目标状态；`Some(reason)` = 未能接线及原因（供前端提示）。
+pub fn apply_provider(key: meowo_store::ProviderKey) -> Option<RepairReason> {
     let Some(s) = ALL_SETUP.iter().find(|s| s.key() == key) else {
-        return false;
+        eprintln!("Meowo repair[{key:?}]: 无对应 ProviderSetup，跳过");
+        return Some(RepairReason::NotDetected);
     };
     if !s.detect() {
-        return false;
+        eprintln!("Meowo repair[{key:?}]: detect()=false（数据目录不存在，视为未安装），跳过接线");
+        return Some(RepairReason::NotDetected);
     }
-    s.apply();
-    true
+    s.apply()
 }
 
 /// app 可执行同目录的 meowo-reporter（打包态 sidecar 与 app 放一起）。

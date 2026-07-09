@@ -8,7 +8,7 @@ import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, typ
 import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
-import { useT } from "../i18n";
+import { useT, repairFailMessage } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
 
@@ -246,6 +246,7 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
   const [hooksStatus, setHooksStatus] = useState<HooksStatus | null>(null);
   const [repairingHooks, setRepairingHooks] = useState(false);
+  const [repairMsg, setRepairMsg] = useState<string | null>(null);
   // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
@@ -261,9 +262,15 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   const repairHooks = () => {
     if (repairingHooks) return;
     setRepairingHooks(true);
+    setRepairMsg(null);
     repairProviderHooks(provider)
-      .then((st) => setHooksStatus(st))
-      .catch(() => {})
+      .then((res) => {
+        setHooksStatus(res.status);
+        // 修复后仍非 installed → 接线没真正生效；按后端回传的 reason 给出精准提示
+        // （如 kimi 未登录 → 「请先登录」），不再静默吞掉。
+        setRepairMsg(res.status === "installed" ? null : repairFailMessage(t, res.reason));
+      })
+      .catch(() => setRepairMsg(repairFailMessage(t, null)))
       .finally(() => setRepairingHooks(false));
   };
 
@@ -356,6 +363,12 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
       {installed === false && installState === "error" && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
           {t.account.installFailed}
+        </div>
+      )}
+
+      {repairMsg && (
+        <div className="provider-card-body agent-install-error" data-testid={"agent-repair-failed-" + provider}>
+          {repairMsg}
         </div>
       )}
 
