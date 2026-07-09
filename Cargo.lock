@@ -2046,10 +2046,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "meowo-agent"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml_edit 0.22.27",
+]
+
+[[package]]
 name = "meowo-app"
 version = "0.4.2"
 dependencies = [
  "mac-notification-sys",
+ "meowo-agent",
  "meowo-reporter",
  "meowo-store",
  "notify",
@@ -2081,6 +2090,7 @@ name = "meowo-reporter"
 version = "0.1.0"
 dependencies = [
  "filetime",
+ "meowo-agent",
  "meowo-store",
  "serde",
  "serde_json",

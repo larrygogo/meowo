@@ -5,22 +5,8 @@ pub mod claude;
 pub mod codex;
 pub mod kimi;
 
-/// 接线失败的机器可读原因，回传前端以给出精准提示（如未登录 → 「请先登录」）。
-/// 序列化为 kebab-case 字符串；`None` 表示成功或已是目标状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RepairReason {
-    /// provider 数据目录不存在（视为未安装）。
-    NotDetected,
-    /// 承载 hooks 的配置文件尚未生成（如 kimi 的 config.toml 需先 `kimi login`）。
-    NeedLogin,
-    /// 找不到 meowo-reporter 二进制（既有 hooks 无有效路径且 app 同目录无 sidecar）。
-    ReporterNotFound,
-    /// 配置文件读取或解析失败（权限/编码/畸形），为保护用户文件放弃写入。
-    ConfigUnreadable,
-    /// 写入失败（目录不可写/磁盘满/杀软拦截）。
-    WriteFailed,
-}
+/// 接线失败原因与命令认领规则住在 `meowo-agent`（与 hooks 格式适配器同层，供 reporter/app 共用）。
+pub use meowo_agent::config::{claim_provider_cmd, RepairReason};
 
 /// Provider 接线抽象。Sync：以 &'static dyn 静态注册表共享。
 pub trait ProviderSetup: Sync {
@@ -80,61 +66,3 @@ pub(crate) fn backup_once(path: &std::path::Path) {
     }
 }
 
-/// 解析 hook command 为（可执行路径, 余参）。首 token 支持带双引号或裸路径。
-pub(crate) fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
-    let c = cmd.trim();
-    let (path, rest) = if let Some(r) = c.strip_prefix('"') {
-        let end = r.find('"')?;
-        (r[..end].to_string(), r[end + 1..].trim())
-    } else {
-        match c.split_once(char::is_whitespace) {
-            Some((p, r)) => (p.to_string(), r.trim()),
-            None => (c.to_string(), ""),
-        }
-    };
-    let args = rest.split_whitespace().map(str::to_string).collect();
-    Some((path, args))
-}
-
-/// 严格认领带 provider 参数的命令（codex/kimi 形态）：可执行文件名恰为 meowo-reporter[.exe]
-///（或历史遗留 cc-reporter[.exe]）且余参恰为 ["--provider", provider]。返回可执行路径。
-/// 不裸 contains，不误伤用户 hook。
-pub(crate) fn claim_provider_cmd(cmd: &str, provider: &str) -> Option<String> {
-    let (path, args) = parse_hook_command(cmd)?;
-    let name = std::path::Path::new(&path).file_name()?.to_str()?;
-    let is_reporter = matches!(
-        name.to_ascii_lowercase().as_str(),
-        "meowo-reporter" | "meowo-reporter.exe" | "cc-reporter" | "cc-reporter.exe"
-    );
-    (is_reporter && args == ["--provider", provider]).then_some(path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn claim_provider_cmd_strict() {
-        // 认领：带引号/裸路径两种形态。
-        assert_eq!(
-            claim_provider_cmd("\"C:/x/meowo-reporter.exe\" --provider codex", "codex").as_deref(),
-            Some("C:/x/meowo-reporter.exe")
-        );
-        assert_eq!(
-            claim_provider_cmd("C:/x/meowo-reporter.exe --provider kimi", "kimi").as_deref(),
-            Some("C:/x/meowo-reporter.exe")
-        );
-        // 拒绝：provider 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
-        // 历史遗留 cc-reporter 也认领，便于升级时替换旧 hooks。
-        assert_eq!(
-            claim_provider_cmd("C:/x/cc-reporter.exe --provider kimi", "kimi").as_deref(),
-            Some("C:/x/cc-reporter.exe")
-        );
-        // 拒绝：provider 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
-        assert!(claim_provider_cmd("C:/x/meowo-reporter.exe --provider codex", "kimi").is_none());
-        assert!(claim_provider_cmd("\"C:/x/meowo-reporter.exe\"", "codex").is_none());
-        assert!(claim_provider_cmd("C:/x/meowo-reporter.exe --provider codex --v", "codex").is_none());
-        assert!(claim_provider_cmd("node meowo-reporter-notify.js --provider codex", "codex").is_none());
-        assert!(claim_provider_cmd("C:/x/cc-reporter-not-us.exe --provider codex", "codex").is_none());
-    }
-}

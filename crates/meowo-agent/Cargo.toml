@@ -1,0 +1,8 @@
+[package]
+name = "meowo-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+toml_edit = { workspace = true }

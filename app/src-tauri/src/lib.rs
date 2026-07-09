@@ -1369,45 +1369,6 @@ fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
     false
 }
 
-/// kimi config.toml 文本里，`event = "SessionStart"` 的 `[[hooks]]` 块内是否有指向 meowo-reporter
-/// 且带 `--provider <p>` 的 command。纯函数，无 TOML 解析库，按行文本 + `[[hooks]]` 块边界的极简状态机
-/// （足够可靠：只在同一块内把 event/command 两行关联起来，不识别块内的具体行序）。
-/// 只看 SessionStart 块（而非任意行匹配）：与 hooks_json_has_reporter 同一根因——只在非 SessionStart
-/// 事件（如 Stop）挂了 meowo-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
-fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
-    let want = format!("--provider {provider}");
-    let mut in_session_start = false;
-    let mut has_reporter = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if t == "[[hooks]]" {
-            if in_session_start && has_reporter {
-                return true;
-            }
-            in_session_start = false;
-            has_reporter = false;
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix("event") {
-            if let Some(v) = rest.trim_start().strip_prefix('=') {
-                if v.trim().trim_matches('"') == "SessionStart" {
-                    in_session_start = true;
-                }
-            }
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix("command") {
-            if let Some(v) = rest.trim_start().strip_prefix('=') {
-                let low = v.to_ascii_lowercase();
-                if low.contains("meowo-reporter") && v.contains(&want) {
-                    has_reporter = true;
-                }
-            }
-        }
-    }
-    in_session_start && has_reporter
-}
-
 /// claude hooks 接入状态：读 claude settings.json 判断 meowo-reporter hooks 是否登记。
 /// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
 /// 有 meowo-reporter hook=Installed。
@@ -1449,18 +1410,18 @@ fn codex_hooks_status() -> HooksStatus {
     }
 }
 
-/// kimi hooks 接入状态：读 kimi_share_dir()/config.toml（新版 ~/.kimi-code 或旧版 ~/.kimi）。
-/// 文件不存在=Missing；读失败=Unknown。
+/// kimi hooks 接入状态：读实况变体的 config.toml（新版 ~/.kimi-code 或旧版 ~/.kimi），
+/// 判定交给该变体的配置格式适配器。文件不存在=Missing；读失败=Unknown（损坏不误报成未装）。
 fn kimi_hooks_status() -> HooksStatus {
-    let Some(dir) = meowo_reporter::kimi::kimi_share_dir() else {
+    let Some(inst) = meowo_reporter::kimi::kimi_install() else {
         return HooksStatus::Unknown;
     };
-    let path = dir.join("config.toml");
+    let path = inst.config_path();
     if !path.exists() {
         return HooksStatus::Missing;
     }
     match std::fs::read_to_string(&path) {
-        Ok(text) if toml_text_has_reporter(&text, "kimi") => HooksStatus::Installed,
+        Ok(text) if inst.config.has_reporter(&text, "kimi") => HooksStatus::Installed,
         Ok(_) => HooksStatus::Missing,
         Err(_) => HooksStatus::Unknown,
     }
@@ -3339,44 +3300,8 @@ mod hooks_check_tests {
         assert!(hooks_json_has_reporter(&v2, "codex"));
     }
 
-    #[test]
-    fn toml_text_detects_reporter_line() {
-        let toml = "\
-[[hooks]]\n\
-event = \"SessionStart\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n";
-        assert!(toml_text_has_reporter(toml, "kimi"));
-        assert!(!toml_text_has_reporter(toml, "codex"));
-        assert!(!toml_text_has_reporter("event = \"x\"\ncommand = \"node a.js\"", "kimi"));
-    }
-
-    #[test]
-    fn toml_text_ignores_reporter_on_non_session_start_event() {
-        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
-        let toml = "\
-[[hooks]]\n\
-event = \"Stop\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n";
-        assert!(!toml_text_has_reporter(toml, "kimi"));
-    }
-
-    #[test]
-    fn toml_text_detects_session_start_among_multiple_blocks() {
-        // Stop 块在前、SessionStart 块在后：应正确关联各自块内的 event/command，不串块。
-        let toml = "\
-[[hooks]]\n\
-event = \"Stop\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n\
-\n\
-[[hooks]]\n\
-event = \"SessionStart\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n";
-        assert!(toml_text_has_reporter(toml, "kimi"));
-    }
+    // kimi config.toml 的 SessionStart 判定已迁入 meowo_agent::config::ConfigFormat::KimiToml，
+    // 测试随之搬到该 crate（见 has_reporter_only_counts_session_start）。
 
     #[test]
     fn claude_hooks_status_three_way() {

@@ -9,62 +9,29 @@
 
 use std::path::{Path, PathBuf};
 
-/// kimi 数据根，优先级：`KIMI_SHARE_DIR` env > 存在的新版 `~/.kimi-code` > 存在的旧版 `~/.kimi`
-/// （兼容旧 Python 版 kimi-cli，其数据目录为 `~/.kimi`、配置/hook 格式与新版一致）> 回退 `~/.kimi-code`
-/// （两者都不存在时的默认，供全新安装写入）。检测/接线/状态/账号凭据/会话读取都经此入口，改这一处即全链路生效。
-/// account/kimi.rs 复用此函数读取凭据/device_id/config.toml，故提升为 pub。
+/// kimi 在本机的实况（走哪个变体、数据目录/配置/凭据/可执行在哪）。变体表见
+/// `meowo_agent::plugins::kimi`：新版 Node「Kimi Code」`~/.kimi-code` 优先，旧 Python 版
+/// `kimi-cli` 的 `~/.kimi` 兼容（两者 hook 格式一致）；都没装则给出新版的默认落点。
+/// 检测/接线/状态/账号凭据/会话读取全部经此一处解析路径。
+pub fn kimi_install() -> Option<meowo_agent::Installation> {
+    meowo_agent::by_id("kimi")?.resolve()
+}
+
+/// kimi 数据根。`kimi_install()` 的便捷取值——调用方只关心目录时用它。
 pub fn kimi_share_dir() -> Option<PathBuf> {
-    if let Ok(d) = std::env::var("KIMI_SHARE_DIR") {
-        if !d.is_empty() {
-            return Some(PathBuf::from(d));
-        }
-    }
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()?;
-    let home = PathBuf::from(home);
-    Some(pick_existing_share_dir(home.join(".kimi-code"), home.join(".kimi")))
+    kimi_install().map(|i| i.data_dir)
 }
 
-/// 在新版目录 `code`（~/.kimi-code）与旧版目录 `legacy`（~/.kimi）间择一：新版存在优先用新版；
-/// 否则旧版存在则用旧版；都不存在回退新版默认。纯逻辑（只读 is_dir），便于单测目录优先级。
-fn pick_existing_share_dir(code: PathBuf, legacy: PathBuf) -> PathBuf {
-    if code.is_dir() {
-        code
-    } else if legacy.is_dir() {
-        legacy
-    } else {
-        code
-    }
-}
-
-/// kimi 可执行的绝对路径（~/.kimi-code/bin/kimi[.exe]）；找不到回退裸名 "kimi"（依赖 PATH）。
-/// resume 用：meowo-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先用绝对路径，
+/// kimi 可执行的绝对路径；找不到回退裸名 "kimi"（依赖 PATH）。
+/// resume/launch 用：meowo-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先绝对路径，
 /// 避免 wt/powershell「系统找不到指定的文件」。
 pub fn kimi_exe() -> String {
-    let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
-    let mut cands: Vec<PathBuf> = Vec::new();
-    if let Some(d) = kimi_share_dir() {
-        cands.push(d.join("bin").join(bin));
-    }
-    // KIMI_SHARE_DIR 可能改了数据目录，但 bin 通常仍在 ~/.kimi-code/bin（新版）或 ~/.kimi/bin（旧版），
-    // 各列一条兜底。旧 Python 版常装在 ~/.local/bin，靠最后的裸名 "kimi" 走 PATH 兜住。
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        let home = PathBuf::from(home);
-        cands.push(home.join(".kimi-code").join("bin").join(bin));
-        cands.push(home.join(".kimi").join("bin").join(bin));
-    }
-    cands
-        .into_iter()
-        .find(|p| p.exists())
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "kimi".to_string())
+    kimi_install().map(|i| i.exe_command()).unwrap_or_else(|| "kimi".to_string())
 }
 
-/// kimi 可执行是否真实存在于 `~/.kimi-code/bin`（区别于 `kimi_exe` 找不到时回退裸名 "kimi"）。
+/// kimi 可执行是否真实落在某个已知位置（区别于 `kimi_exe` 找不到时回退裸名）。
 pub fn kimi_installed() -> bool {
-    let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
-    kimi_share_dir().map(|d| d.join("bin").join(bin).is_file()).unwrap_or(false)
+    kimi_install().is_some_and(|i| i.exe.is_some())
 }
 
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
@@ -212,8 +179,8 @@ pub fn parse_context(content: &str) -> Option<(i64, String)> {
 /// 逐行启发式解析（不引 toml 依赖，同 account/kimi.rs 既有范式）。
 pub fn context_window(model_alias: &str) -> i64 {
     const FALLBACK: i64 = 262_144;
-    let Some(dir) = kimi_share_dir() else { return FALLBACK };
-    let Ok(content) = std::fs::read_to_string(dir.join("config.toml")) else {
+    let Some(inst) = kimi_install() else { return FALLBACK };
+    let Ok(content) = std::fs::read_to_string(inst.config_path()) else {
         return FALLBACK;
     };
     let want = format!("[models.\"{model_alias}\"]");
@@ -340,24 +307,11 @@ mod tests {
     }
 
     #[test]
-    fn share_dir_prefers_kimi_code_then_legacy_kimi() {
-        // 用临时目录构造四种存在性组合，验证优先级：新版 > 旧版 > 回退新版默认。
-        let base = std::env::temp_dir().join(format!("cckb-kimi-share-{}", std::process::id()));
-        let code = base.join(".kimi-code");
-        let legacy = base.join(".kimi");
-        let _ = std::fs::remove_dir_all(&base);
-
-        // 两者都不存在 → 回退新版默认（供全新安装）。
-        assert_eq!(pick_existing_share_dir(code.clone(), legacy.clone()), code);
-
-        // 只有旧版存在 → 用旧版（兼容 Python 版 kimi-cli）。
-        std::fs::create_dir_all(&legacy).unwrap();
-        assert_eq!(pick_existing_share_dir(code.clone(), legacy.clone()), legacy);
-
-        // 两者都存在 → 新版优先。
-        std::fs::create_dir_all(&code).unwrap();
-        assert_eq!(pick_existing_share_dir(code.clone(), legacy.clone()), code);
-
-        let _ = std::fs::remove_dir_all(&base);
+    fn install_resolves_config_path_under_share_dir() {
+        // 目录优先级本身由 meowo-agent 的变体表单测覆盖（不碰真实 home）；这里只守住薄封装的一致性：
+        // config.toml 必须落在 share_dir 下，且 exe_command 非空。
+        let inst = kimi_install().expect("resolve 应总能给出实况或默认落点");
+        assert_eq!(inst.config_path(), kimi_share_dir().unwrap().join("config.toml"));
+        assert!(kimi_exe().to_ascii_lowercase().contains("kimi"));
     }
 }
