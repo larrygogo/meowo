@@ -22,16 +22,16 @@ pub fn kimi_share_dir() -> Option<PathBuf> {
     kimi_install().map(|i| i.data_dir)
 }
 
-/// kimi 可执行的绝对路径；找不到回退裸名 "kimi"（依赖 PATH）。
+/// kimi 的启动 argv（单元素：可执行绝对路径；找不到回退裸名 "kimi" 走 PATH）。
 /// resume/launch 用：meowo-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先绝对路径，
 /// 避免 wt/powershell「系统找不到指定的文件」。
-pub fn kimi_exe() -> String {
-    kimi_install().map(|i| i.exe_command()).unwrap_or_else(|| "kimi".to_string())
+pub fn kimi_launch_argv() -> Vec<String> {
+    kimi_install().map(|i| i.launch_argv()).unwrap_or_else(|| vec!["kimi".to_string()])
 }
 
-/// kimi 可执行是否真实落在某个已知位置（区别于 `kimi_exe` 找不到时回退裸名）。
+/// kimi 可执行是否真实落在某个已知位置（区别于 `kimi_launch_argv` 找不到时回退裸名）。
 pub fn kimi_installed() -> bool {
-    kimi_install().is_some_and(|i| i.exe.is_some())
+    kimi_install().is_some_and(|i| i.is_launchable())
 }
 
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
@@ -309,9 +309,11 @@ mod tests {
     #[test]
     fn install_resolves_config_path_under_share_dir() {
         // 目录优先级本身由 meowo-agent 的变体表单测覆盖（不碰真实 home）；这里只守住薄封装的一致性：
-        // config.toml 必须落在 share_dir 下，且 exe_command 非空。
+        // config.toml 必须落在 share_dir 下，argv 非空且指向 kimi。
         let inst = kimi_install().expect("resolve 应总能给出实况或默认落点");
         assert_eq!(inst.config_path(), kimi_share_dir().unwrap().join("config.toml"));
-        assert!(kimi_exe().to_ascii_lowercase().contains("kimi"));
+        let argv = kimi_launch_argv();
+        assert_eq!(argv.len(), 1);
+        assert!(argv[0].to_ascii_lowercase().contains("kimi"));
     }
 }

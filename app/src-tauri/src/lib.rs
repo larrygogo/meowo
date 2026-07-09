@@ -1421,7 +1421,7 @@ fn kimi_hooks_status() -> HooksStatus {
         return HooksStatus::Missing;
     }
     match std::fs::read_to_string(&path) {
-        Ok(text) if inst.config.has_reporter(&text, "kimi") => HooksStatus::Installed,
+        Ok(text) if inst.hooks.has_reporter(&text, "kimi") => HooksStatus::Installed,
         Ok(_) => HooksStatus::Missing,
         Err(_) => HooksStatus::Unknown,
     }

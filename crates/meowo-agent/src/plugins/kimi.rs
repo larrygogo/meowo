@@ -1,26 +1,58 @@
 //! kimi 插件。两个变体——这正是变体层存在的理由：
 //!
-//! | tag | 发行 | 数据目录 | hooks 格式 | 可执行 |
+//! | tag | 发行 | 数据目录 | hooks 默认形态 | 可执行 |
 //! |---|---|---|---|---|
-//! | `modern` | Node 版 **Kimi Code** | `~/.kimi-code` | `[[hooks]]`（默认无 hooks 键） | `<data>/bin/kimi` |
-//! | `legacy` | 旧 Python 版 **kimi-cli** | `~/.kimi` | `[[hooks]]`（默认 `hooks = []` 空内联数组） | `~/.local/bin/kimi` 等 |
+//! | `modern` | Node 版 **Kimi Code** | `~/.kimi-code` | 无顶层 `hooks` 键 | `<data>/bin/kimi` |
+//! | `legacy` | 旧 Python 版 **kimi-cli** | `~/.kimi` | `hooks = []` 空内联数组 | `~/.local/bin/kimi` 等 |
 //!
 //! 两者的 hook 配置格式与 hook stdin 载荷（session_id/cwd/hook_event_name）实测一致，故共用
-//! [`ConfigFormat::KimiToml`]——差的只是目录与「空内联数组」这一形态，都已在声明里表达。
+//! 同一份 [`HookSpec`]——差的只是目录与「空内联数组」这一形态，都已在声明里表达。
 
 use crate::{
-    auth::AuthScheme,
-    config::ConfigFormat,
+    auth::{AuthScheme, CredentialSource, OAuthRefresh},
+    config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig, RepairReason},
     id::{self, AgentId},
+    launch::{LaunchCandidate, LaunchSpec, Root},
     registry::AgentPlugin,
-    variant::{DataDirSpec, ExeSpec, Variant},
+    variant::{DataDirSpec, Variant},
+};
+
+/// 接线事件集。PermissionRequest = kimi 交互式等待用户审批前触发（官方源码确认，observation-only），
+/// 用于卡片「待交互」显示。
+static EVENTS: [HookEvent; 6] = [
+    HookEvent::plain("SessionStart"),
+    HookEvent::plain("UserPromptSubmit"),
+    HookEvent::plain("PostToolUse"),
+    HookEvent::plain("Stop"),
+    HookEvent::plain("SessionEnd"),
+    HookEvent::plain("PermissionRequest"),
+];
+
+/// kimi 0.20 支持的全部 hook 事件（HOOK_EVENT_TYPES）。一条非法 event 会让 kimi **静默禁用全部**
+/// hooks（源码 salvageConfigData），故 EVENTS 有针对本表的绊线测试。
+pub const EVENT_WHITELIST: [&str; 16] = [
+    "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionResult",
+    "UserPromptSubmit", "Stop", "StopFailure", "Interrupt", "SessionStart", "SessionEnd",
+    "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "Notification",
+];
+
+/// config.toml 由 `kimi login` 生成——不存在即「需先登录」，不凭空创建。
+/// command 不加引号：与 kimi 现存配置的书写形态一致，避免无谓改写用户在用的条目。
+static HOOKS: HookSpec = HookSpec {
+    config_rel: "config.toml",
+    format: ConfigFormat::KimiToml,
+    missing: MissingConfig::Fail(RepairReason::NeedLogin),
+    events: &EVENTS,
+    command: CommandSpec { quote_exe: false, with_provider: true },
 };
 
 /// 来源：kimi-code 开源包 `packages/oauth/src/constants.ts`。
 const AUTH_MODERN: AuthScheme = AuthScheme {
-    credentials_rel: "credentials/kimi-code.json",
-    token_url: "https://auth.kimi.com/api/oauth/token",
-    client_id: "17e5f671-d194-4dfb-9706-5516cb48c098",
+    credentials: CredentialSource::File("credentials/kimi-code.json"),
+    refresh: Some(OAuthRefresh {
+        token_url: "https://auth.kimi.com/api/oauth/token",
+        client_id: "17e5f671-d194-4dfb-9706-5516cb48c098",
+    }),
     default_base_url: "https://api.kimi.com/coding/v1",
 };
 
@@ -29,21 +61,38 @@ const AUTH_MODERN: AuthScheme = AuthScheme {
 /// 变体层的意义正在于此，届时只改这一个 const，account 侧无需再动。
 const AUTH_LEGACY: AuthScheme = AUTH_MODERN;
 
+static LAUNCH_MODERN: LaunchSpec = LaunchSpec {
+    stem: "kimi",
+    candidates: &[
+        LaunchCandidate::Exe { root: Root::DataDir, sub: "bin" },
+        LaunchCandidate::Exe { root: Root::Home, sub: ".kimi-code/bin" },
+    ],
+};
+
+/// 旧版常经 uv/pipx 装到 `~/.local/bin`，不在数据目录下。
+static LAUNCH_LEGACY: LaunchSpec = LaunchSpec {
+    stem: "kimi",
+    candidates: &[
+        LaunchCandidate::Exe { root: Root::DataDir, sub: "bin" },
+        LaunchCandidate::Exe { root: Root::Home, sub: ".kimi/bin" },
+        LaunchCandidate::Exe { root: Root::Home, sub: ".local/bin" },
+    ],
+};
+
 static VARIANTS: [Variant; 2] = [
     Variant {
         tag: "modern",
         data_dir: DataDirSpec { env: Some("KIMI_SHARE_DIR"), candidates: &[".kimi-code"] },
-        config: ConfigFormat::KimiToml,
+        hooks: &HOOKS,
         auth: Some(&AUTH_MODERN),
-        exe: ExeSpec { stem: "kimi", in_data: &["bin"], in_home: &[".kimi-code/bin"] },
+        launch: &LAUNCH_MODERN,
     },
     Variant {
         tag: "legacy",
         data_dir: DataDirSpec { env: Some("KIMI_SHARE_DIR"), candidates: &[".kimi"] },
-        config: ConfigFormat::KimiToml,
+        hooks: &HOOKS,
         auth: Some(&AUTH_LEGACY),
-        // 旧版常经 uv/pipx 装到 ~/.local/bin，不在数据目录下。
-        exe: ExeSpec { stem: "kimi", in_data: &["bin"], in_home: &[".kimi/bin", ".local/bin"] },
+        launch: &LAUNCH_LEGACY,
     },
 ];
 
@@ -76,11 +125,19 @@ mod tests {
     }
 
     #[test]
+    fn events_all_in_upstream_whitelist() {
+        // 防连坐绊线：一条非法 event 会让 kimi 静默禁用全部 hooks。
+        for ev in EVENTS {
+            assert!(EVENT_WHITELIST.contains(&ev.name), "{} 不在 kimi 0.20 事件白名单", ev.name);
+        }
+    }
+
+    #[test]
     fn prefers_modern_then_legacy() {
         let home = std::env::temp_dir().join(format!("meowo-kimi-variants-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
 
-        // 都不存在 → 未安装。
+        // 都不存在 → 未配置过。
         std::fs::create_dir_all(&home).unwrap();
         assert!(probe_at(&home).is_none());
 
@@ -104,21 +161,23 @@ mod tests {
     }
 
     #[test]
-    fn exe_falls_back_to_bare_name_when_not_found() {
+    fn launch_falls_back_to_bare_name_when_not_found() {
         let home = std::env::temp_dir().join(format!("meowo-kimi-exe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join(".kimi")).unwrap();
 
         let inst = probe_at(&home).unwrap();
-        assert_eq!(inst.exe, None);
-        assert_eq!(inst.exe_command(), "kimi"); // 回退裸名走 PATH
+        assert!(!inst.is_launchable());
+        assert_eq!(inst.launch_argv(), vec!["kimi".to_string()]); // 回退裸名走 PATH
 
         // 旧版真实落点：~/.local/bin/kimi[.exe]
         let local_bin = home.join(".local").join("bin");
         std::fs::create_dir_all(&local_bin).unwrap();
         let exe = local_bin.join(crate::exe_file_name("kimi"));
         std::fs::write(&exe, b"").unwrap();
-        assert_eq!(probe_at(&home).unwrap().exe.as_deref(), Some(exe.as_path()));
+        let inst = probe_at(&home).unwrap();
+        assert!(inst.is_launchable());
+        assert_eq!(inst.launch_argv(), vec![exe.to_string_lossy().into_owned()]);
 
         let _ = std::fs::remove_dir_all(&home);
     }

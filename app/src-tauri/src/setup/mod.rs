@@ -5,8 +5,16 @@ pub mod claude;
 pub mod codex;
 pub mod kimi;
 
-/// 接线失败原因与命令认领规则住在 `meowo-agent`（与 hooks 格式适配器同层，供 reporter/app 共用）。
-pub use meowo_agent::config::{claim_provider_cmd, RepairReason};
+/// 接线失败原因住在 `meowo-agent`（与 hooks 格式适配器同层，供 reporter/app 共用）。
+pub use meowo_agent::config::RepairReason;
+
+/// codex 尚未迁入插件层，暂在此保留其命令认领规则（`"<exe>" --provider codex` 形态）。
+/// 迁入后由 `Variant.hooks.command.claim` 取代（见 rollout 计划 Phase B）。
+pub(crate) fn claim_provider_cmd(cmd: &str, provider: &str) -> Option<String> {
+    const CODEX_SHAPE: meowo_agent::CommandSpec =
+        meowo_agent::CommandSpec { quote_exe: true, with_provider: true };
+    CODEX_SHAPE.claim(cmd, provider)
+}
 
 /// Provider 接线抽象。Sync：以 &'static dyn 静态注册表共享。
 pub trait ProviderSetup: Sync {

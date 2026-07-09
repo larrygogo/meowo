@@ -29,12 +29,12 @@ impl super::ProviderSetup for KimiSetup {
 
         // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则 app 同目录的 sidecar。
         // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
-        let Some(reporter) = inst.config.claimed_reporter(&text, "kimi").or_else(super::sibling_reporter) else {
+        let Some(reporter) = inst.hooks.claimed_reporter(&text, "kimi").or_else(super::sibling_reporter) else {
             eprintln!("Meowo repair[kimi]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
             return Some(RepairReason::ReporterNotFound);
         };
 
-        match inst.config.ensure_hooks(&text, &reporter, "kimi") {
+        match inst.hooks.ensure_hooks(&text, &reporter, "kimi") {
             EnsureOutcome::Changed(next) => {
                 super::backup_once(&cfg);
                 match crate::fsutil::write_atomic(&cfg, &next) {
@@ -78,7 +78,7 @@ mod tests {
         let hooks = doc.get("hooks").and_then(|h| h.as_array_of_tables()).map(|a| a.len()).unwrap_or(0);
         eprintln!("变体={} 配置={}", inst.variant_tag, inst.config_path().display());
         eprintln!("apply reason={reason:?}  [[hooks]] 条数={hooks}");
-        eprintln!("SessionStart 已接线={}", inst.config.has_reporter(&text, "kimi"));
+        eprintln!("SessionStart 已接线={}", inst.hooks.has_reporter(&text, "kimi"));
         eprintln!("顶层键={:?}", doc.as_table().iter().map(|(k, _)| k).collect::<Vec<_>>());
     }
 }

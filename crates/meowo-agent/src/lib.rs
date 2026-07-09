@@ -11,15 +11,17 @@
 pub mod auth;
 pub mod config;
 pub mod id;
+pub mod launch;
 pub mod plugins;
 pub mod registry;
 pub mod variant;
 
-pub use auth::AuthScheme;
-pub use config::{ConfigFormat, EnsureOutcome, RepairReason};
+pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
+pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason};
 pub use id::AgentId;
+pub use launch::{LaunchCandidate, LaunchSpec, Root};
 pub use registry::{all, by_id, AgentPlugin};
-pub use variant::{DataDirSpec, ExeSpec, Installation, Variant};
+pub use variant::{DataDirSpec, Installation, Variant};
 
 use std::path::{Path, PathBuf};
 

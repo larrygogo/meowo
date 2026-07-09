@@ -162,7 +162,10 @@ fn ensure_valid_kimi_token() -> Option<String> {
 
     // 仍过期 → 执行刷新。expires_at 缺失/字段名不同会被读成 0 → 恒判过期而走到这里。
     // 端点与 client_id 取自实况变体：若返回 invalid_client，即该变体的 client_id 需按其版本修正。
-    let auth = kimi_auth()?;
+    let Some(auth) = kimi_auth().and_then(|a| a.refresh) else {
+        eprintln!("Meowo usage[kimi]: 该变体未声明 OAuth 刷新方式，无法刷新");
+        return None;
+    };
     eprintln!(
         "Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…（变体 {}）",
         meowo_reporter::kimi::kimi_install().map(|i| i.variant_tag).unwrap_or("?")

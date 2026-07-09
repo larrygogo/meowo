@@ -140,11 +140,14 @@ impl Agent for KimiAgent {
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
         // 用 kimi 可执行绝对路径（spawned 终端 PATH 未必含 kimi）。
-        vec![crate::kimi::kimi_exe(), "-r".into(), session_id.into()]
+        let mut argv = crate::kimi::kimi_launch_argv();
+        argv.push("-r".into());
+        argv.push(session_id.into());
+        argv
     }
     fn launch_args(&self) -> Vec<String> {
         // 绝对路径优先（spawned 终端 PATH 未必含 kimi），与 resume_args 同源。
-        vec![crate::kimi::kimi_exe()]
+        crate::kimi::kimi_launch_argv()
     }
     fn is_installed(&self) -> bool {
         let bin = if cfg!(windows) { "kimi.exe" } else { "kimi" };
