@@ -32,7 +32,9 @@
 
 ---
 
-## 2. 接口改造（Phase A · 无行为变更）
+> **进度**：Phase A ✅（`90b0198`）· Phase B ✅ · Phase C / D 待做。
+
+## 2. 接口改造（Phase A · 无行为变更）✅
 
 **A1. 抽出 `HookSpec`，让事件表成为变体的声明**
 
@@ -98,7 +100,18 @@ pub enum CredentialSource {
 
 ---
 
-## 3. Phase B · 迁 codex（先难在「副作用」，后难在「argv」）
+## 3. Phase B · 迁 codex（先难在「副作用」，后难在「argv」）✅
+
+**落地时的两点偏离设计**
+- `SetupBehavior` trait 没建。codex 的副作用只需要「hooks.json 写完之后再做点事」这一个切点，
+  一个 `AfterWrite` 函数指针就够；为一个实现造 trait 是空架子。claude 的 statusLine 写在
+  **同一个 settings.json 里**，需要的是 `amend`（写前改文本）而非 `after_write`——Phase C 再引入。
+- 接线编排提成了 `setup::wire_hooks(inst, agent_id, after)`，kimi/codex 共用。三个「绝不」
+  （解析失败绝不写、写前必备份、一律原子写）在这一处集中兑现，不再各写一遍。
+
+**一处行为改进**：`hooks` 键存在但非 object 时，旧实现返回「无改动」，上层会把它当成
+「已是目标状态」谎报成功；现在如实回传 `Abandon(ConfigUnreadable)`，「修复连接」会给出原因。
+同理，SessionStart 上挂着废弃的 `cc-reporter` 时，旧实现不认领、重复追加一条；现在认领并更新。
 
 codex 排在 claude 前面：它的两个难点（接线副作用、argv 可执行）是 claude 也要用的机制，且 codex 没有 Keychain 这类平台分叉，做起来干净。
 

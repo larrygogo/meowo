@@ -38,6 +38,9 @@ pub enum EnsureOutcome {
 pub enum ConfigFormat {
     /// kimi：`config.toml` 顶层 `[[hooks]]` array-of-tables。
     KimiToml,
+    /// codex：`hooks.json` 的 `{"hooks": {"<Event>": [{"hooks":[{...}]}]}}`，条目**无** matcher。
+    /// 顶层只允许 `hooks` 键（codex 侧 deny_unknown_fields）。
+    CodexJson,
 }
 
 /// 配置文件不存在时怎么办。声明式，避免每个 agent 的 `apply` 各写一遍 NotFound 分支。
@@ -119,6 +122,7 @@ impl HookSpec {
     pub fn ensure_hooks(&self, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
         match self.format {
             ConfigFormat::KimiToml => kimi_toml::ensure_hooks(self, cur_text, reporter, agent_id),
+            ConfigFormat::CodexJson => codex_json::ensure_hooks(self, cur_text, reporter, agent_id),
         }
     }
 
@@ -138,6 +142,7 @@ impl HookSpec {
     fn claimed_at(&self, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
         match self.format {
             ConfigFormat::KimiToml => kimi_toml::claimed_at(self, cur_text, agent_id, event),
+            ConfigFormat::CodexJson => codex_json::claimed_at(self, cur_text, agent_id, event),
         }
     }
 }
@@ -285,6 +290,110 @@ mod kimi_toml {
             .find_map(|t| t.get("command").and_then(|v| v.as_str()).and_then(|c| spec.command.claim(c, agent_id)));
         found
     }
+}
+
+// ═══ CodexJson ═══
+
+mod codex_json {
+    use super::*;
+    use serde_json::{json, Value};
+
+    /// 解析 JSON 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的 JSON 带 BOM，
+    /// serde_json 会直接报错，曾导致无感接线静默失败。
+    pub fn parse(text: &str) -> Option<Value> {
+        let v: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+        v.is_object().then_some(v)
+    }
+
+    pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+        // 解析失败 / 顶层非对象 → 绝不覆盖用户文件。
+        let Some(mut root) = parse(cur_text) else {
+            return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
+        };
+        match merge(spec, &mut root, reporter, agent_id) {
+            Merge::Abandon => EnsureOutcome::Abandon(RepairReason::ConfigUnreadable),
+            Merge::Unchanged => EnsureOutcome::Unchanged,
+            Merge::Changed => match serde_json::to_string_pretty(&root) {
+                Ok(s) => EnsureOutcome::Changed(format!("{s}\n")),
+                Err(_) => EnsureOutcome::Abandon(RepairReason::WriteFailed),
+            },
+        }
+    }
+
+    enum Merge {
+        Changed,
+        Unchanged,
+        Abandon,
+    }
+
+    fn merge(spec: &HookSpec, root: &mut Value, reporter: &str, agent_id: &str) -> Merge {
+        let desired_cmd = spec.command.render(reporter, agent_id);
+        let mut changed = false;
+
+        match root.get("hooks") {
+            // 键不存在：hooks.json 整个文件本就可从空态建，与 kimi「config.toml 缺失即未登录」
+            // 不同是有意的——此处不存在不代表用户手改过畸形内容。
+            None => {
+                root["hooks"] = json!({});
+                changed = true;
+            }
+            // 键存在但非 object（手改坏形状）：放弃不写，绝不覆盖用户文件。
+            Some(h) if !h.is_object() => return Merge::Abandon,
+            Some(_) => {}
+        }
+        let Some(hooks) = root["hooks"].as_object_mut() else {
+            return Merge::Abandon;
+        };
+
+        for ev in spec.events {
+            let entry_val = hooks.entry(ev.name.to_string()).or_insert_with(|| json!([]));
+            let Some(arr) = entry_val.as_array_mut() else {
+                continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
+            };
+            let mut found = false;
+            for entry in arr.iter_mut() {
+                let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) else {
+                    continue;
+                };
+                for h in hs.iter_mut() {
+                    let claimed = h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id));
+                    if let Some(path) = claimed {
+                        found = true;
+                        if path != reporter {
+                            h["command"] = json!(desired_cmd);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !found {
+                arr.push(json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] }));
+                changed = true;
+            }
+        }
+        if changed {
+            Merge::Changed
+        } else {
+            Merge::Unchanged
+        }
+    }
+
+    pub fn claimed_at(spec: &HookSpec, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
+        let root = parse(cur_text)?;
+        let hooks = root.get("hooks")?.as_object()?;
+        hooks
+            .iter()
+            .filter(|(ev, _)| event.is_none_or(|want| ev.as_str() == want))
+            .flat_map(|(_, arr)| arr.as_array().into_iter().flatten())
+            .flat_map(|entry| entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten())
+            .find_map(|h| h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id)))
+    }
+}
+
+/// 解析 hooks.json 文本（容忍 BOM，顶层须为对象）。供 meowo-app 的 codex trusted_hash 步骤复用，
+/// 免得它为了取回刚写出的结构再实现一遍 BOM 容忍。
+pub fn parse_json_config(text: &str) -> Option<serde_json::Value> {
+    codex_json::parse(text)
 }
 
 #[cfg(test)]
@@ -490,5 +599,144 @@ max_steps_per_turn = 100
         assert!(!KT.has_reporter("event = \"SessionStart\"\ncommand = \"node a.js\"\n", "kimi"));
         assert!(!KT.has_reporter("[[hooks]]\nevent = \"SessionStart\"\ncommand = \"node a.js\"\n", "kimi"));
         assert!(!KT.has_reporter("= = 非法 toml", "kimi"));
+    }
+
+    // ═══ CodexJson ═══
+
+    mod codex {
+        use super::super::*;
+        use serde_json::{json, Value};
+
+        /// codex 的接线规格。事件集 = dispatch 消化面 ∩ codex 0.142 支持面：无 SessionEnd
+        /// （codex 不支持，会话收尾靠 Stop + liveness）；不配 PreToolUse（matcher 目标是 claude 专属工具）。
+        static EVENTS: [HookEvent; 5] = [
+            HookEvent::plain("SessionStart"),
+            HookEvent::plain("UserPromptSubmit"),
+            HookEvent::plain("PostToolUse"),
+            HookEvent::plain("Stop"),
+            HookEvent::plain("PermissionRequest"),
+        ];
+        static CJ: HookSpec = HookSpec {
+            config_rel: "hooks.json",
+            format: ConfigFormat::CodexJson,
+            missing: MissingConfig::CreateFrom("{\"hooks\":{}}"),
+            events: &EVENTS,
+            command: CommandSpec { quote_exe: true, with_provider: true },
+        };
+
+        fn changed(v: &Value, reporter: &str) -> Value {
+            match CJ.ensure_hooks(&v.to_string(), reporter, "codex") {
+                EnsureOutcome::Changed(s) => serde_json::from_str(&s).unwrap(),
+                other => panic!("期望 Changed，实得 {other:?}"),
+            }
+        }
+        fn outcome(v: &Value, reporter: &str) -> EnsureOutcome {
+            CJ.ensure_hooks(&v.to_string(), reporter, "codex")
+        }
+
+        #[test]
+        fn adds_all_events_when_empty() {
+            let out = changed(&json!({}), "C:/x/meowo-reporter.exe");
+            for ev in EVENTS {
+                let h = &out["hooks"][ev.name][0]["hooks"][0];
+                assert_eq!(h["command"], "\"C:/x/meowo-reporter.exe\" --provider codex");
+                assert_eq!(h["timeout"], 5);
+            }
+            assert_eq!(outcome(&out, "C:/x/meowo-reporter.exe"), EnsureOutcome::Unchanged);
+        }
+
+        #[test]
+        fn adopts_manual_wiring_and_fills_missing() {
+            // 复刻手工接线形态：裸路径命令、3 事件、Stop timeout=10。
+            let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
+            let entry = |t: u64| json!({ "hooks": [{ "type": "command", "command": format!("{dev} --provider codex"), "timeout": t }] });
+            let v = json!({ "hooks": { "SessionStart": [entry(5)], "UserPromptSubmit": [entry(5)], "Stop": [entry(10)] }});
+            let out = changed(&v, dev); // 补 PostToolUse/PermissionRequest → 有改动
+            // 既有条目原样保留（裸路径不被改写为引号形态、timeout 10 不动）——幂等按解析后内容判定。
+            assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["command"], format!("{dev} --provider codex"));
+            assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["timeout"], 10);
+            assert!(out["hooks"]["PostToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("--provider codex"));
+            assert!(out["hooks"]["PermissionRequest"].is_array());
+            assert_eq!(outcome(&out, dev), EnsureOutcome::Unchanged);
+        }
+
+        #[test]
+        fn updates_stale_path_keeps_user_hooks() {
+            let v = json!({ "hooks": { "Stop": [
+                { "hooks": [{ "type": "command", "command": "node my-notify.js" }] },
+                { "hooks": [{ "type": "command", "command": "\"C:/old/meowo-reporter.exe\" --provider codex", "timeout": 5 }] }
+            ]}});
+            let out = changed(&v, "C:/new/meowo-reporter.exe");
+            assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["command"], "node my-notify.js"); // 用户 hook 不动
+            assert_eq!(out["hooks"]["Stop"][1]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\" --provider codex");
+            assert_eq!(out["hooks"]["Stop"].as_array().unwrap().len(), 2); // 不重复追加
+        }
+
+        #[test]
+        fn abandons_when_hooks_key_is_non_object() {
+            // 手改坏形状：既有实现会整体置 {}，无备份地清掉用户内容。必须放弃。
+            // 旧实现返回「无改动」，会被上层当成「已是目标状态」而谎报成功；现在如实回传原因。
+            assert_eq!(
+                outcome(&json!({ "hooks": 5 }), "C:/x/meowo-reporter.exe"),
+                EnsureOutcome::Abandon(RepairReason::ConfigUnreadable)
+            );
+        }
+
+        #[test]
+        fn abandons_on_invalid_or_non_object_json() {
+            for src in ["{not json", "[1,2]", "\"scalar\""] {
+                assert_eq!(
+                    CJ.ensure_hooks(src, "C:/x/meowo-reporter.exe", "codex"),
+                    EnsureOutcome::Abandon(RepairReason::ConfigUnreadable),
+                    "src={src:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn tolerates_utf8_bom() {
+            let out = CJ.ensure_hooks("\u{feff}{\"hooks\":{}}", "C:/x/meowo-reporter.exe", "codex");
+            assert!(matches!(out, EnsureOutcome::Changed(_)), "带 BOM 的 JSON 应能解析");
+        }
+
+        #[test]
+        fn skips_event_with_non_array_value() {
+            // 某事件值为畸形形状（非 array）：该事件原样跳过不动，其余事件正常补齐。
+            let out = changed(&json!({ "hooks": { "Stop": "oops" } }), "C:/x/meowo-reporter.exe");
+            assert_eq!(out["hooks"]["Stop"], json!("oops"));
+            for ev in EVENTS.iter().filter(|e| e.name != "Stop") {
+                assert!(out["hooks"][ev.name][0]["hooks"][0]["command"].as_str().unwrap().contains("--provider codex"));
+            }
+        }
+
+        #[test]
+        fn has_reporter_only_counts_session_start() {
+            let wired = changed(&json!({}), "C:/x/meowo-reporter.exe").to_string();
+            assert!(CJ.has_reporter(&wired, "codex"));
+            assert!(!CJ.has_reporter(&wired, "kimi")); // agent 不符
+            assert_eq!(CJ.claimed_reporter(&wired, "codex").as_deref(), Some("C:/x/meowo-reporter.exe"));
+
+            // 只在 Stop 挂了 reporter：不应判定为已接入；但仍能取到二进制位置。
+            let stop_only = json!({ "hooks": { "Stop": [
+                { "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex", "timeout": 5 }] }
+            ]}}).to_string();
+            assert!(!CJ.has_reporter(&stop_only, "codex"));
+            assert_eq!(CJ.claimed_reporter(&stop_only, "codex").as_deref(), Some("C:/x/meowo-reporter.exe"));
+
+            // 废弃的 cc-reporter 挂在 SessionStart：认领得到（供替换），但不算已接入。
+            let legacy = json!({ "hooks": { "SessionStart": [
+                { "hooks": [{ "type": "command", "command": "\"C:/x/cc-reporter.exe\" --provider codex", "timeout": 5 }] }
+            ]}}).to_string();
+            assert!(!CJ.has_reporter(&legacy, "codex"));
+            assert_eq!(CJ.claimed_reporter(&legacy, "codex"), None);
+            // 接线时会被认领并更新为当前 reporter，而非重复追加。
+            let fixed = changed(&serde_json::from_str::<Value>(&legacy).unwrap(), "C:/new/meowo-reporter.exe");
+            assert_eq!(fixed["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+            assert!(CJ.has_reporter(&fixed.to_string(), "codex"));
+
+            // 用户自有 hook / 无 hooks 键 → false。
+            assert!(!CJ.has_reporter(&json!({ "hooks": { "SessionStart": [{ "hooks": [{ "command": "node a.js" }] }] }}).to_string(), "codex"));
+            assert!(!CJ.has_reporter("{}", "codex"));
+        }
     }
 }

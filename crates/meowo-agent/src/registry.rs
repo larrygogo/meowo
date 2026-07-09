@@ -32,9 +32,10 @@ pub trait AgentPlugin: Sync {
 }
 
 static KIMI: crate::plugins::kimi::Kimi = crate::plugins::kimi::Kimi;
+static CODEX: crate::plugins::codex::Codex = crate::plugins::codex::Codex;
 
-/// 已迁入插件层的 agent。claude/codex 仍走 meowo-app 内的旧路径，迁完后补进来。
-static ALL: &[&dyn AgentPlugin] = &[&KIMI];
+/// 已迁入插件层的 agent。claude 仍走 meowo-app 内的旧路径，迁完后补进来。
+static ALL: &[&dyn AgentPlugin] = &[&KIMI, &CODEX];
 
 pub fn all() -> &'static [&'static dyn AgentPlugin] {
     ALL
@@ -52,6 +53,7 @@ mod tests {
     #[test]
     fn by_id_matches_declared_id() {
         assert_eq!(by_id("kimi").map(|p| p.id().as_str()), Some("kimi"));
+        assert_eq!(by_id("codex").map(|p| p.id().as_str()), Some("codex"));
         assert!(by_id("claude").is_none(), "claude 尚未迁入插件层");
         assert!(by_id("nope").is_none());
     }

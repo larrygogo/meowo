@@ -8,12 +8,63 @@ pub mod kimi;
 /// 接线失败原因住在 `meowo-agent`（与 hooks 格式适配器同层，供 reporter/app 共用）。
 pub use meowo_agent::config::RepairReason;
 
-/// codex 尚未迁入插件层，暂在此保留其命令认领规则（`"<exe>" --provider codex` 形态）。
-/// 迁入后由 `Variant.hooks.command.claim` 取代（见 rollout 计划 Phase B）。
-pub(crate) fn claim_provider_cmd(cmd: &str, provider: &str) -> Option<String> {
-    const CODEX_SHAPE: meowo_agent::CommandSpec =
-        meowo_agent::CommandSpec { quote_exe: true, with_provider: true };
-    CODEX_SHAPE.claim(cmd, provider)
+use meowo_agent::{EnsureOutcome, Installation, MissingConfig};
+
+/// 配置落盘之后的 agent 专属副作用（codex 的 trusted_hash 预信任）。入参是**实际写出的**配置文本。
+/// 返回 `Some(reason)` 会让整个接线报失败——只有当该步骤失败真的导致 hooks 不生效时才这么做。
+pub(crate) type AfterWrite = fn(&Installation, &str) -> Option<RepairReason>;
+
+/// 已迁入插件层的 agent 共用的接线编排：读配置 → 交给该变体的格式适配器 → 备份 → 原子写 → 副作用。
+/// 三个「绝不」在此集中兑现：解析失败绝不写、写前必备份、一律原子写。
+pub(crate) fn wire_hooks(inst: &Installation, agent_id: &str, after: Option<AfterWrite>) -> Option<RepairReason> {
+    let path = inst.config_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match inst.hooks.missing {
+            MissingConfig::CreateFrom(seed) => seed.to_string(),
+            MissingConfig::Fail(reason) => {
+                eprintln!("Meowo repair[{agent_id}]: {} 不存在（{reason:?}），跳过", path.display());
+                return Some(reason);
+            }
+        },
+        // 文件存在但读不了（权限、非 UTF-8 编码如 UTF-16）：绝不当「不存在」处理，
+        // 否则会拿初始模板覆盖用户文件。
+        Err(e) => {
+            eprintln!("Meowo repair[{agent_id}]: {} 读取失败（{e}），跳过", path.display());
+            return Some(RepairReason::ConfigUnreadable);
+        }
+    };
+
+    // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则 app 同目录的 sidecar。
+    // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
+    let Some(reporter) = inst.hooks.claimed_reporter(&text, agent_id).or_else(sibling_reporter) else {
+        eprintln!("Meowo repair[{agent_id}]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
+        return Some(RepairReason::ReporterNotFound);
+    };
+
+    let written = match inst.hooks.ensure_hooks(&text, &reporter, agent_id) {
+        EnsureOutcome::Changed(next) => {
+            if path.exists() {
+                backup_once(&path);
+            }
+            if let Err(e) = crate::fsutil::write_atomic(&path, &next) {
+                eprintln!("Meowo repair[{agent_id}]: {} 写入失败（{e}）", path.display());
+                return Some(RepairReason::WriteFailed);
+            }
+            eprintln!("Meowo repair[{agent_id}]: 已写入 hooks 到 {}（变体 {}）", path.display(), inst.variant_tag);
+            next
+        }
+        EnsureOutcome::Unchanged => {
+            eprintln!("Meowo repair[{agent_id}]: {} 已是目标状态，无需改动", path.display());
+            text
+        }
+        EnsureOutcome::Abandon(reason) => {
+            eprintln!("Meowo repair[{agent_id}]: {} 形态无法安全改写（{reason:?}），放弃（绝不写坏）", path.display());
+            return Some(reason);
+        }
+    };
+
+    after.and_then(|f| f(inst, &written))
 }
 
 /// Provider 接线抽象。Sync：以 &'static dyn 静态注册表共享。

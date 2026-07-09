@@ -2,7 +2,7 @@
 //! `hooks = []` 空内联数组的无损替换），本模块只剩 I/O 编排：解析实况 → 读配置 → 交给格式适配器
 //! → 备份 + 原子写。目录由变体表决定（新版 `~/.kimi-code` 优先，旧版 `~/.kimi` 兼容）。
 
-use meowo_agent::{EnsureOutcome, RepairReason};
+use meowo_agent::RepairReason;
 
 /// kimi 的 ProviderSetup。config.toml 由 `kimi login` 生成，缺失 → 视为未完成登录，跳过不创建。
 pub struct KimiSetup;
@@ -12,51 +12,17 @@ impl super::ProviderSetup for KimiSetup {
         meowo_store::ProviderKey::Kimi
     }
     fn detect(&self) -> bool {
-        meowo_reporter::kimi::kimi_share_dir().is_some_and(|d| d.is_dir())
+        meowo_reporter::kimi::kimi_install().is_some_and(|i| i.is_configured())
     }
     fn apply(&self) -> Option<RepairReason> {
         let Some(inst) = meowo_reporter::kimi::kimi_install() else {
             eprintln!("Meowo repair[kimi]: 解析不到 kimi 安装实况，跳过");
             return Some(RepairReason::NotDetected);
         };
-        let cfg = inst.config_path();
-        // config.toml 由 `kimi login` 生成——未登录时它不存在，接线无处可写。这不是错误，
-        // 而是「需要先登录」，据此给前端精准提示而非泛化的失败文案。
-        let Ok(text) = std::fs::read_to_string(&cfg) else {
-            eprintln!("Meowo repair[kimi]: config.toml 读取失败（缺失或不可读，需先完成 kimi login），跳过");
-            return Some(RepairReason::NeedLogin);
-        };
-
-        // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则 app 同目录的 sidecar。
-        // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
-        let Some(reporter) = inst.hooks.claimed_reporter(&text, "kimi").or_else(super::sibling_reporter) else {
-            eprintln!("Meowo repair[kimi]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
-            return Some(RepairReason::ReporterNotFound);
-        };
-
-        match inst.hooks.ensure_hooks(&text, &reporter, "kimi") {
-            EnsureOutcome::Changed(next) => {
-                super::backup_once(&cfg);
-                match crate::fsutil::write_atomic(&cfg, &next) {
-                    Ok(_) => {
-                        eprintln!("Meowo repair[kimi]: 已写入 hooks 到 {}（变体 {}）", cfg.display(), inst.variant_tag);
-                        None
-                    }
-                    Err(e) => {
-                        eprintln!("Meowo repair[kimi]: config.toml 写入失败（{e}）");
-                        Some(RepairReason::WriteFailed)
-                    }
-                }
-            }
-            EnsureOutcome::Unchanged => {
-                eprintln!("Meowo repair[kimi]: config.toml 已是目标状态，无需改动");
-                None
-            }
-            EnsureOutcome::Abandon(reason) => {
-                eprintln!("Meowo repair[kimi]: config.toml 形态无法安全改写（{reason:?}），放弃（绝不写坏）");
-                Some(reason)
-            }
-        }
+        // config.toml 由 `kimi login` 生成——不存在即「需先登录」（变体表里声明为
+        // MissingConfig::Fail(NeedLogin)），据此给前端精准提示而非泛化的失败文案。
+        // 接线无副作用，故不传 after_write。
+        super::wire_hooks(&inst, "kimi", None)
     }
 }
 

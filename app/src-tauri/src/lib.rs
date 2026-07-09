@@ -1343,32 +1343,6 @@ enum HooksStatus {
     Unknown,
 }
 
-/// claude/codex 同款 hooks JSON 里，`SessionStart` 事件下是否存在指向 meowo-reporter 且带
-/// `--provider <p>` 的 command。纯函数。启发式：命令含 "meowo-reporter"（basename）+
-/// "--provider <p>"——该组合不会误配用户自有 hook。
-/// 只看 SessionStart（而非扫描全部事件）：「新会话能否入库」只取决于 SessionStart 是否挂了钩子，
-/// 只在别的事件（如 Stop）挂了 meowo-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
-fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
-    let Some(arr) = v
-        .get("hooks")
-        .and_then(|h| h.get("SessionStart"))
-        .and_then(|s| s.as_array())
-    else {
-        return false;
-    };
-    let want = format!("--provider {provider}");
-    for entry in arr {
-        for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
-            if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
-                if cmd.to_ascii_lowercase().contains("meowo-reporter") && cmd.contains(&want) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 /// claude hooks 接入状态：读 claude settings.json 判断 meowo-reporter hooks 是否登记。
 /// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
 /// 有 meowo-reporter hook=Installed。
@@ -1391,29 +1365,10 @@ fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
     }
 }
 
-/// codex hooks 接入状态：读 ~/.codex/hooks.json。文件不存在=Missing；读/解析失败=Unknown（不误报）。
-fn codex_hooks_status() -> HooksStatus {
-    let Some(home) = meowo_reporter::codex::codex_home() else {
-        return HooksStatus::Unknown;
-    };
-    let path = home.join("hooks.json");
-    if !path.exists() {
-        return HooksStatus::Missing;
-    }
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return HooksStatus::Unknown;
-    };
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(v) if hooks_json_has_reporter(&v, "codex") => HooksStatus::Installed,
-        Ok(_) => HooksStatus::Missing,
-        Err(_) => HooksStatus::Unknown,
-    }
-}
-
-/// kimi hooks 接入状态：读实况变体的 config.toml（新版 ~/.kimi-code 或旧版 ~/.kimi），
-/// 判定交给该变体的配置格式适配器。文件不存在=Missing；读失败=Unknown（损坏不误报成未装）。
-fn kimi_hooks_status() -> HooksStatus {
-    let Some(inst) = meowo_reporter::kimi::kimi_install() else {
+/// 已迁入插件层的 agent（kimi/codex）的 hooks 接入状态：读实况变体的配置文件，判定交给该变体的
+/// 格式适配器。文件不存在=Missing；读失败=Unknown（暂时不可读/损坏不误报成未装）。
+fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) -> HooksStatus {
+    let Some(inst) = inst else {
         return HooksStatus::Unknown;
     };
     let path = inst.config_path();
@@ -1421,7 +1376,7 @@ fn kimi_hooks_status() -> HooksStatus {
         return HooksStatus::Missing;
     }
     match std::fs::read_to_string(&path) {
-        Ok(text) if inst.hooks.has_reporter(&text, "kimi") => HooksStatus::Installed,
+        Ok(text) if inst.hooks.has_reporter(&text, agent_id) => HooksStatus::Installed,
         Ok(_) => HooksStatus::Missing,
         Err(_) => HooksStatus::Unknown,
     }
@@ -1432,8 +1387,12 @@ fn kimi_hooks_status() -> HooksStatus {
 fn check_provider_hooks(provider: String) -> HooksStatus {
     match meowo_store::ProviderKey::parse(Some(&provider)) {
         meowo_store::ProviderKey::Claude => claude_hooks_status(),
-        meowo_store::ProviderKey::Codex => codex_hooks_status(),
-        meowo_store::ProviderKey::Kimi => kimi_hooks_status(),
+        meowo_store::ProviderKey::Codex => {
+            plugin_hooks_status(meowo_reporter::codex::codex_install(), "codex")
+        }
+        meowo_store::ProviderKey::Kimi => {
+            plugin_hooks_status(meowo_reporter::kimi::kimi_install(), "kimi")
+        }
     }
 }
 
@@ -3255,52 +3214,7 @@ mod new_session_tests {
 mod hooks_check_tests {
     use super::*;
 
-    #[test]
-    fn hooks_json_detects_reporter_with_provider() {
-        let v: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": { "SessionStart": [
-            { "matcher": "*", "hooks": [
-              { "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex", "timeout": 5 }
-            ]}
-          ]}
-        }"#).unwrap();
-        assert!(hooks_json_has_reporter(&v, "codex"));
-        assert!(!hooks_json_has_reporter(&v, "kimi")); // provider 不符
-    }
-
-    #[test]
-    fn hooks_json_ignores_foreign_hooks() {
-        let v: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "node other.js" }] }
-          ]}
-        }"#).unwrap();
-        assert!(!hooks_json_has_reporter(&v, "codex"));
-        // 无 hooks 键。
-        let empty: serde_json::Value = serde_json::from_str("{}").unwrap();
-        assert!(!hooks_json_has_reporter(&empty, "codex"));
-    }
-
-    #[test]
-    fn hooks_json_ignores_reporter_on_non_session_start_event() {
-        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
-        let v: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex" }] }
-          ]}
-        }"#).unwrap();
-        assert!(!hooks_json_has_reporter(&v, "codex"));
-        // SessionStart 与 Stop 并存：仍应命中。
-        let v2: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": {
-            "Stop": [{ "hooks": [{ "type": "command", "command": "node other.js" }] }],
-            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex" }] }]
-          }
-        }"#).unwrap();
-        assert!(hooks_json_has_reporter(&v2, "codex"));
-    }
-
-    // kimi config.toml 的 SessionStart 判定已迁入 meowo_agent::config::ConfigFormat::KimiToml，
+    // kimi / codex 的 SessionStart 判定已迁入 meowo_agent::config（KimiToml / CodexJson），
     // 测试随之搬到该 crate（见 has_reporter_only_counts_session_start）。
 
     #[test]

@@ -2050,6 +2050,7 @@ name = "meowo-agent"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "toml_edit 0.22.27",
 ]
 
