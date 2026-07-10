@@ -11,3 +11,8 @@ app/src-tauri/binaries/
 
 # macOS 签名材料(私钥/证书/p12),绝不提交
 .signing/
+
+# Claude Code：worktree 工作副本与本地设置覆盖。
+# 不整个忽略 .claude/——项目级的 settings.json / skills 是该入库共享的。
+.claude/worktrees/
+.claude/settings.local.json
