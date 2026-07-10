@@ -286,19 +286,23 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [filter, search, loadPage]);
 
-  const onArchiveSuccess = useCallback(
+  // 归档/取消归档会改变当前 tab 的可见性：乐观从列表移除该卡片并调整 counts，卡片即刻消失。
+  // 这里不能顺手 refresh()——refresh 是前沿触发，会与尚未落库的 set_archived 赛跑，抢先拉回旧数据
+  // 把乐观更新冲掉，卡片闪一下又回来。成功路径无需自己刷：后端 set_archived 写库后会发 board-changed，
+  // 届时 counts/列表被真实数据校正。失败路径由 onArchiveFailed 显式拉回。
+  const onArchiveOptimistic = useCallback(
     (sessionId: number) => {
-      // 归档/取消归档会改变当前 tab 的可见性，先乐观从列表移除该卡片并调整 counts：
-      // refresh 若正处在冷却窗口内会推迟到窗口末尾，乐观更新让卡片即刻消失。
       setItems((prev) => prev.filter((l) => l.session.id !== sessionId));
       setCounts((prev) => ({
         ...prev,
         archived: Math.max(0, prev.archived + (filter === "archived" ? -1 : 1)),
       }));
-      refresh();
     },
-    [filter, refresh]
+    [filter]
   );
+
+  // 归档失败：乐观移除的卡片必须回来，否则用户以为归档成功了。此刻后端未改动，refresh 拉到的就是真实态。
+  const onArchiveFailed = useCallback(() => refresh(), [refresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -615,7 +619,8 @@ export function App() {
         hasUpdate={hasUpdate}
         search={search}
         onSearchChange={setSearch}
-        onArchiveSuccess={onArchiveSuccess}
+        onArchiveOptimistic={onArchiveOptimistic}
+        onArchiveFailed={onArchiveFailed}
       />
     </div>
   );
