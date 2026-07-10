@@ -5,21 +5,98 @@ pub mod claude;
 pub mod codex;
 pub mod kimi;
 
-/// 接线失败的机器可读原因，回传前端以给出精准提示（如未登录 → 「请先登录」）。
-/// 序列化为 kebab-case 字符串；`None` 表示成功或已是目标状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RepairReason {
-    /// provider 数据目录不存在（视为未安装）。
-    NotDetected,
-    /// 承载 hooks 的配置文件尚未生成（如 kimi 的 config.toml 需先 `kimi login`）。
-    NeedLogin,
-    /// 找不到 meowo-reporter 二进制（既有 hooks 无有效路径且 app 同目录无 sidecar）。
-    ReporterNotFound,
-    /// 配置文件读取或解析失败（权限/编码/畸形），为保护用户文件放弃写入。
-    ConfigUnreadable,
-    /// 写入失败（目录不可写/磁盘满/杀软拦截）。
-    WriteFailed,
+/// 接线失败原因住在 `meowo-agent`（与 hooks 格式适配器同层，供 reporter/app 共用）。
+pub use meowo_agent::config::RepairReason;
+
+use meowo_agent::{EnsureOutcome, Installation, MissingConfig};
+
+/// 配置落盘之后的 agent 专属副作用（codex 的 trusted_hash 预信任）。入参是**实际写出的**配置文本。
+/// 返回 `Some(reason)` 会让整个接线报失败——只有当该步骤失败真的导致 hooks 不生效时才这么做。
+pub(crate) type AfterWrite = fn(&Installation, &str) -> Option<RepairReason>;
+
+/// 落盘**之前**对配置文本的 agent 专属改写（claude 的 statusLine——它与 hooks 同住 settings.json，
+/// 无法靠 `AfterWrite` 表达）。入参是 hooks 合并后的文本与已解析的 reporter 路径。
+///
+/// 约定：**无改动时必须原样返回入参文本**。返回一个语义等价但重新序列化过的字符串会让下面的
+/// 幂等判定误判为「有改动」，于是每次启动都重写一遍用户配置。
+pub(crate) type Amend = fn(&Installation, &str, &str) -> Result<String, RepairReason>;
+
+/// 三家 agent 共用的接线编排：
+/// 读配置 → 格式适配器合并 hooks → `amend` 写前改写 → 备份 → 原子写 → `after` 副作用。
+/// 三个「绝不」在此集中兑现：解析失败绝不写、写前必备份、一律原子写。
+pub(crate) fn wire_hooks(
+    inst: &Installation,
+    agent_id: &str,
+    amend: Option<Amend>,
+    after: Option<AfterWrite>,
+) -> Option<RepairReason> {
+    let path = inst.config_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match inst.hooks.missing {
+            MissingConfig::CreateFrom(seed) => seed.to_string(),
+            MissingConfig::Fail(reason) => {
+                eprintln!("Meowo repair[{agent_id}]: {} 不存在（{reason:?}），跳过", path.display());
+                return Some(reason);
+            }
+        },
+        // 文件存在但读不了（权限、非 UTF-8 编码如 UTF-16）：绝不当「不存在」处理，
+        // 否则会拿初始模板覆盖用户文件。
+        Err(e) => {
+            eprintln!("Meowo repair[{agent_id}]: {} 读取失败（{e}），跳过", path.display());
+            return Some(RepairReason::ConfigUnreadable);
+        }
+    };
+
+    // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则 app 同目录的 sidecar。
+    // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
+    // 已认领的路径还须**当前仍存在**：app 换了目录后 hooks 里残留的旧路径若被当成目标写回去，
+    // hooks 会静默失效（而 sidecar 明明就在手边）。
+    let claimed = inst.hooks.claimed_reporter(&text, agent_id).filter(|p| std::path::Path::new(p).exists());
+    let Some(reporter) = claimed.or_else(sibling_reporter) else {
+        eprintln!("Meowo repair[{agent_id}]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
+        return Some(RepairReason::ReporterNotFound);
+    };
+
+    let merged = match inst.hooks.ensure_hooks(&text, &reporter, agent_id) {
+        EnsureOutcome::Changed(next) => next,
+        // 尚不能就此收工：hooks 已是目标态，statusLine 之类的 amend 目标可能仍需改动。
+        EnsureOutcome::Unchanged => text.clone(),
+        EnsureOutcome::Abandon(reason) => {
+            eprintln!("Meowo repair[{agent_id}]: {} 形态无法安全改写（{reason:?}），放弃（绝不写坏）", path.display());
+            return Some(reason);
+        }
+    };
+
+    let next = match amend {
+        Some(f) => match f(inst, &merged, &reporter) {
+            Ok(t) => t,
+            Err(reason) => {
+                eprintln!("Meowo repair[{agent_id}]: {} 写前改写失败（{reason:?}），放弃", path.display());
+                return Some(reason);
+            }
+        },
+        None => merged,
+    };
+
+    // 幂等判定放在 amend **之后**、与最初读到的文本比对：hooks 与 statusLine 任一需改动就要落盘。
+    // （曾经只看 hooks 的合并结果，于是 hooks 已就位、statusLine 待接时被误报「已是目标状态」。）
+    let written = if next == text {
+        eprintln!("Meowo repair[{agent_id}]: {} 已是目标状态，无需改动", path.display());
+        text
+    } else {
+        if path.exists() {
+            backup_once(&path);
+        }
+        if let Err(e) = crate::fsutil::write_atomic(&path, &next) {
+            eprintln!("Meowo repair[{agent_id}]: {} 写入失败（{e}）", path.display());
+            return Some(RepairReason::WriteFailed);
+        }
+        eprintln!("Meowo repair[{agent_id}]: 已写入 {}（变体 {}）", path.display(), inst.variant_tag);
+        next
+    };
+
+    after.and_then(|f| f(inst, &written))
 }
 
 /// Provider 接线抽象。Sync：以 &'static dyn 静态注册表共享。
@@ -80,61 +157,3 @@ pub(crate) fn backup_once(path: &std::path::Path) {
     }
 }
 
-/// 解析 hook command 为（可执行路径, 余参）。首 token 支持带双引号或裸路径。
-pub(crate) fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
-    let c = cmd.trim();
-    let (path, rest) = if let Some(r) = c.strip_prefix('"') {
-        let end = r.find('"')?;
-        (r[..end].to_string(), r[end + 1..].trim())
-    } else {
-        match c.split_once(char::is_whitespace) {
-            Some((p, r)) => (p.to_string(), r.trim()),
-            None => (c.to_string(), ""),
-        }
-    };
-    let args = rest.split_whitespace().map(str::to_string).collect();
-    Some((path, args))
-}
-
-/// 严格认领带 provider 参数的命令（codex/kimi 形态）：可执行文件名恰为 meowo-reporter[.exe]
-///（或历史遗留 cc-reporter[.exe]）且余参恰为 ["--provider", provider]。返回可执行路径。
-/// 不裸 contains，不误伤用户 hook。
-pub(crate) fn claim_provider_cmd(cmd: &str, provider: &str) -> Option<String> {
-    let (path, args) = parse_hook_command(cmd)?;
-    let name = std::path::Path::new(&path).file_name()?.to_str()?;
-    let is_reporter = matches!(
-        name.to_ascii_lowercase().as_str(),
-        "meowo-reporter" | "meowo-reporter.exe" | "cc-reporter" | "cc-reporter.exe"
-    );
-    (is_reporter && args == ["--provider", provider]).then_some(path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn claim_provider_cmd_strict() {
-        // 认领：带引号/裸路径两种形态。
-        assert_eq!(
-            claim_provider_cmd("\"C:/x/meowo-reporter.exe\" --provider codex", "codex").as_deref(),
-            Some("C:/x/meowo-reporter.exe")
-        );
-        assert_eq!(
-            claim_provider_cmd("C:/x/meowo-reporter.exe --provider kimi", "kimi").as_deref(),
-            Some("C:/x/meowo-reporter.exe")
-        );
-        // 拒绝：provider 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
-        // 历史遗留 cc-reporter 也认领，便于升级时替换旧 hooks。
-        assert_eq!(
-            claim_provider_cmd("C:/x/cc-reporter.exe --provider kimi", "kimi").as_deref(),
-            Some("C:/x/cc-reporter.exe")
-        );
-        // 拒绝：provider 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
-        assert!(claim_provider_cmd("C:/x/meowo-reporter.exe --provider codex", "kimi").is_none());
-        assert!(claim_provider_cmd("\"C:/x/meowo-reporter.exe\"", "codex").is_none());
-        assert!(claim_provider_cmd("C:/x/meowo-reporter.exe --provider codex --v", "codex").is_none());
-        assert!(claim_provider_cmd("node meowo-reporter-notify.js --provider codex", "codex").is_none());
-        assert!(claim_provider_cmd("C:/x/cc-reporter-not-us.exe --provider codex", "codex").is_none());
-    }
-}

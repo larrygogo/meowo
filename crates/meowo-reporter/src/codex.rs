@@ -9,79 +9,22 @@
 
 use std::path::{Path, PathBuf};
 
-/// codex 数据根：`CODEX_HOME` 优先，否则 `~/.codex`。
+/// codex 在本机的实况（数据目录/hooks 规格/凭据/启动 argv）。变体表见
+/// `meowo_agent::plugins::codex`：数据目录 `CODEX_HOME` 优先，否则 `~/.codex`。
+/// 检测/接线/状态/账号/会话读取全部经此一处解析路径。
+pub fn codex_install() -> Option<meowo_agent::Installation> {
+    meowo_agent::by_id("codex")?.resolve()
+}
+
+/// codex 数据根。`codex_install()` 的便捷取值。
 pub fn codex_home() -> Option<PathBuf> {
-    if let Ok(d) = std::env::var("CODEX_HOME") {
-        if !d.is_empty() {
-            return Some(PathBuf::from(d));
-        }
-    }
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()?;
-    Some(PathBuf::from(home).join(".codex"))
+    codex_install().map(|i| i.data_dir)
 }
 
-/// codex 的启动前缀 argv（不含 `resume <id>`）。优先用户【实际在用的】 bun 全局 codex.exe
-/// (`~/.bun/bin/codex.exe`)——用户多用 bun 装/更新，npm 那个常是过期副本(导致 resume 拉到旧版、
-/// 每次提示更新)。其次退回 npm 的 node 包装(`node <codex.js>`)。再次官方独立安装的原生 codex.exe。
-/// 都没有则 None(调用方回退裸名 codex)。
+/// codex 的启动前缀 argv（不含 `resume <id>`）：bun 全局 exe ／ `node <codex.js>` ／ 独立安装 exe。
+/// 都没有则 None（调用方回退裸名 codex）。优先级与理由见变体表的 `LAUNCH`。
 pub fn codex_launch_prefix() -> Option<Vec<String>> {
-    let bin = if cfg!(windows) { "codex.exe" } else { "codex" };
-    // 1) bun 全局 bin。
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        let bun = PathBuf::from(&home).join(".bun").join("bin").join(bin);
-        if bun.exists() {
-            return Some(vec![bun.to_string_lossy().into_owned()]);
-        }
-    }
-    // 2) npm 全局：node "<npm>/node_modules/@openai/codex/bin/codex.js"。
-    if let Some(js) = codex_js() {
-        return Some(vec!["node".into(), js]);
-    }
-    // 3) 官方独立安装(chatgpt.com/codex/install)：{CODEX_HOME}/packages/standalone/current/bin/codex(.exe)。
-    //    `current` 是指向当前 release 的 junction/symlink，跨平台稳定；原生二进制可直接 resume。
-    //    也是修「装完仍显示未安装」的关键：安装脚本只改持久 PATH，运行中的 meowo-app 进程 PATH 是启动时旧快照、
-    //    看不到新目录，故直查此固定路径——装完聚焦/刷新即显示已装，且恢复会话走绝对路径不依赖 PATH。
-    if let Some(standalone) = codex_home() {
-        let exe = standalone
-            .join("packages")
-            .join("standalone")
-            .join("current")
-            .join("bin")
-            .join(bin);
-        if exe.exists() {
-            return Some(vec![exe.to_string_lossy().into_owned()]);
-        }
-    }
-    None
-}
-
-/// codex npm 包的入口 `bin/codex.js` 绝对路径。npm 全局的 `codex` 是 shim，实为
-/// `node "{npm}/node_modules/@openai/codex/bin/codex.js" <args>`；【必须】走 node 包装，直接拉原生
-/// codex.exe 不会真正恢复会话(无 rollout/无 hook)。resume 用：拉起的终端 PATH 未必含 `codex`(裸名报
-/// 0x80070002)，但 `node` 在系统 PATH，故用 `node <此路径>`。路径是固定相对结构(无 arch 变量)，
-/// 不存在则返回 None(调用方回退裸名 codex)。
-pub fn codex_js() -> Option<String> {
-    for var in ["APPDATA", "USERPROFILE"] {
-        if let Ok(v) = std::env::var(var) {
-            let base = if var == "APPDATA" {
-                PathBuf::from(v).join("npm")
-            } else {
-                PathBuf::from(v).join("AppData").join("Roaming").join("npm")
-            };
-            let js = base
-                .join("node_modules")
-                .join("@openai")
-                .join("codex")
-                .join("bin")
-                .join("codex.js");
-            if js.exists() {
-                return Some(js.to_string_lossy().into_owned());
-            }
-        }
-    }
-    None
+    codex_install()?.launch
 }
 
 /// 在 `~/.codex/sessions` 下按 session_id 找 rollout 文件（文件名内嵌 uuid，以 `<uuid>.jsonl` 结尾）。

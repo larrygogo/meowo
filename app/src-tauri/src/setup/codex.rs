@@ -1,87 +1,9 @@
-//! codex（OpenAI Codex CLI）自动接线：幂等合并 `~/.codex/hooks.json`。
-//! codex hooks 格式 Claude 同款但顶层只允许 {"hooks": {...}}（deny_unknown_fields），
-//! 条目无 matcher 键；信任机制（trusted_hash）见本模块 hash/apply 部分（Task 3/4）。
-use serde_json::{json, Value};
-
-/// 接线事件集：dispatch 消化面 ∩ codex 0.142 支持面。无 SessionEnd（codex 不支持，
-/// 会话收尾靠 Stop + liveness）；不配 PreToolUse（其 matcher 目标是 claude 专属工具）。
-pub const CODEX_EVENTS: [&str; 5] =
-    ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "PermissionRequest"];
-
-/// 从 hooks.json 找出已配置的 meowo-reporter 路径（复用现有路径优先的解析源）。
-pub fn reporter_path_from_codex(root: &Value) -> Option<String> {
-    let hooks = root.get("hooks")?.as_object()?;
-    for (_ev, arr) in hooks {
-        for entry in arr.as_array().into_iter().flatten() {
-            for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
-                if let Some(p) = h
-                    .get("command")
-                    .and_then(|c| c.as_str())
-                    .and_then(|c| super::claim_provider_cmd(c, "codex"))
-                {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// 幂等合并：CODEX_EVENTS 逐事件确保挂上 meowo-reporter。已有认领条目 → 仅路径不符时更新
-/// （解析后内容判定，裸路径/引号形态视为等价，不无谓改写用户在用的配置）；缺 → 追加。
-/// 返回是否有改动。
-pub fn ensure_codex_hooks(root: &mut Value, reporter_native: &str) -> bool {
-    let desired_cmd = format!("\"{reporter_native}\" --provider codex");
-    let mut changed = false;
-    match root.get("hooks") {
-        None => {
-            // 键不存在：hooks.json 整个文件本就可从空态建（spec 依据见模块头注释），
-            // 与 kimi「键不存在也放弃」不同是有意的——此处不存在不代表用户手改过畸形内容。
-            root["hooks"] = json!({});
-            changed = true;
-        }
-        Some(h) if !h.is_object() => {
-            // 键存在但非 object（如手改坏形状）：对齐 kimi 哲学，直接放弃不写，绝不覆盖用户文件。
-            return false;
-        }
-        Some(_) => {}
-    }
-    for ev in CODEX_EVENTS {
-        let entry_val = root["hooks"]
-            .as_object_mut()
-            .unwrap()
-            .entry(ev.to_string())
-            .or_insert_with(|| json!([]));
-        let Some(arr) = entry_val.as_array_mut() else {
-            // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
-            continue;
-        };
-        let mut found = false;
-        for entry in arr.iter_mut() {
-            let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) else {
-                continue;
-            };
-            for h in hs.iter_mut() {
-                let claimed = h
-                    .get("command")
-                    .and_then(|c| c.as_str())
-                    .and_then(|c| super::claim_provider_cmd(c, "codex"));
-                if let Some(path) = claimed {
-                    found = true;
-                    if path != reporter_native {
-                        h["command"] = json!(desired_cmd);
-                        changed = true;
-                    }
-                }
-            }
-        }
-        if !found {
-            arr.push(json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] }));
-            changed = true;
-        }
-    }
-    changed
-}
+//! codex（OpenAI Codex CLI）自动接线。**hooks 合并逻辑已迁入
+//! `meowo_agent::config::ConfigFormat::CodexJson`**，本模块只剩两件事：
+//!   1) I/O 编排（读 hooks.json → 交给格式适配器 → 备份 + 原子写）；
+//!   2) 接线**副作用**：往 `config.toml` 的 `[hooks.state]` 写 trusted_hash 预信任
+//!      （要 SHA-256 + 原子写，故留在 app 侧，见 `after_write`）。
+use serde_json::Value;
 
 /// 我方在 hooks.json 里认领到的一条 hook，附真实位置（group_idx = 组在该事件数组里的下标，
 /// handler_idx = handler 在组内 hooks 数组里的下标）——trusted_hash 键必须落在真实位置上，
@@ -116,7 +38,7 @@ pub fn claimed_codex_entries(root: &Value) -> Vec<ClaimedEntry> {
             let Some(cmd) = hs[0].get("command").and_then(|c| c.as_str()) else {
                 continue;
             };
-            if super::claim_provider_cmd(cmd, "codex").is_some() {
+            if claim_codex_cmd(cmd).is_some() {
                 // codex 源码中默认超时为 600（`.unwrap_or(600).max(1)`），同步本处默认值。
                 let t = hs[0].get("timeout").and_then(|t| t.as_u64()).unwrap_or(600);
                 out.push(ClaimedEntry {
@@ -212,87 +134,48 @@ impl super::ProviderSetup for CodexSetup {
         meowo_store::ProviderKey::Codex
     }
     fn detect(&self) -> bool {
-        meowo_reporter::codex::codex_home().is_some_and(|d| d.is_dir())
+        meowo_reporter::codex::codex_install().is_some_and(|i| i.is_configured())
     }
     fn apply(&self) -> Option<super::RepairReason> {
-        use super::RepairReason;
-        let Some(home) = meowo_reporter::codex::codex_home() else {
-            eprintln!("Meowo repair[codex]: 解析不到 codex_home，跳过");
-            return Some(RepairReason::NotDetected);
+        let Some(inst) = meowo_reporter::codex::codex_install() else {
+            eprintln!("Meowo repair[codex]: 解析不到 codex 安装实况，跳过");
+            return Some(super::RepairReason::NotDetected);
         };
-        let hooks_path = home.join("hooks.json");
-        // 1) hooks.json：不存在从空起；存在但读不了/解析失败 → 放弃（绝不覆盖用户文件）。
-        let root_text = match std::fs::read_to_string(&hooks_path) {
-            Ok(t) => t,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{\"hooks\":{}}".to_string(),
-            Err(e) => {
-                eprintln!("Meowo repair[codex]: hooks.json 读取失败（{e}），跳过");
-                return Some(RepairReason::ConfigUnreadable);
-            }
-        };
-        let Ok(mut root) = serde_json::from_str::<serde_json::Value>(root_text.trim_start_matches('\u{feff}')) else {
-            eprintln!("Meowo repair[codex]: hooks.json 解析失败（非法 JSON），跳过");
-            return Some(RepairReason::ConfigUnreadable);
-        };
-        if !root.is_object() {
-            eprintln!("Meowo repair[codex]: hooks.json 顶层非对象，跳过");
-            return Some(RepairReason::ConfigUnreadable);
-        }
-        // reporter 路径：复用已配置的当前 meowo-reporter → 否则 app 同目录 sidecar。
-        // 历史 cc-reporter 路径已废弃，即使可执行仍存在也不能复用，否则 ensure_codex_hooks
-        // 会把旧路径写回去，hooks 仍然指向不存在的 meowo 旧 reporter。
-        let reporter = reporter_path_from_codex(&root)
-            .filter(|p| {
-                std::path::Path::new(p)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| {
-                        let n = n.to_ascii_lowercase();
-                        n == "meowo-reporter" || n == "meowo-reporter.exe"
-                    })
-                    .unwrap_or(false)
-            })
-            .or_else(super::sibling_reporter);
-        let Some(reporter) = reporter else {
-            eprintln!("Meowo repair[codex]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
-            return Some(RepairReason::ReporterNotFound);
-        };
-        if ensure_codex_hooks(&mut root, &reporter) {
-            let Ok(pretty) = serde_json::to_string_pretty(&root) else {
-                eprintln!("Meowo repair[codex]: hooks 序列化失败，跳过");
-                return Some(RepairReason::WriteFailed);
-            };
-            if hooks_path.exists() {
-                super::backup_once(&hooks_path);
-            }
-            if crate::fsutil::write_atomic(&hooks_path, &format!("{pretty}\n")).is_err() {
-                eprintln!("Meowo repair[codex]: hooks.json 写入失败，跳过信任步骤（下次启动整段重试）");
-                return Some(RepairReason::WriteFailed); // hooks.json 没写成，信任步骤跳过（下次启动整段重试）
-            }
-            eprintln!("Meowo repair[codex]: 已写入 hooks 到 {}", hooks_path.display());
-        } else {
-            eprintln!("Meowo repair[codex]: hooks.json 已是目标状态，无需改动");
-        }
-        // 2) config.toml 预信任：hooks 此时已接上，本步纯属锦上添花——任何失败都返回 None（视为成功），
-        // 退化 = codex 弹一次 Trust all，不影响入库。
-        let cfg_path = home.join("config.toml");
-        let cfg_text = match std::fs::read_to_string(&cfg_path) {
-            Ok(t) => t,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(_) => return None,
-        };
-        let Ok(mut doc) = cfg_text.parse::<toml_edit::DocumentMut>() else {
-            return None;
-        };
-        let entries = claimed_codex_entries(&root);
-        if ensure_trusted_hashes(&mut doc, &hooks_path.display().to_string(), &entries) {
-            if cfg_path.exists() {
-                super::backup_once(&cfg_path);
-            }
-            let _ = crate::fsutil::write_atomic(&cfg_path, &doc.to_string());
-        }
-        None
+        // hooks.json 无写前改写；trusted_hash 预信任是落盘后的副作用，走 after_write。
+        super::wire_hooks(&inst, "codex", None, Some(after_write))
     }
+}
+
+/// codex 的 hook command 形态：`"<exe>" --provider codex`。与变体表的声明同源。
+fn claim_codex_cmd(cmd: &str) -> Option<String> {
+    const SHAPE: meowo_agent::CommandSpec = meowo_agent::CommandSpec { quote_exe: true, with_provider: true };
+    SHAPE.claim(cmd, "codex")
+}
+
+/// hooks.json 落盘之后的副作用：往 `config.toml` 的 `[hooks.state]` 写 trusted_hash 预信任。
+///
+/// **纯属锦上添花**：hooks 此时已接上，本步任何失败都不算接线失败——退化 = codex 弹一次
+/// Trust all，不影响入库。故一律返回 `None`。
+fn after_write(inst: &meowo_agent::Installation, hooks_text: &str) -> Option<super::RepairReason> {
+    let hooks_path = inst.config_path();
+    let cfg_path = inst.data_dir.join("config.toml");
+    let cfg_text = match std::fs::read_to_string(&cfg_path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_) => return None,
+    };
+    let Ok(mut doc) = cfg_text.parse::<toml_edit::DocumentMut>() else {
+        return None;
+    };
+    let root = meowo_agent::config::parse_json_config(hooks_text)?;
+    let entries = claimed_codex_entries(&root);
+    if ensure_trusted_hashes(&mut doc, &hooks_path.display().to_string(), &entries) {
+        if cfg_path.exists() {
+            super::backup_once(&cfg_path);
+        }
+        let _ = crate::fsutil::write_atomic(&cfg_path, &doc.to_string());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -300,75 +183,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn ensure_codex_hooks_adds_all_events_when_empty() {
-        let mut v = json!({});
-        assert!(ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-        for ev in CODEX_EVENTS {
-            let cmd = v["hooks"][ev][0]["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(cmd, "\"C:/x/meowo-reporter.exe\" --provider codex");
-            assert_eq!(v["hooks"][ev][0]["hooks"][0]["timeout"], 5);
-        }
-        // 幂等：二跑无改动。
-        assert!(!ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-    }
+    // hooks.json 的合并/判定已迁入 meowo_agent::config::ConfigFormat::CodexJson，
+    // 相关测试随之搬到该 crate（见 config.rs 的 mod codex）。此处只留 trusted_hash 副作用的测试。
 
-    #[test]
-    fn ensure_codex_hooks_adopts_manual_wiring_and_fills_missing() {
-        // 精确复刻本机手工接线形态：裸路径命令、3 事件、Stop timeout=10。
-        let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
-        let entry = |t: u64| json!({ "hooks": [{ "type": "command", "command": format!("{dev} --provider codex"), "timeout": t }] });
-        let mut v = json!({ "hooks": {
-            "SessionStart": [entry(5)], "UserPromptSubmit": [entry(5)], "Stop": [entry(10)]
-        }});
-        assert!(ensure_codex_hooks(&mut v, dev)); // 补 PostToolUse/PermissionRequest → 有改动
-        // 既有条目原样保留（裸路径不被改写为引号形态、timeout 10 不动）——幂等按解析后内容判定。
-        assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], format!("{dev} --provider codex"));
-        assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["timeout"], 10);
-        // 新事件已补齐。
-        assert!(v["hooks"]["PostToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("--provider codex"));
-        assert!(v["hooks"]["PermissionRequest"].is_array());
-        assert!(!ensure_codex_hooks(&mut v, dev));
-    }
-
-    #[test]
-    fn ensure_codex_hooks_updates_stale_path_keeps_user_hooks() {
-        let mut v = json!({ "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "node my-notify.js" }] },
-            { "hooks": [{ "type": "command", "command": "\"C:/old/meowo-reporter.exe\" --provider codex", "timeout": 5 }] }
-        ]}});
-        assert!(ensure_codex_hooks(&mut v, "C:/new/meowo-reporter.exe"));
-        assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], "node my-notify.js"); // 用户 hook 不动
-        assert_eq!(v["hooks"]["Stop"][1]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\" --provider codex");
-        assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 2); // 不重复追加
-    }
-
-    #[test]
-    fn ensure_codex_hooks_abandons_when_hooks_key_is_non_object() {
-        // I1 回归：hooks 键存在但非 object（如手改坏形状）——对齐 kimi 哲学，放弃不写，
-        // 绝不覆盖用户文件（既有实现会整体置 {}，无备份地清掉用户内容）。
-        let mut v = json!({ "hooks": 5 });
-        assert!(!ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-        assert_eq!(v, json!({ "hooks": 5 }));
-    }
-
-    #[test]
-    fn ensure_codex_hooks_skips_event_with_non_array_value() {
-        // I1 回归：某事件值为畸形形状（非 array）——该事件原样跳过不动，其余事件正常补齐。
-        let mut v = json!({ "hooks": { "Stop": "oops" } });
-        assert!(ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe")); // 其余 4 事件补齐 → 有改动
-        assert_eq!(v["hooks"]["Stop"], json!("oops")); // 畸形事件原样不动
-        for ev in CODEX_EVENTS.iter().filter(|&&e| e != "Stop") {
-            let cmd = v["hooks"][ev][0]["hooks"][0]["command"].as_str().unwrap();
-            assert!(cmd.contains("--provider codex"));
+    /// 用变体表声明的格式适配器造出「已接线」的 hooks.json，供下方 trusted_hash 测试消费。
+    ///
+    /// 直接从注册表取 `HookSpec`（纯声明），不经 `codex_install()`——后者要解析真实 home
+    /// （`USERPROFILE`/`HOME`），会让本测试无谓地依赖环境变量。这里根本用不到安装实况。
+    fn wired(reporter: &str) -> Value {
+        let hooks = meowo_agent::by_id("codex").expect("codex 应已注册").variants()[0].hooks;
+        match hooks.ensure_hooks("{\"hooks\":{}}", reporter, "codex") {
+            meowo_agent::EnsureOutcome::Changed(s) => serde_json::from_str(&s).unwrap(),
+            other => panic!("期望 Changed，实得 {other:?}"),
         }
     }
 
     #[test]
-    fn reporter_path_and_claimed_entries_extraction() {
-        let mut v = json!({});
-        ensure_codex_hooks(&mut v, "C:/x/meowo-reporter.exe");
-        assert_eq!(reporter_path_from_codex(&v).as_deref(), Some("C:/x/meowo-reporter.exe"));
+    fn claimed_entries_extraction() {
+        let v = wired("C:/x/meowo-reporter.exe");
         let entries = claimed_codex_entries(&v);
         assert_eq!(entries.len(), 5);
         assert!(entries.iter().all(|e| e.command.contains("--provider codex") && e.timeout == 5));
@@ -398,8 +230,10 @@ mod tests {
 
     #[test]
     fn snake_event_covers_all_codex_events() {
-        for ev in CODEX_EVENTS {
-            assert!(!snake_event(ev).is_empty(), "{ev} 缺 snake_case 映射");
+        // 绊线：变体表新增事件而忘了补 snake_case 映射 → trusted_hash 键写不出，此处失败。
+        let inst = meowo_reporter::codex::codex_install().unwrap();
+        for ev in inst.hooks.events {
+            assert!(!snake_event(ev.name).is_empty(), "{} 缺 snake_case 映射", ev.name);
         }
         assert_eq!(snake_event("PermissionRequest"), "permission_request");
         assert_eq!(snake_event("Unknown"), "");
@@ -484,19 +318,38 @@ mod tests {
         assert!(claimed_codex_entries(&v).is_empty());
     }
 
-    /// dry-run：CODEX_HOME=<真实 ~/.codex 的副本> 时跑 CodexSetup::apply，人工核对副本产物。
-    /// 用法：复制 ~/.codex 到临时目录，CODEX_HOME=<副本> cargo test ... -- --ignored --nocapture
+    /// dry-run：CODEX_HOME=<真实 ~/.codex 的副本> 时跑 CodexSetup::apply，核对副本产物。
+    /// 用法：复制 ~/.codex 到临时目录，
+    ///       CODEX_HOME=<副本> cargo test -p meowo-app dryrun_codex -- --ignored --nocapture
+    ///
+    /// 只打印结构性摘要，**绝不 dump 配置原文**——真实 config.toml/auth.json 含凭据。
     #[test]
     #[ignore]
     fn dryrun_codex() {
         use crate::setup::ProviderSetup;
-        CodexSetup.apply();
-        let home = meowo_reporter::codex::codex_home().unwrap();
-        eprintln!("=== hooks.json ===\n{}", std::fs::read_to_string(home.join("hooks.json")).unwrap());
-        if let Ok(cfg) = std::fs::read_to_string(home.join("config.toml")) {
-            eprintln!("=== config.toml [hooks.state] ===\n{cfg}");
-        } else {
-            eprintln!("=== config.toml not present ===");
+        let reason = CodexSetup.apply();
+        let inst = meowo_reporter::codex::codex_install().unwrap();
+        let text = std::fs::read_to_string(inst.config_path()).unwrap_or_default();
+        let root: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
+        eprintln!("变体={} 配置={}", inst.variant_tag, inst.config_path().display());
+        eprintln!("apply reason={reason:?}");
+        eprintln!("hooks 事件={:?}", root["hooks"].as_object().unwrap().keys().collect::<Vec<_>>());
+        eprintln!("SessionStart 已接线={}", inst.hooks.has_reporter(&text, "codex"));
+        eprintln!("启动 argv={:?}", inst.launch_argv());
+
+        // trusted_hash：只列键名（值是哈希，非机密，但键含绝对路径，够核对了）。
+        let cfg = inst.data_dir.join("config.toml");
+        match std::fs::read_to_string(&cfg).ok().and_then(|t| t.parse::<toml_edit::DocumentMut>().ok()) {
+            Some(doc) => {
+                let keys: Vec<String> = doc
+                    .get("hooks")
+                    .and_then(|h| h.get("state"))
+                    .and_then(|s| s.as_table())
+                    .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
+                    .unwrap_or_default();
+                eprintln!("[hooks.state] 键={keys:#?}");
+            }
+            None => eprintln!("config.toml 不存在或非法"),
         }
     }
 }

@@ -17,16 +17,17 @@ use std::time::Duration;
 use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
-const DEFAULT_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 
-// kimi OAuth 刷新端点与 client_id（来源：kimi-code 开源包 packages/oauth/src/constants.ts）
-const KIMI_TOKEN_URL: &str = "https://auth.kimi.com/api/oauth/token";
-const KIMI_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
+// ═══ 路径 / 鉴权参数（均来自实况变体，不再写死） ═══
 
-// ═══ 路径工具 ═══
+/// 本机 kimi 实况的鉴权方案：凭据位置、OAuth 刷新端点、client_id、默认 base_url。
+/// 新旧版差异（若日后证实 legacy 用不同 client_id）只需改 `meowo_agent::plugins::kimi` 的变体表。
+fn kimi_auth() -> Option<&'static meowo_agent::AuthScheme> {
+    meowo_reporter::kimi::kimi_install()?.auth
+}
 
 fn kimi_credentials_path() -> Option<std::path::PathBuf> {
-    Some(meowo_reporter::kimi::kimi_share_dir()?.join("credentials").join("kimi-code.json"))
+    meowo_reporter::kimi::kimi_install()?.credentials_path()
 }
 
 fn read_kimi_credentials() -> Option<Value> {
@@ -35,7 +36,7 @@ fn read_kimi_credentials() -> Option<Value> {
 
 // ═══ 配置读取 ═══
 
-/// 读 base_url：env KIMI_CODE_BASE_URL > kimi_share_dir/config.toml > 缺省。
+/// 读 base_url：env KIMI_CODE_BASE_URL > 实况 config.toml > 该变体的缺省。
 fn kimi_base_url() -> String {
     if let Ok(url) = std::env::var("KIMI_CODE_BASE_URL") {
         let url = url.trim().trim_end_matches('/').to_string();
@@ -46,13 +47,13 @@ fn kimi_base_url() -> String {
     if let Some(url) = read_config_base_url() {
         return url;
     }
-    DEFAULT_BASE_URL.to_string()
+    kimi_auth().map(|a| a.default_base_url.to_string()).unwrap_or_default()
 }
 
-/// 从 kimi_share_dir()/config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
+/// 从实况 config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
 /// 不引入 toml 依赖，best-effort，失败返回 None。
 fn read_config_base_url() -> Option<String> {
-    let path = meowo_reporter::kimi::kimi_share_dir()?.join("config.toml");
+    let path = meowo_reporter::kimi::kimi_install()?.config_path();
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_section = false;
     for line in content.lines() {
@@ -159,9 +160,16 @@ fn ensure_valid_kimi_token() -> Option<String> {
         return Some(access_token);
     }
 
-    // 仍过期 → 执行刷新。expires_at 缺失/字段名不同会被读成 0 → 恒判过期而走到这里，
-    // 旧版鉴权若与新版 kimi-code 的刷新端点/client_id 不兼容，这里就会失败。
-    eprintln!("Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…");
+    // 仍过期 → 执行刷新。expires_at 缺失/字段名不同会被读成 0 → 恒判过期而走到这里。
+    // 端点与 client_id 取自实况变体：若返回 invalid_client，即该变体的 client_id 需按其版本修正。
+    let Some(auth) = kimi_auth().and_then(|a| a.refresh) else {
+        eprintln!("Meowo usage[kimi]: 该变体未声明 OAuth 刷新方式，无法刷新");
+        return None;
+    };
+    eprintln!(
+        "Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…（变体 {}）",
+        meowo_reporter::kimi::kimi_install().map(|i| i.variant_tag).unwrap_or("?")
+    );
     let Some(refresh_token) = creds.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string) else {
         eprintln!("Meowo usage[kimi]: 凭据缺 refresh_token 字段，无法刷新");
         return None;
@@ -171,12 +179,12 @@ fn ensure_valid_kimi_token() -> Option<String> {
         return None;
     }
 
-    let resp = match ureq::post(KIMI_TOKEN_URL)
+    let resp = match ureq::post(auth.token_url)
         .timeout(HTTP_TIMEOUT)
         .set("Accept", "application/json")
         .send_form(&[
             ("grant_type", "refresh_token"),
-            ("client_id", KIMI_CLIENT_ID),
+            ("client_id", auth.client_id),
             ("refresh_token", &refresh_token),
         ]) {
         Ok(r) => r,
@@ -298,12 +306,10 @@ fn num(v: &Value) -> Option<f64> {
 /// 数字格式容错：used/limit/remaining 可为字符串 "100" 或数字 100（kimi 真实响应为字符串）。
 fn extract_used_limit(v: &Value) -> Option<(f64, f64)> {
     let limit = v.get("limit").and_then(num)?;
-    let used = if let Some(u) = v.get("used").and_then(num) {
-        u
-    } else if let Some(r) = v.get("remaining").and_then(num) {
-        limit - r
-    } else {
-        return None;
+    // used 缺失时从 remaining 反推；两者都无 → None（`?` 提前返回）。
+    let used = match v.get("used").and_then(num) {
+        Some(u) => u,
+        None => limit - v.get("remaining").and_then(num)?,
     };
     Some((used, limit))
 }
@@ -999,6 +1005,24 @@ mod tests {
     fn malformed_no_used_no_remaining_returns_none() {
         let v = json!({"usage": {"limit": 1000}});
         assert!(parse_kimi_usage(&v).is_none());
+    }
+
+    /// extract_used_limit 的三个分支：优先 used；缺 used 时从 remaining 反推；两者皆无 → None。
+    /// 数字/字符串两种格式都要通（kimi 真实响应给的是字符串）。
+    #[test]
+    fn extract_used_limit_prefers_used_then_derives_from_remaining() {
+        // used 存在 → 直接取，remaining 即便矛盾也不参与。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000, "used": 300, "remaining": 999})), Some((300.0, 1000.0)));
+        // 无 used → used = limit - remaining。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": 700})), Some((300.0, 1000.0)));
+        // 字符串数字同样容错。
+        assert_eq!(extract_used_limit(&json!({"limit": "1000", "remaining": "700"})), Some((300.0, 1000.0)));
+        // 无 limit → None（limit 是必需字段）。
+        assert_eq!(extract_used_limit(&json!({"used": 300})), None);
+        // 有 limit 但 used/remaining 皆无 → None。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000})), None);
+        // remaining 存在但不是数字（解析不出）→ 与缺失同等，None。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": "abc"})), None);
     }
 
     #[test]

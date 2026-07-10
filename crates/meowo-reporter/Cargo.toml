@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+meowo-agent = { path = "../meowo-agent" }
 meowo-store = { path = "../meowo-store" }
 serde = { workspace = true }
 serde_json = { workspace = true }

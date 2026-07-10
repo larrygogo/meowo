@@ -32,7 +32,9 @@ if (existsSync(settingsPath)) {
 }
 settings.hooks ??= {};
 
-// 注意：此表须与 app/src-tauri/src/ccsetup.rs 的 HOOK_SPECS 保持一致（两处各维护一份，改一处必同步另一处）。
+// 注意：此表须与 crates/meowo-agent/src/plugins/claude.rs 的 EVENTS 保持一致（两处各维护一份，
+// 改一处必同步另一处）。meowo-app 的 hook_specs_match_install_hooks_mjs 单测会解析本文件比对，
+// 不一致即失败——不要改这里的字面量格式（逐行 ["事件", "matcher"],）。
 const SPECS = [
   ["SessionStart", "*"],
   ["UserPromptSubmit", "*"],

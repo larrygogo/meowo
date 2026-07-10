@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { workspace = true }
 
 [dependencies]
+meowo-agent = { path = "../../crates/meowo-agent" }
 meowo-store = { path = "../../crates/meowo-store" }
 meowo-reporter = { path = "../../crates/meowo-reporter" }
 tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
@@ -29,8 +30,8 @@ percent-encoding = "2"
 ureq = { version = "2", features = ["json"] }
 # 系统语言检测（Settings.language = auto 时解析界面/通知语言）。
 sys-locale = "0.3"
-# kimi config.toml / codex config.toml 的结构保持编辑（保注释与键序）。
-toml_edit = "0.22"
+# codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
+toml_edit = { workspace = true }
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 sha2 = "0.10"
 

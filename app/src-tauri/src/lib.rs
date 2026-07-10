@@ -1251,6 +1251,76 @@ struct InstallDone {
     code: Option<i32>,
 }
 
+/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时（用户多半中途放弃了）。
+#[derive(Clone, serde::Serialize)]
+struct LoginDone {
+    provider: String,
+    ok: bool,
+}
+
+/// 轮询账号解析结果，直到出现（登录成功）或超时，然后 emit `login-done`。
+///
+/// **为什么轮询 `account()` 而不是 watch 凭据文件**：macOS 上 claude 把凭据存进登录 Keychain，
+/// `.credentials.json` 根本不存在，watch mtime 永远等不到。`account()` 已封装三家（含 Keychain）
+/// 的判定，且全是本地读，2s 一轮开销可忽略。
+///
+/// 超时上限 5 分钟：登录走浏览器 OAuth，用户可能中途放弃；spawn 出去的是 detach 的终端，
+/// 拿不到退出码，不设上限线程就永久泄漏。
+fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: String) {
+    const POLL: std::time::Duration = std::time::Duration::from_secs(2);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let start = std::time::Instant::now();
+        // 先查再睡：账号若已就绪（用户很快登完，或本就登录着）立刻 emit，不白等一个轮询周期。
+        // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
+        // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
+        let ok = loop {
+            if account::for_provider(key).account().is_some() {
+                break true;
+            }
+            if start.elapsed() >= TIMEOUT {
+                eprintln!("Meowo login[{provider}]: 等待登录超时（{}s），停止轮询", TIMEOUT.as_secs());
+                break false;
+            }
+            std::thread::sleep(POLL);
+        };
+        let _ = app.emit("login-done", LoginDone { provider, ok });
+    });
+}
+
+/// 在终端里拉起该 agent 的交互式登录（`claude auth login` / `codex login` / `kimi login`），
+/// 并起后台任务等登录完成，完成或超时后 emit `login-done`。
+///
+/// argv 与 `new_session` 同源，故同样是**绝对路径优先、必要时回退裸名**：spawn 出的终端继承
+/// app 启动时的 PATH 快照，未必含刚装好的 agent，裸名会让 wt/powershell 报 0x80070002；但当
+/// 可执行只在 PATH 上（`LaunchCandidate::OnPath`，如 fnm 管理的 codex）时回退裸名是刻意的
+/// ——那类路径带版本/进程号无法静态声明，且 PATH 上的往往是 shim，固化它会绕过其环境准备。
+#[tauri::command]
+async fn login_agent(
+    app: tauri::AppHandle,
+    provider: String,
+    terminal: Option<String>,
+) -> Result<(), String> {
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    let provider = key.as_str().to_string(); // 归一：emit 用规范串
+    let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
+    let argv = inst.login_argv().ok_or("该 agent 未声明登录入口")?;
+    let term = terminal
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| load_settings().resume_terminal);
+
+    // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环。
+    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, None, &term))
+        .await
+        .map_err(|e| e.to_string())?;
+    if !ok {
+        return Err("启动终端失败：无法拉起登录流程".into());
+    }
+    watch_login(app, key, provider);
+    Ok(())
+}
+
 /// 把安装脚本写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
 /// Windows：try/catch 捕获终止错误，打印 `Installation failed: …` 并 exit 1。
 #[cfg(target_os = "windows")]
@@ -1343,137 +1413,54 @@ enum HooksStatus {
     Unknown,
 }
 
-/// claude/codex 同款 hooks JSON 里，`SessionStart` 事件下是否存在指向 meowo-reporter 且带
-/// `--provider <p>` 的 command。纯函数。启发式：命令含 "meowo-reporter"（basename）+
-/// "--provider <p>"——该组合不会误配用户自有 hook。
-/// 只看 SessionStart（而非扫描全部事件）：「新会话能否入库」只取决于 SessionStart 是否挂了钩子，
-/// 只在别的事件（如 Stop）挂了 meowo-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
-fn hooks_json_has_reporter(v: &serde_json::Value, provider: &str) -> bool {
-    let Some(arr) = v
-        .get("hooks")
-        .and_then(|h| h.get("SessionStart"))
-        .and_then(|s| s.as_array())
-    else {
-        return false;
-    };
-    let want = format!("--provider {provider}");
-    for entry in arr {
-        for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
-            if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
-                if cmd.to_ascii_lowercase().contains("meowo-reporter") && cmd.contains(&want) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-/// kimi config.toml 文本里，`event = "SessionStart"` 的 `[[hooks]]` 块内是否有指向 meowo-reporter
-/// 且带 `--provider <p>` 的 command。纯函数，无 TOML 解析库，按行文本 + `[[hooks]]` 块边界的极简状态机
-/// （足够可靠：只在同一块内把 event/command 两行关联起来，不识别块内的具体行序）。
-/// 只看 SessionStart 块（而非任意行匹配）：与 hooks_json_has_reporter 同一根因——只在非 SessionStart
-/// 事件（如 Stop）挂了 meowo-reporter 不能保证新会话会被记录，不应误判成 Installed（审查发现）。
-fn toml_text_has_reporter(text: &str, provider: &str) -> bool {
-    let want = format!("--provider {provider}");
-    let mut in_session_start = false;
-    let mut has_reporter = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if t == "[[hooks]]" {
-            if in_session_start && has_reporter {
-                return true;
-            }
-            in_session_start = false;
-            has_reporter = false;
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix("event") {
-            if let Some(v) = rest.trim_start().strip_prefix('=') {
-                if v.trim().trim_matches('"') == "SessionStart" {
-                    in_session_start = true;
-                }
-            }
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix("command") {
-            if let Some(v) = rest.trim_start().strip_prefix('=') {
-                let low = v.to_ascii_lowercase();
-                if low.contains("meowo-reporter") && v.contains(&want) {
-                    has_reporter = true;
-                }
-            }
-        }
-    }
-    in_session_start && has_reporter
-}
-
-/// claude hooks 接入状态：读 claude settings.json 判断 meowo-reporter hooks 是否登记。
-/// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
-/// 有 meowo-reporter hook=Installed。
-fn claude_hooks_status() -> HooksStatus {
-    claude_hooks_status_at(&setup::claude::claude_settings_path())
-}
-
-/// 纯路径版，便于用临时文件单测三态（不碰真实 ~/.claude）。
-fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
+/// hooks 接入三态判定。纯路径 + 格式规格版，便于用临时文件单测（不碰真实数据目录）。
+///
+/// 文件不存在=Missing；读失败**或解析失败**=Unknown；能解析但 SessionStart 没挂当前
+/// meowo-reporter=Missing；挂了=Installed。
+///
+/// 「解析失败 → Unknown」是核心不变量：配置暂时不可读/损坏时若误报 Missing，前端会催用户点
+/// 「修复连接」，而修复必然因 `Abandon(ConfigUnreadable)` 拒写（绝不写坏用户文件），陷入死循环。
+fn hooks_status_at(path: &std::path::Path, hooks: &meowo_agent::config::HookSpec, agent_id: &str) -> HooksStatus {
     if !path.exists() {
         return HooksStatus::Missing;
     }
     let Ok(text) = std::fs::read_to_string(path) else {
         return HooksStatus::Unknown;
     };
-    match setup::claude::parse_settings(&text) {
-        Some(v) if setup::claude::session_start_has_reporter(&v) => HooksStatus::Installed,
-        Some(_) => HooksStatus::Missing,
-        None => HooksStatus::Unknown,
+    if !hooks.parses(&text) {
+        return HooksStatus::Unknown;
+    }
+    if hooks.has_reporter(&text, agent_id) {
+        HooksStatus::Installed
+    } else {
+        HooksStatus::Missing
     }
 }
 
-/// codex hooks 接入状态：读 ~/.codex/hooks.json。文件不存在=Missing；读/解析失败=Unknown（不误报）。
-fn codex_hooks_status() -> HooksStatus {
-    let Some(home) = meowo_reporter::codex::codex_home() else {
+/// 某 agent 的 hooks 接入状态：读实况变体的配置文件，判定交给该变体的格式适配器。
+/// 解析不出实况（无 home 等）=Unknown。
+fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) -> HooksStatus {
+    let Some(inst) = inst else {
         return HooksStatus::Unknown;
     };
-    let path = home.join("hooks.json");
-    if !path.exists() {
-        return HooksStatus::Missing;
-    }
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return HooksStatus::Unknown;
-    };
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(v) if hooks_json_has_reporter(&v, "codex") => HooksStatus::Installed,
-        Ok(_) => HooksStatus::Missing,
-        Err(_) => HooksStatus::Unknown,
-    }
+    hooks_status_at(&inst.config_path(), inst.hooks, agent_id)
 }
 
-/// kimi hooks 接入状态：读 kimi_share_dir()/config.toml（新版 ~/.kimi-code 或旧版 ~/.kimi）。
-/// 文件不存在=Missing；读失败=Unknown。
-fn kimi_hooks_status() -> HooksStatus {
-    let Some(dir) = meowo_reporter::kimi::kimi_share_dir() else {
-        return HooksStatus::Unknown;
-    };
-    let path = dir.join("config.toml");
-    if !path.exists() {
-        return HooksStatus::Missing;
-    }
-    match std::fs::read_to_string(&path) {
-        Ok(text) if toml_text_has_reporter(&text, "kimi") => HooksStatus::Installed,
-        Ok(_) => HooksStatus::Missing,
-        Err(_) => HooksStatus::Unknown,
+/// 某 provider 在本机的安装实况。三家均已迁入插件层，此处只是把 ProviderKey 映射到各自的
+/// 解析入口（Phase D 会把它收敛成 `by_id(key.as_str())?.resolve()`）。
+fn install_for(key: meowo_store::ProviderKey) -> Option<meowo_agent::Installation> {
+    match key {
+        meowo_store::ProviderKey::Claude => meowo_reporter::claude::claude_install(),
+        meowo_store::ProviderKey::Codex => meowo_reporter::codex::codex_install(),
+        meowo_store::ProviderKey::Kimi => meowo_reporter::kimi::kimi_install(),
     }
 }
 
 /// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
-    match meowo_store::ProviderKey::parse(Some(&provider)) {
-        meowo_store::ProviderKey::Claude => claude_hooks_status(),
-        meowo_store::ProviderKey::Codex => codex_hooks_status(),
-        meowo_store::ProviderKey::Kimi => kimi_hooks_status(),
-    }
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    plugin_hooks_status(install_for(key), key.as_str())
 }
 
 /// 「修复连接」结果：最新接线状态 + 失败原因（None = 成功/已是目标状态）。
@@ -2766,6 +2753,7 @@ pub fn run() {
             available_agents,
             new_session,
             install_agent,
+            login_agent,
             check_provider_hooks,
             repair_provider_hooks,
             recent_cwds,
@@ -3294,88 +3282,12 @@ mod new_session_tests {
 mod hooks_check_tests {
     use super::*;
 
-    #[test]
-    fn hooks_json_detects_reporter_with_provider() {
-        let v: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": { "SessionStart": [
-            { "matcher": "*", "hooks": [
-              { "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex", "timeout": 5 }
-            ]}
-          ]}
-        }"#).unwrap();
-        assert!(hooks_json_has_reporter(&v, "codex"));
-        assert!(!hooks_json_has_reporter(&v, "kimi")); // provider 不符
-    }
+    // kimi / codex 的 SessionStart 判定已迁入 meowo_agent::config（KimiToml / CodexJson），
+    // 测试随之搬到该 crate（见 has_reporter_only_counts_session_start）。
 
-    #[test]
-    fn hooks_json_ignores_foreign_hooks() {
-        let v: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "node other.js" }] }
-          ]}
-        }"#).unwrap();
-        assert!(!hooks_json_has_reporter(&v, "codex"));
-        // 无 hooks 键。
-        let empty: serde_json::Value = serde_json::from_str("{}").unwrap();
-        assert!(!hooks_json_has_reporter(&empty, "codex"));
-    }
-
-    #[test]
-    fn hooks_json_ignores_reporter_on_non_session_start_event() {
-        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
-        let v: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex" }] }
-          ]}
-        }"#).unwrap();
-        assert!(!hooks_json_has_reporter(&v, "codex"));
-        // SessionStart 与 Stop 并存：仍应命中。
-        let v2: serde_json::Value = serde_json::from_str(r#"{
-          "hooks": {
-            "Stop": [{ "hooks": [{ "type": "command", "command": "node other.js" }] }],
-            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex" }] }]
-          }
-        }"#).unwrap();
-        assert!(hooks_json_has_reporter(&v2, "codex"));
-    }
-
-    #[test]
-    fn toml_text_detects_reporter_line() {
-        let toml = "\
-[[hooks]]\n\
-event = \"SessionStart\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n";
-        assert!(toml_text_has_reporter(toml, "kimi"));
-        assert!(!toml_text_has_reporter(toml, "codex"));
-        assert!(!toml_text_has_reporter("event = \"x\"\ncommand = \"node a.js\"", "kimi"));
-    }
-
-    #[test]
-    fn toml_text_ignores_reporter_on_non_session_start_event() {
-        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为 Installed（审查发现）。
-        let toml = "\
-[[hooks]]\n\
-event = \"Stop\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n";
-        assert!(!toml_text_has_reporter(toml, "kimi"));
-    }
-
-    #[test]
-    fn toml_text_detects_session_start_among_multiple_blocks() {
-        // Stop 块在前、SessionStart 块在后：应正确关联各自块内的 event/command，不串块。
-        let toml = "\
-[[hooks]]\n\
-event = \"Stop\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n\
-\n\
-[[hooks]]\n\
-event = \"SessionStart\"\n\
-command = \"/home/u/.local/meowo-reporter --provider kimi\"\n\
-timeout = 5\n";
-        assert!(toml_text_has_reporter(toml, "kimi"));
+    /// claude 的接线规格（取自插件层的变体表，与真实接线同源）。
+    fn claude_spec() -> &'static meowo_agent::config::HookSpec {
+        meowo_agent::by_id("claude").expect("claude 应已注册").variants()[0].hooks
     }
 
     #[test]
@@ -3384,24 +3296,40 @@ timeout = 5\n";
         let dir = std::env::temp_dir().join(format!("cckb-claude-hooks-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("settings.json");
+        let status = |p: &std::path::Path| hooks_status_at(p, claude_spec(), "claude");
 
         let _ = std::fs::remove_file(&path);
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+        assert!(matches!(status(&path), HooksStatus::Missing));
 
-        // Installed：command 用 ccsetup 认可的「带引号 meowo-reporter 路径」格式（参照 ccsetup 既有
-        // 测试 reporter_exe_path_strict_matches_only_our_exe / ensure_hooks_* 里的 command 串）。
+        // Installed：command 用 ClaudeJson 认可的「带引号 meowo-reporter 路径、无参数」格式。
         let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/meowo-reporter.exe\""}]}]}}"#;
         std::fs::File::create(&path).unwrap().write_all(installed.as_bytes()).unwrap();
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Installed));
+        assert!(matches!(status(&path), HooksStatus::Installed));
 
         let foreign = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node other.js"}]}]}}"#;
         std::fs::File::create(&path).unwrap().write_all(foreign.as_bytes()).unwrap();
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+        assert!(matches!(status(&path), HooksStatus::Missing));
 
         // 损坏 JSON → Unknown（核心不变量：不误报 Missing）
         std::fs::File::create(&path).unwrap().write_all(b"{not json").unwrap();
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Unknown));
+        assert!(matches!(status(&path), HooksStatus::Unknown));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 「损坏 → Unknown」对三家一致：kimi 的 TOML 与 codex 的 JSON 同样不许误报 Missing。
+    #[test]
+    fn corrupt_config_is_unknown_for_every_agent() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("cckb-corrupt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for id in ["claude", "codex", "kimi"] {
+            let spec = meowo_agent::by_id(id).unwrap().variants()[0].hooks;
+            let path = dir.join(format!("{id}-{}", spec.config_rel.replace('/', "_")));
+            // 对 TOML 与 JSON 都是非法文本。
+            std::fs::File::create(&path).unwrap().write_all(b"{not parseable [[[").unwrap();
+            assert!(matches!(hooks_status_at(&path, spec, id), HooksStatus::Unknown), "{id} 损坏配置应为 Unknown");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

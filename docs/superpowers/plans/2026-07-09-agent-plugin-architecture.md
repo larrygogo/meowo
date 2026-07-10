@@ -119,20 +119,24 @@ const VARIANTS: &[Variant] = &[
 
 ---
 
-## 4. 试点：迁移 kimi
+## 4. 试点：迁移 kimi ✅ 已完成
 
 选 kimi：变体差异最复杂，最能验证 `Variant`/`ConfigFormat`/`AuthScheme` 三件套。
 
 **步骤**
-1. 建 `meowo-agent` crate（id/variant/config/auth/registry 骨架 + 单测）。
-2. 实现 `ConfigFormat::KimiToml`：把现有 `ensure_kimi_hooks` + `toml_text_has_reporter` 逻辑搬进来（含 `hooks=[]` 无损替换），保留全部现有单测并新增变体用例。
-3. 写 `plugins/kimi.rs` 变体表（modern/legacy）+ `detect()`。
-4. app 侧：`kimi_share_dir` 改为薄封装 `detect().data_dir`（其它 provider 暂不动，保持旧路径）；setup/account 的 kimi 分支改走 `Installation`。
-5. reporter 侧：kimi 的 `read_summary/read_context` 以 `Installation.data_dir` 为根。
-6. 鉴权：`AuthScheme` 携带 legacy client_id/刷新端点，`ensure_valid_kimi_token` 按 `Installation.auth` 取参。
-7. 全量编译 + 测试 + 用真实 `~/.kimi` dry-run 验证。
+1. ✅ 建 `meowo-agent` crate（id/variant/config/auth/registry + plugins/kimi，18 个单测）。
+2. ✅ `ConfigFormat::KimiToml`：`ensure_kimi_hooks` + `toml_text_has_reporter` 迁入并合并为 `ensure_hooks`/`has_reporter`/`claimed_reporter`（含 `hooks=[]` 无损替换）。`has_reporter` 由逐行状态机换成 `toml_edit` 解析。
+3. ✅ `plugins/kimi.rs` 变体表（modern `~/.kimi-code` / legacy `~/.kimi`）+ 默认 `detect()`。
+4. ✅ reporter 侧：`kimi_share_dir`/`kimi_exe`/`kimi_installed` 收敛为 `kimi_install()` 的薄封装；app 侧 setup/hooks-status 改走 `Installation`。
+5. ✅ `context_window` 等会话读取以 `Installation.config_path()` 为根。
+6. ✅ 鉴权：`ensure_valid_kimi_token` / `kimi_base_url` / 凭据路径均取自 `Installation.auth`，`KIMI_TOKEN_URL`/`KIMI_CLIENT_ID`/`DEFAULT_BASE_URL` 三个写死常量消失。
+7. ✅ 全量编译 + `cargo test --workspace` 全绿 + 用真实 `~/.kimi` 副本 dry-run 验证。
 
-**验收**：kimi 卡片正确识别 legacy 变体、修复连接写入 `~/.kimi/config.toml`、账号/配额链路按 legacy 鉴权工作；claude/codex 行为零变化。
+**验收结果**：无 env 覆盖时正确识别 `变体=legacy` → `~/.kimi/config.toml`，6 条 `[[hooks]]`、SessionStart 已接线；claude/codex 行为零变化（仍走旧路径）。
+
+**遗留**：`AUTH_LEGACY` 目前复用新版 client_id（旧版值未知）。若刷新 token 返回 `invalid_client`，只需改 `plugins/kimi.rs` 里这一个 const，account 侧不动——这正是变体层要买到的东西。
+
+**env 覆盖的诚实标签**：`KIMI_SHARE_DIR` 指向的目录没有版本形态信号，命中它的变体把 tag 记为 `env-override` 而非谎报 `modern`。
 
 ---
 

@@ -123,21 +123,28 @@ pub fn oauth_credentials_missing(root: Option<&serde_json::Value>) -> bool {
     access.is_empty() && refresh.is_empty()
 }
 
-/// Claude Code 公开 OAuth client id。
-const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+/// 用量端点是 account 侧的事，不进 `AuthScheme`（后者只管「凭据在哪 + 怎么刷新」）。
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
-const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 
+/// claude 的鉴权声明，取自插件层变体表（`meowo_agent::plugins::claude`）：OAuth client_id、
+/// 刷新端点、凭据位置不再是本文件里的一把常量——换个版本形态只改变体表一处。
+fn claude_auth() -> Option<&'static meowo_agent::AuthScheme> {
+    meowo_reporter::claude::claude_install()?.auth
+}
+
+/// 账号信息住在 home 下的 `~/.claude.json`（**不在** data_dir 内，与凭据不同源），故不经
+/// `Installation`。
 fn claude_json_path() -> Option<PathBuf> {
     super::home_dir().map(|h| h.join(".claude.json"))
 }
 
-/// 非 macOS：Claude Code 把 OAuth 凭据写在此文件。macOS 改存 Keychain（见 keychain_* 函数）。
+/// 非 macOS：Claude Code 把 OAuth 凭据写在 `<data_dir>/.credentials.json`（尊重
+/// `CLAUDE_CONFIG_DIR`）。macOS 改存 Keychain（见 keychain_* 函数）。
 #[cfg(not(target_os = "macos"))]
 fn credentials_path() -> Option<PathBuf> {
-    super::home_dir().map(|h| h.join(".claude").join(".credentials.json"))
+    meowo_reporter::claude::claude_install()?.credentials_path()
 }
 
 fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
@@ -156,9 +163,16 @@ fn write_credentials_atomic(path: &std::path::Path, value: &serde_json::Value) -
     crate::fsutil::write_atomic(path, &body).map_err(|e| e.to_string())
 }
 
-/// macOS 上 Claude Code 把 OAuth 凭据存在登录 Keychain 的这条通用密码里（不写 .credentials.json）。
+/// macOS 上 Claude Code 把 OAuth 凭据存在登录 Keychain 的通用密码里（不写 .credentials.json）。
+/// service 与「写回时的 account 兜底值」均来自变体表的 `CredentialSource::KeychainOrFile`。
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+fn keychain_spec() -> (&'static str, &'static str) {
+    match claude_auth().map(|a| a.credentials) {
+        Some(meowo_agent::CredentialSource::KeychainOrFile { service, account, .. }) => (service, account),
+        // 变体表被改成非 Keychain 形态（不该发生）：退回历史常量，至少不崩。
+        _ => ("Claude Code-credentials", "root"),
+    }
+}
 
 /// 从 `security find-generic-password -g` 的属性输出里抠出 account（"acct"<blob>=...）。
 /// 形如 `"acct"<blob>="root"`，或 non-UTF8 时 `0x726F6F74  "root"`（hex + 可读串）→ 取引号内。
@@ -185,7 +199,7 @@ pub fn parse_keychain_account(attrs: &str) -> Option<String> {
 #[cfg(target_os = "macos")]
 fn keychain_read_password() -> Option<String> {
     let out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
+        .args(["find-generic-password", "-s", keychain_spec().0, "-w"])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -201,7 +215,7 @@ fn keychain_read_password() -> Option<String> {
 fn keychain_read_account() -> Option<String> {
     // `-g`：属性打到 stdout、密码打到 stderr，这里只取属性。
     let out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-g"])
+        .args(["find-generic-password", "-s", keychain_spec().0, "-g"])
         .output()
         .ok()?;
     parse_keychain_account(&String::from_utf8_lossy(&out.stdout))
@@ -215,7 +229,7 @@ fn keychain_write_password(account: &str, password: &str) -> Result<(), String> 
             "add-generic-password",
             "-U",
             "-s",
-            KEYCHAIN_SERVICE,
+            keychain_spec().0,
             "-a",
             account,
             "-w",
@@ -245,12 +259,13 @@ pub(super) fn read_credentials_root() -> Option<serde_json::Value> {
 #[cfg(target_os = "macos")]
 fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
     let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
-    let account = keychain_read_account().unwrap_or_else(|| "root".to_string());
+    // 读得到实际 account 就按同名更新；读不到用变体表声明的兜底值。
+    let account = keychain_read_account().unwrap_or_else(|| keychain_spec().1.to_string());
     keychain_write_password(&account, &body)
 }
 #[cfg(not(target_os = "macos"))]
 fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
-    let path = credentials_path().ok_or("无 HOME")?;
+    let path = credentials_path().ok_or("解析不到 claude 凭据路径")?;
     write_credentials_atomic(&path, value)
 }
 
@@ -280,12 +295,16 @@ fn ensure_valid_token() -> Result<String, String> {
     if refresh.is_empty() {
         return Err("token 已过期且无 refreshToken".into());
     }
-    let resp = ureq::post(TOKEN_URL)
+    // 刷新端点与 client_id 来自变体表；返回 `invalid_client` 即该变体的 client_id 与本机 claude 不符。
+    let Some(spec) = claude_auth().and_then(|a| a.refresh) else {
+        return Err("claude 变体表未声明 OAuth 刷新参数".into());
+    };
+    let resp = ureq::post(spec.token_url)
         .timeout(HTTP_TIMEOUT)
         .send_json(serde_json::json!({
             "grant_type": "refresh_token",
             "refresh_token": refresh,
-            "client_id": CLIENT_ID,
+            "client_id": spec.client_id,
         }))
         .map_err(|e| format!("刷新 token 失败：{e}"))?;
     let body: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;

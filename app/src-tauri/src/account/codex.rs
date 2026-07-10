@@ -266,8 +266,9 @@ fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
 
 // ═══ auth.json 读取 ═══
 
-fn read_auth_json(codex_home: &std::path::Path) -> Option<Value> {
-    let path = codex_home.join("auth.json");
+/// 凭据位置由实况变体给出（`Installation.auth.credentials`），不再在此拼路径。
+fn read_auth_json() -> Option<Value> {
+    let path = meowo_reporter::codex::codex_install()?.credentials_path()?;
     let s = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&s).ok()
 }
@@ -286,9 +287,7 @@ impl ProviderAccount for CodexProviderAccount {
     }
 
     fn account(&self) -> Option<Account> {
-        let home = meowo_reporter::codex::codex_home()?;
-        let auth = read_auth_json(&home)?;
-        parse_codex_account(&auth)
+        parse_codex_account(&read_auth_json()?)
     }
 
     fn usage(&self, _force: bool) -> Option<ProviderUsage> {
@@ -301,9 +300,7 @@ impl ProviderAccount for CodexProviderAccount {
 
     fn usage_supported(&self) -> bool {
         // 仅 chatgpt 模式（订阅）有 rate_limits
-        let Some(home) = meowo_reporter::codex::codex_home() else { return false };
-        let Some(auth) = read_auth_json(&home) else { return false };
-        auth_mode(&auth) == "chatgpt"
+        read_auth_json().is_some_and(|auth| auth_mode(&auth) == "chatgpt")
     }
 }
 

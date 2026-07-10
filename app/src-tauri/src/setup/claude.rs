@@ -1,10 +1,15 @@
-//! 无感适配：meowo-app 启动时幂等地把 meowo-reporter 接入 Claude Code 的 `~/.claude/settings.json`：
-//!   1) 确保 8 个 hook 事件指向 meowo-reporter（缺则补、路径变则更新）；
-//!   2) 把 statusLine 包成「先写库再跑原 statusLine」的脚本，让 Context 百分比自动有准确数据。
-//!
-//! 全程：解析失败即放弃、先备份、原子写、已正确则一字不改（幂等）。核心合并逻辑为纯函数，便于测试。
+//! claude（Anthropic Claude Code）自动接线。**hooks 合并逻辑已迁入
+//! `meowo_agent::config::ConfigFormat::ClaudeJson`**（matcher 感知），本模块只剩两件事：
+//!   1) I/O 编排（读 settings.json → 交给格式适配器 → 备份 + 原子写）；
+//!   2) 接线**副作用**：把 statusLine 包成「先写库再跑原 statusLine」的脚本，让 Context 百分比
+//!      自动有准确数据。它与 hooks 同住 settings.json，故走**写前改写**（`Amend`）而非
+//!      `AfterWrite`——要 `db_path()` 与脚本落盘，留在 app 侧。
 
-/// Claude Code 的 ProviderSetup 实现：委托本文件原有 apply()（hooks + statusLine），零行为变更。
+use meowo_agent::{Installation, RepairReason};
+use serde_json::{json, Value};
+
+/// claude 的 ProviderSetup。settings.json 缺失可从 `{}` 建，但**数据目录不存在＝没装**，
+/// 不凭空造 `~/.claude`（由 `detect()` / `is_configured()` 在上游拦下）。
 pub struct ClaudeSetup;
 
 impl super::ProviderSetup for ClaudeSetup {
@@ -12,185 +17,29 @@ impl super::ProviderSetup for ClaudeSetup {
         meowo_store::ProviderKey::Claude
     }
     fn detect(&self) -> bool {
-        // 与 apply() 内部「~/.claude 目录存在才创建 settings」的守卫同源。
-        claude_settings_path().parent().is_some_and(|p| p.is_dir())
+        meowo_reporter::claude::claude_install().is_some_and(|i| i.is_configured())
     }
-    fn apply(&self) -> Option<super::RepairReason> {
-        apply()
+    fn apply(&self) -> Option<RepairReason> {
+        let Some(inst) = meowo_reporter::claude::claude_install() else {
+            eprintln!("Meowo repair[claude]: 解析不到 claude 安装实况，跳过");
+            return Some(RepairReason::NotDetected);
+        };
+        // `MissingConfig::CreateFrom("{}")` 会在 settings.json 缺失时从空对象建——但仅当
+        // ~/.claude 已存在（CC 确实装过）才该发生，否则会在没装 CC 的机器上凭空造目录和文件。
+        if !inst.is_configured() {
+            eprintln!(
+                "Meowo repair[claude]: {} 不存在（未安装），跳过",
+                inst.data_dir.display()
+            );
+            return Some(RepairReason::NotDetected);
+        }
+        super::wire_hooks(&inst, "claude", Some(statusline_amend), None)
     }
 }
-
-use serde_json::{json, Value};
-
-/// meowo-reporter 负责的 hook 事件 + matcher。PreToolUse 用 matcher 限定只在两种工具触发,
-/// 与用户自有 PreToolUse(如 Bash 预检)按 matcher 区分共存。
-/// 注意：此表须与 scripts/install-hooks.mjs 的 SPECS 保持一致。
-const HOOK_SPECS: [(&str, &str); 8] = [
-    ("SessionStart", "*"),
-    ("UserPromptSubmit", "*"),
-    ("PostToolUse", "*"),
-    ("Stop", "*"),
-    ("SessionEnd", "*"),
-    ("PermissionRequest", "*"),
-    ("PreToolUse", "AskUserQuestion"),
-    ("PreToolUse", "ExitPlanMode"),
-];
 
 /// Windows 路径转 bash 可用形式：`C:\a\b` -> `C:/a/b`（Git Bash 接受 `C:/...`）。
 pub fn to_bash_path(p: &str) -> String {
     p.replace('\\', "/")
-}
-
-/// 严格判定一条 hook command 是否是「我们写入的 meowo-reporter 可执行」并返回其路径：
-/// 必须是单个（可带引号的）可执行路径、**无额外参数**，且文件名恰为 meowo-reporter[.exe]。
-/// 不用裸 contains —— 否则会误伤用户自有 hook（如 `node tools/meowo-reporter-notify.js`，
-/// 或路径里恰好含 meowo-reporter 目录），把人家的命令静默改写坏。纯函数便于单测。
-pub fn reporter_exe_path(cmd: &str) -> Option<String> {
-    let c = cmd.trim();
-    let path = if let Some(rest) = c.strip_prefix('"') {
-        // 形如 "<path>"：取首尾引号之间，引号后不能再有内容（否则是带参数）。
-        let inner = rest.strip_suffix('"')?;
-        if inner.contains('"') {
-            return None;
-        }
-        inner
-    } else {
-        // 裸路径：不能含空白（含空白 = 带参数/是命令而非单可执行）。
-        if c.chars().any(char::is_whitespace) {
-            return None;
-        }
-        c
-    };
-    let name = std::path::Path::new(path).file_name()?.to_str()?;
-    (name.eq_ignore_ascii_case("meowo-reporter") || name.eq_ignore_ascii_case("meowo-reporter.exe"))
-        .then(|| path.to_string())
-}
-
-/// settings 的 `hooks.SessionStart` 数组里是否有我们的 meowo-reporter 可执行。
-/// 「新会话能否入库」只取决于 SessionStart 是否挂了钩子，故与下面 reporter_path_from_hooks
-/// （广扫全部事件、用于路径复用）语义不同，需单独判定，不能混用（审查发现：只在别的事件挂了
-/// meowo-reporter 不能保证新会话会被记录，会被误判成已装）。
-pub fn session_start_has_reporter(settings: &Value) -> bool {
-    let Some(arr) = settings
-        .get("hooks")
-        .and_then(|h| h.get("SessionStart"))
-        .and_then(|s| s.as_array())
-    else {
-        return false;
-    };
-    arr.iter().any(|entry| {
-        entry
-            .get("hooks")
-            .and_then(|x| x.as_array())
-            .into_iter()
-            .flatten()
-            .any(|h| {
-                h.get("command")
-                    .and_then(|x| x.as_str())
-                    .and_then(reporter_exe_path)
-                    .is_some()
-            })
-    })
-}
-
-/// 从 settings 的 hooks 里找出已配置的 meowo-reporter 可执行路径。
-pub fn reporter_path_from_hooks(settings: &Value) -> Option<String> {
-    let hooks = settings.get("hooks")?.as_object()?;
-    for (_event, arr) in hooks {
-        for entry in arr.as_array().into_iter().flatten() {
-            for h in entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten() {
-                if let Some(cmd) = h.get("command").and_then(|x| x.as_str()) {
-                    if let Some(p) = reporter_exe_path(cmd) {
-                        return Some(p);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// 在某 hook 事件数组里找「matcher 等于 target_matcher 且含 meowo-reporter 命令」的 entry。
-/// 返回整个 entry 的可变引用(用于更新其内部 hook 的路径)。matcher 感知:
-/// 同一事件下可有多条按 matcher 区分的条目(如 PreToolUse 的 Bash 预检与本程序的 AskUserQuestion)。
-fn find_reporter_entry_with_matcher<'a>(
-    event_arr: &'a mut [Value],
-    target_matcher: &str,
-) -> Option<&'a mut Value> {
-    for entry in event_arr.iter_mut() {
-        if entry.get("matcher").and_then(|m| m.as_str()) != Some(target_matcher) {
-            continue;
-        }
-        let has_reporter = entry
-            .get("hooks")
-            .and_then(|x| x.as_array())
-            .into_iter()
-            .flatten()
-            .any(|h| {
-                h.get("command")
-                    .and_then(|x| x.as_str())
-                    .and_then(reporter_exe_path)
-                    .is_some()
-            });
-        if has_reporter {
-            return Some(entry);
-        }
-    }
-    None
-}
-
-/// 确保 8 条 (event, matcher) 规格都挂上 meowo-reporter（`reporter_native` 为本机路径，hook 的 command 用 `"<path>"`）。
-/// 返回是否有改动。按 matcher 区分定位/追加，保留同一事件下用户自有的其他 matcher 条目（如 PreToolUse:Bash 预检）。
-pub fn ensure_hooks(settings: &mut Value, reporter_native: &str) -> bool {
-    let desired_cmd = format!("\"{reporter_native}\"");
-    let mut changed = false;
-
-    if !settings.get("hooks").map(|h| h.is_object()).unwrap_or(false) {
-        settings["hooks"] = json!({});
-        changed = true;
-    }
-    for (event, matcher) in HOOK_SPECS {
-        let arr = settings["hooks"]
-            .as_object_mut()
-            .unwrap()
-            .entry(event.to_string())
-            .or_insert_with(|| json!([]));
-        let arr = match arr.as_array_mut() {
-            Some(a) => a,
-            None => {
-                *arr = json!([]);
-                arr.as_array_mut().unwrap()
-            }
-        };
-        match find_reporter_entry_with_matcher(arr, matcher) {
-            Some(entry) => {
-                // 升级该 entry 内 meowo-reporter hook 的路径(matcher 不动)。
-                if let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) {
-                    for h in hs.iter_mut() {
-                        let is_reporter = h
-                            .get("command")
-                            .and_then(|x| x.as_str())
-                            .and_then(reporter_exe_path)
-                            .is_some();
-                        if is_reporter
-                            && h.get("command").and_then(|x| x.as_str()) != Some(desired_cmd.as_str())
-                        {
-                            h["command"] = json!(desired_cmd);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            None => {
-                arr.push(json!({
-                    "matcher": matcher,
-                    "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }]
-                }));
-                changed = true;
-            }
-        }
-    }
-    changed
 }
 
 /// 探测 statusLine 接线状态（只读不改）：
@@ -225,7 +74,9 @@ pub fn build_script(reporter_bash: &str, inner: &str) -> String {
     s.push_str("input=$(cat)\n");
     if inner.trim().is_empty() {
         // 无下游 statusLine：meowo-reporter 写库并自渲染极简状态栏（输出即状态栏）。
-        s.push_str(&format!("printf '%s' \"$input\" | \"{reporter_bash}\" statusline\n"));
+        s.push_str(&format!(
+            "printf '%s' \"$input\" | \"{reporter_bash}\" statusline\n"
+        ));
     } else {
         // 有下游（如 claude-hud）：meowo-reporter 只写库（丢弃输出），再跑下游渲染真正的状态栏。
         s.push_str(&format!(
@@ -236,7 +87,7 @@ pub fn build_script(reporter_bash: &str, inner: &str) -> String {
     s
 }
 
-/// 写出 statusline 包装脚本（先建目录）。返回错误供调用方回滚 settings 的 statusLine 改动。
+/// 写出 statusline 包装脚本（先建目录）。返回错误供调用方决定是否改写 settings。
 fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -244,141 +95,52 @@ fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Res
     std::fs::write(path, script)
 }
 
-/// 解析 settings.json 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的
-/// JSON 带 BOM，serde_json 会直接报错，曾导致无感接线静默失败。
-pub(crate) fn parse_settings(text: &str) -> Option<Value> {
-    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+/// 包装脚本路径：`~/.meowo/statusline.sh`（与 board.db 同目录）。
+fn script_path() -> std::path::PathBuf {
+    crate::db_path().with_file_name("statusline.sh")
 }
 
-/// `~/.claude/settings.json`（尊重 CLAUDE_CONFIG_DIR）。
-pub(crate) fn claude_settings_path() -> std::path::PathBuf {
-    let base = std::env::var("CLAUDE_CONFIG_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".into());
-            std::path::PathBuf::from(home).join(".claude")
-        });
-    base.join("settings.json")
-}
-
-/// 解析 meowo-reporter 本机路径：优先 app 可执行同目录（打包态会把二进制放一起），
-/// 其次复用现有 hooks 里已配置的路径（dev / 已安装）。两者都没有则放弃自动接线。
-fn resolve_reporter_native(settings: &Value) -> Option<String> {
-    // 1) 优先复用现有 hooks 里已配置且仍存在的路径——不折腾用户正在工作的配置（幂等关键）。
-    if let Some(p) = reporter_path_from_hooks(settings) {
-        if std::path::Path::new(&p).exists() {
-            return Some(p);
-        }
-    }
-    // 2) 否则用 app 可执行同目录（全新安装/打包态：meowo-reporter 与 app 放一起）。
-    let bin = if cfg!(windows) { "meowo-reporter.exe" } else { "meowo-reporter" };
-    if let Ok(exe) = std::env::current_exe() {
-        let sib = exe.with_file_name(bin);
-        if sib.exists() {
-            return Some(sib.to_string_lossy().into_owned());
-        }
-    }
-    None
-}
-
-/// 启动时调用：幂等地把 meowo-reporter 接入 Claude Code 的 settings.json（hooks + statusLine）。
-/// 全程 best-effort：读不到 / 解析失败 / 找不到二进制都静默返回，绝不影响应用启动，绝不写坏文件。
-pub fn apply() -> Option<super::RepairReason> {
-    use super::RepairReason;
-    let settings_path = claude_settings_path();
-    let text = match std::fs::read_to_string(&settings_path) {
-        Ok(t) => t,
-        // 没有 settings.json：从空配置创建（刚装 Claude Code、没改过设置的用户就没有这个文件，
-        // 以前直接放弃导致接线永远不发生）。仅当 ~/.claude 目录已存在（CC 确实装过）才创建，
-        // 避免在没装 CC 的机器上凭空造目录和文件。
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if !settings_path.parent().is_some_and(|p| p.is_dir()) {
-                eprintln!("Meowo repair[claude]: ~/.claude 目录不存在，跳过");
-                return Some(RepairReason::NotDetected);
-            }
-            "{}".to_string()
-        }
-        // 其它读取失败（权限、非 UTF-8 编码如 UTF-16 等）：文件存在但读不了，
-        // 绝不能当「不存在」处理——否则会拿空配置覆盖用户文件。
-        Err(e) => {
-            eprintln!("Meowo repair[claude]: settings.json 读取失败（{e}），跳过");
-            return Some(RepairReason::ConfigUnreadable);
-        }
+/// `Amend`：在 hooks 合并后、落盘前把 statusLine 指向包装脚本。
+///
+/// **顺序纪律（勿改）**：脚本先落盘，成功后 settings 才指向它。写失败（目录不可写/杀软拦截/磁盘满）
+/// 时 settings 原样不动——否则 Claude Code 状态栏会指向不存在的脚本，用户原 statusLine 命令
+/// （inner）只存在于没写出去的脚本里而永久丢失，且后续启动因幂等判定命中 marker 而跳过重建、
+/// 永不自愈。settings 未动则下次启动整段重试。
+///
+/// 无改动时**原样返回入参文本**（不重新序列化），否则 `wire_hooks` 的幂等判定会误判为有改动。
+fn statusline_amend(
+    _inst: &Installation,
+    text: &str,
+    reporter: &str,
+) -> Result<String, RepairReason> {
+    let Some(mut settings) = meowo_agent::config::parse_json_config(text) else {
+        return Err(RepairReason::ConfigUnreadable);
     };
-    let Some(mut settings) = parse_settings(&text) else {
-        eprintln!("Meowo repair[claude]: settings.json 解析失败（非法 JSON），跳过（绝不覆盖用户文件）");
-        return Some(RepairReason::ConfigUnreadable); // 解析失败 → 绝不覆盖用户文件
-    };
-    if !settings.is_object() {
-        eprintln!("Meowo repair[claude]: settings.json 顶层非对象，跳过");
-        return Some(RepairReason::ConfigUnreadable); // 顶层不是对象（数组/标量）：后续按键索引赋值会 panic，直接放弃
-    }
-    let orig = settings.clone();
-
-    let Some(reporter_native) = resolve_reporter_native(&settings) else {
-        eprintln!("Meowo repair[claude]: 找不到 meowo-reporter 二进制（既有 hooks 无有效路径且 app 同目录无 sidecar），无法接线");
-        return Some(RepairReason::ReporterNotFound); // 找不到 meowo-reporter 二进制 → 无法接线
-    };
-
-    ensure_hooks(&mut settings, &reporter_native);
-
-    // 包装脚本路径：~/.meowo/statusline.sh（与 board.db 同目录）。
-    let script_path = crate::db_path().with_file_name("statusline.sh");
+    let script_path = script_path();
     let script_bash = to_bash_path(&script_path.to_string_lossy());
-    let invocation = format!("bash \"{script_bash}\"");
+
     match probe_statusline(&settings, &script_bash) {
         Some(inner) => {
-            // 顺序关键：脚本先落盘，成功后 settings 才指向它。写失败（目录不可写/杀软拦截/磁盘满）
-            // 时 settings 原样不动——否则 Claude Code 状态栏会指向不存在的脚本，用户原 statusLine
-            // 命令（inner）只存在于没写出去的脚本里而永久丢失，且后续启动因幂等判定命中 marker
-            // 而跳过重建、永不自愈。settings 未动则下次启动整段重试。
-            let script = build_script(&to_bash_path(&reporter_native), &inner);
-            if write_statusline_script(&script_path, &script).is_ok() {
-                settings["statusLine"] = json!({ "type": "command", "command": invocation });
+            let script = build_script(&to_bash_path(reporter), &inner);
+            if write_statusline_script(&script_path, &script).is_err() {
+                eprintln!("Meowo repair[claude]: statusline 脚本写入失败，settings 原样不动（下次启动重试）");
+                return Ok(text.to_string());
             }
+            settings["statusLine"] =
+                json!({ "type": "command", "command": format!("bash \"{script_bash}\"") });
+            let pretty =
+                serde_json::to_string_pretty(&settings).map_err(|_| RepairReason::WriteFailed)?;
+            Ok(format!("{pretty}\n"))
         }
         None => {
             // 幂等命中（settings 已指向我们的脚本）但脚本文件缺失：用户删 ~/.meowo 重置数据时
             // board.db 会被 Store::open 自动重建，本脚本却不会——不补建则状态栏每次渲染报
             // No such file、Context% 永久断供。原 inner 已无从恢复，退化为自渲染版兜底。
             if !script_path.exists() {
-                let script = build_script(&to_bash_path(&reporter_native), "");
+                let script = build_script(&to_bash_path(reporter), "");
                 let _ = write_statusline_script(&script_path, &script);
             }
-        }
-    }
-
-    if settings == orig {
-        eprintln!("Meowo repair[claude]: settings 已是目标状态，无需改动（若面板仍提示未接入，多半是 SessionStart 未挂 reporter 的判定差异，请反馈）");
-        return None; // 已是目标状态 → 一字不改
-    }
-
-    // 备份原文件，再原子写（先写临时文件后 rename）。备份只在不存在时写一次——
-    // 保留**最初**那份用户原始配置，避免连续启动用（可能已被我们改过的）当前文件覆盖原始备份。
-    let backup = settings_path.with_extension("json.cckb-bak");
-    if !backup.exists() {
-        let _ = std::fs::copy(&settings_path, &backup);
-    }
-    let Ok(pretty) = serde_json::to_string_pretty(&settings) else {
-        eprintln!("Meowo repair[claude]: settings 序列化失败，跳过");
-        return Some(RepairReason::WriteFailed);
-    };
-    let tmp = settings_path.with_extension("json.cckb-tmp");
-    if std::fs::write(&tmp, format!("{pretty}\n")).is_err() {
-        eprintln!("Meowo repair[claude]: 写入临时文件失败（目录不可写/磁盘满/杀软拦截）");
-        return Some(RepairReason::WriteFailed);
-    }
-    match std::fs::rename(&tmp, &settings_path) {
-        Ok(_) => {
-            eprintln!("Meowo repair[claude]: 已写入 hooks 到 {}", settings_path.display());
-            None
-        }
-        Err(e) => {
-            eprintln!("Meowo repair[claude]: 写入 settings.json 失败（rename: {e}）");
-            Some(RepairReason::WriteFailed)
+            Ok(text.to_string())
         }
     }
 }
@@ -388,69 +150,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reporter_exe_path_strict_matches_only_our_exe() {
-        // 我们写入的形态：带引号的单可执行路径，无参数。
-        // 路径用正斜杠：Windows/macOS 均把 `/` 当分隔符，file_name 跨平台一致（避免 macOS 上 `\` 不被当分隔符）。
-        assert_eq!(
-            reporter_exe_path("\"C:/x/meowo-reporter.exe\"").as_deref(),
-            Some("C:/x/meowo-reporter.exe")
-        );
-        assert_eq!(reporter_exe_path("/usr/local/bin/meowo-reporter").as_deref(), Some("/usr/local/bin/meowo-reporter"));
-        // 不能误伤用户自有 hook：带参数、是别的脚本、或只是路径里含子串。
-        assert_eq!(reporter_exe_path("node tools/meowo-reporter-notify.js"), None);
-        assert_eq!(reporter_exe_path("\"C:/x/meowo-reporter.exe\" --flag"), None);
-        assert_eq!(reporter_exe_path("/opt/meowo-reporter/run.sh"), None);
-        assert_eq!(reporter_exe_path("meowo-reporter-wrapper"), None);
-        assert_eq!(reporter_exe_path(""), None);
-        // find_reporter_entry_with_matcher 不应认领「事件内、命令含 meowo-reporter 子串的用户 hook」。
-        let mut arr = vec![json!({"hooks":[{"type":"command","command":"node tools/meowo-reporter-notify.js"}]})];
-        assert!(find_reporter_entry_with_matcher(&mut arr, "*").is_none());
-    }
-
-    #[test]
-    fn ensure_hooks_adds_all_events_when_empty() {
-        let mut v = json!({});
-        assert!(ensure_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-        for e in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"] {
-            let cmd = v["hooks"][e][0]["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(cmd, "\"C:/x/meowo-reporter.exe\"");
-        }
-        // 再跑一次：幂等，无改动。
-        assert!(!ensure_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-    }
-
-    #[test]
-    fn ensure_hooks_updates_changed_path_and_keeps_other_hooks() {
-        // 某事件上已有一个别的 hook + 一个旧路径的 meowo-reporter。
-        let mut v = json!({
-            "hooks": {
-                "SessionStart": [
-                    { "matcher": "*", "hooks": [{ "type": "command", "command": "node other.js" }] },
-                    { "matcher": "*", "hooks": [{ "type": "command", "command": "\"C:/old/meowo-reporter.exe\"", "timeout": 5 }] }
-                ]
-            }
-        });
-        assert!(ensure_hooks(&mut v, "C:/new/meowo-reporter.exe"));
-        // 别的 hook 还在
-        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "node other.js");
-        // meowo-reporter 路径被更新
-        assert_eq!(
-            v["hooks"]["SessionStart"][1]["hooks"][0]["command"],
-            "\"C:/new/meowo-reporter.exe\""
-        );
-        // 没有重复追加（该事件仍是 2 条）
-        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 2);
-    }
-
-    #[test]
     fn probe_statusline_wraps_existing_and_is_idempotent() {
-        let mut v = json!({ "statusLine": { "type": "command", "command": "bash -c 'claude-hud'" } });
+        let mut v =
+            json!({ "statusLine": { "type": "command", "command": "bash -c 'claude-hud'" } });
         let marker = "C:/Users/me/.meowo/statusline.sh";
         let inv = format!("bash \"{marker}\"");
         let inner = probe_statusline(&v, marker).expect("应需要生成脚本");
         assert_eq!(inner, "bash -c 'claude-hud'"); // 捕获到原命令
         assert_eq!(v["statusLine"]["command"], "bash -c 'claude-hud'"); // 探测不改写
-        // 模拟 apply：脚本落盘成功后才改写 settings。
+                                                                        // 模拟 amend：脚本落盘成功后才改写 settings。
         v["statusLine"] = json!({ "type": "command", "command": inv });
         // 再探测：已引用我们的脚本 → None（幂等，不再重复捕获/递归）
         assert!(probe_statusline(&v, marker).is_none());
@@ -475,140 +183,124 @@ mod tests {
         assert!(!without.contains(">/dev/null"));
     }
 
-    /// dry-run：对 CLAUDE_CONFIG_DIR/settings.json（真实文件的副本）跑 apply()，打印结果。
-    /// 用法：CLAUDE_CONFIG_DIR=<tmp> MEOWO_DB=<tmp/board.db> \
-    ///       cargo test -p meowo-app ccsetup::tests::dryrun_against_copy -- --ignored --nocapture
+    #[test]
+    fn to_bash_path_normalizes_windows_separators() {
+        assert_eq!(
+            to_bash_path(r"C:\Users\me\.meowo\statusline.sh"),
+            "C:/Users/me/.meowo/statusline.sh"
+        );
+        assert_eq!(to_bash_path("/home/me/x"), "/home/me/x");
+    }
+
+    /// 从 install-hooks.mjs 里抠出 `const SPECS = [...]` 的 `["事件", "matcher"],` 各行。
+    fn parse_mjs_specs(src: &str) -> Vec<(String, String)> {
+        let start = src
+            .find("const SPECS = [")
+            .expect("install-hooks.mjs 里找不到 const SPECS");
+        let block = &src[start..];
+        let end = block.find("];").expect("SPECS 数组未闭合");
+        block[..end]
+            .lines()
+            .filter_map(|l| {
+                let inner = l.trim().strip_prefix('[')?.split(']').next()?;
+                let mut it = inner.split(',').map(|s| s.trim().trim_matches('"'));
+                Some((it.next()?.to_string(), it.next()?.to_string()))
+            })
+            .collect()
+    }
+
+    /// 绊线：`plugins/claude.rs` 的 EVENTS 与 `scripts/install-hooks.mjs` 的 SPECS 必须逐条一致。
+    /// 两处各维护一份（一个给 app 无感接线，一个给手动脚本），此前只有注释在提醒，靠不住——
+    /// 漏同步会让脚本装出的 hooks 与 app 认领的规格对不上，出现「装了却显示未接入」。
+    #[test]
+    fn hook_specs_match_install_hooks_mjs() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/install-hooks.mjs");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
+        let from_js = parse_mjs_specs(&src);
+        assert_eq!(
+            from_js.len(),
+            8,
+            "解析出的 SPECS 条数不对，脚本格式可能变了"
+        );
+
+        let events = meowo_agent::by_id("claude")
+            .expect("claude 应已注册")
+            .variants()[0]
+            .hooks
+            .events;
+        let from_rs: Vec<(String, String)> = events
+            .iter()
+            .map(|e| {
+                (
+                    e.name.to_string(),
+                    e.matcher.unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            from_rs, from_js,
+            "plugins/claude.rs 的 EVENTS 与 install-hooks.mjs 的 SPECS 不一致"
+        );
+    }
+
+    /// dry-run：对 CLAUDE_CONFIG_DIR/settings.json（真实文件的副本）跑 ClaudeSetup::apply，核对产物。
+    /// 用法：复制 ~/.claude 到临时目录，
+    ///       CLAUDE_CONFIG_DIR=<副本> MEOWO_DB=<副本/board.db> \
+    ///       cargo test -p meowo-app dryrun_claude -- --ignored --nocapture
+    ///
+    /// 只打印结构性摘要，**绝不 dump 配置原文**——真实 settings.json 可能含 env 里的密钥。
     #[test]
     #[ignore]
-    fn dryrun_against_copy() {
-        super::apply();
-        let p = super::claude_settings_path();
-        let after = std::fs::read_to_string(&p).expect("读不回 settings.json");
-        let v: Value = serde_json::from_str(&after).expect("结果不是合法 JSON");
-        eprintln!("=== 顶层键（应全部保留）===\n{:?}", v.as_object().unwrap().keys().collect::<Vec<_>>());
-        eprintln!("=== statusLine ===\n{}", serde_json::to_string_pretty(&v["statusLine"]).unwrap());
-        eprintln!("=== hooks 事件 ===\n{:?}", v["hooks"].as_object().unwrap().keys().collect::<Vec<_>>());
-        eprintln!("=== PreToolUse（应原封不动）===\n{}", v["hooks"]["PreToolUse"][0]["hooks"][0]["command"]);
-        eprintln!("=== SessionStart meowo-reporter（应不变）===\n{}", v["hooks"]["SessionStart"][0]["hooks"][0]["command"]);
-        assert!(v["statusLine"]["command"].as_str().unwrap().contains("statusline.sh"));
-        assert!(v["hooks"]["PreToolUse"].is_array());
-    }
+    fn dryrun_claude() {
+        use crate::setup::ProviderSetup;
+        let reason = super::ClaudeSetup.apply();
+        let inst = meowo_reporter::claude::claude_install().expect("应解析出实况");
+        let text = std::fs::read_to_string(inst.config_path()).expect("读不回 settings.json");
+        let v: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
 
-    #[test]
-    fn real_shape_user_settings_merge() {
-        // 精确复刻用户 settings.json 结构：PreToolUse(node) + 5 个 meowo-reporter 事件 + claude-hud statusLine。
-        let ccr = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
-        let ccr_cmd = format!("\"{ccr}\"");
-        let mut v = json!({
-            "hooks": {
-                "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type":"command", "command":"node \"x/pre-commit-check.cjs\"", "timeout":5000 }] }],
-                "SessionStart": [{ "matcher":"*", "hooks":[{ "type":"command", "command": ccr_cmd, "timeout":5 }] }],
-                "UserPromptSubmit": [{ "matcher":"*", "hooks":[{ "type":"command", "command": ccr_cmd, "timeout":5 }] }],
-                "PostToolUse": [{ "matcher":"*", "hooks":[{ "type":"command", "command": ccr_cmd, "timeout":5 }] }],
-                "Stop": [{ "matcher":"*", "hooks":[{ "type":"command", "command": ccr_cmd, "timeout":5 }] }],
-                "SessionEnd": [{ "matcher":"*", "hooks":[{ "type":"command", "command": ccr_cmd, "timeout":5 }] }]
-            },
-            "statusLine": { "type":"command", "command":"bash -c 'claude-hud stuff'" }
-        });
-        // fixture 缺少 PermissionRequest / PreToolUse(AskUserQuestion|ExitPlanMode) → 首次追加 3 条，返回 true
-        assert!(ensure_hooks(&mut v, ccr));
-        // PreToolUse 的 node 预检原封不动
-        assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "node \"x/pre-commit-check.cjs\"");
-        // PreToolUse 下已追加 AskUserQuestion / ExitPlanMode 两条 meowo-reporter
-        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
-        assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
-        assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
-        // PermissionRequest 也已追加
-        assert_eq!(v["hooks"]["PermissionRequest"][0]["matcher"], "*");
-        // 再跑一次：此时才幂等
-        assert!(!ensure_hooks(&mut v, ccr));
-        // statusLine 探测捕获到原 claude-hud;模拟 apply 在脚本落盘成功后改写
-        let marker = "C:/Users/larry/.meowo/statusline.sh";
-        let inv = format!("bash \"{marker}\"");
-        assert_eq!(probe_statusline(&v, marker).as_deref(), Some("bash -c 'claude-hud stuff'"));
-        v["statusLine"] = json!({ "type": "command", "command": inv });
-        // 再探测幂等：不再重复捕获
-        assert!(probe_statusline(&v, marker).is_none());
-    }
+        eprintln!(
+            "变体={} 配置={}",
+            inst.variant_tag,
+            inst.config_path().display()
+        );
+        eprintln!("apply reason={reason:?}");
+        eprintln!(
+            "顶层键（应全部保留）={:?}",
+            v.as_object().unwrap().keys().collect::<Vec<_>>()
+        );
+        eprintln!(
+            "hooks 事件={:?}",
+            v["hooks"].as_object().unwrap().keys().collect::<Vec<_>>()
+        );
+        eprintln!(
+            "SessionStart 已接线={}",
+            inst.hooks.has_reporter(&text, "claude")
+        );
 
-    #[test]
-    fn parse_settings_tolerates_utf8_bom() {
-        let with_bom = "\u{feff}{\"hooks\":{}}";
-        let v = parse_settings(with_bom).expect("带 BOM 的 JSON 应能解析");
-        assert!(v["hooks"].is_object());
-        // 无 BOM 照常
-        assert!(parse_settings("{}").is_some());
-        // 真正的坏 JSON 仍拒绝
-        assert!(parse_settings("{not json").is_none());
-    }
-
-    #[test]
-    fn reporter_path_extracted_from_hooks() {
-        let v = json!({
-            "hooks": { "Stop": [{ "matcher": "*", "hooks": [
-                { "type": "command", "command": "\"C:/a/b/meowo-reporter.exe\"", "timeout": 5 }
-            ] }] }
-        });
-        assert_eq!(reporter_path_from_hooks(&v).as_deref(), Some("C:/a/b/meowo-reporter.exe"));
-    }
-
-    #[test]
-    fn session_start_has_reporter_requires_session_start_event() {
-        // 只在 Stop 挂了 meowo-reporter：不能保证新会话会入库，不应判定为「已装」（审查发现）。
-        // reporter_path_from_hooks（广扫，供路径复用）仍会命中这条，语义刻意不同。
-        let stop_only = json!({
-            "hooks": { "Stop": [{ "matcher": "*", "hooks": [
-                { "type": "command", "command": "\"C:/a/b/meowo-reporter.exe\"", "timeout": 5 }
-            ] }] }
-        });
-        assert!(!session_start_has_reporter(&stop_only));
-        assert!(reporter_path_from_hooks(&stop_only).is_some());
-
-        // SessionStart 挂了：算已装。
-        let session_start = json!({
-            "hooks": { "SessionStart": [{ "matcher": "*", "hooks": [
-                { "type": "command", "command": "\"C:/a/b/meowo-reporter.exe\"", "timeout": 5 }
-            ] }] }
-        });
-        assert!(session_start_has_reporter(&session_start));
-
-        // 无 hooks 键。
-        assert!(!session_start_has_reporter(&json!({})));
-    }
-
-    #[test]
-    fn ensure_hooks_adds_all_specs_including_pretooluse_matchers() {
-        let mut v = json!({});
-        assert!(ensure_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-        // 5 个老事件 + PermissionRequest:matcher "*"。
-        for e in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
-            assert_eq!(v["hooks"][e][0]["matcher"], "*", "{e} matcher");
-            assert_eq!(v["hooks"][e][0]["hooks"][0]["command"], "\"C:/x/meowo-reporter.exe\"");
+        // 8 条 (event, matcher) 齐。
+        let want: [(&str, &str); 8] = [
+            ("SessionStart", "*"),
+            ("UserPromptSubmit", "*"),
+            ("PostToolUse", "*"),
+            ("Stop", "*"),
+            ("SessionEnd", "*"),
+            ("PermissionRequest", "*"),
+            ("PreToolUse", "AskUserQuestion"),
+            ("PreToolUse", "ExitPlanMode"),
+        ];
+        for (ev, m) in want {
+            let arr = v["hooks"][ev]
+                .as_array()
+                .unwrap_or_else(|| panic!("缺事件 {ev}"));
+            assert!(arr.iter().any(|e| e["matcher"] == m), "缺 ({ev}, {m})");
         }
-        // PreToolUse:两条,matcher 分别 AskUserQuestion / ExitPlanMode。
-        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
-        let matchers: Vec<&str> = pre.iter().map(|e| e["matcher"].as_str().unwrap()).collect();
-        assert!(matchers.contains(&"AskUserQuestion"));
-        assert!(matchers.contains(&"ExitPlanMode"));
-        // 幂等。
-        assert!(!ensure_hooks(&mut v, "C:/x/meowo-reporter.exe"));
-    }
-
-    #[test]
-    fn ensure_hooks_preserves_user_pretooluse_bash() {
-        // 用户自有 PreToolUse:Bash node 预检,不是 meowo-reporter。
-        let mut v = json!({
-            "hooks": { "PreToolUse": [
-                { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"x/pre-check.cjs\"" }] }
-            ]}
-        });
-        ensure_hooks(&mut v, "C:/x/meowo-reporter.exe");
-        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
-        // 原 Bash 条目原封保留。
-        let bash = pre.iter().find(|e| e["matcher"] == "Bash").unwrap();
-        assert_eq!(bash["hooks"][0]["command"], "node \"x/pre-check.cjs\"");
-        // 且新增了 AskUserQuestion / ExitPlanMode 两条 meowo-reporter。
-        assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
-        assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
+        // statusLine 指向脚本且脚本存在。
+        let sl = v["statusLine"]["command"].as_str().unwrap();
+        assert!(sl.contains("statusline.sh"), "statusLine 未指向脚本：{sl}");
+        assert!(super::script_path().exists(), "statusLine 脚本未落盘");
+        eprintln!("statusLine 指向脚本且脚本存在 ✓");
     }
 }
