@@ -13,8 +13,9 @@
 //! - Phase 2 ✅ 注册表合一：`meowo-reporter` 的 `Agent` trait 与那张并行注册表已折进本 crate 的
 //!   [`AgentPlugin`]——进程名、resume/启动 argv、安装脚本、标签页行为是声明式方法，会话遥测走
 //!   [`caps::TelemetryCap`] 能力槽。transcript 解析亦随之迁入（[`transcript`] + `plugins/claude/`）。
-//! - Phase 3 ⏳ 端口注入：`HttpPort` / `FsPort` / `KeychainPort`，让 `meowo-app` 的 `ProviderSetup`
-//!   与 `ProviderAccount` 也住进 `plugins/<id>/`。
+//! - Phase 3 ✅ 端口注入：[`ports::HttpPort`] / [`ports::KeychainPort`] 由宿主注入，于是账号
+//!   （[`account::AccountCap`]）与接线副作用（[`wiring::WiringCap`]）也住进了 `plugins/<id>/`。
+//!   本 crate 不依赖 HTTP 栈，插件层没有一行 `#[cfg(target_os)]`。
 //! - Phase 4 ⏳ 前端描述符：`list_agents()` 下发展示名/品牌色/图标，前端零 agent 知识。
 //!
 //! 终局验收：加一个 agent 只需新增 `plugins/<new>/` 与 `registry.rs` 一行。
@@ -32,6 +33,7 @@ pub mod ports;
 pub mod registry;
 pub mod transcript;
 pub mod variant;
+pub mod wiring;
 
 pub use account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
@@ -45,6 +47,7 @@ pub use transcript::{
     default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 pub use variant::{DataDirSpec, Installation, Variant};
+pub use wiring::{backup_once, wire_hooks, WiringCap, WiringContext};
 
 use std::path::{Path, PathBuf};
 

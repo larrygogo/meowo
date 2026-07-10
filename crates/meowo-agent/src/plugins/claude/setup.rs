@@ -1,39 +1,22 @@
-//! claude（Anthropic Claude Code）自动接线。**hooks 合并逻辑已迁入
-//! `meowo_agent::config::ConfigFormat::ClaudeJson`**（matcher 感知），本模块只剩两件事：
-//!   1) I/O 编排（读 settings.json → 交给格式适配器 → 备份 + 原子写）；
-//!   2) 接线**副作用**：把 statusLine 包成「先写库再跑原 statusLine」的脚本，让 Context 百分比
-//!      自动有准确数据。它与 hooks 同住 settings.json，故走**写前改写**（`Amend`）而非
-//!      `AfterWrite`——要 `db_path()` 与脚本落盘，留在 app 侧。
+//! claude 的接线副作用：把 `statusLine` 包成「先写库再跑原 statusLine」的脚本，让 Context 百分比
+//! 自动有准确数据。
+//!
+//! 它与 hooks 同住 settings.json，故走**写前改写**（`WiringCap::amend`）而非 `after_write`。
+//! 脚本落在 meowo 自己的数据目录下——那是宿主的知识，经 `WiringContext::meowo_dir` 传入，
+//! 插件因此不需要认识 `db_path()`。
 
-use meowo_agent::{Installation, RepairReason};
 use serde_json::{json, Value};
 
-/// claude 的 ProviderSetup。settings.json 缺失可从 `{}` 建，但**数据目录不存在＝没装**，
-/// 不凭空造 `~/.claude`（由 `detect()` / `is_configured()` 在上游拦下）。
-pub struct ClaudeSetup;
+use crate::config::RepairReason;
+use crate::variant::Installation;
+use crate::wiring::{WiringCap, WiringContext};
 
-impl super::ProviderSetup for ClaudeSetup {
-    fn id(&self) -> meowo_agent::AgentId {
-        meowo_agent::id::CLAUDE
-    }
-    fn detect(&self) -> bool {
-        meowo_agent::installation(meowo_agent::id::CLAUDE).is_some_and(|i| i.is_configured())
-    }
-    fn apply(&self) -> Option<RepairReason> {
-        let Some(inst) = meowo_agent::installation(meowo_agent::id::CLAUDE) else {
-            eprintln!("Meowo repair[claude]: 解析不到 claude 安装实况，跳过");
-            return Some(RepairReason::NotDetected);
-        };
-        // `MissingConfig::CreateFrom("{}")` 会在 settings.json 缺失时从空对象建——但仅当
-        // ~/.claude 已存在（CC 确实装过）才该发生，否则会在没装 CC 的机器上凭空造目录和文件。
-        if !inst.is_configured() {
-            eprintln!(
-                "Meowo repair[claude]: {} 不存在（未安装），跳过",
-                inst.data_dir.display()
-            );
-            return Some(RepairReason::NotDetected);
-        }
-        super::wire_hooks(&inst, "claude", Some(statusline_amend), None)
+pub struct ClaudeWiring;
+pub static WIRING: ClaudeWiring = ClaudeWiring;
+
+impl WiringCap for ClaudeWiring {
+    fn amend(&self, _inst: &Installation, text: &str, ctx: &WiringContext, reporter: &str) -> Result<String, RepairReason> {
+        statusline_amend(text, ctx, reporter)
     }
 }
 
@@ -95,12 +78,12 @@ fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Res
     std::fs::write(path, script)
 }
 
-/// 包装脚本路径：`~/.meowo/statusline.sh`（与 board.db 同目录）。
-fn script_path() -> std::path::PathBuf {
-    crate::db_path().with_file_name("statusline.sh")
+/// 包装脚本路径：`<meowo 数据目录>/statusline.sh`（与 board.db 同目录）。
+fn script_path(ctx: &WiringContext) -> std::path::PathBuf {
+    ctx.meowo_dir.join("statusline.sh")
 }
 
-/// `Amend`：在 hooks 合并后、落盘前把 statusLine 指向包装脚本。
+/// `amend`：在 hooks 合并后、落盘前把 statusLine 指向包装脚本。
 ///
 /// **顺序纪律（勿改）**：脚本先落盘，成功后 settings 才指向它。写失败（目录不可写/杀软拦截/磁盘满）
 /// 时 settings 原样不动——否则 Claude Code 状态栏会指向不存在的脚本，用户原 statusLine 命令
@@ -108,15 +91,11 @@ fn script_path() -> std::path::PathBuf {
 /// 永不自愈。settings 未动则下次启动整段重试。
 ///
 /// 无改动时**原样返回入参文本**（不重新序列化），否则 `wire_hooks` 的幂等判定会误判为有改动。
-fn statusline_amend(
-    _inst: &Installation,
-    text: &str,
-    reporter: &str,
-) -> Result<String, RepairReason> {
-    let Some(mut settings) = meowo_agent::config::parse_json_config(text) else {
+fn statusline_amend(text: &str, ctx: &WiringContext, reporter: &str) -> Result<String, RepairReason> {
+    let Some(mut settings) = crate::config::parse_json_config(text) else {
         return Err(RepairReason::ConfigUnreadable);
     };
-    let script_path = script_path();
+    let script_path = script_path(ctx);
     let script_bash = to_bash_path(&script_path.to_string_lossy());
 
     match probe_statusline(&settings, &script_bash) {
@@ -225,7 +204,7 @@ mod tests {
             "解析出的 SPECS 条数不对，脚本格式可能变了"
         );
 
-        let events = meowo_agent::by_id("claude")
+        let events = crate::by_id("claude")
             .expect("claude 应已注册")
             .variants()[0]
             .hooks
@@ -246,18 +225,22 @@ mod tests {
         );
     }
 
-    /// dry-run：对 CLAUDE_CONFIG_DIR/settings.json（真实文件的副本）跑 ClaudeSetup::apply，核对产物。
+    /// dry-run：对 CLAUDE_CONFIG_DIR/settings.json（真实文件的副本）跑一次接线，核对产物。
     /// 用法：复制 ~/.claude 到临时目录，
-    ///       CLAUDE_CONFIG_DIR=<副本> MEOWO_DB=<副本/board.db> \
-    ///       cargo test -p meowo-app dryrun_claude -- --ignored --nocapture
+    ///       CLAUDE_CONFIG_DIR=<副本> MEOWO_DIR=<副本> \
+    ///       cargo test -p meowo-agent dryrun_claude -- --ignored --nocapture
     ///
     /// 只打印结构性摘要，**绝不 dump 配置原文**——真实 settings.json 可能含 env 里的密钥。
     #[test]
     #[ignore]
     fn dryrun_claude() {
-        use crate::setup::ProviderSetup;
-        let reason = super::ClaudeSetup.apply();
-        let inst = meowo_agent::installation(meowo_agent::id::CLAUDE).expect("应解析出实况");
+        use crate::registry::AgentPlugin;
+        let meowo_dir = std::path::PathBuf::from(
+            std::env::var("MEOWO_DIR").expect("请设置 MEOWO_DIR 指向临时目录"),
+        );
+        let ctx = WiringContext { fallback_reporter: None, meowo_dir: &meowo_dir };
+        let reason = super::super::Claude.wire(&ctx);
+        let inst = crate::registry::installation(crate::id::CLAUDE).expect("应解析出实况");
         let text = std::fs::read_to_string(inst.config_path()).expect("读不回 settings.json");
         let v: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
 
@@ -266,7 +249,7 @@ mod tests {
             inst.variant_tag,
             inst.config_path().display()
         );
-        eprintln!("apply reason={reason:?}");
+        eprintln!("wire reason={reason:?}");
         eprintln!(
             "顶层键（应全部保留）={:?}",
             v.as_object().unwrap().keys().collect::<Vec<_>>()
@@ -300,7 +283,7 @@ mod tests {
         // statusLine 指向脚本且脚本存在。
         let sl = v["statusLine"]["command"].as_str().unwrap();
         assert!(sl.contains("statusline.sh"), "statusLine 未指向脚本：{sl}");
-        assert!(super::script_path().exists(), "statusLine 脚本未落盘");
+        assert!(super::script_path(&ctx).exists(), "statusLine 脚本未落盘");
         eprintln!("statusLine 指向脚本且脚本存在 ✓");
     }
 }

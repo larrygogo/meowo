@@ -11,10 +11,10 @@
 //! 独立安装那条也是修「装完仍显示未安装」的关键：安装脚本只改持久 PATH，运行中的 meowo-app
 //! 进程 PATH 是启动时的旧快照、看不到新目录，故直查这个固定路径。
 //!
-//! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任），
-//! 它要 SHA-256 与原子写，不在本层——见 meowo-app 的 `SetupBehavior::after_write`。
+//! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
+pub mod setup;
 pub mod telemetry;
 
 use crate::{
@@ -118,6 +118,9 @@ impl AgentPlugin for Codex {
     }
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
+    }
+    fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
+        Some(&setup::WIRING)
     }
 }
 

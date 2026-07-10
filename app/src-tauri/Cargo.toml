@@ -26,14 +26,12 @@ serde_json = { workspace = true }
 notify = { workspace = true }
 sysinfo = "0.32"
 percent-encoding = "2"
-# ureq 跨平台：account 模块无条件使用，放普通依赖让 workspace 在非 Windows 也能编译。
+# ureq 只服务 ports.rs 的 HttpPort 实现——插件层只认 trait，不依赖 HTTP 栈。
 ureq = { version = "2", features = ["json"] }
 # 系统语言检测（Settings.language = auto 时解析界面/通知语言）。
 sys-locale = "0.3"
 # codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
-toml_edit = { workspace = true }
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
-sha2 = "0.10"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }

@@ -2,9 +2,9 @@
 //!
 //! 1. hooks 条目**带 `matcher`**——同一事件下按 matcher 与用户自有 hook 共存
 //!    （如 `PreToolUse:Bash` 预检 vs 我方的 `PreToolUse:AskUserQuestion`）。
-//! 2. hooks 与 `statusLine` 同住 `settings.json`。statusLine 的包装脚本要落盘、要 db_path，
-//!    不在本层——见 meowo-app 的 `setup::Amend`。
-//! 3. 凭据在 macOS 走登录 Keychain，其它平台走 `~/.claude/.credentials.json`。
+//! 2. hooks 与 `statusLine` 同住 `settings.json`，故 statusLine 的包装脚本走写前改写——见 `setup.rs`。
+//! 3. 凭据在 macOS 走登录 Keychain，其它平台走 `~/.claude/.credentials.json`——见 `account.rs`。
+//!    哪一条由注入的 `KeychainPort` 在运行时判定，本层没有平台 `cfg`。
 //!
 //! 可执行的落法（顺序即优先级）：
 //!
@@ -21,6 +21,7 @@
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
 pub mod account;
+pub mod setup;
 pub mod telemetry;
 pub mod transcript;
 
@@ -151,6 +152,9 @@ impl AgentPlugin for Claude {
     }
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
+    }
+    fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
+        Some(&setup::WIRING)
     }
 }
 

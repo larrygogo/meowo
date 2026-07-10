@@ -128,7 +128,7 @@ pub trait KeychainPort: Sync {
 |---|---|---|
 | 1 ✅ | **身份收敛**:删 `ProviderKey`,全仓改用 `AgentId`;store 的 provider 列退化为字符串;修掉未知降级 claude 的 bug | 三个 enum↔registry 绊线单测中的两个变得无意义并删除 |
 | 2 ✅ | **注册表合一**:reporter 的 `Agent` trait 折进 `AgentPlugin`;transcript 抽象迁出 store;`lib.rs` 两处硬 match 消失 | reporter 不再持有第二张注册表 |
-| 3 | **端口注入**:定义 `api/ports.rs`;account 的联网逻辑与 setup 的 amend/after_write 搬进 `plugins/<id>/` | app 的 `account/` 与 `setup/` 只剩端口实现与编排 |
+| 3 ✅ | **端口注入**:定义 `ports.rs`;account 的联网逻辑与 setup 的 amend/after_write 搬进 `plugins/<id>/` | app 的 `account/` 与 `setup/` 只剩端口实现与编排 |
 | 4 | **前端描述符**:`list_agents()` 下发;删前端三张表与 claude 特判 | 加 agent 前端零改动 |
 
 ### Phase 2 落地记录
@@ -145,6 +145,30 @@ pub trait KeychainPort: Sync {
   改传只含所需字段的 `HookContext`。
 
 `meowo-store` 现在只剩 `error` / `migrations` / `models` / `query` / `store` 五个模块,不认识任何 agent。
+
+### Phase 3 落地记录
+
+`ProviderAccount` 与 `ProviderSetup` 住在 app 里,只是因为它们要联网(`ureq`)、要读 macOS Keychain
+(`security` 子进程)、要 `db_path()`。这三样都是端口该隔离的东西:
+
+- **`HttpPort` / `KeychainPort`** 由宿主注入。`meowo-agent` 因此不依赖 `ureq`,插件的单测注入假实现
+  就能跑(`NoHttp` 用来断言「不该联网的路径确实没联网」)。
+- **`WiringContext`** 传入 `meowo_dir` 与 sidecar 路径,插件不必认识 `db_path()`。
+- **`fsutil::write_atomic` 刻意不做成端口**:它是纯 `std`,测试拿临时目录就能覆盖,注入只会平添间接层。
+  端口留给真正不可测的外部世界。
+
+顺带修正两处分层错误:
+
+1. **缓存与限频原本被三个 agent 各抄一份**。那是「meowo 怎么管用量」的策略,不是「某个 agent 怎么查
+   用量」的知识。现在 `AccountCap::fetch_usage` 只负责去 API 拿一次,读缓存/判鲜/写回统一在编排层。
+2. **kimi 经 `super::codex::` 横向引用** codex 的 `decode_jwt_payload` / `unix_to_iso8601`。
+   一个插件依赖另一个插件是错的方向,提到了 `meowo_agent::codec`。
+
+claude 的六处 `#[cfg(target_os = "macos")]` 收敛成一次 `ports.keychain.available()` 运行时判断,
+两条分支在任意平台都可测。`app/src-tauri` 的 `sha2` 与 `toml_edit` 依赖随之删除。
+
+一个能力**不需要某个端口就不碰它** —— codex 的 `fetch_usage` 不用 `ports.http`,因为它的 rate_limits
+就写在本地 rollout 里。这正是能力槽的意义。
 
 ## 验收:加一个 gemini 要动哪些文件
 

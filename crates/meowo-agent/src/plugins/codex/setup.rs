@@ -1,9 +1,21 @@
-//! codex（OpenAI Codex CLI）自动接线。**hooks 合并逻辑已迁入
-//! `meowo_agent::config::ConfigFormat::CodexJson`**，本模块只剩两件事：
-//!   1) I/O 编排（读 hooks.json → 交给格式适配器 → 备份 + 原子写）；
-//!   2) 接线**副作用**：往 `config.toml` 的 `[hooks.state]` 写 trusted_hash 预信任
-//!      （要 SHA-256 + 原子写，故留在 app 侧，见 `after_write`）。
+//! codex 的接线副作用：hooks.json 落盘之后，往 `config.toml` 的 `[hooks.state]` 写 trusted_hash
+//! 预信任，省掉用户在 codex TUI 里的一次 Trust all。
+//!
+//! hooks 合并逻辑本身在 `crate::config::ConfigFormat::CodexJson`，通用编排在 `crate::wiring`。
 use serde_json::Value;
+
+use crate::config::RepairReason;
+use crate::variant::Installation;
+use crate::wiring::WiringCap;
+
+pub struct CodexWiring;
+pub static WIRING: CodexWiring = CodexWiring;
+
+impl WiringCap for CodexWiring {
+    fn after_write(&self, inst: &Installation, written: &str) -> Option<RepairReason> {
+        write_trusted_hashes(inst, written)
+    }
+}
 
 /// 我方在 hooks.json 里认领到的一条 hook，附真实位置（group_idx = 组在该事件数组里的下标，
 /// handler_idx = handler 在组内 hooks 数组里的下标）——trusted_hash 键必须落在真实位置上，
@@ -125,38 +137,18 @@ pub fn ensure_trusted_hashes(
     changed
 }
 
-/// codex 的 ProviderSetup：先 hooks.json 落盘成功，再写 config.toml 预信任（反序会留下
-/// 指向不存在配置的信任残渣；正序失败的最坏情形 = codex 弹一次审查提示，无损）。
-pub struct CodexSetup;
-
-impl super::ProviderSetup for CodexSetup {
-    fn id(&self) -> meowo_agent::AgentId {
-        meowo_agent::id::CODEX
-    }
-    fn detect(&self) -> bool {
-        meowo_agent::installation(meowo_agent::id::CODEX).is_some_and(|i| i.is_configured())
-    }
-    fn apply(&self) -> Option<super::RepairReason> {
-        let Some(inst) = meowo_agent::installation(meowo_agent::id::CODEX) else {
-            eprintln!("Meowo repair[codex]: 解析不到 codex 安装实况，跳过");
-            return Some(super::RepairReason::NotDetected);
-        };
-        // hooks.json 无写前改写；trusted_hash 预信任是落盘后的副作用，走 after_write。
-        super::wire_hooks(&inst, "codex", None, Some(after_write))
-    }
-}
-
 /// codex 的 hook command 形态：`"<exe>" --provider codex`。与变体表的声明同源。
 fn claim_codex_cmd(cmd: &str) -> Option<String> {
-    const SHAPE: meowo_agent::CommandSpec = meowo_agent::CommandSpec { quote_exe: true, with_provider: true };
+    const SHAPE: crate::CommandSpec = crate::CommandSpec { quote_exe: true, with_provider: true };
     SHAPE.claim(cmd, "codex")
 }
 
 /// hooks.json 落盘之后的副作用：往 `config.toml` 的 `[hooks.state]` 写 trusted_hash 预信任。
+/// 先 hooks.json 落盘成功、再写预信任（反序会留下指向不存在配置的信任残渣）。
 ///
 /// **纯属锦上添花**：hooks 此时已接上，本步任何失败都不算接线失败——退化 = codex 弹一次
 /// Trust all，不影响入库。故一律返回 `None`。
-fn after_write(inst: &meowo_agent::Installation, hooks_text: &str) -> Option<super::RepairReason> {
+fn write_trusted_hashes(inst: &Installation, hooks_text: &str) -> Option<RepairReason> {
     let hooks_path = inst.config_path();
     let cfg_path = inst.data_dir.join("config.toml");
     let cfg_text = match std::fs::read_to_string(&cfg_path) {
@@ -167,11 +159,11 @@ fn after_write(inst: &meowo_agent::Installation, hooks_text: &str) -> Option<sup
     let Ok(mut doc) = cfg_text.parse::<toml_edit::DocumentMut>() else {
         return None;
     };
-    let root = meowo_agent::config::parse_json_config(hooks_text)?;
+    let root = crate::config::parse_json_config(hooks_text)?;
     let entries = claimed_codex_entries(&root);
     if ensure_trusted_hashes(&mut doc, &hooks_path.display().to_string(), &entries) {
         if cfg_path.exists() {
-            super::backup_once(&cfg_path);
+            crate::wiring::backup_once(&cfg_path);
         }
         let _ = crate::fsutil::write_atomic(&cfg_path, &doc.to_string());
     }
@@ -183,7 +175,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // hooks.json 的合并/判定已迁入 meowo_agent::config::ConfigFormat::CodexJson，
+    // hooks.json 的合并/判定已迁入 crate::config::ConfigFormat::CodexJson，
     // 相关测试随之搬到该 crate（见 config.rs 的 mod codex）。此处只留 trusted_hash 副作用的测试。
 
     /// 用变体表声明的格式适配器造出「已接线」的 hooks.json，供下方 trusted_hash 测试消费。
@@ -191,9 +183,9 @@ mod tests {
     /// 直接从注册表取 `HookSpec`（纯声明），不经 `codex_install()`——后者要解析真实 home
     /// （`USERPROFILE`/`HOME`），会让本测试无谓地依赖环境变量。这里根本用不到安装实况。
     fn wired(reporter: &str) -> Value {
-        let hooks = meowo_agent::by_id("codex").expect("codex 应已注册").variants()[0].hooks;
+        let hooks = crate::by_id("codex").expect("codex 应已注册").variants()[0].hooks;
         match hooks.ensure_hooks("{\"hooks\":{}}", reporter, "codex") {
-            meowo_agent::EnsureOutcome::Changed(s) => serde_json::from_str(&s).unwrap(),
+            crate::EnsureOutcome::Changed(s) => serde_json::from_str(&s).unwrap(),
             other => panic!("期望 Changed，实得 {other:?}"),
         }
     }
@@ -231,7 +223,7 @@ mod tests {
     #[test]
     fn snake_event_covers_all_codex_events() {
         // 绊线：变体表新增事件而忘了补 snake_case 映射 → trusted_hash 键写不出，此处失败。
-        let inst = meowo_agent::installation(meowo_agent::id::CODEX).unwrap();
+        let inst = crate::installation(crate::id::CODEX).unwrap();
         for ev in inst.hooks.events {
             assert!(!snake_event(ev.name).is_empty(), "{} 缺 snake_case 映射", ev.name);
         }
@@ -320,19 +312,21 @@ mod tests {
 
     /// dry-run：CODEX_HOME=<真实 ~/.codex 的副本> 时跑 CodexSetup::apply，核对副本产物。
     /// 用法：复制 ~/.codex 到临时目录，
-    ///       CODEX_HOME=<副本> cargo test -p meowo-app dryrun_codex -- --ignored --nocapture
+    ///       CODEX_HOME=<副本> cargo test -p meowo-agent dryrun_codex -- --ignored --nocapture
     ///
     /// 只打印结构性摘要，**绝不 dump 配置原文**——真实 config.toml/auth.json 含凭据。
     #[test]
     #[ignore]
     fn dryrun_codex() {
-        use crate::setup::ProviderSetup;
-        let reason = CodexSetup.apply();
-        let inst = meowo_agent::installation(meowo_agent::id::CODEX).unwrap();
+        use crate::registry::AgentPlugin;
+        let meowo_dir = std::env::temp_dir();
+        let ctx = crate::wiring::WiringContext { fallback_reporter: None, meowo_dir: &meowo_dir };
+        let reason = super::super::Codex.wire(&ctx);
+        let inst = crate::installation(crate::id::CODEX).unwrap();
         let text = std::fs::read_to_string(inst.config_path()).unwrap_or_default();
         let root: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
         eprintln!("变体={} 配置={}", inst.variant_tag, inst.config_path().display());
-        eprintln!("apply reason={reason:?}");
+        eprintln!("wire reason={reason:?}");
         eprintln!("hooks 事件={:?}", root["hooks"].as_object().unwrap().keys().collect::<Vec<_>>());
         eprintln!("SessionStart 已接线={}", inst.hooks.has_reporter(&text, "codex"));
         eprintln!("启动 argv={:?}", inst.launch_argv());

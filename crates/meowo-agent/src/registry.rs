@@ -55,6 +55,33 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 接线副作用（写前改写 / 落盘后处理）。None = 纯 hooks 合并即可（kimi）。
+    fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
+        None
+    }
+
+    /// 幂等接线：把 meowo-reporter 的 hooks 挂到该 agent 的配置里。全程 best-effort，绝不 panic。
+    /// 返回 `None` = 成功/已是目标状态；`Some(reason)` = 无法接线（供「修复连接」回传前端）。
+    ///
+    /// 数据目录不存在＝该 agent 没装过：绝不凭空创建它的配置目录。
+    fn wire(&self, ctx: &crate::wiring::WiringContext) -> Option<crate::config::RepairReason> {
+        let id = self.id();
+        let Some(inst) = self.resolve() else {
+            eprintln!("Meowo repair[{id}]: 解析不到安装实况，跳过");
+            return Some(crate::config::RepairReason::NotDetected);
+        };
+        if !inst.is_configured() {
+            eprintln!("Meowo repair[{id}]: {} 不存在（未安装），跳过", inst.data_dir.display());
+            return Some(crate::config::RepairReason::NotDetected);
+        }
+        crate::wiring::wire_hooks(&inst, id.as_str(), self.wiring(), ctx)
+    }
+
+    /// 该 agent 是否已在本机配置过（数据目录存在）——接线前的门槛。
+    fn is_configured(&self) -> bool {
+        self.resolve().is_some_and(|i| i.is_configured())
+    }
+
     // ═══ 以下由变体表派生，通常不必覆写 ═══
 
     /// 本机实况：逐变体 probe，命中即返回；都不中 → None（＝未安装）。
