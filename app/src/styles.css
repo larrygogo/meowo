@@ -1461,6 +1461,13 @@ html, body {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 名字 + 徽章一行；账号信息另起一行贴在其下。 */
+.provider-card-title-row {
+  min-width: 0;
+  display: flex;
   align-items: center;
   gap: 8px;
 }
@@ -1468,6 +1475,15 @@ html, body {
   font-size: 15px;
   font-weight: 600;
   color: var(--cc-text);
+}
+/* 邮箱常常长于卡片宽度：单行省略，完整值走 title 提示。 */
+.provider-card-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--cc-text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .provider-badge {
   flex: none;

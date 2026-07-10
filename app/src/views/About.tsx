@@ -390,9 +390,17 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
           <cfg.Icon />
         </div>
         <div className="provider-card-title">
-          <span className="provider-name">{cfg.label(t)}</span>
-          {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
-          {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
+          <div className="provider-card-title-row">
+            <span className="provider-name">{cfg.label(t)}</span>
+            {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
+            {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
+          </div>
+          {/* 账号信息紧贴标题下方。邮箱可能很长，单行省略；title 属性兜住完整值。 */}
+          {desc && (
+            <div className="provider-card-desc" title={desc} data-testid={"agent-desc-" + provider}>
+              {desc}
+            </div>
+          )}
         </div>
         {installed === false &&
           (installState === "installing" ? (
@@ -480,7 +488,6 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
         </div>
       )}
 
-      {desc && <div className="provider-card-body" data-testid={"agent-desc-" + provider}>{desc}</div>}
 
       {isLoggedIn && (
         <div className="provider-usage">
