@@ -93,6 +93,27 @@ describe("AccountSection agent 卡", () => {
     expect(screen.getByTestId("agent-install-kimi")).toBeTruthy();
   });
 
+  // 已登录的卡片只显示邮箱。此前拼 显示名 · 邮箱 · 组织，个人账号的组织名恰是
+  // 「<邮箱>'s Organization」，于是同一个邮箱在一行里出现两次，又长又重复。
+  it("已登录只显示邮箱，不带显示名与组织", async () => {
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c", display_name: "Larry", organization: "a@b.c's Organization" }, usage: null, usage_supported: true },
+    ]);
+    render(<AccountSection />);
+    const desc = await screen.findByTestId("agent-desc-claude");
+    expect(desc.textContent).toBe("a@b.c");
+  });
+
+  // 没有邮箱的登录方式（如 codex 的 API key）不能让描述行变空白。
+  it("无邮箱时回退到显示名/登录标签", async () => {
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { login_label: "API key" }, usage: null, usage_supported: true },
+    ]);
+    render(<AccountSection />);
+    const desc = await screen.findByTestId("agent-desc-claude");
+    expect(desc.textContent).toBe("API key");
+  });
+
   // 回归：此前安装输出被丢进 Stdio::null()，失败时用户拿不到任何可排查的东西。
   it("install-done 失败：给出安装日志路径（有 logPath 时）", async () => {
     api.installAgent.mockResolvedValue(undefined);

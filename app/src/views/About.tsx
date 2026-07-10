@@ -372,10 +372,11 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
     : acc
     ? null
     : t.account.notLoggedIn;
+  // 只显示邮箱：显示名 + 邮箱 + 组织三段拼起来又长又重复（个人账号的组织名就是
+  // 「<邮箱>'s Organization」）。邮箱本身已足够标识「登录的是哪个账号」。
+  // 回退链兜住没有邮箱的登录方式（如 codex 的 API key，只有 login_label）。
   const desc = isLoggedIn
-    ? [acc.display_name ?? acc.email ?? acc.login_label, acc.display_name && acc.display_name !== acc.email ? acc.email : null, acc.organization]
-        .filter(Boolean)
-        .join(" · ")
+    ? acc.email ?? acc.display_name ?? acc.login_label ?? ""
     : installed === false
     ? t.account.installHint
     : isInstalled
@@ -479,7 +480,7 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
         </div>
       )}
 
-      {desc && <div className="provider-card-body">{desc}</div>}
+      {desc && <div className="provider-card-body" data-testid={"agent-desc-" + provider}>{desc}</div>}
 
       {isLoggedIn && (
         <div className="provider-usage">
