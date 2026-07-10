@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization，与 NewSessionPanel.test.tsx 同坑）。
-const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
+const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), cancelLogin: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 
 // 收集所有 ProviderCard 注册的 install-done / login-done 回调，测试里手动广播
@@ -26,6 +26,7 @@ const fireLogin = (provider: string, ok: boolean) =>
 
 import { AccountSection } from "./About";
 import { descriptors } from "../test/agents";
+import { zh } from "../i18n/zh";
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
@@ -210,8 +211,10 @@ describe("AccountSection 登录", () => {
     const btn = await screen.findByTestId("agent-login-codex");
     fireEvent.click(btn);
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("codex"));
-    // spawn 成功后不落回 idle——等 login-done，按钮禁用防重复拉起终端。
-    await waitFor(() => expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(true));
+    // spawn 成功后不落回 idle——等 login-done。按钮此时变成「取消等待」，而不是一个死掉的禁用按钮：
+    // 终端可能已被关掉，而后端要 5 分钟才超时。
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+    expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("login-done 成功 → 重查账号（卡片可转已登录）", async () => {
@@ -234,11 +237,48 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
-    await waitFor(() => expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
     fireLogin("codex", false);
-    await waitFor(() => expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(false));
-    const msg = screen.getByTestId("agent-login-error-codex");
-    expect(msg.textContent?.trim().length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.login));
+    expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginTimeout);
+  });
+
+  /// 起因：点完登录后如果终端被关掉（用户手动关、崩溃、agent 自己退出），后端只轮询账号文件，
+  /// 要 5 分钟才超时。这五分钟里按钮一直是「等待登录…」且不可点——用户既不能重来也不知道发生了什么。
+  it("等待中点按钮 → 调 cancel_login，落回可点并提示已取消（而非「未检测到登录完成」）", async () => {
+    api.loginAgent.mockResolvedValue(undefined);
+    api.cancelLogin.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+
+    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("codex"));
+
+    // 收尾由后端 emit login-done（它会再查一次账号；这里模拟「确实没登上」）。
+    fireLogin("codex", false);
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.login));
+    // 取消 ≠ 超时：文案必须区分，否则用户以为是没检测到。
+    expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginCancelled);
+  });
+
+  /// 取消时后端会再查一次账号——用户可能已经在终端里登完了，只是嫌等得慢。此时应转「已登录」。
+  it("取消时若其实已登录成功 → 转已登录，不显示取消提示", async () => {
+    api.loginAgent.mockResolvedValue(undefined);
+    api.cancelLogin.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalled());
+
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true },
+      { provider: "codex", account: { login_label: "API Key" }, usage: null, usage_supported: false },
+    ]);
+    fireLogin("codex", true); // 后端复查发现真登上了
+    await waitFor(() => expect(screen.queryByTestId("agent-login-codex")).toBeNull());
+    expect(screen.queryByTestId("agent-login-error-codex")).toBeNull();
   });
 
   it("拉起登录失败 → 落回可点 + 显示提示", async () => {

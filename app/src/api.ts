@@ -315,6 +315,18 @@ export function loginAgent(provider: AgentId, terminal?: string): Promise<void> 
   return invoke("login_agent", { provider, terminal });
 }
 
+/**
+ * 取消该 agent 的登录等待。
+ *
+ * 点完登录后如果终端被关掉（手动关、崩溃、agent 自己退出），后端毫不知情——它只轮询账号文件，
+ * 会一直等到 5 分钟超时。这个出口让用户立刻落回可点状态。
+ *
+ * 后端仍会 emit `login-done`：取消前它会再查一次账号，真登上了就报 `ok:true`。
+ */
+export function cancelLogin(provider: AgentId): Promise<void> {
+  return invoke("cancel_login", { provider });
+}
+
 /** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */
 export type LoginDone = { provider: AgentId; ok: boolean };
 

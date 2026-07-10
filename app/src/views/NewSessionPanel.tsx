@@ -16,6 +16,7 @@ import {
   agentName,
   getAccounts,
   loginAgent,
+  cancelLogin,
   isLoggedIn,
 } from "../api";
 import { agentAssets } from "../providers";
@@ -79,6 +80,9 @@ export function NewSessionPanel(): ReactElement {
   // 是谁的，否则等待态永远落不回、把别的 agent 的登录按钮一起锁死。用集合而非单值，是因为分别登录
   // 两个 agent 本就该允许并发（各自一个终端、一个后端 watch 线程）。
   const [loginPending, setLoginPending] = useState<Set<AgentId>>(new Set());
+  // 哪些 agent 的等待是被用户主动取消的。login-done 只带 ok:bool，分不出「超时」与「取消」；
+  // 按 agent 分开是因为两个 agent 本就可以并发登录。
+  const cancelledRef = useRef<Set<AgentId>>(new Set());
   // login-done 只订阅一次（切 provider 时 unlisten/relisten 会漏事件），故当前选中项与文案走 ref。
   const providerRef = useRef(provider);
   providerRef.current = provider;
@@ -153,13 +157,17 @@ export function NewSessionPanel(): ReactElement {
         n.delete(p);
         return n;
       });
+      const cancelled = cancelledRef.current.delete(p); // 取一次即消费掉
       // 登录成功与否是该 provider 的客观事实，与当前选中谁无关。
+      // 取消时后端也会再查一次账号——用户可能已经在终端里登完了，只是嫌等得慢。
       if (e.payload.ok) {
         setLoggedIn((m) => ({ ...(m ?? {}), [p]: true }));
       }
       // 但提示只对当前看着的那个 agent 显示，免得用户莫名看到别人的报错。
       if (p !== providerRef.current) return;
-      setError(e.payload.ok ? null : tRef.current.newSession.loginTimeout); // 超时 ≠ 登录失败
+      const t = tRef.current.newSession;
+      // 三种结局：成功（无提示）/ 被取消 / 超时。后端只带 ok:bool，取消与否由发起方记账。
+      setError(e.payload.ok ? null : cancelled ? t.loginCancelled : t.loginTimeout);
     });
     return () => {
       un.then((f) => f());
@@ -210,16 +218,45 @@ export function NewSessionPanel(): ReactElement {
     }
   }
 
-  /** 拉起交互式登录。成功 spawn 后不清等待态——等 login-done 事件（或后端 5 分钟超时）才落回。 */
+  /** 拉起交互式登录。成功 spawn 后不清等待态——等 login-done 事件（或 5 分钟超时 / 用户取消）才落回。 */
   async function doLogin() {
     const target = provider; // 锁定发起时的 provider：之后用户切走了，事件仍要能对上号
     if (loginPending.has(target)) return;
     setLoginPending((s) => new Set(s).add(target));
+    cancelledRef.current.delete(target);
     setError(null);
     try {
       await loginAgent(target);
     } catch (e) {
       setError(String(e));
+      setLoginPending((s) => {
+        const n = new Set(s);
+        n.delete(target);
+        return n;
+      });
+    }
+  }
+
+  /**
+   * 取消等待。终端可能已被关掉（手动关、崩溃、agent 自己退出），而后端只轮询账号文件，
+   * 要 5 分钟才超时——这期间按钮一直不可点，用户既不能重来也不知道发生了什么。
+   *
+   * 不检测「终端还活着吗」：`wt.exe` 拉起窗口后自身立即退出，真正跑登录的是它的孙进程；
+   * 而 `powershell -NoExit` 又会一直活着。靠监视进程只会在某些终端上失灵。
+   *
+   * 收尾由后端 emit `login-done`（它会再查一次账号，真登上了就报 ok:true），故不在此清等待态。
+   */
+  async function cancelLoginWait() {
+    const target = provider;
+    if (!loginPending.has(target)) return;
+    // 后端的 login-done 只带 ok:bool，分不出「超时」与「被取消」。发起方自己记一笔。
+    cancelledRef.current.add(target);
+    setError(null);
+    try {
+      await cancelLogin(target);
+    } catch {
+      // 命令本身失败（不该发生）：至少别把按钮永久卡在等待态。
+      cancelledRef.current.delete(target);
       setLoginPending((s) => {
         const n = new Set(s);
         n.delete(target);
@@ -326,15 +363,16 @@ export function NewSessionPanel(): ReactElement {
           )}
           {avail && avail.length > 0 && needLogin && (
             <div className="ns-warn" data-testid="ns-login-warn">
-              <span>{t.newSession.notLoggedIn}</span>
+              {/* 等待中：这行承载「正在等」，按钮则变成「取消等待」。 */}
+              <span>{loginPending.has(provider) ? t.newSession.loggingIn : t.newSession.notLoggedIn}</span>
               <button
                 type="button"
                 className="ns-repair"
                 data-testid="ns-login"
-                onClick={doLogin}
-                disabled={loginPending.has(provider)}
+                // 等待中不再是死按钮：终端可能已被关掉，而后端要 5 分钟才超时。点它即取消等待。
+                onClick={loginPending.has(provider) ? cancelLoginWait : doLogin}
               >
-                {loginPending.has(provider) ? t.newSession.loggingIn : t.newSession.login}
+                {loginPending.has(provider) ? t.newSession.cancelLogin : t.newSession.login}
               </button>
             </div>
           )}

@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, listAgents, agentName, installAgent, type AgentId, type AgentDescriptor, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
-import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, loginAgent, agentPathGap, addAgentToUserPath, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus, type LoginDone } from "../api";
+import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, loginAgent, cancelLogin, agentPathGap, addAgentToUserPath, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus, type LoginDone } from "../api";
 import { agentAssets } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -266,6 +266,8 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   // 登录态：waiting=已拉起终端、等 login-done；msg=超时/失败提示。
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginMsg, setLoginMsg] = useState<string | null>(null);
+  // 本次等待是否由用户主动取消。login-done 只带 ok:bool，分不出「超时」与「取消」。
+  const cancelledRef = useRef(false);
   // 刚装完（本次会话内）→ 把「登录」按钮标为下一步，把「装完 → 登录」串成一条链路。
   const [justInstalled, setJustInstalled] = useState(false);
   // onInstalled/onLoggedIn 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
@@ -329,14 +331,36 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
     });
   };
 
-  /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done（或 5 分钟超时）才落回。 */
+  /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done（或 5 分钟超时 / 用户取消）才落回。 */
   const startLogin = () => {
     if (loginBusy) return;
     setLoginBusy(true);
-    setLoginMsg(null);
+    setLoginMsg(t.account.loggingIn); // 按钮此时是「取消等待」，等待态由这行文字承载
     loginAgent(provider).catch(() => {
       setLoginBusy(false);
       setLoginMsg(t.account.loginFailed);
+    });
+  };
+
+  /**
+   * 取消等待。终端可能已经被关掉（用户手动关、崩溃、agent 自己退出），而后端只轮询账号文件，
+   * 要 5 分钟才超时——这五分钟里按钮一直不可点。
+   *
+   * 不检测「终端还活着吗」：`wt.exe` 拉起窗口后自身立即退出，真正跑登录的是它的孙进程；
+   * 而 `powershell -NoExit` 又会一直活着。三种终端行为不一致，靠监视进程只会时灵时不灵。
+   *
+   * 收尾由后端 emit `login-done`（它会再查一次账号，真登上了就报 ok:true），故这里不清 busy。
+   */
+  const cancelLoginWait = () => {
+    if (!loginBusy) return;
+    // 后端的 login-done 只带 ok:bool，分不出「超时」还是「被取消」。发起方自己记一笔，
+    // 好让 handler 给出准确的提示（取消 ≠ 没检测到登录完成）。
+    cancelledRef.current = true;
+    cancelLogin(provider).catch(() => {
+      // 命令本身失败（不该发生）：至少别把按钮永久卡在等待态。
+      cancelledRef.current = false;
+      setLoginBusy(false);
+      setLoginMsg(t.account.loginCancelled);
     });
   };
 
@@ -360,10 +384,16 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
     // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果后发 login-done。
     const unL = listen<LoginDone>("login-done", (e) => {
       if (e.payload.provider !== provider) return;
+      const cancelled = cancelledRef.current;
+      cancelledRef.current = false;
       setLoginBusy(false);
       if (e.payload.ok) {
+        // 取消时后端会再查一次账号——用户可能已经在终端里登完了，只是嫌等得慢。
+        setLoginMsg(null);
         setJustInstalled(false);
         onLoggedInRef.current(); // 重查账号 → 卡片转「已登录」并显示身份/用量
+      } else if (cancelled) {
+        setLoginMsg(t.account.loginCancelled); // 取消 ≠ 没检测到登录完成
       } else {
         setLoginMsg(t.account.loginTimeout); // 超时 ≠ 登录失败：用户可能中途放弃了
       }
@@ -440,10 +470,12 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
             type="button"
             className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
             data-testid={"agent-login-" + provider}
-            onClick={startLogin}
-            disabled={loginBusy}
+            // 等待中不再是死按钮：终端可能已被关掉（用户手动关/崩溃），而后端只轮询账号文件，
+            // 要 5 分钟才超时。点它即取消等待，立刻落回可点状态。
+            onClick={loginBusy ? cancelLoginWait : startLogin}
+            title={loginBusy ? t.account.cancelLogin : undefined}
           >
-            {loginBusy ? t.account.loggingIn : t.account.login}
+            {loginBusy ? t.account.cancelLogin : t.account.login}
           </button>
         )}
         {isInstalled && hooksStatus && (hooksStatus === "missing" || hooksStatus === "unknown") && (

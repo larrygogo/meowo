@@ -1276,11 +1276,68 @@ struct InstallDone {
     log_path: Option<String>,
 }
 
-/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时（用户多半中途放弃了）。
+/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时或被用户取消。
 #[derive(Clone, serde::Serialize)]
 struct LoginDone {
     provider: String,
     ok: bool,
+}
+
+/// 每个 agent 当前这一轮登录等待的「代次」。
+///
+/// 递增它即可让**正在跑**的 watch 线程在下一个轮询点自行退出（它每轮比对自己出生时的代次）。
+/// 用代次而不是一个布尔取消位，是因为两件事都要处理：
+///
+/// - **取消**：用户点「取消登录」，代次 +1，旧线程停下，且不再 emit——否则它会迟到地把
+///   一个 `ok:false` 打到用户已经重新发起的那一轮上。
+/// - **重发起**：用户连点两次登录，第二次的代次 +1 把第一个线程也停掉，避免两个线程
+///   同时 emit（一个成功一个超时，前端状态取决于谁先到）。
+///
+/// 按 agent 分开：分别登录两个 agent 本就该允许并发（各自一个终端、一个 watch 线程）。
+static LOGIN_EPOCH: std::sync::Mutex<Option<std::collections::HashMap<&'static str, u64>>> =
+    std::sync::Mutex::new(None);
+
+/// 取下一个代次（用于新起的 watch 线程），同时使该 agent 所有旧线程失效。
+fn bump_login_epoch(key: meowo_agent::AgentId) -> u64 {
+    let mut g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
+    let map = g.get_or_insert_with(std::collections::HashMap::new);
+    let e = map.entry(key.as_str()).or_insert(0);
+    *e += 1;
+    *e
+}
+
+/// 当前代次。watch 线程每轮拿它与自己出生时的代次比对，不等则说明已被取消/取代。
+fn login_epoch(key: meowo_agent::AgentId) -> u64 {
+    let g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
+    g.as_ref().and_then(|m| m.get(key.as_str()).copied()).unwrap_or(0)
+}
+
+/// 取消该 agent 正在进行的登录等待。
+///
+/// 起因：点完登录后如果终端被关掉（用户手动关、崩溃、或 agent 自己退出），后端毫不知情——
+/// 它只轮询账号文件，会一直等到 **5 分钟**超时才 emit `login-done`。这五分钟里按钮一直是
+/// 「等待登录…」且不可点，用户既不能重来也不知道发生了什么。
+///
+/// 检测「终端是否还活着」不可行：`wt.exe` 拉起窗口后自身立即退出，真正跑 `claude auth login`
+/// 的是它的孙进程；而 `powershell -NoExit` 又会一直活着。三种终端行为不一致，靠监视进程
+/// 判断只会在某些终端上失灵。给用户一个**始终有效**的出口，比一个时灵时不灵的检测更好。
+///
+/// 不等价于「登录失败」：用户可能已经在终端里登完了。故取消后仍重查一次账号——
+/// 真登上了就报成功。
+#[tauri::command]
+async fn cancel_login(app: tauri::AppHandle, provider: String) -> Result<(), String> {
+    let key = agent_id(&provider).ok_or("未知 agent")?;
+    let provider = key.as_str().to_string();
+    // 代次 +1：正在跑的 watch 线程下一轮就会看到不等，自行退出且不 emit。
+    bump_login_epoch(key);
+    // 由本命令负责收尾 emit，让前端无论如何都能落回可点状态。
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        let ok = account::account_of(key).is_some(); // 也许真登上了，只是用户嫌慢
+        let _ = app.emit("login-done", LoginDone { provider, ok });
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 轮询账号解析结果，直到出现（登录成功）或超时，然后 emit `login-done`。
@@ -1290,10 +1347,13 @@ struct LoginDone {
 /// 的判定，且全是本地读，2s 一轮开销可忽略。
 ///
 /// 超时上限 5 分钟：登录走浏览器 OAuth，用户可能中途放弃；spawn 出去的是 detach 的终端，
-/// 拿不到退出码，不设上限线程就永久泄漏。
+/// 拿不到退出码，不设上限线程就永久泄漏。用户不想等满 5 分钟时可以 [`cancel_login`]。
 fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: String) {
     const POLL: std::time::Duration = std::time::Duration::from_secs(2);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+    // 出生代次。被 cancel_login 或下一次 login_agent 递增后，本线程静默退出、不 emit——
+    // 收尾的 emit 归那一方，否则会有两个 login-done 打架。
+    let epoch = bump_login_epoch(key);
     std::thread::spawn(move || {
         use tauri::Emitter;
         let start = std::time::Instant::now();
@@ -1301,6 +1361,10 @@ fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: Strin
         // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
         // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
         let ok = loop {
+            if login_epoch(key) != epoch {
+                eprintln!("Meowo login[{provider}]: 已被取消或被新一轮登录取代，停止轮询");
+                return; // 收尾 emit 归取消方 / 新线程
+            }
             if account::account_of(key).is_some() {
                 break true;
             }
@@ -3135,6 +3199,7 @@ pub fn run() {
             agent_path_gap,
             add_agent_to_user_path,
             login_agent,
+            cancel_login,
             check_provider_hooks,
             repair_provider_hooks,
             recent_cwds,
@@ -3260,11 +3325,52 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
-        pending_fingerprint, pid_is_agent, resume_argv_for, session_connected,
+        bump_login_epoch, is_safe_id, login_epoch, normalize_tab_title, parse_wt_default_profile,
+        path_has_exe, pending_fingerprint, pid_is_agent, resume_argv_for, session_connected,
         shell_join_for_windows, should_notify, strip_jsonc_comments, tab_match_score,
         waiting_fingerprint,
     };
+
+    /// 代次是「取消登录」的整个机制：watch 线程每轮比对自己出生时的代次，不等就静默退出。
+    ///
+    /// 两个场景都靠它：用户点取消（代次 +1，旧线程停下且不 emit，收尾 emit 归取消方）；
+    /// 用户连点两次登录（第二次把第一个线程也淘汰掉，避免两个 login-done 打架）。
+    ///
+    /// 用不同 agent 隔离——`LOGIN_EPOCH` 是全局静态，同一 agent 会在测试间串。
+    #[test]
+    fn login_epoch_invalidates_older_watchers_per_agent() {
+        let kimi = meowo_agent::id::KIMI;
+        let codex = meowo_agent::id::CODEX;
+
+        // 一个 watch 线程出生时拿到的代次。
+        let first = bump_login_epoch(kimi);
+        assert_eq!(login_epoch(kimi), first, "刚出生的线程应认得自己这一代");
+
+        // 用户点了取消（或又点了一次登录）：代次前进，老线程下一轮就会看到不等而退出。
+        let second = bump_login_epoch(kimi);
+        assert!(second > first);
+        assert_ne!(login_epoch(kimi), first, "老线程必须发现自己已被取代");
+        assert_eq!(login_epoch(kimi), second, "新线程仍然有效");
+
+        // 按 agent 分开：登 kimi 不该把 codex 的等待线程掀掉（两者本就允许并发）。
+        let codex_epoch = bump_login_epoch(codex);
+        bump_login_epoch(kimi);
+        assert_eq!(login_epoch(codex), codex_epoch, "kimi 的登录不该影响 codex");
+    }
+
+    /// `bump` 严格递增，且每次 bump 后当前代次就等于它的返回值。
+    ///
+    /// 不断言「没碰过的 agent 代次为 0」——`LOGIN_EPOCH` 是进程内全局静态，测试并行跑，
+    /// 那样的断言会取决于哪个测试先摸了 claude。这里只测不依赖初值的性质。
+    #[test]
+    fn bump_login_epoch_is_strictly_increasing() {
+        let claude = meowo_agent::id::CLAUDE;
+        let a = bump_login_epoch(claude);
+        let b = bump_login_epoch(claude);
+        let c = bump_login_epoch(claude);
+        assert!(a < b && b < c, "代次必须严格递增：{a} {b} {c}");
+        assert_eq!(login_epoch(claude), c);
+    }
 
     /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
     /// 不足以防它腐化（dead_code 允许了它）。这里在所有平台实际调它一次，锁住行为：

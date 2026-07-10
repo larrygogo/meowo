@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   listAgents: vi.fn(),
   getAccounts: vi.fn(),
   loginAgent: vi.fn(),
+  cancelLogin: vi.fn(),
 }));
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), ...api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -30,6 +31,15 @@ const fireLogin = (provider: string, ok: boolean) =>
 
 import { NewSessionPanel } from "./NewSessionPanel";
 import { descriptors } from "../test/agents";
+import { zh } from "../i18n/zh";
+
+/**
+ * 当前是否处于「等待登录」态。
+ *
+ * 判据是按钮文案而非 `disabled`：等待中按钮不再禁用，而是变成「取消等待」——终端可能已被
+ * 关掉（手动关、崩溃、agent 自己退出），而后端只轮询账号文件，要 5 分钟才超时。
+ */
+const waiting = () => screen.getByTestId("ns-login").textContent === zh.newSession.cancelLogin;
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
@@ -153,8 +163,9 @@ describe("NewSessionPanel 登录", () => {
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude"));
-    // 等 login-done 才落回，按钮禁用防重复拉起终端。
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+    // 等 login-done 才落回。按钮此时变成「取消等待」，而不是死掉的禁用按钮——终端可能已被关掉，
+    // 而后端只轮询账号文件，要 5 分钟才超时。
+    await waitFor(() => expect(waiting()).toBe(true));
   });
 
   it("login-done 成功 → 提示消失", async () => {
@@ -167,14 +178,50 @@ describe("NewSessionPanel 登录", () => {
     await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
   });
 
+  /// 起因：点完登录后如果终端被关掉（用户手动关、崩溃、agent 自己退出），后端只轮询账号文件，
+  /// 要 5 分钟才超时。这五分钟里按钮一直是「等待登录…」且不可点——用户既不能重来也不知道发生了什么。
+  it("等待中点按钮 → 调 cancel_login，落回可点并提示已取消（而非「未检测到登录完成」）", async () => {
+    claudeSignedOut();
+    api.loginAgent.mockResolvedValue(undefined);
+    api.cancelLogin.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    fireEvent.click(await screen.findByTestId("ns-login"));
+    await waitFor(() => expect(waiting()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("ns-login"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("claude"));
+
+    // 收尾由后端 emit login-done（它会再查一次账号；这里模拟「确实没登上」）。
+    fireLogin("claude", false);
+    await waitFor(() => expect(waiting()).toBe(false));
+    // 取消 ≠ 超时：文案必须区分，否则用户以为是没检测到。
+    expect(screen.getByTestId("ns-error").textContent).toBe(zh.newSession.loginCancelled);
+  });
+
+  /// 取消时后端会再查一次账号——用户可能已经在终端里登完了，只是嫌等得慢。此时应转「已登录」。
+  it("取消时若其实已登录成功 → 未登录提示消失，不显示取消提示", async () => {
+    claudeSignedOut();
+    api.loginAgent.mockResolvedValue(undefined);
+    api.cancelLogin.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    fireEvent.click(await screen.findByTestId("ns-login"));
+    await waitFor(() => expect(waiting()).toBe(true));
+    fireEvent.click(screen.getByTestId("ns-login"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalled());
+
+    fireLogin("claude", true); // 后端复查发现真登上了
+    await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
+    expect(screen.queryByTestId("ns-error")).toBeNull();
+  });
+
   it("login-done 超时 → 落回可点 + 显示提示，提示仍在", async () => {
     claudeSignedOut();
     api.loginAgent.mockResolvedValue(undefined);
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(waiting()).toBe(true));
     fireLogin("claude", false);
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(waiting()).toBe(false));
     // 超时不等于登录失败，未登录提示仍在，错误行给出本地化说明。
     expect(screen.getByTestId("ns-login-warn")).toBeTruthy();
     expect(screen.getByTestId("ns-error").textContent?.trim().length).toBeGreaterThan(0);
@@ -185,9 +232,9 @@ describe("NewSessionPanel 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(waiting()).toBe(true));
     fireLogin("kimi", true); // 与当前选中的 claude 无关
-    expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true);
+    expect(waiting()).toBe(true);
     expect(screen.getByTestId("ns-login-warn")).toBeTruthy();
   });
 
@@ -207,14 +254,14 @@ describe("NewSessionPanel 登录", () => {
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login")); // 发起 claude 登录
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude"));
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(waiting()).toBe(true));
 
     fireEvent.click(screen.getByTestId("ns-agent-kimi")); // claude 还在登录中就切走
     // kimi 未登录且不在等待态 → 按钮可点
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(waiting()).toBe(false));
     fireEvent.click(screen.getByTestId("ns-login"));
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("kimi")); // 并发登录不被挡
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(waiting()).toBe(true));
   });
 
   it("登录中切走后，原 agent 的 login-done 仍能清掉它的等待态", async () => {
@@ -222,14 +269,14 @@ describe("NewSessionPanel 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login")); // claude 登录中
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(waiting()).toBe(true));
 
     fireEvent.click(screen.getByTestId("ns-agent-kimi")); // 切走
     fireLogin("claude", false); // claude 登录超时（此时选中的是 kimi）
     fireEvent.click(screen.getByTestId("ns-agent-claude")); // 切回来
 
     // 等待态已被清掉 → 可以重试登录（旧实现在此永久禁用）
-    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(waiting()).toBe(false));
   });
 
   it("切走期间到达的成功事件，切回后应显示为已登录", async () => {
