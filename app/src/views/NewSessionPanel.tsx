@@ -1,10 +1,11 @@
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
   type ProviderKey,
   type HooksStatus,
+  type LoginDone,
   PROVIDER_KEYS,
   newSession,
   recentCwds,
@@ -12,6 +13,9 @@ import {
   repairProviderHooks,
   getSettings,
   availableAgents,
+  getAccounts,
+  loginAgent,
+  isLoggedIn,
 } from "../api";
 import { providerConfig } from "../providers";
 import { useT, repairFailMessage } from "../i18n";
@@ -65,6 +69,17 @@ export function NewSessionPanel(): ReactElement {
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avail, setAvail] = useState<ProviderKey[] | null>(null);
+  // null = 尚未拿到账号（或取不到）→ 不显示未登录提示，避免误闪/误报。
+  const [loggedIn, setLoggedIn] = useState<Record<string, boolean> | null>(null);
+  // 正在登录的 provider 集合（而非单个 boolean）：登录期间用户可能切换选中项，事件回来时得认得出
+  // 是谁的，否则等待态永远落不回、把别的 agent 的登录按钮一起锁死。用集合而非单值，是因为分别登录
+  // 两个 agent 本就该允许并发（各自一个终端、一个后端 watch 线程）。
+  const [loginPending, setLoginPending] = useState<Set<ProviderKey>>(new Set());
+  // login-done 只订阅一次（切 provider 时 unlisten/relisten 会漏事件），故当前选中项与文案走 ref。
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
+  const tRef = useRef(t);
+  tRef.current = t;
 
   useEffect(() => {
     // 窗口已开时从另一张卡片再点「新建会话」：后端发 ns-prefill 更新表单（不重开窗口）。
@@ -107,6 +122,39 @@ export function NewSessionPanel(): ReactElement {
     );
     // 命令失败时按 spec §5 宁可多列（回退全量 PROVIDER_KEYS）也不空列表——空列表会显示「未检测到已安装」并禁用启动。
     availableAgents().then(setAvail).catch(() => setAvail([...PROVIDER_KEYS]));
+    // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
+    getAccounts()
+      .then((rows) => {
+        const m: Record<string, boolean> = {};
+        for (const p of PROVIDER_KEYS) m[p] = isLoggedIn(rows.find((r) => r.provider === p));
+        setLoggedIn(m);
+      })
+      .catch(() => setLoggedIn(null));
+  }, []);
+
+  // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果，完成/超时后发 login-done。
+  useEffect(() => {
+    const un = listen<LoginDone>("login-done", (e) => {
+      const p = e.payload.provider;
+      // 先无条件清掉**该 provider**的等待态：登录期间用户可能已切走，若按当前选中项过滤就再也
+      // 清不掉了（等待态卡死，该 agent 再也点不动登录）。
+      setLoginPending((s) => {
+        if (!s.has(p)) return s;
+        const n = new Set(s);
+        n.delete(p);
+        return n;
+      });
+      // 登录成功与否是该 provider 的客观事实，与当前选中谁无关。
+      if (e.payload.ok) {
+        setLoggedIn((m) => ({ ...(m ?? {}), [p]: true }));
+      }
+      // 但提示只对当前看着的那个 agent 显示，免得用户莫名看到别人的报错。
+      if (p !== providerRef.current) return;
+      setError(e.payload.ok ? null : tRef.current.newSession.loginTimeout); // 超时 ≠ 登录失败
+    });
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   // default_agent 若未装，则退到首个已装 agent（avail 加载后校正）
@@ -153,6 +201,24 @@ export function NewSessionPanel(): ReactElement {
     }
   }
 
+  /** 拉起交互式登录。成功 spawn 后不清等待态——等 login-done 事件（或后端 5 分钟超时）才落回。 */
+  async function doLogin() {
+    const target = provider; // 锁定发起时的 provider：之后用户切走了，事件仍要能对上号
+    if (loginPending.has(target)) return;
+    setLoginPending((s) => new Set(s).add(target));
+    setError(null);
+    try {
+      await loginAgent(target);
+    } catch (e) {
+      setError(String(e));
+      setLoginPending((s) => {
+        const n = new Set(s);
+        n.delete(target);
+        return n;
+      });
+    }
+  }
+
   // 输入框内容实时过滤最近项：空 / 已选中某项（完全匹配）时显示全部，输入片段时按 名+路径 过滤。
   // 比较前统一 normalize 斜杠方向，避免 C:/proj 与 C:\proj 因分隔符不同而无法高亮/匹配。
   const cwdNorm = normalizePath(cwd.trim());
@@ -162,6 +228,8 @@ export function NewSessionPanel(): ReactElement {
       ? recent
       : recent.filter((r) => r.toLowerCase().includes(q));
   const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
+  // 已装但未登录才提示（loggedIn 为 null = 拿不到账号，不打扰）。
+  const needLogin = loggedIn?.[provider] === false;
 
   return (
     <div className="ns-window">
@@ -244,6 +312,20 @@ export function NewSessionPanel(): ReactElement {
                 disabled={repairing}
               >
                 {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
+              </button>
+            </div>
+          )}
+          {avail && avail.length > 0 && needLogin && (
+            <div className="ns-warn" data-testid="ns-login-warn">
+              <span>{t.newSession.notLoggedIn}</span>
+              <button
+                type="button"
+                className="ns-repair"
+                data-testid="ns-login"
+                onClick={doLogin}
+                disabled={loginPending.has(provider)}
+              >
+                {loginPending.has(provider) ? t.newSession.loggingIn : t.newSession.login}
               </button>
             </div>
           )}

@@ -49,6 +49,8 @@ static AUTH: AuthScheme = AuthScheme {
     credentials: CredentialSource::File("auth.json"),
     refresh: None,
     default_base_url: "",
+    // `codex login`（另有 `codex login status`，但 kimi 无 status 子命令，登录态检测统一走读凭据）。
+    login_args: &["login"],
 };
 
 static LAUNCH: LaunchSpec = LaunchSpec {

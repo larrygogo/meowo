@@ -1251,6 +1251,76 @@ struct InstallDone {
     code: Option<i32>,
 }
 
+/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时（用户多半中途放弃了）。
+#[derive(Clone, serde::Serialize)]
+struct LoginDone {
+    provider: String,
+    ok: bool,
+}
+
+/// 轮询账号解析结果，直到出现（登录成功）或超时，然后 emit `login-done`。
+///
+/// **为什么轮询 `account()` 而不是 watch 凭据文件**：macOS 上 claude 把凭据存进登录 Keychain，
+/// `.credentials.json` 根本不存在，watch mtime 永远等不到。`account()` 已封装三家（含 Keychain）
+/// 的判定，且全是本地读，2s 一轮开销可忽略。
+///
+/// 超时上限 5 分钟：登录走浏览器 OAuth，用户可能中途放弃；spawn 出去的是 detach 的终端，
+/// 拿不到退出码，不设上限线程就永久泄漏。
+fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: String) {
+    const POLL: std::time::Duration = std::time::Duration::from_secs(2);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let start = std::time::Instant::now();
+        // 先查再睡：账号若已就绪（用户很快登完，或本就登录着）立刻 emit，不白等一个轮询周期。
+        // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
+        // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
+        let ok = loop {
+            if account::for_provider(key).account().is_some() {
+                break true;
+            }
+            if start.elapsed() >= TIMEOUT {
+                eprintln!("Meowo login[{provider}]: 等待登录超时（{}s），停止轮询", TIMEOUT.as_secs());
+                break false;
+            }
+            std::thread::sleep(POLL);
+        };
+        let _ = app.emit("login-done", LoginDone { provider, ok });
+    });
+}
+
+/// 在终端里拉起该 agent 的交互式登录（`claude auth login` / `codex login` / `kimi login`），
+/// 并起后台任务等登录完成，完成或超时后 emit `login-done`。
+///
+/// argv 与 `new_session` 同源，故同样是**绝对路径优先、必要时回退裸名**：spawn 出的终端继承
+/// app 启动时的 PATH 快照，未必含刚装好的 agent，裸名会让 wt/powershell 报 0x80070002；但当
+/// 可执行只在 PATH 上（`LaunchCandidate::OnPath`，如 fnm 管理的 codex）时回退裸名是刻意的
+/// ——那类路径带版本/进程号无法静态声明，且 PATH 上的往往是 shim，固化它会绕过其环境准备。
+#[tauri::command]
+async fn login_agent(
+    app: tauri::AppHandle,
+    provider: String,
+    terminal: Option<String>,
+) -> Result<(), String> {
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    let provider = key.as_str().to_string(); // 归一：emit 用规范串
+    let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
+    let argv = inst.login_argv().ok_or("该 agent 未声明登录入口")?;
+    let term = terminal
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| load_settings().resume_terminal);
+
+    // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环。
+    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, None, &term))
+        .await
+        .map_err(|e| e.to_string())?;
+    if !ok {
+        return Err("启动终端失败：无法拉起登录流程".into());
+    }
+    watch_login(app, key, provider);
+    Ok(())
+}
+
 /// 把安装脚本写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
 /// Windows：try/catch 捕获终止错误，打印 `Installation failed: …` 并 exit 1。
 #[cfg(target_os = "windows")]
@@ -1376,20 +1446,21 @@ fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) 
     hooks_status_at(&inst.config_path(), inst.hooks, agent_id)
 }
 
+/// 某 provider 在本机的安装实况。三家均已迁入插件层，此处只是把 ProviderKey 映射到各自的
+/// 解析入口（Phase D 会把它收敛成 `by_id(key.as_str())?.resolve()`）。
+fn install_for(key: meowo_store::ProviderKey) -> Option<meowo_agent::Installation> {
+    match key {
+        meowo_store::ProviderKey::Claude => meowo_reporter::claude::claude_install(),
+        meowo_store::ProviderKey::Codex => meowo_reporter::codex::codex_install(),
+        meowo_store::ProviderKey::Kimi => meowo_reporter::kimi::kimi_install(),
+    }
+}
+
 /// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
-    match meowo_store::ProviderKey::parse(Some(&provider)) {
-        meowo_store::ProviderKey::Claude => {
-            plugin_hooks_status(meowo_reporter::claude::claude_install(), "claude")
-        }
-        meowo_store::ProviderKey::Codex => {
-            plugin_hooks_status(meowo_reporter::codex::codex_install(), "codex")
-        }
-        meowo_store::ProviderKey::Kimi => {
-            plugin_hooks_status(meowo_reporter::kimi::kimi_install(), "kimi")
-        }
-    }
+    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    plugin_hooks_status(install_for(key), key.as_str())
 }
 
 /// 「修复连接」结果：最新接线状态 + 失败原因（None = 成功/已是目标状态）。
@@ -2682,6 +2753,7 @@ pub fn run() {
             available_agents,
             new_session,
             install_agent,
+            login_agent,
             check_provider_hooks,
             repair_provider_hooks,
             recent_cwds,

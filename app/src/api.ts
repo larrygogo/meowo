@@ -275,3 +275,20 @@ export function installAgent(provider: ProviderKey): Promise<void> {
 
 /** 后台安装结束事件 payload（对应后端 install-done）。 */
 export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | null };
+
+/**
+ * 在终端里拉起该 agent 的交互式登录（claude 是 `auth login`，codex/kimi 是 `login`）。
+ * 登录走浏览器 OAuth、终端是 detach 的，拿不到退出码——后端改为轮询账号解析结果，
+ * 完成或超时（5 分钟）后 emit `login-done`。terminal 省略则用设置里的默认终端。
+ */
+export function loginAgent(provider: ProviderKey, terminal?: string): Promise<void> {
+  return invoke("login_agent", { provider, terminal });
+}
+
+/** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */
+export type LoginDone = { provider: ProviderKey; ok: boolean };
+
+/** 该 provider 是否已登录：账号能解析出来就算登录（三家判据各异，已在后端 account() 内收敛）。 */
+export function isLoggedIn(payload: ProviderAccountPayload | undefined): boolean {
+  return !!payload?.account;
+}

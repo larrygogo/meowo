@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
-import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus } from "../api";
+import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, loginAgent, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus, type LoginDone } from "../api";
 import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -221,7 +221,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onInstalled, refreshing, settings, onToggleQuota }: {
+function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, onToggleQuota }: {
   provider: ProviderKey;
   /** null = 安装状态检测中（availableAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
   installed: boolean | null;
@@ -231,6 +231,8 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   onRefresh: () => void;
   /** 后台安装成功后重查安装检测（令卡片转「已装」）。 */
   onInstalled: () => void;
+  /** 登录成功后重查账号（令卡片转「已登录」并显示身份/用量）。 */
+  onLoggedIn: () => void;
   refreshing: boolean;
   /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
   settings: Settings | null;
@@ -247,9 +249,16 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   const [hooksStatus, setHooksStatus] = useState<HooksStatus | null>(null);
   const [repairingHooks, setRepairingHooks] = useState(false);
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
-  // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
+  // 登录态：waiting=已拉起终端、等 login-done；msg=超时/失败提示。
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginMsg, setLoginMsg] = useState<string | null>(null);
+  // 刚装完（本次会话内）→ 把「登录」按钮标为下一步，把「装完 → 登录」串成一条链路。
+  const [justInstalled, setJustInstalled] = useState(false);
+  // onInstalled/onLoggedIn 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
+  const onLoggedInRef = useRef(onLoggedIn);
+  onLoggedInRef.current = onLoggedIn;
 
   useEffect(() => {
     let cancelled = false;
@@ -279,21 +288,45 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
     installAgent(provider).catch(() => setInstallState("error"));
   };
 
+  /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done（或 5 分钟超时）才落回。 */
+  const startLogin = () => {
+    if (loginBusy) return;
+    setLoginBusy(true);
+    setLoginMsg(null);
+    loginAgent(provider).catch(() => {
+      setLoginBusy(false);
+      setLoginMsg(t.account.loginFailed);
+    });
+  };
+
   useEffect(() => {
     // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
     const unD = listen<InstallDone>("install-done", (e) => {
       if (e.payload.provider !== provider) return;
       if (e.payload.ok) {
         setInstallState("idle");
+        setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
         onInstalledRef.current();
       } else {
         setInstallState("error");
       }
     });
+    // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果后发 login-done。
+    const unL = listen<LoginDone>("login-done", (e) => {
+      if (e.payload.provider !== provider) return;
+      setLoginBusy(false);
+      if (e.payload.ok) {
+        setJustInstalled(false);
+        onLoggedInRef.current(); // 重查账号 → 卡片转「已登录」并显示身份/用量
+      } else {
+        setLoginMsg(t.account.loginTimeout); // 超时 ≠ 登录失败：用户可能中途放弃了
+      }
+    });
     return () => {
       unD.then((f) => f());
+      unL.then((f) => f());
     };
-  }, [provider]);
+  }, [provider, t]);
 
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
@@ -347,6 +380,17 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
               {installState === "error" ? t.account.installRetry : t.account.install}
             </button>
           ))}
+        {isInstalled && !isLoggedIn && (
+          <button
+            type="button"
+            className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
+            data-testid={"agent-login-" + provider}
+            onClick={startLogin}
+            disabled={loginBusy}
+          >
+            {loginBusy ? t.account.loggingIn : t.account.login}
+          </button>
+        )}
         {isInstalled && hooksStatus && (hooksStatus === "missing" || hooksStatus === "unknown") && (
           <button
             type="button"
@@ -363,6 +407,12 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
       {installed === false && installState === "error" && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
           {t.account.installFailed}
+        </div>
+      )}
+
+      {loginMsg && (
+        <div className="provider-card-body agent-install-error" data-testid={"agent-login-error-" + provider}>
+          {loginMsg}
         </div>
       )}
 
@@ -462,8 +512,9 @@ export function AccountSection() {
       });
   };
 
-  useEffect(() => {
-    // 先从 getAccounts 拿缓存数据快速渲染，再对每个 usage_supported provider 联网刷新
+  // 先从 getAccounts 拿缓存数据快速渲染，再对每个 usage_supported provider 联网刷新。
+  // 挂载时与登录成功后各调一次（登录成功前该 provider 的 account 为 null，卡片显示「未登录」）。
+  const loadAccounts = () => {
     getAccounts()
       .then((ps) => {
         setPayloads(ps);
@@ -475,7 +526,8 @@ export function AccountSection() {
         ps.filter((p) => p.usage_supported).forEach((p) => doRefresh(p.provider));
       })
       .catch(() => {});
-  }, []);
+  };
+  useEffect(() => { loadAccounts(); }, []);
 
   // 以 PROVIDER_KEYS 为骨架遍历全部 agent（而非只 getAccounts 返回的有账号项），
   // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
@@ -493,6 +545,7 @@ export function AccountSection() {
             err={errMap[p] ?? null}
             onRefresh={() => doRefresh(p)}
             onInstalled={refreshInstalled}
+            onLoggedIn={loadAccounts}
             refreshing={refreshingSet.has(p)}
             settings={settings}
             onToggleQuota={() => toggleQuotaProvider(p)}
