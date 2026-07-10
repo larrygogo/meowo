@@ -16,9 +16,11 @@
 //! - Phase 3 ✅ 端口注入：[`ports::HttpPort`] / [`ports::KeychainPort`] 由宿主注入，于是账号
 //!   （[`account::AccountCap`]）与接线副作用（[`wiring::WiringCap`]）也住进了 `plugins/<id>/`。
 //!   本 crate 不依赖 HTTP 栈，插件层没有一行 `#[cfg(target_os)]`。
-//! - Phase 4 ⏳ 前端描述符：`list_agents()` 下发展示名/品牌色/图标，前端零 agent 知识。
+//! - Phase 4 ✅ 前端描述符：`list_agents()` 下发 id/展示名/安装态，前端不再自带 agent 名单。
+//!   图标与品牌色留在前端资产表——位图 logo 与主题相关的颜色是资产，不是能塞进字段的数据。
 //!
-//! 终局验收：加一个 agent 只需新增 `plugins/<new>/` 与 `registry.rs` 一行。
+//! 终局验收：加一个 agent 只需新增 `plugins/<new>/` 与 `registry.rs` 一行（后端零其它改动）；
+//! 前端只需在资产表补一个图标，不补也只是显示中性徽标 + id，不会崩、不会冒名成 claude。
 
 pub mod account;
 pub mod auth;

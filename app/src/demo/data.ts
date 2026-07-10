@@ -1,5 +1,5 @@
 // demo 专用:构造与 LiveSession 字段一一对应的假会话(仅 demo.html 引用,不进生产构建)。
-import { LiveSession, DEFAULT_PROVIDER, type ProviderKey } from "../api";
+import { LiveSession, type AgentId } from "../api";
 
 export type Item = LiveSession & { connected: boolean };
 
@@ -19,7 +19,7 @@ export function makeSession(p: {
   todoTotal?: number;
   preview?: string | null;
   note?: string | null;
-  provider?: ProviderKey;
+  provider?: AgentId;
 }): Item {
   const id = nextId++;
   return {
@@ -55,6 +55,6 @@ export function makeSession(p: {
     last_ai_text: null,
     last_user_text: null,
     model: null,
-    provider: p.provider ?? DEFAULT_PROVIDER,
+    provider: p.provider ?? "claude",
   };
 }

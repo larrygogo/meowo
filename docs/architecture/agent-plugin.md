@@ -105,20 +105,28 @@ pub trait KeychainPort: Sync {
 后端暴露 `list_agents() -> Vec<AgentDescriptor>`:
 
 ```jsonc
-{
-  "id": "claude",
-  "display_name": "Claude Code",
-  "brand_color": "#d97757",
-  "icon_svg": "<path d=\"…\"/>",
-  "capabilities": { "usage": true, "rename": true, "resume": true }
-}
+{ "id": "claude", "display_name": "Claude Code", "installed": true }
 ```
 
-据此删除:`providers.tsx` 的 `PROVIDERS` 表、`api.ts` 的 `ProviderKey` 联合类型、`About.tsx` 的
-`=== "claude"` 特判、`styles.css` 的 `--cc-claude`(改为从描述符注入 CSS 变量)、`i18n` 的
-`agentClaudeCode` / `agentKimiCode` / `agentCodex` 三条(产品名不翻译)。
+**图标与品牌色不下发。** 原本设想 descriptor 带 `icon_svg` 与 `brand_color`,实现时撞上两个事实:
 
-`noAgents` 之类硬列三家名字的文案,改为按 `list_agents()` 动态拼接。
+- kimi 的 logo 是**位图 PNG**(渐变颗粒纹理,矢量化会失真)。有条 commit 特意把它从 base64 内嵌改成
+  静态资源;为了"下发"再塞回 base64 是倒退。
+- claude 的品牌橙在浅色/深色主题下取**不同明度**(`#d97757` / `#b0532f`)。这是 meowo 的视觉决策,
+  不是 agent 的定义,一个字符串字段表达不了。
+
+结论:**图标和颜色是资产,不是数据。** 它们留在 `providers.tsx` 的资产表里,以 id 为键。加一个 agent
+仍要在那里加一项(总得有人提供图标),但前端**不再有任何 agent 的逻辑分支**。
+
+descriptor 也**不带 `capabilities`**:前端目前没有一处按能力分支,不臆造字段。真需要时再加。
+
+据此删除:`providers.tsx` 的 `PROVIDERS` 表(退化为纯资产表)、`api.ts` 的 `ProviderKey` 联合类型与
+`PROVIDER_KEYS`、`About.tsx` 的 `=== "claude"` 特判、`styles.css` 里 `.stk-agent { color: var(--cc-claude) }`
+这类给所有 agent 抹上 claude 橙的规则、`i18n` 的 `agentClaudeCode` / `agentKimiCode` / `agentCodex` /
+`providerClaudeCode` 四条(产品名不翻译,zh/en 值本就完全相同)。`noAgents` 文案不再点名三家。
+
+未知 id 一律**中性兜底**:显示 id 本身 + 灰色占位徽标。旧的 `providerConfig` 未知时回退
+`PROVIDERS.claude`,于是一个本版本不认识的 agent 会顶着 Claude 的赤陶徽标出现在卡片上。
 
 ## 迁移阶段
 
@@ -129,7 +137,7 @@ pub trait KeychainPort: Sync {
 | 1 ✅ | **身份收敛**:删 `ProviderKey`,全仓改用 `AgentId`;store 的 provider 列退化为字符串;修掉未知降级 claude 的 bug | 三个 enum↔registry 绊线单测中的两个变得无意义并删除 |
 | 2 ✅ | **注册表合一**:reporter 的 `Agent` trait 折进 `AgentPlugin`;transcript 抽象迁出 store;`lib.rs` 两处硬 match 消失 | reporter 不再持有第二张注册表 |
 | 3 ✅ | **端口注入**:定义 `ports.rs`;account 的联网逻辑与 setup 的 amend/after_write 搬进 `plugins/<id>/` | app 的 `account/` 与 `setup/` 只剩端口实现与编排 |
-| 4 | **前端描述符**:`list_agents()` 下发;删前端三张表与 claude 特判 | 加 agent 前端零改动 |
+| 4 ✅ | **前端描述符**:`list_agents()` 下发;删前端三张表与 claude 特判 | 前端只剩一张视觉资产表,无 agent 逻辑分支 |
 
 ### Phase 2 落地记录
 
@@ -170,13 +178,29 @@ claude 的六处 `#[cfg(target_os = "macos")]` 收敛成一次 `ports.keychain.a
 一个能力**不需要某个端口就不碰它** —— codex 的 `fetch_usage` 不用 `ports.http`,因为它的 rate_limits
 就写在本地 rollout 里。这正是能力槽的意义。
 
+### Phase 4 落地记录
+
+`useAgents()` hook 把名单取用收成一处。顺带发现 Sticker 自己又拉了一遍安装列表(`availableAgents()`),
+与账号页重复 —— `list_agents()` 一次带回 `installed`,那个请求整个删掉了。
+
+`--cc-claude` 变量本身**保留**:它是 claude 的品牌色资产。拔掉的是 `.stk-agent { color: var(--cc-claude) }`
+这条规则——它给**所有** agent 的徽标容器抹上 claude 的橙,只因为 kimi/codex 恰好用固定色、不吃 `color`。
+任何新 agent 只要用 `currentColor` 绘制徽标就会被染成橙色。改由 `tintStyle(id, connected)` 按 agent 注入,
+断开态不给 tint(inline style 优先级高于 class,给了就盖掉 `.stk-agent-off` 的灰)。
+
 ## 验收:加一个 gemini 要动哪些文件
 
-改完之后应当只有两处:
+**后端两处**:
 
 1. 新增 `crates/meowo-agent/src/plugins/gemini/`(`mod.rs` 必需;`account.rs` / `setup.rs` /
-   `telemetry.rs` 按需)
+   `telemetry.rs` 按需 —— 不需要的能力就不声明)
 2. `crates/meowo-agent/src/registry.rs` 补一行 `&GEMINI`
 
-前端、store、reporter、app 均零改动。这是本次重构的唯一验收标准 —— 也应当有一个测试来守住它:
-注册表里每个插件都能被 `list_agents()` 完整描述,不需要任何调用方知道它的名字。
+`meowo-store` / `meowo-reporter` / `meowo-app` 均零改动。
+
+**前端一处**:`providers.tsx` 的资产表加一项(图标 + 是否需要底座 + 可选的 tint 变量)。这**无法消除**——
+总得有人提供图标文件。但它是一条纯数据,没有逻辑分支;不加也不会崩,只是显示中性徽标 + id 字符串。
+
+守住这个结论的测试:`providers.test.tsx` 断言未知 agent 走中性兜底且**不等于** claude 的图标;
+`api.newsession.test.ts` 断言 `listAgents()` 原样透传后端下发的未知 id、`agentName()` 未知回退成 id 本身;
+`Sticker.test.tsx` 渲染一个 `provider: "gemini"` 的会话,断言它显示 `"gemini"` 而非 `"Claude Code"`。

@@ -9,7 +9,7 @@ const api = vi.hoisted(() => ({
   checkProviderHooks: vi.fn(),
   availableTerminals: vi.fn(),
   getSettings: vi.fn(),
-  availableAgents: vi.fn(),
+  listAgents: vi.fn(),
   getAccounts: vi.fn(),
   loginAgent: vi.fn(),
 }));
@@ -29,6 +29,7 @@ const fireLogin = (provider: string, ok: boolean) =>
   act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
 
 import { NewSessionPanel } from "./NewSessionPanel";
+import { descriptors } from "../test/agents";
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
@@ -38,7 +39,7 @@ beforeEach(() => {
   api.checkProviderHooks.mockResolvedValue("installed");
   api.availableTerminals.mockResolvedValue(["wt"]);
   api.getSettings.mockResolvedValue({ default_agent: "claude", resume_terminal: "wt" });
-  api.availableAgents.mockResolvedValue(["claude", "codex", "kimi"]);
+  api.listAgents.mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
   // 默认三家都已登录 → 不显示登录提示（各测试按需覆盖）。
   api.getAccounts.mockResolvedValue([
     { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true },
@@ -80,7 +81,7 @@ describe("NewSessionPanel (独立窗口)", () => {
   });
 
   it("agent 选择只列已装的", async () => {
-    api.availableAgents.mockResolvedValue(["claude", "codex"]);
+    api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
     render(<NewSessionPanel />);
     await screen.findByTestId("ns-launch");
     expect(screen.queryByTestId("ns-agent-claude")).toBeTruthy();
@@ -89,7 +90,7 @@ describe("NewSessionPanel (独立窗口)", () => {
   });
 
   it("一个都没装时提示 + 启动禁用", async () => {
-    api.availableAgents.mockResolvedValue([]);
+    api.listAgents.mockResolvedValue(descriptors([]));
     render(<NewSessionPanel />);
     expect(await screen.findByTestId("ns-no-agents")).toBeTruthy();
     expect((screen.getByTestId("ns-launch") as HTMLButtonElement).disabled).toBe(true);

@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization，与 NewSessionPanel.test.tsx 同坑）。
-const api = vi.hoisted(() => ({ getAccounts: vi.fn(), availableAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
+const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 
 // 收集所有 ProviderCard 注册的 install-done / login-done 回调，测试里手动广播
@@ -25,11 +25,12 @@ const fireLogin = (provider: string, ok: boolean) =>
   act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
 
 import { AccountSection } from "./About";
+import { descriptors } from "../test/agents";
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
   api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true }]);
-  api.availableAgents.mockResolvedValue(["claude", "codex"]);
+  api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
   api.refreshUsage.mockResolvedValue({ lanes: [], note: null });
   api.getSettings.mockResolvedValue({ sticker_quota_providers: [] });
   // 默认：bin 目录都在 PATH 上（无提示条），个别用例再覆盖。
@@ -73,7 +74,7 @@ describe("AccountSection agent 卡", () => {
   it("install-done 成功后重查检测、卡片转已装", async () => {
     api.installAgent.mockResolvedValue(undefined);
     // 初次未装 kimi；装完重查返回含 kimi
-    api.availableAgents.mockResolvedValueOnce(["claude", "codex"]).mockResolvedValue(["claude", "codex", "kimi"]);
+    api.listAgents.mockResolvedValueOnce(descriptors(["claude", "codex"])).mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
     render(<AccountSection />);
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
@@ -224,7 +225,7 @@ describe("AccountSection 登录", () => {
   it("装完自动引导：install-done 成功后，该 agent 的登录按钮被标为主要动作", async () => {
     api.installAgent.mockResolvedValue(undefined);
     // 初次未装 kimi；装完重查返回含 kimi（此时 kimi 无账号 → 未登录）
-    api.availableAgents.mockResolvedValueOnce(["claude", "codex"]).mockResolvedValue(["claude", "codex", "kimi"]);
+    api.listAgents.mockResolvedValueOnce(descriptors(["claude", "codex"])).mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
     render(<AccountSection />);
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     fireDone("kimi", true);

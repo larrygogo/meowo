@@ -59,9 +59,6 @@ export const en: Dict = {
     noteCancel: "Cancel",
     youPrefix: "You",
     aiPrefix: "AI",
-    agentClaudeCode: "Claude Code",
-    agentKimiCode: "Kimi Code",
-    agentCodex: "Codex",
     loading: "Loading…",
   },
   newSession: {
@@ -77,7 +74,7 @@ export const en: Dict = {
     launching: "Launching…",
     hooksMissing: "No hooks detected for this agent; the session may not appear on the board",
     hooksUnknown: "Can't confirm this agent's hooks status",
-    noAgents: "No installed AI CLI detected (claude / codex / kimi). Please install one first.",
+    noAgents: "No installed AI CLI detected. Please install one first.",
     notLoggedIn: "This agent is not signed in",
     login: "Sign in",
     loggingIn: "Waiting for sign-in…",
@@ -158,7 +155,6 @@ export const en: Dict = {
     showQuotaOnSticker: "Show quota on sticker",
   },
   account: {
-    providerClaudeCode: "Claude Code",
     notInstalled: "Not installed",
     notLoggedIn: "Not signed in",
     notLoggedInHint: 'Installed but not signed in — click "Sign in" to authorize in a terminal',

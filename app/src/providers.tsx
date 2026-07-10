@@ -1,15 +1,17 @@
-// Agent 提供方（CLI）前端注册表：图标 + 展示名收成一处。加新 CLI = 在此加一项
-// （后端对应 meowo-reporter::agent::Agent 一处），卡片按 provider 查表，不再散落 if 分支。
+// Agent 的**视觉资产**表：图标 + 着色方式。展示名与安装态由后端 list_agents() 下发，不在此处。
+//
+// 为什么资产留在前端：kimi 的 logo 是位图 PNG（渐变颗粒纹理，矢量化会失真），claude 的品牌橙在
+// 浅色/深色主题下取不同明度。位图与主题相关的颜色都无法诚实地塞进后端的一个字符串字段——它们是
+// 资产，不是数据。加一个 agent 仍要在这里加一项（总得有人提供图标），但**前端不再有任何 agent
+// 的逻辑分支**：未知 id 走中性兜底，不会崩、也不会伪装成 claude。
 import type { ReactElement } from "react";
-import type { Dict } from "./i18n/zh";
-import { DEFAULT_PROVIDER } from "./api";
 // Kimi 官方位图 logo（渐变颗粒纹理、非矢量友好）：作静态资源随打包分发（Vite 输出带哈希的文件），
 // 不再把整张 PNG 以超长 base64 内嵌进源码（增大 bundle/难 diff）。四角本就透明，无需圆角裁剪。
 import kimiLogo from "./assets/kimi.png";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst）：fill=currentColor，由容器着色——裸图标场景
-  // (.stk-agent/.stk-utab) 给 --cc-claude 品牌橙、断开转灰；橙方块底座 (.provider-card-icon-claude) 给白。
+  // (.stk-agent/.stk-utab) 给 --cc-claude 品牌橙、断开转灰；橙方块底座 (.provider-card-icon-tile) 给白。
   return (
     <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z" />
@@ -32,7 +34,7 @@ function KimiMark() {
 
 function CodexMark() {
   // OpenAI 官方 app 图标风格：黑圆角方块 + 白「六瓣结」logomark。固定品牌色（不随主题/连接态着色，
-  // 只靠 .stk-agent-off 的 opacity 变暗），与 Kimi 徽标同款处理——避免被 .stk-agent 的强调色染成橙。
+  // 只靠 .stk-agent-off 的 opacity 变暗），与 Kimi 徽标同款处理——故其 tint 为 undefined。
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
       <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#0a0a0c" />
@@ -43,20 +45,53 @@ function CodexMark() {
   );
 }
 
-export type ProviderConfig = {
-  /** 展示名（取自 i18n）。 */
-  label: (t: Dict) => string;
-  /** 卡片元信息行的品牌图标。 */
+/** 未知 agent（DB 里存着本版本不认识的 id）：中性占位方块，绝不伪装成 claude。 */
+function UnknownMark() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="4" opacity="0.35" />
+    </svg>
+  );
+}
+
+export type AgentAssets = {
+  /** 品牌图标。 */
   Icon: () => ReactElement;
+  /**
+   * 徽标以 `currentColor` 绘制时的着色变量名（如 `"--cc-claude"`），由容器 `color` 应用；
+   * 主题明暗变体由该 CSS 变量自己承担。自带固定品牌色的徽标（kimi/codex）为 undefined。
+   */
+  tint?: string;
+  /**
+   * 设置页的 agent 卡片是否需要给徽标补一个品牌色方块底座。裸 logomark（claude）需要；
+   * 自带方块/位图的（codex/kimi）不需要。
+   */
+  needsTile: boolean;
 };
 
-export const PROVIDERS: Record<string, ProviderConfig> = {
-  claude: { label: (t) => t.sticker.agentClaudeCode, Icon: ClaudeMark },
-  kimi: { label: (t) => t.sticker.agentKimiCode, Icon: KimiMark },
-  codex: { label: (t) => t.sticker.agentCodex, Icon: CodexMark },
+const ASSETS: Record<string, AgentAssets> = {
+  claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: true },
+  kimi: { Icon: KimiMark, needsTile: false },
+  codex: { Icon: CodexMark, needsTile: false },
 };
 
-/** 取 provider 配置；未知回退默认 provider。入参保持 string 以防御后端未知值。 */
-export function providerConfig(provider: string): ProviderConfig {
-  return PROVIDERS[provider] ?? PROVIDERS[DEFAULT_PROVIDER];
+const UNKNOWN: AgentAssets = { Icon: UnknownMark, needsTile: false };
+
+/**
+ * 徽标容器的着色。以 `currentColor` 绘制的徽标（claude）走它自己的 CSS 变量；自带固定品牌色的
+ * （kimi/codex）返回空对象，不设 `color`。
+ *
+ * 此前是 CSS 里一句 `.stk-agent { color: var(--cc-claude) }`——给**所有** agent 的容器抹上 claude
+ * 的橙，只因为 kimi/codex 恰好不吃 `color`。任何新 agent 只要用 currentColor 徽标就会被染成橙。
+ *
+ * 断开态传 `enabled=false`，让位给 `.stk-agent-off` 的灰：inline style 的优先级高于 class。
+ */
+export function tintStyle(id: string, enabled = true): { color?: string } {
+  const { tint } = agentAssets(id);
+  return enabled && tint ? { color: `var(${tint})` } : {};
+}
+
+/** 取 agent 的视觉资产；未知 id → 中性兜底（不回退成 claude 的图标）。 */
+export function agentAssets(id: string): AgentAssets {
+  return ASSETS[id] ?? UNKNOWN;
 }

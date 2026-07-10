@@ -778,6 +778,22 @@ fn resume_terminal_kind() -> crate::term_script::TermKind {
     }
 }
 
+/// 聚焦终端时的 resume 回退命令：按 provider 分发（不再硬编码 claude）。是否真的回退由
+/// `focus_session_terminal` 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
+/// 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：只聚焦终端，不回退 resume。
+///
+/// **刻意定义在 `cfg` 之外**：它只用平台无关的 agent API，目前仅 macOS 调用。若把它埋进
+/// `#[cfg(target_os = "macos")]` 块里，Windows 上的编译器根本不会看它——Phase 2 改了
+/// `resume_args` 的签名，正是这样一路漏到 macOS CI 才炸的。逻辑留在 cfg 外，cfg 块里只放
+/// 平台专属的 API 调用。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) -> Vec<String> {
+    session_id
+        .zip(meowo_agent::resolve(provider))
+        .and_then(|(id, a)| a.resume_argv(id))
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 fn focus_session(
     pid: i64,
@@ -817,18 +833,10 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        let agent = meowo_agent::resolve(provider.as_deref());
         // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
-            // resume 回退命令按 provider 分发（不再硬编码 claude）；是否允许回退由
-            // focus_session_terminal 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
-            // 未知 agent → 空 argv：只聚焦终端，不回退 resume。
-            let resume_argv = session_id
-                .as_deref()
-                .zip(agent)
-                .map(|(id, a)| a.resume_args(id))
-                .unwrap_or_default();
+            let resume_argv = resume_argv_for(provider.as_deref(), session_id.as_deref());
             crate::macos::terminal::focus_session_terminal(
                 pid,
                 cwd.as_deref(),
@@ -2385,15 +2393,31 @@ async fn available_terminals() -> Vec<String> {
     }
 }
 
-/// 本机实际已安装的 agent（provider key 列表），供各处按安装过滤展示。仿 available_terminals：
-/// 检测廉价（PATH/文件查询），仍放 blocking 池避免任何意外阻塞事件循环。
+/// 前端看到的一个 agent。**这是前端认识 agent 的唯一途径**——它不再维护自己的 agent 名单。
+///
+/// 不含图标与品牌色：那是**视觉资产**，不是 agent 的定义。位图 logo（kimi）与主题相关的品牌色
+/// （claude 在浅色/深色下取不同明度）都无法诚实地塞进后端的一个字符串字段里，故留在前端的资产表。
+#[derive(Debug, Clone, serde::Serialize)]
+struct AgentDescriptor {
+    id: String,
+    /// 产品名（"Claude Code" / "Kimi Code" / "Codex"）。**不翻译**——产品名没有译名。
+    display_name: String,
+    /// 可执行是否装在本机（决定各处是否列出/可选它）。
+    installed: bool,
+}
+
+/// 全部已注册 agent 及其本机安装状态。仿 available_terminals：检测廉价（PATH/文件查询），
+/// 仍放 blocking 池避免任何意外阻塞事件循环。
 #[tauri::command]
-async fn available_agents() -> Vec<String> {
+async fn list_agents() -> Vec<AgentDescriptor> {
     tauri::async_runtime::spawn_blocking(|| {
         meowo_agent::all()
             .iter()
-            .filter(|a| a.is_installed())
-            .map(|a| a.id().as_str().to_string())
+            .map(|a| AgentDescriptor {
+                id: a.id().as_str().to_string(),
+                display_name: a.display_name().to_string(),
+                installed: a.is_installed(),
+            })
             .collect::<Vec<_>>()
     })
     .await
@@ -2919,7 +2943,7 @@ pub fn run() {
             refresh_usage,
             host_os,
             available_terminals,
-            available_agents,
+            list_agents,
             new_session,
             install_agent,
             agent_path_gap,
@@ -3051,9 +3075,30 @@ pub fn run() {
 mod tests {
     use super::{
         is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
-        pending_fingerprint, pid_is_agent, session_connected, shell_join_for_windows, should_notify,
-        strip_jsonc_comments, tab_match_score, waiting_fingerprint,
+        pending_fingerprint, pid_is_agent, resume_argv_for, session_connected,
+        shell_join_for_windows, should_notify, strip_jsonc_comments, tab_match_score,
+        waiting_fingerprint,
     };
+
+    /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
+    /// 不足以防它腐化（dead_code 允许了它）。这里在所有平台实际调它一次，锁住行为：
+    /// 已知 agent 给出 `[exe, --resume, id]`，未知/缺 session_id 给空 argv（只聚焦、不 resume）。
+    #[test]
+    fn resume_argv_for_dispatches_by_provider_and_degrades_safely() {
+        let argv = resume_argv_for(Some("claude"), Some("SID"));
+        assert_eq!(&argv[argv.len() - 2..], ["--resume".to_string(), "SID".to_string()]);
+        assert!(argv[0].to_ascii_lowercase().contains("claude"));
+
+        let kimi = resume_argv_for(Some("kimi"), Some("SID"));
+        assert_eq!(&kimi[kimi.len() - 2..], ["-r".to_string(), "SID".to_string()]);
+
+        // 未知 agent → 空 argv：绝不拿 claude 的参数去拉起别的 CLI。
+        assert!(resume_argv_for(Some("gemini"), Some("SID")).is_empty());
+        // 没有 session_id 就无从 resume。
+        assert!(resume_argv_for(Some("claude"), None).is_empty());
+        // provider 缺省 → 默认 agent（老会话没写过 provider 列）。
+        assert!(!resume_argv_for(None, Some("SID")).is_empty());
+    }
     use crate::settings::Settings;
     use crate::snap::{
         center_on, clamp_xy_to_work, edge_for_rect, intersection_area, Edge, Rect,

@@ -3,9 +3,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
+import { getSettings, setSettings, availableTerminals, listAgents, agentName, installAgent, type AgentId, type AgentDescriptor, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
 import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, loginAgent, agentPathGap, addAgentToUserPath, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus, type LoginDone } from "../api";
-import { providerConfig } from "../providers";
+import { agentAssets } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT, repairFailMessage } from "../i18n";
@@ -38,6 +38,7 @@ const SETTINGS_DEFAULTS: Settings = {
   preview_enabled: true,
   sticker_style: "elevated",
   sticker_color: "classic",
+  // 首帧占位（get_settings() resolve 前）。真实默认值由后端 settings 给，前端不据此做任何判断。
   sticker_quota_providers: ["claude"],
   default_agent: "claude",
 };
@@ -221,9 +222,11 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, onToggleQuota }: {
-  provider: ProviderKey;
-  /** null = 安装状态检测中（availableAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
+function ProviderCard({ provider, name, installed, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, onToggleQuota }: {
+  provider: AgentId;
+  /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
+  name: string;
+  /** null = 安装状态检测中（listAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
   installed: boolean | null;
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
@@ -240,7 +243,7 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   onToggleQuota: () => void;
 }) {
   const t = useT();
-  const cfg = providerConfig(provider);
+  const assets = agentAssets(provider);
   const acc = payload?.account ?? null;
 
   // 后台安装态：idle=未装可点 / installing=转圈+本地化「安装中…」/ error=失败可重试。
@@ -386,12 +389,12 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   return (
     <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
       <div className="provider-card-head">
-        <div className={"provider-card-icon" + (provider === "claude" ? " provider-card-icon-claude" : "")}>
-          <cfg.Icon />
+        <div className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}>
+          <assets.Icon />
         </div>
         <div className="provider-card-title">
           <div className="provider-card-title-row">
-            <span className="provider-name">{cfg.label(t)}</span>
+            <span className="provider-name">{name}</span>
             {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
             {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
           </div>
@@ -532,12 +535,13 @@ export function AccountSection() {
   const [refreshingSet, setRefreshingSet] = useState<Set<string>>(new Set());
   // errMap: provider key → 错误类型（unsupported/error/null）
   const [errMap, setErrMap] = useState<Record<string, "unsupported" | "error" | null>>({});
-  // installed: 本机实际已装的 agent 集合——决定每张卡是「未安装」还是「已装/未登录」。
-  // 初值 null = 检测中：首帧不判定任何一张卡为未安装，避免 availableAgents() resolve 前误闪「未安装 + 安装按钮」。
-  const [installed, setInstalled] = useState<Set<string> | null>(null);
-  // 重查本机已装 agent 集合。挂载、窗口聚焦、后台安装成功各处复用。
+  // agents: 后端下发的 agent 名单（含展示名与安装态）。前端不再自己维护这份名单。
+  // 初值 null = 检测中：首帧不判定任何一张卡为未安装，避免 listAgents() resolve 前误闪「未安装 + 安装按钮」。
+  const [agents, setAgents] = useState<AgentDescriptor[] | null>(null);
+  const installed = agents === null ? null : new Set(agents.filter((a) => a.installed).map((a) => a.id));
+  // 重查 agent 名单（安装态会变）。挂载、窗口聚焦、后台安装成功各处复用。
   const refreshInstalled = () => {
-    availableAgents().then((a) => setInstalled(new Set(a))).catch(() => {});
+    listAgents().then(setAgents).catch(() => {});
   };
   useEffect(() => { refreshInstalled(); }, []);
   useEffect(() => {
@@ -594,16 +598,17 @@ export function AccountSection() {
   };
   useEffect(() => { loadAccounts(); }, []);
 
-  // 以 PROVIDER_KEYS 为骨架遍历全部 agent（而非只 getAccounts 返回的有账号项），
+  // 以后端下发的 agent 名单为骨架遍历（而非只 getAccounts 返回的有账号项），
   // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
   return (
     <>
-      {PROVIDER_KEYS.map((p) => {
+      {(agents ?? []).map(({ id: p, display_name }) => {
         const payload = payloads.find((x) => x.provider === p) ?? null;
         return (
           <ProviderCard
             key={p}
             provider={p}
+            name={display_name}
             installed={installed === null ? null : installed.has(p)}
             payload={payload}
             usage={usageMap[p] ?? null}
@@ -728,7 +733,8 @@ function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [settings, patch] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
-  const [availAgents, setAvailAgents] = useState<ProviderKey[]>([]);
+  const [agents, setAgents] = useState<AgentDescriptor[]>([]);
+  const availAgents = agents.filter((a) => a.installed).map((a) => a.id);
   // dev 下开机自启会注册调试二进制(开机连不上 dev server → 白屏)，故禁用此开关，仅安装版可用。
   const autostartDisabled = import.meta.env.DEV;
   useEffect(() => {
@@ -736,7 +742,7 @@ function GeneralSection() {
     availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
   }, [autostartDisabled]);
   useEffect(() => {
-    availableAgents().then(setAvailAgents).catch(() => {});
+    listAgents().then(setAgents).catch(() => {});
   }, []);
   const toggleAutostart = () => {
     if (autostartDisabled) return;
@@ -761,10 +767,11 @@ function GeneralSection() {
   const showTermRow = (IS_MAC || IS_WIN) && termOptions.length >= 2;
   // 默认 Agent 下拉：选项以已装 agent 为主；若保存值不在已装列表里（未装/尚未探测完成），
   // 在最前面补一项，避免 Dropdown 内部 find 不到导致按钮标签空白。
-  const defaultAgent = settings?.default_agent ?? "claude";
+  const defaultAgent = settings?.default_agent ?? SETTINGS_DEFAULTS.default_agent;
+  const opt = (p: AgentId) => ({ value: p, label: agentName(agents, p) });
   const defaultAgentOptions = availAgents.includes(defaultAgent)
-    ? availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))
-    : [{ value: defaultAgent, label: providerConfig(defaultAgent).label(t) }, ...availAgents.map((p) => ({ value: p, label: providerConfig(p).label(t) }))];
+    ? availAgents.map(opt)
+    : [opt(defaultAgent), ...availAgents.map(opt)];
   return (
     <>
       <div className="row-card">

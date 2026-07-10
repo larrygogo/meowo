@@ -3,21 +3,22 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
-  type ProviderKey,
+  type AgentId,
+  type AgentDescriptor,
   type HooksStatus,
   type LoginDone,
-  PROVIDER_KEYS,
   newSession,
   recentCwds,
   checkProviderHooks,
   repairProviderHooks,
   getSettings,
-  availableAgents,
+  listAgents,
+  agentName,
   getAccounts,
   loginAgent,
   isLoggedIn,
 } from "../api";
-import { providerConfig } from "../providers";
+import { agentAssets } from "../providers";
 import { useT, repairFailMessage } from "../i18n";
 
 function FolderIcon() {
@@ -57,24 +58,27 @@ function pathKey(p: string): string {
 
 const qs = new URLSearchParams(window.location.search);
 const initialCwd = normalizePath(qs.get("cwd") ?? "");
-const initialProvider = (qs.get("provider") as ProviderKey | null) ?? null;
+const initialProvider: AgentId | null = qs.get("provider");
 
 export function NewSessionPanel(): ReactElement {
   const t = useT();
   const [cwd, setCwd] = useState(initialCwd);
-  const [provider, setProvider] = useState<ProviderKey>(initialProvider ?? "claude");
+  // 首帧种子（settings.default_agent resolve 前）。真实默认值由后端给。
+  const [provider, setProvider] = useState<AgentId>(initialProvider ?? "claude");
   const [recent, setRecent] = useState<string[]>([]);
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [avail, setAvail] = useState<ProviderKey[] | null>(null);
+  // agents: 后端下发的名单（null = 尚未 resolve）。avail = 其中已安装的那些。
+  const [agents, setAgents] = useState<AgentDescriptor[] | null>(null);
+  const avail = agents === null ? null : agents.filter((a) => a.installed).map((a) => a.id);
   // null = 尚未拿到账号（或取不到）→ 不显示未登录提示，避免误闪/误报。
   const [loggedIn, setLoggedIn] = useState<Record<string, boolean> | null>(null);
   // 正在登录的 provider 集合（而非单个 boolean）：登录期间用户可能切换选中项，事件回来时得认得出
   // 是谁的，否则等待态永远落不回、把别的 agent 的登录按钮一起锁死。用集合而非单值，是因为分别登录
   // 两个 agent 本就该允许并发（各自一个终端、一个后端 watch 线程）。
-  const [loginPending, setLoginPending] = useState<Set<ProviderKey>>(new Set());
+  const [loginPending, setLoginPending] = useState<Set<AgentId>>(new Set());
   // login-done 只订阅一次（切 provider 时 unlisten/relisten 会漏事件），故当前选中项与文案走 ref。
   const providerRef = useRef(provider);
   providerRef.current = provider;
@@ -85,7 +89,7 @@ export function NewSessionPanel(): ReactElement {
     // 窗口已开时从另一张卡片再点「新建会话」：后端发 ns-prefill 更新表单（不重开窗口）。
     const un = listen<{ cwd?: string | null; provider?: string | null }>("ns-prefill", (e) => {
       if (e.payload.cwd != null) setCwd(normalizePath(e.payload.cwd));
-      if (e.payload.provider != null) setProvider(e.payload.provider as ProviderKey);
+      if (e.payload.provider != null) setProvider(e.payload.provider);
     });
     return () => {
       un.then((f) => f());
@@ -115,21 +119,26 @@ export function NewSessionPanel(): ReactElement {
       })
       .then(setRecent)
       .catch(() => {});
-    PROVIDER_KEYS.forEach((p) =>
-      checkProviderHooks(p)
-        .then((st) => setHooks((h) => ({ ...h, [p]: st })))
-        .catch(() => {}),
-    );
-    // 命令失败时按 spec §5 宁可多列（回退全量 PROVIDER_KEYS）也不空列表——空列表会显示「未检测到已安装」并禁用启动。
-    availableAgents().then(setAvail).catch(() => setAvail([...PROVIDER_KEYS]));
-    // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
-    getAccounts()
-      .then((rows) => {
-        const m: Record<string, boolean> = {};
-        for (const p of PROVIDER_KEYS) m[p] = isLoggedIn(rows.find((r) => r.provider === p));
-        setLoggedIn(m);
+    // agent 名单由后端下发。拿到后再据此查 hooks 接线状态与登录态——前端不再自带一份 agent 列表。
+    // 失败时保持 agents=null（未探测），UI 既不显示「未检测到已安装」也不禁用启动。
+    listAgents()
+      .then((list) => {
+        setAgents(list);
+        for (const { id } of list) {
+          checkProviderHooks(id)
+            .then((st) => setHooks((h) => ({ ...h, [id]: st })))
+            .catch(() => {});
+        }
+        // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
+        getAccounts()
+          .then((rows) => {
+            const m: Record<string, boolean> = {};
+            for (const { id } of list) m[id] = isLoggedIn(rows.find((r) => r.provider === id));
+            setLoggedIn(m);
+          })
+          .catch(() => setLoggedIn(null));
       })
-      .catch(() => setLoggedIn(null));
+      .catch(() => {});
   }, []);
 
   // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果，完成/超时后发 login-done。
@@ -285,7 +294,7 @@ export function NewSessionPanel(): ReactElement {
           ) : (
             <div className="ns-agents">
               {(avail ?? []).map((p) => {
-                const cfg = providerConfig(p);
+                const { Icon } = agentAssets(p);
                 return (
                   <button
                     key={p}
@@ -294,8 +303,8 @@ export function NewSessionPanel(): ReactElement {
                     className={"ns-agent" + (provider === p ? " is-on" : "")}
                     onClick={() => setProvider(p)}
                   >
-                    <cfg.Icon />
-                    <span>{cfg.label(t)}</span>
+                    <Icon />
+                    <span>{agentName(agents ?? [], p)}</span>
                   </button>
                 );
               })}

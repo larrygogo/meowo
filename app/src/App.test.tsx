@@ -77,7 +77,10 @@ vi.mock("./api", () => ({
     }),
   getAccounts: () => Promise.resolve([]),
   refreshUsage: (_provider: string) => Promise.reject(new Error("USAGE_UNSUPPORTED")),
-  availableAgents: () => Promise.resolve([]),
+  // 本 mock 不展开真实模块（工厂里显式列举导出），故 useAgents 用到的两个都得在此提供。
+  listAgents: () => Promise.resolve([]),
+  agentName: (agents: { id: string; display_name: string }[], id: string) =>
+    agents.find((a) => a.id === id)?.display_name ?? id,
 }));
 // 按事件名分别路由：board-changed → emitBoardChanged；snap-changed 忽略（Tauri 吸边，无法在 jsdom 中测试）
 vi.mock("@tauri-apps/api/event", () => ({

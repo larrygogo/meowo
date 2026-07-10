@@ -12,7 +12,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  availableAgents,
   LiveSession,
   LiveSessionCounts,
   Settings,
@@ -26,7 +25,8 @@ import {
   type UsageLane,
 } from "../api";
 import { isMacPanel } from "../platform";
-import { providerConfig } from "../providers";
+import { agentAssets, tintStyle } from "../providers";
+import { useAgents } from "../useAgents";
 import { useT } from "../i18n";
 import type { Dict } from "../i18n/zh";
 
@@ -556,12 +556,13 @@ export function UsageScreen({
       {/* 品牌图标标签行（每个 provider 一个，点选切换） */}
       <div className="stk-utabs">
         {activeProviders.map((p) => {
-          const { Icon } = providerConfig(p);
+          const { Icon } = agentAssets(p);
           return (
             <button
               key={p}
               type="button"
               className={"stk-utab" + (p === selected ? " on" : "")}
+              style={tintStyle(p)}
               aria-pressed={p === selected}
               onClick={() => pick(p)}
             >
@@ -609,6 +610,9 @@ export function Sticker({
   onArchiveFailed?: () => void;
 }) {
   // hasMore 由父组件传入；未传入时退化为 data.length < total。
+  // agent 展示名来自后端下发的名单；未知 id 回退成 id 本身。
+  // agent 名单一次取全：展示名 + 已装列表（配额过滤用），不再各拉一次。
+  const { name: agentNameOf, installed: availAgents } = useAgents();
   const totalCount = total ?? data.length;
   const onLoadMore = loadMore ?? (() => {});
   const isLoadingMore = loadingMore ?? false;
@@ -637,15 +641,16 @@ export function Sticker({
   // 经 getSettings 校正，缺字段时下方 apply 亦回退 button。
   const [menuMode, setMenuMode] = useState<CardMenuMode>("context");
   const [previewEnabled, setPreviewEnabled] = useState(true);
-  const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
-  const [availAgents, setAvailAgents] = useState<string[]>([]);
+  // 空初值：settings resolve 前不渲染配额区，好过先闪一个猜出来的 agent。默认值由后端给。
+  const [quotaProviders, setQuotaProviders] = useState<string[]>([]);
+
   useEffect(() => {
     const apply = (s: Settings) => {
       setHideDays(s.archive_hide_days);
       setOpenMode(s.terminal_open_mode);
       setMenuMode(s.card_menu_mode ?? "button");
       setPreviewEnabled(s.preview_enabled);
-      setQuotaProviders(s.sticker_quota_providers ?? ["claude"]);
+      setQuotaProviders(s.sticker_quota_providers ?? []);
     };
     getSettings().then(apply).catch(() => {});
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
@@ -665,11 +670,6 @@ export function Sticker({
       cancelled = true;
       try { un?.(); } catch { /* noop */ }
     };
-  }, []);
-
-  // 已装 provider 列表：用于过滤配额显示（只显示既在配额设置里、又已装的 provider）
-  useEffect(() => {
-    availableAgents().then(setAvailAgents).catch(() => {});
   }, []);
 
   // 相对时间（fmtAgo）每分钟重算：递增计数触发轻量重渲染。
@@ -996,8 +996,8 @@ export function Sticker({
               const l = shown[virtualItem.index];
               const unnamed = !l.task_title || l.task_title === "(未命名会话)";
               const title = unnamed ? t.sticker.waitingFirstInput : l.task_title;
-              const agentCfg = providerConfig(l.provider); // provider 品牌图标 + 标签，按表查
-              const agentLabel = agentCfg.label(t);
+              const agentIcon = agentAssets(l.provider); // 品牌图标（视觉资产，按 id 查表）
+              const agentLabel = agentNameOf(l.provider); // 展示名（后端下发；未知 id 显示 id 本身）
               // AI 活动行显示「最近一条 AI 正文」(last_ai_text，回退 transcript preview)；出错优先显示错误标签；
               // previewEnabled（对话预览开关）关闭则不显示 AI 正文（仅保留错误）；用户行同受该开关门控。
               const sub = l.errored && l.error_label
@@ -1123,10 +1123,11 @@ export function Sticker({
                         <div className="stk-line2">
                           <span
                             className={"stk-agent" + (l.connected ? "" : " stk-agent-off")}
+                            style={tintStyle(l.provider, l.connected)}
                             data-tip={agentLabel}
                             aria-label={agentLabel}
                           >
-                            <agentCfg.Icon />
+                            <agentIcon.Icon />
                           </span>
                           {l.cwd && (
                             <span className="stk-repo" data-tip={l.cwd}>

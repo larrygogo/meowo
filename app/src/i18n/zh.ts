@@ -58,9 +58,6 @@ export const zh = {
     noteCancel: "取消",
     youPrefix: "你",
     aiPrefix: "AI",
-    agentClaudeCode: "Claude Code",
-    agentKimiCode: "Kimi Code",
-    agentCodex: "Codex",
     loading: "加载中…",
   },
   newSession: {
@@ -76,7 +73,7 @@ export const zh = {
     launching: "正在启动…",
     hooksMissing: "未检测到该 agent 的 hooks，新建后可能不会出现在看板",
     hooksUnknown: "无法确认该 agent 的 hooks 状态",
-    noAgents: "未检测到已安装的 AI CLI（claude / codex / kimi），请先安装",
+    noAgents: "未检测到已安装的 AI CLI，请先安装",
     notLoggedIn: "该 agent 尚未登录",
     login: "登录",
     loggingIn: "等待登录…",
@@ -158,7 +155,6 @@ export const zh = {
     showQuotaOnSticker: "在贴纸显示配额",
   },
   account: {
-    providerClaudeCode: "Claude Code",
     notInstalled: "未安装",
     notLoggedIn: "未登录",
     notLoggedInHint: "已安装，未登录——点「登录」在终端完成授权",
