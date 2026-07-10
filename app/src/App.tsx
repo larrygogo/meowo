@@ -24,6 +24,7 @@ const PIN_KEY = "meowo-pinned"; // 与 Sticker 的置顶偏好共用
 const TAB_KEY = "meowo-tab";
 const RELEASE_POLL_MS = 90; // 拖拽中轮询鼠标左键的间隔（检测真正松手）
 const PAGE_SIZE = 100; // 贴纸会话每页条数，与首屏一致
+const REFRESH_THROTTLE_MS = 400; // board-changed 刷新的冷却窗口，见 refresh
 
 // 缩略条主轴逻辑长度：按 connected 点数贴合内容（点 10px + 间距 7px = 17，两端留白 26），最小 48。
 // 仅作折叠初值，CollapsedStrip 挂载后会按真实 DOM 尺寸精确校正。
@@ -212,24 +213,42 @@ export function App() {
     []
   );
 
-  // board-changed 频繁触发：节流刷新，且重查「已加载窗口」大小（max(PAGE_SIZE, 当前条数)），
-  // 保住用户已滚动加载的会话、同时反映最新排序/状态，避免被打回第一页（P0）。
+  // 一次刷新：重查「已加载窗口」大小（max(PAGE_SIZE, 当前条数)），保住用户已滚动加载的会话、
+  // 同时反映最新排序/状态，避免被打回第一页（P0）。
   const itemsLenRef = useRef(0);
   itemsLenRef.current = items.length;
-  const refreshThrottleRef = useRef<number | undefined>(undefined);
-  const refresh = useCallback(() => {
-    const run = () => {
-      setReachedEnd(false);
-      const w = Math.max(PAGE_SIZE, itemsLenRef.current);
-      loadPage(filter, search, null, w).then(({ page, applied }) => {
+  const doRefresh = useCallback(() => {
+    setReachedEnd(false);
+    const w = Math.max(PAGE_SIZE, itemsLenRef.current);
+    loadPage(filter, search, null, w)
+      .then(({ page, applied }) => {
         if (applied && page.length < w) setReachedEnd(true);
-      }).catch(() => {});
-      loadStrip(); // 折叠条数据独立刷新（不随 tab）
-    };
-    // 400ms trailing 节流：连续 board-changed 只在安静后跑一次。
-    window.clearTimeout(refreshThrottleRef.current);
-    refreshThrottleRef.current = window.setTimeout(run, 400);
+      })
+      .catch(() => {});
+    loadStrip(); // 折叠条数据独立刷新（不随 tab）
   }, [filter, search, loadPage, loadStrip]);
+
+  // trailing 刷新必须用「触发那一刻」的 filter/search，而非排队那一刻捕获的值：否则排队期间切了 tab，
+  // 旧 filter 的刷新会晚于新 tab 的加载落地，把新 tab 的列表覆盖掉。
+  const doRefreshRef = useRef(doRefresh);
+  doRefreshRef.current = doRefresh;
+
+  // board-changed 会连发（命令写库后端立即通知 + db-watcher 稍后为同一次写入回声 + liveness 轮询），
+  // 故 leading + trailing 节流：首个事件立即刷新（用户操作零延迟），冷却窗口内的后续事件合并成窗口
+  // 末尾的一次刷新。每次刷新是 counts + 一整页 + 折叠条两查询，页大小随滚动增长，值得省。
+  const refreshTimerRef = useRef<number | undefined>(undefined);
+  const refreshLastRunRef = useRef(0);
+  const refresh = useCallback(() => {
+    if (refreshTimerRef.current !== undefined) return; // trailing 已排队，本次并入
+    const fire = () => {
+      refreshTimerRef.current = undefined;
+      refreshLastRunRef.current = Date.now();
+      doRefreshRef.current();
+    };
+    const since = Date.now() - refreshLastRunRef.current;
+    if (since >= REFRESH_THROTTLE_MS) fire();
+    else refreshTimerRef.current = window.setTimeout(fire, REFRESH_THROTTLE_MS - since);
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || reachedEnd) return;
@@ -267,11 +286,34 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [filter, search, loadPage]);
 
+  const onArchiveSuccess = useCallback(
+    (sessionId: number) => {
+      // 归档/取消归档会改变当前 tab 的可见性，先乐观从列表移除该卡片并调整 counts：
+      // refresh 若正处在冷却窗口内会推迟到窗口末尾，乐观更新让卡片即刻消失。
+      setItems((prev) => prev.filter((l) => l.session.id !== sessionId));
+      setCounts((prev) => ({
+        ...prev,
+        archived: Math.max(0, prev.archived + (filter === "archived" ? -1 : 1)),
+      }));
+      refresh();
+    },
+    [filter, refresh]
+  );
+
   useEffect(() => {
-    const un = listen("board-changed", () => refresh());
+    let cancelled = false;
+    let un: (() => void) | undefined;
+    // refresh 恒等（useCallback([])，最新的 filter/search 经 doRefreshRef 取），listener 只注册一次。
+    listen("board-changed", refresh)
+      .then((f) => {
+        if (cancelled) f();
+        else un = f;
+      })
+      .catch(() => {});
     return () => {
-      un.then((f) => f());
-      window.clearTimeout(refreshThrottleRef.current);
+      cancelled = true;
+      if (un) un();
+      window.clearTimeout(refreshTimerRef.current);
     };
   }, [refresh]);
 
@@ -573,6 +615,7 @@ export function App() {
         hasUpdate={hasUpdate}
         search={search}
         onSearchChange={setSearch}
+        onArchiveSuccess={onArchiveSuccess}
       />
     </div>
   );

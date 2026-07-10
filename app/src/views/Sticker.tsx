@@ -589,6 +589,7 @@ export function Sticker({
   hasUpdate,
   search,
   onSearchChange,
+  onArchiveSuccess,
 }: {
   filter: StickerFilter;
   onFilterChange?: (f: StickerFilter) => void;
@@ -601,6 +602,7 @@ export function Sticker({
   hasUpdate?: boolean;
   search?: string;
   onSearchChange?: (q: string) => void;
+  onArchiveSuccess?: (sessionId: number) => void;
 }) {
   // hasMore 由父组件传入；未传入时退化为 data.length < total。
   const totalCount = total ?? data.length;
@@ -1224,9 +1226,12 @@ export function Sticker({
           onStar={() => toggleStar(ctxItem.session.cc_session_id)}
           onNote={() => startNote(ctxItem)}
           onRename={() => startRename(ctxItem)}
-          onArchive={() =>
-            invoke("set_archived", { sessionId: ctxItem.session.id, archived: !ctxItem.archived }).catch(() => {})
-          }
+          onArchive={() => {
+            const target = !ctxItem.archived;
+            const sessionId = ctxItem.session.id;
+            invoke("set_archived", { sessionId, archived: target }).catch(() => {});
+            onArchiveSuccess?.(sessionId);
+          }}
           onNewSession={() =>
             invoke("open_new_session_window", {
               cwd: ctxItem.cwd,

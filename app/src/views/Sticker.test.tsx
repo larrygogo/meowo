@@ -224,6 +224,16 @@ describe("Sticker", () => {
     expect(invokeMock).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:\\\\proj", provider: "kimi" });
   });
 
+  it("归档成功后调用 onArchiveSuccess 回调", async () => {
+    const onArchiveSuccess = vi.fn();
+    const { container } = render(<Sticker filter="all" data={[mk()]} onArchiveSuccess={onArchiveSuccess} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.archive));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(invokeMock).toHaveBeenCalledWith("set_archived", { sessionId: 1, archived: true });
+    expect(onArchiveSuccess).toHaveBeenCalledTimes(1);
+  });
+
   it("待交互 tab 保留后端顺序，不客户端重排", () => {
     const base = (id: number, cc: string, last: number) =>
       mk({ task_title: cc, current_activity: null, connected: true,

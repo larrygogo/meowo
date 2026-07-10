@@ -27,10 +27,10 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub mod setup;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 #[cfg(target_os = "windows")]
@@ -1103,7 +1103,7 @@ fn prepare_resume(
             _ => None,
         }
     })();
-    let _ = app.emit("board-changed", ());
+    emit_board_changed(app, "resume");
     // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
     // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
     let resolved = meowo_store::title::resolve_cwd(cwd, session_id);
@@ -1519,7 +1519,7 @@ fn resume_session(
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
-                let _ = app.emit("board-changed", ());
+                emit_board_changed(&app, "resume-failed");
             }
         });
         Ok(())
@@ -1538,7 +1538,7 @@ fn resume_session(
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
-                let _ = app.emit("board-changed", ());
+                emit_board_changed(&app, "resume-failed");
             }
         });
         Ok(())
@@ -1585,14 +1585,23 @@ fn rename_session(
             let _ = store.set_session_title(sid, &title, now_ms());
         }
     }
-    let _ = app.emit("board-changed", ());
+    emit_board_changed(&app, "rename");
     Ok(())
 }
 
 #[tauri::command]
-fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Result<(), String> {
+fn set_archived(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    session_id: i64,
+    archived: bool,
+) -> Result<(), String> {
     let store = open_store(&state.db_path)?;
-    store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
+    store
+        .set_session_archived(session_id, archived, now_ms())
+        .map_err(|e| e.to_string())?;
+    emit_board_changed(&app, "set_archived");
+    Ok(())
 }
 
 /// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；session_id 用 is_safe_id
@@ -1612,8 +1621,70 @@ fn set_session_note(
     store
         .set_session_note(&session_id, &note, now_ms())
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("board-changed", ());
+    emit_board_changed(&app, "note");
     Ok(())
+}
+
+/// board-changed 的全局合流窗口。发出一次后的这段时间内，新来的事件不再各自 emit，
+/// 只在窗口末尾补发一次（携带最后一个 reason）。
+const BOARD_COALESCE: Duration = Duration::from_millis(300);
+
+/// 合流线程的入口。setup 里 spawn_board_notifier 装填；未装填时 emit_board_changed 退化为直接 emit。
+static BOARD_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
+
+/// 通知前端看板已变更。全部 emit 点都走这里，不要再直接 app.emit("board-changed", ..)。
+///
+/// 此前各源各自为政：命令处理器写完库立刻裸发，db-watcher 1s 后又为同一次写入回声一次，
+/// liveness 每 5s 还可能插一脚——一个归档动作能打出 2~3 次全量刷新，而前端每次刷新是
+/// counts + 一整页（页大小随用户滚动增长）+ 折叠条两查询。合流器给出全局上限：
+/// 至多每 BOARD_COALESCE 一次 emit，同时保持孤立事件（绝大多数用户操作）零延迟送达。
+///
+/// reason 只用于调试与日志，前端当前忽略 payload。
+fn emit_board_changed(app: &tauri::AppHandle, reason: &'static str) {
+    match BOARD_TX.get() {
+        Some(tx) => {
+            let _ = tx.send(reason);
+        }
+        // 合流线程尚未启动（setup 之前）或装填失败：宁可多发，不可不发。
+        None => {
+            let _ = app.emit("board-changed", reason);
+        }
+    }
+}
+
+/// 启动 board-changed 合流线程：前沿立即发，之后每个 BOARD_COALESCE 窗口至多补发一次。
+fn spawn_board_notifier(app: tauri::AppHandle) {
+    let (tx, rx) = channel::<&'static str>();
+    if BOARD_TX.set(tx).is_err() {
+        return; // 已启动过
+    }
+    std::thread::spawn(move || loop {
+        // 空闲：阻塞等第一个事件。发送端存活于 static，recv 出错只可能是进程收尾。
+        let Ok(mut reason) = rx.recv() else { return };
+        loop {
+            let _ = app.emit("board-changed", reason);
+            // 冷却窗口：收集期间到达的事件，只记最后一个 reason。
+            let mut pending: Option<&'static str> = None;
+            let deadline = Instant::now() + BOARD_COALESCE;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(remaining) {
+                    Ok(r) => pending = Some(r),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            // 窗口内有积压 → 立刻补发并重新冷却（故持续高频写库时输出恒定为 1/窗口）；
+            // 没有积压 → 回到外层阻塞等待，下一个孤立事件仍是前沿即时送达。
+            match pending {
+                Some(r) => reason = r,
+                None => break,
+            }
+        }
+    });
 }
 
 /// watch 建立失败/监听死亡后的重建间隔。
@@ -1654,10 +1725,12 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// db watcher 的事件循环：trailing debounce（收到相关事件后 drain 到 300ms 静默再 emit——SQLite 提交
-/// 是 db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件），但设 1s 总上限：statusline/hook 以
+/// db watcher 的事件循环：trailing debounce（收到相关事件后 drain 到 1s 静默再 emit——SQLite 提交
+/// 是 db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件），但设 2s 总上限：statusline/hook 以
 /// ~300ms 节奏持续写库、多会话事件流相位交错时可能永无静默间隙，无上限会让 board-changed 饥饿、
 /// 贴纸冻结在旧数据，恰恰是多会话高活跃期最需要刷新的时候。
+/// 注意这层 debounce 与 emit_board_changed 的全局合流是两回事：这里压的是「一次提交的多文件事件」，
+/// 那里压的是「多个源对同一次变更的重复通知」。
 /// 返回即表示监听已死（通道断开或收到 notify 错误事件，如目录被删），由调用方重建。
 fn run_db_watch_loop(
     app: &tauri::AppHandle,
@@ -1673,8 +1746,8 @@ fn run_db_watch_loop(
             })
         })
     };
-    let debounce = Duration::from_millis(300);
-    let max_wait = Duration::from_millis(1000);
+    let debounce = Duration::from_millis(1000);
+    let max_wait = Duration::from_millis(2000);
     loop {
         let Ok(first) = rx.recv() else { return }; // watcher 关闭/内部线程死亡 → 重建
         if first.is_err() {
@@ -1704,7 +1777,7 @@ fn run_db_watch_loop(
             }
         }
         if relevant {
-            let _ = app.emit("board-changed", ());
+            emit_board_changed(app, "db-watcher");
         }
         if broken {
             return;
@@ -1938,7 +2011,7 @@ fn spawn_liveness_watch(
                 let orphaned = store.end_orphaned_idle(RESUME_GRACE_MS, now_ms()).unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
-                    let _ = app.emit("board-changed", ());
+                    emit_board_changed(&app, "liveness");
                     last = alive;
                 }
 
@@ -2112,7 +2185,7 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
             let body = format!("{{\"imported\":{count},\"at\":{now}}}");
             let _ = std::fs::write(&marker, body);
             if count > 0 {
-                let _ = app.emit("board-changed", ());
+                emit_board_changed(&app, "first-import");
             }
         }
     });
@@ -2864,6 +2937,9 @@ pub fn run() {
             }
             // 无感适配：幂等把 meowo-reporter 接入各 AI CLI（claude: hooks+statusLine；codex/kimi: hooks）。后台跑，失败不影响启动。
             std::thread::spawn(setup::apply_all);
+            // 先起合流线程：其余几个 spawn_* 都经 emit_board_changed 发事件，晚起会让它们的
+            // 首批事件退化成直接 emit。
+            spawn_board_notifier(app.handle().clone());
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
             spawn_first_import(app.handle().clone(), path.clone());
