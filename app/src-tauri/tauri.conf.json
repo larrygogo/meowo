@@ -4,7 +4,7 @@
   "identifier": "com.larrygogo.meowo",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1268",
     "beforeDevCommand": "bun ../scripts/prepare-sidecar.mjs && bun run dev",
     "beforeBuildCommand": "bun ../scripts/prepare-sidecar.mjs && bun run build"
   },

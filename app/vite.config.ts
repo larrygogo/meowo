@@ -20,7 +20,7 @@ function stripWoffFallback(): Plugin {
 export default defineConfig({
   plugins: [stripWoffFallback(), react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  server: { port: 1268, strictPort: true },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
