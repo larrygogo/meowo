@@ -306,12 +306,10 @@ fn num(v: &Value) -> Option<f64> {
 /// 数字格式容错：used/limit/remaining 可为字符串 "100" 或数字 100（kimi 真实响应为字符串）。
 fn extract_used_limit(v: &Value) -> Option<(f64, f64)> {
     let limit = v.get("limit").and_then(num)?;
-    let used = if let Some(u) = v.get("used").and_then(num) {
-        u
-    } else if let Some(r) = v.get("remaining").and_then(num) {
-        limit - r
-    } else {
-        return None;
+    // used 缺失时从 remaining 反推；两者都无 → None（`?` 提前返回）。
+    let used = match v.get("used").and_then(num) {
+        Some(u) => u,
+        None => limit - v.get("remaining").and_then(num)?,
     };
     Some((used, limit))
 }
@@ -1007,6 +1005,24 @@ mod tests {
     fn malformed_no_used_no_remaining_returns_none() {
         let v = json!({"usage": {"limit": 1000}});
         assert!(parse_kimi_usage(&v).is_none());
+    }
+
+    /// extract_used_limit 的三个分支：优先 used；缺 used 时从 remaining 反推；两者皆无 → None。
+    /// 数字/字符串两种格式都要通（kimi 真实响应给的是字符串）。
+    #[test]
+    fn extract_used_limit_prefers_used_then_derives_from_remaining() {
+        // used 存在 → 直接取，remaining 即便矛盾也不参与。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000, "used": 300, "remaining": 999})), Some((300.0, 1000.0)));
+        // 无 used → used = limit - remaining。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": 700})), Some((300.0, 1000.0)));
+        // 字符串数字同样容错。
+        assert_eq!(extract_used_limit(&json!({"limit": "1000", "remaining": "700"})), Some((300.0, 1000.0)));
+        // 无 limit → None（limit 是必需字段）。
+        assert_eq!(extract_used_limit(&json!({"used": 300})), None);
+        // 有 limit 但 used/remaining 皆无 → None。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000})), None);
+        // remaining 存在但不是数字（解析不出）→ 与缺失同等，None。
+        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": "abc"})), None);
     }
 
     #[test]
