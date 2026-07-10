@@ -76,6 +76,9 @@ static AUTH: AuthScheme = AuthScheme {
         client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     }),
     default_base_url: "",
+    // 实测（claude --help / claude auth --help）：登录在 `auth` 子命令下，**没有** `claude login`。
+    // 另有 `claude setup-token`（长期 token），不是交互式 OAuth 登录，不用它。
+    login_args: &["auth", "login"],
 };
 
 static LAUNCH: LaunchSpec = LaunchSpec {
@@ -204,6 +207,18 @@ mod tests {
             names,
             vec![".local/bin", "APPDATA", "USERPROFILE", "on-path"]
         );
+    }
+
+    /// 登录 argv 接在启动 argv 之后。claude 是 `auth login` 两段——实测没有 `claude login`，
+    /// 写错会让「登录」按钮拉起一个报 unknown command 的终端。
+    #[test]
+    fn login_argv_is_auth_login_appended_to_launch() {
+        let home = temp_home("login");
+        let exe = touch_exe(&home.join(".local").join("bin"), "claude");
+        let inst = probe_in(&home).unwrap();
+        let argv = inst.login_argv().expect("claude 应声明登录入口");
+        assert_eq!(argv, vec![exe.to_string_lossy().into_owned(), "auth".into(), "login".into()]);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

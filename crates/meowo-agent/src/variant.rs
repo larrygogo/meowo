@@ -117,6 +117,18 @@ impl Installation {
         self.launch.clone().unwrap_or_else(|| vec![self.launch_stem.to_string()])
     }
 
+    /// 拉起交互式登录的 argv = 启动 argv + 该变体声明的登录子命令（如 `<claude.exe> auth login`）。
+    /// 该变体无鉴权、或未声明登录入口 → None。与 `launch_argv` 同源，故同样是绝对路径优先。
+    pub fn login_argv(&self) -> Option<Vec<String>> {
+        let args = self.auth?.login_args;
+        if args.is_empty() {
+            return None;
+        }
+        let mut argv = self.launch_argv();
+        argv.extend(args.iter().map(|s| s.to_string()));
+        Some(argv)
+    }
+
     /// **可执行装了吗**——能启动/恢复会话。与 [`is_configured`](Self::is_configured) 是两回事：
     /// 卡片上「已安装」与「未检测到数据目录」曾同时出现，正是这两者被混用。
     pub fn is_launchable(&self) -> bool {
@@ -132,6 +144,7 @@ impl Installation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{AuthScheme, CredentialSource};
     use crate::config::{CommandSpec, ConfigFormat, HookEvent, MissingConfig, RepairReason};
     use crate::launch::{LaunchCandidate, LaunchSpec, Root};
 
@@ -154,6 +167,51 @@ mod tests {
 
     fn variant(env: Option<&'static str>, candidates: &'static [&'static str]) -> Variant {
         Variant { tag: "modern", data_dir: DataDirSpec { env, candidates }, hooks: &SPEC, auth: None, launch: &LAUNCH }
+    }
+
+    /// 有登录入口的鉴权声明。
+    static AUTH_WITH_LOGIN: AuthScheme = AuthScheme {
+        credentials: CredentialSource::File("cred.json"),
+        refresh: None,
+        default_base_url: "",
+        login_args: &["auth", "login"],
+    };
+    /// 有鉴权但**无**登录入口（如凭据全由外部工具写入）。
+    static AUTH_NO_LOGIN: AuthScheme = AuthScheme {
+        credentials: CredentialSource::File("cred.json"),
+        refresh: None,
+        default_base_url: "",
+        login_args: &[],
+    };
+
+    fn inst_with_auth(auth: Option<&'static AuthScheme>) -> Installation {
+        let v = Variant {
+            tag: "t",
+            data_dir: DataDirSpec { env: None, candidates: &[".x"] },
+            hooks: &SPEC,
+            auth,
+            launch: &LAUNCH,
+        };
+        // 不传 home：launch 候选（DataDir/bin）不会命中，launch_argv 回退裸名 "x"。
+        v.installation_at(crate::id::KIMI, PathBuf::from("/nowhere"), None)
+    }
+
+    #[test]
+    fn login_argv_appends_declared_subcommand_to_launch_argv() {
+        let inst = inst_with_auth(Some(&AUTH_WITH_LOGIN));
+        assert_eq!(inst.launch_argv(), vec!["x".to_string()]);
+        assert_eq!(
+            inst.login_argv(),
+            Some(vec!["x".to_string(), "auth".to_string(), "login".to_string()])
+        );
+    }
+
+    #[test]
+    fn login_argv_is_none_without_auth_or_login_args() {
+        // 无鉴权声明 → 无登录入口。
+        assert_eq!(inst_with_auth(None).login_argv(), None);
+        // 有鉴权但登录子命令为空 → 同样 None（不能拉起一个只有可执行名的终端）。
+        assert_eq!(inst_with_auth(Some(&AUTH_NO_LOGIN)).login_argv(), None);
     }
 
     #[test]

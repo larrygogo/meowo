@@ -32,11 +32,15 @@ pub struct OAuthRefresh {
     pub client_id: &'static str,
 }
 
-/// 一个变体的凭据布局与刷新方式。
+/// 一个变体的凭据布局、刷新方式与登录入口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthScheme {
     pub credentials: CredentialSource,
     pub refresh: Option<OAuthRefresh>,
     /// 用量等 API 的默认 base_url（配置文件里的 base_url 优先，此为兜底）。空串 = 无。
     pub default_base_url: &'static str,
+    /// 拉起交互式登录的子命令，接在启动 argv 之后。**三家并不同构**（实测）：
+    /// claude 是 `claude auth login`（没有 `claude login`），codex/kimi 是 `<exe> login`。
+    /// 空切片 = 该变体无登录入口，`Installation::login_argv()` 返回 None。
+    pub login_args: &'static [&'static str],
 }

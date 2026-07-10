@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   type ProviderKey,
   type HooksStatus,
+  type LoginDone,
   PROVIDER_KEYS,
   newSession,
   recentCwds,
@@ -12,6 +13,9 @@ import {
   repairProviderHooks,
   getSettings,
   availableAgents,
+  getAccounts,
+  loginAgent,
+  isLoggedIn,
 } from "../api";
 import { providerConfig } from "../providers";
 import { useT, repairFailMessage } from "../i18n";
@@ -65,6 +69,9 @@ export function NewSessionPanel(): ReactElement {
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avail, setAvail] = useState<ProviderKey[] | null>(null);
+  // null = 尚未拿到账号（或取不到）→ 不显示未登录提示，避免误闪/误报。
+  const [loggedIn, setLoggedIn] = useState<Record<string, boolean> | null>(null);
+  const [loginBusy, setLoginBusy] = useState(false);
 
   useEffect(() => {
     // 窗口已开时从另一张卡片再点「新建会话」：后端发 ns-prefill 更新表单（不重开窗口）。
@@ -107,7 +114,32 @@ export function NewSessionPanel(): ReactElement {
     );
     // 命令失败时按 spec §5 宁可多列（回退全量 PROVIDER_KEYS）也不空列表——空列表会显示「未检测到已安装」并禁用启动。
     availableAgents().then(setAvail).catch(() => setAvail([...PROVIDER_KEYS]));
+    // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
+    getAccounts()
+      .then((rows) => {
+        const m: Record<string, boolean> = {};
+        for (const p of PROVIDER_KEYS) m[p] = isLoggedIn(rows.find((r) => r.provider === p));
+        setLoggedIn(m);
+      })
+      .catch(() => setLoggedIn(null));
   }, []);
+
+  // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果，完成/超时后发 login-done。
+  useEffect(() => {
+    const un = listen<LoginDone>("login-done", (e) => {
+      if (e.payload.provider !== provider) return;
+      setLoginBusy(false);
+      if (e.payload.ok) {
+        setLoggedIn((m) => ({ ...(m ?? {}), [e.payload.provider]: true }));
+        setError(null);
+      } else {
+        setError(t.newSession.loginTimeout); // 超时 ≠ 登录失败：用户可能中途放弃了
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [provider, t]);
 
   // default_agent 若未装，则退到首个已装 agent（avail 加载后校正）
   useEffect(() => {
@@ -153,6 +185,19 @@ export function NewSessionPanel(): ReactElement {
     }
   }
 
+  /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done 事件（或超时）才落回。 */
+  async function doLogin() {
+    if (loginBusy) return;
+    setLoginBusy(true);
+    setError(null);
+    try {
+      await loginAgent(provider);
+    } catch (e) {
+      setError(String(e));
+      setLoginBusy(false);
+    }
+  }
+
   // 输入框内容实时过滤最近项：空 / 已选中某项（完全匹配）时显示全部，输入片段时按 名+路径 过滤。
   // 比较前统一 normalize 斜杠方向，避免 C:/proj 与 C:\proj 因分隔符不同而无法高亮/匹配。
   const cwdNorm = normalizePath(cwd.trim());
@@ -162,6 +207,8 @@ export function NewSessionPanel(): ReactElement {
       ? recent
       : recent.filter((r) => r.toLowerCase().includes(q));
   const warn = hooks[provider] === "missing" || hooks[provider] === "unknown";
+  // 已装但未登录才提示（loggedIn 为 null = 拿不到账号，不打扰）。
+  const needLogin = loggedIn?.[provider] === false;
 
   return (
     <div className="ns-window">
@@ -244,6 +291,20 @@ export function NewSessionPanel(): ReactElement {
                 disabled={repairing}
               >
                 {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
+              </button>
+            </div>
+          )}
+          {avail && avail.length > 0 && needLogin && (
+            <div className="ns-warn" data-testid="ns-login-warn">
+              <span>{t.newSession.notLoggedIn}</span>
+              <button
+                type="button"
+                className="ns-repair"
+                data-testid="ns-login"
+                onClick={doLogin}
+                disabled={loginBusy}
+              >
+                {loginBusy ? t.newSession.loggingIn : t.newSession.login}
               </button>
             </div>
           )}
