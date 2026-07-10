@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, setSettings, availableTerminals, availableAgents, installAgent, PROVIDER_KEYS, type ProviderKey, type Settings, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle, type InstallDone } from "../api";
-import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, loginAgent, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus, type LoginDone } from "../api";
+import { getAccounts, refreshUsage, checkProviderHooks, repairProviderHooks, loginAgent, agentPathGap, addAgentToUserPath, type ProviderAccountPayload, type ProviderUsage, type UsageLane, type HooksStatus, type LoginDone } from "../api";
 import { providerConfig } from "../providers";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../appearance";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -246,6 +246,14 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
   // 后台安装态：idle=未装可点 / installing=转圈+本地化「安装中…」/ error=失败可重试。
   // 不透传安装脚本的英文原始输出，进度只用 i18n 文案（随界面语言）。
   const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
+  // 安装失败时的日志落点（后端把脚本输出重定向到该文件）。只展示路径，不透传英文原文。
+  const [installLog, setInstallLog] = useState<string | null>(null);
+  // 装好了但 bin 目录不在持久 PATH 上时，这里是那个目录——终端里敲命令会找不到。
+  // 官方安装器不保证写 PATH（claude 在 Windows 上只打印一行提示就 exit 0），而 meowo 启动
+  // agent 走绝对路径、察觉不到，故须显式检测并给用户一键写入。
+  const [pathGapDir, setPathGapDir] = useState<string | null>(null);
+  const [addingPath, setAddingPath] = useState(false);
+  const [pathMsg, setPathMsg] = useState<string | null>(null);
   const [hooksStatus, setHooksStatus] = useState<HooksStatus | null>(null);
   const [repairingHooks, setRepairingHooks] = useState(false);
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
@@ -265,8 +273,27 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
     checkProviderHooks(provider)
       .then((st) => { if (!cancelled) setHooksStatus(st); })
       .catch(() => {});
+    // 挂载即查：早就装好、但从来没进过 PATH 的用户（本 bug 的多数受害者）也要看到提示，
+    // 不能只在「本次装完」时查。后端对未安装的 agent 返回 null，无需先判 installed。
+    agentPathGap(provider)
+      .then((d) => { if (!cancelled) setPathGapDir(d); })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [provider]);
+
+  /** 把 agent 的 bin 目录写进用户级 PATH。成功后清掉提示条，并告知需重开终端。 */
+  const addPath = () => {
+    if (addingPath) return;
+    setAddingPath(true);
+    setPathMsg(null);
+    addAgentToUserPath(provider)
+      .then(() => {
+        setPathGapDir(null);
+        setPathMsg(t.account.pathAdded);
+      })
+      .catch(() => setPathMsg(t.account.pathAddFailed))
+      .finally(() => setAddingPath(false));
+  };
 
   const repairHooks = () => {
     if (repairingHooks) return;
@@ -303,10 +330,13 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
     // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
     const unD = listen<InstallDone>("install-done", (e) => {
       if (e.payload.provider !== provider) return;
+      setInstallLog(e.payload.logPath);
       if (e.payload.ok) {
         setInstallState("idle");
         setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
         onInstalledRef.current();
+        // 「退出码 0」不等于「装好就能用」：claude 的安装器不写 PATH 也照样 exit 0。
+        agentPathGap(provider).then(setPathGapDir).catch(() => {});
       } else {
         setInstallState("error");
       }
@@ -407,6 +437,33 @@ function ProviderCard({ provider, installed, payload, usage, err, onRefresh, onI
       {installed === false && installState === "error" && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
           {t.account.installFailed}
+          {installLog && (
+            <div className="agent-install-log" data-testid={"agent-install-log-" + provider}>
+              {t.account.installLogHint(installLog)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 装好了却不在 PATH 上：终端里敲不出来。给出目录 + 一键写入用户级 PATH。 */}
+      {isInstalled && pathGapDir && (
+        <div className="provider-card-body agent-path-gap" data-testid={"agent-path-gap-" + provider}>
+          <span className="agent-path-gap-text">{t.account.pathGap(pathGapDir)}</span>
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"agent-add-path-" + provider}
+            onClick={addPath}
+            disabled={addingPath}
+          >
+            {addingPath ? t.account.addingToPath : t.account.addToPath}
+          </button>
+        </div>
+      )}
+
+      {pathMsg && (
+        <div className="provider-card-body agent-path-msg" data-testid={"agent-path-msg-" + provider}>
+          {pathMsg}
         </div>
       )}
 

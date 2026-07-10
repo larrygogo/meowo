@@ -273,8 +273,24 @@ export function installAgent(provider: ProviderKey): Promise<void> {
   return invoke("install_agent", { provider });
 }
 
-/** 后台安装结束事件 payload（对应后端 install-done）。 */
-export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | null };
+/** 后台安装结束事件 payload（对应后端 install-done）。logPath 为安装脚本输出的落盘处（可能为 null）。 */
+export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | null; logPath: string | null };
+
+/**
+ * 该 agent 装好了、但它的 bin 目录不在持久 PATH 上 → 返回该目录；无需处理时 null。
+ *
+ * 存在的理由：官方安装器不保证写 PATH（claude 在 Windows 上只打印一行提示就 exit 0），
+ * 而 meowo 启动 agent 走绝对路径、察觉不到，用户要到手敲 `claude` 才发现打不开。
+ * 非 Windows 恒为 null——unix 的 PATH 由 shell profile 决定，不代用户改。
+ */
+export function agentPathGap(provider: ProviderKey): Promise<string | null> {
+  return invoke("agent_path_gap", { provider });
+}
+
+/** 把该 agent 的 bin 目录写进用户级 PATH（幂等）。已开的终端需重开才能看到。 */
+export function addAgentToUserPath(provider: ProviderKey): Promise<void> {
+  return invoke("add_agent_to_user_path", { provider });
+}
 
 /**
  * 在终端里拉起该 agent 的交互式登录（claude 是 `auth login`，codex/kimi 是 `login`）。
