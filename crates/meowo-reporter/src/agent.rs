@@ -1,9 +1,12 @@
-//! Agent（CLI 提供方）抽象。把散落在 dispatch/proc/meowo-app 的 provider 专属逻辑收成一处，
-//! 加新 CLI 只需新增一个 `impl Agent` 并在 `ALL` 注册。meowo-app 也依赖本 crate，故两个 Rust crate
-//! 共用同一套进程名/resume 定义（单一事实源），消除「一处精确一处子串」的口径漂移。
+//! Agent（CLI 提供方）的**运行时行为**抽象：进程名、resume/launch argv、Stop 正文、上下文占用、
+//! 重命名回写、安装脚本。身份与静态声明（变体/路径/hooks 规格/鉴权）住在 `meowo_agent` 插件层。
+//!
+//! 于是同一个 agent 目前被两张注册表描述——本表与 `meowo_agent::all()`，靠下方配对测试钉在一起。
+//! 这是 Phase 2 要消除的重复：本 trait 将折进 `meowo_agent::AgentPlugin` 的能力槽，本文件随之消失。
+//! 见 `docs/architecture/agent-plugin.md`。
 
 use crate::hook::HookEvent;
-use meowo_store::ProviderKey;
+use meowo_agent::AgentId;
 
 /// Stop 时要落库的输出：最近一条 AI 正文 + 模型展示名（kimi 走 transcript，一次读出两者）。
 #[derive(Debug, Default, PartialEq)]
@@ -22,8 +25,9 @@ pub struct ContextUsage {
 }
 
 pub trait Agent: Sync {
-    /// provider key（与 DB sessions.provider / 前端一致）。
-    fn key(&self) -> ProviderKey;
+    /// agent 身份（与 DB sessions.provider / 前端 provider key 同值）。取自 `meowo_agent` 注册表，
+    /// 本表的每个 id 都必须在那里注册过——由下方 registry 配对测试守住。
+    fn id(&self) -> AgentId;
     /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + meowo-app 判活共用。
     fn process_names(&self) -> &'static [&'static str];
     /// Stop 时取最近 AI 正文 + 模型（claude 用 hook 携带的，kimi 读 wire.jsonl 一次出两者）。
@@ -69,8 +73,8 @@ pub trait Agent: Sync {
 
 struct ClaudeAgent;
 impl Agent for ClaudeAgent {
-    fn key(&self) -> ProviderKey {
-        ProviderKey::Claude
+    fn id(&self) -> AgentId {
+        meowo_agent::id::CLAUDE
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["claude", "claude.exe"]
@@ -118,8 +122,8 @@ impl Agent for ClaudeAgent {
 
 struct KimiAgent;
 impl Agent for KimiAgent {
-    fn key(&self) -> ProviderKey {
-        ProviderKey::Kimi
+    fn id(&self) -> AgentId {
+        meowo_agent::id::KIMI
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["kimi", "kimi.exe"]
@@ -176,8 +180,8 @@ impl Agent for KimiAgent {
 
 struct CodexAgent;
 impl Agent for CodexAgent {
-    fn key(&self) -> ProviderKey {
-        ProviderKey::Codex
+    fn id(&self) -> AgentId {
+        meowo_agent::id::CODEX
     }
     fn process_names(&self) -> &'static [&'static str] {
         // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中
@@ -275,10 +279,17 @@ static KIMI: KimiAgent = KimiAgent;
 static CODEX: CodexAgent = CodexAgent;
 static ALL: &[&dyn Agent] = &[&CLAUDE, &KIMI, &CODEX];
 
-/// 按 provider key 取 agent；遍历 ALL 注册表（单一事实源）。未知不会发生（入参已是强类型），
-/// find 失败时回退 claude 兜底。
-pub fn for_provider(key: ProviderKey) -> &'static dyn Agent {
-    ALL.iter().copied().find(|a| a.key() == key).unwrap_or(&CLAUDE)
+/// 按 agent 身份取实现。入参恒来自 `meowo_agent` 注册表，故必然命中——registry 配对测试守住这点，
+/// find 失败时回退 claude 兜底（不 panic：reporter 是 hook 子进程，绝不阻塞 agent）。
+pub fn for_agent(id: AgentId) -> &'static dyn Agent {
+    ALL.iter().copied().find(|a| a.id() == id).unwrap_or(&CLAUDE)
+}
+
+/// DB 列 / 命令行的 provider 串 → agent 实现。**未知 id 返回 `None`，绝不冒名成 claude**
+/// （旧 `ProviderKey::parse` 正是这么把未知 agent 的会话按 claude 去 resume / 读 transcript 的）。
+/// `None`/空串 → 默认 agent（老会话没写过 provider 列）。
+pub fn resolve(provider: Option<&str>) -> Option<&'static dyn Agent> {
+    meowo_agent::resolve(provider).map(|p| for_agent(p.id()))
 }
 
 /// 所有已知 agent（供 meowo-app 收集全部进程名判活）。
@@ -305,29 +316,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn for_provider_returns_matching_agent() {
-        assert_eq!(for_provider(ProviderKey::Kimi).key(), ProviderKey::Kimi);
-        assert_eq!(for_provider(ProviderKey::Codex).key(), ProviderKey::Codex);
-        assert_eq!(for_provider(ProviderKey::Claude).key(), ProviderKey::Claude);
+    fn for_agent_returns_matching_agent() {
+        for id in [meowo_agent::id::CLAUDE, meowo_agent::id::KIMI, meowo_agent::id::CODEX] {
+            assert_eq!(for_agent(id).id(), id);
+        }
     }
 
     #[test]
     fn claude_read_context_defaults_none() {
         let ev = HookEvent::parse(r#"{"hook_event_name":"Stop","session_id":"x"}"#).unwrap();
-        assert!(for_provider(ProviderKey::Claude).read_context(&ev).is_none());
+        assert!(for_agent(meowo_agent::id::CLAUDE).read_context(&ev).is_none());
     }
 
+    /// 未知 provider 串不得被冒名成 claude——否则一个本版本尚不认识的 agent，其会话会被按 claude
+    /// 去 resume（拉起错误的 CLI）、读 transcript（读错文件）。空/缺省才走默认。
     #[test]
-    fn every_provider_key_has_agent_and_vice_versa() {
-        // enum↔registry 单一事实源守护：ProviderKey 每个 variant 必有一个 ALL 中的 Agent，
-        // 反之亦然；二者数量相等。加新 CLI 漏注册任一侧即在此处失败。
-        for &k in ProviderKey::ALL {
-            assert!(ALL.iter().any(|a| a.key() == k), "ProviderKey {k:?} 无对应 Agent");
+    fn resolve_rejects_unknown_provider_instead_of_falling_back() {
+        assert_eq!(resolve(Some("kimi")).map(|a| a.id()), Some(meowo_agent::id::KIMI));
+        assert_eq!(resolve(None).map(|a| a.id()), Some(meowo_agent::id::CLAUDE));
+        assert_eq!(resolve(Some("")).map(|a| a.id()), Some(meowo_agent::id::CLAUDE));
+        assert!(resolve(Some("gemini")).is_none());
+        assert!(resolve(Some("zzz")).is_none());
+    }
+
+    /// 两张注册表（本 crate 的 `Agent` 与 `meowo_agent` 的 `AgentPlugin`）逐一配对。
+    /// Phase 2 会把它们合并成一张，届时本测试连同 `Agent` trait 一起消失。
+    #[test]
+    fn every_plugin_has_agent_and_vice_versa() {
+        for p in meowo_agent::all() {
+            assert!(ALL.iter().any(|a| a.id() == p.id()), "插件 {} 无对应 Agent 实现", p.id());
         }
         for a in ALL {
-            assert!(ProviderKey::ALL.contains(&a.key()), "Agent {:?} 不在 ProviderKey::ALL", a.key());
+            assert!(meowo_agent::by_id(a.id().as_str()).is_some(), "Agent {} 未在插件注册表登记", a.id());
         }
-        assert_eq!(ALL.len(), ProviderKey::ALL.len());
+        assert_eq!(ALL.len(), meowo_agent::all().len());
+    }
+
+    /// 默认 agent 的 id 必须与 DB schema 的 `DEFAULT 'claude'` 字面量一致。本 crate 同时依赖
+    /// `meowo-agent` 与 `meowo-store`，是唯一能做这个配对断言的地方。
+    #[test]
+    fn default_agent_id_matches_db_default_provider() {
+        assert_eq!(meowo_agent::DEFAULT_ID.as_str(), meowo_store::DEFAULT_PROVIDER);
     }
 
     #[test]
@@ -351,15 +380,15 @@ mod tests {
     fn resume_args_per_provider() {
         // claude 首元素是可执行(绝对路径或回退裸名)，参数固定 --resume <id>。
         // 不写死裸名：装了 claude 的机器上这里应是绝对路径——终端继承的 PATH 快照未必含它。
-        let claude = for_provider(ProviderKey::Claude).resume_args("ID");
+        let claude = for_agent(meowo_agent::id::CLAUDE).resume_args("ID");
         assert_eq!(&claude[1..], ["--resume".to_string(), "ID".to_string()]);
         assert!(claude[0].to_ascii_lowercase().contains("claude"));
         // codex：末两位固定 `resume <id>`；首元素是 node(走包装) 或回退裸名 codex；某元素含 "codex"。
-        let codex = for_provider(ProviderKey::Codex).resume_args("ID");
+        let codex = for_agent(meowo_agent::id::CODEX).resume_args("ID");
         assert_eq!(codex[codex.len() - 2..], ["resume".to_string(), "ID".to_string()]);
         assert!(codex.iter().any(|a| a.to_ascii_lowercase().contains("codex")));
         // kimi 首元素是可执行(绝对路径或回退裸名)，参数固定 -r <id>。
-        let kimi = for_provider(ProviderKey::Kimi).resume_args("ID");
+        let kimi = for_agent(meowo_agent::id::KIMI).resume_args("ID");
         assert_eq!(&kimi[1..], ["-r".to_string(), "ID".to_string()]);
         assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
     }
@@ -367,15 +396,15 @@ mod tests {
     #[test]
     fn launch_args_per_provider() {
         // claude：单元素可执行(绝对路径或回退裸名)，无 resume/id。
-        let claude = for_provider(ProviderKey::Claude).launch_args();
+        let claude = for_agent(meowo_agent::id::CLAUDE).launch_args();
         assert_eq!(claude.len(), 1);
         assert!(claude[0].to_ascii_lowercase().contains("claude"));
         // codex：不含 resume/id；末元素不是 "resume"；某元素含 "codex"。
-        let codex = for_provider(ProviderKey::Codex).launch_args();
+        let codex = for_agent(meowo_agent::id::CODEX).launch_args();
         assert!(codex.iter().all(|a| a != "resume"));
         assert!(codex.iter().any(|a| a.to_ascii_lowercase().contains("codex")));
         // kimi：单元素可执行（绝对路径或回退裸名），无参数。
-        let kimi = for_provider(ProviderKey::Kimi).launch_args();
+        let kimi = for_agent(meowo_agent::id::KIMI).launch_args();
         assert_eq!(kimi.len(), 1);
         assert!(kimi[0].to_ascii_lowercase().contains("kimi"));
     }

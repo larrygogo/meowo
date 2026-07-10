@@ -470,8 +470,8 @@ fn fetch_kimi_usage_live() -> Option<ProviderUsage> {
 pub struct KimiProviderAccount;
 
 impl ProviderAccount for KimiProviderAccount {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Kimi
+    fn id(&self) -> meowo_agent::AgentId {
+        meowo_agent::id::KIMI
     }
 
     /// best-effort 读账号：解 JWT email claim 或降级「已登录」标签。凭据不存在 → None。
@@ -509,7 +509,7 @@ impl ProviderAccount for KimiProviderAccount {
 
     /// force=false：仅读缓存；force=true：60s 限频后联网（失败降级 None）。
     fn usage(&self, force: bool) -> Option<ProviderUsage> {
-        let key = self.key();
+        let key = self.id();
         if !force {
             return super::read_cached_usage(key);
         }

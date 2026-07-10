@@ -280,8 +280,8 @@ fn live_sessions_blocking(
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
         // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
         // liveness 线程/本函数互相阻塞在同一把锁上。
-        let info = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
-            .transcript()
+        let info = meowo_reporter::agent::resolve(Some(&s.provider))
+            .and_then(|a| a.transcript())
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
                     .and_then(|p| p.to_str().map(str::to_string))
@@ -797,9 +797,10 @@ fn focus_session(
     }
     #[cfg(target_os = "windows")]
     {
-        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。缺省 claude。
-        let title_based = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(provider.as_deref()))
-            .sets_terminal_tab_title();
+        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。
+        // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
+        let title_based = meowo_reporter::agent::resolve(provider.as_deref())
+            .is_some_and(|a| a.sets_terminal_tab_title());
         // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
         // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
         let token = session_id
@@ -814,15 +815,17 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        let provider_key = meowo_store::ProviderKey::parse(provider.as_deref());
+        let agent = meowo_reporter::agent::resolve(provider.as_deref());
         // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
             // resume 回退命令按 provider 分发（不再硬编码 claude）；是否允许回退由
             // focus_session_terminal 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
+            // 未知 agent → 空 argv：只聚焦终端，不回退 resume。
             let resume_argv = session_id
                 .as_deref()
-                .map(|id| meowo_reporter::agent::for_provider(provider_key).resume_args(id))
+                .zip(agent)
+                .map(|(id, a)| a.resume_args(id))
                 .unwrap_or_default();
             crate::macos::terminal::focus_session_terminal(
                 pid,
@@ -1108,8 +1111,10 @@ fn prepare_resume(
     // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
     let resolved = meowo_store::title::resolve_cwd(cwd, session_id);
     // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
-    let resume = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(provider)))
-        .resume_args(session_id);
+    // 未知 agent → 空 argv：调用方的 spawn 会失败并回滚复活，好过拿 claude 的参数去拉起别的 CLI。
+    let resume = meowo_reporter::agent::resolve(Some(provider))
+        .map(|a| a.resume_args(session_id))
+        .unwrap_or_default();
     (revived, resolved, resume)
 }
 
@@ -1225,8 +1230,8 @@ async fn new_session(
     terminal: Option<String>,
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    let argv = meowo_reporter::agent::for_provider(key).launch_args();
+    let agent = meowo_reporter::agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let argv = agent.launch_args();
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
@@ -1266,7 +1271,7 @@ struct LoginDone {
 ///
 /// 超时上限 5 分钟：登录走浏览器 OAuth，用户可能中途放弃；spawn 出去的是 detach 的终端，
 /// 拿不到退出码，不设上限线程就永久泄漏。
-fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: String) {
+fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: String) {
     const POLL: std::time::Duration = std::time::Duration::from_secs(2);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
     std::thread::spawn(move || {
@@ -1276,7 +1281,7 @@ fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: S
         // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
         // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
         let ok = loop {
-            if account::for_provider(key).account().is_some() {
+            if account::for_agent(key).account().is_some() {
                 break true;
             }
             if start.elapsed() >= TIMEOUT {
@@ -1302,7 +1307,7 @@ async fn login_agent(
     provider: String,
     terminal: Option<String>,
 ) -> Result<(), String> {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
     let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
     let argv = inst.login_argv().ok_or("该 agent 未声明登录入口")?;
@@ -1370,9 +1375,9 @@ fn build_install_command(script_path: &str) -> std::process::Command {
 /// 前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    let provider = key.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
-    let script = meowo_reporter::agent::for_provider(key)
+    let agent = meowo_reporter::agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let provider = agent.id().as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
+    let script = agent
         .install_script(cfg!(target_os = "windows"))
         .ok_or("该 agent 没有可用的一键安装命令")?;
     let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
@@ -1446,21 +1451,26 @@ fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) 
     hooks_status_at(&inst.config_path(), inst.hooks, agent_id)
 }
 
-/// 某 provider 在本机的安装实况。三家均已迁入插件层，此处只是把 ProviderKey 映射到各自的
-/// 解析入口（Phase D 会把它收敛成 `by_id(key.as_str())?.resolve()`）。
-fn install_for(key: meowo_store::ProviderKey) -> Option<meowo_agent::Installation> {
-    match key {
-        meowo_store::ProviderKey::Claude => meowo_reporter::claude::claude_install(),
-        meowo_store::ProviderKey::Codex => meowo_reporter::codex::codex_install(),
-        meowo_store::ProviderKey::Kimi => meowo_reporter::kimi::kimi_install(),
-    }
+/// 前端/DB 传来的 provider 串 → agent 身份。**未知 id → `None`**，绝不冒名成默认 agent：
+/// 那会让一个本版本尚不认识的 agent 被按 claude 去 resume / 装 / 查用量。调用方据此降级
+/// （command 报错、读操作跳过 agent 专属能力）。空/缺省 → 默认 agent（老会话没写过 provider 列）。
+fn agent_id(provider: &str) -> Option<meowo_agent::AgentId> {
+    meowo_agent::resolve(Some(provider)).map(|p| p.id())
+}
+
+/// 某 agent 在本机的安装实况。直接走插件注册表——不再按 id 分支到各自的解析入口。
+fn install_for(id: meowo_agent::AgentId) -> Option<meowo_agent::Installation> {
+    meowo_agent::by_id(id.as_str())?.resolve()
 }
 
 /// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
+/// 未知 provider → Unknown（不冒名默认 agent 去查它的 hooks）。
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    plugin_hooks_status(install_for(key), key.as_str())
+    let Some(id) = agent_id(&provider) else {
+        return HooksStatus::Unknown;
+    };
+    plugin_hooks_status(install_for(id), id.as_str())
 }
 
 /// 「修复连接」结果：最新接线状态 + 失败原因（None = 成功/已是目标状态）。
@@ -1475,18 +1485,18 @@ struct RepairResult {
 /// 用于「新建会话」面板或设置里的「修复连接」按钮，无需重启 Meowo。
 #[tauri::command]
 fn repair_provider_hooks(provider: String) -> RepairResult {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    match key {
-        meowo_store::ProviderKey::Claude
-        | meowo_store::ProviderKey::Codex
-        | meowo_store::ProviderKey::Kimi => {
-            eprintln!("Meowo repair[{provider}]: 开始修复接线…");
-            let reason = setup::apply_provider(key);
-            let status = check_provider_hooks(provider.clone());
-            eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
-            RepairResult { status, reason }
-        }
-    }
+    let Some(id) = agent_id(&provider) else {
+        eprintln!("Meowo repair[{provider}]: 未知 agent，跳过");
+        return RepairResult {
+            status: HooksStatus::Unknown,
+            reason: Some(setup::RepairReason::NotDetected),
+        };
+    };
+    eprintln!("Meowo repair[{provider}]: 开始修复接线…");
+    let reason = setup::apply_provider(id);
+    let status = check_provider_hooks(provider.clone());
+    eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
+    RepairResult { status, reason }
 }
 
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
@@ -1574,9 +1584,11 @@ fn rename_session(
         return Err("标题不能为空".into());
     }
 
-    // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）。
-    let provider = meowo_store::ProviderKey::parse(provider.as_deref());
-    let _ = meowo_reporter::agent::for_provider(provider).write_rename(&session_id, cwd.as_deref(), &title);
+    // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）；
+    // 未知 agent 则只改 DB 标题，不去猜它的持久层格式。
+    if let Some(a) = meowo_reporter::agent::resolve(provider.as_deref()) {
+        let _ = a.write_rename(&session_id, cwd.as_deref(), &title);
+    }
 
     // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
     // claude 的 apply_title 会从 transcript 重读 custom-title（优先级高于 ai-title）维持一致。
@@ -1960,8 +1972,8 @@ fn spawn_liveness_watch(
                     // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
                     // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
                     let meowo_store::TranscriptInfo { title, error, .. } =
-                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
-                            .transcript()
+                        meowo_reporter::agent::resolve(Some(&s.provider))
+                            .and_then(|a| a.transcript())
                             .and_then(|spec| {
                                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
                                     .and_then(|p| p.to_str().map(str::to_string))
@@ -1977,8 +1989,8 @@ fn spawn_liveness_watch(
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
-                    let title_based =
-                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider))).sets_terminal_tab_title();
+                    let title_based = meowo_reporter::agent::resolve(Some(&s.provider))
+                        .is_some_and(|a| a.sets_terminal_tab_title());
                     // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
                     let tab_token = {
                         let t = meowo_reporter::tabtitle::short_sid(&s.session.cc_session_id);
@@ -2128,9 +2140,9 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
         account::all()
             .iter()
             .map(|pa| account::ProviderAccountPayload {
-                provider: pa.key().as_str().to_string(),
+                provider: pa.id().as_str().to_string(),
                 account: pa.account(),
-                usage: account::read_cached_usage(pa.key()),
+                usage: account::read_cached_usage(pa.id()),
                 usage_supported: pa.usage_supported(),
             })
             .collect()
@@ -2143,9 +2155,9 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
 /// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
 #[tauri::command]
 async fn refresh_usage(provider: String) -> Result<account::ProviderUsage, String> {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    let key = agent_id(&provider).ok_or("未知 agent")?;
     tauri::async_runtime::spawn_blocking(move || {
-        let pa = account::for_provider(key);
+        let pa = account::for_agent(key);
         match pa.usage(true) {
             Some(u) => Ok(u),
             None => {
@@ -2224,7 +2236,7 @@ async fn available_agents() -> Vec<String> {
         meowo_reporter::agent::all()
             .iter()
             .filter(|a| a.is_installed())
-            .map(|a| a.key().as_str().to_string())
+            .map(|a| a.id().as_str().to_string())
             .collect::<Vec<_>>()
     })
     .await

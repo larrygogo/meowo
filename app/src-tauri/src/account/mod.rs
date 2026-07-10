@@ -131,7 +131,7 @@ pub struct ProviderAccountPayload {
 /// Provider 账号抽象：account 信息 + 用量泳道 + 是否支持用量查询。
 /// Sync 约束保证静态注册表（&'static dyn ProviderAccount）可跨线程共享。
 pub trait ProviderAccount: Sync {
-    fn key(&self) -> meowo_store::ProviderKey;
+    fn id(&self) -> meowo_agent::AgentId;
     fn account(&self) -> Option<Account>;
     /// force=false：仅读缓存，不联网；force=true：可触发网络刷新（含 60s 限频）。
     fn usage(&self, force: bool) -> Option<ProviderUsage>;
@@ -148,9 +148,10 @@ static KIMI_PA: kimi::KimiProviderAccount = kimi::KimiProviderAccount;
 static CODEX_PA: codex::CodexProviderAccount = codex::CodexProviderAccount;
 static ALL_PA: &[&dyn ProviderAccount] = &[&CLAUDE_PA, &KIMI_PA, &CODEX_PA];
 
-/// 按 provider key 取 ProviderAccount 实现；遍历 ALL 注册表。未知回退 claude 兜底。
-pub fn for_provider(k: meowo_store::ProviderKey) -> &'static dyn ProviderAccount {
-    ALL_PA.iter().copied().find(|a| a.key() == k).unwrap_or(&CLAUDE_PA)
+/// 按 agent 身份取 ProviderAccount 实现；遍历 ALL 注册表。入参恒来自插件注册表，故必然命中；
+/// find 失败时回退 claude 兜底（配对测试守住这点）。
+pub fn for_agent(id: meowo_agent::AgentId) -> &'static dyn ProviderAccount {
+    ALL_PA.iter().copied().find(|a| a.id() == id).unwrap_or(&CLAUDE_PA)
 }
 
 /// 所有已注册 provider（供 get_accounts 遍历）。
@@ -167,7 +168,7 @@ pub fn all() -> &'static [&'static dyn ProviderAccount] {
 
 /// 读某 provider 的缓存用量。
 /// 先试新格式 providers.{key}，再对 claude 兼容旧扁平 usage 字段。
-pub fn read_cached_usage(k: meowo_store::ProviderKey) -> Option<ProviderUsage> {
+pub fn read_cached_usage(k: meowo_agent::AgentId) -> Option<ProviderUsage> {
     let v = read_json(&usage_cache_path()?)?;
     // 新格式
     if let Some(providers) = v.get("providers") {
@@ -178,7 +179,7 @@ pub fn read_cached_usage(k: meowo_store::ProviderKey) -> Option<ProviderUsage> {
         }
     }
     // 旧扁平格式容错（仅 claude）
-    if k == meowo_store::ProviderKey::Claude {
+    if k == meowo_agent::id::CLAUDE {
         if let Some(old_raw) = v.get("usage") {
             let old: claude::Usage = serde_json::from_value(old_raw.clone()).ok()?;
             return Some(claude::map_to_provider_usage(&old));
@@ -192,7 +193,7 @@ pub fn read_cached_usage(k: meowo_store::ProviderKey) -> Option<ProviderUsage> {
 static USAGE_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 把某 provider 用量写入缓存（providers 分键合并写入，唯一写入方）。
-pub fn write_cached_usage(k: meowo_store::ProviderKey, usage: &ProviderUsage) {
+pub fn write_cached_usage(k: meowo_agent::AgentId, usage: &ProviderUsage) {
     let Some(p) = usage_cache_path() else { return };
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -224,7 +225,7 @@ pub fn write_cached_usage(k: meowo_store::ProviderKey, usage: &ProviderUsage) {
 }
 
 /// 某 provider 的缓存是否在 fresh_ms 内。支持新 fetched_at_map 与旧 fetched_at（仅 claude）。
-pub fn cache_is_fresh(k: meowo_store::ProviderKey, fresh_ms: i64) -> bool {
+pub fn cache_is_fresh(k: meowo_agent::AgentId, fresh_ms: i64) -> bool {
     let Some(v) = usage_cache_path().and_then(|p| read_json(&p)) else {
         return false;
     };
@@ -237,7 +238,7 @@ pub fn cache_is_fresh(k: meowo_store::ProviderKey, fresh_ms: i64) -> bool {
         return now_ms() - t < fresh_ms;
     }
     // 旧扁平格式（仅 claude）
-    if k == meowo_store::ProviderKey::Claude {
+    if k == meowo_agent::id::CLAUDE {
         if let Some(t) = v.get("fetched_at").and_then(|x| x.as_i64()) {
             return now_ms() - t < fresh_ms;
         }
@@ -274,27 +275,25 @@ mod tests {
         assert_eq!(UsageKind::from_str("FIVE_HOUR"), UsageKind::Other); // 大小写不同 → Other
     }
 
+    /// registry↔registry 单一事实源守护：插件注册表每个 agent 必有一个 ALL_PA 中的 ProviderAccount，
+    /// 反之亦然；二者数量相等。加新 agent 漏注册任一侧即在此处失败。
+    /// Phase 3 会把 ProviderAccount 折进插件的 `account()` 能力槽，届时本测试连同注册表一起消失。
     #[test]
-    fn every_provider_key_has_provider_account_and_vice_versa() {
-        // enum↔registry 单一事实源守护：ProviderKey 每个 variant 必有一个 ALL_PA 中的 ProviderAccount，
-        // 反之亦然；二者数量相等。加新 provider 漏注册任一侧即在此处失败。
-        for &k in meowo_store::ProviderKey::ALL {
+    fn every_plugin_has_provider_account_and_vice_versa() {
+        for p in meowo_agent::all() {
             assert!(
-                ALL_PA.iter().any(|a| a.key() == k),
-                "ProviderKey {k:?} 无对应 ProviderAccount 注册"
+                ALL_PA.iter().any(|a| a.id() == p.id()),
+                "插件 {} 无对应 ProviderAccount 注册",
+                p.id()
             );
         }
         for a in ALL_PA {
             assert!(
-                meowo_store::ProviderKey::ALL.contains(&a.key()),
-                "ProviderAccount(key={:?}) 不在 ProviderKey::ALL",
-                a.key()
+                meowo_agent::by_id(a.id().as_str()).is_some(),
+                "ProviderAccount({}) 未在插件注册表登记",
+                a.id()
             );
         }
-        assert_eq!(
-            ALL_PA.len(),
-            meowo_store::ProviderKey::ALL.len(),
-            "ALL_PA 与 ProviderKey::ALL 数量不等"
-        );
+        assert_eq!(ALL_PA.len(), meowo_agent::all().len(), "ALL_PA 与插件注册表数量不等");
     }
 }

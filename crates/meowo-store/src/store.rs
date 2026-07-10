@@ -640,12 +640,15 @@ impl Store {
         Ok(())
     }
 
-    /// 设置会话所属 agent provider（claude/kimi…）。仅在 SessionStart 由 reporter 写一次；
-    /// 不动 last_event_at（同回合的 set_session_cwd 等已刷新）。入参为强类型，写入端归一。
-    pub fn set_session_provider(&self, session_id: i64, provider: crate::ProviderKey) -> Result<(), StoreError> {
+    /// 设置会话所属 agent provider（agent id，如 `"claude"` / `"kimi"`）。仅在 SessionStart 由 reporter
+    /// 写一次；不动 last_event_at（同回合的 set_session_cwd 等已刷新）。
+    ///
+    /// 入参是**原样字符串**：store 不校验、不归一、不认识任何具体 agent。调用方传的 id 来自
+    /// `meowo_agent` 注册表（`AgentId::as_str()`），已由类型保证是注册过的那批。
+    pub fn set_session_provider(&self, session_id: i64, provider: &str) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET provider = ?1 WHERE id = ?2",
-            rusqlite::params![provider.as_str(), session_id],
+            rusqlite::params![provider, session_id],
         )?;
         Ok(())
     }

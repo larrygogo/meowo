@@ -6,9 +6,16 @@
 //! 本 crate 只依赖 std/serde/toml_edit：不碰文件写入、不联网、不依赖 Tauri。落盘与联网各由
 //! meowo-app 完成，但都以本层探测出的 [`Installation`] 为输入，不再各自重推路径。
 //!
-//! 迁移状态：claude / kimi / codex 三家均已迁入 `plugins/`。剩余的 Phase D 是把 meowo-app 与
-//! meowo-reporter 里那三套并行的 trait（`ProviderSetup` / `ProviderAccount` / `Agent`）收敛成
-//! 注册表驱动的通用函数——加新 agent 只写 `plugins/<new>.rs` + `registry.rs` 一行。
+//! 迁移状态（详见 `docs/architecture/agent-plugin.md`）：
+//!
+//! - Phase 1 ✅ 身份收敛：`AgentId` 是全项目唯一的 agent 身份类型，`meowo_store::ProviderKey`
+//!   枚举已删除，DB 的 provider 列退化为原样字符串。解析走 [`resolve`]，未知 id 不再冒名默认 agent。
+//! - Phase 2 ⏳ 注册表合一：把 `meowo-reporter` 的 `Agent`、`meowo-app` 的 `ProviderSetup` /
+//!   `ProviderAccount` 三个并行 trait 折进本 crate 的 [`AgentPlugin`] 能力槽。
+//! - Phase 3 ⏳ 端口注入：`HttpPort` / `FsPort` / `KeychainPort`，让账号与接线也住进 `plugins/<id>/`。
+//! - Phase 4 ⏳ 前端描述符：`list_agents()` 下发展示名/品牌色/图标，前端零 agent 知识。
+//!
+//! 终局验收：加一个 agent 只需新增 `plugins/<new>/` 与 `registry.rs` 一行。
 
 pub mod auth;
 pub mod config;
@@ -22,7 +29,7 @@ pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason};
 pub use id::AgentId;
 pub use launch::{LaunchCandidate, LaunchSpec, Root};
-pub use registry::{all, by_id, AgentPlugin};
+pub use registry::{all, by_id, resolve, AgentPlugin, DEFAULT_ID};
 pub use variant::{DataDirSpec, Installation, Variant};
 
 use std::path::{Path, PathBuf};

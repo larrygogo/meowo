@@ -1,11 +1,12 @@
-use meowo_store::{PendingReview, ProviderKey, SessionStatus, Store, StoreError};
+use meowo_agent::AgentId;
+use meowo_store::{PendingReview, SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
 
 use std::path::Path;
 
 /// 把一个 hook 事件落到库。未知/缺字段一律降级为「无操作」，绝不报错冒泡。
 /// `provider` 为 agent 提供方（claude/kimi…）：仅在 SessionStart 标记到会话上，并决定标题解析路径。
-pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKey) -> Result<(), StoreError> {
+pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: AgentId) -> Result<(), StoreError> {
     match ev.hook_event_name.as_str() {
         "SessionStart" => {
             let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
@@ -46,7 +47,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
                     }
                     _ => { store.touch_session(sid, now_ms)?; }
                 }
-                if let Some(c) = crate::agent::for_provider(provider).read_context(ev) {
+                if let Some(c) = crate::agent::for_agent(provider).read_context(ev) {
                     store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
                 }
             }
@@ -57,7 +58,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 // 最近 AI 正文 + 模型由 agent 决定来源：claude 用 Stop hook 携带的正文（模型走 statusline）；
                 // kimi 的 Stop hook 不带，读会话 wire.jsonl 一次出正文 + 模型。
-                let out = crate::agent::for_provider(provider).stop_outputs(ev);
+                let out = crate::agent::for_agent(provider).stop_outputs(ev);
                 if let Some(msg) = out.last_ai {
                     store.set_last_ai_text(sid, &msg)?;
                 }
@@ -66,7 +67,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
-                if let Some(c) = crate::agent::for_provider(provider).read_context(ev) {
+                if let Some(c) = crate::agent::for_agent(provider).read_context(ev) {
                     store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
                 }
             }
@@ -104,9 +105,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: ProviderKe
     Ok(())
 }
 
-fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: ProviderKey) -> Result<(), StoreError> {
+fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: AgentId) -> Result<(), StoreError> {
     // 是否由 transcript 解析标题由 agent 决定（claude 是；kimi/codex 否，靠首条 prompt 命名）。
-    let agent = crate::agent::for_provider(provider);
+    let agent = crate::agent::for_agent(provider);
     if !agent.resolves_transcript_title() {
         return Ok(());
     }
@@ -133,8 +134,8 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: P
 /// 标题——sid8=session_id 末 8 位、全局唯一，meowo-app 据此精确切到该标签（解决同窗口同目录两会话标签
 /// 同名分不清）。meowo-reporter 是 hook 子进程、继承本会话的 ConPTY，写 CONOUT$ 只影响自己这个标签。
 /// 非 Windows / 非 WT(CONOUT$ 打不开) 静默 no-op。
-fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: ProviderKey) {
-    if !crate::agent::for_provider(provider).writes_tab_token() {
+fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: AgentId) {
+    if !crate::agent::for_agent(provider).writes_tab_token() {
         return;
     }
     let sid8 = crate::tabtitle::short_sid(&ev.session_id);
@@ -159,12 +160,13 @@ fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: ProviderKe
 }
 
 /// 建会话（项目 upsert + 会话 + provider + cwd + 抓 PID），返回 sid。SessionStart 与懒创建共用。
-fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: ProviderKey, now_ms: i64) -> Result<i64, StoreError> {
+fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: AgentId, now_ms: i64) -> Result<i64, StoreError> {
     let (root, name) = project_root_and_name(cwd);
     let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
     let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
-    if !provider.is_default() {
-        store.set_session_provider(sid, provider)?;
+    // DB 把 NULL/缺省的 provider 列视作默认 agent，故默认 agent 不必写库。
+    if provider != meowo_agent::DEFAULT_ID {
+        store.set_session_provider(sid, provider.as_str())?;
     }
     store.set_session_cwd(sid, cwd, now_ms)?;
     if let Some(p) = crate::proc::owner_pid() {
@@ -182,7 +184,7 @@ fn lookup_session(store: &Store, ev: &HookEvent) -> Result<Option<i64>, StoreErr
 
 /// 查会话；查不到且事件带 cwd 时就地懒创建——让「hooks 中途装上 / SessionStart 漏掉（压缩等）」
 /// 的会话在下一条带 cwd 的活动事件（UserPromptSubmit/PostToolUse/Stop）上也能补建上板，不必重开。
-fn lookup_or_create(store: &Store, ev: &HookEvent, provider: ProviderKey, now_ms: i64) -> Result<Option<i64>, StoreError> {
+fn lookup_or_create(store: &Store, ev: &HookEvent, provider: AgentId, now_ms: i64) -> Result<Option<i64>, StoreError> {
     if ev.session_id.is_empty() {
         return Ok(None);
     }

@@ -282,8 +282,8 @@ fn auth_mode(auth_json: &Value) -> &str {
 pub struct CodexProviderAccount;
 
 impl ProviderAccount for CodexProviderAccount {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Codex
+    fn id(&self) -> meowo_agent::AgentId {
+        meowo_agent::id::CODEX
     }
 
     fn account(&self) -> Option<Account> {

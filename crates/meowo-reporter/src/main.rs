@@ -1,5 +1,6 @@
+use meowo_agent::AgentId;
 use meowo_reporter::{db_path, dispatch::dispatch, hook::HookEvent};
-use meowo_store::{ProviderKey, Store};
+use meowo_store::Store;
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,20 +34,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 从命令行解析 `--provider <name>` / `--provider=<name>`，缺省 claude。
-fn parse_provider() -> ProviderKey {
+/// 从命令行解析 `--provider <name>` / `--provider=<name>`，缺省默认 agent。
+///
+/// 未知 id 也回退默认并告警：该参数由我们自己写进各 agent 的 hooks 命令行，出现未知值只可能是
+/// 配置被更新版 meowo 写过、又被旧版读到。此处**必须**产出一个可用的 agent——reporter 是 hook
+/// 子进程，中断会阻塞 agent 本体。落库的 provider 列由 dispatch 按此 id 写，仍是已注册的那批。
+fn parse_provider() -> AgentId {
     let args: Vec<String> = std::env::args().collect();
     let mut it = args.iter();
+    let mut raw: Option<&str> = None;
     while let Some(a) = it.next() {
         if a == "--provider" {
-            if let Some(v) = it.next() {
-                return ProviderKey::from_str(v);
-            }
+            raw = it.next().map(String::as_str);
+            break;
         } else if let Some(v) = a.strip_prefix("--provider=") {
-            return ProviderKey::from_str(v);
+            raw = Some(v);
+            break;
         }
     }
-    ProviderKey::Claude
+    match meowo_agent::resolve(raw) {
+        Some(p) => p.id(),
+        None => {
+            eprintln!(
+                "meowo-reporter: 未知 --provider {:?}，回退默认 agent {}",
+                raw.unwrap_or(""),
+                meowo_agent::DEFAULT_ID
+            );
+            meowo_agent::DEFAULT_ID
+        }
+    }
 }
 
 fn now_ms() -> i64 {

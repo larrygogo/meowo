@@ -8,8 +8,8 @@ use meowo_agent::RepairReason;
 pub struct KimiSetup;
 
 impl super::ProviderSetup for KimiSetup {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Kimi
+    fn id(&self) -> meowo_agent::AgentId {
+        meowo_agent::id::KIMI
     }
     fn detect(&self) -> bool {
         meowo_reporter::kimi::kimi_install().is_some_and(|i| i.is_configured())

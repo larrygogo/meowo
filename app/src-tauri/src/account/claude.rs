@@ -396,8 +396,8 @@ pub fn has_oauth_credentials() -> bool {
 pub struct ClaudeProviderAccount;
 
 impl ProviderAccount for ClaudeProviderAccount {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Claude
+    fn id(&self) -> meowo_agent::AgentId {
+        meowo_agent::id::CLAUDE
     }
 
     fn account(&self) -> Option<Account> {
@@ -411,7 +411,7 @@ impl ProviderAccount for ClaudeProviderAccount {
     }
 
     fn usage(&self, force: bool) -> Option<ProviderUsage> {
-        let key = self.key();
+        let key = self.id();
         if !force {
             // 从缓存读，不联网
             return super::read_cached_usage(key);

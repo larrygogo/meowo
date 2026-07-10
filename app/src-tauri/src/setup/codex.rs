@@ -130,8 +130,8 @@ pub fn ensure_trusted_hashes(
 pub struct CodexSetup;
 
 impl super::ProviderSetup for CodexSetup {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Codex
+    fn id(&self) -> meowo_agent::AgentId {
+        meowo_agent::id::CODEX
     }
     fn detect(&self) -> bool {
         meowo_reporter::codex::codex_install().is_some_and(|i| i.is_configured())

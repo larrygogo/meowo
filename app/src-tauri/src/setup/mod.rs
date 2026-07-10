@@ -101,7 +101,7 @@ pub(crate) fn wire_hooks(
 
 /// Provider 接线抽象。Sync：以 &'static dyn 静态注册表共享。
 pub trait ProviderSetup: Sync {
-    fn key(&self) -> meowo_store::ProviderKey;
+    fn id(&self) -> meowo_agent::AgentId;
     /// 数据目录存在即视为已安装（各自尊重 env 覆盖）。不存在 → apply_all 跳过。
     fn detect(&self) -> bool;
     /// 幂等接线。全程 best-effort：绝不 panic。返回 `None` = 成功/已是目标状态；
@@ -126,13 +126,13 @@ pub fn apply_all() {
 /// 对指定 provider 强制执行一次接线（不管 detect 结果）。用于用户手动点击「修复连接」。
 /// 返回是否成功 apply（true = 数据目录存在并已尝试写入；false = 未安装/找不到 reporter）。
 /// 返回 `None` = 已接线/已是目标状态；`Some(reason)` = 未能接线及原因（供前端提示）。
-pub fn apply_provider(key: meowo_store::ProviderKey) -> Option<RepairReason> {
-    let Some(s) = ALL_SETUP.iter().find(|s| s.key() == key) else {
-        eprintln!("Meowo repair[{key:?}]: 无对应 ProviderSetup，跳过");
+pub fn apply_provider(id: meowo_agent::AgentId) -> Option<RepairReason> {
+    let Some(s) = ALL_SETUP.iter().find(|s| s.id() == id) else {
+        eprintln!("Meowo repair[{id}]: 无对应 ProviderSetup，跳过");
         return Some(RepairReason::NotDetected);
     };
     if !s.detect() {
-        eprintln!("Meowo repair[{key:?}]: detect()=false（数据目录不存在，视为未安装），跳过接线");
+        eprintln!("Meowo repair[{id}]: detect()=false（数据目录不存在，视为未安装），跳过接线");
         return Some(RepairReason::NotDetected);
     }
     s.apply()

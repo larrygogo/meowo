@@ -42,9 +42,29 @@ pub fn all() -> &'static [&'static dyn AgentPlugin] {
     ALL
 }
 
+/// 历史默认 agent。DB 里 `sessions.provider` 为 NULL/空的老会话即它，与 `meowo_store::DEFAULT_PROVIDER`
+/// 及建表 SQL 的 `DEFAULT 'claude'` 同值（配对断言见 `meowo_reporter::agent` 的测试——那里同时依赖两个 crate）。
+pub const DEFAULT_ID: AgentId = crate::id::CLAUDE;
+
 /// 按身份串取插件（`"claude"` / `"kimi"` / `"codex"`，与 DB / 前端 provider key 同值）。
 pub fn by_id(id: &str) -> Option<&'static dyn AgentPlugin> {
     ALL.iter().copied().find(|p| p.id().as_str() == id)
+}
+
+/// DB 列 / 命令行 `--provider` 的字符串 → 已注册插件。**身份解析的唯一入口。**
+///
+/// - `None` / 空串 → 默认插件（老会话没写过 provider 列）。
+/// - 已注册的 id → 该插件。
+/// - **未知 id → `None`**，绝不降级成默认。
+///
+/// 最后一条是刻意的：旧的 `ProviderKey::from_str` 把未知串静默解析成 `Claude`，于是一个由更新版
+/// meowo 写入、本版本尚不认识的 provider，其会话会被当成 claude 来 resume / 读 transcript / 查用量
+/// ——全都指向错误的 CLI。宁可让调用方拿到 `None` 后降级为「不提供 agent 专属能力」，也不冒名顶替。
+pub fn resolve(provider: Option<&str>) -> Option<&'static dyn AgentPlugin> {
+    match provider.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => by_id(id),
+        None => by_id(DEFAULT_ID.as_str()),
+    }
 }
 
 #[cfg(test)]
@@ -65,6 +85,23 @@ mod tests {
         let mut ids: Vec<&str> = all().iter().map(|p| p.id().as_str()).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["claude", "codex", "kimi"]);
+    }
+
+    /// 未知 provider 串**绝不**降级成默认插件——旧 `ProviderKey::from_str` 正是这么把未知 agent
+    /// 的会话冒名成 claude 的。None/空串则走默认（老会话没写过 provider 列）。
+    #[test]
+    fn resolve_maps_unknown_to_none_and_empty_to_default() {
+        assert_eq!(resolve(Some("kimi")).map(|p| p.id().as_str()), Some("kimi"));
+        assert_eq!(resolve(None).map(|p| p.id().as_str()), Some("claude"));
+        assert_eq!(resolve(Some("")).map(|p| p.id().as_str()), Some("claude"));
+        assert_eq!(resolve(Some("  ")).map(|p| p.id().as_str()), Some("claude"));
+        assert!(resolve(Some("gemini")).is_none());
+        assert!(resolve(Some("nonsense")).is_none());
+    }
+
+    #[test]
+    fn default_id_is_registered() {
+        assert!(by_id(DEFAULT_ID.as_str()).is_some());
     }
 
     #[test]

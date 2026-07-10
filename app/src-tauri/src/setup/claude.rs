@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 pub struct ClaudeSetup;
 
 impl super::ProviderSetup for ClaudeSetup {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Claude
+    fn id(&self) -> meowo_agent::AgentId {
+        meowo_agent::id::CLAUDE
     }
     fn detect(&self) -> bool {
         meowo_reporter::claude::claude_install().is_some_and(|i| i.is_configured())
