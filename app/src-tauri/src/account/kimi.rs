@@ -23,11 +23,11 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 /// 本机 kimi 实况的鉴权方案：凭据位置、OAuth 刷新端点、client_id、默认 base_url。
 /// 新旧版差异（若日后证实 legacy 用不同 client_id）只需改 `meowo_agent::plugins::kimi` 的变体表。
 fn kimi_auth() -> Option<&'static meowo_agent::AuthScheme> {
-    meowo_reporter::kimi::kimi_install()?.auth
+    meowo_agent::installation(meowo_agent::id::KIMI)?.auth
 }
 
 fn kimi_credentials_path() -> Option<std::path::PathBuf> {
-    meowo_reporter::kimi::kimi_install()?.credentials_path()
+    meowo_agent::installation(meowo_agent::id::KIMI)?.credentials_path()
 }
 
 fn read_kimi_credentials() -> Option<Value> {
@@ -53,7 +53,7 @@ fn kimi_base_url() -> String {
 /// 从实况 config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
 /// 不引入 toml 依赖，best-effort，失败返回 None。
 fn read_config_base_url() -> Option<String> {
-    let path = meowo_reporter::kimi::kimi_install()?.config_path();
+    let path = meowo_agent::installation(meowo_agent::id::KIMI)?.config_path();
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_section = false;
     for line in content.lines() {
@@ -168,7 +168,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
     };
     eprintln!(
         "Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…（变体 {}）",
-        meowo_reporter::kimi::kimi_install().map(|i| i.variant_tag).unwrap_or("?")
+        meowo_agent::installation(meowo_agent::id::KIMI).map(|i| i.variant_tag).unwrap_or("?")
     );
     let Some(refresh_token) = creds.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string) else {
         eprintln!("Meowo usage[kimi]: 凭据缺 refresh_token 字段，无法刷新");

@@ -131,7 +131,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 /// claude 的鉴权声明，取自插件层变体表（`meowo_agent::plugins::claude`）：OAuth client_id、
 /// 刷新端点、凭据位置不再是本文件里的一把常量——换个版本形态只改变体表一处。
 fn claude_auth() -> Option<&'static meowo_agent::AuthScheme> {
-    meowo_reporter::claude::claude_install()?.auth
+    meowo_agent::installation(meowo_agent::id::CLAUDE)?.auth
 }
 
 /// 账号信息住在 home 下的 `~/.claude.json`（**不在** data_dir 内，与凭据不同源），故不经
@@ -144,7 +144,7 @@ fn claude_json_path() -> Option<PathBuf> {
 /// `CLAUDE_CONFIG_DIR`）。macOS 改存 Keychain（见 keychain_* 函数）。
 #[cfg(not(target_os = "macos"))]
 fn credentials_path() -> Option<PathBuf> {
-    meowo_reporter::claude::claude_install()?.credentials_path()
+    meowo_agent::installation(meowo_agent::id::CLAUDE)?.credentials_path()
 }
 
 fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {

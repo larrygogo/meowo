@@ -1,14 +1,56 @@
-//! 注册表：取代 `ProviderKey` 枚举做分支中枢。加/改 agent 只动 `plugins/`，不动这里的调用方。
+//! 注册表：全项目唯一的 agent 分支中枢。加/改 agent 只动 `plugins/`，不动这里的调用方。
 
-use crate::{id::AgentId, variant::{Installation, Variant}};
+use crate::{
+    caps::TelemetryCap,
+    id::AgentId,
+    variant::{Installation, Variant},
+};
 
-/// 一个 agent 插件。核心只有「我是谁 + 我有哪些变体」；探测由默认实现按变体表逐个 probe。
+/// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
 pub trait AgentPlugin: Sync {
     fn id(&self) -> AgentId;
     fn display_name(&self) -> &'static str;
 
     /// 变体表，**按优先级排列**（新版在前）。首个变体同时充当「全新安装该装到哪」的默认。
     fn variants(&self) -> &'static [Variant];
+
+    /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + meowo-app 判活共用。
+    fn process_names(&self) -> &'static [&'static str];
+
+    // ═══ 声明式能力 ═══
+
+    /// 追加在启动 argv 之后的 resume 子命令（claude `--resume`、kimi `-r`、codex `resume`），
+    /// 其后再接 session_id。空 = 该 agent 不支持恢复会话。
+    fn resume_args(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// 官方一句话安装命令串（None = 无一键方案）。`windows` 决定返回 PowerShell 还是 curl 版。
+    /// 命令是受信硬编码串，调用方在终端里跑。
+    fn install_script(&self, _windows: bool) -> Option<String> {
+        None
+    }
+
+    /// 该 agent 是否把任务标题写进终端标签页标题。true → meowo-app 可按标题精确切到对应标签；
+    /// false → 按任务标题找标签会错抓同名无关标签，应改走窗口级定位。
+    fn sets_terminal_tab_title(&self) -> bool {
+        false
+    }
+
+    /// meowo-reporter 是否应在 hook 时往本标签 ConPTY 写 session_id token，让 meowo-app 能按 token
+    /// 精确切到该标签（解决同窗口同目录两会话标签同名分不清）。仅对「不写标题也不抢标题」的 agent 有意义。
+    fn writes_tab_token(&self) -> bool {
+        false
+    }
+
+    // ═══ 能力槽 ═══
+
+    /// 会话遥测（Stop 正文/模型、上下文占用、transcript、重命名回写）。None = 全部降级。
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        None
+    }
+
+    // ═══ 以下由变体表派生，通常不必覆写 ═══
 
     /// 本机实况：逐变体 probe，命中即返回；都不中 → None（＝未安装）。
     fn detect(&self) -> Option<Installation> {
@@ -28,6 +70,42 @@ pub trait AgentPlugin: Sync {
     /// 于是「kimi 的目录到底是哪个」只在此处回答一次。
     fn resolve(&self) -> Option<Installation> {
         self.detect().or_else(|| self.default_installation())
+    }
+
+    /// 裸启动一个全新会话的 argv。绝对路径优先——meowo-app 拉起的终端继承 app 启动那一刻的 PATH
+    /// 快照，未必含刚装好的 agent（native installer 只改持久 PATH），裸名会让 wt/powershell 报
+    /// 0x80070002。候选全不中时回退裸名交给 PATH 兜底。
+    fn launch_argv(&self) -> Vec<String> {
+        if let Some(i) = self.resolve() {
+            return i.launch_argv();
+        }
+        // 连默认落点都推不出（home 缺失）：回退首选变体声明的裸名。
+        let stem = self.variants().first().map_or(self.id().as_str(), |v| v.launch.stem);
+        vec![stem.to_string()]
+    }
+
+    /// 恢复断开会话的完整 argv = 启动 argv + resume 子命令 + session_id。
+    /// 该 agent 未声明 resume 子命令 → None。
+    fn resume_argv(&self, session_id: &str) -> Option<Vec<String>> {
+        let sub = self.resume_args();
+        if sub.is_empty() {
+            return None;
+        }
+        let mut argv = self.launch_argv();
+        argv.extend(sub.iter().map(|s| s.to_string()));
+        argv.push(session_id.to_string());
+        Some(argv)
+    }
+
+    /// 该 agent 的可执行是否装在本机——**与 `launch_argv` 同源**，杜绝「检测说已安装、启动却找不到
+    /// 文件」。
+    ///
+    /// 「在 PATH 上」也算已装：claude 的变体表把它写成了末位 `OnPath` 候选，kimi/codex 没有该候选
+    /// （给它们加上会让「候选全不中即回退裸名」的单测随跑测机器的 PATH 漂移），故在此统一兜底一次。
+    /// 两条路径都命中不了才算未装，此时 `launch_argv` 回退的裸名确实解析不出可执行。
+    fn is_installed(&self) -> bool {
+        self.resolve().is_some_and(|i| i.is_launchable())
+            || self.variants().first().is_some_and(|v| crate::launch::exe_on_path(&v.launch.file_name()))
     }
 }
 
@@ -65,6 +143,18 @@ pub fn resolve(provider: Option<&str>) -> Option<&'static dyn AgentPlugin> {
         Some(id) => by_id(id),
         None => by_id(DEFAULT_ID.as_str()),
     }
+}
+
+/// 便捷：按身份取该 agent 在本机的实况（路径 / hooks 规格 / 凭据 / 启动 argv）。
+pub fn installation(id: AgentId) -> Option<Installation> {
+    by_id(id.as_str())?.resolve()
+}
+
+/// 进程名（可含路径、大小写不敏感）是否属于任一已知 agent 本体——取 basename **精确**比对。
+/// owner_pid 上溯与 meowo-app 判活/清理共用此函数，杜绝子串误匹配（如名字恰好含 kimi 的无关进程）。
+pub fn is_agent_process(name: &str) -> bool {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name).to_ascii_lowercase();
+    ALL.iter().any(|p| p.process_names().contains(&base.as_str()))
 }
 
 #[cfg(test)]
@@ -109,5 +199,106 @@ mod tests {
         for p in all() {
             assert!(!p.variants().is_empty(), "{} 无变体", p.id());
         }
+    }
+
+    /// 进程名白名单是判活/上溯的依据，任一 agent 漏声明会让它的会话被当成死进程 reap。
+    #[test]
+    fn every_plugin_declares_process_names() {
+        for p in all() {
+            assert!(!p.process_names().is_empty(), "{} 无进程名", p.id());
+            assert!(
+                p.process_names().iter().all(|n| n == &n.to_ascii_lowercase()),
+                "{} 的进程名须为小写（is_agent_process 按小写 basename 精确比对）",
+                p.id()
+            );
+        }
+    }
+
+    #[test]
+    fn is_agent_process_exact_basename_not_substring() {
+        // 精确命中（含路径、大小写）。
+        assert!(is_agent_process("claude.exe"));
+        assert!(is_agent_process("kimi.exe"));
+        assert!(is_agent_process("codex.exe"));
+        assert!(is_agent_process("C:/x/Kimi.EXE"));
+        assert!(is_agent_process("/usr/bin/claude"));
+        // 子串不应误匹配（这正是修复点）。
+        assert!(!is_agent_process("kimi-desktop"));
+        assert!(!is_agent_process("kimichat.exe"));
+        assert!(!is_agent_process("claude-helper.exe"));
+        assert!(!is_agent_process("node"));
+        assert!(!is_agent_process(""));
+    }
+
+    /// resume argv = 启动 argv + 该 agent 声明的 resume 子命令 + session_id。
+    /// 写错子命令会让「恢复会话」拉起一个报 unknown command 的终端。
+    #[test]
+    fn resume_argv_appends_declared_subcommand_and_session_id() {
+        let cases = [
+            (crate::id::CLAUDE, vec!["--resume"]),
+            (crate::id::KIMI, vec!["-r"]),
+            (crate::id::CODEX, vec!["resume"]),
+        ];
+        for (id, sub) in cases {
+            let p = by_id(id.as_str()).unwrap();
+            let argv = p.resume_argv("ID").expect("三家均声明了 resume 子命令");
+            let n = argv.len();
+            assert_eq!(argv[n - 1], "ID", "{id} 的末位应是 session_id");
+            assert_eq!(&argv[n - 1 - sub.len()..n - 1], sub.as_slice(), "{id} 的 resume 子命令不符");
+            // 前缀即启动 argv：同源，杜绝「能启动却恢复不了」。
+            assert_eq!(&argv[..n - 1 - sub.len()], p.launch_argv().as_slice());
+        }
+    }
+
+    /// 启动 argv 非空，且首元素（绝对路径或回退裸名）指向该 agent 自己。
+    #[test]
+    fn launch_argv_is_nonempty_and_points_at_the_agent() {
+        for p in all() {
+            let argv = p.launch_argv();
+            assert!(!argv.is_empty(), "{} 启动 argv 为空", p.id());
+            // codex 的 npm 形态是 ["node", "<...>/codex.js"]，故查「某个元素含 id」而非首元素。
+            assert!(
+                argv.iter().any(|a| a.to_ascii_lowercase().contains(p.id().as_str())),
+                "{} 的启动 argv 未指向自己：{argv:?}",
+                p.id()
+            );
+        }
+    }
+
+    /// 已安装 ⇒ 启动 argv 的首元素真能启动。「能启动」不等于「是绝对路径」：`OnPath` 命中或
+    /// PATH 兜底时 argv 是裸名（刻意不固化 shim 路径），那它就必须真的在 PATH 上。
+    #[test]
+    fn installed_implies_launch_argv_is_runnable() {
+        for p in all() {
+            if !p.is_installed() {
+                continue; // 本机没装（CI 上常见）
+            }
+            let argv = p.launch_argv();
+            let head = &argv[0];
+            if head == p.id().as_str() || head == "node" {
+                let name = crate::exe_file_name(head);
+                assert!(crate::launch::exe_on_path(&name), "{} 回退裸名时应在 PATH 上", p.id());
+            } else {
+                assert!(std::path::Path::new(head).is_file(), "{} 启动 argv 指向的文件应存在：{head}", p.id());
+            }
+        }
+    }
+
+    /// 能力槽的降级语义：不声明 telemetry 的 agent，调用方拿到 None 而不是一个空实现。
+    /// 三家目前都有 telemetry；claude 独有 transcript 与 resolves_transcript_title。
+    #[test]
+    fn telemetry_slot_reflects_declared_capabilities() {
+        let claude = by_id("claude").unwrap().telemetry().expect("claude 有遥测");
+        assert!(claude.transcript().is_some());
+        assert!(claude.resolves_transcript_title());
+
+        for id in ["kimi", "codex"] {
+            let t = by_id(id).unwrap().telemetry().unwrap_or_else(|| panic!("{id} 有遥测"));
+            assert!(t.transcript().is_none(), "{id} 不读 transcript");
+            assert!(!t.resolves_transcript_title(), "{id} 的标题走首条 prompt");
+        }
+
+        // codex 不支持重命名回写（走 app-server JSON-RPC，成本高）→ 默认实现返回 false。
+        assert!(!by_id("codex").unwrap().telemetry().unwrap().write_rename("s", None, "t"));
     }
 }

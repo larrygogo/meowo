@@ -10,14 +10,17 @@
 //!
 //! - Phase 1 ✅ 身份收敛：`AgentId` 是全项目唯一的 agent 身份类型，`meowo_store::ProviderKey`
 //!   枚举已删除，DB 的 provider 列退化为原样字符串。解析走 [`resolve`]，未知 id 不再冒名默认 agent。
-//! - Phase 2 ⏳ 注册表合一：把 `meowo-reporter` 的 `Agent`、`meowo-app` 的 `ProviderSetup` /
-//!   `ProviderAccount` 三个并行 trait 折进本 crate 的 [`AgentPlugin`] 能力槽。
-//! - Phase 3 ⏳ 端口注入：`HttpPort` / `FsPort` / `KeychainPort`，让账号与接线也住进 `plugins/<id>/`。
+//! - Phase 2 ✅ 注册表合一：`meowo-reporter` 的 `Agent` trait 与那张并行注册表已折进本 crate 的
+//!   [`AgentPlugin`]——进程名、resume/启动 argv、安装脚本、标签页行为是声明式方法，会话遥测走
+//!   [`caps::TelemetryCap`] 能力槽。transcript 解析亦随之迁入（[`transcript`] + `plugins/claude/`）。
+//! - Phase 3 ⏳ 端口注入：`HttpPort` / `FsPort` / `KeychainPort`，让 `meowo-app` 的 `ProviderSetup`
+//!   与 `ProviderAccount` 也住进 `plugins/<id>/`。
 //! - Phase 4 ⏳ 前端描述符：`list_agents()` 下发展示名/品牌色/图标，前端零 agent 知识。
 //!
 //! 终局验收：加一个 agent 只需新增 `plugins/<new>/` 与 `registry.rs` 一行。
 
 pub mod auth;
+pub mod caps;
 pub mod config;
 pub mod id;
 pub mod launch;
@@ -27,10 +30,11 @@ pub mod transcript;
 pub mod variant;
 
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
+pub use caps::{ContextUsage, HookContext, StopOutputs, TelemetryCap};
 pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason};
 pub use id::AgentId;
-pub use launch::{LaunchCandidate, LaunchSpec, Root};
-pub use registry::{all, by_id, resolve, AgentPlugin, DEFAULT_ID};
+pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
+pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
 pub use transcript::{
     default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };

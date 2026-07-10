@@ -17,10 +17,10 @@ impl super::ProviderSetup for ClaudeSetup {
         meowo_agent::id::CLAUDE
     }
     fn detect(&self) -> bool {
-        meowo_reporter::claude::claude_install().is_some_and(|i| i.is_configured())
+        meowo_agent::installation(meowo_agent::id::CLAUDE).is_some_and(|i| i.is_configured())
     }
     fn apply(&self) -> Option<RepairReason> {
-        let Some(inst) = meowo_reporter::claude::claude_install() else {
+        let Some(inst) = meowo_agent::installation(meowo_agent::id::CLAUDE) else {
             eprintln!("Meowo repair[claude]: 解析不到 claude 安装实况，跳过");
             return Some(RepairReason::NotDetected);
         };
@@ -257,7 +257,7 @@ mod tests {
     fn dryrun_claude() {
         use crate::setup::ProviderSetup;
         let reason = super::ClaudeSetup.apply();
-        let inst = meowo_reporter::claude::claude_install().expect("应解析出实况");
+        let inst = meowo_agent::installation(meowo_agent::id::CLAUDE).expect("应解析出实况");
         let text = std::fs::read_to_string(inst.config_path()).expect("读不回 settings.json");
         let v: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
 

@@ -20,10 +20,12 @@
 //! `OnPath` 就能命中；Windows 上生成的是 `claude.cmd`，`exe_on_path("claude.exe")` 看不见它，
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
+pub mod telemetry;
 pub mod transcript;
 
 use crate::{
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
+    caps::TelemetryCap,
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},
     id::{self, AgentId},
     launch::{LaunchCandidate, LaunchSpec, Root},
@@ -125,6 +127,26 @@ impl AgentPlugin for Claude {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn process_names(&self) -> &'static [&'static str] {
+        &["claude", "claude.exe"]
+    }
+    fn resume_args(&self) -> &'static [&'static str] {
+        &["--resume"]
+    }
+    fn install_script(&self, windows: bool) -> Option<String> {
+        Some(if windows {
+            "irm https://claude.ai/install.ps1 | iex".into()
+        } else {
+            "curl -fsSL https://claude.ai/install.sh | bash".into()
+        })
+    }
+    /// claude 把任务标题写进标签页 → meowo-app 可按标题精确切标签，无需我们补 token。
+    fn sets_terminal_tab_title(&self) -> bool {
+        true
+    }
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
     }
 }
 

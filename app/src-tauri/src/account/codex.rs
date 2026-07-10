@@ -268,7 +268,7 @@ fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
 
 /// 凭据位置由实况变体给出（`Installation.auth.credentials`），不再在此拼路径。
 fn read_auth_json() -> Option<Value> {
-    let path = meowo_reporter::codex::codex_install()?.credentials_path()?;
+    let path = meowo_agent::installation(meowo_agent::id::CODEX)?.credentials_path()?;
     let s = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&s).ok()
 }
@@ -292,7 +292,7 @@ impl ProviderAccount for CodexProviderAccount {
 
     fn usage(&self, _force: bool) -> Option<ProviderUsage> {
         // 纯本地，无网络，force 参数忽略
-        let home = meowo_reporter::codex::codex_home()?;
+        let home = meowo_agent::installation(meowo_agent::id::CODEX).map(|i| i.data_dir)?;
         let rollout = find_latest_rollout(&home)?;
         let payload = tail_scan_token_count(&rollout)?;
         Some(parse_codex_usage(&payload))

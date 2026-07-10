@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 /// codex 在本机的实况（数据目录/hooks 规格/凭据/启动 argv）。变体表见
 /// `meowo_agent::plugins::codex`：数据目录 `CODEX_HOME` 优先，否则 `~/.codex`。
 /// 检测/接线/状态/账号/会话读取全部经此一处解析路径。
-pub fn codex_install() -> Option<meowo_agent::Installation> {
-    meowo_agent::by_id("codex")?.resolve()
+pub fn codex_install() -> Option<crate::Installation> {
+    crate::registry::installation(crate::id::CODEX)
 }
 
 /// codex 数据根。`codex_install()` 的便捷取值。
@@ -145,7 +145,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
 
 /// codex 会话最近上下文占用：定位 rollout（hook 的 transcript_path 优先，否则按 id 找），
 /// 尾部读取最后一条 token_count。定位/解析失败返回 None。
-pub fn read_context(transcript_path: Option<&str>, session_id: &str) -> Option<crate::agent::ContextUsage> {
+pub fn read_context(transcript_path: Option<&str>, session_id: &str) -> Option<crate::caps::ContextUsage> {
     let path = transcript_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
@@ -157,7 +157,26 @@ pub fn read_context(transcript_path: Option<&str>, session_id: &str) -> Option<c
         return None;
     }
     let pct = (used * 100 / window).clamp(0, 100);
-    Some(crate::agent::ContextUsage { used_pct: pct, window })
+    Some(crate::caps::ContextUsage { used_pct: pct, window })
+}
+
+// ═══ 能力槽 ═══
+
+pub struct CodexTelemetry;
+pub static TELEMETRY: CodexTelemetry = CodexTelemetry;
+
+impl crate::caps::TelemetryCap for CodexTelemetry {
+    /// codex 的 Stop hook 直带 AI 正文（同 claude）；模型 Stop 不带，从 rollout 的 turn_context 补。
+    fn stop_outputs(&self, ctx: &crate::caps::HookContext) -> crate::caps::StopOutputs {
+        crate::caps::StopOutputs {
+            last_ai: ctx.last_assistant_message.map(str::to_string),
+            model: read_model(ctx.transcript_path, ctx.session_id),
+        }
+    }
+
+    fn read_context(&self, ctx: &crate::caps::HookContext) -> Option<crate::caps::ContextUsage> {
+        read_context(ctx.transcript_path, ctx.session_id)
+    }
 }
 
 #[cfg(test)]

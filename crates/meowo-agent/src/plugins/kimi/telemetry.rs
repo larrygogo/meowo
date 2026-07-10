@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 /// `meowo_agent::plugins::kimi`：新版 Node「Kimi Code」`~/.kimi-code` 优先，旧 Python 版
 /// `kimi-cli` 的 `~/.kimi` 兼容（两者 hook 格式一致）；都没装则给出新版的默认落点。
 /// 检测/接线/状态/账号凭据/会话读取全部经此一处解析路径。
-pub fn kimi_install() -> Option<meowo_agent::Installation> {
-    meowo_agent::by_id("kimi")?.resolve()
+pub fn kimi_install() -> Option<crate::Installation> {
+    crate::registry::installation(crate::id::KIMI)
 }
 
 /// kimi 数据根。`kimi_install()` 的便捷取值——调用方只关心目录时用它。
@@ -209,7 +209,7 @@ pub fn context_window(model_alias: &str) -> i64 {
 
 /// 读某 kimi 会话最近的上下文占用：wire.jsonl 尾部取最后一条 usage.record，used/window 算百分比。
 /// 定位/读/解析失败返回 None。大文件尾部有界读（与 read_summary 同款）。
-pub fn read_context(session_id: &str) -> Option<crate::agent::ContextUsage> {
+pub fn read_context(session_id: &str) -> Option<crate::caps::ContextUsage> {
     let wire = session_dir(session_id)?
         .join("agents")
         .join("main")
@@ -226,7 +226,7 @@ pub fn read_context(session_id: &str) -> Option<crate::agent::ContextUsage> {
         return None;
     }
     let pct = (used * 100 / window).clamp(0, 100);
-    Some(crate::agent::ContextUsage { used_pct: pct, window })
+    Some(crate::caps::ContextUsage { used_pct: pct, window })
 }
 
 /// 把某 kimi 会话改成自定义标题：改写 session `state.json` 的 `title` + `isCustomTitle=true`
@@ -257,6 +257,29 @@ pub fn set_custom_title(session_id: &str, title: &str) -> bool {
         return false;
     }
     std::fs::rename(&tmp, &path).is_ok()
+}
+
+// ═══ 能力槽 ═══
+
+pub struct KimiTelemetry;
+pub static TELEMETRY: KimiTelemetry = KimiTelemetry;
+
+impl crate::caps::TelemetryCap for KimiTelemetry {
+    /// kimi 的 Stop hook 不带正文/模型 → 从 wire.jsonl 一次读出两者（避免双读）。
+    fn stop_outputs(&self, ctx: &crate::caps::HookContext) -> crate::caps::StopOutputs {
+        match read_summary(ctx.session_id) {
+            Some(s) => crate::caps::StopOutputs { last_ai: s.last_ai, model: s.model },
+            None => crate::caps::StopOutputs::default(),
+        }
+    }
+
+    fn read_context(&self, ctx: &crate::caps::HookContext) -> Option<crate::caps::ContextUsage> {
+        read_context(ctx.session_id)
+    }
+
+    fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
+        set_custom_title(session_id, title)
+    }
 }
 
 #[cfg(test)]

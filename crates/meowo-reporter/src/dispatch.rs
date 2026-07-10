@@ -47,7 +47,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: AgentId) -
                     }
                     _ => { store.touch_session(sid, now_ms)?; }
                 }
-                if let Some(c) = crate::agent::for_agent(provider).read_context(ev) {
+                if let Some(c) = read_context(provider, ev) {
                     store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
                 }
             }
@@ -58,7 +58,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: AgentId) -
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 // 最近 AI 正文 + 模型由 agent 决定来源：claude 用 Stop hook 携带的正文（模型走 statusline）；
                 // kimi 的 Stop hook 不带，读会话 wire.jsonl 一次出正文 + 模型。
-                let out = crate::agent::for_agent(provider).stop_outputs(ev);
+                let out = telemetry(provider)
+                    .map(|t| t.stop_outputs(&ev.agent_ctx()))
+                    .unwrap_or_default();
                 if let Some(msg) = out.last_ai {
                     store.set_last_ai_text(sid, &msg)?;
                 }
@@ -67,7 +69,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: AgentId) -
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
-                if let Some(c) = crate::agent::for_agent(provider).read_context(ev) {
+                if let Some(c) = read_context(provider, ev) {
                     store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
                 }
             }
@@ -105,9 +107,21 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: AgentId) -
     Ok(())
 }
 
+/// 该 agent 的遥测能力（未注册 / 无此能力 → None，调用方整段跳过）。
+fn telemetry(provider: AgentId) -> Option<&'static dyn meowo_agent::TelemetryCap> {
+    meowo_agent::by_id(provider.as_str())?.telemetry()
+}
+
+/// 从会话日志读上下文占用。claude 无此能力（走 statusline），返回 None。
+fn read_context(provider: AgentId, ev: &HookEvent) -> Option<meowo_agent::ContextUsage> {
+    telemetry(provider)?.read_context(&ev.agent_ctx())
+}
+
 fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: AgentId) -> Result<(), StoreError> {
     // 是否由 transcript 解析标题由 agent 决定（claude 是；kimi/codex 否，靠首条 prompt 命名）。
-    let agent = crate::agent::for_agent(provider);
+    let Some(agent) = telemetry(provider) else {
+        return Ok(());
+    };
     if !agent.resolves_transcript_title() {
         return Ok(());
     }
@@ -135,7 +149,7 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: A
 /// 同名分不清）。meowo-reporter 是 hook 子进程、继承本会话的 ConPTY，写 CONOUT$ 只影响自己这个标签。
 /// 非 Windows / 非 WT(CONOUT$ 打不开) 静默 no-op。
 fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: AgentId) {
-    if !crate::agent::for_agent(provider).writes_tab_token() {
+    if !meowo_agent::by_id(provider.as_str()).is_some_and(|p| p.writes_tab_token()) {
         return;
     }
     let sid8 = crate::tabtitle::short_sid(&ev.session_id);

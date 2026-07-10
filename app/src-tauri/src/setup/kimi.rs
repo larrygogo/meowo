@@ -12,10 +12,10 @@ impl super::ProviderSetup for KimiSetup {
         meowo_agent::id::KIMI
     }
     fn detect(&self) -> bool {
-        meowo_reporter::kimi::kimi_install().is_some_and(|i| i.is_configured())
+        meowo_agent::installation(meowo_agent::id::KIMI).is_some_and(|i| i.is_configured())
     }
     fn apply(&self) -> Option<RepairReason> {
-        let Some(inst) = meowo_reporter::kimi::kimi_install() else {
+        let Some(inst) = meowo_agent::installation(meowo_agent::id::KIMI) else {
             eprintln!("Meowo repair[kimi]: 解析不到 kimi 安装实况，跳过");
             return Some(RepairReason::NotDetected);
         };
@@ -38,7 +38,7 @@ mod tests {
     fn dryrun_kimi() {
         use crate::setup::ProviderSetup;
         let reason = super::KimiSetup.apply();
-        let inst = meowo_reporter::kimi::kimi_install().expect("应解析出实况");
+        let inst = meowo_agent::installation(meowo_agent::id::KIMI).expect("应解析出实况");
         let text = std::fs::read_to_string(inst.config_path()).unwrap_or_default();
         let doc: toml_edit::DocumentMut = text.parse().expect("产物应为合法 TOML");
         let hooks = doc.get("hooks").and_then(|h| h.as_array_of_tables()).map(|a| a.len()).unwrap_or(0);

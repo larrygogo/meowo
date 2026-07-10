@@ -14,7 +14,10 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任），
 //! 它要 SHA-256 与原子写，不在本层——见 meowo-app 的 `SetupBehavior::after_write`。
 
+pub mod telemetry;
+
 use crate::{
+    caps::TelemetryCap,
     auth::{AuthScheme, CredentialSource},
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},
     id::{self, AgentId},
@@ -87,6 +90,30 @@ impl AgentPlugin for Codex {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn process_names(&self) -> &'static [&'static str] {
+        // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中
+        // codex(.exe) 即可。不收 node.exe（过宽，会把任意 node 进程误判为 agent）。
+        &["codex", "codex.exe"]
+    }
+    fn resume_args(&self) -> &'static [&'static str] {
+        &["resume"]
+    }
+    fn install_script(&self, windows: bool) -> Option<String> {
+        Some(if windows {
+            "irm https://chatgpt.com/codex/install.ps1 | iex".into()
+        } else {
+            "curl -fsSL https://chatgpt.com/codex/install.sh | sh".into()
+        })
+    }
+    // sets_terminal_tab_title / writes_tab_token 均取默认 false：
+    // codex 不写「任务标题」式标签名（meowo-app 无法按任务名匹配），且它持续用 SetWindowTitle 管理
+    // 标签标题(spinner+project，如 "⠹ larry")，会盖掉我们写的任何 token，无 session_id 组件、无禁用
+    // 开关可绕过(实测 0.142.3=当前最新发布版)。其源码里「tui.terminal_title=[] 关闭标题管理」只在未
+    // 发布主干，已发布版 [] 反而 clear 成终端默认(路径)。故 codex 的精确切标签暂不可达，meowo-app 走
+    // 窗口级兜底。待 codex 发布 [] 禁用后，覆写 writes_tab_token 返回 true 即与 kimi 同。
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
     }
 }
 

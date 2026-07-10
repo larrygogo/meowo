@@ -134,10 +134,10 @@ impl super::ProviderSetup for CodexSetup {
         meowo_agent::id::CODEX
     }
     fn detect(&self) -> bool {
-        meowo_reporter::codex::codex_install().is_some_and(|i| i.is_configured())
+        meowo_agent::installation(meowo_agent::id::CODEX).is_some_and(|i| i.is_configured())
     }
     fn apply(&self) -> Option<super::RepairReason> {
-        let Some(inst) = meowo_reporter::codex::codex_install() else {
+        let Some(inst) = meowo_agent::installation(meowo_agent::id::CODEX) else {
             eprintln!("Meowo repair[codex]: 解析不到 codex 安装实况，跳过");
             return Some(super::RepairReason::NotDetected);
         };
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn snake_event_covers_all_codex_events() {
         // 绊线：变体表新增事件而忘了补 snake_case 映射 → trusted_hash 键写不出，此处失败。
-        let inst = meowo_reporter::codex::codex_install().unwrap();
+        let inst = meowo_agent::installation(meowo_agent::id::CODEX).unwrap();
         for ev in inst.hooks.events {
             assert!(!snake_event(ev.name).is_empty(), "{} 缺 snake_case 映射", ev.name);
         }
@@ -328,7 +328,7 @@ mod tests {
     fn dryrun_codex() {
         use crate::setup::ProviderSetup;
         let reason = CodexSetup.apply();
-        let inst = meowo_reporter::codex::codex_install().unwrap();
+        let inst = meowo_agent::installation(meowo_agent::id::CODEX).unwrap();
         let text = std::fs::read_to_string(inst.config_path()).unwrap_or_default();
         let root: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
         eprintln!("变体={} 配置={}", inst.variant_tag, inst.config_path().display());

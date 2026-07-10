@@ -34,6 +34,16 @@ impl HookEvent {
         serde_json::from_str(s)
     }
 
+    /// 投影成 agent 能力所需的那几个字段。能力层刻意不认识 `HookEvent` 本身——它依赖
+    /// `meowo_store::TodoInput`，让插件层反向依赖 DB 层。
+    pub fn agent_ctx(&self) -> meowo_agent::HookContext<'_> {
+        meowo_agent::HookContext {
+            session_id: &self.session_id,
+            transcript_path: self.transcript_path.as_deref(),
+            last_assistant_message: self.last_assistant_message.as_deref(),
+        }
+    }
+
     /// 从 tool_input.todos 提取 TodoInput 列表（非 TodoWrite 或无 todos 时返回空）。
     pub fn todo_items(&self) -> Vec<TodoInput> {
         let Some(input) = &self.tool_input else { return Vec::new() };

@@ -280,8 +280,7 @@ fn live_sessions_blocking(
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
         // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
         // liveness 线程/本函数互相阻塞在同一把锁上。
-        let info = meowo_reporter::agent::resolve(Some(&s.provider))
-            .and_then(|a| a.transcript())
+        let info = agent_transcript(&s.provider)
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
                     .and_then(|p| p.to_str().map(str::to_string))
@@ -799,7 +798,7 @@ fn focus_session(
     {
         // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。
         // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
-        let title_based = meowo_reporter::agent::resolve(provider.as_deref())
+        let title_based = meowo_agent::resolve(provider.as_deref())
             .is_some_and(|a| a.sets_terminal_tab_title());
         // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
         // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
@@ -815,7 +814,7 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        let agent = meowo_reporter::agent::resolve(provider.as_deref());
+        let agent = meowo_agent::resolve(provider.as_deref());
         // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
@@ -1070,7 +1069,7 @@ fn pid_alive_agent_quick(pid: i64) -> bool {
     {
         snapshot_processes()
             .get(&(pid as u32))
-            .map(|(_, name)| meowo_reporter::agent::is_agent_process(name))
+            .map(|(_, name)| meowo_agent::is_agent_process(name))
             .unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
@@ -1107,18 +1106,19 @@ fn prepare_resume(
         }
     })();
     let _ = app.emit("board-changed", ());
-    let agent = meowo_reporter::agent::resolve(Some(provider));
+    let agent = meowo_agent::resolve(Some(provider));
     // resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空或失真（旧会话 / 压缩漏
     // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
     // 其余原样采信 DB——此前这里无条件走 claude 的解析路径，非 claude 会话靠「在 ~/.claude/projects
     // 里找不到就回退 DB cwd」的巧合才拿到正确结果。
-    let resolved = match agent.and_then(|a| a.transcript()) {
+    let resolved = match agent.and_then(|a| a.telemetry()).and_then(|t| t.transcript()) {
         Some(spec) => spec.resolve_cwd(cwd, session_id),
         None => meowo_agent::default_resolve_cwd(cwd),
     };
     // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
-    // 未知 agent → 空 argv：调用方的 spawn 会失败并回滚复活，好过拿 claude 的参数去拉起别的 CLI。
-    let resume = agent.map(|a| a.resume_args(session_id)).unwrap_or_default();
+    // 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：调用方的 spawn 会失败并回滚复活，
+    // 好过拿 claude 的参数去拉起别的 CLI。
+    let resume = agent.and_then(|a| a.resume_argv(session_id)).unwrap_or_default();
     (revived, resolved, resume)
 }
 
@@ -1234,8 +1234,8 @@ async fn new_session(
     terminal: Option<String>,
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
-    let agent = meowo_reporter::agent::resolve(Some(&provider)).ok_or("未知 agent")?;
-    let argv = agent.launch_args();
+    let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let argv = agent.launch_argv();
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
@@ -1379,7 +1379,7 @@ fn build_install_command(script_path: &str) -> std::process::Command {
 /// 前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
-    let agent = meowo_reporter::agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
     let provider = agent.id().as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
     let script = agent
         .install_script(cfg!(target_os = "windows"))
@@ -1460,6 +1460,12 @@ fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) 
 /// （command 报错、读操作跳过 agent 专属能力）。空/缺省 → 默认 agent（老会话没写过 provider 列）。
 fn agent_id(provider: &str) -> Option<meowo_agent::AgentId> {
     meowo_agent::resolve(Some(provider)).map(|p| p.id())
+}
+
+/// 该 provider 的 transcript 规格（未知 agent / 无遥测能力 / 不读 transcript → None）。
+/// 只有 claude 有：codex/kimi 的标题走首条 prompt、预览与模型走 Stop hook。
+fn agent_transcript(provider: &str) -> Option<&'static dyn meowo_agent::TranscriptSpec> {
+    meowo_agent::resolve(Some(provider))?.telemetry()?.transcript()
 }
 
 /// 某 agent 在本机的安装实况。直接走插件注册表——不再按 id 分支到各自的解析入口。
@@ -1590,8 +1596,8 @@ fn rename_session(
 
     // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）；
     // 未知 agent 则只改 DB 标题，不去猜它的持久层格式。
-    if let Some(a) = meowo_reporter::agent::resolve(provider.as_deref()) {
-        let _ = a.write_rename(&session_id, cwd.as_deref(), &title);
+    if let Some(t) = meowo_agent::resolve(provider.as_deref()).and_then(|a| a.telemetry()) {
+        let _ = t.write_rename(&session_id, cwd.as_deref(), &title);
     }
 
     // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
@@ -1732,7 +1738,7 @@ fn run_db_watch_loop(
 ///
 /// Windows 会复用 pid：会话结束后它的旧 pid 可能被别的进程（如 esbuild）占用，
 /// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。故按进程名甄别是否仍是 agent 本体——
-/// 复用 meowo_reporter::agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
+/// 复用 meowo_agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
 /// 与 owner_pid 写入侧同一事实源），避免子串误匹配（如名字恰含 kimi 的无关进程）。
 fn pid_is_agent(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
@@ -1741,7 +1747,7 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
     #[cfg(target_os = "windows")]
     {
         sys.process(Pid::from_u32(pid as u32))
-            .map(|p| meowo_reporter::agent::is_agent_process(&p.name().to_string_lossy()))
+            .map(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
             .unwrap_or(false)
     }
     // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
@@ -1771,7 +1777,7 @@ pub(crate) fn pid_is_agent_ps(pid: i64) -> bool {
     else {
         return true; // 查不了 ≠ 已死：宁可暂当存活，等下一轮能查时再判
     };
-    meowo_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
+    meowo_agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
 }
 
 /// macOS/Unix：一次 `ps -axo pid=,comm=` 批量取「进程名含 claude」的 pid 集合，
@@ -1790,7 +1796,7 @@ fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
         let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
         // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
         let comm = it.collect::<Vec<_>>().join(" ");
-        if meowo_reporter::agent::is_agent_process(&comm) {
+        if meowo_agent::is_agent_process(&comm) {
             set.insert(pid);
         }
     }
@@ -1976,8 +1982,7 @@ fn spawn_liveness_watch(
                     // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
                     // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
                     let meowo_agent::TranscriptInfo { title, error, .. } =
-                        meowo_reporter::agent::resolve(Some(&s.provider))
-                            .and_then(|a| a.transcript())
+                        agent_transcript(&s.provider)
                             .and_then(|spec| {
                                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
                                     .and_then(|p| p.to_str().map(str::to_string))
@@ -1993,7 +1998,7 @@ fn spawn_liveness_watch(
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
-                    let title_based = meowo_reporter::agent::resolve(Some(&s.provider))
+                    let title_based = meowo_agent::resolve(Some(&s.provider))
                         .is_some_and(|a| a.sets_terminal_tab_title());
                     // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
                     let tab_token = {
@@ -2237,7 +2242,7 @@ async fn available_terminals() -> Vec<String> {
 #[tauri::command]
 async fn available_agents() -> Vec<String> {
     tauri::async_runtime::spawn_blocking(|| {
-        meowo_reporter::agent::all()
+        meowo_agent::all()
             .iter()
             .filter(|a| a.is_installed())
             .map(|a| a.id().as_str().to_string())

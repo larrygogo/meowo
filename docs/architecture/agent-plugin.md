@@ -126,10 +126,25 @@ pub trait KeychainPort: Sync {
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| 1 | **身份收敛**:删 `ProviderKey`,全仓改用 `AgentId`;store 的 provider 列退化为字符串;修掉未知降级 claude 的 bug | 三个 enum↔registry 绊线单测中的两个变得无意义并删除 |
-| 2 | **注册表合一**:`Agent`(reporter)/ `ProviderSetup` / `ProviderAccount` 三个 trait 折进 `AgentPlugin` 的能力槽;`lib.rs` 两处硬 match 消失 | 全仓只剩一张 `ALL` 注册表 |
+| 1 ✅ | **身份收敛**:删 `ProviderKey`,全仓改用 `AgentId`;store 的 provider 列退化为字符串;修掉未知降级 claude 的 bug | 三个 enum↔registry 绊线单测中的两个变得无意义并删除 |
+| 2 ✅ | **注册表合一**:reporter 的 `Agent` trait 折进 `AgentPlugin`;transcript 抽象迁出 store;`lib.rs` 两处硬 match 消失 | reporter 不再持有第二张注册表 |
 | 3 | **端口注入**:定义 `api/ports.rs`;account 的联网逻辑与 setup 的 amend/after_write 搬进 `plugins/<id>/` | app 的 `account/` 与 `setup/` 只剩端口实现与编排 |
 | 4 | **前端描述符**:`list_agents()` 下发;删前端三张表与 claude 特判 | 加 agent 前端零改动 |
+
+### Phase 2 落地记录
+
+`meowo-reporter` 的 `Agent` trait 是 `AgentPlugin` 的一份影子副本(同样的 `key()`、同样的 `ALL`),
+两者靠一个配对单测钉在一起。合并后:
+
+- **声明式的**(进程名、resume 子命令、安装脚本、是否写标签标题/token)成了 `AgentPlugin` 上带默认值的方法。
+- **有逻辑的**(Stop 正文/模型、上下文占用、transcript 规格、重命名回写)进了 `TelemetryCap` 能力槽,
+  不支持就返回 `None`,由调用方降级。
+- resume/启动 argv 不再各 agent 手写:`resume_argv()` = `launch_argv()` + 声明的子命令 + session_id,
+  杜绝「能启动却恢复不了」。
+- 能力方法不接 reporter 的 `HookEvent`(它依赖 `meowo_store::TodoInput`,会让插件层反向依赖 DB 层),
+  改传只含所需字段的 `HookContext`。
+
+`meowo-store` 现在只剩 `error` / `migrations` / `models` / `query` / `store` 五个模块,不认识任何 agent。
 
 ## 验收:加一个 gemini 要动哪些文件
 

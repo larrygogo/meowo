@@ -8,7 +8,10 @@
 //! 两者的 hook 配置格式与 hook stdin 载荷（session_id/cwd/hook_event_name）实测一致，故共用
 //! 同一份 [`HookSpec`]——差的只是目录与「空内联数组」这一形态，都已在声明里表达。
 
+pub mod telemetry;
+
 use crate::{
+    caps::TelemetryCap,
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig, RepairReason},
     id::{self, AgentId},
@@ -110,6 +113,30 @@ impl AgentPlugin for Kimi {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn process_names(&self) -> &'static [&'static str] {
+        &["kimi", "kimi.exe"]
+    }
+    fn resume_args(&self) -> &'static [&'static str] {
+        &["-r"]
+    }
+    fn install_script(&self, windows: bool) -> Option<String> {
+        // 装当前 Node 版 Kimi Code（装到 ~/.kimi-code/bin/kimi.exe，与 modern 变体的候选一致）。
+        // 注意路径里的 `/kimi-code/`——不带它的 code.kimi.com/install.ps1 装的是旧 Python `kimi-cli`
+        // （落到 ~/.local/bin/kimi-cli.exe，检测不到）。
+        Some(if windows {
+            "irm https://code.kimi.com/kimi-code/install.ps1 | iex".into()
+        } else {
+            "curl -LsSf https://code.kimi.com/kimi-code/install.sh | bash".into()
+        })
+    }
+    /// kimi 不写标签标题、也不抢 → 由 meowo-reporter 在 hook 时补 session_id token，
+    /// meowo-app 据此精确切到该标签（已验证）。
+    fn writes_tab_token(&self) -> bool {
+        true
+    }
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
     }
 }
 
