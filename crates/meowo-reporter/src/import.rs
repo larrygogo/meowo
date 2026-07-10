@@ -77,9 +77,9 @@ pub fn import_from_dir(
     for (mtime, cc_session_id, path, dir_name) in found {
         let title = path
             .to_str()
-            .and_then(meowo_store::title::title_from_transcript)
+            .and_then(meowo_agent::plugins::claude::transcript::title_from_transcript)
             .unwrap_or_else(|| "(未命名会话)".to_string());
-        let cwd = path.to_str().and_then(meowo_store::title::cwd_from_transcript);
+        let cwd = path.to_str().and_then(meowo_agent::plugins::claude::transcript::cwd_from_transcript);
         let (root, name) = match cwd.as_deref() {
             Some(c) => project_root_and_name(c),
             None => fallback_project(&dir_name),

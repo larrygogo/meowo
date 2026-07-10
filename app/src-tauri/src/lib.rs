@@ -47,7 +47,7 @@ use tauri::{Emitter, Manager, State};
 struct AppState {
     db_path: PathBuf,
     /// transcript 增量解析缓存（与后台轮询线程共享 Arc）：避免每次刷新重读整文件。
-    tx_cache: Arc<Mutex<meowo_store::TranscriptCache>>,
+    tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
 }
 
 fn now_ms() -> i64 {
@@ -218,7 +218,7 @@ fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event
 
 fn live_sessions_blocking(
     db_path: &PathBuf,
-    tx_cache: &Mutex<meowo_store::TranscriptCache>,
+    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
     filter: &str,
     search: Option<&str>,
     before_last_event_at: Option<i64>,
@@ -285,7 +285,7 @@ fn live_sessions_blocking(
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
                     .and_then(|p| p.to_str().map(str::to_string))
-                    .map(|path| meowo_store::TranscriptCache::analyze_shared(tx_cache, spec, &path))
+                    .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
             });
         if let Some(info) = info {
             if let Some(t) = info.title {
@@ -1107,14 +1107,18 @@ fn prepare_resume(
         }
     })();
     let _ = app.emit("board-changed", ());
-    // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
-    // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
-    let resolved = meowo_store::title::resolve_cwd(cwd, session_id);
+    let agent = meowo_reporter::agent::resolve(Some(provider));
+    // resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空或失真（旧会话 / 压缩漏
+    // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
+    // 其余原样采信 DB——此前这里无条件走 claude 的解析路径，非 claude 会话靠「在 ~/.claude/projects
+    // 里找不到就回退 DB cwd」的巧合才拿到正确结果。
+    let resolved = match agent.and_then(|a| a.transcript()) {
+        Some(spec) => spec.resolve_cwd(cwd, session_id),
+        None => meowo_agent::default_resolve_cwd(cwd),
+    };
     // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
     // 未知 agent → 空 argv：调用方的 spawn 会失败并回滚复活，好过拿 claude 的参数去拉起别的 CLI。
-    let resume = meowo_reporter::agent::resolve(Some(provider))
-        .map(|a| a.resume_args(session_id))
-        .unwrap_or_default();
+    let resume = agent.map(|a| a.resume_args(session_id)).unwrap_or_default();
     (revived, resolved, resume)
 }
 
@@ -1927,7 +1931,7 @@ fn show_session_notification(
 fn spawn_liveness_watch(
     app: tauri::AppHandle,
     db_path: PathBuf,
-    tx_cache: Arc<Mutex<meowo_store::TranscriptCache>>,
+    tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
 ) {
     use std::collections::HashMap;
     std::thread::spawn(move || {
@@ -1971,7 +1975,7 @@ fn spawn_liveness_watch(
 
                     // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
                     // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-                    let meowo_store::TranscriptInfo { title, error, .. } =
+                    let meowo_agent::TranscriptInfo { title, error, .. } =
                         meowo_reporter::agent::resolve(Some(&s.provider))
                             .and_then(|a| a.transcript())
                             .and_then(|spec| {
@@ -1979,7 +1983,7 @@ fn spawn_liveness_watch(
                                     .and_then(|p| p.to_str().map(str::to_string))
                                     .map(|path| {
                                         // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
-                                        meowo_store::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
+                                        meowo_agent::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
                                     })
                             })
                             .unwrap_or_default();
@@ -2706,8 +2710,8 @@ mod win_constrain {
 pub fn run() {
     migrate_legacy_data();
     let path = db_path();
-    let tx_cache: Arc<Mutex<meowo_store::TranscriptCache>> =
-        Arc::new(Mutex::new(meowo_store::TranscriptCache::new()));
+    let tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>> =
+        Arc::new(Mutex::new(meowo_agent::TranscriptCache::new()));
     tauri::Builder::default()
         // window-state 只持久化/恢复「位置」等，不恢复「尺寸」：main 窗口尺寸改由前端 localStorage
         // (SIZE_KEY) 单独持有。否则吸附态退出会把「细条几何」存进 window-state，与 localStorage 的吸附态

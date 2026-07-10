@@ -20,6 +20,8 @@
 //! `OnPath` 就能命中；Windows 上生成的是 `claude.cmd`，`exe_on_path("claude.exe")` 看不见它，
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
+pub mod transcript;
+
 use crate::{
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},

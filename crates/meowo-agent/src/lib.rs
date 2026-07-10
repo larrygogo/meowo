@@ -23,6 +23,7 @@ pub mod id;
 pub mod launch;
 pub mod plugins;
 pub mod registry;
+pub mod transcript;
 pub mod variant;
 
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
@@ -30,6 +31,9 @@ pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, 
 pub use id::AgentId;
 pub use launch::{LaunchCandidate, LaunchSpec, Root};
 pub use registry::{all, by_id, resolve, AgentPlugin, DEFAULT_ID};
+pub use transcript::{
+    default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+};
 pub use variant::{DataDirSpec, Installation, Variant};
 
 use std::path::{Path, PathBuf};

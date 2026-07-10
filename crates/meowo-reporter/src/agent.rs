@@ -66,7 +66,7 @@ pub trait Agent: Sync {
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool;
     /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。claude 返回 ClaudeTranscript；
     /// codex/kimi 暂无（None）——它们的标题走首条 prompt、预览/模型走 stop_outputs，不读 transcript 分析。
-    fn transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec> {
+    fn transcript(&self) -> Option<&'static dyn meowo_agent::TranscriptSpec> {
         None
     }
 }
@@ -115,8 +115,8 @@ impl Agent for ClaudeAgent {
     fn write_rename(&self, session_id: &str, cwd: Option<&str>, title: &str) -> bool {
         write_claude_custom_title(session_id, cwd, title)
     }
-    fn transcript(&self) -> Option<&'static dyn meowo_store::TranscriptSpec> {
-        Some(&meowo_store::CLAUDE_TRANSCRIPT)
+    fn transcript(&self) -> Option<&'static dyn meowo_agent::TranscriptSpec> {
+        Some(&meowo_agent::plugins::claude::transcript::CLAUDE_TRANSCRIPT)
     }
 }
 
@@ -250,11 +250,14 @@ impl Agent for CodexAgent {
 /// 使 `claude --resume` 列表与贴纸都显示新名。定位失败/打开失败/写失败返回 false。
 /// session_id 已由命令层校验为安全形态（无路径分隔符/穿越），此处直接拼路径。
 fn write_claude_custom_title(session_id: &str, cwd: Option<&str>, title: &str) -> bool {
+    use meowo_agent::plugins::claude::transcript as ct;
+    use meowo_agent::TranscriptSpec;
     use std::io::Write;
-    let Some(path) = meowo_store::title::resolve_cwd(cwd, session_id)
-        .and_then(|c| meowo_store::title::reconstruct_transcript_path(&c, session_id))
+    let Some(path) = ct::CLAUDE_TRANSCRIPT
+        .resolve_cwd(cwd, session_id)
+        .and_then(|c| ct::reconstruct_transcript_path(&c, session_id))
         .filter(|p| p.exists())
-        .or_else(|| meowo_store::title::find_transcript_by_session(session_id))
+        .or_else(|| ct::find_transcript_by_session(session_id))
     else {
         return false;
     };
