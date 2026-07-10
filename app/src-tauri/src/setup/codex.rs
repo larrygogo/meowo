@@ -187,9 +187,12 @@ mod tests {
     // 相关测试随之搬到该 crate（见 config.rs 的 mod codex）。此处只留 trusted_hash 副作用的测试。
 
     /// 用变体表声明的格式适配器造出「已接线」的 hooks.json，供下方 trusted_hash 测试消费。
+    ///
+    /// 直接从注册表取 `HookSpec`（纯声明），不经 `codex_install()`——后者要解析真实 home
+    /// （`USERPROFILE`/`HOME`），会让本测试无谓地依赖环境变量。这里根本用不到安装实况。
     fn wired(reporter: &str) -> Value {
-        let inst = meowo_reporter::codex::codex_install().expect("codex 变体表应可解析");
-        match inst.hooks.ensure_hooks("{\"hooks\":{}}", reporter, "codex") {
+        let hooks = meowo_agent::by_id("codex").expect("codex 应已注册").variants()[0].hooks;
+        match hooks.ensure_hooks("{\"hooks\":{}}", reporter, "codex") {
             meowo_agent::EnsureOutcome::Changed(s) => serde_json::from_str(&s).unwrap(),
             other => panic!("期望 Changed，实得 {other:?}"),
         }
