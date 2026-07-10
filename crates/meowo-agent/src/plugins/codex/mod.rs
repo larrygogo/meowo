@@ -14,6 +14,7 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任），
 //! 它要 SHA-256 与原子写，不在本层——见 meowo-app 的 `SetupBehavior::after_write`。
 
+pub mod account;
 pub mod telemetry;
 
 use crate::{
@@ -114,6 +115,9 @@ impl AgentPlugin for Codex {
     // 窗口级兜底。待 codex 发布 [] 禁用后，覆写 writes_tab_token 返回 true 即与 kimi 同。
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         Some(&telemetry::TELEMETRY)
+    }
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        Some(&account::ACCOUNT)
     }
 }
 

@@ -8,6 +8,7 @@
 //! 两者的 hook 配置格式与 hook stdin 载荷（session_id/cwd/hook_event_name）实测一致，故共用
 //! 同一份 [`HookSpec`]——差的只是目录与「空内联数组」这一形态，都已在声明里表达。
 
+pub mod account;
 pub mod telemetry;
 
 use crate::{
@@ -137,6 +138,9 @@ impl AgentPlugin for Kimi {
     }
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         Some(&telemetry::TELEMETRY)
+    }
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        Some(&account::ACCOUNT)
     }
 }
 

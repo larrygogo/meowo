@@ -1,5 +1,6 @@
 mod account;
 mod fsutil;
+mod ports;
 #[cfg(target_os = "macos")]
 mod macos;
 mod settings;
@@ -1285,7 +1286,7 @@ fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: Strin
         // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
         // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
         let ok = loop {
-            if account::for_agent(key).account().is_some() {
+            if account::account_of(key).is_some() {
                 break true;
             }
             if start.elapsed() >= TIMEOUT {
@@ -2146,13 +2147,12 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
 #[tauri::command]
 async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
     tauri::async_runtime::spawn_blocking(|| {
-        account::all()
-            .iter()
-            .map(|pa| account::ProviderAccountPayload {
-                provider: pa.id().as_str().to_string(),
-                account: pa.account(),
-                usage: account::read_cached_usage(pa.id()),
-                usage_supported: pa.usage_supported(),
+        account::all_with_account()
+            .map(|p| account::ProviderAccountPayload {
+                provider: p.id().as_str().to_string(),
+                account: account::account_of(p.id()),
+                usage: account::read_cached_usage(p.id()),
+                usage_supported: account::usage_supported(p.id()),
             })
             .collect()
     })
@@ -2163,20 +2163,12 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
 /// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频）。
 /// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
 #[tauri::command]
-async fn refresh_usage(provider: String) -> Result<account::ProviderUsage, String> {
+async fn refresh_usage(provider: String) -> Result<meowo_agent::ProviderUsage, String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let pa = account::for_agent(key);
-        match pa.usage(true) {
-            Some(u) => Ok(u),
-            None => {
-                if pa.usage_supported() {
-                    Err("UNAVAILABLE".into())
-                } else {
-                    Err(account::USAGE_UNSUPPORTED.into())
-                }
-            }
-        }
+    tauri::async_runtime::spawn_blocking(move || match account::usage_of(key, true) {
+        Some(u) => Ok(u),
+        None if account::usage_supported(key) => Err("UNAVAILABLE".into()),
+        None => Err(account::USAGE_UNSUPPORTED.to_string()),
     })
     .await
     .map_err(|e| e.to_string())?

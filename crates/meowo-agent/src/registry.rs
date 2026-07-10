@@ -50,6 +50,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 账号与用量。None = 该 agent 无账号概念，卡片不显示登录态与用量。
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        None
+    }
+
     // ═══ 以下由变体表派生，通常不必覆写 ═══
 
     /// 本机实况：逐变体 probe，命中即返回；都不中 → None（＝未安装）。

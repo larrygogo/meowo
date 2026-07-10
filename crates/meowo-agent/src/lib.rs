@@ -19,18 +19,24 @@
 //!
 //! 终局验收：加一个 agent 只需新增 `plugins/<new>/` 与 `registry.rs` 一行。
 
+pub mod account;
 pub mod auth;
 pub mod caps;
+pub mod codec;
+pub mod fsutil;
 pub mod config;
 pub mod id;
 pub mod launch;
 pub mod plugins;
+pub mod ports;
 pub mod registry;
 pub mod transcript;
 pub mod variant;
 
+pub use account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use caps::{ContextUsage, HookContext, StopOutputs, TelemetryCap};
+pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
 pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason};
 pub use id::AgentId;
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};

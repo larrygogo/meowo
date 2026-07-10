@@ -1,10 +1,13 @@
 //! Claude Code 账号、实时用量的读取与解析。
-//! 纯解析/判定/合并函数在此可单测；I/O 与网络见同文件后半部分。
+//! 纯解析/判定/合并函数在此可单测；I/O 与网络经注入的端口完成，见同文件后半部分。
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
+use crate::account::{
+    Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
+};
+use crate::ports::{Body, HttpRequest, Ports};
 
 /// Claude 账号原始信息（内部类型，供 ClaudeProvider::account() 转换使用）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -108,10 +111,6 @@ pub fn merge_credentials(
     out
 }
 
-/// 用量不可查的标记码：读不到可用的 Anthropic OAuth 凭据（多为第三方/中转登录，
-/// 或尚未在终端登录）。前端据此显示「当前登录方式不支持用量查询」而非通用报错。
-pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
-
 /// 凭据根是否缺少可用的 Anthropic OAuth（→ 第三方/非官方登录，用量接口不适用）。
 /// 判定：根缺失、缺 claudeAiOauth、或 access+refresh 双空。纯函数便于单测。
 pub fn oauth_credentials_missing(root: Option<&serde_json::Value>) -> bool {
@@ -128,27 +127,34 @@ const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 
-/// claude 的鉴权声明，取自插件层变体表（`meowo_agent::plugins::claude`）：OAuth client_id、
-/// 刷新端点、凭据位置不再是本文件里的一把常量——换个版本形态只改变体表一处。
-fn claude_auth() -> Option<&'static meowo_agent::AuthScheme> {
-    meowo_agent::installation(meowo_agent::id::CLAUDE)?.auth
+/// claude 的鉴权声明，取自变体表：OAuth client_id、刷新端点、凭据位置不再是本文件里的一把
+/// 常量——换个版本形态只改变体表一处。
+fn claude_auth() -> Option<&'static crate::AuthScheme> {
+    crate::registry::installation(crate::id::CLAUDE)?.auth
 }
 
 /// 账号信息住在 home 下的 `~/.claude.json`（**不在** data_dir 内，与凭据不同源），故不经
 /// `Installation`。
 fn claude_json_path() -> Option<PathBuf> {
-    super::home_dir().map(|h| h.join(".claude.json"))
+    crate::home_dir().map(|h| h.join(".claude.json"))
 }
 
-/// 非 macOS：Claude Code 把 OAuth 凭据写在 `<data_dir>/.credentials.json`（尊重
-/// `CLAUDE_CONFIG_DIR`）。macOS 改存 Keychain（见 keychain_* 函数）。
-#[cfg(not(target_os = "macos"))]
+/// Claude Code 把 OAuth 凭据写在 `<data_dir>/.credentials.json`（尊重 `CLAUDE_CONFIG_DIR`）。
+/// macOS 改存登录 Keychain，此路径仅作回退。
 fn credentials_path() -> Option<PathBuf> {
-    meowo_agent::installation(meowo_agent::id::CLAUDE)?.credentials_path()
+    crate::registry::installation(crate::id::CLAUDE)?.credentials_path()
 }
 
 fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
-    super::read_json(path)
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+/// 当前 Unix 毫秒。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// 读账号（~/.claude.json）。
@@ -156,121 +162,46 @@ pub fn read_account() -> Option<ClaudeAccountInfo> {
     parse_account(&read_json_file(&claude_json_path()?)?)
 }
 
-/// 原子写回 credentials 文件。仅非 macOS（macOS 写 Keychain）。
-#[cfg(not(target_os = "macos"))]
-fn write_credentials_atomic(path: &std::path::Path, value: &serde_json::Value) -> Result<(), String> {
-    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic(path, &body).map_err(|e| e.to_string())
-}
-
-/// macOS 上 Claude Code 把 OAuth 凭据存在登录 Keychain 的通用密码里（不写 .credentials.json）。
-/// service 与「写回时的 account 兜底值」均来自变体表的 `CredentialSource::KeychainOrFile`。
-#[cfg(target_os = "macos")]
+/// Keychain 条目的 service 名与「写回时的 account 兜底值」，均来自变体表的
+/// `CredentialSource::KeychainOrFile`。变体表被改成非 Keychain 形态（不该发生）→ 退回历史常量。
 fn keychain_spec() -> (&'static str, &'static str) {
     match claude_auth().map(|a| a.credentials) {
-        Some(meowo_agent::CredentialSource::KeychainOrFile { service, account, .. }) => (service, account),
-        // 变体表被改成非 Keychain 形态（不该发生）：退回历史常量，至少不崩。
+        Some(crate::CredentialSource::KeychainOrFile { service, account, .. }) => (service, account),
         _ => ("Claude Code-credentials", "root"),
     }
 }
 
-/// 从 `security find-generic-password -g` 的属性输出里抠出 account（"acct"<blob>=...）。
-/// 形如 `"acct"<blob>="root"`，或 non-UTF8 时 `0x726F6F74  "root"`（hex + 可读串）→ 取引号内。
-/// 纯函数便于单测；仅 macOS 调用，其它平台放行 dead_code。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn parse_keychain_account(attrs: &str) -> Option<String> {
-    let key = "\"acct\"<blob>=";
-    for line in attrs.lines() {
-        let Some(idx) = line.find(key) else { continue };
-        let rest = line[idx + key.len()..].trim();
-        if rest == "<NULL>" {
-            return None;
-        }
-        let after = &rest[rest.find('"')? + 1..];
-        let v = &after[..after.find('"')?];
-        if !v.is_empty() {
-            return Some(v.to_string());
-        }
+/// 凭据存在哪：有可用密钥链（macOS 登录 Keychain）就在那儿，否则 `<data_dir>/.credentials.json`。
+///
+/// 这里是一次**运行时**判断而非 `#[cfg(target_os = "macos")]`：平台差异由宿主注入的
+/// [`KeychainPort`](crate::ports::KeychainPort) 承担，插件层因此没有一行 `cfg`，且在任意平台
+/// 都能用假密钥链把两条分支都测到。
+fn read_credentials_root(ports: &Ports) -> Option<serde_json::Value> {
+    if ports.keychain.available() {
+        return serde_json::from_str(&ports.keychain.read_password(keychain_spec().0)?).ok();
     }
-    None
-}
-
-/// 读 Keychain 里那条凭据的密码（即 `{"claudeAiOauth":{...}}` 的 JSON 字符串）。
-#[cfg(target_os = "macos")]
-fn keychain_read_password() -> Option<String> {
-    let out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", keychain_spec().0, "-w"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8(out.stdout).ok()?;
-    let s = s.trim_end_matches(['\r', '\n']).to_string();
-    (!s.is_empty()).then_some(s)
-}
-
-/// 读 Keychain 条目的 account 名（写回时按同名更新；读不到则上层退回默认 "root"）。
-#[cfg(target_os = "macos")]
-fn keychain_read_account() -> Option<String> {
-    // `-g`：属性打到 stdout、密码打到 stderr，这里只取属性。
-    let out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", keychain_spec().0, "-g"])
-        .output()
-        .ok()?;
-    parse_keychain_account(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// 写回 Keychain（-U：条目存在则更新）。password 经 argv 传入，仅同用户进程可见，与本仓既有 shell-out 一致。
-#[cfg(target_os = "macos")]
-fn keychain_write_password(account: &str, password: &str) -> Result<(), String> {
-    let status = std::process::Command::new("security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            keychain_spec().0,
-            "-a",
-            account,
-            "-w",
-            password,
-        ])
-        .status()
-        .map_err(|e| format!("写回 Keychain 失败：{e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("写回 Keychain 失败（security add-generic-password 非零退出）".into())
-    }
-}
-
-/// 读 Claude Code 的 OAuth 凭据根 JSON（形如 `{"claudeAiOauth": {...}}`）。
-/// macOS 取自登录 Keychain，其它平台取自 ~/.claude/.credentials.json。
-#[cfg(target_os = "macos")]
-pub(super) fn read_credentials_root() -> Option<serde_json::Value> {
-    serde_json::from_str(&keychain_read_password()?).ok()
-}
-#[cfg(not(target_os = "macos"))]
-pub(super) fn read_credentials_root() -> Option<serde_json::Value> {
     read_json_file(&credentials_path()?)
 }
 
-/// 刷新 token 后把新凭据写回原存储（保留其余字段）。macOS → Keychain，其它平台 → 原子写文件。
-#[cfg(target_os = "macos")]
-fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
-    let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
-    // 读得到实际 account 就按同名更新；读不到用变体表声明的兜底值。
-    let account = keychain_read_account().unwrap_or_else(|| keychain_spec().1.to_string());
-    keychain_write_password(&account, &body)
-}
-#[cfg(not(target_os = "macos"))]
-fn write_credentials_root(value: &serde_json::Value) -> Result<(), String> {
+/// 刷新 token 后把新凭据写回原存储（保留其余字段）。
+fn write_credentials_root(ports: &Ports, value: &serde_json::Value) -> Result<(), String> {
+    if ports.keychain.available() {
+        let (service, fallback_account) = keychain_spec();
+        let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
+        // 读得到实际 account 就按同名更新；读不到用变体表声明的兜底值。
+        let account = ports
+            .keychain
+            .read_account(service)
+            .unwrap_or_else(|| fallback_account.to_string());
+        return ports.keychain.write_password(service, &account, &body);
+    }
     let path = credentials_path().ok_or("解析不到 claude 凭据路径")?;
-    write_credentials_atomic(&path, value)
+    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())
 }
 
 /// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
-fn ensure_valid_token() -> Result<String, String> {
+fn ensure_valid_token(ports: &Ports) -> Result<String, String> {
     use std::sync::Mutex;
     // 串行化刷新：并发刷新（多窗口/连点）会各自用旋转后失效的 refresh_token 重复请求、互相覆盖。
     // 持锁后下面会重读凭据并重新判过期（双检）——若刚被另一调用方刷新过，直接走 fast-path 返回新
@@ -278,7 +209,7 @@ fn ensure_valid_token() -> Result<String, String> {
     static REFRESH_LOCK: Mutex<()> = Mutex::new(());
     let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-    let root = read_credentials_root();
+    let root = read_credentials_root(ports);
     // 读不到可用 OAuth 凭据 → 视为第三方/非官方登录，用量接口不适用，返回标记码。
     if oauth_credentials_missing(root.as_ref()) {
         return Err(USAGE_UNSUPPORTED.into());
@@ -289,7 +220,7 @@ fn ensure_valid_token() -> Result<String, String> {
     let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
 
-    if !access.is_empty() && !is_token_expired(expires_at, super::now_ms()) {
+    if !access.is_empty() && !is_token_expired(expires_at, now_ms()) {
         return Ok(access);
     }
     if refresh.is_empty() {
@@ -299,15 +230,21 @@ fn ensure_valid_token() -> Result<String, String> {
     let Some(spec) = claude_auth().and_then(|a| a.refresh) else {
         return Err("claude 变体表未声明 OAuth 刷新参数".into());
     };
-    let resp = ureq::post(spec.token_url)
-        .timeout(HTTP_TIMEOUT)
-        .send_json(serde_json::json!({
-            "grant_type": "refresh_token",
-            "refresh_token": refresh,
-            "client_id": spec.client_id,
-        }))
+    let text = ports
+        .http
+        .send(&HttpRequest {
+            method: "POST",
+            url: spec.token_url,
+            headers: &[],
+            body: Body::Json(serde_json::json!({
+                "grant_type": "refresh_token",
+                "refresh_token": refresh,
+                "client_id": spec.client_id,
+            })),
+            timeout: HTTP_TIMEOUT,
+        })
         .map_err(|e| format!("刷新 token 失败：{e}"))?;
-    let body: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+    let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let new_access = body.get("access_token").and_then(|v| v.as_str()).ok_or("刷新响应缺 access_token")?.to_string();
     let new_refresh = body.get("refresh_token").and_then(|v| v.as_str()).unwrap_or(&refresh).to_string();
     // 钳下限 600s：服务端若异常返回 0/负/极小值，避免写回一个立刻过期的 expiresAt 而陷入每次都刷新。
@@ -316,26 +253,28 @@ fn ensure_valid_token() -> Result<String, String> {
         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
         .unwrap_or(3600)
         .max(600);
-    let new_expires_at = super::now_ms() + expires_in * 1000;
+    let new_expires_at = now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
-    write_credentials_root(&merged)?;
+    write_credentials_root(ports, &merged)?;
     Ok(new_access)
 }
 
-/// 联网拉实时用量（含按需刷新 token），成功则写缓存。
-pub fn fetch_usage_live() -> Result<Usage, String> {
-    let token = ensure_valid_token()?;
-    let resp = ureq::get(USAGE_URL)
-        .timeout(HTTP_TIMEOUT)
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("anthropic-beta", OAUTH_BETA)
-        .call()
+/// 联网拉实时用量（含按需刷新 token）。缓存/限频/写回归宿主编排层，本函数只负责拿一次。
+fn fetch_usage_live(ports: &Ports) -> Result<Usage, String> {
+    let token = ensure_valid_token(ports)?;
+    let bearer = format!("Bearer {token}");
+    let text = ports
+        .http
+        .send(&HttpRequest {
+            method: "GET",
+            url: USAGE_URL,
+            headers: &[("Authorization", &bearer), ("anthropic-beta", OAUTH_BETA)],
+            body: Body::Empty,
+            timeout: HTTP_TIMEOUT,
+        })
         .map_err(|e| format!("请求用量失败：{e}"))?;
-    let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
-    // 缓存统一由调用方经 mod.rs 的 write_cached_usage（providers.claude 合并写入）落盘。
-    // 这里绝不能整文件覆写旧扁平格式——那会清掉 kimi/codex 等其它 provider 的缓存条目，
-    // 且引用旧扁平格式的旧命令已全部移除（read_cached_usage 的容错读取保留一个版本周期即可）。
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     Ok(parse_usage(&v))
 }
 
@@ -387,20 +326,12 @@ fn non_empty_str(s: &str) -> Option<String> {
     if s.is_empty() { None } else { Some(s.to_string()) }
 }
 
-/// 当前凭据是否有效的 Anthropic OAuth（usage 接口是否可用）。
-pub fn has_oauth_credentials() -> bool {
-    !oauth_credentials_missing(read_credentials_root().as_ref())
-}
+pub struct ClaudeAccount;
+pub static ACCOUNT: ClaudeAccount = ClaudeAccount;
 
-/// Claude 的 ProviderAccount 实现：包装现有读取逻辑，映射到通用泳道类型。
-pub struct ClaudeProviderAccount;
-
-impl ProviderAccount for ClaudeProviderAccount {
-    fn id(&self) -> meowo_agent::AgentId {
-        meowo_agent::id::CLAUDE
-    }
-
-    fn account(&self) -> Option<Account> {
+impl AccountCap for ClaudeAccount {
+    fn account(&self, _ports: &Ports) -> Option<Account> {
+        // 账号信息在 ~/.claude.json，不碰凭据、不联网——登录轮询会高频调用本方法。
         read_account().map(|a| Account {
             email: Some(a.email),
             display_name: Some(a.display_name),
@@ -410,32 +341,13 @@ impl ProviderAccount for ClaudeProviderAccount {
         })
     }
 
-    fn usage(&self, force: bool) -> Option<ProviderUsage> {
-        let key = self.id();
-        if !force {
-            // 从缓存读，不联网
-            return super::read_cached_usage(key);
-        }
-        // 尊重 60s 限频：新/旧两种缓存格式均支持；未过期直接返回，否则联网拉取。
-        // 使用 super::cache_is_fresh（mod.rs 通用版）而非私有版，消除死代码。
-        if super::cache_is_fresh(key, 60_000) {
-            if let Some(cached) = super::read_cached_usage(key) {
-                return Some(cached);
-            }
-        }
-        match fetch_usage_live() {
-            Ok(old_usage) => {
-                let pu = map_to_provider_usage(&old_usage);
-                // 唯一写入方：mod.rs 的 write_cached_usage（providers.claude 分键合并写入）。
-                super::write_cached_usage(key, &pu);
-                Some(pu)
-            }
-            Err(_) => None,
-        }
+    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String> {
+        fetch_usage_live(ports).map(|u| map_to_provider_usage(&u))
     }
 
-    fn usage_supported(&self) -> bool {
-        has_oauth_credentials()
+    /// 读不到可用的 Anthropic OAuth 凭据（第三方/中转登录，或尚未登录）→ 用量接口不适用。
+    fn usage_supported(&self, ports: &Ports) -> bool {
+        !oauth_credentials_missing(read_credentials_root(ports).as_ref())
     }
 }
 
@@ -491,16 +403,15 @@ mod tests {
         assert!(!is_token_expired(now + 120_000, now));
     }
 
+    /// 无密钥链的平台（或注入了假密钥链的测试）走文件分支，且**不联网**。
+    /// `usage_supported` 只读凭据，NoHttp 会在任何请求上 panic，据此断言这条路径确实不发请求。
     #[test]
-    fn parse_keychain_account_extracts_acct() {
-        let attrs = "keychain: \"/Users/x/Library/Keychains/login.keychain-db\"\n    \"acct\"<blob>=\"root\"\n    \"svce\"<blob>=\"Claude Code-credentials\"\n";
-        assert_eq!(parse_keychain_account(attrs).as_deref(), Some("root"));
-        // non-UTF8 时 security 打成 hex + 可读串，取引号内。
-        let hexed = "    \"acct\"<blob>=0x726F6F74  \"root\"\n";
-        assert_eq!(parse_keychain_account(hexed).as_deref(), Some("root"));
-        // 没有 acct 行 / NULL → None。
-        assert_eq!(parse_keychain_account("nothing here"), None);
-        assert_eq!(parse_keychain_account("    \"acct\"<blob>=<NULL>\n"), None);
+    fn usage_supported_reads_credentials_without_network() {
+        use crate::ports::test_doubles::NoHttp;
+        let ports = Ports { http: &NoHttp, keychain: &crate::ports::NoKeychain };
+        // 本机大概率没有 claude 凭据文件 → 读不到 OAuth → 不支持用量。真有凭据时也只是返回 true，
+        // 两种取值都不该发起网络请求（NoHttp 会 panic）。
+        let _ = ACCOUNT.usage_supported(&ports);
     }
 
     #[test]
