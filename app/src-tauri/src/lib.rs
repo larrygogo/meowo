@@ -1272,8 +1272,10 @@ fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: S
     std::thread::spawn(move || {
         use tauri::Emitter;
         let start = std::time::Instant::now();
+        // 先查再睡：账号若已就绪（用户很快登完，或本就登录着）立刻 emit，不白等一个轮询周期。
+        // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
+        // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
         let ok = loop {
-            std::thread::sleep(POLL);
             if account::for_provider(key).account().is_some() {
                 break true;
             }
@@ -1281,6 +1283,7 @@ fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: S
                 eprintln!("Meowo login[{provider}]: 等待登录超时（{}s），停止轮询", TIMEOUT.as_secs());
                 break false;
             }
+            std::thread::sleep(POLL);
         };
         let _ = app.emit("login-done", LoginDone { provider, ok });
     });
@@ -1289,8 +1292,10 @@ fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: S
 /// 在终端里拉起该 agent 的交互式登录（`claude auth login` / `codex login` / `kimi login`），
 /// 并起后台任务等登录完成，完成或超时后 emit `login-done`。
 ///
-/// argv 首元素是可执行**绝对路径**（与 `new_session` 同源）：spawn 出的终端继承 app 启动时的
-/// PATH 快照，未必含刚装好的 agent——裸名会让 wt/powershell 报 0x80070002。
+/// argv 与 `new_session` 同源，故同样是**绝对路径优先、必要时回退裸名**：spawn 出的终端继承
+/// app 启动时的 PATH 快照，未必含刚装好的 agent，裸名会让 wt/powershell 报 0x80070002；但当
+/// 可执行只在 PATH 上（`LaunchCandidate::OnPath`，如 fnm 管理的 codex）时回退裸名是刻意的
+/// ——那类路径带版本/进程号无法静态声明，且 PATH 上的往往是 shim，固化它会绕过其环境准备。
 #[tauri::command]
 async fn login_agent(
     app: tauri::AppHandle,
