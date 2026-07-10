@@ -125,7 +125,17 @@ impl AgentPlugin for Kimi {
     /// 注意路径里的 `/kimi-code/`——不带它的 `code.kimi.com/install.ps1` 装的是旧 Python `kimi-cli`
     /// （落到 `~/.local/bin/kimi-cli.exe`，检测不到）。
     ///
-    /// `code.kimi.com` 是 nginx 直服，不在 Cloudflare 后面；判定仍照做（中间设备也可能塞 HTML）。
+    /// **不直下**，也**不换入口**，理由都已实测：
+    ///
+    /// - `code.kimi.com` 是 nginx 直服（`server: nginx`，无 `cf-ray`），压根不在 Cloudflare 后面，
+    ///   不会被人机校验拦。判定仍照做——中间设备也可能塞一张 HTML。
+    /// - 它的引导脚本有 417 行（claude 的只有 110 行）。除了「取 latest → 读 manifest 的 checksum →
+    ///   下载 → 校验」这段与 claude 同构之外，它还要迁移旧 `kimi-cli` 安装（重命名成
+    ///   `kimi-legacy.exe`）、备份**正在运行**中被占用的 `kimi.exe`、写用户 PATH。把这些重新实现
+    ///   一遍就是在复刻 kimi 的安装语义，上游一改我们就悄悄装坏。
+    ///
+    /// 对比 claude：它的脚本是段三步胶水，真正的安装由 `claude.exe install` 自己完成，
+    /// 所以那边直下是干净的（见 `plugins/claude/install.rs`）。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
         Some(crate::install::InstallScript {
             url: if windows {

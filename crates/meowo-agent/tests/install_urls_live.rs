@@ -23,6 +23,34 @@ fn curl(url: &str) -> Option<(u32, String)> {
     Some((code.trim().parse().ok()?, body.to_string()))
 }
 
+/// 顺带核对：没有直下能力的 agent，其入口不得经过 Cloudflare。
+/// 这条在单测里靠域名字符串守（`agents_without_direct_install_must_avoid_cloudflare_fronted_hosts`），
+/// 这里则真去看响应头——上游随时可能把某个域挪到 CF 后面。
+#[test]
+#[ignore]
+fn agents_without_direct_install_are_not_fronted_by_cloudflare() {
+    let mut failures = Vec::new();
+    for p in meowo_agent::all() {
+        if p.direct_install().is_some() {
+            continue; // 引导脚本只是回退，允许在 CF 后面
+        }
+        for windows in [true, false] {
+            let Some(script) = p.install_script(windows) else { continue };
+            let out = Command::new("curl")
+                .args(["-sSIL", "--max-time", "30", script.url])
+                .output()
+                .expect("curl 执行失败");
+            let headers = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            if headers.contains("cf-ray") {
+                failures.push(format!("{}: {} 现在挂在 Cloudflare 后面了", p.id(), script.url));
+            } else {
+                eprintln!("✓ {:8} {} 无 CF", p.id().as_str(), script.url);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "无直下的 agent 却经过 CF：\n  {}", failures.join("\n  "));
+}
+
 #[test]
 #[ignore]
 fn every_install_url_serves_a_real_script() {

@@ -197,6 +197,67 @@ mod tests {
         assert!(crate::by_id("codex").unwrap().direct_install().is_none());
     }
 
+    /// **没有直下能力的 agent，其引导脚本入口不得落在已知会做人机校验的域上。**
+    ///
+    /// `claude.ai` 与 `chatgpt.com` 实测 `server: cloudflare` + `cf-ray`，其校验页以 HTTP 200 返回，
+    /// 会被裸管道当脚本执行。
+    ///
+    /// claude 允许把 `claude.ai` 留作回退：它的常规路径是直下（`downloads.claude.ai`，无 CF），
+    /// 只有当发布物 schema 变了、`plan()` 失败时才落到引导脚本——那时被 CF 拦反倒是最不重要的问题。
+    ///
+    /// codex 没有直下，所以它**必须**避开 CF：改取 `chatgpt.com` 那个 302 的终点，也就是
+    /// GitHub Releases（无 CF，内容逐字节相同）。
+    ///
+    /// kimi 的 `code.kimi.com` 是 nginx 直服，本就不在名单上。
+    #[test]
+    fn agents_without_direct_install_must_avoid_cloudflare_fronted_hosts() {
+        /// 实测在 Cloudflare 后面（`server: cloudflare` + `cf-ray`）的域。
+        const CF_FRONTED: [&str; 2] = ["claude.ai", "chatgpt.com"];
+
+        for p in crate::all() {
+            // 有直下 → 引导脚本只是回退路径，允许它落在 CF 后面。
+            if p.direct_install().is_some() {
+                continue;
+            }
+            for windows in [true, false] {
+                let Some(s) = p.install_script(windows) else { continue };
+                for host in CF_FRONTED {
+                    assert!(
+                        !s.url.contains(host),
+                        "{} 没有直下能力，其唯一的安装入口却落在 Cloudflare 前置的 {host} 上：{}\n\
+                         （该域的人机校验页以 HTTP 200 返回，会被当成脚本执行）",
+                        p.id(),
+                        s.url
+                    );
+                }
+            }
+        }
+    }
+
+    /// 反过来守住上一条的前提：claude 之所以获准把 `claude.ai` 留作回退，正因为它有直下。
+    /// 哪天直下被移除，上面那条会立刻把 `claude.ai` 判为违规。
+    #[test]
+    fn claude_may_keep_a_cloudflare_fallback_only_because_it_has_direct_install() {
+        let claude = crate::by_id("claude").unwrap();
+        assert!(claude.direct_install().is_some(), "claude 失去直下后，其 claude.ai 回退就不再可接受");
+        assert!(claude.install_script(true).unwrap().url.contains("claude.ai"));
+    }
+
+    /// codex 必须直取 GitHub Releases 的稳定跳转。`chatgpt.com/codex/install.ps1` 只是它的 302，
+    /// 内容逐字节相同，但那个域在 Cloudflare 后面。
+    #[test]
+    fn codex_bootstrap_comes_from_github_releases() {
+        let p = crate::by_id("codex").unwrap();
+        for windows in [true, false] {
+            let s = p.install_script(windows).expect("codex 有一键安装");
+            assert!(
+                s.url.starts_with("https://github.com/openai/codex/releases/latest/download/"),
+                "codex 应直取 GitHub Releases：{}",
+                s.url
+            );
+        }
+    }
+
     /// kimi 的地址必须带 `/kimi-code/`——不带它装的是旧 Python `kimi-cli`，落到
     /// `~/.local/bin/kimi-cli.exe`，变体表的候选一个都命中不了，装完仍显示「未安装」。
     #[test]

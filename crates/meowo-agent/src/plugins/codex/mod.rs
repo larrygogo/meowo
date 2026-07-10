@@ -100,14 +100,30 @@ impl AgentPlugin for Codex {
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
     }
-    /// `chatgpt.com` 在 Cloudflare 后面（实测 `server: cloudflare` + `cf-ray`），会间歇触发人机
-    /// 校验，其页面以 HTTP 200 返回。脚本本体最终去 GitHub Releases 取二进制。
+    /// 直取 GitHub Releases，**不走 `chatgpt.com`**。
+    ///
+    /// 官方命令是 `irm https://chatgpt.com/codex/install.ps1 | iex`，而 `chatgpt.com` 在
+    /// Cloudflare 后面（实测 `server: cloudflare` + `cf-ray`），会间歇触发人机校验——其页面以
+    /// HTTP 200 返回，裸管道会把那坨 HTML 喂给解释器。
+    ///
+    /// 但那个地址**只是一个 302**，终点就是下面这个 URL：
+    ///
+    /// ```text
+    /// chatgpt.com/codex/install.ps1
+    ///   → 302 → github.com/openai/codex/releases/latest/download/install.ps1
+    ///           server: github.com → Windows-Azure-Blob，无 Cloudflare
+    /// ```
+    ///
+    /// 两者内容逐字节相同（实测 sha256 一致）。直接取终点即可绕开 CF，不必去啃 GitHub API 的
+    /// 未认证限流（60/h），也不必解压 unix 侧那些 `.tar.gz`——脚本自己会处理。
+    ///
+    /// `latest/download/` 是 GitHub 的稳定跳转，始终指向最新 release 的同名资产。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
         Some(crate::install::InstallScript {
             url: if windows {
-                "https://chatgpt.com/codex/install.ps1"
+                "https://github.com/openai/codex/releases/latest/download/install.ps1"
             } else {
-                "https://chatgpt.com/codex/install.sh"
+                "https://github.com/openai/codex/releases/latest/download/install.sh"
             },
             unix_shell: "sh", // 官方命令写的就是 `| sh`
         })
