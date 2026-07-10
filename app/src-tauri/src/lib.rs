@@ -1346,6 +1346,115 @@ async fn login_agent(
     Ok(())
 }
 
+/// 按插件给出的计划直下安装：下载 → 校验大小 → 校验 SHA-256 → 用二进制自身完成安装。
+///
+/// 走这条路的 agent 完全不碰引导脚本，也就完全不碰它身后的 Cloudflare。附带的好处是多了
+/// 一道摘要校验——裸管道连脚本内容都不校验，更别说最终的二进制。
+///
+/// 任何一步失败都删掉半成品：留着一个校验不过的可执行文件，比没有更危险。
+fn run_direct_install(
+    plan: &meowo_agent::InstallPlan,
+    log: Option<&mut std::fs::File>,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    /// 往日志追一行。写成自由函数而不是闭包：闭包会一直借着 `log`，后面还要把它交给子进程输出。
+    fn note(log: &mut Option<&mut std::fs::File>, msg: &str) {
+        if let Some(f) = log.as_mut() {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+
+    let dest = std::env::temp_dir().join(&plan.file_name);
+    let mut log = log;
+    note(&mut log, &format!("Downloading {} {} from {}", plan.file_name, plan.version, plan.url));
+
+    // 进度每 10% 写一行日志（UI 只显示「安装中…」，不透传细节）。250 MB 在慢网上要几分钟，
+    // 没有这几行的话日志看上去就像卡死了。
+    //
+    // 整段包在块里：`on_progress` 可变借着 `log`，出块借用才结束，后面还要把 `log` 交给子进程输出。
+    let written = {
+        let mut last_decile = 0u64;
+        let mut on_progress = |done: u64, total: Option<u64>| {
+            let Some(t) = total.filter(|t| *t > 0) else { return };
+            let decile = done * 10 / t;
+            if decile > last_decile {
+                last_decile = decile;
+                if let Some(f) = log.as_mut() {
+                    let _ = writeln!(f, "  {}% ({done} / {t} bytes)", decile * 10);
+                }
+            }
+        };
+        ports::ports()
+            .http
+            .download(&plan.url, &dest, std::time::Duration::from_secs(600), &mut on_progress)
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&dest);
+                format!("下载失败：{e}")
+            })?
+    };
+
+    let fail = |dest: &std::path::Path, msg: String| -> String {
+        let _ = std::fs::remove_file(dest);
+        msg
+    };
+    if written != plan.size {
+        return Err(fail(&dest, format!("下载不完整：期望 {} 字节，实得 {written}", plan.size)));
+    }
+
+    // 摘要在流式写完后重读一遍算——250 MB 的文件不进内存，Sha256 也是增量喂。
+    let mut f = std::fs::File::open(&dest).map_err(|e| fail(&dest, e.to_string()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut f, &mut hasher).map_err(|e| fail(&dest, e.to_string()))?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != plan.sha256 {
+        return Err(fail(
+            &dest,
+            format!("校验和不匹配（期望 {}，实得 {actual}），已删除下载的文件", plan.sha256),
+        ));
+    }
+    note(&mut log, "Checksum OK");
+
+    // unix 上得先加执行位，否则下一步 spawn 直接 EACCES。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&dest).map_err(|e| fail(&dest, e.to_string()))?.permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&dest, perm).map_err(|e| fail(&dest, e.to_string()))?;
+    }
+
+    // 由二进制自己装 launcher 与 shell 集成（claude 是 `claude.exe install`）。
+    if !plan.post_install_args.is_empty() {
+        note(&mut log, &format!("Running: {} {}", plan.file_name, plan.post_install_args.join(" ")));
+        let mut cmd = std::process::Command::new(&dest);
+        cmd.args(&plan.post_install_args);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let out = cmd.output().map_err(|e| fail(&dest, format!("执行安装失败：{e}")))?;
+        if let Some(f) = log.as_mut() {
+            let _ = f.write_all(&out.stdout);
+            let _ = f.write_all(&out.stderr);
+        }
+        if !out.status.success() {
+            return Err(fail(
+                &dest,
+                format!("安装程序以退出码 {} 结束", out.status.code().unwrap_or(-1)),
+            ));
+        }
+    }
+
+    // 装完即删临时二进制（官方脚本也这么做）。删不掉不算失败。
+    let _ = std::fs::remove_file(&dest);
+    note(&mut log, "Installation complete");
+    Ok(())
+}
+
 /// 取回官方安装引导脚本，并确认它**确实是脚本**。
 ///
 /// 这一步是新加的，起因是一份真实的安装日志：
@@ -1425,6 +1534,40 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
     let provider = agent.id().as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
     let windows = cfg!(target_os = "windows");
+
+    // 优先直下：绕开引导脚本，也就绕开它身后的 Cloudflare。plan() 只做两次小请求（版本号 + 清单），
+    // 失败（发布物 schema 变了 / 下载服务本地区不可用）就回退到引导脚本，不让用户卡死在这条路上。
+    if let Some(cap) = agent.direct_install() {
+        let planned = tauri::async_runtime::spawn_blocking(move || cap.plan(&ports::ports()))
+            .await
+            .map_err(|e| e.to_string())?;
+        match planned {
+            Ok(plan) => {
+                let log_path = install_log_path(&provider);
+                tauri::async_runtime::spawn_blocking(move || {
+                    use tauri::Emitter;
+                    let mut log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+                    let logged = log.is_some();
+                    let res = run_direct_install(&plan, log.as_mut());
+                    if let (Some(f), Err(e)) = (log.as_mut(), res.as_ref()) {
+                        use std::io::Write;
+                        let _ = writeln!(f, "Installation failed: {e}");
+                    }
+                    let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
+                    let ok = res.is_ok();
+                    let _ = app.emit(
+                        "install-done",
+                        InstallDone { provider, ok, code: Some(if ok { 0 } else { 1 }), log_path },
+                    );
+                });
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Meowo install[{provider}]: 直下不可用（{e}），回退官方引导脚本");
+            }
+        }
+    }
+
     let script = agent
         .install_script(windows)
         .ok_or("该 agent 没有可用的一键安装命令")?;

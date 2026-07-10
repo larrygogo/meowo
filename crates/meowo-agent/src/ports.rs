@@ -52,6 +52,20 @@ impl std::fmt::Display for HttpError {
 /// HTTP 客户端。返回响应体文本，由调用方自行解析（各家 API 的 schema 差异归各家插件）。
 pub trait HttpPort: Sync {
     fn send(&self, req: &HttpRequest) -> Result<String, HttpError>;
+
+    /// 流式下载到文件，返回写入的字节数。
+    ///
+    /// 与 [`send`](HttpPort::send) 分开是因为体量：agent 的二进制是 240–260 MB，读成 `String`
+    /// 既撑爆内存也没法算增量进度。实现须边读边写，不得先全量缓冲。
+    ///
+    /// `on_progress` 每收到一块调用一次，参数是（已写字节, 总字节）；总字节未知时为 `None`。
+    fn download(
+        &self,
+        url: &str,
+        dest: &std::path::Path,
+        timeout: Duration,
+        on_progress: &mut dyn FnMut(u64, Option<u64>),
+    ) -> Result<u64, HttpError>;
 }
 
 /// 系统密钥链（macOS 登录 Keychain）。Claude Code 在 macOS 把 OAuth 凭据存在这里而非文件。
@@ -96,6 +110,15 @@ pub(crate) mod test_doubles {
     impl HttpPort for NoHttp {
         fn send(&self, _req: &HttpRequest) -> Result<String, HttpError> {
             panic!("该路径不应发起网络请求");
+        }
+        fn download(
+            &self,
+            _url: &str,
+            _dest: &std::path::Path,
+            _timeout: Duration,
+            _on_progress: &mut dyn FnMut(u64, Option<u64>),
+        ) -> Result<u64, HttpError> {
+            panic!("该路径不应发起网络下载");
         }
     }
 }

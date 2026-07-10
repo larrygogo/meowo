@@ -21,6 +21,7 @@
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
 pub mod account;
+pub mod install;
 pub mod setup;
 pub mod telemetry;
 pub mod transcript;
@@ -136,8 +137,14 @@ impl AgentPlugin for Claude {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
-    /// `claude.ai` 在 Cloudflare 后面，会间歇触发人机校验（其页面以 HTTP 200 返回）。
-    /// 引导脚本本身只是段胶水：它最终去 `downloads.claude.ai`（GCS，无 CF）取二进制。
+    /// 直下：从 `downloads.claude.ai`（GCS，**无 Cloudflare**）取二进制并校验 SHA-256。
+    /// 见 `install.rs`——引导脚本做的正是这三步。
+    fn direct_install(&self) -> Option<&'static dyn crate::install::InstallCap> {
+        Some(&install::DIRECT_INSTALL)
+    }
+
+    /// 回退路径。`claude.ai` 在 Cloudflare 后面，会间歇触发人机校验（其页面以 HTTP 200 返回），
+    /// 故优先走 `direct_install`；只有它失败（如发布物 schema 变了）才落到这里。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
         Some(crate::install::InstallScript {
             url: if windows {

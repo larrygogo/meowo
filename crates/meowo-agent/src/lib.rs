@@ -44,7 +44,7 @@ pub use caps::{ContextUsage, HookContext, StopOutputs, TelemetryCap};
 pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
 pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason};
 pub use id::AgentId;
-pub use install::{is_runnable_script, looks_like_challenge, looks_like_html, InstallScript};
+pub use install::{is_runnable_script, looks_like_challenge, looks_like_html, InstallCap, InstallPlan, InstallScript};
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
 pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
 pub use transcript::{

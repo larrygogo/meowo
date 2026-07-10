@@ -33,6 +33,40 @@ impl HttpPort for UreqHttp {
             Err(e) => Err(HttpError::Transport(e.to_string())),
         }
     }
+
+    /// 流式下载。agent 的二进制是 240–260 MB——边读边写，绝不先缓冲进内存。
+    fn download(
+        &self,
+        url: &str,
+        dest: &std::path::Path,
+        timeout: std::time::Duration,
+        on_progress: &mut dyn FnMut(u64, Option<u64>),
+    ) -> Result<u64, HttpError> {
+        use std::io::{Read, Write};
+
+        let resp = ureq::get(url).timeout(timeout).call().map_err(|e| match e {
+            ureq::Error::Status(code, r) => HttpError::Status(code, r.into_string().unwrap_or_default()),
+            e => HttpError::Transport(e.to_string()),
+        })?;
+        // Content-Length 可能缺失（chunked）；缺了就画不了进度条，但下载照常。
+        let total: Option<u64> = resp.header("Content-Length").and_then(|s| s.parse().ok());
+
+        let mut file = std::fs::File::create(dest).map_err(|e| HttpError::Transport(e.to_string()))?;
+        let mut reader = resp.into_reader();
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut written: u64 = 0;
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| HttpError::Transport(e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n]).map_err(|e| HttpError::Transport(e.to_string()))?;
+            written += n as u64;
+            on_progress(written, total);
+        }
+        file.flush().map_err(|e| HttpError::Transport(e.to_string()))?;
+        Ok(written)
+    }
 }
 
 // ═══ 系统密钥链 ═══

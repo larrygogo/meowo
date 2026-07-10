@@ -30,7 +30,15 @@ pub trait AgentPlugin: Sync {
     /// 返回的是**地址**而非 `irm <url> | iex` 这类命令串：宿主取回内容、判定它确实是脚本
     /// （[`install::is_runnable_script`]）之后才落盘执行。`claude.ai` 与 `chatgpt.com` 都在
     /// Cloudflare 后面，其人机校验页以 **HTTP 200** 返回，裸管道会把那坨 HTML 喂给解释器。
+    ///
+    /// 声明了 [`direct_install`](Self::direct_install) 的 agent 会优先走直下，此项仅作回退。
     fn install_script(&self, _windows: bool) -> Option<crate::install::InstallScript> {
+        None
+    }
+
+    /// 直下安装能力：绕开引导脚本（及其身后的人机校验），从发布物地址直取二进制并校验 SHA-256。
+    /// None = 该 agent 只能走引导脚本。
+    fn direct_install(&self) -> Option<&'static dyn crate::install::InstallCap> {
         None
     }
 

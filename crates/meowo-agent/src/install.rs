@@ -21,6 +21,35 @@ pub struct InstallScript {
     pub unix_shell: &'static str,
 }
 
+/// 直下安装的计划：下载什么、怎么校验、装完执行什么。
+///
+/// 插件只负责**解析出**它（几次小请求），下载大文件、校验摘要、spawn 子进程一律归宿主——
+/// 插件层不写大文件、不 spawn，这与它「纯逻辑 + 注入端口」的定位一致。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallPlan {
+    /// 二进制地址。**必须不在人机校验之后**——直下的全部意义就在于此。
+    pub url: String,
+    /// 落盘的文件名（不含目录；宿主决定放临时目录哪儿）。
+    pub file_name: String,
+    /// 期望的 SHA-256（小写十六进制，64 字符）。不匹配必须删文件并报错。
+    pub sha256: String,
+    /// 期望的字节数。用来画进度，也作为下载完的第一道校验。
+    pub size: u64,
+    /// 下载校验通过后，用**该二进制自身**执行的参数（claude 是 `["install"]`，
+    /// 由它自己装 launcher 与 shell 集成）。空 = 下载完即算装好。
+    pub post_install_args: Vec<String>,
+    /// 供日志与 UI 展示。
+    pub version: String,
+}
+
+/// 直下安装能力。声明它的 agent 可以完全绕开引导脚本（及其身后的人机校验）。
+///
+/// 不声明的 agent 退回 [`AgentPlugin::install_script`](crate::AgentPlugin::install_script)。
+pub trait InstallCap: Sync {
+    /// 解析出计划。只做小请求（版本号、清单），不下载大文件。
+    fn plan(&self, ports: &crate::ports::Ports) -> Result<InstallPlan, String>;
+}
+
 /// 取前 `n` 个**字符**（不是字节）。直接 `&s[..n]` 会在多字节字符中间切开而 panic——
 /// 被判定的内容来自网络，什么都可能有。
 fn head(body: &str, n: usize) -> &str {
@@ -142,6 +171,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 声明了直下的 agent 必须**同时**留着引导脚本作回退：发布物 schema 变了、或下载服务本地区
+    /// 不可用时，`plan()` 会失败，此时得有路可走。
+    #[test]
+    fn direct_install_always_keeps_a_script_fallback() {
+        for p in crate::all() {
+            if p.direct_install().is_some() {
+                assert!(
+                    p.install_script(true).is_some() && p.install_script(false).is_some(),
+                    "{} 声明了直下，但没留引导脚本回退",
+                    p.id()
+                );
+            }
+        }
+    }
+
+    /// claude 走直下（绕开 claude.ai 的 Cloudflare）；kimi/codex 暂时只有引导脚本。
+    /// codex 的二进制在 GitHub Releases，也能直下——但 GitHub API 有未认证限流，另议。
+    #[test]
+    fn only_claude_declares_direct_install_for_now() {
+        assert!(crate::by_id("claude").unwrap().direct_install().is_some());
+        assert!(crate::by_id("kimi").unwrap().direct_install().is_none());
+        assert!(crate::by_id("codex").unwrap().direct_install().is_none());
     }
 
     /// kimi 的地址必须带 `/kimi-code/`——不带它装的是旧 Python `kimi-cli`，落到

@@ -61,9 +61,12 @@ fn every_install_url_serves_a_real_script() {
 
 /// claude 的引导脚本只是段胶水：真正的二进制在 `downloads.claude.ai`（GCS，**不在** Cloudflare
 /// 后面）。这条断言守住那个域仍然直连——它是「彻底绕开 CF 直下二进制」那条路的前提。
+///
+/// 不下整个 250 MB：用 Range 请求取前两个字节，确认是可执行文件的魔数即可。
+/// （完整的下载 + SHA-256 校验我手动跑过一次：size 与 checksum 都与 manifest 精确匹配。）
 #[test]
 #[ignore]
-fn claude_binaries_are_not_behind_cloudflare() {
+fn claude_direct_install_plan_resolves_to_a_real_binary() {
     const BASE: &str = "https://downloads.claude.ai/claude-code-releases";
 
     let (code, version) = curl(&format!("{BASE}/latest")).expect("取版本号失败");
@@ -78,10 +81,23 @@ fn claude_binaries_are_not_behind_cloudflare() {
     assert_eq!(code, 200);
     assert!(!meowo_agent::looks_like_challenge(&manifest), "downloads.claude.ai 竟然也被 CF 挑战了");
 
-    // 每个平台都得有 checksum——那是直下方案的安全前提。
-    for platform in ["win32-x64", "darwin-arm64", "linux-x64"] {
-        assert!(manifest.contains(platform), "manifest 缺平台 {platform}");
+    // 用插件自己的解析器读 manifest——这才是「代码真的能用」的证明，而不是字符串 contains。
+    use meowo_agent::plugins::claude::install::parse_manifest;
+    for platform in ["win32-x64", "win32-arm64", "darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"] {
+        let (sum, size, binary) = parse_manifest(&manifest, platform)
+            .unwrap_or_else(|| panic!("manifest 里解不出 {platform}"));
+        assert_eq!(sum.len(), 64, "{platform} 的 checksum 不是 sha256");
+        assert!(size > 100_000_000, "{platform} 的 size 小得可疑：{size}");
+        assert!(binary.starts_with("claude"), "{platform} 的产物名不对：{binary}");
     }
-    assert!(manifest.contains("checksum"), "manifest 没有 checksum 字段");
-    eprintln!("✓ claude {version}: manifest 带 checksum，downloads.claude.ai 无 CF");
+
+    // 取二进制的前两个字节：Windows 上应是 PE 的 `MZ`。
+    let url = format!("{BASE}/{version}/win32-x64/claude.exe");
+    let out = Command::new("curl")
+        .args(["-sS", "--max-time", "60", "-r", "0-1", &url])
+        .output()
+        .expect("curl 执行失败");
+    assert_eq!(&out.stdout, b"MZ", "{url} 返回的不是 PE 可执行文件");
+
+    eprintln!("✓ claude {version}: manifest 六个平台都有 sha256，二进制是真的 PE，且全程无 CF");
 }

@@ -28,6 +28,8 @@ sysinfo = "0.32"
 percent-encoding = "2"
 # ureq 只服务 ports.rs 的 HttpPort 实现——插件层只认 trait，不依赖 HTTP 栈。
 ureq = { version = "2", features = ["json"] }
+# 直下安装要校验二进制的 SHA-256（Phase 3 曾随 codex setup 迁走，现因 run_direct_install 复用）
+sha2 = "0.10"
 # 系统语言检测（Settings.language = auto 时解析界面/通知语言）。
 sys-locale = "0.3"
 # codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
