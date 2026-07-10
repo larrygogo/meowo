@@ -41,6 +41,11 @@ pub enum ConfigFormat {
     /// codex：`hooks.json` 的 `{"hooks": {"<Event>": [{"hooks":[{...}]}]}}`，条目**无** matcher。
     /// 顶层只允许 `hooks` 键（codex 侧 deny_unknown_fields）。
     CodexJson,
+    /// claude：`settings.json` 的 `{"hooks": {"<Event>": [{"matcher":"...","hooks":[{...}]}]}}`。
+    /// 与 `CodexJson` 同构，唯一差别是条目**带 `matcher`**——同一事件下按 matcher 区分多条，
+    /// 与用户自有 hook（如 `PreToolUse:Bash` 预检）共存。顶层还承载 `statusLine` 等无关键，
+    /// 一律原样保留。
+    ClaudeJson,
 }
 
 /// 配置文件不存在时怎么办。声明式，避免每个 agent 的 `apply` 各写一遍 NotFound 分支。
@@ -123,6 +128,16 @@ impl HookSpec {
         match self.format {
             ConfigFormat::KimiToml => kimi_toml::ensure_hooks(self, cur_text, reporter, agent_id),
             ConfigFormat::CodexJson => codex_json::ensure_hooks(self, cur_text, reporter, agent_id),
+            ConfigFormat::ClaudeJson => claude_json::ensure_hooks(self, cur_text, reporter, agent_id),
+        }
+    }
+
+    /// 配置文本能否被本格式解析。区分「解析不了」与「解析得了但没挂 reporter」——前者是
+    /// 暂时不可读/损坏，不该误报成「未接入」诱导用户去修复（修复也会因 Abandon 而拒写）。
+    pub fn parses(&self, cur_text: &str) -> bool {
+        match self.format {
+            ConfigFormat::KimiToml => cur_text.parse::<DocumentMut>().is_ok(),
+            ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => json_common::parse(cur_text).is_some(),
         }
     }
 
@@ -142,7 +157,8 @@ impl HookSpec {
     fn claimed_at(&self, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
         match self.format {
             ConfigFormat::KimiToml => kimi_toml::claimed_at(self, cur_text, agent_id, event),
-            ConfigFormat::CodexJson => codex_json::claimed_at(self, cur_text, agent_id, event),
+            // claude/codex 的 hooks 树同构（差别只在写入时是否带 matcher），认领扫描共用一份。
+            ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => json_common::claimed_at(self, cur_text, agent_id, event),
         }
     }
 }
@@ -292,11 +308,13 @@ mod kimi_toml {
     }
 }
 
-// ═══ CodexJson ═══
+// ═══ JSON 系（claude / codex）共用 ═══
 
-mod codex_json {
+/// `{"hooks": {"<Event>": [{..., "hooks":[{"command":...}]}]}}` 这棵树的解析与认领扫描。
+/// claude 与 codex 的差别只在**写入**时条目是否带 `matcher`，读侧完全一致，故共用。
+mod json_common {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::Value;
 
     /// 解析 JSON 文本。容忍 UTF-8 BOM——Windows 上不少编辑器/PowerShell 写出的 JSON 带 BOM，
     /// serde_json 会直接报错，曾导致无感接线静默失败。
@@ -305,18 +323,143 @@ mod codex_json {
         v.is_object().then_some(v)
     }
 
+    /// 序列化为落盘文本（pretty + 末尾换行，与两家既有文件风格一致）。
+    pub fn render(root: &Value) -> EnsureOutcome {
+        match serde_json::to_string_pretty(root) {
+            Ok(s) => EnsureOutcome::Changed(format!("{s}\n")),
+            Err(_) => EnsureOutcome::Abandon(RepairReason::WriteFailed),
+        }
+    }
+
+    /// 取出已认领的 reporter 路径。`event=None` 不限事件。**不看 matcher**：认领只由 command
+    /// 形态决定，与条目挂在哪个 matcher 下无关。
+    pub fn claimed_at(spec: &HookSpec, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
+        let root = parse(cur_text)?;
+        let hooks = root.get("hooks")?.as_object()?;
+        hooks
+            .iter()
+            .filter(|(ev, _)| event.is_none_or(|want| ev.as_str() == want))
+            .flat_map(|(_, arr)| arr.as_array().into_iter().flatten())
+            .flat_map(|entry| entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten())
+            .find_map(|h| h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id)))
+    }
+
+    /// 确保顶层 `hooks` 是 object。键不存在 → 建空 object（`true`＝有改动）；
+    /// 存在但非 object（用户手改坏形状）→ `None`，调用方 Abandon，绝不覆盖用户文件。
+    pub fn ensure_hooks_object(root: &mut Value) -> Option<bool> {
+        match root.get("hooks") {
+            None => {
+                root["hooks"] = serde_json::json!({});
+                Some(true)
+            }
+            Some(h) if !h.is_object() => None,
+            Some(_) => Some(false),
+        }
+    }
+}
+
+// ═══ ClaudeJson ═══
+
+mod claude_json {
+    use super::*;
+    use serde_json::{json, Value};
+
     pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
-        // 解析失败 / 顶层非对象 → 绝不覆盖用户文件。
-        let Some(mut root) = parse(cur_text) else {
+        // 解析失败 / 顶层非对象 → 绝不覆盖用户文件（settings.json 还装着 statusLine 等用户配置）。
+        let Some(mut root) = json_common::parse(cur_text) else {
             return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
         };
         match merge(spec, &mut root, reporter, agent_id) {
             Merge::Abandon => EnsureOutcome::Abandon(RepairReason::ConfigUnreadable),
             Merge::Unchanged => EnsureOutcome::Unchanged,
-            Merge::Changed => match serde_json::to_string_pretty(&root) {
-                Ok(s) => EnsureOutcome::Changed(format!("{s}\n")),
-                Err(_) => EnsureOutcome::Abandon(RepairReason::WriteFailed),
-            },
+            Merge::Changed => json_common::render(&root),
+        }
+    }
+
+    enum Merge {
+        Changed,
+        Unchanged,
+        Abandon,
+    }
+
+    /// 条目的 `matcher` 是否是我们要找的那个。`want=None` 时不作要求（claude 的事件表全带
+    /// matcher，此分支仅为规格完整性）。
+    fn matcher_is(entry: &Value, want: Option<&str>) -> bool {
+        match want {
+            None => true,
+            Some(m) => entry.get("matcher").and_then(|x| x.as_str()) == Some(m),
+        }
+    }
+
+    /// 幂等合并。与 codex 版的唯一差别：定位/追加均**按 matcher 区分**——同一事件下用户自有的
+    /// 其他 matcher 条目（如 `PreToolUse:Bash` 预检）原封不动。
+    fn merge(spec: &HookSpec, root: &mut Value, reporter: &str, agent_id: &str) -> Merge {
+        let desired_cmd = spec.command.render(reporter, agent_id);
+        // 旧实现在此直接 `json!({})` 覆盖，会写坏用户手改成非 object 的 hooks 键。
+        let mut changed = match json_common::ensure_hooks_object(root) {
+            Some(c) => c,
+            None => return Merge::Abandon,
+        };
+        let Some(hooks) = root["hooks"].as_object_mut() else {
+            return Merge::Abandon;
+        };
+
+        for ev in spec.events {
+            let entry_val = hooks.entry(ev.name.to_string()).or_insert_with(|| json!([]));
+            let Some(arr) = entry_val.as_array_mut() else {
+                continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
+            };
+            let mut found = false;
+            for entry in arr.iter_mut() {
+                if !matcher_is(entry, ev.matcher) {
+                    continue; // 该 matcher 下是用户自有 hook，不动
+                }
+                let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) else {
+                    continue;
+                };
+                for h in hs.iter_mut() {
+                    let claimed = h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id));
+                    if let Some(path) = claimed {
+                        found = true;
+                        if path != reporter {
+                            h["command"] = json!(desired_cmd);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !found {
+                let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] });
+                if let Some(m) = ev.matcher {
+                    entry["matcher"] = json!(m);
+                }
+                arr.push(entry);
+                changed = true;
+            }
+        }
+        if changed {
+            Merge::Changed
+        } else {
+            Merge::Unchanged
+        }
+    }
+}
+
+// ═══ CodexJson ═══
+
+mod codex_json {
+    use super::*;
+    use serde_json::{json, Value};
+
+    pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+        // 解析失败 / 顶层非对象 → 绝不覆盖用户文件。
+        let Some(mut root) = json_common::parse(cur_text) else {
+            return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
+        };
+        match merge(spec, &mut root, reporter, agent_id) {
+            Merge::Abandon => EnsureOutcome::Abandon(RepairReason::ConfigUnreadable),
+            Merge::Unchanged => EnsureOutcome::Unchanged,
+            Merge::Changed => json_common::render(&root),
         }
     }
 
@@ -328,19 +471,13 @@ mod codex_json {
 
     fn merge(spec: &HookSpec, root: &mut Value, reporter: &str, agent_id: &str) -> Merge {
         let desired_cmd = spec.command.render(reporter, agent_id);
-        let mut changed = false;
-
-        match root.get("hooks") {
-            // 键不存在：hooks.json 整个文件本就可从空态建，与 kimi「config.toml 缺失即未登录」
-            // 不同是有意的——此处不存在不代表用户手改过畸形内容。
-            None => {
-                root["hooks"] = json!({});
-                changed = true;
-            }
-            // 键存在但非 object（手改坏形状）：放弃不写，绝不覆盖用户文件。
-            Some(h) if !h.is_object() => return Merge::Abandon,
-            Some(_) => {}
-        }
+        // 键不存在：hooks.json 整个文件本就可从空态建，与 kimi「config.toml 缺失即未登录」
+        // 不同是有意的——此处不存在不代表用户手改过畸形内容。
+        // 键存在但非 object（手改坏形状）：放弃不写，绝不覆盖用户文件。
+        let mut changed = match json_common::ensure_hooks_object(root) {
+            Some(c) => c,
+            None => return Merge::Abandon,
+        };
         let Some(hooks) = root["hooks"].as_object_mut() else {
             return Merge::Abandon;
         };
@@ -378,22 +515,12 @@ mod codex_json {
         }
     }
 
-    pub fn claimed_at(spec: &HookSpec, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
-        let root = parse(cur_text)?;
-        let hooks = root.get("hooks")?.as_object()?;
-        hooks
-            .iter()
-            .filter(|(ev, _)| event.is_none_or(|want| ev.as_str() == want))
-            .flat_map(|(_, arr)| arr.as_array().into_iter().flatten())
-            .flat_map(|entry| entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten())
-            .find_map(|h| h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id)))
-    }
 }
 
-/// 解析 hooks.json 文本（容忍 BOM，顶层须为对象）。供 meowo-app 的 codex trusted_hash 步骤复用，
-/// 免得它为了取回刚写出的结构再实现一遍 BOM 容忍。
+/// 解析 hooks.json / settings.json 文本（容忍 BOM，顶层须为对象）。供 meowo-app 的 codex
+/// trusted_hash 步骤与 claude statusLine 改写复用，免得它们各自再实现一遍 BOM 容忍。
 pub fn parse_json_config(text: &str) -> Option<serde_json::Value> {
-    codex_json::parse(text)
+    json_common::parse(text)
 }
 
 #[cfg(test)]
@@ -423,6 +550,179 @@ mod tests {
             EnsureOutcome::Changed(s) => s,
             other => panic!("期望 Changed，实得 {other:?}"),
         }
+    }
+
+    /// claude 的接线规格（与 plugins/claude.rs 同源，此处独立声明以免测试依赖插件表的演化）。
+    const CLAUDE_CMD: CommandSpec = CommandSpec { quote_exe: true, with_provider: false };
+    static CLAUDE_EVENTS: [HookEvent; 8] = [
+        HookEvent::matched("SessionStart", "*"),
+        HookEvent::matched("UserPromptSubmit", "*"),
+        HookEvent::matched("PostToolUse", "*"),
+        HookEvent::matched("Stop", "*"),
+        HookEvent::matched("SessionEnd", "*"),
+        HookEvent::matched("PermissionRequest", "*"),
+        HookEvent::matched("PreToolUse", "AskUserQuestion"),
+        HookEvent::matched("PreToolUse", "ExitPlanMode"),
+    ];
+    static CJ: HookSpec = HookSpec {
+        config_rel: "settings.json",
+        format: ConfigFormat::ClaudeJson,
+        missing: MissingConfig::CreateFrom("{}"),
+        events: &CLAUDE_EVENTS,
+        command: CLAUDE_CMD,
+    };
+
+    /// 跑一次 claude 接线，要求有改动，返回解析后的 settings。
+    fn claude_changed(text: &str, reporter: &str) -> serde_json::Value {
+        match CJ.ensure_hooks(text, reporter, "claude") {
+            EnsureOutcome::Changed(s) => serde_json::from_str(&s).expect("产物应为合法 JSON"),
+            other => panic!("期望 Changed，实得 {other:?}"),
+        }
+    }
+
+    // ── ClaudeJson ──
+
+    #[test]
+    fn claude_claim_never_touches_user_hooks() {
+        // 我们写入的形态：带引号的单可执行路径，无参数。
+        assert_eq!(CLAUDE_CMD.claim("\"C:/x/meowo-reporter.exe\"", "claude").as_deref(), Some("C:/x/meowo-reporter.exe"));
+        assert_eq!(CLAUDE_CMD.claim("/usr/local/bin/meowo-reporter", "claude").as_deref(), Some("/usr/local/bin/meowo-reporter"));
+        // 不能误伤用户自有 hook：带参数、是别的脚本、或只是路径里含子串。
+        // `node tools/meowo-reporter-notify.js` 是这条纪律的原始反例，务必保住。
+        assert_eq!(CLAUDE_CMD.claim("node tools/meowo-reporter-notify.js", "claude"), None);
+        assert_eq!(CLAUDE_CMD.claim("\"C:/x/meowo-reporter.exe\" --flag", "claude"), None);
+        assert_eq!(CLAUDE_CMD.claim("/opt/meowo-reporter/run.sh", "claude"), None);
+        assert_eq!(CLAUDE_CMD.claim("meowo-reporter-wrapper", "claude"), None);
+        assert_eq!(CLAUDE_CMD.claim("", "claude"), None);
+    }
+
+    #[test]
+    fn claude_ensure_hooks_adds_all_specs_including_pretooluse_matchers() {
+        let v = claude_changed("{}", "C:/x/meowo-reporter.exe");
+        for e in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
+            assert_eq!(v["hooks"][e][0]["matcher"], "*", "{e} matcher");
+            assert_eq!(v["hooks"][e][0]["hooks"][0]["command"], "\"C:/x/meowo-reporter.exe\"");
+        }
+        // PreToolUse：两条，matcher 分别 AskUserQuestion / ExitPlanMode。
+        let matchers: Vec<&str> =
+            v["hooks"]["PreToolUse"].as_array().unwrap().iter().map(|e| e["matcher"].as_str().unwrap()).collect();
+        assert!(matchers.contains(&"AskUserQuestion"));
+        assert!(matchers.contains(&"ExitPlanMode"));
+        // 幂等。
+        let text = serde_json::to_string(&v).unwrap();
+        assert_eq!(CJ.ensure_hooks(&text, "C:/x/meowo-reporter.exe", "claude"), EnsureOutcome::Unchanged);
+    }
+
+    #[test]
+    fn claude_ensure_hooks_preserves_user_pretooluse_bash() {
+        // 用户自有 PreToolUse:Bash node 预检，不是 meowo-reporter。
+        let src = r#"{"hooks":{"PreToolUse":[
+            {"matcher":"Bash","hooks":[{"type":"command","command":"node \"x/pre-check.cjs\""}]}
+        ]}}"#;
+        let v = claude_changed(src, "C:/x/meowo-reporter.exe");
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        // 原 Bash 条目原封保留。
+        let bash = pre.iter().find(|e| e["matcher"] == "Bash").unwrap();
+        assert_eq!(bash["hooks"][0]["command"], "node \"x/pre-check.cjs\"");
+        // 且新增了 AskUserQuestion / ExitPlanMode 两条 meowo-reporter。
+        assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
+        assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
+    }
+
+    #[test]
+    fn claude_ensure_hooks_updates_changed_path_and_keeps_other_hooks() {
+        // 同一 matcher 下：一个别的 hook + 一个旧路径的 meowo-reporter。
+        let src = r#"{"hooks":{"SessionStart":[
+            {"matcher":"*","hooks":[{"type":"command","command":"node other.js"}]},
+            {"matcher":"*","hooks":[{"type":"command","command":"\"C:/old/meowo-reporter.exe\"","timeout":5}]}
+        ]}}"#;
+        let v = claude_changed(src, "C:/new/meowo-reporter.exe");
+        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "node other.js");
+        assert_eq!(v["hooks"]["SessionStart"][1]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\"");
+        // 没有重复追加（该事件仍是 2 条）。
+        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn claude_ensure_hooks_claims_legacy_cc_reporter() {
+        // 行为改进（与 codex 同）：SessionStart 上挂着废弃的 cc-reporter 时认领并更新，
+        // 而非不认领、重复追加一条。
+        let src = r#"{"hooks":{"SessionStart":[
+            {"matcher":"*","hooks":[{"type":"command","command":"\"C:/old/cc-reporter.exe\"","timeout":5}]}
+        ]}}"#;
+        let v = claude_changed(src, "C:/new/meowo-reporter.exe");
+        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1, "应认领而非追加");
+        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\"");
+    }
+
+    #[test]
+    fn claude_abandons_when_hooks_key_is_not_object() {
+        // 旧实现在此直接 `json!({})` 覆盖，会写坏用户文件。现在如实 Abandon。
+        let out = CJ.ensure_hooks(r#"{"hooks":[1,2]}"#, "C:/x/meowo-reporter.exe", "claude");
+        assert_eq!(out, EnsureOutcome::Abandon(RepairReason::ConfigUnreadable));
+        // 顶层非对象、非法 JSON 同样放弃。
+        assert!(matches!(CJ.ensure_hooks("[]", "r", "claude"), EnsureOutcome::Abandon(_)));
+        assert!(matches!(CJ.ensure_hooks("{not json", "r", "claude"), EnsureOutcome::Abandon(_)));
+    }
+
+    #[test]
+    fn claude_tolerates_utf8_bom_and_preserves_top_level_keys() {
+        // Windows 编辑器/PowerShell 常写出带 BOM 的 JSON；顶层 statusLine 等无关键须原样保留。
+        let src = "\u{feff}{\"statusLine\":{\"type\":\"command\",\"command\":\"hud\"},\"model\":\"opus\"}";
+        let v = claude_changed(src, "C:/x/meowo-reporter.exe");
+        assert_eq!(v["statusLine"]["command"], "hud");
+        assert_eq!(v["model"], "opus");
+        assert!(v["hooks"]["SessionStart"].is_array());
+    }
+
+    #[test]
+    fn claude_has_reporter_requires_session_start_and_current_binary() {
+        // 只在 Stop 挂了 meowo-reporter：不能保证新会话入库，不应判定为已接入。
+        // claimed_reporter（广扫，供路径复用）仍会命中这条，语义刻意不同。
+        let stop_only = r#"{"hooks":{"Stop":[{"matcher":"*","hooks":[
+            {"type":"command","command":"\"C:/a/b/meowo-reporter.exe\"","timeout":5}]}]}}"#;
+        assert!(!CJ.has_reporter(stop_only, "claude"));
+        assert_eq!(CJ.claimed_reporter(stop_only, "claude").as_deref(), Some("C:/a/b/meowo-reporter.exe"));
+
+        let session_start = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+            {"type":"command","command":"\"C:/a/b/meowo-reporter.exe\"","timeout":5}]}]}}"#;
+        assert!(CJ.has_reporter(session_start, "claude"));
+
+        // 历史 cc-reporter 不算「已接入」，也不作为可复用路径（写回去 hooks 依旧失效）。
+        let legacy = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+            {"type":"command","command":"\"C:/a/b/cc-reporter.exe\"","timeout":5}]}]}}"#;
+        assert!(!CJ.has_reporter(legacy, "claude"));
+        assert_eq!(CJ.claimed_reporter(legacy, "claude"), None);
+
+        assert!(!CJ.has_reporter("{}", "claude"));
+    }
+
+    #[test]
+    fn claude_real_shape_user_settings_merge() {
+        // 精确复刻真实 settings.json 结构：PreToolUse(node 预检) + 5 个 meowo-reporter 事件 + claude-hud statusLine。
+        let ccr = "C:/Users/larry/workspace/meowo/target/release/meowo-reporter.exe";
+        let src = format!(
+            r#"{{"hooks":{{
+                "PreToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":"node \"x/pre-commit-check.cjs\"","timeout":5000}}]}}],
+                "SessionStart":[{{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}}],
+                "UserPromptSubmit":[{{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}}],
+                "PostToolUse":[{{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}}],
+                "Stop":[{{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}}],
+                "SessionEnd":[{{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}}]
+            }},"statusLine":{{"type":"command","command":"bash -c 'claude-hud stuff'"}}}}"#
+        );
+        // fixture 缺 PermissionRequest / PreToolUse(AskUserQuestion|ExitPlanMode) → 追加 3 条。
+        let v = claude_changed(&src, ccr);
+        assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "node \"x/pre-commit-check.cjs\"");
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
+        assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
+        assert_eq!(v["hooks"]["PermissionRequest"][0]["matcher"], "*");
+        // statusLine 原样保留（它的改写由 meowo-app 的 amend 负责，不在格式适配器里）。
+        assert_eq!(v["statusLine"]["command"], "bash -c 'claude-hud stuff'");
+        // 再跑一次：此时才幂等。
+        let text = serde_json::to_string(&v).unwrap();
+        assert_eq!(CJ.ensure_hooks(&text, ccr, "claude"), EnsureOutcome::Unchanged);
     }
 
     // ── CommandSpec ──

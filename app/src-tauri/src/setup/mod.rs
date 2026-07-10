@@ -14,9 +14,22 @@ use meowo_agent::{EnsureOutcome, Installation, MissingConfig};
 /// 返回 `Some(reason)` 会让整个接线报失败——只有当该步骤失败真的导致 hooks 不生效时才这么做。
 pub(crate) type AfterWrite = fn(&Installation, &str) -> Option<RepairReason>;
 
-/// 已迁入插件层的 agent 共用的接线编排：读配置 → 交给该变体的格式适配器 → 备份 → 原子写 → 副作用。
+/// 落盘**之前**对配置文本的 agent 专属改写（claude 的 statusLine——它与 hooks 同住 settings.json，
+/// 无法靠 `AfterWrite` 表达）。入参是 hooks 合并后的文本与已解析的 reporter 路径。
+///
+/// 约定：**无改动时必须原样返回入参文本**。返回一个语义等价但重新序列化过的字符串会让下面的
+/// 幂等判定误判为「有改动」，于是每次启动都重写一遍用户配置。
+pub(crate) type Amend = fn(&Installation, &str, &str) -> Result<String, RepairReason>;
+
+/// 三家 agent 共用的接线编排：
+/// 读配置 → 格式适配器合并 hooks → `amend` 写前改写 → 备份 → 原子写 → `after` 副作用。
 /// 三个「绝不」在此集中兑现：解析失败绝不写、写前必备份、一律原子写。
-pub(crate) fn wire_hooks(inst: &Installation, agent_id: &str, after: Option<AfterWrite>) -> Option<RepairReason> {
+pub(crate) fn wire_hooks(
+    inst: &Installation,
+    agent_id: &str,
+    amend: Option<Amend>,
+    after: Option<AfterWrite>,
+) -> Option<RepairReason> {
     let path = inst.config_path();
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -37,31 +50,50 @@ pub(crate) fn wire_hooks(inst: &Installation, agent_id: &str, after: Option<Afte
 
     // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则 app 同目录的 sidecar。
     // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
-    let Some(reporter) = inst.hooks.claimed_reporter(&text, agent_id).or_else(sibling_reporter) else {
+    // 已认领的路径还须**当前仍存在**：app 换了目录后 hooks 里残留的旧路径若被当成目标写回去，
+    // hooks 会静默失效（而 sidecar 明明就在手边）。
+    let claimed = inst.hooks.claimed_reporter(&text, agent_id).filter(|p| std::path::Path::new(p).exists());
+    let Some(reporter) = claimed.or_else(sibling_reporter) else {
         eprintln!("Meowo repair[{agent_id}]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
         return Some(RepairReason::ReporterNotFound);
     };
 
-    let written = match inst.hooks.ensure_hooks(&text, &reporter, agent_id) {
-        EnsureOutcome::Changed(next) => {
-            if path.exists() {
-                backup_once(&path);
-            }
-            if let Err(e) = crate::fsutil::write_atomic(&path, &next) {
-                eprintln!("Meowo repair[{agent_id}]: {} 写入失败（{e}）", path.display());
-                return Some(RepairReason::WriteFailed);
-            }
-            eprintln!("Meowo repair[{agent_id}]: 已写入 hooks 到 {}（变体 {}）", path.display(), inst.variant_tag);
-            next
-        }
-        EnsureOutcome::Unchanged => {
-            eprintln!("Meowo repair[{agent_id}]: {} 已是目标状态，无需改动", path.display());
-            text
-        }
+    let merged = match inst.hooks.ensure_hooks(&text, &reporter, agent_id) {
+        EnsureOutcome::Changed(next) => next,
+        // 尚不能就此收工：hooks 已是目标态，statusLine 之类的 amend 目标可能仍需改动。
+        EnsureOutcome::Unchanged => text.clone(),
         EnsureOutcome::Abandon(reason) => {
             eprintln!("Meowo repair[{agent_id}]: {} 形态无法安全改写（{reason:?}），放弃（绝不写坏）", path.display());
             return Some(reason);
         }
+    };
+
+    let next = match amend {
+        Some(f) => match f(inst, &merged, &reporter) {
+            Ok(t) => t,
+            Err(reason) => {
+                eprintln!("Meowo repair[{agent_id}]: {} 写前改写失败（{reason:?}），放弃", path.display());
+                return Some(reason);
+            }
+        },
+        None => merged,
+    };
+
+    // 幂等判定放在 amend **之后**、与最初读到的文本比对：hooks 与 statusLine 任一需改动就要落盘。
+    // （曾经只看 hooks 的合并结果，于是 hooks 已就位、statusLine 待接时被误报「已是目标状态」。）
+    let written = if next == text {
+        eprintln!("Meowo repair[{agent_id}]: {} 已是目标状态，无需改动", path.display());
+        text
+    } else {
+        if path.exists() {
+            backup_once(&path);
+        }
+        if let Err(e) = crate::fsutil::write_atomic(&path, &next) {
+            eprintln!("Meowo repair[{agent_id}]: {} 写入失败（{e}）", path.display());
+            return Some(RepairReason::WriteFailed);
+        }
+        eprintln!("Meowo repair[{agent_id}]: 已写入 {}（变体 {}）", path.display(), inst.variant_tag);
+        next
     };
 
     after.and_then(|f| f(inst, &written))

@@ -32,7 +32,7 @@
 
 ---
 
-> **进度**：Phase A ✅（`90b0198`）· Phase B ✅ · Phase C / D 待做。
+> **进度**：Phase A ✅（`90b0198`）· Phase B ✅ · Phase C ✅ · Phase D 待做。
 
 ## 2. 接口改造（Phase A · 无行为变更）✅
 
@@ -136,9 +136,54 @@ codex 的 `post_wire` = 现有 `claimed_codex_entries` + `ensure_trusted_hashes`
 
 ---
 
-## 4. Phase C · 迁 claude（matcher + statusLine + Keychain）
+## 4. Phase C · 迁 claude（matcher + statusLine + Keychain）✅
 
-**C1** `plugins/claude.rs`：变体表（单变体 `stable`）+ `HookSpec{ settings.json, ClaudeJson, 8 条带 matcher, BareQuoted }` + `LaunchSpec{ PATH / ~/.local/bin }` + `AuthScheme{ KeychainOrFile }`。
+**落地时的偏离设计与顺带修复**
+
+- **`Amend` 切点已引入**（Phase B 预告的那个）。claude 的 statusLine 与 hooks 同住 `settings.json`，
+  故走「写前改写」。`wire_hooks` 的幂等判定随之**后移到 amend 之后、与最初读到的文本比对**——
+  这是把旧 `apply()` 里「`settings == orig` 再决定写不写」的**正确语义**搬进通用编排，不是修 bug；
+  但若照搬 kimi/codex 那套「只看 `ensure_hooks` 结果」，hooks 已就位而 statusLine 待接时**就会**
+  被误跳过。约定写进了 `Amend` 的文档：**无改动必须原样返回入参文本**，否则重新序列化会让文本
+  比较误判为有改动，每次启动重写一遍用户配置。
+
+- **npm 候选是 `Exe` 而非 `NodeScript`**：`npm view @anthropic-ai/claude-code bin` → `bin/claude.exe`，
+  该包分发的是原生二进制，不是 JS 入口（与 codex 不同，别照抄）。且这条只对 Windows 有意义：
+  unix 上 npm 生成的 shim 是无扩展名的 `claude`，`OnPath` 就能命中；Windows 上是 `claude.cmd`，
+  `exe_on_path("claude.exe")` 看不见它。
+
+- **§6 第三条「启动和检测也有问题」预言命中**：claude 的 `launch_args`/`resume_args` 此前硬编码
+  裸名 `"claude"`，而 `is_installed()` 有 `~/.local/bin` 兜底——于是**检测说「已装」、wt.exe 却报
+  `0x80070002` 系统找不到指定的文件**（新设备装完打不开）。三者现在同源走 `Installation::launch_argv()`。
+
+- **`wire_hooks` 增补「已认领路径须仍存在」过滤**：旧 claude 的 `resolve_reporter_native` 有
+  `exists()` 检查，通用版漏了。app 换目录后 hooks 里的旧路径会被当成目标写回去、hooks 静默失效
+  （sidecar 明明就在手边）。kimi/codex 一并受益。
+
+- **`hooks` 键非 object 时从「直接覆盖」改为 `Abandon`**：旧 claude `ensure_hooks` 会
+  `settings["hooks"] = json!({})` 覆盖用户手改坏的值。现与 codex 同为放弃写入（绝不写坏）。
+
+- **新增 `HookSpec::parses()`**：`check_provider_hooks` 此前对 claude 是「解析失败 → Unknown」，
+  对 kimi/codex 却是「→ Missing」。后者会催用户点「修复连接」，而修复必因 `Abandon(ConfigUnreadable)`
+  拒写，陷入死循环。三家现已统一为 Unknown。
+
+- **claude 开始认领废弃的 `cc-reporter`**（与 §3 对 codex 的改进同）：旧 `reporter_exe_path` 只认
+  meowo-reporter，遇到 cc-reporter 不认领、重复追加一条；现在认领并更新路径。
+
+- **`~/.claude.json` 未进 `Variant`**：账号信息住在 home 下、**不在** data_dir 内（与凭据不同源）。
+  `CLAUDE_CONFIG_DIR` 设置时它的落点未经证实，故 `account/claude.rs` 保持原样读 home，不硬塞进
+  变体模型。C4 的其余部分（凭据路径 / Keychain / client_id / token_url）已由 `AuthScheme` 驱动。
+
+- **macOS Keychain 分支的验证手段**：本机无 macOS toolchain（`cargo check --target aarch64-apple-darwin`
+  因缺 `cc` 失败）。改用一个 scratch crate 真实依赖 meowo-agent、把 macOS 分支代码逐字贴入并去掉
+  cfg gate、在 Windows 上编译，断言 `keychain_spec() == ("Claude Code-credentials", "root")`——
+  service 名一旦漂移，macOS 用户就读不到既有登录态。
+
+- **`cargo +nightly fmt` 不可用于本仓**：无 `rustfmt.toml`，HEAD 从未按默认 rustfmt 风格格式化，
+  跑一次会重排 50 个文件。本轮未跑 fmt。`cargo clippy -- -D warnings`（stable）通过；nightly clippy
+  在 `account/kimi.rs:311` 有一条既存 `question_mark` 违规，与本轮无关。
+
+**C1** `plugins/claude.rs`：变体表（单变体 `stable`）+ `HookSpec{ settings.json, ClaudeJson, 8 条带 matcher, BareQuoted }` + `LaunchSpec{ ~/.local/bin → npm(Win) → PATH }` + `AuthScheme{ KeychainOrFile }`。
 `DataDirSpec.env` 语义对齐：`CLAUDE_CONFIG_DIR` 直接就是数据目录（与 `KIMI_SHARE_DIR` 同）——已支持。
 
 **C2** `ConfigFormat::ClaudeJson`：搬 `ensure_hooks`（matcher 感知的定位/追加）+ `session_start_has_reporter` + `reporter_path_from_hooks`。**必须保住** `find_reporter_entry_with_matcher` 不认领「命令含 meowo-reporter 子串的用户 hook」这条（`node tools/meowo-reporter-notify.js`）——现有单测已覆盖，一并搬。
@@ -173,8 +218,11 @@ codex 的 `post_wire` = 现有 `claimed_codex_entries` + `ensure_trusted_hashes`
 
 - **`is_installed` 口径不一**（A4）：`KimiAgent::is_installed()` = 可执行在 PATH，`KimiSetup::detect()` = 数据目录存在。前端卡片同时显示「已安装」与「未检测到该 agent 的数据目录」，正是这两者打架。
 - **kimi legacy `client_id` 未证实**：`AUTH_LEGACY` 现在复用新版值。等 `刷新 token 响应体` 到手——`invalid_client` 就改 `plugins/kimi.rs` 一个 const。
-- **用户搁置的「启动和检测也有问题」**：大概率就是 A4 + `LaunchSpec`（codex 的 argv 三种落法）。Phase A/B 做完再回头看，很可能不用单独修。
-- **`scripts/install-hooks.mjs` 与 `HOOK_SPECS` 靠注释同步**（C2）：加绊线测试。
+- ~~**用户搁置的「启动和检测也有问题」**：大概率就是 A4 + `LaunchSpec`（codex 的 argv 三种落法）。Phase A/B 做完再回头看，很可能不用单独修。~~
+  → **Phase C 已修**。判断基本正确，但 claude 那一半直到 C1 给它 `LaunchSpec` 才解决：裸名 `"claude"`
+  交给 wt.exe，而 wt 继承的是 app 启动时的 PATH 快照，看不到 native installer 刚加的 `~/.local/bin`。
+- ~~**`scripts/install-hooks.mjs` 与 `HOOK_SPECS` 靠注释同步**（C2）：加绊线测试。~~
+  → 已加 `hook_specs_match_install_hooks_mjs`（解析 mjs 的 SPECS 字面量与 `plugins/claude.rs` 的 EVENTS 逐条比对）。
 
 ---
 

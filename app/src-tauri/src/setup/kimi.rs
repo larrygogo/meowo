@@ -21,8 +21,8 @@ impl super::ProviderSetup for KimiSetup {
         };
         // config.toml 由 `kimi login` 生成——不存在即「需先登录」（变体表里声明为
         // MissingConfig::Fail(NeedLogin)），据此给前端精准提示而非泛化的失败文案。
-        // 接线无副作用，故不传 after_write。
-        super::wire_hooks(&inst, "kimi", None)
+        // 接线无写前改写、无副作用，故 amend / after_write 均为 None。
+        super::wire_hooks(&inst, "kimi", None, None)
     }
 }
 

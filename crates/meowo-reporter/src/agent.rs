@@ -86,14 +86,20 @@ impl Agent for ClaudeAgent {
         true
     }
     fn resume_args(&self, session_id: &str) -> Vec<String> {
-        vec!["claude".into(), "--resume".into(), session_id.into()]
+        // 用 claude 可执行绝对路径（spawned 终端 PATH 未必含 claude），与 launch_args 同源。
+        let mut argv = crate::claude::claude_launch_argv();
+        argv.push("--resume".into());
+        argv.push(session_id.into());
+        argv
     }
     fn launch_args(&self) -> Vec<String> {
-        vec!["claude".into()]
+        // 绝对路径优先：meowo-app 拉起的终端继承 app 启动时的 PATH 快照，未必含刚装好的 claude
+        // （native installer 只改持久 PATH）。裸名会让 wt/powershell 报 0x80070002。
+        crate::claude::claude_launch_argv()
     }
     fn is_installed(&self) -> bool {
-        let bin = if cfg!(windows) { "claude.exe" } else { "claude" };
-        exe_on_path(bin) || in_local_bin(bin)
+        // 与 launch_args 同源：杜绝「检测说已安装、启动却找不到文件」。
+        crate::claude::claude_installed()
     }
     fn install_script(&self, windows: bool) -> Option<String> {
         Some(if windows {
@@ -287,16 +293,6 @@ pub fn exe_on_path(name: &str) -> bool {
     })
 }
 
-/// USERPROFILE/HOME 下的 `~/.local/bin/<name>` 是否存在（claude native installer 默认装这里并加 PATH，
-/// 但 PATH 可能尚未在当前进程环境刷新，故兜底直查）。
-fn in_local_bin(name: &str) -> bool {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()
-        .map(|h| std::path::Path::new(&h).join(".local").join("bin").join(name).is_file())
-        .unwrap_or(false)
-}
-
 /// 进程名（可含路径、大小写不敏感）是否属于任一已知 agent 本体——取 basename **精确**比对。
 /// owner_pid 上溯与 meowo-app 判活/清理共用此函数，杜绝子串误匹配（如名字恰好含 kimi 的无关进程）。
 pub fn is_agent_process(name: &str) -> bool {
@@ -353,7 +349,11 @@ mod tests {
 
     #[test]
     fn resume_args_per_provider() {
-        assert_eq!(for_provider(ProviderKey::Claude).resume_args("ID"), vec!["claude", "--resume", "ID"]);
+        // claude 首元素是可执行(绝对路径或回退裸名)，参数固定 --resume <id>。
+        // 不写死裸名：装了 claude 的机器上这里应是绝对路径——终端继承的 PATH 快照未必含它。
+        let claude = for_provider(ProviderKey::Claude).resume_args("ID");
+        assert_eq!(&claude[1..], ["--resume".to_string(), "ID".to_string()]);
+        assert!(claude[0].to_ascii_lowercase().contains("claude"));
         // codex：末两位固定 `resume <id>`；首元素是 node(走包装) 或回退裸名 codex；某元素含 "codex"。
         let codex = for_provider(ProviderKey::Codex).resume_args("ID");
         assert_eq!(codex[codex.len() - 2..], ["resume".to_string(), "ID".to_string()]);
@@ -366,8 +366,10 @@ mod tests {
 
     #[test]
     fn launch_args_per_provider() {
-        // claude：裸命令，无 resume/id。
-        assert_eq!(for_provider(ProviderKey::Claude).launch_args(), vec!["claude"]);
+        // claude：单元素可执行(绝对路径或回退裸名)，无 resume/id。
+        let claude = for_provider(ProviderKey::Claude).launch_args();
+        assert_eq!(claude.len(), 1);
+        assert!(claude[0].to_ascii_lowercase().contains("claude"));
         // codex：不含 resume/id；末元素不是 "resume"；某元素含 "codex"。
         let codex = for_provider(ProviderKey::Codex).launch_args();
         assert!(codex.iter().all(|a| a != "resume"));

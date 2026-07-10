@@ -141,7 +141,8 @@ impl super::ProviderSetup for CodexSetup {
             eprintln!("Meowo repair[codex]: 解析不到 codex 安装实况，跳过");
             return Some(super::RepairReason::NotDetected);
         };
-        super::wire_hooks(&inst, "codex", Some(after_write))
+        // hooks.json 无写前改写；trusted_hash 预信任是落盘后的副作用，走 after_write。
+        super::wire_hooks(&inst, "codex", None, Some(after_write))
     }
 }
 

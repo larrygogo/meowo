@@ -6,7 +6,9 @@
 //! 本 crate 只依赖 std/serde/toml_edit：不碰文件写入、不联网、不依赖 Tauri。落盘与联网各由
 //! meowo-app 完成，但都以本层探测出的 [`Installation`] 为输入，不再各自重推路径。
 //!
-//! 迁移状态：kimi 已走本层（试点）；claude/codex 仍走 meowo-app 内的旧路径，待逐个迁入 `plugins/`。
+//! 迁移状态：claude / kimi / codex 三家均已迁入 `plugins/`。剩余的 Phase D 是把 meowo-app 与
+//! meowo-reporter 里那三套并行的 trait（`ProviderSetup` / `ProviderAccount` / `Agent`）收敛成
+//! 注册表驱动的通用函数——加新 agent 只写 `plugins/<new>.rs` + `registry.rs` 一行。
 
 pub mod auth;
 pub mod config;

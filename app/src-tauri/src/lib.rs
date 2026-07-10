@@ -1343,50 +1343,46 @@ enum HooksStatus {
     Unknown,
 }
 
-/// claude hooks 接入状态：读 claude settings.json 判断 meowo-reporter hooks 是否登记。
-/// 文件不存在=Missing；读/解析失败=Unknown（暂时不可读/损坏不误报成未装，与 codex/kimi 对称）；
-/// 有 meowo-reporter hook=Installed。
-fn claude_hooks_status() -> HooksStatus {
-    claude_hooks_status_at(&setup::claude::claude_settings_path())
-}
-
-/// 纯路径版，便于用临时文件单测三态（不碰真实 ~/.claude）。
-fn claude_hooks_status_at(path: &std::path::Path) -> HooksStatus {
+/// hooks 接入三态判定。纯路径 + 格式规格版，便于用临时文件单测（不碰真实数据目录）。
+///
+/// 文件不存在=Missing；读失败**或解析失败**=Unknown；能解析但 SessionStart 没挂当前
+/// meowo-reporter=Missing；挂了=Installed。
+///
+/// 「解析失败 → Unknown」是核心不变量：配置暂时不可读/损坏时若误报 Missing，前端会催用户点
+/// 「修复连接」，而修复必然因 `Abandon(ConfigUnreadable)` 拒写（绝不写坏用户文件），陷入死循环。
+fn hooks_status_at(path: &std::path::Path, hooks: &meowo_agent::config::HookSpec, agent_id: &str) -> HooksStatus {
     if !path.exists() {
         return HooksStatus::Missing;
     }
     let Ok(text) = std::fs::read_to_string(path) else {
         return HooksStatus::Unknown;
     };
-    match setup::claude::parse_settings(&text) {
-        Some(v) if setup::claude::session_start_has_reporter(&v) => HooksStatus::Installed,
-        Some(_) => HooksStatus::Missing,
-        None => HooksStatus::Unknown,
+    if !hooks.parses(&text) {
+        return HooksStatus::Unknown;
+    }
+    if hooks.has_reporter(&text, agent_id) {
+        HooksStatus::Installed
+    } else {
+        HooksStatus::Missing
     }
 }
 
-/// 已迁入插件层的 agent（kimi/codex）的 hooks 接入状态：读实况变体的配置文件，判定交给该变体的
-/// 格式适配器。文件不存在=Missing；读失败=Unknown（暂时不可读/损坏不误报成未装）。
+/// 某 agent 的 hooks 接入状态：读实况变体的配置文件，判定交给该变体的格式适配器。
+/// 解析不出实况（无 home 等）=Unknown。
 fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) -> HooksStatus {
     let Some(inst) = inst else {
         return HooksStatus::Unknown;
     };
-    let path = inst.config_path();
-    if !path.exists() {
-        return HooksStatus::Missing;
-    }
-    match std::fs::read_to_string(&path) {
-        Ok(text) if inst.hooks.has_reporter(&text, agent_id) => HooksStatus::Installed,
-        Ok(_) => HooksStatus::Missing,
-        Err(_) => HooksStatus::Unknown,
-    }
+    hooks_status_at(&inst.config_path(), inst.hooks, agent_id)
 }
 
 /// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
     match meowo_store::ProviderKey::parse(Some(&provider)) {
-        meowo_store::ProviderKey::Claude => claude_hooks_status(),
+        meowo_store::ProviderKey::Claude => {
+            plugin_hooks_status(meowo_reporter::claude::claude_install(), "claude")
+        }
         meowo_store::ProviderKey::Codex => {
             plugin_hooks_status(meowo_reporter::codex::codex_install(), "codex")
         }
@@ -3217,30 +3213,51 @@ mod hooks_check_tests {
     // kimi / codex 的 SessionStart 判定已迁入 meowo_agent::config（KimiToml / CodexJson），
     // 测试随之搬到该 crate（见 has_reporter_only_counts_session_start）。
 
+    /// claude 的接线规格（取自插件层的变体表，与真实接线同源）。
+    fn claude_spec() -> &'static meowo_agent::config::HookSpec {
+        meowo_agent::by_id("claude").expect("claude 应已注册").variants()[0].hooks
+    }
+
     #[test]
     fn claude_hooks_status_three_way() {
         use std::io::Write;
         let dir = std::env::temp_dir().join(format!("cckb-claude-hooks-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("settings.json");
+        let status = |p: &std::path::Path| hooks_status_at(p, claude_spec(), "claude");
 
         let _ = std::fs::remove_file(&path);
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+        assert!(matches!(status(&path), HooksStatus::Missing));
 
-        // Installed：command 用 ccsetup 认可的「带引号 meowo-reporter 路径」格式（参照 ccsetup 既有
-        // 测试 reporter_exe_path_strict_matches_only_our_exe / ensure_hooks_* 里的 command 串）。
+        // Installed：command 用 ClaudeJson 认可的「带引号 meowo-reporter 路径、无参数」格式。
         let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/meowo-reporter.exe\""}]}]}}"#;
         std::fs::File::create(&path).unwrap().write_all(installed.as_bytes()).unwrap();
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Installed));
+        assert!(matches!(status(&path), HooksStatus::Installed));
 
         let foreign = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node other.js"}]}]}}"#;
         std::fs::File::create(&path).unwrap().write_all(foreign.as_bytes()).unwrap();
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Missing));
+        assert!(matches!(status(&path), HooksStatus::Missing));
 
         // 损坏 JSON → Unknown（核心不变量：不误报 Missing）
         std::fs::File::create(&path).unwrap().write_all(b"{not json").unwrap();
-        assert!(matches!(claude_hooks_status_at(&path), HooksStatus::Unknown));
+        assert!(matches!(status(&path), HooksStatus::Unknown));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 「损坏 → Unknown」对三家一致：kimi 的 TOML 与 codex 的 JSON 同样不许误报 Missing。
+    #[test]
+    fn corrupt_config_is_unknown_for_every_agent() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("cckb-corrupt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for id in ["claude", "codex", "kimi"] {
+            let spec = meowo_agent::by_id(id).unwrap().variants()[0].hooks;
+            let path = dir.join(format!("{id}-{}", spec.config_rel.replace('/', "_")));
+            // 对 TOML 与 JSON 都是非法文本。
+            std::fs::File::create(&path).unwrap().write_all(b"{not parseable [[[").unwrap();
+            assert!(matches!(hooks_status_at(&path, spec, id), HooksStatus::Unknown), "{id} 损坏配置应为 Unknown");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
