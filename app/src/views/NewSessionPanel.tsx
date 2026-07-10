@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -71,7 +71,15 @@ export function NewSessionPanel(): ReactElement {
   const [avail, setAvail] = useState<ProviderKey[] | null>(null);
   // null = 尚未拿到账号（或取不到）→ 不显示未登录提示，避免误闪/误报。
   const [loggedIn, setLoggedIn] = useState<Record<string, boolean> | null>(null);
-  const [loginBusy, setLoginBusy] = useState(false);
+  // 正在登录的 provider 集合（而非单个 boolean）：登录期间用户可能切换选中项，事件回来时得认得出
+  // 是谁的，否则等待态永远落不回、把别的 agent 的登录按钮一起锁死。用集合而非单值，是因为分别登录
+  // 两个 agent 本就该允许并发（各自一个终端、一个后端 watch 线程）。
+  const [loginPending, setLoginPending] = useState<Set<ProviderKey>>(new Set());
+  // login-done 只订阅一次（切 provider 时 unlisten/relisten 会漏事件），故当前选中项与文案走 ref。
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
+  const tRef = useRef(t);
+  tRef.current = t;
 
   useEffect(() => {
     // 窗口已开时从另一张卡片再点「新建会话」：后端发 ns-prefill 更新表单（不重开窗口）。
@@ -127,19 +135,27 @@ export function NewSessionPanel(): ReactElement {
   // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果，完成/超时后发 login-done。
   useEffect(() => {
     const un = listen<LoginDone>("login-done", (e) => {
-      if (e.payload.provider !== provider) return;
-      setLoginBusy(false);
+      const p = e.payload.provider;
+      // 先无条件清掉**该 provider**的等待态：登录期间用户可能已切走，若按当前选中项过滤就再也
+      // 清不掉了（等待态卡死，该 agent 再也点不动登录）。
+      setLoginPending((s) => {
+        if (!s.has(p)) return s;
+        const n = new Set(s);
+        n.delete(p);
+        return n;
+      });
+      // 登录成功与否是该 provider 的客观事实，与当前选中谁无关。
       if (e.payload.ok) {
-        setLoggedIn((m) => ({ ...(m ?? {}), [e.payload.provider]: true }));
-        setError(null);
-      } else {
-        setError(t.newSession.loginTimeout); // 超时 ≠ 登录失败：用户可能中途放弃了
+        setLoggedIn((m) => ({ ...(m ?? {}), [p]: true }));
       }
+      // 但提示只对当前看着的那个 agent 显示，免得用户莫名看到别人的报错。
+      if (p !== providerRef.current) return;
+      setError(e.payload.ok ? null : tRef.current.newSession.loginTimeout); // 超时 ≠ 登录失败
     });
     return () => {
       un.then((f) => f());
     };
-  }, [provider, t]);
+  }, []);
 
   // default_agent 若未装，则退到首个已装 agent（avail 加载后校正）
   useEffect(() => {
@@ -185,16 +201,21 @@ export function NewSessionPanel(): ReactElement {
     }
   }
 
-  /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done 事件（或超时）才落回。 */
+  /** 拉起交互式登录。成功 spawn 后不清等待态——等 login-done 事件（或后端 5 分钟超时）才落回。 */
   async function doLogin() {
-    if (loginBusy) return;
-    setLoginBusy(true);
+    const target = provider; // 锁定发起时的 provider：之后用户切走了，事件仍要能对上号
+    if (loginPending.has(target)) return;
+    setLoginPending((s) => new Set(s).add(target));
     setError(null);
     try {
-      await loginAgent(provider);
+      await loginAgent(target);
     } catch (e) {
       setError(String(e));
-      setLoginBusy(false);
+      setLoginPending((s) => {
+        const n = new Set(s);
+        n.delete(target);
+        return n;
+      });
     }
   }
 
@@ -302,9 +323,9 @@ export function NewSessionPanel(): ReactElement {
                 className="ns-repair"
                 data-testid="ns-login"
                 onClick={doLogin}
-                disabled={loginBusy}
+                disabled={loginPending.has(provider)}
               >
-                {loginBusy ? t.newSession.loggingIn : t.newSession.login}
+                {loginPending.has(provider) ? t.newSession.loggingIn : t.newSession.login}
               </button>
             </div>
           )}

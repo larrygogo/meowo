@@ -189,4 +189,56 @@ describe("NewSessionPanel 登录", () => {
     expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("ns-login-warn")).toBeTruthy();
   });
+
+  /** 两家都未登录，用于「登录中切走」的回归。 */
+  const bothSignedOut = () =>
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: null, usage: null, usage_supported: true },
+      { provider: "codex", account: { login_label: "API Key" }, usage: null, usage_supported: false },
+      { provider: "kimi", account: null, usage: null, usage_supported: true },
+    ]);
+
+  it("登录中切到别的 agent：新 agent 的登录按钮可点，且能真的发起登录", async () => {
+    // 回归：等待态曾是全局 boolean，切走后 claude 的 login-done 被按当前选中项过滤掉、
+    // 等待态永远落不回 → kimi 的按钮虽显示可点，doLogin 却被 `if (loginBusy) return` 静默挡住。
+    bothSignedOut();
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    fireEvent.click(await screen.findByTestId("ns-login")); // 发起 claude 登录
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude"));
+    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+
+    fireEvent.click(screen.getByTestId("ns-agent-kimi")); // claude 还在登录中就切走
+    // kimi 未登录且不在等待态 → 按钮可点
+    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("ns-login"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("kimi")); // 并发登录不被挡
+    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it("登录中切走后，原 agent 的 login-done 仍能清掉它的等待态", async () => {
+    bothSignedOut();
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    fireEvent.click(await screen.findByTestId("ns-login")); // claude 登录中
+    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(true));
+
+    fireEvent.click(screen.getByTestId("ns-agent-kimi")); // 切走
+    fireLogin("claude", false); // claude 登录超时（此时选中的是 kimi）
+    fireEvent.click(screen.getByTestId("ns-agent-claude")); // 切回来
+
+    // 等待态已被清掉 → 可以重试登录（旧实现在此永久禁用）
+    await waitFor(() => expect((screen.getByTestId("ns-login") as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("切走期间到达的成功事件，切回后应显示为已登录", async () => {
+    bothSignedOut();
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    fireEvent.click(await screen.findByTestId("ns-login"));
+    fireEvent.click(await screen.findByTestId("ns-agent-kimi")); // 切走
+    fireLogin("claude", true); // 登录成功是客观事实，与当前选中谁无关
+    fireEvent.click(screen.getByTestId("ns-agent-claude")); // 切回来
+    await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
+  });
 });
