@@ -2550,7 +2550,7 @@ fn spawn_liveness_watch(
                 notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
 
-                // macOS：把连接中会话的状态摘要写到菜单栏图标标题旁（一眼可见，弥补无吸边缩略条）。
+                // macOS：把连接中会话的状态摘要画成菜单栏彩色徽章（一眼可见，弥补无吸边缩略条）。
                 #[cfg(target_os = "macos")]
                 if last_tray != Some((tray_running, tray_waiting)) {
                     crate::macos::menubar::update_tray_status(&app, tray_running, tray_waiting);
