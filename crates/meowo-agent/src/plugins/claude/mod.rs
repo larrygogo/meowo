@@ -136,11 +136,16 @@ impl AgentPlugin for Claude {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
-    fn install_script(&self, windows: bool) -> Option<String> {
-        Some(if windows {
-            "irm https://claude.ai/install.ps1 | iex".into()
-        } else {
-            "curl -fsSL https://claude.ai/install.sh | bash".into()
+    /// `claude.ai` 在 Cloudflare 后面，会间歇触发人机校验（其页面以 HTTP 200 返回）。
+    /// 引导脚本本身只是段胶水：它最终去 `downloads.claude.ai`（GCS，无 CF）取二进制。
+    fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
+        Some(crate::install::InstallScript {
+            url: if windows {
+                "https://claude.ai/install.ps1"
+            } else {
+                "https://claude.ai/install.sh"
+            },
+            unix_shell: "bash", // 脚本用了 `[[ ]]`，dash 跑不了
         })
     }
     /// claude 把任务标题写进标签页 → meowo-app 可按标题精确切标签，无需我们补 token。

@@ -121,14 +121,19 @@ impl AgentPlugin for Kimi {
     fn resume_args(&self) -> &'static [&'static str] {
         &["-r"]
     }
-    fn install_script(&self, windows: bool) -> Option<String> {
-        // 装当前 Node 版 Kimi Code（装到 ~/.kimi-code/bin/kimi.exe，与 modern 变体的候选一致）。
-        // 注意路径里的 `/kimi-code/`——不带它的 code.kimi.com/install.ps1 装的是旧 Python `kimi-cli`
-        // （落到 ~/.local/bin/kimi-cli.exe，检测不到）。
-        Some(if windows {
-            "irm https://code.kimi.com/kimi-code/install.ps1 | iex".into()
-        } else {
-            "curl -LsSf https://code.kimi.com/kimi-code/install.sh | bash".into()
+    /// 装当前 Node 版 Kimi Code（装到 `~/.kimi-code/bin/kimi.exe`，与 modern 变体的候选一致）。
+    /// 注意路径里的 `/kimi-code/`——不带它的 `code.kimi.com/install.ps1` 装的是旧 Python `kimi-cli`
+    /// （落到 `~/.local/bin/kimi-cli.exe`，检测不到）。
+    ///
+    /// `code.kimi.com` 是 nginx 直服，不在 Cloudflare 后面；判定仍照做（中间设备也可能塞 HTML）。
+    fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
+        Some(crate::install::InstallScript {
+            url: if windows {
+                "https://code.kimi.com/kimi-code/install.ps1"
+            } else {
+                "https://code.kimi.com/kimi-code/install.sh"
+            },
+            unix_shell: "bash",
         })
     }
     /// kimi 不写标签标题、也不抢 → 由 meowo-reporter 在 hook 时补 session_id token，

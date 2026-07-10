@@ -1346,47 +1346,74 @@ async fn login_agent(
     Ok(())
 }
 
-/// 把安装脚本写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
-/// Windows：try/catch 捕获终止错误，打印 `Installation failed: …` 并 exit 1。
-#[cfg(target_os = "windows")]
-fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
-    let body = format!(
-        "Write-Host 'Installing, please wait...'\r\n\
-         try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()); exit 1 }}\r\n"
-    );
-    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.ps1"));
+/// 取回官方安装引导脚本，并确认它**确实是脚本**。
+///
+/// 这一步是新加的，起因是一份真实的安装日志：
+///
+/// ```text
+/// Installing, please wait...
+/// Installation failed: Just a moment...*{box-sizing:border-box…
+/// ```
+///
+/// `claude.ai` 与 `chatgpt.com` 都在 Cloudflare 后面，其人机校验页以 **HTTP 200** 返回。原先的
+/// `irm <url> | iex` / `curl -fsSL <url> | bash` 不会因此报错——`irm` 拿到 HTML 就交给 PowerShell
+/// 执行，`curl -f` 也只挡非 2xx。于是用户对着一屏 CSS 发懵。
+///
+/// 现在 shell 只跑本地文件，联网与判定都在这里。
+fn fetch_install_script(script: &meowo_agent::InstallScript) -> Result<String, String> {
+    use meowo_agent::{Body, HttpRequest};
+    let body = ports::ports()
+        .http
+        .send(&HttpRequest {
+            method: "GET",
+            url: script.url,
+            headers: &[],
+            body: Body::Empty,
+            timeout: std::time::Duration::from_secs(30),
+        })
+        .map_err(|e| format!("下载安装脚本失败：{e}"))?;
+
+    if meowo_agent::looks_like_challenge(&body) {
+        return Err(format!(
+            "{} 返回了 Cloudflare 人机校验页，而不是安装脚本。这是间歇性的，稍后重试通常即可；\
+             若持续失败，请在浏览器里打开该地址手动安装。",
+            script.url
+        ));
+    }
+    if !meowo_agent::is_runnable_script(&body) {
+        return Err(format!("{} 返回的不是安装脚本（可能被中间设备拦截）。", script.url));
+    }
+    Ok(body)
+}
+
+/// 把取回的脚本原样写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
+/// **不再包一层 shell**：脚本本身已含错误处理，包装只会让「哪一行失败」更难看清。
+fn write_install_script(provider: &str, body: &str, windows: bool) -> std::io::Result<String> {
+    let ext = if windows { "ps1" } else { "sh" };
+    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.{ext}"));
     std::fs::write(&p, body)?;
     Ok(p.to_string_lossy().into_owned())
 }
 
-/// macOS/Linux：子 shell 跑安装串，失败打印统一行并以原退出码退出。
-#[cfg(not(target_os = "windows"))]
-fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
-    let body = format!(
-        "echo 'Installing, please wait...'\n\
-         ( {script} ) || {{ rc=$?; echo \"Installation failed: exit code $rc\"; exit $rc; }}\n"
-    );
-    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.sh"));
-    std::fs::write(&p, body)?;
-    Ok(p.to_string_lossy().into_owned())
-}
-
-/// 构造后台安装子进程（不弹窗口）。平台差异只在此：Windows 用 pwsh(优先)/powershell + CREATE_NO_WINDOW，
-/// 其它平台用 bash。stdin/stdout/stderr 由调用方统一设。
+/// 构造后台安装子进程（不弹窗口）。平台差异只在此：Windows 用 pwsh(优先)/powershell +
+/// CREATE_NO_WINDOW；其它平台用该 agent 声明的解释器（claude/kimi 要 bash，codex 官方写的是 sh）。
+/// stdin/stdout/stderr 由调用方统一设。
 #[cfg(target_os = "windows")]
-fn build_install_command(script_path: &str) -> std::process::Command {
+fn build_install_command(script_path: &str, _unix_shell: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let shell = if pwsh_available() { "pwsh" } else { "powershell" };
     let mut c = std::process::Command::new(shell);
+    // Bypass 仍需要：跑的是刚下载的未签名官方脚本。但它已经过 is_runnable_script 判定，
+    // 且来自变体表里硬编码的 https 地址，不是用户输入。
     c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path])
         .creation_flags(CREATE_NO_WINDOW);
     c
 }
 
 #[cfg(not(target_os = "windows"))]
-fn build_install_command(script_path: &str) -> std::process::Command {
-    let mut c = std::process::Command::new("bash");
+fn build_install_command(script_path: &str, unix_shell: &str) -> std::process::Command {
+    let mut c = std::process::Command::new(unix_shell);
     c.arg(script_path);
     c
 }
@@ -1397,10 +1424,19 @@ fn build_install_command(script_path: &str) -> std::process::Command {
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
     let provider = agent.id().as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
+    let windows = cfg!(target_os = "windows");
     let script = agent
-        .install_script(cfg!(target_os = "windows"))
+        .install_script(windows)
         .ok_or("该 agent 没有可用的一键安装命令")?;
-    let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
+
+    let unix_shell = script.unix_shell;
+    let script_url = script.url;
+    // 取脚本 + 判定放在 spawn 之前：被 Cloudflare 拦时直接回传一句人话，而不是把校验页写进日志、
+    // 再让子进程去执行它。放 blocking 池是因为 ureq 是同步的，不能堵住 tauri 的事件循环。
+    let body = tauri::async_runtime::spawn_blocking(move || fetch_install_script(&script))
+        .await
+        .map_err(|e| e.to_string())??;
+    let path = write_install_script(&provider, &body, windows).map_err(|e| e.to_string())?;
 
     // 安装输出落盘：此前 stdout/stderr 直接丢进 Stdio::null()，判成功只看退出码，于是「装是装上了
     // 但没接好」的半成功一律报成功。claude 就是这样——`claude.exe install` 在 Windows 上打印一行
@@ -1412,15 +1448,22 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
     // spawn 放 blocking 线程：GUI 进程首次 spawn 子进程可能被杀软扫描拖慢，勿堵事件循环。
     // spawn 成功即返回 Ok；结果走 install-done 事件；spawn 失败回传 Err，前端立即显示错误。
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use std::io::Write;
         use std::process::Stdio;
         // 日志建不出来（磁盘满/权限）不该让安装失败：退回丢弃输出，log_path 报 None。
-        let log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        let mut log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        // 抬头行由我们写：脚本不再被包一层 shell，这行原先是包装打印的。它是用户在日志里
+        // 判断「有没有跑起来」的唯一信号，别随包装一起丢掉。
+        if let Some(f) = log.as_mut() {
+            let _ = writeln!(f, "Installing {provider} from {url}, please wait...", url = script_url);
+        }
+        let log = log;
         let (out, err) = match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
             Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
             None => (Stdio::null(), Stdio::null()),
         };
         let logged = log.is_some();
-        let mut child = build_install_command(&path)
+        let mut child = build_install_command(&path, unix_shell)
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err)

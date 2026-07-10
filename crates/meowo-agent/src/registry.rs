@@ -25,9 +25,12 @@ pub trait AgentPlugin: Sync {
         &[]
     }
 
-    /// 官方一句话安装命令串（None = 无一键方案）。`windows` 决定返回 PowerShell 还是 curl 版。
-    /// 命令是受信硬编码串，调用方在终端里跑。
-    fn install_script(&self, _windows: bool) -> Option<String> {
+    /// 官方安装引导脚本的地址（None = 无一键方案）。`windows` 决定取 `.ps1` 还是 `.sh`。
+    ///
+    /// 返回的是**地址**而非 `irm <url> | iex` 这类命令串：宿主取回内容、判定它确实是脚本
+    /// （[`install::is_runnable_script`]）之后才落盘执行。`claude.ai` 与 `chatgpt.com` 都在
+    /// Cloudflare 后面，其人机校验页以 **HTTP 200** 返回，裸管道会把那坨 HTML 喂给解释器。
+    fn install_script(&self, _windows: bool) -> Option<crate::install::InstallScript> {
         None
     }
 

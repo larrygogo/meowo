@@ -100,11 +100,16 @@ impl AgentPlugin for Codex {
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
     }
-    fn install_script(&self, windows: bool) -> Option<String> {
-        Some(if windows {
-            "irm https://chatgpt.com/codex/install.ps1 | iex".into()
-        } else {
-            "curl -fsSL https://chatgpt.com/codex/install.sh | sh".into()
+    /// `chatgpt.com` 在 Cloudflare 后面（实测 `server: cloudflare` + `cf-ray`），会间歇触发人机
+    /// 校验，其页面以 HTTP 200 返回。脚本本体最终去 GitHub Releases 取二进制。
+    fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
+        Some(crate::install::InstallScript {
+            url: if windows {
+                "https://chatgpt.com/codex/install.ps1"
+            } else {
+                "https://chatgpt.com/codex/install.sh"
+            },
+            unix_shell: "sh", // 官方命令写的就是 `| sh`
         })
     }
     // sets_terminal_tab_title / writes_tab_token 均取默认 false：

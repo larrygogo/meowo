@@ -150,6 +150,33 @@ describe("AccountSection agent 卡", () => {
     expect(screen.getByTestId("agent-path-gap-claude")).toBeTruthy();
   });
 
+  /// 后端在**跑脚本之前**就失败（引导脚本被 Cloudflare 人机校验拦截）：错误串是我们自己的中文
+  /// 诊断，必须原样显示。此时还没有日志文件——旧代码 `.catch(() => setInstallState("error"))`
+  /// 把它整个丢掉，用户只看到一句通用的「安装失败」，一点线索都没有。
+  it("installAgent 直接 reject：显示后端诊断，而不是通用文案", async () => {
+    const diag = "https://claude.ai/install.ps1 返回了 Cloudflare 人机校验页，而不是安装脚本。";
+    api.installAgent.mockRejectedValue(diag);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-install-kimi"));
+    const errLine = await screen.findByTestId("agent-install-error-kimi");
+    expect(errLine.textContent).toContain("Cloudflare");
+    // 没有日志文件（脚本压根没跑），故不显示日志路径行。
+    expect(screen.queryByTestId("agent-install-log-kimi")).toBeNull();
+  });
+
+  /// 两种失败不能串台：脚本真的跑了再失败时，该给通用文案 + 日志路径，而不是上一次的诊断。
+  it("先被 CF 拦、重试后脚本跑起来又失败：诊断被清掉，改显示日志路径", async () => {
+    api.installAgent.mockRejectedValueOnce("被 Cloudflare 人机校验拦截").mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-install-kimi"));
+    await waitFor(() => expect(screen.getByTestId("agent-install-error-kimi").textContent).toContain("Cloudflare"));
+
+    fireEvent.click(screen.getByTestId("agent-install-kimi")); // 重试
+    fireDone("kimi", false, "C:\\Users\\me\\.meowo\\install-kimi.log");
+    await waitFor(() => expect(screen.getByTestId("agent-install-log-kimi")).toBeTruthy());
+    expect(screen.getByTestId("agent-install-error-kimi").textContent).not.toContain("Cloudflare");
+  });
+
   it("install-done 失败：显示本地化失败说明 + 重试按钮", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);

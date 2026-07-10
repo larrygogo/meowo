@@ -251,6 +251,9 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   const [installState, setInstallState] = useState<"idle" | "installing" | "error">("idle");
   // 安装失败时的日志落点（后端把脚本输出重定向到该文件）。只展示路径，不透传英文原文。
   const [installLog, setInstallLog] = useState<string | null>(null);
+  // 后端在**跑脚本之前**就失败时的诊断（如引导脚本被 Cloudflare 人机校验拦截）。这是我们自己写的
+  // 中文诊断，不是脚本的英文输出，故直接展示——此时还没有日志文件，不给这句话用户就一点线索都没有。
+  const [installMsg, setInstallMsg] = useState<string | null>(null);
   // 装好了但 bin 目录不在持久 PATH 上时，这里是那个目录——终端里敲命令会找不到。
   // 官方安装器不保证写 PATH（claude 在 Windows 上只打印一行提示就 exit 0），而 meowo 启动
   // agent 走绝对路径、察觉不到，故须显式检测并给用户一键写入。
@@ -315,7 +318,15 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
 
   const startInstall = () => {
     setInstallState("installing");
-    installAgent(provider).catch(() => setInstallState("error"));
+    setInstallMsg(null);
+    setInstallLog(null);
+    // 后端在 spawn 之前的失败（取不到脚本 / 被 CF 拦）走这里，错误串是我们自己的中文诊断。
+    // 此前是 `.catch(() => setInstallState("error"))`，把它整个丢掉了——而此时还没有日志文件，
+    // 用户只会看到一句通用的「安装失败」，一点线索都没有。
+    installAgent(provider).catch((e) => {
+      setInstallState("error");
+      setInstallMsg(String(e));
+    });
   };
 
   /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done（或 5 分钟超时）才落回。 */
@@ -334,6 +345,8 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
     const unD = listen<InstallDone>("install-done", (e) => {
       if (e.payload.provider !== provider) return;
       setInstallLog(e.payload.logPath);
+      // 脚本确实跑起来了 → 失败原因在日志里，清掉「跑之前」那条诊断，免得两种失败串台。
+      setInstallMsg(null);
       if (e.payload.ok) {
         setInstallState("idle");
         setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
@@ -448,7 +461,8 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
 
       {installed === false && installState === "error" && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
-          {t.account.installFailed}
+          {/* 有后端诊断（被 CF 拦、取不到脚本）就显示它；否则脚本跑失败了，给通用文案 + 日志路径。 */}
+          {installMsg ?? t.account.installFailed}
           {installLog && (
             <div className="agent-install-log" data-testid={"agent-install-log-" + provider}>
               {t.account.installLogHint(installLog)}
