@@ -1,4 +1,3 @@
-use meowo_agent::AgentId;
 use meowo_reporter::{db_path, dispatch::dispatch, hook::HookEvent};
 use meowo_store::Store;
 use std::io::Read;
@@ -30,39 +29,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let now = now_ms();
     // agent 提供方：kimi 的 hook 命令带 `--provider kimi`；Claude 不带 → 默认 claude。
     let provider = parse_provider();
-    dispatch(&store, &ev, now, provider)?;
+    dispatch(&store, &ev, now, &provider)?;
     Ok(())
 }
 
-/// 从命令行解析 `--provider <name>` / `--provider=<name>`，缺省默认 agent。
+/// 从命令行解析 `--provider <name>` / `--provider=<name>` 的**原始字符串**，缺省默认 agent。
 ///
-/// 未知 id 也回退默认并告警：该参数由我们自己写进各 agent 的 hooks 命令行，出现未知值只可能是
-/// 配置被更新版 meowo 写过、又被旧版读到。此处**必须**产出一个可用的 agent——reporter 是 hook
-/// 子进程，中断会阻塞 agent 本体。落库的 provider 列由 dispatch 按此 id 写，仍是已注册的那批。
-fn parse_provider() -> AgentId {
+/// 刻意**不**归一到已注册的 `AgentId`：该参数由我们自己写进各 agent 的 hooks 命令行，但**跨版本**
+/// 时更新版 meowo 可能写入本版本尚不认识的 id（如 `gemini`）。若在此回退成 `DEFAULT_ID`，dispatch
+/// 就会把这个未知会话落库成默认 agent（甚至因默认不写库而落成 NULL）——等于把未知 provider 冒名成
+/// claude，正是 `meowo_agent::resolve` 契约要杜绝的。
+///
+/// 故原样返回：dispatch 把它原样写进 `sessions.provider`（未知值也保留），仅在需要能力时才对
+/// **已注册**插件做 `by_id` 查询，查不到就整段降级。缺省（claude 不带 `--provider`）返回默认 id。
+fn parse_provider() -> String {
     let args: Vec<String> = std::env::args().collect();
     let mut it = args.iter();
-    let mut raw: Option<&str> = None;
     while let Some(a) = it.next() {
         if a == "--provider" {
-            raw = it.next().map(String::as_str);
-            break;
+            if let Some(v) = it.next() {
+                return v.clone();
+            }
         } else if let Some(v) = a.strip_prefix("--provider=") {
-            raw = Some(v);
-            break;
+            return v.to_string();
         }
     }
-    match meowo_agent::resolve(raw) {
-        Some(p) => p.id(),
-        None => {
-            eprintln!(
-                "meowo-reporter: 未知 --provider {:?}，回退默认 agent {}",
-                raw.unwrap_or(""),
-                meowo_agent::DEFAULT_ID
-            );
-            meowo_agent::DEFAULT_ID
-        }
-    }
+    meowo_agent::DEFAULT_ID.as_str().to_string()
 }
 
 fn now_ms() -> i64 {

@@ -49,9 +49,13 @@ fn write_custom_title(session_id: &str, cwd: Option<&str>, title: &str) -> bool 
     let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) else {
         return false;
     };
-    // 先缓冲成完整一行再单次 write：该 transcript 同时被运行中的 claude 进程追加，
-    // writeln!(f, "{record}") 会经 Display 拆成多次小块写，与对方的追加交错时两边的行都会被撕裂成非法 JSON；
-    // append 模式下单次 write 在同一文件系统上是原子追加，消除交错窗口。
+    // 先缓冲成完整一行再一次性 write_all：该 transcript 同时被运行中的 claude 进程追加。
+    //
+    // 保证不撕裂的**不是**「单次 write」，而是 `O_APPEND`（上面 `.append(true)`）——它让每一次
+    // write 系统调用都是「原子地定位到末尾再写入」。于是即便 write_all 因短写循环了多次，每次
+    // 底层 write 仍各自原子，最坏也只是插在对方两行**之间**，绝不会插进对方**一行的中间**。
+    // （`writeln!(f, "{record}")` 则相反：它经 Display 把一行拆成多次小块写，每块之间都是别人
+    // 可趁虚而入的窗口，两边的行都会被撕成非法 JSON。故必须先拼成整行再一次交出去。）
     let mut line = record.to_string();
     line.push('\n');
     f.write_all(line.as_bytes()).is_ok()

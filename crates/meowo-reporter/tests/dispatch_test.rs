@@ -79,7 +79,7 @@ fn ev(json: &str) -> HookEvent { HookEvent::parse(json).unwrap() }
 
 /// 测试默认走 claude provider；provider 行为单独在 kimi_session_tagged_with_provider 覆盖。
 fn disp(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), meowo_store::StoreError> {
-    dispatch(store, ev, now_ms, meowo_agent::id::CLAUDE)
+    dispatch(store, ev, now_ms, meowo_agent::id::CLAUDE.as_str())
 }
 
 fn write_transcript(name: &str, body: &[u8]) -> std::path::PathBuf {
@@ -316,7 +316,7 @@ fn provider_defaults_claude_and_kimi_is_tagged() {
     // 默认 provider（不带 --provider）→ claude。
     disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"cl1","cwd":"/p"}"#), 100).unwrap();
     // kimi provider 显式标记。
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"km1","cwd":"/p"}"#), 110, meowo_agent::id::KIMI).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"km1","cwd":"/p"}"#), 110, meowo_agent::id::KIMI.as_str()).unwrap();
     let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     let prov = |sid: &str| {
         live.iter().find(|l| l.session.cc_session_id == sid).unwrap().provider.clone()
@@ -325,14 +325,35 @@ fn provider_defaults_claude_and_kimi_is_tagged() {
     assert_eq!(prov("km1"), "kimi");
 }
 
+/// 回归（Copilot review）：本版本尚不认识的 provider（跨版本时更新版 meowo 写入的 id，如 `gemini`）
+/// 必须**原样落库**，绝不因「查不到插件」就冒名成默认 agent。
+///
+/// 此前 dispatch 入参是 `AgentId`，未知值在 main.rs 就被回退成 `DEFAULT_ID`，于是这类会话落成
+/// NULL/claude——破了 `meowo_agent::resolve` 的「未知 id → None，绝不降级」契约。现在全链路传
+/// 原始 `&str`。
+#[test]
+fn unknown_provider_is_persisted_verbatim_not_coerced_to_default() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"SessionStart","session_id":"gm1","cwd":"/p"}"#),
+        100,
+        "gemini", // 本版本没有这个插件
+    )
+    .unwrap();
+    let live = store.live_sessions(None, None, None, None, 1000).unwrap();
+    let l = live.iter().find(|l| l.session.cc_session_id == "gm1").unwrap();
+    assert_eq!(l.provider, "gemini", "未知 provider 必须原样保留，不得冒名成 claude");
+}
+
 #[test]
 fn activity_event_revives_mis_reaped_ended_session() {
     // 会话被误清成 ended（如 app 的 reap 一度不认 kimi pid）后，任一活动事件都应复活，不只 UserPromptSubmit。
     let store = Store::open_in_memory().unwrap();
-    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"rv1","cwd":"/p"}"#), 100, meowo_agent::id::KIMI).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"rv1","cwd":"/p"}"#), 100, meowo_agent::id::KIMI.as_str()).unwrap();
     let sid = store.find_session_id_pub("rv1").unwrap().unwrap();
     store.end_session(sid, 150).unwrap(); // 模拟被误 reap
-    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"rv1","cwd":"/p","tool_name":"Read"}"#), 200, meowo_agent::id::KIMI).unwrap();
+    dispatch(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"rv1","cwd":"/p","tool_name":"Read"}"#), 200, meowo_agent::id::KIMI.as_str()).unwrap();
     let s = store.live_sessions(None, None, None, None, 1000).unwrap().into_iter().find(|l| l.session.cc_session_id == "rv1").unwrap();
     assert_eq!(s.session.status, "running");
     assert_eq!(s.session.ended_at, None); // ended_at 被清，状态自洽
@@ -346,7 +367,7 @@ fn lazy_creates_session_on_prompt_when_session_start_missing() {
         &store,
         &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"mid1","cwd":"/p","prompt":"中途接入"}"#),
         100,
-        meowo_agent::id::KIMI,
+        meowo_agent::id::KIMI.as_str(),
     )
     .unwrap();
     let l = store.live_sessions(None, None, None, None, 1000).unwrap();
