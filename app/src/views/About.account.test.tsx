@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization，与 NewSessionPanel.test.tsx 同坑）。
-const api = vi.hoisted(() => ({ getAccounts: vi.fn(), availableAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn() }));
+const api = vi.hoisted(() => ({ getAccounts: vi.fn(), availableAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 
 // 收集所有 ProviderCard 注册的 install-done / login-done 回调，测试里手动广播
@@ -19,8 +19,8 @@ vi.mock("@tauri-apps/api/event", () => ({
     return Promise.resolve(() => {});
   },
 }));
-const fireDone = (provider: string, ok: boolean) =>
-  act(() => ev.doneCbs.forEach((cb) => cb({ payload: { provider, ok, code: ok ? 0 : 1 } })));
+const fireDone = (provider: string, ok: boolean, logPath: string | null = null) =>
+  act(() => ev.doneCbs.forEach((cb) => cb({ payload: { provider, ok, code: ok ? 0 : 1, logPath } })));
 const fireLogin = (provider: string, ok: boolean) =>
   act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
 
@@ -32,6 +32,9 @@ beforeEach(() => {
   api.availableAgents.mockResolvedValue(["claude", "codex"]);
   api.refreshUsage.mockResolvedValue({ lanes: [], note: null });
   api.getSettings.mockResolvedValue({ sticker_quota_providers: [] });
+  // 默认：bin 目录都在 PATH 上（无提示条），个别用例再覆盖。
+  api.agentPathGap.mockResolvedValue(null);
+  api.addAgentToUserPath.mockResolvedValue(undefined);
   ev.doneCbs.length = 0;
   ev.loginCbs.length = 0;
 });
@@ -88,6 +91,62 @@ describe("AccountSection agent 卡", () => {
     await waitFor(() => expect(screen.queryByTestId("agent-installing-kimi")).toBeNull());
     // 仍未装 → 按钮回来（文案为重试），testid 不变
     expect(screen.getByTestId("agent-install-kimi")).toBeTruthy();
+  });
+
+  // 已登录的卡片只显示邮箱。此前拼 显示名 · 邮箱 · 组织，个人账号的组织名恰是
+  // 「<邮箱>'s Organization」，于是同一个邮箱在一行里出现两次，又长又重复。
+  it("已登录只显示邮箱，不带显示名与组织", async () => {
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c", display_name: "Larry", organization: "a@b.c's Organization" }, usage: null, usage_supported: true },
+    ]);
+    render(<AccountSection />);
+    const desc = await screen.findByTestId("agent-desc-claude");
+    expect(desc.textContent).toBe("a@b.c");
+  });
+
+  // 没有邮箱的登录方式（如 codex 的 API key）不能让描述行变空白。
+  it("无邮箱时回退到显示名/登录标签", async () => {
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { login_label: "API key" }, usage: null, usage_supported: true },
+    ]);
+    render(<AccountSection />);
+    const desc = await screen.findByTestId("agent-desc-claude");
+    expect(desc.textContent).toBe("API key");
+  });
+
+  // 回归：此前安装输出被丢进 Stdio::null()，失败时用户拿不到任何可排查的东西。
+  it("install-done 失败：给出安装日志路径（有 logPath 时）", async () => {
+    api.installAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-install-kimi"));
+    fireDone("kimi", false, "C:\\Users\\x\\.meowo\\install-kimi.log");
+    const log = await screen.findByTestId("agent-install-log-kimi");
+    expect(log.textContent).toContain("install-kimi.log");
+  });
+
+  // 回归：claude 的安装器不写 PATH 也照样 exit 0——「装好了」不等于「终端里敲得出来」。
+  // 提示条须在挂载时就查（多数受害者是早就装好、从没进过 PATH 的用户），不能只在装完时查。
+  it("已装但 bin 目录不在 PATH：显示提示条，可一键写入", async () => {
+    api.agentPathGap.mockResolvedValue("C:\\Users\\x\\.local\\bin");
+    render(<AccountSection />);
+    const gap = await screen.findByTestId("agent-path-gap-claude");
+    expect(gap.textContent).toContain(".local\\bin");
+
+    fireEvent.click(screen.getByTestId("agent-add-path-claude"));
+    await waitFor(() => expect(api.addAgentToUserPath).toHaveBeenCalledWith("claude"));
+    // 写入成功 → 提示条消失，转为「请重开终端」提示
+    await waitFor(() => expect(screen.queryByTestId("agent-path-gap-claude")).toBeNull());
+    expect(screen.getByTestId("agent-path-msg-claude")).toBeTruthy();
+  });
+
+  it("写入 PATH 失败：保留提示条并给出失败说明", async () => {
+    api.agentPathGap.mockResolvedValue("C:\\Users\\x\\.local\\bin");
+    api.addAgentToUserPath.mockRejectedValue(new Error("denied"));
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-add-path-claude"));
+    await waitFor(() => expect(screen.getByTestId("agent-path-msg-claude")).toBeTruthy());
+    // 没写成功 → 提示条不该消失，否则用户以为已修好
+    expect(screen.getByTestId("agent-path-gap-claude")).toBeTruthy();
   });
 
   it("install-done 失败：显示本地化失败说明 + 重试按钮", async () => {

@@ -224,6 +224,37 @@ describe("Sticker", () => {
     expect(invokeMock).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:\\\\proj", provider: "kimi" });
   });
 
+  it("点归档即同步回调 onArchiveOptimistic（不等 IPC 往返），并发出 set_archived", async () => {
+    const onArchiveOptimistic = vi.fn();
+    const onArchiveFailed = vi.fn();
+    const { container } = render(
+      <Sticker filter="all" data={[mk()]} onArchiveOptimistic={onArchiveOptimistic} onArchiveFailed={onArchiveFailed} />
+    );
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.archive));
+    expect(onArchiveOptimistic).toHaveBeenCalledWith(1); // 同步：await 之前就已调用
+    await new Promise((r) => setTimeout(r, 10));
+    expect(invokeMock).toHaveBeenCalledWith("set_archived", { sessionId: 1, archived: true });
+    expect(onArchiveFailed).not.toHaveBeenCalled();
+  });
+
+  // 回归：set_archived 失败时若不回滚，卡片已被乐观摘掉却没真归档，用户以为成功了。
+  it("归档 invoke 失败时调用 onArchiveFailed 以便回滚乐观更新", async () => {
+    const onArchiveOptimistic = vi.fn();
+    const onArchiveFailed = vi.fn();
+    const { container } = render(
+      <Sticker filter="all" data={[mk()]} onArchiveOptimistic={onArchiveOptimistic} onArchiveFailed={onArchiveFailed} />
+    );
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    // once 必须紧贴点击设置：放在 render 前会被挂载时的 get_settings 调用吃掉。
+    // as Promise<void>：invokeMock 的返回类型是各命令结果的联合，reject 分支需显式收窄。
+    invokeMock.mockImplementationOnce(() => Promise.reject(new Error("boom")) as Promise<void>);
+    fireEvent.click(screen.getByText(zh.sticker.archive));
+    expect(onArchiveOptimistic).toHaveBeenCalledWith(1);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(onArchiveFailed).toHaveBeenCalledTimes(1);
+  });
+
   it("待交互 tab 保留后端顺序，不客户端重排", () => {
     const base = (id: number, cc: string, last: number) =>
       mk({ task_title: cc, current_activity: null, connected: true,

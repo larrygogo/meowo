@@ -589,6 +589,8 @@ export function Sticker({
   hasUpdate,
   search,
   onSearchChange,
+  onArchiveOptimistic,
+  onArchiveFailed,
 }: {
   filter: StickerFilter;
   onFilterChange?: (f: StickerFilter) => void;
@@ -601,6 +603,10 @@ export function Sticker({
   hasUpdate?: boolean;
   search?: string;
   onSearchChange?: (q: string) => void;
+  /** 归档请求已发出（未确认）：父层可据此乐观摘掉卡片。 */
+  onArchiveOptimistic?: (sessionId: number) => void;
+  /** 归档请求失败：父层需回滚上面的乐观更新。 */
+  onArchiveFailed?: () => void;
 }) {
   // hasMore 由父组件传入；未传入时退化为 data.length < total。
   const totalCount = total ?? data.length;
@@ -1224,9 +1230,13 @@ export function Sticker({
           onStar={() => toggleStar(ctxItem.session.cc_session_id)}
           onNote={() => startNote(ctxItem)}
           onRename={() => startRename(ctxItem)}
-          onArchive={() =>
-            invoke("set_archived", { sessionId: ctxItem.session.id, archived: !ctxItem.archived }).catch(() => {})
-          }
+          onArchive={() => {
+            const target = !ctxItem.archived;
+            const sessionId = ctxItem.session.id;
+            // 先乐观通知父层摘掉卡片（点完菜单即刻消失，不等 IPC 往返），失败再回滚。
+            onArchiveOptimistic?.(sessionId);
+            invoke("set_archived", { sessionId, archived: target }).catch(() => onArchiveFailed?.());
+          }}
           onNewSession={() =>
             invoke("open_new_session_window", {
               cwd: ctxItem.cwd,

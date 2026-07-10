@@ -1,4 +1,6 @@
 mod account;
+#[cfg(target_os = "windows")]
+mod envpath;
 mod fsutil;
 mod ports;
 #[cfg(target_os = "macos")]
@@ -28,10 +30,10 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub mod setup;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 #[cfg(target_os = "windows")]
@@ -1106,7 +1108,7 @@ fn prepare_resume(
             _ => None,
         }
     })();
-    let _ = app.emit("board-changed", ());
+    emit_board_changed(app, "resume");
     let agent = meowo_agent::resolve(Some(provider));
     // resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空或失真（旧会话 / 压缩漏
     // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
@@ -1254,11 +1256,16 @@ async fn new_session(
 }
 
 /// 后台安装结束事件：ok=true 表示进程 0 退出；code 为退出码（无法取得时 None）。
+/// camelCase：`log_path` 须序列化成前端拿得到的 `logPath`（其余字段是单词，改名前后一致）。
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct InstallDone {
     provider: String,
     ok: bool,
     code: Option<i32>,
+    /// 安装脚本的完整输出落盘处（失败时供用户/我们排查）。UI 不展示英文原文，只给路径。
+    /// 建不出日志文件时为 None——不因为记不了日志就让安装失败。
+    log_path: Option<String>,
 }
 
 /// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时（用户多半中途放弃了）。
@@ -1387,15 +1394,28 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
         .ok_or("该 agent 没有可用的一键安装命令")?;
     let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
 
+    // 安装输出落盘：此前 stdout/stderr 直接丢进 Stdio::null()，判成功只看退出码，于是「装是装上了
+    // 但没接好」的半成功一律报成功。claude 就是这样——`claude.exe install` 在 Windows 上打印一行
+    // 「请自己把 ~/.local/bin 加进 PATH」然后 exit 0，那行警告被丢掉，用户直到手敲 claude 才发现。
+    // 重定向到文件而非读管道：既不必起读线程，也没有管道写满把子进程卡死的风险。
+    // UI 仍不展示英文原文（只给路径），保持进度文案随界面语言。
+    let log_path = install_log_path(&provider);
+
     // spawn 放 blocking 线程：GUI 进程首次 spawn 子进程可能被杀软扫描拖慢，勿堵事件循环。
     // spawn 成功即返回 Ok；结果走 install-done 事件；spawn 失败回传 Err，前端立即显示错误。
-    // 进度不透传（前端只显示本地化「安装中…」），故 stdout/stderr 丢弃、不读管道。
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         use std::process::Stdio;
+        // 日志建不出来（磁盘满/权限）不该让安装失败：退回丢弃输出，log_path 报 None。
+        let log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        let (out, err) = match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
+            Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
+            None => (Stdio::null(), Stdio::null()),
+        };
+        let logged = log.is_some();
         let mut child = build_install_command(&path)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(out)
+            .stderr(err)
             .env("CODEX_NON_INTERACTIVE", "1")
             .spawn()
             .map_err(|e| format!("启动安装失败：{e}"))?;
@@ -1403,15 +1423,78 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
         std::thread::spawn(move || {
             use tauri::Emitter;
             let code = child.wait().ok().and_then(|s| s.code());
+            let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
             let _ = app.emit(
                 "install-done",
-                InstallDone { provider, ok: code == Some(0), code },
+                InstallDone { provider, ok: code == Some(0), code, log_path },
             );
         });
         Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 安装日志落点：与 board.db 同目录（`~/.meowo`）。provider 已由调用方经 ProviderKey 归一，
+/// 不含路径分隔符。父目录建不出来则返回 None（安装本身照跑，只是没日志）。
+fn install_log_path(provider: &str) -> Option<PathBuf> {
+    let dir = db_path().parent()?.to_path_buf();
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("install-{provider}.log")))
+}
+
+/// 该 agent 可执行**所在目录**——仅当 launch argv 首元素是绝对路径时才有意义。
+///
+/// 命中 `LaunchCandidate::OnPath`（裸名）说明它本就在 PATH 上；node 脚本形态的 argv[0] 是 `node`，
+/// 同理。两种情况都不需要提示用户改 PATH，故返回 None。
+#[cfg(target_os = "windows")]
+fn agent_bin_dir(key: meowo_agent::AgentId) -> Option<PathBuf> {
+    let inst = install_for(key)?;
+    let argv = inst.launch_argv();
+    let exe = std::path::Path::new(argv.first()?);
+    if !exe.is_absolute() {
+        return None;
+    }
+    exe.parent().map(|d| d.to_path_buf())
+}
+
+/// 该 agent 装好了、但它的 bin 目录不在**持久** PATH 上 → 返回该目录，供前端提示「加入 PATH」。
+/// 无需处理（已在 PATH / 未安装 / 非 Windows）时返回 None。
+///
+/// 不看进程 PATH：那是 app 启动时的快照，装完之后必然假阴性（详见 envpath 模块文档）。
+#[tauri::command]
+fn agent_path_gap(provider: String) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        // 未知 agent → None：不去猜它的可执行装在哪，更不该据此劝用户改 PATH。
+        let dir = agent_bin_dir(agent_id(&provider)?)?;
+        let dir = dir.to_string_lossy().into_owned();
+        (!envpath::dir_on_persistent_path(&dir)).then_some(dir)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // unix 上 PATH 由 shell profile 决定，改法因 shell 而异，不代用户动。
+        let _ = provider;
+        None
+    }
+}
+
+/// 把该 agent 的 bin 目录写进**用户级** PATH（幂等）。
+///
+/// 只收 provider、不收路径：目录由后端从 `Installation` 推导，杜绝前端把任意路径写进 PATH。
+#[tauri::command]
+fn add_agent_to_user_path(provider: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let key = agent_id(&provider).ok_or("未知 agent")?;
+        let dir = agent_bin_dir(key).ok_or("未找到该 agent 的可执行目录")?;
+        envpath::add_dir_to_user_path(&dir.to_string_lossy())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = provider;
+        Err("当前平台不支持".into())
+    }
 }
 
 /// provider 的 meowo-reporter hooks 接入状态（供「新建会话」面板引导）。
@@ -1540,7 +1623,7 @@ fn resume_session(
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
-                let _ = app.emit("board-changed", ());
+                emit_board_changed(&app, "resume-failed");
             }
         });
         Ok(())
@@ -1559,7 +1642,7 @@ fn resume_session(
                 if let Some(sid) = revived {
                     rollback_failed_resume(sid);
                 }
-                let _ = app.emit("board-changed", ());
+                emit_board_changed(&app, "resume-failed");
             }
         });
         Ok(())
@@ -1608,14 +1691,23 @@ fn rename_session(
             let _ = store.set_session_title(sid, &title, now_ms());
         }
     }
-    let _ = app.emit("board-changed", ());
+    emit_board_changed(&app, "rename");
     Ok(())
 }
 
 #[tauri::command]
-fn set_archived(state: State<AppState>, session_id: i64, archived: bool) -> Result<(), String> {
+fn set_archived(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    session_id: i64,
+    archived: bool,
+) -> Result<(), String> {
     let store = open_store(&state.db_path)?;
-    store.set_session_archived(session_id, archived, now_ms()).map_err(|e| e.to_string())
+    store
+        .set_session_archived(session_id, archived, now_ms())
+        .map_err(|e| e.to_string())?;
+    emit_board_changed(&app, "set_archived");
+    Ok(())
 }
 
 /// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；session_id 用 is_safe_id
@@ -1635,8 +1727,70 @@ fn set_session_note(
     store
         .set_session_note(&session_id, &note, now_ms())
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("board-changed", ());
+    emit_board_changed(&app, "note");
     Ok(())
+}
+
+/// board-changed 的全局合流窗口。发出一次后的这段时间内，新来的事件不再各自 emit，
+/// 只在窗口末尾补发一次（携带最后一个 reason）。
+const BOARD_COALESCE: Duration = Duration::from_millis(300);
+
+/// 合流线程的入口。setup 里 spawn_board_notifier 装填；未装填时 emit_board_changed 退化为直接 emit。
+static BOARD_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
+
+/// 通知前端看板已变更。全部 emit 点都走这里，不要再直接 app.emit("board-changed", ..)。
+///
+/// 此前各源各自为政：命令处理器写完库立刻裸发，db-watcher 1s 后又为同一次写入回声一次，
+/// liveness 每 5s 还可能插一脚——一个归档动作能打出 2~3 次全量刷新，而前端每次刷新是
+/// counts + 一整页（页大小随用户滚动增长）+ 折叠条两查询。合流器给出全局上限：
+/// 至多每 BOARD_COALESCE 一次 emit，同时保持孤立事件（绝大多数用户操作）零延迟送达。
+///
+/// reason 只用于调试与日志，前端当前忽略 payload。
+fn emit_board_changed(app: &tauri::AppHandle, reason: &'static str) {
+    match BOARD_TX.get() {
+        Some(tx) => {
+            let _ = tx.send(reason);
+        }
+        // 合流线程尚未启动（setup 之前）或装填失败：宁可多发，不可不发。
+        None => {
+            let _ = app.emit("board-changed", reason);
+        }
+    }
+}
+
+/// 启动 board-changed 合流线程：前沿立即发，之后每个 BOARD_COALESCE 窗口至多补发一次。
+fn spawn_board_notifier(app: tauri::AppHandle) {
+    let (tx, rx) = channel::<&'static str>();
+    if BOARD_TX.set(tx).is_err() {
+        return; // 已启动过
+    }
+    std::thread::spawn(move || loop {
+        // 空闲：阻塞等第一个事件。发送端存活于 static，recv 出错只可能是进程收尾。
+        let Ok(mut reason) = rx.recv() else { return };
+        loop {
+            let _ = app.emit("board-changed", reason);
+            // 冷却窗口：收集期间到达的事件，只记最后一个 reason。
+            let mut pending: Option<&'static str> = None;
+            let deadline = Instant::now() + BOARD_COALESCE;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(remaining) {
+                    Ok(r) => pending = Some(r),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            // 窗口内有积压 → 立刻补发并重新冷却（故持续高频写库时输出恒定为 1/窗口）；
+            // 没有积压 → 回到外层阻塞等待，下一个孤立事件仍是前沿即时送达。
+            match pending {
+                Some(r) => reason = r,
+                None => break,
+            }
+        }
+    });
 }
 
 /// watch 建立失败/监听死亡后的重建间隔。
@@ -1677,10 +1831,12 @@ fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     });
 }
 
-/// db watcher 的事件循环：trailing debounce（收到相关事件后 drain 到 300ms 静默再 emit——SQLite 提交
-/// 是 db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件），但设 1s 总上限：statusline/hook 以
+/// db watcher 的事件循环：trailing debounce（收到相关事件后 drain 到 1s 静默再 emit——SQLite 提交
+/// 是 db/-wal/-shm 多个事件的爆发，前沿触发会丢掉尾部事件），但设 2s 总上限：statusline/hook 以
 /// ~300ms 节奏持续写库、多会话事件流相位交错时可能永无静默间隙，无上限会让 board-changed 饥饿、
 /// 贴纸冻结在旧数据，恰恰是多会话高活跃期最需要刷新的时候。
+/// 注意这层 debounce 与 emit_board_changed 的全局合流是两回事：这里压的是「一次提交的多文件事件」，
+/// 那里压的是「多个源对同一次变更的重复通知」。
 /// 返回即表示监听已死（通道断开或收到 notify 错误事件，如目录被删），由调用方重建。
 fn run_db_watch_loop(
     app: &tauri::AppHandle,
@@ -1696,8 +1852,8 @@ fn run_db_watch_loop(
             })
         })
     };
-    let debounce = Duration::from_millis(300);
-    let max_wait = Duration::from_millis(1000);
+    let debounce = Duration::from_millis(1000);
+    let max_wait = Duration::from_millis(2000);
     loop {
         let Ok(first) = rx.recv() else { return }; // watcher 关闭/内部线程死亡 → 重建
         if first.is_err() {
@@ -1727,7 +1883,7 @@ fn run_db_watch_loop(
             }
         }
         if relevant {
-            let _ = app.emit("board-changed", ());
+            emit_board_changed(app, "db-watcher");
         }
         if broken {
             return;
@@ -1961,7 +2117,7 @@ fn spawn_liveness_watch(
                 let orphaned = store.end_orphaned_idle(RESUME_GRACE_MS, now_ms()).unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
-                    let _ = app.emit("board-changed", ());
+                    emit_board_changed(&app, "liveness");
                     last = alive;
                 }
 
@@ -2134,7 +2290,7 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
             let body = format!("{{\"imported\":{count},\"at\":{now}}}");
             let _ = std::fs::write(&marker, body);
             if count > 0 {
-                let _ = app.emit("board-changed", ());
+                emit_board_changed(&app, "first-import");
             }
         }
     });
@@ -2766,6 +2922,8 @@ pub fn run() {
             available_agents,
             new_session,
             install_agent,
+            agent_path_gap,
+            add_agent_to_user_path,
             login_agent,
             check_provider_hooks,
             repair_provider_hooks,
@@ -2877,6 +3035,9 @@ pub fn run() {
             }
             // 无感适配：幂等把 meowo-reporter 接入各 AI CLI（claude: hooks+statusLine；codex/kimi: hooks）。后台跑，失败不影响启动。
             std::thread::spawn(setup::apply_all);
+            // 先起合流线程：其余几个 spawn_* 都经 emit_board_changed 发事件，晚起会让它们的
+            // 首批事件退化成直接 emit。
+            spawn_board_notifier(app.handle().clone());
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
             spawn_first_import(app.handle().clone(), path.clone());

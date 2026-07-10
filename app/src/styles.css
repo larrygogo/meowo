@@ -1461,6 +1461,13 @@ html, body {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 名字 + 徽章一行；账号信息另起一行贴在其下。 */
+.provider-card-title-row {
+  min-width: 0;
+  display: flex;
   align-items: center;
   gap: 8px;
 }
@@ -1468,6 +1475,15 @@ html, body {
   font-size: 15px;
   font-weight: 600;
   color: var(--cc-text);
+}
+/* 邮箱常常长于卡片宽度：单行省略，完整值走 title 提示。 */
+.provider-card-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--cc-text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .provider-badge {
   flex: none;
@@ -1995,4 +2011,28 @@ select.ns-input {
 }
 .agent-install-error {
   color: var(--cc-err-vivid);
+}
+/* 安装日志路径：次要信息，压小压淡；路径可能很长，允许折行而非撑破卡片。 */
+.agent-install-log {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.7;
+  word-break: break-all;
+}
+/* 「装了但不在 PATH」提示条：说明文字占满，按钮贴右且不被挤压。 */
+.agent-path-gap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-path-gap-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+.agent-path-gap .provider-card-action {
+  flex: none;
+}
+.agent-path-msg {
+  opacity: 0.8;
 }

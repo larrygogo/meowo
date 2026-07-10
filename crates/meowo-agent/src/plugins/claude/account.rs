@@ -33,6 +33,52 @@ pub struct Usage {
     pub extra_usage_enabled: bool,
 }
 
+/// 套餐徽章的候选字段，按「针对本人」到「针对组织」排列，取首个有语义的。
+///
+/// **刻意不含 `billingType`**：它是计费方式（`stripe_subscription` 等），从来不是套餐。
+/// 早先拿它当兜底，于是 `seatTier` 为空的账号（Max 订阅用户很常见——套餐信息只落在限额档位
+/// 字段里）徽章上赫然写着「Stripe_subscription」。宁可不显示徽章，也不显示一个错的。
+const PLAN_FIELDS: [&str; 4] = [
+    "userRateLimitTier",
+    "organizationRateLimitTier",
+    "seatTier",
+    "organizationType",
+];
+
+/// 无套餐语义的占位值——命中则继续看下一个候选字段，别把 `default` 显示成「Default」。
+fn is_plan_placeholder(s: &str) -> bool {
+    matches!(s, "" | "default" | "unknown" | "none" | "null")
+}
+
+/// 原始档位串 → 徽章文案：`default_claude_max_20x` → `Max 20x`、`claude_max` → `Max`、`pro` → `Pro`。
+///
+/// 剥掉 `default_` / `claude_` 前缀后按 `_` 分段；以数字开头的段是倍率（`20x`）保持原样，
+/// 其余段首字母大写。返回 None 表示该字段没有可展示的套餐信息。
+fn normalize_plan(raw: &str) -> Option<String> {
+    let low = raw.trim().to_lowercase();
+    let mut s: &str = &low;
+    s = s.strip_prefix("default_").unwrap_or(s);
+    s = s.strip_prefix("claude_").unwrap_or(s);
+    if is_plan_placeholder(s) {
+        return None;
+    }
+    let words: Vec<String> = s
+        .split('_')
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            if p.starts_with(|c: char| c.is_ascii_digit()) {
+                return p.to_string(); // 倍率段：20x、5x
+            }
+            let mut ch = p.chars();
+            match ch.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + ch.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
 /// 从 ~/.claude.json 的根 JSON 解析账号（取 oauthAccount）。无则 None。
 pub fn parse_account(root: &serde_json::Value) -> Option<ClaudeAccountInfo> {
     let a = root.get("oauthAccount")?;
@@ -51,11 +97,8 @@ pub fn parse_account(root: &serde_json::Value) -> Option<ClaudeAccountInfo> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
-    // 套餐标签：优先 seatTier，否则 billingType。
-    let plan = ["seatTier", "billingType"]
-        .iter()
-        .find_map(|k| a.get(*k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
-        .map(|s| s.to_string());
+    // 套餐标签：按 PLAN_FIELDS 顺序取首个有语义的档位字段，规范成展示文案。
+    let plan = PLAN_FIELDS.iter().find_map(|k| normalize_plan(a.get(*k)?.as_str()?));
     Some(ClaudeAccountInfo { email, display_name, organization, plan })
 }
 
@@ -363,7 +406,52 @@ mod tests {
         assert_eq!(a.email, "a@b.com");
         assert_eq!(a.display_name, "Larry");
         assert_eq!(a.organization.as_deref(), Some("Acme"));
-        assert_eq!(a.plan.as_deref(), Some("max"));
+        assert_eq!(a.plan.as_deref(), Some("Max"));
+    }
+
+    #[test]
+    fn normalize_plan_strips_prefixes_and_keeps_multiplier() {
+        assert_eq!(normalize_plan("default_claude_max_20x").as_deref(), Some("Max 20x"));
+        assert_eq!(normalize_plan("claude_max").as_deref(), Some("Max"));
+        assert_eq!(normalize_plan("max").as_deref(), Some("Max"));
+        assert_eq!(normalize_plan("pro").as_deref(), Some("Pro"));
+        assert_eq!(normalize_plan("  MAX_5X  ").as_deref(), Some("Max 5x"));
+        // 占位值不该变成「Default」这样的假徽章
+        assert_eq!(normalize_plan("default"), None);
+        assert_eq!(normalize_plan(""), None);
+    }
+
+    /// 回归：真实 Max 订阅账号的形状——seatTier 是**空串**，套餐只落在限额档位字段里。
+    /// 旧逻辑（seatTier → billingType）于是把徽章显示成「Stripe_subscription」。
+    #[test]
+    fn plan_prefers_rate_limit_tier_over_billing_type() {
+        let root = json!({"oauthAccount":{
+            "emailAddress":"a@b.com",
+            "seatTier":"",
+            "userRateLimitTier":"",
+            "billingType":"stripe_subscription",
+            "organizationType":"claude_max",
+            "organizationRateLimitTier":"default_claude_max_20x",
+        }});
+        assert_eq!(parse_account(&root).unwrap().plan.as_deref(), Some("Max 20x"));
+    }
+
+    /// billingType 是计费方式，永远不能当套餐——没有任何档位字段时宁可不显示徽章。
+    #[test]
+    fn billing_type_is_never_used_as_plan() {
+        let root = json!({"oauthAccount":{"emailAddress":"a@b.com","billingType":"stripe_subscription"}});
+        assert_eq!(parse_account(&root).unwrap().plan, None);
+    }
+
+    /// 用户级档位比组织级更精确（组织可能是别人的），优先取它。
+    #[test]
+    fn user_tier_wins_over_organization_tier() {
+        let root = json!({"oauthAccount":{
+            "emailAddress":"a@b.com",
+            "userRateLimitTier":"claude_pro",
+            "organizationRateLimitTier":"default_claude_max_20x",
+        }});
+        assert_eq!(parse_account(&root).unwrap().plan.as_deref(), Some("Pro"));
     }
 
     #[test]
