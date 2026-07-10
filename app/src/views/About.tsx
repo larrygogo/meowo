@@ -377,6 +377,9 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
         onInstalledRef.current();
         // 「退出码 0」不等于「装好就能用」：claude 的安装器不写 PATH 也照样 exit 0。
         agentPathGap(provider).then(setPathGapDir).catch(() => {});
+        // 后端装完顺手接了 hooks（best-effort）——重查一下，接上了就让「未接入」提示条自动消失。
+        // 装完常常还没登录（kimi 的 config.toml 尚不存在），此时多半仍未接上，那就等登录后再接。
+        checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
       } else {
         setInstallState("error");
       }
@@ -392,6 +395,8 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
         setLoginMsg(null);
         setJustInstalled(false);
         onLoggedInRef.current(); // 重查账号 → 卡片转「已登录」并显示身份/用量
+        // 登录后配置文件才生成，是三家都接得上 hooks 的时机——后端已顺手接了，这里重查让提示条消失。
+        checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
       } else if (cancelled) {
         setLoginMsg(t.account.loginCancelled); // 取消 ≠ 没检测到登录完成
       } else {

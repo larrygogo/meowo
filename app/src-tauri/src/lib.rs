@@ -1276,6 +1276,32 @@ struct InstallDone {
     log_path: Option<String>,
 }
 
+/// 安装成功、或登录成功之后，顺手把 hooks 接上——不必等下次启动的 `setup::apply_all`，
+/// 也不必让用户自己去点「修复连接」。
+///
+/// **best-effort，绝不影响主流程**：接线失败不该让安装报失败，更不该让登录报失败。
+///
+/// 为什么两个时机都要接（只接一个等于没接）：`wire()` 的门槛是数据目录存在，而各家的
+/// 配置文件生成时机不同——
+///
+/// | agent | 装完后 | 接线结果 |
+/// |---|---|---|
+/// | claude | `~/.claude` 未必存在（`claude.exe install` 只装 launcher） | 目录在则成功，否则 `NotDetected` |
+/// | kimi | `~/.kimi-code/bin` 被建，但 `config.toml` 要 `kimi login` 才有 | 必然 `NeedLogin` |
+/// | codex | `~/.codex` 未必存在 | 目录在则成功，否则 `NotDetected` |
+///
+/// 也就是说 kimi 只有登录后才接得上；claude/codex 装完可能还没目录，但登录必然会创建它
+/// （写凭据）。故两处都调一次。
+fn wire_hooks_best_effort(id: meowo_agent::AgentId, occasion: &str) {
+    match setup::apply_provider(id) {
+        None => eprintln!("Meowo repair[{id}]: {occasion}后已自动接线"),
+        Some(reason) => {
+            // NeedLogin / NotDetected 都是意料之中：前端的「修复连接」按钮仍在，用户可手动重试。
+            eprintln!("Meowo repair[{id}]: {occasion}后自动接线未生效（{reason:?}），留给用户手动修复");
+        }
+    }
+}
+
 /// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时或被用户取消。
 #[derive(Clone, serde::Serialize)]
 struct LoginDone {
@@ -1334,6 +1360,10 @@ async fn cancel_login(app: tauri::AppHandle, provider: String) -> Result<(), Str
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Emitter;
         let ok = account::account_of(key).is_some(); // 也许真登上了，只是用户嫌慢
+        // 真登上了就和正常登录成功一样接线——否则「取消时其实已登录」这条路径会漏掉接线。
+        if ok {
+            wire_hooks_best_effort(key, "登录");
+        }
         let _ = app.emit("login-done", LoginDone { provider, ok });
     })
     .await
@@ -1374,6 +1404,11 @@ fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: Strin
             }
             std::thread::sleep(POLL);
         };
+        // 登录成功 → 此时配置文件才刚生成（kimi 的 config.toml 由 `kimi login` 写；claude/codex
+        // 的数据目录也因写凭据而必然存在），是三家唯一都接得上 hooks 的时机。
+        if ok {
+            wire_hooks_best_effort(key, "登录");
+        }
         let _ = app.emit("login-done", LoginDone { provider, ok });
     });
 }
@@ -1596,7 +1631,8 @@ fn build_install_command(script_path: &str, unix_shell: &str) -> std::process::C
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
-    let provider = agent.id().as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
+    let id = agent.id(); // Copy；两条安装路径的收尾线程都要用它接线
+    let provider = id.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
     let windows = cfg!(target_os = "windows");
 
     // 优先直下：绕开引导脚本，也就绕开它身后的 Cloudflare。plan() 只做两次小请求（版本号 + 清单），
@@ -1619,6 +1655,10 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
                     }
                     let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
                     let ok = res.is_ok();
+                    // 装好了就顺手接线；失败（多半是数据目录还没建）不影响安装结果。
+                    if ok {
+                        wire_hooks_best_effort(id, "安装");
+                    }
                     let _ = app.emit(
                         "install-done",
                         InstallDone { provider, ok, code: Some(if ok { 0 } else { 1 }), log_path },
@@ -1682,6 +1722,10 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
             use tauri::Emitter;
             let code = child.wait().ok().and_then(|s| s.code());
             let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
+            // 装好了就顺手接线；失败（多半是数据目录还没建）不影响安装结果。
+            if code == Some(0) {
+                wire_hooks_best_effort(id, "安装");
+            }
             let _ = app.emit(
                 "install-done",
                 InstallDone { provider, ok: code == Some(0), code, log_path },

@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization，与 NewSessionPanel.test.tsx 同坑）。
-const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), cancelLogin: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
+const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), cancelLogin: vi.fn(), checkProviderHooks: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 
 // 收集所有 ProviderCard 注册的 install-done / login-done 回调，测试里手动广播
@@ -37,6 +37,8 @@ beforeEach(() => {
   // 默认：bin 目录都在 PATH 上（无提示条），个别用例再覆盖。
   api.agentPathGap.mockResolvedValue(null);
   api.addAgentToUserPath.mockResolvedValue(undefined);
+  // 默认 hooks 已接入（无「未接入」提示条），验接线的用例再覆盖。
+  api.checkProviderHooks.mockResolvedValue("installed");
   ev.doneCbs.length = 0;
   ev.loginCbs.length = 0;
 });
@@ -279,6 +281,33 @@ describe("AccountSection 登录", () => {
     fireLogin("codex", true); // 后端复查发现真登上了
     await waitFor(() => expect(screen.queryByTestId("agent-login-codex")).toBeNull());
     expect(screen.queryByTestId("agent-login-error-codex")).toBeNull();
+  });
+
+  /// 装完 / 登录后，后端会顺手接线（best-effort），前端据此重查一次 hooks 状态——接上了就让
+  /// 「未接入」提示条自动消失，不必让用户再去点「修复连接」。
+  it("登录成功后重查 hooks：接上了则「未接入」提示条消失", async () => {
+    // codex 已装，但 hooks 初始未接入；登录后端接线 → codex 的第二次查询返回 installed。
+    // 按 provider 计数（mockResolvedValueOnce 是全局队列，claude 的挂载查询会抢走它）。
+    let codexChecks = 0;
+    api.checkProviderHooks.mockImplementation((p: string) => {
+      if (p !== "codex") return Promise.resolve("installed");
+      codexChecks += 1;
+      return Promise.resolve(codexChecks === 1 ? "missing" : "installed");
+    });
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true },
+      { provider: "codex", account: null, usage: null, usage_supported: false }, // 未登录
+    ]);
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    // 未接入 → 提示条 + 修复按钮在。
+    expect(await screen.findByTestId("agent-repair-hooks-codex")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    fireLogin("codex", true);
+    // 登录成功 → 重查 hooks 得 installed → 提示条消失。
+    await waitFor(() => expect(screen.queryByTestId("agent-repair-hooks-codex")).toBeNull());
   });
 
   it("拉起登录失败 → 落回可点 + 显示提示", async () => {
