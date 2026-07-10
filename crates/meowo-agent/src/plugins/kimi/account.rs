@@ -14,7 +14,8 @@
 use serde_json::Value;
 use std::time::Duration;
 
-use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
+use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane};
+use crate::ports::{Body, HttpError, HttpRequest, Ports};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -22,16 +23,16 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// 本机 kimi 实况的鉴权方案：凭据位置、OAuth 刷新端点、client_id、默认 base_url。
 /// 新旧版差异（若日后证实 legacy 用不同 client_id）只需改 `meowo_agent::plugins::kimi` 的变体表。
-fn kimi_auth() -> Option<&'static meowo_agent::AuthScheme> {
-    meowo_reporter::kimi::kimi_install()?.auth
+fn kimi_auth() -> Option<&'static crate::AuthScheme> {
+    crate::registry::installation(crate::id::KIMI)?.auth
 }
 
 fn kimi_credentials_path() -> Option<std::path::PathBuf> {
-    meowo_reporter::kimi::kimi_install()?.credentials_path()
+    crate::registry::installation(crate::id::KIMI)?.credentials_path()
 }
 
 fn read_kimi_credentials() -> Option<Value> {
-    super::read_json(&kimi_credentials_path()?)
+    serde_json::from_str(&std::fs::read_to_string(kimi_credentials_path()?).ok()?).ok()
 }
 
 // ═══ 配置读取 ═══
@@ -53,7 +54,7 @@ fn kimi_base_url() -> String {
 /// 从实况 config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
 /// 不引入 toml 依赖，best-effort，失败返回 None。
 fn read_config_base_url() -> Option<String> {
-    let path = meowo_reporter::kimi::kimi_install()?.config_path();
+    let path = crate::registry::installation(crate::id::KIMI)?.config_path();
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_section = false;
     for line in content.lines() {
@@ -132,7 +133,7 @@ fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Resul
 ///
 /// 兜底：刷新失败（invalid_grant/网络错）→ 返回 None → 上层 usage 降级为 None；
 ///         不打印/日志 token 原文。
-fn ensure_valid_kimi_token() -> Option<String> {
+fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
     use std::sync::Mutex;
     // 串行化并发刷新：kimi refresh_token 单次使用后即失效，并发刷新会互相覆盖。
     // 持锁后下方重读凭据（双检）：若刚被另一线程刷新过则直接走 fast-path，不再重刷。
@@ -168,7 +169,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
     };
     eprintln!(
         "Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…（变体 {}）",
-        meowo_reporter::kimi::kimi_install().map(|i| i.variant_tag).unwrap_or("?")
+        crate::registry::installation(crate::id::KIMI).map(|i| i.variant_tag).unwrap_or("?")
     );
     let Some(refresh_token) = creds.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string) else {
         eprintln!("Meowo usage[kimi]: 凭据缺 refresh_token 字段，无法刷新");
@@ -179,20 +180,22 @@ fn ensure_valid_kimi_token() -> Option<String> {
         return None;
     }
 
-    let resp = match ureq::post(auth.token_url)
-        .timeout(HTTP_TIMEOUT)
-        .set("Accept", "application/json")
-        .send_form(&[
+    let text = match ports.http.send(&HttpRequest {
+        method: "POST",
+        url: auth.token_url,
+        headers: &[("Accept", "application/json")],
+        body: Body::Form(&[
             ("grant_type", "refresh_token"),
             ("client_id", auth.client_id),
             ("refresh_token", &refresh_token),
-        ]) {
-        Ok(r) => r,
-        Err(ureq::Error::Status(code, resp)) => {
+        ]),
+        timeout: HTTP_TIMEOUT,
+    }) {
+        Ok(t) => t,
+        Err(HttpError::Status(code, body)) => {
             // OAuth 错误体形如 {"error":"invalid_grant"|"invalid_client",...}——只含错误码不含 token，
             // 可安全打印（截断防超长）。invalid_grant=refresh_token 失效（重登可解）；
             // invalid_client=client_id 不匹配（需按旧版适配）。
-            let body = resp.into_string().unwrap_or_default();
             let snippet: String = body.chars().take(200).collect();
             eprintln!("Meowo usage[kimi]: 刷新 token 返回 HTTP {code}，响应体：{snippet}");
             return None;
@@ -203,7 +206,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
         }
     };
 
-    let body: Value = resp.into_json().ok()?;
+    let body: Value = serde_json::from_str(&text).ok()?;
 
     let new_access = body.get("access_token").and_then(|v| v.as_str())?;
     if new_access.is_empty() {
@@ -240,7 +243,7 @@ fn ensure_valid_kimi_token() -> Option<String> {
 
 /// 复用 codex 模块的 unix 秒 → ISO 8601 实现。
 fn unix_to_iso8601(ts: i64) -> String {
-    super::codex::unix_to_iso8601(ts)
+    crate::codec::unix_to_iso8601(ts)
 }
 
 /// ISO 字符串纳秒精度截断：若形如 `....<frac>Z` 且 frac > 3 位纯数字，截断到毫秒（保留前 3 位）。
@@ -424,62 +427,45 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
 /// kimi access_token 寿命仅约 15 分钟，过期前 60s 自动刷新；
 /// 刷新写回仅更新 access_token/refresh_token/expires_in/expires_at，其余字段不动。
 /// 任何非 2xx / 网络错 / 解析失败 → None（安静降级）。
-fn fetch_kimi_usage_live() -> Option<ProviderUsage> {
-    let Some(access_token) = ensure_valid_kimi_token() else {
-        eprintln!("Meowo usage[kimi]: 无有效 access_token（读不到或刷新失败），跳过取用量");
-        return None;
+fn fetch_kimi_usage_live(ports: &Ports) -> Result<ProviderUsage, String> {
+    let Some(access_token) = ensure_valid_kimi_token(ports) else {
+        return Err("无有效 access_token（读不到或刷新失败）".into());
     };
     let base = kimi_base_url();
     let url = format!("{base}/usages");
+    let bearer = format!("Bearer {access_token}");
 
-    let resp = match ureq::get(&url)
-        .timeout(HTTP_TIMEOUT)
-        .set("Authorization", &format!("Bearer {access_token}"))
-        .set("Accept", "application/json")
-        .call()
-    {
-        Ok(r) => r,
-        // 4xx/5xx：ureq 归为 Error::Status。401 多为 token 失效/旧版鉴权不兼容；404 多为端点不对。
-        Err(ureq::Error::Status(code, _)) => {
-            eprintln!("Meowo usage[kimi]: GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）");
-            return None;
+    let text = match ports.http.send(&HttpRequest {
+        method: "GET",
+        url: &url,
+        headers: &[("Authorization", &bearer), ("Accept", "application/json")],
+        body: Body::Empty,
+        timeout: HTTP_TIMEOUT,
+    }) {
+        Ok(t) => t,
+        // 401 多为 token 失效/旧版鉴权不兼容；404 多为端点不对。
+        Err(HttpError::Status(code, _)) => {
+            return Err(format!("GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）"));
         }
-        Err(e) => {
-            eprintln!("Meowo usage[kimi]: GET {url} 网络错误：{e}");
-            return None;
-        }
+        Err(e) => return Err(format!("GET {url} 网络错误：{e}")),
     };
-    let v: Value = match resp.into_json() {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Meowo usage[kimi]: /usages 响应不是合法 JSON：{e}");
-            return None;
-        }
-    };
-    match parse_kimi_usage(&v) {
-        Some(pu) => Some(pu),
-        None => {
-            eprintln!("Meowo usage[kimi]: /usages 解析不出任何用量 lane（响应 schema 可能与旧版不同）");
-            None
-        }
-    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("/usages 响应不是合法 JSON：{e}"))?;
+    parse_kimi_usage(&v)
+        .ok_or_else(|| "/usages 解析不出任何用量 lane（响应 schema 可能与旧版不同）".to_string())
 }
 
-// ═══ ProviderAccount impl ═══
+// ═══ AccountCap impl ═══
 
-pub struct KimiProviderAccount;
+pub struct KimiAccount;
+pub static ACCOUNT: KimiAccount = KimiAccount;
 
-impl ProviderAccount for KimiProviderAccount {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Kimi
-    }
-
+impl AccountCap for KimiAccount {
     /// best-effort 读账号：解 JWT email claim 或降级「已登录」标签。凭据不存在 → None。
-    fn account(&self) -> Option<Account> {
+    fn account(&self, _ports: &Ports) -> Option<Account> {
         let creds = read_kimi_credentials()?;
         let access_token = creds.get("access_token").and_then(|v| v.as_str())?;
         // 只读 JWT claim、不打印 token 原文
-        let payload = super::codex::decode_jwt_payload(access_token);
+        let payload = crate::codec::decode_jwt_payload(access_token);
         let email = payload.as_ref().and_then(|p| {
             p.get("email")
                 .and_then(|v| v.as_str())
@@ -507,24 +493,13 @@ impl ProviderAccount for KimiProviderAccount {
         }
     }
 
-    /// force=false：仅读缓存；force=true：60s 限频后联网（失败降级 None）。
-    fn usage(&self, force: bool) -> Option<ProviderUsage> {
-        let key = self.key();
-        if !force {
-            return super::read_cached_usage(key);
-        }
-        if super::cache_is_fresh(key, 60_000) {
-            if let Some(cached) = super::read_cached_usage(key) {
-                return Some(cached);
-            }
-        }
-        fetch_kimi_usage_live().inspect(|pu| {
-            super::write_cached_usage(key, pu);
-        })
+    /// 联网拉一次（含按需刷新 token）。缓存与 60s 限频归宿主编排层。
+    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String> {
+        fetch_kimi_usage_live(ports)
     }
 
-    /// 凭据文件存在即支持（不保证能成功，失败会降级 None）。
-    fn usage_supported(&self) -> bool {
+    /// 凭据文件存在即支持（不保证能成功，失败会降级）。
+    fn usage_supported(&self, _ports: &Ports) -> bool {
         kimi_credentials_path().is_some_and(|p| p.exists())
     }
 }

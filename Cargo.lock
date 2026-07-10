@@ -2051,6 +2051,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "toml_edit 0.22.27",
 ]
 
@@ -2079,7 +2080,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tauri-winrt-notification",
- "toml_edit 0.22.27",
  "uiautomation",
  "ureq",
  "windows-sys 0.59.0",

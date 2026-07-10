@@ -7,61 +7,8 @@
 
 use serde_json::Value;
 
-use super::{Account, ProviderAccount, ProviderUsage, UsageKind, UsageLane};
-
-// ═══ base64url 解码（不加依赖，纯手写） ═══
-
-/// base64url（无填充）→ bytes。字符集：A-Z a-z 0-9 - _。
-/// 畸形字符或长度不合法时返回 None。
-pub fn base64url_decode_nopad(s: &str) -> Option<Vec<u8>> {
-    // base64url 字符 → 6-bit 值
-    fn char_val(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'-' => Some(62),
-            b'_' => Some(63),
-            _ => None,
-        }
-    }
-
-    let bytes = s.as_bytes();
-    let n = bytes.len();
-    if n == 0 {
-        return Some(vec![]);
-    }
-
-    // 计算输出长度：每 4 个输入字符 → 3 字节（末尾可差 1-2 个）
-    let out_len = (n * 6) / 8;
-    let mut out = Vec::with_capacity(out_len);
-
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-
-    for &b in bytes {
-        let v = char_val(b)?;
-        buf = (buf << 6) | (v as u32);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-
-    Some(out)
-}
-
-/// JWT 三段 base64url 中段（payload）→ serde_json::Value。
-/// 不验签，仅解码展示。缺段、畸形、非 JSON 均返回 None。
-pub fn decode_jwt_payload(token: &str) -> Option<Value> {
-    let mut parts = token.splitn(3, '.');
-    let _header = parts.next()?;
-    let payload_b64 = parts.next()?;
-    let bytes = base64url_decode_nopad(payload_b64)?;
-    serde_json::from_slice(&bytes).ok()
-}
+use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane};
+use crate::ports::Ports;
 
 // ═══ 账号解析 ═══
 
@@ -76,7 +23,7 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
             let id_token = auth_json
                 .pointer("/tokens/id_token")
                 .and_then(|v| v.as_str())?;
-            let payload = decode_jwt_payload(id_token)?;
+            let payload = crate::codec::decode_jwt_payload(id_token)?;
 
             // email：顶层 claim（空串过滤同 plan/org，避免 Some("") 流出）
             let email = payload.get("email").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
@@ -119,36 +66,6 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
     }
 }
 
-// ═══ 用量解析 ═══
-
-/// Unix 秒 → ISO 8601 UTC 字符串（如 "2025-06-30T12:00:00Z"）。
-/// 不使用 chrono，手写正确的格里历算法（Howard Hinnant civil_from_days）。
-/// pub(super)：kimi.rs 复用，避免重写同一函数。
-pub(super) fn unix_to_iso8601(ts: i64) -> String {
-    let secs = ts.max(0) as u64;
-    let (days_total, rem) = (secs / 86400, secs % 86400);
-    let (h, rem2) = (rem / 3600, rem % 3600);
-    let (m, s) = (rem2 / 60, rem2 % 60);
-    let (year, month, day) = days_to_ymd(days_total);
-    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
-}
-
-/// 将自 1970-01-01 起的天数转换为 (year, month, day)（格里历）。
-/// 实现来自 Howard Hinnant civil_from_days 算法，正确处理所有闰年。
-fn days_to_ymd(z: u64) -> (u64, u64, u64) {
-    // 平移到以公元 0 年 3 月 1 日为纪元（消除闰年处理中的边界复杂度）
-    let z = z as i64 + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64; // 纪元内天数 [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // 纪元内年 [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // 年内天数（3月1日起）[0, 365]
-    let mp = (5 * doy + 2) / 153; // 月内序号 [0, 11]（3月=0，2月=11）
-    let d = doy - (153 * mp + 2) / 5 + 1; // 日 [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // 月 [1, 12]（校正回 Jan=1）
-    let y = if m <= 2 { y + 1 } else { y }; // 1/2 月属于下一年（按 3 月起算时）
-    (y as u64, m, d)
-}
 
 /// 从 token_count 事件的 payload 解析 ProviderUsage（纯函数）。
 /// rate_limits.primary → FiveHour（5h 窗口）；secondary → Weekly（7d 窗口）。
@@ -171,11 +88,11 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
 
         // resets_at：优先 unix 秒字段，其次旧版 resets_in_seconds + record_ts
         let resets_at: Option<String> = if let Some(ts) = rl.get("resets_at").and_then(|v| v.as_i64()) {
-            Some(unix_to_iso8601(ts))
+            Some(crate::codec::unix_to_iso8601(ts))
         } else if let (Some(secs), Some(rec)) =
             (rl.get("resets_in_seconds").and_then(|v| v.as_i64()), record_ts)
         {
-            Some(unix_to_iso8601(rec + secs))
+            Some(crate::codec::unix_to_iso8601(rec + secs))
         } else {
             None
         };
@@ -268,7 +185,7 @@ fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
 
 /// 凭据位置由实况变体给出（`Installation.auth.credentials`），不再在此拼路径。
 fn read_auth_json() -> Option<Value> {
-    let path = meowo_reporter::codex::codex_install()?.credentials_path()?;
+    let path = crate::registry::installation(crate::id::CODEX)?.credentials_path()?;
     let s = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&s).ok()
 }
@@ -277,28 +194,28 @@ fn auth_mode(auth_json: &Value) -> &str {
     auth_json.get("auth_mode").and_then(|v| v.as_str()).unwrap_or("")
 }
 
-// ═══ ProviderAccount impl ═══
+// ═══ AccountCap impl ═══
 
-pub struct CodexProviderAccount;
+pub struct CodexAccount;
+pub static ACCOUNT: CodexAccount = CodexAccount;
 
-impl ProviderAccount for CodexProviderAccount {
-    fn key(&self) -> meowo_store::ProviderKey {
-        meowo_store::ProviderKey::Codex
-    }
-
-    fn account(&self) -> Option<Account> {
+impl AccountCap for CodexAccount {
+    fn account(&self, _ports: &Ports) -> Option<Account> {
         parse_codex_account(&read_auth_json()?)
     }
 
-    fn usage(&self, _force: bool) -> Option<ProviderUsage> {
-        // 纯本地，无网络，force 参数忽略
-        let home = meowo_reporter::codex::codex_home()?;
-        let rollout = find_latest_rollout(&home)?;
-        let payload = tail_scan_token_count(&rollout)?;
-        Some(parse_codex_usage(&payload))
+    /// codex 的用量**不联网**：rate_limits 快照就写在最近一份 rollout 里，尾扫即可。
+    /// 故它不用 `ports.http`——能力槽的意义正在于此，不需要的端口就不碰。
+    fn fetch_usage(&self, _ports: &Ports) -> Result<ProviderUsage, String> {
+        let home = crate::registry::installation(crate::id::CODEX)
+            .map(|i| i.data_dir)
+            .ok_or("解析不到 codex 数据目录")?;
+        let rollout = find_latest_rollout(&home).ok_or("找不到 rollout 文件")?;
+        let payload = tail_scan_token_count(&rollout).ok_or("rollout 里没有 token_count 记录")?;
+        Ok(parse_codex_usage(&payload))
     }
 
-    fn usage_supported(&self) -> bool {
+    fn usage_supported(&self, _ports: &Ports) -> bool {
         // 仅 chatgpt 模式（订阅）有 rate_limits
         read_auth_json().is_some_and(|auth| auth_mode(&auth) == "chatgpt")
     }
@@ -315,28 +232,28 @@ mod tests {
 
     #[test]
     fn base64url_decode_empty() {
-        assert_eq!(base64url_decode_nopad(""), Some(vec![]));
+        assert_eq!(crate::codec::base64url_decode_nopad(""), Some(vec![]));
     }
 
     #[test]
     fn base64url_decode_known_vectors() {
         // "Man" → TWFu（标准 base64，无填充，- _ 无关）
-        let decoded = base64url_decode_nopad("TWFu").unwrap();
+        let decoded = crate::codec::base64url_decode_nopad("TWFu").unwrap();
         assert_eq!(decoded, b"Man");
 
         // "f" → Zg（2 chars, 1 byte）
-        assert_eq!(base64url_decode_nopad("Zg").unwrap(), b"f");
+        assert_eq!(crate::codec::base64url_decode_nopad("Zg").unwrap(), b"f");
 
         // "fo" → Zm8（3 chars, 2 bytes）
-        assert_eq!(base64url_decode_nopad("Zm8").unwrap(), b"fo");
+        assert_eq!(crate::codec::base64url_decode_nopad("Zm8").unwrap(), b"fo");
     }
 
     #[test]
     fn base64url_decode_invalid_char_returns_none() {
         // '!' 非合法 base64url 字符
-        assert_eq!(base64url_decode_nopad("TW!u"), None);
+        assert_eq!(crate::codec::base64url_decode_nopad("TW!u"), None);
         // '+' 是标准 base64 而非 base64url
-        assert_eq!(base64url_decode_nopad("TW+u"), None);
+        assert_eq!(crate::codec::base64url_decode_nopad("TW+u"), None);
     }
 
     #[test]
@@ -347,7 +264,7 @@ mod tests {
         // 6-bit groups: 111110 110111 111111 → 62(='-'), 55(='3'), 63(='_')
         // Actually let me use a known example: RFC 4648 test vector
         // ">>" → "Pj4" in base64, but in base64url same (no + or /)
-        let decoded = base64url_decode_nopad("Pj4").unwrap();
+        let decoded = crate::codec::base64url_decode_nopad("Pj4").unwrap();
         assert_eq!(decoded, b">>");
     }
 
@@ -391,25 +308,25 @@ mod tests {
             }
         });
         let jwt = make_test_jwt(&claims);
-        let decoded = decode_jwt_payload(&jwt).unwrap();
+        let decoded = crate::codec::decode_jwt_payload(&jwt).unwrap();
         assert_eq!(decoded["email"].as_str(), Some("user@example.com"));
     }
 
     #[test]
     fn decode_jwt_payload_too_few_segments_returns_none() {
-        assert!(decode_jwt_payload("onlyone").is_none());
-        assert!(decode_jwt_payload("two.parts").is_none());
+        assert!(crate::codec::decode_jwt_payload("onlyone").is_none());
+        assert!(crate::codec::decode_jwt_payload("two.parts").is_none());
     }
 
     #[test]
     fn decode_jwt_payload_bad_base64_returns_none() {
-        assert!(decode_jwt_payload("header.!!!.sig").is_none());
+        assert!(crate::codec::decode_jwt_payload("header.!!!.sig").is_none());
     }
 
     #[test]
     fn decode_jwt_payload_non_json_returns_none() {
         let garbage = base64url_encode(b"not-json-at-all");
-        assert!(decode_jwt_payload(&format!("h.{garbage}.s")).is_none());
+        assert!(crate::codec::decode_jwt_payload(&format!("h.{garbage}.s")).is_none());
     }
 
     // ── parse_codex_account ──
@@ -571,13 +488,13 @@ mod tests {
     #[test]
     fn unix_to_iso8601_known_date() {
         // 1751284800 = 2025-06-30 12:00:00 UTC（经过验证的已知向量）
-        assert_eq!(unix_to_iso8601(1751284800), "2025-06-30T12:00:00Z");
+        assert_eq!(crate::codec::unix_to_iso8601(1751284800), "2025-06-30T12:00:00Z");
         // 1782820800 = 2026-06-30 12:00:00 UTC
-        assert_eq!(unix_to_iso8601(1782820800), "2026-06-30T12:00:00Z");
+        assert_eq!(crate::codec::unix_to_iso8601(1782820800), "2026-06-30T12:00:00Z");
     }
 
     #[test]
     fn unix_to_iso8601_epoch() {
-        assert_eq!(unix_to_iso8601(0), "1970-01-01T00:00:00Z");
+        assert_eq!(crate::codec::unix_to_iso8601(0), "1970-01-01T00:00:00Z");
     }
 }

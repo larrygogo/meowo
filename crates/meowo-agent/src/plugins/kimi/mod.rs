@@ -8,7 +8,11 @@
 //! 两者的 hook 配置格式与 hook stdin 载荷（session_id/cwd/hook_event_name）实测一致，故共用
 //! 同一份 [`HookSpec`]——差的只是目录与「空内联数组」这一形态，都已在声明里表达。
 
+pub mod account;
+pub mod telemetry;
+
 use crate::{
+    caps::TelemetryCap,
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig, RepairReason},
     id::{self, AgentId},
@@ -110,6 +114,48 @@ impl AgentPlugin for Kimi {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn process_names(&self) -> &'static [&'static str] {
+        &["kimi", "kimi.exe"]
+    }
+    fn resume_args(&self) -> &'static [&'static str] {
+        &["-r"]
+    }
+    /// 装当前 Node 版 Kimi Code（装到 `~/.kimi-code/bin/kimi.exe`，与 modern 变体的候选一致）。
+    /// 注意路径里的 `/kimi-code/`——不带它的 `code.kimi.com/install.ps1` 装的是旧 Python `kimi-cli`
+    /// （落到 `~/.local/bin/kimi-cli.exe`，检测不到）。
+    ///
+    /// **不直下**，也**不换入口**，理由都已实测：
+    ///
+    /// - `code.kimi.com` 是 nginx 直服（`server: nginx`，无 `cf-ray`），压根不在 Cloudflare 后面，
+    ///   不会被人机校验拦。判定仍照做——中间设备也可能塞一张 HTML。
+    /// - 它的引导脚本有 417 行（claude 的只有 110 行）。除了「取 latest → 读 manifest 的 checksum →
+    ///   下载 → 校验」这段与 claude 同构之外，它还要迁移旧 `kimi-cli` 安装（重命名成
+    ///   `kimi-legacy.exe`）、备份**正在运行**中被占用的 `kimi.exe`、写用户 PATH。把这些重新实现
+    ///   一遍就是在复刻 kimi 的安装语义，上游一改我们就悄悄装坏。
+    ///
+    /// 对比 claude：它的脚本是段三步胶水，真正的安装由 `claude.exe install` 自己完成，
+    /// 所以那边直下是干净的（见 `plugins/claude/install.rs`）。
+    fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
+        Some(crate::install::InstallScript {
+            url: if windows {
+                "https://code.kimi.com/kimi-code/install.ps1"
+            } else {
+                "https://code.kimi.com/kimi-code/install.sh"
+            },
+            unix_shell: "bash",
+        })
+    }
+    /// kimi 不写标签标题、也不抢 → 由 meowo-reporter 在 hook 时补 session_id token，
+    /// meowo-app 据此精确切到该标签（已验证）。
+    fn writes_tab_token(&self) -> bool {
+        true
+    }
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
+    }
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        Some(&account::ACCOUNT)
     }
 }
 

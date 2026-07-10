@@ -2,6 +2,7 @@ mod account;
 #[cfg(target_os = "windows")]
 mod envpath;
 mod fsutil;
+mod ports;
 #[cfg(target_os = "macos")]
 mod macos;
 mod settings;
@@ -49,7 +50,7 @@ use tauri::{Emitter, Manager, State};
 struct AppState {
     db_path: PathBuf,
     /// transcript 增量解析缓存（与后台轮询线程共享 Arc）：避免每次刷新重读整文件。
-    tx_cache: Arc<Mutex<meowo_store::TranscriptCache>>,
+    tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
 }
 
 fn now_ms() -> i64 {
@@ -220,7 +221,7 @@ fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event
 
 fn live_sessions_blocking(
     db_path: &PathBuf,
-    tx_cache: &Mutex<meowo_store::TranscriptCache>,
+    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
     filter: &str,
     search: Option<&str>,
     before_last_event_at: Option<i64>,
@@ -282,12 +283,11 @@ fn live_sessions_blocking(
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
         // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
         // liveness 线程/本函数互相阻塞在同一把锁上。
-        let info = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
-            .transcript()
+        let info = agent_transcript(&s.provider)
             .and_then(|spec| {
                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
                     .and_then(|p| p.to_str().map(str::to_string))
-                    .map(|path| meowo_store::TranscriptCache::analyze_shared(tx_cache, spec, &path))
+                    .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
             });
         if let Some(info) = info {
             if let Some(t) = info.title {
@@ -778,6 +778,22 @@ fn resume_terminal_kind() -> crate::term_script::TermKind {
     }
 }
 
+/// 聚焦终端时的 resume 回退命令：按 provider 分发（不再硬编码 claude）。是否真的回退由
+/// `focus_session_terminal` 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
+/// 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：只聚焦终端，不回退 resume。
+///
+/// **刻意定义在 `cfg` 之外**：它只用平台无关的 agent API，目前仅 macOS 调用。若把它埋进
+/// `#[cfg(target_os = "macos")]` 块里，Windows 上的编译器根本不会看它——Phase 2 改了
+/// `resume_args` 的签名，正是这样一路漏到 macOS CI 才炸的。逻辑留在 cfg 外，cfg 块里只放
+/// 平台专属的 API 调用。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) -> Vec<String> {
+    session_id
+        .zip(meowo_agent::resolve(provider))
+        .and_then(|(id, a)| a.resume_argv(id))
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 fn focus_session(
     pid: i64,
@@ -799,9 +815,10 @@ fn focus_session(
     }
     #[cfg(target_os = "windows")]
     {
-        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。缺省 claude。
-        let title_based = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(provider.as_deref()))
-            .sets_terminal_tab_title();
+        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。
+        // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
+        let title_based = meowo_agent::resolve(provider.as_deref())
+            .is_some_and(|a| a.sets_terminal_tab_title());
         // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
         // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
         let token = session_id
@@ -816,16 +833,10 @@ fn focus_session(
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        let provider_key = meowo_store::ProviderKey::parse(provider.as_deref());
         // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
-            // resume 回退命令按 provider 分发（不再硬编码 claude）；是否允许回退由
-            // focus_session_terminal 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
-            let resume_argv = session_id
-                .as_deref()
-                .map(|id| meowo_reporter::agent::for_provider(provider_key).resume_args(id))
-                .unwrap_or_default();
+            let resume_argv = resume_argv_for(provider.as_deref(), session_id.as_deref());
             crate::macos::terminal::focus_session_terminal(
                 pid,
                 cwd.as_deref(),
@@ -1069,7 +1080,7 @@ fn pid_alive_agent_quick(pid: i64) -> bool {
     {
         snapshot_processes()
             .get(&(pid as u32))
-            .map(|(_, name)| meowo_reporter::agent::is_agent_process(name))
+            .map(|(_, name)| meowo_agent::is_agent_process(name))
             .unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
@@ -1106,12 +1117,19 @@ fn prepare_resume(
         }
     })();
     emit_board_changed(app, "resume");
-    // claude --resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空(旧会话/
-    // 压缩漏 SessionStart)，故用 resolve_cwd 从 transcript 兜底解析真实 cwd。
-    let resolved = meowo_store::title::resolve_cwd(cwd, session_id);
+    let agent = meowo_agent::resolve(Some(provider));
+    // resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空或失真（旧会话 / 压缩漏
+    // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
+    // 其余原样采信 DB——此前这里无条件走 claude 的解析路径，非 claude 会话靠「在 ~/.claude/projects
+    // 里找不到就回退 DB cwd」的巧合才拿到正确结果。
+    let resolved = match agent.and_then(|a| a.telemetry()).and_then(|t| t.transcript()) {
+        Some(spec) => spec.resolve_cwd(cwd, session_id),
+        None => meowo_agent::default_resolve_cwd(cwd),
+    };
     // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
-    let resume = meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(provider)))
-        .resume_args(session_id);
+    // 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：调用方的 spawn 会失败并回滚复活，
+    // 好过拿 claude 的参数去拉起别的 CLI。
+    let resume = agent.and_then(|a| a.resume_argv(session_id)).unwrap_or_default();
     (revived, resolved, resume)
 }
 
@@ -1227,8 +1245,8 @@ async fn new_session(
     terminal: Option<String>,
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    let argv = meowo_reporter::agent::for_provider(key).launch_args();
+    let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let argv = agent.launch_argv();
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
@@ -1258,11 +1276,98 @@ struct InstallDone {
     log_path: Option<String>,
 }
 
-/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时（用户多半中途放弃了）。
+/// 安装成功、或登录成功之后，顺手把 hooks 接上——不必等下次启动的 `setup::apply_all`，
+/// 也不必让用户自己去点「修复连接」。
+///
+/// **best-effort，绝不影响主流程**：接线失败不该让安装报失败，更不该让登录报失败。
+///
+/// 为什么两个时机都要接（只接一个等于没接）：`wire()` 的门槛是数据目录存在，而各家的
+/// 配置文件生成时机不同——
+///
+/// | agent | 装完后 | 接线结果 |
+/// |---|---|---|
+/// | claude | `~/.claude` 未必存在（`claude.exe install` 只装 launcher） | 目录在则成功，否则 `NotDetected` |
+/// | kimi | `~/.kimi-code/bin` 被建，但 `config.toml` 要 `kimi login` 才有 | 必然 `NeedLogin` |
+/// | codex | `~/.codex` 未必存在 | 目录在则成功，否则 `NotDetected` |
+///
+/// 也就是说 kimi 只有登录后才接得上；claude/codex 装完可能还没目录，但登录必然会创建它
+/// （写凭据）。故两处都调一次。
+fn wire_hooks_best_effort(id: meowo_agent::AgentId, occasion: &str) {
+    match setup::apply_provider(id) {
+        None => eprintln!("Meowo repair[{id}]: {occasion}后已自动接线"),
+        Some(reason) => {
+            // NeedLogin / NotDetected 都是意料之中：前端的「修复连接」按钮仍在，用户可手动重试。
+            eprintln!("Meowo repair[{id}]: {occasion}后自动接线未生效（{reason:?}），留给用户手动修复");
+        }
+    }
+}
+
+/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时或被用户取消。
 #[derive(Clone, serde::Serialize)]
 struct LoginDone {
     provider: String,
     ok: bool,
+}
+
+/// 每个 agent 当前这一轮登录等待的「代次」。
+///
+/// 递增它即可让**正在跑**的 watch 线程在下一个轮询点自行退出（它每轮比对自己出生时的代次）。
+/// 用代次而不是一个布尔取消位，是因为两件事都要处理：
+///
+/// - **取消**：用户点「取消登录」，代次 +1，旧线程停下，且不再 emit——否则它会迟到地把
+///   一个 `ok:false` 打到用户已经重新发起的那一轮上。
+/// - **重发起**：用户连点两次登录，第二次的代次 +1 把第一个线程也停掉，避免两个线程
+///   同时 emit（一个成功一个超时，前端状态取决于谁先到）。
+///
+/// 按 agent 分开：分别登录两个 agent 本就该允许并发（各自一个终端、一个 watch 线程）。
+static LOGIN_EPOCH: std::sync::Mutex<Option<std::collections::HashMap<&'static str, u64>>> =
+    std::sync::Mutex::new(None);
+
+/// 取下一个代次（用于新起的 watch 线程），同时使该 agent 所有旧线程失效。
+fn bump_login_epoch(key: meowo_agent::AgentId) -> u64 {
+    let mut g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
+    let map = g.get_or_insert_with(std::collections::HashMap::new);
+    let e = map.entry(key.as_str()).or_insert(0);
+    *e += 1;
+    *e
+}
+
+/// 当前代次。watch 线程每轮拿它与自己出生时的代次比对，不等则说明已被取消/取代。
+fn login_epoch(key: meowo_agent::AgentId) -> u64 {
+    let g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
+    g.as_ref().and_then(|m| m.get(key.as_str()).copied()).unwrap_or(0)
+}
+
+/// 取消该 agent 正在进行的登录等待。
+///
+/// 起因：点完登录后如果终端被关掉（用户手动关、崩溃、或 agent 自己退出），后端毫不知情——
+/// 它只轮询账号文件，会一直等到 **5 分钟**超时才 emit `login-done`。这五分钟里按钮一直是
+/// 「等待登录…」且不可点，用户既不能重来也不知道发生了什么。
+///
+/// 检测「终端是否还活着」不可行：`wt.exe` 拉起窗口后自身立即退出，真正跑 `claude auth login`
+/// 的是它的孙进程；而 `powershell -NoExit` 又会一直活着。三种终端行为不一致，靠监视进程
+/// 判断只会在某些终端上失灵。给用户一个**始终有效**的出口，比一个时灵时不灵的检测更好。
+///
+/// 不等价于「登录失败」：用户可能已经在终端里登完了。故取消后仍重查一次账号——
+/// 真登上了就报成功。
+#[tauri::command]
+async fn cancel_login(app: tauri::AppHandle, provider: String) -> Result<(), String> {
+    let key = agent_id(&provider).ok_or("未知 agent")?;
+    let provider = key.as_str().to_string();
+    // 代次 +1：正在跑的 watch 线程下一轮就会看到不等，自行退出且不 emit。
+    bump_login_epoch(key);
+    // 由本命令负责收尾 emit，让前端无论如何都能落回可点状态。
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        let ok = account::account_of(key).is_some(); // 也许真登上了，只是用户嫌慢
+        // 真登上了就和正常登录成功一样接线——否则「取消时其实已登录」这条路径会漏掉接线。
+        if ok {
+            wire_hooks_best_effort(key, "登录");
+        }
+        let _ = app.emit("login-done", LoginDone { provider, ok });
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 轮询账号解析结果，直到出现（登录成功）或超时，然后 emit `login-done`。
@@ -1272,10 +1377,13 @@ struct LoginDone {
 /// 的判定，且全是本地读，2s 一轮开销可忽略。
 ///
 /// 超时上限 5 分钟：登录走浏览器 OAuth，用户可能中途放弃；spawn 出去的是 detach 的终端，
-/// 拿不到退出码，不设上限线程就永久泄漏。
-fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: String) {
+/// 拿不到退出码，不设上限线程就永久泄漏。用户不想等满 5 分钟时可以 [`cancel_login`]。
+fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: String) {
     const POLL: std::time::Duration = std::time::Duration::from_secs(2);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+    // 出生代次。被 cancel_login 或下一次 login_agent 递增后，本线程静默退出、不 emit——
+    // 收尾的 emit 归那一方，否则会有两个 login-done 打架。
+    let epoch = bump_login_epoch(key);
     std::thread::spawn(move || {
         use tauri::Emitter;
         let start = std::time::Instant::now();
@@ -1283,7 +1391,11 @@ fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: S
         // 每轮只是本地读一个 JSON——三家的 account() 都不联网、不 spawn 子进程（claude 读
         // ~/.claude.json；macOS 的 Keychain 只在读**凭据**/刷新 token 时才碰，不在此路径上）。
         let ok = loop {
-            if account::for_provider(key).account().is_some() {
+            if login_epoch(key) != epoch {
+                eprintln!("Meowo login[{provider}]: 已被取消或被新一轮登录取代，停止轮询");
+                return; // 收尾 emit 归取消方 / 新线程
+            }
+            if account::account_of(key).is_some() {
                 break true;
             }
             if start.elapsed() >= TIMEOUT {
@@ -1292,6 +1404,11 @@ fn watch_login(app: tauri::AppHandle, key: meowo_store::ProviderKey, provider: S
             }
             std::thread::sleep(POLL);
         };
+        // 登录成功 → 此时配置文件才刚生成（kimi 的 config.toml 由 `kimi login` 写；claude/codex
+        // 的数据目录也因写凭据而必然存在），是三家唯一都接得上 hooks 的时机。
+        if ok {
+            wire_hooks_best_effort(key, "登录");
+        }
         let _ = app.emit("login-done", LoginDone { provider, ok });
     });
 }
@@ -1309,7 +1426,7 @@ async fn login_agent(
     provider: String,
     terminal: Option<String>,
 ) -> Result<(), String> {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
+    let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
     let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
     let argv = inst.login_argv().ok_or("该 agent 未声明登录入口")?;
@@ -1328,47 +1445,183 @@ async fn login_agent(
     Ok(())
 }
 
-/// 把安装脚本写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
-/// Windows：try/catch 捕获终止错误，打印 `Installation failed: …` 并 exit 1。
-#[cfg(target_os = "windows")]
-fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
-    let body = format!(
-        "Write-Host 'Installing, please wait...'\r\n\
-         try {{ {script} }} catch {{ Write-Host ('Installation failed: ' + $_.ToString()); exit 1 }}\r\n"
-    );
-    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.ps1"));
+/// 按插件给出的计划直下安装：下载 → 校验大小 → 校验 SHA-256 → 用二进制自身完成安装。
+///
+/// 走这条路的 agent 完全不碰引导脚本，也就完全不碰它身后的 Cloudflare。附带的好处是多了
+/// 一道摘要校验——裸管道连脚本内容都不校验，更别说最终的二进制。
+///
+/// 任何一步失败都删掉半成品：留着一个校验不过的可执行文件，比没有更危险。
+fn run_direct_install(
+    plan: &meowo_agent::InstallPlan,
+    log: Option<&mut std::fs::File>,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    /// 往日志追一行。写成自由函数而不是闭包：闭包会一直借着 `log`，后面还要把它交给子进程输出。
+    fn note(log: &mut Option<&mut std::fs::File>, msg: &str) {
+        if let Some(f) = log.as_mut() {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+
+    let dest = std::env::temp_dir().join(&plan.file_name);
+    let mut log = log;
+    note(&mut log, &format!("Downloading {} {} from {}", plan.file_name, plan.version, plan.url));
+
+    // 进度每 10% 写一行日志（UI 只显示「安装中…」，不透传细节）。250 MB 在慢网上要几分钟，
+    // 没有这几行的话日志看上去就像卡死了。
+    //
+    // 整段包在块里：`on_progress` 可变借着 `log`，出块借用才结束，后面还要把 `log` 交给子进程输出。
+    let written = {
+        let mut last_decile = 0u64;
+        let mut on_progress = |done: u64, total: Option<u64>| {
+            let Some(t) = total.filter(|t| *t > 0) else { return };
+            let decile = done * 10 / t;
+            if decile > last_decile {
+                last_decile = decile;
+                if let Some(f) = log.as_mut() {
+                    let _ = writeln!(f, "  {}% ({done} / {t} bytes)", decile * 10);
+                }
+            }
+        };
+        ports::ports()
+            .http
+            .download(&plan.url, &dest, std::time::Duration::from_secs(600), &mut on_progress)
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&dest);
+                format!("下载失败：{e}")
+            })?
+    };
+
+    let fail = |dest: &std::path::Path, msg: String| -> String {
+        let _ = std::fs::remove_file(dest);
+        msg
+    };
+    if written != plan.size {
+        return Err(fail(&dest, format!("下载不完整：期望 {} 字节，实得 {written}", plan.size)));
+    }
+
+    // 摘要在流式写完后重读一遍算——250 MB 的文件不进内存，Sha256 也是增量喂。
+    let mut f = std::fs::File::open(&dest).map_err(|e| fail(&dest, e.to_string()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut f, &mut hasher).map_err(|e| fail(&dest, e.to_string()))?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != plan.sha256 {
+        return Err(fail(
+            &dest,
+            format!("校验和不匹配（期望 {}，实得 {actual}），已删除下载的文件", plan.sha256),
+        ));
+    }
+    note(&mut log, "Checksum OK");
+
+    // unix 上得先加执行位，否则下一步 spawn 直接 EACCES。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&dest).map_err(|e| fail(&dest, e.to_string()))?.permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&dest, perm).map_err(|e| fail(&dest, e.to_string()))?;
+    }
+
+    // 由二进制自己装 launcher 与 shell 集成（claude 是 `claude.exe install`）。
+    if !plan.post_install_args.is_empty() {
+        note(&mut log, &format!("Running: {} {}", plan.file_name, plan.post_install_args.join(" ")));
+        let mut cmd = std::process::Command::new(&dest);
+        cmd.args(&plan.post_install_args);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let out = cmd.output().map_err(|e| fail(&dest, format!("执行安装失败：{e}")))?;
+        if let Some(f) = log.as_mut() {
+            let _ = f.write_all(&out.stdout);
+            let _ = f.write_all(&out.stderr);
+        }
+        if !out.status.success() {
+            return Err(fail(
+                &dest,
+                format!("安装程序以退出码 {} 结束", out.status.code().unwrap_or(-1)),
+            ));
+        }
+    }
+
+    // 装完即删临时二进制（官方脚本也这么做）。删不掉不算失败。
+    let _ = std::fs::remove_file(&dest);
+    note(&mut log, "Installation complete");
+    Ok(())
+}
+
+/// 取回官方安装引导脚本，并确认它**确实是脚本**。
+///
+/// 这一步是新加的，起因是一份真实的安装日志：
+///
+/// ```text
+/// Installing, please wait...
+/// Installation failed: Just a moment...*{box-sizing:border-box…
+/// ```
+///
+/// `claude.ai` 与 `chatgpt.com` 都在 Cloudflare 后面，其人机校验页以 **HTTP 200** 返回。原先的
+/// `irm <url> | iex` / `curl -fsSL <url> | bash` 不会因此报错——`irm` 拿到 HTML 就交给 PowerShell
+/// 执行，`curl -f` 也只挡非 2xx。于是用户对着一屏 CSS 发懵。
+///
+/// 现在 shell 只跑本地文件，联网与判定都在这里。
+fn fetch_install_script(script: &meowo_agent::InstallScript) -> Result<String, String> {
+    use meowo_agent::{Body, HttpRequest};
+    let body = ports::ports()
+        .http
+        .send(&HttpRequest {
+            method: "GET",
+            url: script.url,
+            headers: &[],
+            body: Body::Empty,
+            timeout: std::time::Duration::from_secs(30),
+        })
+        .map_err(|e| format!("下载安装脚本失败：{e}"))?;
+
+    if meowo_agent::looks_like_challenge(&body) {
+        return Err(format!(
+            "{} 返回了 Cloudflare 人机校验页，而不是安装脚本。这是间歇性的，稍后重试通常即可；\
+             若持续失败，请在浏览器里打开该地址手动安装。",
+            script.url
+        ));
+    }
+    if !meowo_agent::is_runnable_script(&body) {
+        return Err(format!("{} 返回的不是安装脚本（可能被中间设备拦截）。", script.url));
+    }
+    Ok(body)
+}
+
+/// 把取回的脚本原样写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
+/// **不再包一层 shell**：脚本本身已含错误处理，包装只会让「哪一行失败」更难看清。
+fn write_install_script(provider: &str, body: &str, windows: bool) -> std::io::Result<String> {
+    let ext = if windows { "ps1" } else { "sh" };
+    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.{ext}"));
     std::fs::write(&p, body)?;
     Ok(p.to_string_lossy().into_owned())
 }
 
-/// macOS/Linux：子 shell 跑安装串，失败打印统一行并以原退出码退出。
-#[cfg(not(target_os = "windows"))]
-fn write_install_script(provider: &str, script: &str) -> std::io::Result<String> {
-    let body = format!(
-        "echo 'Installing, please wait...'\n\
-         ( {script} ) || {{ rc=$?; echo \"Installation failed: exit code $rc\"; exit $rc; }}\n"
-    );
-    let p = std::env::temp_dir().join(format!("meowo-install-{provider}.sh"));
-    std::fs::write(&p, body)?;
-    Ok(p.to_string_lossy().into_owned())
-}
-
-/// 构造后台安装子进程（不弹窗口）。平台差异只在此：Windows 用 pwsh(优先)/powershell + CREATE_NO_WINDOW，
-/// 其它平台用 bash。stdin/stdout/stderr 由调用方统一设。
+/// 构造后台安装子进程（不弹窗口）。平台差异只在此：Windows 用 pwsh(优先)/powershell +
+/// CREATE_NO_WINDOW；其它平台用该 agent 声明的解释器（claude/kimi 要 bash，codex 官方写的是 sh）。
+/// stdin/stdout/stderr 由调用方统一设。
 #[cfg(target_os = "windows")]
-fn build_install_command(script_path: &str) -> std::process::Command {
+fn build_install_command(script_path: &str, _unix_shell: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let shell = if pwsh_available() { "pwsh" } else { "powershell" };
     let mut c = std::process::Command::new(shell);
+    // Bypass 仍需要：跑的是刚下载的未签名官方脚本。但它已经过 is_runnable_script 判定，
+    // 且来自变体表里硬编码的 https 地址，不是用户输入。
     c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path])
         .creation_flags(CREATE_NO_WINDOW);
     c
 }
 
 #[cfg(not(target_os = "windows"))]
-fn build_install_command(script_path: &str) -> std::process::Command {
-    let mut c = std::process::Command::new("bash");
+fn build_install_command(script_path: &str, unix_shell: &str) -> std::process::Command {
+    let mut c = std::process::Command::new(unix_shell);
     c.arg(script_path);
     c
 }
@@ -1377,12 +1630,60 @@ fn build_install_command(script_path: &str) -> std::process::Command {
 /// 前端重查检测转「已装」。安装命令是受信硬编码串（Agent::install_script），非用户输入。
 #[tauri::command]
 async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), String> {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    let provider = key.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
-    let script = meowo_reporter::agent::for_provider(key)
-        .install_script(cfg!(target_os = "windows"))
+    let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let id = agent.id(); // Copy；两条安装路径的收尾线程都要用它接线
+    let provider = id.as_str().to_string(); // 归一：文件名/emit 全用规范串，消除路径注入面+大小写不一致
+    let windows = cfg!(target_os = "windows");
+
+    // 优先直下：绕开引导脚本，也就绕开它身后的 Cloudflare。plan() 只做两次小请求（版本号 + 清单），
+    // 失败（发布物 schema 变了 / 下载服务本地区不可用）就回退到引导脚本，不让用户卡死在这条路上。
+    if let Some(cap) = agent.direct_install() {
+        let planned = tauri::async_runtime::spawn_blocking(move || cap.plan(&ports::ports()))
+            .await
+            .map_err(|e| e.to_string())?;
+        match planned {
+            Ok(plan) => {
+                let log_path = install_log_path(&provider);
+                tauri::async_runtime::spawn_blocking(move || {
+                    use tauri::Emitter;
+                    let mut log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+                    let logged = log.is_some();
+                    let res = run_direct_install(&plan, log.as_mut());
+                    if let (Some(f), Err(e)) = (log.as_mut(), res.as_ref()) {
+                        use std::io::Write;
+                        let _ = writeln!(f, "Installation failed: {e}");
+                    }
+                    let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
+                    let ok = res.is_ok();
+                    // 装好了就顺手接线；失败（多半是数据目录还没建）不影响安装结果。
+                    if ok {
+                        wire_hooks_best_effort(id, "安装");
+                    }
+                    let _ = app.emit(
+                        "install-done",
+                        InstallDone { provider, ok, code: Some(if ok { 0 } else { 1 }), log_path },
+                    );
+                });
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Meowo install[{provider}]: 直下不可用（{e}），回退官方引导脚本");
+            }
+        }
+    }
+
+    let script = agent
+        .install_script(windows)
         .ok_or("该 agent 没有可用的一键安装命令")?;
-    let path = write_install_script(&provider, &script).map_err(|e| e.to_string())?;
+
+    let unix_shell = script.unix_shell;
+    let script_url = script.url;
+    // 取脚本 + 判定放在 spawn 之前：被 Cloudflare 拦时直接回传一句人话，而不是把校验页写进日志、
+    // 再让子进程去执行它。放 blocking 池是因为 ureq 是同步的，不能堵住 tauri 的事件循环。
+    let body = tauri::async_runtime::spawn_blocking(move || fetch_install_script(&script))
+        .await
+        .map_err(|e| e.to_string())??;
+    let path = write_install_script(&provider, &body, windows).map_err(|e| e.to_string())?;
 
     // 安装输出落盘：此前 stdout/stderr 直接丢进 Stdio::null()，判成功只看退出码，于是「装是装上了
     // 但没接好」的半成功一律报成功。claude 就是这样——`claude.exe install` 在 Windows 上打印一行
@@ -1394,15 +1695,22 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
     // spawn 放 blocking 线程：GUI 进程首次 spawn 子进程可能被杀软扫描拖慢，勿堵事件循环。
     // spawn 成功即返回 Ok；结果走 install-done 事件；spawn 失败回传 Err，前端立即显示错误。
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use std::io::Write;
         use std::process::Stdio;
         // 日志建不出来（磁盘满/权限）不该让安装失败：退回丢弃输出，log_path 报 None。
-        let log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        let mut log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        // 抬头行由我们写：脚本不再被包一层 shell，这行原先是包装打印的。它是用户在日志里
+        // 判断「有没有跑起来」的唯一信号，别随包装一起丢掉。
+        if let Some(f) = log.as_mut() {
+            let _ = writeln!(f, "Installing {provider} from {url}, please wait...", url = script_url);
+        }
+        let log = log;
         let (out, err) = match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
             Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
             None => (Stdio::null(), Stdio::null()),
         };
         let logged = log.is_some();
-        let mut child = build_install_command(&path)
+        let mut child = build_install_command(&path, unix_shell)
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err)
@@ -1414,6 +1722,10 @@ async fn install_agent(app: tauri::AppHandle, provider: String) -> Result<(), St
             use tauri::Emitter;
             let code = child.wait().ok().and_then(|s| s.code());
             let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
+            // 装好了就顺手接线；失败（多半是数据目录还没建）不影响安装结果。
+            if code == Some(0) {
+                wire_hooks_best_effort(id, "安装");
+            }
             let _ = app.emit(
                 "install-done",
                 InstallDone { provider, ok: code == Some(0), code, log_path },
@@ -1438,7 +1750,7 @@ fn install_log_path(provider: &str) -> Option<PathBuf> {
 /// 命中 `LaunchCandidate::OnPath`（裸名）说明它本就在 PATH 上；node 脚本形态的 argv[0] 是 `node`，
 /// 同理。两种情况都不需要提示用户改 PATH，故返回 None。
 #[cfg(target_os = "windows")]
-fn agent_bin_dir(key: meowo_store::ProviderKey) -> Option<PathBuf> {
+fn agent_bin_dir(key: meowo_agent::AgentId) -> Option<PathBuf> {
     let inst = install_for(key)?;
     let argv = inst.launch_argv();
     let exe = std::path::Path::new(argv.first()?);
@@ -1456,7 +1768,8 @@ fn agent_bin_dir(key: meowo_store::ProviderKey) -> Option<PathBuf> {
 fn agent_path_gap(provider: String) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        let dir = agent_bin_dir(meowo_store::ProviderKey::parse(Some(&provider)))?;
+        // 未知 agent → None：不去猜它的可执行装在哪，更不该据此劝用户改 PATH。
+        let dir = agent_bin_dir(agent_id(&provider)?)?;
         let dir = dir.to_string_lossy().into_owned();
         (!envpath::dir_on_persistent_path(&dir)).then_some(dir)
     }
@@ -1475,7 +1788,7 @@ fn agent_path_gap(provider: String) -> Option<String> {
 fn add_agent_to_user_path(provider: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let key = meowo_store::ProviderKey::parse(Some(&provider));
+        let key = agent_id(&provider).ok_or("未知 agent")?;
         let dir = agent_bin_dir(key).ok_or("未找到该 agent 的可执行目录")?;
         envpath::add_dir_to_user_path(&dir.to_string_lossy())
     }
@@ -1528,21 +1841,32 @@ fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) 
     hooks_status_at(&inst.config_path(), inst.hooks, agent_id)
 }
 
-/// 某 provider 在本机的安装实况。三家均已迁入插件层，此处只是把 ProviderKey 映射到各自的
-/// 解析入口（Phase D 会把它收敛成 `by_id(key.as_str())?.resolve()`）。
-fn install_for(key: meowo_store::ProviderKey) -> Option<meowo_agent::Installation> {
-    match key {
-        meowo_store::ProviderKey::Claude => meowo_reporter::claude::claude_install(),
-        meowo_store::ProviderKey::Codex => meowo_reporter::codex::codex_install(),
-        meowo_store::ProviderKey::Kimi => meowo_reporter::kimi::kimi_install(),
-    }
+/// 前端/DB 传来的 provider 串 → agent 身份。**未知 id → `None`**，绝不冒名成默认 agent：
+/// 那会让一个本版本尚不认识的 agent 被按 claude 去 resume / 装 / 查用量。调用方据此降级
+/// （command 报错、读操作跳过 agent 专属能力）。空/缺省 → 默认 agent（老会话没写过 provider 列）。
+fn agent_id(provider: &str) -> Option<meowo_agent::AgentId> {
+    meowo_agent::resolve(Some(provider)).map(|p| p.id())
+}
+
+/// 该 provider 的 transcript 规格（未知 agent / 无遥测能力 / 不读 transcript → None）。
+/// 只有 claude 有：codex/kimi 的标题走首条 prompt、预览与模型走 Stop hook。
+fn agent_transcript(provider: &str) -> Option<&'static dyn meowo_agent::TranscriptSpec> {
+    meowo_agent::resolve(Some(provider))?.telemetry()?.transcript()
+}
+
+/// 某 agent 在本机的安装实况。直接走插件注册表——不再按 id 分支到各自的解析入口。
+fn install_for(id: meowo_agent::AgentId) -> Option<meowo_agent::Installation> {
+    meowo_agent::by_id(id.as_str())?.resolve()
 }
 
 /// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
+/// 未知 provider → Unknown（不冒名默认 agent 去查它的 hooks）。
 #[tauri::command]
 fn check_provider_hooks(provider: String) -> HooksStatus {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    plugin_hooks_status(install_for(key), key.as_str())
+    let Some(id) = agent_id(&provider) else {
+        return HooksStatus::Unknown;
+    };
+    plugin_hooks_status(install_for(id), id.as_str())
 }
 
 /// 「修复连接」结果：最新接线状态 + 失败原因（None = 成功/已是目标状态）。
@@ -1557,18 +1881,18 @@ struct RepairResult {
 /// 用于「新建会话」面板或设置里的「修复连接」按钮，无需重启 Meowo。
 #[tauri::command]
 fn repair_provider_hooks(provider: String) -> RepairResult {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    match key {
-        meowo_store::ProviderKey::Claude
-        | meowo_store::ProviderKey::Codex
-        | meowo_store::ProviderKey::Kimi => {
-            eprintln!("Meowo repair[{provider}]: 开始修复接线…");
-            let reason = setup::apply_provider(key);
-            let status = check_provider_hooks(provider.clone());
-            eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
-            RepairResult { status, reason }
-        }
-    }
+    let Some(id) = agent_id(&provider) else {
+        eprintln!("Meowo repair[{provider}]: 未知 agent，跳过");
+        return RepairResult {
+            status: HooksStatus::Unknown,
+            reason: Some(setup::RepairReason::NotDetected),
+        };
+    };
+    eprintln!("Meowo repair[{provider}]: 开始修复接线…");
+    let reason = setup::apply_provider(id);
+    let status = check_provider_hooks(provider.clone());
+    eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
+    RepairResult { status, reason }
 }
 
 /// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
@@ -1656,9 +1980,11 @@ fn rename_session(
         return Err("标题不能为空".into());
     }
 
-    // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）。
-    let provider = meowo_store::ProviderKey::parse(provider.as_deref());
-    let _ = meowo_reporter::agent::for_provider(provider).write_rename(&session_id, cwd.as_deref(), &title);
+    // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）；
+    // 未知 agent 则只改 DB 标题，不去猜它的持久层格式。
+    if let Some(t) = meowo_agent::resolve(provider.as_deref()).and_then(|a| a.telemetry()) {
+        let _ = t.write_rename(&session_id, cwd.as_deref(), &title);
+    }
 
     // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
     // claude 的 apply_title 会从 transcript 重读 custom-title（优先级高于 ai-title）维持一致。
@@ -1871,7 +2197,7 @@ fn run_db_watch_loop(
 ///
 /// Windows 会复用 pid：会话结束后它的旧 pid 可能被别的进程（如 esbuild）占用，
 /// 只判断「pid 是否存在」会把已结束的会话误判为仍连接。故按进程名甄别是否仍是 agent 本体——
-/// 复用 meowo_reporter::agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
+/// 复用 meowo_agent::is_agent_process（取 basename **精确**匹配 claude/kimi 白名单，
 /// 与 owner_pid 写入侧同一事实源），避免子串误匹配（如名字恰含 kimi 的无关进程）。
 fn pid_is_agent(sys: &System, pid: i64) -> bool {
     if pid <= 0 {
@@ -1880,7 +2206,7 @@ fn pid_is_agent(sys: &System, pid: i64) -> bool {
     #[cfg(target_os = "windows")]
     {
         sys.process(Pid::from_u32(pid as u32))
-            .map(|p| meowo_reporter::agent::is_agent_process(&p.name().to_string_lossy()))
+            .map(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
             .unwrap_or(false)
     }
     // macOS/Unix：sysinfo 对进程的可见性不稳（实测 parent() 会过早返回 None、
@@ -1910,7 +2236,7 @@ pub(crate) fn pid_is_agent_ps(pid: i64) -> bool {
     else {
         return true; // 查不了 ≠ 已死：宁可暂当存活，等下一轮能查时再判
     };
-    meowo_reporter::agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
+    meowo_agent::is_agent_process(String::from_utf8_lossy(&out.stdout).trim())
 }
 
 /// macOS/Unix：一次 `ps -axo pid=,comm=` 批量取「进程名含 claude」的 pid 集合，
@@ -1929,7 +2255,7 @@ fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
         let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
         // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
         let comm = it.collect::<Vec<_>>().join(" ");
-        if meowo_reporter::agent::is_agent_process(&comm) {
+        if meowo_agent::is_agent_process(&comm) {
             set.insert(pid);
         }
     }
@@ -2070,7 +2396,7 @@ fn show_session_notification(
 fn spawn_liveness_watch(
     app: tauri::AppHandle,
     db_path: PathBuf,
-    tx_cache: Arc<Mutex<meowo_store::TranscriptCache>>,
+    tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
 ) {
     use std::collections::HashMap;
     std::thread::spawn(move || {
@@ -2114,15 +2440,14 @@ fn spawn_liveness_watch(
 
                     // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
                     // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-                    let meowo_store::TranscriptInfo { title, error, .. } =
-                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider)))
-                            .transcript()
+                    let meowo_agent::TranscriptInfo { title, error, .. } =
+                        agent_transcript(&s.provider)
                             .and_then(|spec| {
                                 spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
                                     .and_then(|p| p.to_str().map(str::to_string))
                                     .map(|path| {
                                         // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
-                                        meowo_store::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
+                                        meowo_agent::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
                                     })
                             })
                             .unwrap_or_default();
@@ -2132,8 +2457,8 @@ fn spawn_liveness_watch(
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
-                    let title_based =
-                        meowo_reporter::agent::for_provider(meowo_store::ProviderKey::parse(Some(&s.provider))).sets_terminal_tab_title();
+                    let title_based = meowo_agent::resolve(Some(&s.provider))
+                        .is_some_and(|a| a.sets_terminal_tab_title());
                     // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
                     let tab_token = {
                         let t = meowo_reporter::tabtitle::short_sid(&s.session.cc_session_id);
@@ -2280,13 +2605,12 @@ fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
 #[tauri::command]
 async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
     tauri::async_runtime::spawn_blocking(|| {
-        account::all()
-            .iter()
-            .map(|pa| account::ProviderAccountPayload {
-                provider: pa.key().as_str().to_string(),
-                account: pa.account(),
-                usage: account::read_cached_usage(pa.key()),
-                usage_supported: pa.usage_supported(),
+        account::all_with_account()
+            .map(|p| account::ProviderAccountPayload {
+                provider: p.id().as_str().to_string(),
+                account: account::account_of(p.id()),
+                usage: account::read_cached_usage(p.id()),
+                usage_supported: account::usage_supported(p.id()),
             })
             .collect()
     })
@@ -2297,20 +2621,12 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
 /// 刷新指定 provider 的用量（可触发网络请求，含 60s 限频）。
 /// None 时按 usage_supported 返回 UNAVAILABLE 或 USAGE_UNSUPPORTED。
 #[tauri::command]
-async fn refresh_usage(provider: String) -> Result<account::ProviderUsage, String> {
-    let key = meowo_store::ProviderKey::parse(Some(&provider));
-    tauri::async_runtime::spawn_blocking(move || {
-        let pa = account::for_provider(key);
-        match pa.usage(true) {
-            Some(u) => Ok(u),
-            None => {
-                if pa.usage_supported() {
-                    Err("UNAVAILABLE".into())
-                } else {
-                    Err(account::USAGE_UNSUPPORTED.into())
-                }
-            }
-        }
+async fn refresh_usage(provider: String) -> Result<meowo_agent::ProviderUsage, String> {
+    let key = agent_id(&provider).ok_or("未知 agent")?;
+    tauri::async_runtime::spawn_blocking(move || match account::usage_of(key, true) {
+        Some(u) => Ok(u),
+        None if account::usage_supported(key) => Err("UNAVAILABLE".into()),
+        None => Err(account::USAGE_UNSUPPORTED.to_string()),
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2371,15 +2687,31 @@ async fn available_terminals() -> Vec<String> {
     }
 }
 
-/// 本机实际已安装的 agent（provider key 列表），供各处按安装过滤展示。仿 available_terminals：
-/// 检测廉价（PATH/文件查询），仍放 blocking 池避免任何意外阻塞事件循环。
+/// 前端看到的一个 agent。**这是前端认识 agent 的唯一途径**——它不再维护自己的 agent 名单。
+///
+/// 不含图标与品牌色：那是**视觉资产**，不是 agent 的定义。位图 logo（kimi）与主题相关的品牌色
+/// （claude 在浅色/深色下取不同明度）都无法诚实地塞进后端的一个字符串字段里，故留在前端的资产表。
+#[derive(Debug, Clone, serde::Serialize)]
+struct AgentDescriptor {
+    id: String,
+    /// 产品名（"Claude Code" / "Kimi Code" / "Codex"）。**不翻译**——产品名没有译名。
+    display_name: String,
+    /// 可执行是否装在本机（决定各处是否列出/可选它）。
+    installed: bool,
+}
+
+/// 全部已注册 agent 及其本机安装状态。仿 available_terminals：检测廉价（PATH/文件查询），
+/// 仍放 blocking 池避免任何意外阻塞事件循环。
 #[tauri::command]
-async fn available_agents() -> Vec<String> {
+async fn list_agents() -> Vec<AgentDescriptor> {
     tauri::async_runtime::spawn_blocking(|| {
-        meowo_reporter::agent::all()
+        meowo_agent::all()
             .iter()
-            .filter(|a| a.is_installed())
-            .map(|a| a.key().as_str().to_string())
+            .map(|a| AgentDescriptor {
+                id: a.id().as_str().to_string(),
+                display_name: a.display_name().to_string(),
+                installed: a.is_installed(),
+            })
             .collect::<Vec<_>>()
     })
     .await
@@ -2849,8 +3181,8 @@ mod win_constrain {
 pub fn run() {
     migrate_legacy_data();
     let path = db_path();
-    let tx_cache: Arc<Mutex<meowo_store::TranscriptCache>> =
-        Arc::new(Mutex::new(meowo_store::TranscriptCache::new()));
+    let tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>> =
+        Arc::new(Mutex::new(meowo_agent::TranscriptCache::new()));
     tauri::Builder::default()
         // window-state 只持久化/恢复「位置」等，不恢复「尺寸」：main 窗口尺寸改由前端 localStorage
         // (SIZE_KEY) 单独持有。否则吸附态退出会把「细条几何」存进 window-state，与 localStorage 的吸附态
@@ -2905,12 +3237,13 @@ pub fn run() {
             refresh_usage,
             host_os,
             available_terminals,
-            available_agents,
+            list_agents,
             new_session,
             install_agent,
             agent_path_gap,
             add_agent_to_user_path,
             login_agent,
+            cancel_login,
             check_provider_hooks,
             repair_provider_hooks,
             recent_cwds,
@@ -3036,10 +3369,72 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_safe_id, normalize_tab_title, parse_wt_default_profile, path_has_exe,
-        pending_fingerprint, pid_is_agent, session_connected, shell_join_for_windows, should_notify,
-        strip_jsonc_comments, tab_match_score, waiting_fingerprint,
+        bump_login_epoch, is_safe_id, login_epoch, normalize_tab_title, parse_wt_default_profile,
+        path_has_exe, pending_fingerprint, pid_is_agent, resume_argv_for, session_connected,
+        shell_join_for_windows, should_notify, strip_jsonc_comments, tab_match_score,
+        waiting_fingerprint,
     };
+
+    /// 代次是「取消登录」的整个机制：watch 线程每轮比对自己出生时的代次，不等就静默退出。
+    ///
+    /// 两个场景都靠它：用户点取消（代次 +1，旧线程停下且不 emit，收尾 emit 归取消方）；
+    /// 用户连点两次登录（第二次把第一个线程也淘汰掉，避免两个 login-done 打架）。
+    ///
+    /// 用不同 agent 隔离——`LOGIN_EPOCH` 是全局静态，同一 agent 会在测试间串。
+    #[test]
+    fn login_epoch_invalidates_older_watchers_per_agent() {
+        let kimi = meowo_agent::id::KIMI;
+        let codex = meowo_agent::id::CODEX;
+
+        // 一个 watch 线程出生时拿到的代次。
+        let first = bump_login_epoch(kimi);
+        assert_eq!(login_epoch(kimi), first, "刚出生的线程应认得自己这一代");
+
+        // 用户点了取消（或又点了一次登录）：代次前进，老线程下一轮就会看到不等而退出。
+        let second = bump_login_epoch(kimi);
+        assert!(second > first);
+        assert_ne!(login_epoch(kimi), first, "老线程必须发现自己已被取代");
+        assert_eq!(login_epoch(kimi), second, "新线程仍然有效");
+
+        // 按 agent 分开：登 kimi 不该把 codex 的等待线程掀掉（两者本就允许并发）。
+        let codex_epoch = bump_login_epoch(codex);
+        bump_login_epoch(kimi);
+        assert_eq!(login_epoch(codex), codex_epoch, "kimi 的登录不该影响 codex");
+    }
+
+    /// `bump` 严格递增，且每次 bump 后当前代次就等于它的返回值。
+    ///
+    /// 不断言「没碰过的 agent 代次为 0」——`LOGIN_EPOCH` 是进程内全局静态，测试并行跑，
+    /// 那样的断言会取决于哪个测试先摸了 claude。这里只测不依赖初值的性质。
+    #[test]
+    fn bump_login_epoch_is_strictly_increasing() {
+        let claude = meowo_agent::id::CLAUDE;
+        let a = bump_login_epoch(claude);
+        let b = bump_login_epoch(claude);
+        let c = bump_login_epoch(claude);
+        assert!(a < b && b < c, "代次必须严格递增：{a} {b} {c}");
+        assert_eq!(login_epoch(claude), c);
+    }
+
+    /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
+    /// 不足以防它腐化（dead_code 允许了它）。这里在所有平台实际调它一次，锁住行为：
+    /// 已知 agent 给出 `[exe, --resume, id]`，未知/缺 session_id 给空 argv（只聚焦、不 resume）。
+    #[test]
+    fn resume_argv_for_dispatches_by_provider_and_degrades_safely() {
+        let argv = resume_argv_for(Some("claude"), Some("SID"));
+        assert_eq!(&argv[argv.len() - 2..], ["--resume".to_string(), "SID".to_string()]);
+        assert!(argv[0].to_ascii_lowercase().contains("claude"));
+
+        let kimi = resume_argv_for(Some("kimi"), Some("SID"));
+        assert_eq!(&kimi[kimi.len() - 2..], ["-r".to_string(), "SID".to_string()]);
+
+        // 未知 agent → 空 argv：绝不拿 claude 的参数去拉起别的 CLI。
+        assert!(resume_argv_for(Some("gemini"), Some("SID")).is_empty());
+        // 没有 session_id 就无从 resume。
+        assert!(resume_argv_for(Some("claude"), None).is_empty());
+        // provider 缺省 → 默认 agent（老会话没写过 provider 列）。
+        assert!(!resume_argv_for(None, Some("SID")).is_empty());
+    }
     use crate::settings::Settings;
     use crate::snap::{
         center_on, clamp_xy_to_work, edge_for_rect, intersection_area, Edge, Rect,

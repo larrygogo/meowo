@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 const invokeMock = vi.hoisted(() =>
   vi.fn((cmd: string, _args?: unknown) => {
@@ -21,7 +21,14 @@ const invokeMock = vi.hoisted(() =>
         default_agent: "claude",
       });
     }
-    if (cmd === "available_agents") return Promise.resolve(["claude"]);
+    // agent 名单与展示名由后端下发（前端不再自带一份）。
+    if (cmd === "list_agents") {
+      return Promise.resolve([
+        { id: "claude", display_name: "Claude Code", installed: true },
+        { id: "kimi", display_name: "Kimi Code", installed: false },
+        { id: "codex", display_name: "Codex", installed: false },
+      ]);
+    }
     return Promise.resolve();
   })
 );
@@ -541,18 +548,29 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-repo")).toBeNull();
   });
 
-  it("kimi 会话用 Kimi Code 标签与 kimi 徽标(黑方块)，claude 用 Claude Code 标签且无方块", () => {
+  // 展示名来自后端 list_agents()（见上方 mock），图标来自前端资产表。异步 resolve 后才有名字，
+  // 故用 findBy* 语义的 waitFor 等一拍。
+  it("agent 标签取后端下发的展示名，徽标取前端资产表", async () => {
     const { container } = render(<Sticker filter="all" data={[mk({ provider: "kimi", project_name: "kimi-proj" })]} />);
     const agent = container.querySelector(".stk-agent") as HTMLElement;
-    expect(agent.getAttribute("data-tip")).toBe(zh.sticker.agentKimiCode);
-    expect(agent.getAttribute("aria-label")).toBe(zh.sticker.agentKimiCode);
+    await waitFor(() => expect(agent.getAttribute("data-tip")).toBe("Kimi Code"));
+    expect(agent.getAttribute("aria-label")).toBe("Kimi Code");
     expect(agent.querySelector("img")).toBeTruthy(); // kimi 徽标内嵌官方 PNG（黑圆角方块已在图内）
 
     cleanup();
     const { container: c2 } = render(<Sticker filter="all" data={[mk({ provider: "claude" })]} />);
     const a2 = c2.querySelector(".stk-agent") as HTMLElement;
-    expect(a2.getAttribute("data-tip")).toBe(zh.sticker.agentClaudeCode);
+    await waitFor(() => expect(a2.getAttribute("data-tip")).toBe("Claude Code"));
     expect(a2.querySelector("svg rect")).toBeNull(); // Claude logomark 无方块
+  });
+
+  /// 本版本不认识的 agent（DB 里存着更新版写入的 id）：显示 id 本身 + 中性徽标，绝不冒名成 Claude。
+  it("未知 agent 不冒名成 claude", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ provider: "gemini" })]} />);
+    const agent = container.querySelector(".stk-agent") as HTMLElement;
+    await waitFor(() => expect(agent.getAttribute("data-tip")).toBe("gemini"));
+    // 中性兜底徽标是一个半透明圆角方块（rect），不是 Claude 的 sunburst path。
+    expect(agent.querySelector("svg rect")).toBeTruthy();
   });
 
   it("搜索走后端：输入调用 onSearchChange，且不客户端过滤已加载数据", () => {

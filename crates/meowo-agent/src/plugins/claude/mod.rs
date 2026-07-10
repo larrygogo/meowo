@@ -2,9 +2,9 @@
 //!
 //! 1. hooks 条目**带 `matcher`**——同一事件下按 matcher 与用户自有 hook 共存
 //!    （如 `PreToolUse:Bash` 预检 vs 我方的 `PreToolUse:AskUserQuestion`）。
-//! 2. hooks 与 `statusLine` 同住 `settings.json`。statusLine 的包装脚本要落盘、要 db_path，
-//!    不在本层——见 meowo-app 的 `setup::Amend`。
-//! 3. 凭据在 macOS 走登录 Keychain，其它平台走 `~/.claude/.credentials.json`。
+//! 2. hooks 与 `statusLine` 同住 `settings.json`，故 statusLine 的包装脚本走写前改写——见 `setup.rs`。
+//! 3. 凭据在 macOS 走登录 Keychain，其它平台走 `~/.claude/.credentials.json`——见 `account.rs`。
+//!    哪一条由注入的 `KeychainPort` 在运行时判定，本层没有平台 `cfg`。
 //!
 //! 可执行的落法（顺序即优先级）：
 //!
@@ -20,8 +20,15 @@
 //! `OnPath` 就能命中；Windows 上生成的是 `claude.cmd`，`exe_on_path("claude.exe")` 看不见它，
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
+pub mod account;
+pub mod install;
+pub mod setup;
+pub mod telemetry;
+pub mod transcript;
+
 use crate::{
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
+    caps::TelemetryCap,
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},
     id::{self, AgentId},
     launch::{LaunchCandidate, LaunchSpec, Root},
@@ -123,6 +130,43 @@ impl AgentPlugin for Claude {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn process_names(&self) -> &'static [&'static str] {
+        &["claude", "claude.exe"]
+    }
+    fn resume_args(&self) -> &'static [&'static str] {
+        &["--resume"]
+    }
+    /// 直下：从 `downloads.claude.ai`（GCS，**无 Cloudflare**）取二进制并校验 SHA-256。
+    /// 见 `install.rs`——引导脚本做的正是这三步。
+    fn direct_install(&self) -> Option<&'static dyn crate::install::InstallCap> {
+        Some(&install::DIRECT_INSTALL)
+    }
+
+    /// 回退路径。`claude.ai` 在 Cloudflare 后面，会间歇触发人机校验（其页面以 HTTP 200 返回），
+    /// 故优先走 `direct_install`；只有它失败（如发布物 schema 变了）才落到这里。
+    fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
+        Some(crate::install::InstallScript {
+            url: if windows {
+                "https://claude.ai/install.ps1"
+            } else {
+                "https://claude.ai/install.sh"
+            },
+            unix_shell: "bash", // 脚本用了 `[[ ]]`，dash 跑不了
+        })
+    }
+    /// claude 把任务标题写进标签页 → meowo-app 可按标题精确切标签，无需我们补 token。
+    fn sets_terminal_tab_title(&self) -> bool {
+        true
+    }
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
+    }
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        Some(&account::ACCOUNT)
+    }
+    fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
+        Some(&setup::WIRING)
     }
 }
 
