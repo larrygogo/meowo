@@ -8,26 +8,26 @@ export type StageMode = "normal" | "docking" | "strip" | "expanded";
 
 export type Store = {
   sessions: Item[];
-  stage: { mode: StageMode; caption: string | null; finale: boolean };
+  stage: { mode: StageMode; caption: string | null; finale: boolean; glow: boolean };
   settings: Settings;
 };
 
 export const store: Store = {
   sessions: [],
-  stage: { mode: "normal", caption: null, finale: false },
+  stage: { mode: "normal", caption: null, finale: false, glow: false },
   settings: {
     archive_hide_days: 0,
     notifications_enabled: true,
     theme: "dark",
-    opacity: 97,
+    opacity: 100,
     ui_scale: 100,
     resume_terminal: "wt",
     language: "zh",
     terminal_open_mode: "card",
-    card_menu_mode: "context",
+    card_menu_mode: "button",
     preview_enabled: true,
-    sticker_style: "elevated",
-    sticker_color: "classic",
+    sticker_style: "flat",
+    sticker_color: "neutral",
     sticker_quota_providers: ["claude"],
     default_agent: "claude",
   },
@@ -48,6 +48,9 @@ export function installMocks(): void {
     switch (cmd) {
       case "host_os":
         return "windows";
+      case "list_agents":
+        // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。demo 仅 claude。
+        return [{ id: "claude", display_name: "Claude Code", installed: true }];
       case "get_settings":
         return store.settings;
       case "get_accounts": {

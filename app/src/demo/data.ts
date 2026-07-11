@@ -4,7 +4,6 @@ import { LiveSession, type AgentId } from "../api";
 export type Item = LiveSession & { connected: boolean };
 
 let nextId = 1;
-const NOW = Date.now();
 
 export function makeSession(p: {
   title: string;
@@ -19,9 +18,12 @@ export function makeSession(p: {
   todoTotal?: number;
   preview?: string | null;
   note?: string | null;
+  lastAi?: string | null;
   provider?: AgentId;
 }): Item {
   const id = nextId++;
+  // 在调用时读取(而非模块加载时):main.tsx 已冻结 Date.now,保证录制全程时间戳稳定。
+  const NOW = Date.now();
   return {
     session: {
       id,
@@ -52,7 +54,7 @@ export function makeSession(p: {
     context_pct: p.ctx ?? null,
     context_window: p.ctx != null ? 200_000 : null,
     pending_review: null,
-    last_ai_text: null,
+    last_ai_text: p.lastAi ?? null,
     last_user_text: null,
     model: null,
     provider: p.provider ?? "claude",

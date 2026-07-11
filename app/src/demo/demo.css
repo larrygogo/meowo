@@ -25,61 +25,71 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='7'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
 }
 
-/* 贴纸窗口:340×430 居中偏上;dock 时滑向右缘;strip 时变 14px 竖条 */
+/* 贴纸窗口:360 宽的满高面板,贴视口右 / 上 / 下三边(仅左侧留白给文案)。
+   贴三边是刻意的——卡片菜单(.ctx-menu,position:fixed)按 window.innerWidth/Height clamp,
+   只有窗口的右 / 下缘≈视口边缘时,菜单才会像真实 app 那样收在贴纸内、任何方向都不溢出。
+   左侧留白放大字文案(见 .demo-caption),构成「左文案 + 右实机窗口」。 */
 .demo-window {
   position: absolute;
-  left: 270px;
-  top: 52px;
-  width: 340px;
-  height: 430px;
-  border-radius: 9px;
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35);
-  /* 位移与宽高收缩同时同速 → 窗口"滑向边缘的同时收成细条",而非先缩后到(更像真实吸附)。 */
-  transition: left 0.55s cubic-bezier(0.5, 0, 0.2, 1), top 0.55s cubic-bezier(0.5, 0, 0.2, 1),
-    width 0.55s cubic-bezier(0.5, 0, 0.2, 1), height 0.55s cubic-bezier(0.5, 0, 0.2, 1),
-    border-radius 0.55s ease;
+  left: 520px;
+  top: 0;
+  width: 360px;
+  height: 600px;
+  border-radius: 12px 0 0 12px; /* 只圆左两角(右/上/下贴视口边) */
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.5), -4px 0 16px rgba(0, 0, 0, 0.35);
+  /* 0.8s(比真实 app 略慢):录制帧率有限,过渡拉长才有足够帧数,收起/展开不掉帧。 */
+  transition: left 0.8s cubic-bezier(0.5, 0, 0.2, 1), top 0.8s cubic-bezier(0.5, 0, 0.2, 1),
+    width 0.8s cubic-bezier(0.5, 0, 0.2, 1), height 0.8s cubic-bezier(0.5, 0, 0.2, 1),
+    border-radius 0.8s ease;
 }
-/* 假光标不触发 :hover，用 .demo-hover 镜像卡片 hover(抬起 + 浮现操作按钮),让 GIF 里能看到 hover 效果。 */
+/* 假光标不触发 :hover，用 .demo-hover 镜像真实卡片 hover。扁平风(默认)的 .stk-card:hover
+   只淡入悬停底色、不抬起(--card-elev-hover 为 none、transform 为 none),故这里如实照做。 */
 .demo-window .stk-card.demo-hover {
   background: var(--cc-surface-hover);
   box-shadow: var(--card-elev-hover);
-  transform: translateY(-1px);
 }
-.demo-window .stk-card.demo-hover .stk-actions { display: inline-flex; }
-.demo-mode-docking { left: 539px; top: 52px; }
+/* docking / expanded 位置与 normal 相同(窗口已停在右缘):docking 只额外亮 snap-glow 提示,
+   expanded 是从 strip 偷看展开回原位。只有 strip 需要收成右缘细条。 */
 .demo-mode-strip {
-  left: 866px;
-  top: 120px;
-  width: 14px;
+  left: 852px;
+  top: 252px;
+  width: 28px;
   height: 96px;
   border-radius: 8px 0 0 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
 }
-.demo-mode-expanded { left: 539px; top: 52px; }
+/* 吸边高亮:真实 app 的 .snap-glow 是 position:fixed 贴窗口边;demo 里 .sticker 只占一角,
+   改为 absolute 贴 .demo-window 右缘。 */
+.demo-window .snap-glow { position: absolute; }
 /* 贴纸/缩略条原样式按窗口高度 100vh 铺;demo 里改成跟随容器 */
 .demo-window .sticker,
 .demo-window .cstrip { height: 100%; }
+/* 真实 app 里 .sticker 铺满整窗,其 backdrop-filter 的包含块≈视口,故卡片菜单(position:fixed)
+   相对视口定位正常。demo 里 .sticker 只占桌面一角,backdrop-filter 会把 fixed 后代(.ctx-menu)
+   的包含块劫持成 .sticker → 菜单被推到窗口外。demo 不透明度 100,backdrop 模糊本就不可见,
+   直接关掉以恢复 .ctx-menu 相对视口定位。 */
+.demo-window .sticker { backdrop-filter: none; }
 .demo-window .resize-grip { display: none; }
 
-/* 字幕:底部居中胶囊,换字幕时重新淡入 */
+/* 字幕:窗口停在右缘,左侧留白正好放文案——纵向居中的大字标题,换字幕时重新淡入。
+   像产品页那样「左文案 + 右实机窗口」,构图不再右偏。 */
 .demo-caption {
   position: absolute;
-  left: 50%;
-  bottom: 26px;
-  transform: translateX(-50%);
-  padding: 9px 22px;
-  border-radius: 999px;
-  background: rgba(20, 18, 16, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  left: 60px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 400px;
   color: #f5f4ef;
-  font-size: 15px;
-  letter-spacing: 0.4px;
-  white-space: nowrap;
-  animation: demo-cap-in 0.45s ease both;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0.3px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  animation: demo-cap-in 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) both;
 }
 @keyframes demo-cap-in {
-  from { opacity: 0; transform: translate(-50%, 10px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translateY(calc(-50% + 12px)); }
+  to { opacity: 1; transform: translateY(-50%); }
 }
 
 /* 收尾:logo + 名字 + slogan */
