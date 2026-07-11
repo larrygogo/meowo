@@ -1,16 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /**
- * agent 提供方 key——必须与 Rust 侧 meowo_store::ProviderKey 保持一致。
- * 新增 CLI 的同步点共 4 处：本联合类型、providers.tsx 的 PROVIDERS、
- * providers.test.tsx 的 EXPECTED_KEYS、Rust meowo_store::ProviderKey::ALL。
+ * agent 身份串（`"claude"` / `"kimi"` / …），与 Rust 侧 `meowo_agent::AgentId` 同值。
+ *
+ * 刻意**不是**联合类型：agent 名单由后端的 `list_agents()` 下发，前端不再维护自己的一份
+ * （此前加一个 CLI 要同步 4 处：这个联合、PROVIDERS 表、测试里的 EXPECTED_KEYS、Rust 的枚举）。
+ * DB 里还可能存着本版本尚不认识的 id，联合类型会对它撒谎。
  */
-export type ProviderKey = "claude" | "kimi" | "codex";
-/** 缺省 provider，无法识别时回退；与 Rust 侧 DEFAULT_PROVIDER 一致。 */
-export const DEFAULT_PROVIDER: ProviderKey = "claude";
+export type AgentId = string;
 
-/** 所有 provider key（渲染新建面板 agent 选项用；与 ProviderKey 联合类型同步）。 */
-export const PROVIDER_KEYS: ProviderKey[] = ["claude", "codex", "kimi"];
+/** 后端下发的一个 agent。前端认识 agent 的唯一途径。 */
+export type AgentDescriptor = {
+  id: AgentId;
+  /** 产品名，不翻译。 */
+  display_name: string;
+  /** 可执行是否装在本机。 */
+  installed: boolean;
+};
 
 export type Todo = {
   id: number;
@@ -107,8 +113,8 @@ export type LiveSession = {
   last_ai_text: string | null;
   /** 最近一条用户消息(锚 UserPromptSubmit);独立字段,不被工具活动覆盖。 */
   last_user_text: string | null;
-  /** agent 提供方：claude（默认）/ kimi / codex，决定卡片图标与标签。 */
-  provider: ProviderKey;
+  /** agent 身份（如 "claude"）。DB 里可能存着本版本不认识的 id，故不是联合类型。 */
+  provider: AgentId;
 };
 
 export type LiveSessionCounts = {
@@ -166,10 +172,10 @@ export type Settings = {
   sticker_style: StickerStyle;
   /** 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。 */
   sticker_color: string;
-  /** 在贴纸底栏显示配额的 provider key 列表（默认 ["claude"]）。 */
-  sticker_quota_providers: string[];
-  /** 「新建会话」面板默认选中的 agent。缺省 "claude"。 */
-  default_agent: ProviderKey;
+  /** 在贴纸底栏显示配额的 agent id 列表（后端给默认值）。 */
+  sticker_quota_providers: AgentId[];
+  /** 「新建会话」面板默认选中的 agent（后端给默认值）。 */
+  default_agent: AgentId;
 };
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "wezterm" | "powershell" | "cmd";
@@ -183,9 +189,17 @@ export function availableTerminals(): Promise<ResumeTerminal[]> {
   return invoke("available_terminals");
 }
 
-/** 本机实际已安装的 agent（provider key）；各处选/展示 agent 按此过滤。 */
-export function availableAgents(): Promise<ProviderKey[]> {
-  return invoke("available_agents");
+/** 全部已注册 agent 及其本机安装状态。展示名、安装态都来自这里，前端不再硬编码 agent 名单。 */
+export function listAgents(): Promise<AgentDescriptor[]> {
+  return invoke("list_agents");
+}
+
+/**
+ * 按 id 取展示名。未知 id（DB 里存着本版本不认识的 agent，或 list_agents 尚未 resolve）
+ * 回退为 id 本身——显示 `"gemini"` 好过显示 `"Claude Code"`。
+ */
+export function agentName(agents: AgentDescriptor[], id: AgentId): string {
+  return agents.find((a) => a.id === id)?.display_name ?? id;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -239,7 +253,7 @@ export function refreshUsage(provider: string): Promise<ProviderUsage> {
 export type HooksStatus = "installed" | "missing" | "unknown";
 
 /** 新建一个全新会话：在 cwd 打开终端裸启动该 provider。terminal 省略则用设置里的默认终端。 */
-export function newSession(cwd: string, provider: ProviderKey, terminal?: string): Promise<void> {
+export function newSession(cwd: string, provider: AgentId, terminal?: string): Promise<void> {
   return invoke("new_session", { cwd, provider, terminal });
 }
 
@@ -249,7 +263,7 @@ export function recentCwds(limit: number): Promise<string[]> {
 }
 
 /** 检测某 provider 的 meowo-reporter hooks 是否已接入（决定新建后会不会入库）。 */
-export function checkProviderHooks(provider: ProviderKey): Promise<HooksStatus> {
+export function checkProviderHooks(provider: AgentId): Promise<HooksStatus> {
   return invoke("check_provider_hooks", { provider });
 }
 
@@ -264,17 +278,17 @@ export type RepairReason =
 export type RepairResult = { status: HooksStatus; reason: RepairReason | null };
 
 /** 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，返回最新状态与失败原因。 */
-export function repairProviderHooks(provider: ProviderKey): Promise<RepairResult> {
+export function repairProviderHooks(provider: AgentId): Promise<RepairResult> {
   return invoke("repair_provider_hooks", { provider });
 }
 
 /** 一键安装某 agent（在终端跑官方安装脚本）。装完在窗口重新聚焦/手动刷新时重检安装状态。 */
-export function installAgent(provider: ProviderKey): Promise<void> {
+export function installAgent(provider: AgentId): Promise<void> {
   return invoke("install_agent", { provider });
 }
 
 /** 后台安装结束事件 payload（对应后端 install-done）。logPath 为安装脚本输出的落盘处（可能为 null）。 */
-export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | null; logPath: string | null };
+export type InstallDone = { provider: AgentId; ok: boolean; code: number | null; logPath: string | null };
 
 /**
  * 该 agent 装好了、但它的 bin 目录不在持久 PATH 上 → 返回该目录；无需处理时 null。
@@ -283,12 +297,12 @@ export type InstallDone = { provider: ProviderKey; ok: boolean; code: number | n
  * 而 meowo 启动 agent 走绝对路径、察觉不到，用户要到手敲 `claude` 才发现打不开。
  * 非 Windows 恒为 null——unix 的 PATH 由 shell profile 决定，不代用户改。
  */
-export function agentPathGap(provider: ProviderKey): Promise<string | null> {
+export function agentPathGap(provider: AgentId): Promise<string | null> {
   return invoke("agent_path_gap", { provider });
 }
 
 /** 把该 agent 的 bin 目录写进用户级 PATH（幂等）。已开的终端需重开才能看到。 */
-export function addAgentToUserPath(provider: ProviderKey): Promise<void> {
+export function addAgentToUserPath(provider: AgentId): Promise<void> {
   return invoke("add_agent_to_user_path", { provider });
 }
 
@@ -297,12 +311,24 @@ export function addAgentToUserPath(provider: ProviderKey): Promise<void> {
  * 登录走浏览器 OAuth、终端是 detach 的，拿不到退出码——后端改为轮询账号解析结果，
  * 完成或超时（5 分钟）后 emit `login-done`。terminal 省略则用设置里的默认终端。
  */
-export function loginAgent(provider: ProviderKey, terminal?: string): Promise<void> {
+export function loginAgent(provider: AgentId, terminal?: string): Promise<void> {
   return invoke("login_agent", { provider, terminal });
 }
 
+/**
+ * 取消该 agent 的登录等待。
+ *
+ * 点完登录后如果终端被关掉（手动关、崩溃、agent 自己退出），后端毫不知情——它只轮询账号文件，
+ * 会一直等到 5 分钟超时。这个出口让用户立刻落回可点状态。
+ *
+ * 后端仍会 emit `login-done`：取消前它会再查一次账号，真登上了就报 `ok:true`。
+ */
+export function cancelLogin(provider: AgentId): Promise<void> {
+  return invoke("cancel_login", { provider });
+}
+
 /** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */
-export type LoginDone = { provider: ProviderKey; ok: boolean };
+export type LoginDone = { provider: AgentId; ok: boolean };
 
 /** 该 provider 是否已登录：账号能解析出来就算登录（三家判据各异，已在后端 account() 内收敛）。 */
 export function isLoggedIn(payload: ProviderAccountPayload | undefined): boolean {

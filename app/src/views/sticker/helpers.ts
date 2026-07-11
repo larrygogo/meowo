@@ -1,0 +1,49 @@
+// 贴纸看板的纯逻辑 helper：行内编辑键盘处理、相对时间、星标持久化、tab 过滤。
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { Dict } from "../../i18n/zh";
+import { DAY_MS, STAR_KEY, type Item, type Tab } from "./types";
+
+export const editorKeyDown =
+  (submit: () => void, cancel: () => void) =>
+  (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") submit();
+    else if (e.key === "Escape") cancel();
+  };
+
+export function fmtAgo(ms: number, t: Dict): string {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return t.time.now;
+  if (m < 60) return t.time.minAgo(m);
+  const h = Math.floor(m / 60);
+  if (h < 24) return t.time.hourAgo(h);
+  return t.time.dayAgo(Math.floor(h / 24));
+}
+
+/** 读取已星标会话集合（按 cc_session_id 持久化，跨重启/换库稳定）。 */
+export function loadStarred(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STAR_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function match(tab: Tab, l: Item, hideDays = 0): boolean {
+  if (tab === "archived") {
+    if (!l.archived) return false;
+    // 归档超过 hideDays 天自动隐藏；archived_at 缺失的旧条目不隐藏。
+    if (hideDays > 0 && l.archived_at && Date.now() - l.archived_at > hideDays * DAY_MS) {
+      return false;
+    }
+    return true;
+  }
+  if (l.archived) return false; // 已归档的不在其它分类显示
+  if (tab === "all") return true;
+  // running = AI 自主运行且无需用户介入；waiting = 等用户交互（status=waiting 或 pending_review）。
+  // 与后端 live_sessions 语义保持一致。
+  if (tab === "waiting") return l.session.status === "waiting" || l.pending_review != null;
+  if (tab === "running") return l.session.status === "running" && l.pending_review == null;
+  return true;
+}

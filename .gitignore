@@ -8,6 +8,10 @@ dist/
 app/src-tauri/gen/
 # prepare-sidecar.mjs 生成的 sidecar 产物（构建时按 target triple 重新生成）
 app/src-tauri/binaries/
+# E2E 构建期由 e2e/run.mjs 临时拷入的 WDIO capability，跑完即删，不应入库
+app/src-tauri/capabilities/wdio.json
+# WDIO 运行时的日志捕获目录
+app/logs/
 
 # macOS 签名材料(私钥/证书/p12),绝不提交
 .signing/

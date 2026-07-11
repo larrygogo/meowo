@@ -19,7 +19,7 @@ pub fn owner_pid() -> Option<u32> {
             .process(parent)
             .map(|p| p.name().to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
-        if crate::agent::is_agent_process(&name) {
+        if meowo_agent::is_agent_process(&name) {
             return Some(parent.as_u32());
         }
         cur = parent;
@@ -40,7 +40,7 @@ pub fn owner_pid() -> Option<u32> {
         if pid <= 1 {
             return None; // 到 launchd/init 边界仍没找到 claude
         }
-        if ps_comm(pid).is_some_and(|c| crate::agent::is_agent_process(&c)) {
+        if ps_comm(pid).is_some_and(|c| meowo_agent::is_agent_process(&c)) {
             return Some(pid);
         }
         pid = ps_ppid(pid)?;

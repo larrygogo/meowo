@@ -1,4 +1,4 @@
-use meowo_reporter::transcript::title_from_transcript;
+use meowo_agent::plugins::claude::transcript::title_from_transcript;
 use std::io::Write;
 
 fn write_tmp(name: &str, body: &str) -> std::path::PathBuf {
@@ -47,7 +47,7 @@ fn none_when_no_title_or_missing_file() {
 
 #[test]
 fn reconstruct_path_encodes_cwd_and_session() {
-    use meowo_reporter::transcript::reconstruct_transcript_path;
+    use meowo_agent::plugins::claude::transcript::reconstruct_transcript_path;
     let p = reconstruct_transcript_path(r"C:\Users\me\proj", "abc-123").unwrap();
     let s = p.to_string_lossy().replace('\\', "/");
     assert!(

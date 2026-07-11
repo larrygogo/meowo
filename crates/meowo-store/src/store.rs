@@ -148,6 +148,16 @@ impl Store {
         Ok(())
     }
 
+    /// `PRAGMA data_version`：一个整数，仅当**别的连接**向本库提交过写入时才变化（本连接自身的
+    /// 写入不改它，纯读也不改）。跨调用比较须用**同一个持久连接**才有意义。
+    /// db-watcher 用它把「真实写入」与「app 读库时新开 WAL 连接触碰 -wal/-shm 文件」的空事件区分开：
+    /// 只有版本号变了才通知前端刷新，掐断 read→watcher→refresh→read 的自持刷新循环。
+    pub fn data_version(&self) -> Result<i64, StoreError> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA data_version", [], |r| r.get(0))?)
+    }
+
     /// 写入/清除某会话的便签：trim 后非空则 upsert，空则删除该行（便签清空即移除）。
     pub fn set_session_note(
         &self,
@@ -640,12 +650,15 @@ impl Store {
         Ok(())
     }
 
-    /// 设置会话所属 agent provider（claude/kimi…）。仅在 SessionStart 由 reporter 写一次；
-    /// 不动 last_event_at（同回合的 set_session_cwd 等已刷新）。入参为强类型，写入端归一。
-    pub fn set_session_provider(&self, session_id: i64, provider: crate::ProviderKey) -> Result<(), StoreError> {
+    /// 设置会话所属 agent provider（agent id，如 `"claude"` / `"kimi"`）。仅在 SessionStart 由 reporter
+    /// 写一次；不动 last_event_at（同回合的 set_session_cwd 等已刷新）。
+    ///
+    /// 入参是**原样字符串**：store 不校验、不归一、不认识任何具体 agent。调用方传的 id 来自
+    /// `meowo_agent` 注册表（`AgentId::as_str()`），已由类型保证是注册过的那批。
+    pub fn set_session_provider(&self, session_id: i64, provider: &str) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET provider = ?1 WHERE id = ?2",
-            rusqlite::params![provider.as_str(), session_id],
+            rusqlite::params![provider, session_id],
         )?;
         Ok(())
     }

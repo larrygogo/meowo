@@ -16,7 +16,7 @@ pub(crate) fn available() -> bool {
     use std::sync::OnceLock;
     static ON_PATH: OnceLock<bool> = OnceLock::new();
     *ON_PATH.get_or_init(|| {
-        std::env::var_os("PATH").is_some_and(|p| crate::path_has_exe(&p, "wezterm.exe"))
+        std::env::var_os("PATH").is_some_and(|p| crate::terminal::path_has_exe(&p, "wezterm.exe"))
     })
 }
 
@@ -89,7 +89,7 @@ fn match_pane(
             return 4;
         }
         let cwd_hit = cwd.is_some_and(|c| cwd_matches(&p.cwd, c));
-        let title_hit = crate::tab_match_score(&p.title, want_title) > 0;
+        let title_hit = crate::terminal::tab_match_score(&p.title, want_title) > 0;
         match (cwd_hit, title_hit) {
             (true, true) => 3,
             (true, false) => 2,
@@ -121,7 +121,7 @@ fn sock_for(pid: u32) -> Option<PathBuf> {
 
 /// 任一存活的 wezterm-gui 实例及其 socket(resume 用:哪个窗口都行)。
 fn any_gui() -> Option<(u32, PathBuf)> {
-    crate::snapshot_processes()
+    crate::proc::snapshot_processes()
         .iter()
         .filter(|(_, (_, name))| name == "wezterm-gui.exe")
         .find_map(|(&pid, _)| sock_for(pid).map(|s| (pid, s)))
@@ -130,7 +130,7 @@ fn any_gui() -> Option<(u32, PathBuf)> {
 /// 会话进程组内的 wezterm-gui 实例(focus 用:必须是该会话的宿主,防止把 WT 里的
 /// 会话误切到 WezTerm 的同名 pane)。
 fn gui_in_group(group: &HashSet<u32>) -> Option<(u32, PathBuf)> {
-    crate::snapshot_processes()
+    crate::proc::snapshot_processes()
         .iter()
         .filter(|(pid, (_, name))| group.contains(pid) && name == "wezterm-gui.exe")
         .find_map(|(&pid, _)| sock_for(pid).map(|s| (pid, s)))
@@ -191,8 +191,8 @@ pub(crate) fn focus_pane(
     }
     let mut target = HashSet::new();
     target.insert(gui_pid);
-    if let Some(hwnd) = crate::find_window_for_pids(&target) {
-        crate::force_foreground(hwnd);
+    if let Some(hwnd) = crate::terminal::find_window_for_pids(&target) {
+        crate::terminal::force_foreground(hwnd);
     }
     true
 }

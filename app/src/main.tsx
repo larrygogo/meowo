@@ -7,6 +7,7 @@ import { Updater } from "./views/Updater";
 import { NewSessionPanel } from "./views/NewSessionPanel";
 import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
+import { installInputModality } from "./input-modality";
 import { bootAppearance } from "./appearance";
 import { detectHostOs } from "./platform";
 import { I18nProvider } from "./i18n";
@@ -17,8 +18,18 @@ import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/600.css";
 import "./styles.css";
 
+// E2E 构建（VITE_E2E=1）才注入 @wdio/tauri-plugin 前端桥（console 转发 / invoke 拦截 /
+// window.wdioTauri）。生产构建下 VITE_E2E 未定义，该动态 import 被 vite 死代码消除，
+// 这个 devDependency 不进产物。见 app/e2e/README.md。
+if (import.meta.env.VITE_E2E === "1") {
+  void import("@wdio/tauri-plugin");
+}
+
 // 正式构建下封死右键菜单与 DevTools 快捷键（dev 放行）。
 lockdownInProduction();
+
+// 焦点框只在键盘导航时显示（避免打开面板时 WKWebView 自动聚焦首元素亮起 UA 焦点框）。
+installInputModality();
 
 // 平台标记（同步，供 CSS 做平台差异，如 macOS 无边框设置窗需自行圆角）。WKWebView 的 UA 含 "Mac"。
 if (/Mac/i.test(navigator.userAgent)) {
