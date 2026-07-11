@@ -242,16 +242,23 @@ const RESUME_GRACE_MS: i64 = 120_000;
 /// 卡片「已连接」判定（纯函数，便于单测）：
 /// - 已结束 → 断开。
 /// - pid 是存活 agent 进程 → 连接（严格校验防 Windows pid 复用，旧 pid 被 esbuild 等占用误判）。
-/// - pid 未知 → 仅 resume 宽限期内（last_event_at 距 now 在 RESUME_GRACE_MS 内）乐观连接，否则断开。
-///   pid 未知只可能是看板 resume 清空待认领（hook 一旦认领 pid 即走上一分支），故宽限即「刚 resume」。
-fn session_connected(status: &str, pid: Option<i64>, pid_alive: bool, last_event_at: i64, now: i64) -> bool {
+/// - 否则（pid 未知，或 pid 已认领但此刻没校验成存活 agent）→ 只要 last_event_at 距 now 在
+///   RESUME_GRACE_MS 内就乐观连接，否则断开。宽限**不再以 pid 是否为空为门槛**，覆盖两种「刚活着」：
+///   一是看板 resume 清空 pid、等 hook 认领；二是新建会话在 SessionStart 已认领 pid
+///   （create_session→set_session_pid），但 app 端进程快照尚未收录这个刚 spawn 的 pid → pid_alive
+///   一时为 false。旧逻辑用 `pid.is_none()` 挡住宽限，导致新卡一诞生就被判「断开」、被连接中优先的
+///   排序拍到列表最底部（一建好就沉底）。
+///   pid 复用误判的风险由「近期活动」本身兜底：被复用旧 pid 的僵尸会话早已不发事件、last_event_at
+///   老旧，落不进宽限窗；真复用又恰好近期活动属极窄边界，且 2 分钟后 last_event_at 不再续、自然沉底。
+fn session_connected(status: &str, _pid: Option<i64>, pid_alive: bool, last_event_at: i64, now: i64) -> bool {
     if status == "ended" {
         return false;
     }
     if pid_alive {
         return true;
     }
-    pid.is_none() && now.saturating_sub(last_event_at) < RESUME_GRACE_MS
+    // pid 已认领但没校验成存活时也走这里：不看 pid 是否为空，仅凭近期活动乐观判连接。
+    now.saturating_sub(last_event_at) < RESUME_GRACE_MS
 }
 
 fn live_sessions_blocking(
@@ -926,7 +933,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_id, session_connected};
+    use super::{is_safe_id, session_connected, RESUME_GRACE_MS};
     use crate::install::{bump_login_epoch, login_epoch};
     use crate::proc::pid_is_agent;
     use crate::terminal::{
@@ -1091,13 +1098,16 @@ mod tests {
         assert!(!session_connected("ended", Some(123), true, now, now));
         // 活着的 agent 进程 → 连接（与时间无关）。
         assert!(session_connected("running", Some(123), true, 0, now));
-        // pid 有值但已死/被复用 → 断开（防 pid 复用误判）。
-        assert!(!session_connected("running", Some(123), false, now, now));
+        // pid 已认领但此刻没校验成存活 + 刚活动过 → 连接（新建会话：SessionStart 已 set_session_pid，
+        // 但 app 进程快照尚未收录该 pid；不该因 pid 非空就丢掉宽限而瞬间判断开沉底）。
+        assert!(session_connected("running", Some(123), false, now - 1_000, now));
+        // pid 已认领但已死/被复用 + 早已不活动 → 断开（pid 复用僵尸会话，靠「近期无活动」兜底）。
+        assert!(!session_connected("running", Some(123), false, now - RESUME_GRACE_MS - 1, now));
         // pid 未知 + 在 resume 宽限期内 → 连接（刚 resume，等 codex 首个 hook）。
         assert!(session_connected("running", None, false, now - 1_000, now));
         assert!(session_connected("waiting", None, false, now - 1_000, now));
         // pid 未知 + 超出宽限期 → 断开（终端没起来/被关的僵尸会话，不再假连接）。
-        assert!(!session_connected("running", None, false, now - 200_000, now));
+        assert!(!session_connected("running", None, false, now - RESUME_GRACE_MS - 1, now));
     }
 
     #[test]
