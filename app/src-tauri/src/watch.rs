@@ -134,7 +134,11 @@ pub(crate) fn run_db_watch_loop(
     // 持久只读连接：PRAGMA data_version 跨调用比较须用同一连接才有意义。开不出来（库暂不可用）
     // 则 vconn=None → 下面回退为「有相关文件事件即 emit」的旧行为，宁可多刷也不让看板冻结。
     let vconn = Store::open(db_path).ok();
-    let mut last_version = vconn.as_ref().and_then(|s| s.data_version().ok());
+    // 起始基线刻意留空（不预读 data_version）：本函数在 watcher 重建时会被重跑，若此刻预读当前版本，
+    // 会把「上一轮退出到本次基线读取之间那次提交」当成已知基线，其排队事件到达时 data_version 等于
+    // 基线 → 被误判无变更而丢掉那次刷新。留 None 则首个相关事件必发一次（版本必 != None），既补上
+    // 重建间隙的写入、又只多一次无害刷新；此后正常门控，不影响掐断自持循环。
+    let mut last_version: Option<i64> = None;
     let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
         let Ok(ev) = res else { return false };
         ev.paths.iter().any(|p| {

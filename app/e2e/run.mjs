@@ -38,7 +38,25 @@ function run(bin, args, env = {}) {
 }
 
 // WDIO 权限只在 e2e 构建存在：若把 wdio.json 常驻 capabilities/，非 e2e 构建下 `wdio:default`
-// 权限未定义会直接编译失败。故临时拷入、try/finally 保证跑完（含失败）必清理。
+// 权限未定义会直接编译失败。故临时拷入、跑完必清理。
+const cleanup = () => {
+  try {
+    rmSync(capDst, { force: true });
+  } catch {
+    /* noop */
+  }
+};
+// 正常/异常退出走下面的 finally；但 finally 不覆盖信号中断（Ctrl-C 的 SIGINT / SIGTERM）——
+// 若在耗时数分钟的构建期间被中断而不清理，残留的 wdio.json 会让后续普通构建因 `wdio:default`
+// 权限未定义而编译失败。故显式捕获信号清理后再退出。
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, () => {
+    cleanup();
+    process.exit(1);
+  });
+}
+// 兜底：清理任何上一次被硬中断遗留的残留，再拷入本次的。
+cleanup();
 copyFileSync(join(here, "wdio.capability.json"), capDst);
 try {
   // 构建 E2E 二进制：
@@ -54,5 +72,5 @@ try {
   // 跑 WDIO（embedded provider：首次会自动匹配/下载 msedgedriver）。
   run("bun", ["x", "wdio", "run", "e2e/wdio.conf.ts"]);
 } finally {
-  rmSync(capDst, { force: true });
+  cleanup();
 }
