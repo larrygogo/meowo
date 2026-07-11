@@ -1,6 +1,7 @@
 // demo 专用:桌面舞台——渐变背景 + 带阴影的贴纸窗口 + 字幕/收尾/假光标。
 // 复用真实 Sticker / CollapsedStrip 组件,数据与形态由 mock store 驱动。
-// Sticker 现为受控组件:tab(filter)与搜索(search)由父层持有并回传,过滤也在父层做——
+// Sticker 现为受控组件:tab(filter)与搜索(search)的状态都由父层持有并回传(受控接线)。
+// 其中 tab 过滤仍在 Sticker 内部按 filter 做,只有 search 由父层下沉过滤(见下方 items)——
 // 这里如实复刻 App.tsx 的接线,否则点 tab 不切、搜索不过滤(demo 才"真实")。
 import { useEffect, useReducer, useState } from "react";
 import { Sticker } from "../views/Sticker";

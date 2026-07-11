@@ -48,9 +48,9 @@ export function installMocks(): void {
     switch (cmd) {
       case "host_os":
         return "windows";
-      case "available_agents":
-        // 已装的 provider 列表（Sticker 用它交叉过滤底栏配额）。demo 仅 claude。
-        return ["claude"];
+      case "list_agents":
+        // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。demo 仅 claude。
+        return [{ id: "claude", display_name: "Claude Code", installed: true }];
       case "get_settings":
         return store.settings;
       case "get_accounts": {
