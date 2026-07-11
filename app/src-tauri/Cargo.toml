@@ -7,6 +7,12 @@ edition = "2021"
 name = "meowo_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# E2E 测试专用：注入 WDIO 内嵌 WebDriver 服务器 + execute/mock/log 桥。仅 `--features e2e`
+# 时编译进二进制；生产构建绝不包含（否则会把一个可远程驱动 app 的 WebDriver 端点 + 任意
+# JS 执行/命令 mock 能力塞进发行版）。E2E 构建见 app/e2e/README.md。
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
 [build-dependencies]
 tauri-build = { workspace = true }
 
@@ -21,6 +27,10 @@ tauri-plugin-autostart = { workspace = true }
 tauri-plugin-updater = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-dialog = "2"
+# E2E 专用插件（feature=e2e 才编译）：tauri-plugin-wdio 提供 execute/mock/日志转发，
+# tauri-plugin-wdio-webdriver 提供内嵌 WebDriver 服务器（embedded provider）。见 [features].
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }

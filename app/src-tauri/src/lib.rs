@@ -724,7 +724,14 @@ pub fn run() {
     let path = db_path();
     let tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>> =
         Arc::new(Mutex::new(meowo_agent::TranscriptCache::new()));
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // E2E 构建（cargo --features e2e）才注入 WDIO 内嵌 WebDriver 服务器 + execute/mock/日志桥；
+    // 生产构建不含这两个插件（见 Cargo.toml [features].e2e 与 app/e2e/README.md）。
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         // window-state 只持久化/恢复「位置」等，不恢复「尺寸」：main 窗口尺寸改由前端 localStorage
         // (SIZE_KEY) 单独持有。否则吸附态退出会把「细条几何」存进 window-state，与 localStorage 的吸附态
         // (SNAP_KEY) 两套持久化不同步——重启读不到 SNAP_KEY 却被还原成细条尺寸，渲染完整贴纸而没真正吸附。

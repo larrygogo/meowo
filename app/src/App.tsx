@@ -326,8 +326,23 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     let un: (() => void) | undefined;
+    // E2E 观测点（仅 VITE_E2E=1 构建启用）：累计收到的 board-changed 次数，供回归测试断言
+    // 「空闲时看板不再被刷新」（见 app/e2e/specs/board-refresh.e2e.ts）。生产构建下 VITE_E2E
+    // 未定义，三元恒取 refresh、这段被 vite 死代码消除，运行时零开销。
+    if (import.meta.env.VITE_E2E === "1") {
+      // 挂载即初始化为 0，让 E2E 测试挂载后立刻能读到计数（不必等第一次事件）。
+      (window as typeof window & { __MEOWO_BOARD_CHANGED__?: number }).__MEOWO_BOARD_CHANGED__ ??= 0;
+    }
+    const onBoardChanged =
+      import.meta.env.VITE_E2E === "1"
+        ? () => {
+            const w = window as typeof window & { __MEOWO_BOARD_CHANGED__?: number };
+            w.__MEOWO_BOARD_CHANGED__ = (w.__MEOWO_BOARD_CHANGED__ ?? 0) + 1;
+            refresh();
+          }
+        : refresh;
     // refresh 恒等（useCallback([])，最新的 filter/search 经 doRefreshRef 取），listener 只注册一次。
-    listen("board-changed", refresh)
+    listen("board-changed", onBoardChanged)
       .then((f) => {
         if (cancelled) f();
         else un = f;
