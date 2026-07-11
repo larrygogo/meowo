@@ -18,6 +18,13 @@ import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/600.css";
 import "./styles.css";
 
+// E2E 构建（VITE_E2E=1）才注入 @wdio/tauri-plugin 前端桥（console 转发 / invoke 拦截 /
+// window.wdioTauri）。生产构建下 VITE_E2E 未定义，该动态 import 被 vite 死代码消除，
+// 这个 devDependency 不进产物。见 app/e2e/README.md。
+if (import.meta.env.VITE_E2E === "1") {
+  void import("@wdio/tauri-plugin");
+}
+
 // 正式构建下封死右键菜单与 DevTools 快捷键（dev 放行）。
 lockdownInProduction();
 

@@ -4,7 +4,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { EmptyState } from "./Sticker";
+import { EmptyState } from "./sticker/EmptyState";
 
 afterEach(() => cleanup());
 

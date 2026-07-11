@@ -36,7 +36,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import { Sticker, EmptyState, UsageScreen } from "./Sticker";
+import { Sticker } from "./Sticker";
+import { EmptyState } from "./sticker/EmptyState";
+import { UsageScreen } from "./sticker/UsageScreen";
 import type { LiveSession, ProviderUsage } from "../api";
 import { zh } from "../i18n/zh";
 

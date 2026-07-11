@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node",
+      "@wdio/globals/types",
+      "@wdio/mocha-framework",
+      "expect-webdriverio",
+      "@wdio/tauri-service"
+    ],
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["wdio.conf.ts", "specs/**/*.ts"]
+}

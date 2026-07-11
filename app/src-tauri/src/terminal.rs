@@ -1,0 +1,925 @@
+//! 终端集成：定位并聚焦会话所在的终端标签页（Windows UIA+Win32 / macOS AppleScript），
+//! 以及在指定目录拉起 resume / 新建会话的终端进程。从 lib.rs 抽出。
+
+use crate::proc::*;
+use crate::settings::load_settings;
+use crate::watch::emit_board_changed;
+use crate::{db_path, is_safe_id, now_ms, open_store};
+#[cfg(target_os = "windows")]
+use crate::wezterm;
+#[cfg(target_os = "windows")]
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+/// 枚举可见顶层窗口，返回第一个进程 pid 命中 targets 的窗口 HWND。
+#[cfg(target_os = "windows")]
+pub(crate) fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Foundation::HWND> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible};
+
+    struct Ctx<'a> {
+        targets: &'a HashSet<u32>,
+        found: Option<HWND>,
+    }
+
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &mut *(lparam as *mut Ctx);
+        if IsWindowVisible(hwnd) == 0 {
+            return TRUE;
+        }
+        let mut wpid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut wpid);
+        if ctx.targets.contains(&wpid) {
+            ctx.found = Some(hwnd);
+            return 0; // FALSE：停止枚举
+        }
+        TRUE
+    }
+
+    let mut ctx = Ctx { targets, found: None };
+    unsafe {
+        EnumWindows(Some(cb), &mut ctx as *mut Ctx as LPARAM);
+    }
+    ctx.found
+}
+
+/// 用纯 Win32 EnumWindows+GetClassNameW 收集所有可见的 Windows Terminal 顶层窗口 HWND(as isize)。
+/// 替代 UIA matcher 从桌面根逐节点跨进程爬树找窗口——后者默认 depth=7、每访问一个元素一次
+/// CurrentClassName RPC，几十~上百窗口累计可达数百 ms；本函数纯进程内，微秒级。
+#[cfg(target_os = "windows")]
+pub(crate) fn enum_wt_hwnds() -> Vec<isize> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, IsWindowVisible,
+    };
+
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        if IsWindowVisible(hwnd) == 0 {
+            return TRUE;
+        }
+        let mut buf = [0u16; 64];
+        let len = GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let cls = String::from_utf16_lossy(&buf[..len as usize]);
+            if cls == "CASCADIA_HOSTING_WINDOW_CLASS" {
+                let out = &mut *(lparam as *mut Vec<isize>);
+                out.push(hwnd as isize);
+            }
+        }
+        TRUE
+    }
+
+    let mut out: Vec<isize> = Vec::new();
+    unsafe {
+        EnumWindows(Some(cb), &mut out as *mut Vec<isize> as LPARAM);
+    }
+    out
+}
+
+/// claude 会把任务标题写进 Windows Terminal 标签页，并加一个**会随状态变化**的前缀符号：
+/// 运行时是 braille spinner(⠐⠂…)，空闲/待输入时是 ✳(U+2733)，可能还有其它符号。
+/// 归一化：剥掉开头所有「非字母数字」字符（覆盖任意状态符号 + 空格；任务标题几乎总以
+/// 字母/数字/CJK 开头），并去掉尾部空白与截断省略号(…/...)。纯函数，便于单测。
+#[allow(dead_code)] // 跨平台纯函数：Windows 上 WT/WezTerm 聚焦共用，非 Windows 仅单测使用
+pub(crate) fn normalize_tab_title(s: &str) -> &str {
+    s.trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim_end()
+        .trim_end_matches(['…', '.'])
+        .trim_end()
+}
+
+/// 标签页标题 `tab_name` 与会话标题 `want` 的匹配强度：2=精确(归一化后相等)，1=单向包含，0=不匹配。
+/// 包含是**双向**的：兼容 claude 对长标题的截断(tab 标题是 want 的前缀)与轻微漂移。
+/// `want` 为空或占位("(未命名会话)")时不参与匹配(返回 0)，避免误命中无关标签页。纯函数。
+#[allow(dead_code)] // 同上：Windows 上 WT/WezTerm 聚焦共用，非 Windows 仅单测调用
+pub(crate) fn tab_match_score(tab_name: &str, want: &str) -> u8 {
+    let want = want.trim();
+    if want.is_empty() || want == "(未命名会话)" {
+        return 0;
+    }
+    let norm = normalize_tab_title(tab_name);
+    if norm.is_empty() {
+        return 0;
+    }
+    if norm == want {
+        2
+    } else if norm.contains(want) || want.contains(norm) {
+        1
+    } else {
+        0
+    }
+}
+
+/// 用 UI Automation 把对应会话的 Windows Terminal 标签页切到前台。
+///
+/// WT 单进程托管多标签/多窗口，按进程 PID 无法区分标签页（所有标签页同一个 HWND）。
+/// 但 claude 会把任务标题写进标签页标题，故按标题精确定位标签页：枚举所有 WT 窗口的
+/// TabItem，取匹配分最高的标签页，`Select` 选中后置前其窗口。命中返回 true；失败/无匹配返回 false。
+///
+/// 性能：仅当出现「多个同分标签页」需要消歧时，才用 `console_group_pids(root_pid)` 做一次进程扫描
+/// (昂贵，要枚举系统所有进程)；常见的唯一精确匹配走纯 UIA 路径(~十几 ms)，不扫进程。
+///
+/// 注意：本函数必须在「干净 COM apartment 的线程」上调用（见 `focus_session` 的后台线程）。
+/// `UIAutomation::new()` 会 CoInitialize 当前线程，Tauri 主线程已是 STA，复用会因 apartment 冲突失败。
+#[cfg(target_os = "windows")]
+pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>) -> bool {
+    use uiautomation::patterns::UISelectionItemPattern;
+    use uiautomation::types::{ControlType, Handle, TreeScope, UIProperty};
+    use uiautomation::variants::Variant;
+    use uiautomation::{UIAutomation, UIElement};
+
+    let Ok(automation) = UIAutomation::new() else { return false };
+
+    // WT 顶层窗口：先用纯 Win32 EnumWindows+GetClassNameW 直接拿 HWND（进程内、微秒级），再
+    // element_from_handle 只进入这几个窗口做 UIA。绕开 crate matcher 从桌面根逐节点 RPC 爬树
+    // （默认 depth=7、每节点一次 CurrentClassName 跨进程调用，几十~上百窗口下可达 50-300ms）。
+    // 保留 HWND 与 UIElement 配对：HWND 用于 GetWindowThreadProcessId 取窗口 pid（消歧用）与置前，
+    // UIElement 用于 UIA 枚举标签页。
+    let wt_windows: Vec<(isize, UIElement)> = enum_wt_hwnds()
+        .into_iter()
+        .filter_map(|h| automation.element_from_handle(Handle::from(h)).ok().map(|el| (h, el)))
+        .collect();
+    if wt_windows.is_empty() {
+        return false;
+    }
+
+    // 标签页条件(TabItem)；其容器条件(TabView=ControlType::Tab)用于把搜索根收窄到标签条子树。
+    let Ok(tab_cond) = automation.create_property_condition(
+        UIProperty::ControlType,
+        Variant::from(ControlType::TabItem as i32),
+        None,
+    ) else {
+        return false;
+    };
+    let tabview_cond = automation
+        .create_property_condition(
+            UIProperty::ControlType,
+            Variant::from(ControlType::Tab as i32),
+            None,
+        )
+        .ok();
+    // 缓存请求：让 FindAll 随元素一次性带回 Name，用 get_cached_name 读取，免每个 TabItem 一次
+    // CurrentName 跨进程 RPC。
+    let cache_req = automation.create_cache_request().ok();
+    if let Some(ref cr) = cache_req {
+        let _ = cr.add_property(UIProperty::Name);
+    }
+
+    // 取某 WT 窗口的 (TabItem, name) 列表。关键提速：先 find_first 定位 TabView 容器(ControlType::Tab，
+    // 命中即停)，把 FindAll 的根从整窗收窄到标签条子树——避免对整窗 Descendants 全扫(含终端内容面板，
+    // 实测每窗口 ~20ms)。容器内优先直接子(Children)，拿不到再容器 Descendants(兼容 TabItem 嵌套)；
+    // 连容器都没有才退化为整窗 Descendants(异常布局兜底)。name 优先走缓存(get_cached_name)。
+    let collect_tabs = |win: &UIElement| -> Vec<(UIElement, String)> {
+        let find_tabitems = |root: &UIElement, scope: TreeScope| -> Vec<UIElement> {
+            match &cache_req {
+                Some(cr) => root.find_all_build_cache(scope, &tab_cond, cr).unwrap_or_default(),
+                None => root.find_all(scope, &tab_cond).unwrap_or_default(),
+            }
+        };
+        let mut tabs: Vec<UIElement> = Vec::new();
+        if let Some(tv) = tabview_cond
+            .as_ref()
+            .and_then(|c| win.find_first(TreeScope::Descendants, c).ok())
+        {
+            tabs = find_tabitems(&tv, TreeScope::Children);
+            if tabs.is_empty() {
+                tabs = find_tabitems(&tv, TreeScope::Descendants);
+            }
+        }
+        if tabs.is_empty() {
+            tabs = find_tabitems(win, TreeScope::Descendants);
+        }
+        tabs.into_iter()
+            .map(|t| {
+                let name = if cache_req.is_some() {
+                    t.get_cached_name().or_else(|_| t.get_name()).unwrap_or_default()
+                } else {
+                    t.get_name().unwrap_or_default()
+                };
+                (t, name)
+            })
+            .collect()
+    };
+
+    // 收集所有命中标签页：(匹配分, 窗口 HWND, 窗口 pid, 标签元素)。【不短路】——同一标题在多个窗口/标签
+    // 出现时，按 console_group_pids(root_pid) 消歧到本会话所属窗口，否则会聚焦到错的同名标签。
+    // want 来源因 agent 而异：claude=任务标题、kimi=cwd 末段目录名(配 token 精确)、codex=cwd 末段目录名
+    // (匹配 codex 自己写的 project-name 标签标题)。单个会话即精确命中；多个同名标签退窗口级。
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let mut matches: Vec<(u8, isize, u32, UIElement)> = Vec::new();
+    for (hwnd, win) in &wt_windows {
+        let mut win_pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(*hwnd as HWND, &mut win_pid);
+        }
+        for (tab, name) in collect_tabs(win) {
+            // token(=session_id 末 8 位，meowo-reporter 写进 kimi 标签) 命中即最高优先级 3、全局唯一——
+            // 压倒按标题的语义匹配，且无需进程组消歧。否则退回标题匹配(0-2，含 codex 的 project-name)。
+            let score = match token {
+                Some(t) if !t.is_empty() && name.contains(t) => 3,
+                _ => tab_match_score(&name, want),
+            };
+            if score > 0 {
+                matches.push((score, *hwnd, win_pid, tab));
+            }
+        }
+    }
+    let max_score = matches.iter().map(|m| m.0).max().unwrap_or(0);
+    if max_score == 0 {
+        return false;
+    }
+    // 只保留最高分候选。
+    matches.retain(|m| m.0 == max_score);
+    // 唯一候选直接用；多个同分时按 console_group_pids(root_pid) 选与本会话同进程组的窗口（窗口宿主
+    // WindowsTerminal.exe 是本会话进程的祖先，故其 pid 落在进程组里）——修「两个同名终端点击跳错」。
+    // 选出本会话所属窗口(进程组含其窗口 pid)的候选。同一窗口里多个同名标签无法区分（UIA 不暴露
+    // tab→进程），此时【不猜】——返回 false 让上层走窗口级定位，避免切到错的同名标签
+    // （如 codex/kimi 同在某目录、标签都显示该目录名时，点哪个都别误切到另一个）。
+    let idx = if matches.len() == 1 {
+        0
+    } else {
+        let group = console_group_pids(root_pid);
+        let in_group: Vec<usize> =
+            (0..matches.len()).filter(|&i| group.contains(&matches[i].2)).collect();
+        match in_group.as_slice() {
+            [i] => *i,         // 唯一属于本会话窗口的候选 → 精确命中
+            _ => return false, // 0 个或多个(同窗口多同名标签) → 不猜，退回窗口级
+        }
+    };
+    let (_, hwnd, _, tab) = &matches[idx];
+    // 选中该标签页（即使其窗口当前在后台也会切换激活标签页），再置前其窗口（直接用 HWND，免再取 native handle）。
+    if let Ok(p) = tab.get_pattern::<UISelectionItemPattern>() {
+        let _ = p.select();
+    }
+    force_foreground(*hwnd as HWND);
+    true
+}
+
+/// 用 AttachThreadInput 绕过 Windows 后台进程 SetForegroundWindow 限制，可靠置顶目标窗口。
+#[cfg(target_os = "windows")]
+pub(crate) fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+    unsafe {
+        let target_thread = GetWindowThreadProcessId(hwnd, null_mut());
+        let fg = GetForegroundWindow();
+        let fg_thread = if fg.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(fg, null_mut())
+        };
+        let cur = GetCurrentThreadId();
+
+        if fg_thread != 0 && fg_thread != cur {
+            AttachThreadInput(cur, fg_thread, 1);
+        }
+        if target_thread != 0 && target_thread != cur {
+            AttachThreadInput(cur, target_thread, 1);
+        }
+
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            ShowWindow(hwnd, SW_SHOW);
+        }
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+
+        if target_thread != 0 && target_thread != cur {
+            AttachThreadInput(cur, target_thread, 0);
+        }
+        if fg_thread != 0 && fg_thread != cur {
+            AttachThreadInput(cur, fg_thread, 0);
+        }
+    }
+}
+
+/// 聚焦某会话的终端。`title_based`=该 agent 是否把任务标题写进 WT 标签（claude 写→按任务标题精确切标签；
+/// codex/kimi 不写→改用 cwd 末段目录名匹配它们的目录名/project-name 标签）。无论哪种，最终都能按进程组
+/// 找到宿主窗口置前。
+/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。供 focus_session 命令与
+/// 「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
+#[cfg(target_os = "windows")]
+pub(crate) fn focus_session_terminal(
+    pid: i64,
+    title: Option<String>,
+    cwd: Option<String>,
+    token: Option<String>,
+    title_based: bool,
+) {
+    std::thread::spawn(move || {
+        // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：meowo-reporter 写进其标签) > 任务标题(claude)
+        // > cwd 末段目录名(codex 匹配其 project-name 标题 / kimi 无 token 时) > 窗口级兜底。
+        // token 全局唯一，能区分同窗口同目录的同名标签——这是 kimi 精确聚焦的关键；codex 暂无此手段(见 agent.rs)。
+        let want = if title_based {
+            title
+        } else {
+            cwd_tab_hint(cwd.as_deref())
+        };
+        let want_str = want.as_deref().unwrap_or("");
+        let has_token = token.as_deref().is_some_and(|t| !t.is_empty());
+        if (!want_str.is_empty() || has_token)
+            && focus_terminal_tab(pid as u32, want_str, token.as_deref())
+        {
+            return;
+        }
+        // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
+        // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
+        let targets = console_group_pids(pid as u32);
+        // WezTerm 宿主：自绘 GUI 无 UIA TabItem，上面的 WT 标签定位必然不中；组内探到
+        // wezterm-gui 就走 wezterm cli 精确切 pane(内含窗口置前)，不再落通用兜底。
+        if wezterm::focus_pane(&targets, want_str, token.as_deref(), cwd.as_deref()) {
+            return;
+        }
+        if let Some(hwnd) = find_window_for_pids(&targets) {
+            force_foreground(hwnd);
+        }
+    });
+}
+
+/// 从 cwd 取末段目录名，作为「不写标签标题」的 agent(codex/kimi) 的 WT 标签匹配线索——这类会话的
+/// 标签默认显示当前目录名。空/根目录返回 None（退回窗口级定位）。
+#[cfg(target_os = "windows")]
+pub(crate) fn cwd_tab_hint(cwd: Option<&str>) -> Option<String> {
+    let c = cwd?.trim_end_matches(['/', '\\']);
+    std::path::Path::new(c)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// iTerm2 是否安装（任意常见位置）：先查标准路径，再用 mdfind 按 bundle id 兜底。
+#[cfg(target_os = "macos")]
+pub(crate) fn iterm_installed() -> bool {
+    use std::path::Path;
+    if Path::new("/Applications/iTerm.app").exists() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if Path::new(&home).join("Applications/iTerm.app").exists() {
+            return true;
+        }
+    }
+    std::process::Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'com.googlecode.iterm2'")
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// 读设置得出「打开未连接会话」用的终端宿主（macOS）。缺省 Terminal.app；
+/// 选了 iTerm2 但未安装时回退 Terminal.app（避免 AppleScript 静默失败）。
+#[cfg(target_os = "macos")]
+pub(crate) fn resume_terminal_kind() -> crate::term_script::TermKind {
+    use crate::term_script::TermKind;
+    match crate::term_script::resume_kind_from_setting(&load_settings().resume_terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    }
+}
+
+/// 聚焦终端时的 resume 回退命令：按 provider 分发（不再硬编码 claude）。是否真的回退由
+/// `focus_session_terminal` 校验进程死活后决定（进程存活时绝不 resume，防 fork 重复会话）。
+/// 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：只聚焦终端，不回退 resume。
+///
+/// **刻意定义在 `cfg` 之外**：它只用平台无关的 agent API，目前仅 macOS 调用。若把它埋进
+/// `#[cfg(target_os = "macos")]` 块里，Windows 上的编译器根本不会看它——Phase 2 改了
+/// `resume_args` 的签名，正是这样一路漏到 macOS CI 才炸的。逻辑留在 cfg 外，cfg 块里只放
+/// 平台专属的 API 调用。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) -> Vec<String> {
+    session_id
+        .zip(meowo_agent::resolve(provider))
+        .and_then(|(id, a)| a.resume_argv(id))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub(crate) fn focus_session(
+    pid: i64,
+    title: Option<String>,
+    cwd: Option<String>,
+    session_id: Option<String>,
+    provider: Option<String>,
+) -> Result<(), String> {
+    if pid <= 0 {
+        return Err("无效 pid".into());
+    }
+    // session_id 经 is_safe_id 校验（仅 `[A-Za-z0-9_-]`，杜绝注入：macOS 分支会把 id 注入 AppleScript）。
+    // 必须用宽松校验——kimi 的 `session_<uuid>` 不合 UUID 形态，用严格 is_session_id 会把连接态的
+    // kimi 卡挡在定位之前（Windows 上 session_id 实际并不参与 focus，仅 pid+title）。
+    if let Some(id) = session_id.as_deref() {
+        if !is_safe_id(id) {
+            return Err("无效 session_id".into());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。
+        // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
+        let title_based = meowo_agent::resolve(provider.as_deref())
+            .is_some_and(|a| a.sets_terminal_tab_title());
+        // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
+        // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
+        let token = session_id
+            .as_deref()
+            .map(meowo_reporter::tabtitle::short_sid)
+            .filter(|s| !s.is_empty());
+        focus_session_terminal(pid, title, cwd, token, title_based);
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = provider;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = title;
+        // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
+        // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
+        std::thread::spawn(move || {
+            let resume_argv = resume_argv_for(provider.as_deref(), session_id.as_deref());
+            crate::macos::terminal::focus_session_terminal(
+                pid,
+                cwd.as_deref(),
+                &resume_argv,
+                resume_terminal_kind(),
+            );
+        });
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (pid, title, cwd, session_id);
+        Err("当前平台不支持".into())
+    }
+}
+
+/// 在系统文件管理器中打开会话的项目目录（卡片右键菜单用）。
+/// 目录须真实存在——DB 记录的 cwd 可能过期（项目被移动/删除），不存在时明确报错而非静默无事发生。
+/// 不经 shell 直接 spawn 文件管理器，目录路径作为独立 argv 传入，无注入面。
+#[tauri::command]
+pub(crate) fn open_project_dir(cwd: String) -> Result<(), String> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !std::path::Path::new(dir).is_dir() {
+        return Err("目录不存在".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // kimi 等 provider 写入的 cwd 可能是正斜杠形式，explorer 对正斜杠路径会打开默认目录而非目标。
+        let dir = dir.replace('/', "\\");
+        std::process::Command::new("explorer").arg(&dir).spawn().map_err(|e| e.to_string())?;
+    }
+    // macOS：open 偶发慢（Finder 冷启动），放后台线程；status() 等待回收，避免僵尸进程。
+    #[cfg(target_os = "macos")]
+    {
+        let dir = dir.to_string();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("open").arg(&dir).status();
+        });
+    }
+    Ok(())
+}
+
+/// 把 `cwd` 收敛成「可安全传给 wt -d」的目录：必须非空、真实存在的目录，且不含会破坏 wt
+/// 命令行解析的元字符(`;` `"`)。不满足则返回 None（调用方退化为不带 -d）。
+/// 在 PATH 各目录中查找指定文件是否存在。不 spawn `where` 子进程——GUI 进程冷启动后
+/// 首次 spawn 控制台子进程要数秒（新建 conhost + 杀软扫描），而同步命令跑在主线程，
+/// 会把整个事件循环（所有窗口）堵死，这正是 0.2.0 设置页在 Windows 上"卡死"的根因。
+/// 用 symlink_metadata 而非 exists()：wt.exe 通常是 App Execution Alias
+/// （APPEXECLINK reparse point），fs::metadata 跟随它会失败、误判为不存在。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn path_has_exe(path_var: &std::ffi::OsStr, exe: &str) -> bool {
+    std::env::split_paths(path_var).any(|dir| dir.join(exe).symlink_metadata().is_ok())
+}
+
+/// Windows Terminal（wt.exe）是否在 PATH 上。进程内缓存：安装状态运行期间基本不变，
+/// resume_session 每次恢复会话都要查询，保持微秒级。
+#[cfg(target_os = "windows")]
+pub(crate) fn wt_available() -> bool {
+    use std::sync::OnceLock;
+    static WT_ON_PATH: OnceLock<bool> = OnceLock::new();
+    *WT_ON_PATH.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "wt.exe"))
+    })
+}
+
+/// PowerShell 7（pwsh.exe）是否在 PATH 上。进程内缓存，同 wt_available。
+/// 一键安装用它优先于 Windows PowerShell 5.1（见 build_install_command 说明）。
+#[cfg(target_os = "windows")]
+pub(crate) fn pwsh_available() -> bool {
+    use std::sync::OnceLock;
+    static PWSH_ON_PATH: OnceLock<bool> = OnceLock::new();
+    *PWSH_ON_PATH.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "pwsh.exe"))
+    })
+}
+
+/// 定位 Windows Terminal 的 settings.json（Store 版 / Preview / 未打包版三处）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn wt_settings_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    [
+        r"Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+        r"Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+        r"Microsoft\Windows Terminal\settings.json",
+    ]
+    .into_iter()
+    .map(|rel| base.join(rel))
+    .find(|p| p.is_file())
+}
+
+/// 去掉 JSONC 注释（WT settings.json 允许 // 与 /* */，且字符串里常有 URL 的 //）。
+/// 按字节扫描、正确跳过字符串与转义，不破坏多字节 UTF-8（profile 名可能含中文）。纯函数便于单测。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn strip_jsonc_comments(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let mut in_str = false;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            out.push(c);
+            if c == b'\\' && i + 1 < b.len() {
+                out.push(b[i + 1]); // 保留转义字符，避免把 \" 误判为字符串结束
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+            i += 1;
+        } else if c == b'"' {
+            in_str = true;
+            out.push(c);
+            i += 1;
+        } else if c == b'/' && i + 1 < b.len() && b[i + 1] == b'/' {
+            i += 2;
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+        } else if c == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
+}
+
+/// 从 WT settings.json 的 JSON 取默认 profile 名：defaultProfile 为 GUID 时在 profiles.list
+/// 按 guid 找 name（大小写不敏感）；本身是名字则直接用。找不到则 None。纯函数便于单测。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn parse_wt_default_profile(v: &serde_json::Value) -> Option<String> {
+    let def = v.get("defaultProfile").and_then(|x| x.as_str())?.trim();
+    if def.is_empty() {
+        return None;
+    }
+    if !def.starts_with('{') {
+        return Some(def.to_string()); // 直接配的是 profile 名
+    }
+    // 新格式 profiles.list 是数组；老格式 profiles 直接是数组。
+    let list = v
+        .get("profiles")
+        .and_then(|p| p.get("list").and_then(|l| l.as_array()).or_else(|| p.as_array()))?;
+    list.iter().find_map(|prof| {
+        let guid = prof.get("guid").and_then(|g| g.as_str())?;
+        guid.eq_ignore_ascii_case(def)
+            .then(|| prof.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .flatten()
+    })
+}
+
+/// 用户 WT 默认 profile 名（多为 PowerShell）。进程内缓存：与 wt_available 一致，运行期基本不变
+/// （改了默认 profile 需重启 app 才生效）。读不到/解析失败/无匹配 → None，调用方退化为不带 -p。
+#[cfg(target_os = "windows")]
+pub(crate) fn wt_default_profile() -> Option<String> {
+    use std::sync::OnceLock;
+    static PROFILE: OnceLock<Option<String>> = OnceLock::new();
+    PROFILE
+        .get_or_init(|| {
+            let raw = std::fs::read_to_string(wt_settings_path()?).ok()?;
+            let v: serde_json::Value = serde_json::from_str(&strip_jsonc_comments(&raw)).ok()?;
+            parse_wt_default_profile(&v)
+        })
+        .clone()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn safe_cwd(cwd: Option<&str>) -> Option<String> {
+    let d = cwd?.trim();
+    // 含 ; " 会破坏命令行解析；以 - 开头会被 wt 当成选项（真实 Windows 路径不会以 - 开头）。
+    if d.is_empty() || d.contains([';', '"']) || d.starts_with('-') {
+        return None;
+    }
+    std::path::Path::new(d).is_dir().then(|| d.to_string())
+}
+
+/// 把 resume 命令 argv 拼成交给 `powershell -Command` / `cmd /k` 的单行命令串。
+/// kimi/codex 的可执行是 USERPROFILE 下的绝对路径，用户名可含空格 / $ / ' / % 等合法字符：
+/// - PowerShell：含空白或 $ ` ' 的参数用**单引号字面量**包裹（内嵌单引号翻倍）——双引号内 $ 与反引号
+///   仍会被插值展开（如 C:\Users\a$b 被吞成 C:\Users\a），单引号内一切按字面处理；带引号的命令路径
+///   需以调用运算符 `&` 前缀。
+/// - cmd：含空白的参数加双引号。cmd 没有字面量引用机制，引号内成对的 %VAR% 仍会展开——属 cmd 本身
+///   限制，用户名含 % 的机器请改用 wt/powershell（此处不做 ^ 转义：引号内 ^ 会按字面残留）。
+///
+/// 纯函数便于单测。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn shell_join_for_windows(args: &[String], powershell: bool) -> String {
+    if powershell {
+        let quoted: Vec<String> = args
+            .iter()
+            .map(|a| {
+                if a.chars().any(char::is_whitespace) || a.contains(['$', '`', '\'']) {
+                    format!("'{}'", a.replace('\'', "''"))
+                } else {
+                    a.clone()
+                }
+            })
+            .collect();
+        let joined = quoted.join(" ");
+        if quoted.first().is_some_and(|f| f.starts_with('\'')) {
+            format!("& {joined}")
+        } else {
+            joined
+        }
+    } else {
+        args.iter()
+            .map(|a| {
+                if a.chars().any(char::is_whitespace) {
+                    format!("\"{a}\"")
+                } else {
+                    a.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// 单 pid 判活（廉价版，resume 前奏专用）：Windows 走 Toolhelp 快照（1-3ms，避免 sysinfo 全进程
+/// OpenProcess 刷新的 30-120ms 拖慢「点下即显示已连接」），Unix 走一次 ps。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn pid_alive_agent_quick(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        snapshot_processes()
+            .get(&(pid as u32))
+            .map(|(_, name)| meowo_agent::is_agent_process(name))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        pid_is_agent_ps(pid)
+    }
+}
+
+/// resume 的跨平台前奏（须在后台线程调用）：乐观复活 → 兜底刷新 → 解析 cwd → 按 provider 取
+/// resume 命令 argv。返回 (真的复活了才是 Some(sid)——供 spawn 失败回滚,绝不回滚未被本次复活的
+/// 真连接会话、resolved_cwd、resume_argv)。
+/// 乐观复活:resume 是看板主动发起的,已知恢复哪个会话——先复活并清旧 pid,卡片即刻显示已连接,
+/// 不必等 hook(尤其 codex 的 session_start hook 要到首个 turn 才触发)。旧 pid 死活经
+/// pid_alive_agent_quick 校验后以 dead_pid 传入,由 store 层 `pid=?` 守卫原子闭合 TOCTOU
+/// (见 revive_for_resume)。emit 兜底刷新,不依赖 db watcher 存活。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn prepare_resume(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    cwd: Option<&str>,
+    provider: &str,
+) -> (Option<i64>, Option<String>, Vec<String>) {
+    let revived = (|| {
+        let store = open_store(&db_path()).ok()?;
+        let sid = store.find_session_id_pub(session_id).ok().flatten()?;
+        let dead_pid = store
+            .session_pid(sid)
+            .ok()
+            .flatten()
+            .filter(|&p| p > 0 && !pid_alive_agent_quick(p));
+        match store.revive_for_resume(sid, now_ms(), dead_pid) {
+            Ok(true) => Some(sid),
+            _ => None,
+        }
+    })();
+    emit_board_changed(app, "resume");
+    let agent = meowo_agent::resolve(Some(provider));
+    // resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空或失真（旧会话 / 压缩漏
+    // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
+    // 其余原样采信 DB——此前这里无条件走 claude 的解析路径，非 claude 会话靠「在 ~/.claude/projects
+    // 里找不到就回退 DB cwd」的巧合才拿到正确结果。
+    let resolved = match agent.and_then(|a| a.telemetry()).and_then(|t| t.transcript()) {
+        Some(spec) => spec.resolve_cwd(cwd, session_id),
+        None => meowo_agent::default_resolve_cwd(cwd),
+    };
+    // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
+    // 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：调用方的 spawn 会失败并回滚复活，
+    // 好过拿 claude 的参数去拉起别的 CLI。
+    let resume = agent.and_then(|a| a.resume_argv(session_id)).unwrap_or_default();
+    (revived, resolved, resume)
+}
+
+/// resume 的终端 spawn 失败时回滚乐观复活（收尾回 ended）：GUI 构建下 stderr 不可见，
+/// 至少让卡片立即回落「已断开」，而不是假显示「已连接」直到 120s 宽限过期。
+/// 只对 prepare_resume 返回 Some(确实复活过)的会话调用——未被本次复活的真连接会话不得误收尾。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn rollback_failed_resume(sid: i64) {
+    if let Ok(store) = open_store(&db_path()) {
+        let _ = store.end_session(sid, now_ms());
+    }
+}
+
+/// 在 `cwd` 打开一个终端并运行 `argv`，终端类型由 `terminal`（同 settings.resume_terminal 取值）决定。
+/// resume（`claude --resume <id>`）与 new（裸 `claude`）共用——唯一区别是传入的 argv。成功返回 true。
+/// Windows：powershell/cmd/wezterm/wt，缺失回退链同 resume 旧逻辑；wt 分支独立传 argv 不拼 shell 串。
+#[cfg(target_os = "windows")]
+pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+    let dir = safe_cwd(cwd);
+    // 选了 wt/默认但没装 wt → 回退 PowerShell；选了 wezterm 但已卸载 → 落回 wt/powershell。
+    let eff = match terminal {
+        "powershell" => "powershell",
+        "cmd" => "cmd",
+        "wezterm" if wezterm::available() => "wezterm",
+        _ if wt_available() => "wt",
+        _ => "powershell",
+    };
+    let spawned: std::io::Result<()> = match eff {
+        "powershell" => {
+            let mut c = Command::new("powershell");
+            c.args(["-NoExit", "-Command", &shell_join_for_windows(argv, true)]);
+            if let Some(d) = &dir {
+                c.current_dir(d);
+            }
+            c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        }
+        "cmd" => {
+            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
+            // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
+            // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
+            let mut c = Command::new("cmd");
+            c.raw_arg("/k").raw_arg(shell_join_for_windows(argv, false));
+            if let Some(d) = &dir {
+                c.current_dir(d);
+            }
+            c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
+        }
+        "wezterm" => wezterm::resume(dir.as_deref(), argv),
+        _ => {
+            let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
+            if let Some(p) = wt_default_profile() {
+                args.push("-p".into());
+                args.push(p);
+            }
+            if let Some(d) = &dir {
+                args.push("-d".into());
+                args.push(d.clone());
+            }
+            args.extend(argv.iter().cloned());
+            Command::new("wt").args(&args).spawn().map(|_| ())
+        }
+    };
+    match spawned {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("打开终端 {eff} 失败：{e}");
+            false
+        }
+    }
+}
+
+/// macOS 版：按 terminal 选 Terminal.app/iTerm2（iTerm2 未装回退 Terminal），走 AppleScript。成功 true。
+#[cfg(target_os = "macos")]
+pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+    use crate::term_script::TermKind;
+    let kind = match crate::term_script::resume_kind_from_setting(terminal) {
+        TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
+        TermKind::ITerm2 => TermKind::Terminal,
+        other => other,
+    };
+    crate::macos::terminal::resume_session_mac(cwd, argv, kind)
+}
+
+/// 其它平台无终端集成。
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub(crate) fn spawn_in_terminal(_argv: &[String], _cwd: Option<&str>, _terminal: &str) -> bool {
+    false
+}
+
+/// 校验并归一「新建会话」的工作目录：非空、真实存在的目录。返回 trim 后的路径。
+pub(crate) fn validate_new_session_cwd(cwd: &str) -> Result<String, String> {
+    let d = cwd.trim();
+    if d.is_empty() {
+        return Err("请选择工作目录".into());
+    }
+    if !std::path::Path::new(d).is_dir() {
+        return Err("目录不存在".into());
+    }
+    Ok(d.to_string())
+}
+
+/// 新建一个全新会话：在 `cwd` 打开终端裸启动指定 provider 的 CLI（无 session_id）。
+/// 会话入库仍靠该 CLI 自己的 hook（claude/kimi 秒级，codex 首条消息后）——本命令只负责 spawn。
+/// terminal 缺省用 settings.resume_terminal。spawn 放 blocking 线程池并 await，失败回传前端面板。
+#[tauri::command]
+pub(crate) async fn new_session(
+    cwd: String,
+    provider: String,
+    terminal: Option<String>,
+) -> Result<(), String> {
+    let dir = validate_new_session_cwd(&cwd)?;
+    let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+    let argv = agent.launch_argv();
+    let term = terminal
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| load_settings().resume_terminal);
+    // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环，同时能 await 结果回传。
+    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, Some(&dir), &term))
+        .await
+        .map_err(|e| e.to_string())?;
+    if ok {
+        Ok(())
+    } else if cfg!(not(any(target_os = "windows", target_os = "macos"))) {
+        Err("当前平台不支持从看板新建会话".into())
+    } else {
+        Err("启动终端失败：请确认所选 agent 已安装并在 PATH 中".into())
+    }
+}
+
+/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
+/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
+/// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
+///
+/// 恢复命令由 `provider` 决定（claude: `claude --resume <id>` / kimi: `kimi -r <id>`，见 agent::resume_args）。
+/// 安全：`session_id` 经 is_safe_id 校验（仅 `[A-Za-z0-9_-]`，无空格/元字符）；可执行名与参数来自受信的
+/// agent::resume_args（非用户输入）；wt 分支各 argv 独立传入，powershell/cmd 命令串只由这些受信片段拼成，从源头杜绝注入。
+#[tauri::command]
+pub(crate) fn resume_session(
+    app: tauri::AppHandle,
+    cwd: Option<String>,
+    session_id: String,
+    provider: String,
+) -> Result<(), String> {
+    if !is_safe_id(&session_id) {
+        return Err("无效 session_id".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
+        // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。
+        std::thread::spawn(move || {
+            let (revived, resolved_cwd, resume) =
+                prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
+            let ok = spawn_in_terminal(&resume, resolved_cwd.as_deref(), &load_settings().resume_terminal);
+            if !ok {
+                // GUI 构建 stderr 不可见：回滚乐观复活，卡片立即回落「已断开」而非假连接 120s。
+                if let Some(sid) = revived {
+                    rollback_failed_resume(sid);
+                }
+                emit_board_changed(&app, "resume-failed");
+            }
+        });
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // resolve_cwd 读 transcript、osascript 可能等 TCC 授权，整段放后台线程不挡主线程。
+        // resume 命令按 provider 分发（与 Windows 同一事实源），不再硬编码 claude——
+        // 否则 macOS 上恢复 codex/kimi 会话会执行错误命令。
+        std::thread::spawn(move || {
+            let (revived, resolved, resume) =
+                prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
+            let ok = spawn_in_terminal(&resume, resolved.as_deref(), &load_settings().resume_terminal);
+            if !ok {
+                eprintln!("恢复会话：终端启动失败");
+                if let Some(sid) = revived {
+                    rollback_failed_resume(sid);
+                }
+                emit_board_changed(&app, "resume-failed");
+            }
+        });
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (app, cwd, provider);
+        Err("当前平台不支持".into())
+    }
+}
+

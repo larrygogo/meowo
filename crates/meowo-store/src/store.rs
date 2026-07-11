@@ -148,6 +148,16 @@ impl Store {
         Ok(())
     }
 
+    /// `PRAGMA data_version`：一个整数，仅当**别的连接**向本库提交过写入时才变化（本连接自身的
+    /// 写入不改它，纯读也不改）。跨调用比较须用**同一个持久连接**才有意义。
+    /// db-watcher 用它把「真实写入」与「app 读库时新开 WAL 连接触碰 -wal/-shm 文件」的空事件区分开：
+    /// 只有版本号变了才通知前端刷新，掐断 read→watcher→refresh→read 的自持刷新循环。
+    pub fn data_version(&self) -> Result<i64, StoreError> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA data_version", [], |r| r.get(0))?)
+    }
+
     /// 写入/清除某会话的便签：trim 后非空则 upsert，空则删除该行（便签清空即移除）。
     pub fn set_session_note(
         &self,

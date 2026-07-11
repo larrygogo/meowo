@@ -24,7 +24,7 @@ const fireDone = (provider: string, ok: boolean, logPath: string | null = null) 
 const fireLogin = (provider: string, ok: boolean) =>
   act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
 
-import { AccountSection } from "./About";
+import { AccountSection } from "./settings/AccountSection";
 import { descriptors } from "../test/agents";
 import { zh } from "../i18n/zh";
 

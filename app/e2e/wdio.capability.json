@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "wdio",
+  "description": "E2E 专用：授予 @wdio/tauri-plugin 的插件权限（execute / 日志转发 / 窗口查询）。仅由 e2e/run.mjs 在构建 --features e2e 前临时拷入 src-tauri/capabilities/，生产源码树中不存在（见 .gitignore）。",
+  "windows": ["main", "about", "updater", "new-session"],
+  "permissions": ["wdio:default"]
+}
