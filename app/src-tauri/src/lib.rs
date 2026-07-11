@@ -26,7 +26,9 @@ use install::{
 };
 use terminal::{focus_session, new_session, open_project_dir, resume_session};
 use window::{open_new_session_window, open_settings, open_update_window, recall_center};
-// 保留在 lib 的代码/装配所依赖的模块内 helper。
+// 保留在 lib 的代码/装配所依赖的模块内 helper。live_sessions_blocking 的连接判定按平台分流：
+// Windows 走 sysinfo 进程表(pid_is_agent)，macOS/Unix 走一次 ps 批量快照(claude_pids_snapshot)。
+#[cfg(target_os = "windows")]
 use proc::pid_is_agent;
 #[cfg(not(target_os = "windows"))]
 use proc::claude_pids_snapshot;
@@ -66,8 +68,16 @@ use std::sync::{Arc, Mutex};
 
 pub mod setup;
 use std::time::{SystemTime, UNIX_EPOCH};
+// 仅 live_sessions_blocking 的 Windows 分支用 sysinfo 建进程表；非 Windows 走 claude_pids_snapshot。
+#[cfg(target_os = "windows")]
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
-use tauri::{Emitter, Manager, State};
+use tauri::State;
+// Emitter：仅非 macOS 的 on_window_event 用 window.emit("snap-changed")（macOS 面板模式无吸边）。
+#[cfg(not(target_os = "macos"))]
+use tauri::Emitter;
+// Manager：仅 Windows setup 用 app.get_webview_window("main") 做出屏救援/子类化。
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
 /// 无权限）时只让该次刷新返回错误，不会在启动时 panic 把整个 app 打挂；
@@ -1366,7 +1376,6 @@ mod tests {
 
 #[cfg(test)]
 mod new_session_tests {
-    use super::*;
     use crate::terminal::validate_new_session_cwd;
 
     #[test]
@@ -1386,7 +1395,6 @@ mod new_session_tests {
 
 #[cfg(test)]
 mod hooks_check_tests {
-    use super::*;
     use crate::install::{hooks_status_at, HooksStatus};
 
     // kimi / codex 的 SessionStart 判定已迁入 meowo_agent::config（KimiToml / CodexJson），

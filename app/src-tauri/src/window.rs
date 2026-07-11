@@ -2,7 +2,11 @@
 
 use crate::settings::{load_settings, tr, ui_lang};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
+// Emitter：仅非 macOS 的 recall_sticker 用 w.emit("recall-sticker")；open_new_session 的 ns-prefill
+// emit 在其块内另有本地 use（macOS 也走那条），故模块级 Emitter 在 macOS 上无用、按平台门控。
+#[cfg(not(target_os = "macos"))]
+use tauri::Emitter;
 #[cfg(not(target_os = "macos"))]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(not(target_os = "macos"))]
