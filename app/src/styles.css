@@ -114,6 +114,11 @@
 :root[data-theme="light"] .pswitch.on { background: var(--cc-accent); }
 * { box-sizing: border-box; }
 
+/* 焦点框只在键盘导航时显示：默认（指针/程序化聚焦）隐藏 UA 焦点框，仅 data-im="kbd" 时恢复。
+   修复「每次打开贴纸面板，WKWebView 自动聚焦首个可聚焦元素（首卡 >_ 钮）而无端亮起焦点框」。
+   模态由 input-modality.ts 维护；WebKit 下程序化 focus 亦算 :focus-visible，故不能用它门控。 */
+:root:not([data-im="kbd"]) :focus { outline: none; }
+
 /* 自定义滚动条（WebView2/WKWebView 均为 webkit 内核）：细、半透明、配深色主题。
    注意：不要设标准属性 scrollbar-width/scrollbar-color——现代 Chromium 一旦见到它们就改用
    标准滚动条渲染并忽略全部 ::-webkit-scrollbar 伪元素（连带上下按钮无法隐藏）。 */
