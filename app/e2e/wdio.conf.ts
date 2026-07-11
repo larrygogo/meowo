@@ -36,6 +36,8 @@ export const config: WebdriverIO.Config = {
     [
       "@wdio/tauri-service",
       {
+        // 内嵌 provider（tauri-plugin-wdio-webdriver 提供的 WebDriver 服务器），不依赖外置 tauri-driver。
+        driverProvider: "embedded",
         // Windows：按本机 WebView2 版本自动下载匹配的 msedgedriver（驱动 Edge 内核所需）。
         autoDownloadEdgeDriver: true,
         // 把前端 console 与后端日志转发到 wdio 输出，便于排查。

@@ -38,6 +38,9 @@
       },
     },
   },
+  "overrides": {
+    "@wdio/native-utils": "2.5.0",
+  },
   "packages": {
     "@asamuzakjp/css-color": ["@asamuzakjp/css-color@5.1.11", "https://registry.npmmirror.com/@asamuzakjp/css-color/-/css-color-5.1.11.tgz", { "dependencies": { "@asamuzakjp/generational-cache": "^1.0.1", "@csstools/css-calc": "^3.2.0", "@csstools/css-color-parser": "^4.1.0", "@csstools/css-parser-algorithms": "^4.0.0", "@csstools/css-tokenizer": "^4.0.0" } }, "sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg=="],
 
@@ -405,7 +408,7 @@
 
     "@wdio/native-types": ["@wdio/native-types@2.4.0", "", {}, "sha512-GjgPskOoTvl17Jwj8aAU3A31gpklL5M1KfbrwYffbQT16CTpJTD8A4PdoS2ZjGoCWcyLBR1CWdJI3W8T0JBLjw=="],
 
-    "@wdio/native-utils": ["@wdio/native-utils@2.4.0", "", { "dependencies": { "@wdio/logger": "9.18.0", "debug": "^4.4.3", "esbuild": "^0.28.0", "find-up-simple": "^1.0.1", "json5": "^2.2.3", "smol-toml": "^1.6.0", "yaml": "^2.9.0" }, "peerDependencies": { "tsx": "^4.22.3" }, "optionalPeers": ["tsx"] }, "sha512-wbox9Hm7Pv98E1krs6/YqbV3a7gDcBK70a/BhZbFYXmVQvtqU8o8AvQerg5aUvYVyi/bQejG0IH9yBfE8LIivQ=="],
+    "@wdio/native-utils": ["@wdio/native-utils@2.5.0", "", { "dependencies": { "@wdio/logger": "9.18.0", "debug": "^4.4.3", "esbuild": "^0.28.0", "find-up-simple": "^1.0.1", "json5": "^2.2.3", "smol-toml": "^1.6.0", "yaml": "^2.9.0" }, "peerDependencies": { "tsx": "^4.22.4" }, "optionalPeers": ["tsx"] }, "sha512-Qv0mJ2elRBZCgYbHCnKPNgE9VaqnmNJyjythTDYyOQpj8pAs6FZXXmWXGkUIdMds5cK0ux/qtxyKU0Y0tDsUUQ=="],
 
     "@wdio/protocols": ["@wdio/protocols@9.29.1", "", {}, "sha512-NFlBQOA4zDb4D/ETpVMqDgbJyEqdhGRsJWybLOXG7PGlPwfcrfmTMHC1+Boq4KODgpwbhCmI9zIk2JQmGYIttQ=="],
 

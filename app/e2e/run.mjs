@@ -12,6 +12,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, ".."); // app/
 const capDst = join(appDir, "src-tauri", "capabilities", "wdio.json");
 
+// Node ≥ 26 预检：其内置 undici v8 严格执行 Fetch 规范，拒绝 wdio `webdriver` 手动设的
+// Content-Length / Connection 头，创建会话时报 UND_ERR_INVALID_ARG（webdriverio#15265）。
+// 快速失败并给出指引，好过让用户对着一屏 undici 栈发懵。修复前请用 Node 22 LTS 跑 E2E。
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor >= 26) {
+  console.error(
+    `\n✗ 当前 Node ${process.versions.node} 与 WebdriverIO 不兼容（webdriverio#15265）：\n` +
+      `  Node ≥ 26 的 undici v8 会拒绝 wdio 设的 Content-Length/Connection 请求头，创建会话即失败。\n` +
+      `  请用 Node 22 LTS 跑 E2E（如 \`fnm use 22\` / \`nvm use 22\`，或用便携版 Node 22 的 node.exe 直接执行 e2e/run.mjs）。\n`,
+  );
+  process.exit(1);
+}
+
 function run(bin, args, env = {}) {
   console.log(`\n▶ ${bin} ${args.join(" ")}`);
   const r = spawnSync(bin, args, {
