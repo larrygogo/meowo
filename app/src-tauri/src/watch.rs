@@ -91,8 +91,9 @@ pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    // 只关心 db 本体及其 -wal/-shm/-journal 等伴生文件；同目录的 settings.json、
-    // usage-cache.json 写入不应触发看板刷新。
+    // 只关心 db 本体及其 -wal/-journal 伴生文件（写入落这里）；同目录的 settings.json、
+    // usage-cache.json 不触发刷新。-shm 刻意排除：它是 WAL 共享内存索引，纯读也会更新其读标记
+    // 触碰 mtime，正是 app 自身读库触发 watcher、进而自持刷新的源头（见 run_db_watch_loop）。
     let db_name = db_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -111,7 +112,7 @@ pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
             std::thread::sleep(WATCH_RETRY);
             continue;
         }
-        run_db_watch_loop(&app, &rx, &db_name);
+        run_db_watch_loop(&app, &rx, &db_path, &db_name);
         // 返回即监听已死（通道断开或错误事件）→ 稍后重建 watcher。
         std::thread::sleep(WATCH_RETRY);
     });
@@ -127,14 +128,20 @@ pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
 pub(crate) fn run_db_watch_loop(
     app: &tauri::AppHandle,
     rx: &std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
+    db_path: &std::path::Path,
     db_name: &str,
 ) {
+    // 持久只读连接：PRAGMA data_version 跨调用比较须用同一连接才有意义。开不出来（库暂不可用）
+    // 则 vconn=None → 下面回退为「有相关文件事件即 emit」的旧行为，宁可多刷也不让看板冻结。
+    let vconn = Store::open(db_path).ok();
+    let mut last_version = vconn.as_ref().and_then(|s| s.data_version().ok());
     let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
         let Ok(ev) = res else { return false };
         ev.paths.iter().any(|p| {
             p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
                 n.strip_prefix(db_name)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+                    // -shm（WAL 共享内存索引）排除：纯读也会触碰它，是自持刷新循环的源头。
+                    .is_some_and(|rest| rest.is_empty() || (rest.starts_with('-') && rest != "-shm"))
             })
         })
     };
@@ -169,7 +176,21 @@ pub(crate) fn run_db_watch_loop(
             }
         }
         if relevant {
-            emit_board_changed(app, "db-watcher");
+            // 只有 data_version 变了（别的连接真的提交过写入）才通知前端刷新；app 自己读库触碰
+            // 文件、WAL checkpoint 等「没有逻辑变更」的空事件一律忽略——这才是掐断
+            // read→watcher→refresh→read 自持循环、消除空闲期贴纸抖动的根治点。
+            // 无持久连接或读版本失败时保守 emit（回退旧行为），不让看板冻结。
+            let changed = match vconn.as_ref().and_then(|s| s.data_version().ok()) {
+                Some(cur) => {
+                    let c = last_version != Some(cur);
+                    last_version = Some(cur);
+                    c
+                }
+                None => true,
+            };
+            if changed {
+                emit_board_changed(app, "db-watcher");
+            }
         }
         if broken {
             return;

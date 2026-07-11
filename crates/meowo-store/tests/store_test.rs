@@ -524,3 +524,37 @@ fn on_user_prompt_no_longer_writes_current_activity() {
     assert_eq!(t.title, "实现登录功能");          // 占位标题被首句替换(保留)
     assert_eq!(t.current_activity, None);          // 不再把 prompt 写进 current_activity
 }
+
+/// data_version 的两条性质是 db-watcher「只在真实写入时刷新看板」的根基（见 store::data_version）：
+/// 1) 本连接自身的写入 / 纯读都不改自己的 data_version —— 故 watcher 的持久连接读版本永不自触发；
+/// 2) 别的连接提交写入后，本连接再读 data_version 会变化 —— 故真实写入必被检出。
+/// 必须用文件库（内存库连接互不共享），并在同进程内开两个独立连接。
+#[test]
+fn data_version_reflects_only_other_connection_writes() {
+    let path = std::env::temp_dir().join(format!("meowo-dv-{}.db", std::process::id()));
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+
+    let a = Store::open(&path).unwrap();
+    let v0 = a.data_version().unwrap();
+
+    // 本连接自身写入：不改自己的 data_version。
+    let pid = a.upsert_project_by_root("/p", "p", 1).unwrap();
+    assert_eq!(a.data_version().unwrap(), v0, "本连接自身写入不应改变自己的 data_version");
+
+    // 纯读：不改 data_version（app 读库不该触发刷新的核心保证）。
+    let _ = a.live_sessions(None, None, None, None, 10).unwrap();
+    assert_eq!(a.data_version().unwrap(), v0, "纯读不应改变 data_version");
+
+    // 别的连接提交写入：本连接再读即变化。
+    let b = Store::open(&path).unwrap();
+    b.start_session(pid, "s", 1).unwrap();
+    assert_ne!(a.data_version().unwrap(), v0, "别的连接提交写入后 data_version 应变化");
+
+    drop(a);
+    drop(b);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
