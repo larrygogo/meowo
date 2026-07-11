@@ -10,7 +10,7 @@ const outDir = resolve(tmpdir(), "cc-demo-frames");
 mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 880, height: 560 }, deviceScaleFactor: 1 });
+const page = await browser.newPage({ viewport: { width: 880, height: 560 }, deviceScaleFactor: 2 });
 page.on("console", (m) => {
   if (m.text().includes("[demo]")) console.warn("页面警告:", m.text());
 });

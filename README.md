@@ -10,7 +10,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   </p>
   <p>哪个在跑、哪个在等你回复、各自做到哪一步——通过各 AI CLI 的 hooks 捕获每个会话的事件,<br/>落进本地 SQLite,再用一个半透明、可吸边的 Tauri 小窗口实时呈现。无需切来切去找终端。</p>
-  <img src="docs/images/demo.gif" alt="Meowo 演示:实时会话贴纸、待交互提醒、会话搜索、重命名归档、底栏用量、吸边缩略" width="760" />
+  <img src="docs/images/demo.webp" alt="Meowo 演示:实时会话贴纸与最近 AI 正文、待交互提醒、卡片菜单重命名 / 便签 / 归档、会话搜索、底栏用量、吸边缩略" width="760" />
 </div>
 
 ## 下载
@@ -49,7 +49,7 @@
 - **便签**:给会话挂一段本地备忘,常显在卡片上、随时编辑——纯本地、与会话内容无关,适合记「等 API key」「记得 review」之类。
 - **改名**:在卡片上直接给会话改名,写入与 Claude Code `/rename` 一致的记录——贴纸和 `claude --resume` 列表同步显示新名字。
 - **归档**:把会话收进「已归档」(可随时还原);设置中可让归档条目在 1 / 7 / 30 天后自动隐藏。
-- 操作按钮(星标 / 便签 / 改名 / 归档)默认隐藏,**悬停卡片才浮现**,保持列表清爽。
+- 星标 / 便签 / 改名 / 归档(以及在同目录新建会话、打开项目目录)统一收进卡片右上角的 **⋯ 菜单**——点开即用,设置里也可改为**右键卡片**触发,保持列表清爽。
 
 ### 🧲 吸边与窗口(仅 Windows)
 
@@ -211,7 +211,7 @@ bunx tsc --noEmit
 bunx vitest run
 ```
 
-> 演示 GIF 可一键重新生成:`cd app && bun run demo:gif`(Playwright 驱动 `demo.html` 合成,产物写到 `docs/images/demo.gif`)。
+> 演示动图可一键重新生成:`cd app && bun run demo:webp`(Playwright 以 2× 逐帧截 `demo.html`,再由 sharp 合成无损/高质量动画 WebP,产物写到 `docs/images/demo.webp`)。
 
 ## 路线
 

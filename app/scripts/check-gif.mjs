@@ -1,4 +1,4 @@
-// 调试用:在 chromium 里实际播放 demo.gif,按秒截图验证渲染正确(透明差分帧是否正常合成)。
+// 调试用:在 chromium 里实际播放 demo.webp,按秒截图验证动图渲染正确。
 import { resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdirSync } from "node:fs";
@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const gif = pathToFileURL(resolve(appDir, "../docs/images/demo.gif")).href;
+const gif = pathToFileURL(resolve(appDir, "../docs/images/demo.webp")).href;
 const outDir = resolve(tmpdir(), "cc-demo-gifcheck");
 mkdirSync(outDir, { recursive: true });
 
