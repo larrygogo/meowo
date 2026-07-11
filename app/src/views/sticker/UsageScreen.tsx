@@ -1,0 +1,92 @@
+// 底栏「凹陷小屏」用量读数：每个开启配额的 provider 一个图标标签，点选后显示其用量泳道。
+import { useState } from "react";
+import { agentAssets, tintStyle } from "../../providers";
+import { useT } from "../../i18n";
+import type { ProviderUsage, UsageLane } from "../../api";
+import { USAGE_KEY } from "./types";
+
+/** 底部用量：嵌在底栏左侧的「凹陷小屏读数」——标签式：一行品牌图标标签，点选后显示该
+   provider 的 5h + 7d/weekly 用量条；与右侧凸起按钮组成「凹陷显示屏 + 凸起按钮」的物理设备面板。 */
+// 利用率档位 → 复用应用既有状态色(绿/黄/红)，与卡片状态点同语义；越满越红即预警。
+function usageSev(pct: number): string {
+  return pct >= 80 ? "is-high" : pct >= 50 ? "is-warn" : "is-ok";
+}
+
+// 单条用量泳道（进度条型或余额数值型）
+function LaneRow({ lane, label }: { lane: UsageLane; label: string }) {
+  if (lane.used_pct != null) {
+    const pct = Math.max(0, Math.min(100, lane.used_pct));
+    return (
+      <div className="stk-urow">
+        <span className="stk-ulabel">{label}</span>
+        <span className="stk-utrack">
+          <i className={"stk-ufill " + usageSev(pct)} style={{ width: `${pct}%` }} />
+        </span>
+        <span className="stk-uval">{Math.round(pct)}%</span>
+      </div>
+    );
+  }
+  // 余额型：显数值，不画进度条
+  const valText = lane.used != null ? `${lane.used}${lane.unit ? ` ${lane.unit}` : ""}` : "—";
+  return (
+    <div className="stk-urow">
+      <span className="stk-ulabel">{label}</span>
+      <span className="stk-uval">{valText}</span>
+    </div>
+  );
+}
+
+/** 标签式用量屏：每个开启配额的 provider 一个图标标签，点选后显示其 5h + 7d/weekly 条。
+ *  符合条件 provider 为空 → 不渲染。 */
+export function UsageScreen({
+  quotaProviders,
+  usageMap,
+}: {
+  quotaProviders: string[];
+  usageMap: Record<string, ProviderUsage>;
+}) {
+  const t = useT();
+  // 用户偏好选中的 provider（持久化：折叠/展开重挂后记住；若不在当前活跃列表中则退回第一个）
+  const [selectedPref, setSelectedPref] = useState<string>(() => localStorage.getItem(USAGE_KEY) ?? "");
+  const pick = (p: string) => {
+    setSelectedPref(p);
+    localStorage.setItem(USAGE_KEY, p);
+  };
+
+  // 仅显示「在配额列表中且有用量数据」的 provider
+  const activeProviders = quotaProviders.filter((p) => !!usageMap[p]);
+  if (!activeProviders.length) return null;
+
+  // 选中态：优先用户选择，其次第一个
+  const selected = activeProviders.includes(selectedPref) ? selectedPref : activeProviders[0];
+
+  const usage = usageMap[selected];
+  const fiveHourLane = usage?.lanes.find((l) => l.kind === "five_hour") ?? null;
+  const sevenDayLane = usage?.lanes.find((l) => l.kind === "seven_day" || l.kind === "weekly") ?? null;
+
+  return (
+    <div className="stk-uscreen" role="group" aria-label={t.account.quota}>
+      {/* 品牌图标标签行（每个 provider 一个，点选切换） */}
+      <div className="stk-utabs">
+        {activeProviders.map((p) => {
+          const { Icon } = agentAssets(p);
+          return (
+            <button
+              key={p}
+              type="button"
+              className={"stk-utab" + (p === selected ? " on" : "")}
+              style={tintStyle(p)}
+              aria-pressed={p === selected}
+              onClick={() => pick(p)}
+            >
+              <Icon />
+            </button>
+          );
+        })}
+      </div>
+      {/* 选中 provider 的 5h 和 7d/weekly 用量条 */}
+      {fiveHourLane && <LaneRow lane={fiveHourLane} label={t.account.laneFiveHour} />}
+      {sevenDayLane && <LaneRow lane={sevenDayLane} label={sevenDayLane.kind === "weekly" ? t.account.laneWeekly : t.account.laneSevenDay} />}
+    </div>
+  );
+}
