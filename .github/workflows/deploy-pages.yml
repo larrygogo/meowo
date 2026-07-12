@@ -1,3 +1,4 @@
+# Pages 部署：需在 Settings → Pages → Source 选 "GitHub Actions"（一次性）。
 name: Deploy site to GitHub Pages
 
 on:
