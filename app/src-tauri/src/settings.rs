@@ -147,6 +147,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "notify.pending.plan") => "Plan awaiting approval",
         ("en", "tray.recall") => "Recall sticker",
         ("en", "tray.settings") => "Settings",
+        ("en", "tray.website") => "Website",
         ("en", "tray.quit") => "Quit",
         ("en", "window.settings") => "Settings",
         ("en", "window.updater") => "Software Update",
@@ -158,6 +159,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "notify.pending.plan") => "计划待批准",
         (_, "tray.recall") => "找回贴纸",
         (_, "tray.settings") => "设置",
+        (_, "tray.website") => "官方网站",
         (_, "tray.quit") => "退出",
         (_, "window.settings") => "设置",
         (_, "window.updater") => "软件更新",
@@ -259,11 +261,17 @@ fn quote_autostart_run_value(app: &tauri::AppHandle) {
     }
 }
 
-/// 设置/关于页用：在默认浏览器打开本项目链接。仅允许本仓库的 https 链接（白名单），
+pub(crate) const SITE_URL: &str = "https://meowo.io";
+
+/// 允许在浏览器里打开的链接前缀：官网与本仓库。
+pub(crate) const ALLOWED_URL_PREFIXES: [&str; 2] =
+    [SITE_URL, "https://github.com/larrygogo/meowo"];
+
+/// 设置/关于页与托盘用：在默认浏览器打开官网或本仓库链接。只放行白名单前缀，
 /// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
 #[tauri::command]
 pub(crate) fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://github.com/larrygogo/meowo") {
+    if !ALLOWED_URL_PREFIXES.iter().any(|p| url.starts_with(p)) {
         return Err("不允许的链接".into());
     }
     #[cfg(target_os = "windows")]

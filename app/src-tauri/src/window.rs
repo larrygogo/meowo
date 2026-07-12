@@ -232,13 +232,14 @@ pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
     }
 }
 
-/// 托盘右键菜单（找回贴纸 / 设置 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
+/// 托盘右键菜单（找回贴纸 / 设置 / 官网 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let recall = MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
+    let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "tray.quit")).build(app)?;
-    MenuBuilder::new(app).items(&[&recall, &settings, &quit]).build()
+    MenuBuilder::new(app).items(&[&recall, &settings, &website, &quit]).build()
 }
 
 /// 切语言后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
@@ -280,6 +281,9 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "recall" => recall_sticker(app),
             "settings" => open_settings_window(app),
+            "website" => {
+                let _ = crate::settings::open_url(crate::settings::SITE_URL.to_string());
+            }
             "quit" => app.exit(0),
             _ => {}
         })

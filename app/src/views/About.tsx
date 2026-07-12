@@ -20,6 +20,8 @@ const hideOptions = (t: Dict) => [
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
+const SITE = "meowo.io";
+const SITE_URL = "https://meowo.io";
 const openExt = (url: string) => invoke("open_url", { url }).catch(() => {});
 
 type Section = "general" | "appearance" | "account" | "about";
@@ -351,7 +353,16 @@ function AboutSection({
         </div>
         <div className="row">
           <div className="row-text">
-            <div className="row-label">{t.about.homepage}</div>
+            <div className="row-label">{t.about.website}</div>
+            <div className="row-desc">{SITE}</div>
+          </div>
+          <button className="sbtn primary" onClick={() => openExt(SITE_URL)}>
+            {t.about.open}
+          </button>
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.about.source}</div>
             <div className="row-desc">{REPO}</div>
           </div>
           <button className="sbtn" onClick={() => openExt(REPO_URL)}>

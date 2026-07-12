@@ -222,8 +222,9 @@ pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
 /// 托盘右键菜单（设置 / 退出），按语言构建；切语言时由 lib.rs 的 apply_language 重建。
 pub fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let settings = MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
+    let website = MenuItemBuilder::with_id("website", crate::tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", crate::tr(lang, "tray.quit")).build(app)?;
-    MenuBuilder::new(app).items(&[&settings, &quit]).build()
+    MenuBuilder::new(app).items(&[&settings, &website, &quit]).build()
 }
 
 /// 创建 macOS 状态栏托盘：左键切换面板，右键弹「设置 / 退出」菜单。
@@ -240,6 +241,9 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false) // 左键不弹菜单 => 留给右键
         .on_menu_event(|app, event| match event.id().as_ref() {
             "settings" => crate::open_settings_window(app),
+            "website" => {
+                let _ = crate::settings::open_url(crate::settings::SITE_URL.to_string());
+            }
             "quit" => app.exit(0),
             _ => {}
         })
