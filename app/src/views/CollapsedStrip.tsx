@@ -7,28 +7,25 @@ type Edge = "left" | "right" | "top";
 // 缩略条主轴最小长度：保证空状态/只有一个点时仍是一条好找好点的条，而非细缝。
 const STRIP_MIN = 48;
 
-// 缩略条的 app 标记：无活跃会话时居中显示，占位用（看板三列图标）。
-function AppMark() {
+// 缩略条的空态占位：无活跃会话时居中显示一双灰色眼睛，呼应 Meowo logo。
+function EyesMark() {
   return (
     <svg
-      width={18}
-      height={18}
+      width={22}
+      height={22}
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
+      className="cstrip-eyes"
       aria-hidden
     >
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M9 8v8M15 8v5" />
+      <circle cx="6.5" cy="12" r="4.5" />
+      <circle cx="17.5" cy="12" r="4.5" />
     </svg>
   );
 }
 
 // 竖条：纵向排列各 connected 会话的状态色点（断开/历史会话不显示）。
-// 无活跃会话时显示 app 图标占位，保持缩略条合理可点的尺寸。
+// 无活跃会话时显示灰色眼睛占位，保持缩略条合理可点的尺寸。
 // 悬停即偷看展开（onExpand）；测量真实内容高度上报（onMeasure）让窗口贴合，避免滚动条。
 export function CollapsedStrip({
   data,
@@ -59,7 +56,7 @@ export function CollapsedStrip({
       <div className="cstrip-dots" ref={dotsRef}>
         {items.length === 0 ? (
           <span className="cstrip-empty">
-            <AppMark />
+            <EyesMark />
           </span>
         ) : (
           items.map((l) => {

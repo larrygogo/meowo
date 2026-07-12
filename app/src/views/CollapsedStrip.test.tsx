@@ -54,10 +54,11 @@ describe("CollapsedStrip", () => {
     expect(container.querySelector(".cstrip-right")).toBeTruthy();
   });
 
-  it("无活跃会话时显示 app 图标占位，不显示圆点", () => {
+  it("无活跃会话时显示灰色眼睛占位，不显示圆点", () => {
     const { container } = render(<CollapsedStrip data={[]} edge="left" onExpand={() => {}} />);
     expect(container.querySelectorAll(".cstrip-dot").length).toBe(0);
     expect(container.querySelector(".cstrip-empty svg")).toBeTruthy();
+    expect(container.querySelector(".cstrip-eyes")).toBeTruthy();
   });
 
   it("无活跃会话时 onMeasure 上报值不低于最小尺寸 48", () => {

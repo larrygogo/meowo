@@ -4,7 +4,8 @@
 #[cfg(not(target_os = "macos"))]
 pub(crate) const SNAP_THRESHOLD: i32 = 20;
 /// 竖条逻辑宽度（实际物理宽度 = 该值 * 显示器 scale_factor）。
-const STRIP_W_LOGICAL: f64 = 20.0;
+/// 28 给 10px 圆点 + 内发光/描边留出足够边距，避免被 8px 圆角裁掉上下/左右。
+const STRIP_W_LOGICAL: f64 = 28.0;
 
 /// 矩形（物理像素），用于吸边判定的纯计算。
 #[derive(Clone, Copy, Debug, PartialEq)]
