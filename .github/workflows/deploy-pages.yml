@@ -41,6 +41,10 @@ jobs:
           NEXT_PUBLIC_SITE_URL: https://meowo.io
 
       - uses: actions/configure-pages@v5
+        # 尝试自动为仓库启用 Pages（源=GitHub Actions），省去手动去 Settings 开启。
+        # 若因权限无法自动启用，则需手动：Settings → Pages → Source 选 GitHub Actions。
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
