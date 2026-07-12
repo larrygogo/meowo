@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>一个常驻桌面的「贴纸」，把 Claude Code、Codex、Kimi 等 AI 编程会话的进度，一眼看全。</b></p>
+  <p><b>桌面贴纸，集中查看 Claude Code、Codex、Kimi 等 AI 编程会话的状态。</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -9,204 +9,207 @@
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555" alt="Platform: Windows | macOS" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   </p>
-  <p>哪个在跑、哪个在等你回复、各自做到哪一步——每个会话一张卡片,实时呈现在一个<br/>半透明、可吸边的桌面小窗口里。无需在一堆终端标签间切来切去找它们。</p>
-  <img src="docs/images/demo.webp" alt="Meowo 演示:实时会话贴纸与最近 AI 正文、待交互提醒、卡片菜单重命名 / 便签 / 归档、会话搜索、底栏用量、吸边缩略" width="760" />
+  <p><b>中文</b> · <a href="README.en.md">English</a></p>
+  <p>Meowo 把各个 AI CLI 的会话事件收集到本地数据库，再用一个小窗口实时展示。<br/>不用在终端之间来回切，也能知道谁在跑、谁在等你、进行到哪一步。</p>
+  <img src="docs/images/demo.webp" alt="Meowo 演示：实时会话贴纸、待交互提醒、会话搜索、重命名归档、底栏用量、吸边缩略" width="760" />
 </div>
 
-## 下载安装
+## 下载
+
+官网：**[meowo.io](https://meowo.io)** —— 点进去会按你的系统直接给对应安装包。
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| **Windows** | [最新版 x64 安装包](https://github.com/larrygogo/meowo/releases/latest)(`meowo_x.y.z_x64-setup.exe`) | NSIS 安装包,双击安装 |
-| **macOS** | [最新版 universal DMG](https://github.com/larrygogo/meowo/releases/latest)(`meowo_x.y.z_universal.dmg`) | Intel / Apple Silicon 通用,需 macOS ≥ 14 Sonoma;已签名公证,双击安装直接打开 |
+| **Windows** | [最新版 x64 安装包](https://github.com/larrygogo/meowo/releases/latest)（`Meowo_x.y.z_x64-setup.exe`） | NSIS 安装包 |
+| **macOS** | [最新版 universal DMG](https://github.com/larrygogo/meowo/releases/latest)（`Meowo_x.y.z_universal.dmg`） | Intel / Apple Silicon 通用，需 macOS ≥ 14 Sonoma；已签名公证 |
 
-链接指向最新 Release 页,进入后下载对应平台的安装包即可。装好后支持应用内(设置 → 关于)检查更新,两个平台均可自动升级。
+下载对应安装包，双击安装即可。应用内支持检查更新。
 
-## 开始使用
+## 能做什么
 
-1. **下载并安装**(见上)。
-2. **打开 Meowo**——它会自动接入你的 Claude Code(补齐所需 hooks、包装好 statusLine),整个过程先备份、不破坏你已有的配置,**无需任何手动设置**。
-3. **正常用你的 AI CLI 就好**:新开或正在跑的会话会实时出现在贴纸上;近 7 天的历史会话也会自动导入,一打开就有内容。
+### 实时会话看板
 
-> 前提是你已经跑过一次 Claude Code(即 `~/.claude/settings.json` 已存在)。Codex / Kimi 等其它 AI CLI 也支持,接入走各自 CLI 的原生 hook 配置。
+- 每个 AI CLI 会话一张卡片，显示项目名、会话标题、最近一条 AI 正文和连接状态。
+- Claude Code 会话会显示准确的 **Context 已用百分比**（来自 statusline）。
+- 顶部 tab 分类：全部 / 待交互 / 运行中 / 已归档，并显示各自数量。
+- 状态用颜色区分：运行中（橙色转圈）、待交互（黄）、在线/闲置（绿）、已断开（虚线环）。
+- 「待交互」按等待时间排序，等得最久的排在最前面。
+- 底栏搜索可按会话标题或仓库名过滤。
+- 第一次启动会自动导入最近 7 天的历史会话（最多 30 条），不会从空白开始。
 
-## 特性
+### 点击直达终端
 
-### 📌 实时会话看板
+- 点**连接中**的会话，直接跳到它所在的终端标签页。Windows 精确切到 Windows Terminal 对应标签；macOS 聚焦 Terminal 或 iTerm2 对应标签。
+- 点**已断开**的会话，在原项目目录新开终端并执行 `claude --resume` 续上对话。
+- 打开方式可以在设置里改：默认点卡片跳转，也可以改成只通过卡片上的「打开」按钮跳转。
 
-- 每个 AI CLI 会话一张卡片：项目名、会话标题、**最近一条 AI 正文**（一眼知道它刚说了 / 在问你什么，尤其待交互时）、连接状态；Claude Code 会话还显示 **Context 已用百分比**（取自其 statusline 的准确值，1M 上下文窗口也能正确显示）。
-- 状态分类 tab:全部 / 待交互 / 运行中 / 已归档,各带计数;状态指示一眼可辨——运行中(橙色转圈)、待交互(黄)、在线/闲置(绿)、已断开(虚线环)。「待交互」tab 内按**等待最久优先**排序,先处理被晾最久的。
-- **搜索**:底栏放大镜一点,即时按会话标题 / 仓库名过滤,快速定位某个会话(在「已归档」tab 内则检索归档会话)。
-- 初次启动自动导入近 7 天的历史会话(最多 30 条、最近优先,标记为已结束),一上来就有内容;无会话时按 tab 给出友好的空态引导。
+### 待交互与出错提醒
 
-### 🚀 点击直达终端
+- 会话需要你回复，或者因为工具调用失败、认证失败等原因卡住时，会归类到「待交互」。
+- 同一情况只弹一次系统通知，点击通知即可跳转到对应终端。
+- 通知可在设置里关闭，默认开启。
 
-- 点**连接中**的会话直达它所在的终端——Windows 精确切到 Windows Terminal 对应标签页并置前窗口(正确处理一个 WT 进程托管多标签/多窗口的情况),macOS 通过 AppleScript 精确聚焦 Terminal / iTerm2 中对应的标签页。
-- 点**已断开**的会话,在其原项目目录新开终端并 `claude --resume` 把对话续上;所用终端可在设置中指定——Windows 支持 Windows Terminal / PowerShell / 命令提示符,macOS 支持 Terminal / iTerm2(按本机实际安装自动过滤)。
-- **打开方式可选**:默认点击卡片直达,也可在设置里改为卡片上单独的「打开」按钮(点卡片不再触发,避免误触)。
-- 跳转与恢复均在后台执行,点完立即返回,贴纸不卡顿。
+### 卡片管理
 
-### 🔔 不漏掉任何等待
+- **星标置顶**：重要会话加星后始终排在最前面。
+- **便签**：给会话挂一段本地备忘，纯本地，和会话内容无关。
+- **改名**：在卡片上直接改名，写入与 Claude Code `/rename` 一致的记录。
+- **归档**：把会话收进「已归档」，可随时还原；归档条目可在 1 / 7 / 30 天后自动隐藏。
+- 操作按钮默认悬停才出现，保持列表简洁。
 
-- 会话因工具调用解析失败 / 需要重新登录 / 认证失败而卡死时,卡片转红并归入「待交互」。
-- 会话需要你回复(待交互)或出错时弹一条去重的系统通知(同一情形只弹一次),点击通知直接切到该会话的终端;设置里有总开关,默认开启。
+### 吸边与窗口（Windows）
 
-### 🗂 卡片即点即管
+- 把窗口拖到屏幕**左 / 右 / 顶**边缘，松手后缩成一条缩略条。左右为竖条，顶部为横条。
+- 缩略条用状态色点表示会话；悬停展开，移开收回；拖离边缘恢复普通窗口。
+- 可 pin 置顶，重启后保留上次的位置、尺寸和吸附边。
+- 托盘悬停时显示待交互 / 运行中会话数。
 
-- **星标置顶**:给重要会话加星,星标会话恒排在列表最前(金色描边高亮,跨重启保留)。
-- **便签**:给会话挂一段本地备忘,常显在卡片上、随时编辑——纯本地、与会话内容无关,适合记「等 API key」「记得 review」之类。
-- **改名**:在卡片上直接给会话改名,写入与 Claude Code `/rename` 一致的记录——贴纸和 `claude --resume` 列表同步显示新名字。
-- **归档**:把会话收进「已归档」(可随时还原);设置中可让归档条目在 1 / 7 / 30 天后自动隐藏。
-- 星标 / 便签 / 改名 / 归档(以及在同目录新建会话、打开项目目录)统一收进卡片右上角的 **⋯ 菜单**——点开即用,设置里也可改为**右键卡片**触发,保持列表清爽。
+### 菜单栏面板（macOS）
 
-### 🧲 吸边与窗口(仅 Windows)
+macOS 上是状态栏应用：无独立浮窗，不显示在 Dock。
 
-- **吸边缩略**:把窗口拖到屏幕**左 / 右 / 顶**边缘松手即缩成一根缩略条(左右为竖条、顶为横条),只用状态色点表示各会话;悬停"偷看"展开、移开自动收回;拖离边缘恢复为普通窗口。吸附态自动置顶。
-- 可手动 pin 让贴纸始终浮在最上层;重启沿用上次的窗口位置、尺寸与吸附边。
-
-### 🍎 菜单栏面板(仅 macOS)
-
-macOS 为状态栏(菜单栏)App——无独立浮窗/吸边/pin,应用不显示在 Dock:
-
-- **左键**菜单栏图标弹出原生毛玻璃贴纸面板(不抢焦点、失焦自动收起),**右键**弹「设置 / 退出」。
-- 图标实时显示「运行中」与「待交互(含出错)」会话计数,不展开面板也能一眼掌握状态。
+- 左键点击菜单栏图标弹出贴纸面板，不抢焦点，失焦自动收起。
+- 右键点击图标打开「设置 / 退出」菜单。
+- 图标实时显示运行中与待交互会话数。
 
 <details>
-<summary>macOS 首次使用的权限授权</summary>
+<summary>macOS 首次使用的权限说明</summary>
 
-首次点击「跳转/恢复终端」会触发 macOS「自动化」授权(系统设置 → 隐私与安全性 → 自动化),需允许 Meowo 控制 Terminal/iTerm2;首次通知会请求通知权限。授权弹窗期间应用保持响应,不影响贴纸正常使用。
+首次点击「跳转 / 恢复终端」会触发 macOS「自动化」授权（系统设置 → 隐私与安全性 → 自动化），需允许 Meowo 控制 Terminal / iTerm2；首次通知会请求通知权限。授权弹窗期间应用保持响应。
 
 </details>
 
-### 🎨 外观与系统集成
+### 外观与系统集成
 
-- 深色 / 浅色 / 跟随系统三种主题,贴纸不透明度(60%–100%)与界面密度(紧凑 / 标准 / 宽松)可调,改动即时生效。
-- Windows 托盘左键打开设置、右键「设置 / 退出」,**鼠标悬停托盘图标即见待交互 / 运行中会话数**,不开窗也能掌握状态;macOS 为菜单栏图标(左键面板、右键菜单)。开机自启等开关集中在设置页「通用」分区。
+- 深色 / 浅色 / 跟随系统三种主题。
+- 窗口不透明度（60%–100%）与界面密度（紧凑 / 标准 / 宽松）可调。
+- Windows 托盘 / macOS 菜单栏均可快速打开设置或退出。
+- 支持开机自启。
 
-### 📊 账号与用量
+### 账号与用量
 
-- **贴纸内常显用量**:底栏一块凹陷小屏读数,实时显示 5 小时 / 7 天 / Opus 三档配额利用率(发光液柱、单色雕刻数字,越满越偏红),不打开设置也能一眼看配额。
-- 设置页「账号」分区显示当前 Claude Code 账号、实时配额(5 小时 / 7 天总量及 Opus / Sonnet 分模型 7 天用量,重置时间精确到钟点)、以及 GitHub 贡献图风格的每日用量热力图;用量先显示缓存再后台刷新,登录 token 过期自动续期。
+- 底栏常显 5 小时 / 7 天配额利用率。
+- 设置页显示当前 Claude Code 账号、各模型用量与配额重置时间。
+- 用量先显示缓存，再后台刷新；token 过期会自动续期。
 
-### 🔌 零配置、纯本地
+### 接入 Claude Code
 
-- 装好即用,无需手动挂 hooks——首次启动幂等接入,先备份、原子写、不破坏已有配置。
-- 全程只在你本机运行、不联网上传:会话数据落在本地一个小数据库里,**内容不离开你的电脑**。
+启动时，Meowo 会自动把 `meowo-reporter` 接入 Claude Code 的 hooks 和 statusLine，先备份、再原子写入，不会破坏已有配置。前提是 `~/.claude/settings.json` 已存在（运行过一次 Claude Code 就会生成）。
 
-## 为什么叫 Meowo?
+## 为什么叫 Meowo？
 
 名字来自猫叫 **meow**，中文译作「喵呜」。
 
-Meowo 像一只猫蹲在屏幕角落：不吵不闹，却用那双发亮的眼睛盯着所有 AI 会话——哪个在跑、哪个在等你、哪个出了错，都逃不过它。
-
 ## 工作原理
 
-你正常用 Claude Code / Codex / Kimi 就好。它们每产生一个事件(会话开始、你发消息、工具调用、会话结束……)都会通过自带的 **hook 机制**顺手通知 Meowo;Meowo 把这些记进本地一个小数据库,桌面贴纸再实时读库刷新。整个链路只在你本机、不联网,会话内容不离开电脑。
+> 以 Claude Code 为例；Codex / Kimi 走各自 CLI 的 hook 机制，数据最终都落到同一份本地数据库。
+
+```
+ Claude Code 会话
+   │  触发 hooks（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd …）
+   │  渲染 statusline（包装脚本把数据喂给 meowo-reporter statusline）
+   ▼
+ meowo-reporter（命令行，读 stdin 的事件 JSON）
+   │  解析事件、标题、项目、todo、Context 用量
+   ▼
+ ~/.meowo/board.db（SQLite，WAL）
+   ▲
+   │  文件监听 + 去抖刷新
+ meowo-app（Tauri 贴纸，React 前端）
+```
+
+- **meowo-reporter** 是无状态的一次性进程：Claude Code 每次触发 hook 都会启动它，读取事件、写库后立即退出，不会阻塞会话。
+- **meowo-app** 启动时监听 `~/.meowo/` 目录变化，库一变就刷新 UI；同时跑后台任务标记空闲会话、首次导入历史会话。
+- 两端只通过 SQLite 通信，运行时不直接依赖。
+
+## 项目结构
+
+```
+meowo/
+├── crates/
+│   ├── meowo-store/        # SQLite 读写 + transcript 标题解析
+│   └── meowo-reporter/     # AI CLI hooks 上报器 + statusline + 首次导入
+├── app/
+│   ├── src/                # React 前端（贴纸视图、吸边状态机、设置页）
+│   └── src-tauri/          # Tauri 桌面壳（窗口、托盘、吸边、账号用量）
+├── scripts/
+│   └── install-hooks.mjs   # 把 meowo-reporter 接入 Claude Code settings.json
+└── docs/                   # 设计文档与实现计划
+```
+
+**技术栈**：Rust（Tauri v2 + rusqlite）、React 18 + TypeScript + Vite、Bun。
+
+## 环境要求
+
+- [Rust](https://rustup.rs/)（stable）
+- [Bun](https://bun.sh/)
+- Windows 上的 Tauri 前置依赖：**WebView2 Runtime**（Win11 自带）、**MSVC 构建工具**（Visual Studio Build Tools，含 C++ 桌面开发）。详见 [Tauri 前置依赖](https://tauri.app/start/prerequisites/)。
+- macOS 上的前置依赖：**Xcode 命令行工具**（`xcode-select --install`）；如需本地构建 universal 包，另需 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`。
+- 已安装的 AI 编程 CLI（[Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi，用于产生会话事件）。
+
+## 快速开始
+
+```bash
+# 1. 安装前端依赖
+cd app
+bun install
+
+# 2. 开发模式运行（含热更新；首次会编译 Rust，稍慢）
+bun run tauri dev
+```
+
+构建发布版安装包：
+
+```bash
+cd app
+bun run tauri build
+# 产物在仓库根 target/release/bundle/ 下（Windows 为 NSIS 安装包，macOS 为 dmg/app）
+```
+
+## 接入 Claude Code
+
+Meowo 启动时会自动接入。如果你不想启动 app 就先挂 hooks，或要写入自定义 settings 路径，可以手动操作：
+
+<details>
+<summary>手动挂 hooks（可选）</summary>
+
+```bash
+# 1. 编译 meowo-reporter
+cargo build --release -p meowo-reporter
+# 产物：target/release/meowo-reporter.exe
+
+# 2. 把它接入 ~/.claude/settings.json 的 hooks（用绝对路径）
+bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"
+```
+
+脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加，也不会破坏你已有的其它 hooks。若更换了 reporter 路径，旧条目需手动清理，或直接启动 app 由自动接线更新路径。
+
+> 此脚本仅用于 Claude Code（写入 `~/.claude/settings.json`）。codex / kimi 的接入走各自 CLI 的原生 hook 配置（其 hook 命令带 `--provider codex|kimi`），不经本脚本。
+
+也可指定写入别的 settings 文件：`bun scripts/install-hooks.mjs <reporter路径> <settings路径>`，或用环境变量 `MEOWO_SETTINGS`。
+
+</details>
+
+挂好后，新开的 Claude Code 会话就会实时出现在贴纸里。
 
 ## 数据与配置
 
 <details>
 <summary>数据与配置文件位置</summary>
 
-- **数据库**:`~/.meowo/board.db`(SQLite,WAL 模式)。可用环境变量 `MEOWO_DB` 覆盖路径(reporter 与 app 都遵循)。
-- **应用设置**:`~/.meowo/settings.json`(通知开关、主题、不透明度、界面密度、归档自动隐藏天数、恢复终端、打开终端方式、最近 AI 正文显示开关)。
-- **用量缓存**:`~/.meowo/usage-cache.json`(账号用量数据的本地缓存)。
-- **statusLine 包装脚本**:`~/.meowo/statusline.sh`(由 app 自动生成与维护,无需手改)。
-- **首次导入标记**:`~/.meowo/imported.json`(存在即跳过再次导入)。删掉它可让下次启动重新导入近期历史会话。
-- **前端本地状态**(localStorage):当前 tab、吸附边、记忆的正常窗口尺寸、置顶偏好、会话星标。
+- **数据库**：`~/.meowo/board.db`（SQLite，WAL 模式）。可用环境变量 `MEOWO_DB` 覆盖路径。
+- **应用设置**：`~/.meowo/settings.json`（通知开关、主题、不透明度、界面密度、归档自动隐藏天数、恢复终端、打开终端方式、最近 AI 正文显示开关）。
+- **用量缓存**：`~/.meowo/usage-cache.json`。
+- **statusLine 包装脚本**：`~/.meowo/statusline.sh`（由 app 自动生成与维护，无需手改）。
+- **首次导入标记**：`~/.meowo/imported.json`（存在即跳过再次导入）。删掉它可让下次启动重新导入近期历史会话。
+- **前端本地状态**（localStorage）：当前 tab、吸附边、记忆的正常窗口尺寸、置顶偏好、会话星标。
 
 </details>
 
-## 路线
-
-- [x] CI(GitHub Actions:cargo test/clippy + 前端 tsc/vitest,windows-latest + macos-latest)
-- [x] 在线更新(`tauri-plugin-updater` + tag 触发的 GitHub Releases,Windows NSIS / macOS app.tar.gz 双平台)
-- [x] macOS 打包(universal dmg,签名公证 + 自动更新)
-- [ ] Linux 打包
-
-## 从源码构建 / 参与开发
-
-<details>
-<summary>展开:环境要求、构建、项目结构、手动接入、测试</summary>
-
-### 环境要求
-
-- [Rust](https://rustup.rs/)(stable)
-- [Bun](https://bun.sh/)
-- Windows 上的 Tauri 前置依赖:**WebView2 Runtime**(Win11 自带)、**MSVC 构建工具**(Visual Studio Build Tools,含 C++ 桌面开发)。详见 [Tauri 前置依赖](https://tauri.app/start/prerequisites/)。
-- macOS 上的前置依赖:**Xcode 命令行工具**(`xcode-select --install`);如需本地构建 universal 包,另需 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`。
-- 一个装好的 AI 编程 CLI（[Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi，用于产生会话事件）。
-
-### 构建与运行
+## 测试
 
 ```bash
-# 装前端依赖
-cd app
-bun install
-
-# 开发模式运行(含热更新;首次会编译 Rust,稍慢)
-bun run tauri dev
-
-# 构建发布版安装包(产物在仓库根 target/release/bundle/ 下)
-bun run tauri build
-```
-
-### 项目结构
-
-```
-meowo/
-├── crates/
-│   ├── meowo-store/        # SQLite 读写 + transcript 标题解析(被 reporter 和 app 共用)
-│   └── meowo-reporter/     # AI CLI hooks 上报器(lib + bin)+ statusline 子命令 + 首次导入逻辑
-├── app/
-│   ├── src/             # React 前端(Sticker 贴纸视图、吸边状态机、设置页、平台分流)
-│   └── src-tauri/       # Tauri 桌面壳(窗口、托盘、吸边、账号用量、AI CLI 自动接线;macos/ 为状态栏面板/托盘/终端跳转/通知)
-├── scripts/
-│   └── install-hooks.mjs  # 把 meowo-reporter 幂等挂进 Claude Code 的 settings.json
-└── docs/                # 设计文档与实现计划
-```
-
-**技术栈**:Rust(Tauri v2 + rusqlite)、React 18 + TypeScript + Vite、Bun(包管理 + 运行)。
-
-### 数据流
-
-```
- Claude Code 会话
-   │  触发 hooks(SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd …)
-   │  渲染 statusline(包装脚本把数据喂给 meowo-reporter statusline,取得准确的 Context 百分比)
-   ▼
- meowo-reporter(命令行,读 stdin 的事件 JSON)
-   │  解析事件、标题、项目、todo、Context 用量
-   ▼
- ~/.meowo/board.db(SQLite,WAL)
-   ▲
-   │  文件监听 + 去抖刷新(notify)
- meowo-app(Tauri 贴纸,React 前端)
-```
-
-- **meowo-reporter** 是无状态的一次性进程：每次触发 hook 都会启动它，读事件、写库后立即退出，绝不阻塞会话。
-- **meowo-app** 启动时监听 `~/.meowo/` 目录变化，库一变就刷新 UI；同时跑后台任务标记空闲会话、首次导入历史会话。
-- 两端只通过这块 SQLite 通信，互不直接依赖运行时。
-
-### 手动接入 hooks(可选)
-
-安装包用户通常无需此步——app 每次启动会自动幂等地把 meowo-reporter 接入 `~/.claude/settings.json`。若想不启动 app 就先挂、或写入自定义 settings 路径:
-
-```bash
-# 1. 编译 meowo-reporter
-cargo build --release -p meowo-reporter
-# 产物:target/release/meowo-reporter.exe
-
-# 2. 把它幂等写进 ~/.claude/settings.json 的 hooks(用绝对路径)
-bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"
-```
-
-脚本会挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加、也不破坏已有 hooks。此脚本仅用于 Claude Code;codex / kimi 的接入走各自 CLI 的原生 hook 配置(hook 命令带 `--provider codex|kimi`)。也可指定别的 settings 文件:`bun scripts/install-hooks.mjs <reporter路径> <settings路径>`,或用环境变量 `MEOWO_SETTINGS`。
-
-### 测试
-
-```bash
-# Rust(全 workspace)
+# Rust（全 workspace）
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 
@@ -216,11 +219,16 @@ bunx tsc --noEmit
 bunx vitest run
 ```
 
-> 演示动图可一键重新生成:`cd app && bun run demo:webp`(Playwright 以 2× 逐帧截 `demo.html`,再由 sharp 合成高保真动画 WebP,产物写到 `docs/images/demo.webp`)。
+> 演示动图可以重新生成：`cd app && bun run demo:webp`（Playwright 逐帧录制 `demo.html`，再用 sharp 合成动画 WebP，产物写到 `docs/images/demo.webp`）。
+
+## 路线
+
+- [x] CI（GitHub Actions：cargo test/clippy + 前端 tsc/vitest，windows-latest + macos-latest）
+- [x] 在线更新（`tauri-plugin-updater` + tag 触发的 GitHub Releases）
+- [x] macOS 打包（universal dmg，签名公证 + 自动更新）
+- [ ] Linux 打包
 
 设计与实现细节见 [`docs/superpowers/`](docs/superpowers/)。
-
-</details>
 
 ## License
 
