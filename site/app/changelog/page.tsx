@@ -78,9 +78,9 @@ export default function ChangelogPage() {
       <section className="pagehead">
         <div className="container">
           <span className="eyebrow">更新日志</span>
-          <h1 className="h1">一路的变化</h1>
+          <h1 className="h1">改过些什么</h1>
           <p className="lead">
-            版本与日期取自仓库真实发布记录；完整明细见{" "}
+            这里只列了每个版本的大致内容，完整明细在{" "}
             <a
               href={RELEASES}
               target="_blank"

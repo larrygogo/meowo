@@ -18,48 +18,48 @@ type Feature = {
 const FEATURES: Feature[] = [
   {
     icon: <BoardIcon />,
-    title: "实时会话看板",
+    title: "会话卡片",
     body: (
       <>
-        每张卡片显示项目名、会话标题、最近一条 AI 正文和连接状态。Claude Code 会话还会显示{" "}
-        <code className="inline">Context</code> 已用百分比。
+        项目、标题、AI 最近说的那句话、连着还是断了，都在卡片上。Claude Code 的会话多一个{" "}
+        <code className="inline">Context</code> 百分比。
       </>
     ),
   },
   {
     icon: <BellIcon />,
     title: "待交互提醒",
-    body: "会话需要你回复或出错时弹一条系统通知；「待交互」按等待时间排序，先处理等得最久的。",
+    body: "它要你回复，或者报错停住了，就弹一条系统通知。同一件事只弹一次，不会连环骚扰。",
   },
   {
     icon: <TerminalIcon />,
-    title: "点击直达终端",
+    title: "跳回终端",
     body: (
       <>
-        点连接中的会话跳到对应终端标签页；点已断开的会话，在原目录新开终端并执行{" "}
-        <code className="inline">--resume</code> 续聊。
+        连着的会话直接切到那个标签页。断开的，在原目录新开终端{" "}
+        <code className="inline">--resume</code> 接着聊。
       </>
     ),
   },
   {
     icon: <CardsIcon />,
-    title: "卡片管理",
+    title: "星标、便签、改名、归档",
     body: (
       <>
-        给会话加星置顶、写本地便签、直接改名（和 <code className="inline">/rename</code>{" "}
-        同步）、归档收起。操作入口在右键菜单或 ⋮ 按钮里。
+        都在右键菜单或者 ⋮ 里。改名走的是和 <code className="inline">/rename</code>{" "}
+        一样的记录，所以 resume 列表里显示的也是新名字。
       </>
     ),
   },
   {
     icon: <MagnetIcon />,
-    title: "吸边与菜单栏",
-    body: "Windows 拖到屏幕边缘缩成缩略条，悬停展开；macOS 为菜单栏面板，图标实时显示运行中与待交互计数。",
+    title: "吸边和菜单栏",
+    body: "Windows 上拖到屏幕边缘就缩成一根细条，鼠标碰一下才展开。macOS 上它是个菜单栏面板，不占 Dock。",
   },
   {
     icon: <ChartIcon />,
-    title: "账号与用量",
-    body: "底栏常显 5 小时 / 7 天配额利用率；设置页可查看账号、分模型用量与重置时间。",
+    title: "配额还剩多少",
+    body: "底栏常年显示 5 小时和 7 天的用量比例。想看得细一点，设置页里有分模型的用量和重置时间。",
   },
 ];
 

@@ -7,8 +7,8 @@ type Props = {
 };
 
 export default function CtaBand({
-  title = "下载 Meowo",
-  subtitle = "免费开源，Windows 和 macOS 都能用。",
+  title = "装一个试试",
+  subtitle = "Windows 和 macOS 都有安装包。MIT 协议，源码在 GitHub 上。",
 }: Props) {
   return (
     <section className="section-sm">
@@ -32,7 +32,7 @@ export default function CtaBand({
               target="_blank"
               rel="noopener noreferrer"
             >
-              在 GitHub 上 Star
+              去 GitHub 看看
             </a>
           </div>
         </div>

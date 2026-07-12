@@ -21,8 +21,8 @@ export default function DocsPage() {
       <section className="pagehead">
         <div className="container">
           <span className="eyebrow">文档</span>
-          <h1 className="h1">上手 Meowo</h1>
-          <p className="lead">从工作原理到接入配置，几分钟看懂它怎么跑。</p>
+          <h1 className="h1">它是怎么跑起来的</h1>
+          <p className="lead">数据从哪来、怎么接进 Claude Code、文件都放在哪。</p>
         </div>
       </section>
 
@@ -74,7 +74,7 @@ export default function DocsPage() {
 
               <h2 id="connect">接入 Claude Code</h2>
               <p>
-                贴纸要有数据，得把 <code className="inline">meowo-reporter</code>{" "}
+                贴纸里要有东西可看，就得先把 <code className="inline">meowo-reporter</code>{" "}
                 挂到 Claude Code 的 hooks 上。
               </p>
               <div className="callout">
@@ -93,8 +93,7 @@ export default function DocsPage() {
                 </span>
               </div>
               <p>
-                挂好后，新开的 Claude Code 会话就会实时出现在贴纸里。关于 Claude Code
-                本身见{" "}
+                挂好之后，新开的 Claude Code 会话就会自己冒到贴纸里。Claude Code 本身的用法见{" "}
                 <a href={DOCS_CLAUDE_CODE} target="_blank" rel="noopener noreferrer">
                   官方文档
                 </a>
@@ -102,7 +101,7 @@ export default function DocsPage() {
               </p>
 
               <h2 id="manual">手动挂 hooks（可选）</h2>
-              <p>不想启动 app 就先挂，或要写入自定义 settings 路径时，可手动操作：</p>
+              <p>如果你不想先启动 app，或者要写到别的 settings 路径，可以自己来：</p>
               <div className="codeblock">
                 <pre>
                   {`# 1. 编译 meowo-reporter

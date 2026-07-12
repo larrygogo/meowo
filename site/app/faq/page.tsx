@@ -11,48 +11,47 @@ export const metadata: Metadata = {
 const QA: { q: string; a: React.ReactNode }[] = [
   {
     q: "Meowo 支持哪些 AI 编程 CLI？",
-    a: "目前支持 Claude Code、Codex、Kimi。它们各自通过 CLI 的 hook 上报事件，数据都写到本地同一份数据库里，所以能在同一张贴纸上显示。",
+    a: "Claude Code、Codex、Kimi。三者各自通过自己 CLI 的 hook 上报事件，最后都写进同一份本地数据库，所以能摆在同一张贴纸上。",
   },
   {
-    q: "我的会话数据会上传到云端吗？",
+    q: "我的会话内容会被传到云上吗？",
     a: (
       <>
-        不会。所有数据只写入本地 <code className="inline">~/.meowo/board.db</code>（SQLite），
-        reporter 与 app 只通过这块本地库通信，Meowo 不把会话内容传到任何服务器。
+        不会。数据只写进本地的 <code className="inline">~/.meowo/board.db</code>（一个 SQLite
+        文件），reporter 和 app 之间也只靠这个文件通信。没有服务端，会话内容不往任何地方发。
       </>
     ),
   },
   {
-    q: "需要手动配置 hooks 吗？",
+    q: "需要自己配 hooks 吗？",
     a: (
       <>
-        通常不需要。使用安装包时，app 每次启动会自动把 reporter 接入
-        Claude Code 的设置，先备份、再写入、不破坏已有配置。如果想手动配置，详见
+        一般不用。app 每次启动都会检查一遍，把 reporter 接进 Claude Code 的设置——先备份、再原子写入，已有的配置不会被弄坏。想自己动手的话看
         <a href="/docs">文档</a>。
       </>
     ),
   },
   {
-    q: "这和直接看终端有什么区别？",
-    a: "终端需要你主动切过去、记住哪个窗口对应哪个会话。Meowo 把这些信息常驻在桌面一角，状态变了实时更新，等你回复时还会弹通知。",
+    q: "这跟我自己看终端有什么区别？",
+    a: "终端得你主动切过去，还得记住哪个窗口是哪个会话。Meowo 就待在桌面一角，状态一变就更新；它开始等你回复的时候，会主动叫你一声。",
   },
   {
-    q: "点击卡片为什么能直达终端？",
-    a: "连接中的会话会精确切到它所在的终端标签页（Windows 的 Windows Terminal、macOS 的 Terminal / iTerm2）；断开的会话则在原项目目录新开终端并 claude --resume 续上对话。所用终端可在设置里指定。",
+    q: "点卡片是怎么跳回终端的？",
+    a: "还连着的会话，会精确切到它所在的那个标签页——Windows 上是 Windows Terminal，macOS 上是 Terminal 或 iTerm2。已经断开的，就在原项目目录新开一个终端跑 claude --resume。用哪个终端可以在设置里指定。",
   },
   {
     q: "支持 Linux 吗？",
-    a: "目前提供 Windows 与 macOS 安装包，Linux 打包在路线图上、尚未提供。可关注 GitHub Releases 获取后续进展。",
+    a: "还没有。现在只有 Windows 和 macOS 的安装包，Linux 在计划里但没做。可以盯着 GitHub Releases。",
   },
   {
-    q: "会一直占用系统资源吗？",
-    a: "不会。reporter 只在触发 hook 时启动，写完数据库就退出。常驻的只有贴纸窗口本身，它通过监听本地文件变化来刷新，开销很小。",
+    q: "会一直吃资源吗？",
+    a: "reporter 只有 hook 触发时才跑起来，写完库立刻退出。常驻的只有贴纸窗口，它靠监听本地文件变化来刷新，开销很小。",
   },
   {
-    q: "免费吗？可以商用吗？",
+    q: "免费吗？能商用吗？",
     a: (
       <>
-        完全免费、开源，采用 MIT 许可证，可自由使用与修改。源码见{" "}
+        免费，开源，MIT 协议，随便用随便改。源码在{" "}
         <a
           href="https://github.com/larrygogo/meowo"
           target="_blank"
@@ -65,12 +64,12 @@ const QA: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
-    q: "如何卸载？会残留什么？",
+    q: "卸载干净吗？",
     a: (
       <>
-        按系统常规方式卸载应用即可。个人数据都在{" "}
-        <code className="inline">~/.meowo/</code> 目录下，删除该目录即彻底清理；接入 Claude Code
-        的 hooks 可在 <code className="inline">~/.claude/settings.json</code> 中移除对应条目。
+        照系统常规方式卸载就行。数据全在{" "}
+        <code className="inline">~/.meowo/</code> 这个目录里，删掉它就没了。挂在{" "}
+        <code className="inline">~/.claude/settings.json</code> 里的 hooks 条目要手动删一下。
       </>
     ),
   },
@@ -83,7 +82,7 @@ export default function FaqPage() {
         <div className="container">
           <span className="eyebrow">FAQ</span>
           <h1 className="h1">常见问题</h1>
-          <p className="lead">关于隐私、接入、平台与使用的一些常见疑问。</p>
+          <p className="lead">隐私、接入、平台，被问得比较多的几个。</p>
         </div>
       </section>
 
@@ -106,8 +105,8 @@ export default function FaqPage() {
       </section>
 
       <CtaBand
-        title="还有问题？"
-        subtitle="可以在 GitHub 上开 Issue 或 Discussion。"
+        title="没找到答案？"
+        subtitle="去 GitHub 开个 Issue 或者 Discussion 问一声。"
       />
     </main>
   );

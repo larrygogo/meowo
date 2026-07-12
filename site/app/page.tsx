@@ -9,24 +9,24 @@ import { StickerWindow } from "@/components/screenshots";
 
 const PROBLEMS = [
   {
-    title: "终端开了一堆",
-    body: "Claude Code、Codex、Kimi 各跑各的，想看进度得一个个窗口切。",
+    title: "窗口开了一堆",
+    body: "Claude Code 在一个标签页，Codex 在另一个，Kimi 又是新开的窗口。想知道各自跑到哪了，只能挨个点过去看。",
   },
   {
-    title: "AI 卡住你没发现",
-    body: "会话在等你回复、或者工具调用失败，终端被压在后面，半天才注意到。",
+    title: "它停下来问你，你没看见",
+    body: "会话卡在「要应用这 3 处修改吗」，或者工具调用失败退出了。终端压在最底下，可能十几分钟后才发现。",
   },
   {
-    title: "回到现场很麻烦",
-    body: "想继续某个会话，得先找到它所在的终端标签页，再重新聚焦。",
+    title: "回不去现场",
+    body: "想接着改，先得想起来那个会话开在哪。断开的更麻烦，还要自己 cd 回项目目录再 resume。",
   },
 ];
 
 const SCENES = [
   {
-    label: "状态一览",
-    title: "几个终端的会话，一个窗口看完",
-    body: "运行中、待交互、已断开，用颜色和 Context 百分比区分。不用在 Windows Terminal / iTerm2 之间来回切。",
+    label: "看状态",
+    title: "会话都在这一列里",
+    body: "运行中是橙色转圈，等你回复的是黄点，断开的是虚线环。Claude Code 的会话还会显示 Context 用了多少，快到上限一眼看得出来。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -63,9 +63,9 @@ const SCENES = [
     ),
   },
   {
-    label: "提醒",
-    title: "等你回复时，别让它晾着",
-    body: "会话卡住或需要你确认时，会进到「待交互」tab，排最前面。也可以弹系统通知，点一下直接跳到对应终端。",
+    label: "待交互",
+    title: "它停下来的时候，你会知道",
+    body: "需要确认，或者卡在报错上，会话就会进「待交互」这个 tab，等得越久排得越靠前。系统通知默认开着，点一下直接跳到那个终端。",
     shot: (
       <StickerWindow
         activeTab="waiting"
@@ -84,9 +84,9 @@ const SCENES = [
     ),
   },
   {
-    label: "跳转",
-    title: "点卡片，回到会话所在终端",
-    body: "连接中的会话直接跳到对应标签页；已经断开的，会在原项目目录新开终端并执行 claude --resume 恢复对话。",
+    label: "回终端",
+    title: "点一下就回到现场",
+    body: "还连着的会话，直接切到它所在的那个标签页。已经断开的，会在原来的项目目录新开一个终端，跑 claude --resume 接上之前的对话。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -104,9 +104,9 @@ const SCENES = [
     ),
   },
   {
-    label: "管理",
-    title: "星标、便签、改名、归档",
-    body: "右键卡片或点右上角 ⋮ 按钮：给重要会话加星置顶，写一条本地备忘，直接改名，或者把暂时不用的会话收起来。",
+    label: "整理",
+    title: "顺手收拾一下",
+    body: "重要的加个星标就置顶了。名字不好认可以直接改，改完 resume 列表里也是新名字。想记一句「先确认 API key」就挂张便签，只存在本地。暂时不看的收进归档，随时能翻出来。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -141,14 +141,14 @@ export default function Home() {
             免费 · 开源 · Windows 与 macOS
           </span>
           <h1 className="h-display">
-            别再在终端里
+            哪个会话
             <br />
-            找你的 AI 会话了
+            正在等你回复？
           </h1>
           <p className="lead lead-light">
-            Meowo 是一个桌面小窗口，实时显示 Claude Code、Codex、Kimi 的会话状态。
+            Meowo 是个常驻桌面角落的小窗口，把 Claude Code、Codex、Kimi 的会话摆在一起：
             <br className="hide-sm" />
-            不用切终端，也能看到谁在跑、谁在等你。
+            谁在跑、谁卡住了、谁在等你确认。点一下，回到它所在的终端。
           </p>
           <div className="hero-cta">
             <a
@@ -161,7 +161,7 @@ export default function Home() {
               下载最新版
             </a>
             <Link className="btn btn-ghost-light btn-lg" href="/features">
-              看它怎么工作 <ArrowRightIcon />
+              先看看功能 <ArrowRightIcon />
             </Link>
           </div>
           <ProductShowcase className="hero-showcase" />
@@ -172,8 +172,8 @@ export default function Home() {
       <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">这些场景熟悉吗</span>
-            <h2 className="h1">会话多了，难免手忙脚乱</h2>
+            <span className="eyebrow">为什么做这个</span>
+            <h2 className="h1">同时开三个会话之后</h2>
           </div>
           <div className="grid grid-3">
             {PROBLEMS.map((p) => (
@@ -192,8 +192,8 @@ export default function Home() {
       <section className="section">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">能做什么</span>
-            <h2 className="h1">从看状态到回现场</h2>
+            <span className="eyebrow">怎么用</span>
+            <h2 className="h1">一个窗口，四件事</h2>
           </div>
           <div className="scenes">
             {SCENES.map((s, i) => (
@@ -216,8 +216,8 @@ export default function Home() {
       <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">更多功能</span>
-            <h2 className="h1">看板之外还有这些</h2>
+            <span className="eyebrow">其它</span>
+            <h2 className="h1">还有这些</h2>
           </div>
           <FeatureGrid />
           <div style={{ textAlign: "center", marginTop: 40 }}>
