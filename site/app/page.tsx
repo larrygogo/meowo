@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { REPO, RELEASE_LATEST } from "@/lib/site";
-import { ArrowRightIcon, DownloadIcon } from "@/components/icons";
+import { getLatestRelease } from "@/lib/release";
+import { ArrowRightIcon } from "@/components/icons";
+import DownloadButton from "@/components/DownloadButton";
 import FeatureGrid from "@/components/FeatureGrid";
 import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
@@ -9,24 +10,24 @@ import { StickerWindow } from "@/components/screenshots";
 
 const PROBLEMS = [
   {
-    title: "终端开了一堆",
-    body: "Claude Code、Codex、Kimi 各跑各的，想看进度得一个个窗口切。",
+    title: "会话散在多个终端窗口",
+    body: "Claude Code、Codex、Kimi 各跑各的。想知道某个会话到哪一步了，得逐个窗口切过去看。",
   },
   {
-    title: "AI 卡住你没发现",
-    body: "会话在等你回复、或者工具调用失败，终端被压在后面，半天才注意到。",
+    title: "等待确认的会话容易被忽略",
+    body: "会话在等一个确认，或者工具调用失败停住了。终端被别的窗口压着，几分钟后才发现。",
   },
   {
-    title: "回到现场很麻烦",
-    body: "想继续某个会话，得先找到它所在的终端标签页，再重新聚焦。",
+    title: "找不到会话在哪个终端",
+    body: "想接着聊某个会话，得先回忆它开在哪个窗口、哪个标签页。",
   },
 ];
 
 const SCENES = [
   {
-    label: "状态一览",
-    title: "几个终端的会话，一个窗口看完",
-    body: "运行中、待交互、已断开，用颜色和 Context 百分比区分。不用在 Windows Terminal / iTerm2 之间来回切。",
+    label: "看板",
+    title: "所有会话的状态在同一个列表里",
+    body: "每张卡片显示会话标题、项目名、连接状态和最近一条 AI 输出。Claude Code 的会话另外显示 Context 已用百分比。不需要在 Windows Terminal 和 iTerm2 之间切换。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -63,9 +64,9 @@ const SCENES = [
     ),
   },
   {
-    label: "提醒",
-    title: "等你回复时，别让它晾着",
-    body: "会话卡住或需要你确认时，会进到「待交互」tab，排最前面。也可以弹系统通知，点一下直接跳到对应终端。",
+    label: "通知",
+    title: "等待输入的会话排在最前",
+    body: "会话需要确认，或者报错停住时，会进入「待交互」tab，按等待时长排序。可以开启系统通知，点击通知直接切到对应终端。",
     shot: (
       <StickerWindow
         activeTab="waiting"
@@ -84,9 +85,9 @@ const SCENES = [
     ),
   },
   {
-    label: "跳转",
-    title: "点卡片，回到会话所在终端",
-    body: "连接中的会话直接跳到对应标签页；已经断开的，会在原项目目录新开终端并执行 claude --resume 恢复对话。",
+    label: "终端",
+    title: "点击卡片，切到会话所在的终端",
+    body: "连接中的会话会切到它所在的标签页。已经断开的会话，Meowo 在原项目目录新开一个终端，执行 claude --resume 恢复对话。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -104,9 +105,9 @@ const SCENES = [
     ),
   },
   {
-    label: "管理",
-    title: "星标、便签、改名、归档",
-    body: "右键卡片或点右上角 ⋮ 按钮：给重要会话加星置顶，写一条本地备忘，直接改名，或者把暂时不用的会话收起来。",
+    label: "会话管理",
+    title: "对单个会话的操作",
+    body: "右键卡片，或点右上角的 ⋮ 按钮。可以给会话加星置顶，写一条只存在本地的便签，改名，或者把不再关注的会话归档收起。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -130,7 +131,9 @@ const SCENES = [
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const release = await getLatestRelease();
+
   return (
     <main>
       {/* Hero */}
@@ -138,30 +141,28 @@ export default function Home() {
         <div className="container">
           <span className="pill pill-dark">
             <span className="dot" />
-            免费 · 开源 · Windows 与 macOS
+            开源 · MIT · Windows 与 macOS
+            {release ? ` · ${release.tag}` : ""}
           </span>
           <h1 className="h-display">
-            别再在终端里
+            Claude Code、Codex、Kimi
             <br />
-            找你的 AI 会话了
+            的会话状态，常驻桌面
           </h1>
           <p className="lead lead-light">
-            Meowo 是一个桌面小窗口，实时显示 Claude Code、Codex、Kimi 的会话状态。
+            Meowo 是一个桌面小窗。它读取各个 CLI 上报的会话事件，
             <br className="hide-sm" />
-            不用切终端，也能看到谁在跑、谁在等你。
+            显示每个会话正在运行、在等你回复，还是已经断开。
           </p>
           <div className="hero-cta">
-            <a
+            <DownloadButton
+              windows={release?.windows ?? null}
+              macos={release?.macos ?? null}
+              fallbackHref="/download"
               className="btn btn-light btn-lg"
-              href={RELEASE_LATEST}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <DownloadIcon />
-              下载最新版
-            </a>
+            />
             <Link className="btn btn-ghost-light btn-lg" href="/features">
-              看它怎么工作 <ArrowRightIcon />
+              查看功能 <ArrowRightIcon />
             </Link>
           </div>
           <ProductShowcase className="hero-showcase" />
@@ -172,8 +173,8 @@ export default function Home() {
       <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">这些场景熟悉吗</span>
-            <h2 className="h1">会话多了，难免手忙脚乱</h2>
+            <span className="eyebrow">背景</span>
+            <h2 className="h1">它针对的三个问题</h2>
           </div>
           <div className="grid grid-3">
             {PROBLEMS.map((p) => (
@@ -192,8 +193,8 @@ export default function Home() {
       <section className="section">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">能做什么</span>
-            <h2 className="h1">从看状态到回现场</h2>
+            <span className="eyebrow">概览</span>
+            <h2 className="h1">它做什么</h2>
           </div>
           <div className="scenes">
             {SCENES.map((s, i) => (
@@ -216,8 +217,8 @@ export default function Home() {
       <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">更多功能</span>
-            <h2 className="h1">看板之外还有这些</h2>
+            <span className="eyebrow">功能列表</span>
+            <h2 className="h1">其余功能</h2>
           </div>
           <FeatureGrid />
           <div style={{ textAlign: "center", marginTop: 40 }}>

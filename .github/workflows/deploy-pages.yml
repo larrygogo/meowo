@@ -7,6 +7,9 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/deploy-pages.yml"
+  # 发版后重新部署：下载按钮的直链是构建时从 GitHub API 取的，不重新构建就还指向旧版本。
+  release:
+    types: [published]
   workflow_dispatch:
 
 # 允许该 workflow 发布到 Pages
@@ -40,6 +43,8 @@ jobs:
         run: bun run build
         env:
           NEXT_PUBLIC_SITE_URL: https://meowo.io
+          # 构建时要读 releases/latest 拿安装包直链，带 token 避开匿名 API 限额。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/configure-pages@v5
         # 尝试自动为仓库启用 Pages（源=GitHub Actions），省去手动去 Settings 开启。

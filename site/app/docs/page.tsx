@@ -5,7 +5,7 @@ import { InfoIcon } from "@/components/icons";
 export const metadata: Metadata = {
   title: "文档 · Meowo",
   description:
-    "Meowo 使用文档：工作原理、接入 Claude Code、手动挂 hooks、数据与配置文件位置。",
+    "Meowo 文档：工作原理、接入 Claude Code、手动挂 hooks、数据与配置文件的位置。",
 };
 
 const TOC = [
@@ -21,8 +21,8 @@ export default function DocsPage() {
       <section className="pagehead">
         <div className="container">
           <span className="eyebrow">文档</span>
-          <h1 className="h1">上手 Meowo</h1>
-          <p className="lead">从工作原理到接入配置，几分钟看懂它怎么跑。</p>
+          <h1 className="h1">文档</h1>
+          <p className="lead">工作原理、接入方式、数据和配置文件的位置。</p>
         </div>
       </section>
 
@@ -62,19 +62,19 @@ export default function DocsPage() {
               <ul>
                 <li>
                   <strong>meowo-reporter</strong>{" "}
-                  是无状态的一次性进程：每次触发 hook 都会启动它，读取事件、写库后立即退出，不会阻塞会话。
+                  是一次性进程，不保存状态。每次触发 hook 时启动，读取事件、写库，然后退出，不会阻塞会话。
                 </li>
                 <li>
-                  <strong>meowo-app</strong>{" "}
-                  启动时监听 <code className="inline">~/.meowo/</code>{" "}
-                  目录变化，库一变就刷新 UI；同时跑后台任务标记空闲会话、首次导入历史会话。
+                  <strong>meowo-app</strong> 启动时监听{" "}
+                  <code className="inline">~/.meowo/</code>{" "}
+                  目录的变化，库一变就刷新界面。它还跑两个后台任务：标记空闲会话，以及首次启动时导入历史会话。
                 </li>
-                <li>两端只通过这块 SQLite 通信，运行时不直接依赖。</li>
+                <li>两端只通过这个 SQLite 文件通信，运行时不互相依赖。</li>
               </ul>
 
               <h2 id="connect">接入 Claude Code</h2>
               <p>
-                贴纸要有数据，得把 <code className="inline">meowo-reporter</code>{" "}
+                窗口里要有数据，得把 <code className="inline">meowo-reporter</code>{" "}
                 挂到 Claude Code 的 hooks 上。
               </p>
               <div className="callout">
@@ -82,19 +82,18 @@ export default function DocsPage() {
                   <InfoIcon />
                 </span>
                 <span>
-                  <strong>使用安装包时通常无需手动操作。</strong> meowo-app
-                  每次启动会自动把 reporter 接入{" "}
-                  <code className="inline">~/.claude/settings.json</code>——补齐所需
+                  <strong>用安装包时一般不需要手动操作。</strong> meowo-app
+                  每次启动会把 reporter 写进{" "}
+                  <code className="inline">~/.claude/settings.json</code>：补齐所需的
                   hook 事件，并把 statusLine 包装成{" "}
-                  <code className="inline">~/.meowo/statusline.sh</code>{" "}
-                  以获取准确的 Context 百分比。全程先备份、原子写、已正确则不改。前提是{" "}
+                  <code className="inline">~/.meowo/statusline.sh</code>，以便拿到准确的
+                  Context 百分比。写之前先备份，写入是原子的；如果配置已经正确就不动它。前提是{" "}
                   <code className="inline">~/.claude/settings.json</code>{" "}
-                  已存在（运行过一次 Claude Code 即会生成）。
+                  已经存在（运行过一次 Claude Code 就会生成）。
                 </span>
               </div>
               <p>
-                挂好后，新开的 Claude Code 会话就会实时出现在贴纸里。关于 Claude Code
-                本身见{" "}
+                挂好之后，新开的 Claude Code 会话就会出现在窗口里。Claude Code 本身见{" "}
                 <a href={DOCS_CLAUDE_CODE} target="_blank" rel="noopener noreferrer">
                   官方文档
                 </a>
@@ -102,7 +101,7 @@ export default function DocsPage() {
               </p>
 
               <h2 id="manual">手动挂 hooks（可选）</h2>
-              <p>不想启动 app 就先挂，或要写入自定义 settings 路径时，可手动操作：</p>
+              <p>不想先启动 app，或者要写入自定义的 settings 路径时，可以手动挂：</p>
               <div className="codeblock">
                 <pre>
                   {`# 1. 编译 meowo-reporter
@@ -114,17 +113,17 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporte
                 </pre>
               </div>
               <p>
-                脚本会把 reporter 挂到所需 hook 事件（SessionStart / UserPromptSubmit /
+                脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit /
                 PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse
-                的 AskUserQuestion / ExitPlanMode，均带 5s 超时）。用同一路径重复运行不会重复追加，也不会破坏已有 hooks。
+                的 AskUserQuestion / ExitPlanMode，都带 5s 超时）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。
               </p>
               <div className="callout">
                 <span className="ci">
                   <InfoIcon />
                 </span>
                 <span>
-                  此脚本仅用于 Claude Code。codex / kimi 的接入走各自 CLI 的原生 hook
-                  配置（其 hook 命令带 <code className="inline">--provider codex|kimi</code>），不经此脚本。
+                  这个脚本只管 Claude Code。codex 和 kimi 的接入走各自 CLI 的原生 hook
+                  配置（hook 命令带 <code className="inline">--provider codex|kimi</code>），不经过它。
                 </span>
               </div>
 
@@ -135,16 +134,16 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporte
                   <code className="inline">MEOWO_DB</code> 覆盖路径。
                 </li>
                 <li>
-                  <strong>应用设置</strong>：<code className="inline">~/.meowo/settings.json</code>（通知开关、主题、不透明度、界面密度、归档自动隐藏天数、恢复终端等）。
+                  <strong>应用设置</strong>：<code className="inline">~/.meowo/settings.json</code>。通知开关、主题、不透明度、界面密度、归档自动隐藏天数、用哪个终端恢复会话，都在这里。
                 </li>
                 <li>
                   <strong>用量缓存</strong>：<code className="inline">~/.meowo/usage-cache.json</code>。
                 </li>
                 <li>
-                  <strong>statusLine 包装脚本</strong>：<code className="inline">~/.meowo/statusline.sh</code>（app 自动生成维护，无需手改）。
+                  <strong>statusLine 包装脚本</strong>：<code className="inline">~/.meowo/statusline.sh</code>。由 app 生成和维护，不用手改。
                 </li>
                 <li>
-                  <strong>首次导入标记</strong>：<code className="inline">~/.meowo/imported.json</code>。删掉它可让下次启动重新导入近期历史会话。
+                  <strong>首次导入标记</strong>：<code className="inline">~/.meowo/imported.json</code>。删掉它，下次启动会重新导入最近的历史会话。
                 </li>
               </ul>
             </article>

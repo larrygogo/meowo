@@ -8,7 +8,7 @@ import { StickerWindow, CollapsedStrip } from "@/components/screenshots";
 export const metadata: Metadata = {
   title: "功能 · Meowo",
   description:
-    "Meowo 能做什么：实时会话看板、待交互提醒、点击跳转终端、卡片管理、Windows 吸边缩略、macOS 菜单栏面板、账号用量。",
+    "Meowo 的功能：会话看板、待交互与通知、终端跳转、会话管理、Windows 吸边缩略、macOS 菜单栏面板、用量读数。",
 };
 
 function Check({ children }: { children: React.ReactNode }) {
@@ -28,9 +28,9 @@ export default function FeaturesPage() {
       <section className="pagehead">
         <div className="container">
           <span className="eyebrow">功能</span>
-          <h1 className="h1">功能一览</h1>
+          <h1 className="h1">功能</h1>
           <p className="lead">
-            用一张小贴纸，把 Claude Code、Codex、Kimi 的会话状态集中起来。
+            Meowo 收集 Claude Code、Codex、Kimi 的会话事件，在一个桌面小窗里显示它们的状态。
           </p>
         </div>
       </section>
@@ -78,14 +78,14 @@ export default function FeaturesPage() {
             ]}
           />
         </div>
-        <p className="showcase-cap">真实界面：会话卡片、状态分类 tab、底栏用量读数</p>
+        <p className="showcase-cap">会话卡片、状态分类 tab、底栏用量读数</p>
       </section>
 
       <section className="section">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">全部特性</span>
-            <h2 className="h1">六个小功能</h2>
+            <span className="eyebrow">概览</span>
+            <h2 className="h1">功能列表</h2>
           </div>
           <FeatureGrid />
         </div>
@@ -96,24 +96,16 @@ export default function FeaturesPage() {
         <div className="container">
           <div className="split">
             <div className="split-text">
-              <span className="eyebrow">实时看板 & 提醒</span>
-              <h2 className="h2">等你回复的，排最前面</h2>
+              <span className="eyebrow">看板与通知</span>
+              <h2 className="h2">等待输入的会话排在最前</h2>
               <p className="lead" style={{ fontSize: 17, marginTop: 14 }}>
-                按状态分 tab，「待交互」里的会话按等待时间排序。需要回复或出错时，会弹一条系统通知。
+                会话按状态分成几个 tab。「待交互」里的会话按等待时长排序，等得最久的在最上面。需要回复或出错时，可以弹一条系统通知。
               </p>
               <ul className="checklist">
-                <Check>
-                  <b>状态分类 tab</b>：全部 / 待交互 / 运行中 / 已归档，各带计数
-                </Check>
-                <Check>
-                  <b>等待最久优先</b>：「待交互」内按被晾时长排序
-                </Check>
-                <Check>
-                  <b>去重系统通知</b>：需要回复或出错时弹一次，点击直接切到该会话
-                </Check>
-                <Check>
-                  <b>最近一条 AI 正文</b>：不展开也知道它刚说了什么
-                </Check>
+                <Check>四个 tab：全部 / 待交互 / 运行中 / 已归档，各自带数量</Check>
+                <Check>「待交互」内部按等待时长排序，等得最久的排最前</Check>
+                <Check>系统通知会去重，同一件事只弹一次；点击后切到该会话</Check>
+                <Check>卡片上直接显示最近一条 AI 输出，不用展开</Check>
               </ul>
             </div>
             <div className="split-media" style={{ padding: 22 }}>
@@ -161,23 +153,22 @@ export default function FeaturesPage() {
               />
             </div>
             <div className="split-text">
-              <span className="eyebrow">直达终端 & 会话管理</span>
-              <h2 className="h2">点卡片，回到终端</h2>
+              <span className="eyebrow">终端跳转与会话管理</span>
+              <h2 className="h2">点击卡片，切到终端</h2>
               <p className="lead" style={{ fontSize: 17, marginTop: 14 }}>
-                连接中的会话直接跳到对应标签页；断开的在原目录新开终端恢复对话。右键或点 ⋮ 按钮管理星标、便签、改名、归档。
+                连接中的会话切到它所在的标签页；已断开的会话，在原项目目录新开终端恢复对话。星标、便签、改名、归档在右键菜单或 ⋮ 按钮里。
               </p>
               <ul className="checklist">
                 <Check>
-                  <b>精确聚焦</b>：Windows 切到 Windows Terminal 对应标签，macOS 聚焦 iTerm2 / Terminal
+                  Windows 上切到 Windows Terminal 的对应标签页，macOS 上聚焦 Terminal 或 iTerm2
                 </Check>
                 <Check>
-                  <b>断线续聊</b>：在原项目目录新开终端并 <code className="inline">claude --resume</code>
+                  会话已断开时，在原项目目录新开终端并执行{" "}
+                  <code className="inline">claude --resume</code>
                 </Check>
+                <Check>加星、写便签、改名、归档：右键卡片，或点卡片右上角的 ⋮</Check>
                 <Check>
-                  <b>星标 / 便签 / 改名 / 归档</b>：右键卡片或点 ⋮ 按钮
-                </Check>
-                <Check>
-                  <b>改名同步</b>：与 <code className="inline">/rename</code> 一致，resume 列表同步显示新名字
+                  改名与 <code className="inline">/rename</code> 等效，resume 列表里显示的也是新名字
                 </Check>
               </ul>
             </div>
@@ -190,24 +181,16 @@ export default function FeaturesPage() {
         <div className="container">
           <div className="split">
             <div className="split-text">
-              <span className="eyebrow">不挡工作流</span>
-              <h2 className="h2">吸边、置顶、搜索、用量</h2>
+              <span className="eyebrow">窗口行为</span>
+              <h2 className="h2">吸边、置顶与搜索</h2>
               <p className="lead" style={{ fontSize: 17, marginTop: 14 }}>
-                Windows 上拖到屏幕边缘，贴纸会缩成一根细条，鼠标悬停时展开。可以 pin 置顶，也能按标题或仓库名搜索会话。底栏显示 5 小时 / 7 天配额利用率。
+                Windows 上把窗口拖到屏幕边缘，它会缩成一根细条，鼠标悬停时展开。窗口可以置顶。底栏有搜索框和配额读数。
               </p>
               <ul className="checklist">
-                <Check>
-                  <b>吸边缩略</b>：拖到左 / 右 / 顶边，松手缩成状态条
-                </Check>
-                <Check>
-                  <b>窗口置顶</b>：pin 后贴纸始终浮在最上层
-                </Check>
-                <Check>
-                  <b>会话搜索</b>：底栏放大镜，按标题 / 仓库名即时过滤
-                </Check>
-                <Check>
-                  <b>用量读数</b>：5 小时 / 7 天配额，越满越偏红
-                </Check>
+                <Check>拖到屏幕左边、右边或顶边松手，窗口缩成一根状态条</Check>
+                <Check>点 pin 之后，窗口保持在最上层</Check>
+                <Check>底栏的放大镜按标题或仓库名过滤会话</Check>
+                <Check>底栏显示 5 小时 / 7 天配额的使用比例，越接近上限颜色越偏红</Check>
               </ul>
             </div>
             <div className="split-media" style={{ padding: "40px 0 40px 40px", display: "flex", justifyContent: "center", alignItems: "center", position: "relative", minHeight: 320 }}>
@@ -254,17 +237,17 @@ export default function FeaturesPage() {
       <section className="section">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">平台差异</span>
-            <h2 className="h1">Windows 和 macOS 各有形态</h2>
+            <span className="eyebrow">平台</span>
+            <h2 className="h1">Windows 和 macOS 的形态不同</h2>
           </div>
           <div className="grid grid-2">
             <Reveal>
               <div className="fcard">
                 <h3 style={{ fontSize: 19 }}>Windows · 桌面贴纸</h3>
                 <ul className="checklist" style={{ marginTop: 16 }}>
-                  <Check>吸边缩略：拖到左 / 右 / 顶边即缩成一根条，悬停展开</Check>
-                  <Check>可 pin 置顶，重启沿用上次的窗口位置与吸附边</Check>
-                  <Check>托盘悬停即见待交互 / 运行中会话数</Check>
+                  <Check>拖到屏幕左 / 右 / 顶边会缩成一根条，鼠标悬停展开</Check>
+                  <Check>可以置顶；重启后沿用上次的窗口位置和吸附边</Check>
+                  <Check>鼠标停在托盘图标上，能看到待交互和运行中的会话数</Check>
                 </ul>
               </div>
             </Reveal>
@@ -272,9 +255,9 @@ export default function FeaturesPage() {
               <div className="fcard">
                 <h3 style={{ fontSize: 19 }}>macOS · 菜单栏面板</h3>
                 <ul className="checklist" style={{ marginTop: 16 }}>
-                  <Check>左键弹出原生毛玻璃面板，失焦自动收起，不占 Dock</Check>
-                  <Check>菜单栏图标实时显示运行中与待交互计数</Check>
-                  <Check>universal 包，已签名公证，双击直接打开</Check>
+                  <Check>左键点图标弹出原生面板，失焦自动收起，不占 Dock</Check>
+                  <Check>菜单栏图标上显示运行中和待交互的会话数</Check>
+                  <Check>universal 包，已签名公证，双击打开</Check>
                 </ul>
               </div>
             </Reveal>

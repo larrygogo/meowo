@@ -15,7 +15,7 @@ export default function Footer() {
               </span>
             </Link>
             <p>
-              一个小窗口，帮你盯着 Claude Code、Codex、Kimi 的会话状态。
+              桌面小窗，显示 Claude Code、Codex、Kimi 的会话状态。
             </p>
           </div>
 
