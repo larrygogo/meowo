@@ -202,8 +202,11 @@ impl AgentPlugin for Kimi {
             unix_shell: "bash",
         })
     }
-    /// kimi 不写标签标题、也不抢 → 由 meowo-reporter 在 hook 时补 session_id token，
-    /// meowo-app 据此精确切到该标签（已验证）。
+    /// Kimi Code 0.23 会把当前任务标题写进终端标签。仍保留 reporter token：较早版本不写标题，
+    /// 新版也可能在 hook 后才覆盖 token；app 会始终优先匹配 token，再匹配任务标题。
+    fn sets_terminal_tab_title(&self) -> bool {
+        true
+    }
     fn writes_tab_token(&self) -> bool {
         true
     }
@@ -244,6 +247,13 @@ mod tests {
                 ev.name
             );
         }
+    }
+
+    #[test]
+    fn terminal_title_capabilities_cover_old_and_new_kimi() {
+        let plugin = Kimi;
+        assert!(plugin.sets_terminal_tab_title());
+        assert!(plugin.writes_tab_token());
     }
 
     #[test]

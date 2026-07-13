@@ -235,7 +235,7 @@ pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>)
 
     // 收集所有命中标签页：(匹配分, 窗口 HWND, 窗口 pid, 标签元素)。【不短路】——同一标题在多个窗口/标签
     // 出现时，按 console_group_pids(root_pid) 消歧到本会话所属窗口，否则会聚焦到错的同名标签。
-    // want 来源因 agent 而异：claude=任务标题、kimi=cwd 末段目录名(配 token 精确)、codex=cwd 末段目录名
+    // want 来源因 agent 而异：claude/kimi=任务标题（kimi 另配 token 精确）、codex=cwd 末段目录名
     // (匹配 codex 自己写的 project-name 标签标题)。单个会话即精确命中；多个同名标签退窗口级。
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
@@ -333,7 +333,7 @@ pub(crate) fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
 }
 
 /// 聚焦某会话的终端。`title_based`=该 agent 是否把任务标题写进 WT 标签（claude 写→按任务标题精确切标签；
-/// codex/kimi 不写→改用 cwd 末段目录名匹配它们的目录名/project-name 标签）。无论哪种，最终都能按进程组
+/// codex 不写→改用 cwd 末段目录名匹配它的 project-name 标签）。无论哪种，最终都能按进程组
 /// 找到宿主窗口置前。
 /// 必须在后台线程调用（保证干净 COM apartment + 不阻塞调用方）。返回实际定位结果；
 /// focus_session 会把结果交给贴纸提示，「点击通知」回调则忽略结果。仅 Windows。
@@ -345,8 +345,8 @@ pub(crate) fn focus_session_terminal(
     token: Option<String>,
     title_based: bool,
 ) -> FocusSessionResult {
-    // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：meowo-reporter 写进其标签) > 任务标题(claude)
-    // > cwd 末段目录名(codex 匹配其 project-name 标题 / kimi 无 token 时) > 窗口级兜底。
+    // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：meowo-reporter 写进其标签)
+    // > 任务标题(claude/kimi)；codex 使用 cwd 末段目录名；最后才做窗口级兜底。
     // token 全局唯一，能区分同窗口同目录的同名标签——这是 kimi 精确聚焦的关键；codex 暂无此手段(见 agent.rs)。
     let want = if title_based {
         title
@@ -377,7 +377,7 @@ pub(crate) fn focus_session_terminal(
     FocusSessionResult::UnsupportedTerminal
 }
 
-/// 从 cwd 取末段目录名，作为「不写标签标题」的 agent(codex/kimi) 的 WT 标签匹配线索——这类会话的
+/// 从 cwd 取末段目录名，作为「不写标签标题」的 agent(codex) 的 WT 标签匹配线索——这类会话的
 /// 标签默认显示当前目录名。空/根目录返回 None（退回窗口级定位）。
 #[cfg(target_os = "windows")]
 pub(crate) fn cwd_tab_hint(cwd: Option<&str>) -> Option<String> {

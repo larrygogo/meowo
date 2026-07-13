@@ -49,7 +49,8 @@ pub trait AgentPlugin: Sync {
     }
 
     /// meowo-reporter 是否应在 hook 时往本标签 ConPTY 写 session_id token，让 meowo-app 能按 token
-    /// 精确切到该标签（解决同窗口同目录两会话标签同名分不清）。仅对「不写标题也不抢标题」的 agent 有意义。
+    /// 精确切到该标签（解决同窗口同目录两会话标签同名分不清）。agent 后续可能覆盖 token，
+    /// 因此声明此能力不排斥同时声明 `sets_terminal_tab_title`，app 会以 token 为最高优先级。
     fn writes_tab_token(&self) -> bool {
         false
     }
