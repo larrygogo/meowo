@@ -160,12 +160,13 @@ impl AgentPlugin for Codex {
             unix_shell: "sh", // 官方命令写的就是 `| sh`
         })
     }
-    // sets_terminal_tab_title / writes_tab_token 均取默认 false：
-    // codex 不写「任务标题」式标签名（meowo-app 无法按任务名匹配），且它持续用 SetWindowTitle 管理
-    // 标签标题(spinner+project，如 "⠹ larry")，会盖掉我们写的任何 token，无 session_id 组件、无禁用
-    // 开关可绕过(实测 0.142.3=当前最新发布版)。其源码里「tui.terminal_title=[] 关闭标题管理」只在未
-    // 发布主干，已发布版 [] 反而 clear 成终端默认(路径)。故 codex 的精确切标签暂不可达，meowo-app 走
-    // 窗口级兜底。待 codex 发布 [] 禁用后，覆写 writes_tab_token 返回 true 即与 kimi 同。
+    // Codex 在首条 prompt 前尚未写 spinner/project 标题，此时 cwd 匹配没有信号；SessionStart hook
+    // 先写 session token，便可精确定位空白新会话。首条 prompt 后 Codex 会覆盖 token 为自己的标题，
+    // app 随即回退到 cwd 匹配，因此消息前后都可定位。它不写「任务标题」式标签，故
+    // sets_terminal_tab_title 仍取默认 false。
+    fn writes_tab_token(&self) -> bool {
+        true
+    }
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         Some(&telemetry::TELEMETRY)
     }
@@ -180,6 +181,12 @@ impl AgentPlugin for Codex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_session_token_before_first_prompt() {
+        assert!(Codex.writes_tab_token());
+        assert!(!Codex.sets_terminal_tab_title());
+    }
 
     #[test]
     fn config_and_credentials_sit_under_data_dir() {

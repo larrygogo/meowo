@@ -495,8 +495,8 @@ pub(crate) async fn focus_session(
         // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
         let title_based =
             meowo_agent::resolve(provider.as_deref()).is_some_and(|a| a.sets_terminal_tab_title());
-        // 只有声明 writes_tab_token 的 agent（当前为 kimi）才拿 session token 匹配。
-        // 给 codex/claude 盲传 sid8 可能偶然命中别的标签文本，并以最高分跳错会话。
+        // 只有声明 writes_tab_token 的 agent 才拿 session token 匹配；盲传 sid8 可能偶然命中
+        // 别的标签文本，并以最高分跳错会话。Codex 首条消息后会覆盖 token，此时自然回退 cwd 匹配。
         let token = meowo_agent::resolve(provider.as_deref())
             .filter(|a| a.writes_tab_token())
             .and(session_id.as_deref())

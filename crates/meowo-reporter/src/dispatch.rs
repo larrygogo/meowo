@@ -150,7 +150,7 @@ fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &
     Ok(())
 }
 
-/// 仅当该 provider 需由 meowo-reporter 补 token 时(kimi)，把 `<cwd 末段目录名> ·<sid8>` 写进本标签的 WT
+/// 仅当该 provider 需由 meowo-reporter 补 token 时，把 `<cwd 末段目录名> ·<sid8>` 写进本标签的 WT
 /// 标题——sid8=session_id 末 8 位、全局唯一，meowo-app 据此精确切到该标签（解决同窗口同目录两会话标签
 /// 同名分不清）。meowo-reporter 是 hook 子进程、继承本会话的 ConPTY，写 CONOUT$ 只影响自己这个标签。
 /// 非 Windows / 非 WT(CONOUT$ 打不开) 静默 no-op。
