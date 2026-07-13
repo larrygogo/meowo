@@ -175,8 +175,13 @@ fn collect_rollouts(dir: &std::path::Path, depth: usize, out: &mut Vec<(u64, std
     }
 }
 
-/// 按 mtime 取最新的 rollout-*.jsonl（sessions + archived_sessions 合并排序）。
-fn find_latest_rollout(codex_home: &std::path::Path) -> Option<std::path::PathBuf> {
+/// 所有 rollout-*.jsonl，按 mtime 从新到旧（sessions + archived_sessions 合并排序）。
+///
+/// 返回**列表**而非单个最新文件：最新的那份会话可能还没写过 token_count（刚开一个新会话、
+/// 还没发过消息就是这样），只看它就会误报「找不到用量」，让面板上的配额时有时无。
+/// 调用方据此顺次回退到次新的会话——rate_limits 是账号级的滚动窗口快照，从稍早一点的会话
+/// 里读出来一样有效。
+fn rollouts_newest_first(codex_home: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut candidates: Vec<(u64, std::path::PathBuf)> = Vec::new();
     for sub in ["sessions", "archived_sessions"] {
         let dir = codex_home.join(sub);
@@ -184,7 +189,14 @@ fn find_latest_rollout(codex_home: &std::path::Path) -> Option<std::path::PathBu
             collect_rollouts(&dir, 5, &mut candidates);
         }
     }
-    candidates.into_iter().max_by_key(|(mtime, _)| *mtime).map(|(_, p)| p)
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.0));
+    candidates.into_iter().map(|(_, p)| p).collect()
+}
+
+/// 从最新的 rollout 起顺次回退，取第一条能读出的 token_count payload。
+/// 扫描上限 20 份：再往前的会话其 rate_limits 快照已经太旧，读出来只会误导。
+fn latest_token_count(codex_home: &std::path::Path) -> Option<Value> {
+    rollouts_newest_first(codex_home).iter().take(20).find_map(|p| tail_scan_token_count(p))
 }
 
 /// 倒序扫描 JSONL 文件，找最后一条 `payload.type=="token_count"` 行，返回其 payload。
@@ -235,8 +247,7 @@ impl AccountCap for CodexAccount {
         let home = crate::registry::installation(crate::id::CODEX)
             .map(|i| i.data_dir)
             .ok_or("解析不到 codex 数据目录")?;
-        let rollout = find_latest_rollout(&home).ok_or("找不到 rollout 文件")?;
-        let payload = tail_scan_token_count(&rollout).ok_or("rollout 里没有 token_count 记录")?;
+        let payload = latest_token_count(&home).ok_or("rollout 里没有 token_count 记录")?;
         Ok(parse_codex_usage(&payload))
     }
 
@@ -526,6 +537,47 @@ mod tests {
         let pu = parse_codex_usage(&payload);
         assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
         assert_eq!(pu.lanes[1].kind, UsageKind::Weekly);
+    }
+
+    /// 最新的会话还没写过 token_count（刚开新会话、还没发消息）时，必须回退到次新的会话，
+    /// 而不是报「找不到用量」——那会让面板上的配额时有时无。
+    #[test]
+    fn latest_token_count_falls_back_past_rollouts_without_usage() {
+        let home = std::env::temp_dir().join(format!("meowo-codex-rollout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home); // 上次跑剩下的文件会污染 mtime 排序
+        let day = home.join("sessions").join("2026").join("07").join("13");
+        std::fs::create_dir_all(&day).unwrap();
+
+        // 较旧：有 token_count。
+        let older = day.join("rollout-2026-07-13T10-00-00-aaa.jsonl");
+        std::fs::write(
+            &older,
+            "{\"payload\":{\"type\":\"turn\"}}\n\
+             {\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":42.0,\"window_minutes\":300}}}}\n",
+        )
+        .unwrap();
+        // 最新：只有别的事件，没有 token_count（刚开的新会话）。
+        let newest = day.join("rollout-2026-07-13T11-00-00-bbb.jsonl");
+        std::fs::write(&newest, "{\"payload\":{\"type\":\"turn\"}}\n").unwrap();
+
+        // 两个 mtime 都显式钉死：文件系统的时间戳粒度可能粗到让两次连写落在同一秒，
+        // 那样排序就不确定、测试会闪烁。
+        set_mtime(&older, 1_700_000_000);
+        set_mtime(&newest, 1_700_000_060);
+
+        assert_eq!(rollouts_newest_first(&home).first(), Some(&newest), "最新的应排在最前");
+        let payload = latest_token_count(&home).expect("应回退到次新的会话读出用量");
+        let pu = parse_codex_usage(&payload);
+        assert_eq!(pu.lanes[0].used_pct, Some(42.0));
+        assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    fn set_mtime(path: &std::path::Path, unix_secs: u64) {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix_secs);
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.set_modified(t).unwrap();
     }
 
     #[test]

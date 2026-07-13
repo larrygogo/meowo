@@ -84,6 +84,20 @@ fn unwrap_chain(cmd: &str, read: &dyn Fn(&std::path::Path) -> Option<String>) ->
     }
 }
 
+/// 删除一个 statusline 包装脚本——**仅当**它确实是我方（含前代品牌）生成的产物，即正文带
+/// [`WRAPPER_MARK`]。同名的用户自有脚本一概不碰。返回是否真的删了。
+///
+/// 用于清除前代品牌遗留的那半个环（`~/.cc-kanban/statusline.sh`）。**调用方必须在接线之后
+/// 再调**：接线要读它才能认出它是包装、并从中剥出用户真正的 statusLine 命令——先删就等于
+/// 把用户的原命令一起丢了，还会让 [`unwrap_chain`] 把一个已不存在的脚本当成「用户命令」
+/// 重新包进新脚本里。
+pub fn remove_generated_wrapper(path: &std::path::Path) -> bool {
+    match std::fs::read_to_string(path) {
+        Ok(t) if t.contains(WRAPPER_MARK) => std::fs::remove_file(path).is_ok(),
+        _ => false,
+    }
+}
+
 /// 该命令是否指向我方生成的包装脚本。
 fn is_wrapper_cmd(cmd: &str, read: &dyn Fn(&std::path::Path) -> Option<String>) -> bool {
     wrapper_target(cmd)
@@ -339,6 +353,34 @@ mod tests {
     fn inner_of_extracts_downstream_only() {
         assert_eq!(inner_of(&build_script("C:/x/meowo-reporter.exe", "bash -c 'hud'")), "bash -c 'hud'");
         assert_eq!(inner_of(&build_script("C:/x/meowo-reporter.exe", "")), "", "自渲染版没有 inner");
+    }
+
+    /// 清除前代残留：只删我方（含前代品牌）生成的包装脚本，同名的用户自有脚本一概不碰。
+    #[test]
+    fn remove_generated_wrapper_only_deletes_our_own() {
+        let dir = std::env::temp_dir().join(format!("meowo-sweep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 前代品牌的产物（带生成标记）→ 删。
+        let legacy = dir.join("legacy-statusline.sh");
+        std::fs::write(
+            &legacy,
+            "#!/usr/bin/env bash\n# 本文件由 cc-kanban 自动生成：写入会话上下文用量 + 渲染状态栏。请勿手改。\n",
+        )
+        .unwrap();
+        assert!(remove_generated_wrapper(&legacy));
+        assert!(!legacy.exists());
+
+        // 用户自己写的同名脚本（无生成标记）→ 不碰。
+        let user = dir.join("user-statusline.sh");
+        std::fs::write(&user, "#!/usr/bin/env bash\necho hi\n").unwrap();
+        assert!(!remove_generated_wrapper(&user));
+        assert!(user.exists(), "用户自有脚本绝不能删");
+
+        // 不存在的文件 → 安静地什么都不做。
+        assert!(!remove_generated_wrapper(&dir.join("nope.sh")));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 路径含空格（Windows 家目录常见）时仍要认得出包装脚本——按空白切会把路径切断，

@@ -46,6 +46,7 @@ pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, 
 pub use id::AgentId;
 pub use install::{is_runnable_script, looks_like_challenge, looks_like_html, InstallCap, InstallPlan, InstallScript};
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
+pub use plugins::claude::setup::remove_generated_wrapper;
 pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
 pub use transcript::{
     default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
@@ -54,6 +55,22 @@ pub use variant::{DataDirSpec, Installation, Variant};
 pub use wiring::{backup_once, wire_hooks, WiringCap, WiringContext};
 
 use std::path::{Path, PathBuf};
+
+/// 测试专用：环境变量互斥锁。
+///
+/// 进程级环境变量（`USERPROFILE`/`HOME`）是**全局**的，而 Rust 测试默认并发跑。改 env 的测试
+/// （如 transcript 的全局搜索用例，会把 `USERPROFILE` 临时指向空的临时目录）与依赖真实 env
+/// 解析安装路径的测试（如 registry 的 launch/resume argv 用例）必须互斥——否则前者开的那个窗口
+/// 里，后者解析不到 `~/.local/bin/claude.exe`、落到 PATH 兜底的裸名 `claude`，测试随机变红。
+///
+/// 锁被毒化（持锁的测试 panic 了）时取回内部值继续：一个测试失败不该把其余测试全带崩。
+#[cfg(test)]
+pub(crate) fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// 用户 home（Windows `USERPROFILE` 优先，回退 `HOME`）。所有目录解析的根。
 pub fn home_dir() -> Option<PathBuf> {
