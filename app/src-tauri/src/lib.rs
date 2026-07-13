@@ -26,12 +26,8 @@ use install::{
 };
 use terminal::{focus_session, new_session, open_project_dir, resume_session};
 use window::{open_new_session_window, open_settings, open_update_window, recall_center};
-// 保留在 lib 的代码/装配所依赖的模块内 helper。live_sessions_blocking 的连接判定按平台分流：
-// Windows 走 sysinfo 进程表(pid_is_agent)，macOS/Unix 走一次 ps 批量快照(claude_pids_snapshot)。
-#[cfg(target_os = "windows")]
-use proc::pid_is_agent;
-#[cfg(not(target_os = "windows"))]
-use proc::claude_pids_snapshot;
+// 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流，见该函数），
+// 由 agent_pids_cached 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
 use watch::{
     emit_board_changed, spawn_board_notifier, spawn_db_watcher, spawn_first_import,
     spawn_liveness_watch,
@@ -68,9 +64,6 @@ use std::sync::{Arc, Mutex};
 
 pub mod setup;
 use std::time::{SystemTime, UNIX_EPOCH};
-// 仅 live_sessions_blocking 的 Windows 分支用 sysinfo 建进程表；非 Windows 走 claude_pids_snapshot。
-#[cfg(target_os = "windows")]
-use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tauri::State;
 // Emitter：仅非 macOS 的 on_window_event 用 window.emit("snap-changed")（macOS 面板模式无吸边）。
 #[cfg(not(target_os = "macos"))]
@@ -86,6 +79,40 @@ struct AppState {
     db_path: PathBuf,
     /// transcript 增量解析缓存（与后台轮询线程共享 Arc）：避免每次刷新重读整文件。
     tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
+    /// 进程表快照的短命缓存：`(采样时刻, 活着的 agent pid 集合)`。见 [`agent_pids_cached`]。
+    liveness: Mutex<Option<(i64, Arc<std::collections::HashSet<i64>>)>>,
+}
+
+/// 进程表快照的存活时长。
+///
+/// 一次界面刷新会并发打好几个后端命令——`App.tsx` 里两处 `Promise.all`：`[counts, page]` 与
+/// 缩略条的 `[page(running), page(waiting)]`，合计 4 个命令，每个都要判活。各扫各的话：
+///
+/// 1. Windows 上就是 4 次全进程表枚举（sysinfo 要遍历所有进程），纯浪费；
+/// 2. 更要命的是**两次扫描之间进程可能退出**——于是角标说「待交互 3」、列表却只有 2 条，
+///    修掉一个不一致又造出一个新的。
+///
+/// 故一轮刷新内共用同一份快照。TTL 取得比刷新冷却（前端 `REFRESH_THROTTLE_MS` = 400ms）短，
+/// 既能把一轮的并发命令合并成一次扫描，又不会让「终端关掉了、卡片还显示连着」肉眼可察。
+const LIVENESS_TTL_MS: i64 = 300;
+
+/// 活着的 agent pid 集合，TTL 内跨命令复用同一份快照。
+///
+/// 判定 connected 的**唯一进程事实源**：列表与角标计数都从这里取，于是两者必然看到同一个世界，
+/// 不会因为各扫一次进程表而给出对不上的数字。
+///
+/// 持锁扫描是有意的：并发到达的命令在此排队，复用第一个扫出来的结果，而不是各扫一次。
+fn agent_pids_cached(state: &AppState) -> Arc<std::collections::HashSet<i64>> {
+    let now = now_ms();
+    let mut slot = state.liveness.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, set)) = slot.as_ref() {
+        if now.saturating_sub(*at) < LIVENESS_TTL_MS {
+            return set.clone();
+        }
+    }
+    let set = Arc::new(crate::proc::agent_pids_snapshot());
+    *slot = Some((now, set.clone()));
+    set
 }
 
 fn now_ms() -> i64 {
@@ -197,26 +224,29 @@ struct LiveItem {
 /// tab 角标计数。`total`/`archived` 纯 SQL 数得出；`running`/`waiting` 不行——它们的语义含
 /// 「此刻还连着」，要查进程表，SQL 看不见（详见 `Store::live_sessions_totals`）。
 ///
-/// 故这里用与**列表同一套判定**（`agent_liveness_probe` + `tab_class`）现算，保证角标数字与
-/// 列表条数自洽：否则角标写着「待交互 3」、点进去列表只有 2 条。
+/// 故这里用与**列表同一套判定、同一份进程快照**（`agent_pids_cached` + `tab_class`）现算，
+/// 保证角标数字与列表条数自洽：否则角标写着「待交互 3」、点进去列表只有 2 条。
 #[tauri::command]
 async fn get_live_sessions_counts(
     state: State<'_, AppState>,
 ) -> Result<meowo_store::query::LiveSessionCounts, String> {
     let db_path = state.db_path.clone();
+    // 快照在**进入 blocking 池之前**取：与并发的 page 命令共用同一份（TTL 内），
+    // 于是两个数字必然出自同一个世界。
+    let alive = agent_pids_cached(&state);
     tauri::async_runtime::spawn_blocking(move || {
         let store = open_store(&db_path)?;
         let (total, archived) = store.live_sessions_totals().map_err(|e| e.to_string())?;
         let candidates = store.live_count_candidates().map_err(|e| e.to_string())?;
 
-        let is_claude = agent_liveness_probe();
         let now = now_ms();
         let (mut running, mut waiting) = (0i64, 0i64);
         for c in candidates {
+            let pid = c.pid.unwrap_or(0);
             let connected = session_connected(
                 &c.status,
                 c.pid,
-                is_claude(c.pid.unwrap_or(0)),
+                pid > 0 && alive.contains(&pid),
                 c.last_event_at,
                 now,
             );
@@ -241,16 +271,19 @@ async fn get_live_sessions_page(
     before_id: Option<i64>,
     limit: usize,
 ) -> Result<Vec<LiveItem>, String> {
-    // 重逻辑（SQLite、进程枚举、transcript 解析）放 blocking 线程池，不占主线程事件循环。
+    // 重逻辑（SQLite、transcript 解析）放 blocking 线程池，不占主线程事件循环。
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
+    // 与 counts 命令共用同一份进程快照（TTL 内只扫一次表）。
+    let alive = agent_pids_cached(&state);
     let filter = if ["all", "running", "waiting", "archived"].contains(&filter.as_str()) {
         filter
     } else {
         "all".into()
     };
     tauri::async_runtime::spawn_blocking(move || {
-        live_sessions_blocking(&db_path, &tx_cache, &filter, search.as_deref(), before_last_event_at, before_id, limit)
+        let page = PageReq { before_last_event_at, before_id, limit };
+        live_sessions_blocking(&db_path, &tx_cache, &alive, &filter, search.as_deref(), page)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -287,26 +320,6 @@ fn session_connected(status: &str, _pid: Option<i64>, pid_alive: bool, last_even
     now.saturating_sub(last_event_at) < RESUME_GRACE_MS
 }
 
-/// 「这个 pid 是不是活着的 agent 进程」的一次性快照探针。
-///
-/// Windows 走 sysinfo 进程表；macOS/Unix 走一次 `ps` 批量快照（sysinfo 在 macOS 上不可靠，
-/// 逐 pid spawn `ps` 又太慢——一批会话只扫一次）。
-///
-/// 抽出来是为了让**列表**与**角标计数**共用同一套判定、同一份快照：两边各查一次进程表，
-/// 就可能在两次快照之间有进程退出，于是角标说「待交互 3」、列表却只有 2 条。
-fn agent_liveness_probe() -> Box<dyn Fn(i64) -> bool> {
-    #[cfg(target_os = "windows")]
-    {
-        let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
-        Box::new(move |pid| pid_is_agent(&sys, pid))
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let pids = claude_pids_snapshot();
-        Box::new(move |pid| pid > 0 && pids.contains(&pid))
-    }
-}
-
 /// 该会话此刻属于哪个 tab 分类。**唯一定义处**——列表过滤与角标计数都从这里取答案，
 /// 免得两边各写一份 `status == "waiting" || pending_review.is_some()` 而慢慢长歪。
 ///
@@ -325,23 +338,30 @@ fn tab_class(connected: bool, status: &str, pending_review: Option<&str>) -> Opt
     None
 }
 
-fn live_sessions_blocking(
-    db_path: &PathBuf,
-    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
-    filter: &str,
-    search: Option<&str>,
+/// 一页请求：游标（上一页末尾的 `(last_event_at, id)`，None = 首页）+ 页大小。
+/// 三者本就是一组，打包传递——顺带让 live_sessions_blocking 的参数不至于多到看不清。
+struct PageReq {
     before_last_event_at: Option<i64>,
     before_id: Option<i64>,
     limit: usize,
+}
+
+fn live_sessions_blocking(
+    db_path: &PathBuf,
+    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
+    alive: &std::collections::HashSet<i64>,
+    filter: &str,
+    search: Option<&str>,
+    page: PageReq,
 ) -> Result<Vec<LiveItem>, String> {
     let store = open_store(db_path)?;
     let sessions = store
-        .live_sessions(Some(filter), search, before_last_event_at, before_id, limit)
+        .live_sessions(Some(filter), search, page.before_last_event_at, page.before_id, page.limit)
         .map_err(|e| e.to_string())?;
-    // connected 校验：一次进程表快照，列表与角标计数共用同一套判定（见 agent_liveness_probe）。
-    let is_claude = agent_liveness_probe();
+    // connected 校验：用调用方传进来的进程快照（与角标计数是同一份，见 agent_pids_cached）。
+    let is_claude = |pid: i64| pid > 0 && alive.contains(&pid);
 
-    // 先算 connected（廉价，仅查进程表）并据此排序，再解析 transcript 标题。
+    // 先算 connected（廉价，仅查集合）并据此排序，再解析 transcript 标题。
     // 标题解析要 read_to_string 整个 JSONL（可达数 MB）；走增量缓存后后续刷新接近 0 成本，
     // 首次加载即使会话较多也能接受——前端用虚拟列表消化，不再做 20 条截断。
     let now = now_ms();
@@ -834,6 +854,7 @@ pub fn run() {
         .manage(AppState {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
+            liveness: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_overview,

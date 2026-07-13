@@ -161,3 +161,29 @@ pub(crate) fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
     set
 }
 
+/// 一次进程表扫描 → **活着的 agent 进程 pid 集合**。
+///
+/// 与 [`pid_is_agent`] 判定同源（都按 basename 精确匹配 agent 白名单，防 Windows pid 复用），
+/// 差别只在这里把整张表**物化成集合**：集合可以跨命令共享，`&System` 不行。
+///
+/// 为什么要能共享：一次界面刷新会并发打好几个后端命令（见 `lib.rs` 的 `agent_pids_cached`），
+/// 每个都要判活。各扫各的话，Windows 上就是好几次全进程表枚举，而且两次扫描之间进程可能退出，
+/// 导致角标与列表对不上。
+pub(crate) fn agent_pids_snapshot() -> HashSet<i64> {
+    #[cfg(target_os = "windows")]
+    {
+        let sys = System::new_with_specifics(
+            sysinfo::RefreshKind::new().with_processes(sysinfo::ProcessRefreshKind::new()),
+        );
+        sys.processes()
+            .iter()
+            .filter(|(_, p)| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
+            .map(|(pid, _)| pid.as_u32() as i64)
+            .collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        claude_pids_snapshot()
+    }
+}
+

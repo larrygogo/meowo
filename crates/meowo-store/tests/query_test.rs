@@ -312,18 +312,30 @@ fn live_counts_split_totals_from_connectivity_candidates() {
     }
     store.set_session_archived(archived_id.unwrap(), true, 600).unwrap();
 
+    // 收尾**只改 status、不清 pending_review**（残留正是「断开还挂着待批准」的根因）。
+    // 造一条这样的残留：已结束、却还留着 pending_review。
+    let (dead, _) = store.start_session(pid, "dead-with-residue", 700).unwrap();
+    store.set_pending_review(dead, meowo_store::PendingReview::Approval, 710).unwrap();
+    store.end_session(dead, 720).unwrap();
+
     let (total, archived) = store.live_sessions_totals().unwrap();
-    assert_eq!(total, 7);
+    assert_eq!(total, 8);
     assert_eq!(archived, 1);
 
-    // 候选 = 未归档 且（status∈{running,waiting} 或 有 pending_review）。
-    // 已结束/已归档的一律不够格——它们绝无可能是「运行中」或「待交互」。
+    // 候选 = 未归档 且 **未结束** 且（status∈{running,waiting} 或 有 pending_review）。
     let cands = store.live_count_candidates().unwrap();
     assert_eq!(cands.len(), 4, "2 running + 1 waiting + 1 pending_review");
     assert_eq!(cands.iter().filter(|c| c.status == "running").count(), 3, "含带 pending 的那条");
     assert_eq!(cands.iter().filter(|c| c.status == "waiting").count(), 1);
-    assert_eq!(cands.iter().filter(|c| c.pending_review.is_some()).count(), 1);
     assert!(cands.iter().all(|c| c.status != "ended"), "已结束的不该成为候选");
+
+    // 关键：那条「已结束 + pending_review 残留」绝不能混进候选。它算不进 running/waiting
+    // （session_connected 对 ended 恒 false），却会让候选集合随历史无限膨胀、白白判活。
+    assert_eq!(
+        cands.iter().filter(|c| c.pending_review.is_some()).count(),
+        1,
+        "只该有活着的那条 pending，已结束的残留不算"
+    );
 }
 
 #[test]

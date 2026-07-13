@@ -388,14 +388,20 @@ impl Store {
         Ok((total, archived))
     }
 
-    /// 可能落入 running / waiting 的会话（未归档，且 status/pending_review 使其够格）。
+    /// 可能落入 running / waiting 的会话（未归档、未结束，且 status/pending_review 使其够格）。
     ///
     /// 只吐出**判定 connected 所需的原料**，不做统计——见 [`Self::live_sessions_totals`] 的说明。
-    /// 集合很小（只有活跃会话），app 层遍历一遍的代价可以忽略。
+    ///
+    /// `status != 'ended'` 这一条不能省。`end_session` 收尾时**只改 status、不清
+    /// pending_review**（那份残留正是「断开的会话还挂着待批准标签」的根因），于是
+    /// `pending_review IS NOT NULL` 会把一大堆早已结束的历史会话捞进来。它们绝无可能算进
+    /// running/waiting（`session_connected` 对 ended 恒为 false），但会让候选集合随历史增长
+    /// 而膨胀，白白拖着 app 层逐条判活——本该是个「只有活跃会话」的小集合。
     pub fn live_count_candidates(&self) -> Result<Vec<LiveCandidate>, StoreError> {
         let mut st = self.conn.prepare(
             "SELECT status, pending_review, pid, last_event_at FROM sessions
-             WHERE archived = 0 AND (status IN ('running','waiting') OR pending_review IS NOT NULL)",
+             WHERE archived = 0 AND status != 'ended'
+               AND (status IN ('running','waiting') OR pending_review IS NOT NULL)",
         )?;
         let rows = st.query_map([], |r| {
             Ok(LiveCandidate {
