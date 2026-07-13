@@ -505,6 +505,47 @@ mod tests {
         assert!(pu.lanes[0].resets_at.as_deref().unwrap().starts_with("2026-07-20"));
     }
 
+    /// 向后兼容绊线：**没升级 codex 的用户**照旧要读得对。改判定依据（位置 → 窗口长度）时
+    /// 最容易踩的就是这个——旧版的三种形态都必须与从前的行为**逐字节一致**。
+    #[test]
+    fn parse_codex_usage_old_shapes_behave_exactly_as_before() {
+        // ① 旧版常态：primary=5 小时窗（300）、secondary=周窗（10080）。
+        //    按窗口判定得出的结论与按位置判定完全相同 → 老用户无感。
+        let classic = parse_codex_usage(&json!({
+            "type": "token_count",
+            "rate_limits": {
+                "primary":   { "used_percent": 45.5, "window_minutes": 300,   "resets_at": 1751284800i64 },
+                "secondary": { "used_percent": 12.3, "window_minutes": 10080, "resets_at": 1751284800i64 }
+            }
+        }));
+        assert_eq!(classic.lanes.len(), 2);
+        assert_eq!(classic.lanes[0].kind, UsageKind::FiveHour);
+        assert_eq!(classic.lanes[0].used_pct, Some(45.5));
+        assert_eq!(classic.lanes[1].kind, UsageKind::Weekly);
+        assert_eq!(classic.lanes[1].used_pct, Some(12.3));
+
+        // ② 更老的版本：根本没有 window_minutes 字段 → 回落到位置语义（primary=5h、secondary=周）。
+        let no_window = parse_codex_usage(&json!({
+            "type": "token_count",
+            "rate_limits": {
+                "primary":   { "used_percent": 30.0 },
+                "secondary": { "used_percent": 40.0 }
+            }
+        }));
+        assert_eq!(no_window.lanes[0].kind, UsageKind::FiveHour);
+        assert_eq!(no_window.lanes[1].kind, UsageKind::Weekly);
+
+        // ③ 旧版只有 primary（低配额账号没有第二个窗口）：仍是单条 5 小时泳道。
+        //    `secondary` 无论是**缺键**还是**为 null**（新版的写法）都要安全跳过，不能造出空泳道。
+        for missing in [json!({ "primary": { "used_percent": 20.0, "window_minutes": 300 } }),
+                        json!({ "primary": { "used_percent": 20.0, "window_minutes": 300 }, "secondary": null })] {
+            let pu = parse_codex_usage(&json!({ "type": "token_count", "rate_limits": missing }));
+            assert_eq!(pu.lanes.len(), 1, "secondary 缺失/为 null 都只应有一条泳道");
+            assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
+            assert_eq!(pu.lanes[0].used_pct, Some(20.0));
+        }
+    }
+
     /// 反过来也要认得：若 codex 把 5 小时窗口放进 secondary，也必须标成 FiveHour，
     /// 且排在周窗口前面——种类和顺序都不再由位置决定。
     #[test]
