@@ -25,35 +25,135 @@ pub fn to_bash_path(p: &str) -> String {
     p.replace('\\', "/")
 }
 
+/// 我方生成的包装脚本的识别标记。两代品牌（meowo / 前身 cc-kanban）的脚本都带这句注释，
+/// 故用它——而非脚本路径——判定「这条 statusLine 命令指向的是我方产物，不是用户自己的命令」。
+///
+/// 靠路径判定曾酿成 fork 炸弹：改名换目录后，新版把 `~/.cc-kanban/statusline.sh` 当成用户原
+/// 命令包进 `~/.meowo/statusline.sh`；用户再跑一次旧版，旧版又把 meowo 的包进 cc-kanban 的。
+/// 两个脚本互相 `bash` 对方，Claude Code 每渲染一次状态栏就点燃一次无限派生。
+const WRAPPER_MARK: &str = "自动生成：写入会话上下文用量";
+
+/// 再入守卫的环境变量名。见 [`build_script`]。
+const GUARD_ENV: &str = "MEOWO_STATUSLINE_ACTIVE";
+
+/// statusLine 命令里指向的包装脚本路径（`bash "…/statusline.sh"` 形态）。
+/// 引号内整体优先——Windows 家目录常含空格，按空白切会把路径切断。
+fn wrapper_target(cmd: &str) -> Option<std::path::PathBuf> {
+    let is_script = |t: &str| t.to_ascii_lowercase().ends_with("statusline.sh");
+    let tok = cmd
+        .split('"')
+        .nth(1)
+        .filter(|t| is_script(t))
+        .or_else(|| cmd.split_whitespace().find(|t| is_script(t)))?;
+    Some(std::path::PathBuf::from(tok))
+}
+
+/// 从包装脚本正文里取出它内嵌的 inner（下游 statusLine 命令）。写库那行（重定向到 /dev/null）
+/// 不是 inner；自渲染版没有 inner。
+fn inner_of(script: &str) -> String {
+    script
+        .lines()
+        .filter(|l| l.contains("$input") && l.contains('|') && !l.contains("/dev/null"))
+        .filter_map(|l| l.split_once('|').map(|(_, r)| r.trim()))
+        .find(|r| !r.contains(" statusline"))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// 把一条 statusLine 命令层层剥到最内的**用户真实命令**：只要它指向我方生成的包装脚本，就取出
+/// 该脚本的 inner 接着剥。剥到成环（两个包装脚本互指）则整条丢弃——环里没有用户的命令，只有
+/// 我们自己的历史残留，留着就是那颗 fork 炸弹。
+fn unwrap_chain(cmd: &str, read: &dyn Fn(&std::path::Path) -> Option<String>) -> String {
+    let mut cur = cmd.trim().to_string();
+    let mut seen: Vec<String> = Vec::new();
+    loop {
+        let Some(path) = wrapper_target(&cur) else { return cur };
+        let Some(text) = read(&path) else { return cur }; // 读不到 → 当用户自己的命令，不动
+        if !text.contains(WRAPPER_MARK) {
+            return cur; // 同名但非我方产物（用户自己也写了个 statusline.sh）→ 不动
+        }
+        let key = path.to_string_lossy().to_ascii_lowercase();
+        if seen.contains(&key) {
+            return String::new(); // 成环
+        }
+        seen.push(key);
+        cur = inner_of(&text);
+        if cur.trim().is_empty() {
+            return String::new();
+        }
+    }
+}
+
+/// 删除一个 statusline 包装脚本——**仅当**它确实是我方（含前代品牌）生成的产物，即正文带
+/// [`WRAPPER_MARK`]。同名的用户自有脚本一概不碰。返回是否真的删了。
+///
+/// 用于清除前代品牌遗留的那半个环（`~/.cc-kanban/statusline.sh`）。**调用方必须在接线之后
+/// 再调**：接线要读它才能认出它是包装、并从中剥出用户真正的 statusLine 命令——先删就等于
+/// 把用户的原命令一起丢了，还会让 [`unwrap_chain`] 把一个已不存在的脚本当成「用户命令」
+/// 重新包进新脚本里。
+pub fn remove_generated_wrapper(path: &std::path::Path) -> bool {
+    match std::fs::read_to_string(path) {
+        Ok(t) if t.contains(WRAPPER_MARK) => std::fs::remove_file(path).is_ok(),
+        _ => false,
+    }
+}
+
+/// 该命令是否指向我方生成的包装脚本。
+fn is_wrapper_cmd(cmd: &str, read: &dyn Fn(&std::path::Path) -> Option<String>) -> bool {
+    wrapper_target(cmd)
+        .and_then(|p| read(&p))
+        .is_some_and(|t| t.contains(WRAPPER_MARK))
+}
+
 /// 探测 statusLine 接线状态（只读不改）：
-///   - Some(inner)：尚未指向我们的脚本，需要生成脚本并改写 settings；inner 是要内嵌的原
-///     statusLine 命令（无则空串）；
-///   - None：已是我们的包装，幂等跳过，不重生成脚本（避免把包装再包一层导致递归）。
+///   - Some(inner)：需要生成脚本并改写 settings；inner 是要内嵌的下游 statusLine 命令（无则空串）；
+///   - None：已是我们的包装且脚本内部干净，幂等跳过。
 ///
 /// 只探测不改写——settings 的实际改写由调用方在**脚本落盘成功之后**执行：先改 settings 再写脚本、
 /// 写失败再回滚的顺序会在回滚代码里反向编码本函数的副作用，脆弱且曾造成「settings 指向不存在的
 /// 脚本、原 statusLine 命令永久丢失」。
 ///
-/// `script_marker` 为我们脚本的实际路径；用它判定幂等，杜绝「把自己的包装再当 inner 捕获」的递归。
-pub fn probe_statusline(settings: &Value, script_marker: &str) -> Option<String> {
+/// `read` 注入脚本读取（纯函数便于单测）：判定「这是包装脚本还是用户命令」必须看**内容**里的
+/// [`WRAPPER_MARK`]，不能看路径——见该常量的说明。
+///
+/// 幂等分支同样要验脚本内部：settings 已指向我们、而我们的脚本内部却回指另一个包装脚本，正是
+/// 中毒机器的现状。此时必须重建（把环剥掉），否则幂等判定会让那颗炸弹永远不被拆除。
+pub fn probe_statusline(
+    settings: &Value,
+    script_marker: &str,
+    read: &dyn Fn(&std::path::Path) -> Option<String>,
+) -> Option<String> {
     let cur = settings
         .get("statusLine")
         .and_then(|s| s.get("command"))
-        .and_then(|x| x.as_str());
-    if let Some(c) = cur {
-        if c.contains(script_marker) {
-            return None; // 已引用我们的脚本 → 幂等，不动（也避免递归）
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+
+    if cur.contains(script_marker) {
+        let ours_inner = read(std::path::Path::new(script_marker))
+            .map(|t| inner_of(&t))
+            .unwrap_or_default();
+        if !is_wrapper_cmd(&ours_inner, read) {
+            return None; // 内部干净 → 真幂等
         }
+        return Some(unwrap_chain(&ours_inner, read)); // 内部有环 → 重建自愈
     }
-    Some(cur.unwrap_or("").to_string())
+    Some(unwrap_chain(cur, read))
 }
 
-/// 生成包装脚本内容：读 stdin → 喂 meowo-reporter 写库（丢弃其输出）→ 跑原 statusLine（如有）渲染状态栏。
-/// `reporter_bash` 为 bash 形式的 meowo-reporter 路径；`inner` 为原 statusLine 命令（空则不渲染）。
+/// 生成包装脚本内容：读 stdin → 喂 meowo-reporter 写库（丢弃其输出）→ 跑下游 statusLine（如有）渲染状态栏。
+/// `reporter_bash` 为 bash 形式的 meowo-reporter 路径；`inner` 为下游 statusLine 命令（空则不渲染）。
+///
+/// 开头的再入守卫是**硬止血**：环境变量经 `export` 传给所有子孙进程，任何再入（无论经由哪个
+/// 包装脚本、哪一代品牌、还是用户手改出的环）立刻退出。[`unwrap_chain`] 从配置上杜绝成环，
+/// 这里保证即使配置又被搞坏，最坏结果也只是状态栏空白——而不是拖垮整台机器。
 pub fn build_script(reporter_bash: &str, inner: &str) -> String {
     let mut s = String::new();
     s.push_str("#!/usr/bin/env bash\n");
     s.push_str("# 本文件由 Meowo 自动生成：写入会话上下文用量 + 渲染状态栏。请勿手改。\n");
+    s.push_str(&format!(
+        "if [ -n \"${{{GUARD_ENV}:-}}\" ]; then exit 0; fi\nexport {GUARD_ENV}=1\n"
+    ));
     s.push_str("input=$(cat)\n");
     if inner.trim().is_empty() {
         // 无下游 statusLine：meowo-reporter 写库并自渲染极简状态栏（输出即状态栏）。
@@ -97,8 +197,9 @@ fn statusline_amend(text: &str, ctx: &WiringContext, reporter: &str) -> Result<S
     };
     let script_path = script_path(ctx);
     let script_bash = to_bash_path(&script_path.to_string_lossy());
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
 
-    match probe_statusline(&settings, &script_bash) {
+    match probe_statusline(&settings, &script_bash, &read) {
         Some(inner) => {
             let script = build_script(&to_bash_path(reporter), &inner);
             if write_statusline_script(&script_path, &script).is_err() {
@@ -128,27 +229,99 @@ fn statusline_amend(text: &str, ctx: &WiringContext, reporter: &str) -> Result<S
 mod tests {
     use super::*;
 
+    /// 没有任何脚本落盘的世界（大多数用例不关心磁盘）。
+    fn no_scripts(_: &std::path::Path) -> Option<String> {
+        None
+    }
+
+    /// 用一张「路径 → 脚本正文」表冒充磁盘。
+    fn disk(files: &[(&str, String)]) -> impl Fn(&std::path::Path) -> Option<String> {
+        let owned: Vec<(String, String)> =
+            files.iter().map(|(p, t)| (p.to_ascii_lowercase(), t.clone())).collect();
+        move |p: &std::path::Path| {
+            let key = p.to_string_lossy().to_ascii_lowercase();
+            owned.iter().find(|(k, _)| *k == key).map(|(_, t)| t.clone())
+        }
+    }
+
     #[test]
     fn probe_statusline_wraps_existing_and_is_idempotent() {
         let mut v =
             json!({ "statusLine": { "type": "command", "command": "bash -c 'claude-hud'" } });
         let marker = "C:/Users/me/.meowo/statusline.sh";
         let inv = format!("bash \"{marker}\"");
-        let inner = probe_statusline(&v, marker).expect("应需要生成脚本");
+        let inner = probe_statusline(&v, marker, &no_scripts).expect("应需要生成脚本");
         assert_eq!(inner, "bash -c 'claude-hud'"); // 捕获到原命令
         assert_eq!(v["statusLine"]["command"], "bash -c 'claude-hud'"); // 探测不改写
-                                                                        // 模拟 amend：脚本落盘成功后才改写 settings。
+
+        // 模拟 amend：脚本落盘成功后才改写 settings。
         v["statusLine"] = json!({ "type": "command", "command": inv });
-        // 再探测：已引用我们的脚本 → None（幂等，不再重复捕获/递归）
-        assert!(probe_statusline(&v, marker).is_none());
+        let fs = disk(&[(marker, build_script("C:/x/meowo-reporter.exe", "bash -c 'claude-hud'"))]);
+        // 再探测：已引用我们的脚本、内部干净 → None（幂等，不再重复捕获/递归）
+        assert!(probe_statusline(&v, marker, &fs).is_none());
     }
 
     #[test]
     fn probe_statusline_handles_absent() {
         let v = json!({});
         let marker = "/home/me/.meowo/statusline.sh";
-        let inner = probe_statusline(&v, marker).expect("无 statusLine 也应接线");
+        let inner = probe_statusline(&v, marker, &no_scripts).expect("无 statusLine 也应接线");
         assert_eq!(inner, ""); // 无原命令
+    }
+
+    /// 回归（fork 炸弹）：settings 指向**前代品牌**的包装脚本时，绝不能把它当用户命令包进来——
+    /// 那会让两个脚本互相 `bash` 对方，Claude Code 每渲染一次状态栏就点燃一次无限派生
+    /// （真机上滚出 13,920 个 bash 进程、98.9% 提交内存）。前代脚本必须被**剥开**，
+    /// 取出它内嵌的用户真实命令。
+    #[test]
+    fn probe_unwraps_legacy_brand_wrapper_instead_of_nesting_it() {
+        let legacy = "C:/Users/me/.cc-kanban/statusline.sh";
+        let ours = "C:/Users/me/.meowo/statusline.sh";
+        // 前代脚本（同样的生成标记），内嵌用户真实的 statusLine。
+        let legacy_text = "#!/usr/bin/env bash\n\
+            # 本文件由 cc-kanban 自动生成：写入会话上下文用量 + 渲染状态栏。请勿手改。\n\
+            input=$(cat)\n\
+            printf '%s' \"$input\" | \"C:/old/cc-reporter.exe\" statusline >/dev/null 2>&1\n\
+            printf '%s' \"$input\" | bash -c 'claude-hud'\n";
+        let v = json!({ "statusLine": { "type": "command", "command": format!("bash \"{legacy}\"") } });
+        let fs = disk(&[(legacy, legacy_text.to_string())]);
+
+        let inner = probe_statusline(&v, ours, &fs).expect("应接线");
+        assert_eq!(inner, "bash -c 'claude-hud'", "必须剥到用户真实命令，而不是套娃");
+        assert!(!inner.contains("statusline.sh"), "inner 绝不能再指向任何包装脚本");
+    }
+
+    /// 回归（自愈）：机器已经中毒——settings 指向我们的脚本，而我们的脚本回指前代脚本，
+    /// 前代脚本又回指我们的，环已闭合。幂等判定必须**看穿脚本内部**，否则这颗炸弹永远拆不掉。
+    #[test]
+    fn probe_rebuilds_when_our_script_points_back_into_a_cycle() {
+        let legacy = "C:/Users/me/.cc-kanban/statusline.sh";
+        let ours = "C:/Users/me/.meowo/statusline.sh";
+        // 真机现场：两个脚本互指。
+        let ours_text = build_script("C:/new/meowo-reporter.exe", &format!("bash \"{legacy}\""));
+        let legacy_text = format!(
+            "#!/usr/bin/env bash\n\
+             # 本文件由 cc-kanban 自动生成：写入会话上下文用量 + 渲染状态栏。请勿手改。\n\
+             input=$(cat)\n\
+             printf '%s' \"$input\" | \"C:/old/cc-reporter.exe\" statusline >/dev/null 2>&1\n\
+             printf '%s' \"$input\" | bash \"{ours}\"\n"
+        );
+        let v = json!({ "statusLine": { "type": "command", "command": format!("bash \"{ours}\"") } });
+        let fs = disk(&[(ours, ours_text), (legacy, legacy_text)]);
+
+        // marker 命中，但内部成环 → 必须返回 Some（重建），而不是 None（幂等放过）。
+        let inner = probe_statusline(&v, ours, &fs).expect("成环时必须重建脚本，不能判定为幂等");
+        assert_eq!(inner, "", "环里没有用户的命令，只有我们的历史残留 → 整条丢弃");
+    }
+
+    /// 用户自己写的 statusline.sh（同名但没有我方生成标记）是真·用户命令，必须原样内嵌，不能剥。
+    #[test]
+    fn probe_keeps_user_authored_script_of_same_name() {
+        let user = "C:/Users/me/scripts/statusline.sh";
+        let ours = "C:/Users/me/.meowo/statusline.sh";
+        let fs = disk(&[(user, "#!/usr/bin/env bash\necho hi\n".to_string())]);
+        let v = json!({ "statusLine": { "type": "command", "command": format!("bash \"{user}\"") } });
+        assert_eq!(probe_statusline(&v, ours, &fs).unwrap(), format!("bash \"{user}\""));
     }
 
     #[test]
@@ -160,6 +333,63 @@ mod tests {
         // 无 inner：让 meowo-reporter 自渲染（不丢弃输出）
         assert!(without.contains("| \"C:/x/meowo-reporter.exe\" statusline\n"));
         assert!(!without.contains(">/dev/null"));
+    }
+
+    /// 硬止血：脚本自带再入守卫。配置层面的解环（`unwrap_chain`）是第一道防线，这是第二道——
+    /// 即便日后又有谁把配置搞成环，最坏也只是状态栏空白，而不是拖垮整台机器。
+    #[test]
+    fn build_script_carries_reentry_guard() {
+        let s = build_script("C:/x/meowo-reporter.exe", "bash -c 'hud'");
+        assert!(s.contains(&format!("if [ -n \"${{{GUARD_ENV}:-}}\" ]; then exit 0; fi")));
+        assert!(s.contains(&format!("export {GUARD_ENV}=1")));
+        // 守卫必须在读 stdin 之前——否则再入的那层会先阻塞在 `cat` 上。
+        let guard = s.find("exit 0").unwrap();
+        let read = s.find("input=$(cat)").unwrap();
+        assert!(guard < read, "守卫必须早于 stdin 读取");
+    }
+
+    /// `inner_of` 要能从两种形态的包装脚本里取出下游命令：写库那行（重定向到 /dev/null）不是 inner。
+    #[test]
+    fn inner_of_extracts_downstream_only() {
+        assert_eq!(inner_of(&build_script("C:/x/meowo-reporter.exe", "bash -c 'hud'")), "bash -c 'hud'");
+        assert_eq!(inner_of(&build_script("C:/x/meowo-reporter.exe", "")), "", "自渲染版没有 inner");
+    }
+
+    /// 清除前代残留：只删我方（含前代品牌）生成的包装脚本，同名的用户自有脚本一概不碰。
+    #[test]
+    fn remove_generated_wrapper_only_deletes_our_own() {
+        let dir = std::env::temp_dir().join(format!("meowo-sweep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 前代品牌的产物（带生成标记）→ 删。
+        let legacy = dir.join("legacy-statusline.sh");
+        std::fs::write(
+            &legacy,
+            "#!/usr/bin/env bash\n# 本文件由 cc-kanban 自动生成：写入会话上下文用量 + 渲染状态栏。请勿手改。\n",
+        )
+        .unwrap();
+        assert!(remove_generated_wrapper(&legacy));
+        assert!(!legacy.exists());
+
+        // 用户自己写的同名脚本（无生成标记）→ 不碰。
+        let user = dir.join("user-statusline.sh");
+        std::fs::write(&user, "#!/usr/bin/env bash\necho hi\n").unwrap();
+        assert!(!remove_generated_wrapper(&user));
+        assert!(user.exists(), "用户自有脚本绝不能删");
+
+        // 不存在的文件 → 安静地什么都不做。
+        assert!(!remove_generated_wrapper(&dir.join("nope.sh")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 路径含空格（Windows 家目录常见）时仍要认得出包装脚本——按空白切会把路径切断，
+    /// 认不出就会又包一层。
+    #[test]
+    fn wrapper_target_survives_spaces_in_path() {
+        let p = wrapper_target("bash \"C:/Users/John Doe/.meowo/statusline.sh\"").unwrap();
+        assert_eq!(to_bash_path(&p.to_string_lossy()), "C:/Users/John Doe/.meowo/statusline.sh");
+        assert!(wrapper_target("bash -c 'claude-hud'").is_none());
     }
 
     #[test]

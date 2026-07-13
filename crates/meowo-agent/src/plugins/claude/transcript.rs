@@ -624,6 +624,9 @@ mod tests {
             format!("{{\"type\":\"user\",\"cwd\":\"C:\\\\real\\\\proj\",\"sessionId\":\"{sid}\"}}\n"),
         )
         .unwrap();
+        // 改的是**进程全局**的 USERPROFILE：持锁期间不许别的测试去解析安装路径，
+        // 否则它们会在这个窗口里解析不到 claude 而随机变红。见 `crate::env_guard`。
+        let _env = crate::env_guard();
         let old_home = std::env::var("USERPROFILE").ok();
         std::env::set_var("USERPROFILE", &home);
         let corrected = CLAUDE_TRANSCRIPT.resolve_cwd(Some(r"C:\stale\gone"), &sid);

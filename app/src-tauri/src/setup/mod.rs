@@ -30,14 +30,54 @@ fn wire(plugin: &dyn meowo_agent::AgentPlugin, reporter: Option<&str>) -> Option
     plugin.wire(&ctx)
 }
 
+/// 前代品牌的数据目录（改名前叫 cc-kanban）。升级上来的用户机器上仍留着它。
+const LEGACY_DIRS: [&str; 1] = [".cc-kanban"];
+
+/// 清除前代品牌遗留的 statusline 包装脚本。
+///
+/// 它是那颗 fork 炸弹的另一半：改名换目录后，新版把 `~/.cc-kanban/statusline.sh` 当成「用户
+/// 原有的 statusLine 命令」包进 `~/.meowo/statusline.sh`；旧版再跑一次，又把 meowo 的包进它
+/// 自己的。两个脚本互相 `bash` 对方，Claude Code 每渲染一次状态栏就点燃一次无限派生。
+///
+/// 接线时的解链（`plugins/claude/setup.rs` 的 `unwrap_chain`）已经把 settings 的 statusLine
+/// 改指回我们自己的干净脚本、环已断开；这里把前代那半个脚本也抹掉，免得它被重新拉进链条
+/// （用户手改、或旧版 app 又被运行一次）。
+///
+/// **必须在接线之后跑**：接线要读这个脚本才能认出它是包装、并从中剥出用户真正的 statusLine
+/// 命令。先删就等于把用户的原命令一起丢了。
+///
+/// 只删带我方生成标记的文件，同名的用户自有脚本一概不碰；前代的 board.db 等数据一律保留
+/// （用户的历史看板还在里面）。
+fn sweep_legacy_wrappers() {
+    let Some(home) = meowo_dir().parent().map(|p| p.to_path_buf()) else {
+        return;
+    };
+    for dir in LEGACY_DIRS {
+        let script = home.join(dir).join("statusline.sh");
+        if meowo_agent::remove_generated_wrapper(&script) {
+            eprintln!("Meowo: 已清除前代品牌遗留的 statusline 包装脚本 {}", script.display());
+        }
+    }
+}
+
 /// 启动后台线程入口：逐 agent 独立 best-effort，一家失败不影响他家。
 /// 未配置过的 agent（数据目录不存在＝没装）跳过，绝不凭空创建它的配置。
 pub fn apply_all() {
     let reporter = sibling_reporter();
+    let mut claude_wired = false;
     for p in meowo_agent::all() {
         if p.is_configured() {
-            let _ = wire(*p, reporter.as_deref());
+            let reason = wire(*p, reporter.as_deref());
+            if p.id() == meowo_agent::id::CLAUDE {
+                claude_wired = reason.is_none();
+            }
         }
+    }
+    // 只有 claude 接线**成功**才清前代残留——那时才确知 statusLine 已指向我们自己的脚本、
+    // 不再引用前代那个。接线若放弃（配置不可读/写不进去），settings 可能仍指着前代脚本，
+    // 此时删它只会把状态栏指向一个不存在的文件。顺序与条件都勿改。
+    if claude_wired {
+        sweep_legacy_wrappers();
     }
 }
 

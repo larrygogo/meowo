@@ -277,6 +277,8 @@ mod tests {
     /// 写错子命令会让「恢复会话」拉起一个报 unknown command 的终端。
     #[test]
     fn resume_argv_appends_declared_subcommand_and_session_id() {
+        // launch_argv 读真实的 USERPROFILE；别的测试会临时改它。见 `crate::env_guard`。
+        let _env = crate::env_guard();
         let cases = [
             (crate::id::CLAUDE, vec!["--resume"]),
             (crate::id::KIMI, vec!["-r"]),
@@ -296,6 +298,7 @@ mod tests {
     /// 启动 argv 非空，且首元素（绝对路径或回退裸名）指向该 agent 自己。
     #[test]
     fn launch_argv_is_nonempty_and_points_at_the_agent() {
+        let _env = crate::env_guard();
         for p in all() {
             let argv = p.launch_argv();
             assert!(!argv.is_empty(), "{} 启动 argv 为空", p.id());
@@ -312,6 +315,7 @@ mod tests {
     /// PATH 兜底时 argv 是裸名（刻意不固化 shim 路径），那它就必须真的在 PATH 上。
     #[test]
     fn installed_implies_launch_argv_is_runnable() {
+        let _env = crate::env_guard();
         for p in all() {
             if !p.is_installed() {
                 continue; // 本机没装（CI 上常见）

@@ -48,19 +48,45 @@ const SPECS = [
 // 写入的 command：双引号包住路径以防空格
 const command = `"${reporter}"`;
 
+// 认领规则：命令恰为我方 reporter 可执行文件（可带引号、**不得带参数**），只按文件名判定。
+// 与 Rust 侧 `CommandSpec::claim` 同规则，两点都要紧：
+//   - 按文件名（而非整串）认领，故 reporter 路径变了（debug→release、换安装目录）也认得出。
+//     旧实现只删「command 完全相同」的条目，路径一变就留下旧条目、再追加一条 → 每换一次路径
+//     重复翻一倍，而 Claude Code 会把同事件下的条目逐条执行，重复 N 条即每次事件派生 N 个进程。
+//   - 禁带参数，才不会误伤用户自己的 hook（如 `node tools/meowo-reporter-notify.js`）。
+const REPORTERS = new Set(["meowo-reporter", "meowo-reporter.exe", "cc-reporter", "cc-reporter.exe"]);
+function isOurs(cmd) {
+  if (typeof cmd !== "string") return false;
+  const m = cmd.trim().match(/^"([^"]+)"$|^([^\s"]+)$/);
+  const path = m && (m[1] ?? m[2]);
+  return !!path && REPORTERS.has(path.split(/[\\/]/).pop().toLowerCase());
+}
+
 for (const [event, matcher] of SPECS) {
   settings.hooks[event] ??= [];
-  // 幂等识别:只移除「command 完全相同 且 matcher 相同」的旧条目,
-  // 避免同事件多 matcher 条目互相误删(如 PreToolUse 的 AskUserQuestion 与 ExitPlanMode)。
-  settings.hooks[event] = settings.hooks[event].filter(
-    (entry) =>
-      !(entry.matcher === matcher && (entry.hooks ?? []).some((h) => h.command === command)),
-  );
-  // 追加新条目；timeout=5s 给 Claude Code 一个上限，万一 reporter 卡住也不会无限阻塞会话
-  settings.hooks[event].push({
-    matcher,
-    hooks: [{ type: "command", command, timeout: 5 }],
-  });
+  // 同一 (event, matcher) 下只留一条我方 hook：第一条更新为当前路径，其余删除。
+  // 用户自有的 hook（isOurs 不认领的）一概不动——包括与我方 hook 同壳的。
+  let kept = false;
+  settings.hooks[event] = settings.hooks[event]
+    .map((entry) => {
+      if (entry.matcher !== matcher) return entry; // 别的 matcher（含用户自有）→ 不动
+      const hooks = (entry.hooks ?? []).filter((h) => {
+        if (!isOurs(h.command)) return true; // 用户自有 hook → 留
+        if (kept) return false; // 我方第 2+ 条 → 重复注册，删
+        kept = true;
+        h.command = command; // timeout=5s 给 Claude Code 一个上限，万一 reporter 卡住也不会无限阻塞会话
+        h.timeout ??= 5;
+        return true;
+      });
+      return { ...entry, hooks };
+    })
+    .filter((entry) => entry.matcher !== matcher || (entry.hooks ?? []).length > 0); // 删空后的壳不留
+  if (!kept) {
+    settings.hooks[event].push({
+      matcher,
+      hooks: [{ type: "command", command, timeout: 5 }],
+    });
+  }
 }
 
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
