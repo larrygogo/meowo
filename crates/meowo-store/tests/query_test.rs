@@ -279,8 +279,10 @@ fn live_sessions_cursor_tie_respects_filter() {
     );
 }
 
+/// 角标的分工：`total`/`archived` 由 SQL 数；running/waiting 只供**原料**（候选行），
+/// 因为它们的语义含「此刻还连着」——那要查进程表，store 层看不见（判定在 app 层的 tab_class）。
 #[test]
-fn live_sessions_counts_matches_tabs() {
+fn live_counts_split_totals_from_connectivity_candidates() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
 
@@ -294,7 +296,7 @@ fn live_sessions_counts_matches_tabs() {
     let (w1, _) = store.start_session(pid, "w1", 300).unwrap();
     store.set_session_status(w1, SessionStatus::Waiting, 310).unwrap();
 
-    // pending_review ×1：status 仍是 running，但应被算进 waiting
+    // pending_review ×1：status 仍是 running，但够格进 waiting
     let (p1, _) = store.start_session(pid, "p1", 320).unwrap();
     store.set_session_status(p1, SessionStatus::Running, 330).unwrap();
     store.set_pending_review(p1, meowo_store::PendingReview::Question, 340).unwrap();
@@ -310,11 +312,18 @@ fn live_sessions_counts_matches_tabs() {
     }
     store.set_session_archived(archived_id.unwrap(), true, 600).unwrap();
 
-    let c = store.live_sessions_counts().unwrap();
-    assert_eq!(c.total, 7);
-    assert_eq!(c.running, 2);
-    assert_eq!(c.waiting, 2, "waiting 应包含 status=waiting 与 pending_review");
-    assert_eq!(c.archived, 1);
+    let (total, archived) = store.live_sessions_totals().unwrap();
+    assert_eq!(total, 7);
+    assert_eq!(archived, 1);
+
+    // 候选 = 未归档 且（status∈{running,waiting} 或 有 pending_review）。
+    // 已结束/已归档的一律不够格——它们绝无可能是「运行中」或「待交互」。
+    let cands = store.live_count_candidates().unwrap();
+    assert_eq!(cands.len(), 4, "2 running + 1 waiting + 1 pending_review");
+    assert_eq!(cands.iter().filter(|c| c.status == "running").count(), 3, "含带 pending 的那条");
+    assert_eq!(cands.iter().filter(|c| c.status == "waiting").count(), 1);
+    assert_eq!(cands.iter().filter(|c| c.pending_review.is_some()).count(), 1);
+    assert!(cands.iter().all(|c| c.status != "ended"), "已结束的不该成为候选");
 }
 
 #[test]
@@ -335,9 +344,9 @@ fn live_sessions_cursor_loads_all_non_archived() {
         store.set_session_archived(s, true, 4700 + i).unwrap();
     }
 
-    let counts = store.live_sessions_counts().unwrap();
-    assert_eq!(counts.total, 300);
-    assert_eq!(counts.archived, 50);
+    let (total, archived) = store.live_sessions_totals().unwrap();
+    assert_eq!(total, 300);
+    assert_eq!(archived, 50);
 
     let mut loaded: Vec<i64> = Vec::new();
     let mut cursor: Option<(i64, i64)> = None;

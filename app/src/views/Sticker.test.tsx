@@ -37,6 +37,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { Sticker } from "./Sticker";
+import { match } from "./sticker/helpers";
 import { EmptyState } from "./sticker/EmptyState";
 import { UsageScreen } from "./sticker/UsageScreen";
 import type { LiveSession, ProviderUsage } from "../api";
@@ -107,6 +108,38 @@ afterEach(() => {
 });
 beforeEach(() => {
   invokeMock.mockClear();
+});
+
+describe("断开会话不再催人交互", () => {
+  const pending = { pending_review: "approval" } as Partial<Item>;
+
+  it("连着时挂出交互标签", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ ...pending, connected: true })]} />);
+    expect(container.querySelector(".pending-pill")).not.toBeNull();
+  });
+
+  it("断开时不挂交互标签——进程都没了，「待批准」只会催用户去点一个点不动的东西", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ ...pending, connected: false })]} />);
+    expect(container.querySelector(".pending-pill")).toBeNull();
+    // 卡片本身仍在「全部」里作为历史留存，只是不再伪装成待办。
+    expect(container.querySelector(".stk-title")?.textContent).toBe("做点事");
+  });
+
+  it("断开的会话不进「待交互」/「运行中」分组", () => {
+    // DB 里残留的 pending_review 曾让断开的会话漏进 waiting：后台收尾只改 status、
+    // 不清 pending_review，而 waiting 的判定是 `status=waiting || pending_review != null`。
+    const dead = mk({ ...pending, connected: false });
+    expect(match("waiting", dead)).toBe(false);
+    expect(match("running", dead)).toBe(false);
+    expect(match("all", dead)).toBe(true); // 仍作为历史留在「全部」
+
+    const deadRunning = mk({ connected: false, session: { ...mk().session, status: "running" } });
+    expect(match("running", deadRunning)).toBe(false);
+
+    // 连着的照旧各归其位。
+    expect(match("waiting", mk({ ...pending, connected: true }))).toBe(true);
+    expect(match("running", mk({ connected: true }))).toBe(true);
+  });
 });
 
 describe("Sticker", () => {

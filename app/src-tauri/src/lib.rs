@@ -194,13 +194,39 @@ struct LiveItem {
     // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
 }
 
+/// tab 角标计数。`total`/`archived` 纯 SQL 数得出；`running`/`waiting` 不行——它们的语义含
+/// 「此刻还连着」，要查进程表，SQL 看不见（详见 `Store::live_sessions_totals`）。
+///
+/// 故这里用与**列表同一套判定**（`agent_liveness_probe` + `tab_class`）现算，保证角标数字与
+/// 列表条数自洽：否则角标写着「待交互 3」、点进去列表只有 2 条。
 #[tauri::command]
 async fn get_live_sessions_counts(
     state: State<'_, AppState>,
 ) -> Result<meowo_store::query::LiveSessionCounts, String> {
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        open_store(&db_path)?.live_sessions_counts().map_err(|e| e.to_string())
+        let store = open_store(&db_path)?;
+        let (total, archived) = store.live_sessions_totals().map_err(|e| e.to_string())?;
+        let candidates = store.live_count_candidates().map_err(|e| e.to_string())?;
+
+        let is_claude = agent_liveness_probe();
+        let now = now_ms();
+        let (mut running, mut waiting) = (0i64, 0i64);
+        for c in candidates {
+            let connected = session_connected(
+                &c.status,
+                c.pid,
+                is_claude(c.pid.unwrap_or(0)),
+                c.last_event_at,
+                now,
+            );
+            match tab_class(connected, &c.status, c.pending_review.as_deref()) {
+                Some("waiting") => waiting += 1,
+                Some("running") => running += 1,
+                _ => {}
+            }
+        }
+        Ok(meowo_store::query::LiveSessionCounts { total, running, waiting, archived })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -261,6 +287,44 @@ fn session_connected(status: &str, _pid: Option<i64>, pid_alive: bool, last_even
     now.saturating_sub(last_event_at) < RESUME_GRACE_MS
 }
 
+/// 「这个 pid 是不是活着的 agent 进程」的一次性快照探针。
+///
+/// Windows 走 sysinfo 进程表；macOS/Unix 走一次 `ps` 批量快照（sysinfo 在 macOS 上不可靠，
+/// 逐 pid spawn `ps` 又太慢——一批会话只扫一次）。
+///
+/// 抽出来是为了让**列表**与**角标计数**共用同一套判定、同一份快照：两边各查一次进程表，
+/// 就可能在两次快照之间有进程退出，于是角标说「待交互 3」、列表却只有 2 条。
+fn agent_liveness_probe() -> Box<dyn Fn(i64) -> bool> {
+    #[cfg(target_os = "windows")]
+    {
+        let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+        Box::new(move |pid| pid_is_agent(&sys, pid))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let pids = claude_pids_snapshot();
+        Box::new(move |pid| pid > 0 && pids.contains(&pid))
+    }
+}
+
+/// 该会话此刻属于哪个 tab 分类。**唯一定义处**——列表过滤与角标计数都从这里取答案，
+/// 免得两边各写一份 `status == "waiting" || pending_review.is_some()` 而慢慢长歪。
+///
+/// 断开的会话既不「运行中」也不「待交互」：进程都没了，催用户去交互毫无意义（点进去只是个
+/// 历史会话），显示成在跑更是假的。它们只作为历史留在「全部」里。
+fn tab_class(connected: bool, status: &str, pending_review: Option<&str>) -> Option<&'static str> {
+    if !connected {
+        return None;
+    }
+    if status == "waiting" || pending_review.is_some() {
+        return Some("waiting");
+    }
+    if status == "running" {
+        return Some("running");
+    }
+    None
+}
+
 fn live_sessions_blocking(
     db_path: &PathBuf,
     tx_cache: &Mutex<meowo_agent::TranscriptCache>,
@@ -274,18 +338,8 @@ fn live_sessions_blocking(
     let sessions = store
         .live_sessions(Some(filter), search, before_last_event_at, before_id, limit)
         .map_err(|e| e.to_string())?;
-    // connected 校验：Windows 走 sysinfo 进程表；macOS/Unix 一次 ps 批量快照
-    // （sysinfo 在 macOS 上不可靠，逐 pid spawn ps 又太慢——一批会话只扫一次）。
-    #[cfg(target_os = "windows")]
-    let sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-    );
-    #[cfg(target_os = "windows")]
-    let is_claude = |pid: i64| pid_is_agent(&sys, pid);
-    #[cfg(not(target_os = "windows"))]
-    let claude_pids = claude_pids_snapshot();
-    #[cfg(not(target_os = "windows"))]
-    let is_claude = |pid: i64| pid > 0 && claude_pids.contains(&pid);
+    // connected 校验：一次进程表快照，列表与角标计数共用同一套判定（见 agent_liveness_probe）。
+    let is_claude = agent_liveness_probe();
 
     // 先算 connected（廉价，仅查进程表）并据此排序，再解析 transcript 标题。
     // 标题解析要 read_to_string 整个 JSONL（可达数 MB）；走增量缓存后后续刷新接近 0 成本，
@@ -348,6 +402,14 @@ fn live_sessions_blocking(
         }
         let unnamed = t.is_empty() || t == "(未命名会话)";
         if !connected && unnamed && s.todos.is_empty() {
+            continue;
+        }
+        // 「运行中」「待交互」只收此刻还连着的会话。SQL 层筛不掉断开的（connected 要查进程表，
+        // 是 SQL 之后才算出来的），故在此补上——否则进程早已死掉的会话会挂在「待交互」里催人，
+        // 点进去却只是个断开的历史会话。DB 里残留的 pending_review 正是这么漏进来的：后台收尾
+        // 只改 status，不清 pending_review，而 waiting 的判定是 `status='waiting' OR
+        // pending_review IS NOT NULL`。
+        if matches!(filter, "waiting" | "running") && !connected {
             continue;
         }
         items.push(LiveItem {
@@ -933,7 +995,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_id, session_connected, RESUME_GRACE_MS};
+    use super::{is_safe_id, session_connected, tab_class, RESUME_GRACE_MS};
     use crate::install::{bump_login_epoch, login_epoch};
     use crate::proc::pid_is_agent;
     use crate::terminal::{
@@ -1077,6 +1139,27 @@ mod tests {
         // 空 PATH → 找不到
         assert!(!path_has_exe(std::ffi::OsStr::new(""), "wt.exe"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 断开的会话既不「运行中」也不「待交互」——进程都没了，催用户去交互毫无意义。
+    /// 这是列表过滤与角标计数**共用**的唯一判定，改坏了两处一起错。
+    #[test]
+    fn tab_class_excludes_disconnected_sessions() {
+        // 连着：三类各归其位。
+        assert_eq!(tab_class(true, "running", None), Some("running"));
+        assert_eq!(tab_class(true, "waiting", None), Some("waiting"));
+        // pending_review 压过 status：正在等用户批准，不算「自主运行中」。
+        assert_eq!(tab_class(true, "running", Some("approval")), Some("waiting"));
+
+        // 断开：一律不进这两个 tab，只作为历史留在「全部」里。
+        // 尤其是这条——DB 里残留的 pending_review 曾让断开的会话挂在「待交互」里催人，
+        // 点进去却只是个死掉的历史会话（后台收尾只改 status，不清 pending_review）。
+        assert_eq!(tab_class(false, "running", Some("approval")), None);
+        assert_eq!(tab_class(false, "waiting", None), None);
+        assert_eq!(tab_class(false, "running", None), None);
+
+        // 已结束/其它状态：本就不属于这两类。
+        assert_eq!(tab_class(true, "ended", None), None);
     }
 
     #[test]
