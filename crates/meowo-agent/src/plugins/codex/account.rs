@@ -67,8 +67,24 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
 }
 
 
+/// 窗口长度（分钟）→ 泳道种类。codex 现实里只有两种窗口：300 分钟（5 小时滚动窗）与
+/// 10080 分钟（7 天）。阈值取 6 小时：短于它的算 5 小时窗，长于它的算周窗。
+fn window_kind(minutes: f64) -> UsageKind {
+    if minutes <= 360.0 {
+        UsageKind::FiveHour
+    } else {
+        UsageKind::Weekly
+    }
+}
+
 /// 从 token_count 事件的 payload 解析 ProviderUsage（纯函数）。
-/// rate_limits.primary → FiveHour（5h 窗口）；secondary → Weekly（7d 窗口）。
+///
+/// 泳道种类按 **`window_minutes`（窗口长度）** 判定，**不按 `primary`/`secondary` 的位置**。
+/// codex 已经改过一次格式：现在 `primary` 装的就是 7 天窗口（`window_minutes: 10080`）、
+/// `secondary` 为 `null`。旧实现按位置硬贴标签（primary→5h、secondary→周），于是把周配额
+/// 显示成「5 小时配额」，而重置时间又是一周后——两者自相矛盾，正是这个 bug 的现场。
+/// 位置语义只在 `window_minutes` 缺失（更老的格式）时作为兜底。
+///
 /// resets_at 缺失时兼容旧字段 resets_in_seconds（若有则加到记录时间戳）。
 pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
     // 记录时间戳（部分旧格式作为 resets_at 兜底）
@@ -81,10 +97,16 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
 
     let mut lanes: Vec<UsageLane> = Vec::new();
 
-    // 解析一条泳道
-    let parse_lane = |key: &str, kind: UsageKind| -> Option<UsageLane> {
+    // 解析一条泳道。`fallback` 仅用于老格式（无 window_minutes）。
+    // 该键为 `null`（新格式的 secondary）时，`used_percent` 取不到 → 安全跳过。
+    let parse_lane = |key: &str, fallback: UsageKind| -> Option<UsageLane> {
         let rl = rate_limits.get(key)?;
         let used_pct = rl.get("used_percent").and_then(|v| v.as_f64())?;
+        let kind = rl
+            .get("window_minutes")
+            .and_then(|v| v.as_f64())
+            .map(window_kind)
+            .unwrap_or(fallback);
 
         // resets_at：优先 unix 秒字段，其次旧版 resets_in_seconds + record_ts
         let resets_at: Option<String> = if let Some(ts) = rl.get("resets_at").and_then(|v| v.as_i64()) {
@@ -113,6 +135,9 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
     if let Some(lane) = parse_lane("secondary", UsageKind::Weekly) {
         lanes.push(lane);
     }
+    // 窗口短的在前（5 小时 → 周），与 claude/kimi 的展示顺序一致。种类既然不再由位置决定，
+    // 顺序也不能再指望位置。
+    lanes.sort_by_key(|l| matches!(l.kind, UsageKind::Weekly));
 
     // note：仅承载别处未展示的额外信息(credits)；plan_type 已作为账号 plan 徽标展示，不重复进 note。
     let credits = payload.get("credits").and_then(|v| v.as_f64());
@@ -444,6 +469,63 @@ mod tests {
 
         // plan_type 已作为账号 plan 徽标展示，不再进 note；无 credits 时 note 为空。
         assert!(pu.note.is_none());
+    }
+
+    /// 回归：codex 的**新格式**——`primary` 装的是 7 天窗口（window_minutes=10080）、
+    /// `secondary` 为 null。（取自真机 rollout。）按位置贴标签会把周配额显示成「5 小时配额」，
+    /// 而重置时间又是一周后，自相矛盾。必须按 window_minutes 判定。
+    #[test]
+    fn parse_codex_usage_new_shape_primary_is_weekly_window() {
+        let payload = json!({
+            "type": "token_count",
+            "rate_limits": {
+                "limit_id": "codex",
+                "limit_name": null,
+                "primary": { "used_percent": 0.0, "window_minutes": 10080, "resets_at": 1784518666i64 },
+                "secondary": null,
+                "credits": null,
+                "plan_type": "pro"
+            }
+        });
+        let pu = parse_codex_usage(&payload);
+        assert_eq!(pu.lanes.len(), 1, "secondary 为 null → 只应有一条泳道");
+        assert_eq!(pu.lanes[0].kind, UsageKind::Weekly, "10080 分钟是周窗口，不是 5 小时");
+        // 1784518666 = 2026-07-20 → 一周后，与周窗口自洽。
+        assert!(pu.lanes[0].resets_at.as_deref().unwrap().starts_with("2026-07-20"));
+    }
+
+    /// 反过来也要认得：若 codex 把 5 小时窗口放进 secondary，也必须标成 FiveHour，
+    /// 且排在周窗口前面——种类和顺序都不再由位置决定。
+    #[test]
+    fn parse_codex_usage_kind_follows_window_not_position() {
+        let payload = json!({
+            "type": "token_count",
+            "rate_limits": {
+                "primary":   { "used_percent": 10.0, "window_minutes": 10080 },
+                "secondary": { "used_percent": 20.0, "window_minutes": 300 }
+            }
+        });
+        let pu = parse_codex_usage(&payload);
+        assert_eq!(pu.lanes.len(), 2);
+        assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour, "短窗口应排在前");
+        assert_eq!(pu.lanes[0].used_pct, Some(20.0));
+        assert_eq!(pu.lanes[1].kind, UsageKind::Weekly);
+        assert_eq!(pu.lanes[1].used_pct, Some(10.0));
+    }
+
+    /// 老格式（无 window_minutes）仍按位置兜底：primary→5h、secondary→周。
+    #[test]
+    fn parse_codex_usage_falls_back_to_position_without_window_minutes() {
+        let payload = json!({
+            "type": "token_count",
+            "rate_limits": {
+                "primary":   { "used_percent": 30.0 },
+                "secondary": { "used_percent": 40.0 }
+            }
+        });
+        let pu = parse_codex_usage(&payload);
+        assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
+        assert_eq!(pu.lanes[1].kind, UsageKind::Weekly);
     }
 
     #[test]
