@@ -18,7 +18,10 @@ fn tty_for_pid(pid: i64) -> Option<String> {
 /// 单次 ps 快照后在内存里走 ppid —— macOS 上 sysinfo parent() 会过早断链（见 lib::pid_is_claude 注释），
 /// 链一断就到不了 iTerm/Terminal，iTerm 多 tab 会话会被识成 Other 而无法聚焦，只能回退新开 Terminal。
 fn ancestor_names(pid: i64) -> Vec<String> {
-    let Ok(out) = Command::new("ps").args(["-axo", "pid=,ppid=,comm="]).output() else {
+    let Ok(out) = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+    else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -26,14 +29,20 @@ fn ancestor_names(pid: i64) -> Vec<String> {
     let mut table: std::collections::HashMap<i64, (i64, String)> = std::collections::HashMap::new();
     for line in text.lines() {
         let mut it = line.split_whitespace();
-        let (Some(p), Some(pp)) = (it.next(), it.next()) else { continue };
-        let (Ok(p), Ok(pp)) = (p.parse::<i64>(), pp.parse::<i64>()) else { continue };
+        let (Some(p), Some(pp)) = (it.next(), it.next()) else {
+            continue;
+        };
+        let (Ok(p), Ok(pp)) = (p.parse::<i64>(), pp.parse::<i64>()) else {
+            continue;
+        };
         table.insert(p, (pp, it.collect::<Vec<_>>().join(" ")));
     }
     let mut names = Vec::new();
     let mut cur = pid;
     for _ in 0..32 {
-        let Some((ppid, comm)) = table.get(&cur) else { break };
+        let Some((ppid, comm)) = table.get(&cur) else {
+            break;
+        };
         if !comm.is_empty() {
             names.push(comm.clone());
         }
@@ -88,7 +97,13 @@ fn focus_existing_tab(pid: i64) -> bool {
 /// 或自动化权限被拒——进程仍存活时绝不能回退 resume，否则会对运行中的会话 fork 出重复会话、看板多出
 /// 重复卡片（与 Windows 侧「聚焦失败只做窗口级置前、绝不 spawn 新进程」的语义对齐；macOS 无等价的
 /// 窗口级手段，宁可不动作）。`resume_argv` 为空表示调用方不允许 resume 回退（如通知点击）。
-pub fn focus_session_terminal(pid: i64, cwd: Option<&str>, resume_argv: &[String], resume_kind: TermKind) {
+pub fn focus_session_terminal(
+    pid: i64,
+    cwd: Option<&str>,
+    resume_argv: &[String],
+    resume_kind: TermKind,
+    env_prefix: &str,
+) {
     if focus_existing_tab(pid) {
         return;
     }
@@ -97,17 +112,27 @@ pub fn focus_session_terminal(pid: i64, cwd: Option<&str>, resume_argv: &[String
     if resume_argv.is_empty() || crate::pid_is_agent_ps(pid) {
         return;
     }
-    let _ = resume_session_mac(cwd, resume_argv, resume_kind); // 回退路径无乐观复活，无需回滚
+    // 回退路径无乐观复活，无需回滚。env_prefix 让回退新开的会话同样带上代理。
+    let _ = resume_session_mac(cwd, resume_argv, resume_kind, env_prefix);
 }
 
 /// 点已断开的卡片（或跳转回退）：按设置在 Terminal.app / iTerm2 新开窗口执行 resume 命令；有 cwd 则先 cd。
 /// `resume_argv` 来自 agent::resume_args（按 provider 分发：claude --resume / kimi -r / codex resume），
 /// 与 Windows 共用同一事实源，不再硬编码 claude。返回 osascript 是否执行成功（失败时调用方回滚乐观复活）。
-pub fn resume_session_mac(cwd: Option<&str>, resume_argv: &[String], kind: TermKind) -> bool {
+/// `env_prefix`：形如 `HTTPS_PROXY='http://…' ` 的 POSIX 命令前缀式赋值（无代理时传空串）。
+/// 它作为 argv 的 **item 1** 传给 AppleScript，是唯一不套 `quoted form` 的一项——POSIX 要求赋值的
+/// 键名不带引号。其值已在 `terminal::env_prefix_posix` 里按单引号规则转义。
+pub fn resume_session_mac(
+    cwd: Option<&str>,
+    resume_argv: &[String],
+    kind: TermKind,
+    env_prefix: &str,
+) -> bool {
     if resume_argv.is_empty() {
         return false;
     }
-    let mut args: Vec<&str> = Vec::with_capacity(resume_argv.len() + 1);
+    let mut args: Vec<&str> = Vec::with_capacity(resume_argv.len() + 2);
+    args.push(env_prefix);
     match cwd {
         Some(dir) if !dir.trim().is_empty() => {
             args.push(dir);

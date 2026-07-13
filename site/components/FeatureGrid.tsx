@@ -7,6 +7,9 @@ import {
   CardsIcon,
   MagnetIcon,
   ChartIcon,
+  PlugIcon,
+  NetworkIcon,
+  ShieldIcon,
 } from "./icons";
 
 type Feature = {
@@ -21,8 +24,8 @@ const FEATURES: Feature[] = [
     title: "会话看板",
     body: (
       <>
-        每张卡片显示项目名、会话标题、最近一条 AI 输出和连接状态。Claude Code 的会话另外显示{" "}
-        <code className="inline">Context</code> 已用百分比。
+        每张卡片显示项目名、会话标题、最近一条 AI 输出和连接状态。支持读取 Context 的 AI Agent
+        还会显示已用百分比。
       </>
     ),
   },
@@ -33,13 +36,8 @@ const FEATURES: Feature[] = [
   },
   {
     icon: <TerminalIcon />,
-    title: "终端跳转",
-    body: (
-      <>
-        点连接中的会话，切到它所在的终端标签页。点已断开的会话，在原目录新开终端并执行{" "}
-        <code className="inline">--resume</code> 续接对话。
-      </>
-    ),
+    title: "一键启动与续接",
+    body: "选择项目目录和 AI 工具即可新建会话。点击卡片切回对应终端；会话已断开时，自动回到原目录续接，无需记命令或会话 ID。",
   },
   {
     icon: <CardsIcon />,
@@ -60,6 +58,21 @@ const FEATURES: Feature[] = [
     icon: <ChartIcon />,
     title: "用量读数",
     body: "底栏显示 5 小时 / 7 天配额的使用比例。设置页可以看到账号信息、分模型用量和重置时间。",
+  },
+  {
+    icon: <PlugIcon />,
+    title: "安装与自动接入",
+    body: "在设置里安装、登录 AI CLI，并自动接入所需 hooks。检测到连接缺失时，可以直接点击修复。",
+  },
+  {
+    icon: <NetworkIcon />,
+    title: "按 AI 工具设置代理",
+    body: "设置全局默认代理，也可以为每个 AI 工具单独选择直连、跟随系统或自定义代理。",
+  },
+  {
+    icon: <ShieldIcon />,
+    title: "本地优先",
+    body: "会话与设置保存在本机。Meowo 通过本地数据库汇总状态，不把会话内容上传到自己的服务器。",
   },
 ];
 

@@ -96,6 +96,10 @@ pub(crate) struct Settings {
     /// 「新建会话」面板默认选中的 agent（claude/kimi/codex）。缺省 claude，兼容老 settings.json。
     #[serde(default = "default_default_agent")]
     pub(crate) default_agent: String,
+    /// 出站代理：用量查询 / OAuth 刷新 / 下载 agent 二进制 / 自更新。
+    /// 可按 agent 覆盖（`api.anthropic.com` 走代理、Kimi 直连是常态）。见 [`crate::proxy`]。
+    #[serde(default)]
+    pub(crate) proxy: crate::proxy::ProxySettings,
 }
 
 impl Default for Settings {
@@ -115,6 +119,7 @@ impl Default for Settings {
             sticker_color: default_sticker_color(),
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
+            proxy: crate::proxy::ProxySettings::default(),
         }
     }
 }
@@ -189,6 +194,9 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     // 后端兜底钳值（与前端 appearance.ts 一致），防越界值落盘后被 5s 轮询线程读到。
     settings.opacity = settings.opacity.clamp(25, 100);
     settings.ui_scale = settings.ui_scale.clamp(50, 200);
+    // 代理地址落盘前校验。非法值一旦写进去，后台只会静默降级直连，用户对着「用量查不到」
+    // 毫无线索——在这里拦下，把具体原因回给设置页。
+    settings.proxy.validate()?;
     let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     let path = settings_path();
     if let Some(dir) = path.parent() {
@@ -196,11 +204,27 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     }
     // 原子写：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
     crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())?;
+    // 代理落盘后立刻写进各 agent 自己的配置（claude 的 settings.json env 块），改完即生效——
+    // 否则用户改了代理还得重启 Meowo 才作数。best-effort：写不进去不影响 Meowo 自己的设置已保存。
+    let reports = crate::proxy::apply_to_agent_configs();
+    let _ = app.emit("proxy-applied", &reports);
     // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
     apply_language(&app, ui_lang(&settings));
     // 通知贴纸窗口实时套用新设置。
     let _ = app.emit("settings-changed", settings);
     Ok(())
+}
+
+/// 某 agent（`agent = None` → 全局规则）当前**生效**的代理串；`None` 表示直连。
+///
+/// 存在的理由只有一个：自更新走 `tauri-plugin-updater`（内部是 reqwest），**不经过 ports.rs 的
+/// ureq 客户端**，拿不到我们解析出来的代理。前端更新窗口只能靠这个命令取值，再喂给
+/// `check({ proxy })`。设置页也用它显示「system 模式下实际读到的环境变量代理是什么」。
+///
+/// 注意：解析结果可能是 `socks5://`，而 updater 的 reqwest 未必编进 socks 支持——前端据此提示。
+#[tauri::command]
+pub(crate) fn get_effective_proxy(agent: Option<String>) -> Option<String> {
+    crate::ports::resolve_proxy(agent.as_deref())
 }
 
 /// 设置窗口用：读取/切换开机自启（原来只在托盘，托盘精简后搬到设置页）。
@@ -217,7 +241,9 @@ pub(crate) fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
 pub(crate) fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     // dev 下拒绝写入：否则会把 target/debug 的调试二进制注册进开机自启，开机白屏。仅安装版可用。
     if tauri::is_dev() {
-        return Err("开机自启仅在安装版可用（dev 下会注册调试二进制，开机连不上 dev server）".into());
+        return Err(
+            "开机自启仅在安装版可用（dev 下会注册调试二进制，开机连不上 dev server）".into(),
+        );
     }
     let mgr = app.autolaunch();
     if enabled {
@@ -249,8 +275,10 @@ fn quote_autostart_run_value(app: &tauri::AppHandle) {
     };
     let name = app.package_info().name.clone(); // 与 tauri-plugin-autostart 的 Run 项名一致
     let value = format!("\"{}\"", exe.display());
-    let run = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", KEY_SET_VALUE);
+    let run = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Run",
+        KEY_SET_VALUE,
+    );
     match run {
         Ok(run) => {
             if let Err(e) = run.set_value(&name, &value) {
@@ -264,8 +292,7 @@ fn quote_autostart_run_value(app: &tauri::AppHandle) {
 pub(crate) const SITE_URL: &str = "https://meowo.io";
 
 /// 允许在浏览器里打开的链接前缀：官网与本仓库。
-pub(crate) const ALLOWED_URL_PREFIXES: [&str; 2] =
-    [SITE_URL, "https://github.com/larrygogo/meowo"];
+pub(crate) const ALLOWED_URL_PREFIXES: [&str; 2] = [SITE_URL, "https://github.com/larrygogo/meowo"];
 
 /// 设置/关于页与托盘用：在默认浏览器打开官网或本仓库链接。只放行白名单前缀，
 /// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
@@ -305,5 +332,30 @@ mod tests {
         // 旧 settings.json 无 default_agent 字段：serde default 兜底 claude，不 panic。
         let v: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(v.default_agent, "claude");
+    }
+
+    #[test]
+    fn old_settings_json_without_proxy_defaults_to_system() {
+        // 老 settings.json 完全没有 proxy 段 → 跟随系统环境变量（而非直连）。
+        let v: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(v.proxy.mode, "system");
+        assert!(v.proxy.per_agent.is_empty());
+        assert!(v.proxy.validate().is_ok());
+    }
+
+    #[test]
+    fn per_agent_proxy_roundtrips_through_settings_json() {
+        // 设置页写入的形态能原样读回（含 per_agent 覆盖）。
+        let src = r#"{"proxy":{"mode":"custom","url":"http://127.0.0.1:7890",
+                     "per_agent":{"kimi":{"mode":"off","url":""}}}}"#;
+        let v: Settings = serde_json::from_str(src).unwrap();
+        assert_eq!(
+            v.proxy.resolve(Some("claude")).as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(v.proxy.resolve(Some("kimi")), None);
+        let text = serde_json::to_string(&v).unwrap();
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.proxy, v.proxy);
     }
 }

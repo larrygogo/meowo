@@ -121,6 +121,18 @@ static VARIANTS: [Variant; 1] = [Variant {
 
 pub struct Claude;
 
+/// claude 是**唯一**能把代理写进自己配置文件的 agent：`settings.json` 的 `env` 块，官方定义为
+/// 「作用于每个会话及其派生子进程」——于是用户自己在终端敲 `claude` 也会走代理。
+///
+/// SOCKS 明确不支持（官方原文：Claude Code does not support SOCKS proxies），故 `socks: false`，
+/// `socks_keys` 留空——填了也没用，只会让用户以为配上了。
+static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
+    socks: false,
+    config_env: true,
+    http_keys: &["HTTPS_PROXY", "HTTP_PROXY"],
+    socks_keys: &[],
+};
+
 impl AgentPlugin for Claude {
     fn id(&self) -> AgentId {
         id::CLAUDE
@@ -133,6 +145,9 @@ impl AgentPlugin for Claude {
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["claude", "claude.exe"]
+    }
+    fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
+        Some(&PROXY)
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
@@ -261,7 +276,14 @@ mod tests {
         let exe = touch_exe(&home.join(".local").join("bin"), "claude");
         let inst = probe_in(&home).unwrap();
         let argv = inst.login_argv().expect("claude 应声明登录入口");
-        assert_eq!(argv, vec![exe.to_string_lossy().into_owned(), "auth".into(), "login".into()]);
+        assert_eq!(
+            argv,
+            vec![
+                exe.to_string_lossy().into_owned(),
+                "auth".into(),
+                "login".into()
+            ]
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

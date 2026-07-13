@@ -18,8 +18,8 @@ pub mod setup;
 pub mod telemetry;
 
 use crate::{
-    caps::TelemetryCap,
     auth::{AuthScheme, CredentialSource},
+    caps::TelemetryCap,
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},
     id::{self, AgentId},
     launch::{LaunchCandidate, LaunchSpec, Root},
@@ -44,7 +44,10 @@ static HOOKS: HookSpec = HookSpec {
     format: ConfigFormat::CodexJson,
     missing: MissingConfig::CreateFrom("{\"hooks\":{}}"),
     events: &EVENTS,
-    command: CommandSpec { quote_exe: true, with_provider: true },
+    command: CommandSpec {
+        quote_exe: true,
+        with_provider: true,
+    },
 };
 
 /// codex 的 `auth.json` 由 CLI 自己维护（含 OIDC id_token），Meowo 只读不刷新 → `refresh: None`。
@@ -60,27 +63,53 @@ static AUTH: AuthScheme = AuthScheme {
 static LAUNCH: LaunchSpec = LaunchSpec {
     stem: "codex",
     candidates: &[
-        LaunchCandidate::Exe { root: Root::Home, sub: ".bun/bin" },
+        LaunchCandidate::Exe {
+            root: Root::Home,
+            sub: ".bun/bin",
+        },
         // npm 全局前缀：Windows 上是 %APPDATA%\npm，某些环境 APPDATA 缺失则由 USERPROFILE 推。
-        LaunchCandidate::NodeScript { root: Root::Env("APPDATA"), rel: "npm/node_modules/@openai/codex/bin/codex.js" },
+        LaunchCandidate::NodeScript {
+            root: Root::Env("APPDATA"),
+            rel: "npm/node_modules/@openai/codex/bin/codex.js",
+        },
         LaunchCandidate::NodeScript {
             root: Root::Env("USERPROFILE"),
             rel: "AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js",
         },
         // `current` 是指向当前 release 的 junction/symlink，跨平台稳定。
-        LaunchCandidate::Exe { root: Root::DataDir, sub: "packages/standalone/current/bin" },
+        LaunchCandidate::Exe {
+            root: Root::DataDir,
+            sub: "packages/standalone/current/bin",
+        },
     ],
 };
 
 static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
-    data_dir: DataDirSpec { env: Some("CODEX_HOME"), candidates: &[".codex"] },
+    data_dir: DataDirSpec {
+        env: Some("CODEX_HOME"),
+        candidates: &[".codex"],
+    },
     hooks: &HOOKS,
     auth: Some(&AUTH),
     launch: &LAUNCH,
 }];
 
 pub struct Codex;
+
+/// codex **无法**从配置文件配代理：让主进程走代理的 issue（openai/codex#6060）仍开着，PR 被拒。
+/// `config.toml` 里那两个看着像的键都不是：`features.network_proxy` 是**沙箱子进程**的代理，
+/// `shell_environment_policy.set` 只注入给它派生的 shell——都不影响 codex 自己的 API 请求。
+/// 只剩进程环境变量一条路（reqwest 会自动读）。
+///
+/// SOCKS 不支持：codex-rs 的 reqwest 没编译 `socks` feature（另见 issue #20844：Windows 下
+/// SOCKS5 不稳，改用 HTTP 代理即恢复）。
+static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
+    socks: false,
+    config_env: false,
+    http_keys: &["HTTPS_PROXY", "HTTP_PROXY"],
+    socks_keys: &[],
+};
 
 impl AgentPlugin for Codex {
     fn id(&self) -> AgentId {
@@ -91,6 +120,9 @@ impl AgentPlugin for Codex {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
+        Some(&PROXY)
     }
     fn process_names(&self) -> &'static [&'static str] {
         // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中
@@ -156,10 +188,19 @@ mod tests {
         std::fs::create_dir_all(home.join(".codex")).unwrap();
 
         let v = &VARIANTS[0];
-        let dir = v.data_dir.candidates.iter().map(|c| home.join(c)).find(|p| p.is_dir()).unwrap();
+        let dir = v
+            .data_dir
+            .candidates
+            .iter()
+            .map(|c| home.join(c))
+            .find(|p| p.is_dir())
+            .unwrap();
         let inst = v.installation_at(id::CODEX, dir, Some(&home));
         assert_eq!(inst.config_path(), home.join(".codex").join("hooks.json"));
-        assert_eq!(inst.credentials_path(), Some(home.join(".codex").join("auth.json")));
+        assert_eq!(
+            inst.credentials_path(),
+            Some(home.join(".codex").join("auth.json"))
+        );
         assert!(inst.is_configured());
         // 三处候选都没有 → 回退裸名。
         assert_eq!(inst.launch_argv(), vec!["codex".to_string()]);
@@ -170,9 +211,15 @@ mod tests {
     #[test]
     fn standalone_install_under_data_dir_is_found() {
         // 「装完仍显示未安装」的回归：PATH 是旧快照，但独立安装的固定路径能直查到。
-        let home = std::env::temp_dir().join(format!("meowo-codex-standalone-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("meowo-codex-standalone-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        let bin = home.join(".codex").join("packages").join("standalone").join("current").join("bin");
+        let bin = home
+            .join(".codex")
+            .join("packages")
+            .join("standalone")
+            .join("current")
+            .join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let exe = bin.join(crate::exe_file_name("codex"));
         std::fs::write(&exe, b"").unwrap();
@@ -196,7 +243,15 @@ mod tests {
             std::fs::write(d.join(&name), b"").unwrap();
         }
         let inst = VARIANTS[0].installation_at(id::CODEX, home.join(".codex"), Some(&home));
-        assert_eq!(inst.launch_argv(), vec![home.join(".bun").join("bin").join(&name).to_string_lossy().into_owned()]);
+        assert_eq!(
+            inst.launch_argv(),
+            vec![home
+                .join(".bun")
+                .join("bin")
+                .join(&name)
+                .to_string_lossy()
+                .into_owned()]
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }

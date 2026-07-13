@@ -12,7 +12,11 @@ use meowo_agent::AgentId;
 
 /// app 可执行同目录的 meowo-reporter（打包态 sidecar 与 app 放一起）。
 fn sibling_reporter() -> Option<String> {
-    let bin = if cfg!(windows) { "meowo-reporter.exe" } else { "meowo-reporter" };
+    let bin = if cfg!(windows) {
+        "meowo-reporter.exe"
+    } else {
+        "meowo-reporter"
+    };
     let exe = std::env::current_exe().ok()?;
     let sib = exe.with_file_name(bin);
     sib.exists().then(|| sib.to_string_lossy().into_owned())
@@ -20,13 +24,19 @@ fn sibling_reporter() -> Option<String> {
 
 /// meowo 自己的数据目录（`~/.meowo`，board.db 与 statusline.sh 的所在）。
 fn meowo_dir() -> std::path::PathBuf {
-    crate::db_path().parent().map(|p| p.to_path_buf()).unwrap_or_default()
+    crate::db_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default()
 }
 
 /// 接线一个 agent。`reporter` 由调用方预解析，避免 apply_all 里逐个重复查 sidecar。
 fn wire(plugin: &dyn meowo_agent::AgentPlugin, reporter: Option<&str>) -> Option<RepairReason> {
     let dir = meowo_dir();
-    let ctx = WiringContext { fallback_reporter: reporter, meowo_dir: &dir };
+    let ctx = WiringContext {
+        fallback_reporter: reporter,
+        meowo_dir: &dir,
+    };
     plugin.wire(&ctx)
 }
 
@@ -55,7 +65,10 @@ fn sweep_legacy_wrappers() {
     for dir in LEGACY_DIRS {
         let script = home.join(dir).join("statusline.sh");
         if meowo_agent::remove_generated_wrapper(&script) {
-            eprintln!("Meowo: 已清除前代品牌遗留的 statusline 包装脚本 {}", script.display());
+            eprintln!(
+                "Meowo: 已清除前代品牌遗留的 statusline 包装脚本 {}",
+                script.display()
+            );
         }
     }
 }
@@ -79,6 +92,9 @@ pub fn apply_all() {
     if claude_wired {
         sweep_legacy_wrappers();
     }
+    // 代理同样在启动时对齐一次：用户可能在 Meowo 没运行时手改过 agent 的配置，或换了机器。
+    // 与 hooks 接线同为 best-effort，失败只留日志。
+    let _ = crate::proxy::apply_to_agent_configs();
 }
 
 /// 对指定 agent 强制执行一次接线（不管是否 configured）。用于用户手动点击「修复连接」。

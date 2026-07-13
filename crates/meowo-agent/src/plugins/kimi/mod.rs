@@ -12,8 +12,8 @@ pub mod account;
 pub mod telemetry;
 
 use crate::{
-    caps::TelemetryCap,
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
+    caps::TelemetryCap,
     config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig, RepairReason},
     id::{self, AgentId},
     launch::{LaunchCandidate, LaunchSpec, Root},
@@ -35,9 +35,22 @@ static EVENTS: [HookEvent; 6] = [
 /// kimi 0.20 支持的全部 hook 事件（HOOK_EVENT_TYPES）。一条非法 event 会让 kimi **静默禁用全部**
 /// hooks（源码 salvageConfigData），故 EVENTS 有针对本表的绊线测试。
 pub const EVENT_WHITELIST: [&str; 16] = [
-    "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionResult",
-    "UserPromptSubmit", "Stop", "StopFailure", "Interrupt", "SessionStart", "SessionEnd",
-    "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "Notification",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
+    "PermissionResult",
+    "UserPromptSubmit",
+    "Stop",
+    "StopFailure",
+    "Interrupt",
+    "SessionStart",
+    "SessionEnd",
+    "SubagentStart",
+    "SubagentStop",
+    "PreCompact",
+    "PostCompact",
+    "Notification",
 ];
 
 /// config.toml 由 `kimi login` 生成——不存在即「需先登录」，不凭空创建。
@@ -47,7 +60,10 @@ static HOOKS: HookSpec = HookSpec {
     format: ConfigFormat::KimiToml,
     missing: MissingConfig::Fail(RepairReason::NeedLogin),
     events: &EVENTS,
-    command: CommandSpec { quote_exe: false, with_provider: true },
+    command: CommandSpec {
+        quote_exe: false,
+        with_provider: true,
+    },
 };
 
 /// 来源：kimi-code 开源包 `packages/oauth/src/constants.ts`。
@@ -71,8 +87,14 @@ const AUTH_LEGACY: AuthScheme = AUTH_MODERN;
 static LAUNCH_MODERN: LaunchSpec = LaunchSpec {
     stem: "kimi",
     candidates: &[
-        LaunchCandidate::Exe { root: Root::DataDir, sub: "bin" },
-        LaunchCandidate::Exe { root: Root::Home, sub: ".kimi-code/bin" },
+        LaunchCandidate::Exe {
+            root: Root::DataDir,
+            sub: "bin",
+        },
+        LaunchCandidate::Exe {
+            root: Root::Home,
+            sub: ".kimi-code/bin",
+        },
     ],
 };
 
@@ -80,23 +102,38 @@ static LAUNCH_MODERN: LaunchSpec = LaunchSpec {
 static LAUNCH_LEGACY: LaunchSpec = LaunchSpec {
     stem: "kimi",
     candidates: &[
-        LaunchCandidate::Exe { root: Root::DataDir, sub: "bin" },
-        LaunchCandidate::Exe { root: Root::Home, sub: ".kimi/bin" },
-        LaunchCandidate::Exe { root: Root::Home, sub: ".local/bin" },
+        LaunchCandidate::Exe {
+            root: Root::DataDir,
+            sub: "bin",
+        },
+        LaunchCandidate::Exe {
+            root: Root::Home,
+            sub: ".kimi/bin",
+        },
+        LaunchCandidate::Exe {
+            root: Root::Home,
+            sub: ".local/bin",
+        },
     ],
 };
 
 static VARIANTS: [Variant; 2] = [
     Variant {
         tag: "modern",
-        data_dir: DataDirSpec { env: Some("KIMI_SHARE_DIR"), candidates: &[".kimi-code"] },
+        data_dir: DataDirSpec {
+            env: Some("KIMI_SHARE_DIR"),
+            candidates: &[".kimi-code"],
+        },
         hooks: &HOOKS,
         auth: Some(&AUTH_MODERN),
         launch: &LAUNCH_MODERN,
     },
     Variant {
         tag: "legacy",
-        data_dir: DataDirSpec { env: Some("KIMI_SHARE_DIR"), candidates: &[".kimi"] },
+        data_dir: DataDirSpec {
+            env: Some("KIMI_SHARE_DIR"),
+            candidates: &[".kimi"],
+        },
         hooks: &HOOKS,
         auth: Some(&AUTH_LEGACY),
         launch: &LAUNCH_LEGACY,
@@ -104,6 +141,22 @@ static VARIANTS: [Variant; 2] = [
 ];
 
 pub struct Kimi;
+
+/// kimi 的 config.toml 没有 proxy 键、也没有环境变量注入机制（`[providers.*.env]` 只作 api_key /
+/// base_url 的 fallback），故只能靠进程环境变量。
+///
+/// **三家里唯一支持 SOCKS 的**：新版 kimi-code 自 v0.12.0 起认全套
+/// `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`，含 socks5。按官方文档，SOCKS 通常经
+/// `ALL_PROXY` 配置——写进 `HTTPS_PROXY` 未必被识别，故 socks 单列一组键。
+///
+/// 注意旧的 Python 版 kimi-cli 连环境变量都不认（aiohttp `trust_env=False`，修复 PR 未合）——
+/// 那个版本无论怎么配都走不了代理，这里无从区分（变体表按目录形态分，不按 CLI 实现语言分）。
+static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
+    socks: true,
+    config_env: false,
+    http_keys: &["HTTPS_PROXY", "HTTP_PROXY"],
+    socks_keys: &["ALL_PROXY"],
+};
 
 impl AgentPlugin for Kimi {
     fn id(&self) -> AgentId {
@@ -117,6 +170,9 @@ impl AgentPlugin for Kimi {
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["kimi", "kimi.exe"]
+    }
+    fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
+        Some(&PROXY)
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["-r"]
@@ -168,7 +224,12 @@ mod tests {
     /// 直接对变体表 probe（不碰真实 home，也不读 env）。
     fn probe_at(home: &Path) -> Option<Installation> {
         VARIANTS.iter().find_map(|v| {
-            let dir = v.data_dir.candidates.iter().map(|c| home.join(c)).find(|p| p.is_dir())?;
+            let dir = v
+                .data_dir
+                .candidates
+                .iter()
+                .map(|c| home.join(c))
+                .find(|p| p.is_dir())?;
             Some(v.installation_at(id::KIMI, dir, Some(home)))
         })
     }
@@ -177,7 +238,11 @@ mod tests {
     fn events_all_in_upstream_whitelist() {
         // 防连坐绊线：一条非法 event 会让 kimi 静默禁用全部 hooks。
         for ev in EVENTS {
-            assert!(EVENT_WHITELIST.contains(&ev.name), "{} 不在 kimi 0.20 事件白名单", ev.name);
+            assert!(
+                EVENT_WHITELIST.contains(&ev.name),
+                "{} 不在 kimi 0.20 事件白名单",
+                ev.name
+            );
         }
     }
 
@@ -197,7 +262,11 @@ mod tests {
         assert_eq!(legacy.config_path(), home.join(".kimi").join("config.toml"));
         assert_eq!(
             legacy.credentials_path(),
-            Some(home.join(".kimi").join("credentials").join("kimi-code.json"))
+            Some(
+                home.join(".kimi")
+                    .join("credentials")
+                    .join("kimi-code.json")
+            )
         );
 
         // 新版出现 → 抢先。

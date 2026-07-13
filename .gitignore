@@ -2,6 +2,7 @@
 node_modules/
 target/
 dist/
+dev.log
 *.db
 *.db-wal
 *.db-shm

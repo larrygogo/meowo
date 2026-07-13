@@ -1,12 +1,12 @@
 //! Agent 一键安装 / 交互式登录 / hooks 接线与状态检测。从 lib.rs 抽出。
 
-use crate::settings::load_settings;
-use crate::terminal::spawn_in_terminal;
-use crate::{account, agent_id, db_path, install_for, ports, setup};
 #[cfg(target_os = "windows")]
 use crate::envpath;
+use crate::settings::load_settings;
 #[cfg(target_os = "windows")]
 use crate::terminal::pwsh_available;
+use crate::terminal::spawn_in_terminal;
+use crate::{account, agent_id, db_path, install_for, ports, setup};
 use std::path::PathBuf;
 
 /// 后台安装结束事件：ok=true 表示进程 0 退出；code 为退出码（无法取得时 None）。
@@ -43,7 +43,9 @@ pub(crate) fn wire_hooks_best_effort(id: meowo_agent::AgentId, occasion: &str) {
         None => eprintln!("Meowo repair[{id}]: {occasion}后已自动接线"),
         Some(reason) => {
             // NeedLogin / NotDetected 都是意料之中：前端的「修复连接」按钮仍在，用户可手动重试。
-            eprintln!("Meowo repair[{id}]: {occasion}后自动接线未生效（{reason:?}），留给用户手动修复");
+            eprintln!(
+                "Meowo repair[{id}]: {occasion}后自动接线未生效（{reason:?}），留给用户手动修复"
+            );
         }
     }
 }
@@ -66,8 +68,9 @@ pub(crate) struct LoginDone {
 ///   同时 emit（一个成功一个超时，前端状态取决于谁先到）。
 ///
 /// 按 agent 分开：分别登录两个 agent 本就该允许并发（各自一个终端、一个 watch 线程）。
-pub(crate) static LOGIN_EPOCH: std::sync::Mutex<Option<std::collections::HashMap<&'static str, u64>>> =
-    std::sync::Mutex::new(None);
+pub(crate) static LOGIN_EPOCH: std::sync::Mutex<
+    Option<std::collections::HashMap<&'static str, u64>>,
+> = std::sync::Mutex::new(None);
 
 /// 取下一个代次（用于新起的 watch 线程），同时使该 agent 所有旧线程失效。
 pub(crate) fn bump_login_epoch(key: meowo_agent::AgentId) -> u64 {
@@ -81,7 +84,9 @@ pub(crate) fn bump_login_epoch(key: meowo_agent::AgentId) -> u64 {
 /// 当前代次。watch 线程每轮拿它与自己出生时的代次比对，不等则说明已被取消/取代。
 pub(crate) fn login_epoch(key: meowo_agent::AgentId) -> u64 {
     let g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
-    g.as_ref().and_then(|m| m.get(key.as_str()).copied()).unwrap_or(0)
+    g.as_ref()
+        .and_then(|m| m.get(key.as_str()).copied())
+        .unwrap_or(0)
 }
 
 /// 取消该 agent 正在进行的登录等待。
@@ -106,7 +111,7 @@ pub(crate) async fn cancel_login(app: tauri::AppHandle, provider: String) -> Res
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Emitter;
         let ok = account::account_of(key).is_some(); // 也许真登上了，只是用户嫌慢
-        // 真登上了就和正常登录成功一样接线——否则「取消时其实已登录」这条路径会漏掉接线。
+                                                     // 真登上了就和正常登录成功一样接线——否则「取消时其实已登录」这条路径会漏掉接线。
         if ok {
             wire_hooks_best_effort(key, "登录");
         }
@@ -145,7 +150,10 @@ pub(crate) fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, prov
                 break true;
             }
             if start.elapsed() >= TIMEOUT {
-                eprintln!("Meowo login[{provider}]: 等待登录超时（{}s），停止轮询", TIMEOUT.as_secs());
+                eprintln!(
+                    "Meowo login[{provider}]: 等待登录超时（{}s），停止轮询",
+                    TIMEOUT.as_secs()
+                );
                 break false;
             }
             std::thread::sleep(POLL);
@@ -176,14 +184,18 @@ pub(crate) async fn login_agent(
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
     let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
     let argv = inst.login_argv().ok_or("该 agent 未声明登录入口")?;
+    // 登录尤其需要代理：codex / kimi 的 device auth 在需代理的网络里会直接卡死（codex #4242、
+    // kimi-cli #1234 都是这个症状），拉起一个连不上的登录终端毫无意义。
+    let env = crate::proxy::launch_env(key);
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
 
     // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环。
-    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, None, &term))
-        .await
-        .map_err(|e| e.to_string())?;
+    let ok =
+        tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, None, &term, &env))
+            .await
+            .map_err(|e| e.to_string())?;
     if !ok {
         return Err("启动终端失败：无法拉起登录流程".into());
     }
@@ -198,6 +210,7 @@ pub(crate) async fn login_agent(
 ///
 /// 任何一步失败都删掉半成品：留着一个校验不过的可执行文件，比没有更危险。
 pub(crate) fn run_direct_install(
+    id: meowo_agent::AgentId,
     plan: &meowo_agent::InstallPlan,
     log: Option<&mut std::fs::File>,
 ) -> Result<(), String> {
@@ -213,7 +226,13 @@ pub(crate) fn run_direct_install(
 
     let dest = std::env::temp_dir().join(&plan.file_name);
     let mut log = log;
-    note(&mut log, &format!("Downloading {} {} from {}", plan.file_name, plan.version, plan.url));
+    note(
+        &mut log,
+        &format!(
+            "Downloading {} {} from {}",
+            plan.file_name, plan.version, plan.url
+        ),
+    );
 
     // 进度每 10% 写一行日志（UI 只显示「安装中…」，不透传细节）。250 MB 在慢网上要几分钟，
     // 没有这几行的话日志看上去就像卡死了。
@@ -222,7 +241,9 @@ pub(crate) fn run_direct_install(
     let written = {
         let mut last_decile = 0u64;
         let mut on_progress = |done: u64, total: Option<u64>| {
-            let Some(t) = total.filter(|t| *t > 0) else { return };
+            let Some(t) = total.filter(|t| *t > 0) else {
+                return;
+            };
             let decile = done * 10 / t;
             if decile > last_decile {
                 last_decile = decile;
@@ -231,9 +252,16 @@ pub(crate) fn run_direct_install(
                 }
             }
         };
-        ports::ports()
+        // 250 MB 的二进制同样走该 agent 的代理——境内直连境外发布源常常就是卡在这一步。
+        ports::HostPorts::for_agent(id)
+            .as_ports()
             .http
-            .download(&plan.url, &dest, std::time::Duration::from_secs(600), &mut on_progress)
+            .download(
+                &plan.url,
+                &dest,
+                std::time::Duration::from_secs(600),
+                &mut on_progress,
+            )
             .map_err(|e| {
                 let _ = std::fs::remove_file(&dest);
                 format!("下载失败：{e}")
@@ -245,7 +273,10 @@ pub(crate) fn run_direct_install(
         msg
     };
     if written != plan.size {
-        return Err(fail(&dest, format!("下载不完整：期望 {} 字节，实得 {written}", plan.size)));
+        return Err(fail(
+            &dest,
+            format!("下载不完整：期望 {} 字节，实得 {written}", plan.size),
+        ));
     }
 
     // 摘要在流式写完后重读一遍算——250 MB 的文件不进内存，Sha256 也是增量喂。
@@ -256,7 +287,10 @@ pub(crate) fn run_direct_install(
     if actual != plan.sha256 {
         return Err(fail(
             &dest,
-            format!("校验和不匹配（期望 {}，实得 {actual}），已删除下载的文件", plan.sha256),
+            format!(
+                "校验和不匹配（期望 {}，实得 {actual}），已删除下载的文件",
+                plan.sha256
+            ),
         ));
     }
     note(&mut log, "Checksum OK");
@@ -265,14 +299,23 @@ pub(crate) fn run_direct_install(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perm = std::fs::metadata(&dest).map_err(|e| fail(&dest, e.to_string()))?.permissions();
+        let mut perm = std::fs::metadata(&dest)
+            .map_err(|e| fail(&dest, e.to_string()))?
+            .permissions();
         perm.set_mode(0o755);
         std::fs::set_permissions(&dest, perm).map_err(|e| fail(&dest, e.to_string()))?;
     }
 
     // 由二进制自己装 launcher 与 shell 集成（claude 是 `claude.exe install`）。
     if !plan.post_install_args.is_empty() {
-        note(&mut log, &format!("Running: {} {}", plan.file_name, plan.post_install_args.join(" ")));
+        note(
+            &mut log,
+            &format!(
+                "Running: {} {}",
+                plan.file_name,
+                plan.post_install_args.join(" ")
+            ),
+        );
         let mut cmd = std::process::Command::new(&dest);
         cmd.args(&plan.post_install_args);
         #[cfg(target_os = "windows")]
@@ -281,7 +324,9 @@ pub(crate) fn run_direct_install(
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let out = cmd.output().map_err(|e| fail(&dest, format!("执行安装失败：{e}")))?;
+        let out = cmd
+            .output()
+            .map_err(|e| fail(&dest, format!("执行安装失败：{e}")))?;
         if let Some(f) = log.as_mut() {
             let _ = f.write_all(&out.stdout);
             let _ = f.write_all(&out.stderr);
@@ -314,9 +359,14 @@ pub(crate) fn run_direct_install(
 /// 执行，`curl -f` 也只挡非 2xx。于是用户对着一屏 CSS 发懵。
 ///
 /// 现在 shell 只跑本地文件，联网与判定都在这里。
-pub(crate) fn fetch_install_script(script: &meowo_agent::InstallScript) -> Result<String, String> {
+pub(crate) fn fetch_install_script(
+    id: meowo_agent::AgentId,
+    script: &meowo_agent::InstallScript,
+) -> Result<String, String> {
     use meowo_agent::{Body, HttpRequest};
-    let body = ports::ports()
+    let ports = ports::HostPorts::for_agent(id);
+    let body = ports
+        .as_ports()
         .http
         .send(&HttpRequest {
             method: "GET",
@@ -335,14 +385,21 @@ pub(crate) fn fetch_install_script(script: &meowo_agent::InstallScript) -> Resul
         ));
     }
     if !meowo_agent::is_runnable_script(&body) {
-        return Err(format!("{} 返回的不是安装脚本（可能被中间设备拦截）。", script.url));
+        return Err(format!(
+            "{} 返回的不是安装脚本（可能被中间设备拦截）。",
+            script.url
+        ));
     }
     Ok(body)
 }
 
 /// 把取回的脚本原样写进临时文件（按 provider 命名，允许并行安装互不覆盖），返回其路径。
 /// **不再包一层 shell**：脚本本身已含错误处理，包装只会让「哪一行失败」更难看清。
-pub(crate) fn write_install_script(provider: &str, body: &str, windows: bool) -> std::io::Result<String> {
+pub(crate) fn write_install_script(
+    provider: &str,
+    body: &str,
+    windows: bool,
+) -> std::io::Result<String> {
     let ext = if windows { "ps1" } else { "sh" };
     let p = std::env::temp_dir().join(format!("meowo-install-{provider}.{ext}"));
     std::fs::write(&p, body)?;
@@ -356,12 +413,22 @@ pub(crate) fn write_install_script(provider: &str, body: &str, windows: bool) ->
 pub(crate) fn build_install_command(script_path: &str, _unix_shell: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let shell = if pwsh_available() { "pwsh" } else { "powershell" };
+    let shell = if pwsh_available() {
+        "pwsh"
+    } else {
+        "powershell"
+    };
     let mut c = std::process::Command::new(shell);
     // Bypass 仍需要：跑的是刚下载的未签名官方脚本。但它已经过 is_runnable_script 判定，
     // 且来自变体表里硬编码的 https 地址，不是用户输入。
-    c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path])
-        .creation_flags(CREATE_NO_WINDOW);
+    c.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        script_path,
+    ])
+    .creation_flags(CREATE_NO_WINDOW);
     c
 }
 
@@ -384,22 +451,29 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
     // 优先直下：绕开引导脚本，也就绕开它身后的 Cloudflare。plan() 只做两次小请求（版本号 + 清单），
     // 失败（发布物 schema 变了 / 下载服务本地区不可用）就回退到引导脚本，不让用户卡死在这条路上。
     if let Some(cap) = agent.direct_install() {
-        let planned = tauri::async_runtime::spawn_blocking(move || cap.plan(&ports::ports()))
-            .await
-            .map_err(|e| e.to_string())?;
+        let planned = tauri::async_runtime::spawn_blocking(move || {
+            let p = ports::HostPorts::for_agent(id);
+            cap.plan(&p.as_ports())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
         match planned {
             Ok(plan) => {
                 let log_path = install_log_path(&provider);
                 tauri::async_runtime::spawn_blocking(move || {
                     use tauri::Emitter;
-                    let mut log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+                    let mut log = log_path
+                        .as_ref()
+                        .and_then(|p| std::fs::File::create(p).ok());
                     let logged = log.is_some();
-                    let res = run_direct_install(&plan, log.as_mut());
+                    let res = run_direct_install(id, &plan, log.as_mut());
                     if let (Some(f), Err(e)) = (log.as_mut(), res.as_ref()) {
                         use std::io::Write;
                         let _ = writeln!(f, "Installation failed: {e}");
                     }
-                    let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
+                    let log_path = logged
+                        .then(|| log_path.map(|p| p.to_string_lossy().into_owned()))
+                        .flatten();
                     let ok = res.is_ok();
                     // 装好了就顺手接线；失败（多半是数据目录还没建）不影响安装结果。
                     if ok {
@@ -407,7 +481,12 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
                     }
                     let _ = app.emit(
                         "install-done",
-                        InstallDone { provider, ok, code: Some(if ok { 0 } else { 1 }), log_path },
+                        InstallDone {
+                            provider,
+                            ok,
+                            code: Some(if ok { 0 } else { 1 }),
+                            log_path,
+                        },
                     );
                 });
                 return Ok(());
@@ -426,7 +505,7 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
     let script_url = script.url;
     // 取脚本 + 判定放在 spawn 之前：被 Cloudflare 拦时直接回传一句人话，而不是把校验页写进日志、
     // 再让子进程去执行它。放 blocking 池是因为 ureq 是同步的，不能堵住 tauri 的事件循环。
-    let body = tauri::async_runtime::spawn_blocking(move || fetch_install_script(&script))
+    let body = tauri::async_runtime::spawn_blocking(move || fetch_install_script(id, &script))
         .await
         .map_err(|e| e.to_string())??;
     let path = write_install_script(&provider, &body, windows).map_err(|e| e.to_string())?;
@@ -444,37 +523,64 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
         use std::io::Write;
         use std::process::Stdio;
         // 日志建不出来（磁盘满/权限）不该让安装失败：退回丢弃输出，log_path 报 None。
-        let mut log = log_path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        let mut log = log_path
+            .as_ref()
+            .and_then(|p| std::fs::File::create(p).ok());
         // 抬头行由我们写：脚本不再被包一层 shell，这行原先是包装打印的。它是用户在日志里
         // 判断「有没有跑起来」的唯一信号，别随包装一起丢掉。
         if let Some(f) = log.as_mut() {
-            let _ = writeln!(f, "Installing {provider} from {url}, please wait...", url = script_url);
+            let _ = writeln!(
+                f,
+                "Installing {provider} from {url}, please wait...",
+                url = script_url
+            );
         }
         let log = log;
-        let (out, err) = match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
+        let (out, err) = match log
+            .as_ref()
+            .and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?)))
+        {
             Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
             None => (Stdio::null(), Stdio::null()),
         };
         let logged = log.is_some();
-        let mut child = build_install_command(&path, unix_shell)
+        // 官方安装脚本内部用 curl / irm 去下 250MB 的二进制——那是**脚本自己**发的请求，不经
+        // ports.rs 的 ureq 客户端，拿不到我们解析的代理。它是我们的直接子进程，故 .envs() 有效
+        // （wt / wezterm / Terminal.app 那几条路就不行，见 terminal::spawn_in_terminal）。
+        // 不设这个，境内用户在直下失败回退到脚本路径时，仍会卡在下载上。
+        let proxy_env = crate::proxy::launch_env_for_install(id);
+        let mut command = build_install_command(&path, unix_shell);
+        // `.envs()` 只会覆盖同名键，不能消掉 ALL_PROXY / 小写变体；off 必须真直连。
+        for key in crate::terminal::PROXY_ENV_KEYS {
+            command.env_remove(key);
+        }
+        let mut child = command
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err)
             .env("CODEX_NON_INTERACTIVE", "1")
+            .envs(proxy_env)
             .spawn()
             .map_err(|e| format!("启动安装失败：{e}"))?;
         // 等退出 + emit done 放独立线程，让 spawn_blocking 尽快归还线程池。
         std::thread::spawn(move || {
             use tauri::Emitter;
             let code = child.wait().ok().and_then(|s| s.code());
-            let log_path = logged.then(|| log_path.map(|p| p.to_string_lossy().into_owned())).flatten();
+            let log_path = logged
+                .then(|| log_path.map(|p| p.to_string_lossy().into_owned()))
+                .flatten();
             // 装好了就顺手接线；失败（多半是数据目录还没建）不影响安装结果。
             if code == Some(0) {
                 wire_hooks_best_effort(id, "安装");
             }
             let _ = app.emit(
                 "install-done",
-                InstallDone { provider, ok: code == Some(0), code, log_path },
+                InstallDone {
+                    provider,
+                    ok: code == Some(0),
+                    code,
+                    log_path,
+                },
             );
         });
         Ok(())
@@ -561,7 +667,11 @@ pub(crate) enum HooksStatus {
 ///
 /// 「解析失败 → Unknown」是核心不变量：配置暂时不可读/损坏时若误报 Missing，前端会催用户点
 /// 「修复连接」，而修复必然因 `Abandon(ConfigUnreadable)` 拒写（绝不写坏用户文件），陷入死循环。
-pub(crate) fn hooks_status_at(path: &std::path::Path, hooks: &meowo_agent::config::HookSpec, agent_id: &str) -> HooksStatus {
+pub(crate) fn hooks_status_at(
+    path: &std::path::Path,
+    hooks: &meowo_agent::config::HookSpec,
+    agent_id: &str,
+) -> HooksStatus {
     if !path.exists() {
         return HooksStatus::Missing;
     }
@@ -580,7 +690,10 @@ pub(crate) fn hooks_status_at(path: &std::path::Path, hooks: &meowo_agent::confi
 
 /// 某 agent 的 hooks 接入状态：读实况变体的配置文件，判定交给该变体的格式适配器。
 /// 解析不出实况（无 home 等）=Unknown。
-pub(crate) fn plugin_hooks_status(inst: Option<meowo_agent::Installation>, agent_id: &str) -> HooksStatus {
+pub(crate) fn plugin_hooks_status(
+    inst: Option<meowo_agent::Installation>,
+    agent_id: &str,
+) -> HooksStatus {
     let Some(inst) = inst else {
         return HooksStatus::Unknown;
     };
@@ -622,4 +735,3 @@ pub(crate) fn repair_provider_hooks(provider: String) -> RepairResult {
     eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
     RepairResult { status, reason }
 }
-

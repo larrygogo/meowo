@@ -36,7 +36,7 @@ bun run start    # 本地跑生产构建
 | `/` | `app/page.tsx` | 首页：主张、产品图、特性、工作原理、CTA |
 | `/features` | `app/features/page.tsx` | 功能详情：深入讲解 + CSS 示意面板 + 平台差异 |
 | `/download` | `app/download/page.tsx` | 下载：平台卡、安装步骤、环境要求 |
-| `/docs` | `app/docs/page.tsx` | 文档：工作原理、接入、手动挂 hooks、数据与配置 |
+| `/docs` | `app/docs/page.tsx` | 文档：工作原理、自动接入、手动接入 Claude Code、数据与配置 |
 | `/changelog` | `app/changelog/page.tsx` | 更新日志（版本 / 日期取自真实 git tag） |
 | `/faq` | `app/faq/page.tsx` | 常见问题（折叠面板） |
 

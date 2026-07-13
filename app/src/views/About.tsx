@@ -10,6 +10,7 @@ import type { Dict } from "../i18n/zh";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
 import { Switch, Dropdown, Segmented, SwatchPicker, FontSizeSlider } from "./settings/widgets";
 import { AccountSection } from "./settings/AccountSection";
+import { NetworkSection } from "./settings/NetworkSection";
 
 const hideOptions = (t: Dict) => [
   { value: 0, label: t.settings.hideNever },
@@ -24,7 +25,7 @@ const SITE = "meowo.io";
 const SITE_URL = "https://meowo.io";
 const openExt = (url: string) => invoke("open_url", { url }).catch(() => {});
 
-type Section = "general" | "appearance" | "account" | "about";
+type Section = "general" | "appearance" | "network" | "account" | "about";
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -75,6 +76,17 @@ function IconAppearance() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// 地球：网络/代理。
+function IconGlobe() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" />
     </svg>
   );
 }
@@ -403,6 +415,10 @@ export function About() {
             <IconAppearance />
             <span>{t.settings.nav.appearance}</span>
           </button>
+          <button className={"nav-item" + (sec === "network" ? " on" : "")} onClick={() => setSec("network")}>
+            <IconGlobe />
+            <span>{t.settings.nav.network}</span>
+          </button>
           <button className={"nav-item" + (sec === "account" ? " on" : "")} onClick={() => setSec("account")}>
             <IconUser />
             <span>{t.settings.nav.account}</span>
@@ -429,6 +445,8 @@ export function About() {
             <GeneralSection />
           ) : sec === "appearance" ? (
             <AppearanceSection />
+          ) : sec === "network" ? (
+            <NetworkSection />
           ) : sec === "account" ? (
             <AccountSection />
           ) : (

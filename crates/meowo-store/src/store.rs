@@ -1,6 +1,8 @@
 use crate::error::StoreError;
 use crate::migrations::SCHEMA;
-use crate::models::{PendingReview, Project, Session, SessionStatus, Task, TaskColumn, Todo, TodoInput, TodoStatus};
+use crate::models::{
+    PendingReview, Project, Session, SessionStatus, Task, TaskColumn, Todo, TodoInput, TodoStatus,
+};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -266,7 +268,12 @@ impl Store {
     }
 
     /// 直接设置会话任务标题（来自 CC ai-title/custom-title），覆盖占位/旧标题。空标题忽略。
-    pub fn set_session_title(&self, session_id: i64, title: &str, now_ms: i64) -> Result<(), StoreError> {
+    pub fn set_session_title(
+        &self,
+        session_id: i64,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
         let t = truncate_chars(title.trim(), 80);
         if t.is_empty() {
             return Ok(());
@@ -349,11 +356,9 @@ impl Store {
         let tid = self.task_id_of_session(session_id)?;
         let cleaned = truncate_chars(&sanitize_prompt(prompt), 60);
         if !cleaned.is_empty() {
-            let title: String = self.conn.query_row(
-                "SELECT title FROM tasks WHERE id = ?1",
-                [tid],
-                |r| r.get(0),
-            )?;
+            let title: String =
+                self.conn
+                    .query_row("SELECT title FROM tasks WHERE id = ?1", [tid], |r| r.get(0))?;
             if title == "(未命名会话)" {
                 self.conn.execute(
                     "UPDATE tasks SET title = ?1, updated_at = ?2 WHERE id = ?3",
@@ -552,7 +557,12 @@ impl Store {
     /// SQL 里比对 `pid=?3` 而非无条件强制：调用方快照与本 UPDATE 之间若新进程 hook 已认领了新的存活 pid，
     /// 行内 pid 已不等于快照校验过死亡的旧 pid，守卫不命中——「绝不清活连接」的不变量在 DB 层原子闭合，
     /// 不依赖调用方时序。返回是否真的复活了(命中 0 行 = 会话实为连接中，调用方失败回滚时不得误收尾)。
-    pub fn revive_for_resume(&self, session_id: i64, now_ms: i64, dead_pid: Option<i64>) -> Result<bool, StoreError> {
+    pub fn revive_for_resume(
+        &self,
+        session_id: i64,
+        now_ms: i64,
+        dead_pid: Option<i64>,
+    ) -> Result<bool, StoreError> {
         let n = self.conn.execute(
             "UPDATE sessions SET status='running', ended_at=NULL, pid=NULL, last_event_at=?1 \
              WHERE id=?2 AND (status='ended' OR pid IS NULL OR pid=?3)",
@@ -642,7 +652,12 @@ impl Store {
     }
 
     /// 记录会话启动时的 cwd（用于重建 transcript 路径取标题）。
-    pub fn set_session_cwd(&self, session_id: i64, cwd: &str, now_ms: i64) -> Result<(), StoreError> {
+    pub fn set_session_cwd(
+        &self,
+        session_id: i64,
+        cwd: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET cwd = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![cwd, now_ms, session_id],
@@ -678,7 +693,12 @@ impl Store {
     /// 一个 claude 进程同一时刻只属于一个会话：故先把这个 pid 从**其它**会话上摘掉
     /// （它们已被 /clear、resume、或同进程开新会话取代），否则旧会话会因进程仍存活而一直
     /// 误显示「已连接」。pid 复用（旧进程退出、号被新 claude 占用）也由此一并纠正。
-    pub fn set_session_pid(&self, session_id: i64, pid: i64, now_ms: i64) -> Result<(), StoreError> {
+    pub fn set_session_pid(
+        &self,
+        session_id: i64,
+        pid: i64,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
         // 事务保证「本会话认领 + 旧会话收尾」原子完成，避免交错留下两个会话同持一个 pid。
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -745,31 +765,6 @@ impl Store {
     }
 }
 
-#[cfg(test)]
-mod recent_cwds_tests {
-    use super::*;
-
-    #[test]
-    fn recent_cwds_dedups_orders_and_limits() {
-        let store = Store::open_in_memory().unwrap();
-        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
-        let (id1, _) = store.start_session(pid, "s1", 100).unwrap();
-        store.set_session_cwd(id1, "C:/projA", 100).unwrap();
-        let (id2, _) = store.start_session(pid, "s2", 200).unwrap();
-        store.set_session_cwd(id2, "C:/projB", 300).unwrap();
-        let (id3, _) = store.start_session(pid, "s3", 400).unwrap();
-        store.set_session_cwd(id3, "C:/projA", 500).unwrap(); // projA 再次活跃至 500
-
-        // projA 最近活跃 500 > projB 300；projA 去重仅一条。
-        assert_eq!(
-            store.recent_cwds(10).unwrap(),
-            vec!["C:/projA".to_string(), "C:/projB".to_string()]
-        );
-        // limit 生效。
-        assert_eq!(store.recent_cwds(1).unwrap(), vec!["C:/projA".to_string()]);
-    }
-}
-
 /// 按字符（非字节）截断，避免切坏多字节中文。
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
@@ -808,4 +803,31 @@ fn derive_column(todos: &[TodoInput]) -> TaskColumn {
         return TaskColumn::Doing;
     }
     TaskColumn::Todo
+}
+
+#[cfg(test)]
+mod recent_cwds_tests {
+    use super::*;
+
+    #[test]
+    fn recent_cwds_dedups_orders_and_limits() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store
+            .upsert_project_by_root("C:/root", "root", 100)
+            .unwrap();
+        let (id1, _) = store.start_session(pid, "s1", 100).unwrap();
+        store.set_session_cwd(id1, "C:/projA", 100).unwrap();
+        let (id2, _) = store.start_session(pid, "s2", 200).unwrap();
+        store.set_session_cwd(id2, "C:/projB", 300).unwrap();
+        let (id3, _) = store.start_session(pid, "s3", 400).unwrap();
+        store.set_session_cwd(id3, "C:/projA", 500).unwrap(); // projA 再次活跃至 500
+
+        // projA 最近活跃 500 > projB 300；projA 去重仅一条。
+        assert_eq!(
+            store.recent_cwds(10).unwrap(),
+            vec!["C:/projA".to_string(), "C:/projB".to_string()]
+        );
+        // limit 生效。
+        assert_eq!(store.recent_cwds(1).unwrap(), vec!["C:/projA".to_string()]);
+    }
 }

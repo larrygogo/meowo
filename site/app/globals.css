@@ -110,6 +110,76 @@ img {
   border-bottom: 1px solid var(--border);
 }
 
+/* ---------- 当前支持的 AI Agent ---------- */
+.supported-agents {
+  border-bottom: 1px solid var(--border);
+}
+.supported-agents-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+  gap: 48px;
+  align-items: end;
+  margin-bottom: 32px;
+}
+.supported-agents-head .eyebrow {
+  margin-bottom: 10px;
+}
+.supported-agents-head p {
+  color: var(--text-dim);
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+.supported-agent-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.supported-agent {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.supported-agent-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+}
+.supported-agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 640;
+}
+.supported-agent-status {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+@media (max-width: 760px) {
+  .supported-agents-head {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .supported-agent-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- 排版 ---------- */
 .eyebrow {
   display: inline-block;
@@ -504,6 +574,16 @@ code.inline {
 }
 .grid-2 {
   grid-template-columns: repeat(2, 1fr);
+}
+/* Reveal 是网格项，卡片是它的子元素。让两层都撑满网格轨道，
+   否则同一行会按内容各自收高，看起来参差不齐。 */
+.grid > .reveal {
+  min-width: 0;
+  height: 100%;
+}
+.grid > .reveal > .fcard {
+  box-sizing: border-box;
+  height: 100%;
 }
 @media (max-width: 860px) {
   .grid-3 {

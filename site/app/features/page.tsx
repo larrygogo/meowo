@@ -8,7 +8,7 @@ import { StickerWindow, CollapsedStrip } from "@/components/screenshots";
 export const metadata: Metadata = {
   title: "功能 · Meowo",
   description:
-    "Meowo 的功能：会话看板、待交互与通知、终端跳转、会话管理、Windows 吸边缩略、macOS 菜单栏面板、用量读数。",
+    "Meowo 的功能：会话看板、待交互与通知、一键启动与续接、按 AI 工具设置代理、自动接入、会话管理与用量读数。",
 };
 
 function Check({ children }: { children: React.ReactNode }) {
@@ -28,9 +28,9 @@ export default function FeaturesPage() {
       <section className="pagehead">
         <div className="container">
           <span className="eyebrow">功能</span>
-          <h1 className="h1">功能</h1>
+          <h1 className="h1">一个工作台，管理完整流程</h1>
           <p className="lead">
-            Meowo 收集 Claude Code、Codex、Kimi 的会话事件，在一个桌面小窗里显示它们的状态。
+            Meowo 把多个 AI 编程代理的会话汇集到一个桌面工作台，状态、提醒和常用操作一处掌握，减少终端切换与命令输入。
           </p>
         </div>
       </section>
@@ -128,7 +128,7 @@ export default function FeaturesPage() {
         </div>
       </section>
 
-      {/* 深入 2：直达终端 & 管理 */}
+      {/* 深入 2：启动、续接与管理 */}
       <section className="section">
         <div className="container">
           <div className="split rev">
@@ -153,31 +153,62 @@ export default function FeaturesPage() {
               />
             </div>
             <div className="split-text">
-              <span className="eyebrow">终端跳转与会话管理</span>
-              <h2 className="h2">点击卡片，切到终端</h2>
+              <span className="eyebrow">启动、续接与会话管理</span>
+              <h2 className="h2">常用操作，不用再敲命令</h2>
               <p className="lead" style={{ fontSize: 17, marginTop: 14 }}>
-                连接中的会话切到它所在的标签页；已断开的会话，在原项目目录新开终端恢复对话。星标、便签、改名、归档在右键菜单或 ⋮ 按钮里。
+                选好项目目录和 AI 工具即可开始；连接中的会话一键切回终端，已断开的会话一键续接。星标、便签、改名、归档也都在界面里完成。
               </p>
               <ul className="checklist">
+                <Check>从最近项目中选目录，再选择已安装的 AI 工具，点一下新建会话</Check>
                 <Check>
                   Windows 上切到 Windows Terminal 的对应标签页，macOS 上聚焦 Terminal 或 iTerm2
                 </Check>
-                <Check>
-                  会话已断开时，在原项目目录新开终端并执行{" "}
-                  <code className="inline">claude --resume</code>
-                </Check>
+                <Check>会话已断开时，自动回到原项目目录并按对应工具的方式续接</Check>
                 <Check>加星、写便签、改名、归档：右键卡片，或点卡片右上角的 ⋮</Check>
-                <Check>
-                  改名与 <code className="inline">/rename</code> 等效，resume 列表里显示的也是新名字
-                </Check>
               </ul>
             </div>
           </div>
         </div>
       </section>
 
-      {/* 吸边 & 用量 */}
+      {/* 代理 */}
       <section className="section section-sunken">
+        <div className="container">
+          <div className="section-head">
+            <span className="eyebrow">网络与代理</span>
+            <h2 className="h1">每个 AI 工具，走适合自己的网络路径</h2>
+            <p className="lead">
+              一份默认规则覆盖日常使用，需要时再按 AI 工具单独设置。Meowo 发起的用量查询、CLI 安装和新会话会复用对应配置。
+            </p>
+          </div>
+          <div className="grid grid-3">
+            <Reveal>
+              <div className="fcard">
+                <h3>全局默认</h3>
+                <p>选择直连、跟随系统环境变量或自定义代理，未单独设置的 AI 工具自动跟随。</p>
+              </div>
+            </Reveal>
+            <Reveal>
+              <div className="fcard">
+                <h3>按工具覆盖</h3>
+                <p>不同 AI 工具可以使用不同代理，也可以让其中一部分保持直连，互不影响。</p>
+              </div>
+            </Reveal>
+            <Reveal>
+              <div className="fcard">
+                <h3>常见格式直接填写</h3>
+                <p>
+                  支持 HTTP、SOCKS5 及带认证的代理，包括{" "}
+                  <code className="inline">host:port:user:pass</code>。工具不支持某种协议时会明确提示。
+                </p>
+              </div>
+            </Reveal>
+          </div>
+        </div>
+      </section>
+
+      {/* 吸边 & 用量 */}
+      <section className="section">
         <div className="container">
           <div className="split">
             <div className="split-text">
@@ -234,7 +265,7 @@ export default function FeaturesPage() {
       </section>
 
       {/* 平台差异 */}
-      <section className="section">
+      <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
             <span className="eyebrow">平台</span>
