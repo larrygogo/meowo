@@ -27,7 +27,17 @@ function CodexLogo() {
   );
 }
 
-export function AgentLogo({ id, size = 34 }: { id: ProviderId; size?: number }) {
+export function AgentLogo({
+  id,
+  size = 34,
+  tile = true,
+}: {
+  id: ProviderId;
+  size?: number;
+  /** Claude 在设置/支持列表里有品牌色底座，在会话卡片和配额栏里只显示裸 logomark。 */
+  tile?: boolean;
+}) {
+  const claudeTile = id === "claude" && tile;
   return (
     <span
       aria-hidden="true"
@@ -39,12 +49,12 @@ export function AgentLogo({ id, size = 34 }: { id: ProviderId; size?: number }) 
         placeItems: "center",
         overflow: "hidden",
         borderRadius: Math.max(4, Math.round(size * 0.27)),
-        color: id === "claude" ? "#fff" : undefined,
-        background: id === "claude" ? "#d97757" : undefined,
+        color: id === "claude" ? (claudeTile ? "#fff" : "#d97757") : undefined,
+        background: claudeTile ? "#d97757" : undefined,
       }}
     >
       {id === "claude" ? (
-        <span style={{ width: "62%", height: "62%", display: "grid" }}>
+        <span style={{ width: claudeTile ? "62%" : "78%", height: claudeTile ? "62%" : "78%", display: "grid" }}>
           <ClaudeLogo />
         </span>
       ) : id === "codex" ? (
@@ -63,11 +73,11 @@ export default function SupportedAgents() {
       <div className="container">
         <div className="supported-agents-head">
           <div>
-            <span className="eyebrow">当前支持</span>
-            <h2 className="h2">连接你正在使用的 AI Agent</h2>
+            <span className="eyebrow">开箱即用</span>
+            <h2 className="h2">安装、登录、接入，都在 Meowo 里完成</h2>
           </div>
           <p>
-            当前版本内置支持以下工具。Meowo 的定位不绑定单一 Agent，支持范围会随版本继续扩展。
+            不必先去终端找安装命令。直接在应用内安装 Claude Code、Codex 或 Kimi，发起登录后自动接入所需 hooks；已经安装的也会自动检测。
           </p>
         </div>
         <div className="supported-agent-list">
@@ -77,7 +87,7 @@ export default function SupportedAgents() {
                 <AgentLogo id={agent.id} />
               </span>
               <span className="supported-agent-name">{agent.name}</span>
-              <span className="supported-agent-status">已支持</span>
+              <span className="supported-agent-status">一键安装 · 登录</span>
             </div>
           ))}
         </div>

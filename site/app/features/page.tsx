@@ -8,7 +8,7 @@ import { StickerWindow, CollapsedStrip } from "@/components/screenshots";
 export const metadata: Metadata = {
   title: "功能 · Meowo",
   description:
-    "Meowo 的功能：会话看板、待交互与通知、一键启动与续接、按 AI 工具设置代理、自动接入、会话管理与用量读数。",
+    "Meowo 的功能：应用内一键安装和登录 AI CLI、自动接入、会话看板、待交互与通知、一键启动与续接、会话管理与用量读数。",
 };
 
 function Check({ children }: { children: React.ReactNode }) {
@@ -30,7 +30,7 @@ export default function FeaturesPage() {
           <span className="eyebrow">功能</span>
           <h1 className="h1">一个工作台，管理完整流程</h1>
           <p className="lead">
-            Meowo 把多个 AI 编程代理的会话汇集到一个桌面工作台，状态、提醒和常用操作一处掌握，减少终端切换与命令输入。
+            从安装、登录 AI 编程代理，到查看状态、处理提醒和续接会话，整个流程都在一个桌面工作台完成。
           </p>
         </div>
       </section>
@@ -153,18 +153,19 @@ export default function FeaturesPage() {
               />
             </div>
             <div className="split-text">
-              <span className="eyebrow">启动、续接与会话管理</span>
-              <h2 className="h2">常用操作，不用再敲命令</h2>
+              <span className="eyebrow">安装、登录、启动与续接</span>
+              <h2 className="h2">从装好 Agent 到开始工作，都不用背命令</h2>
               <p className="lead" style={{ fontSize: 17, marginTop: 14 }}>
-                选好项目目录和 AI 工具即可开始；连接中的会话一键切回终端，已断开的会话一键续接。星标、便签、改名、归档也都在界面里完成。
+                AI CLI 尚未安装时，可直接在 Meowo 里一键安装并发起登录；准备好后，选项目目录和 AI 工具即可开始。连接中的会话一键切回终端，已断开的会话一键续接。
               </p>
               <ul className="checklist">
+                <Check>在设置里一键安装 Claude Code、Codex 或 Kimi，并直接发起账号登录</Check>
+                <Check>自动接入所需 hooks；检测到连接缺失时，一键修复</Check>
                 <Check>从最近项目中选目录，再选择已安装的 AI 工具，点一下新建会话</Check>
                 <Check>
                   Windows 上切到 Windows Terminal 的对应标签页，macOS 上聚焦 Terminal 或 iTerm2
                 </Check>
                 <Check>会话已断开时，自动回到原项目目录并按对应工具的方式续接</Check>
-                <Check>加星、写便签、改名、归档：右键卡片，或点卡片右上角的 ⋮</Check>
               </ul>
             </div>
           </div>

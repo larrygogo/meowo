@@ -153,7 +153,7 @@ export default async function Home() {
           <p className="lead lead-light">
             Meowo 是一款本地优先的 AI 编程代理桌面工作台，
             <br className="hide-sm" />
-            统一管理会话状态、待办提醒与常用操作，少切终端，少输命令。
+            从 AI CLI 的一键安装、登录，到会话状态与待办提醒，都在一个应用里完成。
           </p>
           <div className="hero-cta">
             <DownloadButton
