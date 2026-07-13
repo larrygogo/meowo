@@ -23,6 +23,9 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
+                // 用户已开启新回合，不论消息是否含文本（例如 kimi 的纯图片内容块），
+                // 都必须从 waiting/stale 转回 running。文本只影响标题与最近消息，不应门控状态转换。
+                store.touch_session(sid, now_ms)?;
                 if let Some(prompt) = ev.prompt_text() {
                     store.on_user_prompt(sid, &prompt, now_ms)?;
                     store.set_last_user_text(sid, &prompt)?;

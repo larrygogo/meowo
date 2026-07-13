@@ -350,6 +350,39 @@ html, body {
 }
 /* 控制按钮组在右(margin-auto 推到最右；无用量时也靠右) */
 .stk-bar-actions { margin-left: auto; display: flex; align-items: center; gap: calc(6px * var(--cc-ui)); }
+/* 终端定位提示：浮在底栏上方，不改变列表高度；带动作的提示由用户明确关闭。 */
+.stk-focus-toast {
+  position: absolute; z-index: 45;
+  left: 12px; right: 12px; bottom: calc(66px * var(--cc-ui));
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 10px 10px 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--cc-warn) 38%, var(--cc-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cc-bg) 92%, #000 8%);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+}
+.stk-focus-mark {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  color: #201608; background: var(--cc-warn-vivid); font-size: 12px; font-weight: 800;
+}
+.stk-focus-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.stk-focus-text { color: var(--cc-text); font-size: calc(11px * var(--cc-ui)); line-height: 1.45; user-select: text; }
+.stk-focus-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.stk-focus-btn {
+  border: 1px solid var(--cc-accent-border); border-radius: 6px;
+  padding: 5px 8px; color: var(--cc-accent-text); background: var(--cc-accent-soft);
+  font: inherit; font-size: calc(10px * var(--cc-ui)); cursor: pointer;
+}
+.stk-focus-btn:hover { background: color-mix(in srgb, var(--cc-accent-soft) 70%, var(--cc-accent) 30%); }
+.stk-focus-btn.is-quiet { color: var(--cc-text-dim); border-color: var(--cc-border); background: var(--cc-surface); }
+.stk-focus-btn:disabled { opacity: 0.55; cursor: default; }
+.stk-focus-close {
+  flex: none; display: inline-flex; border: 0; padding: 1px; background: none;
+  color: var(--cc-text-faint); cursor: pointer;
+}
+.stk-focus-close svg { width: 13px; height: 13px; }
 /* 搜索激活：输入框占满整条底栏 */
 .stk-search { display: flex; align-items: center; gap: calc(7px * var(--cc-ui)); width: 100%; }
 .stk-search-ic { flex: none; display: inline-flex; color: var(--cc-text-faint); }

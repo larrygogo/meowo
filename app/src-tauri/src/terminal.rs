@@ -11,6 +11,20 @@ use crate::{db_path, is_safe_id, now_ms, open_store};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+/// 点击连接中会话后的实际定位结果。前端必须区分“会话已断开”和“进程仍在、但终端无法定位”，
+/// 否则后者会表现成毫无反应，用户还会误以为重启 Meowo 能解决。
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)] // macOS 专属失败原因在 Windows 构建中不会构造，反之亦然。
+pub(crate) enum FocusSessionResult {
+    Focused,
+    HostFocused,
+    AliveButNotFound,
+    PermissionDenied,
+    UnsupportedTerminal,
+    ProcessEnded,
+}
+
 /// 枚举可见顶层窗口，返回第一个进程 pid 命中 targets 的窗口 HWND。
 #[cfg(target_os = "windows")]
 pub(crate) fn find_window_for_pids(
@@ -321,8 +335,8 @@ pub(crate) fn force_foreground(hwnd: windows_sys::Win32::Foundation::HWND) {
 /// 聚焦某会话的终端。`title_based`=该 agent 是否把任务标题写进 WT 标签（claude 写→按任务标题精确切标签；
 /// codex/kimi 不写→改用 cwd 末段目录名匹配它们的目录名/project-name 标签）。无论哪种，最终都能按进程组
 /// 找到宿主窗口置前。
-/// 放后台线程 fire-and-forget（保证干净 COM apartment + 不阻塞调用方）。供 focus_session 命令与
-/// 「点击通知」回调共用。仅 Windows（两个调用点均 cfg-gated，故函数整体也 gate）。
+/// 必须在后台线程调用（保证干净 COM apartment + 不阻塞调用方）。返回实际定位结果；
+/// focus_session 会把结果交给贴纸提示，「点击通知」回调则忽略结果。仅 Windows。
 #[cfg(target_os = "windows")]
 pub(crate) fn focus_session_terminal(
     pid: i64,
@@ -330,35 +344,37 @@ pub(crate) fn focus_session_terminal(
     cwd: Option<String>,
     token: Option<String>,
     title_based: bool,
-) {
-    std::thread::spawn(move || {
-        // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：meowo-reporter 写进其标签) > 任务标题(claude)
-        // > cwd 末段目录名(codex 匹配其 project-name 标题 / kimi 无 token 时) > 窗口级兜底。
-        // token 全局唯一，能区分同窗口同目录的同名标签——这是 kimi 精确聚焦的关键；codex 暂无此手段(见 agent.rs)。
-        let want = if title_based {
-            title
-        } else {
-            cwd_tab_hint(cwd.as_deref())
-        };
-        let want_str = want.as_deref().unwrap_or("");
-        let has_token = token.as_deref().is_some_and(|t| !t.is_empty());
-        if (!want_str.is_empty() || has_token)
-            && focus_terminal_tab(pid as u32, want_str, token.as_deref())
-        {
-            return;
-        }
-        // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
-        // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
-        let targets = console_group_pids(pid as u32);
-        // WezTerm 宿主：自绘 GUI 无 UIA TabItem，上面的 WT 标签定位必然不中；组内探到
-        // wezterm-gui 就走 wezterm cli 精确切 pane(内含窗口置前)，不再落通用兜底。
-        if wezterm::focus_pane(&targets, want_str, token.as_deref(), cwd.as_deref()) {
-            return;
-        }
-        if let Some(hwnd) = find_window_for_pids(&targets) {
-            force_foreground(hwnd);
-        }
-    });
+) -> FocusSessionResult {
+    // 匹配 WT 标签优先级：token(session_id 末 8 位，仅 kimi：meowo-reporter 写进其标签) > 任务标题(claude)
+    // > cwd 末段目录名(codex 匹配其 project-name 标题 / kimi 无 token 时) > 窗口级兜底。
+    // token 全局唯一，能区分同窗口同目录的同名标签——这是 kimi 精确聚焦的关键；codex 暂无此手段(见 agent.rs)。
+    let want = if title_based {
+        title
+    } else {
+        cwd_tab_hint(cwd.as_deref())
+    };
+    let want_str = want.as_deref().unwrap_or("");
+    let has_token = token.as_deref().is_some_and(|t| !t.is_empty());
+    if (!want_str.is_empty() || has_token)
+        && focus_terminal_tab(pid as u32, want_str, token.as_deref())
+    {
+        return FocusSessionResult::Focused;
+    }
+    // 兜底：按进程组找宿主顶层窗口置前（命中正确窗口，但不保证切到具体标签）。宿主
+    // WindowsTerminal.exe/conhost 是会话进程的祖先，其窗口 pid 落在进程组里 → 可靠命中正确窗口。
+    let targets = console_group_pids(pid as u32);
+    // WezTerm 宿主：自绘 GUI 无 UIA TabItem，上面的 WT 标签定位必然不中；组内探到
+    // wezterm-gui 就走 wezterm cli 精确切 pane(内含窗口置前)，不再落通用兜底。
+    match wezterm::focus_pane(&targets, want_str, token.as_deref(), cwd.as_deref()) {
+        wezterm::FocusPaneResult::Focused => return FocusSessionResult::Focused,
+        wezterm::FocusPaneResult::HostFocused => return FocusSessionResult::HostFocused,
+        wezterm::FocusPaneResult::NotWezTerm => {}
+    }
+    if let Some(hwnd) = find_window_for_pids(&targets) {
+        force_foreground(hwnd);
+        return FocusSessionResult::HostFocused;
+    }
+    FocusSessionResult::UnsupportedTerminal
 }
 
 /// 从 cwd 取末段目录名，作为「不写标签标题」的 agent(codex/kimi) 的 WT 标签匹配线索——这类会话的
@@ -434,13 +450,13 @@ pub(crate) fn launch_env_for(provider: Option<&str>) -> Vec<(String, String)> {
 }
 
 #[tauri::command]
-pub(crate) fn focus_session(
+pub(crate) async fn focus_session(
     pid: i64,
     title: Option<String>,
     cwd: Option<String>,
     session_id: Option<String>,
     provider: Option<String>,
-) -> Result<(), String> {
+) -> Result<FocusSessionResult, String> {
     if pid <= 0 {
         return Err("无效 pid".into());
     }
@@ -451,32 +467,60 @@ pub(crate) fn focus_session(
         if !is_safe_id(id) {
             return Err("无效 session_id".into());
         }
+        // 前端列表可能已过期，PID 也可能被同类 Agent 进程复用。只校验“这个 PID 是 Agent”不足以
+        // 证明它仍属于用户点击的会话；必须与 DB 当前绑定一致，避免精准打开跳到另一会话。
+        let id = id.to_string();
+        let owns_pid = tauri::async_runtime::spawn_blocking(move || {
+            let store = open_store(&db_path())?;
+            let Some(sid) = store.find_session_id_pub(&id).map_err(|e| e.to_string())? else {
+                return Ok(false);
+            };
+            store
+                .session_pid(sid)
+                .map(|bound| bound == Some(pid))
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        if !owns_pid {
+            return Ok(FocusSessionResult::ProcessEnded);
+        }
     }
     #[cfg(target_os = "windows")]
     {
+        if !pid_alive_agent_quick(pid) {
+            return Ok(FocusSessionResult::ProcessEnded);
+        }
         // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。
         // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
         let title_based =
             meowo_agent::resolve(provider.as_deref()).is_some_and(|a| a.sets_terminal_tab_title());
-        // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
-        // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
-        let token = session_id
-            .as_deref()
+        // 只有声明 writes_tab_token 的 agent（当前为 kimi）才拿 session token 匹配。
+        // 给 codex/claude 盲传 sid8 可能偶然命中别的标签文本，并以最高分跳错会话。
+        let token = meowo_agent::resolve(provider.as_deref())
+            .filter(|a| a.writes_tab_token())
+            .and_then(|_| session_id.as_deref())
             .map(meowo_reporter::tabtitle::short_sid)
             .filter(|s| !s.is_empty());
-        focus_session_terminal(pid, title, cwd, token, title_based);
-        Ok(())
+        tauri::async_runtime::spawn_blocking(move || {
+            focus_session_terminal(pid, title, cwd, token, title_based)
+        })
+        .await
+        .map_err(|e| e.to_string())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = provider;
     #[cfg(target_os = "macos")]
     {
         let _ = title;
-        // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放后台线程 fire-and-forget，
-        // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
-        std::thread::spawn(move || {
+        if !pid_alive_agent_quick(pid) {
+            return Ok(FocusSessionResult::ProcessEnded);
+        }
+        // ps/osascript（含首次 TCC 授权弹窗）可能长时间阻塞，放 blocking 池，不挡主线程事件循环；
+        // 与旧 fire-and-forget 不同，这里 await 结果，让贴纸能解释“为什么没有跳转”。
+        tauri::async_runtime::spawn_blocking(move || {
             let resume_argv = resume_argv_for(provider.as_deref(), session_id.as_deref());
-            // 聚焦失败而回退 resume 时，新开的会话同样要带上代理。
+            // 保留恢复参数供聚焦期间进程退出的判定路径使用；实际恢复改由前端明确确认。
             let env_prefix = env_prefix_posix(&launch_env_for(provider.as_deref()));
             crate::macos::terminal::focus_session_terminal(
                 pid,
@@ -484,9 +528,10 @@ pub(crate) fn focus_session(
                 &resume_argv,
                 resume_terminal_kind(),
                 &env_prefix,
-            );
-        });
-        Ok(())
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -826,6 +871,17 @@ pub(crate) fn prepare_resume(
         }
     })();
     emit_board_changed(app, "resume");
+    let (resolved, resume) = resolve_resume_plan(session_id, cwd, provider);
+    (revived, resolved, resume)
+}
+
+/// 只读解析恢复计划；不得改状态。restart 路径必须先确认计划有效，再结束原进程。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn resolve_resume_plan(
+    session_id: &str,
+    cwd: Option<&str>,
+    provider: &str,
+) -> (Option<String>, Vec<String>) {
     let agent = meowo_agent::resolve(Some(provider));
     // resume 必须在会话原项目目录下运行才找得到会话。DB 的 cwd 可能为空或失真（旧会话 / 压缩漏
     // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
@@ -844,7 +900,7 @@ pub(crate) fn prepare_resume(
     let resume = agent
         .and_then(|a| a.resume_argv(session_id))
         .unwrap_or_default();
-    (revived, resolved, resume)
+    (resolved, resume)
 }
 
 /// resume 的终端 spawn 失败时回滚乐观复活（收尾回 ended）：GUI 构建下 stderr 不可见，
@@ -1103,6 +1159,119 @@ pub(crate) fn resume_session(
         let _ = (app, cwd, provider);
         Err("当前平台不支持".into())
     }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
+    // 确认弹窗停留期间进程可能已经自然结束；此时无需报错，直接进入恢复流程。
+    if !pid_alive_agent_quick(pid) {
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    let sent = {
+        let sys = sysinfo::System::new_all();
+        sys.process(sysinfo::Pid::from_u32(pid as u32))
+            .filter(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
+            .is_some_and(|p| p.kill())
+    };
+    // macOS 上 sysinfo 的进程可见性不稳定（判活本来也走 ps），直接以独立 argv 发送 TERM，不经 shell。
+    #[cfg(target_os = "macos")]
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !sent {
+        return Err("无法结束原会话进程".into());
+    }
+
+    // 给 Agent 的退出清理/SessionEnd hook 留出时间；若仍存活再强制结束，避免恢复出双进程。
+    for _ in 0..30 {
+        if !pid_alive_agent_quick(pid) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if pid_alive_agent_quick(pid) {
+        #[cfg(target_os = "windows")]
+        let forced = {
+            let sys = sysinfo::System::new_all();
+            sys.process(sysinfo::Pid::from_u32(pid as u32))
+                .filter(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
+                .is_some_and(|p| p.kill())
+        };
+        #[cfg(target_os = "macos")]
+        let forced = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success());
+        if !forced {
+            return Err("原会话仍在运行，未重新打开".into());
+        }
+        for _ in 0..20 {
+            if !pid_alive_agent_quick(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if pid_alive_agent_quick(pid) {
+            return Err("原会话仍在运行，未重新打开".into());
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    Ok(())
+}
+
+/// 用户确认后结束“仍存活但无法定位终端”的原 Agent，并在设置中的受支持终端恢复同一会话。
+/// PID 必须仍属于该 session，且进程名仍是受支持 Agent；两层校验避免 PID 复用或过期 UI 误杀进程。
+#[tauri::command]
+pub(crate) async fn restart_session_supported(
+    app: tauri::AppHandle,
+    pid: i64,
+    cwd: Option<String>,
+    session_id: String,
+    provider: String,
+) -> Result<(), String> {
+    if pid <= 0 || !is_safe_id(&session_id) {
+        return Err("无效会话".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = open_store(&db_path()).map_err(|e| e.to_string())?;
+        let sid = store
+            .find_session_id_pub(&session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("会话不存在")?;
+        if store.session_pid(sid).map_err(|e| e.to_string())? != Some(pid) {
+            return Err("会话进程已变化，请刷新后重试".into());
+        }
+
+        // 先验证完整恢复计划，再动原进程；未知 provider/无恢复能力时必须保持原会话原样。
+        let (resolved, resume) = resolve_resume_plan(&session_id, cwd.as_deref(), &provider);
+        if resume.is_empty() {
+            return Err("该 Agent 不支持恢复会话".into());
+        }
+        terminate_agent_for_restart(pid)?;
+
+        // 原进程确认结束后才复活 DB 状态；恢复计划沿用终止前已验证的结果。
+        let (revived, _, _) = prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
+        let env = launch_env_for(Some(&provider));
+        let ok = spawn_in_terminal(
+            &resume,
+            resolved.as_deref(),
+            &load_settings().resume_terminal,
+            &env,
+        );
+        if ok {
+            Ok(())
+        } else {
+            if let Some(id) = revived {
+                rollback_failed_resume(id);
+            }
+            emit_board_changed(&app, "restart-failed");
+            Err("启动受支持的终端失败".into())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

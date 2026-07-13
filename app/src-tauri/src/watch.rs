@@ -285,13 +285,12 @@ pub(crate) fn show_session_notification(
             .title(&title)
             .text1(&body)
             .on_activated(move |_| {
-                focus_session_terminal(
-                    pid,
-                    Some(focus_title.clone()),
-                    focus_cwd.clone(),
-                    focus_token.clone(),
-                    title_based,
-                );
+                let title = focus_title.clone();
+                let cwd = focus_cwd.clone();
+                let token = focus_token.clone();
+                std::thread::spawn(move || {
+                    let _ = focus_session_terminal(pid, Some(title), cwd, token, title_based);
+                });
                 Ok(())
             })
             .show();
@@ -399,11 +398,11 @@ pub(crate) fn spawn_liveness_watch(
                     // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
                     let title_based = meowo_agent::resolve(Some(&s.provider))
                         .is_some_and(|a| a.sets_terminal_tab_title());
-                    // token = session_id 末 8 位(全局唯一)，点击通知聚焦时优先按它精确切标签。
-                    let tab_token = {
-                        let t = meowo_reporter::tabtitle::short_sid(&s.session.cc_session_id);
-                        (!t.is_empty()).then_some(t)
-                    };
+                    // 仅对确实由 reporter 写 token 的 agent 使用 sid8；其它 agent 盲匹配会有误命中风险。
+                    let tab_token = meowo_agent::resolve(Some(&s.provider))
+                        .filter(|a| a.writes_tab_token())
+                        .map(|_| meowo_reporter::tabtitle::short_sid(&s.session.cc_session_id))
+                        .filter(|t| !t.is_empty());
 
                     // 菜单栏摘要计数:出错/待交互/待审批 → 需关注(●),运行中 → ○;在线空闲不计入。
                     if error.is_some() || s.session.status == "waiting" || s.pending_review.is_some() {

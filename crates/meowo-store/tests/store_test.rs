@@ -612,6 +612,35 @@ fn pending_review_set_and_clear() {
     assert_eq!(s.session.last_event_at, 500);
 }
 
+#[test]
+fn lifecycle_boundaries_clear_stale_pending_review() {
+    let store = Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(project, "pending-life", 100).unwrap();
+
+    store.set_pending_review(sid, PendingReview::Approval, 150).unwrap();
+    store.end_session(sid, 200).unwrap();
+    let ended = store
+        .live_sessions(None, None, None, None, 100)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.session.id == sid)
+        .unwrap();
+    assert_eq!(ended.pending_review, None, "结束边界应清理旧审批子态");
+
+    // 模拟旧版本数据库留下的 ended + pending_review 残留；resume 必须再次兜底清理。
+    store.set_pending_review(sid, PendingReview::Plan, 250).unwrap();
+    assert!(store.revive_for_resume(sid, 300, None).unwrap());
+    let resumed = store
+        .live_sessions(None, None, None, None, 100)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.session.id == sid)
+        .unwrap();
+    assert_eq!(resumed.session.status, "running");
+    assert_eq!(resumed.pending_review, None, "新运行周期不得继承旧审批子态");
+}
+
 // == Task 5: on_user_prompt 不再写 current_activity ==
 #[test]
 fn on_user_prompt_no_longer_writes_current_activity() {

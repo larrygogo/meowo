@@ -389,6 +389,57 @@ describe("Sticker", () => {
     expect(container.querySelector(".stk-edit")).toBeNull();
   });
 
+  it("终端不受支持时提示用支持的终端重新打开，并在结束原进程前二次确认", async () => {
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === "focus_session") {
+        return Promise.resolve("unsupported_terminal") as unknown as ReturnType<typeof original>;
+      }
+      return original(cmd, args);
+    });
+    try {
+      const { container } = render(<Sticker filter="all" data={[mk({ connected: true, pid: 1234 })]} />);
+      fireEvent.click(container.querySelector(".stk-card")!);
+      await waitFor(() => expect(screen.getByText(zh.sticker.focusUnsupported)).toBeTruthy());
+      fireEvent.click(screen.getByText(zh.sticker.reopenSupported));
+      expect(screen.getByText(zh.sticker.reopenConfirm)).toBeTruthy();
+      fireEvent.click(screen.getByText(zh.sticker.endAndReopen));
+      await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("restart_session_supported", {
+        pid: 1234,
+        cwd: null,
+        sessionId: "s",
+        provider: "claude",
+      }));
+    } finally {
+      invokeMock.mockImplementation(original);
+    }
+  });
+
+  it("只定位到宿主窗口时保留提示并允许用户选择精准重开", async () => {
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === "focus_session") {
+        return Promise.resolve("host_focused") as unknown as ReturnType<typeof original>;
+      }
+      return original(cmd, args);
+    });
+    try {
+      const { container } = render(<Sticker filter="all" data={[mk({ connected: true, pid: 1234 })]} />);
+      fireEvent.click(container.querySelector(".stk-card")!);
+      await waitFor(() => expect(screen.getByText(zh.sticker.focusHostOnly)).toBeTruthy());
+      expect(screen.getByText(zh.sticker.reopenSupported)).toBeTruthy();
+    } finally {
+      invokeMock.mockImplementation(original);
+    }
+  });
+
+  it("乐观连接但 PID 尚未认领时给出连接中提示，不再静默无动作", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: true, pid: null })]} />);
+    fireEvent.click(container.querySelector(".stk-card")!);
+    expect(screen.getByText(zh.sticker.focusConnecting)).toBeTruthy();
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "focus_session")).toBe(false);
+  });
+
   it("默认(点击卡片模式)不渲染独立打开按钮", () => {
     const { container } = render(<Sticker filter="all" data={[mk({ connected: true })]} />);
     expect(container.querySelector(".stk-open")).toBeNull();
