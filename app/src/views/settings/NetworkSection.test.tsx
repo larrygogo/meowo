@@ -60,8 +60,10 @@ describe("代理优先级", () => {
     );
 
     // kimi 单独设了直连 → 生效是直连；claude/codex 跟随默认 → 生效是默认那个代理。
-    expect(screen.getAllByText(zh.proxy.effective("http://g:1")).length).toBe(2);
-    expect(screen.getByText(zh.proxy.effectiveDirect)).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getAllByText(zh.proxy.effective("http://g:1"))).toHaveLength(2);
+      expect(screen.getByText(zh.proxy.effectiveDirect)).toBeTruthy();
+    });
   });
 
   it("选「自定义」但地址还空着时不落盘——后端会拒空地址", async () => {

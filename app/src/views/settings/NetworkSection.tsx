@@ -200,7 +200,10 @@ export function NetworkSection() {
     ...modeOptions,
   ];
 
+  const hasEffective = (k: string) => Object.prototype.hasOwnProperty.call(effective, k);
+
   const effLabel = (k: string) => {
+    if (!hasEffective(k)) return null;
     const p = effective[k];
     return p ? t.proxy.effective(p) : t.proxy.effectiveDirect;
   };
@@ -263,14 +266,15 @@ export function NetworkSection() {
             const m = rowMode(a.id);
             const rep = reports[a.id];
             const full = FULL_COVERAGE.includes(a.id);
-            const proxied = (effective[a.id] ?? "") !== "";
+            const label = effLabel(a.id);
+            const proxied = hasEffective(a.id) && (effective[a.id] ?? "") !== "";
             return (
               <Fragment key={a.id}>
                 <div className="row">
                   <div className="row-text">
                     <div className="row-label proxy-agent-name">{a.display_name}</div>
                     {/* 自定义模式的输入框已经展示同一个地址，不再在上方重复一遍。 */}
-                    {m !== "custom" && <div className="row-desc">{effLabel(a.id)}</div>}
+                    {m !== "custom" && label && <div className="row-desc">{label}</div>}
                     {/* 覆盖面：只有真的走了代理才谈得上「生效范围」，直连时说这个是噪音。 */}
                     {proxied && (
                       <div className="row-desc proxy-coverage">
