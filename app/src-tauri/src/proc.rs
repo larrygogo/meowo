@@ -5,7 +5,7 @@
 use sysinfo::System;
 #[cfg(target_os = "windows")]
 use sysinfo::Pid;
-#[cfg(target_os = "windows")]
+// 两个平台都要用：Windows 的 Toolhelp 快照，以及 agent_pids_snapshot 的返回类型。
 use std::collections::HashSet;
 
 /// Toolhelp 进程快照：pid -> (父 pid, 可执行名小写)。只读元数据、不开任何进程句柄，数百进程通常
