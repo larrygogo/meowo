@@ -312,11 +312,10 @@ fn live_counts_split_totals_from_connectivity_candidates() {
     }
     store.set_session_archived(archived_id.unwrap(), true, 600).unwrap();
 
-    // 收尾**只改 status、不清 pending_review**（残留正是「断开还挂着待批准」的根因）。
-    // 造一条这样的残留：已结束、却还留着 pending_review。
+    // 模拟旧版本数据库留下的「已结束、却还留着 pending_review」历史残留。
     let (dead, _) = store.start_session(pid, "dead-with-residue", 700).unwrap();
-    store.set_pending_review(dead, meowo_store::PendingReview::Approval, 710).unwrap();
     store.end_session(dead, 720).unwrap();
+    store.set_pending_review(dead, meowo_store::PendingReview::Approval, 730).unwrap();
 
     let (total, archived) = store.live_sessions_totals().unwrap();
     assert_eq!(total, 8);

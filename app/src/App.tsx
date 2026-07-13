@@ -112,6 +112,9 @@ export function App() {
     return s === "waiting" || s === "running" || s === "archived" ? s : "all";
   });
   const [search, setSearch] = useState("");
+  // 搜索结果是临时视图，不能覆盖用户搜索前已经加载好的普通列表（包括它的服务端顺序）。
+  // 按 tab 分开缓存，避免搜索中切 tab/清空时拿另一个 tab 的列表来恢复。
+  const unsearchedItemsRef = useRef<Partial<Record<StickerFilter, Item[]>>>({});
   const pickFilter = useCallback((f: StickerFilter) => {
     setFilter(f);
     localStorage.setItem(TAB_KEY, f);
@@ -211,6 +214,7 @@ export function App() {
             // 排序键变化后不会移动，得等用户手动切 tab 才会跳到正确位置（回归 bug）。
             // 不在 page 里的会话（状态迁移出当前 filter/归档/删除）也随整体替换自然被移除。
             const next = (page as Item[]).slice();
+            if (!search.trim()) unsearchedItemsRef.current[filter] = next;
             // 空转刷新（数据未变）保持原引用，跳过整表重渲染，消除视觉抖动（见 sameList）。
             return sameList(prev, next) ? prev : next;
           }
@@ -221,7 +225,9 @@ export function App() {
             if (!map.has(l.session.id)) append.push(l);
             map.set(l.session.id, l);
           }
-          return [...prev.map((l) => map.get(l.session.id)!), ...append];
+          const next = [...prev.map((l) => map.get(l.session.id)!), ...append];
+          if (!search.trim()) unsearchedItemsRef.current[filter] = next;
+          return next;
         });
         return { page: page as Item[], applied };
       } catch (err) {
@@ -236,14 +242,25 @@ export function App() {
   // 同时反映最新排序/状态，避免被打回第一页（P0）。
   const itemsLenRef = useRef(0);
   itemsLenRef.current = items.length;
+  // 首页/搜索视图正在切换时，旧 items 仍会短暂留在 DOM。此时虚拟列表若触发 loadMore，
+  // 会拿旧列表游标发起一个更新请求，取消首页请求并把结果按旧顺序合并（清空搜索排序错乱的根因）。
+  const resettingPageRef = useRef(false);
+  const pageResetSeqRef = useRef(0);
   const doRefresh = useCallback(() => {
+    const resetSeq = ++pageResetSeqRef.current;
+    resettingPageRef.current = true;
     setReachedEnd(false);
     const w = Math.max(PAGE_SIZE, itemsLenRef.current);
     loadPage(filter, search, null, w)
       .then(({ page, applied }) => {
-        if (applied && page.length < w) setReachedEnd(true);
+        if (applied) {
+          if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+          if (page.length < w) setReachedEnd(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+      });
     loadStrip(); // 折叠条数据独立刷新（不随 tab）
   }, [filter, search, loadPage, loadStrip]);
 
@@ -270,7 +287,7 @@ export function App() {
   }, []);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || reachedEnd) return;
+    if (resettingPageRef.current || loadingMore || reachedEnd) return;
     const last = items[items.length - 1];
     if (!last) return;
     setLoadingMore(true);
@@ -295,15 +312,39 @@ export function App() {
   // filter 切换无需去抖，0ms 立即加载，含首次挂载）。取代原先仅 [filter, loadPage] 的切 tab effect。
   useEffect(() => {
     const t = window.setTimeout(() => {
+      const resetSeq = ++pageResetSeqRef.current;
+      resettingPageRef.current = true;
       setReachedEnd(false);
-      loadPage(filter, search, null)
+      // 清空搜索后覆盖搜索前已经加载的窗口，而不是退回固定首屏；否则列表尾部会丢失，
+      // 用户看到的原列表顺序/滚动窗口也会被搜索操作改变。
+      const limit = search.trim()
+        ? PAGE_SIZE
+        : Math.max(PAGE_SIZE, unsearchedItemsRef.current[filter]?.length ?? 0);
+      loadPage(filter, search, null, limit)
         .then(({ page, applied }) => {
-          if (applied && page.length < PAGE_SIZE) setReachedEnd(true);
+          if (applied) {
+            if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+            if (page.length < limit) setReachedEnd(true);
+          }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+        });
     }, search ? 300 : 0);
     return () => window.clearTimeout(t);
   }, [filter, search, loadPage]);
+
+  const changeSearch = useCallback((next: string) => {
+    if (search.trim() !== next.trim()) resettingPageRef.current = true;
+    // 后端的无搜索请求回来前就恢复原数组，既不让搜索结果继续占位，也完整保留原顺序。
+    // 同时使仍在途的搜索请求失效，防止它在清空后短暂覆盖恢复出的列表。
+    if (search.trim() && !next.trim()) {
+      refreshSeqRef.current += 1;
+      const cached = unsearchedItemsRef.current[filter];
+      if (cached) setItems(cached);
+    }
+    setSearch(next);
+  }, [filter, search]);
 
   // 归档/取消归档会改变当前 tab 的可见性：乐观从列表移除该卡片并调整 counts，卡片即刻消失。
   // 这里不能顺手 refresh()——refresh 是前沿触发，会与尚未落库的 set_archived 赛跑，抢先拉回旧数据
@@ -652,7 +693,7 @@ export function App() {
         loadingMore={loadingMore}
         hasUpdate={hasUpdate}
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={changeSearch}
         onArchiveOptimistic={onArchiveOptimistic}
         onArchiveFailed={onArchiveFailed}
       />

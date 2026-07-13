@@ -44,6 +44,16 @@ import { CardContextMenu } from "./sticker/CardContextMenu";
 import { EmptyState } from "./sticker/EmptyState";
 import { UsageScreen } from "./sticker/UsageScreen";
 
+type FocusSessionResult =
+  | "focused"
+  | "host_focused"
+  | "alive_but_not_found"
+  | "permission_denied"
+  | "unsupported_terminal"
+  | "process_ended";
+
+type FocusNoticeKind = FocusSessionResult | "connecting" | "failed";
+
 
 export function Sticker({
   filter,
@@ -221,6 +231,19 @@ export function Sticker({
   // 便签编辑：notingId 为正在编辑便签的会话 id，noteDraft 为输入内容。与重命名互斥（同卡只开一个）。
   const [notingId, setNotingId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [focusNotice, setFocusNotice] = useState<{
+    kind: FocusNoticeKind;
+    item: Item;
+    confirming?: boolean;
+    busy?: boolean;
+    detail?: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!focusNotice || focusNotice.confirming || focusNotice.busy) return;
+    if (["host_focused", "unsupported_terminal", "alive_but_not_found", "process_ended"].includes(focusNotice.kind)) return;
+    const id = window.setTimeout(() => setFocusNotice(null), 4_000);
+    return () => window.clearTimeout(id);
+  }, [focusNotice]);
   const startNote = (l: Item) => {
     setEditingId(null);
     setNoteDraft(l.note ?? "");
@@ -238,18 +261,73 @@ export function Sticker({
   const canOpen = (l: Item) => l.connected || !l.archived;
   const openTerminal = (l: Item) => {
     if (l.connected) {
-      if (l.pid)
-        invoke("focus_session", {
+      if (!l.pid) {
+        setFocusNotice({ kind: "connecting", item: l });
+        return;
+      }
+      invoke<FocusSessionResult>("focus_session", {
           pid: l.pid,
           title: l.task_title,
           cwd: l.cwd,
           sessionId: l.session.cc_session_id,
           provider: l.provider,
-        }).catch(() => {});
+        })
+        .then((result) => {
+          // demo/旧后端可能不返回值；保持原行为，不误弹失败提示。
+          if (!result || result === "focused") setFocusNotice(null);
+          else setFocusNotice({ kind: result, item: l });
+        })
+        .catch((err) => setFocusNotice({ kind: "failed", item: l, detail: String(err) }));
     } else if (!l.archived) {
       invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, provider: l.provider }).catch(() => {});
     }
   };
+
+  const reopenNoticeSession = () => {
+    if (!focusNotice || focusNotice.busy) return;
+    const l = focusNotice.item;
+    if (focusNotice.kind === "process_ended") {
+      setFocusNotice({ ...focusNotice, busy: true });
+      invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, provider: l.provider })
+        .then(() => setFocusNotice(null))
+        .catch((err) => setFocusNotice({ ...focusNotice, busy: false, kind: "failed", detail: String(err) }));
+      return;
+    }
+    if (!focusNotice.confirming) {
+      setFocusNotice({ ...focusNotice, confirming: true });
+      return;
+    }
+    const pid = l.pid;
+    if (!pid) {
+      // notice 持有点击时的快照，正常不会走到这里；仍在命令边界防御可空类型，绝不把 null 交给后端。
+      setFocusNotice({ ...focusNotice, confirming: false, kind: "process_ended" });
+      return;
+    }
+    setFocusNotice({ ...focusNotice, busy: true });
+    invoke("restart_session_supported", {
+      pid,
+      cwd: l.cwd,
+      sessionId: l.session.cc_session_id,
+      provider: l.provider,
+    })
+      .then(() => setFocusNotice(null))
+      .catch((err) => setFocusNotice({ ...focusNotice, busy: false, confirming: false, kind: "failed", detail: String(err) }));
+  };
+
+  const focusNoticeText = focusNotice
+    ? focusNotice.detail || (focusNotice.confirming
+      ? t.sticker.reopenConfirm
+      : {
+          connecting: t.sticker.focusConnecting,
+          host_focused: t.sticker.focusHostOnly,
+          alive_but_not_found: t.sticker.focusNotFound,
+          permission_denied: t.sticker.focusPermission,
+          unsupported_terminal: t.sticker.focusUnsupported,
+          process_ended: t.sticker.focusEnded,
+          failed: t.sticker.focusFailed,
+          focused: "",
+        }[focusNotice.kind])
+    : "";
 
   // 先按当前 tab 过滤，再排序：星标恒在最前。match(tab) 是安全网（后端已按 tab/search 过滤，
   // 这里兜底防御性重过滤一遍）；搜索过滤已下沉后端（父组件按 search 请求当前 tab 内全库），
@@ -718,6 +796,44 @@ export function Sticker({
           }
           onClose={() => setCtxMenu(null)}
         />
+      )}
+      {focusNotice && focusNotice.kind !== "focused" && (
+        <div className="stk-focus-toast" role="status" onClick={(e) => e.stopPropagation()}>
+          <span className="stk-focus-mark" aria-hidden="true">!</span>
+          <div className="stk-focus-body">
+            <span className="stk-focus-text">{focusNoticeText}</span>
+            <div className="stk-focus-actions">
+              {focusNotice.confirming && (
+                <button
+                  type="button"
+                  className="stk-focus-btn is-quiet"
+                  onClick={() => setFocusNotice({ ...focusNotice, confirming: false })}
+                >
+                  {t.sticker.noteCancel}
+                </button>
+              )}
+              {(["host_focused", "unsupported_terminal", "alive_but_not_found", "process_ended"] as FocusNoticeKind[]).includes(focusNotice.kind) && (
+                <button type="button" className="stk-focus-btn" disabled={focusNotice.busy} onClick={reopenNoticeSession}>
+                  {focusNotice.busy
+                    ? t.sticker.reopening
+                    : focusNotice.confirming
+                    ? t.sticker.endAndReopen
+                    : focusNotice.kind === "process_ended"
+                    ? t.sticker.reopen
+                    : t.sticker.reopenSupported}
+                </button>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="stk-focus-close"
+            aria-label={t.sticker.dismiss}
+            onClick={() => setFocusNotice(null)}
+          >
+            <XIcon />
+          </button>
+        </div>
       )}
       {/* 底栏:用量(左) + 搜索/设置/固定(右)聚为一处;搜索激活时整条变输入框。 */}
       <div className="stk-bar">

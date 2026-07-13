@@ -8,6 +8,13 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FocusPaneResult {
+    NotWezTerm,
+    Focused,
+    HostFocused,
+}
+
 /// 从 GUI 进程 spawn console 程序(wezterm.exe)不弹黑窗。
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -181,20 +188,25 @@ pub(crate) fn focus_pane(
     want_title: &str,
     token: Option<&str>,
     cwd: Option<&str>,
-) -> bool {
-    let Some((gui_pid, sock)) = gui_in_group(group) else { return false };
+) -> FocusPaneResult {
+    let Some((gui_pid, sock)) = gui_in_group(group) else { return FocusPaneResult::NotWezTerm };
     let matched = cli(&sock, &["list", "--format", "json"])
         .and_then(|out| String::from_utf8(out).ok())
         .and_then(|json| match_pane(&parse_panes(&json), want_title, token, cwd));
-    if let Some(pane_id) = matched {
-        let _ = cli(&sock, &["activate-pane", "--pane-id", &pane_id.to_string()]);
-    }
+    let pane_activated = matched.is_some_and(|pane_id| {
+        cli(&sock, &["activate-pane", "--pane-id", &pane_id.to_string()]).is_some()
+    });
     let mut target = HashSet::new();
     target.insert(gui_pid);
     if let Some(hwnd) = crate::terminal::find_window_for_pids(&target) {
         crate::terminal::force_foreground(hwnd);
     }
-    true
+    if pane_activated {
+        FocusPaneResult::Focused
+    } else {
+        // 已确认宿主，但 pane 无唯一匹配或 CLI 激活失败；只能诚实报告窗口级定位。
+        FocusPaneResult::HostFocused
+    }
 }
 
 #[cfg(test)]

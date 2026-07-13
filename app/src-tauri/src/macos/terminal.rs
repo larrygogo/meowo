@@ -83,37 +83,46 @@ fn run_osascript(script: &str, args: &[&str]) -> std::io::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// 尝试切到 claude 进程所在的 Terminal.app/iTerm2 tab。命中返回 true。
-fn focus_existing_tab(pid: i64) -> bool {
+/// 尝试切到 agent 进程所在的 Terminal.app/iTerm2 tab，并保留失败原因给贴纸提示。
+fn focus_existing_tab(pid: i64) -> crate::terminal::FocusSessionResult {
     let kind = detect_term_kind(&ancestor_names(pid));
-    let (Some(tty), Some(script)) = (tty_for_pid(pid), focus_script(kind)) else {
-        return false;
+    let Some(script) = focus_script(kind) else {
+        return crate::terminal::FocusSessionResult::UnsupportedTerminal;
     };
-    matches!(run_osascript(script, &[&tty]), Ok(r) if r == "FOUND")
+    let Some(tty) = tty_for_pid(pid) else {
+        return crate::terminal::FocusSessionResult::AliveButNotFound;
+    };
+    match run_osascript(script, &[&tty]) {
+        Ok(r) if r == "FOUND" => crate::terminal::FocusSessionResult::Focused,
+        Ok(_) => crate::terminal::FocusSessionResult::AliveButNotFound,
+        Err(_) => crate::terminal::FocusSessionResult::PermissionDenied,
+    }
 }
 
-/// 点连接中的卡片：切到该 agent 进程所在的终端 tab；未命中时**仅当进程确已死亡**才回退新开终端 resume。
+/// 点连接中的卡片：切到该 agent 进程所在的终端 tab，并返回可展示的失败原因。
 /// 聚焦失败 ≠ 会话已断开：宿主可能是 VS Code/tmux/WezTerm 等无法脚本聚焦的终端（focus_script=None），
 /// 或自动化权限被拒——进程仍存活时绝不能回退 resume，否则会对运行中的会话 fork 出重复会话、看板多出
 /// 重复卡片（与 Windows 侧「聚焦失败只做窗口级置前、绝不 spawn 新进程」的语义对齐；macOS 无等价的
-/// 窗口级手段，宁可不动作）。`resume_argv` 为空表示调用方不允许 resume 回退（如通知点击）。
+/// 窗口级手段，宁可提示用户）。进程在聚焦期间退出时也只返回 ProcessEnded，由用户明确选择恢复。
 pub fn focus_session_terminal(
     pid: i64,
     cwd: Option<&str>,
     resume_argv: &[String],
     resume_kind: TermKind,
     env_prefix: &str,
-) {
-    if focus_existing_tab(pid) {
-        return;
+) -> crate::terminal::FocusSessionResult {
+    let result = focus_existing_tab(pid);
+    if result == crate::terminal::FocusSessionResult::Focused {
+        return result;
     }
     // 判活走 crate::pid_is_agent_ps（与 reaper/看板同一口径）：口径分叉会让「进程存活却被判死 →
     // 回退 resume 对运行中会话 fork 出重复会话」复发。
-    if resume_argv.is_empty() || crate::pid_is_agent_ps(pid) {
-        return;
+    if crate::pid_is_agent_ps(pid) {
+        return result;
     }
-    // 回退路径无乐观复活，无需回滚。env_prefix 让回退新开的会话同样带上代理。
-    let _ = resume_session_mac(cwd, resume_argv, resume_kind, env_prefix);
+    // 点击与进程退出竞态时交给前端提示“会话已断开”，由用户明确选择重新打开，避免静默 fork。
+    let _ = (cwd, resume_argv, resume_kind, env_prefix);
+    crate::terminal::FocusSessionResult::ProcessEnded
 }
 
 /// 点已断开的卡片（或跳转回退）：按设置在 Terminal.app / iTerm2 新开窗口执行 resume 命令；有 cwd 则先 cd。

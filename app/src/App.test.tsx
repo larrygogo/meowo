@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor, screen } from "@testing-library/react";
+import { render, cleanup, fireEvent, waitFor, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 
 const getLiveSessionsCounts = vi.fn();
@@ -132,6 +132,68 @@ describe("App", () => {
     emitBoardChanged();
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
+  });
+
+  it("清空搜索时恢复搜索前的列表顺序", async () => {
+    const mk = (id: number, title: string, lastEventAt: number) => ({
+      session: {
+        id,
+        cc_session_id: `s-${id}`,
+        status: "running" as const,
+        last_event_at: lastEventAt,
+        started_at: 0,
+        ended_at: null,
+        project_id: 1,
+      },
+      project_name: "p",
+      task_title: title,
+      current_activity: null,
+      column: "todo" as const,
+      todo_done: 0,
+      todo_total: 0,
+      todos: [],
+      pid: null,
+      connected: true,
+      archived: false,
+      archived_at: null,
+      cwd: "/p",
+      errored: false,
+      error_label: null,
+      error_raw: null,
+      preview: null,
+      note: null,
+      context_pct: null,
+      context_window: null,
+      model: null,
+      pending_review: null,
+      last_ai_text: null,
+      last_user_text: null,
+      provider: "claude" as const,
+    });
+    const original = [mk(2, "B", 2000), mk(1, "A", 1000)];
+    getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
+    let emptySearchCalls = 0;
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]);
+      if (search === "A") return Promise.resolve([original[1]]);
+      emptySearchCalls += 1;
+      if (emptySearchCalls === 1) return Promise.resolve(original);
+      // 模拟清空后的刷新尚未返回：原列表应从缓存立即恢复，不能依赖这次响应。
+      return new Promise(() => {});
+    });
+
+    const { container } = render(<App />);
+    const titles = () =>
+      Array.from(container.querySelectorAll(".stk-title")).map((el) => el.textContent);
+    await waitFor(() => expect(titles()).toEqual(["B", "A"]));
+
+    fireEvent.click(container.querySelector(".stk-bar-actions .stk-act:nth-child(2)")!);
+    fireEvent.change(container.querySelector(".stk-search-in")!, { target: { value: "A" } });
+    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "A", null, 100));
+    await waitFor(() => expect(titles()).toEqual(["A"]));
+
+    fireEvent.click(container.querySelector(".stk-search-x")!);
+    await waitFor(() => expect(titles()).toEqual(["B", "A"]));
   });
 
   // 单一真相源：window-state 不再恢复尺寸(lib.rs)，main 窗口尺寸由 SIZE_KEY 持有。非吸附态启动

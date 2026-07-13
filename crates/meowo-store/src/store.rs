@@ -223,7 +223,8 @@ impl Store {
              ON CONFLICT(cc_session_id) DO UPDATE SET
                  status = 'running',
                  last_event_at = excluded.last_event_at,
-                 ended_at = NULL",
+                 ended_at = NULL,
+                 pending_review = NULL",
             rusqlite::params![project_id, cc_session_id, now_ms],
         )?;
         let sid = self
@@ -475,6 +476,9 @@ impl Store {
         status: SessionStatus,
         now_ms: i64,
     ) -> Result<(), StoreError> {
+        if status == SessionStatus::Ended {
+            return self.end_session(session_id, now_ms);
+        }
         self.conn.execute(
             "UPDATE sessions SET status = ?1, last_event_at = ?2 WHERE id = ?3",
             rusqlite::params![status.as_str(), now_ms, session_id],
@@ -537,7 +541,7 @@ impl Store {
     /// 用于「会话曾因 pid 未被认作存活而被 reap 成 ended，但用户其实还在该会话里继续发言」的自愈。
     pub fn revive_if_ended(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET status='running', ended_at=NULL, last_event_at=?1 \
+            "UPDATE sessions SET status='running', ended_at=NULL, pending_review=NULL, last_event_at=?1 \
              WHERE id=?2 AND status='ended'",
             rusqlite::params![now_ms, session_id],
         )?;
@@ -564,7 +568,7 @@ impl Store {
         dead_pid: Option<i64>,
     ) -> Result<bool, StoreError> {
         let n = self.conn.execute(
-            "UPDATE sessions SET status='running', ended_at=NULL, pid=NULL, last_event_at=?1 \
+            "UPDATE sessions SET status='running', ended_at=NULL, pending_review=NULL, pid=NULL, last_event_at=?1 \
              WHERE id=?2 AND (status='ended' OR pid IS NULL OR pid=?3)",
             rusqlite::params![now_ms, session_id, dead_pid],
         )?;
@@ -584,7 +588,7 @@ impl Store {
     /// 结束会话：状态设为 ended，记录 ended_at。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET status = 'ended', ended_at = ?1, last_event_at = ?1 WHERE id = ?2",
+            "UPDATE sessions SET status = 'ended', pending_review = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2",
             rusqlite::params![now_ms, session_id],
         )?;
         Ok(())
@@ -709,7 +713,7 @@ impl Store {
         // 这样 /clear 一发生旧会话立刻从 live 列表消失，而不是只摘 pid 留个空壳。
         // 时间戳保护：只收尾 last_event_at 更旧的会话，迟到的旧会话 hook 无法反杀更活跃的新会话。
         tx.execute(
-            "UPDATE sessions SET pid = NULL, status = 'ended', ended_at = ?2 \
+            "UPDATE sessions SET pid = NULL, status = 'ended', pending_review = NULL, ended_at = ?2, last_event_at = ?2 \
              WHERE pid = ?1 AND id <> ?3 AND status <> 'ended' \
                AND last_event_at < (SELECT last_event_at FROM sessions WHERE id = ?3)",
             rusqlite::params![pid, now_ms, session_id],

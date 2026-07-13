@@ -311,6 +311,26 @@ fn pending_review_cleared_by_next_event() {
 }
 
 #[test]
+fn image_only_user_prompt_starts_a_new_running_turn() {
+    let store = Store::open_in_memory().unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"SessionStart","session_id":"img1","cwd":"/p"}"#), 100).unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"img1"}"#), 200).unwrap();
+    assert_eq!(store.get_session(store.find_session_id_pub("img1").unwrap().unwrap()).unwrap().status, "waiting");
+
+    // kimi 的纯图片 prompt 没有 text 块，但用户确实已经开启新回合。
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"img1","prompt":[{"type":"image","data":"..."}]}"#),
+        300,
+        meowo_agent::id::KIMI.as_str(),
+    )
+    .unwrap();
+    let s = store.get_session(store.find_session_id_pub("img1").unwrap().unwrap()).unwrap();
+    assert_eq!(s.status, "running");
+    assert_eq!(s.last_event_at, 300);
+}
+
+#[test]
 fn provider_defaults_claude_and_kimi_is_tagged() {
     let store = Store::open_in_memory().unwrap();
     // 默认 provider（不带 --provider）→ claude。

@@ -392,9 +392,8 @@ impl Store {
     ///
     /// 只吐出**判定 connected 所需的原料**，不做统计——见 [`Self::live_sessions_totals`] 的说明。
     ///
-    /// `status != 'ended'` 这一条不能省。`end_session` 收尾时**只改 status、不清
-    /// pending_review**（那份残留正是「断开的会话还挂着待批准标签」的根因），于是
-    /// `pending_review IS NOT NULL` 会把一大堆早已结束的历史会话捞进来。它们绝无可能算进
+    /// `status != 'ended'` 这一条不能省。当前生命周期边界会清 pending_review，但旧版本数据库
+    /// 仍可能存在「ended + pending_review」残留；查询必须防御这类历史数据，否则会把已结束会话捞进来。它们绝无可能算进
     /// running/waiting（`session_connected` 对 ended 恒为 false），但会让候选集合随历史增长
     /// 而膨胀，白白拖着 app 层逐条判活——本该是个「只有活跃会话」的小集合。
     pub fn live_count_candidates(&self) -> Result<Vec<LiveCandidate>, StoreError> {
@@ -422,7 +421,7 @@ impl Store {
     /// 真正活跃的会话每个事件都会刷新 last_event_at，到不了这个阈值。
     pub fn end_orphaned_idle(&self, idle_ms: i64, now_ms: i64) -> Result<usize, StoreError> {
         let n = self.conn.execute(
-            "UPDATE sessions SET status='ended', ended_at=?1
+            "UPDATE sessions SET status='ended', pending_review=NULL, ended_at=?1, last_event_at=?1
              WHERE pid IS NULL AND status IN ('running','waiting','stale')
                AND (?1 - last_event_at) > ?2",
             rusqlite::params![now_ms, idle_ms],

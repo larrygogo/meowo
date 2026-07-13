@@ -61,8 +61,8 @@ const FEATURES: Feature[] = [
   },
   {
     icon: <PlugIcon />,
-    title: "安装与自动接入",
-    body: "在设置里安装、登录 AI CLI，并自动接入所需 hooks。检测到连接缺失时，可以直接点击修复。",
+    title: "一键安装、登录与接入",
+    body: "无需先在终端配置环境：直接在 Meowo 里安装 AI CLI、发起登录，并自动接入所需 hooks。检测到连接缺失时，也能一键修复。",
   },
   {
     icon: <NetworkIcon />,

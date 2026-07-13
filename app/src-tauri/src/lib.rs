@@ -27,7 +27,9 @@ use install::{
     add_agent_to_user_path, agent_path_gap, cancel_login, check_provider_hooks, install_agent,
     login_agent, repair_provider_hooks,
 };
-use terminal::{focus_session, new_session, open_project_dir, resume_session};
+use terminal::{
+    focus_session, new_session, open_project_dir, restart_session_supported, resume_session,
+};
 use window::{open_new_session_window, open_settings, open_update_window, recall_center};
 // 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流，见该函数），
 // 由 agent_pids_cached 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
@@ -559,26 +561,37 @@ fn live_sessions_blocking(
     search: Option<&str>,
     page: PageReq,
 ) -> Result<Vec<LiveItem>, String> {
+    if page.limit == 0 {
+        return Ok(Vec::new());
+    }
     let store = open_store(db_path)?;
-    let sessions = store
-        .live_sessions(
-            Some(filter),
-            search,
-            page.before_last_event_at,
-            page.before_id,
-            page.limit,
-        )
-        .map_err(|e| e.to_string())?;
     // connected 校验：用调用方传进来的进程快照（与角标计数是同一份，见 agent_pids_cached）。
     let is_claude = |pid: i64| pid > 0 && alive.contains(&pid);
 
-    // 先算 connected（廉价，仅查集合）并据此排序，再解析 transcript 标题。
+    // running/waiting 的 connected 只能在 SQL 之后按进程快照判定。不能只取一页 SQL 再过滤：
+    // 断开候选会占掉 LIMIT，令返回页不足，前端误判到底并永久漏掉后面的真实连接会话。
+    // 这两类因此按 SQL 游标持续取批次，直到凑满一页有效项或底层结果真正耗尽。
     // 标题解析要 read_to_string 整个 JSONL（可达数 MB）；走增量缓存后后续刷新接近 0 成本，
     // 首次加载即使会话较多也能接受——前端用虚拟列表消化，不再做 20 条截断。
     let now = now_ms();
-    let mut ranked: Vec<(LiveSession, bool)> = sessions
-        .into_iter()
-        .map(|s| {
+    let connectivity_filtered = matches!(filter, "waiting" | "running");
+    let batch_limit = if connectivity_filtered {
+        page.limit.max(100)
+    } else {
+        page.limit
+    };
+    let mut cursor_ts = page.before_last_event_at;
+    let mut cursor_id = page.before_id;
+    let mut ranked: Vec<(LiveSession, bool)> = Vec::new();
+    loop {
+        let sessions = store
+            .live_sessions(Some(filter), search, cursor_ts, cursor_id, batch_limit)
+            .map_err(|e| e.to_string())?;
+        let raw_len = sessions.len();
+        let next_cursor = sessions
+            .last()
+            .map(|s| (s.session.last_event_at, s.session.id));
+        for s in sessions {
             // 已结束=断开；pid 是存活 agent=连接(防 pid 复用)；pid 未知=仅 resume 宽限期内乐观连接。
             let connected = session_connected(
                 &s.session.status,
@@ -587,9 +600,24 @@ fn live_sessions_blocking(
                 s.session.last_event_at,
                 now,
             );
-            (s, connected)
-        })
-        .collect();
+            if !connectivity_filtered || connected {
+                ranked.push((s, connected));
+                if connectivity_filtered && ranked.len() >= page.limit {
+                    break;
+                }
+            }
+        }
+        if !connectivity_filtered
+            || ranked.len() >= page.limit
+            || raw_len < batch_limit
+            || next_cursor.is_none()
+        {
+            break;
+        }
+        let (ts, id) = next_cursor.unwrap();
+        cursor_ts = Some(ts);
+        cursor_id = Some(id);
+    }
     // 连接中优先，其次最近活跃。live_sessions() 已按 last_event_at DESC 返回，
     // 稳定排序按 connected 分组即保留组内的时间序。
     ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
@@ -636,9 +664,8 @@ fn live_sessions_blocking(
         }
         // 「运行中」「待交互」只收此刻还连着的会话。SQL 层筛不掉断开的（connected 要查进程表，
         // 是 SQL 之后才算出来的），故在此补上——否则进程早已死掉的会话会挂在「待交互」里催人，
-        // 点进去却只是个断开的历史会话。DB 里残留的 pending_review 正是这么漏进来的：后台收尾
-        // 只改 status，不清 pending_review，而 waiting 的判定是 `status='waiting' OR
-        // pending_review IS NOT NULL`。
+        // 点进去却只是个断开的历史会话。生命周期边界现已清 pending_review，但旧数据库仍可能
+        // 带历史残留，查询层继续做防御性过滤。
         if matches!(filter, "waiting" | "running") && !connected {
             continue;
         }
@@ -1074,6 +1101,7 @@ pub fn run() {
             get_live_sessions_page,
             focus_session,
             resume_session,
+            restart_session_supported,
             open_project_dir,
             rename_session,
             set_archived,
@@ -1247,7 +1275,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_id, session_connected, tab_class, RESUME_GRACE_MS};
+    use super::{
+        is_safe_id, live_sessions_blocking, session_connected, tab_class, PageReq,
+        RESUME_GRACE_MS,
+    };
     use crate::install::{bump_login_epoch, login_epoch};
     use crate::proc::pid_is_agent;
     use crate::terminal::{
@@ -1255,6 +1286,67 @@ mod tests {
         shell_join_for_windows, strip_jsonc_comments, tab_match_score,
     };
     use crate::watch::{pending_fingerprint, should_notify, waiting_fingerprint};
+
+    #[test]
+    fn waiting_page_skips_disconnected_sql_batches_without_ending_early() {
+        let path = std::env::temp_dir().join(format!(
+            "meowo-filter-page-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = meowo_store::Store::open(&path).unwrap();
+        let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+
+        // waiting 按最旧优先：先放 120 条断开候选，确保超过后端单批 100 条。
+        for i in 0..120 {
+            let (sid, _) = store.start_session(project, &format!("dead-{i}"), 10 + i).unwrap();
+            store.on_user_prompt(sid, &format!("dead {i}"), 10 + i).unwrap();
+            store.set_session_pid(sid, 10_000 + i, 10 + i).unwrap();
+            store
+                .set_session_status(sid, meowo_store::SessionStatus::Waiting, 10 + i)
+                .unwrap();
+        }
+        let mut alive = std::collections::HashSet::new();
+        for i in 0..2 {
+            let (sid, _) = store.start_session(project, &format!("alive-{i}"), 1_000 + i).unwrap();
+            store.on_user_prompt(sid, &format!("alive {i}"), 1_000 + i).unwrap();
+            let pid = 20_000 + i;
+            store.set_session_pid(sid, pid, 1_000 + i).unwrap();
+            store
+                .set_session_status(sid, meowo_store::SessionStatus::Waiting, 1_000 + i)
+                .unwrap();
+            alive.insert(pid);
+        }
+        drop(store);
+
+        let cache = std::sync::Mutex::new(meowo_agent::TranscriptCache::new());
+        let page = live_sessions_blocking(
+            &path,
+            &cache,
+            &alive,
+            "waiting",
+            None,
+            PageReq {
+                before_last_event_at: None,
+                before_id: None,
+                limit: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(page.len(), 2);
+        assert!(page.iter().all(|l| l.connected));
+        assert!(page
+            .iter()
+            .all(|l| l.inner.session.cc_session_id.starts_with("alive-")));
+
+        drop(cache);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 
     /// 代次是「取消登录」的整个机制：watch 线程每轮比对自己出生时的代次，不等就静默退出。
     ///
@@ -1432,7 +1524,7 @@ mod tests {
 
         // 断开：一律不进这两个 tab，只作为历史留在「全部」里。
         // 尤其是这条——DB 里残留的 pending_review 曾让断开的会话挂在「待交互」里催人，
-        // 点进去却只是个死掉的历史会话（后台收尾只改 status，不清 pending_review）。
+        // 点进去却只是个死掉的历史会话（兼容旧数据库中的 pending_review 残留）。
         assert_eq!(tab_class(false, "running", Some("approval")), None);
         assert_eq!(tab_class(false, "waiting", None), None);
         assert_eq!(tab_class(false, "running", None), None);

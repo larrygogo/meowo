@@ -7,7 +7,7 @@ import Reveal from "@/components/Reveal";
 export const metadata: Metadata = {
   title: "下载 · Meowo",
   description:
-    "下载 Meowo：Windows x64 NSIS 安装包，macOS universal DMG（已签名公证）。含环境要求与安装步骤，应用内可以检查更新。",
+    "下载 Meowo：Windows x64 NSIS 安装包，macOS universal DMG（已签名公证）。无需预装 AI CLI，可在应用内一键安装和登录。",
 };
 
 const REQS: { k: string; v: React.ReactNode }[] = [
@@ -16,7 +16,7 @@ const REQS: { k: string; v: React.ReactNode }[] = [
     k: "AI 编程 CLI",
     v: (
       <>
-        已安装{" "}
+        无需预装；可在 Meowo 内一键安装并登录{" "}
         <a href={DOCS_CLAUDE_CODE} target="_blank" rel="noopener noreferrer">
           Claude Code
         </a>{" "}
@@ -36,10 +36,10 @@ const STEPS = [
   { n: 2, title: "安装并打开", body: "Windows 双击 setup.exe。macOS 把应用拖进「应用程序」，双击打开。" },
   {
     n: 3,
-    title: "自动接入",
-    body: "Meowo 会为检测到的 AI 编程 CLI 接入所需 hooks，一般不需要手动编辑配置。",
+    title: "一键安装并登录 AI CLI",
+    body: "没有 Claude Code、Codex 或 Kimi 也没关系：在设置里选择工具，一键安装并发起账号登录。已有工具会自动检测。",
   },
-  { n: 4, title: "开始使用", body: "选择项目目录和 AI 工具，点「启动」即可新建会话，无需先在终端切目录或输入命令。" },
+  { n: 4, title: "自动接入并开始使用", body: "Meowo 自动接入所需 hooks。选择项目目录和 AI 工具，点「启动」即可新建会话。" },
 ];
 
 // 拿到了具体安装包就直连它，并把真实文件名和体积标出来；拿不到就退回 releases 页面。
@@ -58,7 +58,7 @@ export default async function DownloadPage() {
           <span className="eyebrow">下载</span>
           <h1 className="h1">下载 Meowo</h1>
           <p className="lead">
-            {version}开源，MIT 许可。安装后会自动检测本机已有的 AI 编程 CLI，应用内可以检查更新。
+            {version}开源，MIT 许可。无需提前配置 AI CLI：安装 Meowo 后，可直接在应用内一键安装、登录并自动接入。
           </p>
         </div>
       </section>
