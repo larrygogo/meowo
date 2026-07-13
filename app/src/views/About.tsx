@@ -117,9 +117,11 @@ function GeneralSection() {
   };
   const hideDays = settings?.archive_hide_days ?? 0;
   const notifyOn = settings?.notifications_enabled ?? true;
+  const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const previewOn = settings?.preview_enabled ?? true;
   const changeHideDays = (days: number) => patch({ archive_hide_days: days });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
+  const toggleAutoUpdate = () => patch({ auto_update_enabled: !autoUpdateOn });
   const togglePreview = () => patch({ preview_enabled: !previewOn });
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
@@ -153,6 +155,13 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.notifyDesc}</div>
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.autoUpdate}</div>
+            <div className="row-desc">{t.settings.autoUpdateDesc}</div>
+          </div>
+          <Switch checked={autoUpdateOn} onChange={toggleAutoUpdate} />
         </div>
         <div className="row">
           <div className="row-text">
@@ -340,14 +349,15 @@ function AboutSection({
   // （内联 recheck 在检查失败时界面毫无动静）。本节的后台检查只驱动按钮文案与导航角标。
   // 旧的 trigger-update/update-failed 跨窗口协议已废除：曾因两窗状态分歧把按钮锁死在「更新中…」。
   const openUpdater = () => invoke("open_update_window").catch(() => {});
+  const hasUpdate = status === "available" || status === "downloading" || status === "ready";
   const updateBtn =
-    status === "available"
+    hasUpdate
       ? { label: t.about.updateTo(newVersion ?? ""), primary: true }
       : { label: t.about.checkUpdate, primary: false };
 
   const verText = `v${version || "—"}`;
   const verStatus =
-    status === "available" ? t.about.foundNew(newVersion ?? "") : status === "latest" ? t.about.upToDate : "";
+    hasUpdate ? t.about.foundNew(newVersion ?? "") : status === "latest" ? t.about.upToDate : "";
   const verSub = verStatus ? `${verText} · ${verStatus}` : verText;
 
   return (
@@ -399,8 +409,8 @@ export function About() {
   const t = useT();
   const [sec, setSec] = useState<Section>("general");
   const close = () => getCurrentWindow().close().catch(() => {});
-  // 在不随标签切换卸载的父组件里检查更新：每次打开设置窗口只查一次（避免反复点「关于」标签重复请求）。
-  const { status, version: newVersion } = useUpdate();
+  // 设置窗口也服从自动更新开关；关闭时不做后台检查，用户仍可从「关于」手动打开更新窗口检查。
+  const { status, version: newVersion } = useUpdate({ automatic: true });
 
   return (
     <div className="settings">
@@ -426,7 +436,9 @@ export function About() {
           <button className={"nav-item" + (sec === "about" ? " on" : "")} onClick={() => setSec("about")}>
             <IconInfo />
             <span>{t.settings.nav.about}</span>
-            {status === "available" && <span className="nav-tag">{t.settings.updateTag}</span>}
+            {(status === "available" || status === "downloading" || status === "ready") && (
+              <span className="nav-tag">{t.settings.updateTag}</span>
+            )}
           </button>
         </nav>
       </aside>

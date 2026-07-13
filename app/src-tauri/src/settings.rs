@@ -59,6 +59,9 @@ pub(crate) struct Settings {
     /// 桌面通知总开关（待交互 + 错误）。缺省为开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) notifications_enabled: bool,
+    /// 自动检查并下载软件更新。缺省开启，兼容老 settings.json。
+    #[serde(default = "default_true")]
+    pub(crate) auto_update_enabled: bool,
     /// 外观模式：dark / light / system（跟随系统）。缺省 dark，兼容老 settings.json。
     #[serde(default = "default_theme")]
     pub(crate) theme: String,
@@ -107,6 +110,7 @@ impl Default for Settings {
         Settings {
             archive_hide_days: 0,
             notifications_enabled: true,
+            auto_update_enabled: true,
             theme: default_theme(),
             opacity: default_opacity(),
             ui_scale: default_ui_scale(),
@@ -332,6 +336,15 @@ mod tests {
         // 旧 settings.json 无 default_agent 字段：serde default 兜底 claude，不 panic。
         let v: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(v.default_agent, "claude");
+    }
+
+    #[test]
+    fn auto_update_defaults_on_for_new_and_old_settings() {
+        assert!(Settings::default().auto_update_enabled);
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert!(old.auto_update_enabled);
+        let disabled: Settings = serde_json::from_str(r#"{"auto_update_enabled":false}"#).unwrap();
+        assert!(!disabled.auto_update_enabled);
     }
 
     #[test]

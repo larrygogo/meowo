@@ -17,7 +17,7 @@ const WIN_W = 400;
 // 不再有跨窗口 trigger-update/update-failed 事件协议(旧协议曾致按钮死锁)。
 export function Updater() {
   const t = useT();
-  const { status, version, notes, progress, apply, recheck } = useUpdate();
+  const { status, version, notes, progress, download, install, recheck } = useUpdate();
   const [current, setCurrent] = useState("");
   useEffect(() => {
     getVersion().then(setCurrent).catch(() => {});
@@ -27,7 +27,7 @@ export function Updater() {
   // 有更新说明可读时（发现新版/下载中）窗口增高，其余状态收回紧凑高度并保持居中。
   // Windows 上 resizable(false) 会把窗口 min/max 锁死成当前尺寸，程序化 setSize 也被钳住——
   // 必须先临时放开 resizable、改完尺寸立刻锁回，再重新居中。
-  const tall = (status === "available" || status === "downloading") && !!notes;
+  const tall = (status === "available" || status === "downloading" || status === "ready") && !!notes;
   useEffect(() => {
     const resize = async () => {
       const w = getCurrentWindow();
@@ -91,7 +91,7 @@ export function Updater() {
           </>
         )}
 
-        {(status === "available" || status === "downloading") && (
+        {(status === "available" || status === "downloading" || status === "ready") && (
           <>
             <div className="up-status up-new">{t.updater.found(version ?? "")}</div>
             {notes && (
@@ -102,8 +102,8 @@ export function Updater() {
               </div>
             )}
             {status === "available" ? (
-              <button className="sbtn primary" onClick={() => void apply()}>{t.updater.install}</button>
-            ) : (
+              <button className="sbtn primary" onClick={() => void download()}>{t.updater.download}</button>
+            ) : status === "downloading" ? (
               <div className="up-dl">
                 <div className={"up-prog" + (progress == null ? " up-prog-indet" : "")}>
                   <div className="up-prog-fill" style={{ width: `${progress ?? 100}%` }} />
@@ -113,6 +113,11 @@ export function Updater() {
                 </div>
                 <div className="up-hint">{t.updater.restartHint}</div>
               </div>
+            ) : (
+              <>
+                <div className="up-status">{t.updater.ready}</div>
+                <button className="sbtn primary" onClick={() => void install()}>{t.updater.restart}</button>
+              </>
             )}
           </>
         )}

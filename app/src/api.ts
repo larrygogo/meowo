@@ -152,6 +152,8 @@ export type Settings = {
   archive_hide_days: number;
   /** 桌面通知总开关（待交互 + 错误）。 */
   notifications_enabled: boolean;
+  /** 自动检查并在后台下载软件更新。 */
+  auto_update_enabled: boolean;
   /** 外观模式：深色 / 浅色 / 跟随系统。 */
   theme: ThemeMode;
   /** 贴纸背景不透明度（百分比 25–100）。 */
@@ -209,16 +211,25 @@ export function getEffectiveProxy(agent?: AgentId): Promise<string | null> {
   return invoke("get_effective_proxy", { agent: agent ?? null });
 }
 
-export type AvailableUpdate = { version: string; body?: string | null };
+export type AvailableUpdate = {
+  version: string;
+  body?: string | null;
+  downloadState: "available" | "downloading" | "ready";
+};
 
 /** 检查更新。后端会显式执行「自定义代理」或「直连」，不回退到系统环境代理。 */
 export function checkUpdate(): Promise<AvailableUpdate | null> {
   return invoke("check_update");
 }
 
-/** 下载并安装最近一次 checkUpdate() 返回的更新；进度经 update-download-progress 事件通知。 */
-export function downloadAndInstallUpdate(): Promise<void> {
-  return invoke("download_and_install_update");
+/** 下载最近一次 checkUpdate() 返回的更新；进度经 update-download-progress 事件通知。 */
+export function downloadUpdate(): Promise<"downloading" | "ready"> {
+  return invoke("download_update");
+}
+
+/** 安装已下载并通过签名校验的更新。Windows 会在安装前退出应用。 */
+export function installDownloadedUpdate(): Promise<void> {
+  return invoke("install_downloaded_update");
 }
 
 

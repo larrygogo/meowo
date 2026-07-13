@@ -134,7 +134,7 @@ export function App() {
   // 展开过渡中：缩放期间强制不渲染缩略条（三个圆点），落地后再恢复按 mode 判定。
   const [expanding, setExpanding] = useState(false);
   // 只读检查：仅驱动贴纸设置钮上的更新红点；下载/安装由更新窗口（views/Updater）全权负责。
-  const { status: upStatus } = useUpdate();
+  const { status: upStatus } = useUpdate({ automatic: true });
 
   // 折叠条恒显示全部「连接中」会话（running + waiting），与当前选中 tab 无关——
   // 故独立于分页 items 单独加载（按状态查，覆盖旧但仍连接的会话，不受 tab/分页窗口影响）。
@@ -637,7 +637,7 @@ export function App() {
     return <CollapsedStrip data={stripSessions} edge={edge} onExpand={onExpand} onMeasure={onMeasure} />;
   }
   // 有新版本：贴纸不再弹浮动条，改为齿轮按钮上的红点提示(安装入口在设置→关于)。
-  const hasUpdate = upStatus === "available";
+  const hasUpdate = upStatus === "available" || upStatus === "downloading" || upStatus === "ready";
   return (
     <div style={{ height: "100%" }}>
       {!isMacPanel() && glow && <div className={"snap-glow snap-glow-" + glow} />}
