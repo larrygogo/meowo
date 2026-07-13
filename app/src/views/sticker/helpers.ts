@@ -42,7 +42,13 @@ export function match(tab: Tab, l: Item, hideDays = 0): boolean {
   if (l.archived) return false; // 已归档的不在其它分类显示
   if (tab === "all") return true;
   // running = AI 自主运行且无需用户介入；waiting = 等用户交互（status=waiting 或 pending_review）。
-  // 与后端 live_sessions 语义保持一致。
+  // 与后端 live_sessions / tab_class 语义保持一致。
+  //
+  // 断开的会话两类都不进：进程都没了，催用户去交互毫无意义（点进去只是个历史会话），显示成
+  // 在跑更是假的。DB 里残留的 pending_review 会让它们漏进 waiting——后台收尾只改 status、
+  // 不清 pending_review，而 waiting 的判定是 `status=waiting || pending_review != null`。
+  // 它们只作为历史留在「全部」里。
+  if (!l.connected) return false;
   if (tab === "waiting") return l.session.status === "waiting" || l.pending_review != null;
   if (tab === "running") return l.session.status === "running" && l.pending_review == null;
   return true;

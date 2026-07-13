@@ -559,7 +559,9 @@ export function Sticker({
                           ) : (
                             <>
                               <span className="stk-title">{title}</span>
-                              {l.pending_review && (
+                              {/* 断开的会话不挂交互标签：进程都没了，「待批准」只会催用户去点一个
+                                  点不动的东西。DB 里的 pending_review 是收尾时没清干净的残留。 */}
+                              {l.connected && l.pending_review && (
                                 <span className={"pending-pill pending-" + l.pending_review}>
                                   {t.pending[l.pending_review]}
                                 </span>

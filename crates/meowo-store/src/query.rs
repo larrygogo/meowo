@@ -32,6 +32,16 @@ pub struct LiveSessionCounts {
     pub archived: i64,
 }
 
+/// 算 running/waiting 角标所需的一行原料。判定「此刻还连着」要查进程表，只有 app 层做得到，
+/// 故 store 层不统计、只供料。见 [`Store::live_count_candidates`]。
+#[derive(Debug, Clone)]
+pub struct LiveCandidate {
+    pub status: String,
+    pub pending_review: Option<String>,
+    pub pid: Option<i64>,
+    pub last_event_at: i64,
+}
+
 /// 当前活跃区的一张会话卡。
 #[derive(Debug, Clone, Serialize)]
 pub struct LiveSession {
@@ -361,28 +371,47 @@ impl Store {
         Ok(out)
     }
 
-    /// 贴纸各分类总数（供 tab 角标 / 虚拟列表总高度，避免靠已加载数据估算导致闪烁）。
-    pub fn live_sessions_counts(&self) -> Result<LiveSessionCounts, StoreError> {
+    /// 贴纸角标里**纯 SQL 数得出**的两个总数：`(total, archived)`。
+    ///
+    /// `running` / `waiting` 不在这里——它们的语义都含「**此刻**还连着」，而「连着」要查进程表
+    /// （pid 是否是活着的 agent 进程），SQL 看不见。硬用 SQL 数会把进程早已死掉的会话也算进
+    /// 「待交互」，角标催着用户去交互、点进去却是个断开的历史会话；更糟的是列表那边（app 层）
+    /// 按 connected 过滤后只剩 2 条，角标却写着 3，两个数字当场打架。
+    ///
+    /// 故这两类改由 app 层用 [`Self::live_count_candidates`] 的原料算——与列表**同一套判定、
+    /// 同一份进程表快照**，数字必然自洽。
+    pub fn live_sessions_totals(&self) -> Result<(i64, i64), StoreError> {
         let total: i64 = self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
-        let running: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status = 'running' AND pending_review IS NULL AND archived = 0",
-            [],
-            |r| r.get(0),
-        )?;
-        let waiting: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE (status = 'waiting' OR pending_review IS NOT NULL) AND archived = 0",
-            [],
-            |r| r.get(0),
-        )?;
         let archived: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM sessions WHERE archived = 1", [], |r| r.get(0))?;
-        Ok(LiveSessionCounts {
-            total,
-            running,
-            waiting,
-            archived,
-        })
+        Ok((total, archived))
+    }
+
+    /// 可能落入 running / waiting 的会话（未归档、未结束，且 status/pending_review 使其够格）。
+    ///
+    /// 只吐出**判定 connected 所需的原料**，不做统计——见 [`Self::live_sessions_totals`] 的说明。
+    ///
+    /// `status != 'ended'` 这一条不能省。`end_session` 收尾时**只改 status、不清
+    /// pending_review**（那份残留正是「断开的会话还挂着待批准标签」的根因），于是
+    /// `pending_review IS NOT NULL` 会把一大堆早已结束的历史会话捞进来。它们绝无可能算进
+    /// running/waiting（`session_connected` 对 ended 恒为 false），但会让候选集合随历史增长
+    /// 而膨胀，白白拖着 app 层逐条判活——本该是个「只有活跃会话」的小集合。
+    pub fn live_count_candidates(&self) -> Result<Vec<LiveCandidate>, StoreError> {
+        let mut st = self.conn.prepare(
+            "SELECT status, pending_review, pid, last_event_at FROM sessions
+             WHERE archived = 0 AND status != 'ended'
+               AND (status IN ('running','waiting') OR pending_review IS NOT NULL)",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(LiveCandidate {
+                status: r.get(0)?,
+                pending_review: r.get(1)?,
+                pid: r.get(2)?,
+                last_event_at: r.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     /// 兜底收尾「没有 pid、且超过 idle_ms 无任何事件」的 live 会话。返回受影响数。
