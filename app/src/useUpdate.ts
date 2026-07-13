@@ -65,23 +65,39 @@ export function useUpdate(options: { automatic?: boolean; delayMs?: number } = {
 
   // 更新下载是后端进程级共享任务；每个窗口都订阅同一组事件，晚打开的更新窗口也能接续状态。
   useEffect(() => {
+    let disposed = false;
     const unlisteners: Array<() => void> = [];
-    void listen<{ downloaded: number; contentLength: number | null }>(
+    const register = (pending: Promise<() => void>) => {
+      void pending.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+        } else {
+          unlisteners.push(unlisten);
+        }
+      }).catch(() => {});
+    };
+    register(listen<{ downloaded: number; contentLength: number | null }>(
       "update-download-progress",
       ({ payload }) => {
+        if (disposed) return;
         setStatus("downloading");
         const total = payload.contentLength ?? 0;
         setProgress(total === 0 ? null : Math.min(100, Math.round((payload.downloaded / total) * 100)));
       },
-    ).then((fn) => unlisteners.push(fn)).catch(() => {});
-    void listen("update-download-finished", () => {
+    ));
+    register(listen("update-download-finished", () => {
+      if (disposed) return;
       setProgress(100);
       setStatus("ready");
-    }).then((fn) => unlisteners.push(fn)).catch(() => {});
-    void listen("update-download-failed", () => {
+    }));
+    register(listen("update-download-failed", () => {
+      if (disposed) return;
       setStatus("error");
-    }).then((fn) => unlisteners.push(fn)).catch(() => {});
-    return () => unlisteners.forEach((fn) => fn());
+    }));
+    return () => {
+      disposed = true;
+      unlisteners.forEach((fn) => fn());
+    };
   }, []);
 
   // 更新窗口/设置页沿用即时手动检查；主窗则服从“自动更新”设置并延迟启动网络请求。
@@ -116,11 +132,23 @@ export function useUpdate(options: { automatic?: boolean; delayMs?: number } = {
         interval = window.setInterval(run, 12 * 60 * 60 * 1000);
       }, delayMs);
     };
-    void getSettings().then((settings) => {
-      if (!disposed) applySettings(settings);
-    }).catch(() => setStatus("error"));
-    void listen<Settings>("settings-changed", ({ payload }) => applySettings(payload))
-      .then((fn) => { unlisten = fn; })
+    void getSettings()
+      .then((settings) => {
+        if (!disposed) applySettings(settings);
+      })
+      .catch(() => {
+        if (!disposed) setStatus("error");
+      });
+    void listen<Settings>("settings-changed", ({ payload }) => {
+      if (!disposed) applySettings(payload);
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
       .catch(() => {});
     return () => {
       disposed = true;

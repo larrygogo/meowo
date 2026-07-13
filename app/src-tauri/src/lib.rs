@@ -166,15 +166,23 @@ async fn check_update(
         .check()
         .await
         .map_err(|e| e.to_string())?;
-    let result = update.as_ref().map(|u| {
-        let ready = state
+    let ready = if let Some(update) = update.as_ref() {
+        let mut slot = state
             .downloaded_update
             .lock()
-            .map(|slot| {
-                slot.as_ref()
-                    .is_some_and(|downloaded| downloaded.update.version == u.version)
-            })
-            .unwrap_or(false);
+            .map_err(|_| "更新状态锁已损坏".to_string())?;
+        if slot
+            .as_ref()
+            .is_some_and(|downloaded| downloaded.update.version != update.version)
+        {
+            *slot = None;
+        }
+        slot.as_ref()
+            .is_some_and(|downloaded| downloaded.update.version == update.version)
+    } else {
+        false
+    };
+    let result = update.as_ref().map(|u| {
         let download_state = if ready {
             "ready"
         } else if state.update_downloading.load(Ordering::Acquire) {
@@ -265,15 +273,23 @@ async fn download_update(
 
 #[tauri::command]
 fn install_downloaded_update(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state
+    let downloaded = state
         .downloaded_update
         .lock()
-        .map_err(|_| "更新状态锁已损坏".to_string())?;
-    let downloaded = slot.as_ref().ok_or("更新尚未下载完成")?;
-    downloaded
-        .update
-        .install(&downloaded.bytes)
-        .map_err(|e| e.to_string())
+        .map_err(|_| "更新状态锁已损坏".to_string())?
+        .take()
+        .ok_or("更新尚未下载完成")?;
+    if let Err(error) = downloaded.update.install(&downloaded.bytes) {
+        let mut slot = state
+            .downloaded_update
+            .lock()
+            .map_err(|_| "更新状态锁已损坏".to_string())?;
+        if slot.is_none() {
+            *slot = Some(downloaded);
+        }
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 fn now_ms() -> i64 {

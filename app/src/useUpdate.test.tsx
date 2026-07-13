@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   enabled: true,
   check: vi.fn(),
   download: vi.fn(),
+  listen: vi.fn(async () => () => {}),
 }));
 
 vi.mock("./api", () => ({
@@ -16,7 +17,7 @@ vi.mock("./api", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async () => () => {},
+  listen: mocks.listen,
 }));
 
 function Probe() {
@@ -30,6 +31,8 @@ afterEach(() => {
   mocks.enabled = true;
   mocks.check.mockReset();
   mocks.download.mockReset();
+  mocks.listen.mockReset();
+  mocks.listen.mockImplementation(async () => () => {});
 });
 
 describe("automatic updater", () => {
@@ -64,5 +67,22 @@ describe("automatic updater", () => {
 
     expect(mocks.check).not.toHaveBeenCalled();
     expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("组件卸载早于异步监听注册完成时仍会注销监听", async () => {
+    const resolvers: Array<(unlisten: () => void) => void> = [];
+    const unlisten = vi.fn();
+    mocks.listen.mockImplementation(() => new Promise((resolve) => resolvers.push(resolve)));
+
+    const view = render(<Probe />);
+    expect(resolvers).toHaveLength(4);
+    view.unmount();
+
+    await act(async () => {
+      resolvers.forEach((resolve) => resolve(unlisten));
+      await Promise.resolve();
+    });
+
+    expect(unlisten).toHaveBeenCalledTimes(4);
   });
 });
