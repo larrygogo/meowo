@@ -15,7 +15,7 @@ export default function Footer() {
               </span>
             </Link>
             <p>
-              桌面小窗，显示 Claude Code、Codex、Kimi 的会话状态。
+              本地优先的 AI 编程代理桌面工作台。少切终端，少输命令。
             </p>
           </div>
 

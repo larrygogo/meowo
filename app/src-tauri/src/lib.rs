@@ -3,8 +3,11 @@ mod account;
 mod envpath;
 mod fsutil;
 mod ports;
+// pub：集成测试 `tests/proxy_apply.rs` 要在**独立进程**里跑端到端写入（它会设 CLAUDE_CONFIG_DIR /
+// MEOWO_DB 这类进程级环境变量，与 lib 单测并行跑会互相串味）。
 #[cfg(target_os = "macos")]
 mod macos;
+pub mod proxy;
 mod settings;
 pub mod snap;
 mod term_script;
@@ -39,35 +42,35 @@ pub(crate) use window::apply_language;
 // macOS 侧以 crate:: 路径引用这些符号（本机编译不到该平台，re-export 免去改 macos/*.rs）。
 // macos::menubar 走 crate::tr / crate::ui_lang / crate::load_settings 构建托盘菜单；
 // macos::notify 走 crate::resume_terminal_kind 决定聚焦回退终端。
+#[cfg(not(target_os = "windows"))]
+pub(crate) use proc::pid_is_agent_ps;
 #[cfg(target_os = "macos")]
 pub(crate) use settings::{load_settings, tr, ui_lang};
 #[cfg(target_os = "macos")]
 pub(crate) use terminal::resume_terminal_kind;
 #[cfg(target_os = "macos")]
 pub(crate) use window::open_settings_window;
-#[cfg(not(target_os = "windows"))]
-pub(crate) use proc::pid_is_agent_ps;
 
-use settings::{get_autostart, get_settings, open_url, set_autostart, set_settings};
+use settings::{
+    get_autostart, get_effective_proxy, get_settings, open_url, set_autostart, set_settings,
+};
 use snap::{
     cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
 };
 // 出屏约束/吸边检测（run 的窗口事件闭包）只在非 macOS 用这些几何符号。
-#[cfg(not(target_os = "macos"))]
-use snap::{clamp_xy_to_work, edge_for_rect, Rect, SnapPayload, SNAP_THRESHOLD};
 #[cfg(target_os = "windows")]
 use snap::pull_on_screen;
+#[cfg(not(target_os = "macos"))]
+use snap::{clamp_xy_to_work, edge_for_rect, Rect, SnapPayload, SNAP_THRESHOLD};
 
 use meowo_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri_plugin_updater::UpdaterExt;
 
 pub mod setup;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::State;
-// Emitter：仅非 macOS 的 on_window_event 用 window.emit("snap-changed")（macOS 面板模式无吸边）。
-#[cfg(not(target_os = "macos"))]
-use tauri::Emitter;
+use tauri::{Emitter, State};
 // Manager：仅 Windows setup 用 app.get_webview_window("main") 做出屏救援/子类化。
 #[cfg(target_os = "windows")]
 use tauri::Manager;
@@ -81,6 +84,8 @@ struct AppState {
     tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
     /// 进程表快照的短命缓存：`(采样时刻, 活着的 agent pid 集合)`。见 [`agent_pids_cached`]。
     liveness: Mutex<Option<(i64, Arc<std::collections::HashSet<i64>>)>>,
+    /// 最近一次检查得到的更新包；下载命令复用它，确保检查与下载使用同一份代理策略。
+    update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 /// 进程表快照的存活时长。
@@ -113,6 +118,80 @@ fn agent_pids_cached(state: &AppState) -> Arc<std::collections::HashSet<i64>> {
     let set = Arc::new(crate::proc::agent_pids_snapshot());
     *slot = Some((now, set.clone()));
     set
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AvailableUpdate {
+    version: String,
+    body: Option<String>,
+}
+
+/// 自更新不能直接调用插件的前端 `check()`：其 IPC API 没有暴露 `no_proxy`，传空代理会回退
+/// reqwest 的系统代理。这里由后端显式选 `proxy()` 或 `no_proxy()`，使设置里的「直连」名副其实。
+#[tauri::command]
+async fn check_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<AvailableUpdate>, String> {
+    let mut builder = app.updater_builder();
+    if let Some(proxy) = ports::resolve_proxy(None) {
+        if meowo_agent::is_socks(&proxy) {
+            return Err(
+                "软件自更新仅支持 HTTP 代理；当前生效的是 SOCKS 代理，请临时改用 HTTP 代理端口"
+                    .into(),
+            );
+        }
+        let url = proxy.parse().map_err(|e| format!("代理地址无效：{e}"))?;
+        builder = builder.proxy(url);
+    } else {
+        builder = builder.no_proxy();
+    }
+    let update = builder
+        .build()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+    let result = update.as_ref().map(|u| AvailableUpdate {
+        version: u.version.clone(),
+        body: u.body.clone(),
+    });
+    *state
+        .update
+        .lock()
+        .map_err(|_| "更新状态锁已损坏".to_string())? = update;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn download_and_install_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let update = state
+        .update
+        .lock()
+        .map_err(|_| "更新状态锁已损坏".to_string())?
+        .clone()
+        .ok_or("请先检查更新")?;
+    update
+        .download_and_install(
+            |chunk, total| {
+                let _ = app.emit(
+                    "update-download-progress",
+                    serde_json::json!({
+                        "chunkLength": chunk,
+                        "contentLength": total,
+                    }),
+                );
+            },
+            || {
+                let _ = app.emit("update-download-finished", ());
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn now_ms() -> i64 {
@@ -163,7 +242,11 @@ pub(crate) fn migrate_legacy_data() {
     if let Err(e) = copy_dir_all(&old_dir, &new_dir) {
         eprintln!("Meowo 迁移旧数据目录失败: {e}");
     } else {
-        println!("Meowo 已迁移旧数据目录: {} -> {}", old_dir.display(), new_dir.display());
+        println!(
+            "Meowo 已迁移旧数据目录: {} -> {}",
+            old_dir.display(),
+            new_dir.display()
+        );
     }
 }
 
@@ -187,7 +270,9 @@ async fn get_overview(state: State<'_, AppState>) -> Result<Vec<ProjectOverview>
 async fn recent_cwds(state: State<'_, AppState>, limit: usize) -> Result<Vec<String>, String> {
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        open_store(&db_path)?.recent_cwds(limit).map_err(|e| e.to_string())
+        open_store(&db_path)?
+            .recent_cwds(limit)
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -256,7 +341,12 @@ async fn get_live_sessions_counts(
                 _ => {}
             }
         }
-        Ok(meowo_store::query::LiveSessionCounts { total, running, waiting, archived })
+        Ok(meowo_store::query::LiveSessionCounts {
+            total,
+            running,
+            waiting,
+            archived,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -282,8 +372,19 @@ async fn get_live_sessions_page(
         "all".into()
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let page = PageReq { before_last_event_at, before_id, limit };
-        live_sessions_blocking(&db_path, &tx_cache, &alive, &filter, search.as_deref(), page)
+        let page = PageReq {
+            before_last_event_at,
+            before_id,
+            limit,
+        };
+        live_sessions_blocking(
+            &db_path,
+            &tx_cache,
+            &alive,
+            &filter,
+            search.as_deref(),
+            page,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -309,7 +410,13 @@ const RESUME_GRACE_MS: i64 = 120_000;
 ///   排序拍到列表最底部（一建好就沉底）。
 ///   pid 复用误判的风险由「近期活动」本身兜底：被复用旧 pid 的僵尸会话早已不发事件、last_event_at
 ///   老旧，落不进宽限窗；真复用又恰好近期活动属极窄边界，且 2 分钟后 last_event_at 不再续、自然沉底。
-fn session_connected(status: &str, _pid: Option<i64>, pid_alive: bool, last_event_at: i64, now: i64) -> bool {
+fn session_connected(
+    status: &str,
+    _pid: Option<i64>,
+    pid_alive: bool,
+    last_event_at: i64,
+    now: i64,
+) -> bool {
     if status == "ended" {
         return false;
     }
@@ -356,7 +463,13 @@ fn live_sessions_blocking(
 ) -> Result<Vec<LiveItem>, String> {
     let store = open_store(db_path)?;
     let sessions = store
-        .live_sessions(Some(filter), search, page.before_last_event_at, page.before_id, page.limit)
+        .live_sessions(
+            Some(filter),
+            search,
+            page.before_last_event_at,
+            page.before_id,
+            page.limit,
+        )
         .map_err(|e| e.to_string())?;
     // connected 校验：用调用方传进来的进程快照（与角标计数是同一份，见 agent_pids_cached）。
     let is_claude = |pid: i64| pid > 0 && alive.contains(&pid);
@@ -399,12 +512,11 @@ fn live_sessions_blocking(
         // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
         // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
         // liveness 线程/本函数互相阻塞在同一把锁上。
-        let info = agent_transcript(&s.provider)
-            .and_then(|spec| {
-                spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
-                    .and_then(|p| p.to_str().map(str::to_string))
-                    .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
-            });
+        let info = agent_transcript(&s.provider).and_then(|spec| {
+            spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
+                .and_then(|p| p.to_str().map(str::to_string))
+                .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
+        });
         if let Some(info) = info {
             if let Some(t) = info.title {
                 s.task_title = t;
@@ -444,18 +556,14 @@ fn live_sessions_blocking(
     Ok(items)
 }
 
-
-
 /// 可安全作为命令参数的会话 id：非空、≤128、仅 `[A-Za-z0-9_-]`（无引号/分号/空格等 shell/wt 元字符，
 /// 也无 `/`\`.` 杜绝路径穿越）。兼容 claude 的 UUID 与 kimi 的 `session_<uuid>`。resume 用此宽松校验。纯函数。
 fn is_safe_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
-
-
-
 
 /// 前端/DB 传来的 provider 串 → agent 身份。**未知 id → `None`**，绝不冒名成默认 agent：
 /// 那会让一个本版本尚不认识的 agent 被按 claude 去 resume / 装 / 查用量。调用方据此降级
@@ -467,15 +575,15 @@ fn agent_id(provider: &str) -> Option<meowo_agent::AgentId> {
 /// 该 provider 的 transcript 规格（未知 agent / 无遥测能力 / 不读 transcript → None）。
 /// 只有 claude 有：codex/kimi 的标题走首条 prompt、预览与模型走 Stop hook。
 fn agent_transcript(provider: &str) -> Option<&'static dyn meowo_agent::TranscriptSpec> {
-    meowo_agent::resolve(Some(provider))?.telemetry()?.transcript()
+    meowo_agent::resolve(Some(provider))?
+        .telemetry()?
+        .transcript()
 }
 
 /// 某 agent 在本机的安装实况。直接走插件注册表——不再按 id 分支到各自的解析入口。
 fn install_for(id: meowo_agent::AgentId) -> Option<meowo_agent::Installation> {
     meowo_agent::by_id(id.as_str())?.resolve()
 }
-
-
 
 /// 在贴纸上重命名会话：把新名字落到该 agent 自己的持久层（claude 写 transcript custom-title、
 /// kimi 写 session state.json 的 title+isCustomTitle，见各 agent 的 write_rename），并同步更新 DB
@@ -553,10 +661,6 @@ fn set_session_note(
     emit_board_changed(&app, "note");
     Ok(())
 }
-
-
-
-
 
 /// 返回所有 provider 的账号 + 缓存用量（不联网）。供多 provider 账号面板使用。
 /// async + spawn_blocking：account() / usage_supported() 的 claude 分支会调
@@ -678,7 +782,6 @@ async fn list_agents() -> Vec<AgentDescriptor> {
     .unwrap_or_default()
 }
 
-
 /// 用 Win32 窗口子类化在「移动生效前」硬约束贴纸位置，彻底拖不出屏幕（零抖动，
 /// 优于事后 set_position 拉回）。拦截 WM_WINDOWPOSCHANGING，把目标坐标钳进所有显示器
 /// 工作区的并集包围盒。
@@ -699,7 +802,8 @@ mod win_constrain {
     /// 用户拖边框缩放时通知前端用的 AppHandle（启动时注入）。
     static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
     /// 本次缩放手势是否已通知过（一次拖拽只发一次 user-resized）。
-    static RESIZE_EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static RESIZE_EMITTED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
 
     /// 注入 AppHandle（在装子类时一并调用）。
     pub fn set_app(app: tauri::AppHandle) {
@@ -739,7 +843,13 @@ mod win_constrain {
     }
 
     fn virtual_work_bbox() -> Option<(i32, i32, i32, i32)> {
-        let mut bb = Bbox { has: false, l: 0, t: 0, r: 0, b: 0 };
+        let mut bb = Bbox {
+            has: false,
+            l: 0,
+            t: 0,
+            r: 0,
+            b: 0,
+        };
         unsafe {
             EnumDisplayMonitors(
                 std::ptr::null_mut(),
@@ -855,6 +965,7 @@ pub fn run() {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
             liveness: Mutex::new(None),
+            update: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_overview,
@@ -871,6 +982,9 @@ pub fn run() {
             set_autostart,
             get_settings,
             set_settings,
+            get_effective_proxy,
+            check_update,
+            download_and_install_update,
             open_settings,
             open_update_window,
             recall_center,
@@ -907,8 +1021,15 @@ pub fn run() {
                 if window.label() != "main" {
                     return;
                 }
-                let Ok(size) = window.outer_size() else { return };
-                let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
+                let Ok(size) = window.outer_size() else {
+                    return;
+                };
+                let win = Rect {
+                    x: pos.x,
+                    y: pos.y,
+                    w: size.width as i32,
+                    h: size.height as i32,
+                };
 
                 // 限制贴纸不被拖出屏幕：把窗口钳进「所有显示器工作区的并集包围盒」。
                 // 越界就立刻拉回，拖到边缘即停（吸边仍在界内，不受影响）。多显示器下可在并集内自由移动。
@@ -929,7 +1050,12 @@ pub fn run() {
                         bx = bx.max(x1);
                         by = by.max(y1);
                     }
-                    Some(Rect { x: ax, y: ay, w: bx - ax, h: by - ay })
+                    Some(Rect {
+                        x: ax,
+                        y: ay,
+                        w: bx - ax,
+                        h: by - ay,
+                    })
                 });
                 if let Some(vwork) = vwork {
                     let (cx, cy) = clamp_xy_to_work(win, vwork);
@@ -986,7 +1112,11 @@ pub fn run() {
                     std::thread::spawn(move || {
                         for _ in 0..40 {
                             // ~6s
-                            if wc.available_monitors().map(|m| !m.is_empty()).unwrap_or(false) {
+                            if wc
+                                .available_monitors()
+                                .map(|m| !m.is_empty())
+                                .unwrap_or(false)
+                            {
                                 break;
                             }
                             std::thread::sleep(std::time::Duration::from_millis(150));
@@ -1072,11 +1202,17 @@ mod tests {
     #[test]
     fn resume_argv_for_dispatches_by_provider_and_degrades_safely() {
         let argv = resume_argv_for(Some("claude"), Some("SID"));
-        assert_eq!(&argv[argv.len() - 2..], ["--resume".to_string(), "SID".to_string()]);
+        assert_eq!(
+            &argv[argv.len() - 2..],
+            ["--resume".to_string(), "SID".to_string()]
+        );
         assert!(argv[0].to_ascii_lowercase().contains("claude"));
 
         let kimi = resume_argv_for(Some("kimi"), Some("SID"));
-        assert_eq!(&kimi[kimi.len() - 2..], ["-r".to_string(), "SID".to_string()]);
+        assert_eq!(
+            &kimi[kimi.len() - 2..],
+            ["-r".to_string(), "SID".to_string()]
+        );
 
         // 未知 agent → 空 argv：绝不拿 claude 的参数去拉起别的 CLI。
         assert!(resume_argv_for(Some("gemini"), Some("SID")).is_empty());
@@ -1086,12 +1222,15 @@ mod tests {
         assert!(!resume_argv_for(None, Some("SID")).is_empty());
     }
     use crate::settings::Settings;
-    use crate::snap::{
-        center_on, clamp_xy_to_work, edge_for_rect, intersection_area, Edge, Rect,
-    };
+    use crate::snap::{center_on, clamp_xy_to_work, edge_for_rect, intersection_area, Edge, Rect};
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
-    const WORK1: Rect = Rect { x: 0, y: 0, w: 2556, h: 1179 };
+    const WORK1: Rect = Rect {
+        x: 0,
+        y: 0,
+        w: 2556,
+        h: 1179,
+    };
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -1099,10 +1238,16 @@ mod tests {
         use crate::window::tray_tooltip_text;
         // 入参顺序：(lang, running, waiting)。待交互更紧急，排在运行中之前。
         assert_eq!(tray_tooltip_text("zh", 0, 0), "Meowo");
-        assert_eq!(tray_tooltip_text("zh", 2, 3), "Meowo · 3 个待交互 · 2 个运行中");
+        assert_eq!(
+            tray_tooltip_text("zh", 2, 3),
+            "Meowo · 3 个待交互 · 2 个运行中"
+        );
         assert_eq!(tray_tooltip_text("zh", 2, 0), "Meowo · 2 个运行中");
         assert_eq!(tray_tooltip_text("en", 0, 2), "Meowo · 2 waiting");
-        assert_eq!(tray_tooltip_text("en", 1, 1), "Meowo · 1 waiting · 1 running");
+        assert_eq!(
+            tray_tooltip_text("en", 1, 1),
+            "Meowo · 1 waiting · 1 running"
+        );
     }
 
     #[test]
@@ -1114,7 +1259,11 @@ mod tests {
         assert_eq!(shell_join_for_windows(&plain, false), "claude --resume ID");
         // 可执行绝对路径含空格（kimi）：PowerShell 用单引号字面量 + & 调用运算符（双引号内 $/` 会被
         // 插值展开，单引号内一切按字面），cmd 用双引号。
-        let spaced = to_vec(&[r"C:\Users\First Last\.kimi-code\bin\kimi.exe", "-r", "session_x"]);
+        let spaced = to_vec(&[
+            r"C:\Users\First Last\.kimi-code\bin\kimi.exe",
+            "-r",
+            "session_x",
+        ]);
         assert_eq!(
             shell_join_for_windows(&spaced, true),
             r"& 'C:\Users\First Last\.kimi-code\bin\kimi.exe' -r session_x"
@@ -1124,7 +1273,12 @@ mod tests {
             r#""C:\Users\First Last\.kimi-code\bin\kimi.exe" -r session_x"#
         );
         // node 包装（codex）：命令名无空格、脚本路径参数有空格 → 只 quote 参数，PowerShell 不需要 &。
-        let node = to_vec(&["node", r"C:\Users\First Last\AppData\Roaming\npm\codex.js", "resume", "ID"]);
+        let node = to_vec(&[
+            "node",
+            r"C:\Users\First Last\AppData\Roaming\npm\codex.js",
+            "resume",
+            "ID",
+        ]);
         assert_eq!(
             shell_join_for_windows(&node, true),
             r"node 'C:\Users\First Last\AppData\Roaming\npm\codex.js' resume ID"
@@ -1170,7 +1324,10 @@ mod tests {
         assert_eq!(tab_class(true, "running", None), Some("running"));
         assert_eq!(tab_class(true, "waiting", None), Some("waiting"));
         // pending_review 压过 status：正在等用户批准，不算「自主运行中」。
-        assert_eq!(tab_class(true, "running", Some("approval")), Some("waiting"));
+        assert_eq!(
+            tab_class(true, "running", Some("approval")),
+            Some("waiting")
+        );
 
         // 断开：一律不进这两个 tab，只作为历史留在「全部」里。
         // 尤其是这条——DB 里残留的 pending_review 曾让断开的会话挂在「待交互」里催人，
@@ -1185,8 +1342,9 @@ mod tests {
 
     #[test]
     fn pid_is_agent_rejects_non_claude_and_dead() {
-        let sys =
-            System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+        let sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+        );
         // 当前测试进程存在但不叫 claude → 不算连接（pid 复用防护）
         assert!(!pid_is_agent(&sys, std::process::id() as i64));
         // 非法 / 已死的 pid
@@ -1204,44 +1362,97 @@ mod tests {
         assert!(session_connected("running", Some(123), true, 0, now));
         // pid 已认领但此刻没校验成存活 + 刚活动过 → 连接（新建会话：SessionStart 已 set_session_pid，
         // 但 app 进程快照尚未收录该 pid；不该因 pid 非空就丢掉宽限而瞬间判断开沉底）。
-        assert!(session_connected("running", Some(123), false, now - 1_000, now));
+        assert!(session_connected(
+            "running",
+            Some(123),
+            false,
+            now - 1_000,
+            now
+        ));
         // pid 已认领但已死/被复用 + 早已不活动 → 断开（pid 复用僵尸会话，靠「近期无活动」兜底）。
-        assert!(!session_connected("running", Some(123), false, now - RESUME_GRACE_MS - 1, now));
+        assert!(!session_connected(
+            "running",
+            Some(123),
+            false,
+            now - RESUME_GRACE_MS - 1,
+            now
+        ));
         // pid 未知 + 在 resume 宽限期内 → 连接（刚 resume，等 codex 首个 hook）。
         assert!(session_connected("running", None, false, now - 1_000, now));
         assert!(session_connected("waiting", None, false, now - 1_000, now));
         // pid 未知 + 超出宽限期 → 断开（终端没起来/被关的僵尸会话，不再假连接）。
-        assert!(!session_connected("running", None, false, now - RESUME_GRACE_MS - 1, now));
+        assert!(!session_connected(
+            "running",
+            None,
+            false,
+            now - RESUME_GRACE_MS - 1,
+            now
+        ));
     }
 
     #[test]
     fn intersection_area_overlap_and_disjoint() {
-        let win = Rect { x: 100, y: 100, w: 400, h: 300 };
+        let win = Rect {
+            x: 100,
+            y: 100,
+            w: 400,
+            h: 300,
+        };
         assert_eq!(intersection_area(win, WORK1), 400 * 300); // 完全在内
-        // 完全在屏外（第二屏被拔掉的旧坐标）
-        let off = Rect { x: 3000, y: 200, w: 400, h: 300 };
+                                                              // 完全在屏外（第二屏被拔掉的旧坐标）
+        let off = Rect {
+            x: 3000,
+            y: 200,
+            w: 400,
+            h: 300,
+        };
         assert_eq!(intersection_area(off, WORK1), 0);
         // 部分相交
-        let partial = Rect { x: 2400, y: 0, w: 400, h: 300 };
+        let partial = Rect {
+            x: 2400,
+            y: 0,
+            w: 400,
+            h: 300,
+        };
         assert_eq!(intersection_area(partial, WORK1), (2556 - 2400) * 300);
     }
 
     #[test]
     fn clamp_brings_offscreen_window_fully_in() {
         // 在屏右外 → 钳到右边界内（x = 2556 - 400）
-        let off = Rect { x: 3000, y: 200, w: 400, h: 300 };
+        let off = Rect {
+            x: 3000,
+            y: 200,
+            w: 400,
+            h: 300,
+        };
         assert_eq!(clamp_xy_to_work(off, WORK1), (2556 - 400, 200));
         // 负坐标（屏左上外）→ 钳到原点
-        let neg = Rect { x: -50, y: -30, w: 400, h: 300 };
+        let neg = Rect {
+            x: -50,
+            y: -30,
+            w: 400,
+            h: 300,
+        };
         assert_eq!(clamp_xy_to_work(neg, WORK1), (0, 0));
         // 已在屏内 → 不动
-        let inside = Rect { x: 100, y: 100, w: 400, h: 300 };
+        let inside = Rect {
+            x: 100,
+            y: 100,
+            w: 400,
+            h: 300,
+        };
         assert_eq!(clamp_xy_to_work(inside, WORK1), (100, 100));
     }
 
     #[test]
     fn clamp_window_larger_than_work_aligns_origin() {
-        let big = Rect { x: 500, y: 500, w: 3000, h: 2000 };
+        let big = Rect {
+            x: 500,
+            y: 500,
+            w: 3000,
+            h: 2000,
+        };
         assert_eq!(clamp_xy_to_work(big, WORK1), (0, 0));
     }
 
@@ -1279,7 +1490,10 @@ mod tests {
         });
         assert_eq!(parse_wt_default_profile(&legacy).as_deref(), Some("Legacy"));
         // 无匹配 / 缺字段 → None。
-        assert!(parse_wt_default_profile(&serde_json::json!({"defaultProfile": "{zzz}", "profiles": {"list": []}})).is_none());
+        assert!(parse_wt_default_profile(
+            &serde_json::json!({"defaultProfile": "{zzz}", "profiles": {"list": []}})
+        )
+        .is_none());
         assert!(parse_wt_default_profile(&serde_json::json!({})).is_none());
     }
 
@@ -1319,9 +1533,18 @@ mod tests {
     #[test]
     fn tab_title_strips_spinner_prefix() {
         // claude 写入的标题：状态符号 + 空格 + 任务标题。前缀符号会随状态变化。
-        assert_eq!(normalize_tab_title("⠐ 修复贴纸窗口跳转"), "修复贴纸窗口跳转"); // braille spinner
-        assert_eq!(normalize_tab_title("✳ 修复贴纸窗口跳转"), "修复贴纸窗口跳转"); // 空闲 ✳
-        assert_eq!(normalize_tab_title("⠙ Allow editing titles"), "Allow editing titles");
+        assert_eq!(
+            normalize_tab_title("⠐ 修复贴纸窗口跳转"),
+            "修复贴纸窗口跳转"
+        ); // braille spinner
+        assert_eq!(
+            normalize_tab_title("✳ 修复贴纸窗口跳转"),
+            "修复贴纸窗口跳转"
+        ); // 空闲 ✳
+        assert_eq!(
+            normalize_tab_title("⠙ Allow editing titles"),
+            "Allow editing titles"
+        );
         // 无前缀也应原样（仅去首尾空白）。
         assert_eq!(normalize_tab_title("  纯标题  "), "纯标题");
         // 尾部截断省略号应去掉。
@@ -1339,9 +1562,18 @@ mod tests {
     #[test]
     fn tab_match_contains_is_weaker() {
         // 标签页标题含会话标题但不完全相等（如 claude 追加了后缀）→ 弱匹配。
-        assert_eq!(tab_match_score("⠐ 修复贴纸窗口跳转 - done", "修复贴纸窗口跳转"), 1);
+        assert_eq!(
+            tab_match_score("⠐ 修复贴纸窗口跳转 - done", "修复贴纸窗口跳转"),
+            1
+        );
         // 长标题被 claude 截断：tab 标题是 want 的前缀 → 双向包含命中(=1)。
-        assert_eq!(tab_match_score("✳ 修复贴纸连接中会话窗口…", "修复贴纸连接中会话窗口跳转问题"), 1);
+        assert_eq!(
+            tab_match_score(
+                "✳ 修复贴纸连接中会话窗口…",
+                "修复贴纸连接中会话窗口跳转问题"
+            ),
+            1
+        );
     }
 
     #[test]
@@ -1357,74 +1589,134 @@ mod tests {
         assert_eq!(tab_match_score("⠐ (未命名会话)", "(未命名会话)"), 0);
     }
 
-    const WORK: Rect = Rect { x: 0, y: 0, w: 1920, h: 1040 };
+    const WORK: Rect = Rect {
+        x: 0,
+        y: 0,
+        w: 1920,
+        h: 1040,
+    };
 
     // L/R 用例统一用 y=400（远离顶部），避免被顶部判定干扰。
     #[test]
     fn left_within_threshold() {
-        let win = Rect { x: 5, y: 400, w: 300, h: 400 };
+        let win = Rect {
+            x: 5,
+            y: 400,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
     }
 
     #[test]
     fn right_within_threshold() {
-        let win = Rect { x: 1920 - 300 - 5, y: 400, w: 300, h: 400 };
+        let win = Rect {
+            x: 1920 - 300 - 5,
+            y: 400,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Right));
     }
 
     #[test]
     fn top_within_threshold() {
-        let win = Rect { x: 800, y: 8, w: 300, h: 400 };
+        let win = Rect {
+            x: 800,
+            y: 8,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Top));
     }
 
     #[test]
     fn center_is_none() {
-        let win = Rect { x: 800, y: 400, w: 300, h: 400 };
+        let win = Rect {
+            x: 800,
+            y: 400,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), None);
     }
 
     #[test]
     fn threshold_boundary_inclusive() {
-        let win = Rect { x: 20, y: 400, w: 300, h: 400 };
+        let win = Rect {
+            x: 20,
+            y: 400,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
     }
 
     #[test]
     fn just_outside_threshold_none() {
-        let win = Rect { x: 21, y: 400, w: 300, h: 400 };
+        let win = Rect {
+            x: 21,
+            y: 400,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), None);
     }
 
     #[test]
     fn picks_nearer_edge() {
         // 左距 5 < 右距 10，y 远离顶部 → 取左。
-        let work = Rect { x: 0, y: 0, w: 320, h: 1040 };
-        let win = Rect { x: 5, y: 400, w: 305, h: 400 };
+        let work = Rect {
+            x: 0,
+            y: 0,
+            w: 320,
+            h: 1040,
+        };
+        let win = Rect {
+            x: 5,
+            y: 400,
+            w: 305,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
     }
 
     #[test]
     fn top_nearer_than_left() {
         // 左上角附近：顶距 3 < 左距 10 → 取顶。
-        let win = Rect { x: 10, y: 3, w: 300, h: 400 };
+        let win = Rect {
+            x: 10,
+            y: 3,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Top));
     }
 
     #[test]
     fn respects_work_area_offset() {
-        let work = Rect { x: 100, y: 0, w: 1000, h: 1040 };
-        let win = Rect { x: 110, y: 400, w: 300, h: 400 };
+        let work = Rect {
+            x: 100,
+            y: 0,
+            w: 1000,
+            h: 1040,
+        };
+        let win = Rect {
+            x: 110,
+            y: 400,
+            w: 300,
+            h: 400,
+        };
         assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
     }
 
     #[test]
     fn should_notify_only_on_new_error() {
-        assert!(!should_notify(None, None));            // 无错 → 不弹
-        assert!(should_notify(None, Some("a")));        // 新错 → 弹
-        assert!(!should_notify(Some("a"), Some("a")));  // 同一错误 → 不弹
-        assert!(should_notify(Some("a"), Some("b")));   // 换了新错误 → 弹
-        assert!(!should_notify(Some("a"), None));       // 错误消失 → 不弹（由清除处理）
+        assert!(!should_notify(None, None)); // 无错 → 不弹
+        assert!(should_notify(None, Some("a"))); // 新错 → 弹
+        assert!(!should_notify(Some("a"), Some("a"))); // 同一错误 → 不弹
+        assert!(should_notify(Some("a"), Some("b"))); // 换了新错误 → 弹
+        assert!(!should_notify(Some("a"), None)); // 错误消失 → 不弹（由清除处理）
     }
 
     #[test]
@@ -1432,11 +1724,17 @@ mod tests {
         // errored 优先 → None(让位错误)。
         assert_eq!(pending_fingerprint(true, Some("approval"), 100), None);
         // pending 为 Some 且未出错 → Some("{kind}:{last_event_at}")。
-        assert_eq!(pending_fingerprint(false, Some("question"), 100).as_deref(), Some("question:100"));
+        assert_eq!(
+            pending_fingerprint(false, Some("question"), 100).as_deref(),
+            Some("question:100")
+        );
         // 无 pending → None。
         assert_eq!(pending_fingerprint(false, None, 100), None);
         // 指纹随 last_event_at 变化(新回合新指纹)。
-        assert_ne!(pending_fingerprint(false, Some("approval"), 100), pending_fingerprint(false, Some("approval"), 200));
+        assert_ne!(
+            pending_fingerprint(false, Some("approval"), 100),
+            pending_fingerprint(false, Some("approval"), 200)
+        );
     }
 
     #[test]
@@ -1446,7 +1744,10 @@ mod tests {
         // pending 优先:无 waiting 指纹(让位 pending)。
         assert_eq!(waiting_fingerprint(false, true, "waiting", 100), None);
         // 纯 waiting:用 last_event_at 作指纹。
-        assert_eq!(waiting_fingerprint(false, false, "waiting", 100).as_deref(), Some("100"));
+        assert_eq!(
+            waiting_fingerprint(false, false, "waiting", 100).as_deref(),
+            Some("100")
+        );
         // 非 waiting 状态:None。
         assert_eq!(waiting_fingerprint(false, false, "running", 100), None);
     }
@@ -1485,7 +1786,6 @@ mod tests {
         assert_eq!(d.opacity, 100);
         assert_eq!(d.ui_scale, 100);
     }
-
 }
 
 #[cfg(test)]
@@ -1516,7 +1816,10 @@ mod hooks_check_tests {
 
     /// claude 的接线规格（取自插件层的变体表，与真实接线同源）。
     fn claude_spec() -> &'static meowo_agent::config::HookSpec {
-        meowo_agent::by_id("claude").expect("claude 应已注册").variants()[0].hooks
+        meowo_agent::by_id("claude")
+            .expect("claude 应已注册")
+            .variants()[0]
+            .hooks
     }
 
     #[test]
@@ -1532,15 +1835,25 @@ mod hooks_check_tests {
 
         // Installed：command 用 ClaudeJson 认可的「带引号 meowo-reporter 路径、无参数」格式。
         let installed = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"\"C:/x/meowo-reporter.exe\""}]}]}}"#;
-        std::fs::File::create(&path).unwrap().write_all(installed.as_bytes()).unwrap();
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(installed.as_bytes())
+            .unwrap();
         assert!(matches!(status(&path), HooksStatus::Installed));
 
-        let foreign = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node other.js"}]}]}}"#;
-        std::fs::File::create(&path).unwrap().write_all(foreign.as_bytes()).unwrap();
+        let foreign =
+            r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"node other.js"}]}]}}"#;
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(foreign.as_bytes())
+            .unwrap();
         assert!(matches!(status(&path), HooksStatus::Missing));
 
         // 损坏 JSON → Unknown（核心不变量：不误报 Missing）
-        std::fs::File::create(&path).unwrap().write_all(b"{not json").unwrap();
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"{not json")
+            .unwrap();
         assert!(matches!(status(&path), HooksStatus::Unknown));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1556,8 +1869,14 @@ mod hooks_check_tests {
             let spec = meowo_agent::by_id(id).unwrap().variants()[0].hooks;
             let path = dir.join(format!("{id}-{}", spec.config_rel.replace('/', "_")));
             // 对 TOML 与 JSON 都是非法文本。
-            std::fs::File::create(&path).unwrap().write_all(b"{not parseable [[[").unwrap();
-            assert!(matches!(hooks_status_at(&path, spec, id), HooksStatus::Unknown), "{id} 损坏配置应为 Unknown");
+            std::fs::File::create(&path)
+                .unwrap()
+                .write_all(b"{not parseable [[[")
+                .unwrap();
+            assert!(
+                matches!(hooks_status_at(&path, spec, id), HooksStatus::Unknown),
+                "{id} 损坏配置应为 Unknown"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

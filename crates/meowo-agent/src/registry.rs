@@ -71,6 +71,12 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 该 agent 怎么才能被套上代理（支不支持 SOCKS、写哪些环境变量、能否写进自己的配置文件）。
+    /// None = 无从配置代理。差异见 [`crate::proxy`]。
+    fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
+        None
+    }
+
     /// 幂等接线：把 meowo-reporter 的 hooks 挂到该 agent 的配置里。全程 best-effort，绝不 panic。
     /// 返回 `None` = 成功/已是目标状态；`Some(reason)` = 无法接线（供「修复连接」回传前端）。
     ///
@@ -82,7 +88,10 @@ pub trait AgentPlugin: Sync {
             return Some(crate::config::RepairReason::NotDetected);
         };
         if !inst.is_configured() {
-            eprintln!("Meowo repair[{id}]: {} 不存在（未安装），跳过", inst.data_dir.display());
+            eprintln!(
+                "Meowo repair[{id}]: {} 不存在（未安装），跳过",
+                inst.data_dir.display()
+            );
             return Some(crate::config::RepairReason::NotDetected);
         }
         crate::wiring::wire_hooks(&inst, id.as_str(), self.wiring(), ctx)
@@ -98,7 +107,9 @@ pub trait AgentPlugin: Sync {
     /// 本机实况：逐变体 probe，命中即返回；都不中 → None（＝未安装）。
     fn detect(&self) -> Option<Installation> {
         let home = crate::home_dir()?;
-        self.variants().iter().find_map(|v| v.probe(self.id(), &home))
+        self.variants()
+            .iter()
+            .find_map(|v| v.probe(self.id(), &home))
     }
 
     /// 未安装时的默认落点（首选变体的默认目录）。不保证目录存在。
@@ -123,7 +134,10 @@ pub trait AgentPlugin: Sync {
             return i.launch_argv();
         }
         // 连默认落点都推不出（home 缺失）：回退首选变体声明的裸名。
-        let stem = self.variants().first().map_or(self.id().as_str(), |v| v.launch.stem);
+        let stem = self
+            .variants()
+            .first()
+            .map_or(self.id().as_str(), |v| v.launch.stem);
         vec![stem.to_string()]
     }
 
@@ -148,7 +162,10 @@ pub trait AgentPlugin: Sync {
     /// 两条路径都命中不了才算未装，此时 `launch_argv` 回退的裸名确实解析不出可执行。
     fn is_installed(&self) -> bool {
         self.resolve().is_some_and(|i| i.is_launchable())
-            || self.variants().first().is_some_and(|v| crate::launch::exe_on_path(&v.launch.file_name()))
+            || self
+                .variants()
+                .first()
+                .is_some_and(|v| crate::launch::exe_on_path(&v.launch.file_name()))
     }
 }
 
@@ -196,8 +213,13 @@ pub fn installation(id: AgentId) -> Option<Installation> {
 /// 进程名（可含路径、大小写不敏感）是否属于任一已知 agent 本体——取 basename **精确**比对。
 /// owner_pid 上溯与 meowo-app 判活/清理共用此函数，杜绝子串误匹配（如名字恰好含 kimi 的无关进程）。
 pub fn is_agent_process(name: &str) -> bool {
-    let base = name.rsplit(['/', '\\']).next().unwrap_or(name).to_ascii_lowercase();
-    ALL.iter().any(|p| p.process_names().contains(&base.as_str()))
+    let base = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    ALL.iter()
+        .any(|p| p.process_names().contains(&base.as_str()))
 }
 
 #[cfg(test)]
@@ -250,7 +272,9 @@ mod tests {
         for p in all() {
             assert!(!p.process_names().is_empty(), "{} 无进程名", p.id());
             assert!(
-                p.process_names().iter().all(|n| n == &n.to_ascii_lowercase()),
+                p.process_names()
+                    .iter()
+                    .all(|n| n == &n.to_ascii_lowercase()),
                 "{} 的进程名须为小写（is_agent_process 按小写 basename 精确比对）",
                 p.id()
             );
@@ -289,7 +313,11 @@ mod tests {
             let argv = p.resume_argv("ID").expect("三家均声明了 resume 子命令");
             let n = argv.len();
             assert_eq!(argv[n - 1], "ID", "{id} 的末位应是 session_id");
-            assert_eq!(&argv[n - 1 - sub.len()..n - 1], sub.as_slice(), "{id} 的 resume 子命令不符");
+            assert_eq!(
+                &argv[n - 1 - sub.len()..n - 1],
+                sub.as_slice(),
+                "{id} 的 resume 子命令不符"
+            );
             // 前缀即启动 argv：同源，杜绝「能启动却恢复不了」。
             assert_eq!(&argv[..n - 1 - sub.len()], p.launch_argv().as_slice());
         }
@@ -304,7 +332,8 @@ mod tests {
             assert!(!argv.is_empty(), "{} 启动 argv 为空", p.id());
             // codex 的 npm 形态是 ["node", "<...>/codex.js"]，故查「某个元素含 id」而非首元素。
             assert!(
-                argv.iter().any(|a| a.to_ascii_lowercase().contains(p.id().as_str())),
+                argv.iter()
+                    .any(|a| a.to_ascii_lowercase().contains(p.id().as_str())),
                 "{} 的启动 argv 未指向自己：{argv:?}",
                 p.id()
             );
@@ -324,11 +353,66 @@ mod tests {
             let head = &argv[0];
             if head == p.id().as_str() || head == "node" {
                 let name = crate::exe_file_name(head);
-                assert!(crate::launch::exe_on_path(&name), "{} 回退裸名时应在 PATH 上", p.id());
+                assert!(
+                    crate::launch::exe_on_path(&name),
+                    "{} 回退裸名时应在 PATH 上",
+                    p.id()
+                );
             } else {
-                assert!(std::path::Path::new(head).is_file(), "{} 启动 argv 指向的文件应存在：{head}", p.id());
+                assert!(
+                    std::path::Path::new(head).is_file(),
+                    "{} 启动 argv 指向的文件应存在：{head}",
+                    p.id()
+                );
             }
         }
+    }
+
+    /// 代理能力表钉死调研结论。这些值一旦写错，后果是**静默连不上**：给 claude 配了 socks，
+    /// 它既不报错也不走代理，用户完全无从排查。故在此逐条固定。
+    #[test]
+    fn proxy_spec_pins_researched_capabilities() {
+        let spec = |id: &str| {
+            *by_id(id)
+                .unwrap()
+                .proxy()
+                .unwrap_or_else(|| panic!("{id} 应声明代理能力"))
+        };
+
+        // 只有 claude 能写进自己的配置文件（settings.json 的 env 块）——这决定了「用户自己在终端
+        // 敲命令也走代理」只对 claude 成立，是整个功能的覆盖面所在。
+        assert!(
+            spec("claude").config_env,
+            "claude 的 settings.json env 块可写代理"
+        );
+        assert!(
+            !spec("codex").config_env,
+            "codex 无此配置键（issue #6060 未合）"
+        );
+        assert!(!spec("kimi").config_env, "kimi 的 config.toml 无 proxy 键");
+
+        // SOCKS：claude 官方明确不支持；codex 未编译 reqwest 的 socks feature；kimi 支持。
+        assert!(!spec("claude").socks);
+        assert!(!spec("codex").socks);
+        assert!(spec("kimi").socks);
+
+        // 不支持 socks 的两家：给它们一个 socks 串必须当场拒绝，且一个键都不写。
+        for id in ["claude", "codex"] {
+            assert!(
+                spec(id).accepts("socks5://127.0.0.1:1080").is_err(),
+                "{id} 应拒绝 socks"
+            );
+            assert!(
+                spec(id).env_for("socks5://127.0.0.1:1080").is_empty(),
+                "{id} 不该写任何 socks 键"
+            );
+            assert!(spec(id).accepts("http://127.0.0.1:7890").is_ok());
+        }
+        // kimi 的 socks 走 ALL_PROXY（写进 HTTPS_PROXY 未必被识别）。
+        assert_eq!(
+            spec("kimi").env_for("socks5://127.0.0.1:1080"),
+            vec![("ALL_PROXY", "socks5://127.0.0.1:1080".to_string())]
+        );
     }
 
     /// 能力槽的降级语义：不声明 telemetry 的 agent，调用方拿到 None 而不是一个空实现。
@@ -340,12 +424,19 @@ mod tests {
         assert!(claude.resolves_transcript_title());
 
         for id in ["kimi", "codex"] {
-            let t = by_id(id).unwrap().telemetry().unwrap_or_else(|| panic!("{id} 有遥测"));
+            let t = by_id(id)
+                .unwrap()
+                .telemetry()
+                .unwrap_or_else(|| panic!("{id} 有遥测"));
             assert!(t.transcript().is_none(), "{id} 不读 transcript");
             assert!(!t.resolves_transcript_title(), "{id} 的标题走首条 prompt");
         }
 
         // codex 不支持重命名回写（走 app-server JSON-RPC，成本高）→ 默认实现返回 false。
-        assert!(!by_id("codex").unwrap().telemetry().unwrap().write_rename("s", None, "t"));
+        assert!(!by_id("codex")
+            .unwrap()
+            .telemetry()
+            .unwrap()
+            .write_rename("s", None, "t"));
     }
 }

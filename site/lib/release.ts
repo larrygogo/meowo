@@ -1,6 +1,8 @@
 import { cache } from "react";
 import { marked } from "marked";
+import { get } from "node:https";
 import { REPO_SLUG } from "./site";
+import appPackage from "../../app/package.json";
 
 export type Asset = { name: string; url: string; size: number };
 export type Release = {
@@ -29,25 +31,39 @@ async function gh<T>(path: string): Promise<T | null> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "meowo-site-build",
   };
   // CI 里带上 token，避开匿名请求的 60 次/小时限额。
   if (process.env.GITHUB_TOKEN) {
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   }
-  try {
-    const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}${path}`, {
-      headers,
-      cache: "force-cache",
+  // 不使用 Next 增强版 fetch：force-cache 会跨构建保留旧 Release，no-store 又会让
+  // output: "export" 把页面判为动态。Node HTTPS 是纯构建期 I/O，每次构建读取最新数据，
+  // 最终页面仍是完全静态的；外层 React cache() 负责单次构建内去重。
+  return new Promise((resolve) => {
+    const req = get(`https://api.github.com/repos/${REPO_SLUG}${path}`, { headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", () => {
+        if (res.statusCode !== 200) {
+          console.warn(`[release] GitHub API ${path} → ${res.statusCode ?? "unknown"}`);
+          resolve(null);
+          return;
+        }
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as T);
+        } catch (err) {
+          console.warn(`[release] GitHub API ${path} 返回了无效 JSON`, err);
+          resolve(null);
+        }
+      });
     });
-    if (!res.ok) {
-      console.warn(`[release] GitHub API ${path} → ${res.status}`);
-      return null;
-    }
-    return (await res.json()) as T;
-  } catch (err) {
-    console.warn(`[release] 请求 GitHub API ${path} 失败`, err);
-    return null;
-  }
+    req.setTimeout(15_000, () => req.destroy(new Error("GitHub API timeout")));
+    req.on("error", (err) => {
+      console.warn(`[release] 请求 GitHub API ${path} 失败`, err);
+      resolve(null);
+    });
+  });
 }
 
 type ApiRelease = {
@@ -62,11 +78,20 @@ type ApiRelease = {
 
 /**
  * 最新 release：把安装包的真实下载地址嵌进页面。
- * 拿不到就返回 null，调用方回退到 GitHub 的 releases/latest 页面。
+ * API 不可用时用应用自身版本生成徽章，安装包地址回退到 releases/latest 页面。
  */
 export const getLatestRelease = cache(async (): Promise<Release | null> => {
   const json = await gh<ApiRelease>("/releases/latest");
-  if (!json) return null;
+  // 本地匿名请求可能遇到 GitHub API 限流。版本徽章仍以应用自身版本为准，
+  // 下载按钮则因资产为 null 自动回退到 releases/latest，不复用任何旧版本链接。
+  if (!json) {
+    return {
+      tag: `v${appPackage.version}`,
+      version: appPackage.version,
+      windows: null,
+      macos: null,
+    };
+  }
   const assets: Asset[] = json.assets.map((a) => ({
     name: a.name,
     url: a.browser_download_url,

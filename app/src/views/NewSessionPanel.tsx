@@ -69,6 +69,8 @@ export function NewSessionPanel(): ReactElement {
   const [recent, setRecent] = useState<string[]>([]);
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
+  // state 要到下一次 render 才更新；同一事件批次里的双击必须用 ref 同步挡住第二次 IPC。
+  const launchPendingRef = useRef(false);
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // agents: 后端下发的名单（null = 尚未 resolve）。avail = 其中已安装的那些。
@@ -189,13 +191,15 @@ export function NewSessionPanel(): ReactElement {
   }
 
   async function launch() {
-    if (!cwd.trim() || busy) return;
+    if (!cwd.trim() || busy || launchPendingRef.current) return;
+    launchPendingRef.current = true;
     setBusy(true);
     setError(null);
     try {
       await newSession(cwd.trim(), provider);
       closeWin();
     } catch (e) {
+      launchPendingRef.current = false;
       setError(String(e));
       setBusy(false);
     }

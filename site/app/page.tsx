@@ -6,20 +6,21 @@ import FeatureGrid from "@/components/FeatureGrid";
 import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
 import ProductShowcase from "@/components/ProductShowcase";
+import SupportedAgents from "@/components/SupportedAgents";
 import { StickerWindow } from "@/components/screenshots";
 
 const PROBLEMS = [
   {
     title: "会话散在多个终端窗口",
-    body: "Claude Code、Codex、Kimi 各跑各的。想知道某个会话到哪一步了，得逐个窗口切过去看。",
+    body: "多个 AI 编程代理各跑各的。想知道某个会话到哪一步了，得逐个窗口切过去看。",
   },
   {
     title: "等待确认的会话容易被忽略",
     body: "会话在等一个确认，或者工具调用失败停住了。终端被别的窗口压着，几分钟后才发现。",
   },
   {
-    title: "找不到会话在哪个终端",
-    body: "想接着聊某个会话，得先回忆它开在哪个窗口、哪个标签页。",
+    title: "常用操作离不开命令行",
+    body: "换项目、启动不同的 AI 工具、恢复旧会话，都要反复切目录、找会话 ID、输入不同命令。",
   },
 ];
 
@@ -27,7 +28,7 @@ const SCENES = [
   {
     label: "看板",
     title: "所有会话的状态在同一个列表里",
-    body: "每张卡片显示会话标题、项目名、连接状态和最近一条 AI 输出。Claude Code 的会话另外显示 Context 已用百分比。不需要在 Windows Terminal 和 iTerm2 之间切换。",
+    body: "每张卡片显示会话标题、项目名、连接状态和最近一条 AI 输出。支持读取 Context 的 AI Agent 还会显示已用百分比，不必再逐个终端确认进度。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -65,7 +66,7 @@ const SCENES = [
   },
   {
     label: "通知",
-    title: "等待输入的会话排在最前",
+    title: "该你处理的会话，自动排到前面",
     body: "会话需要确认，或者报错停住时，会进入「待交互」tab，按等待时长排序。可以开启系统通知，点击通知直接切到对应终端。",
     shot: (
       <StickerWindow
@@ -85,9 +86,9 @@ const SCENES = [
     ),
   },
   {
-    label: "终端",
-    title: "点击卡片，切到会话所在的终端",
-    body: "连接中的会话会切到它所在的标签页。已经断开的会话，Meowo 在原项目目录新开一个终端，执行 claude --resume 恢复对话。",
+    label: "启动与续接",
+    title: "新建、切换、续接，都不用敲命令",
+    body: "选择项目目录和 AI 工具即可新建会话。点击已有卡片会切到对应终端；会话已断开时，Meowo 会回到原目录并按对应工具的方式续接。",
     shot: (
       <StickerWindow
         activeTab="all"
@@ -106,7 +107,7 @@ const SCENES = [
   },
   {
     label: "会话管理",
-    title: "对单个会话的操作",
+    title: "把重要会话整理好",
     body: "右键卡片，或点右上角的 ⋮ 按钮。可以给会话加星置顶，写一条只存在本地的便签，改名，或者把不再关注的会话归档收起。",
     shot: (
       <StickerWindow
@@ -145,14 +146,14 @@ export default async function Home() {
             {release ? ` · ${release.tag}` : ""}
           </span>
           <h1 className="h-display">
-            Claude Code、Codex、Kimi
+            AI 编程，多开不乱
             <br />
-            的会话状态，常驻桌面
+            常用操作，少敲命令
           </h1>
           <p className="lead lead-light">
-            Meowo 是一个桌面小窗。它读取各个 CLI 上报的会话事件，
+            Meowo 是一款本地优先的 AI 编程代理桌面工作台，
             <br className="hide-sm" />
-            显示每个会话正在运行、在等你回复，还是已经断开。
+            统一管理会话状态、待办提醒与常用操作，少切终端，少输命令。
           </p>
           <div className="hero-cta">
             <DownloadButton
@@ -169,12 +170,14 @@ export default async function Home() {
         </div>
       </section>
 
+      <SupportedAgents />
+
       {/* 痛点 */}
       <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">背景</span>
-            <h2 className="h1">它针对的三个问题</h2>
+            <span className="eyebrow">为什么是 Meowo</span>
+            <h2 className="h1">并行使用 AI 编程代理，本不该这么累</h2>
           </div>
           <div className="grid grid-3">
             {PROBLEMS.map((p) => (
@@ -194,7 +197,7 @@ export default async function Home() {
         <div className="container">
           <div className="section-head">
             <span className="eyebrow">概览</span>
-            <h2 className="h1">它做什么</h2>
+            <h2 className="h1">一个工作台，接住每个会话</h2>
           </div>
           <div className="scenes">
             {SCENES.map((s, i) => (
@@ -217,8 +220,8 @@ export default async function Home() {
       <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
-            <span className="eyebrow">功能列表</span>
-            <h2 className="h1">其余功能</h2>
+            <span className="eyebrow">完整工作流</span>
+            <h2 className="h1">从会话到环境，一处管理</h2>
           </div>
           <FeatureGrid />
           <div style={{ textAlign: "center", marginTop: 40 }}>

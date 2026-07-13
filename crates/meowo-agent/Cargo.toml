@@ -2,9 +2,16 @@
 name = "meowo-agent"
 version = "0.1.0"
 edition = "2021"
+# Windows 会把文件名含 install 的无清单 exe 启发式识别成安装器并弹 UAC；关闭自动测试目标，
+# 在下方给联网测试一个不含 install 的二进制名。
+autotests = false
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml_edit = { workspace = true }
 sha2 = "0.10"
+
+[[test]]
+name = "agent_urls_live"
+path = "tests/install_urls_live.rs"

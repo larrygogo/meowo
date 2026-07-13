@@ -26,13 +26,14 @@ pub mod account;
 pub mod auth;
 pub mod caps;
 pub mod codec;
-pub mod fsutil;
 pub mod config;
+pub mod fsutil;
 pub mod id;
 pub mod install;
 pub mod launch;
 pub mod plugins;
 pub mod ports;
+pub mod proxy;
 pub mod registry;
 pub mod transcript;
 pub mod variant;
@@ -41,15 +42,22 @@ pub mod wiring;
 pub use account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use caps::{ContextUsage, HookContext, StopOutputs, TelemetryCap};
-pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
-pub use config::{CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason};
+pub use config::{
+    CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason,
+};
 pub use id::AgentId;
-pub use install::{is_runnable_script, looks_like_challenge, looks_like_html, InstallCap, InstallPlan, InstallScript};
+pub use install::{
+    is_runnable_script, looks_like_challenge, looks_like_html, InstallCap, InstallPlan,
+    InstallScript,
+};
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
 pub use plugins::claude::setup::remove_generated_wrapper;
+pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
+pub use proxy::{is_socks, ProxySpec};
 pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
 pub use transcript::{
-    default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+    default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec,
+    TurnError,
 };
 pub use variant::{DataDirSpec, Installation, Variant};
 pub use wiring::{backup_once, wire_hooks, WiringCap, WiringContext};
@@ -83,7 +91,9 @@ pub fn home_dir() -> Option<PathBuf> {
 /// 按 `/` 分段拼接相对路径。直接 `join("a/b")` 在 Windows 上会拼出混合分隔符（`dir\a/b`），
 /// 虽多数 API 容忍，但比较/展示都会走样，故统一分段。
 pub(crate) fn join_rel(base: &Path, rel: &str) -> PathBuf {
-    rel.split('/').filter(|s| !s.is_empty()).fold(base.to_path_buf(), |p, s| p.join(s))
+    rel.split('/')
+        .filter(|s| !s.is_empty())
+        .fold(base.to_path_buf(), |p, s| p.join(s))
 }
 
 /// 可执行文件名：Windows 补 `.exe`。
@@ -102,6 +112,11 @@ mod tests {
     #[test]
     fn join_rel_splits_segments() {
         let p = join_rel(Path::new("/base"), "credentials/kimi-code.json");
-        assert_eq!(p, Path::new("/base").join("credentials").join("kimi-code.json"));
+        assert_eq!(
+            p,
+            Path::new("/base")
+                .join("credentials")
+                .join("kimi-code.json")
+        );
     }
 }

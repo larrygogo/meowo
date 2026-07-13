@@ -2,13 +2,14 @@
 // 颜色、布局、字号尽量贴近 app/src/styles.css 中的实际样式
 
 import React from "react";
+import { AgentLogo, type ProviderId } from "../SupportedAgents";
 
 type CardState = "running" | "waiting" | "error" | "idle" | "stopped";
 
 type CardData = {
   title: string;
   repo: string;
-  provider: "claude" | "codex" | "kimi";
+  provider: ProviderId;
   state: CardState;
   pct?: number;
   aiText?: string;
@@ -43,25 +44,7 @@ const TAB_COUNTS = {
 };
 
 function ProviderIcon({ provider }: { provider: CardData["provider"] }) {
-  if (provider === "claude") {
-    return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path d="M12 2L3 7v10l9 5 9-5V7l-9-5z" fill="#d97757" />
-      </svg>
-    );
-  }
-  if (provider === "codex") {
-    return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <rect x="3" y="3" width="18" height="18" rx="4" fill="#1f8fd0" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="9" fill="#0f9e78" />
-    </svg>
-  );
+  return <AgentLogo id={provider} size={14} />;
 }
 
 function StatusIndicator({ state, pct }: { state: CardState; pct?: number }) {
@@ -274,6 +257,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
     boxShadow: "0 20px 50px rgba(0,0,0,0.45)",
     position: "relative",
+    // 演示窗口自成层叠上下文：内部菜单可以盖住卡片，但不能越过官网 sticky Header。
+    zIndex: 0,
+    isolation: "isolate",
   },
   drag: {
     height: 14,
@@ -593,7 +579,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(255,255,255,0.09)",
     borderRadius: 6,
     boxShadow: "0 8px 20px rgba(0,0,0,0.3)",
-    zIndex: 60,
+    zIndex: 10,
   },
   ctxItem: {
     display: "flex",

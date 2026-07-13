@@ -75,6 +75,22 @@ describe("NewSessionPanel (独立窗口)", () => {
     await waitFor(() => expect(closeMock).toHaveBeenCalled());
   });
 
+  it("同一事件批次重复点击只启动一个终端", async () => {
+    let finish!: () => void;
+    api.newSession.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<NewSessionPanel />);
+    fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
+    const launch = screen.getByTestId("ns-launch");
+
+    act(() => {
+      launch.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      launch.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(api.newSession).toHaveBeenCalledTimes(1);
+    finish();
+    await waitFor(() => expect(closeMock).toHaveBeenCalled());
+  });
+
   it("hooks 未装显示警告", async () => {
     api.checkProviderHooks.mockResolvedValue("missing");
     render(<NewSessionPanel />);

@@ -15,7 +15,11 @@ pub fn normalize_tty(raw: &str) -> Option<String> {
         return None;
     }
     if let Some(rest) = t.strip_prefix("/dev/") {
-        return if rest.is_empty() { None } else { Some(format!("/dev/{rest}")) };
+        return if rest.is_empty() {
+            None
+        } else {
+            Some(format!("/dev/{rest}"))
+        };
     }
     if let Some(num) = t.strip_prefix("ttys") {
         return Some(format!("/dev/ttys{num}"));
@@ -96,17 +100,24 @@ end run"#,
     }
 }
 
-/// 返回新开终端执行 `cd <cwd> && <resume 命令>` 的 AppleScript。
-/// argv 约定：item 1 = cwd，item 2..N = resume 命令 argv（来自 agent::resume_args，逐项 quoted form
-/// 拼接防注入）——命令由调用方按 provider 分发（claude/kimi/codex 各异），本脚本不再硬编码 claude，
-/// 使 macOS 与 Windows 共用同一 provider 事实源。
+/// 返回新开终端执行 `cd <cwd> && <env 前缀><resume 命令>` 的 AppleScript。
+///
+/// argv 约定：**item 1 = env 前缀**（形如 `HTTPS_PROXY='http://…' `，可为空串），item 2 = cwd，
+/// item 3..N = resume 命令 argv（来自 agent::resume_args，逐项 quoted form 拼接防注入）——命令由
+/// 调用方按 provider 分发（claude/kimi/codex 各异），本脚本不硬编码 claude，使 macOS 与 Windows
+/// 共用同一 provider 事实源。
+///
+/// env 前缀是**唯一不套 `quoted form`** 的一项：POSIX 的命令前缀式赋值要求键名不带引号，
+/// `'K=v' cmd` 会被 shell 当成一个命令名而不是赋值。其**值**已在 Rust 侧按 POSIX 单引号规则
+/// 转义（见 `terminal::env_prefix_posix`），故拼进来是安全的。
 pub fn resume_script(kind: TermKind) -> &'static str {
     match kind {
         TermKind::ITerm2 => {
             r#"on run argv
-  set targetDir to item 1 of argv
-  set theCmd to "cd " & quoted form of targetDir & " &&"
-  repeat with i from 2 to count of argv
+  set envPrefix to item 1 of argv
+  set targetDir to item 2 of argv
+  set theCmd to "cd " & quoted form of targetDir & " && " & envPrefix & quoted form of item 3 of argv
+  repeat with i from 4 to count of argv
     set theCmd to theCmd & " " & quoted form of item i of argv
   end repeat
   tell application "iTerm2"
@@ -119,9 +130,10 @@ end run"#
         // Terminal 与 Other(回退到 Terminal) 共用
         _ => {
             r#"on run argv
-  set targetDir to item 1 of argv
-  set theCmd to "cd " & quoted form of targetDir & " &&"
-  repeat with i from 2 to count of argv
+  set envPrefix to item 1 of argv
+  set targetDir to item 2 of argv
+  set theCmd to "cd " & quoted form of targetDir & " && " & envPrefix & quoted form of item 3 of argv
+  repeat with i from 4 to count of argv
     set theCmd to theCmd & " " & quoted form of item i of argv
   end repeat
   tell application "Terminal"
@@ -133,13 +145,15 @@ end run"#
     }
 }
 
-/// 无 cwd 时的恢复脚本（argv 全部为 resume 命令 argv，不 cd），镜像 Windows 在 cwd 缺失时不带 -d 的行为。
+/// 无 cwd 时的恢复脚本（item 1 = env 前缀，item 2..N = resume 命令 argv，不 cd），
+/// 镜像 Windows 在 cwd 缺失时不带 -d 的行为。
 pub fn resume_script_cwdless(kind: TermKind) -> &'static str {
     match kind {
         TermKind::ITerm2 => {
             r#"on run argv
-  set theCmd to quoted form of item 1 of argv
-  repeat with i from 2 to count of argv
+  set envPrefix to item 1 of argv
+  set theCmd to envPrefix & quoted form of item 2 of argv
+  repeat with i from 3 to count of argv
     set theCmd to theCmd & " " & quoted form of item i of argv
   end repeat
   tell application "iTerm2"
@@ -151,8 +165,9 @@ end run"#
         }
         _ => {
             r#"on run argv
-  set theCmd to quoted form of item 1 of argv
-  repeat with i from 2 to count of argv
+  set envPrefix to item 1 of argv
+  set theCmd to envPrefix & quoted form of item 2 of argv
+  repeat with i from 3 to count of argv
     set theCmd to theCmd & " " & quoted form of item i of argv
   end repeat
   tell application "Terminal"
@@ -207,7 +222,9 @@ mod tests {
 
     #[test]
     fn focus_script_present_for_known_hosts_only() {
-        assert!(focus_script(TermKind::Terminal).unwrap().contains("tty of t"));
+        assert!(focus_script(TermKind::Terminal)
+            .unwrap()
+            .contains("tty of t"));
         assert!(focus_script(TermKind::ITerm2).unwrap().contains("tty of s"));
         assert!(focus_script(TermKind::Other).is_none());
     }
@@ -215,20 +232,42 @@ mod tests {
     #[test]
     fn resume_script_uses_argv_and_quoted_form() {
         for kind in [TermKind::Terminal, TermKind::ITerm2, TermKind::Other] {
-            // 带 cwd：item 1 是目录，命令 argv 从 item 2 起逐项 quoted form 拼接。
+            // 带 cwd：item 1 = env 前缀，item 2 = 目录，命令 argv 从 item 3 起逐项 quoted form 拼接。
             let s = resume_script(kind);
             assert!(s.contains("on run argv"));
-            assert!(s.contains("repeat with i from 2 to count of argv"));
+            assert!(s.contains("set envPrefix to item 1 of argv"));
+            assert!(s.contains("set targetDir to item 2 of argv"));
+            assert!(s.contains("repeat with i from 4 to count of argv"));
             assert!(s.contains("quoted form of item i of argv"));
             // 命令由 agent::resume_args 按 provider 提供，脚本不得再硬编码 claude。
             assert!(!s.contains("claude"));
-            // 无 cwd：item 1 即命令首项，其余从 item 2 起拼接（与带 cwd 版同形），且不 cd。
+            // 无 cwd：item 1 = env 前缀，item 2 即命令首项，其余从 item 3 起拼接，且不 cd。
             let c = resume_script_cwdless(kind);
             assert!(c.contains("on run argv"));
-            assert!(c.contains("set theCmd to quoted form of item 1 of argv"));
-            assert!(c.contains("repeat with i from 2 to count of argv"));
+            assert!(c.contains("set envPrefix to item 1 of argv"));
+            assert!(c.contains("set theCmd to envPrefix & quoted form of item 2 of argv"));
+            assert!(c.contains("repeat with i from 3 to count of argv"));
             assert!(!c.contains("claude"));
             assert!(!c.contains("cd "));
+        }
+    }
+
+    /// env 前缀是唯一**不套** `quoted form` 的一项——POSIX 的前缀式赋值要求键名不带引号，
+    /// `'K=v' cmd` 会被 shell 当成命令名。命令 argv 则必须逐项 quoted form（防注入），
+    /// 两者不能混为一谈。
+    #[test]
+    fn env_prefix_is_the_only_unquoted_item() {
+        for kind in [TermKind::Terminal, TermKind::ITerm2] {
+            for s in [resume_script(kind), resume_script_cwdless(kind)] {
+                assert!(
+                    s.contains("envPrefix & quoted form of item"),
+                    "env 前缀应原样拼在命令之前"
+                );
+                assert!(
+                    !s.contains("quoted form of envPrefix"),
+                    "env 前缀绝不能被 quoted form 包起来"
+                );
+            }
         }
     }
 }

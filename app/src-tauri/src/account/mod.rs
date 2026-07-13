@@ -10,9 +10,9 @@ use meowo_agent::{AccountCap, AgentId, ProviderUsage};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub use meowo_agent::{Account, USAGE_UNSUPPORTED};
 #[cfg(test)]
 use meowo_agent::UsageKind;
+pub use meowo_agent::{Account, USAGE_UNSUPPORTED};
 
 /// 用量缓存的新鲜期：期内的 force 刷新直接吃缓存，不打 API。
 const USAGE_FRESH_MS: i64 = 60_000;
@@ -20,7 +20,10 @@ const USAGE_FRESH_MS: i64 = 60_000;
 // ═══ 共享 I/O 工具 ═══
 
 fn home_dir() -> Option<PathBuf> {
-    std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().map(PathBuf::from)
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+        .map(PathBuf::from)
 }
 
 fn usage_cache_path() -> Option<PathBuf> {
@@ -35,7 +38,10 @@ fn read_json(path: &std::path::Path) -> Option<serde_json::Value> {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 // ═══ get_accounts 的返回载荷 ═══
@@ -58,12 +64,14 @@ pub fn account_cap(id: AgentId) -> Option<&'static dyn AccountCap> {
 
 /// 读账号信息（只读本地，不联网）。
 pub fn account_of(id: AgentId) -> Option<Account> {
-    account_cap(id)?.account(&crate::ports::ports())
+    let p = crate::ports::HostPorts::for_agent(id);
+    account_cap(id)?.account(&p.as_ports())
 }
 
 /// 该 agent 当前是否支持用量查询。
 pub fn usage_supported(id: AgentId) -> bool {
-    account_cap(id).is_some_and(|c| c.usage_supported(&crate::ports::ports()))
+    let p = crate::ports::HostPorts::for_agent(id);
+    account_cap(id).is_some_and(|c| c.usage_supported(&p.as_ports()))
 }
 
 /// 取用量。
@@ -81,7 +89,9 @@ pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
             return Some(cached);
         }
     }
-    match account_cap(id)?.fetch_usage(&crate::ports::ports()) {
+    // 端口按 agent 绑定：代理是 per-agent 的（claude 走代理、kimi 直连是常态）。
+    let p = crate::ports::HostPorts::for_agent(id);
+    match account_cap(id)?.fetch_usage(&p.as_ports()) {
         Ok(u) => {
             write_cached_usage(id, &u);
             Some(u)
@@ -95,7 +105,10 @@ pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
 
 /// 所有注册了账号能力的 agent（供 get_accounts 遍历）。
 pub fn all_with_account() -> impl Iterator<Item = &'static dyn meowo_agent::AgentPlugin> {
-    meowo_agent::all().iter().copied().filter(|p| p.account().is_some())
+    meowo_agent::all()
+        .iter()
+        .copied()
+        .filter(|p| p.account().is_some())
 }
 
 // ═══ 用量缓存（按 agent 分键） ═══
@@ -139,16 +152,22 @@ pub fn write_cached_usage(id: AgentId, usage: &ProviderUsage) {
     let _guard = USAGE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // 读现有文件合并：只更新本 agent 条目，其它 agent 的缓存原样保留。
     let mut root = read_json(&p).unwrap_or_else(|| serde_json::json!({}));
-    let Some(obj) = root.as_object_mut() else { return };
+    let Some(obj) = root.as_object_mut() else {
+        return;
+    };
 
-    let providers = obj.entry("providers").or_insert_with(|| serde_json::json!({}));
+    let providers = obj
+        .entry("providers")
+        .or_insert_with(|| serde_json::json!({}));
     if let Some(pm) = providers.as_object_mut() {
         if let Ok(val) = serde_json::to_value(usage) {
             pm.insert(id.as_str().to_string(), val);
         }
     }
     // fetched_at_map（每个 agent 独立时间戳）
-    let fat = obj.entry("fetched_at_map").or_insert_with(|| serde_json::json!({}));
+    let fat = obj
+        .entry("fetched_at_map")
+        .or_insert_with(|| serde_json::json!({}));
     if let Some(fm) = fat.as_object_mut() {
         fm.insert(id.as_str().to_string(), serde_json::json!(now_ms()));
     }
@@ -188,7 +207,11 @@ mod tests {
     fn usage_kind_as_str_roundtrip() {
         // as_str→from_str 全量 roundtrip：确保每个 variant 序列化后能正确还原。
         for &k in UsageKind::ALL {
-            assert_eq!(UsageKind::from_str(k.as_str()), k, "UsageKind::{k:?} roundtrip 失败");
+            assert_eq!(
+                UsageKind::from_str(k.as_str()),
+                k,
+                "UsageKind::{k:?} roundtrip 失败"
+            );
         }
     }
 

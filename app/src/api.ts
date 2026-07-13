@@ -176,7 +176,51 @@ export type Settings = {
   sticker_quota_providers: AgentId[];
   /** 「新建会话」面板默认选中的 agent（后端给默认值）。 */
   default_agent: AgentId;
+  /** 出站代理（用量查询 / OAuth 刷新 / 下载 agent 二进制 / 自更新），可按 agent 覆盖。 */
+  proxy: ProxySettings;
 };
+
+/**
+ * 代理模式：
+ * - `off`：直连，忽略环境变量。
+ * - `system`：跟随系统环境变量（HTTPS_PROXY / ALL_PROXY / HTTP_PROXY）。
+ * - `custom`：用 `url` 指定。
+ */
+export type ProxyMode = "off" | "system" | "custom";
+
+export type ProxyRule = {
+  mode: ProxyMode;
+  /** `custom` 时的代理地址：`http://host:port` / `socks5://host:port`，可带 `user:pass@`。 */
+  url: string;
+};
+
+export type ProxySettings = ProxyRule & {
+  /** agent id → 覆盖规则。没有条目的 agent 一律跟随全局。 */
+  per_agent: Record<AgentId, ProxyRule>;
+};
+
+/**
+ * 某 agent（不传 = 全局规则）当前**生效**的代理串；null = 直连。
+ *
+ * 设置页用它显示 system 模式下实际读到的环境变量代理；更新窗口用它给 updater 传 proxy
+ * （自更新走 reqwest，不经后端的 ureq 客户端，只能这样把设置递过去）。
+ */
+export function getEffectiveProxy(agent?: AgentId): Promise<string | null> {
+  return invoke("get_effective_proxy", { agent: agent ?? null });
+}
+
+export type AvailableUpdate = { version: string; body?: string | null };
+
+/** 检查更新。后端会显式执行「自定义代理」或「直连」，不回退到系统环境代理。 */
+export function checkUpdate(): Promise<AvailableUpdate | null> {
+  return invoke("check_update");
+}
+
+/** 下载并安装最近一次 checkUpdate() 返回的更新；进度经 update-download-progress 事件通知。 */
+export function downloadAndInstallUpdate(): Promise<void> {
+  return invoke("download_and_install_update");
+}
+
 
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "wezterm" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";

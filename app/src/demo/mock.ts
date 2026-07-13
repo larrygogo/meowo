@@ -30,6 +30,7 @@ export const store: Store = {
     sticker_color: "neutral",
     sticker_quota_providers: ["claude"],
     default_agent: "claude",
+    proxy: { mode: "system", url: "", per_agent: {} },
   },
 };
 

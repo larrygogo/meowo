@@ -36,10 +36,10 @@ const STEPS = [
   { n: 2, title: "安装并打开", body: "Windows 双击 setup.exe。macOS 把应用拖进「应用程序」，双击打开。" },
   {
     n: 3,
-    title: "接入 hooks",
-    body: "首次启动时，Meowo 把 reporter 写进 Claude Code 的设置，一般不需要手动挂 hooks。",
+    title: "自动接入",
+    body: "Meowo 会为检测到的 AI 编程 CLI 接入所需 hooks，一般不需要手动编辑配置。",
   },
-  { n: 4, title: "开始使用", body: "新开一个 AI 会话，对应的卡片会出现在窗口里。" },
+  { n: 4, title: "开始使用", body: "选择项目目录和 AI 工具，点「启动」即可新建会话，无需先在终端切目录或输入命令。" },
 ];
 
 // 拿到了具体安装包就直连它，并把真实文件名和体积标出来；拿不到就退回 releases 页面。
@@ -58,7 +58,7 @@ export default async function DownloadPage() {
           <span className="eyebrow">下载</span>
           <h1 className="h1">下载 Meowo</h1>
           <p className="lead">
-            {version}开源，MIT 许可。安装后打开即可使用，应用内可以检查更新。
+            {version}开源，MIT 许可。安装后会自动检测本机已有的 AI 编程 CLI，应用内可以检查更新。
           </p>
         </div>
       </section>

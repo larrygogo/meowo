@@ -4,18 +4,22 @@
 use crate::proc::*;
 use crate::settings::load_settings;
 use crate::watch::emit_board_changed;
-use crate::{db_path, is_safe_id, now_ms, open_store};
 #[cfg(target_os = "windows")]
 use crate::wezterm;
+use crate::{db_path, is_safe_id, now_ms, open_store};
 #[cfg(target_os = "windows")]
 use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// 枚举可见顶层窗口，返回第一个进程 pid 命中 targets 的窗口 HWND。
 #[cfg(target_os = "windows")]
-pub(crate) fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys::Win32::Foundation::HWND> {
+pub(crate) fn find_window_for_pids(
+    targets: &HashSet<u32>,
+) -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
 
     struct Ctx<'a> {
         targets: &'a HashSet<u32>,
@@ -36,7 +40,10 @@ pub(crate) fn find_window_for_pids(targets: &HashSet<u32>) -> Option<windows_sys
         TRUE
     }
 
-    let mut ctx = Ctx { targets, found: None };
+    let mut ctx = Ctx {
+        targets,
+        found: None,
+    };
     unsafe {
         EnumWindows(Some(cb), &mut ctx as *mut Ctx as LPARAM);
     }
@@ -128,7 +135,9 @@ pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>)
     use uiautomation::variants::Variant;
     use uiautomation::{UIAutomation, UIElement};
 
-    let Ok(automation) = UIAutomation::new() else { return false };
+    let Ok(automation) = UIAutomation::new() else {
+        return false;
+    };
 
     // WT 顶层窗口：先用纯 Win32 EnumWindows+GetClassNameW 直接拿 HWND（进程内、微秒级），再
     // element_from_handle 只进入这几个窗口做 UIA。绕开 crate matcher 从桌面根逐节点 RPC 爬树
@@ -137,7 +146,12 @@ pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>)
     // UIElement 用于 UIA 枚举标签页。
     let wt_windows: Vec<(isize, UIElement)> = enum_wt_hwnds()
         .into_iter()
-        .filter_map(|h| automation.element_from_handle(Handle::from(h)).ok().map(|el| (h, el)))
+        .filter_map(|h| {
+            automation
+                .element_from_handle(Handle::from(h))
+                .ok()
+                .map(|el| (h, el))
+        })
         .collect();
     if wt_windows.is_empty() {
         return false;
@@ -172,7 +186,9 @@ pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>)
     let collect_tabs = |win: &UIElement| -> Vec<(UIElement, String)> {
         let find_tabitems = |root: &UIElement, scope: TreeScope| -> Vec<UIElement> {
             match &cache_req {
-                Some(cr) => root.find_all_build_cache(scope, &tab_cond, cr).unwrap_or_default(),
+                Some(cr) => root
+                    .find_all_build_cache(scope, &tab_cond, cr)
+                    .unwrap_or_default(),
                 None => root.find_all(scope, &tab_cond).unwrap_or_default(),
             }
         };
@@ -192,7 +208,9 @@ pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>)
         tabs.into_iter()
             .map(|t| {
                 let name = if cache_req.is_some() {
-                    t.get_cached_name().or_else(|_| t.get_name()).unwrap_or_default()
+                    t.get_cached_name()
+                        .or_else(|_| t.get_name())
+                        .unwrap_or_default()
                 } else {
                     t.get_name().unwrap_or_default()
                 };
@@ -240,8 +258,9 @@ pub(crate) fn focus_terminal_tab(root_pid: u32, want: &str, token: Option<&str>)
         0
     } else {
         let group = console_group_pids(root_pid);
-        let in_group: Vec<usize> =
-            (0..matches.len()).filter(|&i| group.contains(&matches[i].2)).collect();
+        let in_group: Vec<usize> = (0..matches.len())
+            .filter(|&i| group.contains(&matches[i].2))
+            .collect();
         match in_group.as_slice() {
             [i] => *i,         // 唯一属于本会话窗口的候选 → 精确命中
             _ => return false, // 0 个或多个(同窗口多同名标签) → 不猜，退回窗口级
@@ -401,6 +420,19 @@ pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) 
         .unwrap_or_default()
 }
 
+/// 拉起该 provider 时要注入的代理环境变量。未知 agent → 空（不注入）。
+///
+/// claude 也返回空——它的代理已写进 settings.json 的 `env` 块，对所有启动方式生效，无须再注入。
+/// 详见 [`crate::proxy::launch_env`]。
+///
+/// 与 `resume_argv_for` 同理**刻意定义在 cfg 之外**：只用平台无关的 agent API，
+/// 埋进 cfg 块会让另一平台的编译器看不到它，改签名时一路漏到对方 CI 才炸。
+pub(crate) fn launch_env_for(provider: Option<&str>) -> Vec<(String, String)> {
+    meowo_agent::resolve(provider)
+        .map(|a| crate::proxy::launch_env(a.id()))
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub(crate) fn focus_session(
     pid: i64,
@@ -424,8 +456,8 @@ pub(crate) fn focus_session(
     {
         // 该 provider 是否把任务标题写进 WT 标签：决定按标题切标签还是按 cwd 目录名切标签。
         // 缺省(None)→默认 agent；未知 agent → false，走窗口级定位兜底（不按标题瞎切标签）。
-        let title_based = meowo_agent::resolve(provider.as_deref())
-            .is_some_and(|a| a.sets_terminal_tab_title());
+        let title_based =
+            meowo_agent::resolve(provider.as_deref()).is_some_and(|a| a.sets_terminal_tab_title());
         // token = session_id 末 8 位(全局唯一)，用于精确切到带该 token 的标签(meowo-reporter 写的 kimi 标签
         // / codex 原生 session_id 标题)，可区分同窗口同目录的同名标签。
         let token = session_id
@@ -444,11 +476,14 @@ pub(crate) fn focus_session(
         // 与 Windows 的 focus_session_terminal 模式对齐，不挡主线程事件循环。
         std::thread::spawn(move || {
             let resume_argv = resume_argv_for(provider.as_deref(), session_id.as_deref());
+            // 聚焦失败而回退 resume 时，新开的会话同样要带上代理。
+            let env_prefix = env_prefix_posix(&launch_env_for(provider.as_deref()));
             crate::macos::terminal::focus_session_terminal(
                 pid,
                 cwd.as_deref(),
                 &resume_argv,
                 resume_terminal_kind(),
+                &env_prefix,
             );
         });
         Ok(())
@@ -473,7 +508,10 @@ pub(crate) fn open_project_dir(cwd: String) -> Result<(), String> {
     {
         // kimi 等 provider 写入的 cwd 可能是正斜杠形式，explorer 对正斜杠路径会打开默认目录而非目标。
         let dir = dir.replace('/', "\\");
-        std::process::Command::new("explorer").arg(&dir).spawn().map_err(|e| e.to_string())?;
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
     // macOS：open 偶发慢（Finder 冷启动），放后台线程；status() 等待回收，避免僵尸进程。
     #[cfg(target_os = "macos")]
@@ -504,9 +542,7 @@ pub(crate) fn path_has_exe(path_var: &std::ffi::OsStr, exe: &str) -> bool {
 pub(crate) fn wt_available() -> bool {
     use std::sync::OnceLock;
     static WT_ON_PATH: OnceLock<bool> = OnceLock::new();
-    *WT_ON_PATH.get_or_init(|| {
-        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "wt.exe"))
-    })
+    *WT_ON_PATH.get_or_init(|| std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "wt.exe")))
 }
 
 /// PowerShell 7（pwsh.exe）是否在 PATH 上。进程内缓存，同 wt_available。
@@ -515,9 +551,8 @@ pub(crate) fn wt_available() -> bool {
 pub(crate) fn pwsh_available() -> bool {
     use std::sync::OnceLock;
     static PWSH_ON_PATH: OnceLock<bool> = OnceLock::new();
-    *PWSH_ON_PATH.get_or_init(|| {
-        std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "pwsh.exe"))
-    })
+    *PWSH_ON_PATH
+        .get_or_init(|| std::env::var_os("PATH").is_some_and(|p| path_has_exe(&p, "pwsh.exe")))
 }
 
 /// 定位 Windows Terminal 的 settings.json（Store 版 / Preview / 未打包版三处）。
@@ -590,13 +625,19 @@ pub(crate) fn parse_wt_default_profile(v: &serde_json::Value) -> Option<String> 
         return Some(def.to_string()); // 直接配的是 profile 名
     }
     // 新格式 profiles.list 是数组；老格式 profiles 直接是数组。
-    let list = v
-        .get("profiles")
-        .and_then(|p| p.get("list").and_then(|l| l.as_array()).or_else(|| p.as_array()))?;
+    let list = v.get("profiles").and_then(|p| {
+        p.get("list")
+            .and_then(|l| l.as_array())
+            .or_else(|| p.as_array())
+    })?;
     list.iter().find_map(|prof| {
         let guid = prof.get("guid").and_then(|g| g.as_str())?;
         guid.eq_ignore_ascii_case(def)
-            .then(|| prof.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .then(|| {
+                prof.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(str::to_string)
+            })
             .flatten()
     })
 }
@@ -668,6 +709,75 @@ pub(crate) fn shell_join_for_windows(args: &[String], powershell: bool) -> Strin
     }
 }
 
+// ═══ 代理环境变量的注入前缀 ═══
+//
+// codex / kimi 没法从配置文件配代理（见 meowo_agent::proxy 的能力表），只认进程环境变量。而
+// `Command::env()` 在这里**靠不住**：wt 会把请求交给**已存在的** Windows Terminal 实例去开标签、
+// wezterm 交给 mux server、macOS 的 Terminal.app 更是早就在跑了——新进程都不是我们的子进程，
+// 继承不到我们设的 env。唯一可靠的办法是把赋值**写进命令串**本身。
+//
+// 于是代理串（用户填的）会进到 shell 命令里 → 三种 shell 各自的转义必须做对，否则就是注入面。
+// 值虽已过 validate（无空格、协议白名单、host/port 合法），仍按「一律正确转义」处理，不赌。
+
+/// 所有启动路径都先清掉继承的代理变量。否则「直连」只是没有新增变量，仍会继承 Meowo
+/// 自己启动时的 HTTPS_PROXY / ALL_PROXY；自定义 HTTP 代理也可能被旧的 ALL_PROXY 抢走。
+pub(crate) const PROXY_ENV_KEYS: [&str; 8] = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "no_proxy",
+];
+
+/// PowerShell：先 `$env:K=$null; `，再 `$env:K='v'; `。单引号字面量内一切按字面处理（双引号内 `$`/反引号会插值），
+/// 内嵌单引号翻倍转义。与 `shell_join_for_windows` 的引用规则同源。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn env_prefix_powershell(env: &[(String, String)]) -> String {
+    let clear: String = PROXY_ENV_KEYS
+        .iter()
+        .map(|k| format!("$env:{k}=$null; "))
+        .collect();
+    let set: String = env
+        .iter()
+        .map(|(k, v)| format!("$env:{k}='{}'; ", v.replace('\'', "''")))
+        .collect();
+    format!("{clear}{set}")
+}
+
+/// cmd：`set "K=v"&& `。整个 `K=v` 包在双引号里，值中的 `&`/`|`/`^` 便不会被当成运算符。
+/// cmd 没有字面量引用机制，`%VAR%` 仍会展开——但代理串已过校验（不含 `%` 的合法 URL），且这与
+/// 既有 `shell_join_for_windows` 的 cmd 分支是同一个已知限制。值里的 `"` 直接剔除（合法代理串不含）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn env_prefix_cmd(env: &[(String, String)]) -> String {
+    let clear: String = PROXY_ENV_KEYS
+        .iter()
+        .map(|k| format!("set \"{k}=\"&& "))
+        .collect();
+    let set: String = env
+        .iter()
+        .map(|(k, v)| format!("set \"{k}={}\"&& ", v.replace('"', "")))
+        .collect();
+    format!("{clear}{set}")
+}
+
+/// POSIX：`K='v' ` —— 命令前缀式赋值（只作用于这一条命令，无需 export）。
+///
+/// **键名必须不加引号**，否则 shell 不再把它识别为赋值（`'K=v' cmd` 会被当成一个命令名）——
+/// 这正是不能把 `K=v` 当作一个 argv 项塞进 AppleScript 的原因（那边每项都套了 `quoted form`）。
+/// 键名是我们自己的常量（安全），值按 POSIX 单引号规则转义（`'` → `'\''`）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
+    let clear = format!("unset {}; ", PROXY_ENV_KEYS.join(" "));
+    let set: String = env
+        .iter()
+        .map(|(k, v)| format!("{k}='{}' ", v.replace('\'', r"'\''")))
+        .collect();
+    format!("{clear}{set}")
+}
+
 /// 单 pid 判活（廉价版，resume 前奏专用）：Windows 走 Toolhelp 快照（1-3ms，避免 sysinfo 全进程
 /// OpenProcess 刷新的 30-120ms 拖慢「点下即显示已连接」），Unix 走一次 ps。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -721,14 +831,19 @@ pub(crate) fn prepare_resume(
     // SessionStart / 目录被移动）。能从 transcript 读出权威 cwd 的 agent（claude）据此纠正；
     // 其余原样采信 DB——此前这里无条件走 claude 的解析路径，非 claude 会话靠「在 ~/.claude/projects
     // 里找不到就回退 DB cwd」的巧合才拿到正确结果。
-    let resolved = match agent.and_then(|a| a.telemetry()).and_then(|t| t.transcript()) {
+    let resolved = match agent
+        .and_then(|a| a.telemetry())
+        .and_then(|t| t.transcript())
+    {
         Some(spec) => spec.resolve_cwd(cwd, session_id),
         None => meowo_agent::default_resolve_cwd(cwd),
     };
     // 恢复命令按 provider 取（claude --resume / kimi -r …）；可执行名+参数均来自受信 agent 定义。
     // 未知 agent、或该 agent 未声明 resume 子命令 → 空 argv：调用方的 spawn 会失败并回滚复活，
     // 好过拿 claude 的参数去拉起别的 CLI。
-    let resume = agent.and_then(|a| a.resume_argv(session_id)).unwrap_or_default();
+    let resume = agent
+        .and_then(|a| a.resume_argv(session_id))
+        .unwrap_or_default();
     (revived, resolved, resume)
 }
 
@@ -746,7 +861,12 @@ pub(crate) fn rollback_failed_resume(sid: i64) {
 /// resume（`claude --resume <id>`）与 new（裸 `claude`）共用——唯一区别是传入的 argv。成功返回 true。
 /// Windows：powershell/cmd/wezterm/wt，缺失回退链同 resume 旧逻辑；wt 分支独立传 argv 不拼 shell 串。
 #[cfg(target_os = "windows")]
-pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+pub(crate) fn spawn_in_terminal(
+    argv: &[String],
+    cwd: Option<&str>,
+    terminal: &str,
+    env: &[(String, String)],
+) -> bool {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
@@ -762,8 +882,13 @@ pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &s
     };
     let spawned: std::io::Result<()> = match eff {
         "powershell" => {
+            let cmd = format!(
+                "{}{}",
+                env_prefix_powershell(env),
+                shell_join_for_windows(argv, true)
+            );
             let mut c = Command::new("powershell");
-            c.args(["-NoExit", "-Command", &shell_join_for_windows(argv, true)]);
+            c.args(["-NoExit", "-Command", &cmd]);
             if let Some(d) = &dir {
                 c.current_dir(d);
             }
@@ -773,14 +898,22 @@ pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &s
             // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
             // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
             // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
+            let cmd = format!(
+                "{}{}",
+                env_prefix_cmd(env),
+                shell_join_for_windows(argv, false)
+            );
             let mut c = Command::new("cmd");
-            c.raw_arg("/k").raw_arg(shell_join_for_windows(argv, false));
+            c.raw_arg("/k").raw_arg(cmd);
             if let Some(d) = &dir {
                 c.current_dir(d);
             }
             c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
         }
-        "wezterm" => wezterm::resume(dir.as_deref(), argv),
+        // wezterm / wt 都不是我们的子进程（前者由 mux server 起、后者交给已存在的 wt 实例），
+        // Command::env() 传不过去 → 有代理要注入时，改成让它们跑一层 PowerShell 来设变量。
+        // 无代理时保持原样（直接跑 agent），把行为变更严格限制在用了代理的用户身上。
+        "wezterm" => wezterm::resume(dir.as_deref(), &wrap_with_env_windows(argv, env)),
         _ => {
             let mut args: Vec<String> = vec!["-w".into(), "0".into(), "nt".into()];
             if let Some(p) = wt_default_profile() {
@@ -791,7 +924,7 @@ pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &s
                 args.push("-d".into());
                 args.push(d.clone());
             }
-            args.extend(argv.iter().cloned());
+            args.extend(wrap_with_env_windows(argv, env));
             Command::new("wt").args(&args).spawn().map(|_| ())
         }
     };
@@ -804,21 +937,55 @@ pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &s
     }
 }
 
+/// 给「不是我们子进程」的终端（wt / wezterm）用：把 argv 包进一层 PowerShell，好让代理环境变量
+/// 能经命令串设进去。即使 `env` 为空也要包一层，以落实「直连」必须清掉继承代理的语义。
+///
+/// 必须使用 `-EncodedCommand`：Windows Terminal 会把普通 `-Command` 参数里的 `;` 重新解释成
+/// 自己的多命令分隔符，于是八条清理环境变量语句会各开一个 tab，并把末尾 agent 路径的引号拆坏。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn wrap_with_env_windows(argv: &[String], env: &[(String, String)]) -> Vec<String> {
+    use base64::Engine;
+
+    let cmd = format!(
+        "{}{}",
+        env_prefix_powershell(env),
+        shell_join_for_windows(argv, true)
+    );
+    let utf16le: Vec<u8> = cmd.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
+    vec![
+        "powershell".into(),
+        "-NoExit".into(),
+        "-EncodedCommand".into(),
+        encoded,
+    ]
+}
+
 /// macOS 版：按 terminal 选 Terminal.app/iTerm2（iTerm2 未装回退 Terminal），走 AppleScript。成功 true。
 #[cfg(target_os = "macos")]
-pub(crate) fn spawn_in_terminal(argv: &[String], cwd: Option<&str>, terminal: &str) -> bool {
+pub(crate) fn spawn_in_terminal(
+    argv: &[String],
+    cwd: Option<&str>,
+    terminal: &str,
+    env: &[(String, String)],
+) -> bool {
     use crate::term_script::TermKind;
     let kind = match crate::term_script::resume_kind_from_setting(terminal) {
         TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
         TermKind::ITerm2 => TermKind::Terminal,
         other => other,
     };
-    crate::macos::terminal::resume_session_mac(cwd, argv, kind)
+    crate::macos::terminal::resume_session_mac(cwd, argv, kind, &env_prefix_posix(env))
 }
 
 /// 其它平台无终端集成。
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub(crate) fn spawn_in_terminal(_argv: &[String], _cwd: Option<&str>, _terminal: &str) -> bool {
+pub(crate) fn spawn_in_terminal(
+    _argv: &[String],
+    _cwd: Option<&str>,
+    _terminal: &str,
+    _env: &[(String, String)],
+) -> bool {
     false
 }
 
@@ -846,13 +1013,16 @@ pub(crate) async fn new_session(
     let dir = validate_new_session_cwd(&cwd)?;
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
     let argv = agent.launch_argv();
+    let env = crate::proxy::launch_env(agent.id());
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
     // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环，同时能 await 结果回传。
-    let ok = tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, Some(&dir), &term))
-        .await
-        .map_err(|e| e.to_string())?;
+    let ok = tauri::async_runtime::spawn_blocking(move || {
+        spawn_in_terminal(&argv, Some(&dir), &term, &env)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     if ok {
         Ok(())
     } else if cfg!(not(any(target_os = "windows", target_os = "macos"))) {
@@ -886,7 +1056,13 @@ pub(crate) fn resume_session(
         std::thread::spawn(move || {
             let (revived, resolved_cwd, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let ok = spawn_in_terminal(&resume, resolved_cwd.as_deref(), &load_settings().resume_terminal);
+            let env = launch_env_for(Some(&provider));
+            let ok = spawn_in_terminal(
+                &resume,
+                resolved_cwd.as_deref(),
+                &load_settings().resume_terminal,
+                &env,
+            );
             if !ok {
                 // GUI 构建 stderr 不可见：回滚乐观复活，卡片立即回落「已断开」而非假连接 120s。
                 if let Some(sid) = revived {
@@ -905,7 +1081,13 @@ pub(crate) fn resume_session(
         std::thread::spawn(move || {
             let (revived, resolved, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let ok = spawn_in_terminal(&resume, resolved.as_deref(), &load_settings().resume_terminal);
+            let env = launch_env_for(Some(&provider));
+            let ok = spawn_in_terminal(
+                &resume,
+                resolved.as_deref(),
+                &load_settings().resume_terminal,
+                &env,
+            );
             if !ok {
                 eprintln!("恢复会话：终端启动失败");
                 if let Some(sid) = revived {
@@ -923,3 +1105,124 @@ pub(crate) fn resume_session(
     }
 }
 
+#[cfg(test)]
+mod proxy_env_tests {
+    use super::*;
+
+    fn decode_wrapped_command(wrapped: &[String]) -> String {
+        use base64::Engine;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&wrapped[3])
+            .unwrap();
+        let utf16: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&utf16).unwrap()
+    }
+
+    fn env(v: &str) -> Vec<(String, String)> {
+        vec![
+            ("HTTPS_PROXY".into(), v.into()),
+            ("HTTP_PROXY".into(), v.into()),
+        ]
+    }
+
+    #[test]
+    fn powershell_prefix_sets_vars_before_the_command() {
+        let p = env_prefix_powershell(&env("http://127.0.0.1:7890"));
+        assert!(p.starts_with("$env:HTTPS_PROXY=$null; "));
+        assert!(p.ends_with(
+            "$env:HTTPS_PROXY='http://127.0.0.1:7890'; $env:HTTP_PROXY='http://127.0.0.1:7890'; "
+        ));
+        // 与命令串拼起来必须是「先赋值、再执行」。
+        let cmd = format!(
+            "{p}{}",
+            shell_join_for_windows(&["claude".to_string()], true)
+        );
+        assert!(cmd.starts_with("$env:HTTPS_PROXY="));
+        assert!(cmd.ends_with("claude"));
+    }
+
+    #[test]
+    fn cmd_prefix_quotes_the_assignment() {
+        // 整个 K=V 包在双引号里：值里的 & | ^ 便不会被 cmd 当成运算符截断命令。
+        let p = env_prefix_cmd(&env("http://127.0.0.1:7890"));
+        assert!(p.starts_with("set \"HTTPS_PROXY=\"&& "));
+        assert!(p.ends_with("set \"HTTPS_PROXY=http://127.0.0.1:7890\"&& set \"HTTP_PROXY=http://127.0.0.1:7890\"&& "));
+    }
+
+    #[test]
+    fn posix_prefix_leaves_the_name_unquoted() {
+        // 关键：**键名不能带引号**——`'K=v' cmd` 会被 shell 当成一个命令名而不是赋值。
+        // 值则必须单引号包裹（AppleScript 会把它原样拼进 shell 命令串）。
+        let p = env_prefix_posix(&env("http://127.0.0.1:7890"));
+        assert!(p.starts_with("unset HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY "));
+        assert!(
+            p.ends_with("HTTPS_PROXY='http://127.0.0.1:7890' HTTP_PROXY='http://127.0.0.1:7890' ")
+        );
+        assert!(!p.starts_with('\''), "键名不得被引起来");
+    }
+
+    /// 代理串是用户输入，会被拼进 shell 命令串——三种 shell 的转义都必须挡住「闭合引号后接命令」
+    /// 的注入。值虽已过 validate（无空格、协议白名单），这里仍按「一律正确转义」把关，不赌。
+    #[test]
+    fn quoting_survives_a_value_with_quotes() {
+        let evil = vec![("HTTPS_PROXY".to_string(), "http://a'b;calc".to_string())];
+
+        // PowerShell：单引号翻倍 → 引号无法闭合，`;calc` 留在字符串里。
+        let ps = env_prefix_powershell(&evil);
+        assert!(ps.ends_with("$env:HTTPS_PROXY='http://a''b;calc'; "));
+
+        // POSIX：`'` → `'\''`，同样无法闭合。
+        let sh = env_prefix_posix(&evil);
+        assert!(sh.ends_with(r"HTTPS_PROXY='http://a'\''b;calc' "));
+
+        // cmd：值里的双引号被剔除，赋值仍完整包在一对双引号内。
+        let c = env_prefix_cmd(&[("HTTPS_PROXY".to_string(), "http://a\"b".to_string())]);
+        assert!(c.ends_with("set \"HTTPS_PROXY=http://ab\"&& "));
+    }
+
+    #[test]
+    fn empty_env_clears_inherited_proxy_before_launching() {
+        // off 的意义是直连，故空 env 也必须清掉继承的代理，而不是原样启动。
+        assert!(env_prefix_powershell(&[]).contains("$env:ALL_PROXY=$null;"));
+        assert!(env_prefix_cmd(&[]).contains("set \"ALL_PROXY=\"&&"));
+        assert!(env_prefix_posix(&[]).starts_with("unset HTTPS_PROXY"));
+        let argv = vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            "abc".to_string(),
+        ];
+        let wrapped = wrap_with_env_windows(&argv, &[]);
+        assert_eq!(wrapped[0], "powershell");
+        assert_eq!(wrapped[2], "-EncodedCommand");
+        assert!(
+            !wrapped[3].contains(';'),
+            "WT 可见的参数里不能再出现命令分隔符"
+        );
+        assert!(decode_wrapped_command(&wrapped).contains("$env:ALL_PROXY=$null;"));
+    }
+
+    /// wt / wezterm 不是我们的子进程（前者交给已存在的 wt 实例、后者交给 mux server），
+    /// Command::env() 传不过去 → 必须包一层 PowerShell 把赋值写进命令串。
+    #[test]
+    fn wt_and_wezterm_get_wrapped_in_a_shell_when_proxied() {
+        let argv = vec![
+            "C:/x/codex.exe".to_string(),
+            "resume".to_string(),
+            "sid".to_string(),
+        ];
+        let w = wrap_with_env_windows(&argv, &env("http://127.0.0.1:7890"));
+        assert_eq!(w[0], "powershell");
+        assert_eq!(w[1], "-NoExit");
+        assert_eq!(w[2], "-EncodedCommand");
+        assert!(!w[3].contains(';'), "WT 不得把脚本拆成多个 tab：{}", w[3]);
+        let decoded = decode_wrapped_command(&w);
+        assert!(decoded.starts_with("$env:HTTPS_PROXY=$null; "));
+        assert!(decoded.contains("$env:HTTPS_PROXY='http://127.0.0.1:7890'; "));
+        assert!(decoded.contains("codex.exe"), "原命令必须还在：{decoded}");
+        assert!(decoded.ends_with("resume sid"));
+    }
+}

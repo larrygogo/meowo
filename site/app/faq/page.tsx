@@ -5,13 +5,13 @@ import CtaBand from "@/components/CtaBand";
 export const metadata: Metadata = {
   title: "FAQ · Meowo",
   description:
-    "Meowo 常见问题：支持哪些 AI CLI、数据是否上传、是否需要手动配置、怎么跳转终端、隐私与卸载。",
+    "Meowo 常见问题：支持哪些 AI CLI、如何减少命令输入、代理设置、数据是否上传、自动接入、隐私与卸载。",
 };
 
 const QA: { q: string; a: React.ReactNode }[] = [
   {
     q: "Meowo 支持哪些 AI 编程 CLI？",
-    a: "Claude Code、Codex、Kimi。它们各自通过 CLI 的 hook 上报事件，数据写进本地同一份数据库，所以能显示在同一个窗口里。",
+    a: "当前内置支持 Claude Code、Codex 和 Kimi。它们各自通过 CLI 的 hook 上报事件，数据写进本地同一份数据库，所以能显示在同一个窗口里。",
   },
   {
     q: "我的会话数据会上传到云端吗？",
@@ -26,18 +26,32 @@ const QA: { q: string; a: React.ReactNode }[] = [
     q: "需要手动配置 hooks 吗？",
     a: (
       <>
-        一般不需要。用安装包时，app 每次启动会把 reporter 写进 Claude Code 的设置，
-        写之前先备份，不会破坏已有配置。想手动配置的话见<a href="/docs">文档</a>。
+        一般不需要。Meowo 启动时会为检测到的 AI 编程 CLI 接入 reporter，
+        写之前先备份，不会破坏已有配置。需要排查或手动接入时见<a href="/docs">文档</a>。
       </>
     ),
   },
   {
     q: "这和直接看终端有什么区别？",
-    a: "看终端要你主动切过去，还得记住哪个窗口对应哪个会话。Meowo 把这些信息放在桌面一角，状态变化时自动更新；会话等你回复时可以弹通知。",
+    a: "看终端要你主动切换窗口，还得记住会话位置和不同工具的命令。Meowo 把状态与常用操作放在桌面一角：需要回复时提醒你，点击即可回到、新建或续接会话。",
+  },
+  {
+    q: "Meowo 能帮我省掉哪些命令？",
+    a: "新建会话时直接选择项目目录和 AI 工具；恢复会话时点击卡片即可，不用查会话 ID 或记各工具的续接参数。CLI 安装、登录、hooks 修复和代理设置也提供了界面入口。",
+  },
+  {
+    q: "代理支持哪些格式，在哪里生效？",
+    a: (
+      <>
+        可以设置全局默认规则，也可以按 AI 工具覆盖。支持 HTTP、SOCKS5、带用户名密码的 URL，以及{" "}
+        <code className="inline">host:port:user:pass</code>。配置会用于 Meowo 的用量查询、CLI 安装和从 Meowo
+        启动的会话；不同 CLI 的协议与覆盖范围有差异，设置页会显示实际生效情况。
+      </>
+    ),
   },
   {
     q: "点击卡片怎么切到终端的？",
-    a: "连接中的会话会切到它所在的终端标签页（Windows 上是 Windows Terminal，macOS 上是 Terminal 或 iTerm2）。已断开的会话，Meowo 在原项目目录新开终端并执行 claude --resume 续接对话。用哪个终端可以在设置里指定。",
+    a: "连接中的会话会切到它所在的终端标签页（Windows 上是 Windows Terminal，macOS 上是 Terminal 或 iTerm2）。已断开的会话，Meowo 会回到原项目目录，并按对应 AI 工具的方式续接。使用哪个终端可以在设置里指定。",
   },
   {
     q: "支持 Linux 吗？",
@@ -67,9 +81,9 @@ const QA: { q: string; a: React.ReactNode }[] = [
     q: "如何卸载？会残留什么？",
     a: (
       <>
-        按系统常规方式卸载应用。数据都在{" "}
-        <code className="inline">~/.meowo/</code> 目录下，删掉这个目录就清干净了。之前写进 Claude Code
-        的 hooks，在 <code className="inline">~/.claude/settings.json</code> 里删掉对应条目即可。
+        按系统常规方式卸载应用。会话数据和应用设置位于{" "}
+        <code className="inline">~/.meowo/</code>。如需彻底清理，再从各 AI CLI 的 hook 配置中删除命令包含{" "}
+        <code className="inline">meowo-reporter</code> 的条目；不要删除其他自定义 hooks。
       </>
     ),
   },
@@ -82,7 +96,7 @@ export default function FaqPage() {
         <div className="container">
           <span className="eyebrow">FAQ</span>
           <h1 className="h1">常见问题</h1>
-          <p className="lead">隐私、接入、平台支持、卸载。</p>
+          <p className="lead">关于支持范围、自动接入、代理、隐私与平台兼容。</p>
         </div>
       </section>
 

@@ -5,13 +5,13 @@ import { InfoIcon } from "@/components/icons";
 export const metadata: Metadata = {
   title: "文档 · Meowo",
   description:
-    "Meowo 文档：工作原理、接入 Claude Code、手动挂 hooks、数据与配置文件的位置。",
+    "Meowo 文档：工作原理、自动接入 AI 编程 CLI、手动接入 Claude Code、数据与配置文件的位置。",
 };
 
 const TOC = [
   { id: "how", label: "工作原理" },
-  { id: "connect", label: "接入 Claude Code" },
-  { id: "manual", label: "手动挂 hooks" },
+  { id: "connect", label: "自动接入" },
+  { id: "manual", label: "手动接入 Claude Code" },
   { id: "data", label: "数据与配置" },
 ];
 
@@ -72,35 +72,32 @@ export default function DocsPage() {
                 <li>两端只通过这个 SQLite 文件通信，运行时不互相依赖。</li>
               </ul>
 
-              <h2 id="connect">接入 Claude Code</h2>
+              <h2 id="connect">自动接入 AI 编程 CLI</h2>
               <p>
-                窗口里要有数据，得把 <code className="inline">meowo-reporter</code>{" "}
-                挂到 Claude Code 的 hooks 上。
+                Meowo 通过各个 AI 编程 CLI 的 hooks 接收会话事件。应用启动时会检测本机已有的工具，并将{" "}
+                <code className="inline">meowo-reporter</code> 幂等接入对应配置。
               </p>
               <div className="callout">
                 <span className="ci">
                   <InfoIcon />
                 </span>
                 <span>
-                  <strong>用安装包时一般不需要手动操作。</strong> meowo-app
-                  每次启动会把 reporter 写进{" "}
-                  <code className="inline">~/.claude/settings.json</code>：补齐所需的
-                  hook 事件，并把 statusLine 包装成{" "}
+                  <strong>用安装包时一般不需要手动操作。</strong> Meowo 写入前会备份配置，保留已有 hooks，
+                  配置已经正确时不会重复修改。以 Claude Code 为例，它会补齐{" "}
+                  <code className="inline">~/.claude/settings.json</code> 中所需的 hook 事件，并把 statusLine 包装成{" "}
                   <code className="inline">~/.meowo/statusline.sh</code>，以便拿到准确的
-                  Context 百分比。写之前先备份，写入是原子的；如果配置已经正确就不动它。前提是{" "}
-                  <code className="inline">~/.claude/settings.json</code>{" "}
-                  已经存在（运行过一次 Claude Code 就会生成）。
+                  Context 百分比。写入是原子的；前提是相应 CLI 已完成首次运行或登录并生成配置目录。
                 </span>
               </div>
               <p>
-                挂好之后，新开的 Claude Code 会话就会出现在窗口里。Claude Code 本身见{" "}
+                接入后，新会话会自动出现在窗口里。Claude Code 本身见{" "}
                 <a href={DOCS_CLAUDE_CODE} target="_blank" rel="noopener noreferrer">
                   官方文档
                 </a>
                 。
               </p>
 
-              <h2 id="manual">手动挂 hooks（可选）</h2>
+              <h2 id="manual">手动接入 Claude Code（可选）</h2>
               <p>不想先启动 app，或者要写入自定义的 settings 路径时，可以手动挂：</p>
               <div className="codeblock">
                 <pre>

@@ -125,6 +125,22 @@ export function PlugIcon(props: P) {
     </svg>
   );
 }
+export function NetworkIcon(props: P) {
+  return (
+    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9S14.5 18.5 12 21M12 3C9.5 5.5 8.2 8.5 8.2 12S9.5 18.5 12 21" />
+    </svg>
+  );
+}
+export function ShieldIcon(props: P) {
+  return (
+    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
+      <path d="M12 3l7 3v5c0 4.6-2.8 8.1-7 10-4.2-1.9-7-5.4-7-10V6l7-3z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
 export function InfoIcon(props: P) {
   return (
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>

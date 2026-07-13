@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DownloadEvent } from "@tauri-apps/plugin-updater";
-
-type UpdateHandle = {
-  version: string;
-  body?: string | null;
-  downloadAndInstall: (cb?: (e: DownloadEvent) => void) => Promise<void>;
-};
+import { listen } from "@tauri-apps/api/event";
+import { checkUpdate, downloadAndInstallUpdate } from "./api";
 
 export type UpdateStatus = "checking" | "latest" | "available" | "downloading" | "error";
 
@@ -20,23 +15,26 @@ export function useUpdate() {
   const [notes, setNotes] = useState<string | null>(null);
   // null = 总大小未知（响应无 Content-Length），UI 显示不带百分比的「下载中…」。
   const [progress, setProgress] = useState<number | null>(0);
-  const handleRef = useRef<UpdateHandle | null>(null);
+  const checkedRef = useRef(false);
 
   // 返回本次检查的结果状态（调用方拿结果不能依赖异步 state）。
   const recheck = useCallback(async (): Promise<UpdateStatus> => {
     setStatus("checking");
+    checkedRef.current = false;
     try {
-      const up = await (await import("@tauri-apps/plugin-updater")).check();
+      const up = await checkUpdate();
       if (up) {
-        handleRef.current = up as unknown as UpdateHandle;
+        checkedRef.current = true;
         setVersion(up.version);
         setNotes(up.body?.trim() ? up.body : null);
         setStatus("available");
         return "available";
       }
+      checkedRef.current = false;
       setStatus("latest");
       return "latest";
     } catch {
+      checkedRef.current = false;
       setStatus("error");
       return "error";
     }
@@ -47,22 +45,27 @@ export function useUpdate() {
   }, [recheck]);
 
   const apply = useCallback(async () => {
-    const up = handleRef.current;
-    if (!up) return;
+    if (!checkedRef.current) return;
     setStatus("downloading");
     setProgress(0);
     try {
       let total = 0;
       let got = 0;
-      await up.downloadAndInstall((e) => {
-        if (e.event === "Started") {
-          total = e.data.contentLength ?? 0;
+      const unlisten = await listen<{ chunkLength: number; contentLength: number | null }>(
+        "update-download-progress",
+        ({ payload }) => {
+          total = payload.contentLength ?? 0;
+          got += payload.chunkLength;
           if (total === 0) setProgress(null);
-        } else if (e.event === "Progress") {
-          got += e.data.chunkLength;
-          if (total > 0) setProgress(Math.min(100, Math.round((got / total) * 100)));
-        } else if (e.event === "Finished") setProgress(100);
-      });
+          else setProgress(Math.min(100, Math.round((got / total) * 100)));
+        },
+      );
+      try {
+        await downloadAndInstallUpdate();
+      } finally {
+        unlisten();
+      }
+      setProgress(100);
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (err) {

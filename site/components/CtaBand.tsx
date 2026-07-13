@@ -9,7 +9,7 @@ type Props = {
 
 export default async function CtaBand({
   title = "下载 Meowo",
-  subtitle = "开源，MIT 许可。Windows 与 macOS。",
+  subtitle = "少切终端，少输命令，让多个 AI 编程任务始终在掌握中。",
 }: Props) {
   const release = await getLatestRelease();
 

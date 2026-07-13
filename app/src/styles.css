@@ -1258,6 +1258,21 @@ html, body {
 .dd-item.sel { color: var(--cc-accent-text); }
 
 .sec-hint { font-size: 12px; color: var(--cc-text-faint); margin-top: 14px; padding-left: 2px; opacity: 0.75; }
+/* 保存被后端拒绝的原因（如代理地址非法）：必须比普通 hint 显眼，否则用户只会看到输入框弹回去而不知为何。 */
+.sec-hint.proxy-err { color: var(--cc-err, #e5534b); opacity: 1; }
+/* 代理地址单占一整行：塞进 .row 右侧只剩半截宽度，连 placeholder 都显示不全。 */
+.proxy-url-row { padding-top: 0; }
+.proxy-url-row .ns-input { width: 100%; }
+/* 模型名不换行（「Claude Code」曾被右侧控件挤成两行）。 */
+.proxy-agent-name { white-space: nowrap; }
+/* 覆盖面：主句一行，理由弱化到次要色——三家能力不同是事实，但不该喧宾夺主。 */
+.proxy-coverage { margin-top: 4px; }
+.proxy-coverage .proxy-why { display: block; opacity: 0.7; margin-top: 2px; }
+/* 代价提示（写系统环境变量的副作用）：比普通 desc 显眼，但不是错误。 */
+.proxy-warn { color: var(--cc-warn, #d9a441); margin-top: 4px; }
+/* 开关被置灰的原因：是前置条件说明，不是错误也不是警告，故保持次要色。 */
+.proxy-need { margin-top: 4px; }
+.row-text > .proxy-err { margin-top: 4px; color: var(--cc-err, #e5534b); }
 
 /* iOS 风开关 */
 .pswitch {

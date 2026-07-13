@@ -14,7 +14,9 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 
-use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_EXPAND_SZ};
+use winreg::enums::{
+    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_EXPAND_SZ,
+};
 use winreg::{RegKey, RegValue};
 
 /// 用户级环境变量所在键。
@@ -130,7 +132,9 @@ pub(crate) fn add_dir_to_user_path(dir: &str) -> Result<(), String> {
     // 原始值决定新值的类型；读不到就当空串 + REG_EXPAND_SZ。
     let (old, vtype) = match env.get_raw_value("Path") {
         Ok(raw) => {
-            let text = env.get_value::<String, _>("Path").map_err(|e| format!("读取 Path 失败：{e}"))?;
+            let text = env
+                .get_value::<String, _>("Path")
+                .map_err(|e| format!("读取 Path 失败：{e}"))?;
             (text, raw.vtype)
         }
         Err(_) => (String::new(), REG_EXPAND_SZ),
@@ -139,7 +143,10 @@ pub(crate) fn add_dir_to_user_path(dir: &str) -> Result<(), String> {
     let new = append_dir(&old, dir);
     env.set_raw_value(
         "Path",
-        &RegValue { bytes: utf16_bytes(&new), vtype },
+        &RegValue {
+            bytes: utf16_bytes(&new),
+            vtype,
+        },
     )
     .map_err(|e| format!("写入 Path 失败：{e}"))?;
 
@@ -148,12 +155,15 @@ pub(crate) fn add_dir_to_user_path(dir: &str) -> Result<(), String> {
 }
 
 /// 通知所有顶层窗口环境变量已变（新开的终端/资源管理器据此重读）。
-/// 已在运行的终端不会更新——它们的 PATH 是自己启动时的快照，只能重开。
+/// 已在运行的终端不会更新——它们的环境是自己启动时的快照，只能重开。
 fn broadcast_env_change() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
     };
-    let param: Vec<u16> = OsStr::new("Environment").encode_wide().chain(std::iter::once(0)).collect();
+    let param: Vec<u16> = OsStr::new("Environment")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     // SMTO_ABORTIFHUNG + 5s 超时：某个卡死的顶层窗口不该拖垮我们。失败无所谓——
     // 值已经落盘，新开的终端照样能读到。
     unsafe {
@@ -188,8 +198,14 @@ mod tests {
 
     #[test]
     fn normalize_is_case_and_separator_insensitive() {
-        assert_eq!(normalize("C:/Users/x/.local/bin/"), "c:\\users\\x\\.local\\bin");
-        assert_eq!(normalize("  C:\\Users\\X\\.local\\bin\\\\  "), "c:\\users\\x\\.local\\bin");
+        assert_eq!(
+            normalize("C:/Users/x/.local/bin/"),
+            "c:\\users\\x\\.local\\bin"
+        );
+        assert_eq!(
+            normalize("  C:\\Users\\X\\.local\\bin\\\\  "),
+            "c:\\users\\x\\.local\\bin"
+        );
     }
 
     #[test]
