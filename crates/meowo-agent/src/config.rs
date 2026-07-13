@@ -256,9 +256,15 @@ mod kimi_toml {
         };
 
         for ev in spec.events {
+            // 同一 event 下只留一条我方 hook：第一条更新路径，其余删除。不去重则重复条目每次
+            // 事件各派生一个 reporter 进程，且污染每接线一轮翻一倍、永不收敛（详见
+            // `json_common::dedupe_event`）。用户自有 hook（claim 不认领）一概不动。
             let mut found = false;
-            for t in arr.iter_mut() {
+            let mut i = 0;
+            while i < arr.len() {
+                let Some(t) = arr.get_mut(i) else { break };
                 if t.get("event").and_then(|v| v.as_str()) != Some(ev.name) {
+                    i += 1;
                     continue;
                 }
                 let Some(path) = t
@@ -266,13 +272,20 @@ mod kimi_toml {
                     .and_then(|v| v.as_str())
                     .and_then(|c| spec.command.claim(c, agent_id))
                 else {
+                    i += 1;
                     continue; // 该事件上的用户自有 hook，不动
                 };
+                if found {
+                    arr.remove(i); // 重复注册，删（不推进 i：后一条已顶上来）
+                    changed = true;
+                    continue;
+                }
                 found = true;
                 if path != reporter {
                     t.insert("command", value(desired_cmd.clone()));
                     changed = true;
                 }
+                i += 1;
             }
             if !found {
                 let mut t = Table::new();
@@ -356,6 +369,84 @@ mod json_common {
             Some(_) => Some(false),
         }
     }
+
+    /// 条目的 `matcher` 是否是我们要找的那个。`want=None` 时不作要求——codex 的条目本就无
+    /// matcher，claude 的事件表则全带。
+    pub fn matcher_is(entry: &Value, want: Option<&str>) -> bool {
+        match want {
+            None => true,
+            Some(m) => entry.get("matcher").and_then(|x| x.as_str()) == Some(m),
+        }
+    }
+
+    /// 该条目的 matcher 相符、且其 hooks 里有我方 reporter。
+    pub fn claims_here(spec: &HookSpec, entry: &Value, matcher: Option<&str>, agent_id: &str) -> bool {
+        matcher_is(entry, matcher)
+            && entry.get("hooks").and_then(|x| x.as_array()).is_some_and(|hs| {
+                hs.iter().any(|h| {
+                    h.get("command").and_then(|c| c.as_str()).is_some_and(|c| spec.command.claim(c, agent_id).is_some())
+                })
+            })
+    }
+
+    /// 同一 (事件, matcher) 下**只留一条**我方 reporter hook：第一条更新为当前路径，其余删除。
+    /// 返回是否有改动。
+    ///
+    /// 去重不是洁癖，是止血。claude/codex 都会把同事件下的条目**逐条执行**，重复 N 条就是每次
+    /// 事件派生 N 个 reporter 进程。而重复一旦产生（两代品牌的 app 交替接线时互不认领对方的
+    /// reporter、并发写、或手动跑过 install-hooks.mjs），旧实现只在「一条都没有」时才追加、
+    /// 从不清理，于是污染每接线一轮翻一倍、永不收敛——真实机器上滚到了每事件 4 条。
+    ///
+    /// 用户自有的 hook（claim 不认领的）一概不动；条目里的我方 hook 被删空后，整条壳也移除。
+    pub fn dedupe_event(
+        spec: &HookSpec,
+        arr: &mut Vec<Value>,
+        matcher: Option<&str>,
+        reporter: &str,
+        desired_cmd: &str,
+        agent_id: &str,
+    ) -> bool {
+        let mut changed = false;
+        let mut kept = false; // 是否已保留过一条我方 hook
+        let mut i = 0;
+        while i < arr.len() {
+            if !matcher_is(&arr[i], matcher) {
+                i += 1;
+                continue; // 别的 matcher（含用户自有）→ 不动
+            }
+            let Some(hs) = arr[i].get_mut("hooks").and_then(|x| x.as_array_mut()) else {
+                i += 1;
+                continue;
+            };
+            let mut j = 0;
+            while j < hs.len() {
+                let claimed =
+                    hs[j].get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id));
+                match claimed {
+                    Some(path) if !kept => {
+                        kept = true;
+                        if path != reporter {
+                            hs[j]["command"] = serde_json::json!(desired_cmd);
+                            changed = true;
+                        }
+                        j += 1;
+                    }
+                    Some(_) => {
+                        hs.remove(j); // 第 2+ 条 → 重复注册，删
+                        changed = true;
+                    }
+                    None => j += 1, // 用户自有 hook，不动
+                }
+            }
+            if hs.is_empty() {
+                arr.remove(i); // 我方 hook 删空后的空壳条目，别留
+                changed = true;
+            } else {
+                i += 1;
+            }
+        }
+        changed
+    }
 }
 
 // ═══ ClaudeJson ═══
@@ -382,16 +473,7 @@ mod claude_json {
         Abandon,
     }
 
-    /// 条目的 `matcher` 是否是我们要找的那个。`want=None` 时不作要求（claude 的事件表全带
-    /// matcher，此分支仅为规格完整性）。
-    fn matcher_is(entry: &Value, want: Option<&str>) -> bool {
-        match want {
-            None => true,
-            Some(m) => entry.get("matcher").and_then(|x| x.as_str()) == Some(m),
-        }
-    }
-
-    /// 幂等合并。与 codex 版的唯一差别：定位/追加均**按 matcher 区分**——同一事件下用户自有的
+    /// 幂等合并。与 codex 版的唯一差别：定位/追加/去重均**按 matcher 区分**——同一事件下用户自有的
     /// 其他 matcher 条目（如 `PreToolUse:Bash` 预检）原封不动。
     fn merge(spec: &HookSpec, root: &mut Value, reporter: &str, agent_id: &str) -> Merge {
         let desired_cmd = spec.command.render(reporter, agent_id);
@@ -409,26 +491,9 @@ mod claude_json {
             let Some(arr) = entry_val.as_array_mut() else {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
-            let mut found = false;
-            for entry in arr.iter_mut() {
-                if !matcher_is(entry, ev.matcher) {
-                    continue; // 该 matcher 下是用户自有 hook，不动
-                }
-                let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) else {
-                    continue;
-                };
-                for h in hs.iter_mut() {
-                    let claimed = h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id));
-                    if let Some(path) = claimed {
-                        found = true;
-                        if path != reporter {
-                            h["command"] = json!(desired_cmd);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            if !found {
+            // 认领 + 更新路径 + 删重复，一并在此完成。
+            changed |= json_common::dedupe_event(spec, arr, ev.matcher, reporter, &desired_cmd, agent_id);
+            if !arr.iter().any(|e| json_common::claims_here(spec, e, ev.matcher, agent_id)) {
                 let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] });
                 if let Some(m) = ev.matcher {
                     entry["matcher"] = json!(m);
@@ -487,23 +552,9 @@ mod codex_json {
             let Some(arr) = entry_val.as_array_mut() else {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
-            let mut found = false;
-            for entry in arr.iter_mut() {
-                let Some(hs) = entry.get_mut("hooks").and_then(|x| x.as_array_mut()) else {
-                    continue;
-                };
-                for h in hs.iter_mut() {
-                    let claimed = h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id));
-                    if let Some(path) = claimed {
-                        found = true;
-                        if path != reporter {
-                            h["command"] = json!(desired_cmd);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            if !found {
+            // codex 的条目无 matcher → 传 None（同事件下我方 hook 只应有一条）。
+            changed |= json_common::dedupe_event(spec, arr, None, reporter, &desired_cmd, agent_id);
+            if !arr.iter().any(|e| json_common::claims_here(spec, e, None, agent_id)) {
                 arr.push(json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] }));
                 changed = true;
             }
@@ -514,7 +565,6 @@ mod codex_json {
             Merge::Unchanged
         }
     }
-
 }
 
 /// 解析 hooks.json / settings.json 文本（容忍 BOM，顶层须为对象）。供 meowo-app 的 codex
@@ -526,6 +576,7 @@ pub fn parse_json_config(text: &str) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// kimi 的接线规格（与 plugins/kimi.rs 同源，此处独立声明以免测试依赖插件表的演化）。
     const KIMI_CMD: CommandSpec = CommandSpec { quote_exe: false, with_provider: true };
@@ -611,6 +662,72 @@ mod tests {
         // 幂等。
         let text = serde_json::to_string(&v).unwrap();
         assert_eq!(CJ.ensure_hooks(&text, "C:/x/meowo-reporter.exe", "claude"), EnsureOutcome::Unchanged);
+    }
+
+    /// 回归（重复注册）：真机 settings.json 的中毒现场——每个事件下 4 条一模一样的 reporter
+    /// 条目（PreToolUse 是 4×2 个 matcher = 8 条）。Claude Code 会逐条执行，于是每次事件派生
+    /// 4 个 reporter 进程。旧实现只在「一条都没有」时才追加、从不清理，污染永不收敛。
+    /// 接线必须把它收敛回每 (事件, matcher) 一条。
+    #[test]
+    fn claude_ensure_hooks_collapses_duplicate_reporter_entries() {
+        let ccr = "C:/x/meowo-reporter.exe";
+        let dup = |matcher: &str, n: usize| -> Vec<serde_json::Value> {
+            (0..n)
+                .map(|_| json!({ "matcher": matcher, "hooks": [
+                    { "type": "command", "command": format!("\"{ccr}\""), "timeout": 5 }] }))
+                .collect()
+        };
+        let mut hooks = serde_json::Map::new();
+        for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
+            hooks.insert(ev.into(), json!(dup("*", 4)));
+        }
+        let mut pre = dup("AskUserQuestion", 4);
+        pre.extend(dup("ExitPlanMode", 4));
+        hooks.insert("PreToolUse".into(), json!(pre));
+        let src = json!({ "hooks": hooks }).to_string();
+
+        let v = claude_changed(&src, ccr);
+        for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
+            assert_eq!(v["hooks"][ev].as_array().unwrap().len(), 1, "{ev} 应收敛为 1 条");
+        }
+        // PreToolUse：两个 matcher 各留 1 条。
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 2, "PreToolUse 应收敛为 2 条（每 matcher 一条）");
+        for m in ["AskUserQuestion", "ExitPlanMode"] {
+            assert_eq!(pre.iter().filter(|e| e["matcher"] == m).count(), 1, "{m} 应恰一条");
+        }
+        // 收敛后幂等。
+        assert_eq!(CJ.ensure_hooks(&v.to_string(), ccr, "claude"), EnsureOutcome::Unchanged);
+    }
+
+    /// 去重必须只删**我方**的重复，用户自有 hook（含同 matcher 下并存的）一条都不能碰。
+    #[test]
+    fn claude_dedupe_never_touches_user_hooks() {
+        let ccr = "C:/x/meowo-reporter.exe";
+        let src = format!(
+            r#"{{"hooks":{{"SessionStart":[
+                {{"matcher":"*","hooks":[{{"type":"command","command":"node other.js"}}]}},
+                {{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}},
+                {{"matcher":"*","hooks":[
+                    {{"type":"command","command":"\"{ccr}\"","timeout":5}},
+                    {{"type":"command","command":"node keep-me.js"}}]}},
+                {{"matcher":"*","hooks":[{{"type":"command","command":"\"{ccr}\"","timeout":5}}]}}
+            ]}}}}"#
+        );
+        let v = claude_changed(&src, ccr);
+        let arr = v["hooks"]["SessionStart"].as_array().unwrap();
+        // 3 条我方重复 → 只留第一条；两条用户 hook 全在（第三条壳因还有 keep-me.js 而保留）。
+        let mine = arr
+            .iter()
+            .flat_map(|e| e["hooks"].as_array().unwrap())
+            .filter(|h| h["command"] == format!("\"{ccr}\""))
+            .count();
+        assert_eq!(mine, 1, "我方 hook 应只剩一条");
+        let cmds: Vec<&str> =
+            arr.iter().flat_map(|e| e["hooks"].as_array().unwrap()).filter_map(|h| h["command"].as_str()).collect();
+        assert!(cmds.contains(&"node other.js"), "用户 hook 不能被删");
+        assert!(cmds.contains(&"node keep-me.js"), "与我方 hook 同壳的用户 hook 不能被删");
+        assert_eq!(CJ.ensure_hooks(&v.to_string(), ccr, "claude"), EnsureOutcome::Unchanged);
     }
 
     #[test]
