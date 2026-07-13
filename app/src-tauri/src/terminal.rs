@@ -499,7 +499,7 @@ pub(crate) async fn focus_session(
         // 给 codex/claude 盲传 sid8 可能偶然命中别的标签文本，并以最高分跳错会话。
         let token = meowo_agent::resolve(provider.as_deref())
             .filter(|a| a.writes_tab_token())
-            .and_then(|_| session_id.as_deref())
+            .and(session_id.as_deref())
             .map(meowo_reporter::tabtitle::short_sid)
             .filter(|s| !s.is_empty());
         tauri::async_runtime::spawn_blocking(move || {

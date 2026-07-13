@@ -297,9 +297,15 @@ export function Sticker({
       setFocusNotice({ ...focusNotice, confirming: true });
       return;
     }
+    const pid = l.pid;
+    if (!pid) {
+      // notice 持有点击时的快照，正常不会走到这里；仍在命令边界防御可空类型，绝不把 null 交给后端。
+      setFocusNotice({ ...focusNotice, confirming: false, kind: "process_ended" });
+      return;
+    }
     setFocusNotice({ ...focusNotice, busy: true });
     invoke("restart_session_supported", {
-      pid: l.pid,
+      pid,
       cwd: l.cwd,
       sessionId: l.session.cc_session_id,
       provider: l.provider,

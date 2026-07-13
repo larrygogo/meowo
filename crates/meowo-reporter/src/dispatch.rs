@@ -23,12 +23,13 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid)?;
-                // 用户已开启新回合，不论消息是否含文本（例如 kimi 的纯图片内容块），
-                // 都必须从 waiting/stale 转回 running。文本只影响标题与最近消息，不应门控状态转换。
-                store.touch_session(sid, now_ms)?;
                 if let Some(prompt) = ev.prompt_text() {
+                    // on_user_prompt 内部会 touch；避免文本消息对 sessions 做两次相同 UPDATE。
                     store.on_user_prompt(sid, &prompt, now_ms)?;
                     store.set_last_user_text(sid, &prompt)?;
+                } else {
+                    // 纯图片内容块同样代表用户开启了新回合，也必须从 waiting/stale 转回 running。
+                    store.touch_session(sid, now_ms)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
                 if let Some(p) = crate::proc::owner_pid() {
