@@ -6,38 +6,47 @@ import { zh } from "../i18n/zh";
 // 更新已迁到后端 IPC：分别 mock 检查、下载命令与 Tauri 进度事件。
 const mocks = vi.hoisted(() => ({
   checkImpl: undefined as undefined | (() => Promise<unknown>),
-  downloadImpl: async () => {},
-  progress: undefined as undefined | ((e: { payload: { chunkLength: number; contentLength: number | null } }) => void),
+  downloadImpl: async (): Promise<"downloading" | "ready"> => "ready",
+  installImpl: async () => {},
+  listeners: {} as Record<string, ((e: { payload: unknown }) => void) | undefined>,
 }));
 vi.mock("../api", async (original) => ({
   ...(await original<typeof import("../api")>()),
   checkUpdate: () => mocks.checkImpl?.(),
-  downloadAndInstallUpdate: () => mocks.downloadImpl(),
+  downloadUpdate: () => mocks.downloadImpl(),
+  installDownloadedUpdate: () => mocks.installImpl(),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_event: string, cb: typeof mocks.progress) => {
-    mocks.progress = cb;
-    return () => { mocks.progress = undefined; };
+  listen: async (event: string, cb: (e: { payload: unknown }) => void) => {
+    mocks.listeners[event] = cb;
+    return () => { delete mocks.listeners[event]; };
   },
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  mocks.checkImpl = undefined;
+  mocks.downloadImpl = async () => "ready";
+  mocks.installImpl = async () => {};
+  mocks.listeners = {};
+});
 
 const mkUpdate = (over: Record<string, unknown> = {}) => ({
   version: "9.9.9",
   body: "- 修复了一个 bug\n- 新增了一个功能",
+  downloadState: "available",
   ...over,
 });
 
 describe("Updater", () => {
-  it("有新版本:显示新版本号、更新说明与「立即更新」按钮", async () => {
+  it("有新版本:显示新版本号、更新说明与下载按钮", async () => {
     mocks.checkImpl = async () => mkUpdate();
     render(<Updater />);
     expect(await screen.findByText(zh.updater.found("9.9.9"))).toBeTruthy();
     expect(screen.getByText(zh.updater.notes)).toBeTruthy();
     expect(screen.getByText(/修复了一个 bug/)).toBeTruthy();
-    expect(screen.getByText(zh.updater.install)).toBeTruthy();
+    expect(screen.getByText(zh.updater.download)).toBeTruthy();
   });
 
   it("release notes 为空时不渲染更新内容区", async () => {
@@ -65,14 +74,14 @@ describe("Updater", () => {
     expect(await screen.findByText(zh.updater.found("9.9.9"))).toBeTruthy();
   });
 
-  it("点「立即更新」进入下载态,按回调计算百分比进度", async () => {
+  it("点下载进入下载态,按后端累计字节计算百分比进度", async () => {
     mocks.checkImpl = async () => mkUpdate();
     mocks.downloadImpl = async () => {
-      mocks.progress?.({ payload: { chunkLength: 50, contentLength: 100 } });
-      await new Promise(() => {}); // 永不 resolve:停在下载态供断言
+      mocks.listeners["update-download-progress"]?.({ payload: { downloaded: 50, contentLength: 100 } });
+      return await new Promise<"downloading" | "ready">(() => {}); // 永不 resolve:停在下载态供断言
     };
     const { container } = render(<Updater />);
-    fireEvent.click(await screen.findByText(zh.updater.install));
+    fireEvent.click(await screen.findByText(zh.updater.download));
     await waitFor(() => expect(screen.getByText(zh.updater.downloadingPct(50))).toBeTruthy());
     const fill = container.querySelector(".up-prog-fill") as HTMLElement;
     expect(fill.style.width).toBe("50%");
@@ -82,12 +91,22 @@ describe("Updater", () => {
   it("总大小未知(无 Content-Length)时显示不带百分比的下载中与呼吸进度条", async () => {
     mocks.checkImpl = async () => mkUpdate();
     mocks.downloadImpl = async () => {
-      mocks.progress?.({ payload: { chunkLength: 1, contentLength: null } });
-      await new Promise(() => {});
+      mocks.listeners["update-download-progress"]?.({ payload: { downloaded: 1, contentLength: null } });
+      return await new Promise<"downloading" | "ready">(() => {});
     };
     const { container } = render(<Updater />);
-    fireEvent.click(await screen.findByText(zh.updater.install));
+    fireEvent.click(await screen.findByText(zh.updater.download));
     expect(await screen.findByText(zh.updater.downloading)).toBeTruthy();
     expect(container.querySelector(".up-prog-indet")).toBeTruthy();
+  });
+
+  it("后台下载完成后显示重启更新按钮", async () => {
+    let installed = false;
+    mocks.installImpl = async () => { installed = true; };
+    mocks.checkImpl = async () => mkUpdate({ downloadState: "ready" });
+    render(<Updater />);
+    expect(await screen.findByText(zh.updater.ready)).toBeTruthy();
+    fireEvent.click(screen.getByText(zh.updater.restart));
+    await waitFor(() => expect(installed).toBe(true));
   });
 });

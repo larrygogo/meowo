@@ -18,6 +18,7 @@ export const store: Store = {
   settings: {
     archive_hide_days: 0,
     notifications_enabled: true,
+    auto_update_enabled: true,
     theme: "dark",
     opacity: 100,
     ui_scale: 100,

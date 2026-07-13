@@ -65,7 +65,10 @@ use snap::{clamp_xy_to_work, edge_for_rect, Rect, SnapPayload, SNAP_THRESHOLD};
 
 use meowo_store::{LiveSession, ProjectOverview, Store, TaskCard};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use tauri_plugin_updater::UpdaterExt;
 
 pub mod setup;
@@ -86,6 +89,15 @@ struct AppState {
     liveness: Mutex<Option<(i64, Arc<std::collections::HashSet<i64>>)>>,
     /// 最近一次检查得到的更新包；下载命令复用它，确保检查与下载使用同一份代理策略。
     update: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// 已下载且通过 updater 签名校验的安装包。只驻留内存，退出应用后重新下载。
+    downloaded_update: Mutex<Option<DownloadedUpdate>>,
+    /// 防止主窗自动下载与更新窗口手动下载并发执行。
+    update_downloading: AtomicBool,
+}
+
+struct DownloadedUpdate {
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
 }
 
 /// 进程表快照的存活时长。
@@ -125,6 +137,7 @@ fn agent_pids_cached(state: &AppState) -> Arc<std::collections::HashSet<i64>> {
 struct AvailableUpdate {
     version: String,
     body: Option<String>,
+    download_state: String,
 }
 
 /// 自更新不能直接调用插件的前端 `check()`：其 IPC API 没有暴露 `no_proxy`，传空代理会回退
@@ -153,9 +166,27 @@ async fn check_update(
         .check()
         .await
         .map_err(|e| e.to_string())?;
-    let result = update.as_ref().map(|u| AvailableUpdate {
-        version: u.version.clone(),
-        body: u.body.clone(),
+    let result = update.as_ref().map(|u| {
+        let ready = state
+            .downloaded_update
+            .lock()
+            .map(|slot| {
+                slot.as_ref()
+                    .is_some_and(|downloaded| downloaded.update.version == u.version)
+            })
+            .unwrap_or(false);
+        let download_state = if ready {
+            "ready"
+        } else if state.update_downloading.load(Ordering::Acquire) {
+            "downloading"
+        } else {
+            "available"
+        };
+        AvailableUpdate {
+            version: u.version.clone(),
+            body: u.body.clone(),
+            download_state: download_state.to_string(),
+        }
     });
     *state
         .update
@@ -165,32 +196,83 @@ async fn check_update(
 }
 
 #[tauri::command]
-async fn download_and_install_update(
+async fn download_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let update = state
         .update
         .lock()
         .map_err(|_| "更新状态锁已损坏".to_string())?
         .clone()
         .ok_or("请先检查更新")?;
-    update
-        .download_and_install(
+    if state
+        .downloaded_update
+        .lock()
+        .map_err(|_| "更新状态锁已损坏".to_string())?
+        .as_ref()
+        .is_some_and(|downloaded| downloaded.update.version == update.version)
+    {
+        return Ok("ready".to_string());
+    }
+    if state
+        .update_downloading
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok("downloading".to_string());
+    }
+
+    let mut downloaded = 0u64;
+    let result = update
+        .download(
             |chunk, total| {
+                downloaded = downloaded.saturating_add(chunk as u64);
                 let _ = app.emit(
                     "update-download-progress",
                     serde_json::json!({
-                        "chunkLength": chunk,
+                        "downloaded": downloaded,
                         "contentLength": total,
                     }),
                 );
             },
-            || {
-                let _ = app.emit("update-download-finished", ());
-            },
+            || {},
         )
-        .await
+        .await;
+    state.update_downloading.store(false, Ordering::Release);
+
+    match result {
+        Ok(bytes) => {
+            let version = update.version.clone();
+            *state
+                .downloaded_update
+                .lock()
+                .map_err(|_| "更新状态锁已损坏".to_string())? =
+                Some(DownloadedUpdate { update, bytes });
+            let _ = app.emit(
+                "update-download-finished",
+                serde_json::json!({ "version": version }),
+            );
+            Ok("ready".to_string())
+        }
+        Err(error) => {
+            let message = error.to_string();
+            let _ = app.emit("update-download-failed", &message);
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn install_downloaded_update(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state
+        .downloaded_update
+        .lock()
+        .map_err(|_| "更新状态锁已损坏".to_string())?;
+    let downloaded = slot.as_ref().ok_or("更新尚未下载完成")?;
+    downloaded
+        .update
+        .install(&downloaded.bytes)
         .map_err(|e| e.to_string())
 }
 
@@ -966,6 +1048,8 @@ pub fn run() {
             tx_cache: tx_cache.clone(),
             liveness: Mutex::new(None),
             update: Mutex::new(None),
+            downloaded_update: Mutex::new(None),
+            update_downloading: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             get_overview,
@@ -984,7 +1068,8 @@ pub fn run() {
             set_settings,
             get_effective_proxy,
             check_update,
-            download_and_install_update,
+            download_update,
+            install_downloaded_update,
             open_settings,
             open_update_window,
             recall_center,

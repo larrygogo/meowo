@@ -1,0 +1,68 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render } from "@testing-library/react";
+import { useUpdate } from "./useUpdate";
+
+const mocks = vi.hoisted(() => ({
+  enabled: true,
+  check: vi.fn(),
+  download: vi.fn(),
+}));
+
+vi.mock("./api", () => ({
+  getSettings: async () => ({ auto_update_enabled: mocks.enabled }),
+  checkUpdate: () => mocks.check(),
+  downloadUpdate: () => mocks.download(),
+  installDownloadedUpdate: async () => {},
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async () => () => {},
+}));
+
+function Probe() {
+  const { status } = useUpdate({ automatic: true, delayMs: 10 });
+  return <div data-testid="status">{status}</div>;
+}
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  mocks.enabled = true;
+  mocks.check.mockReset();
+  mocks.download.mockReset();
+});
+
+describe("automatic updater", () => {
+  it("默认开启时延迟检查并在发现版本后自动下载", async () => {
+    vi.useFakeTimers();
+    mocks.check.mockResolvedValue({
+      version: "9.9.9",
+      body: null,
+      downloadState: "available",
+    });
+    mocks.download.mockResolvedValue("ready");
+    render(<Probe />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    expect(mocks.download).toHaveBeenCalledTimes(1);
+  });
+
+  it("关闭自动更新时不进行后台检查或下载", async () => {
+    vi.useFakeTimers();
+    mocks.enabled = false;
+    render(<Probe />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(mocks.check).not.toHaveBeenCalled();
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+});
