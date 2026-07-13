@@ -1,0 +1,25 @@
+# 发版后重建官网：下载直链、版本号、更新日志都是站点构建时从 GitHub API 取的，
+# 不重新构建就还指向上一个版本。
+#
+# 为什么要绕一道 dispatch：release 事件的 workflow 跑在 tag ref（refs/tags/vX.Y.Z）上，
+# 而 github-pages environment 的 branch policy 只放行 main，deploy job 会被直接拒绝
+# （1 秒失败、无日志）。本 workflow 不碰 environment，只负责在 main 上把部署 workflow 拉起来。
+#
+# GITHUB_TOKEN 触发的事件通常不会再触发新的 workflow run，workflow_dispatch 是官方例外。
+name: Redeploy site on release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 在 main 上触发官网部署
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy-pages.yml --repo ${{ github.repository }} --ref main

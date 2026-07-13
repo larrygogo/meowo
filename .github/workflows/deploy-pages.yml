@@ -7,9 +7,10 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/deploy-pages.yml"
-  # 发版后重新部署：下载按钮的直链是构建时从 GitHub API 取的，不重新构建就还指向旧版本。
-  release:
-    types: [published]
+  # 发版后也要重新部署（下载直链与更新日志是构建时从 GitHub API 取的，不重建就还是旧版本），
+  # 但不能在这里挂 release 触发：那样 workflow 跑在 tag ref 上，而 github-pages
+  # environment 只允许 main 部署，deploy job 会被直接拒掉。改由 site-redeploy.yml
+  # 在 release 发布后 dispatch 本 workflow（跑在 main 上）。
   workflow_dispatch:
 
 # 允许该 workflow 发布到 Pages
