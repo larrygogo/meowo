@@ -139,8 +139,9 @@ export function Dropdown<T extends string | number>({
 }: {
   value: T;
   // icon 可选：给「选择器」型下拉（如账号页的模型切换）在按钮与每个选项前挂一个徽标；
-  // 不传则退化成纯文字下拉，既有调用方无需改动。
-  options: { value: T; label: string; icon?: ReactElement }[];
+  // muted 可选：把该选项显示为「次要/未就绪」（如未安装的 agent）——置灰、沉底由调用方排序。
+  // 都不传则退化成纯文字下拉，既有调用方无需改动。
+  options: { value: T; label: string; icon?: ReactElement; muted?: boolean }[];
   onChange: (v: T) => void;
 }) {
   const { open, pos, ref, btnRef, toggle, setOpen } = usePopup(options.length);
@@ -164,7 +165,7 @@ export function Dropdown<T extends string | number>({
               role="option"
               aria-selected={o.value === value}
               key={o.value}
-              className={"dd-item" + (o.value === value ? " sel" : "")}
+              className={"dd-item" + (o.value === value ? " sel" : "") + (o.muted ? " muted" : "")}
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
               <span className="dd-val">

@@ -1294,6 +1294,9 @@ html, body {
 }
 .dd-item:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
 .dd-item.sel { color: var(--cc-accent-text); }
+/* 次要项（如未安装的 agent）：徽标与文字整体变淡，但仍可点（点进去就是安装入口）。 */
+.dd-item.muted { opacity: 0.5; }
+.dd-item.muted:hover { opacity: 0.85; }
 
 .sec-hint { font-size: 12px; color: var(--cc-text-faint); margin-top: 14px; padding-left: 2px; opacity: 0.75; }
 /* 保存被后端拒绝的原因（如代理地址非法）：必须比普通 hint 显眼，否则用户只会看到输入框弹回去而不知为何。 */

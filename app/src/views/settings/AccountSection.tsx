@@ -953,11 +953,19 @@ export function AccountSection() {
   useEffect(() => { loadAccounts(); }, []);
 
   // 检测中（agents===null）先不渲染，避免下拉框空跳一帧。
-  const list = agents ?? [];
-  if (list.length === 0) return null;
+  const rawList = agents ?? [];
+  if (rawList.length === 0) return null;
 
-  // 有效选中项：记住的那个若仍在名单里就用它，否则回退到首个「已安装」的、再退到第一个。
-  // 派生而非用 effect 同步，省一次额外渲染、也不会在 agents 到达前闪一下空标签。
+  // 下拉里**已安装的排前面**，未安装的沉底——用户多半只装了一两个，没装的不该混在中间碍事。
+  // 用分区而非 sort：分区天然稳定，同组内保持后端注册顺序，不依赖引擎的 sort 稳定性。
+  const list = [
+    ...rawList.filter((a) => a.installed),
+    ...rawList.filter((a) => !a.installed),
+  ];
+
+  // 默认选中项：优先用记住的那个；否则选**首个已安装**的（沉底的没装的不该被默认选中）；
+  // 一个都没装才退到第一个。只依赖 installed（同步可得），不掺登录态（异步）——否则账号加载完
+  // 默认项会跳变，正显示的卡片会莫名切换。
   const eff =
     (selectedAgent && list.some((a) => a.id === selectedAgent) ? selectedAgent : null) ??
     list.find((a) => a.installed)?.id ??
@@ -980,7 +988,8 @@ export function AccountSection() {
                 <Icon />
               </span>
             );
-            return { value: a.id, label: a.display_name, icon };
+            // 未安装的置灰：仍可选（点进去就是安装入口），但一眼看得出「还没配」。
+            return { value: a.id, label: a.display_name, icon, muted: !a.installed };
           })}
           onChange={pickAgent}
         />
