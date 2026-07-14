@@ -1922,12 +1922,14 @@ html, body {
 :root[data-sticker-style="flat"][data-theme="light"] .stk-uval {
   text-shadow: none;
 }
-/* 吸边缩略条：去外投影/内高光；LED 圆点去顶部高光 */
+/* 吸边缩略条：去外投影/内高光。
+   LED 圆点这里**什么都不做**：它的基础样式本就只有一个纯色背景（.cstrip-running/.cstrip-waiting），
+   没有高光可去。此处曾写着「去顶部高光」，实际却给圆点**加**了一圈 0.5px 暗环——注释与代码相反，
+   扁平风反倒比立体风多了个描边。扁平的定义就是纯色面，圆点保持素圆即可。 */
 :root[data-sticker-style="flat"] .cstrip {
   box-shadow: none;
   border: 1px solid var(--cc-border);
 }
-:root[data-sticker-style="flat"] .cstrip-dot { box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25); }
 
 /* ===== 全局自定义提示框（替代原生 title）：主题表面色软框，圆角 + 细描边 + 柔阴影 + 淡入。
    由 Tooltip.tsx 控制位置，position:fixed 穿透 overflow。底色取不透明表面（同下拉菜单 .dd-menu），
