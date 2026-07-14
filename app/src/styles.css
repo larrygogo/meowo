@@ -1803,8 +1803,22 @@ html, body {
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
-/* 能力「不支持」的低调告知：比正文淡，够读到即可——它是背景说明，不是错误。 */
-.provider-cap-note { font-size: 11px; color: var(--cc-text-faint); padding: 8px 2px 2px; }
+/* 能力「不支持」的低调告知：一个带信息图标的小胶囊，读作「说明」而非漏排版的浮空灰字。
+   它是背景信息、不是错误，故用中性 surface 底而非警示色。 */
+.provider-cap-note {
+  display: inline-flex; /* 只占内容宽的胶囊，不撑满整行 */
+  align-items: center;
+  gap: 6px;
+  /* 左右 16px 与卡片其它内容对齐（这行是卡片的直接子元素、无 padding 容器包裹）；底部留白收口。 */
+  margin: 4px 16px 16px;
+  padding: 5px 10px 5px 8px;
+  border-radius: 999px;
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-border);
+  font-size: 11px;
+  color: var(--cc-text-dim);
+}
+.provider-cap-note-ico { flex: none; opacity: 0.7; }
 
 /* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
 .usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }

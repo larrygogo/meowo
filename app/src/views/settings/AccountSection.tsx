@@ -576,7 +576,12 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
           只在已装时显示——没装谈不上能力。 */}
       {isInstalled && !supportsContext && (
         <div className="provider-cap-note" data-testid={"agent-context-unsupported-" + provider}>
-          {t.account.contextUnsupported}
+          <svg className="provider-cap-note-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9.5" />
+            <path d="M12 11v5" />
+            <path d="M12 7.5h.01" />
+          </svg>
+          <span>{t.account.contextUnsupported}</span>
         </div>
       )}
 
