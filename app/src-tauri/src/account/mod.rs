@@ -68,12 +68,18 @@ pub fn account_cap(id: AgentId) -> Option<&'static dyn AccountCap> {
 ///
 /// 账号与用量一律按活跃 profile 读——切了账号，卡片上显示的就该是那个账号的邮箱与额度。
 pub fn active_installation(id: AgentId) -> Option<meowo_agent::Installation> {
-    if let Some(pid) = crate::profile::active_id(id.as_str()) {
-        if let Some(inst) = crate::profile::installation_of(id, &pid) {
-            return Some(inst);
-        }
+    let profile = crate::profile::active_id(id.as_str());
+    installation_for_profile(id, profile.as_deref())
+}
+
+fn installation_for_profile(
+    id: AgentId,
+    profile: Option<&str>,
+) -> Option<meowo_agent::Installation> {
+    match profile {
+        Some(profile) => crate::profile::installation_of(id, profile),
+        None => meowo_agent::by_id(id.as_str())?.resolve(),
     }
-    meowo_agent::by_id(id.as_str())?.resolve()
 }
 
 /// 读**指定实况**的账号信息（只读本地，不联网）。profile 列表逐个读登录态时用它。
@@ -145,11 +151,16 @@ pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
     }
     // 端口按 agent 绑定：代理是 per-agent 的（claude 走代理、kimi 直连是常态）。
     let p = crate::ports::HostPorts::for_agent(id);
-    // 用量按**活跃 profile** 拉——不同账号的额度当然不是一回事。
-    let inst = active_installation(id)?;
+    // 固定本次请求对应的 profile。不能在取实况和完成请求时分别读“当前账号”：用户可能在
+    // 网络请求途中切换账号，旧请求随后回写就会让新账号顶着旧账号的额度。
+    let requested_profile = crate::profile::active_id(id.as_str());
+    let inst = installation_for_profile(id, requested_profile.as_deref())?;
     match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
         Ok(u) => {
-            write_cached_usage(id, &u);
+            if !write_cached_usage_for_profile(id, &requested_profile, &u) {
+                eprintln!("Meowo usage[{id}]: 刷新期间账号已切换，丢弃旧账号结果");
+                return None;
+            }
             Some(u)
         }
         Err(e) => {
@@ -223,12 +234,31 @@ pub fn clear_cached_usage(id: AgentId) {
 }
 
 /// 把某 agent 的用量写入缓存（providers 分键合并写入，唯一写入方）。
-pub fn write_cached_usage(id: AgentId, usage: &ProviderUsage) {
+/// 仅当当前活跃 profile 仍等于请求发起时的快照才写缓存。检查与写入共用缓存锁：切换账号
+/// 会在更新 settings 后调用 `clear_cached_usage` 并取得同一把锁，因此不存在“检查通过、切换清空、
+/// 随后旧请求又写回”的窗口。
+fn write_cached_usage_for_profile(
+    id: AgentId,
+    requested_profile: &Option<String>,
+    usage: &ProviderUsage,
+) -> bool {
+    let _guard = USAGE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if !same_profile(requested_profile, &crate::profile::active_id(id.as_str())) {
+        return false;
+    }
+    write_cached_usage_unlocked(id, usage);
+    true
+}
+
+fn same_profile(requested: &Option<String>, current: &Option<String>) -> bool {
+    requested == current
+}
+
+fn write_cached_usage_unlocked(id: AgentId, usage: &ProviderUsage) {
     let Some(p) = usage_cache_path() else { return };
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _guard = USAGE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // 读现有文件合并：只更新本 agent 条目，其它 agent 的缓存原样保留。
     let mut root = read_json(&p).unwrap_or_else(|| serde_json::json!({}));
     let Some(obj) = root.as_object_mut() else {
@@ -299,6 +329,17 @@ mod tests {
         assert_eq!(UsageKind::from_str("nonexistent_kind"), UsageKind::Other);
         assert_eq!(UsageKind::from_str(""), UsageKind::Other);
         assert_eq!(UsageKind::from_str("FIVE_HOUR"), UsageKind::Other); // 大小写不同 → Other
+    }
+
+    #[test]
+    fn usage_result_only_belongs_to_the_profile_that_started_the_request() {
+        assert!(same_profile(&Some("work".into()), &Some("work".into())));
+        assert!(same_profile(&None, &None));
+        assert!(!same_profile(
+            &Some("work".into()),
+            &Some("personal".into())
+        ));
+        assert!(!same_profile(&Some("work".into()), &None));
     }
 
     /// 账号是**可选**能力槽（不声明它的 agent，卡片不显示登录态、也不给登录入口），但当前五家

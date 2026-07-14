@@ -78,6 +78,20 @@ pub(crate) fn active_id(agent: &str) -> Option<String> {
     active_id_in(&s, agent)
 }
 
+/// profile 仍在设置列表中且私有根目录存在。会话恢复前用它拦住“账号已删除、DB 里的旧会话仍
+/// 留着 profile id”的情况，避免 agent 在一个空目录里重建出设置页看不见的幽灵账号。
+pub(crate) fn exists(agent: &str, id: &str) -> bool {
+    let settings = crate::settings::load_settings();
+    profile_is_registered_in(&settings, agent, id) && profile_root(agent, id).is_dir()
+}
+
+fn profile_is_registered_in(settings: &crate::settings::Settings, agent: &str, id: &str) -> bool {
+    settings
+        .profiles
+        .get(agent)
+        .is_some_and(|profiles| profiles.iter().any(|profile| profile.id == id))
+}
+
 /// 同上，但从给定的 settings 里取（避免重复读盘）。
 fn active_id_in(s: &crate::settings::Settings, agent: &str) -> Option<String> {
     let id = s.active_profile.get(agent)?;
@@ -445,6 +459,21 @@ mod tests {
 
         // 压根没有 profile 的 agent。
         assert_eq!(active_id_in(&s, "codex"), None);
+    }
+
+    #[test]
+    fn profile_registration_rejects_deleted_and_cross_agent_ids() {
+        let mut settings = crate::settings::Settings::default();
+        settings.profiles.insert(
+            "claude".into(),
+            vec![Profile {
+                id: "work".into(),
+                name: "Work".into(),
+            }],
+        );
+        assert!(profile_is_registered_in(&settings, "claude", "work"));
+        assert!(!profile_is_registered_in(&settings, "claude", "deleted"));
+        assert!(!profile_is_registered_in(&settings, "codex", "work"));
     }
 
     /// 默认账号**不注入任何环境变量**——这是「没建 profile 的用户零感知」的全部依据。

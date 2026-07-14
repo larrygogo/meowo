@@ -16,6 +16,7 @@ describe("login api", () => {
       provider: "claude",
       terminal: "wt",
       profile: null, // 省略 = 当前活跃账号
+      useActive: true,
     });
   });
 
@@ -30,6 +31,7 @@ describe("login api", () => {
       provider: "claude",
       terminal: "wt",
       profile: "work",
+      useActive: false,
     });
   });
 
@@ -40,6 +42,18 @@ describe("login api", () => {
       provider: "kimi",
       terminal: undefined,
       profile: null,
+      useActive: true,
+    });
+  });
+
+  it("loginAgent 显式 null 表示默认账号，不跟随当前活跃账号", () => {
+    invokeMock.mockResolvedValue(undefined);
+    loginAgent("claude", undefined, null);
+    expect(invokeMock).toHaveBeenCalledWith("login_agent", {
+      provider: "claude",
+      terminal: undefined,
+      profile: null,
+      useActive: false,
     });
   });
 

@@ -471,6 +471,40 @@ fn profile_of_session(session_id: &str) -> Option<String> {
     store.session_profile(sid).ok().flatten()
 }
 
+fn ensure_session_profile_available(provider: &str, session_id: &str) -> Result<(), String> {
+    let Some(profile) = profile_of_session(session_id) else {
+        return Ok(());
+    };
+    let agent = meowo_agent::resolve(Some(provider)).ok_or("未知 agent")?;
+    validate_session_profile_reference(
+        Some(&profile),
+        crate::profile::exists(agent.id().as_str(), &profile),
+    )
+}
+
+fn validate_session_profile_reference(profile: Option<&str>, exists: bool) -> Result<(), String> {
+    if profile.is_none() || exists {
+        Ok(())
+    } else {
+        let profile = profile.unwrap_or_default();
+        Err(format!("该会话所属账号“{profile}”已被删除，无法恢复"))
+    }
+}
+
+#[cfg(test)]
+mod session_profile_tests {
+    use super::validate_session_profile_reference;
+
+    #[test]
+    fn deleted_profile_blocks_resume_but_default_profile_does_not() {
+        assert!(validate_session_profile_reference(None, false).is_ok());
+        assert!(validate_session_profile_reference(Some("work"), true).is_ok());
+        let error = validate_session_profile_reference(Some("deleted"), false).unwrap_err();
+        assert!(error.contains("deleted"));
+        assert!(error.contains("无法恢复"));
+    }
+}
+
 /// 同上，但指定账号（profile）。`profile = None` → 用该 agent **当前活跃**的账号。
 pub(crate) fn launch_env_for_profile(
     provider: Option<&str>,
@@ -1141,6 +1175,7 @@ pub(crate) fn resume_session(
     if !is_safe_id(&session_id) {
         return Err("无效 session_id".into());
     }
+    ensure_session_profile_available(&provider, &session_id)?;
     #[cfg(target_os = "windows")]
     {
         // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
@@ -1285,6 +1320,8 @@ pub(crate) async fn restart_session_supported(
         if resume.is_empty() {
             return Err("该 Agent 不支持恢复会话".into());
         }
+        // 账号目录可能已被删除。必须在终止仍可用的原进程之前拦住，否则恢复失败还会顺手杀掉会话。
+        ensure_session_profile_available(&provider, &session_id)?;
         terminate_agent_for_restart(pid)?;
 
         // 原进程确认结束后才复活 DB 状态；恢复计划沿用终止前已验证的结果。

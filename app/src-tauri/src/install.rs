@@ -201,7 +201,9 @@ pub(crate) fn watch_login(
 /// 可执行只在 PATH 上（`LaunchCandidate::OnPath`，如 fnm 管理的 codex）时回退裸名是刻意的
 /// ——那类路径带版本/进程号无法静态声明，且 PATH 上的往往是 shim，固化它会绕过其环境准备。
 ///
-/// `profile` = 登进**哪个账号**（`None` = 当前活跃账号）。这个参数是多账号能成立的关键：登录会把
+/// `profile` = 显式指定登进**哪个账号**；`use_active` 为 true 时由后端解析当前活跃账号。
+/// 这个区分是必要的：`profile = None, use_active = false` 明确表示默认账号，而顶部快捷入口传
+/// `use_active = true`。登录会把
 /// 凭据写进**那个 profile 的**目录，而这只由注入的隔离变量（`CLAUDE_CONFIG_DIR` 等）决定。漏掉它，
 /// 新账号的登录就会把默认账号的凭据覆盖掉——用户以为自己加了个账号，其实是把原来那个换掉了。
 #[tauri::command]
@@ -210,10 +212,15 @@ pub(crate) async fn login_agent(
     provider: String,
     terminal: Option<String>,
     profile: Option<String>,
+    use_active: bool,
 ) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
                                              // 登录写的是**目标 profile** 的凭据，故实况也按它取（默认账号 → agent 自己的目录）。
+    let active = use_active
+        .then(|| crate::profile::active_id(key.as_str()))
+        .flatten();
+    let profile = select_login_profile(profile, use_active, active);
     let inst = match profile.as_deref() {
         Some(p) => crate::profile::installation_of(key, p).ok_or("解析不到该账号的目录")?,
         None => install_for(key).ok_or("解析不到该 agent 的安装实况")?,
@@ -238,6 +245,18 @@ pub(crate) async fn login_agent(
     }
     watch_login(app, key, provider, profile);
     Ok(())
+}
+
+fn select_login_profile(
+    explicit: Option<String>,
+    use_active: bool,
+    active: Option<String>,
+) -> Option<String> {
+    if use_active {
+        active
+    } else {
+        explicit
+    }
 }
 
 /// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
@@ -325,7 +344,7 @@ fn remove_credentials_file(path: &std::path::Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod logout_tests {
-    use super::{remove_credentials_file, stderr_excerpt};
+    use super::{remove_credentials_file, select_login_profile, stderr_excerpt};
 
     #[test]
     fn logout_stderr_excerpt_is_trimmed_and_bounded() {
@@ -354,6 +373,23 @@ mod logout_tests {
         assert!(!credentials.exists());
         assert!(config.exists());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn login_target_distinguishes_active_from_explicit_default() {
+        assert_eq!(
+            select_login_profile(None, true, Some("work".into())).as_deref(),
+            Some("work")
+        );
+        assert_eq!(
+            select_login_profile(None, false, Some("work".into())),
+            None,
+            "显式默认账号不能被当前活跃 profile 替换"
+        );
+        assert_eq!(
+            select_login_profile(Some("personal".into()), false, Some("work".into())).as_deref(),
+            Some("personal")
+        );
     }
 }
 
