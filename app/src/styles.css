@@ -2308,6 +2308,13 @@ select.ns-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 账号名 + 套餐徽章同一行；名字长了先省略它，徽章不被挤掉。 */
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .profile-badge {
   flex: none;
   font-size: calc(10px * var(--cc-ui));
@@ -2316,6 +2323,11 @@ select.ns-input {
   background: var(--cc-surface-hover);
   color: var(--cc-text-dim);
   white-space: nowrap;
+}
+/* 套餐徽章：与卡片标题那排的 provider-badge-plan 同色，只是尺寸随账号行。 */
+.profile-badge-plan {
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
 }
 .profile-add-row { display: flex; align-items: center; gap: 6px; }
 .profile-add-input {

@@ -691,16 +691,13 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
 
       {rows.map((p) => {
         const key = p.id ?? DEFAULT_KEY;
-        // 登录态：有账号信息就是登录了。邮箱 > 套餐 > 登录方式标签（codex 的 "API Key"、
-        // opencode 的 "anthropic (oauth)"）。
+        // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
+        // opencode 的 "anthropic (oauth)"、kimi 的 userId 短码）。
         //
-        // 套餐排在标签前，是为了 kimi：它**给不出邮箱**（凭据、JWT、本地文件里都没有），只剩一串
-        // 内部 userId 当标签——挂在账号名下面像一行乱码。会员等级（Allegretto…）才是这一行该说的话。
-        // 上面卡片头部不走这条链（那里等级另有徽章，走这条链会一行一徽章重复两遍）。
+        // 描述行说的是**这是哪个账号**，套餐不在此列——它是徽章（见下），与卡片标题那排一致。
         const desc =
           p.account?.email ??
           p.account?.display_name ??
-          p.account?.plan ??
           p.account?.login_label ??
           t.account.notLoggedIn;
         // 正在改名的那一行：整行让位给输入框（其余按钮此时无从谈起）。
@@ -747,7 +744,14 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
               disabled={busy || p.active}
               onClick={() => run(() => setActiveProfile(provider, p.id))}
             >
-              <span className="profile-name">{p.name || t.account.defaultProfile}</span>
+              <span className="profile-name-row">
+                <span className="profile-name">{p.name || t.account.defaultProfile}</span>
+                {/* 套餐/会员等级：徽章，不写进描述行——那一行是「这是哪个账号」。
+                    kimi 的等级由用量接口捎回（本地读不到），故只有活跃账号拿得到。 */}
+                {p.account?.plan && (
+                  <span className="profile-badge profile-badge-plan">{p.account.plan}</span>
+                )}
+              </span>
               <span className="profile-desc" title={desc}>
                 {desc}
               </span>

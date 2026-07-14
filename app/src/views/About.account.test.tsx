@@ -653,13 +653,14 @@ describe("AccountSection 多账号", () => {
   });
 
   /**
-   * kimi **给不出邮箱**（凭据、JWT、本地文件里都没有），只剩一串内部 userId 当标签——挂在账号名
-   * 下面就是一行乱码。它的会员等级（Allegretto…）由用量接口捎回、后端合并进 `plan`，账号行要用它。
+   * 会员等级是**徽章**，不是描述行。
    *
-   * 所以描述链里 `plan` 必须排在 `login_label` 前面。取不到等级时才退回 userId：那仍比「已登录」
-   * 强——多账号下至少还能分清哪行是哪个账号。
+   * 描述行说的是「这是哪个账号」（邮箱；kimi 给不出邮箱，退到 userId 短码）。把等级写进那一行，
+   * 账号看起来就像叫「Allegretto」——而且两个同档账号会长得一模一样。
+   *
+   * 等级由用量接口捎回（kimi 本地读不到），所以只有活跃账号拿得到，非活跃行没有徽章。
    */
-  it("kimi 账号行显示会员等级；等级未知时才退回 userId", async () => {
+  it("kimi 的会员等级是徽章，描述行仍是账号标识", async () => {
     api.listAgents.mockResolvedValue([
       { id: "kimi", display_name: "Kimi Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
     ]);
@@ -670,11 +671,14 @@ describe("AccountSection 多账号", () => {
     render(<AccountSection />);
 
     const active = await screen.findByTestId("profile-kimi-__default__");
-    expect(active.textContent).toContain("Allegretto");
-    expect(active.textContent).not.toContain("cnta…5a4g");
+    expect(active.querySelector(".profile-badge-plan")?.textContent).toBe("Allegretto");
+    // 描述行不被等级顶掉：它得说清这是哪个账号。
+    expect(active.querySelector(".profile-desc")?.textContent).toBe("cnta…5a4g");
 
-    // 非活跃行拿不到等级（用量缓存不按 profile 分键，只讲活跃账号的事）→ 退回 userId。
-    expect(screen.getByTestId("profile-kimi-alt").textContent).toContain("d0ah…9x2k");
+    // 非活跃行拿不到等级（用量缓存不按 profile 分键，只讲活跃账号的事）→ 无徽章，但仍有标识。
+    const alt = screen.getByTestId("profile-kimi-alt");
+    expect(alt.querySelector(".profile-badge-plan")).toBeNull();
+    expect(alt.querySelector(".profile-desc")?.textContent).toBe("d0ah…9x2k");
   });
 });
 
