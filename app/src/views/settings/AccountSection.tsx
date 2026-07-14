@@ -36,7 +36,7 @@ import {
 import { agentAssets } from "../../providers";
 import { useT, repairFailMessage } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
-import { Switch, ActionMenu } from "./widgets";
+import { Switch, ActionMenu, Dropdown } from "./widgets";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
 
@@ -868,9 +868,22 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
   );
 }
 
+/** 顶部模型切换记住上次选择的 localStorage 键。 */
+const SELECTED_AGENT_KEY = "meowo-account-agent";
+
 export function AccountSection() {
+  const t = useT();
   // 读取/写入应用设置（用于贴纸配额开关）
   const [settings, patchSettings] = useSettingsState();
+  // 顶部下拉选中的 agent id。模型一多，全部竖排要滚半天——改为一次只看一张卡。
+  // 记进 localStorage，跨次打开设置页仍停在上次那个。
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(() => {
+    try { return localStorage.getItem(SELECTED_AGENT_KEY); } catch { return null; }
+  });
+  const pickAgent = (id: string) => {
+    setSelectedAgent(id);
+    try { localStorage.setItem(SELECTED_AGENT_KEY, id); } catch { /* 隐私模式禁写：仅失去记忆，不影响切换 */ }
+  };
   const [payloads, setPayloads] = useState<ProviderAccountPayload[]>([]);
   // usageMap: provider key → 最新 ProviderUsage（缓存先填，联网值覆盖）
   const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
@@ -940,34 +953,49 @@ export function AccountSection() {
   };
   useEffect(() => { loadAccounts(); }, []);
 
-  // 以后端下发的 agent 名单为骨架遍历（而非只 getAccounts 返回的有账号项），
-  // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
+  // 检测中（agents===null）先不渲染，避免下拉框空跳一帧。
+  const list = agents ?? [];
+  if (list.length === 0) return null;
+
+  // 有效选中项：记住的那个若仍在名单里就用它，否则回退到首个「已安装」的、再退到第一个。
+  // 派生而非用 effect 同步，省一次额外渲染、也不会在 agents 到达前闪一下空标签。
+  const eff =
+    (selectedAgent && list.some((a) => a.id === selectedAgent) ? selectedAgent : null) ??
+    list.find((a) => a.installed)?.id ??
+    list[0].id;
+  const cur = list.find((a) => a.id === eff)!;
+  const payload = payloads.find((x) => x.provider === eff) ?? null;
+
+  // 顶部下拉切换 + 仅渲染选中的那一张卡（每张卡按 installed/payload 自渲染未装/未登录/已登录三态）。
   return (
     <>
-      {(agents ?? []).map(({ id: p, display_name, supports_account, supports_profiles, relay }) => {
-        const payload = payloads.find((x) => x.provider === p) ?? null;
-        return (
-          <ProviderCard
-            key={p}
-            provider={p}
-            name={display_name}
-            installed={installed === null ? null : installed.has(p)}
-            supportsAccount={supports_account}
-            supportsProfiles={supports_profiles}
-            relay={relay}
-            payload={payload}
-            usage={usageMap[p] ?? null}
-            err={errMap[p] ?? null}
-            onRefresh={() => doRefresh(p)}
-            onInstalled={refreshInstalled}
-            onLoggedIn={loadAccounts}
-            refreshing={refreshingSet.has(p)}
-            settings={settings}
-            patchSettings={patchSettings}
-            onToggleQuota={() => toggleQuotaProvider(p)}
-          />
-        );
-      })}
+      <div className="account-agent-switch">
+        <span className="account-agent-switch-label">{t.account.agentPicker}</span>
+        <Dropdown
+          value={eff}
+          options={list.map((a) => ({ value: a.id, label: a.display_name }))}
+          onChange={pickAgent}
+        />
+      </div>
+      <ProviderCard
+        key={cur.id}
+        provider={cur.id}
+        name={cur.display_name}
+        installed={installed === null ? null : installed.has(cur.id)}
+        supportsAccount={cur.supports_account}
+        supportsProfiles={cur.supports_profiles}
+        relay={cur.relay}
+        payload={payload}
+        usage={usageMap[cur.id] ?? null}
+        err={errMap[cur.id] ?? null}
+        onRefresh={() => doRefresh(cur.id)}
+        onInstalled={refreshInstalled}
+        onLoggedIn={loadAccounts}
+        refreshing={refreshingSet.has(cur.id)}
+        settings={settings}
+        patchSettings={patchSettings}
+        onToggleQuota={() => toggleQuotaProvider(cur.id)}
+      />
     </>
   );
 }

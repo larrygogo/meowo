@@ -233,6 +233,8 @@ export const en: Dict = {
     notInstalled: "Not installed",
     notLoggedIn: "Not signed in",
     notLoggedInHint: 'Installed but not signed in — click "Sign in" to authorize in a terminal',
+    // Top agent switcher: with many agents, one stacked list means a lot of scrolling.
+    agentPicker: "Agent",
     // Multi-account
     profiles: "Accounts",
     defaultProfile: "Default account",

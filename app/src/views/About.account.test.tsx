@@ -49,12 +49,24 @@ const fireDone = (provider: string, ok: boolean, logPath: string | null = null) 
 const fireLogin = (provider: string, ok: boolean) =>
   act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
 
+/**
+ * 顶部模型下拉切到某个 agent（按展示名）——列表现在一次只渲染选中的那一张卡（agent 一多，全部
+ * 竖排要滚半天）。默认选中首个已安装的（beforeEach 里是 claude），要断言别家就先切过去。
+ */
+async function selectAgent(name: string) {
+  await waitFor(() => expect(document.querySelector(".account-agent-switch .dd-btn")).toBeTruthy());
+  fireEvent.click(document.querySelector(".account-agent-switch .dd-btn") as HTMLElement);
+  fireEvent.click(await screen.findByRole("option", { name }));
+}
+
 import { AccountSection } from "./settings/AccountSection";
 import { modelMenuPlacement } from "./settings/RelayAccess";
 import { descriptors } from "../test/agents";
 import { zh } from "../i18n/zh";
 
 beforeEach(() => {
+  // 顶部模型切换记进 localStorage：不清的话，上个用例选过的 agent 会成为下个用例的默认选中卡。
+  localStorage.clear();
   Object.values(api).forEach((m) => m.mockReset());
   api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true }]);
   api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
@@ -90,9 +102,12 @@ describe("AccountSection agent 卡", () => {
       ),
     );
     render(<AccountSection />);
+    // claude（默认选中）relay 置空 → 不给中转入口。
     await screen.findByTestId("agent-card-claude");
     expect(screen.queryByTestId("agent-access-claude")).toBeNull();
-    expect(screen.getByTestId("agent-access-codex")).toBeTruthy();
+    // codex 声明了中转 → 切过去应有入口。
+    await selectAgent("Codex");
+    expect(await screen.findByTestId("agent-access-codex")).toBeTruthy();
   });
 
   it("模型菜单在下方空间不足时自动向上展开", () => {
@@ -108,20 +123,34 @@ describe("AccountSection agent 卡", () => {
     });
   });
 
-  it("三个 agent 都渲染，未装的标未安装 + 安装按钮", async () => {
+  it("下拉列出全部 agent，一次只渲染选中的那张卡；未装的标未安装 + 安装按钮", async () => {
     render(<AccountSection />);
-    await waitFor(() => expect(screen.getByTestId("agent-card-kimi")).toBeTruthy());
-    expect(screen.getByTestId("agent-card-claude")).toBeTruthy();
-    expect(screen.getByTestId("agent-card-codex")).toBeTruthy();
-    // kimi 未装：availableAgents() resolve 后才出现安装按钮（首帧检测中不渲染，findByTestId 等待）
+    // 默认渲染首个已安装的（claude），别家的卡此刻不在 DOM 里——这正是「不用滚」的由来。
+    await screen.findByTestId("agent-card-claude");
+    expect(screen.queryByTestId("agent-card-codex")).toBeNull();
+    expect(screen.queryByTestId("agent-card-kimi")).toBeNull();
+
+    // 下拉里五家都在（含未装的 kimi）。
+    fireEvent.click(document.querySelector(".account-agent-switch .dd-btn") as HTMLElement);
+    for (const name of ["Claude Code", "Codex", "Kimi Code", "Gemini CLI", "OpenCode"]) {
+      expect(await screen.findByRole("option", { name })).toBeTruthy();
+    }
+
+    // 切到 kimi：它未装 → 卡片带安装按钮；此时 claude 卡已从 DOM 撤下。
+    fireEvent.click(screen.getByRole("option", { name: "Kimi Code" }));
     expect(await screen.findByTestId("agent-install-kimi")).toBeTruthy();
-    // 已装的（claude/codex）无安装按钮
+    expect(screen.queryByTestId("agent-card-claude")).toBeNull();
+
+    // 切回 claude：已装 → 无安装按钮。
+    await selectAgent("Claude Code");
+    expect(await screen.findByTestId("agent-card-claude")).toBeTruthy();
     expect(screen.queryByTestId("agent-install-claude")).toBeNull();
   });
 
   it("点安装调 installAgent", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(api.installAgent).toHaveBeenCalledWith("kimi"));
   });
@@ -129,6 +158,7 @@ describe("AccountSection agent 卡", () => {
   it("点安装进入安装中：转圈 + 本地化「安装中…」（不透传脚本英文）", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     // 安装中指示出现，且有非空本地化文案（不硬编码 i18n 串，避免 locale 依赖）
     const installing = await screen.findByTestId("agent-installing-kimi");
@@ -142,6 +172,7 @@ describe("AccountSection agent 卡", () => {
     // 初次未装 kimi；装完重查返回含 kimi
     api.listAgents.mockResolvedValueOnce(descriptors(["claude", "codex"])).mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
     fireDone("kimi", true);
@@ -152,6 +183,7 @@ describe("AccountSection agent 卡", () => {
   it("install-done 失败：退出安装中、显示重试按钮", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
     fireDone("kimi", false);
@@ -305,6 +337,7 @@ describe("AccountSection agent 卡", () => {
     });
     api.getRelaySecretStatus.mockResolvedValue({ claude: false, codex: false, kimi: true });
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     const card = await screen.findByTestId("agent-card-kimi");
     const relayChoice = Array.from(card.querySelectorAll('[role="radio"]')).find(
       (el) => el.textContent === zh.relay.title,
@@ -353,6 +386,7 @@ describe("AccountSection agent 卡", () => {
   it("install-done 失败：给出安装日志路径（有 logPath 时）", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     fireDone("kimi", false, "C:\\Users\\x\\.meowo\\install-kimi.log");
     const log = await screen.findByTestId("agent-install-log-kimi");
@@ -394,6 +428,7 @@ describe("AccountSection agent 卡", () => {
     const diag = "https://claude.ai/install.ps1 返回了 Cloudflare 人机校验页，而不是安装脚本。";
     api.installAgent.mockRejectedValue(diag);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     const errLine = await screen.findByTestId("agent-install-error-kimi");
     expect(errLine.textContent).toContain("Cloudflare");
@@ -405,6 +440,7 @@ describe("AccountSection agent 卡", () => {
   it("先被 CF 拦、重试后脚本跑起来又失败：诊断被清掉，改显示日志路径", async () => {
     api.installAgent.mockRejectedValueOnce("被 Cloudflare 人机校验拦截").mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(screen.getByTestId("agent-install-error-kimi").textContent).toContain("Cloudflare"));
 
@@ -417,6 +453,7 @@ describe("AccountSection agent 卡", () => {
   it("install-done 失败：显示本地化失败说明 + 重试按钮", async () => {
     api.installAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     await waitFor(() => expect(screen.getByTestId("agent-installing-kimi")).toBeTruthy());
     // 失败——错误行始终显示本地化 installFailed 文案
@@ -433,11 +470,15 @@ describe("AccountSection agent 卡", () => {
 describe("AccountSection 登录", () => {
   it("已装未登录才显示登录按钮；已登录/未装都不显示", async () => {
     render(<AccountSection />);
-    // codex 已装（availableAgents）但 getAccounts 没返回它 → account 为 null → 未登录。
-    expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
-    // claude 已装且有账号 → 已登录，无登录按钮。
+    // claude（默认选中）已装且有账号 → 已登录，无登录按钮。
+    await screen.findByTestId("agent-card-claude");
     expect(screen.queryByTestId("agent-login-claude")).toBeNull();
+    // codex 已装但 getAccounts 没返回它 → account 为 null → 未登录，给登录按钮。
+    await selectAgent("Codex");
+    expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
     // kimi 未装 → 该先安装，不给登录按钮。
+    await selectAgent("Kimi Code");
+    await screen.findByTestId("agent-install-kimi");
     expect(screen.queryByTestId("agent-login-kimi")).toBeNull();
   });
 
@@ -461,10 +502,12 @@ describe("AccountSection 登录", () => {
     render(<AccountSection />);
 
     // 对照：codex 有账号能力但没登录 → 照旧给按钮。
+    await selectAgent("Codex");
     expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
 
     // 已装，但没有账号概念 → 卡片在，登录按钮不在。
-    expect(screen.getByTestId("agent-card-noacct")).toBeTruthy();
+    await selectAgent("No Account");
+    expect(await screen.findByTestId("agent-card-noacct")).toBeTruthy();
     expect(screen.queryByTestId("agent-login-noacct")).toBeNull();
     // 也不该显示「未登录」——它没有「登录」这回事。
     expect(screen.queryByTestId("agent-desc-noacct")).toBeNull();
@@ -473,6 +516,7 @@ describe("AccountSection 登录", () => {
   it("点登录调 loginAgent 并进入等待态", async () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Codex");
     const btn = await screen.findByTestId("agent-login-codex");
     fireEvent.click(btn);
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("codex"));
@@ -485,6 +529,7 @@ describe("AccountSection 登录", () => {
   it("login-done 成功 → 重查账号（卡片可转已登录）", async () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Codex");
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
     const before = api.getAccounts.mock.calls.length;
@@ -501,6 +546,7 @@ describe("AccountSection 登录", () => {
   it("login-done 超时 → 落回可点 + 显示本地化提示（超时不是登录失败）", async () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Codex");
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
     fireLogin("codex", false);
@@ -514,6 +560,7 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     api.cancelLogin.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Codex");
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
 
@@ -532,6 +579,7 @@ describe("AccountSection 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     api.cancelLogin.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Codex");
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
     fireEvent.click(screen.getByTestId("agent-login-codex"));
@@ -563,6 +611,7 @@ describe("AccountSection 登录", () => {
     ]);
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    await selectAgent("Codex");
 
     // 未接入 → 提示条 + 修复按钮在。
     expect(await screen.findByTestId("agent-repair-hooks-codex")).toBeTruthy();
@@ -576,6 +625,7 @@ describe("AccountSection 登录", () => {
   it("拉起登录失败 → 落回可点 + 显示提示", async () => {
     api.loginAgent.mockRejectedValue(new Error("启动终端失败"));
     render(<AccountSection />);
+    await selectAgent("Codex");
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
     await waitFor(() => expect(screen.getByTestId("agent-login-error-codex")).toBeTruthy());
     expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(false);
@@ -586,13 +636,15 @@ describe("AccountSection 登录", () => {
     // 初次未装 kimi；装完重查返回含 kimi（此时 kimi 无账号 → 未登录）
     api.listAgents.mockResolvedValueOnce(descriptors(["claude", "codex"])).mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
     render(<AccountSection />);
+    await selectAgent("Kimi Code");
     fireEvent.click(await screen.findByTestId("agent-install-kimi"));
     fireDone("kimi", true);
     const loginBtn = await screen.findByTestId("agent-login-kimi");
     // 「装完 → 登录」串成一条链路：按钮升为 primary，而非埋在一堆次要按钮里。
     expect(loginBtn.className).toContain("provider-card-action-primary");
-    // 未经安装流程的 codex 则是普通次要按钮。
-    expect(screen.getByTestId("agent-login-codex").className).not.toContain("provider-card-action-primary");
+    // 未经安装流程的 codex 则是普通次要按钮（切过去看）。
+    await selectAgent("Codex");
+    expect((await screen.findByTestId("agent-login-codex")).className).not.toContain("provider-card-action-primary");
   });
 });
 
@@ -611,6 +663,7 @@ describe("AccountSection 多账号", () => {
     ]);
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
+    // claude 是默认选中卡，直接就在，不必切换。
 
     fireEvent.click(await screen.findByTestId("profile-login-claude-work"));
     await waitFor(() =>

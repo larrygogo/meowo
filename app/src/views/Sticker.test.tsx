@@ -703,8 +703,9 @@ describe("Sticker", () => {
     const { container } = render(<Sticker filter="all" data={[mk({ provider: "gemini" })]} />);
     const agent = container.querySelector(".stk-agent") as HTMLElement;
     await waitFor(() => expect(agent.getAttribute("data-tip")).toBe("Gemini CLI"));
-    // gemini 的 sparkle 是 path（兜底是裸 rect）。
-    expect(agent.querySelector("svg path")).toBeTruthy();
+    // gemini 用官方 aurora sparkle 位图（<img>）——而中性兜底是一个裸 <svg><rect>。
+    // 断言渲染了 img 即证明用的是自己的徽标，没落到兜底。
+    expect(agent.querySelector("img")).toBeTruthy();
   });
 
   it("搜索走后端：输入调用 onSearchChange，且不客户端过滤已加载数据", () => {
