@@ -385,8 +385,13 @@ pub struct ClaudeAccount;
 pub static ACCOUNT: ClaudeAccount = ClaudeAccount;
 
 impl AccountCap for ClaudeAccount {
-    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
-        // 账号信息在 ~/.claude.json，不碰凭据、不联网——登录轮询会高频调用本方法。
+    fn account(&self, inst: &Installation, ports: &Ports) -> Option<Account> {
+        // `.claude.json` 的账号资料在**退出登录后仍会留着**；必须同时存在凭据才算已登录。
+        // 这里只读本地文件/Keychain，不联网，仍可供登录轮询高频调用。
+        let credentials = read_credentials_root(inst, ports);
+        if oauth_credentials_missing(credentials.as_ref()) {
+            return None;
+        }
         read_account(inst).map(|a| Account {
             email: Some(a.email),
             display_name: Some(a.display_name),

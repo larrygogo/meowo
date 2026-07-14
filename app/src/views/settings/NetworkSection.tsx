@@ -29,7 +29,7 @@ import {
 } from "../../api";
 import { useT } from "../../i18n";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./state";
-import { Dropdown, Segmented } from "./widgets";
+import { Dropdown, Segmented, Switch } from "./widgets";
 
 /// 每个模型行的模式，比全局多一个「跟随默认」（= per_agent 里没有该条目）。
 type RowMode = ProxyMode | "follow";

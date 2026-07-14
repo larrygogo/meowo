@@ -163,6 +163,17 @@ impl Installation {
         Some(argv)
     }
 
+    /// 非交互式退出登录 argv。CLI 未声明登出入口时返回 None，由宿主按凭据来源安全清理。
+    pub fn logout_argv(&self) -> Option<Vec<String>> {
+        let args = self.auth?.logout_args;
+        if args.is_empty() {
+            return None;
+        }
+        let mut argv = self.launch_argv();
+        argv.extend(args.iter().map(|s| s.to_string()));
+        Some(argv)
+    }
+
     /// **可执行装了吗**——能启动/恢复会话。与 [`is_configured`](Self::is_configured) 是两回事：
     /// 卡片上「已安装」与「未检测到数据目录」曾同时出现，正是这两者被混用。
     pub fn is_launchable(&self) -> bool {
@@ -209,6 +220,7 @@ mod tests {
         refresh: None,
         default_base_url: "",
         login: Some(&["auth", "login"]),
+        logout_args: &["auth", "logout"],
     };
     /// 有鉴权但**无**登录入口（如凭据全由外部工具写入）。
     static AUTH_NO_LOGIN: AuthScheme = AuthScheme {
@@ -216,6 +228,7 @@ mod tests {
         refresh: None,
         default_base_url: "",
         login: None,
+        logout_args: &[],
     };
     /// **裸启动即登录**（gemini：没有登录子命令，跑它自己就会引导认证）。
     static AUTH_LOGIN_ON_LAUNCH: AuthScheme = AuthScheme {
@@ -223,6 +236,7 @@ mod tests {
         refresh: None,
         default_base_url: "",
         login: Some(&[]),
+        logout_args: &[],
     };
     /// 凭据不在 data_dir 底下（opencode：插件在配置目录，凭据在数据目录）。
     static AUTH_HOME_CREDS: AuthScheme = AuthScheme {
@@ -230,6 +244,7 @@ mod tests {
         refresh: None,
         default_base_url: "",
         login: Some(&["auth", "login"]),
+        logout_args: &[],
     };
 
     fn inst_with_auth(auth: Option<&'static AuthScheme>) -> Installation {
@@ -298,6 +313,15 @@ mod tests {
             inst.credentials_path(),
             Some(PathBuf::from("/nowhere").join("cred.json"))
         );
+    }
+
+    #[test]
+    fn logout_argv_uses_declared_noninteractive_subcommand() {
+        assert_eq!(
+            inst_with_auth(Some(&AUTH_WITH_LOGIN)).logout_argv(),
+            Some(vec!["x".to_string(), "auth".to_string(), "logout".to_string()])
+        );
+        assert_eq!(inst_with_auth(Some(&AUTH_NO_LOGIN)).logout_argv(), None);
     }
 
     #[test]

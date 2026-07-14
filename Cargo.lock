@@ -2239,6 +2239,7 @@ dependencies = [
  "tauri-winrt-notification",
  "uiautomation",
  "ureq",
+ "url",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
 ]

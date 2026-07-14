@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
+
+const events = vi.hoisted(() => ({
+  settingsChanged: null as null | ((event: { payload: any }) => void),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (name: string, cb: (event: { payload: any }) => void) => {
+    if (name === "settings-changed") events.settingsChanged = cb;
+    return Promise.resolve(() => {});
+  },
+}));
 
 const invokeMock = vi.hoisted(() =>
   vi.fn((cmd: string, _args?: unknown) => {
@@ -38,7 +48,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
 
-import { Sticker } from "./Sticker";
+import { relayEnabledSignature, Sticker } from "./Sticker";
 import { match } from "./sticker/helpers";
 import { EmptyState } from "./sticker/EmptyState";
 import { UsageScreen } from "./sticker/UsageScreen";
@@ -110,6 +120,7 @@ afterEach(() => {
 });
 beforeEach(() => {
   invokeMock.mockClear();
+  events.settingsChanged = null;
 });
 
 describe("断开会话不再催人交互", () => {
@@ -145,6 +156,29 @@ describe("断开会话不再催人交互", () => {
 });
 
 describe("Sticker", () => {
+  it("中转状态切换时立即重新读取账号配额状态", async () => {
+    render(<Sticker filter="all" data={[]} />);
+    await waitFor(() => expect(events.settingsChanged).not.toBeNull());
+    await waitFor(() => expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "get_accounts").length).toBe(1));
+
+    const officialSettings = {
+      archive_hide_days: 0, notifications_enabled: true, auto_update_enabled: true,
+      theme: "dark", opacity: 94, ui_scale: 100, resume_terminal: "wt", language: "auto",
+      terminal_open_mode: "card", card_menu_mode: "context", preview_enabled: true,
+      sticker_style: "elevated", sticker_color: "classic", sticker_quota_providers: ["claude"],
+      default_agent: "claude", proxy: { mode: "system", url: "", per_agent: {} },
+      relay: { per_agent: {} },
+    } as any;
+    act(() => events.settingsChanged?.({ payload: officialSettings }));
+    const relaySettings = {
+      ...officialSettings,
+      relay: { per_agent: { claude: { enabled: true, base_url: "https://relay/v1", model: "x", protocol: "", auth: "bearer" } } },
+    } as any;
+    expect(relayEnabledSignature(relaySettings)).toBe("claude");
+    act(() => events.settingsChanged?.({ payload: relaySettings }));
+    await waitFor(() => expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "get_accounts").length).toBe(2));
+  });
+
   it("用量选择在卸载重挂后保留（记住上次选择，找不到才退第一个）", () => {
     const usageMap: Record<string, ProviderUsage> = {
       claude: { lanes: [], note: null } as ProviderUsage,

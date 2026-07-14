@@ -48,6 +48,9 @@ static AUTH: AuthScheme = AuthScheme {
     refresh: None,
     default_base_url: "",
     login: Some(&[]),
+    // gemini 没有登出子命令（`gemini --help` 里只有 mcp / extensions / skills / hooks / gemma）
+    // → 宿主直接删凭据文件。
+    logout_args: &[],
 };
 
 /// 接线事件集，写的是 **Gemini 的**事件名（配置里必须如此），译回规范名见 [`Gemini::canonical_event`]。

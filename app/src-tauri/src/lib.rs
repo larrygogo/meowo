@@ -3,6 +3,7 @@ mod account;
 mod envpath;
 mod fsutil;
 mod ports;
+mod relay;
 // pub：集成测试 `tests/proxy_apply.rs` 要在**独立进程**里跑端到端写入（它会设 CLAUDE_CONFIG_DIR /
 // MEOWO_DB 这类进程级环境变量，与 lib 单测并行跑会互相串味）。
 #[cfg(target_os = "macos")]
@@ -26,7 +27,7 @@ mod window;
 // run() 的 generate_handler 以裸标识符登记这些命令，须在 crate 根作用域可见。
 use install::{
     add_agent_to_user_path, agent_path_gap, cancel_login, check_provider_hooks, install_agent,
-    login_agent, repair_provider_hooks,
+    login_agent, logout_agent, repair_provider_hooks,
 };
 use terminal::{
     focus_session, new_session, open_project_dir, restart_session_supported, resume_session,
@@ -57,6 +58,7 @@ pub(crate) use window::open_settings_window;
 use settings::{
     get_autostart, get_effective_proxy, get_settings, open_url, set_autostart, set_settings,
 };
+use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use snap::{
     cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
 };
@@ -799,8 +801,13 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
             .map(|p| account::ProviderAccountPayload {
                 provider: p.id().as_str().to_string(),
                 account: account::account_of(p.id()),
-                usage: account::read_cached_usage(p.id()),
+                usage: if settings::load_settings().relay.enabled(p.id()) {
+                    None
+                } else {
+                    account::read_cached_usage(p.id())
+                },
                 usage_supported: account::usage_supported(p.id()),
+                relay_enabled: settings::load_settings().relay.enabled(p.id()),
             })
             .collect()
     })
@@ -909,6 +916,8 @@ struct AgentDescriptor {
     /// 与「压根不支持多账号」在账号列表上长得一模一样（都只有一条），必须由后端如实说清，
     /// 否则会给一个点了必然报错的按钮。
     supports_profiles: bool,
+    /// 插件显式声明才存在；None 时前端不显示中转入口。
+    relay: Option<meowo_agent::RelayUi>,
 }
 
 /// 全部已注册 agent 及其本机安装状态。仿 available_terminals：检测廉价（PATH/文件查询），
@@ -918,13 +927,20 @@ async fn list_agents() -> Vec<AgentDescriptor> {
     tauri::async_runtime::spawn_blocking(|| {
         meowo_agent::all()
             .iter()
-            .map(|a| AgentDescriptor {
-                id: a.id().as_str().to_string(),
-                display_name: a.display_name().to_string(),
-                installed: a.is_installed(),
-                supports_proxy: a.proxy().is_some(),
-                supports_account: a.account().is_some(),
-                supports_profiles: a.profile().is_some(),
+            .map(|a| {
+                let relay = a.relay().and_then(|cap| {
+                    let installation = a.resolve()?;
+                    cap.supports_variant(installation.variant_tag).then(|| cap.ui())
+                });
+                AgentDescriptor {
+                    id: a.id().as_str().to_string(),
+                    display_name: a.display_name().to_string(),
+                    installed: a.is_installed(),
+                    supports_proxy: a.proxy().is_some(),
+                    supports_account: a.account().is_some(),
+                    supports_profiles: a.profile().is_some(),
+                    relay,
+                }
             })
             .collect::<Vec<_>>()
     })
@@ -1136,6 +1152,10 @@ pub fn run() {
             get_settings,
             set_settings,
             get_effective_proxy,
+            get_relay_secret_status,
+            get_relay_secrets,
+            list_relay_models,
+            set_relay_secret,
             check_update,
             download_update,
             install_downloaded_update,
@@ -1163,6 +1183,7 @@ pub fn run() {
             agent_path_gap,
             add_agent_to_user_path,
             login_agent,
+            logout_agent,
             cancel_login,
             check_provider_hooks,
             repair_provider_hooks,

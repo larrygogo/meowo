@@ -36,6 +36,7 @@ serde_json = { workspace = true }
 notify = { workspace = true }
 sysinfo = "0.32"
 percent-encoding = "2"
+url = "2"
 base64 = "0.22"
 # ureq 只服务 ports.rs 的 HttpPort 实现——插件层只认 trait，不依赖 HTTP 栈。
 # socks-proxy：SOCKS 支持在 ureq 是**编译期 feature**，不开的话 `socks5://` 代理能解析、

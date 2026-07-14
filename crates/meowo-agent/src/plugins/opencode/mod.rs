@@ -64,6 +64,10 @@ static AUTH: AuthScheme = AuthScheme {
     refresh: None,
     default_base_url: "",
     login: Some(&["auth", "login"]),
+    // `opencode auth logout` **是交互式的**（不带参数时让你从列表里选一个 provider），拿它去做
+    // 非交互执行只会卡住。故声明为空，由宿主直接删 auth.json——那恰好就是「登出全部 provider」，
+    // 正是这个按钮该有的语义。
+    logout_args: &[],
 };
 
 /// 桥接插件转发的事件集，**写的已经是规范名**（负载由我们构造，无需再译）。

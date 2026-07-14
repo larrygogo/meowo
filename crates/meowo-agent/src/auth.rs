@@ -60,4 +60,9 @@ pub struct AuthScheme {
     /// 这里曾经是个裸切片，空切片即「无入口」——于是 gemini 这种「裸启动即登录」的 agent 无从表达，
     /// 只能被判成没有登录入口，前端却仍旧亮出登录按钮，点下去只得到一句「拉起登录失败」。
     pub login: Option<&'static [&'static str]>,
+    /// 非交互式退出登录子命令。空切片表示 CLI 没有登出入口，宿主只能删除凭据文件。
+    ///
+    /// 与 [`login`](Self::login) 不同，这里**不需要**「裸启动即登出」这种形态——没有哪个 CLI 会
+    /// 把「启动自己」当成登出，故保持裸切片即可。
+    pub logout_args: &'static [&'static str],
 }

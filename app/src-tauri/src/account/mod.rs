@@ -53,6 +53,7 @@ pub struct ProviderAccountPayload {
     pub account: Option<Account>,
     pub usage: Option<ProviderUsage>,
     pub usage_supported: bool,
+    pub relay_enabled: bool,
 }
 
 // ═══ 能力取用 ═══
@@ -88,6 +89,10 @@ pub fn account_of(id: AgentId) -> Option<Account> {
 
 /// 该 agent 当前是否支持用量查询。
 pub fn usage_supported(id: AgentId) -> bool {
+    // 走中转时用量无从谈起（额度归中转的密钥所有者）。
+    if crate::settings::load_settings().relay.enabled(id) {
+        return false;
+    }
     let Some(inst) = active_installation(id) else {
         return false;
     };
@@ -102,6 +107,9 @@ pub fn usage_supported(id: AgentId) -> bool {
 ///
 /// 这段策略此前被三个 agent 各抄了一份；现在它只存在于这里，插件只负责「去 API 拿」。
 pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
+    if crate::settings::load_settings().relay.enabled(id) {
+        return None;
+    }
     if !force {
         return read_cached_usage(id);
     }

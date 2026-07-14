@@ -85,6 +85,8 @@ const AUTH_MODERN: AuthScheme = AuthScheme {
     // `kimi login`。config.toml 正是由它生成——故 MissingConfig::Fail(NeedLogin) 的提示可直接
     // 引导用户点登录（两者指向同一个动作）。
     login: Some(&["login"]),
+    // 当前 kimi-code CLI 没有 logout 子命令；宿主只删除下方声明的凭据文件。
+    logout_args: &[],
 };
 
 /// 旧 Python 版的凭据布局与新版相同（实测 `~/.kimi/credentials/kimi-code.json` 字段一致）。
@@ -166,6 +168,42 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
     socks_keys: &["ALL_PROXY"],
 };
 
+struct KimiRelay;
+static RELAY: KimiRelay = KimiRelay;
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_PROTOCOLS: [crate::RelayOption; 3] = [
+    crate::RelayOption { value: "kimi", label: "Kimi" },
+    crate::RelayOption { value: "anthropic", label: "Anthropic Messages" },
+    crate::RelayOption { value: "openai", label: "OpenAI Chat Completions" },
+];
+static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 3] = [
+    crate::RelaySuggestionGroup { protocol: "kimi", models: &["kimi-for-coding", "kimi-for-coding-highspeed"] },
+    crate::RelaySuggestionGroup { protocol: "anthropic", models: &["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"] },
+    crate::RelaySuggestionGroup { protocol: "openai", models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.4", "gpt-5.3-codex"] },
+];
+
+impl crate::RelayCap for KimiRelay {
+    fn ui(&self) -> crate::RelayUi {
+        crate::RelayUi { protocols: &RELAY_PROTOCOLS, auth_modes: &RELAY_AUTH, default_protocol: "kimi", default_auth: "bearer", suggestions: &RELAY_SUGGESTIONS }
+    }
+    fn supports_variant(&self, variant_tag: &str) -> bool { variant_tag != "legacy" }
+    fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
+        vec![
+            ("KIMI_MODEL_NAME".into(), config.model.trim().into()),
+            ("KIMI_MODEL_API_KEY".into(), key.into()),
+            ("KIMI_MODEL_BASE_URL".into(), config.base_url.trim().trim_end_matches('/').into()),
+            ("KIMI_MODEL_PROVIDER_TYPE".into(), config.protocol.into()),
+        ]
+    }
+    fn augment_argv(&self, _config: crate::RelayConfig<'_>, _has_secret: bool, argv: Vec<String>) -> Vec<String> { argv }
+    fn model_request(&self, config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
+        crate::RelayModelRequest {
+            auth: if config.protocol == "anthropic" { crate::RelayModelAuth::ApiKey } else { crate::RelayModelAuth::Bearer },
+            anthropic_version: config.protocol == "anthropic",
+        }
+    }
+}
+
 impl AgentPlugin for Kimi {
     fn id(&self) -> AgentId {
         id::KIMI
@@ -181,6 +219,9 @@ impl AgentPlugin for Kimi {
     }
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
         Some(&PROXY)
+    }
+    fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
+        Some(&RELAY)
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["-r"]

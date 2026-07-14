@@ -8,6 +8,11 @@ const NAMES: Record<string, string> = {
   gemini: "Gemini CLI",
   opencode: "OpenCode",
 };
+const RELAYS: Record<string, AgentDescriptor["relay"]> = {
+  claude: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }, { value: "api_key", label: "API Key (x-api-key)" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["claude-sonnet-5"] }] },
+  codex: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["gpt-5.4"] }] },
+  kimi: { protocols: [{ value: "kimi", label: "Kimi" }, { value: "anthropic", label: "Anthropic Messages" }, { value: "openai", label: "OpenAI Chat Completions" }], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "kimi", default_auth: "bearer", suggestions: [{ protocol: "kimi", models: ["kimi-for-coding"] }] },
+};
 
 /**
  * 能被套上代理的那些（＝插件声明了 ProxySpec）。gemini / opencode 尚未声明，故设置页不给它们代理行。
@@ -44,5 +49,6 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     supports_proxy: SUPPORTS_PROXY.has(id),
     supports_account: SUPPORTS_ACCOUNT.has(id),
     supports_profiles: SUPPORTS_PROFILES.has(id),
+    relay: RELAYS[id],
   }));
 }

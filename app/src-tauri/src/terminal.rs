@@ -432,7 +432,16 @@ pub(crate) fn resume_terminal_kind() -> crate::term_script::TermKind {
 pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) -> Vec<String> {
     session_id
         .zip(meowo_agent::resolve(provider))
-        .and_then(|(id, a)| a.resume_argv(id))
+        .and_then(|(session_id, a)| {
+            let sub = a.resume_args();
+            if sub.is_empty() {
+                return None;
+            }
+            let mut argv = crate::relay::augment_argv(a.id(), a.launch_argv());
+            argv.extend(sub.iter().map(|s| s.to_string()));
+            argv.push(session_id.to_string());
+            Some(argv)
+        })
         .unwrap_or_default()
 }
 
@@ -471,6 +480,8 @@ pub(crate) fn launch_env_for_profile(
         return Vec::new();
     };
     let mut env = crate::proxy::launch_env(a.id());
+    // 中转接入（relay）的环境变量：API base / key。与账号隔离变量正交，两者都要。
+    env.extend(crate::relay::launch_env(a.id()));
     let id = match profile {
         Some(p) => Some(p.to_string()),
         None => crate::profile::active_id(a.id().as_str()),
@@ -1103,8 +1114,9 @@ pub(crate) async fn new_session(
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
-    let argv = agent.launch_argv();
-    // 代理 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等）。
+    let argv = crate::relay::augment_argv(agent.id(), agent.launch_argv());
+    // 代理 + 中转 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等），三者都在
+    // `launch_env_for_profile` 里。
     //
     // 这里曾经只注入代理（`proxy::launch_env`），于是多账号完全不生效：设置页明明切到了另一个
     // 账号，新开的会话却仍跑在默认账号上——而且毫无迹象，用户只能靠 `/status` 里的邮箱才发现。

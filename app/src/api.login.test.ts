@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { loginAgent, installAgent, isLoggedIn, type ProviderAccountPayload } from "./api";
+import { getRelaySecrets, loginAgent, logoutAgent, installAgent, isLoggedIn, listRelayModels, type ProviderAccountPayload } from "./api";
 
 beforeEach(() => invokeMock.mockReset());
 
@@ -47,6 +47,31 @@ describe("login api", () => {
     invokeMock.mockResolvedValue(undefined);
     installAgent("codex");
     expect(invokeMock).toHaveBeenCalledWith("install_agent", { provider: "codex" });
+  });
+
+  it("logoutAgent 调用 logout_agent", () => {
+    invokeMock.mockResolvedValue(undefined);
+    logoutAgent("codex");
+    expect(invokeMock).toHaveBeenCalledWith("logout_agent", { provider: "codex" });
+  });
+});
+
+describe("relay api", () => {
+  it("getRelaySecrets 读取本机保存的密钥", () => {
+    invokeMock.mockResolvedValue({ codex: "sk-local" });
+    getRelaySecrets();
+    expect(invokeMock).toHaveBeenCalledWith("get_relay_secrets");
+  });
+
+  it("listRelayModels 只传配置元数据，密钥由后端读取", () => {
+    invokeMock.mockResolvedValue(["relay-model"]);
+    listRelayModels("claude", "https://relay.example/v1", "", "api_key");
+    expect(invokeMock).toHaveBeenCalledWith("list_relay_models", {
+      agent: "claude",
+      baseUrl: "https://relay.example/v1",
+      protocol: "",
+      auth: "api_key",
+    });
   });
 });
 
