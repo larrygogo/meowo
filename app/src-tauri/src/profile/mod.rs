@@ -119,8 +119,7 @@ pub(crate) fn installation_of(
     agent: meowo_agent::AgentId,
     id: &str,
 ) -> Option<meowo_agent::Installation> {
-    meowo_agent::by_id(agent.as_str())?
-        .installation_for_profile(&profile_root(agent.as_str(), id))
+    meowo_agent::by_id(agent.as_str())?.installation_for_profile(&profile_root(agent.as_str(), id))
 }
 
 /// 给某个 profile 的数据目录挂上 hooks。
@@ -174,11 +173,21 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
         let mut out = vec![ProfileView {
             id: None,
             // 用户起过名就用它；没起过留空，由前端本地化成「默认账号」——后端不塞译文。
-            name: s.default_profile_names.get(&provider).cloned().unwrap_or_default(),
+            name: s
+                .default_profile_names
+                .get(&provider)
+                .cloned()
+                .unwrap_or_default(),
             active: default_active,
             account: {
-                let a = plugin.resolve().and_then(|inst| crate::account::account_in(id, &inst));
-                if default_active { crate::account::with_cached_plan(id, a) } else { a }
+                let a = plugin
+                    .resolve()
+                    .and_then(|inst| crate::account::account_in(id, &inst));
+                if default_active {
+                    crate::account::with_cached_plan(id, a)
+                } else {
+                    a
+                }
             },
         }];
 
@@ -189,12 +198,17 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
 
         for p in s.profiles.get(&provider).into_iter().flatten() {
             let is_active = active.as_deref() == Some(p.id.as_str());
-            let account = installation_of(id, &p.id).and_then(|inst| crate::account::account_in(id, &inst));
+            let account =
+                installation_of(id, &p.id).and_then(|inst| crate::account::account_in(id, &inst));
             out.push(ProfileView {
                 id: Some(p.id.clone()),
                 name: p.name.clone(),
                 active: is_active,
-                account: if is_active { crate::account::with_cached_plan(id, account) } else { account },
+                account: if is_active {
+                    crate::account::with_cached_plan(id, account)
+                } else {
+                    account
+                },
             });
         }
         out
@@ -213,30 +227,29 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
         let agent = plugin.id();
         let spec = plugin.profile().ok_or("该 agent 不支持多账号")?;
 
-        let mut s = crate::settings::load_settings();
-        let existing = s.profiles.entry(provider.clone()).or_default();
-        let id = unique_id(existing, &slug(&name));
-        let root = profile_root(&provider, &id);
-
-        // 建出该 profile 需要的每一个目录（opencode 要两个：配置 + 数据）。
-        // agent 自己也会建，但接线要先于第一次启动发生——hooks 得在会话开始前就位。
-        for dir in spec.dirs(&root) {
-            std::fs::create_dir_all(&dir).map_err(|e| format!("创建账号目录失败：{e}"))?;
-        }
-
-        // 接线：这个 profile 的会话也要能上板。失败不回滚目录——用户可以在卡片上点「修复连接」重试，
-        // 而把刚建好的目录删掉只会让他连重试的机会都没有。
-        if let Some(reason) = wire_profile(agent, &id) {
-            eprintln!("Meowo profile[{provider}/{id}]: 接线未完成（{reason:?}），可稍后手动修复");
-        }
-
-        let name = name.trim();
-        existing.push(Profile {
-            id: id.clone(),
-            name: if name.is_empty() { id.clone() } else { name.to_string() },
-        });
-        crate::settings::save_settings(&s)?;
-        Ok(id)
+        crate::settings::update_settings(|s| {
+            let existing = s.profiles.entry(provider.clone()).or_default();
+            let id = unique_id(existing, &slug(&name));
+            let root = profile_root(&provider, &id);
+            for dir in spec.dirs(&root) {
+                std::fs::create_dir_all(&dir).map_err(|e| format!("创建账号目录失败：{e}"))?;
+            }
+            if let Some(reason) = wire_profile(agent, &id) {
+                eprintln!(
+                    "Meowo profile[{provider}/{id}]: 接线未完成（{reason:?}），可稍后手动修复"
+                );
+            }
+            let display = name.trim();
+            existing.push(Profile {
+                id: id.clone(),
+                name: if display.is_empty() {
+                    id.clone()
+                } else {
+                    display.to_string()
+                },
+            });
+            Ok(id)
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -257,23 +270,24 @@ pub(crate) async fn rename_profile(
         if name.is_empty() {
             return Err("账号名不能为空".to_string());
         }
-        let mut s = crate::settings::load_settings();
-        match id {
-            // 默认账号：它不在 profiles 里（是隐式的），名字单独存。
-            None => {
-                s.default_profile_names
-                    .insert(provider.clone(), name.to_string());
+        crate::settings::update_settings(|s| {
+            match id {
+                // 默认账号：它不在 profiles 里（是隐式的），名字单独存。
+                None => {
+                    s.default_profile_names
+                        .insert(provider.clone(), name.to_string());
+                }
+                Some(id) => {
+                    let p = s
+                        .profiles
+                        .get_mut(&provider)
+                        .and_then(|list| list.iter_mut().find(|p| p.id == id))
+                        .ok_or("没有这个账号")?;
+                    p.name = name.to_string();
+                }
             }
-            Some(id) => {
-                let p = s
-                    .profiles
-                    .get_mut(&provider)
-                    .and_then(|list| list.iter_mut().find(|p| p.id == id))
-                    .ok_or("没有这个账号")?;
-                p.name = name.to_string();
-            }
-        }
-        crate::settings::save_settings(&s)
+            Ok(())
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -285,23 +299,24 @@ pub(crate) async fn rename_profile(
 #[tauri::command]
 pub(crate) async fn set_active_profile(provider: String, id: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut s = crate::settings::load_settings();
-        match id {
-            None => {
-                s.active_profile.remove(&provider);
-            }
-            Some(id) => {
-                let known = s
-                    .profiles
-                    .get(&provider)
-                    .is_some_and(|v| v.iter().any(|p| p.id == id));
-                if !known {
-                    return Err("没有这个账号".to_string());
+        crate::settings::update_settings(|s| {
+            match id {
+                None => {
+                    s.active_profile.remove(&provider);
                 }
-                s.active_profile.insert(provider.clone(), id);
+                Some(id) => {
+                    let known = s
+                        .profiles
+                        .get(&provider)
+                        .is_some_and(|v| v.iter().any(|p| p.id == id));
+                    if !known {
+                        return Err("没有这个账号".to_string());
+                    }
+                    s.active_profile.insert(provider.clone(), id);
+                }
             }
-        }
-        crate::settings::save_settings(&s)?;
+            Ok(())
+        })?;
         // 用量缓存是按 agent 存的，换了账号它就过期了——留着会让新账号顶着旧账号的额度。
         if let Some(agent) = meowo_agent::by_id(&provider) {
             crate::account::clear_cached_usage(agent.id());
@@ -319,22 +334,36 @@ pub(crate) async fn set_active_profile(provider: String, id: Option<String>) -> 
 #[tauri::command]
 pub(crate) async fn delete_profile(provider: String, id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut s = crate::settings::load_settings();
-        let list = s.profiles.get_mut(&provider).ok_or("没有这个账号")?;
-        let before = list.len();
-        list.retain(|p| p.id != id);
-        if list.len() == before {
-            return Err("没有这个账号".to_string());
-        }
-        // 删的是活跃账号 → 落回默认，绝不留一个指向已删目录的活跃 id。
-        if s.active_profile.get(&provider).is_some_and(|a| a == &id) {
-            s.active_profile.remove(&provider);
-        }
-        crate::settings::save_settings(&s)?;
+        let (removed, was_active) = crate::settings::update_settings(|s| {
+            let list = s.profiles.get_mut(&provider).ok_or("没有这个账号")?;
+            let pos = list.iter().position(|p| p.id == id).ok_or("没有这个账号")?;
+            let removed = list.remove(pos);
+            let was_active = s.active_profile.get(&provider).is_some_and(|a| a == &id);
+            if was_active {
+                s.active_profile.remove(&provider);
+            }
+            Ok((removed, was_active))
+        })?;
 
         let root = profile_root(&provider, &id);
         if root.is_dir() {
-            std::fs::remove_dir_all(&root).map_err(|e| format!("删除账号目录失败：{e}"))?;
+            if let Err(e) = std::fs::remove_dir_all(&root) {
+                // Settings 已保存但目录没删掉时恢复入口，让用户能够关闭占用进程后重试。
+                let restore = crate::settings::update_settings(|s| {
+                    let list = s.profiles.entry(provider.clone()).or_default();
+                    if !list.iter().any(|p| p.id == removed.id) {
+                        list.push(removed.clone());
+                    }
+                    if was_active {
+                        s.active_profile.insert(provider.clone(), id.clone());
+                    }
+                    Ok(())
+                });
+                return Err(match restore {
+                    Ok(()) => format!("删除账号目录失败：{e}；账号入口已恢复，可稍后重试"),
+                    Err(r) => format!("删除账号目录失败：{e}；且恢复账号入口失败：{r}"),
+                });
+            }
         }
         Ok(())
     })
@@ -368,7 +397,10 @@ mod tests {
         // 兜底断言：任何输入产出的 id 都不含路径分隔符与 '.'。
         for bad in ["../x", "a/b", "a\\b", "..", "a.b", "  ", "🙂"] {
             let s = slug(bad);
-            assert!(!s.contains('/') && !s.contains('\\') && !s.contains('.'), "{bad} → {s}");
+            assert!(
+                !s.contains('/') && !s.contains('\\') && !s.contains('.'),
+                "{bad} → {s}"
+            );
             assert!(!s.is_empty());
         }
     }
@@ -376,8 +408,14 @@ mod tests {
     #[test]
     fn unique_id_avoids_collisions() {
         let existing = vec![
-            Profile { id: "work".into(), name: "工作".into() },
-            Profile { id: "work-2".into(), name: "工作2".into() },
+            Profile {
+                id: "work".into(),
+                name: "工作".into(),
+            },
+            Profile {
+                id: "work-2".into(),
+                name: "工作2".into(),
+            },
         ];
         assert_eq!(unique_id(&existing, "personal"), "personal");
         assert_eq!(unique_id(&existing, "work"), "work-3");
@@ -392,7 +430,10 @@ mod tests {
         let mut s = crate::settings::Settings::default();
         s.profiles.insert(
             "claude".into(),
-            vec![Profile { id: "work".into(), name: "工作".into() }],
+            vec![Profile {
+                id: "work".into(),
+                name: "工作".into(),
+            }],
         );
 
         s.active_profile.insert("claude".into(), "work".into());
@@ -420,13 +461,21 @@ mod tests {
         let env = env_of(meowo_agent::id::CLAUDE, Some("work"));
         assert_eq!(env[0].0, "CLAUDE_CONFIG_DIR");
         assert_eq!(PathBuf::from(&env[0].1), profile_root("claude", "work"));
-        assert_eq!(env.iter().find(|(k, _)| k == PROFILE_ENV).map(|(_, v)| v.as_str()), Some("work"));
+        assert_eq!(
+            env.iter()
+                .find(|(k, _)| k == PROFILE_ENV)
+                .map(|(_, v)| v.as_str()),
+            Some("work")
+        );
         assert_eq!(env.len(), 2, "多注入了变量？实得 {env:?}");
 
         let env = env_of(meowo_agent::id::OPENCODE, Some("work"));
         let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
         assert!(keys.contains(&"OPENCODE_CONFIG_DIR"));
-        assert!(keys.contains(&"XDG_DATA_HOME"), "凭据所在的数据目录也必须隔离");
+        assert!(
+            keys.contains(&"XDG_DATA_HOME"),
+            "凭据所在的数据目录也必须隔离"
+        );
 
         // gemini 不支持多账号（数据目录不可覆盖）→ 无论传什么 id 都不注入。
         assert!(env_of(meowo_agent::id::GEMINI, Some("work")).is_empty());

@@ -176,7 +176,8 @@ mod tests {
     /// 旧代码把它交给了 PowerShell，于是报「Installation failed: Just a moment...」加一屏 CSS。
     #[test]
     fn the_actual_log_that_started_this_is_rejected() {
-        let real = "Just a moment...*{box-sizing:border-box;margin:0;padding:0}html{line-height:1.15;\
+        let real =
+            "Just a moment...*{box-sizing:border-box;margin:0;padding:0}html{line-height:1.15;\
             -webkit-text-size-adjust:100%;color:#313131}body{display:flex}\
             Enable JavaScript and cookies to continue(function(){window._cf_chl_opt = {cFPWv: 'g',\
             cType: 'managed',cZone: 'claude.ai',cRay: 'a18fc0811ad0b585'};})();";
@@ -196,10 +197,16 @@ mod tests {
         use crate::install::InstallScript;
         for p in crate::all() {
             for windows in [true, false] {
-                let Some(s) = p.install_script(windows) else { continue };
+                let Some(s) = p.install_script(windows) else {
+                    continue;
+                };
                 match s {
                     InstallScript::Fetch { url, .. } => {
-                        assert!(url.starts_with("https://"), "{} 的安装地址必须是 https：{url}", p.id());
+                        assert!(
+                            url.starts_with("https://"),
+                            "{} 的安装地址必须是 https：{url}",
+                            p.id()
+                        );
                     }
                     InstallScript::Command { body, .. } => {
                         assert!(!body.trim().is_empty(), "{} 的安装命令为空", p.id());
@@ -262,7 +269,9 @@ mod tests {
                 continue;
             }
             for windows in [true, false] {
-                let Some(s) = p.install_script(windows) else { continue };
+                let Some(s) = p.install_script(windows) else {
+                    continue;
+                };
                 for host in CF_FRONTED {
                     assert!(
                         !s.source().contains(host),
@@ -281,8 +290,15 @@ mod tests {
     #[test]
     fn claude_may_keep_a_cloudflare_fallback_only_because_it_has_direct_install() {
         let claude = crate::by_id("claude").unwrap();
-        assert!(claude.direct_install().is_some(), "claude 失去直下后，其 claude.ai 回退就不再可接受");
-        assert!(claude.install_script(true).unwrap().source().contains("claude.ai"));
+        assert!(
+            claude.direct_install().is_some(),
+            "claude 失去直下后，其 claude.ai 回退就不再可接受"
+        );
+        assert!(claude
+            .install_script(true)
+            .unwrap()
+            .source()
+            .contains("claude.ai"));
     }
 
     /// codex 必须直取 GitHub Releases 的稳定跳转。`chatgpt.com/codex/install.ps1` 只是它的 302，
@@ -293,7 +309,8 @@ mod tests {
         for windows in [true, false] {
             let s = p.install_script(windows).expect("codex 有一键安装");
             assert!(
-                s.source().starts_with("https://github.com/openai/codex/releases/latest/download/"),
+                s.source()
+                    .starts_with("https://github.com/openai/codex/releases/latest/download/"),
                 "codex 应直取 GitHub Releases：{}",
                 s.source()
             );
@@ -307,7 +324,11 @@ mod tests {
         let p = crate::by_id("kimi").unwrap();
         for windows in [true, false] {
             let s = p.install_script(windows).expect("kimi 有一键安装");
-            assert!(s.source().contains("/kimi-code/"), "kimi 地址漏了 /kimi-code/：{}", s.source());
+            assert!(
+                s.source().contains("/kimi-code/"),
+                "kimi 地址漏了 /kimi-code/：{}",
+                s.source()
+            );
         }
     }
 

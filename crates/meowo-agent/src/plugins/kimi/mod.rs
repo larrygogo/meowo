@@ -170,35 +170,78 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
 
 struct KimiRelay;
 static RELAY: KimiRelay = KimiRelay;
-static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption {
+    value: "bearer",
+    label: "Bearer Token",
+}];
 static RELAY_PROTOCOLS: [crate::RelayOption; 3] = [
-    crate::RelayOption { value: "kimi", label: "Kimi" },
-    crate::RelayOption { value: "anthropic", label: "Anthropic Messages" },
-    crate::RelayOption { value: "openai", label: "OpenAI Chat Completions" },
+    crate::RelayOption {
+        value: "kimi",
+        label: "Kimi",
+    },
+    crate::RelayOption {
+        value: "anthropic",
+        label: "Anthropic Messages",
+    },
+    crate::RelayOption {
+        value: "openai",
+        label: "OpenAI Chat Completions",
+    },
 ];
 static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 3] = [
-    crate::RelaySuggestionGroup { protocol: "kimi", models: &["kimi-for-coding", "kimi-for-coding-highspeed"] },
-    crate::RelaySuggestionGroup { protocol: "anthropic", models: &["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"] },
-    crate::RelaySuggestionGroup { protocol: "openai", models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.4", "gpt-5.3-codex"] },
+    crate::RelaySuggestionGroup {
+        protocol: "kimi",
+        models: &["kimi-for-coding", "kimi-for-coding-highspeed"],
+    },
+    crate::RelaySuggestionGroup {
+        protocol: "anthropic",
+        models: &["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"],
+    },
+    crate::RelaySuggestionGroup {
+        protocol: "openai",
+        models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.4", "gpt-5.3-codex"],
+    },
 ];
 
 impl crate::RelayCap for KimiRelay {
     fn ui(&self) -> crate::RelayUi {
-        crate::RelayUi { protocols: &RELAY_PROTOCOLS, auth_modes: &RELAY_AUTH, default_protocol: "kimi", default_auth: "bearer", suggestions: &RELAY_SUGGESTIONS }
+        crate::RelayUi {
+            protocols: &RELAY_PROTOCOLS,
+            auth_modes: &RELAY_AUTH,
+            default_protocol: "kimi",
+            default_auth: "bearer",
+            suggestions: &RELAY_SUGGESTIONS,
+        }
     }
-    fn supports_variant(&self, variant_tag: &str) -> bool { variant_tag != "legacy" }
+    fn supports_variant(&self, variant_tag: &str) -> bool {
+        variant_tag != "legacy"
+    }
     fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
         vec![
             ("KIMI_MODEL_NAME".into(), config.model.trim().into()),
             ("KIMI_MODEL_API_KEY".into(), key.into()),
-            ("KIMI_MODEL_BASE_URL".into(), config.base_url.trim().trim_end_matches('/').into()),
+            (
+                "KIMI_MODEL_BASE_URL".into(),
+                config.base_url.trim().trim_end_matches('/').into(),
+            ),
             ("KIMI_MODEL_PROVIDER_TYPE".into(), config.protocol.into()),
         ]
     }
-    fn augment_argv(&self, _config: crate::RelayConfig<'_>, _has_secret: bool, argv: Vec<String>) -> Vec<String> { argv }
+    fn augment_argv(
+        &self,
+        _config: crate::RelayConfig<'_>,
+        _has_secret: bool,
+        argv: Vec<String>,
+    ) -> Vec<String> {
+        argv
+    }
     fn model_request(&self, config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
         crate::RelayModelRequest {
-            auth: if config.protocol == "anthropic" { crate::RelayModelAuth::ApiKey } else { crate::RelayModelAuth::Bearer },
+            auth: if config.protocol == "anthropic" {
+                crate::RelayModelAuth::ApiKey
+            } else {
+                crate::RelayModelAuth::Bearer
+            },
             anthropic_version: config.protocol == "anthropic",
         }
     }

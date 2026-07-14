@@ -79,7 +79,9 @@ pub fn import_from_dir(
             .to_str()
             .and_then(meowo_agent::plugins::claude::transcript::title_from_transcript)
             .unwrap_or_else(|| "(未命名会话)".to_string());
-        let cwd = path.to_str().and_then(meowo_agent::plugins::claude::transcript::cwd_from_transcript);
+        let cwd = path
+            .to_str()
+            .and_then(meowo_agent::plugins::claude::transcript::cwd_from_transcript);
         let (root, name) = match cwd.as_deref() {
             Some(c) => project_root_and_name(c),
             None => fallback_project(&dir_name),
@@ -111,6 +113,9 @@ fn mtime_ms(path: &Path) -> Option<i64> {
 /// 同一项目的真实路径并存为两个项目行；但 sessions.project_id 为 NOT NULL，跳过项目
 /// 创建就得整条丢弃该会话。无 cwd 的 transcript 很罕见，宁可多一行兜底项目也不丢历史会话。
 fn fallback_project(dir_name: &str) -> (String, String) {
-    let name = dir_name.rsplit('-').find(|s| !s.is_empty()).unwrap_or(dir_name);
+    let name = dir_name
+        .rsplit('-')
+        .find(|s| !s.is_empty())
+        .unwrap_or(dir_name);
     (dir_name.to_string(), name.to_string())
 }

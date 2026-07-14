@@ -258,6 +258,7 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsAttempted, setModelsAttempted] = useState(false);
+  const modelsRequestSeq = useRef(0);
   const mode: AccessMode = rule.enabled || configuring ? "relay" : "official";
 
   useEffect(() => {
@@ -272,9 +273,11 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     if (rule.enabled) setConfiguring(false);
   }, [rule.enabled]);
   useEffect(() => {
+    modelsRequestSeq.current += 1; // 令旧地址/协议的在途响应失效
     setRemoteModels([]);
     setModelsError(null);
     setModelsAttempted(false);
+    setModelsLoading(false);
   }, [agent.id, rule.base_url, rule.protocol, rule.auth]);
 
   const normalizeRule = (next: RelayRule): RelayRule => ({
@@ -291,11 +294,18 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     }
     setModelsLoading(true);
     setModelsError(null);
+    const seq = ++modelsRequestSeq.current;
     const effective = normalizeRule(rule);
     void listRelayModels(agent.id, effective.base_url, effective.protocol, effective.auth)
-      .then(setRemoteModels)
-      .catch((e) => setModelsError(t.relay.modelFetchFailed(String(e))))
-      .finally(() => setModelsLoading(false));
+      .then((models) => {
+        if (seq === modelsRequestSeq.current) setRemoteModels(models);
+      })
+      .catch((e) => {
+        if (seq === modelsRequestSeq.current) setModelsError(t.relay.modelFetchFailed(String(e)));
+      })
+      .finally(() => {
+        if (seq === modelsRequestSeq.current) setModelsLoading(false);
+      });
   };
 
   const saveRule = async (next: RelayRule) => {

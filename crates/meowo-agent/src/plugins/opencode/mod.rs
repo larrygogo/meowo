@@ -226,13 +226,24 @@ impl AgentPlugin for Opencode {
 
 static RELAY: OpencodeRelay = OpencodeRelay;
 static RELAY_PROTOCOLS: [crate::RelayOption; 2] = [
-    crate::RelayOption { value: "openai", label: "OpenAI 兼容" },
-    crate::RelayOption { value: "anthropic", label: "Anthropic Messages" },
+    crate::RelayOption {
+        value: "openai",
+        label: "OpenAI 兼容",
+    },
+    crate::RelayOption {
+        value: "anthropic",
+        label: "Anthropic Messages",
+    },
 ];
-static RELAY_AUTH: [crate::RelayOption; 1] =
-    [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption {
+    value: "bearer",
+    label: "Bearer Token",
+}];
 static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 2] = [
-    crate::RelaySuggestionGroup { protocol: "openai", models: &["gpt-5.4", "gpt-5.3-codex"] },
+    crate::RelaySuggestionGroup {
+        protocol: "openai",
+        models: &["gpt-5.4", "gpt-5.3-codex"],
+    },
     crate::RelaySuggestionGroup {
         protocol: "anthropic",
         models: &["claude-sonnet-5", "claude-opus-4-8"],
@@ -274,7 +285,12 @@ impl crate::RelayCap for OpencodeRelay {
         });
         vec![("OPENCODE_CONFIG_CONTENT".into(), content.to_string())]
     }
-    fn augment_argv(&self, _config: crate::RelayConfig<'_>, _has_secret: bool, argv: Vec<String>) -> Vec<String> {
+    fn augment_argv(
+        &self,
+        _config: crate::RelayConfig<'_>,
+        _has_secret: bool,
+        argv: Vec<String>,
+    ) -> Vec<String> {
         argv // 模型经配置内容的默认 model 指定，不改 argv
     }
     fn model_request(&self, config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
@@ -470,7 +486,10 @@ mod tests {
         );
         // 登录入口：`opencode auth login`。
         let login = inst.login_argv().expect("opencode 有登录入口");
-        assert_eq!(&login[login.len() - 2..], &["auth".to_string(), "login".to_string()]);
+        assert_eq!(
+            &login[login.len() - 2..],
+            &["auth".to_string(), "login".to_string()]
+        );
     }
 
     /// resume 是 `--session <id>`——写成 `--continue` 会拉起「最近一个会话」而不是点开的那个。

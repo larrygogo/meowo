@@ -206,8 +206,12 @@ static USAGE_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub fn clear_cached_usage(id: AgentId) {
     let Some(p) = usage_cache_path() else { return };
     let _guard = USAGE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(mut root) = read_json(&p) else { return };
-    let Some(obj) = root.as_object_mut() else { return };
+    let Some(mut root) = read_json(&p) else {
+        return;
+    };
+    let Some(obj) = root.as_object_mut() else {
+        return;
+    };
     for key in ["providers", "fetched_at_map"] {
         if let Some(m) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
             m.remove(id.as_str());
@@ -305,7 +309,8 @@ mod tests {
     /// 亮出一个必然失败的登录按钮。契约现在由 `AgentDescriptor::supports_account` 显式承载。
     #[test]
     fn account_capability_matches_the_declared_matrix() {
-        let with: std::collections::BTreeSet<&str> = all_with_account().map(|p| p.id().as_str()).collect();
+        let with: std::collections::BTreeSet<&str> =
+            all_with_account().map(|p| p.id().as_str()).collect();
         assert_eq!(
             with,
             ["claude", "codex", "gemini", "kimi", "opencode"]
@@ -331,7 +336,9 @@ mod tests {
     #[test]
     fn every_agent_with_account_can_actually_be_logged_in() {
         for p in all_with_account() {
-            let inst = p.resolve().unwrap_or_else(|| panic!("{} 解析不出安装实况", p.id()));
+            let inst = p
+                .resolve()
+                .unwrap_or_else(|| panic!("{} 解析不出安装实况", p.id()));
             assert!(
                 inst.login_argv().is_some(),
                 "{} 有账号能力却没有登录入口——登录按钮会亮出来，点下去必然失败",

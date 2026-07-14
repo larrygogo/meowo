@@ -4,7 +4,9 @@ use std::process::{Command, Stdio};
 /// 跑 meowo-reporter 二进制，喂给定 stdin 与可选 MEOWO_DB，返回退出码。
 fn run_with(stdin: &str, db: Option<&str>) -> Option<i32> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_meowo-reporter"));
-    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     if let Some(d) = db {
         cmd.env("MEOWO_DB", d);
     }

@@ -128,10 +128,18 @@ impl ParseState {
                             .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
                             .collect::<Vec<_>>()
                             .join(" ");
-                        if joined.is_empty() { None } else { Some(joined) }
+                        if joined.is_empty() {
+                            None
+                        } else {
+                            Some(joined)
+                        }
                     });
                 if let Some(text) = text {
-                    let uuid = v.get("uuid").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                    let uuid = v
+                        .get("uuid")
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     self.last_text = Some((text, uuid));
                 }
             }
@@ -148,9 +156,11 @@ impl ParseState {
                 fingerprint: uuid.clone(),
             })
         });
-        let context_pct = self
-            .last_usage
-            .map(|u| ((u as f64 / CONTEXT_WINDOW as f64) * 100.0).round().min(100.0) as u8);
+        let context_pct = self.last_usage.map(|u| {
+            ((u as f64 / CONTEXT_WINDOW as f64) * 100.0)
+                .round()
+                .min(100.0) as u8
+        });
         TranscriptInfo {
             title: self.custom.clone().or_else(|| self.ai.clone()),
             error,
@@ -245,7 +255,11 @@ fn projects_dir() -> Option<std::path::PathBuf> {
 /// 根据 cwd + session_id 重建 transcript 路径：
 /// ~/.claude/projects/<encode(cwd)>/<session_id>.jsonl。
 pub fn reconstruct_transcript_path(cwd: &str, session_id: &str) -> Option<std::path::PathBuf> {
-    Some(projects_dir()?.join(encode_cwd(cwd)).join(format!("{session_id}.jsonl")))
+    Some(
+        projects_dir()?
+            .join(encode_cwd(cwd))
+            .join(format!("{session_id}.jsonl")),
+    )
 }
 
 /// 不依赖 cwd，直接在 ~/.claude/projects/*/ 下按 `<session_id>.jsonl` 找 transcript。
@@ -292,7 +306,11 @@ pub fn cwd_from_transcript(path: &str) -> Option<String> {
 /// 3) 按 session_id 全局查找。供「同时要标题+错误」的调用方先拿路径再 analyze。
 /// 注意：与 resolve_title 不同，本函数只做路径定位，不保证文件内含有标题；
 /// 第一个候选文件存在即返回，不会因「文件无标题」继续回落。
-fn resolve_path(transcript_path: Option<&str>, cwd: Option<&str>, session_id: &str) -> Option<std::path::PathBuf> {
+fn resolve_path(
+    transcript_path: Option<&str>,
+    cwd: Option<&str>,
+    session_id: &str,
+) -> Option<std::path::PathBuf> {
     if let Some(p) = transcript_path {
         let pb = std::path::PathBuf::from(p);
         if pb.exists() {
@@ -322,13 +340,23 @@ impl TranscriptSpec for ClaudeTranscript {
         Box::new(ClaudeParser(ParseState::default()))
     }
 
-    fn resolve_transcript_path(&self, transcript_path: Option<&str>, cwd: Option<&str>, session_id: &str) -> Option<std::path::PathBuf> {
+    fn resolve_transcript_path(
+        &self,
+        transcript_path: Option<&str>,
+        cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<std::path::PathBuf> {
         resolve_path(transcript_path, cwd, session_id)
     }
 
     /// 解析会话标题，依次尝试：
     /// 1) hook 给的 transcript_path；2) cwd+session_id 重建路径；3) 按 session_id 全局查找。
-    fn resolve_title(&self, transcript_path: Option<&str>, cwd: Option<&str>, session_id: &str) -> Option<String> {
+    fn resolve_title(
+        &self,
+        transcript_path: Option<&str>,
+        cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<String> {
         if let Some(p) = transcript_path {
             if std::path::Path::new(p).exists() {
                 if let Some(t) = title_from_transcript(p) {
@@ -381,31 +409,49 @@ mod tests {
             classify_error("Please run /login · API Error: 403 Request not allowed"),
             Some("需要重新登录")
         );
-        assert_eq!(classify_error("API Error: 403 Request not allowed"), Some("需要重新登录"));
         assert_eq!(
-            classify_error("Failed to authenticate. API Error: 401 Invalid authentication credentials"),
+            classify_error("API Error: 403 Request not allowed"),
+            Some("需要重新登录")
+        );
+        assert_eq!(
+            classify_error(
+                "Failed to authenticate. API Error: 401 Invalid authentication credentials"
+            ),
             Some("认证失败")
         );
-        assert_eq!(classify_error("API Error: 401 Invalid authentication credentials"), Some("认证失败"));
+        assert_eq!(
+            classify_error("API Error: 401 Invalid authentication credentials"),
+            Some("认证失败")
+        );
     }
 
     #[test]
     fn classify_ignores_transient_and_normal() {
-        assert_eq!(classify_error("API Error: 529 Overloaded. This is a server-side issue"), None);
+        assert_eq!(
+            classify_error("API Error: 529 Overloaded. This is a server-side issue"),
+            None
+        );
         assert_eq!(classify_error("API Error: 500 status code (no body)"), None);
-        assert_eq!(classify_error("Unable to connect to API (ECONNRESET)"), None);
+        assert_eq!(
+            classify_error("Unable to connect to API (ECONNRESET)"),
+            None
+        );
         assert_eq!(classify_error("这是一段正常的助手回答。"), None);
     }
 
     #[test]
     fn classify_ignores_long_text_quoting_error() {
         // 正常长回答里引用错误文案（如调试 API 的会话）不应被判为卡死。
-        let long = format!("{}先看日志里的 API Error: 403 Request not allowed，这是因为……", "分析：".repeat(100));
+        let long = format!(
+            "{}先看日志里的 API Error: 403 Request not allowed，这是因为……",
+            "分析：".repeat(100)
+        );
         assert_eq!(classify_error(&long), None);
     }
 
     fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("cc_analyze_{}_{}.jsonl", std::process::id(), name));
+        let p =
+            std::env::temp_dir().join(format!("cc_analyze_{}_{}.jsonl", std::process::id(), name));
         std::fs::write(&p, content).unwrap();
         p
     }
@@ -413,9 +459,12 @@ mod tests {
     #[test]
     fn analyze_detects_parse_abort_and_title() {
         let content = concat!(
-            r#"{"type":"ai-title","aiTitle":"做某功能"}"#, "\n",
-            r#"{"type":"assistant","uuid":"u-err-1","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"The model's tool call could not be parsed (retry also failed)."}]}}"#, "\n",
-            r#"{"type":"system","subtype":"turn_duration","durationMs":1000}"#, "\n",
+            r#"{"type":"ai-title","aiTitle":"做某功能"}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"u-err-1","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"The model's tool call could not be parsed (retry also failed)."}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"turn_duration","durationMs":1000}"#,
+            "\n",
         );
         let p = write_tmp("parse", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -429,8 +478,10 @@ mod tests {
     #[test]
     fn analyze_no_error_on_normal_ending() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"已完成，结果如下。"}]}}"#, "\n",
-            r#"{"type":"system","subtype":"turn_duration","durationMs":500}"#, "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"已完成，结果如下。"}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"turn_duration","durationMs":500}"#,
+            "\n",
         );
         let p = write_tmp("normal", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -441,11 +492,16 @@ mod tests {
     #[test]
     fn analyze_recovered_after_error_not_flagged() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u-err","message":{"role":"assistant","content":[{"type":"text","text":"The model's tool call could not be parsed (retry also failed)."}]}}"#, "\n",
-            r#"{"type":"system","subtype":"turn_duration","durationMs":100}"#, "\n",
-            r#"{"type":"user","message":{"role":"user","content":"继续"}}"#, "\n",
-            r#"{"type":"assistant","uuid":"u-ok","message":{"role":"assistant","content":[{"type":"text","text":"好的，已经修好了。"}]}}"#, "\n",
-            r#"{"type":"system","subtype":"turn_duration","durationMs":200}"#, "\n",
+            r#"{"type":"assistant","uuid":"u-err","message":{"role":"assistant","content":[{"type":"text","text":"The model's tool call could not be parsed (retry also failed)."}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"turn_duration","durationMs":100}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":"继续"}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"u-ok","message":{"role":"assistant","content":[{"type":"text","text":"好的，已经修好了。"}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"turn_duration","durationMs":200}"#,
+            "\n",
         );
         let p = write_tmp("recover", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -456,18 +512,26 @@ mod tests {
     #[test]
     fn analyze_skips_tooluse_only_assistant() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u-err","message":{"role":"assistant","content":[{"type":"text","text":"Please run /login · API Error: 403 Request not allowed"}]}}"#, "\n",
-            r#"{"type":"assistant","uuid":"u-tool","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u-err","message":{"role":"assistant","content":[{"type":"text","text":"Please run /login · API Error: 403 Request not allowed"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"u-tool","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#,
+            "\n",
         );
         let p = write_tmp("toolonly", content);
         let info = analyze_transcript(p.to_str().unwrap());
         std::fs::remove_file(&p).ok();
-        assert_eq!(info.error.map(|e| e.label), Some("需要重新登录".to_string()));
+        assert_eq!(
+            info.error.map(|e| e.label),
+            Some("需要重新登录".to_string())
+        );
     }
 
     #[test]
     fn preview_text_collapses_and_truncates() {
-        assert_eq!(preview_text("  hi\n\n  there  "), Some("hi there".to_string()));
+        assert_eq!(
+            preview_text("  hi\n\n  there  "),
+            Some("hi there".to_string())
+        );
         assert_eq!(preview_text("   \n\t  "), None);
         let long: String = "あ".repeat(200);
         let p = preview_text(&long).unwrap();
@@ -479,7 +543,8 @@ mod tests {
     #[test]
     fn analyze_concatenates_multiple_text_blocks_in_one_assistant() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"先说开场白"},{"type":"tool_use","id":"t","name":"Bash","input":{}},{"type":"text","text":"再说结论"}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"先说开场白"},{"type":"tool_use","id":"t","name":"Bash","input":{}},{"type":"text","text":"再说结论"}]}}"#,
+            "\n",
         );
         let p = write_tmp("concat", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -490,8 +555,10 @@ mod tests {
     #[test]
     fn analyze_exposes_last_assistant_preview() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"first turn"}]}}"#, "\n",
-            r#"{"type":"assistant","uuid":"u2","message":{"role":"assistant","content":[{"type":"text","text":"  need your\n  confirmation  "}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"first turn"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"u2","message":{"role":"assistant","content":[{"type":"text","text":"  need your\n  confirmation  "}]}}"#,
+            "\n",
         );
         let p = write_tmp("preview", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -509,8 +576,10 @@ mod tests {
     fn analyze_extracts_latest_context_usage() {
         // 两条 assistant：取最新一条的 usage。50000+50000+0+10000 = 110000 → 55%。
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":2000,"output_tokens":500},"content":[{"type":"text","text":"早些的回合"}]}}"#, "\n",
-            r#"{"type":"assistant","uuid":"u2","message":{"role":"assistant","usage":{"input_tokens":50000,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0,"output_tokens":10000},"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":2000,"output_tokens":500},"content":[{"type":"text","text":"早些的回合"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"u2","message":{"role":"assistant","usage":{"input_tokens":50000,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0,"output_tokens":10000},"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#,
+            "\n",
         );
         let p = write_tmp("usage", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -522,7 +591,8 @@ mod tests {
     #[test]
     fn analyze_context_pct_caps_at_100() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":300000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"超长上下文"}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":300000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"超长上下文"}]}}"#,
+            "\n",
         );
         let p = write_tmp("usage_cap", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -533,7 +603,8 @@ mod tests {
     #[test]
     fn analyze_no_usage_is_none() {
         let content = concat!(
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"没有 usage 字段"}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"没有 usage 字段"}]}}"#,
+            "\n",
         );
         let p = write_tmp("usage_none", content);
         let info = analyze_transcript(p.to_str().unwrap());
@@ -546,8 +617,10 @@ mod tests {
     #[test]
     fn claude_parser_matches_full_scan() {
         let content = concat!(
-            r#"{"type":"ai-title","aiTitle":"标题X"}"#, "\n",
-            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":40000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"hi there"}]}}"#, "\n",
+            r#"{"type":"ai-title","aiTitle":"标题X"}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":40000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"hi there"}]}}"#,
+            "\n",
         );
         let mut parser = CLAUDE_TRANSCRIPT.new_parser();
         for line in content.lines() {
@@ -563,7 +636,10 @@ mod tests {
 
     #[test]
     fn resolve_title_reads_custom_title() {
-        let p = write_tmp("resolve_title", "{\"type\":\"custom-title\",\"customTitle\":\"我的标题\"}\n");
+        let p = write_tmp(
+            "resolve_title",
+            "{\"type\":\"custom-title\",\"customTitle\":\"我的标题\"}\n",
+        );
         let path = p.to_str().unwrap();
         let via_spec = CLAUDE_TRANSCRIPT.resolve_title(Some(path), None, "sid");
         let via_fn = title_from_transcript(path);
@@ -605,8 +681,16 @@ mod tests {
     #[test]
     fn resolve_cwd_prefers_known() {
         // 已知 cwd 校验不过（其下无 transcript）且全局也找不到 → 回退已知 cwd（已清理场景）。
-        assert_eq!(CLAUDE_TRANSCRIPT.resolve_cwd(Some(r"C:\a\b"), "anyid").as_deref(), Some(r"C:\a\b"));
-        assert_eq!(CLAUDE_TRANSCRIPT.resolve_cwd(Some("  "), "no-such-session-id-xxx"), None);
+        assert_eq!(
+            CLAUDE_TRANSCRIPT
+                .resolve_cwd(Some(r"C:\a\b"), "anyid")
+                .as_deref(),
+            Some(r"C:\a\b")
+        );
+        assert_eq!(
+            CLAUDE_TRANSCRIPT.resolve_cwd(Some("  "), "no-such-session-id-xxx"),
+            None
+        );
     }
 
     #[test]
@@ -621,7 +705,9 @@ mod tests {
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::write(
             proj.join(format!("{sid}.jsonl")),
-            format!("{{\"type\":\"user\",\"cwd\":\"C:\\\\real\\\\proj\",\"sessionId\":\"{sid}\"}}\n"),
+            format!(
+                "{{\"type\":\"user\",\"cwd\":\"C:\\\\real\\\\proj\",\"sessionId\":\"{sid}\"}}\n"
+            ),
         )
         .unwrap();
         // 改的是**进程全局**的 USERPROFILE：持锁期间不许别的测试去解析安装路径，

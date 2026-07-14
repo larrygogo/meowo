@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::account::{
-    Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
-};
+use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
 use crate::ports::{Body, HttpRequest, Ports};
 use crate::variant::Installation;
 
@@ -83,7 +81,11 @@ fn normalize_plan(raw: &str) -> Option<String> {
 /// 从 ~/.claude.json 的根 JSON 解析账号（取 oauthAccount）。无则 None。
 pub fn parse_account(root: &serde_json::Value) -> Option<ClaudeAccountInfo> {
     let a = root.get("oauthAccount")?;
-    let email = a.get("emailAddress").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let email = a
+        .get("emailAddress")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if email.is_empty() {
         return None;
     }
@@ -99,8 +101,15 @@ pub fn parse_account(root: &serde_json::Value) -> Option<ClaudeAccountInfo> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
     // 套餐标签：按 PLAN_FIELDS 顺序取首个有语义的档位字段，规范成展示文案。
-    let plan = PLAN_FIELDS.iter().find_map(|k| normalize_plan(a.get(*k)?.as_str()?));
-    Some(ClaudeAccountInfo { email, display_name, organization, plan })
+    let plan = PLAN_FIELDS
+        .iter()
+        .find_map(|k| normalize_plan(a.get(*k)?.as_str()?));
+    Some(ClaudeAccountInfo {
+        email,
+        display_name,
+        organization,
+        plan,
+    })
 }
 
 /// 解析 /api/oauth/usage 响应。各 bucket 可能为 null/缺失 → Option。
@@ -111,8 +120,15 @@ pub fn parse_usage(v: &serde_json::Value) -> Usage {
             return None;
         }
         let utilization = w.get("utilization").and_then(|x| x.as_f64())?;
-        let resets_at = w.get("resets_at").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        Some(UsageWindow { utilization, resets_at })
+        let resets_at = w
+            .get("resets_at")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        Some(UsageWindow {
+            utilization,
+            resets_at,
+        })
     }
     let extra_usage_enabled = v
         .get("extra_usage")
@@ -161,8 +177,14 @@ pub fn oauth_credentials_missing(root: Option<&serde_json::Value>) -> bool {
     let Some(oauth) = root.and_then(|r| r.get("claudeAiOauth")) else {
         return true;
     };
-    let access = oauth.get("accessToken").and_then(|v| v.as_str()).unwrap_or("");
-    let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("");
+    let access = oauth
+        .get("accessToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let refresh = oauth
+        .get("refreshToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     access.is_empty() && refresh.is_empty()
 }
 
@@ -221,7 +243,9 @@ pub fn read_account(inst: &Installation) -> Option<ClaudeAccountInfo> {
 /// `CredentialSource::KeychainOrFile`。变体表被改成非 Keychain 形态（不该发生）→ 退回历史常量。
 fn keychain_spec(inst: &Installation) -> (&'static str, &'static str) {
     match claude_auth(inst).map(|a| a.credentials) {
-        Some(crate::CredentialSource::KeychainOrFile { service, account, .. }) => (service, account),
+        Some(crate::CredentialSource::KeychainOrFile {
+            service, account, ..
+        }) => (service, account),
         _ => ("Claude Code-credentials", "root"),
     }
 }
@@ -239,7 +263,11 @@ fn read_credentials_root(inst: &Installation, ports: &Ports) -> Option<serde_jso
 }
 
 /// 刷新 token 后把新凭据写回原存储（保留其余字段）。
-fn write_credentials_root(inst: &Installation, ports: &Ports, value: &serde_json::Value) -> Result<(), String> {
+fn write_credentials_root(
+    inst: &Installation,
+    ports: &Ports,
+    value: &serde_json::Value,
+) -> Result<(), String> {
     if ports.keychain.available() {
         let (service, fallback_account) = keychain_spec(inst);
         let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
@@ -252,7 +280,7 @@ fn write_credentials_root(inst: &Installation, ports: &Ports, value: &serde_json
     }
     let path = credentials_path(inst).ok_or("解析不到 claude 凭据路径")?;
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())
+    crate::fsutil::write_atomic_secure(&path, &body).map_err(|e| e.to_string())
 }
 
 /// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
@@ -271,8 +299,16 @@ fn ensure_valid_token(inst: &Installation, ports: &Ports) -> Result<String, Stri
     }
     let root = root.expect("credentials present: oauth_credentials_missing 已排除 None");
     let oauth = root.get("claudeAiOauth").ok_or("凭据缺 claudeAiOauth")?;
-    let access = oauth.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let refresh = oauth.get("refreshToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let access = oauth
+        .get("accessToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let refresh = oauth
+        .get("refreshToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
 
     if !access.is_empty() && !is_token_expired(expires_at, now_ms()) {
@@ -300,8 +336,16 @@ fn ensure_valid_token(inst: &Installation, ports: &Ports) -> Result<String, Stri
         })
         .map_err(|e| format!("刷新 token 失败：{e}"))?;
     let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let new_access = body.get("access_token").and_then(|v| v.as_str()).ok_or("刷新响应缺 access_token")?.to_string();
-    let new_refresh = body.get("refresh_token").and_then(|v| v.as_str()).unwrap_or(&refresh).to_string();
+    let new_access = body
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or("刷新响应缺 access_token")?
+        .to_string();
+    let new_refresh = body
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&refresh)
+        .to_string();
     // 钳下限 600s：服务端若异常返回 0/负/极小值，避免写回一个立刻过期的 expiresAt 而陷入每次都刷新。
     let expires_in = body
         .get("expires_in")
@@ -371,14 +415,24 @@ pub fn map_to_provider_usage(u: &Usage) -> ProviderUsage {
     }
     // seven_day_sonnet 忽略（保持现视觉）
 
-    let note = u.extra_usage_enabled.then(|| "extra_usage_enabled".to_string());
+    let note = u
+        .extra_usage_enabled
+        .then(|| "extra_usage_enabled".to_string());
 
-    ProviderUsage { lanes, note, plan: None }
+    ProviderUsage {
+        lanes,
+        note,
+        plan: None,
+    }
 }
 
 /// 空字符串→ None（resets_at 字段处理）。
 fn non_empty_str(s: &str) -> Option<String> {
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 pub struct ClaudeAccount;
@@ -428,7 +482,10 @@ mod tests {
 
     #[test]
     fn normalize_plan_strips_prefixes_and_keeps_multiplier() {
-        assert_eq!(normalize_plan("default_claude_max_20x").as_deref(), Some("Max 20x"));
+        assert_eq!(
+            normalize_plan("default_claude_max_20x").as_deref(),
+            Some("Max 20x")
+        );
         assert_eq!(normalize_plan("claude_max").as_deref(), Some("Max"));
         assert_eq!(normalize_plan("max").as_deref(), Some("Max"));
         assert_eq!(normalize_plan("pro").as_deref(), Some("Pro"));
@@ -450,13 +507,17 @@ mod tests {
             "organizationType":"claude_max",
             "organizationRateLimitTier":"default_claude_max_20x",
         }});
-        assert_eq!(parse_account(&root).unwrap().plan.as_deref(), Some("Max 20x"));
+        assert_eq!(
+            parse_account(&root).unwrap().plan.as_deref(),
+            Some("Max 20x")
+        );
     }
 
     /// billingType 是计费方式，永远不能当套餐——没有任何档位字段时宁可不显示徽章。
     #[test]
     fn billing_type_is_never_used_as_plan() {
-        let root = json!({"oauthAccount":{"emailAddress":"a@b.com","billingType":"stripe_subscription"}});
+        let root =
+            json!({"oauthAccount":{"emailAddress":"a@b.com","billingType":"stripe_subscription"}});
         assert_eq!(parse_account(&root).unwrap().plan, None);
     }
 
@@ -488,7 +549,10 @@ mod tests {
         });
         let u = parse_usage(&v);
         assert_eq!(u.five_hour.as_ref().unwrap().utilization, 13.0);
-        assert_eq!(u.five_hour.as_ref().unwrap().resets_at, "2026-06-07T08:50:01Z");
+        assert_eq!(
+            u.five_hour.as_ref().unwrap().resets_at,
+            "2026-06-07T08:50:01Z"
+        );
         assert!(u.seven_day_opus.is_none());
         assert_eq!(u.seven_day_sonnet.as_ref().unwrap().utilization, 2.0);
         assert!(!u.extra_usage_enabled);
@@ -513,10 +577,16 @@ mod tests {
     #[test]
     fn usage_supported_reads_credentials_without_network() {
         use crate::ports::test_doubles::NoHttp;
-        let ports = Ports { http: &NoHttp, keychain: &crate::ports::NoKeychain };
+        let ports = Ports {
+            http: &NoHttp,
+            keychain: &crate::ports::NoKeychain,
+        };
         // 本机大概率没有 claude 凭据文件 → 读不到 OAuth → 不支持用量。真有凭据时也只是返回 true，
         // 两种取值都不该发起网络请求（NoHttp 会 panic）。
-        let inst = crate::by_id("claude").unwrap().resolve().expect("总能推出默认落点");
+        let inst = crate::by_id("claude")
+            .unwrap()
+            .resolve()
+            .expect("总能推出默认落点");
         let _ = ACCOUNT.usage_supported(&inst, &ports);
     }
 
@@ -525,7 +595,9 @@ mod tests {
         // 无根、缺 claudeAiOauth、access+refresh 双空 → 缺失（第三方/未登录）。
         assert!(oauth_credentials_missing(None));
         assert!(oauth_credentials_missing(Some(&json!({"mcpOAuth": {}}))));
-        assert!(oauth_credentials_missing(Some(&json!({"claudeAiOauth": {}}))));
+        assert!(oauth_credentials_missing(Some(
+            &json!({"claudeAiOauth": {}})
+        )));
         assert!(oauth_credentials_missing(Some(
             &json!({"claudeAiOauth": {"accessToken": "", "refreshToken": ""}})
         )));
@@ -556,10 +628,22 @@ mod tests {
     #[test]
     fn map_to_provider_usage_maps_lanes_correctly() {
         let u = Usage {
-            five_hour: Some(UsageWindow { utilization: 13.0, resets_at: "2026-06-07T08:50:01Z".into() }),
-            seven_day: Some(UsageWindow { utilization: 55.0, resets_at: "2026-06-11T12:00:00Z".into() }),
-            seven_day_opus: Some(UsageWindow { utilization: 30.0, resets_at: "2026-06-11T12:00:00Z".into() }),
-            seven_day_sonnet: Some(UsageWindow { utilization: 2.0, resets_at: "x".into() }),
+            five_hour: Some(UsageWindow {
+                utilization: 13.0,
+                resets_at: "2026-06-07T08:50:01Z".into(),
+            }),
+            seven_day: Some(UsageWindow {
+                utilization: 55.0,
+                resets_at: "2026-06-11T12:00:00Z".into(),
+            }),
+            seven_day_opus: Some(UsageWindow {
+                utilization: 30.0,
+                resets_at: "2026-06-11T12:00:00Z".into(),
+            }),
+            seven_day_sonnet: Some(UsageWindow {
+                utilization: 2.0,
+                resets_at: "x".into(),
+            }),
             extra_usage_enabled: true,
         };
         let pu = map_to_provider_usage(&u);
@@ -568,7 +652,10 @@ mod tests {
         assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
         assert_eq!(pu.lanes[0].used_pct, Some(13.0));
         assert_eq!(pu.lanes[0].unit.as_deref(), Some("percent"));
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-06-07T08:50:01Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-06-07T08:50:01Z")
+        );
         assert_eq!(pu.lanes[1].kind, UsageKind::SevenDay);
         assert_eq!(pu.lanes[2].kind, UsageKind::Opus);
         // extra_usage_enabled → note。
@@ -578,7 +665,10 @@ mod tests {
     #[test]
     fn map_to_provider_usage_empty_resets_at_becomes_none() {
         let u = Usage {
-            five_hour: Some(UsageWindow { utilization: 1.0, resets_at: "".into() }),
+            five_hour: Some(UsageWindow {
+                utilization: 1.0,
+                resets_at: "".into(),
+            }),
             ..Default::default()
         };
         let pu = map_to_provider_usage(&u);

@@ -120,7 +120,11 @@ fn connected_providers(text: &str) -> Option<String> {
     // `opencode auth logout` 会把它清成 `{}`——空对象是「登出了」，不是「登录了但没信息」。
     let map = root.as_object().filter(|m| !m.is_empty())?;
 
-    let label = map.keys().map(|id| provider_label(id)).collect::<Vec<_>>().join(", ");
+    let label = map
+        .keys()
+        .map(|id| provider_label(id))
+        .collect::<Vec<_>>()
+        .join(", ");
     Some(label)
 }
 
@@ -150,7 +154,8 @@ mod tests {
 
         // 连了多家就都列出来（serde_json 的 Map 默认按键排序，故次序稳定）。
         let label =
-            connected_providers(r#"{"openai":{"type":"api"},"anthropic":{"type":"oauth"}}"#).unwrap();
+            connected_providers(r#"{"openai":{"type":"api"},"anthropic":{"type":"oauth"}}"#)
+                .unwrap();
         assert_eq!(label, "Anthropic, OpenAI");
 
         // 未知 provider（含 wellknown 那种 URL 键）原样展示——那正是 `auth list` 里看到的。
@@ -164,7 +169,10 @@ mod tests {
         );
 
         // type 缺失（schema 漂移）→ 依然算已连接，绝不因此判成「未连接」。
-        assert_eq!(connected_providers(r#"{"anthropic":{}}"#).as_deref(), Some("Anthropic"));
+        assert_eq!(
+            connected_providers(r#"{"anthropic":{}}"#).as_deref(),
+            Some("Anthropic")
+        );
     }
 
     /// 环境变量整体覆盖文件——与 opencode 自己的取值顺序一致。只读文件的话，这类用户
@@ -173,9 +181,15 @@ mod tests {
     fn auth_content_env_var_overrides_the_file() {
         let _env = crate::env_guard();
         std::env::set_var(AUTH_CONTENT_VAR, r#"{"anthropic":{"type":"oauth"}}"#);
-        let ports = Ports { http: &crate::ports::test_doubles::NoHttp, keychain: &crate::ports::NoKeychain };
+        let ports = Ports {
+            http: &crate::ports::test_doubles::NoHttp,
+            keychain: &crate::ports::NoKeychain,
+        };
         // 本机 auth.json 大概率不存在，但环境变量提供了内容 → 仍算已连接。
-        let inst = crate::by_id("opencode").unwrap().resolve().expect("总能推出默认落点");
+        let inst = crate::by_id("opencode")
+            .unwrap()
+            .resolve()
+            .expect("总能推出默认落点");
         let acc = ACCOUNT
             .account(&inst, &ports)
             .expect("环境变量提供了凭据 → 应算已登录");
@@ -192,8 +206,14 @@ mod tests {
     #[test]
     fn usage_is_declared_unsupported_without_network() {
         use crate::ports::test_doubles::NoHttp;
-        let ports = Ports { http: &NoHttp, keychain: &crate::ports::NoKeychain };
-        let inst = crate::by_id("opencode").unwrap().resolve().expect("总能推出默认落点");
+        let ports = Ports {
+            http: &NoHttp,
+            keychain: &crate::ports::NoKeychain,
+        };
+        let inst = crate::by_id("opencode")
+            .unwrap()
+            .resolve()
+            .expect("总能推出默认落点");
         assert!(!ACCOUNT.usage_supported(&inst, &ports));
         assert_eq!(
             ACCOUNT.fetch_usage(&inst, &ports).unwrap_err(),

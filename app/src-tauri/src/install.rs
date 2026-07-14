@@ -213,7 +213,7 @@ pub(crate) async fn login_agent(
 ) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
-    // 登录写的是**目标 profile** 的凭据，故实况也按它取（默认账号 → agent 自己的目录）。
+                                             // 登录写的是**目标 profile** 的凭据，故实况也按它取（默认账号 → agent 自己的目录）。
     let inst = match profile.as_deref() {
         Some(p) => crate::profile::installation_of(key, p).ok_or("解析不到该账号的目录")?,
         None => install_for(key).ok_or("解析不到该 agent 的安装实况")?,
@@ -243,10 +243,7 @@ pub(crate) async fn login_agent(
 /// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
 /// 只删除变体表声明的凭据文件，不碰 config、会话或 hooks。
 #[tauri::command]
-pub(crate) async fn logout_agent(
-    provider: String,
-    profile: Option<String>,
-) -> Result<(), String> {
+pub(crate) async fn logout_agent(provider: String, profile: Option<String>) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     // 登出**哪个账号**：显式指定的那个，否则当前活跃账号。
     //
@@ -332,7 +329,10 @@ mod logout_tests {
 
     #[test]
     fn logout_stderr_excerpt_is_trimmed_and_bounded() {
-        assert_eq!(stderr_excerpt(b"  authentication failed\r\n"), "authentication failed");
+        assert_eq!(
+            stderr_excerpt(b"  authentication failed\r\n"),
+            "authentication failed"
+        );
         let long = "x".repeat(501);
         let excerpt = stderr_excerpt(long.as_bytes());
         assert_eq!(excerpt.chars().count(), 501);

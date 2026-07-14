@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { marked } from "marked";
+import sanitizeHtml from "sanitize-html";
 import { get } from "node:https";
 import { REPO_SLUG } from "./site";
 import appPackage from "../../app/package.json";
@@ -76,6 +77,25 @@ type ApiRelease = {
   assets: { name: string; browser_download_url: string; size: number }[];
 };
 
+export function renderReleaseMarkdown(body: string): string {
+  const raw = marked.parse(body, { async: false }) as string;
+  return sanitizeHtml(raw, {
+    allowedTags: [...sanitizeHtml.defaults.allowedTags, "img"],
+    allowedAttributes: {
+      ...sanitizeHtml.defaults.allowedAttributes,
+      a: ["href", "name", "target", "rel"],
+      img: ["src", "alt", "title"],
+    },
+    allowedSchemes: ["http", "https"],
+    transformTags: {
+      a: (_tagName, attribs) => ({
+        tagName: "a",
+        attribs: { ...attribs, rel: "noopener noreferrer" },
+      }),
+    },
+  });
+}
+
 /**
  * 最新 release：把安装包的真实下载地址嵌进页面。
  * API 不可用时用应用自身版本生成徽章，安装包地址回退到 releases/latest 页面。
@@ -127,7 +147,7 @@ export const getReleaseNotes = cache(async (): Promise<ReleaseNote[]> => {
         tag: r.tag_name,
         title: name && !name.includes(r.tag_name) ? name : null,
         date: (r.published_at ?? "").slice(0, 10),
-        bodyHtml: hasNotes ? (marked.parse(body, { async: false }) as string) : null,
+        bodyHtml: hasNotes ? renderReleaseMarkdown(body) : null,
       };
     });
 });

@@ -170,7 +170,10 @@ mod tests {
     /// email 提取对 schema 不敏感——这正是它存在的理由（真实形状未经实测）。
     #[test]
     fn finds_email_regardless_of_shape() {
-        assert_eq!(find_email(&json!({"active": "a@b.c"})).as_deref(), Some("a@b.c"));
+        assert_eq!(
+            find_email(&json!({"active": "a@b.c"})).as_deref(),
+            Some("a@b.c")
+        );
         assert_eq!(
             find_email(&json!({"active": {"email": "x@y.z", "id": 1}})).as_deref(),
             Some("x@y.z")
@@ -289,8 +292,14 @@ mod tests {
     #[test]
     fn usage_is_declared_unsupported_without_network() {
         use crate::ports::test_doubles::NoHttp;
-        let ports = Ports { http: &NoHttp, keychain: &crate::ports::NoKeychain };
-        let inst = crate::by_id("gemini").unwrap().resolve().expect("总能推出默认落点");
+        let ports = Ports {
+            http: &NoHttp,
+            keychain: &crate::ports::NoKeychain,
+        };
+        let inst = crate::by_id("gemini")
+            .unwrap()
+            .resolve()
+            .expect("总能推出默认落点");
         assert!(!ACCOUNT.usage_supported(&inst, &ports));
         assert_eq!(
             ACCOUNT.fetch_usage(&inst, &ports).unwrap_err(),

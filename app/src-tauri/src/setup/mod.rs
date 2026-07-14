@@ -123,7 +123,10 @@ fn wire_all_profiles(reporter: Option<&str>) {
             match crate::profile::wire_profile(agent.id(), &p.id) {
                 None => eprintln!("Meowo repair[{provider}/{}]: 已接线", p.id),
                 Some(reason) => {
-                    eprintln!("Meowo repair[{provider}/{}]: 接线未生效（{reason:?}）", p.id)
+                    eprintln!(
+                        "Meowo repair[{provider}/{}]: 接线未生效（{reason:?}）",
+                        p.id
+                    )
                 }
             }
         }

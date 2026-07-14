@@ -121,34 +121,64 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
 
 struct CodexRelay;
 static RELAY: CodexRelay = CodexRelay;
-static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption {
+    value: "bearer",
+    label: "Bearer Token",
+}];
 static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
     protocol: "",
-    models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4", "gpt-5.3-codex"],
+    models: &[
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.4",
+        "gpt-5.3-codex",
+    ],
 }];
 
 impl crate::RelayCap for CodexRelay {
     fn ui(&self) -> crate::RelayUi {
-        crate::RelayUi { protocols: &[], auth_modes: &RELAY_AUTH, default_protocol: "", default_auth: "bearer", suggestions: &RELAY_SUGGESTIONS }
+        crate::RelayUi {
+            protocols: &[],
+            auth_modes: &RELAY_AUTH,
+            default_protocol: "",
+            default_auth: "bearer",
+            suggestions: &RELAY_SUGGESTIONS,
+        }
     }
     fn launch_env(&self, _config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
         vec![("MEOWO_CODEX_RELAY_KEY".into(), key.into())]
     }
-    fn augment_argv(&self, config: crate::RelayConfig<'_>, has_secret: bool, mut argv: Vec<String>) -> Vec<String> {
-        if !has_secret { return argv; }
+    fn augment_argv(
+        &self,
+        config: crate::RelayConfig<'_>,
+        has_secret: bool,
+        mut argv: Vec<String>,
+    ) -> Vec<String> {
+        if !has_secret {
+            return argv;
+        }
         let quoted = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
         for value in [
             "model_provider=\"meowo-relay\"".to_string(),
             "model_providers.meowo-relay.name=\"Meowo Relay\"".to_string(),
-            format!("model_providers.meowo-relay.base_url={}", quoted(config.base_url.trim().trim_end_matches('/'))),
+            format!(
+                "model_providers.meowo-relay.base_url={}",
+                quoted(config.base_url.trim().trim_end_matches('/'))
+            ),
             "model_providers.meowo-relay.env_key=\"MEOWO_CODEX_RELAY_KEY\"".to_string(),
             "model_providers.meowo-relay.wire_api=\"responses\"".to_string(),
             format!("model={}", quoted(config.model.trim())),
-        ] { argv.extend(["-c".into(), value]); }
+        ] {
+            argv.extend(["-c".into(), value]);
+        }
         argv
     }
     fn model_request(&self, _config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
-        crate::RelayModelRequest { auth: crate::RelayModelAuth::Bearer, anthropic_version: false }
+        crate::RelayModelRequest {
+            auth: crate::RelayModelAuth::Bearer,
+            anthropic_version: false,
+        }
     }
 }
 

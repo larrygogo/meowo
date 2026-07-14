@@ -228,8 +228,10 @@ impl AgentPlugin for Gemini {
 // 故 protocols 留空（validate 对空协议表不校验），auth 只有 API Key 一种。
 
 static RELAY: GeminiRelay = GeminiRelay;
-static RELAY_AUTH: [crate::RelayOption; 1] =
-    [crate::RelayOption { value: "api_key", label: "API Key" }];
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption {
+    value: "api_key",
+    label: "API Key",
+}];
 static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
     protocol: "",
     models: &["gemini-2.5-pro", "gemini-2.5-flash"],
@@ -250,18 +252,29 @@ impl crate::RelayCap for GeminiRelay {
     fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
         vec![
             ("GEMINI_API_KEY".into(), key.into()),
-            ("GOOGLE_GEMINI_BASE_URL".into(), config.base_url.trim().trim_end_matches('/').into()),
+            (
+                "GOOGLE_GEMINI_BASE_URL".into(),
+                config.base_url.trim().trim_end_matches('/').into(),
+            ),
             ("GEMINI_MODEL".into(), config.model.trim().into()),
             // 强制 API-key 认证，别让 TUI 回到 OAuth。取值取自 bundle 的 AuthType 常量。
             ("GEMINI_DEFAULT_AUTH_TYPE".into(), "gemini-api-key".into()),
         ]
     }
-    fn augment_argv(&self, _config: crate::RelayConfig<'_>, _has_secret: bool, argv: Vec<String>) -> Vec<String> {
+    fn augment_argv(
+        &self,
+        _config: crate::RelayConfig<'_>,
+        _has_secret: bool,
+        argv: Vec<String>,
+    ) -> Vec<String> {
         argv // 模型经 GEMINI_MODEL 注入，不改 argv
     }
     fn model_request(&self, _config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
         // 中转端点讲 Gemini 协议，`/models` 用 x-api-key 取（取不到也无妨，靠 suggestions 兜底）。
-        crate::RelayModelRequest { auth: crate::RelayModelAuth::ApiKey, anthropic_version: false }
+        crate::RelayModelRequest {
+            auth: crate::RelayModelAuth::ApiKey,
+            anthropic_version: false,
+        }
     }
 }
 
@@ -279,7 +292,9 @@ mod tests {
         // socks 不被拒（socks=true），且写进 HTTPS_PROXY 而非 ALL_PROXY。
         let socks = PROXY.env_for("socks5://127.0.0.1:1080");
         assert!(!socks.is_empty(), "gemini 支持 SOCKS，不该返回空");
-        assert!(socks.iter().any(|(k, v)| *k == "HTTPS_PROXY" && v == "socks5://127.0.0.1:1080"));
+        assert!(socks
+            .iter()
+            .any(|(k, v)| *k == "HTTPS_PROXY" && v == "socks5://127.0.0.1:1080"));
         assert!(PROXY.accepts("socks5://h:1").is_ok());
     }
 
@@ -292,12 +307,25 @@ mod tests {
             protocol: "",
             auth: "api_key",
         };
-        let env: std::collections::HashMap<_, _> = RELAY.launch_env(cfg, "sk-key").into_iter().collect();
-        assert_eq!(env.get("GEMINI_API_KEY").map(String::as_str), Some("sk-key"));
-        assert_eq!(env.get("GOOGLE_GEMINI_BASE_URL").map(String::as_str), Some("https://relay.example/v1"));
-        assert_eq!(env.get("GEMINI_MODEL").map(String::as_str), Some("gemini-2.5-pro"));
+        let env: std::collections::HashMap<_, _> =
+            RELAY.launch_env(cfg, "sk-key").into_iter().collect();
+        assert_eq!(
+            env.get("GEMINI_API_KEY").map(String::as_str),
+            Some("sk-key")
+        );
+        assert_eq!(
+            env.get("GOOGLE_GEMINI_BASE_URL").map(String::as_str),
+            Some("https://relay.example/v1")
+        );
+        assert_eq!(
+            env.get("GEMINI_MODEL").map(String::as_str),
+            Some("gemini-2.5-pro")
+        );
         // 强制 API-key 认证，否则 TUI 可能回到 OAuth。
-        assert_eq!(env.get("GEMINI_DEFAULT_AUTH_TYPE").map(String::as_str), Some("gemini-api-key"));
+        assert_eq!(
+            env.get("GEMINI_DEFAULT_AUTH_TYPE").map(String::as_str),
+            Some("gemini-api-key")
+        );
     }
 
     /// 防连坐绊线：照 kimi 的教训，一条非法 event 有可能让**全部** hooks 静默失效。

@@ -35,8 +35,8 @@ pub mod plugins;
 pub mod ports;
 pub mod profile;
 pub mod proxy;
-pub mod relay;
 pub mod registry;
+pub mod relay;
 pub mod transcript;
 pub mod variant;
 pub mod wiring;
@@ -57,8 +57,11 @@ pub use plugins::claude::setup::remove_generated_wrapper;
 pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
-pub use relay::{RelayCap, RelayConfig, RelayModelAuth, RelayModelRequest, RelayOption, RelaySuggestionGroup, RelayUi};
 pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
+pub use relay::{
+    RelayCap, RelayConfig, RelayModelAuth, RelayModelRequest, RelayOption, RelaySuggestionGroup,
+    RelayUi,
+};
 pub use transcript::{
     default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec,
     TurnError,

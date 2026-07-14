@@ -773,7 +773,11 @@ pub(crate) fn shell_join_for_windows(args: &[String], powershell: bool) -> Strin
         let quoted: Vec<String> = args
             .iter()
             .map(|a| {
-                if a.chars().any(char::is_whitespace) || a.contains(['$', '`', '\'']) {
+                if a.chars().any(char::is_whitespace)
+                    || a.contains([
+                        '$', '`', '\'', '"', '&', ';', '|', '<', '>', '(', ')', '{', '}',
+                    ])
+                {
                     format!("'{}'", a.replace('\'', "''"))
                 } else {
                     a.clone()
@@ -834,22 +838,6 @@ pub(crate) fn env_prefix_powershell(env: &[(String, String)]) -> String {
     let set: String = env
         .iter()
         .map(|(k, v)| format!("$env:{k}='{}'; ", v.replace('\'', "''")))
-        .collect();
-    format!("{clear}{set}")
-}
-
-/// cmd：`set "K=v"&& `。整个 `K=v` 包在双引号里，值中的 `&`/`|`/`^` 便不会被当成运算符。
-/// cmd 没有字面量引用机制，`%VAR%` 仍会展开——但代理串已过校验（不含 `%` 的合法 URL），且这与
-/// 既有 `shell_join_for_windows` 的 cmd 分支是同一个已知限制。值里的 `"` 直接剔除（合法代理串不含）。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(crate) fn env_prefix_cmd(env: &[(String, String)]) -> String {
-    let clear: String = PROXY_ENV_KEYS
-        .iter()
-        .map(|k| format!("set \"{k}=\"&& "))
-        .collect();
-    let set: String = env
-        .iter()
-        .map(|(k, v)| format!("set \"{k}={}\"&& ", v.replace('"', "")))
         .collect();
     format!("{clear}{set}")
 }
@@ -997,14 +985,10 @@ pub(crate) fn spawn_in_terminal(
             c.creation_flags(CREATE_NEW_CONSOLE).spawn().map(|_| ())
         }
         "cmd" => {
-            // cmd /k 跑完命令后保留窗口；工作目录走 current_dir。
-            // 必须 raw_arg：cmd.exe 不按 CommandLineToArgvW 规则解析，经 args() 传入时
-            // std 会把命令串整体加引号并把内嵌 " 转义成 \"，cmd 收到畸形命令行、路径解析失败。
-            let cmd = format!(
-                "{}{}",
-                env_prefix_cmd(env),
-                shell_join_for_windows(argv, false)
-            );
+            // cmd 没有能覆盖 %, !, ^, 嵌套引号等全部情况的字面 argv 语法。把真实 argv 放进
+            // PowerShell EncodedCommand，cmd 只看到固定开关与 base64，避免用户路径/中转模型变成语法。
+            let wrapped = wrap_with_env_windows(argv, env);
+            let cmd = shell_join_for_windows(&wrapped, false);
             let mut c = Command::new("cmd");
             c.raw_arg("/k").raw_arg(cmd);
             if let Some(d) = &dir {
@@ -1367,14 +1351,6 @@ mod proxy_env_tests {
     }
 
     #[test]
-    fn cmd_prefix_quotes_the_assignment() {
-        // 整个 K=V 包在双引号里：值里的 & | ^ 便不会被 cmd 当成运算符截断命令。
-        let p = env_prefix_cmd(&env("http://127.0.0.1:7890"));
-        assert!(p.starts_with("set \"HTTPS_PROXY=\"&& "));
-        assert!(p.ends_with("set \"HTTPS_PROXY=http://127.0.0.1:7890\"&& set \"HTTP_PROXY=http://127.0.0.1:7890\"&& "));
-    }
-
-    #[test]
     fn posix_prefix_leaves_the_name_unquoted() {
         // 关键：**键名不能带引号**——`'K=v' cmd` 会被 shell 当成一个命令名而不是赋值。
         // 值则必须单引号包裹（AppleScript 会把它原样拼进 shell 命令串）。
@@ -1399,17 +1375,12 @@ mod proxy_env_tests {
         // POSIX：`'` → `'\''`，同样无法闭合。
         let sh = env_prefix_posix(&evil);
         assert!(sh.ends_with(r"HTTPS_PROXY='http://a'\''b;calc' "));
-
-        // cmd：值里的双引号被剔除，赋值仍完整包在一对双引号内。
-        let c = env_prefix_cmd(&[("HTTPS_PROXY".to_string(), "http://a\"b".to_string())]);
-        assert!(c.ends_with("set \"HTTPS_PROXY=http://ab\"&& "));
     }
 
     #[test]
     fn empty_env_clears_inherited_proxy_before_launching() {
         // off 的意义是直连，故空 env 也必须清掉继承的代理，而不是原样启动。
         assert!(env_prefix_powershell(&[]).contains("$env:ALL_PROXY=$null;"));
-        assert!(env_prefix_cmd(&[]).contains("set \"ALL_PROXY=\"&&"));
         assert!(env_prefix_posix(&[]).starts_with("unset HTTPS_PROXY"));
         let argv = vec![
             "claude".to_string(),

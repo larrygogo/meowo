@@ -28,15 +28,24 @@ mod tests {
     /// `meowo-store`，是唯一能做这个配对断言的地方。
     #[test]
     fn default_agent_id_matches_db_default_provider() {
-        assert_eq!(meowo_agent::DEFAULT_ID.as_str(), meowo_store::DEFAULT_PROVIDER);
+        assert_eq!(
+            meowo_agent::DEFAULT_ID.as_str(),
+            meowo_store::DEFAULT_PROVIDER
+        );
     }
 
     /// 未知 provider 串不得被冒名成默认 agent——否则一个本版本尚不认识的 agent，其会话会被按
     /// claude 去 resume（拉起错误的 CLI）、读 transcript（读错文件）。空/缺省才走默认。
     #[test]
     fn unknown_provider_resolves_to_none_not_default() {
-        assert_eq!(meowo_agent::resolve(None).map(|p| p.id()), Some(meowo_agent::DEFAULT_ID));
-        assert_eq!(meowo_agent::resolve(Some("")).map(|p| p.id()), Some(meowo_agent::DEFAULT_ID));
+        assert_eq!(
+            meowo_agent::resolve(None).map(|p| p.id()),
+            Some(meowo_agent::DEFAULT_ID)
+        );
+        assert_eq!(
+            meowo_agent::resolve(Some("")).map(|p| p.id()),
+            Some(meowo_agent::DEFAULT_ID)
+        );
         // 反例得挑一个**永远**不会被注册的串。这里原本写的是 "gemini"——它后来真的成了注册过的
         // agent，于是这条断言差点在无人察觉的情况下失去意义（幸而它当场变红）。
         assert!(meowo_agent::resolve(Some("not-an-agent")).is_none());

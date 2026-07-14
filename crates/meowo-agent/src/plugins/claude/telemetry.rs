@@ -12,7 +12,10 @@ pub static TELEMETRY: ClaudeTelemetry = ClaudeTelemetry;
 impl TelemetryCap for ClaudeTelemetry {
     fn stop_outputs(&self, ctx: &HookContext) -> StopOutputs {
         // Claude 的 Stop hook 直接带 AI 正文；模型走 statusline（不在此处）。
-        StopOutputs { last_ai: ctx.last_assistant_message.map(str::to_string), model: None }
+        StopOutputs {
+            last_ai: ctx.last_assistant_message.map(str::to_string),
+            model: None,
+        }
     }
 
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {

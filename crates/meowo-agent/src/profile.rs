@@ -103,7 +103,10 @@ mod tests {
         for p in all() {
             let Some(spec) = p.profile() else { continue };
             let (_, first_rel) = spec.envs.first().unwrap_or_else(|| {
-                panic!("{} 声明了 profile 却没有任何环境变量——那就隔离不了任何东西", p.id())
+                panic!(
+                    "{} 声明了 profile 却没有任何环境变量——那就隔离不了任何东西",
+                    p.id()
+                )
             });
             assert_eq!(
                 *first_rel,
@@ -142,7 +145,10 @@ mod tests {
             .and_then(|p| p.profile())
             .expect("opencode 支持多账号");
         let keys: Vec<&str> = spec.envs.iter().map(|(k, _)| *k).collect();
-        assert!(keys.contains(&"OPENCODE_CONFIG_DIR"), "配置目录（插件）没隔离");
+        assert!(
+            keys.contains(&"OPENCODE_CONFIG_DIR"),
+            "配置目录（插件）没隔离"
+        );
         assert!(
             keys.contains(&"XDG_DATA_HOME"),
             "数据目录（凭据）没隔离——账号看起来切了，其实共用同一份 auth.json"
@@ -150,7 +156,11 @@ mod tests {
 
         // 两者必须指向不同的子目录。
         let env = spec.env_for(&root());
-        let cfg = &env.iter().find(|(k, _)| k == "OPENCODE_CONFIG_DIR").unwrap().1;
+        let cfg = &env
+            .iter()
+            .find(|(k, _)| k == "OPENCODE_CONFIG_DIR")
+            .unwrap()
+            .1;
         let data = &env.iter().find(|(k, _)| k == "XDG_DATA_HOME").unwrap().1;
         assert_ne!(cfg, data);
 

@@ -15,7 +15,13 @@ pub struct ClaudeWiring;
 pub static WIRING: ClaudeWiring = ClaudeWiring;
 
 impl WiringCap for ClaudeWiring {
-    fn amend(&self, _inst: &Installation, text: &str, ctx: &WiringContext, reporter: &str) -> Result<String, RepairReason> {
+    fn amend(
+        &self,
+        _inst: &Installation,
+        text: &str,
+        ctx: &WiringContext,
+        reporter: &str,
+    ) -> Result<String, RepairReason> {
         statusline_amend(text, ctx, reporter)
     }
 
@@ -59,9 +65,13 @@ fn mark_onboarded(inst: &Installation) {
         return; // 已就位，保持幂等（别无谓地重写文件）。
     }
     obj.insert("hasCompletedOnboarding".into(), serde_json::json!(true));
-    let Ok(body) = serde_json::to_string_pretty(&v) else { return };
+    let Ok(body) = serde_json::to_string_pretty(&v) else {
+        return;
+    };
     if crate::fsutil::write_atomic(&path, &body).is_err() {
-        eprintln!("Meowo profile[claude]: 补写 hasCompletedOnboarding 失败，TUI 可能会要求重新登录");
+        eprintln!(
+            "Meowo profile[claude]: 补写 hasCompletedOnboarding 失败，TUI 可能会要求重新登录"
+        );
     }
 }
 
@@ -112,7 +122,9 @@ fn unwrap_chain(cmd: &str, read: &dyn Fn(&std::path::Path) -> Option<String>) ->
     let mut cur = cmd.trim().to_string();
     let mut seen: Vec<String> = Vec::new();
     loop {
-        let Some(path) = wrapper_target(&cur) else { return cur };
+        let Some(path) = wrapper_target(&cur) else {
+            return cur;
+        };
         let Some(text) = read(&path) else { return cur }; // 读不到 → 当用户自己的命令，不动
         if !text.contains(WRAPPER_MARK) {
             return cur; // 同名但非我方产物（用户自己也写了个 statusline.sh）→ 不动
@@ -236,7 +248,11 @@ fn script_path(ctx: &WiringContext) -> std::path::PathBuf {
 /// 永不自愈。settings 未动则下次启动整段重试。
 ///
 /// 无改动时**原样返回入参文本**（不重新序列化），否则 `wire_hooks` 的幂等判定会误判为有改动。
-fn statusline_amend(text: &str, ctx: &WiringContext, reporter: &str) -> Result<String, RepairReason> {
+fn statusline_amend(
+    text: &str,
+    ctx: &WiringContext,
+    reporter: &str,
+) -> Result<String, RepairReason> {
     let Some(mut settings) = crate::config::parse_json_config(text) else {
         return Err(RepairReason::ConfigUnreadable);
     };
@@ -329,7 +345,11 @@ mod onboarding_tests {
 
         std::fs::write(&path, "{not json").unwrap();
         mark_onboarded(&profile_inst(&root));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json", "坏文件不该被改写");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{not json",
+            "坏文件不该被改写"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -363,11 +383,16 @@ mod tests {
 
     /// 用一张「路径 → 脚本正文」表冒充磁盘。
     fn disk(files: &[(&str, String)]) -> impl Fn(&std::path::Path) -> Option<String> {
-        let owned: Vec<(String, String)> =
-            files.iter().map(|(p, t)| (p.to_ascii_lowercase(), t.clone())).collect();
+        let owned: Vec<(String, String)> = files
+            .iter()
+            .map(|(p, t)| (p.to_ascii_lowercase(), t.clone()))
+            .collect();
         move |p: &std::path::Path| {
             let key = p.to_string_lossy().to_ascii_lowercase();
-            owned.iter().find(|(k, _)| *k == key).map(|(_, t)| t.clone())
+            owned
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, t)| t.clone())
         }
     }
 
@@ -383,7 +408,10 @@ mod tests {
 
         // 模拟 amend：脚本落盘成功后才改写 settings。
         v["statusLine"] = json!({ "type": "command", "command": inv });
-        let fs = disk(&[(marker, build_script("C:/x/meowo-reporter.exe", "bash -c 'claude-hud'"))]);
+        let fs = disk(&[(
+            marker,
+            build_script("C:/x/meowo-reporter.exe", "bash -c 'claude-hud'"),
+        )]);
         // 再探测：已引用我们的脚本、内部干净 → None（幂等，不再重复捕获/递归）
         assert!(probe_statusline(&v, marker, &fs).is_none());
     }
@@ -410,12 +438,19 @@ mod tests {
             input=$(cat)\n\
             printf '%s' \"$input\" | \"C:/old/cc-reporter.exe\" statusline >/dev/null 2>&1\n\
             printf '%s' \"$input\" | bash -c 'claude-hud'\n";
-        let v = json!({ "statusLine": { "type": "command", "command": format!("bash \"{legacy}\"") } });
+        let v =
+            json!({ "statusLine": { "type": "command", "command": format!("bash \"{legacy}\"") } });
         let fs = disk(&[(legacy, legacy_text.to_string())]);
 
         let inner = probe_statusline(&v, ours, &fs).expect("应接线");
-        assert_eq!(inner, "bash -c 'claude-hud'", "必须剥到用户真实命令，而不是套娃");
-        assert!(!inner.contains("statusline.sh"), "inner 绝不能再指向任何包装脚本");
+        assert_eq!(
+            inner, "bash -c 'claude-hud'",
+            "必须剥到用户真实命令，而不是套娃"
+        );
+        assert!(
+            !inner.contains("statusline.sh"),
+            "inner 绝不能再指向任何包装脚本"
+        );
     }
 
     /// 回归（自愈）：机器已经中毒——settings 指向我们的脚本，而我们的脚本回指前代脚本，
@@ -433,12 +468,16 @@ mod tests {
              printf '%s' \"$input\" | \"C:/old/cc-reporter.exe\" statusline >/dev/null 2>&1\n\
              printf '%s' \"$input\" | bash \"{ours}\"\n"
         );
-        let v = json!({ "statusLine": { "type": "command", "command": format!("bash \"{ours}\"") } });
+        let v =
+            json!({ "statusLine": { "type": "command", "command": format!("bash \"{ours}\"") } });
         let fs = disk(&[(ours, ours_text), (legacy, legacy_text)]);
 
         // marker 命中，但内部成环 → 必须返回 Some（重建），而不是 None（幂等放过）。
         let inner = probe_statusline(&v, ours, &fs).expect("成环时必须重建脚本，不能判定为幂等");
-        assert_eq!(inner, "", "环里没有用户的命令，只有我们的历史残留 → 整条丢弃");
+        assert_eq!(
+            inner, "",
+            "环里没有用户的命令，只有我们的历史残留 → 整条丢弃"
+        );
     }
 
     /// 用户自己写的 statusline.sh（同名但没有我方生成标记）是真·用户命令，必须原样内嵌，不能剥。
@@ -447,8 +486,12 @@ mod tests {
         let user = "C:/Users/me/scripts/statusline.sh";
         let ours = "C:/Users/me/.meowo/statusline.sh";
         let fs = disk(&[(user, "#!/usr/bin/env bash\necho hi\n".to_string())]);
-        let v = json!({ "statusLine": { "type": "command", "command": format!("bash \"{user}\"") } });
-        assert_eq!(probe_statusline(&v, ours, &fs).unwrap(), format!("bash \"{user}\""));
+        let v =
+            json!({ "statusLine": { "type": "command", "command": format!("bash \"{user}\"") } });
+        assert_eq!(
+            probe_statusline(&v, ours, &fs).unwrap(),
+            format!("bash \"{user}\"")
+        );
     }
 
     #[test]
@@ -467,7 +510,9 @@ mod tests {
     #[test]
     fn build_script_carries_reentry_guard() {
         let s = build_script("C:/x/meowo-reporter.exe", "bash -c 'hud'");
-        assert!(s.contains(&format!("if [ -n \"${{{GUARD_ENV}:-}}\" ]; then exit 0; fi")));
+        assert!(s.contains(&format!(
+            "if [ -n \"${{{GUARD_ENV}:-}}\" ]; then exit 0; fi"
+        )));
         assert!(s.contains(&format!("export {GUARD_ENV}=1")));
         // 守卫必须在读 stdin 之前——否则再入的那层会先阻塞在 `cat` 上。
         let guard = s.find("exit 0").unwrap();
@@ -478,8 +523,15 @@ mod tests {
     /// `inner_of` 要能从两种形态的包装脚本里取出下游命令：写库那行（重定向到 /dev/null）不是 inner。
     #[test]
     fn inner_of_extracts_downstream_only() {
-        assert_eq!(inner_of(&build_script("C:/x/meowo-reporter.exe", "bash -c 'hud'")), "bash -c 'hud'");
-        assert_eq!(inner_of(&build_script("C:/x/meowo-reporter.exe", "")), "", "自渲染版没有 inner");
+        assert_eq!(
+            inner_of(&build_script("C:/x/meowo-reporter.exe", "bash -c 'hud'")),
+            "bash -c 'hud'"
+        );
+        assert_eq!(
+            inner_of(&build_script("C:/x/meowo-reporter.exe", "")),
+            "",
+            "自渲染版没有 inner"
+        );
     }
 
     /// 清除前代残留：只删我方（含前代品牌）生成的包装脚本，同名的用户自有脚本一概不碰。
@@ -515,7 +567,10 @@ mod tests {
     #[test]
     fn wrapper_target_survives_spaces_in_path() {
         let p = wrapper_target("bash \"C:/Users/John Doe/.meowo/statusline.sh\"").unwrap();
-        assert_eq!(to_bash_path(&p.to_string_lossy()), "C:/Users/John Doe/.meowo/statusline.sh");
+        assert_eq!(
+            to_bash_path(&p.to_string_lossy()),
+            "C:/Users/John Doe/.meowo/statusline.sh"
+        );
         assert!(wrapper_target("bash -c 'claude-hud'").is_none());
     }
 
@@ -561,9 +616,7 @@ mod tests {
             "解析出的 SPECS 条数不对，脚本格式可能变了"
         );
 
-        let events = crate::by_id("claude")
-            .expect("claude 应已注册")
-            .variants()[0]
+        let events = crate::by_id("claude").expect("claude 应已注册").variants()[0]
             .hooks
             .events;
         let from_rs: Vec<(String, String)> = events
@@ -595,7 +648,10 @@ mod tests {
         let meowo_dir = std::path::PathBuf::from(
             std::env::var("MEOWO_DIR").expect("请设置 MEOWO_DIR 指向临时目录"),
         );
-        let ctx = WiringContext { fallback_reporter: None, meowo_dir: &meowo_dir };
+        let ctx = WiringContext {
+            fallback_reporter: None,
+            meowo_dir: &meowo_dir,
+        };
         let reason = super::super::Claude.wire(&ctx);
         let inst = crate::registry::installation(crate::id::CLAUDE).expect("应解析出实况");
         let text = std::fs::read_to_string(inst.config_path()).expect("读不回 settings.json");

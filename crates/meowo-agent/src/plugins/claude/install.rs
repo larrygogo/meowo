@@ -63,7 +63,8 @@ fn parse_version(body: &str) -> Option<String> {
     let v = body.trim();
     let ok = !v.is_empty()
         && v.split('.').count() == 3
-        && v.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+        && v.split('.')
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
     ok.then(|| v.to_string())
 }
 
@@ -94,7 +95,11 @@ impl crate::install::InstallCap for ClaudeDirectInstall {
 /// 两次请求都很小（版本号几个字节、manifest 几 KB），故走 `HttpPort::send`。
 pub fn plan(ports: &Ports) -> Result<InstallPlan, String> {
     let platform = platform().ok_or_else(|| {
-        format!("claude 不支持本平台（{}/{}）", std::env::consts::OS, std::env::consts::ARCH)
+        format!(
+            "claude 不支持本平台（{}/{}）",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
     })?;
 
     let version = parse_version(&get(ports, &format!("{BASE}/latest"))?)
@@ -134,7 +139,10 @@ mod tests {
     #[test]
     fn parse_manifest_extracts_checksum_size_and_binary() {
         let (sum, size, bin) = parse_manifest(MANIFEST, "win32-x64").expect("应解出 win32-x64");
-        assert_eq!(sum, "d5072b25b9a20bffb24625d36129a05ed2be4d2eb7e35625aad6aa35596892c2");
+        assert_eq!(
+            sum,
+            "d5072b25b9a20bffb24625d36129a05ed2be4d2eb7e35625aad6aa35596892c2"
+        );
         assert_eq!(size, 248_682_144);
         assert_eq!(bin, "claude.exe");
 
@@ -151,11 +159,18 @@ mod tests {
     /// 也绝不带着一个跳过校验的路径继续下载 250 MB 的可执行文件。
     #[test]
     fn parse_manifest_rejects_malformed_checksum() {
-        let bad = r#"{"platforms":{"win32-x64":{"binary":"claude.exe","checksum":"deadbeef","size":1}}}"#;
+        let bad =
+            r#"{"platforms":{"win32-x64":{"binary":"claude.exe","checksum":"deadbeef","size":1}}}"#;
         assert!(parse_manifest(bad, "win32-x64").is_none(), "短摘要必须拒绝");
 
-        let not_hex = format!(r#"{{"platforms":{{"win32-x64":{{"binary":"c.exe","checksum":"{}","size":1}}}}}}"#, "z".repeat(64));
-        assert!(parse_manifest(&not_hex, "win32-x64").is_none(), "非十六进制必须拒绝");
+        let not_hex = format!(
+            r#"{{"platforms":{{"win32-x64":{{"binary":"c.exe","checksum":"{}","size":1}}}}}}"#,
+            "z".repeat(64)
+        );
+        assert!(
+            parse_manifest(&not_hex, "win32-x64").is_none(),
+            "非十六进制必须拒绝"
+        );
     }
 
     #[test]

@@ -17,7 +17,11 @@ pub enum CredentialSource {
     /// 另四家两者同在一处，从没暴露过「相对 data_dir」这个隐含假设。
     HomeFile(&'static str),
     /// macOS 登录 Keychain 的通用密码；其它平台回退到 `file`（Claude Code 就是这样）。
-    KeychainOrFile { service: &'static str, account: &'static str, file: &'static str },
+    KeychainOrFile {
+        service: &'static str,
+        account: &'static str,
+        file: &'static str,
+    },
 }
 
 impl CredentialSource {

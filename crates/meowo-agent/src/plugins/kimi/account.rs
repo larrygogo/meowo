@@ -52,7 +52,9 @@ fn kimi_base_url(inst: &Installation) -> String {
     if let Some(url) = read_config_base_url(inst) {
         return url;
     }
-    kimi_auth(inst).map(|a| a.default_base_url.to_string()).unwrap_or_default()
+    kimi_auth(inst)
+        .map(|a| a.default_base_url.to_string())
+        .unwrap_or_default()
 }
 
 /// 从实况 config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
@@ -75,7 +77,11 @@ fn read_config_base_url(inst: &Installation) -> Option<String> {
         }
         if let Some(rest) = trimmed.strip_prefix("base_url") {
             if let Some(after_eq) = rest.trim_start().strip_prefix('=') {
-                let url = after_eq.trim().trim_matches('"').trim_end_matches('/').to_string();
+                let url = after_eq
+                    .trim()
+                    .trim_matches('"')
+                    .trim_end_matches('/')
+                    .to_string();
                 if !url.is_empty() {
                     return Some(url);
                 }
@@ -116,7 +122,10 @@ pub fn merge_kimi_credentials(
         obj.insert("access_token".into(), serde_json::json!(access_token));
         obj.insert("refresh_token".into(), serde_json::json!(refresh_token));
         obj.insert("expires_in".into(), serde_json::json!(expires_in));
-        obj.insert("expires_at".into(), serde_json::json!(now_secs + expires_in));
+        obj.insert(
+            "expires_at".into(),
+            serde_json::json!(now_secs + expires_in),
+        );
     }
     out
 }
@@ -124,7 +133,7 @@ pub fn merge_kimi_credentials(
 /// 原子写回凭据文件（避免半截文件）。
 fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic(path, &body).map_err(|e| e.to_string())
+    crate::fsutil::write_atomic_secure(path, &body).map_err(|e| e.to_string())
 }
 
 /// 按需刷新 kimi token（过期才刷 + Mutex 串行化 + 双检 + 原子写回）。
@@ -144,8 +153,15 @@ fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String>
     static REFRESH_LOCK: Mutex<()> = Mutex::new(());
 
     let creds = read_kimi_credentials(inst)?;
-    let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let access_token = creds
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let expires_at = creds
+        .get("expires_at")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     // Fast path：token 仍有效，直接返回，不加锁。
     if !access_token.is_empty() && !is_kimi_token_expired(expires_at, now_secs()) {
@@ -157,8 +173,15 @@ fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String>
 
     // 双检：持锁后重读文件，若已被并发刷新过，直接用新 token。
     let creds = read_kimi_credentials(inst)?;
-    let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let access_token = creds
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let expires_at = creds
+        .get("expires_at")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let current_secs = now_secs();
 
     if !access_token.is_empty() && !is_kimi_token_expired(expires_at, current_secs) {
@@ -173,9 +196,15 @@ fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String>
     };
     eprintln!(
         "Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…（变体 {}）",
-        crate::registry::installation(crate::id::KIMI).map(|i| i.variant_tag).unwrap_or("?")
+        crate::registry::installation(crate::id::KIMI)
+            .map(|i| i.variant_tag)
+            .unwrap_or("?")
     );
-    let Some(refresh_token) = creds.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string) else {
+    let Some(refresh_token) = creds
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    else {
         eprintln!("Meowo usage[kimi]: 凭据缺 refresh_token 字段，无法刷新");
         return None;
     };
@@ -350,7 +379,11 @@ fn window_to_kind(duration: f64, time_unit: &str) -> UsageKind {
 /// label 优先 usage.name → usage.title → 默认 "Weekly limit"（不存入结构体，仅供调试参考）。
 fn parse_usage_object(usage: &Value) -> Option<UsageLane> {
     let (used, limit) = extract_used_limit(usage)?;
-    let used_pct = if limit > 0.0 { Some(used / limit * 100.0) } else { None };
+    let used_pct = if limit > 0.0 {
+        Some(used / limit * 100.0)
+    } else {
+        None
+    };
     let resets_at = parse_resets_at(usage);
     Some(UsageLane {
         kind: UsageKind::Weekly,
@@ -366,8 +399,14 @@ fn parse_usage_object(usage: &Value) -> Option<UsageLane> {
 /// detail 若不是对象（缺失或 null）则退回用 item 本身取 used/limit。
 fn parse_limit_item(item: &Value) -> Option<UsageLane> {
     let window = item.get("window")?;
-    let time_unit = window.get("timeUnit").and_then(|v| v.as_str()).unwrap_or("");
-    let duration = window.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let time_unit = window
+        .get("timeUnit")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let duration = window
+        .get("duration")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let kind = window_to_kind(duration, time_unit);
 
     // detail 若不是对象则退回 item 本身取 used/limit
@@ -377,7 +416,11 @@ fn parse_limit_item(item: &Value) -> Option<UsageLane> {
     };
 
     let (used, limit) = extract_used_limit(data)?;
-    let used_pct = if limit > 0.0 { Some(used / limit * 100.0) } else { None };
+    let used_pct = if limit > 0.0 {
+        Some(used / limit * 100.0)
+    } else {
+        None
+    };
     let resets_at = parse_resets_at(data);
 
     Some(UsageLane {
@@ -426,7 +469,11 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
     if lanes.is_empty() {
         None
     } else {
-        Some(ProviderUsage { lanes, note: None, plan: plan_name(v) })
+        Some(ProviderUsage {
+            lanes,
+            note: None,
+            plan: plan_name(v),
+        })
     }
 }
 
@@ -489,11 +536,14 @@ fn fetch_kimi_usage_live(inst: &Installation, ports: &Ports) -> Result<ProviderU
         Ok(t) => t,
         // 401 多为 token 失效/旧版鉴权不兼容；404 多为端点不对。
         Err(HttpError::Status(code, _)) => {
-            return Err(format!("GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）"));
+            return Err(format!(
+                "GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）"
+            ));
         }
         Err(e) => return Err(format!("GET {url} 网络错误：{e}")),
     };
-    let v: Value = serde_json::from_str(&text).map_err(|e| format!("/usages 响应不是合法 JSON：{e}"))?;
+    let v: Value =
+        serde_json::from_str(&text).map_err(|e| format!("/usages 响应不是合法 JSON：{e}"))?;
     parse_kimi_usage(&v)
         .ok_or_else(|| "/usages 解析不出任何用量 lane（响应 schema 可能与旧版不同）".to_string())
 }
@@ -544,7 +594,10 @@ impl AccountCap for KimiAccount {
                 .map(|s| s.to_string())
         });
         // 有 email 就不必再显示 id（邮箱信息量更大）。
-        let login_label = email.is_none().then(|| user_label(payload.as_ref())).flatten();
+        let login_label = email
+            .is_none()
+            .then(|| user_label(payload.as_ref()))
+            .flatten();
 
         Some(Account {
             email,
@@ -588,7 +641,10 @@ mod user_label_tests {
         assert_eq!(user_label(Some(&p)).as_deref(), Some("abcd…mnop"));
 
         // 短 id 原样显示，不做无谓截断。
-        assert_eq!(user_label(Some(&json!({"user_id": "u1"}))).as_deref(), Some("u1"));
+        assert_eq!(
+            user_label(Some(&json!({"user_id": "u1"}))).as_deref(),
+            Some("u1")
+        );
 
         // 什么都没有 → None（卡片回退到「未登录」以外的既有兜底，不显示一个空串）。
         assert_eq!(user_label(Some(&json!({"scope": "x"}))), None);
@@ -640,7 +696,11 @@ mod plan_tests {
             ("LEVEL_ADVANCED", "Allegro"),
             ("LEVEL_PREMIUM", "Vivace"),
         ] {
-            assert_eq!(plan_name(&live_usages_shape(level)).as_deref(), Some(want), "{level}");
+            assert_eq!(
+                plan_name(&live_usages_shape(level)).as_deref(),
+                Some(want),
+                "{level}"
+            );
         }
     }
 
@@ -724,7 +784,8 @@ mod tests {
     #[test]
     fn merge_expires_at_calculation() {
         // expires_at = now_secs + expires_in（Unix 秒），与 kimi 源码完全一致
-        let original = json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+        let original =
+            json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
         let merged = merge_kimi_credentials(&original, "a2", "r2", 900, 1751000000);
         assert_eq!(merged["expires_at"], 1751000900i64);
     }
@@ -764,7 +825,8 @@ mod tests {
         // 若 expires_in 被 clamp 到 [60, 86400]，则：
         // - now_secs + 86400 不溢出（int64 足够容纳）
         // - 下次刷新时间合理（最多 24 小时后）
-        let original = json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+        let original =
+            json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
 
         // 模拟 expires_in 被服务端异常设置为极大值 (100000000)
         // clamp 后应为 86400
@@ -836,7 +898,10 @@ mod tests {
     fn parse_resets_at_reset_at_nanos_truncated() {
         // 纳秒精度（9位）→ 截断到毫秒（3位）
         let v = json!({"resetAt": "2026-06-30T12:00:00.123456789Z"});
-        assert_eq!(parse_resets_at(&v).as_deref(), Some("2026-06-30T12:00:00.123Z"));
+        assert_eq!(
+            parse_resets_at(&v).as_deref(),
+            Some("2026-06-30T12:00:00.123Z")
+        );
     }
 
     #[test]
@@ -857,7 +922,10 @@ mod tests {
     fn parse_resets_at_window_object_ignored() {
         // window 为对象时不应当作秒偏移
         let v = json!({"window": {"duration": 5, "timeUnit": "HOUR"}});
-        assert!(parse_resets_at(&v).is_none(), "window 对象不应产生 reset 偏移");
+        assert!(
+            parse_resets_at(&v).is_none(),
+            "window 对象不应产生 reset 偏移"
+        );
     }
 
     #[test]
@@ -874,7 +942,10 @@ mod tests {
         assert_eq!(window_to_kind(5.0, "TIME_UNIT_HOUR"), UsageKind::FiveHour);
         assert_eq!(window_to_kind(168.0, "TIME_UNIT_HOUR"), UsageKind::SevenDay);
         assert_eq!(window_to_kind(7.0, "TIME_UNIT_DAY"), UsageKind::SevenDay);
-        assert_eq!(window_to_kind(300.0, "TIME_UNIT_MINUTE"), UsageKind::FiveHour);
+        assert_eq!(
+            window_to_kind(300.0, "TIME_UNIT_MINUTE"),
+            UsageKind::FiveHour
+        );
     }
 
     // ── parse_kimi_usage · Schema A（顶层 usage 对象）──
@@ -928,14 +999,21 @@ mod tests {
     fn schema_a_reset_at_unix_seconds() {
         let v = json!({"usage": {"used": 100, "limit": 1000, "resetAt": 1782820800i64}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert!(pu.lanes[0].resets_at.as_deref().unwrap_or("").contains("2026-06-30"));
+        assert!(pu.lanes[0]
+            .resets_at
+            .as_deref()
+            .unwrap_or("")
+            .contains("2026-06-30"));
     }
 
     #[test]
     fn schema_a_reset_at_alias() {
         let v = json!({"usage": {"used": 100, "limit": 1000, "reset_at": "2026-07-01T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-07-01T00:00:00Z")
+        );
     }
 
     #[test]
@@ -943,15 +1021,22 @@ mod tests {
         // resetTime 新增字段名
         let v = json!({"usage": {"used": 100, "limit": 1000, "resetTime": "2026-07-01T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-07-01T00:00:00Z")
+        );
     }
 
     #[test]
     fn schema_a_reset_time_snake() {
         // reset_time 新增下划线别名
-        let v = json!({"usage": {"used": 100, "limit": 1000, "reset_time": "2026-07-02T00:00:00Z"}});
+        let v =
+            json!({"usage": {"used": 100, "limit": 1000, "reset_time": "2026-07-02T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-07-02T00:00:00Z")
+        );
     }
 
     #[test]
@@ -959,7 +1044,10 @@ mod tests {
         // resetAt 纳秒精度 → 截断到毫秒
         let v = json!({"usage": {"used": 100, "limit": 1000, "resetAt": "2026-06-30T12:00:00.123456789Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-06-30T12:00:00.123Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-06-30T12:00:00.123Z")
+        );
     }
 
     #[test]
@@ -996,7 +1084,10 @@ mod tests {
     fn schema_a_zero_limit_no_pct() {
         let v = json!({"usage": {"used": 0, "limit": 0, "resetAt": "2026-06-30T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert!(pu.lanes[0].used_pct.is_none(), "limit=0 时 used_pct 应为 None");
+        assert!(
+            pu.lanes[0].used_pct.is_none(),
+            "limit=0 时 used_pct 应为 None"
+        );
     }
 
     // ── parse_kimi_usage · Schema B（limits 数组）──
@@ -1102,7 +1193,10 @@ mod tests {
     fn balance_in_data_not_parsed() {
         // data.available_balance 属于另一个端点，/usages 响应不含此字段，应忽略
         let v = json!({"data": {"available_balance": 5.42}});
-        assert!(parse_kimi_usage(&v).is_none(), "data.available_balance 应被忽略");
+        assert!(
+            parse_kimi_usage(&v).is_none(),
+            "data.available_balance 应被忽略"
+        );
     }
 
     // ── 混合 / 畸形 ──
@@ -1140,17 +1234,29 @@ mod tests {
     #[test]
     fn extract_used_limit_prefers_used_then_derives_from_remaining() {
         // used 存在 → 直接取，remaining 即便矛盾也不参与。
-        assert_eq!(extract_used_limit(&json!({"limit": 1000, "used": 300, "remaining": 999})), Some((300.0, 1000.0)));
+        assert_eq!(
+            extract_used_limit(&json!({"limit": 1000, "used": 300, "remaining": 999})),
+            Some((300.0, 1000.0))
+        );
         // 无 used → used = limit - remaining。
-        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": 700})), Some((300.0, 1000.0)));
+        assert_eq!(
+            extract_used_limit(&json!({"limit": 1000, "remaining": 700})),
+            Some((300.0, 1000.0))
+        );
         // 字符串数字同样容错。
-        assert_eq!(extract_used_limit(&json!({"limit": "1000", "remaining": "700"})), Some((300.0, 1000.0)));
+        assert_eq!(
+            extract_used_limit(&json!({"limit": "1000", "remaining": "700"})),
+            Some((300.0, 1000.0))
+        );
         // 无 limit → None（limit 是必需字段）。
         assert_eq!(extract_used_limit(&json!({"used": 300})), None);
         // 有 limit 但 used/remaining 皆无 → None。
         assert_eq!(extract_used_limit(&json!({"limit": 1000})), None);
         // remaining 存在但不是数字（解析不出）→ 与缺失同等，None。
-        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": "abc"})), None);
+        assert_eq!(
+            extract_used_limit(&json!({"limit": 1000, "remaining": "abc"})),
+            None
+        );
     }
 
     #[test]
@@ -1198,7 +1304,10 @@ mod tests {
         assert_eq!(weekly.kind, UsageKind::Weekly, "顶层 usage → Weekly");
         assert_eq!(weekly.used, Some(8.0), "used 字符串 '8' 解析为 8.0");
         assert_eq!(weekly.limit, Some(100.0), "limit 字符串 '100' 解析为 100.0");
-        assert!((weekly.used_pct.unwrap() - 8.0).abs() < 0.01, "used_pct 应为 8%");
+        assert!(
+            (weekly.used_pct.unwrap() - 8.0).abs() < 0.01,
+            "used_pct 应为 8%"
+        );
         assert_eq!(
             weekly.resets_at.as_deref(),
             Some("2026-07-06T02:00:13.307Z"),
@@ -1209,8 +1318,15 @@ mod tests {
         let five_hour = &pu.lanes[1];
         assert_eq!(five_hour.kind, UsageKind::FiveHour, "300 MINUTE → FiveHour");
         assert_eq!(five_hour.used, Some(10.0), "used 字符串 '10' 解析为 10.0");
-        assert_eq!(five_hour.limit, Some(100.0), "limit 字符串 '100' 解析为 100.0");
-        assert!((five_hour.used_pct.unwrap() - 10.0).abs() < 0.01, "used_pct 应为 10%");
+        assert_eq!(
+            five_hour.limit,
+            Some(100.0),
+            "limit 字符串 '100' 解析为 100.0"
+        );
+        assert!(
+            (five_hour.used_pct.unwrap() - 10.0).abs() < 0.01,
+            "used_pct 应为 10%"
+        );
         assert_eq!(
             five_hour.resets_at.as_deref(),
             Some("2026-07-01T10:00:13.307Z"),
@@ -1234,6 +1350,9 @@ mod tests {
         // TIME_UNIT_* 前缀变体
         assert_eq!(window_to_kind(5.0, "TIME_UNIT_HOUR"), UsageKind::FiveHour);
         assert_eq!(window_to_kind(7.0, "TIME_UNIT_DAY"), UsageKind::SevenDay);
-        assert_eq!(window_to_kind(300.0, "TIME_UNIT_MINUTE"), UsageKind::FiveHour);
+        assert_eq!(
+            window_to_kind(300.0, "TIME_UNIT_MINUTE"),
+            UsageKind::FiveHour
+        );
     }
 }

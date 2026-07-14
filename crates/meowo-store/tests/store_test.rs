@@ -337,6 +337,85 @@ fn ended_session_not_in_liveness() {
     assert!(live.is_empty());
 }
 
+#[test]
+fn conditional_reap_never_ends_a_session_reclaimed_by_a_new_pid() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "reap-race", 100).unwrap();
+    store.set_session_pid(sid, 111, 110).unwrap();
+    // reaper 观察到 111 后，新进程先完成认领。
+    store.set_session_pid(sid, 222, 120).unwrap();
+    assert!(!store.end_session_if_pid(sid, 111, 110, 130).unwrap());
+    let session = store.get_session(sid).unwrap();
+    assert_eq!(session.status, "running");
+    assert_eq!(store.session_pid(sid).unwrap(), Some(222));
+
+    // pid 相同但其间已有新 hook，也必须拒绝用旧快照收尾。
+    store.touch_session(sid, 130).unwrap();
+    assert!(!store.end_session_if_pid(sid, 222, 120, 140).unwrap());
+    assert!(store.end_session_if_pid(sid, 222, 130, 140).unwrap());
+    assert_eq!(store.get_session(sid).unwrap().status, "ended");
+}
+
+#[test]
+fn late_hooks_cannot_overwrite_newer_session_or_task_state() {
+    let store = Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(project, "out-of-order", 100).unwrap();
+
+    store.set_session_title(sid, "新标题", 500).unwrap();
+    store.set_session_title(sid, "旧标题", 400).unwrap();
+    store.set_current_activity(sid, "新活动", 600).unwrap();
+    store.set_current_activity(sid, "旧活动", 550).unwrap();
+    let newest_todos = [TodoInput {
+        content: "新 Todo".into(),
+        status: TodoStatus::InProgress,
+    }];
+    store.sync_todos(sid, &newest_todos, 700).unwrap();
+
+    // 另一个更新把会话推进到 800；即便 task.updated_at 只有 700，750 的旧 Todo 快照也不能覆盖。
+    store.touch_session(sid, 800).unwrap();
+    let stale_todos = [TodoInput {
+        content: "旧 Todo".into(),
+        status: TodoStatus::Pending,
+    }];
+    store.sync_todos(sid, &stale_todos, 750).unwrap();
+
+    store.set_session_cwd(sid, "/new", 900).unwrap();
+    store.set_session_cwd(sid, "/old", 850).unwrap();
+    store
+        .set_session_status(sid, SessionStatus::Waiting, 1_100)
+        .unwrap();
+    store.set_last_ai_text(sid, "新回复", 1_100).unwrap();
+    store
+        .set_session_status(sid, SessionStatus::Stale, 1_050)
+        .unwrap();
+    store.set_last_ai_text(sid, "旧回复", 1_050).unwrap();
+    store
+        .set_pending_review(sid, PendingReview::Approval, 1_050)
+        .unwrap();
+    store.end_session(sid, 1_050).unwrap();
+    store.set_session_pid(sid, 222, 1_200).unwrap();
+    store.set_session_pid(sid, 111, 1_150).unwrap();
+
+    let task = store.get_task(tid).unwrap();
+    assert_eq!(task.title, "新标题");
+    assert_eq!(task.current_activity.as_deref(), Some("新活动"));
+    let todos = store.list_todos(tid).unwrap();
+    assert_eq!(todos.len(), 1);
+    assert_eq!(todos[0].content, "新 Todo");
+    assert_eq!(store.session_cwd(sid).unwrap().as_deref(), Some("/new"));
+    assert_eq!(store.session_pid(sid).unwrap(), Some(222));
+
+    let session = store.get_session(sid).unwrap();
+    assert_eq!(session.status, "waiting");
+    assert_eq!(session.last_event_at, 1_200);
+    let live = store.live_sessions(None, None, None, None, 2_000).unwrap();
+    let card = live.iter().find(|s| s.session.id == sid).unwrap();
+    assert_eq!(card.last_ai_text.as_deref(), Some("新回复"));
+    assert_eq!(card.pending_review, None);
+}
+
 // == live_sessions pid + end_orphaned_idle ==
 
 #[test]
@@ -558,10 +637,10 @@ fn last_ai_and_user_text_set_with_cleaning() {
 
     // 折叠空白;不动 last_event_at(仍是建会话时的 100)。
     store
-        .set_last_ai_text(sid, "  调研   完成。\n结论更微妙  ")
+        .set_last_ai_text(sid, "  调研   完成。\n结论更微妙  ", 120)
         .unwrap();
     store
-        .set_last_user_text(sid, "切到这个 [Image #1] 任务")
+        .set_last_user_text(sid, "切到这个 [Image #1] 任务", 120)
         .unwrap();
     let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     let s = live
@@ -573,7 +652,7 @@ fn last_ai_and_user_text_set_with_cleaning() {
     assert_eq!(s.session.last_event_at, 100);
 
     // 空串/全空白不覆盖旧值。
-    store.set_last_ai_text(sid, "   ").unwrap();
+    store.set_last_ai_text(sid, "   ", 120).unwrap();
     let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     let s = live
         .iter()
@@ -602,7 +681,7 @@ fn pending_review_set_and_clear() {
     assert_eq!(s.session.last_event_at, 500);
 
     // clear:置 NULL,且不改 last_event_at。
-    store.clear_pending_review(sid).unwrap();
+    store.clear_pending_review(sid, 500).unwrap();
     let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     let s = live
         .iter()
@@ -618,7 +697,9 @@ fn lifecycle_boundaries_clear_stale_pending_review() {
     let project = store.upsert_project_by_root("/p", "p", 100).unwrap();
     let (sid, _) = store.start_session(project, "pending-life", 100).unwrap();
 
-    store.set_pending_review(sid, PendingReview::Approval, 150).unwrap();
+    store
+        .set_pending_review(sid, PendingReview::Approval, 150)
+        .unwrap();
     store.end_session(sid, 200).unwrap();
     let ended = store
         .live_sessions(None, None, None, None, 100)
@@ -629,7 +710,9 @@ fn lifecycle_boundaries_clear_stale_pending_review() {
     assert_eq!(ended.pending_review, None, "结束边界应清理旧审批子态");
 
     // 模拟旧版本数据库留下的 ended + pending_review 残留；resume 必须再次兜底清理。
-    store.set_pending_review(sid, PendingReview::Plan, 250).unwrap();
+    store
+        .set_pending_review(sid, PendingReview::Plan, 250)
+        .unwrap();
     assert!(store.revive_for_resume(sid, 300, None).unwrap());
     let resumed = store
         .live_sessions(None, None, None, None, 100)

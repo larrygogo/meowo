@@ -26,7 +26,9 @@ pub fn kimi_share_dir() -> Option<PathBuf> {
 /// resume/launch 用：meowo-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先绝对路径，
 /// 避免 wt/powershell「系统找不到指定的文件」。
 pub fn kimi_launch_argv() -> Vec<String> {
-    kimi_install().map(|i| i.launch_argv()).unwrap_or_else(|| vec!["kimi".to_string()])
+    kimi_install()
+        .map(|i| i.launch_argv())
+        .unwrap_or_else(|| vec!["kimi".to_string()])
 }
 
 /// kimi 可执行是否真实落在某个已知位置（区别于 `kimi_launch_argv` 找不到时回退裸名）。
@@ -98,9 +100,9 @@ pub fn parse_wire(content: &str) -> WireSummary {
                 }
             }
             "context.append_loop_event" => {
-                let part = v.get("event").filter(|e| {
-                    e.get("type").and_then(|t| t.as_str()) == Some("content.part")
-                });
+                let part = v
+                    .get("event")
+                    .filter(|e| e.get("type").and_then(|t| t.as_str()) == Some("content.part"));
                 let part = part.and_then(|e| e.get("part"));
                 if part.and_then(|p| p.get("type")).and_then(|t| t.as_str()) == Some("text") {
                     if let Some(t) = part.and_then(|p| p.get("text")).and_then(|t| t.as_str()) {
@@ -169,7 +171,11 @@ pub fn parse_context(content: &str) -> Option<(i64, String)> {
         let Some(u) = v.get("usage") else { continue };
         let field = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
         let used = field("inputOther") + field("inputCacheRead") + field("inputCacheCreation");
-        let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+        let model = v
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
         last = Some((used, model));
     }
     last
@@ -179,7 +185,9 @@ pub fn parse_context(content: &str) -> Option<(i64, String)> {
 /// 逐行启发式解析（不引 toml 依赖，同 account/kimi.rs 既有范式）。
 pub fn context_window(model_alias: &str) -> i64 {
     const FALLBACK: i64 = 262_144;
-    let Some(inst) = kimi_install() else { return FALLBACK };
+    let Some(inst) = kimi_install() else {
+        return FALLBACK;
+    };
     let Ok(content) = std::fs::read_to_string(inst.config_path()) else {
         return FALLBACK;
     };
@@ -226,7 +234,10 @@ pub fn read_context(session_id: &str) -> Option<crate::caps::ContextUsage> {
         return None;
     }
     let pct = (used * 100 / window).clamp(0, 100);
-    Some(crate::caps::ContextUsage { used_pct: pct, window })
+    Some(crate::caps::ContextUsage {
+        used_pct: pct,
+        window,
+    })
 }
 
 /// 把某 kimi 会话改成自定义标题：改写 session `state.json` 的 `title` + `isCustomTitle=true`
@@ -247,7 +258,10 @@ pub fn set_custom_title(session_id: &str, title: &str) -> bool {
     let Some(obj) = v.as_object_mut() else {
         return false;
     };
-    obj.insert("title".to_string(), serde_json::Value::String(title.to_string()));
+    obj.insert(
+        "title".to_string(),
+        serde_json::Value::String(title.to_string()),
+    );
     obj.insert("isCustomTitle".to_string(), serde_json::Value::Bool(true));
     let Ok(s) = serde_json::to_string(&v) else {
         return false;
@@ -268,7 +282,10 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
     /// kimi 的 Stop hook 不带正文/模型 → 从 wire.jsonl 一次读出两者（避免双读）。
     fn stop_outputs(&self, ctx: &crate::caps::HookContext) -> crate::caps::StopOutputs {
         match read_summary(ctx.session_id) {
-            Some(s) => crate::caps::StopOutputs { last_ai: s.last_ai, model: s.model },
+            Some(s) => crate::caps::StopOutputs {
+                last_ai: s.last_ai,
+                model: s.model,
+            },
             None => crate::caps::StopOutputs::default(),
         }
     }
@@ -294,7 +311,10 @@ mod tests {
 {"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":727,"output":815,"inputCacheRead":20480,"inputCacheCreation":13}}
 "#;
         // 取最后一条：727 + 20480 + 13 = 21220；output 不计。
-        assert_eq!(parse_context(wire), Some((21220, "kimi-code/kimi-for-coding".to_string())));
+        assert_eq!(
+            parse_context(wire),
+            Some((21220, "kimi-code/kimi-for-coding".to_string()))
+        );
     }
 
     #[test]
@@ -334,7 +354,10 @@ mod tests {
         // 目录优先级本身由 meowo-agent 的变体表单测覆盖（不碰真实 home）；这里只守住薄封装的一致性：
         // config.toml 必须落在 share_dir 下，argv 非空且指向 kimi。
         let inst = kimi_install().expect("resolve 应总能给出实况或默认落点");
-        assert_eq!(inst.config_path(), kimi_share_dir().unwrap().join("config.toml"));
+        assert_eq!(
+            inst.config_path(),
+            kimi_share_dir().unwrap().join("config.toml")
+        );
         let argv = kimi_launch_argv();
         assert_eq!(argv.len(), 1);
         assert!(argv[0].to_ascii_lowercase().contains("kimi"));

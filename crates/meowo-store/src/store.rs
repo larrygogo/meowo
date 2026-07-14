@@ -146,7 +146,8 @@ impl Store {
                  used_pct = COALESCE(excluded.used_pct, used_pct),
                  window_size = COALESCE(excluded.window_size, window_size),
                  model = COALESCE(excluded.model, model),
-                 updated_at = excluded.updated_at",
+                 updated_at = excluded.updated_at
+             WHERE excluded.updated_at >= session_context.updated_at",
             rusqlite::params![cc_session_id, used_pct, window_size, model, now_ms],
         )?;
         Ok(())
@@ -226,7 +227,8 @@ impl Store {
                  status = 'running',
                  last_event_at = excluded.last_event_at,
                  ended_at = NULL,
-                 pending_review = NULL",
+                 pending_review = NULL
+             WHERE excluded.last_event_at >= sessions.last_event_at",
             rusqlite::params![project_id, cc_session_id, now_ms],
         )?;
         let sid = self
@@ -263,7 +265,10 @@ impl Store {
         // 按字符截断，防超大 Bash 命令整条进库并随轮询全量下发。
         let activity = truncate_chars(activity, 200);
         self.conn.execute(
-            "UPDATE tasks SET current_activity = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE tasks SET current_activity = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND updated_at <= ?2 \
+               AND EXISTS (SELECT 1 FROM sessions \
+                           WHERE id = tasks.session_id AND last_event_at <= ?2)",
             rusqlite::params![activity, now_ms, tid],
         )?;
         self.touch_session(session_id, now_ms)?;
@@ -283,7 +288,10 @@ impl Store {
         }
         let tid = self.task_id_of_session(session_id)?;
         self.conn.execute(
-            "UPDATE tasks SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE tasks SET title = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND updated_at <= ?2 \
+               AND EXISTS (SELECT 1 FROM sessions \
+                           WHERE id = tasks.session_id AND last_event_at <= ?2)",
             rusqlite::params![t, now_ms, tid],
         )?;
         Ok(())
@@ -359,15 +367,13 @@ impl Store {
         let tid = self.task_id_of_session(session_id)?;
         let cleaned = truncate_chars(&sanitize_prompt(prompt), 60);
         if !cleaned.is_empty() {
-            let title: String =
-                self.conn
-                    .query_row("SELECT title FROM tasks WHERE id = ?1", [tid], |r| r.get(0))?;
-            if title == "(未命名会话)" {
-                self.conn.execute(
-                    "UPDATE tasks SET title = ?1, updated_at = ?2 WHERE id = ?3",
-                    rusqlite::params![cleaned, now_ms, tid],
-                )?;
-            }
+            self.conn.execute(
+                "UPDATE tasks SET title = ?1, updated_at = ?2 \
+                 WHERE id = ?3 AND title = '(未命名会话)' AND updated_at <= ?2 \
+                   AND EXISTS (SELECT 1 FROM sessions \
+                               WHERE id = tasks.session_id AND last_event_at <= ?2)",
+                rusqlite::params![cleaned, now_ms, tid],
+            )?;
             // 非占位标题:不再把 prompt 写进 current_activity(改由 last_user_text 承担)。
         }
         self.touch_session(session_id, now_ms)?;
@@ -380,7 +386,7 @@ impl Store {
             "UPDATE sessions
              SET last_event_at = ?1,
                  status = CASE WHEN status IN ('waiting','stale') THEN 'running' ELSE status END
-             WHERE id = ?2",
+             WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
         Ok(())
@@ -396,13 +402,19 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         let tid = self.task_id_of_session(session_id)?;
-        let locked: bool = self.conn.query_row(
-            "SELECT column_locked FROM tasks WHERE id = ?1",
-            [tid],
-            |r| Ok(r.get::<_, i64>(0)? != 0),
-        )?;
-
         let tx = self.conn.unchecked_transaction()?;
+        let (locked, task_updated_at, session_updated_at): (bool, i64, i64) = tx.query_row(
+            "SELECT t.column_locked, t.updated_at, s.last_event_at \
+             FROM tasks t JOIN sessions s ON s.id = t.session_id WHERE t.id = ?1",
+            [tid],
+            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
+        )?;
+        // Todo hook 可能乱序到达。必须在删除旧列表之前挡住迟到事件，否则即便下面的
+        // tasks UPDATE 有时间守卫，todos 本身仍会被旧快照整体覆盖。
+        if task_updated_at > now_ms || session_updated_at > now_ms {
+            tx.commit()?;
+            return Ok(());
+        }
         tx.execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
         for (i, t) in todos.iter().enumerate() {
             tx.execute(
@@ -427,7 +439,7 @@ impl Store {
             "UPDATE sessions
              SET last_event_at = ?1,
                  status = CASE WHEN status IN ('waiting','stale') THEN 'running' ELSE status END
-             WHERE id = ?2",
+             WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
         tx.commit()?;
@@ -463,7 +475,8 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE tasks SET column_name = ?1, column_locked = ?2, updated_at = ?3 WHERE id = ?4",
+            "UPDATE tasks SET column_name = ?1, column_locked = ?2, updated_at = ?3 \
+             WHERE id = ?4 AND updated_at <= ?3",
             rusqlite::params![column.as_str(), locked as i64, now_ms, task_id],
         )?;
         Ok(())
@@ -482,7 +495,7 @@ impl Store {
             return self.end_session(session_id, now_ms);
         }
         self.conn.execute(
-            "UPDATE sessions SET status = ?1, last_event_at = ?2 WHERE id = ?3",
+            "UPDATE sessions SET status = ?1, last_event_at = ?2 WHERE id = ?3 AND last_event_at <= ?2",
             rusqlite::params![status.as_str(), now_ms, session_id],
         )?;
         Ok(())
@@ -496,45 +509,55 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET pending_review = ?1, last_event_at = ?2 WHERE id = ?3",
+            "UPDATE sessions SET pending_review = ?1, last_event_at = ?2 WHERE id = ?3 AND last_event_at <= ?2",
             rusqlite::params![kind.as_str(), now_ms, session_id],
         )?;
         Ok(())
     }
 
     /// 清除待审批子态(置 NULL)。不动 last_event_at——由同回合的兄弟调用负责时间戳。
-    pub fn clear_pending_review(&self, session_id: i64) -> Result<(), StoreError> {
+    pub fn clear_pending_review(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET pending_review = NULL WHERE id = ?1",
-            rusqlite::params![session_id],
+            "UPDATE sessions SET pending_review = NULL WHERE id = ?1 AND last_event_at <= ?2",
+            rusqlite::params![session_id, now_ms],
         )?;
         Ok(())
     }
 
     /// 落最近一条 AI 正文:折叠空白 + 截断 200 字符;空/全空白不覆盖旧值。
     /// 不动 last_event_at——Stop 的兄弟 set_session_status 已刷新它。
-    pub fn set_last_ai_text(&self, session_id: i64, text: &str) -> Result<(), StoreError> {
+    pub fn set_last_ai_text(
+        &self,
+        session_id: i64,
+        text: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
         let cleaned = truncate_chars(&sanitize_prompt(text), 200);
         if cleaned.is_empty() {
             return Ok(());
         }
         self.conn.execute(
-            "UPDATE sessions SET last_ai_text = ?1 WHERE id = ?2",
-            rusqlite::params![cleaned, session_id],
+            "UPDATE sessions SET last_ai_text = ?1 WHERE id = ?2 AND last_event_at <= ?3",
+            rusqlite::params![cleaned, session_id, now_ms],
         )?;
         Ok(())
     }
 
     /// 落最近一条用户消息:复用 sanitize_prompt(剥图片标记 + 折叠空白) + 截断 200;空不覆盖。
     /// 不动 last_event_at——UserPromptSubmit 的 on_user_prompt(touch_session) 已刷新它。
-    pub fn set_last_user_text(&self, session_id: i64, text: &str) -> Result<(), StoreError> {
+    pub fn set_last_user_text(
+        &self,
+        session_id: i64,
+        text: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
         let cleaned = truncate_chars(&sanitize_prompt(text), 200);
         if cleaned.is_empty() {
             return Ok(());
         }
         self.conn.execute(
-            "UPDATE sessions SET last_user_text = ?1 WHERE id = ?2",
-            rusqlite::params![cleaned, session_id],
+            "UPDATE sessions SET last_user_text = ?1 WHERE id = ?2 AND last_event_at <= ?3",
+            rusqlite::params![cleaned, session_id, now_ms],
         )?;
         Ok(())
     }
@@ -544,7 +567,7 @@ impl Store {
     pub fn revive_if_ended(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET status='running', ended_at=NULL, pending_review=NULL, last_event_at=?1 \
-             WHERE id=?2 AND status='ended'",
+             WHERE id=?2 AND status='ended' AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
         Ok(())
@@ -571,7 +594,7 @@ impl Store {
     ) -> Result<bool, StoreError> {
         let n = self.conn.execute(
             "UPDATE sessions SET status='running', ended_at=NULL, pending_review=NULL, pid=NULL, last_event_at=?1 \
-             WHERE id=?2 AND (status='ended' OR pid IS NULL OR pid=?3)",
+             WHERE id=?2 AND last_event_at <= ?1 AND (status='ended' OR pid IS NULL OR pid=?3)",
             rusqlite::params![now_ms, session_id, dead_pid],
         )?;
         Ok(n > 0)
@@ -590,10 +613,27 @@ impl Store {
     /// 结束会话：状态设为 ended，记录 ended_at。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET status = 'ended', pending_review = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2",
+            "UPDATE sessions SET status = 'ended', pending_review = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
         Ok(())
+    }
+
+    /// 仅当会话仍持有调用方观察到的 pid 时收尾。用于进程快照 reaper，闭合“读旧 pid 后新进程
+    /// 已重新认领同一会话”的 TOCTOU；返回 false 表示记录已变化，绝不能误杀新连接。
+    pub fn end_session_if_pid(
+        &self,
+        session_id: i64,
+        observed_pid: i64,
+        observed_last_event_at: i64,
+        now_ms: i64,
+    ) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE sessions SET status='ended', pending_review=NULL, ended_at=?1, last_event_at=?1, pid=NULL \
+             WHERE id=?2 AND pid=?3 AND last_event_at=?4 AND status<>'ended'",
+            rusqlite::params![now_ms, session_id, observed_pid, observed_last_event_at],
+        )?;
+        Ok(n > 0)
     }
 
     /// 导入一条历史会话：以 ended 状态写入，started_at=ended_at=last_event_at=mtime。
@@ -665,7 +705,8 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET cwd = ?1, last_event_at = ?2 WHERE id = ?3",
+            "UPDATE sessions SET cwd = ?1, last_event_at = ?2 \
+             WHERE id = ?3 AND last_event_at <= ?2",
             rusqlite::params![cwd, now_ms, session_id],
         )?;
         Ok(())
@@ -741,10 +782,14 @@ impl Store {
     ) -> Result<(), StoreError> {
         // 事务保证「本会话认领 + 旧会话收尾」原子完成，避免交错留下两个会话同持一个 pid。
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3",
+        let claimed = tx.execute(
+            "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3 AND last_event_at <= ?2",
             rusqlite::params![pid, now_ms, session_id],
         )?;
+        if claimed == 0 {
+            tx.commit()?;
+            return Ok(());
+        }
         // 被同一进程的新会话顶替的旧会话：直接收尾为 ended（pid 清空、记 ended_at），
         // 这样 /clear 一发生旧会话立刻从 live 列表消失，而不是只摘 pid 留个空壳。
         // 时间戳保护：只收尾 last_event_at 更旧的会话，迟到的旧会话 hook 无法反杀更活跃的新会话。

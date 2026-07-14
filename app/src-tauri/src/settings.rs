@@ -204,16 +204,23 @@ fn settings_path() -> PathBuf {
     db_path().with_file_name("settings.json")
 }
 
-pub(crate) fn load_settings() -> Settings {
+static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn load_settings_unlocked() -> Settings {
     std::fs::read_to_string(settings_path())
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
 
+pub(crate) fn load_settings() -> Settings {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    load_settings_unlocked()
+}
+
 /// 落盘 settings.json（原子写）。**只管存**——不校验代理、不重建托盘、不 emit 事件，那些是
 /// [`set_settings`] 这条用户路径的事。profile 的增删/切换走它。
-pub(crate) fn save_settings(s: &Settings) -> Result<(), String> {
+fn save_settings_unlocked(s: &Settings) -> Result<(), String> {
     let body = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
     let path = settings_path();
     if let Some(dir) = path.parent() {
@@ -221,6 +228,17 @@ pub(crate) fn save_settings(s: &Settings) -> Result<(), String> {
     }
     // 原子写：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
     crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())
+}
+
+/// 在同一把锁内完成 settings 的读取、修改与落盘，防止并发命令互相覆盖整份文件。
+pub(crate) fn update_settings<T>(
+    update: impl FnOnce(&mut Settings) -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut settings = load_settings_unlocked();
+    let result = update(&mut settings)?;
+    save_settings_unlocked(&settings)?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -237,13 +255,15 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     // 毫无线索——在这里拦下，把具体原因回给设置页。
     settings.proxy.validate()?;
     settings.relay.validate()?;
-    let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    let path = settings_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    // 原子写：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
-    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())?;
+    // profiles 三个字段由独立账号命令维护。设置窗口可能持有较旧的整对象快照，不能让一次外观/网络
+    // 保存把并发创建、改名或切换的账号覆盖掉。
+    update_settings(|current| {
+        settings.profiles = current.profiles.clone();
+        settings.active_profile = current.active_profile.clone();
+        settings.default_profile_names = current.default_profile_names.clone();
+        *current = settings.clone();
+        Ok(())
+    })?;
     // 代理落盘后立刻写进各 agent 自己的配置（claude 的 settings.json env 块），改完即生效——
     // 否则用户改了代理还得重启 Meowo 才作数。best-effort：写不进去不影响 Meowo 自己的设置已保存。
     let reports = crate::proxy::apply_to_agent_configs();
@@ -331,14 +351,32 @@ fn quote_autostart_run_value(app: &tauri::AppHandle) {
 
 pub(crate) const SITE_URL: &str = "https://meowo.io";
 
-/// 允许在浏览器里打开的链接前缀：官网与本仓库。
-pub(crate) const ALLOWED_URL_PREFIXES: [&str; 2] = [SITE_URL, "https://github.com/larrygogo/meowo"];
+fn is_allowed_url(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    if url.scheme() != "https"
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return false;
+    }
+    match url.host_str() {
+        Some("meowo.io") => true,
+        Some("github.com") => {
+            let path = url.path().trim_end_matches('/');
+            path == "/larrygogo/meowo" || path.starts_with("/larrygogo/meowo/")
+        }
+        _ => false,
+    }
+}
 
 /// 设置/关于页与托盘用：在默认浏览器打开官网或本仓库链接。只放行白名单前缀，
 /// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
 #[tauri::command]
 pub(crate) fn open_url(url: String) -> Result<(), String> {
-    if !ALLOWED_URL_PREFIXES.iter().any(|p| url.starts_with(p)) {
+    if !is_allowed_url(&url) {
         return Err("不允许的链接".into());
     }
     #[cfg(target_os = "windows")]
@@ -365,6 +403,21 @@ mod tests {
     #[test]
     fn default_agent_defaults_to_claude() {
         assert_eq!(Settings::default().default_agent, "claude");
+    }
+
+    #[test]
+    fn external_url_allowlist_checks_origin_and_repo_path() {
+        assert!(is_allowed_url("https://meowo.io/docs"));
+        assert!(is_allowed_url(
+            "https://github.com/larrygogo/meowo/releases/latest"
+        ));
+        assert!(!is_allowed_url("https://meowo.io.evil.example/"));
+        assert!(!is_allowed_url(
+            "https://github.com/larrygogo/meowo-malware"
+        ));
+        assert!(!is_allowed_url("https://meowo.io@evil.example/"));
+        assert!(!is_allowed_url("https://meowo.io:444/"));
+        assert!(!is_allowed_url("http://meowo.io/"));
     }
 
     #[test]

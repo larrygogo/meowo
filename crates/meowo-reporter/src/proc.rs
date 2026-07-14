@@ -19,9 +19,8 @@
 pub fn owner_pid(provider: &str) -> Option<u32> {
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
     let agent = meowo_agent::by_id(provider)?;
-    let sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-    );
+    let sys =
+        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
     let mut cur = sysinfo::get_current_pid().ok()?;
     // 最多向上走 16 层，避免异常环导致死循环。
     for _ in 0..16 {

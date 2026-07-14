@@ -15,7 +15,10 @@ fn custom_title_wins_over_ai_title() {
 {"type":"custom-title","customTitle":"我的标题","sessionId":"s"}
 "#;
     let p = write_tmp("cc_tt_1.jsonl", body);
-    assert_eq!(title_from_transcript(p.to_str().unwrap()).as_deref(), Some("我的标题"));
+    assert_eq!(
+        title_from_transcript(p.to_str().unwrap()).as_deref(),
+        Some("我的标题")
+    );
     let _ = std::fs::remove_file(p);
 }
 
@@ -23,7 +26,10 @@ fn custom_title_wins_over_ai_title() {
 fn falls_back_to_ai_title() {
     let body = "{\"type\":\"ai-title\",\"aiTitle\":\"Build dashboard\",\"sessionId\":\"s\"}\n";
     let p = write_tmp("cc_tt_2.jsonl", body);
-    assert_eq!(title_from_transcript(p.to_str().unwrap()).as_deref(), Some("Build dashboard"));
+    assert_eq!(
+        title_from_transcript(p.to_str().unwrap()).as_deref(),
+        Some("Build dashboard")
+    );
     let _ = std::fs::remove_file(p);
 }
 
@@ -33,7 +39,10 @@ fn latest_of_each_kind_wins() {
 {"type":"ai-title","aiTitle":"new","sessionId":"s"}
 "#;
     let p = write_tmp("cc_tt_3.jsonl", body);
-    assert_eq!(title_from_transcript(p.to_str().unwrap()).as_deref(), Some("new"));
+    assert_eq!(
+        title_from_transcript(p.to_str().unwrap()).as_deref(),
+        Some("new")
+    );
     let _ = std::fs::remove_file(p);
 }
 

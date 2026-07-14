@@ -3,11 +3,11 @@
 
 use crate::proc::pid_is_agent;
 use crate::settings::{load_settings, tr, ui_lang};
-use crate::{agent_transcript, now_ms, RESUME_GRACE_MS};
 #[cfg(target_os = "windows")]
 use crate::terminal::focus_session_terminal;
 #[cfg(target_os = "windows")]
 use crate::window::update_tray_tooltip;
+use crate::{agent_transcript, now_ms, RESUME_GRACE_MS};
 use meowo_store::Store;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
@@ -108,7 +108,10 @@ pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
                 continue;
             }
         };
-        if watcher.watch(&watch_dir, RecursiveMode::NonRecursive).is_err() {
+        if watcher
+            .watch(&watch_dir, RecursiveMode::NonRecursive)
+            .is_err()
+        {
             std::thread::sleep(WATCH_RETRY);
             continue;
         }
@@ -145,7 +148,9 @@ pub(crate) fn run_db_watch_loop(
             p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
                 n.strip_prefix(db_name)
                     // -shm（WAL 共享内存索引）排除：纯读也会触碰它，是自持刷新循环的源头。
-                    .is_some_and(|rest| rest.is_empty() || (rest.starts_with('-') && rest != "-shm"))
+                    .is_some_and(|rest| {
+                        rest.is_empty() || (rest.starts_with('-') && rest != "-shm")
+                    })
             })
         })
     };
@@ -208,14 +213,22 @@ pub(crate) fn run_db_watch_loop(
 /// 终端被关/被 /clear 打断时 SessionEnd 往往不触发，会话状态会永远卡在 running/waiting；
 /// 进程都没了就该收尾。pid 为空的不动（可能是刚启动还没抓到 pid，宁可不臆测）。
 pub(crate) fn reap_and_alive_ids(store: &Store, sys: &System, now_ms: i64) -> (Vec<i64>, usize) {
+    const PID_REAP_GRACE_MS: i64 = 10_000;
     let mut alive: Vec<i64> = Vec::new();
     let mut reaped = 0usize;
-    for (id, pid, _) in store.live_session_liveness().unwrap_or_default() {
+    for (id, pid, last_event_at) in store.live_session_liveness().unwrap_or_default() {
         match pid {
             Some(p) if p > 0 => {
                 if pid_is_agent(sys, p) {
                     alive.push(id);
-                } else if store.end_session(id, now_ms).is_ok() {
+                // 进程快照先于 DB 查询生成；刚启动的进程可能已由 hook 写入 DB、却尚未出现在该快照。
+                // 给新事件一个短宽限，下一轮快照即可确认。真正退出的进程最多晚 10s 收尾。
+                } else if now_ms.saturating_sub(last_event_at) < PID_REAP_GRACE_MS {
+                    alive.push(id);
+                } else if store
+                    .end_session_if_pid(id, p, last_event_at, now_ms)
+                    .unwrap_or(false)
+                {
                     reaped += 1; // 进程已死 / pid 被复用 → 收尾
                 }
             }
@@ -237,7 +250,12 @@ pub(crate) fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
 
 /// 待交互通知指纹:errored 或 has_pending 时不发(None,让位错误/待审批);
 /// status==waiting 且无错无 pending 时用 last_event_at 作指纹;其它状态 None。纯函数。
-pub(crate) fn waiting_fingerprint(errored: bool, has_pending: bool, status: &str, last_event_at: i64) -> Option<String> {
+pub(crate) fn waiting_fingerprint(
+    errored: bool,
+    has_pending: bool,
+    status: &str,
+    last_event_at: i64,
+) -> Option<String> {
     if errored || has_pending || status != "waiting" {
         None
     } else {
@@ -247,7 +265,11 @@ pub(crate) fn waiting_fingerprint(errored: bool, has_pending: bool, status: &str
 
 /// 待审批通知指纹:errored 时 None(错误优先);pending 为 Some(kind) 时 "{kind}:{last_event_at}";
 /// 否则 None。纯函数,便于单测。
-pub(crate) fn pending_fingerprint(errored: bool, pending_review: Option<&str>, last_event_at: i64) -> Option<String> {
+pub(crate) fn pending_fingerprint(
+    errored: bool,
+    pending_review: Option<&str>,
+    last_event_at: i64,
+) -> Option<String> {
     if errored {
         return None;
     }
@@ -355,7 +377,9 @@ pub(crate) fn spawn_liveness_watch(
                 // 阈值与 session_connected 的 RESUME_GRACE_MS 对齐：pid 未知的会话「已连接」显示
                 // 在此窗口后回落断开，DB 的 status 也应同时收尾，否则会话会长期卡在错误的 tab 里
                 // （见 RESUME_GRACE_MS 文档：kimi 卸载后 resume「终端起来但命令失败」即命中此路径）。
-                let orphaned = store.end_orphaned_idle(RESUME_GRACE_MS, now_ms()).unwrap_or(0);
+                let orphaned = store
+                    .end_orphaned_idle(RESUME_GRACE_MS, now_ms())
+                    .unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &sys, now_ms());
                 if alive != last || reaped > 0 || orphaned > 0 {
                     emit_board_changed(&app, "liveness");
@@ -370,7 +394,10 @@ pub(crate) fn spawn_liveness_watch(
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
                 let (mut tray_running, mut tray_waiting) = (0usize, 0usize);
-                for s in store.live_sessions(Some("all"), None, None, None, 1000).unwrap_or_default() {
+                for s in store
+                    .live_sessions(Some("all"), None, None, None, 1000)
+                    .unwrap_or_default()
+                {
                     if s.session.status == "ended" || !pid_is_agent(&sys, s.pid.unwrap_or(0)) {
                         continue;
                     }
@@ -386,7 +413,9 @@ pub(crate) fn spawn_liveness_watch(
                                     .and_then(|p| p.to_str().map(str::to_string))
                                     .map(|path| {
                                         // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
-                                        meowo_agent::TranscriptCache::analyze_shared(&tx_cache, spec, &path)
+                                        meowo_agent::TranscriptCache::analyze_shared(
+                                            &tx_cache, spec, &path,
+                                        )
                                     })
                             })
                             .unwrap_or_default();
@@ -395,7 +424,7 @@ pub(crate) fn spawn_liveness_watch(
                         .filter(|t| !t.trim().is_empty())
                         .unwrap_or_else(|| s.task_title.clone());
                     let pid = s.pid.unwrap_or(0); // 连接中必为有效 pid
-                    // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
+                                                  // 该 agent 是否把任务标题写进 WT 标签：决定通知点击是按标题切标签还是窗口级定位。
                     let title_based = meowo_agent::resolve(Some(&s.provider))
                         .is_some_and(|a| a.sets_terminal_tab_title());
                     // 仅对确实由 reporter 写 token 的 agent 使用 sid8；其它 agent 盲匹配会有误命中风险。
@@ -405,7 +434,10 @@ pub(crate) fn spawn_liveness_watch(
                         .filter(|t| !t.is_empty());
 
                     // 菜单栏摘要计数:出错/待交互/待审批 → 需关注(●),运行中 → ○;在线空闲不计入。
-                    if error.is_some() || s.session.status == "waiting" || s.pending_review.is_some() {
+                    if error.is_some()
+                        || s.session.status == "waiting"
+                        || s.pending_review.is_some()
+                    {
                         tray_waiting += 1;
                     } else if s.session.status == "running" {
                         tray_running += 1;
@@ -432,7 +464,11 @@ pub(crate) fn spawn_liveness_watch(
                     }
 
                     // 待审批通知(错误之后、待交互之前;errored 时 pending_fingerprint 返回 None 自动让位)。
-                    match pending_fingerprint(error.is_some(), s.pending_review.as_deref(), s.session.last_event_at) {
+                    match pending_fingerprint(
+                        error.is_some(),
+                        s.pending_review.as_deref(),
+                        s.session.last_event_at,
+                    ) {
                         Some(fp) => {
                             let prev = notified_pending.get(&sid).map(|s| s.as_str());
                             if seeded && notify_on && should_notify(prev, Some(&fp)) {
@@ -460,7 +496,12 @@ pub(crate) fn spawn_liveness_watch(
                     }
 
                     // 待交互通知（errored 时 waiting_fingerprint 返回 None，自动让位给错误）。
-                    match waiting_fingerprint(error.is_some(), s.pending_review.is_some(), &s.session.status, s.session.last_event_at) {
+                    match waiting_fingerprint(
+                        error.is_some(),
+                        s.pending_review.is_some(),
+                        &s.session.status,
+                        s.session.last_event_at,
+                    ) {
                         Some(fp) => {
                             let prev = notified_waiting.get(&sid).map(|s| s.as_str());
                             if seeded && notify_on && should_notify(prev, Some(&fp)) {
@@ -525,9 +566,11 @@ pub(crate) fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
             Err(_) => return,
         };
         let now = now_ms();
-        if let Ok(count) =
-            meowo_reporter::import::import_recent(&store, now, meowo_reporter::import::ImportOpts::default())
-        {
+        if let Ok(count) = meowo_reporter::import::import_recent(
+            &store,
+            now,
+            meowo_reporter::import::ImportOpts::default(),
+        ) {
             let body = format!("{{\"imported\":{count},\"at\":{now}}}");
             let _ = std::fs::write(&marker, body);
             if count > 0 {
@@ -536,4 +579,3 @@ pub(crate) fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
         }
     });
 }
-

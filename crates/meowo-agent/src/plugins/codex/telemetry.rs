@@ -65,7 +65,11 @@ fn read_head_lines(path: &Path, max_lines: usize) -> Option<String> {
     use std::io::{BufRead, BufReader};
     let f = std::fs::File::open(path).ok()?;
     let mut out = String::new();
-    for line in BufReader::new(f).lines().take(max_lines).map_while(Result::ok) {
+    for line in BufReader::new(f)
+        .lines()
+        .take(max_lines)
+        .map_while(Result::ok)
+    {
         out.push_str(&line);
         out.push('\n');
     }
@@ -137,7 +141,8 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let size = f.metadata().ok()?.len();
-    f.seek(SeekFrom::Start(size.saturating_sub(max_bytes))).ok()?;
+    f.seek(SeekFrom::Start(size.saturating_sub(max_bytes)))
+        .ok()?;
     let mut buf = Vec::new();
     f.take(max_bytes).read_to_end(&mut buf).ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
@@ -145,7 +150,10 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
 
 /// codex 会话最近上下文占用：定位 rollout（hook 的 transcript_path 优先，否则按 id 找），
 /// 尾部读取最后一条 token_count。定位/解析失败返回 None。
-pub fn read_context(transcript_path: Option<&str>, session_id: &str) -> Option<crate::caps::ContextUsage> {
+pub fn read_context(
+    transcript_path: Option<&str>,
+    session_id: &str,
+) -> Option<crate::caps::ContextUsage> {
     let path = transcript_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
@@ -157,7 +165,10 @@ pub fn read_context(transcript_path: Option<&str>, session_id: &str) -> Option<c
         return None;
     }
     let pct = (used * 100 / window).clamp(0, 100);
-    Some(crate::caps::ContextUsage { used_pct: pct, window })
+    Some(crate::caps::ContextUsage {
+        used_pct: pct,
+        window,
+    })
 }
 
 // ═══ 能力槽 ═══
@@ -195,7 +206,10 @@ mod tests {
 
     #[test]
     fn parse_context_none_when_no_token_count() {
-        assert_eq!(parse_context(r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#), None);
+        assert_eq!(
+            parse_context(r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#),
+            None
+        );
     }
 
     #[test]

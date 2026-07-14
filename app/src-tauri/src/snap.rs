@@ -80,14 +80,26 @@ pub(crate) fn pull_on_screen(window: &tauri::WebviewWindow, force: bool) {
     let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
         return;
     };
-    let win = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
-    let Ok(monitors) = window.available_monitors() else { return };
+    let win = Rect {
+        x: pos.x,
+        y: pos.y,
+        w: size.width as i32,
+        h: size.height as i32,
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return;
+    };
     if monitors.is_empty() {
         return;
     }
     let to_work = |m: &tauri::window::Monitor| {
         let wa = m.work_area();
-        Rect { x: wa.position.x, y: wa.position.y, w: wa.size.width as i32, h: wa.size.height as i32 }
+        Rect {
+            x: wa.position.x,
+            y: wa.position.y,
+            w: wa.size.width as i32,
+            h: wa.size.height as i32,
+        }
     };
     // 找与窗口相交面积最大的显示器工作区。
     let mut best: Option<(i64, Rect)> = None;
@@ -136,7 +148,9 @@ fn strip_width_phys(scale: f64) -> i32 {
 /// 触发额外重绘闪烁（展开/收起/重测尺寸会反复进入这些命令，但置顶状态多数时候没变）。
 fn set_top_if_changed(window: &tauri::WebviewWindow, desired: bool) -> Result<(), String> {
     if window.is_always_on_top().map_err(|e| e.to_string())? != desired {
-        window.set_always_on_top(desired).map_err(|e| e.to_string())?;
+        window
+            .set_always_on_top(desired)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -213,13 +227,20 @@ pub(crate) fn center_on(
     work_len: i32,
 ) -> i32 {
     let centered = prev_start + (prev_len - new_len) / 2;
-    centered.clamp(work_start, (work_start + work_len - new_len).max(work_start))
+    centered.clamp(
+        work_start,
+        (work_start + work_len - new_len).max(work_start),
+    )
 }
 
 /// 折叠成缩略条：贴到指定边，左/右为竖条、顶为横条。交叉轴以原窗口中心对齐
 /// （吸顶=水平居中，吸左/右=垂直居中）。`extent` 是沿条主轴的逻辑长度，由前端按内容给出。
 #[tauri::command]
-pub(crate) fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f64) -> Result<(), String> {
+pub(crate) fn snap_collapse(
+    window: tauri::WebviewWindow,
+    edge: Edge,
+    extent: f64,
+) -> Result<(), String> {
     let extent = extent.clamp(1.0, 20000.0); // 钳上界，防 *scale 后 f64→i32 回绕
     let m = window_monitor(&window)?;
     let wa = m.work_area();
@@ -274,7 +295,12 @@ pub(crate) fn snap_collapse(window: tauri::WebviewWindow, edge: Edge, extent: f6
 
 /// 偷看展开成全尺寸（仍贴边、保持置顶）：宽高恢复为记住的正常尺寸。
 #[tauri::command]
-pub(crate) fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, height: f64) -> Result<(), String> {
+pub(crate) fn snap_expand(
+    window: tauri::WebviewWindow,
+    edge: Edge,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
     let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0)); // 钳上界防回绕
     let m = window_monitor(&window)?;
     let wa = m.work_area();
@@ -287,12 +313,18 @@ pub(crate) fn snap_expand(window: tauri::WebviewWindow, edge: Edge, width: f64, 
     let (ww, wh) = (wa.size.width as i32, wa.size.height as i32);
     // 交叉轴以当前（缩略条）中心对齐展开，与折叠态保持同一中心，不跳回左/上对齐。
     let (x, y) = match edge {
-        Edge::Left => (wa.position.x, center_on(pos.y, cur_h, phys_h as i32, wa.position.y, wh)),
+        Edge::Left => (
+            wa.position.x,
+            center_on(pos.y, cur_h, phys_h as i32, wa.position.y, wh),
+        ),
         Edge::Right => (
             wa.position.x + ww - phys_w,
             center_on(pos.y, cur_h, phys_h as i32, wa.position.y, wh),
         ),
-        Edge::Top => (center_on(pos.x, cur_w, phys_w, wa.position.x, ww), wa.position.y),
+        Edge::Top => (
+            center_on(pos.x, cur_w, phys_w, wa.position.x, ww),
+            wa.position.y,
+        ),
     };
     // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开，就地放大到贴边位置。
     window

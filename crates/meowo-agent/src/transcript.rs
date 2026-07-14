@@ -46,9 +46,19 @@ pub trait TranscriptSpec: Sync {
     /// 新建一个该 agent 的增量解析器（供 TranscriptCache 在新建/重置条目时调用）。
     fn new_parser(&self) -> Box<dyn TranscriptParser>;
     /// 定位 transcript 文件（hook 路径 → cwd+id 重建 → 全局查找）。
-    fn resolve_transcript_path(&self, transcript_path: Option<&str>, cwd: Option<&str>, session_id: &str) -> Option<PathBuf>;
+    fn resolve_transcript_path(
+        &self,
+        transcript_path: Option<&str>,
+        cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<PathBuf>;
     /// 解析会话标题（读不到/无标题返回 None）。
-    fn resolve_title(&self, transcript_path: Option<&str>, cwd: Option<&str>, session_id: &str) -> Option<String>;
+    fn resolve_title(
+        &self,
+        transcript_path: Option<&str>,
+        cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<String>;
 
     /// 解析会话的真实工作目录——resume 必须在正确的项目目录下运行才找得到会话。
     ///
@@ -97,7 +107,11 @@ enum DeltaOutcome {
     /// 无新增字节：仅需刷新 mtime。
     NoChange(Option<std::time::SystemTime>),
     /// 读到了新增（或需从头重读）的字节。
-    Data { reset: bool, buf: Vec<u8>, mtime: Option<std::time::SystemTime> },
+    Data {
+        reset: bool,
+        buf: Vec<u8>,
+        mtime: Option<std::time::SystemTime>,
+    },
 }
 
 /// 从 offset/prev_mtime 快照出发读取 transcript 的增量字节。纯文件 IO、不触碰缓存，
@@ -194,12 +208,15 @@ impl TranscriptCache {
             }
         }
         let tick = self.tick;
-        let entry = self.entries.entry(path.to_string()).or_insert_with(|| CacheEntry {
-            offset: 0,
-            mtime: None,
-            parser: spec.new_parser(),
-            last_used: tick,
-        });
+        let entry = self
+            .entries
+            .entry(path.to_string())
+            .or_insert_with(|| CacheEntry {
+                offset: 0,
+                mtime: None,
+                parser: spec.new_parser(),
+                last_used: tick,
+            });
         entry.last_used = tick;
         (entry.offset, entry.mtime)
     }
@@ -247,9 +264,16 @@ impl TranscriptCache {
                 }
                 self.entries.insert(
                     path.to_string(),
-                    CacheEntry { offset: 0, mtime: None, parser: spec.new_parser(), last_used: tick },
+                    CacheEntry {
+                        offset: 0,
+                        mtime: None,
+                        parser: spec.new_parser(),
+                        last_used: tick,
+                    },
                 );
-                self.entries.get_mut(path).expect("刚插入的缓存条目必然存在")
+                self.entries
+                    .get_mut(path)
+                    .expect("刚插入的缓存条目必然存在")
             }
         };
         entry.last_used = tick;
@@ -279,7 +303,8 @@ mod tests {
     use crate::plugins::claude::transcript::{analyze_transcript, ClaudeTranscript};
 
     fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("meowo_cache_{}_{}.jsonl", std::process::id(), name));
+        let p =
+            std::env::temp_dir().join(format!("meowo_cache_{}_{}.jsonl", std::process::id(), name));
         std::fs::write(&p, content).unwrap();
         p
     }
@@ -290,8 +315,10 @@ mod tests {
         let p = write_tmp(
             "cache_inc",
             concat!(
-                r#"{"type":"ai-title","aiTitle":"标题A"}"#, "\n",
-                r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"hi"}]}}"#, "\n",
+                r#"{"type":"ai-title","aiTitle":"标题A"}"#,
+                "\n",
+                r#"{"type":"assistant","uuid":"u1","message":{"role":"assistant","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"hi"}]}}"#,
+                "\n",
             ),
         );
         let mut cache = TranscriptCache::new();
@@ -331,7 +358,13 @@ mod tests {
         assert_eq!(line_a.len(), line_b.len());
         let p = write_tmp("cache_rewrite", &format!("{line_a}\n"));
         let mut cache = TranscriptCache::new();
-        assert_eq!(cache.analyze(&ClaudeTranscript, p.to_str().unwrap()).title.as_deref(), Some("AAAA"));
+        assert_eq!(
+            cache
+                .analyze(&ClaudeTranscript, p.to_str().unwrap())
+                .title
+                .as_deref(),
+            Some("AAAA")
+        );
 
         // 等长重写，循环到 mtime 确认变化为止（兼容粗粒度文件系统，NTFS/APFS 首轮即过）。
         let mtime0 = std::fs::metadata(&p).unwrap().modified().unwrap();
@@ -342,8 +375,18 @@ mod tests {
                 break;
             }
         }
-        assert_ne!(std::fs::metadata(&p).unwrap().modified().unwrap(), mtime0, "mtime 未变化，无法验证缓存失效");
-        assert_eq!(cache.analyze(&ClaudeTranscript, p.to_str().unwrap()).title.as_deref(), Some("BBBB"));
+        assert_ne!(
+            std::fs::metadata(&p).unwrap().modified().unwrap(),
+            mtime0,
+            "mtime 未变化，无法验证缓存失效"
+        );
+        assert_eq!(
+            cache
+                .analyze(&ClaudeTranscript, p.to_str().unwrap())
+                .title
+                .as_deref(),
+            Some("BBBB")
+        );
         std::fs::remove_file(&p).ok();
     }
 
@@ -353,7 +396,10 @@ mod tests {
         use std::io::Write;
         use std::sync::Mutex;
         let spec = &ClaudeTranscript;
-        let p = write_tmp("cache_shared", concat!(r#"{"type":"ai-title","aiTitle":"标题A"}"#, "\n"));
+        let p = write_tmp(
+            "cache_shared",
+            concat!(r#"{"type":"ai-title","aiTitle":"标题A"}"#, "\n"),
+        );
         let path = p.to_str().unwrap();
         let cache = Mutex::new(TranscriptCache::new());
 

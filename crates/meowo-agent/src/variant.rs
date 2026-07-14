@@ -34,13 +34,18 @@ impl DataDirSpec {
         if let Some(d) = self.env_override() {
             return d.is_dir().then_some((d, true));
         }
-        self.candidates.iter().map(|c| home.join(c)).find(|p| p.is_dir()).map(|d| (d, false))
+        self.candidates
+            .iter()
+            .map(|c| home.join(c))
+            .find(|p| p.is_dir())
+            .map(|d| (d, false))
     }
 
     /// 全新安装**应当**写入的位置：env 覆盖 → 首个候选。不要求存在。
     /// 所有变体都 probe 不中时，由 agent 的首选变体给出这个默认，供「用之前」的路径展示与写入。
     pub fn default_dir(&self, home: &Path) -> Option<PathBuf> {
-        self.env_override().or_else(|| self.candidates.first().map(|c| home.join(c)))
+        self.env_override()
+            .or_else(|| self.candidates.first().map(|c| home.join(c)))
     }
 }
 
@@ -72,7 +77,12 @@ impl Variant {
     }
 
     /// 以给定 data_dir 构造实况（跳过目录存在性判定）。供 `probe` 与「未配置时的默认位置」共用。
-    pub(crate) fn installation_at(&self, id: AgentId, data_dir: PathBuf, home: Option<&Path>) -> Installation {
+    pub(crate) fn installation_at(
+        &self,
+        id: AgentId,
+        data_dir: PathBuf,
+        home: Option<&Path>,
+    ) -> Installation {
         let launch = self.launch.probe(Some(&data_dir), home);
         Installation {
             id,
@@ -146,7 +156,9 @@ impl Installation {
 
     /// 启动 argv：绝对路径优先，找不到则回退裸名交给 PATH 解析。
     pub fn launch_argv(&self) -> Vec<String> {
-        self.launch.clone().unwrap_or_else(|| vec![self.launch_stem.to_string()])
+        self.launch
+            .clone()
+            .unwrap_or_else(|| vec![self.launch_stem.to_string()])
     }
 
     /// 拉起交互式登录的 argv = 启动 argv + 该变体声明的登录子命令（如 `<claude.exe> auth login`）。
@@ -199,10 +211,19 @@ mod tests {
         format: ConfigFormat::KimiToml,
         missing: MissingConfig::Fail(RepairReason::NeedLogin),
         events: &EVENTS,
-        command: CommandSpec { quote_exe: false, with_provider: true },
+        command: CommandSpec {
+            quote_exe: false,
+            with_provider: true,
+        },
     };
-    static CANDS: [LaunchCandidate; 1] = [LaunchCandidate::Exe { root: Root::DataDir, sub: "bin" }];
-    static LAUNCH: LaunchSpec = LaunchSpec { stem: "x", candidates: &CANDS };
+    static CANDS: [LaunchCandidate; 1] = [LaunchCandidate::Exe {
+        root: Root::DataDir,
+        sub: "bin",
+    }];
+    static LAUNCH: LaunchSpec = LaunchSpec {
+        stem: "x",
+        candidates: &CANDS,
+    };
 
     fn tmp(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("meowo-variant-{name}-{}", std::process::id()));
@@ -211,7 +232,13 @@ mod tests {
     }
 
     fn variant(env: Option<&'static str>, candidates: &'static [&'static str]) -> Variant {
-        Variant { tag: "modern", data_dir: DataDirSpec { env, candidates }, hooks: &SPEC, auth: None, launch: &LAUNCH }
+        Variant {
+            tag: "modern",
+            data_dir: DataDirSpec { env, candidates },
+            hooks: &SPEC,
+            auth: None,
+            launch: &LAUNCH,
+        }
     }
 
     /// 有登录入口的鉴权声明。
@@ -250,7 +277,10 @@ mod tests {
     fn inst_with_auth(auth: Option<&'static AuthScheme>) -> Installation {
         let v = Variant {
             tag: "t",
-            data_dir: DataDirSpec { env: None, candidates: &[".x"] },
+            data_dir: DataDirSpec {
+                env: None,
+                candidates: &[".x"],
+            },
             hooks: &SPEC,
             auth,
             launch: &LAUNCH,
@@ -265,7 +295,11 @@ mod tests {
         assert_eq!(inst.launch_argv(), vec!["x".to_string()]);
         assert_eq!(
             inst.login_argv(),
-            Some(vec!["x".to_string(), "auth".to_string(), "login".to_string()])
+            Some(vec![
+                "x".to_string(),
+                "auth".to_string(),
+                "login".to_string()
+            ])
         );
     }
 
@@ -319,7 +353,11 @@ mod tests {
     fn logout_argv_uses_declared_noninteractive_subcommand() {
         assert_eq!(
             inst_with_auth(Some(&AUTH_WITH_LOGIN)).logout_argv(),
-            Some(vec!["x".to_string(), "auth".to_string(), "logout".to_string()])
+            Some(vec![
+                "x".to_string(),
+                "auth".to_string(),
+                "logout".to_string()
+            ])
         );
         assert_eq!(inst_with_auth(Some(&AUTH_NO_LOGIN)).logout_argv(), None);
     }
@@ -327,7 +365,10 @@ mod tests {
     #[test]
     fn data_dir_probe_takes_first_existing_candidate() {
         let home = tmp("probe");
-        let spec = DataDirSpec { env: None, candidates: &[".modern", ".legacy"] };
+        let spec = DataDirSpec {
+            env: None,
+            candidates: &[".modern", ".legacy"],
+        };
 
         // 都不存在 → probe None，但 default_dir 给首选（供全新安装写入）。
         assert_eq!(spec.probe(&home), None);
@@ -354,7 +395,9 @@ mod tests {
         std::env::set_var(key, &target);
 
         let v = variant(Some(key), &[".modern"]);
-        let inst = v.probe(AgentId::new("t"), &home).expect("env 目录存在应命中");
+        let inst = v
+            .probe(AgentId::new("t"), &home)
+            .expect("env 目录存在应命中");
         assert_eq!(inst.variant_tag, ENV_OVERRIDE_TAG);
         assert_eq!(inst.data_dir, target);
 

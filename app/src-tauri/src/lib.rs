@@ -55,10 +55,10 @@ pub(crate) use terminal::resume_terminal_kind;
 #[cfg(target_os = "macos")]
 pub(crate) use window::open_settings_window;
 
+use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use settings::{
     get_autostart, get_effective_proxy, get_settings, open_url, set_autostart, set_settings,
 };
-use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use snap::{
     cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
 };
@@ -935,7 +935,8 @@ async fn list_agents() -> Vec<AgentDescriptor> {
             .map(|a| {
                 let relay = a.relay().and_then(|cap| {
                     let installation = a.resolve()?;
-                    cap.supports_variant(installation.variant_tag).then(|| cap.ui())
+                    cap.supports_variant(installation.variant_tag)
+                        .then(|| cap.ui())
                 });
                 AgentDescriptor {
                     id: a.id().as_str().to_string(),
@@ -1333,8 +1334,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_safe_id, live_sessions_blocking, session_connected, tab_class, PageReq,
-        RESUME_GRACE_MS,
+        is_safe_id, live_sessions_blocking, session_connected, tab_class, PageReq, RESUME_GRACE_MS,
     };
     use crate::install::{bump_login_epoch, login_epoch};
     use crate::proc::pid_is_agent;
@@ -1359,8 +1359,12 @@ mod tests {
 
         // waiting 按最旧优先：先放 120 条断开候选，确保超过后端单批 100 条。
         for i in 0..120 {
-            let (sid, _) = store.start_session(project, &format!("dead-{i}"), 10 + i).unwrap();
-            store.on_user_prompt(sid, &format!("dead {i}"), 10 + i).unwrap();
+            let (sid, _) = store
+                .start_session(project, &format!("dead-{i}"), 10 + i)
+                .unwrap();
+            store
+                .on_user_prompt(sid, &format!("dead {i}"), 10 + i)
+                .unwrap();
             store.set_session_pid(sid, 10_000 + i, 10 + i).unwrap();
             store
                 .set_session_status(sid, meowo_store::SessionStatus::Waiting, 10 + i)
@@ -1368,8 +1372,12 @@ mod tests {
         }
         let mut alive = std::collections::HashSet::new();
         for i in 0..2 {
-            let (sid, _) = store.start_session(project, &format!("alive-{i}"), 1_000 + i).unwrap();
-            store.on_user_prompt(sid, &format!("alive {i}"), 1_000 + i).unwrap();
+            let (sid, _) = store
+                .start_session(project, &format!("alive-{i}"), 1_000 + i)
+                .unwrap();
+            store
+                .on_user_prompt(sid, &format!("alive {i}"), 1_000 + i)
+                .unwrap();
             let pid = 20_000 + i;
             store.set_session_pid(sid, pid, 1_000 + i).unwrap();
             store
@@ -1465,20 +1473,29 @@ mod tests {
             "漏了隔离变量 → 切了账号也不生效，实得 {keys:?}"
         );
         // 会话据此绑定到该账号（reporter 继承这个变量后写进 sessions.profile）。
-        assert!(keys.contains(&"MEOWO_PROFILE"), "会话将无从绑定账号，实得 {keys:?}");
+        assert!(
+            keys.contains(&"MEOWO_PROFILE"),
+            "会话将无从绑定账号，实得 {keys:?}"
+        );
 
         // opencode 必须拿到**两个**目录变量：只隔离配置目录的话，凭据仍然共用——
         // 账号看起来切了、其实没切，这是最坏的一种失败。
         let env = launch_env_for_profile(Some("opencode"), Some("work"));
         let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
         assert!(keys.contains(&"OPENCODE_CONFIG_DIR"), "实得 {keys:?}");
-        assert!(keys.contains(&"XDG_DATA_HOME"), "凭据所在的数据目录没隔离，实得 {keys:?}");
+        assert!(
+            keys.contains(&"XDG_DATA_HOME"),
+            "凭据所在的数据目录没隔离，实得 {keys:?}"
+        );
 
         // gemini 不支持多账号（数据目录不可被环境变量覆盖）→ 一个隔离变量都不该注入。
         // 只注入 MEOWO_PROFILE 而不隔离目录，会把一个跑在**默认账号**上的会话记成 profile 的。
         let env = launch_env_for_profile(Some("gemini"), Some("work"));
         let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(!keys.contains(&"MEOWO_PROFILE"), "gemini 不支持多账号，实得 {keys:?}");
+        assert!(
+            !keys.contains(&"MEOWO_PROFILE"),
+            "gemini 不支持多账号，实得 {keys:?}"
+        );
     }
 
     /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
@@ -1592,6 +1609,12 @@ mod tests {
         assert_eq!(
             shell_join_for_windows(&apos, true),
             r"& 'C:\Users\O''Brien\kimi.exe' -r id"
+        );
+        // PowerShell 元字符与 JSON 双引号即便没有空格也必须进入单引号字面量。
+        let metachar = to_vec(&[r"C:\Users\A&B\kimi.exe", r#"model=\"x\";calc"#]);
+        assert_eq!(
+            shell_join_for_windows(&metachar, true),
+            r#"& 'C:\Users\A&B\kimi.exe' 'model=\"x\";calc'"#
         );
     }
 

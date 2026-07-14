@@ -326,7 +326,10 @@ mod tests {
         assert_eq!(resolve(Some("  ")).map(|p| p.id().as_str()), Some("claude"));
         // 曾以 "gemini" 作未注册反例——它现在是注册过的 agent 了。反例必须选一个**永远**不会被
         // 注册的串，否则这条断言会随着新 agent 的加入悄悄失去意义。
-        assert_eq!(resolve(Some("gemini")).map(|p| p.id().as_str()), Some("gemini"));
+        assert_eq!(
+            resolve(Some("gemini")).map(|p| p.id().as_str()),
+            Some("gemini")
+        );
         assert!(resolve(Some("nonsense")).is_none());
         assert!(resolve(Some("not-an-agent")).is_none());
     }
@@ -339,7 +342,10 @@ mod tests {
     #[test]
     fn relay_is_an_explicit_plugin_capability_and_kimi_legacy_is_rejected() {
         for id in ["claude", "codex", "kimi"] {
-            assert!(by_id(id).and_then(|plugin| plugin.relay()).is_some(), "{id} 必须显式声明 relay");
+            assert!(
+                by_id(id).and_then(|plugin| plugin.relay()).is_some(),
+                "{id} 必须显式声明 relay"
+            );
         }
         let kimi = by_id("kimi").unwrap().relay().unwrap();
         assert!(kimi.supports_variant("modern"));
@@ -422,8 +428,14 @@ mod tests {
         // 全局判定对 node 为真——正因如此，它不能被用来上溯。
         assert!(is_agent_process("node.exe"));
         // 而别的 agent 绝不把 node 当成自己的会话本体。
-        assert!(!claude.owns_process("node.exe"), "claude 的会话本体不是 node");
-        assert!(!opencode.owns_process("node.exe"), "opencode 是原生二进制，不是 node");
+        assert!(
+            !claude.owns_process("node.exe"),
+            "claude 的会话本体不是 node"
+        );
+        assert!(
+            !opencode.owns_process("node.exe"),
+            "opencode 是原生二进制，不是 node"
+        );
         assert!(!by_id("codex").unwrap().owns_process("node.exe"));
 
         // 各自只认自己，互不越界。

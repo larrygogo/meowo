@@ -21,7 +21,9 @@ fn missing_hook_event_name_is_err() {
 
 #[test]
 fn null_tool_input_yields_empty_todos_and_no_bash() {
-    let ev = HookEvent::parse(r#"{"hook_event_name":"PostToolUse","session_id":"a","tool_input":null}"#).unwrap();
+    let ev =
+        HookEvent::parse(r#"{"hook_event_name":"PostToolUse","session_id":"a","tool_input":null}"#)
+            .unwrap();
     assert_eq!(ev.todo_items().len(), 0);
     assert_eq!(ev.bash_command(), None);
 }

@@ -109,19 +109,26 @@ pub fn ensure_trusted_hashes(
         doc.insert("hooks", toml_edit::Item::Table(t));
     }
     // hooks 键存在但非 table（畸形/误粘 kimi 数组语法）：放弃信任写入，绝不 panic——退化等价于解析失败路径
-    let Some(hooks) = doc["hooks"].as_table_mut() else { return changed };
+    let Some(hooks) = doc["hooks"].as_table_mut() else {
+        return changed;
+    };
     if hooks.get("state").is_none() {
         let mut t = toml_edit::Table::new();
         t.set_implicit(true);
         hooks.insert("state", toml_edit::Item::Table(t));
     }
-    let Some(state) = hooks["state"].as_table_mut() else { return changed };
+    let Some(state) = hooks["state"].as_table_mut() else {
+        return changed;
+    };
     for entry in entries {
         let snake = snake_event(&entry.event);
         if snake.is_empty() {
             continue; // 未知事件不写信任（不该发生：entries 来自我方认领条目）
         }
-        let key = format!("{hooks_path_display}:{snake}:{}:{}", entry.group_idx, entry.handler_idx);
+        let key = format!(
+            "{hooks_path_display}:{snake}:{}:{}",
+            entry.group_idx, entry.handler_idx
+        );
         let hash = codex_hook_hash(snake, &entry.command, entry.timeout);
         let cur = state
             .get(&key)
@@ -139,7 +146,10 @@ pub fn ensure_trusted_hashes(
 
 /// codex 的 hook command 形态：`"<exe>" --provider codex`。与变体表的声明同源。
 fn claim_codex_cmd(cmd: &str) -> Option<String> {
-    const SHAPE: crate::CommandSpec = crate::CommandSpec { quote_exe: true, with_provider: true };
+    const SHAPE: crate::CommandSpec = crate::CommandSpec {
+        quote_exe: true,
+        with_provider: true,
+    };
     SHAPE.claim(cmd, "codex")
 }
 
@@ -195,10 +205,14 @@ mod tests {
         let v = wired("C:/x/meowo-reporter.exe");
         let entries = claimed_codex_entries(&v);
         assert_eq!(entries.len(), 5);
-        assert!(entries.iter().all(|e| e.command.contains("--provider codex") && e.timeout == 5));
+        assert!(entries
+            .iter()
+            .all(|e| e.command.contains("--provider codex") && e.timeout == 5));
         assert!(entries.iter().any(|e| e.event == "PermissionRequest"));
         // 全新单 handler 组场景：真实位置就是 0:0。
-        assert!(entries.iter().all(|e| e.group_idx == 0 && e.handler_idx == 0));
+        assert!(entries
+            .iter()
+            .all(|e| e.group_idx == 0 && e.handler_idx == 0));
     }
 
     #[test]
@@ -225,7 +239,11 @@ mod tests {
         // 绊线：变体表新增事件而忘了补 snake_case 映射 → trusted_hash 键写不出，此处失败。
         let inst = crate::installation(crate::id::CODEX).unwrap();
         for ev in inst.hooks.events {
-            assert!(!snake_event(ev.name).is_empty(), "{} 缺 snake_case 映射", ev.name);
+            assert!(
+                !snake_event(ev.name).is_empty(),
+                "{} 缺 snake_case 映射",
+                ev.name
+            );
         }
         assert_eq!(snake_event("PermissionRequest"), "permission_request");
         assert_eq!(snake_event("Unknown"), "");
@@ -248,9 +266,11 @@ mod tests {
         assert!(ensure_trusted_hashes(&mut doc, hooks_path, &entries));
         let out = doc.to_string();
         assert!(out.contains("default_model = \"x\"")); // 无关内容原样
-        // 键 = <display路径>:<snake事件>:0:0，值 = 本机验证过的真实哈希。
+                                                        // 键 = <display路径>:<snake事件>:0:0，值 = 本机验证过的真实哈希。
         assert!(out.contains(r"C:\Users\larry\.codex\hooks.json:session_start:0:0"));
-        assert!(out.contains("sha256:5e68ee84ac2076b424f12a7a1b346f5c1f5907d4829d6a30239bc49c0e76382c"));
+        assert!(
+            out.contains("sha256:5e68ee84ac2076b424f12a7a1b346f5c1f5907d4829d6a30239bc49c0e76382c")
+        );
         // 幂等：二跑无改动。
         assert!(!ensure_trusted_hashes(&mut doc, hooks_path, &entries));
     }
@@ -293,7 +313,9 @@ mod tests {
         assert!(!out.contains(r"C:\Users\larry\.codex\hooks.json:stop:0:0"));
         // 幂等：二跑无改动，且 0:0 键始终未被触碰。
         assert!(!ensure_trusted_hashes(&mut doc, hooks_path, &entries));
-        assert!(!doc.to_string().contains(r"C:\Users\larry\.codex\hooks.json:stop:0:0"));
+        assert!(!doc
+            .to_string()
+            .contains(r"C:\Users\larry\.codex\hooks.json:stop:0:0"));
     }
 
     #[test]
@@ -320,20 +342,40 @@ mod tests {
     fn dryrun_codex() {
         use crate::registry::AgentPlugin;
         let meowo_dir = std::env::temp_dir();
-        let ctx = crate::wiring::WiringContext { fallback_reporter: None, meowo_dir: &meowo_dir };
+        let ctx = crate::wiring::WiringContext {
+            fallback_reporter: None,
+            meowo_dir: &meowo_dir,
+        };
         let reason = super::super::Codex.wire(&ctx);
         let inst = crate::installation(crate::id::CODEX).unwrap();
         let text = std::fs::read_to_string(inst.config_path()).unwrap_or_default();
         let root: Value = serde_json::from_str(&text).expect("产物应为合法 JSON");
-        eprintln!("变体={} 配置={}", inst.variant_tag, inst.config_path().display());
+        eprintln!(
+            "变体={} 配置={}",
+            inst.variant_tag,
+            inst.config_path().display()
+        );
         eprintln!("wire reason={reason:?}");
-        eprintln!("hooks 事件={:?}", root["hooks"].as_object().unwrap().keys().collect::<Vec<_>>());
-        eprintln!("SessionStart 已接线={}", inst.hooks.has_reporter(&text, "codex"));
+        eprintln!(
+            "hooks 事件={:?}",
+            root["hooks"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "SessionStart 已接线={}",
+            inst.hooks.has_reporter(&text, "codex")
+        );
         eprintln!("启动 argv={:?}", inst.launch_argv());
 
         // trusted_hash：只列键名（值是哈希，非机密，但键含绝对路径，够核对了）。
         let cfg = inst.data_dir.join("config.toml");
-        match std::fs::read_to_string(&cfg).ok().and_then(|t| t.parse::<toml_edit::DocumentMut>().ok()) {
+        match std::fs::read_to_string(&cfg)
+            .ok()
+            .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+        {
             Some(doc) => {
                 let keys: Vec<String> = doc
                     .get("hooks")
