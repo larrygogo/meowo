@@ -87,6 +87,31 @@ pub fn account_of(id: AgentId) -> Option<Account> {
     account_in(id, &active_installation(id)?)
 }
 
+/// 把用量缓存里捎回来的套餐名合并进账号（[`ProviderUsage::plan`]）。
+///
+/// kimi 的会员等级只出现在 `/usages` 的响应里——凭据、JWT、本地文件里一概没有（实测）。而
+/// [`AccountCap::account`] 是纯本地、登录轮询会 2s 跑一次的，不能为它联网。于是让用量刷新把等级
+/// 顺带捎回来，落进缓存，展示时在这里合并。
+///
+/// **只对活跃账号成立**：缓存按 agent 分键、不按 profile（切账号时 `clear_cached_usage` 会丢弃它），
+/// 所以那份套餐名讲的必然是当前活跃的那个账号。把它贴到别的 profile 上，就是把甲的会员等级挂到
+/// 乙头上。
+///
+/// 账号侧自己读得出套餐的（claude 的 `userRateLimitTier`、codex 的 `chatgpt_plan_type`）不覆盖——
+/// 那些更直接也更新鲜。
+pub fn with_cached_plan(id: AgentId, account: Option<Account>) -> Option<Account> {
+    let mut a = account?;
+    if a.plan.is_none() {
+        a.plan = read_cached_usage(id).and_then(|u| u.plan);
+    }
+    Some(a)
+}
+
+/// 活跃账号 + 缓存里的套餐名。展示用（`get_accounts` / 账号列表的活跃行）。
+pub fn account_of_display(id: AgentId) -> Option<Account> {
+    with_cached_plan(id, account_of(id))
+}
+
 /// 该 agent 当前是否支持用量查询。
 pub fn usage_supported(id: AgentId) -> bool {
     // 走中转时用量无从谈起（额度归中转的密钥所有者）。

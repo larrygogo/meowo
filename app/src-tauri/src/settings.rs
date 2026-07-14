@@ -112,6 +112,12 @@ pub(crate) struct Settings {
     /// 每个 agent 当前**活跃**的 profile id。键缺席 = 用默认账号。
     #[serde(default)]
     pub(crate) active_profile: std::collections::BTreeMap<String, String>,
+    /// 用户给**默认账号**起的名字（键＝agent id）。缺席 → 前端显示本地化的「默认账号」。
+    ///
+    /// 默认账号本身是隐式的（不在 `profiles` 里），但「不能改名」纯粹是当初的疏漏，不是设计：
+    /// 名字只是个显示串，不碰任何文件。而两个账号里有一个永远叫「默认账号」，用起来很别扭。
+    #[serde(default)]
+    pub(crate) default_profile_names: std::collections::BTreeMap<String, String>,
     /// API 中转元数据。密钥单独存储，绝不随 Settings 序列化或事件下发。
     #[serde(default)]
     pub(crate) relay: crate::relay::RelaySettings,
@@ -139,6 +145,7 @@ impl Default for Settings {
             // 空 = 只有默认账号（agent 自己的目录），不注入任何环境变量。
             profiles: Default::default(),
             active_profile: Default::default(),
+            default_profile_names: Default::default(),
             relay: crate::relay::RelaySettings::default(),
         }
     }

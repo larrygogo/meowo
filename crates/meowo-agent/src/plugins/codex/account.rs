@@ -144,7 +144,7 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
     let credits = payload.get("credits").and_then(|v| v.as_f64());
     let note = credits.map(|c| format!("credits:{c}"));
 
-    ProviderUsage { lanes, note }
+    ProviderUsage { lanes, note, plan: None }
 }
 
 // ═══ 文件系统读取 ═══

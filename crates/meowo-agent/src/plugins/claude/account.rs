@@ -373,7 +373,7 @@ pub fn map_to_provider_usage(u: &Usage) -> ProviderUsage {
 
     let note = u.extra_usage_enabled.then(|| "extra_usage_enabled".to_string());
 
-    ProviderUsage { lanes, note }
+    ProviderUsage { lanes, note, plan: None }
 }
 
 /// 空字符串→ None（resets_at 字段处理）。

@@ -800,7 +800,7 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
         account::all_with_account()
             .map(|p| account::ProviderAccountPayload {
                 provider: p.id().as_str().to_string(),
-                account: account::account_of(p.id()),
+                account: account::account_of_display(p.id()),
                 usage: if settings::load_settings().relay.enabled(p.id()) {
                     None
                 } else {
@@ -1440,10 +1440,6 @@ mod tests {
         assert_eq!(login_epoch(claude), c);
     }
 
-    /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
-    /// 不足以防它腐化（dead_code 允许了它）。这里在所有平台实际调它一次，锁住行为：
-    /// 已知 agent 给出 `[exe, --resume, id]`，未知/缺 session_id 给空 argv（只聚焦、不 resume）。
-    #[test]
     /// 拉起 agent 的 env **必须**带上账号隔离变量，否则多账号完全不生效。
     ///
     /// 回归：`new_session` 曾直接调 `proxy::launch_env`（只有代理变量），于是设置页明明切到了另一个
@@ -1479,6 +1475,9 @@ mod tests {
         assert!(!keys.contains(&"MEOWO_PROFILE"), "gemini 不支持多账号，实得 {keys:?}");
     }
 
+    /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
+    /// 不足以防它腐化（dead_code 允许了它）。这里在所有平台实际调它一次，锁住行为：
+    /// 已知 agent 给出 `[exe, --resume, id]`，未知/缺 session_id 给空 argv（只聚焦、不 resume）。
     #[test]
     fn resume_argv_for_dispatches_by_provider_and_degrades_safely() {
         let argv = resume_argv_for(Some("claude"), Some("SID"));

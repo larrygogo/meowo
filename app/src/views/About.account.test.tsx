@@ -365,7 +365,10 @@ describe("AccountSection agent 卡", () => {
     api.agentPathGap.mockResolvedValue("C:\\Users\\x\\.local\\bin");
     render(<AccountSection />);
     const gap = await screen.findByTestId("agent-path-gap-claude");
-    expect(gap.textContent).toContain(".local\\bin");
+    // 提示条刻意低调：正文只留一句「为什么该点」，**完整路径挪进 tooltip**——
+    // 这条对多数人是背景噪音（装完就在 PATH 上），横一条长提示会喧宾夺主。
+    expect(gap.getAttribute("title")).toContain(".local\\bin");
+    expect(gap.textContent).not.toContain(".local\\bin");
 
     fireEvent.click(screen.getByTestId("agent-add-path-claude"));
     await waitFor(() => expect(api.addAgentToUserPath).toHaveBeenCalledWith("claude"));
@@ -632,21 +635,6 @@ describe("AccountSection 多账号", () => {
     expect((def.querySelector(".profile-row-main") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  /** 默认账号（id=null）是 agent 自己的目录，删不得——不给删除按钮。 */
-  it("默认账号没有删除按钮，自定义账号有", async () => {
-    api.listProfiles.mockResolvedValue([
-      { id: null, name: "", active: true, account: { email: "a@b.c" } },
-      { id: "work", name: "工作", active: false, account: null },
-    ]);
-    render(<AccountSection />);
-
-    const def = await screen.findByTestId("profile-claude-__default__");
-    expect(def.querySelector('[aria-label]')).toBeNull(); // 无删除图标按钮
-
-    const work = screen.getByTestId("profile-claude-work");
-    expect(work.querySelector(`[aria-label="${zh.account.deleteProfile}"]`)).toBeTruthy();
-  });
-
   /**
    * 不支持多账号的 agent（gemini：数据目录不可被环境变量覆盖）不显示账号列表。
    *
@@ -662,6 +650,31 @@ describe("AccountSection 多账号", () => {
 
     await waitFor(() => expect(screen.getByTestId("profiles-claude")).toBeTruthy());
     expect(screen.queryByTestId("profiles-gemini")).toBeNull();
+  });
+
+  /**
+   * kimi **给不出邮箱**（凭据、JWT、本地文件里都没有），只剩一串内部 userId 当标签——挂在账号名
+   * 下面就是一行乱码。它的会员等级（Allegretto…）由用量接口捎回、后端合并进 `plan`，账号行要用它。
+   *
+   * 所以描述链里 `plan` 必须排在 `login_label` 前面。取不到等级时才退回 userId：那仍比「已登录」
+   * 强——多账号下至少还能分清哪行是哪个账号。
+   */
+  it("kimi 账号行显示会员等级；等级未知时才退回 userId", async () => {
+    api.listAgents.mockResolvedValue([
+      { id: "kimi", display_name: "Kimi Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
+    ]);
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { login_label: "cnta…5a4g", plan: "Allegretto" } },
+      { id: "alt", name: "小号", active: false, account: { login_label: "d0ah…9x2k" } },
+    ]);
+    render(<AccountSection />);
+
+    const active = await screen.findByTestId("profile-kimi-__default__");
+    expect(active.textContent).toContain("Allegretto");
+    expect(active.textContent).not.toContain("cnta…5a4g");
+
+    // 非活跃行拿不到等级（用量缓存不按 profile 分键，只讲活跃账号的事）→ 退回 userId。
+    expect(screen.getByTestId("profile-kimi-alt").textContent).toContain("d0ah…9x2k");
   });
 });
 
@@ -683,7 +696,8 @@ describe("AccountSection 账号的增删改", () => {
     api.deleteProfile.mockResolvedValue(undefined);
     render(<AccountSection />);
 
-    fireEvent.click(await screen.findByTestId("profile-delete-claude-work"));
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-work-delete"));
     await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
     await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "work"));
   });
@@ -693,7 +707,8 @@ describe("AccountSection 账号的增删改", () => {
     dialog.confirm.mockResolvedValue(false);
     render(<AccountSection />);
 
-    fireEvent.click(await screen.findByTestId("profile-delete-claude-work"));
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-work-delete"));
     await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
     expect(api.deleteProfile).not.toHaveBeenCalled();
   });
@@ -704,7 +719,8 @@ describe("AccountSection 账号的增删改", () => {
     api.renameProfile.mockResolvedValue(undefined);
     render(<AccountSection />);
 
-    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-work-rename"));
     const input = await screen.findByTestId("profile-rename-input-claude-work");
     fireEvent.change(input, { target: { value: "个人" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -716,7 +732,8 @@ describe("AccountSection 账号的增删改", () => {
     twoProfiles();
     render(<AccountSection />);
 
-    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-work-rename"));
     const input = await screen.findByTestId("profile-rename-input-claude-work");
     fireEvent.change(input, { target: { value: "别的名字" } });
     // mouseDown 而非 click：要抢在 input 的 onBlur（会提交）之前。
@@ -760,7 +777,8 @@ describe("AccountSection 退出登录 vs 删除账号", () => {
     api.logoutAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
 
-    fireEvent.click(await screen.findByTestId("profile-logout-claude-work"));
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-work-logout"));
     await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
     await waitFor(() => expect(api.logoutAgent).toHaveBeenCalledWith("claude", "work"));
   });
@@ -769,14 +787,37 @@ describe("AccountSection 退出登录 vs 删除账号", () => {
    * **默认账号只能登出，不能删除**——它是 agent 自己的目录（`~/.claude`），不归 meowo 管。
    * 这正是「有了删除账号就不再需要退出登录」不成立的地方。
    */
-  it("默认账号有登出、没有删除", async () => {
+  /**
+   * **默认账号能登出、能改名，但不能删除。**
+   *
+   * 删不得是因为它就是 agent 自己的目录（`~/.claude`）——删它等于抹掉用户的凭据、配置和**全部
+   * 会话历史**，那不是 meowo 该替他做的决定（自定义账号删的是 `~/.meowo/profiles/…`，那才是
+   * 我们自己造的目录）。
+   *
+   * 但**改名没有理由不给**：名字只是个显示串，不碰任何文件。
+   */
+  it("默认账号可登出、可改名，但不可删除", async () => {
     twoProfiles();
     render(<AccountSection />);
 
-    expect(await screen.findByTestId("profile-logout-claude-__default__")).toBeTruthy();
-    expect(screen.queryByTestId("profile-delete-claude-__default__")).toBeNull();
-    // 自定义账号两者都有。
-    expect(screen.getByTestId("profile-logout-claude-work")).toBeTruthy();
-    expect(screen.getByTestId("profile-delete-claude-work")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-__default__"));
+    expect(screen.getByTestId("profile-menu-claude-__default__-logout")).toBeTruthy();
+    expect(screen.getByTestId("profile-menu-claude-__default__-rename")).toBeTruthy();
+    expect(screen.queryByTestId("profile-menu-claude-__default__-delete")).toBeNull();
+  });
+
+  /** 默认账号的名字单独存（它不在 settings.profiles 里），故 id 传 null。 */
+  it("给默认账号改名时 id 传 null", async () => {
+    twoProfiles();
+    api.renameProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-menu-claude-__default__"));
+    fireEvent.click(screen.getByTestId("profile-menu-claude-__default__-rename"));
+    const input = await screen.findByTestId("profile-rename-input-claude-__default__");
+    fireEvent.change(input, { target: { value: "个人号" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(api.renameProfile).toHaveBeenCalledWith("claude", null, "个人号"));
   });
 });

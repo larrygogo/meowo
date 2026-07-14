@@ -241,6 +241,7 @@ export const zh = {
     addProfileHint: "新账号有自己独立的登录与会话历史，互不影响",
     switchProfile: "切换到此账号",
     activeProfile: "使用中",
+    profileActions: "账号操作",
     renameProfile: "重命名",
     cancelEdit: "取消",
     deleteProfile: "删除账号",
@@ -263,7 +264,10 @@ export const zh = {
     installRetry: "重试",
     installFailed: "安装失败",
     installLogHint: (p: string) => `安装日志：${p}`,
-    pathGap: (dir: string) => `已安装，但 ${dir} 不在 PATH 中，终端里敲命令会找不到`,
+    // 提示条要低调：它对多数人是背景噪音（装完就在 PATH 上），只有少数人需要点它。
+    // 完整路径挪进 tooltip（pathGapDetail），正文只留一句「为什么该点」。
+    pathGap: "终端里敲不出命令？",
+    pathGapDetail: (dir: string) => `${dir} 不在 PATH 中，终端里敲命令会找不到`,
     addToPath: "加入 PATH",
     addingToPath: "写入中…",
     pathAdded: "已加入 PATH，请重开终端后生效",

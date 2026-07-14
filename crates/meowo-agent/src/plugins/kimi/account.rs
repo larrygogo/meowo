@@ -10,6 +10,9 @@
 //!   任何非 2xx / 网络错 / 解析失败 → 安静降级 None，不崩溃、不影响其它 provider。
 //!   容错解析 parse_kimi_usage：支持多种推断 schema，字段漂移 used↔remaining、
 //!   resetAt/reset_at/resetTime/reset_time↔reset_in/resetIn/ttl/window(秒偏移)。
+//!
+//! **会员等级**：只长在 /usages 的 `user.membership.level` 上（本地一无所有），故由用量顺带捎回
+//!   （ProviderUsage::plan），宿主缓存后合并进账号卡片。映射见 [`plan_name`]。
 
 use serde_json::Value;
 use std::time::Duration;
@@ -420,7 +423,46 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
         }
     }
 
-    if lanes.is_empty() { None } else { Some(ProviderUsage { lanes, note: None }) }
+    if lanes.is_empty() {
+        None
+    } else {
+        Some(ProviderUsage { lanes, note: None, plan: plan_name(v) })
+    }
+}
+
+/// `LEVEL_*` 枚举 → 套餐名（Andante / Moderato / Allegretto / Allegro / Vivace）。
+///
+/// # 为什么这张表值得如此谨慎
+///
+/// kimi **不公开这个映射**，而且它有两套价格阶梯——国内 5 档（Adagio ¥0 / Andante ¥39 /
+/// Moderato ¥79 / Allegretto ¥159 / Allegro ¥559）与国际 4 档（Moderato / Allegretto / Allegro /
+/// Vivace）——于是同一个枚举在两套里指的不是同一档。这正是各家第三方实现互相打架的原因。
+///
+/// **`LEVEL_INTERMEDIATE = Allegretto` 是实测钉死的**：一个 `REGION_CN`、订阅页明写「当前订阅：
+/// Allegretto（¥159）」的账号，`/usages` 回的正是 `{"user":{"membership":{"level":
+/// "LEVEL_INTERMEDIATE"}}}`。
+///
+/// 这个锚点顺带说明了整张表**对齐的是国际阶梯而非国内的**：若按国内 4 个付费档顺次排（Andante→
+/// Moderato→Allegretto→Allegro），第二档 INTERMEDIATE 该是 Moderato，可实测它是第三档 Allegretto。
+/// 按国际阶梯排（Moderato→Allegretto→Allegro→Vivace）才对得上。按价格顺序猜的实现全错在这里。
+///
+/// 其余三档由这个锚点外推，并与多个独立第三方实现（Swift / TS）的读法一致，**但未经实测**。
+/// 已知的残余风险：国内独有的 Andante（¥39）在国际阶梯里没有对应档，它返回什么枚举无从得知——
+/// 若它也回 `LEVEL_BASIC`，这里会把它显示成 Moderato。等有这样的账号出现再修，不在此凭空加分支。
+///
+/// **未知枚举一律不猜**：返回 None（卡片退回显示 userId），宁可少说一句，也不能把 ¥559 的档说成
+/// ¥79 的。
+fn plan_name(v: &Value) -> Option<String> {
+    let level = v.get("user")?.get("membership")?.get("level")?.as_str()?;
+    let name = match level {
+        "LEVEL_BASIC" => "Moderato",
+        "LEVEL_INTERMEDIATE" => "Allegretto", // ← 实测证实的锚点
+        "LEVEL_ADVANCED" => "Allegro",
+        "LEVEL_PREMIUM" => "Vivace",
+        // 免费档、以及本表还不认识的枚举：不编造一个套餐名。
+        _ => return None,
+    };
+    Some(name.to_string())
 }
 
 // ═══ 联网取用量 ═══
@@ -552,6 +594,68 @@ mod user_label_tests {
         assert_eq!(user_label(Some(&json!({"scope": "x"}))), None);
         assert_eq!(user_label(Some(&json!({"user_id": ""}))), None);
         assert_eq!(user_label(None), None);
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// `/usages` 的**实测响应形状**（2026-07，节选自一个 REGION_CN 账号；userId 已改写）。
+    /// 会员等级只出现在这里——凭据、JWT、`~/.kimi-code` 下的任何文件里都没有。
+    fn live_usages_shape(level: &str) -> Value {
+        json!({
+            "user": {
+                "userId": "cntxxxxxxxxxxxxxxxxx",
+                "region": "REGION_CN",
+                "membership": { "level": level },
+                "businessId": ""
+            },
+            "usage": { "limit": "100", "used": "2", "remaining": "98",
+                       "resetTime": "2026-07-20T02:00:13.307440Z" },
+            "limits": [{
+                "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                "detail": { "limit": "100", "remaining": "100",
+                            "resetTime": "2026-07-14T08:00:13.307440Z" }
+            }],
+            "subType": "TYPE_PURCHASE"
+        })
+    }
+
+    /// 唯一实测钉死的一档：订阅页显示 Allegretto（¥159）的账号，这里回 `LEVEL_INTERMEDIATE`。
+    /// 这条测试就是那份证据本身——它挂了，说明有人按「价格顺序」把表改回去了。
+    #[test]
+    fn intermediate_is_allegretto_as_observed_live() {
+        let u = parse_kimi_usage(&live_usages_shape("LEVEL_INTERMEDIATE")).expect("有 lanes");
+        assert_eq!(u.plan.as_deref(), Some("Allegretto"));
+        // 套餐是顺带捎回来的，不能挤掉用量本身。
+        assert!(!u.lanes.is_empty());
+    }
+
+    #[test]
+    fn maps_the_other_known_levels() {
+        for (level, want) in [
+            ("LEVEL_BASIC", "Moderato"),
+            ("LEVEL_ADVANCED", "Allegro"),
+            ("LEVEL_PREMIUM", "Vivace"),
+        ] {
+            assert_eq!(plan_name(&live_usages_shape(level)).as_deref(), Some(want), "{level}");
+        }
+    }
+
+    /// 不认识的枚举**不猜**：宁可让卡片退回显示 userId，也不能把某一档说成另一档。
+    #[test]
+    fn unknown_or_missing_level_yields_no_plan() {
+        assert_eq!(plan_name(&live_usages_shape("LEVEL_SOMETHING_NEW")), None);
+        assert_eq!(plan_name(&live_usages_shape("")), None);
+        assert_eq!(plan_name(&json!({"user": {"membership": {}}})), None);
+        assert_eq!(plan_name(&json!({"user": {}})), None);
+        assert_eq!(plan_name(&json!({})), None);
+        // 等级读不到也绝不影响用量解析。
+        let u = parse_kimi_usage(&live_usages_shape("LEVEL_WHATEVER")).expect("有 lanes");
+        assert_eq!(u.plan, None);
+        assert!(!u.lanes.is_empty());
     }
 }
 

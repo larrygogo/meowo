@@ -474,8 +474,16 @@ export function createProfile(provider: AgentId, name: string): Promise<string> 
   return invoke("create_profile", { provider, name });
 }
 
-/** 给账号改名。只改展示名，不动它的目录（id）。 */
-export function renameProfile(provider: AgentId, id: string, name: string): Promise<void> {
+/**
+ * 给账号改名。`id = null` → 默认账号（它的名字单独存，不在 profiles 里）。
+ *
+ * 只改展示名，不动它的目录（id）——id 是目录名，改了等于换了个账号。
+ */
+export function renameProfile(
+  provider: AgentId,
+  id: string | null,
+  name: string,
+): Promise<void> {
   return invoke("rename_profile", { provider, id, name });
 }
 

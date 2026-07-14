@@ -36,7 +36,7 @@ import {
 import { agentAssets } from "../../providers";
 import { useT, repairFailMessage } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
-import { Switch } from "./widgets";
+import { Switch, ActionMenu } from "./widgets";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
 
@@ -489,13 +489,19 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
         </div>
       )}
 
-      {/* 装好了却不在 PATH 上：终端里敲不出来。给出目录 + 一键写入用户级 PATH。 */}
+      {/* 装好了却不在 PATH 上：终端里敲不出来。
+          **刻意低调**：对多数人这是背景噪音（装完就在 PATH 上），横一条长提示喧宾夺主。
+          正文只留一句「为什么该点」，完整路径与后果进 tooltip；按钮做成文字链接的样子。 */}
       {isInstalled && pathGapDir && (
-        <div className="provider-card-body agent-path-gap" data-testid={"agent-path-gap-" + provider}>
-          <span className="agent-path-gap-text">{t.account.pathGap(pathGapDir)}</span>
+        <div
+          className="provider-card-body agent-path-gap"
+          data-testid={"agent-path-gap-" + provider}
+          title={t.account.pathGapDetail(pathGapDir)}
+        >
+          <span className="agent-path-gap-text">{t.account.pathGap}</span>
           <button
             type="button"
-            className="provider-card-action"
+            className="agent-path-gap-btn"
             data-testid={"agent-add-path-" + provider}
             onClick={addPath}
             disabled={addingPath}
@@ -576,12 +582,16 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
  * 「默认账号」是隐式的（`id === null`）——它就是 agent 自己的目录（`~/.claude`），不可删除。
  * 没建过任何自定义账号的用户，这里只会看到它一条 + 一个「添加账号」按钮。
  */
+/** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
+const DEFAULT_KEY = "__default__";
+
 function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: () => void }) {
   const t = useT();
   const [rows, setRows] = useState<ProfileView[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
-  // 正在改名的账号 id（null = 没在改名）。默认账号不可改名（它没有 id）。
+  // 正在改名的**行 key**（null = 没在改名）。默认账号用 DEFAULT_KEY——它没有 profile id，
+  // 但照样可以改名（名字只是个显示串，不碰任何文件）。
   const [editing, setEditing] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -661,12 +671,16 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
     run(() => logoutAgent(provider, p.id));
   };
 
-  /** 改名。只动展示名，不动 id（它是目录名，改了就等于换了个账号）。 */
+  /**
+   * 改名。只动展示名，**不动 id**（它是目录名，改了就等于换了个账号）。
+   *
+   * 默认账号也能改：它的 id 是 null，名字单独存在 settings 的 `default_profile_names` 里。
+   */
   const commitRename = (p: ProfileView) => {
     const next = editName.trim();
     setEditing(null);
-    if (!p.id || !next || next === p.name) return;
-    run(() => renameProfile(provider, p.id!, next));
+    if (!next || next === p.name) return;
+    run(() => renameProfile(provider, p.id, next));
   };
 
   if (!rows) return null;
@@ -676,16 +690,21 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
       <div className="profile-list-head">{t.account.profiles}</div>
 
       {rows.map((p) => {
-        const key = p.id ?? "__default__";
-        // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
+        const key = p.id ?? DEFAULT_KEY;
+        // 登录态：有账号信息就是登录了。邮箱 > 套餐 > 登录方式标签（codex 的 "API Key"、
         // opencode 的 "anthropic (oauth)"）。
+        //
+        // 套餐排在标签前，是为了 kimi：它**给不出邮箱**（凭据、JWT、本地文件里都没有），只剩一串
+        // 内部 userId 当标签——挂在账号名下面像一行乱码。会员等级（Allegretto…）才是这一行该说的话。
+        // 上面卡片头部不走这条链（那里等级另有徽章，走这条链会一行一徽章重复两遍）。
         const desc =
           p.account?.email ??
           p.account?.display_name ??
+          p.account?.plan ??
           p.account?.login_label ??
           t.account.notLoggedIn;
         // 正在改名的那一行：整行让位给输入框（其余按钮此时无从谈起）。
-        if (p.id && editing === p.id) {
+        if (editing === key) {
           return (
             <div key={key} className="profile-row profile-add-row">
               <input
@@ -736,9 +755,10 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
 
             {p.active && <span className="profile-badge">{t.account.activeProfile}</span>}
 
-            {/* 登录/登出**必须带上这一行自己的 id**。漏了它：登录会把凭据写进默认账号（用户以为
-                加了个账号，其实把原来那个覆盖了），登出会去清默认账号的凭据（而删凭据不可逆）。 */}
-            {!p.account ? (
+            {/* 登录是未登录时的主操作，留作显眼的按钮；其余（退出/改名/删除）收进菜单。
+                **必须带上这一行自己的 id**：漏了它，登录会把凭据写进默认账号（用户以为加了个账号，
+                其实把原来那个覆盖了）。 */}
+            {!p.account && (
               <button
                 type="button"
                 className="provider-card-action"
@@ -748,51 +768,41 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
               >
                 {t.account.login}
               </button>
-            ) : (
-              // 登出 ≠ 删除：它只清凭据，目录、配置、会话历史都留着，之后还能登回来。
-              // 默认账号更是**只有**这一条退出路径——它是 agent 自己的目录，删不掉。
-              <button
-                type="button"
-                className="provider-card-action"
-                data-testid={"profile-logout-" + provider + "-" + key}
-                disabled={busy}
-                onClick={() => logout(p)}
-              >
-                {t.account.logout}
-              </button>
             )}
 
-            {/* 默认账号不可改名/删除：它是 agent 自己的目录，不归 meowo 管。 */}
-            {p.id && (
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label={t.account.renameProfile}
-                data-tip={t.account.renameProfile}
-                data-testid={"profile-rename-" + provider + "-" + key}
-                disabled={busy}
-                onClick={() => {
-                  setEditName(p.name);
-                  setEditing(p.id);
-                }}
-              >
-                ✎
-              </button>
-            )}
-
-            {p.id && (
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label={t.account.deleteProfile}
-                data-tip={t.account.deleteProfile}
-                data-testid={"profile-delete-" + provider + "-" + key}
-                disabled={busy}
-                onClick={() => remove(p)}
-              >
-                ✕
-              </button>
-            )}
+            <ActionMenu
+              label={t.account.profileActions}
+              testId={"profile-menu-" + provider + "-" + key}
+              items={[
+                // 登出 ≠ 删除：它只清凭据，目录、配置、会话历史都留着，之后还能登回来。
+                // 默认账号更是**只有**这一条退出路径——它是 agent 自己的目录，删不掉。
+                ...(p.account
+                  ? [{ key: "logout", label: t.account.logout, onSelect: () => logout(p) }]
+                  : []),
+                // 默认账号**也能改名**：名字只是个显示串，不碰任何文件。两个账号里有一个永远
+                // 叫「默认账号」，用起来很别扭。
+                {
+                  key: "rename",
+                  label: t.account.renameProfile,
+                  onSelect: () => {
+                    setEditName(p.name);
+                    setEditing(p.id ?? DEFAULT_KEY);
+                  },
+                },
+                // 删除只给自定义账号。默认账号是 agent 自己的目录（`~/.claude`）——删它等于抹掉
+                // 用户的凭据、配置和**全部会话历史**，那不是 meowo 该替他做的决定。
+                ...(p.id
+                  ? [
+                      {
+                        key: "delete",
+                        label: t.account.deleteProfile,
+                        danger: true,
+                        onSelect: () => remove(p),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </div>
         );
       })}

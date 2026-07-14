@@ -73,10 +73,23 @@ pub struct UsageLane {
 }
 
 /// 某 agent 的全部用量泳道。note 携带补充文字（如 extra_usage_enabled / 余额）。
+///
+/// `plan` 是个**账号侧**的字段，长在用量结构里是有原因的：有些 agent 的身份信息**只出现在用量
+/// 响应里**——kimi 的 `/usages` 带 `user.membership.level`（会员等级），而它的凭据、JWT、本地文件
+/// 里根本没有任何可读的身份（实测：只有内部 userId）。而 [`AccountCap::account`] 是纯本地、
+/// 高频调用的（登录轮询 2s 一跑），不能为了一个等级去联网。
+///
+/// 所以让用量刷新时把它顺带捎回来，由宿主缓存、并合并进账号卡片。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ProviderUsage {
     pub lanes: Vec<UsageLane>,
     pub note: Option<String>,
+    /// 用量接口顺带返回的**套餐名**（kimi 的会员等级）。宿主缓存后合并进账号卡片。
+    ///
+    /// 缺省 `None`：另几家的套餐信息本就在账号侧（claude 的 `.claude.json` 有 `userRateLimitTier`），
+    /// 不必绕这一圈。
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 /// 通用账号信息（字段可选，部分 agent 不提供所有字段）。

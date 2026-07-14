@@ -2222,19 +2222,35 @@ select.ns-input {
   word-break: break-all;
 }
 /* 「装了但不在 PATH」提示条：说明文字占满，按钮贴右且不被挤压。 */
+/* PATH 提示条：低调。它对多数人是背景噪音（装完就在 PATH 上），只有少数人需要点它——
+   横一条长提示会喧宾夺主。小字 + 淡色 + 文字式按钮，完整路径走 title。 */
 .agent-path-gap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  font-size: calc(10.5px * var(--cc-ui));
+  color: var(--cc-text-faint);
 }
 .agent-path-gap-text {
-  flex: 1;
   min-width: 0;
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.agent-path-gap .provider-card-action {
+/* 文字链接式：不抢眼，但点得到。 */
+.agent-path-gap-btn {
   flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cc-text-dim);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
+.agent-path-gap-btn:hover:not(:disabled) { color: var(--cc-text); }
+.agent-path-gap-btn:disabled { cursor: default; opacity: 0.6; }
 .agent-path-msg {
   opacity: 0.8;
 }
@@ -2331,3 +2347,7 @@ select.ns-input {
   color: var(--cc-text-faint);
   line-height: 1.5;
 }
+
+/* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */
+.dd-item-danger { color: var(--cc-danger, #e5484d); }
+.dd-item-danger:hover { background: color-mix(in srgb, var(--cc-danger, #e5484d) 12%, transparent); }

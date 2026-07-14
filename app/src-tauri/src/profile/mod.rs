@@ -169,11 +169,17 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
         let active = active_id_in(&s, &provider);
 
         // 默认账号：读 agent 自己目录下的登录态。
+        // 套餐名只合并给**活跃**的那一行——用量缓存不按 profile 分键，它讲的是活跃账号的事。
+        let default_active = active.is_none();
         let mut out = vec![ProfileView {
             id: None,
-            name: String::new(), // 展示名由前端本地化（「默认账号」），后端不塞译文。
-            active: active.is_none(),
-            account: plugin.resolve().and_then(|inst| crate::account::account_in(id, &inst)),
+            // 用户起过名就用它；没起过留空，由前端本地化成「默认账号」——后端不塞译文。
+            name: s.default_profile_names.get(&provider).cloned().unwrap_or_default(),
+            active: default_active,
+            account: {
+                let a = plugin.resolve().and_then(|inst| crate::account::account_in(id, &inst));
+                if default_active { crate::account::with_cached_plan(id, a) } else { a }
+            },
         }];
 
         // 不支持多账号的 agent 到此为止——绝不列出无从生效的 profile。
@@ -182,11 +188,13 @@ pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
         }
 
         for p in s.profiles.get(&provider).into_iter().flatten() {
+            let is_active = active.as_deref() == Some(p.id.as_str());
+            let account = installation_of(id, &p.id).and_then(|inst| crate::account::account_in(id, &inst));
             out.push(ProfileView {
                 id: Some(p.id.clone()),
                 name: p.name.clone(),
-                active: active.as_deref() == Some(p.id.as_str()),
-                account: installation_of(id, &p.id).and_then(|inst| crate::account::account_in(id, &inst)),
+                active: is_active,
+                account: if is_active { crate::account::with_cached_plan(id, account) } else { account },
             });
         }
         out
@@ -234,12 +242,14 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
     .map_err(|e| e.to_string())?
 }
 
-/// 给账号改名。**只动展示名，不动 id** —— id 是目录名，改了就等于换了个账号（凭据、会话历史
-/// 全在那个目录里），而用户以为自己只是改了个称呼。
+/// 给账号改名。`id = None` → **默认账号**（它的名字单独存在 `default_profile_names` 里）。
+///
+/// **只动展示名，不动 id** —— id 是目录名，改了就等于换了个账号（凭据、会话历史全在那个目录里），
+/// 而用户以为自己只是改了个称呼。
 #[tauri::command]
 pub(crate) async fn rename_profile(
     provider: String,
-    id: String,
+    id: Option<String>,
     name: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -248,12 +258,21 @@ pub(crate) async fn rename_profile(
             return Err("账号名不能为空".to_string());
         }
         let mut s = crate::settings::load_settings();
-        let p = s
-            .profiles
-            .get_mut(&provider)
-            .and_then(|list| list.iter_mut().find(|p| p.id == id))
-            .ok_or("没有这个账号")?;
-        p.name = name.to_string();
+        match id {
+            // 默认账号：它不在 profiles 里（是隐式的），名字单独存。
+            None => {
+                s.default_profile_names
+                    .insert(provider.clone(), name.to_string());
+            }
+            Some(id) => {
+                let p = s
+                    .profiles
+                    .get_mut(&provider)
+                    .and_then(|list| list.iter_mut().find(|p| p.id == id))
+                    .ok_or("没有这个账号")?;
+                p.name = name.to_string();
+            }
+        }
         crate::settings::save_settings(&s)
     })
     .await
@@ -393,14 +412,16 @@ mod tests {
         assert!(env_of(meowo_agent::id::CLAUDE, None).is_empty());
     }
 
-    /// profile 的环境变量指向它自己的根目录。opencode 必须拿到**两个**变量，
-    /// 只隔离配置目录的话，凭据仍然共用——账号看起来切了、其实没切。
+    /// profile 的环境变量指向它自己的根目录，外加 `MEOWO_PROFILE`（reporter 继承它，会话据此
+    /// 绑定到该账号）。opencode 必须拿到**两个**目录变量，只隔离配置目录的话，凭据仍然共用——
+    /// 账号看起来切了、其实没切。
     #[test]
     fn profile_env_points_into_its_own_root() {
         let env = env_of(meowo_agent::id::CLAUDE, Some("work"));
-        assert_eq!(env.len(), 1);
         assert_eq!(env[0].0, "CLAUDE_CONFIG_DIR");
         assert_eq!(PathBuf::from(&env[0].1), profile_root("claude", "work"));
+        assert_eq!(env.iter().find(|(k, _)| k == PROFILE_ENV).map(|(_, v)| v.as_str()), Some("work"));
+        assert_eq!(env.len(), 2, "多注入了变量？实得 {env:?}");
 
         let env = env_of(meowo_agent::id::OPENCODE, Some("work"));
         let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();

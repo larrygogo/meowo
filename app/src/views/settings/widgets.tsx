@@ -18,18 +18,18 @@ export function Switch({ checked, onChange, disabled }: { checked: boolean; onCh
   );
 }
 
-export function Dropdown<T extends string | number>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (v: T) => void;
-}) {
+/**
+ * 弹出层的定位与关闭。`Dropdown`（选值）与 `ActionMenu`（执行动作）共用。
+ *
+ * 菜单用 **fixed 定位**：`.row-card` / `.main-body` 有 overflow 裁剪，absolute 的菜单会被切掉。
+ * 坐标在打开时一次性测量，故滚动后会与按钮错位 → 滚动即关（capture 捕获内层滚动）。
+ * WebView 的内容无法溢出原生窗口，所以按钮靠近窗口底部时要向上翻转。
+ *
+ * 抽出来是因为这套东西**两份必然漂移**：改了一处翻转阈值、忘了另一处，就会出现「有的菜单被
+ * 窗口底边切掉」这种只在特定滚动位置复现的怪 bug。
+ */
+function usePopup(itemCount: number) {
   const [open, setOpen] = useState(false);
-  // 菜单用 fixed 定位（脱离 .row-card/.main-body 的 overflow 裁剪），按钮坐标实时测量。
-  // WebView 内容无法超出原生窗口 → 按钮靠近窗口底部、下方放不下时向上翻转弹出。
   const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number }>({ top: 0, right: 0 });
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -44,7 +44,6 @@ export function Dropdown<T extends string | number>({
     };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("resize", close);
-    // 菜单是 fixed 定位、坐标在打开时一次性测量；滚动 .main-body 后会与按钮错位 → 滚动即关（capture 捕获内层滚动）。
     window.addEventListener("scroll", close, true);
     document.addEventListener("keydown", onKey); // Esc 关闭
     return () => {
@@ -60,7 +59,7 @@ export function Dropdown<T extends string | number>({
       if (r) {
         const right = Math.max(0, window.innerWidth - r.right);
         // 估算菜单高（项高约 30px + 容器内边距），下方放不下且上方空间更充裕时向上弹。
-        const estHeight = options.length * 30 + 10;
+        const estHeight = itemCount * 30 + 10;
         const fitsBelow = r.bottom + 6 + estHeight <= window.innerHeight;
         if (!fitsBelow && r.top > window.innerHeight - r.bottom) {
           setPos({ bottom: window.innerHeight - r.top + 6, right });
@@ -71,6 +70,78 @@ export function Dropdown<T extends string | number>({
     }
     setOpen((v) => !v);
   };
+  return { open, setOpen, pos, ref, btnRef, toggle };
+}
+
+/**
+ * 动作菜单（`⋯`）：点一项就执行它，**没有「当前选中值」**——这是它与 `Dropdown` 的根本区别。
+ *
+ * 用于把一行里挤成一排的按钮收进去（账号行的 退出登录 / 重命名 / 删除）。
+ */
+export function ActionMenu({
+  items,
+  label,
+  testId,
+}: {
+  items: { key: string; label: string; danger?: boolean; onSelect: () => void }[];
+  /** 触发按钮的无障碍名（也用作 tooltip）。 */
+  label: string;
+  testId?: string;
+}) {
+  const { open, setOpen, pos, ref, btnRef, toggle } = usePopup(items.length);
+  if (items.length === 0) return null;
+  return (
+    <div className="dd" ref={ref}>
+      <button
+        ref={btnRef}
+        type="button"
+        className="icon-btn"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-tip={label}
+        data-testid={testId}
+        onClick={toggle}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.6" />
+          <circle cx="12" cy="12" r="1.6" />
+          <circle cx="19" cy="12" r="1.6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="dd-menu" role="menu" style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
+          {items.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              role="menuitem"
+              className={"dd-item" + (it.danger ? " dd-item-danger" : "")}
+              data-testid={testId ? `${testId}-${it.key}` : undefined}
+              onClick={() => {
+                setOpen(false);
+                it.onSelect();
+              }}
+            >
+              <span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Dropdown<T extends string | number>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  const { open, pos, ref, btnRef, toggle, setOpen } = usePopup(options.length);
   const cur = options.find((o) => o.value === value);
   return (
     <div className="dd" ref={ref}>
