@@ -141,32 +141,50 @@ fn validate_http_url(raw: &str) -> Result<(), String> {
 }
 
 type SecretMap = BTreeMap<String, String>;
+static RELAY_SECRETS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn secrets_path() -> std::path::PathBuf {
     crate::db_path().with_file_name("relay-secrets.json")
 }
 
 fn read_secrets() -> SecretMap {
-    std::fs::read_to_string(secrets_path())
+    read_secrets_from(&secrets_path())
+}
+
+fn read_secrets_from(path: &std::path::Path) -> SecretMap {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
 
-fn write_secrets(secrets: &SecretMap) -> Result<(), String> {
-    let path = secrets_path();
+fn write_secrets_to(path: &std::path::Path, secrets: &SecretMap) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let body = serde_json::to_string(secrets).map_err(|e| e.to_string())?;
-    meowo_agent::fsutil::write_atomic_secure(&path, &body).map_err(|e| e.to_string())?;
+    meowo_agent::fsutil::write_atomic_secure(path, &body).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn update_secret_at(path: &std::path::Path, agent: &str, secret: &str) -> Result<(), String> {
+    // 必须把整个读-改-写包在同一把锁内；仅靠原子 rename 只能防半截文件，不能防两个调用方
+    // 都基于旧快照写回而互相覆盖。
+    let _guard = RELAY_SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut secrets = read_secrets_from(path);
+    let value = secret.trim();
+    if value.is_empty() {
+        secrets.remove(agent);
+    } else {
+        secrets.insert(agent.to_string(), value.to_string());
+    }
+    write_secrets_to(path, &secrets)
 }
 
 fn has_secret(id: &str) -> bool {
@@ -218,14 +236,7 @@ pub(crate) fn set_relay_secret(agent: String, secret: String) -> Result<(), Stri
     if !cap.supports_variant(installation.variant_tag) {
         return Err("当前安装版本不支持 API 中转".into());
     }
-    let mut secrets = read_secrets();
-    let value = secret.trim();
-    if value.is_empty() {
-        secrets.remove(&agent);
-    } else {
-        secrets.insert(agent, value.to_string());
-    }
-    write_secrets(&secrets)
+    update_secret_at(&secrets_path(), &agent, &secret)
 }
 
 fn models_url(base_url: &str) -> Result<String, String> {
@@ -478,5 +489,32 @@ mod tests {
             .iter()
             .any(|a| a == "model_providers.meowo-relay.wire_api=\"responses\""));
         assert!(argv.iter().any(|a| a == "model=\"gpt-relay\""));
+    }
+
+    #[test]
+    fn concurrent_secret_updates_keep_every_agent_entry() {
+        let dir = std::env::temp_dir().join(format!("meowo-relay-secrets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = std::sync::Arc::new(dir.join("relay-secrets.json"));
+        let mut writers = Vec::new();
+        for index in 0..8 {
+            let path = path.clone();
+            writers.push(std::thread::spawn(move || {
+                update_secret_at(&path, &format!("agent-{index}"), &format!("secret-{index}"))
+                    .unwrap();
+            }));
+        }
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let saved = read_secrets_from(&path);
+        for index in 0..8 {
+            assert_eq!(
+                saved.get(&format!("agent-{index}")).map(String::as_str),
+                Some(format!("secret-{index}").as_str())
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
