@@ -20,6 +20,7 @@ import {
   isLoggedIn,
 } from "../api";
 import { agentAssets } from "../providers";
+import { useAgentListRefresh } from "../useAgents";
 import { useT, repairFailMessage } from "../i18n";
 
 function FolderIcon() {
@@ -102,6 +103,37 @@ export function NewSessionPanel(): ReactElement {
     };
   }, []);
 
+  // agent 名单由后端下发。拿到后再据此查 hooks 接线状态与登录态——前端不再自带一份 agent 列表。
+  // 失败时保持 agents=null（未探测），UI 既不显示「未检测到已安装」也不禁用启动。
+  const reloadAgents = () => {
+    listAgents()
+      .then((list) => {
+        setAgents(list);
+        for (const { id } of list) {
+          checkProviderHooks(id)
+            .then((st) => setHooks((h) => ({ ...h, [id]: st })))
+            .catch(() => {});
+        }
+        // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
+        //
+        // 只给**有账号能力**的 agent 记登录态。`getAccounts()` 压根不会返回没声明该能力的 agent
+        // （gemini / opencode），而「查不到行」≠「未登录」——它是「无账号概念，无从谈起」。
+        // 曾经把两者混为一谈：查不到 → isLoggedIn(undefined) → false → 亮出登录入口 → 点下去，
+        // 后端 `login_argv()` 却是 None，只能报「拉起登录失败」。留 undefined，needLogin 即为 false。
+        getAccounts()
+          .then((rows) => {
+            const m: Record<string, boolean> = {};
+            for (const { id } of list) {
+              const row = rows.find((r) => r.provider === id);
+              if (row) m[id] = isLoggedIn(row);
+            }
+            setLoggedIn(m);
+          })
+          .catch(() => setLoggedIn(null));
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     // 若从会话卡片菜单带 provider 参数打开，保留该参数；否则回退到设置里的默认 agent。
     if (!initialProvider) {
@@ -125,27 +157,10 @@ export function NewSessionPanel(): ReactElement {
       })
       .then(setRecent)
       .catch(() => {});
-    // agent 名单由后端下发。拿到后再据此查 hooks 接线状态与登录态——前端不再自带一份 agent 列表。
-    // 失败时保持 agents=null（未探测），UI 既不显示「未检测到已安装」也不禁用启动。
-    listAgents()
-      .then((list) => {
-        setAgents(list);
-        for (const { id } of list) {
-          checkProviderHooks(id)
-            .then((st) => setHooks((h) => ({ ...h, [id]: st })))
-            .catch(() => {});
-        }
-        // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
-        getAccounts()
-          .then((rows) => {
-            const m: Record<string, boolean> = {};
-            for (const { id } of list) m[id] = isLoggedIn(rows.find((r) => r.provider === id));
-            setLoggedIn(m);
-          })
-          .catch(() => setLoggedIn(null));
-      })
-      .catch(() => {});
+    reloadAgents();
   }, []);
+  // 装完一个 agent，这里的可选项就该多一个——不必关掉面板重开。
+  useAgentListRefresh(reloadAgents);
 
   // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果，完成/超时后发 login-done。
   useEffect(() => {

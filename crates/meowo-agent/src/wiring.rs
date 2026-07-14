@@ -26,7 +26,13 @@ pub trait WiringCap: Sync {
     ///
     /// **约定：无改动时必须原样返回入参文本。** 返回一个语义等价但重新序列化过的字符串，会让
     /// 下面的幂等判定误判为「有改动」，于是每次启动都重写一遍用户配置。
-    fn amend(&self, _inst: &Installation, text: &str, _ctx: &WiringContext, _reporter: &str) -> Result<String, RepairReason> {
+    fn amend(
+        &self,
+        _inst: &Installation,
+        text: &str,
+        _ctx: &WiringContext,
+        _reporter: &str,
+    ) -> Result<String, RepairReason> {
         Ok(text.to_string())
     }
 
@@ -51,21 +57,32 @@ pub fn backup_once(path: &Path) {
 /// 通用接线编排。三个「绝不」在此集中兑现：解析失败绝不写、写前必备份、一律原子写。
 ///
 /// 返回 `None` = 成功/已是目标状态；`Some(reason)` = 无法接线（供「修复连接」把原因回传前端）。
-pub fn wire_hooks(inst: &Installation, agent_id: &str, cap: Option<&dyn WiringCap>, ctx: &WiringContext) -> Option<RepairReason> {
+pub fn wire_hooks(
+    inst: &Installation,
+    agent_id: &str,
+    cap: Option<&dyn WiringCap>,
+    ctx: &WiringContext,
+) -> Option<RepairReason> {
     let path = inst.config_path();
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => match inst.hooks.missing {
             MissingConfig::CreateFrom(seed) => seed.to_string(),
             MissingConfig::Fail(reason) => {
-                eprintln!("Meowo repair[{agent_id}]: {} 不存在（{reason:?}），跳过", path.display());
+                eprintln!(
+                    "Meowo repair[{agent_id}]: {} 不存在（{reason:?}），跳过",
+                    path.display()
+                );
                 return Some(reason);
             }
         },
         // 文件存在但读不了（权限、非 UTF-8 编码如 UTF-16）：绝不当「不存在」处理，
         // 否则会拿初始模板覆盖用户文件。
         Err(e) => {
-            eprintln!("Meowo repair[{agent_id}]: {} 读取失败（{e}），跳过", path.display());
+            eprintln!(
+                "Meowo repair[{agent_id}]: {} 读取失败（{e}），跳过",
+                path.display()
+            );
             return Some(RepairReason::ConfigUnreadable);
         }
     };
@@ -74,7 +91,10 @@ pub fn wire_hooks(inst: &Installation, agent_id: &str, cap: Option<&dyn WiringCa
     // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
     // 已认领的路径还须**当前仍存在**：app 换了目录后 hooks 里残留的旧路径若被当成目标写回去，
     // hooks 会静默失效（而 sidecar 明明就在手边）。
-    let claimed = inst.hooks.claimed_reporter(&text, agent_id).filter(|p| Path::new(p).exists());
+    let claimed = inst
+        .hooks
+        .claimed_reporter(&text, agent_id)
+        .filter(|p| Path::new(p).exists());
     let Some(reporter) = claimed.or_else(|| ctx.fallback_reporter.map(str::to_string)) else {
         eprintln!("Meowo repair[{agent_id}]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
         return Some(RepairReason::ReporterNotFound);
@@ -85,7 +105,10 @@ pub fn wire_hooks(inst: &Installation, agent_id: &str, cap: Option<&dyn WiringCa
         // 尚不能就此收工：hooks 已是目标态，statusLine 之类的 amend 目标可能仍需改动。
         EnsureOutcome::Unchanged => text.clone(),
         EnsureOutcome::Abandon(reason) => {
-            eprintln!("Meowo repair[{agent_id}]: {} 形态无法安全改写（{reason:?}），放弃（绝不写坏）", path.display());
+            eprintln!(
+                "Meowo repair[{agent_id}]: {} 形态无法安全改写（{reason:?}），放弃（绝不写坏）",
+                path.display()
+            );
             return Some(reason);
         }
     };
@@ -94,7 +117,10 @@ pub fn wire_hooks(inst: &Installation, agent_id: &str, cap: Option<&dyn WiringCa
         Some(c) => match c.amend(inst, &merged, ctx, &reporter) {
             Ok(t) => t,
             Err(reason) => {
-                eprintln!("Meowo repair[{agent_id}]: {} 写前改写失败（{reason:?}），放弃", path.display());
+                eprintln!(
+                    "Meowo repair[{agent_id}]: {} 写前改写失败（{reason:?}），放弃",
+                    path.display()
+                );
                 return Some(reason);
             }
         },
@@ -104,17 +130,27 @@ pub fn wire_hooks(inst: &Installation, agent_id: &str, cap: Option<&dyn WiringCa
     // 幂等判定放在 amend **之后**、与最初读到的文本比对：hooks 与 statusLine 任一需改动就要落盘。
     // （曾经只看 hooks 的合并结果，于是 hooks 已就位、statusLine 待接时被误报「已是目标状态」。）
     let written = if next == text {
-        eprintln!("Meowo repair[{agent_id}]: {} 已是目标状态，无需改动", path.display());
+        eprintln!(
+            "Meowo repair[{agent_id}]: {} 已是目标状态，无需改动",
+            path.display()
+        );
         text
     } else {
         if path.exists() {
             backup_once(&path);
         }
         if let Err(e) = crate::fsutil::write_atomic(&path, &next) {
-            eprintln!("Meowo repair[{agent_id}]: {} 写入失败（{e}）", path.display());
+            eprintln!(
+                "Meowo repair[{agent_id}]: {} 写入失败（{e}）",
+                path.display()
+            );
             return Some(RepairReason::WriteFailed);
         }
-        eprintln!("Meowo repair[{agent_id}]: 已写入 {}（变体 {}）", path.display(), inst.variant_tag);
+        eprintln!(
+            "Meowo repair[{agent_id}]: 已写入 {}（变体 {}）",
+            path.display(),
+            inst.variant_tag
+        );
         next
     };
 

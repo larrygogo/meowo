@@ -11,7 +11,7 @@ use meowo_agent::wiring::WiringContext;
 use meowo_agent::AgentId;
 
 /// app 可执行同目录的 meowo-reporter（打包态 sidecar 与 app 放一起）。
-fn sibling_reporter() -> Option<String> {
+pub(crate) fn sibling_reporter() -> Option<String> {
     let bin = if cfg!(windows) {
         "meowo-reporter.exe"
     } else {
@@ -23,7 +23,7 @@ fn sibling_reporter() -> Option<String> {
 }
 
 /// meowo 自己的数据目录（`~/.meowo`，board.db 与 statusline.sh 的所在）。
-fn meowo_dir() -> std::path::PathBuf {
+pub(crate) fn meowo_dir() -> std::path::PathBuf {
     crate::db_path()
         .parent()
         .map(|p| p.to_path_buf())
@@ -86,6 +86,15 @@ pub fn apply_all() {
             }
         }
     }
+    // 多账号：每个 profile 都要接一遍自己的线——它们各有一个独立的数据目录，hooks 也各写各的。
+    //
+    // 不只是「补漏」：agent 会重写自己的配置文件（claude 就会全量重写 settings.json），一次接线
+    // 不是一劳永逸的。默认账号靠这里每次启动对齐一次，profile 此前却没有任何对齐时机——
+    // 建号时接一次、登录后接一次，之后就再也没人管了。
+    //
+    // 它同时是 claude 的 `hasCompletedOnboarding` 补写时机（见 `plugins::claude::setup`）：
+    // 那个标记要在**登录之后**才补得上，而登录早已结束的老 profile 只能靠这里救。
+    wire_all_profiles(reporter.as_deref());
     // 只有 claude 接线**成功**才清前代残留——那时才确知 statusLine 已指向我们自己的脚本、
     // 不再引用前代那个。接线若放弃（配置不可读/写不进去），settings 可能仍指着前代脚本，
     // 此时删它只会把状态栏指向一个不存在的文件。顺序与条件都勿改。
@@ -99,6 +108,32 @@ pub fn apply_all() {
 
 /// 对指定 agent 强制执行一次接线（不管是否 configured）。用于用户手动点击「修复连接」。
 /// 返回 `None` = 已接线/已是目标状态；`Some(reason)` = 未能接线及原因（供前端提示）。
+/// 给所有已建的 profile 各接一遍线。best-effort：单个失败只留日志，绝不影响其余。
+fn wire_all_profiles(reporter: Option<&str>) {
+    let s = crate::settings::load_settings();
+    for (provider, list) in &s.profiles {
+        let Some(agent) = meowo_agent::by_id(provider) else {
+            continue;
+        };
+        for p in list {
+            // 目录还没建出来（用户手删了？）→ 跳过，绝不凭空重建一个空账号。
+            if !crate::profile::profile_root(provider, &p.id).is_dir() {
+                continue;
+            }
+            match crate::profile::wire_profile(agent.id(), &p.id) {
+                None => eprintln!("Meowo repair[{provider}/{}]: 已接线", p.id),
+                Some(reason) => {
+                    eprintln!(
+                        "Meowo repair[{provider}/{}]: 接线未生效（{reason:?}）",
+                        p.id
+                    )
+                }
+            }
+        }
+    }
+    let _ = reporter; // wire_profile 自行解析 reporter（与默认账号同源）
+}
+
 pub fn apply_provider(id: AgentId) -> Option<RepairReason> {
     let Some(p) = meowo_agent::by_id(id.as_str()) else {
         eprintln!("Meowo repair[{id}]: 无对应插件，跳过");

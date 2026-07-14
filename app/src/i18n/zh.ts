@@ -117,7 +117,7 @@ export const zh = {
     "认证失败": "认证失败",
   } as Record<string, string>,
   settings: {
-    nav: { general: "通用", appearance: "外观", network: "网络", account: "模型", about: "关于" },
+    nav: { general: "通用", appearance: "外观", network: "网络", account: "Agent", about: "关于" },
     updateTag: "新版本",
     close: "关闭",
     autostart: "开机自启",
@@ -233,6 +233,23 @@ export const zh = {
     notInstalled: "未安装",
     notLoggedIn: "未登录",
     notLoggedInHint: "已安装，未登录——点「登录」在终端完成授权",
+    // 能力如实告知：官方不给数据 / 插件未实现，都明写「不支持」，不留空白让人以为是 bug。
+    contextUnsupported: "上下文占用：该模型不支持显示",
+    // 多账号
+    profiles: "账号",
+    defaultProfile: "默认账号",
+    addProfile: "添加账号",
+    newProfileName: "账号名称（如：工作）",
+    addProfileHint: "新账号有自己独立的登录与会话历史，互不影响",
+    switchProfile: "切换到此账号",
+    activeProfile: "使用中",
+    profileActions: "账号操作",
+    renameProfile: "重命名",
+    cancelEdit: "取消",
+    deleteProfile: "删除账号",
+    deleteProfileConfirm: (name: string) =>
+      `删除账号「${name}」？它的登录凭据与会话历史会一并删除，无法恢复。`,
+    profileUnsupported: "该 agent 不支持多账号",
     login: "登录",
     loggingIn: "等待登录…",
     cancelLogin: "取消等待",
@@ -249,7 +266,10 @@ export const zh = {
     installRetry: "重试",
     installFailed: "安装失败",
     installLogHint: (p: string) => `安装日志：${p}`,
-    pathGap: (dir: string) => `已安装，但 ${dir} 不在 PATH 中，终端里敲命令会找不到`,
+    // 提示条要低调：它对多数人是背景噪音（装完就在 PATH 上），只有少数人需要点它。
+    // 完整路径挪进 tooltip（pathGapDetail），正文只留一句「为什么该点」。
+    pathGap: "终端里敲不出命令？",
+    pathGapDetail: (dir: string) => `${dir} 不在 PATH 中，终端里敲命令会找不到`,
     addToPath: "加入 PATH",
     addingToPath: "写入中…",
     pathAdded: "已加入 PATH，请重开终端后生效",

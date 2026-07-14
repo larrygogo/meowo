@@ -26,7 +26,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- agent provider：claude（默认）/ kimi…，驱动卡片图标/标签与 resume 命令。旧库由 migrate 的 ALTER 补齐。
     -- 此 'claude' 默认值须与 DEFAULT_PROVIDER 常量、store.rs ALTER 语句中的 'claude' 一致；
     -- 改默认 provider 时三处都要改，models.rs 的绊线测试会在改常量时提醒。
-    provider       TEXT NOT NULL DEFAULT 'claude'
+    provider       TEXT NOT NULL DEFAULT 'claude',
+    -- 多账号：该会话跑在哪个 profile（账号）上。**NULL = 默认账号**（agent 自己的目录），
+    -- 老会话与不经 meowo 启动的会话都是 NULL——恰好是对的。
+    --
+    -- 恢复会话必须按它注入隔离环境变量，回到**同一个**账号：用当前活跃账号去 resume 一个旧会话，
+    -- 会拿错误的身份去续一段不属于它的对话。
+    profile        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

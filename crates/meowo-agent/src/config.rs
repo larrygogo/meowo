@@ -46,6 +46,18 @@ pub enum ConfigFormat {
     /// 与用户自有 hook（如 `PreToolUse:Bash` 预检）共存。顶层还承载 `statusLine` 等无关键，
     /// 一律原样保留。
     ClaudeJson,
+    /// opencode：产物**不是配置文件，而是一个 TS 插件**。opencode 压根没有 command hook——它只认
+    /// JS/TS 插件（启动时扫 `<配置目录>/{plugin,plugins}/*.ts`），故「接线」在这里落成一份由 meowo
+    /// 生成的桥接插件：它订阅 opencode 的事件，再把 payload 喂给 meowo-reporter 的 stdin。
+    ///
+    /// 反而占了个便宜：**payload 由我们自己构造**，可以直接吐成与 claude 同款的
+    /// `{hook_event_name, session_id, cwd}`，reporter 侧一行都不用改。
+    ///
+    /// 代价是这份文件整体归 meowo 所有：幂等判定按「生成的全文是否逐字相同」，用户手改会在下次
+    /// 接线时被整体覆盖（文件头已写明「请勿手改」）。与另三家「在用户的配置里合并进我方条目、
+    /// 用户自有条目一概不动」是两种不同的所有权模型——因为那三家的文件本就属于用户，
+    /// 而这个文件从来只有 meowo 会写。
+    OpencodeTs,
 }
 
 /// 配置文件不存在时怎么办。声明式，避免每个 agent 的 `apply` 各写一遍 NotFound 分支。
@@ -70,7 +82,11 @@ pub struct CommandSpec {
 impl CommandSpec {
     /// 写出的 command 串。
     pub fn render(self, reporter: &str, agent_id: &str) -> String {
-        let exe = if self.quote_exe { format!("\"{reporter}\"") } else { reporter.to_string() };
+        let exe = if self.quote_exe {
+            format!("\"{reporter}\"")
+        } else {
+            reporter.to_string()
+        };
         if self.with_provider {
             format!("{exe} --provider {agent_id}")
         } else {
@@ -104,10 +120,16 @@ pub struct HookEvent {
 
 impl HookEvent {
     pub const fn plain(name: &'static str) -> Self {
-        Self { name, matcher: None }
+        Self {
+            name,
+            matcher: None,
+        }
     }
     pub const fn matched(name: &'static str, matcher: &'static str) -> Self {
-        Self { name, matcher: Some(matcher) }
+        Self {
+            name,
+            matcher: Some(matcher),
+        }
     }
 }
 
@@ -128,7 +150,10 @@ impl HookSpec {
         match self.format {
             ConfigFormat::KimiToml => kimi_toml::ensure_hooks(self, cur_text, reporter, agent_id),
             ConfigFormat::CodexJson => codex_json::ensure_hooks(self, cur_text, reporter, agent_id),
-            ConfigFormat::ClaudeJson => claude_json::ensure_hooks(self, cur_text, reporter, agent_id),
+            ConfigFormat::ClaudeJson => {
+                claude_json::ensure_hooks(self, cur_text, reporter, agent_id)
+            }
+            ConfigFormat::OpencodeTs => opencode_ts::ensure_hooks(cur_text, reporter, agent_id),
         }
     }
 
@@ -137,20 +162,27 @@ impl HookSpec {
     pub fn parses(&self, cur_text: &str) -> bool {
         match self.format {
             ConfigFormat::KimiToml => cur_text.parse::<DocumentMut>().is_ok(),
-            ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => json_common::parse(cur_text).is_some(),
+            ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => {
+                json_common::parse(cur_text).is_some()
+            }
+            // 这份文件由 meowo 独占生成，任何内容都能被下一次生成整体取代——不存在「读得出但改不动」
+            // 的中间态，故恒真（另三家要靠它区分「文件坏了」与「文件好但没接线」）。
+            ConfigFormat::OpencodeTs => true,
         }
     }
 
     /// 新会话是否真能入库：**只看 SessionStart**，且必须是当前 meowo-reporter。仅在别的事件
     /// （如 Stop）挂了 reporter，不能保证新会话被记录，不应误判成已接入。
     pub fn has_reporter(&self, cur_text: &str, agent_id: &str) -> bool {
-        self.claimed_at(cur_text, agent_id, Some(SESSION_START)).is_some_and(|p| is_current_reporter(&p))
+        self.claimed_at(cur_text, agent_id, Some(SESSION_START))
+            .is_some_and(|p| is_current_reporter(&p))
     }
 
     /// 从既有配置里取出已认领的**当前** meowo-reporter 绝对路径，用于复用其位置（不限事件）。
     /// 历史 cc-reporter 不算：它已废弃，当成目标写回去 hooks 依旧失效。
     pub fn claimed_reporter(&self, cur_text: &str, agent_id: &str) -> Option<String> {
-        self.claimed_at(cur_text, agent_id, None).filter(|p| is_current_reporter(p))
+        self.claimed_at(cur_text, agent_id, None)
+            .filter(|p| is_current_reporter(p))
     }
 
     /// 认领到的 reporter 路径（可能是历史 cc-reporter）。`event=None` 表示不限事件。
@@ -158,7 +190,11 @@ impl HookSpec {
         match self.format {
             ConfigFormat::KimiToml => kimi_toml::claimed_at(self, cur_text, agent_id, event),
             // claude/codex 的 hooks 树同构（差别只在写入时是否带 matcher），认领扫描共用一份。
-            ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => json_common::claimed_at(self, cur_text, agent_id, event),
+            ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => {
+                json_common::claimed_at(self, cur_text, agent_id, event)
+            }
+            // 插件是一体的：认领到它，就意味着它声明的每个事件都在（`event` 因此无从、也不必过滤）。
+            ConfigFormat::OpencodeTs => opencode_ts::claimed(cur_text),
         }
     }
 }
@@ -185,19 +221,27 @@ pub fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
 }
 
 fn file_name_lower(path: &str) -> Option<String> {
-    Some(std::path::Path::new(path).file_name()?.to_str()?.to_ascii_lowercase())
+    // 同时按 `/` 和 `\` 取末段——**不能**用 `Path::file_name()`：它只认当前平台的分隔符，于是在
+    // macOS/Linux 上 Windows 路径 `C:\…\meowo-reporter.exe` 会被整串当成文件名，认领判定当场失败。
+    // 而 reporter 路径来自配置文件，写它的平台未必是读它的平台。
+    let name = path.trim().rsplit(['/', '\\']).next()?;
+    (!name.is_empty()).then(|| name.to_ascii_lowercase())
 }
 
 /// 是 meowo-reporter 或历史遗留的 cc-reporter。
 fn is_any_reporter(path: &str) -> bool {
     file_name_lower(path).is_some_and(|n| {
-        matches!(n.as_str(), "meowo-reporter" | "meowo-reporter.exe" | "cc-reporter" | "cc-reporter.exe")
+        matches!(
+            n.as_str(),
+            "meowo-reporter" | "meowo-reporter.exe" | "cc-reporter" | "cc-reporter.exe"
+        )
     })
 }
 
 /// 是**当前** meowo-reporter（排除历史 cc-reporter）。
 fn is_current_reporter(path: &str) -> bool {
-    file_name_lower(path).is_some_and(|n| matches!(n.as_str(), "meowo-reporter" | "meowo-reporter.exe"))
+    file_name_lower(path)
+        .is_some_and(|n| matches!(n.as_str(), "meowo-reporter" | "meowo-reporter.exe"))
 }
 
 // ═══ KimiToml ═══
@@ -205,7 +249,12 @@ fn is_current_reporter(path: &str) -> bool {
 mod kimi_toml {
     use super::*;
 
-    pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+    pub fn ensure_hooks(
+        spec: &HookSpec,
+        cur_text: &str,
+        reporter: &str,
+        agent_id: &str,
+    ) -> EnsureOutcome {
         // 解析失败绝不写（kimi 自身对坏文件同样拒写）。
         let Ok(mut doc) = cur_text.parse::<DocumentMut>() else {
             return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
@@ -232,7 +281,11 @@ mod kimi_toml {
         let desired_cmd = spec.command.render(reporter, agent_id);
         let mut changed = false;
 
-        if doc.get("hooks").and_then(|it| it.as_array_of_tables()).is_none() {
+        if doc
+            .get("hooks")
+            .and_then(|it| it.as_array_of_tables())
+            .is_none()
+        {
             // 不是 array-of-tables。可安全替换的只有两种：
             //   - 不存在：新版 kimi-code 默认无顶层 hooks 键。
             //   - `hooks = []`：旧 Python 版 kimi-cli 的默认**空内联数组**——语义等价于「无 hooks」，
@@ -304,7 +357,12 @@ mod kimi_toml {
     }
 
     /// 认领到的 reporter 路径。解析失败 → None（调用方对「读不出来」另有 Unknown 通道）。
-    pub fn claimed_at(spec: &HookSpec, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
+    pub fn claimed_at(
+        spec: &HookSpec,
+        cur_text: &str,
+        agent_id: &str,
+        event: Option<&str>,
+    ) -> Option<String> {
         // 迭代器借用 doc；必须先算出 owned String 再让 doc 出作用域。
         let doc = cur_text.parse::<DocumentMut>().ok()?;
         let found = doc
@@ -316,7 +374,11 @@ mod kimi_toml {
                 None => true,
                 Some(ev) => t.get("event").and_then(|v| v.as_str()) == Some(ev),
             })
-            .find_map(|t| t.get("command").and_then(|v| v.as_str()).and_then(|c| spec.command.claim(c, agent_id)));
+            .find_map(|t| {
+                t.get("command")
+                    .and_then(|v| v.as_str())
+                    .and_then(|c| spec.command.claim(c, agent_id))
+            });
         found
     }
 }
@@ -346,15 +408,30 @@ mod json_common {
 
     /// 取出已认领的 reporter 路径。`event=None` 不限事件。**不看 matcher**：认领只由 command
     /// 形态决定，与条目挂在哪个 matcher 下无关。
-    pub fn claimed_at(spec: &HookSpec, cur_text: &str, agent_id: &str, event: Option<&str>) -> Option<String> {
+    pub fn claimed_at(
+        spec: &HookSpec,
+        cur_text: &str,
+        agent_id: &str,
+        event: Option<&str>,
+    ) -> Option<String> {
         let root = parse(cur_text)?;
         let hooks = root.get("hooks")?.as_object()?;
         hooks
             .iter()
             .filter(|(ev, _)| event.is_none_or(|want| ev.as_str() == want))
             .flat_map(|(_, arr)| arr.as_array().into_iter().flatten())
-            .flat_map(|entry| entry.get("hooks").and_then(|x| x.as_array()).into_iter().flatten())
-            .find_map(|h| h.get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id)))
+            .flat_map(|entry| {
+                entry
+                    .get("hooks")
+                    .and_then(|x| x.as_array())
+                    .into_iter()
+                    .flatten()
+            })
+            .find_map(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .and_then(|c| spec.command.claim(c, agent_id))
+            })
     }
 
     /// 确保顶层 `hooks` 是 object。键不存在 → 建空 object（`true`＝有改动）；
@@ -380,13 +457,23 @@ mod json_common {
     }
 
     /// 该条目的 matcher 相符、且其 hooks 里有我方 reporter。
-    pub fn claims_here(spec: &HookSpec, entry: &Value, matcher: Option<&str>, agent_id: &str) -> bool {
+    pub fn claims_here(
+        spec: &HookSpec,
+        entry: &Value,
+        matcher: Option<&str>,
+        agent_id: &str,
+    ) -> bool {
         matcher_is(entry, matcher)
-            && entry.get("hooks").and_then(|x| x.as_array()).is_some_and(|hs| {
-                hs.iter().any(|h| {
-                    h.get("command").and_then(|c| c.as_str()).is_some_and(|c| spec.command.claim(c, agent_id).is_some())
+            && entry
+                .get("hooks")
+                .and_then(|x| x.as_array())
+                .is_some_and(|hs| {
+                    hs.iter().any(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .is_some_and(|c| spec.command.claim(c, agent_id).is_some())
+                    })
                 })
-            })
     }
 
     /// 同一 (事件, matcher) 下**只留一条**我方 reporter hook：第一条更新为当前路径，其余删除。
@@ -420,8 +507,10 @@ mod json_common {
             };
             let mut j = 0;
             while j < hs.len() {
-                let claimed =
-                    hs[j].get("command").and_then(|c| c.as_str()).and_then(|c| spec.command.claim(c, agent_id));
+                let claimed = hs[j]
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .and_then(|c| spec.command.claim(c, agent_id));
                 match claimed {
                     Some(path) if !kept => {
                         kept = true;
@@ -455,7 +544,12 @@ mod claude_json {
     use super::*;
     use serde_json::{json, Value};
 
-    pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+    pub fn ensure_hooks(
+        spec: &HookSpec,
+        cur_text: &str,
+        reporter: &str,
+        agent_id: &str,
+    ) -> EnsureOutcome {
         // 解析失败 / 顶层非对象 → 绝不覆盖用户文件（settings.json 还装着 statusLine 等用户配置）。
         let Some(mut root) = json_common::parse(cur_text) else {
             return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
@@ -487,13 +581,19 @@ mod claude_json {
         };
 
         for ev in spec.events {
-            let entry_val = hooks.entry(ev.name.to_string()).or_insert_with(|| json!([]));
+            let entry_val = hooks
+                .entry(ev.name.to_string())
+                .or_insert_with(|| json!([]));
             let Some(arr) = entry_val.as_array_mut() else {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
             // 认领 + 更新路径 + 删重复，一并在此完成。
-            changed |= json_common::dedupe_event(spec, arr, ev.matcher, reporter, &desired_cmd, agent_id);
-            if !arr.iter().any(|e| json_common::claims_here(spec, e, ev.matcher, agent_id)) {
+            changed |=
+                json_common::dedupe_event(spec, arr, ev.matcher, reporter, &desired_cmd, agent_id);
+            if !arr
+                .iter()
+                .any(|e| json_common::claims_here(spec, e, ev.matcher, agent_id))
+            {
                 let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] });
                 if let Some(m) = ev.matcher {
                     entry["matcher"] = json!(m);
@@ -516,7 +616,12 @@ mod codex_json {
     use super::*;
     use serde_json::{json, Value};
 
-    pub fn ensure_hooks(spec: &HookSpec, cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+    pub fn ensure_hooks(
+        spec: &HookSpec,
+        cur_text: &str,
+        reporter: &str,
+        agent_id: &str,
+    ) -> EnsureOutcome {
         // 解析失败 / 顶层非对象 → 绝不覆盖用户文件。
         let Some(mut root) = json_common::parse(cur_text) else {
             return EnsureOutcome::Abandon(RepairReason::ConfigUnreadable);
@@ -548,13 +653,18 @@ mod codex_json {
         };
 
         for ev in spec.events {
-            let entry_val = hooks.entry(ev.name.to_string()).or_insert_with(|| json!([]));
+            let entry_val = hooks
+                .entry(ev.name.to_string())
+                .or_insert_with(|| json!([]));
             let Some(arr) = entry_val.as_array_mut() else {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
             // codex 的条目无 matcher → 传 None（同事件下我方 hook 只应有一条）。
             changed |= json_common::dedupe_event(spec, arr, None, reporter, &desired_cmd, agent_id);
-            if !arr.iter().any(|e| json_common::claims_here(spec, e, None, agent_id)) {
+            if !arr
+                .iter()
+                .any(|e| json_common::claims_here(spec, e, None, agent_id))
+            {
                 arr.push(json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] }));
                 changed = true;
             }
@@ -563,6 +673,196 @@ mod codex_json {
             Merge::Changed
         } else {
             Merge::Unchanged
+        }
+    }
+}
+
+// ═══ OpencodeTs ═══
+
+/// opencode 的接线产物是一份**由 meowo 全权生成的 TS 桥接插件**，不是与用户共处的配置文件。
+/// 因此这里没有「合并」，只有「生成 / 比对」：目标全文算出来，与磁盘上的逐字比较，不同即重写。
+///
+/// reporter 路径以 **JSON 字符串字面量**嵌入。这一步不是偷懒——Windows 路径里的 `\` 若直接塞进
+/// TS 源码就是转义符（`C:\Users\...` 里的 `\U` 会让插件加载直接语法错误）。JSON 的字符串转义
+/// 恰好是合法 JS 字符串字面量的子集，`serde_json` 来回一趟就同时解决了写入转义与读回解析。
+mod opencode_ts {
+    use super::*;
+
+    /// 待填的两个洞。用占位符而非 `format!`：模板里全是 JS 的 `{}`，走 `format!` 就得把每一个都
+    /// 写成 `{{}}`，模板会变得没法读、也没法直接拷进编辑器验证。
+    const REPORTER_SLOT: &str = "__MEOWO_REPORTER__";
+    const PROVIDER_SLOT: &str = "__MEOWO_PROVIDER__";
+
+    /// 认领标记：`claimed` 靠它把路径捞回来，故它与模板里的写法必须一字不差。
+    const REPORTER_DECL: &str = "const MEOWO_REPORTER = ";
+
+    /// 桥接插件模板。事件映射见 [`crate::plugins::opencode`] 的模块文档。
+    const TEMPLATE: &str = r#"// meowo-reporter bridge —— 由 Meowo 生成，请勿手改：下次接线会整体覆盖本文件。
+//
+// opencode 没有 command hook（只认 TS 插件），所以 meowo 的「接线」在这里落成一份桥接：
+// 订阅 opencode 的事件，把负载喂进 meowo-reporter 的 stdin。
+//
+// 负载刻意与 claude/codex/kimi 的 hook 同形（hook_event_name / session_id / cwd），于是
+// reporter 侧不必为 opencode 单开一条解析路径——它根本看不出这一条是插件转发来的。
+
+const MEOWO_REPORTER = __MEOWO_REPORTER__
+const MEOWO_PROVIDER = __MEOWO_PROVIDER__
+
+function meowoReport(payload) {
+  // 没有 session_id 就无从落库，直接丢弃（reporter 侧同样会拒，这里省一次进程派生）。
+  if (!payload.session_id) return
+  try {
+    const proc = Bun.spawn([MEOWO_REPORTER, "--provider", MEOWO_PROVIDER], {
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    proc.stdin.write(JSON.stringify(payload))
+    proc.stdin.end()
+    // 别让这个短命子进程拖住 opencode 自己的退出。
+    proc.unref?.()
+  } catch {
+    // 上报是尽力而为：出了任何岔子都不能把宿主 opencode 带崩。
+  }
+}
+
+export const MeowoReporter = async ({ directory }) => ({
+  event: async ({ event }) => {
+    const props = event?.properties ?? {}
+    switch (event?.type) {
+      case "session.created":
+        meowoReport({
+          hook_event_name: "SessionStart",
+          session_id: props.info?.id,
+          cwd: props.info?.directory ?? directory,
+        })
+        break
+      // opencode 每个回合跑完都发一次 idle——这正是 claude 的 Stop 语义。
+      case "session.idle":
+        meowoReport({ hook_event_name: "Stop", session_id: props.sessionID, cwd: directory })
+        break
+      // opencode 没有「会话结束」这一概念，删除会话是唯一确定的终结信号。进程退出的收尾
+      // 因此与 codex 一样，交给 meowo-app 的判活去 reap，不在这里硬凑一个 SessionEnd。
+      case "session.deleted":
+        meowoReport({
+          hook_event_name: "SessionEnd",
+          session_id: props.info?.id,
+          cwd: props.info?.directory ?? directory,
+        })
+        break
+    }
+  },
+  "chat.message": async (input, output) => {
+    const text = (output?.parts ?? [])
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("")
+    meowoReport({
+      hook_event_name: "UserPromptSubmit",
+      session_id: input?.sessionID,
+      cwd: directory,
+      prompt: text,
+    })
+  },
+  "tool.execute.after": async (input) => {
+    meowoReport({
+      hook_event_name: "PostToolUse",
+      session_id: input?.sessionID,
+      cwd: directory,
+      tool_name: input?.tool,
+    })
+  },
+})
+"#;
+
+    /// 生成插件全文。
+    pub fn render_plugin(reporter: &str, agent_id: &str) -> String {
+        TEMPLATE
+            .replace(REPORTER_SLOT, &js_string(reporter))
+            .replace(PROVIDER_SLOT, &js_string(agent_id))
+    }
+
+    /// Rust 串 → JS 字符串字面量（含引号）。
+    fn js_string(s: &str) -> String {
+        serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+    }
+
+    /// 目标全文与现状逐字比对——一致即已是目标状态，否则整体重写。
+    pub fn ensure_hooks(cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+        let next = render_plugin(reporter, agent_id);
+        if cur_text == next {
+            EnsureOutcome::Unchanged
+        } else {
+            EnsureOutcome::Changed(next)
+        }
+    }
+
+    /// 从既有插件里取回 reporter 路径。仍走与另三家同一条严格判定（文件名必须是
+    /// `meowo-reporter[.exe]` 或历史 `cc-reporter[.exe]`）：万一用户在同名文件里放了自己的东西，
+    /// 我们宁可不认领，也不能把它的路径当成自己的 reporter 写回去。
+    pub fn claimed(cur_text: &str) -> Option<String> {
+        let rest = cur_text.split_once(REPORTER_DECL)?.1;
+        let line = rest.lines().next()?.trim();
+        let path: String = serde_json::from_str(line).ok()?;
+        is_any_reporter(&path).then_some(path)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 生成 → 认领 → 再生成，必须闭环且幂等。Windows 路径的反斜杠是这里的真正考点：
+        /// 它一旦没被转义，产出的就是一份加载即语法错误的插件。
+        #[test]
+        fn windows_path_survives_render_and_claim_roundtrip() {
+            let win = r"C:\Users\larry\AppData\Local\Meowo\meowo-reporter.exe";
+            let out = render_plugin(win, "opencode");
+
+            // 路径以转义形态落进源码——绝不能出现裸的单反斜杠。
+            assert!(out.contains(
+                r#"const MEOWO_REPORTER = "C:\\Users\\larry\\AppData\\Local\\Meowo\\meowo-reporter.exe""#
+            ));
+            assert!(out.contains(r#"const MEOWO_PROVIDER = "opencode""#));
+
+            // 认领读回的是原始路径（反转义后）。
+            assert_eq!(claimed(&out).as_deref(), Some(win));
+            // 幂等。
+            assert_eq!(
+                ensure_hooks(&out, win, "opencode"),
+                EnsureOutcome::Unchanged
+            );
+            // 换了路径 → 重写。
+            let moved = r"D:\meowo\meowo-reporter.exe";
+            assert_eq!(
+                ensure_hooks(&out, moved, "opencode"),
+                EnsureOutcome::Changed(render_plugin(moved, "opencode"))
+            );
+        }
+
+        #[test]
+        fn creates_from_empty_and_claims_legacy_reporter() {
+            let unix = "/usr/local/bin/meowo-reporter";
+            assert_eq!(
+                ensure_hooks("", unix, "opencode"),
+                EnsureOutcome::Changed(render_plugin(unix, "opencode"))
+            );
+
+            // 历史 cc-reporter 认领得到（供升级时替换旧路径），但外层 `claimed_reporter` 会用
+            // `is_current_reporter` 把它滤掉，于是接线改写成当前 reporter——与另三家同一套语义。
+            let legacy = render_plugin("/old/cc-reporter", "opencode");
+            assert_eq!(claimed(&legacy).as_deref(), Some("/old/cc-reporter"));
+        }
+
+        /// 认领必须严格：同名文件里若是用户自己的东西，绝不能把它的路径当成我们的 reporter。
+        #[test]
+        fn never_claims_a_foreign_binary() {
+            let foreign = TEMPLATE
+                .replace(REPORTER_SLOT, "\"/opt/not-us/notify.sh\"")
+                .replace(PROVIDER_SLOT, "\"opencode\"");
+            assert_eq!(claimed(&foreign), None);
+            // 压根不是我们的插件（没有那行声明）。
+            assert_eq!(claimed("export const Whatever = async () => ({})\n"), None);
+            assert_eq!(claimed(""), None);
         }
     }
 }
@@ -579,7 +879,10 @@ mod tests {
     use serde_json::json;
 
     /// kimi 的接线规格（与 plugins/kimi.rs 同源，此处独立声明以免测试依赖插件表的演化）。
-    const KIMI_CMD: CommandSpec = CommandSpec { quote_exe: false, with_provider: true };
+    const KIMI_CMD: CommandSpec = CommandSpec {
+        quote_exe: false,
+        with_provider: true,
+    };
     static KIMI_EVENTS: [HookEvent; 6] = [
         HookEvent::plain("SessionStart"),
         HookEvent::plain("UserPromptSubmit"),
@@ -604,7 +907,10 @@ mod tests {
     }
 
     /// claude 的接线规格（与 plugins/claude.rs 同源，此处独立声明以免测试依赖插件表的演化）。
-    const CLAUDE_CMD: CommandSpec = CommandSpec { quote_exe: true, with_provider: false };
+    const CLAUDE_CMD: CommandSpec = CommandSpec {
+        quote_exe: true,
+        with_provider: false,
+    };
     static CLAUDE_EVENTS: [HookEvent; 8] = [
         HookEvent::matched("SessionStart", "*"),
         HookEvent::matched("UserPromptSubmit", "*"),
@@ -636,13 +942,32 @@ mod tests {
     #[test]
     fn claude_claim_never_touches_user_hooks() {
         // 我们写入的形态：带引号的单可执行路径，无参数。
-        assert_eq!(CLAUDE_CMD.claim("\"C:/x/meowo-reporter.exe\"", "claude").as_deref(), Some("C:/x/meowo-reporter.exe"));
-        assert_eq!(CLAUDE_CMD.claim("/usr/local/bin/meowo-reporter", "claude").as_deref(), Some("/usr/local/bin/meowo-reporter"));
+        assert_eq!(
+            CLAUDE_CMD
+                .claim("\"C:/x/meowo-reporter.exe\"", "claude")
+                .as_deref(),
+            Some("C:/x/meowo-reporter.exe")
+        );
+        assert_eq!(
+            CLAUDE_CMD
+                .claim("/usr/local/bin/meowo-reporter", "claude")
+                .as_deref(),
+            Some("/usr/local/bin/meowo-reporter")
+        );
         // 不能误伤用户自有 hook：带参数、是别的脚本、或只是路径里含子串。
         // `node tools/meowo-reporter-notify.js` 是这条纪律的原始反例，务必保住。
-        assert_eq!(CLAUDE_CMD.claim("node tools/meowo-reporter-notify.js", "claude"), None);
-        assert_eq!(CLAUDE_CMD.claim("\"C:/x/meowo-reporter.exe\" --flag", "claude"), None);
-        assert_eq!(CLAUDE_CMD.claim("/opt/meowo-reporter/run.sh", "claude"), None);
+        assert_eq!(
+            CLAUDE_CMD.claim("node tools/meowo-reporter-notify.js", "claude"),
+            None
+        );
+        assert_eq!(
+            CLAUDE_CMD.claim("\"C:/x/meowo-reporter.exe\" --flag", "claude"),
+            None
+        );
+        assert_eq!(
+            CLAUDE_CMD.claim("/opt/meowo-reporter/run.sh", "claude"),
+            None
+        );
         assert_eq!(CLAUDE_CMD.claim("meowo-reporter-wrapper", "claude"), None);
         assert_eq!(CLAUDE_CMD.claim("", "claude"), None);
     }
@@ -650,18 +975,35 @@ mod tests {
     #[test]
     fn claude_ensure_hooks_adds_all_specs_including_pretooluse_matchers() {
         let v = claude_changed("{}", "C:/x/meowo-reporter.exe");
-        for e in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
+        for e in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "Stop",
+            "SessionEnd",
+            "PermissionRequest",
+        ] {
             assert_eq!(v["hooks"][e][0]["matcher"], "*", "{e} matcher");
-            assert_eq!(v["hooks"][e][0]["hooks"][0]["command"], "\"C:/x/meowo-reporter.exe\"");
+            assert_eq!(
+                v["hooks"][e][0]["hooks"][0]["command"],
+                "\"C:/x/meowo-reporter.exe\""
+            );
         }
         // PreToolUse：两条，matcher 分别 AskUserQuestion / ExitPlanMode。
-        let matchers: Vec<&str> =
-            v["hooks"]["PreToolUse"].as_array().unwrap().iter().map(|e| e["matcher"].as_str().unwrap()).collect();
+        let matchers: Vec<&str> = v["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["matcher"].as_str().unwrap())
+            .collect();
         assert!(matchers.contains(&"AskUserQuestion"));
         assert!(matchers.contains(&"ExitPlanMode"));
         // 幂等。
         let text = serde_json::to_string(&v).unwrap();
-        assert_eq!(CJ.ensure_hooks(&text, "C:/x/meowo-reporter.exe", "claude"), EnsureOutcome::Unchanged);
+        assert_eq!(
+            CJ.ensure_hooks(&text, "C:/x/meowo-reporter.exe", "claude"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     /// 回归（重复注册）：真机 settings.json 的中毒现场——每个事件下 4 条一模一样的 reporter
@@ -673,12 +1015,21 @@ mod tests {
         let ccr = "C:/x/meowo-reporter.exe";
         let dup = |matcher: &str, n: usize| -> Vec<serde_json::Value> {
             (0..n)
-                .map(|_| json!({ "matcher": matcher, "hooks": [
-                    { "type": "command", "command": format!("\"{ccr}\""), "timeout": 5 }] }))
+                .map(|_| {
+                    json!({ "matcher": matcher, "hooks": [
+                    { "type": "command", "command": format!("\"{ccr}\""), "timeout": 5 }] })
+                })
                 .collect()
         };
         let mut hooks = serde_json::Map::new();
-        for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
+        for ev in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "Stop",
+            "SessionEnd",
+            "PermissionRequest",
+        ] {
             hooks.insert(ev.into(), json!(dup("*", 4)));
         }
         let mut pre = dup("AskUserQuestion", 4);
@@ -687,17 +1038,35 @@ mod tests {
         let src = json!({ "hooks": hooks }).to_string();
 
         let v = claude_changed(&src, ccr);
-        for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "PermissionRequest"] {
-            assert_eq!(v["hooks"][ev].as_array().unwrap().len(), 1, "{ev} 应收敛为 1 条");
+        for ev in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "Stop",
+            "SessionEnd",
+            "PermissionRequest",
+        ] {
+            assert_eq!(
+                v["hooks"][ev].as_array().unwrap().len(),
+                1,
+                "{ev} 应收敛为 1 条"
+            );
         }
         // PreToolUse：两个 matcher 各留 1 条。
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 2, "PreToolUse 应收敛为 2 条（每 matcher 一条）");
         for m in ["AskUserQuestion", "ExitPlanMode"] {
-            assert_eq!(pre.iter().filter(|e| e["matcher"] == m).count(), 1, "{m} 应恰一条");
+            assert_eq!(
+                pre.iter().filter(|e| e["matcher"] == m).count(),
+                1,
+                "{m} 应恰一条"
+            );
         }
         // 收敛后幂等。
-        assert_eq!(CJ.ensure_hooks(&v.to_string(), ccr, "claude"), EnsureOutcome::Unchanged);
+        assert_eq!(
+            CJ.ensure_hooks(&v.to_string(), ccr, "claude"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     /// 去重必须只删**我方**的重复，用户自有 hook（含同 matcher 下并存的）一条都不能碰。
@@ -723,11 +1092,20 @@ mod tests {
             .filter(|h| h["command"] == format!("\"{ccr}\""))
             .count();
         assert_eq!(mine, 1, "我方 hook 应只剩一条");
-        let cmds: Vec<&str> =
-            arr.iter().flat_map(|e| e["hooks"].as_array().unwrap()).filter_map(|h| h["command"].as_str()).collect();
+        let cmds: Vec<&str> = arr
+            .iter()
+            .flat_map(|e| e["hooks"].as_array().unwrap())
+            .filter_map(|h| h["command"].as_str())
+            .collect();
         assert!(cmds.contains(&"node other.js"), "用户 hook 不能被删");
-        assert!(cmds.contains(&"node keep-me.js"), "与我方 hook 同壳的用户 hook 不能被删");
-        assert_eq!(CJ.ensure_hooks(&v.to_string(), ccr, "claude"), EnsureOutcome::Unchanged);
+        assert!(
+            cmds.contains(&"node keep-me.js"),
+            "与我方 hook 同壳的用户 hook 不能被删"
+        );
+        assert_eq!(
+            CJ.ensure_hooks(&v.to_string(), ccr, "claude"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     #[test]
@@ -754,8 +1132,14 @@ mod tests {
             {"matcher":"*","hooks":[{"type":"command","command":"\"C:/old/meowo-reporter.exe\"","timeout":5}]}
         ]}}"#;
         let v = claude_changed(src, "C:/new/meowo-reporter.exe");
-        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "node other.js");
-        assert_eq!(v["hooks"]["SessionStart"][1]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\"");
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "node other.js"
+        );
+        assert_eq!(
+            v["hooks"]["SessionStart"][1]["hooks"][0]["command"],
+            "\"C:/new/meowo-reporter.exe\""
+        );
         // 没有重复追加（该事件仍是 2 条）。
         assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 2);
     }
@@ -768,8 +1152,15 @@ mod tests {
             {"matcher":"*","hooks":[{"type":"command","command":"\"C:/old/cc-reporter.exe\"","timeout":5}]}
         ]}}"#;
         let v = claude_changed(src, "C:/new/meowo-reporter.exe");
-        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1, "应认领而非追加");
-        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\"");
+        assert_eq!(
+            v["hooks"]["SessionStart"].as_array().unwrap().len(),
+            1,
+            "应认领而非追加"
+        );
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "\"C:/new/meowo-reporter.exe\""
+        );
     }
 
     #[test]
@@ -778,8 +1169,14 @@ mod tests {
         let out = CJ.ensure_hooks(r#"{"hooks":[1,2]}"#, "C:/x/meowo-reporter.exe", "claude");
         assert_eq!(out, EnsureOutcome::Abandon(RepairReason::ConfigUnreadable));
         // 顶层非对象、非法 JSON 同样放弃。
-        assert!(matches!(CJ.ensure_hooks("[]", "r", "claude"), EnsureOutcome::Abandon(_)));
-        assert!(matches!(CJ.ensure_hooks("{not json", "r", "claude"), EnsureOutcome::Abandon(_)));
+        assert!(matches!(
+            CJ.ensure_hooks("[]", "r", "claude"),
+            EnsureOutcome::Abandon(_)
+        ));
+        assert!(matches!(
+            CJ.ensure_hooks("{not json", "r", "claude"),
+            EnsureOutcome::Abandon(_)
+        ));
     }
 
     #[test]
@@ -799,7 +1196,10 @@ mod tests {
         let stop_only = r#"{"hooks":{"Stop":[{"matcher":"*","hooks":[
             {"type":"command","command":"\"C:/a/b/meowo-reporter.exe\"","timeout":5}]}]}}"#;
         assert!(!CJ.has_reporter(stop_only, "claude"));
-        assert_eq!(CJ.claimed_reporter(stop_only, "claude").as_deref(), Some("C:/a/b/meowo-reporter.exe"));
+        assert_eq!(
+            CJ.claimed_reporter(stop_only, "claude").as_deref(),
+            Some("C:/a/b/meowo-reporter.exe")
+        );
 
         let session_start = r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
             {"type":"command","command":"\"C:/a/b/meowo-reporter.exe\"","timeout":5}]}]}}"#;
@@ -830,7 +1230,10 @@ mod tests {
         );
         // fixture 缺 PermissionRequest / PreToolUse(AskUserQuestion|ExitPlanMode) → 追加 3 条。
         let v = claude_changed(&src, ccr);
-        assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "node \"x/pre-commit-check.cjs\"");
+        assert_eq!(
+            v["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            "node \"x/pre-commit-check.cjs\""
+        );
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert!(pre.iter().any(|e| e["matcher"] == "AskUserQuestion"));
         assert!(pre.iter().any(|e| e["matcher"] == "ExitPlanMode"));
@@ -839,44 +1242,102 @@ mod tests {
         assert_eq!(v["statusLine"]["command"], "bash -c 'claude-hud stuff'");
         // 再跑一次：此时才幂等。
         let text = serde_json::to_string(&v).unwrap();
-        assert_eq!(CJ.ensure_hooks(&text, ccr, "claude"), EnsureOutcome::Unchanged);
+        assert_eq!(
+            CJ.ensure_hooks(&text, ccr, "claude"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     // ── CommandSpec ──
 
     #[test]
     fn render_covers_three_agent_shapes() {
-        let claude = CommandSpec { quote_exe: true, with_provider: false };
-        let codex = CommandSpec { quote_exe: true, with_provider: true };
-        assert_eq!(claude.render("C:/x/meowo-reporter.exe", "claude"), "\"C:/x/meowo-reporter.exe\"");
-        assert_eq!(codex.render("C:/x/meowo-reporter.exe", "codex"), "\"C:/x/meowo-reporter.exe\" --provider codex");
-        assert_eq!(KIMI_CMD.render("C:/x/meowo-reporter.exe", "kimi"), "C:/x/meowo-reporter.exe --provider kimi");
+        let claude = CommandSpec {
+            quote_exe: true,
+            with_provider: false,
+        };
+        let codex = CommandSpec {
+            quote_exe: true,
+            with_provider: true,
+        };
+        assert_eq!(
+            claude.render("C:/x/meowo-reporter.exe", "claude"),
+            "\"C:/x/meowo-reporter.exe\""
+        );
+        assert_eq!(
+            codex.render("C:/x/meowo-reporter.exe", "codex"),
+            "\"C:/x/meowo-reporter.exe\" --provider codex"
+        );
+        assert_eq!(
+            KIMI_CMD.render("C:/x/meowo-reporter.exe", "kimi"),
+            "C:/x/meowo-reporter.exe --provider kimi"
+        );
     }
 
     #[test]
     fn claim_with_provider_is_strict() {
         // 认领：带引号/裸路径两种形态。
-        assert_eq!(KIMI_CMD.claim("\"C:/x/meowo-reporter.exe\" --provider kimi", "kimi").as_deref(), Some("C:/x/meowo-reporter.exe"));
-        assert_eq!(KIMI_CMD.claim("C:/x/meowo-reporter.exe --provider kimi", "kimi").as_deref(), Some("C:/x/meowo-reporter.exe"));
+        assert_eq!(
+            KIMI_CMD
+                .claim("\"C:/x/meowo-reporter.exe\" --provider kimi", "kimi")
+                .as_deref(),
+            Some("C:/x/meowo-reporter.exe")
+        );
+        assert_eq!(
+            KIMI_CMD
+                .claim("C:/x/meowo-reporter.exe --provider kimi", "kimi")
+                .as_deref(),
+            Some("C:/x/meowo-reporter.exe")
+        );
         // 历史遗留 cc-reporter 也认领，便于升级时替换旧路径。
-        assert_eq!(KIMI_CMD.claim("C:/x/cc-reporter.exe --provider kimi", "kimi").as_deref(), Some("C:/x/cc-reporter.exe"));
+        assert_eq!(
+            KIMI_CMD
+                .claim("C:/x/cc-reporter.exe --provider kimi", "kimi")
+                .as_deref(),
+            Some("C:/x/cc-reporter.exe")
+        );
         // 拒绝：agent 不符 / 无参数 / 多余参数 / 别的可执行 / 子串陷阱。
-        assert!(KIMI_CMD.claim("C:/x/meowo-reporter.exe --provider codex", "kimi").is_none());
-        assert!(KIMI_CMD.claim("\"C:/x/meowo-reporter.exe\"", "kimi").is_none());
-        assert!(KIMI_CMD.claim("C:/x/meowo-reporter.exe --provider kimi --v", "kimi").is_none());
-        assert!(KIMI_CMD.claim("node meowo-reporter-notify.js --provider kimi", "kimi").is_none());
-        assert!(KIMI_CMD.claim("C:/x/cc-reporter-not-us.exe --provider kimi", "kimi").is_none());
+        assert!(KIMI_CMD
+            .claim("C:/x/meowo-reporter.exe --provider codex", "kimi")
+            .is_none());
+        assert!(KIMI_CMD
+            .claim("\"C:/x/meowo-reporter.exe\"", "kimi")
+            .is_none());
+        assert!(KIMI_CMD
+            .claim("C:/x/meowo-reporter.exe --provider kimi --v", "kimi")
+            .is_none());
+        assert!(KIMI_CMD
+            .claim("node meowo-reporter-notify.js --provider kimi", "kimi")
+            .is_none());
+        assert!(KIMI_CMD
+            .claim("C:/x/cc-reporter-not-us.exe --provider kimi", "kimi")
+            .is_none());
     }
 
     #[test]
     fn claim_bare_quoted_rejects_any_argument() {
         // claude 形态：单个（可带引号的）可执行路径，禁带参数。
-        let bare = CommandSpec { quote_exe: true, with_provider: false };
-        assert_eq!(bare.claim("\"C:/x/meowo-reporter.exe\"", "claude").as_deref(), Some("C:/x/meowo-reporter.exe"));
-        assert_eq!(bare.claim("/usr/local/bin/meowo-reporter", "claude").as_deref(), Some("/usr/local/bin/meowo-reporter"));
+        let bare = CommandSpec {
+            quote_exe: true,
+            with_provider: false,
+        };
+        assert_eq!(
+            bare.claim("\"C:/x/meowo-reporter.exe\"", "claude")
+                .as_deref(),
+            Some("C:/x/meowo-reporter.exe")
+        );
+        assert_eq!(
+            bare.claim("/usr/local/bin/meowo-reporter", "claude")
+                .as_deref(),
+            Some("/usr/local/bin/meowo-reporter")
+        );
         // 带参数 = 不是我们写的那条；用户自有 hook 一概不认领。
-        assert!(bare.claim("\"C:/x/meowo-reporter.exe\" --flag", "claude").is_none());
-        assert!(bare.claim("node tools/meowo-reporter-notify.js", "claude").is_none());
+        assert!(bare
+            .claim("\"C:/x/meowo-reporter.exe\" --flag", "claude")
+            .is_none());
+        assert!(bare
+            .claim("node tools/meowo-reporter-notify.js", "claude")
+            .is_none());
         assert!(bare.claim("/opt/meowo-reporter/run.sh", "claude").is_none());
         assert!(bare.claim("meowo-reporter-wrapper", "claude").is_none());
         assert!(bare.claim("", "claude").is_none());
@@ -891,10 +1352,17 @@ mod tests {
         assert!(out.contains("# 用户注释")); // 结构保持：注释仍在
         assert!(out.contains("max_steps_per_turn = 100"));
         for ev in KIMI_EVENTS {
-            assert!(out.contains(&format!("event = \"{}\"", ev.name)), "{} 未写入", ev.name);
+            assert!(
+                out.contains(&format!("event = \"{}\"", ev.name)),
+                "{} 未写入",
+                ev.name
+            );
         }
         assert!(out.contains(r#"command = "C:/x/meowo-reporter.exe --provider kimi""#));
-        assert_eq!(KT.ensure_hooks(&out, "C:/x/meowo-reporter.exe", "kimi"), EnsureOutcome::Unchanged);
+        assert_eq!(
+            KT.ensure_hooks(&out, "C:/x/meowo-reporter.exe", "kimi"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     #[test]
@@ -902,13 +1370,20 @@ mod tests {
         let dev = "C:/Users/larry/Desktop/workspace/meowo/target/release/meowo-reporter.exe";
         let mut src = String::from("theme = \"light\"\n");
         for ev in KIMI_EVENTS {
-            src.push_str(&format!("[[hooks]]\nevent = \"{}\"\ncommand = \"{dev} --provider kimi\"\ntimeout = 5\n\n", ev.name));
+            src.push_str(&format!(
+                "[[hooks]]\nevent = \"{}\"\ncommand = \"{dev} --provider kimi\"\ntimeout = 5\n\n",
+                ev.name
+            ));
         }
         // 路径一致：无改动。
         assert_eq!(KT.ensure_hooks(&src, dev, "kimi"), EnsureOutcome::Unchanged);
         // 路径失效换 sidecar：6 条 command 全部更新，用户键 theme 不动。
         let out = changed(&src, "C:/app/meowo-reporter.exe");
-        assert_eq!(out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#).count(), 6);
+        assert_eq!(
+            out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#)
+                .count(),
+            6
+        );
         assert!(out.contains("theme = \"light\""));
     }
 
@@ -927,16 +1402,27 @@ mod tests {
 
         let out = changed(&src, "C:/app/meowo-reporter.exe");
         assert_eq!(out.matches("cc-reporter").count(), 0);
-        assert_eq!(out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#).count(), 6);
+        assert_eq!(
+            out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#)
+                .count(),
+            6
+        );
         assert!(out.contains("theme = \"light\""));
         assert!(KT.has_reporter(&out, "kimi"));
-        assert_eq!(KT.claimed_reporter(&out, "kimi").as_deref(), Some("C:/app/meowo-reporter.exe"));
-        assert_eq!(KT.ensure_hooks(&out, "C:/app/meowo-reporter.exe", "kimi"), EnsureOutcome::Unchanged);
+        assert_eq!(
+            KT.claimed_reporter(&out, "kimi").as_deref(),
+            Some("C:/app/meowo-reporter.exe")
+        );
+        assert_eq!(
+            KT.ensure_hooks(&out, "C:/app/meowo-reporter.exe", "kimi"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     #[test]
     fn keeps_user_hook_entries() {
-        let src = "[[hooks]]\nevent = \"Notification\"\ncommand = \"my-notify --ding\"\ntimeout = 3\n";
+        let src =
+            "[[hooks]]\nevent = \"Notification\"\ncommand = \"my-notify --ding\"\ntimeout = 3\n";
         let out = changed(src, "C:/x/meowo-reporter.exe");
         assert!(out.contains("my-notify --ding")); // 用户 hook 原样
         assert_eq!(out.matches("--provider kimi").count(), 6);
@@ -983,15 +1469,33 @@ max_steps_per_turn = 100
         let out = changed(src, "C:/app/meowo-reporter.exe");
         // 输出必须仍是合法 TOML（array-of-tables 不能错位插到 section 里）。
         let reparsed: DocumentMut = out.parse().expect("产物应为合法 TOML");
-        let arr = reparsed["hooks"].as_array_of_tables().expect("hooks 应为 array-of-tables");
+        let arr = reparsed["hooks"]
+            .as_array_of_tables()
+            .expect("hooks 应为 array-of-tables");
         assert_eq!(arr.len(), 6);
-        assert_eq!(out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#).count(), 6);
+        assert_eq!(
+            out.matches(r#"command = "C:/app/meowo-reporter.exe --provider kimi""#)
+                .count(),
+            6
+        );
         // 其余键与 [section] 表原样保留（含 api_key，绝不能丢）。
-        assert_eq!(reparsed["default_model"].as_str(), Some("kimi-code/kimi-for-coding"));
+        assert_eq!(
+            reparsed["default_model"].as_str(),
+            Some("kimi-code/kimi-for-coding")
+        );
         assert_eq!(reparsed["merge_all_available_skills"].as_bool(), Some(true));
-        assert_eq!(reparsed["providers"]["managed:kimi-code"]["api_key"].as_str(), Some("secret-should-survive"));
-        assert_eq!(reparsed["loop_control"]["max_steps_per_turn"].as_integer(), Some(100));
-        assert_eq!(KT.ensure_hooks(&out, "C:/app/meowo-reporter.exe", "kimi"), EnsureOutcome::Unchanged);
+        assert_eq!(
+            reparsed["providers"]["managed:kimi-code"]["api_key"].as_str(),
+            Some("secret-should-survive")
+        );
+        assert_eq!(
+            reparsed["loop_control"]["max_steps_per_turn"].as_integer(),
+            Some(100)
+        );
+        assert_eq!(
+            KT.ensure_hooks(&out, "C:/app/meowo-reporter.exe", "kimi"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     // ── has_reporter / claimed_reporter ──
@@ -1006,15 +1510,24 @@ max_steps_per_turn = 100
         let stop_only = "[[hooks]]\nevent = \"Stop\"\ncommand = \"/home/u/.local/meowo-reporter --provider kimi\"\ntimeout = 5\n";
         assert!(!KT.has_reporter(stop_only, "kimi"));
         // 但接线时仍能从中取到 reporter 位置（不限事件）。
-        assert_eq!(KT.claimed_reporter(stop_only, "kimi").as_deref(), Some("/home/u/.local/meowo-reporter"));
+        assert_eq!(
+            KT.claimed_reporter(stop_only, "kimi").as_deref(),
+            Some("/home/u/.local/meowo-reporter")
+        );
 
         // Stop 块在前、SessionStart 块在后：不串块。
         let both = format!("{stop_only}\n{session_start}");
         assert!(KT.has_reporter(&both, "kimi"));
 
         // 非 hooks 结构 / 用户自有命令 / 畸形 TOML → false。
-        assert!(!KT.has_reporter("event = \"SessionStart\"\ncommand = \"node a.js\"\n", "kimi"));
-        assert!(!KT.has_reporter("[[hooks]]\nevent = \"SessionStart\"\ncommand = \"node a.js\"\n", "kimi"));
+        assert!(!KT.has_reporter(
+            "event = \"SessionStart\"\ncommand = \"node a.js\"\n",
+            "kimi"
+        ));
+        assert!(!KT.has_reporter(
+            "[[hooks]]\nevent = \"SessionStart\"\ncommand = \"node a.js\"\n",
+            "kimi"
+        ));
         assert!(!KT.has_reporter("= = 非法 toml", "kimi"));
     }
 
@@ -1038,7 +1551,10 @@ max_steps_per_turn = 100
             format: ConfigFormat::CodexJson,
             missing: MissingConfig::CreateFrom("{\"hooks\":{}}"),
             events: &EVENTS,
-            command: CommandSpec { quote_exe: true, with_provider: true },
+            command: CommandSpec {
+                quote_exe: true,
+                with_provider: true,
+            },
         };
 
         fn changed(v: &Value, reporter: &str) -> Value {
@@ -1059,7 +1575,10 @@ max_steps_per_turn = 100
                 assert_eq!(h["command"], "\"C:/x/meowo-reporter.exe\" --provider codex");
                 assert_eq!(h["timeout"], 5);
             }
-            assert_eq!(outcome(&out, "C:/x/meowo-reporter.exe"), EnsureOutcome::Unchanged);
+            assert_eq!(
+                outcome(&out, "C:/x/meowo-reporter.exe"),
+                EnsureOutcome::Unchanged
+            );
         }
 
         #[test]
@@ -1069,10 +1588,16 @@ max_steps_per_turn = 100
             let entry = |t: u64| json!({ "hooks": [{ "type": "command", "command": format!("{dev} --provider codex"), "timeout": t }] });
             let v = json!({ "hooks": { "SessionStart": [entry(5)], "UserPromptSubmit": [entry(5)], "Stop": [entry(10)] }});
             let out = changed(&v, dev); // 补 PostToolUse/PermissionRequest → 有改动
-            // 既有条目原样保留（裸路径不被改写为引号形态、timeout 10 不动）——幂等按解析后内容判定。
-            assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["command"], format!("{dev} --provider codex"));
+                                        // 既有条目原样保留（裸路径不被改写为引号形态、timeout 10 不动）——幂等按解析后内容判定。
+            assert_eq!(
+                out["hooks"]["Stop"][0]["hooks"][0]["command"],
+                format!("{dev} --provider codex")
+            );
             assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["timeout"], 10);
-            assert!(out["hooks"]["PostToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("--provider codex"));
+            assert!(out["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("--provider codex"));
             assert!(out["hooks"]["PermissionRequest"].is_array());
             assert_eq!(outcome(&out, dev), EnsureOutcome::Unchanged);
         }
@@ -1084,8 +1609,14 @@ max_steps_per_turn = 100
                 { "hooks": [{ "type": "command", "command": "\"C:/old/meowo-reporter.exe\" --provider codex", "timeout": 5 }] }
             ]}});
             let out = changed(&v, "C:/new/meowo-reporter.exe");
-            assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["command"], "node my-notify.js"); // 用户 hook 不动
-            assert_eq!(out["hooks"]["Stop"][1]["hooks"][0]["command"], "\"C:/new/meowo-reporter.exe\" --provider codex");
+            assert_eq!(
+                out["hooks"]["Stop"][0]["hooks"][0]["command"],
+                "node my-notify.js"
+            ); // 用户 hook 不动
+            assert_eq!(
+                out["hooks"]["Stop"][1]["hooks"][0]["command"],
+                "\"C:/new/meowo-reporter.exe\" --provider codex"
+            );
             assert_eq!(out["hooks"]["Stop"].as_array().unwrap().len(), 2); // 不重复追加
         }
 
@@ -1113,16 +1644,25 @@ max_steps_per_turn = 100
         #[test]
         fn tolerates_utf8_bom() {
             let out = CJ.ensure_hooks("\u{feff}{\"hooks\":{}}", "C:/x/meowo-reporter.exe", "codex");
-            assert!(matches!(out, EnsureOutcome::Changed(_)), "带 BOM 的 JSON 应能解析");
+            assert!(
+                matches!(out, EnsureOutcome::Changed(_)),
+                "带 BOM 的 JSON 应能解析"
+            );
         }
 
         #[test]
         fn skips_event_with_non_array_value() {
             // 某事件值为畸形形状（非 array）：该事件原样跳过不动，其余事件正常补齐。
-            let out = changed(&json!({ "hooks": { "Stop": "oops" } }), "C:/x/meowo-reporter.exe");
+            let out = changed(
+                &json!({ "hooks": { "Stop": "oops" } }),
+                "C:/x/meowo-reporter.exe",
+            );
             assert_eq!(out["hooks"]["Stop"], json!("oops"));
             for ev in EVENTS.iter().filter(|e| e.name != "Stop") {
-                assert!(out["hooks"][ev.name][0]["hooks"][0]["command"].as_str().unwrap().contains("--provider codex"));
+                assert!(out["hooks"][ev.name][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--provider codex"));
             }
         }
 
@@ -1131,14 +1671,20 @@ max_steps_per_turn = 100
             let wired = changed(&json!({}), "C:/x/meowo-reporter.exe").to_string();
             assert!(CJ.has_reporter(&wired, "codex"));
             assert!(!CJ.has_reporter(&wired, "kimi")); // agent 不符
-            assert_eq!(CJ.claimed_reporter(&wired, "codex").as_deref(), Some("C:/x/meowo-reporter.exe"));
+            assert_eq!(
+                CJ.claimed_reporter(&wired, "codex").as_deref(),
+                Some("C:/x/meowo-reporter.exe")
+            );
 
             // 只在 Stop 挂了 reporter：不应判定为已接入；但仍能取到二进制位置。
             let stop_only = json!({ "hooks": { "Stop": [
                 { "hooks": [{ "type": "command", "command": "\"C:/x/meowo-reporter.exe\" --provider codex", "timeout": 5 }] }
             ]}}).to_string();
             assert!(!CJ.has_reporter(&stop_only, "codex"));
-            assert_eq!(CJ.claimed_reporter(&stop_only, "codex").as_deref(), Some("C:/x/meowo-reporter.exe"));
+            assert_eq!(
+                CJ.claimed_reporter(&stop_only, "codex").as_deref(),
+                Some("C:/x/meowo-reporter.exe")
+            );
 
             // 废弃的 cc-reporter 挂在 SessionStart：认领得到（供替换），但不算已接入。
             let legacy = json!({ "hooks": { "SessionStart": [
@@ -1147,12 +1693,19 @@ max_steps_per_turn = 100
             assert!(!CJ.has_reporter(&legacy, "codex"));
             assert_eq!(CJ.claimed_reporter(&legacy, "codex"), None);
             // 接线时会被认领并更新为当前 reporter，而非重复追加。
-            let fixed = changed(&serde_json::from_str::<Value>(&legacy).unwrap(), "C:/new/meowo-reporter.exe");
+            let fixed = changed(
+                &serde_json::from_str::<Value>(&legacy).unwrap(),
+                "C:/new/meowo-reporter.exe",
+            );
             assert_eq!(fixed["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
             assert!(CJ.has_reporter(&fixed.to_string(), "codex"));
 
             // 用户自有 hook / 无 hooks 键 → false。
-            assert!(!CJ.has_reporter(&json!({ "hooks": { "SessionStart": [{ "hooks": [{ "command": "node a.js" }] }] }}).to_string(), "codex"));
+            assert!(!CJ.has_reporter(
+                &json!({ "hooks": { "SessionStart": [{ "hooks": [{ "command": "node a.js" }] }] }})
+                    .to_string(),
+                "codex"
+            ));
             assert!(!CJ.has_reporter("{}", "codex"));
         }
     }

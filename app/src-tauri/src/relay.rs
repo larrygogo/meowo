@@ -64,7 +64,8 @@ impl RelaySettings {
         let plugin = meowo_agent::by_id(id.as_str())?;
         let cap = plugin.relay()?;
         let installation = plugin.resolve()?;
-        cap.supports_variant(installation.variant_tag).then_some(rule)
+        cap.supports_variant(installation.variant_tag)
+            .then_some(rule)
     }
 
     pub(crate) fn enabled(&self, id: meowo_agent::AgentId) -> bool {
@@ -77,8 +78,12 @@ impl RelaySettings {
                 continue;
             }
             let plugin = meowo_agent::by_id(id).ok_or_else(|| format!("未知中转 agent：{id}"))?;
-            let cap = plugin.relay().ok_or_else(|| format!("{id} 插件不支持 API 中转"))?;
-            let variant = plugin.resolve().ok_or_else(|| format!("无法解析 {id} 的安装形态"))?;
+            let cap = plugin
+                .relay()
+                .ok_or_else(|| format!("{id} 插件不支持 API 中转"))?;
+            let variant = plugin
+                .resolve()
+                .ok_or_else(|| format!("无法解析 {id} 的安装形态"))?;
             validate_http_url(&rule.base_url)?;
             if rule.model.trim().is_empty() {
                 return Err(format!("{id} 的中转模型不能为空"));
@@ -116,7 +121,9 @@ fn relay_config_for<'a>(
 fn supported_relay_plugins() -> impl Iterator<Item = &'static dyn meowo_agent::AgentPlugin> {
     meowo_agent::all().iter().copied().filter(|plugin| {
         plugin.relay().is_some_and(|cap| {
-            plugin.resolve().is_some_and(|installation| cap.supports_variant(installation.variant_tag))
+            plugin
+                .resolve()
+                .is_some_and(|installation| cap.supports_variant(installation.variant_tag))
         })
     })
 }
@@ -152,7 +159,7 @@ fn write_secrets(secrets: &SecretMap) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let body = serde_json::to_string(secrets).map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())?;
+    meowo_agent::fsutil::write_atomic_secure(&path, &body).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -202,8 +209,12 @@ pub(crate) fn get_relay_secrets() -> BTreeMap<String, String> {
 #[tauri::command]
 pub(crate) fn set_relay_secret(agent: String, secret: String) -> Result<(), String> {
     let plugin = meowo_agent::by_id(&agent).ok_or_else(|| "未知 agent".to_string())?;
-    let cap = plugin.relay().ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
-    let installation = plugin.resolve().ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
+    let cap = plugin
+        .relay()
+        .ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
+    let installation = plugin
+        .resolve()
+        .ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
     if !cap.supports_variant(installation.variant_tag) {
         return Err("当前安装版本不支持 API 中转".into());
     }
@@ -267,14 +278,26 @@ pub(crate) async fn list_relay_models(
 
     let id = crate::agent_id(&agent).ok_or_else(|| "未知 agent".to_string())?;
     let plugin = meowo_agent::by_id(&agent).ok_or_else(|| "未知 agent".to_string())?;
-    let cap = plugin.relay().ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
-    let installation = plugin.resolve().ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
+    let cap = plugin
+        .relay()
+        .ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
+    let installation = plugin
+        .resolve()
+        .ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
     let ui = cap.ui();
     let config = meowo_agent::RelayConfig {
         base_url: &base_url,
         model: "",
-        protocol: if protocol.is_empty() { ui.default_protocol } else { &protocol },
-        auth: if auth.is_empty() { ui.default_auth } else { &auth },
+        protocol: if protocol.is_empty() {
+            ui.default_protocol
+        } else {
+            &protocol
+        },
+        auth: if auth.is_empty() {
+            ui.default_auth
+        } else {
+            &auth
+        },
     };
     cap.validate(config, installation.variant_tag)?;
     let request = cap.model_request(config);
@@ -322,7 +345,9 @@ pub(crate) fn launch_env(id: meowo_agent::AgentId) -> Vec<(String, String)> {
     let Some(key) = secret(id) else { return vec![] };
     meowo_agent::by_id(id.as_str())
         .and_then(|plugin| plugin.relay())
-        .map_or_else(Vec::new, |cap| cap.launch_env(relay_config_for(rule, cap), &key))
+        .map_or_else(Vec::new, |cap| {
+            cap.launch_env(relay_config_for(rule, cap), &key)
+        })
 }
 
 /// Codex 用 CLI 的临时 `-c` 覆盖声明 provider，避免改写全局 config.toml。
@@ -446,11 +471,7 @@ mod tests {
             auth: "bearer".into(),
         };
         let codex = meowo_agent::by_id("codex").unwrap().relay().unwrap();
-        let argv = codex.augment_argv(
-            relay_config_for(&rule, codex),
-            true,
-            vec!["codex".into()],
-        );
+        let argv = codex.augment_argv(relay_config_for(&rule, codex), true, vec!["codex".into()]);
         assert_eq!(argv[0], "codex");
         assert!(argv.iter().any(|a| a == "model_provider=\"meowo-relay\""));
         assert!(argv

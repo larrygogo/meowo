@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useAgentListRefresh } from "../useAgents";
 import { availableTerminals, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -61,11 +62,16 @@ function IconInfo() {
   );
 }
 
-function IconUser() {
+// 机器人徽标：这一分区管的是各家 AI Agent，比人像更贴切。
+function IconAgent() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+      <path d="M12 8V4H8" />
+      <rect x="4" y="8" width="16" height="12" rx="2.5" />
+      <path d="M2 14h2" />
+      <path d="M20 14h2" />
+      <path d="M9 13.5v2" />
+      <path d="M15 13.5v2" />
     </svg>
   );
 }
@@ -106,9 +112,11 @@ function GeneralSection() {
     if (!autostartDisabled) invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
     availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
   }, [autostartDisabled]);
-  useEffect(() => {
+  const reloadAgents = () => {
     listAgents().then(setAgents).catch(() => {});
-  }, []);
+  };
+  useEffect(reloadAgents, []);
+  useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
   const toggleAutostart = () => {
     if (autostartDisabled) return;
     const next = !autostart;
@@ -430,7 +438,7 @@ export function About() {
             <span>{t.settings.nav.network}</span>
           </button>
           <button className={"nav-item" + (sec === "account" ? " on" : "")} onClick={() => setSec("account")}>
-            <IconUser />
+            <IconAgent />
             <span>{t.settings.nav.account}</span>
           </button>
           <button className={"nav-item" + (sec === "about" ? " on" : "")} onClick={() => setSec("about")}>

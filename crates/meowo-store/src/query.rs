@@ -149,7 +149,11 @@ impl Store {
                  GROUP BY project_id, column_name",
             )?;
             let rows = stmt.query_map([], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
             })?;
             for row in rows {
                 let (pid, col, n) = row?;
@@ -159,9 +163,9 @@ impl Store {
         // 最近活动时间：一次按项目取 MAX(last_event_at)；无会话的项目回退 project.updated_at。
         let mut last_evt: HashMap<i64, i64> = HashMap::new();
         {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT project_id, MAX(last_event_at) FROM sessions GROUP BY project_id")?;
+            let mut stmt = self.conn.prepare(
+                "SELECT project_id, MAX(last_event_at) FROM sessions GROUP BY project_id",
+            )?;
             let rows = stmt.query_map([], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
             })?;
@@ -172,7 +176,8 @@ impl Store {
                 }
             }
         }
-        let col_count = |pid: i64, col: &str| cols.get(&(pid, col.to_string())).copied().unwrap_or(0);
+        let col_count =
+            |pid: i64, col: &str| cols.get(&(pid, col.to_string())).copied().unwrap_or(0);
         let mut out = Vec::with_capacity(projects.len());
         for project in projects {
             let pid = project.id;
@@ -226,7 +231,11 @@ impl Store {
         let mut out = Vec::with_capacity(rows.len());
         for (task, session_status) in rows {
             let todos = todos_map.remove(&task.id).unwrap_or_default();
-            out.push(TaskCard { task, todos, session_status });
+            out.push(TaskCard {
+                task,
+                todos,
+                session_status,
+            });
         }
         Ok(out)
     }
@@ -258,8 +267,12 @@ impl Store {
 
         match filter {
             Some("all") => conditions.push("s.archived = 0".into()),
-            Some("running") => conditions.push("s.status = 'running' AND s.pending_review IS NULL AND s.archived = 0".into()),
-            Some("waiting") => conditions.push("(s.status = 'waiting' OR s.pending_review IS NOT NULL) AND s.archived = 0".into()),
+            Some("running") => conditions.push(
+                "s.status = 'running' AND s.pending_review IS NULL AND s.archived = 0".into(),
+            ),
+            Some("waiting") => conditions.push(
+                "(s.status = 'waiting' OR s.pending_review IS NOT NULL) AND s.archived = 0".into(),
+            ),
             Some("archived") => conditions.push("s.archived = 1".into()),
             _ => {} // None 不过滤
         }
@@ -280,9 +293,11 @@ impl Store {
         if let (Some(ts), Some(id)) = (before_last_event_at, before_id) {
             // 整体括起：AND 优先级高于 OR，不加括号第二个 OR 分支会绕过 filter（4035ec5 回归）。
             if asc {
-                conditions.push("((s.last_event_at > ?) OR (s.last_event_at = ? AND s.id > ?))".into());
+                conditions
+                    .push("((s.last_event_at > ?) OR (s.last_event_at = ? AND s.id > ?))".into());
             } else {
-                conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
+                conditions
+                    .push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
             }
             params.push(Value::Integer(ts));
             params.push(Value::Integer(ts));
@@ -331,7 +346,26 @@ impl Store {
                 let last_ai_text: Option<String> = r.get(21)?;
                 let last_user_text: Option<String> = r.get(22)?;
                 let provider: String = r.get(23)?;
-                Ok((session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text, provider))
+                Ok((
+                    session,
+                    project_name,
+                    task_id,
+                    task_title,
+                    current_activity,
+                    column,
+                    pid,
+                    archived,
+                    cwd,
+                    archived_at,
+                    context_pct,
+                    context_window,
+                    model,
+                    note,
+                    pending_review,
+                    last_ai_text,
+                    last_user_text,
+                    provider,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -339,7 +373,27 @@ impl Store {
         let task_ids: Vec<i64> = rows.iter().filter_map(|r| r.2).collect();
         let mut todos_map = self.todos_by_task(&task_ids)?;
         let mut out = Vec::with_capacity(rows.len());
-        for (session, project_name, task_id, task_title, current_activity, column, pid, archived, cwd, archived_at, context_pct, context_window, model, note, pending_review, last_ai_text, last_user_text, provider) in rows {
+        for (
+            session,
+            project_name,
+            task_id,
+            task_title,
+            current_activity,
+            column,
+            pid,
+            archived,
+            cwd,
+            archived_at,
+            context_pct,
+            context_window,
+            model,
+            note,
+            pending_review,
+            last_ai_text,
+            last_user_text,
+            provider,
+        ) in rows
+        {
             let todos = task_id
                 .and_then(|tid| todos_map.remove(&tid))
                 .unwrap_or_default();
@@ -381,10 +435,14 @@ impl Store {
     /// 故这两类改由 app 层用 [`Self::live_count_candidates`] 的原料算——与列表**同一套判定、
     /// 同一份进程表快照**，数字必然自洽。
     pub fn live_sessions_totals(&self) -> Result<(i64, i64), StoreError> {
-        let total: i64 = self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
-        let archived: i64 = self
+        let total: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM sessions WHERE archived = 1", [], |r| r.get(0))?;
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+        let archived: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE archived = 1",
+            [],
+            |r| r.get(0),
+        )?;
         Ok((total, archived))
     }
 
@@ -429,4 +487,3 @@ impl Store {
         Ok(n)
     }
 }
-

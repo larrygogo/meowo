@@ -6,11 +6,11 @@ use tauri::Manager;
 // Emitter：仅非 macOS 的 recall_sticker 用 w.emit("recall-sticker")；open_new_session 的 ns-prefill
 // emit 在其块内另有本地 use（macOS 也走那条），故模块级 Emitter 在 macOS 上无用、按平台门控。
 #[cfg(not(target_os = "macos"))]
-use tauri::Emitter;
-#[cfg(not(target_os = "macos"))]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(not(target_os = "macos"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+#[cfg(not(target_os = "macos"))]
+use tauri::Emitter;
 
 /// 前端调用：打开设置窗口（贴纸 tab 栏的设置按钮）。
 /// 必须在子线程创建：同步 command 跑在主线程，直接 build() 会阻塞主线程消息泵，
@@ -126,7 +126,11 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
 /// 传入 cwd/provider 时，新建面板会预填该路径并选中该模型。
 /// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
 #[tauri::command]
-pub(crate) fn open_new_session_window(app: tauri::AppHandle, cwd: Option<String>, provider: Option<String>) {
+pub(crate) fn open_new_session_window(
+    app: tauri::AppHandle,
+    cwd: Option<String>,
+    provider: Option<String>,
+) {
     std::thread::spawn(move || open_new_session_window_impl(&app, cwd, provider));
 }
 
@@ -144,7 +148,10 @@ pub(crate) fn open_new_session_window_impl(
         // 窗口已开：若从另一张卡片带了 cwd/provider 预填，通知面板更新表单（不重开窗口），再聚焦。
         if cwd.is_some() || provider.is_some() {
             use tauri::Emitter;
-            let _ = app.emit("ns-prefill", serde_json::json!({ "cwd": cwd, "provider": provider }));
+            let _ = app.emit(
+                "ns-prefill",
+                serde_json::json!({ "cwd": cwd, "provider": provider }),
+            );
         }
         let _ = w.set_focus();
         return;
@@ -154,25 +161,28 @@ pub(crate) fn open_new_session_window_impl(
         _ => {
             let mut params = Vec::new();
             if let Some(c) = &cwd {
-                params.push(format!("cwd={}", percent_encode(c.as_bytes(), NON_ALPHANUMERIC)));
+                params.push(format!(
+                    "cwd={}",
+                    percent_encode(c.as_bytes(), NON_ALPHANUMERIC)
+                ));
             }
             if let Some(p) = &provider {
-                params.push(format!("provider={}", percent_encode(p.as_bytes(), NON_ALPHANUMERIC)));
+                params.push(format!(
+                    "provider={}",
+                    percent_encode(p.as_bytes(), NON_ALPHANUMERIC)
+                ));
             }
             format!("index.html?{}", params.join("&"))
         }
     };
-    let builder = tauri::WebviewWindowBuilder::new(
-        app,
-        "new-session",
-        tauri::WebviewUrl::App(url.into()),
-    )
-    .title(tr(ui_lang(&load_settings()), "window.newSession"))
-    .inner_size(460.0, 420.0)
-    .min_inner_size(460.0, 420.0)
-    .resizable(false)
-    .decorations(false)
-    .center();
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, "new-session", tauri::WebviewUrl::App(url.into()))
+            .title(tr(ui_lang(&load_settings()), "window.newSession"))
+            .inner_size(460.0, 420.0)
+            .min_inner_size(460.0, 420.0)
+            .resizable(false)
+            .decorations(false)
+            .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .ns-window 的 border-radius 呈现（同设置窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
@@ -234,12 +244,17 @@ pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
 
 /// 托盘右键菜单（找回贴纸 / 设置 / 官网 / 退出），按语言构建；切语言时由 rebuild_tray_menu 重建。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn build_tray_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+pub(crate) fn build_tray_menu(
+    app: &tauri::AppHandle,
+    lang: &str,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let recall = MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "tray.quit")).build(app)?;
-    MenuBuilder::new(app).items(&[&recall, &settings, &website, &quit]).build()
+    MenuBuilder::new(app)
+        .items(&[&recall, &settings, &website, &quit])
+        .build()
 }
 
 /// 切语言后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
@@ -305,7 +320,12 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// Windows：把待交互/运行中会话数摘要写进托盘悬浮提示，鼠标移到托盘一眼可见，
 /// 弥补桌面端无菜单栏标题。计数为 0 时回落到纯品牌名。
 #[cfg(target_os = "windows")]
-pub(crate) fn update_tray_tooltip(app: &tauri::AppHandle, running: usize, waiting: usize, lang: &str) {
+pub(crate) fn update_tray_tooltip(
+    app: &tauri::AppHandle,
+    running: usize,
+    waiting: usize,
+    lang: &str,
+) {
     let Some(tray) = app.tray_by_id("meowo-tray") else {
         return;
     };
@@ -336,4 +356,3 @@ pub(crate) fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> S
     }
     format!("Meowo · {}", parts.join(" · "))
 }
-

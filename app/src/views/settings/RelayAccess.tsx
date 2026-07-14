@@ -16,7 +16,15 @@ import { Dropdown, Segmented } from "./widgets";
 
 type AccessMode = "official" | "relay";
 
-const relayDefault = (agent: AgentDescriptor): RelayRule => ({
+/**
+ * RelayAccess 只看这三个字段。
+ *
+ * 收窄成 Pick 而不是要完整的 `AgentDescriptor`：否则调用方（ProviderCard 手工拼一个 agent 对象）
+ * 得为了满足类型去编造它根本不读的字段——比如 `supports_proxy`，随手填个 `false` 就是在说谎。
+ */
+type RelayAgent = Pick<AgentDescriptor, "id" | "display_name" | "relay">;
+
+const relayDefault = (agent: RelayAgent): RelayRule => ({
   enabled: false,
   base_url: "",
   model: "",
@@ -224,7 +232,7 @@ export function RelayAccess({
   settings,
   patch,
 }: {
-  agent: AgentDescriptor;
+  agent: RelayAgent;
   settings: Settings | null;
   patch: (p: Partial<Settings>) => Promise<string | null>;
 }) {
@@ -234,7 +242,7 @@ export function RelayAccess({
 }
 
 function RelayAccessSupported({ agent, settings, patch, capability }: {
-  agent: AgentDescriptor;
+  agent: RelayAgent;
   settings: Settings | null;
   patch: (p: Partial<Settings>) => Promise<string | null>;
   capability: NonNullable<AgentDescriptor["relay"]>;
@@ -250,6 +258,7 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsAttempted, setModelsAttempted] = useState(false);
+  const modelsRequestSeq = useRef(0);
   const mode: AccessMode = rule.enabled || configuring ? "relay" : "official";
 
   useEffect(() => {
@@ -264,9 +273,11 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     if (rule.enabled) setConfiguring(false);
   }, [rule.enabled]);
   useEffect(() => {
+    modelsRequestSeq.current += 1; // 令旧地址/协议的在途响应失效
     setRemoteModels([]);
     setModelsError(null);
     setModelsAttempted(false);
+    setModelsLoading(false);
   }, [agent.id, rule.base_url, rule.protocol, rule.auth]);
 
   const normalizeRule = (next: RelayRule): RelayRule => ({
@@ -283,11 +294,18 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     }
     setModelsLoading(true);
     setModelsError(null);
+    const seq = ++modelsRequestSeq.current;
     const effective = normalizeRule(rule);
     void listRelayModels(agent.id, effective.base_url, effective.protocol, effective.auth)
-      .then(setRemoteModels)
-      .catch((e) => setModelsError(t.relay.modelFetchFailed(String(e))))
-      .finally(() => setModelsLoading(false));
+      .then((models) => {
+        if (seq === modelsRequestSeq.current) setRemoteModels(models);
+      })
+      .catch((e) => {
+        if (seq === modelsRequestSeq.current) setModelsError(t.relay.modelFetchFailed(String(e)));
+      })
+      .finally(() => {
+        if (seq === modelsRequestSeq.current) setModelsLoading(false);
+      });
   };
 
   const saveRule = async (next: RelayRule) => {

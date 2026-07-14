@@ -2,9 +2,9 @@
 //! Windows 走 Toolhelp 快照 + sysinfo，macOS/Unix 走 ps。供终端聚焦、看板连接判定、存活轮询共用。
 //! 从 lib.rs 抽出（纯进程逻辑，无窗口/DB 依赖）。
 
-use sysinfo::System;
 #[cfg(target_os = "windows")]
 use sysinfo::Pid;
+use sysinfo::System;
 // 两个平台都要用：Windows 的 Toolhelp 快照，以及 agent_pids_snapshot 的返回类型。
 use std::collections::HashSet;
 
@@ -35,8 +35,7 @@ pub(crate) fn snapshot_processes() -> std::collections::HashMap<u32, (u32, Strin
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap_or(entry.szExeFile.len());
-                let name =
-                    String::from_utf16_lossy(&entry.szExeFile[..end]).to_ascii_lowercase();
+                let name = String::from_utf16_lossy(&entry.szExeFile[..end]).to_ascii_lowercase();
                 map.insert(entry.th32ProcessID, (entry.th32ParentProcessID, name));
                 if Process32NextW(snap, &mut entry) == 0 {
                     break;
@@ -58,15 +57,28 @@ pub(crate) fn console_group_pids(root_pid: u32) -> HashSet<u32> {
     // 祖先：向上到「终端宿主」为止。遇到桌面壳/系统进程(explorer/sihost/...)就停，
     // 否则会把桌面、任务栏的窗口也算进来，点击时误聚焦到桌面。
     let boundary = [
-        "explorer.exe", "sihost.exe", "svchost.exe", "services.exe", "wininit.exe",
-        "winlogon.exe", "csrss.exe", "runtimebroker.exe", "dwm.exe",
+        "explorer.exe",
+        "sihost.exe",
+        "svchost.exe",
+        "services.exe",
+        "wininit.exe",
+        "winlogon.exe",
+        "csrss.exe",
+        "runtimebroker.exe",
+        "dwm.exe",
     ];
     let terminal_host = [
-        "windowsterminal.exe", "conhost.exe", "openconsole.exe", "wt.exe", "wezterm-gui.exe",
+        "windowsterminal.exe",
+        "conhost.exe",
+        "openconsole.exe",
+        "wt.exe",
+        "wezterm-gui.exe",
     ];
     let mut cur = root_pid;
     for _ in 0..32 {
-        let Some(&(ppid, _)) = snapshot.get(&cur) else { break };
+        let Some(&(ppid, _)) = snapshot.get(&cur) else {
+            break;
+        };
         if ppid == 0 {
             break;
         }
@@ -151,7 +163,9 @@ pub(crate) fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
     };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         let mut it = line.split_whitespace();
-        let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else { continue };
+        let Some(pid) = it.next().and_then(|p| p.parse::<i64>().ok()) else {
+            continue;
+        };
         // comm 在 macOS 上是可执行文件全路径，可能含空格 → 余下字段拼回。
         let comm = it.collect::<Vec<_>>().join(" ");
         if meowo_agent::is_agent_process(&comm) {
@@ -186,4 +200,3 @@ pub(crate) fn agent_pids_snapshot() -> HashSet<i64> {
         claude_pids_snapshot()
     }
 }
-

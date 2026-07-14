@@ -86,7 +86,12 @@ pub trait KeychainPort: Sync {
         None
     }
     /// 写回（条目存在则更新）。
-    fn write_password(&self, _service: &str, _account: &str, _password: &str) -> Result<(), String> {
+    fn write_password(
+        &self,
+        _service: &str,
+        _account: &str,
+        _password: &str,
+    ) -> Result<(), String> {
         Err("本平台无可用密钥链".into())
     }
 }

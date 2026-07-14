@@ -117,8 +117,10 @@ fn blit_plus(rgba: &mut [u8], total: usize, x0: usize, rgb: [u8; 3]) {
             let px = x0 + c;
             let dx = (px as f32 + 0.5 - cx).abs();
             let dy = (y as f32 + 0.5 - cy).abs();
-            let cov_h = (PLUS_ARM + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_TH + 0.5 - dy).clamp(0.0, 1.0);
-            let cov_v = (PLUS_TH + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_ARM + 0.5 - dy).clamp(0.0, 1.0);
+            let cov_h =
+                (PLUS_ARM + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_TH + 0.5 - dy).clamp(0.0, 1.0);
+            let cov_v =
+                (PLUS_TH + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_ARM + 0.5 - dy).clamp(0.0, 1.0);
             let a = cov_h.max(cov_v);
             if a > 0.0 {
                 blend_over(rgba, (y * total + px) * 4, rgb, a);
@@ -136,7 +138,10 @@ fn push_pair(out: &mut Vec<(usize, usize)>, sym: usize, n: usize) {
     out.push((sym, if out.is_empty() { 0 } else { PAIR_GAP }));
     // 数字最多显示两位；超过 99 显示 99+（末尾追加合成「+」字形）。
     for (i, ch) in n.min(99).to_string().bytes().enumerate() {
-        out.push(((ch - b'0') as usize, if i == 0 { SYM_NUM_GAP } else { DIGIT_GAP }));
+        out.push((
+            (ch - b'0') as usize,
+            if i == 0 { SYM_NUM_GAP } else { DIGIT_GAP },
+        ));
     }
     if n > 99 {
         out.push((GLYPH_PLUS, DIGIT_GAP));
@@ -170,8 +175,8 @@ fn render_status_rgba(running: usize, waiting: usize) -> Option<(Vec<u8>, u32, u
     if groups.is_empty() {
         return None;
     }
-    let total: usize = groups.iter().map(|(_, g)| badge_w(g)).sum::<usize>()
-        + BADGE_GAP * (groups.len() - 1);
+    let total: usize =
+        groups.iter().map(|(_, g)| badge_w(g)).sum::<usize>() + BADGE_GAP * (groups.len() - 1);
     let mut rgba = vec![0u8; total * GLYPH_H * 4];
     let mut x = 0;
     for (i, (marker, glyphs)) in groups.iter().enumerate() {
@@ -179,7 +184,11 @@ fn render_status_rgba(running: usize, waiting: usize) -> Option<(Vec<u8>, u32, u
             x += BADGE_GAP;
         }
         let bw = badge_w(glyphs);
-        let color = if *marker == GLYPH_RUN { RUN_RGB } else { WAIT_RGB };
+        let color = if *marker == GLYPH_RUN {
+            RUN_RGB
+        } else {
+            WAIT_RGB
+        };
         fill_round_rect(&mut rgba, total, x, bw, color);
         // 内容（数字/加号）在徽章内水平居中。
         let mut gx = x + (bw - content_w(glyphs)) / 2;
@@ -209,10 +218,12 @@ pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
     };
     match render_status_rgba(running, waiting) {
         Some((rgba, w, h)) => {
-            let _ = tray.set_icon_with_as_template(Some(tauri::image::Image::new(&rgba, w, h)), false);
+            let _ =
+                tray.set_icon_with_as_template(Some(tauri::image::Image::new(&rgba, w, h)), false);
         }
         None => {
-            let logo = tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);
+            let logo =
+                tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);
             let _ = tray.set_icon_with_as_template(Some(logo), true);
         }
     }
@@ -220,11 +231,18 @@ pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
 }
 
 /// 托盘右键菜单（设置 / 退出），按语言构建；切语言时由 lib.rs 的 apply_language 重建。
-pub fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let settings = MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
-    let website = MenuItemBuilder::with_id("website", crate::tr(lang, "tray.website")).build(app)?;
+pub fn build_tray_menu(
+    app: &AppHandle,
+    lang: &str,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let settings =
+        MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
+    let website =
+        MenuItemBuilder::with_id("website", crate::tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", crate::tr(lang, "tray.quit")).build(app)?;
-    MenuBuilder::new(app).items(&[&settings, &website, &quit]).build()
+    MenuBuilder::new(app)
+        .items(&[&settings, &website, &quit])
+        .build()
 }
 
 /// 创建 macOS 状态栏托盘：左键切换面板，右键弹「设置 / 退出」菜单。
@@ -284,10 +302,18 @@ mod tests {
         // 运行组在前、待办组在后；组间 PAIR_GAP，图标→数字 SYM_NUM_GAP。
         assert_eq!(
             status_seq(3, 2),
-            vec![(GLYPH_RUN, 0), (3, SYM_NUM_GAP), (GLYPH_WAIT, PAIR_GAP), (2, SYM_NUM_GAP)]
+            vec![
+                (GLYPH_RUN, 0),
+                (3, SYM_NUM_GAP),
+                (GLYPH_WAIT, PAIR_GAP),
+                (2, SYM_NUM_GAP)
+            ]
         );
         // 多位数：首位 SYM_NUM_GAP，后续 DIGIT_GAP。
-        assert_eq!(status_seq(12, 0), vec![(GLYPH_RUN, 0), (1, SYM_NUM_GAP), (2, DIGIT_GAP)]);
+        assert_eq!(
+            status_seq(12, 0),
+            vec![(GLYPH_RUN, 0), (1, SYM_NUM_GAP), (2, DIGIT_GAP)]
+        );
         // 仅待办：待办组打头，前置间隔为 0。
         assert_eq!(status_seq(0, 5), vec![(GLYPH_WAIT, 0), (5, SYM_NUM_GAP)]);
     }
@@ -302,12 +328,22 @@ mod tests {
         // 超过 99：显示 99 + 合成「+」。
         assert_eq!(
             status_seq(150, 0),
-            vec![(GLYPH_RUN, 0), (9, SYM_NUM_GAP), (9, DIGIT_GAP), (GLYPH_PLUS, DIGIT_GAP)]
+            vec![
+                (GLYPH_RUN, 0),
+                (9, SYM_NUM_GAP),
+                (9, DIGIT_GAP),
+                (GLYPH_PLUS, DIGIT_GAP)
+            ]
         );
         // 待交互超 99 同样封顶。
         assert_eq!(
             status_seq(0, 100),
-            vec![(GLYPH_WAIT, 0), (9, SYM_NUM_GAP), (9, DIGIT_GAP), (GLYPH_PLUS, DIGIT_GAP)]
+            vec![
+                (GLYPH_WAIT, 0),
+                (9, SYM_NUM_GAP),
+                (9, DIGIT_GAP),
+                (GLYPH_PLUS, DIGIT_GAP)
+            ]
         );
     }
 
@@ -318,7 +354,10 @@ mod tests {
         assert_eq!(h, GLYPH_H as u32);
         assert_eq!(rgba.len(), (w as usize) * GLYPH_H * 4);
         // 图集长度自洽：等于各字形 H*W 之和。
-        assert_eq!(GLYPH_ATLAS.len(), GLYPH_W.iter().map(|w| GLYPH_H * w).sum::<usize>());
+        assert_eq!(
+            GLYPH_ATLAS.len(),
+            GLYPH_W.iter().map(|w| GLYPH_H * w).sum::<usize>()
+        );
     }
 
     // 扫描：是否存在一个「不透明且 RGB≈target」的像素（容差 8）。

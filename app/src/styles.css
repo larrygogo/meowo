@@ -1249,6 +1249,11 @@ html, body {
 .dd-btn:hover { background: rgba(255, 255, 255, 0.13); }
 .dd-btn.open { border-color: var(--cc-accent-border); }
 .dd-chev { flex: none; opacity: 0.65; transition: transform 0.16s; }
+/* 值区（可选徽标 + 文字）：文字过长时省略，徽标不被挤掉。 */
+.dd-val { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-ico { flex: none; display: flex; align-items: center; justify-content: center; width: 17px; height: 17px; }
+.dd-ico svg, .dd-ico img { width: 16px; height: 16px; }
 .dd-btn.open .dd-chev { transform: rotate(180deg); }
 .dd-menu {
   min-width: 96px;
@@ -1289,6 +1294,9 @@ html, body {
 }
 .dd-item:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
 .dd-item.sel { color: var(--cc-accent-text); }
+/* 次要项（如未安装的 agent）：徽标与文字整体变淡，但仍可点（点进去就是安装入口）。 */
+.dd-item.muted { opacity: 0.5; }
+.dd-item.muted:hover { opacity: 0.85; }
 
 .sec-hint { font-size: 12px; color: var(--cc-text-faint); margin-top: 14px; padding-left: 2px; opacity: 0.75; }
 /* 保存被后端拒绝的原因（如代理地址非法）：必须比普通 hint 显眼，否则用户只会看到输入框弹回去而不知为何。 */
@@ -1659,6 +1667,14 @@ html, body {
   width: 100%;
   height: 100%;
 }
+/* 裸 logomark（无方块底座的 gemini 四角星、claude sunburst）：满幅铺开会顶到外框、比自带方块的
+   邻座重，留一圈内边距。只在这个 44px 卡片外框里收，新建会话面板按原始尺寸渲染、不受此影响。 */
+.provider-card-icon[data-agent="gemini"] svg,
+.provider-card-icon[data-agent="gemini"] img,
+.provider-card-icon[data-agent="claude"] svg {
+  width: 82%;
+  height: 82%;
+}
 .provider-card-title {
   flex: 1;
   min-width: 0;
@@ -1788,6 +1804,21 @@ html, body {
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+/* 能力「不支持」的低调告知：一个带信息图标的小胶囊，读作「说明」而非漏排版的浮空灰字。
+   它是背景信息、不是错误，故用中性 surface 底而非警示色。 */
+/* 与「配额」区块同款：上边框 + 同样的 14px/16px 内边距，让它与上面的区段同栏、左对齐，
+   而不是浮在卡片底部自成一格（胶囊那版的边框内边距还会把文字又缩进一截，更显错位）。
+   图标定位在 16px 内边距的起点上，与「配额」标题左缘对齐。 */
+.provider-cap-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--cc-border);
+  font-size: 11px;
+  color: var(--cc-text-faint);
+}
+.provider-cap-note-ico { flex: none; opacity: 0.7; }
 
 /* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
 .usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }
@@ -1891,12 +1922,14 @@ html, body {
 :root[data-sticker-style="flat"][data-theme="light"] .stk-uval {
   text-shadow: none;
 }
-/* 吸边缩略条：去外投影/内高光；LED 圆点去顶部高光 */
+/* 吸边缩略条：去外投影/内高光。
+   LED 圆点这里**什么都不做**：它的基础样式本就只有一个纯色背景（.cstrip-running/.cstrip-waiting），
+   没有高光可去。此处曾写着「去顶部高光」，实际却给圆点**加**了一圈 0.5px 暗环——注释与代码相反，
+   扁平风反倒比立体风多了个描边。扁平的定义就是纯色面，圆点保持素圆即可。 */
 :root[data-sticker-style="flat"] .cstrip {
   box-shadow: none;
   border: 1px solid var(--cc-border);
 }
-:root[data-sticker-style="flat"] .cstrip-dot { box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25); }
 
 /* ===== 全局自定义提示框（替代原生 title）：主题表面色软框，圆角 + 细描边 + 柔阴影 + 淡入。
    由 Tooltip.tsx 控制位置，position:fixed 穿透 overflow。底色取不透明表面（同下拉菜单 .dd-menu），
@@ -1933,13 +1966,12 @@ html, body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #262624;
+  /* 与主面板底色一致（新建会话从主面板弹出）。取 --cc-bg-rgb 的**不透明**版：不能直接用 --cc-bg，
+     它带 --cc-opacity（给贴纸的半透明），独立窗口用了会透出桌面。 */
+  background: rgb(var(--cc-bg-rgb));
   color: var(--cc-text);
   overflow: hidden;
   font-size: 13px;
-}
-:root[data-theme="light"] .ns-window {
-  background: #faf9f5;
 }
 /* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings/.updater 的处理）。
    Windows 端该窗口未设 transparent，若圆角仍生效会在四角露出 html/body 透明底的伪影，故仅 macOS 生效。 */
@@ -2222,19 +2254,165 @@ select.ns-input {
   word-break: break-all;
 }
 /* 「装了但不在 PATH」提示条：说明文字占满，按钮贴右且不被挤压。 */
+/* PATH 提示条：低调。它对多数人是背景噪音（装完就在 PATH 上），只有少数人需要点它——
+   横一条长提示会喧宾夺主。小字 + 淡色 + 文字式按钮，完整路径走 title。 */
 .agent-path-gap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  font-size: calc(10.5px * var(--cc-ui));
+  color: var(--cc-text-faint);
 }
 .agent-path-gap-text {
-  flex: 1;
   min-width: 0;
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.agent-path-gap .provider-card-action {
+/* 文字链接式：不抢眼，但点得到。 */
+.agent-path-gap-btn {
   flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cc-text-dim);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
+.agent-path-gap-btn:hover:not(:disabled) { color: var(--cc-text); }
+.agent-path-gap-btn:disabled { cursor: default; opacity: 0.6; }
 .agent-path-msg {
   opacity: 0.8;
 }
+
+/* ═══ 多账号（profile）：agent 卡片里的账号列表 ═══
+   默认账号（id=null）永远在第一行，不可删除；活跃账号高亮。 */
+/* 顶部模型切换：模型一多，全部竖排要滚半天——下拉选一个只看一张卡。
+   做成紧凑的图标胶囊（agent 徽标 + 名字 + 箭头），读作「当前是哪个、点击切换」。
+   刻意不铺满整行：满宽按钮配一个内容宽的菜单会右错位（usePopup 菜单相对按钮右边对齐），
+   紧凑胶囊则按钮与菜单宽度自然接近。给个 min-width 让短名字也不至于缩成一小坨、切换时少抖。 */
+.account-agent-switch {
+  display: flex;
+  margin-bottom: 12px;
+}
+.account-agent-switch .dd-btn {
+  min-width: 190px;
+  padding: 8px 12px;
+  /* 无边框：留 1px 透明边免得尺寸跳；open 态也不描边（否则展开时冒出一圈强调色）。 */
+  border-color: transparent;
+}
+.account-agent-switch .dd-btn.open { border-color: transparent; }
+.account-agent-switch .dd-menu { min-width: 190px; }
+
+.profile-list { display: flex; flex-direction: column; gap: 6px; }
+.profile-list-head {
+  font-size: calc(11px * var(--cc-ui));
+  color: var(--cc-text-dim);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+}
+/* 使用中的账号：淡强调色填充 + 柔和强调边，与别处的选中态（.stk-focus-btn）一致。
+   早先用满饱和的 --cc-accent 描整圈边 + 左侧同色内阴影条，是一圈很扎眼的亮绿框——「使用中」
+   徽章已经点明了活跃，行本身只需轻轻托一下、不该抢戏。 */
+.profile-row-active {
+  border-color: var(--cc-accent-border);
+  background: var(--cc-accent-soft);
+}
+/* 整行即「切到此账号」的点击区；已是活跃账号时禁用（disabled 时不给指针手势）。 */
+.profile-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.profile-row-main:disabled { cursor: default; }
+.profile-name {
+  font-size: calc(12px * var(--cc-ui));
+  color: var(--cc-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 邮箱可能很长（也可能是 opencode 的 "Anthropic, OpenAI" 一串 provider）：单行省略，title 兜全值。 */
+.profile-desc {
+  font-size: calc(10.5px * var(--cc-ui));
+  color: var(--cc-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 账号名 + 套餐徽章同一行；名字长了先省略它，徽章不被挤掉。 */
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.profile-badge {
+  flex: none;
+  font-size: calc(10px * var(--cc-ui));
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--cc-surface-hover);
+  color: var(--cc-text-dim);
+  white-space: nowrap;
+}
+/* 套餐徽章：与卡片标题那排的 provider-badge-plan 同色，只是尺寸随账号行。
+   描一道边，好让它在活跃行的淡绿底上也分得清（否则徽章底色与行底色同为 accent-soft 会糊在一起）。 */
+.profile-badge-plan {
+  color: var(--cc-accent-text);
+  background: var(--cc-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--cc-accent-border);
+}
+.profile-add-row { display: flex; align-items: center; gap: 6px; }
+.profile-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: calc(12px * var(--cc-ui));
+}
+.profile-add-btn {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--cc-border);
+  background: none;
+  color: var(--cc-text-dim);
+  font-size: calc(11.5px * var(--cc-ui));
+  cursor: pointer;
+}
+.profile-add-btn:hover:not(:disabled) {
+  color: var(--cc-text);
+  border-color: var(--cc-text-faint);
+}
+.profile-hint {
+  font-size: calc(10.5px * var(--cc-ui));
+  color: var(--cc-text-faint);
+  line-height: 1.5;
+}
+
+/* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */
+.dd-item-danger { color: var(--cc-danger, #e5484d); }
+.dd-item-danger:hover { background: color-mix(in srgb, var(--cc-danger, #e5484d) 12%, transparent); }

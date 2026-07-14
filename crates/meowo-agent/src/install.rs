@@ -11,14 +11,45 @@
 //! 现在改为：宿主先把脚本取回来，[`looks_like_challenge`] 判定后才落盘执行。shell 只跑本地文件，
 //! 不再联网。
 
-/// 官方安装引导脚本。
+/// 一键安装的方式。
+///
+/// 两条路子：**抓官方引导脚本**（claude/codex/kimi 的 `curl|sh` / `irm|iex` 落点），或**直接跑一条
+/// 本地命令**（gemini/opencode 走 `npm i -g …`，官方没有 `curl|sh` 脚本可抓）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InstallScript {
-    /// 脚本地址。取回后须经 [`looks_like_challenge`] 判定。
-    pub url: &'static str,
-    /// unix 下用哪个解释器跑它（`"bash"` / `"sh"`）。Windows 恒用 PowerShell，此字段忽略。
-    /// 三家不同：claude/kimi 的脚本需要 bash（用了 `[[ ]]`），codex 的官方命令写的是 `sh`。
-    pub unix_shell: &'static str,
+pub enum InstallScript {
+    /// 抓官方引导脚本再执行。脚本地址取回后**须经** [`is_runnable_script`]（含 [`looks_like_challenge`]）
+    /// 判定——`claude.ai`/`chatgpt.com` 在 CF 后面，会间歇把挑战页当 200 返回，不能直接喂给解释器。
+    Fetch {
+        url: &'static str,
+        /// unix 下用哪个解释器（`"bash"` / `"sh"`）。Windows 恒用 PowerShell，此字段忽略。
+        /// claude/kimi 的脚本需要 bash（用了 `[[ ]]`），codex 官方命令写的是 `sh`。
+        unix_shell: &'static str,
+    },
+    /// 直接跑一条本地命令（`npm i -g …` 等，官方没有引导脚本）。命令体原样写进临时 `.ps1`/`.sh`
+    /// 后执行——**不联网、无需 challenge 判定**（不经 CF）。两平台命令若不同，由 `install_script(windows)`
+    /// 各返回一份；npm 命令通常两平台一致。
+    Command {
+        body: &'static str,
+        /// unix 下的解释器；npm 命令用 `"bash"`/`"sh"` 皆可。Windows 恒用 PowerShell。
+        unix_shell: &'static str,
+    },
+}
+
+impl InstallScript {
+    /// unix 下的解释器（Windows 恒用 PowerShell，忽略此值）。
+    pub fn unix_shell(&self) -> &'static str {
+        match self {
+            Self::Fetch { unix_shell, .. } | Self::Command { unix_shell, .. } => unix_shell,
+        }
+    }
+
+    /// 日志 / 进度里展示的「来源」：Fetch 给脚本地址，Command 给命令本身。
+    pub fn source(&self) -> &'static str {
+        match self {
+            Self::Fetch { url, .. } => url,
+            Self::Command { body, .. } => body,
+        }
+    }
 }
 
 /// 直下安装的计划：下载什么、怎么校验、装完执行什么。
@@ -145,7 +176,8 @@ mod tests {
     /// 旧代码把它交给了 PowerShell，于是报「Installation failed: Just a moment...」加一屏 CSS。
     #[test]
     fn the_actual_log_that_started_this_is_rejected() {
-        let real = "Just a moment...*{box-sizing:border-box;margin:0;padding:0}html{line-height:1.15;\
+        let real =
+            "Just a moment...*{box-sizing:border-box;margin:0;padding:0}html{line-height:1.15;\
             -webkit-text-size-adjust:100%;color:#313131}body{display:flex}\
             Enable JavaScript and cookies to continue(function(){window._cf_chl_opt = {cFPWv: 'g',\
             cType: 'managed',cZone: 'claude.ai',cRay: 'a18fc0811ad0b585'};})();";
@@ -153,21 +185,38 @@ mod tests {
         assert!(!is_runnable_script(real), "绝不能把它交给解释器");
     }
 
-    /// 三家的安装地址：必须是 https，且扩展名与平台匹配。写错会让一键安装装错东西
-    /// （kimi 少写 `/kimi-code/` 就会装成旧 Python 版，落到检测不到的路径）。
+    /// 每家的安装声明都得站得住脚：
+    /// - `Fetch` 的地址必须是 https（写错会装错东西——kimi 少写 `/kimi-code/` 就装成旧 Python 版）。
+    /// - `Command` 的命令体非空。
+    /// - 解释器只认 bash/sh。
+    ///
+    /// 不再强求地址以 `.ps1`/`.sh` 结尾：opencode 的官方安装端点 `https://opencode.ai/install` 就没有
+    /// 扩展名（服务端按 UA 决定回什么）。
     #[test]
-    fn every_plugin_declares_sane_install_urls() {
+    fn every_plugin_declares_sane_install_scripts() {
+        use crate::install::InstallScript;
         for p in crate::all() {
             for windows in [true, false] {
-                let Some(s) = p.install_script(windows) else { continue };
-                assert!(s.url.starts_with("https://"), "{} 的安装地址必须是 https：{}", p.id(), s.url);
-                let want_ext = if windows { ".ps1" } else { ".sh" };
-                assert!(s.url.ends_with(want_ext), "{} 的 {windows} 版地址应以 {want_ext} 结尾：{}", p.id(), s.url);
+                let Some(s) = p.install_script(windows) else {
+                    continue;
+                };
+                match s {
+                    InstallScript::Fetch { url, .. } => {
+                        assert!(
+                            url.starts_with("https://"),
+                            "{} 的安装地址必须是 https：{url}",
+                            p.id()
+                        );
+                    }
+                    InstallScript::Command { body, .. } => {
+                        assert!(!body.trim().is_empty(), "{} 的安装命令为空", p.id());
+                    }
+                }
                 assert!(
-                    matches!(s.unix_shell, "bash" | "sh"),
+                    matches!(s.unix_shell(), "bash" | "sh"),
                     "{} 声明了未知解释器：{}",
                     p.id(),
-                    s.unix_shell
+                    s.unix_shell()
                 );
             }
         }
@@ -220,14 +269,16 @@ mod tests {
                 continue;
             }
             for windows in [true, false] {
-                let Some(s) = p.install_script(windows) else { continue };
+                let Some(s) = p.install_script(windows) else {
+                    continue;
+                };
                 for host in CF_FRONTED {
                     assert!(
-                        !s.url.contains(host),
+                        !s.source().contains(host),
                         "{} 没有直下能力，其唯一的安装入口却落在 Cloudflare 前置的 {host} 上：{}\n\
                          （该域的人机校验页以 HTTP 200 返回，会被当成脚本执行）",
                         p.id(),
-                        s.url
+                        s.source()
                     );
                 }
             }
@@ -239,8 +290,15 @@ mod tests {
     #[test]
     fn claude_may_keep_a_cloudflare_fallback_only_because_it_has_direct_install() {
         let claude = crate::by_id("claude").unwrap();
-        assert!(claude.direct_install().is_some(), "claude 失去直下后，其 claude.ai 回退就不再可接受");
-        assert!(claude.install_script(true).unwrap().url.contains("claude.ai"));
+        assert!(
+            claude.direct_install().is_some(),
+            "claude 失去直下后，其 claude.ai 回退就不再可接受"
+        );
+        assert!(claude
+            .install_script(true)
+            .unwrap()
+            .source()
+            .contains("claude.ai"));
     }
 
     /// codex 必须直取 GitHub Releases 的稳定跳转。`chatgpt.com/codex/install.ps1` 只是它的 302，
@@ -251,9 +309,10 @@ mod tests {
         for windows in [true, false] {
             let s = p.install_script(windows).expect("codex 有一键安装");
             assert!(
-                s.url.starts_with("https://github.com/openai/codex/releases/latest/download/"),
+                s.source()
+                    .starts_with("https://github.com/openai/codex/releases/latest/download/"),
                 "codex 应直取 GitHub Releases：{}",
-                s.url
+                s.source()
             );
         }
     }
@@ -265,7 +324,11 @@ mod tests {
         let p = crate::by_id("kimi").unwrap();
         for windows in [true, false] {
             let s = p.install_script(windows).expect("kimi 有一键安装");
-            assert!(s.url.contains("/kimi-code/"), "kimi 地址漏了 /kimi-code/：{}", s.url);
+            assert!(
+                s.source().contains("/kimi-code/"),
+                "kimi 地址漏了 /kimi-code/：{}",
+                s.source()
+            );
         }
     }
 

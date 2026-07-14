@@ -44,22 +44,33 @@ impl LaunchSpec {
 
     /// 逐候选找真实存在的可执行，返回启动 argv；全不中返回 None（调用方回退 `[stem]`）。
     pub fn probe(&self, data_dir: Option<&Path>, home: Option<&Path>) -> Option<Vec<String>> {
-        self.candidates.iter().find_map(|c| self.probe_one(c, data_dir, home))
+        self.candidates
+            .iter()
+            .find_map(|c| self.probe_one(c, data_dir, home))
     }
 
-    fn probe_one(&self, cand: &LaunchCandidate, data_dir: Option<&Path>, home: Option<&Path>) -> Option<Vec<String>> {
+    fn probe_one(
+        &self,
+        cand: &LaunchCandidate,
+        data_dir: Option<&Path>,
+        home: Option<&Path>,
+    ) -> Option<Vec<String>> {
         match cand {
             LaunchCandidate::Exe { root, sub } => {
-                let p = crate::join_rel(&resolve_root(*root, data_dir, home)?, sub).join(self.file_name());
+                let p = crate::join_rel(&resolve_root(*root, data_dir, home)?, sub)
+                    .join(self.file_name());
                 p.is_file().then(|| vec![path_string(&p)])
             }
             LaunchCandidate::NodeScript { root, rel } => {
                 let p = crate::join_rel(&resolve_root(*root, data_dir, home)?, rel);
-                p.is_file().then(|| vec!["node".to_string(), path_string(&p)])
+                p.is_file()
+                    .then(|| vec!["node".to_string(), path_string(&p)])
             }
             // 纯查文件存在，不 spawn。命中也只回裸名——PATH 上的 agent 常是 shim，
             // 把 shim 的绝对路径固化下来反而可能绕过它做的环境准备。
-            LaunchCandidate::OnPath => exe_on_path(&self.file_name()).then(|| vec![self.stem.to_string()]),
+            LaunchCandidate::OnPath => {
+                exe_on_path(&self.file_name()).then(|| vec![self.stem.to_string()])
+            }
         }
     }
 }
@@ -102,10 +113,19 @@ mod tests {
         std::fs::create_dir_all(&data).unwrap();
 
         static CANDS: [LaunchCandidate; 2] = [
-            LaunchCandidate::Exe { root: Root::DataDir, sub: "bin" },
-            LaunchCandidate::Exe { root: Root::Home, sub: ".local/bin" },
+            LaunchCandidate::Exe {
+                root: Root::DataDir,
+                sub: "bin",
+            },
+            LaunchCandidate::Exe {
+                root: Root::Home,
+                sub: ".local/bin",
+            },
         ];
-        let spec = LaunchSpec { stem: "demo", candidates: &CANDS };
+        let spec = LaunchSpec {
+            stem: "demo",
+            candidates: &CANDS,
+        };
         let name = spec.file_name();
 
         // 都不存在 → None（调用方回退裸名）。
@@ -115,13 +135,19 @@ mod tests {
         let local = home.join(".local").join("bin");
         std::fs::create_dir_all(&local).unwrap();
         std::fs::write(local.join(&name), b"").unwrap();
-        assert_eq!(spec.probe(Some(&data), Some(&home)), Some(vec![path_string(&local.join(&name))]));
+        assert_eq!(
+            spec.probe(Some(&data), Some(&home)),
+            Some(vec![path_string(&local.join(&name))])
+        );
 
         // 首位候选出现 → 抢先。
         let bin = data.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join(&name), b"").unwrap();
-        assert_eq!(spec.probe(Some(&data), Some(&home)), Some(vec![path_string(&bin.join(&name))]));
+        assert_eq!(
+            spec.probe(Some(&data), Some(&home)),
+            Some(vec![path_string(&bin.join(&name))])
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -132,7 +158,12 @@ mod tests {
         let home = tmp("npm");
         let key = "MEOWO_TEST_NPM_ROOT";
         let root = home.join("npm");
-        let js = root.join("node_modules").join("@openai").join("codex").join("bin").join("codex.js");
+        let js = root
+            .join("node_modules")
+            .join("@openai")
+            .join("codex")
+            .join("bin")
+            .join("codex.js");
         std::fs::create_dir_all(js.parent().unwrap()).unwrap();
         std::fs::write(&js, b"").unwrap();
         std::env::set_var(key, &root);
@@ -141,8 +172,14 @@ mod tests {
             root: Root::Env("MEOWO_TEST_NPM_ROOT"),
             rel: "node_modules/@openai/codex/bin/codex.js",
         }];
-        let spec = LaunchSpec { stem: "codex", candidates: &CANDS };
-        assert_eq!(spec.probe(None, Some(&home)), Some(vec!["node".to_string(), path_string(&js)]));
+        let spec = LaunchSpec {
+            stem: "codex",
+            candidates: &CANDS,
+        };
+        assert_eq!(
+            spec.probe(None, Some(&home)),
+            Some(vec!["node".to_string(), path_string(&js)])
+        );
 
         // env 缺失 → 该候选跳过（而非 panic）。
         std::env::remove_var(key);

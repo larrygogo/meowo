@@ -1,13 +1,19 @@
 // 设置窗口「账号」页：每个 provider 的安装 / 登录 / 用量三态卡片。
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   installAgent,
   listAgents,
+  listProfiles,
+  createProfile,
+  setActiveProfile,
+  renameProfile,
+  deleteProfile,
   type AgentId,
   type AgentDescriptor,
+  type ProfileView,
   type Settings,
   type InstallDone,
 } from "../../api";
@@ -30,7 +36,7 @@ import {
 import { agentAssets } from "../../providers";
 import { useT, repairFailMessage } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
-import { Switch } from "./widgets";
+import { Switch, ActionMenu, Dropdown } from "./widgets";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
 
@@ -131,12 +137,28 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
   /** null = 安装状态检测中（listAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
   installed: boolean | null;
+  /**
+   * 该 agent 有没有账号概念。false → 不显示登录态、不给登录入口。
+   *
+   * 不能靠 `payload == null` 推断：那既可能是「没有账号能力」，也可能是「账号还没加载出来」
+   * 或「真的没登录」。三者混在一起的后果就是给没有登录入口的 agent 亮出登录按钮——它的
+   * `login_argv()` 是 None，点下去只会得到一句「拉起登录失败」。
+   */
+  supportsAccount: boolean;
+  /**
+   * 该 agent 能否有多个账号。false（gemini：数据目录不可被环境变量覆盖）→ 不显示账号列表。
+   *
+   * 不能靠「列表只有一条」推断——那与「只建了默认账号」长得一模一样。
+   */
+  supportsProfiles: boolean;
+  /** meowo 能否显示该 agent 的上下文占用。false（gemini/opencode）→ 卡片显式标注「不支持」。 */
+  supportsContext: boolean;
   relay: AgentDescriptor["relay"];
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
@@ -350,13 +372,14 @@ function ProviderCard({ provider, name, installed, relay, payload, usage, err, o
   // 设置页切换接入方式后应立即反映，不等待账号接口下一次刷新；老后端 payload 仍作为加载前回退。
   const relayEnabled = settings?.relay?.per_agent[provider]?.enabled ?? payload?.relay_enabled ?? false;
   const isLoggedIn = isInstalled && (acc != null || relayEnabled);
+  // 无账号概念的 agent：已装即到此为止——它没有「登录」这回事，所以不报「未登录」、也不给登录按钮。
   const statusBadge = relayEnabled
     ? t.account.relayBadge
     : !isInstalled
     ? installed === false
       ? t.account.notInstalled
       : null
-    : acc
+    : acc || !supportsAccount
     ? null
     : t.account.notLoggedIn;
   // 只显示邮箱：显示名 + 邮箱 + 组织三段拼起来又长又重复（个人账号的组织名就是
@@ -368,14 +391,20 @@ function ProviderCard({ provider, name, installed, relay, payload, usage, err, o
     ? acc?.email ?? acc?.display_name ?? acc?.login_label ?? ""
     : installed === false
     ? t.account.installHint
-    : isInstalled
+    : isInstalled && supportsAccount
     ? t.account.notLoggedInHint
     : "";
 
   return (
     <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
       <div className="provider-card-head">
-        <div className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}>
+        <div
+          className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}
+          data-agent={provider}
+          // claude 是 currentColor 绘制的裸 logomark，无方框时得由容器给品牌橙（--cc-claude），
+          // 否则会继承文字色变灰。有方框的（若日后有）由 .provider-card-icon-tile 自己给白。
+          style={!assets.needsTile && assets.tint ? { color: `var(${assets.tint})` } : undefined}
+        >
           <assets.Icon />
         </div>
         <div className="provider-card-title">
@@ -408,7 +437,10 @@ function ProviderCard({ provider, name, installed, relay, payload, usage, err, o
               {installState === "error" ? t.account.installRetry : t.account.install}
             </button>
           ))}
-        {isInstalled && !isLoggedIn && !relayEnabled && (
+        {/* 顶部这两个按钮作用于**当前活跃账号**（卡片头部显示的正是它的信息）。下面账号列表里的
+            同名按钮则针对具体某一行——两者并存不是冗余：一个是「当前账号」的快捷方式，
+            一个是「哪一个账号」的精确操作。 */}
+        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && (
           <button
             type="button"
             className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
@@ -445,9 +477,11 @@ function ProviderCard({ provider, name, installed, relay, payload, usage, err, o
         )}
       </div>
 
-      {relay && (
+      {/* 未安装时不给「接入方式」——还没有可运行的 agent，配官方账号还是中转都无从谈起，
+          先把它装上。装好后这一段才出现。 */}
+      {isInstalled && relay && (
         <RelayAccess
-          agent={{ id: provider, display_name: name, installed: isInstalled, relay }}
+          agent={{ id: provider, display_name: name, relay }}
           settings={settings}
           patch={patchSettings}
         />
@@ -465,13 +499,19 @@ function ProviderCard({ provider, name, installed, relay, payload, usage, err, o
         </div>
       )}
 
-      {/* 装好了却不在 PATH 上：终端里敲不出来。给出目录 + 一键写入用户级 PATH。 */}
+      {/* 装好了却不在 PATH 上：终端里敲不出来。
+          **刻意低调**：对多数人这是背景噪音（装完就在 PATH 上），横一条长提示喧宾夺主。
+          正文只留一句「为什么该点」，完整路径与后果进 tooltip；按钮做成文字链接的样子。 */}
       {isInstalled && pathGapDir && (
-        <div className="provider-card-body agent-path-gap" data-testid={"agent-path-gap-" + provider}>
-          <span className="agent-path-gap-text">{t.account.pathGap(pathGapDir)}</span>
+        <div
+          className="provider-card-body agent-path-gap"
+          data-testid={"agent-path-gap-" + provider}
+          title={t.account.pathGapDetail(pathGapDir)}
+        >
+          <span className="agent-path-gap-text">{t.account.pathGap}</span>
           <button
             type="button"
-            className="provider-card-action"
+            className="agent-path-gap-btn"
             data-testid={"agent-add-path-" + provider}
             onClick={addPath}
             disabled={addingPath}
@@ -536,13 +576,334 @@ function ProviderCard({ provider, name, installed, relay, payload, usage, err, o
           </div>
         </div>
       )}
+
+      {/* 能力如实告知：上下文占用不支持时明写「不支持」，不留空白让用户以为是 bug。
+          只在已装时显示——没装谈不上能力。 */}
+      {isInstalled && !supportsContext && (
+        <div className="provider-cap-note" data-testid={"agent-context-unsupported-" + provider}>
+          <svg className="provider-cap-note-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9.5" />
+            <path d="M12 11v5" />
+            <path d="M12 7.5h.01" />
+          </svg>
+          <span>{t.account.contextUnsupported}</span>
+        </div>
+      )}
+
+
+      {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
+          列一个孤零零的「默认账号」除了占地方没有任何信息。 */}
+      {isInstalled && supportsProfiles && (
+        <ProfileList provider={provider} onChanged={onLoggedIn} />
+      )}
     </div>
   );
 }
 
+/**
+ * 某个 agent 的账号列表：默认账号 + 自定义账号，可切换 / 登录 / 删除 / 添加。
+ *
+ * 「默认账号」是隐式的（`id === null`）——它就是 agent 自己的目录（`~/.claude`），不可删除。
+ * 没建过任何自定义账号的用户，这里只会看到它一条 + 一个「添加账号」按钮。
+ */
+/** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
+const DEFAULT_KEY = "__default__";
+
+function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: () => void }) {
+  const t = useT();
+  const [rows, setRows] = useState<ProfileView[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  // 正在改名的**行 key**（null = 没在改名）。默认账号用 DEFAULT_KEY——它没有 profile id，
+  // 但照样可以改名（名字只是个显示串，不碰任何文件）。
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    listProfiles(provider)
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, [provider]);
+
+  useEffect(reload, [reload]);
+
+  // 登录完成 → 该账号的登录态变了，重查。
+  useEffect(() => {
+    const un = listen("login-done", () => reload());
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [reload]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+      reload();
+      onChanged();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = () => {
+    const n = name.trim();
+    if (!n) return;
+    run(async () => {
+      await createProfile(provider, n);
+      setName("");
+      setAdding(false);
+    });
+  };
+
+  /**
+   * 删除账号（连同它的目录）。**活跃账号也能删** —— 后端会把活跃标记落回默认账号。
+   *
+   * 确认框走 `@tauri-apps/plugin-dialog` 的 `confirm`，**不是 `window.confirm`**：后者在 Tauri 的
+   * webview 里会被直接吞掉，返回值恒为 false ——按钮看着能点，点了却什么都不发生。
+   */
+  const remove = async (p: ProfileView) => {
+    if (!p.id) return; // 默认账号是 agent 自己的目录，删不得
+    const label = p.name || p.id;
+    const yes = await confirm(t.account.deleteProfileConfirm(label), {
+      title: t.account.deleteProfile,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
+    run(() => deleteProfile(provider, p.id!));
+  };
+
+  /**
+   * 退出登录。**与删除账号不是一回事**：登出只清凭据，目录、配置、会话历史都留着，之后还能登回来；
+   * 删除则连目录一起抹掉，且默认账号根本删不掉（那是 agent 自己的目录）——所以登出是它唯一的退出手段。
+   *
+   * 清凭据不可逆，故同样要确认。
+   */
+  const logout = async (p: ProfileView) => {
+    const label = p.name || t.account.defaultProfile;
+    const yes = await confirm(t.account.logoutConfirm(label), {
+      title: t.account.logout,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
+    run(() => logoutAgent(provider, p.id));
+  };
+
+  /**
+   * 改名。只动展示名，**不动 id**（它是目录名，改了就等于换了个账号）。
+   *
+   * 默认账号也能改：它的 id 是 null，名字单独存在 settings 的 `default_profile_names` 里。
+   */
+  const commitRename = (p: ProfileView) => {
+    const next = editName.trim();
+    setEditing(null);
+    if (!next || next === p.name) return;
+    run(() => renameProfile(provider, p.id, next));
+  };
+
+  if (!rows) return null;
+
+  return (
+    <div className="provider-card-body profile-list" data-testid={"profiles-" + provider}>
+      <div className="profile-list-head">{t.account.profiles}</div>
+
+      {rows.map((p) => {
+        const key = p.id ?? DEFAULT_KEY;
+        // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
+        // opencode 的 "Anthropic, OpenAI" 一串 provider、kimi 的 userId 短码）。
+        //
+        // 描述行说的是**这是哪个账号**，套餐不在此列——它是徽章（见下），与卡片标题那排一致。
+        const desc =
+          p.account?.email ??
+          p.account?.display_name ??
+          p.account?.login_label ??
+          t.account.notLoggedIn;
+        // 正在改名的那一行：整行让位给输入框（其余按钮此时无从谈起）。
+        if (editing === key) {
+          return (
+            <div key={key} className="profile-row profile-add-row">
+              <input
+                className="profile-add-input"
+                autoFocus
+                value={editName}
+                data-testid={"profile-rename-input-" + provider + "-" + key}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename(p);
+                  if (e.key === "Escape") setEditing(null);
+                }}
+                onBlur={() => commitRename(p)}
+              />
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={"profile-rename-cancel-" + provider + "-" + key}
+                // onMouseDown：抢在 input 的 onBlur（会提交）之前把改名取消掉。
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setEditing(null);
+                }}
+              >
+                {t.account.cancelEdit}
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div
+            key={key}
+            className={"profile-row" + (p.active ? " profile-row-active" : "")}
+            data-testid={"profile-" + provider + "-" + key}
+          >
+            <button
+              type="button"
+              className="profile-row-main"
+              title={t.account.switchProfile}
+              disabled={busy || p.active}
+              onClick={() => run(() => setActiveProfile(provider, p.id))}
+            >
+              <span className="profile-name-row">
+                <span className="profile-name">{p.name || t.account.defaultProfile}</span>
+                {/* 套餐/会员等级：徽章，不写进描述行——那一行是「这是哪个账号」。
+                    kimi 的等级由用量接口捎回（本地读不到），故只有活跃账号拿得到。 */}
+                {p.account?.plan && (
+                  <span className="profile-badge profile-badge-plan">{p.account.plan}</span>
+                )}
+              </span>
+              <span className="profile-desc" title={desc}>
+                {desc}
+              </span>
+            </button>
+
+            {p.active && <span className="profile-badge">{t.account.activeProfile}</span>}
+
+            {/* 登录是未登录时的主操作，留作显眼的按钮；其余（退出/改名/删除）收进菜单。
+                **必须带上这一行自己的 id**：漏了它，登录会把凭据写进默认账号（用户以为加了个账号，
+                其实把原来那个覆盖了）。 */}
+            {!p.account && (
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={"profile-login-" + provider + "-" + key}
+                disabled={busy}
+                onClick={() => run(() => loginAgent(provider, undefined, p.id))}
+              >
+                {t.account.login}
+              </button>
+            )}
+
+            <ActionMenu
+              label={t.account.profileActions}
+              testId={"profile-menu-" + provider + "-" + key}
+              items={[
+                // 登出 ≠ 删除：它只清凭据，目录、配置、会话历史都留着，之后还能登回来。
+                // 默认账号更是**只有**这一条退出路径——它是 agent 自己的目录，删不掉。
+                ...(p.account
+                  ? [{ key: "logout", label: t.account.logout, onSelect: () => logout(p) }]
+                  : []),
+                // 默认账号**也能改名**：名字只是个显示串，不碰任何文件。两个账号里有一个永远
+                // 叫「默认账号」，用起来很别扭。
+                {
+                  key: "rename",
+                  label: t.account.renameProfile,
+                  onSelect: () => {
+                    setEditName(p.name);
+                    setEditing(p.id ?? DEFAULT_KEY);
+                  },
+                },
+                // 删除只给自定义账号。默认账号是 agent 自己的目录（`~/.claude`）——删它等于抹掉
+                // 用户的凭据、配置和**全部会话历史**，那不是 meowo 该替他做的决定。
+                ...(p.id
+                  ? [
+                      {
+                        key: "delete",
+                        label: t.account.deleteProfile,
+                        danger: true,
+                        onSelect: () => remove(p),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </div>
+        );
+      })}
+
+      {adding ? (
+        <div className="profile-add-row">
+          <input
+            className="profile-add-input"
+            autoFocus
+            placeholder={t.account.newProfileName}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") add();
+              if (e.key === "Escape") setAdding(false);
+            }}
+          />
+          <button
+            type="button"
+            className="provider-card-action provider-card-action-primary"
+            data-testid={"profile-add-confirm-" + provider}
+            disabled={busy || !name.trim()}
+            onClick={add}
+          >
+            {t.account.addProfile}
+          </button>
+          {/* 反悔的出口。Esc 也行，但一个明摆着的按钮不该让人去猜。 */}
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"profile-add-cancel-" + provider}
+            disabled={busy}
+            onClick={() => {
+              setAdding(false);
+              setName("");
+            }}
+          >
+            {t.account.cancelEdit}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="profile-add-btn"
+          data-testid={"profile-add-" + provider}
+          disabled={busy}
+          onClick={() => setAdding(true)}
+        >
+          + {t.account.addProfile}
+        </button>
+      )}
+
+      <div className="profile-hint">{t.account.addProfileHint}</div>
+      {err && <div className="agent-install-error">{err}</div>}
+    </div>
+  );
+}
+
+/** 顶部模型切换记住上次选择的 localStorage 键。 */
+const SELECTED_AGENT_KEY = "meowo-account-agent";
+
 export function AccountSection() {
   // 读取/写入应用设置（用于贴纸配额开关）
   const [settings, patchSettings] = useSettingsState();
+  // 顶部下拉选中的 agent id。模型一多，全部竖排要滚半天——改为一次只看一张卡。
+  // 记进 localStorage，跨次打开设置页仍停在上次那个。
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(() => {
+    try { return localStorage.getItem(SELECTED_AGENT_KEY); } catch { return null; }
+  });
+  const pickAgent = (id: string) => {
+    setSelectedAgent(id);
+    try { localStorage.setItem(SELECTED_AGENT_KEY, id); } catch { /* 隐私模式禁写：仅失去记忆，不影响切换 */ }
+  };
   const [payloads, setPayloads] = useState<ProviderAccountPayload[]>([]);
   // usageMap: provider key → 最新 ProviderUsage（缓存先填，联网值覆盖）
   const [usageMap, setUsageMap] = useState<Record<string, ProviderUsage>>({});
@@ -612,32 +973,68 @@ export function AccountSection() {
   };
   useEffect(() => { loadAccounts(); }, []);
 
-  // 以后端下发的 agent 名单为骨架遍历（而非只 getAccounts 返回的有账号项），
-  // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
+  // 检测中（agents===null）先不渲染，避免下拉框空跳一帧。
+  const rawList = agents ?? [];
+  if (rawList.length === 0) return null;
+
+  // 下拉里**已安装的排前面**，未安装的沉底——用户多半只装了一两个，没装的不该混在中间碍事。
+  // 用分区而非 sort：分区天然稳定，同组内保持后端注册顺序，不依赖引擎的 sort 稳定性。
+  const list = [
+    ...rawList.filter((a) => a.installed),
+    ...rawList.filter((a) => !a.installed),
+  ];
+
+  // 默认选中项：优先用记住的那个；否则选**首个已安装**的（沉底的没装的不该被默认选中）；
+  // 一个都没装才退到第一个。只依赖 installed（同步可得），不掺登录态（异步）——否则账号加载完
+  // 默认项会跳变，正显示的卡片会莫名切换。
+  const eff =
+    (selectedAgent && list.some((a) => a.id === selectedAgent) ? selectedAgent : null) ??
+    list.find((a) => a.installed)?.id ??
+    list[0].id;
+  const cur = list.find((a) => a.id === eff)!;
+  const payload = payloads.find((x) => x.provider === eff) ?? null;
+
+  // 顶部下拉切换 + 仅渲染选中的那一张卡（每张卡按 installed/payload 自渲染未装/未登录/已登录三态）。
   return (
     <>
-      {(agents ?? []).map(({ id: p, display_name, relay }) => {
-        const payload = payloads.find((x) => x.provider === p) ?? null;
-        return (
-          <ProviderCard
-            key={p}
-            provider={p}
-            name={display_name}
-            installed={installed === null ? null : installed.has(p)}
-            relay={relay}
-            payload={payload}
-            usage={usageMap[p] ?? null}
-            err={errMap[p] ?? null}
-            onRefresh={() => doRefresh(p)}
-            onInstalled={refreshInstalled}
-            onLoggedIn={loadAccounts}
-            refreshing={refreshingSet.has(p)}
-            settings={settings}
-            patchSettings={patchSettings}
-            onToggleQuota={() => toggleQuotaProvider(p)}
-          />
-        );
-      })}
+      <div className="account-agent-switch">
+        <Dropdown
+          value={eff}
+          options={list.map((a) => {
+            // claude 的徽标是 currentColor 绘制的裸 logomark，得由容器给它品牌色（--cc-claude），
+            // 否则在下拉里会继承文字色、变成灰白。自带固定色的（kimi/codex/gemini/opencode）tint 为空。
+            const { Icon, tint } = agentAssets(a.id);
+            const icon = (
+              <span style={{ display: "flex", color: tint ? `var(${tint})` : undefined }}>
+                <Icon />
+              </span>
+            );
+            // 未安装的置灰：仍可选（点进去就是安装入口），但一眼看得出「还没配」。
+            return { value: a.id, label: a.display_name, icon, muted: !a.installed };
+          })}
+          onChange={pickAgent}
+        />
+      </div>
+      <ProviderCard
+        key={cur.id}
+        provider={cur.id}
+        name={cur.display_name}
+        installed={installed === null ? null : installed.has(cur.id)}
+        supportsAccount={cur.supports_account}
+        supportsProfiles={cur.supports_profiles}
+        supportsContext={cur.supports_context ?? true}
+        relay={cur.relay}
+        payload={payload}
+        usage={usageMap[cur.id] ?? null}
+        err={errMap[cur.id] ?? null}
+        onRefresh={() => doRefresh(cur.id)}
+        onInstalled={refreshInstalled}
+        onLoggedIn={loadAccounts}
+        refreshing={refreshingSet.has(cur.id)}
+        settings={settings}
+        patchSettings={patchSettings}
+        onToggleQuota={() => toggleQuotaProvider(cur.id)}
+      />
     </>
   );
 }

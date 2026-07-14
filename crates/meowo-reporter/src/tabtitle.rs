@@ -13,7 +13,10 @@
 /// claude/codex 的 UUID、kimi 的 `session_<uuid>` 都能得到稳定唯一的短码。纯函数，meowo-app 也复用它
 /// 算出同一 token 做匹配。
 pub fn short_sid(session_id: &str) -> String {
-    let hex: String = session_id.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    let hex: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect();
     let n = hex.len();
     hex[n.saturating_sub(8)..].to_string()
 }
@@ -77,7 +80,10 @@ mod tests {
 
     #[test]
     fn short_sid_takes_last_8_hex() {
-        assert_eq!(short_sid("a1b2c3d4-e5f6-7890-abcd-ef1234567890"), "34567890");
+        assert_eq!(
+            short_sid("a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
+            "34567890"
+        );
         assert_eq!(
             short_sid("session_00000000-0000-0000-0000-0000000000ab"),
             "000000ab"

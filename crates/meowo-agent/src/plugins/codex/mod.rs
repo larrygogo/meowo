@@ -52,12 +52,19 @@ static HOOKS: HookSpec = HookSpec {
 
 /// codex 的 `auth.json` 由 CLI 自己维护（含 OIDC id_token），Meowo 只读不刷新 → `refresh: None`。
 /// 用量走 rollout 文件与 auth.json 内的字段，无独立 base_url。
+/// 多账号：`CODEX_HOME` 一个变量搬走整个数据目录（凭据 auth.json、hooks.json、rollout 全在里面）。
+static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
+    envs: &[("CODEX_HOME", "")],
+    data_rel: "",
+    creds_rel: "auth.json",
+};
+
 static AUTH: AuthScheme = AuthScheme {
     credentials: CredentialSource::File("auth.json"),
     refresh: None,
     default_base_url: "",
     // `codex login`（另有 `codex login status`，但 kimi 无 status 子命令，登录态检测统一走读凭据）。
-    login_args: &["login"],
+    login: Some(&["login"]),
     logout_args: &["logout"],
 };
 
@@ -114,34 +121,64 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
 
 struct CodexRelay;
 static RELAY: CodexRelay = CodexRelay;
-static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption {
+    value: "bearer",
+    label: "Bearer Token",
+}];
 static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
     protocol: "",
-    models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4", "gpt-5.3-codex"],
+    models: &[
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.4",
+        "gpt-5.3-codex",
+    ],
 }];
 
 impl crate::RelayCap for CodexRelay {
     fn ui(&self) -> crate::RelayUi {
-        crate::RelayUi { protocols: &[], auth_modes: &RELAY_AUTH, default_protocol: "", default_auth: "bearer", suggestions: &RELAY_SUGGESTIONS }
+        crate::RelayUi {
+            protocols: &[],
+            auth_modes: &RELAY_AUTH,
+            default_protocol: "",
+            default_auth: "bearer",
+            suggestions: &RELAY_SUGGESTIONS,
+        }
     }
     fn launch_env(&self, _config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
         vec![("MEOWO_CODEX_RELAY_KEY".into(), key.into())]
     }
-    fn augment_argv(&self, config: crate::RelayConfig<'_>, has_secret: bool, mut argv: Vec<String>) -> Vec<String> {
-        if !has_secret { return argv; }
+    fn augment_argv(
+        &self,
+        config: crate::RelayConfig<'_>,
+        has_secret: bool,
+        mut argv: Vec<String>,
+    ) -> Vec<String> {
+        if !has_secret {
+            return argv;
+        }
         let quoted = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
         for value in [
             "model_provider=\"meowo-relay\"".to_string(),
             "model_providers.meowo-relay.name=\"Meowo Relay\"".to_string(),
-            format!("model_providers.meowo-relay.base_url={}", quoted(config.base_url.trim().trim_end_matches('/'))),
+            format!(
+                "model_providers.meowo-relay.base_url={}",
+                quoted(config.base_url.trim().trim_end_matches('/'))
+            ),
             "model_providers.meowo-relay.env_key=\"MEOWO_CODEX_RELAY_KEY\"".to_string(),
             "model_providers.meowo-relay.wire_api=\"responses\"".to_string(),
             format!("model={}", quoted(config.model.trim())),
-        ] { argv.extend(["-c".into(), value]); }
+        ] {
+            argv.extend(["-c".into(), value]);
+        }
         argv
     }
     fn model_request(&self, _config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
-        crate::RelayModelRequest { auth: crate::RelayModelAuth::Bearer, anthropic_version: false }
+        crate::RelayModelRequest {
+            auth: crate::RelayModelAuth::Bearer,
+            anthropic_version: false,
+        }
     }
 }
 
@@ -188,7 +225,7 @@ impl AgentPlugin for Codex {
     ///
     /// `latest/download/` 是 GitHub 的稳定跳转，始终指向最新 release 的同名资产。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
-        Some(crate::install::InstallScript {
+        Some(crate::install::InstallScript::Fetch {
             url: if windows {
                 "https://github.com/openai/codex/releases/latest/download/install.ps1"
             } else {
@@ -212,6 +249,9 @@ impl AgentPlugin for Codex {
     }
     fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
         Some(&setup::WIRING)
+    }
+    fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
+        Some(&PROFILE)
     }
 }
 

@@ -77,8 +77,14 @@ fn file_url_to_path(url: &str) -> Option<String> {
 /// pane 的 cwd(file URL)与会话 cwd(Windows 路径)是否同一目录:统一反斜杠、去尾斜杠、
 /// ASCII 大小写不敏感(NTFS 语义,非 ASCII 按原样比较,够用)。
 fn cwd_matches(pane_cwd_url: &str, session_cwd: &str) -> bool {
-    let Some(p) = file_url_to_path(pane_cwd_url) else { return false };
-    let norm = |s: &str| s.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
+    let Some(p) = file_url_to_path(pane_cwd_url) else {
+        return false;
+    };
+    let norm = |s: &str| {
+        s.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
     norm(&p) == norm(session_cwd)
 }
 
@@ -116,7 +122,12 @@ fn match_pane(
 /// wezterm 的 runtime 目录(Windows 上固定 $HOME/.local/share/wezterm,已实测)。
 fn runtime_dir() -> Option<PathBuf> {
     let home = std::env::var_os("USERPROFILE")?;
-    Some(PathBuf::from(home).join(".local").join("share").join("wezterm"))
+    Some(
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("wezterm"),
+    )
 }
 
 /// pid 对应的 gui socket:文件存在才算(GUI 退出会残留旧 sock 文件,必须配进程校验,
@@ -177,7 +188,10 @@ pub(crate) fn resume(dir: Option<&str>, argv: &[String]) -> std::io::Result<()> 
     }
     args.push("--");
     args.extend(argv.iter().map(String::as_str));
-    std::process::Command::new("wezterm-gui").args(&args).spawn().map(|_| ())
+    std::process::Command::new("wezterm-gui")
+        .args(&args)
+        .spawn()
+        .map(|_| ())
 }
 
 /// 会话宿主是 WezTerm 时精确切到其 pane 并置前窗口;宿主不是 WezTerm(组内无 gui)返回 false。
@@ -189,7 +203,9 @@ pub(crate) fn focus_pane(
     token: Option<&str>,
     cwd: Option<&str>,
 ) -> FocusPaneResult {
-    let Some((gui_pid, sock)) = gui_in_group(group) else { return FocusPaneResult::NotWezTerm };
+    let Some((gui_pid, sock)) = gui_in_group(group) else {
+        return FocusPaneResult::NotWezTerm;
+    };
     let matched = cli(&sock, &["list", "--format", "json"])
         .and_then(|out| String::from_utf8(out).ok())
         .and_then(|json| match_pane(&parse_panes(&json), want_title, token, cwd));
@@ -269,7 +285,11 @@ mod tests {
     }
 
     fn pane(id: u64, title: &str, cwd: &str) -> PaneInfo {
-        PaneInfo { pane_id: id, title: title.into(), cwd: cwd.into() }
+        PaneInfo {
+            pane_id: id,
+            title: title.into(),
+            cwd: cwd.into(),
+        }
     }
 
     #[test]
@@ -311,13 +331,19 @@ mod tests {
             pane(0, "✳ 修复登录", "file:///C:/proj/"),
             pane(1, "pwsh.exe", "file:///C:/proj/"),
         ];
-        assert_eq!(match_pane(&panes, "修复登录", None, Some(r"C:\proj")), Some(0));
+        assert_eq!(
+            match_pane(&panes, "修复登录", None, Some(r"C:\proj")),
+            Some(0)
+        );
     }
 
     #[test]
     fn match_pane_no_signal_returns_none() {
         let panes = vec![pane(0, "pwsh.exe", "file:///C:/x/")];
         assert_eq!(match_pane(&panes, "", None, None), None);
-        assert_eq!(match_pane(&panes, "不存在的标题", None, Some(r"C:\y")), None);
+        assert_eq!(
+            match_pane(&panes, "不存在的标题", None, Some(r"C:\y")),
+            None
+        );
     }
 }

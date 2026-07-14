@@ -58,11 +58,18 @@ pub trait RelayCap: Sync {
         }
         let ui = self.ui();
         if !ui.protocols.is_empty()
-            && !ui.protocols.iter().any(|option| option.value == config.protocol)
+            && !ui
+                .protocols
+                .iter()
+                .any(|option| option.value == config.protocol)
         {
             return Err("中转接口协议不受支持".into());
         }
-        if !ui.auth_modes.iter().any(|option| option.value == config.auth) {
+        if !ui
+            .auth_modes
+            .iter()
+            .any(|option| option.value == config.auth)
+        {
             return Err("中转凭据类型不受支持".into());
         }
         Ok(())

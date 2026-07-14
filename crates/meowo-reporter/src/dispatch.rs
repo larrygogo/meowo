@@ -1,5 +1,5 @@
-use meowo_store::{PendingReview, SessionStatus, Store, StoreError};
 use crate::hook::HookEvent;
+use meowo_store::{PendingReview, SessionStatus, Store, StoreError};
 
 use std::path::Path;
 
@@ -8,11 +8,26 @@ use std::path::Path;
 /// `provider` 是**原始字符串**（可能是本版本尚不认识的 id）：SessionStart 时原样写进
 /// `sessions.provider`（未知值也保留，绝不冒名成默认 agent）；需要能力（stop 正文、context、
 /// transcript 标题、tab token）时才对已注册插件 `by_id` 查询，查不到就整段降级为无操作。
-pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> Result<(), StoreError> {
-    match ev.hook_event_name.as_str() {
+pub fn dispatch(
+    store: &Store,
+    ev: &HookEvent,
+    now_ms: i64,
+    provider: &str,
+) -> Result<(), StoreError> {
+    // 事件名先由该 agent 译成规范名。只有 gemini 真的要译（它把「用户提交」「回合结束」叫成
+    // `BeforeAgent` / `AfterAgent`），其余四家原样透传；未注册的 provider 同样透传，其未知事件
+    // 照旧落到末尾的 `_ => {}`。翻译表归插件所有——这里刻意不出现任何 agent 的名字。
+    let event = meowo_agent::by_id(provider).map_or(ev.hook_event_name.as_str(), |p| {
+        p.canonical_event(&ev.hook_event_name)
+    });
+    match event {
         "SessionStart" => {
-            let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
-            if ev.session_id.is_empty() { return Ok(()); }
+            let Some(cwd) = ev.cwd.as_deref() else {
+                return Ok(());
+            };
+            if ev.session_id.is_empty() {
+                return Ok(());
+            }
             let sid = create_session(store, ev, cwd, provider, now_ms)?;
             // resume 一个已结束会话时，SessionStart 也要复活它（置 running、清 ended_at），否则卡片停在
             // 断开态直到用户发首条消息才重连。
@@ -22,17 +37,17 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
-                store.clear_pending_review(sid)?;
+                store.clear_pending_review(sid, now_ms)?;
                 if let Some(prompt) = ev.prompt_text() {
                     // on_user_prompt 内部会 touch；避免文本消息对 sessions 做两次相同 UPDATE。
                     store.on_user_prompt(sid, &prompt, now_ms)?;
-                    store.set_last_user_text(sid, &prompt)?;
+                    store.set_last_user_text(sid, &prompt, now_ms)?;
                 } else {
                     // 纯图片内容块同样代表用户开启了新回合，也必须从 waiting/stale 转回 running。
                     store.touch_session(sid, now_ms)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
-                if let Some(p) = crate::proc::owner_pid() {
+                if let Some(p) = crate::proc::owner_pid(provider) {
                     store.set_session_pid(sid, p as i64, now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
@@ -41,7 +56,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
         }
         "PostToolUse" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
-                store.clear_pending_review(sid)?;
+                store.clear_pending_review(sid, now_ms)?;
                 match ev.tool_name.as_deref() {
                     Some("TodoWrite") => {
                         store.sync_todos(sid, &ev.todo_items(), now_ms)?;
@@ -51,16 +66,24 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                             store.set_current_activity(sid, &format!("› {cmd}"), now_ms)?;
                         }
                     }
-                    _ => { store.touch_session(sid, now_ms)?; }
+                    _ => {
+                        store.touch_session(sid, now_ms)?;
+                    }
                 }
                 if let Some(c) = read_context(provider, ev) {
-                    store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
+                    store.set_session_context(
+                        &ev.session_id,
+                        Some(c.used_pct),
+                        Some(c.window),
+                        None,
+                        now_ms,
+                    )?;
                 }
             }
         }
         "Stop" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
-                store.clear_pending_review(sid)?;
+                store.clear_pending_review(sid, now_ms)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 // 最近 AI 正文 + 模型由 agent 决定来源：claude 用 Stop hook 携带的正文（模型走 statusline）；
                 // kimi 的 Stop hook 不带，读会话 wire.jsonl 一次出正文 + 模型。
@@ -68,7 +91,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                     .map(|t| t.stop_outputs(&ev.agent_ctx()))
                     .unwrap_or_default();
                 if let Some(msg) = out.last_ai {
-                    store.set_last_ai_text(sid, &msg)?;
+                    store.set_last_ai_text(sid, &msg, now_ms)?;
                 }
                 if let Some(model) = out.model {
                     store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
@@ -76,13 +99,19 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
                 if let Some(c) = read_context(provider, ev) {
-                    store.set_session_context(&ev.session_id, Some(c.used_pct), Some(c.window), None, now_ms)?;
+                    store.set_session_context(
+                        &ev.session_id,
+                        Some(c.used_pct),
+                        Some(c.window),
+                        None,
+                        now_ms,
+                    )?;
                 }
             }
         }
         "SessionEnd" => {
             if let Some(sid) = lookup_session(store, ev)? {
-                store.clear_pending_review(sid)?;
+                store.clear_pending_review(sid, now_ms)?;
                 store.end_session(sid, now_ms)?;
             }
         }
@@ -113,6 +142,16 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
     Ok(())
 }
 
+/// 本次 hook 所属的账号（profile）。由 meowo-app 拉起 agent 时注入，reporter 作为 hook 子进程继承。
+///
+/// 缺席 = 默认账号（用户自己在终端里跑的 agent，或压根没建过 profile）——那正是我们想记的 NULL。
+fn profile_from_env() -> Option<String> {
+    std::env::var("MEOWO_PROFILE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// 该 agent 的遥测能力（未注册 / 无此能力 → None，调用方整段跳过）。
 fn telemetry(provider: &str) -> Option<&'static dyn meowo_agent::TelemetryCap> {
     meowo_agent::by_id(provider)?.telemetry()
@@ -123,7 +162,13 @@ fn read_context(provider: &str, ev: &HookEvent) -> Option<meowo_agent::ContextUs
     telemetry(provider)?.read_context(&ev.agent_ctx())
 }
 
-fn apply_title(store: &Store, ev: &HookEvent, sid: i64, now_ms: i64, provider: &str) -> Result<(), StoreError> {
+fn apply_title(
+    store: &Store,
+    ev: &HookEvent,
+    sid: i64,
+    now_ms: i64,
+    provider: &str,
+) -> Result<(), StoreError> {
     // 是否由 transcript 解析标题由 agent 决定（claude 是；kimi/codex 否，靠首条 prompt 命名）。
     let Some(agent) = telemetry(provider) else {
         return Ok(());
@@ -180,7 +225,13 @@ fn write_tab_token(store: &Store, sid: i64, ev: &HookEvent, provider: &str) {
 }
 
 /// 建会话（项目 upsert + 会话 + provider + cwd + 抓 PID），返回 sid。SessionStart 与懒创建共用。
-fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: &str, now_ms: i64) -> Result<i64, StoreError> {
+fn create_session(
+    store: &Store,
+    ev: &HookEvent,
+    cwd: &str,
+    provider: &str,
+    now_ms: i64,
+) -> Result<i64, StoreError> {
     let (root, name) = project_root_and_name(cwd);
     let pid = store.upsert_project_by_root(&root, &name, now_ms)?;
     let (sid, _) = store.start_session(pid, &ev.session_id, now_ms)?;
@@ -189,8 +240,14 @@ fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: &str, now_
     if provider != meowo_agent::DEFAULT_ID.as_str() {
         store.set_session_provider(sid, provider)?;
     }
+    // 多账号：这个会话跑在哪个账号上。meowo 拉起 agent 时注入 `MEOWO_PROFILE`，而 reporter 是
+    // agent 的 hook 子进程，于是继承得到它。用户自己在终端敲 agent（不经 meowo）时没有这个变量
+    // → 记成默认账号，正确。恢复会话时据此回到同一个账号。
+    if let Some(p) = profile_from_env() {
+        store.set_session_profile(sid, Some(&p))?;
+    }
     store.set_session_cwd(sid, cwd, now_ms)?;
-    if let Some(p) = crate::proc::owner_pid() {
+    if let Some(p) = crate::proc::owner_pid(provider) {
         store.set_session_pid(sid, p as i64, now_ms)?;
     }
     Ok(sid)
@@ -205,7 +262,12 @@ fn lookup_session(store: &Store, ev: &HookEvent) -> Result<Option<i64>, StoreErr
 
 /// 查会话；查不到且事件带 cwd 时就地懒创建——让「hooks 中途装上 / SessionStart 漏掉（压缩等）」
 /// 的会话在下一条带 cwd 的活动事件（UserPromptSubmit/PostToolUse/Stop）上也能补建上板，不必重开。
-fn lookup_or_create(store: &Store, ev: &HookEvent, provider: &str, now_ms: i64) -> Result<Option<i64>, StoreError> {
+fn lookup_or_create(
+    store: &Store,
+    ev: &HookEvent,
+    provider: &str,
+    now_ms: i64,
+) -> Result<Option<i64>, StoreError> {
     if ev.session_id.is_empty() {
         return Ok(None);
     }

@@ -7,14 +7,70 @@
 ///
 /// 刻意**不**做成端口：它是纯 `std`，测试拿临时目录就能覆盖，注入只会平添间接层。
 /// 端口留给真正需要隔离的外部世界——HTTP 与系统密钥链，见 [`crate::ports`]。
-pub fn write_atomic(path: &std::path::Path, body: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&tmp, body)?;
+use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn write_atomic_impl(
+    path: &std::path::Path,
+    body: &str,
+    #[cfg(unix)] forced_mode: Option<u32>,
+) -> std::io::Result<()> {
+    // 父目录可能还不存在：opencode 的接线产物落在数据目录下的 `plugin/` 子目录里，而该子目录只有
+    // 用户装过插件才会有。对既有三家这是 no-op（它们的配置就住在数据目录根上）。
+    //
+    // 这不与「绝不凭空创建 agent 的数据目录」相抵触：走到这里时数据目录必然已存在——`wire` 用
+    // `is_configured()`（数据目录存在）作为前置门槛，不过关的 agent 根本到不了写入这一步。
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp.{}.{seq}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let inherited = std::fs::metadata(path)
+            .ok()
+            .map(|m| m.permissions().mode() & 0o777);
+        options.mode(forced_mode.or(inherited).unwrap_or(0o666));
+    }
+    let mut file = options.open(&tmp)?;
+    if let Err(e) = file
+        .write_all(body.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
+        drop(file);
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    drop(file);
     if let Err(e) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
     Ok(())
+}
+
+pub fn write_atomic(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    write_atomic_impl(
+        path,
+        body,
+        #[cfg(unix)]
+        None,
+    )
+}
+
+/// 原子写敏感文件。Unix 上临时文件从创建起即为 0600，避免 rename 后再 chmod 的暴露窗口。
+pub fn write_atomic_secure(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    write_atomic_impl(
+        path,
+        body,
+        #[cfg(unix)]
+        Some(0o600),
+    )
 }
 
 #[cfg(test)]
@@ -35,6 +91,66 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("tmp."))
             .collect();
         assert!(leftovers.is_empty(), "残留临时文件：{leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_atomic_writers_do_not_share_a_temp_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-fsutil-concurrent-{}-{}",
+            std::process::id(),
+            super::TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let writers: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    super::write_atomic(&path, &format!("writer-{i}"))
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap().unwrap();
+        }
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with("writer-"));
+        assert!(
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().contains("tmp.")),
+            "并发写入后不得残留临时文件"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_preserves_permissions_and_secure_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("meowo-fsutil-mode-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let inherited = dir.join("inherited.json");
+        std::fs::write(&inherited, "old").unwrap();
+        std::fs::set_permissions(&inherited, std::fs::Permissions::from_mode(0o640)).unwrap();
+        super::write_atomic(&inherited, "new").unwrap();
+        assert_eq!(
+            std::fs::metadata(&inherited).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+
+        let secret = dir.join("secret.json");
+        super::write_atomic_secure(&secret, "secret").unwrap();
+        assert_eq!(
+            std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

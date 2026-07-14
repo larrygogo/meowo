@@ -16,6 +16,31 @@ export type AgentDescriptor = {
   display_name: string;
   /** 可执行是否装在本机。 */
   installed: boolean;
+  /**
+   * 能否被套上代理。为 false 时设置页**不给它代理行**——给一个读不到代理配置的 agent 显示
+   * 输入框，等于请用户去配一个静默不生效的代理。
+   */
+  supports_proxy: boolean;
+  /**
+   * 有没有账号概念。为 false 时**不得显示登录态、也不得给出登录入口**——该 agent 的
+   * `login_argv()` 是 None，按钮点下去只会报「拉起登录失败」。
+   *
+   * 不能靠「账号查不出来」来推断：那与「真的没登录」长得一模一样。
+   */
+  supports_account: boolean;
+  /**
+   * 能否有多个账号。false（gemini）→ 不给「添加账号」入口。
+   *
+   * 不能靠「账号列表只有一条」推断——那与「只建了默认账号」无法区分。
+   */
+  supports_profiles: boolean;
+  /**
+   * meowo 能否显示该 agent 的上下文占用（贴纸百分比液柱）。false（gemini/opencode）时
+   * 卡片显式标注「上下文占用：不支持」，不留空白让用户以为是 bug。
+   *
+   * 老后端不下发此字段 → undefined，按「支持」处理（不误标已有能力的 agent 为不支持）。
+   */
+  supports_context?: boolean;
   /** 插件未声明该能力时为 null，界面不得显示中转入口。 */
   relay?: RelayCapability | null;
 };
@@ -417,8 +442,66 @@ export function addAgentToUserPath(provider: AgentId): Promise<void> {
  * 登录走浏览器 OAuth、终端是 detach 的，拿不到退出码——后端改为轮询账号解析结果，
  * 完成或超时（5 分钟）后 emit `login-done`。terminal 省略则用设置里的默认终端。
  */
-export function loginAgent(provider: AgentId, terminal?: string): Promise<void> {
-  return invoke("login_agent", { provider, terminal });
+/**
+ * 拉起交互式登录。`profile` = 登进哪个账号（省略/null = 当前活跃账号）。
+ *
+ * 多账号下**必须传**：登录会把凭据写进那个账号自己的目录，漏传就会把默认账号的凭据覆盖掉——
+ * 用户以为加了个账号，其实是把原来那个换掉了。
+ */
+export function loginAgent(
+  provider: AgentId,
+  terminal?: string,
+  profile?: string | null,
+): Promise<void> {
+  return invoke("login_agent", { provider, terminal, profile: profile ?? null });
+}
+
+/** 一个账号（profile）。`id === null` 即**默认账号**——agent 自己的目录，不可删除。 */
+export type ProfileView = {
+  id: string | null;
+  /** 展示名。默认账号为空串，由前端本地化。 */
+  name: string;
+  active: boolean;
+  /** 该账号自己的登录态。null = 未登录。 */
+  account: Account | null;
+};
+
+/**
+ * 某 agent 的账号列表（默认账号 + 自定义），每个都带自己的登录态。
+ *
+ * 不支持多账号的 agent（gemini：数据目录不可被环境变量覆盖）只会返回**一条**默认账号——
+ * 前端据此不给「添加账号」入口。
+ */
+export function listProfiles(provider: AgentId): Promise<ProfileView[]> {
+  return invoke("list_profiles", { provider });
+}
+
+/** 新建账号（建目录 + 接线）。返回它的 id。不会自动切过去，也不会自动登录。 */
+export function createProfile(provider: AgentId, name: string): Promise<string> {
+  return invoke("create_profile", { provider, name });
+}
+
+/**
+ * 给账号改名。`id = null` → 默认账号（它的名字单独存，不在 profiles 里）。
+ *
+ * 只改展示名，不动它的目录（id）——id 是目录名，改了等于换了个账号。
+ */
+export function renameProfile(
+  provider: AgentId,
+  id: string | null,
+  name: string,
+): Promise<void> {
+  return invoke("rename_profile", { provider, id, name });
+}
+
+/** 切换活跃账号。`id = null` → 切回默认账号。只影响此后新拉起的会话。 */
+export function setActiveProfile(provider: AgentId, id: string | null): Promise<void> {
+  return invoke("set_active_profile", { provider, id });
+}
+
+/** 删除账号，**连同它的整个目录**（凭据、配置、该账号的会话历史）。不可逆。 */
+export function deleteProfile(provider: AgentId, id: string): Promise<void> {
+  return invoke("delete_profile", { provider, id });
 }
 
 /**
@@ -434,8 +517,15 @@ export function cancelLogin(provider: AgentId): Promise<void> {
 }
 
 /** 退出官方账号。不会删除模型配置、会话、hooks 或中转配置。 */
-export function logoutAgent(provider: AgentId): Promise<void> {
-  return invoke("logout_agent", { provider });
+/**
+ * 退出登录。`profile` = 登出哪个账号（省略/null = 当前活跃账号）。
+ *
+ * 多账号下**必须传**：登出会清掉那个账号目录里的凭据，漏传就会去清默认账号的——而删凭据是
+ * 不可逆的。它与「删除账号」不是一回事：登出只清凭据，目录、配置、会话历史都留着，还能再登回来；
+ * 而默认账号压根删不掉（那是 agent 自己的目录），登出是它唯一的退出手段。
+ */
+export function logoutAgent(provider: AgentId, profile?: string | null): Promise<void> {
+  return invoke("logout_agent", { provider, profile: profile ?? null });
 }
 
 /** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */

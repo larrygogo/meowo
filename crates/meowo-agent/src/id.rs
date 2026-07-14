@@ -28,3 +28,5 @@ impl fmt::Display for AgentId {
 pub const CLAUDE: AgentId = AgentId::new("claude");
 pub const KIMI: AgentId = AgentId::new("kimi");
 pub const CODEX: AgentId = AgentId::new("codex");
+pub const GEMINI: AgentId = AgentId::new("gemini");
+pub const OPENCODE: AgentId = AgentId::new("opencode");

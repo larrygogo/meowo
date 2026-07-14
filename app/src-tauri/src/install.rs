@@ -129,7 +129,14 @@ pub(crate) async fn cancel_login(app: tauri::AppHandle, provider: String) -> Res
 ///
 /// 超时上限 5 分钟：登录走浏览器 OAuth，用户可能中途放弃；spawn 出去的是 detach 的终端，
 /// 拿不到退出码，不设上限线程就永久泄漏。用户不想等满 5 分钟时可以 [`cancel_login`]。
-pub(crate) fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, provider: String) {
+/// `profile` = 正在登进哪个账号（`None` = 默认账号）。**必须按它轮询**：登录写的是那个 profile
+/// 的凭据，若去查当前活跃账号，用户登完了这里也永远看不到——login-done 只会在 5 分钟后超时。
+pub(crate) fn watch_login(
+    app: tauri::AppHandle,
+    key: meowo_agent::AgentId,
+    provider: String,
+    profile: Option<String>,
+) {
     const POLL: std::time::Duration = std::time::Duration::from_secs(2);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
     // 出生代次。被 cancel_login 或下一次 login_agent 递增后，本线程静默退出、不 emit——
@@ -146,7 +153,14 @@ pub(crate) fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, prov
                 eprintln!("Meowo login[{provider}]: 已被取消或被新一轮登录取代，停止轮询");
                 return; // 收尾 emit 归取消方 / 新线程
             }
-            if account::account_of(key).is_some() {
+            // 查的是**正在登录的那个账号**的凭据，不是当前活跃的。
+            let logged_in = match profile.as_deref() {
+                Some(p) => crate::profile::installation_of(key, p)
+                    .and_then(|inst| account::account_in(key, &inst))
+                    .is_some(),
+                None => account::account_of(key).is_some(),
+            };
+            if logged_in {
                 break true;
             }
             if start.elapsed() >= TIMEOUT {
@@ -159,9 +173,21 @@ pub(crate) fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, prov
             std::thread::sleep(POLL);
         };
         // 登录成功 → 此时配置文件才刚生成（kimi 的 config.toml 由 `kimi login` 写；claude/codex
-        // 的数据目录也因写凭据而必然存在），是三家唯一都接得上 hooks 的时机。
+        // 的数据目录也因写凭据而必然存在），是唯一都接得上 hooks 的时机。
+        //
+        // 多账号下**必须接那个 profile 的线**，不是默认账号的：新建 profile 时也接过一次，但那时
+        // 它还没登录——kimi 那种「配置文件由 login 生成」的 agent，当时必然以 NeedLogin 失败。
+        // 这里是它唯一的补救时机；接错了对象，profile 的会话就永远不会上板。
         if ok {
-            wire_hooks_best_effort(key, "登录");
+            match profile.as_deref() {
+                Some(p) => match crate::profile::wire_profile(key, p) {
+                    None => eprintln!("Meowo repair[{key}/{p}]: 登录后已自动接线"),
+                    Some(reason) => eprintln!(
+                        "Meowo repair[{key}/{p}]: 登录后自动接线未生效（{reason:?}），留给用户手动修复"
+                    ),
+                },
+                None => wire_hooks_best_effort(key, "登录"),
+            }
         }
         let _ = app.emit("login-done", LoginDone { provider, ok });
     });
@@ -174,19 +200,30 @@ pub(crate) fn watch_login(app: tauri::AppHandle, key: meowo_agent::AgentId, prov
 /// app 启动时的 PATH 快照，未必含刚装好的 agent，裸名会让 wt/powershell 报 0x80070002；但当
 /// 可执行只在 PATH 上（`LaunchCandidate::OnPath`，如 fnm 管理的 codex）时回退裸名是刻意的
 /// ——那类路径带版本/进程号无法静态声明，且 PATH 上的往往是 shim，固化它会绕过其环境准备。
+///
+/// `profile` = 登进**哪个账号**（`None` = 当前活跃账号）。这个参数是多账号能成立的关键：登录会把
+/// 凭据写进**那个 profile 的**目录，而这只由注入的隔离变量（`CLAUDE_CONFIG_DIR` 等）决定。漏掉它，
+/// 新账号的登录就会把默认账号的凭据覆盖掉——用户以为自己加了个账号，其实是把原来那个换掉了。
 #[tauri::command]
 pub(crate) async fn login_agent(
     app: tauri::AppHandle,
     provider: String,
     terminal: Option<String>,
+    profile: Option<String>,
 ) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
-    let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
+                                             // 登录写的是**目标 profile** 的凭据，故实况也按它取（默认账号 → agent 自己的目录）。
+    let inst = match profile.as_deref() {
+        Some(p) => crate::profile::installation_of(key, p).ok_or("解析不到该账号的目录")?,
+        None => install_for(key).ok_or("解析不到该 agent 的安装实况")?,
+    };
     let argv = inst.login_argv().ok_or("该 agent 未声明登录入口")?;
     // 登录尤其需要代理：codex / kimi 的 device auth 在需代理的网络里会直接卡死（codex #4242、
     // kimi-cli #1234 都是这个症状），拉起一个连不上的登录终端毫无意义。
-    let env = crate::proxy::launch_env(key);
+    let mut env = crate::proxy::launch_env(key);
+    // 隔离变量：决定这次登录的凭据写进哪个目录。
+    env.extend(crate::profile::env_of(key, profile.as_deref()));
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
@@ -199,16 +236,30 @@ pub(crate) async fn login_agent(
     if !ok {
         return Err("启动终端失败：无法拉起登录流程".into());
     }
-    watch_login(app, key, provider);
+    watch_login(app, key, provider, profile);
     Ok(())
 }
 
 /// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
 /// 只删除变体表声明的凭据文件，不碰 config、会话或 hooks。
 #[tauri::command]
-pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
+pub(crate) async fn logout_agent(provider: String, profile: Option<String>) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
-    let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
+    // 登出**哪个账号**：显式指定的那个，否则当前活跃账号。
+    //
+    // 这里曾经写死默认账号（`install_for`），后果是：你切到另一个账号后点「退出登录」，被清掉的
+    // 却是**默认账号**的凭据——而你想登出的那个原封不动。删凭据是不可逆的，这种错尤其伤。
+    let profile = match profile {
+        Some(p) => Some(p),
+        None => crate::profile::active_id(key.as_str()),
+    };
+    let inst = match profile.as_deref() {
+        Some(p) => crate::profile::installation_of(key, p).ok_or("解析不到该账号的目录")?,
+        None => install_for(key).ok_or("解析不到该 agent 的安装实况")?,
+    };
+    // 账号隔离变量。**登出命令尤其需要它**：`claude auth logout` 认的是 `CLAUDE_CONFIG_DIR`，
+    // 不注入的话它会跑去清默认账号的凭据——命令执行成功、结果南辕北辙。
+    let env = crate::profile::env_of(key, profile.as_deref());
     // 若登录流程还在轮询，登出必须让它停止；否则旧线程可能稍后误报登录成功。
     bump_login_epoch(key);
 
@@ -216,7 +267,10 @@ pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
         if let Some(argv) = inst.logout_argv() {
             let (program, args) = argv.split_first().ok_or("登出命令为空")?;
             let mut command = std::process::Command::new(program);
-            command.args(args).stdout(std::process::Stdio::null());
+            command
+                .args(args)
+                .envs(env)
+                .stdout(std::process::Stdio::null());
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
@@ -275,7 +329,10 @@ mod logout_tests {
 
     #[test]
     fn logout_stderr_excerpt_is_trimmed_and_bounded() {
-        assert_eq!(stderr_excerpt(b"  authentication failed\r\n"), "authentication failed");
+        assert_eq!(
+            stderr_excerpt(b"  authentication failed\r\n"),
+            "authentication failed"
+        );
         let long = "x".repeat(501);
         let excerpt = stderr_excerpt(long.as_bytes());
         assert_eq!(excerpt.chars().count(), 501);
@@ -456,18 +513,23 @@ pub(crate) fn run_direct_install(
 /// 执行，`curl -f` 也只挡非 2xx。于是用户对着一屏 CSS 发懵。
 ///
 /// 现在 shell 只跑本地文件，联网与判定都在这里。
-pub(crate) fn fetch_install_script(
+pub(crate) fn resolve_install_body(
     id: meowo_agent::AgentId,
     script: &meowo_agent::InstallScript,
 ) -> Result<String, String> {
     use meowo_agent::{Body, HttpRequest};
+    // Command 变体（npm 等）：命令体就是要跑的内容，不联网、无需 challenge 判定（不经 CF）。
+    let url = match script {
+        meowo_agent::InstallScript::Command { body, .. } => return Ok(body.to_string()),
+        meowo_agent::InstallScript::Fetch { url, .. } => *url,
+    };
     let ports = ports::HostPorts::for_agent(id);
     let body = ports
         .as_ports()
         .http
         .send(&HttpRequest {
             method: "GET",
-            url: script.url,
+            url,
             headers: &[],
             body: Body::Empty,
             timeout: std::time::Duration::from_secs(30),
@@ -476,16 +538,12 @@ pub(crate) fn fetch_install_script(
 
     if meowo_agent::looks_like_challenge(&body) {
         return Err(format!(
-            "{} 返回了 Cloudflare 人机校验页，而不是安装脚本。这是间歇性的，稍后重试通常即可；\
-             若持续失败，请在浏览器里打开该地址手动安装。",
-            script.url
+            "{url} 返回了 Cloudflare 人机校验页，而不是安装脚本。这是间歇性的，稍后重试通常即可；\
+             若持续失败，请在浏览器里打开该地址手动安装。"
         ));
     }
     if !meowo_agent::is_runnable_script(&body) {
-        return Err(format!(
-            "{} 返回的不是安装脚本（可能被中间设备拦截）。",
-            script.url
-        ));
+        return Err(format!("{url} 返回的不是安装脚本（可能被中间设备拦截）。"));
     }
     Ok(body)
 }
@@ -598,11 +656,12 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
         .install_script(windows)
         .ok_or("该 agent 没有可用的一键安装命令")?;
 
-    let unix_shell = script.unix_shell;
-    let script_url = script.url;
+    let unix_shell = script.unix_shell();
+    let script_url = script.source();
     // 取脚本 + 判定放在 spawn 之前：被 Cloudflare 拦时直接回传一句人话，而不是把校验页写进日志、
-    // 再让子进程去执行它。放 blocking 池是因为 ureq 是同步的，不能堵住 tauri 的事件循环。
-    let body = tauri::async_runtime::spawn_blocking(move || fetch_install_script(id, &script))
+    // 再让子进程去执行它。Command 变体（npm）在此直接返回命令体，不联网。放 blocking 池是因为
+    // ureq 是同步的，不能堵住 tauri 的事件循环。
+    let body = tauri::async_runtime::spawn_blocking(move || resolve_install_body(id, &script))
         .await
         .map_err(|e| e.to_string())??;
     let path = write_install_script(&provider, &body, windows).map_err(|e| e.to_string())?;

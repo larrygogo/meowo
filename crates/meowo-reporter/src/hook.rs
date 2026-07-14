@@ -18,7 +18,10 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_input: Option<serde_json::Value>,
-    #[serde(default, alias = "assistant_message")]
+    /// 回合结束时 hook 携带的最近一条 AI 正文。各家字段名不同，靠 alias 收束到同一个字段：
+    /// claude/codex 是 `last_assistant_message`，kimi 是 `assistant_message`，
+    /// gemini 的 `AfterAgent` 叫 `prompt_response`。
+    #[serde(default, alias = "assistant_message", alias = "prompt_response")]
     pub last_assistant_message: Option<String>,
 }
 
@@ -46,7 +49,9 @@ impl HookEvent {
 
     /// 从 tool_input.todos 提取 TodoInput 列表（非 TodoWrite 或无 todos 时返回空）。
     pub fn todo_items(&self) -> Vec<TodoInput> {
-        let Some(input) = &self.tool_input else { return Vec::new() };
+        let Some(input) = &self.tool_input else {
+            return Vec::new();
+        };
         let Some(arr) = input.get("todos").and_then(|v| v.as_array()) else {
             return Vec::new();
         };

@@ -1,0 +1,273 @@
+/* 小红书海报排版：1080×1440，暖白底 + Claude 橙，衬托暗色贴纸窗口。
+   贴纸本体是真实组件，这里只负责画布、标题、要点与投影。 */
+
+:root {
+  --ink: #1a1918;
+  --ink-soft: #7a726a;
+  --orange: #d97757;
+  --green: #2e9e80;
+  --line: #e2dcd4;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.poster {
+  position: relative;
+  width: 1080px;
+  height: 1440px;
+  padding: 76px 80px 72px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(620px 620px at 88% 10%, rgba(217, 119, 87, 0.16), transparent 65%),
+    radial-gradient(560px 560px at 6% 92%, rgba(46, 158, 128, 0.13), transparent 65%),
+    linear-gradient(180deg, #f9f7f4 0%, #ece6df 100%);
+  color: var(--ink);
+}
+
+.poster-center { align-items: center; justify-content: center; text-align: center; }
+
+/* ── 文字 ── */
+.kicker {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--orange);
+  letter-spacing: 0.02em;
+}
+
+.h1 {
+  margin: 26px 0 0;
+  font-size: 78px;
+  font-weight: 800;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+}
+
+.h1 mark {
+  background: var(--orange);
+  color: #fff;
+  padding: 2px 16px 6px;
+  border-radius: 14px;
+}
+
+.h2 {
+  margin: 0;
+  font-size: 62px;
+  font-weight: 800;
+  line-height: 1.26;
+  letter-spacing: -0.01em;
+}
+
+.h2 em { font-style: normal; color: var(--green); }
+
+.sub {
+  margin: 18px 0 0;
+  font-size: 30px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+/* ── 贴纸窗口（真实组件，等比放大）── */
+.shot {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 30px 0;
+}
+
+/* 尺寸即真实尺寸——放大靠 app 的 --cc-ui（见 main.tsx），不用 zoom / transform。 */
+.shot-window {
+  width: var(--shot-w, 620px);
+  height: var(--shot-h, 740px);
+  flex: none;
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow:
+    0 24px 56px rgba(60, 45, 35, 0.26),
+    0 6px 16px rgba(60, 45, 35, 0.15);
+}
+
+/* 贴纸在海报里是静态展示：去掉窗口交互装饰 */
+.shot-window .sticker { height: 100%; backdrop-filter: none; }
+.shot-window .resize-grip { display: none; }
+
+/* ── 要点列表 ── */
+.points {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.points li {
+  position: relative;
+  padding-left: 30px;
+  margin-top: 18px;
+  font-size: 28px;
+  line-height: 1.5;
+  color: #4d453e;
+}
+
+.points li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--orange);
+}
+
+.points-green li::before { background: var(--green); }
+
+/* ── 标签 chips ── */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.chip {
+  padding: 11px 22px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid var(--line);
+  font-size: 26px;
+  color: var(--ink);
+}
+
+/* ── 吸边场景：屏幕示意 + 真实 CollapsedStrip 贴右缘 ── */
+.strip-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 34px;
+  padding: 30px 0;
+}
+
+.screen {
+  position: relative;
+  height: 430px;
+  border-radius: 22px;
+  border: 3px solid var(--line);
+  background: linear-gradient(160deg, #fffdfb, #f1ece5);
+  box-shadow: 0 20px 46px rgba(60, 45, 35, 0.14);
+  overflow: hidden;
+}
+
+.screen-hint {
+  position: absolute;
+  left: 34px;
+  top: 26px;
+  font-size: 24px;
+  color: #b3aaa1;
+  letter-spacing: 0.08em;
+}
+
+/* 屏幕里放一个示意的编辑器窗口，衬出「贴纸缩到边上、不挡活儿」 */
+.screen-app {
+  position: absolute;
+  left: 34px;
+  top: 76px;
+  right: 130px;
+  bottom: 30px;
+  border-radius: 14px;
+  background: #fff;
+  border: 2px solid #e8e2da;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.screen-app i {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: #ece7e0;
+}
+
+.screen-app i:nth-child(2n) { width: 72%; }
+.screen-app i:nth-child(3n) { width: 55%; background: #f2ede6; }
+.screen-app i:nth-child(1) { width: 40%; background: #e0d9d0; }
+
+.strip-dock {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+}
+
+/* 真实缩略条 28×96，随 --cc-ui(1.65) 放大到约 46×158；再 scale 一档做特写。
+   这里可以用 transform——缩略条没有虚拟列表，不靠 rect 实测算布局。 */
+.strip-window {
+  width: 46px;
+  height: 158px;
+  transform: scale(1.9);
+  transform-origin: right center;
+  filter: drop-shadow(-8px 10px 22px rgba(60, 45, 35, 0.3));
+}
+
+.strip-window .cstrip { height: 100%; }
+
+.strip-callout {
+  font-size: 26px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* ── 下载页 ── */
+.logo { margin-bottom: 34px; border-radius: 26px; }
+
+.poster-center .points { margin: 40px 0 0; text-align: left; }
+
+.cta {
+  margin: 52px 0 26px;
+  display: block;
+  width: 100%;
+  padding: 28px 0;
+  border-radius: 26px;
+  background: var(--orange);
+  color: #fff;
+  font-size: 46px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: 0.01em;
+  box-shadow: 0 16px 34px rgba(217, 119, 87, 0.34);
+}
+
+.meta-center {
+  margin: 6px 0;
+  font-size: 24px;
+  color: var(--ink-soft);
+}
+
+/* ── 页脚 ── */
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 22px;
+}
+
+.brand .url {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--orange);
+}
+
+.brand .meta {
+  font-size: 24px;
+  color: var(--ink-soft);
+}

@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane};
 use crate::ports::Ports;
+use crate::variant::Installation;
 
 // ═══ 账号解析 ═══
 
@@ -16,7 +17,10 @@ use crate::ports::Ports;
 /// auth_mode=="chatgpt"：解 id_token JWT claims；"apikey"：仅标注 login_label。
 /// 解析失败一律 None，不冒泡 Err。
 pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
-    let auth_mode = auth_json.get("auth_mode").and_then(|v| v.as_str()).unwrap_or("");
+    let auth_mode = auth_json
+        .get("auth_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     match auth_mode {
         "chatgpt" => {
@@ -26,7 +30,11 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
             let payload = crate::codec::decode_jwt_payload(id_token)?;
 
             // email：顶层 claim（空串过滤同 plan/org，避免 Some("") 流出）
-            let email = payload.get("email").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+            let email = payload
+                .get("email")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
 
             // plan：https://api.openai.com/auth 命名空间
             let plan = payload
@@ -65,7 +73,6 @@ pub fn parse_codex_account(auth_json: &Value) -> Option<Account> {
         _ => None,
     }
 }
-
 
 /// 窗口长度（分钟）→ 泳道种类。codex 现实里只有两种窗口：300 分钟（5 小时滚动窗）与
 /// 10080 分钟（7 天）。阈值取 6 小时：短于它的算 5 小时窗，长于它的算周窗。
@@ -109,15 +116,17 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
             .unwrap_or(fallback);
 
         // resets_at：优先 unix 秒字段，其次旧版 resets_in_seconds + record_ts
-        let resets_at: Option<String> = if let Some(ts) = rl.get("resets_at").and_then(|v| v.as_i64()) {
-            Some(crate::codec::unix_to_iso8601(ts))
-        } else if let (Some(secs), Some(rec)) =
-            (rl.get("resets_in_seconds").and_then(|v| v.as_i64()), record_ts)
-        {
-            Some(crate::codec::unix_to_iso8601(rec + secs))
-        } else {
-            None
-        };
+        let resets_at: Option<String> =
+            if let Some(ts) = rl.get("resets_at").and_then(|v| v.as_i64()) {
+                Some(crate::codec::unix_to_iso8601(ts))
+            } else if let (Some(secs), Some(rec)) = (
+                rl.get("resets_in_seconds").and_then(|v| v.as_i64()),
+                record_ts,
+            ) {
+                Some(crate::codec::unix_to_iso8601(rec + secs))
+            } else {
+                None
+            };
 
         Some(UsageLane {
             kind,
@@ -143,7 +152,11 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
     let credits = payload.get("credits").and_then(|v| v.as_f64());
     let note = credits.map(|c| format!("credits:{c}"));
 
-    ProviderUsage { lanes, note }
+    ProviderUsage {
+        lanes,
+        note,
+        plan: None,
+    }
 }
 
 // ═══ 文件系统读取 ═══
@@ -153,7 +166,9 @@ fn collect_rollouts(dir: &std::path::Path, depth: usize, out: &mut Vec<(u64, std
     if depth == 0 {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let p = entry.path();
         if p.is_dir() {
@@ -196,7 +211,10 @@ fn rollouts_newest_first(codex_home: &std::path::Path) -> Vec<std::path::PathBuf
 /// 从最新的 rollout 起顺次回退，取第一条能读出的 token_count payload。
 /// 扫描上限 20 份：再往前的会话其 rate_limits 快照已经太旧，读出来只会误导。
 fn latest_token_count(codex_home: &std::path::Path) -> Option<Value> {
-    rollouts_newest_first(codex_home).iter().take(20).find_map(|p| tail_scan_token_count(p))
+    rollouts_newest_first(codex_home)
+        .iter()
+        .take(20)
+        .find_map(|p| tail_scan_token_count(p))
 }
 
 /// 倒序扫描 JSONL 文件，找最后一条 `payload.type=="token_count"` 行，返回其 payload。
@@ -205,7 +223,9 @@ fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
     let f = std::fs::File::open(path).ok()?;
     let lines: Vec<String> = BufReader::new(f).lines().map_while(Result::ok).collect();
     for line in lines.iter().rev() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         // 支持两种结构：顶层 {type, payload} 或 {payload: {type, ...}}
         let payload_type = v
             .get("payload")
@@ -220,15 +240,18 @@ fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
 
 // ═══ auth.json 读取 ═══
 
-/// 凭据位置由实况变体给出（`Installation.auth.credentials`），不再在此拼路径。
-fn read_auth_json() -> Option<Value> {
-    let path = crate::registry::installation(crate::id::CODEX)?.credentials_path()?;
+/// 凭据位置由**传入的**实况给出（默认账号 or 某个 profile 的私有目录），不在此拼路径。
+fn read_auth_json(inst: &Installation) -> Option<Value> {
+    let path = inst.credentials_path()?;
     let s = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&s).ok()
 }
 
 fn auth_mode(auth_json: &Value) -> &str {
-    auth_json.get("auth_mode").and_then(|v| v.as_str()).unwrap_or("")
+    auth_json
+        .get("auth_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
 }
 
 // ═══ AccountCap impl ═══
@@ -237,23 +260,23 @@ pub struct CodexAccount;
 pub static ACCOUNT: CodexAccount = CodexAccount;
 
 impl AccountCap for CodexAccount {
-    fn account(&self, _ports: &Ports) -> Option<Account> {
-        parse_codex_account(&read_auth_json()?)
+    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
+        parse_codex_account(&read_auth_json(inst)?)
     }
 
     /// codex 的用量**不联网**：rate_limits 快照就写在最近一份 rollout 里，尾扫即可。
     /// 故它不用 `ports.http`——能力槽的意义正在于此，不需要的端口就不碰。
-    fn fetch_usage(&self, _ports: &Ports) -> Result<ProviderUsage, String> {
-        let home = crate::registry::installation(crate::id::CODEX)
-            .map(|i| i.data_dir)
-            .ok_or("解析不到 codex 数据目录")?;
-        let payload = latest_token_count(&home).ok_or("rollout 里没有 token_count 记录")?;
+    ///
+    /// rollout 也在数据目录里，故多账号下天然是**该 profile 自己的**用量。
+    fn fetch_usage(&self, inst: &Installation, _ports: &Ports) -> Result<ProviderUsage, String> {
+        let payload =
+            latest_token_count(&inst.data_dir).ok_or("rollout 里没有 token_count 记录")?;
         Ok(parse_codex_usage(&payload))
     }
 
-    fn usage_supported(&self, _ports: &Ports) -> bool {
+    fn usage_supported(&self, inst: &Installation, _ports: &Ports) -> bool {
         // 仅 chatgpt 模式（订阅）有 rate_limits
-        read_auth_json().is_some_and(|auth| auth_mode(&auth) == "chatgpt")
+        read_auth_json(inst).is_some_and(|auth| auth_mode(&auth) == "chatgpt")
     }
 }
 
@@ -434,7 +457,11 @@ mod tests {
 
     // ── parse_codex_usage ──
 
-    fn make_token_count_payload(primary_pct: f64, secondary_pct: f64, resets_at_unix: i64) -> Value {
+    fn make_token_count_payload(
+        primary_pct: f64,
+        secondary_pct: f64,
+        resets_at_unix: i64,
+    ) -> Value {
         json!({
             "type": "token_count",
             "rate_limits": {
@@ -472,7 +499,11 @@ mod tests {
         assert_eq!(five_hour.used_pct, Some(45.5));
         assert_eq!(five_hour.unit.as_deref(), Some("percent"));
         // 1751284800 = 2025-06-30T12:00:00Z
-        assert!(five_hour.resets_at.as_deref().unwrap_or("").contains("2025-06-30"));
+        assert!(five_hour
+            .resets_at
+            .as_deref()
+            .unwrap_or("")
+            .contains("2025-06-30"));
 
         let weekly = &pu.lanes[1];
         assert_eq!(weekly.kind, UsageKind::Weekly);
@@ -500,9 +531,17 @@ mod tests {
         });
         let pu = parse_codex_usage(&payload);
         assert_eq!(pu.lanes.len(), 1, "secondary 为 null → 只应有一条泳道");
-        assert_eq!(pu.lanes[0].kind, UsageKind::Weekly, "10080 分钟是周窗口，不是 5 小时");
+        assert_eq!(
+            pu.lanes[0].kind,
+            UsageKind::Weekly,
+            "10080 分钟是周窗口，不是 5 小时"
+        );
         // 1784518666 = 2026-07-20 → 一周后，与周窗口自洽。
-        assert!(pu.lanes[0].resets_at.as_deref().unwrap().starts_with("2026-07-20"));
+        assert!(pu.lanes[0]
+            .resets_at
+            .as_deref()
+            .unwrap()
+            .starts_with("2026-07-20"));
     }
 
     /// 向后兼容绊线：**没升级 codex 的用户**照旧要读得对。改判定依据（位置 → 窗口长度）时
@@ -537,8 +576,10 @@ mod tests {
 
         // ③ 旧版只有 primary（低配额账号没有第二个窗口）：仍是单条 5 小时泳道。
         //    `secondary` 无论是**缺键**还是**为 null**（新版的写法）都要安全跳过，不能造出空泳道。
-        for missing in [json!({ "primary": { "used_percent": 20.0, "window_minutes": 300 } }),
-                        json!({ "primary": { "used_percent": 20.0, "window_minutes": 300 }, "secondary": null })] {
+        for missing in [
+            json!({ "primary": { "used_percent": 20.0, "window_minutes": 300 } }),
+            json!({ "primary": { "used_percent": 20.0, "window_minutes": 300 }, "secondary": null }),
+        ] {
             let pu = parse_codex_usage(&json!({ "type": "token_count", "rate_limits": missing }));
             assert_eq!(pu.lanes.len(), 1, "secondary 缺失/为 null 都只应有一条泳道");
             assert_eq!(pu.lanes[0].kind, UsageKind::FiveHour);
@@ -606,7 +647,11 @@ mod tests {
         set_mtime(&older, 1_700_000_000);
         set_mtime(&newest, 1_700_000_060);
 
-        assert_eq!(rollouts_newest_first(&home).first(), Some(&newest), "最新的应排在最前");
+        assert_eq!(
+            rollouts_newest_first(&home).first(),
+            Some(&newest),
+            "最新的应排在最前"
+        );
         let payload = latest_token_count(&home).expect("应回退到次新的会话读出用量");
         let pu = parse_codex_usage(&payload);
         assert_eq!(pu.lanes[0].used_pct, Some(42.0));
@@ -663,9 +708,15 @@ mod tests {
     #[test]
     fn unix_to_iso8601_known_date() {
         // 1751284800 = 2025-06-30 12:00:00 UTC（经过验证的已知向量）
-        assert_eq!(crate::codec::unix_to_iso8601(1751284800), "2025-06-30T12:00:00Z");
+        assert_eq!(
+            crate::codec::unix_to_iso8601(1751284800),
+            "2025-06-30T12:00:00Z"
+        );
         // 1782820800 = 2026-06-30 12:00:00 UTC
-        assert_eq!(crate::codec::unix_to_iso8601(1782820800), "2026-06-30T12:00:00Z");
+        assert_eq!(
+            crate::codec::unix_to_iso8601(1782820800),
+            "2026-06-30T12:00:00Z"
+        );
     }
 
     #[test]

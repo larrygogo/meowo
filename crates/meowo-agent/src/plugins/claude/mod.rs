@@ -72,6 +72,18 @@ static HOOKS: HookSpec = HookSpec {
 ///
 /// 用量端点（`api.anthropic.com/api/oauth/usage`）不在此处：`AuthScheme` 只管「凭据在哪 +
 /// 怎么刷新」，用量是 account 侧的事。
+/// 多账号：`CLAUDE_CONFIG_DIR` 一个变量就把整个数据目录搬走（凭据、settings.json、历史全在里面）。
+///
+/// macOS 上 claude 的凭据默认在 Keychain 而非文件——但**设了 `CLAUDE_CONFIG_DIR` 之后不影响隔离**：
+/// 各 profile 的 hooks / settings / 历史都各自独立，而 Keychain 那份凭据是全局的，等于所有 profile
+/// 共享同一个登录身份。**这一条尚未解决**（见 `creds_rel` 指向的文件回退路径），macOS 上要真正切换
+/// 账号还需要额外轮换 Keychain 条目。Windows / Linux 无此问题。
+static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
+    envs: &[("CLAUDE_CONFIG_DIR", "")],
+    data_rel: "",
+    creds_rel: ".credentials.json",
+};
+
 static AUTH: AuthScheme = AuthScheme {
     credentials: CredentialSource::KeychainOrFile {
         service: "Claude Code-credentials",
@@ -85,7 +97,7 @@ static AUTH: AuthScheme = AuthScheme {
     default_base_url: "",
     // 实测（claude --help / claude auth --help）：登录在 `auth` 子命令下，**没有** `claude login`。
     // 另有 `claude setup-token`（长期 token），不是交互式 OAuth 登录，不用它。
-    login_args: &["auth", "login"],
+    login: Some(&["auth", "login"]),
     logout_args: &["auth", "logout"],
 };
 
@@ -137,34 +149,68 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
 struct ClaudeRelay;
 static RELAY: ClaudeRelay = ClaudeRelay;
 static RELAY_AUTH: [crate::RelayOption; 2] = [
-    crate::RelayOption { value: "bearer", label: "Bearer Token" },
-    crate::RelayOption { value: "api_key", label: "API Key (x-api-key)" },
+    crate::RelayOption {
+        value: "bearer",
+        label: "Bearer Token",
+    },
+    crate::RelayOption {
+        value: "api_key",
+        label: "API Key (x-api-key)",
+    },
 ];
 static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
     protocol: "",
-    models: &["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+    models: &[
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+    ],
 }];
 
 impl crate::RelayCap for ClaudeRelay {
     fn ui(&self) -> crate::RelayUi {
         crate::RelayUi {
-            protocols: &[], auth_modes: &RELAY_AUTH, default_protocol: "", default_auth: "bearer",
+            protocols: &[],
+            auth_modes: &RELAY_AUTH,
+            default_protocol: "",
+            default_auth: "bearer",
             suggestions: &RELAY_SUGGESTIONS,
         }
     }
     fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
         vec![
-            ("ANTHROPIC_BASE_URL".into(), config.base_url.trim().trim_end_matches('/').into()),
-            ((if config.auth == "api_key" { "ANTHROPIC_API_KEY" } else { "ANTHROPIC_AUTH_TOKEN" }).into(), key.into()),
+            (
+                "ANTHROPIC_BASE_URL".into(),
+                config.base_url.trim().trim_end_matches('/').into(),
+            ),
+            (
+                (if config.auth == "api_key" {
+                    "ANTHROPIC_API_KEY"
+                } else {
+                    "ANTHROPIC_AUTH_TOKEN"
+                })
+                .into(),
+                key.into(),
+            ),
         ]
     }
-    fn augment_argv(&self, config: crate::RelayConfig<'_>, _has_secret: bool, mut argv: Vec<String>) -> Vec<String> {
+    fn augment_argv(
+        &self,
+        config: crate::RelayConfig<'_>,
+        _has_secret: bool,
+        mut argv: Vec<String>,
+    ) -> Vec<String> {
         argv.extend(["--model".into(), config.model.trim().into()]);
         argv
     }
     fn model_request(&self, config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
         crate::RelayModelRequest {
-            auth: if config.auth == "api_key" { crate::RelayModelAuth::ApiKey } else { crate::RelayModelAuth::Bearer },
+            auth: if config.auth == "api_key" {
+                crate::RelayModelAuth::ApiKey
+            } else {
+                crate::RelayModelAuth::Bearer
+            },
             anthropic_version: true,
         }
     }
@@ -201,7 +247,7 @@ impl AgentPlugin for Claude {
     /// 回退路径。`claude.ai` 在 Cloudflare 后面，会间歇触发人机校验（其页面以 HTTP 200 返回），
     /// 故优先走 `direct_install`；只有它失败（如发布物 schema 变了）才落到这里。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
-        Some(crate::install::InstallScript {
+        Some(crate::install::InstallScript::Fetch {
             url: if windows {
                 "https://claude.ai/install.ps1"
             } else {
@@ -222,6 +268,9 @@ impl AgentPlugin for Claude {
     }
     fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
         Some(&setup::WIRING)
+    }
+    fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
+        Some(&PROFILE)
     }
 }
 

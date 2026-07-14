@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ports::Ports;
+use crate::variant::Installation;
 
 /// 用量泳道种类。serde snake_case 与前端/API 字段对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,10 +73,23 @@ pub struct UsageLane {
 }
 
 /// 某 agent 的全部用量泳道。note 携带补充文字（如 extra_usage_enabled / 余额）。
+///
+/// `plan` 是个**账号侧**的字段，长在用量结构里是有原因的：有些 agent 的身份信息**只出现在用量
+/// 响应里**——kimi 的 `/usages` 带 `user.membership.level`（会员等级），而它的凭据、JWT、本地文件
+/// 里根本没有任何可读的身份（实测：只有内部 userId）。而 [`AccountCap::account`] 是纯本地、
+/// 高频调用的（登录轮询 2s 一跑），不能为了一个等级去联网。
+///
+/// 所以让用量刷新时把它顺带捎回来，由宿主缓存、并合并进账号卡片。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ProviderUsage {
     pub lanes: Vec<UsageLane>,
     pub note: Option<String>,
+    /// 用量接口顺带返回的**套餐名**（kimi 的会员等级）。宿主缓存后合并进账号卡片。
+    ///
+    /// 缺省 `None`：另几家的套餐信息本就在账号侧（claude 的 `.claude.json` 有 `userRateLimitTier`），
+    /// 不必绕这一圈。
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 /// 通用账号信息（字段可选，部分 agent 不提供所有字段）。
@@ -94,19 +108,27 @@ pub struct Account {
 pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
 
 /// 账号能力：读账号信息 + 拉实时用量。不声明此能力的 agent，其账号卡片显示为未登录。
+///
+/// # 三个方法都接 [`Installation`]
+///
+/// 因为「哪个账号」这件事，**完全由传进来的那份实况决定**：默认账号给的是 agent 自己的目录，
+/// 某个 profile（多账号）给的是那个 profile 的私有目录，凭据路径也随之落在它里面。
+///
+/// 这里曾经是无参的，各实现自己去 `registry::installation(ID)` 取默认实况——于是多账号根本
+/// 读不出登录态：无论问的是哪个 profile，答的永远是默认账号那一个。
 pub trait AccountCap: Sync {
-    /// 读本机登录态与账号信息。**只读本地**（凭据文件 / 密钥链），不联网——调用方会在轮询
+    /// 读该实况的登录态与账号信息。**只读本地**（凭据文件 / 密钥链），不联网——调用方会在轮询
     /// 登录状态时高频调用它。
-    fn account(&self, ports: &Ports) -> Option<Account>;
+    fn account(&self, inst: &Installation, ports: &Ports) -> Option<Account>;
 
     /// 联网拉一次实时用量（含按需刷新 token）。
     ///
     /// **不读缓存、不做限频、不写回**——那些归宿主编排层。返回 `Err` 时其内容会被当作错误码/文案
     /// 回传前端；读不到官方 OAuth 凭据时应返回 [`USAGE_UNSUPPORTED`]。
-    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String>;
+    fn fetch_usage(&self, inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String>;
 
     /// 该 agent 当前是否支持用量查询（如 claude 在第三方登录下不支持）。默认支持。
-    fn usage_supported(&self, _ports: &Ports) -> bool {
+    fn usage_supported(&self, _inst: &Installation, _ports: &Ports) -> bool {
         true
     }
 }

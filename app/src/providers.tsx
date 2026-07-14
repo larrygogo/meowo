@@ -8,6 +8,9 @@ import type { ReactElement } from "react";
 // Kimi 官方位图 logo（渐变颗粒纹理、非矢量友好）：作静态资源随打包分发（Vite 输出带哈希的文件），
 // 不再把整张 PNG 以超长 base64 内嵌进源码（增大 bundle/难 diff）。四角本就透明，无需圆角裁剪。
 import kimiLogo from "./assets/kimi.png";
+// Gemini 官方 "aurora" sparkle：那层蓝紫极光是**位图纹理**（四角星路径裁一张内嵌 JPEG），
+// 矢量渐变复刻不出来。取自官方 gstatic 资产、自包含（data-uri 内嵌，离线可用），当静态资源打包。
+import geminiLogo from "./assets/gemini.svg";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst）：fill=currentColor，由容器着色——裸图标场景
@@ -45,6 +48,40 @@ function CodexMark() {
   );
 }
 
+function GeminiMark() {
+  // Gemini 官方 aurora sparkle（位图纹理，见 import 处说明）。自带固定品牌色，与 kimi 同款处理：
+  // 用 <img>、断开态只靠 .stk-agent-off 的 opacity 变暗（tint 为 undefined）。它是唯一的**裸**
+  // logomark（无方块底座）。
+  //
+  // 尺寸 13 对齐 codex/opencode——新建会话面板按原始尺寸并排渲染。设置页卡片会把它拉满 44px 外框，
+  // 那里需要的留白由 `.provider-card-icon[data-agent=gemini]` 单独给，两个上下文各自调、互不牵连。
+  return (
+    <img
+      src={geminiLogo}
+      width={13}
+      height={13}
+      alt=""
+      aria-hidden="true"
+      style={{ display: "block" }}
+    />
+  );
+}
+
+function OpencodeMark() {
+  // ⚠️ **不是** OpenCode 的官方 logomark——找不到可靠的矢量原件，与其编一个假的品牌标识，不如放一个
+  // 明摆着是占位的终端提示符（黑方块 + 白 `>_`）。它可辨识、不冒充，拿到官方资产后直接换掉这个函数
+  // 即可，别处无需改动。自带固定色，故 tint 为 undefined。
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#0a0a0c" />
+      <g stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none">
+        <path d="M6.5 8.5 10 12l-3.5 3.5" />
+        <path d="M12.5 16h5" />
+      </g>
+    </svg>
+  );
+}
+
 /** 未知 agent（DB 里存着本版本不认识的 id）：中性占位方块，绝不伪装成 claude。 */
 function UnknownMark() {
   return (
@@ -70,9 +107,11 @@ export type AgentAssets = {
 };
 
 const ASSETS: Record<string, AgentAssets> = {
-  claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: true },
+  claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: false },
   kimi: { Icon: KimiMark, needsTile: false },
   codex: { Icon: CodexMark, needsTile: false },
+  gemini: { Icon: GeminiMark, needsTile: false },
+  opencode: { Icon: OpencodeMark, needsTile: false },
 };
 
 const UNKNOWN: AgentAssets = { Icon: UnknownMark, needsTile: false };

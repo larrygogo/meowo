@@ -19,6 +19,7 @@ mod wezterm;
 // lib.rs 现只保留：托管状态、数据查询命令、会话读写命令、agent 解析 helper 与 run() 装配。
 mod install;
 mod proc;
+mod profile;
 mod terminal;
 mod watch;
 mod window;
@@ -54,10 +55,10 @@ pub(crate) use terminal::resume_terminal_kind;
 #[cfg(target_os = "macos")]
 pub(crate) use window::open_settings_window;
 
+use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use settings::{
     get_autostart, get_effective_proxy, get_settings, open_url, set_autostart, set_settings,
 };
-use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use snap::{
     cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
 };
@@ -799,7 +800,7 @@ async fn get_accounts() -> Vec<account::ProviderAccountPayload> {
         account::all_with_account()
             .map(|p| account::ProviderAccountPayload {
                 provider: p.id().as_str().to_string(),
-                account: account::account_of(p.id()),
+                account: account::account_of_display(p.id()),
                 usage: if settings::load_settings().relay.enabled(p.id()) {
                     None
                 } else {
@@ -894,6 +895,32 @@ struct AgentDescriptor {
     display_name: String,
     /// 可执行是否装在本机（决定各处是否列出/可选它）。
     installed: bool,
+    /// 这个 agent **能不能被套上代理**（＝插件是否声明了 `ProxySpec`）。
+    ///
+    /// 为 false 的 agent，设置页不给它代理行。没有这个字段时，前端只能给每个 agent 都画一行——
+    /// 于是用户会给一个根本读不到代理配置的 agent 认真填上代理，然后对着「连不上」毫无线索地瞎试。
+    /// 这正是网络分区最忌讳的失败模式：**静默不生效**。宁可不给入口，也不给一个假的。
+    supports_proxy: bool,
+    /// 这个 agent 有没有**账号概念**（＝插件是否声明了 account 能力槽）。
+    ///
+    /// 为 false 时，设置页与新建会话面板都不得显示登录态、也不得给出登录入口——它的
+    /// `login_argv()` 是 `None`，按钮点下去只会得到一句「拉起登录失败」。
+    ///
+    /// 没有这个字段时，前端只能靠「账号查不出来」推断，而那与「真的没登录」长得一模一样：
+    /// gemini / opencode 因此被判成「未登录」，亮出一个必然失败的按钮。**给出走不通的入口，
+    /// 比不给入口更糟**——用户会以为是自己的问题，反复去点。
+    supports_account: bool,
+    /// 这个 agent 能不能有**多个账号**（＝插件声明了 `ProfileSpec`）。
+    ///
+    /// false（gemini：数据目录不可被环境变量覆盖）→ 前端不给「添加账号」入口。「只有一个默认账号」
+    /// 与「压根不支持多账号」在账号列表上长得一模一样（都只有一条），必须由后端如实说清，
+    /// 否则会给一个点了必然报错的按钮。
+    supports_profiles: bool,
+    /// meowo 能否显示这个 agent 的**上下文占用**（贴纸上的百分比液柱）。
+    ///
+    /// 为 false（gemini：官方 hook 不给 token；opencode：会话 token 在它自己库里，不经 hook）时，
+    /// 前端显式标注「上下文占用：不支持」——不留空白让用户以为是 bug。
+    supports_context: bool,
     /// 插件显式声明才存在；None 时前端不显示中转入口。
     relay: Option<meowo_agent::RelayUi>,
 }
@@ -908,12 +935,17 @@ async fn list_agents() -> Vec<AgentDescriptor> {
             .map(|a| {
                 let relay = a.relay().and_then(|cap| {
                     let installation = a.resolve()?;
-                    cap.supports_variant(installation.variant_tag).then(|| cap.ui())
+                    cap.supports_variant(installation.variant_tag)
+                        .then(|| cap.ui())
                 });
                 AgentDescriptor {
                     id: a.id().as_str().to_string(),
                     display_name: a.display_name().to_string(),
                     installed: a.is_installed(),
+                    supports_proxy: a.proxy().is_some(),
+                    supports_account: a.account().is_some(),
+                    supports_profiles: a.profile().is_some(),
+                    supports_context: a.provides_context(),
                     relay,
                 }
             })
@@ -1149,6 +1181,11 @@ pub fn run() {
             host_os,
             available_terminals,
             list_agents,
+            profile::list_profiles,
+            profile::create_profile,
+            profile::rename_profile,
+            profile::set_active_profile,
+            profile::delete_profile,
             new_session,
             install_agent,
             agent_path_gap,
@@ -1297,8 +1334,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_safe_id, live_sessions_blocking, session_connected, tab_class, PageReq,
-        RESUME_GRACE_MS,
+        is_safe_id, live_sessions_blocking, session_connected, tab_class, PageReq, RESUME_GRACE_MS,
     };
     use crate::install::{bump_login_epoch, login_epoch};
     use crate::proc::pid_is_agent;
@@ -1323,8 +1359,12 @@ mod tests {
 
         // waiting 按最旧优先：先放 120 条断开候选，确保超过后端单批 100 条。
         for i in 0..120 {
-            let (sid, _) = store.start_session(project, &format!("dead-{i}"), 10 + i).unwrap();
-            store.on_user_prompt(sid, &format!("dead {i}"), 10 + i).unwrap();
+            let (sid, _) = store
+                .start_session(project, &format!("dead-{i}"), 10 + i)
+                .unwrap();
+            store
+                .on_user_prompt(sid, &format!("dead {i}"), 10 + i)
+                .unwrap();
             store.set_session_pid(sid, 10_000 + i, 10 + i).unwrap();
             store
                 .set_session_status(sid, meowo_store::SessionStatus::Waiting, 10 + i)
@@ -1332,8 +1372,12 @@ mod tests {
         }
         let mut alive = std::collections::HashSet::new();
         for i in 0..2 {
-            let (sid, _) = store.start_session(project, &format!("alive-{i}"), 1_000 + i).unwrap();
-            store.on_user_prompt(sid, &format!("alive {i}"), 1_000 + i).unwrap();
+            let (sid, _) = store
+                .start_session(project, &format!("alive-{i}"), 1_000 + i)
+                .unwrap();
+            store
+                .on_user_prompt(sid, &format!("alive {i}"), 1_000 + i)
+                .unwrap();
             let pid = 20_000 + i;
             store.set_session_pid(sid, pid, 1_000 + i).unwrap();
             store
@@ -1410,6 +1454,50 @@ mod tests {
         assert_eq!(login_epoch(claude), c);
     }
 
+    /// 拉起 agent 的 env **必须**带上账号隔离变量，否则多账号完全不生效。
+    ///
+    /// 回归：`new_session` 曾直接调 `proxy::launch_env`（只有代理变量），于是设置页明明切到了另一个
+    /// 账号，新开的会话却仍跑在默认账号上——没有任何报错，用户只能靠 `/status` 里的邮箱才发现。
+    /// 新建会话是切换账号后**最先走的一条路**，漏了它等于整个功能没做。
+    ///
+    /// 这条钉的是 `launch_env_for_profile` 的产出。它**抓不到「有人再次绕过它」**——那只能靠
+    /// `proxy::launch_env` 上那段警告和 review。
+    #[test]
+    fn launch_env_carries_profile_isolation_vars() {
+        use crate::terminal::launch_env_for_profile;
+
+        let env = launch_env_for_profile(Some("claude"), Some("work"));
+        let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            keys.contains(&"CLAUDE_CONFIG_DIR"),
+            "漏了隔离变量 → 切了账号也不生效，实得 {keys:?}"
+        );
+        // 会话据此绑定到该账号（reporter 继承这个变量后写进 sessions.profile）。
+        assert!(
+            keys.contains(&"MEOWO_PROFILE"),
+            "会话将无从绑定账号，实得 {keys:?}"
+        );
+
+        // opencode 必须拿到**两个**目录变量：只隔离配置目录的话，凭据仍然共用——
+        // 账号看起来切了、其实没切，这是最坏的一种失败。
+        let env = launch_env_for_profile(Some("opencode"), Some("work"));
+        let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"OPENCODE_CONFIG_DIR"), "实得 {keys:?}");
+        assert!(
+            keys.contains(&"XDG_DATA_HOME"),
+            "凭据所在的数据目录没隔离，实得 {keys:?}"
+        );
+
+        // gemini 不支持多账号（数据目录不可被环境变量覆盖）→ 一个隔离变量都不该注入。
+        // 只注入 MEOWO_PROFILE 而不隔离目录，会把一个跑在**默认账号**上的会话记成 profile 的。
+        let env = launch_env_for_profile(Some("gemini"), Some("work"));
+        let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            !keys.contains(&"MEOWO_PROFILE"),
+            "gemini 不支持多账号，实得 {keys:?}"
+        );
+    }
+
     /// `resume_argv_for` 只被 macOS 的 focus_session 调用，Windows 上没有调用者——光「能编译」
     /// 不足以防它腐化（dead_code 允许了它）。这里在所有平台实际调它一次，锁住行为：
     /// 已知 agent 给出 `[exe, --resume, id]`，未知/缺 session_id 给空 argv（只聚焦、不 resume）。
@@ -1428,8 +1516,21 @@ mod tests {
             ["-r".to_string(), "SID".to_string()]
         );
 
-        // 未知 agent → 空 argv：绝不拿 claude 的参数去拉起别的 CLI。
-        assert!(resume_argv_for(Some("gemini"), Some("SID")).is_empty());
+        // 新接入的两家，各自的 resume 子命令都得对上。
+        let gemini = resume_argv_for(Some("gemini"), Some("SID"));
+        assert_eq!(
+            &gemini[gemini.len() - 2..],
+            ["--resume".to_string(), "SID".to_string()]
+        );
+        let opencode = resume_argv_for(Some("opencode"), Some("SID"));
+        assert_eq!(
+            &opencode[opencode.len() - 2..],
+            ["--session".to_string(), "SID".to_string()]
+        );
+
+        // 未知 agent → 空 argv：绝不拿 claude 的参数去拉起别的 CLI。反例必须选一个永远不会被
+        // 注册的串——这里原本写的是 "gemini"，而它后来真成了一个 agent。
+        assert!(resume_argv_for(Some("not-an-agent"), Some("SID")).is_empty());
         // 没有 session_id 就无从 resume。
         assert!(resume_argv_for(Some("claude"), None).is_empty());
         // provider 缺省 → 默认 agent（老会话没写过 provider 列）。
@@ -1508,6 +1609,12 @@ mod tests {
         assert_eq!(
             shell_join_for_windows(&apos, true),
             r"& 'C:\Users\O''Brien\kimi.exe' -r id"
+        );
+        // PowerShell 元字符与 JSON 双引号即便没有空格也必须进入单引号字面量。
+        let metachar = to_vec(&[r"C:\Users\A&B\kimi.exe", r#"model=\"x\";calc"#]);
+        assert_eq!(
+            shell_join_for_windows(&metachar, true),
+            r#"& 'C:\Users\A&B\kimi.exe' 'model=\"x\";calc'"#
         );
     }
 

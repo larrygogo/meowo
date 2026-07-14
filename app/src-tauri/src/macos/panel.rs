@@ -38,7 +38,9 @@ pub fn convert_main_to_panel(app: &AppHandle) {
         Err(_) => return,
     };
 
-    let delegate = panel_delegate!(CcPanelDelegate { window_did_resign_key });
+    let delegate = panel_delegate!(CcPanelDelegate {
+        window_did_resign_key
+    });
     let handle = app.clone();
     delegate.set_listener(Box::new(move |name: String| {
         if name == "window_did_resign_key" {

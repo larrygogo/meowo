@@ -35,20 +35,30 @@ fn agents_without_direct_install_are_not_fronted_by_cloudflare() {
             continue; // 引导脚本只是回退，允许在 CF 后面
         }
         for windows in [true, false] {
-            let Some(script) = p.install_script(windows) else { continue };
+            let Some(script) = p.install_script(windows) else {
+                continue;
+            };
+            // Command 变体（npm）没有可 curl 的 URL——CF 前置检查对它无意义，跳过。
+            let meowo_agent::InstallScript::Fetch { url, .. } = script else {
+                continue;
+            };
             let out = Command::new("curl")
-                .args(["-sSIL", "--max-time", "30", script.url])
+                .args(["-sSIL", "--max-time", "30", url])
                 .output()
                 .expect("curl 执行失败");
             let headers = String::from_utf8_lossy(&out.stdout).to_lowercase();
             if headers.contains("cf-ray") {
-                failures.push(format!("{}: {} 现在挂在 Cloudflare 后面了", p.id(), script.url));
+                failures.push(format!("{}: {} 现在挂在 Cloudflare 后面了", p.id(), url));
             } else {
-                eprintln!("✓ {:8} {} 无 CF", p.id().as_str(), script.url);
+                eprintln!("✓ {:8} {} 无 CF", p.id().as_str(), url);
             }
         }
     }
-    assert!(failures.is_empty(), "无直下的 agent 却经过 CF：\n  {}", failures.join("\n  "));
+    assert!(
+        failures.is_empty(),
+        "无直下的 agent 却经过 CF：\n  {}",
+        failures.join("\n  ")
+    );
 }
 
 #[test]
@@ -58,33 +68,48 @@ fn every_install_url_serves_a_real_script() {
 
     for p in meowo_agent::all() {
         for windows in [true, false] {
-            let Some(script) = p.install_script(windows) else { continue };
-            let Some((code, body)) = curl(script.url) else {
-                failures.push(format!("{}: curl 执行失败（本机没有 curl？）", script.url));
+            let Some(script) = p.install_script(windows) else {
+                continue;
+            };
+            let meowo_agent::InstallScript::Fetch { url, .. } = script else {
+                continue;
+            };
+            let Some((code, body)) = curl(url) else {
+                failures.push(format!("{}: curl 执行失败（本机没有 curl？）", url));
                 continue;
             };
 
             if code != 200 {
-                failures.push(format!("{}: HTTP {code}", script.url));
+                failures.push(format!("{}: HTTP {code}", url));
                 continue;
             }
             if meowo_agent::looks_like_challenge(&body) {
                 // 这不是代码 bug——是 Cloudflare 此刻正在挑战。如实报告。
                 failures.push(format!(
                     "{}: 返回 Cloudflare 人机校验页（HTTP 200）。间歇性，稍后重试",
-                    script.url
+                    url
                 ));
                 continue;
             }
             if !meowo_agent::is_runnable_script(&body) {
-                failures.push(format!("{}: 返回的不是脚本（{} 字节）", script.url, body.len()));
+                failures.push(format!("{}: 返回的不是脚本（{} 字节）", url, body.len()));
                 continue;
             }
-            eprintln!("✓ {:8} {:6} {} ({} 字节)", p.id().as_str(), if windows { "win" } else { "unix" }, script.url, body.len());
+            eprintln!(
+                "✓ {:8} {:6} {} ({} 字节)",
+                p.id().as_str(),
+                if windows { "win" } else { "unix" },
+                url,
+                body.len()
+            );
         }
     }
 
-    assert!(failures.is_empty(), "安装地址核对失败：\n  {}", failures.join("\n  "));
+    assert!(
+        failures.is_empty(),
+        "安装地址核对失败：\n  {}",
+        failures.join("\n  ")
+    );
 }
 
 /// claude 的引导脚本只是段胶水：真正的二进制在 `downloads.claude.ai`（GCS，**不在** Cloudflare
@@ -101,22 +126,39 @@ fn claude_direct_install_plan_resolves_to_a_real_binary() {
     assert_eq!(code, 200);
     let version = version.trim();
     assert!(
-        version.split('.').count() == 3 && version.split('.').all(|p| p.chars().all(|c| c.is_ascii_digit())),
+        version.split('.').count() == 3
+            && version
+                .split('.')
+                .all(|p| p.chars().all(|c| c.is_ascii_digit())),
         "版本号形态不对：{version:?}"
     );
 
-    let (code, manifest) = curl(&format!("{BASE}/{version}/manifest.json")).expect("取 manifest 失败");
+    let (code, manifest) =
+        curl(&format!("{BASE}/{version}/manifest.json")).expect("取 manifest 失败");
     assert_eq!(code, 200);
-    assert!(!meowo_agent::looks_like_challenge(&manifest), "downloads.claude.ai 竟然也被 CF 挑战了");
+    assert!(
+        !meowo_agent::looks_like_challenge(&manifest),
+        "downloads.claude.ai 竟然也被 CF 挑战了"
+    );
 
     // 用插件自己的解析器读 manifest——这才是「代码真的能用」的证明，而不是字符串 contains。
     use meowo_agent::plugins::claude::install::parse_manifest;
-    for platform in ["win32-x64", "win32-arm64", "darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"] {
+    for platform in [
+        "win32-x64",
+        "win32-arm64",
+        "darwin-arm64",
+        "darwin-x64",
+        "linux-x64",
+        "linux-arm64",
+    ] {
         let (sum, size, binary) = parse_manifest(&manifest, platform)
             .unwrap_or_else(|| panic!("manifest 里解不出 {platform}"));
         assert_eq!(sum.len(), 64, "{platform} 的 checksum 不是 sha256");
         assert!(size > 100_000_000, "{platform} 的 size 小得可疑：{size}");
-        assert!(binary.starts_with("claude"), "{platform} 的产物名不对：{binary}");
+        assert!(
+            binary.starts_with("claude"),
+            "{platform} 的产物名不对：{binary}"
+        );
     }
 
     // 取二进制的前两个字节：Windows 上应是 PE 的 `MZ`。

@@ -28,6 +28,7 @@ import {
   type ProxySettings,
 } from "../../api";
 import { useT } from "../../i18n";
+import { useAgentListRefresh } from "../../useAgents";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./state";
 import { Dropdown, Segmented, Switch } from "./widgets";
 
@@ -101,9 +102,17 @@ export function NetworkSection() {
 
   const proxy: ProxySettings = settings?.proxy ?? SETTINGS_DEFAULTS.proxy;
 
-  useEffect(() => {
-    listAgents().then(setAgents).catch(() => {});
-  }, []);
+  // 只保留**已安装且能被套上代理**的 agent。两层过滤各有其忌讳：
+  //   - 配不了代理的 → 给它画输入框，就是请用户配一个静默不生效的代理（这一分区最怕的失败）；
+  //   - 没装的 → 还没有可运行的 agent，代理配了也无处生效，先把它装上再说。
+  const reloadAgents = () => {
+    listAgents()
+      .then((all) => setAgents(all.filter((a) => a.supports_proxy && a.installed)))
+      .catch(() => {});
+  };
+  useEffect(reloadAgents, []);
+  // 装完一个 agent 它才够格出现在这里（上面按 installed 过滤）——立刻重取，不必重开设置页。
+  useAgentListRefresh(reloadAgents);
 
   // 设置一变就重算生效值（含 system 模式下读到的环境变量）。
   useEffect(() => {

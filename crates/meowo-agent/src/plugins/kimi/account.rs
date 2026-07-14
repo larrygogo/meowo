@@ -10,12 +10,16 @@
 //!   任何非 2xx / 网络错 / 解析失败 → 安静降级 None，不崩溃、不影响其它 provider。
 //!   容错解析 parse_kimi_usage：支持多种推断 schema，字段漂移 used↔remaining、
 //!   resetAt/reset_at/resetTime/reset_time↔reset_in/resetIn/ttl/window(秒偏移)。
+//!
+//! **会员等级**：只长在 /usages 的 `user.membership.level` 上（本地一无所有），故由用量顺带捎回
+//!   （ProviderUsage::plan），宿主缓存后合并进账号卡片。映射见 [`plan_name`]。
 
 use serde_json::Value;
 use std::time::Duration;
 
 use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane};
 use crate::ports::{Body, HttpError, HttpRequest, Ports};
+use crate::variant::Installation;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -23,38 +27,40 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// 本机 kimi 实况的鉴权方案：凭据位置、OAuth 刷新端点、client_id、默认 base_url。
 /// 新旧版差异（若日后证实 legacy 用不同 client_id）只需改 `meowo_agent::plugins::kimi` 的变体表。
-fn kimi_auth() -> Option<&'static crate::AuthScheme> {
-    crate::registry::installation(crate::id::KIMI)?.auth
+fn kimi_auth(inst: &Installation) -> Option<&'static crate::AuthScheme> {
+    inst.auth
 }
 
-fn kimi_credentials_path() -> Option<std::path::PathBuf> {
-    crate::registry::installation(crate::id::KIMI)?.credentials_path()
+fn kimi_credentials_path(inst: &Installation) -> Option<std::path::PathBuf> {
+    inst.credentials_path()
 }
 
-fn read_kimi_credentials() -> Option<Value> {
-    serde_json::from_str(&std::fs::read_to_string(kimi_credentials_path()?).ok()?).ok()
+fn read_kimi_credentials(inst: &Installation) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(kimi_credentials_path(inst)?).ok()?).ok()
 }
 
 // ═══ 配置读取 ═══
 
 /// 读 base_url：env KIMI_CODE_BASE_URL > 实况 config.toml > 该变体的缺省。
-fn kimi_base_url() -> String {
+fn kimi_base_url(inst: &Installation) -> String {
     if let Ok(url) = std::env::var("KIMI_CODE_BASE_URL") {
         let url = url.trim().trim_end_matches('/').to_string();
         if !url.is_empty() {
             return url;
         }
     }
-    if let Some(url) = read_config_base_url() {
+    if let Some(url) = read_config_base_url(inst) {
         return url;
     }
-    kimi_auth().map(|a| a.default_base_url.to_string()).unwrap_or_default()
+    kimi_auth(inst)
+        .map(|a| a.default_base_url.to_string())
+        .unwrap_or_default()
 }
 
 /// 从实况 config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
 /// 不引入 toml 依赖，best-effort，失败返回 None。
-fn read_config_base_url() -> Option<String> {
-    let path = crate::registry::installation(crate::id::KIMI)?.config_path();
+fn read_config_base_url(inst: &Installation) -> Option<String> {
+    let path = inst.config_path();
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_section = false;
     for line in content.lines() {
@@ -71,7 +77,11 @@ fn read_config_base_url() -> Option<String> {
         }
         if let Some(rest) = trimmed.strip_prefix("base_url") {
             if let Some(after_eq) = rest.trim_start().strip_prefix('=') {
-                let url = after_eq.trim().trim_matches('"').trim_end_matches('/').to_string();
+                let url = after_eq
+                    .trim()
+                    .trim_matches('"')
+                    .trim_end_matches('/')
+                    .to_string();
                 if !url.is_empty() {
                     return Some(url);
                 }
@@ -112,7 +122,10 @@ pub fn merge_kimi_credentials(
         obj.insert("access_token".into(), serde_json::json!(access_token));
         obj.insert("refresh_token".into(), serde_json::json!(refresh_token));
         obj.insert("expires_in".into(), serde_json::json!(expires_in));
-        obj.insert("expires_at".into(), serde_json::json!(now_secs + expires_in));
+        obj.insert(
+            "expires_at".into(),
+            serde_json::json!(now_secs + expires_in),
+        );
     }
     out
 }
@@ -120,7 +133,7 @@ pub fn merge_kimi_credentials(
 /// 原子写回凭据文件（避免半截文件）。
 fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Result<(), String> {
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic(path, &body).map_err(|e| e.to_string())
+    crate::fsutil::write_atomic_secure(path, &body).map_err(|e| e.to_string())
 }
 
 /// 按需刷新 kimi token（过期才刷 + Mutex 串行化 + 双检 + 原子写回）。
@@ -133,15 +146,22 @@ fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Resul
 ///
 /// 兜底：刷新失败（invalid_grant/网络错）→ 返回 None → 上层 usage 降级为 None；
 ///         不打印/日志 token 原文。
-fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
+fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String> {
     use std::sync::Mutex;
     // 串行化并发刷新：kimi refresh_token 单次使用后即失效，并发刷新会互相覆盖。
     // 持锁后下方重读凭据（双检）：若刚被另一线程刷新过则直接走 fast-path，不再重刷。
     static REFRESH_LOCK: Mutex<()> = Mutex::new(());
 
-    let creds = read_kimi_credentials()?;
-    let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let creds = read_kimi_credentials(inst)?;
+    let access_token = creds
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let expires_at = creds
+        .get("expires_at")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     // Fast path：token 仍有效，直接返回，不加锁。
     if !access_token.is_empty() && !is_kimi_token_expired(expires_at, now_secs()) {
@@ -152,9 +172,16 @@ fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
     let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     // 双检：持锁后重读文件，若已被并发刷新过，直接用新 token。
-    let creds = read_kimi_credentials()?;
-    let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let creds = read_kimi_credentials(inst)?;
+    let access_token = creds
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let expires_at = creds
+        .get("expires_at")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let current_secs = now_secs();
 
     if !access_token.is_empty() && !is_kimi_token_expired(expires_at, current_secs) {
@@ -163,15 +190,21 @@ fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
 
     // 仍过期 → 执行刷新。expires_at 缺失/字段名不同会被读成 0 → 恒判过期而走到这里。
     // 端点与 client_id 取自实况变体：若返回 invalid_client，即该变体的 client_id 需按其版本修正。
-    let Some(auth) = kimi_auth().and_then(|a| a.refresh) else {
+    let Some(auth) = kimi_auth(inst).and_then(|a| a.refresh) else {
         eprintln!("Meowo usage[kimi]: 该变体未声明 OAuth 刷新方式，无法刷新");
         return None;
     };
     eprintln!(
         "Meowo usage[kimi]: access_token 已过期或无 expires_at，尝试刷新…（变体 {}）",
-        crate::registry::installation(crate::id::KIMI).map(|i| i.variant_tag).unwrap_or("?")
+        crate::registry::installation(crate::id::KIMI)
+            .map(|i| i.variant_tag)
+            .unwrap_or("?")
     );
-    let Some(refresh_token) = creds.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string) else {
+    let Some(refresh_token) = creds
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    else {
         eprintln!("Meowo usage[kimi]: 凭据缺 refresh_token 字段，无法刷新");
         return None;
     };
@@ -227,8 +260,9 @@ fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
     let refresh_secs = now_secs();
     let merged = merge_kimi_credentials(&creds, new_access, new_refresh, expires_in, refresh_secs);
 
-    // 仅在刷新成功后写回（失败不碰文件）。
-    let path = kimi_credentials_path()?;
+    // 仅在刷新成功后写回（失败不碰文件）。多账号下这写的是**该 profile 自己的**凭据——
+    // 各 profile 各写各的，不会互相覆盖（这正是选目录隔离而非轮换凭据的理由）。
+    let path = kimi_credentials_path(inst)?;
     if write_kimi_credentials_atomic(&path, &merged).is_err() {
         // 写回失败（权限/磁盘），但刷新本身成功 → 本次仍可用新 token（内存中），
         // 下次仍会再刷（未持久化）。
@@ -345,7 +379,11 @@ fn window_to_kind(duration: f64, time_unit: &str) -> UsageKind {
 /// label 优先 usage.name → usage.title → 默认 "Weekly limit"（不存入结构体，仅供调试参考）。
 fn parse_usage_object(usage: &Value) -> Option<UsageLane> {
     let (used, limit) = extract_used_limit(usage)?;
-    let used_pct = if limit > 0.0 { Some(used / limit * 100.0) } else { None };
+    let used_pct = if limit > 0.0 {
+        Some(used / limit * 100.0)
+    } else {
+        None
+    };
     let resets_at = parse_resets_at(usage);
     Some(UsageLane {
         kind: UsageKind::Weekly,
@@ -361,8 +399,14 @@ fn parse_usage_object(usage: &Value) -> Option<UsageLane> {
 /// detail 若不是对象（缺失或 null）则退回用 item 本身取 used/limit。
 fn parse_limit_item(item: &Value) -> Option<UsageLane> {
     let window = item.get("window")?;
-    let time_unit = window.get("timeUnit").and_then(|v| v.as_str()).unwrap_or("");
-    let duration = window.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let time_unit = window
+        .get("timeUnit")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let duration = window
+        .get("duration")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let kind = window_to_kind(duration, time_unit);
 
     // detail 若不是对象则退回 item 本身取 used/limit
@@ -372,7 +416,11 @@ fn parse_limit_item(item: &Value) -> Option<UsageLane> {
     };
 
     let (used, limit) = extract_used_limit(data)?;
-    let used_pct = if limit > 0.0 { Some(used / limit * 100.0) } else { None };
+    let used_pct = if limit > 0.0 {
+        Some(used / limit * 100.0)
+    } else {
+        None
+    };
     let resets_at = parse_resets_at(data);
 
     Some(UsageLane {
@@ -418,7 +466,50 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
         }
     }
 
-    if lanes.is_empty() { None } else { Some(ProviderUsage { lanes, note: None }) }
+    if lanes.is_empty() {
+        None
+    } else {
+        Some(ProviderUsage {
+            lanes,
+            note: None,
+            plan: plan_name(v),
+        })
+    }
+}
+
+/// `LEVEL_*` 枚举 → 套餐名（Andante / Moderato / Allegretto / Allegro / Vivace）。
+///
+/// # 为什么这张表值得如此谨慎
+///
+/// kimi **不公开这个映射**，而且它有两套价格阶梯——国内 5 档（Adagio ¥0 / Andante ¥39 /
+/// Moderato ¥79 / Allegretto ¥159 / Allegro ¥559）与国际 4 档（Moderato / Allegretto / Allegro /
+/// Vivace）——于是同一个枚举在两套里指的不是同一档。这正是各家第三方实现互相打架的原因。
+///
+/// **`LEVEL_INTERMEDIATE = Allegretto` 是实测钉死的**：一个 `REGION_CN`、订阅页明写「当前订阅：
+/// Allegretto（¥159）」的账号，`/usages` 回的正是 `{"user":{"membership":{"level":
+/// "LEVEL_INTERMEDIATE"}}}`。
+///
+/// 这个锚点顺带说明了整张表**对齐的是国际阶梯而非国内的**：若按国内 4 个付费档顺次排（Andante→
+/// Moderato→Allegretto→Allegro），第二档 INTERMEDIATE 该是 Moderato，可实测它是第三档 Allegretto。
+/// 按国际阶梯排（Moderato→Allegretto→Allegro→Vivace）才对得上。按价格顺序猜的实现全错在这里。
+///
+/// 其余三档由这个锚点外推，并与多个独立第三方实现（Swift / TS）的读法一致，**但未经实测**。
+/// 已知的残余风险：国内独有的 Andante（¥39）在国际阶梯里没有对应档，它返回什么枚举无从得知——
+/// 若它也回 `LEVEL_BASIC`，这里会把它显示成 Moderato。等有这样的账号出现再修，不在此凭空加分支。
+///
+/// **未知枚举一律不猜**：返回 None（卡片退回显示 userId），宁可少说一句，也不能把 ¥559 的档说成
+/// ¥79 的。
+fn plan_name(v: &Value) -> Option<String> {
+    let level = v.get("user")?.get("membership")?.get("level")?.as_str()?;
+    let name = match level {
+        "LEVEL_BASIC" => "Moderato",
+        "LEVEL_INTERMEDIATE" => "Allegretto", // ← 实测证实的锚点
+        "LEVEL_ADVANCED" => "Allegro",
+        "LEVEL_PREMIUM" => "Vivace",
+        // 免费档、以及本表还不认识的枚举：不编造一个套餐名。
+        _ => return None,
+    };
+    Some(name.to_string())
 }
 
 // ═══ 联网取用量 ═══
@@ -427,11 +518,11 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
 /// kimi access_token 寿命仅约 15 分钟，过期前 60s 自动刷新；
 /// 刷新写回仅更新 access_token/refresh_token/expires_in/expires_at，其余字段不动。
 /// 任何非 2xx / 网络错 / 解析失败 → None（安静降级）。
-fn fetch_kimi_usage_live(ports: &Ports) -> Result<ProviderUsage, String> {
-    let Some(access_token) = ensure_valid_kimi_token(ports) else {
+fn fetch_kimi_usage_live(inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String> {
+    let Some(access_token) = ensure_valid_kimi_token(inst, ports) else {
         return Err("无有效 access_token（读不到或刷新失败）".into());
     };
-    let base = kimi_base_url();
+    let base = kimi_base_url(inst);
     let url = format!("{base}/usages");
     let bearer = format!("Bearer {access_token}");
 
@@ -445,11 +536,14 @@ fn fetch_kimi_usage_live(ports: &Ports) -> Result<ProviderUsage, String> {
         Ok(t) => t,
         // 401 多为 token 失效/旧版鉴权不兼容；404 多为端点不对。
         Err(HttpError::Status(code, _)) => {
-            return Err(format!("GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）"));
+            return Err(format!(
+                "GET {url} 返回 HTTP {code}（401=鉴权失效/不兼容，404=端点不对）"
+            ));
         }
         Err(e) => return Err(format!("GET {url} 网络错误：{e}")),
     };
-    let v: Value = serde_json::from_str(&text).map_err(|e| format!("/usages 响应不是合法 JSON：{e}"))?;
+    let v: Value =
+        serde_json::from_str(&text).map_err(|e| format!("/usages 响应不是合法 JSON：{e}"))?;
     parse_kimi_usage(&v)
         .ok_or_else(|| "/usages 解析不出任何用量 lane（响应 schema 可能与旧版不同）".to_string())
 }
@@ -459,10 +553,37 @@ fn fetch_kimi_usage_live(ports: &Ports) -> Result<ProviderUsage, String> {
 pub struct KimiAccount;
 pub static ACCOUNT: KimiAccount = KimiAccount;
 
+/// JWT 里的用户标识 → 卡片上的一行字。kimi 拿不到邮箱，这是唯一能区分两个账号的东西。
+///
+/// id 形如 `d0ah7sudu6f8a9u5a4g`，整串糊在卡片上既长又没法读。取**首尾各 4 位**（`d0ah…5a4g`）：
+/// 足以一眼看出两个账号不是同一个，又不至于占满一行。太短的 id 原样显示，不做无谓截断。
+fn user_label(payload: Option<&Value>) -> Option<String> {
+    let id = payload?
+        .get("user_id")
+        .or_else(|| payload?.get("sub"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    // 按字符数截，不按字节——id 理论上可能不是纯 ASCII。
+    let chars: Vec<char> = id.chars().collect();
+    if chars.len() <= 12 {
+        return Some(id.to_string());
+    }
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    Some(format!("{head}…{tail}"))
+}
+
 impl AccountCap for KimiAccount {
-    /// best-effort 读账号：解 JWT email claim 或降级「已登录」标签。凭据不存在 → None。
-    fn account(&self, _ports: &Ports) -> Option<Account> {
-        let creds = read_kimi_credentials()?;
+    /// 读账号。**kimi 不给邮箱**——它的凭据里没有，本地文件里也没有（实测：JWT 的 claims 只有
+    /// `client_id / user_id / scope / token_id / device_id / type / iss / sub / exp / nbf / iat / jti`；
+    /// `~/.kimi-code` 下没有任何含邮箱的文件；`/usages` 只回额度）。
+    ///
+    /// 所以退而求其次用 `user_id` 当标识。这不是为了好看，是**多账号下唯一能区分「这两个 kimi
+    /// 账号是不是同一个」的东西**——只显示「已登录」的话，两个账号的卡片长得一模一样。
+    ///
+    /// `email` 仍然照读：kimi 哪天在 JWT 里补上它，这里自动就用上了。
+    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
+        let creds = read_kimi_credentials(inst)?;
         let access_token = creds.get("access_token").and_then(|v| v.as_str())?;
         // 只读 JWT claim、不打印 token 原文
         let payload = crate::codec::decode_jwt_payload(access_token);
@@ -472,39 +593,131 @@ impl AccountCap for KimiAccount {
                 .filter(|s| !s.is_empty() && s.contains('@'))
                 .map(|s| s.to_string())
         });
+        // 有 email 就不必再显示 id（邮箱信息量更大）。
+        let login_label = email
+            .is_none()
+            .then(|| user_label(payload.as_ref()))
+            .flatten();
 
-        if let Some(email_str) = email {
-            Some(Account {
-                email: Some(email_str),
-                display_name: None,
-                organization: None,
-                plan: None,
-                login_label: None,
-            })
-        } else {
-            // 解不出 email → 降级「已登录」标签
-            Some(Account {
-                email: None,
-                display_name: None,
-                organization: None,
-                plan: None,
-                login_label: Some("已登录".to_string()),
-            })
-        }
+        Some(Account {
+            email,
+            display_name: None,
+            organization: None,
+            plan: None,
+            login_label,
+        })
     }
 
     /// 联网拉一次（含按需刷新 token）。缓存与 60s 限频归宿主编排层。
-    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String> {
-        fetch_kimi_usage_live(ports)
+    fn fetch_usage(&self, inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String> {
+        fetch_kimi_usage_live(inst, ports)
     }
 
     /// 凭据文件存在即支持（不保证能成功，失败会降级）。
-    fn usage_supported(&self, _ports: &Ports) -> bool {
-        kimi_credentials_path().is_some_and(|p| p.exists())
+    fn usage_supported(&self, inst: &Installation, _ports: &Ports) -> bool {
+        kimi_credentials_path(inst).is_some_and(|p| p.exists())
     }
 }
 
 // ═══ Tests ═══
+
+#[cfg(test)]
+mod user_label_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// kimi 不给邮箱（JWT 里没有，本地文件里也没有），只能拿 `user_id` 当标识。
+    ///
+    /// 这不是好看不好看的问题：多账号下如果只显示「已登录」，两个 kimi 账号的卡片**一模一样**，
+    /// 用户根本分不清哪个是哪个。
+    #[test]
+    fn falls_back_to_user_id_when_kimi_gives_no_email() {
+        // 实测的真实形状：有 user_id，没有 email。
+        let p = json!({"user_id": "d0ah7sudu6f8a9u5a4g", "sub": "d0ah7sudu6f8a9u5a4g"});
+        assert_eq!(user_label(Some(&p)).as_deref(), Some("d0ah…5a4g"));
+
+        // 没有 user_id 时退到 sub。
+        let p = json!({"sub": "abcdefghijklmnop"});
+        assert_eq!(user_label(Some(&p)).as_deref(), Some("abcd…mnop"));
+
+        // 短 id 原样显示，不做无谓截断。
+        assert_eq!(
+            user_label(Some(&json!({"user_id": "u1"}))).as_deref(),
+            Some("u1")
+        );
+
+        // 什么都没有 → None（卡片回退到「未登录」以外的既有兜底，不显示一个空串）。
+        assert_eq!(user_label(Some(&json!({"scope": "x"}))), None);
+        assert_eq!(user_label(Some(&json!({"user_id": ""}))), None);
+        assert_eq!(user_label(None), None);
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// `/usages` 的**实测响应形状**（2026-07，节选自一个 REGION_CN 账号；userId 已改写）。
+    /// 会员等级只出现在这里——凭据、JWT、`~/.kimi-code` 下的任何文件里都没有。
+    fn live_usages_shape(level: &str) -> Value {
+        json!({
+            "user": {
+                "userId": "cntxxxxxxxxxxxxxxxxx",
+                "region": "REGION_CN",
+                "membership": { "level": level },
+                "businessId": ""
+            },
+            "usage": { "limit": "100", "used": "2", "remaining": "98",
+                       "resetTime": "2026-07-20T02:00:13.307440Z" },
+            "limits": [{
+                "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                "detail": { "limit": "100", "remaining": "100",
+                            "resetTime": "2026-07-14T08:00:13.307440Z" }
+            }],
+            "subType": "TYPE_PURCHASE"
+        })
+    }
+
+    /// 唯一实测钉死的一档：订阅页显示 Allegretto（¥159）的账号，这里回 `LEVEL_INTERMEDIATE`。
+    /// 这条测试就是那份证据本身——它挂了，说明有人按「价格顺序」把表改回去了。
+    #[test]
+    fn intermediate_is_allegretto_as_observed_live() {
+        let u = parse_kimi_usage(&live_usages_shape("LEVEL_INTERMEDIATE")).expect("有 lanes");
+        assert_eq!(u.plan.as_deref(), Some("Allegretto"));
+        // 套餐是顺带捎回来的，不能挤掉用量本身。
+        assert!(!u.lanes.is_empty());
+    }
+
+    #[test]
+    fn maps_the_other_known_levels() {
+        for (level, want) in [
+            ("LEVEL_BASIC", "Moderato"),
+            ("LEVEL_ADVANCED", "Allegro"),
+            ("LEVEL_PREMIUM", "Vivace"),
+        ] {
+            assert_eq!(
+                plan_name(&live_usages_shape(level)).as_deref(),
+                Some(want),
+                "{level}"
+            );
+        }
+    }
+
+    /// 不认识的枚举**不猜**：宁可让卡片退回显示 userId，也不能把某一档说成另一档。
+    #[test]
+    fn unknown_or_missing_level_yields_no_plan() {
+        assert_eq!(plan_name(&live_usages_shape("LEVEL_SOMETHING_NEW")), None);
+        assert_eq!(plan_name(&live_usages_shape("")), None);
+        assert_eq!(plan_name(&json!({"user": {"membership": {}}})), None);
+        assert_eq!(plan_name(&json!({"user": {}})), None);
+        assert_eq!(plan_name(&json!({})), None);
+        // 等级读不到也绝不影响用量解析。
+        let u = parse_kimi_usage(&live_usages_shape("LEVEL_WHATEVER")).expect("有 lanes");
+        assert_eq!(u.plan, None);
+        assert!(!u.lanes.is_empty());
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -571,7 +784,8 @@ mod tests {
     #[test]
     fn merge_expires_at_calculation() {
         // expires_at = now_secs + expires_in（Unix 秒），与 kimi 源码完全一致
-        let original = json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+        let original =
+            json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
         let merged = merge_kimi_credentials(&original, "a2", "r2", 900, 1751000000);
         assert_eq!(merged["expires_at"], 1751000900i64);
     }
@@ -611,7 +825,8 @@ mod tests {
         // 若 expires_in 被 clamp 到 [60, 86400]，则：
         // - now_secs + 86400 不溢出（int64 足够容纳）
         // - 下次刷新时间合理（最多 24 小时后）
-        let original = json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+        let original =
+            json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
 
         // 模拟 expires_in 被服务端异常设置为极大值 (100000000)
         // clamp 后应为 86400
@@ -683,7 +898,10 @@ mod tests {
     fn parse_resets_at_reset_at_nanos_truncated() {
         // 纳秒精度（9位）→ 截断到毫秒（3位）
         let v = json!({"resetAt": "2026-06-30T12:00:00.123456789Z"});
-        assert_eq!(parse_resets_at(&v).as_deref(), Some("2026-06-30T12:00:00.123Z"));
+        assert_eq!(
+            parse_resets_at(&v).as_deref(),
+            Some("2026-06-30T12:00:00.123Z")
+        );
     }
 
     #[test]
@@ -704,7 +922,10 @@ mod tests {
     fn parse_resets_at_window_object_ignored() {
         // window 为对象时不应当作秒偏移
         let v = json!({"window": {"duration": 5, "timeUnit": "HOUR"}});
-        assert!(parse_resets_at(&v).is_none(), "window 对象不应产生 reset 偏移");
+        assert!(
+            parse_resets_at(&v).is_none(),
+            "window 对象不应产生 reset 偏移"
+        );
     }
 
     #[test]
@@ -721,7 +942,10 @@ mod tests {
         assert_eq!(window_to_kind(5.0, "TIME_UNIT_HOUR"), UsageKind::FiveHour);
         assert_eq!(window_to_kind(168.0, "TIME_UNIT_HOUR"), UsageKind::SevenDay);
         assert_eq!(window_to_kind(7.0, "TIME_UNIT_DAY"), UsageKind::SevenDay);
-        assert_eq!(window_to_kind(300.0, "TIME_UNIT_MINUTE"), UsageKind::FiveHour);
+        assert_eq!(
+            window_to_kind(300.0, "TIME_UNIT_MINUTE"),
+            UsageKind::FiveHour
+        );
     }
 
     // ── parse_kimi_usage · Schema A（顶层 usage 对象）──
@@ -775,14 +999,21 @@ mod tests {
     fn schema_a_reset_at_unix_seconds() {
         let v = json!({"usage": {"used": 100, "limit": 1000, "resetAt": 1782820800i64}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert!(pu.lanes[0].resets_at.as_deref().unwrap_or("").contains("2026-06-30"));
+        assert!(pu.lanes[0]
+            .resets_at
+            .as_deref()
+            .unwrap_or("")
+            .contains("2026-06-30"));
     }
 
     #[test]
     fn schema_a_reset_at_alias() {
         let v = json!({"usage": {"used": 100, "limit": 1000, "reset_at": "2026-07-01T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-07-01T00:00:00Z")
+        );
     }
 
     #[test]
@@ -790,15 +1021,22 @@ mod tests {
         // resetTime 新增字段名
         let v = json!({"usage": {"used": 100, "limit": 1000, "resetTime": "2026-07-01T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-07-01T00:00:00Z")
+        );
     }
 
     #[test]
     fn schema_a_reset_time_snake() {
         // reset_time 新增下划线别名
-        let v = json!({"usage": {"used": 100, "limit": 1000, "reset_time": "2026-07-02T00:00:00Z"}});
+        let v =
+            json!({"usage": {"used": 100, "limit": 1000, "reset_time": "2026-07-02T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-07-02T00:00:00Z")
+        );
     }
 
     #[test]
@@ -806,7 +1044,10 @@ mod tests {
         // resetAt 纳秒精度 → 截断到毫秒
         let v = json!({"usage": {"used": 100, "limit": 1000, "resetAt": "2026-06-30T12:00:00.123456789Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert_eq!(pu.lanes[0].resets_at.as_deref(), Some("2026-06-30T12:00:00.123Z"));
+        assert_eq!(
+            pu.lanes[0].resets_at.as_deref(),
+            Some("2026-06-30T12:00:00.123Z")
+        );
     }
 
     #[test]
@@ -843,7 +1084,10 @@ mod tests {
     fn schema_a_zero_limit_no_pct() {
         let v = json!({"usage": {"used": 0, "limit": 0, "resetAt": "2026-06-30T00:00:00Z"}});
         let pu = parse_kimi_usage(&v).expect("should parse");
-        assert!(pu.lanes[0].used_pct.is_none(), "limit=0 时 used_pct 应为 None");
+        assert!(
+            pu.lanes[0].used_pct.is_none(),
+            "limit=0 时 used_pct 应为 None"
+        );
     }
 
     // ── parse_kimi_usage · Schema B（limits 数组）──
@@ -949,7 +1193,10 @@ mod tests {
     fn balance_in_data_not_parsed() {
         // data.available_balance 属于另一个端点，/usages 响应不含此字段，应忽略
         let v = json!({"data": {"available_balance": 5.42}});
-        assert!(parse_kimi_usage(&v).is_none(), "data.available_balance 应被忽略");
+        assert!(
+            parse_kimi_usage(&v).is_none(),
+            "data.available_balance 应被忽略"
+        );
     }
 
     // ── 混合 / 畸形 ──
@@ -987,17 +1234,29 @@ mod tests {
     #[test]
     fn extract_used_limit_prefers_used_then_derives_from_remaining() {
         // used 存在 → 直接取，remaining 即便矛盾也不参与。
-        assert_eq!(extract_used_limit(&json!({"limit": 1000, "used": 300, "remaining": 999})), Some((300.0, 1000.0)));
+        assert_eq!(
+            extract_used_limit(&json!({"limit": 1000, "used": 300, "remaining": 999})),
+            Some((300.0, 1000.0))
+        );
         // 无 used → used = limit - remaining。
-        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": 700})), Some((300.0, 1000.0)));
+        assert_eq!(
+            extract_used_limit(&json!({"limit": 1000, "remaining": 700})),
+            Some((300.0, 1000.0))
+        );
         // 字符串数字同样容错。
-        assert_eq!(extract_used_limit(&json!({"limit": "1000", "remaining": "700"})), Some((300.0, 1000.0)));
+        assert_eq!(
+            extract_used_limit(&json!({"limit": "1000", "remaining": "700"})),
+            Some((300.0, 1000.0))
+        );
         // 无 limit → None（limit 是必需字段）。
         assert_eq!(extract_used_limit(&json!({"used": 300})), None);
         // 有 limit 但 used/remaining 皆无 → None。
         assert_eq!(extract_used_limit(&json!({"limit": 1000})), None);
         // remaining 存在但不是数字（解析不出）→ 与缺失同等，None。
-        assert_eq!(extract_used_limit(&json!({"limit": 1000, "remaining": "abc"})), None);
+        assert_eq!(
+            extract_used_limit(&json!({"limit": 1000, "remaining": "abc"})),
+            None
+        );
     }
 
     #[test]
@@ -1045,7 +1304,10 @@ mod tests {
         assert_eq!(weekly.kind, UsageKind::Weekly, "顶层 usage → Weekly");
         assert_eq!(weekly.used, Some(8.0), "used 字符串 '8' 解析为 8.0");
         assert_eq!(weekly.limit, Some(100.0), "limit 字符串 '100' 解析为 100.0");
-        assert!((weekly.used_pct.unwrap() - 8.0).abs() < 0.01, "used_pct 应为 8%");
+        assert!(
+            (weekly.used_pct.unwrap() - 8.0).abs() < 0.01,
+            "used_pct 应为 8%"
+        );
         assert_eq!(
             weekly.resets_at.as_deref(),
             Some("2026-07-06T02:00:13.307Z"),
@@ -1056,8 +1318,15 @@ mod tests {
         let five_hour = &pu.lanes[1];
         assert_eq!(five_hour.kind, UsageKind::FiveHour, "300 MINUTE → FiveHour");
         assert_eq!(five_hour.used, Some(10.0), "used 字符串 '10' 解析为 10.0");
-        assert_eq!(five_hour.limit, Some(100.0), "limit 字符串 '100' 解析为 100.0");
-        assert!((five_hour.used_pct.unwrap() - 10.0).abs() < 0.01, "used_pct 应为 10%");
+        assert_eq!(
+            five_hour.limit,
+            Some(100.0),
+            "limit 字符串 '100' 解析为 100.0"
+        );
+        assert!(
+            (five_hour.used_pct.unwrap() - 10.0).abs() < 0.01,
+            "used_pct 应为 10%"
+        );
         assert_eq!(
             five_hour.resets_at.as_deref(),
             Some("2026-07-01T10:00:13.307Z"),
@@ -1081,6 +1350,9 @@ mod tests {
         // TIME_UNIT_* 前缀变体
         assert_eq!(window_to_kind(5.0, "TIME_UNIT_HOUR"), UsageKind::FiveHour);
         assert_eq!(window_to_kind(7.0, "TIME_UNIT_DAY"), UsageKind::SevenDay);
-        assert_eq!(window_to_kind(300.0, "TIME_UNIT_MINUTE"), UsageKind::FiveHour);
+        assert_eq!(
+            window_to_kind(300.0, "TIME_UNIT_MINUTE"),
+            UsageKind::FiveHour
+        );
     }
 }
