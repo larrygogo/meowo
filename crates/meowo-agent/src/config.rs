@@ -203,7 +203,11 @@ pub fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
 }
 
 fn file_name_lower(path: &str) -> Option<String> {
-    Some(std::path::Path::new(path).file_name()?.to_str()?.to_ascii_lowercase())
+    // 同时按 `/` 和 `\` 取末段——**不能**用 `Path::file_name()`：它只认当前平台的分隔符，于是在
+    // macOS/Linux 上 Windows 路径 `C:\…\meowo-reporter.exe` 会被整串当成文件名，认领判定当场失败。
+    // 而 reporter 路径来自配置文件，写它的平台未必是读它的平台。
+    let name = path.trim().rsplit(['/', '\\']).next()?;
+    (!name.is_empty()).then(|| name.to_ascii_lowercase())
 }
 
 /// 是 meowo-reporter 或历史遗留的 cc-reporter。

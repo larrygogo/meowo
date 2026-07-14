@@ -37,8 +37,8 @@ const invokeMock = vi.hoisted(() =>
         { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true },
         { id: "kimi", display_name: "Kimi Code", installed: false, supports_proxy: true },
         { id: "codex", display_name: "Codex", installed: false, supports_proxy: true },
-        { id: "gemini", display_name: "Gemini CLI", installed: false, supports_proxy: false },
-        { id: "opencode", display_name: "OpenCode", installed: false, supports_proxy: false },
+        { id: "gemini", display_name: "Gemini CLI", installed: false, supports_proxy: true },
+        { id: "opencode", display_name: "OpenCode", installed: false, supports_proxy: true },
       ]);
     }
     return Promise.resolve();
