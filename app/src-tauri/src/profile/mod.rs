@@ -234,6 +234,32 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
     .map_err(|e| e.to_string())?
 }
 
+/// 给账号改名。**只动展示名，不动 id** —— id 是目录名，改了就等于换了个账号（凭据、会话历史
+/// 全在那个目录里），而用户以为自己只是改了个称呼。
+#[tauri::command]
+pub(crate) async fn rename_profile(
+    provider: String,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("账号名不能为空".to_string());
+        }
+        let mut s = crate::settings::load_settings();
+        let p = s
+            .profiles
+            .get_mut(&provider)
+            .and_then(|list| list.iter_mut().find(|p| p.id == id))
+            .ok_or("没有这个账号")?;
+        p.name = name.to_string();
+        crate::settings::save_settings(&s)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 切换活跃账号。`id = None` → 切回默认账号。
 ///
 /// 只影响**此后**拉起的会话：已经在跑的会话早已继承了它启动时的环境变量，不会中途改换账号。

@@ -9,6 +9,7 @@ import {
   listProfiles,
   createProfile,
   setActiveProfile,
+  renameProfile,
   deleteProfile,
   type AgentId,
   type AgentDescriptor,
@@ -577,6 +578,9 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
   const [rows, setRows] = useState<ProfileView[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  // 正在改名的账号 id（null = 没在改名）。默认账号不可改名（它没有 id）。
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -621,11 +625,29 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
     });
   };
 
-  const remove = (p: ProfileView) => {
-    if (!p.id) return; // 默认账号删不得
+  /**
+   * 删除账号（连同它的目录）。**活跃账号也能删** —— 后端会把活跃标记落回默认账号。
+   *
+   * 确认框走 `@tauri-apps/plugin-dialog` 的 `confirm`，**不是 `window.confirm`**：后者在 Tauri 的
+   * webview 里会被直接吞掉，返回值恒为 false ——按钮看着能点，点了却什么都不发生。
+   */
+  const remove = async (p: ProfileView) => {
+    if (!p.id) return; // 默认账号是 agent 自己的目录，删不得
     const label = p.name || p.id;
-    if (!window.confirm(t.account.deleteProfileConfirm(label))) return;
+    const yes = await confirm(t.account.deleteProfileConfirm(label), {
+      title: t.account.deleteProfile,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
     run(() => deleteProfile(provider, p.id!));
+  };
+
+  /** 改名。只动展示名，不动 id（它是目录名，改了就等于换了个账号）。 */
+  const commitRename = (p: ProfileView) => {
+    const next = editName.trim();
+    setEditing(null);
+    if (!p.id || !next || next === p.name) return;
+    run(() => renameProfile(provider, p.id!, next));
   };
 
   if (!rows) return null;
@@ -643,6 +665,37 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
           p.account?.display_name ??
           p.account?.login_label ??
           t.account.notLoggedIn;
+        // 正在改名的那一行：整行让位给输入框（其余按钮此时无从谈起）。
+        if (p.id && editing === p.id) {
+          return (
+            <div key={key} className="profile-row profile-add-row">
+              <input
+                className="profile-add-input"
+                autoFocus
+                value={editName}
+                data-testid={"profile-rename-input-" + provider + "-" + key}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename(p);
+                  if (e.key === "Escape") setEditing(null);
+                }}
+                onBlur={() => commitRename(p)}
+              />
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={"profile-rename-cancel-" + provider + "-" + key}
+                // onMouseDown：抢在 input 的 onBlur（会提交）之前把改名取消掉。
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setEditing(null);
+                }}
+              >
+                {t.account.cancelEdit}
+              </button>
+            </div>
+          );
+        }
         return (
           <div
             key={key}
@@ -678,12 +731,31 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
               </button>
             )}
 
+            {/* 默认账号不可改名/删除：它是 agent 自己的目录，不归 meowo 管。 */}
+            {p.id && (
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label={t.account.renameProfile}
+                data-tip={t.account.renameProfile}
+                data-testid={"profile-rename-" + provider + "-" + key}
+                disabled={busy}
+                onClick={() => {
+                  setEditName(p.name);
+                  setEditing(p.id);
+                }}
+              >
+                ✎
+              </button>
+            )}
+
             {p.id && (
               <button
                 type="button"
                 className="icon-btn"
                 aria-label={t.account.deleteProfile}
                 data-tip={t.account.deleteProfile}
+                data-testid={"profile-delete-" + provider + "-" + key}
                 disabled={busy}
                 onClick={() => remove(p)}
               >
@@ -715,6 +787,19 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
             onClick={add}
           >
             {t.account.addProfile}
+          </button>
+          {/* 反悔的出口。Esc 也行，但一个明摆着的按钮不该让人去猜。 */}
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"profile-add-cancel-" + provider}
+            disabled={busy}
+            onClick={() => {
+              setAdding(false);
+              setName("");
+            }}
+          >
+            {t.account.cancelEdit}
           </button>
         </div>
       ) : (

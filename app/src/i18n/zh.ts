@@ -241,6 +241,8 @@ export const zh = {
     addProfileHint: "新账号有自己独立的登录与会话历史，互不影响",
     switchProfile: "切换到此账号",
     activeProfile: "使用中",
+    renameProfile: "重命名",
+    cancelEdit: "取消",
     deleteProfile: "删除账号",
     deleteProfileConfirm: (name: string) =>
       `删除账号「${name}」？它的登录凭据与会话历史会一并删除，无法恢复。`,

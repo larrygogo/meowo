@@ -241,6 +241,8 @@ export const en: Dict = {
     addProfileHint: "A new account gets its own sign-in and session history, fully separate",
     switchProfile: "Switch to this account",
     activeProfile: "In use",
+    renameProfile: "Rename",
+    cancelEdit: "Cancel",
     deleteProfile: "Delete account",
     deleteProfileConfirm: (name: string) =>
       `Delete account "${name}"? Its credentials and session history will be deleted for good.`,

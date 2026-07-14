@@ -1176,6 +1176,7 @@ pub fn run() {
             list_agents,
             profile::list_profiles,
             profile::create_profile,
+            profile::rename_profile,
             profile::set_active_profile,
             profile::delete_profile,
             new_session,

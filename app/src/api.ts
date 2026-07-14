@@ -474,6 +474,11 @@ export function createProfile(provider: AgentId, name: string): Promise<string> 
   return invoke("create_profile", { provider, name });
 }
 
+/** 给账号改名。只改展示名，不动它的目录（id）。 */
+export function renameProfile(provider: AgentId, id: string, name: string): Promise<void> {
+  return invoke("rename_profile", { provider, id, name });
+}
+
 /** 切换活跃账号。`id = null` → 切回默认账号。只影响此后新拉起的会话。 */
 export function setActiveProfile(provider: AgentId, id: string | null): Promise<void> {
   return invoke("set_active_profile", { provider, id });

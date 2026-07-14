@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   listProfiles: vi.fn(),
   createProfile: vi.fn(),
   setActiveProfile: vi.fn(),
+  renameProfile: vi.fn(),
   deleteProfile: vi.fn(),
 }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
@@ -661,5 +662,81 @@ describe("AccountSection 多账号", () => {
 
     await waitFor(() => expect(screen.getByTestId("profiles-claude")).toBeTruthy());
     expect(screen.queryByTestId("profiles-gemini")).toBeNull();
+  });
+});
+
+describe("AccountSection 账号的增删改", () => {
+  const twoProfiles = () =>
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: false, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: true, account: { email: "w@b.c" } }, // 正在使用
+    ]);
+
+  /**
+   * **正在使用的账号也必须删得掉**（后端会把活跃标记落回默认账号）。
+   *
+   * 确认框走 `@tauri-apps/plugin-dialog` 的 `confirm`，**不是 `window.confirm`**——后者在 Tauri 的
+   * webview 里会被直接吞掉、恒返回 false：按钮看着能点，点了却什么都不发生。这正是它此前删不掉的原因。
+   */
+  it("正在使用的账号也能删除，且走 tauri 的 confirm", async () => {
+    twoProfiles();
+    api.deleteProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-delete-claude-work"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(api.deleteProfile).toHaveBeenCalledWith("claude", "work"));
+  });
+
+  it("确认框点取消 → 不删", async () => {
+    twoProfiles();
+    dialog.confirm.mockResolvedValue(false);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-delete-claude-work"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(api.deleteProfile).not.toHaveBeenCalled();
+  });
+
+  /** 改名只动展示名，不动 id——id 是目录名，改了等于换了个账号（凭据和历史都在那个目录里）。 */
+  it("可以给已有账号改名", async () => {
+    twoProfiles();
+    api.renameProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    const input = await screen.findByTestId("profile-rename-input-claude-work");
+    fireEvent.change(input, { target: { value: "个人" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(api.renameProfile).toHaveBeenCalledWith("claude", "work", "个人"));
+  });
+
+  it("改名可以取消——不调后端", async () => {
+    twoProfiles();
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-rename-claude-work"));
+    const input = await screen.findByTestId("profile-rename-input-claude-work");
+    fireEvent.change(input, { target: { value: "别的名字" } });
+    // mouseDown 而非 click：要抢在 input 的 onBlur（会提交）之前。
+    fireEvent.mouseDown(screen.getByTestId("profile-rename-cancel-claude-work"));
+
+    await waitFor(() => expect(screen.queryByTestId("profile-rename-input-claude-work")).toBeNull());
+    expect(api.renameProfile).not.toHaveBeenCalled();
+  });
+
+  /** 点了「添加账号」之后得能反悔——只给 Esc 是让人去猜。 */
+  it("添加账号可以取消", async () => {
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-add-claude"));
+    const input = screen.getByPlaceholderText(zh.account.newProfileName);
+    fireEvent.change(input, { target: { value: "半途而废" } });
+
+    fireEvent.click(screen.getByTestId("profile-add-cancel-claude"));
+
+    await waitFor(() => expect(screen.getByTestId("profile-add-claude")).toBeTruthy());
+    expect(api.createProfile).not.toHaveBeenCalled();
   });
 });
