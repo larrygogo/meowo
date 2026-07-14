@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useAgentListRefresh } from "../useAgents";
 import { availableTerminals, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
@@ -111,9 +112,11 @@ function GeneralSection() {
     if (!autostartDisabled) invoke<boolean>("get_autostart").then(setAutostart).catch(() => {});
     availableTerminals().then(setAvailTerms).catch(() => setAvailTerms([]));
   }, [autostartDisabled]);
-  useEffect(() => {
+  const reloadAgents = () => {
     listAgents().then(setAgents).catch(() => {});
-  }, []);
+  };
+  useEffect(reloadAgents, []);
+  useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
   const toggleAutostart = () => {
     if (autostartDisabled) return;
     const next = !autostart;

@@ -20,6 +20,7 @@ import {
   isLoggedIn,
 } from "../api";
 import { agentAssets } from "../providers";
+import { useAgentListRefresh } from "../useAgents";
 import { useT, repairFailMessage } from "../i18n";
 
 function FolderIcon() {
@@ -102,31 +103,9 @@ export function NewSessionPanel(): ReactElement {
     };
   }, []);
 
-  useEffect(() => {
-    // 若从会话卡片菜单带 provider 参数打开，保留该参数；否则回退到设置里的默认 agent。
-    if (!initialProvider) {
-      getSettings()
-        .then((s) => setProvider(s.default_agent))
-        .catch(() => {});
-    }
-    recentCwds(8)
-      .then((list) => {
-        // 后端按原始字符串去重；同一目录可能因历史数据斜杠方向不同而重复。
-        // 前端 normalize 后再按大小写不敏感（Windows）去重一次。
-        const seen = new Set<string>();
-        return list
-          .map(normalizePath)
-          .filter((p) => {
-            const key = pathKey(p);
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-      })
-      .then(setRecent)
-      .catch(() => {});
-    // agent 名单由后端下发。拿到后再据此查 hooks 接线状态与登录态——前端不再自带一份 agent 列表。
-    // 失败时保持 agents=null（未探测），UI 既不显示「未检测到已安装」也不禁用启动。
+  // agent 名单由后端下发。拿到后再据此查 hooks 接线状态与登录态——前端不再自带一份 agent 列表。
+  // 失败时保持 agents=null（未探测），UI 既不显示「未检测到已安装」也不禁用启动。
+  const reloadAgents = () => {
     listAgents()
       .then((list) => {
         setAgents(list);
@@ -153,7 +132,35 @@ export function NewSessionPanel(): ReactElement {
           .catch(() => setLoggedIn(null));
       })
       .catch(() => {});
+  };
+
+  useEffect(() => {
+    // 若从会话卡片菜单带 provider 参数打开，保留该参数；否则回退到设置里的默认 agent。
+    if (!initialProvider) {
+      getSettings()
+        .then((s) => setProvider(s.default_agent))
+        .catch(() => {});
+    }
+    recentCwds(8)
+      .then((list) => {
+        // 后端按原始字符串去重；同一目录可能因历史数据斜杠方向不同而重复。
+        // 前端 normalize 后再按大小写不敏感（Windows）去重一次。
+        const seen = new Set<string>();
+        return list
+          .map(normalizePath)
+          .filter((p) => {
+            const key = pathKey(p);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      })
+      .then(setRecent)
+      .catch(() => {});
+    reloadAgents();
   }, []);
+  // 装完一个 agent，这里的可选项就该多一个——不必关掉面板重开。
+  useAgentListRefresh(reloadAgents);
 
   // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果，完成/超时后发 login-done。
   useEffect(() => {

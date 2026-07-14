@@ -1,5 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { listAgents, agentName, type AgentDescriptor, type AgentId } from "./api";
+
+/**
+ * 装完一个 agent，名单就变了（未装 → 已装）。**凡是列 agent 的地方都得跟着重取**，否则装完还要
+ * 重开页面才看得见：网络分区的代理行、新建会话面板的可选项、贴纸的徽标，都只在挂载时取过一次。
+ *
+ * 只有 `ok` 才重取——失败什么都没改变。
+ */
+export function useAgentListRefresh(reload: () => void) {
+  // reload 每次渲染都是新函数；用 ref 存最新的，订阅只建一次、不反复重订。
+  const ref = useRef(reload);
+  ref.current = reload;
+  useEffect(() => {
+    const un = listen<{ ok: boolean }>("install-done", (e) => {
+      if (e.payload.ok) ref.current();
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+}
 
 /**
  * 后端下发的 agent 名单（展示名 + 安装态）。前端不再自己维护这份名单——加一个 agent 不必改前端。
@@ -18,6 +39,7 @@ export function useAgents(): {
     listAgents().then(setAgents).catch(() => {});
   };
   useEffect(reload, []);
+  useAgentListRefresh(reload); // 装完新 agent 立刻反映，不必重开页面
   return {
     agents,
     installed: (agents ?? []).filter((a) => a.installed).map((a) => a.id),

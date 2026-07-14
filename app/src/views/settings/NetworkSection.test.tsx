@@ -9,7 +9,7 @@
 //      你在别处开的终端我们够不着。UI 说成「全部会话」就是骗人：用户会对着自己终端里连不上的 codex
 //      毫无线索地瞎试。
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 
 // vi.mock 会被提升到文件顶部，工厂里引用的外部变量必须走 vi.hoisted（与 About.account.test.tsx 同坑）。
 const api = vi.hoisted(() => ({
@@ -19,7 +19,16 @@ const api = vi.hoisted(() => ({
   getEffectiveProxy: vi.fn(),
 }));
 vi.mock("../../api", async (o) => ({ ...(await o<typeof import("../../api")>()), ...api }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve(() => {}) }));
+// 收集 install-done 监听者，测试里手动广播（模拟后端 emit）。
+const ev = vi.hoisted(() => ({ doneCbs: [] as Array<(e: unknown) => void> }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (event: string, cb: (e: unknown) => void) => {
+    if (event === "install-done") ev.doneCbs.push(cb);
+    return Promise.resolve(() => {});
+  },
+}));
+const fireInstallDone = (provider: string, ok: boolean) =>
+  act(() => ev.doneCbs.forEach((cb) => cb({ payload: { provider, ok, code: ok ? 0 : 1, logPath: null } })));
 
 import { NetworkSection } from "./NetworkSection";
 import { SETTINGS_DEFAULTS } from "./state";
@@ -83,6 +92,20 @@ describe("代理优先级", () => {
     expect(await screen.findByText("Claude Code")).toBeTruthy();
     expect(screen.queryByText("Gemini CLI")).toBeNull();
     expect(screen.queryByText("OpenCode")).toBeNull();
+  });
+
+  /// 装完一个 agent，它的代理行必须**立刻**出现——这一分区只在挂载时取过一次名单，
+  /// 不订阅 install-done 的话，用户装完还得关掉设置页重开才看得到。
+  it("装完 agent 后代理行立刻出现，不必重开设置页", async () => {
+    api.listAgents
+      .mockResolvedValueOnce(descriptors(["claude"]))         // 初次：gemini 未装
+      .mockResolvedValue(descriptors(["claude", "gemini"]));  // 装完重查：gemini 已装
+    await mount(DIRECT);
+    expect(await screen.findByText("Claude Code")).toBeTruthy();
+    expect(screen.queryByText("Gemini CLI")).toBeNull();
+
+    fireInstallDone("gemini", true);
+    expect(await screen.findByText("Gemini CLI")).toBeTruthy();
   });
 
   it("选「自定义」但地址还空着时不落盘——后端会拒空地址", async () => {
