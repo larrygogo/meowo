@@ -2,6 +2,7 @@
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   installAgent,
   listAgents,
@@ -17,6 +18,7 @@ import {
   repairProviderHooks,
   loginAgent,
   cancelLogin,
+  logoutAgent,
   agentPathGap,
   addAgentToUserPath,
   type ProviderAccountPayload,
@@ -30,6 +32,7 @@ import { useT, repairFailMessage } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
 import { Switch } from "./widgets";
 import { useSettingsState } from "./state";
+import { RelayAccess } from "./RelayAccess";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -128,12 +131,13 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
   /** null = 安装状态检测中（listAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
   installed: boolean | null;
+  relay: AgentDescriptor["relay"];
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
@@ -145,6 +149,8 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   refreshing: boolean;
   /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
   settings: Settings | null;
+  /** 保存模型接入方式及中转元数据。 */
+  patchSettings: (p: Partial<Settings>) => Promise<string | null>;
   /** 切换本 provider 的贴纸配额显示开关。 */
   onToggleQuota: () => void;
 }) {
@@ -172,6 +178,8 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   // 登录态：waiting=已拉起终端、等 login-done；msg=超时/失败提示。
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginMsg, setLoginMsg] = useState<string | null>(null);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const [logoutMsg, setLogoutMsg] = useState<string | null>(null);
   // 本次等待是否由用户主动取消。login-done 只带 ok:bool，分不出「超时」与「取消」。
   const cancelledRef = useRef(false);
   // 刚装完（本次会话内）→ 把「登录」按钮标为下一步，把「装完 → 登录」串成一条链路。
@@ -318,11 +326,33 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
 
+  const startLogout = async () => {
+    const yes = await confirm(t.account.logoutConfirm(name), {
+      title: t.account.logout,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
+    setLogoutBusy(true);
+    setLogoutMsg(null);
+    try {
+      await logoutAgent(provider);
+      onLoggedIn();
+    } catch (e) {
+      setLogoutMsg(t.account.logoutFailed(String(e)));
+    } finally {
+      setLogoutBusy(false);
+    }
+  };
+
   // 安装态优先：未安装时一律按未安装展示（即使本地缓存了旧账号信息），
   // 只有「已安装且账号存在」才展示登录身份与用量。
   const isInstalled = installed === true;
-  const isLoggedIn = isInstalled && acc != null;
-  const statusBadge = !isInstalled
+  // 设置页切换接入方式后应立即反映，不等待账号接口下一次刷新；老后端 payload 仍作为加载前回退。
+  const relayEnabled = settings?.relay?.per_agent[provider]?.enabled ?? payload?.relay_enabled ?? false;
+  const isLoggedIn = isInstalled && (acc != null || relayEnabled);
+  const statusBadge = relayEnabled
+    ? t.account.relayBadge
+    : !isInstalled
     ? installed === false
       ? t.account.notInstalled
       : null
@@ -332,8 +362,10 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   // 只显示邮箱：显示名 + 邮箱 + 组织三段拼起来又长又重复（个人账号的组织名就是
   // 「<邮箱>'s Organization」）。邮箱本身已足够标识「登录的是哪个账号」。
   // 回退链兜住没有邮箱的登录方式（如 codex 的 API key，只有 login_label）。
-  const desc = isLoggedIn
-    ? acc.email ?? acc.display_name ?? acc.login_label ?? ""
+  const desc = relayEnabled
+    ? t.account.relayActive
+    : isLoggedIn
+    ? acc?.email ?? acc?.display_name ?? acc?.login_label ?? ""
     : installed === false
     ? t.account.installHint
     : isInstalled
@@ -349,7 +381,7 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
         <div className="provider-card-title">
           <div className="provider-card-title-row">
             <span className="provider-name">{name}</span>
-            {isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
+            {!relayEnabled && isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
             {statusBadge && <span className={"provider-badge" + (installed === false ? " provider-badge-off" : "")}>{statusBadge}</span>}
           </div>
           {/* 账号信息紧贴标题下方。邮箱可能很长，单行省略；title 属性兜住完整值。 */}
@@ -376,7 +408,7 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
               {installState === "error" ? t.account.installRetry : t.account.install}
             </button>
           ))}
-        {isInstalled && !isLoggedIn && (
+        {isInstalled && !isLoggedIn && !relayEnabled && (
           <button
             type="button"
             className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
@@ -387,6 +419,17 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
             title={loginBusy ? t.account.cancelLogin : undefined}
           >
             {loginBusy ? t.account.cancelLogin : t.account.login}
+          </button>
+        )}
+        {isInstalled && acc && !relayEnabled && (
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"agent-logout-" + provider}
+            onClick={startLogout}
+            disabled={logoutBusy}
+          >
+            {logoutBusy ? t.account.loggingOut : t.account.logout}
           </button>
         )}
         {isInstalled && hooksStatus && (hooksStatus === "missing" || hooksStatus === "unknown") && (
@@ -401,6 +444,14 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
           </button>
         )}
       </div>
+
+      {relay && (
+        <RelayAccess
+          agent={{ id: provider, display_name: name, installed: isInstalled, relay }}
+          settings={settings}
+          patch={patchSettings}
+        />
+      )}
 
       {installed === false && installState === "error" && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-install-error-" + provider}>
@@ -442,6 +493,12 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
         </div>
       )}
 
+      {logoutMsg && (
+        <div className="provider-card-body agent-install-error" data-testid={"agent-logout-error-" + provider}>
+          {logoutMsg}
+        </div>
+      )}
+
       {repairMsg && (
         <div className="provider-card-body agent-install-error" data-testid={"agent-repair-failed-" + provider}>
           {repairMsg}
@@ -449,7 +506,7 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
       )}
 
 
-      {isLoggedIn && (
+      {isLoggedIn && !relayEnabled && (
         <div className="provider-usage">
           <div className="usage-bar-head">
             <span className="usage-card-title">{t.account.quota}</span>
@@ -559,7 +616,7 @@ export function AccountSection() {
   // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
   return (
     <>
-      {(agents ?? []).map(({ id: p, display_name }) => {
+      {(agents ?? []).map(({ id: p, display_name, relay }) => {
         const payload = payloads.find((x) => x.provider === p) ?? null;
         return (
           <ProviderCard
@@ -567,6 +624,7 @@ export function AccountSection() {
             provider={p}
             name={display_name}
             installed={installed === null ? null : installed.has(p)}
+            relay={relay}
             payload={payload}
             usage={usageMap[p] ?? null}
             err={errMap[p] ?? null}
@@ -575,6 +633,7 @@ export function AccountSection() {
             onLoggedIn={loadAccounts}
             refreshing={refreshingSet.has(p)}
             settings={settings}
+            patchSettings={patchSettings}
             onToggleQuota={() => toggleQuotaProvider(p)}
           />
         );

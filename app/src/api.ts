@@ -16,6 +16,16 @@ export type AgentDescriptor = {
   display_name: string;
   /** 可执行是否装在本机。 */
   installed: boolean;
+  /** 插件未声明该能力时为 null，界面不得显示中转入口。 */
+  relay?: RelayCapability | null;
+};
+
+export type RelayCapability = {
+  protocols: { value: string; label: string }[];
+  auth_modes: { value: string; label: string }[];
+  default_protocol: string;
+  default_auth: string;
+  suggestions: { protocol: string; models: string[] }[];
 };
 
 export type Todo = {
@@ -180,7 +190,47 @@ export type Settings = {
   default_agent: AgentId;
   /** 出站代理（用量查询 / OAuth 刷新 / 下载 agent 二进制 / 自更新），可按 agent 覆盖。 */
   proxy: ProxySettings;
+  /** API 中转元数据；密钥由独立命令保存，不在此对象中。 */
+  relay?: RelaySettings;
 };
+
+export type RelayAuth = string;
+export type RelayProtocol = string;
+export type RelayRule = {
+  enabled: boolean;
+  base_url: string;
+  model: string;
+  protocol: RelayProtocol | "";
+  auth: RelayAuth;
+};
+export type RelaySettings = {
+  per_agent: Partial<Record<AgentId, RelayRule>>;
+};
+
+/** 中转密钥是否已保存；只返回布尔状态，不返回密钥正文。 */
+export function getRelaySecretStatus(): Promise<Record<AgentId, boolean>> {
+  return invoke("get_relay_secret_status");
+}
+
+/** 读取本机已保存的中转密钥，供用户在设置页直接查看和修改。 */
+export function getRelaySecrets(): Promise<Partial<Record<AgentId, string>>> {
+  return invoke("get_relay_secrets");
+}
+
+/** 保存或替换中转密钥。空串用于删除；密钥不会进入 Settings。 */
+export function setRelaySecret(agent: AgentId, secret: string): Promise<void> {
+  return invoke("set_relay_secret", { agent, secret });
+}
+
+/** 从当前中转的兼容 `/models` 端点读取模型 ID；凭据仅由后端读取。 */
+export function listRelayModels(
+  agent: AgentId,
+  baseUrl: string,
+  protocol: RelayProtocol | "",
+  auth: RelayAuth,
+): Promise<string[]> {
+  return invoke("list_relay_models", { agent, baseUrl, protocol, auth });
+}
 
 /**
  * 代理模式：
@@ -295,6 +345,7 @@ export type ProviderAccountPayload = {
   account: Account | null;
   usage: ProviderUsage | null;
   usage_supported: boolean;
+  relay_enabled?: boolean;
 };
 
 export function getAccounts(): Promise<ProviderAccountPayload[]> {
@@ -380,6 +431,11 @@ export function loginAgent(provider: AgentId, terminal?: string): Promise<void> 
  */
 export function cancelLogin(provider: AgentId): Promise<void> {
   return invoke("cancel_login", { provider });
+}
+
+/** 退出官方账号。不会删除模型配置、会话、hooks 或中转配置。 */
+export function logoutAgent(provider: AgentId): Promise<void> {
+  return invoke("logout_agent", { provider });
 }
 
 /** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */

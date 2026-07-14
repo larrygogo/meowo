@@ -58,6 +58,7 @@ static AUTH: AuthScheme = AuthScheme {
     default_base_url: "",
     // `codex login`（另有 `codex login status`，但 kimi 无 status 子命令，登录态检测统一走读凭据）。
     login_args: &["login"],
+    logout_args: &["logout"],
 };
 
 static LAUNCH: LaunchSpec = LaunchSpec {
@@ -111,6 +112,39 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
     socks_keys: &[],
 };
 
+struct CodexRelay;
+static RELAY: CodexRelay = CodexRelay;
+static RELAY_AUTH: [crate::RelayOption; 1] = [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
+    protocol: "",
+    models: &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4", "gpt-5.3-codex"],
+}];
+
+impl crate::RelayCap for CodexRelay {
+    fn ui(&self) -> crate::RelayUi {
+        crate::RelayUi { protocols: &[], auth_modes: &RELAY_AUTH, default_protocol: "", default_auth: "bearer", suggestions: &RELAY_SUGGESTIONS }
+    }
+    fn launch_env(&self, _config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
+        vec![("MEOWO_CODEX_RELAY_KEY".into(), key.into())]
+    }
+    fn augment_argv(&self, config: crate::RelayConfig<'_>, has_secret: bool, mut argv: Vec<String>) -> Vec<String> {
+        if !has_secret { return argv; }
+        let quoted = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+        for value in [
+            "model_provider=\"meowo-relay\"".to_string(),
+            "model_providers.meowo-relay.name=\"Meowo Relay\"".to_string(),
+            format!("model_providers.meowo-relay.base_url={}", quoted(config.base_url.trim().trim_end_matches('/'))),
+            "model_providers.meowo-relay.env_key=\"MEOWO_CODEX_RELAY_KEY\"".to_string(),
+            "model_providers.meowo-relay.wire_api=\"responses\"".to_string(),
+            format!("model={}", quoted(config.model.trim())),
+        ] { argv.extend(["-c".into(), value]); }
+        argv
+    }
+    fn model_request(&self, _config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
+        crate::RelayModelRequest { auth: crate::RelayModelAuth::Bearer, anthropic_version: false }
+    }
+}
+
 impl AgentPlugin for Codex {
     fn id(&self) -> AgentId {
         id::CODEX
@@ -123,6 +157,9 @@ impl AgentPlugin for Codex {
     }
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
         Some(&PROXY)
+    }
+    fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
+        Some(&RELAY)
     }
     fn process_names(&self) -> &'static [&'static str] {
         // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中

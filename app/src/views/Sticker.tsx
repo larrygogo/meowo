@@ -54,6 +54,13 @@ type FocusSessionResult =
 
 type FocusNoticeKind = FocusSessionResult | "connecting" | "failed";
 
+export function relayEnabledSignature(settings: Settings): string {
+  return Object.entries(settings.relay?.per_agent ?? {})
+    .filter(([, rule]) => rule?.enabled)
+    .map(([provider]) => provider)
+    .sort()
+    .join(",");
+}
 
 export function Sticker({
   filter,
@@ -120,6 +127,9 @@ export function Sticker({
   const [previewEnabled, setPreviewEnabled] = useState(true);
   // 空初值：settings resolve 前不渲染配额区，好过先闪一个猜出来的 agent。默认值由后端给。
   const [quotaProviders, setQuotaProviders] = useState<string[]>([]);
+  // 中转启用状态改变时重建贴纸用量请求：启用后立即隐藏官方配额，关闭后立即恢复缓存并刷新。
+  const [usageRevision, setUsageRevision] = useState(0);
+  const relaySignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     const apply = (s: Settings) => {
@@ -128,13 +138,25 @@ export function Sticker({
       setMenuMode(s.card_menu_mode ?? "button");
       setPreviewEnabled(s.preview_enabled);
       setQuotaProviders(s.sticker_quota_providers ?? []);
+      const signature = relayEnabledSignature(s);
+      if (relaySignatureRef.current !== null && relaySignatureRef.current !== signature) {
+        setUsageRevision((n) => n + 1);
+      }
+      relaySignatureRef.current = signature;
     };
-    getSettings().then(apply).catch(() => {});
+    let receivedLiveSettings = false;
+    getSettings().then((settings) => {
+      // 监听事件可能比首次读取更早返回；不能让旧快照覆盖刚切换完的接入方式。
+      if (!receivedLiveSettings) apply(settings);
+    }).catch(() => {});
     // cleanup 可能先于 listen resolve 执行：用 cancelled 标记，resolve 后立即注销，防监听器泄漏。
     let cancelled = false;
     let un: (() => void) | undefined;
     try {
-      listen<Settings>("settings-changed", (e) => apply(e.payload))
+      listen<Settings>("settings-changed", (e) => {
+        receivedLiveSettings = true;
+        apply(e.payload);
+      })
         .then((f) => {
           if (cancelled) f();
           else un = f;
@@ -405,17 +427,18 @@ export function Sticker({
     const timers: number[] = [];
     getAccounts()
       .then((ps) => {
-        if (cancelled) return;
-        // 用缓存 usage 快速预填（保留已有的联网值不被缓存覆盖）
-        const cached: Record<string, ProviderUsage> = {};
-        ps.forEach((p) => { if (p.usage) cached[p.provider] = p.usage; });
+        if (cancelled || !Array.isArray(ps)) return;
+        // 中转启用的 provider 必须立即从贴纸移除；切回官方则用缓存快速恢复。
         setUsageMap((cur) => {
-          const next: Record<string, ProviderUsage> = { ...cached };
-          Object.keys(cur).forEach((k) => { if (cur[k]) next[k] = cur[k]; });
+          const next: Record<string, ProviderUsage> = { ...cur };
+          ps.forEach((p) => {
+            if (p.relay_enabled) delete next[p.provider];
+            else if (!next[p.provider] && p.usage) next[p.provider] = p.usage;
+          });
           return next;
         });
         // 对有账号且支持用量的 provider：立即刷新 + 定时刷新
-        ps.filter((p) => p.account != null && p.usage_supported).forEach(({ provider }) => {
+        ps.filter((p) => p.account != null && p.usage_supported && !p.relay_enabled).forEach(({ provider }) => {
           const doRefresh = () => {
             if (cancelled) return;
             refreshUsage(provider)
@@ -431,7 +454,7 @@ export function Sticker({
       cancelled = true;
       timers.forEach((id) => window.clearInterval(id));
     };
-  }, []);
+  }, [usageRevision]);
   // usageMap 与 quotaProviders 直接传入 UsageScreen，不再在父层预处理为行数组。
   // 交叉过滤：只显示既在配额设置里、又已装的 provider（availAgents 为空=未加载时不过滤，避免闪空）
   const shownQuota = quotaProviders.filter((p) => availAgents.length === 0 || availAgents.includes(p));

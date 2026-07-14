@@ -6,6 +6,11 @@ const NAMES: Record<string, string> = {
   codex: "Codex",
   kimi: "Kimi Code",
 };
+const RELAYS: Record<string, AgentDescriptor["relay"]> = {
+  claude: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }, { value: "api_key", label: "API Key (x-api-key)" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["claude-sonnet-5"] }] },
+  codex: { protocols: [], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "", default_auth: "bearer", suggestions: [{ protocol: "", models: ["gpt-5.4"] }] },
+  kimi: { protocols: [{ value: "kimi", label: "Kimi" }, { value: "anthropic", label: "Anthropic Messages" }, { value: "openai", label: "OpenAI Chat Completions" }], auth_modes: [{ value: "bearer", label: "Bearer Token" }], default_protocol: "kimi", default_auth: "bearer", suggestions: [{ protocol: "kimi", models: ["kimi-for-coding"] }] },
+};
 
 /**
  * 造一份 `list_agents()` 的返回：列出全部已知 agent，其中 `installed` 里的标记为已装。
@@ -18,5 +23,6 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     id,
     display_name: NAMES[id],
     installed: installed.includes(id),
+    relay: RELAYS[id],
   }));
 }

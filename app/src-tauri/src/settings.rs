@@ -103,6 +103,9 @@ pub(crate) struct Settings {
     /// 可按 agent 覆盖（`api.anthropic.com` 走代理、Kimi 直连是常态）。见 [`crate::proxy`]。
     #[serde(default)]
     pub(crate) proxy: crate::proxy::ProxySettings,
+    /// API 中转元数据。密钥单独存储，绝不随 Settings 序列化或事件下发。
+    #[serde(default)]
+    pub(crate) relay: crate::relay::RelaySettings,
 }
 
 impl Default for Settings {
@@ -124,6 +127,7 @@ impl Default for Settings {
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
             proxy: crate::proxy::ProxySettings::default(),
+            relay: crate::relay::RelaySettings::default(),
         }
     }
 }
@@ -201,6 +205,7 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     // 代理地址落盘前校验。非法值一旦写进去，后台只会静默降级直连，用户对着「用量查不到」
     // 毫无线索——在这里拦下，把具体原因回给设置页。
     settings.proxy.validate()?;
+    settings.relay.validate()?;
     let body = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     let path = settings_path();
     if let Some(dir) = path.parent() {
@@ -370,5 +375,14 @@ mod tests {
         let text = serde_json::to_string(&v).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
         assert_eq!(back.proxy, v.proxy);
+    }
+
+    #[test]
+    fn old_settings_without_relay_defaults_off_and_contains_no_secret_field() {
+        let v: Settings = serde_json::from_str("{}").unwrap();
+        assert!(v.relay.per_agent.is_empty());
+        let text = serde_json::to_string(&v).unwrap();
+        assert!(!text.contains("api_key"));
+        assert!(!text.contains("secret"));
     }
 }

@@ -21,6 +21,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   sticker_quota_providers: ["claude"],
   default_agent: "claude",
   proxy: { mode: "system", url: "", per_agent: {} },
+  relay: { per_agent: {} },
 };
 
 // 设置读写：本地保留完整对象，每次只 patch 改动字段后整对象写回（后端 set_settings 收整对象，

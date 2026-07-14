@@ -1307,6 +1307,143 @@ html, body {
 .proxy-need { margin-top: 4px; }
 .row-text > .proxy-err { margin-top: 4px; color: var(--cc-err, #e5534b); }
 
+.settings-subtitle {
+  margin: 24px 2px 4px;
+  color: var(--cc-text);
+  font-size: 14px;
+  font-weight: 650;
+}
+.relay-intro { margin-top: 6px; margin-bottom: 12px; }
+.provider-access {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--cc-border);
+}
+.provider-access-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.provider-access .seg { flex-shrink: 1; }
+.relay-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 14px;
+}
+.relay-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.relay-field > span { color: var(--cc-text-muted); font-size: 11px; }
+.relay-field .ns-input { width: 100%; }
+.relay-select-field .dd, .relay-select-field .dd-btn { width: 100%; min-width: 0; }
+.relay-secret-field { grid-column: 1 / -1; }
+.relay-coverage { margin-top: 10px; color: var(--cc-text-faint); }
+.relay-model-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 31px;
+  color: var(--cc-text);
+  background: var(--cc-surface-hover);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  transition: border-color 0.14s, box-shadow 0.14s, background 0.14s;
+}
+.relay-model-picker:hover { background: rgba(255, 255, 255, 0.1); }
+.relay-model-picker.open {
+  border-color: var(--cc-accent-border);
+  box-shadow: 0 0 0 2px rgba(95, 132, 255, 0.1);
+}
+.relay-model-input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  appearance: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0 54px 0 10px;
+  font: inherit;
+  font-size: 12.5px;
+}
+.relay-model-input::placeholder { color: var(--cc-text-faint); }
+.relay-model-refresh {
+  position: absolute;
+  right: 25px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cc-text-faint);
+  cursor: pointer;
+}
+.relay-model-refresh:hover:not(:disabled) { color: var(--cc-accent-text); background: var(--cc-surface-hover); }
+.relay-model-refresh.loading svg { animation: relay-spin 0.8s linear infinite; }
+.relay-model-refresh:disabled { cursor: default; }
+.relay-model-chev { position: absolute; right: 9px; color: var(--cc-text-faint); pointer-events: none; transition: transform 0.16s; }
+.relay-model-picker.open .relay-model-chev { transform: rotate(180deg); }
+.relay-model-menu {
+  position: fixed;
+  z-index: 80;
+  max-height: min(260px, calc(100vh - 12px));
+  overflow-y: auto;
+  padding: 5px;
+  background: #2e2e2c;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  animation: dd-pop 0.12s ease-out;
+}
+.relay-model-menu.up { animation-name: relay-menu-pop-up; }
+@keyframes relay-menu-pop-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+:root[data-theme="light"] .relay-model-menu { background: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
+.relay-model-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--cc-text-dim);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.relay-model-option:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
+.relay-model-option.sel { color: var(--cc-accent-text); }
+.relay-model-option span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relay-model-option em {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(95, 132, 255, 0.13);
+  color: var(--cc-accent-text);
+  font-size: 9.5px;
+  font-style: normal;
+}
+.relay-model-status, .relay-model-custom {
+  padding: 8px 9px;
+  color: var(--cc-text-faint);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+.relay-model-status { display: flex; align-items: center; gap: 7px; }
+.relay-model-status.error { color: var(--cc-err, #e5534b); }
+.relay-model-custom { margin-top: 3px; border-top: 1px solid var(--cc-border); }
+.relay-model-spinner { width: 11px; height: 11px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: relay-spin 0.8s linear infinite; }
+@keyframes relay-spin { to { transform: rotate(360deg); } }
+
 /* iOS 风开关 */
 .pswitch {
   flex: none;
