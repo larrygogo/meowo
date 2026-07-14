@@ -18,6 +18,51 @@ impl WiringCap for ClaudeWiring {
     fn amend(&self, _inst: &Installation, text: &str, ctx: &WiringContext, reporter: &str) -> Result<String, RepairReason> {
         statusline_amend(text, ctx, reporter)
     }
+
+    fn after_write(&self, inst: &Installation, _written: &str) -> Option<RepairReason> {
+        // 只对多账号（profile）做。默认账号的 `.claude.json` 是用户自己用出来的，不该由我们代笔。
+        if inst.profile.is_some() {
+            mark_onboarded(inst);
+        }
+        None
+    }
+}
+
+/// 给 profile 的 `.claude.json` 补上 `hasCompletedOnboarding`。
+///
+/// # 为什么必须补
+///
+/// 新 profile 的 `.claude.json` 是 `claude auth login` 写出来的——它含 `oauthAccount`（所以 meowo
+/// 能读出邮箱、判定「已登录」），却**不含 `hasCompletedOnboarding`**：那个标记只有走完 TUI 的
+/// 首次引导才会写。
+///
+/// 而 claude 的 **TUI 启动时看不到这个标记，就会跑一遍首次引导——其中包含「登录」一步**，哪怕
+/// 凭据早就躺在同一个目录里。于是用户切到新账号、新建会话，迎面就是「请登录」。
+///
+/// 这个症状极具迷惑性，实测确认过：**同一份凭据，`claude -p`（非交互，跳过引导）跑得好好的，
+/// 一开 TUI 就要你重新登录**。查凭据、查环境变量注入、查隔离目录，全都是对的——问题压根不在
+/// 「登录」上，而在「引导」上。
+///
+/// **只加不改**：`.claude.json` 里的其余字段（`oauthAccount`、`userID`…）一概原样保留。
+fn mark_onboarded(inst: &Installation) {
+    // profile 模式下 `.claude.json` 落在数据目录**里**（默认账号则在 home 根上，是它的兄弟）。
+    let path = inst.data_dir.join(".claude.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        // 还没登录过（文件尚不存在）→ 什么都不做。登录成功后会再接线一次，那时补。
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return; // 解析不了就别碰，绝不写坏用户文件。
+    };
+    let Some(obj) = v.as_object_mut() else { return };
+    if obj.get("hasCompletedOnboarding").and_then(|x| x.as_bool()) == Some(true) {
+        return; // 已就位，保持幂等（别无谓地重写文件）。
+    }
+    obj.insert("hasCompletedOnboarding".into(), serde_json::json!(true));
+    let Ok(body) = serde_json::to_string_pretty(&v) else { return };
+    if crate::fsutil::write_atomic(&path, &body).is_err() {
+        eprintln!("Meowo profile[claude]: 补写 hasCompletedOnboarding 失败，TUI 可能会要求重新登录");
+    }
 }
 
 /// Windows 路径转 bash 可用形式：`C:\a\b` -> `C:/a/b`（Git Bash 接受 `C:/...`）。
@@ -222,6 +267,88 @@ fn statusline_amend(text: &str, ctx: &WiringContext, reporter: &str) -> Result<S
             }
             Ok(text.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod onboarding_tests {
+    use super::*;
+
+    /// 造一份 profile 实况（data_dir = profile 根）。
+    fn profile_inst(root: &std::path::Path) -> Installation {
+        crate::by_id("claude")
+            .unwrap()
+            .installation_for_profile(root)
+            .expect("claude 支持多账号")
+    }
+
+    /// **补 `hasCompletedOnboarding`，否则新账号一开 TUI 就要你重新登录。**
+    ///
+    /// `claude auth login` 写出的 `.claude.json` 有 `oauthAccount`（于是 meowo 判定「已登录」），
+    /// 却没有 `hasCompletedOnboarding`——那个标记只有走完 TUI 首次引导才会写。而 claude 的 TUI
+    /// 看不到它就会跑一遍引导，其中包含「登录」一步，哪怕凭据就在同一个目录里。
+    ///
+    /// 症状极具迷惑性（实测踩过）：同一份凭据，`claude -p` 跑得好好的，一开 TUI 就要重新登录。
+    #[test]
+    fn marks_profile_as_onboarded_without_touching_other_fields() {
+        let root = std::env::temp_dir().join(format!("meowo-onboard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join(".claude.json");
+
+        // `claude auth login` 写出来的形状：有账号，无引导标记。
+        std::fs::write(
+            &path,
+            r#"{"oauthAccount":{"emailAddress":"a@b.c"},"userID":"u1"}"#,
+        )
+        .unwrap();
+
+        mark_onboarded(&profile_inst(&root));
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["hasCompletedOnboarding"], serde_json::json!(true));
+        // 只加不改：原有字段一个都不能动。
+        assert_eq!(v["oauthAccount"]["emailAddress"], "a@b.c");
+        assert_eq!(v["userID"], "u1");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 文件不存在（还没登录过）→ 什么都不做，绝不凭空造一个 `.claude.json`。
+    /// 坏 JSON → 也不碰，绝不写坏用户文件。
+    #[test]
+    fn never_creates_or_corrupts_the_file() {
+        let root = std::env::temp_dir().join(format!("meowo-onboard-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join(".claude.json");
+
+        mark_onboarded(&profile_inst(&root));
+        assert!(!path.exists(), "还没登录就不该造出 .claude.json");
+
+        std::fs::write(&path, "{not json").unwrap();
+        mark_onboarded(&profile_inst(&root));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json", "坏文件不该被改写");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 默认账号的 `.claude.json` 是用户自己用出来的——**绝不代笔**。
+    /// `after_write` 只在 profile 实况下补标记。
+    #[test]
+    fn default_account_is_never_touched() {
+        let root = std::env::temp_dir().join(format!("meowo-onboard-def-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // 默认账号实况：profile 为 None。
+        let inst = crate::by_id("claude").unwrap().resolve().unwrap();
+        assert!(inst.profile.is_none());
+        // after_write 对它不做任何事（没有 profile → 不补标记）。
+        assert_eq!(WIRING.after_write(&inst, ""), None);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

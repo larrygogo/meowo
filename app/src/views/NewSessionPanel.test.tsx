@@ -173,6 +173,40 @@ describe("NewSessionPanel 登录", () => {
     expect(screen.queryByTestId("ns-login-warn")).toBeNull();
   });
 
+  /**
+   * 「无账号能力」≠「未登录」。
+   *
+   * 回归：`getAccounts()` 只返回**声明了账号能力**的 agent（后端遍历 all_with_account）。曾把
+   * 「查不到行」当成「未登录」，于是给没有账号能力的 agent 也亮出登录按钮——点下去后端
+   * `login_argv()` 是 None，只能报「拉起登录失败」。给出入口却走不通，比没有入口更糟。
+   *
+   * 两者必须分开：真有账号能力却没登录的（kimi），照旧给入口。当前五家都有账号能力，故这里
+   * 手造一个没有的。
+   */
+  it("无账号能力的 agent 不给登录入口；真未登录的照给", async () => {
+    api.listAgents.mockResolvedValue([
+      { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
+      { id: "kimi", display_name: "Kimi Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
+      { id: "noacct", display_name: "No Account", installed: true, supports_proxy: false, supports_account: false, supports_profiles: false },
+    ]);
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true },
+      // 有账号能力，但确实没登录 → 该给入口。
+      { provider: "kimi", account: null, usage: null, usage_supported: true },
+      // noacct 不在返回里——它没声明账号能力，后端根本不会列它。
+    ]);
+    render(<NewSessionPanel />);
+
+    // kimi：真未登录 → 亮出入口。
+    fireEvent.click(await screen.findByTestId("ns-agent-kimi"));
+    await waitFor(() => expect(screen.queryByTestId("ns-login")).toBeTruthy());
+
+    // noacct：无账号概念 → 不该亮（曾经会亮，且点了必失败）。
+    fireEvent.click(screen.getByTestId("ns-agent-noacct"));
+    await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
+    expect(screen.queryByTestId("ns-login")).toBeNull();
+  });
+
   it("点登录调 loginAgent 并进入等待态", async () => {
     claudeSignedOut();
     api.loginAgent.mockResolvedValue(undefined);

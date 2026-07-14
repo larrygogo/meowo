@@ -8,6 +8,7 @@ use crate::account::{
     Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
 };
 use crate::ports::{Body, HttpRequest, Ports};
+use crate::variant::Installation;
 
 /// Claude 账号原始信息（内部类型，供 ClaudeProvider::account() 转换使用）。
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -172,20 +173,31 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// claude 的鉴权声明，取自变体表：OAuth client_id、刷新端点、凭据位置不再是本文件里的一把
 /// 常量——换个版本形态只改变体表一处。
-fn claude_auth() -> Option<&'static crate::AuthScheme> {
-    crate::registry::installation(crate::id::CLAUDE)?.auth
+fn claude_auth(inst: &Installation) -> Option<&'static crate::AuthScheme> {
+    inst.auth
 }
 
-/// 账号信息住在 home 下的 `~/.claude.json`（**不在** data_dir 内，与凭据不同源），故不经
-/// `Installation`。
-fn claude_json_path() -> Option<PathBuf> {
+/// 账号信息（email / 组织 / 套餐）所在的 `.claude.json`。
+///
+/// **它在哪，取决于有没有设 `CLAUDE_CONFIG_DIR`**——这是 claude 的一处历史遗留，两种情形并不同构：
+///
+/// - **默认账号**：`~/.claude.json`，在 home 根上，是数据目录（`~/.claude`）的**兄弟**，不在它里面。
+/// - **profile（设了 `CLAUDE_CONFIG_DIR`）**：`<配置目录>/.claude.json`，**落在目录里面**（实测：
+///   把 `CLAUDE_CONFIG_DIR` 指向一个空目录跑一次 claude，它在里面建出了 `.claude.json` /
+///   `projects` / `sessions`，并如实报「Not logged in」）。
+///
+/// 不区分这两种情形的后果是**串号**：profile 用着账号 B 的凭据，卡片上却显示账号 A 的邮箱。
+fn claude_json_path(inst: &Installation) -> Option<PathBuf> {
+    if inst.profile.is_some() {
+        return Some(inst.data_dir.join(".claude.json"));
+    }
     crate::home_dir().map(|h| h.join(".claude.json"))
 }
 
 /// Claude Code 把 OAuth 凭据写在 `<data_dir>/.credentials.json`（尊重 `CLAUDE_CONFIG_DIR`）。
 /// macOS 改存登录 Keychain，此路径仅作回退。
-fn credentials_path() -> Option<PathBuf> {
-    crate::registry::installation(crate::id::CLAUDE)?.credentials_path()
+fn credentials_path(inst: &Installation) -> Option<PathBuf> {
+    inst.credentials_path()
 }
 
 fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
@@ -201,14 +213,14 @@ fn now_ms() -> i64 {
 }
 
 /// 读账号（~/.claude.json）。
-pub fn read_account() -> Option<ClaudeAccountInfo> {
-    parse_account(&read_json_file(&claude_json_path()?)?)
+pub fn read_account(inst: &Installation) -> Option<ClaudeAccountInfo> {
+    parse_account(&read_json_file(&claude_json_path(inst)?)?)
 }
 
 /// Keychain 条目的 service 名与「写回时的 account 兜底值」，均来自变体表的
 /// `CredentialSource::KeychainOrFile`。变体表被改成非 Keychain 形态（不该发生）→ 退回历史常量。
-fn keychain_spec() -> (&'static str, &'static str) {
-    match claude_auth().map(|a| a.credentials) {
+fn keychain_spec(inst: &Installation) -> (&'static str, &'static str) {
+    match claude_auth(inst).map(|a| a.credentials) {
         Some(crate::CredentialSource::KeychainOrFile { service, account, .. }) => (service, account),
         _ => ("Claude Code-credentials", "root"),
     }
@@ -219,17 +231,17 @@ fn keychain_spec() -> (&'static str, &'static str) {
 /// 这里是一次**运行时**判断而非 `#[cfg(target_os = "macos")]`：平台差异由宿主注入的
 /// [`KeychainPort`](crate::ports::KeychainPort) 承担，插件层因此没有一行 `cfg`，且在任意平台
 /// 都能用假密钥链把两条分支都测到。
-fn read_credentials_root(ports: &Ports) -> Option<serde_json::Value> {
+fn read_credentials_root(inst: &Installation, ports: &Ports) -> Option<serde_json::Value> {
     if ports.keychain.available() {
-        return serde_json::from_str(&ports.keychain.read_password(keychain_spec().0)?).ok();
+        return serde_json::from_str(&ports.keychain.read_password(keychain_spec(inst).0)?).ok();
     }
-    read_json_file(&credentials_path()?)
+    read_json_file(&credentials_path(inst)?)
 }
 
 /// 刷新 token 后把新凭据写回原存储（保留其余字段）。
-fn write_credentials_root(ports: &Ports, value: &serde_json::Value) -> Result<(), String> {
+fn write_credentials_root(inst: &Installation, ports: &Ports, value: &serde_json::Value) -> Result<(), String> {
     if ports.keychain.available() {
-        let (service, fallback_account) = keychain_spec();
+        let (service, fallback_account) = keychain_spec(inst);
         let body = serde_json::to_string(value).map_err(|e| e.to_string())?;
         // 读得到实际 account 就按同名更新；读不到用变体表声明的兜底值。
         let account = ports
@@ -238,13 +250,13 @@ fn write_credentials_root(ports: &Ports, value: &serde_json::Value) -> Result<()
             .unwrap_or_else(|| fallback_account.to_string());
         return ports.keychain.write_password(service, &account, &body);
     }
-    let path = credentials_path().ok_or("解析不到 claude 凭据路径")?;
+    let path = credentials_path(inst).ok_or("解析不到 claude 凭据路径")?;
     let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())
 }
 
 /// 确保有有效 access token：未过期直接返回；过期则刷新并写回原存储，再返回新 token。
-fn ensure_valid_token(ports: &Ports) -> Result<String, String> {
+fn ensure_valid_token(inst: &Installation, ports: &Ports) -> Result<String, String> {
     use std::sync::Mutex;
     // 串行化刷新：并发刷新（多窗口/连点）会各自用旋转后失效的 refresh_token 重复请求、互相覆盖。
     // 持锁后下面会重读凭据并重新判过期（双检）——若刚被另一调用方刷新过，直接走 fast-path 返回新
@@ -252,7 +264,7 @@ fn ensure_valid_token(ports: &Ports) -> Result<String, String> {
     static REFRESH_LOCK: Mutex<()> = Mutex::new(());
     let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-    let root = read_credentials_root(ports);
+    let root = read_credentials_root(inst, ports);
     // 读不到可用 OAuth 凭据 → 视为第三方/非官方登录，用量接口不适用，返回标记码。
     if oauth_credentials_missing(root.as_ref()) {
         return Err(USAGE_UNSUPPORTED.into());
@@ -270,7 +282,7 @@ fn ensure_valid_token(ports: &Ports) -> Result<String, String> {
         return Err("token 已过期且无 refreshToken".into());
     }
     // 刷新端点与 client_id 来自变体表；返回 `invalid_client` 即该变体的 client_id 与本机 claude 不符。
-    let Some(spec) = claude_auth().and_then(|a| a.refresh) else {
+    let Some(spec) = claude_auth(inst).and_then(|a| a.refresh) else {
         return Err("claude 变体表未声明 OAuth 刷新参数".into());
     };
     let text = ports
@@ -299,13 +311,13 @@ fn ensure_valid_token(ports: &Ports) -> Result<String, String> {
     let new_expires_at = now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
-    write_credentials_root(ports, &merged)?;
+    write_credentials_root(inst, ports, &merged)?;
     Ok(new_access)
 }
 
 /// 联网拉实时用量（含按需刷新 token）。缓存/限频/写回归宿主编排层，本函数只负责拿一次。
-fn fetch_usage_live(ports: &Ports) -> Result<Usage, String> {
-    let token = ensure_valid_token(ports)?;
+fn fetch_usage_live(inst: &Installation, ports: &Ports) -> Result<Usage, String> {
+    let token = ensure_valid_token(inst, ports)?;
     let bearer = format!("Bearer {token}");
     let text = ports
         .http
@@ -373,9 +385,9 @@ pub struct ClaudeAccount;
 pub static ACCOUNT: ClaudeAccount = ClaudeAccount;
 
 impl AccountCap for ClaudeAccount {
-    fn account(&self, _ports: &Ports) -> Option<Account> {
+    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
         // 账号信息在 ~/.claude.json，不碰凭据、不联网——登录轮询会高频调用本方法。
-        read_account().map(|a| Account {
+        read_account(inst).map(|a| Account {
             email: Some(a.email),
             display_name: Some(a.display_name),
             organization: a.organization,
@@ -384,13 +396,13 @@ impl AccountCap for ClaudeAccount {
         })
     }
 
-    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String> {
-        fetch_usage_live(ports).map(|u| map_to_provider_usage(&u))
+    fn fetch_usage(&self, inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String> {
+        fetch_usage_live(inst, ports).map(|u| map_to_provider_usage(&u))
     }
 
     /// 读不到可用的 Anthropic OAuth 凭据（第三方/中转登录，或尚未登录）→ 用量接口不适用。
-    fn usage_supported(&self, ports: &Ports) -> bool {
-        !oauth_credentials_missing(read_credentials_root(ports).as_ref())
+    fn usage_supported(&self, inst: &Installation, ports: &Ports) -> bool {
+        !oauth_credentials_missing(read_credentials_root(inst, ports).as_ref())
     }
 }
 
@@ -499,7 +511,8 @@ mod tests {
         let ports = Ports { http: &NoHttp, keychain: &crate::ports::NoKeychain };
         // 本机大概率没有 claude 凭据文件 → 读不到 OAuth → 不支持用量。真有凭据时也只是返回 true，
         // 两种取值都不该发起网络请求（NoHttp 会 panic）。
-        let _ = ACCOUNT.usage_supported(&ports);
+        let inst = crate::by_id("claude").unwrap().resolve().expect("总能推出默认落点");
+        let _ = ACCOUNT.usage_supported(&inst, &ports);
     }
 
     #[test]

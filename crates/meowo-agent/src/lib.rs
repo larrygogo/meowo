@@ -33,6 +33,7 @@ pub mod install;
 pub mod launch;
 pub mod plugins;
 pub mod ports;
+pub mod profile;
 pub mod proxy;
 pub mod registry;
 pub mod transcript;
@@ -53,6 +54,7 @@ pub use install::{
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
 pub use plugins::claude::setup::remove_generated_wrapper;
 pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
+pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
 pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
 pub use transcript::{

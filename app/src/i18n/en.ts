@@ -205,6 +205,18 @@ export const en: Dict = {
     notInstalled: "Not installed",
     notLoggedIn: "Not signed in",
     notLoggedInHint: 'Installed but not signed in — click "Sign in" to authorize in a terminal',
+    // Multi-account
+    profiles: "Accounts",
+    defaultProfile: "Default account",
+    addProfile: "Add account",
+    newProfileName: "Account name (e.g. Work)",
+    addProfileHint: "A new account gets its own sign-in and session history, fully separate",
+    switchProfile: "Switch to this account",
+    activeProfile: "In use",
+    deleteProfile: "Delete account",
+    deleteProfileConfirm: (name: string) =>
+      `Delete account "${name}"? Its credentials and session history will be deleted for good.`,
+    profileUnsupported: "This agent doesn't support multiple accounts",
     login: "Sign in",
     loggingIn: "Waiting for sign-in…",
     cancelLogin: "Cancel",

@@ -8,6 +8,7 @@
 use serde_json::Value;
 
 use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane};
+use crate::variant::Installation;
 use crate::ports::Ports;
 
 // ═══ 账号解析 ═══
@@ -220,9 +221,9 @@ fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
 
 // ═══ auth.json 读取 ═══
 
-/// 凭据位置由实况变体给出（`Installation.auth.credentials`），不再在此拼路径。
-fn read_auth_json() -> Option<Value> {
-    let path = crate::registry::installation(crate::id::CODEX)?.credentials_path()?;
+/// 凭据位置由**传入的**实况给出（默认账号 or 某个 profile 的私有目录），不在此拼路径。
+fn read_auth_json(inst: &Installation) -> Option<Value> {
+    let path = inst.credentials_path()?;
     let s = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&s).ok()
 }
@@ -237,23 +238,23 @@ pub struct CodexAccount;
 pub static ACCOUNT: CodexAccount = CodexAccount;
 
 impl AccountCap for CodexAccount {
-    fn account(&self, _ports: &Ports) -> Option<Account> {
-        parse_codex_account(&read_auth_json()?)
+    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
+        parse_codex_account(&read_auth_json(inst)?)
     }
 
     /// codex 的用量**不联网**：rate_limits 快照就写在最近一份 rollout 里，尾扫即可。
     /// 故它不用 `ports.http`——能力槽的意义正在于此，不需要的端口就不碰。
-    fn fetch_usage(&self, _ports: &Ports) -> Result<ProviderUsage, String> {
-        let home = crate::registry::installation(crate::id::CODEX)
-            .map(|i| i.data_dir)
-            .ok_or("解析不到 codex 数据目录")?;
-        let payload = latest_token_count(&home).ok_or("rollout 里没有 token_count 记录")?;
+    ///
+    /// rollout 也在数据目录里，故多账号下天然是**该 profile 自己的**用量。
+    fn fetch_usage(&self, inst: &Installation, _ports: &Ports) -> Result<ProviderUsage, String> {
+        let payload =
+            latest_token_count(&inst.data_dir).ok_or("rollout 里没有 token_count 记录")?;
         Ok(parse_codex_usage(&payload))
     }
 
-    fn usage_supported(&self, _ports: &Ports) -> bool {
+    fn usage_supported(&self, inst: &Installation, _ports: &Ports) -> bool {
         // 仅 chatgpt 模式（订阅）有 rate_limits
-        read_auth_json().is_some_and(|auth| auth_mode(&auth) == "chatgpt")
+        read_auth_json(inst).is_some_and(|auth| auth_mode(&auth) == "chatgpt")
     }
 }
 

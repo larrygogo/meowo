@@ -103,6 +103,15 @@ pub(crate) struct Settings {
     /// 可按 agent 覆盖（`api.anthropic.com` 走代理、Kimi 直连是常态）。见 [`crate::proxy`]。
     #[serde(default)]
     pub(crate) proxy: crate::proxy::ProxySettings,
+    /// 多账号：每个 agent 的**自定义** profile 列表（键＝agent id）。
+    ///
+    /// **默认账号不在里面**——它是隐式的，指向 agent 自己的目录（`~/.claude`），且不注入任何
+    /// 环境变量。于是不建 profile 的用户零感知：这两个字段为空时，一切与从前一模一样。
+    #[serde(default)]
+    pub(crate) profiles: std::collections::BTreeMap<String, Vec<crate::profile::Profile>>,
+    /// 每个 agent 当前**活跃**的 profile id。键缺席 = 用默认账号。
+    #[serde(default)]
+    pub(crate) active_profile: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -124,6 +133,9 @@ impl Default for Settings {
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
             proxy: crate::proxy::ProxySettings::default(),
+            // 空 = 只有默认账号（agent 自己的目录），不注入任何环境变量。
+            profiles: Default::default(),
+            active_profile: Default::default(),
         }
     }
 }
@@ -186,6 +198,18 @@ pub(crate) fn load_settings() -> Settings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// 落盘 settings.json（原子写）。**只管存**——不校验代理、不重建托盘、不 emit 事件，那些是
+/// [`set_settings`] 这条用户路径的事。profile 的增删/切换走它。
+pub(crate) fn save_settings(s: &Settings) -> Result<(), String> {
+    let body = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
+    let path = settings_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    // 原子写：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
+    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

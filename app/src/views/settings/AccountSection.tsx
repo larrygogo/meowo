@@ -1,12 +1,17 @@
 // 设置窗口「账号」页：每个 provider 的安装 / 登录 / 用量三态卡片。
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   installAgent,
   listAgents,
+  listProfiles,
+  createProfile,
+  setActiveProfile,
+  deleteProfile,
   type AgentId,
   type AgentDescriptor,
+  type ProfileView,
   type Settings,
   type InstallDone,
 } from "../../api";
@@ -128,12 +133,26 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
   /** null = 安装状态检测中（listAgents() 尚未 resolve），此时不渲染未安装/已安装的判定分支。 */
   installed: boolean | null;
+  /**
+   * 该 agent 有没有账号概念。false（gemini / opencode）→ 不显示登录态、不给登录入口。
+   *
+   * 不能靠 `payload == null` 推断：那既可能是「没有账号能力」，也可能是「账号还没加载出来」
+   * 或「真的没登录」。三者混在一起的后果就是给没有登录入口的 agent 亮出登录按钮——它的
+   * `login_argv()` 是 None，点下去只会得到一句「拉起登录失败」。
+   */
+  supportsAccount: boolean;
+  /**
+   * 该 agent 能否有多个账号。false（gemini：数据目录不可被环境变量覆盖）→ 不显示账号列表。
+   *
+   * 不能靠「列表只有一条」推断——那与「只建了默认账号」长得一模一样。
+   */
+  supportsProfiles: boolean;
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
   err: "unsupported" | "error" | null;
@@ -322,11 +341,13 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
   // 只有「已安装且账号存在」才展示登录身份与用量。
   const isInstalled = installed === true;
   const isLoggedIn = isInstalled && acc != null;
+  // 无账号概念的 agent（gemini / opencode）：已装即到此为止——它没有「登录」这回事，
+  // 所以不报「未登录」，也不给登录按钮。会话上报与 hooks 修复照常，不受任何影响。
   const statusBadge = !isInstalled
     ? installed === false
       ? t.account.notInstalled
       : null
-    : acc
+    : acc || !supportsAccount
     ? null
     : t.account.notLoggedIn;
   // 只显示邮箱：显示名 + 邮箱 + 组织三段拼起来又长又重复（个人账号的组织名就是
@@ -336,7 +357,7 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
     ? acc.email ?? acc.display_name ?? acc.login_label ?? ""
     : installed === false
     ? t.account.installHint
-    : isInstalled
+    : isInstalled && supportsAccount
     ? t.account.notLoggedInHint
     : "";
 
@@ -376,7 +397,7 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
               {installState === "error" ? t.account.installRetry : t.account.install}
             </button>
           ))}
-        {isInstalled && !isLoggedIn && (
+        {isInstalled && !isLoggedIn && supportsAccount && (
           <button
             type="button"
             className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
@@ -479,6 +500,181 @@ function ProviderCard({ provider, name, installed, payload, usage, err, onRefres
           </div>
         </div>
       )}
+
+      {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
+          列一个孤零零的「默认账号」除了占地方没有任何信息。 */}
+      {isInstalled && supportsProfiles && (
+        <ProfileList provider={provider} onChanged={onLoggedIn} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 某个 agent 的账号列表：默认账号 + 自定义账号，可切换 / 登录 / 删除 / 添加。
+ *
+ * 「默认账号」是隐式的（`id === null`）——它就是 agent 自己的目录（`~/.claude`），不可删除。
+ * 没建过任何自定义账号的用户，这里只会看到它一条 + 一个「添加账号」按钮。
+ */
+function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: () => void }) {
+  const t = useT();
+  const [rows, setRows] = useState<ProfileView[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    listProfiles(provider)
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, [provider]);
+
+  useEffect(reload, [reload]);
+
+  // 登录完成 → 该账号的登录态变了，重查。
+  useEffect(() => {
+    const un = listen("login-done", () => reload());
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [reload]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+      reload();
+      onChanged();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = () => {
+    const n = name.trim();
+    if (!n) return;
+    run(async () => {
+      await createProfile(provider, n);
+      setName("");
+      setAdding(false);
+    });
+  };
+
+  const remove = (p: ProfileView) => {
+    if (!p.id) return; // 默认账号删不得
+    const label = p.name || p.id;
+    if (!window.confirm(t.account.deleteProfileConfirm(label))) return;
+    run(() => deleteProfile(provider, p.id!));
+  };
+
+  if (!rows) return null;
+
+  return (
+    <div className="provider-card-body profile-list" data-testid={"profiles-" + provider}>
+      <div className="profile-list-head">{t.account.profiles}</div>
+
+      {rows.map((p) => {
+        const key = p.id ?? "__default__";
+        // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
+        // opencode 的 "anthropic (oauth)"）。
+        const desc =
+          p.account?.email ??
+          p.account?.display_name ??
+          p.account?.login_label ??
+          t.account.notLoggedIn;
+        return (
+          <div
+            key={key}
+            className={"profile-row" + (p.active ? " profile-row-active" : "")}
+            data-testid={"profile-" + provider + "-" + key}
+          >
+            <button
+              type="button"
+              className="profile-row-main"
+              title={t.account.switchProfile}
+              disabled={busy || p.active}
+              onClick={() => run(() => setActiveProfile(provider, p.id))}
+            >
+              <span className="profile-name">{p.name || t.account.defaultProfile}</span>
+              <span className="profile-desc" title={desc}>
+                {desc}
+              </span>
+            </button>
+
+            {p.active && <span className="profile-badge">{t.account.activeProfile}</span>}
+
+            {/* 未登录的账号给登录入口——**必须带上它自己的 id**，否则凭据会写进默认账号，
+                用户以为加了个账号，其实是把原来那个覆盖了。 */}
+            {!p.account && (
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={"profile-login-" + provider + "-" + key}
+                disabled={busy}
+                onClick={() => run(() => loginAgent(provider, undefined, p.id))}
+              >
+                {t.account.login}
+              </button>
+            )}
+
+            {p.id && (
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label={t.account.deleteProfile}
+                data-tip={t.account.deleteProfile}
+                disabled={busy}
+                onClick={() => remove(p)}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      {adding ? (
+        <div className="profile-add-row">
+          <input
+            className="profile-add-input"
+            autoFocus
+            placeholder={t.account.newProfileName}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") add();
+              if (e.key === "Escape") setAdding(false);
+            }}
+          />
+          <button
+            type="button"
+            className="provider-card-action provider-card-action-primary"
+            data-testid={"profile-add-confirm-" + provider}
+            disabled={busy || !name.trim()}
+            onClick={add}
+          >
+            {t.account.addProfile}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="profile-add-btn"
+          data-testid={"profile-add-" + provider}
+          disabled={busy}
+          onClick={() => setAdding(true)}
+        >
+          + {t.account.addProfile}
+        </button>
+      )}
+
+      <div className="profile-hint">{t.account.addProfileHint}</div>
+      {err && <div className="agent-install-error">{err}</div>}
     </div>
   );
 }
@@ -559,7 +755,7 @@ export function AccountSection() {
   // 每张卡按 installed/payload 自行渲染未装/未登录/已登录三态。
   return (
     <>
-      {(agents ?? []).map(({ id: p, display_name }) => {
+      {(agents ?? []).map(({ id: p, display_name, supports_account, supports_profiles }) => {
         const payload = payloads.find((x) => x.provider === p) ?? null;
         return (
           <ProviderCard
@@ -567,6 +763,8 @@ export function AccountSection() {
             provider={p}
             name={display_name}
             installed={installed === null ? null : installed.has(p)}
+            supportsAccount={supports_account}
+            supportsProfiles={supports_profiles}
             payload={payload}
             usage={usageMap[p] ?? null}
             err={errMap[p] ?? null}

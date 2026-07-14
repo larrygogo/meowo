@@ -1,0 +1,295 @@
+//! gemini（Google Gemini CLI）插件。数据目录与 hooks 文件都平平无奇——`~/.gemini/settings.json`
+//! 的 hooks 块与 claude 的 `settings.json` **结构完全同构**，故直接复用 [`ConfigFormat::ClaudeJson`]，
+//! 一行合并逻辑都不必新写。
+//!
+//! 真正的两处不同：
+//!
+//! **一、事件名自成一派。** Gemini 没有 `UserPromptSubmit` 与 `Stop`，对应的叫 `BeforeAgent` /
+//! `AfterAgent`，`PostToolUse` 叫 `AfterTool`。写进配置的必须是 Gemini 认识的名字，而 reporter 的
+//! dispatch 只认规范名，故本插件覆写 [`canonical_event`](AgentPlugin::canonical_event) 把它们译回去。
+//! 这也是「加 agent 只动 `plugins/`」的一次兑现：dispatch 里没有一个 `if provider == "gemini"`。
+//!
+//! **二、它是纯 JS，没有自己的可执行。** npm 全局装出来的 `gemini.cmd` 只是个 shim，真正跑起来的
+//! 进程是 `node`（实测 0.50.0：`bin` 指向 `bundle/gemini.js`）。这逼得 [`process_names`] 必须收
+//! `node`——代价见那里的注释。
+//!
+//! 事件表（配置里写左边，dispatch 看到的是右边）：
+//!
+//! | Gemini | 规范名 | 用途 |
+//! |---|---|---|
+//! | `SessionStart` | `SessionStart` | 建会话 |
+//! | `BeforeAgent` | `UserPromptSubmit` | 用户提交（负载带 `prompt`） |
+//! | `AfterTool` | `PostToolUse` | 工具跑完 |
+//! | `AfterAgent` | `Stop` | 回合结束（负载带 `prompt_response`＝AI 正文） |
+//! | `SessionEnd` | `SessionEnd` | 会话收尾 |
+
+pub mod account;
+pub mod telemetry;
+
+use crate::{
+    auth::{AuthScheme, CredentialSource},
+    caps::TelemetryCap,
+    config::{CommandSpec, ConfigFormat, HookEvent, HookSpec, MissingConfig},
+    id::{self, AgentId},
+    launch::{LaunchCandidate, LaunchSpec, Root},
+    registry::AgentPlugin,
+    variant::{DataDirSpec, Variant},
+};
+
+/// Gemini 的 OAuth 凭据。文件名取自 0.50 bundle 里的常量，与账号信息同处 `~/.gemini`（＝ data_dir）。
+///
+/// **登录入口是 `Some(&[])`——裸启动**。gemini 没有登录子命令（实测 `gemini --help`：只有
+/// mcp / extensions / skills / hooks / gemma），跑 `gemini` 本身首次就会引导你选认证方式
+/// （Google 账号 / API key）。这与「没有登录入口」（`login: None`）是两回事。
+///
+/// 不声明 OAuth 刷新：token 由 gemini 自己维护，Meowo 只读不刷。
+static AUTH: AuthScheme = AuthScheme {
+    credentials: CredentialSource::File("oauth_creds.json"),
+    refresh: None,
+    default_base_url: "",
+    login: Some(&[]),
+};
+
+/// 接线事件集，写的是 **Gemini 的**事件名（配置里必须如此），译回规范名见 [`Gemini::canonical_event`]。
+///
+/// 不带 matcher（`plain`）是有意的：Gemini 的工具事件按正则匹配工具名，但生命周期事件的 matcher 是
+/// **精确字符串**比对——claude 那套 `matcher: "*"` 搬过来会一条都匹配不上，而缺省即「不限制」。
+static EVENTS: [HookEvent; 5] = [
+    HookEvent::plain("SessionStart"),
+    HookEvent::plain("BeforeAgent"),
+    HookEvent::plain("AfterTool"),
+    HookEvent::plain("AfterAgent"),
+    HookEvent::plain("SessionEnd"),
+];
+
+/// Gemini 0.50 支持的全部 hook 事件。写进一条它不认识的 event 会怎样尚未实测，但 kimi 的前车之鉴
+/// （一条非法 event 令**全部** hooks 静默失效）足以让这张白名单值得存在——EVENTS 有针对它的绊线测试。
+pub const EVENT_WHITELIST: [&str; 11] = [
+    "BeforeTool",
+    "AfterTool",
+    "BeforeAgent",
+    "AfterAgent",
+    "BeforeModel",
+    "AfterModel",
+    "BeforeToolSelection",
+    "SessionStart",
+    "SessionEnd",
+    "Notification",
+    "PreCompress",
+];
+
+/// `settings.json` 与 claude 的同名文件同构，且同样承载 hooks 之外的用户配置（主题、模型…），
+/// 故一律原样保留。文件不存在时从 `{}` 建——gemini 本就允许它缺席。
+static HOOKS: HookSpec = HookSpec {
+    config_rel: "settings.json",
+    format: ConfigFormat::ClaudeJson,
+    missing: MissingConfig::CreateFrom("{}"),
+    events: &EVENTS,
+    command: CommandSpec {
+        quote_exe: true,
+        with_provider: true,
+    },
+};
+
+/// 纯 JS，没有原生二进制：**必须**走 node 包装。
+///
+/// 实测 npm 全局（Windows）：`%APPDATA%\npm\node_modules\@google\gemini-cli\bundle\gemini.js`，
+/// 而 `%APPDATA%\npm\gemini.exe` **并不存在**——npm 只生成 `gemini.cmd` / `gemini.ps1` / `gemini`(sh)。
+/// 所以 Windows 上绝不能指望 `OnPath`（它查的是 `gemini.exe`），只能直取那个 js。
+///
+/// unix 侧 npm 全局前缀五花八门（`/usr/local`、`~/.npm-global`、nvm 的版本目录…），逐一枚举是徒劳；
+/// 好在那里的 shim 是无扩展名的 `gemini`，`OnPath` 正好能兜住，故末位留它。
+static LAUNCH: LaunchSpec = LaunchSpec {
+    stem: "gemini",
+    candidates: &[
+        LaunchCandidate::NodeScript {
+            root: Root::Env("APPDATA"),
+            rel: "npm/node_modules/@google/gemini-cli/bundle/gemini.js",
+        },
+        // APPDATA 缺失的环境里由 USERPROFILE 推。
+        LaunchCandidate::NodeScript {
+            root: Root::Env("USERPROFILE"),
+            rel: "AppData/Roaming/npm/node_modules/@google/gemini-cli/bundle/gemini.js",
+        },
+        LaunchCandidate::OnPath,
+    ],
+};
+
+static VARIANTS: [Variant; 1] = [Variant {
+    tag: "stable",
+    data_dir: DataDirSpec {
+        // Gemini CLI 未见「数据目录」级别的环境变量覆盖（`GEMINI_API_KEY` 之类只管鉴权），故不声明。
+        env: None,
+        candidates: &[".gemini"],
+    },
+    hooks: &HOOKS,
+    auth: Some(&AUTH),
+    launch: &LAUNCH,
+}];
+
+pub struct Gemini;
+
+impl AgentPlugin for Gemini {
+    fn id(&self) -> AgentId {
+        id::GEMINI
+    }
+    fn display_name(&self) -> &'static str {
+        "Gemini CLI"
+    }
+    fn variants(&self) -> &'static [Variant] {
+        &VARIANTS
+    }
+
+    /// **不得不收 `node`。** gemini 没有自己的可执行——会话本体就是一个跑着 `bundle/gemini.js` 的
+    /// node 进程，不收它，owner_pid 上溯就找不到会话宿主（PID 抓不到 → 判活拿不到依据），
+    /// 整条会话生命周期都会瘸。
+    ///
+    /// 代价是 `is_agent_process("node.exe")` 从此为真，判活因而变宽：某个 gemini 会话的 PID 若被
+    /// 系统回收、又恰好落给另一个 node 进程，那个已死的会话会被误判为仍然活着。这是**已知且被接受**
+    /// 的取舍——反过来（不收 node）的代价是每个 gemini 会话从一开始就没有 PID，那是必然的坏，
+    /// 而这个是偶然的坏。
+    ///
+    /// 上溯本身不受这层宽泛影响：reporter 是 gemini 派生的 hook 子进程，父链上第一个 node 必是它。
+    fn process_names(&self) -> &'static [&'static str] {
+        &["gemini", "gemini.exe", "node", "node.exe"]
+    }
+
+    /// Gemini 的事件名 → meowo 规范名。这是本插件存在的主要理由，见模块文档的对照表。
+    fn canonical_event<'a>(&self, raw: &'a str) -> &'a str {
+        match raw {
+            "BeforeAgent" => "UserPromptSubmit",
+            "AfterAgent" => "Stop",
+            "AfterTool" => "PostToolUse",
+            other => other,
+        }
+    }
+
+    fn resume_args(&self) -> &'static [&'static str] {
+        &["--resume"]
+    }
+
+    /// 只有 npm 一条安装路（`npm i -g @google/gemini-cli`），没有官方引导脚本可取——
+    /// [`InstallScript`](crate::install::InstallScript) 表达不了 npm，故不声明，一键安装对它降级。
+    fn writes_tab_token(&self) -> bool {
+        true
+    }
+
+    fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
+    }
+    fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        Some(&account::ACCOUNT)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 防连坐绊线：照 kimi 的教训，一条非法 event 有可能让**全部** hooks 静默失效。
+    #[test]
+    fn events_all_in_upstream_whitelist() {
+        for ev in EVENTS {
+            assert!(
+                EVENT_WHITELIST.contains(&ev.name),
+                "{} 不在 Gemini 事件白名单",
+                ev.name
+            );
+        }
+    }
+
+    /// 声明的每个事件都必须译得出规范名，且译出的必须是 dispatch 真正消化的那几个——
+    /// 少译一个，该事件就会静静地什么都不做。
+    #[test]
+    fn every_declared_event_maps_to_a_canonical_name_dispatch_handles() {
+        // dispatch 的消化面（见 meowo_reporter::dispatch）。
+        const CANONICAL: [&str; 5] = [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "Stop",
+            "SessionEnd",
+        ];
+        for ev in EVENTS {
+            let mapped = Gemini.canonical_event(ev.name);
+            assert!(
+                CANONICAL.contains(&mapped),
+                "{} 译成了 dispatch 不认的 {mapped}",
+                ev.name
+            );
+        }
+        // 逐条钉死映射本身——写反一条（如 AfterAgent → PostToolUse）不会有任何报错，
+        // 只会让「回合结束」永远不发生，卡片永远停在运行中。
+        assert_eq!(Gemini.canonical_event("BeforeAgent"), "UserPromptSubmit");
+        assert_eq!(Gemini.canonical_event("AfterAgent"), "Stop");
+        assert_eq!(Gemini.canonical_event("AfterTool"), "PostToolUse");
+        // 同名的原样透传。
+        assert_eq!(Gemini.canonical_event("SessionStart"), "SessionStart");
+        assert_eq!(Gemini.canonical_event("SessionEnd"), "SessionEnd");
+    }
+
+    #[test]
+    fn hooks_live_in_settings_json_under_data_dir() {
+        let home = std::env::temp_dir().join(format!("meowo-gemini-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini")).unwrap();
+
+        let inst = VARIANTS[0]
+            .probe(id::GEMINI, &home)
+            .expect("数据目录在 → 应命中");
+        assert_eq!(
+            inst.config_path(),
+            home.join(".gemini").join("settings.json")
+        );
+        assert!(inst.is_configured());
+        // 凭据与配置同处 data_dir（不像 opencode 那样把配置与数据分了家）。
+        assert_eq!(
+            inst.credentials_path(),
+            Some(home.join(".gemini").join("oauth_creds.json"))
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 登录入口 = **裸启动**。gemini 没有登录子命令（`gemini --help` 里只有 mcp / extensions /
+    /// skills / hooks / gemma），跑它自己首次就会引导你选认证方式。
+    ///
+    /// 这条曾经是反的：gemini 被声明成「无鉴权」，`login_argv()` 于是返回 None，后端回一句
+    /// 「该 agent 未声明登录入口」——而前端仍旧亮着登录按钮，点下去只得到「拉起登录失败」。
+    #[test]
+    fn login_entry_is_a_bare_launch_not_a_subcommand() {
+        let _env = crate::env_guard();
+        let inst = Gemini.resolve().expect("总能推出默认落点");
+        let login = inst.login_argv().expect("gemini 有登录入口（裸启动）");
+        assert_eq!(
+            login,
+            inst.launch_argv(),
+            "登录 argv 就该是启动 argv 本身，不多任何子命令"
+        );
+    }
+
+    /// npm 全局的 js 入口必须走 `node` 包装：直接拿裸名 `gemini` 在 Windows 上解析不出可执行
+    /// （npm 只放了 `.cmd`/`.ps1`，没有 `.exe`）。
+    #[test]
+    fn npm_global_yields_node_prefixed_argv() {
+        let home = std::env::temp_dir().join(format!("meowo-gemini-npm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let js = crate::join_rel(
+            &home,
+            "AppData/Roaming/npm/node_modules/@google/gemini-cli/bundle/gemini.js",
+        );
+        std::fs::create_dir_all(js.parent().unwrap()).unwrap();
+        std::fs::write(&js, b"").unwrap();
+
+        // 用 USERPROFILE 那条候选（APPDATA 指向真实机器，测试里不该依赖它）。
+        let _env = crate::env_guard();
+        std::env::remove_var("APPDATA");
+        std::env::set_var("USERPROFILE", &home);
+
+        let argv = LAUNCH.probe(None, Some(&home)).expect("js 在 → 应命中");
+        assert_eq!(argv[0], "node", "gemini 没有原生可执行，必须由 node 拉起");
+        assert!(argv[1].ends_with("gemini.js"));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}

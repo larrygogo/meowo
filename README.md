@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>桌面贴纸，集中查看 Claude Code、Codex、Kimi 等 AI 编程会话的状态。</b></p>
+  <p><b>桌面贴纸，集中查看 Claude Code、Codex、Kimi、Gemini CLI、OpenCode 等 AI 编程会话的状态。</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -102,7 +102,7 @@ macOS 上是状态栏应用：无独立浮窗，不显示在 Dock。
 
 ## 工作原理
 
-> 以 Claude Code 为例；Codex / Kimi 走各自 CLI 的 hook 机制，数据最终都落到同一份本地数据库。
+> 以 Claude Code 为例；Codex / Kimi / Gemini CLI 走各自 CLI 的 hook 机制，OpenCode 没有 hook、改由一份自动生成的桥接插件转发事件。数据最终都落到同一份本地数据库。
 
 ```
  Claude Code 会话
@@ -145,7 +145,7 @@ meowo/
 - [Bun](https://bun.sh/)
 - Windows 上的 Tauri 前置依赖：**WebView2 Runtime**（Win11 自带）、**MSVC 构建工具**（Visual Studio Build Tools，含 C++ 桌面开发）。详见 [Tauri 前置依赖](https://tauri.app/start/prerequisites/)。
 - macOS 上的前置依赖：**Xcode 命令行工具**（`xcode-select --install`）；如需本地构建 universal 包，另需 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`。
-- 已安装的 AI 编程 CLI（[Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi，用于产生会话事件）。
+- 已安装的 AI 编程 CLI（[Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi / [Gemini CLI](https://github.com/google-gemini/gemini-cli) / [OpenCode](https://opencode.ai)，用于产生会话事件）。
 
 ## 快速开始
 
@@ -184,7 +184,7 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporte
 
 脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加，也不会破坏你已有的其它 hooks。若更换了 reporter 路径，旧条目需手动清理，或直接启动 app 由自动接线更新路径。
 
-> 此脚本仅用于 Claude Code（写入 `~/.claude/settings.json`）。codex / kimi 的接入走各自 CLI 的原生 hook 配置（其 hook 命令带 `--provider codex|kimi`），不经本脚本。
+> 此脚本仅用于 Claude Code（写入 `~/.claude/settings.json`）。其余几家不经本脚本，由 app 启动时自动接线：codex / kimi / gemini 写各自 CLI 的原生 hook 配置（hook 命令带 `--provider <id>`）；opencode 没有 hook 机制，改为在 `~/.config/opencode/plugin/` 下生成一份桥接插件，由它把事件转发给 meowo-reporter。
 
 也可指定写入别的 settings 文件：`bun scripts/install-hooks.mjs <reporter路径> <settings路径>`，或用环境变量 `MEOWO_SETTINGS`。
 

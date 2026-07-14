@@ -46,6 +46,18 @@ pub enum ConfigFormat {
     /// 与用户自有 hook（如 `PreToolUse:Bash` 预检）共存。顶层还承载 `statusLine` 等无关键，
     /// 一律原样保留。
     ClaudeJson,
+    /// opencode：产物**不是配置文件，而是一个 TS 插件**。opencode 压根没有 command hook——它只认
+    /// JS/TS 插件（启动时扫 `<配置目录>/{plugin,plugins}/*.ts`），故「接线」在这里落成一份由 meowo
+    /// 生成的桥接插件：它订阅 opencode 的事件，再把 payload 喂给 meowo-reporter 的 stdin。
+    ///
+    /// 反而占了个便宜：**payload 由我们自己构造**，可以直接吐成与 claude 同款的
+    /// `{hook_event_name, session_id, cwd}`，reporter 侧一行都不用改。
+    ///
+    /// 代价是这份文件整体归 meowo 所有：幂等判定按「生成的全文是否逐字相同」，用户手改会在下次
+    /// 接线时被整体覆盖（文件头已写明「请勿手改」）。与另三家「在用户的配置里合并进我方条目、
+    /// 用户自有条目一概不动」是两种不同的所有权模型——因为那三家的文件本就属于用户，
+    /// 而这个文件从来只有 meowo 会写。
+    OpencodeTs,
 }
 
 /// 配置文件不存在时怎么办。声明式，避免每个 agent 的 `apply` 各写一遍 NotFound 分支。
@@ -129,6 +141,7 @@ impl HookSpec {
             ConfigFormat::KimiToml => kimi_toml::ensure_hooks(self, cur_text, reporter, agent_id),
             ConfigFormat::CodexJson => codex_json::ensure_hooks(self, cur_text, reporter, agent_id),
             ConfigFormat::ClaudeJson => claude_json::ensure_hooks(self, cur_text, reporter, agent_id),
+            ConfigFormat::OpencodeTs => opencode_ts::ensure_hooks(cur_text, reporter, agent_id),
         }
     }
 
@@ -138,6 +151,9 @@ impl HookSpec {
         match self.format {
             ConfigFormat::KimiToml => cur_text.parse::<DocumentMut>().is_ok(),
             ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => json_common::parse(cur_text).is_some(),
+            // 这份文件由 meowo 独占生成，任何内容都能被下一次生成整体取代——不存在「读得出但改不动」
+            // 的中间态，故恒真（另三家要靠它区分「文件坏了」与「文件好但没接线」）。
+            ConfigFormat::OpencodeTs => true,
         }
     }
 
@@ -159,6 +175,8 @@ impl HookSpec {
             ConfigFormat::KimiToml => kimi_toml::claimed_at(self, cur_text, agent_id, event),
             // claude/codex 的 hooks 树同构（差别只在写入时是否带 matcher），认领扫描共用一份。
             ConfigFormat::CodexJson | ConfigFormat::ClaudeJson => json_common::claimed_at(self, cur_text, agent_id, event),
+            // 插件是一体的：认领到它，就意味着它声明的每个事件都在（`event` 因此无从、也不必过滤）。
+            ConfigFormat::OpencodeTs => opencode_ts::claimed(cur_text),
         }
     }
 }
@@ -563,6 +581,193 @@ mod codex_json {
             Merge::Changed
         } else {
             Merge::Unchanged
+        }
+    }
+}
+
+// ═══ OpencodeTs ═══
+
+/// opencode 的接线产物是一份**由 meowo 全权生成的 TS 桥接插件**，不是与用户共处的配置文件。
+/// 因此这里没有「合并」，只有「生成 / 比对」：目标全文算出来，与磁盘上的逐字比较，不同即重写。
+///
+/// reporter 路径以 **JSON 字符串字面量**嵌入。这一步不是偷懒——Windows 路径里的 `\` 若直接塞进
+/// TS 源码就是转义符（`C:\Users\...` 里的 `\U` 会让插件加载直接语法错误）。JSON 的字符串转义
+/// 恰好是合法 JS 字符串字面量的子集，`serde_json` 来回一趟就同时解决了写入转义与读回解析。
+mod opencode_ts {
+    use super::*;
+
+    /// 待填的两个洞。用占位符而非 `format!`：模板里全是 JS 的 `{}`，走 `format!` 就得把每一个都
+    /// 写成 `{{}}`，模板会变得没法读、也没法直接拷进编辑器验证。
+    const REPORTER_SLOT: &str = "__MEOWO_REPORTER__";
+    const PROVIDER_SLOT: &str = "__MEOWO_PROVIDER__";
+
+    /// 认领标记：`claimed` 靠它把路径捞回来，故它与模板里的写法必须一字不差。
+    const REPORTER_DECL: &str = "const MEOWO_REPORTER = ";
+
+    /// 桥接插件模板。事件映射见 [`crate::plugins::opencode`] 的模块文档。
+    const TEMPLATE: &str = r#"// meowo-reporter bridge —— 由 Meowo 生成，请勿手改：下次接线会整体覆盖本文件。
+//
+// opencode 没有 command hook（只认 TS 插件），所以 meowo 的「接线」在这里落成一份桥接：
+// 订阅 opencode 的事件，把负载喂进 meowo-reporter 的 stdin。
+//
+// 负载刻意与 claude/codex/kimi 的 hook 同形（hook_event_name / session_id / cwd），于是
+// reporter 侧不必为 opencode 单开一条解析路径——它根本看不出这一条是插件转发来的。
+
+const MEOWO_REPORTER = __MEOWO_REPORTER__
+const MEOWO_PROVIDER = __MEOWO_PROVIDER__
+
+function meowoReport(payload) {
+  // 没有 session_id 就无从落库，直接丢弃（reporter 侧同样会拒，这里省一次进程派生）。
+  if (!payload.session_id) return
+  try {
+    const proc = Bun.spawn([MEOWO_REPORTER, "--provider", MEOWO_PROVIDER], {
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    proc.stdin.write(JSON.stringify(payload))
+    proc.stdin.end()
+    // 别让这个短命子进程拖住 opencode 自己的退出。
+    proc.unref?.()
+  } catch {
+    // 上报是尽力而为：出了任何岔子都不能把宿主 opencode 带崩。
+  }
+}
+
+export const MeowoReporter = async ({ directory }) => ({
+  event: async ({ event }) => {
+    const props = event?.properties ?? {}
+    switch (event?.type) {
+      case "session.created":
+        meowoReport({
+          hook_event_name: "SessionStart",
+          session_id: props.info?.id,
+          cwd: props.info?.directory ?? directory,
+        })
+        break
+      // opencode 每个回合跑完都发一次 idle——这正是 claude 的 Stop 语义。
+      case "session.idle":
+        meowoReport({ hook_event_name: "Stop", session_id: props.sessionID, cwd: directory })
+        break
+      // opencode 没有「会话结束」这一概念，删除会话是唯一确定的终结信号。进程退出的收尾
+      // 因此与 codex 一样，交给 meowo-app 的判活去 reap，不在这里硬凑一个 SessionEnd。
+      case "session.deleted":
+        meowoReport({
+          hook_event_name: "SessionEnd",
+          session_id: props.info?.id,
+          cwd: props.info?.directory ?? directory,
+        })
+        break
+    }
+  },
+  "chat.message": async (input, output) => {
+    const text = (output?.parts ?? [])
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("")
+    meowoReport({
+      hook_event_name: "UserPromptSubmit",
+      session_id: input?.sessionID,
+      cwd: directory,
+      prompt: text,
+    })
+  },
+  "tool.execute.after": async (input) => {
+    meowoReport({
+      hook_event_name: "PostToolUse",
+      session_id: input?.sessionID,
+      cwd: directory,
+      tool_name: input?.tool,
+    })
+  },
+})
+"#;
+
+    /// 生成插件全文。
+    pub fn render_plugin(reporter: &str, agent_id: &str) -> String {
+        TEMPLATE
+            .replace(REPORTER_SLOT, &js_string(reporter))
+            .replace(PROVIDER_SLOT, &js_string(agent_id))
+    }
+
+    /// Rust 串 → JS 字符串字面量（含引号）。
+    fn js_string(s: &str) -> String {
+        serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+    }
+
+    /// 目标全文与现状逐字比对——一致即已是目标状态，否则整体重写。
+    pub fn ensure_hooks(cur_text: &str, reporter: &str, agent_id: &str) -> EnsureOutcome {
+        let next = render_plugin(reporter, agent_id);
+        if cur_text == next {
+            EnsureOutcome::Unchanged
+        } else {
+            EnsureOutcome::Changed(next)
+        }
+    }
+
+    /// 从既有插件里取回 reporter 路径。仍走与另三家同一条严格判定（文件名必须是
+    /// `meowo-reporter[.exe]` 或历史 `cc-reporter[.exe]`）：万一用户在同名文件里放了自己的东西，
+    /// 我们宁可不认领，也不能把它的路径当成自己的 reporter 写回去。
+    pub fn claimed(cur_text: &str) -> Option<String> {
+        let rest = cur_text.split_once(REPORTER_DECL)?.1;
+        let line = rest.lines().next()?.trim();
+        let path: String = serde_json::from_str(line).ok()?;
+        is_any_reporter(&path).then_some(path)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 生成 → 认领 → 再生成，必须闭环且幂等。Windows 路径的反斜杠是这里的真正考点：
+        /// 它一旦没被转义，产出的就是一份加载即语法错误的插件。
+        #[test]
+        fn windows_path_survives_render_and_claim_roundtrip() {
+            let win = r"C:\Users\larry\AppData\Local\Meowo\meowo-reporter.exe";
+            let out = render_plugin(win, "opencode");
+
+            // 路径以转义形态落进源码——绝不能出现裸的单反斜杠。
+            assert!(out.contains(
+                r#"const MEOWO_REPORTER = "C:\\Users\\larry\\AppData\\Local\\Meowo\\meowo-reporter.exe""#
+            ));
+            assert!(out.contains(r#"const MEOWO_PROVIDER = "opencode""#));
+
+            // 认领读回的是原始路径（反转义后）。
+            assert_eq!(claimed(&out).as_deref(), Some(win));
+            // 幂等。
+            assert_eq!(ensure_hooks(&out, win, "opencode"), EnsureOutcome::Unchanged);
+            // 换了路径 → 重写。
+            let moved = r"D:\meowo\meowo-reporter.exe";
+            assert_eq!(
+                ensure_hooks(&out, moved, "opencode"),
+                EnsureOutcome::Changed(render_plugin(moved, "opencode"))
+            );
+        }
+
+        #[test]
+        fn creates_from_empty_and_claims_legacy_reporter() {
+            let unix = "/usr/local/bin/meowo-reporter";
+            assert_eq!(
+                ensure_hooks("", unix, "opencode"),
+                EnsureOutcome::Changed(render_plugin(unix, "opencode"))
+            );
+
+            // 历史 cc-reporter 认领得到（供升级时替换旧路径），但外层 `claimed_reporter` 会用
+            // `is_current_reporter` 把它滤掉，于是接线改写成当前 reporter——与另三家同一套语义。
+            let legacy = render_plugin("/old/cc-reporter", "opencode");
+            assert_eq!(claimed(&legacy).as_deref(), Some("/old/cc-reporter"));
+        }
+
+        /// 认领必须严格：同名文件里若是用户自己的东西，绝不能把它的路径当成我们的 reporter。
+        #[test]
+        fn never_claims_a_foreign_binary() {
+            let foreign = TEMPLATE
+                .replace(REPORTER_SLOT, "\"/opt/not-us/notify.sh\"")
+                .replace(PROVIDER_SLOT, "\"opencode\"");
+            assert_eq!(claimed(&foreign), None);
+            // 压根不是我们的插件（没有那行声明）。
+            assert_eq!(claimed("export const Whatever = async () => ({})\n"), None);
+            assert_eq!(claimed(""), None);
         }
     }
 }

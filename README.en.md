@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>A desktop sticker that keeps an eye on your Claude Code, Codex, and Kimi coding sessions — all in one place.</b></p>
+  <p><b>A desktop sticker that keeps an eye on your Claude Code, Codex, Kimi, Gemini CLI, and OpenCode coding sessions — all in one place.</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -102,7 +102,7 @@ The name comes from the sound a cat makes — **meow** — rendered in Chinese a
 
 ## How it works
 
-> Claude Code is used as the example here; Codex / Kimi use their own CLI hook mechanisms, and the data all lands in the same local database.
+> Claude Code is used as the example here; Codex / Kimi / Gemini CLI use their own CLI hook mechanisms, while OpenCode has no hooks at all and instead gets an auto-generated bridge plugin that forwards its events. The data all lands in the same local database.
 
 ```
  Claude Code session
@@ -145,7 +145,7 @@ meowo/
 - [Bun](https://bun.sh/)
 - Tauri prerequisites on Windows: **WebView2 Runtime** (bundled with Win11) and the **MSVC build tools** (Visual Studio Build Tools, incl. C++ desktop development). See [Tauri prerequisites](https://tauri.app/start/prerequisites/).
 - Prerequisites on macOS: **Xcode Command Line Tools** (`xcode-select --install`); to build a universal package locally you also need `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
-- An installed AI coding CLI ([Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi) to produce session events.
+- An installed AI coding CLI ([Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi / [Gemini CLI](https://github.com/google-gemini/gemini-cli) / [OpenCode](https://opencode.ai)) to produce session events.
 
 ## Quick start
 
@@ -184,7 +184,7 @@ bun scripts/install-hooks.mjs "<absolute-repo-path>/target/release/meowo-reporte
 
 The script wires meowo-reporter into the required hook events (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode, each with a 5s timeout cap). Running it again with the same path won't duplicate entries or break your other hooks. If you change the reporter path, remove the old entries manually, or just launch the app and let auto-wiring update the path.
 
-> This script is for Claude Code only (it writes to `~/.claude/settings.json`). Codex / Kimi are wired via their own CLIs' native hook config (their hook commands carry `--provider codex|kimi`) and don't go through this script.
+> This script is for Claude Code only (it writes to `~/.claude/settings.json`). The others don't go through it — the app wires them on startup: Codex / Kimi / Gemini get entries in their own CLIs' native hook config (hook commands carry `--provider <id>`); OpenCode has no hook mechanism, so a bridge plugin is generated under `~/.config/opencode/plugin/` to forward events to meowo-reporter.
 
 You can also write to a different settings file: `bun scripts/install-hooks.mjs <reporter-path> <settings-path>`, or use the `MEOWO_SETTINGS` environment variable.
 

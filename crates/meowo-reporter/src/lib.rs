@@ -37,6 +37,8 @@ mod tests {
     fn unknown_provider_resolves_to_none_not_default() {
         assert_eq!(meowo_agent::resolve(None).map(|p| p.id()), Some(meowo_agent::DEFAULT_ID));
         assert_eq!(meowo_agent::resolve(Some("")).map(|p| p.id()), Some(meowo_agent::DEFAULT_ID));
-        assert!(meowo_agent::resolve(Some("gemini")).is_none());
+        // 反例得挑一个**永远**不会被注册的串。这里原本写的是 "gemini"——它后来真的成了注册过的
+        // agent，于是这条断言差点在无人察觉的情况下失去意义（幸而它当场变红）。
+        assert!(meowo_agent::resolve(Some("not-an-agent")).is_none());
     }
 }

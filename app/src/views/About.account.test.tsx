@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization，与 NewSessionPanel.test.tsx 同坑）。
-const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), cancelLogin: vi.fn(), checkProviderHooks: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
+const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), cancelLogin: vi.fn(), checkProviderHooks: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn(), listProfiles: vi.fn(), createProfile: vi.fn(), setActiveProfile: vi.fn(), deleteProfile: vi.fn() }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 
 // 收集所有 ProviderCard 注册的 install-done / login-done 回调，测试里手动广播
@@ -39,6 +39,10 @@ beforeEach(() => {
   api.addAgentToUserPath.mockResolvedValue(undefined);
   // 默认 hooks 已接入（无「未接入」提示条），验接线的用例再覆盖。
   api.checkProviderHooks.mockResolvedValue("installed");
+  // 默认：只有一个默认账号（没建过自定义账号）。
+  api.listProfiles.mockResolvedValue([
+    { id: null, name: "", active: true, account: { email: "a@b.c" } },
+  ]);
   ev.doneCbs.length = 0;
   ev.loginCbs.length = 0;
 });
@@ -207,6 +211,35 @@ describe("AccountSection 登录", () => {
     expect(screen.queryByTestId("agent-login-kimi")).toBeNull();
   });
 
+  /**
+   * 没有账号概念的 agent：已装也不给登录按钮、不报「未登录」。
+   *
+   * 回归：`getAccounts()` 只返回**声明了账号能力**的 agent。旧逻辑靠 `payload == null` 判定未登录，
+   * 于是给没有账号能力的 agent 也亮出登录按钮——而它的 `login_argv()` 是 None，点下去后端只能回
+   * 一句「拉起登录失败」。给出走不通的入口，比不给入口更糟：用户会以为是自己的环境有问题，
+   * 反复去点。（gemini / opencode 真的这么翻过车，直到它们的登录入口被补上。）
+   *
+   * 判据必须是后端下发的 `supports_account`，不能靠「账号查不出来」去猜——那与「真的没登录」
+   * （codex 那种）长得一模一样。当前五家都有账号能力，故这里手造一个没有的。
+   */
+  it("无账号概念的 agent 已装也不给登录按钮，且不报未登录", async () => {
+    api.listAgents.mockResolvedValue([
+      { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
+      { id: "codex", display_name: "Codex", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
+      { id: "noacct", display_name: "No Account", installed: true, supports_proxy: false, supports_account: false, supports_profiles: false },
+    ]);
+    render(<AccountSection />);
+
+    // 对照：codex 有账号能力但没登录 → 照旧给按钮。
+    expect(await screen.findByTestId("agent-login-codex")).toBeTruthy();
+
+    // 已装，但没有账号概念 → 卡片在，登录按钮不在。
+    expect(screen.getByTestId("agent-card-noacct")).toBeTruthy();
+    expect(screen.queryByTestId("agent-login-noacct")).toBeNull();
+    // 也不该显示「未登录」——它没有「登录」这回事。
+    expect(screen.queryByTestId("agent-desc-noacct")).toBeNull();
+  });
+
   it("点登录调 loginAgent 并进入等待态", async () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<AccountSection />);
@@ -330,5 +363,77 @@ describe("AccountSection 登录", () => {
     expect(loginBtn.className).toContain("provider-card-action-primary");
     // 未经安装流程的 codex 则是普通次要按钮。
     expect(screen.getByTestId("agent-login-codex").className).not.toContain("provider-card-action-primary");
+  });
+});
+
+describe("AccountSection 多账号", () => {
+  /**
+   * 登录**必须带上那个账号自己的 id**。
+   *
+   * 这是整个多账号功能的命门：登录会把凭据写进「注入的隔离变量所指的目录」，而那个变量由 profile id
+   * 决定。漏传 id，新账号的登录就会把**默认账号**的凭据覆盖掉——用户以为自己加了个账号，
+   * 其实是把原来那个换掉了，而且毫无提示。
+   */
+  it("给某个账号点登录时，把它的 id 传给 loginAgent", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: null }, // 未登录
+    ]);
+    api.loginAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-login-claude-work"));
+    await waitFor(() =>
+      expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, "work")
+    );
+  });
+
+  it("点账号行即切换；已是活跃的那行不可点", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.setActiveProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    const row = await screen.findByTestId("profile-claude-work");
+    fireEvent.click(row.querySelector(".profile-row-main")!);
+    await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
+
+    // 活跃那行（默认账号）的主按钮是禁用的——点它没有意义。
+    const def = screen.getByTestId("profile-claude-__default__");
+    expect((def.querySelector(".profile-row-main") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /** 默认账号（id=null）是 agent 自己的目录，删不得——不给删除按钮。 */
+  it("默认账号没有删除按钮，自定义账号有", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: null },
+    ]);
+    render(<AccountSection />);
+
+    const def = await screen.findByTestId("profile-claude-__default__");
+    expect(def.querySelector('[aria-label]')).toBeNull(); // 无删除图标按钮
+
+    const work = screen.getByTestId("profile-claude-work");
+    expect(work.querySelector(`[aria-label="${zh.account.deleteProfile}"]`)).toBeTruthy();
+  });
+
+  /**
+   * 不支持多账号的 agent（gemini：数据目录不可被环境变量覆盖）不显示账号列表。
+   *
+   * 判据必须是后端下发的 `supports_profiles`，不能靠「列表只有一条」推断——那与「只建了默认账号」
+   * 长得一模一样。谎称支持的后果是两个「账号」静默共用同一份凭据。
+   */
+  it("不支持多账号的 agent 不显示账号列表", async () => {
+    api.listAgents.mockResolvedValue([
+      { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true, supports_account: true, supports_profiles: true },
+      { id: "gemini", display_name: "Gemini CLI", installed: true, supports_proxy: false, supports_account: true, supports_profiles: false },
+    ]);
+    render(<AccountSection />);
+
+    await waitFor(() => expect(screen.getByTestId("profiles-claude")).toBeTruthy());
+    expect(screen.queryByTestId("profiles-gemini")).toBeNull();
   });
 });

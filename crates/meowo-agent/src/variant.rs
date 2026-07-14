@@ -82,6 +82,9 @@ impl Variant {
             auth: self.auth,
             launch,
             launch_stem: self.launch.stem,
+            // 默认账号。profile 实况由 `installation_for_profile` 事后填上——可执行的探测与
+            // profile 无关（换账号不换二进制），故这里共用同一条 probe 路径。
+            profile: None,
         }
     }
 }
@@ -99,6 +102,9 @@ pub struct Installation {
     pub launch: Option<Vec<String>>,
     /// 回退裸名（无扩展名）。
     pub launch_stem: &'static str,
+    /// 这份实况属于哪个 **profile**（多账号）：`(profile 根目录, 隔离规格)`。
+    /// `None` = 默认账号，即 agent 自己的目录。由 [`AgentPlugin::installation_for_profile`] 填。
+    pub profile: Option<(PathBuf, &'static crate::profile::ProfileSpec)>,
 }
 
 impl Installation {
@@ -108,8 +114,34 @@ impl Installation {
     }
 
     /// 凭据文件路径（该变体无鉴权则 None）。macOS Keychain 变体返回的是其文件回退路径。
+    ///
+    /// 三种情形，**这是凭据路径的唯一出口**，别处不要自行拼接：
+    ///
+    /// 1. **profile（多账号）**：一切都在 profile 根底下——凭据也不例外。默认路径在这里全不作数：
+    ///    opencode 的凭据默认在 `~/.local/share/opencode`，而 profile 模式下整个数据目录都被
+    ///    `XDG_DATA_HOME` 搬走了，再按 home 去拼就会指向一个属于**默认账号**的文件。
+    /// 2. **凭据不在 `data_dir` 底下**（[`CredentialSource::HomeFile`]）：相对 home 解析。
+    /// 3. 其余：相对 `data_dir`。
     pub fn credentials_path(&self) -> Option<PathBuf> {
-        self.auth.map(|a| crate::join_rel(&self.data_dir, a.credentials.file_rel()))
+        self.auth?;
+        if let Some((root, spec)) = &self.profile {
+            return Some(spec.credentials(root));
+        }
+        let auth = self.auth?;
+        match auth.credentials {
+            crate::auth::CredentialSource::HomeFile(rel) => {
+                Some(crate::join_rel(&crate::home_dir()?, rel))
+            }
+            _ => Some(crate::join_rel(&self.data_dir, auth.credentials.file_rel())),
+        }
+    }
+
+    /// 启动该 agent 时要注入的环境变量。默认账号 → 空（什么都不注入，现有用户零感知）。
+    pub fn profile_env(&self) -> Vec<(String, String)> {
+        match &self.profile {
+            Some((root, spec)) => spec.env_for(root),
+            None => Vec::new(),
+        }
     }
 
     /// 启动 argv：绝对路径优先，找不到则回退裸名交给 PATH 解析。
@@ -118,12 +150,14 @@ impl Installation {
     }
 
     /// 拉起交互式登录的 argv = 启动 argv + 该变体声明的登录子命令（如 `<claude.exe> auth login`）。
-    /// 该变体无鉴权、或未声明登录入口 → None。与 `launch_argv` 同源，故同样是绝对路径优先。
+    /// 该变体无鉴权、或未声明登录入口（`login: None`）→ None。与 `launch_argv` 同源，故同样是
+    /// 绝对路径优先。
+    ///
+    /// **空子命令是合法的**：`login: Some(&[])` 表示「裸启动即登录」——gemini 没有登录子命令，
+    /// 跑 `gemini` 本身就会引导认证。此前空切片被当成「无入口」而返回 None，gemini 因此无从表达，
+    /// 前端的登录按钮点下去只能得到一句「拉起登录失败」。
     pub fn login_argv(&self) -> Option<Vec<String>> {
-        let args = self.auth?.login_args;
-        if args.is_empty() {
-            return None;
-        }
+        let args = self.auth?.login?;
         let mut argv = self.launch_argv();
         argv.extend(args.iter().map(|s| s.to_string()));
         Some(argv)
@@ -174,14 +208,28 @@ mod tests {
         credentials: CredentialSource::File("cred.json"),
         refresh: None,
         default_base_url: "",
-        login_args: &["auth", "login"],
+        login: Some(&["auth", "login"]),
     };
     /// 有鉴权但**无**登录入口（如凭据全由外部工具写入）。
     static AUTH_NO_LOGIN: AuthScheme = AuthScheme {
         credentials: CredentialSource::File("cred.json"),
         refresh: None,
         default_base_url: "",
-        login_args: &[],
+        login: None,
+    };
+    /// **裸启动即登录**（gemini：没有登录子命令，跑它自己就会引导认证）。
+    static AUTH_LOGIN_ON_LAUNCH: AuthScheme = AuthScheme {
+        credentials: CredentialSource::File("cred.json"),
+        refresh: None,
+        default_base_url: "",
+        login: Some(&[]),
+    };
+    /// 凭据不在 data_dir 底下（opencode：插件在配置目录，凭据在数据目录）。
+    static AUTH_HOME_CREDS: AuthScheme = AuthScheme {
+        credentials: CredentialSource::HomeFile(".local/share/x/auth.json"),
+        refresh: None,
+        default_base_url: "",
+        login: Some(&["auth", "login"]),
     };
 
     fn inst_with_auth(auth: Option<&'static AuthScheme>) -> Installation {
@@ -207,11 +255,49 @@ mod tests {
     }
 
     #[test]
-    fn login_argv_is_none_without_auth_or_login_args() {
+    fn login_argv_is_none_only_when_no_login_entry_is_declared() {
         // 无鉴权声明 → 无登录入口。
         assert_eq!(inst_with_auth(None).login_argv(), None);
-        // 有鉴权但登录子命令为空 → 同样 None（不能拉起一个只有可执行名的终端）。
+        // 声明了鉴权但明确没有登录入口（login: None）→ 同样 None。
         assert_eq!(inst_with_auth(Some(&AUTH_NO_LOGIN)).login_argv(), None);
+    }
+
+    /// **裸启动即登录**必须能表达出来。这条曾经是反的：空子命令被当成「无登录入口」而返回 None
+    /// （注释还写着「不能拉起一个只有可执行名的终端」）。gemini 恰恰就是这种 agent——它没有登录
+    /// 子命令，跑 `gemini` 本身就会引导认证。于是它被判成没有入口，而前端仍旧亮出登录按钮，
+    /// 点下去只得到一句「拉起登录失败」。
+    ///
+    /// `login: None`（真的没有入口）与 `login: Some(&[])`（入口就是启动它自己）必须泾渭分明。
+    #[test]
+    fn login_argv_supports_bare_launch_as_the_login_flow() {
+        let inst = inst_with_auth(Some(&AUTH_LOGIN_ON_LAUNCH));
+        // 登录 argv 就是启动 argv 本身，不多一个参数。
+        assert_eq!(inst.login_argv(), Some(vec!["x".to_string()]));
+        assert_eq!(inst.login_argv(), Some(inst.launch_argv()));
+    }
+
+    /// 凭据可以不在 data_dir 底下（opencode：插件落配置目录，凭据落数据目录）。
+    /// 相对 data_dir 解析会把它拼到一个根本不存在的路径上，登录态因此永远读不出来。
+    #[test]
+    fn credentials_may_live_outside_the_data_dir() {
+        let _env = crate::env_guard();
+        let home = std::env::temp_dir().join(format!("meowo-homecred-{}", std::process::id()));
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("HOME", &home);
+
+        let inst = inst_with_auth(Some(&AUTH_HOME_CREDS));
+        // 相对 home，而不是相对 data_dir（/nowhere）。
+        assert_eq!(
+            inst.credentials_path(),
+            Some(crate::join_rel(&home, ".local/share/x/auth.json"))
+        );
+
+        // 对照：普通的 File 仍相对 data_dir。
+        let inst = inst_with_auth(Some(&AUTH_WITH_LOGIN));
+        assert_eq!(
+            inst.credentials_path(),
+            Some(PathBuf::from("/nowhere").join("cred.json"))
+        );
     }
 
     #[test]

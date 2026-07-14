@@ -67,6 +67,14 @@ static HOOKS: HookSpec = HookSpec {
 };
 
 /// 来源：kimi-code 开源包 `packages/oauth/src/constants.ts`。
+/// 多账号：`KIMI_SHARE_DIR` 一个变量搬走整个数据目录（凭据、config.toml、会话 wire.jsonl 全在里面）。
+/// 两个变体（modern `~/.kimi-code` / legacy `~/.kimi`）共用同一个环境变量，profile 下不必区分。
+static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
+    envs: &[("KIMI_SHARE_DIR", "")],
+    data_rel: "",
+    creds_rel: "credentials/kimi-code.json",
+};
+
 const AUTH_MODERN: AuthScheme = AuthScheme {
     credentials: CredentialSource::File("credentials/kimi-code.json"),
     refresh: Some(OAuthRefresh {
@@ -76,7 +84,7 @@ const AUTH_MODERN: AuthScheme = AuthScheme {
     default_base_url: "https://api.kimi.com/coding/v1",
     // `kimi login`。config.toml 正是由它生成——故 MissingConfig::Fail(NeedLogin) 的提示可直接
     // 引导用户点登录（两者指向同一个动作）。
-    login_args: &["login"],
+    login: Some(&["login"]),
 };
 
 /// 旧 Python 版的凭据布局与新版相同（实测 `~/.kimi/credentials/kimi-code.json` 字段一致）。
@@ -215,6 +223,9 @@ impl AgentPlugin for Kimi {
     }
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
+    }
+    fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
+        Some(&PROFILE)
     }
 }
 

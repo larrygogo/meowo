@@ -2101,3 +2101,96 @@ select.ns-input {
 .agent-path-msg {
   opacity: 0.8;
 }
+
+/* ═══ 多账号（profile）：agent 卡片里的账号列表 ═══
+   默认账号（id=null）永远在第一行，不可删除；活跃账号高亮。 */
+.profile-list { display: flex; flex-direction: column; gap: 6px; }
+.profile-list-head {
+  font-size: calc(11px * var(--cc-ui));
+  color: var(--cc-text-dim);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+}
+/* 使用中的账号：左侧一道强调色，比整行变色克制，也不会跟卡片本身的层次打架。 */
+.profile-row-active {
+  border-color: var(--cc-accent, var(--cc-border));
+  box-shadow: inset 2px 0 0 var(--cc-accent, transparent);
+}
+/* 整行即「切到此账号」的点击区；已是活跃账号时禁用（disabled 时不给指针手势）。 */
+.profile-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.profile-row-main:disabled { cursor: default; }
+.profile-name {
+  font-size: calc(12px * var(--cc-ui));
+  color: var(--cc-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 邮箱可能很长（也可能是 opencode 的 "anthropic (oauth), openai (api)"）：单行省略，title 兜全值。 */
+.profile-desc {
+  font-size: calc(10.5px * var(--cc-ui));
+  color: var(--cc-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-badge {
+  flex: none;
+  font-size: calc(10px * var(--cc-ui));
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--cc-surface-hover);
+  color: var(--cc-text-dim);
+  white-space: nowrap;
+}
+.profile-add-row { display: flex; align-items: center; gap: 6px; }
+.profile-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: calc(12px * var(--cc-ui));
+}
+.profile-add-btn {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--cc-border);
+  background: none;
+  color: var(--cc-text-dim);
+  font-size: calc(11.5px * var(--cc-ui));
+  cursor: pointer;
+}
+.profile-add-btn:hover:not(:disabled) {
+  color: var(--cc-text);
+  border-color: var(--cc-text-faint);
+}
+.profile-hint {
+  font-size: calc(10.5px * var(--cc-ui));
+  color: var(--cc-text-faint);
+  line-height: 1.5;
+}

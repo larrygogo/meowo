@@ -8,6 +8,14 @@
 /// 刻意**不**做成端口：它是纯 `std`，测试拿临时目录就能覆盖，注入只会平添间接层。
 /// 端口留给真正需要隔离的外部世界——HTTP 与系统密钥链，见 [`crate::ports`]。
 pub fn write_atomic(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    // 父目录可能还不存在：opencode 的接线产物落在数据目录下的 `plugin/` 子目录里，而该子目录只有
+    // 用户装过插件才会有。对既有三家这是 no-op（它们的配置就住在数据目录根上）。
+    //
+    // 这不与「绝不凭空创建 agent 的数据目录」相抵触：走到这里时数据目录必然已存在——`wire` 用
+    // `is_configured()`（数据目录存在）作为前置门槛，不过关的 agent 根本到不了写入这一步。
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
     std::fs::write(&tmp, body)?;
     if let Err(e) = std::fs::rename(&tmp, path) {

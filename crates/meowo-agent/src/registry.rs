@@ -17,6 +17,21 @@ pub trait AgentPlugin: Sync {
     /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + meowo-app 判活共用。
     fn process_names(&self) -> &'static [&'static str];
 
+    /// 某进程名是否是**本 agent** 的会话本体。与全局的 [`is_agent_process`] 刻意不同：那个问的是
+    /// 「这是不是某个 agent」，这个问的是「这是不是**我**」。
+    ///
+    /// 上溯抓 PID 必须用这一个。gemini 把 `node` 收进了自己的进程名（它没有别的可执行），于是全局
+    /// 判定下 `is_agent_process("node.exe")` 恒为真——若 reporter 拿它去上溯，任何 agent 的 hook 都
+    /// 可能在父链上撞见一个**无关的** node 祖先（VS Code 的集成终端就是一个），把它误认成自己的
+    /// 会话本体。更糟的是两个不同 agent 的会话会因此认领到**同一个** pid，而 `set_session_pid` 的
+    /// pid 独占语义会让后来者把前者直接收尾成 `ended`——两个活着的会话互相抹杀。
+    ///
+    /// 这不是假想：实测中 gemini 与 opencode 的会话正是这样抢到了同一个 node 祖先并互相顶掉的。
+    fn owns_process(&self, name: &str) -> bool {
+        let base = basename_lower(name);
+        self.process_names().contains(&base.as_str())
+    }
+
     // ═══ 声明式能力 ═══
 
     /// 追加在启动 argv 之后的 resume 子命令（claude `--resume`、kimi `-r`、codex `resume`），
@@ -53,6 +68,40 @@ pub trait AgentPlugin: Sync {
     /// 因此声明此能力不排斥同时声明 `sets_terminal_tab_title`，app 会以 token 为最高优先级。
     fn writes_tab_token(&self) -> bool {
         false
+    }
+
+    /// 多账号（profile）的隔离规格。`None` = 该 agent **不支持**多账号。
+    ///
+    /// 目前只有 gemini 是 None：它的数据目录无法被环境变量覆盖（`GEMINI_DIR` 实测无效，设了它
+    /// gemini 照样读 `~/.gemini`）。谎称支持的后果不是报错，而是**两个 profile 静默共用同一份凭据**
+    /// ——切了账号却毫无效果，且没有任何迹象。宁可如实说不支持。
+    fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
+        None
+    }
+
+    /// 某个 profile 在本机的安装实况：数据目录、hooks 规格、凭据位置全部落在 profile 根底下。
+    /// 接线（给这个 profile 挂 hooks）与读它的登录态都走它。
+    ///
+    /// 与 [`resolve`](Self::resolve) 的区别：那个给的是**默认账号**（agent 自己的目录）的实况。
+    fn installation_for_profile(&self, root: &std::path::Path) -> Option<Installation> {
+        let spec = self.profile()?;
+        let v = self.variants().first()?;
+        let home = crate::home_dir();
+        let mut inst = v.installation_at(self.id(), spec.data_dir(root), home.as_deref());
+        inst.profile = Some((root.to_path_buf(), spec));
+        Some(inst)
+    }
+
+    /// 该 agent 的 hook 事件名 → **meowo 规范事件名**（`SessionStart` / `UserPromptSubmit` /
+    /// `PostToolUse` / `Stop` / `SessionEnd` / `PermissionRequest` / `PreToolUse`，即 dispatch 的消化面）。
+    ///
+    /// 默认原样透传——claude/codex/kimi/opencode 的事件名本就是规范名。**只有 gemini 需要它**：
+    /// 它把「用户提交」「回合结束」叫成 `BeforeAgent` / `AfterAgent`，而配置里必须写它认识的名字。
+    ///
+    /// 翻译放在这里而不是 dispatch 里，是为了守住「加 agent 只动 `plugins/`」——否则 dispatch 的
+    /// match 上迟早会长出一排 `if provider == "..."`。
+    fn canonical_event<'a>(&self, raw: &'a str) -> &'a str {
+        raw
     }
 
     // ═══ 能力槽 ═══
@@ -173,9 +222,11 @@ pub trait AgentPlugin: Sync {
 static CLAUDE: crate::plugins::claude::Claude = crate::plugins::claude::Claude;
 static KIMI: crate::plugins::kimi::Kimi = crate::plugins::kimi::Kimi;
 static CODEX: crate::plugins::codex::Codex = crate::plugins::codex::Codex;
+static GEMINI: crate::plugins::gemini::Gemini = crate::plugins::gemini::Gemini;
+static OPENCODE: crate::plugins::opencode::Opencode = crate::plugins::opencode::Opencode;
 
-/// 全部 agent。三家均已迁入插件层——加 agent 只写 `plugins/<new>.rs` 再在此补一行。
-static ALL: &[&dyn AgentPlugin] = &[&CLAUDE, &KIMI, &CODEX];
+/// 全部 agent。五家均在插件层——加 agent 只写 `plugins/<new>/` 再在此补一行。
+static ALL: &[&dyn AgentPlugin] = &[&CLAUDE, &KIMI, &CODEX, &GEMINI, &OPENCODE];
 
 pub fn all() -> &'static [&'static dyn AgentPlugin] {
     ALL
@@ -211,14 +262,22 @@ pub fn installation(id: AgentId) -> Option<Installation> {
     by_id(id.as_str())?.resolve()
 }
 
-/// 进程名（可含路径、大小写不敏感）是否属于任一已知 agent 本体——取 basename **精确**比对。
-/// owner_pid 上溯与 meowo-app 判活/清理共用此函数，杜绝子串误匹配（如名字恰好含 kimi 的无关进程）。
-pub fn is_agent_process(name: &str) -> bool {
-    let base = name
-        .rsplit(['/', '\\'])
+/// 进程名 → 小写 basename（可含路径）。精确比对的公共前置，杜绝子串误匹配。
+fn basename_lower(name: &str) -> String {
+    name.rsplit(['/', '\\'])
         .next()
         .unwrap_or(name)
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+/// 进程名（可含路径、大小写不敏感）是否属于**任一**已知 agent 本体——取 basename 精确比对。
+///
+/// 供 meowo-app 的判活/清理使用（它问的是「这个 pid 还是个 agent 吗」）。
+///
+/// **上溯抓 PID 不要用它**，用 [`AgentPlugin::owns_process`]：自 gemini 收了 `node` 起，这里对
+/// `node.exe` 恒为真，拿它上溯会让任意 agent 撞上无关的 node 祖先。原委见 `owns_process` 的文档。
+pub fn is_agent_process(name: &str) -> bool {
+    let base = basename_lower(name);
     ALL.iter()
         .any(|p| p.process_names().contains(&base.as_str()))
 }
@@ -229,9 +288,9 @@ mod tests {
 
     #[test]
     fn by_id_matches_declared_id() {
-        assert_eq!(by_id("claude").map(|p| p.id().as_str()), Some("claude"));
-        assert_eq!(by_id("kimi").map(|p| p.id().as_str()), Some("kimi"));
-        assert_eq!(by_id("codex").map(|p| p.id().as_str()), Some("codex"));
+        for id in ["claude", "kimi", "codex", "gemini", "opencode"] {
+            assert_eq!(by_id(id).map(|p| p.id().as_str()), Some(id));
+        }
         assert!(by_id("nope").is_none());
     }
 
@@ -240,7 +299,7 @@ mod tests {
     fn registry_covers_every_provider_key() {
         let mut ids: Vec<&str> = all().iter().map(|p| p.id().as_str()).collect();
         ids.sort_unstable();
-        assert_eq!(ids, vec!["claude", "codex", "kimi"]);
+        assert_eq!(ids, vec!["claude", "codex", "gemini", "kimi", "opencode"]);
     }
 
     /// 未知 provider 串**绝不**降级成默认插件——旧 `ProviderKey::from_str` 正是这么把未知 agent
@@ -251,8 +310,11 @@ mod tests {
         assert_eq!(resolve(None).map(|p| p.id().as_str()), Some("claude"));
         assert_eq!(resolve(Some("")).map(|p| p.id().as_str()), Some("claude"));
         assert_eq!(resolve(Some("  ")).map(|p| p.id().as_str()), Some("claude"));
-        assert!(resolve(Some("gemini")).is_none());
+        // 曾以 "gemini" 作未注册反例——它现在是注册过的 agent 了。反例必须选一个**永远**不会被
+        // 注册的串，否则这条断言会随着新 agent 的加入悄悄失去意义。
+        assert_eq!(resolve(Some("gemini")).map(|p| p.id().as_str()), Some("gemini"));
         assert!(resolve(Some("nonsense")).is_none());
+        assert!(resolve(Some("not-an-agent")).is_none());
     }
 
     #[test]
@@ -288,14 +350,66 @@ mod tests {
         assert!(is_agent_process("claude.exe"));
         assert!(is_agent_process("kimi.exe"));
         assert!(is_agent_process("codex.exe"));
+        assert!(is_agent_process("opencode.exe"));
         assert!(is_agent_process("C:/x/Kimi.EXE"));
         assert!(is_agent_process("/usr/bin/claude"));
         // 子串不应误匹配（这正是修复点）。
         assert!(!is_agent_process("kimi-desktop"));
         assert!(!is_agent_process("kimichat.exe"));
         assert!(!is_agent_process("claude-helper.exe"));
-        assert!(!is_agent_process("node"));
+        assert!(!is_agent_process("opencode-helper.exe"));
         assert!(!is_agent_process(""));
+    }
+
+    /// `node` **算** agent 进程——这条曾经反着断言（`assert!(!is_agent_process("node"))`，当时
+    /// codex 的注释还写着「不收 node.exe，过宽」），gemini 进来后不得不翻转：它没有自己的可执行，
+    /// 会话本体就是一个跑 `bundle/gemini.js` 的 node 进程，不收它，owner_pid 上溯就抓不到宿主。
+    ///
+    /// 代价如实记在这里：判活对 node 从此变宽——某个 gemini 会话的 PID 被系统回收、又恰好落给
+    /// 另一个 node 进程时，那个已死的会话会被误判为仍活着。接受它，是因为反面（不收 node）意味着
+    /// 每个 gemini 会话从一开始就抓不到 PID：那是必然的坏，而这个是偶然的坏。详见 `plugins::gemini`。
+    #[test]
+    fn node_counts_as_agent_because_gemini_has_no_binary_of_its_own() {
+        assert!(is_agent_process("node"));
+        assert!(is_agent_process("node.exe"));
+        assert!(is_agent_process("C:/Program Files/nodejs/node.exe"));
+        // 变宽的只有「node 本身」：仍是精确 basename 比对，名字里含 node 的无关进程不会被误收。
+        assert!(!is_agent_process("nodemon"));
+        assert!(!is_agent_process("node-gyp.exe"));
+    }
+
+    /// 上溯抓 PID 只认**自己**的进程名——这是 `owns_process` 与全局 `is_agent_process` 的分野。
+    ///
+    /// 回归背景（实测踩到的，不是假想）：gemini 没有自己的可执行，会话本体就是个 node 进程，于是
+    /// `node` 进了它的白名单。全局判定从此对 `node.exe` 恒为真；若 reporter 拿全局判定去上溯，
+    /// **任何** agent 的 hook 都会在父链上撞见无关的 node 祖先并认领它的 pid。两个不同 agent 的
+    /// 会话因此持有同一个 pid，而 `set_session_pid` 的 pid 独占语义会让后来者把前者收尾成
+    /// `ended`——两个活着的会话互相抹杀。gemini 与 opencode 当场就这么互抹了。
+    #[test]
+    fn owns_process_is_per_agent_not_global() {
+        let gemini = by_id("gemini").unwrap();
+        let claude = by_id("claude").unwrap();
+        let opencode = by_id("opencode").unwrap();
+
+        // node 确实是 gemini 的会话本体。
+        assert!(gemini.owns_process("node.exe"));
+        assert!(gemini.owns_process("C:/Program Files/nodejs/node.exe"));
+
+        // 全局判定对 node 为真——正因如此，它不能被用来上溯。
+        assert!(is_agent_process("node.exe"));
+        // 而别的 agent 绝不把 node 当成自己的会话本体。
+        assert!(!claude.owns_process("node.exe"), "claude 的会话本体不是 node");
+        assert!(!opencode.owns_process("node.exe"), "opencode 是原生二进制，不是 node");
+        assert!(!by_id("codex").unwrap().owns_process("node.exe"));
+
+        // 各自只认自己，互不越界。
+        assert!(claude.owns_process("claude.exe"));
+        assert!(opencode.owns_process("/usr/local/bin/opencode"));
+        assert!(!claude.owns_process("opencode.exe"));
+        assert!(!opencode.owns_process("claude.exe"));
+        // 仍是精确 basename 比对，不做子串匹配。
+        assert!(!gemini.owns_process("nodemon"));
+        assert!(!gemini.owns_process("node-gyp.exe"));
     }
 
     /// resume argv = 启动 argv + 该 agent 声明的 resume 子命令 + session_id。
@@ -308,6 +422,9 @@ mod tests {
             (crate::id::CLAUDE, vec!["--resume"]),
             (crate::id::KIMI, vec!["-r"]),
             (crate::id::CODEX, vec!["resume"]),
+            (crate::id::GEMINI, vec!["--resume"]),
+            // `--continue` 只会续「最近一个」，恢复不了点开的那个——必须是接 id 的 `--session`。
+            (crate::id::OPENCODE, vec!["--session"]),
         ];
         for (id, sub) in cases {
             let p = by_id(id.as_str()).unwrap();

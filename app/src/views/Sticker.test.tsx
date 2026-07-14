@@ -24,9 +24,11 @@ const invokeMock = vi.hoisted(() =>
     // agent 名单与展示名由后端下发（前端不再自带一份）。
     if (cmd === "list_agents") {
       return Promise.resolve([
-        { id: "claude", display_name: "Claude Code", installed: true },
-        { id: "kimi", display_name: "Kimi Code", installed: false },
-        { id: "codex", display_name: "Codex", installed: false },
+        { id: "claude", display_name: "Claude Code", installed: true, supports_proxy: true },
+        { id: "kimi", display_name: "Kimi Code", installed: false, supports_proxy: true },
+        { id: "codex", display_name: "Codex", installed: false, supports_proxy: true },
+        { id: "gemini", display_name: "Gemini CLI", installed: false, supports_proxy: false },
+        { id: "opencode", display_name: "OpenCode", installed: false, supports_proxy: false },
       ]);
     }
     return Promise.resolve();
@@ -652,11 +654,23 @@ describe("Sticker", () => {
 
   /// 本版本不认识的 agent（DB 里存着更新版写入的 id）：显示 id 本身 + 中性徽标，绝不冒名成 Claude。
   it("未知 agent 不冒名成 claude", async () => {
-    const { container } = render(<Sticker filter="all" data={[mk({ provider: "gemini" })]} />);
+    // 反例得挑一个**永远**不会被注册的 id。这里原本写的是 "gemini"——它后来真成了一个 agent，
+    // 有了自己的徽标，这条断言当场变红（幸而如此，否则它会在无人察觉时失去意义）。
+    const { container } = render(<Sticker filter="all" data={[mk({ provider: "not-an-agent" })]} />);
     const agent = container.querySelector(".stk-agent") as HTMLElement;
-    await waitFor(() => expect(agent.getAttribute("data-tip")).toBe("gemini"));
+    // 展示名回退成 id 本身——显示 "not-an-agent" 好过显示 "Claude Code"。
+    await waitFor(() => expect(agent.getAttribute("data-tip")).toBe("not-an-agent"));
     // 中性兜底徽标是一个半透明圆角方块（rect），不是 Claude 的 sunburst path。
     expect(agent.querySelector("svg rect")).toBeTruthy();
+    expect(agent.querySelector("svg path")).toBeNull();
+  });
+
+  it("已注册 agent 用自己的徽标，不落到中性兜底", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ provider: "gemini" })]} />);
+    const agent = container.querySelector(".stk-agent") as HTMLElement;
+    await waitFor(() => expect(agent.getAttribute("data-tip")).toBe("Gemini CLI"));
+    // gemini 的 sparkle 是 path（兜底是裸 rect）。
+    expect(agent.querySelector("svg path")).toBeTruthy();
   });
 
   it("搜索走后端：输入调用 onSearchChange，且不客户端过滤已加载数据", () => {

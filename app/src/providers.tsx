@@ -45,6 +45,46 @@ function CodexMark() {
   );
 }
 
+function GeminiMark() {
+  // Gemini 的四角星（sparkle）+ 官方蓝紫渐变。自带固定品牌色，与 kimi/codex 同款处理（tint 为
+  // undefined，断开态只靠 .stk-agent-off 的 opacity 变暗）。
+  //
+  // 渐变 id 必须唯一：同一页面会同时渲染多个徽标，撞 id 会让后挂载的那个引用到前一个的 <defs>。
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+      <defs>
+        <linearGradient id="meowo-gemini-grad" x1="0" y1="24" x2="24" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#4285F4" />
+          <stop offset="0.5" stopColor="#9B72CB" />
+          <stop offset="1" stopColor="#D96570" />
+        </linearGradient>
+      </defs>
+      {/* 缩到 0.82 居中留白：设置页的 .provider-card-icon 会把徽标 svg 拉满外框，而 sparkle 不像
+          codex/opencode 那样自带方块底——满幅铺开会比邻座重得多。留白后视觉重量才对得齐。 */}
+      <path
+        d="M12 24A14.304 14.304 0 0 0 0 12 14.304 14.304 0 0 0 12 0a14.305 14.305 0 0 0 12 12 14.305 14.305 0 0 0-12 12Z"
+        fill="url(#meowo-gemini-grad)"
+        transform="translate(2.16 2.16) scale(0.82)"
+      />
+    </svg>
+  );
+}
+
+function OpencodeMark() {
+  // ⚠️ **不是** OpenCode 的官方 logomark——找不到可靠的矢量原件，与其编一个假的品牌标识，不如放一个
+  // 明摆着是占位的终端提示符（黑方块 + 白 `>_`）。它可辨识、不冒充，拿到官方资产后直接换掉这个函数
+  // 即可，别处无需改动。自带固定色，故 tint 为 undefined。
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#0a0a0c" />
+      <g stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none">
+        <path d="M6.5 8.5 10 12l-3.5 3.5" />
+        <path d="M12.5 16h5" />
+      </g>
+    </svg>
+  );
+}
+
 /** 未知 agent（DB 里存着本版本不认识的 id）：中性占位方块，绝不伪装成 claude。 */
 function UnknownMark() {
   return (
@@ -73,6 +113,8 @@ const ASSETS: Record<string, AgentAssets> = {
   claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: true },
   kimi: { Icon: KimiMark, needsTile: false },
   codex: { Icon: CodexMark, needsTile: false },
+  gemini: { Icon: GeminiMark, needsTile: false },
+  opencode: { Icon: OpencodeMark, needsTile: false },
 };
 
 const UNKNOWN: AgentAssets = { Icon: UnknownMark, needsTile: false };

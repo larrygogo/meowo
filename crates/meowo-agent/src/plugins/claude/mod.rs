@@ -72,6 +72,18 @@ static HOOKS: HookSpec = HookSpec {
 ///
 /// 用量端点（`api.anthropic.com/api/oauth/usage`）不在此处：`AuthScheme` 只管「凭据在哪 +
 /// 怎么刷新」，用量是 account 侧的事。
+/// 多账号：`CLAUDE_CONFIG_DIR` 一个变量就把整个数据目录搬走（凭据、settings.json、历史全在里面）。
+///
+/// macOS 上 claude 的凭据默认在 Keychain 而非文件——但**设了 `CLAUDE_CONFIG_DIR` 之后不影响隔离**：
+/// 各 profile 的 hooks / settings / 历史都各自独立，而 Keychain 那份凭据是全局的，等于所有 profile
+/// 共享同一个登录身份。**这一条尚未解决**（见 `creds_rel` 指向的文件回退路径），macOS 上要真正切换
+/// 账号还需要额外轮换 Keychain 条目。Windows / Linux 无此问题。
+static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
+    envs: &[("CLAUDE_CONFIG_DIR", "")],
+    data_rel: "",
+    creds_rel: ".credentials.json",
+};
+
 static AUTH: AuthScheme = AuthScheme {
     credentials: CredentialSource::KeychainOrFile {
         service: "Claude Code-credentials",
@@ -85,7 +97,7 @@ static AUTH: AuthScheme = AuthScheme {
     default_base_url: "",
     // 实测（claude --help / claude auth --help）：登录在 `auth` 子命令下，**没有** `claude login`。
     // 另有 `claude setup-token`（长期 token），不是交互式 OAuth 登录，不用它。
-    login_args: &["auth", "login"],
+    login: Some(&["auth", "login"]),
 };
 
 static LAUNCH: LaunchSpec = LaunchSpec {
@@ -182,6 +194,9 @@ impl AgentPlugin for Claude {
     }
     fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
         Some(&setup::WIRING)
+    }
+    fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
+        Some(&PROFILE)
     }
 }
 

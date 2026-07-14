@@ -136,10 +136,18 @@ export function NewSessionPanel(): ReactElement {
             .catch(() => {});
         }
         // 登录态：账号能解析出来就算已登录。取不到就保持 null（不提示），宁可不打扰也不误报未登录。
+        //
+        // 只给**有账号能力**的 agent 记登录态。`getAccounts()` 压根不会返回没声明该能力的 agent
+        // （gemini / opencode），而「查不到行」≠「未登录」——它是「无账号概念，无从谈起」。
+        // 曾经把两者混为一谈：查不到 → isLoggedIn(undefined) → false → 亮出登录入口 → 点下去，
+        // 后端 `login_argv()` 却是 None，只能报「拉起登录失败」。留 undefined，needLogin 即为 false。
         getAccounts()
           .then((rows) => {
             const m: Record<string, boolean> = {};
-            for (const { id } of list) m[id] = isLoggedIn(rows.find((r) => r.provider === id));
+            for (const { id } of list) {
+              const row = rows.find((r) => r.provider === id);
+              if (row) m[id] = isLoggedIn(row);
+            }
             setLoggedIn(m);
           })
           .catch(() => setLoggedIn(null));

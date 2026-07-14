@@ -62,16 +62,37 @@ pub fn account_cap(id: AgentId) -> Option<&'static dyn AccountCap> {
     meowo_agent::by_id(id.as_str())?.account()
 }
 
-/// 读账号信息（只读本地，不联网）。
-pub fn account_of(id: AgentId) -> Option<Account> {
+/// 该 agent **当前活跃 profile** 的安装实况；没建 profile / 该 agent 不支持多账号 → 默认账号
+/// （agent 自己的目录）。
+///
+/// 账号与用量一律按活跃 profile 读——切了账号，卡片上显示的就该是那个账号的邮箱与额度。
+pub fn active_installation(id: AgentId) -> Option<meowo_agent::Installation> {
+    if let Some(pid) = crate::profile::active_id(id.as_str()) {
+        if let Some(inst) = crate::profile::installation_of(id, &pid) {
+            return Some(inst);
+        }
+    }
+    meowo_agent::by_id(id.as_str())?.resolve()
+}
+
+/// 读**指定实况**的账号信息（只读本地，不联网）。profile 列表逐个读登录态时用它。
+pub fn account_in(id: AgentId, inst: &meowo_agent::Installation) -> Option<Account> {
     let p = crate::ports::HostPorts::for_agent(id);
-    account_cap(id)?.account(&p.as_ports())
+    account_cap(id)?.account(inst, &p.as_ports())
+}
+
+/// 读当前活跃账号的信息（只读本地，不联网）。
+pub fn account_of(id: AgentId) -> Option<Account> {
+    account_in(id, &active_installation(id)?)
 }
 
 /// 该 agent 当前是否支持用量查询。
 pub fn usage_supported(id: AgentId) -> bool {
+    let Some(inst) = active_installation(id) else {
+        return false;
+    };
     let p = crate::ports::HostPorts::for_agent(id);
-    account_cap(id).is_some_and(|c| c.usage_supported(&p.as_ports()))
+    account_cap(id).is_some_and(|c| c.usage_supported(&inst, &p.as_ports()))
 }
 
 /// 取用量。
@@ -91,7 +112,9 @@ pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
     }
     // 端口按 agent 绑定：代理是 per-agent 的（claude 走代理、kimi 直连是常态）。
     let p = crate::ports::HostPorts::for_agent(id);
-    match account_cap(id)?.fetch_usage(&p.as_ports()) {
+    // 用量按**活跃 profile** 拉——不同账号的额度当然不是一回事。
+    let inst = active_installation(id)?;
+    match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
         Ok(u) => {
             write_cached_usage(id, &u);
             Some(u)
@@ -142,6 +165,25 @@ pub fn read_cached_usage(id: AgentId) -> Option<ProviderUsage> {
 /// write_cached_usage 的「读-合并-写」临界区锁：贴纸挂载/定时刷新会对多个 agent 同 tick 并发
 /// 刷新（各自 spawn_blocking），不串行化时后写者会用旧快照覆盖先写者刚落盘的条目（丢失更新）。
 static USAGE_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 丢弃某 agent 的用量缓存。
+///
+/// **切换账号时必须调**：缓存是按 agent 分键的，不按 profile——换了账号，那份额度就属于别人了，
+/// 留着会让新账号顶着旧账号的用量条，直到下一次刷新才纠正。
+pub fn clear_cached_usage(id: AgentId) {
+    let Some(p) = usage_cache_path() else { return };
+    let _guard = USAGE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(mut root) = read_json(&p) else { return };
+    let Some(obj) = root.as_object_mut() else { return };
+    for key in ["providers", "fetched_at_map"] {
+        if let Some(m) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
+            m.remove(id.as_str());
+        }
+    }
+    if let Ok(body) = serde_json::to_string_pretty(&root) {
+        let _ = crate::fsutil::write_atomic(&p, &body);
+    }
+}
 
 /// 把某 agent 的用量写入缓存（providers 分键合并写入，唯一写入方）。
 pub fn write_cached_usage(id: AgentId, usage: &ProviderUsage) {
@@ -222,12 +264,46 @@ mod tests {
         assert_eq!(UsageKind::from_str("FIVE_HOUR"), UsageKind::Other); // 大小写不同 → Other
     }
 
-    /// 三家目前都声明了账号能力；漏接能力槽会让该 agent 的账号卡片静默变成「未登录」。
+    /// 账号是**可选**能力槽（不声明它的 agent，卡片不显示登录态、也不给登录入口），但当前五家
+    /// 恰好都声明了——所以这里钉的是**矩阵**，不是「全员必须有」。
+    ///
+    /// 这条曾经写成「每个插件都必须声明 account」。那不是规矩，只是当时三家碰巧都有；
+    /// 而更糟的是，前端一直靠「账号查不出来」反推「未登录」，于是一个没有账号能力的 agent 会被
+    /// 亮出一个必然失败的登录按钮。契约现在由 `AgentDescriptor::supports_account` 显式承载。
     #[test]
-    fn every_plugin_declares_account_capability() {
+    fn account_capability_matches_the_declared_matrix() {
+        let with: std::collections::BTreeSet<&str> = all_with_account().map(|p| p.id().as_str()).collect();
+        assert_eq!(
+            with,
+            ["claude", "codex", "gemini", "kimi", "opencode"]
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "账号能力的覆盖面变了——加/减了 agent，还是漏声明了能力槽？"
+        );
+        // all_with_account 必须恰好是「声明了 account 的那些」，不多不少。
         for p in meowo_agent::all() {
-            assert!(p.account().is_some(), "{} 未声明账号能力", p.id());
+            assert_eq!(
+                p.account().is_some(),
+                with.contains(p.id().as_str()),
+                "{} 的账号能力与 all_with_account 不一致",
+                p.id()
+            );
         }
-        assert_eq!(all_with_account().count(), meowo_agent::all().len());
+    }
+
+    /// **有账号能力 ⇒ 必须有登录入口。** 两者一旦脱节，前端就会亮出一个点了必失败的登录按钮：
+    /// 卡片按「有账号能力但没登录」显示登录按钮，后端的 `login_argv()` 却是 None，只能回一句
+    /// 「该 agent 未声明登录入口」。gemini 正是这么翻车的——它没有登录子命令（登录靠裸启动），
+    /// 而当时的 `login_args: &[]` 被当成「无入口」。
+    #[test]
+    fn every_agent_with_account_can_actually_be_logged_in() {
+        for p in all_with_account() {
+            let inst = p.resolve().unwrap_or_else(|| panic!("{} 解析不出安装实况", p.id()));
+            assert!(
+                inst.login_argv().is_some(),
+                "{} 有账号能力却没有登录入口——登录按钮会亮出来，点下去必然失败",
+                p.id()
+            );
+        }
     }
 }

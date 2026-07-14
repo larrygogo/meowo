@@ -205,6 +205,18 @@ export const zh = {
     notInstalled: "未安装",
     notLoggedIn: "未登录",
     notLoggedInHint: "已安装，未登录——点「登录」在终端完成授权",
+    // 多账号
+    profiles: "账号",
+    defaultProfile: "默认账号",
+    addProfile: "添加账号",
+    newProfileName: "账号名称（如：工作）",
+    addProfileHint: "新账号有自己独立的登录与会话历史，互不影响",
+    switchProfile: "切换到此账号",
+    activeProfile: "使用中",
+    deleteProfile: "删除账号",
+    deleteProfileConfirm: (name: string) =>
+      `删除账号「${name}」？它的登录凭据与会话历史会一并删除，无法恢复。`,
+    profileUnsupported: "该 agent 不支持多账号",
     login: "登录",
     loggingIn: "等待登录…",
     cancelLogin: "取消等待",

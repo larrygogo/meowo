@@ -12,13 +12,35 @@ describe("login api", () => {
   it("loginAgent 调用 login_agent 并透传 provider/terminal", () => {
     invokeMock.mockResolvedValue(undefined);
     loginAgent("claude", "wt");
-    expect(invokeMock).toHaveBeenCalledWith("login_agent", { provider: "claude", terminal: "wt" });
+    expect(invokeMock).toHaveBeenCalledWith("login_agent", {
+      provider: "claude",
+      terminal: "wt",
+      profile: null, // 省略 = 当前活跃账号
+    });
+  });
+
+  /**
+   * 多账号：登录**必须**能指定登进哪个账号——凭据会写进那个账号自己的目录。
+   * 漏传的话，新账号的登录就把默认账号的凭据覆盖了：用户以为加了个账号，其实是把原来那个换掉了。
+   */
+  it("loginAgent 透传 profile（决定凭据写进哪个账号的目录）", () => {
+    invokeMock.mockResolvedValue(undefined);
+    loginAgent("claude", "wt", "work");
+    expect(invokeMock).toHaveBeenCalledWith("login_agent", {
+      provider: "claude",
+      terminal: "wt",
+      profile: "work",
+    });
   });
 
   it("loginAgent 省略 terminal 时传 undefined（后端回退设置里的默认终端）", () => {
     invokeMock.mockResolvedValue(undefined);
     loginAgent("kimi");
-    expect(invokeMock).toHaveBeenCalledWith("login_agent", { provider: "kimi", terminal: undefined });
+    expect(invokeMock).toHaveBeenCalledWith("login_agent", {
+      provider: "kimi",
+      terminal: undefined,
+      profile: null,
+    });
   });
 
   it("installAgent 调用 install_agent", () => {

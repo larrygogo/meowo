@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ports::Ports;
+use crate::variant::Installation;
 
 /// 用量泳道种类。serde snake_case 与前端/API 字段对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,19 +95,27 @@ pub struct Account {
 pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
 
 /// 账号能力：读账号信息 + 拉实时用量。不声明此能力的 agent，其账号卡片显示为未登录。
+///
+/// # 三个方法都接 [`Installation`]
+///
+/// 因为「哪个账号」这件事，**完全由传进来的那份实况决定**：默认账号给的是 agent 自己的目录，
+/// 某个 profile（多账号）给的是那个 profile 的私有目录，凭据路径也随之落在它里面。
+///
+/// 这里曾经是无参的，各实现自己去 `registry::installation(ID)` 取默认实况——于是多账号根本
+/// 读不出登录态：无论问的是哪个 profile，答的永远是默认账号那一个。
 pub trait AccountCap: Sync {
-    /// 读本机登录态与账号信息。**只读本地**（凭据文件 / 密钥链），不联网——调用方会在轮询
+    /// 读该实况的登录态与账号信息。**只读本地**（凭据文件 / 密钥链），不联网——调用方会在轮询
     /// 登录状态时高频调用它。
-    fn account(&self, ports: &Ports) -> Option<Account>;
+    fn account(&self, inst: &Installation, ports: &Ports) -> Option<Account>;
 
     /// 联网拉一次实时用量（含按需刷新 token）。
     ///
     /// **不读缓存、不做限频、不写回**——那些归宿主编排层。返回 `Err` 时其内容会被当作错误码/文案
     /// 回传前端；读不到官方 OAuth 凭据时应返回 [`USAGE_UNSUPPORTED`]。
-    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String>;
+    fn fetch_usage(&self, inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String>;
 
     /// 该 agent 当前是否支持用量查询（如 claude 在第三方登录下不支持）。默认支持。
-    fn usage_supported(&self, _ports: &Ports) -> bool {
+    fn usage_supported(&self, _inst: &Installation, _ports: &Ports) -> bool {
         true
     }
 }

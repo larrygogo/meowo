@@ -9,7 +9,12 @@ use std::path::Path;
 /// `sessions.provider`（未知值也保留，绝不冒名成默认 agent）；需要能力（stop 正文、context、
 /// transcript 标题、tab token）时才对已注册插件 `by_id` 查询，查不到就整段降级为无操作。
 pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> Result<(), StoreError> {
-    match ev.hook_event_name.as_str() {
+    // 事件名先由该 agent 译成规范名。只有 gemini 真的要译（它把「用户提交」「回合结束」叫成
+    // `BeforeAgent` / `AfterAgent`），其余四家原样透传；未注册的 provider 同样透传，其未知事件
+    // 照旧落到末尾的 `_ => {}`。翻译表归插件所有——这里刻意不出现任何 agent 的名字。
+    let event = meowo_agent::by_id(provider)
+        .map_or(ev.hook_event_name.as_str(), |p| p.canonical_event(&ev.hook_event_name));
+    match event {
         "SessionStart" => {
             let Some(cwd) = ev.cwd.as_deref() else { return Ok(()) };
             if ev.session_id.is_empty() { return Ok(()); }
@@ -32,7 +37,7 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
                     store.touch_session(sid, now_ms)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
-                if let Some(p) = crate::proc::owner_pid() {
+                if let Some(p) = crate::proc::owner_pid(provider) {
                     store.set_session_pid(sid, p as i64, now_ms)?;
                 }
                 apply_title(store, ev, sid, now_ms, provider)?;
@@ -113,6 +118,16 @@ pub fn dispatch(store: &Store, ev: &HookEvent, now_ms: i64, provider: &str) -> R
     Ok(())
 }
 
+/// 本次 hook 所属的账号（profile）。由 meowo-app 拉起 agent 时注入，reporter 作为 hook 子进程继承。
+///
+/// 缺席 = 默认账号（用户自己在终端里跑的 agent，或压根没建过 profile）——那正是我们想记的 NULL。
+fn profile_from_env() -> Option<String> {
+    std::env::var("MEOWO_PROFILE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// 该 agent 的遥测能力（未注册 / 无此能力 → None，调用方整段跳过）。
 fn telemetry(provider: &str) -> Option<&'static dyn meowo_agent::TelemetryCap> {
     meowo_agent::by_id(provider)?.telemetry()
@@ -189,8 +204,14 @@ fn create_session(store: &Store, ev: &HookEvent, cwd: &str, provider: &str, now_
     if provider != meowo_agent::DEFAULT_ID.as_str() {
         store.set_session_provider(sid, provider)?;
     }
+    // 多账号：这个会话跑在哪个账号上。meowo 拉起 agent 时注入 `MEOWO_PROFILE`，而 reporter 是
+    // agent 的 hook 子进程，于是继承得到它。用户自己在终端敲 agent（不经 meowo）时没有这个变量
+    // → 记成默认账号，正确。恢复会话时据此回到同一个账号。
+    if let Some(p) = profile_from_env() {
+        store.set_session_profile(sid, Some(&p))?;
+    }
     store.set_session_cwd(sid, cwd, now_ms)?;
-    if let Some(p) = crate::proc::owner_pid() {
+    if let Some(p) = crate::proc::owner_pid(provider) {
         store.set_session_pid(sid, p as i64, now_ms)?;
     }
     Ok(sid)

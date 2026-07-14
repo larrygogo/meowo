@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use crate::account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane};
 use crate::ports::{Body, HttpError, HttpRequest, Ports};
+use crate::variant::Installation;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -23,38 +24,38 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// 本机 kimi 实况的鉴权方案：凭据位置、OAuth 刷新端点、client_id、默认 base_url。
 /// 新旧版差异（若日后证实 legacy 用不同 client_id）只需改 `meowo_agent::plugins::kimi` 的变体表。
-fn kimi_auth() -> Option<&'static crate::AuthScheme> {
-    crate::registry::installation(crate::id::KIMI)?.auth
+fn kimi_auth(inst: &Installation) -> Option<&'static crate::AuthScheme> {
+    inst.auth
 }
 
-fn kimi_credentials_path() -> Option<std::path::PathBuf> {
-    crate::registry::installation(crate::id::KIMI)?.credentials_path()
+fn kimi_credentials_path(inst: &Installation) -> Option<std::path::PathBuf> {
+    inst.credentials_path()
 }
 
-fn read_kimi_credentials() -> Option<Value> {
-    serde_json::from_str(&std::fs::read_to_string(kimi_credentials_path()?).ok()?).ok()
+fn read_kimi_credentials(inst: &Installation) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(kimi_credentials_path(inst)?).ok()?).ok()
 }
 
 // ═══ 配置读取 ═══
 
 /// 读 base_url：env KIMI_CODE_BASE_URL > 实况 config.toml > 该变体的缺省。
-fn kimi_base_url() -> String {
+fn kimi_base_url(inst: &Installation) -> String {
     if let Ok(url) = std::env::var("KIMI_CODE_BASE_URL") {
         let url = url.trim().trim_end_matches('/').to_string();
         if !url.is_empty() {
             return url;
         }
     }
-    if let Some(url) = read_config_base_url() {
+    if let Some(url) = read_config_base_url(inst) {
         return url;
     }
-    kimi_auth().map(|a| a.default_base_url.to_string()).unwrap_or_default()
+    kimi_auth(inst).map(|a| a.default_base_url.to_string()).unwrap_or_default()
 }
 
 /// 从实况 config.toml 简单逐行解析 [providers."managed:kimi-code"].base_url。
 /// 不引入 toml 依赖，best-effort，失败返回 None。
-fn read_config_base_url() -> Option<String> {
-    let path = crate::registry::installation(crate::id::KIMI)?.config_path();
+fn read_config_base_url(inst: &Installation) -> Option<String> {
+    let path = inst.config_path();
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_section = false;
     for line in content.lines() {
@@ -133,13 +134,13 @@ fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Resul
 ///
 /// 兜底：刷新失败（invalid_grant/网络错）→ 返回 None → 上层 usage 降级为 None；
 ///         不打印/日志 token 原文。
-fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
+fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String> {
     use std::sync::Mutex;
     // 串行化并发刷新：kimi refresh_token 单次使用后即失效，并发刷新会互相覆盖。
     // 持锁后下方重读凭据（双检）：若刚被另一线程刷新过则直接走 fast-path，不再重刷。
     static REFRESH_LOCK: Mutex<()> = Mutex::new(());
 
-    let creds = read_kimi_credentials()?;
+    let creds = read_kimi_credentials(inst)?;
     let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
 
@@ -152,7 +153,7 @@ fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
     let _guard = REFRESH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     // 双检：持锁后重读文件，若已被并发刷新过，直接用新 token。
-    let creds = read_kimi_credentials()?;
+    let creds = read_kimi_credentials(inst)?;
     let access_token = creds.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
     let current_secs = now_secs();
@@ -163,7 +164,7 @@ fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
 
     // 仍过期 → 执行刷新。expires_at 缺失/字段名不同会被读成 0 → 恒判过期而走到这里。
     // 端点与 client_id 取自实况变体：若返回 invalid_client，即该变体的 client_id 需按其版本修正。
-    let Some(auth) = kimi_auth().and_then(|a| a.refresh) else {
+    let Some(auth) = kimi_auth(inst).and_then(|a| a.refresh) else {
         eprintln!("Meowo usage[kimi]: 该变体未声明 OAuth 刷新方式，无法刷新");
         return None;
     };
@@ -227,8 +228,9 @@ fn ensure_valid_kimi_token(ports: &Ports) -> Option<String> {
     let refresh_secs = now_secs();
     let merged = merge_kimi_credentials(&creds, new_access, new_refresh, expires_in, refresh_secs);
 
-    // 仅在刷新成功后写回（失败不碰文件）。
-    let path = kimi_credentials_path()?;
+    // 仅在刷新成功后写回（失败不碰文件）。多账号下这写的是**该 profile 自己的**凭据——
+    // 各 profile 各写各的，不会互相覆盖（这正是选目录隔离而非轮换凭据的理由）。
+    let path = kimi_credentials_path(inst)?;
     if write_kimi_credentials_atomic(&path, &merged).is_err() {
         // 写回失败（权限/磁盘），但刷新本身成功 → 本次仍可用新 token（内存中），
         // 下次仍会再刷（未持久化）。
@@ -427,11 +429,11 @@ pub fn parse_kimi_usage(v: &Value) -> Option<ProviderUsage> {
 /// kimi access_token 寿命仅约 15 分钟，过期前 60s 自动刷新；
 /// 刷新写回仅更新 access_token/refresh_token/expires_in/expires_at，其余字段不动。
 /// 任何非 2xx / 网络错 / 解析失败 → None（安静降级）。
-fn fetch_kimi_usage_live(ports: &Ports) -> Result<ProviderUsage, String> {
-    let Some(access_token) = ensure_valid_kimi_token(ports) else {
+fn fetch_kimi_usage_live(inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String> {
+    let Some(access_token) = ensure_valid_kimi_token(inst, ports) else {
         return Err("无有效 access_token（读不到或刷新失败）".into());
     };
-    let base = kimi_base_url();
+    let base = kimi_base_url(inst);
     let url = format!("{base}/usages");
     let bearer = format!("Bearer {access_token}");
 
@@ -459,10 +461,37 @@ fn fetch_kimi_usage_live(ports: &Ports) -> Result<ProviderUsage, String> {
 pub struct KimiAccount;
 pub static ACCOUNT: KimiAccount = KimiAccount;
 
+/// JWT 里的用户标识 → 卡片上的一行字。kimi 拿不到邮箱，这是唯一能区分两个账号的东西。
+///
+/// id 形如 `d0ah7sudu6f8a9u5a4g`，整串糊在卡片上既长又没法读。取**首尾各 4 位**（`d0ah…5a4g`）：
+/// 足以一眼看出两个账号不是同一个，又不至于占满一行。太短的 id 原样显示，不做无谓截断。
+fn user_label(payload: Option<&Value>) -> Option<String> {
+    let id = payload?
+        .get("user_id")
+        .or_else(|| payload?.get("sub"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    // 按字符数截，不按字节——id 理论上可能不是纯 ASCII。
+    let chars: Vec<char> = id.chars().collect();
+    if chars.len() <= 12 {
+        return Some(id.to_string());
+    }
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    Some(format!("{head}…{tail}"))
+}
+
 impl AccountCap for KimiAccount {
-    /// best-effort 读账号：解 JWT email claim 或降级「已登录」标签。凭据不存在 → None。
-    fn account(&self, _ports: &Ports) -> Option<Account> {
-        let creds = read_kimi_credentials()?;
+    /// 读账号。**kimi 不给邮箱**——它的凭据里没有，本地文件里也没有（实测：JWT 的 claims 只有
+    /// `client_id / user_id / scope / token_id / device_id / type / iss / sub / exp / nbf / iat / jti`；
+    /// `~/.kimi-code` 下没有任何含邮箱的文件；`/usages` 只回额度）。
+    ///
+    /// 所以退而求其次用 `user_id` 当标识。这不是为了好看，是**多账号下唯一能区分「这两个 kimi
+    /// 账号是不是同一个」的东西**——只显示「已登录」的话，两个账号的卡片长得一模一样。
+    ///
+    /// `email` 仍然照读：kimi 哪天在 JWT 里补上它，这里自动就用上了。
+    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
+        let creds = read_kimi_credentials(inst)?;
         let access_token = creds.get("access_token").and_then(|v| v.as_str())?;
         // 只读 JWT claim、不打印 token 原文
         let payload = crate::codec::decode_jwt_payload(access_token);
@@ -472,39 +501,59 @@ impl AccountCap for KimiAccount {
                 .filter(|s| !s.is_empty() && s.contains('@'))
                 .map(|s| s.to_string())
         });
+        // 有 email 就不必再显示 id（邮箱信息量更大）。
+        let login_label = email.is_none().then(|| user_label(payload.as_ref())).flatten();
 
-        if let Some(email_str) = email {
-            Some(Account {
-                email: Some(email_str),
-                display_name: None,
-                organization: None,
-                plan: None,
-                login_label: None,
-            })
-        } else {
-            // 解不出 email → 降级「已登录」标签
-            Some(Account {
-                email: None,
-                display_name: None,
-                organization: None,
-                plan: None,
-                login_label: Some("已登录".to_string()),
-            })
-        }
+        Some(Account {
+            email,
+            display_name: None,
+            organization: None,
+            plan: None,
+            login_label,
+        })
     }
 
     /// 联网拉一次（含按需刷新 token）。缓存与 60s 限频归宿主编排层。
-    fn fetch_usage(&self, ports: &Ports) -> Result<ProviderUsage, String> {
-        fetch_kimi_usage_live(ports)
+    fn fetch_usage(&self, inst: &Installation, ports: &Ports) -> Result<ProviderUsage, String> {
+        fetch_kimi_usage_live(inst, ports)
     }
 
     /// 凭据文件存在即支持（不保证能成功，失败会降级）。
-    fn usage_supported(&self, _ports: &Ports) -> bool {
-        kimi_credentials_path().is_some_and(|p| p.exists())
+    fn usage_supported(&self, inst: &Installation, _ports: &Ports) -> bool {
+        kimi_credentials_path(inst).is_some_and(|p| p.exists())
     }
 }
 
 // ═══ Tests ═══
+
+#[cfg(test)]
+mod user_label_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// kimi 不给邮箱（JWT 里没有，本地文件里也没有），只能拿 `user_id` 当标识。
+    ///
+    /// 这不是好看不好看的问题：多账号下如果只显示「已登录」，两个 kimi 账号的卡片**一模一样**，
+    /// 用户根本分不清哪个是哪个。
+    #[test]
+    fn falls_back_to_user_id_when_kimi_gives_no_email() {
+        // 实测的真实形状：有 user_id，没有 email。
+        let p = json!({"user_id": "d0ah7sudu6f8a9u5a4g", "sub": "d0ah7sudu6f8a9u5a4g"});
+        assert_eq!(user_label(Some(&p)).as_deref(), Some("d0ah…5a4g"));
+
+        // 没有 user_id 时退到 sub。
+        let p = json!({"sub": "abcdefghijklmnop"});
+        assert_eq!(user_label(Some(&p)).as_deref(), Some("abcd…mnop"));
+
+        // 短 id 原样显示，不做无谓截断。
+        assert_eq!(user_label(Some(&json!({"user_id": "u1"}))).as_deref(), Some("u1"));
+
+        // 什么都没有 → None（卡片回退到「未登录」以外的既有兜底，不显示一个空串）。
+        assert_eq!(user_label(Some(&json!({"scope": "x"}))), None);
+        assert_eq!(user_label(Some(&json!({"user_id": ""}))), None);
+        assert_eq!(user_label(None), None);
+    }
+}
 
 #[cfg(test)]
 mod tests {

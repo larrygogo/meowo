@@ -52,12 +52,19 @@ static HOOKS: HookSpec = HookSpec {
 
 /// codex 的 `auth.json` 由 CLI 自己维护（含 OIDC id_token），Meowo 只读不刷新 → `refresh: None`。
 /// 用量走 rollout 文件与 auth.json 内的字段，无独立 base_url。
+/// 多账号：`CODEX_HOME` 一个变量搬走整个数据目录（凭据 auth.json、hooks.json、rollout 全在里面）。
+static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
+    envs: &[("CODEX_HOME", "")],
+    data_rel: "",
+    creds_rel: "auth.json",
+};
+
 static AUTH: AuthScheme = AuthScheme {
     credentials: CredentialSource::File("auth.json"),
     refresh: None,
     default_base_url: "",
     // `codex login`（另有 `codex login status`，但 kimi 无 status 子命令，登录态检测统一走读凭据）。
-    login_args: &["login"],
+    login: Some(&["login"]),
 };
 
 static LAUNCH: LaunchSpec = LaunchSpec {
@@ -175,6 +182,9 @@ impl AgentPlugin for Codex {
     }
     fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
         Some(&setup::WIRING)
+    }
+    fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
+        Some(&PROFILE)
     }
 }
 

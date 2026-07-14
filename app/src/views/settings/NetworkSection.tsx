@@ -101,8 +101,12 @@ export function NetworkSection() {
 
   const proxy: ProxySettings = settings?.proxy ?? SETTINGS_DEFAULTS.proxy;
 
+  // 只保留**能被套上代理**的 agent。配不了代理的（gemini / opencode 尚未声明代理能力）压根不给行：
+  // 给它们画一个输入框，就是在请用户去配一个静默不生效的代理——这一分区最忌讳的正是这种失败。
   useEffect(() => {
-    listAgents().then(setAgents).catch(() => {});
+    listAgents()
+      .then((all) => setAgents(all.filter((a) => a.supports_proxy)))
+      .catch(() => {});
   }, []);
 
   // 设置一变就重算生效值（含 system 模式下读到的环境变量）。

@@ -55,7 +55,7 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 9] = [
+        const ALTERS: [&str; 10] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
@@ -67,6 +67,8 @@ impl Store {
             // 此 'claude' 默认值与 migrations.rs 建表默认值、DEFAULT_PROVIDER 常量为同一事实，
             // 改默认 provider 时需三处同步（models.rs 绊线测试会在改常量时红）。
             "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'",
+            // 多账号：会话跑在哪个 profile 上。NULL = 默认账号——老库补齐后全是 NULL，正是我们要的。
+            "ALTER TABLE sessions ADD COLUMN profile TEXT",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -680,6 +682,36 @@ impl Store {
             rusqlite::params![provider, session_id],
         )?;
         Ok(())
+    }
+
+    /// 记下该会话跑在哪个账号（profile）上。`None` = 默认账号——**不写**，让它保持 NULL。
+    ///
+    /// 恢复会话时按它注入隔离环境变量。不记的话，用户切了账号之后再打开一个旧会话，
+    /// 就会拿当前活跃账号的身份去续一段不属于它的对话。
+    pub fn set_session_profile(
+        &self,
+        session_id: i64,
+        profile: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET profile = ?1 WHERE id = ?2",
+            rusqlite::params![profile, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 该会话跑在哪个账号上（`None` = 默认账号）。
+    pub fn session_profile(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        let r = self.conn.query_row(
+            "SELECT profile FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get::<_, Option<String>>(0),
+        );
+        match r {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// 取会话存的 cwd。

@@ -443,10 +443,40 @@ pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) 
 ///
 /// 与 `resume_argv_for` 同理**刻意定义在 cfg 之外**：只用平台无关的 agent API，
 /// 埋进 cfg 块会让另一平台的编译器看不到它，改签名时一路漏到对方 CI 才炸。
-pub(crate) fn launch_env_for(provider: Option<&str>) -> Vec<(String, String)> {
-    meowo_agent::resolve(provider)
-        .map(|a| crate::proxy::launch_env(a.id()))
-        .unwrap_or_default()
+/// **恢复某个会话**时要注入的环境变量：代理 + 该会话**自己所属账号**的隔离变量。
+///
+/// 刻意不用「当前活跃账号」：用户切到账号 B 之后再打开一个属于账号 A 的旧会话，若按 B 注入，
+/// 就是拿错误的身份去续一段不属于它的对话——而且不会有任何报错。
+pub(crate) fn launch_env_for_session(
+    provider: Option<&str>,
+    session_id: &str,
+) -> Vec<(String, String)> {
+    let profile = profile_of_session(session_id);
+    launch_env_for_profile(provider, profile.as_deref())
+}
+
+/// 该会话（按 agent 的 session id）跑在哪个账号上。查不到 → None（默认账号）。
+fn profile_of_session(session_id: &str) -> Option<String> {
+    let store = meowo_store::Store::open(crate::db_path()).ok()?;
+    let sid = store.find_session_id_pub(session_id).ok()??;
+    store.session_profile(sid).ok().flatten()
+}
+
+/// 同上，但指定账号（profile）。`profile = None` → 用该 agent **当前活跃**的账号。
+pub(crate) fn launch_env_for_profile(
+    provider: Option<&str>,
+    profile: Option<&str>,
+) -> Vec<(String, String)> {
+    let Some(a) = meowo_agent::resolve(provider) else {
+        return Vec::new();
+    };
+    let mut env = crate::proxy::launch_env(a.id());
+    let id = match profile {
+        Some(p) => Some(p.to_string()),
+        None => crate::profile::active_id(a.id().as_str()),
+    };
+    env.extend(crate::profile::env_of(a.id(), id.as_deref()));
+    env
 }
 
 #[tauri::command]
@@ -521,7 +551,12 @@ pub(crate) async fn focus_session(
         tauri::async_runtime::spawn_blocking(move || {
             let resume_argv = resume_argv_for(provider.as_deref(), session_id.as_deref());
             // 保留恢复参数供聚焦期间进程退出的判定路径使用；实际恢复改由前端明确确认。
-            let env_prefix = env_prefix_posix(&launch_env_for(provider.as_deref()));
+            // 账号按**该会话自己的**取（没有 session_id 就退回当前活跃账号）。
+            let env = match session_id.as_deref() {
+                Some(sid) => launch_env_for_session(provider.as_deref(), sid),
+                None => launch_env_for_profile(provider.as_deref(), None),
+            };
+            let env_prefix = env_prefix_posix(&env);
             crate::macos::terminal::focus_session_terminal(
                 pid,
                 cwd.as_deref(),
@@ -1069,7 +1104,12 @@ pub(crate) async fn new_session(
     let dir = validate_new_session_cwd(&cwd)?;
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
     let argv = agent.launch_argv();
-    let env = crate::proxy::launch_env(agent.id());
+    // 代理 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等）。
+    //
+    // 这里曾经只注入代理（`proxy::launch_env`），于是多账号完全不生效：设置页明明切到了另一个
+    // 账号，新开的会话却仍跑在默认账号上——而且毫无迹象，用户只能靠 `/status` 里的邮箱才发现。
+    // 新建会话是**用户切换账号后最先走的一条路**，漏了它等于整个功能没做。
+    let env = launch_env_for_profile(Some(&provider), None);
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
@@ -1112,7 +1152,7 @@ pub(crate) fn resume_session(
         std::thread::spawn(move || {
             let (revived, resolved_cwd, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let env = launch_env_for(Some(&provider));
+            let env = launch_env_for_session(Some(&provider), &session_id);
             let ok = spawn_in_terminal(
                 &resume,
                 resolved_cwd.as_deref(),
@@ -1137,7 +1177,7 @@ pub(crate) fn resume_session(
         std::thread::spawn(move || {
             let (revived, resolved, resume) =
                 prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let env = launch_env_for(Some(&provider));
+            let env = launch_env_for_session(Some(&provider), &session_id);
             let ok = spawn_in_terminal(
                 &resume,
                 resolved.as_deref(),
@@ -1253,7 +1293,7 @@ pub(crate) async fn restart_session_supported(
 
         // 原进程确认结束后才复活 DB 状态；恢复计划沿用终止前已验证的结果。
         let (revived, _, _) = prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-        let env = launch_env_for(Some(&provider));
+        let env = launch_env_for_session(Some(&provider), &session_id);
         let ok = spawn_in_terminal(
             &resume,
             resolved.as_deref(),
