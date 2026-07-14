@@ -1805,18 +1805,17 @@ html, body {
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
 /* 能力「不支持」的低调告知：一个带信息图标的小胶囊，读作「说明」而非漏排版的浮空灰字。
    它是背景信息、不是错误，故用中性 surface 底而非警示色。 */
+/* 与「配额」区块同款：上边框 + 同样的 14px/16px 内边距，让它与上面的区段同栏、左对齐，
+   而不是浮在卡片底部自成一格（胶囊那版的边框内边距还会把文字又缩进一截，更显错位）。
+   图标定位在 16px 内边距的起点上，与「配额」标题左缘对齐。 */
 .provider-cap-note {
-  display: inline-flex; /* 只占内容宽的胶囊，不撑满整行 */
+  display: flex;
   align-items: center;
-  gap: 6px;
-  /* 左右 16px 与卡片其它内容对齐（这行是卡片的直接子元素、无 padding 容器包裹）；底部留白收口。 */
-  margin: 4px 16px 16px;
-  padding: 5px 10px 5px 8px;
-  border-radius: 999px;
-  background: var(--cc-surface);
-  border: 1px solid var(--cc-border);
+  gap: 7px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--cc-border);
   font-size: 11px;
-  color: var(--cc-text-dim);
+  color: var(--cc-text-faint);
 }
 .provider-cap-note-ico { flex: none; opacity: 0.7; }
 

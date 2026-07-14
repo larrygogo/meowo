@@ -585,6 +585,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
         </div>
       )}
 
+
       {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
           列一个孤零零的「默认账号」除了占地方没有任何信息。 */}
       {isInstalled && supportsProfiles && (
