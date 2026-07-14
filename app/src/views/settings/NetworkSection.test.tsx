@@ -64,14 +64,25 @@ describe("代理优先级", () => {
   it("模型的代理压过默认代理，未单独设置的才回落到默认", async () => {
     await mount(
       { mode: "custom", url: "http://g:1", per_agent: { kimi: { mode: "off", url: "" } } },
-      { "": "http://g:1", claude: "http://g:1", codex: "http://g:1", kimi: null, gemini: "http://g:1", opencode: "http://g:1" },
+      { "": "http://g:1", claude: "http://g:1", codex: "http://g:1", kimi: null },
     );
 
-    // kimi 单独设了直连 → 生效是直连；其余四家跟随默认 → 生效是默认那个代理。
+    // 只有已装的（claude/codex/kimi）显示代理行。kimi 单独设了直连 → 生效是直连；
+    // claude/codex 跟随默认 → 生效是默认那个代理。
     await waitFor(() => {
-      expect(screen.getAllByText(zh.proxy.effective("http://g:1"))).toHaveLength(4);
+      expect(screen.getAllByText(zh.proxy.effective("http://g:1"))).toHaveLength(2);
       expect(screen.getByText(zh.proxy.effectiveDirect)).toBeTruthy();
     });
+  });
+
+  /// 未安装的 agent 不给代理行——还没有可运行的 agent，代理配了也无处生效。
+  it("未安装的 agent 不显示代理行", async () => {
+    // gemini 支持代理但未装；claude 已装。
+    api.listAgents.mockResolvedValue(descriptors(["claude"]));
+    await mount(DIRECT);
+    expect(await screen.findByText("Claude Code")).toBeTruthy();
+    expect(screen.queryByText("Gemini CLI")).toBeNull();
+    expect(screen.queryByText("OpenCode")).toBeNull();
   });
 
   it("选「自定义」但地址还空着时不落盘——后端会拒空地址", async () => {
