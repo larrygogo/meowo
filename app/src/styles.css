@@ -1966,13 +1966,12 @@ html, body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #262624;
+  /* 与主面板底色一致（新建会话从主面板弹出）。取 --cc-bg-rgb 的**不透明**版：不能直接用 --cc-bg，
+     它带 --cc-opacity（给贴纸的半透明），独立窗口用了会透出桌面。 */
+  background: rgb(var(--cc-bg-rgb));
   color: var(--cc-text);
   overflow: hidden;
   font-size: 13px;
-}
-:root[data-theme="light"] .ns-window {
-  background: #faf9f5;
 }
 /* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings/.updater 的处理）。
    Windows 端该窗口未设 transparent，若圆角仍生效会在四角露出 html/body 透明底的伪影，故仅 macOS 生效。 */
