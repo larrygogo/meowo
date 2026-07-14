@@ -429,6 +429,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
               {installState === "error" ? t.account.installRetry : t.account.install}
             </button>
           ))}
+        {/* 顶部这两个按钮作用于**当前活跃账号**（卡片头部显示的正是它的信息）。下面账号列表里的
+            同名按钮则针对具体某一行——两者并存不是冗余：一个是「当前账号」的快捷方式，
+            一个是「哪一个账号」的精确操作。 */}
         {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && (
           <button
             type="button"
@@ -642,6 +645,22 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
     run(() => deleteProfile(provider, p.id!));
   };
 
+  /**
+   * 退出登录。**与删除账号不是一回事**：登出只清凭据，目录、配置、会话历史都留着，之后还能登回来；
+   * 删除则连目录一起抹掉，且默认账号根本删不掉（那是 agent 自己的目录）——所以登出是它唯一的退出手段。
+   *
+   * 清凭据不可逆，故同样要确认。
+   */
+  const logout = async (p: ProfileView) => {
+    const label = p.name || t.account.defaultProfile;
+    const yes = await confirm(t.account.logoutConfirm(label), {
+      title: t.account.logout,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
+    run(() => logoutAgent(provider, p.id));
+  };
+
   /** 改名。只动展示名，不动 id（它是目录名，改了就等于换了个账号）。 */
   const commitRename = (p: ProfileView) => {
     const next = editName.trim();
@@ -717,9 +736,9 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
 
             {p.active && <span className="profile-badge">{t.account.activeProfile}</span>}
 
-            {/* 未登录的账号给登录入口——**必须带上它自己的 id**，否则凭据会写进默认账号，
-                用户以为加了个账号，其实是把原来那个覆盖了。 */}
-            {!p.account && (
+            {/* 登录/登出**必须带上这一行自己的 id**。漏了它：登录会把凭据写进默认账号（用户以为
+                加了个账号，其实把原来那个覆盖了），登出会去清默认账号的凭据（而删凭据不可逆）。 */}
+            {!p.account ? (
               <button
                 type="button"
                 className="provider-card-action"
@@ -728,6 +747,18 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
                 onClick={() => run(() => loginAgent(provider, undefined, p.id))}
               >
                 {t.account.login}
+              </button>
+            ) : (
+              // 登出 ≠ 删除：它只清凭据，目录、配置、会话历史都留着，之后还能登回来。
+              // 默认账号更是**只有**这一条退出路径——它是 agent 自己的目录，删不掉。
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={"profile-logout-" + provider + "-" + key}
+                disabled={busy}
+                onClick={() => logout(p)}
+              >
+                {t.account.logout}
               </button>
             )}
 

@@ -243,9 +243,26 @@ pub(crate) async fn login_agent(
 /// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
 /// 只删除变体表声明的凭据文件，不碰 config、会话或 hooks。
 #[tauri::command]
-pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
+pub(crate) async fn logout_agent(
+    provider: String,
+    profile: Option<String>,
+) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
-    let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
+    // 登出**哪个账号**：显式指定的那个，否则当前活跃账号。
+    //
+    // 这里曾经写死默认账号（`install_for`），后果是：你切到另一个账号后点「退出登录」，被清掉的
+    // 却是**默认账号**的凭据——而你想登出的那个原封不动。删凭据是不可逆的，这种错尤其伤。
+    let profile = match profile {
+        Some(p) => Some(p),
+        None => crate::profile::active_id(key.as_str()),
+    };
+    let inst = match profile.as_deref() {
+        Some(p) => crate::profile::installation_of(key, p).ok_or("解析不到该账号的目录")?,
+        None => install_for(key).ok_or("解析不到该 agent 的安装实况")?,
+    };
+    // 账号隔离变量。**登出命令尤其需要它**：`claude auth logout` 认的是 `CLAUDE_CONFIG_DIR`，
+    // 不注入的话它会跑去清默认账号的凭据——命令执行成功、结果南辕北辙。
+    let env = crate::profile::env_of(key, profile.as_deref());
     // 若登录流程还在轮询，登出必须让它停止；否则旧线程可能稍后误报登录成功。
     bump_login_epoch(key);
 
@@ -253,7 +270,10 @@ pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
         if let Some(argv) = inst.logout_argv() {
             let (program, args) = argv.split_first().ok_or("登出命令为空")?;
             let mut command = std::process::Command::new(program);
-            command.args(args).stdout(std::process::Stdio::null());
+            command
+                .args(args)
+                .envs(env)
+                .stdout(std::process::Stdio::null());
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;

@@ -502,8 +502,15 @@ export function cancelLogin(provider: AgentId): Promise<void> {
 }
 
 /** 退出官方账号。不会删除模型配置、会话、hooks 或中转配置。 */
-export function logoutAgent(provider: AgentId): Promise<void> {
-  return invoke("logout_agent", { provider });
+/**
+ * 退出登录。`profile` = 登出哪个账号（省略/null = 当前活跃账号）。
+ *
+ * 多账号下**必须传**：登出会清掉那个账号目录里的凭据，漏传就会去清默认账号的——而删凭据是
+ * 不可逆的。它与「删除账号」不是一回事：登出只清凭据，目录、配置、会话历史都留着，还能再登回来；
+ * 而默认账号压根删不掉（那是 agent 自己的目录），登出是它唯一的退出手段。
+ */
+export function logoutAgent(provider: AgentId, profile?: string | null): Promise<void> {
+  return invoke("logout_agent", { provider, profile: profile ?? null });
 }
 
 /** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */

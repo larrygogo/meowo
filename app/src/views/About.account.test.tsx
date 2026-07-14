@@ -740,3 +740,43 @@ describe("AccountSection 账号的增删改", () => {
     expect(api.createProfile).not.toHaveBeenCalled();
   });
 });
+
+describe("AccountSection 退出登录 vs 删除账号", () => {
+  const twoProfiles = () =>
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: false, account: { email: "a@b.c" } }, // 默认账号，已登录
+      { id: "work", name: "工作", active: true, account: { email: "w@b.c" } },
+    ]);
+
+  /**
+   * **登出必须带上那一行自己的 id。**
+   *
+   * 回归：`logout_agent` 原本写死默认账号（`install_for`），且跑 `claude auth logout` 时不注入
+   * `CLAUDE_CONFIG_DIR`——于是你切到另一个账号后点「退出登录」，被清掉的是**默认账号**的凭据，
+   * 而你想登出的那个原封不动。删凭据不可逆，这种错尤其伤。
+   */
+  it("登出某个账号时把它的 id 传下去", async () => {
+    twoProfiles();
+    api.logoutAgent.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-logout-claude-work"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(api.logoutAgent).toHaveBeenCalledWith("claude", "work"));
+  });
+
+  /**
+   * **默认账号只能登出，不能删除**——它是 agent 自己的目录（`~/.claude`），不归 meowo 管。
+   * 这正是「有了删除账号就不再需要退出登录」不成立的地方。
+   */
+  it("默认账号有登出、没有删除", async () => {
+    twoProfiles();
+    render(<AccountSection />);
+
+    expect(await screen.findByTestId("profile-logout-claude-__default__")).toBeTruthy();
+    expect(screen.queryByTestId("profile-delete-claude-__default__")).toBeNull();
+    // 自定义账号两者都有。
+    expect(screen.getByTestId("profile-logout-claude-work")).toBeTruthy();
+    expect(screen.getByTestId("profile-delete-claude-work")).toBeTruthy();
+  });
+});

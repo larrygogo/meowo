@@ -49,10 +49,28 @@ describe("login api", () => {
     expect(invokeMock).toHaveBeenCalledWith("install_agent", { provider: "codex" });
   });
 
-  it("logoutAgent 调用 logout_agent", () => {
+  it("logoutAgent 调用 logout_agent（省略 profile = 当前活跃账号）", () => {
     invokeMock.mockResolvedValue(undefined);
     logoutAgent("codex");
-    expect(invokeMock).toHaveBeenCalledWith("logout_agent", { provider: "codex" });
+    expect(invokeMock).toHaveBeenCalledWith("logout_agent", {
+      provider: "codex",
+      profile: null,
+    });
+  });
+
+  /**
+   * 多账号：登出**必须**能指定登出哪个账号。
+   *
+   * 后端曾写死默认账号，且跑 `claude auth logout` 时不注入 `CLAUDE_CONFIG_DIR`——于是切到别的账号
+   * 后点退出登录，被清掉的是**默认账号**的凭据，而你想登出的那个原封不动。删凭据不可逆。
+   */
+  it("logoutAgent 透传 profile（决定清哪个账号的凭据）", () => {
+    invokeMock.mockResolvedValue(undefined);
+    logoutAgent("claude", "work");
+    expect(invokeMock).toHaveBeenCalledWith("logout_agent", {
+      provider: "claude",
+      profile: "work",
+    });
   });
 });
 
