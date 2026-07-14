@@ -185,12 +185,130 @@ impl AgentPlugin for Opencode {
     fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
         Some(&PROFILE)
     }
+    fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
+        Some(&RELAY)
+    }
+}
+
+// ═══ API 中转 ═══
+//
+// opencode 天生就是「自带 provider」的：中转＝往它的配置里加一个自定义 provider。它没有 kimi 那种
+// 单一 base_url 环境变量，但认 **`OPENCODE_CONFIG_CONTENT`**——一段内联 JSON 配置，与磁盘上的配置
+// （及 `plugin/` 下自动加载的 reporter 插件）**合并**，不是替换（实测：设了它跑 `opencode models`，
+// 自定义 provider 的模型如实列出，reporter 插件照常在）。
+//
+// 于是 launch_env 只回一个环境变量：一段声明了自定义 provider（baseURL + apiKey + 模型）并把默认
+// `model` 指向它的 JSON。协议决定用哪个 ai-sdk 适配包：OpenAI 兼容端点用 `@ai-sdk/openai-compatible`，
+// Anthropic 格式用 `@ai-sdk/anthropic`（二进制里这两个包名各出现 200+ / 90+ 次，是它内置支持的）。
+// key 走 `options.apiKey`，ai-sdk 按包各自加正确的鉴权头（openai→Bearer、anthropic→x-api-key），
+// 不必我们操心。
+
+static RELAY: OpencodeRelay = OpencodeRelay;
+static RELAY_PROTOCOLS: [crate::RelayOption; 2] = [
+    crate::RelayOption { value: "openai", label: "OpenAI 兼容" },
+    crate::RelayOption { value: "anthropic", label: "Anthropic Messages" },
+];
+static RELAY_AUTH: [crate::RelayOption; 1] =
+    [crate::RelayOption { value: "bearer", label: "Bearer Token" }];
+static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 2] = [
+    crate::RelaySuggestionGroup { protocol: "openai", models: &["gpt-5.4", "gpt-5.3-codex"] },
+    crate::RelaySuggestionGroup {
+        protocol: "anthropic",
+        models: &["claude-sonnet-5", "claude-opus-4-8"],
+    },
+];
+
+pub struct OpencodeRelay;
+
+impl crate::RelayCap for OpencodeRelay {
+    fn ui(&self) -> crate::RelayUi {
+        crate::RelayUi {
+            protocols: &RELAY_PROTOCOLS,
+            auth_modes: &RELAY_AUTH,
+            default_protocol: "openai",
+            default_auth: "bearer",
+            suggestions: &RELAY_SUGGESTIONS,
+        }
+    }
+    fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
+        let npm = if config.protocol == "anthropic" {
+            "@ai-sdk/anthropic"
+        } else {
+            "@ai-sdk/openai-compatible"
+        };
+        let model = config.model.trim();
+        let base = config.base_url.trim().trim_end_matches('/');
+        // 用 serde_json 组装，base_url/model/key 里的特殊字符自动转义（都可能来自用户输入）。
+        let content = serde_json::json!({
+            "$schema": "https://opencode.ai/config.json",
+            "provider": {
+                "meowo-relay": {
+                    "npm": npm,
+                    "name": "Meowo Relay",
+                    "options": { "baseURL": base, "apiKey": key },
+                    "models": { model: { "name": model } }
+                }
+            },
+            "model": format!("meowo-relay/{model}")
+        });
+        vec![("OPENCODE_CONFIG_CONTENT".into(), content.to_string())]
+    }
+    fn augment_argv(&self, _config: crate::RelayConfig<'_>, _has_secret: bool, argv: Vec<String>) -> Vec<String> {
+        argv // 模型经配置内容的默认 model 指定，不改 argv
+    }
+    fn model_request(&self, config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
+        crate::RelayModelRequest {
+            auth: if config.protocol == "anthropic" {
+                crate::RelayModelAuth::ApiKey
+            } else {
+                crate::RelayModelAuth::Bearer
+            },
+            anthropic_version: config.protocol == "anthropic",
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::EnsureOutcome;
+    use crate::RelayCap;
+
+    /// 中转：只回一个 `OPENCODE_CONFIG_CONTENT`，内容是一段声明自定义 provider 并把默认 model
+    /// 指向它的 JSON。协议决定 ai-sdk 适配包。
+    #[test]
+    fn relay_injects_custom_provider_config() {
+        let cfg = crate::RelayConfig {
+            base_url: "https://relay.example/v1/",
+            model: " gpt-5.4 ",
+            protocol: "openai",
+            auth: "bearer",
+        };
+        let env = RELAY.launch_env(cfg, "sk-key");
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "OPENCODE_CONFIG_CONTENT");
+        let v: serde_json::Value = serde_json::from_str(&env[0].1).expect("合法 JSON");
+        let p = &v["provider"]["meowo-relay"];
+        assert_eq!(p["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(p["options"]["baseURL"], "https://relay.example/v1"); // 尾斜杠去掉
+        assert_eq!(p["options"]["apiKey"], "sk-key");
+        assert_eq!(p["models"]["gpt-5.4"]["name"], "gpt-5.4"); // model 已 trim
+        assert_eq!(v["model"], "meowo-relay/gpt-5.4");
+    }
+
+    /// anthropic 协议换适配包（openai-compatible → anthropic）。
+    #[test]
+    fn relay_switches_sdk_package_by_protocol() {
+        let cfg = crate::RelayConfig {
+            base_url: "https://r",
+            model: "claude-sonnet-5",
+            protocol: "anthropic",
+            auth: "bearer",
+        };
+        let env = RELAY.launch_env(cfg, "k");
+        let v: serde_json::Value = serde_json::from_str(&env[0].1).unwrap();
+        assert_eq!(v["provider"]["meowo-relay"]["npm"], "@ai-sdk/anthropic");
+    }
 
     /// 生成的插件里真正 `hook_event_name` 的那几个，必须与 [`EVENTS`] 声明的完全一致。
     ///

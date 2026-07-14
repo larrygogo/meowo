@@ -191,11 +191,79 @@ impl AgentPlugin for Gemini {
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
     }
+    fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
+        Some(&RELAY)
+    }
+}
+
+// ═══ API 中转 ═══
+//
+// gemini-cli 认这四个环境变量（实测 0.50 bundle）：`GEMINI_API_KEY`（密钥）、`GOOGLE_GEMINI_BASE_URL`
+// （自定义端点，代码里 `baseUrl || process.env["GOOGLE_GEMINI_BASE_URL"]`）、`GEMINI_MODEL`（模型）、
+// `GEMINI_DEFAULT_AUTH_TYPE`（强制走 API-key 认证，取值 `gemini-api-key`——否则 TUI 仍可能去跑 OAuth）。
+//
+// **只有一种协议**：中转端点必须讲 Gemini 自己的 generateContent 格式（不是 OpenAI/Anthropic），
+// 故 protocols 留空（validate 对空协议表不校验），auth 只有 API Key 一种。
+
+static RELAY: GeminiRelay = GeminiRelay;
+static RELAY_AUTH: [crate::RelayOption; 1] =
+    [crate::RelayOption { value: "api_key", label: "API Key" }];
+static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
+    protocol: "",
+    models: &["gemini-2.5-pro", "gemini-2.5-flash"],
+}];
+
+pub struct GeminiRelay;
+
+impl crate::RelayCap for GeminiRelay {
+    fn ui(&self) -> crate::RelayUi {
+        crate::RelayUi {
+            protocols: &[],
+            auth_modes: &RELAY_AUTH,
+            default_protocol: "",
+            default_auth: "api_key",
+            suggestions: &RELAY_SUGGESTIONS,
+        }
+    }
+    fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
+        vec![
+            ("GEMINI_API_KEY".into(), key.into()),
+            ("GOOGLE_GEMINI_BASE_URL".into(), config.base_url.trim().trim_end_matches('/').into()),
+            ("GEMINI_MODEL".into(), config.model.trim().into()),
+            // 强制 API-key 认证，别让 TUI 回到 OAuth。取值取自 bundle 的 AuthType 常量。
+            ("GEMINI_DEFAULT_AUTH_TYPE".into(), "gemini-api-key".into()),
+        ]
+    }
+    fn augment_argv(&self, _config: crate::RelayConfig<'_>, _has_secret: bool, argv: Vec<String>) -> Vec<String> {
+        argv // 模型经 GEMINI_MODEL 注入，不改 argv
+    }
+    fn model_request(&self, _config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
+        // 中转端点讲 Gemini 协议，`/models` 用 x-api-key 取（取不到也无妨，靠 suggestions 兜底）。
+        crate::RelayModelRequest { auth: crate::RelayModelAuth::ApiKey, anthropic_version: false }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RelayCap;
+
+    /// 中转：把 gemini-cli 指向自定义端点的四个环境变量（变量名实测自 0.50 bundle）。
+    #[test]
+    fn relay_points_gemini_at_custom_endpoint() {
+        let cfg = crate::RelayConfig {
+            base_url: "https://relay.example/v1/", // 尾斜杠应被去掉
+            model: " gemini-2.5-pro ",             // 前后空白应被 trim
+            protocol: "",
+            auth: "api_key",
+        };
+        let env: std::collections::HashMap<_, _> = RELAY.launch_env(cfg, "sk-key").into_iter().collect();
+        assert_eq!(env.get("GEMINI_API_KEY").map(String::as_str), Some("sk-key"));
+        assert_eq!(env.get("GOOGLE_GEMINI_BASE_URL").map(String::as_str), Some("https://relay.example/v1"));
+        assert_eq!(env.get("GEMINI_MODEL").map(String::as_str), Some("gemini-2.5-pro"));
+        // 强制 API-key 认证，否则 TUI 可能回到 OAuth。
+        assert_eq!(env.get("GEMINI_DEFAULT_AUTH_TYPE").map(String::as_str), Some("gemini-api-key"));
+    }
 
     /// 防连坐绊线：照 kimi 的教训，一条非法 event 有可能让**全部** hooks 静默失效。
     #[test]
