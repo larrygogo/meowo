@@ -483,11 +483,10 @@ fn ensure_session_profile_available(provider: &str, session_id: &str) -> Result<
 }
 
 fn validate_session_profile_reference(profile: Option<&str>, exists: bool) -> Result<(), String> {
-    if profile.is_none() || exists {
-        Ok(())
-    } else {
-        let profile = profile.unwrap_or_default();
-        Err(format!("该会话所属账号“{profile}”已被删除，无法恢复"))
+    match profile {
+        None => Ok(()),
+        Some(_) if exists => Ok(()),
+        Some(profile) => Err(format!("该会话所属账号“{profile}”已被删除，无法恢复")),
     }
 }
 

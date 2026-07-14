@@ -445,8 +445,8 @@ export function addAgentToUserPath(provider: AgentId): Promise<void> {
 /**
  * 拉起交互式登录。`profile` = 登进哪个账号：省略表示当前活跃账号，显式 null 表示默认账号。
  *
- * 多账号下**必须传**：登录会把凭据写进那个账号自己的目录，漏传就会把默认账号的凭据覆盖掉——
- * 用户以为加了个账号，其实是把原来那个换掉了。
+ * 多账号下要明确调用意图：省略时会操作当前活跃账号（通常是默认账号）；若要操作账号列表中的
+ * 特定一行，应显式传它的 id，默认账号则显式传 null。
  */
 export function loginAgent(
   provider: AgentId,
