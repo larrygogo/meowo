@@ -78,28 +78,49 @@ impl AccountCap for OpencodeAccount {
     }
 }
 
-/// auth.json 的文本 → 「连了哪几家 provider」的展示串（如 `anthropic (oauth), openai (api)`）。
+/// opencode 的 provider id → 给人看的展示名。取自 opencode 的 provider 注册表（models.dev）里
+/// 常见的几家。
+///
+/// **未知 id 原样返回**——这既兜住新出现的 provider，也兜住 `wellknown` 类型那种「键是一段 URL」
+/// 的情形（源码 `auth.set(url, …)`）：那串 URL 正是用户在 `opencode auth list` 里看到的，照原样显示
+/// 就对。
+fn provider_label(id: &str) -> String {
+    match id {
+        "anthropic" => "Anthropic",
+        "openai" => "OpenAI",
+        "github-copilot" => "GitHub Copilot",
+        "github-models" => "GitHub Models",
+        "google" => "Google",
+        "google-vertex" => "Google Vertex",
+        "azure" => "Azure",
+        "amazon-bedrock" => "Amazon Bedrock",
+        "openrouter" => "OpenRouter",
+        "deepseek" => "DeepSeek",
+        "groq" => "Groq",
+        "mistral" => "Mistral",
+        "xai" => "xAI",
+        "cerebras" => "Cerebras",
+        "fireworks" => "Fireworks",
+        "togetherai" => "Together AI",
+        "huggingface" => "Hugging Face",
+        "vercel" => "Vercel",
+        "opencode" => "opencode",
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// auth.json 的文本 → 「连了哪几家 provider」的展示串（如 `Anthropic, OpenAI`）。
 /// 一家都没连（`{}`、空文本、坏 JSON）→ None，即「未登录」。
 ///
-/// 带上 `type` 是有意的：`oauth` 与 `api` 在续期行为上完全不同（前者会过期刷新，后者是长期 key），
-/// 而这是 `opencode auth list` 唯一比「provider 名」多给的信息。
-///
-/// 键**未必是 provider id**：`wellknown` 类型的键是一个 URL（源码 `auth.set(url, …)`）。原样展示
-/// 即可——那正是用户在 `auth list` 里看到的东西。
+/// 只列 provider 名、**不带登录类型**（`oauth`/`api`）：类型对绝大多数人是噪音，卡片要的是
+/// 「连了谁」。连了多家就逗号拼起来——这正是 opencode 里「一个账号登了多个 provider」的样子。
 fn connected_providers(text: &str) -> Option<String> {
     let root: Value = serde_json::from_str(text).ok()?;
     // `opencode auth logout` 会把它清成 `{}`——空对象是「登出了」，不是「登录了但没信息」。
     let map = root.as_object().filter(|m| !m.is_empty())?;
 
-    let label = map
-        .iter()
-        .map(|(id, cred)| match cred.get("type").and_then(Value::as_str) {
-            Some(t) => format!("{id} ({t})"),
-            // schema 漂了也不至于把「已连接」判成「没连接」——退回只显示名字。
-            None => id.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let label = map.keys().map(|id| provider_label(id)).collect::<Vec<_>>().join(", ");
     Some(label)
 }
 
@@ -118,30 +139,32 @@ mod tests {
     }
 
     /// 「多账号」在 opencode 其实是「多 provider」——同一 provider 只能有一份凭据（后写覆盖），
-    /// 也没有「活跃账号」。所以卡片上诚实的表达就是把连上的几家都列出来。
+    /// 也没有「活跃账号」。所以卡片上诚实的表达就是把连上的几家都列出来，用友好名、不带登录类型。
     #[test]
-    fn connected_providers_are_listed_with_their_credential_type() {
+    fn connected_providers_are_listed_by_friendly_name() {
+        // 单家：id → 友好名，不带 (oauth)/(api) 后缀。
         assert_eq!(
-            connected_providers(r#"{"anthropic":{"type":"oauth"}}"#).as_deref(),
-            Some("anthropic (oauth)")
+            connected_providers(r#"{"github-copilot":{"type":"oauth"}}"#).as_deref(),
+            Some("GitHub Copilot")
         );
 
         // 连了多家就都列出来（serde_json 的 Map 默认按键排序，故次序稳定）。
         let label =
             connected_providers(r#"{"openai":{"type":"api"},"anthropic":{"type":"oauth"}}"#).unwrap();
-        assert_eq!(label, "anthropic (oauth), openai (api)");
+        assert_eq!(label, "Anthropic, OpenAI");
 
-        // 键未必是 provider id：wellknown 的键是 URL，原样展示。
+        // 未知 provider（含 wellknown 那种 URL 键）原样展示——那正是 `auth list` 里看到的。
         assert_eq!(
             connected_providers(r#"{"https://x.dev":{"type":"wellknown"}}"#).as_deref(),
-            Some("https://x.dev (wellknown)")
+            Some("https://x.dev")
+        );
+        assert_eq!(
+            connected_providers(r#"{"some-new-provider":{"type":"oauth"}}"#).as_deref(),
+            Some("some-new-provider")
         );
 
-        // type 缺失（schema 漂移）→ 退回只显示名字，绝不因此判成「未连接」。
-        assert_eq!(
-            connected_providers(r#"{"anthropic":{}}"#).as_deref(),
-            Some("anthropic")
-        );
+        // type 缺失（schema 漂移）→ 依然算已连接，绝不因此判成「未连接」。
+        assert_eq!(connected_providers(r#"{"anthropic":{}}"#).as_deref(), Some("Anthropic"));
     }
 
     /// 环境变量整体覆盖文件——与 opencode 自己的取值顺序一致。只读文件的话，这类用户
@@ -156,7 +179,7 @@ mod tests {
         let acc = ACCOUNT
             .account(&inst, &ports)
             .expect("环境变量提供了凭据 → 应算已登录");
-        assert_eq!(acc.login_label.as_deref(), Some("anthropic (oauth)"));
+        assert_eq!(acc.login_label.as_deref(), Some("Anthropic"));
 
         // 空串不算数（设了但没值）。
         std::env::set_var(AUTH_CONTENT_VAR, "");

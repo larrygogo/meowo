@@ -2300,7 +2300,7 @@ select.ns-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 邮箱可能很长（也可能是 opencode 的 "anthropic (oauth), openai (api)"）：单行省略，title 兜全值。 */
+/* 邮箱可能很长（也可能是 opencode 的 "Anthropic, OpenAI" 一串 provider）：单行省略，title 兜全值。 */
 .profile-desc {
   font-size: calc(10.5px * var(--cc-ui));
   color: var(--cc-text-faint);

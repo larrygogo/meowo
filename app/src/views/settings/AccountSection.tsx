@@ -692,7 +692,7 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
       {rows.map((p) => {
         const key = p.id ?? DEFAULT_KEY;
         // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
-        // opencode 的 "anthropic (oauth)"、kimi 的 userId 短码）。
+        // opencode 的 "Anthropic, OpenAI" 一串 provider、kimi 的 userId 短码）。
         //
         // 描述行说的是**这是哪个账号**，套餐不在此列——它是徽章（见下），与卡片标题那排一致。
         const desc =
