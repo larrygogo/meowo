@@ -40,6 +40,12 @@ const SUPPORTS_ACCOUNT = new Set(["claude", "codex", "kimi", "gemini", "opencode
 const SUPPORTS_PROFILES = new Set(["claude", "codex", "kimi", "opencode"]);
 
 /**
+ * meowo 能显示上下文占用的那些。**gemini/opencode 不行**：gemini 的 hook 不带 token，opencode
+ * 没声明 telemetry（token 在它自己库里）。与后端 `AgentPlugin::provides_context()` 同源。
+ */
+const SUPPORTS_CONTEXT = new Set(["claude", "codex", "kimi"]);
+
+/**
  * 造一份 `list_agents()` 的返回：列出全部已知 agent，其中 `installed` 里的标记为已装。
  *
  * 各测试此前各自 mock `availableAgents()` 的 id 数组；descriptor 多了展示名与安装态两个字段，
@@ -53,6 +59,7 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     supports_proxy: SUPPORTS_PROXY.has(id),
     supports_account: SUPPORTS_ACCOUNT.has(id),
     supports_profiles: SUPPORTS_PROFILES.has(id),
+    supports_context: SUPPORTS_CONTEXT.has(id),
     relay: RELAYS[id],
   }));
 }

@@ -706,6 +706,22 @@ describe("AccountSection 多账号", () => {
   });
 
   /**
+   * 上下文占用不支持的 agent（gemini/opencode）明写「不支持」，不留空白让用户以为是 bug。
+   * 支持的（claude）不显示这行。
+   */
+  it("上下文不支持的 agent 显式标注，支持的不标", async () => {
+    // gemini 需已装才谈得上「能力」——未装时卡片只有安装按钮。
+    api.listAgents.mockResolvedValue(descriptors(["claude", "codex", "gemini"]));
+    render(<AccountSection />);
+    // claude（默认选中、支持上下文）→ 没有这行。
+    await screen.findByTestId("agent-card-claude");
+    expect(screen.queryByTestId("agent-context-unsupported-claude")).toBeNull();
+    // 切到 gemini（已装、不支持上下文）→ 有这行。
+    await selectAgent("Gemini CLI");
+    expect(await screen.findByTestId("agent-context-unsupported-gemini")).toBeTruthy();
+  });
+
+  /**
    * 会员等级是**徽章**，不是描述行。
    *
    * 描述行说的是「这是哪个账号」（邮箱；kimi 给不出邮箱，退到 userId 短码）。把等级写进那一行，

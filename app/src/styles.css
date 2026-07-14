@@ -1803,6 +1803,8 @@ html, body {
 .usage-reset { font-size: 10px; color: var(--cc-text-faint); }
 .usage-extra { font-size: 11px; color: var(--cc-warn); margin-top: 6px; }
 .usage-stale { font-size: 11px; color: var(--cc-text-faint); padding: 6px 0; }
+/* 能力「不支持」的低调告知：比正文淡，够读到即可——它是背景说明，不是错误。 */
+.provider-cap-note { font-size: 11px; color: var(--cc-text-faint); padding: 8px 2px 2px; }
 
 /* 贴纸配额显示开关行（账号卡 provider-usage 底部）*/
 .usage-sticker-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-border); }

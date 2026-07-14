@@ -916,6 +916,11 @@ struct AgentDescriptor {
     /// 与「压根不支持多账号」在账号列表上长得一模一样（都只有一条），必须由后端如实说清，
     /// 否则会给一个点了必然报错的按钮。
     supports_profiles: bool,
+    /// meowo 能否显示这个 agent 的**上下文占用**（贴纸上的百分比液柱）。
+    ///
+    /// 为 false（gemini：官方 hook 不给 token；opencode：会话 token 在它自己库里，不经 hook）时，
+    /// 前端显式标注「上下文占用：不支持」——不留空白让用户以为是 bug。
+    supports_context: bool,
     /// 插件显式声明才存在；None 时前端不显示中转入口。
     relay: Option<meowo_agent::RelayUi>,
 }
@@ -939,6 +944,7 @@ async fn list_agents() -> Vec<AgentDescriptor> {
                     supports_proxy: a.proxy().is_some(),
                     supports_account: a.account().is_some(),
                     supports_profiles: a.profile().is_some(),
+                    supports_context: a.provides_context(),
                     relay,
                 }
             })

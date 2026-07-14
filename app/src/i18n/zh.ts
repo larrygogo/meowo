@@ -233,6 +233,8 @@ export const zh = {
     notInstalled: "未安装",
     notLoggedIn: "未登录",
     notLoggedInHint: "已安装，未登录——点「登录」在终端完成授权",
+    // 能力如实告知：官方不给数据 / 插件未实现，都明写「不支持」，不留空白让人以为是 bug。
+    contextUnsupported: "上下文占用：该模型不支持显示",
     // 多账号
     profiles: "账号",
     defaultProfile: "默认账号",

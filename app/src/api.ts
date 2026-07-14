@@ -34,6 +34,13 @@ export type AgentDescriptor = {
    * 不能靠「账号列表只有一条」推断——那与「只建了默认账号」无法区分。
    */
   supports_profiles: boolean;
+  /**
+   * meowo 能否显示该 agent 的上下文占用（贴纸百分比液柱）。false（gemini/opencode）时
+   * 卡片显式标注「上下文占用：不支持」，不留空白让用户以为是 bug。
+   *
+   * 老后端不下发此字段 → undefined，按「支持」处理（不误标已有能力的 agent 为不支持）。
+   */
+  supports_context?: boolean;
   /** 插件未声明该能力时为 null，界面不得显示中转入口。 */
   relay?: RelayCapability | null;
 };

@@ -194,6 +194,11 @@ impl AgentPlugin for Gemini {
     fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
         Some(&RELAY)
     }
+    /// **上下文占用不支持**：Gemini 的 hook 负载里不带 token 计数（实测 0.50——`AfterAgent` 只给
+    /// `prompt_response` 正文），而为了一个百分比去解析它的会话文件不划算。见 telemetry.rs。
+    fn provides_context(&self) -> bool {
+        false
+    }
 }
 
 // ═══ API 中转 ═══

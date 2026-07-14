@@ -132,6 +132,15 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// meowo 能否显示该 agent 的**上下文占用**（贴纸上那个百分比液柱）。
+    ///
+    /// 默认 `true`：claude（statusLine）、codex/kimi（会话日志的 token_count）都拿得到。
+    /// 返回 `false` 的 agent 前端会显式标注「上下文占用：不支持」，而不是留一片空白让用户以为是
+    /// bug——是官方不给数据 / 我们没在插件里实现，两种都如实告知。gemini/opencode 见各自插件的说明。
+    fn provides_context(&self) -> bool {
+        true
+    }
+
     /// 幂等接线：把 meowo-reporter 的 hooks 挂到该 agent 的配置里。全程 best-effort，绝不 panic。
     /// 返回 `None` = 成功/已是目标状态；`Some(reason)` = 无法接线（供「修复连接」回传前端）。
     ///

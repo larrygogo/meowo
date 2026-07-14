@@ -188,6 +188,11 @@ impl AgentPlugin for Opencode {
     fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
         Some(&RELAY)
     }
+    /// **上下文占用不支持**：opencode 没声明 telemetry（其会话 token 在它自己的 SQLite 库里，
+    /// 不经 hook 负载给出），meowo 这侧拿不到——如实标注「不支持」，不留空白。
+    fn provides_context(&self) -> bool {
+        false
+    }
 }
 
 // ═══ API 中转 ═══

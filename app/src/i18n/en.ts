@@ -233,6 +233,8 @@ export const en: Dict = {
     notInstalled: "Not installed",
     notLoggedIn: "Not signed in",
     notLoggedInHint: 'Installed but not signed in — click "Sign in" to authorize in a terminal',
+    // Be honest about capabilities: say "not supported" plainly instead of leaving a blank.
+    contextUnsupported: "Context usage: not available for this agent",
     // Multi-account
     profiles: "Accounts",
     defaultProfile: "Default account",

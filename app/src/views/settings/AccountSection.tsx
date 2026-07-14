@@ -137,7 +137,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -157,6 +157,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
    * 不能靠「列表只有一条」推断——那与「只建了默认账号」长得一模一样。
    */
   supportsProfiles: boolean;
+  /** meowo 能否显示该 agent 的上下文占用。false（gemini/opencode）→ 卡片显式标注「不支持」。 */
+  supportsContext: boolean;
   relay: AgentDescriptor["relay"];
   payload: ProviderAccountPayload | null;
   usage: ProviderUsage | null;
@@ -567,6 +569,14 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
             <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
             <Switch checked={inQuota} onChange={onToggleQuota} />
           </div>
+        </div>
+      )}
+
+      {/* 能力如实告知：上下文占用不支持时明写「不支持」，不留空白让用户以为是 bug。
+          只在已装时显示——没装谈不上能力。 */}
+      {isInstalled && !supportsContext && (
+        <div className="provider-cap-note" data-testid={"agent-context-unsupported-" + provider}>
+          {t.account.contextUnsupported}
         </div>
       )}
 
@@ -1001,6 +1011,7 @@ export function AccountSection() {
         installed={installed === null ? null : installed.has(cur.id)}
         supportsAccount={cur.supports_account}
         supportsProfiles={cur.supports_profiles}
+        supportsContext={cur.supports_context ?? true}
         relay={cur.relay}
         payload={payload}
         usage={usageMap[cur.id] ?? null}
