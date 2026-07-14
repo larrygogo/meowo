@@ -233,8 +233,6 @@ export const zh = {
     notInstalled: "未安装",
     notLoggedIn: "未登录",
     notLoggedInHint: "已安装，未登录——点「登录」在终端完成授权",
-    // 顶部模型切换：模型一多，全部竖排要滚半天，改为下拉选一个只看一张卡。
-    agentPicker: "模型",
     // 多账号
     profiles: "账号",
     defaultProfile: "默认账号",

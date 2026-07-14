@@ -872,7 +872,6 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
 const SELECTED_AGENT_KEY = "meowo-account-agent";
 
 export function AccountSection() {
-  const t = useT();
   // 读取/写入应用设置（用于贴纸配额开关）
   const [settings, patchSettings] = useSettingsState();
   // 顶部下拉选中的 agent id。模型一多，全部竖排要滚半天——改为一次只看一张卡。
@@ -970,10 +969,19 @@ export function AccountSection() {
   return (
     <>
       <div className="account-agent-switch">
-        <span className="account-agent-switch-label">{t.account.agentPicker}</span>
         <Dropdown
           value={eff}
-          options={list.map((a) => ({ value: a.id, label: a.display_name }))}
+          options={list.map((a) => {
+            // claude 的徽标是 currentColor 绘制的裸 logomark，得由容器给它品牌色（--cc-claude），
+            // 否则在下拉里会继承文字色、变成灰白。自带固定色的（kimi/codex/gemini/opencode）tint 为空。
+            const { Icon, tint } = agentAssets(a.id);
+            const icon = (
+              <span style={{ display: "flex", color: tint ? `var(${tint})` : undefined }}>
+                <Icon />
+              </span>
+            );
+            return { value: a.id, label: a.display_name, icon };
+          })}
           onChange={pickAgent}
         />
       </div>

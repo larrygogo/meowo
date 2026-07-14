@@ -1,6 +1,6 @@
 // 设置窗口的通用 UI 组件：开关、下拉、分段选择、色板、离散滑块。
 // 纯展示、无业务耦合，供各 section 复用。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../../appearance";
 
 export function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled?: boolean }) {
@@ -138,7 +138,9 @@ export function Dropdown<T extends string | number>({
   onChange,
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  // icon 可选：给「选择器」型下拉（如账号页的模型切换）在按钮与每个选项前挂一个徽标；
+  // 不传则退化成纯文字下拉，既有调用方无需改动。
+  options: { value: T; label: string; icon?: ReactElement }[];
   onChange: (v: T) => void;
 }) {
   const { open, pos, ref, btnRef, toggle, setOpen } = usePopup(options.length);
@@ -146,7 +148,10 @@ export function Dropdown<T extends string | number>({
   return (
     <div className="dd" ref={ref}>
       <button ref={btnRef} type="button" className={"dd-btn" + (open ? " open" : "")} onClick={toggle}>
-        <span>{cur?.label ?? ""}</span>
+        <span className="dd-val">
+          {cur?.icon && <span className="dd-ico">{cur.icon}</span>}
+          <span className="dd-label">{cur?.label ?? ""}</span>
+        </span>
         <svg className="dd-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="6 9 12 15 18 9" />
         </svg>
@@ -162,9 +167,12 @@ export function Dropdown<T extends string | number>({
               className={"dd-item" + (o.value === value ? " sel" : "")}
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
-              <span>{o.label}</span>
+              <span className="dd-val">
+                {o.icon && <span className="dd-ico">{o.icon}</span>}
+                <span className="dd-label">{o.label}</span>
+              </span>
               {o.value === value && (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <svg className="dd-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               )}
