@@ -513,18 +513,23 @@ pub(crate) fn run_direct_install(
 /// 执行，`curl -f` 也只挡非 2xx。于是用户对着一屏 CSS 发懵。
 ///
 /// 现在 shell 只跑本地文件，联网与判定都在这里。
-pub(crate) fn fetch_install_script(
+pub(crate) fn resolve_install_body(
     id: meowo_agent::AgentId,
     script: &meowo_agent::InstallScript,
 ) -> Result<String, String> {
     use meowo_agent::{Body, HttpRequest};
+    // Command 变体（npm 等）：命令体就是要跑的内容，不联网、无需 challenge 判定（不经 CF）。
+    let url = match script {
+        meowo_agent::InstallScript::Command { body, .. } => return Ok(body.to_string()),
+        meowo_agent::InstallScript::Fetch { url, .. } => *url,
+    };
     let ports = ports::HostPorts::for_agent(id);
     let body = ports
         .as_ports()
         .http
         .send(&HttpRequest {
             method: "GET",
-            url: script.url,
+            url,
             headers: &[],
             body: Body::Empty,
             timeout: std::time::Duration::from_secs(30),
@@ -533,16 +538,12 @@ pub(crate) fn fetch_install_script(
 
     if meowo_agent::looks_like_challenge(&body) {
         return Err(format!(
-            "{} 返回了 Cloudflare 人机校验页，而不是安装脚本。这是间歇性的，稍后重试通常即可；\
-             若持续失败，请在浏览器里打开该地址手动安装。",
-            script.url
+            "{url} 返回了 Cloudflare 人机校验页，而不是安装脚本。这是间歇性的，稍后重试通常即可；\
+             若持续失败，请在浏览器里打开该地址手动安装。"
         ));
     }
     if !meowo_agent::is_runnable_script(&body) {
-        return Err(format!(
-            "{} 返回的不是安装脚本（可能被中间设备拦截）。",
-            script.url
-        ));
+        return Err(format!("{url} 返回的不是安装脚本（可能被中间设备拦截）。"));
     }
     Ok(body)
 }
@@ -655,11 +656,12 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
         .install_script(windows)
         .ok_or("该 agent 没有可用的一键安装命令")?;
 
-    let unix_shell = script.unix_shell;
-    let script_url = script.url;
+    let unix_shell = script.unix_shell();
+    let script_url = script.source();
     // 取脚本 + 判定放在 spawn 之前：被 Cloudflare 拦时直接回传一句人话，而不是把校验页写进日志、
-    // 再让子进程去执行它。放 blocking 池是因为 ureq 是同步的，不能堵住 tauri 的事件循环。
-    let body = tauri::async_runtime::spawn_blocking(move || fetch_install_script(id, &script))
+    // 再让子进程去执行它。Command 变体（npm）在此直接返回命令体，不联网。放 blocking 池是因为
+    // ureq 是同步的，不能堵住 tauri 的事件循环。
+    let body = tauri::async_runtime::spawn_blocking(move || resolve_install_body(id, &script))
         .await
         .map_err(|e| e.to_string())??;
     let path = write_install_script(&provider, &body, windows).map_err(|e| e.to_string())?;

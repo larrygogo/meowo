@@ -171,8 +171,16 @@ impl AgentPlugin for Gemini {
         &["--resume"]
     }
 
-    /// 只有 npm 一条安装路（`npm i -g @google/gemini-cli`），没有官方引导脚本可取——
-    /// [`InstallScript`](crate::install::InstallScript) 表达不了 npm，故不声明，一键安装对它降级。
+    /// 只有 npm 一条安装路，官方没有 `curl|sh` 引导脚本——用 [`InstallScript::Command`] 直接跑
+    /// `npm i -g @google/gemini-cli`（两平台命令一致）。前提是本机有 node/npm；没有则安装子进程
+    /// 会以「npm 找不到」失败，用户看到重试按钮——这合理，没有 node 本就装不了 gemini-cli。
+    fn install_script(&self, _windows: bool) -> Option<crate::install::InstallScript> {
+        Some(crate::install::InstallScript::Command {
+            body: "npm install -g @google/gemini-cli",
+            unix_shell: "bash",
+        })
+    }
+
     fn writes_tab_token(&self) -> bool {
         true
     }

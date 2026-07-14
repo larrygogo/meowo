@@ -36,15 +36,17 @@ fn agents_without_direct_install_are_not_fronted_by_cloudflare() {
         }
         for windows in [true, false] {
             let Some(script) = p.install_script(windows) else { continue };
+            // Command 变体（npm）没有可 curl 的 URL——CF 前置检查对它无意义，跳过。
+            let meowo_agent::InstallScript::Fetch { url, .. } = script else { continue };
             let out = Command::new("curl")
-                .args(["-sSIL", "--max-time", "30", script.url])
+                .args(["-sSIL", "--max-time", "30", url])
                 .output()
                 .expect("curl 执行失败");
             let headers = String::from_utf8_lossy(&out.stdout).to_lowercase();
             if headers.contains("cf-ray") {
-                failures.push(format!("{}: {} 现在挂在 Cloudflare 后面了", p.id(), script.url));
+                failures.push(format!("{}: {} 现在挂在 Cloudflare 后面了", p.id(), url));
             } else {
-                eprintln!("✓ {:8} {} 无 CF", p.id().as_str(), script.url);
+                eprintln!("✓ {:8} {} 无 CF", p.id().as_str(), url);
             }
         }
     }
@@ -59,28 +61,29 @@ fn every_install_url_serves_a_real_script() {
     for p in meowo_agent::all() {
         for windows in [true, false] {
             let Some(script) = p.install_script(windows) else { continue };
-            let Some((code, body)) = curl(script.url) else {
-                failures.push(format!("{}: curl 执行失败（本机没有 curl？）", script.url));
+            let meowo_agent::InstallScript::Fetch { url, .. } = script else { continue };
+            let Some((code, body)) = curl(url) else {
+                failures.push(format!("{}: curl 执行失败（本机没有 curl？）", url));
                 continue;
             };
 
             if code != 200 {
-                failures.push(format!("{}: HTTP {code}", script.url));
+                failures.push(format!("{}: HTTP {code}", url));
                 continue;
             }
             if meowo_agent::looks_like_challenge(&body) {
                 // 这不是代码 bug——是 Cloudflare 此刻正在挑战。如实报告。
                 failures.push(format!(
                     "{}: 返回 Cloudflare 人机校验页（HTTP 200）。间歇性，稍后重试",
-                    script.url
+                    url
                 ));
                 continue;
             }
             if !meowo_agent::is_runnable_script(&body) {
-                failures.push(format!("{}: 返回的不是脚本（{} 字节）", script.url, body.len()));
+                failures.push(format!("{}: 返回的不是脚本（{} 字节）", url, body.len()));
                 continue;
             }
-            eprintln!("✓ {:8} {:6} {} ({} 字节)", p.id().as_str(), if windows { "win" } else { "unix" }, script.url, body.len());
+            eprintln!("✓ {:8} {:6} {} ({} 字节)", p.id().as_str(), if windows { "win" } else { "unix" }, url, body.len());
         }
     }
 

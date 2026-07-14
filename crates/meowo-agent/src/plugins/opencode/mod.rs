@@ -163,6 +163,22 @@ impl AgentPlugin for Opencode {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--session"]
     }
+    /// 一键安装：
+    /// - **Unix**：官方引导脚本 `https://opencode.ai/install`（bash；它自己按平台拉预编译二进制）。
+    /// - **Windows**：官方脚本是 bash，装不了；走 npm（`opencode-ai` 的 postinstall 拉平台包）。
+    fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
+        Some(if windows {
+            crate::install::InstallScript::Command {
+                body: "npm install -g opencode-ai",
+                unix_shell: "bash",
+            }
+        } else {
+            crate::install::InstallScript::Fetch {
+                url: "https://opencode.ai/install",
+                unix_shell: "bash",
+            }
+        })
+    }
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
     }

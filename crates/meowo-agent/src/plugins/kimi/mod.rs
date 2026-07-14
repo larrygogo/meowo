@@ -242,7 +242,7 @@ impl AgentPlugin for Kimi {
     /// 对比 claude：它的脚本是段三步胶水，真正的安装由 `claude.exe install` 自己完成，
     /// 所以那边直下是干净的（见 `plugins/claude/install.rs`）。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
-        Some(crate::install::InstallScript {
+        Some(crate::install::InstallScript::Fetch {
             url: if windows {
                 "https://code.kimi.com/kimi-code/install.ps1"
             } else {

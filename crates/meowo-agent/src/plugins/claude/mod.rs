@@ -213,7 +213,7 @@ impl AgentPlugin for Claude {
     /// 回退路径。`claude.ai` 在 Cloudflare 后面，会间歇触发人机校验（其页面以 HTTP 200 返回），
     /// 故优先走 `direct_install`；只有它失败（如发布物 schema 变了）才落到这里。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
-        Some(crate::install::InstallScript {
+        Some(crate::install::InstallScript::Fetch {
             url: if windows {
                 "https://claude.ai/install.ps1"
             } else {

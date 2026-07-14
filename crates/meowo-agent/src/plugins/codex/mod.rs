@@ -195,7 +195,7 @@ impl AgentPlugin for Codex {
     ///
     /// `latest/download/` 是 GitHub 的稳定跳转，始终指向最新 release 的同名资产。
     fn install_script(&self, windows: bool) -> Option<crate::install::InstallScript> {
-        Some(crate::install::InstallScript {
+        Some(crate::install::InstallScript::Fetch {
             url: if windows {
                 "https://github.com/openai/codex/releases/latest/download/install.ps1"
             } else {
