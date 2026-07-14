@@ -401,6 +401,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
         <div
           className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}
           data-agent={provider}
+          // claude 是 currentColor 绘制的裸 logomark，无方框时得由容器给品牌橙（--cc-claude），
+          // 否则会继承文字色变灰。有方框的（若日后有）由 .provider-card-icon-tile 自己给白。
+          style={!assets.needsTile && assets.tint ? { color: `var(${assets.tint})` } : undefined}
         >
           <assets.Icon />
         </div>

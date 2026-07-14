@@ -107,7 +107,7 @@ export type AgentAssets = {
 };
 
 const ASSETS: Record<string, AgentAssets> = {
-  claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: true },
+  claude: { Icon: ClaudeMark, tint: "--cc-claude", needsTile: false },
   kimi: { Icon: KimiMark, needsTile: false },
   codex: { Icon: CodexMark, needsTile: false },
   gemini: { Icon: GeminiMark, needsTile: false },

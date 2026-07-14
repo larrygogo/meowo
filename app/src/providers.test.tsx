@@ -51,12 +51,11 @@ describe("agent 视觉资产", () => {
     expect(tintStyle("claude", true)).toEqual({ color: "var(--cc-claude)" });
   });
 
-  it("设置页只有裸 logomark 需要品牌色底座", () => {
-    // 底座是**写死的 claude 珊瑚橙渐变**（.provider-card-icon-tile），所以只有 claude 自己的
-    // currentColor logomark 能用它。任何自带品牌色的徽标一旦误设 needsTile，就会被套上 claude 的橙底。
-    expect(agentAssets("claude").needsTile).toBe(true);
-    for (const id of ["kimi", "codex", "gemini", "opencode"]) {
-      expect(agentAssets(id).needsTile, `${id} 自带品牌色，不该套 claude 的橙底座`).toBe(false);
+  it("设置页所有徽标都不套方块底座（裸 logomark 呈现）", () => {
+    // 现在五家在卡片头都是裸 logomark（claude/gemini 无底座、品牌色由容器给；codex/opencode/kimi
+    // 自带方块/位图）。needsTile 全 false——那个 claude 橙底座（.provider-card-icon-tile）已不再启用。
+    for (const id of ["claude", "kimi", "codex", "gemini", "opencode"]) {
+      expect(agentAssets(id).needsTile, `${id} 不该套方块底座`).toBe(false);
     }
   });
 });
