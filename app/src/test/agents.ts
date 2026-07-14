@@ -19,10 +19,11 @@ const RELAYS: Record<string, AgentDescriptor["relay"]> = {
 };
 
 /**
- * 能被套上代理的那些（＝插件声明了 ProxySpec）。gemini / opencode 尚未声明，故设置页不给它们代理行。
+ * 能被套上代理的那些（＝插件声明了 ProxySpec）。当前**五家都有**（gemini/opencode 也认标准代理
+ * 环境变量，实测其 bundle/二进制）。
  * 与后端 `AgentPlugin::proxy()` 的能力矩阵同源——那边加了代理能力，这里也要跟上。
  */
-const SUPPORTS_PROXY = new Set(["claude", "codex", "kimi"]);
+const SUPPORTS_PROXY = new Set(["claude", "codex", "kimi", "gemini", "opencode"]);
 
 /**
  * 有账号概念的那些（＝插件声明了 account 能力槽）。当前**五家都有**，故这里全收。

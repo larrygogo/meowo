@@ -118,6 +118,20 @@ static LAUNCH: LaunchSpec = LaunchSpec {
     ],
 };
 
+/// gemini（node/undici）的代理支持，实测 0.50 bundle：
+/// - 读 `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`（大小写都认），用 `setGlobalDispatcher(new ProxyAgent)`
+///   挂到全局 fetch。
+/// - **SOCKS 支持**：bundle 里 `socks-proxy-agent` / `SocksProxyAgent` / `socks://` 明确接线，
+///   socks 串同样从 `HTTPS_PROXY` 读（不读 `ALL_PROXY`），故 socks_keys 与 http_keys 同。
+/// - 只认进程环境变量、不写进自己的配置（`config_env=false`）：与 codex/kimi 一样，只覆盖从 Meowo
+///   打开的会话。
+static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
+    socks: true,
+    config_env: false,
+    http_keys: &["HTTPS_PROXY", "HTTP_PROXY"],
+    socks_keys: &["HTTPS_PROXY", "HTTP_PROXY"],
+};
+
 static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
@@ -191,6 +205,9 @@ impl AgentPlugin for Gemini {
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
     }
+    fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
+        Some(&PROXY)
+    }
     fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
         Some(&RELAY)
     }
@@ -252,6 +269,19 @@ impl crate::RelayCap for GeminiRelay {
 mod tests {
     use super::*;
     use crate::RelayCap;
+
+    /// 代理：HTTP 走 HTTPS_PROXY/HTTP_PROXY；gemini **支持 SOCKS**（socks-proxy-agent），
+    /// socks 串同样从 HTTPS_PROXY 读。
+    #[test]
+    fn proxy_accepts_http_and_socks() {
+        let http = PROXY.env_for("http://127.0.0.1:7890");
+        assert!(http.iter().any(|(k, _)| *k == "HTTPS_PROXY"));
+        // socks 不被拒（socks=true），且写进 HTTPS_PROXY 而非 ALL_PROXY。
+        let socks = PROXY.env_for("socks5://127.0.0.1:1080");
+        assert!(!socks.is_empty(), "gemini 支持 SOCKS，不该返回空");
+        assert!(socks.iter().any(|(k, v)| *k == "HTTPS_PROXY" && v == "socks5://127.0.0.1:1080"));
+        assert!(PROXY.accepts("socks5://h:1").is_ok());
+    }
 
     /// 中转：把 gemini-cli 指向自定义端点的四个环境变量（变量名实测自 0.50 bundle）。
     #[test]

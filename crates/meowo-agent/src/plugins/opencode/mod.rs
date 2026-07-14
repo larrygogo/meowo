@@ -130,6 +130,19 @@ static LAUNCH: LaunchSpec = LaunchSpec {
 /// Windows 上同样是 `~/.config/opencode`——opencode 用 `xdg-basedir`，而那个包没有 Windows 特判，
 /// 于是 `%APPDATA%` 完全不参与。这一条**已实测**（1.17.20 首次运行即建出 `C:\Users\<u>\.config\opencode`），
 /// 别想当然地改成 AppData。
+/// opencode（Bun 编译）的代理支持，实测二进制：Bun 运行时的 fetch 认 `HTTP_PROXY`/`HTTPS_PROXY`/
+/// `NO_PROXY`（大小写都在）。
+///
+/// **SOCKS 不声明**：二进制里 `SocksProxyAgent` 仅 3 处、未见接到主 API 请求上——宁可只认稳的 HTTP
+/// 代理，也不给一个可能静默失效的 socks（填错的代价就是「设了却连不上」，那正是最该避免的）。
+/// 只认环境变量（`config_env=false`）。
+static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
+    socks: false,
+    config_env: false,
+    http_keys: &["HTTPS_PROXY", "HTTP_PROXY"],
+    socks_keys: &[],
+};
+
 static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
@@ -184,6 +197,9 @@ impl AgentPlugin for Opencode {
     }
     fn profile(&self) -> Option<&'static crate::profile::ProfileSpec> {
         Some(&PROFILE)
+    }
+    fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
+        Some(&PROXY)
     }
     fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
         Some(&RELAY)
@@ -278,6 +294,16 @@ mod tests {
     use super::*;
     use crate::config::EnsureOutcome;
     use crate::RelayCap;
+
+    /// 代理：认 HTTP 代理（HTTPS_PROXY/HTTP_PROXY）；**不支持 SOCKS**——给 socks 串时 env_for
+    /// 返回空，绝不写一个它不认识的代理让请求静默连不上。
+    #[test]
+    fn proxy_accepts_http_but_rejects_socks() {
+        let http = PROXY.env_for("http://127.0.0.1:7890");
+        assert!(http.iter().any(|(k, _)| *k == "HTTPS_PROXY"));
+        assert!(PROXY.accepts("socks5://h:1").is_err());
+        assert!(PROXY.env_for("socks5://127.0.0.1:1080").is_empty());
+    }
 
     /// 中转：只回一个 `OPENCODE_CONFIG_CONTENT`，内容是一段声明自定义 provider 并把默认 model
     /// 指向它的 JSON。协议决定 ai-sdk 适配包。

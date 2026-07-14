@@ -64,12 +64,12 @@ describe("代理优先级", () => {
   it("模型的代理压过默认代理，未单独设置的才回落到默认", async () => {
     await mount(
       { mode: "custom", url: "http://g:1", per_agent: { kimi: { mode: "off", url: "" } } },
-      { "": "http://g:1", claude: "http://g:1", codex: "http://g:1", kimi: null },
+      { "": "http://g:1", claude: "http://g:1", codex: "http://g:1", kimi: null, gemini: "http://g:1", opencode: "http://g:1" },
     );
 
-    // kimi 单独设了直连 → 生效是直连；claude/codex 跟随默认 → 生效是默认那个代理。
+    // kimi 单独设了直连 → 生效是直连；其余四家跟随默认 → 生效是默认那个代理。
     await waitFor(() => {
-      expect(screen.getAllByText(zh.proxy.effective("http://g:1"))).toHaveLength(2);
+      expect(screen.getAllByText(zh.proxy.effective("http://g:1"))).toHaveLength(4);
       expect(screen.getByText(zh.proxy.effectiveDirect)).toBeTruthy();
     });
   });
