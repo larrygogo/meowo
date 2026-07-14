@@ -474,7 +474,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
         )}
       </div>
 
-      {relay && (
+      {/* 未安装时不给「接入方式」——还没有可运行的 agent，配官方账号还是中转都无从谈起，
+          先把它装上。装好后这一段才出现。 */}
+      {isInstalled && relay && (
         <RelayAccess
           agent={{ id: provider, display_name: name, relay }}
           settings={settings}
