@@ -396,7 +396,10 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   return (
     <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
       <div className="provider-card-head">
-        <div className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}>
+        <div
+          className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}
+          data-agent={provider}
+        >
           <assets.Icon />
         </div>
         <div className="provider-card-title">

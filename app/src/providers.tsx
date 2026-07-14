@@ -47,11 +47,15 @@ function CodexMark() {
 
 function GeminiMark() {
   // Gemini 的四角星（sparkle）+ 官方蓝紫渐变。自带固定品牌色，与 kimi/codex 同款处理（tint 为
-  // undefined，断开态只靠 .stk-agent-off 的 opacity 变暗）。
+  // undefined，断开态只靠 .stk-agent-off 的 opacity 变暗）。它是唯一的**裸** logomark（无方块底座）。
+  //
+  // 尺寸 13 对齐 codex/opencode——新建会话面板按 svg 原始尺寸并排渲染，早先的 12 + 焊进路径的
+  // scale(0.82) 让这颗星明显比邻座小。路径本就铺满 0‒24 viewBox，不再内嵌缩放：设置页卡片需要的
+  // 那点留白改由 `.provider-card-icon[data-agent=gemini]` 单独给，两个上下文各自调，互不牵连。
   //
   // 渐变 id 必须唯一：同一页面会同时渲染多个徽标，撞 id 会让后挂载的那个引用到前一个的 <defs>。
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
       <defs>
         <linearGradient id="meowo-gemini-grad" x1="0" y1="24" x2="24" y2="0" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#4285F4" />
@@ -59,12 +63,9 @@ function GeminiMark() {
           <stop offset="1" stopColor="#D96570" />
         </linearGradient>
       </defs>
-      {/* 缩到 0.82 居中留白：设置页的 .provider-card-icon 会把徽标 svg 拉满外框，而 sparkle 不像
-          codex/opencode 那样自带方块底——满幅铺开会比邻座重得多。留白后视觉重量才对得齐。 */}
       <path
         d="M12 24A14.304 14.304 0 0 0 0 12 14.304 14.304 0 0 0 12 0a14.305 14.305 0 0 0 12 12 14.305 14.305 0 0 0-12 12Z"
         fill="url(#meowo-gemini-grad)"
-        transform="translate(2.16 2.16) scale(0.82)"
       />
     </svg>
   );

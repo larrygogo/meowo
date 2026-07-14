@@ -1659,6 +1659,12 @@ html, body {
   width: 100%;
   height: 100%;
 }
+/* Gemini 是裸四角星（无方块底座）：满幅铺开会顶到外框、比自带方块的邻座重，留一圈内边距。
+   只在这个 44px 卡片外框里收，新建会话面板按原始尺寸渲染、不受此影响。 */
+.provider-card-icon[data-agent="gemini"] svg {
+  width: 82%;
+  height: 82%;
+}
 .provider-card-title {
   flex: 1;
   min-width: 0;
