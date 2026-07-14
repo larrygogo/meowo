@@ -258,19 +258,53 @@ describe("AccountSection agent 卡", () => {
   });
 
   it("已保存的中转密钥在设置页明文显示，清空后删除", async () => {
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { claude: {
+        enabled: true,
+        base_url: "https://relay.example/v1",
+        model: "claude-relay",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: true, codex: false, kimi: false });
     api.getRelaySecrets.mockResolvedValue({ claude: "sk-visible-local" });
     render(<AccountSection />);
-    const card = await screen.findByTestId("agent-card-claude");
-    const relayChoice = Array.from(card.querySelectorAll('[role="radio"]')).find(
-      (el) => el.textContent === zh.relay.title,
-    ) as HTMLElement;
-    fireEvent.click(relayChoice);
-
     const secret = await screen.findByDisplayValue("sk-visible-local") as HTMLInputElement;
     expect(secret.type).toBe("text");
     fireEvent.change(secret, { target: { value: "" } });
     fireEvent.blur(secret);
     await waitFor(() => expect(api.setRelaySecret).toHaveBeenCalledWith("claude", ""));
+    await waitFor(() =>
+      expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.enabled).toBe(false),
+    );
+  });
+
+  it("旧中转规则协议为空时保存插件默认协议", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { kimi: {
+        enabled: false,
+        base_url: "https://relay.example/v1",
+        model: "kimi-for-coding",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: false, codex: false, kimi: true });
+    render(<AccountSection />);
+    const card = await screen.findByTestId("agent-card-kimi");
+    const relayChoice = Array.from(card.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === zh.relay.title,
+    ) as HTMLElement;
+    fireEvent.click(relayChoice);
+
+    await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
+    const saved = api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.kimi;
+    expect(saved.enabled).toBe(true);
+    expect(saved.protocol).toBe("kimi");
   });
 
   it("模型选择器从中转获取选项，同时仍可输入自定义模型", async () => {

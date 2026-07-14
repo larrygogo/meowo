@@ -216,21 +216,27 @@ pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
         if let Some(argv) = inst.logout_argv() {
             let (program, args) = argv.split_first().ok_or("登出命令为空")?;
             let mut command = std::process::Command::new(program);
-            command
-                .args(args)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
+            command.args(args).stdout(std::process::Stdio::null());
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                 command.creation_flags(CREATE_NO_WINDOW);
             }
-            let status = command
-                .status()
+            let output = command
+                .output()
                 .map_err(|e| format!("启动登出命令失败：{e}"))?;
-            if !status.success() {
-                return Err(format!("登出命令失败，退出码：{:?}", status.code()));
+            if !output.status.success() {
+                let detail = stderr_excerpt(&output.stderr);
+                let suffix = if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!("：{detail}")
+                };
+                return Err(format!(
+                    "登出命令失败，退出码：{:?}{suffix}",
+                    output.status.code()
+                ));
             }
             return Ok(());
         }
@@ -244,6 +250,17 @@ pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+fn stderr_excerpt(stderr: &[u8]) -> String {
+    const MAX_CHARS: usize = 500;
+    let text = String::from_utf8_lossy(stderr);
+    let trimmed = text.trim();
+    let mut excerpt: String = trimmed.chars().take(MAX_CHARS).collect();
+    if trimmed.chars().count() > MAX_CHARS {
+        excerpt.push('…');
+    }
+    excerpt
+}
+
 fn remove_credentials_file(path: &std::path::Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -254,7 +271,16 @@ fn remove_credentials_file(path: &std::path::Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod logout_tests {
-    use super::remove_credentials_file;
+    use super::{remove_credentials_file, stderr_excerpt};
+
+    #[test]
+    fn logout_stderr_excerpt_is_trimmed_and_bounded() {
+        assert_eq!(stderr_excerpt(b"  authentication failed\r\n"), "authentication failed");
+        let long = "x".repeat(501);
+        let excerpt = stderr_excerpt(long.as_bytes());
+        assert_eq!(excerpt.chars().count(), 501);
+        assert!(excerpt.ends_with('…'));
+    }
 
     #[test]
     fn credential_file_logout_is_idempotent_and_keeps_siblings() {

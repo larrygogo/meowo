@@ -116,6 +116,8 @@ function ModelPicker({
     const trimmed = next.trim();
     if (trimmed && trimmed !== value) onCommit(trimmed);
   };
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
   const show = () => {
     setOpen(true);
     onOpen();
@@ -146,13 +148,13 @@ function ModelPicker({
     const close = (event: MouseEvent) => {
       const node = event.target as Node;
       if (!rootRef.current?.contains(node) && !menuRef.current?.contains(node)) {
-        commit();
+        commitRef.current();
         setOpen(false);
       }
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  });
+  }, [open]);
 
   const remoteSet = new Set(remote);
   const options = [...new Set([...remote, ...fallback])].filter((model) =>
@@ -267,6 +269,11 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     setModelsAttempted(false);
   }, [agent.id, rule.base_url, rule.protocol, rule.auth]);
 
+  const normalizeRule = (next: RelayRule): RelayRule => ({
+    ...next,
+    protocol: next.protocol || capability.default_protocol,
+    auth: next.auth || capability.default_auth,
+  });
   const fetchModels = () => {
     if (modelsLoading) return;
     setModelsAttempted(true);
@@ -276,7 +283,8 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     }
     setModelsLoading(true);
     setModelsError(null);
-    void listRelayModels(agent.id, rule.base_url, rule.protocol, rule.auth)
+    const effective = normalizeRule(rule);
+    void listRelayModels(agent.id, effective.base_url, effective.protocol, effective.auth)
       .then(setRemoteModels)
       .catch((e) => setModelsError(t.relay.modelFetchFailed(String(e))))
       .finally(() => setModelsLoading(false));
@@ -284,14 +292,18 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
 
   const saveRule = async (next: RelayRule) => {
     setErr(null);
+    const normalized = normalizeRule(next);
     const e = await patch({
-      relay: { per_agent: { ...relay.per_agent, [agent.id]: next } },
+      relay: { per_agent: { ...relay.per_agent, [agent.id]: normalized } },
     });
     setErr(e);
     return e;
   };
-  const ready = (next: RelayRule, hasSecret = secretSaved) =>
-    Boolean(next.base_url.trim() && next.model.trim() && hasSecret && (!capability.protocols.length || next.protocol));
+  const ready = (next: RelayRule, hasSecret = secretSaved) => {
+    const normalized = normalizeRule(next);
+    return Boolean(normalized.base_url.trim() && normalized.model.trim() && hasSecret
+      && (!capability.protocols.length || normalized.protocol));
+  };
   const saveField = (next: RelayRule) => {
     // 正在配置且最后一个必填项刚补齐时直接完成切换，不要求用户先切回官方再点一次中转。
     void saveRule({ ...next, enabled: rule.enabled || (configuring && ready(next)) });
@@ -311,12 +323,17 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
   };
   const saveSecret = (value: string) => {
     setErr(null);
-    void setRelaySecret(agent.id, value)
+    const normalized = value.trim();
+    void setRelaySecret(agent.id, normalized)
       .then(() => {
-        const saved = Boolean(value);
-        setSecretValue(value);
+        const saved = normalized.length > 0;
+        setSecretValue(normalized);
         setSecretSaved(saved);
-        if (configuring && ready(rule, saved)) void saveRule({ ...rule, enabled: true });
+        if (!saved && rule.enabled) {
+          void saveRule({ ...rule, enabled: false });
+        } else if (configuring && ready(rule, saved)) {
+          void saveRule({ ...rule, enabled: true });
+        }
       })
       .catch((e) => setErr(String(e)));
   };
@@ -326,7 +343,9 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
     label: option.value === "bearer" ? t.relay.bearer : option.value === "api_key" ? t.relay.apiKeyHeader : option.label,
   }));
   const protocolOptions: { value: RelayProtocol; label: string }[] = capability.protocols;
-  const fallbackModels = capability.suggestions.find((group) => group.protocol === rule.protocol)
+  const fallbackModels = capability.suggestions.find(
+    (group) => group.protocol === normalizeRule(rule).protocol,
+  )
     ?? capability.suggestions.find((group) => group.protocol === "");
 
   return (

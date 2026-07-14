@@ -49,6 +49,17 @@ pub(crate) struct RelaySettings {
 
 impl RelaySettings {
     pub(crate) fn rule(&self, id: meowo_agent::AgentId) -> Option<&RelayRule> {
+        self.rule_with_secret(id, has_secret(id.as_str()))
+    }
+
+    fn rule_with_secret(
+        &self,
+        id: meowo_agent::AgentId,
+        secret_present: bool,
+    ) -> Option<&RelayRule> {
+        if !secret_present {
+            return None;
+        }
         let rule = self.per_agent.get(id.as_str()).filter(|r| r.enabled)?;
         let plugin = meowo_agent::by_id(id.as_str())?;
         let cap = plugin.relay()?;
@@ -72,7 +83,7 @@ impl RelaySettings {
             if rule.model.trim().is_empty() {
                 return Err(format!("{id} 的中转模型不能为空"));
             }
-            cap.validate(relay_config(rule), variant.variant_tag)?;
+            cap.validate(relay_config_for(rule, cap), variant.variant_tag)?;
             if !has_secret(id) {
                 return Err(format!("请先保存 {id} 的中转密钥"));
             }
@@ -81,12 +92,24 @@ impl RelaySettings {
     }
 }
 
-fn relay_config(rule: &RelayRule) -> meowo_agent::RelayConfig<'_> {
+fn relay_config_for<'a>(
+    rule: &'a RelayRule,
+    cap: &'static dyn meowo_agent::RelayCap,
+) -> meowo_agent::RelayConfig<'a> {
+    let ui = cap.ui();
     meowo_agent::RelayConfig {
         base_url: &rule.base_url,
         model: &rule.model,
-        protocol: &rule.protocol,
-        auth: &rule.auth,
+        protocol: if rule.protocol.is_empty() {
+            ui.default_protocol
+        } else {
+            &rule.protocol
+        },
+        auth: if rule.auth.is_empty() {
+            ui.default_auth
+        } else {
+            &rule.auth
+        },
     }
 }
 
@@ -246,11 +269,12 @@ pub(crate) async fn list_relay_models(
     let plugin = meowo_agent::by_id(&agent).ok_or_else(|| "未知 agent".to_string())?;
     let cap = plugin.relay().ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
     let installation = plugin.resolve().ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
+    let ui = cap.ui();
     let config = meowo_agent::RelayConfig {
         base_url: &base_url,
         model: "",
-        protocol: &protocol,
-        auth: &auth,
+        protocol: if protocol.is_empty() { ui.default_protocol } else { &protocol },
+        auth: if auth.is_empty() { ui.default_auth } else { &auth },
     };
     cap.validate(config, installation.variant_tag)?;
     let request = cap.model_request(config);
@@ -298,7 +322,7 @@ pub(crate) fn launch_env(id: meowo_agent::AgentId) -> Vec<(String, String)> {
     let Some(key) = secret(id) else { return vec![] };
     meowo_agent::by_id(id.as_str())
         .and_then(|plugin| plugin.relay())
-        .map_or_else(Vec::new, |cap| cap.launch_env(relay_config(rule), &key))
+        .map_or_else(Vec::new, |cap| cap.launch_env(relay_config_for(rule, cap), &key))
 }
 
 /// Codex 用 CLI 的临时 `-c` 覆盖声明 provider，避免改写全局 config.toml。
@@ -310,7 +334,9 @@ pub(crate) fn augment_argv(id: meowo_agent::AgentId, argv: Vec<String>) -> Vec<S
     };
     meowo_agent::by_id(id.as_str())
         .and_then(|plugin| plugin.relay())
-        .map_or(argv.clone(), |cap| cap.augment_argv(relay_config(rule), has_secret(id.as_str()), argv))
+        .map_or(argv.clone(), |cap| {
+            cap.augment_argv(relay_config_for(rule, cap), has_secret(id.as_str()), argv)
+        })
 }
 
 #[cfg(test)]
@@ -356,6 +382,30 @@ mod tests {
     }
 
     #[test]
+    fn enabled_rule_without_secret_is_not_effective() {
+        let mut settings = RelaySettings::default();
+        settings.per_agent.insert(
+            "claude".into(),
+            RelayRule {
+                enabled: true,
+                ..RelayRule::default()
+            },
+        );
+        assert!(settings
+            .rule_with_secret(meowo_agent::AgentId::new("claude"), false)
+            .is_none());
+    }
+
+    #[test]
+    fn empty_protocol_and_auth_use_plugin_defaults() {
+        let rule = RelayRule::default();
+        let kimi = meowo_agent::by_id("kimi").unwrap().relay().unwrap();
+        let config = relay_config_for(&rule, kimi);
+        assert_eq!(config.protocol, "kimi");
+        assert_eq!(config.auth, "bearer");
+    }
+
+    #[test]
     fn claude_header_kind_and_kimi_protocol_are_explicit() {
         let mut rule = RelayRule {
             enabled: true,
@@ -366,7 +416,7 @@ mod tests {
         };
         let claude = meowo_agent::by_id("claude").unwrap().relay().unwrap();
         assert_eq!(
-            claude.launch_env(relay_config(&rule), "secret"),
+            claude.launch_env(relay_config_for(&rule, claude), "secret"),
             vec![
                 (
                     "ANTHROPIC_BASE_URL".into(),
@@ -377,12 +427,13 @@ mod tests {
         );
         rule.auth = "bearer".into();
         assert_eq!(
-            claude.launch_env(relay_config(&rule), "secret")[1].0,
+            claude.launch_env(relay_config_for(&rule, claude), "secret")[1].0,
             "ANTHROPIC_AUTH_TOKEN"
         );
-        let kimi = meowo_agent::by_id("kimi").unwrap().relay().unwrap().launch_env(relay_config(&rule), "secret");
-        assert!(kimi.contains(&("KIMI_MODEL_PROVIDER_TYPE".into(), "anthropic".into())));
-        assert!(kimi.contains(&("KIMI_MODEL_NAME".into(), "model-x".into())));
+        let kimi = meowo_agent::by_id("kimi").unwrap().relay().unwrap();
+        let kimi_env = kimi.launch_env(relay_config_for(&rule, kimi), "secret");
+        assert!(kimi_env.contains(&("KIMI_MODEL_PROVIDER_TYPE".into(), "anthropic".into())));
+        assert!(kimi_env.contains(&("KIMI_MODEL_NAME".into(), "model-x".into())));
     }
 
     #[test]
@@ -394,8 +445,12 @@ mod tests {
             protocol: String::new(),
             auth: "bearer".into(),
         };
-        let argv = meowo_agent::by_id("codex").unwrap().relay().unwrap()
-            .augment_argv(relay_config(&rule), true, vec!["codex".into()]);
+        let codex = meowo_agent::by_id("codex").unwrap().relay().unwrap();
+        let argv = codex.augment_argv(
+            relay_config_for(&rule, codex),
+            true,
+            vec!["codex".into()],
+        );
         assert_eq!(argv[0], "codex");
         assert!(argv.iter().any(|a| a == "model_provider=\"meowo-relay\""));
         assert!(argv
