@@ -86,6 +86,7 @@ static AUTH: AuthScheme = AuthScheme {
     // 实测（claude --help / claude auth --help）：登录在 `auth` 子命令下，**没有** `claude login`。
     // 另有 `claude setup-token`（长期 token），不是交互式 OAuth 登录，不用它。
     login_args: &["auth", "login"],
+    logout_args: &["auth", "logout"],
 };
 
 static LAUNCH: LaunchSpec = LaunchSpec {
@@ -133,6 +134,42 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
     socks_keys: &[],
 };
 
+struct ClaudeRelay;
+static RELAY: ClaudeRelay = ClaudeRelay;
+static RELAY_AUTH: [crate::RelayOption; 2] = [
+    crate::RelayOption { value: "bearer", label: "Bearer Token" },
+    crate::RelayOption { value: "api_key", label: "API Key (x-api-key)" },
+];
+static RELAY_SUGGESTIONS: [crate::RelaySuggestionGroup; 1] = [crate::RelaySuggestionGroup {
+    protocol: "",
+    models: &["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+}];
+
+impl crate::RelayCap for ClaudeRelay {
+    fn ui(&self) -> crate::RelayUi {
+        crate::RelayUi {
+            protocols: &[], auth_modes: &RELAY_AUTH, default_protocol: "", default_auth: "bearer",
+            suggestions: &RELAY_SUGGESTIONS,
+        }
+    }
+    fn launch_env(&self, config: crate::RelayConfig<'_>, key: &str) -> Vec<(String, String)> {
+        vec![
+            ("ANTHROPIC_BASE_URL".into(), config.base_url.trim().trim_end_matches('/').into()),
+            ((if config.auth == "api_key" { "ANTHROPIC_API_KEY" } else { "ANTHROPIC_AUTH_TOKEN" }).into(), key.into()),
+        ]
+    }
+    fn augment_argv(&self, config: crate::RelayConfig<'_>, _has_secret: bool, mut argv: Vec<String>) -> Vec<String> {
+        argv.extend(["--model".into(), config.model.trim().into()]);
+        argv
+    }
+    fn model_request(&self, config: crate::RelayConfig<'_>) -> crate::RelayModelRequest {
+        crate::RelayModelRequest {
+            auth: if config.auth == "api_key" { crate::RelayModelAuth::ApiKey } else { crate::RelayModelAuth::Bearer },
+            anthropic_version: true,
+        }
+    }
+}
+
 impl AgentPlugin for Claude {
     fn id(&self) -> AgentId {
         id::CLAUDE
@@ -148,6 +185,9 @@ impl AgentPlugin for Claude {
     }
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
         Some(&PROXY)
+    }
+    fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
+        Some(&RELAY)
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]

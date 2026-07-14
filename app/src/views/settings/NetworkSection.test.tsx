@@ -30,7 +30,10 @@ import type { ProxySettings } from "../../api";
 const DIRECT: ProxySettings = { mode: "off", url: "", per_agent: {} };
 
 /// 挂载网络分区。`effective` 是后端解析出的生效代理（键 "" = 全局规则）。
-const mount = async (proxy: ProxySettings, effective: Record<string, string | null> = {}) => {
+const mount = async (
+  proxy: ProxySettings,
+  effective: Record<string, string | null> = {},
+) => {
   api.getSettings.mockResolvedValue({ ...SETTINGS_DEFAULTS, proxy });
   api.getEffectiveProxy.mockImplementation((agent?: string) => Promise.resolve(effective[agent ?? ""] ?? null));
   render(<NetworkSection />);
@@ -45,12 +48,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("代理优先级", () => {
+  it("网络页不再承载模型接入方式", async () => {
+    await mount(DIRECT);
+    expect(screen.queryByText(zh.relay.accessMode)).toBeNull();
+  });
+
   it("代理地址和认证信息按原值显示", async () => {
     await mount(
       { mode: "system", url: "", per_agent: {} },
       { "": "http://user:secret@proxy.example:7890" },
     );
-    expect(screen.getByText(zh.proxy.systemHint("http://user:secret@proxy.example:7890"))).toBeTruthy();
+    expect(await screen.findByText(zh.proxy.systemHint("http://user:secret@proxy.example:7890"))).toBeTruthy();
   });
   /// 默认直连不该妨碍单独给某个模型配代理——这是最常见的配法。
   it("模型的代理压过默认代理，未单独设置的才回落到默认", async () => {

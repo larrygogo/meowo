@@ -432,7 +432,16 @@ pub(crate) fn resume_terminal_kind() -> crate::term_script::TermKind {
 pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) -> Vec<String> {
     session_id
         .zip(meowo_agent::resolve(provider))
-        .and_then(|(id, a)| a.resume_argv(id))
+        .and_then(|(session_id, a)| {
+            let sub = a.resume_args();
+            if sub.is_empty() {
+                return None;
+            }
+            let mut argv = crate::relay::augment_argv(a.id(), a.launch_argv());
+            argv.extend(sub.iter().map(|s| s.to_string()));
+            argv.push(session_id.to_string());
+            Some(argv)
+        })
         .unwrap_or_default()
 }
 
@@ -445,7 +454,11 @@ pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) 
 /// 埋进 cfg 块会让另一平台的编译器看不到它，改签名时一路漏到对方 CI 才炸。
 pub(crate) fn launch_env_for(provider: Option<&str>) -> Vec<(String, String)> {
     meowo_agent::resolve(provider)
-        .map(|a| crate::proxy::launch_env(a.id()))
+        .map(|a| {
+            let mut env = crate::proxy::launch_env(a.id());
+            env.extend(crate::relay::launch_env(a.id()));
+            env
+        })
         .unwrap_or_default()
 }
 
@@ -1068,8 +1081,9 @@ pub(crate) async fn new_session(
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
-    let argv = agent.launch_argv();
-    let env = crate::proxy::launch_env(agent.id());
+    let argv = crate::relay::augment_argv(agent.id(), agent.launch_argv());
+    let mut env = crate::proxy::launch_env(agent.id());
+    env.extend(crate::relay::launch_env(agent.id()));
     let term = terminal
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);

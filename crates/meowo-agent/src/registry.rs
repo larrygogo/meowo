@@ -78,6 +78,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// API 中转。None = 不支持，宿主和前端都不得提供中转入口。
+    fn relay(&self) -> Option<&'static dyn crate::relay::RelayCap> {
+        None
+    }
+
     /// 幂等接线：把 meowo-reporter 的 hooks 挂到该 agent 的配置里。全程 best-effort，绝不 panic。
     /// 返回 `None` = 成功/已是目标状态；`Some(reason)` = 无法接线（供「修复连接」回传前端）。
     ///
@@ -258,6 +263,16 @@ mod tests {
     #[test]
     fn default_id_is_registered() {
         assert!(by_id(DEFAULT_ID.as_str()).is_some());
+    }
+
+    #[test]
+    fn relay_is_an_explicit_plugin_capability_and_kimi_legacy_is_rejected() {
+        for id in ["claude", "codex", "kimi"] {
+            assert!(by_id(id).and_then(|plugin| plugin.relay()).is_some(), "{id} 必须显式声明 relay");
+        }
+        let kimi = by_id("kimi").unwrap().relay().unwrap();
+        assert!(kimi.supports_variant("modern"));
+        assert!(!kimi.supports_variant("legacy"));
     }
 
     #[test]

@@ -43,4 +43,6 @@ pub struct AuthScheme {
     /// claude 是 `claude auth login`（没有 `claude login`），codex/kimi 是 `<exe> login`。
     /// 空切片 = 该变体无登录入口，`Installation::login_argv()` 返回 None。
     pub login_args: &'static [&'static str],
+    /// 非交互式退出登录子命令。空切片表示 CLI 没有登出入口，宿主只能删除凭据文件。
+    pub logout_args: &'static [&'static str],
 }

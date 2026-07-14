@@ -3,8 +3,27 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization，与 NewSessionPanel.test.tsx 同坑）。
-const api = vi.hoisted(() => ({ getAccounts: vi.fn(), listAgents: vi.fn(), installAgent: vi.fn(), loginAgent: vi.fn(), cancelLogin: vi.fn(), checkProviderHooks: vi.fn(), refreshUsage: vi.fn(), getSettings: vi.fn(), setSettings: vi.fn(), agentPathGap: vi.fn(), addAgentToUserPath: vi.fn() }));
+const api = vi.hoisted(() => ({
+  getAccounts: vi.fn(),
+  listAgents: vi.fn(),
+  installAgent: vi.fn(),
+  loginAgent: vi.fn(),
+  cancelLogin: vi.fn(),
+  logoutAgent: vi.fn(),
+  checkProviderHooks: vi.fn(),
+  refreshUsage: vi.fn(),
+  getSettings: vi.fn(),
+  setSettings: vi.fn(),
+  getRelaySecretStatus: vi.fn(),
+  getRelaySecrets: vi.fn(),
+  listRelayModels: vi.fn(),
+  setRelaySecret: vi.fn(),
+  agentPathGap: vi.fn(),
+  addAgentToUserPath: vi.fn(),
+}));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
+const dialog = vi.hoisted(() => ({ confirm: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 
 // 收集所有 ProviderCard 注册的 install-done / login-done 回调，测试里手动广播
 // （模拟 Tauri emit 到全部监听者）。进度不透传英文、前端不订阅 install-progress，故只收集 done。
@@ -25,6 +44,7 @@ const fireLogin = (provider: string, ok: boolean) =>
   act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
 
 import { AccountSection } from "./settings/AccountSection";
+import { modelMenuPlacement } from "./settings/RelayAccess";
 import { descriptors } from "../test/agents";
 import { zh } from "../i18n/zh";
 
@@ -34,6 +54,14 @@ beforeEach(() => {
   api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
   api.refreshUsage.mockResolvedValue({ lanes: [], note: null });
   api.getSettings.mockResolvedValue({ sticker_quota_providers: [] });
+  api.setSettings.mockResolvedValue(undefined);
+  api.getRelaySecretStatus.mockResolvedValue({ claude: false, codex: false, kimi: false });
+  api.getRelaySecrets.mockResolvedValue({});
+  api.listRelayModels.mockResolvedValue([]);
+  api.setRelaySecret.mockResolvedValue(undefined);
+  api.logoutAgent.mockResolvedValue(undefined);
+  dialog.confirm.mockReset();
+  dialog.confirm.mockResolvedValue(true);
   // 默认：bin 目录都在 PATH 上（无提示条），个别用例再覆盖。
   api.agentPathGap.mockResolvedValue(null);
   api.addAgentToUserPath.mockResolvedValue(undefined);
@@ -45,6 +73,31 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("AccountSection agent 卡", () => {
+  it("插件未声明中转能力时不渲染中转入口", async () => {
+    api.listAgents.mockResolvedValue(
+      descriptors(["claude", "codex"]).map((agent) =>
+        agent.id === "claude" ? { ...agent, relay: null } : agent,
+      ),
+    );
+    render(<AccountSection />);
+    await screen.findByTestId("agent-card-claude");
+    expect(screen.queryByTestId("agent-access-claude")).toBeNull();
+    expect(screen.getByTestId("agent-access-codex")).toBeTruthy();
+  });
+
+  it("模型菜单在下方空间不足时自动向上展开", () => {
+    expect(modelMenuPlacement({ top: 430, bottom: 461 }, 500, 240)).toEqual({
+      opensUp: true,
+      top: 185,
+      maxHeight: 240,
+    });
+    expect(modelMenuPlacement({ top: 80, bottom: 111 }, 500, 240)).toEqual({
+      opensUp: false,
+      top: 116,
+      maxHeight: 240,
+    });
+  });
+
   it("三个 agent 都渲染，未装的标未安装 + 安装按钮", async () => {
     render(<AccountSection />);
     await waitFor(() => expect(screen.getByTestId("agent-card-kimi")).toBeTruthy());
@@ -116,6 +169,174 @@ describe("AccountSection agent 卡", () => {
     render(<AccountSection />);
     const desc = await screen.findByTestId("agent-desc-claude");
     expect(desc.textContent).toBe("API key");
+  });
+
+  it("中转模式不展示残留的官方账号配额或登录按钮", async () => {
+    api.getAccounts.mockResolvedValue([
+      {
+        provider: "claude",
+        account: { email: "old-official@example.com" },
+        usage: { lanes: [{ kind: "five_hour", used_pct: 50 }], note: null },
+        usage_supported: false,
+        relay_enabled: true,
+      },
+    ]);
+    render(<AccountSection />);
+    expect((await screen.findByTestId("agent-desc-claude")).textContent).toBe(zh.account.relayActive);
+    expect(screen.queryByTestId("agent-login-claude")).toBeNull();
+    expect(screen.queryByTestId("agent-logout-claude")).toBeNull();
+    expect(screen.queryByText(zh.account.quota)).toBeNull();
+  });
+
+  it("官方账号可确认退出，成功后重新读取账号状态", async () => {
+    api.getAccounts
+      .mockResolvedValueOnce([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true }])
+      .mockResolvedValue([{ provider: "claude", account: null, usage: null, usage_supported: false }]);
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("agent-logout-claude"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(api.logoutAgent).toHaveBeenCalledWith("claude"));
+    await waitFor(() => expect(screen.queryByTestId("agent-logout-claude")).toBeNull());
+    expect(screen.getByTestId("agent-login-claude")).toBeTruthy();
+  });
+
+  it("取消退出确认时不清除官方凭据", async () => {
+    dialog.confirm.mockResolvedValue(false);
+    render(<AccountSection />);
+    fireEvent.click(await screen.findByTestId("agent-logout-claude"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(api.logoutAgent).not.toHaveBeenCalled();
+  });
+
+  it("模型卡内用官方账号 / API 中转二选一，预配置完整时可直接切换", async () => {
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: {
+        per_agent: {
+          claude: {
+            enabled: false,
+            base_url: "https://relay.example/v1",
+            model: "claude-relay",
+            protocol: "",
+            auth: "bearer",
+          },
+        },
+      },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: true, codex: false, kimi: false });
+    render(<AccountSection />);
+
+    const card = await screen.findByTestId("agent-card-claude");
+    const relayChoice = Array.from(card.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === zh.relay.title,
+    ) as HTMLElement;
+    expect(relayChoice).toBeTruthy();
+    fireEvent.click(relayChoice);
+
+    await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
+    const saved = api.setSettings.mock.calls.at(-1)?.[0];
+    expect(saved.relay.per_agent.claude.enabled).toBe(true);
+    expect(card.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe(zh.relay.title);
+  });
+
+  it("中转密钥仍走独立命令，不进入 Settings", async () => {
+    render(<AccountSection />);
+    const card = await screen.findByTestId("agent-card-claude");
+    const relayChoice = Array.from(card.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === zh.relay.title,
+    ) as HTMLElement;
+    fireEvent.click(relayChoice);
+    const secret = await screen.findByPlaceholderText(zh.relay.secretPlaceholder);
+    fireEvent.change(secret, { target: { value: "sk-never-in-settings" } });
+    fireEvent.blur(secret);
+
+    await waitFor(() =>
+      expect(api.setRelaySecret).toHaveBeenCalledWith("claude", "sk-never-in-settings"),
+    );
+    expect(JSON.stringify(api.setSettings.mock.calls)).not.toContain("sk-never-in-settings");
+  });
+
+  it("已保存的中转密钥在设置页明文显示，清空后删除", async () => {
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { claude: {
+        enabled: true,
+        base_url: "https://relay.example/v1",
+        model: "claude-relay",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: true, codex: false, kimi: false });
+    api.getRelaySecrets.mockResolvedValue({ claude: "sk-visible-local" });
+    render(<AccountSection />);
+    const secret = await screen.findByDisplayValue("sk-visible-local") as HTMLInputElement;
+    expect(secret.type).toBe("text");
+    fireEvent.change(secret, { target: { value: "" } });
+    fireEvent.blur(secret);
+    await waitFor(() => expect(api.setRelaySecret).toHaveBeenCalledWith("claude", ""));
+    await waitFor(() =>
+      expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.enabled).toBe(false),
+    );
+  });
+
+  it("旧中转规则协议为空时保存插件默认协议", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "codex", "kimi"]));
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { kimi: {
+        enabled: false,
+        base_url: "https://relay.example/v1",
+        model: "kimi-for-coding",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: false, codex: false, kimi: true });
+    render(<AccountSection />);
+    const card = await screen.findByTestId("agent-card-kimi");
+    const relayChoice = Array.from(card.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === zh.relay.title,
+    ) as HTMLElement;
+    fireEvent.click(relayChoice);
+
+    await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
+    const saved = api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.kimi;
+    expect(saved.enabled).toBe(true);
+    expect(saved.protocol).toBe("kimi");
+  });
+
+  it("模型选择器从中转获取选项，同时仍可输入自定义模型", async () => {
+    api.getSettings.mockResolvedValue({
+      sticker_quota_providers: [],
+      relay: { per_agent: { claude: {
+        enabled: true,
+        base_url: "https://relay.example/v1",
+        model: "old-model",
+        protocol: "",
+        auth: "bearer",
+      } } },
+    });
+    api.getRelaySecretStatus.mockResolvedValue({ claude: true, codex: false, kimi: false });
+    api.listRelayModels.mockResolvedValue(["relay-model-a", "relay-model-b"]);
+    render(<AccountSection />);
+
+    const input = await screen.findByDisplayValue("old-model");
+    await waitFor(() => expect(api.getRelaySecretStatus).toHaveBeenCalled());
+    fireEvent.focus(input);
+    await waitFor(() => expect(api.listRelayModels).toHaveBeenCalledWith(
+      "claude", "https://relay.example/v1", "", "bearer",
+    ));
+    fireEvent.change(input, { target: { value: "relay-model" } });
+    fireEvent.click(await screen.findByText("relay-model-b"));
+    await waitFor(() => expect(api.setSettings).toHaveBeenCalled());
+    expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.model).toBe("relay-model-b");
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "vendor-private-model" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(api.setSettings.mock.calls.at(-1)?.[0].relay.per_agent.claude.model).toBe("vendor-private-model"));
   });
 
   // 回归：此前安装输出被丢进 Stdio::null()，失败时用户拿不到任何可排查的东西。

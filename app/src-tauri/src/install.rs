@@ -203,6 +203,103 @@ pub(crate) async fn login_agent(
     Ok(())
 }
 
+/// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
+/// 只删除变体表声明的凭据文件，不碰 config、会话或 hooks。
+#[tauri::command]
+pub(crate) async fn logout_agent(provider: String) -> Result<(), String> {
+    let key = agent_id(&provider).ok_or("未知 agent")?;
+    let inst = install_for(key).ok_or("解析不到该 agent 的安装实况")?;
+    // 若登录流程还在轮询，登出必须让它停止；否则旧线程可能稍后误报登录成功。
+    bump_login_epoch(key);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(argv) = inst.logout_argv() {
+            let (program, args) = argv.split_first().ok_or("登出命令为空")?;
+            let mut command = std::process::Command::new(program);
+            command.args(args).stdout(std::process::Stdio::null());
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                command.creation_flags(CREATE_NO_WINDOW);
+            }
+            let output = command
+                .output()
+                .map_err(|e| format!("启动登出命令失败：{e}"))?;
+            if !output.status.success() {
+                let detail = stderr_excerpt(&output.stderr);
+                let suffix = if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!("：{detail}")
+                };
+                return Err(format!(
+                    "登出命令失败，退出码：{:?}{suffix}",
+                    output.status.code()
+                ));
+            }
+            return Ok(());
+        }
+
+        let path = inst
+            .credentials_path()
+            .ok_or("该 agent 未声明登出入口或凭据位置")?;
+        remove_credentials_file(&path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn stderr_excerpt(stderr: &[u8]) -> String {
+    const MAX_CHARS: usize = 500;
+    let text = String::from_utf8_lossy(stderr);
+    let trimmed = text.trim();
+    let mut excerpt: String = trimmed.chars().take(MAX_CHARS).collect();
+    if trimmed.chars().count() > MAX_CHARS {
+        excerpt.push('…');
+    }
+    excerpt
+}
+
+fn remove_credentials_file(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("删除凭据失败（{}）：{e}", path.display())),
+    }
+}
+
+#[cfg(test)]
+mod logout_tests {
+    use super::{remove_credentials_file, stderr_excerpt};
+
+    #[test]
+    fn logout_stderr_excerpt_is_trimmed_and_bounded() {
+        assert_eq!(stderr_excerpt(b"  authentication failed\r\n"), "authentication failed");
+        let long = "x".repeat(501);
+        let excerpt = stderr_excerpt(long.as_bytes());
+        assert_eq!(excerpt.chars().count(), 501);
+        assert!(excerpt.ends_with('…'));
+    }
+
+    #[test]
+    fn credential_file_logout_is_idempotent_and_keeps_siblings() {
+        let dir = std::env::temp_dir().join(format!("meowo-logout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let credentials = dir.join("credentials.json");
+        let config = dir.join("config.toml");
+        std::fs::write(&credentials, "secret").unwrap();
+        std::fs::write(&config, "hooks = []").unwrap();
+
+        remove_credentials_file(&credentials).unwrap();
+        remove_credentials_file(&credentials).unwrap();
+        assert!(!credentials.exists());
+        assert!(config.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// 按插件给出的计划直下安装：下载 → 校验大小 → 校验 SHA-256 → 用二进制自身完成安装。
 ///
 /// 走这条路的 agent 完全不碰引导脚本，也就完全不碰它身后的 Cloudflare。附带的好处是多了
