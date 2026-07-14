@@ -8,6 +8,9 @@ import type { ReactElement } from "react";
 // Kimi 官方位图 logo（渐变颗粒纹理、非矢量友好）：作静态资源随打包分发（Vite 输出带哈希的文件），
 // 不再把整张 PNG 以超长 base64 内嵌进源码（增大 bundle/难 diff）。四角本就透明，无需圆角裁剪。
 import kimiLogo from "./assets/kimi.png";
+// Gemini 官方 "aurora" sparkle：那层蓝紫极光是**位图纹理**（四角星路径裁一张内嵌 JPEG），
+// 矢量渐变复刻不出来。取自官方 gstatic 资产、自包含（data-uri 内嵌，离线可用），当静态资源打包。
+import geminiLogo from "./assets/gemini.svg";
 
 function ClaudeMark() {
   // 官方 Claude logomark（赤陶色 sunburst）：fill=currentColor，由容器着色——裸图标场景
@@ -46,28 +49,21 @@ function CodexMark() {
 }
 
 function GeminiMark() {
-  // Gemini 的四角星（sparkle）+ 官方蓝紫渐变。自带固定品牌色，与 kimi/codex 同款处理（tint 为
-  // undefined，断开态只靠 .stk-agent-off 的 opacity 变暗）。它是唯一的**裸** logomark（无方块底座）。
+  // Gemini 官方 aurora sparkle（位图纹理，见 import 处说明）。自带固定品牌色，与 kimi 同款处理：
+  // 用 <img>、断开态只靠 .stk-agent-off 的 opacity 变暗（tint 为 undefined）。它是唯一的**裸**
+  // logomark（无方块底座）。
   //
-  // 尺寸 13 对齐 codex/opencode——新建会话面板按 svg 原始尺寸并排渲染，早先的 12 + 焊进路径的
-  // scale(0.82) 让这颗星明显比邻座小。路径本就铺满 0‒24 viewBox，不再内嵌缩放：设置页卡片需要的
-  // 那点留白改由 `.provider-card-icon[data-agent=gemini]` 单独给，两个上下文各自调，互不牵连。
-  //
-  // 渐变 id 必须唯一：同一页面会同时渲染多个徽标，撞 id 会让后挂载的那个引用到前一个的 <defs>。
+  // 尺寸 13 对齐 codex/opencode——新建会话面板按原始尺寸并排渲染。设置页卡片会把它拉满 44px 外框，
+  // 那里需要的留白由 `.provider-card-icon[data-agent=gemini]` 单独给，两个上下文各自调、互不牵连。
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-      <defs>
-        <linearGradient id="meowo-gemini-grad" x1="0" y1="24" x2="24" y2="0" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#4285F4" />
-          <stop offset="0.5" stopColor="#9B72CB" />
-          <stop offset="1" stopColor="#D96570" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M12 24A14.304 14.304 0 0 0 0 12 14.304 14.304 0 0 0 12 0a14.305 14.305 0 0 0 12 12 14.305 14.305 0 0 0-12 12Z"
-        fill="url(#meowo-gemini-grad)"
-      />
-    </svg>
+    <img
+      src={geminiLogo}
+      width={13}
+      height={13}
+      alt=""
+      aria-hidden="true"
+      style={{ display: "block" }}
+    />
   );
 }
 
