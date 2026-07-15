@@ -36,12 +36,18 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+// 语言优先：在根路径 "/" 按浏览器默认语言（或记住的手动选择）跳到对应版本；
+// 顺带把 <html lang> 同步为当前路径的语言。只在 "/" 自动跳转，深链接（/en/... 或 /features）
+// 保持用户点进来的语言，避免分享的英文链接被中文浏览器强行跳回。
+const LANG_SCRIPT = `(function(){try{var p=location.pathname;var en=p==="/en"||p==="/en/"||p.indexOf("/en/")===0;document.documentElement.lang=en?"en":"zh-CN";if(p==="/"||p===""){var s=localStorage.getItem("meowo-lang");var w=s||(((navigator.language||"")).toLowerCase().indexOf("zh")===0?"zh":"en");if(w==="en"){location.replace("/en/");}}}catch(e){}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
       <body>
+        <script dangerouslySetInnerHTML={{ __html: LANG_SCRIPT }} />
         <Nav />
         {children}
         <Footer />

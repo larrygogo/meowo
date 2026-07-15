@@ -1,54 +1,55 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { LICENSE, RELEASES, REPO } from "@/lib/site";
+import { getDict, langFromPath, withLang } from "@/lib/i18n";
+
+const EXTERNAL: Record<string, string> = { repo: REPO, releases: RELEASES, license: LICENSE };
 
 export default function Footer() {
+  const pathname = usePathname();
+  const lang = langFromPath(pathname);
+  const d = getDict(lang);
+
   return (
     <footer className="footer">
       <div className="container">
         <div className="footer-top">
           <div className="footer-brand">
-            <Link href="/" className="nav-brand">
+            <Link href={withLang(lang, "/")} className="nav-brand">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="Meowo logo" width={26} height={26} />
               <span>
                 Meowo <span className="cn">喵呜</span>
               </span>
             </Link>
-            <p>
-              本地优先的 AI 编程代理桌面工作台。展开是桌面贴纸，收起是电子红绿灯。少切终端，少输命令。
-            </p>
+            <p>{d.footer.tagline}</p>
           </div>
 
           <div className="footer-cols">
-            <div className="footer-col">
-              <h5>产品</h5>
-              <Link href="/features">功能</Link>
-              <Link href="/download">下载</Link>
-              <Link href="/changelog">更新日志</Link>
-            </div>
-            <div className="footer-col">
-              <h5>资源</h5>
-              <Link href="/docs">文档</Link>
-              <Link href="/faq">FAQ</Link>
-              <a href={RELEASES} target="_blank" rel="noopener noreferrer">
-                Releases
-              </a>
-            </div>
-            <div className="footer-col">
-              <h5>项目</h5>
-              <a href={REPO} target="_blank" rel="noopener noreferrer">
-                GitHub
-              </a>
-              <a href={LICENSE} target="_blank" rel="noopener noreferrer">
-                License
-              </a>
-            </div>
+            {d.footer.cols.map((col) => (
+              <div className="footer-col" key={col.title}>
+                <h5>{col.title}</h5>
+                {col.links.map((l) =>
+                  l.href ? (
+                    <a key={l.label} href={EXTERNAL[l.href]} target="_blank" rel="noopener noreferrer">
+                      {l.label}
+                    </a>
+                  ) : (
+                    <Link key={l.label} href={withLang(lang, l.path!)}>
+                      {l.label}
+                    </Link>
+                  )
+                )}
+              </div>
+            ))}
           </div>
         </div>
 
         <div className="footer-bottom">
-          <span>MIT © larrygogo</span>
-          <span className="tip">名字来自猫叫 meow，中文译作「喵呜」🐱</span>
+          <span>{d.footer.license}</span>
+          <span className="tip">{d.footer.tip}</span>
         </div>
       </div>
     </footer>

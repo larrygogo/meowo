@@ -363,6 +363,24 @@ code.inline {
   align-items: center;
   gap: 10px;
 }
+.nav-lang {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  font-size: 13.5px;
+  font-weight: 560;
+  color: var(--text-dim);
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.nav-lang:hover {
+  color: var(--text);
+  background: var(--bg-sunken);
+  border-color: var(--border-strong);
+}
 .nav-gh {
   display: inline-flex;
   align-items: center;

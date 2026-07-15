@@ -1,5 +1,6 @@
 import kimiLogo from "../../app/src/assets/kimi.png";
 import geminiLogo from "../../app/src/assets/gemini.svg";
+import { getDict, type Lang } from "@/lib/i18n";
 
 export type ProviderId = "claude" | "codex" | "kimi" | "gemini" | "opencode";
 
@@ -89,18 +90,17 @@ export function AgentLogo({
   );
 }
 
-export default function SupportedAgents() {
+export default function SupportedAgents({ lang = "zh" }: { lang?: Lang }) {
+  const d = getDict(lang).supported;
   return (
     <section className="section-sm supported-agents">
       <div className="container">
         <div className="supported-agents-head">
           <div>
-            <span className="eyebrow">开箱即用</span>
-            <h2 className="h2">安装、登录、接入，都在 Meowo 里完成</h2>
+            <span className="eyebrow">{d.eyebrow}</span>
+            <h2 className="h2">{d.heading}</h2>
           </div>
-          <p>
-            不必先去终端找安装命令。直接在应用内安装 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode，发起登录后自动接入所需 hooks；已经安装的也会自动检测。同一个工具还能保存多个官方账号一键切换，或按模型接入 API 中转。
-          </p>
+          <p>{d.body}</p>
         </div>
         <div className="supported-agent-list">
           {AGENTS.map((agent) => (
@@ -109,7 +109,7 @@ export default function SupportedAgents() {
                 <AgentLogo id={agent.id} />
               </span>
               <span className="supported-agent-name">{agent.name}</span>
-              <span className="supported-agent-status">一键安装 · 登录</span>
+              <span className="supported-agent-status">{d.status}</span>
             </div>
           ))}
         </div>

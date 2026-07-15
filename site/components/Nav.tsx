@@ -3,13 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { NAV_LINKS, REPO } from "@/lib/site";
+import { REPO } from "@/lib/site";
+import { getDict, langFromPath, switchLangPath, withLang } from "@/lib/i18n";
 import { GitHubIcon, MenuIcon } from "./icons";
 
 export default function Nav() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+
+  const lang = langFromPath(pathname);
+  const d = getDict(lang);
+  const base = lang === "en" ? pathname.replace(/^\/en/, "") || "/" : pathname;
+  const otherLang = lang === "en" ? "zh" : "en";
+  const switchHref = switchLangPath(pathname, otherLang);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 6);
@@ -21,13 +28,27 @@ export default function Nav() {
   // 路由变化时收起移动菜单
   useEffect(() => setOpen(false), [pathname]);
 
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+  // 让 <html lang> 跟随当前语言（静态导出下 html 标签固定，运行时同步以利可访问性/SEO）。
+  useEffect(() => {
+    document.documentElement.lang = d.htmlLang;
+  }, [d.htmlLang]);
+
+  const isActive = (path: string) =>
+    path === "/" ? base === "/" : base === path || base.startsWith(path + "/");
+
+  // 手动切换语言：记住选择，避免自动跳转再把用户拉回去。
+  const rememberLang = () => {
+    try {
+      localStorage.setItem("meowo-lang", otherLang);
+    } catch {
+      /* ignore */
+    }
+  };
 
   return (
     <nav className={`nav${scrolled ? " scrolled" : ""}`}>
       <div className="container nav-inner">
-        <Link href="/" className="nav-brand">
+        <Link href={withLang(lang, "/")} className="nav-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Meowo logo" width={26} height={26} />
           <span>
@@ -36,11 +57,11 @@ export default function Nav() {
         </Link>
 
         <div className="nav-menu">
-          {NAV_LINKS.map((l) => (
+          {d.nav.links.map((l) => (
             <Link
-              key={l.href}
-              href={l.href}
-              className={`nav-link${isActive(l.href) ? " active" : ""}`}
+              key={l.path}
+              href={withLang(lang, l.path)}
+              className={`nav-link${isActive(l.path) ? " active" : ""}`}
             >
               {l.label}
             </Link>
@@ -48,6 +69,15 @@ export default function Nav() {
         </div>
 
         <div className="nav-right">
+          <Link
+            className="nav-lang"
+            href={switchHref}
+            onClick={rememberLang}
+            aria-label={d.nav.switchTo}
+            title={d.nav.switchTo}
+          >
+            {d.nav.switchTo}
+          </Link>
           <a
             className="nav-gh"
             href={REPO}
@@ -57,12 +87,12 @@ export default function Nav() {
           >
             <GitHubIcon />
           </a>
-          <Link className="btn btn-primary nav-cta-desktop" href="/download">
-            下载
+          <Link className="btn btn-primary nav-cta-desktop" href={withLang(lang, "/download")}>
+            {d.nav.download}
           </Link>
           <button
             className="nav-burger"
-            aria-label="菜单"
+            aria-label={d.nav.menu}
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
@@ -73,13 +103,16 @@ export default function Nav() {
 
       {open && (
         <div className="nav-mobile">
-          {NAV_LINKS.map((l) => (
-            <Link key={l.href} href={l.href}>
+          {d.nav.links.map((l) => (
+            <Link key={l.path} href={withLang(lang, l.path)}>
               {l.label}
             </Link>
           ))}
-          <Link className="btn btn-primary" href="/download">
-            下载
+          <Link href={switchHref} onClick={rememberLang}>
+            {d.nav.switchTo}
+          </Link>
+          <Link className="btn btn-primary" href={withLang(lang, "/download")}>
+            {d.nav.download}
           </Link>
         </div>
       )}
