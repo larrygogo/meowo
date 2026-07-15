@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 const QA: { q: string; a: React.ReactNode }[] = [
   {
     q: "Meowo 支持哪些 AI 编程 CLI？",
-    a: "当前内置支持 Claude Code、Codex 和 Kimi。它们各自通过 CLI 的 hook 上报事件，数据写进本地同一份数据库，所以能显示在同一个窗口里。",
+    a: "当前内置支持 Claude Code、Codex、Kimi、Gemini CLI 和 OpenCode。它们各自通过 CLI 的 hook 上报事件，数据写进本地同一份数据库，所以能显示在同一个窗口里。",
   },
   {
     q: "我的会话数据会上传到云端吗？",

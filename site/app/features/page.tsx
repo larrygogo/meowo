@@ -159,7 +159,7 @@ export default function FeaturesPage() {
                 AI CLI 尚未安装时，可直接在 Meowo 里一键安装并发起登录；准备好后，选项目目录和 AI 工具即可开始。连接中的会话一键切回终端，已断开的会话一键续接。
               </p>
               <ul className="checklist">
-                <Check>在设置里一键安装 Claude Code、Codex 或 Kimi，并直接发起账号登录</Check>
+                <Check>在设置里一键安装 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode，并直接发起账号登录（同一工具可保存多个账号）</Check>
                 <Check>自动接入所需 hooks；检测到连接缺失时，一键修复</Check>
                 <Check>从最近项目中选目录，再选择已安装的 AI 工具，点一下新建会话</Check>
                 <Check>

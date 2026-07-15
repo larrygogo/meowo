@@ -20,7 +20,7 @@ const REQS: { k: string; v: React.ReactNode }[] = [
         <a href={DOCS_CLAUDE_CODE} target="_blank" rel="noopener noreferrer">
           Claude Code
         </a>{" "}
-        / Codex / Kimi 其一，用于产生会话事件
+        / Codex / Kimi / Gemini CLI / OpenCode 其一，用于产生会话事件
       </>
     ),
   },
@@ -37,7 +37,7 @@ const STEPS = [
   {
     n: 3,
     title: "一键安装并登录 AI CLI",
-    body: "没有 Claude Code、Codex 或 Kimi 也没关系：在设置里选择工具，一键安装并发起账号登录。已有工具会自动检测。",
+    body: "没有 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode 也没关系：在设置里选择工具，一键安装并发起账号登录。已有工具会自动检测。",
   },
   { n: 4, title: "自动接入并开始使用", body: "Meowo 自动接入所需 hooks。选择项目目录和 AI 工具，点「启动」即可新建会话。" },
 ];

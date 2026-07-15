@@ -41,7 +41,7 @@ export default function DocsPage() {
             <article className="prose">
               <h2 id="how">工作原理</h2>
               <p>
-                以 Claude Code 为例；Codex / Kimi 走各自 CLI 的 hook
+                以 Claude Code 为例；Codex / Kimi / Gemini CLI / OpenCode 走各自 CLI 的 hook
                 机制，数据最终都落到同一份本地数据库。
               </p>
               <div className="codeblock">
@@ -119,8 +119,8 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporte
                   <InfoIcon />
                 </span>
                 <span>
-                  这个脚本只管 Claude Code。codex 和 kimi 的接入走各自 CLI 的原生 hook
-                  配置（hook 命令带 <code className="inline">--provider codex|kimi</code>），不经过它。
+                  这个脚本只管 Claude Code。codex、kimi、gemini、opencode 的接入走各自 CLI 的原生 hook
+                  配置（hook 命令带 <code className="inline">--provider codex|kimi|gemini|opencode</code>），不经过它。
                 </span>
               </div>
 
