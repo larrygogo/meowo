@@ -8,10 +8,11 @@
 
 import React from "react";
 import { AgentLogo, type ProviderId } from "../SupportedAgents";
+import { getDict, type Lang } from "@/lib/i18n";
 
 type CardState = "running" | "waiting" | "error" | "idle" | "stopped";
 
-type CardData = {
+export type CardData = {
   title: string;
   repo: string;
   provider: ProviderId;
@@ -35,9 +36,9 @@ type Props = {
   flat?: boolean;
   className?: string;
   style?: React.CSSProperties;
+  lang?: Lang;
 };
 
-const TAB_LABELS = { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" };
 const TAB_COUNTS = { all: 4, waiting: 1, running: 2, archived: 0 };
 
 type Tokens = ReturnType<typeof tokens>;
@@ -177,9 +178,11 @@ export default function StickerWindow({
   flat = true,
   className = "",
   style,
+  lang = "zh",
 }: Props) {
   const t = tokens(theme, flat);
   const styles = makeStyles(t, bgRgb);
+  const L = getDict(lang).sticker;
   return (
     <div className={`stk-win ${className}`} style={{ ...styles.window, ...style }}>
       <div style={styles.drag} />
@@ -193,7 +196,7 @@ export default function StickerWindow({
           />
           {(["all", "waiting", "running", "archived"] as const).map((k) => (
             <span key={k} style={{ ...styles.stab, color: activeTab === k ? t.accentText : t.dim }}>
-              {TAB_LABELS[k]}
+              {L.tabs[k]}
               {k !== "all" && k !== "archived" && (
                 <span style={{ ...styles.stabN, color: activeTab === k ? t.accentText : t.faint }}>
                   {TAB_COUNTS[k]}
@@ -212,7 +215,7 @@ export default function StickerWindow({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={styles.line1}>
                   <span style={styles.title}>{c.title}</span>
-                  <span style={styles.time}>{c.time ?? "刚刚"}</span>
+                  <span style={styles.time}>{c.time ?? L.justNow}</span>
                   <span style={styles.menuBtn}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="1" />
@@ -239,13 +242,13 @@ export default function StickerWindow({
             )}
             {c.aiText && (
               <div style={styles.subrow}>
-                <span style={{ ...styles.tag, color: t.accentText, background: t.aiBg }}>AI</span>
+                <span style={{ ...styles.tag, color: t.accentText, background: t.aiBg }}>{L.ai}</span>
                 <span style={styles.sub}>{c.aiText}</span>
               </div>
             )}
             {c.userText && (
               <div style={styles.subrow}>
-                <span style={styles.tag}>你</span>
+                <span style={styles.tag}>{L.you}</span>
                 <span style={styles.sub}>{c.userText}</span>
               </div>
             )}
@@ -256,29 +259,29 @@ export default function StickerWindow({
         <div style={styles.ctxMenu}>
           <button style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.79 21.55a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.554 10.34a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" /></svg>
-            星标置顶
+            {L.menu.star}
           </button>
           <button style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2z" /><path d="M15 21v-5a1 1 0 0 1 1-1h5" /></svg>
-            添加便签
+            {L.menu.note}
           </button>
           <button style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-            重命名
+            {L.menu.rename}
           </button>
           <button style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>
-            归档
+            {L.menu.archive}
           </button>
           <div style={styles.ctxSep} />
           <button style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-            新建会话
+            {L.menu.newSession}
           </button>
           <div style={styles.ctxSep} />
           <button style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg>
-            打开项目目录
+            {L.menu.openDir}
           </button>
         </div>
       )}
@@ -293,12 +296,12 @@ export default function StickerWindow({
             </span>
           </div>
           <div style={styles.urow}>
-            <span style={styles.ulabel}>5 小时配额</span>
+            <span style={styles.ulabel}>{L.quota5h}</span>
             <span style={styles.utrack}><i style={{ ...styles.ufill, width: "62%", background: t.warn }} /></span>
             <span style={styles.uval}>62%</span>
           </div>
           <div style={styles.urow}>
-            <span style={styles.ulabel}>7 天配额</span>
+            <span style={styles.ulabel}>{L.quota7d}</span>
             <span style={styles.utrack}><i style={{ ...styles.ufill, width: "38%", background: t.ok }} /></span>
             <span style={styles.uval}>38%</span>
           </div>

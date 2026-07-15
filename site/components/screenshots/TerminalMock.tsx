@@ -2,6 +2,7 @@
 
 import React from "react";
 import { AgentLogo, type ProviderId } from "../SupportedAgents";
+import type { Lang } from "@/lib/i18n";
 
 type Tab = { repo: string; provider: ProviderId; active?: boolean };
 
@@ -11,14 +12,20 @@ const TABS: Tab[] = [
   { repo: "cc-relay", provider: "kimi" },
 ];
 
-export default function TerminalMock({ style }: { style?: React.CSSProperties }) {
+const LINES = {
+  zh: { prompt: "codex：接入账号用量面板", ask: "要应用这 3 处修改吗？(y/n)" },
+  en: { prompt: "codex: wire up the usage panel", ask: "Apply these 3 changes? (y/n)" },
+};
+
+export default function TerminalMock({ style, lang = "zh" }: { style?: React.CSSProperties; lang?: Lang }) {
+  const t = LINES[lang];
   return (
     <div className="term" style={style}>
       <div className="term-tabbar">
-        {TABS.map((t) => (
-          <span key={t.repo} className={`term-tab${t.active ? " active" : ""}`}>
-            <AgentLogo id={t.provider} size={13} tile={false} />
-            <span>{t.repo}</span>
+        {TABS.map((tab) => (
+          <span key={tab.repo} className={`term-tab${tab.active ? " active" : ""}`}>
+            <AgentLogo id={tab.provider} size={13} tile={false} />
+            <span>{tab.repo}</span>
           </span>
         ))}
         <span className="term-newtab">+</span>
@@ -29,10 +36,10 @@ export default function TerminalMock({ style }: { style?: React.CSSProperties })
           <span className="term-branch"> git:(main)</span>
         </div>
         <div className="term-line">
-          <span className="term-arrow">›</span> codex：接入账号用量面板
+          <span className="term-arrow">›</span> {t.prompt}
         </div>
         <div className="term-line term-ask">
-          <span className="term-bullet">●</span> 要应用这 3 处修改吗？(y/n)
+          <span className="term-bullet">●</span> {t.ask}
           <span className="term-cursor" />
         </div>
       </div>

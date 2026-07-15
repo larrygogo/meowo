@@ -1,12 +1,18 @@
 import Reveal from "./Reveal";
+import DemoFrame from "./DemoFrame";
+import { type Lang } from "@/lib/i18n";
 
 type Props = {
-  caption?: string;
+  lang?: Lang;
   className?: string;
 };
 
-/** 深色贴纸产品图，套一层窗口壳；在浅色页面上形成高级的明暗对比。 */
-export default function ProductShowcase({ caption, className = "" }: Props) {
+/**
+ * Hero：把 app 里那段「真人操作」演示（app/src/demo，构建到 /demo/）用 iframe 引进来。
+ * 与 webp 动画完全一致、循环播放，并随语言切换（?lang）——app 自带的 i18n + demo 文案翻译。
+ * iframe 隔离样式，不影响官网。
+ */
+export default function ProductShowcase({ lang = "zh", className = "" }: Props) {
   return (
     <div className={`showcase ${className}`.trim()}>
       <Reveal>
@@ -17,16 +23,10 @@ export default function ProductShowcase({ caption, className = "" }: Props) {
             <span className="tl g" />
           </div>
           <div className="window-body">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/demo.webp"
-              alt="Meowo 实时会话看板演示：会话卡片、状态分类、底栏用量"
-              loading="lazy"
-            />
+            <DemoFrame lang={lang} />
           </div>
         </div>
       </Reveal>
-      {caption && <p className="showcase-cap">{caption}</p>}
     </div>
   );
 }
