@@ -430,6 +430,11 @@ code.inline {
     width: 100%;
     margin-top: 14px;
   }
+  /* CTA 按钮文字不能被 .nav-mobile a 的暗灰色盖掉（否则深底上几乎看不清）。 */
+  .nav-mobile a.btn-primary {
+    color: #fff;
+    border-bottom: none;
+  }
 }
 
 /* ---------- 深色 Hero（首页） ---------- */
@@ -1112,6 +1117,22 @@ code.inline {
     grid-template-columns: 1fr;
     gap: 28px;
     padding: 26px;
+  }
+}
+/* 移动端：主题展示卡满铺整屏、收紧内边距，给贴纸留出 ≥308px 的展示宽度，
+   否则贴纸被 maxWidth:100% 压窄后底栏放不下会重叠。 */
+@media (max-width: 640px) {
+  .theme-showcase {
+    width: auto;
+    margin-left: -24px;
+    margin-right: -24px;
+    padding: 24px 16px;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+  .ts-stage {
+    padding: 8px 2px;
   }
 }
 .ts-controls {
