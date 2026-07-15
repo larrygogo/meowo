@@ -99,7 +99,7 @@ export default function SupportedAgents() {
             <h2 className="h2">安装、登录、接入，都在 Meowo 里完成</h2>
           </div>
           <p>
-            不必先去终端找安装命令。直接在应用内安装 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode，发起登录后自动接入所需 hooks；已经安装的也会自动检测。同一个工具还能保存多个账号、随时切换。
+            不必先去终端找安装命令。直接在应用内安装 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode，发起登录后自动接入所需 hooks；已经安装的也会自动检测。同一个工具还能保存多个官方账号一键切换，或按模型接入 API 中转。
           </p>
         </div>
         <div className="supported-agent-list">

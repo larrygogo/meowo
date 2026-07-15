@@ -15,7 +15,7 @@ export default function Footer() {
               </span>
             </Link>
             <p>
-              本地优先的 AI 编程代理桌面工作台。少切终端，少输命令。
+              本地优先的 AI 编程代理桌面工作台。展开是桌面贴纸，收起是电子红绿灯。少切终端，少输命令。
             </p>
           </div>
 
