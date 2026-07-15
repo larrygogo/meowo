@@ -178,7 +178,7 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
             </Link>
           </div>
           <p className="hero-note">{c.hero.note}</p>
-          <ProductShowcase className="hero-showcase" />
+          <ProductShowcase lang={lang} className="hero-showcase" />
         </div>
       </section>
 
