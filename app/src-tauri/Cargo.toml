@@ -53,12 +53,17 @@ sys-locale = "0.3"
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
+# 点击 toast 后从"通知中心"移除本应用的已投递通知（tauri-winrt-notification 本身不暴露历史清除）。
+# 版本与 tauri-winrt-notification 内部的 windows 0.61 对齐，避免拉入第二份 windows 副本。
+windows = { version = "0.61", features = ["UI_Notifications"] }
 # 修正 auto-launch 写 Run 项时路径不加引号的问题（含空格路径会失败）：enable 后重写为带引号路径。
 winreg = "0.55"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
 mac-notification-sys = "0.6"
+# 点击通知后从"通知中心"移除本应用的已投递通知（mac-notification-sys 不暴露移除接口）。
+objc = "0.2"
 
 [lints.rust]
 # tauri-nspanel 的 panel_delegate! 宏展开含 #[cfg(feature = "cargo-clippy")]，新 rustc 下触发

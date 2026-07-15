@@ -2219,6 +2219,7 @@ dependencies = [
  "meowo-reporter",
  "meowo-store",
  "notify",
+ "objc",
  "percent-encoding",
  "serde",
  "serde_json",
@@ -2240,6 +2241,7 @@ dependencies = [
  "uiautomation",
  "ureq",
  "url",
+ "windows 0.61.3",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
 ]
