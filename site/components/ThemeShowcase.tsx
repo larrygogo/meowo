@@ -76,7 +76,7 @@ export default function ThemeShowcase() {
         <p className="ts-hint">7 种配色 · 扁平 / 立体 · 深 / 浅 · 还能调透明度与界面密度，随手换一套。</p>
       </div>
 
-      <div className="ts-stage" data-theme={theme}>
+      <div className="ts-stage">
         <StickerWindow
           activeTab="all"
           theme={theme}

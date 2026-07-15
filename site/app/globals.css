@@ -1176,32 +1176,20 @@ code.inline {
   line-height: 1.6;
   margin-top: 2px;
 }
+/* 直接一整块：贴纸落在卡片上，不再套一层深色舞台框（贴纸自带描边 + 投影，不靠背景衬托）。 */
 .ts-stage {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 36px 24px;
-  border-radius: var(--r-xl);
-  background:
-    radial-gradient(80% 90% at 50% 15%, rgba(20, 24, 22, 0.06), transparent 70%),
-    var(--bg-sunken);
-  border: 1px solid var(--border);
-  min-height: 320px;
+  padding: 8px;
+  min-height: 300px;
   overflow-x: auto;
-  transition: background 0.3s;
-}
-.ts-stage[data-theme="dark"] {
-  background:
-    radial-gradient(80% 90% at 50% 15%, rgba(0, 0, 0, 0.4), transparent 70%),
-    #0d0e10;
-  border-color: rgba(255, 255, 255, 0.06);
 }
 .ts-stage .stk-win {
   flex: 0 0 auto;
 }
 @media (max-width: 460px) {
   .ts-stage {
-    padding: 24px 12px;
     justify-content: flex-start;
   }
 }
