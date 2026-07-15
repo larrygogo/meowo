@@ -8,8 +8,8 @@ type Props = {
 };
 
 export default async function CtaBand({
-  title = "下载 Meowo",
-  subtitle = "少切终端，少输命令，让多个 AI 编程任务始终在掌握中。",
+  title = "把多开 AI 编程，收进桌面一角",
+  subtitle = "少切终端，少输命令。每个会话的状态、配额与待办，一切尽在计划之中。",
 }: Props) {
   const release = await getLatestRelease();
 

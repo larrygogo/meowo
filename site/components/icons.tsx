@@ -103,14 +103,6 @@ export function CardsIcon(props: P) {
     </svg>
   );
 }
-export function MagnetIcon(props: P) {
-  return (
-    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <path d="M6 4H3v8a9 9 0 0018 0V4h-3v8a6 6 0 01-12 0z" />
-      <path d="M3 8h3M18 8h3" />
-    </svg>
-  );
-}
 export function ChartIcon(props: P) {
   return (
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
@@ -146,6 +138,35 @@ export function InfoIcon(props: P) {
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 11v5M12 8h.01" />
+    </svg>
+  );
+}
+export function UsersIcon(props: P) {
+  return (
+    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+export function PaletteIcon(props: P) {
+  return (
+    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
+      <path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.52-.2-.99-.53-1.34-.32-.35-.52-.82-.52-1.33 0-1.1.9-2 2-2h2.35A4.35 4.35 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
+      <circle cx="7.5" cy="11.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="9.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="14.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+export function TrafficIcon(props: P) {
+  return (
+    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
+      <rect x="8" y="2" width="8" height="20" rx="4" />
+      <circle cx="12" cy="7" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="17" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   );
 }

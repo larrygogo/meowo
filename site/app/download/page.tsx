@@ -39,7 +39,7 @@ const STEPS = [
     title: "一键安装并登录 AI CLI",
     body: "没有 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode 也没关系：在设置里选择工具，一键安装并发起账号登录。已有工具会自动检测。",
   },
-  { n: 4, title: "自动接入并开始使用", body: "Meowo 自动接入所需 hooks。选择项目目录和 AI 工具，点「启动」即可新建会话。" },
+  { n: 4, title: "自动接入并开始使用", body: "Meowo 自动接入所需 hooks。选择项目目录和 AI 工具，点「启动」即可新建会话。会话状态就会出现在桌面一角的贴纸上。" },
 ];
 
 // 拿到了具体安装包就直连它，并把真实文件名和体积标出来；拿不到就退回 releases 页面。

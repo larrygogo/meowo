@@ -302,11 +302,15 @@ pub(crate) fn show_session_notification(
     } else {
         app.config().identifier.clone()
     };
+    let activate_app_id = app_id.clone();
     let _ = app.run_on_main_thread(move || {
         let _ = Toast::new(&app_id)
             .title(&title)
             .text1(&body)
             .on_activated(move |_| {
+                // 点击后 toast 不会自动从"通知中心"消失（Windows 设计如此），主动清掉本应用
+                // 的历史通知。回调线程由 OS 经 COM 投递、已初始化 WinRT，可直接调 History。
+                clear_delivered_toasts(&activate_app_id);
                 let title = focus_title.clone();
                 let cwd = focus_cwd.clone();
                 let token = focus_token.clone();
@@ -317,6 +321,18 @@ pub(crate) fn show_session_notification(
             })
             .show();
     });
+}
+
+/// 从"通知中心"移除本应用（按 AUMID）所有已投递的 toast。tauri-winrt-notification 不暴露单条
+/// 移除/tag，故只能整体清空——对"会话等待/出错"这类瞬时提醒正合适。失败静默（非安装版 AUMID
+/// 未注册时会 Err）。
+#[cfg(target_os = "windows")]
+fn clear_delivered_toasts(app_id: &str) {
+    use windows::core::HSTRING;
+    use windows::UI::Notifications::ToastNotificationManager;
+    if let Ok(history) = ToastNotificationManager::History() {
+        let _ = history.ClearWithId(&HSTRING::from(app_id));
+    }
 }
 
 #[cfg(target_os = "macos")]

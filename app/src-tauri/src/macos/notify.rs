@@ -27,6 +27,9 @@ pub fn init(_app: &AppHandle) {
             if let Ok(NotificationResponse::Click) =
                 send_notification(&job.title, None, &job.body, None)
             {
+                // 点击后通知不会自动从"通知中心"消失，主动移除本应用的已投递通知。
+                // 与 send_notification 同线程调用（该线程已在跑通知中心的 runloop）。
+                clear_delivered();
                 // 点通知正文 -> 按 pid->tty 切到该会话所在终端。resume_argv 传空 = 不允许 resume 回退，
                 // resume_kind 仅占位（仍按设置取，保持一致）。
                 // resume_argv 为空 → 不会走 resume 回退，env 前缀无用武之地，传空串。
@@ -41,6 +44,23 @@ pub fn init(_app: &AppHandle) {
         }
     });
     let _ = TX.set(tx);
+}
+
+/// 移除本应用在"通知中心"里所有已投递的通知。mac-notification-sys 不给单条句柄/标识，
+/// 只能整体清空——对"会话等待/出错"这类瞬时提醒正合适。走已废弃的 NSUserNotificationCenter
+/// （与 mac-notification-sys 内部用的是同一套），故用 removeAllDeliveredNotifications。
+fn clear_delivered() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    // SAFETY: 标准 objc 消息发送；defaultUserNotificationCenter 返回进程级单例（可能为 nil，
+    // 已判空），removeAllDeliveredNotifications 无参无返回。
+    unsafe {
+        let center: *mut Object =
+            msg_send![class!(NSUserNotificationCenter), defaultUserNotificationCenter];
+        if !center.is_null() {
+            let _: () = msg_send![center, removeAllDeliveredNotifications];
+        }
+    }
 }
 
 /// 投递一条通知任务（非阻塞）。OnceLock 未初始化时静默丢弃。

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { NAV_LINKS, REPO, RELEASE_LATEST } from "@/lib/site";
+import { NAV_LINKS, REPO } from "@/lib/site";
 import { GitHubIcon, MenuIcon } from "./icons";
 
 export default function Nav() {
@@ -57,14 +57,9 @@ export default function Nav() {
           >
             <GitHubIcon />
           </a>
-          <a
-            className="btn btn-primary nav-cta-desktop"
-            href={RELEASE_LATEST}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <Link className="btn btn-primary nav-cta-desktop" href="/download">
             下载
-          </a>
+          </Link>
           <button
             className="nav-burger"
             aria-label="菜单"
@@ -83,14 +78,9 @@ export default function Nav() {
               {l.label}
             </Link>
           ))}
-          <a
-            className="btn btn-primary"
-            href={RELEASE_LATEST}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <Link className="btn btn-primary" href="/download">
             下载
-          </a>
+          </Link>
         </div>
       )}
     </nav>
