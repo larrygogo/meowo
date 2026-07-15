@@ -55,6 +55,43 @@ export class Timeline {
     this.hooks.sync(t * 1000);
     await this.hooks.paint();
   }
+
+  /**
+   * 实时播放（用于网页内嵌演示，非录制）：按真实时钟触发 at() 动作、插值 tween()，
+   * 但**不**冻结 CSS 动画——让过渡/关键帧自然播放。播到末尾（+尾巴）后调用 onEnd。
+   * 返回停止函数。
+   */
+  play(onEnd: () => void, tailSec = 0.6): () => void {
+    const start = performance.now();
+    const fired = new Set<Action>();
+    let raf = 0;
+    let stopped = false;
+    const frame = (now: number) => {
+      if (stopped) return;
+      const t = (now - start) / 1000;
+      for (const a of this.actions) {
+        if (a.at <= t && !fired.has(a)) {
+          fired.add(a);
+          void a.run();
+        }
+      }
+      for (const w of this.tweens) {
+        if (t < w.from) continue;
+        const k = Math.min(1, (t - w.from) / Math.max(w.to - w.from, 1e-9));
+        w.apply(w.ease(k));
+      }
+      if (t >= this.duration + tailSec) {
+        onEnd();
+        return;
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+    };
+  }
 }
 
 function nextPaint(): Promise<void> {

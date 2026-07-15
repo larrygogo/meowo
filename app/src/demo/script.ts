@@ -14,6 +14,7 @@ import { Timeline } from "./timeline";
 import { store, notify } from "./mock";
 import { makeSession } from "./data";
 import { clickEl, moveToEl, typeText, pressKey, setCursor, hoverEl } from "./cursor";
+import { DEMO_STRINGS, type DemoLang } from "./strings";
 
 function mut(fn: () => void): () => void {
   return () => {
@@ -28,28 +29,29 @@ const menuBtn = (i: number) => `.stk-vitem[data-index="${i}"] .stk-menu-btn`;
 const menuItem = (k: number) => `.ctx-menu .ctx-item:nth-of-type(${k})`;
 const CPS = 7; // 打字速度(字/秒),放慢到看得清
 
-export function buildScript(): Timeline {
+export function buildScript(lang: DemoLang = "zh"): Timeline {
+  const S = DEMO_STRINGS[lang];
   const tl = new Timeline(20);
-  const s1 = makeSession({ title: "重构吸边状态机", project: "larrygogo/meowo", ctx: 62, todoDone: 3, todoTotal: 5, lastAi: "把状态机拆成了 3 个纯函数,正在补吸附边界的单测。" });
-  const s2 = makeSession({ title: "接入账号用量面板", project: "larrygogo/autopilot", ctx: 41, todoDone: 1, todoTotal: 4, lastAi: "配额液柱组件写好了,底栏小屏已能读数。" });
-  const s3 = makeSession({ title: "升级 tauri 到 2.3", project: "larrygogo/cc-relay", status: "stale", agoMin: 12, lastAi: "已更新 Cargo.toml,等你确认几处 breaking change。" });
-  const s4 = makeSession({ title: "修复 statusline 兼容性", project: "larrygogo/clawmo-ios", status: "ended", connected: false, agoMin: 180, lastAi: "兼容性修好并已合并,收工。" });
+  const s1 = makeSession({ title: S.sessions[0].title, project: "larrygogo/meowo", ctx: 62, todoDone: 3, todoTotal: 5, lastAi: S.sessions[0].ai });
+  const s2 = makeSession({ title: S.sessions[1].title, project: "larrygogo/autopilot", ctx: 41, todoDone: 1, todoTotal: 4, lastAi: S.sessions[1].ai });
+  const s3 = makeSession({ title: S.sessions[2].title, project: "larrygogo/cc-relay", status: "stale", agoMin: 12, lastAi: S.sessions[2].ai });
+  const s4 = makeSession({ title: S.sessions[3].title, project: "larrygogo/clawmo-ios", status: "ended", connected: false, agoMin: 180, lastAi: S.sessions[3].ai });
   store.sessions = [s1, s2, s3, s4];
   notify();
   // 光标初始位:DOM 挂载后第一帧再落(buildScript 时 React 还没渲染完)。
   tl.at(0, () => setCursor(640, 520));
 
   // ── 场景 1(0–4.8s):实时 AI 正文 + Context 百分比在跳 ──
-  tl.at(0.5, mut(() => { store.stage.caption = "所有 AI 会话,一眼看全"; }));
-  tl.at(1.7, mut(() => { s1.last_ai_text = "重构完成,正在跑 cargo clippy 校验。"; s1.context_pct = 63; }));
-  tl.at(3.0, mut(() => { s2.last_ai_text = "在写 vitest 用例覆盖配额液柱。"; s2.context_pct = 43; s2.todo_done = 2; }));
-  tl.at(4.2, mut(() => { s1.last_ai_text = "clippy 通过,写入 src/snap/mod.rs。"; s1.context_pct = 64; s1.todo_done = 4; }));
+  tl.at(0.5, mut(() => { store.stage.caption = S.caps[0]; }));
+  tl.at(1.7, mut(() => { s1.last_ai_text = S.live.s1a; s1.context_pct = 63; }));
+  tl.at(3.0, mut(() => { s2.last_ai_text = S.live.s2a; s2.context_pct = 43; s2.todo_done = 2; }));
+  tl.at(4.2, mut(() => { s1.last_ai_text = S.live.s1b; s1.context_pct = 64; s1.todo_done = 4; }));
 
   // ── 场景 2(4.8–9.8s):转待交互 + tab 过滤 ──
-  tl.at(5.0, mut(() => { store.stage.caption = "谁在等你回复,立刻知道"; }));
+  tl.at(5.0, mut(() => { store.stage.caption = S.caps[1]; }));
   tl.at(5.6, mut(() => {
     s2.session.status = "waiting";
-    s2.last_ai_text = "要应用这 3 处修改吗?(y / n)";
+    s2.last_ai_text = S.live.s2wait;
   }));
   moveToEl(tl, 6.3, 7.1, ".tabs .stab:nth-child(3)"); // 待交互(滑块占 nth-child(1)，故 +1)
   tl.at(7.3, () => clickEl(".tabs .stab:nth-child(3)"));
@@ -57,27 +59,27 @@ export function buildScript(): Timeline {
   tl.at(9.3, () => clickEl(".tabs .stab:nth-child(2)"));
 
   // ── 场景 3(9.8–15.0s):卡片菜单 → 重命名 ──
-  tl.at(10.0, mut(() => { store.stage.caption = "卡片菜单,即点即管"; }));
+  tl.at(10.0, mut(() => { store.stage.caption = S.caps[2]; }));
   tl.at(10.4, () => hoverEl(card(1))); // 卡片抬起(扁平风只淡入底色)
   moveToEl(tl, 10.7, 11.4, menuBtn(1));
   tl.at(11.6, () => clickEl(menuBtn(1)));   // 打开卡片菜单
   moveToEl(tl, 12.1, 12.8, menuItem(3));    // 停顿看清菜单,再移到「重命名」
   tl.at(13.0, () => clickEl(menuItem(3)));  // 进编辑
-  typeText(tl, 13.3, ".stk-edit", "评审用量面板方案", CPS);
+  typeText(tl, 13.3, ".stk-edit", S.rename, CPS);
   tl.at(14.7, () => pressKey(".stk-edit", "Enter"));
 
   // ── 场景 4(15.0–20.9s):卡片菜单 → 加便签 ──
-  tl.at(15.2, mut(() => { store.stage.caption = "给会话挂个本地便签"; }));
+  tl.at(15.2, mut(() => { store.stage.caption = S.caps[3]; }));
   tl.at(15.6, () => hoverEl(card(0)));
   moveToEl(tl, 15.9, 16.6, menuBtn(0));
   tl.at(16.8, () => clickEl(menuBtn(0)));
   moveToEl(tl, 17.3, 18.0, menuItem(2));  // 「便签」
   tl.at(18.2, () => clickEl(menuItem(2))); // 打开便签编辑器
-  typeText(tl, 18.5, ".stk-note-edit", "记得先确认 API key", CPS);
+  typeText(tl, 18.5, ".stk-note-edit", S.note, CPS);
   tl.at(20.7, () => pressKey(".stk-note-edit", "Enter")); // 保存 → 便签块出现
 
   // ── 场景 5(20.9–24.6s):卡片菜单 → 归档 ──
-  tl.at(21.0, mut(() => { store.stage.caption = "不用的收进归档"; }));
+  tl.at(21.0, mut(() => { store.stage.caption = S.caps[4]; }));
   tl.at(21.4, () => hoverEl(card(3)));
   moveToEl(tl, 21.7, 22.4, menuBtn(3));
   tl.at(22.6, () => clickEl(menuBtn(3)));
@@ -86,20 +88,20 @@ export function buildScript(): Timeline {
   tl.at(24.3, () => hoverEl(null)); // 清除卡片 hover
 
   // ── 场景 6(24.6–29.4s):底栏搜索过滤 ──
-  tl.at(24.8, mut(() => { store.stage.caption = "搜索任意会话:标题 / 仓库名即时过滤"; }));
+  tl.at(24.8, mut(() => { store.stage.caption = S.caps[5]; }));
   moveToEl(tl, 25.3, 26.1, ".stk-bar-actions .stk-act:nth-child(2)");
   tl.at(26.3, () => clickEl(".stk-bar-actions .stk-act:nth-child(2)")); // 打开搜索(第 2 个动作)
-  typeText(tl, 26.7, ".stk-search-in", "tauri", 5); // 过滤到「升级 tauri 到 2.3」
+  typeText(tl, 26.7, ".stk-search-in", S.search, 5); // 过滤到 tauri 那条
   moveToEl(tl, 28.5, 29.2, ".stk-search-x");
   tl.at(29.4, () => clickEl(".stk-search-x")); // 关闭搜索，列表还原
 
   // ── 场景 7(29.6–33.0s):置顶(pin)→ 图钉点亮 ──
-  tl.at(29.7, mut(() => { store.stage.caption = "需要时钉住,始终浮在最上层"; }));
+  tl.at(29.7, mut(() => { store.stage.caption = S.caps[6]; }));
   moveToEl(tl, 30.2, 31.0, ".stk-bar-actions .stk-act:nth-child(4)"); // 图钉(第 4 个动作)
   tl.at(31.2, () => clickEl(".stk-bar-actions .stk-act:nth-child(4)")); // 点亮为置顶态
 
   // ── 场景 8(33.0–40.0s):吸边——右缘高亮提示 → 收成细条 → 偷看(过渡 0.8s,不掉帧) ──
-  tl.at(33.2, mut(() => { store.stage.caption = "拖到边缘,吸附成一根状态条"; }));
+  tl.at(33.2, mut(() => { store.stage.caption = S.caps[7]; }));
   tl.at(33.9, mut(() => { store.stage.glow = true; }));   // 拖近右缘:对应侧发光脉动提示
   tl.at(35.3, mut(() => { store.stage.glow = false; store.stage.mode = "strip"; })); // 松手→收成细条(→36.1)
   moveToEl(tl, 36.7, 37.5, ".demo-window .cstrip");

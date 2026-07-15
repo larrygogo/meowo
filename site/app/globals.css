@@ -654,57 +654,23 @@ code.inline {
   width: 100%;
   height: auto;
 }
-/* Hero「桌面」：深色屏内放真实贴纸 + 吸在右边缘的红绿灯（替代静态截图，支持多语言）。 */
-.hero-desktop {
+/* Hero 演示 iframe：内部固定 880×600（demo 设计尺寸），外层按容器宽度整体缩放。 */
+.hero-demo-wrap {
   position: relative;
-  min-height: 460px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 48px 40px;
+  width: 100%;
+  aspect-ratio: 880 / 600;
   overflow: hidden;
-  background:
-    radial-gradient(60% 70% at 30% 24%, rgba(45, 212, 167, 0.14), transparent 62%),
-    radial-gradient(50% 60% at 82% 82%, rgba(31, 143, 208, 0.12), transparent 66%),
-    linear-gradient(160deg, #14161a, #0d0e10 70%);
+  background: #171513;
 }
-.hero-desktop::before {
-  /* 极淡桌面网格 */
-  content: "";
+.hero-demo-frame {
   position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: radial-gradient(80% 80% at 50% 40%, #000, transparent 78%);
-  -webkit-mask-image: radial-gradient(80% 80% at 50% 40%, #000, transparent 78%);
-}
-.hero-desktop-glow {
-  position: absolute;
-  width: 420px;
-  height: 420px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(45, 212, 167, 0.18), transparent 68%);
-  filter: blur(20px);
-  z-index: 0;
-}
-.hero-desktop .stk-win {
-  position: relative;
-  z-index: 1;
-}
-.hero-desktop-strip {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 2;
-}
-@media (max-width: 560px) {
-  .hero-desktop {
-    min-height: 0;
-    padding: 28px 8px;
-  }
+  top: 0;
+  left: 0;
+  width: 880px;
+  height: 600px;
+  border: 0;
+  transform-origin: top left;
+  background: #171513;
 }
 .showcase-cap {
   text-align: center;

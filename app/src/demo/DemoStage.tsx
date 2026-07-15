@@ -8,9 +8,10 @@ import { Sticker } from "../views/Sticker";
 import { CollapsedStrip } from "../views/CollapsedStrip";
 import { store, subscribe } from "./mock";
 import type { StickerFilter } from "../api";
+import { DEMO_STRINGS, type DemoLang } from "./strings";
 import logoUrl from "../../src-tauri/icons/128x128@2x.png";
 
-export function DemoStage() {
+export function DemoStage({ lang = "zh" }: { lang?: DemoLang }) {
   const [, force] = useReducer((x: number) => x + 1, 0);
   useEffect(() => subscribe(force), []);
   const [filter, setFilter] = useState<StickerFilter>("all");
@@ -57,7 +58,7 @@ export function DemoStage() {
         <div className="demo-finale">
           <img src={logoUrl} width={88} height={88} alt="" />
           <div className="demo-finale-name">Meowo</div>
-          <div className="demo-finale-slogan">你所有的 Claude Code 会话,一眼看全</div>
+          <div className="demo-finale-slogan">{DEMO_STRINGS[lang].finale}</div>
         </div>
       )}
       <div id="demo-cursor">
