@@ -204,8 +204,18 @@ fn normalize_proxy_url(url: &str) -> Result<Cow<'_, str>, String> {
         return Err("host:port:user:pass 格式中的主机、端口、用户名和密码都不能为空".into());
     }
 
-    let user = percent_encoding::utf8_percent_encode(user, percent_encoding::NON_ALPHANUMERIC);
-    let pass = percent_encoding::utf8_percent_encode(pass, percent_encoding::NON_ALPHANUMERIC);
+    // RFC 3986 unreserved 字符（ALPHA / DIGIT / "-._~"）在 URI 中本来就安全，必须原样保留。
+    // `NON_ALPHANUMERIC` 会把 `-` / `_` 也写成 `%2D` / `%5F`；虽然标准上等价，但部分代理
+    // 客户端会直接拿 URL parser 返回的 userinfo 做 Basic Auth，不主动 percent-decode，导致认证失败。
+    // 其余非字母数字字符仍编码，避免 `@` / `:` / `/` 等改变 URL 结构。
+    const PROXY_CREDENTIAL_ENCODE_SET: &percent_encoding::AsciiSet =
+        &percent_encoding::NON_ALPHANUMERIC
+            .remove(b'-')
+            .remove(b'.')
+            .remove(b'_')
+            .remove(b'~');
+    let user = percent_encoding::utf8_percent_encode(user, PROXY_CREDENTIAL_ENCODE_SET);
+    let pass = percent_encoding::utf8_percent_encode(pass, PROXY_CREDENTIAL_ENCODE_SET);
     Ok(Cow::Owned(format!("http://{user}:{pass}@{host}:{port}")))
 }
 
@@ -736,8 +746,9 @@ mod tests {
     #[test]
     fn four_part_proxy_is_canonicalized_and_credentials_are_encoded() {
         assert_eq!(
-            normalize_proxy_url("proxy.example:8080:user@example:p@ss/word:tail").unwrap(),
-            "http://user%40example:p%40ss%2Fword%3Atail@proxy.example:8080"
+            normalize_proxy_url("proxy.example:8080:user-name_test~v1@example:p@ss/word:tail")
+                .unwrap(),
+            "http://user-name_test~v1%40example:p%40ss%2Fword%3Atail@proxy.example:8080"
         );
         assert_eq!(
             normalize_proxy_url("[2001:db8::1]:1080:user:pass").unwrap(),

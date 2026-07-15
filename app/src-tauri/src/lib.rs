@@ -1,4 +1,6 @@
 mod account;
+#[cfg(any(target_os = "macos", test))]
+mod app_bundle;
 #[cfg(target_os = "windows")]
 mod envpath;
 mod fsutil;
@@ -1102,6 +1104,13 @@ mod win_constrain {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Tauri 的 macOS updater 原地覆盖当前 `.app`，不会把旧外层目录 `cc-kanban.app` 改成
+    // `Meowo.app`。在创建任何插件状态前先迁移并从新路径重启，使 updater / autostart 后续都只
+    // 看到规范路径。开发态不处在该 bundle 结构中，自动 no-op。
+    #[cfg(target_os = "macos")]
+    if app_bundle::migrate_legacy_bundle_and_relaunch() {
+        return;
+    }
     migrate_legacy_data();
     let path = db_path();
     let tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>> =
@@ -1270,6 +1279,8 @@ pub fn run() {
             // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
             #[cfg(target_os = "macos")]
             {
+                // bundle 改名后同步刷新旧版留下的 LaunchAgent；先建新项再删旧项，失败不丢设置。
+                app_bundle::migrate_legacy_autostart(app.handle());
                 app.handle()
                     .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
                 // nspanel 插件必须先注册（它 manage(WebviewPanelManager)），to_panel()/get_webview_panel()
