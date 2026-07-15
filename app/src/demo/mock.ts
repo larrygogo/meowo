@@ -29,7 +29,7 @@ export const store: Store = {
     preview_enabled: true,
     sticker_style: "flat",
     sticker_color: "neutral",
-    sticker_quota_providers: ["claude"],
+    sticker_quota_providers: ["claude", "codex"],
     default_agent: "claude",
     proxy: { mode: "system", url: "", per_agent: {} },
   },
@@ -44,6 +44,25 @@ export function notify(): void {
   subs.forEach((f) => f());
 }
 
+function mkUsage(fiveH: number, sevenD: number): ProviderUsage {
+  return {
+    lanes: [
+      { kind: "five_hour", used_pct: fiveH, used: null, limit: null, unit: null, resets_at: "2026-06-18T20:00:00Z" },
+      { kind: "seven_day", used_pct: sevenD, used: null, limit: null, unit: null, resets_at: "2026-06-24T08:00:00Z" },
+    ],
+    note: null,
+  };
+}
+
+function mkAccount(provider: string, fiveH: number, sevenD: number): ProviderAccountPayload {
+  return {
+    provider,
+    account: { email: "demo@example.com", display_name: "Demo User", organization: null, plan: "Pro", login_label: null },
+    usage: mkUsage(fiveH, sevenD),
+    usage_supported: true,
+  };
+}
+
 export function installMocks(): void {
   mockWindows("main");
   mockIPC((cmd, args) => {
@@ -51,44 +70,24 @@ export function installMocks(): void {
       case "host_os":
         return "windows";
       case "list_agents":
-        // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。demo 仅 claude。
-        return [{ id: "claude", display_name: "Claude Code", installed: true }];
+        // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。
+        // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Gemini CLI（不独尊 Claude）。
+        return [
+          { id: "claude", display_name: "Claude Code", installed: true },
+          { id: "codex", display_name: "Codex", installed: true },
+          { id: "kimi", display_name: "Kimi Code", installed: true },
+          { id: "gemini", display_name: "Gemini CLI", installed: true },
+        ];
       case "get_settings":
         return store.settings;
       case "get_accounts": {
-        // demo 假数据：仅 claude 有账号与用量
-        const claudePayload: ProviderAccountPayload = {
-          provider: "claude",
-          account: {
-            email: "demo@example.com",
-            display_name: "Demo User",
-            organization: null,
-            plan: "Pro",
-            login_label: null,
-          },
-          usage: {
-            lanes: [
-              { kind: "five_hour", used_pct: 62, used: null, limit: null, unit: null, resets_at: "2026-06-18T20:00:00Z" },
-              { kind: "seven_day", used_pct: 38, used: null, limit: null, unit: null, resets_at: "2026-06-24T08:00:00Z" },
-            ],
-            note: null,
-          },
-          usage_supported: true,
-        };
-        return [claudePayload];
+        // demo 假数据：Claude 与 Codex 都有账号与用量，底栏配额呈现多 provider。
+        return [mkAccount("claude", 62, 38), mkAccount("codex", 45, 22)];
       }
       case "refresh_usage": {
         const a = args as { provider: string };
-        if (a.provider === "claude") {
-          const claudeUsage: ProviderUsage = {
-            lanes: [
-              { kind: "five_hour", used_pct: 62, used: null, limit: null, unit: null, resets_at: "2026-06-18T20:00:00Z" },
-              { kind: "seven_day", used_pct: 38, used: null, limit: null, unit: null, resets_at: "2026-06-24T08:00:00Z" },
-            ],
-            note: null,
-          };
-          return claudeUsage;
-        }
+        if (a.provider === "claude") return mkUsage(62, 38);
+        if (a.provider === "codex") return mkUsage(45, 22);
         return { lanes: [], note: null };
       }
       case "get_live_sessions":

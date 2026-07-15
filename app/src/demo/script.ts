@@ -32,10 +32,10 @@ const CPS = 7; // 打字速度(字/秒),放慢到看得清
 export function buildScript(lang: DemoLang = "zh"): Timeline {
   const S = DEMO_STRINGS[lang];
   const tl = new Timeline(20);
-  const s1 = makeSession({ title: S.sessions[0].title, project: "larrygogo/meowo", ctx: 62, todoDone: 3, todoTotal: 5, lastAi: S.sessions[0].ai });
-  const s2 = makeSession({ title: S.sessions[1].title, project: "larrygogo/autopilot", ctx: 41, todoDone: 1, todoTotal: 4, lastAi: S.sessions[1].ai });
-  const s3 = makeSession({ title: S.sessions[2].title, project: "larrygogo/cc-relay", status: "stale", agoMin: 12, lastAi: S.sessions[2].ai });
-  const s4 = makeSession({ title: S.sessions[3].title, project: "larrygogo/clawmo-ios", status: "ended", connected: false, agoMin: 180, lastAi: S.sessions[3].ai });
+  const s1 = makeSession({ title: S.sessions[0].title, project: "larrygogo/meowo", provider: "claude", ctx: 62, todoDone: 3, todoTotal: 5, lastAi: S.sessions[0].ai });
+  const s2 = makeSession({ title: S.sessions[1].title, project: "larrygogo/autopilot", provider: "codex", ctx: 41, todoDone: 1, todoTotal: 4, lastAi: S.sessions[1].ai });
+  const s3 = makeSession({ title: S.sessions[2].title, project: "larrygogo/cc-relay", provider: "kimi", status: "stale", agoMin: 12, lastAi: S.sessions[2].ai });
+  const s4 = makeSession({ title: S.sessions[3].title, project: "larrygogo/clawmo-ios", provider: "gemini", status: "ended", connected: false, agoMin: 180, lastAi: S.sessions[3].ai });
   store.sessions = [s1, s2, s3, s4];
   notify();
   // 光标初始位:DOM 挂载后第一帧再落(buildScript 时 React 还没渲染完)。
