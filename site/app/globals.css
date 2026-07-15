@@ -901,10 +901,6 @@ code.inline {
   .scene-rev .scene-shot {
     order: 0;
   }
-  .scene-shot {
-    transform: scale(0.94);
-    transform-origin: top center;
-  }
 }
 
 /* 场景里衬托贴纸的软背景舞台 */
@@ -922,17 +918,28 @@ code.inline {
   border: 1px solid var(--border);
   overflow: hidden;
 }
-/* 贴纸约有 300px 最小内容宽度：窄视口下收紧内边距让它放得下，避免右缘被裁。 */
-@media (max-width: 560px) {
-  .scene-stage {
-    padding: 28px 10px;
-  }
-}
 .scene-stage.stage-dark {
   background:
     radial-gradient(80% 90% at 50% 10%, rgba(45, 212, 167, 0.12), transparent 70%),
     #101113;
   border-color: rgba(255, 255, 255, 0.06);
+}
+/* 移动端：舞台满铺整屏、去圆角与左右描边，给贴纸腾出宽度，红绿灯落在屏幕真正的右边缘。
+   .scene-shot 本是居中 flex，负外边距对 flex item 不生效，故先降为块级再用负外边距
+   突破 .container 的 24px 内边距。 */
+@media (max-width: 640px) {
+  .scene-shot {
+    display: block;
+  }
+  .scene-stage {
+    width: auto;
+    margin-left: -24px;
+    margin-right: -24px;
+    padding: 32px 16px;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
 }
 
 /* ---------- 交替图文段（功能页 split） ---------- */
