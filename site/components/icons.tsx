@@ -103,14 +103,6 @@ export function CardsIcon(props: P) {
     </svg>
   );
 }
-export function MagnetIcon(props: P) {
-  return (
-    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <path d="M6 4H3v8a9 9 0 0018 0V4h-3v8a6 6 0 01-12 0z" />
-      <path d="M3 8h3M18 8h3" />
-    </svg>
-  );
-}
 export function ChartIcon(props: P) {
   return (
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
@@ -165,13 +157,6 @@ export function PaletteIcon(props: P) {
       <circle cx="7.5" cy="11.5" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="9.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="14.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-export function CursorClickIcon(props: P) {
-  return (
-    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <path d="M9 3v3M5.6 5.6l2.1 2.1M3 9h3M14 11l7 3-3 1.5L16 21l-3-7z" />
     </svg>
   );
 }

@@ -107,11 +107,12 @@ function tokens(theme: "dark" | "light", flat: boolean) {
     modelBg: dark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.06)",
     aiBg: dark ? "rgba(45,212,167,0.16)" : "rgba(18,166,127,0.15)",
 
-    // 状态色（鲜亮，随主题）
+    // 状态色（鲜亮，随主题）；soft/clear 由同一份 rgb 派生，避免字符串耦合。
     ok: dark ? "#4ec9a5" : "#17ab77",
-    okSoft: dark ? "rgba(78,201,165,0.22)" : "rgba(23,171,119,0.22)",
+    okSoft: `rgba(${dark ? "78,201,165" : "23,171,119"}, 0.22)`,
+    okClear: `rgba(${dark ? "78,201,165" : "23,171,119"}, 0)`,
     warn: dark ? "#e0a23c" : "#d99a1a",
-    warnSoft: dark ? "rgba(224,162,60,0.22)" : "rgba(217,154,26,0.22)",
+    warnSoft: `rgba(${dark ? "224,162,60" : "217,154,26"}, 0.22)`,
     err: dark ? "#e0584c" : "#db453a",
 
     windowShadow: dark ? "0 20px 50px rgba(0,0,0,0.45)" : "0 18px 44px rgba(20,24,22,0.16)",
@@ -127,7 +128,7 @@ function StatusIndicator({ state, pct, styles, t }: { state: CardState; pct?: nu
     return (
       <div style={styles.ind}>
         <div style={{ ...styles.ring, borderColor: t.okSoft, background: t.okSoft }}>
-          <div style={{ ...styles.sweep, background: `conic-gradient(from 0deg, ${t.okSoft.replace("0.22", "0")} 0deg, ${t.ok} 110deg, ${t.okSoft.replace("0.22", "0")} 110deg 360deg)` }} />
+          <div style={{ ...styles.sweep, background: `conic-gradient(from 0deg, ${t.okClear} 0deg, ${t.ok} 110deg, ${t.okClear} 110deg 360deg)` }} />
           <div style={styles.mask} />
           <div style={{ ...styles.core, background: t.ok, color: "#06281f" }}>{pct}%</div>
         </div>

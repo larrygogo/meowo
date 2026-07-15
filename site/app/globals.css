@@ -864,6 +864,11 @@ code.inline {
   gap: 64px;
   align-items: center;
 }
+/* 网格轨道默认 min-width:auto(=min-content)，贴纸有固定最小宽度会把 1fr 轨道撑破容器，
+   导致窄屏整页横向溢出。归零后轨道可收缩，超出部分交给 .scene-stage 的 overflow 裁剪。 */
+.scene > * {
+  min-width: 0;
+}
 .scene-rev .scene-shot {
   order: 2;
 }
@@ -917,6 +922,12 @@ code.inline {
   border: 1px solid var(--border);
   overflow: hidden;
 }
+/* 贴纸约有 300px 最小内容宽度：窄视口下收紧内边距让它放得下，避免右缘被裁。 */
+@media (max-width: 560px) {
+  .scene-stage {
+    padding: 28px 10px;
+  }
+}
 .scene-stage.stage-dark {
   background:
     radial-gradient(80% 90% at 50% 10%, rgba(45, 212, 167, 0.12), transparent 70%),
@@ -930,6 +941,9 @@ code.inline {
   grid-template-columns: 1fr 1fr;
   gap: 56px;
   align-items: center;
+}
+.split > * {
+  min-width: 0;
 }
 .split.rev .split-media {
   order: 2;
