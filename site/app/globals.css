@@ -430,10 +430,12 @@ code.inline {
     width: 100%;
     margin-top: 14px;
   }
-  /* CTA 按钮文字不能被 .nav-mobile a 的暗灰色盖掉（否则深底上几乎看不清）。 */
+  /* CTA 按钮：.nav-mobile a 把它变成 display:block 会丢掉 .btn 的 flex 居中，
+     且暗灰色会盖掉白字。这里重新居中并恢复白字。 */
   .nav-mobile a.btn-primary {
     color: #fff;
     border-bottom: none;
+    text-align: center;
   }
 }
 
