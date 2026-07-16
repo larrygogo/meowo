@@ -338,7 +338,8 @@ export const zh = {
     back: "上一步",
     next: "下一步",
     done: "开始使用",
-    stepOf: (i: number, n: number) => `${i} / ${n}`,
+    stepsLabel: "引导步骤",
+    stepOf: (i: number, n: number) => `第 ${i} 步，共 ${n} 步`,
     welcome: {
       title: "欢迎使用 Meowo",
       desc: "常驻桌面的小贴纸，实时汇总 Claude Code、Codex、Gemini 等 AI 编程会话的进度——不用在终端之间来回切，也知道谁在跑、谁在等你。",

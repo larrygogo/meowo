@@ -336,7 +336,8 @@ export const en: Dict = {
     back: "Back",
     next: "Next",
     done: "Get started",
-    stepOf: (i, n) => `${i} / ${n}`,
+    stepsLabel: "Onboarding steps",
+    stepOf: (i, n) => `Step ${i} of ${n}`,
     welcome: {
       title: "Welcome to Meowo",
       desc: "A desktop sticker that shows live progress of your AI coding sessions — Claude Code, Codex, Gemini and more — so you know who's running and who's waiting on you, without switching between terminals.",

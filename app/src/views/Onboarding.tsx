@@ -400,14 +400,14 @@ export function Onboarding() {
       </div>
 
       <div className="ob-foot">
-        <div className="ob-dots" role="tablist" aria-label={t.onboarding.stepOf(step + 1, total)}>
+        {/* 步骤圆点是导航，不是 tab（无对应 tabpanel）：用 aria-current="step" 表达当前步。 */}
+        <div className="ob-dots" role="group" aria-label={t.onboarding.stepsLabel}>
           {steps.map((_, i) => (
             <button
               key={i}
               className={"ob-dot" + (i === step ? " on" : "")}
               aria-label={t.onboarding.stepOf(i + 1, total)}
-              aria-selected={i === step}
-              role="tab"
+              aria-current={i === step ? "step" : undefined}
               onClick={() => setStep(i)}
             />
           ))}
