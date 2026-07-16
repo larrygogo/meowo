@@ -68,6 +68,59 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     }
 }
 
+/// 前端调用：打开使用引导窗口（首次启动自动弹 / 托盘「使用引导」/ 设置页「使用引导」按钮）。
+/// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
+#[tauri::command]
+pub(crate) fn open_onboarding(app: tauri::AppHandle) {
+    std::thread::spawn(move || open_onboarding_window(&app));
+}
+
+/// 打开（或聚焦）引导窗口。label 为 "onboarding"（main.tsx 按此 label 路由到引导页）。
+pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
+    // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
+    if let Some(w) = app.get_webview_window("onboarding") {
+        let _ = w.set_focus();
+        return;
+    }
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "onboarding",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title(tr(ui_lang(&load_settings()), "window.onboarding"))
+    .inner_size(460.0, 600.0)
+    .min_inner_size(460.0, 600.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .decorations(false)
+    .center();
+    // macOS：无边框窗口不自动圆角，设透明由前端 .onboarding 的 border-radius 呈现（同设置/更新窗口）。
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    match builder.build() {
+        Ok(_onboarding_window) => {
+            // macOS：引导窗口关闭后切回 Accessory，重新隐藏 Dock 图标（同设置/更新窗口）。
+            #[cfg(target_os = "macos")]
+            {
+                let app_handle = app.clone();
+                _onboarding_window.on_window_event(move |e| {
+                    if matches!(
+                        e,
+                        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                    ) {
+                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                    }
+                });
+            }
+        }
+        Err(e) => eprintln!("创建引导窗口失败: {e}"),
+    }
+}
+
 /// 前端调用：打开软件更新窗口（贴纸更新红点 / 设置页「更新到 vX」按钮）。
 /// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
 #[tauri::command]
@@ -249,11 +302,12 @@ pub(crate) fn build_tray_menu(
     lang: &str,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let recall = MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?;
+    let guide = MenuItemBuilder::with_id("guide", tr(lang, "tray.guide")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "tray.quit")).build(app)?;
     MenuBuilder::new(app)
-        .items(&[&recall, &settings, &website, &quit])
+        .items(&[&recall, &guide, &settings, &website, &quit])
         .build()
 }
 
@@ -295,6 +349,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "recall" => recall_sticker(app),
+            "guide" => open_onboarding_window(app),
             "settings" => open_settings_window(app),
             "website" => {
                 let _ = crate::settings::open_url(crate::settings::SITE_URL.to_string());

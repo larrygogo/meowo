@@ -5,6 +5,7 @@ import { App } from "./App";
 import { About } from "./views/About";
 import { Updater } from "./views/Updater";
 import { NewSessionPanel } from "./views/NewSessionPanel";
+import { Onboarding } from "./views/Onboarding";
 import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
 import { installInputModality } from "./input-modality";
@@ -61,6 +62,8 @@ void detectHostOs().then(() => {
           <Updater />
         ) : label === "new-session" ? (
           <NewSessionPanel />
+        ) : label === "onboarding" ? (
+          <Onboarding />
         ) : (
           <App />
         )}

@@ -121,6 +121,10 @@ pub(crate) struct Settings {
     /// API 中转元数据。密钥单独存储，绝不随 Settings 序列化或事件下发。
     #[serde(default)]
     pub(crate) relay: crate::relay::RelaySettings,
+    /// 使用引导是否已看过。缺省 false —— 新装用户及老用户升级后首次启动各自动弹一次引导窗口，
+    /// 看完（或点关闭）即置 true，之后只能从托盘/设置手动再看。
+    #[serde(default)]
+    pub(crate) onboarding_seen: bool,
 }
 
 impl Default for Settings {
@@ -147,6 +151,7 @@ impl Default for Settings {
             active_profile: Default::default(),
             default_profile_names: Default::default(),
             relay: crate::relay::RelaySettings::default(),
+            onboarding_seen: false,
         }
     }
 }
@@ -178,24 +183,28 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "notify.pending.question") => "A session is asking you a question",
         ("en", "notify.pending.plan") => "Plan awaiting approval",
         ("en", "tray.recall") => "Recall sticker",
+        ("en", "tray.guide") => "Getting started",
         ("en", "tray.settings") => "Settings",
         ("en", "tray.website") => "Website",
         ("en", "tray.quit") => "Quit",
         ("en", "window.settings") => "Settings",
         ("en", "window.updater") => "Software Update",
         ("en", "window.newSession") => "New Session",
+        ("en", "window.onboarding") => "Getting started",
         (_, "notify.error") => "会话出错",
         (_, "notify.waiting") => "等待你回复",
         (_, "notify.pending.approval") => "需要你批准工具调用",
         (_, "notify.pending.question") => "会话在问你问题",
         (_, "notify.pending.plan") => "计划待批准",
         (_, "tray.recall") => "找回贴纸",
+        (_, "tray.guide") => "使用引导",
         (_, "tray.settings") => "设置",
         (_, "tray.website") => "官方网站",
         (_, "tray.quit") => "退出",
         (_, "window.settings") => "设置",
         (_, "window.updater") => "软件更新",
         (_, "window.newSession") => "新建会话",
+        (_, "window.onboarding") => "使用引导",
         _ => "",
     }
 }
@@ -244,6 +253,16 @@ pub(crate) fn update_settings<T>(
 #[tauri::command]
 pub(crate) fn get_settings() -> Settings {
     load_settings()
+}
+
+/// 引导窗口用：把「已看过引导」落盘。刻意不走 set_settings（那条会校验代理、写各 agent 配置、
+/// 重建托盘、广播事件），引导只需翻一个布尔，用轻量的 update_settings 单改单存即可。
+#[tauri::command]
+pub(crate) fn mark_onboarding_seen() -> Result<(), String> {
+    update_settings(|s| {
+        s.onboarding_seen = true;
+        Ok(())
+    })
 }
 
 #[tauri::command]

@@ -162,17 +162,24 @@ fn proxy_lands_in_claude_settings_json_end_to_end() {
         "必须告知为什么没生效，而不是静默不写"
     );
 
-    // ── 5. 认领记录确实落盘了（下次运行据此判断哪些键是我们的） ──
+    // ── 5. 四段式认证信息正确编码并落盘；认领记录也保存规范化后的值 ──
     write_meowo_settings(
         &meowo_dir,
-        serde_json::json!({ "mode": "custom", "url": "http://127.0.0.1:7890" }),
+        serde_json::json!({
+            "mode": "custom",
+            "url": "proxy.example:8888:user-name_test~v1:p@ss/word"
+        }),
     );
     meowo_app_lib::proxy::apply_to_agent_configs();
+    let expected = "http://user-name_test~v1:p%40ss%2Fword@proxy.example:8888";
+    let v = read_json(&settings_json);
+    assert_eq!(v["env"]["HTTPS_PROXY"], expected);
+    assert_eq!(v["env"]["HTTP_PROXY"], expected);
     let applied: BTreeMap<String, BTreeMap<String, String>> = serde_json::from_str(
         &std::fs::read_to_string(meowo_dir.join("proxy-applied.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(applied["claude"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(applied["claude"]["HTTPS_PROXY"], expected);
 
     // ── 6. 所有权状态写不下来 → 回滚刚写入的代理，不能留下一个日后无法安全删除的键 ──
     std::fs::write(&settings_json, r#"{"env":{"FOO":"bar"}}"#).unwrap();
