@@ -176,8 +176,13 @@ pub(crate) fn validate_url(url: &str) -> Result<(), String> {
 /// `/` 等字符改变 URL 结构。已有协议、标准 `user:pass@host` 写法及普通 `host:port` 原样保留。
 fn normalize_proxy_url(url: &str) -> Result<Cow<'_, str>, String> {
     let u = url.trim();
-    if u.contains("://") {
-        return Ok(Cow::Borrowed(u));
+    // 只有当 `://` 之前是纯 scheme（不含 `:`）时才认作「已带协议」原样保留。否则像
+    // `host:port:user:pa://ss`（口令里恰好含 `://`）会被误判成带 scheme 而跳过规范化，
+    // 结构分隔符不转义、后续校验/连接异常。
+    if let Some(idx) = u.find("://") {
+        if !u[..idx].contains(':') {
+            return Ok(Cow::Borrowed(u));
+        }
     }
 
     let (host, tail) = if let Some(rest) = u.strip_prefix('[') {
@@ -758,6 +763,11 @@ mod tests {
         assert_eq!(
             normalize_proxy_url("http://user:pass@host:8080").unwrap(),
             "http://user:pass@host:8080"
+        );
+        // 口令里恰好含 `://` 不能被误判成「已带协议」而跳过规范化——`://` 前有 `:`，非 scheme。
+        assert_eq!(
+            normalize_proxy_url("proxy.example:8080:user:pa://ss").unwrap(),
+            "http://user:pa%3A%2F%2Fss@proxy.example:8080"
         );
         assert_eq!(
             ureq_compatible_url("http://user%40example:p%40ss%2Fword%3Atail@proxy.example:8080"),

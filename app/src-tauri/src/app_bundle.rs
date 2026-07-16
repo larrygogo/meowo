@@ -47,6 +47,12 @@ fn rename_legacy_bundle(executable: &Path) -> RenameOutcome {
     }
     match std::fs::rename(&old, &new) {
         Ok(()) => RenameOutcome::Renamed { old, new },
+        // 并发首启竞态：另一实例已把 old 改名成 new，本实例的 rename 得到 NotFound。此时旧路径
+        // 已消失，继续从旧 bundle 启动会让基于 current_exe 的初始化失败——视作「已迁移」，
+        // 让调用方照常从新路径重启。
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && new.exists() => {
+            RenameOutcome::Renamed { old, new }
+        }
         Err(error) => RenameOutcome::Skipped(format!(
             "无法把 {} 重命名为 {}：{error}",
             old.display(),
