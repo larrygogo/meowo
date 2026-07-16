@@ -1004,6 +1004,342 @@ html, body {
 :root[data-theme="light"] .updater { background: #faf9f5; }
 /* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .settings 的处理）。 */
 :root.platform-macos .updater { border-radius: 12px; }
+
+/* ===== 使用引导窗口（label "onboarding"）：首次启动自动弹，分步介绍核心用法与窗口/设置。
+   固定 460×600，顶栏可拖动 + 关闭/跳过，中部每步一张迷你界面示意图 + 要点，底部圆点 + 上一步/下一步。 ===== */
+.onboarding {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1c1c1e;
+  color: var(--cc-text);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+:root[data-theme="light"] .onboarding { background: #f6f6f7; }
+:root.platform-macos .onboarding { border-radius: 12px; }
+.ob-bar {
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 0 8px;
+}
+.ob-skip {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--cc-text-faint);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--r-sm, 6px);
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s;
+}
+.ob-skip:hover { color: var(--cc-text); background: var(--cc-surface); }
+.ob-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 4px 34px 8px;
+  animation: panel-fade 0.22s ease;
+}
+/* ── 每步的迷你界面示意图区（固定高度，内容垂直居中） ── */
+.ob-hero {
+  flex: none;
+  min-height: 158px;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  margin-top: 2px;
+}
+/* 迷你「贴纸窗口」：复刻真实贴纸的深色卡面 + 圆角 + 细边，装 tab/卡片 */
+.obm-panel {
+  width: 214px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border-radius: 12px;
+  background: rgba(var(--cc-bg-rgb), 1);
+  border: 1px solid var(--cc-border);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+}
+.obm-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 1px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cc-text);
+}
+.obm-bar .obm-logo { border-radius: 5px; display: block; }
+/* 迷你贴纸底栏：左用量读数 + 右动作条（新建/搜索/设置/置顶），置顶图钉在最右并高亮 */
+.obm-footbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--cc-border);
+}
+.obm-usage { display: flex; align-items: center; gap: 4px; }
+.obm-uchip { width: 11px; height: 11px; flex: none; border-radius: 4px; background: var(--cc-surface-hover); }
+.obm-ubar { width: 34px; height: 5px; border-radius: 3px; background: var(--cc-surface-hover); overflow: hidden; }
+.obm-ubar > span { display: block; height: 100%; width: 34%; border-radius: 3px; background: var(--cc-accent); }
+.obm-acts { display: flex; align-items: center; gap: 5px; }
+.obm-act {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: var(--cc-surface-hover);
+  color: var(--cc-text-faint);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1;
+}
+/* 搜索：小放大镜（圆 + 柄）；设置：三点，都用极简形状避免小尺寸糊成一团 */
+.obm-act-search { position: relative; }
+.obm-act-search::before { content: ""; width: 6px; height: 6px; border: 1.5px solid currentColor; border-radius: 50%; }
+.obm-act-search::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 3px; height: 1.5px; background: currentColor; transform: rotate(45deg); transform-origin: right; }
+.obm-act svg { display: block; }
+.obm-act-pin { background: var(--cc-accent-soft); color: var(--cc-accent-text); box-shadow: 0 0 0 1.5px var(--cc-accent-border); }
+.obm-tabs { display: flex; gap: 9px; padding: 0 1px 2px; font-size: 9px; color: var(--cc-text-faint); }
+.obm-tabs b { font-weight: 500; }
+.obm-tabs b.on { color: var(--cc-accent-text); font-weight: 600; }
+.obm-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--cc-surface);
+}
+.obm-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; position: relative; }
+.obm-run { background: var(--cc-run-vivid); }
+/* 运行态转圈环，与真实 .stk-ind-run::after 一致的语义 */
+.obm-run::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid var(--cc-run-vivid);
+  border-top-color: transparent;
+  opacity: 0.7;
+  animation: ob-spin 1.1s linear infinite;
+}
+.obm-wait { background: var(--cc-warn-vivid); }
+.obm-active { background: var(--cc-ok-vivid); }
+.obm-off { background: transparent; border: 2px dashed var(--cc-text-faint); }
+@keyframes ob-spin { to { transform: rotate(360deg); } }
+.obm-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.obm-lines i { display: block; height: 4px; border-radius: 3px; background: var(--cc-text-faint); opacity: 0.55; }
+.obm-l1 { width: 68%; }
+.obm-l2 { width: 42%; opacity: 0.32; }
+.obm-l2.wide { width: 82%; }
+/* 卡片内的 Context 进度条（对应 Claude 会话的已用百分比） */
+.obm-bar-ctx { height: 5px; border-radius: 3px; background: var(--cc-surface-hover); overflow: hidden; }
+.obm-bar-ctx span { display: block; height: 100%; border-radius: 3px; background: var(--cc-accent); }
+
+/* 直达 + 提醒：通知气泡 + 卡片被点击 → 箭头 → 迷你终端 */
+.obm-jump { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.obm-toast {
+  align-self: flex-end;
+  margin-right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 128px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: rgba(var(--cc-bg-rgb), 1);
+  border: 1px solid var(--cc-border);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.26);
+}
+.obm-toast i { flex: 1; height: 4px; border-radius: 3px; background: var(--cc-text-faint); opacity: 0.5; }
+.obm-jump-row { display: flex; align-items: center; gap: 9px; }
+.obm-card-click {
+  width: 128px;
+  background: rgba(var(--cc-bg-rgb), 1);
+  border: 1px solid var(--cc-accent-border);
+  box-shadow: 0 0 0 3px var(--cc-accent-soft);
+}
+.obm-cursor { position: absolute; right: -5px; bottom: -6px; color: var(--cc-text); filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4)); }
+.obm-arrow { color: var(--cc-text-faint); flex: none; }
+.obm-term {
+  width: 132px;
+  padding: 8px 9px;
+  border-radius: 9px;
+  background: #16161a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.obm-term-dots { display: flex; gap: 4px; margin-bottom: 6px; }
+.obm-term-dots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.22); }
+.obm-term code { display: block; font-size: 9.5px; line-height: 1.3; color: #4ec9a5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 窗口与设置：桌面上的置顶贴纸 + 菜单栏/托盘图标（带计数徽章） */
+.obm-desktop { position: relative; width: 240px; height: 150px; display: grid; place-items: center; }
+.obm-desktop .obm-panel-pinned { width: 200px; }
+.obm-tray {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.obm-tray-ico {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--cc-surface-hover);
+}
+.obm-tray-ico img { border-radius: 4px; display: block; }
+.obm-tray-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--cc-warn-vivid);
+  color: #1a1a1b;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+.obm-panel-pinned { box-shadow: 0 0 0 1.5px var(--cc-accent-border), 0 10px 26px rgba(0, 0, 0, 0.28); }
+
+/* 卡片菜单示意：卡片右上「⋯」高亮 + 展开的操作菜单弹层（星标/便签/改名/归档） */
+.obm-cardmenu { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 214px; }
+.obm-card-menu { background: rgba(var(--cc-bg-rgb), 1); border: 1px solid var(--cc-border); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28); }
+.obm-menubtn { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--cc-accent-soft); color: var(--cc-accent-text); box-shadow: 0 0 0 1.5px var(--cc-accent-border); }
+.obm-pop {
+  align-self: flex-end;
+  width: 132px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(var(--cc-bg-rgb), 1);
+  border: 1px solid var(--cc-border);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.36);
+}
+.obm-pop-item { display: flex; align-items: center; gap: 8px; padding: 4px 7px; border-radius: 6px; font-size: 10.5px; color: var(--cc-text-dim); }
+.obm-pop-item:first-child { background: var(--cc-surface); color: var(--cc-text); }
+.obm-pop-ico { width: 13px; height: 13px; flex: none; display: grid; place-items: center; color: var(--cc-text-faint); }
+.obm-pop-item:first-child .obm-pop-ico { color: var(--cc-accent-text); }
+.obm-pop-ico svg { width: 12px; height: 12px; }
+.obm-pop-sep { height: 1px; margin: 3px 5px; background: var(--cc-border); }
+
+/* 引导内嵌设置：与设置页 .row 同款外观（标签左、控件右），即时写入生效 */
+.ob-set { width: 100%; display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.ob-set-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: var(--cc-surface);
+  text-align: left;
+}
+.ob-set-ico { flex: none; width: 18px; height: 18px; display: grid; place-items: center; color: var(--cc-text-faint); }
+.ob-set-ico svg { width: 17px; height: 17px; }
+.ob-set-text { flex: 1; min-width: 0; }
+.ob-set-label { font-size: 13px; color: var(--cc-text); }
+.ob-set-desc { font-size: 11px; color: var(--cc-text-faint); margin-top: 2px; line-height: 1.4; }
+
+.ob-title {
+  margin: 16px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.ob-desc {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--cc-text-dim);
+  max-width: 340px;
+}
+.ob-points {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+.ob-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--cc-text-dim);
+}
+.ob-tick {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 0.5px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--cc-accent-soft);
+  color: var(--cc-accent-text);
+}
+.ob-reopen {
+  margin: 18px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--cc-text-faint);
+  max-width: 340px;
+}
+.ob-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--cc-border);
+}
+.ob-dots { display: flex; align-items: center; gap: 7px; }
+.ob-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  appearance: none;
+  border: none;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--cc-surface-hover);
+  cursor: pointer;
+  transition: background 0.16s, width 0.16s;
+}
+.ob-dot:hover { background: var(--cc-text-faint); }
+.ob-dot.on { width: 18px; border-radius: 4px; background: var(--cc-accent); }
+.ob-actions { display: flex; align-items: center; gap: 8px; }
+.ob-actions .sbtn { min-width: 74px; }
 .up-bar { flex: none; height: 32px; display: flex; align-items: center; justify-content: flex-end; padding: 0 8px; gap: 6px; }
 /* dev 专用 mock 切换钮（生产构建不渲染）：靠左低调小字 */
 .up-devmock {

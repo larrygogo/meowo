@@ -329,5 +329,55 @@ export const en: Dict = {
     blurb: "Meowo — a desktop sticker showing live progress of all your AI coding sessions.",
     feedback: "Feedback",
     changelog: "Changelog",
+    guide: "Getting started",
+  },
+  onboarding: {
+    skip: "Skip",
+    back: "Back",
+    next: "Next",
+    done: "Get started",
+    stepsLabel: "Onboarding steps",
+    stepOf: (i, n) => `Step ${i} of ${n}`,
+    welcome: {
+      title: "Welcome to Meowo",
+      desc: "A desktop sticker that shows live progress of your AI coding sessions — Claude Code, Codex, Gemini and more — so you know who's running and who's waiting on you, without switching between terminals.",
+    },
+    board: {
+      title: "Live session board",
+      points: [
+        "One card per session: project, title, latest AI message and connection status.",
+        "Tabs for All / Waiting / Running / Archived, each with a count.",
+        "Color-coded status: orange = running, yellow = waiting, green = online, dashed = disconnected.",
+        "Sessions waiting on you are sorted by wait time — the longest wait comes first.",
+      ],
+    },
+    terminal: {
+      title: "Jump to terminal · Nudges",
+      points: [
+        "Click a connected session to jump straight to its terminal tab.",
+        "Click a disconnected session to reopen a terminal in its folder and resume.",
+        "When a session needs a reply or gets stuck it moves to Waiting and pings you once.",
+      ],
+    },
+    cardmenu: {
+      title: "Card menu: manage each session",
+      desc: "Hover a card and a “⋯” menu appears — star, note, rename, archive, new session and open folder all live there.",
+      mode: "Open it from the card button, or by right-click",
+    },
+    window: {
+      title: "Window & settings",
+      points: [
+        "Drag the sticker anywhere on your desktop — it stays where you drop it.",
+        "Hit the pin at the bottom-right of the toolbar to keep the sticker always on top.",
+        "Recall the sticker or open Settings anytime from the tray / menu bar icon.",
+        "Theme, notifications, launch-at-login and more live in Settings.",
+      ],
+      reopenHint: "You can reopen this guide anytime from the tray / menu bar icon or Settings.",
+    },
+    setup: {
+      title: "Choose your preferences",
+      desc: "Just the common ones — change any of them later in Settings.",
+      terminalHint: "Which terminal to use when reopening a disconnected session.",
+    },
   },
 };
