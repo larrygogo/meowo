@@ -399,6 +399,15 @@ function AboutSection({
             {t.about.open}
           </button>
         </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.about.guide}</div>
+            <div className="row-desc">{t.onboarding.welcome.title}</div>
+          </div>
+          <button className="sbtn" onClick={() => void invoke("open_onboarding").catch(() => {})}>
+            {t.about.open}
+          </button>
+        </div>
       </div>
 
       <p className="about-blurb">{t.about.blurb}</p>

@@ -34,7 +34,9 @@ use install::{
 use terminal::{
     focus_session, new_session, open_project_dir, restart_session_supported, resume_session,
 };
-use window::{open_new_session_window, open_settings, open_update_window, recall_center};
+use window::{
+    open_new_session_window, open_onboarding, open_settings, open_update_window, recall_center,
+};
 // 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流，见该函数），
 // 由 agent_pids_cached 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
 use watch::{
@@ -56,10 +58,14 @@ pub(crate) use settings::{load_settings, tr, ui_lang};
 pub(crate) use terminal::resume_terminal_kind;
 #[cfg(target_os = "macos")]
 pub(crate) use window::open_settings_window;
+// macOS 托盘菜单「使用引导」项走 crate::open_onboarding_window。
+#[cfg(target_os = "macos")]
+pub(crate) use window::open_onboarding_window;
 
 use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use settings::{
-    get_autostart, get_effective_proxy, get_settings, open_url, set_autostart, set_settings,
+    get_autostart, get_effective_proxy, get_settings, mark_onboarding_seen, open_url,
+    set_autostart, set_settings,
 };
 use snap::{
     cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
@@ -1167,6 +1173,7 @@ pub fn run() {
             set_autostart,
             get_settings,
             set_settings,
+            mark_onboarding_seen,
             get_effective_proxy,
             get_relay_secret_status,
             get_relay_secrets,
@@ -1176,6 +1183,7 @@ pub fn run() {
             download_update,
             install_downloaded_update,
             open_settings,
+            open_onboarding,
             open_update_window,
             recall_center,
             open_url,
@@ -1336,6 +1344,15 @@ pub fn run() {
             spawn_db_watcher(app.handle().clone(), path.clone());
             spawn_liveness_watch(app.handle().clone(), path.clone(), tx_cache.clone());
             spawn_first_import(app.handle().clone(), path.clone());
+            // 首次启动（新装 / 老用户升级后第一次）自动弹使用引导。延迟一拍让贴纸先画出来，
+            // 引导窗口叠在已成型的应用上；看完/关闭时前端置 onboarding_seen=true，之后只手动打开。
+            if !crate::settings::load_settings().onboarding_seen {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    window::open_onboarding_window(&handle);
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
