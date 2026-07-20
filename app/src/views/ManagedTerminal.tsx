@@ -122,7 +122,9 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       if (data.includes("\r")) {
         onUserSubmitRef.current?.();
       }
-      void writeManagedTerminal(sessionId, data).catch(() => {});
+      // 写失败必须可见：典型场景是整段粘贴超过后端单次输入上限被拒——
+      // 静默吞掉的话，粘贴无声消失，终端画面纹丝不动。
+      void writeManagedTerminal(sessionId, data).catch((e) => setError(String(e)));
     });
     let unOutput: (() => void) | undefined;
     let unExit: (() => void) | undefined;
@@ -177,6 +179,19 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     const inspectAttention = (bytes: Uint8Array) => {
       attentionTailRef.current = (attentionTailRef.current + attentionDecoder.decode(bytes, { stream: true })).slice(-16_384);
     };
+    // 整屏抓取 + 多条回溯正则不便宜，不能每个输出 chunk 都跑一遍——构建/日志刷屏时
+    // 事件很密，逐帧扫描会拖垮主线程。合并成至多每 150ms 一次的尾随节流：持续输出时
+    // 有界地扫，输出停下后最后一批也保证在 150ms 内被扫到（审批/信任页正是这种停帧画面）。
+    let attentionScanTimer = 0;
+    const scheduleAttentionScan = () => {
+      if (attentionScanTimer) return;
+      attentionScanTimer = window.setTimeout(() => {
+        attentionScanTimer = 0;
+        if (cancelled) return;
+        const screen = renderedScreen();
+        if (screen) reportAttention(screen);
+      }, 150);
+    };
     const writeOutput = (payload: OutputEvent) => {
       const bytes = decodeBase64(payload.data);
       const offset = Number.isFinite(payload.offset) ? payload.offset : nextOffset;
@@ -188,10 +203,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       nextOffset = end;
       inspectAttention(visible);
       markPainted(visible);
-      terminal.write(visible, () => {
-        const screen = renderedScreen();
-        if (screen) reportAttention(screen);
-      });
+      terminal.write(visible, scheduleAttentionScan);
     };
     const applyExit = (payload: ExitEvent) => {
       window.clearTimeout(snapshotTimer);
@@ -253,6 +265,9 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     rearmRef.current = () => {
       if (cancelled) return;
       window.clearTimeout(snapshotTimer);
+      // 排程中的扫描读的是旧进程的画面，重启后不再有意义。
+      window.clearTimeout(attentionScanTimer);
+      attentionScanTimer = 0;
       nextOffset = 0;
       hasWrittenOutput = false;
       painted = false;
@@ -313,6 +328,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       window.clearTimeout(snapshotTimer);
       window.clearTimeout(giveUpTimer);
       window.clearTimeout(resizeTimer);
+      window.clearTimeout(attentionScanTimer);
       observer.disconnect();
       input.dispose();
       unOutput?.();
@@ -414,9 +430,14 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
             const text = lastScreenRef.current || visibleTerminalText(attentionTailRef.current);
             if (text) onAttentionRef.current?.({ id: "manual-terminal-screen", text });
           }}>{t.chat.terminalGuiInteraction}</button>
-          <button type="button" onClick={() => void openAttachedTerminal(sessionId)}>{t.chat.terminalAttach}</button>
-          <button type="button" onClick={() => void stopManagedTerminal(sessionId)}>{t.chat.terminalStop}</button>
+          {/* 后端刻意让 attach 失败可见（不静默回退 GUI），前端吞掉就前功尽弃；
+              结束失败同理——终端看起来还活着，用户会以为已经停了。 */}
+          <button type="button" onClick={() => { setError(""); void openAttachedTerminal(sessionId).catch((e) => setError(String(e))); }}>{t.chat.terminalAttach}</button>
+          <button type="button" onClick={() => { setError(""); void stopManagedTerminal(sessionId).catch((e) => setError(String(e))); }}>{t.chat.terminalStop}</button>
         </div>
+      )}
+      {active && error && (
+        <button type="button" className="managed-terminal-error" role="alert" onClick={() => setError("")}>{error}</button>
       )}
     </div>
   );

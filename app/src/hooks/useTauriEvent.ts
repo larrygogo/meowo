@@ -21,7 +21,9 @@ export function useTauriEvent<T>(event: string, handler: (event: Event<T>) => vo
         if (disposed) dispose();
         else unlisten = dispose;
       })
-      .catch(() => {});
+      // 注册失败意味着该事件从此收不到（如 login-done 会让登录流程永久挂起），
+      // 至少留下线索。
+      .catch((error) => console.error(`listen(${event}) 注册失败`, error));
 
     return () => {
       disposed = true;

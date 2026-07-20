@@ -563,12 +563,24 @@ export function ChatWindow() {
     if (sessionId <= 0) return;
     const consumerId = `chat-${sessionId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     let disposed = false;
-    void registerApprovalConsumer(sessionId, consumerId).then(() => {
-      // effect 可能在 IPC 返回前已经因切会话/关窗清理；再次注销闭合这个竞态窗口。
-      if (disposed) void unregisterApprovalConsumer(consumerId).catch(() => {});
-    }).catch(() => {});
+    let retryTimer = 0;
+    // 注册失败不能就此放弃：没有租约，后端会把所有审批直接交还终端 TUI，
+    // 而这扇窗看起来一切正常（轮询永远拿不到 pending）——用户以为在 GUI 等审批，
+    // 实际审批卡在终端里没人看。effect 不会重跑，这里自己做有限退避重试。
+    const register = (attempt: number) => {
+      void registerApprovalConsumer(sessionId, consumerId).then(() => {
+        // effect 可能在 IPC 返回前已经因切会话/关窗清理；再次注销闭合这个竞态窗口。
+        if (disposed) void unregisterApprovalConsumer(consumerId).catch(() => {});
+      }).catch((error) => {
+        console.error("注册审批消费者失败", error);
+        if (disposed || attempt >= 5) return;
+        retryTimer = window.setTimeout(() => register(attempt + 1), 500 * 2 ** attempt);
+      });
+    };
+    register(0);
     return () => {
       disposed = true;
+      window.clearTimeout(retryTimer);
       void unregisterApprovalConsumer(consumerId).catch(() => {});
     };
   }, [sessionId]);
