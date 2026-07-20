@@ -1,7 +1,7 @@
 //! Live-session query service and Tauri adapters.
 
 use meowo_store::LiveSession;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
@@ -209,7 +209,7 @@ pub(crate) struct PageReq {
 }
 
 pub(crate) fn live_sessions_blocking(
-    db_path: &PathBuf,
+    db_path: &Path,
     tx_cache: &Mutex<meowo_agent::TranscriptCache>,
     alive: &std::collections::HashSet<i64>,
     filter: &str,

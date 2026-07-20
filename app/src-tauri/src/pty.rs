@@ -17,6 +17,18 @@ use tauri::{Emitter, Manager};
 
 const BACKLOG_LIMIT: usize = 1024 * 1024;
 
+#[derive(Clone, Copy)]
+pub(crate) struct TerminalSize {
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+}
+
+impl TerminalSize {
+    pub(crate) const fn new(cols: u16, rows: u16) -> Self {
+        Self { cols, rows }
+    }
+}
+
 struct ManagedPty {
     session_id: AtomicI64,
     /// Option 是给收尾用的：ClosePseudoConsole（drop）让 conhost 退出、释放资源。
@@ -288,8 +300,7 @@ impl PtyBroker {
         argv: &[String],
         cwd: Option<&str>,
         env: &[(String, String)],
-        cols: u16,
-        rows: u16,
+        terminal_size: TerminalSize,
     ) -> Result<(), String> {
         if argv.is_empty() {
             return Err("该 Agent 不支持恢复会话".into());
@@ -304,7 +315,7 @@ impl PtyBroker {
         }
 
         let pair = native_pty_system()
-            .openpty(size(cols, rows))
+            .openpty(size(terminal_size.cols, terminal_size.rows))
             .map_err(|e| e.to_string())?;
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
@@ -448,7 +459,14 @@ impl PtyBroker {
                 CURRENT_PROTOCOL_VERSION.to_string(),
             ),
         ]);
-        if let Err(error) = self.start(app, temp_id, argv, cwd, &launch_env, cols, rows) {
+        if let Err(error) = self.start(
+            app,
+            temp_id,
+            argv,
+            cwd,
+            &launch_env,
+            TerminalSize::new(cols, rows),
+        ) {
             if let Ok(mut pending) = self.attach.pending.lock() {
                 pending.remove(&launch_token);
             }

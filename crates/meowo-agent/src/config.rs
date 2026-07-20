@@ -721,12 +721,14 @@ mod codex_json {
                 .iter()
                 .any(|e| json_common::claims_here(spec, e, None, agent_id))
             {
-                let mut handler =
+                let handler =
                     json!({ "type": "command", "command": desired_cmd, "timeout": ev.timeout });
                 #[cfg(windows)]
-                {
+                let handler = {
+                    let mut handler = handler;
                     handler["commandWindows"] = json!(desired_windows_cmd.clone());
-                }
+                    handler
+                };
                 arr.push(json!({ "hooks": [handler] }));
                 changed = true;
             }

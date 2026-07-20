@@ -64,7 +64,7 @@ function promptSnippet(visible: string, index: number, contextBefore = 1): strin
 export function terminalAttention(text: string, markers: string[], interactivePrompt = false): TerminalAttention | null {
   if (!text) return null;
   const visible = visibleTerminalText(text);
-  const lower = visible.toLocaleLowerCase();
+  const lower = visible.toLowerCase();
   let best: { index: number; id: string } | null = null;
   const longSession = /this session is[^\n]{0,120}\bold and[^\n]{0,80}\btokens\b/i.exec(visible)
     ?? /resuming the full session will consume a substantial portion of your usage limits/i.exec(visible);
@@ -75,7 +75,7 @@ export function terminalAttention(text: string, markers: string[], interactivePr
     best = { index: commandApproval.index, id: "claude:command-approval" };
   }
   for (const marker of markers) {
-    const normalized = marker.toLocaleLowerCase();
+    const normalized = marker.toLowerCase();
     const index = lower.lastIndexOf(normalized);
     if (index >= 0 && (!best || index > best.index)) best = { index, id: `provider:${normalized}` };
   }
@@ -159,7 +159,7 @@ export function terminalAttention(text: string, markers: string[], interactivePr
     // 最后一次重绘，描述取最短的完整版本（长版本通常混进了下一轮提示文字）。
     const unique = new Map<string, TerminalAttentionOption>();
     for (const occurrence of occurrences) {
-      const key = `${occurrence.kind}:${occurrence.label.toLocaleLowerCase()}`;
+      const key = `${occurrence.kind}:${occurrence.label.toLowerCase()}`;
       const existing = unique.get(key);
       if (!existing) {
         unique.set(key, { ...occurrence });

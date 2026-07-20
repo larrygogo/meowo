@@ -89,8 +89,8 @@ pub(crate) struct Settings {
     /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
     #[serde(default = "default_terminal_open_mode")]
     pub(crate) terminal_open_mode: String,
-    /// 打开会话落到哪个视图：chat = Meowo 对话窗口（默认），terminal = 外部终端。
-    /// 兼容老 settings.json（缺席 → chat）。
+    /// 打开会话落到哪个视图：terminal = 外部终端（默认），chat = Meowo 对话窗口。
+    /// 兼容老 settings.json（缺席 → terminal）。
     #[serde(default = "default_session_open_in")]
     pub(crate) session_open_in: String,
     /// 卡片菜单触发方式：button = 卡片菜单按钮（默认），context = 右键菜单。兼容老 settings.json。

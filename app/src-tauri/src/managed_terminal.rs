@@ -34,8 +34,7 @@ pub(crate) async fn start_managed_terminal(
                 cwd,
                 session.cc_session_id,
                 provider,
-                cols,
-                rows,
+                super::pty::TerminalSize::new(cols, rows),
             )
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]

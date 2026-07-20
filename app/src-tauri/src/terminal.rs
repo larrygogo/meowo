@@ -1427,7 +1427,7 @@ pub(crate) async fn takeover_managed_terminal(
     {
         let broker = state.ptys.clone();
         let db = state.db_path.clone();
-        return tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             let store = open_store(&db)?;
             let session = store.get_session(session_id).map_err(|e| e.to_string())?;
             let provider = store
@@ -1461,12 +1461,11 @@ pub(crate) async fn takeover_managed_terminal(
                 cwd,
                 session.cc_session_id,
                 provider,
-                cols,
-                rows,
+                crate::pty::TerminalSize::new(cols, rows),
             )
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -1540,8 +1539,7 @@ fn start_managed_resume(
         cwd,
         session_id,
         provider,
-        100,
-        30,
+        crate::pty::TerminalSize::new(100, 30),
     )?;
     reveal_session(&app, &broker, sid)
 }
@@ -1557,8 +1555,7 @@ pub(crate) fn start_managed_resume_sized(
     cwd: Option<String>,
     session_id: String,
     provider: String,
-    cols: u16,
-    rows: u16,
+    terminal_size: crate::pty::TerminalSize,
 ) -> Result<(), String> {
     ensure_session_profile_available(&provider, &session_id)?;
     let (resolved, resume) = resolve_resume_plan(&session_id, cwd.as_deref(), &provider);
@@ -1580,8 +1577,7 @@ pub(crate) fn start_managed_resume_sized(
         &resume,
         resolved.as_deref(),
         &env,
-        cols,
-        rows,
+        terminal_size,
     ) {
         if let Some(id) = revived {
             rollback_failed_resume(id);
