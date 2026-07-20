@@ -560,32 +560,81 @@ fn resolve_path(
     find_transcript_by_session(session_id)
 }
 
-/// runtime 能力清单通常在 transcript 开头；恢复会话后 Claude 也可能在末尾写一份更新清单。
-/// 各读 4 MiB，避免为了几十个 skill 在打开 ChatWindow 时全量扫描数百 MiB 的长会话。
-fn transcript_capability_windows(path: &std::path::Path) -> Vec<String> {
-    use std::io::{Read, Seek, SeekFrom};
-    const WINDOW: u64 = 4 * 1024 * 1024;
-    let Ok(mut file) = std::fs::File::open(path) else { return Vec::new() };
-    let Ok(len) = file.metadata().map(|metadata| metadata.len()) else { return Vec::new() };
-    let mut out = Vec::new();
-    let mut head = Vec::new();
-    if file.by_ref().take(WINDOW).read_to_end(&mut head).is_ok() {
-        out.push(String::from_utf8_lossy(&head).into_owned());
-    }
-    if len > WINDOW {
-        let start = len.saturating_sub(WINDOW);
-        if file.seek(SeekFrom::Start(start)).is_ok() {
-            let mut tail_bytes = Vec::new();
-            if file.read_to_end(&mut tail_bytes).is_ok() {
-                let tail = String::from_utf8_lossy(&tail_bytes);
-                // 起点可能落在一条 JSON 中间；丢掉残片，避免把其中的换行误当 JSONL 边界。
-                if let Some(newline) = tail.find('\n') {
-                    out.push(tail[newline + 1..].to_string());
-                }
-            }
+/// 扫 buf 里**完整行**（到最后一个 `\n` 为止）中的 skill_listing，更新 `latest`，
+/// 返回处理到的字节数（最后一个 `\n` 之后的位置；无 `\n` 时为 0）。
+/// 按字节找行边界再 lossy 解码：lossy 会把非法序列换成 U+FFFD，先解码再算偏移会错位。
+fn scan_complete_lines(buf: &[u8], latest: &mut Option<Vec<crate::SlashCommand>>) -> usize {
+    let Some(end) = buf.iter().rposition(|&byte| byte == b'\n') else {
+        return 0;
+    };
+    let text = String::from_utf8_lossy(&buf[..end]);
+    for line in text.lines() {
+        if let Some(commands) = skill_listing_from_line(line) {
+            *latest = Some(commands);
         }
     }
-    out
+    end + 1
+}
+
+/// runtime 能力清单通常在 transcript 开头；恢复会话后 Claude 也可能在末尾写一份更新清单。
+/// 各读 4 MiB，避免为了几十个 skill 在打开 ChatWindow 时全量扫描数百 MiB 的长会话。
+/// 返回（清单，已扫描到的字节偏移）——偏移落在行首，供增量扫描继续。
+fn full_skill_scan(path: &std::path::Path) -> (Option<Vec<crate::SlashCommand>>, u64) {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 4 * 1024 * 1024;
+    let mut latest = None;
+    let Ok(mut file) = std::fs::File::open(path) else { return (None, 0) };
+    let Ok(len) = file.metadata().map(|metadata| metadata.len()) else { return (None, 0) };
+    let mut head = Vec::new();
+    if file.by_ref().take(WINDOW).read_to_end(&mut head).is_err() {
+        return (None, 0);
+    }
+    let scanned = scan_complete_lines(&head, &mut latest);
+    if len <= WINDOW {
+        return (latest, scanned as u64);
+    }
+    let start = len - WINDOW;
+    let mut tail = Vec::new();
+    if file.seek(SeekFrom::Start(start)).is_err() || file.read_to_end(&mut tail).is_err() {
+        return (latest, scanned as u64);
+    }
+    // 起点可能落在一条 JSON 中间；跳到下一行行首再扫，避免把残片里的换行误当 JSONL 边界。
+    let Some(newline) = tail.iter().position(|&byte| byte == b'\n') else {
+        return (latest, scanned as u64);
+    };
+    let offset = newline + 1;
+    let scanned = scan_complete_lines(&tail[offset..], &mut latest);
+    (latest, start + (offset + scanned) as u64)
+}
+
+/// skill 清单的增量扫描缓存。ChatWindow 在 `runtime_commands_pending` 期间随每次 650ms
+/// 轮询重新探测；无缓存时每次都重读最多 8 MiB 窗口 + 重扫。缓存后：文件未变只花一次
+/// stat；transcript 追加（流式会话的常态）只读并扫新增的字节——JSONL 只追加不改写，
+/// 首次全量扫过的区间不会再长出新清单。文件被截断/替换（len 变小或 mtime 倒退）时全量重扫。
+struct SkillScan {
+    len: u64,
+    mtime: Option<std::time::SystemTime>,
+    /// 下一次增量扫描的起点（上一条完整行之后的字节偏移）。
+    scanned_to: u64,
+    latest: Option<Vec<crate::SlashCommand>>,
+}
+
+static SKILL_SCANS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, SkillScan>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 从 `from` 起读追加的字节并扫完整行；返回新的扫描终点。读不动（文件被并发替换等）返回 None。
+fn scan_appended(
+    path: &std::path::Path,
+    from: u64,
+    latest: &mut Option<Vec<crate::SlashCommand>>,
+) -> Option<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(from + scan_complete_lines(&buf, latest) as u64)
 }
 
 fn valid_skill_name(name: &str) -> bool {
@@ -637,14 +686,33 @@ fn skill_listing_from_line(line: &str) -> Option<Vec<crate::SlashCommand>> {
 }
 
 fn runtime_skill_commands(path: &std::path::Path) -> Option<Vec<crate::SlashCommand>> {
-    let mut latest = None;
-    for window in transcript_capability_windows(path) {
-        for line in window.lines() {
-            if let Some(commands) = skill_listing_from_line(line) {
-                latest = Some(commands);
+    let Ok(metadata) = std::fs::metadata(path) else { return None };
+    let len = metadata.len();
+    let mtime = metadata.modified().ok();
+    let mut scans = SKILL_SCANS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = scans.get_mut(path) {
+        if entry.len == len && entry.mtime == mtime {
+            return entry.latest.clone();
+        }
+        // 只增长 → 增量扫描追加部分；变短或同长不同 mtime（原地改写）/读失败 → 当作被替换，落回全量。
+        if len > entry.len {
+            let mut latest = entry.latest.take();
+            if let Some(scanned_to) = scan_appended(path, entry.scanned_to, &mut latest) {
+                *entry = SkillScan { len, mtime, scanned_to, latest };
+                return entry.latest.clone();
             }
         }
+        scans.remove(path);
     }
+    let (latest, scanned_to) = full_skill_scan(path);
+    // 条目极小（一个路径 + 几十条命令），上限只为杜绝病态增长。
+    if scans.len() >= 32 {
+        scans.clear();
+    }
+    scans.insert(
+        path.to_path_buf(),
+        SkillScan { len, mtime, scanned_to, latest: latest.clone() },
+    );
     latest
 }
 
@@ -1198,6 +1266,42 @@ mod tests {
         assert_eq!(commands[0].description.as_deref(), Some("Review the current diff"));
         assert_eq!(commands[1].description.as_deref(), Some("Design guidance"));
         assert!(commands.iter().all(|command| command.source == crate::SlashSource::Builtin));
+    }
+
+    /// 缓存契约：追加走增量扫描（残行不入账），截断/重写落回全量重扫。
+    #[test]
+    fn runtime_skill_scan_picks_up_appended_listings_incrementally() {
+        let path = std::env::temp_dir().join(format!(
+            "claude-runtime-skills-append-{}.jsonl",
+            std::process::id()
+        ));
+        let listing = |names: &[&str]| {
+            serde_json::json!({
+                "type": "attachment",
+                "attachment": { "type": "skill_listing", "content": "", "names": names }
+            })
+        };
+        let names_of = |commands: Option<Vec<crate::SlashCommand>>| {
+            commands
+                .unwrap()
+                .iter()
+                .map(|command| command.name.clone())
+                .collect::<Vec<_>>()
+        };
+        std::fs::write(&path, format!("{}\n", listing(&["first"]))).unwrap();
+        assert_eq!(names_of(CLAUDE_TRANSCRIPT.runtime_slash_commands(&path)), vec!["/first"]);
+
+        // 追加一份更新清单 + 一条未写完的残行；增量扫描应取到新清单、跳过残行。
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        write!(file, "{}\n{{\"partial", listing(&["second"])).unwrap();
+        drop(file);
+        assert_eq!(names_of(CLAUDE_TRANSCRIPT.runtime_slash_commands(&path)), vec!["/second"]);
+
+        // 文件被截断重写（长度变短）→ 全量重扫，不沿用旧偏移。
+        std::fs::write(&path, format!("{}\n", listing(&["third"]))).unwrap();
+        assert_eq!(names_of(CLAUDE_TRANSCRIPT.runtime_slash_commands(&path)), vec!["/third"]);
+        let _ = std::fs::remove_file(path);
     }
 
     /// 非 claude agent 走默认实现：直接采信 DB cwd，不去翻 ~/.claude/projects。

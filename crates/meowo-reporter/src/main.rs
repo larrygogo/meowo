@@ -56,7 +56,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             attach::notify_claim(session_id);
         }
     }
-    if canonical_event == "PermissionRequest" {
+    // GUI 审批桥只对「PermissionRequest hook 会阻塞等待并采纳决策输出」的 provider 生效
+    // （见 AgentPlugin::permission_hook_decides）。kimi 的该事件是 observation-only 且 5s
+    // 超时：若也弹 GUI 审批卡，卡片控制不了真实审批，点「允许」还会错误清掉
+    // pending_review——真实提示仍留在终端里等人。这类 provider 的待批状态仍由 dispatch
+    // 落库（卡片显示「去终端处理」），只是不接管决策。
+    let hook_decides = meowo_agent::by_id(&provider).is_some_and(|p| p.permission_hook_decides());
+    if canonical_event == "PermissionRequest" && hook_decides {
         if let Some(session_id) = store.find_session_id_pub(&ev.session_id)? {
             if let Some(decision) = attach::request_approval(
                 session_id,

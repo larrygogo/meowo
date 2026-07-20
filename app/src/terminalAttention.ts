@@ -41,16 +41,18 @@ export function visibleTerminalText(text: string): string {
 
 // 登录、凭据恢复等提示并不总是由 provider 暴露为稳定文案。这里仅收需要键盘确认的
 // 高信号启动提示；命中后 GUI 会显示 CLI 的原文，而不是猜测并重写它的选项。
+// 直接带 g 标志预编译：terminalAttention 跑在 150ms 节流扫描 / 80ms 启动轮询的热路径上，
+// 每次调用重新 new RegExp 是纯浪费；matchAll 不会改写 lastIndex，共享实例是安全的。
 const GENERIC_STARTUP_PROMPTS = [
-  /restore[^\n]{0,100}(?:token|credential|authentication)/i,
-  /(?:token|credential|authentication)[^\n]{0,100}restore/i,
-  /oauth token has been revoked/i,
-  /no oauth token/i,
-  /run \/login to sign in/i,
-  /waiting for sign-in to complete/i,
-  /trust gateway/i,
-  /(?:oauth|token|credential|authentication|sign-in|sign in|login|gateway)[\s\S]{0,320}press (?:enter|esc|escape) to/i,
-  /press (?:enter|esc|escape) to[\s\S]{0,320}(?:oauth|token|credential|authentication|sign-in|sign in|login|gateway)/i,
+  /restore[^\n]{0,100}(?:token|credential|authentication)/gi,
+  /(?:token|credential|authentication)[^\n]{0,100}restore/gi,
+  /oauth token has been revoked/gi,
+  /no oauth token/gi,
+  /run \/login to sign in/gi,
+  /waiting for sign-in to complete/gi,
+  /trust gateway/gi,
+  /(?:oauth|token|credential|authentication|sign-in|sign in|login|gateway)[\s\S]{0,320}press (?:enter|esc|escape) to/gi,
+  /press (?:enter|esc|escape) to[\s\S]{0,320}(?:oauth|token|credential|authentication|sign-in|sign in|login|gateway)/gi,
 ];
 
 function promptSnippet(visible: string, index: number, contextBefore = 1): string {
@@ -80,8 +82,7 @@ export function terminalAttention(text: string, markers: string[], interactivePr
     if (index >= 0 && (!best || index > best.index)) best = { index, id: `provider:${normalized}` };
   }
   for (const pattern of GENERIC_STARTUP_PROMPTS) {
-    const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
-    for (const match of lower.matchAll(new RegExp(pattern.source, flags))) {
+    for (const match of lower.matchAll(pattern)) {
       const index = match.index ?? -1;
       if (index >= 0 && (!best || index > best.index)) {
         // id 按识别规则稳定，而不带整屏文字。TUI 重绘会改变原始流的重复片段，若把它们
@@ -101,7 +102,7 @@ export function terminalAttention(text: string, markers: string[], interactivePr
   if (!best) return null;
   const snippet = best.id === "interactive:numbered-selector"
     ? visible
-    : promptSnippet(visible, best.index, best.id === "claude:command-approval" ? 5 : 1);
+    : promptSnippet(visible, best.index, best.id === "claude:command-approval" ? 12 : 1);
   // 命令审批的选项已经转换成 GUI 按钮，详情区保留命令、用途和审批问题，只从第一个
   // 编号选项起裁掉。这样不会重复 Yes/No，也不会带上键位说明或 TUI 重绘尾部噪声。
   const snippetLines = snippet.split("\n");
@@ -110,8 +111,8 @@ export function terminalAttention(text: string, markers: string[], interactivePr
     ? snippetLines.slice(0, firstOptionLine).join("\n").trim()
     : snippet;
   const labels = snippet.split("\n").flatMap((line) => {
-    const match = line.match(/^\s*(?:[❯>]\s*)?(\d+)\.\s*(.+?)\s*$/);
-    return match ? [{ index: Number(match[1]) - 1, label: match[2] }] : [];
+    const match = line.match(/^\s*([❯>]?)\s*(\d+)\.\s*(.+?)\s*$/);
+    return match ? [{ index: Number(match[2]) - 1, label: match[3], focused: Boolean(match[1]) }] : [];
   });
   if (best.id === "interactive:numbered-selector") {
     const lines = snippet.split("\n");
@@ -200,13 +201,24 @@ export function terminalAttention(text: string, markers: string[], interactivePr
   }
   // trust、长会话恢复以及其他编号选择器共用同一套结构化按钮，不再退化成上一项/下一项。
   if (labels.length >= 2) {
+    // TUI 重绘可能把同一菜单多次留在缓冲里；按编号合并，焦点状态取最后一次重绘。
+    const byIndex = new Map<number, (typeof labels)[number]>();
+    for (const entry of labels) byIndex.set(entry.index, entry);
+    const merged = [...byIndex.values()].sort((a, b) => a.index - b.index);
+    const focused = merged.filter((entry) => entry.focused).at(-1);
     return {
       id: best.id,
       text: displayText,
-      options: labels.map(({ index, label }) => ({
+      options: merged.map(({ index, label }) => ({
         label,
-        // 先回到第一项再下移，避免依赖当前光标停在哪一项。
-        input: "\x1b[A".repeat(8) + "\x1b[B".repeat(Math.max(0, index)) + "\r",
+        // 这些菜单和 numbered-selector 一样首尾循环，「先按 8 次上键归零」在 3 项菜单上
+        // 会绕圈选错（点拒绝实际选中批准）。抓到 ❯ 光标就从它做相对移动；确实没有光标
+        // 标记时才退回归零法——那类菜单没有更可靠的定位依据。
+        input: focused
+          ? (index < focused.index
+            ? "\x1b[A".repeat(focused.index - index) + "\r"
+            : "\x1b[B".repeat(index - focused.index) + "\r")
+          : "\x1b[A".repeat(8) + "\x1b[B".repeat(Math.max(0, index)) + "\r",
       })),
     };
   }

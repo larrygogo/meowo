@@ -223,6 +223,10 @@ impl AgentPlugin for Claude {
     fn display_name(&self) -> &'static str {
         "Claude Code"
     }
+    /// PermissionRequest hook 声明了 310s 阻塞（EVENTS 里的 with_timeout），决策输出会被采纳。
+    fn permission_hook_decides(&self) -> bool {
+        true
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -342,8 +346,16 @@ impl AgentPlugin for Claude {
             unix_shell: "bash", // 脚本用了 `[[ ]]`，dash 跑不了
         })
     }
-    /// claude 把任务标题写进标签页 → meowo-app 可按标题精确切标签，无需我们补 token。
+    /// claude 会把**自动生成的会话标题**写进标签页——但只有自然语言首条消息才触发生成；
+    /// 首条消息是斜杠命令（如 `/code-review`）的会话标签永远停留在默认 "Claude Code"，
+    /// 按任务标题匹配必然落空。故仍保留标题匹配，同时补 reporter token 兜底（见下）。
     fn sets_terminal_tab_title(&self) -> bool {
+        true
+    }
+    /// 标签停在默认标题（斜杠命令会话）或标题漂移时，token 是唯一能精确命中的线索。
+    /// 与 kimi 相同的已知折扣：claude 运行中 spinner 持续刷新标题会覆盖 token；Stop 时
+    /// 写入的 token 在空闲/等输入期间存活——「点卡片定位过去」主要发生在这个阶段。
+    fn writes_tab_token(&self) -> bool {
         true
     }
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
@@ -363,6 +375,13 @@ impl AgentPlugin for Claude {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 斜杠命令会话的标签停在默认 "Claude Code"，标题匹配落空 → 必须同时声明 token 兜底。
+    #[test]
+    fn terminal_title_capabilities_cover_slash_command_sessions() {
+        assert!(Claude.sets_terminal_tab_title());
+        assert!(Claude.writes_tab_token());
+    }
 
     fn probe_in(home: &std::path::Path) -> Option<crate::Installation> {
         VARIANTS[0].probe(id::CLAUDE, home)

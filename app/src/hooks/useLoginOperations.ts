@@ -33,11 +33,19 @@ export function useLoginOperations(onDone?: (event: LoginDone) => void) {
 
   useTauriEvent<LoginDone>("login-done", (event) => {
     const { provider, operationId, outcome } = event.payload;
-    if (pendingRef.current.get(provider) !== operationId) return;
-
-    pendingRef.current.delete(provider);
-    setStates((current) => new Map(current).set(provider, { phase: "done", outcome }));
-    onDone?.(event.payload);
+    if (pendingRef.current.get(provider) === operationId) {
+      pendingRef.current.delete(provider);
+      setStates((current) => new Map(current).set(provider, { phase: "done", outcome }));
+      onDone?.(event.payload);
+      return;
+    }
+    // 登录成功是该 provider 的客观事实：别的窗口（设置页 vs 新会话面板）完成的登录，
+    // 本窗口也必须刷新登录状态，否则会一直停在「未登录」。本窗口自己另有进行中的
+    // 操作时不动它——它的 watcher 很快会以自己的 operationId 收尾。
+    if (outcome === "success" && !pendingRef.current.has(provider)) {
+      setStates((current) => new Map(current).set(provider, { phase: "done", outcome }));
+      onDone?.(event.payload);
+    }
   });
 
   const start = async (provider: AgentId, options: LoginOptions = {}): Promise<boolean> => {

@@ -118,15 +118,26 @@ pub(crate) fn unregister_approval_consumer(state: State<'_, super::AppState>, co
 }
 
 #[tauri::command]
-pub(crate) fn resolve_pending_approval(
+pub(crate) async fn resolve_pending_approval(
     state: State<'_, super::AppState>,
     session_id: i64,
     request_id: String,
     choice: String,
 ) -> Result<(), String> {
-    state
-        .ptys
-        .resolve_approval_choice(session_id, &request_id, &choice)
+    let ptys = state.ptys.clone();
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ptys.resolve_approval_choice(session_id, &request_id, &choice)?;
+        // reporter 收到决策后也会清 pending_review，但 codex 的 hook 可能继承只读沙箱、
+        // 清不掉——标记会一直挂到下一个 hook 事件才被顺带清理。app 进程写库没有这种
+        // 限制，这里当场兜底清掉（best-effort：清不掉也不影响已送达的决策）。
+        if let Ok(store) = super::open_store(&db_path) {
+            let _ = store.clear_pending_review(session_id, super::now_ms());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

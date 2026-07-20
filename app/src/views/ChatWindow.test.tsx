@@ -210,9 +210,10 @@ describe("ChatWindow", () => {
       if (command === "get_pending_approval") return Promise.resolve(null);
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
       if (command === "managed_terminal_snapshot") {
-        // endOffset 是「已产生多少输出」的判据（data 现在是增量，可能为空）。
+        // endOffset 是「已产生多少输出」的判据（data 现在是 base64 增量，可能为空）；
+        // 就绪判定还要求 data 里有可见文本（纯控制序列不算）。
         return Promise.resolve(started
-          ? { sessionId: 13, active: true, data: "ready", startOffset: 0, endOffset: 5, exited: false, exitCode: null }
+          ? { sessionId: 13, active: true, data: btoa("ready"), startOffset: 0, endOffset: 5, exited: false, exitCode: null }
           : { sessionId: 13, active: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       }
       return Promise.resolve();
@@ -270,7 +271,8 @@ describe("ChatWindow", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
     fireEvent.click(await screen.findByRole("button", { name: "Yes, continue" }));
-    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 14, data: "\x1b[A".repeat(8) + "\r" });
+    // 光标已停在第一项：相对移动为 0，直接回车确认，不再盲按上键绕圈。
+    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 14, data: "\r" });
   });
 
   it("shows a managed PTY startup choice when the conversation opens without visiting Terminal", async () => {
@@ -408,7 +410,8 @@ describe("ChatWindow", () => {
 
     const input = await screen.findByRole("textbox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "/code" } });
-    expect(await screen.findByRole("option", { name: /\/code-review/ }, { timeout: 2_000 })).toBeTruthy();
+    // 探测有 2s 限频（避免随 650ms 轮询打满后端），等待窗口相应放宽。
+    expect(await screen.findByRole("option", { name: /\/code-review/ }, { timeout: 4_000 })).toBeTruthy();
     expect(uiCalls).toBeGreaterThan(1);
   });
 

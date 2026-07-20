@@ -501,6 +501,26 @@ fn ensure_session_profile_available(provider: &str, session_id: &str) -> Result<
     )
 }
 
+/// 目标已有同长同 mtime 的副本时跳过复制。跨账号 takeover/restart 会背靠背同步两次
+/// （杀进程前先做一次可恢复副本 + 启动前补最终增量），无此判断第二遍会把整棵会话树
+/// （transcript 可达数百 MB）原样重拷一遍。Windows 的 CopyFileEx 保留写入时间，macOS
+/// 的 clonefile 亦然；平台不保留 mtime 时判定不成立，退化为照常复制，只是失去优化。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn file_unchanged(source: &std::path::Path, target: &std::path::Path) -> bool {
+    let Some((source_meta, target_meta)) = std::fs::metadata(source)
+        .ok()
+        .zip(std::fs::metadata(target).ok())
+    else {
+        return false;
+    };
+    source_meta.len() == target_meta.len()
+        && source_meta
+            .modified()
+            .ok()
+            .zip(target_meta.modified().ok())
+            .is_some_and(|(source_mtime, target_mtime)| source_mtime == target_mtime)
+}
+
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn copy_dir_merge(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
@@ -509,7 +529,7 @@ fn copy_dir_merge(source: &std::path::Path, target: &std::path::Path) -> Result<
         let destination = target.join(entry.file_name());
         if entry.file_type().map_err(|error| error.to_string())?.is_dir() {
             copy_dir_merge(&entry.path(), &destination)?;
-        } else {
+        } else if !file_unchanged(&entry.path(), &destination) {
             std::fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
         }
     }
@@ -541,7 +561,9 @@ fn sync_claude_session_files(
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    std::fs::copy(source, &target).map_err(|error| format!("同步 Claude 会话失败：{error}"))?;
+    if !file_unchanged(source, &target) {
+        std::fs::copy(source, &target).map_err(|error| format!("同步 Claude 会话失败：{error}"))?;
+    }
 
     // Claude 的回滚历史、环境快照与任务也按 session id 分目录保存。
     for bucket in ["file-history", "session-env", "tasks"] {
@@ -571,11 +593,18 @@ fn prepare_claude_session_for_active_profile(
     if provider != "claude" {
         return Ok(profile_of_session(session_id));
     }
+    // 找不到本地 transcript 时不能硬报错：查找只覆盖 ~/.claude 与托管 profile 目录，
+    // 用户自设 CLAUDE_CONFIG_DIR（插件本就当一等配置支持）或 transcript 被
+    // cleanupPeriodDays 清理时都查不到，而 `claude --resume` 自己找得到会话。
+    // 退回该会话记录的账号原样恢复，只跳过跨账号同步——同步本来也无从做起。
+    let Some(source) =
+        meowo_agent::plugins::claude::transcript::find_transcript_by_session(session_id)
+    else {
+        return Ok(profile_of_session(session_id));
+    };
     let target_profile = crate::profile::active_id("claude");
     let target_root = crate::profile::data_dir("claude", target_profile.as_deref())
         .ok_or("无法定位当前 Claude 账号目录")?;
-    let source = meowo_agent::plugins::claude::transcript::find_transcript_by_session(session_id)
-        .ok_or("找不到 Claude 会话文件，无法跨账号恢复")?;
     sync_claude_session_files(&source, &target_root, session_id)?;
     Ok(target_profile)
 }
@@ -747,16 +776,19 @@ pub(crate) async fn focus_session(
         }
         // 会话跑在 Meowo 自己的 PTY 里时，压根没有外部终端窗口可找：下面那套 WT 标签 / 窗口
         // 定位必然落空，用户只会收到一句「当前终端不支持自动跳转，会话仍在原终端运行」——
-        // 而它根本不在什么原终端里。直接把用户带到它真正所在的地方。
-        // 会话跑在 Meowo 自己的 PTY 里时，压根没有外部终端窗口可找：下面那套 WT 标签 / 窗口
-        // 定位必然落空，用户只会收到一句「当前终端不支持自动跳转，会话仍在原终端运行」——
         // 而它根本不在什么原终端里。改按 session_open_in 把用户带到它真正所在的地方
         // （对话窗口，或 attach 到同一 PTY 的外部终端）。
         //
         // 注：只有**托管**会话走这里。用户自己在终端里敲起来的会话不归 Meowo 持有，没有 PTY
         // 可 attach，仍走下面的窗口定位——那本来就是它该去的地方。
         if let Some(sid) = sid.filter(|sid| state.ptys.is_managed(*sid)) {
-            reveal_session(&app, &state.ptys, sid)?;
+            // reveal_session 含同步 IO（load_settings）与外部终端 spawn（杀软扫描可达数秒），
+            // 与本文件其他 reveal_session 调用点一致放 blocking 池，不占 async 运行时线程。
+            let app = app.clone();
+            let ptys = state.ptys.clone();
+            tauri::async_runtime::spawn_blocking(move || reveal_session(&app, &ptys, sid))
+                .await
+                .map_err(|e| e.to_string())??;
             return Ok(FocusSessionResult::Focused);
         }
     }

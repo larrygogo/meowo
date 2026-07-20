@@ -304,8 +304,10 @@ export function getLiveSessionsPage(
   return invoke("get_live_sessions_page", {
     filter,
     search: search && search.trim() ? search : null,
-    before_last_event_at: cursor?.last_event_at ?? null,
-    before_id: cursor?.id ?? null,
+    // Tauri 按 camelCase 匹配 Rust 命令参数；snake_case 键会被静默当成缺失（Option → None），
+    // 游标永远失效、「加载更多」重复返回第一页。
+    beforeLastEventAt: cursor?.last_event_at ?? null,
+    beforeId: cursor?.id ?? null,
     limit,
   });
 }
@@ -529,10 +531,10 @@ export function refreshUsage(provider: string): Promise<ProviderUsage> {
 /** 某 provider 的 meowo-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */
 export type HooksStatus = "installed" | "missing" | "unknown";
 
-/** 新建一个全新会话：在 cwd 打开终端裸启动该 provider。terminal 省略则用设置里的默认终端。 */
+/** 新建一个全新会话：起托管 PTY，视图与终端类型由设置的 session_open_in / resume_terminal 决定。 */
 /** `options`：启动选项的选择（option id → choice id），映射成 flag 由后端按插件声明表完成。 */
-export function newSession(cwd: string, provider: AgentId, options?: Record<string, string>, terminal?: string): Promise<void> {
-  return invoke("new_session", { cwd, provider, terminal, options });
+export function newSession(cwd: string, provider: AgentId, options?: Record<string, string>): Promise<void> {
+  return invoke("new_session", { cwd, provider, options });
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */

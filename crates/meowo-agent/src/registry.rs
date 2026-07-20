@@ -189,6 +189,14 @@ pub trait AgentPlugin: Sync {
 
     // ═══ 能力槽 ═══
 
+    /// PermissionRequest hook 的决策输出会被该 agent **采纳**（阻塞式审批，如 claude/codex 的
+    /// 310s hook）。GUI 审批桥只对声明它的 agent 生效：observation-only 的 PermissionRequest
+    /// （kimi，5s 超时、忽略 hookSpecificOutput）若也弹 GUI 审批卡，卡片既控制不了真实审批，
+    /// 用户点「允许」还会错误清掉 pending_review——真实提示仍在终端里等人。
+    fn permission_hook_decides(&self) -> bool {
+        false
+    }
+
     /// 会话遥测（Stop 正文/模型、上下文占用、transcript、重命名回写）。None = 全部降级。
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         None

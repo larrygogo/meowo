@@ -101,7 +101,10 @@ describe("terminalAttention", () => {
       "Resume full session as-is",
       "Don't ask me again",
     ]);
-    expect(attention?.options?.[1].input).toBe("\x1b[A".repeat(8) + "\x1b[B\r");
+    // 菜单首尾循环，必须从 ❯ 光标做相对移动，而不是盲按上键归零。
+    expect(attention?.options?.[0].input).toBe("\r");
+    expect(attention?.options?.[1].input).toBe("\x1b[B\r");
+    expect(attention?.options?.[2].input).toBe("\x1b[B\x1b[B\r");
   });
 
   it("turns Claude's command approval into its three native choices", () => {

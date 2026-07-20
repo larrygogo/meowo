@@ -10,7 +10,7 @@ import { reduceChatEvents } from "../chat/reducer";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ChatSidebar } from "./ChatSidebar";
 import { ManagedTerminal } from "./ManagedTerminal";
-import { appendTerminalText, terminalAttention as detectTerminalAttention, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
+import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 
 function initialSessionId(): number {
   const value = new URLSearchParams(window.location.search).get("sessionId");
@@ -47,10 +47,15 @@ function approvalSuggestionLabel(suggestion: unknown, index: number, t: ReturnTy
 function claudeCommandApprovalDetails(text: string) {
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   const marker = lines.findIndex((line) => /this command requires approval/i.test(line));
-  const before = (marker >= 0 ? lines.slice(0, marker) : lines)
-    .filter((line) => !/^bash command$/i.test(line));
+  let before = marker >= 0 ? lines.slice(0, marker) : lines;
+  // 审批框以工具头（"Bash command"）开头；只取最后一个工具头之后的内容，
+  // 避免把上一屏残留的输出并进命令文本。
+  const header = before.reduce((found, line, index) => (/^bash command$/i.test(line) ? index : found), -1);
+  if (header >= 0) before = before.slice(header + 1);
   return {
-    command: before.length >= 2 ? before[before.length - 2] : before[0] ?? "",
+    // 长命令会按终端宽度硬换行成多行；除末行（用途说明）外全部并入命令整段显示，
+    // 不能按「倒数第二行是命令」取——那只会摘到换行后的最后一个片段。
+    command: before.length >= 2 ? before.slice(0, -1).join("\n") : before[0] ?? "",
     description: before.length >= 2 ? before[before.length - 1] : "",
     question: lines.find((line) => /do you want to proceed\?/i.test(line)) ?? "",
   };
@@ -289,35 +294,47 @@ function terminalInput(content: string): string {
 
 type TerminalStartupResult = "ready" | TerminalAttention;
 
-async function waitForTerminalReady(sessionId: number, attentionMarkers: string[]): Promise<TerminalStartupResult> {
+type TerminalReadyMessages = {
+  exited: (code: number | null) => string;
+  failed: string;
+  timeout: string;
+};
+
+async function waitForTerminalReady(sessionId: number, attentionMarkers: string[], messages: TerminalReadyMessages): Promise<TerminalStartupResult> {
   const startedAt = Date.now();
-  let firstOutputAt = 0;
   const decoder = new TextDecoder();
   let outputTail = "";
+  let lastOutputAt = 0;
+  let hasVisible = false;
   // 带 since 只拉增量；保留一小段解码后的尾部，让跨 IPC 分片的提示仍可识别。
   let since = 0;
-  while (Date.now() - startedAt < 20_000) {
+  while (Date.now() - startedAt < 45_000) {
     const snapshot = await managedTerminalSnapshot(sessionId, since);
-    since = snapshot.endOffset;
     if (!snapshot.active) {
       if (snapshot.exited) {
-        throw new Error(`Agent 启动后立即退出${snapshot.exitCode == null ? "" : `（退出码 ${snapshot.exitCode}）`}，请在终端页查看输出`);
+        throw new Error(messages.exited(snapshot.exitCode ?? null));
       }
-      throw new Error("Agent 终端未能启动");
+      throw new Error(messages.failed);
     }
+    // 判「有新输出」看 endOffset 而不是 data：data 现在是增量，首帧之后的轮次
+    // 常常为空，用它判断会把已经就绪的终端误判成还没输出。
+    const grew = snapshot.endOffset > since;
+    since = snapshot.endOffset;
     outputTail = appendTerminalText(outputTail, snapshot.data, decoder);
     const attention = detectTerminalAttention(outputTail, attentionMarkers);
     if (attention) return attention;
-    // 判「已产生输出」看 endOffset 而不是 data：data 现在是增量，首帧之后的轮次
-    // 常常为空，用它判断会把已经就绪的终端误判成还没输出。
-    if (snapshot.endOffset > 0) {
-      if (!firstOutputAt) firstOutputAt = Date.now();
-      // 等首屏绘制和 raw/bracketed-paste 模式初始化完成，避免启动阶段清空过早写入的消息。
-      if (Date.now() - firstOutputAt >= 700) return "ready";
-    }
+    if (grew) lastOutputAt = Date.now();
+    if (!hasVisible && visibleTerminalText(outputTail)) hasVisible = true;
+    // 就绪 = 已画出可见内容（--resume 启动阶段只有清屏/光标序列，不算）且输出安静了
+    // 700ms。回放长 transcript 时输出持续、计时随之顺延，不会把消息写进还在初始化的
+    // composer；固定「首字节后 700ms」正是之前吞消息的根因。
+    if (hasVisible && lastOutputAt && Date.now() - lastOutputAt >= 700) return "ready";
+    // 极端情况：TUI 常驻动画让输出永不安静。已有可见画面且没识别到阻塞提示时，
+    // 20 秒后按就绪处理——比直接超时报错对用户更有用。
+    if (hasVisible && Date.now() - startedAt >= 20_000) return "ready";
     await new Promise((resolve) => window.setTimeout(resolve, 80));
   }
-  throw new Error("等待 Agent 终端就绪超时，请在终端页查看状态");
+  throw new Error(messages.timeout);
 }
 
 export function ChatWindow() {
@@ -347,6 +364,14 @@ export function ChatWindow() {
   // 当前 tab，只把 xterm 从“可见终端 UI”降为后台屏幕状态机。
   const [terminalMonitorNeeded, setTerminalMonitorNeeded] = useState(view === "terminal");
   const [managedPtyActive, setManagedPtyActive] = useState(false);
+  // 已挂载的 ManagedTerminal 暴露的重启复位钩子：对话页重启 PTY（sendText/changeMode）后
+  // 调它把输出偏移归零，否则新进程的输出全被旧偏移判成重复而丢弃。
+  const terminalRearmRef = useRef<(() => void) | null>(null);
+  const terminalReadyMessages: TerminalReadyMessages = {
+    exited: t.chat.terminalStartExited,
+    failed: t.chat.terminalStartFailed,
+    timeout: t.chat.terminalReadyTimeout,
+  };
   const revealTerminalAttention = useCallback((attention: TerminalAttention | null) => {
     if (!attention) { setTerminalAttention(null); return; }
     terminalEverShownRef.current = true;
@@ -386,11 +411,24 @@ export function ChatWindow() {
     : transcriptCapabilitiesReady ? 1 : 0;
   const startupAttentionMarkerKey = (chatUi?.startup_attention_markers ?? []).join("\0");
   const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan";
+  // runtime 清单未就绪时，探测键随每次 650ms 轮询的 offset 变化而变化——不能每变一次就
+  // 打一发 agent_chat_ui（后端要重扫命令目录、探 transcript）。同一会话内限频到 2s 一查；
+  // 换会话/换 provider/换 cwd 仍立即查。
+  const chatUiProbeRef = useRef({ key: "", at: 0 });
   useEffect(() => {
     if (!provider) return;
     let stale = false;
-    agentChatUi(provider, cwd, sessionId).then((ui) => { if (!stale) setChatUi(ui); }).catch(() => {});
-    return () => { stale = true; };
+    let timer = 0;
+    const key = `${provider}\0${cwd ?? ""}\0${sessionId}`;
+    const fetchUi = () => {
+      chatUiProbeRef.current = { key, at: Date.now() };
+      agentChatUi(provider, cwd, sessionId).then((ui) => { if (!stale) setChatUi(ui); }).catch(() => {});
+    };
+    const last = chatUiProbeRef.current;
+    const wait = last.key === key ? 2_000 - (Date.now() - last.at) : 0;
+    if (wait > 0) timer = window.setTimeout(fetchUi, wait);
+    else fetchUi();
+    return () => { stale = true; window.clearTimeout(timer); };
   }, [provider, cwd, sessionId, runtimeCapabilityProbe]);
 
   // 启动阻塞属于会话状态，不属于终端视图。即使用户从未打开终端 tab，也先用轻量增量
@@ -728,7 +766,10 @@ export function ChatWindow() {
         // React 状态尚未落下而漏掉 provider 声明的信任/登录提示。
         const ui = chatUi ?? (provider ? await agentChatUi(provider, cwd, sessionId).catch(() => null) : null);
         await startManagedTerminal(sessionId, 100, 30);
-        const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? []);
+        // 已挂载的后台终端还停在旧进程的输出偏移上，必须归零重拉，否则新 PTY 的输出
+        // 会被它当成「已写过」整段丢弃，画面定格、屏幕识别全部失效。
+        terminalRearmRef.current?.();
+        const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? [], terminalReadyMessages);
         if (startup !== "ready") {
           terminalEverShownRef.current = true;
           setTerminalAttention(startup);
@@ -779,7 +820,9 @@ export function ChatWindow() {
         }
         const ui = chatUi ?? (provider ? await agentChatUi(provider, cwd, sessionId).catch(() => null) : null);
         await startManagedTerminal(sessionId, 100, 30);
-        const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? []);
+        // 同 sendText：重启后必须让后台终端的输出偏移归零，见 terminalRearmRef 注释。
+        terminalRearmRef.current?.();
+        const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? [], terminalReadyMessages);
         if (startup !== "ready") {
           terminalEverShownRef.current = true;
           setTerminalAttention(startup);
@@ -1069,6 +1112,7 @@ export function ChatWindow() {
             attentionMarkers={chatUi?.startup_attention_markers ?? []}
             interactivePrompt={terminalInteractivePrompt}
             onAttention={revealTerminalAttention}
+            rearmRef={terminalRearmRef}
           />
         </div>
       )}

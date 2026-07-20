@@ -189,6 +189,10 @@ impl AgentPlugin for Codex {
     fn display_name(&self) -> &'static str {
         "Codex"
     }
+    /// PermissionRequest hook 声明了 310s 阻塞（EVENTS 里的 with_timeout），决策输出会被采纳。
+    fn permission_hook_decides(&self) -> bool {
+        true
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -66,9 +66,12 @@ type ManagedTerminalProps = {
   attentionMarkers?: string[];
   interactivePrompt?: boolean;
   onAttention?: (attention: TerminalAttention | null) => void;
+  /// 供父组件在自己重启 PTY 后触发偏移复位（对话页发送/切模式也会重启 PTY，
+  /// 不止组件内部的 start/takeover 按钮）。
+  rearmRef?: MutableRefObject<(() => void) | null>;
 };
 
-export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, onAttention }: ManagedTerminalProps) {
+export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, onAttention, rearmRef: externalRearmRef }: ManagedTerminalProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -282,6 +285,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       setExitCode(undefined);
       void inspectSnapshot();
     };
+    if (externalRearmRef) externalRearmRef.current = () => rearmRef.current?.();
     const outputListener = listen<OutputEvent>("pty-output", ({ payload }) => {
       if (payload.sessionId === sessionId) {
         window.clearTimeout(snapshotTimer);
@@ -337,8 +341,9 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       terminalRef.current = null;
       fitRef.current = null;
       rearmRef.current = null;
+      if (externalRearmRef) externalRearmRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, externalRearmRef]);
 
   // capability 查询可能比 PTY 首屏稍晚返回。提示文字先到、markers 后到时也要立刻补判，
   // 不能等一个可能永远不会来的后续输出 chunk。

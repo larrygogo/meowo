@@ -50,7 +50,13 @@ struct CompletedPty {
     start_offset: u64,
     end_offset: u64,
     code: Option<u32>,
+    /// 入表顺序，淘汰时取最小者。不能按 session id 淘汰：pending 启动失败的条目
+    /// 是递减的负数 id，按 id 取 min 会恰好先扔掉最新的失败诊断。
+    seq: u64,
 }
+
+/// [`CompletedPty::seq`] 的全局递增源。只求单调，跨 broker 共用无妨。
+static COMPLETED_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct AttachState {
     endpoint: Mutex<Option<SocketAddr>>,
@@ -184,8 +190,13 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
     let start_offset = end_offset.saturating_sub(final_data.len() as u64);
     if let Ok(mut completed) = broker.completed.lock() {
         // 退出输出只为诊断与终端回放保留；限制条数，避免长期运行无限增长。
+        // 按入表顺序淘汰最旧的一条（见 CompletedPty::seq 注释）。
         if completed.len() >= 24 {
-            if let Some(oldest) = completed.keys().min().copied() {
+            if let Some(oldest) = completed
+                .iter()
+                .min_by_key(|(_, entry)| entry.seq)
+                .map(|(id, _)| *id)
+            {
                 completed.remove(&oldest);
             }
         }
@@ -196,6 +207,7 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
                 start_offset,
                 end_offset,
                 code,
+                seq: COMPLETED_SEQ.fetch_add(1, Ordering::Relaxed),
             },
         );
     }
@@ -287,8 +299,8 @@ impl PtyBroker {
 
     /// 审批 broker 只有在对应对话窗确实可用时才能接管请求。外部终端启动的 agent 也能从
     /// discovery 文件发现 broker，但那不代表此刻有 GUI 消费者；若直接入队，会让原 TUI
-    /// 无提示等满五分钟。收到请求时主动打开/切换到对应会话，并给窗口创建一个很短的期限；
-    /// 创建失败则调用方立即返回 `pass`，由 agent 自己的审批界面接管。
+    /// 无提示等满五分钟。收到请求时主动打开/切换到对应会话，等到窗口注册消费者为止；
+    /// 期限内没等到则由调用方撤回请求并返回 `pass`，由 agent 自己的审批界面接管。
     fn ensure_approval_window(&self, session_id: i64) -> bool {
         if self.has_approval_consumer(session_id) {
             return true;
@@ -299,7 +311,10 @@ impl PtyBroker {
         crate::window::open_chat_window_detached(app.clone(), session_id);
         // 等前端完成 session 切换并显式注册。窗口可见只能证明 WebView 存在，不能证明它已监听
         // pending-approval；以消费者租约为准，避免请求落在两个 useEffect 之间。
-        for _ in 0..80 {
+        // 期限 10s：首次 WebView2 冷启动（内核初始化 + bundle 加载 + React 挂载 + 注册 IPC）
+        // 实测可超 2s；等待期间请求已在 approvals 表里，注册完成的窗口靠轮询也能立刻取到，
+        // 不会出现「窗口弹出却空无一物」。占的是本连接自己的 handler 线程，不挤别人。
+        for _ in 0..400 {
             if self.has_approval_consumer(session_id) {
                 return true;
             }
@@ -407,6 +422,17 @@ impl PtyBroker {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let session_id = managed.session_id.load(Ordering::Acquire);
+                        // 分发必须发生在追加 backlog 的同一把锁内：handle_attach 在一个
+                        // backlog→subscribers 临界区里「回放 + 注册订阅者」，若这里先放掉
+                        // backlog 锁再单独锁 subscribers，恰在缝隙注册的订阅者会把同一个
+                        // chunk 从回放和通道各收一次——外部终端上屏重复的原始 ANSI。
+                        // send 是无界通道的非阻塞投递，双锁临界区不会久持。
+                        let send_chunk = |data: &[u8]| {
+                            if let Ok(mut subscribers) = managed.subscribers.lock() {
+                                let chunk = data.to_vec();
+                                subscribers.retain(|(_, sender)| sender.send(chunk.clone()).is_ok());
+                            }
+                        };
                         let offset = if let Ok(mut backlog) = managed.backlog.lock() {
                             let offset = managed.output_end.load(Ordering::Relaxed);
                             backlog.extend(&buf[..n]);
@@ -416,20 +442,21 @@ impl PtyBroker {
                             managed
                                 .output_end
                                 .store(offset + n as u64, Ordering::Release);
+                            send_chunk(&buf[..n]);
                             offset
                         } else {
-                            managed.output_end.fetch_add(n as u64, Ordering::AcqRel)
+                            let offset = managed.output_end.fetch_add(n as u64, Ordering::AcqRel);
+                            send_chunk(&buf[..n]);
+                            offset
                         };
-                        if let Ok(mut subscribers) = managed.subscribers.lock() {
-                            let chunk = buf[..n].to_vec();
-                            subscribers.retain(|(_, sender)| sender.send(chunk.clone()).is_ok());
-                        }
-                        let payload = PtyOutput {
-                            session_id,
-                            offset,
-                            data: base64::engine::general_purpose::STANDARD.encode(&buf[..n]),
-                        };
+                        // 先确认对话窗存在再构造 payload：窗口关着时每个 16KB chunk 的
+                        // base64 编码（~21KB 新分配）都是白做的，构建/日志刷屏时尤甚。
                         if let Some(window) = app.get_webview_window("chat") {
+                            let payload = PtyOutput {
+                                session_id,
+                                offset,
+                                data: base64::engine::general_purpose::STANDARD.encode(&buf[..n]),
+                            };
                             let _ = window.emit("pty-output", &payload);
                         }
                     }
@@ -939,6 +966,10 @@ impl PtyBroker {
             let _ = stream.write_all(format!("\r\nMeowo attach: {error}\r\n").as_bytes());
             Err(error)
         };
+        // 外部终端从 spawn 到连上有秒级窗口，期间 SessionStart 的 claim 可能已把临时负 id
+        // 重绑成真实 id；握手里带的还是旧 id，按绑定表翻译后再查，否则「新会话开在外部
+        // 终端」会间歇性打开一扇只写着「PTY 会话未运行」的死窗口。
+        let session_id = self.binding(session_id).unwrap_or(session_id);
         if let Err(error) = self.resize(session_id, cols, rows) {
             return refuse(stream, error);
         }
@@ -1076,9 +1107,9 @@ impl PtyBroker {
         if request.session_id <= 0 || request.request_id.len() < 8 {
             return Err("审批请求无效".into());
         }
-        if !self.ensure_approval_window(request.session_id) {
-            return stream.write_all(b"pass\n").map_err(|e| e.to_string());
-        }
+        // 先入表再等窗口：冷启动的 WebView2 完成消费者注册可能晚于任何固定等待窗口。
+        // 请求在表里，晚注册的窗口靠 getPendingApproval 轮询就能找回它；反过来（等到了
+        // 才入表）则超时瞬间请求人间蒸发，用户面对一扇刚弹出的空窗口。
         let (tx, rx) = mpsc::channel();
         self.attach
             .approvals
@@ -1091,6 +1122,14 @@ impl PtyBroker {
                     response: tx,
                 },
             );
+        if !self.ensure_approval_window(request.session_id) {
+            // 窗口没起来：撤回请求，把决定权交还 agent 自己的审批界面。
+            if let Ok(mut approvals) = self.attach.approvals.lock() {
+                approvals.remove(&request.request_id);
+            }
+            self.emit_approval("pending-approval-cleared", &request);
+            return stream.write_all(b"pass\n").map_err(|e| e.to_string());
+        }
         self.emit_approval("pending-approval", &request);
         let decision = rx.recv_timeout(std::time::Duration::from_secs(300)).ok();
         if let Ok(mut approvals) = self.attach.approvals.lock() {
@@ -1160,6 +1199,7 @@ mod tests {
                 start_offset: 96,
                 end_offset: 100,
                 code: Some(0),
+                seq: 0,
             },
         );
 
@@ -1188,6 +1228,7 @@ mod tests {
                 start_offset: 100,
                 end_offset: 106,
                 code: Some(0),
+                seq: 0,
             },
         );
 

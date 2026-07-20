@@ -230,12 +230,14 @@ pub(crate) fn watch_login(
     provider: String,
     profile: Option<String>,
     operation_id: String,
+    // 出生代次。由 login_agent 在 spawn 终端**之前**注册（否则冷启动的几秒里用户点取消，
+    // cancel_login 查不到 operationId 只能报错，而随后注册的 watcher 又白等 5 分钟）。
+    // 被 cancel_login 或下一次 login_agent 递增后，本线程静默退出、不 emit——
+    // 收尾的 emit 归那一方，否则会有两个 login-done 打架。
+    epoch: u64,
 ) {
     const POLL: std::time::Duration = std::time::Duration::from_secs(2);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-    // 出生代次。被 cancel_login 或下一次 login_agent 递增后，本线程静默退出、不 emit——
-    // 收尾的 emit 归那一方，否则会有两个 login-done 打架。
-    let epoch = begin_login_operation(key, &operation_id);
     std::thread::spawn(move || {
         use tauri::Emitter;
         let start = std::time::Instant::now();
@@ -352,15 +354,21 @@ pub(crate) async fn login_agent(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| load_settings().resume_terminal);
 
+    // spawn 之前先注册操作：冷启动首次 spawn 可达数秒，这期间用户就可能点取消，
+    // cancel_login 必须能按 operationId 找到它。取消发生在 spawn 期间时，epoch 已被
+    // 递增，watcher 线程第一轮比对就会静默退出，不会复活已取消的操作。
+    let epoch = begin_login_operation(key, &operation_id);
     // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环。
     let ok =
         tauri::async_runtime::spawn_blocking(move || spawn_in_terminal(&argv, None, &term, &env))
             .await
             .map_err(|e| e.to_string())?;
     if !ok {
+        // 终端没拉起来就没有可等的登录；注销操作，别让一个查不到进展的 watcher 挂着。
+        let _ = cancel_login_operation(key, &operation_id);
         return Err("启动终端失败：无法拉起登录流程".into());
     }
-    watch_login(app, key, provider, profile, operation_id);
+    watch_login(app, key, provider, profile, operation_id, epoch);
     Ok(())
 }
 
