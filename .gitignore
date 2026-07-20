@@ -21,3 +21,13 @@ app/logs/
 # 不整个忽略 .claude/——项目级的 settings.json / skills 是该入库共享的。
 .claude/worktrees/
 .claude/settings.local.json
+
+# Next.js 误生成的构建输出（本项目用 Vite，此目录只会是误跑 next 的产物）
+.next/
+
+# 本地海报/聊天预览导出的临时工具页（半成品草稿；若完善成正式工具应改为提交，
+# 与已入库的 scripts/record-demo.mjs 同等对待）
+app/chat-preview.html
+app/poster.html
+app/scripts/export-poster.mjs
+app/src/chat-preview.tsx
