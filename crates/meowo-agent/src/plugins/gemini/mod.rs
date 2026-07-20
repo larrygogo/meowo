@@ -243,6 +243,11 @@ impl AgentPlugin for Gemini {
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
     }
+    /// OAuth 已死（个人版 Code Assist 被停），API Key 是个人用户唯一的活路——而 gemini 没有
+    /// 「输入 key」的登录子命令，只能由宿主替用户把 key 落进 `~/.gemini/.env`。见 account.rs。
+    fn api_key_login(&self) -> Option<&'static dyn crate::account::ApiKeyLoginCap> {
+        Some(&account::API_KEY_LOGIN)
+    }
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
         Some(&PROXY)
     }

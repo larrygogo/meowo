@@ -420,6 +420,13 @@ export const en: Dict = {
     loginCancelled: "Stopped waiting. If you finished signing in, hit refresh.",
     loginFailed: "Failed to start sign-in",
     loginTimeout: "Sign-in not detected. If you already signed in, click refresh",
+    // API-key sign-in (gemini: Google shut down OAuth for individual accounts; a key is the only way in)
+    apiKeyLogin: "Use API Key",
+    apiKeyPlaceholder: "Paste API key",
+    apiKeySave: "Save",
+    apiKeySaving: "Saving…",
+    apiKeyHint: "The key is written into the agent's own config (works in every terminal) and removed on sign-out",
+    apiKeyFailed: (e: string) => `API-key sign-in failed: ${e}`,
     logout: "Sign out",
     loggingOut: "Signing out…",
     logoutConfirm: (name: string) => `Sign out of the official ${name} account? Relay settings, sessions, and hooks will be kept.`,

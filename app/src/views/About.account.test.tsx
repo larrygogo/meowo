@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   loginAgent: vi.fn(),
   cancelLogin: vi.fn(),
   logoutAgent: vi.fn(),
+  apiKeyLogin: vi.fn(),
   checkProviderHooks: vi.fn(),
   refreshUsage: vi.fn(),
   getSettings: vi.fn(),
@@ -111,6 +112,48 @@ describe("AccountSection agent 卡", () => {
     // codex 声明了中转 → 切过去应有入口。
     await selectAgent("Codex");
     expect(await screen.findByTestId("agent-access-codex")).toBeTruthy();
+  });
+
+  /**
+   * API Key 登录入口只给声明了能力的 agent（当前 gemini：OAuth 被官方停用，key 是唯一活路）。
+   * 判据是后端下发的 `supports_api_key_login`——别家未登录时不得出现这个按钮，
+   * 否则点保存只会得到后端一句「该 agent 不支持 API Key 登录」。
+   */
+  it("API Key 登录：gemini 有入口，保存成功即收起并重查账号；别家没有", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "gemini"]));
+    api.getAccounts.mockResolvedValue([]); // 全员未登录
+    api.apiKeyLogin.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    // claude（默认选中）未登录：只有交互式登录，没有 API Key 入口。
+    await screen.findByTestId("agent-card-claude");
+    expect(screen.queryByTestId("agent-api-key-login-claude")).toBeNull();
+
+    await selectAgent("Gemini CLI");
+    fireEvent.click(await screen.findByTestId("agent-api-key-login-gemini"));
+    const input = await screen.findByTestId("agent-api-key-input-gemini");
+    fireEvent.change(input, { target: { value: "AIzaTest123" } });
+    const accountQueries = api.getAccounts.mock.calls.length;
+    fireEvent.click(screen.getByTestId("agent-api-key-save-gemini"));
+    await waitFor(() => expect(api.apiKeyLogin).toHaveBeenCalledWith("gemini", "AIzaTest123"));
+    // 成功 → 输入区收起 + 重查账号（同步落盘、当场生效，不走 login-done 轮询）。
+    await waitFor(() => expect(screen.queryByTestId("agent-api-key-form-gemini")).toBeNull());
+    await waitFor(() => expect(api.getAccounts.mock.calls.length).toBeGreaterThan(accountQueries));
+  });
+
+  it("API Key 保存失败：错误就地展示，输入区保留可重试", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "gemini"]));
+    api.getAccounts.mockResolvedValue([]);
+    api.apiKeyLogin.mockRejectedValue("API Key 含有空白或不可见字符");
+    render(<AccountSection />);
+    await selectAgent("Gemini CLI");
+    fireEvent.click(await screen.findByTestId("agent-api-key-login-gemini"));
+    fireEvent.change(await screen.findByTestId("agent-api-key-input-gemini"), {
+      target: { value: "bad key" },
+    });
+    fireEvent.click(screen.getByTestId("agent-api-key-save-gemini"));
+    const err = await screen.findByTestId("agent-api-key-error-gemini");
+    expect(err.textContent).toContain("API Key 含有空白或不可见字符");
+    expect(screen.getByTestId("agent-api-key-form-gemini")).toBeTruthy();
   });
 
   it("模型菜单在下方空间不足时自动向上展开", () => {

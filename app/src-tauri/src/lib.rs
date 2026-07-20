@@ -33,8 +33,8 @@ mod window;
 
 // run() 的 generate_handler 以裸标识符登记这些命令，须在 crate 根作用域可见。
 use install::{
-    add_agent_to_user_path, agent_path_gap, cancel_login, check_provider_hooks, install_agent,
-    login_agent, logout_agent, repair_provider_hooks,
+    add_agent_to_user_path, agent_path_gap, api_key_login, cancel_login, check_provider_hooks,
+    install_agent, login_agent, logout_agent, repair_provider_hooks,
 };
 use chat::get_chat_history;
 use managed_terminal::{
@@ -504,6 +504,12 @@ struct AgentDescriptor {
     /// gemini / opencode 因此被判成「未登录」，亮出一个必然失败的按钮。**给出走不通的入口，
     /// 比不给入口更糟**——用户会以为是自己的问题，反复去点。
     supports_account: bool,
+    /// 这个 agent 能不能**用 API Key 登录**（＝插件声明了 `ApiKeyLoginCap`）。
+    ///
+    /// 为 gemini 而设：Google 停掉了个人版 Code Assist 的 OAuth（交互式登录必然失败），
+    /// API Key 是唯一活路，而它没有「输入 key」的登录子命令——必须由 meowo 提供入口。
+    /// 为 true 时，前端在未登录状态额外给出「填 API Key」输入。
+    supports_api_key_login: bool,
     /// 这个 agent 能不能有**多个账号**（＝插件声明了 `ProfileSpec`）。
     ///
     /// false（gemini：数据目录不可被环境变量覆盖）→ 前端不给「添加账号」入口。「只有一个默认账号」
@@ -541,6 +547,7 @@ async fn list_agents() -> Vec<AgentDescriptor> {
                     installed: a.is_installed(),
                     supports_proxy: a.proxy().is_some(),
                     supports_account: a.account().is_some(),
+                    supports_api_key_login: a.api_key_login().is_some(),
                     supports_profiles: a.profile().is_some(),
                     supports_context: a.provides_context(),
                     launch_options: a.launch_options(),
@@ -913,6 +920,7 @@ pub fn run() {
             agent_path_gap,
             add_agent_to_user_path,
             login_agent,
+            api_key_login,
             logout_agent,
             cancel_login,
             check_provider_hooks,

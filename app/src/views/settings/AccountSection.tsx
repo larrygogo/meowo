@@ -22,6 +22,7 @@ import {
   checkProviderHooks,
   repairProviderHooks,
   logoutAgent,
+  apiKeyLogin,
   agentPathGap,
   addAgentToUserPath,
   type ProviderAccountPayload,
@@ -135,7 +136,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -149,6 +150,11 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
    * `login_argv()` 是 None，点下去只会得到一句「拉起登录失败」。
    */
   supportsAccount: boolean;
+  /**
+   * 该 agent 能否用 API Key 登录（gemini：OAuth 被官方停用，key 是唯一活路）。
+   * true → 未登录时在「登录」旁边多一个「API Key 登录」入口。
+   */
+  supportsApiKeyLogin: boolean;
   /**
    * 该 agent 能否有多个账号。false（gemini：数据目录不可被环境变量覆盖）→ 不显示账号列表。
    *
@@ -209,6 +215,11 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
         : null;
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutMsg, setLogoutMsg] = useState<string | null>(null);
+  // API Key 登录：输入区开合 + 输入值 + 保存中 + 错误。key 不落任何前端持久化，提交即清。
+  const [apiKeyOpen, setApiKeyOpen] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [apiKeyBusy, setApiKeyBusy] = useState(false);
+  const [apiKeyMsg, setApiKeyMsg] = useState<string | null>(null);
   // 刚装完（本次会话内）→ 把「登录」按钮标为下一步，把「装完 → 登录」串成一条链路。
   const [justInstalled, setJustInstalled] = useState(false);
   // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
@@ -318,6 +329,24 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
     checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
   }, [loginState, provider]);
 
+  /** 保存 API Key。后端同步落盘（写进 agent 自己的配置），成功即已登录，无需轮询等待。 */
+  const saveApiKey = () => {
+    const key = apiKeyValue.trim();
+    if (!key || apiKeyBusy) return;
+    setApiKeyBusy(true);
+    setApiKeyMsg(null);
+    apiKeyLogin(provider, key)
+      .then(() => {
+        setApiKeyOpen(false);
+        setApiKeyValue("");
+        onLoggedIn();
+        // 后端保存时顺手接了 hooks（settings.json 此刻必然存在）——重查让「未接入」提示条消失。
+        checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
+      })
+      .catch((e) => setApiKeyMsg(t.account.apiKeyFailed(String(e))))
+      .finally(() => setApiKeyBusy(false));
+  };
+
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
 
@@ -426,6 +455,21 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
             {loginBusy ? t.account.cancelLogin : t.account.login}
           </button>
         )}
+        {/* API Key 登录：交互式 OAuth 之外的第二入口（gemini 的 OAuth 已被官方停用，这是
+            唯一走得通的一条）。点击开合输入区，不打断旁边的交互式登录等待。 */}
+        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && supportsApiKeyLogin && (
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"agent-api-key-login-" + provider}
+            onClick={() => {
+              setApiKeyMsg(null);
+              setApiKeyOpen((o) => !o);
+            }}
+          >
+            {t.account.apiKeyLogin}
+          </button>
+        )}
         {isInstalled && acc && !relayEnabled && (
           <button
             type="button"
@@ -449,6 +493,53 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
           </button>
         )}
       </div>
+
+      {/* API Key 输入区：type=password——key 是机密，屏幕上不明示。Enter 提交、Esc 收起。 */}
+      {apiKeyOpen && isInstalled && !isLoggedIn && (
+        <div className="provider-card-body" data-testid={"agent-api-key-form-" + provider}>
+          <div className="profile-add-row">
+            <input
+              type="password"
+              className="profile-add-input"
+              autoFocus
+              placeholder={t.account.apiKeyPlaceholder}
+              value={apiKeyValue}
+              data-testid={"agent-api-key-input-" + provider}
+              onChange={(e) => setApiKeyValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveApiKey();
+                if (e.key === "Escape") setApiKeyOpen(false);
+              }}
+            />
+            <button
+              type="button"
+              className="provider-card-action provider-card-action-primary"
+              data-testid={"agent-api-key-save-" + provider}
+              disabled={apiKeyBusy || !apiKeyValue.trim()}
+              onClick={saveApiKey}
+            >
+              {apiKeyBusy ? t.account.apiKeySaving : t.account.apiKeySave}
+            </button>
+            <button
+              type="button"
+              className="provider-card-action"
+              disabled={apiKeyBusy}
+              onClick={() => {
+                setApiKeyOpen(false);
+                setApiKeyValue("");
+              }}
+            >
+              {t.account.cancelEdit}
+            </button>
+          </div>
+          <div className="profile-hint">{t.account.apiKeyHint}</div>
+          {apiKeyMsg && (
+            <div className="agent-install-error" data-testid={"agent-api-key-error-" + provider}>
+              {apiKeyMsg}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 未安装时不给「接入方式」——还没有可运行的 agent，配官方账号还是中转都无从谈起，
           先把它装上。装好后这一段才出现。 */}
@@ -1011,6 +1102,7 @@ export function AccountSection() {
         name={cur.display_name}
         installed={installed === null ? null : installed.has(cur.id)}
         supportsAccount={cur.supports_account}
+        supportsApiKeyLogin={cur.supports_api_key_login ?? false}
         supportsProfiles={cur.supports_profiles}
         supportsContext={cur.supports_context ?? true}
         relay={cur.relay}

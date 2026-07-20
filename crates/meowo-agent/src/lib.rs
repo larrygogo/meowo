@@ -43,7 +43,9 @@ pub mod transcript;
 pub mod variant;
 pub mod wiring;
 
-pub use account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
+pub use account::{
+    Account, AccountCap, ApiKeyLoginCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
+};
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use caps::{ContextUsage, HookContext, StopOutputs, TelemetryCap};
 pub use chat_ui::{

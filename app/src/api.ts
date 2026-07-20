@@ -40,6 +40,13 @@ export type AgentDescriptor = {
    */
   supports_profiles: boolean;
   /**
+   * 能否用 API Key 登录（gemini：OAuth 被官方停用，key 是唯一活路，且 CLI 没有输入 key 的
+   * 登录子命令，必须由 meowo 提供入口）。为 true 时未登录卡片额外给「填 API Key」输入。
+   *
+   * 老后端不下发此字段 → undefined，按「不支持」处理（不给一个后端接不住的入口）。
+   */
+  supports_api_key_login?: boolean;
+  /**
    * meowo 能否显示该 agent 的上下文占用（贴纸百分比液柱）。false（gemini/opencode）时
    * 卡片显式标注「上下文占用：不支持」，不留空白让用户以为是 bug。
    *
@@ -666,6 +673,15 @@ export function deleteProfile(provider: AgentId, id: string): Promise<void> {
  */
 export function cancelLogin(provider: AgentId, operationId: string): Promise<void> {
   return invoke("cancel_login", { provider, operationId });
+}
+
+/**
+ * 用 API Key 登录（`supports_api_key_login` 的 agent，当前只有 gemini）。同步落盘、当场生效：
+ * 后端把 key 写进 CLI 自己认的位置（gemini：`~/.gemini/.env` + settings 的 selectedType），
+ * resolve 后重查账号即可。`profile` 语义同 logoutAgent（省略/null = 当前活跃账号）。
+ */
+export function apiKeyLogin(provider: AgentId, key: string, profile?: string | null): Promise<void> {
+  return invoke("api_key_login", { provider, key, profile: profile ?? null });
 }
 
 /** 退出官方账号。不会删除模型配置、会话、hooks 或中转配置。 */

@@ -35,6 +35,13 @@ const SUPPORTS_PROXY = new Set(["claude", "codex", "kimi", "gemini", "opencode"]
 const SUPPORTS_ACCOUNT = new Set(["claude", "codex", "kimi", "gemini", "opencode"]);
 
 /**
+ * 能用 API Key 登录的那些（＝插件声明了 ApiKeyLoginCap）。**只有 gemini**：它的 OAuth 被官方
+ * 停用（个人版 Code Assist 关闸），key 是唯一活路，且 CLI 没有输入 key 的登录子命令。
+ * 与后端 `AgentPlugin::api_key_login()` 同源。
+ */
+const SUPPORTS_API_KEY_LOGIN = new Set(["gemini"]);
+
+/**
  * 能有多个账号的那些（＝插件声明了 ProfileSpec）。**gemini 不行**：它的数据目录无法被环境变量
  * 覆盖（`GEMINI_DIR` 实测无效），谎称支持会让两个「账号」静默共用同一份凭据。
  */
@@ -166,6 +173,7 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     installed: installed.includes(id),
     supports_proxy: SUPPORTS_PROXY.has(id),
     supports_account: SUPPORTS_ACCOUNT.has(id),
+    supports_api_key_login: SUPPORTS_API_KEY_LOGIN.has(id),
     supports_profiles: SUPPORTS_PROFILES.has(id),
     supports_context: SUPPORTS_CONTEXT.has(id),
     launch_options: LAUNCH_OPTIONS[id] ?? [],

@@ -376,6 +376,46 @@ fn select_login_profile(
     }
 }
 
+/// 用 API Key 完成登录（声明了 `ApiKeyLoginCap` 的 agent，当前只有 gemini）。
+///
+/// 与 [`login_agent`] 是并列入口，不是替代：那条拉终端走交互式流程，这条同步落盘、当场生效——
+/// gemini 的交互式登录只剩 OAuth 一条路，而 Google 已对个人账号关闸（*This client is no longer
+/// supported for Gemini Code Assist for individuals*），点它必然失败；key 又没有对应的登录子命令，
+/// 只能由宿主替用户写进 CLI 认的位置（`~/.gemini/.env` + settings 的 selectedType）。
+///
+/// key 是机密：不写日志、不进 Settings、不通过事件广播；具体落盘位置与权限由插件负责。
+/// 成功后顺手接线，与交互式登录成功后的行为一致（settings.json 此刻必然存在）。
+///
+/// 不 emit `login-done`：本命令同步返回，前端拿到 Ok 即重查账号。若此前有一轮交互式登录还在
+/// 轮询等待，它下一轮（≤2s）就会看到账号出现，自行以 success 收尾——两条路互不打架。
+#[tauri::command]
+pub(crate) async fn api_key_login(
+    provider: String,
+    key: String,
+    profile: Option<String>,
+) -> Result<(), String> {
+    let id = agent_id(&provider).ok_or("未知 agent")?;
+    let cap = meowo_agent::by_id(id.as_str())
+        .and_then(|p| p.api_key_login())
+        .ok_or("该 agent 不支持 API Key 登录")?;
+    // 写进**哪个账号**：显式指定的那个，否则当前活跃账号——与 logout 同一套语义。
+    let profile = match profile {
+        Some(p) => Some(p),
+        None => crate::profile::active_id(id.as_str()),
+    };
+    let inst = match profile.as_deref() {
+        Some(p) => crate::profile::installation_of(id, p).ok_or("解析不到该账号的目录")?,
+        None => install_for(id).ok_or("解析不到该 agent 的安装实况")?,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        cap.save_api_key(&inst, &key)?;
+        wire_hooks_best_effort(id, "登录");
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
 /// 只删除变体表声明的凭据文件，不碰 config、会话或 hooks。
 #[tauri::command]
@@ -428,13 +468,19 @@ pub(crate) async fn logout_agent(provider: String, profile: Option<String>) -> R
                     output.status.code()
                 ));
             }
-            return Ok(());
+        } else {
+            let path = inst
+                .credentials_path()
+                .ok_or("该 agent 未声明登出入口或凭据位置")?;
+            remove_credentials_file(&path)?;
         }
 
-        let path = inst
-            .credentials_path()
-            .ok_or("该 agent 未声明登出入口或凭据位置")?;
-        remove_credentials_file(&path)
+        // 支持 API Key 登录的 agent（gemini）：key 也是凭据，登出必须一并清掉——只删
+        // oauth_creds.json 的话，`.env` 里的 key 会让账号立刻又显示「已登录（API Key）」。
+        if let Some(cap) = meowo_agent::by_id(key.as_str()).and_then(|p| p.api_key_login()) {
+            cap.clear_api_key(&inst)?;
+        }
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?

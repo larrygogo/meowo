@@ -426,6 +426,13 @@ export const zh = {
     loginCancelled: "已取消等待登录。若已在终端登录完成，点刷新即可",
     loginFailed: "拉起登录失败",
     loginTimeout: "未检测到登录完成。若已在终端登录，请点刷新",
+    // API Key 登录（gemini：官方已停掉个人账号的 OAuth，key 是唯一活路）
+    apiKeyLogin: "API Key 登录",
+    apiKeyPlaceholder: "粘贴 API Key",
+    apiKeySave: "保存",
+    apiKeySaving: "保存中…",
+    apiKeyHint: "key 会写进该 agent 自己的配置（对所有终端生效），退出登录时一并清除",
+    apiKeyFailed: (e: string) => `API Key 登录失败：${e}`,
     logout: "退出登录",
     loggingOut: "退出中…",
     logoutConfirm: (name: string) => `确定退出 ${name} 的官方账号吗？中转配置、会话和 hooks 不会被删除。`,

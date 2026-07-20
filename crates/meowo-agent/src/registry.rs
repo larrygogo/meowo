@@ -199,6 +199,12 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// API Key 登录。None = 该 agent 不支持（或不需要——它的交互式登录足够）。
+    /// 声明它的 agent，前端在未登录时额外给出「填 API Key」入口，登出时顺带清除 key。
+    fn api_key_login(&self) -> Option<&'static dyn crate::account::ApiKeyLoginCap> {
+        None
+    }
+
     /// 接线副作用（写前改写 / 落盘后处理）。None = 纯 hooks 合并即可（kimi）。
     fn wiring(&self) -> Option<&'static dyn crate::wiring::WiringCap> {
         None
