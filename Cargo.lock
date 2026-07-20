@@ -2303,7 +2303,7 @@ dependencies = [
  "meowo-reporter",
  "meowo-store",
  "notify",
- "objc",
+ "objc2",
  "percent-encoding",
  "portable-pty",
  "serde",
