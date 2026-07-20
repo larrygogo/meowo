@@ -65,36 +65,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ev.tool_input.as_ref(),
                 &ev.permission_suggestions,
             ) {
-                let output = match decision {
-                    meowo_protocol::broker::ApprovalDecision::Allow => Some(serde_json::json!({
-                        "hookSpecificOutput": {
-                            "hookEventName": "PermissionRequest",
-                            "decision": { "behavior": "allow" }
-                        }
-                    })),
-                    meowo_protocol::broker::ApprovalDecision::AllowWithPermissions(updated) => Some(serde_json::json!({
-                        "hookSpecificOutput": {
-                            "hookEventName": "PermissionRequest",
-                            "decision": {
-                                "behavior": "allow",
-                                "updatedPermissions": updated,
-                            }
-                        }
-                    })),
-                    meowo_protocol::broker::ApprovalDecision::Deny => Some(serde_json::json!({
-                        "hookSpecificOutput": {
-                            "hookEventName": "PermissionRequest",
-                            "decision": {
-                                "behavior": "deny",
-                                "message": "Denied in Meowo."
-                            }
-                        }
-                    })),
-                    // GUI 消费者消失时交还 Agent 原终端；不输出 hook 决策即可恢复原生提示。
-                    meowo_protocol::broker::ApprovalDecision::Pass => None,
-                };
+                let (output, settled) = approval_outcome(decision);
                 if let Some(output) = output {
                     println!("{output}");
+                }
+                // 决策已尘埃落定（GUI 里点了允许/拒绝）→ **当场**清「待批准」。不清的话，
+                // 这个标记要等下一个 hook 事件（PostToolUse/Stop）才被顺带清掉——被批准的
+                // 工具跑多久，卡片就错挂「待批准」多久；拒绝更要等到回合结束的 Stop。
+                //
+                // best-effort（吞错）：codex 的 hook 可能继承只读沙箱（见上方 dispatch 的注释），
+                // 清不掉绝不能影响已经打给 agent 的决策输出。
+                if settled {
+                    let _ = store.clear_pending_review(session_id, now_ms());
                 }
             }
         }
@@ -134,4 +116,95 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// GUI 审批决策 → （打给 agent 的 hook 输出，审批是否已尘埃落定）。
+///
+/// 第二个分量决定要不要当场清 `pending_review`：Allow/Deny 都是「有人做了决定」，提示不再悬着；
+/// **Pass 不算**——GUI 消费者消失时交还 agent 原终端（不输出 hook 决策即可恢复原生提示），
+/// 用户还没批，标记必须留着，否则卡片会在提示仍悬着时谎报「运行中」。
+fn approval_outcome(
+    decision: meowo_protocol::broker::ApprovalDecision,
+) -> (Option<serde_json::Value>, bool) {
+    use meowo_protocol::broker::ApprovalDecision as Decision;
+    match decision {
+        Decision::Allow => (
+            Some(serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": { "behavior": "allow" }
+                }
+            })),
+            true,
+        ),
+        Decision::AllowWithPermissions(updated) => (
+            Some(serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "allow",
+                        "updatedPermissions": updated,
+                    }
+                }
+            })),
+            true,
+        ),
+        Decision::Deny => (
+            Some(serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "deny",
+                        "message": "Denied in Meowo."
+                    }
+                }
+            })),
+            true,
+        ),
+        Decision::Pass => (None, false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::approval_outcome;
+    use meowo_protocol::broker::ApprovalDecision;
+
+    /// Allow/Deny = 决策落地：既要输出 hook 决策，也要清「待批准」。此前没有第二个分量，
+    /// 批准后卡片会一直挂着「待批准」直到下一个 hook 事件——被批准的工具跑多久就错多久。
+    #[test]
+    fn allow_and_deny_settle_the_review() {
+        let (output, settled) = approval_outcome(ApprovalDecision::Allow);
+        assert!(settled);
+        assert_eq!(
+            output.unwrap()["hookSpecificOutput"]["decision"]["behavior"],
+            "allow"
+        );
+
+        let (output, settled) = approval_outcome(ApprovalDecision::Deny);
+        assert!(settled);
+        assert_eq!(
+            output.unwrap()["hookSpecificOutput"]["decision"]["behavior"],
+            "deny"
+        );
+
+        let suggestion = serde_json::json!({"type": "addRules"});
+        let (output, settled) =
+            approval_outcome(ApprovalDecision::AllowWithPermissions(vec![suggestion.clone()]));
+        assert!(settled);
+        let out = output.unwrap();
+        assert_eq!(out["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert_eq!(
+            out["hookSpecificOutput"]["decision"]["updatedPermissions"][0],
+            suggestion
+        );
+    }
+
+    /// Pass = 交还原终端：不输出决策（恢复原生提示），也**不**清「待批准」——用户还没批。
+    #[test]
+    fn pass_returns_to_terminal_and_keeps_the_review_pending() {
+        let (output, settled) = approval_outcome(ApprovalDecision::Pass);
+        assert!(output.is_none());
+        assert!(!settled);
+    }
 }
