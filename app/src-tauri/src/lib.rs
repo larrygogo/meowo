@@ -36,7 +36,7 @@ use install::{
     add_agent_to_user_path, agent_path_gap, api_key_login, cancel_login, check_provider_hooks,
     install_agent, login_agent, logout_agent, repair_provider_hooks,
 };
-use chat::get_chat_history;
+use chat::{get_chat_history, get_subagent_transcript, refresh_session_model};
 use managed_terminal::{
     get_pending_approval, managed_terminal_binding, managed_terminal_snapshot,
     open_attached_terminal, register_approval_consumer, resize_managed_terminal,
@@ -859,6 +859,8 @@ pub fn run() {
             get_live_sessions_counts,
             get_live_sessions_page,
             get_chat_history,
+            get_subagent_transcript,
+            refresh_session_model,
             open_chat_window,
             start_managed_terminal,
             takeover_managed_terminal,

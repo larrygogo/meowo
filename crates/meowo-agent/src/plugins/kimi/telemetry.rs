@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 use crate::transcript::ChatItem;
-use crate::transcript::{ChatOnlyParser, TranscriptEvent, TranscriptParser, TranscriptSpec};
+use crate::transcript::{
+    ChatOnlyParser, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, TranscriptEvent,
+    TranscriptParser, TranscriptSpec,
+};
 
 fn chat_id(prefix: &str, line: &str) -> String {
     let hash = line.bytes().fold(0xcbf29ce484222325u64, |h, b| {
@@ -98,6 +101,12 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
             };
             let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if matches!(event_type, "tool.result" | "tool_result") {
+                let text = event
+                    .get("output")
+                    .or_else(|| event.pointer("/result/output"))
+                    .or_else(|| event.get("result"))
+                    .map(value_text)
+                    .unwrap_or_default();
                 return vec![TranscriptEvent::ToolResult {
                     id: chat_id("result", line),
                     timestamp,
@@ -107,12 +116,9 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                         .or_else(|| event.get("toolCallId"))
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
-                    text: event
-                        .get("output")
-                        .or_else(|| event.pointer("/result/output"))
-                        .or_else(|| event.get("result"))
-                        .map(value_text)
-                        .unwrap_or_default(),
+                    // 子任务状态就写在这条结果里；顺手取出，折叠态才能显示进度。
+                    subagent: KIMI_SUBAGENTS.detect_result(&text),
+                    text,
                     is_error: event
                         .get("isError")
                         .or_else(|| event.get("is_error"))
@@ -157,27 +163,37 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                     })
                     .into_iter()
                     .collect(),
-                "tool.call" | "tool_call" | "tool" => vec![TranscriptEvent::ToolCall {
-                    id: part
-                        .get("id")
-                        .or_else(|| part.get("callId"))
-                        .or_else(|| part.get("toolCallId"))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| chat_id("tool", line)),
-                    timestamp,
-                    name: part
+                "tool.call" | "tool_call" | "tool" => {
+                    let name = part
                         .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("tool")
-                        .to_string(),
-                    summary: part
+                        .to_string();
+                    let args = part
                         .get("input")
                         .or_else(|| part.get("arguments"))
-                        .or_else(|| part.get("args"))
-                        .map(value_text)
-                        .unwrap_or_default(),
-                }],
+                        .or_else(|| part.get("args"));
+                    let subagent = KIMI_SUBAGENTS.detect_call(&name, args);
+                    vec![TranscriptEvent::ToolCall {
+                        id: part
+                            .get("id")
+                            .or_else(|| part.get("callId"))
+                            .or_else(|| part.get("toolCallId"))
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| chat_id("tool", line)),
+                        timestamp,
+                        name,
+                        // 子任务的摘要取那句描述；否则整包 args（含上千字 prompt）会把摘要行淹掉。
+                        summary: subagent
+                            .as_ref()
+                            .map(|call| call.description.clone())
+                            .filter(|description| !description.is_empty())
+                            .or_else(|| args.map(value_text))
+                            .unwrap_or_default(),
+                        subagent,
+                    }]
+                }
                 _ => Vec::new(),
             }
         }
@@ -196,6 +212,351 @@ fn parse_chat_items(line: &str) -> Vec<ChatItem> {
         .into_iter()
         .map(ChatItem::from)
         .collect()
+}
+
+/// Kimi 的子任务侧车布局（kimi-code 0.2x 实测）：
+///
+/// ```text
+/// sessions/<wd>/session_<id>/agents/main/wire.jsonl       ← 主流
+/// sessions/<wd>/session_<id>/agents/agent-0/wire.jsonl    ← 子任务，同格式
+/// sessions/<wd>/session_<id>/agents/agent-1/wire.jsonl
+/// ```
+///
+/// 与 claude 不同，kimi **没有 meta 文件做外键**：主链 `Agent` 调用的归属只写在对应
+/// `tool.result` 的**输出正文**里（`agent_id: agent-0` 这样的纯文本行）。故定位要回扫主流，
+/// 找到该 callId 的结果再抠 id——正是这种差异让子任务能力必须落在插件而非共享路径。
+pub struct KimiSubagents;
+pub static KIMI_SUBAGENTS: KimiSubagents = KimiSubagents;
+
+/// 紧跟 `key` 之后的取值（跳过 `:`/`=`/引号/空白），只取字母数字与 `-_`。
+fn value_after(text: &str, key: &str) -> Option<String> {
+    let rest = text.split(key).nth(1)?;
+    let rest = rest.trim_start_matches([':', '=', '"', '\'', ' ', '\t']);
+    let value: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    (!value.is_empty()).then_some(value)
+}
+
+/// kimi 的状态词 → 归一化的 `running` / `completed` / `failed`。
+fn normalize_status(raw: &str) -> Option<&'static str> {
+    match raw {
+        "completed" | "done" | "success" => Some("completed"),
+        "failed" | "error" | "cancelled" | "aborted" => Some("failed"),
+        "running" | "not_ready" | "pending" | "queued" => Some("running"),
+        _ => None,
+    }
+}
+
+/// 从工具结果正文里抠出每个子任务的 (agent_id, 状态)。kimi 只以自然语言/XML 形式回吐
+/// 这些信息，没有结构化字段：
+///
+/// - 单发 `Agent`：`agent_id: agent-0` 与 `status: running` 分行写在同一段里
+/// - `AgentSwarm`：`<subagent mode="resume" agent_id="agent-3" outcome="completed">`，一份结果里多个
+///
+/// 两种写法都只认 `agent_id` 这个键（`task_id` 长得很像但不是它），并约束成
+/// `agent-<字母数字>`，以免把正文里的其它词当成目录名。保序去重：分支顺序即此顺序。
+fn agent_states_from_result(text: &str) -> Vec<(String, Option<String>)> {
+    let mut out: Vec<(String, Option<String>)> = Vec::new();
+    // XML 形态：逐个 <subagent …> 标签，id 与 outcome 同在标签属性里，必须成对取。
+    if text.contains("<subagent") {
+        for chunk in text.split("<subagent").skip(1) {
+            let attrs = chunk.split('>').next().unwrap_or("");
+            let Some(id) = value_after(attrs, "agent_id") else {
+                continue;
+            };
+            if !id.starts_with("agent-") || id.len() <= "agent-".len() {
+                continue;
+            }
+            let status = value_after(attrs, "outcome")
+                .as_deref()
+                .and_then(normalize_status)
+                .map(str::to_string);
+            if !out.iter().any(|(seen, _)| *seen == id) {
+                out.push((id, status));
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    // 纯文本形态（单发 Agent）：整段只描述一个子任务，且 `status:` 常写在 `agent_id:`
+    // 之前，故从整段取状态而不是从 id 之后找。
+    let status = value_after(text, "status")
+        .as_deref()
+        .and_then(normalize_status)
+        .map(str::to_string);
+    for chunk in text.split("agent_id").skip(1) {
+        let rest = chunk.trim_start_matches([':', '=', '"', '\'', ' ', '\t']);
+        let id: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if !id.starts_with("agent-") || id.len() <= "agent-".len() {
+            continue;
+        }
+        if !out.iter().any(|(seen, _)| *seen == id) {
+            out.push((id, status.clone()));
+        }
+    }
+    out
+}
+
+/// 取**最长的不含 JSON 转义字符**的片段当特征串：JSON 只转义 `"`、`\` 与控制字符，
+/// 避开它们的片段必然在 wire.jsonl 里原样出现，于是无需解析整行就能做子串匹配。
+///
+/// 取最长而非开头：同一批派发的子任务常常共用一大段开场白（"调研 X 项目（工作目录 …）"），
+/// 前缀切片会把它们全配到同一个目录上。最长片段落在各自的正文里，实测能唯一命中。
+fn distinctive_slice(text: &str) -> Option<&str> {
+    let mut best: Option<(usize, usize)> = None;
+    let mut start = 0usize;
+    let push = |start: usize, end: usize, best: &mut Option<(usize, usize)>| {
+        if end > start && best.is_none_or(|(a, b)| end - start > b - a) {
+            *best = Some((start, end));
+        }
+    };
+    for (offset, c) in text.char_indices() {
+        if c == '"' || c == '\\' || c.is_control() {
+            push(start, offset, &mut best);
+            start = offset + c.len_utf8();
+        }
+    }
+    push(start, text.len(), &mut best);
+    // 太短的特征串会误配到别的子任务上。
+    best.filter(|(a, b)| b - a >= 24).map(|(a, b)| &text[a..b])
+}
+
+/// 读文件头部若干字节（lossy）。子 agent 的开场 prompt 在最前面几行，
+/// 但其中的 systemPrompt 可能很大，故给足窗口。
+fn read_head(path: &Path, limit: u64) -> Option<String> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(limit)
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+impl KimiSubagents {
+    /// 子任务还在跑时结果尚未写入，`agent_id` 无处可取——而这恰恰是用户最想看进度的时刻。
+    /// 好在派发内容会原样出现在对应子 agent 的开场 prompt 里（fan-out 的每个 `item` 经
+    /// `prompt_template` 渲染，单发 `Agent` 则是整段 `prompt`），据此反查目录。
+    /// 按派发顺序返回，与 TUI 里的 001/002… 编号一致。
+    fn locate_by_prompt(agents_dir: &Path, items: &[String]) -> Vec<SubagentStream> {
+        /// 开场 prompt 在文件最前面；1 MiB 足以越过 systemPrompt。
+        const HEAD_LIMIT: u64 = 1024 * 1024;
+        let Ok(entries) = std::fs::read_dir(agents_dir) else {
+            return Vec::new();
+        };
+        let mut heads: Vec<(String, PathBuf, String)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_str()?.to_string();
+                if !name.starts_with("agent-") {
+                    return None;
+                }
+                let path = entry.path().join("wire.jsonl");
+                let head = read_head(&path, HEAD_LIMIT)?;
+                Some((name, path, head))
+            })
+            .collect();
+        // 目录名里的编号按数值排序，让同分数的匹配保持 agent-2 < agent-10。
+        heads.sort_by_key(|(name, _, _)| {
+            name.trim_start_matches("agent-").parse::<u64>().unwrap_or(u64::MAX)
+        });
+        let mut used = std::collections::HashSet::new();
+        items
+            .iter()
+            .filter_map(|item| {
+                let needle = distinctive_slice(item)?;
+                let (name, path, _) = heads
+                    .iter()
+                    .find(|(name, _, head)| !used.contains(name) && head.contains(needle))?;
+                used.insert(name.clone());
+                Some(SubagentStream {
+                    label: Some(name.clone()),
+                    // 走到这条路径就说明结果还没落盘，即还在跑。
+                    status: Some("running".to_string()),
+                    path: path.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
+impl SubagentSpec for KimiSubagents {
+    fn detect_call(
+        &self,
+        tool_name: &str,
+        input: Option<&serde_json::Value>,
+    ) -> Option<SubagentRef> {
+        // `Agent` 单发一个；`AgentSwarm` 一次派一批——两种形态：
+        // fan-out（`items` 每项一个子任务）与 resume（`resume_agent_ids` 恢复既有的一批）。
+        if !matches!(tool_name, "Agent" | "AgentSwarm") {
+            return None;
+        }
+        let input = input?;
+        let count = input
+            .get("items")
+            .and_then(|v| v.as_array())
+            .map(|items| items.len())
+            .or_else(|| {
+                input
+                    .get("resume_agent_ids")
+                    .and_then(|v| v.as_object())
+                    .map(|ids| ids.len())
+            })
+            .unwrap_or(1);
+        Some(SubagentRef {
+            description: input
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            agent_type: input
+                .get("subagent_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            count: count.max(1) as u32,
+        })
+    }
+
+    fn locate_streams(&self, main_transcript: &Path, tool_use_id: &str) -> Vec<SubagentStream> {
+        // .../agents/main/wire.jsonl → .../agents/
+        let Some(agents_dir) = main_transcript.parent().and_then(Path::parent) else {
+            return Vec::new();
+        };
+        let Ok(main) = std::fs::read_to_string(main_transcript) else {
+            return Vec::new();
+        };
+        let mut ids: Vec<(String, Option<String>)> = Vec::new();
+        let mut fanout_items: Vec<String> = Vec::new();
+        for line in main.lines() {
+            // 只解析确实提到这个 callId 的行，避免为整份主流做全量 JSON 解析。
+            if !line.contains(tool_use_id) {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let Some(event) = value.get("event") else {
+                continue;
+            };
+            let call_id = event
+                .get("callId")
+                .or_else(|| event.get("call_id"))
+                .or_else(|| event.get("toolCallId"))
+                .and_then(|v| v.as_str());
+            if call_id != Some(tool_use_id) {
+                continue;
+            }
+            match event.get("type").and_then(|v| v.as_str()) {
+                // resume 形态的权威名单直接写在调用参数里，不必等结果。
+                Some("tool.call" | "tool_call") => {
+                    if let Some(resume) = event
+                        .pointer("/args/resume_agent_ids")
+                        .or_else(|| event.pointer("/input/resume_agent_ids"))
+                        .and_then(|v| v.as_object())
+                    {
+                        // 恢复的一批在结果落盘前都在跑；真实结局稍后由结果覆盖。
+                        ids.extend(
+                            resume
+                                .keys()
+                                .map(|id| (id.clone(), Some("running".to_string()))),
+                        );
+                    }
+                    // 派发内容：swarm 是 items 逐项，单发 Agent 是整段 prompt。
+                    // 两者都用于「结果尚未写入时」按开场 prompt 反查目录。
+                    match event
+                        .pointer("/args/items")
+                        .or_else(|| event.pointer("/input/items"))
+                        .and_then(|v| v.as_array())
+                    {
+                        Some(items) => fanout_items.extend(
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_str())
+                                .map(str::to_string),
+                        ),
+                        None => {
+                            if let Some(prompt) = event
+                                .pointer("/args/prompt")
+                                .or_else(|| event.pointer("/input/prompt"))
+                                .and_then(|v| v.as_str())
+                            {
+                                fanout_items.push(prompt.to_string());
+                            }
+                        }
+                    }
+                }
+                // fan-out 形态的 id 只在结果里（`<subagent agent_id="agent-3">`）。
+                Some("tool.result" | "tool_result") => {
+                    if let Some(output) = event
+                        .get("output")
+                        .or_else(|| event.pointer("/result/output"))
+                        .or_else(|| event.get("result"))
+                        .map(value_text)
+                    {
+                        ids.extend(agent_states_from_result(&output));
+                    }
+                }
+                _ => {}
+            }
+        }
+        // 同一批 id 会被参数（resume）和结果各报一次。保序去重，并让**后出现**的状态胜出：
+        // 参数只能说明"已派出"，结果才带真实结局。
+        let mut merged: Vec<(String, Option<String>)> = Vec::new();
+        for (id, status) in ids {
+            match merged.iter_mut().find(|(seen, _)| *seen == id) {
+                Some(entry) => {
+                    if status.is_some() {
+                        entry.1 = status;
+                    }
+                }
+                None => merged.push((id, status)),
+            }
+        }
+        // fan-out 的 agent_id 只写在结果里。swarm 仍在跑时结果还没落盘——正是用户最想看
+        // 进度的时刻——只能靠开场 prompt 反查目录。
+        if merged.is_empty() && !fanout_items.is_empty() {
+            return Self::locate_by_prompt(agents_dir, &fanout_items);
+        }
+        merged
+            .into_iter()
+            .map(|(id, status)| SubagentStream {
+                path: agents_dir.join(&id).join("wire.jsonl"),
+                // 一批子任务必须能分辨谁是谁；单发时也显示，kimi 的 id 本身就是可读的。
+                label: Some(id),
+                status,
+            })
+            .filter(|stream| stream.path.is_file())
+            .collect()
+    }
+
+    fn parse_stream_line(&self, line: &str) -> Vec<TranscriptEvent> {
+        // 子 agent 的 wire.jsonl 与主流同格式，直接复用。
+        parse_transcript_events(line)
+    }
+
+    fn detect_result(&self, output: &str) -> Option<SubagentOutcome> {
+        let states = agent_states_from_result(output);
+        if states.is_empty() {
+            return None;
+        }
+        let mut outcome = SubagentOutcome { running: 0, completed: 0, failed: 0 };
+        for (_, status) in &states {
+            match status.as_deref() {
+                Some("completed") => outcome.completed += 1,
+                Some("failed") => outcome.failed += 1,
+                // 没写状态的分支按「在跑」计——派出去了但还没有结局。
+                _ => outcome.running += 1,
+            }
+        }
+        Some(outcome)
+    }
 }
 
 pub struct KimiTranscript;
@@ -262,6 +623,10 @@ impl TranscriptSpec for KimiTranscript {
         true
     }
 
+    fn subagents(&self) -> Option<&'static dyn SubagentSpec> {
+        Some(&KIMI_SUBAGENTS)
+    }
+
     fn supports_analysis(&self) -> bool {
         false
     }
@@ -280,6 +645,31 @@ pub fn kimi_share_dir() -> Option<PathBuf> {
     kimi_install().map(|i| i.data_dir)
 }
 
+/// Meowo 管理的 kimi profile 数据目录（每个 profile 根就是它的 `KIMI_SHARE_DIR`，见
+/// `plugins/kimi` 的 `PROFILE` 声明）。多账号会话的 `session_index.jsonl` 落在这些目录里，
+/// 而 meowo-app 进程没有 `KIMI_SHARE_DIR`——只查默认目录会让 profile 会话的
+/// 改名/摘要/上下文全部静默落空，故会话目录查找必须把它们纳入候选。
+/// 目录布局与 claude 侧 `managed_projects_dirs` 同源（`~/.meowo/profiles/<agent>/<id>`）。
+fn managed_share_dirs() -> Vec<PathBuf> {
+    let Some(home) = crate::home_dir() else {
+        return Vec::new();
+    };
+    let root = std::env::var_os("MEOWO_DB")
+        .map(PathBuf::from)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| home.join(".meowo"))
+        .join("profiles")
+        .join("kimi");
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+        .collect()
+}
+
 /// kimi 的启动 argv（单元素：可执行绝对路径；找不到回退裸名 "kimi" 走 PATH）。
 /// resume/launch 用：meowo-app 拉起的终端 PATH 未必含 kimi（或 kimi 是 shim/别名），故优先绝对路径，
 /// 避免 wt/powershell「系统找不到指定的文件」。
@@ -295,8 +685,21 @@ pub fn kimi_installed() -> bool {
 }
 
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
+/// 依次查默认数据目录与全部受管 profile 目录：session_id 全局唯一，首个命中即返回。
+/// reporter 由 profile 里的 kimi 派生时自带 `KIMI_SHARE_DIR`，`kimi_share_dir()` 即命中；
+/// meowo-app 没有该变量，profile 会话靠 `managed_share_dirs()` 兜底。
 fn session_dir(session_id: &str) -> Option<PathBuf> {
-    let idx = kimi_share_dir()?.join("session_index.jsonl");
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    candidates.extend(kimi_share_dir());
+    candidates.extend(managed_share_dirs());
+    candidates
+        .into_iter()
+        .find_map(|dir| session_dir_in(&dir, session_id))
+}
+
+/// 在**某个**数据目录的 `session_index.jsonl` 里查 session_id。
+fn session_dir_in(share_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let idx = share_dir.join("session_index.jsonl");
     let content = std::fs::read_to_string(idx).ok()?;
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -408,9 +811,13 @@ pub fn read_summary(session_id: &str) -> Option<WireSummary> {
     }
     let head = read_range(&wire, 0, HEAD_BYTES).unwrap_or_default();
     let tail = read_range(&wire, size.saturating_sub(TAIL_BYTES), TAIL_BYTES).unwrap_or_default();
+    let tail_summary = parse_wire(&tail);
     Some(WireSummary {
-        model: parse_wire(&head).model,
-        last_ai: parse_wire(&tail).last_ai,
+        // 模型**不只**在头部：会话中途 `/model` 切换会在文件后段再写一条 `config.update`
+        // （实测尾部可见 `kimi-for-coding → k3 → kimi-for-coding` 这样的切换序列）。
+        // 只读头部的话，切换后界面永远停在最初那个模型上。尾部优先、头部兜底。
+        model: tail_summary.model.or_else(|| parse_wire(&head).model),
+        last_ai: tail_summary.last_ai,
     })
 }
 
@@ -500,8 +907,9 @@ pub fn read_context(session_id: &str) -> Option<crate::caps::ContextUsage> {
 
 /// 把某 kimi 会话改成自定义标题：改写 session `state.json` 的 `title` + `isCustomTitle=true`
 /// （后者阻止 kimi 之后用 AI 标题覆盖，与 claude 的 custom-title 同义），使 kimi 自身会话列表与
-/// `kimi -r` 列表也显示新名。其余字段原样保留。临时文件 + rename 原子写，避免与运行中的 kimi
-/// 并发写 state.json 撕裂。定位/读/解析/写失败返回 false。
+/// `kimi -r` 列表也显示新名。其余字段原样保留。写回走 [`crate::fsutil::write_atomic`]
+/// （pid+序号临时名 + rename + 失败清理），避免与运行中的 kimi 并发写 state.json 撕裂，
+/// 也避免并发改名互踩同一个固定临时名、崩溃后残留临时文件。定位/读/解析/写失败返回 false。
 pub fn set_custom_title(session_id: &str, title: &str) -> bool {
     let Some(dir) = session_dir(session_id) else {
         return false;
@@ -524,11 +932,7 @@ pub fn set_custom_title(session_id: &str, title: &str) -> bool {
     let Ok(s) = serde_json::to_string(&v) else {
         return false;
     };
-    let tmp = path.with_extension("json.cckb-tmp");
-    if std::fs::write(&tmp, s).is_err() {
-        return false;
-    }
-    std::fs::rename(&tmp, &path).is_ok()
+    crate::fsutil::write_atomic(&path, &s).is_ok()
 }
 
 // ═══ 能力槽 ═══
@@ -686,6 +1090,192 @@ mod tests {
         ));
     }
 
+    /// kimi 的子任务归属只写在 `Agent` 工具结果的**自然语言正文**里，没有结构化字段。
+    /// 这个抠取是整条链路最脆的一环，钉死它的边界。
+    #[test]
+    fn extracts_agent_ids_and_status_from_free_form_and_swarm_results() {
+        let ids = |text: &str| {
+            agent_states_from_result(text)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        // 单发 Agent：纯文本 `agent_id: agent-0`，且状态写在 id **之前**，要能取到。
+        assert_eq!(
+            agent_states_from_result("task_id: agent-3hzhkhtr\nstatus: running\nagent_id: agent-0\n"),
+            vec![("agent-0".to_string(), Some("running".to_string()))]
+        );
+        // AgentSwarm：一份结果里多个 XML 属性形式的 id，各带自己的 outcome，保序去重。
+        assert_eq!(
+            agent_states_from_result(
+                r#"<agent_swarm_result><summary>completed: 3</summary>
+                   <subagent mode="resume" agent_id="agent-3" outcome="completed">甲</subagent>
+                   <subagent agent_id="agent-4" outcome="failed">乙</subagent>
+                   <subagent agent_id="agent-3" outcome="completed">重复的不再计一次</subagent>"#
+            ),
+            vec![
+                ("agent-3".to_string(), Some("completed".to_string())),
+                ("agent-4".to_string(), Some("failed".to_string())),
+            ]
+        );
+        // 状态必须按分支各取各的，不能让某一个的 outcome 串到别的分支上。
+        assert_eq!(
+            agent_states_from_result(
+                r#"<subagent agent_id="agent-1" outcome="failed">x</subagent>
+                   <subagent agent_id="agent-2">没写 outcome</subagent>"#
+            ),
+            vec![
+                ("agent-1".to_string(), Some("failed".to_string())),
+                ("agent-2".to_string(), None),
+            ]
+        );
+        // task_id 长得很像但不是它要的那个；必须认 `agent_id` 这个键。
+        assert!(ids("task_id: agent-3hzhkhtr\nstatus: running\n").is_empty());
+        // 目录名不能被正文里后续的词污染。
+        assert_eq!(ids("agent_id: agent-12 (resume 用这个 id)"), vec!["agent-12"]);
+        // 光有前缀没有编号不是合法目录名。
+        assert!(ids("agent_id: agent-").is_empty());
+        assert!(ids("完全无关的输出").is_empty());
+    }
+
+    /// AgentSwarm 一次派一批：调用侧要报出规模，定位侧要给出全部分支。
+    #[test]
+    fn swarm_call_reports_batch_size_and_locates_every_branch() {
+        let fanout = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"tool_s","name":"AgentSwarm","args":{"description":"分组审查全部代码","subagent_type":"explore","items":["甲","乙","丙"],"prompt_template":"审查 {{item}}"}}}"#;
+        let ChatItem::ToolUse { summary, subagent, .. } = &parse_chat_items(fanout)[0] else {
+            panic!("应解析成工具调用");
+        };
+        assert_eq!(summary, "分组审查全部代码");
+        let subagent = subagent.as_ref().expect("AgentSwarm 也是子任务委派");
+        assert_eq!(subagent.count, 3, "fan-out 的规模来自 items 条数");
+
+        // resume 形态：规模来自 resume_agent_ids。
+        let resume = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"tool_r","name":"AgentSwarm","args":{"description":"恢复暂停的 agent","resume_agent_ids":{"agent-3":"继续","agent-4":"继续"}}}}"#;
+        let ChatItem::ToolUse { subagent, .. } = &parse_chat_items(resume)[0] else {
+            panic!("应解析成工具调用");
+        };
+        assert_eq!(subagent.as_ref().unwrap().count, 2);
+
+        let root = std::env::temp_dir().join(format!("kimi-swarm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let agents = root.join("agents");
+        std::fs::create_dir_all(agents.join("main")).unwrap();
+        let main_path = agents.join("main/wire.jsonl");
+        let branch = |id: &str, text: &str| {
+            std::fs::create_dir_all(agents.join(id)).unwrap();
+            std::fs::write(
+                agents.join(id).join("wire.jsonl"),
+                format!(
+                    r#"{{"type":"context.append_loop_event","event":{{"type":"content.part","part":{{"type":"text","text":"{text}"}}}}}}"#
+                ) + "\n",
+            )
+            .unwrap();
+        };
+        branch("agent-3", "甲的结论");
+        branch("agent-4", "乙的结论");
+        std::fs::write(
+            &main_path,
+            format!(
+                "{}\n{}\n",
+                resume.replace("tool_r", "tool_s"),
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","callId":"tool_s","output":"<agent_swarm_result><subagent agent_id=\"agent-3\">甲</subagent><subagent agent_id=\"agent-4\">乙</subagent>"}}"#
+            ),
+        )
+        .unwrap();
+
+        let runs = crate::transcript::read_subagent_chat(&KIMI_TRANSCRIPT, &main_path, "tool_s");
+        assert_eq!(runs.len(), 2, "一次 swarm 的每个分支都要能展开");
+        assert_eq!(runs[0].label.as_deref(), Some("agent-3"));
+        assert_eq!(runs[1].label.as_deref(), Some("agent-4"));
+        assert!(
+            matches!(&runs[0].items[0], ChatItem::AssistantDelta { text, .. } if text == "甲的结论"),
+            "实际：{:?}",
+            runs[0].items
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 状态挂在主链的工具回执上——折叠状态下就能显示进度，不必先展开去读侧车流。
+    #[test]
+    fn tool_result_carries_subagent_outcome_for_the_collapsed_badge() {
+        let swarm = r#"{"type":"context.append_loop_event","event":{"type":"tool.result","callId":"tool_s","output":"<agent_swarm_result><subagent agent_id=\"agent-1\" outcome=\"completed\">甲</subagent><subagent agent_id=\"agent-2\" outcome=\"failed\">乙</subagent><subagent agent_id=\"agent-3\">还在跑</subagent>"}}"#;
+        let ChatItem::ToolResult { subagent, .. } = &parse_chat_items(swarm)[0] else {
+            panic!("应解析成工具结果");
+        };
+        let outcome = subagent.as_ref().expect("swarm 回执应带结局统计");
+        assert_eq!((outcome.completed, outcome.failed, outcome.running), (1, 1, 1));
+
+        // 单发 Agent 刚派出去：结果里写着 running。
+        let single = r#"{"type":"context.append_loop_event","event":{"type":"tool.result","callId":"tool_x","output":"task_id: agent-zzz\nstatus: running\nagent_id: agent-0"}}"#;
+        let ChatItem::ToolResult { subagent, .. } = &parse_chat_items(single)[0] else {
+            panic!("应解析成工具结果");
+        };
+        assert_eq!(subagent.as_ref().unwrap().running, 1);
+
+        // 普通工具的回执不该被安上子任务结局。
+        let plain = r#"{"type":"context.append_loop_event","event":{"type":"tool.result","callId":"t2","output":"cargo test 通过"}}"#;
+        let ChatItem::ToolResult { subagent, .. } = &parse_chat_items(plain)[0] else {
+            panic!("应解析成工具结果");
+        };
+        assert!(subagent.is_none());
+    }
+
+    /// 主链识别 + 摘要取描述（args 里的 prompt 上千字，不能进摘要行）。
+    #[test]
+    fn agent_tool_call_carries_subagent_ref_and_readable_summary() {
+        let line = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"tool_x","name":"Agent","args":{"subagent_type":"explore","description":"评估反混淆效果","prompt":"你在评估一个很长的项目……"}}}"#;
+        let ChatItem::ToolUse { summary, subagent, .. } = &parse_chat_items(line)[0] else {
+            panic!("应解析成工具调用");
+        };
+        assert_eq!(summary, "评估反混淆效果");
+        let subagent = subagent.as_ref().expect("Agent 调用应带 SubagentRef");
+        assert_eq!(subagent.agent_type.as_deref(), Some("explore"));
+
+        // 普通工具不受影响：摘要仍是参数原文，且不标成子任务。
+        let plain = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"t2","name":"Bash","args":{"command":"cargo test"}}}"#;
+        let ChatItem::ToolUse { subagent, .. } = &parse_chat_items(plain)[0] else {
+            panic!("应解析成工具调用");
+        };
+        assert!(subagent.is_none());
+    }
+
+    /// 侧车流定位：回扫主流找到该 callId 的结果 → 抠 agent_id → `agents/<id>/wire.jsonl`。
+    #[test]
+    fn locates_subagent_stream_via_main_wire_result() {
+        let root = std::env::temp_dir().join(format!("kimi-subagent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let agents = root.join("agents");
+        std::fs::create_dir_all(agents.join("main")).unwrap();
+        std::fs::create_dir_all(agents.join("agent-0")).unwrap();
+        let main = agents.join("main/wire.jsonl");
+        std::fs::write(
+            &main,
+            format!(
+                "{}\n{}\n",
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"tool_x","name":"Agent","args":{"description":"查一下"}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","callId":"tool_x","output":"task_id: agent-zzz\nagent_id: agent-0\nstatus: running"}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("agent-0/wire.jsonl"),
+            format!("{}\n", r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"子任务结论"}}}"#),
+        )
+        .unwrap();
+
+        let runs = crate::transcript::read_subagent_chat(&KIMI_TRANSCRIPT, &main, "tool_x");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].label.as_deref(), Some("agent-0"));
+        assert!(
+            matches!(&runs[0].items[0], ChatItem::AssistantDelta { text, .. } if text == "子任务结论"),
+            "实际：{:?}",
+            runs[0].items
+        );
+        // 没有对应结果行的 callId 不该猜一个流出来。
+        assert!(crate::transcript::read_subagent_chat(&KIMI_TRANSCRIPT, &main, "tool_none").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn install_resolves_config_path_under_share_dir() {
         // 目录优先级本身由 meowo-agent 的变体表单测覆盖（不碰真实 home）；这里只守住薄封装的一致性：
@@ -698,5 +1288,78 @@ mod tests {
         let argv = kimi_launch_argv();
         assert_eq!(argv.len(), 1);
         assert!(argv[0].to_ascii_lowercase().contains("kimi"));
+    }
+
+    /// 回归（多账号）：profile 会话的 `session_index.jsonl` 落在 `~/.meowo/profiles/kimi/<id>/`
+    /// 下，而 meowo-app 进程没有 `KIMI_SHARE_DIR`。修复前 `session_dir` 只查默认目录，profile
+    /// 会话定位不到 → 改名静默不生效（meowo 里改了名，kimi 自己的会话列表还是旧名）。
+    #[test]
+    fn session_lookup_and_rename_cover_managed_profile_dirs() {
+        let _env = crate::env_guard();
+        let home = std::env::temp_dir().join(format!("meowo-kimi-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+
+        // 默认账号的数据目录也在，且索引里有**别的**会话——默认目录的查找不能因新候选而回退。
+        let default_sid = format!("kimi-default-sid-{}", std::process::id());
+        let default_share = home.join(".kimi-code");
+        let default_session = default_share.join("sessions/wd/session_default");
+        std::fs::create_dir_all(&default_session).unwrap();
+        std::fs::write(
+            default_share.join("session_index.jsonl"),
+            serde_json::json!({"sessionId": default_sid, "sessionDir": default_session})
+                .to_string()
+                + "\n",
+        )
+        .unwrap();
+
+        // profile 数据目录 = profile 根（`KIMI_SHARE_DIR` 就指向它，见 plugins/kimi 的 PROFILE）。
+        let profile_sid = format!("kimi-profile-sid-{}", std::process::id());
+        let profile_share = home.join(".meowo").join("profiles").join("kimi").join("work");
+        let profile_session = profile_share.join("sessions/wd/session_profile");
+        std::fs::create_dir_all(&profile_session).unwrap();
+        std::fs::write(
+            profile_share.join("session_index.jsonl"),
+            serde_json::json!({"sessionId": profile_sid, "sessionDir": profile_session})
+                .to_string()
+                + "\n",
+        )
+        .unwrap();
+        std::fs::write(profile_session.join("state.json"), r#"{"title":"旧名"}"#).unwrap();
+
+        let old_userprofile = std::env::var("USERPROFILE").ok();
+        let old_home = std::env::var("HOME").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("HOME", &home);
+
+        // 默认目录的会话照常命中；profile 目录的会话也查得到（修复前这里返回 None）。
+        assert_eq!(
+            session_dir(&default_sid).as_deref(),
+            Some(default_session.as_path())
+        );
+        assert_eq!(
+            session_dir(&profile_sid).as_deref(),
+            Some(profile_session.as_path())
+        );
+        assert_eq!(session_dir("no-such-sid"), None);
+
+        // 端到端：profile 会话的改名真正写进它自己目录的 state.json。
+        assert!(set_custom_title(&profile_sid, "新名字"));
+        let state: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(profile_session.join("state.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state["title"], "新名字");
+        assert_eq!(state["isCustomTitle"], true);
+        assert!(!set_custom_title("no-such-sid", "x"));
+
+        match old_userprofile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match old_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

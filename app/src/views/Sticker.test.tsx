@@ -725,3 +725,46 @@ describe("Sticker", () => {
     expect(container.querySelectorAll(".stk-vitem").length).toBe(before);
   });
 });
+
+describe("自绘滚动条 thumb 拖拽", () => {
+  // jsdom 没有布局，scrollHeight/clientHeight 恒为 0，syncSb 会判定无需滚动条、thumb 不渲染。
+  // 给滚动容器补上假尺寸再触发一次 syncSb（只管 thumb 拖拽这条链路，不管布局精度）。
+  const renderThumb = async () => {
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
+    const scrollEl = container.querySelector(".stk-scroll") as HTMLElement;
+    Object.defineProperties(scrollEl, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 600 },
+    });
+    fireEvent.scroll(scrollEl);
+    await waitFor(() => expect(container.querySelector(".stk-sb")).not.toBeNull());
+    return { scrollEl, thumb: container.querySelector(".stk-sb") as HTMLElement };
+  };
+
+  it("拖拽中移出窗口松手（buttons=0 的 mousemove）→ 结束拖拽并注销监听", async () => {
+    const { scrollEl, thumb } = await renderThumb();
+    fireEvent.mouseDown(thumb, { clientY: 100, buttons: 1 });
+    expect(thumb.className).toContain("is-drag");
+    // 正常拖动：按住键移动会改写 scrollTop。
+    fireEvent.mouseMove(window, { clientY: 220, buttons: 1 });
+    const dragged = scrollEl.scrollTop;
+    expect(dragged).toBeGreaterThan(0);
+    // 窗外松手后移回窗内：这次无按键的移动必须被认作松手，而不是继续拖动。
+    fireEvent.mouseMove(window, { clientY: 500, buttons: 0 });
+    expect(thumb.className).not.toContain("is-drag");
+    expect(scrollEl.scrollTop).toBe(dragged);
+    // 监听已注销：之后按住键移动也不许再改写 scrollTop。
+    fireEvent.mouseMove(window, { clientY: 900, buttons: 1 });
+    expect(scrollEl.scrollTop).toBe(dragged);
+  });
+
+  it("拖拽中窗口失焦（blur）→ 同样结束拖拽", async () => {
+    const { scrollEl, thumb } = await renderThumb();
+    fireEvent.mouseDown(thumb, { clientY: 100, buttons: 1 });
+    expect(thumb.className).toContain("is-drag");
+    fireEvent(window, new Event("blur"));
+    expect(thumb.className).not.toContain("is-drag");
+    fireEvent.mouseMove(window, { clientY: 900, buttons: 1 });
+    expect(scrollEl.scrollTop).toBe(0);
+  });
+});

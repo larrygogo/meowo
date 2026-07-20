@@ -279,6 +279,17 @@ pub(crate) fn mark_onboarding_seen() -> Result<(), String> {
     })
 }
 
+/// `set_settings` 落盘前的字段保护：profiles 三字段由独立账号命令维护、`onboarding_seen` 由
+/// [`mark_onboarding_seen`] 单独落盘，而设置窗口回传的是打开时的整对象快照。以磁盘最新值
+/// 回填这些字段——否则窗口打开期间创建/改名/切换的账号会被旧快照覆盖，刚完成的引导标记
+/// 也会被写回 false（引导重复弹出）。纯函数便于单测。
+fn preserve_independently_managed_fields(incoming: &mut Settings, current: &Settings) {
+    incoming.profiles = current.profiles.clone();
+    incoming.active_profile = current.active_profile.clone();
+    incoming.default_profile_names = current.default_profile_names.clone();
+    incoming.onboarding_seen = current.onboarding_seen;
+}
+
 #[tauri::command]
 pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
     // 后端兜底钳值（与前端 appearance.ts 一致），防越界值落盘后被 5s 轮询线程读到。
@@ -288,12 +299,10 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     // 毫无线索——在这里拦下，把具体原因回给设置页。
     settings.proxy.validate()?;
     settings.relay.validate()?;
-    // profiles 三个字段由独立账号命令维护。设置窗口可能持有较旧的整对象快照，不能让一次外观/网络
-    // 保存把并发创建、改名或切换的账号覆盖掉。
+    // profiles 三个字段由独立账号命令维护，onboarding_seen 由 mark_onboarding_seen 单独落盘；
+    // 设置窗口可能持有较旧的整对象快照，一次外观/网络保存不得把窗口打开期间的并发变更覆盖掉。
     update_settings(|current| {
-        settings.profiles = current.profiles.clone();
-        settings.active_profile = current.active_profile.clone();
-        settings.default_profile_names = current.default_profile_names.clone();
+        preserve_independently_managed_fields(&mut settings, current);
         *current = settings.clone();
         Ok(())
     })?;
@@ -547,5 +556,41 @@ mod tests {
         let text = serde_json::to_string(&v).unwrap();
         assert!(!text.contains("api_key"));
         assert!(!text.contains("secret"));
+    }
+
+    /// 设置窗口回传的是打开时的整对象快照：由独立命令维护的字段必须以磁盘最新值为准，
+    /// 尤其 onboarding_seen——窗口打开期间刚完成引导，一次外观保存不得把它写回 false。
+    #[test]
+    fn set_settings_preserves_independently_managed_fields() {
+        let mut incoming = Settings {
+            opacity: 60, // 这次保存真正想改的字段
+            ..Default::default()
+        };
+        let mut current = Settings {
+            onboarding_seen: true, // 窗口打开期间完成了引导
+            ..Default::default()
+        };
+        current.profiles.insert("claude".into(), vec![]); // 期间建过账号
+        current
+            .active_profile
+            .insert("claude".into(), "work".into()); // 期间切了账号
+        current
+            .default_profile_names
+            .insert("claude".into(), "公司号".into());
+
+        preserve_independently_managed_fields(&mut incoming, &current);
+
+        assert!(incoming.onboarding_seen, "引导标记不得被旧快照写回 false");
+        assert!(incoming.profiles.contains_key("claude"));
+        assert_eq!(
+            incoming.active_profile.get("claude"),
+            Some(&"work".to_string())
+        );
+        assert_eq!(
+            incoming.default_profile_names.get("claude"),
+            Some(&"公司号".to_string())
+        );
+        // 其余字段仍以用户提交的快照为准——那才是这次保存的内容。
+        assert_eq!(incoming.opacity, 60);
     }
 }

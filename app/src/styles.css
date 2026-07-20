@@ -2348,13 +2348,13 @@ html, body {
 .ns-body {
   flex: 1;
   overflow-y: auto;
-  padding: 15px 16px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 10px;
 }
 
-.ns-field { display: flex; flex-direction: column; gap: 7px; }
+.ns-field { display: flex; flex-direction: column; gap: 5px; }
 .ns-label {
   font-size: 11px;
   font-weight: 600;
@@ -2455,9 +2455,9 @@ select.ns-input {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-height: 116px;
+  max-height: 96px;
   overflow-y: auto;
-  padding: 3px;
+  padding: 2px 3px;
   border-top: 1px solid var(--cc-border);
 }
 .ns-recent-item {
@@ -2490,24 +2490,27 @@ select.ns-input {
   white-space: nowrap;
 }
 
-/* Agent：等宽竖版选择卡（图标在上、名在下），选中翡翠绿高亮。 */
-.ns-agents { display: flex; gap: 8px; }
+/* Agent：横向紧凑条（图标+名一行），选中翡翠绿高亮。
+   按内容自适应宽度、放不下自动换行——不做等宽平摊（flex: 1）：那会让每多装一个
+   agent 都把整排卡挤瘦一截，agent 增多后名字先被压省略；换行则天然可扩展。 */
+.ns-agents { display: flex; flex-wrap: wrap; gap: 8px; }
 .ns-agent {
-  flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 11px 6px;
+  gap: 7px;
+  padding: 7px 12px;
   border: 1px solid var(--cc-border);
   background: var(--cc-surface);
   color: var(--cc-text-dim);
   border-radius: var(--r-md);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
+  white-space: nowrap;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
+.ns-agent svg { flex: 0 0 auto; }
+/* 徽标容器：承接 tintStyle 的品牌色（claude 的 logomark 以 currentColor 绘制）。 */
+.ns-agent-mark { display: inline-flex; align-items: center; flex: 0 0 auto; }
 .ns-agent svg { opacity: 0.8; transition: opacity 0.12s; }
 .ns-agent:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
 .ns-agent.is-on {
@@ -2517,17 +2520,36 @@ select.ns-input {
 }
 .ns-agent.is-on svg { opacity: 1; }
 
-/* 启动选项：插件声明才出现（选择 → CLI flag），一行一栏，标签在左选择在右。
+/* 启动选项：插件声明才出现（选择 → CLI flag）。
+   不再是单行列表，而是包裹在带背景的网格容器内，使「配置区」更有整体感。
    下拉用自绘 Dropdown（.dd）：WebView2 的原生 select 跟随系统主题画白底，无视 color-scheme。 */
-.ns-options { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.ns-option { display: flex; align-items: center; gap: 10px; }
-.ns-option-label {
-  flex: 0 0 auto;
-  min-width: 48px;
-  font-size: 11px;
-  color: var(--cc-text-dim);
+.ns-options {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
 }
-.ns-option .dd { flex: 1; min-width: 0; }
+/* 只有一个选项时（或屏幕极窄），退化回单列。 */
+.ns-options:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+.ns-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ns-option-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cc-text-dim);
+  letter-spacing: 0.02em;
+}
+.ns-option .dd { width: 100%; }
 .ns-option .dd-btn { width: 100%; min-width: 0; }
 
 /* 状态条：hooks 未装警告 / 启动错误，soft 底色 + 同色描边，比裸彩字更醒目。 */
@@ -2966,6 +2988,148 @@ select.ns-input {
 .chat-activity-group[open] > .chat-activity-summary .chat-tool-chevron { transform: rotate(90deg); }
 .chat-activity-items { padding: 5px 0 6px; }
 .chat-activity-group.is-error { border-color: color-mix(in srgb, #df6b6b 42%, var(--cc-border)); }
+
+/* 子任务：一次委派出去的独立工作。不并进「N 次工具操作」那一坨——它代表一整段
+   自成一体的过程，展开的是子任务自己的时间线（可再嵌套，Claude 的 spawnDepth）。
+   用左侧强调条与工具组区分：同为可展开容器，但语义层级不同。 */
+.chat-subagent {
+  position: relative;
+  margin: 2px 0 28px;
+  border: 1px solid color-mix(in srgb, var(--cc-accent) 26%, var(--cc-border));
+  border-left: 2px solid color-mix(in srgb, var(--cc-accent) 62%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--cc-accent) 4%, var(--cc-bg));
+  /* 刻意不用 overflow: hidden 裁圆角：它会让本元素成为「最近的滚动祖先」，
+     而它自己又不滚动，于是下面 summary 的 sticky 直接失效。改由 summary
+     自带上圆角贴合边框。 */
+}
+.chat-subagent > summary::-webkit-details-marker { display: none; }
+.chat-subagent > summary {
+  min-height: 46px;
+  padding: 0 17px 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--cc-text-dim);
+  font-size: 11px;
+  /* 吸顶：子任务展开后内容很长，收起入口必须一直在手边，不能逼用户往回滚一屏找。
+     不透明底色是必需的——否则下方内容会从标题栏底下透出来。 */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--cc-accent) 4%, var(--cc-bg));
+  border-radius: 12px;
+}
+.chat-subagent[open] > summary { border-radius: 12px 12px 0 0; }
+.chat-subagent > summary:hover { background: color-mix(in srgb, var(--cc-text) 3.5%, transparent); }
+.chat-subagent[open] > summary { border-bottom: 1px solid color-mix(in srgb, var(--cc-border) 56%, transparent); }
+.chat-subagent[open] > summary .chat-tool-chevron { transform: rotate(90deg); }
+.chat-subagent-icon {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--cc-accent) 78%, var(--cc-text));
+}
+.chat-subagent-label { flex: 0 0 auto; font-weight: 550; color: var(--cc-text); }
+/* 描述是这行的主信息，占据剩余宽度；过长省略而不是把徽标挤出去。 */
+.chat-subagent-desc { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-subagent-type {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-accent) 13%, transparent);
+  color: color-mix(in srgb, var(--cc-accent) 72%, var(--cc-text));
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+/* 嵌套时间线自带外边距，容器只补两侧留白。 */
+.chat-subagent-body { padding: 8px 12px 2px; }
+.chat-subagent-hint { padding: 8px 4px 12px; color: var(--cc-text-faint); font-size: 11px; }
+/* 子任务时间线限高内滚：一个子任务可以有上百条，全铺开会把主对话推到几屏之外。
+   50vh 留出足够上下文，又保证收起入口始终在同一屏内。 */
+.chat-subagent-scroll {
+  max-height: 50vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 一次派一批（kimi 的 AgentSwarm 可达十几个）：每个分支自己折叠，展开一个不牵连其余。 */
+.chat-subagent-branch {
+  margin: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--cc-border) 62%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%);
+}
+.chat-subagent-branch > summary::-webkit-details-marker { display: none; }
+.chat-subagent-branch > summary {
+  min-height: 34px;
+  padding: 0 11px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.chat-subagent-branch > summary:hover { background: color-mix(in srgb, var(--cc-text) 3.5%, transparent); }
+.chat-subagent-branch[open] > summary {
+  border-bottom: 1px solid color-mix(in srgb, var(--cc-border) 50%, transparent);
+  border-radius: 10px 10px 0 0;
+}
+.chat-subagent-branch[open] > summary .chat-tool-chevron { transform: rotate(90deg); }
+.chat-subagent-branch > .chat-subagent-scroll { padding: 4px 8px; }
+.chat-subagent-branch-label {
+  flex: 0 0 auto;
+  color: var(--cc-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.chat-subagent-branch-count { flex: 1; min-width: 0; color: var(--cc-text-faint); font-size: 10px; }
+/* 状态徽标：进行中用中性灰（避免十几个分支同时闪成一片彩色），完成绿、失败红。 */
+.chat-subagent-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--cc-text) 8%, transparent);
+  color: var(--cc-text-dim);
+}
+/* 进行中的脉冲点：静态文字看不出「还在动」，而这正是用户盯着它的原因。
+   只让一个 4px 的点呼吸——整块徽标闪烁在十几个分支同时进行时会很吵。 */
+.chat-subagent-pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: subagent-pulse 1.4s ease-in-out infinite;
+}
+@keyframes subagent-pulse {
+  0%, 100% { opacity: 0.28; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-subagent-pulse { animation: none; opacity: 0.75; }
+}
+.chat-subagent-status.is-completed {
+  background: color-mix(in srgb, var(--cc-accent) 15%, transparent);
+  color: color-mix(in srgb, var(--cc-accent) 75%, var(--cc-text));
+}
+.chat-subagent-status.is-failed {
+  background: color-mix(in srgb, #df6b6b 16%, transparent);
+  color: #e08585;
+}
+.chat-subagent-hint.is-error { color: #df6b6b; }
+/* 嵌套层级里收掉底部大间距，避免层层叠加后拉出一大片空白。 */
+.chat-subagent-body .chat-activity-group,
+.chat-subagent-body .chat-subagent { margin-bottom: 12px; }
 /* 组内的行走「圆角 hover 行 + 微间隙」，与 dd-menu / 侧栏同一套列表语言；
    行间不再画分隔线——分隔感由 2px 空隙与 hover 底色承担。 */
 .chat-tool {
@@ -3090,7 +3254,20 @@ select.ns-input {
   background: var(--cc-text);
 }
 .chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: color-mix(in srgb, var(--cc-text) 9%, var(--cc-bg)); opacity: 1; }
-.chat-send-error { order: 3; padding: 0 8px; }
+.chat-send-error { order: 3; padding: 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 就地接管按钮：错误文案旁边直接给出出路，不必跨页去终端页找。 */
+.chat-send-takeover {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, #d96c6c 45%, var(--cc-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #d96c6c 12%, transparent);
+  color: #e08585;
+  font-size: 10px;
+  cursor: pointer;
+}
+.chat-send-takeover:hover:not(:disabled) { background: color-mix(in srgb, #d96c6c 20%, transparent); }
+.chat-send-takeover:disabled { opacity: 0.55; cursor: default; }
 @media (max-width: 680px) {
   .chat-live { display: none; }
   .chat-scroll { padding-left: 22px; padding-right: 22px; }

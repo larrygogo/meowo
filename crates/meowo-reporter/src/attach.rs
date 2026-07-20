@@ -98,7 +98,7 @@ fn approval_broker() -> Option<(String, String, u16)> {
         }
         _ => {}
     }
-    let path = crate::db_path().parent()?.join(APPROVAL_BROKER_FILE);
+    let path = crate::db_path()?.parent()?.join(APPROVAL_BROKER_FILE);
     let discovery: BrokerDiscovery =
         serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     if discovery.endpoint.is_empty() || discovery.token.is_empty() {
@@ -152,21 +152,31 @@ pub(crate) fn notify_claim(session_id: i64) {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
-    if let Ok(mut stream) = TcpStream::connect(endpoint) {
-        let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
-        if protocol >= CURRENT_PROTOCOL_VERSION {
-            let _ = write_v2_handshake(
-                &mut stream,
-                &BrokerRequest::Claim {
-                    token,
-                    launch_token: launch,
-                    session_id,
-                },
-            );
-        } else {
-            let handshake = encode_legacy_claim(&token, &launch, session_id);
-            let _ = stream.write_all(handshake.as_bytes());
-        }
+    // 与 request_approval 同理（见 CONNECT_TIMEOUT 的说明）：裸 connect 在对端端口被无关
+    // 进程回收时会一直挂着，hook 进程随之卡死。claim 只是条一次性通知，解析失败/超时直接
+    // 放弃——首要契约是绝不阻塞 agent。
+    let Ok(mut addrs) = endpoint.to_socket_addrs() else {
+        return;
+    };
+    let Some(addr) = addrs.next() else {
+        return;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) else {
+        return;
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
+    if protocol >= CURRENT_PROTOCOL_VERSION {
+        let _ = write_v2_handshake(
+            &mut stream,
+            &BrokerRequest::Claim {
+                token,
+                launch_token: launch,
+                session_id,
+            },
+        );
+    } else {
+        let handshake = encode_legacy_claim(&token, &launch, session_id);
+        let _ = stream.write_all(handshake.as_bytes());
     }
 }
 

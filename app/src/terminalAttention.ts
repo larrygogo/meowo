@@ -55,6 +55,51 @@ const GENERIC_STARTUP_PROMPTS = [
   /press (?:enter|esc|escape) to[\s\S]{0,320}(?:oauth|token|credential|authentication|sign-in|sign in|login|gateway)/gi,
 ];
 
+/// 导航提示：菜单在等键盘选择的信号。要求同时出现「方向键/导航」与「回车确认」两类线索，
+/// 单独一个 ❯ 太常见（提示符、列表装饰都可能有），会把正文误报成菜单。
+const MENU_HINT = /(?:↑↓|↑\/↓|up\/down|arrow keys)[^\n]{0,80}(?:enter|select|confirm)|enter\s+(?:to\s+)?select/i;
+
+/// 光标菜单：一句导航提示 + 一个 ❯ 标记当前项。返回选项块的行区间。
+///
+/// 边界靠**缩进**而不是空行：`visibleTerminalText` 与 xterm 抓屏都会丢掉空行，但保留行首
+/// 缩进。同一个菜单的选项缩进一致，而小节标题（如 kimi 的 `Thinking (←→ to switch)`）
+/// 缩进更浅——取「含 ❯ 且同缩进的连续行」正好圈出选项，不会把相邻小节吞进来。
+function detectCursorMenu(
+  visible: string,
+): { index: number; lines: string[]; focused: number; title: string } | null {
+  const lines = visible.split("\n");
+  const hintLine = lines.findIndex((line) => MENU_HINT.test(line));
+  if (hintLine < 0) return null;
+  const focusedLine = lines.findIndex((line) => /^\s*❯\s+\S/.test(line));
+  if (focusedLine < 0) return null;
+  // 文本起始列：带 ❯ 的行要跨过标记本身，才能和其余项对齐比较。
+  const textIndent = (line: string): number => {
+    const match = /^(\s*)(❯\s+)?/.exec(line);
+    return (match?.[1]?.length ?? 0) + (match?.[2]?.length ?? 0);
+  };
+  const target = textIndent(lines[focusedLine]);
+  const sameBlock = (line: string) => line.trim().length > 0 && textIndent(line) === target;
+  let start = focusedLine;
+  while (start > 0 && sameBlock(lines[start - 1])) start -= 1;
+  let end = focusedLine;
+  while (end + 1 < lines.length && sameBlock(lines[end + 1])) end += 1;
+  // 只有一项的「菜单」多半是误判（提示符、单条列表）。
+  if (end - start < 1) return null;
+  // 标题以**提示行**为锚取它上面一行，而不是「选项块之前最近的一行」——两者之间还夹着
+  // provider 过滤行之类的东西，那种会把抬头显示成 "All Kimi Code"。
+  const title = lines
+    .slice(0, hintLine)
+    .reverse()
+    .find((line) => line.trim() && !/^[\s─━═|-]+$/.test(line));
+  const index = lines.slice(0, start).join("\n").length;
+  return {
+    index,
+    lines: lines.slice(start, end + 1),
+    focused: focusedLine - start,
+    title: title?.trim() ?? "",
+  };
+}
+
 function promptSnippet(visible: string, index: number, contextBefore = 1): string {
   const lines = visible.split("\n");
   const matchedLine = visible.slice(0, index).split("\n").length - 1;
@@ -63,7 +108,14 @@ function promptSnippet(visible: string, index: number, contextBefore = 1): strin
 }
 
 /** 返回当前启动阻塞提示的可见原文；null 表示没有需要 GUI 接管的交互。 */
-export function terminalAttention(text: string, markers: string[], interactivePrompt = false): TerminalAttention | null {
+/// `expectMenu`：刚发出一条会弹交互菜单的命令（如 `/model`）。只在这段窗口里认光标菜单——
+/// 常开的话，agent 平时画的任何带 ❯ 的列表都会弹成卡片，噪声大于价值。
+export function terminalAttention(
+  text: string,
+  markers: string[],
+  interactivePrompt = false,
+  expectMenu = false,
+): TerminalAttention | null {
   if (!text) return null;
   const visible = visibleTerminalText(text);
   const lower = visible.toLowerCase();
@@ -98,6 +150,35 @@ export function terminalAttention(text: string, markers: string[], interactivePr
     if (selectorHint && numberedChoices.length >= 2) {
       best = { index: selectorHint.index, id: "interactive:numbered-selector" };
     }
+  }
+  // 无编号的光标菜单（kimi 的 `/model`、provider 切换等）。与上面的编号选择器是两种形态：
+  // 那种每项带 `1.`，这种只有一个 ❯ 光标 + 一句导航提示。实测形如：
+  //   Select a model  (type to search)
+  //   Tab toggle provider · ↑↓ navigate · Enter select · Esc cancel
+  //     K2.7 Coding            Kimi Code
+  //   ❯ K3                     Kimi Code ← current
+  const cursorMenu = !best && expectMenu ? detectCursorMenu(visible) : null;
+  if (cursorMenu) {
+    return {
+      id: "interactive:cursor-menu",
+      text: cursorMenu.title,
+      options: cursorMenu.lines.map((line, position) => {
+        // 行首缩进只是菜单的对齐手段，不属于选项文字。
+        const label = line.replace(/^\s*(?:❯\s+)?/, "").trimEnd();
+        const delta = position - cursorMenu.focused;
+        return {
+          // 多列对齐用的大段空格在按钮上没意义；压成单空格，超长再截断。
+          label: label.replace(/\s{2,}/g, "  ").slice(0, 80),
+          // 与编号选择器同一套：菜单首尾循环，只能从 ❯ 做相对移动。
+          input: delta === 0 ? "\r" : delta < 0
+            ? "\x1b[A".repeat(-delta) + "\r"
+            : "\x1b[B".repeat(delta) + "\r",
+          focused: delta === 0,
+          position,
+          kind: "choice" as const,
+        };
+      }),
+    };
   }
   if (!best) return null;
   const snippet = best.id === "interactive:numbered-selector"

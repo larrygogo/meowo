@@ -54,7 +54,8 @@ pub const EVENT_WHITELIST: [&str; 16] = [
 ];
 
 /// config.toml 由 `kimi login` 生成——不存在即「需先登录」，不凭空创建。
-/// command 不加引号：与 kimi 现存配置的书写形态一致，避免无谓改写用户在用的条目。
+/// command 不加引号：与 kimi 现存配置的书写形态一致，避免无谓改写用户在用的条目
+///（reporter 路径含空白时仍强制加引号，否则执行与认领同按空白截断，见 `CommandSpec::quote_exe`）。
 static HOOKS: HookSpec = HookSpec {
     config_rel: "config.toml",
     format: ConfigFormat::KimiToml,
@@ -63,6 +64,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: false,
         with_provider: true,
+        ps_call_operator: false,
     },
 };
 
@@ -269,7 +271,49 @@ impl AgentPlugin for Kimi {
     fn resume_args(&self) -> &'static [&'static str] {
         &["-r"]
     }
-    /// kimi 的 `/model` 同样是交互式菜单，不声明模型预设。
+    /// 启动 flag 取自 `kimi --help`（kimi-code 0.2x 实测）：`--auto` / `-y, --yolo` 是权限档，
+    /// `--plan` 是计划模式。维度 id 与 [`Self::mode_controls`] 对齐，前端两处共用同一套文案。
+    ///
+    /// **不声明 model**：`-m, --model <alias>` 确实存在，但别名来自用户的 `config.toml`
+    /// （`kimi provider` 可增删），不是产品固定值。本表只放插件能担保的字面量——
+    /// 硬编码一份别名清单，用户改了 provider 后就会静默传一个不存在的模型。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{LaunchChoice, LaunchOption};
+        static OPTIONS: [LaunchOption; 2] = [
+            LaunchOption {
+                id: "permission",
+                default: "default",
+                choices: &[
+                    LaunchChoice { id: "default", label: "Default", args: &[] },
+                    LaunchChoice { id: "auto", label: "Auto", args: &["--auto"] },
+                    LaunchChoice { id: "yolo", label: "Yolo", args: &["--yolo"] },
+                ],
+            },
+            LaunchOption {
+                id: "work",
+                default: "default",
+                choices: &[
+                    LaunchChoice { id: "default", label: "Default", args: &[] },
+                    LaunchChoice { id: "plan", label: "Plan", args: &["--plan"] },
+                ],
+            },
+        ];
+        // 同 mode_controls：只给已验证的 modern Kimi Code；旧 Python kimi-cli 的 flag 不同。
+        if crate::installation(crate::id::KIMI)
+            .is_some_and(|installation| installation.variant_tag == "modern")
+        {
+            &OPTIONS
+        } else {
+            &[]
+        }
+    }
+    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
+    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        Some("/model")
+    }
+    /// kimi 的 `/model` 同样是交互式菜单（二进制里的命令描述就是 `/model: switch model`，
+    /// 且失败提示是「Run /model to select one first」），不接受内联参数，故不声明模型预设。
     fn slash_commands(&self) -> &'static [&'static str] {
         &["/clear", "/compact", "/help", "/model", "/status"]
     }

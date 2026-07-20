@@ -158,6 +158,7 @@ fn claim_codex_cmd(cmd: &str) -> Option<String> {
     const SHAPE: crate::CommandSpec = crate::CommandSpec {
         quote_exe: true,
         with_provider: true,
+        ps_call_operator: false,
     };
     SHAPE.claim(cmd, "codex")
 }
@@ -181,10 +182,23 @@ fn write_trusted_hashes(inst: &Installation, hooks_text: &str) -> Option<RepairR
     let root = crate::config::parse_json_config(hooks_text)?;
     let entries = claimed_codex_entries(&root);
     if ensure_trusted_hashes(&mut doc, &hooks_path.display().to_string(), &entries) {
+        // 与 hooks 接线同纪律：写前必备份，备份失败就不写（config.toml 装着用户的模型与
+        // provider 配置）。本步是锦上添花，失败不算接线失败，但必须留痕、不许静默吞。
         if cfg_path.exists() {
-            crate::wiring::backup_once(&cfg_path);
+            if let Err(e) = crate::wiring::backup_once(&cfg_path) {
+                eprintln!(
+                    "Meowo repair[codex]: {} 备份失败（{e}），跳过 trusted_hash 写入",
+                    cfg_path.display()
+                );
+                return None;
+            }
         }
-        let _ = crate::fsutil::write_atomic(&cfg_path, &doc.to_string());
+        if let Err(e) = crate::fsutil::write_atomic(&cfg_path, &doc.to_string()) {
+            eprintln!(
+                "Meowo repair[codex]: {} trusted_hash 写入失败（{e}）",
+                cfg_path.display()
+            );
+        }
     }
     None
 }

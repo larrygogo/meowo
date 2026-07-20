@@ -1,28 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
+const confirmDialog = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog, confirm: confirmDialog }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ close: vi.fn(() => Promise.resolve()) }),
 }));
 // 记录挂载次数：切 tab 不应重建终端（重建=dispose+new Terminal+全量 backlog 重放）。
 const terminalMounts = vi.hoisted(() => ({ count: 0 }));
+// 真实组件的屏幕识别在这里跑不动（没有 xterm）。把它的回调与入参暴露出来，测试就能
+// 用**真实解析器**产出的 attention 驱动 ChatWindow，验证渲染与按键下发这一段。
+const terminalProps = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 vi.mock("./ManagedTerminal", async () => {
   const { useEffect } = await import("react");
   return {
-    ManagedTerminal: ({ sessionId }: { sessionId: number }) => {
+    ManagedTerminal: (props: { sessionId: number }) => {
+      terminalProps.current = props as unknown as Record<string, unknown>;
       useEffect(() => { terminalMounts.count += 1; }, []);
-      return <div>PTY {sessionId}</div>;
+      return <div>PTY {props.sessionId}</div>;
     },
   };
 });
 
 import { ChatWindow } from "./ChatWindow";
 import { chatUi } from "../test/agents";
+import { terminalAttention } from "../terminalAttention";
 
 function respondWithHistory(history: unknown, approval: unknown = null) {
   invoke.mockImplementation((command: string) => {
@@ -86,6 +92,191 @@ describe("ChatWindow", () => {
     expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "\r" });
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(screen.getByText("PTY 7")).toBeTruthy();
+  });
+
+  it("展开子任务时才拉取它的时间线，并嵌套渲染", async () => {
+    window.history.replaceState({}, "", "/?sessionId=9");
+    const nested = [{
+      label: "agent-0", status: "completed",
+      items: [
+        { type: "assistant_text", id: "s1", timestamp: null, text: "子任务的结论" },
+        { type: "tool_use", id: "st1", timestamp: null, name: "Bash", summary: "rg foo" },
+      ],
+    }];
+    respondWithHistory({
+      sessionId: 9, title: "派活", status: "running", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 10, reset: false, pendingReview: null,
+      items: [
+        { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
+        {
+          type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
+          subagent: { description: "验证审批双轨", agent_type: "general-purpose", count: 1 },
+        },
+      ],
+    });
+    invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 9, title: "派活", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 10, reset: false, pendingReview: null,
+        items: [
+          { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
+          {
+            type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
+            subagent: { description: "验证审批双轨", agent_type: "general-purpose", count: 1 },
+          },
+        ],
+      });
+      if (command === "get_pending_approval") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 9, active: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "get_subagent_transcript") {
+        expect(args).toEqual({ sessionId: 9, toolUseId: "toolu_1" });
+        return Promise.resolve(nested);
+      }
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    // 子任务自成一行，不被并进「N 个操作」那一坨；摘要显示的是描述而不是整包参数。
+    const summary = await screen.findByText("验证审批双轨");
+    expect(screen.getByText("子任务")).toBeTruthy();
+    expect(screen.getByText("general-purpose")).toBeTruthy();
+    expect(screen.queryByText("执行了 1 个操作")).toBeNull();
+    // 未展开前绝不请求：一个会话可能有几十个子任务。
+    expect(invoke).not.toHaveBeenCalledWith("get_subagent_transcript", expect.anything());
+
+    const details = summary.closest("details")!;
+    const toggle = (open: boolean) => {
+      details.open = open;
+      fireEvent(details, new Event("toggle"));
+    };
+    toggle(true);
+    expect(await screen.findByText("子任务的结论")).toBeTruthy();
+    // 嵌套时间线沿用同一套渲染：里面的工具调用照样分组。
+    expect(screen.getByText("执行了 1 个操作")).toBeTruthy();
+
+    // 折叠再展开不该重复请求（结果缓存在组件里）。
+    const calls = invoke.mock.calls.filter(([command]) => command === "get_subagent_transcript").length;
+    toggle(false);
+    toggle(true);
+    expect(invoke.mock.calls.filter(([command]) => command === "get_subagent_transcript").length).toBe(calls);
+  });
+
+  it("不展开也显示子任务状态：无回执=在跑，有回执=按结局统计", async () => {
+    window.history.replaceState({}, "", "/?sessionId=17");
+    const swarm = {
+      type: "tool_use", id: "tool_s", timestamp: null, name: "AgentSwarm", summary: "分组审查",
+      subagent: { description: "分组审查", agent_type: "explore", count: 3 },
+    };
+    let done = false;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 17, title: "批量", status: "running", provider: "kimi", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null,
+        items: done
+          ? [swarm, {
+              type: "tool_result", id: "r1", timestamp: null, tool_use_id: "tool_s",
+              text: "done", is_error: false,
+              subagent: { running: 0, completed: 2, failed: 1 },
+            }]
+          // 一批 fan-out 的结局要等整批跑完才写进主链——跑着的时候主链上没有回执。
+          : [swarm],
+      });
+      if (command === "get_pending_approval") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 17, active: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("kimi"));
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    // 没有回执 → 三个都在跑，且**不必展开**（不该为一个徽标去读侧车流）。
+    expect(await screen.findByText("3 进行中")).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalledWith("get_subagent_transcript", expect.anything());
+
+    // 回执到达后按真实结局显示（靠历史轮询自然刷新，不手动重渲染）。
+    done = true;
+    await waitFor(() => expect(screen.getAllByText("2 完成 · 1 失败").length).toBeGreaterThan(0), { timeout: 3_000 });
+    expect(screen.queryByText("3 进行中")).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("get_subagent_transcript", expect.anything());
+  });
+
+  it("交互式菜单型 CLI：切换模型发出 /model，再把弹出的菜单转成按钮", async () => {
+    window.history.replaceState({}, "", "/?sessionId=18");
+    // 真机抓屏形态（见 app/src-tauri/tests/capture_model_menu.rs）：无编号，靠 ❯ 标当前项。
+    const menu = [
+      "\x1b[2J Select a model  (type to search)",
+      "  Tab toggle provider · ↑↓ navigate · Enter select · Esc cancel",
+      "     K2.7 Coding            Kimi Code",
+      "   ❯ K3                     Kimi Code ← current",
+    ].join("\r\n");
+    let sentMenuCommand = false;
+    invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 18, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
+      });
+      if (command === "get_pending_approval") return Promise.resolve(null);
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("kimi"));
+      if (command === "write_managed_terminal" && args.data === "/model") sentMenuCommand = true;
+      if (command === "managed_terminal_snapshot") {
+        // 命令发出后，CLI 把菜单画到屏幕上。
+        return Promise.resolve({
+          sessionId: 18, active: true,
+          data: sentMenuCommand ? btoa(menu) : btoa("ready"),
+          startOffset: 0, endOffset: sentMenuCommand ? 400 : 5, exited: false, exitCode: null,
+        });
+      }
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    // kimi 没有静态预设，按钮改为「发命令打开 CLI 自己的菜单」。
+    const button = await screen.findByRole("button", { name: "切换模型" });
+    fireEvent.click(button);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 18, data: "/model" }));
+
+    // 识别窗口已打开，交给终端组件去认（真实组件读 xterm 画面，这里直接喂真实解析结果）。
+    await waitFor(() => expect(terminalProps.current?.expectMenu).toBe(true));
+    const attention = terminalAttention(menu, [], false, true);
+    expect(attention?.id).toBe("interactive:cursor-menu");
+    act(() => { (terminalProps.current?.onAttention as (a: unknown) => void)(attention); });
+
+    // 菜单被渲染成 GUI 选项；选项文字来自 CLI 现给的清单，宿主没有维护一份。
+    const choice = await screen.findByRole("button", { name: /K2\.7 Coding/ }, { timeout: 3_000 });
+    fireEvent.click(choice);
+    // 菜单首尾循环：从 ❯（K3）上移一格到 K2.7 再回车。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 18, data: "\x1b[A\r" }));
+    // 切换模型不产生 Stop hook，模型不会自己落库；必须主动刷一次，
+    // 否则对话页与贴纸会一直挂着旧模型直到下一条消息跑完。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("refresh_session_model", { sessionId: 18 }), { timeout: 3_000 });
+  });
+
+  it("菜单已打开时再点不重发命令（否则会打进搜索框把候选全过滤掉）", async () => {
+    window.history.replaceState({}, "", "/?sessionId=19");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 19, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
+      });
+      if (command === "get_pending_approval") return Promise.resolve(null);
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("kimi"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 19, active: true, data: btoa("ready"), startOffset: 0, endOffset: 5, exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const button = await screen.findByRole("button", { name: "切换模型" });
+    const sentModel = () => invoke.mock.calls.filter(([command, args]) =>
+      command === "write_managed_terminal" && (args as { data?: string }).data === "/model").length;
+
+    fireEvent.click(button);
+    await waitFor(() => expect(sentModel()).toBe(1));
+    // 识别窗口开着时再点：只收起（发 Esc），绝不重发——重发会变成 `Search: /model/model`。
+    await waitFor(() => expect(terminalProps.current?.expectMenu).toBe(true));
+    fireEvent.click(button);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 19, data: "\x1b" }));
+    expect(sentModel()).toBe(1);
   });
 
   it("shows the provider capability fallback", async () => {
@@ -626,29 +817,75 @@ describe("ChatWindow", () => {
     expect(localStorage.getItem("meowo-chat-sidebar-collapsed")).toBe("0");
   });
 
-  it("directs the user to take over instead of resuming a session still held externally", async () => {
+  it("外部占用时就地给出接管入口，确认后重放刚才那次发送", async () => {
     window.history.replaceState({}, "", "/?sessionId=15");
     const history = {
       sessionId: 15, title: "外部运行中", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [],
     };
+    let takenOver = false;
     invoke.mockImplementation((command: string) => {
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "get_pending_approval") return Promise.resolve(null);
       if (command === "managed_terminal_snapshot") {
-        return Promise.resolve({ sessionId: 15, active: false, data: "", exited: false, exitCode: null });
+        // 接管前没有托管 PTY；接管后有，且已画出可见内容。
+        return Promise.resolve(takenOver
+          ? { sessionId: 15, active: true, data: btoa("ready"), startOffset: 0, endOffset: 5, exited: false, exitCode: null }
+          : { sessionId: 15, active: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       }
+      // 进程是否真活着由后端按 pid 判定——前端不再靠 status 猜，而是让这次 start 被拒。
+      if (command === "start_managed_terminal") return Promise.reject("会话仍在外部终端运行，不能重复接管");
+      if (command === "takeover_managed_terminal") { takenOver = true; return Promise.resolve(); }
       return Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("textbox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "别起第二个" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    // 接管要杀掉外部进程，必须显式确认——发送不能代劳，后端也会拒绝这次 start。
-    expect(await screen.findByText(/请切到「终端」页接管后再发送/)).toBeTruthy();
-    expect(invoke).not.toHaveBeenCalledWith("start_managed_terminal", expect.anything());
-    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", expect.anything());
+
+    expect(await screen.findByText(/会话仍在外部终端运行/)).toBeTruthy();
+    // 输入不能丢：接管后要原样重发这条。
     expect(input.value).toBe("别起第二个");
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", expect.anything());
+
+    // 接管是破坏性的（杀掉外部进程），必须显式确认；取消则什么都不做。
+    confirmDialog.mockResolvedValueOnce(false);
+    fireEvent.click(screen.getByRole("button", { name: "结束外部进程并接管" }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalled());
+    expect(invoke).not.toHaveBeenCalledWith("takeover_managed_terminal", expect.anything());
+
+    confirmDialog.mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole("button", { name: "结束外部进程并接管" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("takeover_managed_terminal", { sessionId: 15, cols: 100, rows: 30 }));
+    // 接管成功后自动重放刚才那次发送，用户不必重打一遍。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 15, data: "别起第二个" }), { timeout: 3_000 });
+  });
+
+  it("外部会话其实已经死了（status 陈旧）时，直接起托管终端而不是一律拒绝", async () => {
+    window.history.replaceState({}, "", "/?sessionId=16");
+    // status 仍是 running/stale，但进程早没了——后端 pid 判定会放行这次 start。
+    const history = {
+      sessionId: 16, title: "陈旧状态", status: "stale", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 0, reset: false, pendingReview: null, items: [],
+    };
+    let started = false;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve(history);
+      if (command === "get_pending_approval") return Promise.resolve(null);
+      if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve(started
+          ? { sessionId: 16, active: true, data: btoa("ready"), startOffset: 0, endOffset: 5, exited: false, exitCode: null }
+          : { sessionId: 16, active: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      }
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByRole("textbox", { name: "发送消息给 Agent" });
+    fireEvent.change(input, { target: { value: "继续" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_managed_terminal", { sessionId: 16, cols: 100, rows: 30 }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 16, data: "继续" }), { timeout: 3_000 });
   });
 
   it("keeps the prompt and reports a managed terminal that exits during startup", async () => {

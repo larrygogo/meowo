@@ -22,15 +22,15 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: 安装 Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust 构建缓存
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: 安装前端依赖
         working-directory: app
@@ -43,7 +43,7 @@ jobs:
         run: bun scripts/prepare-sidecar.mjs --universal
 
       - name: 构建并发布(签名公证 + 自动更新产物)
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # 自动更新（minisign，复用现有密钥）

@@ -122,11 +122,16 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                 timestamp,
                 name,
                 summary,
+                // codex 当前没有子任务：工具集只有 exec/wait，`task_started` 是回合级事件
+                // （payload 带 turn_id / model_context_window）而非委派。
+                subagent: None,
             }]
         }
         ("response_item", "function_call_output")
         | ("response_item", "custom_tool_call_output") => {
             vec![TranscriptEvent::ToolResult {
+                // codex 没有子任务概念（见 mod.rs 的 subagents 说明）。
+                subagent: None,
                 id: chat_id("result", line),
                 timestamp,
                 tool_call_id: payload
@@ -363,7 +368,9 @@ pub fn parse_context(content: &str) -> Option<(i64, i64)> {
 }
 
 /// 读文件尾部最多 max_bytes 字节为 lossy UTF-8（首个半截行交给 parse_context 跳过）。
-fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
+/// `pub(super)`：account 的 token_count 尾部扫描复用同一份有界读——rollout 可达数十 MB，
+/// 绝不能整个读进内存。
+pub(super) fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let size = f.metadata().ok()?.len();

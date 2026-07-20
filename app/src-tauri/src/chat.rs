@@ -142,6 +142,81 @@ fn load_chat_history(
     Ok(history)
 }
 
+/// 读取一次子任务委派的完整时间线（用户在对话页展开时按需调用）。
+///
+/// 不走 [`load_chat_history`] 的增量路径：侧车流是已经写完的独立文件，整读一次即可，
+/// 也不该让 650ms 的历史轮询顺带承担它的成本。
+fn load_subagent_transcript(
+    db_path: &Path,
+    session_id: i64,
+    tool_use_id: &str,
+) -> Result<Vec<meowo_protocol::ipc::SubagentRun>, String> {
+    let store = super::open_store(db_path)?;
+    let header = store.session_header(session_id).map_err(|e| e.to_string())?;
+    let spec = meowo_agent::by_id(&header.provider)
+        .and_then(|agent| agent.telemetry())
+        .and_then(|telemetry| telemetry.transcript())
+        .ok_or("该 Agent 不提供结构化会话记录")?;
+    let path = spec
+        .resolve_transcript_path(None, header.cwd.as_deref(), &header.cc_session_id)
+        .ok_or("找不到会话记录文件")?;
+    let runs = meowo_agent::transcript::read_subagent_chat(spec, &path, tool_use_id);
+    if runs.is_empty() {
+        return Err("找不到该子任务的记录".into());
+    }
+    Ok(runs)
+}
+
+/// 重读该会话当前的模型并落库。
+///
+/// 模型平时由 Stop hook 写入，但 `/model` 切换本身不产生 Stop——不发下一条消息就永远不刷新，
+/// 对话页和贴纸都还挂着旧模型。GUI 驱动的切换完成后调一次即可：一次有界读，不进热路径。
+fn refresh_model(db_path: &Path, session_id: i64) -> Result<Option<String>, String> {
+    let store = super::open_store(db_path)?;
+    let header = store.session_header(session_id).map_err(|e| e.to_string())?;
+    let model = meowo_agent::by_id(&header.provider)
+        .and_then(|agent| agent.telemetry())
+        .map(|telemetry| {
+            telemetry.stop_outputs(&meowo_agent::caps::HookContext {
+                session_id: &header.cc_session_id,
+                transcript_path: None,
+                last_assistant_message: None,
+            })
+        })
+        .and_then(|out| out.model);
+    if let Some(model) = model.as_deref() {
+        store
+            .set_session_context(&header.cc_session_id, None, None, Some(model), super::now_ms())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(model)
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_session_model(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+) -> Result<Option<String>, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || refresh_model(&db_path, session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn get_subagent_transcript(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+    tool_use_id: String,
+) -> Result<Vec<meowo_protocol::ipc::SubagentRun>, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        load_subagent_transcript(&db_path, session_id, &tool_use_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn get_chat_history(
     state: State<'_, super::AppState>,

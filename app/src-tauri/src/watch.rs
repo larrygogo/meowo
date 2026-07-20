@@ -87,6 +87,7 @@ pub(crate) const WATCH_RETRY: Duration = Duration::from_secs(5);
 /// watch 建立失败（全新安装时 ~/.meowo 由 ccsetup/liveness 等并发线程创建，watcher 可能抢先执行
 /// 而目录尚不存在）或监听中途死亡（目录被删、notify 后端出错）都不放弃：先确保目录存在、失败 5s 后
 /// 重建——否则首启一次失败会让 DB 变更监听在整个进程生命周期内静默失效，前端无轮询兜底、看板冻结。
+/// 重建成功后无条件补发一次：监听死亡到重建完成的间隙里，最后一次变更可能没有任何事件送达。
 pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
         .parent()
@@ -99,26 +100,37 @@ pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "board.db".to_string());
-    std::thread::spawn(move || loop {
-        let _ = std::fs::create_dir_all(&watch_dir);
-        let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
-            Ok(w) => w,
-            Err(_) => {
+    std::thread::spawn(move || {
+        // 首轮建立不算重建：启动路径自带首轮数据加载，无需补发。
+        let mut rebuilt = false;
+        loop {
+            let _ = std::fs::create_dir_all(&watch_dir);
+            let (tx, rx) = channel();
+            let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
+                Ok(w) => w,
+                Err(_) => {
+                    std::thread::sleep(WATCH_RETRY);
+                    continue;
+                }
+            };
+            if watcher
+                .watch(&watch_dir, RecursiveMode::NonRecursive)
+                .is_err()
+            {
                 std::thread::sleep(WATCH_RETRY);
                 continue;
             }
-        };
-        if watcher
-            .watch(&watch_dir, RecursiveMode::NonRecursive)
-            .is_err()
-        {
+            if rebuilt {
+                // 重建成功：从上一轮监听死亡那一刻起事件就丢了，死亡到本次重建之间（含固定 5s
+                // 睡眠）的最后一次变更可能没有任何事件送达，间隙内的写入要等下一次变更才被
+                // 发现，看板定格在旧数据。无条件补发一次让前端重拉。
+                emit_board_changed(&app, "watch-rebuild");
+            }
+            rebuilt = true;
+            run_db_watch_loop(&app, &rx, &db_path, &db_name);
+            // 返回即监听已死（通道断开或错误事件）→ 稍后重建 watcher。
             std::thread::sleep(WATCH_RETRY);
-            continue;
         }
-        run_db_watch_loop(&app, &rx, &db_path, &db_name);
-        // 返回即监听已死（通道断开或错误事件）→ 稍后重建 watcher。
-        std::thread::sleep(WATCH_RETRY);
     });
 }
 
@@ -543,7 +555,7 @@ pub(crate) fn spawn_liveness_watch(
                         }
                     }
                 }
-                // 清掉本轮彻底消失（已结束/超出 100 条上限）的残留条目，防止 map 无限增长。
+                // 清掉本轮彻底消失（已结束/超出 1000 条上限，见上方 live_sessions 查询）的残留条目，防止 map 无限增长。
                 // 边缘情况：会话彻底消失后又带着完全相同的未解决错误/待交互重新出现，会再弹一次——可接受。
                 notified.retain(|k, _| present.contains_key(k));
                 notified_pending.retain(|k, _| present.contains_key(k));

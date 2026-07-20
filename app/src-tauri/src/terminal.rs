@@ -1023,6 +1023,18 @@ pub(crate) fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     std::path::Path::new(d).is_dir().then(|| d.to_string())
 }
 
+/// macOS resume 的 cwd 准入：None/空白走无目录脚本（合法）；给了目录就必须真实存在——
+/// 目录已删时 AppleScript 里 `cd` 失败被 `&&` 短路，resume 根本没跑，osascript 却返回成功
+/// （假恢复：终端空空，DB 却已乐观复活）。与 Windows 侧 safe_cwd 的 is_dir 校验同一纪律。
+/// 纯函数便于在非 macOS 上单测。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn mac_resume_cwd_valid(cwd: Option<&str>) -> bool {
+    match cwd.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(dir) => std::path::Path::new(dir).is_dir(),
+        None => true,
+    }
+}
+
 /// 把 resume 命令 argv 拼成交给 `powershell -Command` / `cmd /k` 的单行命令串。
 /// kimi/codex 的可执行是 USERPROFILE 下的绝对路径，用户名可含空格 / $ / ' / % 等合法字符：
 /// - PowerShell：含空白或 $ ` ' 的参数用**单引号字面量**包裹（内嵌单引号翻倍）——双引号内 $ 与反引号
@@ -1120,6 +1132,57 @@ pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
         .map(|(k, v)| format!("{k}='{}' ", v.replace('\'', r"'\''")))
         .collect();
     format!("{clear}{set}")
+}
+
+/// macOS 恢复会话的 env 注入文件：赋值写进临时文件（unix 下创建即 0600），终端命令只出现
+/// `source '<tmp>' && rm -f '<tmp>' && ` 前缀——密钥值不再落在可见命令行上。
+///
+/// 起因：恢复会话的 env 带着中转 API key（ANTHROPIC_API_KEY / KIMI_MODEL_API_KEY /
+/// GEMINI_API_KEY），此前由 [`env_prefix_posix`] 拼成 `K='sk-…' ` 前缀直接进终端命令——
+/// iTerm2 会把这行命令写进 ~/.zsh_history，Terminal.app 则留在滚动缓冲区，都是明文落盘。
+/// 文件由恢复命令 source 成功后立即自删；命令若没来得及执行（窗口被直接关掉），残留文件
+/// 权限 0600 仅本人可读，并随 $TMPDIR 周期清理。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn env_source_prefix_posix(env: &[(String, String)]) -> Result<String, String> {
+    // source 进来的赋值必须 export 才会传给恢复出来的子进程；unset 清掉继承的代理变量
+    // （语义同 env_prefix_posix），值按同一套 POSIX 单引号规则转义。
+    let mut content = format!("unset {}\n", PROXY_ENV_KEYS.join(" "));
+    for (key, value) in env {
+        content.push_str(&format!("export {key}='{}'\n", value.replace('\'', r"'\''")));
+    }
+    let dir = std::env::temp_dir();
+    // create_new 杜绝符号链接/抢占覆写；撞名（概率可忽略）换名重试。
+    for _ in 0..3 {
+        let mut token = [0u8; 8];
+        if getrandom::fill(&mut token).is_err() {
+            // OS RNG 不可用属于极端退化；混入进程号即可，文件本就是 0600。
+            token = u64::from(std::process::id()).to_le_bytes();
+        }
+        let token_hex: String = token.iter().map(|b| format!("{b:02x}")).collect();
+        let path = dir.join(format!("meowo-env-{}-{token_hex}", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // 0600 必须与创建同一步完成：先建后 chmod 会留出一个默认权限的窗口期，
+        // 而密钥内容恰好在这个窗口期内写入。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let Ok(mut file) = options.open(&path) else {
+            continue;
+        };
+        use std::io::Write as _;
+        if let Err(error) = file.write_all(content.as_bytes()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("env 注入文件写入失败：{error}"));
+        }
+        drop(file);
+        // 路径按同一套单引号规则转义后拼进 source/rm（temp_dir 一般不会带引号，纪律不松）。
+        let quoted = path.to_string_lossy().replace('\'', r"'\''");
+        return Ok(format!("source '{quoted}' && rm -f '{quoted}' && "));
+    }
+    Err("无法创建 env 注入临时文件".into())
 }
 
 /// 单 pid 判活（廉价版，resume 前奏专用）：Windows 走 Toolhelp 快照（1-3ms，避免 sysinfo 全进程
@@ -1324,7 +1387,18 @@ pub(crate) fn spawn_in_terminal(
         TermKind::ITerm2 => TermKind::Terminal,
         other => other,
     };
-    crate::macos::terminal::resume_session_mac(cwd, argv, kind, &env_prefix_posix(env))
+    // env 里可能带中转 API key：写进 0600 临时文件由终端命令 source，不再拼进可见命令行
+    // （iTerm2 会把它写进 shell history，Terminal.app 留在滚动缓冲区）。建不出文件时宁可
+    // 恢复失败（调用方回滚乐观复活），也不回退到把密钥敲进终端的旧形式。
+    let Ok(env_prefix) = env_source_prefix_posix(env) else {
+        return false;
+    };
+    // cwd 必须真实存在：目录已删时 AppleScript 里 cd 失败被 && 短路，resume 没跑却返回成功
+    // （假恢复）。返回 false 由调用方回滚乐观复活。
+    if !mac_resume_cwd_valid(cwd) {
+        return false;
+    }
+    crate::macos::terminal::resume_session_mac(cwd, argv, kind, &env_prefix)
 }
 
 /// 其它平台无终端集成。
@@ -1657,59 +1731,145 @@ pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Resul
         .is_some_and(|pid| pid > 0 && pid_alive_agent_quick(pid)))
 }
 
+/// Windows：`terminate_agent_for_restart` 用的已验证 agent 进程句柄。
+/// 校验后立刻 OpenProcess 钉住进程身份：此后原进程退出、pid 被系统回收复用，
+/// TerminateProcess 与退出等待都只作用于原进程对象（已退出则操作失败），绝不会落到
+/// 复用该 pid 的无关进程上——闭合「DB 校验 pid 归属」与「kill」之间的 TOCTOU 窗口
+/// （此前 sysinfo 先按快照复核进程名、kill 时再按 pid 重新 OpenProcess，两段之间可错杀）。
+#[cfg(target_os = "windows")]
+struct AgentProcessHandle(windows_sys::Win32::Foundation::HANDLE);
+
+/// [`AgentProcessHandle::open_verified`] 的结局分类：区分开「进程已自然退出」（不算失败，
+/// 与函数顶部判活同一语义）和「pid 被非 agent 进程复用」（白名单拦截，什么都不杀）。
+#[cfg(target_os = "windows")]
+enum AgentProcessOpen {
+    Opened(AgentProcessHandle),
+    Exited,
+    NotAgent,
+}
+
+#[cfg(target_os = "windows")]
+impl AgentProcessHandle {
+    /// 打开 pid 并复核可执行名仍在 agent 白名单内。名字取自句柄钉住的进程对象本身
+    /// （与 Toolhelp 快照同一套 is_agent_process 白名单，但不怕快照后 pid 复用）。
+    fn open_verified(pid: i64) -> AgentProcessOpen {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+            QueryFullProcessImageNameW,
+        };
+        if !(1..=u32::MAX as i64).contains(&pid) {
+            return AgentProcessOpen::Exited;
+        }
+        unsafe {
+            let handle = OpenProcess(
+                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid as u32,
+            );
+            // 打不开几乎总是「校验到 kill 的间隙内自然退出」；权限类失败由调用方
+            // 再以判活复核兜底（见 terminate_agent_for_restart）。
+            if handle.is_null() {
+                return AgentProcessOpen::Exited;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            if QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut len) == 0 {
+                CloseHandle(handle);
+                return AgentProcessOpen::Exited;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            if !meowo_agent::is_agent_process(&path) {
+                CloseHandle(handle);
+                return AgentProcessOpen::NotAgent;
+            }
+            AgentProcessOpen::Opened(AgentProcessHandle(handle))
+        }
+    }
+
+    fn terminate(&self) -> bool {
+        unsafe { windows_sys::Win32::System::Threading::TerminateProcess(self.0, 1) != 0 }
+    }
+
+    /// 进程对象是否仍在运行（未 signaled）。句柄钉住身份，pid 复用不影响判断。
+    fn alive(&self) -> bool {
+        unsafe {
+            windows_sys::Win32::System::Threading::WaitForSingleObject(self.0, 0)
+                == windows_sys::Win32::Foundation::WAIT_TIMEOUT
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for AgentProcessHandle {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
     // 确认弹窗停留期间进程可能已经自然结束；此时无需报错，直接进入恢复流程。
     if !pid_alive_agent_quick(pid) {
         return Ok(());
     }
+    // Windows：校验后立刻持句柄钉住进程身份（见 AgentProcessHandle），之后的 terminate 与
+    // 退出等待全走句柄、不按 pid 重开。进程名白名单复核不收反升：改在句柄钉住的进程对象上
+    // 取镜像路径复核（open_verified）。
     #[cfg(target_os = "windows")]
-    let sent = {
-        let sys = sysinfo::System::new_all();
-        sys.process(sysinfo::Pid::from_u32(pid as u32))
-            .filter(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
-            .is_some_and(|p| p.kill())
+    let proc_handle = match AgentProcessHandle::open_verified(pid) {
+        AgentProcessOpen::Opened(h) => h,
+        // 校验到 kill 的间隙内自然退出：与顶部判活同一语义，不算失败。但判活仍报活
+        // （权限不足等打不开句柄的情形）必须拦下——否则恢复会拉起第二个进程。
+        AgentProcessOpen::Exited if !pid_alive_agent_quick(pid) => return Ok(()),
+        AgentProcessOpen::Exited => return Err("无法结束原会话进程".into()),
+        // pid 被非 agent 进程复用：白名单拦截，什么都不杀。
+        AgentProcessOpen::NotAgent => return Err("无法结束原会话进程".into()),
     };
-    // macOS 上 sysinfo 的进程可见性不稳定（判活本来也走 ps），直接以独立 argv 发送 TERM，不经 shell。
+    #[cfg(target_os = "windows")]
+    let kill = |force: bool| {
+        // Windows 只有 TerminateProcess 一档（与旧 sysinfo kill 相同），无 TERM/KILL 之分。
+        let _ = force;
+        proc_handle.terminate()
+    };
+    #[cfg(target_os = "windows")]
+    let alive = || proc_handle.alive();
+    // macOS 上 sysinfo 的进程可见性不稳定（判活本来也走 ps），直接以独立 argv 发送信号，不经 shell。
     #[cfg(target_os = "macos")]
-    let sent = std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status()
-        .is_ok_and(|s| s.success());
-    if !sent {
+    let kill = |force: bool| {
+        let pid = pid.to_string();
+        std::process::Command::new("kill")
+            .args([if force { "-KILL" } else { "-TERM" }, pid.as_str()])
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    #[cfg(target_os = "macos")]
+    let alive = || pid_alive_agent_quick(pid);
+
+    if !kill(false) && alive() {
         return Err("无法结束原会话进程".into());
     }
 
     // 给 Agent 的退出清理/SessionEnd hook 留出时间；若仍存活再强制结束，避免恢复出双进程。
     for _ in 0..30 {
-        if !pid_alive_agent_quick(pid) {
+        if !alive() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    if pid_alive_agent_quick(pid) {
-        #[cfg(target_os = "windows")]
-        let forced = {
-            let sys = sysinfo::System::new_all();
-            sys.process(sysinfo::Pid::from_u32(pid as u32))
-                .filter(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
-                .is_some_and(|p| p.kill())
-        };
-        #[cfg(target_os = "macos")]
-        let forced = std::process::Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .status()
-            .is_ok_and(|s| s.success());
-        if !forced {
+    if alive() {
+        if !kill(true) && alive() {
             return Err("原会话仍在运行，未重新打开".into());
         }
         for _ in 0..20 {
-            if !pid_alive_agent_quick(pid) {
+            if !alive() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        if pid_alive_agent_quick(pid) {
+        if alive() {
             return Err("原会话仍在运行，未重新打开".into());
         }
     }
@@ -1834,6 +1994,63 @@ mod proxy_env_tests {
         assert!(!p.starts_with('\''), "键名不得被引起来");
     }
 
+    /// 恢复会话的 env 带着中转 API key：赋值必须写进 0600 临时文件，可见命令行只剩
+    /// `source <tmp> && rm -f <tmp> &&`——否则 iTerm2 把它写进 ~/.zsh_history、
+    /// Terminal.app 留在滚动缓冲区，都是明文落盘。
+    #[test]
+    fn posix_env_moves_secrets_into_a_sourced_file() {
+        let secret_env = vec![
+            (
+                "ANTHROPIC_API_KEY".to_string(),
+                "sk-ant-secret".to_string(),
+            ),
+            ("HTTPS_PROXY".to_string(), "http://127.0.0.1:7890".to_string()),
+        ];
+        let prefix = env_source_prefix_posix(&secret_env).unwrap();
+        // 可见命令行只有 source/rm 与文件路径——密钥值绝不能出现在其中。
+        assert!(prefix.starts_with("source '"));
+        assert!(prefix.contains("' && rm -f '"));
+        assert!(prefix.ends_with("' && "));
+        assert!(!prefix.contains("sk-ant-secret"), "prefix={prefix}");
+        assert!(!prefix.contains("7890"), "prefix={prefix}");
+        // source 与 rm 指向同一文件；文件内容含 unset 清理与 export 赋值。
+        let path = prefix
+            .trim_start_matches("source '")
+            .split('\'')
+            .next()
+            .unwrap();
+        assert!(prefix.contains(&format!("rm -f '{path}'")));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.starts_with("unset HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY "));
+        assert!(content.contains("export ANTHROPIC_API_KEY='sk-ant-secret'\n"));
+        assert!(content.contains("export HTTPS_PROXY='http://127.0.0.1:7890'\n"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "密钥文件必须创建即 0600"
+            );
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// env 文件与内联前缀同一套转义纪律：值里的单引号闭合不了，注入留在字符串里。
+    #[test]
+    fn posix_env_file_escapes_quotes_in_values() {
+        let evil = vec![("K".to_string(), "a'b;calc".to_string())];
+        let prefix = env_source_prefix_posix(&evil).unwrap();
+        let path = prefix
+            .trim_start_matches("source '")
+            .split('\'')
+            .next()
+            .unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains(r"export K='a'\''b;calc'"));
+        std::fs::remove_file(path).unwrap();
+    }
+
     /// 代理串是用户输入，会被拼进 shell 命令串——三种 shell 的转义都必须挡住「闭合引号后接命令」
     /// 的注入。值虽已过 validate（无空格、协议白名单），这里仍按「一律正确转义」把关，不赌。
     #[test]
@@ -1888,5 +2105,48 @@ mod proxy_env_tests {
         assert!(decoded.contains("$env:HTTPS_PROXY='http://127.0.0.1:7890'; "));
         assert!(decoded.contains("codex.exe"), "原命令必须还在：{decoded}");
         assert!(decoded.ends_with("resume sid"));
+    }
+
+    /// macOS resume 的 cwd 准入：None/空白合法（走无目录脚本）；给了目录就必须真实存在，
+    /// 否则 AppleScript 里 cd 失败被 && 短路，resume 没跑却返回成功（假恢复）。
+    #[test]
+    fn mac_resume_cwd_valid_requires_existing_dir() {
+        assert!(mac_resume_cwd_valid(None));
+        assert!(mac_resume_cwd_valid(Some("")));
+        assert!(mac_resume_cwd_valid(Some("   ")));
+        let dir = std::env::temp_dir();
+        assert!(mac_resume_cwd_valid(dir.to_str()));
+        assert!(!mac_resume_cwd_valid(Some(
+            "C:/definitely-not-exist/meowo-xyz-123"
+        )));
+        // 文件不是目录，同样拒收。
+        let file = dir.join("meowo-cwd-valid-test-file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(!mac_resume_cwd_valid(file.to_str()));
+        let _ = std::fs::remove_file(&file);
+    }
+
+    /// open_verified 的白名单复核：测试进程自身不是 agent，必须被拦下（NotAgent）——
+    /// 这正是 pid 复用场景的防线：句柄钉住后按镜像路径复核，不杀错进程。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn open_verified_rejects_the_non_agent_test_process() {
+        match AgentProcessHandle::open_verified(std::process::id() as i64) {
+            AgentProcessOpen::NotAgent => {}
+            AgentProcessOpen::Opened(_) => panic!("非 agent 进程不得通过白名单复核"),
+            AgentProcessOpen::Exited => panic!("当前进程明明活着，不该判成 Exited"),
+        }
+    }
+
+    /// 打不开句柄的 pid 一律按 Exited 归类（调用方再以判活复核区分自然退出与权限问题）。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn open_verified_reports_exited_for_unopenable_pids() {
+        for pid in [0, -1, i64::MAX, 0x0FFF_FFFF] {
+            assert!(
+                matches!(AgentProcessHandle::open_verified(pid), AgentProcessOpen::Exited),
+                "pid={pid} 应判为 Exited"
+            );
+        }
     }
 }

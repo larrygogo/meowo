@@ -8,7 +8,7 @@ use meowo_protocol::broker::{read_handshake, BrokerRequest, CURRENT_PROTOCOL_VER
 pub(crate) use meowo_protocol::ipc::ManagedTerminalSnapshotDto as PtySnapshot;
 use meowo_protocol::ipc::{PtyExitEvent as PtyExit, PtyOutputEvent as PtyOutput};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -80,6 +80,15 @@ struct PendingApproval {
 #[derive(Clone)]
 pub(crate) struct PtyBroker {
     sessions: Arc<Mutex<HashMap<i64, Arc<ManagedPty>>>>,
+    /// 已登记、但还在锁外 openpty+spawn 的会话（纯集合，值无语义）。冷启动叠加杀软扫描时
+    /// spawn 可达数秒，绝不能用 sessions 锁跨过它——snapshot/write/resize/stop 都是主线程
+    /// 上的同步 Tauri 命令，持锁期间它们全部排队，一个会话冷启动卡顿就冻结整应用。
+    /// 占位只承担「防重复启动」语义：读路径把它当作尚未运行——snapshot 回 inactive 空帧
+    /// （与启动前一致，前端本就在等 start 返回），write/resize/stop 按「未运行」快速失败。
+    starting: Arc<Mutex<HashSet<i64>>>,
+    /// GUI 退出时置位。shutdown 先置位再抢 sessions 锁 drain；start 登记前在同一把锁内
+    /// 复核它——「spawn 完成时 shutdown 已 drain 完」的会话必须当场杀掉，不能塞回表里孤儿化。
+    shutting_down: Arc<AtomicBool>,
     completed: Arc<Mutex<HashMap<i64, CompletedPty>>>,
     attach: Arc<AttachState>,
 }
@@ -89,6 +98,8 @@ impl Default for PtyBroker {
         let token = random_token();
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            starting: Arc::new(Mutex::new(HashSet::new())),
+            shutting_down: Arc::new(AtomicBool::new(false)),
             completed: Arc::new(Mutex::new(HashMap::new())),
             attach: Arc::new(AttachState {
                 endpoint: Mutex::new(None),
@@ -335,15 +346,68 @@ impl PtyBroker {
         if argv.is_empty() {
             return Err("该 Agent 不支持恢复会话".into());
         }
-        // 持有注册表锁直到 spawn+insert 完成，闭合两个并发 start 同时通过 contains 检查的竞态。
-        let mut sessions = self.sessions.lock().map_err(|_| "PTY 状态锁已损坏")?;
-        if sessions.contains_key(&session_id) {
+        // 锁内只做「查重 + 登记启动占位」便立即放锁，openpty+spawn 移到锁外：冷启动叠加
+        // 杀软扫描时 spawn 可达数秒，而 snapshot/write/resize/stop 都是主线程上的同步
+        // Tauri 命令，持锁跨过 spawn 会让它们全部排队——一个会话冷启动卡顿就冻结整应用。
+        // 已在运行或已有占位（另一个 start 正在锁外 spawn）→ 按重复启动收敛，与原先
+        // 持锁排队后看到 contains 的语义一致。
+        if !self.begin_start(session_id)? {
             return Ok(());
         }
+        let result = self.start_spawned(app, session_id, argv, cwd, env, terminal_size);
+        if result.is_err() {
+            // 启动失败清占位，重试才进得来；completed 快照已在 begin_start 摘掉，与旧行为一致。
+            self.end_start(session_id);
+        }
+        result
+    }
+
+    /// 登记「启动中」占位。contains 检查与占位插入在同一锁程内原子完成，两个并发 start
+    /// 只有一个拿得到占位。锁序约定：**starting → sessions → completed**（全代码库唯一
+    /// 嵌套持锁处；其余路径都只单锁，构成不了 ABBA）。
+    /// 不变量：本函数返回后 completed[sid] 必为空，之后出现的条目一定来自本次调用之后的
+    /// finalize。判重提前返回的分支同样要摘：start 按 Ok 收敛后调用方照常跑秒退探测（只凭
+    /// completed 判断「起没起来」），上一代退出的定格快照会被误读成本次启动秒退——当前
+    /// 这一代（运行中/启动中）尚未 finalize，completed 里的任何条目对该探测都是噪音。
+    fn begin_start(&self, session_id: i64) -> Result<bool, String> {
+        let mut starting = self.starting.lock().map_err(|_| "PTY 状态锁已损坏")?;
+        let sessions = self.sessions.lock().map_err(|_| "PTY 状态锁已损坏")?;
+        let duplicate = sessions.contains_key(&session_id) || !starting.insert(session_id);
         if let Ok(mut completed) = self.completed.lock() {
             completed.remove(&session_id);
         }
+        Ok(!duplicate)
+    }
 
+    /// 摘掉启动占位（成功在登记入表之后、失败在收尾之后调用）。
+    fn end_start(&self, session_id: i64) {
+        if let Ok(mut starting) = self.starting.lock() {
+            starting.remove(&session_id);
+        }
+    }
+
+    /// spawn 完成后的登记。shutdown 先置 `shutting_down` 再抢同一把锁 drain，故在锁内复核：
+    /// 复核看到的若是已置位，说明 drain 已结束，登记进去就是没人收尾的孤儿——调用方当场收尾。
+    fn register_spawned(&self, session_id: i64, managed: &Arc<ManagedPty>) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().map_err(|_| "PTY 状态锁已损坏")?;
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err("应用正在退出，放弃登记新会话".into());
+        }
+        sessions.insert(session_id, managed.clone());
+        Ok(())
+    }
+
+    /// start 的锁外段：openpty → spawn → 登记 → 起 waiter/reader 线程。
+    /// 调用方持有 starting 占位；本函数任一步失败都由调用方清占位。
+    fn start_spawned(
+        &self,
+        app: tauri::AppHandle,
+        session_id: i64,
+        argv: &[String],
+        cwd: Option<&str>,
+        env: &[(String, String)],
+        terminal_size: TerminalSize,
+    ) -> Result<(), String> {
         let pair = native_pty_system()
             .openpty(size(terminal_size.cols, terminal_size.rows))
             .map_err(|e| e.to_string())?;
@@ -386,8 +450,19 @@ impl PtyBroker {
             subscribers: Mutex::new(Vec::new()),
             finalized: AtomicBool::new(false),
         });
-        sessions.insert(session_id, managed.clone());
-        drop(sessions);
+        if let Err(error) = self.register_spawned(session_id, &managed) {
+            // 应用正在退出：shutdown 的 drain 已结束，这个会话塞进去也没人收尾——当场按
+            // drain 的同等待遇杀掉子进程并释放伪终端（否则 Windows 上 conhost 孤儿化）。
+            if let Ok(mut child) = managed.child.lock() {
+                let _ = child.kill();
+            }
+            if let Ok(mut master) = managed.master.lock() {
+                drop(master.take());
+            }
+            return Err(error);
+        }
+        // 先入表、再摘占位：两步之间不留「既不在表也无占位」的空窗，并发 start 漏不进来。
+        self.end_start(session_id);
 
         // waiter：收尾的主触发器。Windows ConPTY 在子进程退出后不给 reader EOF（本机实证，
         // 连 drop master 都唤不醒阻塞中的 read），所以收尾绝不能挂在 reader 上——这里轮询
@@ -691,6 +766,11 @@ impl PtyBroker {
     /// GUI 退出时的清理。不做的话：(1) discovery 文件残留，下一个 reporter 会连向一个
     /// 早已不属于我们的端口；(2) 托管 PTY 的子进程被孤儿化（Windows 上 conhost 一并残留）。
     pub(crate) fn shutdown(&self) {
+        // 先置位再抢锁 drain：登记路径（register_spawned）在同一把锁内复核这个标志，
+        // 置位之后完成的 spawn 会被拒并当场收尾，drain 之后不会有新会话混进表里。
+        // Release：纯 store 不能用 AcqRel（那是给读改写的）。这里要的正是「置位对随后
+        // 拿到同一把锁的线程可见」，Release 与登记路径的 Acquire 读配对即可。
+        self.shutting_down.store(true, Ordering::Release);
         #[cfg(not(test))]
         if let Some(dir) = crate::db_path().parent() {
             let _ = std::fs::remove_file(dir.join(APPROVAL_BROKER_FILE));
@@ -1053,6 +1133,26 @@ impl PtyBroker {
         }
     }
 
+    /// claim 的 sessions 锁内段：真实 id 已被占用 → Err；临时会话已登记 → 在同一锁程内
+    /// 完成「取出 + 改 id + 重绑」，外部观察者看不到空窗；尚未登记 → Ok(None)，由调用方
+    /// 决定等（启动占位还在）还是报错（真的已结束）。
+    fn try_claim_rebind(
+        &self,
+        temp_id: i64,
+        real_id: i64,
+    ) -> Result<Option<Arc<ManagedPty>>, String> {
+        let mut sessions = self.sessions.lock().map_err(|_| "PTY 状态锁已损坏")?;
+        if sessions.contains_key(&real_id) {
+            return Err("真实 PTY 会话已存在".into());
+        }
+        let Some(managed) = sessions.remove(&temp_id) else {
+            return Ok(None);
+        };
+        managed.session_id.store(real_id, Ordering::Release);
+        sessions.insert(real_id, managed.clone());
+        Ok(Some(managed))
+    }
+
     fn handle_claim(
         &self,
         token: &str,
@@ -1074,16 +1174,33 @@ impl PtyBroker {
             .map_err(|_| "PTY 临时会话锁已损坏")?
             .get(launch_token)
             .ok_or("PTY claim token 无效或已使用")?;
-        let managed = {
-            let mut sessions = self.sessions.lock().map_err(|_| "PTY 状态锁已损坏")?;
-            if sessions.contains_key(&real_id) {
-                return Err("真实 PTY 会话已存在".into());
+        // start 的 openpty+spawn 在锁外进行（冷启动+杀软扫描可达数秒），claim 又是一次性的
+        // （reporter 不重试）——子进程已起、登记未落的窗口里绝不能按「已结束」把这次绑定
+        // 错杀掉。占位还在就等它落地：占的是本连接自己的 handler 线程，不挤别人。
+        let mut managed = None;
+        for _ in 0..200 {
+            if let Some(current) = self.try_claim_rebind(temp_id, real_id)? {
+                managed = Some(current);
+                break;
             }
-            let managed = sessions.remove(&temp_id).ok_or("临时 PTY 会话已结束")?;
-            managed.session_id.store(real_id, Ordering::Release);
-            sessions.insert(real_id, managed.clone());
-            managed
-        };
+            let still_starting = self
+                .starting
+                .lock()
+                .map_err(|_| "PTY 状态锁已损坏")?
+                .contains(&temp_id);
+            if !still_starting {
+                // 占位刚被摘掉：可能是登记落表（先 insert 后 remove，正常时上面一轮就该
+                // 命中），也可能是启动失败清了占位——复查一次再下「已结束」的结论。
+                managed = self.try_claim_rebind(temp_id, real_id)?;
+                if managed.is_none() {
+                    return Err("临时 PTY 会话已结束".into());
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        // 占位最长存留一个 spawn 周期；5s 还没落地按启动失败处理，token 保留供重认。
+        let managed = managed.ok_or("PTY 启动登记超时")?;
         if let Ok(mut pending) = self.attach.pending.lock() {
             pending.remove(launch_token);
         }
@@ -1187,6 +1304,155 @@ mod tests {
         assert!(snapshot.data.is_empty());
         assert_eq!(snapshot.exit_code, None);
         assert!(broker.write(42, &vec![0; 64 * 1024 + 1]).is_err());
+    }
+
+    /// 最小可用的 ManagedPty：不碰真 PTY，供占位/登记/shutdown 的状态机测试。
+    #[derive(Debug)]
+    struct DummyChild;
+    impl portable_pty::ChildKiller for DummyChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(DummyChild)
+        }
+    }
+    impl portable_pty::Child for DummyChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+            Ok(None)
+        }
+        fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+            Err(std::io::Error::other("dummy child never exits"))
+        }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    fn dummy_managed(session_id: i64) -> Arc<ManagedPty> {
+        Arc::new(ManagedPty {
+            session_id: AtomicI64::new(session_id),
+            master: Mutex::new(None),
+            finalized: AtomicBool::new(false),
+            writer: Mutex::new(Box::new(std::io::sink())),
+            child: Mutex::new(Box::new(DummyChild)),
+            backlog: Mutex::new(VecDeque::new()),
+            output_end: AtomicU64::new(0),
+            subscribers: Mutex::new(Vec::new()),
+        })
+    }
+
+    #[test]
+    fn starting_placeholder_suppresses_duplicate_starts_until_cleared() {
+        let broker = PtyBroker::default();
+        assert!(broker.begin_start(7).unwrap());
+        // 占位期间第二个 start 必须被判为重复（contains 检查与占位插入在同一锁程内原子完成）。
+        assert!(!broker.begin_start(7).unwrap());
+        broker.end_start(7);
+        // 启动失败清掉占位后，重试必须能重新登记。
+        assert!(broker.begin_start(7).unwrap());
+        broker.end_start(7);
+        // 已在运行的会话同样压住新占位（走 sessions.contains 分支）。
+        broker.sessions.lock().unwrap().insert(8, dummy_managed(8));
+        assert!(!broker.begin_start(8).unwrap());
+    }
+
+    /// 判重提前返回同样要摘掉 completed 残留：start 按 Ok 收敛后，调用方的秒退探测只凭
+    /// completed 判断「起没起来」，上一代退出的定格快照会被误报成本次启动秒退。
+    #[test]
+    fn duplicate_start_clears_the_stale_completed_snapshot() {
+        let broker = PtyBroker::default();
+        let stale = || CompletedPty {
+            data: b"old".to_vec(),
+            start_offset: 0,
+            end_offset: 3,
+            code: Some(1),
+            seq: 0,
+        };
+        // sessions.contains 分支（会话仍在运行，completed 里躺着上一代的退出快照）。
+        broker.sessions.lock().unwrap().insert(7, dummy_managed(7));
+        broker.completed.lock().unwrap().insert(7, stale());
+        assert!(!broker.begin_start(7).unwrap());
+        assert!(broker.exit_info(7).is_none(), "残留快照必须被摘掉");
+        // starting 占位分支（另一个 start 正在锁外 spawn；finalize 先插 completed 再摘
+        // sessions 的间隙里，completed 也可能出现当前占位之前的写入）。
+        broker.begin_start(8).unwrap();
+        broker.completed.lock().unwrap().insert(8, stale());
+        assert!(!broker.begin_start(8).unwrap());
+        assert!(broker.exit_info(8).is_none());
+        broker.end_start(8);
+    }
+
+    #[test]
+    fn a_starting_session_reads_as_not_yet_running() {
+        let broker = PtyBroker::default();
+        broker.begin_start(7).unwrap();
+        // snapshot：inactive 且非 exited 的空帧——与启动前一致，前端按既有「未连接」路径
+        // 处理，绝不会把启动中的会话误判成已退出（completed 已在登记占位时摘掉）。
+        let snapshot = broker.snapshot(7, 0);
+        assert!(!snapshot.active);
+        assert!(!snapshot.exited);
+        assert!(snapshot.data.is_empty());
+        // write/resize/stop 快速失败，不在启动中的会话上排队等待。
+        assert!(broker.write(7, b"x").is_err());
+        assert!(broker.resize(7, 80, 24).is_err());
+        assert!(broker.stop(7).is_err());
+        assert!(!broker.is_managed(7));
+        broker.end_start(7);
+    }
+
+    #[test]
+    fn claim_waits_for_the_inflight_start_to_register() {
+        let broker = PtyBroker::default();
+        broker.attach.pending.lock().unwrap().insert("launch".into(), -5);
+        broker.begin_start(-5).unwrap();
+        let token = broker.attach.token.clone();
+
+        // 模拟 start 的锁外段：spawn 完成后登记入表、再摘占位。
+        let registrar = broker.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            registrar.sessions.lock().unwrap().insert(-5, dummy_managed(-5));
+            registrar.end_start(-5);
+        });
+
+        // claim 一次性、reporter 不重试：登记未落的窗口里必须等，不能按「已结束」错杀。
+        broker.handle_claim(&token, "launch", 9).unwrap();
+        handle.join().unwrap();
+        let sessions = broker.sessions.lock().unwrap();
+        assert!(sessions.contains_key(&9));
+        assert!(!sessions.contains_key(&-5));
+        drop(sessions);
+        assert_eq!(broker.binding(-5), Some(9));
+        assert!(broker.attach.pending.lock().unwrap().get("launch").is_none());
+    }
+
+    #[test]
+    fn claim_after_a_failed_start_keeps_its_token() {
+        let broker = PtyBroker::default();
+        broker.attach.pending.lock().unwrap().insert("launch".into(), -5);
+        broker.begin_start(-5).unwrap();
+        broker.end_start(-5); // 启动失败：清占位、不入表
+        let token = broker.attach.token.clone();
+        assert!(broker.handle_claim(&token, "launch", 9).is_err());
+        // token 不消费：早到/迟到的 claim 都不得断送下一次认领（原有语义保持）。
+        assert_eq!(
+            broker.attach.pending.lock().unwrap().get("launch"),
+            Some(&-5)
+        );
+    }
+
+    #[test]
+    fn registration_after_shutdown_is_rejected() {
+        let broker = PtyBroker::default();
+        broker.shutdown();
+        // drain 结束后完成的 spawn 必须登记失败（调用方当场收尾），不能混进表里孤儿化。
+        assert!(broker.register_spawned(7, &dummy_managed(7)).is_err());
+        assert!(!broker.sessions.lock().unwrap().contains_key(&7));
     }
 
     #[test]

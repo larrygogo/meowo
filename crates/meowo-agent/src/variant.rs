@@ -214,6 +214,7 @@ mod tests {
         command: CommandSpec {
             quote_exe: false,
             with_provider: true,
+            ps_call_operator: false,
         },
     };
     static CANDS: [LaunchCandidate; 1] = [LaunchCandidate::Exe {

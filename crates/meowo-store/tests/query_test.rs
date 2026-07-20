@@ -662,3 +662,26 @@ fn live_sessions_search_none_is_backcompat() {
         .unwrap();
     assert_eq!(r2.len(), 1);
 }
+
+/// 回归（审查发现）：live_sessions 曾把 provider 空串/纯空白原样透出，而兄弟读路径
+/// （session_header / session_provider）都有「空值回退 DEFAULT_PROVIDER」的防御——
+/// 上层拿到空串会把会话按未知 agent 处理（丢掉 transcript 能力）。
+#[test]
+fn live_sessions_falls_back_to_default_provider_for_blank_provider() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    // set_session_provider 是原样透写（store 不校验、不归一），用它造出脏 provider 的行。
+    let (empty, _) = store.start_session(pid, "empty-provider", 100).unwrap();
+    store.set_session_provider(empty, "").unwrap();
+    let (blank, _) = store.start_session(pid, "blank-provider", 200).unwrap();
+    store.set_session_provider(blank, "   ").unwrap();
+
+    let live = store.live_sessions(None, None, None, None, 100).unwrap();
+    let got = |id: i64| {
+        live.iter()
+            .find(|l| l.session.id == id)
+            .map(|l| l.provider.as_str())
+    };
+    assert_eq!(got(empty), Some(meowo_store::DEFAULT_PROVIDER));
+    assert_eq!(got(blank), Some(meowo_store::DEFAULT_PROVIDER));
+}

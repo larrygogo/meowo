@@ -11,7 +11,16 @@ use std::path::{Path, PathBuf};
 
 /// GUI 对话窗口消费的 provider 无关消息单元。终端 ANSI 只负责还原终端，结构化对话始终来自
 /// agent 自己的 transcript，避免把光标移动、spinner 和重绘误当正文。
-pub use meowo_protocol::ipc::ChatItem;
+pub use meowo_protocol::ipc::{ChatItem, SubagentOutcome, SubagentRef, SubagentRun};
+
+/// 一条待读取的子任务侧车流。
+pub struct SubagentStream {
+    /// 分支标签（kimi 的 `agent-3`）；单发委派可为 None。
+    pub label: Option<String>,
+    /// 归一化状态 `running` / `completed` / `failed`；provider 未留下信号时为 None。
+    pub status: Option<String>,
+    pub path: PathBuf,
+}
 
 /// Provider 私有日志解析后的领域事件。它刻意不依赖 GUI/IPC 的序列化形状：插件只描述
 /// “发生了什么”，边界适配器再决定当前前端契约如何表达。
@@ -47,6 +56,8 @@ pub enum TranscriptEvent {
         timestamp: Option<String>,
         name: String,
         summary: String,
+        /// 该调用是一次子任务委派时的展示信息（见 [`SubagentSpec::detect_call`]）。
+        subagent: Option<SubagentRef>,
     },
     ToolResult {
         id: String,
@@ -54,6 +65,8 @@ pub enum TranscriptEvent {
         tool_call_id: Option<String>,
         text: String,
         is_error: bool,
+        /// 该结果是子任务委派的回执时的结局统计（见 [`SubagentSpec::detect_result`]）。
+        subagent: Option<SubagentOutcome>,
     },
     Metadata {
         id: String,
@@ -115,11 +128,13 @@ impl From<TranscriptEvent> for ChatItem {
                 timestamp,
                 name,
                 summary,
+                subagent,
             } => Self::ToolUse {
                 id,
                 timestamp,
                 name,
                 summary,
+                subagent,
             },
             TranscriptEvent::ToolResult {
                 id,
@@ -127,12 +142,14 @@ impl From<TranscriptEvent> for ChatItem {
                 tool_call_id,
                 text,
                 is_error,
+                subagent,
             } => Self::ToolResult {
                 id,
                 timestamp,
                 tool_use_id: tool_call_id,
                 text,
                 is_error,
+                subagent,
             },
             TranscriptEvent::Metadata {
                 id,
@@ -222,6 +239,41 @@ impl TranscriptParser for ChatOnlyParser {
     }
 }
 
+/// 子任务（subagent）能力：agent 支持把工作委派给子 agent，并把子 agent 的过程记在
+/// **主 transcript 之外的侧车流**里时声明它。
+///
+/// 为什么单列一个槽而不是在解析里加分支：两家的布局与关联方式毫无共同点——
+/// claude 是 `<session>/subagents/agent-<id>.{jsonl,meta.json}`，靠 meta 里的 `toolUseId`
+/// 做外键；kimi 是 `agents/agent-N/wire.jsonl`，得从主链 `tool.result` 的**输出正文**里
+/// 抠出 `agent_id`。把这些塞进共享路径必然长成一排 `if provider ==`。
+///
+/// 侧车流按需读取（用户展开时），不进 [`read_chat_delta`] 的增量热路径：子任务往往几十条、
+/// 一个会话几十个，跟着 650ms 轮询一起读会让长会话首开与稳态轮询都付出无谓代价。
+pub trait SubagentSpec: Sync {
+    /// 主链上这条工具调用是不是一次子任务委派？是则返回展示信息。
+    fn detect_call(&self, tool_name: &str, input: Option<&serde_json::Value>)
+        -> Option<SubagentRef>;
+
+    /// 定位该次委派的侧车流。**返回列表**：一次调用未必只派一个子任务——kimi 的
+    /// `AgentSwarm` 一次能派出十几个（fan-out 一批 items，或 resume 一批既有 agent）。
+    /// `main_transcript` = 主 transcript 路径，`tool_use_id` = 主链那条工具调用的 id。
+    /// 空列表 = 子任务尚未落盘、记录已清理，或这条根本不是委派。
+    fn locate_streams(&self, main_transcript: &Path, tool_use_id: &str) -> Vec<SubagentStream>;
+
+    /// 解析侧车流的一行。两家的侧车流都与主流同格式，但可能有额外前提
+    /// （claude 的侧车行全部带 `isSidechain`，主流解析会主动丢弃它们）。
+    fn parse_stream_line(&self, line: &str) -> Vec<TranscriptEvent>;
+
+    /// 主链上这条**工具结果**是不是某次委派的回执？是则给出各分支的结局统计。
+    ///
+    /// 状态就写在主 transcript 里，解析时顺手取到即可——因此折叠状态下也能显示进度，
+    /// 不必先展开（展开要读侧车流，那是按需 I/O，不该为了一个徽标付出）。
+    /// 默认 None：该 provider 没有在主链留下可靠的结局信号。
+    fn detect_result(&self, _output: &str) -> Option<SubagentOutcome> {
+        None
+    }
+}
+
 /// 某 agent 的 transcript 规格：定位文件 + 解析标题 + 产出增量解析器。
 /// Sync：以 &'static dyn 共享。
 pub trait TranscriptSpec: Sync {
@@ -299,6 +351,12 @@ pub trait TranscriptSpec: Sync {
     fn supports_analysis(&self) -> bool {
         true
     }
+
+    /// 子任务能力。None = 该 agent 没有子任务概念（codex 当前如此：工具只有 exec/wait，
+    /// `task_started` 是回合级事件而非委派），或其子任务过程不落在可读的侧车流里。
+    fn subagents(&self) -> Option<&'static dyn SubagentSpec> {
+        None
+    }
 }
 
 /// transcript 缓存失效判据，聊天与看板分析两条读取路径共用。
@@ -317,6 +375,64 @@ pub(crate) fn transcript_reset(
     prev_mtime: Option<std::time::SystemTime>,
 ) -> bool {
     len < offset || (len == offset && prev_mtime.is_some() && mtime != prev_mtime)
+}
+
+/// 单个子任务侧车的读取上限。子任务本身就是「大工作拆出去」，个别会跑出很大的流；
+/// 展开是一次同步 IPC，不能让一次点击拖住窗口。超限时读尾部——子任务的结论在末尾。
+const SUBAGENT_STREAM_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// 读一条侧车流的全部消息。超限时读尾部——子任务的结论在末尾。
+fn read_stream(subagents: &dyn SubagentSpec, path: &Path) -> Option<Vec<ChatItem>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let truncated = len > SUBAGENT_STREAM_LIMIT;
+    if truncated {
+        file.seek(SeekFrom::Start(len - SUBAGENT_STREAM_LIMIT)).ok()?;
+    }
+    // JSONL 行可能含非法 UTF-8（截断的多字节），lossy 读避免整份作废。
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines = text.lines();
+    // 超限时从中间切入，首行多半是半条 JSON，丢掉。
+    if truncated {
+        lines.next();
+    }
+    Some(
+        lines
+            .flat_map(|line| subagents.parse_stream_line(line))
+            .map(ChatItem::from)
+            .collect(),
+    )
+}
+
+/// 读取一次子任务委派的完整时间线。**按需调用**（用户展开时），不进增量热路径。
+///
+/// 与 [`read_chat_delta`] 的区别是刻意的：那条路径服务 650ms 轮询，必须增量且只读一个流；
+/// 这里读的是已经写完的侧车流，整读一次即可，不需要 offset 记账。
+///
+/// 返回多条：一次委派未必只派一个子任务（kimi 的 `AgentSwarm`）。空列表表示该 agent
+/// 没有子任务能力，或这条调用找不到任何侧车流（尚未落盘、已被清理、或根本不是委派）。
+pub fn read_subagent_chat(
+    spec: &dyn TranscriptSpec,
+    main_transcript: &Path,
+    tool_use_id: &str,
+) -> Vec<SubagentRun> {
+    let Some(subagents) = spec.subagents() else {
+        return Vec::new();
+    };
+    subagents
+        .locate_streams(main_transcript, tool_use_id)
+        .into_iter()
+        .filter_map(|stream| {
+            Some(SubagentRun {
+                label: stream.label,
+                status: stream.status,
+                items: read_stream(subagents, &stream.path)?,
+            })
+        })
+        .collect()
 }
 
 /// 从 `offset` 起只解析新增的完整 JSONL 行。文件被截断/重建时自动从头开始并标记 reset，前端据此
@@ -663,6 +779,7 @@ mod tests {
                 tool_call_id: Some("call".into()),
                 text: "ok".into(),
                 is_error: false,
+                subagent: None,
             }),
             ChatItem::ToolResult {
                 id: "result".into(),
@@ -670,6 +787,7 @@ mod tests {
                 tool_use_id: Some("call".into()),
                 text: "ok".into(),
                 is_error: false,
+                subagent: None,
             }
         );
         assert_eq!(

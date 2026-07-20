@@ -369,11 +369,19 @@ fn write_applied(m: &AppliedMap) -> Result<(), String> {
 // claude 另外还能写进它自己的配置文件（`apply_to_agent_configs`）。设置页必须如实标注这个覆盖面，
 // 不许含糊——见 `NetworkSection.tsx` 的 coverage 文案。
 
+/// 串行化 [`apply_to_agent_configs`] 的进程内锁（理由见函数首行注释）。
+static APPLY_AGENT_CONFIGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 把当前代理设置写进各 agent **自己的**配置文件。启动时与设置保存后各跑一次。
 ///
 /// 逐 agent best-effort：一家失败不影响他家（与 hooks 接线同纪律）。未配置过的 agent
 /// （数据目录不存在＝没装）跳过，绝不凭空创建它的配置目录。
 pub fn apply_to_agent_configs() -> Vec<AgentProxyReport> {
+    // 整个读-改-写（各 agent 配置文件 + proxy-applied.json 所有权状态）都基于先前快照：
+    // 启动后台线程（setup）与设置保存命令（主线程）并发跑时，旧快照写回会把另一方刚生效
+    // 的修改打掉（典型：启动后几秒内保存代理设置）。与 RELAY_SECRETS_LOCK / USAGE_CACHE_LOCK
+    // 同一模式，用进程内 Mutex 串行化。
+    let _guard = APPLY_AGENT_CONFIGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let settings = crate::settings::load_settings();
     let mut applied = read_applied();
     let mut reports = Vec::new();
@@ -451,8 +459,14 @@ pub fn apply_to_agent_configs() -> Vec<AgentProxyReport> {
                 continue;
             }
             meowo_agent::EnsureOutcome::Changed(next) => {
+                // 写前必备份，与 hooks 接线同纪律：备份失败就放弃本次写入——吞掉错误照常
+                // 落盘，等于拿用户的 settings.json 去赌「也许不需要回滚」。
                 if path.exists() {
-                    meowo_agent::backup_once(&path); // 写前必备份，与 hooks 接线同纪律
+                    if let Err(e) = meowo_agent::backup_once(&path) {
+                        report.error = Some(format!("备份 {} 失败：{e}", path.display()));
+                        reports.push(report);
+                        continue;
+                    }
                 }
                 if let Err(e) = meowo_agent::fsutil::write_atomic(&path, &next) {
                     report.error = Some(format!("写入 {} 失败：{e}", path.display()));

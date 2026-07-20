@@ -27,6 +27,9 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = vi.fn(); } }));
+// 与 About.account.test.tsx 同款：确认框必须走 tauri 的 dialog（webview 会吞掉 window.confirm）。
+const dialog = vi.hoisted(() => ({ confirm: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 
 import { ManagedTerminal } from "./ManagedTerminal";
 
@@ -37,6 +40,8 @@ describe("ManagedTerminal", () => {
   beforeEach(() => {
     invoke.mockReset();
     write.mockReset();
+    dialog.confirm.mockReset();
+    dialog.confirm.mockResolvedValue(true);
     eventHandlers.clear();
     global.ResizeObserver = class {
       observe = vi.fn();
@@ -193,6 +198,35 @@ describe("ManagedTerminal", () => {
     await waitFor(() => expect(write).toHaveBeenCalled());
     expect(write).toHaveBeenCalledTimes(1);
     expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("ABCDEF");
+  });
+
+  it("confirm 通过后真的调用接管 invoke", async () => {
+    // 回归：此前用 window.confirm——Tauri webview 会吞掉它、恒返回 false，接管按钮永远点不动；
+    // 而旧测试只断言按钮渲染、从不点击，刚好放过了这个 bug。这里必须点下去走完全链路。
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    const button = await screen.findByRole("button", { name: "结束外部进程并接管" });
+    button.click();
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("takeover_managed_terminal", { sessionId: 163, cols: 80, rows: 24 }),
+    );
+  });
+
+  it("confirm 取消时不调用接管 invoke", async () => {
+    dialog.confirm.mockResolvedValue(false);
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    const button = await screen.findByRole("button", { name: "结束外部进程并接管" });
+    button.click();
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(invoke.mock.calls.some(([command]) => command === "takeover_managed_terminal")).toBe(false);
   });
 
   it("realigns the output offset when the PTY is restarted in place", async () => {

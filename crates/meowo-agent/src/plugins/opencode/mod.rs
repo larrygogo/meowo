@@ -98,6 +98,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: false,
         with_provider: true,
+        ps_call_operator: false,
     },
 };
 
@@ -175,6 +176,11 @@ impl AgentPlugin for Opencode {
     /// `opencode --session <id>`（`--continue` 是「续最近一个」，不接 id，表达不了「恢复指定会话」）。
     fn resume_args(&self) -> &'static [&'static str] {
         &["--session"]
+    }
+    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
+    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        Some("/model")
     }
     /// opencode 的切模型命令是 `/models`（复数，弹选择器），没有 `/model`/`/status`/`/clear`
     /// ——清上下文对应 `/new`。此前前端的通用 fallback 把这三个都补给它了。

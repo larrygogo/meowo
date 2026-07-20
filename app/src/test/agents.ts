@@ -94,6 +94,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
   return {
     slash_commands: commands,
     model_presets: MODEL_PRESETS[provider] ?? [],
+    // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
+    model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : "/model",
     mode_controls: provider === "claude"
       ? [{ dimension: "permission", cycle_input: "\u001b[Z", options: [] }]
       : provider === "codex"

@@ -31,7 +31,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // statusline 子命令：解析 CC statusline JSON 写入上下文用量，再把 stdin 原样透传到 stdout，
     // 供管道下游（claude-hud）照常渲染。解析/写库失败都不影响透传。
     if std::env::args().nth(1).as_deref() == Some("statusline") {
-        if let Ok(store) = Store::open(db_path()) {
+        // db_path 为 None（解析不到 home）时跳过写库只做透传——绝不能因此卡住状态栏。
+        if let Some(store) = db_path().and_then(|p| Store::open(p).ok()) {
             meowo_reporter::statusline::record(&store, &buf, now_ms());
         }
         // 无下游时这行就是状态栏；被包装脚本链下游时其 stdout 会被丢弃，仅写库生效。
@@ -40,7 +41,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ev = HookEvent::parse(&buf)?;
-    let store = Store::open(db_path())?;
+    // 解析不到 home 就没有库可写——连审批桥的 discovery 文件都躺在库旁边，整条链路无从
+    // 谈起。直接 no-op 返回：main 最终以 0 退出，绝不阻塞 agent。
+    let Some(path) = db_path() else {
+        return Ok(());
+    };
+    let store = Store::open(path)?;
     let now = now_ms();
     // agent 提供方：kimi 的 hook 命令带 `--provider kimi`；Claude 不带 → 默认 claude。
     let provider = parse_provider();

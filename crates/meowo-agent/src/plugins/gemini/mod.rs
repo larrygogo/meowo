@@ -57,12 +57,17 @@ static AUTH: AuthScheme = AuthScheme {
 ///
 /// 不带 matcher（`plain`）是有意的：Gemini 的工具事件按正则匹配工具名，但生命周期事件的 matcher 是
 /// **精确字符串**比对——claude 那套 `matcher: "*"` 搬过来会一条都匹配不上，而缺省即「不限制」。
+///
+/// timeout 单位是**毫秒**，与 claude 的秒语义相反（实测 0.51 hookRunner：
+/// `setTimeout(..., hookConfig.timeout ?? 60000)`）。沿用 `plain` 的默认 5 就是 5ms——reporter
+/// 刚 spawn 即被 `taskkill /f /t` 整树击杀，每个 hook 都「超时失败」，会话根本落不了库。
+const GEMINI_HOOK_TIMEOUT_MS: u64 = 5_000;
 static EVENTS: [HookEvent; 5] = [
-    HookEvent::plain("SessionStart"),
-    HookEvent::plain("BeforeAgent"),
-    HookEvent::plain("AfterTool"),
-    HookEvent::plain("AfterAgent"),
-    HookEvent::plain("SessionEnd"),
+    HookEvent::plain("SessionStart").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
+    HookEvent::plain("BeforeAgent").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
+    HookEvent::plain("AfterTool").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
+    HookEvent::plain("AfterAgent").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
+    HookEvent::plain("SessionEnd").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
 ];
 
 /// Gemini 0.50 支持的全部 hook 事件。写进一条它不认识的 event 会怎样尚未实测，但 kimi 的前车之鉴
@@ -83,6 +88,10 @@ pub const EVENT_WHITELIST: [&str; 11] = [
 
 /// `settings.json` 与 claude 的同名文件同构，且同样承载 hooks 之外的用户配置（主题、模型…），
 /// 故一律原样保留。文件不存在时从 `{}` 建——gemini 本就允许它缺席。
+///
+/// `ps_call_operator`：gemini 在 Windows 恒经 PowerShell 执行 hook（0.51 `getShellConfiguration`
+/// 没有 cmd 分支），引号开头的 `"exe" --provider gemini` 是字符串表达式、解析即以 code 1 失败，
+/// 必须写成 `& "exe" --provider gemini`。
 static HOOKS: HookSpec = HookSpec {
     config_rel: "settings.json",
     format: ConfigFormat::ClaudeJson,
@@ -91,6 +100,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: true,
         with_provider: true,
+        ps_call_operator: true,
     },
 };
 
@@ -183,6 +193,11 @@ impl AgentPlugin for Gemini {
 
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
+    }
+    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
+    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        Some("/model")
     }
     /// gemini 没有 `/status`/`/compact`——对应物叫 `/stats` 与 `/compress`。此前前端的通用
     /// fallback 给它补全 `/status`，发进去只会报 unknown command。
@@ -369,6 +384,45 @@ mod tests {
             env.get("GEMINI_DEFAULT_AUTH_TYPE").map(String::as_str),
             Some("gemini-api-key")
         );
+    }
+
+    /// gemini 的 hook timeout 单位是毫秒（hookRunner `setTimeout`，默认 60000）。写成 claude
+    /// 的秒语义（5）就是 5ms——reporter 一 spawn 即被整树击杀，每个 hook 都超时失败，
+    /// 会话永远落不了库。绊线：任何事件的 timeout 掉回秒量级即失败。
+    #[test]
+    fn hook_timeouts_are_milliseconds_not_seconds() {
+        for ev in EVENTS {
+            assert!(
+                ev.timeout >= 1_000,
+                "{} 的 timeout={} 是秒语义残留，gemini 会按毫秒解释",
+                ev.name,
+                ev.timeout
+            );
+        }
+    }
+
+    /// Windows 上 gemini 恒经 PowerShell 执行 hook：引号开头的命令是字符串表达式、以 code 1
+    /// 失败，必须带调用运算符 `&`。非 Windows（bash -c）不得带——`&` 在 bash 是后台运算符。
+    /// 两种形态都必须被认领（升级迁移 + 幂等）。
+    #[test]
+    fn hook_command_is_powershell_invocable_on_windows() {
+        let cmd = HOOKS.command.render("C:/x/meowo-reporter.exe", "gemini");
+        if cfg!(windows) {
+            assert_eq!(cmd, "& \"C:/x/meowo-reporter.exe\" --provider gemini");
+        } else {
+            assert_eq!(cmd, "\"C:/x/meowo-reporter.exe\" --provider gemini");
+        }
+        // 新旧两种形态都认领（旧＝无 `&` 的历史接线，升级时要能原地更新而非重复追加）。
+        for form in [
+            "& \"C:/x/meowo-reporter.exe\" --provider gemini",
+            "\"C:/x/meowo-reporter.exe\" --provider gemini",
+        ] {
+            assert_eq!(
+                HOOKS.command.claim(form, "gemini").as_deref(),
+                Some("C:/x/meowo-reporter.exe"),
+                "未认领形态：{form}"
+            );
+        }
     }
 
     /// 防连坐绊线：照 kimi 的教训，一条非法 event 有可能让**全部** hooks 静默失效。

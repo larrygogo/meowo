@@ -35,6 +35,40 @@ pub struct SessionContext {
     pub window_size: Option<i64>,
 }
 
+/// `BEGIN IMMEDIATE` 的收尾守卫：drop 时若未显式 commit 就 best-effort ROLLBACK——
+/// rusqlite 的 `unchecked_transaction` 只发 deferred BEGIN，而 WAL 下 deferred 事务在
+/// 「先 SELECT 后写入」的间隙被别的连接提交写入时，升级写锁会 SQLITE_BUSY_SNAPSHOT 直接
+/// 失败（busy handler 不生效）。IMMEDIATE 开局即取写锁（冲突走 busy_timeout 等待），
+/// 配本守卫保证任何错误路径都不会把写锁/未决事务留在连接上。
+struct ImmediateTx<'a> {
+    conn: &'a Connection,
+    committed: bool,
+}
+
+impl<'a> ImmediateTx<'a> {
+    fn begin(conn: &'a Connection) -> Result<Self, StoreError> {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(Self {
+            conn,
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) -> Result<(), StoreError> {
+        self.conn.execute_batch("COMMIT")?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for ImmediateTx<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+    }
+}
+
 impl Store {
     /// 打开（或新建）数据库，开启 WAL，执行建表。
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Store, StoreError> {
@@ -427,8 +461,12 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         let tid = self.task_id_of_session(session_id)?;
-        let tx = self.conn.unchecked_transaction()?;
-        let (locked, task_updated_at, session_updated_at): (bool, i64, i64) = tx.query_row(
+        // 不能沿用 `unchecked_transaction` 的 deferred BEGIN：WAL 下 SELECT 与 DELETE/INSERT
+        // 之间若被别的连接提交写入，升级写事务会 SQLITE_BUSY_SNAPSHOT 直接失败（busy handler
+        // 不生效），这次 TodoWrite 就被丢了（要等下一条事件才自愈）。BEGIN IMMEDIATE 开局即
+        // 取写锁，冲突走 busy_timeout 等待；守卫语义（下方乱序挡写）不变。
+        let tx = ImmediateTx::begin(&self.conn)?;
+        let (locked, task_updated_at, session_updated_at): (bool, i64, i64) = self.conn.query_row(
             "SELECT t.column_locked, t.updated_at, s.last_event_at \
              FROM tasks t JOIN sessions s ON s.id = t.session_id WHERE t.id = ?1",
             [tid],
@@ -437,38 +475,37 @@ impl Store {
         // Todo hook 可能乱序到达。必须在删除旧列表之前挡住迟到事件，否则即便下面的
         // tasks UPDATE 有时间守卫，todos 本身仍会被旧快照整体覆盖。
         if task_updated_at > now_ms || session_updated_at > now_ms {
-            tx.commit()?;
-            return Ok(());
+            return tx.commit();
         }
-        tx.execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
+        self.conn
+            .execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
         for (i, t) in todos.iter().enumerate() {
-            tx.execute(
+            self.conn.execute(
                 "INSERT INTO todos (task_id, content, status, order_idx) VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![tid, t.content, t.status.as_str(), i as i64],
             )?;
         }
         if !locked {
             let col = derive_column(todos);
-            tx.execute(
+            self.conn.execute(
                 "UPDATE tasks SET column_name = ?1, updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![col.as_str(), now_ms, tid],
             )?;
         } else {
-            tx.execute(
+            self.conn.execute(
                 "UPDATE tasks SET updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now_ms, tid],
             )?;
         }
         // touch_session 等价逻辑（事务内）：刷新 last_event_at，waiting/stale 复活为 running
-        tx.execute(
+        self.conn.execute(
             "UPDATE sessions
              SET last_event_at = ?1,
                  status = CASE WHEN status IN ('waiting','stale') THEN 'running' ELSE status END
              WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
-        tx.commit()?;
-        Ok(())
+        tx.commit()
     }
 
     pub fn list_todos(&self, task_id: i64) -> Result<Vec<Todo>, StoreError> {

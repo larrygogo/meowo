@@ -8,8 +8,10 @@
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+    SubagentRef, SubagentSpec, SubagentStream, TranscriptEvent, TranscriptInfo, TranscriptParser,
+    TranscriptSpec, TurnError,
 };
+use std::path::{Path, PathBuf};
 
 fn text_from_content(value: &serde_json::Value) -> String {
     if let Some(s) = value.as_str() {
@@ -55,6 +57,9 @@ fn tool_summary(name: &str, input: Option<&serde_json::Value>) -> String {
         "Bash" => "command",
         "WebSearch" => "query",
         "Read" | "Write" | "Edit" => "file_path",
+        // 子任务委派：摘要取那句任务描述。缺了这条会落到下面的整包 JSON 兜底，
+        // 而 prompt 动辄上千字——摘要行会变成一段被截断的 prompt 泥巴。
+        "Agent" | "Task" => "description",
         _ => "",
     };
     if !key.is_empty() {
@@ -66,10 +71,16 @@ fn tool_summary(name: &str, input: Option<&serde_json::Value>) -> String {
 }
 
 fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
+    parse_events(line, false)
+}
+
+/// `allow_sidechain`：读**子任务侧车流**时为 true。侧车文件里每一行都带 `isSidechain`，
+/// 主流解析主动丢弃它们（子任务过程不该混进主时间线），但读侧车流时它们正是全部内容。
+fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return Vec::new();
     };
-    if v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
+    if !allow_sidechain && v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
         return Vec::new();
     }
     let kind = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
@@ -127,6 +138,9 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                                     .get("is_error")
                                     .and_then(|x| x.as_bool())
                                     .unwrap_or(false),
+                                // claude 的委派回执不带结局（异步子任务的完成经 notification
+                                // 另行回来），主链上没有可靠信号，如实留空。
+                                subagent: None,
                             })
                         }
                         _ => None,
@@ -159,23 +173,20 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                             timestamp: timestamp.clone(),
                             text: text.to_string(),
                         }),
-                    Some("tool_use") => Some(TranscriptEvent::ToolCall {
-                        id: block
-                            .get("id")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or(base_id)
-                            .to_string(),
-                        timestamp: timestamp.clone(),
-                        name: block
-                            .get("name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("Tool")
-                            .to_string(),
-                        summary: tool_summary(
-                            block.get("name").and_then(|x| x.as_str()).unwrap_or(""),
-                            block.get("input"),
-                        ),
-                    }),
+                    Some("tool_use") => {
+                        let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
+                        Some(TranscriptEvent::ToolCall {
+                            id: block
+                                .get("id")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or(base_id)
+                                .to_string(),
+                            timestamp: timestamp.clone(),
+                            name: name.to_string(),
+                            summary: tool_summary(name, block.get("input")),
+                            subagent: CLAUDE_SUBAGENTS.detect_call(name, block.get("input")),
+                        })
+                    }
                     _ => None,
                 },
             )
@@ -716,6 +727,101 @@ fn runtime_skill_commands(path: &std::path::Path) -> Option<Vec<crate::SlashComm
     latest
 }
 
+// ═══ SubagentSpec 实现 ═══
+
+/// Claude 的子任务侧车布局（实测 Claude Code 2.x）：
+///
+/// ```text
+/// <projects>/<proj>/<session-id>.jsonl          ← 主 transcript
+/// <projects>/<proj>/<session-id>/subagents/
+///     agent-<agent-id>.jsonl                    ← 子任务全过程（与主流同格式，行带 isSidechain）
+///     agent-<agent-id>.meta.json                ← {agentType, description, toolUseId, spawnDepth}
+/// ```
+///
+/// `meta.json` 的 `toolUseId` 就是主链那条 `Agent` 工具调用的 id——现成外键，
+/// 不必靠 `parentUuid` 做图归并。
+pub struct ClaudeSubagents;
+pub static CLAUDE_SUBAGENTS: ClaudeSubagents = ClaudeSubagents;
+
+impl ClaudeSubagents {
+    /// `<dir>/<session>.jsonl` → `<dir>/<session>/subagents/`
+    fn stream_dir(main_transcript: &Path) -> Option<PathBuf> {
+        let dir = main_transcript.with_extension("").join("subagents");
+        dir.is_dir().then_some(dir)
+    }
+}
+
+impl SubagentSpec for ClaudeSubagents {
+    fn detect_call(
+        &self,
+        tool_name: &str,
+        input: Option<&serde_json::Value>,
+    ) -> Option<SubagentRef> {
+        // `Task` 是旧版名，`Agent` 是当前名；两个都认，历史会话才不会退化成裸工具调用。
+        if !matches!(tool_name, "Agent" | "Task") {
+            return None;
+        }
+        let input = input?;
+        Some(SubagentRef {
+            description: input
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            agent_type: input
+                .get("subagent_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            // claude 的一次 Agent 调用恒定对应一个子任务；同时派多个是多条 tool_use。
+            count: 1,
+        })
+    }
+
+    fn locate_streams(&self, main_transcript: &Path, tool_use_id: &str) -> Vec<SubagentStream> {
+        Self::locate_one(main_transcript, tool_use_id)
+            .map(|path| {
+                vec![SubagentStream {
+                    label: None,
+                    // claude 的 meta.json 只记身份不记结局，没有可靠的状态信号。
+                    status: None,
+                    path,
+                }]
+            })
+            .unwrap_or_default()
+    }
+
+    fn parse_stream_line(&self, line: &str) -> Vec<TranscriptEvent> {
+        parse_events(line, true)
+    }
+}
+
+impl ClaudeSubagents {
+    fn locate_one(main_transcript: &Path, tool_use_id: &str) -> Option<PathBuf> {
+        let dir = Self::stream_dir(main_transcript)?;
+        for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            // meta 只有几行；整读无妨。
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if meta.get("toolUseId").and_then(|v| v.as_str()) != Some(tool_use_id) {
+                continue;
+            }
+            // agent-<id>.meta.json → agent-<id>.jsonl
+            let stem = path.file_name()?.to_str()?.strip_suffix(".meta.json")?;
+            let stream = dir.join(format!("{stem}.jsonl"));
+            return stream.is_file().then_some(stream);
+        }
+        None
+    }
+}
+
 // ═══ TranscriptSpec 实现 ═══
 
 /// Claude Code 的 transcript 规格。
@@ -731,6 +837,10 @@ impl TranscriptSpec for ClaudeTranscript {
 
     fn supports_chat(&self) -> bool {
         true
+    }
+
+    fn subagents(&self) -> Option<&'static dyn SubagentSpec> {
+        Some(&CLAUDE_SUBAGENTS)
     }
 
     fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
@@ -1302,6 +1412,85 @@ mod tests {
         std::fs::write(&path, format!("{}\n", listing(&["third"]))).unwrap();
         assert_eq!(names_of(CLAUDE_TRANSCRIPT.runtime_slash_commands(&path)), vec!["/third"]);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// 子任务委派：摘要取描述而非整包 input（prompt 上千字会把摘要行淹掉），
+    /// 并带上让前端渲染成可展开条目的 SubagentRef。旧版工具名 `Task` 同样识别。
+    #[test]
+    fn agent_tool_call_carries_subagent_ref_and_readable_summary() {
+        let line = r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Agent","input":{"description":"验证审批双轨","subagent_type":"general-purpose","prompt":"You are a code-review VERIFIER. 很长很长的正文……"}}]}}"#;
+        let items = parse_chat_items(line);
+        let ChatItem::ToolUse { summary, subagent, .. } = &items[0] else {
+            panic!("应解析成工具调用，实际：{items:?}");
+        };
+        assert_eq!(summary, "验证审批双轨", "摘要应是描述，不是整包 input JSON");
+        let subagent = subagent.as_ref().expect("Agent 调用应带 SubagentRef");
+        assert_eq!(subagent.description, "验证审批双轨");
+        assert_eq!(subagent.agent_type.as_deref(), Some("general-purpose"));
+
+        // 旧版名 Task 同样认，否则历史会话里的子任务会退化成裸工具调用。
+        let legacy = line.replace("\"name\":\"Agent\"", "\"name\":\"Task\"");
+        let ChatItem::ToolUse { subagent, .. } = &parse_chat_items(&legacy)[0] else {
+            panic!("Task 也应解析成工具调用");
+        };
+        assert!(subagent.is_some());
+
+        // 普通工具不该被误判成子任务。
+        let bash = r#"{"type":"assistant","uuid":"a2","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"cargo test"}}]}}"#;
+        let ChatItem::ToolUse { subagent, .. } = &parse_chat_items(bash)[0] else {
+            panic!("应解析成工具调用");
+        };
+        assert!(subagent.is_none());
+    }
+
+    /// 侧车流按 meta.json 的 toolUseId 外键定位；流内每行都是 sidechain，
+    /// 必须**不**被主流那道 sidechain 守卫丢掉，否则展开永远是空的。
+    #[test]
+    fn locates_subagent_stream_by_tool_use_id_and_parses_sidechain_lines() {
+        let root = std::env::temp_dir().join(format!("claude-subagent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let project = root.join("projects/proj");
+        let main = project.join("session-1.jsonl");
+        let subagents = project.join("session-1/subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        std::fs::write(&main, "").unwrap();
+        std::fs::write(
+            subagents.join("agent-abc.meta.json"),
+            r#"{"agentType":"general-purpose","description":"查一下","toolUseId":"toolu_target","spawnDepth":1}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            subagents.join("agent-abc.jsonl"),
+            format!(
+                "{}\n{}\n",
+                r#"{"type":"assistant","uuid":"s1","isSidechain":true,"agentId":"abc","message":{"content":[{"type":"text","text":"子任务结论"}]}}"#,
+                r#"{"type":"assistant","uuid":"s2","isSidechain":true,"agentId":"abc","message":{"content":[{"type":"tool_use","id":"st1","name":"Bash","input":{"command":"rg foo"}}]}}"#
+            ),
+        )
+        .unwrap();
+        // 另一个子任务，确保是按 toolUseId 精确匹配而不是撞见第一个就返回。
+        std::fs::write(
+            subagents.join("agent-other.meta.json"),
+            r#"{"toolUseId":"toolu_other"}"#,
+        )
+        .unwrap();
+        std::fs::write(subagents.join("agent-other.jsonl"), "").unwrap();
+
+        let runs = crate::transcript::read_subagent_chat(&CLAUDE_TRANSCRIPT, &main, "toolu_target");
+        assert_eq!(runs.len(), 1, "claude 一次调用恒对应一个子任务");
+        let items = &runs[0].items;
+        assert!(
+            matches!(&items[0], ChatItem::AssistantText { text, .. } if text == "子任务结论"),
+            "sidechain 行必须被解析，实际：{items:?}"
+        );
+        assert!(matches!(&items[1], ChatItem::ToolUse { name, .. } if name == "Bash"));
+
+        // 对不上的 toolUseId 不该硬凑一个流出来。
+        assert!(
+            crate::transcript::read_subagent_chat(&CLAUDE_TRANSCRIPT, &main, "toolu_missing")
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 非 claude agent 走默认实现：直接采信 DB cwd，不去翻 ~/.claude/projects。

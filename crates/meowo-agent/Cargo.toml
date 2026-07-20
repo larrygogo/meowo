@@ -16,3 +16,8 @@ sha2 = "0.10"
 [[test]]
 name = "agent_urls_live"
 path = "tests/install_urls_live.rs"
+
+# autotests = false 关掉了自动发现，新增集成测试必须在这里登记。
+[[test]]
+name = "subagent_live"
+path = "tests/subagent_live.rs"

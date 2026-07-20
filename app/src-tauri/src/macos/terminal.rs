@@ -128,9 +128,10 @@ pub fn focus_session_terminal(
 /// 点已断开的卡片（或跳转回退）：按设置在 Terminal.app / iTerm2 新开窗口执行 resume 命令；有 cwd 则先 cd。
 /// `resume_argv` 来自 agent::resume_args（按 provider 分发：claude --resume / kimi -r / codex resume），
 /// 与 Windows 共用同一事实源，不再硬编码 claude。返回 osascript 是否执行成功（失败时调用方回滚乐观复活）。
-/// `env_prefix`：形如 `HTTPS_PROXY='http://…' ` 的 POSIX 命令前缀式赋值（无代理时传空串）。
-/// 它作为 argv 的 **item 1** 传给 AppleScript，是唯一不套 `quoted form` 的一项——POSIX 要求赋值的
-/// 键名不带引号。其值已在 `terminal::env_prefix_posix` 里按单引号规则转义。
+/// `env_prefix`：形如 `source '<tmp>' && rm -f '<tmp>' && ` 的前缀——环境赋值（含中转 API key）
+/// 在 0600 临时文件里，密钥不进可见命令行（见 `terminal::env_source_prefix_posix`）。
+/// 它作为 argv 的 **item 1** 传给 AppleScript，是唯一不套 `quoted form` 的一项——source/&& 是
+/// 必须原样执行的 shell 语法，路径与文件内容已在 Rust 侧转义。
 pub fn resume_session_mac(
     cwd: Option<&str>,
     resume_argv: &[String],

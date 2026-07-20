@@ -345,7 +345,7 @@ impl Store {
                 let pending_review: Option<String> = r.get(20)?;
                 let last_ai_text: Option<String> = r.get(21)?;
                 let last_user_text: Option<String> = r.get(22)?;
-                let provider: String = r.get(23)?;
+                let provider: Option<String> = r.get(23)?;
                 Ok((
                     session,
                     project_name,
@@ -419,7 +419,11 @@ impl Store {
                 pending_review,
                 last_ai_text,
                 last_user_text,
-                provider,
+                // provider 的空值回退与 session_header/session_provider 一致：DB 里可能是
+                // NULL 或空串/纯空白，直接透出去会让上层按未知 agent 处理（丢掉 transcript 能力）。
+                provider: provider
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or_else(|| crate::DEFAULT_PROVIDER.to_string()),
             });
         }
         Ok(out)

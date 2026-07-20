@@ -510,17 +510,23 @@ export function Sticker({
     const startScroll = el.scrollTop;
     const { scrollHeight, clientHeight } = el;
     const thumbH = Math.max(28, (clientHeight * clientHeight) / scrollHeight);
-    const move = (ev: MouseEvent) => {
-      const ratio = (ev.clientY - startY) / (clientHeight - thumbH);
-      el.scrollTop = startScroll + ratio * (scrollHeight - clientHeight);
-    };
     const up = () => {
       setSbDrag(false);
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", up);
+    };
+    const move = (ev: MouseEvent) => {
+      // 拖着 thumb 移出窗口再松手时，webview 收不到这次 mouseup。靠 buttons=0 认出「键已不在」
+      // 并做与 up 相同的清理——否则残留监听会把之后窗内的普通移动全当成拖拽（列表跟着鼠标乱滚）。
+      if (ev.buttons === 0) { up(); return; }
+      const ratio = (ev.clientY - startY) / (clientHeight - thumbH);
+      el.scrollTop = startScroll + ratio * (scrollHeight - clientHeight);
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+    // 窗口失焦（拖到别的屏幕松手/切窗）同样收不到 mouseup，与 Tooltip/CardContextMenu 同款的 blur 兜底。
+    window.addEventListener("blur", up);
   };
 
   return (

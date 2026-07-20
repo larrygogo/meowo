@@ -107,6 +107,52 @@ describe("terminalAttention", () => {
     expect(attention?.options?.[2].input).toBe("\x1b[B\x1b[B\r");
   });
 
+  /// 画面取自真机抓屏（app/src-tauri/tests/capture_model_menu.rs 跑 kimi `/model` 的结果）。
+  /// 与编号选择器是两种形态：这里没有 `1.`，只有一个 ❯ 光标 + 一句导航提示。
+  it("把 kimi 的 /model 光标菜单转成 GUI 选项", () => {
+    const screen = [
+      "\x1b[2J ──────────────────────────────────────────────",
+      " Select a model  (type to search)",
+      "  Tab toggle provider · ↑↓ navigate · Enter select · Alt+S session-only · Esc cancel",
+      "  All   Kimi Code",
+      "     K2.7 Coding            Kimi Code",
+      "     K2.7 Coding Highspeed  Kimi Code",
+      "   ❯ K3                     Kimi Code ← current",
+      "  Thinking  (←→ to switch)",
+      "     Low      High    [ Max ]",
+      " ──────────────────────────────────────────────",
+    ].join("\r\n");
+    // 第四个参数 expectMenu：只有刚发出会弹菜单的命令时才认，避免把正文误报成菜单。
+    expect(terminalAttention(screen, [])).toBeNull();
+    const attention = terminalAttention(screen, [], false, true);
+    expect(attention?.id).toBe("interactive:cursor-menu");
+    expect(attention?.text).toContain("Select a model");
+    // 只圈出与 ❯ 同缩进的那段：provider 过滤行（缩进更浅）和 Thinking 小节都不算选项。
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "K2.7 Coding  Kimi Code",
+      "K2.7 Coding Highspeed  Kimi Code",
+      "K3  Kimi Code ← current",
+    ]);
+    // 菜单首尾循环，必须从 ❯ 做相对移动。
+    expect(attention?.options?.[0].input).toBe("\x1b[A\x1b[A\r");
+    expect(attention?.options?.[1].input).toBe("\x1b[A\r");
+    expect(attention?.options?.[2].input).toBe("\r");
+    expect(attention?.options?.[2].focused).toBe(true);
+  });
+
+  /// 守卫必须在**开着识别窗口时**依然成立——否则「没开窗口所以返回 null」会让用例空转。
+  it("光标菜单要同时有导航提示和多个同级项，避免把正文误报成菜单", () => {
+    // 只有 ❯ 没有导航提示：提示符、列表装饰都长这样，不能算菜单。
+    const prose = "\x1b[2J❯ 第一点\r\n❯ 第二点\r\n就这些";
+    expect(terminalAttention(prose, [], false, true)).toBeNull();
+    // 有提示但只有一项：多半是提示符本身。
+    const single = "\x1b[2JPick one\r\n↑↓ navigate · Enter select\r\n  ❯ 唯一项";
+    expect(terminalAttention(single, [], false, true)).toBeNull();
+    // 有提示、有多项，但那几项缩进不一致（是正文段落而非菜单块）。
+    const uneven = "\x1b[2JPick one\r\n↑↓ navigate · Enter select\r\n  ❯ 甲\r\n      乙\r\n  丙";
+    expect(terminalAttention(uneven, [], false, true)?.options?.length ?? 0).toBeLessThan(3);
+  });
+
   it("turns Claude's command approval into its three native choices", () => {
     const prompt = [
       "\x1b[2JBash command",

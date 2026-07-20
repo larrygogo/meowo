@@ -15,7 +15,7 @@ import {
   getAccounts,
   isLoggedIn,
 } from "../api";
-import { agentAssets } from "../providers";
+import { agentAssets, tintStyle } from "../providers";
 import { Dropdown } from "../Dropdown";
 import { useAgentListRefresh } from "../useAgents";
 import { useTauriEvent } from "../hooks/useTauriEvent";
@@ -313,7 +313,10 @@ export function NewSessionPanel(): ReactElement {
                     className={"ns-agent" + (provider === p ? " is-on" : "")}
                     onClick={() => setProvider(p)}
                   >
-                    <Icon />
+                    {/* currentColor 绘制的徽标（claude）要由容器补品牌色，只染图标不染文字。 */}
+                    <span className="ns-agent-mark" style={tintStyle(p)}>
+                      <Icon />
+                    </span>
                     <span>{agentName(agents ?? [], p)}</span>
                   </button>
                 );

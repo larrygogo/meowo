@@ -286,10 +286,15 @@ export function App() {
     else refreshTimerRef.current = window.setTimeout(fire, REFRESH_THROTTLE_MS - since);
   }, []);
 
+  // loadingMore 是 state：setLoadingMore(true) 到下次渲染落地之间，同一 tick 内 loadMore 仍可按
+  // 旧闭包重入（Sticker 触底 effect 在一个渲染批内可能连发），以相同游标重复请求下一页。
+  // ref 镜像同步置位，重入当场被拒（与 useLoginOperations 的 pendingRef 同一套路）。
+  const loadingMoreRef = useRef(false);
   const loadMore = useCallback(async () => {
-    if (resettingPageRef.current || loadingMore || reachedEnd) return;
+    if (resettingPageRef.current || loadingMoreRef.current || reachedEnd) return;
     const last = items[items.length - 1];
     if (!last) return;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const { page, applied } = await loadPage(filter, search, {
@@ -304,9 +309,10 @@ export function App() {
     } catch (err) {
       console.error("[loadMore] 加载失败：", err);
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [filter, search, loadingMore, reachedEnd, items, loadPage]);
+  }, [filter, search, reachedEnd, items, loadPage]);
 
   // filter / search 变化：重置到首页（search 变化去抖 300ms，避免每次按键都打一次后端；
   // filter 切换无需去抖，0ms 立即加载，含首次挂载）。取代原先仅 [filter, loadPage] 的切 tab effect。
@@ -393,6 +399,10 @@ export function App() {
       cancelled = true;
       if (un) un();
       window.clearTimeout(refreshTimerRef.current);
+      // 复位而不仅是 clearTimeout：refresh() 以「ref 非 undefined」判定 trailing 已排队。
+      // HMR 重挂载会跑 cleanup 但保留 ref——不复位则残留一个永不触发的定时器 id，
+      // 之后每次 refresh() 都以为 trailing 在排队而直接 return，看板刷新永久静默丢失。
+      refreshTimerRef.current = undefined;
     };
   }, [refresh]);
 
@@ -565,6 +575,12 @@ export function App() {
     });
     return () => {
       un.then((f) => f());
+      // 拖拽中途卸载也要停掉松手轮询：否则 90ms 的 pointer_left_down IPC 轮询随组件泄漏、
+      // 卸载后仍持续空转（与 handleDragRelease 里的清理保持一致）。
+      if (settleRef.current) {
+        window.clearInterval(settleRef.current);
+        settleRef.current = null;
+      }
     };
   }, [handleDragRelease]);
 

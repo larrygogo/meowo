@@ -99,10 +99,14 @@ pub(crate) fn env_guard() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// 用户 home（Windows `USERPROFILE` 优先，回退 `HOME`）。所有目录解析的根。
+///
+/// 空串视为未设置（与 `variant::DataDirSpec::env_override` 同一防护）：显式置空的
+/// `USERPROFILE` 若被采纳，`home.join(".claude")` 会拼出相对路径，随 cwd 漂移。
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
         .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("HOME").ok().filter(|v| !v.is_empty()))
         .map(PathBuf::from)
 }
 
@@ -136,5 +140,38 @@ mod tests {
                 .join("credentials")
                 .join("kimi-code.json")
         );
+    }
+
+    /// 环境变量被显式置成空串 = 未设置：必须回退/判 None，而不是采纳空串拼出相对路径。
+    /// 改进程级 env，须持 [`crate::env_guard`] 与其它 env 测试互斥，并在结束时还原现场。
+    #[test]
+    fn home_dir_treats_empty_env_vars_as_unset() {
+        let _env = crate::env_guard();
+        let saved_profile = std::env::var("USERPROFILE").ok();
+        let saved_home = std::env::var("HOME").ok();
+
+        // USERPROFILE 置空串 → 回退 HOME（此前会返回 Some("")，join 出随 cwd 漂移的相对路径）。
+        std::env::set_var("USERPROFILE", "");
+        std::env::set_var("HOME", "/home/fallback");
+        assert_eq!(home_dir(), Some(PathBuf::from("/home/fallback")));
+
+        // 两者都空 → None。
+        std::env::set_var("HOME", "");
+        assert_eq!(home_dir(), None);
+
+        // 常规优先级不受影响：USERPROFILE 非空时优先。
+        std::env::set_var("USERPROFILE", "C:/Users/me");
+        std::env::set_var("HOME", "/home/fallback");
+        assert_eq!(home_dir(), Some(PathBuf::from("C:/Users/me")));
+
+        // 还原现场：env 是进程全局的，置空状态不能留给后续测试。
+        match saved_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match saved_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
     }
 }

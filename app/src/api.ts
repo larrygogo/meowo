@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ChatHistoryDto } from "./generated/contracts/ChatHistoryDto";
 import type { ChatItem as GeneratedChatItem } from "./generated/contracts/ChatItem";
+import type { SubagentRun as GeneratedSubagentRun } from "./generated/contracts/SubagentRun";
 import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTerminalSnapshotDto";
 import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
@@ -92,6 +93,11 @@ export type ModeControl = {
 export type ChatUi = {
   slash_commands: SlashCommand[];
   model_presets: ModelPreset[];
+  /**
+   * 打开「选模型」交互菜单的命令（预设为空时才有意义）。除 claude 外几家的 `/model`
+   * 不接受内联参数，只能发出它再把 CLI 弹出的菜单渲染成按钮——清单由 CLI 现给。
+   */
+  model_menu_command?: string | null;
   /** Provider 声明的多维模式交互能力；当前值由 ChatHistory 的增量状态提供。 */
   mode_controls: ModeControl[];
   /** 启动时必须转到终端人工处理的提示文本片段（框架通用值 + provider 补充）。 */
@@ -218,6 +224,8 @@ export type LiveSessionCounts = {
 
 export type ChatItem = GeneratedChatItem;
 export type ChatHistory = ChatHistoryDto;
+/** 一次委派可能派出多个子任务（kimi 的 AgentSwarm），故按分支返回。 */
+export type SubagentRun = GeneratedSubagentRun;
 
 export type PendingApproval = PendingApprovalDto;
 
@@ -227,6 +235,25 @@ export type PendingApproval = PendingApprovalDto;
  */
 export function getChatHistory(sessionId: number, offset: number, full?: boolean): Promise<ChatHistory> {
   return invoke("get_chat_history", { sessionId, offset, full });
+}
+
+/**
+ * 取一次子任务委派的完整时间线（用户展开那条 Agent 调用时才调用）。
+ *
+ * 子任务过程不在主 transcript 里，而在 provider 各自的侧车流中（claude 的
+ * `subagents/agent-*.jsonl`、kimi 的 `agents/agent-N/wire.jsonl`）。刻意不并进
+ * 650ms 的历史轮询：一个会话可能有几十个子任务，跟着热路径一起读毫无必要。
+ */
+export function getSubagentTranscript(sessionId: number, toolUseId: string): Promise<SubagentRun[]> {
+  return invoke("get_subagent_transcript", { sessionId, toolUseId });
+}
+
+/**
+ * 重读会话当前模型并落库。模型平时由 Stop hook 写入，而 `/model` 切换不产生 Stop——
+ * GUI 驱动切换后调它，对话页与贴纸才会立刻反映新模型，而不是等下一条消息跑完。
+ */
+export function refreshSessionModel(sessionId: number): Promise<string | null> {
+  return invoke("refresh_session_model", { sessionId });
 }
 
 export function openChatWindow(sessionId: number): Promise<void> {

@@ -63,6 +63,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: true,
         with_provider: false,
+        ps_call_operator: false,
     },
 };
 

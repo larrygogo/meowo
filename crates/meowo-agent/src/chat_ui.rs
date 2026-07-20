@@ -109,6 +109,9 @@ pub struct ModeControl {
 pub struct ChatUi {
     pub slash_commands: Vec<SlashCommand>,
     pub model_presets: Vec<ModelPreset>,
+    /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
+    /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
+    pub model_menu_command: Option<&'static str>,
     /// Provider 声明的模式交互能力。模式的真实当前值由 transcript 增量独立提供。
     pub mode_controls: Vec<ModeControl>,
     /// 框架默认值与 provider 补充的、启动/恢复期间必须由用户在终端里处理的提示文本片段。
@@ -249,7 +252,8 @@ fn read_head(path: &Path, max: u64) -> Option<String> {
 }
 
 /// 内置表 ∪ 发现的自定义命令：同名时**自定义覆盖内置**（与 CLI 自身的遮蔽语义一致，
-/// 且自定义带着从文件里读出的描述），最后按名排序供补全稳定展示。
+/// 且自定义带着从文件里读出的描述）；自定义内部同名时**项目级覆盖用户级**（claude 的
+/// 遮蔽语义：离会话 cwd 越近优先级越高）。最后按名排序供补全稳定展示。
 pub(crate) fn merge_commands(
     builtins: &[&str],
     custom: Vec<SlashCommand>,
@@ -260,9 +264,25 @@ pub(crate) fn merge_commands(
         .map(|b| SlashCommand::builtin(b))
         .collect();
     out.extend(custom);
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    // discover 输出用户级在前；只按名字做稳定排序会把用户级留在前面，dedup 留首个便让
+    // 用户级盖住项目级——与 claude 语义恰好相反。故同名时按遮蔽优先级再排一层。
+    out.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| shadow_rank(a.source).cmp(&shadow_rank(b.source)))
+    });
     out.dedup_by(|a, b| a.name == b.name);
     out
+}
+
+/// 同名命令的遮蔽优先级：数值小者在排序中居前，从而在 `dedup` 中存活。
+/// Builtin 实际到不了这一层（同名内置已在上方被过滤），列出只为覆盖全部变体。
+fn shadow_rank(source: SlashSource) -> u8 {
+    match source {
+        SlashSource::Project => 0,
+        SlashSource::User => 1,
+        SlashSource::Builtin => 2,
+    }
 }
 
 #[cfg(test)]
@@ -375,5 +395,35 @@ mod tests {
         // 同名时自定义覆盖内置——与 CLI 自身的遮蔽语义一致。
         assert_eq!(merged[1].source, SlashSource::Project);
         assert_eq!(merged[1].description.as_deref(), Some("自定义走查"));
+    }
+
+    /// discover 输出用户级在前、项目级在后；合并时同名必须项目级胜出（claude 语义），
+    /// 不能靠「稳定排序 + dedup 留首个」让用户级盖掉项目级（修复前正是如此）。
+    #[test]
+    fn project_command_shadows_same_named_user_command() {
+        let custom = vec![
+            SlashCommand {
+                name: "/review".into(),
+                description: Some("用户级走查".into()),
+                source: SlashSource::User,
+            },
+            SlashCommand {
+                name: "/review".into(),
+                description: Some("项目级走查".into()),
+                source: SlashSource::Project,
+            },
+            SlashCommand {
+                name: "/deploy".into(),
+                description: None,
+                source: SlashSource::User,
+            },
+        ];
+        let merged = merge_commands(&[], custom);
+        assert_eq!(
+            merged.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            vec!["/deploy", "/review"]
+        );
+        assert_eq!(merged[1].source, SlashSource::Project);
+        assert_eq!(merged[1].description.as_deref(), Some("项目级走查"));
     }
 }

@@ -218,11 +218,13 @@ fn latest_token_count(codex_home: &std::path::Path) -> Option<Value> {
 }
 
 /// 倒序扫描 JSONL 文件，找最后一条 `payload.type=="token_count"` 行，返回其 payload。
+/// 只读尾部 256KB（token_count 随每回合写入、本来就在文件末尾；与 telemetry 读上下文占用同一份
+/// 有界读）：调用方最多顺次扫 20 份 rollout，每份可达数十 MB，全量 `lines().collect()` 会把
+/// 它们逐个整个读进内存。尾部首行若被截断，JSON 解析失败自然跳过，不影响更靠后的完整行。
 fn tail_scan_token_count(path: &std::path::Path) -> Option<Value> {
-    use std::io::{BufRead, BufReader};
-    let f = std::fs::File::open(path).ok()?;
-    let lines: Vec<String> = BufReader::new(f).lines().map_while(Result::ok).collect();
-    for line in lines.iter().rev() {
+    const TAIL_BYTES: u64 = 256 * 1024;
+    let text = super::telemetry::read_tail(path, TAIL_BYTES)?;
+    for line in text.lines().rev() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -664,6 +666,30 @@ mod tests {
         let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix_secs);
         let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_modified(t).unwrap();
+    }
+
+    /// token_count 在大 rollout 的末尾附近时，尾部有界读一样找得到——不必把整个文件读进内存。
+    #[test]
+    fn tail_scan_finds_token_count_near_end_of_large_rollout() {
+        let dir = std::env::temp_dir().join(format!("meowo-codex-tail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rollout-big.jsonl");
+        // 头部塞 ~1MB 无关事件（远超 256KB 尾部窗口），token_count 只在末尾。
+        let filler = format!(
+            "{{\"payload\":{{\"type\":\"turn\",\"data\":\"{}\"}}}}\n",
+            "x".repeat(1024)
+        );
+        let mut body = String::new();
+        for _ in 0..1024 {
+            body.push_str(&filler);
+        }
+        body.push_str("{\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":77.0,\"window_minutes\":300}}}}\n");
+        std::fs::write(&path, body).unwrap();
+
+        let payload = tail_scan_token_count(&path).expect("末尾的 token_count 应被读到");
+        assert_eq!(payload["rate_limits"]["primary"]["used_percent"], json!(77.0));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -2,6 +2,46 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 一次子任务委派的展示信息。真正的子任务时间线不在这里——它住在 provider 的侧车流里，
+/// 由 `get_subagent_transcript` 按 `ToolUse.id` 在用户展开时才读取。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../app/src/generated/contracts/"))]
+pub struct SubagentRef {
+    /// 委派时写的一句话任务描述（claude/kimi 的 `description` 参数）。
+    pub description: String,
+    /// 子 agent 类型（`subagent_type`，如 general-purpose / explore）。
+    pub agent_type: Option<String>,
+    /// 这次调用派出几个子任务。kimi 的 `AgentSwarm` 一次可以派出十几个，
+    /// 展开前就把规模显示出来；普通单发委派为 1。
+    pub count: u32,
+}
+
+/// 一次委派的结局统计。挂在**主链的工具结果**上，于是折叠状态下就能显示进度——
+/// 不必先展开（展开要读侧车流，那是按需 I/O）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../app/src/generated/contracts/"))]
+pub struct SubagentOutcome {
+    pub running: u32,
+    pub completed: u32,
+    pub failed: u32,
+}
+
+/// 一个子任务的完整时间线。一次委派可能对应多条（kimi 的 `AgentSwarm`），
+/// 故 `get_subagent_transcript` 返回的是列表而不是单份 items。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../app/src/generated/contracts/"))]
+pub struct SubagentRun {
+    /// 分支标签（kimi 的 `agent-3`）。单发委派没有可显示的分支名时为 None。
+    pub label: Option<String>,
+    /// 归一化状态：`running` / `completed` / `failed`。None = 该 provider 没有留下状态
+    /// 信号（claude 的 meta.json 只记身份不记结果）。
+    pub status: Option<String>,
+    pub items: Vec<ChatItem>,
+}
+
 /// Provider 日志经插件解析后交给聊天归一化层的稳定消息单元。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -38,6 +78,10 @@ pub enum ChatItem {
         timestamp: Option<String>,
         name: String,
         summary: String,
+        /// Some = 这条是子任务委派（claude/kimi 的 `Agent` 工具）。委派出去的工作记在主
+        /// transcript 之外的侧车流里，前端据此渲染成可展开条目，展开时才按需拉取。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent: Option<SubagentRef>,
     },
     ToolResult {
         id: String,
@@ -45,6 +89,10 @@ pub enum ChatItem {
         tool_use_id: Option<String>,
         text: String,
         is_error: bool,
+        /// 这条结果是某次子任务委派的回执时，带上各分支的结局统计。前端按
+        /// `tool_use_id` 配到对应的委派上，于是折叠状态下也能显示状态。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent: Option<SubagentOutcome>,
     },
     Meta {
         id: String,
@@ -261,10 +309,13 @@ mod tests {
             tool_use_id: Some("tool-1".into()),
             text: "ok".into(),
             is_error: false,
+            subagent: None,
         };
         let value = serde_json::to_value(item).unwrap();
         assert_eq!(value["type"], "tool_result");
         assert_eq!(value["tool_use_id"], "tool-1");
+        // 非子任务的回执不该带这个键——旧前端与快照比对都按「缺席」理解。
+        assert!(value.get("subagent").is_none());
         assert_eq!(PendingReviewKind::from_stored("question"), Some(PendingReviewKind::Question));
         assert_eq!(PendingReviewKind::from_stored("future"), None);
     }

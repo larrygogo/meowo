@@ -40,11 +40,20 @@ export function useSettingsState() {
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const reload = (fresh = false): Promise<Settings> => {
     if (fresh || !loadRef.current) {
-      loadRef.current = getSettings().then((s) => {
-        ref.current = s;
-        setSettingsState(s);
-        return s;
-      });
+      loadRef.current = getSettings()
+        .then((s) => {
+          ref.current = s;
+          setSettingsState(s);
+          return s;
+        })
+        .catch((err: unknown) => {
+          // 被拒的 Promise 不能留在缓存里：否则首读失败后，之后每次 reload() 都拿到同一个
+          // 已拒 Promise——第一次 patch 必丢，还把真正的保存错误盖成误导性的首读错误。
+          // 先清空再 rethrow，让下次调用重新拉取。（清空是安全的：本 handler 挂链最早，
+          // 任何可能替换缓存的 reload(true) 都排在它之后执行。）
+          loadRef.current = null;
+          throw err;
+        });
     }
     return loadRef.current;
   };

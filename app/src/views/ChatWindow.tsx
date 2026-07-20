@@ -2,8 +2,8 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
-import { agentChatUi, getChatHistory, getPendingApproval, isExternallyHeld, managedTerminalBinding, managedTerminalSnapshot, registerApprovalConsumer, resolvePendingApproval, startManagedTerminal, unregisterApprovalConsumer, writeManagedTerminal, type ChatHistory, type ChatItem, type ChatUi, type PendingApproval } from "../api";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { agentChatUi, getChatHistory, getPendingApproval, getSubagentTranscript, isExternallyHeld, managedTerminalBinding, managedTerminalSnapshot, refreshSessionModel, registerApprovalConsumer, resolvePendingApproval, startManagedTerminal, takeoverManagedTerminal, unregisterApprovalConsumer, writeManagedTerminal, type ChatHistory, type ChatItem, type ChatUi, type PendingApproval, type SubagentRun } from "../api";
 import { useT } from "../i18n";
 import { agentAssets, tintStyle } from "../providers";
 import { reduceChatEvents } from "../chat/reducer";
@@ -193,18 +193,194 @@ function ToolActivity({ item, result }: { item: ToolUseItem; result?: ToolResult
   );
 }
 
+/// 一次子任务委派。子任务的过程不在主 transcript 里（住在 provider 的侧车流），
+/// 故这里只在**用户展开时**才去取——一个会话可能派出几十个子任务，跟着历史轮询一起读
+/// 毫无必要。取回后缓存在组件里，折叠再展开不会重复请求。
+function statusText(status: string, t: ReturnType<typeof useT>): string {
+  if (status === "completed") return t.chat.subagentCompleted;
+  if (status === "failed") return t.chat.subagentFailed;
+  return t.chat.subagentRunning;
+}
+
+/// 状态徽标。进行中带一个脉冲圆点——静态文字看不出「还在动」，而这正是用户盯着它的原因。
+function StatusBadge({ tone, text }: { tone: string; text: string }) {
+  return (
+    <span className={"chat-subagent-status is-" + tone}>
+      {tone === "running" && <i className="chat-subagent-pulse" aria-hidden="true" />}
+      {text}
+    </span>
+  );
+}
+
+/// 子任务时间线的容器：限高 + 内部滚动。子任务动辄几十上百条，直接铺开会把主对话
+/// 挤到几屏之外，用户想收起时还得一路往回滚。
+function SubagentTimeline({ sessionId, items }: { sessionId: number; items: ChatItem[] }) {
+  const t = useT();
+  if (items.length === 0) return <div className="chat-subagent-hint">{t.chat.subagentEmpty}</div>;
+  return (
+    <div className="chat-subagent-scroll">
+      <Transcript sessionId={sessionId} items={items} />
+    </div>
+  );
+}
+
+/// 结局统计 → 徽标。多个分支时报出数量，单个只说状态。
+function outcomeBadge(
+  outcome: { running: number; completed: number; failed: number },
+  t: ReturnType<typeof useT>,
+): { tone: string; text: string } | null {
+  const known = outcome.running + outcome.completed + outcome.failed;
+  if (known === 0) return null;
+  const one = (tone: string, single: string, many: (n: number) => string) =>
+    ({ tone, text: known > 1 ? many(known) : single });
+  if (outcome.failed === known) return one("failed", t.chat.subagentFailed, t.chat.subagentTallyFailed);
+  if (outcome.completed === known) return one("completed", t.chat.subagentCompleted, t.chat.subagentTallyCompleted);
+  if (outcome.running === known) return one("running", t.chat.subagentRunning, t.chat.subagentTallyRunning);
+  const parts = [
+    outcome.completed && t.chat.subagentTallyCompleted(outcome.completed),
+    outcome.failed && t.chat.subagentTallyFailed(outcome.failed),
+    outcome.running && t.chat.subagentTallyRunning(outcome.running),
+  ].filter(Boolean);
+  return { tone: outcome.running ? "running" : "failed", text: parts.join(" · ") };
+}
+
+function SubagentBlock({ sessionId, item, outcome, settled }: {
+  sessionId: number;
+  item: ToolUseItem;
+  /// 主链回执带来的结局统计——**不必展开**就有，展开才拉的是时间线本身。
+  outcome?: { running: number; completed: number; failed: number } | null;
+  /// 主链上是否已有这次委派的回执。没有 = 还没回来 = 在跑。
+  settled?: boolean;
+}) {
+  const t = useT();
+  const [runs, setRuns] = useState<SubagentRun[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+  const subagent = item.subagent;
+  // 侧车流和主 transcript 一样是逐条事件（kimi 更是 chunk 级增量），必须走同一套归一化——
+  // 直接渲染原始事件会把一句话散成几十个碎片气泡。
+  const fetchRuns = useCallback(() => getSubagentTranscript(sessionId, item.id)
+    .then((fetched) => fetched.map((run) => ({ ...run, items: reduceChatEvents([], run.items, true) }))),
+    [sessionId, item.id]);
+  const load = () => {
+    if (runs || loading) return;
+    setLoading(true);
+    setError("");
+    fetchRuns().then(setRuns).catch((e) => setError(String(e))).finally(() => setLoading(false));
+  };
+  // 展开着且还有分支在跑时定期重取：子任务边跑边写，静态快照会一直停在打开那一刻。
+  // 收起或全部结束就停——不给已完结的子任务留一个永动的轮询。
+  const hasRunning = runs?.some((run) => run.status === "running") ?? false;
+  useEffect(() => {
+    if (!open || !hasRunning) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void fetchRuns().then((fresh) => { if (!cancelled) setRuns(fresh); }).catch(() => {});
+    }, 3_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [open, hasRunning, fetchRuns]);
+  const count = subagent?.count ?? 1;
+  // 展开取过时用逐分支的实时状态；没展开则用主链回执带来的统计（这正是「不展开也能看状态」）。
+  const summary = (() => {
+    if (runs?.length) {
+      const tally = { completed: 0, failed: 0, running: 0 };
+      for (const run of runs) {
+        if (run.status === "completed" || run.status === "failed" || run.status === "running") {
+          tally[run.status] += 1;
+        }
+      }
+      const badge = outcomeBadge(tally, t);
+      if (badge) return badge;
+    }
+    if (outcome) return outcomeBadge(outcome, t);
+    // 回执还没写进主链 = 这批子任务派出去了还没回来。一批 fan-out 的结局要等整批结束
+    // 才落盘，若只认回执，正在跑的那段时间反而什么都不显示——那恰是最该显示的时候。
+    if (!settled) return outcomeBadge({ running: count, completed: 0, failed: 0 }, t);
+    return null;
+  })();
+  return (
+    <details className="chat-subagent" onToggle={(event) => {
+      setOpen(event.currentTarget.open);
+      if (event.currentTarget.open) load();
+    }}>
+      <summary>
+        <span className="chat-subagent-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="5" r="2.4" /><circle cx="5.5" cy="18.5" r="2.4" /><circle cx="18.5" cy="18.5" r="2.4" />
+            <path d="M12 7.4v3.2M12 10.6H5.5v5.5M12 10.6h6.5v5.5" />
+          </svg>
+        </span>
+        <span className="chat-subagent-label">{count > 1 ? t.chat.subagentBatch(count) : t.chat.subagent}</span>
+        <span className="chat-subagent-desc">{subagent?.description || item.summary}</span>
+        {/* 汇总状态要展开取过一次才有（状态与时间线同源，都在侧车流里）。 */}
+        {summary && <StatusBadge tone={summary.tone} text={summary.text} />}
+        {subagent?.agent_type && <span className="chat-subagent-type">{subagent.agent_type}</span>}
+        <span className="chat-tool-chevron">›</span>
+      </summary>
+      <div className="chat-subagent-body">
+        {loading && <div className="chat-subagent-hint">{t.chat.subagentLoading}</div>}
+        {error && <div className="chat-subagent-hint is-error" role="alert">{error}</div>}
+        {runs && (runs.length === 0
+          ? <div className="chat-subagent-hint">{t.chat.subagentEmpty}</div>
+          // 单个分支直接铺开；一次派一批（swarm 可达十几个）则每个分支各自折叠，
+          // 否则一次展开会把十几条完整时间线全部倒进页面。
+          : runs.length === 1
+          ? <SubagentTimeline sessionId={sessionId} items={runs[0].items} />
+          : runs.map((run, index) => (
+            <details className="chat-subagent-branch" key={run.label ?? index}>
+              <summary>
+                <span className="chat-subagent-branch-label">{run.label ?? `#${index + 1}`}</span>
+                {run.status && <StatusBadge tone={run.status} text={statusText(run.status, t)} />}
+                <span className="chat-subagent-branch-count">{t.chat.subagentSteps(run.items.length)}</span>
+                <span className="chat-tool-chevron">›</span>
+              </summary>
+              <SubagentTimeline sessionId={sessionId} items={run.items} />
+            </details>
+          )))}
+      </div>
+    </details>
+  );
+}
+
 /// items 引用不变就不重算：稳态下 650ms 一轮的 history 刷新会让父组件重渲染，
 /// 但 items 往往原样不动（reduceChatEvents 无新消息时返回同一引用）。没有这层
 /// memo 时，每一轮都要重跑下面的分组循环、重建全部 JSX——长会话上千条时很贵。
-const Transcript = memo(function Transcript({ items }: { items: ChatItem[] }) {
+const Transcript = memo(function Transcript({ sessionId, items }: { sessionId: number; items: ChatItem[] }) {
   const t = useT();
+  // 委派的结局写在**主链的工具回执**上，而回执往往排在委派之后若干条。先建一张
+  // tool_use_id → 结局 的索引，折叠态的徽标才有数据可用。
+  const outcomes = new Map<string, NonNullable<ToolResultItem["subagent"]>>();
+  // 还要记下「哪些委派已经有回执了」：一批 fan-out 子任务的结局要等整批结束才写进主链，
+  // 而**跑着的时候**恰恰是最该显示进度的时刻。没有回执 = 派出去了还没回来 = 在跑。
+  const settled = new Set<string>();
+  for (const item of items) {
+    if (item.type !== "tool_result" || !item.tool_use_id) continue;
+    settled.add(item.tool_use_id);
+    if (item.subagent) outcomes.set(item.tool_use_id, item.subagent);
+  }
   const blocks: JSX.Element[] = [];
   for (let index = 0; index < items.length;) {
     const item = items[index];
+    // 子任务委派不并进「N 次工具操作」那一坨：它代表一整段独立工作，值得单独一行，
+    // 且展开的是子任务时间线而不是一段参数文本。
+    if (item.type === "tool_use" && item.subagent) {
+      blocks.push(<SubagentBlock
+        key={item.id}
+        sessionId={sessionId}
+        item={item}
+        outcome={outcomes.get(item.id)}
+        settled={settled.has(item.id)}
+      />);
+      index += 1;
+      continue;
+    }
     if (item.type === "tool_use" || item.type === "tool_result") {
       const tools: Array<ToolUseItem | ToolResultItem> = [];
       while (index < items.length) {
         const candidate = items[index];
+        // 子任务在上面已单独成块；遇到它就断组，别把它吞进这坨里。
+        if (candidate.type === "tool_use" && candidate.subagent) break;
         if (candidate.type !== "tool_use" && candidate.type !== "tool_result") break;
         tools.push(candidate);
         index += 1;
@@ -352,6 +528,10 @@ export function ChatWindow() {
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
+  // 会话确实还活在用户自己的终端里（后端按 pid 判定）：就地给接管入口，而不是把用户
+  // 打发去终端页自己找按钮。retryRef 记住被拒的那个动作，接管成功后原样重放。
+  const [needsTakeover, setNeedsTakeover] = useState(false);
+  const retryRef = useRef<(() => void | Promise<void>) | null>(null);
   const [terminalAttention, setTerminalAttention] = useState<TerminalAttention | null>(null);
   const [questionCustomText, setQuestionCustomText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -397,6 +577,10 @@ export function ChatWindow() {
     return next;
   });
   const [modelMenu, setModelMenu] = useState(false);
+  /// 刚发出一条会弹菜单的命令：在这个时间点之前让屏幕识别去认光标菜单。
+  /// 不常开是刻意的——菜单形态（导航提示 + ❯）虽然特征明确，但常开等于把 agent 平时
+  /// 画的任何选择列表都变成弹卡片，噪声大于价值。
+  const [menuWatchUntil, setMenuWatchUntil] = useState(0);
   const [modeMenu, setModeMenu] = useState<string | null>(null);
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
@@ -468,7 +652,7 @@ export function ChatWindow() {
           setTerminalMonitorNeeded(true);
           return;
         }
-        timer = window.setTimeout(() => void poll(), snapshot.active ? 350 : 1_200);
+        timer = window.setTimeout(() => void poll(), 1_200);
       } catch {
         if (!cancelled) timer = window.setTimeout(() => void poll(), 1_200);
       }
@@ -487,6 +671,16 @@ export function ChatWindow() {
     ? (chatUi?.slash_commands ?? []).filter((c) => c.name.startsWith(prompt) && c.name !== prompt)
     : [];
   const modelPresets = chatUi?.model_presets ?? [];
+  const modelMenuCommand = chatUi?.model_menu_command ?? null;
+  // 识别窗口是个时间点，不是布尔——过期后要真的停下来，故用一个到点自灭的计时器驱动重渲染。
+  const [menuWatching, setMenuWatching] = useState(false);
+  useEffect(() => {
+    const remaining = menuWatchUntil - Date.now();
+    if (remaining <= 0) { setMenuWatching(false); return; }
+    setMenuWatching(true);
+    const timer = window.setTimeout(() => setMenuWatching(false), remaining);
+    return () => window.clearTimeout(timer);
+  }, [menuWatchUntil]);
   const modeControls = chatUi?.mode_controls ?? [];
   const offsetRef = useRef(0);
   const activeSessionRef = useRef(sessionId);
@@ -519,6 +713,7 @@ export function ChatWindow() {
     setSendError("");
     setTerminalAttention(null);
     setTerminalMonitorNeeded(false);
+    setMenuWatchUntil(0);
     setManagedPtyActive(false);
     setAttachments(draft?.attachments ?? []);
     setApproval(null);
@@ -746,37 +941,14 @@ export function ChatWindow() {
   const sendText = async (content: string): Promise<boolean> => {
     setSending(true);
     setSendError("");
+    setNeedsTakeover(false);
     try {
       if (terminalAttention) {
         terminalEverShownRef.current = true;
         setSendError(t.chat.terminalNeedsAttention);
         return false;
       }
-      const snapshot = await managedTerminalSnapshot(sessionId);
-      if (!snapshot.active) {
-        // 历史/断开会话无需先切换终端页手动接管；发送本身就是明确的恢复意图。
-        // 但会话仍在外部终端里跑着时不能这么做：后端守卫会拒绝对同一 session 起第二个
-        // agent，用户只会看到一句「不能重复接管」。接管要杀掉外部进程，必须由用户显式
-        // 确认（终端页的接管按钮），不能由一次发送隐式代劳。
-        if (externalRunning) {
-          setSendError(t.chat.sendNeedsTakeover);
-          return false;
-        }
-        // capability 查询通常已随 history 完成；用户极快发送时就在这里补等一次，不能因为
-        // React 状态尚未落下而漏掉 provider 声明的信任/登录提示。
-        const ui = chatUi ?? (provider ? await agentChatUi(provider, cwd, sessionId).catch(() => null) : null);
-        await startManagedTerminal(sessionId, 100, 30);
-        // 已挂载的后台终端还停在旧进程的输出偏移上，必须归零重拉，否则新 PTY 的输出
-        // 会被它当成「已写过」整段丢弃，画面定格、屏幕识别全部失效。
-        terminalRearmRef.current?.();
-        const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? [], terminalReadyMessages);
-        if (startup !== "ready") {
-          terminalEverShownRef.current = true;
-          setTerminalAttention(startup);
-          setSendError(t.chat.terminalNeedsAttention);
-          return false;
-        }
-      }
+      if (!await ensureWritableTerminal()) return false;
       // 正文与 Enter 分成两次 IPC/PTY flush。部分 TUI 在同一个输入 chunk 中收到 paste-end + Enter
       // 时只更新 composer 而不提交；分开发送与真实键盘输入语义一致。
       await writeManagedTerminal(sessionId, terminalInput(content));
@@ -790,8 +962,77 @@ export function ChatWindow() {
       setSending(false);
     }
   };
+  /// 确保有一个可写的托管终端；没有就地拉起。返回 false 表示已把原因写进 sendError。
+  ///
+  /// 关键点：**不再靠前端的 status 猜**「是不是还在外部终端跑着」。status 为 stale 只说明
+  /// 一段时间没上报，进程很可能早就没了——而旧逻辑会把这类会话一律拒掉，用户明明可以直接发。
+  /// 后端的 `session_agent_alive` 是按 pid 的权威判定，让它来拒：拒了才说明进程真活着，
+  /// 这时给出就地接管入口，而不是一句「请自己切到终端页」的死路。
+  async function ensureWritableTerminal(): Promise<boolean> {
+    const snapshot = await managedTerminalSnapshot(sessionId);
+    if (snapshot.active) return true;
+    // capability 查询通常已随 history 完成；用户极快发送时就在这里补等一次，不能因为
+    // React 状态尚未落下而漏掉 provider 声明的信任/登录提示。
+    const ui = chatUi ?? (provider ? await agentChatUi(provider, cwd, sessionId).catch(() => null) : null);
+    try {
+      await startManagedTerminal(sessionId, 100, 30);
+    } catch (error) {
+      // 后端确认进程仍活着 → 接管要杀掉外部进程，必须由用户显式确认，不能由一次发送代劳。
+      if (externalRunning) {
+        setNeedsTakeover(true);
+        setSendError(t.chat.sendNeedsTakeover);
+        return false;
+      }
+      throw error;
+    }
+    // 已挂载的后台终端还停在旧进程的输出偏移上，必须归零重拉，否则新 PTY 的输出
+    // 会被它当成「已写过」整段丢弃，画面定格、屏幕识别全部失效。
+    terminalRearmRef.current?.();
+    const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? [], terminalReadyMessages);
+    if (startup !== "ready") {
+      terminalEverShownRef.current = true;
+      setTerminalAttention(startup);
+      setSendError(t.chat.terminalNeedsAttention);
+      return false;
+    }
+    return true;
+  }
+
+  /// 就地接管：结束外部进程、在 Meowo 的 PTY 里恢复同一会话，然后重试刚才那个动作。
+  /// 接管是破坏性的（杀掉用户自己终端里的 agent），故必须显式确认。
+  const takeoverAndRetry = async (retry: () => void | Promise<void>) => {
+    // 确认框走 `@tauri-apps/plugin-dialog` 的 `confirm`，**不是 `window.confirm`**：后者在 Tauri 的
+    // webview（尤其 macOS WKWebView）里会被直接吞掉、恒返回 false——按钮看着能点，点了却什么都不发生。
+    const yes = await confirm(t.chat.terminalTakeoverConfirm, {
+      title: t.chat.terminalTakeover,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
+    setSending(true);
+    setSendError("");
+    try {
+      await takeoverManagedTerminal(sessionId, 100, 30);
+      terminalRearmRef.current?.();
+      setNeedsTakeover(false);
+      const startup = await waitForTerminalReady(sessionId, chatUi?.startup_attention_markers ?? [], terminalReadyMessages);
+      if (startup !== "ready") {
+        terminalEverShownRef.current = true;
+        setTerminalAttention(startup);
+        setSendError(t.chat.terminalNeedsAttention);
+        return;
+      }
+    } catch (error) {
+      setSendError(String(error));
+      return;
+    } finally {
+      setSending(false);
+    }
+    await retry();
+  };
+
   const sendPrompt = async () => {
     if ((!prompt.trim() && attachments.length === 0) || sending) return;
+    retryRef.current = () => sendPrompt();
     if (await sendText(promptWithAttachments(prompt, attachments))) {
       setPrompt("");
       setAttachments([]);
@@ -799,11 +1040,38 @@ export function ChatWindow() {
   };
   /// 斜杠命令直通 PTY——CLI 的 composer 收到 "/xxx" + 回车会当命令执行，无需特殊协议。
   const sendSlash = (command: string) => {
-    if (!sending) void sendText(command);
+    if (sending) return;
+    retryRef.current = () => sendSlash(command);
+    void sendText(command);
+  };
+  /// 发一条会弹出交互菜单的命令（如 `/model`），并在随后一小段时间里让屏幕识别去认那个菜单。
+  ///
+  /// 为什么不直接下发 `/model <id>`：除 claude 外几家的 `/model` 都是交互式菜单，内联参数
+  /// 无效（实测 kimi 的命令描述就是 `/model: switch model`）。发命令再把 CLI 弹出的菜单
+  /// 转成 GUI 按钮，模型清单由 CLI 现给——宿主不必维护一份会随用户配置过时的清单。
+  const openTerminalMenu = async (command: string) => {
+    // `sending` 在写完就落回 false，而 TUI 的菜单要过一会儿才画出来。只看它的话，用户
+    // 觉得「没反应」再点一次，第二遍命令就直接打进已经打开的菜单搜索框里——实测会变成
+    // `Search: /model/model`、`No matches`，三个模型全被过滤掉，反而彻底选不了。
+    // 故识别窗口开着期间一律不再重发。
+    if (sending || menuWatching) return;
+    retryRef.current = () => openTerminalMenu(command);
+    // 菜单要靠屏幕识别，而识别跑在 ManagedTerminal 里——它可能还没挂载（用户从没开过终端页）。
+    setTerminalMonitorNeeded(true);
+    setMenuWatchUntil(Date.now() + 20_000);
+    if (!await sendText(command)) setMenuWatchUntil(0);
+  };
+  /// 放弃这次菜单交互：给 TUI 一个 Esc 收起菜单，并关掉识别窗口。
+  const cancelTerminalMenu = () => {
+    setMenuWatchUntil(0);
+    setTerminalAttention(null);
+    void writeManagedTerminal(sessionId, "\x1b").catch(() => {});
   };
   /// 模式动作完全由插件描述：快捷键原样发送，命令则用和人工输入一致的 paste + Enter 序列。
   const changeMode = async (dimension: string, inputs: { data: string; submit: boolean }[], optimisticValue?: string) => {
     if (inputs.length === 0 || sending) return;
+    // 若因外部占用被拒，接管后重放的是这同一个动作。
+    retryRef.current = () => changeMode(dimension, inputs, optimisticValue);
     setSending(true);
     setSendError("");
     try {
@@ -812,24 +1080,8 @@ export function ChatWindow() {
         setSendError(t.chat.terminalNeedsAttention);
         return;
       }
-      const snapshot = await managedTerminalSnapshot(sessionId);
-      if (!snapshot.active) {
-        if (externalRunning) {
-          setSendError(t.chat.sendNeedsTakeover);
-          return;
-        }
-        const ui = chatUi ?? (provider ? await agentChatUi(provider, cwd, sessionId).catch(() => null) : null);
-        await startManagedTerminal(sessionId, 100, 30);
-        // 同 sendText：重启后必须让后台终端的输出偏移归零，见 terminalRearmRef 注释。
-        terminalRearmRef.current?.();
-        const startup = await waitForTerminalReady(sessionId, ui?.startup_attention_markers ?? [], terminalReadyMessages);
-        if (startup !== "ready") {
-          terminalEverShownRef.current = true;
-          setTerminalAttention(startup);
-          setSendError(t.chat.terminalNeedsAttention);
-          return;
-        }
-      }
+      // 与发送同一套：交后端权威判定，被拒才给接管入口（见 ensureWritableTerminal）。
+      if (!await ensureWritableTerminal()) return;
       for (const input of inputs) {
         await writeManagedTerminal(sessionId, input.submit ? terminalInput(input.data) : input.data);
         if (input.submit) {
@@ -885,8 +1137,19 @@ export function ChatWindow() {
   const commandRemember = commandOptions.find((option) => option !== commandDeny && option !== commandAllowOnce);
   const chooseTerminalOption = (option: { input: string } | undefined) => {
     if (!option) return;
+    // 选完这次菜单就结束了：关掉识别窗口，否则按钮会一直停在「收起」态。
+    // 判据取 attention 本身的类型而不是识别窗口是否还开着——窗口会到点自灭，
+    // 用户慢慢选的话就漏掉刷新了。
+    const wasModelMenu = terminalAttention?.id === "interactive:cursor-menu";
+    setMenuWatchUntil(0);
     void writeManagedTerminal(sessionId, option.input)
-      .then(() => setTerminalAttention(null))
+      .then(() => {
+        setTerminalAttention(null);
+        // 模型平时由 Stop hook 落库，而 `/model` 切换不产生 Stop——不主动刷一次的话，
+        // 对话页和贴纸会一直挂着旧模型直到下一条消息跑完。CLI 要一会儿才把新模型写进
+        // 会话日志，故稍等再读。
+        if (wasModelMenu) window.setTimeout(() => void refreshSessionModel(sessionId).catch(() => {}), 600);
+      })
       .catch((error) => setSendError(String(error)));
   };
   const chooseInteractiveOption = (option: TerminalAttentionOption) => {
@@ -980,7 +1243,7 @@ export function ChatWindow() {
             /* 不提供结构化 transcript 的 agent：hook 落库的最近往来仍然是真实数据，先渲染它，
                「暂未提供结构化对话记录」降为其下的注脚——有什么就展示什么，而不是只报没有。 */
             provisional.length > 0
-              ? <><Transcript items={provisional} /><div className="chat-empty is-note">{t.chat.unsupported}</div></>
+              ? <><Transcript sessionId={sessionId} items={provisional} /><div className="chat-empty is-note">{t.chat.unsupported}</div></>
               : <div className="chat-empty">{t.chat.unsupported}</div>
           )
           /* 空列表分两种事实：会话已在跑（transcript 尚未落第一条/尚未定位到）≠ 真的没有记录。
@@ -988,7 +1251,7 @@ export function ChatWindow() {
              running 态也不能说「没有内容」——那与下面的运行指示互相打架。 */
           : items.length === 0 ? (
             provisional.length > 0
-              ? <Transcript items={provisional} />
+              ? <Transcript sessionId={sessionId} items={provisional} />
               : <div className="chat-empty">{history?.status === "running" ? t.chat.emptyWorking : t.chat.empty}</div>
           )
           : <>
@@ -999,7 +1262,7 @@ export function ChatWindow() {
                 </button>
               </div>
             )}
-            <Transcript items={items} />
+            <Transcript sessionId={sessionId} items={items} />
           </>}
         {/* Agent 正在跑但 transcript 半天不落新行时，页面此前毫无动静，像卡死。
             running 态常驻一个脉冲指示，有具体活动（工具名）就显示出来。 */}
@@ -1081,11 +1344,9 @@ export function ChatWindow() {
         </div>
         <div className={`chat-terminal-attention-actions${terminalAttention.options?.length === 2 ? " has-two-options" : ""}`}>
           {terminalAttention.options?.length ? terminalAttention.options.map((option, index) => (
-            <button type="button" className={index === 0 ? "is-primary is-option" : "is-option"} key={`${index}:${option.label}`} onClick={() => {
-              void writeManagedTerminal(sessionId, option.input)
-                .then(() => setTerminalAttention(null))
-                .catch((error) => setSendError(String(error)));
-            }}>{option.label}</button>
+            // 走同一个 chooseTerminalOption：它还负责关掉菜单识别窗口、并在模型菜单
+            // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
+            <button type="button" className={index === 0 ? "is-primary is-option" : "is-option"} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>{option.label}</button>
           )) : <>
             <button type="button" onClick={() => void writeManagedTerminal(sessionId, "\x1b[A")}>{t.chat.terminalPromptUp}</button>
             <button type="button" onClick={() => void writeManagedTerminal(sessionId, "\x1b[B")}>{t.chat.terminalPromptDown}</button>
@@ -1111,6 +1372,7 @@ export function ChatWindow() {
             visible={view === "terminal"}
             attentionMarkers={chatUi?.startup_attention_markers ?? []}
             interactivePrompt={terminalInteractivePrompt}
+            expectMenu={menuWatching}
             onAttention={revealTerminalAttention}
             rearmRef={terminalRearmRef}
           />
@@ -1180,17 +1442,25 @@ export function ChatWindow() {
           <button type="button" className="chat-attach-button" aria-label={t.chat.attach} title={t.chat.attach} onClick={() => void chooseAttachments()}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65"><path d="M12 5v14M5 12h14" /></svg>
           </button>
-          {(modelPresets.length > 0 || history?.model) && <div className="chat-model">
+          {(modelPresets.length > 0 || modelMenuCommand || history?.model) && <div className="chat-model">
             <button
               type="button"
               className="chat-model-button"
-              disabled={modelPresets.length === 0}
+              disabled={modelPresets.length === 0 && !modelMenuCommand}
               aria-label={t.chat.switchModel}
-              title={modelPresets.length > 0 ? t.chat.switchModel : undefined}
-              onClick={() => setModelMenu((open) => !open)}
+              title={menuWatching ? t.chat.modelMenuOpen : modelPresets.length > 0 || modelMenuCommand ? t.chat.switchModel : undefined}
+              // 有静态预设（只有 claude，其 `/model <id>` 接受内联参数）就直接下拉；
+              // 其余 CLI 的 `/model` 是交互式菜单，改为把命令发过去，再由屏幕识别把
+              // CLI 自己弹出的菜单转成 GUI 按钮——模型清单由 CLI 现给，不必我们维护。
+              onClick={() => {
+                if (modelPresets.length > 0) { setModelMenu((open) => !open); return; }
+                // 菜单已在终端里开着：再点是「收起」而不是重发（重发会打进搜索框）。
+                if (menuWatching) { cancelTerminalMenu(); return; }
+                if (modelMenuCommand) void openTerminalMenu(modelMenuCommand);
+              }}
             >
               {history?.model || t.chat.model}
-              {modelPresets.length > 0 && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>}
+              {(modelPresets.length > 0 || modelMenuCommand) && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>}
             </button>
             {modelMenu && modelPresets.length > 0 && <div className="dd-menu chat-model-menu" role="menu">
               {modelPresets.map((preset) => {
@@ -1274,7 +1544,17 @@ export function ChatWindow() {
               : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" /></svg>}
           </button>
         </div>
-        {sendError && <div className="chat-send-error" role="alert">{sendError}</div>}
+        {sendError && <div className="chat-send-error" role="alert">
+          <span>{sendError}</span>
+          {/* 会话确实活在外部终端里：就地给接管入口。此前这里只有一句「请切到终端页接管」，
+              用户得自己跨页找按钮，回来还要重打一遍刚才的消息。 */}
+          {needsTakeover && <button
+            type="button"
+            className="chat-send-takeover"
+            disabled={sending}
+            onClick={() => { const retry = retryRef.current; void takeoverAndRetry(() => retry?.()); }}
+          >{t.chat.terminalTakeover}</button>}
+        </div>}
       </footer>}
       </div>
     </div>

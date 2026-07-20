@@ -47,6 +47,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: true,
         with_provider: true,
+        ps_call_operator: false,
     },
 };
 
@@ -209,6 +210,11 @@ impl AgentPlugin for Codex {
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
+    }
+    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
+    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        Some("/model")
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
     fn slash_commands(&self) -> &'static [&'static str] {

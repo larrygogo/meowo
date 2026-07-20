@@ -75,6 +75,9 @@ struct LoginOperations {
 }
 
 impl LoginOperations {
+    /// 无 id 的裸递增。生产路径只剩「按 operationId 收尾」（cancel/finish/take），
+    /// 它只被代次语义的测试使用，故门控到 test。
+    #[cfg(test)]
     fn bump(&mut self, key: meowo_agent::AgentId) -> u64 {
         let slot = self.slots.entry(key.as_str()).or_default();
         slot.epoch += 1;
@@ -105,6 +108,16 @@ impl LoginOperations {
         true
     }
 
+    /// 登出路径用：与 bump 一样递增代次让 watch 线程静默退场，但把被取消的 operationId
+    /// 拿回来——前端的 pending 只靠 login-done 清除（useLoginOperations），「登录等待中点
+    /// 退出登录」时必须由登出方按这个 id 补发一个 Cancelled，否则按钮永久卡在等待态。
+    /// 无进行中操作 → None：不得凭空发事件。
+    fn take(&mut self, key: meowo_agent::AgentId) -> Option<String> {
+        let slot = self.slots.entry(key.as_str()).or_default();
+        slot.epoch += 1;
+        slot.operation_id.take()
+    }
+
     fn finish(
         &mut self,
         key: meowo_agent::AgentId,
@@ -126,6 +139,8 @@ static LOGIN_STATE: std::sync::LazyLock<std::sync::Mutex<LoginOperations>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(LoginOperations::default()));
 
 /// 取下一个代次（用于新起的 watch 线程），同时使该 agent 所有旧线程失效。
+/// 生产路径只剩「按 operationId 收尾」（见 take_login_operation），裸 bump 只被测试使用。
+#[cfg(test)]
 pub(crate) fn bump_login_epoch(key: meowo_agent::AgentId) -> u64 {
     LOGIN_STATE
         .lock()
@@ -153,6 +168,15 @@ fn cancel_login_operation(key: meowo_agent::AgentId, operation_id: &str) -> bool
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .cancel(key, operation_id)
+}
+
+/// 登出路径用：取消该 agent 当前登录操作并拿回 operationId（无进行中操作 → None）。
+/// watch 线程因代次失效静默退出，补发 login-done 的责任移交给登出方。
+fn take_login_operation(key: meowo_agent::AgentId) -> Option<String> {
+    LOGIN_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take(key)
 }
 
 fn finish_login_operation(
@@ -427,7 +451,11 @@ pub(crate) async fn api_key_login(
 /// 退出官方账号。优先调用 CLI 自带的非交互式登出命令；没有登出入口的 CLI（当前为 Kimi）
 /// 只删除变体表声明的凭据文件，不碰 config、会话或 hooks。
 #[tauri::command]
-pub(crate) async fn logout_agent(provider: String, profile: Option<String>) -> Result<(), String> {
+pub(crate) async fn logout_agent(
+    app: tauri::AppHandle,
+    provider: String,
+    profile: Option<String>,
+) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     // 登出**哪个账号**：显式指定的那个，否则当前活跃账号。
     //
@@ -445,7 +473,20 @@ pub(crate) async fn logout_agent(provider: String, profile: Option<String>) -> R
     // 不注入的话它会跑去清默认账号的凭据——命令执行成功、结果南辕北辙。
     let env = crate::profile::env_of(key, profile.as_deref());
     // 若登录流程还在轮询，登出必须让它停止；否则旧线程可能稍后误报登录成功。
-    bump_login_epoch(key);
+    // 等待线程按代次失效静默退出（不 emit），但前端的 pending 只靠 login-done 清除——
+    // 这里按被取消的 operationId 补发 Cancelled，否则「重新登录等待中点退出登录」后
+    // 按钮永久卡在等待态。无进行中操作（None）则不发，免得塞一个对不上号的 login-done。
+    if let Some(operation_id) = take_login_operation(key) {
+        use tauri::Emitter;
+        let _ = app.emit(
+            "login-done",
+            LoginDoneEvent {
+                operation_id,
+                provider: key.as_str().to_string(),
+                outcome: LoginOutcome::Cancelled,
+            },
+        );
+    }
 
     tauri::async_runtime::spawn_blocking(move || {
         if let Some(argv) = inst.logout_argv() {
@@ -1128,5 +1169,19 @@ mod login_operation_tests {
         assert!(state.cancel(claude, "claude-op"));
         assert!(!state.cancel(claude, "claude-op"));
         assert!(state.finish(codex, codex_epoch, "codex-op"));
+    }
+
+    #[test]
+    fn take_returns_the_cancelled_operation_and_invalidates_its_watcher() {
+        let mut state = LoginOperations::default();
+        let claude = meowo_agent::id::CLAUDE;
+        let epoch = state.begin(claude, "op-1");
+
+        // 登出取走 operationId：等待线程的 finish 必然失败（代次已前进、id 已被取走），
+        // 它静默退场、不 emit——补发 login-done 的责任移交给登出方，两边不会各发一个。
+        assert_eq!(state.take(claude).as_deref(), Some("op-1"));
+        assert!(!state.finish(claude, epoch, "op-1"));
+        // 没有进行中操作时再取 → None：登出方不得凭空发 login-done。
+        assert_eq!(state.take(claude), None);
     }
 }

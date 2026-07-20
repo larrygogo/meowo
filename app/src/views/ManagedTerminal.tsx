@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import {
@@ -65,13 +66,15 @@ type ManagedTerminalProps = {
   onUserSubmit?: () => void;
   attentionMarkers?: string[];
   interactivePrompt?: boolean;
+  /// 刚发出会弹菜单的命令（如 `/model`）：这段窗口里额外识别光标菜单。
+  expectMenu?: boolean;
   onAttention?: (attention: TerminalAttention | null) => void;
   /// 供父组件在自己重启 PTY 后触发偏移复位（对话页发送/切模式也会重启 PTY，
   /// 不止组件内部的 start/takeover 按钮）。
   rearmRef?: MutableRefObject<(() => void) | null>;
 };
 
-export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, onAttention, rearmRef: externalRearmRef }: ManagedTerminalProps) {
+export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, onAttention, rearmRef: externalRearmRef }: ManagedTerminalProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -90,6 +93,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   const onUserSubmitRef = useRef(onUserSubmit);
   const attentionMarkersRef = useRef(attentionMarkers);
   const interactivePromptRef = useRef(interactivePrompt);
+  const expectMenuRef = useRef(expectMenu);
   const onAttentionRef = useRef(onAttention);
   const visibleRef = useRef(visible);
   const attentionTailRef = useRef("");
@@ -98,6 +102,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   onUserSubmitRef.current = onUserSubmit;
   attentionMarkersRef.current = attentionMarkers;
   interactivePromptRef.current = interactivePrompt;
+  expectMenuRef.current = expectMenu;
   onAttentionRef.current = onAttention;
   visibleRef.current = visible;
 
@@ -153,7 +158,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     };
     const reportAttention = (text: string) => {
       if (text) lastScreenRef.current = text;
-      const attention = terminalAttention(text, attentionMarkersRef.current, interactivePromptRef.current);
+      const attention = terminalAttention(text, attentionMarkersRef.current, interactivePromptRef.current, expectMenuRef.current);
       if (!attention) return;
       const signature = `${attention.id}\0${attention.text}\0${JSON.stringify(attention.options)}`;
       if (signature === attentionReportedRef.current) return;
@@ -349,14 +354,14 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   // 不能等一个可能永远不会来的后续输出 chunk。
   const attentionMarkerKey = attentionMarkers.join("\0");
   useEffect(() => {
-    const attention = terminalAttention(lastScreenRef.current || attentionTailRef.current, attentionMarkers, interactivePrompt);
+    const attention = terminalAttention(lastScreenRef.current || attentionTailRef.current, attentionMarkers, interactivePrompt, expectMenu);
     if (!attention) return;
     const signature = `${attention.id}\0${attention.text}\0${JSON.stringify(attention.options)}`;
     if (signature === attentionReportedRef.current) return;
     attentionReportedRef.current = signature;
     setInitialized(true);
     onAttentionRef.current?.(attention);
-  }, [attentionMarkerKey, interactivePrompt]);
+  }, [attentionMarkerKey, interactivePrompt, expectMenu]);
 
   // 隐藏期间容器尺寸为 0，xterm 会按 0 列算布局。切回来立刻 fit 一次并聚焦——
   // ResizeObserver 虽然也会触发，但带 80ms 防抖，中间会闪一帧错位的画面。
@@ -397,7 +402,14 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
 
   const takeover = async () => {
     const terminal = terminalRef.current;
-    if (!terminal || !window.confirm(t.chat.terminalTakeoverConfirm)) return;
+    if (!terminal) return;
+    // 确认框走 `@tauri-apps/plugin-dialog` 的 `confirm`，**不是 `window.confirm`**：后者在 Tauri 的
+    // webview（尤其 macOS WKWebView）里会被直接吞掉、恒返回 false——按钮看着能点，点了却什么都不发生。
+    const yes = await confirm(t.chat.terminalTakeoverConfirm, {
+      title: t.chat.terminalTakeover,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
     setStarting(true);
     setError("");
     terminal.focus();

@@ -26,7 +26,7 @@ pub(crate) fn open_settings(app: tauri::AppHandle) {
 pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     // macOS：打开设置窗口前临时切到 Regular 激活策略，否则纯托盘 App 的窗口无法获焦。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "about");
 
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_focus();
@@ -48,7 +48,7 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
         let builder = builder.transparent(true);
         match builder.build() {
             Ok(_about_window) => {
-                // macOS：设置窗口关闭后切回 Accessory，重新隐藏 Dock 图标。
+                // macOS：设置窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（重新隐藏 Dock 图标）。
                 #[cfg(target_os = "macos")]
                 {
                     let app_handle = app.clone();
@@ -58,7 +58,7 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
                             tauri::WindowEvent::CloseRequested { .. }
                                 | tauri::WindowEvent::Destroyed
                         ) {
-                            crate::macos::menubar::settings_window_did_close(&app_handle);
+                            crate::macos::menubar::settings_window_did_close(&app_handle, "about");
                         }
                     });
                 }
@@ -79,7 +79,7 @@ pub(crate) fn open_onboarding(app: tauri::AppHandle) {
 pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "onboarding");
 
     if let Some(w) = app.get_webview_window("onboarding") {
         let _ = w.set_focus();
@@ -103,7 +103,7 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     let builder = builder.transparent(true);
     match builder.build() {
         Ok(_onboarding_window) => {
-            // macOS：引导窗口关闭后切回 Accessory，重新隐藏 Dock 图标（同设置/更新窗口）。
+            // macOS：引导窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置/更新窗口）。
             #[cfg(target_os = "macos")]
             {
                 let app_handle = app.clone();
@@ -112,7 +112,7 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                        crate::macos::menubar::settings_window_did_close(&app_handle, "onboarding");
                     }
                 });
             }
@@ -134,7 +134,7 @@ pub(crate) fn open_update_window(app: tauri::AppHandle) {
 pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "updater");
 
     if let Some(w) = app.get_webview_window("updater") {
         let _ = w.set_focus();
@@ -157,7 +157,7 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     let builder = builder.transparent(true);
     match builder.build() {
         Ok(_update_window) => {
-            // macOS：更新窗口关闭后切回 Accessory，重新隐藏 Dock 图标（同设置窗口）。
+            // macOS：更新窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置窗口）。
             #[cfg(target_os = "macos")]
             {
                 let app_handle = app.clone();
@@ -166,7 +166,7 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                        crate::macos::menubar::settings_window_did_close(&app_handle, "updater");
                     }
                 });
             }
@@ -195,7 +195,7 @@ pub(crate) fn open_new_session_window_impl(
 ) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "new-session");
 
     if let Some(w) = app.get_webview_window("new-session") {
         // 窗口已开：若从另一张卡片带了 cwd/provider 预填，通知面板更新表单（不重开窗口），再聚焦。
@@ -231,8 +231,8 @@ pub(crate) fn open_new_session_window_impl(
     let builder =
         tauri::WebviewWindowBuilder::new(app, "new-session", tauri::WebviewUrl::App(url.into()))
             .title(tr(ui_lang(&load_settings()), "window.newSession"))
-            .inner_size(460.0, 420.0)
-            .min_inner_size(460.0, 420.0)
+            .inner_size(460.0, 520.0)
+            .min_inner_size(460.0, 520.0)
             .resizable(false)
             .decorations(false)
             .center();
@@ -249,7 +249,7 @@ pub(crate) fn open_new_session_window_impl(
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                        crate::macos::menubar::settings_window_did_close(&app_handle, "new-session");
                     }
                 });
             }
@@ -307,7 +307,7 @@ pub(crate) fn open_chat_window_impl(
     session_id: i64,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "chat");
 
     if let Some(w) = app.get_webview_window("chat") {
         use tauri::Emitter;
@@ -343,7 +343,7 @@ pub(crate) fn open_chat_window_impl(
             ptys.clear_approval_consumers();
             ptys.pass_pending_approvals();
             #[cfg(target_os = "macos")]
-            crate::macos::menubar::settings_window_did_close(&app_handle);
+            crate::macos::menubar::settings_window_did_close(&app_handle, "chat");
         }
     });
     Ok(())

@@ -146,6 +146,7 @@ pub trait AgentPlugin: Sync {
         crate::chat_ui::ChatUi {
             slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
             model_presets: self.model_presets().to_vec(),
+            model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             startup_attention_markers: self.startup_attention_markers().to_vec(),
             runtime_commands_pending,
@@ -188,6 +189,16 @@ pub trait AgentPlugin: Sync {
     }
 
     // ═══ 能力槽 ═══
+
+    /// 打开「选模型」交互菜单的斜杠命令。
+    ///
+    /// 与 [`Self::model_presets`] 互补而非重复：声明了预设的 agent（只有 claude，它的
+    /// `/model <id>` 接受内联参数）直接按预设发命令；其余四家的 `/model` 是交互式菜单，
+    /// 内联参数无效——对它们只能「发出这条命令，再把 CLI 弹出的菜单渲染成 GUI 按钮」。
+    /// 菜单内容由 CLI 自己给，宿主不必维护一份会过时的模型清单。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        None
+    }
 
     /// PermissionRequest hook 的决策输出会被该 agent **采纳**（阻塞式审批，如 claude/codex 的
     /// 310s hook）。GUI 审批桥只对声明它的 agent 生效：observation-only 的 PermissionRequest
@@ -765,8 +776,9 @@ mod tests {
             }
         }
 
-        // 矩阵：claude 有模型 + 权限两栏；codex/gemini 各一栏审批；kimi/opencode 未调研到
-        // 稳定 flag，如实不声明。
+        // 矩阵：claude 有模型 + 权限两栏；codex/gemini 各一栏审批；kimi 有权限 + 计划两栏
+        // （`--auto` / `--yolo` / `--plan`，见 `kimi --help`），但**没有 model**——它的模型
+        // 别名来自用户 config.toml，不是产品固定值。opencode 仍未调研到稳定 flag。
         let opts = |id: &str| by_id(id).unwrap().launch_options();
         assert_eq!(
             opts("claude").iter().map(|o| o.id).collect::<Vec<_>>(),
@@ -774,8 +786,15 @@ mod tests {
         );
         assert_eq!(opts("codex").iter().map(|o| o.id).collect::<Vec<_>>(), vec!["approval"]);
         assert_eq!(opts("gemini").iter().map(|o| o.id).collect::<Vec<_>>(), vec!["approval"]);
-        assert!(opts("kimi").is_empty());
         assert!(opts("opencode").is_empty());
+        // kimi 的表随变体而定（旧 Python kimi-cli 的 flag 不同），本机未装 modern 时为空。
+        let kimi = opts("kimi");
+        if !kimi.is_empty() {
+            assert_eq!(kimi.iter().map(|o| o.id).collect::<Vec<_>>(), vec!["permission", "work"]);
+            assert!(kimi.iter().all(|o| o.choices.iter().all(|c| c.args.iter().all(
+                |arg| matches!(*arg, "--auto" | "--yolo" | "--plan")
+            ))));
+        }
 
         // flag 字面量抽查（与 `--help` 实测对齐）。
         let arg_of = |id: &str, opt: &str, choice: &str| {

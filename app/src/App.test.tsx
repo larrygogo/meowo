@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 const getLiveSessionsCounts = vi.fn();
 const getLiveSessionsPage = vi.fn();
 let emitBoardChanged: () => void = () => {};
+let emitSnapChanged: (e: { payload: { edge: "left" | "right" | "top" | null } }) => void = () => {};
 const unlisten = vi.fn();
 
 // jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
@@ -82,10 +83,12 @@ vi.mock("./api", () => ({
   agentName: (agents: { id: string; display_name: string }[], id: string) =>
     agents.find((a) => a.id === id)?.display_name ?? id,
 }));
-// 按事件名分别路由：board-changed → emitBoardChanged；snap-changed 忽略（Tauri 吸边，无法在 jsdom 中测试）
+// 按事件名分别路由：board-changed → emitBoardChanged；snap-changed → emitSnapChanged
+// （真实吸边靠 Tauri 后端无法在 jsdom 测，但拖拽中卸载的轮询泄漏可以模拟事件验证）。
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: (event: string, cb: () => void) => {
-    if (event === "board-changed") emitBoardChanged = cb;
+  listen: (event: string, cb: (e: { payload: { edge: "left" | "right" | "top" | null } }) => void) => {
+    if (event === "board-changed") emitBoardChanged = cb as () => void;
+    if (event === "snap-changed") emitSnapChanged = cb;
     return Promise.resolve(unlisten);
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -132,6 +135,32 @@ describe("App", () => {
     emitBoardChanged();
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
+  });
+
+  // 回归：拖拽中途卸载组件，90ms 的 pointer_left_down 松手轮询必须随 cleanup 停掉——
+  // 否则 interval 泄漏，卸载后仍持续打 IPC 空转。
+  it("拖拽中途卸载：松手轮询 pointer_left_down 随卸载停止，不泄漏", async () => {
+    // 左键一直按着（resolve true）：轮询不会自己停，只能指望卸载时的 cleanup。
+    vi.mocked(invoke).mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "pointer_left_down" ? true : undefined)
+    );
+    const { container, unmount } = render(<App />);
+    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
+
+    // mousedown 命中拖拽区 → 进入拖拽态；随后 snap-changed 近边 → 启动松手轮询。
+    fireEvent.mouseDown(container.querySelector(".drag")!);
+    emitSnapChanged({ payload: { edge: "left" } });
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("pointer_left_down")
+    );
+
+    unmount();
+    const pollCalls = () =>
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "pointer_left_down").length;
+    const atUnmount = pollCalls();
+    // 轮询若还活着，300ms（>3 个周期）内必然再触发数次。
+    await new Promise((r) => setTimeout(r, 300));
+    expect(pollCalls()).toBe(atUnmount);
   });
 
   it("清空搜索时恢复搜索前的列表顺序", async () => {
