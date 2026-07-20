@@ -1,4 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ChatHistoryDto } from "./generated/contracts/ChatHistoryDto";
+import type { ChatItem as GeneratedChatItem } from "./generated/contracts/ChatItem";
+import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTerminalSnapshotDto";
+import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDto";
+import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 
 /**
  * agent 身份串（`"claude"` / `"kimi"` / …），与 Rust 侧 `meowo_agent::AgentId` 同值。
@@ -41,8 +46,53 @@ export type AgentDescriptor = {
    * 老后端不下发此字段 → undefined，按「支持」处理（不误标已有能力的 agent 为不支持）。
    */
   supports_context?: boolean;
+  /**
+   * 新建会话的启动选项（选择 → CLI flag 映射，由插件声明）。空/缺失 = 面板不给该 agent
+   * 选项栏。前端只回传 choice id；翻译成命令行参数在后端按同一张声明表进行。
+   */
+  launch_options?: LaunchOption[];
   /** 插件未声明该能力时为 null，界面不得显示中转入口。 */
   relay?: RelayCapability | null;
+};
+
+/** 启动选项的一个可选值。label 是产品词；细文案由 i18n 按 `<option>.<choice>` 取，缺省回退 label。 */
+export type LaunchChoice = { id: string; label: string; args: string[] };
+/** 一栏启动选项（单选）。 */
+export type LaunchOption = { id: string; choices: LaunchChoice[]; default: string };
+
+/** 快速切模型的一个预设项。描述文案在前端 i18n（chat.modelDesc）按 id 取。 */
+export type ModelPreset = { id: string; label: string };
+
+/** 一条斜杠命令。builtin 的描述走前端 i18n；user/project 是从命令文件头里读出的。 */
+export type SlashCommand = {
+  name: string;
+  description: string | null;
+  source: "builtin" | "user" | "project";
+};
+
+export type ModeInput = { data: string; submit: boolean };
+export type ModeOption = { value: string; inputs: ModeInput[] };
+export type ModeControl = {
+  dimension: string;
+  cycle_input: string | null;
+  options: ModeOption[];
+};
+
+/**
+ * 对话页能力，由**安装实况**组装：插件内置表 ∪ 用户/项目目录里发现的自定义命令 + CLI 版本。
+ * 不随 `list_agents()` 静态下发——它依赖会话的 cwd（项目级命令）且随安装变化。
+ */
+export type ChatUi = {
+  slash_commands: SlashCommand[];
+  model_presets: ModelPreset[];
+  /** Provider 声明的多维模式交互能力；当前值由 ChatHistory 的增量状态提供。 */
+  mode_controls: ModeControl[];
+  /** 启动时必须转到终端人工处理的提示文本片段（框架通用值 + provider 补充）。 */
+  startup_attention_markers: string[];
+  /** runtime skill 清单尚未落盘；ChatWindow 应随 transcript 增量继续探测。 */
+  runtime_commands_pending: boolean;
+  /** 探测到的已装 CLI 版本（`--version` 首行）；探测失败为 null。 */
+  version: string | null;
 };
 
 export type RelayCapability = {
@@ -159,6 +209,79 @@ export type LiveSessionCounts = {
   archived: number;
 };
 
+export type ChatItem = GeneratedChatItem;
+export type ChatHistory = ChatHistoryDto;
+
+export type PendingApproval = PendingApprovalDto;
+
+/**
+ * 取对话历史。offset>0 只回增量；offset=0 的首读默认只回尾部若干条（长会话可达上千条，
+ * 全量会把巨大的 JSON 压到主线程），`full` 传 true 才返回整段——用于「加载更早的对话」。
+ */
+export function getChatHistory(sessionId: number, offset: number, full?: boolean): Promise<ChatHistory> {
+  return invoke("get_chat_history", { sessionId, offset, full });
+}
+
+export function openChatWindow(sessionId: number): Promise<void> {
+  return invoke("open_chat_window", { sessionId });
+}
+
+/** 在默认浏览器打开对话内容里的链接。后端只放行 http/https，其余 scheme 一律拒绝。 */
+export function openLink(url: string): Promise<void> {
+  return invoke("open_link", { url });
+}
+
+/// 会话是否可能仍由**外部**终端持有——即托管前需要先接管（杀掉旧进程）而非直接恢复。
+///
+/// `stale` 一并算入：它只表示久未有事件，进程未必已死。判活的事实源在后端（实时查进程表），
+/// 前端这份 status 是轮询快照，只能保守。宁可多让用户确认一次接管（takeover 对已死进程同样
+/// 安全——它会先判活，死了就直接恢复），也不要给出一个必然被后端拒绝的「直接恢复」按钮。
+export function isExternallyHeld(status?: string): boolean {
+  return status === "running" || status === "waiting" || status === "stale";
+}
+
+export type ManagedTerminalSnapshot = ManagedTerminalSnapshotDto;
+export function startManagedTerminal(sessionId: number, cols: number, rows: number): Promise<void> {
+  return invoke("start_managed_terminal", { sessionId, cols, rows });
+}
+export function takeoverManagedTerminal(sessionId: number, cols: number, rows: number): Promise<void> {
+  return invoke("takeover_managed_terminal", { sessionId, cols, rows });
+}
+/**
+ * 取终端输出快照。`since` 传上次拿到的 endOffset，只回增量——不传则全量（首帧用）。
+ * backlog 上限 1 MiB，轮询里省掉的就是这一整份的 base64 + IPC 传输。
+ */
+export function managedTerminalSnapshot(sessionId: number, since?: number): Promise<ManagedTerminalSnapshot> {
+  return invoke("managed_terminal_snapshot", { sessionId, since });
+}
+export function managedTerminalBinding(sessionId: number): Promise<number | null> {
+  return invoke("managed_terminal_binding", { sessionId });
+}
+export function writeManagedTerminal(sessionId: number, data: string): Promise<void> {
+  return invoke("write_managed_terminal", { sessionId, data });
+}
+export function resizeManagedTerminal(sessionId: number, cols: number, rows: number): Promise<void> {
+  return invoke("resize_managed_terminal", { sessionId, cols, rows });
+}
+export function stopManagedTerminal(sessionId: number): Promise<void> {
+  return invoke("stop_managed_terminal", { sessionId });
+}
+export function getPendingApproval(sessionId: number): Promise<PendingApproval | null> {
+  return invoke("get_pending_approval", { sessionId });
+}
+export function registerApprovalConsumer(sessionId: number, consumerId: string): Promise<void> {
+  return invoke("register_approval_consumer", { sessionId, consumerId });
+}
+export function unregisterApprovalConsumer(consumerId: string): Promise<void> {
+  return invoke("unregister_approval_consumer", { consumerId });
+}
+export function resolvePendingApproval(sessionId: number, requestId: string, choice: string): Promise<void> {
+  return invoke("resolve_pending_approval", { sessionId, requestId, choice });
+}
+export function openAttachedTerminal(sessionId: number): Promise<void> {
+  return invoke("open_attached_terminal", { sessionId });
+}
+
 export function getLiveSessionsCounts(): Promise<LiveSessionCounts> {
   return invoke("get_live_sessions_counts");
 }
@@ -201,6 +324,13 @@ export type Settings = {
   language: LangSetting;
   /** 打开终端方式：card = 点击卡片（默认）/ button = 卡片上单独的打开按钮。 */
   terminal_open_mode: TerminalOpenMode;
+  /**
+   * 打开会话落到哪个视图：chat = Meowo 对话窗口（默认）/ terminal = 外部终端。
+   *
+   * 两种取值下 agent 都由 Meowo 的 PTY 持有，差的只是用哪个界面看它——terminal 是把同一个
+   * PTY attach 到 `resume_terminal` 选定的终端里，不是另起一个进程。
+   */
+  session_open_in: SessionOpenIn;
   /** 卡片菜单触发方式：context = 右键菜单（默认）/ button = 卡片菜单按钮（触屏友好），二选一。 */
   card_menu_mode: CardMenuMode;
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
@@ -311,6 +441,7 @@ export function installDownloadedUpdate(): Promise<void> {
 export type ResumeTerminal = "terminal" | "iterm" | "wt" | "wezterm" | "powershell" | "cmd";
 export type LangSetting = "auto" | "zh" | "en";
 export type TerminalOpenMode = "card" | "button";
+export type SessionOpenIn = "chat" | "terminal";
 export type CardMenuMode = "context" | "button";
 export type StickerStyle = "elevated" | "flat";
 
@@ -322,6 +453,14 @@ export function availableTerminals(): Promise<ResumeTerminal[]> {
 /** 全部已注册 agent 及其本机安装状态。展示名、安装态都来自这里，前端不再硬编码 agent 名单。 */
 export function listAgents(): Promise<AgentDescriptor[]> {
   return invoke("list_agents");
+}
+
+/**
+ * 对话页能力查询。按会话的 provider + cwd 组装：装了什么版本、配了什么自定义命令，
+ * 补全就出什么。未知 provider → null，调用方降级为不补全、不给模型菜单。
+ */
+export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: number): Promise<ChatUi | null> {
+  return invoke("agent_chat_ui", { provider, cwd, sessionId });
 }
 
 /**
@@ -384,8 +523,9 @@ export function refreshUsage(provider: string): Promise<ProviderUsage> {
 export type HooksStatus = "installed" | "missing" | "unknown";
 
 /** 新建一个全新会话：在 cwd 打开终端裸启动该 provider。terminal 省略则用设置里的默认终端。 */
-export function newSession(cwd: string, provider: AgentId, terminal?: string): Promise<void> {
-  return invoke("new_session", { cwd, provider, terminal });
+/** `options`：启动选项的选择（option id → choice id），映射成 flag 由后端按插件声明表完成。 */
+export function newSession(cwd: string, provider: AgentId, options?: Record<string, string>, terminal?: string): Promise<void> {
+  return invoke("new_session", { cwd, provider, terminal, options });
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
@@ -452,13 +592,20 @@ export function loginAgent(
   provider: AgentId,
   terminal?: string,
   profile?: string | null,
+  operationId: string = createLoginOperationId(provider),
 ): Promise<void> {
   return invoke("login_agent", {
     provider,
     terminal,
     profile: profile ?? null,
     useActive: profile === undefined,
+    operationId,
   });
+}
+
+export function createLoginOperationId(provider: AgentId): string {
+  const suffix = Math.random().toString(36).slice(2);
+  return `login-${provider}-${Date.now().toString(36)}-${suffix}`;
 }
 
 /** 一个账号（profile）。`id === null` 即**默认账号**——agent 自己的目录，不可删除。 */
@@ -515,10 +662,10 @@ export function deleteProfile(provider: AgentId, id: string): Promise<void> {
  * 点完登录后如果终端被关掉（手动关、崩溃、agent 自己退出），后端毫不知情——它只轮询账号文件，
  * 会一直等到 5 分钟超时。这个出口让用户立刻落回可点状态。
  *
- * 后端仍会 emit `login-done`：取消前它会再查一次账号，真登上了就报 `ok:true`。
+ * 后端仍会 emit 带同一 operationId 的 `login-done`；取消前会再查一次账号并返回明确 outcome。
  */
-export function cancelLogin(provider: AgentId): Promise<void> {
-  return invoke("cancel_login", { provider });
+export function cancelLogin(provider: AgentId, operationId: string): Promise<void> {
+  return invoke("cancel_login", { provider, operationId });
 }
 
 /** 退出官方账号。不会删除模型配置、会话、hooks 或中转配置。 */
@@ -533,8 +680,8 @@ export function logoutAgent(provider: AgentId, profile?: string | null): Promise
   return invoke("logout_agent", { provider, profile: profile ?? null });
 }
 
-/** 登录结束事件 payload（对应后端 login-done）。ok=false 表示等待超时，非登录失败。 */
-export type LoginDone = { provider: AgentId; ok: boolean };
+/** 登录结束事件 payload。operationId 将结果严格关联到发起它的那一轮登录。 */
+export type LoginDone = LoginDoneEvent;
 
 /** 该 provider 是否已登录：账号能解析出来就算登录（三家判据各异，已在后端 account() 内收敛）。 */
 export function isLoggedIn(payload: ProviderAccountPayload | undefined): boolean {

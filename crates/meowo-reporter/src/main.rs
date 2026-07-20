@@ -3,9 +3,24 @@ use meowo_store::Store;
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod attach;
+
 fn main() {
-    // 任何错误都吞掉并以 0 退出——绝不阻塞 Claude Code。
-    let _ = run();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "attach") {
+        if let Err(error) = attach::run(&args) {
+            eprintln!("Meowo attach failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    // 任何错误都吞掉并以 0 退出——绝不阻塞 Agent。显式诊断开关只写 stderr，便于定位
+    // hook 已执行但没有入库/没有进入 GUI broker 的问题，默认行为仍完全静默。
+    if let Err(error) = run() {
+        if std::env::var_os("MEOWO_REPORTER_DEBUG").is_some() {
+            eprintln!("Meowo reporter diagnostic: {error}");
+        }
+    }
     std::process::exit(0);
 }
 
@@ -29,7 +44,64 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let now = now_ms();
     // agent 提供方：kimi 的 hook 命令带 `--provider kimi`；Claude 不带 → 默认 claude。
     let provider = parse_provider();
-    dispatch(&store, &ev, now, &provider)?;
+    let canonical_event = meowo_agent::by_id(&provider).map_or(ev.hook_event_name.as_str(), |p| {
+        p.canonical_event(&ev.hook_event_name)
+    });
+    // Codex 的 hook 可能继承 workspace 沙箱：能读 ~/.meowo/board.db，却不能写。审批桥不能被
+    // 这次遥测写入失败短路，否则 PermissionRequest 永远只会落回终端。先记下错误，完成所有
+    // 不依赖写库的 broker 工作后再返回；main 最终仍按契约吞错并以 0 退出。
+    let dispatch_error = dispatch(&store, &ev, now, &provider).err();
+    if canonical_event == "SessionStart" {
+        if let Some(session_id) = store.find_session_id_pub(&ev.session_id)? {
+            attach::notify_claim(session_id);
+        }
+    }
+    if canonical_event == "PermissionRequest" {
+        if let Some(session_id) = store.find_session_id_pub(&ev.session_id)? {
+            if let Some(decision) = attach::request_approval(
+                session_id,
+                &provider,
+                ev.tool_name.as_deref().unwrap_or("Tool"),
+                ev.tool_input.as_ref(),
+                &ev.permission_suggestions,
+            ) {
+                let output = match decision {
+                    meowo_protocol::broker::ApprovalDecision::Allow => Some(serde_json::json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PermissionRequest",
+                            "decision": { "behavior": "allow" }
+                        }
+                    })),
+                    meowo_protocol::broker::ApprovalDecision::AllowWithPermissions(updated) => Some(serde_json::json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PermissionRequest",
+                            "decision": {
+                                "behavior": "allow",
+                                "updatedPermissions": updated,
+                            }
+                        }
+                    })),
+                    meowo_protocol::broker::ApprovalDecision::Deny => Some(serde_json::json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PermissionRequest",
+                            "decision": {
+                                "behavior": "deny",
+                                "message": "Denied in Meowo."
+                            }
+                        }
+                    })),
+                    // GUI 消费者消失时交还 Agent 原终端；不输出 hook 决策即可恢复原生提示。
+                    meowo_protocol::broker::ApprovalDecision::Pass => None,
+                };
+                if let Some(output) = output {
+                    println!("{output}");
+                }
+            }
+        }
+    }
+    if let Some(error) = dispatch_error {
+        return Err(Box::new(error));
+    }
     Ok(())
 }
 

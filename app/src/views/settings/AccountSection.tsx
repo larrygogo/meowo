@@ -1,7 +1,6 @@
 // 设置窗口「账号」页：每个 provider 的安装 / 登录 / 用量三态卡片。
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   installAgent,
@@ -22,8 +21,6 @@ import {
   refreshUsage,
   checkProviderHooks,
   repairProviderHooks,
-  loginAgent,
-  cancelLogin,
   logoutAgent,
   agentPathGap,
   addAgentToUserPath,
@@ -31,7 +28,6 @@ import {
   type ProviderUsage,
   type UsageLane,
   type HooksStatus,
-  type LoginDone,
 } from "../../api";
 import { agentAssets } from "../../providers";
 import { useT, repairFailMessage } from "../../i18n";
@@ -39,6 +35,8 @@ import type { Dict } from "../../i18n/zh";
 import { Switch, ActionMenu, Dropdown } from "./widgets";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
+import { useTauriEvent } from "../../hooks/useTauriEvent";
+import { useLoginOperations, type LoginOperationState } from "../../hooks/useLoginOperations";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -137,7 +135,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -168,6 +166,10 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   onInstalled: () => void;
   /** 登录成功后重查账号（令卡片转「已登录」并显示身份/用量）。 */
   onLoggedIn: () => void;
+  /** 页面级登录状态；切换 provider 导致卡片重挂载时仍会保留。 */
+  loginState: LoginOperationState | undefined;
+  onStartLogin: (profile?: string | null) => Promise<boolean>;
+  onCancelLogin: () => Promise<boolean>;
   refreshing: boolean;
   /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
   settings: Settings | null;
@@ -197,20 +199,21 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   const [hooksStatus, setHooksStatus] = useState<HooksStatus | null>(null);
   const [repairingHooks, setRepairingHooks] = useState(false);
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
-  // 登录态：waiting=已拉起终端、等 login-done；msg=超时/失败提示。
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [loginMsg, setLoginMsg] = useState<string | null>(null);
+  const loginBusy = loginState?.phase === "pending";
+  const loginMsg = loginState?.phase === "pending"
+    ? t.account.loggingIn
+    : loginState?.phase === "error"
+      ? loginState.action === "start" ? t.account.loginFailed : t.account.loginCancelled
+      : loginState?.phase === "done" && loginState.outcome !== "success"
+        ? loginState.outcome === "cancelled" ? t.account.loginCancelled : t.account.loginTimeout
+        : null;
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutMsg, setLogoutMsg] = useState<string | null>(null);
-  // 本次等待是否由用户主动取消。login-done 只带 ok:bool，分不出「超时」与「取消」。
-  const cancelledRef = useRef(false);
   // 刚装完（本次会话内）→ 把「登录」按钮标为下一步，把「装完 → 登录」串成一条链路。
   const [justInstalled, setJustInstalled] = useState(false);
-  // onInstalled/onLoggedIn 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
+  // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
-  const onLoggedInRef = useRef(onLoggedIn);
-  onLoggedInRef.current = onLoggedIn;
 
   useEffect(() => {
     let cancelled = false;
@@ -270,12 +273,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done（或 5 分钟超时 / 用户取消）才落回。 */
   const startLogin = () => {
     if (loginBusy) return;
-    setLoginBusy(true);
-    setLoginMsg(t.account.loggingIn); // 按钮此时是「取消等待」，等待态由这行文字承载
-    loginAgent(provider).catch(() => {
-      setLoginBusy(false);
-      setLoginMsg(t.account.loginFailed);
-    });
+    void onStartLogin().catch(() => {});
   };
 
   /**
@@ -285,65 +283,40 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
    * 不检测「终端还活着吗」：`wt.exe` 拉起窗口后自身立即退出，真正跑登录的是它的孙进程；
    * 而 `powershell -NoExit` 又会一直活着。三种终端行为不一致，靠监视进程只会时灵时不灵。
    *
-   * 收尾由后端 emit `login-done`（它会再查一次账号，真登上了就报 ok:true），故这里不清 busy。
+   * 收尾由后端 emit 带 operationId 的 `login-done`，故这里不抢先清 busy。
    */
   const cancelLoginWait = () => {
     if (!loginBusy) return;
-    // 后端的 login-done 只带 ok:bool，分不出「超时」还是「被取消」。发起方自己记一笔，
-    // 好让 handler 给出准确的提示（取消 ≠ 没检测到登录完成）。
-    cancelledRef.current = true;
-    cancelLogin(provider).catch(() => {
-      // 命令本身失败（不该发生）：至少别把按钮永久卡在等待态。
-      cancelledRef.current = false;
-      setLoginBusy(false);
-      setLoginMsg(t.account.loginCancelled);
-    });
+    void onCancelLogin().catch(() => {});
   };
 
+  // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
+  useTauriEvent<InstallDone>("install-done", (e) => {
+    if (e.payload.provider !== provider) return;
+    setInstallLog(e.payload.logPath);
+    // 脚本确实跑起来了 → 失败原因在日志里，清掉「跑之前」那条诊断，免得两种失败串台。
+    setInstallMsg(null);
+    if (e.payload.ok) {
+      setInstallState("idle");
+      setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
+      onInstalledRef.current();
+      // 「退出码 0」不等于「装好就能用」：claude 的安装器不写 PATH 也照样 exit 0。
+      agentPathGap(provider).then(setPathGapDir).catch(() => {});
+      // 后端装完顺手接了 hooks（best-effort）——重查一下，接上了就让「未接入」提示条自动消失。
+      // 装完常常还没登录（kimi 的 config.toml 尚不存在），此时多半仍未接上，那就等登录后再接。
+      checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
+    } else {
+      setInstallState("error");
+    }
+  });
+
+  // 成功事件由页面级状态机匹配；卡片只处理与展示相关的后续动作。
   useEffect(() => {
-    // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
-    const unD = listen<InstallDone>("install-done", (e) => {
-      if (e.payload.provider !== provider) return;
-      setInstallLog(e.payload.logPath);
-      // 脚本确实跑起来了 → 失败原因在日志里，清掉「跑之前」那条诊断，免得两种失败串台。
-      setInstallMsg(null);
-      if (e.payload.ok) {
-        setInstallState("idle");
-        setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
-        onInstalledRef.current();
-        // 「退出码 0」不等于「装好就能用」：claude 的安装器不写 PATH 也照样 exit 0。
-        agentPathGap(provider).then(setPathGapDir).catch(() => {});
-        // 后端装完顺手接了 hooks（best-effort）——重查一下，接上了就让「未接入」提示条自动消失。
-        // 装完常常还没登录（kimi 的 config.toml 尚不存在），此时多半仍未接上，那就等登录后再接。
-        checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
-      } else {
-        setInstallState("error");
-      }
-    });
-    // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果后发 login-done。
-    const unL = listen<LoginDone>("login-done", (e) => {
-      if (e.payload.provider !== provider) return;
-      const cancelled = cancelledRef.current;
-      cancelledRef.current = false;
-      setLoginBusy(false);
-      if (e.payload.ok) {
-        // 取消时后端会再查一次账号——用户可能已经在终端里登完了，只是嫌等得慢。
-        setLoginMsg(null);
-        setJustInstalled(false);
-        onLoggedInRef.current(); // 重查账号 → 卡片转「已登录」并显示身份/用量
-        // 登录后配置文件才生成，是三家都接得上 hooks 的时机——后端已顺手接了，这里重查让提示条消失。
-        checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
-      } else if (cancelled) {
-        setLoginMsg(t.account.loginCancelled); // 取消 ≠ 没检测到登录完成
-      } else {
-        setLoginMsg(t.account.loginTimeout); // 超时 ≠ 登录失败：用户可能中途放弃了
-      }
-    });
-    return () => {
-      unD.then((f) => f());
-      unL.then((f) => f());
-    };
-  }, [provider, t]);
+    if (loginState?.phase !== "done" || loginState.outcome !== "success") return;
+    setJustInstalled(false);
+    // 登录后配置文件才生成，是三家都接得上 hooks 的时机——后端已顺手接了，这里重查让提示条消失。
+    checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
+  }, [loginState, provider]);
 
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
@@ -594,7 +567,13 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
       {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
           列一个孤零零的「默认账号」除了占地方没有任何信息。 */}
       {isInstalled && supportsProfiles && (
-        <ProfileList provider={provider} onChanged={onLoggedIn} />
+        <ProfileList
+          provider={provider}
+          onChanged={onLoggedIn}
+          loginState={loginState}
+          onStartLogin={onStartLogin}
+          onCancelLogin={onCancelLogin}
+        />
       )}
     </div>
   );
@@ -609,7 +588,13 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: () => void }) {
+function ProfileList({ provider, onChanged, loginState, onStartLogin, onCancelLogin }: {
+  provider: AgentId;
+  onChanged: () => void;
+  loginState: LoginOperationState | undefined;
+  onStartLogin: (profile?: string | null) => Promise<boolean>;
+  onCancelLogin: () => Promise<boolean>;
+}) {
   const t = useT();
   const [rows, setRows] = useState<ProfileView[] | null>(null);
   const [adding, setAdding] = useState(false);
@@ -630,12 +615,7 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
   useEffect(reload, [reload]);
 
   // 登录完成 → 该账号的登录态变了，重查。
-  useEffect(() => {
-    const un = listen("login-done", () => reload());
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, [reload]);
+  useTauriEvent("login-done", () => reload());
 
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -715,6 +695,8 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
 
       {rows.map((p) => {
         const key = p.id ?? DEFAULT_KEY;
+        const profileLoginPending = loginState?.phase === "pending" && loginState.profile === p.id;
+        const anotherLoginPending = loginState?.phase === "pending" && !profileLoginPending;
         // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
         // opencode 的 "Anthropic, OpenAI" 一串 provider、kimi 的 userId 短码）。
         //
@@ -791,10 +773,14 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
                 type="button"
                 className="provider-card-action"
                 data-testid={"profile-login-" + provider + "-" + key}
-                disabled={busy}
-                onClick={() => run(() => loginAgent(provider, undefined, p.id))}
+                disabled={busy || anotherLoginPending}
+                onClick={() => {
+                  setErr(null);
+                  const request = profileLoginPending ? onCancelLogin() : onStartLogin(p.id);
+                  void request.catch((e) => setErr(String(e)));
+                }}
               >
-                {t.account.login}
+                {profileLoginPending ? t.account.cancelLogin : t.account.login}
               </button>
             )}
 
@@ -971,6 +957,10 @@ export function AccountSection() {
       })
       .catch(() => {});
   };
+  // 挂在 AccountSection 而不是 keyed ProviderCard 内：切换下拉项不会遗失仍在后端等待的 operationId。
+  const loginOperations = useLoginOperations((event) => {
+    if (event.outcome === "success") loadAccounts();
+  });
   useEffect(() => { loadAccounts(); }, []);
 
   // 检测中（agents===null）先不渲染，避免下拉框空跳一帧。
@@ -1030,6 +1020,9 @@ export function AccountSection() {
         onRefresh={() => doRefresh(cur.id)}
         onInstalled={refreshInstalled}
         onLoggedIn={loadAccounts}
+        loginState={loginOperations.states.get(cur.id)}
+        onStartLogin={(profile) => loginOperations.start(cur.id, { profile })}
+        onCancelLogin={() => loginOperations.cancel(cur.id)}
         refreshing={refreshingSet.has(cur.id)}
         settings={settings}
         patchSettings={patchSettings}

@@ -269,6 +269,50 @@ impl AgentPlugin for Kimi {
     fn resume_args(&self) -> &'static [&'static str] {
         &["-r"]
     }
+    /// kimi 的 `/model` 同样是交互式菜单，不声明模型预设。
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &["/clear", "/compact", "/help", "/model", "/status"]
+    }
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        use crate::{ModeControl, ModeInput, ModeOption};
+        static PLAN_ON: [ModeInput; 1] = [ModeInput { data: "/plan on", submit: true }];
+        static PLAN_OFF: [ModeInput; 1] = [ModeInput { data: "/plan off", submit: true }];
+        static MANUAL: [ModeInput; 2] = [
+            ModeInput { data: "/yolo off", submit: true },
+            ModeInput { data: "/auto off", submit: true },
+        ];
+        static YOLO: [ModeInput; 1] = [ModeInput { data: "/yolo on", submit: true }];
+        static AUTO: [ModeInput; 1] = [ModeInput { data: "/auto on", submit: true }];
+        static WORK: [ModeOption; 2] = [
+            ModeOption { value: "default", inputs: &PLAN_OFF },
+            ModeOption { value: "plan", inputs: &PLAN_ON },
+        ];
+        static PERMISSION: [ModeOption; 3] = [
+            ModeOption { value: "manual", inputs: &MANUAL },
+            ModeOption { value: "yolo", inputs: &YOLO },
+            ModeOption { value: "auto", inputs: &AUTO },
+        ];
+        static MODES: [ModeControl; 2] = [
+            ModeControl {
+                dimension: "work",
+                cycle_input: Some("\x1b[Z"),
+                options: &WORK,
+            },
+            ModeControl {
+                dimension: "permission",
+                cycle_input: None,
+                options: &PERMISSION,
+            },
+        ];
+        // 旧 Python 版 kimi-cli 的命令和 wire 事件不同；只给已验证的 modern Kimi Code 声明。
+        if crate::installation(crate::id::KIMI)
+            .is_some_and(|installation| installation.variant_tag == "modern")
+        {
+            &MODES
+        } else {
+            &[]
+        }
+    }
     /// 装当前 Node 版 Kimi Code（装到 `~/.kimi-code/bin/kimi.exe`，与 modern 变体的候选一致）。
     /// 注意路径里的 `/kimi-code/`——不带它的 `code.kimi.com/install.ps1` 装的是旧 Python `kimi-cli`
     /// （落到 `~/.local/bin/kimi-cli.exe`，检测不到）。

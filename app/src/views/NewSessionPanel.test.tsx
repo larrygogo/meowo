@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, act, within } from "@testing-library/react";
 
 // vi.mock 会被提升到文件顶部，工厂函数里引用的外部变量必须走 vi.hoisted
 // （否则 TDZ：ReferenceError: Cannot access 'api' before initialization）。
@@ -26,8 +26,11 @@ vi.mock("@tauri-apps/api/event", () => ({
     return Promise.resolve(() => {});
   },
 }));
-const fireLogin = (provider: string, ok: boolean) =>
-  act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
+const fireLogin = (provider: string, outcome: "success" | "cancelled" | "timeout") => {
+  const call = [...api.loginAgent.mock.calls].reverse().find(([p]) => p === provider);
+  const operationId = call?.[3] ?? `unrelated-${provider}`;
+  act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, operationId, outcome } })));
+};
 
 import { NewSessionPanel } from "./NewSessionPanel";
 import { descriptors } from "../test/agents";
@@ -71,7 +74,7 @@ describe("NewSessionPanel (独立窗口)", () => {
     render(<NewSessionPanel />);
     fireEvent.change(await screen.findByTestId("ns-dir"), { target: { value: "C:/proj" } });
     fireEvent.click(screen.getByTestId("ns-launch"));
-    await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/proj", "claude"));
+    await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/proj", "claude", {}));
     await waitFor(() => expect(closeMock).toHaveBeenCalled());
   });
 
@@ -113,6 +116,26 @@ describe("NewSessionPanel (独立窗口)", () => {
     expect(screen.queryByTestId("ns-agent-claude")).toBeTruthy();
     expect(screen.queryByTestId("ns-agent-codex")).toBeTruthy();
     expect(screen.queryByTestId("ns-agent-kimi")).toBeNull();
+  });
+
+  it("启动选项由插件声明：选择随 newSession 回传，换 agent 清空且未声明者无此栏", async () => {
+    api.newSession.mockResolvedValue(undefined);
+    render(<NewSessionPanel />);
+    // claude 声明了模型 + 权限两栏（表来自 descriptor.launch_options，前端零硬编码）。
+    // 自绘 Dropdown：点开再点选项（"Opus" 是产品词回退，"计划模式" 来自 i18n）。
+    fireEvent.click(within(await screen.findByTestId("ns-option-model")).getByRole("button"));
+    fireEvent.click(screen.getByRole("option", { name: "Opus" }));
+    fireEvent.click(within(screen.getByTestId("ns-option-permission")).getByRole("button"));
+    fireEvent.click(screen.getByRole("option", { name: "计划模式" }));
+    fireEvent.change(screen.getByTestId("ns-dir"), { target: { value: "C:/proj" } });
+    fireEvent.click(screen.getByTestId("ns-launch"));
+    // 只回传 choice id；翻译成 CLI flag 是后端按同一张声明表做的事。
+    await waitFor(() => expect(api.newSession).toHaveBeenCalledWith(
+      "C:/proj", "claude", { model: "opus", permission: "plan" },
+    ));
+    // kimi 未声明启动选项 → 整块不渲染，也不会把 claude 的残留选择带过去。
+    fireEvent.click(screen.getByTestId("ns-agent-kimi"));
+    await waitFor(() => expect(screen.queryByTestId("ns-options")).toBeNull());
   });
 
   it("一个都没装时提示 + 启动禁用", async () => {
@@ -212,7 +235,7 @@ describe("NewSessionPanel 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
-    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, undefined, expect.any(String)));
     // 等 login-done 才落回。按钮此时变成「取消等待」，而不是死掉的禁用按钮——终端可能已被关掉，
     // 而后端只轮询账号文件，要 5 分钟才超时。
     await waitFor(() => expect(waiting()).toBe(true));
@@ -224,7 +247,7 @@ describe("NewSessionPanel 登录", () => {
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
     await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
-    fireLogin("claude", true);
+    fireLogin("claude", "success");
     await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
   });
 
@@ -239,10 +262,10 @@ describe("NewSessionPanel 登录", () => {
     await waitFor(() => expect(waiting()).toBe(true));
 
     fireEvent.click(screen.getByTestId("ns-login"));
-    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("claude"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("claude", expect.any(String)));
 
     // 收尾由后端 emit login-done（它会再查一次账号；这里模拟「确实没登上」）。
-    fireLogin("claude", false);
+    fireLogin("claude", "cancelled");
     await waitFor(() => expect(waiting()).toBe(false));
     // 取消 ≠ 超时：文案必须区分，否则用户以为是没检测到。
     expect(screen.getByTestId("ns-error").textContent).toBe(zh.newSession.loginCancelled);
@@ -259,7 +282,7 @@ describe("NewSessionPanel 登录", () => {
     fireEvent.click(screen.getByTestId("ns-login"));
     await waitFor(() => expect(api.cancelLogin).toHaveBeenCalled());
 
-    fireLogin("claude", true); // 后端复查发现真登上了
+    fireLogin("claude", "success"); // 后端复查发现真登上了
     await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
     expect(screen.queryByTestId("ns-error")).toBeNull();
   });
@@ -270,7 +293,7 @@ describe("NewSessionPanel 登录", () => {
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
     await waitFor(() => expect(waiting()).toBe(true));
-    fireLogin("claude", false);
+    fireLogin("claude", "timeout");
     await waitFor(() => expect(waiting()).toBe(false));
     // 超时不等于登录失败，未登录提示仍在，错误行给出本地化说明。
     expect(screen.getByTestId("ns-login-warn")).toBeTruthy();
@@ -283,7 +306,7 @@ describe("NewSessionPanel 登录", () => {
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
     await waitFor(() => expect(waiting()).toBe(true));
-    fireLogin("kimi", true); // 与当前选中的 claude 无关
+    fireLogin("kimi", "success"); // 与当前选中的 claude 无关
     expect(waiting()).toBe(true);
     expect(screen.getByTestId("ns-login-warn")).toBeTruthy();
   });
@@ -303,14 +326,14 @@ describe("NewSessionPanel 登录", () => {
     api.loginAgent.mockResolvedValue(undefined);
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login")); // 发起 claude 登录
-    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, undefined, expect.any(String)));
     await waitFor(() => expect(waiting()).toBe(true));
 
     fireEvent.click(screen.getByTestId("ns-agent-kimi")); // claude 还在登录中就切走
     // kimi 未登录且不在等待态 → 按钮可点
     await waitFor(() => expect(waiting()).toBe(false));
     fireEvent.click(screen.getByTestId("ns-login"));
-    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("kimi")); // 并发登录不被挡
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("kimi", undefined, undefined, expect.any(String))); // 并发登录不被挡
     await waitFor(() => expect(waiting()).toBe(true));
   });
 
@@ -322,7 +345,7 @@ describe("NewSessionPanel 登录", () => {
     await waitFor(() => expect(waiting()).toBe(true));
 
     fireEvent.click(screen.getByTestId("ns-agent-kimi")); // 切走
-    fireLogin("claude", false); // claude 登录超时（此时选中的是 kimi）
+    fireLogin("claude", "timeout"); // claude 登录超时（此时选中的是 kimi）
     fireEvent.click(screen.getByTestId("ns-agent-claude")); // 切回来
 
     // 等待态已被清掉 → 可以重试登录（旧实现在此永久禁用）
@@ -335,7 +358,7 @@ describe("NewSessionPanel 登录", () => {
     render(<NewSessionPanel />);
     fireEvent.click(await screen.findByTestId("ns-login"));
     fireEvent.click(await screen.findByTestId("ns-agent-kimi")); // 切走
-    fireLogin("claude", true); // 登录成功是客观事实，与当前选中谁无关
+    fireLogin("claude", "success"); // 登录成功是客观事实，与当前选中谁无关
     fireEvent.click(screen.getByTestId("ns-agent-claude")); // 切回来
     await waitFor(() => expect(screen.queryByTestId("ns-login-warn")).toBeNull());
   });

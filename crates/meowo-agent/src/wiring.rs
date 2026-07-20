@@ -13,7 +13,8 @@ use crate::variant::Installation;
 
 /// 接线时宿主提供的上下文。插件因此不需要知道 `db_path()` 之类的 app 知识。
 pub struct WiringContext<'a> {
-    /// 找不到已认领的 reporter 时的兜底路径（app 同目录的 sidecar）。
+    /// 与当前 app 同版本的 reporter（app 同目录的 sidecar）。存在时必须优先于配置里的旧路径，
+    /// 否则 GUI 已升级而 hooks 仍调用安装目录中的旧 reporter，新协议（如 GUI 审批）会静默失效。
     pub fallback_reporter: Option<&'a str>,
     /// meowo 自己的数据目录（`~/.meowo`）。claude 的 statusLine 包装脚本落在这里。
     pub meowo_dir: &'a Path,
@@ -87,7 +88,9 @@ pub fn wire_hooks(
         }
     };
 
-    // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则宿主给的 sidecar。
+    // reporter 路径：优先使用当前 app 随包 sidecar，只有宿主没有 sidecar 时才复用配置里的 reporter。
+    // 仅按“文件名是 meowo-reporter 且路径存在”无法判断协议版本；此前优先 claimed，导致开发版
+    // GUI/升级后的 app 仍调用安装目录中的旧 reporter，PermissionRequest 永远到不了新 broker。
     // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
     // 已认领的路径还须**当前仍存在**：app 换了目录后 hooks 里残留的旧路径若被当成目标写回去，
     // hooks 会静默失效（而 sidecar 明明就在手边）。
@@ -95,7 +98,11 @@ pub fn wire_hooks(
         .hooks
         .claimed_reporter(&text, agent_id)
         .filter(|p| Path::new(p).exists());
-    let Some(reporter) = claimed.or_else(|| ctx.fallback_reporter.map(str::to_string)) else {
+    let bundled = ctx
+        .fallback_reporter
+        .filter(|path| Path::new(path).exists())
+        .map(str::to_string);
+    let Some(reporter) = prefer_bundled_reporter(claimed, bundled) else {
         eprintln!("Meowo repair[{agent_id}]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
         return Some(RepairReason::ReporterNotFound);
     };
@@ -155,4 +162,29 @@ pub fn wire_hooks(
     };
 
     cap.and_then(|c| c.after_write(inst, &written))
+}
+
+fn prefer_bundled_reporter(claimed: Option<String>, bundled: Option<String>) -> Option<String> {
+    bundled.or(claimed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prefer_bundled_reporter;
+
+    #[test]
+    fn bundled_reporter_replaces_an_existing_but_stale_hook_binary() {
+        assert_eq!(
+            prefer_bundled_reporter(
+                Some("C:/Users/me/AppData/Local/Meowo/meowo-reporter.exe".into()),
+                Some("C:/workspace/target/debug/meowo-reporter.exe".into()),
+            )
+            .as_deref(),
+            Some("C:/workspace/target/debug/meowo-reporter.exe")
+        );
+        assert_eq!(
+            prefer_bundled_reporter(Some("/installed/meowo-reporter".into()), None).as_deref(),
+            Some("/installed/meowo-reporter")
+        );
+    }
 }

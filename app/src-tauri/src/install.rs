@@ -50,12 +50,7 @@ pub(crate) fn wire_hooks_best_effort(id: meowo_agent::AgentId, occasion: &str) {
     }
 }
 
-/// 登录结束事件：ok=true 表示已解析出账号；false 表示等待超时或被用户取消。
-#[derive(Clone, serde::Serialize)]
-pub(crate) struct LoginDone {
-    provider: String,
-    ok: bool,
-}
+use meowo_protocol::ipc::{LoginDoneEvent, LoginOutcome};
 
 /// 每个 agent 当前这一轮登录等待的「代次」。
 ///
@@ -68,25 +63,107 @@ pub(crate) struct LoginDone {
 ///   同时 emit（一个成功一个超时，前端状态取决于谁先到）。
 ///
 /// 按 agent 分开：分别登录两个 agent 本就该允许并发（各自一个终端、一个 watch 线程）。
-pub(crate) static LOGIN_EPOCH: std::sync::Mutex<
-    Option<std::collections::HashMap<&'static str, u64>>,
-> = std::sync::Mutex::new(None);
+#[derive(Default)]
+struct LoginSlot {
+    epoch: u64,
+    operation_id: Option<String>,
+}
+
+#[derive(Default)]
+struct LoginOperations {
+    slots: std::collections::HashMap<&'static str, LoginSlot>,
+}
+
+impl LoginOperations {
+    fn bump(&mut self, key: meowo_agent::AgentId) -> u64 {
+        let slot = self.slots.entry(key.as_str()).or_default();
+        slot.epoch += 1;
+        slot.operation_id = None;
+        slot.epoch
+    }
+
+    fn epoch(&self, key: meowo_agent::AgentId) -> u64 {
+        self.slots.get(key.as_str()).map_or(0, |slot| slot.epoch)
+    }
+
+    fn begin(&mut self, key: meowo_agent::AgentId, operation_id: &str) -> u64 {
+        let slot = self.slots.entry(key.as_str()).or_default();
+        slot.epoch += 1;
+        slot.operation_id = Some(operation_id.to_owned());
+        slot.epoch
+    }
+
+    fn cancel(&mut self, key: meowo_agent::AgentId, operation_id: &str) -> bool {
+        let Some(slot) = self.slots.get_mut(key.as_str()) else {
+            return false;
+        };
+        if slot.operation_id.as_deref() != Some(operation_id) {
+            return false;
+        }
+        slot.epoch += 1;
+        slot.operation_id = None;
+        true
+    }
+
+    fn finish(
+        &mut self,
+        key: meowo_agent::AgentId,
+        epoch: u64,
+        operation_id: &str,
+    ) -> bool {
+        let Some(slot) = self.slots.get_mut(key.as_str()) else {
+            return false;
+        };
+        if slot.epoch != epoch || slot.operation_id.as_deref() != Some(operation_id) {
+            return false;
+        }
+        slot.operation_id = None;
+        true
+    }
+}
+
+static LOGIN_STATE: std::sync::LazyLock<std::sync::Mutex<LoginOperations>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(LoginOperations::default()));
 
 /// 取下一个代次（用于新起的 watch 线程），同时使该 agent 所有旧线程失效。
 pub(crate) fn bump_login_epoch(key: meowo_agent::AgentId) -> u64 {
-    let mut g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
-    let map = g.get_or_insert_with(std::collections::HashMap::new);
-    let e = map.entry(key.as_str()).or_insert(0);
-    *e += 1;
-    *e
+    LOGIN_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .bump(key)
 }
 
 /// 当前代次。watch 线程每轮拿它与自己出生时的代次比对，不等则说明已被取消/取代。
 pub(crate) fn login_epoch(key: meowo_agent::AgentId) -> u64 {
-    let g = LOGIN_EPOCH.lock().unwrap_or_else(|e| e.into_inner());
-    g.as_ref()
-        .and_then(|m| m.get(key.as_str()).copied())
-        .unwrap_or(0)
+    LOGIN_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .epoch(key)
+}
+
+fn begin_login_operation(key: meowo_agent::AgentId, operation_id: &str) -> u64 {
+    LOGIN_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .begin(key, operation_id)
+}
+
+fn cancel_login_operation(key: meowo_agent::AgentId, operation_id: &str) -> bool {
+    LOGIN_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .cancel(key, operation_id)
+}
+
+fn finish_login_operation(
+    key: meowo_agent::AgentId,
+    epoch: u64,
+    operation_id: &str,
+) -> bool {
+    LOGIN_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .finish(key, epoch, operation_id)
 }
 
 /// 取消该 agent 正在进行的登录等待。
@@ -102,11 +179,16 @@ pub(crate) fn login_epoch(key: meowo_agent::AgentId) -> u64 {
 /// 不等价于「登录失败」：用户可能已经在终端里登完了。故取消后仍重查一次账号——
 /// 真登上了就报成功。
 #[tauri::command]
-pub(crate) async fn cancel_login(app: tauri::AppHandle, provider: String) -> Result<(), String> {
+pub(crate) async fn cancel_login(
+    app: tauri::AppHandle,
+    provider: String,
+    operation_id: String,
+) -> Result<(), String> {
     let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string();
-    // 代次 +1：正在跑的 watch 线程下一轮就会看到不等，自行退出且不 emit。
-    bump_login_epoch(key);
+    if !cancel_login_operation(key, &operation_id) {
+        return Err("登录操作已结束或已被替换".into());
+    }
     // 由本命令负责收尾 emit，让前端无论如何都能落回可点状态。
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Emitter;
@@ -115,7 +197,18 @@ pub(crate) async fn cancel_login(app: tauri::AppHandle, provider: String) -> Res
         if ok {
             wire_hooks_best_effort(key, "登录");
         }
-        let _ = app.emit("login-done", LoginDone { provider, ok });
+        let _ = app.emit(
+            "login-done",
+            LoginDoneEvent {
+                operation_id,
+                provider,
+                outcome: if ok {
+                    LoginOutcome::Success
+                } else {
+                    LoginOutcome::Cancelled
+                },
+            },
+        );
     })
     .await
     .map_err(|e| e.to_string())
@@ -136,12 +229,13 @@ pub(crate) fn watch_login(
     key: meowo_agent::AgentId,
     provider: String,
     profile: Option<String>,
+    operation_id: String,
 ) {
     const POLL: std::time::Duration = std::time::Duration::from_secs(2);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
     // 出生代次。被 cancel_login 或下一次 login_agent 递增后，本线程静默退出、不 emit——
     // 收尾的 emit 归那一方，否则会有两个 login-done 打架。
-    let epoch = bump_login_epoch(key);
+    let epoch = begin_login_operation(key, &operation_id);
     std::thread::spawn(move || {
         use tauri::Emitter;
         let start = std::time::Instant::now();
@@ -189,7 +283,21 @@ pub(crate) fn watch_login(
                 None => wire_hooks_best_effort(key, "登录"),
             }
         }
-        let _ = app.emit("login-done", LoginDone { provider, ok });
+        if !finish_login_operation(key, epoch, &operation_id) {
+            return;
+        }
+        let _ = app.emit(
+            "login-done",
+            LoginDoneEvent {
+                operation_id,
+                provider,
+                outcome: if ok {
+                    LoginOutcome::Success
+                } else {
+                    LoginOutcome::Timeout
+                },
+            },
+        );
     });
 }
 
@@ -213,7 +321,16 @@ pub(crate) async fn login_agent(
     terminal: Option<String>,
     profile: Option<String>,
     use_active: bool,
+    operation_id: String,
 ) -> Result<(), String> {
+    if operation_id.is_empty()
+        || operation_id.len() > 128
+        || !operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("登录操作 ID 无效".into());
+    }
     let key = agent_id(&provider).ok_or("未知 agent")?;
     let provider = key.as_str().to_string(); // 归一：emit 用规范串
                                              // 登录写的是**目标 profile** 的凭据，故实况也按它取（默认账号 → agent 自己的目录）。
@@ -243,7 +360,7 @@ pub(crate) async fn login_agent(
     if !ok {
         return Err("启动终端失败：无法拉起登录流程".into());
     }
-    watch_login(app, key, provider, profile);
+    watch_login(app, key, provider, profile, operation_id);
     Ok(())
 }
 
@@ -926,4 +1043,36 @@ pub(crate) fn repair_provider_hooks(provider: String) -> RepairResult {
     let status = check_provider_hooks(provider.clone());
     eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
     RepairResult { status, reason }
+}
+
+#[cfg(test)]
+mod login_operation_tests {
+    use super::LoginOperations;
+
+    #[test]
+    fn a_new_operation_invalidates_the_previous_completion() {
+        let mut state = LoginOperations::default();
+        let agent = meowo_agent::id::CLAUDE;
+        let first_epoch = state.begin(agent, "first");
+        let second_epoch = state.begin(agent, "second");
+
+        assert!(second_epoch > first_epoch);
+        assert!(!state.finish(agent, first_epoch, "first"));
+        assert!(state.finish(agent, second_epoch, "second"));
+        assert!(!state.finish(agent, second_epoch, "second"));
+    }
+
+    #[test]
+    fn cancel_only_matches_the_current_operation_and_is_agent_scoped() {
+        let mut state = LoginOperations::default();
+        let claude = meowo_agent::id::CLAUDE;
+        let codex = meowo_agent::id::CODEX;
+        let codex_epoch = state.begin(codex, "codex-op");
+        state.begin(claude, "claude-op");
+
+        assert!(!state.cancel(claude, "stale-op"));
+        assert!(state.cancel(claude, "claude-op"));
+        assert!(!state.cancel(claude, "claude-op"));
+        assert!(state.finish(codex, codex_epoch, "codex-op"));
+    }
 }

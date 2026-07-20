@@ -176,6 +176,24 @@ impl AgentPlugin for Opencode {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--session"]
     }
+    /// opencode 的切模型命令是 `/models`（复数，弹选择器），没有 `/model`/`/status`/`/clear`
+    /// ——清上下文对应 `/new`。此前前端的通用 fallback 把这三个都补给它了。
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &[
+            "/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo",
+        ]
+    }
+    /// 自定义命令：`<配置目录>/command/*.md`（我们的 data_dir 正是它的配置目录）+ 项目级
+    /// `.opencode/command/`。嵌套目录的命名语义未验证过 → 只收顶层，宁可少收也不编造名字。
+    fn custom_commands(&self) -> Option<&'static crate::CustomCommandSpec> {
+        static SPEC: crate::CustomCommandSpec = crate::CustomCommandSpec {
+            user_dir: Some("command"),
+            project_dir: Some(".opencode/command"),
+            ext: "md",
+            namespace_sep: None,
+        };
+        Some(&SPEC)
+    }
     /// 一键安装：
     /// - **Unix**：官方引导脚本 `https://opencode.ai/install`（bash；它自己按平台拉预编译二进制）。
     /// - **Windows**：官方脚本是 bash，装不了；走 npm（`opencode-ai` 的 postinstall 拉平台包）。

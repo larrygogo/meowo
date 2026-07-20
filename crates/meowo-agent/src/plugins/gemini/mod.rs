@@ -184,6 +184,44 @@ impl AgentPlugin for Gemini {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
+    /// gemini 没有 `/status`/`/compact`——对应物叫 `/stats` 与 `/compress`。此前前端的通用
+    /// fallback 给它补全 `/status`，发进去只会报 unknown command。
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &[
+            "/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools",
+        ]
+    }
+    /// 启动选项（实测 `gemini --help`）：审批形态。`auto_edit` 走 `--approval-mode`，
+    /// 全自动走更老且更稳的 `--yolo`。模型不声明——gemini 的模型名随版本更迭。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{LaunchChoice, LaunchOption};
+        static OPTIONS: [LaunchOption; 1] = [LaunchOption {
+            id: "approval",
+            default: "default",
+            choices: &[
+                LaunchChoice { id: "default", label: "Default", args: &[] },
+                LaunchChoice {
+                    id: "autoEdit",
+                    label: "Auto Edit",
+                    args: &["--approval-mode", "auto_edit"],
+                },
+                LaunchChoice { id: "yolo", label: "YOLO", args: &["--yolo"] },
+            ],
+        }];
+        &OPTIONS
+    }
+    /// 自定义命令是 TOML：`~/.gemini/commands/**.toml` + 项目级 `.gemini/commands/`；
+    /// 子目录按 `:` 命名空间（`commands/git/commit.toml` → `/git:commit`），描述取顶层
+    /// `description` 键。
+    fn custom_commands(&self) -> Option<&'static crate::CustomCommandSpec> {
+        static SPEC: crate::CustomCommandSpec = crate::CustomCommandSpec {
+            user_dir: Some("commands"),
+            project_dir: Some(".gemini/commands"),
+            ext: "toml",
+            namespace_sep: Some(":"),
+        };
+        Some(&SPEC)
+    }
 
     /// 只有 npm 一条安装路，官方没有 `curl|sh` 引导脚本——用 [`InstallScript::Command`] 直接跑
     /// `npm i -g @google/gemini-cli`（两平台命令一致）。前提是本机有 node/npm；没有则安装子进程

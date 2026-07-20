@@ -9,6 +9,232 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use crate::transcript::ChatItem;
+use crate::transcript::{ChatOnlyParser, TranscriptEvent, TranscriptParser, TranscriptSpec};
+
+fn chat_id(prefix: &str, line: &str) -> String {
+    let hash = line.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    });
+    format!("codex-{prefix}-{hash:016x}")
+}
+
+fn content_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| {
+                part.get("text")
+                    .or_else(|| part.get("input_text"))
+                    .or_else(|| part.get("output_text"))
+                    .and_then(|text| text.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        other => other.to_string(),
+    }
+}
+
+fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Vec::new();
+    };
+    let timestamp = value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let payload = value.get("payload").unwrap_or(&value);
+    let outer = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let kind = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    match (outer, kind) {
+        ("event_msg", "user_message") => {
+            let text = payload.get("message").map(content_text).unwrap_or_default();
+            (!text.trim().is_empty())
+                .then(|| TranscriptEvent::UserMessage {
+                    id: chat_id("user", line),
+                    timestamp,
+                    text,
+                })
+                .into_iter()
+                .collect()
+        }
+        ("event_msg", "agent_message") => {
+            let text = payload.get("message").map(content_text).unwrap_or_default();
+            (!text.trim().is_empty())
+                .then(|| TranscriptEvent::AssistantMessage {
+                    id: chat_id("assistant", line),
+                    timestamp,
+                    text,
+                })
+                .into_iter()
+                .collect()
+        }
+        ("event_msg", "agent_reasoning") => {
+            let text = payload
+                .get("text")
+                .or_else(|| payload.get("message"))
+                .map(content_text)
+                .unwrap_or_default();
+            (!text.trim().is_empty())
+                .then(|| TranscriptEvent::Reasoning {
+                    id: chat_id("reasoning", line),
+                    timestamp,
+                    text,
+                })
+                .into_iter()
+                .collect()
+        }
+        ("response_item", "reasoning") => {
+            let text = payload
+                .get("summary")
+                .or_else(|| payload.get("content"))
+                .or_else(|| payload.get("text"))
+                .map(content_text)
+                .unwrap_or_default();
+            (!text.trim().is_empty())
+                .then(|| TranscriptEvent::Reasoning {
+                    id: chat_id("reasoning", line),
+                    timestamp,
+                    text,
+                })
+                .into_iter()
+                .collect()
+        }
+        ("response_item", "function_call") | ("response_item", "custom_tool_call") => {
+            let name = payload
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool")
+                .to_string();
+            let summary = payload
+                .get("arguments")
+                .or_else(|| payload.get("input"))
+                .map(content_text)
+                .unwrap_or_default();
+            vec![TranscriptEvent::ToolCall {
+                id: payload
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| chat_id("tool", line)),
+                timestamp,
+                name,
+                summary,
+            }]
+        }
+        ("response_item", "function_call_output")
+        | ("response_item", "custom_tool_call_output") => {
+            vec![TranscriptEvent::ToolResult {
+                id: chat_id("result", line),
+                timestamp,
+                tool_call_id: payload
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                text: payload.get("output").map(content_text).unwrap_or_default(),
+                is_error: payload
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            }]
+        }
+        ("event_msg", "context_compacted") => vec![TranscriptEvent::Metadata {
+            id: chat_id("compact", line),
+            timestamp,
+            kind: "compact".into(),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+fn parse_chat_items(line: &str) -> Vec<ChatItem> {
+    parse_transcript_events(line)
+        .into_iter()
+        .map(ChatItem::from)
+        .collect()
+}
+
+pub struct CodexTranscript;
+pub static CODEX_TRANSCRIPT: CodexTranscript = CodexTranscript;
+
+impl TranscriptSpec for CodexTranscript {
+    fn new_parser(&self) -> Box<dyn TranscriptParser> {
+        Box::new(ChatOnlyParser)
+    }
+
+    fn resolve_transcript_path(
+        &self,
+        transcript_path: Option<&str>,
+        _cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<PathBuf> {
+        transcript_path
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .or_else(|| find_rollout(session_id))
+    }
+
+    fn resolve_title(
+        &self,
+        _transcript_path: Option<&str>,
+        _cwd: Option<&str>,
+        _session_id: &str,
+    ) -> Option<String> {
+        None
+    }
+
+    fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
+        parse_transcript_events(line)
+    }
+
+    fn agent_modes_from_line(&self, line: &str) -> Vec<crate::AgentMode> {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return Vec::new();
+        };
+        let outer = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let payload = value.get("payload").unwrap_or(&value);
+        let mut modes = Vec::new();
+        if outer == "turn_context" {
+            if let Some(mode) = payload
+                .pointer("/collaboration_mode/mode")
+                .and_then(|v| v.as_str())
+            {
+                modes.push(crate::AgentMode::new("collaboration", mode));
+            }
+            if let Some(approval) = payload.get("approval_policy").and_then(|v| v.as_str()) {
+                modes.push(crate::AgentMode::new("approval", approval));
+            }
+            if let Some(sandbox) = payload
+                .pointer("/sandbox_policy/type")
+                .and_then(|v| v.as_str())
+            {
+                modes.push(crate::AgentMode::new("sandbox", sandbox));
+            }
+        } else if outer == "event_msg"
+            && payload.get("type").and_then(|v| v.as_str()) == Some("task_started")
+        {
+            if let Some(mode) = payload
+                .get("collaboration_mode_kind")
+                .and_then(|v| v.as_str())
+            {
+                modes.push(crate::AgentMode::new("collaboration", mode));
+            }
+        }
+        modes
+    }
+
+    fn supports_chat(&self) -> bool {
+        true
+    }
+
+    fn supports_analysis(&self) -> bool {
+        false
+    }
+}
+
 /// codex 在本机的实况（数据目录/hooks 规格/凭据/启动 argv）。变体表见
 /// `meowo_agent::plugins::codex`：数据目录 `CODEX_HOME` 优先，否则 `~/.codex`。
 /// 检测/接线/状态/账号/会话读取全部经此一处解析路径。
@@ -188,11 +414,36 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
     fn read_context(&self, ctx: &crate::caps::HookContext) -> Option<crate::caps::ContextUsage> {
         read_context(ctx.transcript_path, ctx.session_id)
     }
+
+    fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
+        Some(&CODEX_TRANSCRIPT)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_collaboration_approval_and_sandbox_dimensions() {
+        let modes = CODEX_TRANSCRIPT.agent_modes_from_line(
+            r#"{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"},"collaboration_mode":{"mode":"plan"}}}"#,
+        );
+        assert_eq!(
+            modes,
+            vec![
+                crate::AgentMode::new("collaboration", "plan"),
+                crate::AgentMode::new("approval", "on-request"),
+                crate::AgentMode::new("sandbox", "workspace-write"),
+            ]
+        );
+        assert_eq!(
+            CODEX_TRANSCRIPT.agent_modes_from_line(
+                r#"{"type":"event_msg","payload":{"type":"task_started","collaboration_mode_kind":"default"}}"#,
+            ),
+            vec![crate::AgentMode::new("collaboration", "default")]
+        );
+    }
 
     #[test]
     fn parse_context_takes_last_nonnull_token_count() {
@@ -229,5 +480,31 @@ mod tests {
 {"type":"turn_context","payload":{"cwd":"/p"}}"#;
         assert_eq!(parse_model(rollout), None);
         assert_eq!(parse_model(""), None);
+    }
+
+    #[test]
+    fn chat_parser_uses_clean_events_and_tool_records_without_duplicates() {
+        let user = r#"{"timestamp":"t1","type":"event_msg","payload":{"type":"user_message","message":"修复测试"}}"#;
+        let assistant = r#"{"timestamp":"t2","type":"event_msg","payload":{"type":"agent_message","message":"开始处理"}}"#;
+        let tool = r#"{"timestamp":"t3","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"cargo test\"}","call_id":"c1"}}"#;
+        let reasoning = r#"{"timestamp":"t2","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"先运行测试"}]}}"#;
+        assert!(
+            matches!(&parse_chat_items(user)[0], ChatItem::UserText { text, .. } if text == "修复测试")
+        );
+        assert!(
+            matches!(&parse_chat_items(assistant)[0], ChatItem::AssistantText { text, .. } if text == "开始处理")
+        );
+        assert!(
+            matches!(&parse_chat_items(tool)[0], ChatItem::ToolUse { name, summary, .. } if name == "shell_command" && summary.contains("cargo test"))
+        );
+        assert!(matches!(
+            &parse_chat_items(reasoning)[0],
+            ChatItem::Reasoning { text, .. } if text == "先运行测试"
+        ));
+        // 原始 response_item user message 常含指令包，与 event_msg.user_message 重复，必须跳过。
+        assert!(parse_chat_items(
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[]}}"#
+        )
+        .is_empty());
     }
 }

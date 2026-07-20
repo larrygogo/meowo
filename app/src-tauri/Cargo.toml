@@ -18,6 +18,7 @@ tauri-build = { workspace = true }
 
 [dependencies]
 meowo-agent = { path = "../../crates/meowo-agent" }
+meowo-protocol = { path = "../../crates/meowo-protocol" }
 meowo-store = { path = "../../crates/meowo-store" }
 meowo-reporter = { path = "../../crates/meowo-reporter" }
 tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
@@ -46,6 +47,8 @@ ureq = { version = "2", features = ["json", "socks-proxy"] }
 sha2 = "0.10"
 # 系统语言检测（Settings.language = auto 时解析界面/通知语言）。
 sys-locale = "0.3"
+portable-pty = "0.9.0"
+getrandom = "0.3"
 # codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 

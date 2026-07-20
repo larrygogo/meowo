@@ -28,6 +28,7 @@ import { type Item, type Tab, TAB_KEYS, PIN_KEY, STAR_KEY } from "./sticker/type
 import { editorKeyDown, fmtAgo, loadStarred, match } from "./sticker/helpers";
 import {
   CheckIcon,
+  ChatIcon,
   CloseIcon,
   GearIcon,
   MoreIcon,
@@ -301,7 +302,11 @@ export function Sticker({
         })
         .catch((err) => setFocusNotice({ kind: "failed", item: l, detail: String(err) }));
     } else if (!l.archived) {
-      invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, provider: l.provider }).catch(() => {});
+      // 恢复现在可能因多种原因失败（恢复计划无效、PTY 起不来、attach 打不开外部终端）。
+      // 静默吞掉的话，用户点了卡片只会看到「什么都没发生」，尤其在把打开方式设成外部终端后，
+      // 会直接被理解成设置不生效。走与 focus 相同的提示通道。
+      invoke("resume_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, provider: l.provider })
+        .catch((err) => setFocusNotice({ kind: "failed", item: l, detail: String(err) }));
     }
   };
 
@@ -623,7 +628,7 @@ export function Sticker({
                       }
                     }}
                     style={{ cursor: !buttonMode && canOpen(l) ? "pointer" : "default" }}
-                    data-tip={buttonMode ? "" : l.connected ? t.sticker.jumpToTerminal : l.archived ? "" : t.sticker.resumeInTerminal}
+                    data-tip={buttonMode ? "" : l.connected ? t.sticker.openSession : l.archived ? "" : t.sticker.resumeSession}
                   >
                     <div className="stk-top">
                       <span className="stk-ind">{indicator}</span>
@@ -668,6 +673,16 @@ export function Sticker({
                                 </span>
                               )}
                               <span className="stk-time">{fmtAgo(l.session.last_event_at, t)}</span>
+                              <button
+                                type="button"
+                                className="stk-chat-btn"
+                                aria-label={t.sticker.openChat}
+                                data-tip={t.sticker.openChat}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  invoke("open_chat_window", { sessionId: l.session.id }).catch(() => {});
+                                }}
+                              ><ChatIcon /></button>
                               {/* 星标/便签/重命名/归档操作收进卡片菜单（CardContextMenu），标题行不再挤 hover 图标。
                                   默认右键触发；card_menu_mode=button（触屏等不便右键）时改为此处的常显菜单按钮，
                                   两种触发方式二选一。星标态由卡片金角、便签由便签块表达，收起入口不丢信息。 */}
@@ -763,8 +778,8 @@ export function Sticker({
                           <button
                             type="button"
                             className="stk-open"
-                            data-tip={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
-                            aria-label={l.connected ? t.sticker.jumpToTerminal : t.sticker.resumeInTerminal}
+                            data-tip={l.connected ? t.sticker.openSession : t.sticker.resumeSession}
+                            aria-label={l.connected ? t.sticker.openSession : t.sticker.resumeSession}
                             onClick={(e) => { e.stopPropagation(); openTerminal(l); }}
                           ><OpenIcon /></button>
                         )}

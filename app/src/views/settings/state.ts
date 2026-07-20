@@ -13,6 +13,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   resume_terminal: "terminal",
   language: "auto",
   terminal_open_mode: "card",
+  session_open_in: "terminal",
   card_menu_mode: "button",
   preview_enabled: true,
   sticker_style: "elevated",

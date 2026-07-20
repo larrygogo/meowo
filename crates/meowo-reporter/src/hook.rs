@@ -18,6 +18,10 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_input: Option<serde_json::Value>,
+    /// Claude PermissionRequest 提供的“本次允许之外”的原生选项（例如写入项目/用户权限规则）。
+    /// 其他 Agent 没有该字段时保持空列表。
+    #[serde(default)]
+    pub permission_suggestions: Vec<serde_json::Value>,
     /// 回合结束时 hook 携带的最近一条 AI 正文。各家字段名不同，靠 alias 收束到同一个字段：
     /// claude/codex 是 `last_assistant_message`，kimi 是 `assistant_message`，
     /// gemini 的 `AfterAgent` 叫 `prompt_response`。

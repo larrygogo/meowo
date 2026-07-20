@@ -45,7 +45,7 @@ static EVENTS: [HookEvent; 8] = [
     HookEvent::matched("PostToolUse", "*"),
     HookEvent::matched("Stop", "*"),
     HookEvent::matched("SessionEnd", "*"),
-    HookEvent::matched("PermissionRequest", "*"),
+    HookEvent::matched("PermissionRequest", "*").with_timeout(310),
     HookEvent::matched("PreToolUse", "AskUserQuestion"),
     HookEvent::matched("PreToolUse", "ExitPlanMode"),
 ];
@@ -238,6 +238,92 @@ impl AgentPlugin for Claude {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &[
+            "/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory",
+            "/model", "/resume", "/review", "/status",
+        ]
+    }
+    /// 启动选项（实测 `claude --help`）：`--model <alias>` 与 `--permission-mode
+    /// <default|plan|acceptEdits|bypassPermissions>`。default 项一律不传 flag——CLI 的默认
+    /// 行为由 CLI 自己决定，不替它猜。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{LaunchChoice, LaunchOption};
+        static OPTIONS: [LaunchOption; 2] = [
+            LaunchOption {
+                id: "model",
+                default: "default",
+                choices: &[
+                    LaunchChoice { id: "default", label: "Default", args: &[] },
+                    LaunchChoice { id: "opus", label: "Opus", args: &["--model", "opus"] },
+                    LaunchChoice { id: "sonnet", label: "Sonnet", args: &["--model", "sonnet"] },
+                    LaunchChoice { id: "haiku", label: "Haiku", args: &["--model", "haiku"] },
+                    LaunchChoice { id: "opusplan", label: "Opus Plan", args: &["--model", "opusplan"] },
+                ],
+            },
+            LaunchOption {
+                id: "permission",
+                default: "default",
+                choices: &[
+                    LaunchChoice { id: "default", label: "Default", args: &[] },
+                    LaunchChoice { id: "plan", label: "Plan", args: &["--permission-mode", "plan"] },
+                    LaunchChoice {
+                        id: "acceptEdits",
+                        label: "Accept Edits",
+                        args: &["--permission-mode", "acceptEdits"],
+                    },
+                    LaunchChoice {
+                        id: "bypassPermissions",
+                        label: "Bypass Permissions",
+                        args: &["--permission-mode", "bypassPermissions"],
+                    },
+                ],
+            },
+        ];
+        &OPTIONS
+    }
+    /// 用户级 `<数据目录>/commands/*.md`（多账号时随 profile 走）+ 项目级 `.claude/commands/`；
+    /// 子目录按 `:` 命名空间（`commands/git/commit.md` → `/git:commit`）。
+    fn custom_commands(&self) -> Option<&'static crate::CustomCommandSpec> {
+        static SPEC: crate::CustomCommandSpec = crate::CustomCommandSpec {
+            user_dir: Some("commands"),
+            project_dir: Some(".claude/commands"),
+            ext: "md",
+            namespace_sep: Some(":"),
+        };
+        Some(&SPEC)
+    }
+    /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
+    /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
+    fn model_presets(&self) -> &'static [crate::ModelPreset] {
+        &[
+            crate::ModelPreset { id: "opus", label: "Opus" },
+            crate::ModelPreset { id: "sonnet", label: "Sonnet" },
+            crate::ModelPreset { id: "haiku", label: "Haiku" },
+            crate::ModelPreset { id: "opusplan", label: "Opus Plan" },
+        ]
+    }
+    /// Claude Code 官方的 `chat:cycleMode` 键位（Shift+Tab）。模式集合会随账号与启动参数
+    /// 变化，因此这里只声明“循环下一项”，不向 GUI 虚构一张固定、可直接跳转的列表。
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            dimension: "permission",
+            cycle_input: Some("\x1b[Z"),
+            options: &[],
+        }];
+        &MODES
+    }
+    /// Claude 在首次进入某个 cwd 时会先显示 workspace trust 选择器。它不是可接收聊天文本的
+    /// composer；这些片段覆盖现有版本的标题、错误兜底与非交互提示措辞。
+    fn startup_attention_markers(&self) -> &'static [&'static str] {
+        &[
+            "do you trust the files in this folder",
+            "do you trust the contents of this directory",
+            "trust this folder",
+            "workspace not trusted",
+            "workspace trust dialog",
+        ]
+    }
     /// 直下：从 `downloads.claude.ai`（GCS，**无 Cloudflare**）取二进制并校验 SHA-256。
     /// 见 `install.rs`——引导脚本做的正是这三步。
     fn direct_install(&self) -> Option<&'static dyn crate::install::InstallCap> {
@@ -390,5 +476,17 @@ mod tests {
             .iter()
             .filter(|e| e.name != "PreToolUse")
             .all(|e| e.matcher == Some("*")));
+        assert_eq!(
+            EVENTS
+                .iter()
+                .find(|e| e.name == "PermissionRequest")
+                .unwrap()
+                .timeout,
+            310
+        );
+        assert!(EVENTS
+            .iter()
+            .filter(|e| e.name != "PermissionRequest")
+            .all(|e| e.timeout == 5));
     }
 }

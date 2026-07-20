@@ -28,6 +28,15 @@ fn default_language() -> String {
 fn default_terminal_open_mode() -> String {
     "card".to_string()
 }
+/// 打开会话时把用户带到哪个**视图**：terminal = 外部终端（默认），chat = Meowo 对话窗口。
+///
+/// 只是视图之争，不是「谁持有 agent」之争：两种取值下会话都由 Meowo 的 PTY 持有，
+/// terminal 只是改为用 attach 客户端把同一个 PTY 镜像到用户选的外部终端里。
+///
+/// 缺省 terminal：点卡片去终端是终端托管之前就有的习惯，老用户升级不该被静默改掉落点。
+fn default_session_open_in() -> String {
+    "terminal".to_string()
+}
 /// 卡片菜单（星标/便签/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
 /// context = 右键菜单，两者二选一。
 fn default_card_menu_mode() -> String {
@@ -80,6 +89,10 @@ pub(crate) struct Settings {
     /// 打开终端方式：card = 点击卡片（默认），button = 卡片单独打开按钮。兼容老 settings.json。
     #[serde(default = "default_terminal_open_mode")]
     pub(crate) terminal_open_mode: String,
+    /// 打开会话落到哪个视图：chat = Meowo 对话窗口（默认），terminal = 外部终端。
+    /// 兼容老 settings.json（缺席 → chat）。
+    #[serde(default = "default_session_open_in")]
+    pub(crate) session_open_in: String,
     /// 卡片菜单触发方式：button = 卡片菜单按钮（默认），context = 右键菜单。兼容老 settings.json。
     #[serde(default = "default_card_menu_mode")]
     pub(crate) card_menu_mode: String,
@@ -139,6 +152,7 @@ impl Default for Settings {
             resume_terminal: default_resume_terminal(),
             language: default_language(),
             terminal_open_mode: default_terminal_open_mode(),
+            session_open_in: default_session_open_in(),
             card_menu_mode: default_card_menu_mode(),
             preview_enabled: true,
             sticker_style: default_sticker_style(),
@@ -391,13 +405,9 @@ fn is_allowed_url(raw: &str) -> bool {
     }
 }
 
-/// 设置/关于页与托盘用：在默认浏览器打开官网或本仓库链接。只放行白名单前缀，
-/// Windows 用 explorer、macOS 用 open 打开（均不经 shell），杜绝被滥用打开任意/恶意目标。
-#[tauri::command]
-pub(crate) fn open_url(url: String) -> Result<(), String> {
-    if !is_allowed_url(&url) {
-        return Err("不允许的链接".into());
-    }
+/// 在默认浏览器打开 `url`。Windows 用 explorer、macOS 用 open（均不经 shell）。
+/// 只做「打开」这一件事——放行哪些链接由两个命令各自的校验负责。
+fn spawn_browser(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     std::process::Command::new("explorer")
         .arg(&url)
@@ -413,6 +423,28 @@ pub(crate) fn open_url(url: String) -> Result<(), String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = url;
     Ok(())
+}
+
+/// 设置/关于页与托盘用：打开官网或本仓库链接。只放行白名单前缀——这些入口是**应用自己**
+/// 发起的导航，用户没有机会审视目标，必须收紧到可信域，杜绝被滥用打开任意/恶意目标。
+#[tauri::command]
+pub(crate) fn open_url(url: String) -> Result<(), String> {
+    if !is_allowed_url(&url) {
+        return Err("不允许的链接".into());
+    }
+    spawn_browser(url)
+}
+
+/// 对话内容里的链接用：用户**主动点击**模型输出中的 URL，与浏览器/聊天工具的行为一致，
+/// 不做域名白名单——但 scheme 必须是 http/https：explorer/open 对 file:、ms-settings: 等
+/// scheme 同样来者不拒，任由 transcript 内容触发本地程序是注入通道，不是链接。
+#[tauri::command]
+pub(crate) fn open_link(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|_| "无效链接")?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只支持 http/https 链接".into());
+    }
+    spawn_browser(url)
 }
 
 #[cfg(test)]
@@ -444,6 +476,34 @@ mod tests {
         // 旧 settings.json 无 default_agent 字段：serde default 兜底 claude，不 panic。
         let v: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(v.default_agent, "claude");
+    }
+
+    #[test]
+    fn open_link_rejects_non_http_schemes() {
+        // 校验只看 scheme 是否放行，不真的打开浏览器——非 windows/macos 的 spawn_browser
+        // 是 no-op，windows 上 explorer 对 Err 分支根本不会执行。
+        assert!(open_link("javascript:alert(1)".into()).is_err());
+        assert!(open_link("file:///C:/Windows/System32/calc.exe".into()).is_err());
+        assert!(open_link("ms-settings:display".into()).is_err());
+        assert!(open_link("not a url".into()).is_err());
+    }
+
+    #[test]
+    fn old_settings_json_without_session_open_in_defaults_to_terminal() {
+        // 老用户的 settings.json 没有这个字段：必须落到 terminal（= 托管之前的既有习惯），
+        // 且不 panic。
+        let v: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(v.session_open_in, "terminal");
+        assert_eq!(Settings::default().session_open_in, "terminal");
+    }
+
+    #[test]
+    fn session_open_in_round_trips_through_json() {
+        let v: Settings = serde_json::from_str(r#"{"session_open_in":"chat"}"#).unwrap();
+        assert_eq!(v.session_open_in, "chat");
+        // 写回去的值必须原样保住，否则用户改了设置却看不出任何变化。
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains(r#""session_open_in":"chat""#));
     }
 
     #[test]

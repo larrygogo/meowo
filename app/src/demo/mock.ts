@@ -25,6 +25,7 @@ export const store: Store = {
     resume_terminal: "wt",
     language: "zh",
     terminal_open_mode: "card",
+    session_open_in: "terminal",
     card_menu_mode: "button",
     preview_enabled: true,
     sticker_style: "flat",
@@ -78,6 +79,28 @@ export function installMocks(): void {
           { id: "kimi", display_name: "Kimi Code", installed: true },
           { id: "gemini", display_name: "Gemini CLI", installed: true },
         ];
+      case "agent_chat_ui": {
+        // 对话页能力按会话查询（真实后端由安装实况组装）。demo 只演 claude 的对话窗：
+        // 内置表 + 一条「项目里发现的自定义命令」，让补全菜单的两类来源都露脸。
+        if ((args as { provider?: string })?.provider !== "claude") return null;
+        return {
+          slash_commands: [
+            ...["/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"]
+              .map((name) => ({ name, description: null, source: "builtin" })),
+            { name: "/deploy", description: "部署到预发环境", source: "project" },
+          ].sort((a, b) => a.name.localeCompare(b.name)),
+          model_presets: [
+            { id: "opus", label: "Opus" },
+            { id: "sonnet", label: "Sonnet" },
+            { id: "haiku", label: "Haiku" },
+            { id: "opusplan", label: "Opus Plan" },
+          ],
+          mode_controls: [{ dimension: "permission", cycle_input: "\u001b[Z", options: [] }],
+          startup_attention_markers: ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"],
+          runtime_commands_pending: false,
+          version: "2.1.215 (Claude Code)",
+        };
+      }
       case "get_settings":
         return store.settings;
       case "get_accounts": {

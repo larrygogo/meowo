@@ -6,6 +6,7 @@ import { About } from "./views/About";
 import { Updater } from "./views/Updater";
 import { NewSessionPanel } from "./views/NewSessionPanel";
 import { Onboarding } from "./views/Onboarding";
+import { ChatWindow } from "./views/ChatWindow";
 import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
 import { installInputModality } from "./input-modality";
@@ -17,6 +18,7 @@ import "@fontsource-variable/inter"; // 内置 Inter 可变字体做西文（自
 // 只取 400(正文)/600(标题)两档控制体积；500 等会自动回退到最近档。
 import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/600.css";
+import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 // E2E 构建（VITE_E2E=1）才注入 @wdio/tauri-plugin 前端桥（console 转发 / invoke 拦截 /
@@ -64,6 +66,8 @@ void detectHostOs().then(() => {
           <NewSessionPanel />
         ) : label === "onboarding" ? (
           <Onboarding />
+        ) : label === "chat" ? (
+          <ChatWindow />
         ) : (
           <App />
         )}

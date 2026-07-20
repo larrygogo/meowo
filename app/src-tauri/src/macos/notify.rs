@@ -55,8 +55,10 @@ fn clear_delivered() {
     // SAFETY: 标准 objc 消息发送；defaultUserNotificationCenter 返回进程级单例（可能为 nil，
     // 已判空），removeAllDeliveredNotifications 无参无返回。
     unsafe {
-        let center: *mut Object =
-            msg_send![class!(NSUserNotificationCenter), defaultUserNotificationCenter];
+        let center: *mut Object = msg_send![
+            class!(NSUserNotificationCenter),
+            defaultUserNotificationCenter
+        ];
         if !center.is_null() {
             let _: () = msg_send![center, removeAllDeliveredNotifications];
         }

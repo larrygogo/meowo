@@ -116,6 +116,7 @@ impl CommandSpec {
 pub struct HookEvent {
     pub name: &'static str,
     pub matcher: Option<&'static str>,
+    pub timeout: u64,
 }
 
 impl HookEvent {
@@ -123,13 +124,19 @@ impl HookEvent {
         Self {
             name,
             matcher: None,
+            timeout: 5,
         }
     }
     pub const fn matched(name: &'static str, matcher: &'static str) -> Self {
         Self {
             name,
             matcher: Some(matcher),
+            timeout: 5,
         }
+    }
+    pub const fn with_timeout(mut self, timeout: u64) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -491,6 +498,7 @@ mod json_common {
         matcher: Option<&str>,
         reporter: &str,
         desired_cmd: &str,
+        desired_timeout: u64,
         agent_id: &str,
     ) -> bool {
         let mut changed = false;
@@ -516,6 +524,15 @@ mod json_common {
                         kept = true;
                         if path != reporter {
                             hs[j]["command"] = serde_json::json!(desired_cmd);
+                            changed = true;
+                        }
+                        // 普通 hook 沿用用户/旧版本已有 timeout；只有声明了非默认值的长等待
+                        // hook（当前为 PermissionRequest）需要迁移，否则 GUI 审批仍会被旧 5 秒杀掉。
+                        if desired_timeout != 5
+                            && hs[j].get("timeout").and_then(|v| v.as_u64())
+                                != Some(desired_timeout)
+                        {
+                            hs[j]["timeout"] = serde_json::json!(desired_timeout);
                             changed = true;
                         }
                         j += 1;
@@ -588,13 +605,20 @@ mod claude_json {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
             // 认领 + 更新路径 + 删重复，一并在此完成。
-            changed |=
-                json_common::dedupe_event(spec, arr, ev.matcher, reporter, &desired_cmd, agent_id);
+            changed |= json_common::dedupe_event(
+                spec,
+                arr,
+                ev.matcher,
+                reporter,
+                &desired_cmd,
+                ev.timeout,
+                agent_id,
+            );
             if !arr
                 .iter()
                 .any(|e| json_common::claims_here(spec, e, ev.matcher, agent_id))
             {
-                let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] });
+                let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": ev.timeout }] });
                 if let Some(m) = ev.matcher {
                     entry["matcher"] = json!(m);
                 }
@@ -641,6 +665,8 @@ mod codex_json {
 
     fn merge(spec: &HookSpec, root: &mut Value, reporter: &str, agent_id: &str) -> Merge {
         let desired_cmd = spec.command.render(reporter, agent_id);
+        #[cfg(windows)]
+        let desired_windows_cmd = codex_windows_command(reporter, agent_id);
         // 键不存在：hooks.json 整个文件本就可从空态建，与 kimi「config.toml 缺失即未登录」
         // 不同是有意的——此处不存在不代表用户手改过畸形内容。
         // 键存在但非 object（手改坏形状）：放弃不写，绝不覆盖用户文件。
@@ -660,12 +686,48 @@ mod codex_json {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
             // codex 的条目无 matcher → 传 None（同事件下我方 hook 只应有一条）。
-            changed |= json_common::dedupe_event(spec, arr, None, reporter, &desired_cmd, agent_id);
+            changed |= json_common::dedupe_event(
+                spec,
+                arr,
+                None,
+                reporter,
+                &desired_cmd,
+                ev.timeout,
+                agent_id,
+            );
+            // Codex 在 Windows 上可能通过 PowerShell 执行 hook；以引号开头的通用 command
+            // 会被当成字符串表达式并以 code 1 失败。官方支持 commandWindows 覆盖，因此显式
+            // 用一个独立 PowerShell 进程执行 reporter，这在 cmd 与 PowerShell 外层都可工作。
+            #[cfg(windows)]
+            for entry in arr.iter_mut() {
+                let Some(handlers) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
+                    continue;
+                };
+                for handler in handlers {
+                    let ours = handler
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|cmd| spec.command.claim(cmd, agent_id).is_some());
+                    if ours
+                        && handler.get("commandWindows").and_then(Value::as_str)
+                            != Some(desired_windows_cmd.as_str())
+                    {
+                        handler["commandWindows"] = json!(desired_windows_cmd.clone());
+                        changed = true;
+                    }
+                }
+            }
             if !arr
                 .iter()
                 .any(|e| json_common::claims_here(spec, e, None, agent_id))
             {
-                arr.push(json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] }));
+                let mut handler =
+                    json!({ "type": "command", "command": desired_cmd, "timeout": ev.timeout });
+                #[cfg(windows)]
+                {
+                    handler["commandWindows"] = json!(desired_windows_cmd.clone());
+                }
+                arr.push(json!({ "hooks": [handler] }));
                 changed = true;
             }
         }
@@ -674,6 +736,14 @@ mod codex_json {
         } else {
             Merge::Unchanged
         }
+    }
+
+    #[cfg(windows)]
+    fn codex_windows_command(reporter: &str, agent_id: &str) -> String {
+        let reporter = reporter.replace('\'', "''");
+        format!(
+            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '{reporter}' --provider {agent_id}\""
+        )
     }
 }
 
@@ -1544,7 +1614,7 @@ max_steps_per_turn = 100
             HookEvent::plain("UserPromptSubmit"),
             HookEvent::plain("PostToolUse"),
             HookEvent::plain("Stop"),
-            HookEvent::plain("PermissionRequest"),
+            HookEvent::plain("PermissionRequest").with_timeout(310),
         ];
         static CJ: HookSpec = HookSpec {
             config_rel: "hooks.json",
@@ -1573,7 +1643,12 @@ max_steps_per_turn = 100
             for ev in EVENTS {
                 let h = &out["hooks"][ev.name][0]["hooks"][0];
                 assert_eq!(h["command"], "\"C:/x/meowo-reporter.exe\" --provider codex");
-                assert_eq!(h["timeout"], 5);
+                #[cfg(windows)]
+                assert_eq!(
+                    h["commandWindows"],
+                    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& 'C:/x/meowo-reporter.exe' --provider codex\""
+                );
+                assert_eq!(h["timeout"], ev.timeout);
             }
             assert_eq!(
                 outcome(&out, "C:/x/meowo-reporter.exe"),
@@ -1599,7 +1674,28 @@ max_steps_per_turn = 100
                 .unwrap()
                 .contains("--provider codex"));
             assert!(out["hooks"]["PermissionRequest"].is_array());
+            assert_eq!(
+                out["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+                310
+            );
             assert_eq!(outcome(&out, dev), EnsureOutcome::Unchanged);
+        }
+
+        #[test]
+        fn upgrades_only_permission_timeout() {
+            let reporter = "C:/x/meowo-reporter.exe";
+            let command = format!("\"{reporter}\" --provider codex");
+            let entry = |timeout| json!({ "hooks": [{ "type": "command", "command": command, "timeout": timeout }] });
+            let v = json!({ "hooks": {
+                "SessionStart": [entry(12)],
+                "PermissionRequest": [entry(5)]
+            }});
+            let out = changed(&v, reporter);
+            assert_eq!(out["hooks"]["SessionStart"][0]["hooks"][0]["timeout"], 12);
+            assert_eq!(
+                out["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+                310
+            );
         }
 
         #[test]

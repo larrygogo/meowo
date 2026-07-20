@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/meowo-store", "crates/meowo-agent", "crates/meowo-reporter", "app/src-tauri"]
+members = ["crates/meowo-store", "crates/meowo-agent", "crates/meowo-protocol", "crates/meowo-reporter", "app/src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]

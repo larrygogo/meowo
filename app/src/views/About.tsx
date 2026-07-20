@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
-import { availableTerminals, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type CardMenuMode, type StickerStyle } from "../api";
+import { availableTerminals, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
@@ -190,6 +190,20 @@ function GeneralSection() {
               { value: "button" as const, label: t.settings.openModeButton },
             ]}
             onChange={(v: TerminalOpenMode) => patch({ terminal_open_mode: v })}
+          />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.sessionOpenIn}</div>
+            <div className="row-desc">{t.settings.sessionOpenInDesc}</div>
+          </div>
+          <Dropdown
+            value={settings?.session_open_in ?? "terminal"}
+            options={[
+              { value: "chat" as const, label: t.settings.sessionOpenInChat },
+              { value: "terminal" as const, label: t.settings.sessionOpenInTerminal },
+            ]}
+            onChange={(v: SessionOpenIn) => patch({ session_open_in: v })}
           />
         </div>
         <div className="row">

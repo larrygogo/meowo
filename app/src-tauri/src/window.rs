@@ -258,6 +258,71 @@ pub(crate) fn open_new_session_window_impl(
     }
 }
 
+/// 打开单例会话对话窗口。再次点击另一张卡片时复用窗口并发事件切换会话。
+#[tauri::command]
+pub(crate) fn open_chat_window(app: tauri::AppHandle, session_id: i64) {
+    std::thread::spawn(move || open_chat_window_impl(&app, session_id));
+}
+
+/// 托盘点击入口：打开最近活跃会话的对话窗口。托盘没有「当前会话」上下文，
+/// 取 last_event_at 最新的未归档会话最贴近「看看现在在跑什么」。
+/// 一条会话都没有（新装/全归档）时回落到设置窗口，避免点了毫无反应。
+pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
+    let app = app.clone();
+    // 查库放子线程：与 open_settings_window 同理由，主线程同步 IO 会阻塞消息泵。
+    std::thread::spawn(move || {
+        let latest = crate::open_store(&crate::db_path())
+            .ok()
+            .and_then(|store| store.latest_session_id().ok().flatten());
+        match latest {
+            Some(session_id) => open_chat_window_impl(&app, session_id),
+            None => open_settings_window(&app),
+        }
+    });
+}
+
+fn open_chat_window_impl(app: &tauri::AppHandle, session_id: i64) {
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app);
+
+    if let Some(w) = app.get_webview_window("chat") {
+        use tauri::Emitter;
+        let _ = w.emit("chat-session-changed", session_id);
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let url = format!("index.html?sessionId={session_id}");
+    let builder = tauri::WebviewWindowBuilder::new(app, "chat", tauri::WebviewUrl::App(url.into()))
+        .title("Meowo · Chat")
+        .inner_size(960.0, 760.0)
+        .min_inner_size(620.0, 480.0)
+        .resizable(true)
+        .decorations(false)
+        .center();
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    match builder.build() {
+        Ok(win) => {
+            let app_handle = app.clone();
+            win.on_window_event(move |e| {
+                if matches!(
+                    e,
+                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                ) {
+                    app_handle
+                        .state::<crate::AppState>()
+                        .ptys
+                        .pass_pending_approvals();
+                    #[cfg(target_os = "macos")]
+                    crate::macos::menubar::settings_window_did_close(&app_handle);
+                }
+            });
+        }
+        Err(e) => eprintln!("创建对话窗口失败: {e}"),
+    }
+}
+
 /// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/置顶/聚焦。
 /// 折叠态的「展开 + 还原正常尺寸」由前端在调用本命令前完成（snap_restore），故这里只按当前尺寸居中。
 #[tauri::command]
@@ -329,6 +394,13 @@ pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
     if let Some(w) = app.get_webview_window("updater") {
         let _ = w.set_title(tr(lang, "window.updater"));
     }
+    if let Some(w) = app.get_webview_window("chat") {
+        let _ = w.set_title(if lang == "zh" {
+            "Meowo · 对话"
+        } else {
+            "Meowo · Chat"
+        });
+    }
 }
 
 /// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。
@@ -345,7 +417,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     builder
         .tooltip("Meowo")
         .menu(&menu)
-        // 左键留给「打开设置」，菜单仅在右键弹出。
+        // 左键留给「打开对话窗口」，菜单仅在右键弹出（设置仍在右键菜单里）。
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "recall" => recall_sticker(app),
@@ -365,7 +437,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                open_settings_window(tray.app_handle());
+                open_latest_chat_window(tray.app_handle());
             }
         })
         .build(app)?;

@@ -53,7 +53,7 @@ pub trait TelemetryCap: Sync {
     }
 
     /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。
-    /// codex/kimi 无——它们的标题走首条 prompt、预览/模型走 stop_outputs，不读 transcript。
+    /// codex/kimi 的 spec 只供结构化对话；标题仍走首条 prompt、预览/模型走 stop_outputs。
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
         None
     }

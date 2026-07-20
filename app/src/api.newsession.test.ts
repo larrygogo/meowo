@@ -30,10 +30,12 @@ describe("new-session api", () => {
     expect(agentName([], "claude")).toBe("claude");
   });
 
-  it("newSession 透传参数", () => {
+  it("newSession 透传参数（含启动选项的 choice id）", () => {
     invokeMock.mockResolvedValue(undefined);
-    newSession("C:/p", "claude", "wt");
-    expect(invokeMock).toHaveBeenCalledWith("new_session", { cwd: "C:/p", provider: "claude", terminal: "wt" });
+    newSession("C:/p", "claude", { model: "opus" }, "wt");
+    expect(invokeMock).toHaveBeenCalledWith("new_session", {
+      cwd: "C:/p", provider: "claude", terminal: "wt", options: { model: "opus" },
+    });
   });
 
   it("checkProviderHooks 传 provider", () => {

@@ -191,6 +191,15 @@ export function CloseIcon() {
   );
 }
 
+export function ChatIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+      <path d="M8 9h8M8 13h5" />
+    </svg>
+  );
+}
+
 export function EmptyIcon({ tab }: { tab: Tab }) {
   const common = {
     width: 28, height: 28, viewBox: "0 0 24 24", fill: "none",

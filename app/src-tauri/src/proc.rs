@@ -180,7 +180,7 @@ pub(crate) fn claude_pids_snapshot() -> std::collections::HashSet<i64> {
 /// 与 [`pid_is_agent`] 判定同源（都按 basename 精确匹配 agent 白名单，防 Windows pid 复用），
 /// 差别只在这里把整张表**物化成集合**：集合可以跨命令共享，`&System` 不行。
 ///
-/// 为什么要能共享：一次界面刷新会并发打好几个后端命令（见 `lib.rs` 的 `agent_pids_cached`），
+/// 为什么要能共享：一次界面刷新会并发打好几个后端命令（见 `session_query` 的快照缓存），
 /// 每个都要判活。各扫各的话，Windows 上就是好几次全进程表枚举，而且两次扫描之间进程可能退出，
 /// 导致角标与列表对不上。
 pub(crate) fn agent_pids_snapshot() -> HashSet<i64> {

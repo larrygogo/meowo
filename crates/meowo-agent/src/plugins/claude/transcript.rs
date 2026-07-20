@@ -5,7 +5,199 @@
 //! 「读一个 JSONL 文件」平白拖着 rusqlite 依赖，claude 专属的路径布局也伪装成了通用的 store API。
 //! 通用部分（`TranscriptInfo` / trait / `TranscriptCache`）见 `crate::transcript`。
 
-use crate::transcript::{TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError};
+#[cfg(test)]
+use crate::transcript::ChatItem;
+use crate::transcript::{
+    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+};
+
+fn text_from_content(value: &serde_json::Value) -> String {
+    if let Some(s) = value.as_str() {
+        return s.to_string();
+    }
+    value
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    part.as_str().map(str::to_string).or_else(|| {
+                        part.get("text")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn compact_json(value: Option<&serde_json::Value>, max: usize) -> String {
+    let mut s = value
+        .map(|v| {
+            if let Some(text) = v.as_str() {
+                text.to_string()
+            } else {
+                v.to_string()
+            }
+        })
+        .unwrap_or_default();
+    if s.chars().count() > max {
+        s = s.chars().take(max).collect::<String>();
+        s.push('…');
+    }
+    s
+}
+
+fn tool_summary(name: &str, input: Option<&serde_json::Value>) -> String {
+    let key = match name {
+        "Bash" => "command",
+        "WebSearch" => "query",
+        "Read" | "Write" | "Edit" => "file_path",
+        _ => "",
+    };
+    if !key.is_empty() {
+        if let Some(s) = input.and_then(|v| v.get(key)).and_then(|v| v.as_str()) {
+            return compact_json(Some(&serde_json::Value::String(s.to_string())), 800);
+        }
+    }
+    compact_json(input, 800)
+}
+
+fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Vec::new();
+    };
+    if v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
+        return Vec::new();
+    }
+    let kind = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    let base_id = v
+        .get("uuid")
+        .or_else(|| v.pointer("/message/id"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("message");
+    let timestamp = v
+        .get("timestamp")
+        .and_then(|x| x.as_str())
+        .map(str::to_string);
+    let content = v.pointer("/message/content");
+    match kind {
+        "user" => {
+            if let Some(text) = content
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                return vec![TranscriptEvent::UserMessage {
+                    id: base_id.to_string(),
+                    timestamp,
+                    text: text.to_string(),
+                }];
+            }
+            content
+                .and_then(|x| x.as_array())
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(
+                    |(i, block)| match block.get("type").and_then(|x| x.as_str()) {
+                        Some("text") => block
+                            .get("text")
+                            .and_then(|x| x.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|text| TranscriptEvent::UserMessage {
+                                id: format!("{base_id}:{i}"),
+                                timestamp: timestamp.clone(),
+                                text: text.to_string(),
+                            }),
+                        Some("tool_result") => {
+                            let text = text_from_content(
+                                block.get("content").unwrap_or(&serde_json::Value::Null),
+                            );
+                            Some(TranscriptEvent::ToolResult {
+                                id: format!("{base_id}:{i}"),
+                                timestamp: timestamp.clone(),
+                                tool_call_id: block
+                                    .get("tool_use_id")
+                                    .and_then(|x| x.as_str())
+                                    .map(str::to_string),
+                                text: compact_json(Some(&serde_json::Value::String(text)), 4000),
+                                is_error: block
+                                    .get("is_error")
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or(false),
+                            })
+                        }
+                        _ => None,
+                    },
+                )
+                .collect()
+        }
+        "assistant" => content
+            .and_then(|x| x.as_array())
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter_map(
+                |(i, block)| match block.get("type").and_then(|x| x.as_str()) {
+                    Some("text") => block
+                        .get("text")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|text| TranscriptEvent::AssistantMessage {
+                            id: format!("{base_id}:{i}"),
+                            timestamp: timestamp.clone(),
+                            text: text.to_string(),
+                        }),
+                    Some("thinking") => block
+                        .get("thinking")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|text| TranscriptEvent::Reasoning {
+                            id: format!("{base_id}:{i}"),
+                            timestamp: timestamp.clone(),
+                            text: text.to_string(),
+                        }),
+                    Some("tool_use") => Some(TranscriptEvent::ToolCall {
+                        id: block
+                            .get("id")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or(base_id)
+                            .to_string(),
+                        timestamp: timestamp.clone(),
+                        name: block
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("Tool")
+                            .to_string(),
+                        summary: tool_summary(
+                            block.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+                            block.get("input"),
+                        ),
+                    }),
+                    _ => None,
+                },
+            )
+            .collect(),
+        "system" if v.get("subtype").and_then(|x| x.as_str()) == Some("compact_boundary") => {
+            vec![TranscriptEvent::Metadata {
+                id: base_id.to_string(),
+                timestamp,
+                kind: "compact".into(),
+            }]
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+fn parse_chat_items(line: &str) -> Vec<ChatItem> {
+    parse_transcript_events(line)
+        .into_iter()
+        .map(ChatItem::from)
+        .collect()
+}
 
 /// 上下文窗口基准（标准 200k）。1M-context 变体无法从 transcript 的 model 字段可靠识别，
 /// 故统一按 200k 估算并封顶 100%；后续若需精确可按 model 调整。
@@ -246,36 +438,77 @@ fn encode_cwd(cwd: &str) -> String {
         .collect()
 }
 
-/// projects 目录。刻意直查 `~/.claude/projects` 而不走变体表的 data_dir：`CLAUDE_CONFIG_DIR`
-/// 只搬走 settings/credentials，transcript 仍落在 home 下的 `.claude`（与 Claude Code 行为一致）。
+/// 默认账号的 projects 目录。
 fn projects_dir() -> Option<std::path::PathBuf> {
     Some(crate::home_dir()?.join(".claude").join("projects"))
+}
+
+/// Meowo 管理的 Claude 账号数据目录。Claude 会把 transcript 一并放进
+/// `CLAUDE_CONFIG_DIR/projects`，所以跨账号查看/恢复时必须把这些目录也纳入候选。
+fn managed_projects_dirs() -> Vec<std::path::PathBuf> {
+    let Some(home) = crate::home_dir() else { return Vec::new() };
+    let root = std::env::var_os("MEOWO_DB")
+        .map(std::path::PathBuf::from)
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| home.join(".meowo"))
+        .join("profiles")
+        .join("claude");
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path().join("projects"))
+        .collect()
 }
 
 /// 根据 cwd + session_id 重建 transcript 路径：
 /// ~/.claude/projects/<encode(cwd)>/<session_id>.jsonl。
 pub fn reconstruct_transcript_path(cwd: &str, session_id: &str) -> Option<std::path::PathBuf> {
-    Some(
-        projects_dir()?
-            .join(encode_cwd(cwd))
-            .join(format!("{session_id}.jsonl")),
-    )
+    let relative = std::path::PathBuf::from(encode_cwd(cwd)).join(format!("{session_id}.jsonl"));
+    let default = projects_dir()?.join(&relative);
+    if default.exists() {
+        return Some(default);
+    }
+    managed_projects_dirs()
+        .into_iter()
+        .map(|projects| projects.join(&relative))
+        .filter(|path| path.exists())
+        .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
+        .or(Some(default))
+}
+
+/// 在指定 Claude 数据目录中按 cwd 构造 transcript 路径。宿主在跨账号恢复前用它把会话
+/// 精确同步到目标 `CLAUDE_CONFIG_DIR`，而不接触该目录里的凭据与设置。
+pub fn transcript_path_in(
+    data_dir: &std::path::Path,
+    cwd: &str,
+    session_id: &str,
+) -> std::path::PathBuf {
+    data_dir
+        .join("projects")
+        .join(encode_cwd(cwd))
+        .join(format!("{session_id}.jsonl"))
 }
 
 /// 不依赖 cwd，直接在 ~/.claude/projects/*/ 下按 `<session_id>.jsonl` 找 transcript。
 /// transcript 文件名即 session_id（全局唯一），对 cwd 缺失/编码不一致都免疫。
 pub fn find_transcript_by_session(session_id: &str) -> Option<std::path::PathBuf> {
-    let projects = projects_dir()?;
     let file = format!("{session_id}.jsonl");
-    for entry in std::fs::read_dir(&projects).ok()?.flatten() {
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            let candidate = entry.path().join(&file);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
+    let mut projects = vec![projects_dir()?];
+    projects.extend(managed_projects_dirs());
+    projects
+        .into_iter()
+        .flat_map(|projects| {
+            std::fs::read_dir(projects)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .map(|entry| entry.path().join(&file))
+                .filter(|candidate| candidate.exists())
+                .collect::<Vec<_>>()
+        })
+        .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
 }
 
 /// 从 transcript JSONL 里读出会话工作目录(cwd)：取第一条带非空 "cwd" 字段的记录。
@@ -327,6 +560,94 @@ fn resolve_path(
     find_transcript_by_session(session_id)
 }
 
+/// runtime 能力清单通常在 transcript 开头；恢复会话后 Claude 也可能在末尾写一份更新清单。
+/// 各读 4 MiB，避免为了几十个 skill 在打开 ChatWindow 时全量扫描数百 MiB 的长会话。
+fn transcript_capability_windows(path: &std::path::Path) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 4 * 1024 * 1024;
+    let Ok(mut file) = std::fs::File::open(path) else { return Vec::new() };
+    let Ok(len) = file.metadata().map(|metadata| metadata.len()) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut head = Vec::new();
+    if file.by_ref().take(WINDOW).read_to_end(&mut head).is_ok() {
+        out.push(String::from_utf8_lossy(&head).into_owned());
+    }
+    if len > WINDOW {
+        let start = len.saturating_sub(WINDOW);
+        if file.seek(SeekFrom::Start(start)).is_ok() {
+            let mut tail_bytes = Vec::new();
+            if file.read_to_end(&mut tail_bytes).is_ok() {
+                let tail = String::from_utf8_lossy(&tail_bytes);
+                // 起点可能落在一条 JSON 中间；丢掉残片，避免把其中的换行误当 JSONL 边界。
+                if let Some(newline) = tail.find('\n') {
+                    out.push(tail[newline + 1..].to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+}
+
+fn skill_listing_from_line(line: &str) -> Option<Vec<crate::SlashCommand>> {
+    if !line.contains("\"skill_listing\"") {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let attachment = value.get("attachment")?;
+    if attachment.get("type").and_then(|kind| kind.as_str()) != Some("skill_listing") {
+        return None;
+    }
+    let content = attachment.get("content").and_then(|content| content.as_str()).unwrap_or("");
+    let content_names: Vec<&str> = content
+        .lines()
+        .filter_map(|line| line.strip_prefix("- ")?.split_once(":"))
+        .map(|(name, _)| name.trim())
+        .collect();
+    let names: Vec<&str> = attachment
+        .get("names")
+        .and_then(|names| names.as_array())
+        .map(|names| names.iter().filter_map(|name| name.as_str()).collect())
+        .unwrap_or(content_names);
+    let commands = names
+        .into_iter()
+        .filter(|name| valid_skill_name(name))
+        .take(256)
+        .map(|name| {
+            let prefix = format!("- {name}:");
+            let description = content.lines().find_map(|line| line.strip_prefix(&prefix)).map(|description| {
+                let description = description.trim();
+                let mut text: String = description.chars().take(240).collect();
+                if description.chars().count() > 240 {
+                    text.push('…');
+                }
+                text
+            });
+            crate::SlashCommand::runtime(format!("/{name}"), description)
+        })
+        .collect();
+    Some(commands)
+}
+
+fn runtime_skill_commands(path: &std::path::Path) -> Option<Vec<crate::SlashCommand>> {
+    let mut latest = None;
+    for window in transcript_capability_windows(path) {
+        for line in window.lines() {
+            if let Some(commands) = skill_listing_from_line(line) {
+                latest = Some(commands);
+            }
+        }
+    }
+    latest
+}
+
 // ═══ TranscriptSpec 实现 ═══
 
 /// Claude Code 的 transcript 规格。
@@ -338,6 +659,34 @@ pub static CLAUDE_TRANSCRIPT: ClaudeTranscript = ClaudeTranscript;
 impl TranscriptSpec for ClaudeTranscript {
     fn new_parser(&self) -> Box<dyn TranscriptParser> {
         Box::new(ClaudeParser(ParseState::default()))
+    }
+
+    fn supports_chat(&self) -> bool {
+        true
+    }
+
+    fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
+        parse_transcript_events(line)
+    }
+
+    fn agent_modes_from_line(&self, line: &str) -> Vec<crate::AgentMode> {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return Vec::new();
+        };
+        value
+            .get("permissionMode")
+            .and_then(|mode| mode.as_str())
+            .filter(|mode| !mode.trim().is_empty())
+            .map(|mode| vec![crate::AgentMode::new("permission", mode)])
+            .unwrap_or_default()
+    }
+
+    fn supports_runtime_slash_commands(&self) -> bool {
+        true
+    }
+
+    fn runtime_slash_commands(&self, path: &std::path::Path) -> Option<Vec<crate::SlashCommand>> {
+        runtime_skill_commands(path)
     }
 
     fn resolve_transcript_path(
@@ -398,6 +747,73 @@ impl TranscriptSpec for ClaudeTranscript {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_permission_mode_from_user_and_mode_records() {
+        assert_eq!(
+            CLAUDE_TRANSCRIPT.agent_modes_from_line(
+                r#"{"type":"user","permissionMode":"acceptEdits","message":{"content":"hi"}}"#,
+            ),
+            vec![crate::AgentMode::new("permission", "acceptEdits")]
+        );
+        assert_eq!(
+            CLAUDE_TRANSCRIPT.agent_modes_from_line(
+                r#"{"type":"permission-mode","permissionMode":"plan"}"#,
+            ),
+            vec![crate::AgentMode::new("permission", "plan")]
+        );
+        assert_eq!(
+            CLAUDE_TRANSCRIPT.agent_modes_from_line(
+                r#"{"type":"user","message":{"permissionMode":"nested"}}"#,
+            ),
+            Vec::<crate::AgentMode>::new(),
+            "只采信 Claude transcript 的顶层权威字段"
+        );
+    }
+
+    #[test]
+    fn chat_parser_extracts_text_tools_and_skips_sidechain() {
+        let assistant = r#"{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:00Z","message":{"content":[{"type":"thinking","thinking":"先检查项目"},{"type":"text","text":"我来处理"},{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"cargo test"}}]}}"#;
+        let items = parse_chat_items(assistant);
+        assert!(matches!(&items[0], ChatItem::Reasoning { text, .. } if text == "先检查项目"));
+        assert!(matches!(&items[1], ChatItem::AssistantText { text, .. } if text == "我来处理"));
+        assert!(
+            matches!(&items[2], ChatItem::ToolUse { name, summary, .. } if name == "Bash" && summary == "cargo test")
+        );
+
+        let result = r#"{"type":"user","uuid":"u1","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok","is_error":false}]}}"#;
+        assert!(
+            matches!(&parse_chat_items(result)[0], ChatItem::ToolResult { tool_use_id: Some(id), text, is_error: false, .. } if id == "tool-1" && text == "ok")
+        );
+
+        let sidechain = r#"{"type":"assistant","uuid":"sub","isSidechain":true,"message":{"content":[{"type":"text","text":"hidden"}]}}"#;
+        assert!(parse_chat_items(sidechain).is_empty());
+    }
+
+    #[test]
+    fn chat_delta_waits_for_complete_line_and_resumes_from_offset() {
+        use std::io::Write;
+        let path = write_tmp(
+            "chat-delta",
+            r#"{"type":"user","uuid":"u1","message":{"content":"hello"}}"#,
+        );
+        let first = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, 0, None);
+        assert!(first.items.is_empty());
+        assert_eq!(first.offset, 0);
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file).unwrap();
+        writeln!(file, r#"{{"type":"assistant","uuid":"a1","message":{{"content":[{{"type":"text","text":"world"}}]}}}}"#).unwrap();
+        let second = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, first.offset, first.mtime);
+        assert_eq!(second.items.len(), 2);
+        let third = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, second.offset, second.mtime);
+        assert!(third.items.is_empty());
+        assert_eq!(third.offset, second.offset);
+        std::fs::remove_file(path).ok();
+    }
 
     #[test]
     fn classify_matches_stuck_errors() {
@@ -724,6 +1140,64 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         assert_eq!(corrected.as_deref(), Some(r"C:\real\proj"));
         assert_eq!(verified_ok.as_deref(), Some(r"C:\real\proj"));
+    }
+
+    #[test]
+    fn transcript_lookup_includes_managed_claude_profiles() {
+        let sid = format!("profile-shared-{}", std::process::id());
+        let home = std::env::temp_dir().join(format!("cc_profile_home_{}", std::process::id()));
+        let transcript = home
+            .join(".meowo/profiles/claude/work/projects/C--shared-project")
+            .join(format!("{sid}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(
+            &transcript,
+            format!(r#"{{"type":"user","sessionId":"{sid}","cwd":"C:\\shared\\project"}}"#),
+        )
+        .unwrap();
+
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        std::env::set_var("USERPROFILE", &home);
+        assert_eq!(find_transcript_by_session(&sid).as_deref(), Some(transcript.as_path()));
+        assert_eq!(
+            reconstruct_transcript_path(r"C:\shared\project", &sid).as_deref(),
+            Some(transcript.as_path())
+        );
+        match old_home {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discovers_runtime_slash_commands_from_claudes_authoritative_skill_listing() {
+        let path = std::env::temp_dir().join(format!(
+            "claude-runtime-skills-{}.jsonl",
+            std::process::id()
+        ));
+        let line = serde_json::json!({
+            "type": "attachment",
+            "attachment": {
+                "type": "skill_listing",
+                "content": "- code-review: Review the current diff\n- frontend-design:frontend-design: Design guidance\n- stale-skill: Must not be shown",
+                // names 是 Claude 对**本会话实际启用项**的权威清单；content 可能含兼容说明，
+                // 不能反过来把未启用项猜成命令。
+                "names": ["code-review", "frontend-design:frontend-design"]
+            }
+        });
+        std::fs::write(&path, format!("{}\n", line)).unwrap();
+        let commands = CLAUDE_TRANSCRIPT.runtime_slash_commands(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(
+            commands.iter().map(|command| command.name.as_str()).collect::<Vec<_>>(),
+            vec!["/code-review", "/frontend-design:frontend-design"]
+        );
+        assert_eq!(commands[0].description.as_deref(), Some("Review the current diff"));
+        assert_eq!(commands[1].description.as_deref(), Some("Design guidance"));
+        assert!(commands.iter().all(|command| command.source == crate::SlashSource::Builtin));
     }
 
     /// 非 claude agent 走默认实现：直接采信 DB cwd，不去翻 ~/.claude/projects。

@@ -2,12 +2,13 @@
 //! 这里是「后台线程层」：所有向前端 board-changed / 通知的推送都收敛在此。
 
 use crate::proc::pid_is_agent;
+use crate::session_query::RESUME_GRACE_MS;
 use crate::settings::{load_settings, tr, ui_lang};
 #[cfg(target_os = "windows")]
 use crate::terminal::focus_session_terminal;
 #[cfg(target_os = "windows")]
 use crate::window::update_tray_tooltip;
-use crate::{agent_transcript, now_ms, RESUME_GRACE_MS};
+use crate::{agent_transcript, now_ms};
 use meowo_store::Store;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
@@ -420,21 +421,24 @@ pub(crate) fn spawn_liveness_watch(
                     let sid = s.session.cc_session_id.clone();
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
-                    // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
-                    // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-                    let meowo_agent::TranscriptInfo { title, error, .. } =
-                        agent_transcript(&s.provider)
-                            .and_then(|spec| {
-                                spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
-                                    .and_then(|p| p.to_str().map(str::to_string))
-                                    .map(|path| {
-                                        // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
-                                        meowo_agent::TranscriptCache::analyze_shared(
-                                            &tx_cache, spec, &path,
-                                        )
-                                    })
-                            })
-                            .unwrap_or_default();
+                    let meowo_agent::TranscriptInfo {
+                        mut title, error, ..
+                    } = agent_transcript(&s.provider)
+                        .filter(|spec| spec.supports_analysis())
+                        .and_then(|spec| {
+                            spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
+                                .and_then(|p| p.to_str().map(str::to_string))
+                                .map(|path| {
+                                    // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
+                                    meowo_agent::TranscriptCache::analyze_shared(
+                                        &tx_cache, spec, &path,
+                                    )
+                                })
+                        })
+                        .unwrap_or_default();
+                    if !crate::agent_resolves_transcript_title(&s.provider) {
+                        title = None;
+                    }
                     // 会话标题：通知正文用，也作点击聚焦时匹配 WT 标签页的标题。transcript 标题优先，否则 DB 标题。
                     let display_title = title
                         .filter(|t| !t.trim().is_empty())

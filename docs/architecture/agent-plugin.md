@@ -183,6 +183,31 @@ claude 的六处 `#[cfg(target_os = "macos")]` 收敛成一次 `ports.keychain.a
 `useAgents()` hook 把名单取用收成一处。顺带发现 Sticker 自己又拉了一遍安装列表(`availableAgents()`),
 与账号页重复 —— `list_agents()` 一次带回 `installed`,那个请求整个删掉了。
 
+对话页的斜杠命令补全与快速切模型预设后来也从前端硬编码表迁走,但**没有**进静态描述符,而是
+按会话查询的动态接口 `agent_chat_ui(provider, cwd)`(见 `chat_ui.rs`):插件声明的内置表
+(`slash_commands()` / `model_presets()`,按变体) ∪ 从安装实况**发现**的自定义命令
+(`CustomCommandSpec`:claude 的 `commands/*.md`、codex 的 `prompts/`、gemini 的
+`commands/**.toml`、opencode 的 `command/`,含项目级目录),外加宿主探测的 CLI 版本
+(`--version`,进程级缓存)。装了新命令、换了版本,下一次打开会话就反映。
+
+旧的前端硬编码表给未知 agent 落一份通用 fallback —— 而 fallback 恰恰撒谎:gemini 的对应命令是
+`/stats`/`/compress` 而非 `/status`/`/compact`,opencode 是 `/models` 而非 `/model`。现在未知
+agent 得到的是「不补全、不给菜单」的诚实降级;模型预设只有 claude 声明(唯一 `/model` 接受
+内联参数的 CLI,别家是交互式菜单,在对话页发出去用户什么也看不见)。内置命令的描述文案仍留
+前端 i18n(翻译是前端资产);自定义命令的描述从命令文件头里读(那是用户写的数据,不是翻译)。
+
+「能力由安装的 CLI 决定」的边界也如实记下:五家 CLI 都没有「自述能力」的接口(没有任何
+`list-commands`),内置表这份知识只能由插件整理,可动态化的是**选表与发现**;版本已随
+`ChatUiContext` 传入插件,真出现版本分叉时加分支即可,不必改接口。
+
+新建会话的**启动选项**走同一条路(`launch_options.rs`):插件声明「选择 → CLI flag」的映射表
+(claude 的 `--model`/`--permission-mode`,codex 的 `--full-auto`/`--sandbox`,gemini 的
+`--yolo`/`--approval-mode`),经 descriptor 下发,面板照表渲染。前端只回传 choice id,
+`resolve_launch_args` 按声明表翻译成 argv——未知 option 被忽略、未知 choice 落默认,
+**用户输入在任何分支下都进不了命令行**。默认项一律不传 flag(「默认」的诚实含义是「行为由
+CLI 自己决定」,不替它猜);模型名随版本频繁更迭的 codex/gemini **不声明**模型栏,kimi/opencode
+未调研到稳定 flag、如实不声明——给一个点了会启动失败的下拉,比不给更糟。
+
 `--cc-claude` 变量本身**保留**:它是 claude 的品牌色资产。拔掉的是 `.stk-agent { color: var(--cc-claude) }`
 这条规则——它给**所有** agent 的徽标容器抹上 claude 的橙,只因为 kimi/codex 恰好用固定色、不吃 `color`。
 任何新 agent 只要用 `currentColor` 绘制徽标就会被染成橙色。改由 `tintStyle(id, connected)` 按 agent 注入,

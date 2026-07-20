@@ -1,10 +1,12 @@
 mod account;
+mod chat;
 #[cfg(any(target_os = "macos", test))]
 mod app_bundle;
 #[cfg(target_os = "windows")]
 mod envpath;
 mod fsutil;
 mod ports;
+mod pty;
 mod relay;
 // pub：集成测试 `tests/proxy_apply.rs` 要在**独立进程**里跑端到端写入（它会设 CLAUDE_CONFIG_DIR /
 // MEOWO_DB 这类进程级环境变量，与 lib 单测并行跑会互相串味）。
@@ -20,8 +22,11 @@ mod wezterm;
 // 由原 lib.rs 巨石按职责拆出的功能模块（详见各文件头部说明）。
 // lib.rs 现只保留：托管状态、数据查询命令、会话读写命令、agent 解析 helper 与 run() 装配。
 mod install;
+mod managed_terminal;
 mod proc;
 mod profile;
+mod session_query;
+mod session_command;
 mod terminal;
 mod watch;
 mod window;
@@ -31,18 +36,34 @@ use install::{
     add_agent_to_user_path, agent_path_gap, cancel_login, check_provider_hooks, install_agent,
     login_agent, logout_agent, repair_provider_hooks,
 };
+use chat::get_chat_history;
+use managed_terminal::{
+    get_pending_approval, managed_terminal_binding, managed_terminal_snapshot,
+    open_attached_terminal, register_approval_consumer, resize_managed_terminal,
+    resolve_pending_approval, start_managed_terminal, stop_managed_terminal,
+    unregister_approval_consumer, write_managed_terminal,
+};
+use session_query::{
+    get_live_sessions_counts, get_live_sessions_page, get_overview, get_project_tasks, recent_cwds,
+};
+use session_command::{rename_session, set_archived, set_session_note};
+#[cfg(test)]
+use session_command::is_safe_id;
+#[cfg(test)]
+use session_query::{
+    live_sessions_blocking, session_connected, tab_class, PageReq, RESUME_GRACE_MS,
+};
 use terminal::{
     focus_session, new_session, open_project_dir, restart_session_supported, resume_session,
+    takeover_managed_terminal,
 };
 use window::{
-    open_new_session_window, open_onboarding, open_settings, open_update_window, recall_center,
+    open_chat_window, open_new_session_window, open_onboarding, open_settings, open_update_window,
+    recall_center,
 };
-// 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流，见该函数），
-// 由 agent_pids_cached 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
-use watch::{
-    emit_board_changed, spawn_board_notifier, spawn_db_watcher, spawn_first_import,
-    spawn_liveness_watch,
-};
+// 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流），
+// 由 session_query 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
+use watch::{spawn_board_notifier, spawn_db_watcher, spawn_first_import, spawn_liveness_watch};
 #[cfg(not(target_os = "macos"))]
 use window::setup_tray;
 // settings::set_settings 切语言后调用（全平台）。
@@ -64,7 +85,7 @@ pub(crate) use window::open_onboarding_window;
 
 use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_relay_secret};
 use settings::{
-    get_autostart, get_effective_proxy, get_settings, mark_onboarding_seen, open_url,
+    get_autostart, get_effective_proxy, get_settings, mark_onboarding_seen, open_link, open_url,
     set_autostart, set_settings,
 };
 use snap::{
@@ -76,7 +97,7 @@ use snap::pull_on_screen;
 #[cfg(not(target_os = "macos"))]
 use snap::{clamp_xy_to_work, edge_for_rect, Rect, SnapPayload, SNAP_THRESHOLD};
 
-use meowo_store::{LiveSession, ProjectOverview, Store, TaskCard};
+use meowo_store::Store;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -98,51 +119,23 @@ struct AppState {
     db_path: PathBuf,
     /// transcript 增量解析缓存（与后台轮询线程共享 Arc）：避免每次刷新重读整文件。
     tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>>,
-    /// 进程表快照的短命缓存：`(采样时刻, 活着的 agent pid 集合)`。见 [`agent_pids_cached`]。
-    liveness: Mutex<Option<(i64, Arc<std::collections::HashSet<i64>>)>>,
+    /// 「等长重写」检测所需的 mtime 记录。
+    chat_mtimes: Arc<Mutex<chat::ChatMtimes>>,
+    /// 会话列表和角标共享的短命进程表快照。
+    process_snapshots: session_query::ProcessSnapshotCache,
     /// 最近一次检查得到的更新包；下载命令复用它，确保检查与下载使用同一份代理策略。
     update: Mutex<Option<tauri_plugin_updater::Update>>,
     /// 已下载且通过 updater 签名校验的安装包。只驻留内存，退出应用后重新下载。
     downloaded_update: Mutex<Option<DownloadedUpdate>>,
     /// 防止主窗自动下载与更新窗口手动下载并发执行。
     update_downloading: AtomicBool,
+    /// 由 Meowo 持有的交互式 PTY。对话窗口与后续 attach 客户端共享同一 broker。
+    ptys: pty::PtyBroker,
 }
 
 struct DownloadedUpdate {
     update: tauri_plugin_updater::Update,
     bytes: Vec<u8>,
-}
-
-/// 进程表快照的存活时长。
-///
-/// 一次界面刷新会并发打好几个后端命令——`App.tsx` 里两处 `Promise.all`：`[counts, page]` 与
-/// 缩略条的 `[page(running), page(waiting)]`，合计 4 个命令，每个都要判活。各扫各的话：
-///
-/// 1. Windows 上就是 4 次全进程表枚举（sysinfo 要遍历所有进程），纯浪费；
-/// 2. 更要命的是**两次扫描之间进程可能退出**——于是角标说「待交互 3」、列表却只有 2 条，
-///    修掉一个不一致又造出一个新的。
-///
-/// 故一轮刷新内共用同一份快照。TTL 取得比刷新冷却（前端 `REFRESH_THROTTLE_MS` = 400ms）短，
-/// 既能把一轮的并发命令合并成一次扫描，又不会让「终端关掉了、卡片还显示连着」肉眼可察。
-const LIVENESS_TTL_MS: i64 = 300;
-
-/// 活着的 agent pid 集合，TTL 内跨命令复用同一份快照。
-///
-/// 判定 connected 的**唯一进程事实源**：列表与角标计数都从这里取，于是两者必然看到同一个世界，
-/// 不会因为各扫一次进程表而给出对不上的数字。
-///
-/// 持锁扫描是有意的：并发到达的命令在此排队，复用第一个扫出来的结果，而不是各扫一次。
-fn agent_pids_cached(state: &AppState) -> Arc<std::collections::HashSet<i64>> {
-    let now = now_ms();
-    let mut slot = state.liveness.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((at, set)) = slot.as_ref() {
-        if now.saturating_sub(*at) < LIVENESS_TTL_MS {
-            return set.clone();
-        }
-    }
-    let set = Arc::new(crate::proc::agent_pids_snapshot());
-    *slot = Some((now, set.clone()));
-    set
 }
 
 #[derive(serde::Serialize)]
@@ -361,344 +354,8 @@ pub(crate) fn migrate_legacy_data() {
     }
 }
 
-fn open_store(path: &PathBuf) -> Result<Store, String> {
+fn open_store(path: &std::path::Path) -> Result<Store, String> {
     Store::open(path).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn get_overview(state: State<'_, AppState>) -> Result<Vec<ProjectOverview>, String> {
-    // 与 get_live_sessions 一致：SQLite I/O 放 blocking 线程池，不占主线程事件循环。
-    let db_path = state.db_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        open_store(&db_path)?.overview().map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// 「新建会话」面板的最近目录（去重+倒序）。
-#[tauri::command]
-async fn recent_cwds(state: State<'_, AppState>, limit: usize) -> Result<Vec<String>, String> {
-    let db_path = state.db_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        open_store(&db_path)?
-            .recent_cwds(limit)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn get_project_tasks(
-    state: State<'_, AppState>,
-    project_id: i64,
-) -> Result<Vec<TaskCard>, String> {
-    let db_path = state.db_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        open_store(&db_path)?
-            .project_tasks(project_id)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[derive(serde::Serialize)]
-struct LiveItem {
-    #[serde(flatten)]
-    inner: LiveSession,
-    connected: bool,
-    errored: bool,
-    error_label: Option<String>,
-    error_raw: Option<String>,
-    // 最近一条 AI 正文的轻推预览（清洗+截断），卡片 hover 速览用。
-    preview: Option<String>,
-    // 注：context_pct / context_window 来自 inner(LiveSession)，由 statusline 写库、flatten 输出。
-}
-
-/// tab 角标计数。`total`/`archived` 纯 SQL 数得出；`running`/`waiting` 不行——它们的语义含
-/// 「此刻还连着」，要查进程表，SQL 看不见（详见 `Store::live_sessions_totals`）。
-///
-/// 故这里用与**列表同一套判定、同一份进程快照**（`agent_pids_cached` + `tab_class`）现算，
-/// 保证角标数字与列表条数自洽：否则角标写着「待交互 3」、点进去列表只有 2 条。
-#[tauri::command]
-async fn get_live_sessions_counts(
-    state: State<'_, AppState>,
-) -> Result<meowo_store::query::LiveSessionCounts, String> {
-    let db_path = state.db_path.clone();
-    // 快照在**进入 blocking 池之前**取：与并发的 page 命令共用同一份（TTL 内），
-    // 于是两个数字必然出自同一个世界。
-    let alive = agent_pids_cached(&state);
-    tauri::async_runtime::spawn_blocking(move || {
-        let store = open_store(&db_path)?;
-        let (total, archived) = store.live_sessions_totals().map_err(|e| e.to_string())?;
-        let candidates = store.live_count_candidates().map_err(|e| e.to_string())?;
-
-        let now = now_ms();
-        let (mut running, mut waiting) = (0i64, 0i64);
-        for c in candidates {
-            let pid = c.pid.unwrap_or(0);
-            let connected = session_connected(
-                &c.status,
-                c.pid,
-                pid > 0 && alive.contains(&pid),
-                c.last_event_at,
-                now,
-            );
-            match tab_class(connected, &c.status, c.pending_review.as_deref()) {
-                Some("waiting") => waiting += 1,
-                Some("running") => running += 1,
-                _ => {}
-            }
-        }
-        Ok(meowo_store::query::LiveSessionCounts {
-            total,
-            running,
-            waiting,
-            archived,
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn get_live_sessions_page(
-    state: State<'_, AppState>,
-    filter: String,
-    search: Option<String>,
-    before_last_event_at: Option<i64>,
-    before_id: Option<i64>,
-    limit: usize,
-) -> Result<Vec<LiveItem>, String> {
-    // 重逻辑（SQLite、transcript 解析）放 blocking 线程池，不占主线程事件循环。
-    let db_path = state.db_path.clone();
-    let tx_cache = state.tx_cache.clone();
-    // 与 counts 命令共用同一份进程快照（TTL 内只扫一次表）。
-    let alive = agent_pids_cached(&state);
-    let filter = if ["all", "running", "waiting", "archived"].contains(&filter.as_str()) {
-        filter
-    } else {
-        "all".into()
-    };
-    tauri::async_runtime::spawn_blocking(move || {
-        let page = PageReq {
-            before_last_event_at,
-            before_id,
-            limit,
-        };
-        live_sessions_blocking(
-            &db_path,
-            &tx_cache,
-            &alive,
-            &filter,
-            search.as_deref(),
-            page,
-        )
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// 看板 resume 后「乐观连接」的宽限期(ms)。pid 未知(resume 清空待认领)的会话仅在此窗口内显示已连接，
-/// 给 codex 这类「resume 不发 hook、要到首条消息才触发」的 agent 留出「启动 + 用户发首条消息」的窗口；
-/// 超时仍无 hook 认领真 pid 则回落未连接——避免没真正起来的会话(终端没开/被秒关)长期假连接。
-/// 同一阈值也驱动 spawn_liveness_watch 里的 end_orphaned_idle 兜底收尾（见该处调用）：
-/// 若只改「已连接」显示而不收尾 DB 的 status，会话会长期停在错误的运行中/待交互 tab 里——
-/// 卡片已显示断开、tab 分类却对不上（如 kimi 卸载后 resume 失败：终端进程本身起来了，
-/// spawn_in_terminal 判定为成功、不触发失败回滚，但 kimi 从未真正启动、永远不会有 hook 认领 pid）。
-const RESUME_GRACE_MS: i64 = 120_000;
-
-/// 卡片「已连接」判定（纯函数，便于单测）：
-/// - 已结束 → 断开。
-/// - pid 是存活 agent 进程 → 连接（严格校验防 Windows pid 复用，旧 pid 被 esbuild 等占用误判）。
-/// - 否则（pid 未知，或 pid 已认领但此刻没校验成存活 agent）→ 只要 last_event_at 距 now 在
-///   RESUME_GRACE_MS 内就乐观连接，否则断开。宽限**不再以 pid 是否为空为门槛**，覆盖两种「刚活着」：
-///   一是看板 resume 清空 pid、等 hook 认领；二是新建会话在 SessionStart 已认领 pid
-///   （create_session→set_session_pid），但 app 端进程快照尚未收录这个刚 spawn 的 pid → pid_alive
-///   一时为 false。旧逻辑用 `pid.is_none()` 挡住宽限，导致新卡一诞生就被判「断开」、被连接中优先的
-///   排序拍到列表最底部（一建好就沉底）。
-///   pid 复用误判的风险由「近期活动」本身兜底：被复用旧 pid 的僵尸会话早已不发事件、last_event_at
-///   老旧，落不进宽限窗；真复用又恰好近期活动属极窄边界，且 2 分钟后 last_event_at 不再续、自然沉底。
-fn session_connected(
-    status: &str,
-    _pid: Option<i64>,
-    pid_alive: bool,
-    last_event_at: i64,
-    now: i64,
-) -> bool {
-    if status == "ended" {
-        return false;
-    }
-    if pid_alive {
-        return true;
-    }
-    // pid 已认领但没校验成存活时也走这里：不看 pid 是否为空，仅凭近期活动乐观判连接。
-    now.saturating_sub(last_event_at) < RESUME_GRACE_MS
-}
-
-/// 该会话此刻属于哪个 tab 分类。**唯一定义处**——列表过滤与角标计数都从这里取答案，
-/// 免得两边各写一份 `status == "waiting" || pending_review.is_some()` 而慢慢长歪。
-///
-/// 断开的会话既不「运行中」也不「待交互」：进程都没了，催用户去交互毫无意义（点进去只是个
-/// 历史会话），显示成在跑更是假的。它们只作为历史留在「全部」里。
-fn tab_class(connected: bool, status: &str, pending_review: Option<&str>) -> Option<&'static str> {
-    if !connected {
-        return None;
-    }
-    if status == "waiting" || pending_review.is_some() {
-        return Some("waiting");
-    }
-    if status == "running" {
-        return Some("running");
-    }
-    None
-}
-
-/// 一页请求：游标（上一页末尾的 `(last_event_at, id)`，None = 首页）+ 页大小。
-/// 三者本就是一组，打包传递——顺带让 live_sessions_blocking 的参数不至于多到看不清。
-struct PageReq {
-    before_last_event_at: Option<i64>,
-    before_id: Option<i64>,
-    limit: usize,
-}
-
-fn live_sessions_blocking(
-    db_path: &PathBuf,
-    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
-    alive: &std::collections::HashSet<i64>,
-    filter: &str,
-    search: Option<&str>,
-    page: PageReq,
-) -> Result<Vec<LiveItem>, String> {
-    if page.limit == 0 {
-        return Ok(Vec::new());
-    }
-    let store = open_store(db_path)?;
-    // connected 校验：用调用方传进来的进程快照（与角标计数是同一份，见 agent_pids_cached）。
-    let is_claude = |pid: i64| pid > 0 && alive.contains(&pid);
-
-    // running/waiting 的 connected 只能在 SQL 之后按进程快照判定。不能只取一页 SQL 再过滤：
-    // 断开候选会占掉 LIMIT，令返回页不足，前端误判到底并永久漏掉后面的真实连接会话。
-    // 这两类因此按 SQL 游标持续取批次，直到凑满一页有效项或底层结果真正耗尽。
-    // 标题解析要 read_to_string 整个 JSONL（可达数 MB）；走增量缓存后后续刷新接近 0 成本，
-    // 首次加载即使会话较多也能接受——前端用虚拟列表消化，不再做 20 条截断。
-    let now = now_ms();
-    let connectivity_filtered = matches!(filter, "waiting" | "running");
-    let batch_limit = if connectivity_filtered {
-        page.limit.max(100)
-    } else {
-        page.limit
-    };
-    let mut cursor_ts = page.before_last_event_at;
-    let mut cursor_id = page.before_id;
-    let mut ranked: Vec<(LiveSession, bool)> = Vec::new();
-    loop {
-        let sessions = store
-            .live_sessions(Some(filter), search, cursor_ts, cursor_id, batch_limit)
-            .map_err(|e| e.to_string())?;
-        let raw_len = sessions.len();
-        let next_cursor = sessions
-            .last()
-            .map(|s| (s.session.last_event_at, s.session.id));
-        for s in sessions {
-            // 已结束=断开；pid 是存活 agent=连接(防 pid 复用)；pid 未知=仅 resume 宽限期内乐观连接。
-            let connected = session_connected(
-                &s.session.status,
-                s.pid,
-                is_claude(s.pid.unwrap_or(0)),
-                s.session.last_event_at,
-                now,
-            );
-            if !connectivity_filtered || connected {
-                ranked.push((s, connected));
-                if connectivity_filtered && ranked.len() >= page.limit {
-                    break;
-                }
-            }
-        }
-        if !connectivity_filtered
-            || ranked.len() >= page.limit
-            || raw_len < batch_limit
-            || next_cursor.is_none()
-        {
-            break;
-        }
-        let (ts, id) = next_cursor.unwrap();
-        cursor_ts = Some(ts);
-        cursor_id = Some(id);
-    }
-    // 连接中优先，其次最近活跃。live_sessions() 已按 last_event_at DESC 返回，
-    // 稳定排序按 connected 分组即保留组内的时间序。
-    ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
-
-    // 逐条解析标题并过滤，不再做 20 条截断。连接中的会话排在最前，
-    // 它们（正在活跃、文件确实在变）优先拿到实时标题；断开的会话继续解析并全部返回。
-    let mut items: Vec<LiveItem> = Vec::with_capacity(ranked.len());
-    for (mut s, connected) in ranked {
-        // 一次读 transcript 拿标题与错误（断开/历史会话不触发 hook，DB 可能是旧值）。
-        // 走增量缓存：只解析新追加的行，避免每轮重读整文件（大 transcript 可达数百 ms，会拖慢整窗）。
-        // 上下文百分比不在这里算——它由 statusline 写库、随 LiveSession flatten 输出。
-        let mut error_label: Option<String> = None;
-        let mut error_raw: Option<String> = None;
-        let mut preview: Option<String> = None;
-        // 注：此处仅按 transcript() 是否存在解析；下方对 info.title 的覆盖不再单独 gate
-        // resolves_transcript_title。当前只有 claude 有 spec（且 resolves_transcript_title=true），
-        // codex/kimi transcript()=None 不进此分支，故零影响。将来若引入「有 spec 但标题走首条
-        // prompt」的 provider，需回到这里与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-        // analyze_shared：文件 IO 在缓存锁外进行，大 transcript 首读（数百 ms）不会把
-        // liveness 线程/本函数互相阻塞在同一把锁上。
-        let info = agent_transcript(&s.provider).and_then(|spec| {
-            spec.resolve_transcript_path(None, s.cwd.as_deref(), &s.session.cc_session_id)
-                .and_then(|p| p.to_str().map(str::to_string))
-                .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
-        });
-        if let Some(info) = info {
-            if let Some(t) = info.title {
-                s.task_title = t;
-            }
-            if let Some(e) = info.error {
-                error_label = Some(e.label);
-                error_raw = Some(e.raw);
-            }
-            preview = info.preview;
-        }
-        // 清噪声：过滤 ping 连通性测试 + 未命名无 todo 已断开的旧残留。
-        let t = s.task_title.trim();
-        if t.eq_ignore_ascii_case("ping") {
-            continue;
-        }
-        let unnamed = t.is_empty() || t == "(未命名会话)";
-        if !connected && unnamed && s.todos.is_empty() {
-            continue;
-        }
-        // 「运行中」「待交互」只收此刻还连着的会话。SQL 层筛不掉断开的（connected 要查进程表，
-        // 是 SQL 之后才算出来的），故在此补上——否则进程早已死掉的会话会挂在「待交互」里催人，
-        // 点进去却只是个断开的历史会话。生命周期边界现已清 pending_review，但旧数据库仍可能
-        // 带历史残留，查询层继续做防御性过滤。
-        if matches!(filter, "waiting" | "running") && !connected {
-            continue;
-        }
-        items.push(LiveItem {
-            inner: s,
-            connected,
-            errored: error_label.is_some(),
-            error_label,
-            error_raw,
-            preview,
-        });
-    }
-    Ok(items)
-}
-
-/// 可安全作为命令参数的会话 id：非空、≤128、仅 `[A-Za-z0-9_-]`（无引号/分号/空格等 shell/wt 元字符，
-/// 也无 `/`\`.` 杜绝路径穿越）。兼容 claude 的 UUID 与 kimi 的 `session_<uuid>`。resume 用此宽松校验。纯函数。
-fn is_safe_id(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 128
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// 前端/DB 传来的 provider 串 → agent 身份。**未知 id → `None`**，绝不冒名成默认 agent：
@@ -709,93 +366,22 @@ fn agent_id(provider: &str) -> Option<meowo_agent::AgentId> {
 }
 
 /// 该 provider 的 transcript 规格（未知 agent / 无遥测能力 / 不读 transcript → None）。
-/// 只有 claude 有：codex/kimi 的标题走首条 prompt、预览与模型走 Stop hook。
+/// claude/codex/kimi 都可提供；是否从中取标题由独立 capability 决定。
 fn agent_transcript(provider: &str) -> Option<&'static dyn meowo_agent::TranscriptSpec> {
     meowo_agent::resolve(Some(provider))?
         .telemetry()?
         .transcript()
 }
 
+fn agent_resolves_transcript_title(provider: &str) -> bool {
+    meowo_agent::resolve(Some(provider))
+        .and_then(|agent| agent.telemetry())
+        .is_some_and(|telemetry| telemetry.resolves_transcript_title())
+}
+
 /// 某 agent 在本机的安装实况。直接走插件注册表——不再按 id 分支到各自的解析入口。
 fn install_for(id: meowo_agent::AgentId) -> Option<meowo_agent::Installation> {
     meowo_agent::by_id(id.as_str())?.resolve()
-}
-
-/// 在贴纸上重命名会话：把新名字落到该 agent 自己的持久层（claude 写 transcript custom-title、
-/// kimi 写 session state.json 的 title+isCustomTitle，见各 agent 的 write_rename），并同步更新 DB
-/// 标题让卡片/总览即时一致。agent 侧失败（找不到 transcript/state.json）不阻断 DB 更新——卡片仍
-/// 显示新名，仅 agent 自身列表可能不同步。
-///
-/// 安全：session_id 用 is_safe_id 校验（仅 [A-Za-z0-9_-]，杜绝注入与路径穿越，兼容 kimi 的
-/// session_<uuid>）；title 经 trim + 截断。
-#[tauri::command]
-fn rename_session(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-    cwd: Option<String>,
-    session_id: String,
-    title: String,
-    provider: Option<String>,
-) -> Result<(), String> {
-    if !is_safe_id(&session_id) {
-        return Err("无效 session_id".into());
-    }
-    let title: String = title.trim().chars().take(80).collect();
-    if title.is_empty() {
-        return Err("标题不能为空".into());
-    }
-
-    // 落到 agent 自己的持久层（best-effort）。provider 缺省 claude（兼容旧调用方）；
-    // 未知 agent 则只改 DB 标题，不去猜它的持久层格式。
-    if let Some(t) = meowo_agent::resolve(provider.as_deref()).and_then(|a| a.telemetry()) {
-        let _ = t.write_rename(&session_id, cwd.as_deref(), &title);
-    }
-
-    // 同步 DB 标题：卡片/总览即时显示新名。kimi 的 on_user_prompt 仅在占位标题时命名，不会覆盖；
-    // claude 的 apply_title 会从 transcript 重读 custom-title（优先级高于 ai-title）维持一致。
-    if let Ok(store) = open_store(&state.db_path) {
-        if let Ok(Some(sid)) = store.find_session_id_pub(&session_id) {
-            let _ = store.set_session_title(sid, &title, now_ms());
-        }
-    }
-    emit_board_changed(&app, "rename");
-    Ok(())
-}
-
-#[tauri::command]
-fn set_archived(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-    session_id: i64,
-    archived: bool,
-) -> Result<(), String> {
-    let store = open_store(&state.db_path)?;
-    store
-        .set_session_archived(session_id, archived, now_ms())
-        .map_err(|e| e.to_string())?;
-    emit_board_changed(&app, "set_archived");
-    Ok(())
-}
-
-/// 写入/清除某会话的便签（按 cc_session_id）。便签是用户私有备忘，存本地 DB；session_id 用 is_safe_id
-/// 校验（兼容 kimi 的 session_<uuid>、仍杜绝注入），正文截断到 500 字符（store 内 trim 后空则删除该行）。
-#[tauri::command]
-fn set_session_note(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-    session_id: String,
-    note: String,
-) -> Result<(), String> {
-    if !is_safe_id(&session_id) {
-        return Err("无效 session_id".into());
-    }
-    let note: String = note.chars().take(500).collect();
-    let store = open_store(&state.db_path)?;
-    store
-        .set_session_note(&session_id, &note, now_ms())
-        .map_err(|e| e.to_string())?;
-    emit_board_changed(&app, "note");
-    Ok(())
 }
 
 /// 返回所有 provider 的账号 + 缓存用量（不联网）。供多 provider 账号面板使用。
@@ -929,6 +515,9 @@ struct AgentDescriptor {
     /// 为 false（gemini：官方 hook 不给 token；opencode：会话 token 在它自己库里，不经 hook）时，
     /// 前端显式标注「上下文占用：不支持」——不留空白让用户以为是 bug。
     supports_context: bool,
+    /// 新建会话的启动选项（选择 → CLI flag 映射，由插件声明）。空 = 面板不给选项栏。
+    /// 前端只回传 choice id，翻译成 argv 在后端按这张表进行——用户输入进不了命令行。
+    launch_options: &'static [meowo_agent::LaunchOption],
     /// 插件显式声明才存在；None 时前端不显示中转入口。
     relay: Option<meowo_agent::RelayUi>,
 }
@@ -954,6 +543,7 @@ async fn list_agents() -> Vec<AgentDescriptor> {
                     supports_account: a.account().is_some(),
                     supports_profiles: a.profile().is_some(),
                     supports_context: a.provides_context(),
+                    launch_options: a.launch_options(),
                     relay,
                 }
             })
@@ -961,6 +551,97 @@ async fn list_agents() -> Vec<AgentDescriptor> {
     })
     .await
     .unwrap_or_default()
+}
+
+/// 已装 CLI 的版本，`<launch_argv> --version` 探测，**进程级缓存**（版本只随重装变化，而
+/// node 系 CLI 冷启动要一秒上下，不能每开一个对话窗都付一次）。探测失败缓存 None，不反复重试。
+fn probe_cli_version(plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
+
+    let id = plugin.id().as_str().to_string();
+    if let Some(hit) = CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .get(&id)
+    {
+        return hit.clone();
+    }
+
+    let argv = plugin.launch_argv();
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..])
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    // 有界等待：`--version` 正常亚秒返回，但一个挂死的 CLI 不该把查询线程一起挂死。
+    let version = cmd.spawn().ok().and_then(|mut child| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                _ => {
+                    let _ = child.kill();
+                    break;
+                }
+            }
+        }
+        let out = child.wait_with_output().ok()?;
+        let line = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())?
+            .to_string();
+        Some(line)
+    });
+    CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(id, version.clone());
+    version
+}
+
+/// 对话页能力：按会话查询（provider + cwd），由**安装实况**组装——插件的内置表 ∪ 用户/项目
+/// 目录里发现的自定义命令 + 探测到的 CLI 版本。装了新命令、换了版本，下次打开会话就反映。
+/// 未知 provider → None，前端降级为不补全、不给模型菜单。
+#[tauri::command]
+async fn agent_chat_ui(
+    provider: String,
+    cwd: Option<String>,
+    session_id: Option<i64>,
+) -> Option<meowo_agent::ChatUi> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let plugin = meowo_agent::resolve(Some(&provider))?;
+        let version = probe_cli_version(plugin);
+        let external_session_id = session_id.and_then(|session_id| {
+            open_store(&db_path())
+                .ok()?
+                .session_header(session_id)
+                .ok()
+                .map(|header| header.cc_session_id)
+        });
+        Some(plugin.chat_ui(&meowo_agent::ChatUiContext {
+            cwd: cwd.as_deref().map(std::path::Path::new),
+            version: version.as_deref(),
+            session_id: external_session_id.as_deref(),
+        }))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// 用 Win32 窗口子类化在「移动生效前」硬约束贴纸位置，彻底拖不出屏幕（零抖动，
@@ -1121,6 +802,12 @@ pub fn run() {
     let path = db_path();
     let tx_cache: Arc<Mutex<meowo_agent::TranscriptCache>> =
         Arc::new(Mutex::new(meowo_agent::TranscriptCache::new()));
+    let ptys = pty::PtyBroker::default();
+    let approval_ptys = ptys.clone();
+    let exit_ptys = ptys.clone();
+    if let Err(error) = ptys.start_attach_server() {
+        eprintln!("启动 PTY attach 服务失败: {error}");
+    }
     let builder = tauri::Builder::default();
     // E2E 构建（cargo --features e2e）才注入 WDIO 内嵌 WebDriver 服务器 + execute/mock/日志桥；
     // 生产构建不含这两个插件（见 Cargo.toml [features].e2e 与 app/e2e/README.md）。
@@ -1152,16 +839,32 @@ pub fn run() {
         .manage(AppState {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
-            liveness: Mutex::new(None),
+            chat_mtimes: Arc::new(Mutex::new(chat::ChatMtimes::default())),
+            process_snapshots: session_query::ProcessSnapshotCache::default(),
             update: Mutex::new(None),
             downloaded_update: Mutex::new(None),
             update_downloading: AtomicBool::new(false),
+            ptys,
         })
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_project_tasks,
             get_live_sessions_counts,
             get_live_sessions_page,
+            get_chat_history,
+            open_chat_window,
+            start_managed_terminal,
+            takeover_managed_terminal,
+            managed_terminal_snapshot,
+            managed_terminal_binding,
+            write_managed_terminal,
+            resize_managed_terminal,
+            stop_managed_terminal,
+            get_pending_approval,
+            register_approval_consumer,
+            unregister_approval_consumer,
+            resolve_pending_approval,
+            open_attached_terminal,
             focus_session,
             resume_session,
             restart_session_supported,
@@ -1186,6 +889,7 @@ pub fn run() {
             open_onboarding,
             open_update_window,
             recall_center,
+            open_link,
             open_url,
             snap_collapse,
             snap_expand,
@@ -1198,6 +902,7 @@ pub fn run() {
             host_os,
             available_terminals,
             list_agents,
+            agent_chat_ui,
             profile::list_profiles,
             profile::create_profile,
             profile::rename_profile,
@@ -1284,6 +989,9 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // attach 服务在线程中接收 hook 审批；拿到 AppHandle 后主动推送给对话窗口，
+            // 前端轮询仅作为窗口晚打开时的兜底。
+            approval_ptys.set_app_handle(app.handle().clone());
             // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
             #[cfg(target_os = "macos")]
             {
@@ -1355,8 +1063,16 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(move |_app, event| {
+            // 托管 PTY 的子进程不随 GUI 一起死：不显式收尾就会被孤儿化（Windows 上 conhost
+            // 一并残留）。同时删掉 approval-broker.json，否则下一个 reporter 会拿着已失效的
+            // 端点去连一个可能已被回收的端口。
+            if matches!(event, tauri::RunEvent::Exit) {
+                exit_ptys.shutdown();
+            }
+        });
 }
 
 #[cfg(test)]

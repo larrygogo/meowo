@@ -25,12 +25,14 @@
 pub mod account;
 pub mod auth;
 pub mod caps;
+pub mod chat_ui;
 pub mod codec;
 pub mod config;
 pub mod fsutil;
 pub mod id;
 pub mod install;
 pub mod launch;
+pub mod launch_options;
 pub mod plugins;
 pub mod ports;
 pub mod profile;
@@ -44,6 +46,10 @@ pub mod wiring;
 pub use account::{Account, AccountCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED};
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use caps::{ContextUsage, HookContext, StopOutputs, TelemetryCap};
+pub use chat_ui::{
+    ChatUi, ChatUiContext, CustomCommandSpec, ModeControl, ModeInput, ModeOption, SlashCommand,
+    SlashSource,
+};
 pub use config::{
     CommandSpec, ConfigFormat, EnsureOutcome, HookEvent, HookSpec, MissingConfig, RepairReason,
 };
@@ -53,18 +59,21 @@ pub use install::{
     InstallScript,
 };
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
+pub use launch_options::{resolve_launch_args, LaunchChoice, LaunchOption};
 pub use plugins::claude::setup::remove_generated_wrapper;
 pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
-pub use registry::{all, by_id, installation, is_agent_process, resolve, AgentPlugin, DEFAULT_ID};
+pub use registry::{
+    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ModelPreset, DEFAULT_ID,
+};
 pub use relay::{
     RelayCap, RelayConfig, RelayModelAuth, RelayModelRequest, RelayOption, RelaySuggestionGroup,
     RelayUi,
 };
 pub use transcript::{
-    default_resolve_cwd, TranscriptCache, TranscriptInfo, TranscriptParser, TranscriptSpec,
-    TurnError,
+    default_resolve_cwd, read_chat_delta, AgentMode, ChatDelta, ChatItem, TranscriptCache,
+    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 pub use variant::{DataDirSpec, Installation, Variant};
 pub use wiring::{backup_once, wire_hooks, WiringCap, WiringContext};

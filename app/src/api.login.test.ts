@@ -11,12 +11,13 @@ describe("login api", () => {
   // 命令名拼错时组件测试仍会通过（它们 mock 掉了整个 api 模块），只有这里能拦住。
   it("loginAgent 调用 login_agent 并透传 provider/terminal", () => {
     invokeMock.mockResolvedValue(undefined);
-    loginAgent("claude", "wt");
+    loginAgent("claude", "wt", undefined, "op-1");
     expect(invokeMock).toHaveBeenCalledWith("login_agent", {
       provider: "claude",
       terminal: "wt",
       profile: null, // 省略 = 当前活跃账号
       useActive: true,
+      operationId: "op-1",
     });
   });
 
@@ -26,34 +27,37 @@ describe("login api", () => {
    */
   it("loginAgent 透传 profile（决定凭据写进哪个账号的目录）", () => {
     invokeMock.mockResolvedValue(undefined);
-    loginAgent("claude", "wt", "work");
+    loginAgent("claude", "wt", "work", "op-2");
     expect(invokeMock).toHaveBeenCalledWith("login_agent", {
       provider: "claude",
       terminal: "wt",
       profile: "work",
       useActive: false,
+      operationId: "op-2",
     });
   });
 
   it("loginAgent 省略 terminal 时传 undefined（后端回退设置里的默认终端）", () => {
     invokeMock.mockResolvedValue(undefined);
-    loginAgent("kimi");
+    loginAgent("kimi", undefined, undefined, "op-3");
     expect(invokeMock).toHaveBeenCalledWith("login_agent", {
       provider: "kimi",
       terminal: undefined,
       profile: null,
       useActive: true,
+      operationId: "op-3",
     });
   });
 
   it("loginAgent 显式 null 表示默认账号，不跟随当前活跃账号", () => {
     invokeMock.mockResolvedValue(undefined);
-    loginAgent("claude", undefined, null);
+    loginAgent("claude", undefined, null, "op-4");
     expect(invokeMock).toHaveBeenCalledWith("login_agent", {
       provider: "claude",
       terminal: undefined,
       profile: null,
       useActive: false,
+      operationId: "op-4",
     });
   });
 

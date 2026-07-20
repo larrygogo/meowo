@@ -63,6 +63,7 @@ function isOurs(cmd) {
 }
 
 for (const [event, matcher] of SPECS) {
+  const timeout = event === "PermissionRequest" ? 310 : 5;
   settings.hooks[event] ??= [];
   // 同一 (event, matcher) 下只留一条我方 hook：第一条更新为当前路径，其余删除。
   // 用户自有的 hook（isOurs 不认领的）一概不动——包括与我方 hook 同壳的。
@@ -74,8 +75,10 @@ for (const [event, matcher] of SPECS) {
         if (!isOurs(h.command)) return true; // 用户自有 hook → 留
         if (kept) return false; // 我方第 2+ 条 → 重复注册，删
         kept = true;
-        h.command = command; // timeout=5s 给 Claude Code 一个上限，万一 reporter 卡住也不会无限阻塞会话
-        h.timeout ??= 5;
+        h.command = command;
+        // 审批 hook 要等待 GUI 用户决定；普通 hook 仍限制 5 秒，且保留用户已有的自定义值。
+        if (event === "PermissionRequest") h.timeout = timeout;
+        else h.timeout ??= timeout;
         return true;
       });
       return { ...entry, hooks };
@@ -84,7 +87,7 @@ for (const [event, matcher] of SPECS) {
   if (!kept) {
     settings.hooks[event].push({
       matcher,
-      hooks: [{ type: "command", command, timeout: 5 }],
+      hooks: [{ type: "command", command, timeout }],
     });
   }
 }

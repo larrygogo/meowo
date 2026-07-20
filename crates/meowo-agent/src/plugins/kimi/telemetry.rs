@@ -3,11 +3,269 @@
 //!
 //! wire.jsonl 结构（kimi-code 0.19.2 实测）：每行一个事件，AI 正文在
 //! `type="context.append_loop_event"` 且 `event.type="content.part"` 且 `event.part.type="text"`
-//! 的 `event.part.text` 里（`part.type="think"` 是思考过程，跳过）。用户输入则是 `type="turn.prompt"`
+//! 的 `event.part.text` 里（`part.type="think"` 是思考过程：聊天窗口展示，但不计入最终 AI 正文）。
+//! 用户输入则是 `type="turn.prompt"`
 //! 或 `type="context.append_message"` 且 `message.role="user"`——遇到即清空缓冲，使最终缓冲恰为
 //! 「最后一条用户输入之后的 AI 文本」。
 
 use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+use crate::transcript::ChatItem;
+use crate::transcript::{ChatOnlyParser, TranscriptEvent, TranscriptParser, TranscriptSpec};
+
+fn chat_id(prefix: &str, line: &str) -> String {
+    let hash = line.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    });
+    format!("kimi-{prefix}-{hash:016x}")
+}
+
+fn value_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join(""),
+        other => other.to_string(),
+    }
+}
+
+fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Vec::new();
+    };
+    let timestamp = value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "turn.prompt" => {
+            let text = value
+                .get("input")
+                .or_else(|| value.get("prompt"))
+                .or_else(|| value.get("message"))
+                .map(value_text)
+                .unwrap_or_default();
+            (!text.trim().is_empty())
+                .then(|| TranscriptEvent::UserMessage {
+                    id: chat_id("user", line),
+                    timestamp,
+                    text,
+                })
+                .into_iter()
+                .collect()
+        }
+        "context.append_message"
+            if value
+                .get("message")
+                .and_then(|message| message.get("role"))
+                .and_then(|role| role.as_str())
+                == Some("user") =>
+        {
+            let Some(message) = value.get("message") else {
+                return Vec::new();
+            };
+            // Kimi 也用 role=user 承载 system reminder、后台任务通知等内部注入。只排除明确
+            // 标成非 user 的 origin；旧版没有 origin 的纯用户消息仍需兼容。
+            if message
+                .get("origin")
+                .and_then(|origin| origin.get("kind"))
+                .and_then(|kind| kind.as_str())
+                .is_some_and(|kind| kind != "user")
+            {
+                return Vec::new();
+            }
+            let text = message
+                .get("content")
+                .or_else(|| message.get("text"))
+                .map(value_text)
+                .unwrap_or_default();
+            (!text.trim().is_empty())
+                .then(|| TranscriptEvent::UserMessage {
+                    id: chat_id("user", line),
+                    timestamp,
+                    text,
+                })
+                .into_iter()
+                .collect()
+        }
+        "context.append_loop_event" => {
+            let Some(event) = value.get("event") else {
+                return Vec::new();
+            };
+            let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if matches!(event_type, "tool.result" | "tool_result") {
+                return vec![TranscriptEvent::ToolResult {
+                    id: chat_id("result", line),
+                    timestamp,
+                    tool_call_id: event
+                        .get("callId")
+                        .or_else(|| event.get("call_id"))
+                        .or_else(|| event.get("toolCallId"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                    text: event
+                        .get("output")
+                        .or_else(|| event.pointer("/result/output"))
+                        .or_else(|| event.get("result"))
+                        .map(value_text)
+                        .unwrap_or_default(),
+                    is_error: event
+                        .get("isError")
+                        .or_else(|| event.get("is_error"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                }];
+            }
+            let part = if event_type == "content.part" {
+                event.get("part")
+            } else if matches!(event_type, "tool.call" | "tool_call") {
+                Some(event)
+            } else {
+                None
+            };
+            let Some(part) = part else { return Vec::new() };
+            match part
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or(event_type)
+            {
+                "text" => part
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .filter(|text| !text.is_empty())
+                    .map(|text| TranscriptEvent::AssistantChunk {
+                        id: chat_id("assistant", line),
+                        timestamp,
+                        text: text.to_string(),
+                    })
+                    .into_iter()
+                    .collect(),
+                "think" | "thinking" => part
+                    .get("think")
+                    .or_else(|| part.get("thinking"))
+                    .or_else(|| part.get("text"))
+                    .and_then(|v| v.as_str())
+                    .filter(|text| !text.is_empty())
+                    .map(|text| TranscriptEvent::ReasoningChunk {
+                        id: chat_id("reasoning", line),
+                        timestamp,
+                        text: text.to_string(),
+                    })
+                    .into_iter()
+                    .collect(),
+                "tool.call" | "tool_call" | "tool" => vec![TranscriptEvent::ToolCall {
+                    id: part
+                        .get("id")
+                        .or_else(|| part.get("callId"))
+                        .or_else(|| part.get("toolCallId"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| chat_id("tool", line)),
+                    timestamp,
+                    name: part
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool")
+                        .to_string(),
+                    summary: part
+                        .get("input")
+                        .or_else(|| part.get("arguments"))
+                        .or_else(|| part.get("args"))
+                        .map(value_text)
+                        .unwrap_or_default(),
+                }],
+                _ => Vec::new(),
+            }
+        }
+        "context.compact" | "context.compacted" => vec![TranscriptEvent::Metadata {
+            id: chat_id("compact", line),
+            timestamp,
+            kind: "compact".into(),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+fn parse_chat_items(line: &str) -> Vec<ChatItem> {
+    parse_transcript_events(line)
+        .into_iter()
+        .map(ChatItem::from)
+        .collect()
+}
+
+pub struct KimiTranscript;
+pub static KIMI_TRANSCRIPT: KimiTranscript = KimiTranscript;
+
+impl TranscriptSpec for KimiTranscript {
+    fn new_parser(&self) -> Box<dyn TranscriptParser> {
+        Box::new(ChatOnlyParser)
+    }
+
+    fn resolve_transcript_path(
+        &self,
+        transcript_path: Option<&str>,
+        _cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<PathBuf> {
+        transcript_path
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .or_else(|| {
+                session_dir(session_id)
+                    .map(|dir| dir.join("agents").join("main").join("wire.jsonl"))
+                    .filter(|path| path.exists())
+            })
+    }
+
+    fn resolve_title(
+        &self,
+        _transcript_path: Option<&str>,
+        _cwd: Option<&str>,
+        _session_id: &str,
+    ) -> Option<String> {
+        None
+    }
+
+    fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
+        parse_transcript_events(line)
+    }
+
+    fn agent_modes_from_line(&self, line: &str) -> Vec<crate::AgentMode> {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return Vec::new();
+        };
+        match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "permission.set_mode" => value
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .map(|mode| vec![crate::AgentMode::new("permission", mode)])
+                .unwrap_or_default(),
+            "plan_mode.enter" => vec![crate::AgentMode::new("work", "plan")],
+            "plan_mode.exit" => vec![crate::AgentMode::new("work", "default")],
+            _ => Vec::new(),
+        }
+    }
+
+    fn default_agent_modes(&self) -> Vec<crate::AgentMode> {
+        vec![
+            crate::AgentMode::new("work", "default"),
+            crate::AgentMode::new("permission", "manual"),
+        ]
+    }
+
+    fn supports_chat(&self) -> bool {
+        true
+    }
+
+    fn supports_analysis(&self) -> bool {
+        false
+    }
+}
 
 /// kimi 在本机的实况（走哪个变体、数据目录/配置/凭据/可执行在哪）。变体表见
 /// `meowo_agent::plugins::kimi`：新版 Node「Kimi Code」`~/.kimi-code` 优先，旧 Python 版
@@ -297,11 +555,33 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
     fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
         set_custom_title(session_id, title)
     }
+
+    fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
+        Some(&KIMI_TRANSCRIPT)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_independent_permission_and_work_modes() {
+        assert_eq!(
+            KIMI_TRANSCRIPT.agent_modes_from_line(
+                r#"{"type":"permission.set_mode","mode":"yolo"}"#,
+            ),
+            vec![crate::AgentMode::new("permission", "yolo")]
+        );
+        assert_eq!(
+            KIMI_TRANSCRIPT.agent_modes_from_line(r#"{"type":"plan_mode.enter"}"#),
+            vec![crate::AgentMode::new("work", "plan")]
+        );
+        assert_eq!(
+            KIMI_TRANSCRIPT.agent_modes_from_line(r#"{"type":"plan_mode.exit"}"#),
+            vec![crate::AgentMode::new("work", "default")]
+        );
+    }
 
     #[test]
     fn parse_context_takes_last_usage_record_and_sums_inputs() {
@@ -347,6 +627,63 @@ mod tests {
         let wire = r#"{"type":"turn.prompt","input":"hi"}
 {"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"think","think":"only thinking"}}}"#;
         assert_eq!(parse_wire(wire).last_ai, None);
+    }
+
+    #[test]
+    fn chat_parser_emits_user_and_mergeable_assistant_deltas() {
+        let user = r#"{"type":"turn.prompt","input":"继续"}"#;
+        let first = r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"正在"}}}"#;
+        let second = r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"处理"}}}"#;
+        let thinking = r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"think","think":"先分析"}}}"#;
+        assert!(
+            matches!(&parse_chat_items(user)[0], ChatItem::UserText { text, .. } if text == "继续")
+        );
+        assert!(
+            matches!(&parse_chat_items(first)[0], ChatItem::AssistantDelta { text, .. } if text == "正在")
+        );
+        assert!(
+            matches!(&parse_chat_items(second)[0], ChatItem::AssistantDelta { text, .. } if text == "处理")
+        );
+        assert!(matches!(
+            &parse_chat_items(thinking)[0],
+            ChatItem::ReasoningDelta { text, .. } if text == "先分析"
+        ));
+    }
+
+    #[test]
+    fn chat_parser_emits_context_append_message_user_content() {
+        let string_content = r#"{"type":"context.append_message","timestamp":"2026-07-18T01:02:03Z","message":{"role":"user","content":"从这里继续"}}"#;
+        let array_content = r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"第一段"},{"type":"text","text":"第二段"}]}}"#;
+        let assistant = r#"{"type":"context.append_message","message":{"role":"assistant","content":"不要重复解析"}}"#;
+        let injected = r#"{"type":"context.append_message","message":{"role":"user","content":"hidden reminder","origin":{"kind":"injection"}}}"#;
+
+        assert!(matches!(
+            &parse_chat_items(string_content)[0],
+            ChatItem::UserText { timestamp: Some(timestamp), text, .. }
+                if timestamp == "2026-07-18T01:02:03Z" && text == "从这里继续"
+        ));
+        assert!(matches!(
+            &parse_chat_items(array_content)[0],
+            ChatItem::UserText { text, .. } if text == "第一段第二段"
+        ));
+        assert!(parse_chat_items(assistant).is_empty());
+        assert!(parse_chat_items(injected).is_empty());
+    }
+
+    #[test]
+    fn chat_parser_matches_real_kimi_tool_fields() {
+        let call = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"tool-1","name":"Bash","args":{"command":"cargo test"}}}"#;
+        let result = r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"tool-1","result":{"output":"all green"}}}"#;
+        assert!(matches!(
+            &parse_chat_items(call)[0],
+            ChatItem::ToolUse { id, summary, .. }
+                if id == "tool-1" && summary.contains("cargo test")
+        ));
+        assert!(matches!(
+            &parse_chat_items(result)[0],
+            ChatItem::ToolResult { tool_use_id: Some(id), text, .. }
+                if id == "tool-1" && text == "all green"
+        ));
     }
 
     #[test]

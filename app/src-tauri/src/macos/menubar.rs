@@ -235,8 +235,7 @@ pub fn build_tray_menu(
     app: &AppHandle,
     lang: &str,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let guide =
-        MenuItemBuilder::with_id("guide", crate::tr(lang, "tray.guide")).build(app)?;
+    let guide = MenuItemBuilder::with_id("guide", crate::tr(lang, "tray.guide")).build(app)?;
     let settings =
         MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
     let website =
