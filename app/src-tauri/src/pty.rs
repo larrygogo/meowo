@@ -223,8 +223,16 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
         // 收尾：resume 路径已经乐观复活过 DB（prepare_resume），没人回滚的话卡片会一直
         // 假显示「已连接」，直到 pid 判活的宽限窗口过期才自愈。这同时覆盖了「PTY 起来了
         // 但 CLI 秒退（不在 PATH）」——那种情况 start() 返回 Ok，调用方的回滚够不着。
-        if let Ok(store) = crate::open_store(&crate::db_path()) {
-            let _ = store.end_session(session_id, crate::now_ms());
+        // 写失败时卡片会假显示「已连接」，靠 pid 判活的宽限窗口自愈；留一条日志方便定位。
+        match crate::open_store(&crate::db_path()) {
+            Ok(store) => {
+                if let Err(error) = store.end_session(session_id, crate::now_ms()) {
+                    eprintln!("PTY 退出后回写会话结束状态失败（等待 pid 宽限窗口自愈）: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("PTY 退出后打开数据库失败（等待 pid 宽限窗口自愈）: {error}");
+            }
         }
         if let Ok(mut bindings) = broker.attach.bindings.lock() {
             bindings.retain(|_, real| *real != session_id);
@@ -281,7 +289,7 @@ impl PtyBroker {
         let Some(app) = self.attach.app.lock().ok().and_then(|app| app.clone()) else {
             return false;
         };
-        crate::window::open_chat_window(app.clone(), session_id);
+        crate::window::open_chat_window_detached(app.clone(), session_id);
         // 等前端完成 session 切换并显式注册。窗口可见只能证明 WebView 存在，不能证明它已监听
         // pending-approval；以消费者租约为准，避免请求落在两个 useEffect 之间。
         for _ in 0..80 {
@@ -620,7 +628,17 @@ impl PtyBroker {
             };
             if let Ok(json) = serde_json::to_vec(&discovery) {
                 let _ = std::fs::create_dir_all(dir);
-                let _ = std::fs::write(dir.join(APPROVAL_BROKER_FILE), json);
+                let path = dir.join(APPROVAL_BROKER_FILE);
+                // 写失败要留痕：agent 侧的表现只是「审批默默回到 TUI」，没有日志根本查不到磁盘满/无权限。
+                if let Err(error) = std::fs::write(&path, json) {
+                    eprintln!("审批 broker discovery 文件写入失败（外部终端的审批将回落 TUI）: {error}");
+                }
+                // token 等于 PTY 完全接管权。父目录权限已经挡住他人，这里再收紧到 0600 作纵深防御。
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                }
             }
         }
         let broker = self.clone();
@@ -695,7 +713,10 @@ impl PtyBroker {
             .and_then(|bindings| bindings.get(&temp_id).copied())
     }
 
-    pub(crate) fn attach_args(&self, session_id: i64) -> Result<(String, String), String> {
+    /// attach 前置校验：会话确实由本进程的 PTY 持有，且 attach 服务已在监听。
+    /// 刻意不返回 endpoint/token——它们经 discovery 文件（unix 下 0600）交给客户端，
+    /// 不进外部终端的进程参数（argv 对同机其他进程可见，token 等于 PTY 完全接管权）。
+    pub(crate) fn ensure_attachable(&self, session_id: i64) -> Result<(), String> {
         if !self
             .sessions
             .lock()
@@ -704,13 +725,12 @@ impl PtyBroker {
         {
             return Err("该会话尚未由 Meowo 接管".into());
         }
-        let endpoint = self
-            .attach
+        self.attach
             .endpoint
             .lock()
             .map_err(|_| "attach 状态锁已损坏")?
             .ok_or("attach 服务未启动")?;
-        Ok((endpoint.to_string(), self.attach.token.clone()))
+        Ok(())
     }
 
     pub(crate) fn pending_approval(&self, session_id: i64) -> Option<ApprovalRequest> {
@@ -828,6 +848,16 @@ impl PtyBroker {
         Ok(())
     }
 
+    /// 对话窗被销毁时的租约兜底。租约平时靠前端卸载时 unregister，但窗口销毁瞬间
+    /// 那次 IPC 未必执行得到；残留租约会让 `ensure_approval_window` 误判「有 GUI
+    /// 消费者」而把审批入队空等 300s，而不是立即交还 TUI。chat 窗是单例，
+    /// 所有 consumer 都属于它，直接清空即可。
+    pub(crate) fn clear_approval_consumers(&self) {
+        if let Ok(mut consumers) = self.attach.approval_consumers.lock() {
+            consumers.clear();
+        }
+    }
+
     pub(crate) fn unregister_approval_consumer(&self, consumer_id: &str) {
         let session_id = self
             .attach
@@ -861,6 +891,12 @@ impl PtyBroker {
 
     fn handle_attach(&self, mut stream: TcpStream) -> Result<(), String> {
         stream.set_nodelay(true).ok();
+        // 握手必须限时：loopback 上任何本地进程都能 connect，不设读超时的话，连上后
+        // 一言不发就永久占住一个 handler 线程（每连接一线程），反复建连即可耗尽线程数。
+        // 认证通过进入转发模式后再放开（attach 空闲时本来就没有输入帧）。
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .ok();
         let handshake = read_handshake(&mut stream).map_err(|e| e.to_string())?;
         let BrokerRequest::Attach {
             token,
@@ -937,6 +973,10 @@ impl PtyBroker {
             let _ = output.shutdown(Shutdown::Both);
         });
 
+        stream.set_read_timeout(None).ok();
+        // 出错也必须走下方的 subscriber 清理，不能 `?` 提前返回——残留的订阅项会让
+        // 转发线程带着半开 socket 等到 finalize_exit 才被收走。
+        let mut frame_error = None;
         loop {
             let mut header = [0u8; 5];
             if stream.read_exact(&mut header).is_err() {
@@ -952,20 +992,27 @@ impl PtyBroker {
                 break;
             }
             let current_id = session.session_id.load(Ordering::Acquire);
-            match kind {
-                1 => self.write(current_id, &payload)?,
+            let result = match kind {
+                1 => self.write(current_id, &payload),
                 2 if payload.len() == 4 => self.resize(
                     current_id,
                     u16::from_be_bytes([payload[0], payload[1]]),
                     u16::from_be_bytes([payload[2], payload[3]]),
-                )?,
+                ),
                 _ => break,
+            };
+            if let Err(error) = result {
+                frame_error = Some(error);
+                break;
             }
         }
         if let Ok(mut subscribers) = session.subscribers.lock() {
             subscribers.retain(|(id, _)| *id != subscriber_id);
         }
-        Ok(())
+        match frame_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn handle_claim(
@@ -1321,6 +1368,22 @@ mod tests {
         broker.unregister_approval_consumer("consumer-b");
         assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Pass));
         assert!(broker.pending_approval(7).is_none());
+    }
+
+    #[test]
+    fn destroying_chat_window_clears_every_consumer_lease() {
+        // 窗口销毁时前端的 unregister 未必执行得到；关窗兜底必须把租约清干净，
+        // 否则残留租约会让下一个审批入队空等 300s 而不是立即交还 TUI。
+        let broker = PtyBroker::default();
+        broker
+            .register_approval_consumer(7, "consumer-a".into())
+            .unwrap();
+        broker
+            .register_approval_consumer(8, "consumer-b".into())
+            .unwrap();
+        broker.clear_approval_consumers();
+        assert!(!broker.has_approval_consumer(7));
+        assert!(!broker.has_approval_consumer(8));
     }
 
     #[test]

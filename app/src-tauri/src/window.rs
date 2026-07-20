@@ -259,9 +259,25 @@ pub(crate) fn open_new_session_window_impl(
 }
 
 /// 打开单例会话对话窗口。再次点击另一张卡片时复用窗口并发事件切换会话。
+/// 创建/切换失败必须传播回前端：静默失败时用户「点了没反应」，再点会重复起会话。
 #[tauri::command]
-pub(crate) fn open_chat_window(app: tauri::AppHandle, session_id: i64) {
-    std::thread::spawn(move || open_chat_window_impl(&app, session_id));
+pub(crate) async fn open_chat_window(
+    app: tauri::AppHandle,
+    session_id: i64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_chat_window_impl(&app, session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 无处上报错误的入口（审批唤醒）用的 fire-and-forget 变体；失败仅留日志，
+/// 由调用方自身的兜底（消费者租约超时 → pass）保证不悬挂。
+pub(crate) fn open_chat_window_detached(app: tauri::AppHandle, session_id: i64) {
+    std::thread::spawn(move || {
+        if let Err(error) = open_chat_window_impl(&app, session_id) {
+            eprintln!("打开对话窗口失败: {error}");
+        }
+    });
 }
 
 /// 托盘点击入口：打开最近活跃会话的对话窗口。托盘没有「当前会话」上下文，
@@ -275,22 +291,33 @@ pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
             .ok()
             .and_then(|store| store.latest_session_id().ok().flatten());
         match latest {
-            Some(session_id) => open_chat_window_impl(&app, session_id),
+            Some(session_id) => {
+                // 托盘入口没有 UI 可上报；至少留日志。
+                if let Err(error) = open_chat_window_impl(&app, session_id) {
+                    eprintln!("打开对话窗口失败: {error}");
+                }
+            }
             None => open_settings_window(&app),
         }
     });
 }
 
-fn open_chat_window_impl(app: &tauri::AppHandle, session_id: i64) {
+pub(crate) fn open_chat_window_impl(
+    app: &tauri::AppHandle,
+    session_id: i64,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app);
 
     if let Some(w) = app.get_webview_window("chat") {
         use tauri::Emitter;
-        let _ = w.emit("chat-session-changed", session_id);
+        // emit 失败绝不能静默：窗口会照常聚焦，但停留在旧会话——用户点了卡片 A，
+        // 看到的却是会话 B，比不弹窗更具误导性。
+        w.emit("chat-session-changed", session_id)
+            .map_err(|e| format!("切换会话失败: {e}"))?;
         let _ = w.show();
         let _ = w.set_focus();
-        return;
+        return Ok(());
     }
     let url = format!("index.html?sessionId={session_id}");
     let builder = tauri::WebviewWindowBuilder::new(app, "chat", tauri::WebviewUrl::App(url.into()))
@@ -302,25 +329,24 @@ fn open_chat_window_impl(app: &tauri::AppHandle, session_id: i64) {
         .center();
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
-    match builder.build() {
-        Ok(win) => {
-            let app_handle = app.clone();
-            win.on_window_event(move |e| {
-                if matches!(
-                    e,
-                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-                ) {
-                    app_handle
-                        .state::<crate::AppState>()
-                        .ptys
-                        .pass_pending_approvals();
-                    #[cfg(target_os = "macos")]
-                    crate::macos::menubar::settings_window_did_close(&app_handle);
-                }
-            });
+    let win = builder
+        .build()
+        .map_err(|e| format!("创建对话窗口失败: {e}"))?;
+    let app_handle = app.clone();
+    win.on_window_event(move |e| {
+        if matches!(
+            e,
+            tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+        ) {
+            let ptys = &app_handle.state::<crate::AppState>().ptys;
+            // 先清租约再放行挂起审批：窗口没了，租约留着只会让后续审批空等 300s。
+            ptys.clear_approval_consumers();
+            ptys.pass_pending_approvals();
+            #[cfg(target_os = "macos")]
+            crate::macos::menubar::settings_window_did_close(&app_handle);
         }
-        Err(e) => eprintln!("创建对话窗口失败: {e}"),
-    }
+    });
+    Ok(())
 }
 
 /// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/置顶/聚焦。

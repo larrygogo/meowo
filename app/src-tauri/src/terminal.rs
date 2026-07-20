@@ -1480,20 +1480,16 @@ pub(crate) fn attach_in_external_terminal(
     broker: &crate::pty::PtyBroker,
     sid: i64,
 ) -> Result<(), String> {
-    let (endpoint, token) = broker.attach_args(sid)?;
+    broker.ensure_attachable(sid)?;
     let reporter = crate::setup::sibling_reporter().ok_or("找不到 meowo-reporter attach 客户端")?;
     let terminal = load_settings().resume_terminal;
+    // endpoint/token/protocol 不进 argv：attach 客户端自行读 discovery 文件
+    //（与审批桥接同一来源，含 pid 判活），token 不暴露在进程参数里。
     let argv = vec![
         reporter,
         "attach".into(),
-        "--endpoint".into(),
-        endpoint,
-        "--token".into(),
-        token,
         "--session".into(),
         sid.to_string(),
-        "--protocol".into(),
-        meowo_protocol::broker::CURRENT_PROTOCOL_VERSION.to_string(),
     ];
     if spawn_in_terminal(&argv, None, &terminal, &[]) {
         Ok(())
@@ -1517,8 +1513,9 @@ pub(crate) fn reveal_session(
     if load_settings().session_open_in == "terminal" {
         return attach_in_external_terminal(broker, sid);
     }
-    crate::window::open_chat_window(app.clone(), sid);
-    Ok(())
+    // 同步等窗口创建结果：PTY 已经拉起、窗口却没开时，把错误交还调用方，
+    // 而不是让前端误报成功（用户「点了没反应」会再点一次，重复起会话）。
+    crate::window::open_chat_window_impl(app, sid)
 }
 
 /// 从看板卡片恢复：会话此刻还没有任何视图，故成功后按设置把用户带过去。

@@ -256,12 +256,20 @@ fn write_frame(stream: &Arc<Mutex<TcpStream>>, kind: u8, payload: &[u8]) -> std:
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let endpoint = arg_value(args, "--endpoint").ok_or("missing --endpoint")?;
-    let token = arg_value(args, "--token").ok_or("missing --token")?;
     let session = arg_value(args, "--session").ok_or("missing --session")?;
-    let protocol = arg_value(args, "--protocol")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0);
+    // token 常规不走 argv（进程参数对同机其他进程可见）：GUI 只传 --session，
+    // endpoint/token/protocol 从 discovery 文件解析——与审批桥接同一来源，
+    // 同样的 pid 判活挡掉陈旧文件。显式传参保留为调试后门。
+    let (endpoint, token, protocol) = match arg_value(args, "--token") {
+        Some(token) => (
+            arg_value(args, "--endpoint").ok_or("missing --endpoint")?,
+            token,
+            arg_value(args, "--protocol")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+        ),
+        None => approval_broker().ok_or("未发现运行中的 Meowo（attach 需要 GUI 先启动）")?,
+    };
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let nonce = format!(
         "{:x}{:x}",
