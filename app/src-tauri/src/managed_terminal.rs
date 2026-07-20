@@ -95,8 +95,10 @@ pub(crate) fn stop_managed_terminal(
 pub(crate) fn get_pending_approval(
     state: State<'_, super::AppState>,
     session_id: i64,
-) -> Option<super::pty::ApprovalRequest> {
-    state.ptys.pending_approval(session_id)
+) -> Option<meowo_protocol::ipc::PendingApprovalDto> {
+    // 出口走 DTO 而非原始 ApprovalRequest：后者空 suggestions 会被 skip 掉字段，
+    // 与 ts-rs 生成的前端类型（字段恒在）不符。缘由见 pty.rs 的 emit_approval。
+    state.ptys.pending_approval(session_id).map(Into::into)
 }
 
 #[tauri::command]

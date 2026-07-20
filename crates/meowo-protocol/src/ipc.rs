@@ -227,6 +227,32 @@ mod tests {
         assert!(value.get("start_offset").is_none());
     }
 
+    /// GUI 边界必须走 DTO 的理由，钉成测试：原始 `broker::ApprovalRequest` 在
+    /// `permission_suggestions` 为空时把字段整个 skip 掉（reporter 线路的减负），而前端类型
+    /// （ts-rs 从 DTO 生成）承诺该字段**恒在**——app 曾直接把 ApprovalRequest emit 给前端，
+    /// codex 的审批（从不带 suggestions）一弹就让 ChatWindow 在 `.map` 上崩掉。
+    #[test]
+    fn dto_always_carries_permission_suggestions_even_when_empty() {
+        let request = crate::broker::ApprovalRequest {
+            session_id: 7,
+            request_id: "req-1".into(),
+            provider: "codex".into(),
+            tool_name: "Bash".into(),
+            description: None,
+            input: "{}".into(),
+            permission_suggestions: vec![],
+        };
+        // 原始线路结构：空列表 → 字段消失（这正是不能拿它喂前端的原因）。
+        let raw = serde_json::to_value(&request).unwrap();
+        assert!(raw.get("permissionSuggestions").is_none());
+
+        // DTO：字段恒在，空时是 `[]` 而不是缺席。
+        let dto_value = serde_json::to_value(PendingApprovalDto::from(request)).unwrap();
+        assert_eq!(dto_value["permissionSuggestions"], serde_json::json!([]));
+        assert_eq!(dto_value["sessionId"], 7);
+        assert_eq!(dto_value["requestId"], "req-1");
+    }
+
     #[test]
     fn chat_contract_keeps_tagged_items_and_rejects_unknown_review_kinds() {
         let item = ChatItem::ToolResult {

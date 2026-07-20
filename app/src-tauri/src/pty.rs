@@ -272,9 +272,16 @@ impl PtyBroker {
         }
     }
 
+    /// 发给前端的必须是 [`PendingApprovalDto`]（GUI 边界的稳定形态），**不能**是原始
+    /// [`ApprovalRequest`]：后者是 reporter↔app 的线路结构，`permission_suggestions` 空时
+    /// 会被 `skip_serializing_if` 整个略去——而前端类型（ts-rs 从 DTO 生成）承诺该字段恒在，
+    /// 拿到瘦负载就在 `.map` 上崩整个 ChatWindow。codex 的审批从不带 suggestions，必踩。
     fn emit_approval(&self, event: &str, request: &ApprovalRequest) {
         if let Some(app) = self.attach.app.lock().ok().and_then(|app| app.clone()) {
-            let _ = app.emit(event, request.clone());
+            let _ = app.emit(
+                event,
+                meowo_protocol::ipc::PendingApprovalDto::from(request.clone()),
+            );
         }
     }
 

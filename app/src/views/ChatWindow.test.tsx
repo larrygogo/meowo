@@ -781,4 +781,33 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull());
     expect(screen.queryByText("该请求来自非托管会话，请在原终端中处理")).toBeNull();
   });
+
+  /**
+   * 回归：负载缺 `permissionSuggestions` 时审批条照常渲染，不许崩整窗。
+   *
+   * 类型上该字段恒在（DTO 保证），但真实世界里出现过缺席：后端曾直接 emit 原始
+   * `ApprovalRequest`（空列表被 `skip_serializing_if` 略去），codex 的审批一弹，
+   * ChatWindow 就死在 `.map` 上（TypeError: Cannot read properties of undefined）。
+   * 后端已改走 DTO；这里钉住前端的 `?? []` 防御，堵旧后端/新前端错配的同一条死路。
+   */
+  it("survives an approval payload that lacks permissionSuggestions", async () => {
+    window.history.replaceState({}, "", "/?sessionId=12");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 12, title: "审批", status: "running", provider: "codex", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "approval", items: [],
+      });
+      if (command === "get_pending_approval") return Promise.resolve({
+        sessionId: 12, requestId: "request-lean", provider: "codex", toolName: "Bash",
+        description: "运行测试", input: "{\"command\":\"cargo test\"}",
+        // 刻意没有 permissionSuggestions —— 模拟被 skip 掉字段的瘦负载。
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    // 审批条正常出现：允许/拒绝都在，只是没有「记住」类按钮。
+    expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /允许并记住/ })).toBeNull();
+  });
 });

@@ -1087,7 +1087,9 @@ export function ChatWindow() {
         {approval ? <div className="chat-approval-actions">
           <button type="button" className="is-deny" disabled={resolvingApproval} onClick={() => void decideApproval("deny")}>{t.chat.deny}</button>
           <button type="button" className="is-allow" disabled={resolvingApproval} onClick={() => void decideApproval("allow_once")}>{t.chat.allowOnce}</button>
-          {approval.permissionSuggestions.map((suggestion, index) => (
+          {/* `?? []`：类型上字段恒在（DTO 保证），但旧后端/新前端错配时负载可能缺它——
+              一个可选按钮组不值得让整个 ChatWindow 白屏。 */}
+          {(approval.permissionSuggestions ?? []).map((suggestion, index) => (
             <button
               type="button"
               className="is-allow is-persistent"
