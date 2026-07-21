@@ -217,6 +217,58 @@ pub(crate) async fn refresh_session_model(
         .map_err(|e| e.to_string())?
 }
 
+/// 用会话日志里的待办快照重建 DB。
+///
+/// 待办平时由 hook 落库，但 hook 只在 meowo 在场时才捕获得到。以下几种情况 DB 会与
+/// agent 的真实清单脱节，而日志里一直是对的：
+/// - 中途才启动 meowo（agent 早就调过待办工具）；
+/// - hook 曾漏接或写库失败；
+/// - 早先的解析有误（如状态别名不认识，已完成项被降级成待办）。
+///
+/// 一次有界读 + 整份覆盖，不进 650ms 的历史轮询热路径；由前端在切换会话时调一次。
+fn refresh_todos(db_path: &Path, session_id: i64) -> Result<usize, String> {
+    let store = super::open_store(db_path)?;
+    let header = store.session_header(session_id).map_err(|e| e.to_string())?;
+    let Some(todos) = meowo_agent::by_id(&header.provider)
+        .and_then(|agent| agent.telemetry())
+        .and_then(|telemetry| {
+            telemetry.read_todos(&meowo_agent::caps::HookContext {
+                session_id: &header.cc_session_id,
+                transcript_path: None,
+                last_assistant_message: None,
+            })
+        })
+    else {
+        // 该 agent 不从日志提供待办（如 claude 现版本用增量事件）——保持 DB 现状，
+        // 不能拿「读不到」当成「清单已清空」去覆盖 hook 已经落好的数据。
+        return Ok(0);
+    };
+    let inputs: Vec<meowo_store::TodoInput> = todos
+        .into_iter()
+        .map(|todo| meowo_store::TodoInput {
+            content: todo.content,
+            // 状态词归一化在这里做：插件如实带出 agent 写的词（kimi 是 done）。
+            status: meowo_store::TodoStatus::from_str(&todo.status),
+        })
+        .collect();
+    let count = inputs.len();
+    store
+        .sync_todos(session_id, &inputs, super::now_ms())
+        .map_err(|e| e.to_string())?;
+    Ok(count)
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_session_todos(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+) -> Result<usize, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || refresh_todos(&db_path, session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn get_subagent_transcript(
     state: State<'_, super::AppState>,

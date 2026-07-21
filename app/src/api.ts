@@ -256,6 +256,17 @@ export function refreshSessionModel(sessionId: number): Promise<string | null> {
   return invoke("refresh_session_model", { sessionId });
 }
 
+/**
+ * 用会话日志里的待办快照重建 DB，返回条数。
+ *
+ * 待办平时由 hook 落库，但 hook 只在 meowo 在场时捕获得到——中途才启动、hook 漏接、
+ * 或早先解析有误（如状态别名不认识）时，DB 会与 agent 的真实清单脱节，而日志一直是对的。
+ * 切换会话时调一次即可；agent 不从日志提供待办时返回 0 并保持 DB 现状。
+ */
+export function refreshSessionTodos(sessionId: number): Promise<number> {
+  return invoke("refresh_session_todos", { sessionId });
+}
+
 export function openChatWindow(sessionId: number): Promise<void> {
   return invoke("open_chat_window", { sessionId });
 }

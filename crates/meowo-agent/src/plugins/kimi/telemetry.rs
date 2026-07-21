@@ -882,6 +882,76 @@ pub fn context_window(model_alias: &str) -> i64 {
 
 /// 读某 kimi 会话最近的上下文占用：wire.jsonl 尾部取最后一条 usage.record，used/window 算百分比。
 /// 定位/读/解析失败返回 None。大文件尾部有界读（与 read_summary 同款）。
+/// 从 wire.jsonl 文本取**最后一次** `TodoList` 调用的整份待办快照。
+/// 状态词原样带出（kimi 写 `done`），归一化留给 DB 层。
+pub fn parse_todos(content: &str) -> Option<Vec<crate::caps::TodoSnapshot>> {
+    let mut last = None;
+    for line in content.lines() {
+        // 先做廉价的子串筛，避免为整份日志做全量 JSON 解析。
+        if !line.contains("TodoList") {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(event) = value.get("event") else {
+            continue;
+        };
+        if !matches!(
+            event.get("type").and_then(|v| v.as_str()),
+            Some("tool.call" | "tool_call")
+        ) || event.get("name").and_then(|v| v.as_str()) != Some("TodoList")
+        {
+            continue;
+        }
+        // 用 continue 而不是 `?`：某一行格式异常只该跳过它，不能让整个函数提前返回、
+        // 把前面已经找到的快照一并丢掉。
+        let Some(todos) = event
+            .pointer("/args/todos")
+            .or_else(|| event.pointer("/input/todos"))
+            .and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+        last = Some(
+            todos
+                .iter()
+                .filter_map(|todo| {
+                    let content = todo
+                        .get("title")
+                        .or_else(|| todo.get("content"))
+                        .and_then(|v| v.as_str())?;
+                    Some(crate::caps::TodoSnapshot {
+                        content: content.to_string(),
+                        status: todo
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("pending")
+                            .to_string(),
+                    })
+                })
+                .collect(),
+        );
+    }
+    last
+}
+
+/// 读某 kimi 会话当前的待办快照。整读上限内全读；超限只读尾部——待办是整份覆盖写的，
+/// 最后一次调用必然在尾部。
+pub fn read_todos(session_id: &str) -> Option<Vec<crate::caps::TodoSnapshot>> {
+    let wire = session_dir(session_id)?
+        .join("agents")
+        .join("main")
+        .join("wire.jsonl");
+    let size = std::fs::metadata(&wire).ok()?.len();
+    let text = if size <= FULL_READ_CAP {
+        std::fs::read_to_string(&wire).ok()?
+    } else {
+        read_range(&wire, size.saturating_sub(TAIL_BYTES), TAIL_BYTES)?
+    };
+    parse_todos(&text)
+}
+
 pub fn read_context(session_id: &str) -> Option<crate::caps::ContextUsage> {
     let wire = session_dir(session_id)?
         .join("agents")
@@ -956,6 +1026,10 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
         read_context(ctx.session_id)
     }
 
+    fn read_todos(&self, ctx: &crate::caps::HookContext) -> Option<Vec<crate::caps::TodoSnapshot>> {
+        read_todos(ctx.session_id)
+    }
+
     fn write_rename(&self, session_id: &str, _cwd: Option<&str>, title: &str) -> bool {
         set_custom_title(session_id, title)
     }
@@ -985,6 +1059,35 @@ mod tests {
             KIMI_TRANSCRIPT.agent_modes_from_line(r#"{"type":"plan_mode.exit"}"#),
             vec![crate::AgentMode::new("work", "default")]
         );
+    }
+
+    /// 从会话日志重建待办：取**最后一次** TodoList 的整份快照，状态词原样带出
+    /// （kimi 写 `done`，归一化是 DB 层的事），标题字段 title/content 都认。
+    #[test]
+    fn parse_todos_takes_last_snapshot_and_keeps_agent_wording() {
+        // wire.jsonl 是 JSONL：**每行必须是完整 JSON**，不能跨行。
+        let wire = r#"
+{"type":"context.append_loop_event","event":{"type":"tool.call","name":"TodoList","args":{"todos":[{"title":"旧的一条","status":"pending"}]}}}
+{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"干活"}}}
+{"type":"context.append_loop_event","event":{"type":"tool.call","name":"TodoList","args":{"todos":[{"title":"定位根因","status":"done"},{"title":"修复并验证","status":"in_progress"},{"content":"推送分支","status":"pending"}]}}}
+"#;
+        let todos = parse_todos(wire).expect("应读到待办快照");
+        assert_eq!(
+            todos
+                .iter()
+                .map(|t| (t.content.as_str(), t.status.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("定位根因", "done"),
+                ("修复并验证", "in_progress"),
+                ("推送分支", "pending"),
+            ],
+            "应取最后一次快照，且保留 agent 自己的状态词"
+        );
+
+        // 没有 TodoList 调用时返回 None——「读不到」不等于「清单为空」，
+        // 上层据此保持 DB 现状，不能拿空列表覆盖 hook 已落好的数据。
+        assert!(parse_todos(r#"{"type":"usage.record","model":"x"}"#).is_none());
     }
 
     #[test]

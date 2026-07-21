@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
-import { agentChatUi, getChatHistory, getPendingApproval, isExternallyHeld, managedTerminalBinding, managedTerminalSnapshot, refreshSessionModel, registerApprovalConsumer, resolvePendingApproval, startManagedTerminal, takeoverManagedTerminal, unregisterApprovalConsumer, writeManagedTerminal, type ChatHistory, type ChatItem, type ChatUi, type PendingApproval } from "../api";
+import { agentChatUi, getChatHistory, getPendingApproval, isExternallyHeld, managedTerminalBinding, managedTerminalSnapshot, refreshSessionModel, refreshSessionTodos, registerApprovalConsumer, resolvePendingApproval, startManagedTerminal, takeoverManagedTerminal, unregisterApprovalConsumer, writeManagedTerminal, type ChatHistory, type ChatItem, type ChatUi, type PendingApproval } from "../api";
 import { useT } from "../i18n";
 import { agentAssets, tintStyle } from "../providers";
 import { reduceChatEvents } from "../chat/reducer";
@@ -545,6 +545,14 @@ export function ChatWindow() {
       window.clearTimeout(retryTimer);
       void unregisterApprovalConsumer(consumerId).catch(() => {});
     };
+  }, [sessionId]);
+
+  // 打开/切换会话时用会话日志重建一次待办。hook 只在 meowo 在场时才捕获得到待办，
+  // 中途启动、hook 漏接、早先解析有误（状态别名不认识）都会让 DB 与真实清单脱节，
+  // 而 agent 自己的日志一直是对的。一次有界读，不进 650ms 轮询。
+  useEffect(() => {
+    if (sessionId <= 0) return;
+    void refreshSessionTodos(sessionId).catch(() => {});
   }, [sessionId]);
 
   useEffect(() => {
