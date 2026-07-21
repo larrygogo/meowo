@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getLiveSessionsPage, type LiveSession } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import { useT } from "../i18n";
 
-/** 侧栏一次拉的会话数上限。列表只为切换服务，不做分页——超出的老会话去看板找。 */
+/** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端给不满为止。 */
 const PAGE_LIMIT = 60;
 
 /** board-changed 刷新的冷却窗口（ms）：该事件会三连发（命令写库通知 + db-watcher 回声 +
@@ -32,11 +32,22 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
   const t = useT();
   // null = 首次加载尚未完成：与「真空」区分，避免首帧误闪「暂无会话」。
   const [sessions, setSessions] = useState<LiveSession[] | null>(null);
+  // 翻页用「从头取 limit 条」而不是游标：后端会把已连接的会话顶到结果最前面，
+  // 按最后一项的 last_event_at 续查会漏掉/重复中间那段。整段重取也让 board-changed
+  // 刷新走同一条路径，不必维护「已加载的页」这份额外状态。
+  const [limit, setLimit] = useState(PAGE_LIMIT);
+  const [reachedEnd, setReachedEnd] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    const load = () => getLiveSessionsPage("all", null, null, PAGE_LIMIT)
-      .then((list) => { if (!cancelled) setSessions(Array.isArray(list) ? list : []); })
+    const load = () => getLiveSessionsPage("all", null, null, limit)
+      .then((list) => {
+        if (cancelled) return;
+        const rows = Array.isArray(list) ? list : [];
+        setSessions(rows);
+        // 后端给不满就说明没有下一页了（它内部已经补页跳过空会话）。
+        setReachedEnd(rows.length < limit);
+      })
       // 首载失败降级为空列表（显示「暂无会话」），而不是永远停在加载占位。
       .catch(() => { if (!cancelled) setSessions((s) => s ?? []); });
     void load();
@@ -60,7 +71,16 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
     return () => { cancelled = true; un?.(); if (timer !== undefined) window.clearTimeout(timer); };
-  }, []);
+  }, [limit]);
+
+  // 滚到底前 120px 就预取下一页。`sessions.length >= limit` 兼作防重入：上一页还在
+  // 路上时 sessions 仍是旧的短列表，条件不成立，不会连着叠加好几页。
+  const onScroll = (event: UIEvent<HTMLElement>) => {
+    if (reachedEnd || sessions === null) return;
+    const el = event.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
+    if (sessions.length >= limit) setLimit((n) => n + PAGE_LIMIT);
+  };
 
   return (
     <aside className="chat-sidebar">
@@ -92,7 +112,7 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
           </button>
         </div>
       </div>
-      <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTitle}>
+      <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTitle} onScroll={onScroll}>
         {sessions === null && <div className="chat-sidebar-empty">{t.chat.sidebarLoading}</div>}
         {sessions !== null && sessions.length === 0 && <div className="chat-sidebar-empty">{t.chat.sidebarEmpty}</div>}
         {(sessions ?? []).map((item) => {
@@ -123,6 +143,10 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
             </button>
           );
         })}
+        {/* 下一页在路上：此时 sessions 仍是上一页，长度短于 limit。 */}
+        {sessions !== null && sessions.length > 0 && !reachedEnd && sessions.length < limit && (
+          <div className="chat-sidebar-empty">{t.chat.sidebarLoading}</div>
+        )}
       </nav>
       {/* 常驻底部：会话列表可能很长并滚动，设置入口不能跟着滚走。 */}
       <div className="chat-sidebar-footer">

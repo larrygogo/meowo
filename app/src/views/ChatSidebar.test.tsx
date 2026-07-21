@@ -54,6 +54,39 @@ describe("ChatSidebar", () => {
     expect(onCollapse).toHaveBeenCalled();
   });
 
+  it("滚到底继续翻页，直到后端给不满一页", async () => {
+    const all = Array.from({ length: 150 }, (_, i) => session(1000 - i, `会话 ${i}`));
+    const limits: number[] = [];
+    invoke.mockImplementation((command: string, args: { limit: number }) => {
+      if (command !== "get_live_sessions_page") return Promise.resolve();
+      limits.push(args.limit);
+      return Promise.resolve(all.slice(0, args.limit));
+    });
+    render(<ChatSidebar activeId={1000} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /会话 0/ });
+    expect(limits).toEqual([60]);
+    expect(screen.queryByRole("button", { name: /会话 60/ })).toBeNull();
+
+    const list = screen.getByRole("navigation");
+    // jsdom 里这些尺寸恒为 0，得手动装出「已经滚到底」的几何。
+    Object.defineProperty(list, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 400, configurable: true });
+    Object.defineProperty(list, "scrollTop", { value: 600, configurable: true });
+
+    fireEvent.scroll(list);
+    await screen.findByRole("button", { name: /会话 60/ });
+    expect(limits).toEqual([60, 120]);
+
+    fireEvent.scroll(list);
+    await screen.findByRole("button", { name: /会话 149/ });
+    expect(limits).toEqual([60, 120, 180]);
+
+    // 150 < 180：后端已经给不满，到此为止，再滚也不应该再发请求。
+    fireEvent.scroll(list);
+    fireEvent.scroll(list);
+    expect(limits).toEqual([60, 120, 180]);
+  });
+
   it("survives a backend without the sessions command", async () => {
     // demo/旧后端对未知命令返回 undefined：侧栏必须静默降级为空列表，不能崩掉整个窗口。
     invoke.mockResolvedValue(undefined);
