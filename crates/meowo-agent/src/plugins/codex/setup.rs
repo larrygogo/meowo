@@ -47,15 +47,24 @@ pub fn claimed_codex_entries(root: &Value) -> Vec<ClaimedEntry> {
             if hs.len() != 1 {
                 continue; // 组内不止一个 handler：canon 公式套不上，跳过不预信任
             }
-            let Some(cmd) = hs[0].get("command").and_then(|c| c.as_str()) else {
+            let Some(configured_cmd) = hs[0].get("command").and_then(|c| c.as_str()) else {
                 continue;
             };
-            if claim_codex_cmd(cmd).is_some() {
+            if claim_codex_cmd(configured_cmd).is_some() {
+                // Codex 先按平台选择 commandWindows/command，再对这个“有效命令”计算信任哈希。
+                // 必须复刻该顺序，否则 Windows 覆盖存在时我们写出的 trusted_hash 永远不匹配。
+                #[cfg(windows)]
+                let effective_cmd = hs[0]
+                    .get("commandWindows")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or(configured_cmd);
+                #[cfg(not(windows))]
+                let effective_cmd = configured_cmd;
                 // codex 源码中默认超时为 600（`.unwrap_or(600).max(1)`），同步本处默认值。
                 let t = hs[0].get("timeout").and_then(|t| t.as_u64()).unwrap_or(600);
                 out.push(ClaimedEntry {
                     event: ev.clone(),
-                    command: cmd.to_string(),
+                    command: effective_cmd.to_string(),
                     timeout: t,
                     group_idx,
                     handler_idx: 0,
@@ -149,6 +158,7 @@ fn claim_codex_cmd(cmd: &str) -> Option<String> {
     const SHAPE: crate::CommandSpec = crate::CommandSpec {
         quote_exe: true,
         with_provider: true,
+        ps_call_operator: false,
     };
     SHAPE.claim(cmd, "codex")
 }
@@ -172,10 +182,23 @@ fn write_trusted_hashes(inst: &Installation, hooks_text: &str) -> Option<RepairR
     let root = crate::config::parse_json_config(hooks_text)?;
     let entries = claimed_codex_entries(&root);
     if ensure_trusted_hashes(&mut doc, &hooks_path.display().to_string(), &entries) {
+        // 与 hooks 接线同纪律：写前必备份，备份失败就不写（config.toml 装着用户的模型与
+        // provider 配置）。本步是锦上添花，失败不算接线失败，但必须留痕、不许静默吞。
         if cfg_path.exists() {
-            crate::wiring::backup_once(&cfg_path);
+            if let Err(e) = crate::wiring::backup_once(&cfg_path) {
+                eprintln!(
+                    "Meowo repair[codex]: {} 备份失败（{e}），跳过 trusted_hash 写入",
+                    cfg_path.display()
+                );
+                return None;
+            }
         }
-        let _ = crate::fsutil::write_atomic(&cfg_path, &doc.to_string());
+        if let Err(e) = crate::fsutil::write_atomic(&cfg_path, &doc.to_string()) {
+            eprintln!(
+                "Meowo repair[codex]: {} trusted_hash 写入失败（{e}）",
+                cfg_path.display()
+            );
+        }
     }
     None
 }
@@ -207,7 +230,18 @@ mod tests {
         assert_eq!(entries.len(), 5);
         assert!(entries
             .iter()
-            .all(|e| e.command.contains("--provider codex") && e.timeout == 5));
+            .all(|e| e.command.contains("--provider codex")));
+        assert_eq!(
+            entries
+                .iter()
+                .find(|e| e.event == "PermissionRequest")
+                .map(|e| e.timeout),
+            Some(310)
+        );
+        assert!(entries
+            .iter()
+            .filter(|e| e.event != "PermissionRequest")
+            .all(|e| e.timeout == 5));
         assert!(entries.iter().any(|e| e.event == "PermissionRequest"));
         // 全新单 handler 组场景：真实位置就是 0:0。
         assert!(entries

@@ -203,6 +203,38 @@ fn empty_todos_resets_column_to_todo() {
     assert_eq!(store.list_todos(tid).unwrap().len(), 0);
 }
 
+/// 回归：会话时钟被**别的**事件推进后，更新的 Todo 快照仍必须落库。
+///
+/// 现场——kimi 边跑边勾选待办：每次 TodoList 带整份快照，中间夹着 Stop / 其它工具的
+/// PostToolUse 把 session.last_event_at 顶到未来。旧守卫拿 last_event_at 当判据，于是
+/// 「三条全 done」的最新快照因 now_ms 落后被整份丢弃，界面永远停在 pending（0/3）。
+#[test]
+fn todo_snapshot_lands_even_after_session_clock_advances() {
+    use meowo_store::{TodoInput, TodoStatus};
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(pid, "cc-todo", 200).unwrap();
+    let snapshot = |a: &str, b: &str| {
+        [
+            TodoInput { content: "A".into(), status: TodoStatus::from_str(a) },
+            TodoInput { content: "B".into(), status: TodoStatus::from_str(b) },
+        ]
+    };
+
+    store.sync_todos(sid, &snapshot("in_progress", "pending"), 300).unwrap();
+    // 别的事件把会话时钟推到远处（Stop、其它工具的 PostToolUse 都会）。
+    store.touch_session(sid, 900).unwrap();
+    // 随后到达的待办快照 now_ms=400 < 900，但它是**更新的** todo 状态，必须落库。
+    store.sync_todos(sid, &snapshot("completed", "completed"), 400).unwrap();
+
+    let todos = store.list_todos(tid).unwrap();
+    assert_eq!(
+        todos.iter().map(|t| t.status.as_str()).collect::<Vec<_>>(),
+        vec!["completed", "completed"],
+        "会话时钟领先时，更新的待办快照被错误丢弃了"
+    );
+}
+
 #[test]
 fn all_pending_todos_is_todo_column() {
     let store = Store::open_in_memory().unwrap();
@@ -367,19 +399,22 @@ fn late_hooks_cannot_overwrite_newer_session_or_task_state() {
     store.set_session_title(sid, "旧标题", 400).unwrap();
     store.set_current_activity(sid, "新活动", 600).unwrap();
     store.set_current_activity(sid, "旧活动", 550).unwrap();
-    let newest_todos = [TodoInput {
-        content: "新 Todo".into(),
-        status: TodoStatus::InProgress,
-    }];
-    store.sync_todos(sid, &newest_todos, 700).unwrap();
-
-    // 另一个更新把会话推进到 800；即便 task.updated_at 只有 700，750 的旧 Todo 快照也不能覆盖。
-    store.touch_session(sid, 800).unwrap();
+    // Todo 的迟到守卫只跟**它自己的更新时刻**（task.updated_at）比：先落 750 的新快照，
+    // 再来一个 700 的旧快照就该被挡。**不能**跟 session.last_event_at 比——别的事件
+    // （下面的 touch_session）会把会话时钟顶到未来，若拿它当判据，真正最新的 Todo 快照
+    // 反而会因落后而被整份丢弃（实测：done 进不来，界面一直停在 pending）。
     let stale_todos = [TodoInput {
         content: "旧 Todo".into(),
         status: TodoStatus::Pending,
     }];
-    store.sync_todos(sid, &stale_todos, 750).unwrap();
+    let newest_todos = [TodoInput {
+        content: "新 Todo".into(),
+        status: TodoStatus::InProgress,
+    }];
+    store.sync_todos(sid, &newest_todos, 750).unwrap();
+    // 会话被别的事件推进到 800，但这不该让随后到达的 700 旧快照能覆盖 750 的新快照。
+    store.touch_session(sid, 800).unwrap();
+    store.sync_todos(sid, &stale_todos, 700).unwrap();
 
     store.set_session_cwd(sid, "/new", 900).unwrap();
     store.set_session_cwd(sid, "/old", 850).unwrap();

@@ -10,6 +10,65 @@ pub struct Store {
     pub(crate) conn: Connection,
 }
 
+/// 对话窗口一次读齐的会话头部信息（sessions + 关联 tasks）。
+#[derive(Debug, Clone)]
+pub struct SessionHeader {
+    pub cc_session_id: String,
+    pub status: String,
+    pub cwd: Option<String>,
+    pub provider: String,
+    pub pending_review: Option<String>,
+    /// 无关联任务时为 None（调用方回落到占位标题）。
+    pub title: Option<String>,
+    pub current_activity: Option<String>,
+    /// hook 驱动的最近往来（UserPromptSubmit / Stop 落库）。transcript 尚未落盘或该 agent
+    /// 不提供结构化 transcript 时，对话窗口用它们渲染临时时间线，而不是一片空白。
+    pub last_user_text: Option<String>,
+    pub last_ai_text: Option<String>,
+}
+
+/// statusline 写入的单会话上下文快照。字段各自可能缺失（provider 不支持 / 首帧未到）。
+#[derive(Debug, Clone, Default)]
+pub struct SessionContext {
+    pub model: Option<String>,
+    pub used_pct: Option<i64>,
+    pub window_size: Option<i64>,
+}
+
+/// `BEGIN IMMEDIATE` 的收尾守卫：drop 时若未显式 commit 就 best-effort ROLLBACK——
+/// rusqlite 的 `unchecked_transaction` 只发 deferred BEGIN，而 WAL 下 deferred 事务在
+/// 「先 SELECT 后写入」的间隙被别的连接提交写入时，升级写锁会 SQLITE_BUSY_SNAPSHOT 直接
+/// 失败（busy handler 不生效）。IMMEDIATE 开局即取写锁（冲突走 busy_timeout 等待），
+/// 配本守卫保证任何错误路径都不会把写锁/未决事务留在连接上。
+struct ImmediateTx<'a> {
+    conn: &'a Connection,
+    committed: bool,
+}
+
+impl<'a> ImmediateTx<'a> {
+    fn begin(conn: &'a Connection) -> Result<Self, StoreError> {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(Self {
+            conn,
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) -> Result<(), StoreError> {
+        self.conn.execute_batch("COMMIT")?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for ImmediateTx<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+    }
+}
+
 impl Store {
     /// 打开（或新建）数据库，开启 WAL，执行建表。
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Store, StoreError> {
@@ -402,48 +461,53 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), StoreError> {
         let tid = self.task_id_of_session(session_id)?;
-        let tx = self.conn.unchecked_transaction()?;
-        let (locked, task_updated_at, session_updated_at): (bool, i64, i64) = tx.query_row(
-            "SELECT t.column_locked, t.updated_at, s.last_event_at \
-             FROM tasks t JOIN sessions s ON s.id = t.session_id WHERE t.id = ?1",
+        // 不能沿用 `unchecked_transaction` 的 deferred BEGIN：WAL 下 SELECT 与 DELETE/INSERT
+        // 之间若被别的连接提交写入，升级写事务会 SQLITE_BUSY_SNAPSHOT 直接失败（busy handler
+        // 不生效），这次 TodoWrite 就被丢了（要等下一条事件才自愈）。BEGIN IMMEDIATE 开局即
+        // 取写锁，冲突走 busy_timeout 等待；守卫语义（下方乱序挡写）不变。
+        let tx = ImmediateTx::begin(&self.conn)?;
+        let (locked, task_updated_at): (bool, i64) = self.conn.query_row(
+            "SELECT column_locked, updated_at FROM tasks WHERE id = ?1",
             [tid],
-            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?)),
         )?;
-        // Todo hook 可能乱序到达。必须在删除旧列表之前挡住迟到事件，否则即便下面的
-        // tasks UPDATE 有时间守卫，todos 本身仍会被旧快照整体覆盖。
-        if task_updated_at > now_ms || session_updated_at > now_ms {
-            tx.commit()?;
-            return Ok(());
+        // Todo hook 可能乱序到达。挡迟到事件只能跟**todo 自己的更新时刻**（task.updated_at，
+        // 每次 sync_todos 才推进）比，不能跟 session.last_event_at 比：后者是「会话最后活跃
+        // 时刻」，被 Stop、其它工具的 PostToolUse 等**任何**事件推进。一旦这些事件把 session
+        // 时钟顶到未来，随后到达的 TodoList——哪怕正是最新快照——就会因 now_ms 落后而被整份
+        // 丢弃，界面于是永远停在旧状态（实测：done 的快照进不来，库里一直是 pending）。
+        if task_updated_at > now_ms {
+            return tx.commit();
         }
-        tx.execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
+        self.conn
+            .execute("DELETE FROM todos WHERE task_id = ?1", [tid])?;
         for (i, t) in todos.iter().enumerate() {
-            tx.execute(
+            self.conn.execute(
                 "INSERT INTO todos (task_id, content, status, order_idx) VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![tid, t.content, t.status.as_str(), i as i64],
             )?;
         }
         if !locked {
             let col = derive_column(todos);
-            tx.execute(
+            self.conn.execute(
                 "UPDATE tasks SET column_name = ?1, updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![col.as_str(), now_ms, tid],
             )?;
         } else {
-            tx.execute(
+            self.conn.execute(
                 "UPDATE tasks SET updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now_ms, tid],
             )?;
         }
         // touch_session 等价逻辑（事务内）：刷新 last_event_at，waiting/stale 复活为 running
-        tx.execute(
+        self.conn.execute(
             "UPDATE sessions
              SET last_event_at = ?1,
                  status = CASE WHEN status IN ('waiting','stale') THEN 'running' ELSE status END
              WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
-        tx.commit()?;
-        Ok(())
+        tx.commit()
     }
 
     pub fn list_todos(&self, task_id: i64) -> Result<Vec<Todo>, StoreError> {
@@ -600,6 +664,19 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// 该 pid 是否已被**另一条**未结束的会话行认领。set_session_pid 保证同一时刻至多
+    /// 一条非 ended 行持有某个 pid——存在这样的别行，就说明本会话记录的 pid 是换代残留
+    /// （典型：/clear 前的旧行，见 end_session 注释），进程虽活但已不属于本会话，
+    /// 接管守卫应视其为「本会话进程已死」。也顺带自愈 end_session 清 pid 之前留下的存量脏行。
+    pub fn pid_held_by_other_live(&self, session_id: i64, pid: i64) -> Result<bool, StoreError> {
+        let r = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE pid = ?1 AND id <> ?2 AND status <> 'ended')",
+            rusqlite::params![pid, session_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(r)
+    }
+
     /// 取会话当前记录的 pid（resume 前校验死活用；不存在的会话报错）。
     pub fn session_pid(&self, session_id: i64) -> Result<Option<i64>, StoreError> {
         let r = self.conn.query_row(
@@ -610,10 +687,13 @@ impl Store {
         Ok(r)
     }
 
-    /// 结束会话：状态设为 ended，记录 ended_at。
+    /// 结束会话：状态设为 ended，记录 ended_at，并清 pid。
+    /// 清 pid 是必须的：/clear 只换会话不换进程，SessionEnd 先于新会话认领 pid 到达时，
+    /// 旧行若留着 pid，set_session_pid 的换代清理（只扫非 ended 行）摘不掉它——此后
+    /// 接管守卫拿这个「活着但已归新会话」的 pid 判活，会把旧会话误判成「仍在外部终端运行」。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET status = 'ended', pending_review = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2 AND last_event_at <= ?1",
+            "UPDATE sessions SET status = 'ended', pending_review = NULL, pid = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
         Ok(())
@@ -697,6 +777,100 @@ impl Store {
         Ok(s)
     }
 
+    pub fn session_pending_review(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT pending_review FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .map_err(StoreError::from)
+    }
+
+    /// 最近有活动的未归档会话 id。托盘点击没有「当前会话」上下文，用它决定打开哪个。
+    /// 一条会话都没有时返回 None（调用方回落到打开设置）。
+    pub fn latest_session_id(&self) -> Result<Option<i64>, StoreError> {
+        match self.conn.query_row(
+            "SELECT id FROM sessions WHERE archived = 0 ORDER BY last_event_at DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        ) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// 对话窗口一次拿齐会话头部信息。此前这些字段由 5 个方法分别查询——它们打的是
+    /// sessions/tasks 各自的**同一行**，在 650ms 轮询下每秒多做近十次无谓往返。
+    /// tasks 用 LEFT JOIN：会话未必有关联任务，缺行时 title/current_activity 为 None。
+    pub fn session_header(&self, session_id: i64) -> Result<SessionHeader, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT s.cc_session_id, s.status, s.cwd, s.provider, s.pending_review, \
+                        t.title, t.current_activity, s.last_user_text, s.last_ai_text \
+                 FROM sessions s LEFT JOIN tasks t ON t.session_id = s.id \
+                 WHERE s.id = ?1 LIMIT 1",
+                [session_id],
+                |row| {
+                    // provider 的空值回退必须与 session_provider 一致：DB 里可能是 NULL
+                    // 或空串，直接透出去会让上层按未知 agent 处理（丢掉 transcript 能力）。
+                    let provider: Option<String> = row.get(3)?;
+                    Ok(SessionHeader {
+                        cc_session_id: row.get(0)?,
+                        status: row.get(1)?,
+                        cwd: row.get(2)?,
+                        provider: provider
+                            .filter(|p| !p.trim().is_empty())
+                            .unwrap_or_else(|| crate::DEFAULT_PROVIDER.to_string()),
+                        pending_review: row.get(4)?,
+                        // 与 session_title 同语义：纯空白标题视作没有标题。
+                        title: row
+                            .get::<_, Option<String>>(5)?
+                            .filter(|t| !t.trim().is_empty()),
+                        current_activity: row.get(6)?,
+                        last_user_text: row.get(7)?,
+                        last_ai_text: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(StoreError::from)
+    }
+
+    /// statusline 写入的单会话上下文快照：模型展示名 + 已用百分比 + 上下文窗口大小。
+    /// 无 statusline 数据（provider 不支持 / 首帧未到）时各字段为 None——session_context
+    /// 按事件懒建行，这里不假定行存在。看板走批量 flatten，这条是对话窗口的单条读法。
+    pub fn session_context(&self, cc_session_id: &str) -> Result<SessionContext, StoreError> {
+        match self.conn.query_row(
+            "SELECT model, used_pct, window_size FROM session_context WHERE cc_session_id = ?1",
+            [cc_session_id],
+            |row| {
+                Ok(SessionContext {
+                    model: row.get(0)?,
+                    used_pct: row.get(1)?,
+                    window_size: row.get(2)?,
+                })
+            },
+        ) {
+            Ok(ctx) => Ok(ctx),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(SessionContext::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// 会话对应任务的当前活动文本（工具名/阶段描述，hook 写入）。无任务或空闲为 None。
+    pub fn session_current_activity(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        match self.conn.query_row(
+            "SELECT current_activity FROM tasks WHERE session_id = ?1 LIMIT 1",
+            [session_id],
+            |row| row.get(0),
+        ) {
+            Ok(activity) => Ok(activity),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// 记录会话启动时的 cwd（用于重建 transcript 路径取标题）。
     pub fn set_session_cwd(
         &self,
@@ -767,6 +941,18 @@ impl Store {
             |row| row.get::<_, Option<String>>(0),
         )?;
         Ok(r)
+    }
+
+    /// 取会话所属 agent。未知 id 原样返回；老数据的 NULL/空值回退历史默认值。
+    pub fn session_provider(&self, session_id: i64) -> Result<String, StoreError> {
+        let provider: Option<String> = self.conn.query_row(
+            "SELECT provider FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        Ok(provider
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| crate::DEFAULT_PROVIDER.to_string()))
     }
 
     /// 记录会话所属进程 PID（来自 reporter 在 SessionStart 抓取的 claude.exe 父进程）。
@@ -888,6 +1074,144 @@ fn derive_column(todos: &[TodoInput]) -> TaskColumn {
         return TaskColumn::Doing;
     }
     TaskColumn::Todo
+}
+
+#[cfg(test)]
+mod latest_session_tests {
+    use super::*;
+
+    /// 托盘点击靠它决定打开哪个会话：必须取最近活跃的、且跳过已归档的，
+    /// 空库返回 None（调用方据此回落到设置窗口，而不是点了没反应）。
+    #[test]
+    fn latest_session_picks_most_recent_unarchived() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.latest_session_id().unwrap(), None, "空库应为 None");
+
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (old, _) = store.start_session(pid, "s-old", 100).unwrap();
+        let (recent, _) = store.start_session(pid, "s-recent", 500).unwrap();
+        assert_eq!(store.latest_session_id().unwrap(), Some(recent));
+
+        // 归档最新的那个 → 退回次新的，而不是继续返回已归档会话。
+        store.set_session_archived(recent, true, 600).unwrap();
+        assert_eq!(store.latest_session_id().unwrap(), Some(old));
+
+        // 全部归档 → None。
+        store.set_session_archived(old, true, 700).unwrap();
+        assert_eq!(store.latest_session_id().unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod stale_pid_tests {
+    use super::*;
+
+    /// /clear 只换会话不换进程：SessionEnd 先把旧会话收尾，随后新会话才认领同一 pid。
+    /// end_session 若不清 pid，旧行会留着一个「活着但已归新会话」的 pid，接管守卫
+    /// 据此把旧会话误判成「仍在外部终端运行」——而那个终端并不存在。
+    #[test]
+    fn end_session_clears_pid() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (old, _) = store.start_session(pid, "s-old", 100).unwrap();
+        store.set_session_pid(old, 74519, 100).unwrap();
+        store.end_session(old, 200).unwrap();
+        assert_eq!(store.session_pid(old).unwrap(), None);
+    }
+
+    /// 存量脏数据（end_session 清 pid 之前留下的 ended+pid 行）的自愈判据：
+    /// 同一 pid 已被另一条非 ended 行认领 → 本行的 pid 是换代残留，不算「本会话还活着」。
+    #[test]
+    fn pid_held_by_other_live_detects_reclaimed_pid() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (old, _) = store.start_session(pid, "s-old", 100).unwrap();
+        let (new, _) = store.start_session(pid, "s-new", 300).unwrap();
+        // 直接写库造出历史脏行：ended 但 pid 未清（end_session 已修，正常路径造不出来）。
+        store
+            .conn
+            .execute(
+                "UPDATE sessions SET status='ended', ended_at=200, pid=74519 WHERE id=?1",
+                [old],
+            )
+            .unwrap();
+        // 新会话尚未认领该 pid：没有别的活行持有它，旧行的 pid 只能按字面判活。
+        assert!(!store.pid_held_by_other_live(old, 74519).unwrap());
+        // 新会话认领同一 pid 后：旧行的 pid 判为换代残留。
+        store.set_session_pid(new, 74519, 300).unwrap();
+        assert!(store.pid_held_by_other_live(old, 74519).unwrap());
+        // 认领方自己查自己：pid 归属正常，不受影响。
+        assert!(!store.pid_held_by_other_live(new, 74519).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod session_header_tests {
+    use super::*;
+
+    /// session_header 合并了原先 5 个单行查询，必须逐字保住它们各自的回退语义——
+    /// 这些回退（空 provider→默认、空白标题→None、无 task→None）都是静默的，
+    /// 丢掉不会报错，只会让上层拿到错误的 agent 或把空白当标题显示。
+    #[test]
+    fn session_header_preserves_fallbacks_of_the_queries_it_replaced() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+
+        // 新建会话：start_session 会一并建 task（带占位标题），activity 尚为空。
+        // 与被替换的单查询保持一致即可，这里不假定 title 为 None。
+        let (bare, _) = store.start_session(pid, "s-bare", 100).unwrap();
+        let h = store.session_header(bare).unwrap();
+        assert_eq!(h.cc_session_id, "s-bare");
+        assert_eq!(h.title, store.session_title(bare).unwrap());
+        assert_eq!(h.current_activity, None);
+        // provider 为空 → 回落默认，与 session_provider 一致（不能透出空串，否则上层
+        // 按未知 agent 处理，直接丢掉 transcript 能力）。start_session 会写入默认值，
+        // 造不出这种旧数据，直接置 NULL / 空串来覆盖两条回退分支。
+        // 列有 NOT NULL 约束，实际能出现的脏值是空串/纯空白。
+        for blank in ["", "   "] {
+            store
+                .conn
+                .execute(
+                    "UPDATE sessions SET provider = ?1 WHERE id = ?2",
+                    rusqlite::params![blank, bare],
+                )
+                .unwrap();
+            let h = store.session_header(bare).unwrap();
+            assert_eq!(h.provider, crate::DEFAULT_PROVIDER, "provider={blank:?}");
+            assert_eq!(h.provider, store.session_provider(bare).unwrap());
+        }
+        // 还原，免得污染后面对 s-bare 的断言。
+        store
+            .set_session_provider(bare, crate::DEFAULT_PROVIDER)
+            .unwrap();
+
+        // 纯空白标题按「没有标题」处理，与 session_title 一致。
+        // set_session_title 会 trim 且忽略空值，造不出这种脏数据，直接写库。
+        let (blank, _) = store.start_session(pid, "s-blank", 200).unwrap();
+        let blank_task = store.task_id_of_session_pub(blank).unwrap();
+        store
+            .conn
+            .execute("UPDATE tasks SET title = '   ' WHERE id = ?1", [blank_task])
+            .unwrap();
+        assert_eq!(store.session_header(blank).unwrap().title, None);
+        assert_eq!(store.session_title(blank).unwrap(), None);
+
+        // 正常路径：各字段与被替换的单查询逐一一致。
+        let (full, _) = store.start_session(pid, "s-full", 300).unwrap();
+        store.set_session_title(full, "真实标题", 300).unwrap();
+        store.set_session_cwd(full, "C:/work", 300).unwrap();
+        store.set_session_provider(full, "codex").unwrap();
+        let h = store.session_header(full).unwrap();
+        assert_eq!(h.title.as_deref(), Some("真实标题"));
+        assert_eq!(h.title, store.session_title(full).unwrap());
+        assert_eq!(h.cwd, store.session_cwd(full).unwrap());
+        assert_eq!(h.provider, store.session_provider(full).unwrap());
+        assert_eq!(h.pending_review, store.session_pending_review(full).unwrap());
+        assert_eq!(
+            h.current_activity,
+            store.session_current_activity(full).unwrap()
+        );
+    }
 }
 
 #[cfg(test)]

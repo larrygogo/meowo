@@ -10,7 +10,7 @@
 //   CC_WEBP_LOSSLESS=1   无损编码(零残影、像素级完美,但体积巨大 ~20MB)。
 //   CC_WEBP_EFFORT=5     压缩耗时/体积权衡(0–6),越高越小越慢。
 //   CC_KEEP_FRAMES=1     编码后保留 ../target/demo-frames 的逐帧 PNG(便于换参数重编,免重录)。
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,7 +74,18 @@ try {
 
   console.log(`完成:${outPath} (${(statSync(outPath).size / 1024 / 1024).toFixed(2)} MB)`);
 } finally {
-  vite?.kill();
+  killTree(vite);
+}
+
+// spawn 带 shell: true 时，vite 是 cmd 包装进程的子进程：child.kill() 只杀包装进程，
+// vite 孙进程会孤儿化残留、继续占用端口。Windows 下用 taskkill /T /F 杀整棵进程树。
+function killTree(child) {
+  if (!child) return;
+  if (process.platform === "win32" && child.pid) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    child.kill();
+  }
 }
 
 async function ping(url) {

@@ -347,11 +347,12 @@ fn ensure_valid_token(inst: &Installation, ports: &Ports) -> Result<String, Stri
         .unwrap_or(&refresh)
         .to_string();
     // 钳下限 600s：服务端若异常返回 0/负/极小值，避免写回一个立刻过期的 expiresAt 而陷入每次都刷新。
+    // 钳上限 86400s（24h）：防服务端异常返回超大值导致 now_ms() + expires_in*1000 溢出回绕。
     let expires_in = body
         .get("expires_in")
         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
         .unwrap_or(3600)
-        .max(600);
+        .clamp(600, 86400);
     let new_expires_at = now_ms() + expires_in * 1000;
 
     let merged = merge_credentials(&root, &new_access, &new_refresh, new_expires_at);
@@ -623,6 +624,64 @@ mod tests {
         assert_eq!(merged["claudeAiOauth"]["expiresAt"], 999);
         assert_eq!(merged["claudeAiOauth"]["scopes"][0], "a");
         assert_eq!(merged["claudeAiOauth"]["subscriptionType"], "max");
+    }
+
+    /// 走生产路径的防溢出回归：刷新响应给出病态大的 expires_in 时，写回的 expiresAt 必须被钳在
+    /// 24h 内——否则 now_ms() + expires_in*1000 溢出（debug panic / release 回绕成过去的时间戳，
+    /// 于是每次拉用量都重刷）。
+    #[test]
+    fn refresh_clamps_pathological_expires_in() {
+        /// 假刷新端点：回一份 expires_in = i64::MAX 的响应。
+        struct HugeExpiresIn;
+        impl crate::ports::HttpPort for HugeExpiresIn {
+            fn send(&self, _req: &HttpRequest) -> Result<String, crate::ports::HttpError> {
+                Ok(r#"{"access_token":"new_access","refresh_token":"new_refresh","expires_in":9223372036854775807}"#
+                    .to_string())
+            }
+            fn download(
+                &self,
+                _url: &str,
+                _dest: &std::path::Path,
+                _timeout: std::time::Duration,
+                _on_progress: &mut dyn FnMut(u64, Option<u64>),
+            ) -> Result<u64, crate::ports::HttpError> {
+                unreachable!("token 刷新不走下载")
+            }
+        }
+
+        // profile 实况：凭据落在 <root>/.credentials.json；NoKeychain 恒不可用 → 走文件分支。
+        let root = std::env::temp_dir().join(format!("meowo-claude-clamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let inst = crate::by_id("claude")
+            .unwrap()
+            .installation_for_profile(&root)
+            .expect("claude 支持多账号");
+        std::fs::write(
+            root.join(".credentials.json"),
+            json!({"claudeAiOauth":{"accessToken":"old","refreshToken":"oldr","expiresAt":0}})
+                .to_string(),
+        )
+        .unwrap();
+
+        let ports = Ports {
+            http: &HugeExpiresIn,
+            keychain: &crate::ports::NoKeychain,
+        };
+        let before = now_ms();
+        let token = ensure_valid_token(&inst, &ports).expect("刷新应成功");
+        assert_eq!(token, "new_access");
+
+        let written: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(".credentials.json")).unwrap(),
+        )
+        .unwrap();
+        let expires_at = written["claudeAiOauth"]["expiresAt"].as_i64().unwrap();
+        assert!(
+            expires_at >= before + 86400 * 1000 && expires_at <= now_ms() + 86400 * 1000,
+            "expires_in 必须被钳到 86400s（expires_at={expires_at}）"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

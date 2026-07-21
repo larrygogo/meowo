@@ -21,12 +21,57 @@ pub(crate) fn open_settings(app: tauri::AppHandle) {
     std::thread::spawn(move || open_settings_window(&app));
 }
 
+/// `visible:false` 创建的窗口的兜底显示。窗口创建即可见的话，WebView 画出首帧前是
+/// 默认白底——打开瞬间闪一下白框；故所有窗口（贴纸/设置/对话/更新/引导/新建会话）都
+/// 隐藏创建，由前端首帧后自行 show（useShowWhenReady）。但前端脚本没起来
+/// （加载失败/崩溃）时窗口会永久隐身、用户以为点了没反应——到点仍不可见就强制显示，
+/// 宁可白屏也要可见可关。`focus` 对贴纸主窗口传 false（窗口配置 focus:false，
+/// 开机自启不得抢焦点），其余弹出窗口传 true。
+pub(crate) fn show_after_grace(window: &tauri::WebviewWindow, focus: bool) {
+    let w = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+        if !w.is_visible().unwrap_or(true) {
+            let _ = w.show();
+            if focus {
+                let _ = w.set_focus();
+            }
+        }
+    });
+}
+
+/// 独立窗口的**原生**底色，与 styles.css 的 --cc-window-bg 对齐（dark #1c1c1e / light #f6f6f7）。
+///
+/// 隐藏创建 + 首帧后 show 只消除了「窗口先于首帧显示」的那类白框；show 的瞬间 WebView2
+/// 的合成帧仍可能没上屏（rAF 提交 ≠ 已呈现），这一两帧露出的是原生窗口底色——默认白，
+/// 于是还是闪。把原生底色设成与页面主题同色，即便露出来也是同色纯色帧，肉眼不可辨。
+/// theme=system 时借主窗口的 theme()（跟随 OS，本应用不调 set_theme）判定明暗。
+/// 仅用于非 macOS：macOS 这些窗口是 transparent + 前端圆角，设原生底色会破坏透明。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn window_background_color(app: &tauri::AppHandle) -> tauri::webview::Color {
+    let dark = match load_settings().theme.as_str() {
+        "light" => false,
+        "dark" => true,
+        _ => app
+            .get_webview_window("main")
+            .and_then(|w| w.theme().ok())
+            .map(|t| t == tauri::Theme::Dark)
+            // 拿不到就按深色：应用默认主题即深色，闪浅不如闪深。
+            .unwrap_or(true),
+    };
+    if dark {
+        tauri::webview::Color(0x1c, 0x1c, 0x1e, 0xff)
+    } else {
+        tauri::webview::Color(0xf6, 0xf6, 0xf7, 0xff)
+    }
+}
+
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
 /// 托盘左键点击与右键菜单「设置」共用此逻辑。
 pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
     // macOS：打开设置窗口前临时切到 Regular 激活策略，否则纯托盘 App 的窗口无法获焦。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "about");
 
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_focus();
@@ -41,14 +86,20 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
         .min_inner_size(620.0, 460.0)
         .resizable(false)
         .decorations(false)
+        // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+        .visible(false)
         .center();
         // macOS：无边框窗口不会自动圆角，故设为透明，由前端 .settings 的 border-radius 呈现圆角
         // （系统会按不透明内容自动绘制圆角阴影）。Windows 由 DWM 自动圆角，保持不透明不变。
         #[cfg(target_os = "macos")]
         let builder = builder.transparent(true);
+        // 非 macOS：原生底色对齐主题，show 瞬间合成帧未上屏也不露白（见 window_background_color）。
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.background_color(window_background_color(app));
         match builder.build() {
             Ok(_about_window) => {
-                // macOS：设置窗口关闭后切回 Accessory，重新隐藏 Dock 图标。
+                show_after_grace(&_about_window, true);
+                // macOS：设置窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（重新隐藏 Dock 图标）。
                 #[cfg(target_os = "macos")]
                 {
                     let app_handle = app.clone();
@@ -58,7 +109,7 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
                             tauri::WindowEvent::CloseRequested { .. }
                                 | tauri::WindowEvent::Destroyed
                         ) {
-                            crate::macos::menubar::settings_window_did_close(&app_handle);
+                            crate::macos::menubar::settings_window_did_close(&app_handle, "about");
                         }
                     });
                 }
@@ -79,7 +130,7 @@ pub(crate) fn open_onboarding(app: tauri::AppHandle) {
 pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "onboarding");
 
     if let Some(w) = app.get_webview_window("onboarding") {
         let _ = w.set_focus();
@@ -97,13 +148,18 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     .maximizable(false)
     .minimizable(false)
     .decorations(false)
+    // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+    .visible(false)
     .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .onboarding 的 border-radius 呈现（同设置/更新窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_onboarding_window) => {
-            // macOS：引导窗口关闭后切回 Accessory，重新隐藏 Dock 图标（同设置/更新窗口）。
+            show_after_grace(&_onboarding_window, true);
+            // macOS：引导窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置/更新窗口）。
             #[cfg(target_os = "macos")]
             {
                 let app_handle = app.clone();
@@ -112,7 +168,7 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                        crate::macos::menubar::settings_window_did_close(&app_handle, "onboarding");
                     }
                 });
             }
@@ -134,7 +190,7 @@ pub(crate) fn open_update_window(app: tauri::AppHandle) {
 pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "updater");
 
     if let Some(w) = app.get_webview_window("updater") {
         let _ = w.set_focus();
@@ -151,13 +207,18 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     .min_inner_size(400.0, 252.0)
     .resizable(false)
     .decorations(false)
+    // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+    .visible(false)
     .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .updater 的 border-radius 呈现（同设置窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_update_window) => {
-            // macOS：更新窗口关闭后切回 Accessory，重新隐藏 Dock 图标（同设置窗口）。
+            show_after_grace(&_update_window, true);
+            // macOS：更新窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置窗口）。
             #[cfg(target_os = "macos")]
             {
                 let app_handle = app.clone();
@@ -166,7 +227,7 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                        crate::macos::menubar::settings_window_did_close(&app_handle, "updater");
                     }
                 });
             }
@@ -195,7 +256,7 @@ pub(crate) fn open_new_session_window_impl(
 ) {
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::settings_window_will_open(app);
+    crate::macos::menubar::settings_window_will_open(app, "new-session");
 
     if let Some(w) = app.get_webview_window("new-session") {
         // 窗口已开：若从另一张卡片带了 cwd/provider 预填，通知面板更新表单（不重开窗口），再聚焦。
@@ -231,16 +292,21 @@ pub(crate) fn open_new_session_window_impl(
     let builder =
         tauri::WebviewWindowBuilder::new(app, "new-session", tauri::WebviewUrl::App(url.into()))
             .title(tr(ui_lang(&load_settings()), "window.newSession"))
-            .inner_size(460.0, 420.0)
-            .min_inner_size(460.0, 420.0)
+            .inner_size(460.0, 520.0)
+            .min_inner_size(460.0, 520.0)
             .resizable(false)
             .decorations(false)
+            // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+            .visible(false)
             .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .ns-window 的 border-radius 呈现（同设置窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_win) => {
+            show_after_grace(&_win, true);
             #[cfg(target_os = "macos")]
             {
                 let app_handle = app.clone();
@@ -249,13 +315,111 @@ pub(crate) fn open_new_session_window_impl(
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle);
+                        crate::macos::menubar::settings_window_did_close(&app_handle, "new-session");
                     }
                 });
             }
         }
         Err(e) => eprintln!("创建新建会话窗口失败: {e}"),
     }
+}
+
+/// 打开单例会话对话窗口。再次点击另一张卡片时复用窗口并发事件切换会话。
+/// 创建/切换失败必须传播回前端：静默失败时用户「点了没反应」，再点会重复起会话。
+#[tauri::command]
+pub(crate) async fn open_chat_window(
+    app: tauri::AppHandle,
+    session_id: i64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_chat_window_impl(&app, session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 无处上报错误的入口（审批唤醒）用的 fire-and-forget 变体；失败仅留日志，
+/// 由调用方自身的兜底（消费者租约超时 → pass）保证不悬挂。
+pub(crate) fn open_chat_window_detached(app: tauri::AppHandle, session_id: i64) {
+    std::thread::spawn(move || {
+        if let Err(error) = open_chat_window_impl(&app, session_id) {
+            eprintln!("打开对话窗口失败: {error}");
+        }
+    });
+}
+
+/// 托盘点击入口：打开最近活跃会话的对话窗口。托盘没有「当前会话」上下文，
+/// 取 last_event_at 最新的未归档会话最贴近「看看现在在跑什么」。
+/// 一条会话都没有（新装/全归档）时回落到设置窗口，避免点了毫无反应。
+/// 仅非 macOS：macOS 托盘走 `macos::menubar::setup_tray`（面板模式），不经此入口。
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
+    let app = app.clone();
+    // 查库放子线程：与 open_settings_window 同理由，主线程同步 IO 会阻塞消息泵。
+    std::thread::spawn(move || {
+        let latest = crate::open_store(&crate::db_path())
+            .ok()
+            .and_then(|store| store.latest_session_id().ok().flatten());
+        match latest {
+            Some(session_id) => {
+                // 托盘入口没有 UI 可上报；至少留日志。
+                if let Err(error) = open_chat_window_impl(&app, session_id) {
+                    eprintln!("打开对话窗口失败: {error}");
+                }
+            }
+            None => open_settings_window(&app),
+        }
+    });
+}
+
+pub(crate) fn open_chat_window_impl(
+    app: &tauri::AppHandle,
+    session_id: i64,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::macos::menubar::settings_window_will_open(app, "chat");
+
+    if let Some(w) = app.get_webview_window("chat") {
+        use tauri::Emitter;
+        // emit 失败绝不能静默：窗口会照常聚焦，但停留在旧会话——用户点了卡片 A，
+        // 看到的却是会话 B，比不弹窗更具误导性。
+        w.emit("chat-session-changed", session_id)
+            .map_err(|e| format!("切换会话失败: {e}"))?;
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let url = format!("index.html?sessionId={session_id}");
+    let builder = tauri::WebviewWindowBuilder::new(app, "chat", tauri::WebviewUrl::App(url.into()))
+        .title("Meowo · Chat")
+        .inner_size(960.0, 760.0)
+        .min_inner_size(620.0, 480.0)
+        .resizable(true)
+        .decorations(false)
+        // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+        .visible(false)
+        .center();
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
+    let win = builder
+        .build()
+        .map_err(|e| format!("创建对话窗口失败: {e}"))?;
+    show_after_grace(&win, true);
+    let app_handle = app.clone();
+    win.on_window_event(move |e| {
+        if matches!(
+            e,
+            tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+        ) {
+            let ptys = &app_handle.state::<crate::AppState>().ptys;
+            // 先清租约再放行挂起审批：窗口没了，租约留着只会让后续审批空等 300s。
+            ptys.clear_approval_consumers();
+            ptys.pass_pending_approvals();
+            #[cfg(target_os = "macos")]
+            crate::macos::menubar::settings_window_did_close(&app_handle, "chat");
+        }
+    });
+    Ok(())
 }
 
 /// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/置顶/聚焦。
@@ -329,6 +493,13 @@ pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
     if let Some(w) = app.get_webview_window("updater") {
         let _ = w.set_title(tr(lang, "window.updater"));
     }
+    if let Some(w) = app.get_webview_window("chat") {
+        let _ = w.set_title(if lang == "zh" {
+            "Meowo · 对话"
+        } else {
+            "Meowo · Chat"
+        });
+    }
 }
 
 /// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。
@@ -345,7 +516,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     builder
         .tooltip("Meowo")
         .menu(&menu)
-        // 左键留给「打开设置」，菜单仅在右键弹出。
+        // 左键留给「打开对话窗口」，菜单仅在右键弹出（设置仍在右键菜单里）。
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "recall" => recall_sticker(app),
@@ -365,7 +536,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                open_settings_window(tray.app_handle());
+                open_latest_chat_window(tray.app_handle());
             }
         })
         .build(app)?;

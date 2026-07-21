@@ -1,16 +1,9 @@
-import kimiLogo from "../../app/src/assets/kimi.png";
-import geminiLogo from "../../app/src/assets/gemini.svg";
-import { getDict, type Lang } from "@/lib/i18n";
+// 各 AI Agent 的品牌 logo 与 ProviderId：StickerWindow 会话卡片使用。
+// （原「支持的 Agent」展示板块已随首页重构移除，这里只保留 logo 部分。）
+import kimiLogo from "@/assets/kimi.png";
+import geminiLogo from "@/assets/gemini.svg";
 
 export type ProviderId = "claude" | "codex" | "kimi" | "gemini" | "opencode";
-
-const AGENTS: { id: ProviderId; name: string }[] = [
-  { id: "claude", name: "Claude Code" },
-  { id: "codex", name: "Codex" },
-  { id: "kimi", name: "Kimi Code" },
-  { id: "gemini", name: "Gemini CLI" },
-  { id: "opencode", name: "OpenCode" },
-];
 
 function ClaudeLogo() {
   return (
@@ -87,33 +80,5 @@ export function AgentLogo({
         <img src={kimiLogo.src} width={size} height={size} alt="" style={{ display: "block" }} />
       )}
     </span>
-  );
-}
-
-export default function SupportedAgents({ lang = "zh" }: { lang?: Lang }) {
-  const d = getDict(lang).supported;
-  return (
-    <section className="section-sm supported-agents">
-      <div className="container">
-        <div className="supported-agents-head">
-          <div>
-            <span className="eyebrow">{d.eyebrow}</span>
-            <h2 className="h2">{d.heading}</h2>
-          </div>
-          <p>{d.body}</p>
-        </div>
-        <div className="supported-agent-list">
-          {AGENTS.map((agent) => (
-            <div className="supported-agent" key={agent.id}>
-              <span className="supported-agent-icon">
-                <AgentLogo id={agent.id} />
-              </span>
-              <span className="supported-agent-name">{agent.name}</span>
-              <span className="supported-agent-status">{d.status}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
   );
 }

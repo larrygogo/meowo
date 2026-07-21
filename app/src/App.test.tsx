@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 const getLiveSessionsCounts = vi.fn();
 const getLiveSessionsPage = vi.fn();
 let emitBoardChanged: () => void = () => {};
+let emitSnapChanged: (e: { payload: { edge: "left" | "right" | "top" | null } }) => void = () => {};
 const unlisten = vi.fn();
 
 // jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
@@ -52,12 +53,25 @@ vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
 vi.mock("./api", () => ({
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
+  // 与真实 api.ts 同款归一化：允许各测试继续用「裸数组」写 mock 数据，这里补上
+  // { items, next_cursor } 包装（给满 limit → 用末项当游标；给不满 → 到底）。
   getLiveSessionsPage: (
     filter: "all" | "running" | "waiting" | "archived",
     search: string | null,
     cursor: { last_event_at: number; id: number } | null,
     limit: number
-  ) => getLiveSessionsPage(filter, search, cursor, limit),
+  ) =>
+    Promise.resolve(getLiveSessionsPage(filter, search, cursor, limit)).then((res: unknown) => {
+      if (!Array.isArray(res)) return res;
+      const rows = res as { session: { last_event_at: number; id: number } }[];
+      const last = rows[rows.length - 1];
+      return {
+        items: rows,
+        next_cursor: rows.length >= limit && last
+          ? { last_event_at: last.session.last_event_at, id: last.session.id }
+          : null,
+      };
+    }),
   getSettings: () =>
     Promise.resolve({
       archive_hide_days: 0,
@@ -82,10 +96,12 @@ vi.mock("./api", () => ({
   agentName: (agents: { id: string; display_name: string }[], id: string) =>
     agents.find((a) => a.id === id)?.display_name ?? id,
 }));
-// 按事件名分别路由：board-changed → emitBoardChanged；snap-changed 忽略（Tauri 吸边，无法在 jsdom 中测试）
+// 按事件名分别路由：board-changed → emitBoardChanged；snap-changed → emitSnapChanged
+// （真实吸边靠 Tauri 后端无法在 jsdom 测，但拖拽中卸载的轮询泄漏可以模拟事件验证）。
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: (event: string, cb: () => void) => {
-    if (event === "board-changed") emitBoardChanged = cb;
+  listen: (event: string, cb: (e: { payload: { edge: "left" | "right" | "top" | null } }) => void) => {
+    if (event === "board-changed") emitBoardChanged = cb as () => void;
+    if (event === "snap-changed") emitSnapChanged = cb;
     return Promise.resolve(unlisten);
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -106,6 +122,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(() => Promise.resolv
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(() => Promise.resolve()) }));
 
 import { App } from "./App";
+import { zh } from "./i18n/zh";
 
 beforeEach(() => {
   getLiveSessionsCounts.mockReset();
@@ -126,12 +143,78 @@ describe("App", () => {
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
   });
 
+  // 回归：冷启动首页未落地前不能闪「还没有会话」假空态，必须显示加载占位。
+  it("初始加载中显示加载占位，落地后再切到正常空态", async () => {
+    let resolvePage: (v: unknown[]) => void = () => {};
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]); // 折叠条查询不挂起
+      return new Promise((r) => { resolvePage = r as (v: unknown[]) => void; });
+    });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(zh.sticker.loading)).toBeTruthy());
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+    resolvePage([]);
+    await waitFor(() => expect(screen.getByText(zh.empty.allTitle)).toBeTruthy());
+    expect(screen.queryByText(zh.sticker.loading)).toBeNull();
+  });
+
+  // 回归：首页加载失败曾只 console.error，用户看到「还没有会话」。现在必须显示
+  // 「加载失败 + 重试」，且点重试会重新发起首页加载，成功后回到正常空态。
+  it("初始加载失败显示错误与重试，重试成功后恢复正常", async () => {
+    let failFirst = true;
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]);
+      if (failFirst) {
+        failFirst = false;
+        return Promise.reject(new Error("boom"));
+      }
+      return Promise.resolve([]);
+    });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(zh.sticker.loadFailed)).toBeTruthy());
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+
+    const callsBefore = getLiveSessionsPage.mock.calls.filter(([, s]) => s === "").length;
+    fireEvent.click(screen.getByTestId("empty-retry-cta"));
+    await waitFor(() =>
+      expect(getLiveSessionsPage.mock.calls.filter(([, s]) => s === "").length).toBeGreaterThan(callsBefore)
+    );
+    await waitFor(() => expect(screen.getByText(zh.empty.allTitle)).toBeTruthy());
+    expect(screen.queryByText(zh.sticker.loadFailed)).toBeNull();
+  });
+
   it("收到 board-changed 后重新拉取 counts 和第 0 页", async () => {
     render(<App />);
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
     emitBoardChanged();
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
+  });
+
+  // 回归：拖拽中途卸载组件，90ms 的 pointer_left_down 松手轮询必须随 cleanup 停掉——
+  // 否则 interval 泄漏，卸载后仍持续打 IPC 空转。
+  it("拖拽中途卸载：松手轮询 pointer_left_down 随卸载停止，不泄漏", async () => {
+    // 左键一直按着（resolve true）：轮询不会自己停，只能指望卸载时的 cleanup。
+    vi.mocked(invoke).mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "pointer_left_down" ? true : undefined)
+    );
+    const { container, unmount } = render(<App />);
+    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
+
+    // mousedown 命中拖拽区 → 进入拖拽态；随后 snap-changed 近边 → 启动松手轮询。
+    fireEvent.mouseDown(container.querySelector(".drag")!);
+    emitSnapChanged({ payload: { edge: "left" } });
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("pointer_left_down")
+    );
+
+    unmount();
+    const pollCalls = () =>
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "pointer_left_down").length;
+    const atUnmount = pollCalls();
+    // 轮询若还活着，300ms（>3 个周期）内必然再触发数次。
+    await new Promise((r) => setTimeout(r, 300));
+    expect(pollCalls()).toBe(atUnmount);
   });
 
   it("清空搜索时恢复搜索前的列表顺序", async () => {

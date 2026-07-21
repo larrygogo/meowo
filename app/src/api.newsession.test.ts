@@ -30,10 +30,13 @@ describe("new-session api", () => {
     expect(agentName([], "claude")).toBe("claude");
   });
 
-  it("newSession 透传参数", () => {
+  it("newSession 透传参数（含启动选项的 choice id）", () => {
     invokeMock.mockResolvedValue(undefined);
-    newSession("C:/p", "claude", "wt");
-    expect(invokeMock).toHaveBeenCalledWith("new_session", { cwd: "C:/p", provider: "claude", terminal: "wt" });
+    // 不再传 terminal：托管模式下终端选择由后端设置决定（后端参数仅为旧前端兼容保留）。
+    newSession("C:/p", "claude", { model: "opus" });
+    expect(invokeMock).toHaveBeenCalledWith("new_session", {
+      cwd: "C:/p", provider: "claude", options: { model: "opus" },
+    });
   });
 
   it("checkProviderHooks 传 provider", () => {

@@ -18,6 +18,7 @@ tauri-build = { workspace = true }
 
 [dependencies]
 meowo-agent = { path = "../../crates/meowo-agent" }
+meowo-protocol = { path = "../../crates/meowo-protocol" }
 meowo-store = { path = "../../crates/meowo-store" }
 meowo-reporter = { path = "../../crates/meowo-reporter" }
 tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
@@ -46,6 +47,8 @@ ureq = { version = "2", features = ["json", "socks-proxy"] }
 sha2 = "0.10"
 # 系统语言检测（Settings.language = auto 时解析界面/通知语言）。
 sys-locale = "0.3"
+portable-pty = "0.9.0"
+getrandom = "0.3"
 # codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 
@@ -60,10 +63,12 @@ windows = { version = "0.61", features = ["UI_Notifications"] }
 winreg = "0.55"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
+# 钉 rev 不跟踪分支：lock 重建 / cargo update 不会静默拉到上游新提交（与 Cargo.lock 锁定提交一致）。
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "18ffb9a201fbf6fedfaa382fd4b92315ea30ab1a" }
 mac-notification-sys = "0.6"
 # 点击通知后从"通知中心"移除本应用的已投递通知（mac-notification-sys 不暴露移除接口）。
-objc = "0.2"
+# objc2 与 tauri 生态现有 0.6 对齐（替换 2022 年后停维护的 objc 0.2）。
+objc2 = "0.6"
 
 [lints.rust]
 # tauri-nspanel 的 panel_delegate! 宏展开含 #[cfg(feature = "cargo-clippy")]，新 rustc 下触发

@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useShowWhenReady } from "../useShowWhenReady";
 import { useT } from "../i18n";
 import { availableTerminals, type ResumeTerminal, type StickerStyle, type CardMenuMode, type ThemeMode } from "../api";
-import { Segmented, Dropdown } from "./settings/widgets";
+import { Segmented } from "./settings/widgets";
+import { Dropdown } from "./menu";
 import { useSettingsState } from "./settings/state";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 
@@ -335,6 +337,8 @@ type Step = {
  */
 export function Onboarding() {
   const t = useT();
+  // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
+  useShowWhenReady();
   const [step, setStep] = useState(0);
 
   // 顺序刻意把两个「偏配置」的步骤（快速设置、卡片菜单）放到欢迎之后的前面：

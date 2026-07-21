@@ -228,11 +228,10 @@ pub fn build_script(reporter_bash: &str, inner: &str) -> String {
 }
 
 /// 写出 statusline 包装脚本（先建目录）。返回错误供调用方决定是否改写 settings。
+/// 走原子写：脚本落盘要么完整要么不存在——裸 `std::fs::write` 的半截文件会被幂等判定
+/// 当成「脚本已就位」而永久跳过重建（见 `statusline_amend` 的补建分支），状态栏就此空白。
 fn write_statusline_script(path: &std::path::Path, script: &str) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, script)
+    crate::fsutil::write_atomic(path, script)
 }
 
 /// 包装脚本路径：`<meowo 数据目录>/statusline.sh`（与 board.db 同目录）。
@@ -274,10 +273,13 @@ fn statusline_amend(
             Ok(format!("{pretty}\n"))
         }
         None => {
-            // 幂等命中（settings 已指向我们的脚本）但脚本文件缺失：用户删 ~/.meowo 重置数据时
-            // board.db 会被 Store::open 自动重建，本脚本却不会——不补建则状态栏每次渲染报
-            // No such file、Context% 永久断供。原 inner 已无从恢复，退化为自渲染版兜底。
-            if !script_path.exists() {
+            // 幂等命中（settings 已指向我们的脚本）但脚本缺失或内容损坏（读不到 / 不含我方生成标记）。
+            // 缺失：用户删 ~/.meowo 重置数据时 board.db 会被 Store::open 自动重建，本脚本却不会；
+            // 损坏：旧版裸写留下的半截文件、杀软截断。两者下不补建则状态栏每次渲染报 No such file、
+            // Context% 永久断供——而 probe 的幂等判定只认 settings 里的路径，不会发现脚本坏了。
+            // 原 inner 已无从恢复，退化为自渲染版兜底。
+            let intact = read(&script_path).is_some_and(|t| t.contains(WRAPPER_MARK));
+            if !intact {
                 let script = build_script(&to_bash_path(reporter), "");
                 let _ = write_statusline_script(&script_path, &script);
             }
@@ -581,6 +583,89 @@ mod tests {
             "C:/Users/me/.meowo/statusline.sh"
         );
         assert_eq!(to_bash_path("/home/me/x"), "/home/me/x");
+    }
+
+    /// 回归：settings 已指向我们的脚本、脚本却是**缺生成标记的残件**（旧版裸写只落了一半 /
+    /// 被杀软截断）时，幂等分支必须重建脚本——否则自愈逻辑被「脚本文件存在」骗过，状态栏永久空白。
+    #[test]
+    fn amend_rebuilds_wrapper_script_missing_our_mark() {
+        let dir = std::env::temp_dir().join(format!("meowo-amend-heal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = WiringContext {
+            fallback_reporter: None,
+            meowo_dir: &dir,
+        };
+        let script = script_path(&ctx);
+        let script_bash = to_bash_path(&script.to_string_lossy());
+        // 残件：文件在，但没有我方生成标记。
+        std::fs::write(&script, "#!/usr/bin/env bash\ninpu").unwrap();
+        let text = format!(
+            "{{\"statusLine\":{{\"type\":\"command\",\"command\":\"bash \\\"{script_bash}\\\"\"}}}}"
+        );
+
+        let out = statusline_amend(&text, &ctx, "C:/x/meowo-reporter.exe").expect("应成功");
+        assert_eq!(out, text, "settings 已指向脚本，文本应原样返回");
+        let healed = std::fs::read_to_string(&script).unwrap();
+        assert!(healed.contains(WRAPPER_MARK), "残件脚本必须被重建");
+        assert!(healed.contains("input=$(cat)"), "应重建为完整脚本");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 脚本文件被删（用户清空 ~/.meowo）时幂等分支同样补建，否则状态栏每次渲染报 No such file。
+    #[test]
+    fn amend_rebuilds_missing_wrapper_script() {
+        let dir = std::env::temp_dir().join(format!("meowo-amend-miss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = WiringContext {
+            fallback_reporter: None,
+            meowo_dir: &dir,
+        };
+        let script = script_path(&ctx);
+        let script_bash = to_bash_path(&script.to_string_lossy());
+        assert!(!script.exists());
+        let text = format!(
+            "{{\"statusLine\":{{\"type\":\"command\",\"command\":\"bash \\\"{script_bash}\\\"\"}}}}"
+        );
+
+        let out = statusline_amend(&text, &ctx, "C:/x/meowo-reporter.exe").expect("应成功");
+        assert_eq!(out, text);
+        let rebuilt = std::fs::read_to_string(&script).expect("脚本应被补建");
+        assert!(rebuilt.contains(WRAPPER_MARK));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 脚本完好（含生成标记）时幂等分支**不重写**——无谓重写只会白白打开与运行中 Claude
+    /// 读脚本撞车的窗口。
+    #[test]
+    fn amend_leaves_intact_wrapper_script_alone() {
+        let dir = std::env::temp_dir().join(format!("meowo-amend-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = WiringContext {
+            fallback_reporter: None,
+            meowo_dir: &dir,
+        };
+        let script = script_path(&ctx);
+        let script_bash = to_bash_path(&script.to_string_lossy());
+        let original = build_script("C:/x/meowo-reporter.exe", "");
+        std::fs::write(&script, &original).unwrap();
+        let text = format!(
+            "{{\"statusLine\":{{\"type\":\"command\",\"command\":\"bash \\\"{script_bash}\\\"\"}}}}"
+        );
+
+        let out = statusline_amend(&text, &ctx, "C:/x/meowo-reporter.exe").expect("应成功");
+        assert_eq!(out, text);
+        assert_eq!(
+            std::fs::read_to_string(&script).unwrap(),
+            original,
+            "完好脚本不该被重写"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 从 install-hooks.mjs 里抠出 `const SPECS = [...]` 的 `["事件", "matcher"],` 各行。

@@ -13,7 +13,8 @@ use crate::variant::Installation;
 
 /// 接线时宿主提供的上下文。插件因此不需要知道 `db_path()` 之类的 app 知识。
 pub struct WiringContext<'a> {
-    /// 找不到已认领的 reporter 时的兜底路径（app 同目录的 sidecar）。
+    /// 与当前 app 同版本的 reporter（app 同目录的 sidecar）。存在时必须优先于配置里的旧路径，
+    /// 否则 GUI 已升级而 hooks 仍调用安装目录中的旧 reporter，新协议（如 GUI 审批）会静默失效。
     pub fallback_reporter: Option<&'a str>,
     /// meowo 自己的数据目录（`~/.meowo`）。claude 的 statusLine 包装脚本落在这里。
     pub meowo_dir: &'a Path,
@@ -44,14 +45,18 @@ pub trait WiringCap: Sync {
 }
 
 /// 备份一次：`<文件名>.cckb-bak` 不存在时 copy。保留最初的用户原始配置。
-pub fn backup_once(path: &Path) {
+///
+/// copy 失败（权限/磁盘满/杀软拦截）必须上抛，不许吞：「写前必备份」的意思是
+/// **备份不了就不写**——吞掉错误照常落盘，连用户原始配置的最后一次留档机会也赔进去。
+pub fn backup_once(path: &Path) -> std::io::Result<()> {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return;
+        return Ok(());
     };
     let bak = path.with_file_name(format!("{name}.cckb-bak"));
-    if !bak.exists() {
-        let _ = std::fs::copy(path, &bak);
+    if bak.exists() {
+        return Ok(());
     }
+    std::fs::copy(path, &bak).map(|_| ())
 }
 
 /// 通用接线编排。三个「绝不」在此集中兑现：解析失败绝不写、写前必备份、一律原子写。
@@ -87,7 +92,9 @@ pub fn wire_hooks(
         }
     };
 
-    // reporter 路径：复用配置里已认领的当前 meowo-reporter → 否则宿主给的 sidecar。
+    // reporter 路径：优先使用当前 app 随包 sidecar，只有宿主没有 sidecar 时才复用配置里的 reporter。
+    // 仅按“文件名是 meowo-reporter 且路径存在”无法判断协议版本；此前优先 claimed，导致开发版
+    // GUI/升级后的 app 仍调用安装目录中的旧 reporter，PermissionRequest 永远到不了新 broker。
     // 历史 cc-reporter 路径不算数（claimed_reporter 已排除）：把它当目标写回去 hooks 仍然失效。
     // 已认领的路径还须**当前仍存在**：app 换了目录后 hooks 里残留的旧路径若被当成目标写回去，
     // hooks 会静默失效（而 sidecar 明明就在手边）。
@@ -95,7 +102,11 @@ pub fn wire_hooks(
         .hooks
         .claimed_reporter(&text, agent_id)
         .filter(|p| Path::new(p).exists());
-    let Some(reporter) = claimed.or_else(|| ctx.fallback_reporter.map(str::to_string)) else {
+    let bundled = ctx
+        .fallback_reporter
+        .filter(|path| Path::new(path).exists())
+        .map(str::to_string);
+    let Some(reporter) = prefer_bundled_reporter(claimed, bundled) else {
         eprintln!("Meowo repair[{agent_id}]: 找不到 meowo-reporter 二进制（既有 hooks 无有效 meowo 路径且 app 同目录无 sidecar），无法接线");
         return Some(RepairReason::ReporterNotFound);
     };
@@ -137,7 +148,14 @@ pub fn wire_hooks(
         text
     } else {
         if path.exists() {
-            backup_once(&path);
+            // 备份失败 → 放弃写入：「写前必备份」不许退化成「没备份照写」。
+            if let Err(e) = backup_once(&path) {
+                eprintln!(
+                    "Meowo repair[{agent_id}]: {} 备份失败（{e}），放弃写入",
+                    path.display()
+                );
+                return Some(RepairReason::WriteFailed);
+            }
         }
         if let Err(e) = crate::fsutil::write_atomic(&path, &next) {
             eprintln!(
@@ -155,4 +173,61 @@ pub fn wire_hooks(
     };
 
     cap.and_then(|c| c.after_write(inst, &written))
+}
+
+fn prefer_bundled_reporter(claimed: Option<String>, bundled: Option<String>) -> Option<String> {
+    bundled.or(claimed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{backup_once, prefer_bundled_reporter};
+
+    #[test]
+    fn bundled_reporter_replaces_an_existing_but_stale_hook_binary() {
+        assert_eq!(
+            prefer_bundled_reporter(
+                Some("C:/Users/me/AppData/Local/Meowo/meowo-reporter.exe".into()),
+                Some("C:/workspace/target/debug/meowo-reporter.exe".into()),
+            )
+            .as_deref(),
+            Some("C:/workspace/target/debug/meowo-reporter.exe")
+        );
+        assert_eq!(
+            prefer_bundled_reporter(Some("/installed/meowo-reporter".into()), None).as_deref(),
+            Some("/installed/meowo-reporter")
+        );
+    }
+
+    /// 备份只在首次创建：第二次调用不得覆盖最初的用户原文（这正是 .cckb-bak 的意义）。
+    #[test]
+    fn backup_once_keeps_the_earliest_original() {
+        let dir = std::env::temp_dir().join(format!("meowo-backup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("settings.json");
+
+        std::fs::write(&cfg, "v1").unwrap();
+        backup_once(&cfg).unwrap();
+        std::fs::write(&cfg, "v2").unwrap();
+        backup_once(&cfg).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json.cckb-bak")).unwrap(),
+            "v1",
+            "备份必须保留最初的用户原始配置"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 备份失败必须上抛（此前 `let _ = copy` 静默吞错，「写前必备份」成了空话）。
+    /// `fs::copy` 对目录必然报错，用它制造一次逃不掉的备份失败。
+    #[test]
+    fn backup_failure_is_reported_not_swallowed() {
+        let dir = std::env::temp_dir().join(format!("meowo-backup-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(backup_once(&dir).is_err(), "无法备份时必须返回 Err");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

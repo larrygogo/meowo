@@ -74,18 +74,36 @@ pub enum MissingConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandSpec {
     /// 可执行路径是否加双引号（claude/codex 加，kimi 不加——保持与各自现存配置一致）。
+    /// 路径含空白字符时本标志被忽略、一律加引号：裸路径会在执行/认领两侧同按空白截断。
     pub quote_exe: bool,
     /// 是否追加 `--provider <id>`（codex/kimi 加；claude 靠 settings 里的位置区分，不带参）。
     pub with_provider: bool,
+    /// Windows 上是否在命令串前加 PowerShell 调用运算符 `& `。
+    ///
+    /// gemini 的 hookRunner 在 Windows 恒经 PowerShell 执行 command（实测 0.51
+    /// `getShellConfiguration`：ComSpec 是 pwsh/powershell 用之，否则找 pwsh，兜底
+    /// powershell.exe——**没有 cmd 分支**），而 PowerShell 里以引号开头的
+    /// `"exe" --provider x` 是字符串表达式、解析即失败——codex 当年靠官方的
+    /// `commandWindows` 绕开同一个坑，gemini 没有该字段，只能写 `& "exe" --provider x`。
+    /// 非 Windows（bash -c）不加：`&` 在 bash 里是后台运算符。
+    pub ps_call_operator: bool,
 }
 
 impl CommandSpec {
     /// 写出的 command 串。
     pub fn render(self, reporter: &str, agent_id: &str) -> String {
-        let exe = if self.quote_exe {
+        // 路径含空白时必须加引号，与 quote_exe 无关：裸写的命令会被执行方与 `parse_hook_command`
+        // 同按第一个空白截断——hook 执行失败，认领也永远认不回去，每轮接线追加一条孤儿条目。
+        // 无空白时仍按 quote_exe 书写，既有条目（幂等按解析后内容比对）不会被无谓改写。
+        let exe = if self.quote_exe || reporter.contains(char::is_whitespace) {
             format!("\"{reporter}\"")
         } else {
             reporter.to_string()
+        };
+        let exe = if self.ps_call_operator && cfg!(windows) {
+            format!("& {exe}")
+        } else {
+            exe
         };
         if self.with_provider {
             format!("{exe} --provider {agent_id}")
@@ -116,6 +134,7 @@ impl CommandSpec {
 pub struct HookEvent {
     pub name: &'static str,
     pub matcher: Option<&'static str>,
+    pub timeout: u64,
 }
 
 impl HookEvent {
@@ -123,13 +142,19 @@ impl HookEvent {
         Self {
             name,
             matcher: None,
+            timeout: 5,
         }
     }
     pub const fn matched(name: &'static str, matcher: &'static str) -> Self {
         Self {
             name,
             matcher: Some(matcher),
+            timeout: 5,
         }
+    }
+    pub const fn with_timeout(mut self, timeout: u64) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -206,7 +231,9 @@ const SESSION_START: &str = "SessionStart";
 
 /// 解析 hook command 为（可执行路径, 余参）。首 token 支持带双引号或裸路径。
 pub fn parse_hook_command(cmd: &str) -> Option<(String, Vec<String>)> {
-    let c = cmd.trim();
+    // 剥掉 PowerShell 调用运算符前缀（gemini 的 Windows 命令形态，见 CommandSpec::ps_call_operator）：
+    // 认领只看「可执行 + 余参」，带不带 `&` 的新旧两种形态都要认，否则升级后旧条目成孤儿、新条目重复追加。
+    let c = cmd.trim().trim_start_matches('&').trim_start();
     let (path, rest) = if let Some(r) = c.strip_prefix('"') {
         let end = r.find('"')?;
         (r[..end].to_string(), r[end + 1..].trim())
@@ -491,6 +518,7 @@ mod json_common {
         matcher: Option<&str>,
         reporter: &str,
         desired_cmd: &str,
+        desired_timeout: u64,
         agent_id: &str,
     ) -> bool {
         let mut changed = false;
@@ -514,8 +542,31 @@ mod json_common {
                 match claimed {
                     Some(path) if !kept => {
                         kept = true;
-                        if path != reporter {
+                        // 路径过期 → 更新；命令**形态**不满足 spec 也要迁移——gemini 在 Windows
+                        // 必须带 PowerShell 调用运算符 `&`（无它则解析失败、hook 恒挂），只比路径
+                        // 会让旧形态永远留在配置里继续失败。刻意不做整串强一致：手工接线的等价
+                        // 形态（裸路径 vs 引号）原样保留，幂等按解析后内容判定。
+                        let form_bad = spec.command.ps_call_operator
+                            && cfg!(windows)
+                            && !hs[j]
+                                .get("command")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("")
+                                .trim_start()
+                                .starts_with('&');
+                        if path != reporter || form_bad {
                             hs[j]["command"] = serde_json::json!(desired_cmd);
+                            changed = true;
+                        }
+                        // 普通 hook 沿用用户/旧版本已有 timeout；只有声明了非默认值的 hook 需要
+                        // 迁移：PermissionRequest 的长等待（310s），以及 gemini 全部事件——它的
+                        // timeout 单位是**毫秒**（hookRunner `setTimeout(...,timeout)`，默认 6e4），
+                        // 按 claude 的秒语义写 5 会让 hook 5ms 即被整树击杀。
+                        if desired_timeout != 5
+                            && hs[j].get("timeout").and_then(|v| v.as_u64())
+                                != Some(desired_timeout)
+                        {
+                            hs[j]["timeout"] = serde_json::json!(desired_timeout);
                             changed = true;
                         }
                         j += 1;
@@ -587,14 +638,21 @@ mod claude_json {
             let Some(arr) = entry_val.as_array_mut() else {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
-            // 认领 + 更新路径 + 删重复，一并在此完成。
-            changed |=
-                json_common::dedupe_event(spec, arr, ev.matcher, reporter, &desired_cmd, agent_id);
+            // 认领 + 更新命令串 + 删重复，一并在此完成。
+            changed |= json_common::dedupe_event(
+                spec,
+                arr,
+                ev.matcher,
+                reporter,
+                &desired_cmd,
+                ev.timeout,
+                agent_id,
+            );
             if !arr
                 .iter()
                 .any(|e| json_common::claims_here(spec, e, ev.matcher, agent_id))
             {
-                let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] });
+                let mut entry = json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": ev.timeout }] });
                 if let Some(m) = ev.matcher {
                     entry["matcher"] = json!(m);
                 }
@@ -641,6 +699,8 @@ mod codex_json {
 
     fn merge(spec: &HookSpec, root: &mut Value, reporter: &str, agent_id: &str) -> Merge {
         let desired_cmd = spec.command.render(reporter, agent_id);
+        #[cfg(windows)]
+        let desired_windows_cmd = codex_windows_command(reporter, agent_id);
         // 键不存在：hooks.json 整个文件本就可从空态建，与 kimi「config.toml 缺失即未登录」
         // 不同是有意的——此处不存在不代表用户手改过畸形内容。
         // 键存在但非 object（手改坏形状）：放弃不写，绝不覆盖用户文件。
@@ -660,12 +720,50 @@ mod codex_json {
                 continue; // 事件值存在但非 array（畸形形状）：跳过该事件不动，不置空覆盖。
             };
             // codex 的条目无 matcher → 传 None（同事件下我方 hook 只应有一条）。
-            changed |= json_common::dedupe_event(spec, arr, None, reporter, &desired_cmd, agent_id);
+            changed |= json_common::dedupe_event(
+                spec,
+                arr,
+                None,
+                reporter,
+                &desired_cmd,
+                ev.timeout,
+                agent_id,
+            );
+            // Codex 在 Windows 上可能通过 PowerShell 执行 hook；以引号开头的通用 command
+            // 会被当成字符串表达式并以 code 1 失败。官方支持 commandWindows 覆盖，因此显式
+            // 用一个独立 PowerShell 进程执行 reporter，这在 cmd 与 PowerShell 外层都可工作。
+            #[cfg(windows)]
+            for entry in arr.iter_mut() {
+                let Some(handlers) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
+                    continue;
+                };
+                for handler in handlers {
+                    let ours = handler
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|cmd| spec.command.claim(cmd, agent_id).is_some());
+                    if ours
+                        && handler.get("commandWindows").and_then(Value::as_str)
+                            != Some(desired_windows_cmd.as_str())
+                    {
+                        handler["commandWindows"] = json!(desired_windows_cmd.clone());
+                        changed = true;
+                    }
+                }
+            }
             if !arr
                 .iter()
                 .any(|e| json_common::claims_here(spec, e, None, agent_id))
             {
-                arr.push(json!({ "hooks": [{ "type": "command", "command": desired_cmd, "timeout": 5 }] }));
+                let handler =
+                    json!({ "type": "command", "command": desired_cmd, "timeout": ev.timeout });
+                #[cfg(windows)]
+                let handler = {
+                    let mut handler = handler;
+                    handler["commandWindows"] = json!(desired_windows_cmd.clone());
+                    handler
+                };
+                arr.push(json!({ "hooks": [handler] }));
                 changed = true;
             }
         }
@@ -674,6 +772,14 @@ mod codex_json {
         } else {
             Merge::Unchanged
         }
+    }
+
+    #[cfg(windows)]
+    fn codex_windows_command(reporter: &str, agent_id: &str) -> String {
+        let reporter = reporter.replace('\'', "''");
+        format!(
+            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '{reporter}' --provider {agent_id}\""
+        )
     }
 }
 
@@ -882,6 +988,7 @@ mod tests {
     const KIMI_CMD: CommandSpec = CommandSpec {
         quote_exe: false,
         with_provider: true,
+        ps_call_operator: false,
     };
     static KIMI_EVENTS: [HookEvent; 6] = [
         HookEvent::plain("SessionStart"),
@@ -910,6 +1017,7 @@ mod tests {
     const CLAUDE_CMD: CommandSpec = CommandSpec {
         quote_exe: true,
         with_provider: false,
+        ps_call_operator: false,
     };
     static CLAUDE_EVENTS: [HookEvent; 8] = [
         HookEvent::matched("SessionStart", "*"),
@@ -935,6 +1043,56 @@ mod tests {
             EnsureOutcome::Changed(s) => serde_json::from_str(&s).expect("产物应为合法 JSON"),
             other => panic!("期望 Changed，实得 {other:?}"),
         }
+    }
+
+    /// gemini 形态的接线规格（ClaudeJson + `--provider` + PowerShell 调用运算符 + 毫秒 timeout）。
+    /// 与 plugins/gemini 同源，独立声明以免测试依赖插件表的演化。
+    static GEMINI_EVENTS: [HookEvent; 2] = [
+        HookEvent::plain("SessionStart").with_timeout(5_000),
+        HookEvent::plain("AfterAgent").with_timeout(5_000),
+    ];
+    static GJ: HookSpec = HookSpec {
+        config_rel: "settings.json",
+        format: ConfigFormat::ClaudeJson,
+        missing: MissingConfig::CreateFrom("{}"),
+        events: &GEMINI_EVENTS,
+        command: CommandSpec {
+            quote_exe: true,
+            with_provider: true,
+            ps_call_operator: true,
+        },
+    };
+
+    /// 已按旧版接线的 gemini 配置（无 `&` 前缀 + 秒语义 timeout 5）必须被原地迁移：
+    /// gemini 把 5 当 5**毫秒**，reporter 一 spawn 即被整树击杀；Windows 上无 `&` 的引号命令
+    /// 在 PowerShell 里是字符串表达式、以 code 1 失败。两者都不迁移，会话就永远落不了库。
+    #[test]
+    fn gemini_migrates_legacy_seconds_timeout_and_command_form() {
+        let ccr = "C:/x/meowo-reporter.exe";
+        let src = format!(
+            r#"{{"hooks":{{
+                "SessionStart":[{{"hooks":[{{"type":"command","command":"\"{ccr}\" --provider gemini","timeout":5}}]}}],
+                "AfterAgent":[{{"hooks":[{{"type":"command","command":"\"{ccr}\" --provider gemini","timeout":5}}]}}]
+            }}}}"#
+        );
+        let out = match GJ.ensure_hooks(&src, ccr, "gemini") {
+            EnsureOutcome::Changed(s) => {
+                serde_json::from_str::<serde_json::Value>(&s).expect("产物应为合法 JSON")
+            }
+            other => panic!("旧接线应被迁移（Changed），实得 {other:?}"),
+        };
+        let desired = GJ.command.render(ccr, "gemini");
+        for ev in ["SessionStart", "AfterAgent"] {
+            let h = &out["hooks"][ev][0]["hooks"][0];
+            assert_eq!(h["command"], serde_json::json!(desired), "{ev} 命令形态未迁移");
+            assert_eq!(h["timeout"], serde_json::json!(5_000), "{ev} timeout 未迁移到毫秒");
+        }
+        // 幂等：迁移后的产物再跑一遍必须 Unchanged，不得反复改写用户文件。
+        let migrated = serde_json::to_string(&out).unwrap();
+        assert_eq!(
+            GJ.ensure_hooks(&migrated, ccr, "gemini"),
+            EnsureOutcome::Unchanged
+        );
     }
 
     // ── ClaudeJson ──
@@ -1255,10 +1413,12 @@ mod tests {
         let claude = CommandSpec {
             quote_exe: true,
             with_provider: false,
+            ps_call_operator: false,
         };
         let codex = CommandSpec {
             quote_exe: true,
             with_provider: true,
+            ps_call_operator: false,
         };
         assert_eq!(
             claude.render("C:/x/meowo-reporter.exe", "claude"),
@@ -1320,6 +1480,7 @@ mod tests {
         let bare = CommandSpec {
             quote_exe: true,
             with_provider: false,
+            ps_call_operator: false,
         };
         assert_eq!(
             bare.claim("\"C:/x/meowo-reporter.exe\"", "claude")
@@ -1498,6 +1659,62 @@ max_steps_per_turn = 100
         );
     }
 
+    /// 回归：reporter 路径含空白（如 `C:\Users\Zhang San\...`）时命令必须写成带引号形态。
+    /// 修复前裸写的命令被 kimi 与 `parse_hook_command` 同按第一个空白截断：hook 执行失败，
+    /// 认领也永远认不回去——每轮接线再追加一条孤儿条目，配置单调膨胀。
+    #[test]
+    fn quotes_command_when_reporter_path_contains_whitespace() {
+        let spaced = "C:/Users/Zhang San/AppData/Local/Meowo/meowo-reporter.exe";
+        // render：含空白 → 带引号；无空白 → 维持裸形态（无空格机器上的既有条目不因本修复被改写）。
+        assert_eq!(
+            KIMI_CMD.render(spaced, "kimi"),
+            format!("\"{spaced}\" --provider kimi")
+        );
+        assert_eq!(
+            KIMI_CMD.render("C:/x/meowo-reporter.exe", "kimi"),
+            "C:/x/meowo-reporter.exe --provider kimi"
+        );
+        // 带引号形态能认回完整路径；裸形态确实会被截断而认不回（这正是修复前的膨胀机制）。
+        assert_eq!(
+            KIMI_CMD
+                .claim(&KIMI_CMD.render(spaced, "kimi"), "kimi")
+                .as_deref(),
+            Some(spaced)
+        );
+        assert_eq!(
+            KIMI_CMD.claim(
+                "C:/Users/Zhang San/meowo-reporter.exe --provider kimi",
+                "kimi"
+            ),
+            None
+        );
+
+        // 端到端：6 个事件的命令都含带引号的路径。
+        let out = changed("theme = \"dark\"\n", spaced);
+        let quoted = format!("\"{spaced}\" --provider kimi");
+        assert_eq!(out.matches(&quoted).count(), 6);
+        // 且 TOML 解析回的命令值与 render 一致——toml_edit 对内含引号的串会选用字面串形态
+        // （`command = '"..." --provider kimi'`），故按解析后的值断言，不押注序列化拼写。
+        let reparsed: DocumentMut = out.parse().expect("产物应为合法 TOML");
+        let arr = reparsed["hooks"]
+            .as_array_of_tables()
+            .expect("hooks 应为 array-of-tables");
+        assert_eq!(arr.len(), 6);
+        for t in arr.iter() {
+            assert_eq!(
+                t.get("command").and_then(|v| v.as_str()),
+                Some(quoted.as_str())
+            );
+        }
+        assert!(KT.has_reporter(&out, "kimi"));
+        assert_eq!(KT.claimed_reporter(&out, "kimi").as_deref(), Some(spaced));
+        // 重复接线必须幂等——claim 认回带引号条目，一条都不再追加（修复前这里每轮 +6 条）。
+        assert_eq!(
+            KT.ensure_hooks(&out, spaced, "kimi"),
+            EnsureOutcome::Unchanged
+        );
+    }
+
     // ── has_reporter / claimed_reporter ──
 
     #[test]
@@ -1544,7 +1761,7 @@ max_steps_per_turn = 100
             HookEvent::plain("UserPromptSubmit"),
             HookEvent::plain("PostToolUse"),
             HookEvent::plain("Stop"),
-            HookEvent::plain("PermissionRequest"),
+            HookEvent::plain("PermissionRequest").with_timeout(310),
         ];
         static CJ: HookSpec = HookSpec {
             config_rel: "hooks.json",
@@ -1554,6 +1771,7 @@ max_steps_per_turn = 100
             command: CommandSpec {
                 quote_exe: true,
                 with_provider: true,
+                ps_call_operator: false,
             },
         };
 
@@ -1573,7 +1791,12 @@ max_steps_per_turn = 100
             for ev in EVENTS {
                 let h = &out["hooks"][ev.name][0]["hooks"][0];
                 assert_eq!(h["command"], "\"C:/x/meowo-reporter.exe\" --provider codex");
-                assert_eq!(h["timeout"], 5);
+                #[cfg(windows)]
+                assert_eq!(
+                    h["commandWindows"],
+                    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& 'C:/x/meowo-reporter.exe' --provider codex\""
+                );
+                assert_eq!(h["timeout"], ev.timeout);
             }
             assert_eq!(
                 outcome(&out, "C:/x/meowo-reporter.exe"),
@@ -1599,7 +1822,28 @@ max_steps_per_turn = 100
                 .unwrap()
                 .contains("--provider codex"));
             assert!(out["hooks"]["PermissionRequest"].is_array());
+            assert_eq!(
+                out["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+                310
+            );
             assert_eq!(outcome(&out, dev), EnsureOutcome::Unchanged);
+        }
+
+        #[test]
+        fn upgrades_only_permission_timeout() {
+            let reporter = "C:/x/meowo-reporter.exe";
+            let command = format!("\"{reporter}\" --provider codex");
+            let entry = |timeout| json!({ "hooks": [{ "type": "command", "command": command, "timeout": timeout }] });
+            let v = json!({ "hooks": {
+                "SessionStart": [entry(12)],
+                "PermissionRequest": [entry(5)]
+            }});
+            let out = changed(&v, reporter);
+            assert_eq!(out["hooks"]["SessionStart"][0]["hooks"][0]["timeout"], 12);
+            assert_eq!(
+                out["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+                310
+            );
         }
 
         #[test]

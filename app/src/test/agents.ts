@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from "../api";
+import type { AgentDescriptor, ChatUi, LaunchOption, SlashCommand } from "../api";
 
 /** 测试里已知的五家产品名。真实值由后端 `list_agents()` 下发（须与注册表的 display_name 同值）。 */
 const NAMES: Record<string, string> = {
@@ -35,6 +35,13 @@ const SUPPORTS_PROXY = new Set(["claude", "codex", "kimi", "gemini", "opencode"]
 const SUPPORTS_ACCOUNT = new Set(["claude", "codex", "kimi", "gemini", "opencode"]);
 
 /**
+ * 能用 API Key 登录的那些（＝插件声明了 ApiKeyLoginCap）。**只有 gemini**：它的 OAuth 被官方
+ * 停用（个人版 Code Assist 关闸），key 是唯一活路，且 CLI 没有输入 key 的登录子命令。
+ * 与后端 `AgentPlugin::api_key_login()` 同源。
+ */
+const SUPPORTS_API_KEY_LOGIN = new Set(["gemini"]);
+
+/**
  * 能有多个账号的那些（＝插件声明了 ProfileSpec）。**gemini 不行**：它的数据目录无法被环境变量
  * 覆盖（`GEMINI_DIR` 实测无效），谎称支持会让两个「账号」静默共用同一份凭据。
  */
@@ -45,6 +52,115 @@ const SUPPORTS_PROFILES = new Set(["claude", "codex", "kimi", "opencode"]);
  * 没声明 telemetry（token 在它自己库里）。与后端 `AgentPlugin::provides_context()` 同源。
  */
 const SUPPORTS_CONTEXT = new Set(["claude", "codex", "kimi"]);
+
+/**
+ * 对话页内置 `/` 补全候选。与后端 `AgentPlugin::slash_commands()` 同源——各家命令表是插件
+ * 声明的事实（gemini 是 `/stats` 不是 `/status`，opencode 是 `/models` 不是 `/model`）。
+ */
+const SLASH_COMMANDS: Record<string, string[]> = {
+  claude: ["/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"],
+  codex: ["/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status"],
+  kimi: ["/clear", "/compact", "/help", "/model", "/status"],
+  gemini: ["/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools"],
+  opencode: ["/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo"],
+};
+
+/**
+ * 快速切模型预设。**只有 claude**：它的 `/model` 接受内联参数；其余四家是交互式菜单，
+ * 声明了预设等于给出一个点了没反应的菜单。与后端 `AgentPlugin::model_presets()` 同源。
+ */
+const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
+  claude: [
+    { id: "opus", label: "Opus" },
+    { id: "sonnet", label: "Sonnet" },
+    { id: "haiku", label: "Haiku" },
+    { id: "opusplan", label: "Opus Plan" },
+  ],
+};
+
+/**
+ * 造一份 `agent_chat_ui()` 的返回：该 agent 的内置命令表 + 模型预设（无自定义命令）。
+ * 要测自定义命令，在用例里 `custom` 传发现出来的条目。未知 provider 回 null——与后端同语义。
+ */
+export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | null {
+  const builtins = SLASH_COMMANDS[provider];
+  if (!builtins) return null;
+  const commands: SlashCommand[] = [
+    ...builtins
+      .filter((name) => !custom.some((c) => c.name === name))
+      .map((name) => ({ name, description: null, source: "builtin" as const })),
+    ...custom,
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    slash_commands: commands,
+    model_presets: MODEL_PRESETS[provider] ?? [],
+    // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
+    model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : "/model",
+    mode_controls: provider === "claude"
+      ? [{ dimension: "permission", cycle_input: "\u001b[Z", options: [] }]
+      : provider === "codex"
+        ? [{ dimension: "collaboration", cycle_input: "\u001b[Z", options: [] }]
+        : [],
+    startup_attention_markers: provider === "claude"
+      ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
+      : ["do you trust the files in this folder", "do you trust the contents of this directory"],
+    runtime_commands_pending: false,
+    version: null,
+  };
+}
+
+/**
+ * 启动选项。与后端 `AgentPlugin::launch_options()` 同源：claude 有模型+权限两栏，
+ * codex/gemini 各一栏审批，kimi/opencode 未调研到稳定 flag、如实不声明。
+ */
+const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
+  claude: [
+    {
+      id: "model",
+      default: "default",
+      choices: [
+        { id: "default", label: "Default", args: [] },
+        { id: "opus", label: "Opus", args: ["--model", "opus"] },
+        { id: "sonnet", label: "Sonnet", args: ["--model", "sonnet"] },
+        { id: "haiku", label: "Haiku", args: ["--model", "haiku"] },
+        { id: "opusplan", label: "Opus Plan", args: ["--model", "opusplan"] },
+      ],
+    },
+    {
+      id: "permission",
+      default: "default",
+      choices: [
+        { id: "default", label: "Default", args: [] },
+        { id: "plan", label: "Plan", args: ["--permission-mode", "plan"] },
+        { id: "acceptEdits", label: "Accept Edits", args: ["--permission-mode", "acceptEdits"] },
+        { id: "bypassPermissions", label: "Bypass Permissions", args: ["--permission-mode", "bypassPermissions"] },
+      ],
+    },
+  ],
+  codex: [
+    {
+      id: "approval",
+      default: "default",
+      choices: [
+        { id: "default", label: "Default", args: [] },
+        { id: "readOnly", label: "Read Only", args: ["--sandbox", "read-only"] },
+        { id: "fullAuto", label: "Full Auto", args: ["--full-auto"] },
+        { id: "yolo", label: "YOLO", args: ["--dangerously-bypass-approvals-and-sandbox"] },
+      ],
+    },
+  ],
+  gemini: [
+    {
+      id: "approval",
+      default: "default",
+      choices: [
+        { id: "default", label: "Default", args: [] },
+        { id: "autoEdit", label: "Auto Edit", args: ["--approval-mode", "auto_edit"] },
+        { id: "yolo", label: "YOLO", args: ["--yolo"] },
+      ],
+    },
+  ],
+};
 
 /**
  * 造一份 `list_agents()` 的返回：列出全部已知 agent，其中 `installed` 里的标记为已装。
@@ -59,8 +175,10 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     installed: installed.includes(id),
     supports_proxy: SUPPORTS_PROXY.has(id),
     supports_account: SUPPORTS_ACCOUNT.has(id),
+    supports_api_key_login: SUPPORTS_API_KEY_LOGIN.has(id),
     supports_profiles: SUPPORTS_PROFILES.has(id),
     supports_context: SUPPORTS_CONTEXT.has(id),
+    launch_options: LAUNCH_OPTIONS[id] ?? [],
     relay: RELAYS[id],
   }));
 }

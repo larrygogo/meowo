@@ -39,8 +39,6 @@ type Props = {
   lang?: Lang;
 };
 
-const TAB_COUNTS = { all: 4, waiting: 1, running: 2, archived: 0 };
-
 type Tokens = ReturnType<typeof tokens>;
 
 function tokens(theme: "dark" | "light", flat: boolean) {
@@ -183,8 +181,15 @@ export default function StickerWindow({
   const t = tokens(theme, flat);
   const styles = makeStyles(t, bgRgb);
   const L = getDict(lang).sticker;
+  // tab 计数从实际传入的卡片推导，避免「传 2 张卡却显示 running=2」的货不对板。
+  const tabCounts: Partial<Record<"waiting" | "running", number>> = {};
+  for (const c of cards) {
+    if (c.state === "waiting" || c.state === "running") {
+      tabCounts[c.state] = (tabCounts[c.state] ?? 0) + 1;
+    }
+  }
   return (
-    <div className={`stk-win ${className}`} style={{ ...styles.window, ...style }}>
+    <div className={`stk-win ${className}`} style={{ ...styles.window, ...style }} aria-hidden="true">
       <div style={styles.drag} />
       <div style={styles.tabs}>
         <div style={styles.tabseg}>
@@ -199,7 +204,7 @@ export default function StickerWindow({
               {L.tabs[k]}
               {k !== "all" && k !== "archived" && (
                 <span style={{ ...styles.stabN, color: activeTab === k ? t.accentText : t.faint }}>
-                  {TAB_COUNTS[k]}
+                  {tabCounts[k] ?? 0}
                 </span>
               )}
             </span>
@@ -257,32 +262,32 @@ export default function StickerWindow({
       </div>
       {showMenu && (
         <div style={styles.ctxMenu}>
-          <button style={styles.ctxItem}>
+          <span style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.79 21.55a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.554 10.34a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" /></svg>
             {L.menu.star}
-          </button>
-          <button style={styles.ctxItem}>
+          </span>
+          <span style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2z" /><path d="M15 21v-5a1 1 0 0 1 1-1h5" /></svg>
             {L.menu.note}
-          </button>
-          <button style={styles.ctxItem}>
+          </span>
+          <span style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
             {L.menu.rename}
-          </button>
-          <button style={styles.ctxItem}>
+          </span>
+          <span style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>
             {L.menu.archive}
-          </button>
+          </span>
           <div style={styles.ctxSep} />
-          <button style={styles.ctxItem}>
+          <span style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
             {L.menu.newSession}
-          </button>
+          </span>
           <div style={styles.ctxSep} />
-          <button style={styles.ctxItem}>
+          <span style={styles.ctxItem}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg>
             {L.menu.openDir}
-          </button>
+          </span>
         </div>
       )}
       <div style={styles.bar}>
@@ -365,7 +370,7 @@ function makeStyles(t: Tokens, bgRgb?: string): Styles {
       transition: "transform 0.24s cubic-bezier(0.34,1.2,0.5,1)",
       zIndex: 0,
     },
-    stab: { position: "relative", zIndex: 1, flex: 1, fontSize: 11, padding: "3px 2px", display: "flex", alignItems: "center", justifyContent: "center", gap: 3, whiteSpace: "nowrap", textShadow: t.engrave },
+    stab: { position: "relative", zIndex: 1, flex: 1, fontSize: 11, fontWeight: 600, padding: "3px 2px", display: "flex", alignItems: "center", justifyContent: "center", gap: 3, whiteSpace: "nowrap", textShadow: t.engrave },
     stabN: { fontSize: 9.5 },
     scroll: { flex: 1, overflow: "hidden", padding: "4px 0 18px", display: "flex", flexDirection: "column", gap: 6 },
     card: { padding: "10px 11px", background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, boxShadow: t.cardElev },

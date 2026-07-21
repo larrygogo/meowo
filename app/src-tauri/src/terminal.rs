@@ -2,11 +2,12 @@
 //! 以及在指定目录拉起 resume / 新建会话的终端进程。从 lib.rs 抽出。
 
 use crate::proc::*;
+use crate::session_command::is_safe_id;
 use crate::settings::load_settings;
 use crate::watch::emit_board_changed;
 #[cfg(target_os = "windows")]
 use crate::wezterm;
-use crate::{db_path, is_safe_id, now_ms, open_store};
+use crate::{db_path, now_ms, open_store};
 #[cfg(target_os = "windows")]
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -452,16 +453,29 @@ pub(crate) fn resume_argv_for(provider: Option<&str>, session_id: Option<&str>) 
 ///
 /// 与 `resume_argv_for` 同理**刻意定义在 cfg 之外**：只用平台无关的 agent API，
 /// 埋进 cfg 块会让另一平台的编译器看不到它，改签名时一路漏到对方 CI 才炸。
-/// **恢复某个会话**时要注入的环境变量：代理 + 该会话**自己所属账号**的隔离变量。
+/// **恢复某个会话**时要注入的环境变量。
 ///
-/// 刻意不用「当前活跃账号」：用户切到账号 B 之后再打开一个属于账号 A 的旧会话，若按 B 注入，
-/// 就是拿错误的身份去续一段不属于它的对话——而且不会有任何报错。
+/// Claude 的会话可跨账号继续：恢复前会把会话资料同步到当前活跃账号，因此这里也必须使用当前
+/// 活跃账号。其余 provider 尚未声明跨账号会话迁移能力，仍沿用该会话原先所属的账号。
 pub(crate) fn launch_env_for_session(
     provider: Option<&str>,
     session_id: &str,
 ) -> Vec<(String, String)> {
-    let profile = profile_of_session(session_id);
+    let stored = profile_of_session(session_id);
+    let active = provider.and_then(crate::profile::active_id);
+    let profile = resume_profile(provider, stored, active);
     launch_env_for_profile(provider, profile.as_deref())
+}
+
+fn resume_profile(
+    provider: Option<&str>,
+    stored: Option<String>,
+    active: Option<String>,
+) -> Option<String> {
+    match provider {
+        Some("claude") => active,
+        _ => stored,
+    }
 }
 
 /// 该会话（按 agent 的 session id）跑在哪个账号上。查不到 → None（默认账号）。
@@ -472,6 +486,11 @@ fn profile_of_session(session_id: &str) -> Option<String> {
 }
 
 fn ensure_session_profile_available(provider: &str, session_id: &str) -> Result<(), String> {
+    // Claude 恢复使用当前活跃账号；旧账号即使已删除，也不该阻止一个仍能在其他目录找到
+    // transcript 的会话被接管。目标账号由 active_id 保证一定是已注册且目录存在的 profile。
+    if provider == "claude" {
+        return Ok(());
+    }
     let Some(profile) = profile_of_session(session_id) else {
         return Ok(());
     };
@@ -480,6 +499,171 @@ fn ensure_session_profile_available(provider: &str, session_id: &str) -> Result<
         Some(&profile),
         crate::profile::exists(agent.id().as_str(), &profile),
     )
+}
+
+/// 目标已有同长同 mtime 的副本时跳过复制。跨账号 takeover/restart 会背靠背同步两次
+/// （杀进程前先做一次可恢复副本 + 启动前补最终增量），无此判断第二遍会把整棵会话树
+/// （transcript 可达数百 MB）原样重拷一遍。Windows 的 CopyFileEx 保留写入时间，macOS
+/// 的 clonefile 亦然；平台不保留 mtime 时判定不成立，退化为照常复制，只是失去优化。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn file_unchanged(source: &std::path::Path, target: &std::path::Path) -> bool {
+    let Some((source_meta, target_meta)) = std::fs::metadata(source)
+        .ok()
+        .zip(std::fs::metadata(target).ok())
+    else {
+        return false;
+    };
+    source_meta.len() == target_meta.len()
+        && source_meta
+            .modified()
+            .ok()
+            .zip(target_meta.modified().ok())
+            .is_some_and(|(source_mtime, target_mtime)| source_mtime == target_mtime)
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn copy_dir_merge(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let destination = target.join(entry.file_name());
+        if entry.file_type().map_err(|error| error.to_string())?.is_dir() {
+            copy_dir_merge(&entry.path(), &destination)?;
+        } else if !file_unchanged(&entry.path(), &destination) {
+            std::fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn sync_claude_session_files(
+    source: &std::path::Path,
+    target_root: &std::path::Path,
+    session_id: &str,
+) -> Result<(), String> {
+    let source_root = source
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .ok_or("Claude 会话路径格式异常")?;
+    if source_root == target_root {
+        return Ok(());
+    }
+    let project = source
+        .parent()
+        .and_then(|path| path.file_name())
+        .ok_or("Claude 会话项目路径格式异常")?;
+    let target = target_root
+        .join("projects")
+        .join(project)
+        .join(format!("{session_id}.jsonl"));
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    if !file_unchanged(source, &target) {
+        std::fs::copy(source, &target).map_err(|error| format!("同步 Claude 会话失败：{error}"))?;
+    }
+
+    // Claude 的回滚历史、环境快照与任务也按 session id 分目录保存。
+    for bucket in ["file-history", "session-env", "tasks"] {
+        let from = source_root.join(bucket).join(session_id);
+        if from.is_dir() {
+            copy_dir_merge(&from, &target_root.join(bucket).join(session_id))?;
+        }
+    }
+    // subagents 位于 transcript 同级的 `<session-id>/` 目录。
+    let subagents = source.with_extension("");
+    if subagents.is_dir() {
+        copy_dir_merge(
+            &subagents,
+            &target.parent().unwrap_or(target_root).join(session_id),
+        )?;
+    }
+    Ok(())
+}
+
+/// 把一个 Claude session 的资料同步到当前活跃账号目录。只复制 session 级数据，绝不复制
+/// credentials/settings/plugins。源文件保留，因此之后切回任意账号仍可按最新副本继续。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn prepare_claude_session_for_active_profile(
+    provider: &str,
+    session_id: &str,
+) -> Result<Option<String>, String> {
+    if provider != "claude" {
+        return Ok(profile_of_session(session_id));
+    }
+    // 找不到本地 transcript 时不能硬报错：查找只覆盖 ~/.claude 与托管 profile 目录，
+    // 用户自设 CLAUDE_CONFIG_DIR（插件本就当一等配置支持）或 transcript 被
+    // cleanupPeriodDays 清理时都查不到，而 `claude --resume` 自己找得到会话。
+    // 退回该会话记录的账号原样恢复，只跳过跨账号同步——同步本来也无从做起。
+    let Some(source) =
+        meowo_agent::plugins::claude::transcript::find_transcript_by_session(session_id)
+    else {
+        return Ok(profile_of_session(session_id));
+    };
+    let target_profile = crate::profile::active_id("claude");
+    let target_root = crate::profile::data_dir("claude", target_profile.as_deref())
+        .ok_or("无法定位当前 Claude 账号目录")?;
+    sync_claude_session_files(&source, &target_root, session_id)?;
+    Ok(target_profile)
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn record_resumed_profile(session_id: &str, profile: Option<&str>) {
+    let Ok(store) = open_store(&db_path()) else { return };
+    let Ok(Some(id)) = store.find_session_id_pub(session_id) else { return };
+    let _ = store.set_session_profile(id, profile);
+}
+
+#[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
+mod cross_account_resume_tests {
+    use super::sync_claude_session_files;
+
+    #[test]
+    fn copies_only_session_scoped_claude_data() {
+        let root = std::env::temp_dir().join(format!("meowo-cross-account-{}", std::process::id()));
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        let session = "session-1";
+        let transcript = source_root
+            .join("projects/project")
+            .join(format!("{session}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "conversation").unwrap();
+        for bucket in ["file-history", "session-env", "tasks"] {
+            let dir = source_root.join(bucket).join(session);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("item"), bucket).unwrap();
+        }
+        let subagent = transcript.with_extension("").join("subagents");
+        std::fs::create_dir_all(&subagent).unwrap();
+        std::fs::write(subagent.join("agent.jsonl"), "child").unwrap();
+        std::fs::write(source_root.join(".credentials.json"), "secret").unwrap();
+
+        sync_claude_session_files(&transcript, &target_root, session).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(
+                target_root
+                    .join("projects/project")
+                    .join(format!("{session}.jsonl"))
+            )
+            .unwrap(),
+            "conversation"
+        );
+        for bucket in ["file-history", "session-env", "tasks"] {
+            assert!(target_root.join(bucket).join(session).join("item").is_file());
+        }
+        assert!(target_root
+            .join("projects/project")
+            .join(session)
+            .join("subagents/agent.jsonl")
+            .is_file());
+        assert!(!target_root.join(".credentials.json").exists());
+        assert_eq!(std::fs::read_to_string(&transcript).unwrap(), "conversation");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 fn validate_session_profile_reference(profile: Option<&str>, exists: bool) -> Result<(), String> {
@@ -492,7 +676,7 @@ fn validate_session_profile_reference(profile: Option<&str>, exists: bool) -> Re
 
 #[cfg(test)]
 mod session_profile_tests {
-    use super::validate_session_profile_reference;
+    use super::{resume_profile, validate_session_profile_reference};
 
     #[test]
     fn deleted_profile_blocks_resume_but_default_profile_does_not() {
@@ -501,6 +685,21 @@ mod session_profile_tests {
         let error = validate_session_profile_reference(Some("deleted"), false).unwrap_err();
         assert!(error.contains("deleted"));
         assert!(error.contains("无法恢复"));
+    }
+
+    #[test]
+    fn claude_resume_uses_active_account_while_other_agents_keep_the_stored_one() {
+        assert_eq!(
+            resume_profile(Some("claude"), None, Some("work".into())).as_deref(),
+            Some("work")
+        );
+        // 切回默认账号必须得到明确的 None，不能又回落到会话之前所属的 profile。
+        assert_eq!(resume_profile(Some("claude"), Some("work".into()), None), None);
+        assert_eq!(
+            resume_profile(Some("codex"), Some("original".into()), Some("active".into()))
+                .as_deref(),
+            Some("original")
+        );
     }
 }
 
@@ -512,19 +711,34 @@ pub(crate) fn launch_env_for_profile(
     let Some(a) = meowo_agent::resolve(provider) else {
         return Vec::new();
     };
-    let mut env = crate::proxy::launch_env(a.id());
-    // 中转接入（relay）的环境变量：API base / key。与账号隔离变量正交，两者都要。
-    env.extend(crate::relay::launch_env(a.id()));
     let id = match profile {
-        Some(p) => Some(p.to_string()),
+        Some(profile) => Some(profile.to_string()),
         None => crate::profile::active_id(a.id().as_str()),
     };
-    env.extend(crate::profile::env_of(a.id(), id.as_deref()));
+    launch_env_for_exact_profile(a, id.as_deref())
+}
+
+fn launch_env_for_exact_profile(
+    agent: &'static dyn meowo_agent::AgentPlugin,
+    profile: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut env = crate::proxy::launch_env(agent.id());
+    // 中转接入（relay）的环境变量：API base / key。与账号隔离变量正交，两者都要。
+    env.extend(crate::relay::launch_env(agent.id()));
+    env.extend(crate::profile::env_of(agent.id(), profile));
     env
+}
+
+fn launch_env_for_resume_target(provider: &str, profile: Option<&str>) -> Vec<(String, String)> {
+    meowo_agent::resolve(Some(provider))
+        .map(|agent| launch_env_for_exact_profile(agent, profile))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub(crate) async fn focus_session(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
     pid: i64,
     title: Option<String>,
     cwd: Option<String>,
@@ -544,20 +758,38 @@ pub(crate) async fn focus_session(
         // 前端列表可能已过期，PID 也可能被同类 Agent 进程复用。只校验“这个 PID 是 Agent”不足以
         // 证明它仍属于用户点击的会话；必须与 DB 当前绑定一致，避免精准打开跳到另一会话。
         let id = id.to_string();
-        let owns_pid = tauri::async_runtime::spawn_blocking(move || {
+        let (owns_pid, sid) = tauri::async_runtime::spawn_blocking(move || {
             let store = open_store(&db_path())?;
             let Some(sid) = store.find_session_id_pub(&id).map_err(|e| e.to_string())? else {
-                return Ok(false);
+                return Ok::<_, String>((false, None));
             };
-            store
+            let owns = store
                 .session_pid(sid)
                 .map(|bound| bound == Some(pid))
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?;
+            Ok((owns, Some(sid)))
         })
         .await
         .map_err(|e| e.to_string())??;
         if !owns_pid {
             return Ok(FocusSessionResult::ProcessEnded);
+        }
+        // 会话跑在 Meowo 自己的 PTY 里时，压根没有外部终端窗口可找：下面那套 WT 标签 / 窗口
+        // 定位必然落空，用户只会收到一句「当前终端不支持自动跳转，会话仍在原终端运行」——
+        // 而它根本不在什么原终端里。改按 session_open_in 把用户带到它真正所在的地方
+        // （对话窗口，或 attach 到同一 PTY 的外部终端）。
+        //
+        // 注：只有**托管**会话走这里。用户自己在终端里敲起来的会话不归 Meowo 持有，没有 PTY
+        // 可 attach，仍走下面的窗口定位——那本来就是它该去的地方。
+        if let Some(sid) = sid.filter(|sid| state.ptys.is_managed(*sid)) {
+            // reveal_session 含同步 IO（load_settings）与外部终端 spawn（杀软扫描可达数秒），
+            // 与本文件其他 reveal_session 调用点一致放 blocking 池，不占 async 运行时线程。
+            let app = app.clone();
+            let ptys = state.ptys.clone();
+            tauri::async_runtime::spawn_blocking(move || reveal_session(&app, &ptys, sid))
+                .await
+                .map_err(|e| e.to_string())??;
+            return Ok(FocusSessionResult::Focused);
         }
     }
     #[cfg(target_os = "windows")]
@@ -791,6 +1023,18 @@ pub(crate) fn safe_cwd(cwd: Option<&str>) -> Option<String> {
     std::path::Path::new(d).is_dir().then(|| d.to_string())
 }
 
+/// macOS resume 的 cwd 准入：None/空白走无目录脚本（合法）；给了目录就必须真实存在——
+/// 目录已删时 AppleScript 里 `cd` 失败被 `&&` 短路，resume 根本没跑，osascript 却返回成功
+/// （假恢复：终端空空，DB 却已乐观复活）。与 Windows 侧 safe_cwd 的 is_dir 校验同一纪律。
+/// 纯函数便于在非 macOS 上单测。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn mac_resume_cwd_valid(cwd: Option<&str>) -> bool {
+    match cwd.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(dir) => std::path::Path::new(dir).is_dir(),
+        None => true,
+    }
+}
+
 /// 把 resume 命令 argv 拼成交给 `powershell -Command` / `cmd /k` 的单行命令串。
 /// kimi/codex 的可执行是 USERPROFILE 下的绝对路径，用户名可含空格 / $ / ' / % 等合法字符：
 /// - PowerShell：含空白或 $ ` ' 的参数用**单引号字面量**包裹（内嵌单引号翻倍）——双引号内 $ 与反引号
@@ -890,6 +1134,57 @@ pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
     format!("{clear}{set}")
 }
 
+/// macOS 恢复会话的 env 注入文件：赋值写进临时文件（unix 下创建即 0600），终端命令只出现
+/// `source '<tmp>' && rm -f '<tmp>' && ` 前缀——密钥值不再落在可见命令行上。
+///
+/// 起因：恢复会话的 env 带着中转 API key（ANTHROPIC_API_KEY / KIMI_MODEL_API_KEY /
+/// GEMINI_API_KEY），此前由 [`env_prefix_posix`] 拼成 `K='sk-…' ` 前缀直接进终端命令——
+/// iTerm2 会把这行命令写进 ~/.zsh_history，Terminal.app 则留在滚动缓冲区，都是明文落盘。
+/// 文件由恢复命令 source 成功后立即自删；命令若没来得及执行（窗口被直接关掉），残留文件
+/// 权限 0600 仅本人可读，并随 $TMPDIR 周期清理。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn env_source_prefix_posix(env: &[(String, String)]) -> Result<String, String> {
+    // source 进来的赋值必须 export 才会传给恢复出来的子进程；unset 清掉继承的代理变量
+    // （语义同 env_prefix_posix），值按同一套 POSIX 单引号规则转义。
+    let mut content = format!("unset {}\n", PROXY_ENV_KEYS.join(" "));
+    for (key, value) in env {
+        content.push_str(&format!("export {key}='{}'\n", value.replace('\'', r"'\''")));
+    }
+    let dir = std::env::temp_dir();
+    // create_new 杜绝符号链接/抢占覆写；撞名（概率可忽略）换名重试。
+    for _ in 0..3 {
+        let mut token = [0u8; 8];
+        if getrandom::fill(&mut token).is_err() {
+            // OS RNG 不可用属于极端退化；混入进程号即可，文件本就是 0600。
+            token = u64::from(std::process::id()).to_le_bytes();
+        }
+        let token_hex: String = token.iter().map(|b| format!("{b:02x}")).collect();
+        let path = dir.join(format!("meowo-env-{}-{token_hex}", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // 0600 必须与创建同一步完成：先建后 chmod 会留出一个默认权限的窗口期，
+        // 而密钥内容恰好在这个窗口期内写入。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let Ok(mut file) = options.open(&path) else {
+            continue;
+        };
+        use std::io::Write as _;
+        if let Err(error) = file.write_all(content.as_bytes()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("env 注入文件写入失败：{error}"));
+        }
+        drop(file);
+        // 路径按同一套单引号规则转义后拼进 source/rm（temp_dir 一般不会带引号，纪律不松）。
+        let quoted = path.to_string_lossy().replace('\'', r"'\''");
+        return Ok(format!("source '{quoted}' && rm -f '{quoted}' && "));
+    }
+    Err("无法创建 env 注入临时文件".into())
+}
+
 /// 单 pid 判活（廉价版，resume 前奏专用）：Windows 走 Toolhelp 快照（1-3ms，避免 sysinfo 全进程
 /// OpenProcess 刷新的 30-120ms 拖慢「点下即显示已连接」），Unix 走一次 ps。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -910,20 +1205,19 @@ pub(crate) fn pid_alive_agent_quick(pid: i64) -> bool {
     }
 }
 
-/// resume 的跨平台前奏（须在后台线程调用）：乐观复活 → 兜底刷新 → 解析 cwd → 按 provider 取
-/// resume 命令 argv。返回 (真的复活了才是 Some(sid)——供 spawn 失败回滚,绝不回滚未被本次复活的
-/// 真连接会话、resolved_cwd、resume_argv)。
+/// resume 的跨平台前奏（须在后台线程调用）：乐观复活 → 兜底刷新。
+/// 返回真的复活了才是 Some(sid)——供 spawn 失败回滚,绝不回滚未被本次复活的真连接会话。
+///
 /// 乐观复活:resume 是看板主动发起的,已知恢复哪个会话——先复活并清旧 pid,卡片即刻显示已连接,
 /// 不必等 hook(尤其 codex 的 session_start hook 要到首个 turn 才触发)。旧 pid 死活经
 /// pid_alive_agent_quick 校验后以 dead_pid 传入,由 store 层 `pid=?` 守卫原子闭合 TOCTOU
 /// (见 revive_for_resume)。emit 兜底刷新,不依赖 db watcher 存活。
+///
+/// **不做**恢复计划解析：两个调用方都在调用前自己算过一遍并丢弃这里的结果，而
+/// resolve_resume_plan 在 DB cwd 失真时要 read_dir 整个 projects 目录再逐行读 JSONL
+/// （50-500ms），白算一遍很贵。计划由调用方负责传给 broker。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(crate) fn prepare_resume(
-    app: &tauri::AppHandle,
-    session_id: &str,
-    cwd: Option<&str>,
-    provider: &str,
-) -> (Option<i64>, Option<String>, Vec<String>) {
+pub(crate) fn prepare_resume(app: &tauri::AppHandle, session_id: &str) -> Option<i64> {
     let revived = (|| {
         let store = open_store(&db_path()).ok()?;
         let sid = store.find_session_id_pub(session_id).ok().flatten()?;
@@ -938,8 +1232,7 @@ pub(crate) fn prepare_resume(
         }
     })();
     emit_board_changed(app, "resume");
-    let (resolved, resume) = resolve_resume_plan(session_id, cwd, provider);
-    (revived, resolved, resume)
+    revived
 }
 
 /// 只读解析恢复计划；不得改状态。restart 路径必须先确认计划有效，再结束原进程。
@@ -1094,7 +1387,18 @@ pub(crate) fn spawn_in_terminal(
         TermKind::ITerm2 => TermKind::Terminal,
         other => other,
     };
-    crate::macos::terminal::resume_session_mac(cwd, argv, kind, &env_prefix_posix(env))
+    // env 里可能带中转 API key：写进 0600 临时文件由终端命令 source，不再拼进可见命令行
+    // （iTerm2 会把它写进 shell history，Terminal.app 留在滚动缓冲区）。建不出文件时宁可
+    // 恢复失败（调用方回滚乐观复活），也不回退到把密钥敲进终端的旧形式。
+    let Ok(env_prefix) = env_source_prefix_posix(env) else {
+        return false;
+    };
+    // cwd 必须真实存在：目录已删时 AppleScript 里 cd 失败被 && 短路，resume 没跑却返回成功
+    // （假恢复）。返回 false 由调用方回滚乐观复活。
+    if !mac_resume_cwd_valid(cwd) {
+        return false;
+    }
+    crate::macos::terminal::resume_session_mac(cwd, argv, kind, &env_prefix)
 }
 
 /// 其它平台无终端集成。
@@ -1120,18 +1424,29 @@ pub(crate) fn validate_new_session_cwd(cwd: &str) -> Result<String, String> {
     Ok(d.to_string())
 }
 
-/// 新建一个全新会话：在 `cwd` 打开终端裸启动指定 provider 的 CLI（无 session_id）。
-/// 会话入库仍靠该 CLI 自己的 hook（claude/kimi 秒级，codex 首条消息后）——本命令只负责 spawn。
-/// terminal 缺省用 settings.resume_terminal。spawn 放 blocking 线程池并 await，失败回传前端面板。
+/// 新建一个全新会话：由 Meowo PTY 裸启动指定 provider 的 CLI（无 session_id），并按
+/// `session_open_in` 把用户带到对话窗口或 attach 后的外部终端。
+/// 会话入库仍靠 CLI hook；SessionStart 后 reporter 用一次性 token 将临时 PTY 绑定到真实 session id。
+/// `terminal` 仅为旧前端兼容参数：托管模式下用哪个外部终端由设置里的 `resume_terminal` 决定。
 #[tauri::command]
 pub(crate) async fn new_session(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
     cwd: String,
     provider: String,
     terminal: Option<String>,
+    options: Option<std::collections::HashMap<String, String>>,
 ) -> Result<(), String> {
     let dir = validate_new_session_cwd(&cwd)?;
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
-    let argv = crate::relay::augment_argv(agent.id(), agent.launch_argv());
+    // 启动选项：前端只回传 choice id，此处按插件声明表翻译成 flag——未知 id 被忽略/落默认，
+    // 用户输入永远进不了 argv。放在 relay 增补**之前**：中转声明的 `--model` 必须最后压轴
+    // （中转端点只认它配置的那个模型，用户选的别名对它无意义，claude 以最后一个 --model 为准）。
+    let mut argv = agent.launch_argv();
+    if let Some(sel) = &options {
+        argv.extend(meowo_agent::resolve_launch_args(agent.launch_options(), sel));
+    }
+    let argv = crate::relay::augment_argv(agent.id(), argv);
     // 代理 + 中转 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等），三者都在
     // `launch_env_for_profile` 里。
     //
@@ -1139,34 +1454,38 @@ pub(crate) async fn new_session(
     // 账号，新开的会话却仍跑在默认账号上——而且毫无迹象，用户只能靠 `/status` 里的邮箱才发现。
     // 新建会话是**用户切换账号后最先走的一条路**，漏了它等于整个功能没做。
     let env = launch_env_for_profile(Some(&provider), None);
-    let term = terminal
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| load_settings().resume_terminal);
-    // 冷启动首次 spawn 控制台子进程可达数秒；放 blocking 池不挡事件循环，同时能 await 结果回传。
-    let ok = tauri::async_runtime::spawn_blocking(move || {
-        spawn_in_terminal(&argv, Some(&dir), &term, &env)
+    // 参数为兼容旧前端保留；托管模式不再由这里预选外部终端，视图与终端类型分别由
+    // session_open_in / resume_terminal 决定。
+    let _ = terminal;
+    let broker = state.ptys.clone();
+    let reveal_broker = state.ptys.clone();
+    let window_app = app.clone();
+    // PTY 冷启动与杀软扫描可能阻塞数秒，放 blocking 池；首次 SessionStart hook 会把临时 PTY
+    // 认领为真实数据库 session。
+    let temp_id = tauri::async_runtime::spawn_blocking(move || {
+        broker.start_pending(app, &argv, Some(&dir), &env, 100, 30)
     })
     .await
-    .map_err(|e| e.to_string())?;
-    if ok {
-        Ok(())
-    } else if cfg!(not(any(target_os = "windows", target_os = "macos"))) {
-        Err("当前平台不支持从看板新建会话".into())
-    } else {
-        Err("启动终端失败：请确认所选 agent 已安装并在 PATH 中".into())
-    }
+    .map_err(|e| e.to_string())??;
+    // 用临时负 id 就能 attach：claim 只改注册表的键，subscriber 挂在 ManagedPty 上，
+    // 认领前后都指着同一个 PTY，不会断流。
+    tauri::async_runtime::spawn_blocking(move || {
+        reveal_session(&window_app, &reveal_broker, temp_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// 恢复一个已断开的会话：在其原工作目录 `cwd` 新开一个终端跑 `claude --resume <session_id>`。
-/// 终端按设置 `resume_terminal` 选择——Windows：wt(默认)/wezterm/powershell/cmd；macOS：Terminal/iTerm2。
-/// `cwd` 缺失/非法(旧会话)时不带 cwd，尽力按 id 恢复。
+/// 恢复一个已断开的会话：由 Meowo 持有 PTY，并打开同步对话窗口。外部终端若需要，
+/// 再通过 attach 连接到同一 PTY；这样从卡片恢复的会话也能在 GUI 中直接发送消息与审批。
 ///
 /// 恢复命令由 `provider` 决定（claude: `claude --resume <id>` / kimi: `kimi -r <id>`，见 agent::resume_args）。
 /// 安全：`session_id` 经 is_safe_id 校验（仅 `[A-Za-z0-9_-]`，无空格/元字符）；可执行名与参数来自受信的
 /// agent::resume_args（非用户输入）；wt 分支各 argv 独立传入，powershell/cmd 命令串只由这些受信片段拼成，从源头杜绝注入。
 #[tauri::command]
-pub(crate) fn resume_session(
+pub(crate) async fn resume_session(
     app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
     cwd: Option<String>,
     session_id: String,
     provider: String,
@@ -1175,59 +1494,336 @@ pub(crate) fn resume_session(
         return Err("无效 session_id".into());
     }
     ensure_session_profile_available(&provider, &session_id)?;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
-        // 冷启动后首次 spawn 控制台子进程可达数秒（新建 conhost + 杀软扫描），resolve_cwd 还要读
-        // transcript；同步命令跑在主线程，整段挪后台线程，命令立即返回。
-        std::thread::spawn(move || {
-            let (revived, resolved_cwd, resume) =
-                prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let env = launch_env_for_session(Some(&provider), &session_id);
-            let ok = spawn_in_terminal(
-                &resume,
-                resolved_cwd.as_deref(),
-                &load_settings().resume_terminal,
-                &env,
-            );
-            if !ok {
-                // GUI 构建 stderr 不可见：回滚乐观复活，卡片立即回落「已断开」而非假连接 120s。
-                if let Some(sid) = revived {
-                    rollback_failed_resume(sid);
-                }
-                emit_board_changed(&app, "resume-failed");
+        let broker = state.ptys.clone();
+        let db = state.db_path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let store = open_store(&db)?;
+            let sid = store
+                .find_session_id_pub(&session_id)
+                .map_err(|e| e.to_string())?
+                .ok_or("会话不存在")?;
+            if session_agent_alive(&store, sid)? {
+                return Err("会话仍在外部终端运行，请先在终端页选择接管".into());
             }
-        });
-        Ok(())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // resolve_cwd 读 transcript、osascript 可能等 TCC 授权，整段放后台线程不挡主线程。
-        // resume 命令按 provider 分发（与 Windows 同一事实源），不再硬编码 claude——
-        // 否则 macOS 上恢复 codex/kimi 会话会执行错误命令。
-        std::thread::spawn(move || {
-            let (revived, resolved, resume) =
-                prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-            let env = launch_env_for_session(Some(&provider), &session_id);
-            let ok = spawn_in_terminal(
-                &resume,
-                resolved.as_deref(),
-                &load_settings().resume_terminal,
-                &env,
-            );
-            if !ok {
-                eprintln!("恢复会话：终端启动失败");
-                if let Some(sid) = revived {
-                    rollback_failed_resume(sid);
-                }
-                emit_board_changed(&app, "resume-failed");
-            }
-        });
-        Ok(())
+            start_managed_resume(app, broker, sid, cwd, session_id, provider)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (app, cwd, provider);
         Err("当前平台不支持".into())
+    }
+}
+
+/// 把仍在外部终端中的 Agent 安全迁移到 Meowo：先验证 PID 与恢复计划，再结束旧进程，
+/// 最后以同一个 session id 在托管 PTY 中恢复。前端会在执行前明确二次确认。
+#[tauri::command]
+pub(crate) async fn takeover_managed_terminal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    session_id: i64,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let broker = state.ptys.clone();
+        let db = state.db_path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let store = open_store(&db)?;
+            let session = store.get_session(session_id).map_err(|e| e.to_string())?;
+            let provider = store
+                .session_provider(session_id)
+                .map_err(|e| e.to_string())?;
+            let cwd = store.session_cwd(session_id).map_err(|e| e.to_string())?;
+            // takeover 与 resume/start 的守卫互为镜像：那两条要求进程**已死**，这条专治
+            // 进程**还活着**——先确认恢复计划有效，再结束旧进程。判活口径必须一致（直接
+            // 复用 session_agent_alive，含 pid 归属校验——换代残留的 pid 属于别的会话，
+            // 杀不得），否则同一会话可能两条路都放行，对同一个 session id 起出第二个 agent。
+            let pid = if session_agent_alive(&store, session_id)? {
+                store.session_pid(session_id).map_err(|e| e.to_string())?
+            } else {
+                None
+            };
+
+            ensure_session_profile_available(&provider, &session.cc_session_id)?;
+            let (_, resume) =
+                resolve_resume_plan(&session.cc_session_id, cwd.as_deref(), &provider);
+            if resume.is_empty() {
+                return Err("该 Agent 不支持恢复会话".into());
+            }
+            // 先做一次可恢复副本再结束外部进程；结束后 start_managed_resume_sized 会再同步
+            // 最终增量。这样目标目录不可写/源文件缺失时不会先把用户仍可用的会话杀掉。
+            prepare_claude_session_for_active_profile(&provider, &session.cc_session_id)?;
+            if let Some(pid) = pid {
+                terminate_agent_for_restart(pid)?;
+            }
+            start_managed_resume_sized(
+                app,
+                broker,
+                session_id,
+                cwd,
+                session.cc_session_id,
+                provider,
+                crate::pty::TerminalSize::new(cols, rows),
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (app, state, session_id, cols, rows);
+        Err("当前平台不支持".into())
+    }
+}
+
+/// 在用户选定的外部终端里起 attach 客户端，把托管 PTY 镜像过去。
+/// Agent 与 PTY 都不迁移——外部窗口只是同一个 PTY 的第二个视图。
+pub(crate) fn attach_in_external_terminal(
+    broker: &crate::pty::PtyBroker,
+    sid: i64,
+) -> Result<(), String> {
+    broker.ensure_attachable(sid)?;
+    let reporter = crate::setup::sibling_reporter().ok_or("找不到 meowo-reporter attach 客户端")?;
+    let terminal = load_settings().resume_terminal;
+    // endpoint/token/protocol 不进 argv：attach 客户端自行读 discovery 文件
+    //（与审批桥接同一来源，含 pid 判活），token 不暴露在进程参数里。
+    let argv = vec![
+        reporter,
+        "attach".into(),
+        "--session".into(),
+        sid.to_string(),
+    ];
+    if spawn_in_terminal(&argv, None, &terminal, &[]) {
+        Ok(())
+    } else {
+        Err("打开外部同步终端失败".into())
+    }
+}
+
+/// 把用户带到会话所在的视图，按 `session_open_in` 分发。
+///
+/// 两种取值下 agent 都由 Meowo 的 PTY 持有——差的只是拿什么界面看它：`chat` 用对话窗口，
+/// `terminal` 用 attach 客户端把同一个 PTY 镜像进用户选的外部终端。故这里不做任何进程决策。
+///
+/// attach 失败**不**回退去开对话窗口：外部终端起不来是要让用户看见的错误，静默换成 GUI
+/// 只会让人以为设置没生效。
+pub(crate) fn reveal_session(
+    app: &tauri::AppHandle,
+    broker: &crate::pty::PtyBroker,
+    sid: i64,
+) -> Result<(), String> {
+    if load_settings().session_open_in == "terminal" {
+        return attach_in_external_terminal(broker, sid);
+    }
+    // 同步等窗口创建结果：PTY 已经拉起、窗口却没开时，把错误交还调用方，
+    // 而不是让前端误报成功（用户「点了没反应」会再点一次，重复起会话）。
+    crate::window::open_chat_window_impl(app, sid)
+}
+
+/// 从看板卡片恢复：会话此刻还没有任何视图，故成功后按设置把用户带过去。
+/// 100x30 只是首帧占位尺寸——对话窗口/attach 客户端挂上来后会立即按真实容器发 resize。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn start_managed_resume(
+    app: tauri::AppHandle,
+    broker: crate::pty::PtyBroker,
+    sid: i64,
+    cwd: Option<String>,
+    session_id: String,
+    provider: String,
+) -> Result<(), String> {
+    start_managed_resume_sized(
+        app.clone(),
+        broker.clone(),
+        sid,
+        cwd,
+        session_id,
+        provider,
+        crate::pty::TerminalSize::new(100, 30),
+    )?;
+    reveal_session(&app, &broker, sid)
+}
+
+/// 恢复会话到托管 PTY 的**唯一**实现。刻意不开窗：从对话窗口内发起的恢复
+/// （start_managed_terminal / takeover）窗口已经在了，再调 open_chat_window 会触发
+/// chat-session-changed，把用户正在编辑的输入连同 history 一起重置。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn start_managed_resume_sized(
+    app: tauri::AppHandle,
+    broker: crate::pty::PtyBroker,
+    sid: i64,
+    cwd: Option<String>,
+    session_id: String,
+    provider: String,
+    terminal_size: crate::pty::TerminalSize,
+) -> Result<(), String> {
+    ensure_session_profile_available(&provider, &session_id)?;
+    let (resolved, resume) = resolve_resume_plan(&session_id, cwd.as_deref(), &provider);
+    if resume.is_empty() {
+        return Err("该 Agent 不支持恢复会话".into());
+    }
+    // takeover 调用本函数前已经结束旧进程；普通 resume 的旧进程本就不在。此刻复制能拿到
+    // 完整的最后一帧 transcript，也不会与 Claude 正在追加同一个文件发生竞争。
+    let target_profile = prepare_claude_session_for_active_profile(&provider, &session_id)?;
+    let revived = prepare_resume(&app, &session_id);
+    let env = if provider == "claude" {
+        launch_env_for_resume_target(&provider, target_profile.as_deref())
+    } else {
+        launch_env_for_session(Some(&provider), &session_id)
+    };
+    if let Err(error) = broker.start(
+        app.clone(),
+        sid,
+        &resume,
+        resolved.as_deref(),
+        &env,
+        terminal_size,
+    ) {
+        if let Some(id) = revived {
+            rollback_failed_resume(id);
+        }
+        emit_board_changed(&app, "resume-failed");
+        return Err(error);
+    }
+    if provider == "claude" {
+        record_resumed_profile(&session_id, target_profile.as_deref());
+    }
+    // 秒退探测：CLI 拒绝启动时（典型：resume 一个正被另一进程占用的会话，claude 直接报错
+    // 退出），spawn 本身是成功的，错误只打印在 PTY 里就死了——不在这截获，用户看到的只有
+    // 「点了没反应」。
+    //
+    // 以 25ms 为粒度轮询到 1 秒，且**一见到输出就返回**：正常启动的 TUI 几十毫秒内就会
+    // 吐首屏，此时进程显然没有秒退，再等下去纯粹是让用户干看着。此前固定 5×200ms 睡满，
+    // 成功路径必然白等 1 秒——那是这条链路上最确定的一笔浪费。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        if let Some((code, tail)) = broker.exit_info(sid) {
+            emit_board_changed(&app, "resume-failed");
+            let code = code.map_or_else(|| "?".into(), |c| c.to_string());
+            return Err(if tail.is_empty() {
+                format!("Agent 启动后立即退出（退出码 {code}）")
+            } else {
+                format!("Agent 启动后立即退出（退出码 {code}）：{tail}")
+            });
+        }
+        // 有输出 = 进程活着并已开始工作，没必要再守着看它会不会秒退。
+        if broker.output_len(sid) > 0 {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+/// 会话的 agent 进程此刻是否真的还活着。
+///
+/// 刻意**不**复用 `session_connected`：那是**看板显示**语义，带 RESUME_GRACE_MS 宽限窗口，
+/// 会把「刚乐观复活、进程尚未起来」的会话报成已连接。拿它当接管守卫会误拒用户，且它读的是
+/// `session_query` 的缓存快照可能与实时进程表给出相反结论。守卫要的是进程事实，故实时查。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Result<bool, String> {
+    let Some(pid) = store
+        .session_pid(sid)
+        .map_err(|e| e.to_string())?
+        .filter(|&pid| pid > 0)
+    else {
+        return Ok(false);
+    };
+    if !pid_alive_agent_quick(pid) {
+        return Ok(false);
+    }
+    // 进程活着还不够，pid 得仍归本会话：/clear 换代后旧行可能残留一个「活着但已被
+    // 新会话认领」的 pid（end_session 清 pid 之前的存量数据）。拿它当「外部仍在运行」
+    // 会误拒接管——而那个「外部终端」根本不存在；更糟的是 takeover 会照着它杀错新会话的进程。
+    if store
+        .pid_held_by_other_live(sid, pid)
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Windows：`terminate_agent_for_restart` 用的已验证 agent 进程句柄。
+/// 校验后立刻 OpenProcess 钉住进程身份：此后原进程退出、pid 被系统回收复用，
+/// TerminateProcess 与退出等待都只作用于原进程对象（已退出则操作失败），绝不会落到
+/// 复用该 pid 的无关进程上——闭合「DB 校验 pid 归属」与「kill」之间的 TOCTOU 窗口
+/// （此前 sysinfo 先按快照复核进程名、kill 时再按 pid 重新 OpenProcess，两段之间可错杀）。
+#[cfg(target_os = "windows")]
+struct AgentProcessHandle(windows_sys::Win32::Foundation::HANDLE);
+
+/// [`AgentProcessHandle::open_verified`] 的结局分类：区分开「进程已自然退出」（不算失败，
+/// 与函数顶部判活同一语义）和「pid 被非 agent 进程复用」（白名单拦截，什么都不杀）。
+#[cfg(target_os = "windows")]
+enum AgentProcessOpen {
+    Opened(AgentProcessHandle),
+    Exited,
+    NotAgent,
+}
+
+#[cfg(target_os = "windows")]
+impl AgentProcessHandle {
+    /// 打开 pid 并复核可执行名仍在 agent 白名单内。名字取自句柄钉住的进程对象本身
+    /// （与 Toolhelp 快照同一套 is_agent_process 白名单，但不怕快照后 pid 复用）。
+    fn open_verified(pid: i64) -> AgentProcessOpen {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+            QueryFullProcessImageNameW,
+        };
+        if !(1..=u32::MAX as i64).contains(&pid) {
+            return AgentProcessOpen::Exited;
+        }
+        unsafe {
+            let handle = OpenProcess(
+                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid as u32,
+            );
+            // 打不开几乎总是「校验到 kill 的间隙内自然退出」；权限类失败由调用方
+            // 再以判活复核兜底（见 terminate_agent_for_restart）。
+            if handle.is_null() {
+                return AgentProcessOpen::Exited;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            if QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut len) == 0 {
+                CloseHandle(handle);
+                return AgentProcessOpen::Exited;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            if !meowo_agent::is_agent_process(&path) {
+                CloseHandle(handle);
+                return AgentProcessOpen::NotAgent;
+            }
+            AgentProcessOpen::Opened(AgentProcessHandle(handle))
+        }
+    }
+
+    fn terminate(&self) -> bool {
+        unsafe { windows_sys::Win32::System::Threading::TerminateProcess(self.0, 1) != 0 }
+    }
+
+    /// 进程对象是否仍在运行（未 signaled）。句柄钉住身份，pid 复用不影响判断。
+    fn alive(&self) -> bool {
+        unsafe {
+            windows_sys::Win32::System::Threading::WaitForSingleObject(self.0, 0)
+                == windows_sys::Win32::Foundation::WAIT_TIMEOUT
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for AgentProcessHandle {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
     }
 }
 
@@ -1237,53 +1833,61 @@ fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
     if !pid_alive_agent_quick(pid) {
         return Ok(());
     }
+    // Windows：校验后立刻持句柄钉住进程身份（见 AgentProcessHandle），之后的 terminate 与
+    // 退出等待全走句柄、不按 pid 重开。进程名白名单复核不收反升：改在句柄钉住的进程对象上
+    // 取镜像路径复核（open_verified）。
     #[cfg(target_os = "windows")]
-    let sent = {
-        let sys = sysinfo::System::new_all();
-        sys.process(sysinfo::Pid::from_u32(pid as u32))
-            .filter(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
-            .is_some_and(|p| p.kill())
+    let proc_handle = match AgentProcessHandle::open_verified(pid) {
+        AgentProcessOpen::Opened(h) => h,
+        // 校验到 kill 的间隙内自然退出：与顶部判活同一语义，不算失败。但判活仍报活
+        // （权限不足等打不开句柄的情形）必须拦下——否则恢复会拉起第二个进程。
+        AgentProcessOpen::Exited if !pid_alive_agent_quick(pid) => return Ok(()),
+        AgentProcessOpen::Exited => return Err("无法结束原会话进程".into()),
+        // pid 被非 agent 进程复用：白名单拦截，什么都不杀。
+        AgentProcessOpen::NotAgent => return Err("无法结束原会话进程".into()),
     };
-    // macOS 上 sysinfo 的进程可见性不稳定（判活本来也走 ps），直接以独立 argv 发送 TERM，不经 shell。
+    #[cfg(target_os = "windows")]
+    let kill = |force: bool| {
+        // Windows 只有 TerminateProcess 一档（与旧 sysinfo kill 相同），无 TERM/KILL 之分。
+        let _ = force;
+        proc_handle.terminate()
+    };
+    #[cfg(target_os = "windows")]
+    let alive = || proc_handle.alive();
+    // macOS 上 sysinfo 的进程可见性不稳定（判活本来也走 ps），直接以独立 argv 发送信号，不经 shell。
     #[cfg(target_os = "macos")]
-    let sent = std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status()
-        .is_ok_and(|s| s.success());
-    if !sent {
+    let kill = |force: bool| {
+        let pid = pid.to_string();
+        std::process::Command::new("kill")
+            .args([if force { "-KILL" } else { "-TERM" }, pid.as_str()])
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    #[cfg(target_os = "macos")]
+    let alive = || pid_alive_agent_quick(pid);
+
+    if !kill(false) && alive() {
         return Err("无法结束原会话进程".into());
     }
 
     // 给 Agent 的退出清理/SessionEnd hook 留出时间；若仍存活再强制结束，避免恢复出双进程。
     for _ in 0..30 {
-        if !pid_alive_agent_quick(pid) {
+        if !alive() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    if pid_alive_agent_quick(pid) {
-        #[cfg(target_os = "windows")]
-        let forced = {
-            let sys = sysinfo::System::new_all();
-            sys.process(sysinfo::Pid::from_u32(pid as u32))
-                .filter(|p| meowo_agent::is_agent_process(&p.name().to_string_lossy()))
-                .is_some_and(|p| p.kill())
-        };
-        #[cfg(target_os = "macos")]
-        let forced = std::process::Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .status()
-            .is_ok_and(|s| s.success());
-        if !forced {
+    if alive() {
+        if !kill(true) && alive() {
             return Err("原会话仍在运行，未重新打开".into());
         }
         for _ in 0..20 {
-            if !pid_alive_agent_quick(pid) {
+            if !alive() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        if pid_alive_agent_quick(pid) {
+        if alive() {
             return Err("原会话仍在运行，未重新打开".into());
         }
     }
@@ -1319,13 +1923,20 @@ pub(crate) async fn restart_session_supported(
         if resume.is_empty() {
             return Err("该 Agent 不支持恢复会话".into());
         }
+        // 与托管接管一致：跨账号副本先落稳，再结束仍可用的外部进程。
+        prepare_claude_session_for_active_profile(&provider, &session_id)?;
         // 账号目录可能已被删除。必须在终止仍可用的原进程之前拦住，否则恢复失败还会顺手杀掉会话。
         ensure_session_profile_available(&provider, &session_id)?;
         terminate_agent_for_restart(pid)?;
 
         // 原进程确认结束后才复活 DB 状态；恢复计划沿用终止前已验证的结果。
-        let (revived, _, _) = prepare_resume(&app, &session_id, cwd.as_deref(), &provider);
-        let env = launch_env_for_session(Some(&provider), &session_id);
+        let target_profile = prepare_claude_session_for_active_profile(&provider, &session_id)?;
+        let revived = prepare_resume(&app, &session_id);
+        let env = if provider == "claude" {
+            launch_env_for_resume_target(&provider, target_profile.as_deref())
+        } else {
+            launch_env_for_session(Some(&provider), &session_id)
+        };
         let ok = spawn_in_terminal(
             &resume,
             resolved.as_deref(),
@@ -1333,6 +1944,9 @@ pub(crate) async fn restart_session_supported(
             &env,
         );
         if ok {
+            if provider == "claude" {
+                record_resumed_profile(&session_id, target_profile.as_deref());
+            }
             Ok(())
         } else {
             if let Some(id) = revived {
@@ -1398,6 +2012,63 @@ mod proxy_env_tests {
         assert!(!p.starts_with('\''), "键名不得被引起来");
     }
 
+    /// 恢复会话的 env 带着中转 API key：赋值必须写进 0600 临时文件，可见命令行只剩
+    /// `source <tmp> && rm -f <tmp> &&`——否则 iTerm2 把它写进 ~/.zsh_history、
+    /// Terminal.app 留在滚动缓冲区，都是明文落盘。
+    #[test]
+    fn posix_env_moves_secrets_into_a_sourced_file() {
+        let secret_env = vec![
+            (
+                "ANTHROPIC_API_KEY".to_string(),
+                "sk-ant-secret".to_string(),
+            ),
+            ("HTTPS_PROXY".to_string(), "http://127.0.0.1:7890".to_string()),
+        ];
+        let prefix = env_source_prefix_posix(&secret_env).unwrap();
+        // 可见命令行只有 source/rm 与文件路径——密钥值绝不能出现在其中。
+        assert!(prefix.starts_with("source '"));
+        assert!(prefix.contains("' && rm -f '"));
+        assert!(prefix.ends_with("' && "));
+        assert!(!prefix.contains("sk-ant-secret"), "prefix={prefix}");
+        assert!(!prefix.contains("7890"), "prefix={prefix}");
+        // source 与 rm 指向同一文件；文件内容含 unset 清理与 export 赋值。
+        let path = prefix
+            .trim_start_matches("source '")
+            .split('\'')
+            .next()
+            .unwrap();
+        assert!(prefix.contains(&format!("rm -f '{path}'")));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.starts_with("unset HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY "));
+        assert!(content.contains("export ANTHROPIC_API_KEY='sk-ant-secret'\n"));
+        assert!(content.contains("export HTTPS_PROXY='http://127.0.0.1:7890'\n"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "密钥文件必须创建即 0600"
+            );
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// env 文件与内联前缀同一套转义纪律：值里的单引号闭合不了，注入留在字符串里。
+    #[test]
+    fn posix_env_file_escapes_quotes_in_values() {
+        let evil = vec![("K".to_string(), "a'b;calc".to_string())];
+        let prefix = env_source_prefix_posix(&evil).unwrap();
+        let path = prefix
+            .trim_start_matches("source '")
+            .split('\'')
+            .next()
+            .unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains(r"export K='a'\''b;calc'"));
+        std::fs::remove_file(path).unwrap();
+    }
+
     /// 代理串是用户输入，会被拼进 shell 命令串——三种 shell 的转义都必须挡住「闭合引号后接命令」
     /// 的注入。值虽已过 validate（无空格、协议白名单），这里仍按「一律正确转义」把关，不赌。
     #[test]
@@ -1452,5 +2123,48 @@ mod proxy_env_tests {
         assert!(decoded.contains("$env:HTTPS_PROXY='http://127.0.0.1:7890'; "));
         assert!(decoded.contains("codex.exe"), "原命令必须还在：{decoded}");
         assert!(decoded.ends_with("resume sid"));
+    }
+
+    /// macOS resume 的 cwd 准入：None/空白合法（走无目录脚本）；给了目录就必须真实存在，
+    /// 否则 AppleScript 里 cd 失败被 && 短路，resume 没跑却返回成功（假恢复）。
+    #[test]
+    fn mac_resume_cwd_valid_requires_existing_dir() {
+        assert!(mac_resume_cwd_valid(None));
+        assert!(mac_resume_cwd_valid(Some("")));
+        assert!(mac_resume_cwd_valid(Some("   ")));
+        let dir = std::env::temp_dir();
+        assert!(mac_resume_cwd_valid(dir.to_str()));
+        assert!(!mac_resume_cwd_valid(Some(
+            "C:/definitely-not-exist/meowo-xyz-123"
+        )));
+        // 文件不是目录，同样拒收。
+        let file = dir.join("meowo-cwd-valid-test-file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(!mac_resume_cwd_valid(file.to_str()));
+        let _ = std::fs::remove_file(&file);
+    }
+
+    /// open_verified 的白名单复核：测试进程自身不是 agent，必须被拦下（NotAgent）——
+    /// 这正是 pid 复用场景的防线：句柄钉住后按镜像路径复核，不杀错进程。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn open_verified_rejects_the_non_agent_test_process() {
+        match AgentProcessHandle::open_verified(std::process::id() as i64) {
+            AgentProcessOpen::NotAgent => {}
+            AgentProcessOpen::Opened(_) => panic!("非 agent 进程不得通过白名单复核"),
+            AgentProcessOpen::Exited => panic!("当前进程明明活着，不该判成 Exited"),
+        }
+    }
+
+    /// 打不开句柄的 pid 一律按 Exited 归类（调用方再以判活复核区分自然退出与权限问题）。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn open_verified_reports_exited_for_unopenable_pids() {
+        for pid in [0, -1, i64::MAX, 0x0FFF_FFFF] {
+            assert!(
+                matches!(AgentProcessHandle::open_verified(pid), AgentProcessOpen::Exited),
+                "pid={pid} 应判为 Exited"
+            );
+        }
     }
 }

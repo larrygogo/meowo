@@ -20,6 +20,8 @@ jobs:
           components: clippy
       - name: Rust 构建缓存
         uses: Swatinem/rust-cache@v2
+      - name: 生成并校验前后端 IPC 契约
+        run: cargo test -p meowo-protocol && git diff --exit-code -- app/src/generated/contracts
       - name: 安装前端依赖
         working-directory: app
         run: bun install --frozen-lockfile

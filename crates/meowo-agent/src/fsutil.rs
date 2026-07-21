@@ -1,8 +1,9 @@
 //! 跨 crate 共享的文件系统小工具。
 
 /// 原子写文件（pid 后缀临时文件 + rename）：读端裸读不会见到半截文件；pid 后缀防多进程
-/// 同时写同一路径时临时文件互相覆盖（吸取 kimi 凭据写回的实现）。rename 失败时 best-effort
-/// 清理临时文件。settings.json / usage-cache.json / 各 agent 凭据写回统一走这里，
+/// 同时写同一路径时临时文件互相覆盖（吸取 kimi 凭据写回的实现）；撞名（死进程残留的 tmp
+/// 恰好顶着一个被 OS 复用的 pid）时清残留、换序号重试，而不是把写入判失败。rename 失败时
+/// best-effort 清理临时文件。settings.json / usage-cache.json / 各 agent 凭据写回统一走这里，
 /// 消除四份各自漂移的 tmp+rename 拷贝。
 ///
 /// 刻意**不**做成端口：它是纯 `std`，测试拿临时目录就能覆盖，注入只会平添间接层。
@@ -25,19 +26,37 @@ fn write_atomic_impl(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = path.with_extension(format!("tmp.{}.{seq}", std::process::id()));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let inherited = std::fs::metadata(path)
-            .ok()
-            .map(|m| m.permissions().mode() & 0o777);
-        options.mode(forced_mode.or(inherited).unwrap_or(0o666));
-    }
-    let mut file = options.open(&tmp)?;
+    // 撞名重试上限。撞名只可能来自死进程残留（同 pid 的活进程不存在、本进程内序号唯一），
+    // 清掉残留后下一个序号几乎必空；重试防的是残留清不动（杀软/索引器短暂占用）又连续撞名。
+    const MAX_TMP_COLLISIONS: u32 = 8;
+    let mut collisions = 0;
+    let (tmp, mut file) = loop {
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!("tmp.{}.{seq}", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let inherited = std::fs::metadata(path)
+                .ok()
+                .map(|m| m.permissions().mode() & 0o777);
+            options.mode(forced_mode.or(inherited).unwrap_or(0o666));
+        }
+        match options.open(&tmp) {
+            Ok(file) => break (tmp, file),
+            // create_new 撞名：上次崩溃残留的同名 tmp 恰好顶着被 OS 复用的 pid。清残留、
+            // 换序号再试——整个写入不该为死进程的残渣报错。
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AlreadyExists
+                    && collisions < MAX_TMP_COLLISIONS =>
+            {
+                collisions += 1;
+                let _ = std::fs::remove_file(&tmp);
+            }
+            Err(e) => return Err(e),
+        }
+    };
     if let Err(e) = file
         .write_all(body.as_bytes())
         .and_then(|()| file.sync_all())
@@ -91,6 +110,29 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("tmp."))
             .collect();
         assert!(leftovers.is_empty(), "残留临时文件：{leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 上次崩溃残留的同名 tmp + OS 复用 pid + 本进程首次写该路径：create_new 撞名
+    /// 不该让整个写入失败（修复前 AlreadyExists 直接上抛，写入报错）。
+    #[test]
+    fn stale_tmp_with_recycled_pid_does_not_fail_the_write() {
+        let dir = std::env::temp_dir().join(format!("meowo-fsutil-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("x.json");
+
+        // 按当前 pid 与接下来的全局序号预占一批临时名，模拟死进程残留。多占几个以吸收
+        // 并发测试同时消耗序号的抖动（数量低于撞名重试上限，写入必然成功）。
+        let base = super::TMP_SEQ.load(std::sync::atomic::Ordering::Relaxed);
+        for seq in base..base + 4 {
+            let stale = p.with_extension(format!("tmp.{}.{seq}", std::process::id()));
+            std::fs::write(&stale, "半截的崩溃残留").unwrap();
+        }
+
+        super::write_atomic(&p, "{\"ok\":true}").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "{\"ok\":true}");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

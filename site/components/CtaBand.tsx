@@ -27,7 +27,7 @@ export default async function CtaBand({ lang = "zh", title, subtitle }: Props) {
               fallbackHref={withLang(lang, "/download")}
             />
             <a
-              className="btn btn-secondary btn-lg"
+              className="btn btn-ghost btn-lg"
               href={REPO}
               target="_blank"
               rel="noopener noreferrer"

@@ -10,6 +10,7 @@ import { Sticker } from "../views/Sticker";
 import { CollapsedStrip } from "../views/CollapsedStrip";
 import type { StickerFilter } from "../api";
 import logoUrl from "../../src-tauri/icons/128x128@2x.png";
+import "../fonts";
 import "../styles.css";
 import "./poster.css";
 
@@ -182,7 +183,7 @@ const SCENES: Record<string, () => JSX.Element> = {
       </div>
       <Points items={[
         "悬停展开偷看，移开自动收回",
-        "可置顶、不透明度 60%–100% 可调",
+        "可置顶、不透明度 25%–100% 可调",
         "macOS 上是菜单栏面板，不占 Dock",
       ]} />
     </div>

@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "bun x serve out"
   },
   "dependencies": {
     "marked": "^18.0.6",

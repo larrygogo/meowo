@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getVersion } from "@tauri-apps/api/app";
 import { useUpdate } from "../useUpdate";
+import { useShowWhenReady } from "../useShowWhenReady";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 
@@ -17,6 +18,8 @@ const WIN_W = 400;
 // 不再有跨窗口 trigger-update/update-failed 事件协议(旧协议曾致按钮死锁)。
 export function Updater() {
   const t = useT();
+  // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
+  useShowWhenReady();
   const { status, version, notes, progress, download, install, recheck } = useUpdate();
   const [current, setCurrent] = useState("");
   useEffect(() => {
@@ -105,7 +108,14 @@ export function Updater() {
               <button className="sbtn primary" onClick={() => void download()}>{t.updater.download}</button>
             ) : status === "downloading" ? (
               <div className="up-dl">
-                <div className={"up-prog" + (progress == null ? " up-prog-indet" : "")}>
+                {/* progress 为 null 时总大小未知：indeterminate 进度条按 ARIA 规范不给 aria-valuenow。 */}
+                <div
+                  className={"up-prog" + (progress == null ? " up-prog-indet" : "")}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progress == null ? undefined : Math.round(progress)}
+                >
                   <div className="up-prog-fill" style={{ width: `${progress ?? 100}%` }} />
                 </div>
                 <div className="up-status-dl">

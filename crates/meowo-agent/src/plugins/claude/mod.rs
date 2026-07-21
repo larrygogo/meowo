@@ -45,7 +45,7 @@ static EVENTS: [HookEvent; 8] = [
     HookEvent::matched("PostToolUse", "*"),
     HookEvent::matched("Stop", "*"),
     HookEvent::matched("SessionEnd", "*"),
-    HookEvent::matched("PermissionRequest", "*"),
+    HookEvent::matched("PermissionRequest", "*").with_timeout(310),
     HookEvent::matched("PreToolUse", "AskUserQuestion"),
     HookEvent::matched("PreToolUse", "ExitPlanMode"),
 ];
@@ -63,6 +63,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: true,
         with_provider: false,
+        ps_call_operator: false,
     },
 };
 
@@ -223,6 +224,16 @@ impl AgentPlugin for Claude {
     fn display_name(&self) -> &'static str {
         "Claude Code"
     }
+    /// PermissionRequest hook 声明了 310s 阻塞（EVENTS 里的 with_timeout），决策输出会被采纳。
+    fn permission_hook_decides(&self) -> bool {
+        true
+    }
+    /// 旧版 Claude Code 的 `TodoWrite` 带整份快照。**当前版本已换成增量的
+    /// `TaskCreate`/`TaskUpdate`**（单条创建/改状态，不是快照），那条路要靠累积增量才能
+    /// 还原列表，不属于这个槽——留着 `TodoWrite` 只为兼容仍在用旧版的用户。
+    fn todo_snapshot_tools(&self) -> &'static [&'static str] {
+        &["TodoWrite"]
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -237,6 +248,92 @@ impl AgentPlugin for Claude {
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
+    }
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &[
+            "/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory",
+            "/model", "/resume", "/review", "/status",
+        ]
+    }
+    /// 启动选项（实测 `claude --help`）：`--model <alias>` 与 `--permission-mode
+    /// <default|plan|acceptEdits|bypassPermissions>`。default 项一律不传 flag——CLI 的默认
+    /// 行为由 CLI 自己决定，不替它猜。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{LaunchChoice, LaunchOption};
+        static OPTIONS: [LaunchOption; 2] = [
+            LaunchOption {
+                id: "model",
+                default: "default",
+                choices: &[
+                    LaunchChoice { id: "default", label: "Default", args: &[] },
+                    LaunchChoice { id: "opus", label: "Opus", args: &["--model", "opus"] },
+                    LaunchChoice { id: "sonnet", label: "Sonnet", args: &["--model", "sonnet"] },
+                    LaunchChoice { id: "haiku", label: "Haiku", args: &["--model", "haiku"] },
+                    LaunchChoice { id: "opusplan", label: "Opus Plan", args: &["--model", "opusplan"] },
+                ],
+            },
+            LaunchOption {
+                id: "permission",
+                default: "default",
+                choices: &[
+                    LaunchChoice { id: "default", label: "Default", args: &[] },
+                    LaunchChoice { id: "plan", label: "Plan", args: &["--permission-mode", "plan"] },
+                    LaunchChoice {
+                        id: "acceptEdits",
+                        label: "Accept Edits",
+                        args: &["--permission-mode", "acceptEdits"],
+                    },
+                    LaunchChoice {
+                        id: "bypassPermissions",
+                        label: "Bypass Permissions",
+                        args: &["--permission-mode", "bypassPermissions"],
+                    },
+                ],
+            },
+        ];
+        &OPTIONS
+    }
+    /// 用户级 `<数据目录>/commands/*.md`（多账号时随 profile 走）+ 项目级 `.claude/commands/`；
+    /// 子目录按 `:` 命名空间（`commands/git/commit.md` → `/git:commit`）。
+    fn custom_commands(&self) -> Option<&'static crate::CustomCommandSpec> {
+        static SPEC: crate::CustomCommandSpec = crate::CustomCommandSpec {
+            user_dir: Some("commands"),
+            project_dir: Some(".claude/commands"),
+            ext: "md",
+            namespace_sep: Some(":"),
+        };
+        Some(&SPEC)
+    }
+    /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
+    /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
+    fn model_presets(&self) -> &'static [crate::ModelPreset] {
+        &[
+            crate::ModelPreset { id: "opus", label: "Opus" },
+            crate::ModelPreset { id: "sonnet", label: "Sonnet" },
+            crate::ModelPreset { id: "haiku", label: "Haiku" },
+            crate::ModelPreset { id: "opusplan", label: "Opus Plan" },
+        ]
+    }
+    /// Claude Code 官方的 `chat:cycleMode` 键位（Shift+Tab）。模式集合会随账号与启动参数
+    /// 变化，因此这里只声明“循环下一项”，不向 GUI 虚构一张固定、可直接跳转的列表。
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            dimension: "permission",
+            cycle_input: Some("\x1b[Z"),
+            options: &[],
+        }];
+        &MODES
+    }
+    /// Claude 在首次进入某个 cwd 时会先显示 workspace trust 选择器。它不是可接收聊天文本的
+    /// composer；这些片段覆盖现有版本的标题、错误兜底与非交互提示措辞。
+    fn startup_attention_markers(&self) -> &'static [&'static str] {
+        &[
+            "do you trust the files in this folder",
+            "do you trust the contents of this directory",
+            "trust this folder",
+            "workspace not trusted",
+            "workspace trust dialog",
+        ]
     }
     /// 直下：从 `downloads.claude.ai`（GCS，**无 Cloudflare**）取二进制并校验 SHA-256。
     /// 见 `install.rs`——引导脚本做的正是这三步。
@@ -256,8 +353,16 @@ impl AgentPlugin for Claude {
             unix_shell: "bash", // 脚本用了 `[[ ]]`，dash 跑不了
         })
     }
-    /// claude 把任务标题写进标签页 → meowo-app 可按标题精确切标签，无需我们补 token。
+    /// claude 会把**自动生成的会话标题**写进标签页——但只有自然语言首条消息才触发生成；
+    /// 首条消息是斜杠命令（如 `/code-review`）的会话标签永远停留在默认 "Claude Code"，
+    /// 按任务标题匹配必然落空。故仍保留标题匹配，同时补 reporter token 兜底（见下）。
     fn sets_terminal_tab_title(&self) -> bool {
+        true
+    }
+    /// 标签停在默认标题（斜杠命令会话）或标题漂移时，token 是唯一能精确命中的线索。
+    /// 与 kimi 相同的已知折扣：claude 运行中 spinner 持续刷新标题会覆盖 token；Stop 时
+    /// 写入的 token 在空闲/等输入期间存活——「点卡片定位过去」主要发生在这个阶段。
+    fn writes_tab_token(&self) -> bool {
         true
     }
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
@@ -277,6 +382,13 @@ impl AgentPlugin for Claude {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 斜杠命令会话的标签停在默认 "Claude Code"，标题匹配落空 → 必须同时声明 token 兜底。
+    #[test]
+    fn terminal_title_capabilities_cover_slash_command_sessions() {
+        assert!(Claude.sets_terminal_tab_title());
+        assert!(Claude.writes_tab_token());
+    }
 
     fn probe_in(home: &std::path::Path) -> Option<crate::Installation> {
         VARIANTS[0].probe(id::CLAUDE, home)
@@ -390,5 +502,17 @@ mod tests {
             .iter()
             .filter(|e| e.name != "PreToolUse")
             .all(|e| e.matcher == Some("*")));
+        assert_eq!(
+            EVENTS
+                .iter()
+                .find(|e| e.name == "PermissionRequest")
+                .unwrap()
+                .timeout,
+            310
+        );
+        assert!(EVENTS
+            .iter()
+            .filter(|e| e.name != "PermissionRequest")
+            .all(|e| e.timeout == 5));
     }
 }

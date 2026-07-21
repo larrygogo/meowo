@@ -1,0 +1,84 @@
+import { memo } from "react";
+import { type ChatItem } from "../../api";
+import { useT } from "../../i18n";
+import { Message } from "./Message";
+import { SubagentBlock } from "./SubagentBlock";
+import { friendlyToolName, ToolActivity } from "./ToolActivity";
+import { type ToolResultItem, type ToolUseItem } from "./shared";
+
+/// items 引用不变就不重算：稳态下 650ms 一轮的 history 刷新会让父组件重渲染，
+/// 但 items 往往原样不动（reduceChatEvents 无新消息时返回同一引用）。没有这层
+/// memo 时，每一轮都要重跑下面的分组循环、重建全部 JSX——长会话上千条时很贵。
+export const Transcript = memo(function Transcript({ sessionId, items }: { sessionId: number; items: ChatItem[] }) {
+  const t = useT();
+  // 委派的结局写在**主链的工具回执**上，而回执往往排在委派之后若干条。先建一张
+  // tool_use_id → 结局 的索引，折叠态的徽标才有数据可用。
+  const outcomes = new Map<string, NonNullable<ToolResultItem["subagent"]>>();
+  // 还要记下「哪些委派已经有回执了」：一批 fan-out 子任务的结局要等整批结束才写进主链，
+  // 而**跑着的时候**恰恰是最该显示进度的时刻。没有回执 = 派出去了还没回来 = 在跑。
+  const settled = new Set<string>();
+  for (const item of items) {
+    if (item.type !== "tool_result" || !item.tool_use_id) continue;
+    settled.add(item.tool_use_id);
+    if (item.subagent) outcomes.set(item.tool_use_id, item.subagent);
+  }
+  const blocks: JSX.Element[] = [];
+  for (let index = 0; index < items.length;) {
+    const item = items[index];
+    // 子任务委派不并进「N 次工具操作」那一坨：它代表一整段独立工作，值得单独一行，
+    // 且展开的是子任务时间线而不是一段参数文本。
+    if (item.type === "tool_use" && item.subagent) {
+      blocks.push(<SubagentBlock
+        key={item.id}
+        sessionId={sessionId}
+        item={item}
+        outcome={outcomes.get(item.id)}
+        settled={settled.has(item.id)}
+      />);
+      index += 1;
+      continue;
+    }
+    if (item.type === "tool_use" || item.type === "tool_result") {
+      const tools: Array<ToolUseItem | ToolResultItem> = [];
+      while (index < items.length) {
+        const candidate = items[index];
+        // 子任务在上面已单独成块；遇到它就断组，别把它吞进这坨里。
+        if (candidate.type === "tool_use" && candidate.subagent) break;
+        if (candidate.type !== "tool_use" && candidate.type !== "tool_result") break;
+        tools.push(candidate);
+        index += 1;
+      }
+      const results = new Map<string, ToolResultItem>();
+      for (const tool of tools) {
+        if (tool.type === "tool_result" && tool.tool_use_id) results.set(tool.tool_use_id, tool);
+      }
+      const consumed = new Set<string>();
+      const callCount = tools.filter((tool) => tool.type === "tool_use").length;
+      const failureCount = tools.filter((tool) => tool.type === "tool_result" && tool.is_error).length;
+      const names = [...new Set(tools
+        .filter((tool): tool is ToolUseItem => tool.type === "tool_use")
+        .map((tool) => friendlyToolName(tool.name, t)))].slice(0, 3);
+      blocks.push(<details className={"chat-activity-group" + (failureCount ? " is-error" : "")} key={`tools-${tools[0].id}`}>
+        <summary className="chat-activity-summary">
+          <span className="chat-tool-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
+          <span className="chat-activity-count">{t.chat.toolActivities(callCount || tools.length)}</span>
+          <span className="chat-activity-kinds">{names.join(" · ")}</span>
+          {failureCount > 0 && <span className="chat-activity-errors">{t.chat.toolFailures(failureCount)}</span>}
+          <span className="chat-tool-chevron">›</span>
+        </summary>
+        <div className="chat-activity-items">{tools.map((tool) => {
+          if (tool.type === "tool_use") {
+            const result = results.get(tool.id);
+            if (result) consumed.add(result.id);
+            return <ToolActivity key={tool.id} item={tool} result={result} />;
+          }
+          return consumed.has(tool.id) ? null : <Message key={tool.id} item={tool} />;
+        })}</div>
+      </details>);
+      continue;
+    }
+    blocks.push(<Message key={item.id} item={item} />);
+    index += 1;
+  }
+  return <>{blocks}</>;
+});

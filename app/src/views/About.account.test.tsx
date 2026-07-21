@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   loginAgent: vi.fn(),
   cancelLogin: vi.fn(),
   logoutAgent: vi.fn(),
+  apiKeyLogin: vi.fn(),
   checkProviderHooks: vi.fn(),
   refreshUsage: vi.fn(),
   getSettings: vi.fn(),
@@ -46,8 +47,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 const fireDone = (provider: string, ok: boolean, logPath: string | null = null) =>
   act(() => ev.doneCbs.forEach((cb) => cb({ payload: { provider, ok, code: ok ? 0 : 1, logPath } })));
-const fireLogin = (provider: string, ok: boolean) =>
-  act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, ok } })));
+const fireLogin = (provider: string, outcome: "success" | "cancelled" | "timeout") => {
+  const call = [...api.loginAgent.mock.calls].reverse().find(([p]) => p === provider);
+  const operationId = call?.[3] ?? `unrelated-${provider}`;
+  act(() => ev.loginCbs.forEach((cb) => cb({ payload: { provider, operationId, outcome } })));
+};
 
 /**
  * 顶部模型下拉切到某个 agent（按展示名）——列表现在一次只渲染选中的那一张卡（agent 一多，全部
@@ -108,6 +112,48 @@ describe("AccountSection agent 卡", () => {
     // codex 声明了中转 → 切过去应有入口。
     await selectAgent("Codex");
     expect(await screen.findByTestId("agent-access-codex")).toBeTruthy();
+  });
+
+  /**
+   * API Key 登录入口只给声明了能力的 agent（当前 gemini：OAuth 被官方停用，key 是唯一活路）。
+   * 判据是后端下发的 `supports_api_key_login`——别家未登录时不得出现这个按钮，
+   * 否则点保存只会得到后端一句「该 agent 不支持 API Key 登录」。
+   */
+  it("API Key 登录：gemini 有入口，保存成功即收起并重查账号；别家没有", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "gemini"]));
+    api.getAccounts.mockResolvedValue([]); // 全员未登录
+    api.apiKeyLogin.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    // claude（默认选中）未登录：只有交互式登录，没有 API Key 入口。
+    await screen.findByTestId("agent-card-claude");
+    expect(screen.queryByTestId("agent-api-key-login-claude")).toBeNull();
+
+    await selectAgent("Gemini CLI");
+    fireEvent.click(await screen.findByTestId("agent-api-key-login-gemini"));
+    const input = await screen.findByTestId("agent-api-key-input-gemini");
+    fireEvent.change(input, { target: { value: "AIzaTest123" } });
+    const accountQueries = api.getAccounts.mock.calls.length;
+    fireEvent.click(screen.getByTestId("agent-api-key-save-gemini"));
+    await waitFor(() => expect(api.apiKeyLogin).toHaveBeenCalledWith("gemini", "AIzaTest123"));
+    // 成功 → 输入区收起 + 重查账号（同步落盘、当场生效，不走 login-done 轮询）。
+    await waitFor(() => expect(screen.queryByTestId("agent-api-key-form-gemini")).toBeNull());
+    await waitFor(() => expect(api.getAccounts.mock.calls.length).toBeGreaterThan(accountQueries));
+  });
+
+  it("API Key 保存失败：错误就地展示，输入区保留可重试", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "gemini"]));
+    api.getAccounts.mockResolvedValue([]);
+    api.apiKeyLogin.mockRejectedValue("API Key 含有空白或不可见字符");
+    render(<AccountSection />);
+    await selectAgent("Gemini CLI");
+    fireEvent.click(await screen.findByTestId("agent-api-key-login-gemini"));
+    fireEvent.change(await screen.findByTestId("agent-api-key-input-gemini"), {
+      target: { value: "bad key" },
+    });
+    fireEvent.click(screen.getByTestId("agent-api-key-save-gemini"));
+    const err = await screen.findByTestId("agent-api-key-error-gemini");
+    expect(err.textContent).toContain("API Key 含有空白或不可见字符");
+    expect(screen.getByTestId("agent-api-key-form-gemini")).toBeTruthy();
   });
 
   it("模型菜单在下方空间不足时自动向上展开", () => {
@@ -299,7 +345,7 @@ describe("AccountSection agent 卡", () => {
     expect(JSON.stringify(api.setSettings.mock.calls)).not.toContain("sk-never-in-settings");
   });
 
-  it("已保存的中转密钥在设置页明文显示，清空后删除", async () => {
+  it("已保存的中转密钥以密码掩码回填（不明文上屏），清空后删除", async () => {
     api.getSettings.mockResolvedValue({
       sticker_quota_providers: [],
       relay: { per_agent: { claude: {
@@ -314,7 +360,8 @@ describe("AccountSection agent 卡", () => {
     api.getRelaySecrets.mockResolvedValue({ claude: "sk-visible-local" });
     render(<AccountSection />);
     const secret = await screen.findByDisplayValue("sk-visible-local") as HTMLInputElement;
-    expect(secret.type).toBe("text");
+    // 令牌是机密：与 API Key 登录输入框同规用 password 掩码（值仍回填、可编辑清空）。
+    expect(secret.type).toBe("password");
     fireEvent.change(secret, { target: { value: "" } });
     fireEvent.blur(secret);
     await waitFor(() => expect(api.setRelaySecret).toHaveBeenCalledWith("claude", ""));
@@ -519,11 +566,28 @@ describe("AccountSection 登录", () => {
     await selectAgent("Codex");
     const btn = await screen.findByTestId("agent-login-codex");
     fireEvent.click(btn);
-    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("codex"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalledWith("codex", undefined, undefined, expect.any(String)));
     // spawn 成功后不落回 idle——等 login-done。按钮此时变成「取消等待」，而不是一个死掉的禁用按钮：
     // 终端可能已被关掉，而后端要 5 分钟才超时。
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
     expect((screen.getByTestId("agent-login-codex") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("切换 agent 后仍保留等待中的 operationId，并可用同一 id 取消", async () => {
+    api.loginAgent.mockResolvedValue(undefined);
+    api.cancelLogin.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    await selectAgent("Codex");
+    fireEvent.click(await screen.findByTestId("agent-login-codex"));
+    await waitFor(() => expect(api.loginAgent).toHaveBeenCalled());
+    const operationId = api.loginAgent.mock.calls[0][3];
+
+    await selectAgent("Claude Code");
+    await selectAgent("Codex");
+    await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
+
+    fireEvent.click(screen.getByTestId("agent-login-codex"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("codex", operationId));
   });
 
   it("login-done 成功 → 重查账号（卡片可转已登录）", async () => {
@@ -538,7 +602,7 @@ describe("AccountSection 登录", () => {
       { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true },
       { provider: "codex", account: { login_label: "API Key" }, usage: null, usage_supported: false },
     ]);
-    fireLogin("codex", true);
+    fireLogin("codex", "success");
     await waitFor(() => expect(api.getAccounts.mock.calls.length).toBeGreaterThan(before));
     await waitFor(() => expect(screen.queryByTestId("agent-login-codex")).toBeNull());
   });
@@ -549,7 +613,7 @@ describe("AccountSection 登录", () => {
     await selectAgent("Codex");
     fireEvent.click(await screen.findByTestId("agent-login-codex"));
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
-    fireLogin("codex", false);
+    fireLogin("codex", "timeout");
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.login));
     expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginTimeout);
   });
@@ -565,10 +629,10 @@ describe("AccountSection 登录", () => {
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.cancelLogin));
 
     fireEvent.click(screen.getByTestId("agent-login-codex"));
-    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("codex"));
+    await waitFor(() => expect(api.cancelLogin).toHaveBeenCalledWith("codex", expect.any(String)));
 
     // 收尾由后端 emit login-done（它会再查一次账号；这里模拟「确实没登上」）。
-    fireLogin("codex", false);
+    fireLogin("codex", "cancelled");
     await waitFor(() => expect(screen.getByTestId("agent-login-codex").textContent).toBe(zh.account.login));
     // 取消 ≠ 超时：文案必须区分，否则用户以为是没检测到。
     expect(screen.getByTestId("agent-login-error-codex").textContent).toBe(zh.account.loginCancelled);
@@ -589,7 +653,7 @@ describe("AccountSection 登录", () => {
       { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true },
       { provider: "codex", account: { login_label: "API Key" }, usage: null, usage_supported: false },
     ]);
-    fireLogin("codex", true); // 后端复查发现真登上了
+    fireLogin("codex", "success"); // 后端复查发现真登上了
     await waitFor(() => expect(screen.queryByTestId("agent-login-codex")).toBeNull());
     expect(screen.queryByTestId("agent-login-error-codex")).toBeNull();
   });
@@ -617,7 +681,7 @@ describe("AccountSection 登录", () => {
     expect(await screen.findByTestId("agent-repair-hooks-codex")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("agent-login-codex"));
-    fireLogin("codex", true);
+    fireLogin("codex", "success");
     // 登录成功 → 重查 hooks 得 installed → 提示条消失。
     await waitFor(() => expect(screen.queryByTestId("agent-repair-hooks-codex")).toBeNull());
   });
@@ -667,7 +731,7 @@ describe("AccountSection 多账号", () => {
 
     fireEvent.click(await screen.findByTestId("profile-login-claude-work"));
     await waitFor(() =>
-      expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, "work")
+      expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, "work", expect.any(String))
     );
   });
 

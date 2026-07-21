@@ -7,11 +7,13 @@ import {
   getLiveSessionsPage,
   LiveSession,
   LiveSessionCounts,
+  PageCursor,
   StickerFilter,
 } from "./api";
 import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
+import { useShowWhenReady } from "./useShowWhenReady";
 import { isMacPanel } from "./platform";
 
 type Item = LiveSession & { connected: boolean };
@@ -39,10 +41,11 @@ function stripExtent(count: number): number {
   return Math.max(48, count * 17 + 26);
 }
 
-// 正常窗口最小尺寸：与 tauri.conf.json 的 minWidth/minHeight 对齐。SIZE_KEY 是「正常尺寸」基准，
-// 不应低于此（低于即被细条尺寸毒化）。
+// 正常窗口最小尺寸：与 tauri.conf.json 的 minWidth/minHeight、snap.rs 的 STICKER_MIN_* 三处对齐。
+// SIZE_KEY 是「正常尺寸」基准，不应低于此（低于即被细条尺寸毒化）。
+// 高度按「至少完整显示两张会话卡」定（约 132px 窗框 + 2×90px 卡片）。
 const SIZE_MIN_W = 360;
-const SIZE_MIN_H = 240;
+const SIZE_MIN_H = 330;
 const SIZE_MAX = 20000; // 上界：与后端 snap_* 命令的 clamp 上限一致（防 f64→i32 回绕/异常大值）
 const SIZE_DEFAULT = { w: 360, h: 440 }; // 与 tauri.conf.json 默认 width/height 一致
 
@@ -98,6 +101,9 @@ function totalFor(filter: StickerFilter, counts: LiveSessionCounts): number {
 
 
 export function App() {
+  // 贴纸窗口以 visible:false 创建（tauri.conf.json），首帧渲染后再显示，消除启动瞬间的白框闪烁。
+  // 不抢焦点（窗口配置 focus:false，开机自启同理）；macOS 面板模式显隐归 menubar 管，这里不越权。
+  useShowWhenReady({ focus: false, enabled: !isMacPanel() });
   const [items, setItems] = useState<Item[]>([]);
   const [counts, setCounts] = useState<LiveSessionCounts>({
     total: 0,
@@ -107,6 +113,13 @@ export function App() {
   });
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const [reachedEnd, setReachedEnd] = useState<boolean>(false);
+  // 冷启动首页加载：未落地前 initialLoading=true（Sticker 显示加载占位而非假空态）；
+  // 首页/刷新失败置 loadError（Sticker 显示「加载失败 + 重试」），任一首页型加载成功后清除。
+  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<boolean>(false);
+  // 重试：递增 nonce 重新触发下方的 filter/search 首页加载 effect。
+  const [retryNonce, setRetryNonce] = useState(0);
+  const retryLoad = useCallback(() => setRetryNonce((n) => n + 1), []);
   const [filter, setFilter] = useState<StickerFilter>(() => {
     const s = localStorage.getItem(TAB_KEY);
     return s === "waiting" || s === "running" || s === "archived" ? s : "all";
@@ -149,7 +162,7 @@ export function App() {
     ])
       .then(([r, w]) => {
         const map = new Map<number, Item>();
-        [...r, ...w].forEach((s) => map.set(s.session.id, s as Item));
+        [...r.items, ...w.items].forEach((s) => map.set(s.session.id, s as Item));
         const next = [...map.values()];
         setStripSessions((prev) => (sameList(prev, next) ? prev : next));
       })
@@ -177,24 +190,29 @@ export function App() {
 
   // 请求序号守卫：并发刷新时旧响应可能晚于新响应返回，仅当自己仍是最新一次请求才写入。
   const refreshSeqRef = useRef(0);
+  // 下一页游标：**只认后端响应里带回的扫描位置**。列表做过 connected-first 排序，
+  // 末项不是本页时间上最旧的一条，从 items 里自己推游标会重复/漏页。
+  const nextCursorRef = useRef<PageCursor | null>(null);
   const loadPage = useCallback(
     async (
       filter: StickerFilter,
       search: string,
-      cursor: { last_event_at: number; id: number } | null,
+      cursor: PageCursor | null,
       limit: number = PAGE_SIZE
-    ): Promise<{ page: Item[]; applied: boolean }> => {
+    ): Promise<{ page: Item[]; cursor: PageCursor | null; applied: boolean }> => {
       const seq = ++refreshSeqRef.current;
       // counts 只在首页/刷新（cursor === null）时才需要；loadMore 复用已有 counts，
       // 避免频繁 loadMore 时对 counts 做纯重复的后端查询（审查发现）。
       const needCounts = cursor === null;
       try {
-        const [countsRes, page] = await Promise.all([
+        const [countsRes, res] = await Promise.all([
           needCounts ? getLiveSessionsCounts() : Promise.resolve(null),
           getLiveSessionsPage(filter, search, cursor, limit),
         ]);
+        const page = res.items;
         const applied = seq === refreshSeqRef.current;
-        if (!applied) return { page: page as Item[], applied };
+        if (!applied) return { page: page as Item[], cursor: res.next_cursor, applied };
+        nextCursorRef.current = res.next_cursor;
         if (countsRes) {
           setCounts((prev) =>
             prev.total === countsRes.total &&
@@ -229,7 +247,7 @@ export function App() {
           if (!search.trim()) unsearchedItemsRef.current[filter] = next;
           return next;
         });
-        return { page: page as Item[], applied };
+        return { page: page as Item[], cursor: res.next_cursor, applied };
       } catch (err) {
         console.error("[loadPage] 加载失败：", err);
         throw err;
@@ -252,14 +270,20 @@ export function App() {
     setReachedEnd(false);
     const w = Math.max(PAGE_SIZE, itemsLenRef.current);
     loadPage(filter, search, null, w)
-      .then(({ page, applied }) => {
+      .then(({ cursor, applied }) => {
         if (applied) {
+          setInitialLoading(false);
+          setLoadError(false);
           if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
-          if (page.length < w) setReachedEnd(true);
+          if (cursor === null) setReachedEnd(true);
         }
       })
       .catch(() => {
-        if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+        if (resetSeq === pageResetSeqRef.current) {
+          setInitialLoading(false);
+          setLoadError(true);
+          resettingPageRef.current = false;
+        }
       });
     loadStrip(); // 折叠条数据独立刷新（不随 tab）
   }, [filter, search, loadPage, loadStrip]);
@@ -286,27 +310,35 @@ export function App() {
     else refreshTimerRef.current = window.setTimeout(fire, REFRESH_THROTTLE_MS - since);
   }, []);
 
+  // loadingMore 是 state：setLoadingMore(true) 到下次渲染落地之间，同一 tick 内 loadMore 仍可按
+  // 旧闭包重入（Sticker 触底 effect 在一个渲染批内可能连发），以相同游标重复请求下一页。
+  // ref 镜像同步置位，重入当场被拒（与 useLoginOperations 的 pendingRef 同一套路）。
+  const loadingMoreRef = useRef(false);
   const loadMore = useCallback(async () => {
-    if (resettingPageRef.current || loadingMore || reachedEnd) return;
-    const last = items[items.length - 1];
-    if (!last) return;
+    if (resettingPageRef.current || loadingMoreRef.current || reachedEnd) return;
+    // 游标必须用后端上次带回的扫描位置：从可见列表末项推会撞上 connected-first 排序
+    // （末项不是时间上最旧的一条），每页都会重复返回被顶到前排的会话。
+    const cursor = nextCursorRef.current;
+    if (cursor === null) {
+      setReachedEnd(true);
+      return;
+    }
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const { page, applied } = await loadPage(filter, search, {
-        last_event_at: last.session.last_event_at,
-        id: last.session.id,
-      });
+      const { cursor: next, applied } = await loadPage(filter, search, cursor);
       // 请求过程中若已被更新的请求（如切 tab/刷新）取代，本次结果不再代表当前 tab 的状态，
       // reachedEnd 不应据此更新，否则可能把旧 tab 的「已到底」误写到新 tab 上（审查发现的竞态）。
-      if (applied && page.length < PAGE_SIZE) {
+      if (applied && next === null) {
         setReachedEnd(true);
       }
     } catch (err) {
       console.error("[loadMore] 加载失败：", err);
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [filter, search, loadingMore, reachedEnd, items, loadPage]);
+  }, [filter, search, reachedEnd, loadPage]);
 
   // filter / search 变化：重置到首页（search 变化去抖 300ms，避免每次按键都打一次后端；
   // filter 切换无需去抖，0ms 立即加载，含首次挂载）。取代原先仅 [filter, loadPage] 的切 tab effect。
@@ -321,18 +353,24 @@ export function App() {
         ? PAGE_SIZE
         : Math.max(PAGE_SIZE, unsearchedItemsRef.current[filter]?.length ?? 0);
       loadPage(filter, search, null, limit)
-        .then(({ page, applied }) => {
+        .then(({ cursor, applied }) => {
           if (applied) {
+            setInitialLoading(false);
+            setLoadError(false);
             if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
-            if (page.length < limit) setReachedEnd(true);
+            if (cursor === null) setReachedEnd(true);
           }
         })
         .catch(() => {
-          if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+          if (resetSeq === pageResetSeqRef.current) {
+            setInitialLoading(false);
+            setLoadError(true);
+            resettingPageRef.current = false;
+          }
         });
     }, search ? 300 : 0);
     return () => window.clearTimeout(t);
-  }, [filter, search, loadPage]);
+  }, [filter, search, loadPage, retryNonce]);
 
   const changeSearch = useCallback((next: string) => {
     if (search.trim() !== next.trim()) resettingPageRef.current = true;
@@ -393,6 +431,10 @@ export function App() {
       cancelled = true;
       if (un) un();
       window.clearTimeout(refreshTimerRef.current);
+      // 复位而不仅是 clearTimeout：refresh() 以「ref 非 undefined」判定 trailing 已排队。
+      // HMR 重挂载会跑 cleanup 但保留 ref——不复位则残留一个永不触发的定时器 id，
+      // 之后每次 refresh() 都以为 trailing 在排队而直接 return，看板刷新永久静默丢失。
+      refreshTimerRef.current = undefined;
     };
   }, [refresh]);
 
@@ -565,6 +607,12 @@ export function App() {
     });
     return () => {
       un.then((f) => f());
+      // 拖拽中途卸载也要停掉松手轮询：否则 90ms 的 pointer_left_down IPC 轮询随组件泄漏、
+      // 卸载后仍持续空转（与 handleDragRelease 里的清理保持一致）。
+      if (settleRef.current) {
+        window.clearInterval(settleRef.current);
+        settleRef.current = null;
+      }
     };
   }, [handleDragRelease]);
 
@@ -696,6 +744,9 @@ export function App() {
         onSearchChange={changeSearch}
         onArchiveOptimistic={onArchiveOptimistic}
         onArchiveFailed={onArchiveFailed}
+        initialLoading={initialLoading}
+        loadError={loadError}
+        onRetry={retryLoad}
       />
     </div>
   );

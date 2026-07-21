@@ -9,6 +9,7 @@ import { installMocks, store, notify } from "./mock";
 import { buildScript } from "./script";
 import { DemoStage } from "./DemoStage";
 import type { DemoLang } from "./strings";
+import "../fonts";
 import "../styles.css";
 import "./demo.css";
 

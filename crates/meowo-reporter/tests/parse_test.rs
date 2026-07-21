@@ -29,6 +29,22 @@ fn null_tool_input_yields_empty_todos_and_no_bash() {
 }
 
 #[test]
+fn permission_suggestions_are_preserved_for_the_gui_broker() {
+    let ev = HookEvent::parse(r#"{
+        "hook_event_name":"PermissionRequest",
+        "session_id":"a",
+        "permission_suggestions":[{
+            "type":"addRules",
+            "behavior":"allow",
+            "destination":"localSettings",
+            "rules":[{"toolName":"Bash","ruleContent":"cargo test"}]
+        }]
+    }"#).unwrap();
+    assert_eq!(ev.permission_suggestions.len(), 1);
+    assert_eq!(ev.permission_suggestions[0]["destination"], "localSettings");
+}
+
+#[test]
 fn todos_not_array_yields_empty() {
     let ev = HookEvent::parse(r#"{"hook_event_name":"PostToolUse","session_id":"a","tool_name":"TodoWrite","tool_input":{"todos":"oops"}}"#).unwrap();
     assert_eq!(ev.todo_items().len(), 0);

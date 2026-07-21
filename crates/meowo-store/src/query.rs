@@ -345,7 +345,7 @@ impl Store {
                 let pending_review: Option<String> = r.get(20)?;
                 let last_ai_text: Option<String> = r.get(21)?;
                 let last_user_text: Option<String> = r.get(22)?;
-                let provider: String = r.get(23)?;
+                let provider: Option<String> = r.get(23)?;
                 Ok((
                     session,
                     project_name,
@@ -419,7 +419,11 @@ impl Store {
                 pending_review,
                 last_ai_text,
                 last_user_text,
-                provider,
+                // provider 的空值回退与 session_header/session_provider 一致：DB 里可能是
+                // NULL 或空串/纯空白，直接透出去会让上层按未知 agent 处理（丢掉 transcript 能力）。
+                provider: provider
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or_else(|| crate::DEFAULT_PROVIDER.to_string()),
             });
         }
         Ok(out)
@@ -434,15 +438,23 @@ impl Store {
     ///
     /// 故这两类改由 app 层用 [`Self::live_count_candidates`] 的原料算——与列表**同一套判定、
     /// 同一份进程表快照**，数字必然自洽。
+    ///
+    /// total / archived 同样要对齐列表口径：列表（enrich）会丢弃 ping 会话和「已断开的
+    /// 空壳」（未命名且无 todo），这里不剔除的话角标恒大于列表条数，用户会以为会话丢了
+    /// （原始症状：角标 60、列表 11）。「断开」SQL 看不见，但 `status = 'ended'` 必判断开
+    /// （`session_connected` 对 ended 恒 false），空壳几乎全是 ended（探针/崩溃残留）；
+    /// 残余误差只剩两类小头：非 ended 的断开空壳（多算）与 transcript 能补出标题的
+    /// 未命名会话（少算），方向相反、量级都小。
     pub fn live_sessions_totals(&self) -> Result<(i64, i64), StoreError> {
-        let total: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
-        let archived: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE archived = 1",
-            [],
-            |r| r.get(0),
-        )?;
+        const SQL: &str = "SELECT COUNT(*), COALESCE(SUM(s.archived = 1), 0)
+             FROM sessions s
+             LEFT JOIN tasks t ON t.session_id = s.id
+             WHERE NOT (
+                 LOWER(TRIM(COALESCE(t.title, ''))) = 'ping'
+                 OR (s.status = 'ended'
+                     AND TRIM(COALESCE(t.title, '')) IN ('', '(未命名会话)')
+                     AND NOT EXISTS (SELECT 1 FROM todos td WHERE td.task_id = t.id)))";
+        let (total, archived) = self.conn.query_row(SQL, [], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok((total, archived))
     }
 
@@ -454,11 +466,16 @@ impl Store {
     /// 仍可能存在「ended + pending_review」残留；查询必须防御这类历史数据，否则会把已结束会话捞进来。它们绝无可能算进
     /// running/waiting（`session_connected` 对 ended 恒为 false），但会让候选集合随历史增长
     /// 而膨胀，白白拖着 app 层逐条判活——本该是个「只有活跃会话」的小集合。
+    ///
+    /// ping（健康探测）会话即便连着也不会出现在列表里（enrich 无条件丢弃），这里同样
+    /// 剔除，否则 running/waiting 角标会数出一条用户在列表里找不到的会话。
     pub fn live_count_candidates(&self) -> Result<Vec<LiveCandidate>, StoreError> {
         let mut st = self.conn.prepare(
-            "SELECT status, pending_review, pid, last_event_at FROM sessions
-             WHERE archived = 0 AND status != 'ended'
-               AND (status IN ('running','waiting') OR pending_review IS NOT NULL)",
+            "SELECT s.status, s.pending_review, s.pid, s.last_event_at FROM sessions s
+             LEFT JOIN tasks t ON t.session_id = s.id
+             WHERE s.archived = 0 AND s.status != 'ended'
+               AND (s.status IN ('running','waiting') OR s.pending_review IS NOT NULL)
+               AND LOWER(TRIM(COALESCE(t.title, ''))) != 'ping'",
         )?;
         let rows = st.query_map([], |r| {
             Ok(LiveCandidate {

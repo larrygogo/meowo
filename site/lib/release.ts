@@ -3,7 +3,10 @@ import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
 import { get } from "node:https";
 import { REPO_SLUG } from "./site";
-import appPackage from "../../app/package.json";
+
+// 应用版本兜底：GitHub API 不可用（如本地匿名限流）时用于版本徽章。
+// 与应用解耦，构建期可用环境变量 MEOWO_VERSION 覆盖；发新版时记得同步这里的默认值。
+const APP_VERSION = process.env.MEOWO_VERSION ?? "0.5.5";
 
 export type Asset = { name: string; url: string; size: number };
 export type Release = {
@@ -106,8 +109,8 @@ export const getLatestRelease = cache(async (): Promise<Release | null> => {
   // 下载按钮则因资产为 null 自动回退到 releases/latest，不复用任何旧版本链接。
   if (!json) {
     return {
-      tag: `v${appPackage.version}`,
-      version: appPackage.version,
+      tag: `v${APP_VERSION}`,
+      version: APP_VERSION,
       windows: null,
       macos: null,
     };

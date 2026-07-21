@@ -121,6 +121,46 @@ fn session_start_then_prompt_then_todos_flow() {
     assert_eq!(store.list_todos(tid).unwrap().len(), 1);
 }
 
+/// 待办工具名由插件声明，**不是**写死的 `TodoWrite`：kimi 叫 `TodoList`，字段也用
+/// `title` 而非 `content`。此前 dispatch 里写死一个名字，两家现版本都对不上——
+/// 待办表一直是空的，界面自然什么都显示不出来。
+#[test]
+fn kimi_todo_list_snapshot_lands_in_the_store() {
+    let store = Store::open_in_memory().unwrap();
+    let kimi = |json: &str| dispatch(&store, &ev(json), 100, meowo_agent::id::KIMI.as_str());
+    kimi(r#"{"hook_event_name":"SessionStart","session_id":"k1","cwd":"/home/me/proj"}"#).unwrap();
+    kimi(
+        // status 用 kimi 真实写的 `done`（不是 claude 的 `completed`）——端到端覆盖
+        // 状态别名映射，否则已完成项会静默降级成 pending，界面上一条都勾不上。
+        r#"{"hook_event_name":"PostToolUse","session_id":"k1","tool_name":"TodoList","tool_input":{"todos":[
+            {"title":"贴纸看板 UX 修复","status":"done"},
+            {"title":"聊天窗口 UX 修复","status":"in_progress"}
+        ]}}"#,
+    )
+    .unwrap();
+
+    let sid = store.find_session_id_pub("k1").unwrap().unwrap();
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    let todos = store.list_todos(tid).unwrap();
+    assert_eq!(
+        todos.iter().map(|t| t.content.as_str()).collect::<Vec<_>>(),
+        vec!["贴纸看板 UX 修复", "聊天窗口 UX 修复"]
+    );
+    assert_eq!(todos[0].status.as_str(), "completed");
+    assert_eq!(todos[1].status.as_str(), "in_progress");
+
+    // 同名工具在别的 provider 上不该被当成待办（工具名归各插件声明）。
+    let claude = |json: &str| dispatch(&store, &ev(json), 200, meowo_agent::id::CLAUDE.as_str());
+    claude(r#"{"hook_event_name":"SessionStart","session_id":"c1","cwd":"/home/me/proj"}"#).unwrap();
+    claude(
+        r#"{"hook_event_name":"PostToolUse","session_id":"c1","tool_name":"TodoList","tool_input":{"todos":[{"title":"x","status":"pending"}]}}"#,
+    )
+    .unwrap();
+    let csid = store.find_session_id_pub("c1").unwrap().unwrap();
+    let ctid = store.task_id_of_session_pub(csid).unwrap();
+    assert!(store.list_todos(ctid).unwrap().is_empty());
+}
+
 #[test]
 fn stop_then_end_updates_session_status() {
     let store = Store::open_in_memory().unwrap();

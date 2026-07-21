@@ -1,10 +1,11 @@
-/* 小红书海报排版：1080×1440，暖白底 + Claude 橙，衬托暗色贴纸窗口。
+/* 小红书海报排版：1080×1440，暖白底 + 翡翠绿（主应用品牌色），衬托暗色贴纸窗口。
    贴纸本体是真实组件，这里只负责画布、标题、要点与投影。 */
 
 :root {
   --ink: #1a1918;
   --ink-soft: #7a726a;
-  --orange: #d97757;
+  /* 品牌翡翠绿：暖白浅底上的文字/描边/填充用 #12a67f 档；亮绿 #2dd4a7 只作背景光晕（白字压亮绿对比度不足）。 */
+  --brand: #12a67f;
   --green: #2e9e80;
   --line: #e2dcd4;
 }
@@ -13,7 +14,8 @@
 
 body {
   margin: 0;
-  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  font-family: "Inter Variable", "Noto Sans SC", -apple-system, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -26,7 +28,7 @@ body {
   flex-direction: column;
   overflow: hidden;
   background:
-    radial-gradient(620px 620px at 88% 10%, rgba(217, 119, 87, 0.16), transparent 65%),
+    radial-gradient(620px 620px at 88% 10%, rgba(45, 212, 167, 0.14), transparent 65%),
     radial-gradient(560px 560px at 6% 92%, rgba(46, 158, 128, 0.13), transparent 65%),
     linear-gradient(180deg, #f9f7f4 0%, #ece6df 100%);
   color: var(--ink);
@@ -38,7 +40,7 @@ body {
 .kicker {
   font-size: 26px;
   font-weight: 700;
-  color: var(--orange);
+  color: var(--brand);
   letter-spacing: 0.02em;
 }
 
@@ -51,7 +53,7 @@ body {
 }
 
 .h1 mark {
-  background: var(--orange);
+  background: var(--brand);
   color: #fff;
   padding: 2px 16px 6px;
   border-radius: 14px;
@@ -123,7 +125,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--orange);
+  background: var(--brand);
 }
 
 .points-green li::before { background: var(--green); }
@@ -239,13 +241,13 @@ body {
   width: 100%;
   padding: 28px 0;
   border-radius: 26px;
-  background: var(--orange);
+  background: var(--brand);
   color: #fff;
   font-size: 46px;
   font-weight: 800;
   text-align: center;
   letter-spacing: 0.01em;
-  box-shadow: 0 16px 34px rgba(217, 119, 87, 0.34);
+  box-shadow: 0 16px 34px rgba(18, 166, 127, 0.34);
 }
 
 .meta-center {
@@ -264,7 +266,7 @@ body {
 .brand .url {
   font-size: 40px;
   font-weight: 800;
-  color: var(--orange);
+  color: var(--brand);
 }
 
 .brand .meta {

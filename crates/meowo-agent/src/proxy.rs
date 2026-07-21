@@ -80,9 +80,14 @@ impl ProxySpec {
 }
 
 /// 代理串是不是 SOCKS 系。
+///
+/// 前缀清单必须盖全设置页允许保存的 SOCKS 形态（app 侧 `SCHEMES` = socks4 / socks4a /
+/// socks5）：漏掉一个，该形态就会绕过「不支持 SOCKS 的 agent 当场拒收」与「自更新仅
+/// HTTP 代理」两道拦截，静默走错通道。socks5h 虽不在 SCHEMES 里，保守仍算 SOCKS。
 pub fn is_socks(proxy: &str) -> bool {
     let s = proxy.trim().to_ascii_lowercase();
     s.starts_with("socks4://")
+        || s.starts_with("socks4a://")
         || s.starts_with("socks5://")
         || s.starts_with("socks5h://")
         || s.starts_with("socks://")
@@ -253,6 +258,7 @@ mod tests {
             "socks5://h:1",
             "SOCKS5://h:1",
             " socks4://h:1",
+            "socks4a://h:1", // 设置页允许保存（app 侧 SCHEMES）此前却漏判：会绕过自更新的 SOCKS 拦截
             "socks5h://h:1",
             "socks://h:1",
         ] {

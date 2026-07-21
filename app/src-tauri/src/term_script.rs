@@ -102,14 +102,15 @@ end run"#,
 
 /// 返回新开终端执行 `cd <cwd> && <env 前缀><resume 命令>` 的 AppleScript。
 ///
-/// argv 约定：**item 1 = env 前缀**（形如 `HTTPS_PROXY='http://…' `，可为空串），item 2 = cwd，
+/// argv 约定：**item 1 = env 前缀**，item 2 = cwd，
 /// item 3..N = resume 命令 argv（来自 agent::resume_args，逐项 quoted form 拼接防注入）——命令由
 /// 调用方按 provider 分发（claude/kimi/codex 各异），本脚本不硬编码 claude，使 macOS 与 Windows
 /// 共用同一 provider 事实源。
 ///
-/// env 前缀是**唯一不套 `quoted form`** 的一项：POSIX 的命令前缀式赋值要求键名不带引号，
-/// `'K=v' cmd` 会被 shell 当成一个命令名而不是赋值。其**值**已在 Rust 侧按 POSIX 单引号规则
-/// 转义（见 `terminal::env_prefix_posix`），故拼进来是安全的。
+/// env 前缀形如 `source '<tmp>' && rm -f '<tmp>' && `：赋值（含中转 API key）写在 0600 临时
+/// 文件里由命令自行 source 并删除，密钥值不进可见命令行（见 `terminal::env_source_prefix_posix`）。
+/// 它是**唯一不套 `quoted form`** 的一项——source/&& 是必须原样执行的 shell 语法；文件路径与
+/// 文件内容已在 Rust 侧按 POSIX 单引号规则转义，拼进来是安全的。
 pub fn resume_script(kind: TermKind) -> &'static str {
     match kind {
         TermKind::ITerm2 => {
@@ -252,9 +253,9 @@ mod tests {
         }
     }
 
-    /// env 前缀是唯一**不套** `quoted form` 的一项——POSIX 的前缀式赋值要求键名不带引号，
-    /// `'K=v' cmd` 会被 shell 当成命令名。命令 argv 则必须逐项 quoted form（防注入），
-    /// 两者不能混为一谈。
+    /// env 前缀是唯一**不套** `quoted form` 的一项——它是必须原样执行的 shell 语法
+    /// （`source '<tmp>' && rm -f '<tmp>' && `），quote 起来就成了一个命令名。命令 argv
+    /// 则必须逐项 quoted form（防注入），两者不能混为一谈。
     #[test]
     fn env_prefix_is_the_only_unquoted_item() {
         for kind in [TermKind::Terminal, TermKind::ITerm2] {

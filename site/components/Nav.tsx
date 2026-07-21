@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { REPO } from "@/lib/site";
 import { getDict, langFromPath, switchLangPath, withLang } from "@/lib/i18n";
 import { GitHubIcon, MenuIcon } from "./icons";
@@ -11,6 +11,7 @@ export default function Nav() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
 
   const lang = langFromPath(pathname);
   const d = getDict(lang);
@@ -27,6 +28,23 @@ export default function Nav() {
 
   // 路由变化时收起移动菜单
   useEffect(() => setOpen(false), [pathname]);
+
+  // 移动菜单打开时：Escape 或点击菜单外部即关闭
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointer = (e: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointer);
+    };
+  }, [open]);
 
   // 让 <html lang> 跟随当前语言（静态导出下 html 标签固定，运行时同步以利可访问性/SEO）。
   useEffect(() => {
@@ -46,7 +64,7 @@ export default function Nav() {
   };
 
   return (
-    <nav className={`nav${scrolled ? " scrolled" : ""}`}>
+    <nav ref={navRef} className={`nav${scrolled ? " scrolled" : ""}`}>
       <div className="container nav-inner">
         <Link href={withLang(lang, "/")} className="nav-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -62,6 +80,7 @@ export default function Nav() {
               key={l.path}
               href={withLang(lang, l.path)}
               className={`nav-link${isActive(l.path) ? " active" : ""}`}
+              aria-current={isActive(l.path) ? "page" : undefined}
             >
               {l.label}
             </Link>
@@ -94,6 +113,7 @@ export default function Nav() {
             className="nav-burger"
             aria-label={d.nav.menu}
             aria-expanded={open}
+            aria-controls="nav-mobile"
             onClick={() => setOpen((v) => !v)}
           >
             <MenuIcon />
@@ -102,9 +122,9 @@ export default function Nav() {
       </div>
 
       {open && (
-        <div className="nav-mobile">
+        <div className="nav-mobile" id="nav-mobile">
           {d.nav.links.map((l) => (
-            <Link key={l.path} href={withLang(lang, l.path)}>
+            <Link key={l.path} href={withLang(lang, l.path)} aria-current={isActive(l.path) ? "page" : undefined}>
               {l.label}
             </Link>
           ))}

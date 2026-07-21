@@ -182,7 +182,7 @@ cargo build --release -p meowo-reporter
 bun scripts/install-hooks.mjs "<absolute-repo-path>/target/release/meowo-reporter.exe"
 ```
 
-The script wires meowo-reporter into the required hook events (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode, each with a 5s timeout cap). Running it again with the same path won't duplicate entries or break your other hooks. If you change the reporter path, remove the old entries manually, or just launch the app and let auto-wiring update the path.
+The script wires meowo-reporter into the required hook events (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode, each with a 5s timeout cap). Running it again with the same path won't duplicate entries or break your other hooks. If you change the reporter path (e.g. debug → release, or a new install location), just run the script again — it claims its existing entries by executable name and updates them to the new path in place, leaving no duplicates.
 
 > This script is for Claude Code only (it writes to `~/.claude/settings.json`). The others don't go through it — the app wires them on startup: Codex / Kimi / Gemini get entries in their own CLIs' native hook config (hook commands carry `--provider <id>`); OpenCode has no hook mechanism, so a bridge plugin is generated under `~/.config/opencode/plugin/` to forward events to meowo-reporter.
 

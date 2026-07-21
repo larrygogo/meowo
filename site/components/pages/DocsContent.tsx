@@ -74,7 +74,7 @@ cargo build --release -p meowo-reporter
 
 # 2. Wire into ~/.claude/settings.json hooks (use an absolute path)
 bun scripts/install-hooks.mjs "<repo-abs-path>/target/release/meowo-reporter.exe"`}</pre></div>
-      <p>The script attaches the reporter to the hook events it needs (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode, all with a 5s timeout). Running it again with the same path won't duplicate entries or break your existing hooks.</p>
+      <p>The script attaches the reporter to the hook events it needs (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode; normal hooks get a 5s timeout, PermissionRequest 310s so it can wait for your approval). Running it again with the same path won't duplicate entries or break your existing hooks.</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
         <span>This script only handles Claude Code. codex, kimi, gemini, and opencode connect through their own native hook config (the hook command carries <code className="inline">--provider codex|kimi|gemini|opencode</code>) and don't go through it.</span>
@@ -120,7 +120,7 @@ cargo build --release -p meowo-reporter
 
 # 2. 接入 ~/.claude/settings.json 的 hooks（用绝对路径）
 bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"`}</pre></div>
-      <p>脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，都带 5s 超时）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。</p>
+      <p>脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode；普通 hook 带 5s 超时，PermissionRequest 为 310s——要等你审批）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
         <span>这个脚本只管 Claude Code。codex、kimi、gemini、opencode 的接入走各自 CLI 的原生 hook 配置（hook 命令带 <code className="inline">--provider codex|kimi|gemini|opencode</code>），不经过它。</span>
@@ -154,12 +154,12 @@ export default function DocsContent({ lang }: { lang: Lang }) {
       <section className="section-sm">
         <div className="container">
           <div className="doc-layout">
-            <aside className="doc-toc">
+            <nav className="doc-toc" aria-label={head.toc}>
               <div className="toc-title">{head.toc}</div>
               {toc.map((t) => (
                 <a key={t.id} href={`#${t.id}`}>{t.label}</a>
               ))}
-            </aside>
+            </nav>
             {lang === "en" ? <EnDocs /> : <ZhDocs />}
           </div>
         </div>

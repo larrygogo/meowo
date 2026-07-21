@@ -34,7 +34,7 @@ static EVENTS: [HookEvent; 5] = [
     HookEvent::plain("UserPromptSubmit"),
     HookEvent::plain("PostToolUse"),
     HookEvent::plain("Stop"),
-    HookEvent::plain("PermissionRequest"),
+    HookEvent::plain("PermissionRequest").with_timeout(310),
 ];
 
 /// hooks.json 不存在时从空态建——与 kimi「config.toml 缺失即未登录」不同是有意的：
@@ -47,6 +47,7 @@ static HOOKS: HookSpec = HookSpec {
     command: CommandSpec {
         quote_exe: true,
         with_provider: true,
+        ps_call_operator: false,
     },
 };
 
@@ -189,6 +190,10 @@ impl AgentPlugin for Codex {
     fn display_name(&self) -> &'static str {
         "Codex"
     }
+    /// PermissionRequest hook 声明了 310s 阻塞（EVENTS 里的 with_timeout），决策输出会被采纳。
+    fn permission_hook_decides(&self) -> bool {
+        true
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -205,6 +210,56 @@ impl AgentPlugin for Codex {
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
+    }
+    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
+    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        Some("/model")
+    }
+    /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &[
+            "/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status",
+        ]
+    }
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            dimension: "collaboration",
+            cycle_input: Some("\x1b[Z"),
+            options: &[],
+        }];
+        &MODES
+    }
+    /// 启动选项（实测 `codex --help`）：审批/沙箱形态。模型**不声明**——codex 的模型名随
+    /// 版本频繁更迭，声明一份很快就过期的清单等于给出会启动失败的选项。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{LaunchChoice, LaunchOption};
+        static OPTIONS: [LaunchOption; 1] = [LaunchOption {
+            id: "approval",
+            default: "default",
+            choices: &[
+                LaunchChoice { id: "default", label: "Default", args: &[] },
+                LaunchChoice { id: "readOnly", label: "Read Only", args: &["--sandbox", "read-only"] },
+                LaunchChoice { id: "fullAuto", label: "Full Auto", args: &["--full-auto"] },
+                LaunchChoice {
+                    id: "yolo",
+                    label: "YOLO",
+                    args: &["--dangerously-bypass-approvals-and-sandbox"],
+                },
+            ],
+        }];
+        &OPTIONS
+    }
+    /// 自定义 prompt：`~/.codex/prompts/*.md` → `/<文件名>`。只有用户级（codex 无项目级目录），
+    /// 平铺无命名空间。
+    fn custom_commands(&self) -> Option<&'static crate::CustomCommandSpec> {
+        static SPEC: crate::CustomCommandSpec = crate::CustomCommandSpec {
+            user_dir: Some("prompts"),
+            project_dir: None,
+            ext: "md",
+            namespace_sep: None,
+        };
+        Some(&SPEC)
     }
     /// 直取 GitHub Releases，**不走 `chatgpt.com`**。
     ///
@@ -263,6 +318,22 @@ mod tests {
     fn writes_session_token_before_first_prompt() {
         assert!(Codex.writes_tab_token());
         assert!(!Codex.sets_terminal_tab_title());
+    }
+
+    #[test]
+    fn permission_hook_waits_for_gui_decision() {
+        assert_eq!(
+            EVENTS
+                .iter()
+                .find(|e| e.name == "PermissionRequest")
+                .unwrap()
+                .timeout,
+            310
+        );
+        assert!(EVENTS
+            .iter()
+            .filter(|e| e.name != "PermissionRequest")
+            .all(|e| e.timeout == 5));
     }
 
     #[test]

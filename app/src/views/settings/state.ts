@@ -13,10 +13,12 @@ export const SETTINGS_DEFAULTS: Settings = {
   resume_terminal: "terminal",
   language: "auto",
   terminal_open_mode: "card",
+  session_open_in: "terminal",
   card_menu_mode: "button",
   preview_enabled: true,
-  sticker_style: "elevated",
-  sticker_color: "classic",
+  // 占位与真实默认（appearance.ts / 后端 settings.rs）保持一致：flat / neutral。
+  sticker_style: "flat",
+  sticker_color: "neutral",
   // 首帧占位（get_settings() resolve 前）。真实默认值由后端 settings 给，前端不据此做任何判断。
   sticker_quota_providers: ["claude"],
   default_agent: "claude",
@@ -39,11 +41,20 @@ export function useSettingsState() {
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const reload = (fresh = false): Promise<Settings> => {
     if (fresh || !loadRef.current) {
-      loadRef.current = getSettings().then((s) => {
-        ref.current = s;
-        setSettingsState(s);
-        return s;
-      });
+      loadRef.current = getSettings()
+        .then((s) => {
+          ref.current = s;
+          setSettingsState(s);
+          return s;
+        })
+        .catch((err: unknown) => {
+          // 被拒的 Promise 不能留在缓存里：否则首读失败后，之后每次 reload() 都拿到同一个
+          // 已拒 Promise——第一次 patch 必丢，还把真正的保存错误盖成误导性的首读错误。
+          // 先清空再 rethrow，让下次调用重新拉取。（清空是安全的：本 handler 挂链最早，
+          // 任何可能替换缓存的 reload(true) 都排在它之后执行。）
+          loadRef.current = null;
+          throw err;
+        });
     }
     return loadRef.current;
   };

@@ -724,4 +724,147 @@ describe("Sticker", () => {
     // 前端不再按搜索词过滤已加载数据（过滤由后端负责）→ 卡片数不变
     expect(container.querySelectorAll(".stk-vitem").length).toBe(before);
   });
+
+  it("主导航 tab 是 button[role=tab]，容器 role=tablist，选中态 aria-selected", () => {
+    const onFilterChange = vi.fn();
+    const { container } = render(<Sticker filter="all" data={[]} onFilterChange={onFilterChange} />);
+    const tablist = container.querySelector("[role='tablist']")!;
+    expect(tablist).toBeTruthy();
+    const tabs = tablist.querySelectorAll("button[role='tab']");
+    expect(tabs.length).toBe(4);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true"); // 当前 tab=all
+    expect(tabs[1].getAttribute("aria-selected")).toBe("false");
+    fireEvent.click(tabs[1]);
+    expect(onFilterChange).toHaveBeenCalledWith("waiting");
+  });
+
+  it("底栏操作钮均为 button（键盘可达）", () => {
+    render(<Sticker filter="all" data={[]} />);
+    for (const label of [zh.newSession.newButton, zh.sticker.search, zh.sticker.openSettings, zh.sticker.pinOff]) {
+      expect(screen.getByLabelText(label).tagName).toBe("BUTTON");
+    }
+    // 关闭搜索钮在搜索激活后出现，同样是 button
+    fireEvent.click(screen.getByLabelText(zh.sticker.search));
+    expect(screen.getByLabelText(zh.sticker.searchClose).tagName).toBe("BUTTON");
+  });
+
+  it("卡片支持键盘：Enter/Space 触发与点击相同的打开终端行为", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: true, pid: 1234 })]} />);
+    const card = container.querySelector(".stk-card") as HTMLElement;
+    expect(card.getAttribute("role")).toBe("button");
+    expect(card.getAttribute("tabindex")).toBe("0");
+    fireEvent.keyDown(card, { key: "Enter" });
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("focus_session", expect.objectContaining({ pid: 1234 }))
+    );
+    invokeMock.mockClear();
+    fireEvent.keyDown(card, { key: " " });
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("focus_session", expect.objectContaining({ pid: 1234 }))
+    );
+  });
+
+  it("卡片内按钮的键盘事件不冒泡触发卡片的打开终端行为", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ connected: true, pid: 1234 })]} />);
+    expect(container.querySelector(".stk-card")).toBeTruthy();
+    fireEvent.keyDown(screen.getByLabelText(zh.sticker.openChat), { key: "Enter" });
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "focus_session")).toBe(false);
+  });
+
+  it("便签块支持键盘：Enter 进入编辑并预填原文，且不开终端", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ note: "旧便签" })]} />);
+    const note = container.querySelector(".stk-note") as HTMLElement;
+    expect(note.getAttribute("role")).toBe("button");
+    expect(note.getAttribute("tabindex")).toBe("0");
+    fireEvent.keyDown(note, { key: "Enter" });
+    expect((container.querySelector(".stk-note-edit") as HTMLInputElement).value).toBe("旧便签");
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "focus_session")).toBe(false);
+  });
+
+  it("搜索有词且 0 结果：显示独立「无匹配」空态，不带「新建会话」CTA", () => {
+    const { container } = render(<Sticker filter="all" data={[]} search="zzz" onSearchChange={() => {}} />);
+    fireEvent.click(screen.getByLabelText(zh.sticker.search)); // 激活搜索
+    expect(screen.getByText(zh.empty.searchTitle)).toBeTruthy();
+    expect(screen.getByText(zh.empty.searchHint)).toBeTruthy();
+    expect(container.querySelector("[data-testid='empty-new-cta']")).toBeNull();
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+  });
+
+  it("initialLoading 时显示加载占位而非空态文案", () => {
+    render(<Sticker filter="all" data={[]} initialLoading />);
+    expect(screen.getByText(zh.sticker.loading)).toBeTruthy();
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+  });
+
+  it("loadError 时显示加载失败与重试按钮，点击触发 onRetry", () => {
+    const onRetry = vi.fn();
+    const { container } = render(<Sticker filter="all" data={[]} loadError onRetry={onRetry} />);
+    expect(screen.getByText(zh.sticker.loadFailed)).toBeTruthy();
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+    fireEvent.click(container.querySelector("[data-testid='empty-retry-cta']")!);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("重命名保存失败时经 focusNotice 提示，不静默吞错", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    fireEvent.click(screen.getByText(zh.sticker.renameTitle));
+    fireEvent.change(container.querySelector(".stk-edit") as HTMLInputElement, { target: { value: "新名字" } });
+    // once 必须紧贴点击设置：只让 rename_session 这一次调用失败
+    invokeMock.mockImplementationOnce(() => Promise.reject(new Error("boom")) as Promise<void>);
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteSave));
+    await waitFor(() => expect(screen.getByText(zh.sticker.renameFailed)).toBeTruthy());
+  });
+
+  it("便签保存失败时经 focusNotice 提示，不静默吞错", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ note: "旧" })]} />);
+    fireEvent.click(container.querySelector(".stk-note")!);
+    fireEvent.change(container.querySelector(".stk-note-edit") as HTMLInputElement, { target: { value: "新便签" } });
+    invokeMock.mockImplementationOnce(() => Promise.reject(new Error("boom")) as Promise<void>);
+    fireEvent.click(screen.getByLabelText(zh.sticker.noteSave));
+    await waitFor(() => expect(screen.getByText(zh.sticker.noteFailed)).toBeTruthy());
+  });
+});
+
+describe("自绘滚动条 thumb 拖拽", () => {
+  // jsdom 没有布局，scrollHeight/clientHeight 恒为 0，syncSb 会判定无需滚动条、thumb 不渲染。
+  // 给滚动容器补上假尺寸再触发一次 syncSb（只管 thumb 拖拽这条链路，不管布局精度）。
+  const renderThumb = async () => {
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
+    const scrollEl = container.querySelector(".stk-scroll") as HTMLElement;
+    Object.defineProperties(scrollEl, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 600 },
+    });
+    fireEvent.scroll(scrollEl);
+    await waitFor(() => expect(container.querySelector(".stk-sb")).not.toBeNull());
+    return { scrollEl, thumb: container.querySelector(".stk-sb") as HTMLElement };
+  };
+
+  it("拖拽中移出窗口松手（buttons=0 的 mousemove）→ 结束拖拽并注销监听", async () => {
+    const { scrollEl, thumb } = await renderThumb();
+    fireEvent.mouseDown(thumb, { clientY: 100, buttons: 1 });
+    expect(thumb.className).toContain("is-drag");
+    // 正常拖动：按住键移动会改写 scrollTop。
+    fireEvent.mouseMove(window, { clientY: 220, buttons: 1 });
+    const dragged = scrollEl.scrollTop;
+    expect(dragged).toBeGreaterThan(0);
+    // 窗外松手后移回窗内：这次无按键的移动必须被认作松手，而不是继续拖动。
+    fireEvent.mouseMove(window, { clientY: 500, buttons: 0 });
+    expect(thumb.className).not.toContain("is-drag");
+    expect(scrollEl.scrollTop).toBe(dragged);
+    // 监听已注销：之后按住键移动也不许再改写 scrollTop。
+    fireEvent.mouseMove(window, { clientY: 900, buttons: 1 });
+    expect(scrollEl.scrollTop).toBe(dragged);
+  });
+
+  it("拖拽中窗口失焦（blur）→ 同样结束拖拽", async () => {
+    const { scrollEl, thumb } = await renderThumb();
+    fireEvent.mouseDown(thumb, { clientY: 100, buttons: 1 });
+    expect(thumb.className).toContain("is-drag");
+    fireEvent(window, new Event("blur"));
+    expect(thumb.className).not.toContain("is-drag");
+    fireEvent.mouseMove(window, { clientY: 900, buttons: 1 });
+    expect(scrollEl.scrollTop).toBe(0);
+  });
 });

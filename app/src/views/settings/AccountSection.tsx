@@ -1,7 +1,6 @@
 // 设置窗口「账号」页：每个 provider 的安装 / 登录 / 用量三态卡片。
 // 从 About.tsx 抽出（体量最大、最内聚，且已被 About.account.test.tsx 单独覆盖）。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   installAgent,
@@ -22,23 +21,24 @@ import {
   refreshUsage,
   checkProviderHooks,
   repairProviderHooks,
-  loginAgent,
-  cancelLogin,
   logoutAgent,
+  apiKeyLogin,
   agentPathGap,
   addAgentToUserPath,
   type ProviderAccountPayload,
   type ProviderUsage,
   type UsageLane,
   type HooksStatus,
-  type LoginDone,
 } from "../../api";
 import { agentAssets } from "../../providers";
 import { useT, repairFailMessage } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
-import { Switch, ActionMenu, Dropdown } from "./widgets";
+import { Switch } from "./widgets";
+import { ActionMenu, Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
+import { useTauriEvent } from "../../hooks/useTauriEvent";
+import { useLoginOperations, type LoginOperationState } from "../../hooks/useLoginOperations";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -118,7 +118,9 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
           <span className="usage-label">{label}</span>
           <span className="usage-pct">{pct.toFixed(0)}%</span>
         </div>
-        <div className="usage-track"><i style={{ width: `${pct}%` }} /></div>
+        <div className="usage-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+          <i style={{ width: `${pct}%` }} />
+        </div>
         {lane.resets_at && <div className="usage-reset">{fmtResetIn(lane.resets_at, t)}</div>}
       </div>
     );
@@ -137,7 +139,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, refreshing, settings, patchSettings, onToggleQuota }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, onInstalled, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -151,6 +153,11 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
    * `login_argv()` 是 None，点下去只会得到一句「拉起登录失败」。
    */
   supportsAccount: boolean;
+  /**
+   * 该 agent 能否用 API Key 登录（gemini：OAuth 被官方停用，key 是唯一活路）。
+   * true → 未登录时在「登录」旁边多一个「API Key 登录」入口。
+   */
+  supportsApiKeyLogin: boolean;
   /**
    * 该 agent 能否有多个账号。false（gemini：数据目录不可被环境变量覆盖）→ 不显示账号列表。
    *
@@ -168,6 +175,10 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   onInstalled: () => void;
   /** 登录成功后重查账号（令卡片转「已登录」并显示身份/用量）。 */
   onLoggedIn: () => void;
+  /** 页面级登录状态；切换 provider 导致卡片重挂载时仍会保留。 */
+  loginState: LoginOperationState | undefined;
+  onStartLogin: (profile?: string | null) => Promise<boolean>;
+  onCancelLogin: () => Promise<boolean>;
   refreshing: boolean;
   /** 当前应用设置，用于读取 sticker_quota_providers 开关态。 */
   settings: Settings | null;
@@ -197,20 +208,26 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   const [hooksStatus, setHooksStatus] = useState<HooksStatus | null>(null);
   const [repairingHooks, setRepairingHooks] = useState(false);
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
-  // 登录态：waiting=已拉起终端、等 login-done；msg=超时/失败提示。
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [loginMsg, setLoginMsg] = useState<string | null>(null);
+  const loginBusy = loginState?.phase === "pending";
+  const loginMsg = loginState?.phase === "pending"
+    ? t.account.loggingIn
+    : loginState?.phase === "error"
+      ? loginState.action === "start" ? t.account.loginFailed : t.account.loginCancelled
+      : loginState?.phase === "done" && loginState.outcome !== "success"
+        ? loginState.outcome === "cancelled" ? t.account.loginCancelled : t.account.loginTimeout
+        : null;
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutMsg, setLogoutMsg] = useState<string | null>(null);
-  // 本次等待是否由用户主动取消。login-done 只带 ok:bool，分不出「超时」与「取消」。
-  const cancelledRef = useRef(false);
+  // API Key 登录：输入区开合 + 输入值 + 保存中 + 错误。key 不落任何前端持久化，提交即清。
+  const [apiKeyOpen, setApiKeyOpen] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [apiKeyBusy, setApiKeyBusy] = useState(false);
+  const [apiKeyMsg, setApiKeyMsg] = useState<string | null>(null);
   // 刚装完（本次会话内）→ 把「登录」按钮标为下一步，把「装完 → 登录」串成一条链路。
   const [justInstalled, setJustInstalled] = useState(false);
-  // onInstalled/onLoggedIn 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
+  // onInstalled 每次渲染新建，用 ref 存最新，事件订阅只依赖 provider、不反复重订。
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
-  const onLoggedInRef = useRef(onLoggedIn);
-  onLoggedInRef.current = onLoggedIn;
 
   useEffect(() => {
     let cancelled = false;
@@ -270,12 +287,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
   /** 拉起交互式登录。成功 spawn 后不清 busy——等 login-done（或 5 分钟超时 / 用户取消）才落回。 */
   const startLogin = () => {
     if (loginBusy) return;
-    setLoginBusy(true);
-    setLoginMsg(t.account.loggingIn); // 按钮此时是「取消等待」，等待态由这行文字承载
-    loginAgent(provider).catch(() => {
-      setLoginBusy(false);
-      setLoginMsg(t.account.loginFailed);
-    });
+    void onStartLogin().catch(() => {});
   };
 
   /**
@@ -285,65 +297,58 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
    * 不检测「终端还活着吗」：`wt.exe` 拉起窗口后自身立即退出，真正跑登录的是它的孙进程；
    * 而 `powershell -NoExit` 又会一直活着。三种终端行为不一致，靠监视进程只会时灵时不灵。
    *
-   * 收尾由后端 emit `login-done`（它会再查一次账号，真登上了就报 ok:true），故这里不清 busy。
+   * 收尾由后端 emit 带 operationId 的 `login-done`，故这里不抢先清 busy。
    */
   const cancelLoginWait = () => {
     if (!loginBusy) return;
-    // 后端的 login-done 只带 ok:bool，分不出「超时」还是「被取消」。发起方自己记一笔，
-    // 好让 handler 给出准确的提示（取消 ≠ 没检测到登录完成）。
-    cancelledRef.current = true;
-    cancelLogin(provider).catch(() => {
-      // 命令本身失败（不该发生）：至少别把按钮永久卡在等待态。
-      cancelledRef.current = false;
-      setLoginBusy(false);
-      setLoginMsg(t.account.loginCancelled);
-    });
+    void onCancelLogin().catch(() => {});
   };
 
+  // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
+  useTauriEvent<InstallDone>("install-done", (e) => {
+    if (e.payload.provider !== provider) return;
+    setInstallLog(e.payload.logPath);
+    // 脚本确实跑起来了 → 失败原因在日志里，清掉「跑之前」那条诊断，免得两种失败串台。
+    setInstallMsg(null);
+    if (e.payload.ok) {
+      setInstallState("idle");
+      setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
+      onInstalledRef.current();
+      // 「退出码 0」不等于「装好就能用」：claude 的安装器不写 PATH 也照样 exit 0。
+      agentPathGap(provider).then(setPathGapDir).catch(() => {});
+      // 后端装完顺手接了 hooks（best-effort）——重查一下，接上了就让「未接入」提示条自动消失。
+      // 装完常常还没登录（kimi 的 config.toml 尚不存在），此时多半仍未接上，那就等登录后再接。
+      checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
+    } else {
+      setInstallState("error");
+    }
+  });
+
+  // 成功事件由页面级状态机匹配；卡片只处理与展示相关的后续动作。
   useEffect(() => {
-    // 只关心装完结果；进度不透传英文，无需订阅 install-progress。
-    const unD = listen<InstallDone>("install-done", (e) => {
-      if (e.payload.provider !== provider) return;
-      setInstallLog(e.payload.logPath);
-      // 脚本确实跑起来了 → 失败原因在日志里，清掉「跑之前」那条诊断，免得两种失败串台。
-      setInstallMsg(null);
-      if (e.payload.ok) {
-        setInstallState("idle");
-        setJustInstalled(true); // 装完通常尚未登录 → 高亮「登录」作为下一步
-        onInstalledRef.current();
-        // 「退出码 0」不等于「装好就能用」：claude 的安装器不写 PATH 也照样 exit 0。
-        agentPathGap(provider).then(setPathGapDir).catch(() => {});
-        // 后端装完顺手接了 hooks（best-effort）——重查一下，接上了就让「未接入」提示条自动消失。
-        // 装完常常还没登录（kimi 的 config.toml 尚不存在），此时多半仍未接上，那就等登录后再接。
+    if (loginState?.phase !== "done" || loginState.outcome !== "success") return;
+    setJustInstalled(false);
+    // 登录后配置文件才生成，是三家都接得上 hooks 的时机——后端已顺手接了，这里重查让提示条消失。
+    checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
+  }, [loginState, provider]);
+
+  /** 保存 API Key。后端同步落盘（写进 agent 自己的配置），成功即已登录，无需轮询等待。 */
+  const saveApiKey = () => {
+    const key = apiKeyValue.trim();
+    if (!key || apiKeyBusy) return;
+    setApiKeyBusy(true);
+    setApiKeyMsg(null);
+    apiKeyLogin(provider, key)
+      .then(() => {
+        setApiKeyOpen(false);
+        setApiKeyValue("");
+        onLoggedIn();
+        // 后端保存时顺手接了 hooks（settings.json 此刻必然存在）——重查让「未接入」提示条消失。
         checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
-      } else {
-        setInstallState("error");
-      }
-    });
-    // 登录在 detach 的外部终端里完成，拿不到退出码——后端轮询账号解析结果后发 login-done。
-    const unL = listen<LoginDone>("login-done", (e) => {
-      if (e.payload.provider !== provider) return;
-      const cancelled = cancelledRef.current;
-      cancelledRef.current = false;
-      setLoginBusy(false);
-      if (e.payload.ok) {
-        // 取消时后端会再查一次账号——用户可能已经在终端里登完了，只是嫌等得慢。
-        setLoginMsg(null);
-        setJustInstalled(false);
-        onLoggedInRef.current(); // 重查账号 → 卡片转「已登录」并显示身份/用量
-        // 登录后配置文件才生成，是三家都接得上 hooks 的时机——后端已顺手接了，这里重查让提示条消失。
-        checkProviderHooks(provider).then(setHooksStatus).catch(() => {});
-      } else if (cancelled) {
-        setLoginMsg(t.account.loginCancelled); // 取消 ≠ 没检测到登录完成
-      } else {
-        setLoginMsg(t.account.loginTimeout); // 超时 ≠ 登录失败：用户可能中途放弃了
-      }
-    });
-    return () => {
-      unD.then((f) => f());
-      unL.then((f) => f());
-    };
-  }, [provider, t]);
+      })
+      .catch((e) => setApiKeyMsg(t.account.apiKeyFailed(String(e))))
+      .finally(() => setApiKeyBusy(false));
+  };
 
   // 当前 provider 是否在贴纸配额列表中
   const inQuota = settings?.sticker_quota_providers?.includes(provider) ?? false;
@@ -453,6 +458,21 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
             {loginBusy ? t.account.cancelLogin : t.account.login}
           </button>
         )}
+        {/* API Key 登录：交互式 OAuth 之外的第二入口（gemini 的 OAuth 已被官方停用，这是
+            唯一走得通的一条）。点击开合输入区，不打断旁边的交互式登录等待。 */}
+        {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && supportsApiKeyLogin && (
+          <button
+            type="button"
+            className="provider-card-action"
+            data-testid={"agent-api-key-login-" + provider}
+            onClick={() => {
+              setApiKeyMsg(null);
+              setApiKeyOpen((o) => !o);
+            }}
+          >
+            {t.account.apiKeyLogin}
+          </button>
+        )}
         {isInstalled && acc && !relayEnabled && (
           <button
             type="button"
@@ -476,6 +496,53 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
           </button>
         )}
       </div>
+
+      {/* API Key 输入区：type=password——key 是机密，屏幕上不明示。Enter 提交、Esc 收起。 */}
+      {apiKeyOpen && isInstalled && !isLoggedIn && (
+        <div className="provider-card-body" data-testid={"agent-api-key-form-" + provider}>
+          <div className="profile-add-row">
+            <input
+              type="password"
+              className="profile-add-input"
+              autoFocus
+              placeholder={t.account.apiKeyPlaceholder}
+              value={apiKeyValue}
+              data-testid={"agent-api-key-input-" + provider}
+              onChange={(e) => setApiKeyValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveApiKey();
+                if (e.key === "Escape") setApiKeyOpen(false);
+              }}
+            />
+            <button
+              type="button"
+              className="provider-card-action provider-card-action-primary"
+              data-testid={"agent-api-key-save-" + provider}
+              disabled={apiKeyBusy || !apiKeyValue.trim()}
+              onClick={saveApiKey}
+            >
+              {apiKeyBusy ? t.account.apiKeySaving : t.account.apiKeySave}
+            </button>
+            <button
+              type="button"
+              className="provider-card-action"
+              disabled={apiKeyBusy}
+              onClick={() => {
+                setApiKeyOpen(false);
+                setApiKeyValue("");
+              }}
+            >
+              {t.account.cancelEdit}
+            </button>
+          </div>
+          <div className="profile-hint">{t.account.apiKeyHint}</div>
+          {apiKeyMsg && (
+            <div className="agent-install-error" data-testid={"agent-api-key-error-" + provider}>
+              {apiKeyMsg}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 未安装时不给「接入方式」——还没有可运行的 agent，配官方账号还是中转都无从谈起，
           先把它装上。装好后这一段才出现。 */}
@@ -572,7 +639,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
           {/* 贴纸配额显示开关 */}
           <div className="usage-sticker-row">
             <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
-            <Switch checked={inQuota} onChange={onToggleQuota} />
+            <Switch checked={inQuota} onChange={onToggleQuota} label={t.settings.showQuotaOnSticker} />
           </div>
         </div>
       )}
@@ -594,7 +661,13 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
       {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
           列一个孤零零的「默认账号」除了占地方没有任何信息。 */}
       {isInstalled && supportsProfiles && (
-        <ProfileList provider={provider} onChanged={onLoggedIn} />
+        <ProfileList
+          provider={provider}
+          onChanged={onLoggedIn}
+          loginState={loginState}
+          onStartLogin={onStartLogin}
+          onCancelLogin={onCancelLogin}
+        />
       )}
     </div>
   );
@@ -609,7 +682,13 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsProf
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: () => void }) {
+function ProfileList({ provider, onChanged, loginState, onStartLogin, onCancelLogin }: {
+  provider: AgentId;
+  onChanged: () => void;
+  loginState: LoginOperationState | undefined;
+  onStartLogin: (profile?: string | null) => Promise<boolean>;
+  onCancelLogin: () => Promise<boolean>;
+}) {
   const t = useT();
   const [rows, setRows] = useState<ProfileView[] | null>(null);
   const [adding, setAdding] = useState(false);
@@ -630,12 +709,7 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
   useEffect(reload, [reload]);
 
   // 登录完成 → 该账号的登录态变了，重查。
-  useEffect(() => {
-    const un = listen("login-done", () => reload());
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, [reload]);
+  useTauriEvent("login-done", () => reload());
 
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -715,6 +789,8 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
 
       {rows.map((p) => {
         const key = p.id ?? DEFAULT_KEY;
+        const profileLoginPending = loginState?.phase === "pending" && loginState.profile === p.id;
+        const anotherLoginPending = loginState?.phase === "pending" && !profileLoginPending;
         // 登录态：有账号信息就是登录了。邮箱 > 登录方式标签（codex 的 "API Key"、
         // opencode 的 "Anthropic, OpenAI" 一串 provider、kimi 的 userId 短码）。
         //
@@ -791,10 +867,14 @@ function ProfileList({ provider, onChanged }: { provider: AgentId; onChanged: ()
                 type="button"
                 className="provider-card-action"
                 data-testid={"profile-login-" + provider + "-" + key}
-                disabled={busy}
-                onClick={() => run(() => loginAgent(provider, undefined, p.id))}
+                disabled={busy || anotherLoginPending}
+                onClick={() => {
+                  setErr(null);
+                  const request = profileLoginPending ? onCancelLogin() : onStartLogin(p.id);
+                  void request.catch((e) => setErr(String(e)));
+                }}
               >
-                {t.account.login}
+                {profileLoginPending ? t.account.cancelLogin : t.account.login}
               </button>
             )}
 
@@ -971,6 +1051,10 @@ export function AccountSection() {
       })
       .catch(() => {});
   };
+  // 挂在 AccountSection 而不是 keyed ProviderCard 内：切换下拉项不会遗失仍在后端等待的 operationId。
+  const loginOperations = useLoginOperations((event) => {
+    if (event.outcome === "success") loadAccounts();
+  });
   useEffect(() => { loadAccounts(); }, []);
 
   // 检测中（agents===null）先不渲染，避免下拉框空跳一帧。
@@ -1021,6 +1105,7 @@ export function AccountSection() {
         name={cur.display_name}
         installed={installed === null ? null : installed.has(cur.id)}
         supportsAccount={cur.supports_account}
+        supportsApiKeyLogin={cur.supports_api_key_login ?? false}
         supportsProfiles={cur.supports_profiles}
         supportsContext={cur.supports_context ?? true}
         relay={cur.relay}
@@ -1030,6 +1115,9 @@ export function AccountSection() {
         onRefresh={() => doRefresh(cur.id)}
         onInstalled={refreshInstalled}
         onLoggedIn={loadAccounts}
+        loginState={loginOperations.states.get(cur.id)}
+        onStartLogin={(profile) => loginOperations.start(cur.id, { profile })}
+        onCancelLogin={() => loginOperations.cancel(cur.id)}
         refreshing={refreshingSet.has(cur.id)}
         settings={settings}
         patchSettings={patchSettings}

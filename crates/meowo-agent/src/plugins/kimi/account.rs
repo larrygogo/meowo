@@ -324,7 +324,9 @@ fn parse_resets_at(v: &Value) -> Option<String> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            return Some(unix_to_iso8601(now + secs));
+            // saturating_add：服务端若返回病态大的偏移，now+secs 不会溢出
+            // （debug panic / release 回绕成 1970 年前后被 max(0) 钳成 epoch）。
+            return Some(unix_to_iso8601(now.saturating_add(secs)));
         }
     }
     None
@@ -818,32 +820,66 @@ mod tests {
 
     // ── expires_in 上界测试（防溢出）──
 
+    /// 走生产路径的防溢出测试：刷新响应给出病态大的 expires_in 时，`ensure_valid_kimi_token`
+    /// 必须把它钳到 86400s 再写回——否则 now_secs + expires_in 溢出回绕，凭据里的 expires_at
+    /// 落在过去，每次拉用量都重刷。
     #[test]
     fn ensure_valid_kimi_token_clamps_expires_in() {
-        // 这是单元测试演示；实际 ensure_valid_kimi_token 涉及文件 I/O，
-        // 此处验证钳制逻辑是否被正确应用于 merge 后的 expires_at。
-        // 若 expires_in 被 clamp 到 [60, 86400]，则：
-        // - now_secs + 86400 不溢出（int64 足够容纳）
-        // - 下次刷新时间合理（最多 24 小时后）
-        let original =
-            json!({"access_token": "a", "refresh_token": "r", "expires_at": 0, "expires_in": 0});
+        /// 假刷新端点：回一份 expires_in 病态大的响应。
+        struct HugeExpiresIn;
+        impl crate::ports::HttpPort for HugeExpiresIn {
+            fn send(&self, _req: &HttpRequest) -> Result<String, HttpError> {
+                Ok(r#"{"access_token":"new_access","refresh_token":"new_refresh","expires_in":100000000}"#
+                    .to_string())
+            }
+            fn download(
+                &self,
+                _url: &str,
+                _dest: &std::path::Path,
+                _timeout: Duration,
+                _on_progress: &mut dyn FnMut(u64, Option<u64>),
+            ) -> Result<u64, HttpError> {
+                unreachable!("token 刷新不走下载")
+            }
+        }
 
-        // 模拟 expires_in 被服务端异常设置为极大值 (100000000)
-        // clamp 后应为 86400
-        let clamped_expires_in = 100000000i64.clamp(60, 86400);
-        assert_eq!(clamped_expires_in, 86400);
+        // profile 实况：凭据落在 <root>/credentials/kimi-code.json（KIMI_SHARE_DIR 隔离布局）。
+        let root = std::env::temp_dir().join(format!("meowo-kimi-clamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let inst = crate::by_id("kimi")
+            .unwrap()
+            .installation_for_profile(&root)
+            .expect("kimi 支持多账号");
+        let creds_path = inst.credentials_path().expect("kimi 变体有凭据路径");
+        std::fs::create_dir_all(creds_path.parent().unwrap()).unwrap();
+        // 已过期的凭据 → 必走刷新。
+        std::fs::write(
+            &creds_path,
+            json!({"access_token":"old","refresh_token":"oldr","expires_at":0,"expires_in":0})
+                .to_string(),
+        )
+        .unwrap();
 
-        // 模拟 expires_in 被异常设置为极小值 (5)
-        // clamp 后应为 60
-        let clamped_small = 5i64.clamp(60, 86400);
-        assert_eq!(clamped_small, 60);
+        let ports = Ports {
+            http: &HugeExpiresIn,
+            keychain: &crate::ports::NoKeychain,
+        };
+        let before = now_secs();
+        let token = ensure_valid_kimi_token(&inst, &ports).expect("刷新应成功");
+        assert_eq!(token, "new_access");
 
-        // 验证 merge 计算不溢出
-        let now = i64::MAX / 2; // 模拟大数时间戳
-        let merged = merge_kimi_credentials(&original, "a2", "r2", clamped_expires_in, now);
-        let expires_at = merged["expires_at"].as_i64().unwrap();
-        // now + 86400 不应溢出（仍是有效的 i64）
-        assert_eq!(expires_at, now + 86400);
+        // 写回的必须是钳制后的值：expires_in == 86400，expires_at 落在 now+86400。
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&creds_path).unwrap()).unwrap();
+        assert_eq!(written["expires_in"], json!(86400));
+        assert_eq!(written["access_token"], json!("new_access"));
+        let expires_at = written["expires_at"].as_i64().unwrap();
+        assert!(
+            expires_at >= before + 86400 && expires_at <= now_secs() + 86400,
+            "expires_at 必须是 now+86400（钳制后），实际 {expires_at}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ── truncate_frac_to_millis ──
@@ -932,6 +968,20 @@ mod tests {
     fn parse_resets_at_missing_returns_none() {
         let v = json!({"other_key": "val"});
         assert!(parse_resets_at(&v).is_none());
+    }
+
+    /// 病态大的秒偏移不得让 now+secs 溢出（debug 会 panic）：saturating 到 i64::MAX 后照常格式化。
+    #[test]
+    fn parse_resets_at_huge_offset_saturates_instead_of_overflowing() {
+        let v = json!({"reset_in": i64::MAX});
+        let s = parse_resets_at(&v).expect("饱和后仍应给出时间戳");
+        assert!(s.ends_with('Z'), "应为 ISO8601：{s}");
+        // 负向病态值同理：饱和到 i64::MIN，unix_to_iso8601 内部 max(0) 钳成 epoch。
+        let v = json!({"ttl": i64::MIN});
+        assert_eq!(
+            parse_resets_at(&v).as_deref(),
+            Some("1970-01-01T00:00:00Z")
+        );
     }
 
     // ── window_to_kind 前缀容忍 ──

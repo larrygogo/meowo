@@ -2,12 +2,13 @@
 //! 这里是「后台线程层」：所有向前端 board-changed / 通知的推送都收敛在此。
 
 use crate::proc::pid_is_agent;
+use crate::session_query::RESUME_GRACE_MS;
 use crate::settings::{load_settings, tr, ui_lang};
 #[cfg(target_os = "windows")]
 use crate::terminal::focus_session_terminal;
 #[cfg(target_os = "windows")]
 use crate::window::update_tray_tooltip;
-use crate::{agent_transcript, now_ms, RESUME_GRACE_MS};
+use crate::{agent_transcript, now_ms};
 use meowo_store::Store;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
@@ -50,11 +51,25 @@ pub(crate) fn spawn_board_notifier(app: tauri::AppHandle) {
     if BOARD_TX.set(tx).is_err() {
         return; // 已启动过
     }
-    std::thread::spawn(move || loop {
+    std::thread::spawn(move || {
+        coalesce_loop(rx, |reason| {
+            let _ = app.emit("board-changed", reason);
+        });
+    });
+}
+
+/// 合流循环本体，与 tauri 解耦（emit 为闭包）以便单测；生产侧由 spawn_board_notifier 驱动。
+/// 语义：leading+trailing——孤立事件零延迟送达；窗口内多次触发合并为窗口末尾的一次，
+/// 且排队中的旧事件被最新事件取代（pending 只记最后一个 reason，前端忽略 payload、只重拉最新状态）。
+fn coalesce_loop(
+    rx: std::sync::mpsc::Receiver<&'static str>,
+    mut emit: impl FnMut(&'static str),
+) {
+    loop {
         // 空闲：阻塞等第一个事件。发送端存活于 static，recv 出错只可能是进程收尾。
         let Ok(mut reason) = rx.recv() else { return };
         loop {
-            let _ = app.emit("board-changed", reason);
+            emit(reason);
             // 冷却窗口：收集期间到达的事件，只记最后一个 reason。
             let mut pending: Option<&'static str> = None;
             let deadline = Instant::now() + BOARD_COALESCE;
@@ -76,7 +91,7 @@ pub(crate) fn spawn_board_notifier(app: tauri::AppHandle) {
                 None => break,
             }
         }
-    });
+    }
 }
 
 /// watch 建立失败/监听死亡后的重建间隔。
@@ -86,6 +101,7 @@ pub(crate) const WATCH_RETRY: Duration = Duration::from_secs(5);
 /// watch 建立失败（全新安装时 ~/.meowo 由 ccsetup/liveness 等并发线程创建，watcher 可能抢先执行
 /// 而目录尚不存在）或监听中途死亡（目录被删、notify 后端出错）都不放弃：先确保目录存在、失败 5s 后
 /// 重建——否则首启一次失败会让 DB 变更监听在整个进程生命周期内静默失效，前端无轮询兜底、看板冻结。
+/// 重建成功后无条件补发一次：监听死亡到重建完成的间隙里，最后一次变更可能没有任何事件送达。
 pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
     let watch_dir = db_path
         .parent()
@@ -98,26 +114,37 @@ pub(crate) fn spawn_db_watcher(app: tauri::AppHandle, db_path: PathBuf) {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "board.db".to_string());
-    std::thread::spawn(move || loop {
-        let _ = std::fs::create_dir_all(&watch_dir);
-        let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
-            Ok(w) => w,
-            Err(_) => {
+    std::thread::spawn(move || {
+        // 首轮建立不算重建：启动路径自带首轮数据加载，无需补发。
+        let mut rebuilt = false;
+        loop {
+            let _ = std::fs::create_dir_all(&watch_dir);
+            let (tx, rx) = channel();
+            let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
+                Ok(w) => w,
+                Err(_) => {
+                    std::thread::sleep(WATCH_RETRY);
+                    continue;
+                }
+            };
+            if watcher
+                .watch(&watch_dir, RecursiveMode::NonRecursive)
+                .is_err()
+            {
                 std::thread::sleep(WATCH_RETRY);
                 continue;
             }
-        };
-        if watcher
-            .watch(&watch_dir, RecursiveMode::NonRecursive)
-            .is_err()
-        {
+            if rebuilt {
+                // 重建成功：从上一轮监听死亡那一刻起事件就丢了，死亡到本次重建之间（含固定 5s
+                // 睡眠）的最后一次变更可能没有任何事件送达，间隙内的写入要等下一次变更才被
+                // 发现，看板定格在旧数据。无条件补发一次让前端重拉。
+                emit_board_changed(&app, "watch-rebuild");
+            }
+            rebuilt = true;
+            run_db_watch_loop(&app, &rx, &db_path, &db_name);
+            // 返回即监听已死（通道断开或错误事件）→ 稍后重建 watcher。
             std::thread::sleep(WATCH_RETRY);
-            continue;
         }
-        run_db_watch_loop(&app, &rx, &db_path, &db_name);
-        // 返回即监听已死（通道断开或错误事件）→ 稍后重建 watcher。
-        std::thread::sleep(WATCH_RETRY);
     });
 }
 
@@ -420,21 +447,24 @@ pub(crate) fn spawn_liveness_watch(
                     let sid = s.session.cc_session_id.clone();
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
-                    // 注：同 live_sessions_blocking，仅按 transcript() 门控；将来若有「有 spec 但标题走首条
-                    // prompt」的 provider，需在此与 dispatch::apply_title 一致地按 resolves_transcript_title 门控标题。
-                    let meowo_agent::TranscriptInfo { title, error, .. } =
-                        agent_transcript(&s.provider)
-                            .and_then(|spec| {
-                                spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
-                                    .and_then(|p| p.to_str().map(str::to_string))
-                                    .map(|path| {
-                                        // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
-                                        meowo_agent::TranscriptCache::analyze_shared(
-                                            &tx_cache, spec, &path,
-                                        )
-                                    })
-                            })
-                            .unwrap_or_default();
+                    let meowo_agent::TranscriptInfo {
+                        mut title, error, ..
+                    } = agent_transcript(&s.provider)
+                        .filter(|spec| spec.supports_analysis())
+                        .and_then(|spec| {
+                            spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
+                                .and_then(|p| p.to_str().map(str::to_string))
+                                .map(|path| {
+                                    // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。
+                                    meowo_agent::TranscriptCache::analyze_shared(
+                                        &tx_cache, spec, &path,
+                                    )
+                                })
+                        })
+                        .unwrap_or_default();
+                    if !crate::agent_resolves_transcript_title(&s.provider) {
+                        title = None;
+                    }
                     // 会话标题：通知正文用，也作点击聚焦时匹配 WT 标签页的标题。transcript 标题优先，否则 DB 标题。
                     let display_title = title
                         .filter(|t| !t.trim().is_empty())
@@ -539,7 +569,7 @@ pub(crate) fn spawn_liveness_watch(
                         }
                     }
                 }
-                // 清掉本轮彻底消失（已结束/超出 100 条上限）的残留条目，防止 map 无限增长。
+                // 清掉本轮彻底消失（已结束/超出 1000 条上限，见上方 live_sessions 查询）的残留条目，防止 map 无限增长。
                 // 边缘情况：会话彻底消失后又带着完全相同的未解决错误/待交互重新出现，会再弹一次——可接受。
                 notified.retain(|k, _| present.contains_key(k));
                 notified_pending.retain(|k, _| present.contains_key(k));
@@ -594,4 +624,132 @@ pub(crate) fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
             }
         }
     });
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{coalesce_loop, BOARD_COALESCE};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError};
+    use std::time::{Duration, Instant};
+
+    /// 驱动一个合流线程：输入端交测试塞事件，emit 出的 reason 经另一通道回收集合。
+    fn spawn_collector() -> (
+        std::sync::mpsc::Sender<&'static str>,
+        Receiver<&'static str>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel::<&'static str>();
+        let (out_tx, out_rx) = std::sync::mpsc::channel::<&'static str>();
+        let handle = std::thread::spawn(move || {
+            coalesce_loop(rx, move |r| {
+                let _ = out_tx.send(r);
+            })
+        });
+        (tx, out_rx, handle)
+    }
+
+    fn recv_within(rx: &Receiver<&'static str>, timeout: Duration) -> Option<&'static str> {
+        rx.recv_timeout(timeout).ok()
+    }
+
+    fn leaked_reason(i: usize) -> &'static str {
+        Box::leak(format!("r{i}").into_boxed_str())
+    }
+
+    /// 爆发连发 → 恰好两次 emit：前沿立即出第一个，其余合并为窗口末尾的一次且携带最后的 reason
+    /// （「最新状态取代排队中的旧事件」，而不是补发窗口内第一个）。
+    #[test]
+    fn burst_coalesces_to_leading_plus_single_trailing_with_last_reason() {
+        let (tx, out, _h) = spawn_collector();
+        let t0 = Instant::now();
+        for r in ["a", "b", "c", "d"] {
+            tx.send(r).unwrap();
+        }
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("a"));
+        assert!(t0.elapsed() < BOARD_COALESCE, "前沿必须零延迟送达");
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("d"));
+        // 窗口关闭后没有第三次 emit。
+        assert_eq!(
+            recv_within(&out, BOARD_COALESCE * 3),
+            None,
+            "窗口内事件已并入 trailing，不得再各自补发"
+        );
+    }
+
+    /// 静默超过一个窗口后，下一个孤立事件仍是前沿即时送达——合流不把低频操作拖进 trailing 延迟，
+    /// 「操作后立即可见」的体感不被破坏。
+    #[test]
+    fn isolated_event_after_idle_emits_immediately_again() {
+        let (tx, out, _h) = spawn_collector();
+        tx.send("one").unwrap();
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("one"));
+        std::thread::sleep(BOARD_COALESCE + Duration::from_millis(200));
+        let t0 = Instant::now();
+        tx.send("two").unwrap();
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("two"));
+        assert!(t0.elapsed() < BOARD_COALESCE, "孤立事件必须走前沿");
+        assert_eq!(recv_within(&out, BOARD_COALESCE * 3), None);
+    }
+
+    /// 持续高频输入（间隔远小于窗口、总时长跨多个窗口）→ 输出被钳在每窗口约一次，
+    /// 且最后一次 emit 收敛到最新事件。这正是 statusline/hook 高频写库时前端不被刷爆的保证。
+    #[test]
+    fn sustained_stream_is_capped_and_converges_to_latest() {
+        let (tx, out, _h) = spawn_collector();
+        const N: usize = 30;
+        let last_expected = leaked_reason(N - 1);
+        let sender = std::thread::spawn(move || {
+            let t0 = Instant::now();
+            for i in 0..N {
+                if tx.send(leaked_reason(i)).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            t0.elapsed()
+        });
+        let mut emits: Vec<&'static str> = Vec::new();
+        // 收敛即退，死线只防「永不收敛」挂死，取值放极宽：慢 CI 上 sleep(30ms) 实际可拖到
+        // 百余毫秒，按名义时长（30*30ms+余量）设死线曾在 macOS runner 稳定超时——
+        // 发送方还没发完就到点，收不到最末事件的 trailing。
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            match out.recv_timeout(Duration::from_millis(200)) {
+                Ok(r) => emits.push(r),
+                Err(RecvTimeoutError::Timeout) => {
+                    if sender.is_finished() && emits.last() == Some(&last_expected) {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let send_elapsed = sender.join().unwrap();
+        assert_eq!(emits.first(), Some(&"r0"), "首个事件必须前沿送达");
+        assert_eq!(
+            emits.last().copied(),
+            Some(last_expected),
+            "trailing 必须收敛到最新事件: {emits:?}"
+        );
+        // 钳频上界按**实际**发送时长折算窗口数（名义 900ms ≈ 3 窗口，慢机上可拉长数倍）：
+        // 按名义算会把「合流器正常、机器慢」误判成刷爆。leading + 每窗口至多一次 trailing。
+        let windows = send_elapsed.as_millis() as usize / BOARD_COALESCE.as_millis() as usize + 2;
+        assert!(
+            emits.len() >= 2 && emits.len() <= windows + 2,
+            "持续流须被钳在每窗口约一次: {} 次 emit > 窗口数 {windows}",
+            emits.len()
+        );
+    }
+
+    /// 发送端断开（进程收尾）→ 合流线程退出，不空转。已入队的事件仍先补发完。
+    #[test]
+    fn loop_exits_after_sender_disconnect() {
+        let (tx, out, h) = spawn_collector();
+        tx.send("last").unwrap();
+        drop(tx);
+        h.join().expect("发送端断开后合流线程应退出");
+        // 断开前已入队的事件不丢：leading 或 trailing 必送达过。
+        assert_eq!(recv_within(&out, Duration::from_millis(0)), Some("last"));
+    }
 }

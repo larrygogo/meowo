@@ -107,6 +107,25 @@ pub struct Account {
 /// 前端据此显示「当前登录方式不支持用量查询」而非通用报错。
 pub const USAGE_UNSUPPORTED: &str = "USAGE_UNSUPPORTED";
 
+/// API Key 登录能力：把用户提供的 key 落成该 agent 自己认得的持久配置。
+///
+/// 为 gemini 而生：Google 已停掉个人版 Gemini Code Assist 的 OAuth（报
+/// *This client is no longer supported for Gemini Code Assist for individuals*），个人用户只剩
+/// API Key 一条路，而 gemini 没有「输入 key」的登录子命令——key 只能靠环境变量或 `~/.gemini/.env`。
+/// 交互式登录（拉终端走 OAuth）帮不上忙，必须由宿主替用户把 key 写到 CLI 认的位置。
+///
+/// 与 [`crate::RelayCap`] 不是一回事：中转改的是**端点**（附带才要 key），且只对 meowo 拉起的
+/// 会话生效；这里写的是 agent 自己的配置，用户在任何终端裸跑 CLI 同样生效。
+pub trait ApiKeyLoginCap: Sync {
+    /// 校验并保存 key。**幂等**：重复保存即覆盖。实现负责把 key 写到该实况（`inst.data_dir`）下
+    /// CLI 自己会读的位置，并确保 CLI 下次启动就走 API-key 认证、不再去碰 OAuth。
+    fn save_api_key(&self, inst: &Installation, key: &str) -> Result<(), String>;
+
+    /// 清除已保存的 key（登出的一部分）。**幂等**：没配过也返回 Ok。
+    /// 只清 key 本身，不碰配置里的其它内容。
+    fn clear_api_key(&self, inst: &Installation) -> Result<(), String>;
+}
+
 /// 账号能力：读账号信息 + 拉实时用量。不声明此能力的 agent，其账号卡片显示为未登录。
 ///
 /// # 三个方法都接 [`Installation`]

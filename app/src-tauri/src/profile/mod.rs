@@ -31,6 +31,17 @@ pub(crate) fn profile_root(agent: &str, id: &str) -> PathBuf {
     profiles_root().join(agent).join(id)
 }
 
+/// 某个账号实际使用的数据目录。`id = None` 明确表示 agent 的默认账号，不表示当前活跃账号。
+pub(crate) fn data_dir(agent: &str, id: Option<&str>) -> Option<PathBuf> {
+    let plugin = meowo_agent::by_id(agent)?;
+    match id {
+        Some(id) => plugin
+            .installation_for_profile(&profile_root(agent, id))
+            .map(|installation| installation.data_dir),
+        None => plugin.default_installation().map(|installation| installation.data_dir),
+    }
+}
+
 /// 展示名 → 目录名。**这不是美化，是安全边界**：id 会被直接当成目录名拼进路径，若原样使用用户
 /// 输入，一个 `../..` 就能让我们在用户的文件系统上乱建目录、甚至让接线写到别处去。
 ///

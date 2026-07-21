@@ -1,4 +1,4 @@
-// 设置页「网络」分区：代理（全局默认 + 按模型覆盖）。
+// 设置页「网络」分区：代理（全局默认 + 按 Agent 覆盖）。
 //
 // 这个分区的**核心难点是如实**：三家 CLI 的代理能力差得很远，UI 不能假装它们一样（2026-07 复核）——
 //
@@ -30,7 +30,8 @@ import {
 import { useT } from "../../i18n";
 import { useAgentListRefresh } from "../../useAgents";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./state";
-import { Dropdown, Segmented, Switch } from "./widgets";
+import { Segmented, Switch } from "./widgets";
+import { Dropdown } from "../menu";
 
 /// 每个模型行的模式，比全局多一个「跟随默认」（= per_agent 里没有该条目）。
 type RowMode = ProxyMode | "follow";
@@ -172,7 +173,7 @@ export function NetworkSection() {
     save({ ...proxy, mode: m });
   };
 
-  // ── 按模型覆盖 ──
+  // ── 按 Agent 覆盖 ──
   const rowMode = (id: string): RowMode =>
     pending[id] ? "custom" : (proxy.per_agent[id]?.mode ?? "follow");
 

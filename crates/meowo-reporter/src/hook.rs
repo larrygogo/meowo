@@ -18,6 +18,10 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_input: Option<serde_json::Value>,
+    /// Claude PermissionRequest 提供的“本次允许之外”的原生选项（例如写入项目/用户权限规则）。
+    /// 其他 Agent 没有该字段时保持空列表。
+    #[serde(default)]
+    pub permission_suggestions: Vec<serde_json::Value>,
     /// 回合结束时 hook 携带的最近一条 AI 正文。各家字段名不同，靠 alias 收束到同一个字段：
     /// claude/codex 是 `last_assistant_message`，kimi 是 `assistant_message`，
     /// gemini 的 `AfterAgent` 叫 `prompt_response`。
@@ -25,8 +29,11 @@ pub struct HookEvent {
     pub last_assistant_message: Option<String>,
 }
 
+/// 各家的字段名不同：claude 的 `TodoWrite` 用 `content`，kimi 的 `TodoList` 用 `title`。
+/// 两者都只是「这条待办的文字」，用 alias 收进同一个字段，不必为此分叉解析。
 #[derive(Debug, Deserialize)]
 struct RawTodo {
+    #[serde(alias = "title", alias = "subject", alias = "text")]
     content: String,
     #[serde(default)]
     status: String,

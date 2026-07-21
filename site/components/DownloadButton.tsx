@@ -26,7 +26,8 @@ function detect(): Platform {
   if (typeof navigator === "undefined") return null;
   const ua = navigator.userAgent;
   if (/iPhone|iPad|iPod|Android/i.test(ua)) return null; // 移动端没得下
-  if (/Mac/i.test(ua)) return "macos";
+  // iPadOS 桌面模式 UA 带 "Macintosh"，靠触屏点数排除
+  if (/Mac/i.test(ua)) return navigator.maxTouchPoints > 1 ? null : "macos";
   if (/Win/i.test(ua)) return "windows";
   return null;
 }

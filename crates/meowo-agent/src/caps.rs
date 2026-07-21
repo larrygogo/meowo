@@ -36,6 +36,15 @@ pub struct ContextUsage {
     pub window: i64,
 }
 
+/// 一条待办的原始快照。`status` 保留 agent **自己写的词**（claude 是 `completed`、
+/// kimi 是 `done`），归一化交给 DB 层的 `TodoStatus::from_str`——插件层不依赖 store，
+/// 也不该替它决定枚举取值。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoSnapshot {
+    pub content: String,
+    pub status: String,
+}
+
 /// 会话遥测能力：从 hook 负载或该 agent 的会话文件里取出「正文 / 模型 / 上下文占用 / 标题」，
 /// 以及把重命名写回 agent 自己的持久层。
 ///
@@ -52,8 +61,17 @@ pub trait TelemetryCap: Sync {
         None
     }
 
+    /// 从会话日志读**当前的待办快照**。
+    ///
+    /// 与 hook 路径互补：hook 只在 meowo 在场时捕获得到，而会话日志是 agent 自己一直在写的。
+    /// 有了它，「中途才启动 meowo」「hook 曾漏接」「早先解析有误」这几种情况都能按需重建，
+    /// 不必干等 agent 下一次调用待办工具。None = 该 agent 的日志里读不到待办。
+    fn read_todos(&self, _ctx: &HookContext) -> Option<Vec<TodoSnapshot>> {
+        None
+    }
+
     /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。
-    /// codex/kimi 无——它们的标题走首条 prompt、预览/模型走 stop_outputs，不读 transcript。
+    /// codex/kimi 的 spec 只供结构化对话；标题仍走首条 prompt、预览/模型走 stop_outputs。
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
         None
     }

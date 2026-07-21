@@ -5,6 +5,15 @@ use crate::{
     id::AgentId,
     variant::{Installation, Variant},
 };
+use std::path::Path;
+
+/// 对话页快速切模型的一个预设项：前端点选后向 PTY 发送 `/model <id>`。
+/// `label` 是展示名；描述文案是翻译资产，留在前端 i18n（按 `id` 取）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct ModelPreset {
+    pub id: &'static str,
+    pub label: &'static str,
+}
 
 /// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
 pub trait AgentPlugin: Sync {
@@ -70,6 +79,81 @@ pub trait AgentPlugin: Sync {
         false
     }
 
+    /// 对话页输入框 `/` 前缀的补全候选。这些命令由该 agent 的 TUI 自己执行，meowo 只把文本
+    /// 原样送进 PTY——所以**宁缺毋滥**：只列常用且跨版本稳定的。空 = 前端不提供补全。
+    ///
+    /// 此前这张表硬编码在前端（按 provider 的 `Record`，未知 agent 落一份通用 fallback）。
+    /// fallback 恰恰是谎言：gemini 没有 `/status`（是 `/stats`）、opencode 没有 `/model`
+    /// （是 `/models`），补出来的命令发进去只会报 unknown command。命令表是 agent 的事实，
+    /// 归插件声明。
+    fn slash_commands(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// 对话页快速切模型的预设（前端发送 `/model <id>`）。只有 `/model` 接受**内联参数**的
+    /// agent 才该声明——交互式菜单型的 `/model` 在对话页发出去用户什么也看不见。
+    /// 空 = 不提供快捷切换（前端只展示当前模型，不给菜单）。
+    fn model_presets(&self) -> &'static [ModelPreset] {
+        &[]
+    }
+
+    /// 会话内可交互的模式维度。空 = 没有稳定且经过验证的切换方式。
+    fn mode_controls(&self) -> &'static [crate::chat_ui::ModeControl] {
+        &[]
+    }
+
+    /// 启动/恢复时可能抢占 composer 的交互式提示。只声明经过验证、必须由用户亲自处理的
+    /// 文本标记；ChatWindow 命中后会展示终端并停止自动发送。
+    fn startup_attention_markers(&self) -> &'static [&'static str] {
+        crate::chat_ui::COMMON_STARTUP_ATTENTION_MARKERS
+    }
+
+    /// 自定义斜杠命令的发现规格（用户/项目目录里放了什么命令文件，补全就出什么）。
+    /// None = 该 agent 无自定义命令机制，或其机制未经调研——**没验证过的不声明**。
+    fn custom_commands(&self) -> Option<&'static crate::chat_ui::CustomCommandSpec> {
+        None
+    }
+
+    /// 新建会话的启动选项（选择 → CLI flag 的映射表，见 [`crate::launch_options`]）。
+    /// 空 = 面板不给该 agent 任何选项栏。宿主用 [`crate::resolve_launch_args`] 把前端的选择
+    /// 翻译成 argv——用户输入永远不直接进命令行。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        &[]
+    }
+
+    /// 对话页能力总装：内置表（插件按变体声明）∪ 从安装实况发现的自定义命令 + 模型预设。
+    /// GUI 每次打开会话问一次——装了新命令/换了版本，下一次询问就反映，无需重启。
+    fn chat_ui(&self, ctx: &crate::chat_ui::ChatUiContext) -> crate::chat_ui::ChatUi {
+        let mut custom = match (self.custom_commands(), self.resolve()) {
+            (Some(spec), Some(inst)) => spec.discover(&inst.data_dir, ctx.cwd),
+            _ => Vec::new(),
+        };
+        let mut runtime_commands_pending = false;
+        if let (Some(session_id), Some(transcript)) = (
+            ctx.session_id,
+            self.telemetry().and_then(|telemetry| telemetry.transcript()),
+        ) {
+            if transcript.supports_runtime_slash_commands() {
+                runtime_commands_pending = true;
+                if let Some(path) = transcript.resolve_transcript_path(None, ctx.cwd.and_then(Path::to_str), session_id) {
+                    if let Some(commands) = transcript.runtime_slash_commands(&path) {
+                        custom.extend(commands);
+                        runtime_commands_pending = false;
+                    }
+                }
+            }
+        }
+        crate::chat_ui::ChatUi {
+            slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
+            model_presets: self.model_presets().to_vec(),
+            model_menu_command: self.model_menu_command(),
+            mode_controls: self.mode_controls().to_vec(),
+            startup_attention_markers: self.startup_attention_markers().to_vec(),
+            runtime_commands_pending,
+            version: ctx.version.map(str::to_string),
+        }
+    }
+
     /// 多账号（profile）的隔离规格。`None` = 该 agent **不支持**多账号。
     ///
     /// 目前只有 gemini 是 None：它的数据目录无法被环境变量覆盖（`GEMINI_DIR` 实测无效，设了它
@@ -106,6 +190,35 @@ pub trait AgentPlugin: Sync {
 
     // ═══ 能力槽 ═══
 
+    /// 哪些工具的调用参数里带着**整份待办快照**（`tool_input.todos`）。
+    ///
+    /// 工具名是各家自己的事，且会随版本改：kimi 叫 `TodoList`，claude 早期叫 `TodoWrite`
+    /// （现版本改成了增量的 `TaskCreate`/`TaskUpdate`，不是快照，故不在此列）。
+    /// 此前 dispatch 里写死 `"TodoWrite"`，两家都对不上——待办表一直是空的。
+    ///
+    /// 只声明**快照式**的工具：整份列表覆盖写，语义与 `sync_todos` 一致。
+    fn todo_snapshot_tools(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// 打开「选模型」交互菜单的斜杠命令。
+    ///
+    /// 与 [`Self::model_presets`] 互补而非重复：声明了预设的 agent（只有 claude，它的
+    /// `/model <id>` 接受内联参数）直接按预设发命令；其余四家的 `/model` 是交互式菜单，
+    /// 内联参数无效——对它们只能「发出这条命令，再把 CLI 弹出的菜单渲染成 GUI 按钮」。
+    /// 菜单内容由 CLI 自己给，宿主不必维护一份会过时的模型清单。
+    fn model_menu_command(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// PermissionRequest hook 的决策输出会被该 agent **采纳**（阻塞式审批，如 claude/codex 的
+    /// 310s hook）。GUI 审批桥只对声明它的 agent 生效：observation-only 的 PermissionRequest
+    /// （kimi，5s 超时、忽略 hookSpecificOutput）若也弹 GUI 审批卡，卡片既控制不了真实审批，
+    /// 用户点「允许」还会错误清掉 pending_review——真实提示仍在终端里等人。
+    fn permission_hook_decides(&self) -> bool {
+        false
+    }
+
     /// 会话遥测（Stop 正文/模型、上下文占用、transcript、重命名回写）。None = 全部降级。
     fn telemetry(&self) -> Option<&'static dyn TelemetryCap> {
         None
@@ -113,6 +226,12 @@ pub trait AgentPlugin: Sync {
 
     /// 账号与用量。None = 该 agent 无账号概念，卡片不显示登录态与用量。
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
+        None
+    }
+
+    /// API Key 登录。None = 该 agent 不支持（或不需要——它的交互式登录足够）。
+    /// 声明它的 agent，前端在未登录时额外给出「填 API Key」入口，登出时顺带清除 key。
+    fn api_key_login(&self) -> Option<&'static dyn crate::account::ApiKeyLoginCap> {
         None
     }
 
@@ -569,8 +688,148 @@ mod tests {
         );
     }
 
+    /// 对话页能力表钉死调研结论。斜杠命令由各 CLI 的 TUI 自己执行，写错的后果是补全出一条
+    /// 发进去报 unknown command 的命令；模型预设写错的后果更隐蔽——`/model <id>` 对交互式
+    /// 菜单型的 CLI 发出去**什么也不发生**。故逐条固定。
+    #[test]
+    fn chat_ui_caps_pin_researched_capabilities() {
+        // 五家都声明了命令表：/help 人人都有；每条都以 "/" 开头且不含空格（补全项是整命令，
+        // 参数由用户自己接）。
+        for p in all() {
+            let cmds = p.slash_commands();
+            assert!(!cmds.is_empty(), "{} 应声明斜杠命令表", p.id());
+            assert!(cmds.contains(&"/help"), "{} 缺 /help", p.id());
+            for c in cmds {
+                assert!(
+                    c.starts_with('/') && !c.contains(' '),
+                    "{} 的命令 {c:?} 不合形",
+                    p.id()
+                );
+            }
+        }
+
+        // 只有 claude 的 `/model` 接受内联参数——其余四家是交互式菜单，声明预设＝给出一个
+        // 点了没反应的菜单。
+        let presets = by_id("claude").unwrap().model_presets();
+        assert!(!presets.is_empty());
+        assert!(presets.iter().any(|m| m.id == "sonnet"));
+        for id in ["codex", "kimi", "gemini", "opencode"] {
+            assert!(
+                by_id(id).unwrap().model_presets().is_empty(),
+                "{id} 的 /model 是交互式菜单，不该声明预设"
+            );
+        }
+
+        assert_eq!(by_id("claude").unwrap().mode_controls()[0].dimension, "permission");
+        assert_eq!(by_id("codex").unwrap().mode_controls()[0].dimension, "collaboration");
+        for id in ["gemini", "opencode"] {
+            assert!(by_id(id).unwrap().mode_controls().is_empty());
+        }
+
+        // 目录信任不是 Claude 私有概念：Gemini 当前使用同一标题，Codex 使用 directory
+        // 版本；Kimi/OpenCode 即便当前没有，也继承精确的通用标题以兼容后续版本。
+        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+            let markers = by_id(id).unwrap().startup_attention_markers();
+            assert!(markers.iter().any(|marker| marker.contains("folder")));
+            assert!(markers.iter().any(|marker| marker.contains("directory")));
+        }
+
+        // 命令表如实反映各家差异（这正是硬编码 fallback 撒过谎的地方）。
+        let has = |id: &str, c: &str| by_id(id).unwrap().slash_commands().contains(&c);
+        assert!(has("gemini", "/stats") && !has("gemini", "/status"));
+        assert!(has("opencode", "/models") && !has("opencode", "/model"));
+        assert!(has("codex", "/model") && has("kimi", "/model"));
+        assert!(
+            !has("claude", "/code-review"),
+            "Claude skills 必须来自会话的 skill_listing，不能再写死进基础表"
+        );
+
+        // 自定义命令的发现规格：调研过的四家各按自己的目录/格式声明；kimi 未验证有此机制，
+        // 如实不声明——瞎猜一个目录的后果是永远扫不出东西还装作支持。
+        let spec = |id: &str| by_id(id).unwrap().custom_commands();
+        assert!(spec("kimi").is_none());
+        for (id, ext, project) in [
+            ("claude", "md", true),
+            ("codex", "md", false),
+            ("gemini", "toml", true),
+            ("opencode", "md", true),
+        ] {
+            let s = spec(id).unwrap_or_else(|| panic!("{id} 应声明自定义命令规格"));
+            assert_eq!(s.ext, ext, "{id} 的命令文件格式");
+            assert_eq!(s.project_dir.is_some(), project, "{id} 的项目级目录声明");
+            assert!(s.user_dir.is_some(), "{id} 应有用户级目录");
+        }
+    }
+
+    /// 启动选项表钉死调研结论 + 结构不变量。写错 flag 的后果是新会话直接启动失败或
+    /// **静默不生效**（CLI 把未知 flag 当参数吞掉），故逐条固定。
+    #[test]
+    fn launch_options_pin_researched_flags_and_invariants() {
+        // 结构不变量：default 指向存在的 choice，且 default 项不传任何 flag——
+        // 「默认」的诚实含义是「行为由 CLI 自己决定」。choice id 不重复。
+        for p in all() {
+            for opt in p.launch_options() {
+                let def = opt
+                    .choices
+                    .iter()
+                    .find(|c| c.id == opt.default)
+                    .unwrap_or_else(|| panic!("{}::{} 的 default 不在 choices 里", p.id(), opt.id));
+                assert!(
+                    def.args.is_empty(),
+                    "{}::{} 的默认项不该传 flag",
+                    p.id(),
+                    opt.id
+                );
+                let mut ids: Vec<_> = opt.choices.iter().map(|c| c.id).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                assert_eq!(ids.len(), opt.choices.len(), "{}::{} choice id 重复", p.id(), opt.id);
+            }
+        }
+
+        // 矩阵：claude 有模型 + 权限两栏；codex/gemini 各一栏审批；kimi 有权限 + 计划两栏
+        // （`--auto` / `--yolo` / `--plan`，见 `kimi --help`），但**没有 model**——它的模型
+        // 别名来自用户 config.toml，不是产品固定值。opencode 仍未调研到稳定 flag。
+        let opts = |id: &str| by_id(id).unwrap().launch_options();
+        assert_eq!(
+            opts("claude").iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec!["model", "permission"]
+        );
+        assert_eq!(opts("codex").iter().map(|o| o.id).collect::<Vec<_>>(), vec!["approval"]);
+        assert_eq!(opts("gemini").iter().map(|o| o.id).collect::<Vec<_>>(), vec!["approval"]);
+        assert!(opts("opencode").is_empty());
+        // kimi 的表随变体而定（旧 Python kimi-cli 的 flag 不同），本机未装 modern 时为空。
+        let kimi = opts("kimi");
+        if !kimi.is_empty() {
+            assert_eq!(kimi.iter().map(|o| o.id).collect::<Vec<_>>(), vec!["permission", "work"]);
+            assert!(kimi.iter().all(|o| o.choices.iter().all(|c| c.args.iter().all(
+                |arg| matches!(*arg, "--auto" | "--yolo" | "--plan")
+            ))));
+        }
+
+        // flag 字面量抽查（与 `--help` 实测对齐）。
+        let arg_of = |id: &str, opt: &str, choice: &str| {
+            opts(id)
+                .iter()
+                .find(|o| o.id == opt)
+                .and_then(|o| o.choices.iter().find(|c| c.id == choice))
+                .map(|c| c.args.to_vec())
+                .unwrap()
+        };
+        assert_eq!(arg_of("claude", "model", "opusplan"), vec!["--model", "opusplan"]);
+        assert_eq!(
+            arg_of("claude", "permission", "plan"),
+            vec!["--permission-mode", "plan"]
+        );
+        assert_eq!(
+            arg_of("codex", "approval", "yolo"),
+            vec!["--dangerously-bypass-approvals-and-sandbox"]
+        );
+        assert_eq!(arg_of("gemini", "approval", "yolo"), vec!["--yolo"]);
+    }
+
     /// 能力槽的降级语义：不声明 telemetry 的 agent，调用方拿到 None 而不是一个空实现。
-    /// 三家目前都有 telemetry；claude 独有 transcript 与 resolves_transcript_title。
+    /// 三家目前都有 telemetry 与结构化 transcript；只有 claude 从 transcript 解析标题。
     #[test]
     fn telemetry_slot_reflects_declared_capabilities() {
         let claude = by_id("claude").unwrap().telemetry().expect("claude 有遥测");
@@ -582,7 +841,7 @@ mod tests {
                 .unwrap()
                 .telemetry()
                 .unwrap_or_else(|| panic!("{id} 有遥测"));
-            assert!(t.transcript().is_none(), "{id} 不读 transcript");
+            assert!(t.transcript().is_some(), "{id} 提供结构化对话 transcript");
             assert!(!t.resolves_transcript_title(), "{id} 的标题走首条 prompt");
         }
 

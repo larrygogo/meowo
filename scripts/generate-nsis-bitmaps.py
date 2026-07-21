@@ -1,7 +1,8 @@
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
-OUT_DIR = Path("app/src-tauri/icons")
+# 锚定脚本位置而非 CWD：从错误目录运行时，相对路径会静默建目录、把产物写错地方。
+OUT_DIR = Path(__file__).resolve().parent.parent / "app" / "src-tauri" / "icons"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PANEL_TOP = "#1d1d20"

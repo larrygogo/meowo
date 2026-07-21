@@ -50,13 +50,15 @@ pub fn init(_app: &AppHandle) {
 /// 只能整体清空——对"会话等待/出错"这类瞬时提醒正合适。走已废弃的 NSUserNotificationCenter
 /// （与 mac-notification-sys 内部用的是同一套），故用 removeAllDeliveredNotifications。
 fn clear_delivered() {
-    use objc::runtime::Object;
-    use objc::{class, msg_send, sel, sel_impl};
-    // SAFETY: 标准 objc 消息发送；defaultUserNotificationCenter 返回进程级单例（可能为 nil，
-    // 已判空），removeAllDeliveredNotifications 无参无返回。
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    // SAFETY: 标准 objc 消息发送；defaultUserNotificationCenter 返回进程级单例（不归我们持有，
+    // 故取裸指针而非 Retained；可能为 nil，已判空），removeAllDeliveredNotifications 无参无返回。
     unsafe {
-        let center: *mut Object =
-            msg_send![class!(NSUserNotificationCenter), defaultUserNotificationCenter];
+        let center: *mut AnyObject = msg_send![
+            class!(NSUserNotificationCenter),
+            defaultUserNotificationCenter
+        ];
         if !center.is_null() {
             let _: () = msg_send![center, removeAllDeliveredNotifications];
         }

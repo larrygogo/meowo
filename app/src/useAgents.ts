@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 import { listAgents, agentName, type AgentDescriptor, type AgentId } from "./api";
+import { useTauriEvent } from "./hooks/useTauriEvent";
 
 /**
  * 装完一个 agent，名单就变了（未装 → 已装）。**凡是列 agent 的地方都得跟着重取**，否则装完还要
@@ -9,17 +9,9 @@ import { listAgents, agentName, type AgentDescriptor, type AgentId } from "./api
  * 只有 `ok` 才重取——失败什么都没改变。
  */
 export function useAgentListRefresh(reload: () => void) {
-  // reload 每次渲染都是新函数；用 ref 存最新的，订阅只建一次、不反复重订。
-  const ref = useRef(reload);
-  ref.current = reload;
-  useEffect(() => {
-    const un = listen<{ ok: boolean }>("install-done", (e) => {
-      if (e.payload.ok) ref.current();
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, []);
+  useTauriEvent<{ ok: boolean }>("install-done", (e) => {
+    if (e.payload.ok) reload();
+  });
 }
 
 /**

@@ -45,6 +45,10 @@ export function repairFailMessage(t: Dict, reason: RepairReason | null): string 
 
 export function I18nProvider({ children, initial }: { children: ReactNode; initial?: Lang }) {
   const [lang, setLang] = useState<Lang>(() => initial ?? readCache());
+  // <html lang> 跟随当前语言（屏幕阅读器朗读、字体回退、连字符断行都依赖它）。
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
   useEffect(() => {
     if (initial) return; // 测试注入固定语言时不订阅
     let eventApplied = false;

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
@@ -235,8 +237,7 @@ pub fn build_tray_menu(
     app: &AppHandle,
     lang: &str,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let guide =
-        MenuItemBuilder::with_id("guide", crate::tr(lang, "tray.guide")).build(app)?;
+    let guide = MenuItemBuilder::with_id("guide", crate::tr(lang, "tray.guide")).build(app)?;
     let settings =
         MenuItemBuilder::with_id("settings", crate::tr(lang, "tray.settings")).build(app)?;
     let website =
@@ -285,18 +286,69 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 打开设置窗口前临时切到 Regular 以便获焦；关闭时切回 Accessory（挂在窗口事件里）。
-pub fn settings_window_will_open(app: &AppHandle) {
+/// macOS 激活策略的引用计数：当前处于「需要 Regular」状态的窗口 label 集合。
+/// 设置/引导/更新/新建会话/对话窗口各自在打开时切 Regular、关闭时归还计数；两个窗口同开时
+/// 关掉任一个，不能把仍开着的另一个误切回 Accessory（Dock 图标消失、剩余窗口无法获焦），
+/// 故按 label 计数、归零才切回。
+fn regular_policy_windows() -> &'static Mutex<HashSet<&'static str>> {
+    static SET: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// 引用计数纯逻辑（便于单测）：登记一个窗口打开。按 label 去重——窗口已存在时打开路径
+/// 只是聚焦、会重入，同一窗口不得产生两笔计数。
+fn track_regular_open(set: &mut HashSet<&'static str>, label: &'static str) {
+    set.insert(label);
+}
+
+/// 引用计数纯逻辑（便于单测）：登记一个窗口关闭，返回是否可以切回 Accessory（最后一个
+/// 窗口关闭才为 true）。同一窗口的 CloseRequested 与 Destroyed 会各来一次：set 语义下
+/// 第二次是空操作，不会提前归零。
+fn track_regular_close(set: &mut HashSet<&'static str>, label: &'static str) -> bool {
+    set.remove(label);
+    set.is_empty()
+}
+
+/// 打开设置类窗口前临时切到 Regular 以便获焦（挂在各窗口的创建/聚焦路径上）。
+pub fn settings_window_will_open(app: &AppHandle, label: &'static str) {
+    if let Ok(mut set) = regular_policy_windows().lock() {
+        track_regular_open(&mut set, label);
+    }
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
 }
 
-pub fn settings_window_did_close(app: &AppHandle) {
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+/// 归还激活策略计数（挂在各窗口的关闭事件里）：最后一个这类窗口关闭才切回 Accessory。
+pub fn settings_window_did_close(app: &AppHandle, label: &'static str) {
+    let may_restore = match regular_policy_windows().lock() {
+        Ok(mut set) => track_regular_close(&mut set, label),
+        // 锁损坏：退化为旧行为（无条件切回），好过永远不切、Dock 图标一直挂着。
+        Err(_) => true,
+    };
+    if may_restore {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 激活策略引用计数：两个窗口同开时关掉任一个不得切回 Accessory；同一窗口的
+    /// CloseRequested/Destroyed 双回调与「已存在窗口的重复打开」都不得扰乱计数。
+    #[test]
+    fn regular_policy_reference_counting() {
+        let mut set = HashSet::new();
+        track_regular_open(&mut set, "about");
+        track_regular_open(&mut set, "chat");
+        // 已存在的窗口再次「打开」（聚焦路径）重入，不产生额外计数。
+        track_regular_open(&mut set, "chat");
+        // 关掉任一个：仍有窗口开着，不切回。
+        assert!(!track_regular_close(&mut set, "chat"));
+        // 同一窗口的 CloseRequested + Destroyed 双回调：第二次是空操作，不得提前归零。
+        assert!(!track_regular_close(&mut set, "chat"));
+        // 最后一个窗口关闭 → 归零，切回 Accessory。
+        assert!(track_regular_close(&mut set, "about"));
+    }
 
     #[test]
     fn status_seq_groups_and_gaps() {

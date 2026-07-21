@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- 内容与 tauri-build 内置的 windows-app-manifest.xml 等价（Common-Controls v6）。
+     由 build.rs 通过全局 /MANIFEST:EMBED 嵌进**所有**链接产物——生产 bin、cdylib、
+     以及 cargo test 的可执行。之所以不走 tauri_build 的默认嵌入：那条路只覆盖 bin
+     （cargo 的 rustc-link-arg-tests 也够不着 lib 单测），而链接闭包里的 TaskDialogIndirect
+     只存在于 comctl32 v6——没有这份声明的 test 可执行会被 loader 解析到 System32 的
+     v5.82，全部单测以 STATUS_ENTRYPOINT_NOT_FOUND 秒死。 -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

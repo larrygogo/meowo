@@ -105,48 +105,6 @@ export function StarIcon({ starred }: { starred: boolean }) {
   );
 }
 
-export function TabIcon({ tab }: { tab: Tab }) {
-  const common = { width: 11, height: 11, viewBox: "0 0 16 16", "aria-hidden": true } as const;
-  switch (tab) {
-    case "all": // 列表
-      return (
-        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-          <line x1="3" y1="4.5" x2="13" y2="4.5" />
-          <line x1="3" y1="8" x2="13" y2="8" />
-          <line x1="3" y1="11.5" x2="13" y2="11.5" />
-        </svg>
-      );
-    case "waiting": // 举手（待交互）——与 macOS 菜单栏 hand.raised 同隐喻；lucide hand
-      return (
-        <svg {...common} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
-          <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" />
-          <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
-          <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-        </svg>
-      );
-    case "running": // 循环箭头（运行中）
-      return (
-        <svg {...common} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-          <path d="M21 3v5h-5" />
-          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-          <path d="M3 21v-5h5" />
-        </svg>
-      );
-    case "archived": // 归档盒
-      return (
-        <svg {...common} fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
-          <rect x="2.5" y="3" width="11" height="3" rx="0.5" />
-          <path d="M3.5 6v6.5h9V6" />
-          <line x1="6.5" y1="9" x2="9.5" y2="9" strokeLinecap="round" />
-        </svg>
-      );
-  }
-}
-
 export function PinIcon({ pinned }: { pinned: boolean }) {
   // lucide pin：未置顶描边、置顶时填充以示激活（尺寸与搜索/设置图标统一为 13）
   return (
@@ -187,6 +145,15 @@ export function CloseIcon() {
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+export function ChatIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+      <path d="M8 9h8M8 13h5" />
     </svg>
   );
 }

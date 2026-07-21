@@ -182,7 +182,7 @@ cargo build --release -p meowo-reporter
 bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"
 ```
 
-脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加，也不会破坏你已有的其它 hooks。若更换了 reporter 路径，旧条目需手动清理，或直接启动 app 由自动接线更新路径。
+脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加，也不会破坏你已有的其它 hooks。若更换了 reporter 路径（如 debug 换 release、换了安装目录），再跑一次脚本即可——它按可执行文件名认领旧条目并原地更新为新路径，不会留下重复条目。
 
 > 此脚本仅用于 Claude Code（写入 `~/.claude/settings.json`）。其余几家不经本脚本，由 app 启动时自动接线：codex / kimi / gemini 写各自 CLI 的原生 hook 配置（hook 命令带 `--provider <id>`）；opencode 没有 hook 机制，改为在 `~/.config/opencode/plugin/` 下生成一份桥接插件，由它把事件转发给 meowo-reporter。
 
