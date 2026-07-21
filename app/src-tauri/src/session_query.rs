@@ -485,10 +485,12 @@ mod tests {
         )
         .unwrap()
         .len();
-        println!("counts.total (未归档)  = {total}");
+        // total 含归档，列表 filter="all" 不含——对账要拿 total - archived 去比。
+        println!("counts.total (含归档)  = {total}");
         println!("counts.archived        = {archived}");
+        println!("未归档                 = {}", total - archived);
         println!("列表实际可见           = {visible}");
-        println!("差额（被判为空壳丢弃） = {}", total - visible as i64);
+        println!("差额（被判为空壳丢弃） = {}", total - archived - visible as i64);
     }
 
     #[test]
