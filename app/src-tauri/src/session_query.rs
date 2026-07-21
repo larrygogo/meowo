@@ -222,15 +222,14 @@ pub(crate) fn live_sessions_blocking(
     let store = super::open_store(db_path)?;
     let now = super::now_ms();
     let connectivity_filtered = matches!(filter, "waiting" | "running");
-    let batch_limit = if connectivity_filtered {
-        page.limit.max(100)
-    } else {
-        page.limit
-    };
+    // 每批都比 limit 多取：enrich 之后还要丢弃 ping / 空会话（以及 waiting|running 下
+    // 的未连接项），按 limit 取批会让一页严重缩水——侧栏没有「加载更多」，缩水多少就
+    // 少显示多少（曾出现 60 条里只剩 11 条，用户以为会话丢了）。
+    let batch_limit = page.limit.max(100);
     let mut cursor_ts = page.before_last_event_at;
     let mut cursor_id = page.before_id;
-    let mut ranked: Vec<(LiveSession, bool)> = Vec::new();
-    loop {
+    let mut items: Vec<LiveItem> = Vec::with_capacity(page.limit);
+    'fill: loop {
         let sessions = store
             .live_sessions(Some(filter), search, cursor_ts, cursor_id, batch_limit)
             .map_err(|e| e.to_string())?;
@@ -247,75 +246,76 @@ pub(crate) fn live_sessions_blocking(
                 session.session.last_event_at,
                 now,
             );
-            if !connectivity_filtered || connected {
-                ranked.push((session, connected));
-                if connectivity_filtered && ranked.len() >= page.limit {
-                    break;
+            if connectivity_filtered && !connected {
+                continue;
+            }
+            if let Some(item) = enrich(tx_cache, session, connected) {
+                items.push(item);
+                if items.len() >= page.limit {
+                    break 'fill;
                 }
             }
         }
-        if !connectivity_filtered
-            || ranked.len() >= page.limit
-            || raw_len < batch_limit
-            || next_cursor.is_none()
-        {
+        // 这一批没取满 batch_limit，说明后面没有数据了；补页到此为止。
+        if raw_len < batch_limit {
             break;
         }
-        let (timestamp, id) = next_cursor.expect("checked above");
+        let Some((timestamp, id)) = next_cursor else {
+            break;
+        };
         cursor_ts = Some(timestamp);
         cursor_id = Some(id);
     }
-    ranked.sort_by_key(|row| std::cmp::Reverse(row.1));
+    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。
+    items.sort_by_key(|item| std::cmp::Reverse(item.connected));
+    Ok(items)
+}
 
-    let mut items = Vec::with_capacity(ranked.len());
-    for (mut session, connected) in ranked {
-        let mut error_label = None;
-        let mut error_raw = None;
-        let mut preview = None;
-        let info = super::agent_transcript(&session.provider)
-            .filter(|spec| spec.supports_analysis())
-            .and_then(|spec| {
-                spec.resolve_transcript_path(
-                    None,
-                    session.cwd.as_deref(),
-                    &session.session.cc_session_id,
-                )
+/// 补上 transcript 里的标题/错误/预览。返回 `None` 表示这条不该出现在列表里：
+/// 健康探测（ping），或者一条既没标题、没 todo 又已经断开的空壳会话。
+fn enrich(
+    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
+    mut session: LiveSession,
+    connected: bool,
+) -> Option<LiveItem> {
+    let mut error_label = None;
+    let mut error_raw = None;
+    let mut preview = None;
+    let info = super::agent_transcript(&session.provider)
+        .filter(|spec| spec.supports_analysis())
+        .and_then(|spec| {
+            spec.resolve_transcript_path(None, session.cwd.as_deref(), &session.session.cc_session_id)
                 .and_then(|path| path.to_str().map(str::to_string))
                 .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
-            });
-        if let Some(info) = info {
-            if super::agent_resolves_transcript_title(&session.provider) {
-                if let Some(title) = info.title {
-                    session.task_title = title;
-                }
-            }
-            if let Some(error) = info.error {
-                error_label = Some(error.label);
-                error_raw = Some(error.raw);
-            }
-            preview = info.preview;
-        }
-        let title = session.task_title.trim();
-        if title.eq_ignore_ascii_case("ping") {
-            continue;
-        }
-        let unnamed = title.is_empty() || title == "(未命名会话)";
-        if !connected && unnamed && session.todos.is_empty() {
-            continue;
-        }
-        if connectivity_filtered && !connected {
-            continue;
-        }
-        items.push(LiveItem {
-            inner: session,
-            connected,
-            errored: error_label.is_some(),
-            error_label,
-            error_raw,
-            preview,
         });
+    if let Some(info) = info {
+        if super::agent_resolves_transcript_title(&session.provider) {
+            if let Some(title) = info.title {
+                session.task_title = title;
+            }
+        }
+        if let Some(error) = info.error {
+            error_label = Some(error.label);
+            error_raw = Some(error.raw);
+        }
+        preview = info.preview;
     }
-    Ok(items)
+    let title = session.task_title.trim();
+    if title.eq_ignore_ascii_case("ping") {
+        return None;
+    }
+    let unnamed = title.is_empty() || title == "(未命名会话)";
+    if !connected && unnamed && session.todos.is_empty() {
+        return None;
+    }
+    Some(LiveItem {
+        inner: session,
+        connected,
+        errored: error_label.is_some(),
+        error_label,
+        error_raw,
+        preview,
+    })
 }
 
 #[cfg(test)]
@@ -326,6 +326,59 @@ mod tests {
     fn unknown_filters_degrade_to_all() {
         assert_eq!(normalize_filter("unknown".into()), "all");
         assert_eq!(normalize_filter("waiting".into()), "waiting");
+    }
+
+    /// 侧栏没有「加载更多」，一次请求拿到多少就显示多少。空会话是在取完一批**之后**
+    /// 才被 `enrich` 丢掉的，所以补页循环必须继续往下取直到凑满 limit——否则一批
+    /// 空壳会话就能把整个列表压到个位数（真实案例：60 条里只剩 11 条）。
+    #[test]
+    fn empty_sessions_do_not_shrink_the_page() {
+        let dir = std::env::temp_dir().join(format!("meowo-page-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("page.db");
+        let _ = std::fs::remove_file(&db);
+        let old = super::super::now_ms() - RESUME_GRACE_MS * 10; // 早于宽限期 → 一定判为未连接
+
+        {
+            let store = meowo_store::Store::open(&db).unwrap();
+            let project = store.upsert_project_by_root("/tmp/proj", "proj", old).unwrap();
+            // 先塞 80 条空壳（无标题、无 todo、已结束），再塞 20 条有标题的。按时间倒序，
+            // 空壳排在前面，第一批 100 条里只有 20 条能通过过滤。
+            for i in 0..100 {
+                let cc = format!("cc-{i:03}");
+                let (sid, _) = store.start_session(project, &cc, old + i).unwrap();
+                if i >= 80 {
+                    store.set_session_title(sid, &format!("真实会话 {i}"), old + i).unwrap();
+                }
+                store.set_session_status(sid, meowo_store::SessionStatus::Ended, old + i).unwrap();
+            }
+            // 再补 60 条有标题的、更早的会话，用来验证补页确实翻到了第二批。
+            for i in 0..60 {
+                let cc = format!("older-{i:03}");
+                let (sid, _) = store.start_session(project, &cc, old - 1000 - i).unwrap();
+                store.set_session_title(sid, &format!("更早会话 {i}"), old - 1000 - i).unwrap();
+                store.set_session_status(sid, meowo_store::SessionStatus::Ended, old - 1000 - i).unwrap();
+            }
+        }
+
+        let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        let alive = std::collections::HashSet::new();
+        let items = live_sessions_blocking(
+            &db,
+            &cache,
+            &alive,
+            "all",
+            None,
+            PageReq { before_last_event_at: None, before_id: None, limit: 60 },
+        )
+        .unwrap();
+
+        assert_eq!(items.len(), 60, "补页应凑满一整页，而不是被空会话压缩");
+        assert!(
+            items.iter().all(|item| !item.inner.task_title.trim().is_empty()),
+            "空壳会话不该出现在结果里",
+        );
+        let _ = std::fs::remove_file(&db);
     }
 
     #[test]

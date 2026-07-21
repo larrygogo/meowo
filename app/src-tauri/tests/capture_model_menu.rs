@@ -32,6 +32,8 @@ fn boot_agent() -> AgentSession {
     let mut command = CommandBuilder::new(&exe);
     command.cwd(&cwd);
     command.env("TERM", "xterm-256color");
+    // 见 probe_enter.rs 同处注释：不隔离就会污染用户的生产 board.db。
+    command.env("MEOWO_DB", cwd.join("board.db"));
     let child = pair.slave.spawn_command(command).unwrap();
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
@@ -135,6 +137,8 @@ fn capture_model_menu() {
     let mut command = CommandBuilder::new(&exe);
     command.cwd(&cwd);
     command.env("TERM", "xterm-256color");
+    // 见 probe_enter.rs 同处注释：不隔离就会污染用户的生产 board.db。
+    command.env("MEOWO_DB", cwd.join("board.db"));
     let mut child = pair.slave.spawn_command(command).unwrap();
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
