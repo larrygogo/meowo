@@ -2,8 +2,14 @@
 import type { AgentModeDto } from "./AgentModeDto";
 import type { ChatItem } from "./ChatItem";
 import type { PendingReviewKind } from "./PendingReviewKind";
+import type { TodoDto } from "./TodoDto";
 
-export type ChatHistoryDto = { sessionId: number, title: string, status: string, provider: string, cwd: string | null, supported: boolean, items: Array<ChatItem>, offset: number, reset: boolean, pendingReview: PendingReviewKind | null, model: string | null, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, currentActivity: string | null, hasMore: boolean, 
+export type ChatHistoryDto = { sessionId: number, title: string, status: string, provider: string, cwd: string | null, supported: boolean, items: Array<ChatItem>, offset: number, reset: boolean, pendingReview: PendingReviewKind | null, model: string | null, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, currentActivity: string | null, 
+/**
+ * Agent 自己维护的待办清单（快照式待办工具经 hook 落库）。空 = 该会话没有清单，
+ * 或该 agent 的待办是增量事件而非快照（当前版本的 Claude Code 即如此）。
+ */
+todos: Array<TodoDto>, hasMore: boolean, 
 /**
  * hook 驱动的最近往来（UserPromptSubmit / Stop 落库），与 transcript 解析无关。
  * items 为空（transcript 未落盘/未定位）或该 agent 不提供结构化 transcript 时，

@@ -2,6 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 一条待办。`status` 用字面量而非枚举：来源是各家 agent 的自由文本状态，
+/// 归一化后仍可能出现本版本不认识的值，前端按未知处理即可，不该让整份反序列化失败。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../app/src/generated/contracts/"))]
+pub struct TodoDto {
+    pub content: String,
+    /// `pending` / `in_progress` / `completed`。
+    pub status: String,
+}
+
 /// 一次子任务委派的展示信息。真正的子任务时间线不在这里——它住在 provider 的侧车流里，
 /// 由 `get_subagent_transcript` 按 `ToolUse.id` 在用户展开时才读取。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +186,9 @@ pub struct ChatHistoryDto {
     #[cfg_attr(test, ts(type = "number | null"))]
     pub context_window: Option<i64>,
     pub current_activity: Option<String>,
+    /// Agent 自己维护的待办清单（快照式待办工具经 hook 落库）。空 = 该会话没有清单，
+    /// 或该 agent 的待办是增量事件而非快照（当前版本的 Claude Code 即如此）。
+    pub todos: Vec<TodoDto>,
     pub has_more: bool,
     /// hook 驱动的最近往来（UserPromptSubmit / Stop 落库），与 transcript 解析无关。
     /// items 为空（transcript 未落盘/未定位）或该 agent 不提供结构化 transcript 时，

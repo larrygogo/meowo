@@ -228,6 +228,12 @@ impl AgentPlugin for Claude {
     fn permission_hook_decides(&self) -> bool {
         true
     }
+    /// 旧版 Claude Code 的 `TodoWrite` 带整份快照。**当前版本已换成增量的
+    /// `TaskCreate`/`TaskUpdate`**（单条创建/改状态，不是快照），那条路要靠累积增量才能
+    /// 还原列表，不属于这个槽——留着 `TodoWrite` 只为兼容仍在用旧版的用户。
+    fn todo_snapshot_tools(&self) -> &'static [&'static str] {
+        &["TodoWrite"]
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }

@@ -105,6 +105,20 @@ fn load_chat_history(
         context_pct: context.used_pct,
         context_window: context.window_size,
         current_activity: header.current_activity.clone(),
+        // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
+        todos: store
+            .task_id_of_session_pub(session_id)
+            .and_then(|task_id| store.list_todos(task_id))
+            .map(|todos| {
+                todos
+                    .into_iter()
+                    .map(|todo| meowo_protocol::ipc::TodoDto {
+                        content: todo.content,
+                        status: todo.status.as_str().to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         has_more: false,
         last_user_text: header.last_user_text.clone(),
         last_ai_text: header.last_ai_text.clone(),

@@ -307,6 +307,10 @@ impl AgentPlugin for Kimi {
             &[]
         }
     }
+    /// kimi 的待办工具叫 `TodoList`，参数是整份快照 `{todos:[{title,status}]}`。
+    fn todo_snapshot_tools(&self) -> &'static [&'static str] {
+        &["TodoList"]
+    }
     /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
     /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
     fn model_menu_command(&self) -> Option<&'static str> {

@@ -57,8 +57,14 @@ pub fn dispatch(
         "PostToolUse" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid, now_ms)?;
+                // 待办工具名由插件声明：kimi 叫 `TodoList`，claude 旧版叫 `TodoWrite`。
+                // 此前这里写死 `"TodoWrite"`，两家现版本都对不上，待办表一直是空的。
+                let todo_tool = ev.tool_name.as_deref().is_some_and(|name| {
+                    meowo_agent::by_id(provider)
+                        .is_some_and(|plugin| plugin.todo_snapshot_tools().contains(&name))
+                });
                 match ev.tool_name.as_deref() {
-                    Some("TodoWrite") => {
+                    _ if todo_tool => {
                         store.sync_todos(sid, &ev.todo_items(), now_ms)?;
                     }
                     Some("Bash") => {

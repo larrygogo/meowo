@@ -81,7 +81,7 @@ describe("ChatWindow", () => {
     expect(screen.getByText("开始")).toBeTruthy();
     expect(screen.getByText("我来实现")).toBeTruthy();
     expect(screen.getByText("先检查现有协议")).toBeTruthy();
-    const activity = screen.getByText("执行了 1 个操作").closest("details");
+    const activity = screen.getByText("执行了 1 次工具调用").closest("details");
     expect(activity?.hasAttribute("open")).toBe(false);
     expect(screen.getAllByText("运行终端").length).toBeGreaterThan(0);
     expect(screen.queryByText("工具结果")).toBeNull();
@@ -89,7 +89,9 @@ describe("ChatWindow", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "发送消息给 Agent" }), { target: { value: "继续实现" } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "发送消息给 Agent" }), { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "继续实现" }));
-    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "\r" });
+    // Enter 在正文之后隔 SUBMIT_GAP_MS 才发（等 TUI 的斜杠补全渲染完，否则 Enter 会被
+    // 补全菜单吃掉、只换行不提交），故这里同样要 waitFor。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "\r" }));
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(screen.getByText("PTY 7")).toBeTruthy();
   });
@@ -141,7 +143,7 @@ describe("ChatWindow", () => {
     const summary = await screen.findByText("验证审批双轨");
     expect(screen.getByText("子任务")).toBeTruthy();
     expect(screen.getByText("general-purpose")).toBeTruthy();
-    expect(screen.queryByText("执行了 1 个操作")).toBeNull();
+    expect(screen.queryByText("执行了 1 次工具调用")).toBeNull();
     // 未展开前绝不请求：一个会话可能有几十个子任务。
     expect(invoke).not.toHaveBeenCalledWith("get_subagent_transcript", expect.anything());
 
@@ -153,7 +155,7 @@ describe("ChatWindow", () => {
     toggle(true);
     expect(await screen.findByText("子任务的结论")).toBeTruthy();
     // 嵌套时间线沿用同一套渲染：里面的工具调用照样分组。
-    expect(screen.getByText("执行了 1 个操作")).toBeTruthy();
+    expect(screen.getByText("执行了 1 次工具调用")).toBeTruthy();
 
     // 折叠再展开不该重复请求（结果缓存在组件里）。
     const calls = invoke.mock.calls.filter(([command]) => command === "get_subagent_transcript").length;
@@ -698,7 +700,8 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "YOLO" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "/yolo on" }));
-    expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "\r" });
+    // Enter 隔 SUBMIT_GAP_MS 才发（见 submitToTerminal），同样要 waitFor。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "\r" }));
     expect(await screen.findByText("权限模式: YOLO")).toBeTruthy();
   });
 

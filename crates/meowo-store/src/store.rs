@@ -466,15 +466,17 @@ impl Store {
         // 不生效），这次 TodoWrite 就被丢了（要等下一条事件才自愈）。BEGIN IMMEDIATE 开局即
         // 取写锁，冲突走 busy_timeout 等待；守卫语义（下方乱序挡写）不变。
         let tx = ImmediateTx::begin(&self.conn)?;
-        let (locked, task_updated_at, session_updated_at): (bool, i64, i64) = self.conn.query_row(
-            "SELECT t.column_locked, t.updated_at, s.last_event_at \
-             FROM tasks t JOIN sessions s ON s.id = t.session_id WHERE t.id = ?1",
+        let (locked, task_updated_at): (bool, i64) = self.conn.query_row(
+            "SELECT column_locked, updated_at FROM tasks WHERE id = ?1",
             [tid],
-            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?)),
         )?;
-        // Todo hook 可能乱序到达。必须在删除旧列表之前挡住迟到事件，否则即便下面的
-        // tasks UPDATE 有时间守卫，todos 本身仍会被旧快照整体覆盖。
-        if task_updated_at > now_ms || session_updated_at > now_ms {
+        // Todo hook 可能乱序到达。挡迟到事件只能跟**todo 自己的更新时刻**（task.updated_at，
+        // 每次 sync_todos 才推进）比，不能跟 session.last_event_at 比：后者是「会话最后活跃
+        // 时刻」，被 Stop、其它工具的 PostToolUse 等**任何**事件推进。一旦这些事件把 session
+        // 时钟顶到未来，随后到达的 TodoList——哪怕正是最新快照——就会因 now_ms 落后而被整份
+        // 丢弃，界面于是永远停在旧状态（实测：done 的快照进不来，库里一直是 pending）。
+        if task_updated_at > now_ms {
             return tx.commit();
         }
         self.conn

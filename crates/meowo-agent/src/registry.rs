@@ -190,6 +190,17 @@ pub trait AgentPlugin: Sync {
 
     // ═══ 能力槽 ═══
 
+    /// 哪些工具的调用参数里带着**整份待办快照**（`tool_input.todos`）。
+    ///
+    /// 工具名是各家自己的事，且会随版本改：kimi 叫 `TodoList`，claude 早期叫 `TodoWrite`
+    /// （现版本改成了增量的 `TaskCreate`/`TaskUpdate`，不是快照，故不在此列）。
+    /// 此前 dispatch 里写死 `"TodoWrite"`，两家都对不上——待办表一直是空的。
+    ///
+    /// 只声明**快照式**的工具：整份列表覆盖写，语义与 `sync_todos` 一致。
+    fn todo_snapshot_tools(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// 打开「选模型」交互菜单的斜杠命令。
     ///
     /// 与 [`Self::model_presets`] 互补而非重复：声明了预设的 agent（只有 claude，它的

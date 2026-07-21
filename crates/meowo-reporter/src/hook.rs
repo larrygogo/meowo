@@ -29,8 +29,11 @@ pub struct HookEvent {
     pub last_assistant_message: Option<String>,
 }
 
+/// 各家的字段名不同：claude 的 `TodoWrite` 用 `content`，kimi 的 `TodoList` 用 `title`。
+/// 两者都只是「这条待办的文字」，用 alias 收进同一个字段，不必为此分叉解析。
 #[derive(Debug, Deserialize)]
 struct RawTodo {
+    #[serde(alias = "title", alias = "subject", alias = "text")]
     content: String,
     #[serde(default)]
     status: String,

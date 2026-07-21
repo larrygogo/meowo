@@ -83,6 +83,9 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   const [snapshotReady, setSnapshotReady] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [starting, setStarting] = useState(false);
+  // 结束终端是异步的（杀进程 + 等 pty-exit 回传，Windows 上有几百毫秒延迟）。
+  // 没有这个状态，按钮点完毫无变化，用户以为没反应。
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");
   const [exitCode, setExitCode] = useState<number | null | undefined>(undefined);
   const externalRunning = isExternallyHeld(status);
@@ -112,7 +115,11 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+      // "JetBrains Mono" 由 styles.css 的 @font-face 打包提供（不依赖本机安装），管拉丁+符号；
+      // 它不含 CJK，中文逐字回退到各平台**真实存在**的好看字体：微软雅黑 / 苹方 / Noto。
+      // （曾误写 "Microsoft YaHei Mono"——该字体名不存在，导致中文掉到 Courier New 的宋体兜底，
+      //  正是「中文看着奇怪」的来源。）xterm 用等宽网格定位，中文按双宽对齐，非等宽也整齐。
+      fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
       fontSize: 12,
       lineHeight: 1.22,
       scrollback: 5000,
@@ -386,6 +393,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     const terminal = terminalRef.current;
     if (!terminal) return;
     setStarting(true);
+    setStopping(false);
     setError("");
     terminal.focus();
     try {
@@ -411,6 +419,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     }).catch(() => false);
     if (!yes) return;
     setStarting(true);
+    setStopping(false);
     setError("");
     terminal.focus();
     try {
@@ -421,6 +430,27 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       setError(String(e));
     } finally {
       setStarting(false);
+    }
+  };
+
+  const stop = async () => {
+    // 结束是破坏性操作（直接杀掉正在跑的 Agent 进程），与接管同款确认——
+    // 同样必须走 plugin-dialog 的 confirm，理由见 takeover。
+    const yes = await confirm(t.chat.terminalStopConfirm, {
+      title: t.chat.terminalStop,
+      kind: "warning",
+    }).catch(() => false);
+    if (!yes) return;
+    setError("");
+    // 立刻给反馈：按钮转「正在结束…」并禁用，直到进程退出（pty-exit 把 active 设 false，
+    // 整个操作区随之卸载）。成功后不清 stopping——active 变 false 时这块就消失了。
+    setStopping(true);
+    try {
+      await stopManagedTerminal(sessionId);
+    } catch (e) {
+      // 失败要能重试：终端看着还活着，得把状态退回可点。
+      setError(String(e));
+      setStopping(false);
     }
   };
 
@@ -443,18 +473,20 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       )}
       {active && (
         <div className="managed-terminal-actions">
-          <button type="button" onClick={() => {
-            const text = lastScreenRef.current || visibleTerminalText(attentionTailRef.current);
-            if (text) onAttentionRef.current?.({ id: "manual-terminal-screen", text });
-          }}>{t.chat.terminalGuiInteraction}</button>
           {/* 后端刻意让 attach 失败可见（不静默回退 GUI），前端吞掉就前功尽弃；
               结束失败同理——终端看起来还活着，用户会以为已经停了。 */}
           <button type="button" onClick={() => { setError(""); void openAttachedTerminal(sessionId).catch((e) => setError(String(e))); }}>{t.chat.terminalAttach}</button>
-          <button type="button" onClick={() => { setError(""); void stopManagedTerminal(sessionId).catch((e) => setError(String(e))); }}>{t.chat.terminalStop}</button>
+          <button type="button" disabled={stopping} onClick={() => void stop()}>
+            {stopping ? t.chat.terminalStopping : t.chat.terminalStop}
+          </button>
         </div>
       )}
       {active && error && (
-        <button type="button" className="managed-terminal-error" role="alert" onClick={() => setError("")}>{error}</button>
+        // 容器只挂 role="alert"，关闭动作收进内嵌按钮——同一元素身兼 button 与 alert 两个角色会冲突。
+        <div className="managed-terminal-error" role="alert">
+          <span>{error}</span>
+          <button type="button" aria-label={t.chat.close} onClick={() => setError("")}>×</button>
+        </div>
       )}
     </div>
   );
