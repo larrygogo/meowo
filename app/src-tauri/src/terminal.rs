@@ -1176,6 +1176,9 @@ pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
 }
 
 /// POSIX shell 参数逐项单引号包裹并拼接；单引号按 `'\''` 转义。
+/// POSIX shell 参数逐项单引号包裹并拼接；单引号按 `'\''` 转义。
+///
+/// 例：`["a", "b'c"] -> "'a' 'b'\\''c'"`。
 fn shell_join_for_posix(args: &[String]) -> String {
     args.iter()
         .map(|arg| format!("'{}'", arg.replace('\'', r"'\''")))
@@ -1183,6 +1186,13 @@ fn shell_join_for_posix(args: &[String]) -> String {
         .join(" ")
 }
 
+/// 组装给 Ghostty 执行的一条 `sh -lc` 命令。
+///
+/// - `env_prefix` 形如 `source '<tmp>' && rm -f '<tmp>' && `（见 `env_source_prefix_posix`）；
+/// - `cwd` 非空时先 `cd` 到目标目录；
+/// - `argv` 逐项按 POSIX 单引号规则转义并拼接。
+///
+/// `argv` 为空时返回 `None`，调用方应视为不可执行。
 fn ghostty_shell_command(cwd: Option<&str>, argv: &[String], env_prefix: &str) -> Option<String> {
     if argv.is_empty() {
         return None;
@@ -1196,6 +1206,10 @@ fn ghostty_shell_command(cwd: Option<&str>, argv: &[String], env_prefix: &str) -
 }
 
 #[cfg(target_os = "macos")]
+/// 用 Ghostty 新开终端并执行恢复命令。
+///
+/// 通过 `open -na Ghostty --args -e /bin/sh -lc <cmd>` 拉起，
+/// 返回值表示是否成功发起 spawn（并不等待命令执行完成）。
 fn resume_session_ghostty(cwd: Option<&str>, argv: &[String], env_prefix: &str) -> bool {
     let Some(cmd) = ghostty_shell_command(cwd, argv, env_prefix) else {
         return false;
