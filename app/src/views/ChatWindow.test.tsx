@@ -31,8 +31,19 @@ import { chatUi } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
 
 function respondWithHistory(history: unknown, approval: unknown = null) {
-  invoke.mockImplementation((command: string) => {
-    if (command === "get_chat_history") return Promise.resolve(history);
+  invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    // 增量语义必须模拟：组件把每次轮询返回的 items **追加**进 transcript，真实后端
+    // 只回 offset 之后的新事件。无视 offset 每轮都回整批，慢机上测试跨过 650ms
+    // 轮询间隔时同一批会被追加两遍——Windows CI 上「找到多个元素」的抖动即源于此。
+    if (command === "get_chat_history") {
+      const h = history as { offset?: number; items?: unknown[] };
+      const cursor = (args?.offset as number) ?? 0;
+      // cursor=0 是首读/全量重读，恒回整批；追平后的轮询才回空。
+      if (cursor > 0 && cursor >= (h.offset ?? 0)) {
+        return Promise.resolve({ ...h, items: [], hasMore: false });
+      }
+      return Promise.resolve(history);
+    }
     if (command === "get_pending_approval") return Promise.resolve(approval);
     if (command === "managed_terminal_binding") return Promise.resolve(null);
     if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 1, active: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
@@ -120,10 +131,11 @@ describe("ChatWindow", () => {
       ],
     });
     invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      // 同 respondWithHistory：只有 offset 落后时才回 items，重复整批会在慢机上被追加两遍。
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 9, title: "派活", status: "running", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 10, reset: false, pendingReview: null,
-        items: [
+        items: (args.offset as number) >= 10 ? [] : [
           { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
           {
             type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
