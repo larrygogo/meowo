@@ -80,11 +80,10 @@ describe("ChatWindow", () => {
     expect(invoke).toHaveBeenCalledWith("open_project_dir", { cwd: "C:/repo" });
     expect(screen.getByText("开始")).toBeTruthy();
     expect(screen.getByText("我来实现")).toBeTruthy();
-    // 思考过程默认折叠——它常有上百行，展开着会把结论和后续对话挤出屏幕。
-    // 内容仍在 DOM 里（details 只是不展开），标题栏给出行数供判断长度。
+    // 短思考直接摊开，不为几行内容加一次点击（长的才收成预览态，见下一个用例）。
     const reasoning = screen.getByText("先检查现有协议").closest("details");
-    expect(reasoning?.hasAttribute("open")).toBe(false);
-    expect(screen.getByText("1 行")).toBeTruthy();
+    expect(reasoning?.hasAttribute("open")).toBe(true);
+    expect(reasoning?.className).not.toContain("is-long");
     const activity = screen.getByText("执行了 1 次工具调用").closest("details");
     expect(activity?.hasAttribute("open")).toBe(false);
     expect(screen.getAllByText("运行终端").length).toBeGreaterThan(0);
@@ -283,6 +282,27 @@ describe("ChatWindow", () => {
     fireEvent.click(button);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 19, data: "\x1b" }));
     expect(sentModel()).toBe(1);
+  });
+
+  it("长思考收成预览态：内容仍在 DOM 里，标题给出行数", async () => {
+    window.history.replaceState({}, "", "/?sessionId=22");
+    const long = Array.from({ length: 30 }, (_, i) => `推理第 ${i + 1} 步`).join("\n");
+    respondWithHistory({
+      sessionId: 22, title: "长推理", status: "running", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 0, reset: false, pendingReview: null,
+      items: [{ type: "reasoning", id: "r1", timestamp: null, text: long }],
+    });
+    render(<ChatWindow />);
+
+    // 预览态：details 不展开，但内容**不是**被藏起来——CSS 会显示开头几行并渐隐，
+    // 所以节点必须仍在 DOM 里（也让浏览器内搜索、屏幕阅读器仍能命中）。
+    const first = await screen.findByText(/推理第 1 步/);
+    const details = first.closest("details");
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(details?.className).toContain("is-long");
+    expect(screen.getByText("30 行")).toBeTruthy();
+    // 末尾那步也在 DOM 里，只是被 max-height 裁掉了视觉。
+    expect(screen.getByText(/推理第 30 步/)).toBeTruthy();
   });
 
   it("shows the provider capability fallback", async () => {

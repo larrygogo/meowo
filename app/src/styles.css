@@ -3393,7 +3393,17 @@ select.ns-input {
 .chat-reasoning .chat-md { margin-top: var(--sp-7); white-space: normal; user-select: text; }
 /* 展开后也限高内滚：思考过程可以有上百行，全铺开会把结论顶出屏幕，收起时还得一路往回滚。 */
 .chat-reasoning[open] .chat-md { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; padding-right: var(--sp-6); }
-/* 行数徽标：不展开也能判断这段有多长。 */
+/* 长推理的收起态是**预览**而非隐藏：显示开头几行并向下渐隐，一眼能看到 agent 在想什么。
+   details 收起时 UA 默认把非 summary 的内容 display:none，这里显式覆盖回来。
+   高度与 Message.tsx 的 REASONING_PREVIEW_LINES 对应（行高 1.65，约 6 行）。 */
+.chat-reasoning.is-long:not([open]) .chat-md {
+  display: block;
+  max-height: 9.9em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 60%, transparent 100%);
+}
+/* 行数徽标：预览态下告诉用户展开还能看到多少。 */
 .chat-reasoning-size { margin-left: var(--sp-6); color: var(--cc-text-faint); font-weight: 400; }
 
 /* 侧栏底部的设置入口：与列表分隔，列表滚动时它固定在底部。 */
