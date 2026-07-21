@@ -16,7 +16,7 @@ import {
   isLoggedIn,
 } from "../api";
 import { agentAssets, tintStyle } from "../providers";
-import { Dropdown } from "../Dropdown";
+import { Dropdown } from "./menu";
 import { useAgentListRefresh } from "../useAgents";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useLoginOperations } from "../hooks/useLoginOperations";
@@ -270,6 +270,8 @@ export function NewSessionPanel(): ReactElement {
                 value={cwd}
                 placeholder={t.newSession.dirPlaceholder}
                 onChange={(e) => setCwd(e.target.value)}
+                // Enter 直接启动（launch 内部对空目录/busy 有守卫），与账号页 API Key 输入框同规。
+                onKeyDown={(e) => { if (e.key === "Enter") void launch(); }}
               />
               <button type="button" className="ns-browse" onClick={pickDir}>
                 {t.newSession.browse}
@@ -297,7 +299,12 @@ export function NewSessionPanel(): ReactElement {
 
         <div className="ns-field">
           <span className="ns-label">{t.newSession.agent}</span>
-          {avail && avail.length === 0 ? (
+          {avail === null ? (
+            // listAgents() 尚未 resolve：给「检测中」占位，而不是一块猜不出含义的空白。
+            <div className="ns-agents" data-testid="ns-agents-detecting">
+              {t.newSession.detectingAgents}
+            </div>
+          ) : avail.length === 0 ? (
             <div className="ns-warn" data-testid="ns-no-agents">
               {t.newSession.noAgents}
             </div>
@@ -333,6 +340,7 @@ export function NewSessionPanel(): ReactElement {
                 <div key={option.id} className="ns-option" data-testid={"ns-option-" + option.id}>
                   <span className="ns-option-label">{t.newSession.launchOption[option.id] ?? option.id}</span>
                   <Dropdown
+                    align="left"
                     value={opts[option.id] ?? option.default}
                     options={option.choices.map((choice) => ({
                       value: choice.id,
@@ -376,7 +384,7 @@ export function NewSessionPanel(): ReactElement {
         </div>
 
         {error && (
-          <div className="ns-error" data-testid="ns-error">
+          <div className="ns-error" data-testid="ns-error" role="alert">
             {error}
           </div>
         )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { LiveSession } from "../api";
+import { useT } from "../i18n";
 
 type Item = LiveSession & { connected: boolean };
 type Edge = "left" | "right" | "top";
@@ -38,6 +39,7 @@ export function CollapsedStrip({
   onExpand: () => void;
   onMeasure?: (heightPx: number) => void;
 }) {
+  const t = useT();
   const items = data.filter((l) => !l.archived && l.connected);
   const dotsRef = useRef<HTMLDivElement>(null);
   const horizontal = edge === "top"; // 顶部为横条，沿宽度排列
@@ -52,7 +54,22 @@ export function CollapsedStrip({
   }, [items.length, onMeasure, horizontal]);
 
   return (
-    <div className={"cstrip cstrip-" + edge} onMouseEnter={onExpand}>
+    // 键盘可达：可聚焦，聚焦/Enter/Space 与悬停一样展开。用 group 而非 button——
+    // button 会把内部状态点的 img 语义压掉，状态点的可访问文本就丢了。
+    <div
+      className={"cstrip cstrip-" + edge}
+      role="group"
+      tabIndex={0}
+      aria-label={t.sticker.expandBoard}
+      onMouseEnter={onExpand}
+      onFocus={onExpand}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onExpand();
+        }
+      }}
+    >
       <div className="cstrip-dots" ref={dotsRef}>
         {items.length === 0 ? (
           <span className="cstrip-empty">
@@ -67,7 +84,21 @@ export function CollapsedStrip({
               : l.session.status === "waiting"
               ? "cstrip-waiting"
               : "cstrip-on";
-            return <span key={l.session.id} className={"cstrip-dot " + cls} />;
+            const status = l.errored
+              ? t.sticker.sessionError
+              : l.session.status === "running"
+              ? t.badge.running
+              : l.session.status === "waiting"
+              ? t.badge.waiting
+              : t.sticker.online;
+            return (
+              <span
+                key={l.session.id}
+                className={"cstrip-dot " + cls}
+                role="img"
+                aria-label={`${l.task_title || t.sticker.waitingFirstInput} · ${status}`}
+              />
+            );
           })
         )}
       </div>

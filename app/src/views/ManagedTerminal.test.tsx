@@ -229,6 +229,36 @@ describe("ManagedTerminal", () => {
     expect(invoke.mock.calls.some(([command]) => command === "takeover_managed_terminal")).toBe(false);
   });
 
+  it("结束终端需 confirm 确认后才调用 stop_managed_terminal", async () => {
+    // 回归：结束终端是破坏性操作（直接杀 Agent 进程），此前一点就杀、没有任何确认。
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ ...noPty, active: true, data: btoa("ready"), endOffset: 5 });
+      }
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    const button = await screen.findByRole("button", { name: "结束终端" });
+    button.click();
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stop_managed_terminal", { sessionId: 163 }));
+  });
+
+  it("结束终端的 confirm 被取消时不杀进程", async () => {
+    dialog.confirm.mockResolvedValue(false);
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ ...noPty, active: true, data: btoa("ready"), endOffset: 5 });
+      }
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    const button = await screen.findByRole("button", { name: "结束终端" });
+    button.click();
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(invoke.mock.calls.some(([command]) => command === "stop_managed_terminal")).toBe(false);
+  });
+
   it("realigns the output offset when the PTY is restarted in place", async () => {
     // 结束终端 → 再接管：新 PTY 的 output_end 从 0 重新计数。若沿用上一个进程的
     // nextOffset（这里是 7），新输出会被判成「已写过」而整段丢弃，终端定格在旧内容上。

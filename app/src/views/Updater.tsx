@@ -105,7 +105,14 @@ export function Updater() {
               <button className="sbtn primary" onClick={() => void download()}>{t.updater.download}</button>
             ) : status === "downloading" ? (
               <div className="up-dl">
-                <div className={"up-prog" + (progress == null ? " up-prog-indet" : "")}>
+                {/* progress 为 null 时总大小未知：indeterminate 进度条按 ARIA 规范不给 aria-valuenow。 */}
+                <div
+                  className={"up-prog" + (progress == null ? " up-prog-indet" : "")}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progress == null ? undefined : Math.round(progress)}
+                >
                   <div className="up-prog-fill" style={{ width: `${progress ?? 100}%` }} />
                 </div>
                 <div className="up-status-dl">

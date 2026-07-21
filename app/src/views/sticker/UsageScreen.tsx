@@ -19,7 +19,7 @@ function LaneRow({ lane, label }: { lane: UsageLane; label: string }) {
     return (
       <div className="stk-urow">
         <span className="stk-ulabel">{label}</span>
-        <span className="stk-utrack">
+        <span className="stk-utrack" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
           <i className={"stk-ufill " + usageSev(pct)} style={{ width: `${pct}%` }} />
         </span>
         <span className="stk-uval">{Math.round(pct)}%</span>

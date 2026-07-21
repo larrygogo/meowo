@@ -13,9 +13,12 @@ function emptyCopy(tab: Tab, t: Dict): { title: string; hint: string | null } {
   }
 }
 
-export function EmptyState({ tab, onNew }: { tab: Tab; onNew?: () => void }) {
+export function EmptyState({ tab, onNew, search }: { tab: Tab; onNew?: () => void; search?: boolean }) {
   const t = useT();
-  const { title, hint } = emptyCopy(tab, t);
+  // search=true：搜索有词但 0 结果的独立文案；调用方此时不传 onNew（无「新建会话」CTA）。
+  const { title, hint } = search
+    ? { title: t.empty.searchTitle, hint: t.empty.searchHint }
+    : emptyCopy(tab, t);
   return (
     <div className="stk-empty">
       <span className="stk-empty-icon"><EmptyIcon tab={tab} /></span>

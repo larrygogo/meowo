@@ -30,7 +30,7 @@ export default function Footer() {
           <div className="footer-cols">
             {d.footer.cols.map((col) => (
               <div className="footer-col" key={col.title}>
-                <h5>{col.title}</h5>
+                <h2>{col.title}</h2>
                 {col.links.map((l) =>
                   l.href ? (
                     <a key={l.label} href={EXTERNAL[l.href]} target="_blank" rel="noopener noreferrer">

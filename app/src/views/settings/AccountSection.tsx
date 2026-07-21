@@ -33,7 +33,8 @@ import {
 import { agentAssets } from "../../providers";
 import { useT, repairFailMessage } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
-import { Switch, ActionMenu, Dropdown } from "./widgets";
+import { Switch } from "./widgets";
+import { ActionMenu, Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
@@ -117,7 +118,9 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
           <span className="usage-label">{label}</span>
           <span className="usage-pct">{pct.toFixed(0)}%</span>
         </div>
-        <div className="usage-track"><i style={{ width: `${pct}%` }} /></div>
+        <div className="usage-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+          <i style={{ width: `${pct}%` }} />
+        </div>
         {lane.resets_at && <div className="usage-reset">{fmtResetIn(lane.resets_at, t)}</div>}
       </div>
     );
@@ -636,7 +639,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
           {/* 贴纸配额显示开关 */}
           <div className="usage-sticker-row">
             <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
-            <Switch checked={inQuota} onChange={onToggleQuota} />
+            <Switch checked={inQuota} onChange={onToggleQuota} label={t.settings.showQuotaOnSticker} />
           </div>
         </div>
       )}

@@ -8,6 +8,10 @@ import { useT } from "../i18n";
 /** 侧栏一次拉的会话数上限。列表只为切换服务，不做分页——超出的老会话去看板找。 */
 const PAGE_LIMIT = 60;
 
+/** board-changed 刷新的冷却窗口（ms）：该事件会三连发（命令写库通知 + db-watcher 回声 +
+ *  liveness 轮询），与 App.tsx 看板刷新的 leading+trailing 节流同参数、同行为。 */
+const REFRESH_THROTTLE_MS = 400;
+
 /** cwd 末段目录名作展示，完整路径进 title。与贴纸 stk-repo 同款。 */
 function folderName(cwd: string | null): string {
   if (!cwd) return "";
@@ -26,19 +30,36 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
   onCollapse: () => void;
 }) {
   const t = useT();
-  const [sessions, setSessions] = useState<LiveSession[]>([]);
+  // null = 首次加载尚未完成：与「真空」区分，避免首帧误闪「暂无会话」。
+  const [sessions, setSessions] = useState<LiveSession[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const load = () => getLiveSessionsPage("all", null, null, PAGE_LIMIT)
       .then((list) => { if (!cancelled) setSessions(Array.isArray(list) ? list : []); })
-      .catch(() => {});
+      // 首载失败降级为空列表（显示「暂无会话」），而不是永远停在加载占位。
+      .catch(() => { if (!cancelled) setSessions((s) => s ?? []); });
     void load();
+    // board-changed 会三连发（见 REFRESH_THROTTLE_MS）：leading + trailing 节流，
+    // 首个事件立即刷新，冷却窗口内的后续事件合并成窗口末尾的一次刷新。
+    let timer: number | undefined;
+    let lastRun = 0;
+    const throttledLoad = () => {
+      if (timer !== undefined) return; // trailing 已排队，本次并入
+      const fire = () => {
+        timer = undefined;
+        lastRun = Date.now();
+        void load();
+      };
+      const since = Date.now() - lastRun;
+      if (since >= REFRESH_THROTTLE_MS) fire();
+      else timer = window.setTimeout(fire, REFRESH_THROTTLE_MS - since);
+    };
     let un: (() => void) | undefined;
-    listen("board-changed", () => void load()).then((fn) => {
+    listen("board-changed", throttledLoad).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
-    return () => { cancelled = true; un?.(); };
+    return () => { cancelled = true; un?.(); if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   return (
@@ -72,8 +93,9 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
         </div>
       </div>
       <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTitle}>
-        {sessions.length === 0 && <div className="chat-sidebar-empty">{t.chat.sidebarEmpty}</div>}
-        {sessions.map((item) => {
+        {sessions === null && <div className="chat-sidebar-empty">{t.chat.sidebarLoading}</div>}
+        {sessions !== null && sessions.length === 0 && <div className="chat-sidebar-empty">{t.chat.sidebarEmpty}</div>}
+        {(sessions ?? []).map((item) => {
           const Icon = agentAssets(item.provider).Icon;
           const dir = folderName(item.cwd);
           return (
@@ -89,6 +111,7 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
               <span
                 className={"chat-sidebar-agent-icon" + (item.connected ? "" : " is-off")}
                 style={tintStyle(item.provider, item.connected)}
+                role="img"
                 aria-label={item.provider}
               >
                 <Icon />

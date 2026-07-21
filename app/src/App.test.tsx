@@ -109,6 +109,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(() => Promise.resolv
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(() => Promise.resolve()) }));
 
 import { App } from "./App";
+import { zh } from "./i18n/zh";
 
 beforeEach(() => {
   getLiveSessionsCounts.mockReset();
@@ -127,6 +128,46 @@ describe("App", () => {
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
     // search 初值为空字符串（App 自持有的真实搜索状态，非固定 null）。
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
+  });
+
+  // 回归：冷启动首页未落地前不能闪「还没有会话」假空态，必须显示加载占位。
+  it("初始加载中显示加载占位，落地后再切到正常空态", async () => {
+    let resolvePage: (v: unknown[]) => void = () => {};
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]); // 折叠条查询不挂起
+      return new Promise((r) => { resolvePage = r as (v: unknown[]) => void; });
+    });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(zh.sticker.loading)).toBeTruthy());
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+    resolvePage([]);
+    await waitFor(() => expect(screen.getByText(zh.empty.allTitle)).toBeTruthy());
+    expect(screen.queryByText(zh.sticker.loading)).toBeNull();
+  });
+
+  // 回归：首页加载失败曾只 console.error，用户看到「还没有会话」。现在必须显示
+  // 「加载失败 + 重试」，且点重试会重新发起首页加载，成功后回到正常空态。
+  it("初始加载失败显示错误与重试，重试成功后恢复正常", async () => {
+    let failFirst = true;
+    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
+      if (search === null) return Promise.resolve([]);
+      if (failFirst) {
+        failFirst = false;
+        return Promise.reject(new Error("boom"));
+      }
+      return Promise.resolve([]);
+    });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(zh.sticker.loadFailed)).toBeTruthy());
+    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
+
+    const callsBefore = getLiveSessionsPage.mock.calls.filter(([, s]) => s === "").length;
+    fireEvent.click(screen.getByTestId("empty-retry-cta"));
+    await waitFor(() =>
+      expect(getLiveSessionsPage.mock.calls.filter(([, s]) => s === "").length).toBeGreaterThan(callsBefore)
+    );
+    await waitFor(() => expect(screen.getByText(zh.empty.allTitle)).toBeTruthy());
+    expect(screen.queryByText(zh.sticker.loadFailed)).toBeNull();
   });
 
   it("收到 board-changed 后重新拉取 counts 和第 0 页", async () => {

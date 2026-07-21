@@ -9,7 +9,8 @@ import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
-import { Switch, Dropdown, Segmented, SwatchPicker, FontSizeSlider } from "./settings/widgets";
+import { Switch, Segmented, SwatchPicker, FontSizeSlider } from "./settings/widgets";
+import { Dropdown } from "./menu";
 import { AccountSection } from "./settings/AccountSection";
 import { NetworkSection } from "./settings/NetworkSection";
 
@@ -155,28 +156,28 @@ function GeneralSection() {
             <div className="row-label">{t.settings.autostart}</div>
             <div className="row-desc">{t.settings.autostartDesc}</div>
           </div>
-          <Switch checked={autostart} onChange={toggleAutostart} disabled={autostartDisabled} />
+          <Switch checked={autostart} onChange={toggleAutostart} disabled={autostartDisabled} label={t.settings.autostart} />
         </div>
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.notify}</div>
             <div className="row-desc">{t.settings.notifyDesc}</div>
           </div>
-          <Switch checked={notifyOn} onChange={toggleNotify} />
+          <Switch checked={notifyOn} onChange={toggleNotify} label={t.settings.notify} />
         </div>
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.autoUpdate}</div>
             <div className="row-desc">{t.settings.autoUpdateDesc}</div>
           </div>
-          <Switch checked={autoUpdateOn} onChange={toggleAutoUpdate} />
+          <Switch checked={autoUpdateOn} onChange={toggleAutoUpdate} label={t.settings.autoUpdate} />
         </div>
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.preview}</div>
             <div className="row-desc">{t.settings.previewDesc}</div>
           </div>
-          <Switch checked={previewOn} onChange={togglePreview} />
+          <Switch checked={previewOn} onChange={togglePreview} label={t.settings.preview} />
         </div>
         <div className="row">
           <div className="row-text">
@@ -294,7 +295,7 @@ function AppearanceSection() {
   const opacity = settings?.opacity ?? 94;
   const uiScale = settings?.ui_scale ?? 100;
   const stickerStyle = settings?.sticker_style ?? "elevated";
-  const stickerColor = settings?.sticker_color ?? "classic";
+  const stickerColor = settings?.sticker_color ?? "neutral";
   // 钳到 [0,100]：手改 settings.json 为越界值时，避免算出负/超界的 linear-gradient 填充宽度。
   const fill = Math.max(0, Math.min(100, ((opacity - OPACITY_MIN) / (OPACITY_MAX - OPACITY_MIN)) * 100));
   return (
@@ -427,9 +428,23 @@ function AboutSection({
       <p className="about-blurb">{t.about.blurb}</p>
 
       <div className="about-foot">
-        <a onClick={() => openExt(REPO_URL + "/issues")}>{t.about.feedback}</a>
+        {/* 样式原本挂在 `.about-foot a` 元素选择器上（styles.css 本轮不可改），
+            这里用内联 style 复刻外观（accent 色 + 手型 + 去掉按钮默认样式）。 */}
+        <button
+          type="button"
+          style={{ appearance: "none", background: "none", border: "none", padding: 0, font: "inherit", color: "var(--cc-accent-text)", cursor: "pointer" }}
+          onClick={() => openExt(REPO_URL + "/issues")}
+        >
+          {t.about.feedback}
+        </button>
         <span className="dot">·</span>
-        <a onClick={() => openExt(REPO_URL + "/releases")}>{t.about.changelog}</a>
+        <button
+          type="button"
+          style={{ appearance: "none", background: "none", border: "none", padding: 0, font: "inherit", color: "var(--cc-accent-text)", cursor: "pointer" }}
+          onClick={() => openExt(REPO_URL + "/releases")}
+        >
+          {t.about.changelog}
+        </button>
         <div className="copy">MIT License · © 2026 larrygogo</div>
       </div>
     </>
@@ -448,23 +463,23 @@ export function About() {
       <aside className="side">
         <div className="side-top" data-tauri-drag-region />
         <nav className="side-nav">
-          <button className={"nav-item" + (sec === "general" ? " on" : "")} onClick={() => setSec("general")}>
+          <button className={"nav-item" + (sec === "general" ? " on" : "")} aria-current={sec === "general" ? "page" : undefined} onClick={() => setSec("general")}>
             <IconGear />
             <span>{t.settings.nav.general}</span>
           </button>
-          <button className={"nav-item" + (sec === "appearance" ? " on" : "")} onClick={() => setSec("appearance")}>
+          <button className={"nav-item" + (sec === "appearance" ? " on" : "")} aria-current={sec === "appearance" ? "page" : undefined} onClick={() => setSec("appearance")}>
             <IconAppearance />
             <span>{t.settings.nav.appearance}</span>
           </button>
-          <button className={"nav-item" + (sec === "network" ? " on" : "")} onClick={() => setSec("network")}>
+          <button className={"nav-item" + (sec === "network" ? " on" : "")} aria-current={sec === "network" ? "page" : undefined} onClick={() => setSec("network")}>
             <IconGlobe />
             <span>{t.settings.nav.network}</span>
           </button>
-          <button className={"nav-item" + (sec === "account" ? " on" : "")} onClick={() => setSec("account")}>
+          <button className={"nav-item" + (sec === "account" ? " on" : "")} aria-current={sec === "account" ? "page" : undefined} onClick={() => setSec("account")}>
             <IconAgent />
             <span>{t.settings.nav.account}</span>
           </button>
-          <button className={"nav-item" + (sec === "about" ? " on" : "")} onClick={() => setSec("about")}>
+          <button className={"nav-item" + (sec === "about" ? " on" : "")} aria-current={sec === "about" ? "page" : undefined} onClick={() => setSec("about")}>
             <IconInfo />
             <span>{t.settings.nav.about}</span>
             {(status === "available" || status === "downloading" || status === "ready") && (

@@ -23,7 +23,7 @@ export const STICKER_COLOR_KEYS = Object.keys(STICKER_COLORS);
 const DEFAULT_STICKER_COLOR = "neutral";
 const DEFAULT_STICKER_STYLE: StickerStyle = "flat";
 
-/** 把（颜色预设 key × 生效主题）解析为贴纸底色 RGB；未知 key 回退经典原色。纯函数，便于单测。 */
+/** 把（颜色预设 key × 生效主题）解析为贴纸底色 RGB；未知 key 回退默认（无色）。纯函数，便于单测。 */
 export function stickerBgRgb(color: string, theme: "dark" | "light"): string {
   const p = STICKER_COLORS[color] ?? STICKER_COLORS[DEFAULT_STICKER_COLOR];
   return theme === "light" ? p.light : p.dark;

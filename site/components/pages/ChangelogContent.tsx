@@ -42,7 +42,7 @@ export default async function ChangelogContent({ lang }: { lang: Lang }) {
           <h1 className="h1">{t.title}</h1>
           <p className="lead">
             {t.leadPre}
-            <a href={RELEASES} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent-ink)", textDecoration: "underline" }}>
+            <a href={RELEASES} target="_blank" rel="noopener noreferrer" className="link-inline">
               {t.releases}
             </a>
             {t.leadPost}

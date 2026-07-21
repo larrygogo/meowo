@@ -79,14 +79,6 @@ export function BoardIcon(props: P) {
     </svg>
   );
 }
-export function BellIcon(props: P) {
-  return (
-    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <path d="M18 8a6 6 0 10-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
-      <path d="M10.5 21a1.7 1.7 0 003 0" />
-    </svg>
-  );
-}
 export function TerminalIcon(props: P) {
   return (
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
@@ -117,14 +109,6 @@ export function PlugIcon(props: P) {
     </svg>
   );
 }
-export function NetworkIcon(props: P) {
-  return (
-    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9S14.5 18.5 12 21M12 3C9.5 5.5 8.2 8.5 8.2 12S9.5 18.5 12 21" />
-    </svg>
-  );
-}
 export function ShieldIcon(props: P) {
   return (
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
@@ -150,23 +134,13 @@ export function UsersIcon(props: P) {
     </svg>
   );
 }
-export function PaletteIcon(props: P) {
+export function TodoIcon(props: P) {
   return (
     <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.52-.2-.99-.53-1.34-.32-.35-.52-.82-.52-1.33 0-1.1.9-2 2-2h2.35A4.35 4.35 0 0 0 22 11c0-4.97-4.48-9-10-9z" />
-      <circle cx="7.5" cy="11.5" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="9.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="14.5" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-export function TrafficIcon(props: P) {
-  return (
-    <svg viewBox="0 0 24 24" {...line} aria-hidden="true" {...props}>
-      <rect x="8" y="2" width="8" height="20" rx="4" />
-      <circle cx="12" cy="7" r="1.2" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="17" r="1.2" fill="currentColor" stroke="none" />
+      <path d="M3.5 5.5l1.4 1.4 2.6-2.8" />
+      <path d="M3.5 12.5l1.4 1.4 2.6-2.8" />
+      <path d="M3.5 19.5l1.4 1.4 2.6-2.8" />
+      <path d="M11 6h9M11 13h9M11 20h9" />
     </svg>
   );
 }

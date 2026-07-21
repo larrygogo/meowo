@@ -37,7 +37,6 @@ import {
   PinIcon,
   PlusIcon,
   SearchIcon,
-  TabIcon,
   XIcon,
 } from "./sticker/icons";
 import { RunBadge } from "./sticker/RunBadge";
@@ -77,6 +76,9 @@ export function Sticker({
   onSearchChange,
   onArchiveOptimistic,
   onArchiveFailed,
+  initialLoading,
+  loadError,
+  onRetry,
 }: {
   filter: StickerFilter;
   onFilterChange?: (f: StickerFilter) => void;
@@ -93,6 +95,12 @@ export function Sticker({
   onArchiveOptimistic?: (sessionId: number) => void;
   /** 归档请求失败：父层需回滚上面的乐观更新。 */
   onArchiveFailed?: () => void;
+  /** 冷启动首次加载中：true 时显示加载占位而非假空态。 */
+  initialLoading?: boolean;
+  /** 首页加载失败：显示「加载失败 + 重试」而非「还没有会话」。 */
+  loadError?: boolean;
+  /** 重试回调：重新发起首页加载。 */
+  onRetry?: () => void;
 }) {
   // hasMore 由父组件传入；未传入时退化为 data.length < total。
   // agent 展示名来自后端下发的名单；未知 id 回退成 id 本身。
@@ -239,9 +247,12 @@ export function Sticker({
     setEditingId(l.session.id);
   };
   const submitRename = (l: Item) => {
-    const t = draft.trim();
-    if (t && t !== l.task_title) {
-      invoke("rename_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, title: t, provider: l.provider }).catch(() => {});
+    // 局部变量原名 t 与 i18n 字典 t 冲突，改名 title 以便失败提示取字典文案。
+    const title = draft.trim();
+    if (title && title !== l.task_title) {
+      // 失败不能静默：走 focusNotice 提示通道（detail 直接展示文案，4s 自动消失）。
+      invoke("rename_session", { cwd: l.cwd, sessionId: l.session.cc_session_id, title, provider: l.provider })
+        .catch(() => setFocusNotice({ kind: "failed", item: l, detail: t.sticker.renameFailed }));
     }
     setEditingId(null);
   };
@@ -274,7 +285,9 @@ export function Sticker({
   };
   const submitNote = (l: Item) => {
     if (noteDraft !== (l.note ?? "")) {
-      invoke("set_session_note", { sessionId: l.session.cc_session_id, note: noteDraft }).catch(() => {});
+      // 失败不能静默：与重命名共用 focusNotice 提示通道。
+      invoke("set_session_note", { sessionId: l.session.cc_session_id, note: noteDraft })
+        .catch(() => setFocusNotice({ kind: "failed", item: l, detail: t.sticker.noteFailed }));
     }
     setNotingId(null);
   };
@@ -533,7 +546,7 @@ export function Sticker({
     <div className="sticker">
       {!isMacPanel() && <div className="drag" data-tauri-drag-region />}
       <div className="tabs">
-        <div className="tabseg">
+        <div className="tabseg" role="tablist">
           {/* 选中态立体滑块：切换时平滑滑到目标 tab(translateX 动画) */}
           <span
             className="tabseg-slider"
@@ -542,15 +555,17 @@ export function Sticker({
           {TAB_KEYS.map((k) => {
             const n = counts[k];
             return (
-              <span
+              <button
                 key={k}
+                type="button"
+                role="tab"
+                aria-selected={tab === k}
                 className={"stab " + (tab === k ? "stab-on" : "")}
                 onClick={() => pick(k)}
               >
-                <TabIcon tab={k} />
                 {t.tabs[k]}
                 {k !== "all" && k !== "archived" && <span className="stab-n">{n > 99 ? "99+" : n}</span>}
-              </span>
+              </button>
             );
           })}
         </div>
@@ -561,8 +576,22 @@ export function Sticker({
         onScroll={syncSb}
       >
         {shown.length === 0 ? (
-          isLoadingMore ? (
+          initialLoading ? (
+            // 冷启动首次加载：先给加载占位，不闪「还没有会话」假空态。
             <div className="stk-loading">{t.sticker.loading}</div>
+          ) : loadError ? (
+            // 首页加载失败：如实告知并可重试，不伪装成空看板。
+            <div className="stk-empty">
+              <div className="stk-empty-title">{t.sticker.loadFailed}</div>
+              <button type="button" className="stk-empty-cta" data-testid="empty-retry-cta" onClick={() => onRetry?.()}>
+                {t.sticker.retry}
+              </button>
+            </div>
+          ) : isLoadingMore ? (
+            <div className="stk-loading">{t.sticker.loading}</div>
+          ) : searchOpen && q.trim() ? (
+            // 搜索有词但 0 结果：独立空态，不带「新建会话」CTA，避免误导。
+            <EmptyState tab={tab} search />
           ) : (
             <EmptyState tab={tab} onNew={() => invoke("open_new_session_window").catch(() => {})} />
           )
@@ -614,6 +643,8 @@ export function Sticker({
                 >
                   <div
                     className={"stk-card" + (isStarred(l) ? " is-star" : "")}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       // 编辑态(重命名/便签)下，点击卡片仅用于关闭编辑器（失焦），绝不导航开终端。
                       // 注：编辑输入框已 stopPropagation，这里只会被「点击卡片空白处」触发。
@@ -623,6 +654,20 @@ export function Sticker({
                         return;
                       }
                       // 按钮模式：点击卡片不开终端，改由卡片上的打开按钮触发。
+                      if (buttonMode) return;
+                      openTerminal(l);
+                    }}
+                    onKeyDown={(e) => {
+                      // 键盘可达：焦点在卡片本体时 Enter/Space 等效点击。内部按钮/输入框的
+                      // 键盘事件(target 不是卡片)放行，由它们自己的 click 处理，避免双重触发。
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault(); // 阻止 Space 触发页面滚动
+                      if (editingId !== null || notingId !== null) {
+                        setEditingId(null);
+                        setNotingId(null);
+                        return;
+                      }
                       if (buttonMode) return;
                       openTerminal(l);
                     }}
@@ -716,6 +761,7 @@ export function Sticker({
                             className={"stk-agent" + (l.connected ? "" : " stk-agent-off")}
                             style={tintStyle(l.provider, l.connected)}
                             data-tip={agentLabel}
+                            role="img"
                             aria-label={agentLabel}
                           >
                             <agentIcon.Icon />
@@ -762,7 +808,16 @@ export function Sticker({
                       <div
                         className="stk-note"
                         data-tip={t.sticker.noteEdit}
+                        role="button"
+                        tabIndex={0}
                         onClick={(e) => { e.stopPropagation(); startNote(l); }}
+                        onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          e.preventDefault();
+                          e.stopPropagation(); // 不冒泡给卡片，避免误开终端
+                          startNote(l);
+                        }}
                       >
                         <span className="stk-note-icon"><NoteIcon /></span>
                         <span className="stk-note-txt">{l.note}</span>
@@ -896,15 +951,16 @@ export function Sticker({
                 if (e.key === "Escape") closeSearch();
               }}
             />
-            <span className="stk-act stk-search-x" data-tip={t.sticker.searchClose} aria-label={t.sticker.searchClose} onClick={closeSearch}>
+            <button type="button" className="stk-act stk-search-x" data-tip={t.sticker.searchClose} aria-label={t.sticker.searchClose} onClick={closeSearch}>
               <CloseIcon />
-            </span>
+            </button>
           </div>
         ) : (
           <>
             <UsageScreen quotaProviders={shownQuota} usageMap={usageMap} />
             <div className="stk-bar-actions">
-              <span
+              <button
+                type="button"
                 className="stk-act"
                 data-tip={t.newSession.newButton}
                 aria-label={t.newSession.newButton}
@@ -912,11 +968,12 @@ export function Sticker({
                 onClick={() => invoke("open_new_session_window").catch(() => {})}
               >
                 <PlusIcon />
-              </span>
-              <span className="stk-act" data-tip={t.sticker.search} aria-label={t.sticker.search} onClick={() => setSearchOpen(true)}>
+              </button>
+              <button type="button" className="stk-act" data-tip={t.sticker.search} aria-label={t.sticker.search} onClick={() => setSearchOpen(true)}>
                 <SearchIcon />
-              </span>
-              <span
+              </button>
+              <button
+                type="button"
                 className="stk-act"
                 data-tip={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
                 aria-label={hasUpdate ? t.sticker.updateAvailable : t.sticker.openSettings}
@@ -925,16 +982,17 @@ export function Sticker({
               >
                 <GearIcon />
                 {hasUpdate && <span className="stk-dot" aria-hidden="true" />}
-              </span>
+              </button>
               {!isMacPanel() && (
-                <span
+                <button
+                  type="button"
                   className={"stk-act " + (pinned ? "stk-pin-on" : "")}
                   data-tip={pinned ? t.sticker.pinOn : t.sticker.pinOff}
                   aria-label={pinned ? t.sticker.pinOn : t.sticker.pinOff}
                   onClick={togglePin}
                 >
                   <PinIcon pinned={pinned} />
-                </span>
+                </button>
               )}
             </div>
           </>

@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
   trailingSlash: true,
   // 导出模式下 next/image 默认优化不可用；本站用普通 <img>，置为不优化以防未来引入。
   images: { unoptimized: true },
+  // (zh)/en 两个路由组各自持有根 layout（为了输出正确的 <html lang>），没有公共根 layout；
+  // 开启后未匹配 URL 由 app/global-not-found.tsx（整文档组件）渲染成 out/404.html。
+  experimental: { globalNotFound: true },
 };
 
 export default nextConfig;

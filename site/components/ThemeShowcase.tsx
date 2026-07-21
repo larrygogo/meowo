@@ -66,10 +66,10 @@ export default function ThemeShowcase({ lang = "zh" }: { lang?: Lang }) {
         <div className="ts-group">
           <span className="ts-label">{d.style}</span>
           <div className="ts-seg">
-            <button type="button" className={style === "flat" ? "on" : ""} onClick={() => setStyle("flat")}>
+            <button type="button" aria-pressed={style === "flat"} className={style === "flat" ? "on" : ""} onClick={() => setStyle("flat")}>
               {d.flat}
             </button>
-            <button type="button" className={style === "emboss" ? "on" : ""} onClick={() => setStyle("emboss")}>
+            <button type="button" aria-pressed={style === "emboss"} className={style === "emboss" ? "on" : ""} onClick={() => setStyle("emboss")}>
               {d.emboss}
             </button>
           </div>
@@ -78,10 +78,10 @@ export default function ThemeShowcase({ lang = "zh" }: { lang?: Lang }) {
         <div className="ts-group">
           <span className="ts-label">{d.theme}</span>
           <div className="ts-seg">
-            <button type="button" className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")}>
+            <button type="button" aria-pressed={theme === "dark"} className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")}>
               {d.dark}
             </button>
-            <button type="button" className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")}>
+            <button type="button" aria-pressed={theme === "light"} className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")}>
               {d.light}
             </button>
           </div>

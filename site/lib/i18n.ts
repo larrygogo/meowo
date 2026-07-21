@@ -73,12 +73,7 @@ export type Dict = {
   nav: NavDict;
   footer: FooterDict;
   cta: CtaDict;
-  supported: {
-    eyebrow: string;
-    heading: string;
-    body: string;
-    status: string;
-  };
+  // 与 components/FeatureGrid.tsx 的 ICONS 一一对应，共 8 张卡。
   features: Feature[];
   theme: ThemeDict;
   sticker: {
@@ -144,25 +139,25 @@ const ZH: Dict = {
     download: "下载最新版",
     star: "在 GitHub 上 Star",
   },
-  supported: {
-    eyebrow: "开箱即用",
-    heading: "安装、登录、接入，都在 Meowo 里完成",
-    body: "不必先去终端找安装命令。直接在应用内安装 Claude Code、Codex、Kimi、Gemini CLI 或 OpenCode，发起登录后自动接入所需 hooks；已经安装的也会自动检测。同一个工具还能保存多个官方账号一键切换，或按模型接入 API 中转。",
-    status: "一键安装 · 登录",
-  },
   features: [
-    { title: "会话看板", body: "每张卡片显示项目名、会话标题、最近一条 AI 输出和连接状态。支持读取 Context 的 AI Agent 还会显示上下文已用百分比。" },
-    { title: "待交互与通知", body: "会话等待输入或报错时进入「待交互」，按等待时长排序。开启系统通知后，点通知直接跳到对应会话，同一件事只弹一次。" },
-    { title: "点击直达终端 tab", body: "点卡片，直接切到该会话所在的终端标签页。会话已断开时，自动回到原目录并按对应工具的方式续接——无需记命令或会话 ID。" },
-    { title: "会话菜单一站集成", body: "右键或点 ⋮：一键新建会话、打开项目目录、加星置顶、写本地便签、改名、归档。常用操作都在这，不用导出切换、也不用敲命令。" },
-    { title: "展开贴纸，收起红绿灯", body: "展开时是钉在桌面一角的贴纸；拖到屏幕边缘收起，就缩成一条竖排的电子红绿灯——红黄绿三色一眼看清各会话状态。" },
-    { title: "用量与上下文监控", body: "底栏显示 5 小时 / 7 天配额使用比例，越接近上限越偏红；卡片显示会话上下文用量。不焦虑，一切都在计划之中。" },
-    { title: "一键安装、登录与接入", body: "无需先在终端配置环境：直接在 Meowo 里安装 AI CLI、发起登录，并自动接入所需 hooks。检测到连接缺失时，也能一键修复。" },
-    { title: "多账号 + API 中转", body: "同一个工具保存多个官方账号，一键切换，各自独立登录与会话历史；也支持按模型接入 API 中转，配置期间仍走官方账号。" },
-    { title: "按 AI 工具设置代理", body: "设置全局默认代理，也可以为每个 AI 工具单独选择直连、跟随系统或自定义代理，支持 HTTP / SOCKS5 及带认证的地址。" },
-    { title: "多风格 · 多配色", body: "7 种贴纸配色、扁平与立体两种风格、深浅主题随系统或手动切换，还能调不透明度与界面密度——挑一套顺眼的摆在桌面上。" },
-    { title: "本地优先", body: "会话与设置保存在本机。Meowo 通过本地 SQLite 汇总状态，不把会话内容上传到自己的服务器。" },
+    { title: "会话看板", body: "项目名、会话标题、最近一条 AI 输出、连接状态，一张卡看完。能读 Context 的 Agent 还会带上上下文已用百分比——哪个会话快撑爆上下文，扫一眼卡片就知道。" },
+    { title: "点击直达终端 tab", body: "点卡片就切到会话所在的终端标签页：Windows 上是 Windows Terminal，macOS 上是 Terminal 或 iTerm2。会话已断开时自动回到原目录、按各工具自己的方式续接——不用查会话 ID，也不用记续接参数。" },
+    { title: "Agent 待办清单", body: "Agent 拆解任务后，对话窗口实时显示它的待办清单：正在做哪一条、4 条里完成了几条，随 hook 落库跟着刷新——不用翻终端输出找进度。" },
+    { title: "审批与菜单按钮化", body: "等批准的命令、弹出的选择菜单，在对话窗口里直接渲染成按钮：允许 / 拒绝、信任确认、长会话恢复、模型选择，点一下就把对应按键发回终端——不用敲键盘应答。" },
+    { title: "多账号 + API 中转", body: "同一个工具保存多个官方账号，一键切换，凭据与会话历史各自独立；也可以按模型填入中转地址与密钥接入 API 中转。两种接入互斥，配置中转期间仍走官方账号。" },
+    { title: "本地优先", body: "会话与设置只写进本机 ~/.meowo/ 的 SQLite，reporter 与 app 只通过这个本地文件通信。没有自己的服务器，不上传会话内容，断网也照常工作。" },
+    { title: "一键安装、登录与接入", body: "Claude Code、Codex、Kimi、Gemini CLI、OpenCode 直接在应用内一键安装并发起登录，所需 hooks 自动接入；检测到连接缺失时，再点一下就修好。" },
+    { title: "用量与上下文监控", body: "贴纸底栏实时显示 5 小时 / 7 天配额的使用比例，越接近上限颜色越偏红；每张卡片显示会话上下文用量。限额将至你有预判，不会被突然中断打个措手不及。" },
   ],
+  sticker: {
+    tabs: { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" },
+    quota5h: "5 小时配额",
+    quota7d: "7 天配额",
+    ai: "AI",
+    you: "你",
+    justNow: "刚刚",
+    menu: { star: "星标置顶", note: "添加便签", rename: "重命名", archive: "归档", newSession: "新建会话", openDir: "打开项目目录" },
+  },
   theme: {
     eyebrowHome: "你的桌面，你说了算",
     headingHome: "多种风格与配色，随手切换",
@@ -180,15 +175,6 @@ const ZH: Dict = {
     light: "浅色",
     hint: "7 种配色 · 扁平 / 立体 · 深 / 浅 · 还能调透明度与界面密度，随手换一套。",
     swatches: { neutral: "无色", classic: "经典", slate: "石青", moss: "苔绿", plum: "暮紫", rose: "玫粉", amber: "琥珀" },
-  },
-  sticker: {
-    tabs: { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" },
-    quota5h: "5 小时配额",
-    quota7d: "7 天配额",
-    ai: "AI",
-    you: "你",
-    justNow: "刚刚",
-    menu: { star: "星标置顶", note: "添加便签", rename: "重命名", archive: "归档", newSession: "新建会话", openDir: "打开项目目录" },
   },
   featuresMore: "查看全部功能",
 };
@@ -244,25 +230,25 @@ const EN: Dict = {
     download: "Download latest",
     star: "Star on GitHub",
   },
-  supported: {
-    eyebrow: "Ready out of the box",
-    heading: "Install, sign in, and connect — all inside Meowo",
-    body: "No need to hunt for install commands in a terminal. Install Claude Code, Codex, Kimi, Gemini CLI, or OpenCode right in the app, start the login, and the required hooks are wired up automatically; already-installed tools are detected too. Each tool can also keep multiple official accounts to switch between, or connect an API relay per model.",
-    status: "Install · Sign in",
-  },
   features: [
-    { title: "Session board", body: "Each card shows the project name, session title, the latest AI output, and connection status. Agents that expose Context also show how much of the context window is used." },
-    { title: "Needs-you & notifications", body: "When a session waits for input or errors out, it moves to “Needs you”, sorted by wait time. Enable system notifications and clicking one jumps straight to that session — the same event only pings once." },
-    { title: "Click to jump to the terminal tab", body: "Click a card to switch to the terminal tab that session lives in. If it's disconnected, Meowo returns to its directory and resumes it the tool's way — no commands or session IDs to remember." },
-    { title: "Everything in the session menu", body: "Right-click or the ⋮ button: new session, open project directory, star to pin, jot a local note, rename, archive. Common actions live here — no exporting, switching, or typing commands." },
-    { title: "Sticker expanded, traffic light collapsed", body: "Expanded, it's a sticker pinned to a corner of your desktop; drag it to a screen edge and it shrinks into a vertical electronic traffic light — red / amber / green tells each session's state at a glance." },
-    { title: "Quota & context monitoring", body: "The bottom bar shows 5-hour / 7-day quota usage, redder as it nears the cap; cards show each session's context usage. No anxiety — everything stays under control." },
-    { title: "One-click install, sign-in & connect", body: "No terminal setup first: install an AI CLI, start the login, and wire up the required hooks right in Meowo. Missing a connection? One click fixes it." },
-    { title: "Multiple accounts + API relay", body: "Keep several official accounts per tool and switch with one click — each with its own login and history; or connect an API relay per model, still using the official account while you configure it." },
-    { title: "Per-tool network proxy", body: "Set a global default proxy, or choose direct / follow-system / custom proxy for each AI tool individually. Supports HTTP / SOCKS5 and authenticated addresses." },
-    { title: "Styles & colors", body: "7 sticker colors, flat or dimensional styles, and dark/light themes that follow the system or switch by hand — plus opacity and UI density. Pick a look that fits your desktop." },
-    { title: "Local-first", body: "Sessions and settings stay on your machine. Meowo aggregates state through a local SQLite database and never uploads session content to its own servers." },
+    { title: "Session board", body: "Project, session title, the latest AI output, connection state — one card tells it all. Agents that expose Context also show how full the context window is, so you know which session is about to burst." },
+    { title: "Click to jump to the terminal tab", body: "Click a card and you land in its terminal tab — Windows Terminal on Windows, Terminal or iTerm2 on macOS. Disconnected? Meowo returns to the project directory and resumes the session the tool's own way — no IDs or resume flags to remember." },
+    { title: "Agent todo list", body: "When the agent breaks a task into steps, the chat window shows its todo list live: the item in progress and how many of the list are done, refreshed as hooks land. No scrolling terminal output to find the progress." },
+    { title: "Approvals & menus as buttons", body: "Commands awaiting approval and popup menus render as buttons in the chat window: allow / deny, trust prompts, long-session resume, model pickers. One click sends the matching keys back to the terminal — no keyboard replies." },
+    { title: "Multiple accounts + API relay", body: "Keep several official accounts per tool, switch in one click, each with its own credentials and history. Or fill in a relay address and key per model to use an API relay — mutually exclusive, and the official account keeps serving while you configure." },
+    { title: "Local-first", body: "Sessions and settings live only in ~/.meowo/ as local SQLite; the reporter and the app talk only through that file. No Meowo server, no uploaded conversations — works just fine offline." },
+    { title: "One-click install, sign-in & connect", body: "Install Claude Code, Codex, Kimi, Gemini CLI, or OpenCode right in the app and start the login; the required hooks are wired automatically. Detect a broken connection? One more click repairs it." },
+    { title: "Quota & context monitoring", body: "The sticker's bottom bar tracks 5-hour / 7-day quota live, turning redder near the cap; every card shows context usage. You see limits coming — no sudden interruption catching you off guard." },
   ],
+  sticker: {
+    tabs: { all: "All", waiting: "Needs you", running: "Running", archived: "Archived" },
+    quota5h: "5-hr",
+    quota7d: "7-day",
+    ai: "AI",
+    you: "You",
+    justNow: "just now",
+    menu: { star: "Star to pin", note: "Add note", rename: "Rename", archive: "Archive", newSession: "New session", openDir: "Open project dir" },
+  },
   theme: {
     eyebrowHome: "Your desktop, your call",
     headingHome: "Styles and colors, switched on a whim",
@@ -280,15 +266,6 @@ const EN: Dict = {
     light: "Light",
     hint: "7 colors · Flat / 3D · Dark / Light · plus opacity and UI density — swap a whole set anytime.",
     swatches: { neutral: "None", classic: "Classic", slate: "Slate", moss: "Moss", plum: "Plum", rose: "Rose", amber: "Amber" },
-  },
-  sticker: {
-    tabs: { all: "All", waiting: "Needs you", running: "Running", archived: "Archived" },
-    quota5h: "5-hr",
-    quota7d: "7-day",
-    ai: "AI",
-    you: "You",
-    justNow: "just now",
-    menu: { star: "Star to pin", note: "Add note", rename: "Rename", archive: "Archive", newSession: "New session", openDir: "Open project dir" },
   },
   featuresMore: "See all features",
 };

@@ -16,8 +16,9 @@ export const SETTINGS_DEFAULTS: Settings = {
   session_open_in: "terminal",
   card_menu_mode: "button",
   preview_enabled: true,
-  sticker_style: "elevated",
-  sticker_color: "classic",
+  // 占位与真实默认（appearance.ts / 后端 settings.rs）保持一致：flat / neutral。
+  sticker_style: "flat",
+  sticker_color: "neutral",
   // 首帧占位（get_settings() resolve 前）。真实默认值由后端 settings 给，前端不据此做任何判断。
   sticker_quota_providers: ["claude"],
   default_agent: "claude",

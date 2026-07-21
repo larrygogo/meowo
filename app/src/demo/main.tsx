@@ -5,6 +5,7 @@ import { bootAppearance } from "../appearance";
 import { installMocks } from "./mock";
 import { buildScript } from "./script";
 import { DemoStage } from "./DemoStage";
+import "../fonts";
 import "../styles.css";
 import "./demo.css";
 

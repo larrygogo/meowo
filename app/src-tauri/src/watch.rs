@@ -51,11 +51,25 @@ pub(crate) fn spawn_board_notifier(app: tauri::AppHandle) {
     if BOARD_TX.set(tx).is_err() {
         return; // 已启动过
     }
-    std::thread::spawn(move || loop {
+    std::thread::spawn(move || {
+        coalesce_loop(rx, |reason| {
+            let _ = app.emit("board-changed", reason);
+        });
+    });
+}
+
+/// 合流循环本体，与 tauri 解耦（emit 为闭包）以便单测；生产侧由 spawn_board_notifier 驱动。
+/// 语义：leading+trailing——孤立事件零延迟送达；窗口内多次触发合并为窗口末尾的一次，
+/// 且排队中的旧事件被最新事件取代（pending 只记最后一个 reason，前端忽略 payload、只重拉最新状态）。
+fn coalesce_loop(
+    rx: std::sync::mpsc::Receiver<&'static str>,
+    mut emit: impl FnMut(&'static str),
+) {
+    loop {
         // 空闲：阻塞等第一个事件。发送端存活于 static，recv 出错只可能是进程收尾。
         let Ok(mut reason) = rx.recv() else { return };
         loop {
-            let _ = app.emit("board-changed", reason);
+            emit(reason);
             // 冷却窗口：收集期间到达的事件，只记最后一个 reason。
             let mut pending: Option<&'static str> = None;
             let deadline = Instant::now() + BOARD_COALESCE;
@@ -77,7 +91,7 @@ pub(crate) fn spawn_board_notifier(app: tauri::AppHandle) {
                 None => break,
             }
         }
-    });
+    }
 }
 
 /// watch 建立失败/监听死亡后的重建间隔。
@@ -610,4 +624,127 @@ pub(crate) fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
             }
         }
     });
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{coalesce_loop, BOARD_COALESCE};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError};
+    use std::time::{Duration, Instant};
+
+    /// 驱动一个合流线程：输入端交测试塞事件，emit 出的 reason 经另一通道回收集合。
+    fn spawn_collector() -> (
+        std::sync::mpsc::Sender<&'static str>,
+        Receiver<&'static str>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel::<&'static str>();
+        let (out_tx, out_rx) = std::sync::mpsc::channel::<&'static str>();
+        let handle = std::thread::spawn(move || {
+            coalesce_loop(rx, move |r| {
+                let _ = out_tx.send(r);
+            })
+        });
+        (tx, out_rx, handle)
+    }
+
+    fn recv_within(rx: &Receiver<&'static str>, timeout: Duration) -> Option<&'static str> {
+        rx.recv_timeout(timeout).ok()
+    }
+
+    fn leaked_reason(i: usize) -> &'static str {
+        Box::leak(format!("r{i}").into_boxed_str())
+    }
+
+    /// 爆发连发 → 恰好两次 emit：前沿立即出第一个，其余合并为窗口末尾的一次且携带最后的 reason
+    /// （「最新状态取代排队中的旧事件」，而不是补发窗口内第一个）。
+    #[test]
+    fn burst_coalesces_to_leading_plus_single_trailing_with_last_reason() {
+        let (tx, out, _h) = spawn_collector();
+        let t0 = Instant::now();
+        for r in ["a", "b", "c", "d"] {
+            tx.send(r).unwrap();
+        }
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("a"));
+        assert!(t0.elapsed() < BOARD_COALESCE, "前沿必须零延迟送达");
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("d"));
+        // 窗口关闭后没有第三次 emit。
+        assert_eq!(
+            recv_within(&out, BOARD_COALESCE * 3),
+            None,
+            "窗口内事件已并入 trailing，不得再各自补发"
+        );
+    }
+
+    /// 静默超过一个窗口后，下一个孤立事件仍是前沿即时送达——合流不把低频操作拖进 trailing 延迟，
+    /// 「操作后立即可见」的体感不被破坏。
+    #[test]
+    fn isolated_event_after_idle_emits_immediately_again() {
+        let (tx, out, _h) = spawn_collector();
+        tx.send("one").unwrap();
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("one"));
+        std::thread::sleep(BOARD_COALESCE + Duration::from_millis(200));
+        let t0 = Instant::now();
+        tx.send("two").unwrap();
+        assert_eq!(recv_within(&out, Duration::from_secs(2)), Some("two"));
+        assert!(t0.elapsed() < BOARD_COALESCE, "孤立事件必须走前沿");
+        assert_eq!(recv_within(&out, BOARD_COALESCE * 3), None);
+    }
+
+    /// 持续高频输入（间隔远小于窗口、总时长跨多个窗口）→ 输出被钳在每窗口约一次，
+    /// 且最后一次 emit 收敛到最新事件。这正是 statusline/hook 高频写库时前端不被刷爆的保证。
+    #[test]
+    fn sustained_stream_is_capped_and_converges_to_latest() {
+        let (tx, out, _h) = spawn_collector();
+        const N: usize = 30;
+        let last_expected = leaked_reason(N - 1);
+        let sender = std::thread::spawn(move || {
+            for i in 0..N {
+                if tx.send(leaked_reason(i)).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        });
+        let mut emits: Vec<&'static str> = Vec::new();
+        // 收集到发送结束后再等一个多窗口，把 trailing 收齐。
+        let deadline = Instant::now() + Duration::from_millis(30 * N as u64 + 2 * 1000);
+        while Instant::now() < deadline {
+            match out.recv_timeout(Duration::from_millis(200)) {
+                Ok(r) => emits.push(r),
+                Err(RecvTimeoutError::Timeout) => {
+                    if sender.is_finished() && emits.last() == Some(&last_expected) {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        sender.join().unwrap();
+        assert_eq!(emits.first(), Some(&"r0"), "首个事件必须前沿送达");
+        assert_eq!(
+            emits.last().copied(),
+            Some(last_expected),
+            "trailing 必须收敛到最新事件: {emits:?}"
+        );
+        // 30 个输入横跨约 900ms ≈ 3 个窗口：leading + 每窗口至多一次 trailing，远小于 30。
+        let windows = (30 * 30) / BOARD_COALESCE.as_millis() as usize + 2;
+        assert!(
+            emits.len() >= 2 && emits.len() <= windows + 2,
+            "持续流须被钳在每窗口约一次: {} 次 emit > 窗口数 {windows}",
+            emits.len()
+        );
+    }
+
+    /// 发送端断开（进程收尾）→ 合流线程退出，不空转。已入队的事件仍先补发完。
+    #[test]
+    fn loop_exits_after_sender_disconnect() {
+        let (tx, out, h) = spawn_collector();
+        tx.send("last").unwrap();
+        drop(tx);
+        h.join().expect("发送端断开后合流线程应退出");
+        // 断开前已入队的事件不丢：leading 或 trailing 必送达过。
+        assert_eq!(recv_within(&out, Duration::from_millis(0)), Some("last"));
+    }
 }

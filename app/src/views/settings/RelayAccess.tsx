@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   getRelaySecretStatus,
@@ -12,7 +12,8 @@ import {
   type Settings,
 } from "../../api";
 import { useT } from "../../i18n";
-import { Dropdown, Segmented } from "./widgets";
+import { Segmented } from "./widgets";
+import { Dropdown } from "../menu";
 
 type AccessMode = "official" | "relay";
 
@@ -119,6 +120,9 @@ function ModelPicker({
   const [text, setText] = useState(value);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0, width: 0, maxHeight: 260, opensUp: false });
+  // ↑/↓ 键盘导航的高亮项（-1 = 无高亮，此时 Enter 走自由文本提交）；输入或重开菜单时复位。
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => setText(value), [value]);
@@ -130,6 +134,7 @@ function ModelPicker({
   const commitRef = useRef(commit);
   commitRef.current = commit;
   const show = () => {
+    setActiveIdx(-1);
     setOpen(true);
     onOpen();
   };
@@ -173,6 +178,7 @@ function ModelPicker({
   );
   const choose = (model: string) => {
     setText(model);
+    setActiveIdx(-1);
     onCommit(model);
     setOpen(false);
   };
@@ -187,12 +193,31 @@ function ModelPicker({
         spellCheck={false}
         role="combobox"
         aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open && activeIdx >= 0 && activeIdx < options.length ? `${listId}-${activeIdx}` : undefined}
         onFocus={show}
-        onChange={(e) => { setText(e.target.value); setOpen(true); }}
+        onChange={(e) => { setText(e.target.value); setActiveIdx(-1); setOpen(true); }}
         onKeyDown={(e) => {
-          if (e.key === "Enter") { commit(); setOpen(false); e.currentTarget.blur(); }
-          if (e.key === "Escape") { setOpen(false); e.currentTarget.blur(); }
-          if (e.key === "ArrowDown") show();
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (!open) { show(); return; }
+            setActiveIdx((i) => Math.min(i + 1, options.length - 1));
+            return;
+          }
+          if (e.key === "ArrowUp" && open) {
+            e.preventDefault();
+            setActiveIdx((i) => Math.max(i - 1, -1));
+            return;
+          }
+          if (e.key === "Enter") {
+            // 有键盘高亮项则选中它；否则按自由文本提交（combobox 允许输入任意模型名）。
+            const picked = open && activeIdx >= 0 ? options[activeIdx] : undefined;
+            if (picked) choose(picked);
+            else { commit(); setOpen(false); }
+            e.currentTarget.blur();
+          }
+          if (e.key === "Escape") { setOpen(false); setActiveIdx(-1); e.currentTarget.blur(); }
         }}
       />
       <button
@@ -211,10 +236,20 @@ function ModelPicker({
         <div
           className={`relay-model-menu${pos.opensUp ? " up" : ""}`}
           ref={menuRef}
+          id={listId}
+          role="listbox"
           style={{ left: pos.left, top: pos.top, width: pos.width, maxHeight: pos.maxHeight }}
         >
-          {options.map((model) => (
-            <button type="button" className={`relay-model-option${model === value ? " sel" : ""}`} key={model} onClick={() => choose(model)}>
+          {options.map((model, i) => (
+            <button
+              type="button"
+              role="option"
+              id={`${listId}-${i}`}
+              aria-selected={model === value}
+              className={`relay-model-option${model === value ? " sel" : ""}${i === activeIdx ? " active" : ""}`}
+              key={model}
+              onClick={() => choose(model)}
+            >
               <span>{model}</span>
               {remoteSet.has(model) && <em>{relayLabel}</em>}
             </button>

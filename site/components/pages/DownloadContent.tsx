@@ -107,7 +107,7 @@ export default async function DownloadContent({ lang }: { lang: Lang }) {
                   <h3>Windows</h3>
                 </div>
                 <p className="meta">{c.win.meta}</p>
-                <a className="btn btn-primary btn-lg" href={release?.windows?.url ?? RELEASE_LATEST} target="_blank" rel="noopener noreferrer">
+                <a className="btn btn-primary btn-lg" href={release?.windows?.url ?? RELEASE_LATEST}>
                   <DownloadIcon />
                   {c.win.btn}
                 </a>
@@ -121,7 +121,7 @@ export default async function DownloadContent({ lang }: { lang: Lang }) {
                   <h3>macOS</h3>
                 </div>
                 <p className="meta">{c.mac.meta}</p>
-                <a className="btn btn-primary btn-lg" href={release?.macos?.url ?? RELEASE_LATEST} target="_blank" rel="noopener noreferrer">
+                <a className="btn btn-primary btn-lg" href={release?.macos?.url ?? RELEASE_LATEST}>
                   <DownloadIcon />
                   {c.mac.btn}
                 </a>
@@ -129,7 +129,7 @@ export default async function DownloadContent({ lang }: { lang: Lang }) {
               </div>
             </Reveal>
           </div>
-          <p style={{ textAlign: "center", marginTop: 24 }}>
+          <p className="more-row">
             <a className="btn btn-ghost" href={RELEASES} target="_blank" rel="noopener noreferrer">
               {c.allVersions}
             </a>
@@ -148,7 +148,7 @@ export default async function DownloadContent({ lang }: { lang: Lang }) {
               <Reveal key={s.title}>
                 <div className="step">
                   <span className="sn">{i + 1}</span>
-                  <h4>{s.title}</h4>
+                  <h3>{s.title}</h3>
                   <p>{s.body}</p>
                 </div>
               </Reveal>
@@ -158,7 +158,7 @@ export default async function DownloadContent({ lang }: { lang: Lang }) {
       </section>
 
       <section className="section section-sunken">
-        <div className="container" style={{ maxWidth: 820 }}>
+        <div className="container container-narrow">
           <div className="section-head">
             <span className="eyebrow">{c.reqsEyebrow}</span>
             <h2 className="h1">{c.reqsTitle}</h2>
@@ -171,7 +171,7 @@ export default async function DownloadContent({ lang }: { lang: Lang }) {
               </div>
             ))}
           </div>
-          <p className="faint" style={{ textAlign: "center", marginTop: 22, fontSize: 13.5 }}>{c.macNote}</p>
+          <p className="faint note-center">{c.macNote}</p>
         </div>
       </section>
     </main>

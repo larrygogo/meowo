@@ -107,6 +107,13 @@ export function App() {
   });
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const [reachedEnd, setReachedEnd] = useState<boolean>(false);
+  // 冷启动首页加载：未落地前 initialLoading=true（Sticker 显示加载占位而非假空态）；
+  // 首页/刷新失败置 loadError（Sticker 显示「加载失败 + 重试」），任一首页型加载成功后清除。
+  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<boolean>(false);
+  // 重试：递增 nonce 重新触发下方的 filter/search 首页加载 effect。
+  const [retryNonce, setRetryNonce] = useState(0);
+  const retryLoad = useCallback(() => setRetryNonce((n) => n + 1), []);
   const [filter, setFilter] = useState<StickerFilter>(() => {
     const s = localStorage.getItem(TAB_KEY);
     return s === "waiting" || s === "running" || s === "archived" ? s : "all";
@@ -254,12 +261,18 @@ export function App() {
     loadPage(filter, search, null, w)
       .then(({ page, applied }) => {
         if (applied) {
+          setInitialLoading(false);
+          setLoadError(false);
           if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
           if (page.length < w) setReachedEnd(true);
         }
       })
       .catch(() => {
-        if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+        if (resetSeq === pageResetSeqRef.current) {
+          setInitialLoading(false);
+          setLoadError(true);
+          resettingPageRef.current = false;
+        }
       });
     loadStrip(); // 折叠条数据独立刷新（不随 tab）
   }, [filter, search, loadPage, loadStrip]);
@@ -329,16 +342,22 @@ export function App() {
       loadPage(filter, search, null, limit)
         .then(({ page, applied }) => {
           if (applied) {
+            setInitialLoading(false);
+            setLoadError(false);
             if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
             if (page.length < limit) setReachedEnd(true);
           }
         })
         .catch(() => {
-          if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
+          if (resetSeq === pageResetSeqRef.current) {
+            setInitialLoading(false);
+            setLoadError(true);
+            resettingPageRef.current = false;
+          }
         });
     }, search ? 300 : 0);
     return () => window.clearTimeout(t);
-  }, [filter, search, loadPage]);
+  }, [filter, search, loadPage, retryNonce]);
 
   const changeSearch = useCallback((next: string) => {
     if (search.trim() !== next.trim()) resettingPageRef.current = true;
@@ -712,6 +731,9 @@ export function App() {
         onSearchChange={changeSearch}
         onArchiveOptimistic={onArchiveOptimistic}
         onArchiveFailed={onArchiveFailed}
+        initialLoading={initialLoading}
+        loadError={loadError}
+        onRetry={retryLoad}
       />
     </div>
   );

@@ -56,8 +56,9 @@ const GENERIC_STARTUP_PROMPTS = [
 ];
 
 /// 导航提示：菜单在等键盘选择的信号。要求同时出现「方向键/导航」与「回车确认」两类线索，
-/// 单独一个 ❯ 太常见（提示符、列表装饰都可能有），会把正文误报成菜单。
-const MENU_HINT = /(?:↑↓|↑\/↓|up\/down|arrow keys)[^\n]{0,80}(?:enter|select|confirm)|enter\s+(?:to\s+)?select/i;
+/// 单独一个 ❯ 太常见（提示符、列表装饰都可能有），会把正文误报成菜单。中文本地化 CLI
+/// 常把 enter/confirm 写作「回车/确认」，一并收。
+const MENU_HINT = /(?:↑↓|↑\/↓|up\/down|arrow keys)[^\n]{0,80}(?:enter|select|confirm|回车|确认)|enter\s+(?:to\s+)?select/i;
 
 /// 光标菜单：一句导航提示 + 一个 ❯ 标记当前项。返回选项块的行区间。
 ///
@@ -105,6 +106,52 @@ function promptSnippet(visible: string, index: number, contextBefore = 1): strin
   const matchedLine = visible.slice(0, index).split("\n").length - 1;
   // 命令审批需要多保留几行，才能显示命令和用途；普通启动选择只留一行上下文。
   return lines.slice(Math.max(0, matchedLine - contextBefore), matchedLine + 10).join("\n").trim();
+}
+
+/// 光标菜单选项块 → GUI 按钮。行首缩进只是菜单的对齐手段，不属于选项文字；
+/// 菜单首尾循环，只能从 ❯ 光标做相对移动，不能靠「多按几次上键」归零。
+function cursorMenuOptions(lines: string[], focused: number): TerminalAttentionOption[] {
+  return lines.map((line, position) => {
+    const label = line.replace(/^\s*(?:❯\s+)?/, "").trimEnd();
+    const delta = position - focused;
+    return {
+      // 多列对齐用的大段空格在按钮上没意义；压成单空格，超长再截断。
+      label: label.replace(/\s{2,}/g, "  ").slice(0, 80),
+      input: delta === 0 ? "\r" : delta < 0
+        ? "\x1b[A".repeat(-delta) + "\r"
+        : "\x1b[B".repeat(delta) + "\r",
+      focused: delta === 0,
+      position,
+      kind: "choice" as const,
+    };
+  });
+}
+
+/// 锚定光标菜单：best 已确认是阻塞提示，不再要求导航提示行（中文本地化 CLI 的长会话恢复
+/// 等菜单经常没有 "enter to select" 这类线索），直接从提示锚点之后找 ❯ 光标所在的同缩进块。
+/// 扩展时跳过以句读结尾的行——那是题干的说明句（如「完整恢复会消耗较多额度。」），
+/// 与选项同缩进时容易被误吞进选项块。
+function detectAnchoredCursorMenu(
+  visible: string,
+  fromIndex: number,
+): { lines: string[]; focused: number } | null {
+  const lines = visible.split("\n");
+  const fromLine = visible.slice(0, fromIndex).split("\n").length - 1;
+  const focusedLine = lines.findIndex((line, index) => index > fromLine && /^\s*❯\s+\S/.test(line));
+  if (focusedLine < 0) return null;
+  const textIndent = (line: string): number => {
+    const match = /^(\s*)(❯\s+)?/.exec(line);
+    return (match?.[1]?.length ?? 0) + (match?.[2]?.length ?? 0);
+  };
+  const target = textIndent(lines[focusedLine]);
+  const optionLine = (line: string) =>
+    line.trim().length > 0 && textIndent(line) === target && !/[。？！?!.：:]$/.test(line.trim());
+  let start = focusedLine;
+  while (start > 0 && optionLine(lines[start - 1])) start -= 1;
+  let end = focusedLine;
+  while (end + 1 < lines.length && optionLine(lines[end + 1])) end += 1;
+  if (end - start < 1) return null;
+  return { lines: lines.slice(start, end + 1), focused: focusedLine - start };
 }
 
 /** 返回当前启动阻塞提示的可见原文；null 表示没有需要 GUI 接管的交互。 */
@@ -162,22 +209,7 @@ export function terminalAttention(
     return {
       id: "interactive:cursor-menu",
       text: cursorMenu.title,
-      options: cursorMenu.lines.map((line, position) => {
-        // 行首缩进只是菜单的对齐手段，不属于选项文字。
-        const label = line.replace(/^\s*(?:❯\s+)?/, "").trimEnd();
-        const delta = position - cursorMenu.focused;
-        return {
-          // 多列对齐用的大段空格在按钮上没意义；压成单空格，超长再截断。
-          label: label.replace(/\s{2,}/g, "  ").slice(0, 80),
-          // 与编号选择器同一套：菜单首尾循环，只能从 ❯ 做相对移动。
-          input: delta === 0 ? "\r" : delta < 0
-            ? "\x1b[A".repeat(-delta) + "\r"
-            : "\x1b[B".repeat(delta) + "\r",
-          focused: delta === 0,
-          position,
-          kind: "choice" as const,
-        };
-      }),
+      options: cursorMenuOptions(cursorMenu.lines, cursorMenu.focused),
     };
   }
   if (!best) return null;
@@ -302,6 +334,12 @@ export function terminalAttention(
           : "\x1b[A".repeat(8) + "\x1b[B".repeat(Math.max(0, index)) + "\r",
       })),
     };
+  }
+  // 无编号的光标菜单（中文本地化 CLI 的长会话恢复等）：编号提取落空时从 ❯ 光标块提取选项，
+  // 让 GUI 直接给出选项按钮，而不是把「上一项/下一项」甩给用户。
+  const anchored = detectAnchoredCursorMenu(visible, best.index) ?? detectCursorMenu(visible);
+  if (anchored) {
+    return { id: best.id, text: displayText, options: cursorMenuOptions(anchored.lines, anchored.focused) };
   }
   return { id: best.id, text: displayText };
 }

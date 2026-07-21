@@ -107,6 +107,44 @@ describe("terminalAttention", () => {
     expect(attention?.options?.[2].input).toBe("\x1b[B\x1b[B\r");
   });
 
+  /// 中文本地化 CLI 的长会话菜单：选项不带 `1.` 编号、没有英文导航提示，过去会退化成
+  /// 「上一项/下一项」。现在从 ❯ 光标块提取直接选项；与选项同缩进的说明句（句号结尾）
+  /// 不能被吞进选项块。
+  it("无编号的中文光标菜单也给直接选项，说明句不算选项", () => {
+    const prompt = [
+      "\x1b[2JThis session is 2d 3h old and 98.2k tokens.",
+      "? 如何恢复这个长会话？",
+      "  完整恢复会消耗较多额度，建议从摘要恢复。",
+      "❯ 从摘要恢复（推荐）",
+      "  恢复完整会话",
+      "  取消",
+    ].join("\r\n");
+    const attention = terminalAttention(prompt, []);
+    expect(attention?.id).toBe("claude:long-session-resume");
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "从摘要恢复（推荐）",
+      "恢复完整会话",
+      "取消",
+    ]);
+    expect(attention?.options?.[0].input).toBe("\r");
+    expect(attention?.options?.[1].input).toBe("\x1b[B\r");
+    expect(attention?.options?.[2].input).toBe("\x1b[B\x1b[B\r");
+  });
+
+  /// 中文导航提示（「回车确认」而非 enter/select）同样算菜单信号。
+  it("光标菜单的导航提示支持中文", () => {
+    const screen = [
+      "\x1b[2JSelect a model",
+      "↑↓ 移动 · 回车确认",
+      "  K2.7",
+      "❯ K3",
+    ].join("\r\n");
+    const attention = terminalAttention(screen, [], false, true);
+    expect(attention?.id).toBe("interactive:cursor-menu");
+    expect(attention?.options?.map((option) => option.label)).toEqual(["K2.7", "K3"]);
+    expect(attention?.options?.[0].input).toBe("\x1b[A\r");
+  });
+
   /// 画面取自真机抓屏（app/src-tauri/tests/capture_model_menu.rs 跑 kimi `/model` 的结果）。
   /// 与编号选择器是两种形态：这里没有 `1.`，只有一个 ❯ 光标 + 一句导航提示。
   it("把 kimi 的 /model 光标菜单转成 GUI 选项", () => {

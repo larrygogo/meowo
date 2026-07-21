@@ -154,12 +154,12 @@ export default function DocsContent({ lang }: { lang: Lang }) {
       <section className="section-sm">
         <div className="container">
           <div className="doc-layout">
-            <aside className="doc-toc">
+            <nav className="doc-toc" aria-label={head.toc}>
               <div className="toc-title">{head.toc}</div>
               {toc.map((t) => (
                 <a key={t.id} href={`#${t.id}`}>{t.label}</a>
               ))}
-            </aside>
+            </nav>
             {lang === "en" ? <EnDocs /> : <ZhDocs />}
           </div>
         </div>

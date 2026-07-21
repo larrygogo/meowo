@@ -1,6 +1,6 @@
 // 全局自定义提示框：替代原生 title 那个迟钝又难看的系统提示。
 // 单例挂在文档根，position:fixed 穿透 .stk-scroll/.sticker 等 overflow 裁剪；事件委托读元素的
-// data-tip 文案，悬停 ~320ms 后在元素附近淡入，默认下方、放不下翻上方，左右夹在窗口内。
+// data-tip 文案，悬停或键盘聚焦 ~320ms 后在元素附近淡入，默认下方、放不下翻上方，左右夹在窗口内。
 // 两个窗口（贴纸 main、设置 about）在 main.tsx 各挂一个即可。
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -34,8 +34,9 @@ export function TooltipLayer() {
       const el = t.closest<HTMLElement>("[data-tip]");
       return el && el.getAttribute("data-tip") ? el : null;
     };
-    const onOver = (e: MouseEvent) => {
-      const el = tipEl(e.target);
+    // 悬停（mouseover）与键盘聚焦（focusin）走同一套延时显示；focusin 会冒泡，document 上能收到。
+    const show = (t: EventTarget | null) => {
+      const el = tipEl(t);
       if (!el || el === anchor.current) return;
       anchor.current = el;
       clear();
@@ -45,18 +46,23 @@ export function TooltipLayer() {
         setTip({ text: el.getAttribute("data-tip") || "", rect: el.getBoundingClientRect() });
       }, SHOW_DELAY);
     };
-    const onOut = (e: MouseEvent) => {
-      const el = tipEl(e.target);
+    const onOver = (e: MouseEvent) => show(e.target);
+    const onFocusIn = (e: FocusEvent) => show(e.target);
+    const maybeHide = (t: EventTarget | null, to: EventTarget | null) => {
+      const el = tipEl(t);
       if (!el || el !== anchor.current) return;
-      const to = e.relatedTarget;
-      if (to instanceof Node && el.contains(to)) return; // 移入自身子节点不算离开
+      if (to instanceof Node && el.contains(to)) return; // 移入/聚焦到自身子节点不算离开
       hide();
     };
+    const onOut = (e: MouseEvent) => maybeHide(e.target, e.relatedTarget);
+    const onFocusOut = (e: FocusEvent) => maybeHide(e.target, e.relatedTarget);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") hide();
     };
     document.addEventListener("mouseover", onOver);
     document.addEventListener("mouseout", onOut);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
     document.addEventListener("keydown", onKey);
     // 位置是一次性测量的：滚动/点击/窗口失焦后会与锚点错位，直接收起。
     window.addEventListener("scroll", hide, true);
@@ -66,6 +72,8 @@ export function TooltipLayer() {
       clear();
       document.removeEventListener("mouseover", onOver);
       document.removeEventListener("mouseout", onOut);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("blur", hide);
