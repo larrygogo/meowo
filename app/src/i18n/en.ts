@@ -156,6 +156,7 @@ export const en: Dict = {
     toolActivities: (count: number) => `${count} tool ${count === 1 ? "call" : "calls"}`,
     toolFailures: (count: number) => `${count} failed`,
     reasoning: "Reasoning",
+    reasoningLines: (n) => `${n} lines`,
     compact: "Context compacted",
     readOnly: "Conversation history is mirrored live; switch to Terminal to take over a disconnected session",
     inputLabel: "Send a message to the Agent",

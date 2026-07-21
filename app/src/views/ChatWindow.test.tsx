@@ -80,7 +80,11 @@ describe("ChatWindow", () => {
     expect(invoke).toHaveBeenCalledWith("open_project_dir", { cwd: "C:/repo" });
     expect(screen.getByText("开始")).toBeTruthy();
     expect(screen.getByText("我来实现")).toBeTruthy();
-    expect(screen.getByText("先检查现有协议")).toBeTruthy();
+    // 思考过程默认折叠——它常有上百行，展开着会把结论和后续对话挤出屏幕。
+    // 内容仍在 DOM 里（details 只是不展开），标题栏给出行数供判断长度。
+    const reasoning = screen.getByText("先检查现有协议").closest("details");
+    expect(reasoning?.hasAttribute("open")).toBe(false);
+    expect(screen.getByText("1 行")).toBeTruthy();
     const activity = screen.getByText("执行了 1 次工具调用").closest("details");
     expect(activity?.hasAttribute("open")).toBe(false);
     expect(screen.getAllByText("运行终端").length).toBeGreaterThan(0);

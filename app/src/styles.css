@@ -3391,6 +3391,10 @@ select.ns-input {
    white-space 必须在这个更高特异性的选择器里再写一次——上面通用的 `.chat-reasoning div`
    带 pre-wrap，会盖过单类名的 .chat-md。 */
 .chat-reasoning .chat-md { margin-top: var(--sp-7); white-space: normal; user-select: text; }
+/* 展开后也限高内滚：思考过程可以有上百行，全铺开会把结论顶出屏幕，收起时还得一路往回滚。 */
+.chat-reasoning[open] .chat-md { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; padding-right: var(--sp-6); }
+/* 行数徽标：不展开也能判断这段有多长。 */
+.chat-reasoning-size { margin-left: var(--sp-6); color: var(--cc-text-faint); font-weight: 400; }
 
 /* 侧栏底部的设置入口：与列表分隔，列表滚动时它固定在底部。 */
 .chat-sidebar-footer { flex: 0 0 auto; padding: var(--sp-6); border-top: 1px solid var(--cc-border); }

@@ -159,6 +159,7 @@ export const zh = {
     toolActivities: (count: number) => `执行了 ${count} 次工具调用`,
     toolFailures: (count: number) => `${count} 个失败`,
     reasoning: "思考过程",
+    reasoningLines: (n: number) => `${n} 行`,
     compact: "上下文已压缩",
     readOnly: "对话记录实时同步；切换到终端可接管已断开的会话",
     inputLabel: "发送消息给 Agent",

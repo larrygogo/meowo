@@ -17,9 +17,16 @@ export function Message({ item }: { item: ChatItem }) {
     );
   }
   if (item.type === "reasoning" || item.type === "reasoning_delta") {
+    // 默认折叠：思考过程动辄上百行，展开着会把结论和后续对话挤出屏幕，而它多数时候
+    // 是「需要时才回头看」的内容。标题栏给出行数，不展开也知道有多长。
+    const lines = item.text.split("\n").filter((line) => line.trim()).length;
     return (
-      <details className="chat-reasoning" open>
-        <summary><span className="chat-timeline-dot" />{t.chat.reasoning}</summary>
+      <details className="chat-reasoning">
+        <summary>
+          <span className="chat-timeline-dot" />
+          {t.chat.reasoning}
+          <span className="chat-reasoning-size">{t.chat.reasoningLines(lines)}</span>
+        </summary>
         <div className="chat-md"><ChatMarkdown text={item.text} /></div>
       </details>
     );
