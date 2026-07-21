@@ -1176,7 +1176,6 @@ pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
 }
 
 /// POSIX shell 参数逐项单引号包裹并拼接；单引号按 `'\''` 转义。
-/// POSIX shell 参数逐项单引号包裹并拼接；单引号按 `'\''` 转义。
 ///
 /// 例：`["a", "b'c"] -> "'a' 'b'\\''c'"`。
 fn shell_join_for_posix(args: &[String]) -> String {
