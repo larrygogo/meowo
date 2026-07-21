@@ -130,8 +130,10 @@ fn kimi_todo_list_snapshot_lands_in_the_store() {
     let kimi = |json: &str| dispatch(&store, &ev(json), 100, meowo_agent::id::KIMI.as_str());
     kimi(r#"{"hook_event_name":"SessionStart","session_id":"k1","cwd":"/home/me/proj"}"#).unwrap();
     kimi(
+        // status 用 kimi 真实写的 `done`（不是 claude 的 `completed`）——端到端覆盖
+        // 状态别名映射，否则已完成项会静默降级成 pending，界面上一条都勾不上。
         r#"{"hook_event_name":"PostToolUse","session_id":"k1","tool_name":"TodoList","tool_input":{"todos":[
-            {"title":"贴纸看板 UX 修复","status":"completed"},
+            {"title":"贴纸看板 UX 修复","status":"done"},
             {"title":"聊天窗口 UX 修复","status":"in_progress"}
         ]}}"#,
     )

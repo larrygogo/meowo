@@ -54,13 +54,20 @@ impl TodoStatus {
             TodoStatus::Completed => "completed",
         }
     }
-    /// 从 TodoWrite 的 status 字符串映射；无副作用、未知值降级为 Pending，
+    /// 从各家待办工具的 status 字符串映射；无副作用、未知值降级为 Pending，
     /// 故用中缀方法而非 fallible 的 std FromStr。
+    ///
+    /// **各家用词不同**，必须都认：claude 的 TodoWrite 写 `completed`，kimi 的 TodoList
+    /// 写 `done`（本机会话实测：done 910 次、pending 522、in_progress 224）。此前只认
+    /// `completed`，kimi 的已完成项全部降级成 Pending——界面上一条都勾不上（0/4）。
+    /// 连字符/驼峰等写法一并归一，避免下一个 agent 换个拼法又静默失效。
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> TodoStatus {
-        match s {
-            "in_progress" => TodoStatus::InProgress,
-            "completed" => TodoStatus::Completed,
+        match s.trim().to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
+            "in_progress" | "inprogress" | "doing" | "active" | "started" => {
+                TodoStatus::InProgress
+            }
+            "completed" | "done" | "complete" | "finished" | "closed" => TodoStatus::Completed,
             _ => TodoStatus::Pending,
         }
     }
@@ -142,6 +149,43 @@ pub struct TodoInput {
 /// `sessions.provider` 一律按原样字符串读写：store 不认识 claude/kimi/codex，也不该认识——
 /// 身份解析归 `meowo_agent::resolve`，加 agent 不必动 DB 层。
 pub const DEFAULT_PROVIDER: &str = "claude";
+
+#[cfg(test)]
+mod todo_status_tests {
+    use super::*;
+
+    /// 各家待办工具的状态用词不同，映射漏一个就是**静默失效**——不报错，只是把已完成项
+    /// 降级成 Pending，界面上一条都勾不上。实测：claude 写 `completed`，kimi 写 `done`。
+    #[test]
+    fn maps_each_agents_wording_for_completed_and_in_progress() {
+        for s in ["completed", "done", "complete", "finished", "Done", " DONE "] {
+            assert_eq!(
+                TodoStatus::from_str(s),
+                TodoStatus::Completed,
+                "{s:?} 应视为已完成"
+            );
+        }
+        for s in ["in_progress", "in-progress", "inProgress", "doing", "active"] {
+            assert_eq!(
+                TodoStatus::from_str(s),
+                TodoStatus::InProgress,
+                "{s:?} 应视为进行中"
+            );
+        }
+        // 未知值降级为 Pending，而不是让整份解析失败。
+        for s in ["pending", "todo", "", "某种没见过的状态"] {
+            assert_eq!(TodoStatus::from_str(s), TodoStatus::Pending, "{s:?} 应降级");
+        }
+    }
+
+    /// 落库用的规范值不能跟着别名漂移——DTO 与前端按它比较。
+    #[test]
+    fn canonical_strings_are_stable() {
+        assert_eq!(TodoStatus::Completed.as_str(), "completed");
+        assert_eq!(TodoStatus::InProgress.as_str(), "in_progress");
+        assert_eq!(TodoStatus::Pending.as_str(), "pending");
+    }
+}
 
 #[cfg(test)]
 mod provider_tests {

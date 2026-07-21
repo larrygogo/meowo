@@ -5,14 +5,21 @@
 //! `cargo test -p meowo-app --test capture_model_menu -- --ignored --nocapture`
 //! 或单个：`... capture_submit_key -- --ignored --nocapture`
 
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// 拉起 agent，自动应答 DSR（ESC[6n），等首屏画完。返回（master、输出通道、child、cwd）。
 /// TUI 会用 DSR 问光标位置，收不到回应就卡在启动上——真实终端由模拟器应答，这里替它答。
-fn boot_agent() -> (Box<dyn Write + Send>, mpsc::Receiver<Vec<u8>>, Box<dyn portable_pty::Child + Send + Sync>, std::path::PathBuf) {
+type AgentSession = (
+    Box<dyn Write + Send>,
+    mpsc::Receiver<Vec<u8>>,
+    Box<dyn portable_pty::Child + Send + Sync>,
+    std::path::PathBuf,
+);
+
+fn boot_agent() -> AgentSession {
     let exe = std::env::var("MEOWO_CAPTURE_EXE").unwrap_or_else(|_| {
         let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
         format!("{home}/.kimi-code/bin/kimi")
