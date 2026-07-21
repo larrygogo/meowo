@@ -274,7 +274,7 @@ pub(crate) fn live_sessions_blocking(
                 session.session.last_event_at,
                 now,
             );
-            if !(connectivity_filtered && !connected) {
+            if !connectivity_filtered || connected {
                 if let Some(item) = enrich(tx_cache, session, connected) {
                     items.push(item);
                 }

@@ -349,6 +349,8 @@ pub(crate) fn open_chat_window_detached(app: tauri::AppHandle, session_id: i64) 
 /// 托盘点击入口：打开最近活跃会话的对话窗口。托盘没有「当前会话」上下文，
 /// 取 last_event_at 最新的未归档会话最贴近「看看现在在跑什么」。
 /// 一条会话都没有（新装/全归档）时回落到设置窗口，避免点了毫无反应。
+/// 仅非 macOS：macOS 托盘走 `macos::menubar::setup_tray`（面板模式），不经此入口。
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
     let app = app.clone();
     // 查库放子线程：与 open_settings_window 同理由，主线程同步 IO 会阻塞消息泵。
