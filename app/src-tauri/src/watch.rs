@@ -700,16 +700,20 @@ mod tests {
         const N: usize = 30;
         let last_expected = leaked_reason(N - 1);
         let sender = std::thread::spawn(move || {
+            let t0 = Instant::now();
             for i in 0..N {
                 if tx.send(leaked_reason(i)).is_err() {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(30));
             }
+            t0.elapsed()
         });
         let mut emits: Vec<&'static str> = Vec::new();
-        // 收集到发送结束后再等一个多窗口，把 trailing 收齐。
-        let deadline = Instant::now() + Duration::from_millis(30 * N as u64 + 2 * 1000);
+        // 收敛即退，死线只防「永不收敛」挂死，取值放极宽：慢 CI 上 sleep(30ms) 实际可拖到
+        // 百余毫秒，按名义时长（30*30ms+余量）设死线曾在 macOS runner 稳定超时——
+        // 发送方还没发完就到点，收不到最末事件的 trailing。
+        let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
             match out.recv_timeout(Duration::from_millis(200)) {
                 Ok(r) => emits.push(r),
@@ -721,15 +725,16 @@ mod tests {
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
-        sender.join().unwrap();
+        let send_elapsed = sender.join().unwrap();
         assert_eq!(emits.first(), Some(&"r0"), "首个事件必须前沿送达");
         assert_eq!(
             emits.last().copied(),
             Some(last_expected),
             "trailing 必须收敛到最新事件: {emits:?}"
         );
-        // 30 个输入横跨约 900ms ≈ 3 个窗口：leading + 每窗口至多一次 trailing，远小于 30。
-        let windows = (30 * 30) / BOARD_COALESCE.as_millis() as usize + 2;
+        // 钳频上界按**实际**发送时长折算窗口数（名义 900ms ≈ 3 窗口，慢机上可拉长数倍）：
+        // 按名义算会把「合流器正常、机器慢」误判成刷爆。leading + 每窗口至多一次 trailing。
+        let windows = send_elapsed.as_millis() as usize / BOARD_COALESCE.as_millis() as usize + 2;
         assert!(
             emits.len() >= 2 && emits.len() <= windows + 2,
             "持续流须被钳在每窗口约一次: {} 次 emit > 窗口数 {windows}",
