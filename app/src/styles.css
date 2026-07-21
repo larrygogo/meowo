@@ -2344,9 +2344,9 @@ button.stab {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  /* 与主面板底色一致（新建会话从主面板弹出）。取 --cc-bg-rgb 的**不透明**版：不能直接用 --cc-bg，
+  /* 不透明独立窗口统一底色（同设置/更新/引导/对话窗）。不能直接用 --cc-bg：
      它带 --cc-opacity（给贴纸的半透明），独立窗口用了会透出桌面。 */
-  background: rgb(var(--cc-bg-rgb));
+  background: var(--cc-window-bg);
   color: var(--cc-text);
   overflow: hidden;
   font-size: var(--fs-13);
@@ -2859,12 +2859,17 @@ select.ns-input {
   position: relative;
   /* 对话窗底色必须不透明：--cc-bg 在 :root 带 --cc-opacity（给贴纸/缩略条的半透明），
      直接继承会让本窗及所有 color-mix(var(--cc-bg)…) 的后代透桌面、发灰。
-     同 .ns-window 的做法，在本作用域重声明为不透明版，一处覆盖全部后代（贴纸/缩略条不在此子树内，不受影响）。 */
-  --cc-bg: rgb(var(--cc-bg-rgb));
+     在本作用域重声明为 --cc-window-bg（设置/更新/引导窗的统一底色），一处覆盖全部后代
+     （贴纸/缩略条不在此子树内，不受影响）——各不透明独立窗口底色必须一致，不得再各混各的。 */
+  --cc-bg: var(--cc-window-bg);
   color: var(--cc-text);
-  background: color-mix(in srgb, var(--cc-bg) 98%, white 2%);
+  background: var(--cc-bg);
   border: 0;
   border-radius: 0;
+}
+/* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .ns-window/.settings/.updater）。 */
+:root.platform-macos .chat-window {
+  border-radius: var(--r-12);
 }
 .chat-bar {
   height: 64px;
@@ -3283,10 +3288,11 @@ select.ns-input {
    标题栏 / 侧栏 / 输入框全部跟着变深，与终端底色连成一片。深色主题下本就是这些值，无副作用。 */
 .chat-window.is-terminal {
   --cc-bg-rgb: 33, 33, 35;
-  /* 必须直接覆盖 --cc-bg：它在 :root 定义为 rgba(var(--cc-bg-rgb),…)，已在 documentElement
-     被 light 主题算成浅色实值并继承下来，只改 --cc-bg-rgb 不会让它重算。
-     取上一行重声明的 --cc-bg-rgb（= :root 深色默认值 33,33,35）算出不透明深色。 */
-  --cc-bg: rgb(var(--cc-bg-rgb));
+  /* 必须直接覆盖 --cc-window-bg / --cc-bg：它们已在 documentElement 被 light 主题算成
+     浅色实值并继承下来，只改 --cc-bg-rgb 不会让它们重算。取值 = :root 深色默认，
+     与对话视图同底（--cc-window-bg），切换对话/终端页签时底色不跳档。 */
+  --cc-window-bg: #1c1c1e;
+  --cc-bg: var(--cc-window-bg);
   --cc-surface: rgba(255, 255, 255, 0.05);
   --cc-surface-hover: rgba(255, 255, 255, 0.09);
   --cc-border: rgba(255, 255, 255, 0.09);
