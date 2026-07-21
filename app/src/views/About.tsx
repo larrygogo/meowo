@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { availableTerminals, listAgents, agentName, type AgentId, type AgentDescriptor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle } from "../api";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
+import { useShowWhenReady } from "../useShowWhenReady";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
@@ -453,6 +454,8 @@ function AboutSection({
 
 export function About() {
   const t = useT();
+  // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
+  useShowWhenReady();
   const [sec, setSec] = useState<Section>("general");
   const close = () => getCurrentWindow().close().catch(() => {});
   // 设置窗口也服从自动更新开关；关闭时不做后台检查，用户仍可从「关于」手动打开更新窗口检查。

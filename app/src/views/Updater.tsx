@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getVersion } from "@tauri-apps/api/app";
 import { useUpdate } from "../useUpdate";
+import { useShowWhenReady } from "../useShowWhenReady";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 
@@ -17,6 +18,8 @@ const WIN_W = 400;
 // 不再有跨窗口 trigger-update/update-failed 事件协议(旧协议曾致按钮死锁)。
 export function Updater() {
   const t = useT();
+  // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
+  useShowWhenReady();
   const { status, version, notes, progress, download, install, recheck } = useUpdate();
   const [current, setCurrent] = useState("");
   useEffect(() => {

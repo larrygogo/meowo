@@ -21,6 +21,51 @@ pub(crate) fn open_settings(app: tauri::AppHandle) {
     std::thread::spawn(move || open_settings_window(&app));
 }
 
+/// `visible:false` 创建的窗口的兜底显示。窗口创建即可见的话，WebView 画出首帧前是
+/// 默认白底——打开瞬间闪一下白框；故所有窗口（贴纸/设置/对话/更新/引导/新建会话）都
+/// 隐藏创建，由前端首帧后自行 show（useShowWhenReady）。但前端脚本没起来
+/// （加载失败/崩溃）时窗口会永久隐身、用户以为点了没反应——到点仍不可见就强制显示，
+/// 宁可白屏也要可见可关。`focus` 对贴纸主窗口传 false（窗口配置 focus:false，
+/// 开机自启不得抢焦点），其余弹出窗口传 true。
+pub(crate) fn show_after_grace(window: &tauri::WebviewWindow, focus: bool) {
+    let w = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+        if !w.is_visible().unwrap_or(true) {
+            let _ = w.show();
+            if focus {
+                let _ = w.set_focus();
+            }
+        }
+    });
+}
+
+/// 独立窗口的**原生**底色，与 styles.css 的 --cc-window-bg 对齐（dark #1c1c1e / light #f6f6f7）。
+///
+/// 隐藏创建 + 首帧后 show 只消除了「窗口先于首帧显示」的那类白框；show 的瞬间 WebView2
+/// 的合成帧仍可能没上屏（rAF 提交 ≠ 已呈现），这一两帧露出的是原生窗口底色——默认白，
+/// 于是还是闪。把原生底色设成与页面主题同色，即便露出来也是同色纯色帧，肉眼不可辨。
+/// theme=system 时借主窗口的 theme()（跟随 OS，本应用不调 set_theme）判定明暗。
+/// 仅用于非 macOS：macOS 这些窗口是 transparent + 前端圆角，设原生底色会破坏透明。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn window_background_color(app: &tauri::AppHandle) -> tauri::webview::Color {
+    let dark = match load_settings().theme.as_str() {
+        "light" => false,
+        "dark" => true,
+        _ => app
+            .get_webview_window("main")
+            .and_then(|w| w.theme().ok())
+            .map(|t| t == tauri::Theme::Dark)
+            // 拿不到就按深色：应用默认主题即深色，闪浅不如闪深。
+            .unwrap_or(true),
+    };
+    if dark {
+        tauri::webview::Color(0x1c, 0x1c, 0x1e, 0xff)
+    } else {
+        tauri::webview::Color(0xf6, 0xf6, 0xf7, 0xff)
+    }
+}
+
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
 /// 托盘左键点击与右键菜单「设置」共用此逻辑。
 pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
@@ -41,13 +86,19 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
         .min_inner_size(620.0, 460.0)
         .resizable(false)
         .decorations(false)
+        // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+        .visible(false)
         .center();
         // macOS：无边框窗口不会自动圆角，故设为透明，由前端 .settings 的 border-radius 呈现圆角
         // （系统会按不透明内容自动绘制圆角阴影）。Windows 由 DWM 自动圆角，保持不透明不变。
         #[cfg(target_os = "macos")]
         let builder = builder.transparent(true);
+        // 非 macOS：原生底色对齐主题，show 瞬间合成帧未上屏也不露白（见 window_background_color）。
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.background_color(window_background_color(app));
         match builder.build() {
             Ok(_about_window) => {
+                show_after_grace(&_about_window, true);
                 // macOS：设置窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（重新隐藏 Dock 图标）。
                 #[cfg(target_os = "macos")]
                 {
@@ -97,12 +148,17 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     .maximizable(false)
     .minimizable(false)
     .decorations(false)
+    // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+    .visible(false)
     .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .onboarding 的 border-radius 呈现（同设置/更新窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_onboarding_window) => {
+            show_after_grace(&_onboarding_window, true);
             // macOS：引导窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置/更新窗口）。
             #[cfg(target_os = "macos")]
             {
@@ -151,12 +207,17 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     .min_inner_size(400.0, 252.0)
     .resizable(false)
     .decorations(false)
+    // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+    .visible(false)
     .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .updater 的 border-radius 呈现（同设置窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_update_window) => {
+            show_after_grace(&_update_window, true);
             // macOS：更新窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置窗口）。
             #[cfg(target_os = "macos")]
             {
@@ -235,12 +296,17 @@ pub(crate) fn open_new_session_window_impl(
             .min_inner_size(460.0, 520.0)
             .resizable(false)
             .decorations(false)
+            // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+            .visible(false)
             .center();
     // macOS：无边框窗口不自动圆角，设透明由前端 .ns-window 的 border-radius 呈现（同设置窗口）。
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_win) => {
+            show_after_grace(&_win, true);
             #[cfg(target_os = "macos")]
             {
                 let app_handle = app.clone();
@@ -326,12 +392,17 @@ pub(crate) fn open_chat_window_impl(
         .min_inner_size(620.0, 480.0)
         .resizable(true)
         .decorations(false)
+        // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
+        .visible(false)
         .center();
     #[cfg(target_os = "macos")]
     let builder = builder.transparent(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(window_background_color(app));
     let win = builder
         .build()
         .map_err(|e| format!("创建对话窗口失败: {e}"))?;
+    show_after_grace(&win, true);
     let app_handle = app.clone();
     win.on_window_event(move |e| {
         if matches!(

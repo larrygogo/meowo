@@ -7,6 +7,13 @@ pub(crate) const SNAP_THRESHOLD: i32 = 20;
 /// 28 给 10px 圆点 + 内发光/描边留出足够边距，避免被 8px 圆角裁掉上下/左右。
 const STRIP_W_LOGICAL: f64 = 28.0;
 
+/// 贴纸正常态最小逻辑尺寸。**必须与 tauri.conf.json 的 minWidth/minHeight、App.tsx 的
+/// SIZE_MIN_W/H 三处一致**（折叠时会临时放开，这里是恢复时设回的值）。
+/// 高度按「至少完整显示两张会话卡」定：窗框+拖拽区+tab+底栏合计约 132px，
+/// 标准密度单卡约 84px + 6px 间距，两张约 174px；330 在宽松密度(112%)下也够。
+pub(crate) const STICKER_MIN_W: f64 = 360.0;
+pub(crate) const STICKER_MIN_H: f64 = 330.0;
+
 /// 矩形（物理像素），用于吸边判定的纯计算。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -328,7 +335,7 @@ pub(crate) fn snap_expand(
     };
     // 恢复正常最小尺寸（与 tauri.conf minWidth/minHeight 一致）再展开，就地放大到贴边位置。
     window
-        .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
+        .set_min_size(Some(tauri::LogicalSize::new(STICKER_MIN_W, STICKER_MIN_H)))
         .map_err(|e| e.to_string())?;
     window
         .set_size(tauri::PhysicalSize::new(phys_w as u32, phys_h))
@@ -352,7 +359,7 @@ pub(crate) fn snap_restore(
     let (width, height) = (width.clamp(1.0, 20000.0), height.clamp(1.0, 20000.0));
     // 恢复正常最小尺寸限制，再设回记住的宽高，置顶还原为用户的 pin 偏好。
     window
-        .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
+        .set_min_size(Some(tauri::LogicalSize::new(STICKER_MIN_W, STICKER_MIN_H)))
         .map_err(|e| e.to_string())?;
     window
         .set_size(tauri::LogicalSize::new(width, height))
@@ -370,7 +377,7 @@ pub(crate) fn snap_restore(
 #[tauri::command]
 pub(crate) fn unsnap(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
     window
-        .set_min_size(Some(tauri::LogicalSize::new(360.0, 240.0)))
+        .set_min_size(Some(tauri::LogicalSize::new(STICKER_MIN_W, STICKER_MIN_H)))
         .map_err(|e| e.to_string())?;
     set_top_if_changed(&window, pinned)?;
     Ok(())

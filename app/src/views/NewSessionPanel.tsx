@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useShowWhenReady } from "../useShowWhenReady";
 import {
   type AgentId,
   type AgentDescriptor,
@@ -63,6 +64,8 @@ const initialProvider: AgentId | null = qs.get("provider");
 
 export function NewSessionPanel(): ReactElement {
   const t = useT();
+  // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
+  useShowWhenReady();
   const [cwd, setCwd] = useState(initialCwd);
   // 首帧种子（settings.default_agent resolve 前）。真实默认值由后端给。
   const [provider, setProvider] = useState<AgentId>(initialProvider ?? "claude");

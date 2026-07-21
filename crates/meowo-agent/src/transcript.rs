@@ -547,7 +547,13 @@ pub struct TranscriptCache {
 }
 
 /// 缓存条目上限：超出时淘汰最久未访问的条目，防长期运行无界增长。
-const MAX_CACHE_ENTRIES: usize = 256;
+///
+/// 上限必须显著大于一次列表补页可能触碰的 transcript 数（session_query 的扫描上限
+/// 是每请求千行级）：条目被挤掉即偏移归零，下次访问整文件重读重解析——一次超上限的
+/// 扫描会把**活跃会话**的条目全部轮转出去，之后每 ~300ms 的刷新都退化成 O(整文件)，
+/// 恰是本缓存要防的场景。单条目只存偏移与累积摘要（标题/预览等短字符串），放大到
+/// 1024 的内存代价可忽略。
+const MAX_CACHE_ENTRIES: usize = 1024;
 
 /// read_transcript_delta 的结果：analyze 与 analyze_shared 共用的文件 IO 段。
 enum DeltaOutcome {

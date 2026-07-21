@@ -90,6 +90,22 @@ pub(crate) struct LiveItem {
     preview: Option<String>,
 }
 
+/// 翻页游标：**SQL 扫描位置**（排序前）。响应里的 items 会做 connected-first 排序，
+/// 末项不再是本页时间上最旧的一条——拿末项当游标会重复/漏页（旧版 loadMore 的坑）。
+/// 调用方翻下一页必须回传这里给出的 cursor，而不是自己从 items 推。
+#[derive(serde::Serialize, Clone, Copy)]
+pub(crate) struct PageCursor {
+    pub(crate) last_event_at: i64,
+    pub(crate) id: i64,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct LiveSessionsPage {
+    pub(crate) items: Vec<LiveItem>,
+    /// None = 已扫到底，没有下一页。Some 也可能恰好是最后一行——下一页会拿到空 items + None。
+    pub(crate) next_cursor: Option<PageCursor>,
+}
+
 #[tauri::command]
 pub(crate) async fn get_live_sessions_counts(
     state: State<'_, super::AppState>,
@@ -140,7 +156,7 @@ pub(crate) async fn get_live_sessions_page(
     before_last_event_at: Option<i64>,
     before_id: Option<i64>,
     limit: usize,
-) -> Result<Vec<LiveItem>, String> {
+) -> Result<LiveSessionsPage, String> {
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
     let alive = state.process_snapshots.snapshot();
@@ -215,9 +231,9 @@ pub(crate) fn live_sessions_blocking(
     filter: &str,
     search: Option<&str>,
     page: PageReq,
-) -> Result<Vec<LiveItem>, String> {
+) -> Result<LiveSessionsPage, String> {
     if page.limit == 0 {
-        return Ok(Vec::new());
+        return Ok(LiveSessionsPage { items: Vec::new(), next_cursor: None });
     }
     let store = super::open_store(db_path)?;
     let now = super::now_ms();
@@ -226,18 +242,30 @@ pub(crate) fn live_sessions_blocking(
     // 的未连接项），按 limit 取批会让一页严重缩水——侧栏没有「加载更多」，缩水多少就
     // 少显示多少（曾出现 60 条里只剩 11 条，用户以为会话丢了）。
     let batch_limit = page.limit.max(100);
+    // 单次请求的扫描上限：补页不能变成无界全表扫描（几乎全被过滤的库——大量空壳、
+    // 或 waiting|running 下大量断开——会让循环翻到表尾，每行都过一遍 enrich）。
+    // 到达上限就带着扫描位置返回，调用方拿 next_cursor 继续，代价摊到多次请求。
+    let scan_cap = batch_limit.saturating_mul(10);
+    let mut scanned = 0usize;
     let mut cursor_ts = page.before_last_event_at;
     let mut cursor_id = page.before_id;
     let mut items: Vec<LiveItem> = Vec::with_capacity(page.limit);
+    // Some = 页满/到达扫描上限时的续扫位置；None = 已扫到底。
+    let mut next_cursor: Option<PageCursor> = None;
     'fill: loop {
         let sessions = store
             .live_sessions(Some(filter), search, cursor_ts, cursor_id, batch_limit)
             .map_err(|e| e.to_string())?;
         let raw_len = sessions.len();
-        let next_cursor = sessions
+        let batch_tail = sessions
             .last()
             .map(|session| (session.session.last_event_at, session.session.id));
         for session in sessions {
+            scanned += 1;
+            let scan_pos = PageCursor {
+                last_event_at: session.session.last_event_at,
+                id: session.session.id,
+            };
             let pid = session.pid.unwrap_or(0);
             let connected = session_connected(
                 &session.session.status,
@@ -246,21 +274,22 @@ pub(crate) fn live_sessions_blocking(
                 session.session.last_event_at,
                 now,
             );
-            if connectivity_filtered && !connected {
-                continue;
-            }
-            if let Some(item) = enrich(tx_cache, session, connected) {
-                items.push(item);
-                if items.len() >= page.limit {
-                    break 'fill;
+            if !(connectivity_filtered && !connected) {
+                if let Some(item) = enrich(tx_cache, session, connected) {
+                    items.push(item);
                 }
+            }
+            if items.len() >= page.limit || scanned >= scan_cap {
+                // 游标取当前行的 SQL 位置（严格小于/大于续查，当前行不会重复出现）。
+                next_cursor = Some(scan_pos);
+                break 'fill;
             }
         }
         // 这一批没取满 batch_limit，说明后面没有数据了；补页到此为止。
         if raw_len < batch_limit {
             break;
         }
-        let Some((timestamp, id)) = next_cursor else {
+        let Some((timestamp, id)) = batch_tail else {
             break;
         };
         cursor_ts = Some(timestamp);
@@ -268,16 +297,33 @@ pub(crate) fn live_sessions_blocking(
     }
     // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。
     items.sort_by_key(|item| std::cmp::Reverse(item.connected));
-    Ok(items)
+    Ok(LiveSessionsPage { items, next_cursor })
 }
 
-/// 补上 transcript 里的标题/错误/预览。返回 `None` 表示这条不该出现在列表里：
-/// 健康探测（ping），或者一条既没标题、没 todo 又已经断开的空壳会话。
+/// 列表的丢弃规则（与 store 的 live_sessions_totals / live_count_candidates 口径对齐）：
+/// 健康探测（ping），或一条既没标题、没 todo 又已经断开的空壳会话。
+fn dropped_from_list(title: &str, connected: bool, todos: &[meowo_store::Todo]) -> bool {
+    if title.eq_ignore_ascii_case("ping") {
+        return true;
+    }
+    let unnamed = title.is_empty() || title == "(未命名会话)";
+    !connected && unnamed && todos.is_empty()
+}
+
+/// 补上 transcript 里的标题/错误/预览。返回 `None` 表示这条不该出现在列表里
+/// （规则见 [`dropped_from_list`]）。
 fn enrich(
     tx_cache: &Mutex<meowo_agent::TranscriptCache>,
     mut session: LiveSession,
     connected: bool,
 ) -> Option<LiveItem> {
+    // DB 数据已能定夺去留时先裁决，省掉 transcript 的文件 IO：只有会从 transcript
+    // 补标题的 provider（目前 claude），未命名会话才可能被翻案；其余 provider 标题
+    // 以 DB 为准，注定被丢的行不必为解析 transcript 付一次 open/read。
+    let resolves_title = super::agent_resolves_transcript_title(&session.provider);
+    if !resolves_title && dropped_from_list(session.task_title.trim(), connected, &session.todos) {
+        return None;
+    }
     let mut error_label = None;
     let mut error_raw = None;
     let mut preview = None;
@@ -300,12 +346,7 @@ fn enrich(
         }
         preview = info.preview;
     }
-    let title = session.task_title.trim();
-    if title.eq_ignore_ascii_case("ping") {
-        return None;
-    }
-    let unnamed = title.is_empty() || title == "(未命名会话)";
-    if !connected && unnamed && session.todos.is_empty() {
+    if dropped_from_list(session.task_title.trim(), connected, &session.todos) {
         return None;
     }
     Some(LiveItem {
@@ -363,7 +404,7 @@ mod tests {
 
         let cache = Mutex::new(meowo_agent::TranscriptCache::default());
         let alive = std::collections::HashSet::new();
-        let items = live_sessions_blocking(
+        let page = live_sessions_blocking(
             &db,
             &cache,
             &alive,
@@ -373,17 +414,21 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(items.len(), 60, "补页应凑满一整页，而不是被空会话压缩");
+        assert_eq!(page.items.len(), 60, "补页应凑满一整页，而不是被空会话压缩");
         assert!(
-            items.iter().all(|item| !item.inner.task_title.trim().is_empty()),
+            page.items.iter().all(|item| !item.inner.task_title.trim().is_empty()),
             "空壳会话不该出现在结果里",
+        );
+        assert!(
+            page.next_cursor.is_some(),
+            "库里还有第 61+ 条有效会话，next_cursor 不该是 None",
         );
         let _ = std::fs::remove_file(&db);
     }
 
-    /// 贴纸靠「上一页最后一项的 (last_event_at, id)」当游标翻页。若结果里混入了被
-    /// 顶到前排的已连接会话，最后一项就不再是这批里时间最旧的那条，游标会回退 ——
-    /// 翻页要么漏会话、要么原地打转。这里把整个翻页过程跑完，断言能收全。
+    /// 排序会把已连接的会话顶到页首，页内末项不再是时间上最旧的一条——旧版调用方拿
+    /// 末项当游标，翻页要么重复要么打转。现在后端在响应里带回**扫描位置**游标，调用方
+    /// 必须回传它。这里把整个翻页过程跑完，断言既收全、也不重复。
     #[test]
     fn cursor_paging_collects_every_session() {
         let dir = std::env::temp_dir().join(format!("meowo-cursor-{}", std::process::id()));
@@ -430,25 +475,26 @@ mod tests {
                 },
             )
             .unwrap();
-            if page.is_empty() {
+            for item in &page.items {
+                assert!(
+                    seen.insert(item.inner.session.id),
+                    "游标翻页重复返回了会话 {}",
+                    item.inner.session.id,
+                );
+            }
+            let Some(next) = page.next_cursor else {
                 break;
-            }
-            for item in &page {
-                seen.insert(item.inner.session.id);
-            }
-            let last = page.last().expect("non-empty");
-            cursor = Some((last.inner.session.last_event_at, last.inner.session.id));
-            if page.len() < PAGE {
-                break;
-            }
+            };
+            cursor = Some((next.last_event_at, next.id));
         }
 
         assert_eq!(seen.len(), TOTAL as usize, "游标翻页漏掉了会话");
         let _ = std::fs::remove_file(&db);
     }
 
-    /// 拿本机真实 board.db 对账：tab 计数（纯 SQL count）与列表实际能显示的条数差
-    /// 多少——差额就是被 `enrich` 当空壳丢掉的会话，数字对不上时用户会以为会话丢了。
+    /// 拿本机真实 board.db 对账：tab 计数与列表实际能显示的条数差多少。totals 现已按
+    /// 列表口径剔除 ping/已结束空壳，差额应接近 0；残余是「非 ended 的断开空壳」（多算）
+    /// 与「transcript 补出标题的未命名会话」（少算）两类小头。
     ///   cargo test --lib counts_versus_visible -- --ignored --nocapture
     #[test]
     #[ignore = "读本机真实数据；仅供手动对账"]
@@ -484,13 +530,14 @@ mod tests {
             },
         )
         .unwrap()
+        .items
         .len();
         // total 含归档，列表 filter="all" 不含——对账要拿 total - archived 去比。
-        println!("counts.total (含归档)  = {total}");
-        println!("counts.archived        = {archived}");
-        println!("未归档                 = {}", total - archived);
-        println!("列表实际可见           = {visible}");
-        println!("差额（被判为空壳丢弃） = {}", total - archived - visible as i64);
+        println!("counts.total (含归档，已剔除空壳) = {total}");
+        println!("counts.archived                   = {archived}");
+        println!("未归档                            = {}", total - archived);
+        println!("列表实际可见                      = {visible}");
+        println!("差额（应接近 0）                  = {}", total - archived - visible as i64);
     }
 
     #[test]

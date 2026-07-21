@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { agentChatUi, getChatHistory, getPendingApproval, isExternallyHeld, managedTerminalBinding, managedTerminalSnapshot, refreshSessionModel, refreshSessionTodos, registerApprovalConsumer, resolvePendingApproval, startManagedTerminal, takeoverManagedTerminal, unregisterApprovalConsumer, writeManagedTerminal, type ChatHistory, type ChatItem, type ChatUi, type PendingApproval } from "../api";
 import { useT } from "../i18n";
+import { useShowWhenReady } from "../useShowWhenReady";
 import { agentAssets, tintStyle } from "../providers";
 import { reduceChatEvents } from "../chat/reducer";
 import { ContextMeter } from "./chat/ContextMeter";
@@ -196,6 +197,8 @@ async function waitForTerminalReady(sessionId: number, attentionMarkers: string[
 
 export function ChatWindow() {
   const t = useT();
+  // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
+  useShowWhenReady();
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [history, setHistory] = useState<ChatHistory | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);

@@ -17,7 +17,7 @@
         "width": 360,
         "height": 440,
         "minWidth": 360,
-        "minHeight": 240,
+        "minHeight": 330,
         "transparent": true,
         "decorations": false,
         "maximizable": false,
@@ -26,7 +26,7 @@
         "resizable": true,
         "focus": false,
         "shadow": false,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {

@@ -333,13 +333,22 @@ export function getLiveSessionsCounts(): Promise<LiveSessionCounts> {
 
 export type StickerFilter = "all" | "running" | "waiting" | "archived";
 
+export type PageCursor = { last_event_at: number; id: number };
+
+/**
+ * 会话分页响应。`next_cursor` 是后端的 **SQL 扫描位置**（排序前）：items 会做
+ * connected-first 排序，末项不再是本页时间上最旧的一条，拿末项当游标会重复/漏页。
+ * 翻下一页必须回传 next_cursor；null = 已到底。
+ */
+export type LiveSessionsPage = { items: LiveSession[]; next_cursor: PageCursor | null };
+
 export function getLiveSessionsPage(
   filter: StickerFilter,
   search: string | null,
-  cursor: { last_event_at: number; id: number } | null,
+  cursor: PageCursor | null,
   limit: number
-): Promise<LiveSession[]> {
-  return invoke("get_live_sessions_page", {
+): Promise<LiveSessionsPage> {
+  return invoke<unknown>("get_live_sessions_page", {
     filter,
     search: search && search.trim() ? search : null,
     // Tauri 按 camelCase 匹配 Rust 命令参数；snake_case 键会被静默当成缺失（Option → None），
@@ -347,6 +356,24 @@ export function getLiveSessionsPage(
     beforeLastEventAt: cursor?.last_event_at ?? null,
     beforeId: cursor?.id ?? null,
     limit,
+  }).then((res) => {
+    // 旧后端 / demo mock 仍返回裸数组：给不满 limit 视作到底，满页时按旧约定用末项续查
+    // （旧后端本就只有这套语义）。undefined = 后端没有该命令，静默降级为空列表。
+    if (Array.isArray(res)) {
+      const rows = res as LiveSession[];
+      const last = rows[rows.length - 1];
+      return {
+        items: rows,
+        next_cursor: rows.length >= limit && last
+          ? { last_event_at: last.session.last_event_at, id: last.session.id }
+          : null,
+      };
+    }
+    const page = res as Partial<LiveSessionsPage> | null | undefined;
+    if (page && Array.isArray(page.items)) {
+      return { items: page.items, next_cursor: page.next_cursor ?? null };
+    }
+    return { items: [], next_cursor: null };
   });
 }
 

@@ -18,12 +18,25 @@ vi.mock("./views/Sticker", () => ({
 
 vi.mock("./api", () => ({
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
+  // 与真实 api.ts 同款归一化：mock 数据继续写裸数组，这里补 { items, next_cursor } 包装
+  // （给满 limit → 用末项当游标；给不满 → 到底）。
   getLiveSessionsPage: (
     filter: "all" | "running" | "waiting" | "archived",
     search: string | null,
     cursor: { last_event_at: number; id: number } | null,
     limit: number
-  ) => getLiveSessionsPage(filter, search, cursor, limit),
+  ) =>
+    Promise.resolve(getLiveSessionsPage(filter, search, cursor, limit)).then((res: unknown) => {
+      if (!Array.isArray(res)) return res;
+      const rows = res as { session: { last_event_at: number; id: number } }[];
+      const last = rows[rows.length - 1];
+      return {
+        items: rows,
+        next_cursor: rows.length >= limit && last
+          ? { last_event_at: last.session.last_event_at, id: last.session.id }
+          : null,
+      };
+    }),
   getSettings: () => Promise.resolve({}),
   getAccounts: () => Promise.resolve([]),
   refreshUsage: () => Promise.reject(new Error("USAGE_UNSUPPORTED")),

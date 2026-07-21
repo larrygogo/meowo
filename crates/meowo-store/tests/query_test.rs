@@ -382,6 +382,8 @@ fn live_sessions_cursor_tie_respects_filter() {
 
 /// 角标的分工：`total`/`archived` 由 SQL 数；running/waiting 只供**原料**（候选行），
 /// 因为它们的语义含「此刻还连着」——那要查进程表，store 层看不见（判定在 app 层的 tab_class）。
+/// 两边都必须与列表口径对齐：列表会丢弃 ping 与「已结束的空壳」，角标不剔除就会数出
+/// 用户在列表里找不到的会话。
 #[test]
 fn live_counts_split_totals_from_connectivity_candidates() {
     let store = Store::open_in_memory().unwrap();
@@ -389,22 +391,26 @@ fn live_counts_split_totals_from_connectivity_candidates() {
 
     // running ×2
     let (r1, _) = store.start_session(pid, "r1", 100).unwrap();
+    store.set_session_title(r1, "任务 r1", 100).unwrap();
     store
         .set_session_status(r1, SessionStatus::Running, 110)
         .unwrap();
     let (r2, _) = store.start_session(pid, "r2", 200).unwrap();
+    store.set_session_title(r2, "任务 r2", 200).unwrap();
     store
         .set_session_status(r2, SessionStatus::Running, 210)
         .unwrap();
 
     // waiting ×1（status=waiting）
     let (w1, _) = store.start_session(pid, "w1", 300).unwrap();
+    store.set_session_title(w1, "任务 w1", 300).unwrap();
     store
         .set_session_status(w1, SessionStatus::Waiting, 310)
         .unwrap();
 
     // pending_review ×1：status 仍是 running，但够格进 waiting
     let (p1, _) = store.start_session(pid, "p1", 320).unwrap();
+    store.set_session_title(p1, "任务 p1", 320).unwrap();
     store
         .set_session_status(p1, SessionStatus::Running, 330)
         .unwrap();
@@ -418,6 +424,9 @@ fn live_counts_split_totals_from_connectivity_candidates() {
         let (s, _) = store
             .start_session(pid, &format!("ended-{i}"), 400 + i)
             .unwrap();
+        store
+            .set_session_title(s, &format!("任务 ended-{i}"), 400 + i)
+            .unwrap();
         store.end_session(s, 500 + i).unwrap();
         if i == 0 {
             archived_id = Some(s);
@@ -429,16 +438,28 @@ fn live_counts_split_totals_from_connectivity_candidates() {
 
     // 模拟旧版本数据库留下的「已结束、却还留着 pending_review」历史残留。
     let (dead, _) = store.start_session(pid, "dead-with-residue", 700).unwrap();
+    store.set_session_title(dead, "任务 dead", 700).unwrap();
     store.end_session(dead, 720).unwrap();
     store
         .set_pending_review(dead, meowo_store::PendingReview::Approval, 730)
         .unwrap();
 
+    // 列表口径外的两条：ping 探针（哪怕 running）与已结束的未命名空壳。
+    // 它们都不会出现在列表里，totals / candidates 也必须数不到。
+    let (ping, _) = store.start_session(pid, "ping-probe", 800).unwrap();
+    store.set_session_title(ping, "ping", 800).unwrap();
+    store
+        .set_session_status(ping, SessionStatus::Running, 810)
+        .unwrap();
+    let (shell, _) = store.start_session(pid, "empty-shell", 820).unwrap();
+    store.end_session(shell, 830).unwrap();
+
     let (total, archived) = store.live_sessions_totals().unwrap();
-    assert_eq!(total, 8);
+    assert_eq!(total, 8, "ping 与已结束空壳不该进 total");
     assert_eq!(archived, 1);
 
     // 候选 = 未归档 且 **未结束** 且（status∈{running,waiting} 或 有 pending_review）。
+    // ping 探针虽是 running，也不许进候选（列表里根本看不到它）。
     let cands = store.live_count_candidates().unwrap();
     assert_eq!(cands.len(), 4, "2 running + 1 waiting + 1 pending_review");
     assert_eq!(
@@ -467,10 +488,15 @@ fn live_sessions_cursor_loads_all_non_archived() {
     let store = Store::open_in_memory().unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
 
-    // 250 条非归档会话，last_event_at 从 1000 递增到 3499
+    // 250 条非归档会话，last_event_at 从 1000 递增到 3499。
+    // 都给标题：未命名的 ended 会话会被 totals 按「空壳」剔除（对齐列表口径），
+    // 本测试关心的是游标翻页完整性，不掺空壳因素。
     for i in 0..250 {
         let (s, _) = store
             .start_session(pid, &format!("s-{i}"), 1000 + i)
+            .unwrap();
+        store
+            .set_session_title(s, &format!("任务 {i}"), 1000 + i)
             .unwrap();
         store.end_session(s, 2000 + i).unwrap();
     }
@@ -478,6 +504,9 @@ fn live_sessions_cursor_loads_all_non_archived() {
     for i in 0..50 {
         let (s, _) = store
             .start_session(pid, &format!("arch-{i}"), 4500 + i)
+            .unwrap();
+        store
+            .set_session_title(s, &format!("归档 {i}"), 4500 + i)
             .unwrap();
         store.end_session(s, 4600 + i).unwrap();
         store.set_session_archived(s, true, 4700 + i).unwrap();

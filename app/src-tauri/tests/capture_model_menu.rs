@@ -5,10 +5,12 @@
 //! `cargo test -p meowo-app --test capture_model_menu -- --ignored --nocapture`
 //! 或单个：`... capture_submit_key -- --ignored --nocapture`
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, PtySize};
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+mod common;
 
 /// 拉起 agent，自动应答 DSR（ESC[6n），等首屏画完。返回（master、输出通道、child、cwd）。
 /// TUI 会用 DSR 问光标位置，收不到回应就卡在启动上——真实终端由模拟器应答，这里替它答。
@@ -29,11 +31,7 @@ fn boot_agent() -> AgentSession {
     let pair = native_pty_system()
         .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
         .unwrap();
-    let mut command = CommandBuilder::new(&exe);
-    command.cwd(&cwd);
-    command.env("TERM", "xterm-256color");
-    // 见 probe_enter.rs 同处注释：不隔离就会污染用户的生产 board.db。
-    command.env("MEOWO_DB", cwd.join("board.db"));
+    let command = common::agent_command(&exe, &cwd);
     let child = pair.slave.spawn_command(command).unwrap();
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
@@ -134,11 +132,7 @@ fn capture_model_menu() {
     let pair = native_pty_system()
         .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
         .unwrap();
-    let mut command = CommandBuilder::new(&exe);
-    command.cwd(&cwd);
-    command.env("TERM", "xterm-256color");
-    // 见 probe_enter.rs 同处注释：不隔离就会污染用户的生产 board.db。
-    command.env("MEOWO_DB", cwd.join("board.db"));
+    let command = common::agent_command(&exe, &cwd);
     let mut child = pair.slave.spawn_command(command).unwrap();
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();

@@ -6,10 +6,12 @@
 //!
 //! `cargo test -p meowo-app --test probe_enter -- --ignored --nocapture`
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, PtySize};
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+mod common;
 
 fn strip_ansi(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
@@ -68,13 +70,7 @@ fn probe_enter_key() {
         let pair = native_pty_system()
             .openpty(PtySize { rows: 40, cols: 100, pixel_width: 0, pixel_height: 0 })
             .unwrap();
-        let mut cmd = CommandBuilder::new(&exe);
-        cmd.cwd(&cwd);
-        cmd.env("TERM", "xterm-256color");
-        // probe 拉起的是**真实** agent 进程，它的 hook 会照常上报会话。不隔离 MEOWO_DB
-        // 的话，每跑一轮就往用户的 ~/.meowo/board.db 里塞一条空会话，按 last_event_at
-        // 排在最前面，把真实会话挤出侧栏首页（曾经攒到 47 条）。
-        cmd.env("MEOWO_DB", cwd.join("board.db"));
+        let cmd = common::agent_command(&exe, &cwd);
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         let mut reader = pair.master.try_clone_reader().unwrap();
         let mut writer = pair.master.take_writer().unwrap();

@@ -1,11 +1,11 @@
-import { useEffect, useState, type UIEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getLiveSessionsPage, type LiveSession } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import { useT } from "../i18n";
 
-/** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端给不满为止。 */
+/** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
 
 /** board-changed 刷新的冷却窗口（ms）：该事件会三连发（命令写库通知 + db-watcher 回声 +
@@ -32,25 +32,61 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
   const t = useT();
   // null = 首次加载尚未完成：与「真空」区分，避免首帧误闪「暂无会话」。
   const [sessions, setSessions] = useState<LiveSession[] | null>(null);
-  // 翻页用「从头取 limit 条」而不是游标：后端会把已连接的会话顶到结果最前面，
-  // 按最后一项的 last_event_at 续查会漏掉/重复中间那段。整段重取也让 board-changed
-  // 刷新走同一条路径，不必维护「已加载的页」这份额外状态。
+  // 翻页用「从头取 limit 条」而不是游标续传：整段重取让 board-changed 刷新走同一条
+  // 路径，不必维护「已加载的页」这份额外状态。到底与否看后端带回的 next_cursor。
   const [limit, setLimit] = useState(PAGE_LIMIT);
   const [reachedEnd, setReachedEnd] = useState(false);
+  // 翻页请求在途：state 供 loading 行渲染；ref 同步镜像挡快速连滚——两个 scroll 事件
+  // 可能落在同一次渲染提交前，state 版守卫看不出第一发已经把 limit 抬上去了。
+  const [growing, setGrowing] = useState(false);
+  const growingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const limitRef = useRef(limit);
+  limitRef.current = limit;
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => getLiveSessionsPage("all", null, null, limit)
-      .then((list) => {
-        if (cancelled) return;
-        const rows = Array.isArray(list) ? list : [];
-        setSessions(rows);
-        // 后端给不满就说明没有下一页了（它内部已经补页跳过空会话）。
-        setReachedEnd(rows.length < limit);
+  // refresh = 整段重取替换（首载 / board-changed）；grow = 翻页，只把新条目**追加到尾部**。
+  // 追加而非替换：后端对整页做 connected-first 排序，扩大 limit 可能把更深处的活会话
+  // 顶到列表最上方——用户正停在底部等下一页，上方插行会让视口内容跳走。已加载段的
+  // 重排交给下一次 refresh（那时用户多半不在翻页途中）。
+  const load = useCallback((mode: "refresh" | "grow") => {
+    const lim = limitRef.current;
+    return getLiveSessionsPage("all", null, null, lim)
+      .then((page) => {
+        if (!mountedRef.current) return;
+        setReachedEnd(page.next_cursor === null);
+        if (mode === "grow") {
+          setSessions((prev) => {
+            if (!prev) return page.items;
+            const seen = new Set(prev.map((s) => s.session.id));
+            return [...prev, ...page.items.filter((s) => !seen.has(s.session.id))];
+          });
+        } else {
+          setSessions(page.items);
+        }
       })
-      // 首载失败降级为空列表（显示「暂无会话」），而不是永远停在加载占位。
-      .catch(() => { if (!cancelled) setSessions((s) => s ?? []); });
-    void load();
+      .catch(() => {
+        if (!mountedRef.current) return;
+        // 翻页失败：limit 退回上一页的量。不退的话 loading 行永远挂着、重滚也发不出
+        // 请求（limit 已被抬高，唯一能救场的只剩恰好路过的 board-changed）。
+        if (mode === "grow") setLimit((n) => Math.max(PAGE_LIMIT, n - PAGE_LIMIT));
+        // 首载失败降级为空列表（显示「暂无会话」），而不是永远停在加载占位。
+        setSessions((s) => s ?? []);
+      })
+      .finally(() => {
+        if (mode === "grow") {
+          growingRef.current = false;
+          if (mountedRef.current) setGrowing(false);
+        }
+      });
+  }, []);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  // 订阅只在挂载时建一次，**不随 limit 重建**：unlisten → 新 listen 之间有异步空窗，
+  // 每翻一页都重订的话，恰落在空窗里的 board-changed 会被吞掉（节流状态也会清零）。
+  useEffect(() => {
+    mountedRef.current = true;
+    void loadRef.current("refresh");
     // board-changed 会三连发（见 REFRESH_THROTTLE_MS）：leading + trailing 节流，
     // 首个事件立即刷新，冷却窗口内的后续事件合并成窗口末尾的一次刷新。
     let timer: number | undefined;
@@ -60,26 +96,42 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
       const fire = () => {
         timer = undefined;
         lastRun = Date.now();
-        void load();
+        void loadRef.current("refresh");
       };
       const since = Date.now() - lastRun;
       if (since >= REFRESH_THROTTLE_MS) fire();
       else timer = window.setTimeout(fire, REFRESH_THROTTLE_MS - since);
     };
+    let cancelled = false;
     let un: (() => void) | undefined;
     listen("board-changed", throttledLoad).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
-    return () => { cancelled = true; un?.(); if (timer !== undefined) window.clearTimeout(timer); };
+    return () => {
+      mountedRef.current = false;
+      cancelled = true;
+      un?.();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+
+  // limit 变大（滚动翻页）→ 拉一次 grow。失败回退会把 limit 改小，不能据此再发请求，
+  // 否则「失败 → 回退 → 又触发加载」原地打转。
+  const prevLimitRef = useRef(PAGE_LIMIT);
+  useEffect(() => {
+    const grew = limit > prevLimitRef.current;
+    prevLimitRef.current = limit;
+    if (grew) void loadRef.current("grow");
   }, [limit]);
 
-  // 滚到底前 120px 就预取下一页。`sessions.length >= limit` 兼作防重入：上一页还在
-  // 路上时 sessions 仍是旧的短列表，条件不成立，不会连着叠加好几页。
+  // 滚到底前 120px 就预取下一页。
   const onScroll = (event: UIEvent<HTMLElement>) => {
-    if (reachedEnd || sessions === null) return;
+    if (reachedEnd || sessions === null || growingRef.current) return;
     const el = event.currentTarget;
     if (el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
-    if (sessions.length >= limit) setLimit((n) => n + PAGE_LIMIT);
+    growingRef.current = true;
+    setGrowing(true);
+    setLimit((n) => n + PAGE_LIMIT);
   };
 
   return (
@@ -143,8 +195,9 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
             </button>
           );
         })}
-        {/* 下一页在路上：此时 sessions 仍是上一页，长度短于 limit。 */}
-        {sessions !== null && sessions.length > 0 && !reachedEnd && sessions.length < limit && (
+        {/* 下一页在路上。挂在真实在途状态上：翻页失败会清掉它，不会留下一个永远
+            转不完的 loading 行。 */}
+        {sessions !== null && sessions.length > 0 && growing && (
           <div className="chat-sidebar-empty">{t.chat.sidebarLoading}</div>
         )}
       </nav>

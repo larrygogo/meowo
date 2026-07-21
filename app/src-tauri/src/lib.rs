@@ -827,11 +827,16 @@ pub fn run() {
         // (SIZE_KEY) 单独持有。否则吸附态退出会把「细条几何」存进 window-state，与 localStorage 的吸附态
         // (SNAP_KEY) 两套持久化不同步——重启读不到 SNAP_KEY 却被还原成细条尺寸，渲染完整贴纸而没真正吸附。
         // about 设置窗口固定尺寸(resizable=false)，不受影响；折叠/正常尺寸均由前端 snap 逻辑权威设定。
+        // VISIBLE 也不恢复：设置/对话窗口以 visible:false 创建、前端首帧后才显示（消除白框闪烁），
+        // 插件若按上次退出时的「可见」在创建当口就 show，隐藏创建被当场抵消，白框闪烁复发。
+        // 可见性完全由代码显式控制（main 由 tauri.conf 的 visible:true，其余窗口自管）。
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all()
-                        .difference(tauri_plugin_window_state::StateFlags::SIZE),
+                    tauri_plugin_window_state::StateFlags::all().difference(
+                        tauri_plugin_window_state::StateFlags::SIZE
+                            | tauri_plugin_window_state::StateFlags::VISIBLE,
+                    ),
                 )
                 .build(),
         )
@@ -1022,6 +1027,12 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             {
                 setup_tray(app)?;
+                // 贴纸以 visible:false 创建（消除启动白框闪烁），前端首帧后自行显示
+                // （useShowWhenReady，不抢焦点）；这里兜底：前端没起来也要到点可见。
+                // macOS 不需要——面板模式的贴纸本就隐藏创建、显隐归 menubar 管。
+                if let Some(w) = app.get_webview_window("main") {
+                    crate::window::show_after_grace(&w, false);
+                }
             }
             // window-state 恢复后，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
             #[cfg(target_os = "windows")]
@@ -1156,9 +1167,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(page.len(), 2);
-        assert!(page.iter().all(|l| l.connected));
+        assert_eq!(page.items.len(), 2);
+        assert!(page.items.iter().all(|l| l.connected));
         assert!(page
+            .items
             .iter()
             .all(|l| l.inner.session.cc_session_id.starts_with("alive-")));
 

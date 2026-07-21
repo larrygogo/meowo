@@ -7,11 +7,13 @@ import {
   getLiveSessionsPage,
   LiveSession,
   LiveSessionCounts,
+  PageCursor,
   StickerFilter,
 } from "./api";
 import { Sticker } from "./views/Sticker";
 import { CollapsedStrip } from "./views/CollapsedStrip";
 import { useUpdate } from "./useUpdate";
+import { useShowWhenReady } from "./useShowWhenReady";
 import { isMacPanel } from "./platform";
 
 type Item = LiveSession & { connected: boolean };
@@ -39,10 +41,11 @@ function stripExtent(count: number): number {
   return Math.max(48, count * 17 + 26);
 }
 
-// 正常窗口最小尺寸：与 tauri.conf.json 的 minWidth/minHeight 对齐。SIZE_KEY 是「正常尺寸」基准，
-// 不应低于此（低于即被细条尺寸毒化）。
+// 正常窗口最小尺寸：与 tauri.conf.json 的 minWidth/minHeight、snap.rs 的 STICKER_MIN_* 三处对齐。
+// SIZE_KEY 是「正常尺寸」基准，不应低于此（低于即被细条尺寸毒化）。
+// 高度按「至少完整显示两张会话卡」定（约 132px 窗框 + 2×90px 卡片）。
 const SIZE_MIN_W = 360;
-const SIZE_MIN_H = 240;
+const SIZE_MIN_H = 330;
 const SIZE_MAX = 20000; // 上界：与后端 snap_* 命令的 clamp 上限一致（防 f64→i32 回绕/异常大值）
 const SIZE_DEFAULT = { w: 360, h: 440 }; // 与 tauri.conf.json 默认 width/height 一致
 
@@ -98,6 +101,9 @@ function totalFor(filter: StickerFilter, counts: LiveSessionCounts): number {
 
 
 export function App() {
+  // 贴纸窗口以 visible:false 创建（tauri.conf.json），首帧渲染后再显示，消除启动瞬间的白框闪烁。
+  // 不抢焦点（窗口配置 focus:false，开机自启同理）；macOS 面板模式显隐归 menubar 管，这里不越权。
+  useShowWhenReady({ focus: false, enabled: !isMacPanel() });
   const [items, setItems] = useState<Item[]>([]);
   const [counts, setCounts] = useState<LiveSessionCounts>({
     total: 0,
@@ -156,7 +162,7 @@ export function App() {
     ])
       .then(([r, w]) => {
         const map = new Map<number, Item>();
-        [...r, ...w].forEach((s) => map.set(s.session.id, s as Item));
+        [...r.items, ...w.items].forEach((s) => map.set(s.session.id, s as Item));
         const next = [...map.values()];
         setStripSessions((prev) => (sameList(prev, next) ? prev : next));
       })
@@ -184,24 +190,29 @@ export function App() {
 
   // 请求序号守卫：并发刷新时旧响应可能晚于新响应返回，仅当自己仍是最新一次请求才写入。
   const refreshSeqRef = useRef(0);
+  // 下一页游标：**只认后端响应里带回的扫描位置**。列表做过 connected-first 排序，
+  // 末项不是本页时间上最旧的一条，从 items 里自己推游标会重复/漏页。
+  const nextCursorRef = useRef<PageCursor | null>(null);
   const loadPage = useCallback(
     async (
       filter: StickerFilter,
       search: string,
-      cursor: { last_event_at: number; id: number } | null,
+      cursor: PageCursor | null,
       limit: number = PAGE_SIZE
-    ): Promise<{ page: Item[]; applied: boolean }> => {
+    ): Promise<{ page: Item[]; cursor: PageCursor | null; applied: boolean }> => {
       const seq = ++refreshSeqRef.current;
       // counts 只在首页/刷新（cursor === null）时才需要；loadMore 复用已有 counts，
       // 避免频繁 loadMore 时对 counts 做纯重复的后端查询（审查发现）。
       const needCounts = cursor === null;
       try {
-        const [countsRes, page] = await Promise.all([
+        const [countsRes, res] = await Promise.all([
           needCounts ? getLiveSessionsCounts() : Promise.resolve(null),
           getLiveSessionsPage(filter, search, cursor, limit),
         ]);
+        const page = res.items;
         const applied = seq === refreshSeqRef.current;
-        if (!applied) return { page: page as Item[], applied };
+        if (!applied) return { page: page as Item[], cursor: res.next_cursor, applied };
+        nextCursorRef.current = res.next_cursor;
         if (countsRes) {
           setCounts((prev) =>
             prev.total === countsRes.total &&
@@ -236,7 +247,7 @@ export function App() {
           if (!search.trim()) unsearchedItemsRef.current[filter] = next;
           return next;
         });
-        return { page: page as Item[], applied };
+        return { page: page as Item[], cursor: res.next_cursor, applied };
       } catch (err) {
         console.error("[loadPage] 加载失败：", err);
         throw err;
@@ -259,12 +270,12 @@ export function App() {
     setReachedEnd(false);
     const w = Math.max(PAGE_SIZE, itemsLenRef.current);
     loadPage(filter, search, null, w)
-      .then(({ page, applied }) => {
+      .then(({ cursor, applied }) => {
         if (applied) {
           setInitialLoading(false);
           setLoadError(false);
           if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
-          if (page.length < w) setReachedEnd(true);
+          if (cursor === null) setReachedEnd(true);
         }
       })
       .catch(() => {
@@ -305,18 +316,20 @@ export function App() {
   const loadingMoreRef = useRef(false);
   const loadMore = useCallback(async () => {
     if (resettingPageRef.current || loadingMoreRef.current || reachedEnd) return;
-    const last = items[items.length - 1];
-    if (!last) return;
+    // 游标必须用后端上次带回的扫描位置：从可见列表末项推会撞上 connected-first 排序
+    // （末项不是时间上最旧的一条），每页都会重复返回被顶到前排的会话。
+    const cursor = nextCursorRef.current;
+    if (cursor === null) {
+      setReachedEnd(true);
+      return;
+    }
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const { page, applied } = await loadPage(filter, search, {
-        last_event_at: last.session.last_event_at,
-        id: last.session.id,
-      });
+      const { cursor: next, applied } = await loadPage(filter, search, cursor);
       // 请求过程中若已被更新的请求（如切 tab/刷新）取代，本次结果不再代表当前 tab 的状态，
       // reachedEnd 不应据此更新，否则可能把旧 tab 的「已到底」误写到新 tab 上（审查发现的竞态）。
-      if (applied && page.length < PAGE_SIZE) {
+      if (applied && next === null) {
         setReachedEnd(true);
       }
     } catch (err) {
@@ -325,7 +338,7 @@ export function App() {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [filter, search, reachedEnd, items, loadPage]);
+  }, [filter, search, reachedEnd, loadPage]);
 
   // filter / search 变化：重置到首页（search 变化去抖 300ms，避免每次按键都打一次后端；
   // filter 切换无需去抖，0ms 立即加载，含首次挂载）。取代原先仅 [filter, loadPage] 的切 tab effect。
@@ -340,12 +353,12 @@ export function App() {
         ? PAGE_SIZE
         : Math.max(PAGE_SIZE, unsearchedItemsRef.current[filter]?.length ?? 0);
       loadPage(filter, search, null, limit)
-        .then(({ page, applied }) => {
+        .then(({ cursor, applied }) => {
           if (applied) {
             setInitialLoading(false);
             setLoadError(false);
             if (resetSeq === pageResetSeqRef.current) resettingPageRef.current = false;
-            if (page.length < limit) setReachedEnd(true);
+            if (cursor === null) setReachedEnd(true);
           }
         })
         .catch(() => {
