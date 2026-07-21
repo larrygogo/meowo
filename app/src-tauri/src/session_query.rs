@@ -381,6 +381,116 @@ mod tests {
         let _ = std::fs::remove_file(&db);
     }
 
+    /// 贴纸靠「上一页最后一项的 (last_event_at, id)」当游标翻页。若结果里混入了被
+    /// 顶到前排的已连接会话，最后一项就不再是这批里时间最旧的那条，游标会回退 ——
+    /// 翻页要么漏会话、要么原地打转。这里把整个翻页过程跑完，断言能收全。
+    #[test]
+    fn cursor_paging_collects_every_session() {
+        let dir = std::env::temp_dir().join(format!("meowo-cursor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("cursor.db");
+        let _ = std::fs::remove_file(&db);
+        let old = super::super::now_ms() - RESUME_GRACE_MS * 10;
+        const TOTAL: i64 = 250;
+        let mut alive = std::collections::HashSet::new();
+
+        {
+            let store = meowo_store::Store::open(&db).unwrap();
+            let project = store.upsert_project_by_root("/tmp/p", "p", old).unwrap();
+            for i in 0..TOTAL {
+                let (sid, _) = store.start_session(project, &format!("cc-{i:04}"), old + i).unwrap();
+                store.set_session_title(sid, &format!("会话 {i}"), old + i).unwrap();
+                // 每 7 条留一个「活着」的会话散布在时间轴各处：它们会被排序顶到每页最前，
+                // 正是压垮游标单调性的那批。其余标记 ended。
+                if i % 7 == 0 {
+                    let pid = 9000 + i;
+                    store.set_session_pid(sid, pid, old + i).unwrap();
+                    alive.insert(pid);
+                } else {
+                    store.set_session_status(sid, meowo_store::SessionStatus::Ended, old + i).unwrap();
+                }
+            }
+        }
+
+        let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor: Option<(i64, i64)> = None;
+        const PAGE: usize = 100;
+        for _ in 0..20 {
+            let page = live_sessions_blocking(
+                &db,
+                &cache,
+                &alive,
+                "all",
+                None,
+                PageReq {
+                    before_last_event_at: cursor.map(|c| c.0),
+                    before_id: cursor.map(|c| c.1),
+                    limit: PAGE,
+                },
+            )
+            .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            for item in &page {
+                seen.insert(item.inner.session.id);
+            }
+            let last = page.last().expect("non-empty");
+            cursor = Some((last.inner.session.last_event_at, last.inner.session.id));
+            if page.len() < PAGE {
+                break;
+            }
+        }
+
+        assert_eq!(seen.len(), TOTAL as usize, "游标翻页漏掉了会话");
+        let _ = std::fs::remove_file(&db);
+    }
+
+    /// 拿本机真实 board.db 对账：tab 计数（纯 SQL count）与列表实际能显示的条数差
+    /// 多少——差额就是被 `enrich` 当空壳丢掉的会话，数字对不上时用户会以为会话丢了。
+    ///   cargo test --lib counts_versus_visible -- --ignored --nocapture
+    #[test]
+    #[ignore = "读本机真实数据；仅供手动对账"]
+    fn counts_versus_visible_rows() {
+        let Some(home) = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()
+        else {
+            return;
+        };
+        let db = std::path::PathBuf::from(home).join(".meowo").join("board.db");
+        if !db.exists() {
+            eprintln!("本机没有 ~/.meowo/board.db，跳过");
+            return;
+        }
+        let (total, archived) = super::super::open_store(&db)
+            .unwrap()
+            .live_sessions_totals()
+            .unwrap();
+        let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        // alive 传空集 → 全部按「未连接」判定，正是列表过滤最狠的情形（可见条数下界）。
+        let alive = std::collections::HashSet::new();
+        let visible = live_sessions_blocking(
+            &db,
+            &cache,
+            &alive,
+            "all",
+            None,
+            PageReq {
+                before_last_event_at: None,
+                before_id: None,
+                limit: total as usize + 100,
+            },
+        )
+        .unwrap()
+        .len();
+        println!("counts.total (未归档)  = {total}");
+        println!("counts.archived        = {archived}");
+        println!("列表实际可见           = {visible}");
+        println!("差额（被判为空壳丢弃） = {}", total - visible as i64);
+    }
+
     #[test]
     fn process_snapshot_is_reused_within_ttl_and_refreshed_afterwards() {
         let cache = ProcessSnapshotCache::default();
