@@ -409,6 +409,25 @@ pub(crate) fn iterm_installed() -> bool {
         .unwrap_or(false)
 }
 
+/// Ghostty 是否安装（任意常见位置）：先查标准路径，再用 mdfind 按 bundle id 兜底。
+#[cfg(target_os = "macos")]
+pub(crate) fn ghostty_installed() -> bool {
+    use std::path::Path;
+    if Path::new("/Applications/Ghostty.app").exists() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if Path::new(&home).join("Applications/Ghostty.app").exists() {
+            return true;
+        }
+    }
+    std::process::Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'com.mitchellh.ghostty'")
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// 读设置得出「打开未连接会话」用的终端宿主（macOS）。缺省 Terminal.app；
 /// 选了 iTerm2 但未安装时回退 Terminal.app（避免 AppleScript 静默失败）。
 #[cfg(target_os = "macos")]
@@ -527,7 +546,11 @@ fn copy_dir_merge(source: &std::path::Path, target: &std::path::Path) -> Result<
     for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let destination = target.join(entry.file_name());
-        if entry.file_type().map_err(|error| error.to_string())?.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
             copy_dir_merge(&entry.path(), &destination)?;
         } else if !file_unchanged(&entry.path(), &destination) {
             std::fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
@@ -611,8 +634,12 @@ fn prepare_claude_session_for_active_profile(
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn record_resumed_profile(session_id: &str, profile: Option<&str>) {
-    let Ok(store) = open_store(&db_path()) else { return };
-    let Ok(Some(id)) = store.find_session_id_pub(session_id) else { return };
+    let Ok(store) = open_store(&db_path()) else {
+        return;
+    };
+    let Ok(Some(id)) = store.find_session_id_pub(session_id) else {
+        return;
+    };
     let _ = store.set_session_profile(id, profile);
 }
 
@@ -653,7 +680,11 @@ mod cross_account_resume_tests {
             "conversation"
         );
         for bucket in ["file-history", "session-env", "tasks"] {
-            assert!(target_root.join(bucket).join(session).join("item").is_file());
+            assert!(target_root
+                .join(bucket)
+                .join(session)
+                .join("item")
+                .is_file());
         }
         assert!(target_root
             .join("projects/project")
@@ -661,7 +692,10 @@ mod cross_account_resume_tests {
             .join("subagents/agent.jsonl")
             .is_file());
         assert!(!target_root.join(".credentials.json").exists());
-        assert_eq!(std::fs::read_to_string(&transcript).unwrap(), "conversation");
+        assert_eq!(
+            std::fs::read_to_string(&transcript).unwrap(),
+            "conversation"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }
@@ -694,10 +728,17 @@ mod session_profile_tests {
             Some("work")
         );
         // 切回默认账号必须得到明确的 None，不能又回落到会话之前所属的 profile。
-        assert_eq!(resume_profile(Some("claude"), Some("work".into()), None), None);
         assert_eq!(
-            resume_profile(Some("codex"), Some("original".into()), Some("active".into()))
-                .as_deref(),
+            resume_profile(Some("claude"), Some("work".into()), None),
+            None
+        );
+        assert_eq!(
+            resume_profile(
+                Some("codex"),
+                Some("original".into()),
+                Some("active".into())
+            )
+            .as_deref(),
             Some("original")
         );
     }
@@ -1134,6 +1175,37 @@ pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
     format!("{clear}{set}")
 }
 
+/// POSIX shell 参数逐项单引号包裹并拼接；单引号按 `'\''` 转义。
+fn shell_join_for_posix(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| format!("'{}'", arg.replace('\'', r"'\''")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn ghostty_shell_command(cwd: Option<&str>, argv: &[String], env_prefix: &str) -> Option<String> {
+    if argv.is_empty() {
+        return None;
+    }
+    let run = format!("{env_prefix}{}", shell_join_for_posix(argv));
+    let cmd = match cwd.map(str::trim) {
+        Some("") | None => run,
+        Some(dir) => format!("cd '{}' && {run}", dir.replace('\'', r"'\''")),
+    };
+    Some(cmd)
+}
+
+#[cfg(target_os = "macos")]
+fn resume_session_ghostty(cwd: Option<&str>, argv: &[String], env_prefix: &str) -> bool {
+    let Some(cmd) = ghostty_shell_command(cwd, argv, env_prefix) else {
+        return false;
+    };
+    std::process::Command::new("open")
+        .args(["-na", "Ghostty", "--args", "-e", "/bin/sh", "-lc", &cmd])
+        .spawn()
+        .is_ok()
+}
+
 /// macOS 恢复会话的 env 注入文件：赋值写进临时文件（unix 下创建即 0600），终端命令只出现
 /// `source '<tmp>' && rm -f '<tmp>' && ` 前缀——密钥值不再落在可见命令行上。
 ///
@@ -1148,7 +1220,10 @@ pub(crate) fn env_source_prefix_posix(env: &[(String, String)]) -> Result<String
     // （语义同 env_prefix_posix），值按同一套 POSIX 单引号规则转义。
     let mut content = format!("unset {}\n", PROXY_ENV_KEYS.join(" "));
     for (key, value) in env {
-        content.push_str(&format!("export {key}='{}'\n", value.replace('\'', r"'\''")));
+        content.push_str(&format!(
+            "export {key}='{}'\n",
+            value.replace('\'', r"'\''")
+        ));
     }
     let dir = std::env::temp_dir();
     // create_new 杜绝符号链接/抢占覆写；撞名（概率可忽略）换名重试。
@@ -1373,7 +1448,7 @@ pub(crate) fn wrap_with_env_windows(argv: &[String], env: &[(String, String)]) -
     ]
 }
 
-/// macOS 版：按 terminal 选 Terminal.app/iTerm2（iTerm2 未装回退 Terminal），走 AppleScript。成功 true。
+/// macOS 版：按 terminal 选 Terminal.app/iTerm2/Ghostty（iTerm2/Ghostty 未装回退 Terminal），成功 true。
 #[cfg(target_os = "macos")]
 pub(crate) fn spawn_in_terminal(
     argv: &[String],
@@ -1381,6 +1456,15 @@ pub(crate) fn spawn_in_terminal(
     terminal: &str,
     env: &[(String, String)],
 ) -> bool {
+    if terminal.eq_ignore_ascii_case("ghostty") && ghostty_installed() {
+        let Ok(env_prefix) = env_source_prefix_posix(env) else {
+            return false;
+        };
+        if !mac_resume_cwd_valid(cwd) {
+            return false;
+        }
+        return resume_session_ghostty(cwd, argv, &env_prefix);
+    }
     use crate::term_script::TermKind;
     let kind = match crate::term_script::resume_kind_from_setting(terminal) {
         TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
@@ -1444,7 +1528,10 @@ pub(crate) async fn new_session(
     // （中转端点只认它配置的那个模型，用户选的别名对它无意义，claude 以最后一个 --model 为准）。
     let mut argv = agent.launch_argv();
     if let Some(sel) = &options {
-        argv.extend(meowo_agent::resolve_launch_args(agent.launch_options(), sel));
+        argv.extend(meowo_agent::resolve_launch_args(
+            agent.launch_options(),
+            sel,
+        ));
     }
     let argv = crate::relay::augment_argv(agent.id(), argv);
     // 代理 + 中转 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等），三者都在
@@ -1773,8 +1860,8 @@ impl AgentProcessHandle {
     fn open_verified(pid: i64) -> AgentProcessOpen {
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-            QueryFullProcessImageNameW,
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_TERMINATE,
         };
         if !(1..=u32::MAX as i64).contains(&pid) {
             return AgentProcessOpen::Exited;
@@ -2018,11 +2105,11 @@ mod proxy_env_tests {
     #[test]
     fn posix_env_moves_secrets_into_a_sourced_file() {
         let secret_env = vec![
+            ("ANTHROPIC_API_KEY".to_string(), "sk-ant-secret".to_string()),
             (
-                "ANTHROPIC_API_KEY".to_string(),
-                "sk-ant-secret".to_string(),
+                "HTTPS_PROXY".to_string(),
+                "http://127.0.0.1:7890".to_string(),
             ),
-            ("HTTPS_PROXY".to_string(), "http://127.0.0.1:7890".to_string()),
         ];
         let prefix = env_source_prefix_posix(&secret_env).unwrap();
         // 可见命令行只有 source/rm 与文件路径——密钥值绝不能出现在其中。
@@ -2144,6 +2231,29 @@ mod proxy_env_tests {
         let _ = std::fs::remove_file(&file);
     }
 
+    #[test]
+    fn ghostty_shell_command_quotes_everything() {
+        let argv = vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            "id'123".to_string(),
+        ];
+        let cmd =
+            ghostty_shell_command(Some("/tmp/a b/c'd"), &argv, "source '/tmp/e' && ").expect("cmd");
+        assert_eq!(
+            cmd,
+            "cd '/tmp/a b/c'\\''d' && source '/tmp/e' && 'claude' '--resume' 'id'\\''123'"
+        );
+    }
+
+    #[test]
+    fn ghostty_shell_command_handles_cwdless_and_empty_argv() {
+        let argv = vec!["codex".to_string(), "resume".to_string(), "sid".to_string()];
+        let cmd = ghostty_shell_command(None, &argv, "source '/tmp/e' && ").expect("cmd");
+        assert_eq!(cmd, "source '/tmp/e' && 'codex' 'resume' 'sid'");
+        assert!(ghostty_shell_command(None, &[], "source '/tmp/e' && ").is_none());
+    }
+
     /// open_verified 的白名单复核：测试进程自身不是 agent，必须被拦下（NotAgent）——
     /// 这正是 pid 复用场景的防线：句柄钉住后按镜像路径复核，不杀错进程。
     #[cfg(target_os = "windows")]
@@ -2162,7 +2272,10 @@ mod proxy_env_tests {
     fn open_verified_reports_exited_for_unopenable_pids() {
         for pid in [0, -1, i64::MAX, 0x0FFF_FFFF] {
             assert!(
-                matches!(AgentProcessHandle::open_verified(pid), AgentProcessOpen::Exited),
+                matches!(
+                    AgentProcessHandle::open_verified(pid),
+                    AgentProcessOpen::Exited
+                ),
                 "pid={pid} 应判为 Exited"
             );
         }
