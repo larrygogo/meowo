@@ -1541,12 +1541,14 @@ pub(crate) async fn takeover_managed_terminal(
                 .map_err(|e| e.to_string())?;
             let cwd = store.session_cwd(session_id).map_err(|e| e.to_string())?;
             // takeover 与 resume/start 的守卫互为镜像：那两条要求进程**已死**，这条专治
-            // 进程**还活着**——先确认恢复计划有效，再结束旧进程。判活口径必须一致，否则
-            // 同一会话可能两条路都放行，对同一个 session id 起出第二个 agent。
-            let pid = store
-                .session_pid(session_id)
-                .map_err(|e| e.to_string())?
-                .filter(|pid| *pid > 0 && pid_alive_agent_quick(*pid));
+            // 进程**还活着**——先确认恢复计划有效，再结束旧进程。判活口径必须一致（直接
+            // 复用 session_agent_alive，含 pid 归属校验——换代残留的 pid 属于别的会话，
+            // 杀不得），否则同一会话可能两条路都放行，对同一个 session id 起出第二个 agent。
+            let pid = if session_agent_alive(&store, session_id)? {
+                store.session_pid(session_id).map_err(|e| e.to_string())?
+            } else {
+                None
+            };
 
             ensure_session_profile_available(&provider, &session.cc_session_id)?;
             let (_, resume) =
@@ -1725,10 +1727,26 @@ pub(crate) fn start_managed_resume_sized(
 /// `session_query` 的缓存快照可能与实时进程表给出相反结论。守卫要的是进程事实，故实时查。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Result<bool, String> {
-    Ok(store
+    let Some(pid) = store
         .session_pid(sid)
         .map_err(|e| e.to_string())?
-        .is_some_and(|pid| pid > 0 && pid_alive_agent_quick(pid)))
+        .filter(|&pid| pid > 0)
+    else {
+        return Ok(false);
+    };
+    if !pid_alive_agent_quick(pid) {
+        return Ok(false);
+    }
+    // 进程活着还不够，pid 得仍归本会话：/clear 换代后旧行可能残留一个「活着但已被
+    // 新会话认领」的 pid（end_session 清 pid 之前的存量数据）。拿它当「外部仍在运行」
+    // 会误拒接管——而那个「外部终端」根本不存在；更糟的是 takeover 会照着它杀错新会话的进程。
+    if store
+        .pid_held_by_other_live(sid, pid)
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// Windows：`terminate_agent_for_restart` 用的已验证 agent 进程句柄。

@@ -664,6 +664,19 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// 该 pid 是否已被**另一条**未结束的会话行认领。set_session_pid 保证同一时刻至多
+    /// 一条非 ended 行持有某个 pid——存在这样的别行，就说明本会话记录的 pid 是换代残留
+    /// （典型：/clear 前的旧行，见 end_session 注释），进程虽活但已不属于本会话，
+    /// 接管守卫应视其为「本会话进程已死」。也顺带自愈 end_session 清 pid 之前留下的存量脏行。
+    pub fn pid_held_by_other_live(&self, session_id: i64, pid: i64) -> Result<bool, StoreError> {
+        let r = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE pid = ?1 AND id <> ?2 AND status <> 'ended')",
+            rusqlite::params![pid, session_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(r)
+    }
+
     /// 取会话当前记录的 pid（resume 前校验死活用；不存在的会话报错）。
     pub fn session_pid(&self, session_id: i64) -> Result<Option<i64>, StoreError> {
         let r = self.conn.query_row(
@@ -674,10 +687,13 @@ impl Store {
         Ok(r)
     }
 
-    /// 结束会话：状态设为 ended，记录 ended_at。
+    /// 结束会话：状态设为 ended，记录 ended_at，并清 pid。
+    /// 清 pid 是必须的：/clear 只换会话不换进程，SessionEnd 先于新会话认领 pid 到达时，
+    /// 旧行若留着 pid，set_session_pid 的换代清理（只扫非 ended 行）摘不掉它——此后
+    /// 接管守卫拿这个「活着但已归新会话」的 pid 判活，会把旧会话误判成「仍在外部终端运行」。
     pub fn end_session(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE sessions SET status = 'ended', pending_review = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2 AND last_event_at <= ?1",
+            "UPDATE sessions SET status = 'ended', pending_review = NULL, pid = NULL, ended_at = ?1, last_event_at = ?1 WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
         Ok(())
@@ -1083,6 +1099,49 @@ mod latest_session_tests {
         // 全部归档 → None。
         store.set_session_archived(old, true, 700).unwrap();
         assert_eq!(store.latest_session_id().unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod stale_pid_tests {
+    use super::*;
+
+    /// /clear 只换会话不换进程：SessionEnd 先把旧会话收尾，随后新会话才认领同一 pid。
+    /// end_session 若不清 pid，旧行会留着一个「活着但已归新会话」的 pid，接管守卫
+    /// 据此把旧会话误判成「仍在外部终端运行」——而那个终端并不存在。
+    #[test]
+    fn end_session_clears_pid() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (old, _) = store.start_session(pid, "s-old", 100).unwrap();
+        store.set_session_pid(old, 74519, 100).unwrap();
+        store.end_session(old, 200).unwrap();
+        assert_eq!(store.session_pid(old).unwrap(), None);
+    }
+
+    /// 存量脏数据（end_session 清 pid 之前留下的 ended+pid 行）的自愈判据：
+    /// 同一 pid 已被另一条非 ended 行认领 → 本行的 pid 是换代残留，不算「本会话还活着」。
+    #[test]
+    fn pid_held_by_other_live_detects_reclaimed_pid() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (old, _) = store.start_session(pid, "s-old", 100).unwrap();
+        let (new, _) = store.start_session(pid, "s-new", 300).unwrap();
+        // 直接写库造出历史脏行：ended 但 pid 未清（end_session 已修，正常路径造不出来）。
+        store
+            .conn
+            .execute(
+                "UPDATE sessions SET status='ended', ended_at=200, pid=74519 WHERE id=?1",
+                [old],
+            )
+            .unwrap();
+        // 新会话尚未认领该 pid：没有别的活行持有它，旧行的 pid 只能按字面判活。
+        assert!(!store.pid_held_by_other_live(old, 74519).unwrap());
+        // 新会话认领同一 pid 后：旧行的 pid 判为换代残留。
+        store.set_session_pid(new, 74519, 300).unwrap();
+        assert!(store.pid_held_by_other_live(old, 74519).unwrap());
+        // 认领方自己查自己：pid 归属正常，不受影响。
+        assert!(!store.pid_held_by_other_live(new, 74519).unwrap());
     }
 }
 
