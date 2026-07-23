@@ -112,8 +112,9 @@ use tauri_plugin_updater::UpdaterExt;
 pub mod setup;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, State};
-// Manager：仅 Windows setup 用 app.get_webview_window("main") 做出屏救援/子类化。
-#[cfg(target_os = "windows")]
+// Manager：跨平台都要(install_downloaded_update 在 spawn_blocking 里 app.state::<AppState>(),
+// 以及 Windows setup 的 app.get_webview_window("main") 出屏救援/子类化)。
+// 曾误加 #[cfg(windows)] 门控 → macOS/Linux 上 .state() 找不到方法(E0599),Windows CI 掩盖。
 use tauri::Manager;
 
 /// 托管状态只持有库路径。每个命令按需开短连接——库暂时不可用（被独占锁/损坏/
