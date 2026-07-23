@@ -6,6 +6,7 @@ import { getSettings, setSettings, type Settings } from "../../api";
 export const SETTINGS_DEFAULTS: Settings = {
   archive_hide_days: 0,
   notifications_enabled: true,
+  attention_flash_enabled: true,
   auto_update_enabled: true,
   theme: "dark",
   opacity: 94,

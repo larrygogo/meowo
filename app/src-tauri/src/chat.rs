@@ -14,6 +14,8 @@ use tauri::State;
 pub(crate) struct ChatMtimes {
     entries: std::collections::HashMap<i64, (std::time::SystemTime, u64)>,
     tick: u64,
+    /// errored 的节流缓存:(采样时刻, 值)。见 [`ERRORED_SAMPLE_MS`]。
+    errored: std::collections::HashMap<i64, (i64, bool)>,
 }
 
 impl ChatMtimes {
@@ -50,6 +52,27 @@ impl ChatMtimes {
             }
         }
     }
+
+    fn errored_cached(&self, session_id: i64, now_ms: i64) -> Option<bool> {
+        self.errored
+            .get(&session_id)
+            .filter(|(sampled_at, _)| now_ms.saturating_sub(*sampled_at) < ERRORED_SAMPLE_MS)
+            .map(|(_, value)| *value)
+    }
+
+    fn put_errored(&mut self, session_id: i64, now_ms: i64, value: bool) {
+        self.errored.insert(session_id, (now_ms, value));
+        if self.errored.len() > Self::CAP {
+            let oldest = self
+                .errored
+                .iter()
+                .min_by_key(|(_, (sampled_at, _))| *sampled_at)
+                .map(|(id, _)| *id);
+            if let Some(id) = oldest {
+                self.errored.remove(&id);
+            }
+        }
+    }
 }
 
 /// Far more than one screen, while keeping first-open IPC and DOM work bounded.
@@ -63,9 +86,24 @@ fn trim_first_page<T>(items: &mut Vec<T>, full: bool, full_read: bool) -> bool {
     true
 }
 
+/// 存活信号,带进 [`load_chat_history`]:进程表快照(TTL 缓存,与看板共享)加该会话的
+/// 托管 PTY 活性——hook 未认领 pid / 事件宽限过期时的存活兜底,与看板同口径。
+/// owned:采样发生在 spawn_blocking 闭包内,持有权直接随值走,不做生命周期穿针。
+struct LiveSignals {
+    alive: std::sync::Arc<std::collections::HashSet<i64>>,
+    pty_live: bool,
+}
+
+/// errored 的重采样间隔:transcript 分析走共享 mtime 缓存,但 agent 流式输出期间文件
+/// 每轮都在变,650ms 全采样等于对同一批新增字节做两遍解析(分析器 + 聊天增量各一遍),
+/// 且解析在与侧栏共享的缓存锁内。错误徽标容忍 ~5s 延迟,换掉 8 倍的重复解析。
+const ERRORED_SAMPLE_MS: i64 = 5_000;
+
 fn load_chat_history(
     db_path: &Path,
     chat_mtimes: &Mutex<ChatMtimes>,
+    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
+    live: LiveSignals,
     session_id: i64,
     offset: u64,
     full: bool,
@@ -105,6 +143,15 @@ fn load_chat_history(
         context_pct: context.used_pct,
         context_window: context.window_size,
         current_activity: header.current_activity.clone(),
+        // 与看板 tab_class 的地基同源（session_connected）：DB 的 running 在进程死后、
+        // reaper 收尾前是滞留值，直接展示会出现「假运行中」。
+        connected: super::session_query::session_connected(
+            &header.status,
+            header.pid,
+            super::session_query::process_alive(header.pid, &live.alive, live.pty_live),
+            header.last_event_at,
+            super::now_ms(),
+        ),
         // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
         todos: store
             .task_id_of_session_pub(session_id)
@@ -120,9 +167,38 @@ fn load_chat_history(
             })
             .unwrap_or_default(),
         has_more: false,
+        errored: false,
+        pty_managed: live.pty_live,
         last_user_text: header.last_user_text.clone(),
         last_ai_text: header.last_ai_text.clone(),
     };
+    // errored 与侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
+    // 5s 节流:agent 流式输出期间 transcript 每轮都在变,650ms 全采样会对同一批新增字节
+    // 做两遍解析(分析器 + 下面的聊天增量各一遍)且解析持共享缓存锁;错误徽标容忍 ~5s 延迟。
+    {
+        let now_ms = super::now_ms();
+        let cached = chat_mtimes
+            .lock()
+            .ok()
+            .and_then(|seen| seen.errored_cached(session_id, now_ms));
+        history.errored = match cached {
+            Some(value) => value,
+            None => {
+                let value = super::session_query::analyze_transcript(
+                    tx_cache,
+                    &history.provider,
+                    history.cwd.as_deref(),
+                    &header.cc_session_id,
+                )
+                .map(|info| info.error.is_some())
+                .unwrap_or(false);
+                if let Ok(mut seen) = chat_mtimes.lock() {
+                    seen.put_errored(session_id, now_ms, value);
+                }
+                value
+            }
+        };
+    }
     let spec = meowo_agent::by_id(&history.provider)
         .and_then(|agent| agent.telemetry())
         .and_then(|telemetry| telemetry.transcript());
@@ -166,7 +242,9 @@ fn load_subagent_transcript(
     tool_use_id: &str,
 ) -> Result<Vec<meowo_protocol::ipc::SubagentRun>, String> {
     let store = super::open_store(db_path)?;
-    let header = store.session_header(session_id).map_err(|e| e.to_string())?;
+    let header = store
+        .session_header(session_id)
+        .map_err(|e| e.to_string())?;
     let spec = meowo_agent::by_id(&header.provider)
         .and_then(|agent| agent.telemetry())
         .and_then(|telemetry| telemetry.transcript())
@@ -187,7 +265,9 @@ fn load_subagent_transcript(
 /// 对话页和贴纸都还挂着旧模型。GUI 驱动的切换完成后调一次即可：一次有界读，不进热路径。
 fn refresh_model(db_path: &Path, session_id: i64) -> Result<Option<String>, String> {
     let store = super::open_store(db_path)?;
-    let header = store.session_header(session_id).map_err(|e| e.to_string())?;
+    let header = store
+        .session_header(session_id)
+        .map_err(|e| e.to_string())?;
     let model = meowo_agent::by_id(&header.provider)
         .and_then(|agent| agent.telemetry())
         .map(|telemetry| {
@@ -200,7 +280,13 @@ fn refresh_model(db_path: &Path, session_id: i64) -> Result<Option<String>, Stri
         .and_then(|out| out.model);
     if let Some(model) = model.as_deref() {
         store
-            .set_session_context(&header.cc_session_id, None, None, Some(model), super::now_ms())
+            .set_session_context(
+                &header.cc_session_id,
+                None,
+                None,
+                Some(model),
+                super::now_ms(),
+            )
             .map_err(|e| e.to_string())?;
     }
     Ok(model)
@@ -228,7 +314,9 @@ pub(crate) async fn refresh_session_model(
 /// 一次有界读 + 整份覆盖，不进 650ms 的历史轮询热路径；由前端在切换会话时调一次。
 fn refresh_todos(db_path: &Path, session_id: i64) -> Result<usize, String> {
     let store = super::open_store(db_path)?;
-    let header = store.session_header(session_id).map_err(|e| e.to_string())?;
+    let header = store
+        .session_header(session_id)
+        .map_err(|e| e.to_string())?;
     let Some(todos) = meowo_agent::by_id(&header.provider)
         .and_then(|agent| agent.telemetry())
         .and_then(|telemetry| {
@@ -292,10 +380,20 @@ pub(crate) async fn get_chat_history(
 ) -> Result<ChatHistory, String> {
     let db_path = state.db_path.clone();
     let chat_mtimes: Arc<Mutex<ChatMtimes>> = state.chat_mtimes.clone();
+    let tx_cache = state.tx_cache.clone();
+    // 进程表采样(TTL 缓存,与看板共享)在 spawn_blocking 里做:冷采样 Windows 上要
+    // 30-120ms,不能挂在 async-runtime 线程上。PTY 活性是纯内存查表,留在外面无妨。
+    let snapshots = state.process_snapshots.clone();
+    let pty_live = state.ptys.is_active(session_id);
     tauri::async_runtime::spawn_blocking(move || {
         load_chat_history(
             &db_path,
             &chat_mtimes,
+            &tx_cache,
+            LiveSignals {
+                alive: snapshots.snapshot(),
+                pty_live,
+            },
             session_id,
             offset,
             full.unwrap_or(false),
@@ -305,9 +403,131 @@ pub(crate) async fn get_chat_history(
     .map_err(|e| e.to_string())?
 }
 
+/// 粘贴附件的单文件上限。覆盖截图与常规文档；防的是把整包安装镜像塞进剪贴板粘过来——
+/// 内容要过 base64 + IPC，一份超大 payload 会把主进程内存与序列化都拖住。
+const PASTED_ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// 把粘贴进对话输入框的图片/文件落成临时文件，返回绝对路径接入现有附件流程。
+///
+/// 为什么要宿主代劳：webview 的剪贴板只给 File **内容**，拿不到源文件路径，而附件协议
+/// 是「把路径列表交给 CLI 自己读」。落在系统临时目录的 meowo-paste 子目录，交给 OS 的
+/// 临时清理策略回收——CLI 在发送后的下一个回合就会读走它。
+/// 文件名只取 basename 并过滤路径分隔符（杜绝 `..\` 穿越），落进带时间戳的独立子目录，
+/// 既避免同名互踩，附件条上又能显示原始文件名。
+#[tauri::command]
+pub(crate) async fn save_pasted_attachment(
+    file_name: String,
+    data_base64: String,
+) -> Result<String, String> {
+    // async + spawn_blocking：同步命令跑在主线程，而这里要解码最多 ~43MB 的 base64 再写
+    // 最多 32MB 磁盘——粘贴大图/大文件会把消息泵冻住肉眼可见的一段时间。
+    tauri::async_runtime::spawn_blocking(move || {
+        save_pasted_attachment_blocking(file_name, data_base64)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn save_pasted_attachment_blocking(
+    file_name: String,
+    data_base64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    // 编码后长度 ≈ 4/3 原始大小：先按编码长度挡住超大 payload，再解码。
+    if data_base64.len() > PASTED_ATTACHMENT_MAX_BYTES / 3 * 4 + 4 {
+        return Err("附件过大（上限 32MB）".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("空附件".into());
+    }
+    if bytes.len() > PASTED_ATTACHMENT_MAX_BYTES {
+        return Err("附件过大（上限 32MB）".into());
+    }
+    let safe: String = Path::new(&file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .take(80)
+        .collect();
+    let safe = if safe.trim().is_empty() {
+        "pasted.bin".to_string()
+    } else {
+        safe
+    };
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir()
+        .join("meowo-paste")
+        .join(format!("{}-{seq}", super::now_ms()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(safe);
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// 读系统剪贴板**图像**的指纹(尺寸 + RGBA 内容);剪贴板里不是图像时为 None。只读不写。
+///
+/// 用途:发送粘贴图片附件前,判断「剪贴板里还是不是刚才粘贴进 meowo 的那张图」——
+/// 匹配才敢向 CLI 的 PTY 发 Ctrl-V,让 TUI 自己读剪贴板、走它的原生图片附加
+/// (claude 的 `[Image #N]`、kimi 的 `[image:…]`);不匹配(用户中途复制过别的东西)
+/// 绝不能发,否则会把错的图附给 agent。
+#[tauri::command]
+pub(crate) async fn clipboard_image_fingerprint() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        let Ok(image) = clipboard.get_image() else {
+            return Ok(None);
+        };
+        use meowo_agent::codec::{fnv1a, FNV1A_OFFSET};
+        let mut hash = FNV1A_OFFSET;
+        fnv1a(&mut hash, &(image.width as u64).to_le_bytes());
+        fnv1a(&mut hash, &(image.height as u64).to_le_bytes());
+        fnv1a(&mut hash, &image.bytes);
+        Ok(Some(format!("{hash:016x}")))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pasted_attachment_roundtrip_keeps_name_and_content() {
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(b"png-bytes");
+        let path = save_pasted_attachment_blocking("shot.png".into(), data).unwrap();
+        let path = std::path::PathBuf::from(path);
+        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("shot.png"));
+        assert!(path.starts_with(std::env::temp_dir().join("meowo-paste")));
+        assert_eq!(std::fs::read(&path).unwrap(), b"png-bytes");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn pasted_attachment_name_cannot_escape_the_paste_dir() {
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(b"x");
+        let path = save_pasted_attachment_blocking("..\\..\\evil.exe".into(), data).unwrap();
+        let path = std::path::PathBuf::from(path);
+        // basename 化 + 过滤分隔符：无论名字长什么样，都只能落在 meowo-paste 里。
+        assert!(path.starts_with(std::env::temp_dir().join("meowo-paste")));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn pasted_attachment_rejects_oversize_and_empty() {
+        // 编码长度粗筛：超过上限的 payload 不必真造 32MB，长度骗过第一道即可验证拒绝。
+        let oversized = "A".repeat(PASTED_ATTACHMENT_MAX_BYTES / 3 * 4 + 8);
+        assert!(save_pasted_attachment_blocking("big.bin".into(), oversized).is_err());
+        assert!(save_pasted_attachment_blocking("empty.bin".into(), String::new()).is_err());
+    }
 
     #[test]
     fn stale_mtime_observations_cannot_overwrite_newer_ones() {

@@ -1,22 +1,24 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { appConfirm } from "../confirm";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import {
+  confirmStopSession,
   isExternallyHeld,
   managedTerminalSnapshot,
   openAttachedTerminal,
+  openLink,
   resizeManagedTerminal,
   startManagedTerminal,
-  stopManagedTerminal,
   takeoverManagedTerminal,
   writeManagedTerminal,
 } from "../api";
 import { useT } from "../i18n";
 import type { PtyExitEvent as ExitEvent } from "../generated/contracts/PtyExitEvent";
 import type { PtyOutputEvent as OutputEvent } from "../generated/contracts/PtyOutputEvent";
-import { terminalAttention, visibleTerminalText, type TerminalAttention } from "../terminalAttention";
+import { terminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention } from "../terminalAttention";
 
 function decodeBase64(data: string): Uint8Array {
   const binary = atob(data);
@@ -59,6 +61,51 @@ function hasVisibleOutput(bytes: Uint8Array): boolean {
 /// TUI 迟迟不画东西时的保底：宁可把黑屏交给用户，也不要让 spinner 永远转下去。
 const INITIALIZING_TIMEOUT_MS = 25_000;
 
+/// 剔除「终端自动应答」形态的序列：CPR 光标位置（`\x1b[n;mR`，含 DECXCPR 的 `?` 变体）、
+/// DSR 状态（`\x1b[0n`）、DA1/DA2 设备属性（`…c`）、DECRPM（`…$y`）、OSC 应答（颜色查询等）、
+/// DCS 应答。重连时快照会把整段历史回放进 xterm，历史里 agent 当年的查询（`\x1b[6n` 等）
+/// 会被 xterm **再答一遍**，迟到的应答经 onData 打进正跑着的 agent 输入框，控制序列被
+/// 部分吞掉后剩下孤立尾字符（真实案例：每次重连 claude 的 composer 里多出一个 C）。
+/// 只在历史回放窗口内套用；用户按键唯一可能撞形态的是带修饰键的 F3（`\x1b[1;2R`），
+/// 在几毫秒的回放窗口里按到它的代价可以忽略。
+export function stripTerminalReplies(data: string): string {
+  // DECRPM($y)的 '?' 必须可选:xterm 对 ANSI 模式查询(CSI Ps $ p)的应答不带 '?'
+  // (如 \x1b[4;2$y),只匹配 DEC 私有形态会漏放。CSI-t 是窗口尺寸报告(CSI 18 t 等,
+  // windowOptions 开启时 xterm 会应答)——无用户按键以裸 t 收尾,纳入无误伤。
+  return data.replace(
+    // eslint-disable-next-line no-control-regex
+    /\x1b\[\??\d+(?:;\d+)*R|\x1b\[0n|\x1b\[[?>][\d;]*c|\x1b\[\??\d+;\d+\$y|\x1b\[\d+(?:;\d+)*t|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\/g,
+    "",
+  );
+}
+
+type InverseScanCell = { isInverse(): number };
+type InverseScanLine = { length: number; getCell(x: number): InverseScanCell | undefined };
+export type InverseScanBuffer = { viewportY: number; getLine(y: number): InverseScanLine | undefined };
+
+/// 在 viewport 里找「孤立的单格反显」——TUI 自绘假光标的形态（kimi 的输入光标就是
+/// `\e[7m \e[27m` 一个反显空格，见 capture_ime_cursor 探针）。连排反显（选中行、菜单
+/// 焦点项）整段跳过；命中超过一个说明画面里另有反显装饰，多义即放弃（返回 null）。
+export function findFakeCaret(buffer: InverseScanBuffer | undefined, rows: number): { x: number; y: number } | null {
+  if (!buffer) return null;
+  let hit: { x: number; y: number } | null = null;
+  for (let row = 0; row < rows; row += 1) {
+    const line = buffer.getLine(buffer.viewportY + row);
+    if (!line) continue;
+    for (let col = 0; col < line.length; col += 1) {
+      if (!line.getCell(col)?.isInverse()) continue;
+      let end = col;
+      while (end + 1 < line.length && line.getCell(end + 1)?.isInverse()) end += 1;
+      if (end === col) {
+        if (hit) return null;
+        hit = { x: col, y: row };
+      }
+      col = end;
+    }
+  }
+  return hit;
+}
+
 type ManagedTerminalProps = {
   sessionId: number;
   status?: string;
@@ -68,13 +115,16 @@ type ManagedTerminalProps = {
   interactivePrompt?: boolean;
   /// 刚发出会弹菜单的命令（如 `/model`）：这段窗口里额外识别光标菜单。
   expectMenu?: boolean;
+  /// 识别文法(provider 门控 + 插件声明的选择器锚点)。缺省按 Claude 处理(兼容旧调用),
+  /// 生产路径由 ChatWindow 从 chatUi 显式组装传入。
+  grammar?: AttentionGrammar;
   onAttention?: (attention: TerminalAttention | null) => void;
   /// 供父组件在自己重启 PTY 后触发偏移复位（对话页发送/切模式也会重启 PTY，
   /// 不止组件内部的 start/takeover 按钮）。
   rearmRef?: MutableRefObject<(() => void) | null>;
 };
 
-export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, onAttention, rearmRef: externalRearmRef }: ManagedTerminalProps) {
+export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, onAttention, rearmRef: externalRearmRef }: ManagedTerminalProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -97,6 +147,7 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   const attentionMarkersRef = useRef(attentionMarkers);
   const interactivePromptRef = useRef(interactivePrompt);
   const expectMenuRef = useRef(expectMenu);
+  const grammarRef = useRef(grammar);
   const onAttentionRef = useRef(onAttention);
   const visibleRef = useRef(visible);
   const attentionTailRef = useRef("");
@@ -106,13 +157,23 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   attentionMarkersRef.current = attentionMarkers;
   interactivePromptRef.current = interactivePrompt;
   expectMenuRef.current = expectMenu;
+  grammarRef.current = grammar;
   onAttentionRef.current = onAttention;
   visibleRef.current = visible;
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    // 终端里的链接遵循终端惯例：Ctrl/Cmd+点击才打开（普通点击留给 TUI 的鼠标交互与选区）。
+    // 打开走后端 open_link（限 http/https，与对话 Markdown 链接同一条通道）；被拒时把原因
+    // 显示出来，不许无声吞掉——「点了没反应」正是这类问题最难排查的形态。
+    const openTerminalLink = (event: MouseEvent, uri: string) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      void openLink(uri).catch((e) => setError(String(e)));
+    };
     const terminal = new Terminal({
+      // OSC 8 超链接（TUI 显式声明的链接）由这里接住；纯文本 URL 的识别在 WebLinksAddon。
+      linkHandler: { activate: openTerminalLink },
       cursorBlink: true,
       convertEol: false,
       // "JetBrains Mono" 由 styles.css 的 @font-face 打包提供（不依赖本机安装），管拉丁+符号；
@@ -128,18 +189,83 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
+    // 纯文本 URL 的链接化。不装它 xterm 根本不识别正文里的 URL——「Ctrl+点击打不开链接」
+    // 的第一层原因就是链接从未存在过。
+    terminal.loadAddon(new WebLinksAddon(openTerminalLink));
     terminal.open(host);
+    // 按键粘贴：xterm 把 Ctrl+V 当普通组合键吞掉（preventDefault 后向 PTY 发 ^V），
+    // 浏览器的原生 paste 事件因此永远不触发——Windows/Linux 上按键粘贴整个失效。
+    // 返回 false 让 xterm 完全放行这个 keydown：WebView 对聚焦的隐藏 textarea 执行原生
+    // 粘贴，xterm 自带的 paste 监听接住文本（含 bracketed paste 包装）走 onData 下发。
+    // 刻意不自己读剪贴板：navigator.clipboard 在 webview 里要额外权限，原生事件路径零依赖。
+    // Shift+Insert 是 Windows 终端的习惯粘贴键，一并放行。
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      const paste = ((event.ctrlKey || event.metaKey) && !event.altKey && event.code === "KeyV")
+        || (event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "Insert");
+      return !paste;
+    });
+    // 上面的放行有个盲区：剪贴板是**图片**时 paste 事件没有文本数据，xterm 的 paste 监听
+    // 不产生任何输入，^V 也早被拦下——claude 的原生贴图（^V 让 TUI 自己读系统剪贴板出
+    // [Image #N]）在终端页整条断掉。兜底：无文本而有文件（位图）的 paste，补发 ^V 给 CLI。
+    // 文本存在时不动——bracketed paste 的既有通路优先。
+    const pasteImageFallback = (event: ClipboardEvent) => {
+      const data = event.clipboardData;
+      if (!data || data.getData("text") || data.files.length === 0) return;
+      event.preventDefault();
+      void writeManagedTerminal(sessionId, "\x16").catch((e) => setError(String(e)));
+    };
+    host.addEventListener("paste", pasteImageFallback);
+    // ── IME 锚点校正 ──
+    // 实测（capture_ime_cursor 探针）：kimi 启动即 `?25l` 隐藏硬件光标、从不恢复，输入框里的
+    // 光标是自绘的反显空格；帧尾硬件光标停在最后绘制行的行尾。而 xterm 的组合输入锚点就是
+    // 硬件光标（CompositionHelper 按 buffer.x/y 定位），输入法候选栏于是钉在行尾——按硬件
+    // 光标锚定 IME 的终端全都如此，属 TUI 侧缺陷，但宿主能救：组合期间找到唯一的假光标格
+    // 就把组合视图与隐藏 textarea 改锚过去。xterm 在 compositionstart/update（含其内部
+    // setTimeout 重定位）会反复写回硬件光标坐标，用 MutationObserver 盯住 style 每次覆盖；
+    // 同值不写，观察器不会自我打环。找不到/多义时不动，维持 xterm 默认行为。
+    const helperTextarea = host.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    const compositionView = host.querySelector<HTMLElement>(".composition-view");
+    let composing = false;
+    const alignIme = () => {
+      if (!composing || !helperTextarea) return;
+      const caret = findFakeCaret(terminal.buffer?.active, terminal.rows);
+      if (!caret) return;
+      const screen = host.querySelector<HTMLElement>(".xterm-screen");
+      if (!screen || terminal.cols < 1 || terminal.rows < 1) return;
+      const left = `${Math.round((caret.x * screen.clientWidth) / terminal.cols)}px`;
+      const top = `${Math.round((caret.y * screen.clientHeight) / terminal.rows)}px`;
+      for (const el of [helperTextarea, compositionView]) {
+        if (!el) continue;
+        if (el.style.left !== left) el.style.left = left;
+        if (el.style.top !== top) el.style.top = top;
+      }
+    };
+    const imeObserver = new MutationObserver(alignIme);
+    const startComposition = () => { composing = true; alignIme(); };
+    const endComposition = () => { composing = false; };
+    if (helperTextarea) {
+      helperTextarea.addEventListener("compositionstart", startComposition);
+      helperTextarea.addEventListener("compositionend", endComposition);
+      imeObserver.observe(helperTextarea, { attributes: true, attributeFilter: ["style"] });
+      if (compositionView) imeObserver.observe(compositionView, { attributes: true, attributeFilter: ["style"] });
+    }
     terminalRef.current = terminal;
     fitRef.current = fit;
     requestAnimationFrame(() => fit.fit());
 
     const input = terminal.onData((data) => {
-      if (data.includes("\r")) {
+      // 历史回放窗口内，xterm 对回放查询的自动应答不得下发 PTY（见 stripTerminalReplies）；
+      // 用户真实按键不匹配这些形态，照常放行。窗口外（agent 实时发的查询）原样转发——
+      // 那些应答是 agent 正在等的。
+      const payload = replayingHistory ? stripTerminalReplies(data) : data;
+      if (!payload) return;
+      if (payload.includes("\r")) {
         onUserSubmitRef.current?.();
       }
       // 写失败必须可见：典型场景是整段粘贴超过后端单次输入上限被拒——
       // 静默吞掉的话，粘贴无声消失，终端画面纹丝不动。
-      void writeManagedTerminal(sessionId, data).catch((e) => setError(String(e)));
+      void writeManagedTerminal(sessionId, payload).catch((e) => setError(String(e)));
     });
     let unOutput: (() => void) | undefined;
     let unExit: (() => void) | undefined;
@@ -147,11 +273,29 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     let hasWrittenOutput = false;
     let painted = false;
     let snapshotApplied = false;
+    // 快照全量回放进行中(true 期间 onData 过滤终端自动应答);该次 write 的完成回调清位。
+    let replayingHistory = false;
     let nextOffset = 0;
     const bufferedOutput: OutputEvent[] = [];
     let bufferedExit: ExitEvent | null = null;
     let snapshotTimer = 0;
     const attentionDecoder = new TextDecoder();
+    // IME 候选栏对齐依赖 xterm 的字形测量：打包的 JetBrains Mono 由 @font-face 异步加载，
+    // 终端常在字体就绪前完成测量——单元格宽高按回退字体计算，光标的像素坐标随行列越偏
+    // 越远，组合输入期跟随光标的隐藏 textarea（输入法候选栏的锚点）就落不到输入框上。
+    // 字体就绪后强制重测：同值赋值会被 options 服务去重，先动一格字号再改回才触发。
+    // jsdom 没有 document.fonts，可选链让测试环境静默跳过。
+    void document.fonts?.load('12px "JetBrains Mono"').then(() => {
+      if (cancelled) return;
+      const size = terminal.options.fontSize ?? 12;
+      terminal.options.fontSize = size + 1;
+      terminal.options.fontSize = size;
+      fit.fit();
+      // 重测可能改变行列数，PTY 侧要跟着调，否则 TUI 按旧尺寸画、连输入框的位置都是错的。
+      if (visibleRef.current && terminal.cols > 1 && terminal.rows > 1) {
+        void resizeManagedTerminal(sessionId, terminal.cols, terminal.rows).catch(() => {});
+      }
+    }).catch(() => {});
     // 保底：TUI 一直不画东西也不能永远停在 spinner 上。
     const giveUpTimer = window.setTimeout(() => {
       if (!cancelled) { painted = true; setInitialized(true); }
@@ -163,10 +307,33 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       window.clearTimeout(giveUpTimer);
       setInitialized(true);
     };
+    // 提示从屏幕上消失(在终端里答掉了/界面翻页了)后连续多少次扫描不再匹配,才发布 null
+    // 自动收卡。>1 是为了骑过 TUI 的分笔重绘:整屏重画的中间帧可能短暂不匹配,立即清卡
+    // 会闪烁——而清卡又重置了签名去重,重绘完成后同一屏会再弹一次,循环闪。
+    const ATTENTION_CLEAR_STREAK = 3;
+    let attentionMissStreak = 0;
     const reportAttention = (text: string) => {
       if (text) lastScreenRef.current = text;
-      const attention = terminalAttention(text, attentionMarkersRef.current, interactivePromptRef.current, expectMenuRef.current);
-      if (!attention) return;
+      const attention = terminalAttention(text, attentionMarkersRef.current, interactivePromptRef.current, expectMenuRef.current, grammarRef.current);
+      if (!attention) {
+        // 此前这里直接 return——attention 状态只置不清,误报或已在终端里处理过的提示会
+        // 永久钉住卡片、锁死对话页输入框。现在:屏幕持续不匹配就发布 null 收卡,并重置
+        // 签名去重,让真正的下一个提示(哪怕内容相同)还能再弹。
+        if (attentionReportedRef.current) {
+          attentionMissStreak += 1;
+          if (attentionMissStreak >= ATTENTION_CLEAR_STREAK) {
+            attentionMissStreak = 0;
+            attentionReportedRef.current = null;
+            onAttentionRef.current?.(null);
+          } else {
+            // 扫描由输出事件驱动;最后一次重绘后终端可能归于安静,凑不满连击就永远
+            // 清不掉。miss 期间自我续排,直到清卡或重新匹配。
+            window.setTimeout(() => { if (!cancelled) scheduleAttentionScan(); }, 200);
+          }
+        }
+        return;
+      }
+      attentionMissStreak = 0;
       const signature = `${attention.id}\0${attention.text}\0${JSON.stringify(attention.options)}`;
       if (signature === attentionReportedRef.current) return;
       // 信任页本身就是当前需要展示的有效画面，不能继续被“正在初始化”遮罩盖住。
@@ -218,7 +385,13 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       nextOffset = end;
       inspectAttention(visible);
       markPainted(visible);
-      terminal.write(visible, scheduleAttentionScan);
+      terminal.write(visible, () => {
+        // xterm 按入队顺序处理 chunk:回放那笔 write 解析完(它触发的自动应答也都发完)
+        // 这里才回调,此后到达的都是实时数据,应答恢复放行。后续写清一个本就 false 的
+        // 标志无副作用。
+        replayingHistory = false;
+        scheduleAttentionScan();
+      });
     };
     const applyExit = (payload: ExitEvent) => {
       window.clearTimeout(snapshotTimer);
@@ -239,11 +412,17 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       setActive(snapshot.active);
       setExitCode(snapshot.exited ? snapshot.exitCode : undefined);
       if (snapshot.data) {
+        // 首次全量回放(重连/重开窗口)才拦应答:里面全是答过的旧查询。增量补查是准实时
+        // 输出,agent 可能正等着这些应答,不拦。
+        if (!hasWrittenOutput) replayingHistory = true;
         writeOutput({
           sessionId,
           offset: Number.isFinite(snapshot.startOffset) ? snapshot.startOffset : 0,
           data: snapshot.data,
         });
+        // writeOutput 可能因区间裁剪空转(没写就没有清位回调):hasWrittenOutput 仍为
+        // false 说明确实没写,标志必须当场收回,否则实时应答被永久拦截。
+        replayingHistory = replayingHistory && hasWrittenOutput;
       }
       // data 是从 startOffset 起的增量，兜底算末尾要从 startOffset 加起，
       // 直接拿长度当绝对末尾会把偏移算小，之后的事件会被重复写一遍。
@@ -346,6 +525,10 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       window.clearTimeout(resizeTimer);
       window.clearTimeout(attentionScanTimer);
       observer.disconnect();
+      imeObserver.disconnect();
+      host.removeEventListener("paste", pasteImageFallback);
+      helperTextarea?.removeEventListener("compositionstart", startComposition);
+      helperTextarea?.removeEventListener("compositionend", endComposition);
       input.dispose();
       unOutput?.();
       unExit?.();
@@ -360,15 +543,19 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   // capability 查询可能比 PTY 首屏稍晚返回。提示文字先到、markers 后到时也要立刻补判，
   // 不能等一个可能永远不会来的后续输出 chunk。
   const attentionMarkerKey = attentionMarkers.join("\0");
+  // 文法(锚点/provider)可能晚于首屏到达(chatUi 是异步查询):变化时用最后一屏复扫,
+  // 与 markers 晚到的补投递同一套逻辑。
+  const grammarKey = JSON.stringify(grammar ?? null);
   useEffect(() => {
-    const attention = terminalAttention(lastScreenRef.current || attentionTailRef.current, attentionMarkers, interactivePrompt, expectMenu);
+    const attention = terminalAttention(lastScreenRef.current || attentionTailRef.current, attentionMarkers, interactivePrompt, expectMenu, grammar);
     if (!attention) return;
     const signature = `${attention.id}\0${attention.text}\0${JSON.stringify(attention.options)}`;
     if (signature === attentionReportedRef.current) return;
     attentionReportedRef.current = signature;
     setInitialized(true);
     onAttentionRef.current?.(attention);
-  }, [attentionMarkerKey, interactivePrompt, expectMenu]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attentionMarkerKey, grammarKey, interactivePrompt, expectMenu]);
 
   // 隐藏期间容器尺寸为 0，xterm 会按 0 列算布局。切回来立刻 fit 一次并聚焦——
   // ResizeObserver 虽然也会触发，但带 80ms 防抖，中间会闪一帧错位的画面。
@@ -411,12 +598,13 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   const takeover = async () => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    // 确认框走 `@tauri-apps/plugin-dialog` 的 `confirm`，**不是 `window.confirm`**：后者在 Tauri 的
-    // webview（尤其 macOS WKWebView）里会被直接吞掉、恒返回 false——按钮看着能点，点了却什么都不发生。
-    const yes = await confirm(t.chat.terminalTakeoverConfirm, {
+    // 确认框走应用内模态(appConfirm)。**不是 `window.confirm`**:后者在 Tauri 的
+    // webview(尤其 macOS WKWebView)里会被直接吞掉、恒返回 false;系统原生 MessageBox
+    // 与应用样式脱节,已弃用。Host 挂在 ChatWindow 根上(本组件总在其内渲染)。
+    const yes = await appConfirm(t.chat.terminalTakeoverConfirm, {
       title: t.chat.terminalTakeover,
-      kind: "warning",
-    }).catch(() => false);
+      danger: true,
+    });
     if (!yes) return;
     setStarting(true);
     setStopping(false);
@@ -434,19 +622,16 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
   };
 
   const stop = async () => {
-    // 结束是破坏性操作（直接杀掉正在跑的 Agent 进程），与接管同款确认——
-    // 同样必须走 plugin-dialog 的 confirm，理由见 takeover。
-    const yes = await confirm(t.chat.terminalStopConfirm, {
-      title: t.chat.terminalStop,
-      kind: "warning",
-    }).catch(() => false);
-    if (!yes) return;
+    // 结束是破坏性操作(直接杀掉正在跑的 Agent 进程):确认+停止走与对话页标题栏共用的
+    // confirmStopSession(api.ts)。确认后立刻置 busy:按钮转「正在结束…」并禁用,直到
+    // 进程退出(pty-exit 把 active 设 false,整个操作区随之卸载)。成功后不清 stopping。
     setError("");
-    // 立刻给反馈：按钮转「正在结束…」并禁用，直到进程退出（pty-exit 把 active 设 false，
-    // 整个操作区随之卸载）。成功后不清 stopping——active 变 false 时这块就消失了。
-    setStopping(true);
     try {
-      await stopManagedTerminal(sessionId);
+      await confirmStopSession(
+        sessionId,
+        { title: t.chat.terminalStop, message: t.chat.endSessionConfirm },
+        () => setStopping(true),
+      );
     } catch (e) {
       // 失败要能重试：终端看着还活着，得把状态退回可点。
       setError(String(e));

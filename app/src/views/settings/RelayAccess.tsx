@@ -12,7 +12,7 @@ import {
   type Settings,
 } from "../../api";
 import { useT } from "../../i18n";
-import { Segmented } from "./widgets";
+import { Segmented, Switch } from "./widgets";
 import { Dropdown } from "../menu";
 
 type AccessMode = "official" | "relay";
@@ -31,6 +31,7 @@ const relayDefault = (agent: RelayAgent): RelayRule => ({
   model: "",
   protocol: agent.relay?.default_protocol ?? "",
   auth: agent.relay?.default_auth ?? "bearer",
+  env_options: [],
 });
 
 function RelayInput({
@@ -475,6 +476,39 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
                 onCommit={saveSecret}
               />
             </label>
+            {/* 插件声明的附加环境变量（目前只有 claude 的两个）；勾选随规则持久化，启动会话时注入。 */}
+            {(capability.env_options?.length ?? 0) > 0 && (
+              <div className="relay-field relay-env-options">
+                <span>{t.relay.envOptions}</span>
+                {capability.env_options!.map((option) => {
+                  const selected = (rule.env_options ?? []).includes(option.id);
+                  const label =
+                    option.id === "disable_nonessential_traffic"
+                      ? t.relay.envDisableNonessential
+                      : option.id === "no_attribution_header"
+                        ? t.relay.envNoAttribution
+                        : option.label;
+                  return (
+                    <div className="relay-env-option" key={option.id}>
+                      <span className="relay-env-option-text">
+                        <span className="relay-env-option-label">{label}</span>
+                        <span className="relay-env-option-desc">{`${option.env[0]}=${option.env[1]}`}</span>
+                      </span>
+                      <Switch
+                        checked={selected}
+                        label={label}
+                        onChange={() => {
+                          const next = new Set(rule.env_options ?? []);
+                          if (selected) next.delete(option.id);
+                          else next.add(option.id);
+                          saveField({ ...rule, env_options: [...next] });
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div className="row-desc relay-coverage">
             {rule.enabled ? t.relay.coverage : t.relay.completeToEnable}

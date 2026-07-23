@@ -126,12 +126,12 @@ macOS 上是状态栏应用：无独立浮窗，不显示在 Dock。
 
 ```
 meowo/
-├── crates/
-│   ├── meowo-store/        # SQLite 读写 + transcript 标题解析
-│   └── meowo-reporter/     # AI CLI hooks 上报器 + statusline + 首次导入
 ├── app/
 │   ├── src/                # React 前端（贴纸视图、吸边状态机、设置页）
-│   └── src-tauri/          # Tauri 桌面壳（窗口、托盘、吸边、账号用量）
+│   └── src-tauri/          # Tauri 桌面壳（窗口、托盘、吸边、账号用量）；Rust workspace 根
+│       └── crates/
+│           ├── meowo-store/     # SQLite 读写 + transcript 标题解析
+│           └── meowo-reporter/  # AI CLI hooks 上报器 + statusline + 首次导入
 ├── scripts/
 │   └── install-hooks.mjs   # 把 meowo-reporter 接入 Claude Code settings.json
 └── docs/                   # 设计文档与实现计划
@@ -163,7 +163,7 @@ bun run tauri dev
 ```bash
 cd app
 bun run tauri build
-# 产物在仓库根 target/release/bundle/ 下（Windows 为 NSIS 安装包，macOS 为 dmg/app）
+# 产物在 app/src-tauri/target/release/bundle/ 下（Windows 为 NSIS 安装包，macOS 为 dmg/app）
 ```
 
 ## 接入 Claude Code
@@ -174,12 +174,12 @@ Meowo 启动时会自动接入。如果你不想启动 app 就先挂 hooks，或
 <summary>手动挂 hooks（可选）</summary>
 
 ```bash
-# 1. 编译 meowo-reporter
-cargo build --release -p meowo-reporter
-# 产物：target/release/meowo-reporter.exe
+# 1. 编译 meowo-reporter（Rust workspace 根在 app/src-tauri）
+cd app/src-tauri && cargo build --release -p meowo-reporter
+# 产物：app/src-tauri/target/release/meowo-reporter.exe
 
 # 2. 把它接入 ~/.claude/settings.json 的 hooks（用绝对路径）
-bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"
+bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release/meowo-reporter.exe"
 ```
 
 脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode，均带 5s 超时上限）。用同一路径重复运行不会重复追加，也不会破坏你已有的其它 hooks。若更换了 reporter 路径（如 debug 换 release、换了安装目录），再跑一次脚本即可——它按可执行文件名认领旧条目并原地更新为新路径，不会留下重复条目。

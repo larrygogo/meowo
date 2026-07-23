@@ -118,12 +118,7 @@ impl LoginOperations {
         slot.operation_id.take()
     }
 
-    fn finish(
-        &mut self,
-        key: meowo_agent::AgentId,
-        epoch: u64,
-        operation_id: &str,
-    ) -> bool {
+    fn finish(&mut self, key: meowo_agent::AgentId, epoch: u64, operation_id: &str) -> bool {
         let Some(slot) = self.slots.get_mut(key.as_str()) else {
             return false;
         };
@@ -179,11 +174,7 @@ fn take_login_operation(key: meowo_agent::AgentId) -> Option<String> {
         .take(key)
 }
 
-fn finish_login_operation(
-    key: meowo_agent::AgentId,
-    epoch: u64,
-    operation_id: &str,
-) -> bool {
+fn finish_login_operation(key: meowo_agent::AgentId, epoch: u64, operation_id: &str) -> bool {
     LOGIN_STATE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1021,19 +1012,24 @@ pub(crate) fn agent_bin_dir(key: meowo_agent::AgentId) -> Option<PathBuf> {
 ///
 /// 不看进程 PATH：那是 app 启动时的快照，装完之后必然假阴性（详见 envpath 模块文档）。
 #[tauri::command]
-pub(crate) fn agent_path_gap(provider: String) -> Option<String> {
+pub(crate) async fn agent_path_gap(provider: String) -> Result<Option<String>, String> {
     #[cfg(target_os = "windows")]
     {
-        // 未知 agent → None：不去猜它的可执行装在哪，更不该据此劝用户改 PATH。
-        let dir = agent_bin_dir(agent_id(&provider)?)?;
-        let dir = dir.to_string_lossy().into_owned();
-        (!envpath::dir_on_persistent_path(&dir)).then_some(dir)
+        // async + spawn_blocking：解析安装形态与查注册表 PATH 都是 IO，不进主线程。
+        tauri::async_runtime::spawn_blocking(move || {
+            // 未知 agent → None：不去猜它的可执行装在哪，更不该据此劝用户改 PATH。
+            let dir = agent_bin_dir(agent_id(&provider)?)?;
+            let dir = dir.to_string_lossy().into_owned();
+            (!envpath::dir_on_persistent_path(&dir)).then_some(dir)
+        })
+        .await
+        .map_err(|e| e.to_string())
     }
     #[cfg(not(target_os = "windows"))]
     {
         // unix 上 PATH 由 shell profile 决定，改法因 shell 而异，不代用户动。
         let _ = provider;
-        None
+        Ok(None)
     }
 }
 
@@ -1041,12 +1037,19 @@ pub(crate) fn agent_path_gap(provider: String) -> Option<String> {
 ///
 /// 只收 provider、不收路径：目录由后端从 `Installation` 推导，杜绝前端把任意路径写进 PATH。
 #[tauri::command]
-pub(crate) fn add_agent_to_user_path(provider: String) -> Result<(), String> {
+pub(crate) async fn add_agent_to_user_path(provider: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let key = agent_id(&provider).ok_or("未知 agent")?;
         let dir = agent_bin_dir(key).ok_or("未找到该 agent 的可执行目录")?;
-        envpath::add_dir_to_user_path(&dir.to_string_lossy())
+        // async + spawn_blocking：写完注册表要 SendMessageTimeoutW(HWND_BROADCAST) 广播
+        // WM_SETTINGCHANGE，桌面上任何一个响应慢的顶层窗口都能让它等接近 5s——同步命令
+        // 会拿这段等待冻住主线程消息泵。
+        tauri::async_runtime::spawn_blocking(move || {
+            envpath::add_dir_to_user_path(&dir.to_string_lossy())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1107,8 +1110,15 @@ pub(crate) fn plugin_hooks_status(
 /// 检测某 provider 的 meowo-reporter hooks 是否已接入（新建会话面板据此提示是否会入库）。
 /// 未知 provider → Unknown（不冒名默认 agent 去查它的 hooks）。
 #[tauri::command]
-pub(crate) fn check_provider_hooks(provider: String) -> HooksStatus {
-    let Some(id) = agent_id(&provider) else {
+pub(crate) async fn check_provider_hooks(provider: String) -> Result<HooksStatus, String> {
+    // async + spawn_blocking：要解析安装形态并读 agent 配置文件，不进主线程。
+    tauri::async_runtime::spawn_blocking(move || check_provider_hooks_blocking(&provider))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn check_provider_hooks_blocking(provider: &str) -> HooksStatus {
+    let Some(id) = agent_id(provider) else {
         return HooksStatus::Unknown;
     };
     plugin_hooks_status(install_for(id), id.as_str())
@@ -1125,19 +1135,25 @@ pub(crate) struct RepairResult {
 /// 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，然后返回最新状态与失败原因。
 /// 用于「新建会话」面板或设置里的「修复连接」按钮，无需重启 Meowo。
 #[tauri::command]
-pub(crate) fn repair_provider_hooks(provider: String) -> RepairResult {
-    let Some(id) = agent_id(&provider) else {
-        eprintln!("Meowo repair[{provider}]: 未知 agent，跳过");
-        return RepairResult {
-            status: HooksStatus::Unknown,
-            reason: Some(setup::RepairReason::NotDetected),
+pub(crate) async fn repair_provider_hooks(provider: String) -> Result<RepairResult, String> {
+    // async + spawn_blocking：apply_provider 要读改写多个 agent 配置文件，是这批点击触发
+    // 命令里最重的一个，绝不能占主线程。
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(id) = agent_id(&provider) else {
+            eprintln!("Meowo repair[{provider}]: 未知 agent，跳过");
+            return RepairResult {
+                status: HooksStatus::Unknown,
+                reason: Some(setup::RepairReason::NotDetected),
+            };
         };
-    };
-    eprintln!("Meowo repair[{provider}]: 开始修复接线…");
-    let reason = setup::apply_provider(id);
-    let status = check_provider_hooks(provider.clone());
-    eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
-    RepairResult { status, reason }
+        eprintln!("Meowo repair[{provider}]: 开始修复接线…");
+        let reason = setup::apply_provider(id);
+        let status = check_provider_hooks_blocking(&provider);
+        eprintln!("Meowo repair[{provider}]: reason={reason:?} → 状态={status:?}");
+        RepairResult { status, reason }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

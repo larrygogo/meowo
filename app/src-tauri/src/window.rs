@@ -315,7 +315,10 @@ pub(crate) fn open_new_session_window_impl(
                         e,
                         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
                     ) {
-                        crate::macos::menubar::settings_window_did_close(&app_handle, "new-session");
+                        crate::macos::menubar::settings_window_did_close(
+                            &app_handle,
+                            "new-session",
+                        );
                     }
                 });
             }
@@ -327,10 +330,7 @@ pub(crate) fn open_new_session_window_impl(
 /// 打开单例会话对话窗口。再次点击另一张卡片时复用窗口并发事件切换会话。
 /// 创建/切换失败必须传播回前端：静默失败时用户「点了没反应」，再点会重复起会话。
 #[tauri::command]
-pub(crate) async fn open_chat_window(
-    app: tauri::AppHandle,
-    session_id: i64,
-) -> Result<(), String> {
+pub(crate) async fn open_chat_window(app: tauri::AppHandle, session_id: i64) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || open_chat_window_impl(&app, session_id))
         .await
         .map_err(|e| e.to_string())?
@@ -370,10 +370,7 @@ pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
     });
 }
 
-pub(crate) fn open_chat_window_impl(
-    app: &tauri::AppHandle,
-    session_id: i64,
-) -> Result<(), String> {
+pub(crate) fn open_chat_window_impl(app: &tauri::AppHandle, session_id: i64) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app, "chat");
 
@@ -493,13 +490,8 @@ pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str) {
     if let Some(w) = app.get_webview_window("updater") {
         let _ = w.set_title(tr(lang, "window.updater"));
     }
-    if let Some(w) = app.get_webview_window("chat") {
-        let _ = w.set_title(if lang == "zh" {
-            "Meowo · 对话"
-        } else {
-            "Meowo · Chat"
-        });
-    }
+    // chat 窗口的标题由前端随会话状态动态维护（ChatWindow 的 setTitle effect），
+    // 这里不再按语言重设——两处写同一标题会互相覆盖。
 }
 
 /// 构建系统托盘：左键点击直接打开设置；右键菜单提供设置 / 退出。

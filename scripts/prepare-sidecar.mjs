@@ -15,10 +15,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = join(root, "app", "src-tauri", "binaries");
+// Rust workspace 根在 app/src-tauri(见其 Cargo.toml 的 [workspace]):cargo 从这里起跑,
+// 产物也落在它下面的 target/。
+const workspace = join(root, "app", "src-tauri");
+const outDir = join(workspace, "binaries");
 mkdirSync(outDir, { recursive: true });
 
-const run = (cmd) => execSync(cmd, { cwd: root, stdio: "inherit" });
+const run = (cmd) => execSync(cmd, { cwd: workspace, stdio: "inherit" });
 const hostTriple = () =>
   execSync("rustc --print host-tuple").toString().trim();
 
@@ -33,13 +36,13 @@ if (triple === "universal-apple-darwin") {
     // universal 构建会按各架构分别编译 meowo-app，tauri_build 编译期按当前
     // TARGET triple 校验 externalBin，单架构文件也必须在 binaries/ 在场
     copyFileSync(
-      join(root, "target", t, "release", "meowo-reporter"),
+      join(workspace, "target", t, "release", "meowo-reporter"),
       join(outDir, `meowo-reporter-${t}`),
     );
   }
   const out = join(outDir, "meowo-reporter-universal-apple-darwin");
   const slices = arches
-    .map((t) => `"${join(root, "target", t, "release", "meowo-reporter")}"`)
+    .map((t) => `"${join(workspace, "target", t, "release", "meowo-reporter")}"`)
     .join(" ");
   run(`lipo -create -output "${out}" ${slices}`);
   chmodSync(out, 0o755); // lipo 按 umask 建文件，不保证可执行位
@@ -47,7 +50,7 @@ if (triple === "universal-apple-darwin") {
 } else {
   run(`cargo build --release -p meowo-reporter --target ${triple}`);
   const ext = triple.includes("windows") ? ".exe" : "";
-  const src = join(root, "target", triple, "release", `meowo-reporter${ext}`);
+  const src = join(workspace, "target", triple, "release", `meowo-reporter${ext}`);
   const dst = join(outDir, `meowo-reporter-${triple}${ext}`);
   copyFileSync(src, dst);
   console.log(`sidecar 就绪: ${dst}`);

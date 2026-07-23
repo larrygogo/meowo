@@ -127,10 +127,12 @@ function GeneralSection() {
   };
   const hideDays = settings?.archive_hide_days ?? 0;
   const notifyOn = settings?.notifications_enabled ?? true;
+  const flashOn = settings?.attention_flash_enabled ?? true;
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const previewOn = settings?.preview_enabled ?? true;
   const changeHideDays = (days: number) => patch({ archive_hide_days: days });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
+  const toggleFlash = () => patch({ attention_flash_enabled: !flashOn });
   const toggleAutoUpdate = () => patch({ auto_update_enabled: !autoUpdateOn });
   const togglePreview = () => patch({ preview_enabled: !previewOn });
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
@@ -166,6 +168,14 @@ function GeneralSection() {
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} label={t.settings.notify} />
         </div>
+        {/* 任务栏闪烁仅 Windows 有效(macOS 由菜单栏徽章承担同一职责),别的平台不显示无效开关。 */}
+        {IS_WIN && <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.attentionFlash}</div>
+            <div className="row-desc">{t.settings.attentionFlashDesc}</div>
+          </div>
+          <Switch checked={flashOn} onChange={toggleFlash} label={t.settings.attentionFlash} />
+        </div>}
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.autoUpdate}</div>

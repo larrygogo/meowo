@@ -126,12 +126,12 @@ The name comes from the sound a cat makes — **meow** — rendered in Chinese a
 
 ```
 meowo/
-├── crates/
-│   ├── meowo-store/        # SQLite read/write + transcript title parsing
-│   └── meowo-reporter/     # AI CLI hooks reporter + statusline + first-run import
 ├── app/
 │   ├── src/                # React frontend (sticker view, edge-snap state machine, settings)
-│   └── src-tauri/          # Tauri desktop shell (window, tray, edge-snap, account usage)
+│   └── src-tauri/          # Tauri desktop shell (window, tray, edge-snap, account usage); Rust workspace root
+│       └── crates/
+│           ├── meowo-store/     # SQLite read/write + transcript title parsing
+│           └── meowo-reporter/  # AI CLI hooks reporter + statusline + first-run import
 ├── scripts/
 │   └── install-hooks.mjs   # wires meowo-reporter into Claude Code's settings.json
 └── docs/                   # design docs & implementation plans
@@ -163,7 +163,7 @@ Build a release installer:
 ```bash
 cd app
 bun run tauri build
-# Output goes to target/release/bundle/ at the repo root (NSIS installer on Windows, dmg/app on macOS)
+# Output goes to app/src-tauri/target/release/bundle/ (NSIS installer on Windows, dmg/app on macOS)
 ```
 
 ## Connecting to Claude Code
@@ -174,12 +174,12 @@ Meowo wires itself in automatically on startup. If you'd rather set up the hooks
 <summary>Wire up hooks manually (optional)</summary>
 
 ```bash
-# 1. Build meowo-reporter
-cargo build --release -p meowo-reporter
-# Output: target/release/meowo-reporter.exe
+# 1. Build meowo-reporter (the Rust workspace root is app/src-tauri)
+cd app/src-tauri && cargo build --release -p meowo-reporter
+# Output: app/src-tauri/target/release/meowo-reporter.exe
 
 # 2. Wire it into ~/.claude/settings.json hooks (use an absolute path)
-bun scripts/install-hooks.mjs "<absolute-repo-path>/target/release/meowo-reporter.exe"
+bun scripts/install-hooks.mjs "<absolute-repo-path>/app/src-tauri/target/release/meowo-reporter.exe"
 ```
 
 The script wires meowo-reporter into the required hook events (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode, each with a 5s timeout cap). Running it again with the same path won't duplicate entries or break your other hooks. If you change the reporter path (e.g. debug → release, or a new install location), just run the script again — it claims its existing entries by executable name and updates them to the new path in place, leaving no duplicates.

@@ -61,10 +61,7 @@ pub(crate) fn spawn_board_notifier(app: tauri::AppHandle) {
 /// 合流循环本体，与 tauri 解耦（emit 为闭包）以便单测；生产侧由 spawn_board_notifier 驱动。
 /// 语义：leading+trailing——孤立事件零延迟送达；窗口内多次触发合并为窗口末尾的一次，
 /// 且排队中的旧事件被最新事件取代（pending 只记最后一个 reason，前端忽略 payload、只重拉最新状态）。
-fn coalesce_loop(
-    rx: std::sync::mpsc::Receiver<&'static str>,
-    mut emit: impl FnMut(&'static str),
-) {
+fn coalesce_loop(rx: std::sync::mpsc::Receiver<&'static str>, mut emit: impl FnMut(&'static str)) {
     loop {
         // 空闲：阻塞等第一个事件。发送端存活于 static，recv 出错只可能是进程收尾。
         let Ok(mut reason) = rx.recv() else { return };
@@ -393,6 +390,24 @@ pub(crate) fn show_session_notification(
 ) {
 }
 
+/// 有新的需关注事件且用户不在看任何 Meowo 窗口时,请求任务栏注意力(Informational:
+/// 高亮驻留、不无限闪烁)。目标是 chat 窗口——主贴纸 skipTaskbar,闪它是无效操作;
+/// chat 窗口不存在(用户只用贴纸+外部终端)时跳过,toast 已覆盖那条路径。
+#[cfg(target_os = "windows")]
+fn flash_chat_window_if_unfocused(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let any_focused = app
+        .webview_windows()
+        .values()
+        .any(|w| w.is_focused().unwrap_or(false));
+    if any_focused {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("chat") {
+        let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+}
+
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
 /// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
@@ -433,6 +448,9 @@ pub(crate) fn spawn_liveness_watch(
                 let settings = load_settings();
                 let notify_on = settings.notifications_enabled;
                 let lang = ui_lang(&settings);
+                // 本轮是否有新的需关注事件(与 toast 同一套指纹判定,但不受 notify_on 门控):
+                // 循环末尾据此请求一次任务栏注意力。
+                let mut attention_fired = false;
 
                 // 错误 + 待交互通知：仅扫连接中的会话（活跃，数量少）。同时统计菜单栏状态摘要。
                 let mut present: HashMap<String, String> = HashMap::new();
@@ -492,7 +510,9 @@ pub(crate) fn spawn_liveness_watch(
                     // 错误通知（优先）。
                     if let Some(e) = &error {
                         let prev = notified.get(&sid).map(|s| s.as_str());
-                        if seeded && notify_on && should_notify(prev, Some(&e.fingerprint)) {
+                        let fired = seeded && should_notify(prev, Some(&e.fingerprint));
+                        attention_fired |= fired;
+                        if fired && notify_on {
                             show_session_notification(
                                 &app,
                                 tr(lang, "notify.error").into(),
@@ -517,7 +537,9 @@ pub(crate) fn spawn_liveness_watch(
                     ) {
                         Some(fp) => {
                             let prev = notified_pending.get(&sid).map(|s| s.as_str());
-                            if seeded && notify_on && should_notify(prev, Some(&fp)) {
+                            let fired = seeded && should_notify(prev, Some(&fp));
+                            attention_fired |= fired;
+                            if fired && notify_on {
                                 let key = match s.pending_review.as_deref() {
                                     Some("question") => "notify.pending.question",
                                     Some("plan") => "notify.pending.plan",
@@ -550,7 +572,9 @@ pub(crate) fn spawn_liveness_watch(
                     ) {
                         Some(fp) => {
                             let prev = notified_waiting.get(&sid).map(|s| s.as_str());
-                            if seeded && notify_on && should_notify(prev, Some(&fp)) {
+                            let fired = seeded && should_notify(prev, Some(&fp));
+                            attention_fired |= fired;
+                            if fired && notify_on {
                                 show_session_notification(
                                     &app,
                                     tr(lang, "notify.waiting").into(),
@@ -575,6 +599,16 @@ pub(crate) fn spawn_liveness_watch(
                 notified_pending.retain(|k, _| present.contains_key(k));
                 notified_waiting.retain(|k, _| present.contains_key(k));
                 seeded = true;
+
+                // 任务栏注意力:本轮有任何新的需关注事件就闪一次(每轮最多一次)。toast 会自己
+                // 消失,任务栏高亮驻留到用户点开——这是「应用在后台时无感知」的补位信号。
+                // 仅 Windows:macOS 已有菜单栏徽章承担同一职责,dock 弹跳过于喧闹。
+                #[cfg(target_os = "windows")]
+                if attention_fired && settings.attention_flash_enabled {
+                    flash_chat_window_if_unfocused(&app);
+                }
+                #[cfg(not(target_os = "windows"))]
+                let _ = attention_fired;
 
                 // macOS：把连接中会话的状态摘要画成菜单栏彩色徽章（一眼可见，弥补无吸边缩略条）。
                 #[cfg(target_os = "macos")]
@@ -625,7 +659,6 @@ pub(crate) fn spawn_first_import(app: tauri::AppHandle, db_path: PathBuf) {
         }
     });
 }
-
 
 #[cfg(test)]
 mod tests {

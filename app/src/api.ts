@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { appConfirm } from "./confirm";
 import type { ChatHistoryDto } from "./generated/contracts/ChatHistoryDto";
 import type { ChatItem as GeneratedChatItem } from "./generated/contracts/ChatItem";
 import type { SubagentRun as GeneratedSubagentRun } from "./generated/contracts/SubagentRun";
@@ -80,10 +81,14 @@ export type SlashCommand = {
 
 export type ModeInput = { data: string; submit: boolean };
 export type ModeOption = { value: string; inputs: ModeInput[] };
+/** TUI 状态栏上代表某个模式值的稳定文案片段；cycle 盲切后靠它从屏幕即时回显落点。 */
+export type ModeScreenMarker = { marker: string; value: string };
 export type ModeControl = {
   dimension: string;
   cycle_input: string | null;
   options: ModeOption[];
+  /** 空表 = 该维度无屏幕回显能力，显示只随 transcript 状态走。 */
+  screen_markers: ModeScreenMarker[];
 };
 
 /**
@@ -100,10 +105,20 @@ export type ChatUi = {
   model_menu_command?: string | null;
   /** Provider 声明的多维模式交互能力；当前值由 ChatHistory 的增量状态提供。 */
   mode_controls: ModeControl[];
+  /** 裸发送会弹出交互界面的内置命令（含 model_menu_command，后端总装时已并入）。 */
+  menu_slash_commands: string[];
   /** 启动时必须转到终端人工处理的提示文本片段（框架通用值 + provider 补充）。 */
   startup_attention_markers: string[];
+  /** 数字选择器锚点(插件声明的识别文法):空 = 该 agent 的纯编号菜单不做卡片化。 */
+  selector_anchors: { marker: string; kind: "input" | "chat" }[];
+  /** 中断当前回合的按键序列(如 Esc);null = 未取证,GUI 不提供强制插话入口。 */
+  interrupt_input: string | null;
   /** runtime skill 清单尚未落盘；ChatWindow 应随 transcript 增量继续探测。 */
   runtime_commands_pending: boolean;
+  /** 附件可用该 CLI 原生的 `@路径` 提及注入;false = 退回通用指令文本兜底。 */
+  attachment_mention: boolean;
+  /** TUI 支持 Ctrl-V 原生粘贴剪贴板图片时的 composer 占位符正则;null = 不支持。 */
+  clipboard_image_paste: string | null;
   /** 探测到的已装 CLI 版本（`--version` 首行）；探测失败为 null。 */
   version: string | null;
 };
@@ -114,6 +129,8 @@ export type RelayCapability = {
   default_protocol: string;
   default_auth: string;
   suggestions: { protocol: string; models: string[] }[];
+  /** 可勾选的附加环境变量（如 Claude Code 的两个流量/归因开关）；插件未声明时缺省。 */
+  env_options?: { id: string; label: string; env: [string, string] }[];
 };
 
 export type Todo = {
@@ -276,6 +293,24 @@ export function openLink(url: string): Promise<void> {
   return invoke("open_link", { url });
 }
 
+/**
+ * 把粘贴进对话输入框的图片/文件内容落成临时文件，返回绝对路径。
+ * webview 剪贴板拿不到源文件路径（File 只有内容），附件协议却是「路径列表交给 CLI 读」，
+ * 只能由宿主代为落盘。
+ */
+export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {
+  return invoke("save_pasted_attachment", { fileName, dataBase64 });
+}
+
+/**
+ * 读系统剪贴板**图像**的指纹(只读不写);剪贴板里不是图像时为 null。
+ * 用途:发送粘贴图片前比对「剪贴板里还是不是刚粘贴的那张图」,匹配才向 PTY 发 Ctrl-V
+ * 走 TUI 自己的原生图片附加——不匹配绝不能发,否则附给 agent 的是错的图。
+ */
+export function clipboardImageFingerprint(): Promise<string | null> {
+  return invoke("clipboard_image_fingerprint");
+}
+
 /// 会话是否可能仍由**外部**终端持有——即托管前需要先接管（杀掉旧进程）而非直接恢复。
 ///
 /// `stale` 一并算入：它只表示久未有事件，进程未必已死。判活的事实源在后端（实时查进程表），
@@ -283,6 +318,22 @@ export function openLink(url: string): Promise<void> {
 /// 安全——它会先判活，死了就直接恢复），也不要给出一个必然被后端拒绝的「直接恢复」按钮。
 export function isExternallyHeld(status?: string): boolean {
   return status === "running" || status === "waiting" || status === "stale";
+}
+
+/// 对话窗/侧栏展示层的会话状态口径(后端 tab_class 是它的跨语言镜像,改任一端须同步)。
+/// 优先级:connected 为假时绝不展示「在跑/在等」——DB 的 running 在进程死后、reaper
+/// 收尾前是滞留值,直接展示就是假运行中;ended 同理让位于存活观测(恢复会话的轮询
+/// 窗口期 DB 还挂着旧 'ended',而 PTY 已在跑,此时按 waiting 过渡而不是谎报已结束);
+/// errored(出错,数据源为 LiveSession.errored / ChatHistoryDto.errored)高于 pending:
+/// 出错必须先被看见;pending(待审批/待交互)高于 waiting:有明确动作召唤。
+export type SessionTone = "running" | "pending" | "waiting" | "offline" | "ended" | "error";
+export function sessionTone(connected: boolean, status?: string, pendingReview?: unknown, errored?: boolean): SessionTone {
+  if (status === "ended" && !connected) return "ended";
+  if (!connected) return "offline";
+  if (errored) return "error";
+  if (pendingReview) return "pending";
+  if (status === "running") return "running";
+  return "waiting";
 }
 
 export type ManagedTerminalSnapshot = ManagedTerminalSnapshotDto;
@@ -310,6 +361,23 @@ export function resizeManagedTerminal(sessionId: number, cols: number, rows: num
 }
 export function stopManagedTerminal(sessionId: number): Promise<void> {
   return invoke("stop_managed_terminal", { sessionId });
+}
+
+/// 「结束会话」的唯一流程:应用内确认模态(appConfirm,系统原生 MessageBox 样式与应用
+/// 脱节已弃用;window.confirm 会被 webview 吞掉,同样不可用)→ 杀托管 PTY 进程。
+/// 对话页标题栏与终端页操作条两个入口共用,确认文案/停止协议改这里一处。
+/// busy 态与错误呈现由调用方负责(两处 UI 槽位不同):`onConfirmed` 在用户确认后、真正
+/// 结束前触发,给调用方置 busy;返回 false = 用户取消;抛错 = 结束失败,调用方必须让它可见。
+export async function confirmStopSession(
+  sessionId: number,
+  text: { title: string; message: string },
+  onConfirmed?: () => void,
+): Promise<boolean> {
+  const yes = await appConfirm(text.message, { title: text.title, danger: true });
+  if (!yes) return false;
+  onConfirmed?.();
+  await stopManagedTerminal(sessionId);
+  return true;
 }
 export function getPendingApproval(sessionId: number): Promise<PendingApproval | null> {
   return invoke("get_pending_approval", { sessionId });
@@ -384,6 +452,8 @@ export type Settings = {
   archive_hide_days: number;
   /** 桌面通知总开关（待交互 + 错误）。 */
   notifications_enabled: boolean;
+  /** 需要关注且 Meowo 都不在前台时,请求任务栏注意力(Windows 任务栏闪烁)。 */
+  attention_flash_enabled: boolean;
   /** 自动检查并在后台下载软件更新。 */
   auto_update_enabled: boolean;
   /** 外观模式：深色 / 浅色 / 跟随系统。 */
@@ -431,6 +501,8 @@ export type RelayRule = {
   model: string;
   protocol: RelayProtocol | "";
   auth: RelayAuth;
+  /** 勾选的附加环境变量选项 id；旧设置文件没有该字段，读取时按空数组处理。 */
+  env_options?: string[];
 };
 export type RelaySettings = {
   per_agent: Partial<Record<AgentId, RelayRule>>;

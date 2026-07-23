@@ -47,13 +47,18 @@ pub(crate) async fn start_managed_terminal(
     .map_err(|e| e.to_string())?
 }
 
+// snapshot/write/resize/stop 一律 async + spawn_blocking：同步命令跑在主线程，而这几条
+// 都要抢 PTY 状态锁、拷 backlog（最多 1MiB）或触碰 ConPTY——任何一次卡顿都会冻住消息泵。
 #[tauri::command]
-pub(crate) fn managed_terminal_snapshot(
+pub(crate) async fn managed_terminal_snapshot(
     state: State<'_, super::AppState>,
     session_id: i64,
     since: Option<u64>,
-) -> super::pty::PtySnapshot {
-    state.ptys.snapshot(session_id, since.unwrap_or(0))
+) -> Result<super::pty::PtySnapshot, String> {
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || ptys.snapshot(session_id, since.unwrap_or(0)))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -65,30 +70,39 @@ pub(crate) fn managed_terminal_binding(
 }
 
 #[tauri::command]
-pub(crate) fn write_managed_terminal(
+pub(crate) async fn write_managed_terminal(
     state: State<'_, super::AppState>,
     session_id: i64,
     data: String,
 ) -> Result<(), String> {
-    state.ptys.write(session_id, data.as_bytes())
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || ptys.write(session_id, data.as_bytes()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn resize_managed_terminal(
+pub(crate) async fn resize_managed_terminal(
     state: State<'_, super::AppState>,
     session_id: i64,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    state.ptys.resize(session_id, cols, rows)
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || ptys.resize(session_id, cols, rows))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn stop_managed_terminal(
+pub(crate) async fn stop_managed_terminal(
     state: State<'_, super::AppState>,
     session_id: i64,
 ) -> Result<(), String> {
-    state.ptys.stop(session_id)
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || ptys.stop(session_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

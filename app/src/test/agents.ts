@@ -71,6 +71,7 @@ const SLASH_COMMANDS: Record<string, string[]> = {
  */
 const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
   claude: [
+    { id: "fable", label: "Fable" },
     { id: "opus", label: "Opus" },
     { id: "sonnet", label: "Sonnet" },
     { id: "haiku", label: "Haiku" },
@@ -95,16 +96,43 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     slash_commands: commands,
     model_presets: MODEL_PRESETS[provider] ?? [],
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
-    model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : "/model",
+    // opencode 的命令是 /models(复数)——与后端插件声明同源。
+    model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",
     mode_controls: provider === "claude"
-      ? [{ dimension: "permission", cycle_input: "\u001b[Z", options: [] }]
+      ? [{
+        dimension: "permission", cycle_input: "\u001b[Z", options: [],
+        // 与后端 claude 插件同源：官方文档承诺的状态栏指示文本 → transcript 的 permissionMode 值。
+        screen_markers: [
+          { marker: "bypass permissions on", value: "bypassPermissions" },
+          { marker: "accept edits on", value: "acceptEdits" },
+          { marker: "plan mode on", value: "plan" },
+          { marker: "auto mode on", value: "auto" },
+          { marker: "don't ask on", value: "dontAsk" },
+          { marker: "manual mode on", value: "default" },
+        ],
+      }]
       : provider === "codex"
-        ? [{ dimension: "collaboration", cycle_input: "\u001b[Z", options: [] }]
+        ? [{ dimension: "collaboration", cycle_input: "\u001b[Z", options: [], screen_markers: [] }]
         : [],
     startup_attention_markers: provider === "claude"
       ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
       : ["do you trust the files in this folder", "do you trust the contents of this directory"],
+    // 与后端总装同源：claude 声明的五个 + 交互式 /model 型 CLI 并入的 model_menu_command。
+    menu_slash_commands: provider === "claude"
+      ? ["/config", "/mcp", "/memory", "/model", "/resume"]
+      : (MODEL_PRESETS[provider] ?? []).length > 0 ? [] : [provider === "opencode" ? "/models" : "/model"],
+    // 与后端同源:选择器锚点是插件声明的识别文法,当前只有 claude 有真机取证。
+    selector_anchors: provider === "claude"
+      ? [{ marker: "type something", kind: "input" as const }, { marker: "chat about this", kind: "chat" as const }]
+      : [],
+    // 与后端同源:五家都用 Esc 中断(claude/codex 确证,其余约定推断,见插件注释)。
+    interrupt_input: "",
     runtime_commands_pending: false,
+    // 与后端同源:claude/gemini(提交时原生附加)与 kimi(@ 是它自己的文本级一等语法)
+    // 声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。
+    attachment_mention: provider === "claude" || provider === "gemini" || provider === "kimi",
+    // 与后端同源:claude/kimi 的 TUI 文档明确 Ctrl-V 读剪贴板原生附加图片,占位符各家不同。
+    clipboard_image_paste: provider === "claude" ? "\\[Image #\\d" : provider === "kimi" ? "\\[image[:# ]" : null,
     version: null,
   };
 }
@@ -120,6 +148,7 @@ const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
       default: "default",
       choices: [
         { id: "default", label: "Default", args: [] },
+        { id: "fable", label: "Fable", args: ["--model", "fable"] },
         { id: "opus", label: "Opus", args: ["--model", "opus"] },
         { id: "sonnet", label: "Sonnet", args: ["--model", "sonnet"] },
         { id: "haiku", label: "Haiku", args: ["--model", "haiku"] },

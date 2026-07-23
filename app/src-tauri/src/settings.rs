@@ -68,6 +68,11 @@ pub(crate) struct Settings {
     /// 桌面通知总开关（待交互 + 错误）。缺省为开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) notifications_enabled: bool,
+    /// 会话需要关注(出错/待审批/待交互)且 Meowo 窗口都不在前台时,请求任务栏注意力
+    /// (Windows 任务栏闪烁)。与 toast 独立开关:通知会消失,任务栏高亮驻留到用户点开。
+    /// 缺省开启,兼容老 settings.json。
+    #[serde(default = "default_true")]
+    pub(crate) attention_flash_enabled: bool,
     /// 自动检查并下载软件更新。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) auto_update_enabled: bool,
@@ -145,6 +150,7 @@ impl Default for Settings {
         Settings {
             archive_hide_days: 0,
             notifications_enabled: true,
+            attention_flash_enabled: true,
             auto_update_enabled: true,
             theme: default_theme(),
             opacity: default_opacity(),
@@ -264,19 +270,27 @@ pub(crate) fn update_settings<T>(
     Ok(result)
 }
 
+// 本文件的 command 一律 async + spawn_blocking：同步命令跑在主线程，settings.json 虽小，
+// 但杀软扫描/同步盘接管目录时任何一次读写都可能拖到秒级，冻住消息泵。
 #[tauri::command]
-pub(crate) fn get_settings() -> Settings {
-    load_settings()
+pub(crate) async fn get_settings() -> Result<Settings, String> {
+    tauri::async_runtime::spawn_blocking(load_settings)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 引导窗口用：把「已看过引导」落盘。刻意不走 set_settings（那条会校验代理、写各 agent 配置、
 /// 重建托盘、广播事件），引导只需翻一个布尔，用轻量的 update_settings 单改单存即可。
 #[tauri::command]
-pub(crate) fn mark_onboarding_seen() -> Result<(), String> {
-    update_settings(|s| {
-        s.onboarding_seen = true;
-        Ok(())
+pub(crate) async fn mark_onboarding_seen() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        update_settings(|s| {
+            s.onboarding_seen = true;
+            Ok(())
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// `set_settings` 落盘前的字段保护：profiles 三字段由独立账号命令维护、`onboarding_seen` 由
@@ -291,7 +305,10 @@ fn preserve_independently_managed_fields(incoming: &mut Settings, current: &Sett
 }
 
 #[tauri::command]
-pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
+pub(crate) async fn set_settings(
+    app: tauri::AppHandle,
+    mut settings: Settings,
+) -> Result<(), String> {
     // 后端兜底钳值（与前端 appearance.ts 一致），防越界值落盘后被 5s 轮询线程读到。
     settings.opacity = settings.opacity.clamp(25, 100);
     settings.ui_scale = settings.ui_scale.clamp(50, 200);
@@ -299,19 +316,31 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
     // 毫无线索——在这里拦下，把具体原因回给设置页。
     settings.proxy.validate()?;
     settings.relay.validate()?;
-    // profiles 三个字段由独立账号命令维护，onboarding_seen 由 mark_onboarding_seen 单独落盘；
-    // 设置窗口可能持有较旧的整对象快照，一次外观/网络保存不得把窗口打开期间的并发变更覆盖掉。
-    update_settings(|current| {
-        preserve_independently_managed_fields(&mut settings, current);
-        *current = settings.clone();
-        Ok(())
-    })?;
-    // 代理落盘后立刻写进各 agent 自己的配置（claude 的 settings.json env 块），改完即生效——
-    // 否则用户改了代理还得重启 Meowo 才作数。best-effort：写不进去不影响 Meowo 自己的设置已保存。
-    let reports = crate::proxy::apply_to_agent_configs();
-    let _ = app.emit("proxy-applied", &reports);
+    // 落盘 + 写各 agent 配置都是文件 IO，且 apply_to_agent_configs 要排队等启动线程的同一把
+    // 锁——同步命令会拿这些卡主线程消息泵，故整段挪进 blocking 池。
+    let io_app = app.clone();
+    let settings = tauri::async_runtime::spawn_blocking(move || -> Result<Settings, String> {
+        // profiles 三个字段由独立账号命令维护，onboarding_seen 由 mark_onboarding_seen 单独落盘；
+        // 设置窗口可能持有较旧的整对象快照，一次外观/网络保存不得把窗口打开期间的并发变更覆盖掉。
+        update_settings(|current| {
+            preserve_independently_managed_fields(&mut settings, current);
+            *current = settings.clone();
+            Ok(())
+        })?;
+        // 代理落盘后立刻写进各 agent 自己的配置（claude 的 settings.json env 块），改完即生效——
+        // 否则用户改了代理还得重启 Meowo 才作数。best-effort：写不进去不影响 Meowo 自己的设置已保存。
+        let reports = crate::proxy::apply_to_agent_configs();
+        let _ = io_app.emit("proxy-applied", &reports);
+        Ok(settings)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     // 切语言后重建托盘菜单/窗口标题（无条件重建，菜单仅两项，幂等且廉价）。
-    apply_language(&app, ui_lang(&settings));
+    // 托盘/菜单对象有线程亲和（muda 在其创建线程即主线程上操作），不能在 blocking 池里碰。
+    let lang = ui_lang(&settings);
+    let menu_app = app.clone();
+    app.run_on_main_thread(move || apply_language(&menu_app, lang))
+        .map_err(|e| e.to_string())?;
     // 通知贴纸窗口实时套用新设置。
     let _ = app.emit("settings-changed", settings);
     Ok(())
@@ -325,8 +354,10 @@ pub(crate) fn set_settings(app: tauri::AppHandle, mut settings: Settings) -> Res
 ///
 /// 注意：解析结果可能是 `socks5://`，而 updater 的 reqwest 未必编进 socks 支持——前端据此提示。
 #[tauri::command]
-pub(crate) fn get_effective_proxy(agent: Option<String>) -> Option<String> {
-    crate::ports::resolve_proxy(agent.as_deref())
+pub(crate) async fn get_effective_proxy(agent: Option<String>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::ports::resolve_proxy(agent.as_deref()))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 设置窗口用：读取/切换开机自启（原来只在托盘，托盘精简后搬到设置页）。

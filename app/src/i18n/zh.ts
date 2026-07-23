@@ -1,6 +1,8 @@
 // 中文字典（基准）。en.ts 用 `typeof zh` 约束 key 与函数签名编译期对齐。
 // 注意：「(未命名会话)」是数据库 sentinel 不在此处——展示层用 sticker.waitingFirstInput 映射。
 export const zh = {
+  // 应用内确认模态(confirm.tsx)的通用按钮。
+  dialog: { ok: "确定", cancel: "取消" },
   tabs: { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" },
   time: {
     now: "刚刚",
@@ -142,6 +144,15 @@ export const zh = {
   chat: {
     title: "会话对话",
     live: "实时同步",
+    // 标题栏状态徽标(按 SessionTone 取)。放在标题栏,文案要短。
+    status: {
+      running: "运行中",
+      pending: "待处理",
+      waiting: "等你输入",
+      offline: "未连接",
+      ended: "已结束",
+      error: "出错了",
+    } as Record<string, string>,
     unsupported: "这个 Agent 暂未提供结构化对话记录",
     empty: "还没有可显示的对话记录",
     // 会话 running 但 transcript 尚未落第一条时用它——此时说「没有记录」与运行指示自相矛盾。
@@ -210,9 +221,15 @@ export const zh = {
     terminalExited: (code: number | null) => `Agent 进程已退出${code == null ? "" : `（退出码 ${code}）`}，上方保留了终端输出`,
     terminalStop: "结束终端",
     terminalStopping: "正在结束…",
-    terminalStopConfirm: "结束终端会终止正在运行的 Agent 进程，进行中的任务会被打断。是否继续？",
+    endSession: "结束会话",
+    // 对话页标题栏与终端页操作条共用同一段确认文案(confirmStopSession)。
+    endSessionConfirm: "结束会话会终止正在运行的 Agent 进程，进行中的任务会被打断。是否继续？",
     terminalAttach: "在外部终端同步打开",
     modelMenuOpen: "终端里已打开模型菜单，点此收起",
+    // 交互式斜杠命令（/config、/resume 等）发出后的过渡横幅：识别成功会变成选项卡片；
+    // 识别不出的面板形态也至少给「切到终端 / 收起」的出口，不能让用户对着空白干等。
+    slashMenuOpened: "命令界面已在终端打开，正在识别可选项…",
+    slashMenuDismiss: "收起",
     todos: "待办",
     todoProgress: (done: number, total: number) => `${done}/${total}`,
     subagent: "子任务",
@@ -231,6 +248,15 @@ export const zh = {
     terminalReadyTimeout: "等待 Agent 终端就绪超时，请在终端页查看状态",
     sendNeedsTakeover: "会话仍在外部终端运行。接管会先结束那个进程，再在 Meowo 中继续这次操作。",
     terminalNeedsAttention: "Agent 正在等待启动确认，请直接在当前对话页的交互卡片中完成选择，然后重新发送。",
+    queuedInterjections: (n: number) => `${n} 条插话已排队,当前回合结束后处理`,
+    queuedAttachmentOnly: "(附件)",
+    interjectNow: "立即插话",
+    interjectNowTip: "发送中断键停止当前回合,排队的插话会立刻被处理;已完成的工作保留。",
+    interruptAndSend: "打断并发送",
+    interruptAndSendTip: "先中断当前回合,再发送这条消息;当前回合已完成的工作保留。",
+    attentionDismiss: "仅收起",
+    attentionDismissTip: "收起这张卡片，不向终端发送任何按键。若提示是真的，它仍在终端页等待处理。",
+    unrecognizedPromptConfirm: "Agent 似乎正在终端里等待一个交互（界面未能识别成卡片）。现在发送会把文字直接打进那个界面，可能误触选项。确定发送吗？",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
     terminalPromptHelp: "Agent 正在等待启动确认。下面是当前提示原文；无需使用 TUI，可用右侧按钮选择并确认，之后若还有下一步，Meowo 会继续显示。",
     trustPromptTitle: "是否信任此文件夹？",
@@ -278,6 +304,7 @@ export const zh = {
       "danger-full-access": "完全访问",
     } as Record<string, string>,
     modelDesc: {
+      fable: "能力高于 Opus 的旗舰档",
       opus: "最强推理，复杂任务首选",
       sonnet: "速度与能力兼顾的均衡之选",
       haiku: "轻快响应，简单任务更省额度",
@@ -328,6 +355,8 @@ export const zh = {
     autostartDesc: "系统开机后自动启动",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
+    attentionFlash: "任务栏提醒",
+    attentionFlashDesc: "窗口在后台时,会话需要关注就高亮任务栏图标",
     autoUpdate: "自动更新",
     autoUpdateDesc: "自动检查并下载新版本，准备好后由你确认重启",
     archiveHide: "归档自动隐藏",
@@ -437,6 +466,9 @@ export const zh = {
     secretSaved: "已保存；输入新值可替换",
     completeToEnable: "填写中转地址、模型和密钥后自动启用；配置期间仍使用官方账号。",
     coverage: "仅从 Meowo 新建、恢复或重启的会话生效；已经运行的会话不会切换。",
+    envOptions: "附加环境变量",
+    envDisableNonessential: "禁用非必要流量",
+    envNoAttribution: "去掉归因标识头",
     saveFailed: (e: string) => `中转保存失败：${e}`,
   },
   account: {
