@@ -40,6 +40,34 @@ pub(crate) fn show_after_grace(window: &tauri::WebviewWindow, focus: bool) {
     });
 }
 
+/// Win11 的 DWM 只给带标题栏或 thick frame 的窗口自动圆角；`decorations(false)` +
+/// `resizable(false)` 的小窗（设置/引导/更新/新建会话/确认）两者皆无，默认直角——必须
+/// 显式声明圆角偏好。对话窗 resizable(true) 带 thick frame 故天然圆角；贴纸主窗
+/// transparent + 前端 CSS 圆角，都不需要这里。Win10 不认这个属性（返回错误码），
+/// 静默忽略：那代系统全窗直角是系统规范，不强造。macOS 无此概念（transparent +
+/// 前端圆角），空实现。
+pub(crate) fn round_window_corners(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        };
+        if let Ok(handle) = window.hwnd() {
+            let preference = DWMWCP_ROUND;
+            unsafe {
+                DwmSetWindowAttribute(
+                    handle.0 as _,
+                    DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                    std::ptr::addr_of!(preference).cast(),
+                    std::mem::size_of_val(&preference) as u32,
+                );
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
+}
+
 /// 独立窗口的**原生**底色，与 styles.css 的 --cc-window-bg 对齐（dark #1c1c1e / light #f6f6f7）。
 ///
 /// 隐藏创建 + 首帧后 show 只消除了「窗口先于首帧显示」的那类白框；show 的瞬间 WebView2
@@ -48,7 +76,7 @@ pub(crate) fn show_after_grace(window: &tauri::WebviewWindow, focus: bool) {
 /// theme=system 时借主窗口的 theme()（跟随 OS，本应用不调 set_theme）判定明暗。
 /// 仅用于非 macOS：macOS 这些窗口是 transparent + 前端圆角，设原生底色会破坏透明。
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-fn window_background_color(app: &tauri::AppHandle) -> tauri::webview::Color {
+pub(crate) fn window_background_color(app: &tauri::AppHandle) -> tauri::webview::Color {
     let dark = match load_settings().theme.as_str() {
         "light" => false,
         "dark" => true,
@@ -98,6 +126,7 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
         let builder = builder.background_color(window_background_color(app));
         match builder.build() {
             Ok(_about_window) => {
+                round_window_corners(&_about_window);
                 show_after_grace(&_about_window, true);
                 // macOS：设置窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（重新隐藏 Dock 图标）。
                 #[cfg(target_os = "macos")]
@@ -158,6 +187,7 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_onboarding_window) => {
+            round_window_corners(&_onboarding_window);
             show_after_grace(&_onboarding_window, true);
             // macOS：引导窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置/更新窗口）。
             #[cfg(target_os = "macos")]
@@ -217,6 +247,7 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_update_window) => {
+            round_window_corners(&_update_window);
             show_after_grace(&_update_window, true);
             // macOS：更新窗口关闭后归还激活策略计数，最后一个窗口关闭才切回 Accessory（同设置窗口）。
             #[cfg(target_os = "macos")]
@@ -306,6 +337,7 @@ pub(crate) fn open_new_session_window_impl(
     let builder = builder.background_color(window_background_color(app));
     match builder.build() {
         Ok(_win) => {
+            round_window_corners(&_win);
             show_after_grace(&_win, true);
             #[cfg(target_os = "macos")]
             {

@@ -818,6 +818,9 @@ button.stab {
 }
 .ctx-item:hover { background: var(--cc-surface-hover); }
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
+/* 「结束会话」：平时同普通项，hover 才显破坏性的红（与对话窗标题栏 .chat-end 同语汇）。 */
+.ctx-item-danger:hover { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
+.ctx-item-danger:hover svg { color: var(--cc-err-vivid); }
 .ctx-sep { height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
 /* 卡片菜单按钮（card_menu_mode=button 时替代右键触发）：常显小圆角图标钮——
    为触屏等无 hover 环境而生，不能做 hover 才浮现。 */
@@ -2907,12 +2910,19 @@ select.ns-input {
 /* 确认对话框(ConfirmWindow):独立**原生小窗**(无边框,可拖拽、可拖出主窗边界),
    webview 渲染故吃应用主题/字体——替代样式脱节的系统 MessageBox。整卡填满窗口,
    data-tauri-drag-region 让空白处拖动整窗。默认焦点在取消上,Enter 不触发破坏性动作。 */
-.app-confirm.is-window { width: 100vw; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; padding: var(--sp-14) var(--sp-14) var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-12); background: var(--cc-bg); overflow: hidden; }
+.app-confirm.is-window { width: 100vw; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; padding: var(--sp-14) var(--sp-14) var(--sp-12); border: 1px solid var(--cc-border); background: var(--cc-bg); overflow: hidden; }
+/* macOS：无边框窗口不自动圆角，配合 Rust 端 transparent 由此呈现（同 .updater/.settings）。
+   Windows 不画 CSS 圆角：窗口圆角由 DWM 裁（round_window_corners），CSS 再画一套半径
+   不一致的圆角只会在四角露出底色缝。 */
+:root.platform-macos .app-confirm.is-window { border-radius: var(--r-12); }
+/* 窗口高度由前端量完内容后收拢（ConfirmWindow 的 fit），flex:1 只在长文时把余量交给滚动区。 */
 .app-confirm.is-window p { flex: 1; overflow: auto; }
+.app-confirm.is-window p > span { display: block; }
 .app-confirm strong { display: block; margin-bottom: var(--sp-8); font-size: var(--fs-13); color: var(--cc-text); }
 .app-confirm p { margin: 0 0 var(--sp-12); color: var(--cc-text-dim); font-size: var(--fs-11); line-height: 1.6; }
 .app-confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
-.app-confirm-actions button { min-width: 76px; padding: var(--sp-6) var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-8); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--fs-11); cursor: pointer; }
+/* --r-7 是真实存在的 token：此前写成不存在的 --r-8，border-radius 解析失败退成直角。 */
+.app-confirm-actions button { min-width: 76px; padding: var(--sp-6) var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-7); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--fs-11); cursor: pointer; }
 .app-confirm-actions button:hover { background: color-mix(in srgb, var(--cc-text) 6%, transparent); }
 .app-confirm-actions button.is-primary { border-color: transparent; background: var(--cc-text); color: var(--cc-bg); }
 .app-confirm-actions button.is-primary:hover { background: color-mix(in srgb, var(--cc-text) 85%, var(--cc-bg)); }
@@ -2924,10 +2934,13 @@ select.ns-input {
 .chat-queued { width: min(720px, calc(100% - 48px)); margin: 0 auto var(--sp-8); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-7) var(--sp-11); border: 1px dashed color-mix(in srgb, var(--cc-warn-vivid) 35%, transparent); border-radius: var(--r-9); color: var(--cc-text-dim); font-size: var(--fs-10-5); }
 .chat-queued button { margin-left: auto; padding: var(--sp-4) var(--sp-9); border: 1px solid var(--cc-border); border-radius: var(--r-7); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--fs-10); cursor: pointer; white-space: nowrap; }
 .chat-queued button:hover { background: color-mix(in srgb, var(--cc-text) 6%, transparent); }
-/* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。 */
-.chat-interject-button { padding: var(--sp-5) var(--sp-10); border: 1px solid color-mix(in srgb, var(--cc-warn-vivid) 45%, transparent); border-radius: var(--r-7); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--fs-10); cursor: pointer; white-space: nowrap; }
-.chat-interject-button:hover:not(:disabled) { color: var(--cc-text); background: color-mix(in srgb, var(--cc-warn-vivid) 10%, transparent); }
-.chat-interject-button:disabled { opacity: .5; cursor: default; }
+/* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
+   .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤
+   (38px 高、翡翠边框+填充,发送键专属),特异性盖过单类名——缺前缀时本按钮被刷成
+   大绿块。height/min-height 一并重置回自然高度。 */
+.chat-compose .chat-interject-button { height: auto; min-height: 0; padding: var(--sp-5) var(--sp-10); border: 1px solid color-mix(in srgb, var(--cc-warn-vivid) 45%, transparent); border-radius: var(--r-7); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--fs-10); cursor: pointer; white-space: nowrap; }
+.chat-compose .chat-interject-button:hover:not(:disabled) { color: var(--cc-text); background: color-mix(in srgb, var(--cc-warn-vivid) 10%, transparent); }
+.chat-compose .chat-interject-button:disabled { opacity: .5; cursor: default; }
 
 /* 标题栏幽灵按钮的共同基样式:视图页签与「结束会话」是并排的视觉同类,尺寸/字号/圆角
    必须一处定义、一起变。 */
@@ -3322,9 +3335,13 @@ select.ns-input {
   background: var(--cc-text);
 }
 .chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: color-mix(in srgb, var(--cc-text) 9%, var(--cc-bg)); opacity: 1; }
-/* 就地接管按钮：错误文案旁边直接给出出路，不必跨页去终端页找。 */
-.chat-send-takeover {
+/* 就地接管按钮：错误文案旁边直接给出出路，不必跨页去终端页找。
+   .chat-compose 前缀压过 `.chat-compose button` 的 accent 皮肤（同 .chat-interject-button）：
+   结束外部进程是破坏性动作，红描边小药丸，不该披发送键的大绿皮。 */
+.chat-compose .chat-send-takeover {
   flex: 0 0 auto;
+  height: auto;
+  min-height: 0;
   padding: var(--sp-3) var(--sp-9);
   border: 1px solid color-mix(in srgb, var(--cc-err) 45%, var(--cc-border));
   border-radius: var(--r-pill);
@@ -3333,8 +3350,8 @@ select.ns-input {
   font-size: var(--fs-10);
   cursor: pointer;
 }
-.chat-send-takeover:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-err) 20%, transparent); }
-.chat-send-takeover:disabled { opacity: 0.55; cursor: default; }
+.chat-compose .chat-send-takeover:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-err) 20%, transparent); }
+.chat-compose .chat-send-takeover:disabled { opacity: 0.55; cursor: default; }
 @media (max-width: 680px) {
   .chat-live { display: none; }
   .chat-scroll { padding-left: var(--sp-22); padding-right: var(--sp-22); }
