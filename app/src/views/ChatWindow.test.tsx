@@ -1215,6 +1215,9 @@ describe("ChatWindow", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     expect(invoke.mock.calls.some(([command]) => command === "write_managed_terminal")).toBe(false);
+    // 等第一次发送的异步守卫彻底收尾(sending→false,按钮从「发送中…」回到「发送」),
+    // 否则慢机上(macOS CI)第二次 Enter 会撞进 sending 守卫被吞掉,等不到下面的 write。
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeTruthy());
 
     // 确认(队列次个 true):照常发送正文。
     fireEvent.keyDown(input, { key: "Enter" });
