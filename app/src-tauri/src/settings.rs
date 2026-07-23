@@ -314,7 +314,11 @@ pub(crate) async fn set_settings(
     settings.ui_scale = settings.ui_scale.clamp(50, 200);
     // 代理地址落盘前校验。非法值一旦写进去，后台只会静默降级直连，用户对着「用量查不到」
     // 毫无线索——在这里拦下，把具体原因回给设置页。
+    // 先清洗再校验：粘贴进来的地址常混入零宽字符（中转还有全角冒号的情况），肉眼看着
+    // 完全正确却过不了校验；洗完仍不合法的才是真错误。
+    settings.proxy.normalize();
     settings.proxy.validate()?;
+    settings.relay.normalize();
     settings.relay.validate()?;
     // 落盘 + 写各 agent 配置都是文件 IO，且 apply_to_agent_configs 要排队等启动线程的同一把
     // 锁——同步命令会拿这些卡主线程消息泵，故整段挪进 blocking 池。

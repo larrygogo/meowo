@@ -37,13 +37,10 @@ const relayDefault = (agent: RelayAgent): RelayRule => ({
 function RelayInput({
   value,
   placeholder,
-  type = "text",
   onCommit,
 }: {
   value: string;
   placeholder: string;
-  /** secret 字段传 "password"：中转令牌是机密，与 API Key 登录输入框同规，已保存值不明文上屏。 */
-  type?: "text" | "password";
   onCommit: (value: string) => void;
 }) {
   const [text, setText] = useState(value);
@@ -56,7 +53,7 @@ function RelayInput({
     <>
       <input
         className="ns-input"
-        type={type}
+        type="text"
         autoComplete="off"
         spellCheck={false}
         value={text}
@@ -467,12 +464,12 @@ function RelayAccessSupported({ agent, settings, patch, capability }: {
                 />
               </div>
             )}
+            {/* 密钥明文展示：中转令牌粘贴错一个字符就是 401，用户需要肉眼核对；本就仅本机可见。 */}
             <label className="relay-field relay-secret-field">
               <span>{t.relay.secret}</span>
               <RelayInput
                 value={secretValue}
                 placeholder={t.relay.secretPlaceholder}
-                type="password"
                 onCommit={saveSecret}
               />
             </label>

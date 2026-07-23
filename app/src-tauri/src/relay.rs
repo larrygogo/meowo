@@ -52,6 +52,16 @@ pub(crate) struct RelaySettings {
 }
 
 impl RelaySettings {
+    /// 落盘前清洗规则字段。网页「复制」按钮和聊天工具常把零宽/双向控制字符带进剪贴板，
+    /// 中文输入法也容易敲出全角冒号——它们在输入框里肉眼不可见或难以分辨，只拦不洗的话，
+    /// 用户对着一条「明明正确」的地址毫无办法。
+    pub(crate) fn normalize(&mut self) {
+        for rule in self.per_agent.values_mut() {
+            rule.base_url = sanitize_relay_field(&rule.base_url);
+            rule.model = sanitize_relay_field(&rule.model);
+        }
+    }
+
     pub(crate) fn rule(&self, id: meowo_agent::AgentId) -> Option<&RelayRule> {
         self.rule_with_secret(id, has_secret(id.as_str()))
     }
@@ -88,7 +98,8 @@ impl RelaySettings {
             let variant = plugin
                 .resolve()
                 .ok_or_else(|| format!("无法解析 {id} 的安装形态"))?;
-            validate_http_url(&rule.base_url)?;
+            // 前缀 agent id：payload 携带整份 per_agent，报错的可能不是当前正在编辑的那个。
+            validate_http_url(&rule.base_url).map_err(|e| format!("{id} 的{e}"))?;
             if rule.model.trim().is_empty() {
                 return Err(format!("{id} 的中转模型不能为空"));
             }
@@ -131,6 +142,38 @@ fn supported_relay_plugins() -> impl Iterator<Item = &'static dyn meowo_agent::A
                 .is_some_and(|installation| cap.supports_variant(installation.variant_tag))
         })
     })
+}
+
+/// 去掉粘贴带入的不可见字符：零宽系、双向控制、BOM、软连字符。
+/// 中转（地址/模型/密钥）与代理地址（proxy.rs normalize）共用。
+pub(crate) fn strip_invisible(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{00AD}'
+                    | '\u{200B}'..='\u{200F}'
+                    | '\u{202A}'..='\u{202E}'
+                    | '\u{2060}'..='\u{2064}'
+                    | '\u{2066}'..='\u{2069}'
+                    | '\u{FEFF}'
+            )
+        })
+        .collect()
+}
+
+/// 地址/模型名的完整清洗：去不可见字符、全角 ASCII 折半角（ｈ→h、：→:）、掐头尾空白。
+fn sanitize_relay_field(raw: &str) -> String {
+    strip_invisible(raw)
+        .chars()
+        .map(|c| match c {
+            '\u{3000}' => ' ',
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn validate_http_url(raw: &str) -> Result<(), String> {
@@ -183,7 +226,9 @@ fn update_secret_at(path: &std::path::Path, agent: &str, secret: &str) -> Result
     // 都基于旧快照写回而互相覆盖。
     let _guard = RELAY_SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut secrets = read_secrets_from(path);
-    let value = secret.trim();
+    // 令牌里的零宽字符会原样进 Authorization 头，中转端一律 401，用户毫无线索——先洗掉。
+    let cleaned = strip_invisible(secret);
+    let value = cleaned.trim();
     if value.is_empty() {
         secrets.remove(agent);
     } else {
@@ -406,6 +451,53 @@ mod tests {
         assert!(validate_http_url("http://127.0.0.1:4000").is_ok());
         assert!(validate_http_url("relay.example/v1").is_err());
         assert!(validate_http_url("socks5://relay.example").is_err());
+    }
+
+    /// 用户反馈：地址「明明是 https:// 开头」却报前缀错误——粘贴带入的零宽字符/全角冒号
+    /// 在输入框里不可见。normalize 洗掉后应能通过校验并落盘干净值。
+    #[test]
+    fn pasted_invisible_and_fullwidth_chars_are_sanitized() {
+        assert_eq!(
+            sanitize_relay_field("\u{200B}https://relay.example/v1\u{FEFF}"),
+            "https://relay.example/v1"
+        );
+        assert_eq!(
+            sanitize_relay_field("https\u{FF1A}//relay.example"),
+            "https://relay.example"
+        );
+        assert_eq!(sanitize_relay_field("\u{202A}model-x\u{202C}"), "model-x");
+        let mut settings = RelaySettings::default();
+        settings.per_agent.insert(
+            "claude".into(),
+            RelayRule {
+                enabled: false,
+                base_url: "\u{200B}https://relay.example/v1".into(),
+                model: "\u{2060}model-x ".into(),
+                ..RelayRule::default()
+            },
+        );
+        settings.normalize();
+        let rule = &settings.per_agent["claude"];
+        assert_eq!(rule.base_url, "https://relay.example/v1");
+        assert_eq!(rule.model, "model-x");
+        assert!(validate_http_url(&rule.base_url).is_ok());
+    }
+
+    #[test]
+    fn secret_invisible_chars_are_stripped_before_save() {
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-relay-secret-strip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("relay-secrets.json");
+        update_secret_at(&path, "claude", "\u{FEFF}sk-abc\u{200B} ").unwrap();
+        assert_eq!(
+            read_secrets_from(&path).get("claude").map(String::as_str),
+            Some("sk-abc")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
