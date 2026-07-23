@@ -84,6 +84,17 @@ export function FolderIcon() {
   );
 }
 
+export function StopIcon() {
+  // lucide circle-stop：右键菜单「结束会话」用
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <rect x="9" y="9" width="6" height="6" rx="1" />
+    </svg>
+  );
+}
+
 export function NoteIcon() {
   // lucide sticky-note：折角便签纸，区别于 rename 的铅笔
   return (

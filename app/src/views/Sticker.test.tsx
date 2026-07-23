@@ -108,7 +108,7 @@ function mk(over: Partial<Item> = {}): Item {
     task_title: "做点事",
     current_activity: "正在做点事",
     column: "doing", todo_done: 0, todo_total: 0, todos: [],
-    pid: 1234, connected: true, archived: false, cwd: null, errored: false, error_label: null, error_raw: null,
+    pid: 1234, connected: true, pty_managed: false, archived: false, cwd: null, errored: false, error_label: null, error_raw: null,
     provider: "claude",
     ...over,
   } as Item;
@@ -284,6 +284,38 @@ describe("Sticker", () => {
     const { container: c2 } = render(<Sticker filter="all" data={[mk({ cwd: null })]} />);
     fireEvent.contextMenu(c2.querySelector(".stk-card")!);
     expect(screen.queryByText(zh.sticker.openProjectDir)).toBeNull();
+  });
+
+  it("本 GUI 托管的会话菜单末尾多出「结束会话」,确认后发出 stop_managed_terminal", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ pty_managed: true })]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    const item = screen.getByText(zh.chat.endSession);
+    // 确认框应答「确认」→ 停止命令发出。once 紧贴点击设置,免被挂载期调用吃掉。
+    invokeMock.mockImplementationOnce(() => Promise.resolve(true) as Promise<unknown> as Promise<void>);
+    fireEvent.click(item);
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "confirm_dialog",
+        expect.objectContaining({ title: zh.chat.endSession, danger: true }),
+      ),
+    );
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("stop_managed_terminal", { sessionId: 1 }));
+  });
+
+  it("「结束会话」确认框取消时不发停止命令", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ pty_managed: true })]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    // 默认 invokeMock 对 confirm_dialog 返回 undefined → appConfirm 按取消收场。
+    fireEvent.click(screen.getByText(zh.chat.endSession));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(invokeMock).not.toHaveBeenCalledWith("stop_managed_terminal", expect.anything());
+  });
+
+  it("非本 GUI 托管的会话(外部终端)不显示「结束会话」", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ pty_managed: false, connected: true })]} />);
+    fireEvent.contextMenu(container.querySelector(".stk-card")!);
+    expect(document.querySelector(".ctx-menu")).toBeTruthy();
+    expect(screen.queryByText(zh.chat.endSession)).toBeNull();
   });
 
   it("已星标/有便签/已归档的会话,菜单项显示反向文案", () => {

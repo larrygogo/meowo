@@ -1,7 +1,7 @@
 // 卡片右键/菜单按钮弹出的操作菜单：星标/便签/重命名/归档/新建会话/打开目录。
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
-import { ArchiveIcon, FolderIcon, NoteIcon, PencilIcon, PlusIcon, StarIcon } from "./icons";
+import { ArchiveIcon, FolderIcon, NoteIcon, PencilIcon, PlusIcon, StarIcon, StopIcon } from "./icons";
 
 // 卡片右键菜单：星标/便签/重命名/归档收拢于此（替代原 hover 图标行，卡片标题行更干净）。
 // fixed 定位 + useLayoutEffect 钳位：贴纸窗口小，菜单贴边时向内收、不被窗口边缘裁掉。
@@ -18,6 +18,7 @@ export function CardContextMenu({
   onArchive,
   onNewSession,
   onOpenDir,
+  onEndSession,
   onClose,
 }: {
   x: number;
@@ -33,6 +34,8 @@ export function CardContextMenu({
   onNewSession: () => void;
   /** 打开项目目录；会话无 cwd（旧数据）时传 null 隐藏该项。 */
   onOpenDir: (() => void) | null;
+  /** 结束会话（杀托管 PTY）；仅本 GUI 托管的会话可结束，其余传 null 隐藏该项。 */
+  onEndSession: (() => void) | null;
   onClose: () => void;
 }) {
   const t = useT();
@@ -108,6 +111,15 @@ export function CardContextMenu({
           <button type="button" role="menuitem" className="ctx-item" onClick={act(onOpenDir)}>
             <FolderIcon />
             {t.sticker.openProjectDir}
+          </button>
+        </>
+      )}
+      {onEndSession && (
+        <>
+          <div className="ctx-sep" role="separator" />
+          <button type="button" role="menuitem" className="ctx-item ctx-item-danger" onClick={act(onEndSession)}>
+            <StopIcon />
+            {t.chat.endSession}
           </button>
         </>
       )}

@@ -43,6 +43,8 @@ export function makeSession(p: {
     todos: [],
     pid: 1000 + id,
     connected: p.connected ?? true,
+    // demo 会话没有真实 PTY，不亮「结束会话」入口。
+    pty_managed: false,
     archived: p.archived ?? false,
     archived_at: p.archived ? NOW : null,
     cwd: `C:/dev/${p.project.split("/").pop()}`,

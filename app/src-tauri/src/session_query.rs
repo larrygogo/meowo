@@ -87,6 +87,9 @@ pub(crate) struct LiveItem {
     #[serde(flatten)]
     pub(crate) inner: LiveSession,
     pub(crate) connected: bool,
+    /// 本 GUI 进程正托管该会话的 PTY。门控卡片菜单「结束会话」的可见性——外部终端里
+    /// 跑的会话杀不了（要先走接管），与对话窗 ChatHistoryDto.pty_managed 同口径。
+    pty_managed: bool,
     errored: bool,
     error_label: Option<String>,
     error_raw: Option<String>,
@@ -313,15 +316,16 @@ pub(crate) fn live_sessions_blocking(
                 last_event_at: session.session.last_event_at,
                 id: session.session.id,
             };
+            let pty_managed = pty_live.contains(&session.session.id);
             let connected = session_connected(
                 &session.session.status,
                 session.pid,
-                process_alive(session.pid, alive, pty_live.contains(&session.session.id)),
+                process_alive(session.pid, alive, pty_managed),
                 session.session.last_event_at,
                 now,
             );
             if !connectivity_filtered || connected {
-                if let Some(item) = enrich(tx_cache, session, connected) {
+                if let Some(item) = enrich(tx_cache, session, connected, pty_managed) {
                     items.push(item);
                 }
             }
@@ -362,6 +366,7 @@ fn enrich(
     tx_cache: &Mutex<meowo_agent::TranscriptCache>,
     mut session: LiveSession,
     connected: bool,
+    pty_managed: bool,
 ) -> Option<LiveItem> {
     // DB 数据已能定夺去留时先裁决，省掉 transcript 的文件 IO：只有会从 transcript
     // 补标题的 provider（目前 claude），未命名会话才可能被翻案；其余 provider 标题
@@ -397,6 +402,7 @@ fn enrich(
     Some(LiveItem {
         inner: session,
         connected,
+        pty_managed,
         errored: error_label.is_some(),
         error_label,
         error_raw,
