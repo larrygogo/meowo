@@ -1177,11 +1177,14 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     expect(await screen.findByText("Agent 正在等待你的回答")).toBeTruthy();
-    const writesBefore = invoke.mock.calls.filter(([command]) => command === "write_managed_terminal").length;
+    const writes = () => invoke.mock.calls.filter(([command]) => command === "write_managed_terminal").length;
+    const writesBefore = writes();
     fireEvent.click(screen.getByRole("button", { name: "仅收起" }));
+    // 零副作用断言必须**同步**做(点击处理器只 setTerminalAttention(null),纯同步):
+    // 放到下面的 await/waitFor 之后,慢机(macOS CI)上后台 timer 会在那段窗口里插入一次
+    // 无关写入,把「零副作用」误判成失败。点击后当场查,timer 还没机会触发。
+    expect(writes()).toBe(writesBefore);
     await waitFor(() => expect(screen.queryByText(/Which items should I continue with/)).toBeNull());
-    // 零副作用:收起没有向 PTY 写任何字节。
-    expect(invoke.mock.calls.filter(([command]) => command === "write_managed_terminal").length).toBe(writesBefore);
   });
 
   /**
