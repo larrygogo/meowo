@@ -818,9 +818,10 @@ button.stab {
 }
 .ctx-item:hover { background: var(--cc-surface-hover); }
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
-/* 「结束会话」：平时同普通项，hover 才显破坏性的红（与对话窗标题栏 .chat-end 同语汇）。 */
-.ctx-item-danger:hover { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
-.ctx-item-danger:hover svg { color: var(--cc-err-vivid); }
+/* 「结束会话」：平时同普通项，hover/键盘聚焦才显破坏性的红（与对话窗标题栏 .chat-end
+   同语汇）。:focus-visible 不能省：键盘导航/触屏没有 hover，破坏性语义不该只给鼠标看。 */
+.ctx-item-danger:hover, .ctx-item-danger:focus-visible { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
+.ctx-item-danger:hover svg, .ctx-item-danger:focus-visible svg { color: var(--cc-err-vivid); }
 .ctx-sep { height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
 /* 卡片菜单按钮（card_menu_mode=button 时替代右键触发）：常显小圆角图标钮——
    为触屏等无 hover 环境而生，不能做 hover 才浮现。 */

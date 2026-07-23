@@ -18,14 +18,24 @@ export function ConfirmWindow() {
   const t = useT();
   const [payload, setPayload] = useState<Payload | null>(null);
   const messageRef = useRef<HTMLSpanElement>(null);
-  const id = Number(getCurrentWindow().label.slice("confirm-".length));
+  // 非 Tauri 环境(测试/浏览器预览)getCurrentWindow 在渲染期就会抛:id 置 null,
+  // 组件渲染空壳并跳过所有窗口调用(与下方 fit 的降级同一口径),不能整棵树崩掉。
+  const id = (() => {
+    try {
+      return Number(getCurrentWindow().label.slice("confirm-".length));
+    } catch {
+      return null;
+    }
+  })();
   const decide = (ok: boolean) => {
+    if (id === null) return;
     // 结果送回请求方;窗口由后端在收到结果后关闭。失败也不留悬窗:自关兜底。
     void invoke("confirm_dialog_result", { id, ok }).catch(() => {
       void getCurrentWindow().close().catch(() => {});
     });
   };
   useEffect(() => {
+    if (id === null) return;
     invoke<Payload>("confirm_dialog_payload", { id })
       .then(setPayload)
       // 取不到内容(请求已被并发取消)就直接按取消收场,不渲染空壳。
