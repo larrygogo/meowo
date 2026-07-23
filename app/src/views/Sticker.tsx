@@ -14,6 +14,7 @@ import {
   Settings,
   StickerFilter,
   TerminalOpenMode,
+  confirmStopSession,
   getSettings,
   getAccounts,
   refreshUsage,
@@ -892,6 +893,19 @@ export function Sticker({
           }
           onOpenDir={
             ctxItem.cwd ? () => invoke("open_project_dir", { cwd: ctxItem.cwd }).catch(() => {}) : null
+          }
+          onEndSession={
+            // 仅本 GUI 托管的 PTY 能结束（与对话窗标题栏入口同门控）；确认+停止走共用的
+            // confirmStopSession。成功后不用做别的：轮询里 connected 翻 false、徽标自退。
+            // 失败也由徽标兜底可见——卡片仍显「运行中」即说明没停掉，贴纸窗无独立错误槽位。
+            ctxItem.pty_managed
+              ? () => {
+                  void confirmStopSession(ctxItem.session.id, {
+                    title: t.chat.endSession,
+                    message: t.chat.endSessionConfirm,
+                  }).catch(() => {});
+                }
+              : null
           }
           onClose={() => setCtxMenu(null)}
         />

@@ -347,7 +347,7 @@ describe("AccountSection agent 卡", () => {
     expect(JSON.stringify(api.setSettings.mock.calls)).not.toContain("sk-never-in-settings");
   });
 
-  it("已保存的中转密钥以密码掩码回填（不明文上屏），清空后删除", async () => {
+  it("已保存的中转密钥明文回填（便于核对），清空后删除", async () => {
     api.getSettings.mockResolvedValue({
       sticker_quota_providers: [],
       relay: { per_agent: { claude: {
@@ -362,8 +362,8 @@ describe("AccountSection agent 卡", () => {
     api.getRelaySecrets.mockResolvedValue({ claude: "sk-visible-local" });
     render(<AccountSection />);
     const secret = await screen.findByDisplayValue("sk-visible-local") as HTMLInputElement;
-    // 令牌是机密：与 API Key 登录输入框同规用 password 掩码（值仍回填、可编辑清空）。
-    expect(secret.type).toBe("password");
+    // 令牌明文展示：粘贴错一个字符就是 401，用户需要肉眼核对，且仅本机可见。
+    expect(secret.type).toBe("text");
     fireEvent.change(secret, { target: { value: "" } });
     fireEvent.blur(secret);
     await waitFor(() => expect(api.setRelaySecret).toHaveBeenCalledWith("claude", ""));

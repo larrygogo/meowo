@@ -66,6 +66,17 @@ impl Default for ProxySettings {
 }
 
 impl ProxySettings {
+    /// 落盘前清洗：粘贴带入的零宽/双向控制字符肉眼不可见，却会让「看起来完全正确」的
+    /// 地址过不了校验（与中转地址同源的坑，helper 见 relay.rs）。只去不可见字符、掐头尾
+    /// 空白，不折全角：代理 URL 可内嵌 user:pass 凭据，凭据字符不该被改写。
+    pub(crate) fn normalize(&mut self) {
+        let urls = std::iter::once(&mut self.url)
+            .chain(self.per_agent.values_mut().map(|rule| &mut rule.url));
+        for url in urls {
+            *url = crate::relay::strip_invisible(url).trim().to_string();
+        }
+    }
+
     /// 某 agent 生效的规则：有覆盖用覆盖，否则用全局。
     fn rule_for(&self, agent: Option<&str>) -> ProxyRule {
         agent
@@ -650,6 +661,25 @@ mod tests {
             serde_json::from_str(r#"{"per_agent":{"kimi":{"mode":"off"}}}"#).unwrap();
         assert_eq!(s.per_agent["kimi"].mode, "off");
         assert_eq!(s.mode, "system");
+    }
+
+    /// 与中转地址同源的坑：粘贴带入的零宽字符让「看起来完全正确」的代理地址过不了校验。
+    /// normalize 洗掉后应能通过，且全局与 per_agent 覆盖都要洗到。
+    #[test]
+    fn pasted_invisible_chars_in_proxy_urls_are_stripped() {
+        let mut settings = ProxySettings {
+            mode: "custom".into(),
+            url: "\u{200B}http://127.0.0.1:7890 ".into(),
+            per_agent: BTreeMap::from([(
+                "kimi".into(),
+                rule("custom", "\u{FEFF}http://127.0.0.1:1080"),
+            )]),
+        };
+        assert!(settings.validate().is_err(), "洗之前应被校验拦下");
+        settings.normalize();
+        assert_eq!(settings.url, "http://127.0.0.1:7890");
+        assert_eq!(settings.per_agent["kimi"].url, "http://127.0.0.1:1080");
+        assert!(settings.validate().is_ok());
     }
 
     #[test]

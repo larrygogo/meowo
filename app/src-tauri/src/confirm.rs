@@ -25,6 +25,11 @@ type ResultSender = tauri::async_runtime::Sender<bool>;
 pub(crate) struct Confirms {
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, (ConfirmPayload, Option<ResultSender>)>>,
+    /// 各父窗身上挂着的确认框计数。父窗的 set_enabled 必须引用计数:同一父窗可能并发
+    /// 挂多个确认框(用户点不了被禁用的父窗,但 JS 侧事件/定时器仍能再拉起一个),首个
+    /// resolve 就恢复父窗会让其余「模态」形同虚设——父窗可点,关掉它还会连带销毁剩下
+    /// 的确认框、静默按取消收场。进场 +1、离场 -1,归零才恢复。
+    disabled_parents: Mutex<HashMap<String, usize>>,
 }
 
 impl Confirms {
@@ -41,6 +46,36 @@ impl Confirms {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .remove(&id);
+    }
+
+    /// 计数 +1;返回是否由本次从 0 变 1(该真正执行禁用)。
+    fn parent_disabled(&self, label: &str) -> bool {
+        let mut parents = self
+            .disabled_parents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let count = parents.entry(label.to_string()).or_insert(0);
+        *count += 1;
+        *count == 1
+    }
+
+    /// 计数 -1;返回是否归零(该真正恢复启用)。计数缺失按归零处理——宁可多恢复一次,
+    /// 也不能让父窗停留在禁用态。
+    fn parent_released(&self, label: &str) -> bool {
+        let mut parents = self
+            .disabled_parents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        match parents.get_mut(label) {
+            Some(count) if *count > 1 => {
+                *count -= 1;
+                false
+            }
+            _ => {
+                parents.remove(label);
+                true
+            }
+        }
     }
 }
 
@@ -76,14 +111,33 @@ pub(crate) async fn confirm_dialog(
             ),
         );
     let label = format!("confirm-{id}");
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+    let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
         .inner_size(WIDTH, HEIGHT)
         .resizable(false)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        // 首帧渲染完由前端 useShowWhenReady 显示,消除白框闪烁(与其余窗口同款)。
+        // 首帧渲染完由前端自行显示(ConfirmWindow 量完内容、调完窗口高度再 show),
+        // 消除白框闪烁(与其余窗口同款)。
         .visible(false);
+    // 模态的所属关系:请求窗口设为 owner(Windows)/父窗(macOS)。任务栏与最小化行为
+    // 跟随父窗,且点击被禁用的父窗时系统会把焦点弹回本窗(配合下方 set_enabled)。
+    // 拿不到对应 WebviewWindow(理论上不发生)就退化为独立置顶窗,不拦流程。
+    #[cfg(any(windows, target_os = "macos"))]
+    let builder = match app.get_webview_window(window.label()) {
+        Some(parent) => builder.parent(&parent).map_err(|error| {
+            confirms.remove(id);
+            error.to_string()
+        })?,
+        None => builder,
+    };
+    // macOS:无边框窗口不自动圆角,设透明由前端 .app-confirm.is-window 的 border-radius
+    // 呈现(同设置/更新窗口)。
+    #[cfg(target_os = "macos")]
+    let mut builder = builder.transparent(true);
+    // 非 macOS:原生底色对齐主题,show 瞬间合成帧未上屏也不露白(见 window_background_color)。
+    #[cfg(not(target_os = "macos"))]
+    let mut builder = builder.background_color(crate::window::window_background_color(&app));
     // 居中于请求窗口(物理坐标折算逻辑坐标);任一项拿不到就交给系统默认落点。
     if let (Ok(pos), Ok(size), Ok(scale)) = (
         window.outer_position(),
@@ -98,6 +152,12 @@ pub(crate) async fn confirm_dialog(
         confirms.remove(id);
         error.to_string()
     })?;
+    // Win11:无边框不可缩放窗口 DWM 不自动圆角,显式声明(见 round_window_corners)。
+    crate::window::round_window_corners(&confirm_window);
+    // 兜底显示:前端没起来(加载失败/崩溃)时到点强制 show。此前缺这个兜底只是悬窗;
+    // 下面启用模态后,父窗已被禁用,confirm 再永久隐身等于整个应用被劫持——
+    // 必须保证它可见可关(Alt-F4 = 取消,Destroyed 分支收尾)。
+    crate::window::show_after_grace(&confirm_window, true);
     // 被直接关闭(Alt-F4/系统关闭)= 取消:sender 还在说明没人给过答案。
     {
         let confirms = confirms.clone();
@@ -109,11 +169,24 @@ pub(crate) async fn confirm_dialog(
             }
         });
     }
+    // 模态:等待期间禁用请求窗口——此前只是置顶,父窗照常可点,一边挂着「结束会话?」
+    // 一边还能继续操作。禁用失败(窗口已关/平台不支持)静默退化为非模态,不拦确认本身。
+    // 从这里到恢复之间不得有 `?` 提前返回,否则父窗被永久禁用。
+    // 经引用计数(见 disabled_parents):并发确认框首个 resolve 不得提前恢复父窗。
+    if confirms.parent_disabled(window.label()) {
+        let _ = window.set_enabled(false);
+    }
     let ok = rx.recv().await.unwrap_or(false);
     confirms.remove(id);
+    // 先恢复父窗、再关模态窗(Win32 模态收尾定式):顺序反了的话,销毁瞬间系统找不到
+    // 可激活的所属窗口,焦点会飞到别的应用。收尾后把焦点交还父窗。
+    if confirms.parent_released(window.label()) {
+        let _ = window.set_enabled(true);
+    }
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.close();
     }
+    let _ = window.set_focus();
     Ok(ok)
 }
 
@@ -139,5 +212,26 @@ pub(crate) fn confirm_dialog_payload(
 pub(crate) fn confirm_dialog_result(state: tauri::State<'_, super::AppState>, id: u64, ok: bool) {
     if let Some(sender) = state.confirms.take_sender(id) {
         let _ = sender.try_send(ok);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 同一父窗并发挂两个确认框:首个 resolve 不得恢复父窗(第二个「模态」会形同虚设),
+    /// 最后一个离场才恢复;计数缺失按归零处理,不同父窗互不影响。
+    #[test]
+    fn parent_enable_is_refcounted() {
+        let confirms = Confirms::default();
+        assert!(confirms.parent_disabled("chat")); // 0→1:执行禁用
+        assert!(!confirms.parent_disabled("chat")); // 1→2:已禁用,不重复
+        assert!(!confirms.parent_released("chat")); // 2→1:还有确认框挂着,不恢复
+        assert!(confirms.parent_released("chat")); // 1→0:恢复
+        assert!(confirms.parent_released("chat")); // 计数缺失:宁可多恢复一次
+        // 不同父窗互不影响。
+        assert!(confirms.parent_disabled("main"));
+        assert!(confirms.parent_released("chat"));
+        assert!(confirms.parent_released("main"));
     }
 }

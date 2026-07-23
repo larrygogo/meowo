@@ -206,6 +206,8 @@ export type LiveSession = {
   todos: Todo[];
   pid: number | null;
   connected: boolean;
+  /** 本 GUI 进程正托管该会话的 PTY；门控贴纸卡片菜单「结束会话」的可见性。 */
+  pty_managed: boolean;
   archived: boolean;
   archived_at: number | null;
   cwd: string | null;
