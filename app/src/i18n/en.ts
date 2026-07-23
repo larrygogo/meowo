@@ -240,7 +240,7 @@ export const en: Dict = {
     terminalReadyTimeout: "Timed out waiting for the Agent terminal to become ready; check the Terminal tab",
     sendNeedsTakeover: "This session is still running in an external terminal. Taking over stops that process, then continues this action in Meowo.",
     terminalNeedsAttention: "The Agent is waiting for startup confirmation. Complete the choice in the interaction card on this conversation page, then send again.",
-    queuedInterjections: (n: number) => n > 1 ? `${n} queued messages — processed after the current turn` : "1 queued message — processed after the current turn",
+    queuedInterjections: (n: number) => n === 1 ? "1 queued message — processed after the current turn" : `${n} queued messages — processed after the current turn`,
     queuedAttachmentOnly: "(attachment)",
     interjectNow: "Process now",
     interjectNowTip: "Send the interrupt key to stop the current turn; queued messages are processed right away. Completed work is kept.",

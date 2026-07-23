@@ -3,8 +3,8 @@
   "private": true,
   "//": "仅转发:前端工程住在 app/(tauri.conf 的相对路径、CI 的 working-directory 都按此假设),这里只是让常用命令能在仓库根目录敲。不放依赖、不上 workspaces——那会把 node_modules 提升到根,native 依赖与既有路径都有翻车风险。",
   "scripts": {
-    "dev": "cd app && bun tauri dev",
-    "build": "cd app && bun tauri build",
+    "dev": "cd app && bun run tauri dev",
+    "build": "cd app && bun run tauri build",
     "web": "cd app && bun run dev",
     "test": "cd app && bun run test",
     "typecheck": "cd app && bun tsc --noEmit",
