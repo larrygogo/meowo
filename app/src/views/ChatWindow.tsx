@@ -975,16 +975,24 @@ export function ChatWindow() {
       .catch((error) => setSendError(error instanceof Error ? error.message : String(error)));
   };
   // 排队插话的消解:回合结束(tone 离开 running)= CLI 开始处理队列,整单清空;
-  // 某条提前出现在 transcript/兜底时间线里也单独移除。updater 里同引用短路,防
+  // 某条提前出现在 transcript/兜底时间线里也单独移除(插话打断当前回合时 CLI 立即
+  // 处理队列,tone 不离开 running,只有这条路径能收走回执)。匹配用「包含」而非全等:
+  // 落盘文本会带附件指令和 TUI 的 [Image #N] 占位前缀,hook 的 lastUserText 又把换行
+  // 归一成空格,全等永远失配,回执会一直挂着误导用户。updater 里同引用短路,防
   // setState 新引用触发自循环。
   useEffect(() => {
     setQueuedInterjections((current) => {
       if (current.length === 0) return current;
       if (tone !== "running") return [];
+      const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
       const recent = items.slice(-12);
-      const next = current.filter((text) =>
-        history?.lastUserText !== text
-        && !recent.some((item) => item.type === "user_text" && (item as { text?: string }).text === text));
+      const next = current.filter((text) => {
+        const needle = collapse(text);
+        const seen = (candidate: string | null | undefined) =>
+          !!candidate && collapse(candidate).includes(needle);
+        return !seen(history?.lastUserText)
+          && !recent.some((item) => item.type === "user_text" && seen((item as { text?: string }).text));
+      });
       return next.length === current.length ? current : next;
     });
   }, [tone, items, history?.lastUserText]);

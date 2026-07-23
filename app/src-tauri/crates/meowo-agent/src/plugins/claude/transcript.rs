@@ -478,15 +478,20 @@ fn managed_projects_dirs() -> Vec<std::path::PathBuf> {
 
 /// 根据 cwd + session_id 重建 transcript 路径：
 /// ~/.claude/projects/<encode(cwd)>/<session_id>.jsonl。
+///
+/// 默认目录与各 managed profile 目录**一视同仁按 mtime 取最新**，不能「默认目录存在
+/// 即返回」：跨 profile 恢复会话时宿主把 transcript 复制进目标 CLAUDE_CONFIG_DIR，
+/// 原文件留在默认目录成为不再增长的陈旧副本——偏爱默认目录会让对话页从此只看到
+/// 副本的截止时刻，会话明明在跑、新消息却永远不出现。
 pub fn reconstruct_transcript_path(cwd: &str, session_id: &str) -> Option<std::path::PathBuf> {
     let relative = std::path::PathBuf::from(encode_cwd(cwd)).join(format!("{session_id}.jsonl"));
     let default = projects_dir()?.join(&relative);
-    if default.exists() {
-        return Some(default);
-    }
-    managed_projects_dirs()
-        .into_iter()
-        .map(|projects| projects.join(&relative))
+    std::iter::once(default.clone())
+        .chain(
+            managed_projects_dirs()
+                .into_iter()
+                .map(|projects| projects.join(&relative)),
+        )
         .filter(|path| path.exists())
         .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
         .or(Some(default))
@@ -1368,6 +1373,56 @@ mod tests {
         assert_eq!(
             reconstruct_transcript_path(r"C:\shared\project", &sid).as_deref(),
             Some(transcript.as_path())
+        );
+        match old_home {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// 跨 profile 恢复会话后,默认 ~/.claude 里留下的是不再增长的陈旧副本,续写发生在
+    /// managed profile 的同名文件里。路径重建必须按 mtime 挑最新,而不是默认目录存在
+    /// 即返回——否则对话页从此只看到副本的截止时刻(真实案例:0.5.8 新消息不上屏)。
+    #[test]
+    fn transcript_reconstruction_prefers_the_freshest_copy_over_the_default_dir() {
+        let sid = format!("stale-copy-{}", std::process::id());
+        let home = std::env::temp_dir().join(format!("cc_stale_copy_home_{}", std::process::id()));
+        let relative = std::path::PathBuf::from("C--shared-project").join(format!("{sid}.jsonl"));
+        let stale = home.join(".claude/projects").join(&relative);
+        let fresh = home
+            .join(".meowo/profiles/claude/work/projects")
+            .join(&relative);
+        for path in [&stale, &fresh] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "{}\n").unwrap();
+        }
+        // 默认目录副本停在一小时前;managed profile 里的延续文件刚刚还在写。
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        std::env::set_var("USERPROFILE", &home);
+        assert_eq!(
+            reconstruct_transcript_path(r"C:\shared\project", &sid).as_deref(),
+            Some(fresh.as_path())
+        );
+        // 反向:默认目录才是最新时仍选默认——不是无脑偏爱 managed 目录。
+        std::fs::File::options()
+            .write(true)
+            .open(&fresh)
+            .unwrap()
+            .set_modified(old - std::time::Duration::from_secs(3600))
+            .unwrap();
+        assert_eq!(
+            reconstruct_transcript_path(r"C:\shared\project", &sid).as_deref(),
+            Some(stale.as_path())
         );
         match old_home {
             Some(value) => std::env::set_var("USERPROFILE", value),

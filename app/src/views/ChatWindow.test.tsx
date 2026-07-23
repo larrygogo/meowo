@@ -1485,6 +1485,40 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
   });
 
+  /**
+   * 插话打断当前回合被 CLI 立即处理时,tone 不离开 running(打断后无缝进入新回合),
+   * 回执只能靠「消息出现在 transcript」消解。落盘文本带 TUI 的 [Image #N] 占位前缀与
+   * 附件指令,与用户原文不全等——匹配必须是归一化后的包含关系,否则回执永远挂着。
+   */
+  it("插话被立即处理:transcript 出现带前缀的落盘文本即消解回执", async () => {
+    window.history.replaceState({}, "", "/?sessionId=95");
+    let current: Record<string, unknown> = {
+      sessionId: 95, title: "插话消解", status: "running", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve(current);
+      if (command === "get_pending_approval") return Promise.resolve(null);
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 95, active: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByRole("textbox", { name: "发送消息给 Agent" });
+    fireEvent.change(input, { target: { value: "插一句" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("1 条插话已排队,当前回合结束后处理")).toBeTruthy();
+
+    current = {
+      ...current,
+      offset: 10,
+      items: [{ type: "user_text", id: "u9", timestamp: null, text: "[Image #1] 插一句\n请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：\n- C:\\tmp\\x.png" }],
+    };
+    await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
+    // 会话仍在运行(新回合),消解不靠回合结束。
+    expect(screen.queryByText("运行中")).toBeTruthy();
+  });
+
   it("打断并发送:先写中断键(Esc)再提交正文", async () => {
     window.history.replaceState({}, "", "/?sessionId=94");
     invoke.mockImplementation((command: string) => {
