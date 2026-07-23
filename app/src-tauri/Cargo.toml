@@ -3,6 +3,42 @@ name = "meowo-app"
 version = "0.5.6"
 edition = "2021"
 
+# 全部 Rust 都住在 app/src-tauri 下:本包既是 Tauri 应用 crate,也是 workspace 根
+# (根包自动是成员)。cargo 命令从本目录起跑;sidecar/CI/e2e 的 target 路径都按此假设。
+[workspace]
+members = [
+    "crates/meowo-store",
+    "crates/meowo-agent",
+    "crates/meowo-protocol",
+    "crates/meowo-reporter",
+]
+resolver = "2"
+
+# 安装包体积:此前没有任何 release 配置,主程序裸奔到 25MB——一半是可 strip 的符号
+# 和未做 LTO 的跨 crate 重复代码。代价只是 release 编译变慢。
+# 刻意**不设** panic = "abort":本应用靠线程隔离降级存活——PTY 读取/attach/watch 等
+# 长驻后台线程里的 panic 只该死一个镜像线程,abort 会把所有托管会话一起带走;
+# 全仓 ~20 处锁中毒恢复(unwrap_or_else(into_inner))也只在 unwind 语义下才有意义。
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml_edit = "0.22"
+thiserror = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2", features = [] }
+notify = "6"
+tauri-plugin-window-state = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
 [lib]
 name = "meowo_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -17,10 +53,10 @@ e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 tauri-build = { workspace = true }
 
 [dependencies]
-meowo-agent = { path = "../../crates/meowo-agent" }
-meowo-protocol = { path = "../../crates/meowo-protocol" }
-meowo-store = { path = "../../crates/meowo-store" }
-meowo-reporter = { path = "../../crates/meowo-reporter" }
+meowo-agent = { path = "crates/meowo-agent" }
+meowo-protocol = { path = "crates/meowo-protocol" }
+meowo-store = { path = "crates/meowo-store" }
+meowo-reporter = { path = "crates/meowo-reporter" }
 tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = { workspace = true }
@@ -36,6 +72,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
 sysinfo = "0.32"
+# 只读剪贴板图像指纹(发送附件时判断「剪贴板里还是不是刚粘贴的那张图」),绝不写剪贴板。
+# image-data 提供 get_image;关默认特性是去掉 Linux 的 wayland-data-control 附带依赖。
+arboard = { version = "3", default-features = false, features = ["image-data"] }
 percent-encoding = "2"
 url = "2"
 base64 = "0.22"

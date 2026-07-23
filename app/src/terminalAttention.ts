@@ -39,6 +39,19 @@ export function visibleTerminalText(text: string): string {
     .trim();
 }
 
+/// 从终端可见文本里识别当前模式：命中位置**最靠后**的标记胜出——模式切换的重绘按时间
+/// 顺序追加进输出流，最后出现的指示文案就是当前状态（backlog 尾部可能还留着旧指示）。
+/// 小写比较；U+2019 弯引号归一为直引号（"don't ask on" 两种写法都认）。
+export function modeFromScreen(visible: string, markers: { marker: string; value: string }[]): string | null {
+  const haystack = visible.toLowerCase().replace(/’/g, "'");
+  let best: { at: number; value: string } | null = null;
+  for (const { marker, value } of markers) {
+    const at = haystack.lastIndexOf(marker.toLowerCase());
+    if (at >= 0 && (!best || at > best.at)) best = { at, value };
+  }
+  return best?.value ?? null;
+}
+
 // 登录、凭据恢复等提示并不总是由 provider 暴露为稳定文案。这里仅收需要键盘确认的
 // 高信号启动提示；命中后 GUI 会显示 CLI 的原文，而不是猜测并重写它的选项。
 // 直接带 g 标志预编译：terminalAttention 跑在 150ms 节流扫描 / 80ms 启动轮询的热路径上，
@@ -58,7 +71,31 @@ const GENERIC_STARTUP_PROMPTS = [
 /// 导航提示：菜单在等键盘选择的信号。要求同时出现「方向键/导航」与「回车确认」两类线索，
 /// 单独一个 ❯ 太常见（提示符、列表装饰都可能有），会把正文误报成菜单。中文本地化 CLI
 /// 常把 enter/confirm 写作「回车/确认」，一并收。
-const MENU_HINT = /(?:↑↓|↑\/↓|up\/down|arrow keys)[^\n]{0,80}(?:enter|select|confirm|回车|确认)|enter\s+(?:to\s+)?select/i;
+const MENU_HINT = /(?:↑↓|↑\/↓|up\/down|arrow keys|方向键|j\/k)[^\n]{0,80}(?:enter|select|confirm|move|回车|确认|选择)|enter\s+(?:to\s+)?select/i;
+
+/// 数字选择器的锚点项:该 provider 的选择器里**固有出现**的选项文案(小写子串匹配)。
+/// 纯编号 run 只有含锚点才算选择器本体——会话正文里的普通编号列表没有这些文案。
+/// kind 决定该项在卡片上的形态:input = 自由输入项,chat = 转聊天项。
+export type SelectorAnchor = { marker: string; kind: "input" | "chat" };
+
+/// 识别文法:provider 门控 + 插件声明的锚点。识别规则正逐步从「Claude 截屏硬编码」
+/// 下放为插件声明(循 startup_attention_markers 的先例),这是第一步。
+export type AttentionGrammar = {
+  /// 会话的 agent id。claude 专有的整句识别规则(长会话恢复/命令审批)只对 claude 生效
+  /// ——别家 agent 的输出里引用 "Do you want to proceed?" 不该误弹 Claude 审批卡。
+  provider?: string;
+  selectorAnchors: SelectorAnchor[];
+};
+
+/// 兼容默认:未显式传文法时按 Claude 处理(存量调用与测试的行为不变)。
+/// 生产路径(ChatWindow/ManagedTerminal)一律显式传插件声明的文法。
+const CLAUDE_GRAMMAR: AttentionGrammar = {
+  provider: "claude",
+  selectorAnchors: [
+    { marker: "type something", kind: "input" },
+    { marker: "chat about this", kind: "chat" },
+  ],
+};
 
 /// 光标菜单：一句导航提示 + 一个 ❯ 标记当前项。返回选项块的行区间。
 ///
@@ -71,11 +108,11 @@ function detectCursorMenu(
   const lines = visible.split("\n");
   const hintLine = lines.findIndex((line) => MENU_HINT.test(line));
   if (hintLine < 0) return null;
-  const focusedLine = lines.findIndex((line) => /^\s*❯\s+\S/.test(line));
+  const focusedLine = lines.findIndex((line) => /^\s*[❯›]\s+\S/.test(line));
   if (focusedLine < 0) return null;
-  // 文本起始列：带 ❯ 的行要跨过标记本身，才能和其余项对齐比较。
+  // 文本起始列：带光标的行要跨过标记本身，才能和其余项对齐比较。
   const textIndent = (line: string): number => {
-    const match = /^(\s*)(❯\s+)?/.exec(line);
+    const match = /^(\s*)([❯›]\s+)?/.exec(line);
     return (match?.[1]?.length ?? 0) + (match?.[2]?.length ?? 0);
   };
   const target = textIndent(lines[focusedLine]);
@@ -101,6 +138,79 @@ function detectCursorMenu(
   };
 }
 
+/// 框线数字菜单——gemini `/model` 对话框的形态(真机 PTY 取证,gemini-cli 0.51,2026-07):
+/// 全框线包裹(内容行首尾都是 │)、编号项、`●` 标记焦点、无导航提示行、Esc 关闭;
+/// ↑/↓ 移动焦点、Enter 确认经按键探针证实(tests/capture_model_menu.rs,
+/// MEOWO_CAPTURE_PROBE_KEYS=1)。只认框内行,普通正文的编号列表不会进来;
+/// 仅在 expectMenu 窗口(刚发出菜单命令)内启用,进一步压误报面。
+function detectFramedNumberedMenu(
+  visible: string,
+): { title: string; options: TerminalAttentionOption[] } | null {
+  const lines = visible
+    .split("\n")
+    .filter((line) => /^\s*│/.test(line))
+    .map((line) => line.replace(/^\s*│ ?/, "").replace(/\s*│\s*$/, "").trimEnd())
+    .filter((line) => line.trim().length > 0);
+  if (lines.length < 3) return null;
+  type Item = { label: string; focused: boolean; description?: string; indent: number };
+  type Run = { start: number; items: Item[] };
+  const runs: Run[] = [];
+  let current: Run | null = null;
+  lines.forEach((line, index) => {
+    const numbered = line.match(/^(\s*)([●❯›>]?)\s*(\d+)[.)]\s+(.+?)$/);
+    if (numbered) {
+      const num = Number(numbered[3]);
+      if (num === 1) {
+        current = { start: index, items: [] };
+        runs.push(current);
+      }
+      if (current && num === current.items.length + 1) {
+        current.items.push({
+          label: numbered[4].trim(),
+          focused: numbered[2].length > 0,
+          indent: numbered[1].length + (numbered[2] ? numbered[2].length + 1 : 0),
+        });
+        return;
+      }
+      current = null;
+      return;
+    }
+    const last = current?.items.at(-1);
+    if (last) {
+      // 比选项更深的缩进行是它的描述;缩进回到项级以下(Remember…/(Press Esc…)等
+      // 尾注行)则菜单收束——不能把对话框的说明行折进最后一个选项。
+      const indent = (line.match(/^\s*/) as RegExpMatchArray)[0].length;
+      if (indent > last.indent) {
+        last.description = [last.description, line.trim()].filter(Boolean).join(" ");
+      } else {
+        current = null;
+      }
+    }
+  });
+  // 重绘会把同一对话框多次留在缓冲里,取最后一个完整的 run;没有焦点标记时不接线——
+  // 相对移动的起点未知,按钮会选错项,宁可不出卡片。
+  const run = [...runs].reverse().find((r) => r.items.length >= 2 && r.items.some((item) => item.focused));
+  if (!run) return null;
+  const focusedIndex = run.items.findIndex((item) => item.focused);
+  const title = [...lines.slice(0, run.start)].reverse().find((line) => line.trim()) ?? "";
+  return {
+    title: title.trim(),
+    options: run.items.map((item, position) => {
+      const delta = position - focusedIndex;
+      return {
+        label: item.label.replace(/\s{2,}/g, "  ").slice(0, 80),
+        description: item.description,
+        input: delta === 0 ? "\r" : delta < 0
+          ? "\x1b[A".repeat(-delta) + "\r"
+          : "\x1b[B".repeat(delta) + "\r",
+        focused: delta === 0,
+        position,
+        kind: "choice" as const,
+      };
+    }),
+  };
+}
+
 function promptSnippet(visible: string, index: number, contextBefore = 1): string {
   const lines = visible.split("\n");
   const matchedLine = visible.slice(0, index).split("\n").length - 1;
@@ -112,7 +222,7 @@ function promptSnippet(visible: string, index: number, contextBefore = 1): strin
 /// 菜单首尾循环，只能从 ❯ 光标做相对移动，不能靠「多按几次上键」归零。
 function cursorMenuOptions(lines: string[], focused: number): TerminalAttentionOption[] {
   return lines.map((line, position) => {
-    const label = line.replace(/^\s*(?:❯\s+)?/, "").trimEnd();
+    const label = line.replace(/^\s*(?:[❯›]\s+)?/, "").trimEnd();
     const delta = position - focused;
     return {
       // 多列对齐用的大段空格在按钮上没意义；压成单空格，超长再截断。
@@ -137,10 +247,10 @@ function detectAnchoredCursorMenu(
 ): { lines: string[]; focused: number } | null {
   const lines = visible.split("\n");
   const fromLine = visible.slice(0, fromIndex).split("\n").length - 1;
-  const focusedLine = lines.findIndex((line, index) => index > fromLine && /^\s*❯\s+\S/.test(line));
+  const focusedLine = lines.findIndex((line, index) => index > fromLine && /^\s*[❯›]\s+\S/.test(line));
   if (focusedLine < 0) return null;
   const textIndent = (line: string): number => {
-    const match = /^(\s*)(❯\s+)?/.exec(line);
+    const match = /^(\s*)([❯›]\s+)?/.exec(line);
     return (match?.[1]?.length ?? 0) + (match?.[2]?.length ?? 0);
   };
   const target = textIndent(lines[focusedLine]);
@@ -162,18 +272,23 @@ export function terminalAttention(
   markers: string[],
   interactivePrompt = false,
   expectMenu = false,
+  grammar: AttentionGrammar = CLAUDE_GRAMMAR,
 ): TerminalAttention | null {
   if (!text) return null;
   const visible = visibleTerminalText(text);
   const lower = visible.toLowerCase();
   let best: { index: number; id: string } | null = null;
-  const longSession = /this session is[^\n]{0,120}\bold and[^\n]{0,80}\btokens\b/i.exec(visible)
-    ?? /resuming the full session will consume a substantial portion of your usage limits/i.exec(visible);
-  if (longSession) best = { index: longSession.index, id: "claude:long-session-resume" };
-  const commandApproval = /this command requires approval/i.exec(visible)
-    ?? /do you want to proceed\?/i.exec(visible);
-  if (commandApproval && (!best || commandApproval.index > best.index)) {
-    best = { index: commandApproval.index, id: "claude:command-approval" };
+  // claude:* 整句规则只对 claude 会话生效:这些是 Claude 的界面原文,别家 agent 的
+  // 输出里**引用**同一句话(讨论审批流程、cat 含该句的脚本)不该误弹卡片、锁住输入框。
+  if (grammar.provider === "claude") {
+    const longSession = /this session is[^\n]{0,120}\bold and[^\n]{0,80}\btokens\b/i.exec(visible)
+      ?? /resuming the full session will consume a substantial portion of your usage limits/i.exec(visible);
+    if (longSession) best = { index: longSession.index, id: "claude:long-session-resume" };
+    const commandApproval = /this command requires approval/i.exec(visible)
+      ?? /do you want to proceed\?/i.exec(visible);
+    if (commandApproval && (!best || commandApproval.index > best.index)) {
+      best = { index: commandApproval.index, id: "claude:command-approval" };
+    }
   }
   for (const marker of markers) {
     const normalized = marker.toLowerCase();
@@ -193,7 +308,7 @@ export function terminalAttention(
   }
   if (!best && interactivePrompt) {
     const selectorHint = /enter to select[^\n]*/i.exec(visible);
-    const numberedChoices = visible.match(/^\s*(?:[❯>]\s*)?\d+\.\s+/gm) ?? [];
+    const numberedChoices = visible.match(/^\s*(?:[❯›>]\s*)?\d+[.)]\s+/gm) ?? [];
     if (selectorHint && numberedChoices.length >= 2) {
       best = { index: selectorHint.index, id: "interactive:numbered-selector" };
     }
@@ -212,6 +327,16 @@ export function terminalAttention(
       options: cursorMenuOptions(cursorMenu.lines, cursorMenu.focused),
     };
   }
+  // 框线数字菜单(gemini 的 /model 对话框):无导航提示行,光标菜单认不出;形态与
+  // 交互语义均经真机取证,复用同一个卡片通道(选项按钮 = 相对移动 + 回车)。
+  const framedMenu = !best && expectMenu ? detectFramedNumberedMenu(visible) : null;
+  if (framedMenu) {
+    return {
+      id: "interactive:cursor-menu",
+      text: framedMenu.title,
+      options: framedMenu.options,
+    };
+  }
   if (!best) return null;
   const snippet = best.id === "interactive:numbered-selector"
     ? visible
@@ -219,44 +344,61 @@ export function terminalAttention(
   // 命令审批的选项已经转换成 GUI 按钮，详情区保留命令、用途和审批问题，只从第一个
   // 编号选项起裁掉。这样不会重复 Yes/No，也不会带上键位说明或 TUI 重绘尾部噪声。
   const snippetLines = snippet.split("\n");
-  const firstOptionLine = snippetLines.findIndex((line) => /^\s*(?:[❯>]\s*)?\d+\.\s+/.test(line));
+  const firstOptionLine = snippetLines.findIndex((line) => /^\s*(?:[❯›>]\s*)?\d+[.)]\s+/.test(line));
   const displayText = best.id === "claude:command-approval" && firstOptionLine >= 0
     ? snippetLines.slice(0, firstOptionLine).join("\n").trim()
     : snippet;
   const labels = snippet.split("\n").flatMap((line) => {
-    const match = line.match(/^\s*([❯>]?)\s*(\d+)\.\s*(.+?)\s*$/);
+    const match = line.match(/^\s*([❯›>]?)\s*(\d+)[.)]\s*(.+?)\s*$/);
     return match ? [{ index: Number(match[2]) - 1, label: match[3], focused: Boolean(match[1]) }] : [];
   });
   if (best.id === "interactive:numbered-selector") {
     const lines = snippet.split("\n");
-    const occurrences: TerminalAttentionOption[] = [];
-    let current: TerminalAttentionOption | null = null;
+    // 编号项分两种形态：复选框（多选题，`1. [ ] xxx`）和纯编号（单选题，`1. xxx`——
+    // AskUserQuestion 的单选/多问题标签页形态就长这样）。会话正文也常有普通的
+    // `1. / 2. / 3.` 列表，不能照单全收：菜单编号必然从 1 连续递增，据此把编号项分成
+    // 「连续编号 run」；纯编号 run 只有当其中含 Claude 选择器固有的锚点项（Type
+    // something / Chat about this / Submit）时才算选择器本体，正文列表 run 整组丢弃。
+    // 复选框菜单照旧只认复选框项。
+    type NumberedOccurrence = TerminalAttentionOption & { plain?: boolean; group?: number };
+    const occurrences: NumberedOccurrence[] = [];
+    let current: NumberedOccurrence | null = null;
+    let run = 0;
+    let lastIndex = -1;
     for (const line of lines) {
-      const numbered = line.match(/^\s*([❯>]?)\s*(\d+)\.\s*(?:\[([ x✓✔])\]\s*)?(.+?)\s*$/i);
+      const numbered = line.match(/^\s*([❯›>]?)\s*(\d+)[.)]\s*(?:\[([ x*✓✔])\]\s*)?(.+?)\s*$/i);
       const checkbox = numbered?.[3];
-      const numberedLabel = numbered?.[4]?.trim() ?? "";
-      // 会话正文也常有普通的 `1. / 2. / 3.` 列表；只有复选框项和 Claude 明确提供的
-      // “Chat about this” 才属于这个选择器，避免把正文里的审查结论复制成选项。
-      if (numbered && (checkbox !== undefined || /chat about this/i.test(numberedLabel))) {
+      if (numbered) {
+        const index = Number(numbered[2]);
+        // 编号断裂（重新从 1 起、跳号、回退）＝另一份列表/菜单重绘。
+        if (index !== lastIndex + 1) run += 1;
+        lastIndex = index;
         const label = numbered[4].trim();
+        const lowerLabel = label.toLowerCase();
+        const special = grammar.selectorAnchors
+          .find((anchor) => lowerLabel.includes(anchor.marker.toLowerCase()))?.kind ?? null;
         current = {
           label,
           input: "",
           selected: Boolean(checkbox && !/\s/.test(checkbox)),
           focused: Boolean(numbered[1]),
-          kind: /type something/i.test(label) ? "input" : /chat about this/i.test(label) ? "chat" : "choice",
+          kind: special ?? "choice",
+          plain: checkbox === undefined && !special,
+          group: run,
         };
         occurrences.push(current);
         continue;
       }
-      if (numbered) { current = null; continue; }
-      const submit = line.match(/^\s*([❯>]?)\s*submit\s*$/i);
+      const submit = line.match(/^\s*([❯›>]?)\s*submit\s*$/i);
       if (submit) {
+        // Submit 夹在编号项之间（多选布局：choices → Submit → hint），归当前 run，
+        // 不打断编号连续性判断。
         current = {
           label: line.trim(),
           input: "",
           kind: "submit",
           focused: Boolean(submit[1]),
+          group: run,
         };
         occurrences.push(current);
         continue;
@@ -269,10 +411,24 @@ export function terminalAttention(
         current.description = [current.description, line.trim()].filter(Boolean).join(" ");
       }
     }
+    // 复选框项存在 → 多选菜单，纯编号行是正文噪声，照旧丢弃；
+    // 全无复选框 → 单选菜单，只保留与锚点项同组的纯编号项。
+    // 锚点来自插件声明(grammar.selectorAnchors,循 startup_attention_markers 的先例;
+    // claude 声明 Type something / Chat about this)。未声明锚点的 provider,纯编号 run
+    // 整组按正文丢弃——宁可不出卡片(发送侧有未识别交互的软拦兜底),也不把正文列表
+    // 变成会向 PTY 打方向键的按钮。单选屏没有独立 Submit 行,submit 不计入锚。
+    const hasCheckbox = occurrences.some((occurrence) => occurrence.kind === "choice" && !occurrence.plain);
+    const anchoredGroups = new Set(
+      occurrences
+        .filter((occurrence) => occurrence.kind === "input" || occurrence.kind === "chat")
+        .map((occurrence) => occurrence.group),
+    );
+    const kept = occurrences.filter((occurrence) =>
+      !occurrence.plain || (!hasCheckbox && anchoredGroups.has(occurrence.group)));
     // 全屏 TUI 重绘可能把同一块内容多次留在 scrollback。按动作+标签合并，选中状态取
     // 最后一次重绘，描述取最短的完整版本（长版本通常混进了下一轮提示文字）。
     const unique = new Map<string, TerminalAttentionOption>();
-    for (const occurrence of occurrences) {
+    for (const { plain: _plain, group: _group, ...occurrence } of kept) {
       const key = `${occurrence.kind}:${occurrence.label.toLowerCase()}`;
       const existing = unique.get(key);
       if (!existing) {
@@ -286,9 +442,11 @@ export function terminalAttention(
       }
     }
     const ordered = [...unique.values()];
-    // 某些重绘只在状态行里写出 Submit，独立选择行被裁掉；Claude 的顺序固定为
+    // 某些重绘只在状态行里写出 Submit，独立选择行被裁掉；Claude 的多选顺序固定为
     // checkbox choices → Submit → Chat about this，在 Chat 前补回它。
-    if (!ordered.some((choice) => choice.kind === "submit")) {
+    // 仅限多选：单选菜单没有独立 Submit 行（Enter 选中即提交/切到下一问），虚构一个
+    // 带相对移动输入的提交按钮只会把光标挪到错的选项上。
+    if (hasCheckbox && !ordered.some((choice) => choice.kind === "submit")) {
       const chatAt = ordered.findIndex((choice) => choice.kind === "chat");
       ordered.splice(chatAt >= 0 ? chatAt : ordered.length, 0, { label: "Submit", input: "", kind: "submit", focused: false });
     }
@@ -304,6 +462,9 @@ export function terminalAttention(
           : "\x1b[B".repeat(delta) + "\r",
       };
     });
+    // 一项可点的都没剩(全部 run 因缺锚被判为正文):不出空卡——空卡只会收走输入框
+    // 又给不了任何动作。返回 null 让发送侧的「未识别交互」软拦接手。
+    if (choices.length === 0) return null;
     const questionLine = [...lines].reverse().find((line) => /[?？]/.test(line) && !/enter to select/i.test(line));
     const question = questionLine?.split(/→|->/).at(-1)?.trim() ?? "";
     return {

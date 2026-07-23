@@ -63,12 +63,23 @@ fn probe_enter_key() {
             .trim_end_matches("ms")
             .parse()
             .unwrap_or(20);
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap();
         let exe = format!("{home}/.kimi-code/bin/kimi");
-        let cwd = std::env::temp_dir().join(format!("meowo-enter-{}-{}", std::process::id(), label.len()));
+        let cwd = std::env::temp_dir().join(format!(
+            "meowo-enter-{}-{}",
+            std::process::id(),
+            label.len()
+        ));
         std::fs::create_dir_all(&cwd).unwrap();
         let pair = native_pty_system()
-            .openpty(PtySize { rows: 40, cols: 100, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows: 40,
+                cols: 100,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .unwrap();
         let cmd = common::agent_command(&exe, &cwd);
         let mut child = pair.slave.spawn_command(cmd).unwrap();

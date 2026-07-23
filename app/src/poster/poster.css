@@ -14,7 +14,7 @@
 
 body {
   margin: 0;
-  font-family: "Inter Variable", "Noto Sans SC", -apple-system, "Segoe UI",
+  font-family: "Inter Variable", -apple-system, "Segoe UI",
     "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }

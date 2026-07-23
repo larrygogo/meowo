@@ -6,6 +6,22 @@ import type { TodoDto } from "./TodoDto";
 
 export type ChatHistoryDto = { sessionId: number, title: string, status: string, provider: string, cwd: string | null, supported: boolean, items: Array<ChatItem>, offset: number, reset: boolean, pendingReview: PendingReviewKind | null, model: string | null, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, currentActivity: string | null, 
 /**
+ * 会话进程是否仍被认为存活（与看板 `session_connected` 同口径：pid 在进程表里，
+ * 或距最近事件不足宽限期）。status 是 hook 驱动的离散快照，进程死后 reaper 收尾前
+ * DB 里可能残留 running——前端展示运行态必须以此校正，否则出现「假运行中」。
+ */
+connected: boolean, 
+/**
+ * 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
+ * 不做 transcript 分析的 agent（codex/kimi）恒为 false。
+ */
+errored: boolean, 
+/**
+ * 本 GUI 进程正托管着该会话的 PTY。决定「结束会话」入口的可见性：只有自己托管的
+ * 进程才能从 GUI 结束；外部终端里跑的会话（connected 但非托管）不该亮这个入口。
+ */
+ptyManaged: boolean, 
+/**
  * Agent 自己维护的待办清单（快照式待办工具经 hook 落库）。空 = 该会话没有清单，
  * 或该 agent 的待办是增量事件而非快照（当前版本的 Claude Code 即如此）。
  */

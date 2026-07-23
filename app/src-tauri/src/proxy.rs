@@ -381,7 +381,9 @@ pub fn apply_to_agent_configs() -> Vec<AgentProxyReport> {
     // 启动后台线程（setup）与设置保存命令（主线程）并发跑时，旧快照写回会把另一方刚生效
     // 的修改打掉（典型：启动后几秒内保存代理设置）。与 RELAY_SECRETS_LOCK / USAGE_CACHE_LOCK
     // 同一模式，用进程内 Mutex 串行化。
-    let _guard = APPLY_AGENT_CONFIGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = APPLY_AGENT_CONFIGS_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let settings = crate::settings::load_settings();
     let mut applied = read_applied();
     let mut reports = Vec::new();

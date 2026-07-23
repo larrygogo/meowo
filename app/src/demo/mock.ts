@@ -18,6 +18,7 @@ export const store: Store = {
   settings: {
     archive_hide_days: 0,
     notifications_enabled: true,
+    attention_flash_enabled: true,
     auto_update_enabled: true,
     theme: "dark",
     opacity: 100,
@@ -90,14 +91,20 @@ export function installMocks(): void {
             { name: "/deploy", description: "部署到预发环境", source: "project" },
           ].sort((a, b) => a.name.localeCompare(b.name)),
           model_presets: [
+            { id: "fable", label: "Fable" },
             { id: "opus", label: "Opus" },
             { id: "sonnet", label: "Sonnet" },
             { id: "haiku", label: "Haiku" },
             { id: "opusplan", label: "Opus Plan" },
           ],
-          mode_controls: [{ dimension: "permission", cycle_input: "\u001b[Z", options: [] }],
+          mode_controls: [{ dimension: "permission", cycle_input: "\u001b[Z", options: [], screen_markers: [] }],
+          menu_slash_commands: ["/config", "/mcp", "/memory", "/model", "/resume"],
           startup_attention_markers: ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"],
+          selector_anchors: [{ marker: "type something", kind: "input" }, { marker: "chat about this", kind: "chat" }],
+          interrupt_input: "",
           runtime_commands_pending: false,
+          attachment_mention: true,
+          clipboard_image_paste: "\\[Image #\\d",
           version: "2.1.215 (Claude Code)",
         };
       }

@@ -38,7 +38,9 @@ pub(crate) fn data_dir(agent: &str, id: Option<&str>) -> Option<PathBuf> {
         Some(id) => plugin
             .installation_for_profile(&profile_root(agent, id))
             .map(|installation| installation.data_dir),
-        None => plugin.default_installation().map(|installation| installation.data_dir),
+        None => plugin
+            .default_installation()
+            .map(|installation| installation.data_dir),
     }
 }
 

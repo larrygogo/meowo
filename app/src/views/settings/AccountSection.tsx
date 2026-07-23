@@ -659,8 +659,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
 
 
       {/* 多账号：已装且支持时才给。不支持的（gemini）连列表都不显示——它只有一个账号，
-          列一个孤零零的「默认账号」除了占地方没有任何信息。 */}
-      {isInstalled && supportsProfiles && (
+          列一个孤零零的「默认账号」除了占地方没有任何信息。
+          中转模式下也不给：账号列表管的是官方登录身份，中转与之互斥，列出来只会误导。 */}
+      {isInstalled && supportsProfiles && !relayEnabled && (
         <ProfileList
           provider={provider}
           onChanged={onLoggedIn}

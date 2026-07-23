@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { terminalAttention, terminalNeedsAttention } from "./terminalAttention";
+import { modeFromScreen, terminalAttention, terminalNeedsAttention } from "./terminalAttention";
 
 describe("terminalAttention", () => {
   it("returns the provider-declared trust screen for the GUI", () => {
@@ -83,6 +83,157 @@ describe("terminalAttention", () => {
     expect(attention?.options?.[1].focused).toBe(true);
     expect(attention?.options?.[2].input).toBe("\x1b[B\r");
     expect(attention?.options?.some((option) => option.label.includes("Transcript"))).toBe(false);
+  });
+
+  /// AskUserQuestion 的单选/多问题标签页形态:选项**不带复选框**,只有纯编号。
+  /// 过去只认 `[ ]` 项,这批选项整组被当正文丢掉,GUI 卡片上只剩两个空按钮。
+  /// 识别锚:菜单编号从 1 连续递增,且 run 内含 Type something / Chat about this。
+  it("单选式提问(无复选框、多问题标签页)也要给出编号选项", () => {
+    const prompt = [
+      "\x1b[2J1. 正文里的普通列表项",
+      "2. 不该被当成选项",
+      "← 范围 风格 ✓ Submit →",
+      "你觉得不好看的是哪个?",
+      "❯ 1. 应用图标 (推荐)",
+      "     任务栏/窗口上的默认 Tauri 蓝圆图标, 是占位符, 需要重新设计",
+      "  2. 标题栏的琥珀色方块",
+      "     界面左上角 Facet 文字旁的切面标记",
+      "  3. 两个都要重做",
+      "     统一重新设计一套品牌标识, 图标和界面标记保持一致",
+      "  4. Type something.",
+      "  5. Chat about this",
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ].join("\r\n");
+    const attention = terminalAttention(prompt, [], true);
+    expect(attention?.id).toBe("interactive:numbered-selector");
+    expect(attention?.text).toContain("你觉得不好看的是哪个");
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "应用图标 (推荐)", "标题栏的琥珀色方块", "两个都要重做", "Type something.", "Chat about this",
+    ]);
+    // 描述行归属各自选项。
+    expect(attention?.options?.[0].description).toContain("占位符");
+    expect(attention?.options?.[1].description).toContain("切面标记");
+    // 相对移动从 ❯ 光标(第 1 项)出发。
+    expect(attention?.options?.[0].focused).toBe(true);
+    expect(attention?.options?.[0].input).toBe("\r");
+    expect(attention?.options?.[2].input).toBe("\x1b[B\x1b[B\r");
+    expect(attention?.options?.[3].kind).toBe("input");
+    expect(attention?.options?.[4].kind).toBe("chat");
+    // 单选菜单没有独立 Submit 行,不得虚构一个会乱移光标的提交按钮。
+    expect(attention?.options?.some((option) => option.kind === "submit")).toBe(false);
+    // 正文列表没混进来。
+    expect(attention?.options?.some((option) => option.label.includes("正文"))).toBe(false);
+  });
+
+  /// 单选选项的描述里出现问号不该把选项 run 拦腰截断——分组锚是编号连续性,不是行内容。
+  it("选项描述含问号时 run 不断裂", () => {
+    const prompt = [
+      "\x1b[2J要怎么处理这个端口冲突?",
+      "❯ 1. 换端口",
+      "     换到 2680, 有其他进程占用怎么办?",
+      "  2. 杀掉占用进程",
+      "  3. Chat about this",
+      "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ].join("\r\n");
+    const attention = terminalAttention(prompt, [], true);
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "换端口", "杀掉占用进程", "Chat about this",
+    ]);
+  });
+
+  /// 字形兼容:`1)` 编号风格 + `[*]` 选中标记 + `›`(U+203A)光标——别家 CLI 的常见形态,
+  /// 此前只认 Claude 当前版本的 `1.` / `[x]` / `❯`,这些菜单整组识别不出。
+  it("兼容 1) 编号、[*] 勾选与 › 光标的菜单形态", () => {
+    const numbered = [
+      "\x1b[2J选择要启用的项",
+      "› 1) [*] 已选中的项",
+      "  2) [ ] 未选中的项",
+      "  3) Type something",
+      "Enter to select · ↑/↓ to navigate",
+    ].join("\r\n");
+    const attention = terminalAttention(numbered, [], true);
+    expect(attention?.id).toBe("interactive:numbered-selector");
+    expect(attention?.options?.map((option) => option.label)).toContain("已选中的项");
+    expect(attention?.options?.find((option) => option.label === "已选中的项")?.selected).toBe(true);
+    expect(attention?.options?.find((option) => option.label === "未选中的项")?.selected).toBe(false);
+
+    const cursorMenu = [
+      "\x1b[2JSelect a model",
+      "Use arrow keys to move · enter to select",
+      "  gpt-5.5-codex",
+      "› gpt-5.5",
+      "  gpt-5.5-mini",
+    ].join("\r\n");
+    const menu = terminalAttention(cursorMenu, [], false, true);
+    expect(menu?.id).toBe("interactive:cursor-menu");
+    expect(menu?.options?.map((option) => option.label)).toEqual(["gpt-5.5-codex", "gpt-5.5", "gpt-5.5-mini"]);
+    expect(menu?.options?.[1].focused).toBe(true);
+  });
+
+  /// claude:* 整句规则带 provider 门控:别家 agent 的输出**引用**同一句话(讨论审批流程、
+  /// cat 含该句的脚本)不得误弹 Claude 审批卡片锁住输入框。
+  it("claude 专有整句规则只对 claude 会话生效", () => {
+    const text = "\x1b[2Jecho test\r\nDo you want to proceed?\r\n> 1. Yes\r\n  2. No";
+    const codex = terminalAttention(text, [], false, false, { provider: "codex", selectorAnchors: [] });
+    expect(codex).toBeNull();
+    // 缺省文法(存量调用)与显式 claude 都照旧识别。
+    expect(terminalAttention(text, [])?.id).toBe("claude:command-approval");
+    expect(terminalAttention(text, [], false, false, { provider: "claude", selectorAnchors: [] })?.id).toBe("claude:command-approval");
+  });
+
+  /// 锚点由插件声明:声明了别家文案的 provider,其纯编号单选菜单同样能卡片化;
+  /// 未声明锚点的 provider 不出空卡(返回 null,交由发送侧软拦兜底)。
+  it("选择器锚点走插件声明的文法", () => {
+    const prompt = [
+      "\x1b[2J选择下一步?",
+      "❯ 1. 继续",
+      "  2. 停止",
+      "  3. 输入其他内容",
+      "Enter to select · ↑/↓ to navigate",
+    ].join("\r\n");
+    const declared = terminalAttention(prompt, [], true, false, {
+      provider: "someagent",
+      selectorAnchors: [{ marker: "输入其他内容", kind: "input" }],
+    });
+    expect(declared?.id).toBe("interactive:numbered-selector");
+    expect(declared?.options?.map((option) => option.label)).toEqual(["继续", "停止", "输入其他内容"]);
+    expect(declared?.options?.[2].kind).toBe("input");
+    // 同一屏,未声明锚点 → 不出没有任何可点项的空卡。
+    expect(terminalAttention(prompt, [], true, false, { provider: "someagent", selectorAnchors: [] })).toBeNull();
+  });
+
+  /// gemini `/model` 对话框(真机 PTY 取证,gemini-cli 0.51):框线包裹的编号项 + ● 焦点,
+  /// 无导航提示行。↑/↓ 移动、Enter 确认经按键探针证实——按钮输入 = 相对移动 + 回车。
+  it("把 gemini 的框线数字菜单转成 GUI 选项(仅 expectMenu 窗口)", () => {
+    const menu = [
+      "\x1b[2J > /model",
+      "╭──────────────────────────────╮",
+      "│                              │",
+      "│ Select Model│",
+      "│                              │",
+      "│ ● 1. Auto│",
+      "│      Let Gemini CLI decide the best model for the task: gemini-3.1-pro-preview│",
+      "│   2. Manual│",
+      "│      Manually select a model│",
+      "│                              │",
+      "│ Remember model for future sessions: false (Press Tab to toggle)│",
+      "│ > To use a specific Gemini model on startup, use the --model flag.│",
+      "│                              │",
+      "│ (Press Esc to close)│",
+      "╰──────────────────────────────╯",
+    ].join("\r\n");
+    const attention = terminalAttention(menu, [], false, true, { provider: "gemini", selectorAnchors: [] });
+    expect(attention?.id).toBe("interactive:cursor-menu");
+    expect(attention?.text).toBe("Select Model");
+    expect(attention?.options?.map((option) => option.label)).toEqual(["Auto", "Manual"]);
+    expect(attention?.options?.[0].focused).toBe(true);
+    expect(attention?.options?.[0].input).toBe("\r");
+    expect(attention?.options?.[1].input).toBe("\x1b[B\r");
+    expect(attention?.options?.[0].description).toContain("decide the best model");
+    // 对话框尾注(Remember…/Press Esc…)不得折进最后一个选项的描述。
+    expect(attention?.options?.[1].description).toBe("Manually select a model");
+    // 不在菜单窗口内不认——框线数字形态只在刚发出菜单命令时有意义。
+    expect(terminalAttention(menu, [], false, false, { provider: "gemini", selectorAnchors: [] })).toBeNull();
   });
 
   it("turns Claude's long-session token warning into explicit GUI choices", () => {
@@ -214,5 +365,32 @@ describe("terminalAttention", () => {
       "Yes, and don't ask again for: cargo build *",
       "No",
     ]);
+  });
+});
+
+describe("modeFromScreen", () => {
+  const MARKERS = [
+    { marker: "bypass permissions on", value: "bypassPermissions" },
+    { marker: "plan mode on", value: "plan" },
+    { marker: "manual mode on", value: "default" },
+    { marker: "don't ask on", value: "dontAsk" },
+  ];
+
+  it("命中位置最靠后的指示胜出——backlog 尾部还留着切换前的旧指示", () => {
+    const screen = `some output
+⏸ manual mode on (shift+tab to cycle)
+more
+⏸ plan mode on (shift+tab to cycle)`;
+    expect(modeFromScreen(screen, MARKERS)).toBe("plan");
+  });
+
+  it("大小写不敏感，弯引号归一（don't/don’t 都认）", () => {
+    expect(modeFromScreen("⏵⏵ Don’t Ask On", MARKERS)).toBe("dontAsk");
+    expect(modeFromScreen("BYPASS PERMISSIONS ON", MARKERS)).toBe("bypassPermissions");
+  });
+
+  it("无命中或无标记时返回 null，显示保持现状", () => {
+    expect(modeFromScreen("plain composer text", MARKERS)).toBeNull();
+    expect(modeFromScreen("⏸ plan mode on", [])).toBeNull();
   });
 });

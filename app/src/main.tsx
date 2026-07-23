@@ -7,17 +7,14 @@ import { Updater } from "./views/Updater";
 import { NewSessionPanel } from "./views/NewSessionPanel";
 import { Onboarding } from "./views/Onboarding";
 import { ChatWindow } from "./views/ChatWindow";
+import { ConfirmWindow } from "./views/ConfirmWindow";
 import { TooltipLayer } from "./Tooltip";
 import { lockdownInProduction } from "./devtools-guard";
 import { installInputModality } from "./input-modality";
 import { bootAppearance } from "./appearance";
 import { detectHostOs } from "./platform";
 import { I18nProvider } from "./i18n";
-import "@fontsource-variable/inter"; // 内置 Inter 可变字体做西文（自托管，全平台一致）
-// 内置 Noto Sans SC 做中文（思源黑体）：按 Unicode 子集切分、本地按需加载，不联网。
-// 只取 400(正文)/600(标题)两档控制体积；500 等会自动回退到最近档。
-import "@fontsource/noto-sans-sc/400.css";
-import "@fontsource/noto-sans-sc/600.css";
+import "./fonts"; // 内置字体集的唯一入口(取舍理由见 fonts.ts;demo/poster 也走它,不再各自 import)
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
@@ -68,6 +65,8 @@ void detectHostOs().then(() => {
           <Onboarding />
         ) : label === "chat" ? (
           <ChatWindow />
+        ) : label.startsWith("confirm-") ? (
+          <ConfirmWindow />
         ) : (
           <App />
         )}

@@ -68,12 +68,12 @@ function EnDocs() {
 
       <h2 id="manual">Manual Claude Code setup (optional)</h2>
       <p>If you don't want to launch the app first, or need to write to a custom settings path, you can hook it up by hand:</p>
-      <div className="codeblock"><pre>{`# 1. Build meowo-reporter
-cargo build --release -p meowo-reporter
-# output: target/release/meowo-reporter(.exe)
+      <div className="codeblock"><pre>{`# 1. Build meowo-reporter (the Rust workspace root is app/src-tauri)
+cd app/src-tauri && cargo build --release -p meowo-reporter
+# output: app/src-tauri/target/release/meowo-reporter(.exe)
 
 # 2. Wire into ~/.claude/settings.json hooks (use an absolute path)
-bun scripts/install-hooks.mjs "<repo-abs-path>/target/release/meowo-reporter.exe"`}</pre></div>
+bun scripts/install-hooks.mjs "<repo-abs-path>/app/src-tauri/target/release/meowo-reporter.exe"`}</pre></div>
       <p>The script attaches the reporter to the hook events it needs (SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest, plus PreToolUse's AskUserQuestion / ExitPlanMode; normal hooks get a 5s timeout, PermissionRequest 310s so it can wait for your approval). Running it again with the same path won't duplicate entries or break your existing hooks.</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
@@ -114,12 +114,12 @@ function ZhDocs() {
 
       <h2 id="manual">手动接入 Claude Code（可选）</h2>
       <p>不想先启动 app，或者要写入自定义的 settings 路径时，可以手动挂：</p>
-      <div className="codeblock"><pre>{`# 1. 编译 meowo-reporter
-cargo build --release -p meowo-reporter
-# 产物：target/release/meowo-reporter(.exe)
+      <div className="codeblock"><pre>{`# 1. 编译 meowo-reporter（Rust workspace 根在 app/src-tauri）
+cd app/src-tauri && cargo build --release -p meowo-reporter
+# 产物：app/src-tauri/target/release/meowo-reporter(.exe)
 
 # 2. 接入 ~/.claude/settings.json 的 hooks（用绝对路径）
-bun scripts/install-hooks.mjs "<仓库绝对路径>/target/release/meowo-reporter.exe"`}</pre></div>
+bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release/meowo-reporter.exe"`}</pre></div>
       <p>脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode；普通 hook 带 5s 超时，PermissionRequest 为 310s——要等你审批）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>

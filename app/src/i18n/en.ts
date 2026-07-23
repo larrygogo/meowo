@@ -2,6 +2,7 @@
 import type { Dict } from "./zh";
 
 export const en: Dict = {
+  dialog: { ok: "OK", cancel: "Cancel" },
   tabs: { all: "All", waiting: "Waiting", running: "Running", archived: "Archived" },
   time: {
     now: "now",
@@ -140,6 +141,15 @@ export const en: Dict = {
   chat: {
     title: "Session conversation",
     live: "Live sync",
+    // Header status badge (keyed by SessionTone). Short: it sits in the title bar.
+    status: {
+      running: "Running",
+      pending: "Needs action",
+      waiting: "Waiting for you",
+      offline: "Disconnected",
+      ended: "Ended",
+      error: "Errored",
+    } as Record<string, string>,
     unsupported: "This agent does not provide structured conversation history yet",
     empty: "No conversation entries to display yet",
     emptyWorking: "The agent is already working — the conversation will appear shortly",
@@ -206,9 +216,12 @@ export const en: Dict = {
     terminalExited: (code: number | null) => `The Agent exited${code == null ? "" : ` with code ${code}`}; its terminal output is preserved above`,
     terminalStop: "Stop terminal",
     terminalStopping: "Stopping…",
-    terminalStopConfirm: "Stopping the terminal kills the running Agent process and interrupts its current task. Continue?",
+    endSession: "End session",
+    endSessionConfirm: "Ending the session kills the running Agent process and interrupts its current task. Continue?",
     terminalAttach: "Open synced external terminal",
     modelMenuOpen: "The model menu is open in the terminal — click to dismiss",
+    slashMenuOpened: "The command opened a terminal UI — detecting its options…",
+    slashMenuDismiss: "Dismiss",
     todos: "To-do",
     todoProgress: (done: number, total: number) => `${done}/${total}`,
     subagent: "Subtask",
@@ -227,6 +240,15 @@ export const en: Dict = {
     terminalReadyTimeout: "Timed out waiting for the Agent terminal to become ready; check the Terminal tab",
     sendNeedsTakeover: "This session is still running in an external terminal. Taking over stops that process, then continues this action in Meowo.",
     terminalNeedsAttention: "The Agent is waiting for startup confirmation. Complete the choice in the interaction card on this conversation page, then send again.",
+    queuedInterjections: (n: number) => n > 1 ? `${n} queued messages — processed after the current turn` : "1 queued message — processed after the current turn",
+    queuedAttachmentOnly: "(attachment)",
+    interjectNow: "Process now",
+    interjectNowTip: "Send the interrupt key to stop the current turn; queued messages are processed right away. Completed work is kept.",
+    interruptAndSend: "Interrupt & send",
+    interruptAndSendTip: "Stop the current turn first, then send this message. Completed work is kept.",
+    attentionDismiss: "Hide",
+    attentionDismissTip: "Hide this card without sending any keys to the terminal. If the prompt is real, it is still waiting in the terminal view.",
+    unrecognizedPromptConfirm: "The Agent appears to be waiting for an interaction in the terminal (not recognized as a card). Sending now will type your text into that screen and may trigger an option. Send anyway?",
     terminalPromptTitle: "The Agent needs a startup choice",
     terminalPromptHelp: "The Agent is waiting for startup confirmation. Use these controls instead of the TUI; Meowo will show the next step after you confirm this one.",
     trustPromptTitle: "Trust this folder?",
@@ -273,6 +295,7 @@ export const en: Dict = {
       "danger-full-access": "Full access",
     } as Record<string, string>,
     modelDesc: {
+      fable: "Most capable tier, above Opus",
       opus: "Strongest reasoning for complex work",
       sonnet: "Balanced speed and capability",
       haiku: "Fast and light on your quota",
@@ -322,6 +345,8 @@ export const en: Dict = {
     autostartDesc: "Starts automatically when the system boots",
     notify: "Desktop notifications",
     notifyDesc: "Notify when a session needs your reply or errors out",
+    attentionFlash: "Taskbar alert",
+    attentionFlashDesc: "Highlight the taskbar icon when a session needs attention while Meowo is in the background",
     autoUpdate: "Automatic updates",
     autoUpdateDesc: "Check and download new versions automatically, then let you choose when to restart",
     archiveHide: "Auto-hide archived",
@@ -429,6 +454,9 @@ export const en: Dict = {
     secretSaved: "Saved; enter a new value to replace it",
     completeToEnable: "Enter the relay URL, model, and credential to enable it. The official account remains active while configuring.",
     coverage: "Applies only to sessions created, resumed, or restarted from Meowo. Running sessions are unchanged.",
+    envOptions: "Extra environment variables",
+    envDisableNonessential: "Disable non-essential traffic",
+    envNoAttribution: "Omit attribution header",
     saveFailed: (e: string) => `Could not save relay: ${e}`,
   },
   account: {

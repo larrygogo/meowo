@@ -20,8 +20,12 @@ jobs:
           components: clippy
       - name: Rust 构建缓存
         uses: Swatinem/rust-cache@v2
+        with:
+          # workspace 根在 app/src-tauri（全部 Rust 都住那里），target/ 也在它下面。
+          workspaces: app/src-tauri
       - name: 生成并校验前后端 IPC 契约
-        run: cargo test -p meowo-protocol && git diff --exit-code -- app/src/generated/contracts
+        working-directory: app/src-tauri
+        run: cargo test -p meowo-protocol && git diff --exit-code -- ../src/generated/contracts
       - name: 安装前端依赖
         working-directory: app
         run: bun install --frozen-lockfile
@@ -35,8 +39,10 @@ jobs:
       - name: 准备 meowo-reporter sidecar
         run: bun scripts/prepare-sidecar.mjs
       - name: Rust 测试
+        working-directory: app/src-tauri
         run: cargo test --workspace
       - name: Rust clippy
+        working-directory: app/src-tauri
         run: cargo clippy --workspace -- -D warnings
 
   # 依赖漏洞审计：第三方 crate / npm 包出现已知 CVE 时给出门禁/告警。
@@ -51,6 +57,8 @@ jobs:
         # 等 informational 告警不阻断（多为无法立即修的传递依赖）。
         # 不用 rustsec/audit-check action——它在 push 事件需 Checks API 写权限，
         # 而默认 GITHUB_TOKEN 只读 → 报「Resource not accessible by integration」。
+        # Cargo.lock 与 .cargo/audit.toml 都随 workspace 住在 app/src-tauri 下。
+        working-directory: app/src-tauri
         run: cargo audit
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getLiveSessionsPage, type LiveSession } from "../api";
+import { getLiveSessionsPage, sessionTone, type LiveSession } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import { useT } from "../i18n";
 
@@ -170,6 +170,11 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
         {(sessions ?? []).map((item) => {
           const Icon = agentAssets(item.provider).Icon;
           const dir = folderName(item.cwd);
+          // 与对话窗标题栏同一套口径(sessionTone,含 errored——贴纸的错误优先级由此
+          // 对齐,不再出现「贴纸报错、侧栏亮绿点」)。offline/ended 不加点——图标置灰
+          // (is-off)已表达「不活跃」,再叠一个灰点是噪声。
+          const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored);
+          const showDot = tone === "running" || tone === "pending" || tone === "waiting" || tone === "error";
           return (
             <button
               type="button"
@@ -187,6 +192,7 @@ export function ChatSidebar({ activeId, onSelect, onCollapse }: {
                 aria-label={item.provider}
               >
                 <Icon />
+                {showDot && <i className={`chat-sidebar-dot is-${tone}`} role="status" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />}
               </span>
               <span className="chat-sidebar-text">
                 <span className="chat-sidebar-name">{item.task_title || t.sticker.waitingFirstInput}</span>

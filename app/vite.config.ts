@@ -1,26 +1,18 @@
 /// <reference types="vitest/config" />
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// 剔除 @fontsource CSS 里的 .woff 兜底源（只留 woff2）：Tauri 的 WebView2/WKWebView 均支持
-// woff2，woff 永远不会被加载却会被打包，白占体积（中文字库双格式约差一半）。
-function stripWoffFallback(): Plugin {
-  return {
-    name: "strip-woff-fallback",
-    enforce: "pre",
-    transform(code, id) {
-      if (id.includes("@fontsource") && id.endsWith(".css")) {
-        return code.replace(/,\s*url\([^)]+\.woff\)\s*format\(["']woff["']\)/g, "");
-      }
-      return null;
-    },
-  };
-}
-
 export default defineConfig({
-  plugins: [stripWoffFallback(), react()],
+  plugins: [react()],
   clearScreen: false,
-  server: { port: 1268, strictPort: true },
+  server: {
+    port: 1268,
+    strictPort: true,
+    // src-tauri 整个排除出 vite 的文件监视(Tauri 官方模板同款):Rust workspace 连同
+    // target/ 都住在 app/src-tauri 下,cargo 编译中的 .o 文件被占用,watcher 碰上就
+    // EBUSY 崩掉 dev server;前端热更新也本来就不该关心 Rust 产物。
+    watch: { ignored: ["**/src-tauri/**"] },
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],

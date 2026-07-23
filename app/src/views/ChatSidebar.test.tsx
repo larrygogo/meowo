@@ -146,6 +146,29 @@ describe("ChatSidebar", () => {
     expect(names.findIndex((n) => n.includes("新活会话"))).toBe(60);
   });
 
+  it("按 sessionTone 渲染状态点:running 脉冲、pending 召唤、断开/已结束不加点", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_live_sessions_page") {
+        return Promise.resolve([
+          session(1, "在跑", { connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
+          session(2, "待审批", { connected: true, pending_review: "approval", session: { id: 2, cc_session_id: "cc-2", status: "waiting" } } as Partial<LiveSession>),
+          session(3, "在等", { connected: true, session: { id: 3, cc_session_id: "cc-3", status: "waiting" } } as Partial<LiveSession>),
+          session(4, "已断开"),
+        ]);
+      }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={1} onSelect={() => {}} onCollapse={() => {}} />);
+    const dotOf = async (name: RegExp) =>
+      (await screen.findByRole("button", { name })).querySelector(".chat-sidebar-dot");
+    expect((await dotOf(/在跑/))?.className).toContain("is-running");
+    // pending 优先于 waiting:它有明确的动作召唤。
+    expect((await dotOf(/待审批/))?.className).toContain("is-pending");
+    expect((await dotOf(/在等/))?.className).toContain("is-waiting");
+    // 断开/已结束:图标置灰已表达不活跃,不再叠点。
+    expect(await dotOf(/已断开/)).toBeNull();
+  });
+
   it("survives a backend without the sessions command", async () => {
     // demo/旧后端对未知命令返回 undefined：侧栏必须静默降级为空列表，不能崩掉整个窗口。
     invoke.mockResolvedValue(undefined);

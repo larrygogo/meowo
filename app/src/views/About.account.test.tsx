@@ -274,6 +274,8 @@ describe("AccountSection agent 卡", () => {
     expect(screen.queryByTestId("agent-login-claude")).toBeNull();
     expect(screen.queryByTestId("agent-logout-claude")).toBeNull();
     expect(screen.queryByText(zh.account.quota)).toBeNull();
+    // 账号列表管的是官方登录身份，中转与之互斥——一并隐藏，免得误导。
+    expect(screen.queryByTestId("profiles-claude")).toBeNull();
   });
 
   it("官方账号可确认退出，成功后重新读取账号状态", async () => {

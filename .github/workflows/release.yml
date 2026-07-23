@@ -31,6 +31,9 @@ jobs:
 
       - name: Rust 构建缓存
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # workspace 根在 app/src-tauri（全部 Rust 都住那里），target/ 也在它下面。
+          workspaces: app/src-tauri
 
       - name: 安装前端依赖
         working-directory: app

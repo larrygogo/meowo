@@ -5,7 +5,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
-const PROCESS_SNAPSHOT_TTL_MS: i64 = 300;
+/// 必须 ≥ 对话窗 650ms 的历史轮询周期:此前 300ms 意味着单开对话窗时每一轮都击穿缓存,
+/// Windows 上每 650ms 付一次 30-120ms 的全进程扫描(proc.rs 注释实测)。900ms 让相邻
+/// 轮询共享同一次采样;存活展示容忍 ~1s 的陈旧(RESUME_GRACE 是 120s 量级)。
+const PROCESS_SNAPSHOT_TTL_MS: i64 = 900;
 
 /// Counts and list queries share one process-table observation during a UI refresh.
 #[derive(Default)]
@@ -111,19 +114,23 @@ pub(crate) async fn get_live_sessions_counts(
     state: State<'_, super::AppState>,
 ) -> Result<meowo_store::query::LiveSessionCounts, String> {
     let db_path = state.db_path.clone();
-    let alive = state.process_snapshots.snapshot();
+    // 进程表采样在 spawn_blocking 里做:冷采样 Windows 上要 30-120ms,不能挂在
+    // async-runtime 线程上(且采样持缓存互斥锁,并发命令会排队其后)。
+    let snapshots = state.process_snapshots.clone();
+    // 托管 PTY 活跃 = 进程必在(meowo 自己 spawn 的),hook 未认领 pid / 事件宽限过期时兜底。
+    let pty_live = state.ptys.active_session_ids();
     tauri::async_runtime::spawn_blocking(move || {
+        let alive = snapshots.snapshot();
         let store = super::open_store(&db_path)?;
         let (total, archived) = store.live_sessions_totals().map_err(|e| e.to_string())?;
         let candidates = store.live_count_candidates().map_err(|e| e.to_string())?;
         let now = super::now_ms();
         let (mut running, mut waiting) = (0i64, 0i64);
         for candidate in candidates {
-            let pid = candidate.pid.unwrap_or(0);
             let connected = session_connected(
                 &candidate.status,
                 candidate.pid,
-                pid > 0 && alive.contains(&pid),
+                process_alive(candidate.pid, &alive, pty_live.contains(&candidate.id)),
                 candidate.last_event_at,
                 now,
             );
@@ -159,13 +166,17 @@ pub(crate) async fn get_live_sessions_page(
 ) -> Result<LiveSessionsPage, String> {
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
-    let alive = state.process_snapshots.snapshot();
+    // 采样进 spawn_blocking,理由同 get_live_sessions_counts。
+    let snapshots = state.process_snapshots.clone();
+    let pty_live = state.ptys.active_session_ids();
     let filter = normalize_filter(filter);
     tauri::async_runtime::spawn_blocking(move || {
+        let alive = snapshots.snapshot();
         live_sessions_blocking(
             &db_path,
             &tx_cache,
             &alive,
+            &pty_live,
             &filter,
             search.as_deref(),
             PageReq {
@@ -187,6 +198,32 @@ fn normalize_filter(filter: String) -> String {
     }
 }
 
+/// 存活判定的唯一 OR:进程表命中,或该会话的托管 PTY 活跃(meowo 自己 spawn 的进程必在)。
+/// 对话窗(chat.rs)、看板计数、会话列表三条通道共用——此前三处手抄,措辞已开始分叉。
+pub(crate) fn process_alive(
+    pid: Option<i64>,
+    alive: &std::collections::HashSet<i64>,
+    pty_live: bool,
+) -> bool {
+    pid.is_some_and(|p| p > 0 && alive.contains(&p)) || pty_live
+}
+
+/// transcript 分析的唯一接线:supports_analysis 门控 + 路径解析 + 共享 mtime 缓存。
+/// 侧栏/贴纸(enrich)与对话窗(errored)同源于此,「同口径」不再靠手工维持。
+pub(crate) fn analyze_transcript(
+    tx_cache: &Mutex<meowo_agent::TranscriptCache>,
+    provider: &str,
+    cwd: Option<&str>,
+    cc_session_id: &str,
+) -> Option<meowo_agent::transcript::TranscriptInfo> {
+    let spec = super::agent_transcript(provider).filter(|spec| spec.supports_analysis())?;
+    let path = spec.resolve_transcript_path(None, cwd, cc_session_id)?;
+    let path = path.to_str()?;
+    Some(meowo_agent::TranscriptCache::analyze_shared(
+        tx_cache, spec, path,
+    ))
+}
+
 /// Resume and newly-spawned sessions remain optimistically connected while hooks claim the PID.
 pub(crate) const RESUME_GRACE_MS: i64 = 120_000;
 
@@ -198,7 +235,11 @@ pub(crate) fn session_connected(
     now: i64,
 ) -> bool {
     if status == "ended" {
-        return false;
+        // ended 只让位于**实证**存活(进程表命中 / 本 GUI 托管 PTY 活跃):恢复会话的
+        // 窗口期 DB 还挂着旧 'ended' 而 PTY 已在跑,不给存活兜底就会「已结束」徽标配
+        // 「结束会话」按钮同框。事件宽限不适用——刚结束的会话天然在宽限期内,套用它
+        // 会让所有 ended 会话诈尸 120 秒。
+        return pid_alive;
     }
     pid_alive || now.saturating_sub(last_event_at) < RESUME_GRACE_MS
 }
@@ -228,12 +269,18 @@ pub(crate) fn live_sessions_blocking(
     db_path: &Path,
     tx_cache: &Mutex<meowo_agent::TranscriptCache>,
     alive: &std::collections::HashSet<i64>,
+    // 托管 PTY 活跃的会话集合:hook 未认领 pid / 事件宽限过期时的存活兜底,
+    // 与对话窗口(chat.rs 的 connected)同口径,两边不再各说各话。
+    pty_live: &std::collections::HashSet<i64>,
     filter: &str,
     search: Option<&str>,
     page: PageReq,
 ) -> Result<LiveSessionsPage, String> {
     if page.limit == 0 {
-        return Ok(LiveSessionsPage { items: Vec::new(), next_cursor: None });
+        return Ok(LiveSessionsPage {
+            items: Vec::new(),
+            next_cursor: None,
+        });
     }
     let store = super::open_store(db_path)?;
     let now = super::now_ms();
@@ -266,11 +313,10 @@ pub(crate) fn live_sessions_blocking(
                 last_event_at: session.session.last_event_at,
                 id: session.session.id,
             };
-            let pid = session.pid.unwrap_or(0);
             let connected = session_connected(
                 &session.session.status,
                 session.pid,
-                pid > 0 && alive.contains(&pid),
+                process_alive(session.pid, alive, pty_live.contains(&session.session.id)),
                 session.session.last_event_at,
                 now,
             );
@@ -327,13 +373,12 @@ fn enrich(
     let mut error_label = None;
     let mut error_raw = None;
     let mut preview = None;
-    let info = super::agent_transcript(&session.provider)
-        .filter(|spec| spec.supports_analysis())
-        .and_then(|spec| {
-            spec.resolve_transcript_path(None, session.cwd.as_deref(), &session.session.cc_session_id)
-                .and_then(|path| path.to_str().map(str::to_string))
-                .map(|path| meowo_agent::TranscriptCache::analyze_shared(tx_cache, spec, &path))
-        });
+    let info = analyze_transcript(
+        tx_cache,
+        &session.provider,
+        session.cwd.as_deref(),
+        &session.session.cc_session_id,
+    );
     if let Some(info) = info {
         if super::agent_resolves_transcript_title(&session.provider) {
             if let Some(title) = info.title {
@@ -382,41 +427,59 @@ mod tests {
 
         {
             let store = meowo_store::Store::open(&db).unwrap();
-            let project = store.upsert_project_by_root("/tmp/proj", "proj", old).unwrap();
+            let project = store
+                .upsert_project_by_root("/tmp/proj", "proj", old)
+                .unwrap();
             // 先塞 80 条空壳（无标题、无 todo、已结束），再塞 20 条有标题的。按时间倒序，
             // 空壳排在前面，第一批 100 条里只有 20 条能通过过滤。
             for i in 0..100 {
                 let cc = format!("cc-{i:03}");
                 let (sid, _) = store.start_session(project, &cc, old + i).unwrap();
                 if i >= 80 {
-                    store.set_session_title(sid, &format!("真实会话 {i}"), old + i).unwrap();
+                    store
+                        .set_session_title(sid, &format!("真实会话 {i}"), old + i)
+                        .unwrap();
                 }
-                store.set_session_status(sid, meowo_store::SessionStatus::Ended, old + i).unwrap();
+                store
+                    .set_session_status(sid, meowo_store::SessionStatus::Ended, old + i)
+                    .unwrap();
             }
             // 再补 60 条有标题的、更早的会话，用来验证补页确实翻到了第二批。
             for i in 0..60 {
                 let cc = format!("older-{i:03}");
                 let (sid, _) = store.start_session(project, &cc, old - 1000 - i).unwrap();
-                store.set_session_title(sid, &format!("更早会话 {i}"), old - 1000 - i).unwrap();
-                store.set_session_status(sid, meowo_store::SessionStatus::Ended, old - 1000 - i).unwrap();
+                store
+                    .set_session_title(sid, &format!("更早会话 {i}"), old - 1000 - i)
+                    .unwrap();
+                store
+                    .set_session_status(sid, meowo_store::SessionStatus::Ended, old - 1000 - i)
+                    .unwrap();
             }
         }
 
         let cache = Mutex::new(meowo_agent::TranscriptCache::default());
         let alive = std::collections::HashSet::new();
+        let pty_none = std::collections::HashSet::new();
         let page = live_sessions_blocking(
             &db,
             &cache,
             &alive,
+            &pty_none,
             "all",
             None,
-            PageReq { before_last_event_at: None, before_id: None, limit: 60 },
+            PageReq {
+                before_last_event_at: None,
+                before_id: None,
+                limit: 60,
+            },
         )
         .unwrap();
 
         assert_eq!(page.items.len(), 60, "补页应凑满一整页，而不是被空会话压缩");
         assert!(
-            page.items.iter().all(|item| !item.inner.task_title.trim().is_empty()),
+            page.items
+                .iter()
+                .all(|item| !item.inner.task_title.trim().is_empty()),
             "空壳会话不该出现在结果里",
         );
         assert!(
@@ -443,8 +506,12 @@ mod tests {
             let store = meowo_store::Store::open(&db).unwrap();
             let project = store.upsert_project_by_root("/tmp/p", "p", old).unwrap();
             for i in 0..TOTAL {
-                let (sid, _) = store.start_session(project, &format!("cc-{i:04}"), old + i).unwrap();
-                store.set_session_title(sid, &format!("会话 {i}"), old + i).unwrap();
+                let (sid, _) = store
+                    .start_session(project, &format!("cc-{i:04}"), old + i)
+                    .unwrap();
+                store
+                    .set_session_title(sid, &format!("会话 {i}"), old + i)
+                    .unwrap();
                 // 每 7 条留一个「活着」的会话散布在时间轴各处：它们会被排序顶到每页最前，
                 // 正是压垮游标单调性的那批。其余标记 ended。
                 if i % 7 == 0 {
@@ -452,12 +519,15 @@ mod tests {
                     store.set_session_pid(sid, pid, old + i).unwrap();
                     alive.insert(pid);
                 } else {
-                    store.set_session_status(sid, meowo_store::SessionStatus::Ended, old + i).unwrap();
+                    store
+                        .set_session_status(sid, meowo_store::SessionStatus::Ended, old + i)
+                        .unwrap();
                 }
             }
         }
 
         let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        let pty_none = std::collections::HashSet::new();
         let mut seen = std::collections::HashSet::new();
         let mut cursor: Option<(i64, i64)> = None;
         const PAGE: usize = 100;
@@ -466,6 +536,7 @@ mod tests {
                 &db,
                 &cache,
                 &alive,
+                &pty_none,
                 "all",
                 None,
                 PageReq {
@@ -505,7 +576,9 @@ mod tests {
         else {
             return;
         };
-        let db = std::path::PathBuf::from(home).join(".meowo").join("board.db");
+        let db = std::path::PathBuf::from(home)
+            .join(".meowo")
+            .join("board.db");
         if !db.exists() {
             eprintln!("本机没有 ~/.meowo/board.db，跳过");
             return;
@@ -517,10 +590,12 @@ mod tests {
         let cache = Mutex::new(meowo_agent::TranscriptCache::default());
         // alive 传空集 → 全部按「未连接」判定，正是列表过滤最狠的情形（可见条数下界）。
         let alive = std::collections::HashSet::new();
+        let pty_none = std::collections::HashSet::new();
         let visible = live_sessions_blocking(
             &db,
             &cache,
             &alive,
+            &pty_none,
             "all",
             None,
             PageReq {
@@ -537,15 +612,22 @@ mod tests {
         println!("counts.archived                   = {archived}");
         println!("未归档                            = {}", total - archived);
         println!("列表实际可见                      = {visible}");
-        println!("差额（应接近 0）                  = {}", total - archived - visible as i64);
+        println!(
+            "差额（应接近 0）                  = {}",
+            total - archived - visible as i64
+        );
     }
 
     #[test]
     fn process_snapshot_is_reused_within_ttl_and_refreshed_afterwards() {
         let cache = ProcessSnapshotCache::default();
         let first = cache.snapshot_with(1_000, || [7].into_iter().collect());
-        let reused = cache.snapshot_with(1_100, || panic!("must reuse the cached sample"));
-        let refreshed = cache.snapshot_with(1_301, || [9].into_iter().collect());
+        // TTL 必须罩得住对话窗 650ms 的轮询周期:651ms 后仍复用同一次采样,
+        // 否则单开对话窗时每轮都冷采样(Windows 上一次 30-120ms)。
+        let reused = cache.snapshot_with(1_651, || panic!("must reuse the cached sample"));
+        let refreshed = cache.snapshot_with(1_000 + PROCESS_SNAPSHOT_TTL_MS + 1, || {
+            [9].into_iter().collect()
+        });
 
         assert!(Arc::ptr_eq(&first, &reused));
         assert_eq!(*refreshed, [9].into_iter().collect());

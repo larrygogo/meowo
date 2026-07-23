@@ -1,10 +1,10 @@
 //! Meowo 持有的 PTY broker。结构化对话仍走 transcript；这里仅负责原始 ANSI 终端的双向镜像。
 
 use base64::Engine;
+use meowo_protocol::broker::{read_handshake, BrokerRequest, CURRENT_PROTOCOL_VERSION};
 pub(crate) use meowo_protocol::broker::{ApprovalDecision, ApprovalRequest};
 #[cfg(not(test))]
 use meowo_protocol::broker::{BrokerDiscovery, APPROVAL_BROKER_FILE};
-use meowo_protocol::broker::{read_handshake, BrokerRequest, CURRENT_PROTOCOL_VERSION};
 pub(crate) use meowo_protocol::ipc::ManagedTerminalSnapshotDto as PtySnapshot;
 use meowo_protocol::ipc::{PtyExitEvent as PtyExit, PtyOutputEvent as PtyOutput};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -36,7 +36,12 @@ struct ManagedPty {
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     /// 收尾只许跑一次：waiter（轮询到进程退出）与 reader（万一真的 EOF）都会尝试触发。
     finalized: AtomicBool,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// PTY 输入的有界队列入口；对 ConPTY 管道的阻塞写全部由独立 writer 线程承担。
+    /// 子进程不读 stdin 时管道写会**无限期阻塞**，绝不能发生在 write() 的调用线程上
+    /// （它可能是 IPC/blocking 池线程，历史上还是主线程——一次卡住就冻结整应用）。
+    /// 队满由 write() 的有界等待兜住；writer 线程写失败即退出并丢弃 rx，之后 try_send
+    /// 以 Disconnected 快速失败。
+    input_tx: mpsc::SyncSender<Vec<u8>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
     backlog: Mutex<VecDeque<u8>>,
     /// 自 PTY 启动以来累计输出的字节位置；与 backlog 锁内更新，供快照和实时帧去重排序。
@@ -425,10 +430,7 @@ impl PtyBroker {
             if let Some(endpoint) = *endpoint {
                 command.env("MEOWO_PTY_ENDPOINT", endpoint.to_string());
                 command.env("MEOWO_PTY_TOKEN", &self.attach.token);
-                command.env(
-                    "MEOWO_PTY_PROTOCOL",
-                    CURRENT_PROTOCOL_VERSION.to_string(),
-                );
+                command.env("MEOWO_PTY_PROTOCOL", CURRENT_PROTOCOL_VERSION.to_string());
             }
         }
         command.env("TERM", "xterm-256color");
@@ -438,17 +440,33 @@ impl PtyBroker {
             .spawn_command(command)
             .map_err(|e| e.to_string())?;
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         drop(pair.slave);
+        // 容量 128 × 单次 ≤64KB：正常按键/粘贴远用不满；持续塞满只可能是子进程长时间不读 stdin。
+        let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(128);
         let managed = Arc::new(ManagedPty {
             session_id: AtomicI64::new(session_id),
             master: Mutex::new(Some(pair.master)),
-            writer: Mutex::new(writer),
+            input_tx,
             child: Mutex::new(child),
             backlog: Mutex::new(VecDeque::new()),
             output_end: AtomicU64::new(0),
             subscribers: Mutex::new(Vec::new()),
             finalized: AtomicBool::new(false),
+        });
+        // writer 线程：唯一直接触碰 ConPTY 输入管道的地方。写失败（管道断）即退出；
+        // ManagedPty 被收尾丢弃后 tx 断开，recv 出错线程随之结束。它若卡死在一次
+        // write 上，就与 reader 同等待遇——带着句柄躺着，收尾从不等它。
+        std::thread::spawn(move || {
+            while let Ok(chunk) = input_rx.recv() {
+                if writer
+                    .write_all(&chunk)
+                    .and_then(|_| writer.flush())
+                    .is_err()
+                {
+                    return;
+                }
+            }
         });
         if let Err(error) = self.register_spawned(session_id, &managed) {
             // 应用正在退出：shutdown 的 drain 已结束，这个会话塞进去也没人收尾——当场按
@@ -489,6 +507,48 @@ impl PtyBroker {
             }
         });
 
+        // pty-output 合帧：reader 每读 16KB 就直发一条事件的话，构建/日志刷屏时每秒数百次
+        // 「序列化 → 主线程事件循环 → WebView2 IPC → JS」会把整个界面拖卡。专职 emitter
+        // 线程把一帧（16ms）内到达的 chunk 聚成一条事件再发；交互场景（距上次 emit 已超过
+        // 一帧）走快路径立即发出，不给按键回显加可感知延迟。
+        // 有界通道 + 阻塞 send：宁可反压 reader（等效于子进程输出慢一点），不丢终端字节——
+        // 前端 xterm 按 offset 对齐增量渲染，事件流缺一段就得等 snapshot 重对齐。
+        let (emit_tx, emit_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(64);
+        let emitter_app = app.clone();
+        let emitter_managed = managed.clone();
+        std::thread::spawn(move || {
+            const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
+            // 单帧上限：重输出时一帧最多聚 256KB，base64 后 ~341KB，别让单条事件无限膨胀。
+            const MAX_FRAME_BYTES: usize = 256 * 1024;
+            let mut last_emit = std::time::Instant::now() - FRAME;
+            while let Ok((offset, mut frame)) = emit_rx.recv() {
+                // 距上次 emit 不足一帧才聚合；chunk 偏移天然连续（单一 reader 顺序投递），
+                // 聚合帧仍以首 chunk 的 offset 对齐。
+                let frame_end = last_emit + FRAME;
+                while frame.len() < MAX_FRAME_BYTES {
+                    let now = std::time::Instant::now();
+                    if now >= frame_end {
+                        break;
+                    }
+                    // Timeout/Disconnected 都先把手头的发出去；断开由外层 recv 收尾退出。
+                    match emit_rx.recv_timeout(frame_end - now) {
+                        Ok((_, more)) => frame.extend_from_slice(&more),
+                        Err(_) => break,
+                    }
+                }
+                // 先确认对话窗存在再构造 payload：窗口关着时 base64 全是白做的。
+                if let Some(window) = emitter_app.get_webview_window("chat") {
+                    let payload = PtyOutput {
+                        session_id: emitter_managed.session_id.load(Ordering::Acquire),
+                        offset,
+                        data: base64::engine::general_purpose::STANDARD.encode(&frame),
+                    };
+                    let _ = window.emit("pty-output", &payload);
+                }
+                last_emit = std::time::Instant::now();
+            }
+        });
+
         let broker = self.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
@@ -496,7 +556,6 @@ impl PtyBroker {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        let session_id = managed.session_id.load(Ordering::Acquire);
                         // 分发必须发生在追加 backlog 的同一把锁内：handle_attach 在一个
                         // backlog→subscribers 临界区里「回放 + 注册订阅者」，若这里先放掉
                         // backlog 锁再单独锁 subscribers，恰在缝隙注册的订阅者会把同一个
@@ -505,7 +564,8 @@ impl PtyBroker {
                         let send_chunk = |data: &[u8]| {
                             if let Ok(mut subscribers) = managed.subscribers.lock() {
                                 let chunk = data.to_vec();
-                                subscribers.retain(|(_, sender)| sender.send(chunk.clone()).is_ok());
+                                subscribers
+                                    .retain(|(_, sender)| sender.send(chunk.clone()).is_ok());
                             }
                         };
                         let offset = if let Ok(mut backlog) = managed.backlog.lock() {
@@ -524,19 +584,12 @@ impl PtyBroker {
                             send_chunk(&buf[..n]);
                             offset
                         };
-                        // 先确认对话窗存在再构造 payload：窗口关着时每个 16KB chunk 的
-                        // base64 编码（~21KB 新分配）都是白做的，构建/日志刷屏时尤甚。
-                        if let Some(window) = app.get_webview_window("chat") {
-                            let payload = PtyOutput {
-                                session_id,
-                                offset,
-                                data: base64::engine::general_purpose::STANDARD.encode(&buf[..n]),
-                            };
-                            let _ = window.emit("pty-output", &payload);
-                        }
+                        // 对话窗的实时帧交 emitter 合帧后发出（见上），backlog/订阅者不受影响。
+                        let _ = emit_tx.send((offset, buf[..n].to_vec()));
                     }
                 }
             }
+            // reader 退出（EOF/出错）时 emit_tx 随闭包 drop，emitter 发完残余后自行结束。
             finalize_exit(&broker, &app, &managed);
         });
         Ok(())
@@ -603,11 +656,21 @@ impl PtyBroker {
             .get(&session_id)
             .cloned()
             .ok_or("PTY 会话未运行")?;
-        let mut writer = session.writer.lock().map_err(|_| "PTY 输入锁已损坏")?;
-        writer
-            .write_all(data)
-            .and_then(|_| writer.flush())
-            .map_err(|e| e.to_string())
+        // 有界等待入队，绝不直接写管道（理由见 ManagedPty::input_tx）。到点仍满说明
+        // 子进程长时间不读 stdin（挂死/被暂停），报错比无限阻塞调用线程诚实。
+        let mut chunk = data.to_vec();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            chunk = match session.input_tx.try_send(chunk) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::TrySendError::Disconnected(_)) => return Err("PTY 输入通道已关闭".into()),
+                Err(mpsc::TrySendError::Full(chunk)) => chunk,
+            };
+            if std::time::Instant::now() >= deadline {
+                return Err("Agent 未在读取输入，输入已积压，请稍后重试".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
     }
 
     pub(crate) fn resize(&self, session_id: i64, cols: u16, rows: u16) -> Result<(), String> {
@@ -687,6 +750,24 @@ impl PtyBroker {
         }
     }
 
+    /// 当前有活跃托管 PTY 的会话集合。存活校正用:hook 尚未认领 pid(如 codex 首回合前)
+    /// 或 120s 事件宽限过期时,meowo 自己 spawn 的 agent 也必须算「已连接」——PTY 在即进程在。
+    /// 不含 starting 占位(与 snapshot 的 active 口径一致:spawn 完成前按未运行处理)。
+    pub(crate) fn active_session_ids(&self) -> HashSet<i64> {
+        self.sessions
+            .lock()
+            .map(|sessions| sessions.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// 单会话版 [`Self::active_session_ids`](对话窗轮询按会话取,不必整表拷贝)。
+    pub(crate) fn is_active(&self, session_id: i64) -> bool {
+        self.sessions
+            .lock()
+            .map(|sessions| sessions.contains_key(&session_id))
+            .unwrap_or(false)
+    }
+
     pub(crate) fn stop(&self, session_id: i64) -> Result<(), String> {
         let session = self
             .sessions
@@ -740,7 +821,9 @@ impl PtyBroker {
                 let path = dir.join(APPROVAL_BROKER_FILE);
                 // 写失败要留痕：agent 侧的表现只是「审批默默回到 TUI」，没有日志根本查不到磁盘满/无权限。
                 if let Err(error) = std::fs::write(&path, json) {
-                    eprintln!("审批 broker discovery 文件写入失败（外部终端的审批将回落 TUI）: {error}");
+                    eprintln!(
+                        "审批 broker discovery 文件写入失败（外部终端的审批将回落 TUI）: {error}"
+                    );
                 }
                 // token 等于 PTY 完全接管权。父目录权限已经挡住他人，这里再收紧到 0600 作纵深防御。
                 #[cfg(unix)]
@@ -1153,12 +1236,7 @@ impl PtyBroker {
         Ok(Some(managed))
     }
 
-    fn handle_claim(
-        &self,
-        token: &str,
-        launch_token: &str,
-        real_id: i64,
-    ) -> Result<(), String> {
+    fn handle_claim(&self, token: &str, launch_token: &str, real_id: i64) -> Result<(), String> {
         if token != self.attach.token {
             return Err("PTY claim 认证失败".into());
         }
@@ -1253,10 +1331,7 @@ impl PtyBroker {
             approvals.remove(&request.request_id);
         }
         self.emit_approval("pending-approval-cleared", &request);
-        let response = format!(
-            "{}\n",
-            decision.unwrap_or(ApprovalDecision::Pass).as_wire()
-        );
+        let response = format!("{}\n", decision.unwrap_or(ApprovalDecision::Pass).as_wire());
         stream
             .write_all(response.as_bytes())
             .map_err(|e| e.to_string())
@@ -1334,11 +1409,13 @@ mod tests {
     }
 
     fn dummy_managed(session_id: i64) -> Arc<ManagedPty> {
+        // rx 直接丢弃：假会话没有 writer 线程，写入以 Disconnected 快速失败即可。
+        let (input_tx, _) = mpsc::sync_channel(1);
         Arc::new(ManagedPty {
             session_id: AtomicI64::new(session_id),
             master: Mutex::new(None),
             finalized: AtomicBool::new(false),
-            writer: Mutex::new(Box::new(std::io::sink())),
+            input_tx,
             child: Mutex::new(Box::new(DummyChild)),
             backlog: Mutex::new(VecDeque::new()),
             output_end: AtomicU64::new(0),
@@ -1408,7 +1485,12 @@ mod tests {
     #[test]
     fn claim_waits_for_the_inflight_start_to_register() {
         let broker = PtyBroker::default();
-        broker.attach.pending.lock().unwrap().insert("launch".into(), -5);
+        broker
+            .attach
+            .pending
+            .lock()
+            .unwrap()
+            .insert("launch".into(), -5);
         broker.begin_start(-5).unwrap();
         let token = broker.attach.token.clone();
 
@@ -1416,7 +1498,11 @@ mod tests {
         let registrar = broker.clone();
         let handle = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            registrar.sessions.lock().unwrap().insert(-5, dummy_managed(-5));
+            registrar
+                .sessions
+                .lock()
+                .unwrap()
+                .insert(-5, dummy_managed(-5));
             registrar.end_start(-5);
         });
 
@@ -1428,13 +1514,24 @@ mod tests {
         assert!(!sessions.contains_key(&-5));
         drop(sessions);
         assert_eq!(broker.binding(-5), Some(9));
-        assert!(broker.attach.pending.lock().unwrap().get("launch").is_none());
+        assert!(broker
+            .attach
+            .pending
+            .lock()
+            .unwrap()
+            .get("launch")
+            .is_none());
     }
 
     #[test]
     fn claim_after_a_failed_start_keeps_its_token() {
         let broker = PtyBroker::default();
-        broker.attach.pending.lock().unwrap().insert("launch".into(), -5);
+        broker
+            .attach
+            .pending
+            .lock()
+            .unwrap()
+            .insert("launch".into(), -5);
         broker.begin_start(-5).unwrap();
         broker.end_start(-5); // 启动失败：清占位、不入表
         let token = broker.attach.token.clone();

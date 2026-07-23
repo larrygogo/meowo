@@ -23,13 +23,20 @@ type AgentSession = (
 
 fn boot_agent() -> AgentSession {
     let exe = std::env::var("MEOWO_CAPTURE_EXE").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap();
         format!("{home}/.kimi-code/bin/kimi")
     });
     let cwd = std::env::temp_dir().join(format!("meowo-capture-{}", std::process::id()));
     std::fs::create_dir_all(&cwd).unwrap();
     let pair = native_pty_system()
-        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     let command = common::agent_command(&exe, &cwd);
     let child = pair.slave.spawn_command(command).unwrap();
@@ -76,11 +83,96 @@ fn read_until_quiet(rx: &mpsc::Receiver<Vec<u8>>, quiet: Duration, cap: Duration
     out
 }
 
+/// 同 read_until_quiet,但读取期间应答 DSR(ESC[6n)。运行中的 TUI 会反复查光标位置,
+/// 收不到应答就卡住甚至退出——boot_agent 返回后就不再应答,故后续读取必须自己答。
+fn read_answering_dsr(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    writer: &mut Box<dyn Write + Send>,
+    quiet: Duration,
+    cap: Duration,
+) -> Vec<u8> {
+    let start = Instant::now();
+    let mut out = Vec::new();
+    while start.elapsed() < cap {
+        match rx.recv_timeout(quiet) {
+            Ok(chunk) => {
+                if chunk.windows(4).any(|w| w == b"\x1b[6n") {
+                    let _ = writer.write_all(b"\x1b[1;1R").and_then(|_| writer.flush());
+                }
+                out.extend_from_slice(&chunk);
+            }
+            Err(_) => break,
+        }
+    }
+    out
+}
+
 /// 实测「文字 → 隔多久 → 回车」中，间隔多短会导致回车被 composer 当成换行而非提交。
 ///
 /// 现场：GUI 发 `/plan on` 后隔 20ms 补 `\r`，结果只换行没提交。斜杠命令要弹补全/校验，
 /// composer 处理需要时间；`\r` 追太快就落进「还在编辑」的状态被当换行。这里逐个间隔试，
 /// 找出可靠提交所需的最小延迟。用斜杠命令 `/plan on`（正是出问题的那条）当被测文字。
+/// 取证「运行中的中断键」:发一个会跑一会儿的 prompt,读运行中的状态行(中断提示通常
+/// 就在那,如 codex 的 "esc to interrupt"),再按候选中断键看是否真的停下。GUI 的「强推
+/// 插话」靠它——有证据才在插件里声明 interrupt_input,宁缺毋滥。
+///
+/// 用法(会真的发一条 prompt、消耗额度):
+///   MEOWO_CAPTURE_EXE=<cli> [MEOWO_CAPTURE_PROMPT=...] [MEOWO_CAPTURE_INTERRUPT=esc|ctrlc]
+///   cargo test -p meowo-app --test capture_model_menu capture_interrupt -- --ignored --nocapture
+#[test]
+#[ignore = "会拉起真实 agent 进程并发一条 prompt(耗额度);仅供手动调研"]
+fn capture_interrupt() {
+    // boot_agent 返回后**立刻**发输入——空闲期不应答 DSR 会让某些 TUI(gemini)SessionEnd
+    // 退出(能工作的 capture_model_menu 正是 boot 后马上发命令,不留空闲)。
+    let (mut writer, rx, mut child, cwd) = boot_agent();
+    let prompt = std::env::var("MEOWO_CAPTURE_PROMPT")
+        .unwrap_or_else(|_| "写一个 300 字的科幻短故事".into());
+    let send = |writer: &mut Box<dyn std::io::Write + Send>, bytes: &[u8]| -> bool {
+        writer.write_all(bytes).and_then(|_| writer.flush()).is_ok()
+    };
+    if !send(&mut writer, prompt.as_bytes()) {
+        eprintln!("### 进程不收输入(BrokenPipe):可能是 launcher shim 在 ConPTY 下已退(kimi.exe)。");
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&cwd);
+        return;
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    send(&mut writer, b"\r");
+    // 运行中画面:状态行通常带中断提示。读一段(回合往往持续输出,给足时间)。
+    let running = read_answering_dsr(
+        &rx,
+        &mut writer,
+        Duration::from_millis(2500),
+        Duration::from_secs(15),
+    );
+    eprintln!(
+        "=== 运行中画面(可见文本,尾部) ===\n{}",
+        tail_lines(&visible(&running), 20)
+    );
+    eprintln!(
+        "=== 运行中原始字节(尾 400,找 interrupt/stop/esc/ctrl 提示) ===\n{:?}",
+        tail(&running, 400)
+    );
+    // 按候选中断键,看是否停下(画面出现 Interrupted / 回到 composer)。
+    let key: &[u8] = match std::env::var("MEOWO_CAPTURE_INTERRUPT").as_deref() {
+        Ok("ctrlc") => b"\x03",
+        _ => b"\x1b",
+    };
+    send(&mut writer, key);
+    let after = read_answering_dsr(
+        &rx,
+        &mut writer,
+        Duration::from_millis(1500),
+        Duration::from_secs(10),
+    );
+    eprintln!(
+        "=== 中断键之后(可见文本,尾部) ===\n{}",
+        tail_lines(&visible(&after), 20)
+    );
+    let _ = child.kill();
+    let _ = std::fs::remove_dir_all(&cwd);
+}
+
 #[test]
 #[ignore = "会拉起真实 agent 进程；仅供手动调研"]
 fn capture_submit_key() {
@@ -99,7 +191,11 @@ fn capture_submit_key() {
         std::thread::sleep(Duration::from_millis(1200));
         let _ = read_until_quiet(&rx, Duration::from_millis(400), Duration::from_secs(3));
         let cmd = "/plan on";
-        if writer.write_all(cmd.as_bytes()).and_then(|_| writer.flush()).is_err() {
+        if writer
+            .write_all(cmd.as_bytes())
+            .and_then(|_| writer.flush())
+            .is_err()
+        {
             eprintln!("### {label}: 跳过（进程不收输入）");
             let _ = child.kill();
             let _ = std::fs::remove_dir_all(&cwd);
@@ -107,13 +203,24 @@ fn capture_submit_key() {
         }
         std::thread::sleep(Duration::from_millis(500));
         // 记下按键前的画面，便于对照按键后的变化。
-        let before = visible(&read_until_quiet(&rx, Duration::from_millis(400), Duration::from_secs(3)));
+        let before = visible(&read_until_quiet(
+            &rx,
+            Duration::from_millis(400),
+            Duration::from_secs(3),
+        ));
         let _ = writer.write_all(key).and_then(|_| writer.flush());
-        let after = visible(&read_until_quiet(&rx, Duration::from_millis(1500), Duration::from_secs(10)));
+        let after = visible(&read_until_quiet(
+            &rx,
+            Duration::from_millis(1500),
+            Duration::from_secs(10),
+        ));
         eprintln!("\n### {label}");
         eprintln!("--- 按键前(末4行) ---\n{}", tail_lines(&before, 4));
         eprintln!("--- 按键后(末8行) ---\n{}", tail_lines(&after, 8));
-        eprintln!("--- 按键后原始字节(尾500) ---\n{:?}", tail(after.as_bytes(), 500));
+        eprintln!(
+            "--- 按键后原始字节(尾500) ---\n{:?}",
+            tail(after.as_bytes(), 500)
+        );
         let _ = child.kill();
         let _ = std::fs::remove_dir_all(&cwd);
     }
@@ -123,14 +230,21 @@ fn capture_submit_key() {
 #[ignore = "会拉起真实 agent 进程；仅供手动调研"]
 fn capture_model_menu() {
     let exe = std::env::var("MEOWO_CAPTURE_EXE").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap();
         format!("{home}/.kimi-code/bin/kimi")
     });
     let cwd = std::env::temp_dir().join("meowo-capture-model");
     std::fs::create_dir_all(&cwd).unwrap();
 
     let pair = native_pty_system()
-        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     let command = common::agent_command(&exe, &cwd);
     let mut child = pair.slave.spawn_command(command).unwrap();
@@ -163,10 +277,14 @@ fn capture_model_menu() {
     });
 
     // 等首屏画完（长会话启动可能慢，给足时间）；期间按需应答 DSR。
+    // 静默阈值与总时限可调:codex 启动时会先跑自动更新,期间长时间无输出,
+    // 默认 1.5s 的静默判定会提前放行,把菜单命令打进还不存在的 composer。
+    let boot_quiet = Duration::from_millis(env_ms("MEOWO_CAPTURE_BOOT_QUIET_MS", 1500));
+    let boot_cap = Duration::from_millis(env_ms("MEOWO_CAPTURE_BOOT_TIMEOUT_MS", 45_000));
     let mut boot = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(45);
+    let deadline = Instant::now() + boot_cap;
     while Instant::now() < deadline {
-        match rx.recv_timeout(Duration::from_millis(1500)) {
+        match rx.recv_timeout(boot_quiet) {
             Ok(chunk) => {
                 if chunk.windows(4).any(|w| w == b"\x1b[6n") {
                     let _ = writer.write_all(b"\x1b[1;1R");
@@ -177,17 +295,58 @@ fn capture_model_menu() {
             Err(_) => break,
         }
     }
-    eprintln!("=== 启动画面（可见文本，尾部） ===\n{}", tail_lines(&visible(&boot), 25));
+    eprintln!(
+        "=== 启动画面（可见文本，尾部） ===\n{}",
+        tail_lines(&visible(&boot), 25)
+    );
 
-    writer.write_all(b"/model\r").unwrap();
+    // 菜单命令可覆盖:opencode 是 `/models`(复数),其余家是 `/model`。
+    let menu_cmd = std::env::var("MEOWO_CAPTURE_MENU_CMD").unwrap_or_else(|_| "/model".into());
+    // 正文与回车分两次写、隔一拍——合并写会被 TUI 当粘贴块,块内 \r 只换行不提交
+    // (probe_enter.rs 的实测结论,gemini 上也复现:合并写后 /model 留在 composer 里)。
+    writer.write_all(menu_cmd.as_bytes()).unwrap();
+    writer.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    // 提交键可选(MEOWO_CAPTURE_SUBMIT):不同 TUI 认的"回车"不同(kimi 是 kitty 协议,
+    // 见 probe_enter.rs);opencode 的 \r 实测无效,要逐个试。
+    let submit: &[u8] = match std::env::var("MEOWO_CAPTURE_SUBMIT").as_deref() {
+        Ok("lf") => b"\n",
+        Ok("crlf") => b"\r\n",
+        Ok("kitty") => b"\x1b[13u",
+        Ok("keypad") => b"\x1bOM",
+        _ => b"\r",
+    };
+    writer.write_all(submit).unwrap();
     writer.flush().unwrap();
     let menu = read_until_quiet(&rx, Duration::from_millis(1500), Duration::from_secs(25));
 
-    eprintln!("=== /model 之后的原始输出（带转义，截断） ===\n{:?}", tail(&menu, 2500));
+    eprintln!(
+        "=== /model 之后的原始输出（带转义，截断） ===\n{:?}",
+        tail(&menu, 2500)
+    );
     eprintln!("=== /model 之后的可见文本 ===\n{}", visible(&menu));
+
+    // 交互语义取证(MEOWO_CAPTURE_PROBE_KEYS=1):菜单开着时按 ↓ 再按 Enter,观察焦点
+    // 标记是否移动、Enter 是否确认——接线 GUI 按钮前必须证实这两个键的真实效果。
+    if std::env::var("MEOWO_CAPTURE_PROBE_KEYS").is_ok() {
+        let _ = writer.write_all(b"\x1b[B").and_then(|_| writer.flush());
+        let after_down = read_until_quiet(&rx, Duration::from_millis(1200), Duration::from_secs(8));
+        eprintln!("=== ↓ 之后的可见文本 ===\n{}", visible(&after_down));
+        let _ = writer.write_all(b"\r").and_then(|_| writer.flush());
+        let after_enter =
+            read_until_quiet(&rx, Duration::from_millis(1200), Duration::from_secs(8));
+        eprintln!("=== Enter 之后的可见文本 ===\n{}", visible(&after_enter));
+    }
 
     let _ = child.kill();
     let _ = std::fs::remove_dir_all(&cwd);
+}
+
+fn env_ms(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn tail(bytes: &[u8], max: usize) -> String {

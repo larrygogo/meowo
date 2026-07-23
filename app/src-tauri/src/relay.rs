@@ -27,6 +27,9 @@ pub(crate) struct RelayRule {
     /// 由插件定义的凭据类型 value。
     #[serde(default = "default_auth")]
     pub(crate) auth: String,
+    /// 用户勾选的附加环境变量选项 id（插件 `RelayUi::env_options` 声明的子集）。
+    #[serde(default)]
+    pub(crate) env_options: Vec<String>,
 }
 
 impl Default for RelayRule {
@@ -37,6 +40,7 @@ impl Default for RelayRule {
             model: String::new(),
             protocol: String::new(),
             auth: default_auth(),
+            env_options: Vec::new(),
         }
     }
 }
@@ -115,6 +119,7 @@ fn relay_config_for<'a>(
         } else {
             &rule.auth
         },
+        env_options: &rule.env_options,
     }
 }
 
@@ -198,45 +203,59 @@ fn secret(id: meowo_agent::AgentId) -> Option<String> {
         .cloned()
 }
 
+// 三条密钥命令一律 async + spawn_blocking：同步命令跑在主线程，而这几条都要读写
+// relay-secrets.json（set 还要解析安装形态）——文件被杀软/同步盘拖住时会冻住消息泵。
 /// 返回当前安装形态支持中转的插件密钥状态。
 #[tauri::command]
-pub(crate) fn get_relay_secret_status() -> BTreeMap<String, bool> {
-    let secrets = read_secrets();
-    supported_relay_plugins()
-        .map(|id| {
-            let id = id.id().as_str();
-            (
-                id.to_string(),
-                secrets.get(id).is_some_and(|s| !s.is_empty()),
-            )
-        })
-        .collect()
+pub(crate) async fn get_relay_secret_status() -> Result<BTreeMap<String, bool>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let secrets = read_secrets();
+        supported_relay_plugins()
+            .map(|id| {
+                let id = id.id().as_str();
+                (
+                    id.to_string(),
+                    secrets.get(id).is_some_and(|s| !s.is_empty()),
+                )
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 用户明确要求在本机设置页查看已保存密钥；仅通过本地 Tauri IPC 返回，不进入 Settings/日志。
 #[tauri::command]
-pub(crate) fn get_relay_secrets() -> BTreeMap<String, String> {
-    let secrets = read_secrets();
-    supported_relay_plugins()
-        .map(|plugin| plugin.id().as_str())
-        .filter_map(|id| secrets.get(id).map(|value| (id.to_string(), value.clone())))
-        .collect()
+pub(crate) async fn get_relay_secrets() -> Result<BTreeMap<String, String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let secrets = read_secrets();
+        supported_relay_plugins()
+            .map(|plugin| plugin.id().as_str())
+            .filter_map(|id| secrets.get(id).map(|value| (id.to_string(), value.clone())))
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 空串表示删除。密钥不写日志、不进入 Settings，也不通过事件广播。
 #[tauri::command]
-pub(crate) fn set_relay_secret(agent: String, secret: String) -> Result<(), String> {
-    let plugin = meowo_agent::by_id(&agent).ok_or_else(|| "未知 agent".to_string())?;
-    let cap = plugin
-        .relay()
-        .ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
-    let installation = plugin
-        .resolve()
-        .ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
-    if !cap.supports_variant(installation.variant_tag) {
-        return Err("当前安装版本不支持 API 中转".into());
-    }
-    update_secret_at(&secrets_path(), &agent, &secret)
+pub(crate) async fn set_relay_secret(agent: String, secret: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let plugin = meowo_agent::by_id(&agent).ok_or_else(|| "未知 agent".to_string())?;
+        let cap = plugin
+            .relay()
+            .ok_or_else(|| "该 agent 不支持 API 中转".to_string())?;
+        let installation = plugin
+            .resolve()
+            .ok_or_else(|| "无法解析 agent 安装形态".to_string())?;
+        if !cap.supports_variant(installation.variant_tag) {
+            return Err("当前安装版本不支持 API 中转".into());
+        }
+        update_secret_at(&secrets_path(), &agent, &secret)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn models_url(base_url: &str) -> Result<String, String> {
@@ -309,6 +328,8 @@ pub(crate) async fn list_relay_models(
         } else {
             &auth
         },
+        // 拉模型列表不需要附加环境变量；它们只随会话启动注入。
+        env_options: &[],
     };
     cap.validate(config, installation.variant_tag)?;
     let request = cap.model_request(config);
@@ -449,6 +470,7 @@ mod tests {
             model: "model-x".into(),
             protocol: "anthropic".into(),
             auth: "api_key".into(),
+            env_options: Vec::new(),
         };
         let claude = meowo_agent::by_id("claude").unwrap().relay().unwrap();
         assert_eq!(
@@ -472,6 +494,51 @@ mod tests {
         assert!(kimi_env.contains(&("KIMI_MODEL_NAME".into(), "model-x".into())));
     }
 
+    /// claude 的两个附加环境变量：勾选才注入，未声明的 id 被忽略；其它 agent 没有可选项，
+    /// 即使规则里带了 id（用户手工改过设置文件）也什么都不会注入。
+    #[test]
+    fn claude_env_options_are_injected_only_when_selected() {
+        let mut rule = RelayRule {
+            enabled: true,
+            base_url: "https://relay.example/v1".into(),
+            model: "model-x".into(),
+            protocol: String::new(),
+            auth: "bearer".into(),
+            env_options: vec![
+                "disable_nonessential_traffic".into(),
+                "bogus_id".into(), // 未声明：validate 会拒，launch_env 也必须忽略
+            ],
+        };
+        let claude = meowo_agent::by_id("claude").unwrap().relay().unwrap();
+        // 未声明的 id 在保存校验阶段就被拦下。
+        assert!(claude
+            .validate(relay_config_for(&rule, claude), "stable")
+            .is_err());
+        let env = claude.launch_env(relay_config_for(&rule, claude), "secret");
+        assert!(env.contains(&(
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
+            "1".into()
+        )));
+        assert!(!env
+            .iter()
+            .any(|(k, _)| k == "CLAUDE_CODE_ATTRIBUTION_HEADER"));
+        assert!(!env.iter().any(|(k, _)| k.starts_with("BOGUS")));
+
+        rule.env_options = vec!["no_attribution_header".into()];
+        assert!(claude
+            .validate(relay_config_for(&rule, claude), "stable")
+            .is_ok());
+        let env = claude.launch_env(relay_config_for(&rule, claude), "secret");
+        assert!(env.contains(&("CLAUDE_CODE_ATTRIBUTION_HEADER".into(), "0".into())));
+        assert!(!env
+            .iter()
+            .any(|(k, _)| k == "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"));
+
+        let kimi = meowo_agent::by_id("kimi").unwrap().relay().unwrap();
+        let kimi_env = kimi.launch_env(relay_config_for(&rule, kimi), "secret");
+        assert!(!kimi_env.iter().any(|(k, _)| k.starts_with("CLAUDE_CODE_")));
+    }
+
     #[test]
     fn codex_uses_ephemeral_responses_provider() {
         let rule = RelayRule {
@@ -480,6 +547,7 @@ mod tests {
             model: "gpt-relay".into(),
             protocol: String::new(),
             auth: "bearer".into(),
+            env_options: Vec::new(),
         };
         let codex = meowo_agent::by_id("codex").unwrap().relay().unwrap();
         let argv = codex.augment_argv(relay_config_for(&rule, codex), true, vec!["codex".into()]);

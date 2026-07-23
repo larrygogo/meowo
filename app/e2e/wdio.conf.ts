@@ -5,12 +5,13 @@ import type { TauriCapabilities } from "@wdio/tauri-service";
 // 本文件在 ESM 下运行（app/package.json "type":"module"），无 __dirname → 从 import.meta.url 求。
 const here = dirname(fileURLToPath(import.meta.url));
 
-// E2E 二进制路径：Cargo workspace 的 target 在仓库根（app/e2e → app → 仓库根 → target/debug）。
+// E2E 二进制路径：Cargo workspace 根在 app/src-tauri，target 也在它下面
+// （app/e2e → app → src-tauri → target/debug）。
 // 名字取自 cargo package "meowo-app"（e2e/run.mjs 用 `tauri build --debug --no-bundle` 产出，不改名）。
 const appBinary = join(
   here,
   "..",
-  "..",
+  "src-tauri",
   "target",
   "debug",
   process.platform === "win32" ? "meowo-app.exe" : "meowo-app",

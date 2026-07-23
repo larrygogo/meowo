@@ -1,7 +1,8 @@
 mod account;
-mod chat;
 #[cfg(any(target_os = "macos", test))]
 mod app_bundle;
+mod chat;
+mod confirm;
 #[cfg(target_os = "windows")]
 mod envpath;
 mod fsutil;
@@ -25,30 +26,33 @@ mod install;
 mod managed_terminal;
 mod proc;
 mod profile;
-mod session_query;
 mod session_command;
+mod session_query;
 mod terminal;
 mod watch;
 mod window;
 
 // run() 的 generate_handler 以裸标识符登记这些命令，须在 crate 根作用域可见。
+use chat::{
+    clipboard_image_fingerprint, get_chat_history, get_subagent_transcript, refresh_session_model,
+    refresh_session_todos, save_pasted_attachment,
+};
 use install::{
     add_agent_to_user_path, agent_path_gap, api_key_login, cancel_login, check_provider_hooks,
     install_agent, login_agent, logout_agent, repair_provider_hooks,
 };
-use chat::{get_chat_history, get_subagent_transcript, refresh_session_model, refresh_session_todos};
 use managed_terminal::{
     get_pending_approval, managed_terminal_binding, managed_terminal_snapshot,
     open_attached_terminal, register_approval_consumer, resize_managed_terminal,
     resolve_pending_approval, start_managed_terminal, stop_managed_terminal,
     unregister_approval_consumer, write_managed_terminal,
 };
+#[cfg(test)]
+use session_command::is_safe_id;
+use session_command::{rename_session, set_archived, set_session_note};
 use session_query::{
     get_live_sessions_counts, get_live_sessions_page, get_overview, get_project_tasks, recent_cwds,
 };
-use session_command::{rename_session, set_archived, set_session_note};
-#[cfg(test)]
-use session_command::is_safe_id;
 #[cfg(test)]
 use session_query::{
     live_sessions_blocking, session_connected, tab_class, PageReq, RESUME_GRACE_MS,
@@ -122,7 +126,10 @@ struct AppState {
     /// 「等长重写」检测所需的 mtime 记录。
     chat_mtimes: Arc<Mutex<chat::ChatMtimes>>,
     /// 会话列表和角标共享的短命进程表快照。
-    process_snapshots: session_query::ProcessSnapshotCache,
+    // Arc:采样(冷路径 30-120ms)在各命令的 spawn_blocking 里做,缓存需跨闭包共享。
+    process_snapshots: std::sync::Arc<session_query::ProcessSnapshotCache>,
+    // Arc:confirm_dialog 的窗口销毁回调要在 'static 闭包里访问待决表。
+    confirms: std::sync::Arc<confirm::Confirms>,
     /// 最近一次检查得到的更新包；下载命令复用它，确保检查与下载使用同一份代理策略。
     update: Mutex<Option<tauri_plugin_updater::Update>>,
     /// 已下载且通过 updater 签名校验的安装包。只驻留内存，退出应用后重新下载。
@@ -278,24 +285,32 @@ async fn download_update(
 }
 
 #[tauri::command]
-fn install_downloaded_update(state: State<'_, AppState>) -> Result<(), String> {
-    let downloaded = state
-        .downloaded_update
-        .lock()
-        .map_err(|_| "更新状态锁已损坏".to_string())?
-        .take()
-        .ok_or("更新尚未下载完成")?;
-    if let Err(error) = downloaded.update.install(&downloaded.bytes) {
-        let mut slot = state
+async fn install_downloaded_update(app: tauri::AppHandle) -> Result<(), String> {
+    // async + spawn_blocking：install 要把几十 MB 安装包落盘并拉起安装进程，同步命令会
+    // 让所有窗口在退出前的最后几秒集体「未响应」。State 不能跨进 blocking 闭包，改经
+    // AppHandle 在闭包内取。
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let downloaded = state
             .downloaded_update
             .lock()
-            .map_err(|_| "更新状态锁已损坏".to_string())?;
-        if slot.is_none() {
-            *slot = Some(downloaded);
+            .map_err(|_| "更新状态锁已损坏".to_string())?
+            .take()
+            .ok_or("更新尚未下载完成")?;
+        if let Err(error) = downloaded.update.install(&downloaded.bytes) {
+            let mut slot = state
+                .downloaded_update
+                .lock()
+                .map_err(|_| "更新状态锁已损坏".to_string())?;
+            if slot.is_none() {
+                *slot = Some(downloaded);
+            }
+            return Err(error.to_string());
         }
-        return Err(error.to_string());
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn now_ms() -> i64 {
@@ -832,12 +847,10 @@ pub fn run() {
         // 可见性完全由代码显式控制（main 由 tauri.conf 的 visible:true，其余窗口自管）。
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all().difference(
-                        tauri_plugin_window_state::StateFlags::SIZE
-                            | tauri_plugin_window_state::StateFlags::VISIBLE,
-                    ),
-                )
+                .with_state_flags(tauri_plugin_window_state::StateFlags::all().difference(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::VISIBLE,
+                ))
                 .build(),
         )
         .plugin(tauri_plugin_autostart::init(
@@ -852,7 +865,8 @@ pub fn run() {
             db_path: path.clone(),
             tx_cache: tx_cache.clone(),
             chat_mtimes: Arc::new(Mutex::new(chat::ChatMtimes::default())),
-            process_snapshots: session_query::ProcessSnapshotCache::default(),
+            process_snapshots: std::sync::Arc::new(session_query::ProcessSnapshotCache::default()),
+            confirms: std::sync::Arc::new(confirm::Confirms::default()),
             update: Mutex::new(None),
             downloaded_update: Mutex::new(None),
             update_downloading: AtomicBool::new(false),
@@ -864,9 +878,14 @@ pub fn run() {
             get_live_sessions_counts,
             get_live_sessions_page,
             get_chat_history,
+            confirm::confirm_dialog,
+            confirm::confirm_dialog_payload,
+            confirm::confirm_dialog_result,
             get_subagent_transcript,
             refresh_session_model,
             refresh_session_todos,
+            save_pasted_attachment,
+            clipboard_image_fingerprint,
             open_chat_window,
             start_managed_terminal,
             takeover_managed_terminal,
@@ -1154,10 +1173,12 @@ mod tests {
         drop(store);
 
         let cache = std::sync::Mutex::new(meowo_agent::TranscriptCache::new());
+        let pty_none = std::collections::HashSet::new();
         let page = live_sessions_blocking(
             &path,
             &cache,
             &alive,
+            &pty_none,
             "waiting",
             None,
             PageReq {
@@ -1444,8 +1465,12 @@ mod tests {
     #[test]
     fn session_connected_logic() {
         let now = 1_000_000i64;
-        // 结束 → 断开（即使 pid 看着是活的）。
-        assert!(!session_connected("ended", Some(123), true, now, now));
+        // 结束 + 实证存活(进程表命中/托管 PTY 活跃)→ 连接:恢复会话的窗口期 DB 还挂着
+        // 旧 'ended' 而 PTY 已在跑,不让位就会「已结束」徽标配「结束会话」按钮同框。
+        assert!(session_connected("ended", Some(123), true, now, now));
+        // 结束 + 无实证存活 → 断开,事件宽限**不适用**:刚结束的会话天然在宽限期内,
+        // 套用宽限会让所有 ended 会话诈尸 120 秒。
+        assert!(!session_connected("ended", Some(123), false, now, now));
         // 活着的 agent 进程 → 连接（与时间无关）。
         assert!(session_connected("running", Some(123), true, 0, now));
         // pid 已认领但此刻没校验成存活 + 刚活动过 → 连接（新建会话：SessionStart 已 set_session_pid，

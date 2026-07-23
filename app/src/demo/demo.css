@@ -7,7 +7,7 @@
     radial-gradient(1100px 600px at 18% -10%, #2e2a26 0%, transparent 55%),
     radial-gradient(900px 560px at 105% 110%, #26221f 0%, transparent 60%),
     linear-gradient(160deg, #211e1b 0%, #1b1917 55%, #171513 100%);
-  font-family: "Inter Variable", "Noto Sans SC", -apple-system, "Segoe UI",
+  font-family: "Inter Variable", -apple-system, "Segoe UI",
     "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 .demo-blob {

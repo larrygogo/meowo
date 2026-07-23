@@ -13,25 +13,45 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 // xterm 需要真实 canvas/DOM 度量，jsdom 跑不了；这里只关心遮罩状态机，故把终端替换成哑实现。
+const keyHandler = vi.hoisted(() => ({ current: null as ((event: KeyboardEvent) => boolean) | null }));
+const linkOpen = vi.hoisted(() => ({ current: null as ((event: MouseEvent, uri: string) => void) | null }));
+const termOptions = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+// onData 处理器与可控的 write 完成回调:回放拦截测试要在「write 已入队、回调未触发」的
+// 窗口里注入 xterm 自动应答,manual 模式把回调攒进队列由测试择机触发。
+const dataHandler = vi.hoisted(() => ({ current: null as ((data: string) => void) | null }));
+const writeCallbacks = vi.hoisted(() => ({ manual: false, queue: [] as (() => void)[] }));
+vi.mock("@xterm/addon-web-links", () => ({
+  WebLinksAddon: class {
+    constructor(handler: (event: MouseEvent, uri: string) => void) { linkOpen.current = handler; }
+  },
+}));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
+    constructor(options: Record<string, unknown>) { termOptions.current = options; }
     cols = 80;
     rows = 24;
-    write = (data: Uint8Array | string, callback?: () => void) => { write(data); callback?.(); };
+    options = { fontSize: 12 };
+    write = (data: Uint8Array | string, callback?: () => void) => {
+      write(data);
+      if (writeCallbacks.manual && callback) writeCallbacks.queue.push(callback);
+      else callback?.();
+    };
     open = vi.fn();
     reset = vi.fn();
     focus = vi.fn();
     dispose = vi.fn();
     loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
+    onData = (handler: (data: string) => void) => { dataHandler.current = handler; return { dispose: vi.fn() }; };
+    attachCustomKeyEventHandler = (handler: (event: KeyboardEvent) => boolean) => { keyHandler.current = handler; };
   },
 }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = vi.fn(); } }));
-// 与 About.account.test.tsx 同款：确认框必须走 tauri 的 dialog（webview 会吞掉 window.confirm）。
-const dialog = vi.hoisted(() => ({ confirm: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => dialog);
+// 接管确认走应用内原生小窗(invoke confirm_dialog),不再用 plugin-dialog / window.confirm。
+// 用 confirmAnswer 控制那次 invoke 的返回;plugin-dialog 仍被 mock 以防其它路径引用。
+vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: vi.fn(), open: vi.fn() }));
+const confirmAnswer = vi.hoisted(() => ({ ok: true }));
 
-import { ManagedTerminal } from "./ManagedTerminal";
+import { findFakeCaret, ManagedTerminal, stripTerminalReplies } from "./ManagedTerminal";
 
 const noPty = { sessionId: 163, active: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null };
 
@@ -40,13 +60,80 @@ describe("ManagedTerminal", () => {
   beforeEach(() => {
     invoke.mockReset();
     write.mockReset();
-    dialog.confirm.mockReset();
-    dialog.confirm.mockResolvedValue(true);
+    confirmAnswer.ok = true;
     eventHandlers.clear();
+    dataHandler.current = null;
+    writeCallbacks.manual = false;
+    writeCallbacks.queue = [];
     global.ResizeObserver = class {
       observe = vi.fn();
       disconnect = vi.fn();
     } as unknown as typeof ResizeObserver;
+  });
+
+  it("放行粘贴组合键：Ctrl/Cmd+V 与 Shift+Insert 交给浏览器原生 paste，其余按键仍由 xterm 处理", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(keyHandler.current).toBeTruthy());
+    const key = (init: Partial<KeyboardEvent> & { type: string; code: string }) => init as KeyboardEvent;
+    // false = xterm 不处理也不 preventDefault → WebView 对隐藏 textarea 执行原生粘贴。
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyV", ctrlKey: true }))).toBe(false);
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyV", metaKey: true }))).toBe(false);
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyV", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(keyHandler.current!(key({ type: "keydown", code: "Insert", shiftKey: true }))).toBe(false);
+    // 组合键的 keyup 与普通按键照常交给 xterm（否则 ^V 之外的键序全部失灵）。
+    expect(keyHandler.current!(key({ type: "keyup", code: "KeyV", ctrlKey: true }))).toBe(true);
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyV" }))).toBe(true);
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyC", ctrlKey: true }))).toBe(true);
+    // Ctrl+Alt+V（AltGr 组合可能产字符）不劫持。
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyV", ctrlKey: true, altKey: true }))).toBe(true);
+  });
+
+  it("链接走终端惯例：Ctrl/Cmd+点击经 open_link 打开，普通点击不动", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(linkOpen.current).toBeTruthy());
+    const click = (init: Partial<MouseEvent>) => init as MouseEvent;
+    // 普通点击留给 TUI 的鼠标交互与选区。
+    linkOpen.current!(click({}), "https://example.com/a");
+    expect(invoke).not.toHaveBeenCalledWith("open_link", expect.anything());
+    linkOpen.current!(click({ ctrlKey: true }), "https://example.com/a");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_link", { url: "https://example.com/a" }));
+    // OSC 8 超链接（TUI 显式声明）与纯文本 URL 同一个门控与通道。
+    const handler = termOptions.current?.linkHandler as { activate: (e: MouseEvent, uri: string) => void };
+    expect(handler).toBeTruthy();
+    handler.activate(click({ metaKey: true }), "https://example.com/b");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_link", { url: "https://example.com/b" }));
+  });
+
+  it("findFakeCaret：孤立单格反显是假光标，连排反显与多义画面不误认", () => {
+    // 'X' = 反显格，'.' = 普通格。kimi 的输入光标就是一个孤立的反显空格。
+    const bufferOf = (rows: string[]) => ({
+      viewportY: 0,
+      getLine: (y: number) => {
+        const row = rows[y];
+        if (row == null) return undefined;
+        return {
+          length: row.length,
+          getCell: (x: number) => (x < row.length ? { isInverse: () => (row[x] === "X" ? 1 : 0) } : undefined),
+        };
+      },
+    });
+    // 唯一孤立反显 → 命中（输入行 "> ab▮"）。
+    expect(findFakeCaret(bufferOf(["......", "..X...", "......"]), 3)).toEqual({ x: 2, y: 1 });
+    // 菜单选中行是连排反显：整段跳过，孤立的那格仍命中。
+    expect(findFakeCaret(bufferOf(["XXXXX.", "....X.", "......"]), 3)).toEqual({ x: 4, y: 1 });
+    // 两个孤立反显：多义，放弃（维持 xterm 默认锚点）。
+    expect(findFakeCaret(bufferOf(["..X...", "....X."]), 2)).toBeNull();
+    // 没有反显：无从锚定。
+    expect(findFakeCaret(bufferOf(["......", "......"]), 2)).toBeNull();
+    expect(findFakeCaret(undefined, 2)).toBeNull();
   });
 
   it("offers takeover when the session is still running in an external terminal", async () => {
@@ -181,6 +268,40 @@ describe("ManagedTerminal", () => {
     expect(attention.mock.calls[1][0].text).toContain("OAuth token has been revoked");
   });
 
+  /**
+   * 提示从屏幕上消失(在终端里答掉了/界面翻页了)后必须自动收卡:此前 attention 只置
+   * 不清,误报或已处理的提示会永久钉住卡片、锁死对话页输入框。清卡带连击门槛
+   * (连续多次扫描不匹配)骑过 TUI 分笔重绘的中间帧;之后同类新提示还能再弹。
+   */
+  it("提示消失后自动发布 null 收卡,新提示可再弹", async () => {
+    const attention = vi.fn();
+    const trust = "\x1b[2JDo you trust the files in this folder?\r\n  Yes\r\n  No";
+    const cleared = "\x1b[2Jworking on it...";
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ ...noPty, active: true, data: btoa(trust), endOffset: trust.length });
+      }
+      return Promise.resolve();
+    });
+    render(
+      <ManagedTerminal
+        sessionId={163}
+        status="running"
+        attentionMarkers={["do you trust the files in this folder"]}
+        onAttention={attention}
+      />,
+    );
+    await waitFor(() => expect(attention).toHaveBeenCalledTimes(1));
+    // 提示被答掉:清屏后只剩普通输出。miss 分支会自我续排扫描凑满连击,无需更多输出。
+    eventHandlers.get("pty-output")!({ payload: { sessionId: 163, offset: trust.length, data: btoa(cleared) } });
+    await waitFor(() => expect(attention).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+    expect(attention.mock.calls[1][0]).toBeNull();
+    // 下一个同类提示(内容相同)仍要能弹:签名去重已随清卡重置。
+    eventHandlers.get("pty-output")!({ payload: { sessionId: 163, offset: trust.length + cleared.length, data: btoa(trust) } });
+    await waitFor(() => expect(attention).toHaveBeenCalledTimes(3), { timeout: 3_000 });
+    expect(attention.mock.calls[2][0]?.text).toContain("Do you trust");
+  });
+
   it("orders and deduplicates live output buffered while the initial snapshot is loading", async () => {
     let resolveSnapshot!: (value: typeof noPty) => void;
     invoke.mockImplementation((command: string) => {
@@ -205,27 +326,29 @@ describe("ManagedTerminal", () => {
     // 而旧测试只断言按钮渲染、从不点击，刚好放过了这个 bug。这里必须点下去走完全链路。
     invoke.mockImplementation((command: string) => {
       if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      if (command === "confirm_dialog") return Promise.resolve(confirmAnswer.ok);
       return Promise.resolve();
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
     const button = await screen.findByRole("button", { name: "结束外部进程并接管" });
     button.click();
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("takeover_managed_terminal", { sessionId: 163, cols: 80, rows: 24 }),
     );
   });
 
   it("confirm 取消时不调用接管 invoke", async () => {
-    dialog.confirm.mockResolvedValue(false);
+    confirmAnswer.ok = false;
     invoke.mockImplementation((command: string) => {
       if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      if (command === "confirm_dialog") return Promise.resolve(confirmAnswer.ok);
       return Promise.resolve();
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
     const button = await screen.findByRole("button", { name: "结束外部进程并接管" });
     button.click();
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     expect(invoke.mock.calls.some(([command]) => command === "takeover_managed_terminal")).toBe(false);
   });
 
@@ -235,27 +358,29 @@ describe("ManagedTerminal", () => {
       if (command === "managed_terminal_snapshot") {
         return Promise.resolve({ ...noPty, active: true, data: btoa("ready"), endOffset: 5 });
       }
+      if (command === "confirm_dialog") return Promise.resolve(confirmAnswer.ok);
       return Promise.resolve();
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
     const button = await screen.findByRole("button", { name: "结束终端" });
     button.click();
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("stop_managed_terminal", { sessionId: 163 }));
   });
 
   it("结束终端的 confirm 被取消时不杀进程", async () => {
-    dialog.confirm.mockResolvedValue(false);
+    confirmAnswer.ok = false;
     invoke.mockImplementation((command: string) => {
       if (command === "managed_terminal_snapshot") {
         return Promise.resolve({ ...noPty, active: true, data: btoa("ready"), endOffset: 5 });
       }
+      if (command === "confirm_dialog") return Promise.resolve(confirmAnswer.ok);
       return Promise.resolve();
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
     const button = await screen.findByRole("button", { name: "结束终端" });
     button.click();
-    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     expect(invoke.mock.calls.some(([command]) => command === "stop_managed_terminal")).toBe(false);
   });
 
@@ -283,5 +408,55 @@ describe("ManagedTerminal", () => {
     eventHandlers.get("pty-output")!({ payload: { sessionId: 163, offset: 0, data: btoa("HI") } });
     await waitFor(() => expect(write).toHaveBeenCalled());
     expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("HI");
+  });
+
+  it("stripTerminalReplies 剔除各类自动应答、保留用户输入", () => {
+    // CPR / DA1 / DA2 / DSR 状态 / DECRPM / OSC 颜色应答 / DCS 应答。
+    expect(stripTerminalReplies("\x1b[24;1R")).toBe("");
+    expect(stripTerminalReplies("\x1b[?1;2c")).toBe("");
+    expect(stripTerminalReplies("\x1b[>0;276;0c")).toBe("");
+    expect(stripTerminalReplies("\x1b[0n")).toBe("");
+    expect(stripTerminalReplies("\x1b[?2026;2$y")).toBe("");
+    // DECRPM 的 ANSI 形态不带 '?'(xterm 对 CSI Ps $ p 的应答),同样要拦。
+    expect(stripTerminalReplies("\x1b[4;2$y")).toBe("");
+    // CSI-t 窗口尺寸报告(windowOptions 开启时 xterm 会应答 CSI 18 t 等)。
+    expect(stripTerminalReplies("\x1b[8;24;80t")).toBe("");
+    expect(stripTerminalReplies("\x1b]11;rgb:1e1e/1e1e/1e1e\x07")).toBe("");
+    expect(stripTerminalReplies("\x1bP>|xterm\x1b\\")).toBe("");
+    // 混着来也只剔应答;普通字符、回车、方向键(无参数的 \x1b[C)原样保留。
+    expect(stripTerminalReplies("a\x1b[?1;2cb\r")).toBe("ab\r");
+    expect(stripTerminalReplies("\x1b[C")).toBe("\x1b[C");
+    expect(stripTerminalReplies("你好")).toBe("你好");
+  });
+
+  /**
+   * 重连回放不得把 xterm 的自动应答打进 PTY:快照会整段回放历史,里面 agent 当年的
+   * 查询(\x1b[6n 等)会被 xterm 再答一遍,迟到的应答落进正跑着的 agent 输入框,
+   * 变成孤立的尾字符(真实案例:每次重连 claude 的 composer 里多一个 C)。
+   * 拦截仅限回放窗口:窗口内用户按键照常放行,窗口结束后应答恢复转发。
+   */
+  it("历史回放窗口内拦下自动应答,回放结束与用户输入不受影响", async () => {
+    writeCallbacks.manual = true;
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ sessionId: 163, active: true, data: btoa("history \x1b[6n tail"), startOffset: 0, endOffset: 16, exited: false, exitCode: null });
+      }
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(dataHandler.current).toBeTruthy());
+    await waitFor(() => expect(write).toHaveBeenCalled());
+
+    // 回放已入队、完成回调未触发:此刻 xterm 对历史查询吐出 CPR 应答 → 必须拦下。
+    dataHandler.current!("\x1b[24;1R");
+    expect(invoke.mock.calls.some(([command]) => command === "write_managed_terminal")).toBe(false);
+    // 同一窗口里的用户真实输入不受影响。
+    dataHandler.current!("a");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 163, data: "a" }));
+
+    // 回放完成后,agent 实时查询的应答是它正在等的,恢复原样转发。
+    writeCallbacks.queue.forEach((callback) => callback());
+    dataHandler.current!("\x1b[24;1R");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 163, data: "\x1b[24;1R" }));
   });
 });
