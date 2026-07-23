@@ -62,12 +62,14 @@ function hasVisibleOutput(bytes: Uint8Array): boolean {
 const INITIALIZING_TIMEOUT_MS = 25_000;
 
 /// 剔除「终端自动应答」形态的序列：CPR 光标位置（`\x1b[n;mR`，含 DECXCPR 的 `?` 变体）、
-/// DSR 状态（`\x1b[0n`）、DA1/DA2 设备属性（`…c`）、DECRPM（`…$y`）、OSC 应答（颜色查询等）、
-/// DCS 应答。重连时快照会把整段历史回放进 xterm，历史里 agent 当年的查询（`\x1b[6n` 等）
-/// 会被 xterm **再答一遍**，迟到的应答经 onData 打进正跑着的 agent 输入框，控制序列被
-/// 部分吞掉后剩下孤立尾字符（真实案例：每次重连 claude 的 composer 里多出一个 C）。
+/// DSR 状态（`\x1b[0n`）、DA1/DA2 设备属性（`…c`）、DECRPM（`…$y`）、OSC 应答（颜色查询
+/// 等）、DCS 应答。重连时快照会把整段历史回放进 xterm，历史里 agent 当年的查询（`\x1b[6n`
+/// 等）会被 xterm **再答一遍**，迟到的应答经 onData 打进正跑着的 agent 输入框，控制序列
+/// 被部分吞掉后剩下孤立尾字符（真实案例：每次重连 claude 的 composer 里多出一个 C）。
 /// 只在历史回放窗口内套用；用户按键唯一可能撞形态的是带修饰键的 F3（`\x1b[1;2R`），
 /// 在几毫秒的回放窗口里按到它的代价可以忽略。
+/// 首帧前的启动探测不需要前端拦截:后端代答后已把查询从流中摘除（pty.rs 的
+/// StartupProbeScanner），xterm 根本看不到,不存在要拦的自动应答。
 export function stripTerminalReplies(data: string): string {
   // DECRPM($y)的 '?' 必须可选:xterm 对 ANSI 模式查询(CSI Ps $ p)的应答不带 '?'
   // (如 \x1b[4;2$y),只匹配 DEC 私有形态会漏放。CSI-t 是窗口尺寸报告(CSI 18 t 等,
@@ -255,9 +257,10 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
     requestAnimationFrame(() => fit.fit());
 
     const input = terminal.onData((data) => {
-      // 历史回放窗口内，xterm 对回放查询的自动应答不得下发 PTY（见 stripTerminalReplies）；
-      // 用户真实按键不匹配这些形态，照常放行。窗口外（agent 实时发的查询）原样转发——
-      // 那些应答是 agent 正在等的。
+      // 历史回放窗口内，xterm 对回放查询的自动应答不得下发 PTY（见 stripTerminalReplies）。
+      // 预绘期不需要额外拦 CPR：启动探测由后端代答并**从流中摘除**（pty.rs 的
+      // StartupProbeScanner），xterm 根本看不到就不会自动应答。实时查询的应答原样
+      // 转发——那是 TUI 正在等的；用户真实按键不匹配回放过滤的形态，照常放行。
       const payload = replayingHistory ? stripTerminalReplies(data) : data;
       if (!payload) return;
       if (payload.includes("\r")) {
@@ -413,7 +416,10 @@ export function ManagedTerminal({ sessionId, status, visible = true, onUserSubmi
       setExitCode(snapshot.exited ? snapshot.exitCode : undefined);
       if (snapshot.data) {
         // 首次全量回放(重连/重开窗口)才拦应答:里面全是答过的旧查询。增量补查是准实时
-        // 输出,agent 可能正等着这些应答,不拦。
+        // 输出,agent 可能正等着这些应答,不拦。启动探测(ESC[6n)的代答不在这里做——
+        // 曾在此按回放内容补答过,但临时 id→真实 id 的重挂会重扫同一段 backlog,同一个
+        // 查询被答两次,多出的应答落进 composer 成杂字符;现在由后端 reader 单趟代答
+        // (pty.rs StartupProbeScanner),回放路径只负责「不放行 xterm 的重复应答」。
         if (!hasWrittenOutput) replayingHistory = true;
         writeOutput({
           sessionId,

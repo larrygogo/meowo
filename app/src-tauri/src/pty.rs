@@ -284,6 +284,212 @@ fn random_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// TUI 启动探测(`ESC[6n` 光标位置查询)的**唯一**应答者。
+///
+/// claude 等 TUI 启动时先发 `ESC[6n` 探测终端,**得不到回应就永远不画第一帧**;而此刻
+/// 往往还没有任何视图挂着(对话窗 WebView 冷启动要一两秒,外部 attach 更晚),查询只能
+/// 躺在 backlog 里等回放。谁替它答?此前的答案是「每个视图自己答」:xterm 自动应答、
+/// attach 客户端 DsrFilter 代答、前端回放代答——应答者一多,再叠上重连/重挂对同一段
+/// backlog 的重扫,同一个查询就会被答多次;多出来的应答落进 agent 输入框,成了孤立的
+/// 杂字符(真实案例:恢复会话后 claude 的 composer 里凭空多一个 C)。
+///
+/// 现在收成单一所有者:PTY reader 对输出流做**单趟**扫描,首个可见字节之前的 `ESC[6n]`
+/// 由后端当场代答 `ESC[1;1R`——TUI 只要一个基准值,真实排版靠后续的清屏与绝对定位
+/// 序列,(1,1) 与 attach 客户端 DsrFilter 的既有行为一致。单趟意味着每个查询字节只被
+/// 检视一次,重连、回放、组件重挂都不可能触发第二次应答。首帧画出后 TUI 的实时查询
+/// 交还给活着的视图(xterm 以真实光标位置应答),本扫描器永久停机。
+///
+/// **已代答的探测同时从流中摘除**:单一应答者的另一半含义是下游根本看不到已答的查询。
+/// 摘除之前,同一条首帧前探测会被订阅在先的 attach 客户端(DsrFilter 对实时查询全数
+/// 代答)或与首个可见字节挤进同一事件帧的 GUI xterm 再答一遍——多出的应答落进 agent
+/// 输入框。摘除之后 DsrFilter/xterm 只会遇到首帧后的实时查询,那正是它们该答的。
+struct StartupProbeScanner {
+    /// 已见到可见字节:探测期结束,feed 恒原样透传。
+    painted: bool,
+    state: ProbeScanState,
+    /// 疑似探测前缀的暂存(`ESC`/`ESC[`/`ESC[6`,最多 3 字节):确定是探测则丢弃
+    /// (已代答),确定不是则原样冲入输出。只在首帧前使用,扣住几个字节无副作用;
+    /// 回到 Ground 时恒为空,painted 翻转只发生在 Ground,故停机时不会扣留字节。
+    hold: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+enum ProbeScanState {
+    Ground,
+    Esc,
+    /// ESC + 中间字节(0x20-0x2F,如 charset 指定 `ESC ( B`):负载不是画面,等最终字节。
+    /// 此前这类序列落回 Ground,负载字节被误判为可见输出,扫描器提前停机——探测从此
+    /// 没人答,TUI 卡在首帧前(25s 兜底后黑屏)。
+    EscIntermediate,
+    /// CSI:hold 非空 = 仍可能是探测;hold 已冲出 = 已排除,透传到最终字节。
+    Csi,
+    Osc,
+    OscEsc,
+    /// DCS/SOS/PM/APC 字符串(ESC P/X/^/_):负载不是画面,吞到 ST(ESC \)。
+    Str,
+    StrEsc,
+}
+
+impl StartupProbeScanner {
+    fn new() -> Self {
+        Self {
+            painted: false,
+            state: ProbeScanState::Ground,
+            hold: Vec::new(),
+        }
+    }
+
+    fn painted(&self) -> bool {
+        self.painted
+    }
+
+    fn flush(&mut self, out: &mut Vec<u8>) {
+        out.append(&mut self.hold);
+    }
+
+    /// 返回(应转发/入 backlog 的字节, 本 chunk 需要代答的探测个数)。已代答的探测不在
+    /// 返回字节里;疑似探测前缀暂存到下一 chunk,撕裂在边界上的查询照样只答一次、不外流。
+    /// 可见性口径与前端 hasVisibleOutput 一致:ESC 序列与 ≤0x20 的空白控制字节都不算画面。
+    fn feed(&mut self, chunk: &[u8]) -> (Vec<u8>, usize) {
+        let mut out = Vec::with_capacity(self.hold.len() + chunk.len());
+        if self.painted {
+            out.extend_from_slice(chunk);
+            return (out, 0);
+        }
+        let mut probes = 0;
+        for (index, &byte) in chunk.iter().enumerate() {
+            match self.state {
+                ProbeScanState::Ground => {
+                    if byte == 0x1b {
+                        self.hold.push(byte);
+                        self.state = ProbeScanState::Esc;
+                    } else if byte > 0x20 && byte != 0x7f {
+                        // 可见字节:探测期结束,本字节与其后全部原样透传。
+                        self.painted = true;
+                        out.push(byte);
+                        out.extend_from_slice(&chunk[index + 1..]);
+                        return (out, probes);
+                    } else {
+                        out.push(byte);
+                    }
+                }
+                // Esc 状态 hold 恒为 [ESC](只从 Ground 进入)。
+                ProbeScanState::Esc => match byte {
+                    0x5b => {
+                        self.hold.push(byte);
+                        self.state = ProbeScanState::Csi;
+                    }
+                    0x5d => {
+                        self.flush(&mut out);
+                        out.push(byte);
+                        self.state = ProbeScanState::Osc;
+                    }
+                    // ESC ESC:冲出前一个,新的接着暂存(hold 恰好不变)。
+                    0x1b => out.push(0x1b),
+                    0x20..=0x2f => {
+                        self.flush(&mut out);
+                        out.push(byte);
+                        self.state = ProbeScanState::EscIntermediate;
+                    }
+                    b'P' | b'X' | b'^' | b'_' => {
+                        self.flush(&mut out);
+                        out.push(byte);
+                        self.state = ProbeScanState::Str;
+                    }
+                    // 双字节 ESC 序列(ESC 7 等):吞掉 kind 字节回到地面。
+                    _ => {
+                        self.flush(&mut out);
+                        out.push(byte);
+                        self.state = ProbeScanState::Ground;
+                    }
+                },
+                ProbeScanState::EscIntermediate => {
+                    out.push(byte);
+                    // 中间字节(0x20-0x2F)可连续多个;其余任意字节都当最终字节收尾。
+                    if !(0x20..=0x2f).contains(&byte) {
+                        self.state = ProbeScanState::Ground;
+                    }
+                }
+                ProbeScanState::Csi => {
+                    if self.hold.is_empty() {
+                        // 已排除探测的 CSI:透传到最终字节。
+                        out.push(byte);
+                        if (0x40..=0x7e).contains(&byte) {
+                            self.state = ProbeScanState::Ground;
+                        }
+                    } else if self.hold.len() == 2 && byte == b'6' {
+                        self.hold.push(byte);
+                    } else if self.hold.len() == 3 && byte == b'n' {
+                        // 完整 `ESC[6n`:代答,并把这四个字节从流中摘除。
+                        self.hold.clear();
+                        probes += 1;
+                        self.state = ProbeScanState::Ground;
+                    } else {
+                        // 参数不是恰好 "6":排除探测,冲出暂存,本字节照常处理。
+                        self.flush(&mut out);
+                        out.push(byte);
+                        if (0x40..=0x7e).contains(&byte) {
+                            self.state = ProbeScanState::Ground;
+                        }
+                    }
+                }
+                ProbeScanState::Osc => {
+                    out.push(byte);
+                    if byte == 0x07 {
+                        self.state = ProbeScanState::Ground;
+                    } else if byte == 0x1b {
+                        self.state = ProbeScanState::OscEsc;
+                    }
+                }
+                ProbeScanState::OscEsc => {
+                    // ST(ESC \)收尾;其余当 OSC 内容继续吞。
+                    out.push(byte);
+                    self.state = if byte == 0x5c {
+                        ProbeScanState::Ground
+                    } else {
+                        ProbeScanState::Osc
+                    };
+                }
+                ProbeScanState::Str => {
+                    out.push(byte);
+                    if byte == 0x1b {
+                        self.state = ProbeScanState::StrEsc;
+                    }
+                }
+                ProbeScanState::StrEsc => {
+                    out.push(byte);
+                    self.state = match byte {
+                        0x5c => ProbeScanState::Ground,
+                        0x1b => ProbeScanState::StrEsc,
+                        _ => ProbeScanState::Str,
+                    };
+                }
+            }
+        }
+        (out, probes)
+    }
+}
+
+/// 从**展示用**字节流中移除完整的 `ESC[6n` 查询。只用于 attach 回放:客户端 DsrFilter
+/// 会对流里的每个查询代答一遍,而回放里的查询全是历史——首帧前的探测已在 reader 处
+/// 被摘除根本不进 backlog(StartupProbeScanner),留下的是首帧后的查询,当年已由活着
+/// 的视图答过,迟到的代答会打进正跑着的 agent 输入框(「重开外部同步终端后 composer
+/// 里多一个 C」的直接来源)。backlog 本体与偏移一个字节都不能动:GUI 快照按偏移对齐
+/// 增量。跨 backlog 裁剪边界的残缺前缀不匹配、原样保留(既有的碎片语义)。
+fn strip_dsr_queries(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        if data[i..].starts_with(b"\x1b[6n") {
+            i += 4;
+        } else {
+            out.push(data[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         rows: rows.clamp(2, 500),
@@ -552,10 +758,32 @@ impl PtyBroker {
         let broker = self.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
+            // 启动探测代答必须在 reader 单趟流上做(见 StartupProbeScanner):任何基于
+            // 快照/回放的重扫都可能把同一个查询答第二遍,多出的应答会落进 agent 输入框。
+            let mut probe_scanner = StartupProbeScanner::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
+                        // 首帧前:扫描并把已代答的探测从流中摘除(理由见 StartupProbeScanner:
+                        // 下游 DsrFilter/xterm 看不到已答的查询就不可能再答第二遍),疑似探测
+                        // 前缀暂存到下一读。首帧后:零拷贝直通,不再产生任何暂存。
+                        let (data, probes): (std::borrow::Cow<'_, [u8]>, usize) =
+                            if probe_scanner.painted() {
+                                (std::borrow::Cow::Borrowed(&buf[..n]), 0)
+                            } else {
+                                let (cleaned, probes) = probe_scanner.feed(&buf[..n]);
+                                (std::borrow::Cow::Owned(cleaned), probes)
+                            };
+                        // try_send 不阻塞 reader;队列满(128 条积压)说明子进程根本不读
+                        // 输入,丢一条代答无关大局——那种进程连首帧都不会有人等到。
+                        for _ in 0..probes {
+                            let _ = managed.input_tx.try_send(b"\x1b[1;1R".to_vec());
+                        }
+                        // 整个 chunk 都被摘除/暂存(如恰好只有一条探测):没有字节要分发。
+                        if data.is_empty() {
+                            continue;
+                        }
                         // 分发必须发生在追加 backlog 的同一把锁内：handle_attach 在一个
                         // backlog→subscribers 临界区里「回放 + 注册订阅者」，若这里先放掉
                         // backlog 锁再单独锁 subscribers，恰在缝隙注册的订阅者会把同一个
@@ -570,22 +798,24 @@ impl PtyBroker {
                         };
                         let offset = if let Ok(mut backlog) = managed.backlog.lock() {
                             let offset = managed.output_end.load(Ordering::Relaxed);
-                            backlog.extend(&buf[..n]);
+                            backlog.extend(data.iter().copied());
                             while backlog.len() > BACKLOG_LIMIT {
                                 backlog.pop_front();
                             }
                             managed
                                 .output_end
-                                .store(offset + n as u64, Ordering::Release);
-                            send_chunk(&buf[..n]);
+                                .store(offset + data.len() as u64, Ordering::Release);
+                            send_chunk(&data);
                             offset
                         } else {
-                            let offset = managed.output_end.fetch_add(n as u64, Ordering::AcqRel);
-                            send_chunk(&buf[..n]);
+                            let offset = managed
+                                .output_end
+                                .fetch_add(data.len() as u64, Ordering::AcqRel);
+                            send_chunk(&data);
                             offset
                         };
                         // 对话窗的实时帧交 emitter 合帧后发出（见上），backlog/订阅者不受影响。
-                        let _ = emit_tx.send((offset, buf[..n].to_vec()));
+                        let _ = emit_tx.send((offset, data.into_owned()));
                     }
                 }
             }
@@ -1161,6 +1391,10 @@ impl PtyBroker {
                 .push((subscriber_id, tx));
             backlog.iter().copied().collect::<Vec<_>>()
         };
+        // 回放给外部终端前滤掉历史查询(理由见 strip_dsr_queries):否则客户端 DsrFilter
+        // 每次重开外部同步终端都会把它们再代答一遍。订阅之后的实时字节不过滤——
+        // 新查询正是 DsrFilter 该答的。
+        let backlog = strip_dsr_queries(&backlog);
         let mut output = stream.try_clone().map_err(|e| e.to_string())?;
         std::thread::spawn(move || {
             if output.write_all(&backlog).is_ok() {
@@ -1576,6 +1810,80 @@ mod tests {
         assert_eq!(snapshot.start_offset, 96);
         assert_eq!(snapshot.end_offset, 100);
         assert_eq!(snapshot.exit_code, Some(0));
+    }
+
+    /// 启动探测代答的核心契约:首个可见字节之前的 `ESC[6n` 答、且每个只答一次,同时
+    /// **从流中摘除**——下游(attach DsrFilter、GUI xterm)看不到已答的查询,就不可能
+    /// 再答第二遍;其余字节一个不动。画过首帧后永久停机、原样透传(实时查询交还给
+    /// 活着的视图,xterm 以真实位置应答)。这是「新建会话卡初始化」与「恢复会话
+    /// composer 多个 C」两个 bug 的共同守卫。
+    #[test]
+    fn startup_probe_scanner_answers_and_strips_prepaint_queries_once() {
+        let mut scanner = StartupProbeScanner::new();
+        // claude 冷启动的真实形态:查光标、藏光标、清屏——探测被摘除,其余原样保留。
+        assert_eq!(
+            scanner.feed(b"\x1b[6n\x1b[?25l\x1b[2J"),
+            (b"\x1b[?25l\x1b[2J".to_vec(), 1)
+        );
+        // 跨 chunk 撕裂的查询:前缀暂存不外流,补齐后计数,字节不重复不丢失。
+        assert_eq!(scanner.feed(b"\x1b["), (vec![], 0));
+        assert_eq!(scanner.feed(b"6n"), (vec![], 1));
+        // 撕裂后排除探测的序列:暂存的前缀原样冲出。
+        assert_eq!(scanner.feed(b"\x1b[6"), (vec![], 0));
+        assert_eq!(scanner.feed(b"m"), (b"\x1b[6m".to_vec(), 0));
+        // OSC 标题文本与空白控制字节都不算画面,探测期未结束。
+        assert_eq!(
+            scanner.feed(b"\x1b]0;title\x07 \r\n\x1b[6n"),
+            (b"\x1b]0;title\x07 \r\n".to_vec(), 1)
+        );
+        // 首个可见字节后停机:此后的查询原样透传,由活着的视图应答。
+        assert_eq!(scanner.feed(b"W"), (b"W".to_vec(), 0));
+        assert_eq!(scanner.feed(b"\x1b[6n"), (b"\x1b[6n".to_vec(), 0));
+    }
+
+    #[test]
+    fn startup_probe_scanner_ignores_lookalikes_and_stops_at_paint() {
+        let mut scanner = StartupProbeScanner::new();
+        // 参数不是恰好 "6" 的 CSI-n 都不是光标探测(DSR 状态查询/DECXCPR 变体等),
+        // 一律不答、原样保留。
+        let lookalikes: &[u8] = b"\x1b[16n\x1b[?6n\x1b[6;1n\x1b[0n";
+        assert_eq!(scanner.feed(lookalikes), (lookalikes.to_vec(), 0));
+        // 同一 chunk 里查询在可见字节之前:计入并摘除,可见字节起原样透传(含后续查询)。
+        let mut scanner = StartupProbeScanner::new();
+        assert_eq!(
+            scanner.feed(b"\x1b[6nhello\x1b[6n"),
+            (b"hello\x1b[6n".to_vec(), 1)
+        );
+    }
+
+    /// charset 指定(`ESC ( B`)与 DCS/APC 等字符串序列的负载不是画面:此前 ESC 的
+    /// 中间字节/串负载被误判为可见字节,扫描器提前停机——之后的探测没人答,TUI 卡在
+    /// 首帧前(25s 兜底后黑屏)。
+    #[test]
+    fn startup_probe_scanner_survives_charset_and_string_sequences() {
+        let mut scanner = StartupProbeScanner::new();
+        assert_eq!(scanner.feed(b"\x1b(B\x1b)0"), (b"\x1b(B\x1b)0".to_vec(), 0));
+        assert_eq!(
+            scanner.feed(b"\x1bP+q544e\x1b\\"),
+            (b"\x1bP+q544e\x1b\\".to_vec(), 0)
+        );
+        assert_eq!(scanner.feed(b"\x1b_Ga=q\x1b\\"), (b"\x1b_Ga=q\x1b\\".to_vec(), 0));
+        // 这些序列之后的探测仍有人答。
+        assert_eq!(scanner.feed(b"\x1b[6n"), (vec![], 1));
+        // 真正的可见字节才停机。
+        assert_eq!(scanner.feed(b"x"), (b"x".to_vec(), 0));
+        assert!(scanner.painted());
+    }
+
+    /// attach 回放的展示流要滤掉历史查询(客户端 DsrFilter 会代答流里的每个查询,
+    /// 历史查询的迟到应答会打进 agent 输入框);形似而非与残缺前缀原样保留。
+    #[test]
+    fn strip_dsr_queries_removes_only_complete_queries() {
+        assert_eq!(strip_dsr_queries(b"ab\x1b[6ncd"), b"abcd");
+        assert_eq!(strip_dsr_queries(b"\x1b[6n\x1b[6n"), b"");
+        assert_eq!(strip_dsr_queries(b"\x1b[16n\x1b[?6n"), b"\x1b[16n\x1b[?6n");
+        // backlog 裁剪边界留下的残缺前缀:不匹配,不误删。
+        assert_eq!(strip_dsr_queries(b"\x1b[6"), b"\x1b[6");
     }
 
     /// since 的三种边界：命中中段只回增量、追平后回空、落在已裁剪区之前退化为全量。

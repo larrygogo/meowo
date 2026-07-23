@@ -410,6 +410,32 @@ describe("ManagedTerminal", () => {
     expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("HI");
   });
 
+  /**
+   * 预绘期不再需要前端拦 CPR:启动探测由后端代答并**从流中摘除**(pty.rs
+   * StartupProbeScanner),xterm 根本看不到已代答的查询。反过来,凡是 xterm 真的
+   * 应答了的查询(DECXCPR `?6n` 变体、首帧后的实时查询),它的应答就是唯一一份,
+   * 必须原样转发——预绘期一并拦掉会让 TUI 等不到应答。
+   */
+  it("回放窗口关闭后 CPR 应答原样转发(预绘期不拦)", async () => {
+    // 后端摘除探测后的冷启动形态:藏光标、清屏,流里已没有 \x1b[6n。
+    const loading = "\x1b[?25l\x1b[2J";
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ ...noPty, active: true, data: btoa(loading), endOffset: loading.length });
+      }
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(dataHandler.current).toBeTruthy());
+    await waitFor(() => expect(write).toHaveBeenCalled());
+    // 回放窗口已随 write 回调关闭:首帧未画,CPR 也照常转发(它对应的查询后端没答)。
+    dataHandler.current!("\x1b[24;1R");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 163, data: "\x1b[24;1R" }));
+    // 用户真实按键同样不受影响。
+    dataHandler.current!("a");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 163, data: "a" }));
+  });
+
   it("stripTerminalReplies 剔除各类自动应答、保留用户输入", () => {
     // CPR / DA1 / DA2 / DSR 状态 / DECRPM / OSC 颜色应答 / DCS 应答。
     expect(stripTerminalReplies("\x1b[24;1R")).toBe("");
