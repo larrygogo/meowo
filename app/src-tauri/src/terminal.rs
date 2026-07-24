@@ -409,6 +409,25 @@ pub(crate) fn iterm_installed() -> bool {
         .unwrap_or(false)
 }
 
+/// Ghostty 是否安装（任意常见位置）：先查标准路径，再用 mdfind 按 bundle id 兜底。
+#[cfg(target_os = "macos")]
+pub(crate) fn ghostty_installed() -> bool {
+    use std::path::Path;
+    if Path::new("/Applications/Ghostty.app").exists() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if Path::new(&home).join("Applications/Ghostty.app").exists() {
+            return true;
+        }
+    }
+    std::process::Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'com.mitchellh.ghostty'")
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// 读设置得出「打开未连接会话」用的终端宿主（macOS）。缺省 Terminal.app；
 /// 选了 iTerm2 但未安装时回退 Terminal.app（避免 AppleScript 静默失败）。
 #[cfg(target_os = "macos")]
@@ -1164,6 +1183,50 @@ pub(crate) fn env_prefix_posix(env: &[(String, String)]) -> String {
     format!("{clear}{set}")
 }
 
+/// POSIX shell 参数逐项单引号包裹并拼接；单引号按 `'\''` 转义。
+///
+/// 例：`["a", "b'c"] -> "'a' 'b'\\''c'"`。
+fn shell_join_for_posix(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| format!("'{}'", arg.replace('\'', r"'\''")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 组装给 Ghostty 执行的一条 `sh -lc` 命令。
+///
+/// - `env_prefix` 形如 `source '<tmp>' && rm -f '<tmp>' && `（见 `env_source_prefix_posix`）；
+/// - `cwd` 非空时先 `cd` 到目标目录；
+/// - `argv` 逐项按 POSIX 单引号规则转义并拼接。
+///
+/// `argv` 为空时返回 `None`，调用方应视为不可执行。
+fn ghostty_shell_command(cwd: Option<&str>, argv: &[String], env_prefix: &str) -> Option<String> {
+    if argv.is_empty() {
+        return None;
+    }
+    let run = format!("{env_prefix}{}", shell_join_for_posix(argv));
+    let cmd = match cwd.map(str::trim) {
+        Some("") | None => run,
+        Some(dir) => format!("cd '{}' && {run}", dir.replace('\'', r"'\''")),
+    };
+    Some(cmd)
+}
+
+#[cfg(target_os = "macos")]
+/// 用 Ghostty 新开终端并执行恢复命令。
+///
+/// 通过 `open -na Ghostty --args -e /bin/sh -lc <cmd>` 拉起，
+/// 返回值表示是否成功发起 spawn（并不等待命令执行完成）。
+fn resume_session_ghostty(cwd: Option<&str>, argv: &[String], env_prefix: &str) -> bool {
+    let Some(cmd) = ghostty_shell_command(cwd, argv, env_prefix) else {
+        return false;
+    };
+    std::process::Command::new("open")
+        .args(["-na", "Ghostty", "--args", "-e", "/bin/sh", "-lc", &cmd])
+        .spawn()
+        .is_ok()
+}
+
 /// macOS 恢复会话的 env 注入文件：赋值写进临时文件（unix 下创建即 0600），终端命令只出现
 /// `source '<tmp>' && rm -f '<tmp>' && ` 前缀——密钥值不再落在可见命令行上。
 ///
@@ -1406,7 +1469,7 @@ pub(crate) fn wrap_with_env_windows(argv: &[String], env: &[(String, String)]) -
     ]
 }
 
-/// macOS 版：按 terminal 选 Terminal.app/iTerm2（iTerm2 未装回退 Terminal），走 AppleScript。成功 true。
+/// macOS 版：按 terminal 选 Terminal.app/iTerm2/Ghostty（iTerm2/Ghostty 未装回退 Terminal），成功 true。
 #[cfg(target_os = "macos")]
 pub(crate) fn spawn_in_terminal(
     argv: &[String],
@@ -1414,6 +1477,15 @@ pub(crate) fn spawn_in_terminal(
     terminal: &str,
     env: &[(String, String)],
 ) -> bool {
+    if terminal.eq_ignore_ascii_case("ghostty") && ghostty_installed() {
+        let Ok(env_prefix) = env_source_prefix_posix(env) else {
+            return false;
+        };
+        if !mac_resume_cwd_valid(cwd) {
+            return false;
+        }
+        return resume_session_ghostty(cwd, argv, &env_prefix);
+    }
     use crate::term_script::TermKind;
     let kind = match crate::term_script::resume_kind_from_setting(terminal) {
         TermKind::ITerm2 if iterm_installed() => TermKind::ITerm2,
@@ -2178,6 +2250,29 @@ mod proxy_env_tests {
         std::fs::write(&file, b"x").unwrap();
         assert!(!mac_resume_cwd_valid(file.to_str()));
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn ghostty_shell_command_quotes_everything() {
+        let argv = vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            "id'123".to_string(),
+        ];
+        let cmd =
+            ghostty_shell_command(Some("/tmp/a b/c'd"), &argv, "source '/tmp/e' && ").expect("cmd");
+        assert_eq!(
+            cmd,
+            "cd '/tmp/a b/c'\\''d' && source '/tmp/e' && 'claude' '--resume' 'id'\\''123'"
+        );
+    }
+
+    #[test]
+    fn ghostty_shell_command_handles_cwdless_and_empty_argv() {
+        let argv = vec!["codex".to_string(), "resume".to_string(), "sid".to_string()];
+        let cmd = ghostty_shell_command(None, &argv, "source '/tmp/e' && ").expect("cmd");
+        assert_eq!(cmd, "source '/tmp/e' && 'codex' 'resume' 'sid'");
+        assert!(ghostty_shell_command(None, &[], "source '/tmp/e' && ").is_none());
     }
 
     /// open_verified 的白名单复核：测试进程自身不是 agent，必须被拦下（NotAgent）——
