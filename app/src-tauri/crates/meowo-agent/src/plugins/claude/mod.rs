@@ -99,8 +99,9 @@ static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
 /// 只列 session 级数据——credentials / settings / plugins 一概不搬（那是账号本身，
 /// 搬过去等于把两个账号合并）。
 static CROSS_ACCOUNT: crate::profile::CrossAccountSession = crate::profile::CrossAccountSession {
-    transcript_dir: "projects",
-    transcript_ext: ".jsonl",
+    // `<root>/projects/<项目>/<session-id>.jsonl`
+    transcript_depth: 3,
+    session_dir_up: 0,
     session_buckets: &["file-history", "session-env", "tasks"],
     subagents_beside_transcript: true,
 };

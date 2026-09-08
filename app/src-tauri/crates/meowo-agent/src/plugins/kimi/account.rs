@@ -845,7 +845,7 @@ mod tests {
             }
         }
 
-        // profile 实况：凭据落在 <root>/credentials/kimi-code.json（KIMI_SHARE_DIR 隔离布局）。
+        // profile 实况：凭据落在 <root>/credentials/kimi-code.json（KIMI_CODE_HOME 隔离布局）。
         let root = std::env::temp_dir().join(format!("meowo-kimi-clamp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let inst = crate::by_id("kimi")

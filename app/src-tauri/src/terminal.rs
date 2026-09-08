@@ -563,28 +563,39 @@ fn sync_session_files(
     target_root: &std::path::Path,
     session_id: &str,
 ) -> Result<(), String> {
-    // source 形如 <root>/<transcript_dir>/<项目>/<id><ext>，上溯三级即数据根。
+    // 数据根按插件声明的层数上溯（claude 3 / codex 5 / kimi 6，各自的实测出处在插件里）。
     let source_root = source
-        .parent()
-        .and_then(std::path::Path::parent)
-        .and_then(std::path::Path::parent)
+        .ancestors()
+        .nth(spec.transcript_depth)
         .ok_or("会话路径格式异常")?;
     if source_root == target_root {
         return Ok(());
     }
-    let project = source
-        .parent()
-        .and_then(|path| path.file_name())
-        .ok_or("会话项目路径格式异常")?;
-    let target = target_root
-        .join(spec.transcript_dir)
-        .join(project)
-        .join(format!("{session_id}{}", spec.transcript_ext));
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    if !file_unchanged(source, &target) {
-        std::fs::copy(source, &target).map_err(|error| format!("同步会话失败：{error}"))?;
+    // 一律**按原相对路径**落到目标账号下：日期分层（codex）、工作区哈希目录（kimi）、
+    // 项目目录（claude）都原样保留——各家 resume 就是按自己那套路径找会话的，宿主不必
+    // 认识其中任何一层，也就不会因为某家改了目录名而搬错地方。
+    let relative = source
+        .strip_prefix(source_root)
+        .map_err(|_| "会话路径不在数据根之下".to_string())?;
+    let target = target_root.join(relative);
+    if spec.session_dir_up == 0 {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        if !file_unchanged(source, &target) {
+            std::fs::copy(source, &target).map_err(|error| format!("同步会话失败：{error}"))?;
+        }
+    } else {
+        // 正文只是会话目录里的一个文件（kimi）：整棵搬，否则 blobs/侧车留在原账号，
+        // 搬过去的是一份它自己读不全的副本。
+        let session_dir = source
+            .ancestors()
+            .nth(spec.session_dir_up)
+            .ok_or("会话目录路径格式异常")?;
+        let session_rel = session_dir
+            .strip_prefix(source_root)
+            .map_err(|_| "会话目录不在数据根之下".to_string())?;
+        copy_dir_merge(session_dir, &target_root.join(session_rel))?;
     }
 
     // 回滚历史、环境快照、任务等按 session id 分目录保存的数据桶。
@@ -658,17 +669,25 @@ fn record_resumed_profile(session_id: &str, profile: Option<&str>) {
 mod cross_account_resume_tests {
     use super::sync_session_files;
 
-    /// 用 **claude 插件声明的真实规格**跑同步：目录名不再写死在宿主里，这条测试
-    /// 因此同时验证了「规格取自插件」与「按规格搬对了东西」。
-    fn claude_spec() -> &'static meowo_agent::profile::CrossAccountSession {
-        meowo_agent::resolve(Some("claude"))
+    /// 用**插件声明的真实规格**跑同步：目录名不再写死在宿主里，这些测试因此同时验证了
+    /// 「规格取自插件」与「按规格搬对了东西」。
+    fn spec_of(provider: &str) -> &'static meowo_agent::profile::CrossAccountSession {
+        meowo_agent::resolve(Some(provider))
             .and_then(|agent| agent.cross_account_session())
-            .expect("claude 声明了跨账号会话迁移")
+            .unwrap_or_else(|| panic!("{provider} 声明了跨账号会话迁移"))
+    }
+
+    fn claude_spec() -> &'static meowo_agent::profile::CrossAccountSession {
+        spec_of("claude")
+    }
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("meowo-cross-account-{tag}-{}", std::process::id()))
     }
 
     #[test]
     fn copies_only_session_scoped_claude_data() {
-        let root = std::env::temp_dir().join(format!("meowo-cross-account-{}", std::process::id()));
+        let root = temp_root("claude");
         let source_root = root.join("source");
         let target_root = root.join("target");
         let session = "session-1";
@@ -717,6 +736,81 @@ mod cross_account_resume_tests {
         );
         let _ = std::fs::remove_dir_all(root);
     }
+
+    /// codex 的会话正文埋在**日期分层**下、文件名还带 `rollout-<时刻>-` 前缀：证明搬运
+    /// 只认「相对数据根的原路径」，不再假定 claude 那套 `<项目>/<id>.jsonl`。
+    /// 账号级的聚合文件（history.jsonl / thread_history_1.sqlite）必须留在原地。
+    #[test]
+    fn copies_codex_rollout_at_its_dated_path() {
+        let root = temp_root("codex");
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        let session = "01a01e42-7e1e-77f0-aa48-f0fe3353457a";
+        let relative = format!("sessions/2026/08/20/rollout-2026-08-20T16-21-09-{session}.jsonl");
+        let transcript = source_root.join(&relative);
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "rollout").unwrap();
+        std::fs::write(source_root.join("auth.json"), "secret").unwrap();
+        std::fs::write(source_root.join("history.jsonl"), "别家的历史").unwrap();
+        std::fs::write(source_root.join("thread_history_1.sqlite"), "投影").unwrap();
+
+        sync_session_files(spec_of("codex"), &transcript, &target_root, session).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(target_root.join(&relative)).unwrap(),
+            "rollout",
+            "rollout 必须按原相对路径落到目标账号下——codex 就是按这个路径找会话的"
+        );
+        assert!(!target_root.join("auth.json").exists(), "凭据不得搬运");
+        assert!(
+            !target_root.join("history.jsonl").exists()
+                && !target_root.join("thread_history_1.sqlite").exists(),
+            "账号级聚合文件不得搬运——那会把两个账号的历史混在一起"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// kimi 的正文只是会话目录里的一个文件：整棵 `<session-id>/` 都得跟过去，否则
+    /// blobs（用户贴的图）与各 agent 侧车留在原账号，搬过去的是读不全的半份副本。
+    #[test]
+    fn copies_the_whole_kimi_session_directory() {
+        let root = temp_root("kimi");
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        let session = "session_2aa50466-fd8f-40de-822f-5bfdd252f860";
+        let session_rel = format!("sessions/wd_meowo_ec7a1f97c4e4/{session}");
+        let session_dir = source_root.join(&session_rel);
+        let transcript = session_dir.join("agents/main/wire.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "wire").unwrap();
+        std::fs::create_dir_all(session_dir.join("blobs")).unwrap();
+        std::fs::write(session_dir.join("blobs/img.png"), "图").unwrap();
+        std::fs::create_dir_all(source_root.join("credentials")).unwrap();
+        std::fs::write(source_root.join("credentials/kimi-code.json"), "secret").unwrap();
+        std::fs::write(source_root.join("session_index.jsonl"), "别家的账本").unwrap();
+
+        sync_session_files(spec_of("kimi"), &transcript, &target_root, session).unwrap();
+
+        let moved = target_root.join(&session_rel);
+        assert_eq!(
+            std::fs::read_to_string(moved.join("agents/main/wire.jsonl")).unwrap(),
+            "wire"
+        );
+        assert_eq!(
+            std::fs::read_to_string(moved.join("blobs/img.png")).unwrap(),
+            "图",
+            "正文旁边的 blobs 必须一起搬"
+        );
+        assert!(
+            !target_root.join("credentials").exists(),
+            "凭据不得搬运——那是账号本身"
+        );
+        assert!(
+            !target_root.join("session_index.jsonl").exists(),
+            "索引是 kimi 自己维护的账本（sessionDir 是绝对路径），不得替它编一条进去"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 fn validate_session_profile_reference(profile: Option<&str>, exists: bool) -> Result<(), String> {
@@ -740,25 +834,33 @@ mod session_profile_tests {
         assert!(error.contains("无法恢复"));
     }
 
+    /// 判据是插件有没有声明跨账号迁移，**不是** agent 身份：声明了的（claude/codex/kimi，
+    /// 各自的实测出处在插件里）按当前活跃账号恢复，没声明的（opencode：会话存储没取证过）
+    /// 沿用会话原先所属的账号。
     #[test]
-    fn claude_resume_uses_active_account_while_other_agents_keep_the_stored_one() {
-        assert_eq!(
-            resume_profile(Some("claude"), None, Some("work".into())).as_deref(),
-            Some("work")
-        );
-        // 切回默认账号必须得到明确的 None，不能又回落到会话之前所属的 profile。
-        assert_eq!(
-            resume_profile(Some("claude"), Some("work".into()), None),
-            None
-        );
+    fn agents_that_can_move_sessions_resume_on_the_active_account() {
+        for provider in ["claude", "codex", "kimi"] {
+            assert_eq!(
+                resume_profile(Some(provider), None, Some("work".into())).as_deref(),
+                Some("work"),
+                "{provider} 声明了跨账号迁移，该按活跃账号恢复"
+            );
+            // 切回默认账号必须得到明确的 None，不能又回落到会话之前所属的 profile。
+            assert_eq!(
+                resume_profile(Some(provider), Some("work".into()), None),
+                None,
+                "{provider} 切回默认账号时不该回落到原 profile"
+            );
+        }
         assert_eq!(
             resume_profile(
-                Some("codex"),
+                Some("opencode"),
                 Some("original".into()),
                 Some("active".into())
             )
             .as_deref(),
-            Some("original")
+            Some("original"),
+            "没声明迁移的 agent 必须沿用会话原账号——它的会话资料并不在活跃账号目录里"
         );
     }
 }
@@ -2068,6 +2170,138 @@ pub(crate) async fn takeover_managed_terminal(
         let _ = (app, state, session_id, cols, rows, options);
         Err("当前平台不支持".into())
     }
+}
+
+/// 切换账号后，把该 agent **正在托管运行**的会话就地重启到新账号上。
+///
+/// 起因（用户报障）：切换账号只改设置，已经在跑的进程仍带着启动时注入的账号环境变量——
+/// 用户切完看不出任何变化，得手动「结束会话 → 恢复」才换得过去。这里把那两步替他做掉，
+/// 走的正是同一条路：停 PTY → 等 broker 收掉记录 → `start_managed_resume_sized`
+/// （跨账号资料迁移、启动选项/附加目录回放、预信任工作区、账号写回 DB 都在它里面）。
+///
+/// 三道收窄，每道都是为了不白杀用户的进程：
+/// - **只对声明了跨账号迁移的 agent 生效**：其余 agent 恢复时仍回到会话原本的账号
+///   （`prepare_resume_launch` 算出的 target_profile 恒等于原账号），重启只是白跑一趟，
+///   还把正在生成的回答丢了；
+/// - **只动本进程托管的会话**：外部终端里的进程不归我们管（用户得先接管）；
+/// - **已经在目标账号上的会话不动**：切换对它是空操作。
+///
+/// 中途失败不中断其余会话——账号已经切了，能救几个救几个；有失败就把首个错误抛给前端，
+/// 否则用户会以为全切过去了，实际有会话还挂在旧账号上（这正是本次要修的那种静默）。
+#[tauri::command]
+pub(crate) async fn apply_active_profile_to_sessions(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    provider: String,
+) -> Result<u32, String> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let broker = state.ptys.clone();
+        let db = state.db_path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if !supports_cross_account_resume(Some(&provider)) {
+                return Ok(0);
+            }
+            let store = open_store(&db)?;
+            let target = crate::profile::active_id(&provider);
+            // 排序只为可复现：HashSet 的迭代序每次都不同，多个会话同时失败时报出来的
+            // 「第一个错」会跟着飘，复现和对日志都无从下手。
+            let mut ids: Vec<i64> = broker.active_session_ids().into_iter().collect();
+            ids.sort_unstable();
+            let mut restarted = 0u32;
+            let mut first_error: Option<String> = None;
+            for sid in ids {
+                match restart_session_onto_active_profile(
+                    &app, &broker, &store, sid, &provider, &target,
+                ) {
+                    Ok(true) => restarted += 1,
+                    Ok(false) => {}
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+            match first_error {
+                Some(error) => Err(error),
+                None => Ok(restarted),
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (app, state, provider);
+        Ok(0)
+    }
+}
+
+/// 把单个托管会话重启到当前活跃账号。`Ok(true)` = 真的重启了它；`Ok(false)` = 没动它
+/// （不是本 agent / 已经在目标账号上 / 恰在此刻自己退出了 / start 判重收敛）。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn restart_session_onto_active_profile(
+    app: &tauri::AppHandle,
+    broker: &crate::pty::PtyBroker,
+    store: &meowo_store::Store,
+    sid: i64,
+    provider: &str,
+    target_profile: &Option<String>,
+) -> Result<bool, String> {
+    if store.session_provider(sid).map_err(|e| e.to_string())? != provider {
+        return Ok(false);
+    }
+    if store.session_profile(sid).map_err(|e| e.to_string())? == *target_profile {
+        return Ok(false);
+    }
+    let session = store.get_session(sid).map_err(|e| e.to_string())?;
+    let cwd = store.session_cwd(sid).map_err(|e| e.to_string())?;
+    // 尺寸必须在杀之前取：PTY 记录一收走，grid 就只剩 (0,0)。取不到时退回与看板恢复
+    // 同一个首帧占位——视图挂上来后前端会按真实容器 resize 纠正。
+    let (cols, rows) = broker.grid(sid);
+    let terminal_size = if cols == 0 || rows == 0 {
+        crate::pty::TerminalSize::new(100, 30)
+    } else {
+        crate::pty::TerminalSize::new(cols, rows)
+    };
+    // 与「结束会话」同一条路（stop 会武装 waiter 的升级链——Windows 上 kill 恒报成功
+    // 却未必真死，只发一刀会永远等不到收尾）。
+    if let Err(error) = broker.stop(sid) {
+        // 会话恰好在这一刻自己退出了（stop 只在 PTY 记录还在时成立）：它已经不在托管中，
+        // 没什么可重启的，也不是失败——别拿一句「PTY 会话未运行」去污染切换结果。
+        if !broker.is_active(sid) {
+            return Ok(false);
+        }
+        return Err(error);
+    }
+    // 等 broker 收掉 PTY 记录再起：`start` 的判重只看 sessions 表，没等到就会按
+    // 「重复启动」收敛成 Ok(false)——账号一个都没换，还什么都不报。
+    if !wait_pty_released(broker, sid) {
+        return Err("原会话仍在运行，未能切换到新账号".into());
+    }
+    start_managed_resume_sized(
+        app.clone(),
+        broker.clone(),
+        sid,
+        cwd,
+        session.cc_session_id,
+        provider.to_string(),
+        terminal_size,
+        // 启动选项不在这里回放：`prepare_resume_launch` 会从 DB 取回这个会话自己存的那份。
+        None,
+    )
+}
+
+/// 等 broker 把该会话的 PTY 记录收掉（waiter 的 finalize_exit）。`stop` 只负责发刀，
+/// 收尾是异步的；升级链最迟在 3s 那档强制 finalize，10s 的上限留足了余量。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn wait_pty_released(broker: &crate::pty::PtyBroker, sid: i64) -> bool {
+    for _ in 0..200 {
+        if !broker.is_active(sid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    false
 }
 
 /// 已在线的外部视图带到前台：Some = 处理完毕（Ok 聚焦成功 / Err 聚焦失败必须让用户看见，

@@ -979,9 +979,9 @@ pub fn kimi_share_dir() -> Option<PathBuf> {
     kimi_install().map(|i| i.data_dir)
 }
 
-/// Meowo 管理的 kimi profile 数据目录（每个 profile 根就是它的 `KIMI_SHARE_DIR`，见
+/// Meowo 管理的 kimi profile 数据目录（每个 profile 根就是它的 `KIMI_CODE_HOME`，见
 /// `plugins/kimi` 的 `PROFILE` 声明）。多账号会话的 `session_index.jsonl` 落在这些目录里，
-/// 而 meowo-app 进程没有 `KIMI_SHARE_DIR`——只查默认目录会让 profile 会话的
+/// 而 meowo-app 进程没有 `KIMI_CODE_HOME`——只查默认目录会让 profile 会话的
 /// 改名/摘要/上下文全部静默落空，故会话目录查找必须把它们纳入候选。
 /// 目录布局与 claude 侧 `managed_projects_dirs` 同源（`~/.meowo/profiles/<agent>/<id>`），
 /// 数据根解析与目录枚举（含 symlink/junction 解引用）收敛在 `crate::managed_profile_dirs`。
@@ -1005,7 +1005,7 @@ pub fn kimi_installed() -> bool {
 
 /// 从 `session_index.jsonl` 查 session_id 对应的会话目录（kimi 的目录名带哈希，靠此索引而非自己算）。
 /// 依次查默认数据目录与全部受管 profile 目录：session_id 全局唯一，首个命中即返回。
-/// reporter 由 profile 里的 kimi 派生时自带 `KIMI_SHARE_DIR`，`kimi_share_dir()` 即命中；
+/// reporter 由 profile 里的 kimi 派生时自带 `KIMI_CODE_HOME`，`kimi_share_dir()` 即命中；
 /// meowo-app 没有该变量，profile 会话靠 `managed_share_dirs()` 兜底。
 fn session_dir(session_id: &str) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -1016,8 +1016,27 @@ fn session_dir(session_id: &str) -> Option<PathBuf> {
         .find_map(|dir| session_dir_in(&dir, session_id))
 }
 
-/// 在**某个**数据目录的 `session_index.jsonl` 里查 session_id。
+/// 在**某个**数据目录里查 session_id 的会话目录：先读 `session_index.jsonl`，查不到再扫
+/// `sessions/*/<session-id>/`。
+///
+/// 扫目录这条兜底是给**跨账号搬过来的会话**用的：切账号时 meowo 只把会话目录整棵拷进新账号
+/// （kimi 自己扫 `sessions/**` 就能 resume，实测见 plugins/kimi 的 `CROSS_ACCOUNT`），并不改
+/// 目标账号的索引——索引里的 `sessionDir` 是**绝对路径**，替 kimi 编一条进去，等于拿我们的
+/// 猜测去覆盖它自己维护的账本。没有这条兜底，搬过去的会话在新账号下读不到 transcript：
+/// 对话页空白、上下文与改名一并静默落空。
 fn session_dir_in(share_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    if let Some(dir) = session_dir_from_index(share_dir, session_id) {
+        return Some(dir);
+    }
+    // 会话目录名就是 session id（实测 session_index.jsonl：sessionDir 末段 == sessionId）。
+    std::fs::read_dir(share_dir.join("sessions"))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path().join(session_id))
+        .find(|dir| dir.is_dir())
+}
+
+fn session_dir_from_index(share_dir: &Path, session_id: &str) -> Option<PathBuf> {
     let idx = share_dir.join("session_index.jsonl");
     let content = std::fs::read_to_string(idx).ok()?;
     for line in content.lines() {
@@ -1402,6 +1421,43 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
 
 #[cfg(test)]
 mod tests {
+    /// 跨账号搬过来的会话在目标账号里**没有索引条目**（索引是 kimi 自己维护的账本，
+    /// `sessionDir` 还是绝对路径，我们不替它编）。没有扫目录这条兜底，搬过去的会话读不到
+    /// transcript：对话页空白、上下文与改名一并静默落空。
+    #[test]
+    fn session_lookup_falls_back_to_scanning_when_the_index_has_no_entry() {
+        let root = std::env::temp_dir().join(format!("kimi_scan_{}", std::process::id()));
+        let session = format!("session_scan_{}", std::process::id());
+        let dir = root.join("sessions/wd_proj_abc").join(&session);
+        std::fs::create_dir_all(dir.join("agents/main")).unwrap();
+        std::fs::write(dir.join("agents/main/wire.jsonl"), "{}\n").unwrap();
+
+        // 索引压根不存在 → 扫 sessions/*/<session-id>/ 命中。
+        assert_eq!(
+            super::session_dir_in(&root, &session).as_deref(),
+            Some(dir.as_path())
+        );
+
+        // 索引有条目时以它为准（kimi 的目录名带工作区哈希，靠索引而非自己算）。
+        let indexed = root.join("sessions/wd_other_def").join(&session);
+        std::fs::create_dir_all(&indexed).unwrap();
+        std::fs::write(
+            root.join("session_index.jsonl"),
+            format!(
+                "{{\"sessionId\":\"{session}\",\"sessionDir\":\"{}\"}}
+",
+                indexed.display().to_string().replace('\\', "/")
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            super::session_dir_in(&root, &session).map(|p| p.to_string_lossy().replace('\\', "/")),
+            Some(indexed.to_string_lossy().replace('\\', "/"))
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     /// 看板卡片的 AI 动态行（`preview`）。kimi 的 Stop hook 不带正文，跑动期间 DB 的
@@ -2204,7 +2260,7 @@ mod tests {
     }
 
     /// 回归（多账号）：profile 会话的 `session_index.jsonl` 落在 `~/.meowo/profiles/kimi/<id>/`
-    /// 下，而 meowo-app 进程没有 `KIMI_SHARE_DIR`。修复前 `session_dir` 只查默认目录，profile
+    /// 下，而 meowo-app 进程没有 `KIMI_CODE_HOME`。修复前 `session_dir` 只查默认目录，profile
     /// 会话定位不到 → 改名静默不生效（meowo 里改了名，kimi 自己的会话列表还是旧名）。
     #[test]
     fn session_lookup_and_rename_cover_managed_profile_dirs() {
@@ -2225,7 +2281,7 @@ mod tests {
         )
         .unwrap();
 
-        // profile 数据目录 = profile 根（`KIMI_SHARE_DIR` 就指向它，见 plugins/kimi 的 PROFILE）。
+        // profile 数据目录 = profile 根（`KIMI_CODE_HOME` 就指向它，见 plugins/kimi 的 PROFILE）。
         let profile_sid = format!("kimi-profile-sid-{}", std::process::id());
         let profile_share = home
             .join(".meowo")

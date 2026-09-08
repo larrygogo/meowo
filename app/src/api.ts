@@ -1111,9 +1111,26 @@ export function renameProfile(
   return invoke("rename_profile", { provider, id, name });
 }
 
-/** 切换活跃账号。`id = null` → 切回默认账号。只影响此后新拉起的会话。 */
+/**
+ * 切换活跃账号。`id = null` → 切回默认账号。
+ *
+ * 只改设置——进程中途换不了账号。要让**运行中**的会话也跟过去，得在用户点头后接着调
+ * {@link applyActiveProfileToSessions}。
+ */
 export function setActiveProfile(provider: AgentId, id: string | null): Promise<void> {
   return invoke("set_active_profile", { provider, id });
+}
+
+/**
+ * 把该 agent 正在托管运行的会话就地重启到**当前活跃账号**（＝替用户做掉「结束会话 → 恢复」）。
+ * 返回真正重启了几个。
+ *
+ * 必须在 {@link setActiveProfile} 之后调：后端按「此刻的活跃账号」恢复。会杀进程，
+ * 故调用前必须让用户确认。不支持跨账号搬会话的 agent（descriptor 的
+ * `moves_sessions_across_accounts` 为 false）后端直接返回 0，不动任何会话。
+ */
+export function applyActiveProfileToSessions(provider: AgentId): Promise<number> {
+  return invoke("apply_active_profile_to_sessions", { provider });
 }
 
 /** 删除账号，**连同它的整个目录**（凭据、配置、该账号的会话历史）。不可逆。 */

@@ -72,6 +72,15 @@ supports_context: boolean,
  */
 supports_chat_export: boolean, 
 /**
+ * 切换账号时，这个 agent 的**会话能不能跟着搬过去**（＝插件声明了 `CrossAccountSession`）。
+ *
+ * 为 true（目前只有 claude）时，恢复会把会话资料复制进目标账号目录，于是「切账号」
+ * 对正在跑的会话也讲得通——设置页据此在切换前问一句「要不要连运行中的会话一起重启」。
+ * 为 false 的 agent 恢复时仍回到会话原本的账号，重启只会白杀一次进程、丢掉正在生成的
+ * 回答，UI 因此连问都不该问，覆盖面文案也照实说「仅对之后新建或恢复的会话生效」。
+ */
+moves_sessions_across_accounts: boolean, 
+/**
  * 这个 agent 支不支持**一个会话访问多个目录**（＝插件声明了 `extra_dir_flag`）。
  * 为 true 时新建面板给「附加目录」入口（跨仓同一需求开一个会话）；false 不显示。
  */

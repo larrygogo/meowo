@@ -74,12 +74,45 @@ static HOOKS: HookSpec = HookSpec {
 };
 
 /// 来源：kimi-code 开源包 `packages/oauth/src/constants.ts`。
-/// 多账号：`KIMI_SHARE_DIR` 一个变量搬走整个数据目录（凭据、config.toml、会话 wire.jsonl 全在里面）。
-/// 两个变体（modern `~/.kimi-code` / legacy `~/.kimi`）共用同一个环境变量，profile 下不必区分。
+/// 多账号：`KIMI_CODE_HOME` 一个变量搬走整个数据目录（凭据、config.toml、会话 wire.jsonl 全在里面）。
+///
+/// **绝不能是 `KIMI_SHARE_DIR`**（此前就是它，等于多账号完全没隔离）：在 kimi-code 0.40.1 的
+/// 二进制里，`KIMI_SHARE_DIR` 的含义是「旧版 kimi-cli 的**迁移来源**目录」，不是数据目录——
+/// `resolveLegacySourceHome(env, home, cwd)` 拿它当 `~/.kimi` 的替代来源，而数据根另有其人：
+/// `resolveKimiHome(homeDir) { return homeDir ?? process.env["KIMI_CODE_HOME"] ?? join(homedir(), ".kimi-code") }`。
+///
+/// 实测（0.40.1，本机）：`KIMI_SHARE_DIR=<空目录> kimi session list` 照样列出真实 `~/.kimi-code`
+/// 里的会话、日志也仍写在那儿；换成 `KIMI_CODE_HOME=<空目录>` 才只列出该目录里的会话。
+/// 症状因此是最坏的那种「看起来隔离了、其实没有」：所有 kimi 账号共用 `~/.kimi-code`，凭据互相
+/// 覆盖、会话历史混在一起，连预写工作区信任与 reporter 的 transcript 查找也一并落空。
+///
+/// profile 恒取 `variants().first()`（＝modern），故这里只声明 modern 的变量；legacy 的
+/// Python kimi-cli 走不到 profile 这条路。
 static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
-    envs: &[("KIMI_SHARE_DIR", "")],
+    envs: &[("KIMI_CODE_HOME", "")],
     data_rel: "",
     creds_rel: "credentials/kimi-code.json",
+};
+
+/// kimi 的会话可跨账号继续：会话目录整棵搬进目标账号的数据根即可，**不必**改
+/// `session_index.jsonl`——kimi 自己会扫 `sessions/**`。
+///
+/// 实测（kimi-code 0.40.1，本机 2026-09-08）：新建一个空 `KIMI_CODE_HOME`，只把
+/// `sessions/<wd_工作区>/<session-id>/` 整个目录拷进去（没有 session_index.jsonl、没有凭据）——
+/// - `kimi session list` 列出了它；
+/// - `kimi -r <该 id> -p x` 报的是 `no provider configured`（＝会话已找到，卡在没登录），
+///   而同一个目录里换一个不存在的 id 报的是 `Session "…" not found`。两条错误分得开，
+///   证明会话查找纯靠拷进去的那棵目录。
+///
+/// 搬的是整棵会话目录而不是单个 `wire.jsonl`：正文旁边还有 blobs（用户贴的图）与各 agent 的
+/// 侧车，单搬正文会造出一个 kimi 自己读不全的半份副本。
+static CROSS_ACCOUNT: crate::profile::CrossAccountSession = crate::profile::CrossAccountSession {
+    // `<root>/sessions/<wd_工作区>/<session-id>/agents/main/wire.jsonl`
+    transcript_depth: 6,
+    // 正文往上第 3 级就是 `<session-id>/`（wire.jsonl → main → agents → 会话目录）。
+    session_dir_up: 3,
+    session_buckets: &[],
+    subagents_beside_transcript: false,
 };
 
 const AUTH_MODERN: AuthScheme = AuthScheme {
@@ -144,7 +177,11 @@ static VARIANTS: [Variant; 2] = [
     Variant {
         tag: "modern",
         data_dir: DataDirSpec {
-            env: Some("KIMI_SHARE_DIR"),
+            // 与 PROFILE 注入的变量必须是同一个（见那儿的实测注释）：reporter 作为 kimi 的
+            // hook 子进程继承这套环境，靠它解析出**同一个**数据根，否则 profile 会话的
+            // transcript/上下文/改名全部静默落空。legacy 变体沿用 KIMI_SHARE_DIR 不动——
+            // 那是旧 Python 版的世界，本机无从取证，且 profile 走不到它。
+            env: Some("KIMI_CODE_HOME"),
             candidates: &[".kimi-code"],
         },
         hooks: &HOOKS,
@@ -298,6 +335,9 @@ impl AgentPlugin for Kimi {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn cross_account_session(&self) -> Option<&'static crate::profile::CrossAccountSession> {
+        Some(&CROSS_ACCOUNT)
     }
     fn process_names(&self) -> &'static [&'static str] {
         &["kimi", "kimi.exe"]

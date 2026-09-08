@@ -7,6 +7,7 @@ import {
   listProfiles,
   createProfile,
   setActiveProfile,
+  applyActiveProfileToSessions,
   renameProfile,
   deleteProfile,
   mergeProfileIntoDefault,
@@ -151,7 +152,7 @@ function UsageBar({ lane, label }: { lane: UsageLane; label: string }) {
 
 // 单个 provider 卡片：安装/登录/用量三态。已装且登录 = 现有账号信息 + 用量泳道 + 刷新按钮 + 贴纸显示开关；
 // 已装未登录 = 提示语；未装 = 一键安装按钮。
-function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo }: {
+function ProviderCard({ provider, name, installed, supportsAccount, supportsApiKeyLogin, supportsProfiles, movesSessionsAcrossAccounts, supportsContext, relay, payload, usage, err, onRefresh, installOp, onStartInstall, onCancelInstall, onLoggedIn, loginState, onStartLogin, onCancelLogin, refreshing, settings, patchSettings, onToggleQuota, usageRefreshedAt, updateInfo }: {
   provider: AgentId;
   /** 展示名，来自后端 list_agents()（产品名，不翻译）。 */
   name: string;
@@ -176,6 +177,12 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
    * 不能靠「列表只有一条」推断——那与「只建了默认账号」长得一模一样。
    */
   supportsProfiles: boolean;
+  /**
+   * 切账号时该 agent 的会话能否跟着搬到新账号（后端 `moves_sessions_across_accounts`）。
+   * true（claude）→ 切换后可把运行中的会话重启到新账号；false 的 agent 恢复时仍回到会话
+   * 原本的账号，重启只是白杀一次进程，故连问都不问。**不得按 id 判断**。
+   */
+  movesSessionsAcrossAccounts: boolean;
   /** meowo 能否显示该 agent 的上下文占用。false（gemini/opencode）→ 卡片显式标注「不支持」。 */
   supportsContext: boolean;
   relay: AgentDescriptor["relay"];
@@ -822,6 +829,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
       {isInstalled && supportsProfiles && !relayEnabled && (
         <ProfileList
           provider={provider}
+          movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
           onChanged={onLoggedIn}
           loginState={loginState}
           onStartLogin={onStartLogin}
@@ -841,8 +849,10 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-function ProfileList({ provider, onChanged, loginState, onStartLogin, onCancelLogin }: {
+function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginState, onStartLogin, onCancelLogin }: {
   provider: AgentId;
+  /** 见 ProviderCard 同名 prop：决定切换后要不要问「运行中的会话也重启过去吗」。 */
+  movesSessionsAcrossAccounts: boolean;
   onChanged: () => void;
   loginState: LoginOperationState | undefined;
   onStartLogin: (profile?: string | null) => Promise<boolean>;
@@ -941,6 +951,50 @@ function ProfileList({ provider, onChanged, loginState, onStartLogin, onCancelLo
   };
 
   /**
+   * 切换活跃账号。
+   *
+   * 后端的 `set_active_profile` 只改设置——进程中途换不了账号，运行中的会话仍带着启动时
+   * 注入的那套账号环境变量。此前用户只能手动「结束会话 → 恢复」才把它们换过去（用户报障：
+   * 「切换账号时已经存在的会话不会立刻应用新账号」）。这里替他做掉那两步：先切设置，
+   * 再问一句，点头后由后端把运行中的会话就地重启到新账号。
+   *
+   * **先切后问**，不是「问完再切」：设置该不该写与他要不要重启会话是两件事。不点头就退回
+   * 老行为（账号已切，运行中的会话留在原账号上），而不是连账号都没切成。
+   *
+   * 计数口径与「更新」那条一致（本进程托管 + 已连接）；查询失败按 0 处理，不挡切换——
+   * 后端在重启时还会自己判一遍该动哪些会话。
+   */
+  const switchTo = async (p: ProfileView) => {
+    if (busy || p.active) return;
+    let running = 0;
+    if (movesSessionsAcrossAccounts) {
+      try {
+        const page = await getLiveSessionsPage("all", null, null, 200);
+        running = page.items.filter(
+          (l) => l.connected && l.pty_managed && l.provider === provider,
+        ).length;
+      } catch {
+        /* 查询失败按 0 处理，不挡切换 */
+      }
+    }
+    run(async () => {
+      await setActiveProfile(provider, p.id);
+      if (running === 0) return;
+      const ok = await appConfirm(t.account.switchRestartConfirm(running), {
+        title: t.account.switchProfile,
+        // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
+        danger: true,
+        confirmLabel: t.account.switchRestartConfirmLabel,
+      });
+      if (!ok) return;
+      // 重启失败不该连累账号切换：设置已经写进去了，账号列表照常刷新，错误就地显示。
+      await applyActiveProfileToSessions(provider).catch((e) =>
+        setErr(formatBackendError(e, t.locale)),
+      );
+    });
+  };
+
+  /**
    * 改名。只动展示名，**不动 id**（它是目录名，改了就等于换了个账号）。
    *
    * 默认账号也能改：它的 id 是 null，名字单独存在 settings 的 `default_profile_names` 里。
@@ -1013,7 +1067,7 @@ function ProfileList({ provider, onChanged, loginState, onStartLogin, onCancelLo
               className="profile-row-main"
               data-tip={t.account.switchProfile}
               disabled={busy || p.active}
-              onClick={() => run(() => setActiveProfile(provider, p.id))}
+              onClick={() => void switchTo(p)}
             >
               <span className="profile-name-row">
                 <span className="profile-name">{p.name || t.account.defaultProfile}</span>
@@ -1141,8 +1195,11 @@ function ProfileList({ provider, onChanged, loginState, onStartLogin, onCancelLo
       )}
 
       <div className="profile-hint">{t.account.addProfileHint}</div>
-      {/* 覆盖面明示：切换只影响此后拉起的会话（后端 profile/mod.rs 的既定行为，此前 UI 零提示）。 */}
-      <div className="profile-hint">{t.account.switchCoverage}</div>
+      {/* 覆盖面明示：切换本身只改设置（后端 profile/mod.rs 的既定行为，此前 UI 零提示）。
+          会话能跟着搬的 agent 另说一句——它切完会问要不要把运行中的会话重启过去。 */}
+      <div className="profile-hint">
+        {movesSessionsAcrossAccounts ? t.account.switchCoverageRestart : t.account.switchCoverage}
+      </div>
       {err && <div className="agent-install-error">{err}</div>}
     </div>
   );
@@ -1386,6 +1443,7 @@ export function AccountSection() {
         supportsAccount={cur.supports_account}
         supportsApiKeyLogin={cur.supports_api_key_login ?? false}
         supportsProfiles={cur.supports_profiles}
+        movesSessionsAcrossAccounts={cur.moves_sessions_across_accounts ?? false}
         supportsContext={cur.supports_context ?? true}
         relay={cur.relay}
         payload={payload}
