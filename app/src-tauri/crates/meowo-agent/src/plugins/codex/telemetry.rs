@@ -433,12 +433,26 @@ pub fn codex_launch_prefix() -> Option<Vec<String>> {
     codex_install()?.launch
 }
 
-/// 在 `~/.codex/sessions` 下按 session_id 找 rollout 文件（文件名内嵌 uuid，以 `<uuid>.jsonl` 结尾）。
-/// 递归 walk 年/月/日（限深，避免误入无关深目录）。仅作 transcript_path 缺失时的兜底。
+/// 在 codex 的 `sessions/` 下按 session_id 找 rollout 文件（文件名内嵌 uuid，以 `<uuid>.jsonl`
+/// 结尾）。递归 walk 年/月/日（限深，避免误入无关深目录）。仅作 transcript_path 缺失时的兜底。
+///
+/// 依次查默认数据目录与**全部受管 profile 目录**：session_id 全局唯一，首个命中即返回。
+/// reporter 由 profile 里的 codex 派生时自带 `CODEX_HOME`，`codex_home()` 即命中；meowo-app
+/// 没有该变量，profile 会话靠 `managed_codex_homes()` 兜底——漏了它，多账号下的 codex 会话
+/// 上下文/切换引擎/跨账号搬迁会全部静默落空（kimi 侧 `managed_share_dirs` 与 claude 侧
+/// `managed_projects_dirs` 是同一条纪律）。
 fn find_rollout(session_id: &str) -> Option<PathBuf> {
-    let sessions = codex_home()?.join("sessions");
     let suffix = format!("{session_id}.jsonl");
-    walk_find(&sessions, &suffix, 6)
+    std::iter::once(codex_home())
+        .flatten()
+        .chain(managed_codex_homes())
+        .find_map(|home| walk_find(&home.join("sessions"), &suffix, 6))
+}
+
+/// Meowo 管理的 codex profile 数据目录（每个 profile 根就是它的 `CODEX_HOME`，见
+/// `plugins/codex` 的 `PROFILE` 声明）。
+fn managed_codex_homes() -> Vec<PathBuf> {
+    crate::managed_profile_dirs(crate::id::CODEX.as_str())
 }
 
 fn walk_find(dir: &Path, suffix: &str, depth: usize) -> Option<PathBuf> {
@@ -607,6 +621,45 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// rollout 查找必须覆盖**受管 profile 目录**：meowo-app 进程没有 `CODEX_HOME`，
+    /// 只查默认目录的话，多账号下的 codex 会话上下文/切换引擎/跨账号搬迁会全部静默落空
+    /// （claude 与 kimi 侧各自栽过同一跤，见它们的同名用例）。
+    #[test]
+    fn rollout_lookup_includes_managed_codex_profiles() {
+        let sid = format!("01a01e42-0000-0000-0000-{:012}", std::process::id());
+        let home = std::env::temp_dir().join(format!("codex_profile_home_{}", std::process::id()));
+        let rollout = home
+            .join(".meowo/profiles/codex/work/sessions/2026/08/20")
+            .join(format!("rollout-2026-08-20T16-21-09-{sid}.jsonl"));
+        std::fs::create_dir_all(rollout.parent().unwrap()).unwrap();
+        std::fs::write(&rollout, "{}\n").unwrap();
+
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        // meowo PTY 里跑测试会带着指向真库的 MEOWO_DB——数据根解析优先读它，不一并指进
+        // 临时 home 的话，managed 目录会扫到真实 profile 而不是本用例造的。
+        let old_db = std::env::var("MEOWO_DB").ok();
+        // 同理：外层若带着 CODEX_HOME（本会话自身就可能带），默认目录会命中别处。
+        let old_codex = std::env::var("CODEX_HOME").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
+        std::env::remove_var("CODEX_HOME");
+        let found = find_rollout(&sid);
+        match old_home {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match old_db {
+            Some(value) => std::env::set_var("MEOWO_DB", value),
+            None => std::env::remove_var("MEOWO_DB"),
+        }
+        if let Some(value) = old_codex {
+            std::env::set_var("CODEX_HOME", value);
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(found.as_deref(), Some(rollout.as_path()));
+    }
 
     #[test]
     fn extracts_collaboration_approval_and_sandbox_dimensions() {

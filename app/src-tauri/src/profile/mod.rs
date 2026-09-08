@@ -345,7 +345,11 @@ pub(crate) async fn rename_profile(
 
 /// 切换活跃账号。`id = None` → 切回默认账号。
 ///
-/// 只影响**此后**拉起的会话：已经在跑的会话早已继承了它启动时的环境变量，不会中途改换账号。
+/// 本命令只改设置：已经在跑的会话早已继承了它启动时的环境变量，进程中途换不了账号。
+/// 让运行中的会话也跟过去，得由前端在用户确认后接着调
+/// [`crate::terminal::apply_active_profile_to_sessions`]——它把这些会话就地停掉再按新账号
+/// 恢复（＝用户此前只能手动做的「结束会话 → 恢复」）。两步分开是因为**杀进程要用户点头**，
+/// 而设置该不该写与他点不点头无关。
 #[tauri::command]
 pub(crate) async fn set_active_profile(provider: String, id: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {

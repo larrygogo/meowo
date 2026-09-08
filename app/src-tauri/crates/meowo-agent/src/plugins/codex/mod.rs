@@ -65,6 +65,25 @@ static PROFILE: crate::profile::ProfileSpec = crate::profile::ProfileSpec {
     creds_rel: "auth.json",
 };
 
+/// codex 的会话可跨账号继续：resume 只按 `$CODEX_HOME/sessions/**` 找 rollout 文件，
+/// 把那一个文件按原相对路径复制进目标账号目录即可在新账号下接着跑。
+///
+/// 实测（codex 0.152.0，本机 2026-09-08）：
+/// - 空 `CODEX_HOME` 下 `codex exec resume <id>` → `Error: thread/resume failed: no rollout found
+///   for thread id <id>`；
+/// - 同一个空目录里**只**放进 `sessions/2026/08/20/rollout-<时刻>-<id>.jsonl` 一个文件 →
+///   直接接上会话（打印出同一个 session id 的会话头）。
+///
+/// 于是 `thread_history_1.sqlite`（新版的分页 thread history 投影）与 `history.jsonl` 都**不搬**：
+/// 实测证明 resume 不需要它们，而它们是账号级的聚合文件，搬过去等于把两个账号的历史混在一起。
+static CROSS_ACCOUNT: crate::profile::CrossAccountSession = crate::profile::CrossAccountSession {
+    // `<root>/sessions/<年>/<月>/<日>/rollout-<时刻>-<session-id>.jsonl`
+    transcript_depth: 5,
+    session_dir_up: 0,
+    session_buckets: &[],
+    subagents_beside_transcript: false,
+};
+
 static AUTH: AuthScheme = AuthScheme {
     credentials: CredentialSource::File("auth.json"),
     refresh: None,
@@ -207,6 +226,9 @@ impl AgentPlugin for Codex {
     }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
+    }
+    fn cross_account_session(&self) -> Option<&'static crate::profile::CrossAccountSession> {
+        Some(&CROSS_ACCOUNT)
     }
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
         Some(&PROXY)

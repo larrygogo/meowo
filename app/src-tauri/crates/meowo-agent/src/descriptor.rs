@@ -59,6 +59,16 @@ pub struct AgentDescriptor {
     /// 会话没有可交接的历史，跨 provider 切换只能以它为**目标**、不能以它为来源。
     /// 前端不得按 id 判断——这正是守卫测试盯着的那类分支。
     pub supports_chat_export: bool,
+    /// 切换账号时，这个 agent 的**会话能不能跟着搬过去**（＝插件声明了 `CrossAccountSession`）。
+    ///
+    /// 为 true 时，恢复会把会话资料复制进目标账号目录，于是「切账号」对正在跑的会话也讲得
+    /// 通——设置页据此在切换后问一句「要不要连运行中的会话一起重启」。为 false 的 agent
+    /// 恢复时仍回到会话原本的账号，重启只会白杀一次进程、丢掉正在生成的回答，UI 因此连问
+    /// 都不该问，覆盖面文案也照实说「仅对之后新建或恢复的会话生效」。
+    ///
+    /// 覆盖面是**插件声明的事实**、会随取证进展变（谁声明了看各插件的 `CROSS_ACCOUNT`，
+    /// 有绊线测试钉着矩阵），前端不得按 id 反推。
+    pub moves_sessions_across_accounts: bool,
     /// 这个 agent 支不支持**一个会话访问多个目录**（＝插件声明了 `extra_dir_flag`）。
     /// 为 true 时新建面板给「附加目录」入口（跨仓同一需求开一个会话）；false 不显示。
     pub supports_extra_dirs: bool,
@@ -93,6 +103,7 @@ impl AgentDescriptor {
                 .telemetry()
                 .and_then(|telemetry| telemetry.transcript())
                 .is_some_and(|spec| spec.supports_chat()),
+            moves_sessions_across_accounts: plugin.cross_account_session().is_some(),
             supports_extra_dirs: plugin.extra_dir_flag().is_some(),
             launch_options: plugin.launch_options(),
             relay,

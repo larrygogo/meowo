@@ -828,6 +828,12 @@ export const en: Dict = {
     newProfileName: "Account name (e.g. Work)",
     addProfileHint: "Each account keeps its own sign-in and session history",
     switchCoverage: "Applies to new or resumed sessions only; running sessions keep their account",
+    switchCoverageRestart: "Running sessions can be restarted onto the new account; conversations are kept",
+    switchRestartConfirm: (n) =>
+      n === 1
+        ? "Account switched. Restart the 1 running session of this Agent onto the new account too? Its conversation is kept."
+        : `Account switched. Restart the ${n} running sessions of this Agent onto the new account too? Their conversations are kept.`,
+    switchRestartConfirmLabel: "Restart them",
     agentsLoadFailed: "Couldn't load the Agent list. Please retry",
     switchProfile: "Switch to this account",
     activeProfile: "In use",

@@ -8,7 +8,7 @@ use crate::{auth::AuthScheme, config::HookSpec, id::AgentId, launch::LaunchSpec}
 /// 数据目录的解析规则。
 #[derive(Debug, Clone, Copy)]
 pub struct DataDirSpec {
-    /// 环境变量覆盖名（如 `KIMI_SHARE_DIR` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR`）。
+    /// 环境变量覆盖名（如 `KIMI_CODE_HOME` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR`）。
     /// 三家语义一致：变量值**就是**数据目录本身。设了就优先于候选目录。
     pub env: Option<&'static str>,
     /// 相对 home 的候选目录，按优先级排列。`probe` 取第一个**已存在**的。
@@ -209,7 +209,7 @@ impl Installation {
     /// 用户在终端页手动信任一次，与没有此功能时等价，绝不因预信任失败挡住会话。
     ///
     /// 门槛是数据目录已存在（与 `wire` 同一条纪律：**绝不凭空创建 agent 的数据目录**）。调用方必须
-    /// 按本次实际生效的账号给实况——kimi 的多账号靠 `KIMI_SHARE_DIR` 搬走整个数据目录，写进默认
+    /// 按本次实际生效的账号给实况——kimi 的多账号靠 `KIMI_CODE_HOME` 搬走整个数据目录，写进默认
     /// 目录而会话跑在隔离账号上，等于没写。
     pub fn pretrust_workspace(&self, cwd: &str) -> bool {
         let Some(spec) = self.trust else {

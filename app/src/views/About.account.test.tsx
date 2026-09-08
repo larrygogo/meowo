@@ -29,6 +29,8 @@ const api = vi.hoisted(() => ({
   listProfiles: vi.fn(),
   createProfile: vi.fn(),
   setActiveProfile: vi.fn(),
+  applyActiveProfileToSessions: vi.fn(),
+  sessionsOffActiveProfileCount: vi.fn(),
   renameProfile: vi.fn(),
   deleteProfile: vi.fn(),
   mergeProfileIntoDefault: vi.fn(),
@@ -122,6 +124,9 @@ beforeEach(() => {
   api.checkAgentUpdates.mockResolvedValue([]);
   // 默认：无活跃会话（点「更新」不弹确认），有会话的用例再覆盖。
   api.getLiveSessionsPage.mockResolvedValue({ items: [], next_cursor: null });
+  // 默认：切账号后没有会话要重启（个别用例再覆盖）。
+  api.sessionsOffActiveProfileCount.mockResolvedValue(0);
+  api.applyActiveProfileToSessions.mockResolvedValue(0);
   // 默认：只有一个默认账号（没建过自定义账号）。
   api.listProfiles.mockResolvedValue([
     { id: null, name: "", active: true, account: { email: "a@b.c" } },
@@ -877,6 +882,79 @@ describe("AccountSection 多账号", () => {
     // 活跃那行（默认账号）的主按钮是禁用的——点它没有意义。
     const def = screen.getByTestId("profile-claude-__default__");
     expect((def.querySelector(".profile-row-main") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /**
+   * 切换账号对**运行中**的会话：进程中途换不了账号，得停掉再按新账号恢复。
+   *
+   * 顺序是行为的一部分：**先切设置、再问要不要重启**。反过来（问完才切）会让「不重启」
+   * 连账号都切不成——而那正是此前一直可用的行为。
+   */
+  it("切账号：先落设置，再问要不要把运行中的会话重启到新账号", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.sessionsOffActiveProfileCount.mockResolvedValue(1);
+    api.setActiveProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+
+    const row = await screen.findByTestId("profile-claude-work");
+    fireEvent.click(row.querySelector(".profile-row-main")!);
+    await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
+    // 待重启数问的是后端（看板列表分页，自己数会漏），且必须切完再问。
+    await waitFor(() => expect(api.sessionsOffActiveProfileCount).toHaveBeenCalledWith("claude"));
+    expect(api.setActiveProfile.mock.invocationCallOrder[0])
+      .toBeLessThan(api.sessionsOffActiveProfileCount.mock.invocationCallOrder[0]);
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(dialog.confirm.mock.calls[0][0]).toContain("1");
+    expect(dialog.confirm.mock.calls[0][1]).toMatchObject({ danger: true });
+    // 确认（beforeEach 默认 resolve true）→ 后端把这些会话就地重启到新账号。
+    await waitFor(() => expect(api.applyActiveProfileToSessions).toHaveBeenCalledWith("claude"));
+  });
+
+  /** 不重启 = 退回老行为：账号照切，运行中的会话留在原账号上。绝不能连账号都没切成。 */
+  it("切账号：确认框点取消，账号仍已切换，只是不重启会话", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.sessionsOffActiveProfileCount.mockResolvedValue(1);
+    api.setActiveProfile.mockResolvedValue(undefined);
+    dialog.confirm.mockResolvedValue(false);
+    render(<AccountSection />);
+
+    const row = await screen.findByTestId("profile-claude-work");
+    fireEvent.click(row.querySelector(".profile-row-main")!);
+    await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
+    await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
+    expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 会话搬不过去的 agent（opencode：会话存储没取证过，插件没声明 CrossAccountSession）连问都
+   * 不问——它恢复时仍会回到会话原本的账号，重启只是白杀一次进程、把正在生成的回答丢掉。
+   * 判据是后端下发的 `moves_sessions_across_accounts`，**不得按 id 判断**。
+   */
+  it("切账号：会话搬不过去的 agent 不问也不重启，覆盖面文案照实说", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["claude", "opencode"]));
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.sessionsOffActiveProfileCount.mockResolvedValue(1); // 就算后端说有，也不该问到这一步
+    api.setActiveProfile.mockResolvedValue(undefined);
+    render(<AccountSection />);
+    await selectAgent("OpenCode");
+
+    expect((await screen.findByTestId("profiles-opencode")).textContent)
+      .toContain(zh.account.switchCoverage);
+    const row = await screen.findByTestId("profile-opencode-work");
+    fireEvent.click(row.querySelector(".profile-row-main")!);
+    await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("opencode", "work"));
+    expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
+    expect(dialog.confirm).not.toHaveBeenCalled();
+    expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
   });
 
   /**

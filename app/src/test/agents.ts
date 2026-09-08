@@ -74,6 +74,12 @@ const SUPPORTS_CONTEXT = new Set(["claude", "codex", "kimi"]);
 const SUPPORTS_CHAT_EXPORT = new Set(["claude", "codex", "kimi"]);
 
 /**
+ * 切账号时会话能跟着搬到新账号的那些。与后端 `cross_account_session()` 同源——
+ * opencode 的会话存储没取证过，gemini 压根不支持多账号。
+ */
+const MOVES_SESSIONS_ACROSS_ACCOUNTS = new Set(["claude", "codex", "kimi"]);
+
+/**
  * 对话页内置 `/` 补全候选。与后端 `AgentPlugin::slash_commands()` 同源——各家命令表是插件
  * 声明的事实（gemini 是 `/stats` 不是 `/status`，opencode 是 `/models` 不是 `/model`）。
  */
@@ -288,6 +294,9 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     supports_profiles: SUPPORTS_PROFILES.has(id),
     supports_context: SUPPORTS_CONTEXT.has(id),
     supports_chat_export: SUPPORTS_CHAT_EXPORT.has(id),
+    // 与后端事实对齐:claude/codex/kimi 声明了 CrossAccountSession(会话能搬去另一个账号);
+    // opencode 的会话存储没取证过,gemini 压根不支持多账号。
+    moves_sessions_across_accounts: MOVES_SESSIONS_ACROSS_ACCOUNTS.has(id),
     // 与后端事实对齐:目前只有 claude 声明了附加目录 flag(--add-dir)。
     supports_extra_dirs: id === "claude",
     launch_options: LAUNCH_OPTIONS[id] ?? [],
