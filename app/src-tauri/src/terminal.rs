@@ -2179,12 +2179,8 @@ pub(crate) async fn takeover_managed_terminal(
 /// 走的正是同一条路：停 PTY → 等 broker 收掉记录 → `start_managed_resume_sized`
 /// （跨账号资料迁移、启动选项/附加目录回放、预信任工作区、账号写回 DB 都在它里面）。
 ///
-/// 三道收窄，每道都是为了不白杀用户的进程：
-/// - **只对声明了跨账号迁移的 agent 生效**：其余 agent 恢复时仍回到会话原本的账号
-///   （`prepare_resume_launch` 算出的 target_profile 恒等于原账号），重启只是白跑一趟，
-///   还把正在生成的回答丢了；
-/// - **只动本进程托管的会话**：外部终端里的进程不归我们管（用户得先接管）；
-/// - **已经在目标账号上的会话不动**：切换对它是空操作。
+/// 该动哪些会话由 [`sessions_off_active_profile`] 判（前端弹确认框前问的那个数出自同一条
+/// 判据，两边因此不会各说各话）。
 ///
 /// 中途失败不中断其余会话——账号已经切了，能救几个救几个；有失败就把首个错误抛给前端，
 /// 否则用户会以为全切过去了，实际有会话还挂在旧账号上（这正是本次要修的那种静默）。
@@ -2199,21 +2195,11 @@ pub(crate) async fn apply_active_profile_to_sessions(
         let broker = state.ptys.clone();
         let db = state.db_path.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            if !supports_cross_account_resume(Some(&provider)) {
-                return Ok(0);
-            }
             let store = open_store(&db)?;
-            let target = crate::profile::active_id(&provider);
-            // 排序只为可复现：HashSet 的迭代序每次都不同，多个会话同时失败时报出来的
-            // 「第一个错」会跟着飘，复现和对日志都无从下手。
-            let mut ids: Vec<i64> = broker.active_session_ids().into_iter().collect();
-            ids.sort_unstable();
             let mut restarted = 0u32;
             let mut first_error: Option<String> = None;
-            for sid in ids {
-                match restart_session_onto_active_profile(
-                    &app, &broker, &store, sid, &provider, &target,
-                ) {
+            for sid in sessions_off_active_profile(&broker, &store, &provider)? {
+                match restart_session_onto_active_profile(&app, &broker, &store, sid, &provider) {
                     Ok(true) => restarted += 1,
                     Ok(false) => {}
                     Err(error) => {
@@ -2236,8 +2222,76 @@ pub(crate) async fn apply_active_profile_to_sessions(
     }
 }
 
+/// 切到当前活跃账号后，还有几个托管会话挂在别的账号上（＝
+/// [`apply_active_profile_to_sessions`] 会动几个）。只读，不碰任何进程。
+///
+/// 前端弹「要不要把它们也重启过去」之前问这一句。**必须在 `set_active_profile` 之后调**：
+/// 判据是「和**当前**活跃账号不同」，切之前问等于拿旧账号跟自己比，恒为 0。
+#[tauri::command]
+pub(crate) async fn sessions_off_active_profile_count(
+    state: tauri::State<'_, crate::AppState>,
+    provider: String,
+) -> Result<u32, String> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let broker = state.ptys.clone();
+        let db = state.db_path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let store = open_store(&db)?;
+            Ok(sessions_off_active_profile(&broker, &store, &provider)?.len() as u32)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (state, provider);
+        Ok(0)
+    }
+}
+
+/// 本进程托管着、且**还没在当前活跃账号上**的那些会话（＝切账号后需要重启的那批）。
+///
+/// 计数与重启共用这一条判据，两个数字因此由构造保证一致——前端此前是自己翻一页看板列表
+/// 数的，会话一多就数不全（连着但久未活动的会话按 last_event_at 排到后面，翻页翻不到），
+/// 于是「不弹确认、也不重启」，账号切了会话却还挂在旧账号上。
+///
+/// 三道收窄，每道都是为了不白杀用户的进程：
+/// - **只对声明了跨账号迁移的 agent 生效**：其余 agent 恢复时仍回到会话原本的账号
+///   （`prepare_resume_launch` 算出的 target_profile 恒等于原账号），重启只是白跑一趟，
+///   还把正在生成的回答丢了；
+/// - **只动本进程托管的会话**：外部终端里的进程不归我们管（用户得先接管）；
+/// - **已经在目标账号上的会话不动**：切换对它是空操作。
+///
+/// 排序只为可复现：HashSet 的迭代序每次都不同，多个会话同时失败时报出来的「第一个错」
+/// 会跟着飘，复现和对日志都无从下手。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn sessions_off_active_profile(
+    broker: &crate::pty::PtyBroker,
+    store: &meowo_store::Store,
+    provider: &str,
+) -> Result<Vec<i64>, String> {
+    if !supports_cross_account_resume(Some(provider)) {
+        return Ok(Vec::new());
+    }
+    let target = crate::profile::active_id(provider);
+    let mut ids: Vec<i64> = broker.active_session_ids().into_iter().collect();
+    ids.sort_unstable();
+    let mut pending = Vec::new();
+    for sid in ids {
+        if store.session_provider(sid).map_err(|e| e.to_string())? != provider {
+            continue;
+        }
+        if store.session_profile(sid).map_err(|e| e.to_string())? == target {
+            continue;
+        }
+        pending.push(sid);
+    }
+    Ok(pending)
+}
+
 /// 把单个托管会话重启到当前活跃账号。`Ok(true)` = 真的重启了它；`Ok(false)` = 没动它
-/// （不是本 agent / 已经在目标账号上 / 恰在此刻自己退出了 / start 判重收敛）。
+/// （恰在此刻自己退出了 / start 判重收敛）。该不该动它由 [`sessions_off_active_profile`] 判。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn restart_session_onto_active_profile(
     app: &tauri::AppHandle,
@@ -2245,14 +2299,7 @@ fn restart_session_onto_active_profile(
     store: &meowo_store::Store,
     sid: i64,
     provider: &str,
-    target_profile: &Option<String>,
 ) -> Result<bool, String> {
-    if store.session_provider(sid).map_err(|e| e.to_string())? != provider {
-        return Ok(false);
-    }
-    if store.session_profile(sid).map_err(|e| e.to_string())? == *target_profile {
-        return Ok(false);
-    }
     let session = store.get_session(sid).map_err(|e| e.to_string())?;
     let cwd = store.session_cwd(sid).map_err(|e| e.to_string())?;
     // 尺寸必须在杀之前取：PTY 记录一收走，grid 就只剩 (0,0)。取不到时退回与看板恢复

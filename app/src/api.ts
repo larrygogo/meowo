@@ -1122,6 +1122,17 @@ export function setActiveProfile(provider: AgentId, id: string | null): Promise<
 }
 
 /**
+ * 切到当前活跃账号后，还有几个托管会话挂在别的账号上（＝{@link applyActiveProfileToSessions}
+ * 会动几个）。只读，不碰任何进程。
+ *
+ * **必须在 {@link setActiveProfile} 之后调**：判据是「和当前活跃账号不同」，切之前问等于拿
+ * 旧账号跟自己比，恒为 0。计数与重启在后端共用同一条判据，两个数字因此不会各说各话。
+ */
+export function sessionsOffActiveProfileCount(provider: AgentId): Promise<number> {
+  return invoke("sessions_off_active_profile_count", { provider });
+}
+
+/**
  * 把该 agent 正在托管运行的会话就地重启到**当前活跃账号**（＝替用户做掉「结束会话 → 恢复」）。
  * 返回真正重启了几个。
  *

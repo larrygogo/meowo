@@ -30,6 +30,7 @@ const api = vi.hoisted(() => ({
   createProfile: vi.fn(),
   setActiveProfile: vi.fn(),
   applyActiveProfileToSessions: vi.fn(),
+  sessionsOffActiveProfileCount: vi.fn(),
   renameProfile: vi.fn(),
   deleteProfile: vi.fn(),
   mergeProfileIntoDefault: vi.fn(),
@@ -123,7 +124,8 @@ beforeEach(() => {
   api.checkAgentUpdates.mockResolvedValue([]);
   // 默认：无活跃会话（点「更新」不弹确认），有会话的用例再覆盖。
   api.getLiveSessionsPage.mockResolvedValue({ items: [], next_cursor: null });
-  // 默认：切账号后没有会话要重启（个别用例再覆盖 getLiveSessionsPage）。
+  // 默认：切账号后没有会话要重启（个别用例再覆盖）。
+  api.sessionsOffActiveProfileCount.mockResolvedValue(0);
   api.applyActiveProfileToSessions.mockResolvedValue(0);
   // 默认：只有一个默认账号（没建过自定义账号）。
   api.listProfiles.mockResolvedValue([
@@ -893,21 +895,17 @@ describe("AccountSection 多账号", () => {
       { id: null, name: "", active: true, account: { email: "a@b.c" } },
       { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
     ]);
-    api.getLiveSessionsPage.mockResolvedValue({
-      items: [
-        { connected: true, pty_managed: true, provider: "claude" },
-        { connected: true, pty_managed: true, provider: "codex" }, // 别家的不算
-        { connected: false, pty_managed: true, provider: "claude" }, // 断连的不算
-      ],
-      next_cursor: null,
-    });
+    api.sessionsOffActiveProfileCount.mockResolvedValue(1);
     api.setActiveProfile.mockResolvedValue(undefined);
     render(<AccountSection />);
 
     const row = await screen.findByTestId("profile-claude-work");
     fireEvent.click(row.querySelector(".profile-row-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
-    // 只数本 provider 的 connected && pty_managed → 1 个，弹 danger 确认。
+    // 待重启数问的是后端（看板列表分页，自己数会漏），且必须切完再问。
+    await waitFor(() => expect(api.sessionsOffActiveProfileCount).toHaveBeenCalledWith("claude"));
+    expect(api.setActiveProfile.mock.invocationCallOrder[0])
+      .toBeLessThan(api.sessionsOffActiveProfileCount.mock.invocationCallOrder[0]);
     await waitFor(() => expect(dialog.confirm).toHaveBeenCalled());
     expect(dialog.confirm.mock.calls[0][0]).toContain("1");
     expect(dialog.confirm.mock.calls[0][1]).toMatchObject({ danger: true });
@@ -921,10 +919,7 @@ describe("AccountSection 多账号", () => {
       { id: null, name: "", active: true, account: { email: "a@b.c" } },
       { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
     ]);
-    api.getLiveSessionsPage.mockResolvedValue({
-      items: [{ connected: true, pty_managed: true, provider: "claude" }],
-      next_cursor: null,
-    });
+    api.sessionsOffActiveProfileCount.mockResolvedValue(1);
     api.setActiveProfile.mockResolvedValue(undefined);
     dialog.confirm.mockResolvedValue(false);
     render(<AccountSection />);
@@ -947,10 +942,7 @@ describe("AccountSection 多账号", () => {
       { id: null, name: "", active: true, account: { email: "a@b.c" } },
       { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
     ]);
-    api.getLiveSessionsPage.mockResolvedValue({
-      items: [{ connected: true, pty_managed: true, provider: "opencode" }],
-      next_cursor: null,
-    });
+    api.sessionsOffActiveProfileCount.mockResolvedValue(1); // 就算后端说有，也不该问到这一步
     api.setActiveProfile.mockResolvedValue(undefined);
     render(<AccountSection />);
     await selectAgent("OpenCode");
@@ -960,6 +952,7 @@ describe("AccountSection 多账号", () => {
     const row = await screen.findByTestId("profile-opencode-work");
     fireEvent.click(row.querySelector(".profile-row-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("opencode", "work"));
+    expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
     expect(dialog.confirm).not.toHaveBeenCalled();
     expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
   });

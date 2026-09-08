@@ -90,7 +90,8 @@ use session_query::{
 use session_command::{session_launch_selections, set_session_launch_selection};
 use terminal::{
     apply_active_profile_to_sessions, focus_session, new_session, open_automation_settings,
-    open_project_dir, restart_session_supported, resume_session, takeover_managed_terminal,
+    open_project_dir, restart_session_supported, resume_session, sessions_off_active_profile_count,
+    takeover_managed_terminal,
 };
 use window::{
     open_chat_window, open_latest_chat, open_new_session_window, open_onboarding, open_settings,
@@ -1271,6 +1272,7 @@ pub fn run() {
             resume_session,
             restart_session_supported,
             apply_active_profile_to_sessions,
+            sessions_off_active_profile_count,
             open_project_dir,
             open_automation_settings,
             #[cfg(target_os = "macos")]

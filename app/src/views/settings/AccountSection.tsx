@@ -8,6 +8,7 @@ import {
   createProfile,
   setActiveProfile,
   applyActiveProfileToSessions,
+  sessionsOffActiveProfileCount,
   renameProfile,
   deleteProfile,
   mergeProfileIntoDefault,
@@ -178,9 +179,10 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
    */
   supportsProfiles: boolean;
   /**
-   * 切账号时该 agent 的会话能否跟着搬到新账号（后端 `moves_sessions_across_accounts`）。
-   * true（claude）→ 切换后可把运行中的会话重启到新账号；false 的 agent 恢复时仍回到会话
-   * 原本的账号，重启只是白杀一次进程，故连问都不问。**不得按 id 判断**。
+   * 切账号时该 agent 的会话能否跟着搬到新账号（后端 `moves_sessions_across_accounts`，
+   * ＝插件声明了 `CrossAccountSession`）。true → 切换后可把运行中的会话重启到新账号；
+   * false 的 agent 恢复时仍回到会话原本的账号，重启只是白杀一次进程，故连问都不问。
+   * **不得按 id 判断**——覆盖面是插件声明的事实，会随取证进展变。
    */
   movesSessionsAcrossAccounts: boolean;
   /** meowo 能否显示该 agent 的上下文占用。false（gemini/opencode）→ 卡片显式标注「不支持」。 */
@@ -961,24 +963,18 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
    * **先切后问**，不是「问完再切」：设置该不该写与他要不要重启会话是两件事。不点头就退回
    * 老行为（账号已切，运行中的会话留在原账号上），而不是连账号都没切成。
    *
-   * 计数口径与「更新」那条一致（本进程托管 + 已连接）；查询失败按 0 处理，不挡切换——
-   * 后端在重启时还会自己判一遍该动哪些会话。
+   * 待重启的会话数**问后端**，不自己翻看板列表数：那份列表是分页的，连着但久未活动的会话
+   * 按 last_event_at 排在后面、翻页翻不到，于是漏数成 0——不弹确认、也不重启，账号切了
+   * 会话却还挂在旧账号上，正是本次要修的那种静默。后端的计数与重启共用同一条判据。
    */
   const switchTo = async (p: ProfileView) => {
     if (busy || p.active) return;
-    let running = 0;
-    if (movesSessionsAcrossAccounts) {
-      try {
-        const page = await getLiveSessionsPage("all", null, null, 200);
-        running = page.items.filter(
-          (l) => l.connected && l.pty_managed && l.provider === provider,
-        ).length;
-      } catch {
-        /* 查询失败按 0 处理，不挡切换 */
-      }
-    }
     run(async () => {
       await setActiveProfile(provider, p.id);
+      // 搬不了会话的 agent 不必问后端：它恒为 0（后端同样先判这一条）。
+      if (!movesSessionsAcrossAccounts) return;
+      // 必须切完再问：判据是「和当前活跃账号不同」。
+      const running = await sessionsOffActiveProfileCount(provider);
       if (running === 0) return;
       const ok = await appConfirm(t.account.switchRestartConfirm(running), {
         title: t.account.switchProfile,
