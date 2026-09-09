@@ -476,6 +476,24 @@ pub struct ManagedTerminalSnapshotDto {
     pub external_viewers: bool,
 }
 
+/// 某会话的托管 PTY 被**就地换了一个新进程**（`pty-restarted`）。
+///
+/// 只在**不是由持有画面的那扇窗发起**的重启时发：切换账号后把运行中的会话重启到新账号，
+/// 命令来自设置窗，而画面在对话窗/终端页——它们无从知道进程换了代。
+/// 对话窗自己发起的重启（sendText / 切模式 / 接管 / 假死横幅的「结束并恢复」）在原地
+/// 调 rearm，不走这条事件，免得同一次重启复位两遍、白闪一次。
+///
+/// 前端收到即把输出偏移归零并重拉快照：新 PTY 从 0 重新计数，沿用旧偏移会让所有新输出
+/// 被判成「已写过」而丢弃——画面定格在旧进程的最后一帧，打字也没有回显（实拍症状）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PtyRestartedEvent {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub session_id: i64,
+}
+
 /// 外部同步终端（attach 客户端）在线状态变化事件（`pty-external-viewers`）。
 /// 对话窗订阅它即时刷新「输入可能交错」提示——快照轮询在桌面端不是常开通道，
 /// 订阅表增删的那一刻必须主动推（pty.rs handle_attach 的两处订阅表写点）。

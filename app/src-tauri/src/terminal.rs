@@ -2325,7 +2325,7 @@ fn restart_session_onto_active_profile(
     if !wait_pty_released(broker, sid) {
         return Err("原会话仍在运行，未能切换到新账号".into());
     }
-    start_managed_resume_sized(
+    let started = start_managed_resume_sized(
         app.clone(),
         broker.clone(),
         sid,
@@ -2335,7 +2335,18 @@ fn restart_session_onto_active_profile(
         terminal_size,
         // 启动选项不在这里回放：`prepare_resume_launch` 会从 DB 取回这个会话自己存的那份。
         None,
-    )
+    )?;
+    if started {
+        // 画面在对话窗/终端页，而这条重启是设置窗发起的——它们无从知道进程换了代。
+        // 不发这条事件，新 PTY 从 0 起的输出会被旧偏移全判成「已写过」丢弃：终端定格在
+        // 旧进程的最后一帧、打字没有回显（用户实拍「切完账号终端页不刷新」的直接原因）。
+        use tauri::Emitter as _;
+        let _ = app.emit(
+            "pty-restarted",
+            meowo_protocol::ipc::PtyRestartedEvent { session_id: sid },
+        );
+    }
+    Ok(started)
 }
 
 /// 等 broker 把该会话的 PTY 记录收掉（waiter 的 finalize_exit）。`stop` 只负责发刀，
