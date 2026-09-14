@@ -25,6 +25,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   terminal_font_size: 12,
   terminal_line_height: "normal",
   terminal_scrollback: 5000,
+  chat_content_width: "fixed",
   // 占位与真实默认（appearance.ts / 后端 settings.rs）保持一致：flat / neutral。
   sticker_style: "flat",
   sticker_color: "neutral",

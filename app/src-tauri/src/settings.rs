@@ -68,6 +68,10 @@ fn default_terminal_font_size() -> u32 {
 fn default_terminal_line_height() -> String {
     "normal".to_string()
 }
+/// 对话内容列宽：fixed = 居中定宽阅读列（默认，即历史的 720px）/ full = 铺满窗口。
+fn default_chat_content_width() -> String {
+    "fixed".to_string()
+}
 /// 终端回滚缓冲行数（xterm scrollback）。缺省 5000，与前端 xterm 的历史硬编码一致。
 fn default_terminal_scrollback() -> u32 {
     5000
@@ -169,6 +173,9 @@ pub(crate) struct Settings {
     /// 终端回滚缓冲行数。缺省 5000，兼容老 settings.json。
     #[serde(default = "default_terminal_scrollback")]
     pub(crate) terminal_scrollback: u32,
+    /// 对话内容列宽：fixed（默认）/ full。缺省 fixed，兼容老 settings.json。
+    #[serde(default = "default_chat_content_width")]
+    pub(crate) chat_content_width: String,
     /// 贴纸风格：flat = 扁平（默认），elevated = 立体感。缺省 flat，兼容老 settings.json。
     #[serde(default = "default_sticker_style")]
     pub(crate) sticker_style: String,
@@ -251,6 +258,7 @@ impl Default for Settings {
             terminal_font_size: default_terminal_font_size(),
             terminal_line_height: default_terminal_line_height(),
             terminal_scrollback: default_terminal_scrollback(),
+            chat_content_width: default_chat_content_width(),
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),
             sticker_quota_providers: default_sticker_quota_providers(),

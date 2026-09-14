@@ -2638,20 +2638,18 @@ impl PtyBroker {
             // PermissionRequest 自动放行 → 表单出现在终端）。仅提问可用，普通审批
             // 不开这个口子——它的 pass 由消费者注销/窗口关闭等路径兜底。
             "pass" if pending.request.tool_name == "AskUserQuestion" => ApprovalDecision::Pass,
-            // 卡内代答：正文由前端拼（「问题 → 答案」清单），引导语在这里统一包上——
-            // 措辞决定模型把 deny 当答复还是当拒绝，集中协议层一处便于热修。
-            value if value.starts_with("answer:") => {
+            // 卡内代答：前端给出 `问题原文 → 答案` 的 JSON 映射，reporter 以 allow +
+            // updatedInput.answers 回 CC（工具正常返回答案，不是 error 回执）。
+            value if value.starts_with("answers:") => {
                 if pending.request.tool_name != "AskUserQuestion" {
                     return Err("无效的审批选项".into());
                 }
-                let body = value["answer:".len()..].trim();
-                if body.is_empty() {
-                    return Err("无效的审批选项".into());
-                }
-                ApprovalDecision::DenyWith(format!(
-                    "{}{body}",
-                    meowo_protocol::broker::QUESTION_ANSWER_PREAMBLE
-                ))
+                let answers = serde_json::from_str::<serde_json::Value>(&value["answers:".len()..])
+                    .ok()
+                    .and_then(|v| v.as_object().cloned())
+                    .filter(|answers| answers_match_questions(&pending.request.input, answers))
+                    .ok_or("无效的审批选项")?;
+                ApprovalDecision::Answer(answers)
             }
             _ => return Err("无效的审批选项".into()),
         };
@@ -3355,8 +3353,8 @@ impl PtyBroker {
                 .map_err(|e| e.to_string());
         }
         // PreToolUse 代答桥：表单尚未渲染（PreToolUse 在权限流程之前拦住了工具），挂起
-        // 等 GUI 在题面卡上作答。答案以 DenyWith 回 hook——reason 直达模型，表单不再
-        // 出现；GUI 不可用/超时/「去终端作答」回 pass——reporter 零输出，CC 继续走权限
+        // 等 GUI 在题面卡上作答。答案以 Answer 回 hook——allow + updatedInput.answers，
+        // 表单不再出现；GUI 不可用/超时/「去终端作答」回 pass——reporter 零输出，CC 继续走权限
         // 流程，PermissionRequest 会再来一遍并走下面的自动放行段，表单照常出现在终端。
         // 旧 reporter 不带 pre_tool_use 标记，永远走不进这里。
         if request.tool_name == "AskUserQuestion" && request.pre_tool_use {
@@ -3422,7 +3420,7 @@ impl PtyBroker {
                     ApprovalDecision::Pass
                 }
             };
-            if matches!(decision, ApprovalDecision::DenyWith(_)) {
+            if matches!(decision, ApprovalDecision::Answer(_)) {
                 // 已代答：收题面，已答的卡不许靠轮询弹回来。
                 self.clear_interactive_question(request.session_id);
             }
@@ -3685,6 +3683,34 @@ fn await_approval_outcome(
             _ => {}
         }
     }
+}
+
+/// 卡内代答的答案映射是否与挂起提问的题面一一对应。CC 的 AskUserQuestion 按问题原文
+/// 取答案：键必须恰好是全部题面（不多不漏），每题答案为非空字符串。题面本身不可键控
+/// （解析失败 / 无题 / 空题面 / 同文重题）时一律 false——那种提问只能交还终端表单作答。
+/// 与前端 askUserQuestion.ts 的 answersRepresentable 同一判据。
+fn answers_match_questions(
+    input: &str,
+    answers: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(input) else {
+        return false;
+    };
+    let Some(questions) = parsed.get("questions").and_then(|q| q.as_array()) else {
+        return false;
+    };
+    let mut keys = HashSet::new();
+    for question in questions {
+        let text = question.get("question").and_then(|q| q.as_str()).unwrap_or("");
+        if text.trim().is_empty() || !keys.insert(text) {
+            return false;
+        }
+    }
+    !keys.is_empty()
+        && answers.len() == keys.len()
+        && answers.iter().all(|(key, value)| {
+            keys.contains(key.as_str()) && value.as_str().is_some_and(|s| !s.trim().is_empty())
+        })
 }
 
 #[cfg(test)]
@@ -4329,14 +4355,15 @@ mod tests {
         assert!(!dto.answerable, "无 approvals 背书的题面不可作答");
     }
 
-    /// 挂起中的提问由 resolve 通道代答/交还：`answer:<正文>` → DenyWith(引导语+正文)；
-    /// `pass` → Pass（去终端作答）。answer 臂只对提问开放，普通审批条目拒收。
+    /// 挂起中的提问由 resolve 通道代答/交还：`answers:<JSON 映射>` → Answer；
+    /// `pass` → Pass（去终端作答）。answers 臂只对提问开放，普通审批条目与坏答案拒收。
     #[test]
     fn resolve_channel_answers_or_passes_a_held_question() {
         let broker = PtyBroker::default();
         let (tx, rx) = mpsc::channel();
         let mut request = approval_request(31, "AskUserQuestion");
         request.pre_tool_use = true;
+        request.input = r#"{"questions":[{"question":"晚饭吃什么？"}]}"#.into();
         broker.attach.approvals.lock().unwrap().insert(
             request.request_id.clone(),
             PendingApproval {
@@ -4348,14 +4375,13 @@ mod tests {
         assert!(broker.pending_approval(31).is_none());
 
         broker
-            .resolve_approval_choice(31, &request.request_id, "answer:晚饭吃什么？ → 火锅")
+            .resolve_approval_choice(31, &request.request_id, r#"answers:{"晚饭吃什么？":"火锅"}"#)
             .unwrap();
         let decision = rx.recv().unwrap();
-        let ApprovalDecision::DenyWith(reason) = decision else {
-            panic!("代答应是 DenyWith，实际：{decision:?}");
+        let ApprovalDecision::Answer(answers) = decision else {
+            panic!("代答应是 Answer，实际：{decision:?}");
         };
-        assert!(reason.starts_with(meowo_protocol::broker::QUESTION_ANSWER_MARKER));
-        assert!(reason.ends_with("晚饭吃什么？ → 火锅"));
+        assert_eq!(answers["晚饭吃什么？"], "火锅");
 
         // 「去终端作答」：pass 让 reporter 零输出、表单回落终端。
         let (tx, rx) = mpsc::channel();
@@ -4371,7 +4397,33 @@ mod tests {
             .unwrap();
         assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Pass));
 
-        // 空正文与非提问条目一律拒收。
+        // 坏答案（非 JSON / 非对象 / 空映射 / 空答案 / 非字符串 / 键对不上题面）一律拒收。
+        for bad in [
+            "answers:晚饭 → 火锅",
+            "answers:[]",
+            "answers:{}",
+            r#"answers:{"晚饭吃什么？":"  "}"#,
+            r#"answers:{"晚饭吃什么？":1}"#,
+            r#"answers:{"午饭吃什么？":"火锅"}"#,
+            r#"answers:{"晚饭吃什么？":"火锅","":"x"}"#,
+        ] {
+            let (tx, _rx) = mpsc::channel();
+            broker.attach.approvals.lock().unwrap().insert(
+                request.request_id.clone(),
+                PendingApproval {
+                    request: request.clone(),
+                    response: tx,
+                },
+            );
+            assert!(
+                broker
+                    .resolve_approval_choice(31, &request.request_id, bad)
+                    .is_err(),
+                "{bad} 应被拒收"
+            );
+        }
+
+        // 非提问条目一律拒收。
         let (tx, _rx) = mpsc::channel();
         broker.attach.approvals.lock().unwrap().insert(
             "request-bash-31".into(),
@@ -4385,13 +4437,10 @@ mod tests {
             },
         );
         assert!(broker
-            .resolve_approval_choice(31, "request-bash-31", "answer:某答案")
+            .resolve_approval_choice(31, "request-bash-31", r#"answers:{"q":"a"}"#)
             .is_err());
         assert!(broker
             .resolve_approval_choice(31, "request-bash-31", "pass")
-            .is_err());
-        assert!(broker
-            .resolve_approval_choice(31, "request-bash-31", "answer:   ")
             .is_err());
     }
 
@@ -4437,6 +4486,44 @@ mod tests {
         assert_eq!(approval_summon_action(false, true, false), SummonAction::Summon);
         assert_eq!(approval_summon_action(false, false, true), SummonAction::Summon);
         assert_eq!(approval_summon_action(false, false, false), SummonAction::Summon);
+    }
+
+    /// 代答答案必须与挂起提问的题面一一对应：CC 按问题原文取答案，空键、多余键、漏题
+    /// 都会让工具拿到对不上的答案。题面本身不可键控（空题面 / 同文重题）时一律拒收——
+    /// 前端此时不给提交，只留「去终端作答」。
+    #[test]
+    fn answers_must_cover_exactly_the_held_questions() {
+        let input = r#"{"questions":[{"question":"晚饭吃什么？"},{"question":"配菜选哪些？"}]}"#;
+        let map = |json: &str| {
+            serde_json::from_str::<serde_json::Value>(json)
+                .unwrap()
+                .as_object()
+                .cloned()
+                .unwrap()
+        };
+        assert!(answers_match_questions(
+            input,
+            &map(r#"{"晚饭吃什么？":"火锅","配菜选哪些？":"毛肚, 虾滑"}"#)
+        ));
+        for bad in [
+            r#"{"晚饭吃什么？":"火锅"}"#,
+            r#"{"晚饭吃什么？":"火锅","配菜选哪些？":"毛肚","多余":"x"}"#,
+            r#"{"晚饭吃什么？":"火锅","":"毛肚"}"#,
+            r#"{"晚饭吃什么？":"火锅","配菜选哪些？":"  "}"#,
+            r#"{"晚饭吃什么？":"火锅","配菜选哪些？":1}"#,
+            r#"{}"#,
+        ] {
+            assert!(!answers_match_questions(input, &map(bad)), "{bad} 应被拒收");
+        }
+        let one = map(r#"{"晚饭吃什么？":"火锅"}"#);
+        for unkeyable in [
+            r#"{"questions":[]}"#,
+            r#"{"questions":[{"question":"晚饭吃什么？"},{"question":"晚饭吃什么？"}]}"#,
+            r#"{"questions":[{"question":"  "}]}"#,
+            r#"not json"#,
+        ] {
+            assert!(!answers_match_questions(unkeyable, &one), "{unkeyable} 不可键控");
+        }
     }
 
     fn approval_request(session_id: i64, tool: &str) -> ApprovalRequest {

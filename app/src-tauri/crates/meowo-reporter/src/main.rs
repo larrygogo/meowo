@@ -98,10 +98,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // AskUserQuestion 代答桥：PreToolUse 是唯一能在表单渲染前拦下提问的闸门
     // （PermissionRequest 层的 allow+updatedInput / deny 都拦不住表单，2.1.234 实测）。
-    // broker 挂起等 GUI 作答；答案以 DenyWith 回来 → 输出 permissionDecision deny +
-    // reason（模型把它当答复采纳继续）。Allow/Pass 都不输出 → 工具继续、表单照常出现
-    // （Allow 正是旧 broker 自动放行段的回包，跨版本兼容在此闭合）。ExitPlanMode 的
-    // PreToolUse 不进此分支。
+    // broker 挂起等 GUI 作答；答案以 Answer 回来 → 输出 permissionDecision allow +
+    // updatedInput.answers（CC 视为交互已满足，工具正常返回答案）。Allow/Pass 都不输出
+    // → 工具继续、表单照常出现（Allow 正是旧 broker 自动放行段的回包，跨版本兼容在此
+    // 闭合）。ExitPlanMode 的 PreToolUse 不进此分支。
     if canonical_event == "PreToolUse"
         && ev.tool_name.as_deref() == Some("AskUserQuestion")
         && hook_decides
@@ -115,7 +115,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &[],
                 true,
             ) {
-                let (output, settled) = pretooluse_outcome(decision);
+                let (output, settled) = pretooluse_outcome(decision, ev.tool_input.as_ref());
                 if let Some(output) = output {
                     println!("{output}");
                 }
@@ -220,21 +220,46 @@ fn approval_outcome(
             })),
             true,
         ),
-        Decision::Pass => (None, false),
+        // 审批桥不会收到代答（协议上可能），无从映射成权限决策 → 不输出，回落终端。
+        Decision::Pass | Decision::Answer(_) => (None, false),
     }
 }
 
 /// AskUserQuestion 代答桥的决策 → （PreToolUse hook 输出，提问是否已了结）。
 ///
-/// 与 `approval_outcome` 的关键差异：这里**只有 DenyWith（GUI 已代答）产生输出**。
+/// 与 `approval_outcome` 的关键差异：这里**只有 GUI 已代答才产生输出**。
 /// Allow/Pass 都静默——工具继续执行、TUI 表单照常出现，提问仍悬着等人（Allow 是旧
-/// broker 自动放行段的回包，Pass 是挂起超时/无消费者的降级）；PreToolUse 输出 allow
-/// 反而会跳过后续权限流程，绝不能发。
+/// broker 自动放行段的回包，Pass 是挂起超时/无消费者的降级）；**裸 allow 绝不能发**
+/// （会跳过后续权限流程）。代答的 allow 必带 `updatedInput.answers`：CC 对
+/// requiresUserInteraction 的工具只认「hook 带了 updatedInput」为交互已满足
+/// （2.1.270 源码：`Hook satisfied user interaction … via updatedInput`），工具正常
+/// 执行并把 answers 作为结果返回，deny 规则仍能覆盖。
+///
+/// 答案不走 deny reason：error 回执里自称「用户已回答、请勿重试」的指令文本在模型
+/// 看来就是提示注入，会被拒采并反问用户（实拍）。DenyWith 仅为兼容旧版 app 保留。
 fn pretooluse_outcome(
     decision: meowo_protocol::broker::ApprovalDecision,
+    tool_input: Option<&serde_json::Value>,
 ) -> (Option<serde_json::Value>, bool) {
     use meowo_protocol::broker::ApprovalDecision as Decision;
     match decision {
+        Decision::Answer(answers) => {
+            // 原参数拿不到（非对象）就无法拼 updatedInput——静默回落表单，不丢作答机会。
+            let Some(mut input) = tool_input.and_then(|v| v.as_object()).cloned() else {
+                return (None, false);
+            };
+            input.insert("answers".into(), serde_json::Value::Object(answers));
+            (
+                Some(serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "updatedInput": input,
+                    }
+                })),
+                true,
+            )
+        }
         Decision::DenyWith(reason) => (
             Some(serde_json::json!({
                 "hookSpecificOutput": {
@@ -295,24 +320,37 @@ mod tests {
         assert!(!settled);
     }
 
-    /// 代答桥只有 DenyWith 产生 PreToolUse 输出（deny+reason=答案直达模型并了结提问）；
-    /// Allow（旧 broker 自动放行回包）/Pass（超时降级）/裸 Deny 一律静默——工具继续、
-    /// 表单照常、提问仍悬着。PreToolUse 绝不能输出 allow（会跳过后续权限流程）。
+    /// 代答桥只有 GUI 作答产生 PreToolUse 输出：Answer → allow + 原参数并入 answers
+    /// （CC 视为交互已满足，工具正常返回答案）。Allow（旧 broker 自动放行回包）/Pass
+    /// （超时降级）/裸 Deny 一律静默——工具继续、表单照常、提问仍悬着。绝不输出裸 allow。
     #[test]
     fn pretooluse_only_answers_settle_the_question() {
+        let input = serde_json::json!({
+            "questions": [{ "question": "晚饭吃什么？", "options": [{ "label": "火锅" }] }]
+        });
+        let mut answers = serde_json::Map::new();
+        answers.insert("晚饭吃什么？".into(), "火锅".into());
         let (output, settled) =
-            pretooluse_outcome(ApprovalDecision::DenyWith("【Meowo 代答】晚饭 → 火锅".into()));
+            pretooluse_outcome(ApprovalDecision::Answer(answers.clone()), Some(&input));
         assert!(settled);
         let out = output.unwrap();
-        assert_eq!(
-            out["hookSpecificOutput"]["hookEventName"],
-            "PreToolUse"
-        );
-        assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "deny");
-        assert_eq!(
-            out["hookSpecificOutput"]["permissionDecisionReason"],
-            "【Meowo 代答】晚饭 → 火锅"
-        );
+        let hook = &out["hookSpecificOutput"];
+        assert_eq!(hook["hookEventName"], "PreToolUse");
+        assert_eq!(hook["permissionDecision"], "allow");
+        assert_eq!(hook["updatedInput"]["questions"], input["questions"]);
+        assert_eq!(hook["updatedInput"]["answers"]["晚饭吃什么？"], "火锅");
+        assert!(hook.get("permissionDecisionReason").is_none());
+
+        // 拿不到原参数就拼不出 updatedInput：静默回落表单，绝不发裸 allow。
+        let (output, settled) = pretooluse_outcome(ApprovalDecision::Answer(answers), None);
+        assert!(output.is_none());
+        assert!(!settled);
+
+        // 旧版 app 仍会送 DenyWith：兼容输出 deny + reason。
+        let (output, settled) =
+            pretooluse_outcome(ApprovalDecision::DenyWith("旧答案".into()), Some(&input));
+        assert!(settled);
+        assert_eq!(output.unwrap()["hookSpecificOutput"]["permissionDecision"], "deny");
 
         for decision in [
             ApprovalDecision::Allow,
@@ -320,7 +358,7 @@ mod tests {
             ApprovalDecision::Deny,
             ApprovalDecision::Pass,
         ] {
-            let (output, settled) = pretooluse_outcome(decision);
+            let (output, settled) = pretooluse_outcome(decision, Some(&input));
             assert!(output.is_none());
             assert!(!settled);
         }

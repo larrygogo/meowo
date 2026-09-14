@@ -12,14 +12,13 @@ pub const MAX_HANDSHAKE_BYTES: usize = 32 * 1024;
 pub const CURRENT_PROTOCOL_VERSION: u16 = 2;
 pub const V2_MAGIC: &[u8; 4] = b"MWO2";
 
-/// GUI 代答 AskUserQuestion 时 deny reason 的哨兵前缀。transcript 解析靠它把
-/// 「代答回执」从真实工具失败里区分出来(tool_result 只有 tool_use_id 没有工具名,
-/// 逐行无状态解析配不了对,文本哨兵是唯一稳定判据)。
+/// 旧版代答回执的哨兵前缀。旧版把答案塞进 PreToolUse deny reason,CC 记成 error 回执;
+/// 现已改走 allow + updatedInput.answers(正常回执,见 [`ApprovalDecision::Answer`]),
+/// 保留常量只为历史 transcript 里的旧回执仍按「已作答」压平,不再产生新的。
+///
+/// 弃用 deny 的原因:工具结果里自称「用户已回答、请勿重试、直接采用」的指令性文字,
+/// 正是提示注入的典型形态——模型会(也应当)起疑并停下来找用户确认,措辞修不好。
 pub const QUESTION_ANSWER_MARKER: &str = "【Meowo 代答】";
-/// deny reason 的固定引导语。措辞直接影响模型是否把 deny 当作答复采纳(而不是当拒绝
-/// 重试提问),集中在这一个常量便于热修;不进 i18n——读者是模型,不是用户。
-pub const QUESTION_ANSWER_PREAMBLE: &str =
-    "【Meowo 代答】用户已在 Meowo 对话窗中直接回答了本次 AskUserQuestion。这不是拒绝:请勿重试提问,直接采用以下答案继续任务。\n\n";
 
 /// GUI broker 的发现文件。`pid` 用于拒绝崩溃后遗留的过期端点。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,9 +57,13 @@ pub enum ApprovalDecision {
     Allow,
     AllowWithPermissions(Vec<serde_json::Value>),
     Deny,
-    /// 拒绝并携带给模型看的说明文本。AskUserQuestion 代答用它把答案送回 hook；
-    /// 旧 reporter 的 from_wire 解不出 JSON deny → None → 不输出决策，安全回落 TUI。
+    /// 拒绝并携带给模型看的说明文本。旧版 app 用它送代答答案，新 reporter 仍认以兼容；
+    /// 新版 app 不再产生（代答走 [`Self::Answer`]）。
     DenyWith(String),
+    /// AskUserQuestion 代答：`问题原文 → 答案` 映射。reporter 以 PreToolUse allow +
+    /// `updatedInput.answers` 回 CC——CC 视为交互已满足、不弹表单，工具正常返回答案。
+    /// 旧 reporter 的 from_wire 解不出 → None → 不输出决策，安全回落 TUI 表单。
+    Answer(serde_json::Map<String, serde_json::Value>),
     Pass,
 }
 
@@ -77,6 +80,11 @@ impl ApprovalDecision {
             Self::DenyWith(message) => serde_json::json!({
                 "behavior": "deny",
                 "message": message,
+            })
+            .to_string(),
+            Self::Answer(answers) => serde_json::json!({
+                "behavior": "answer",
+                "answers": answers,
             })
             .to_string(),
             Self::Pass => "pass".into(),
@@ -98,6 +106,10 @@ impl ApprovalDecision {
                     Some("deny") => {
                         let message = value.get("message")?.as_str()?.to_string();
                         Some(Self::DenyWith(message))
+                    }
+                    Some("answer") => {
+                        let answers = value.get("answers")?.as_object()?.clone();
+                        Some(Self::Answer(answers))
                     }
                     _ => None,
                 }
@@ -404,19 +416,22 @@ mod tests {
             ApprovalDecision::from_wire(&remembered.as_wire()),
             Some(remembered)
         );
-        let answered =
-            ApprovalDecision::DenyWith(format!("{QUESTION_ANSWER_PREAMBLE}晚饭 → 火锅"));
+        let denied = ApprovalDecision::DenyWith("原因".into());
+        assert_eq!(
+            ApprovalDecision::from_wire(&denied.as_wire()),
+            Some(denied.clone())
+        );
+        let mut answers = serde_json::Map::new();
+        answers.insert("晚饭吃什么？".into(), "火锅".into());
+        let answered = ApprovalDecision::Answer(answers);
         assert_eq!(
             ApprovalDecision::from_wire(&answered.as_wire()),
             Some(answered.clone())
         );
-        // JSON deny 的 wire 形状是 reporter 侧 hook 输出的直接原料，锁死字段名。
+        // wire 形状是 reporter 侧 hook 输出的直接原料，锁死字段名。
         let wire: serde_json::Value = serde_json::from_str(&answered.as_wire()).unwrap();
-        assert_eq!(wire["behavior"], "deny");
-        assert!(wire["message"]
-            .as_str()
-            .unwrap()
-            .starts_with(QUESTION_ANSWER_MARKER));
+        assert_eq!(wire["behavior"], "answer");
+        assert_eq!(wire["answers"]["晚饭吃什么？"], "火锅");
         assert_eq!(ApprovalDecision::from_wire("future-value"), None);
     }
 

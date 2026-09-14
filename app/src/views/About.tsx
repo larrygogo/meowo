@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
-import { availableTerminals, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight } from "../api";
+import { availableTerminals, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -474,6 +474,10 @@ const lineHeightOptions = (t: Dict): { value: TerminalLineHeight; label: string 
   { value: "normal", label: t.settings.lineNormal },
   { value: "relaxed", label: t.settings.lineRelaxed },
 ];
+const chatWidthOptions = (t: Dict): { value: ChatContentWidth; label: string }[] => [
+  { value: "fixed", label: t.settings.chatWidthFixed },
+  { value: "full", label: t.settings.chatWidthFull },
+];
 
 /** 滑杆草稿：拖动期间只更新本地显示，松手（pointerup）或键盘调节静默 240ms 后才提交。
  *  逐像素 onChange 直发 patch = 每 px 一轮完整的 set_settings 链（全量写盘 + 读写 claude
@@ -525,6 +529,7 @@ function AppearanceSection() {
   const termFont = settings?.terminal_font_size ?? SETTINGS_DEFAULTS.terminal_font_size;
   const termLine = settings?.terminal_line_height ?? SETTINGS_DEFAULTS.terminal_line_height;
   const termBack = settings?.terminal_scrollback ?? SETTINGS_DEFAULTS.terminal_scrollback;
+  const chatWidth = settings?.chat_content_width ?? SETTINGS_DEFAULTS.chat_content_width;
   // 滑杆草稿（拖动中本地显示，松手才提交）：见 useSliderDraft。
   const opacityDraft = useSliderDraft((v) => void patch({ opacity: v }));
   const termFontDraft = useSliderDraft((v) => void patch({ terminal_font_size: v }));
@@ -570,6 +575,13 @@ function AppearanceSection() {
             <div className="row-desc">{t.settings.fontSizeDesc}</div>
           </div>
           <FontSizeSlider value={uiScale} options={fontSizeOptions(t)} onChange={(v) => patch({ ui_scale: v })} label={t.settings.fontSize} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.chatWidth}</div>
+            <div className="row-desc">{t.settings.chatWidthDesc}</div>
+          </div>
+          <Segmented value={chatWidth} options={chatWidthOptions(t)} onChange={(v) => patch({ chat_content_width: v })} label={t.settings.chatWidth} />
         </div>
         <div className="row">
           <div className="row-text">

@@ -6,7 +6,7 @@
 // 数据源是 ~/.meowo/settings.json，经 get_settings 读取；任一窗口改设置后后端广播
 // settings-changed，这里实时重套用（顺带做了设置窗口里的明暗即时预览）。
 import { listen } from "@tauri-apps/api/event";
-import { getSettings, type Settings, type StickerStyle, type ThemeMode } from "./api";
+import { getSettings, type ChatContentWidth, type Settings, type StickerStyle, type ThemeMode } from "./api";
 import { remoteUi, REMOTE_SETTINGS_EVENT } from "./remoteMode";
 
 /** 贴纸底色预设：swatch = 设置页色板里显示的鲜亮代表色（小圆点便于区分）；
@@ -37,6 +37,7 @@ type Appearance = {
   ui_scale: number;
   sticker_style: StickerStyle;
   sticker_color: string;
+  chat_content_width: ChatContentWidth;
 };
 
 const CACHE_KEY = "meowo-appearance";
@@ -46,6 +47,7 @@ const DEFAULTS: Appearance = {
   ui_scale: 100,
   sticker_style: DEFAULT_STICKER_STYLE,
   sticker_color: DEFAULT_STICKER_COLOR,
+  chat_content_width: "fixed",
 };
 
 let current: Appearance = DEFAULTS;
@@ -77,6 +79,8 @@ function apply(a: Appearance): void {
   if (themeColor) themeColor.content = theme === "light" ? "#f6f6f7" : "#1c1c1e";
   // 贴纸风格（立体感/扁平）：CSS 用 [data-sticker-style="flat"] 抹平所有立体效果。
   root.setAttribute("data-sticker-style", a.sticker_style);
+  // 对话内容列宽：CSS 用 [data-chat-width="full"] 把 --chat-col 从 720px 换成 100%。
+  root.setAttribute("data-chat-width", a.chat_content_width === "full" ? "full" : "fixed");
   // 贴纸底色：内联设 --cc-bg-rgb（天然盖过 :root[data-theme=light] 的默认值），随生效主题取深/浅一套。
   root.style.setProperty("--cc-bg-rgb", stickerBgRgb(a.sticker_color, theme));
   // 不透明度下限与 UI 一致（25–100）：放低下限以便配合系统 acrylic 透出更明显的模糊桌面；
@@ -94,6 +98,7 @@ function pick(s: Partial<Settings> | null | undefined): Appearance {
     ui_scale: s?.ui_scale ?? DEFAULTS.ui_scale,
     sticker_style: s?.sticker_style ?? DEFAULTS.sticker_style,
     sticker_color: s?.sticker_color ?? DEFAULTS.sticker_color,
+    chat_content_width: s?.chat_content_width ?? DEFAULTS.chat_content_width,
   };
 }
 

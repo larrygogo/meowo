@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  composeAnswerBody,
+  answersRepresentable,
+  composeAnswers,
   matchFocusedQuestion,
   matchOptionByLabel,
   observeTranscriptForDismiss,
@@ -11,7 +12,7 @@ import {
   type StructuredQuestion,
 } from "./askUserQuestion";
 
-describe("composeAnswerBody", () => {
+describe("composeAnswers", () => {
   const question = (over: Partial<StructuredQuestion>): StructuredQuestion => ({
     question: "问点什么？",
     header: null,
@@ -21,7 +22,7 @@ describe("composeAnswerBody", () => {
   });
   const draft = (selected: string[], custom = ""): QuestionAnswerDraft => ({ selected, custom });
 
-  it("逐题一行,多选顿号拼接,自定义追加在选项后", () => {
+  it("按问题原文(不带 header)建键,多选逗号拼接,自定义追加在选项后", () => {
     const questions = [
       question({ header: "晚饭", question: "晚饭吃什么？" }),
       question({ header: "配菜", question: "配菜选哪些？", multiSelect: true }),
@@ -30,25 +31,45 @@ describe("composeAnswerBody", () => {
       [0, draft(["火锅"])],
       [1, draft(["毛肚", "虾滑"], " 少放辣 ")],
     ]);
-    expect(composeAnswerBody(questions, answers)).toBe(
-      "晚饭 · 晚饭吃什么？ → 火锅\n配菜 · 配菜选哪些？ → 毛肚、虾滑、少放辣",
-    );
+    expect(composeAnswers(questions, answers)).toEqual({
+      "晚饭吃什么？": "火锅",
+      "配菜选哪些？": "毛肚, 虾滑, 少放辣",
+    });
   });
 
   it("任一题空着(含纯空白自定义)即不可提交", () => {
-    const questions = [question({}), question({ multiSelect: true })];
-    expect(composeAnswerBody(questions, new Map([[0, draft(["A"])]]))).toBeNull();
+    const questions = [question({ question: "甲？" }), question({ question: "乙？", multiSelect: true })];
+    expect(composeAnswers(questions, new Map([[0, draft(["A"])]]))).toBeNull();
     expect(
-      composeAnswerBody(questions, new Map([[0, draft(["A"])], [1, draft([], "   ")]])),
+      composeAnswers(questions, new Map([[0, draft(["A"])], [1, draft([], "   ")]])),
     ).toBeNull();
-    expect(composeAnswerBody([], new Map())).toBeNull();
+    expect(composeAnswers([], new Map())).toBeNull();
   });
 
-  it("纯自定义文本可作答,无 header 的题面直接用问题原文", () => {
+  it("纯自定义文本可作答", () => {
     const questions = [question({ question: "还有什么要补充？" })];
-    expect(composeAnswerBody(questions, new Map([[0, draft([], "没有了")]]))).toBe(
-      "还有什么要补充？ → 没有了",
-    );
+    expect(composeAnswers(questions, new Map([[0, draft([], "没有了")]]))).toEqual({
+      "还有什么要补充？": "没有了",
+    });
+  });
+
+  it("题面不可键控(空题面/同文重题)时即使都答了也不可提交", () => {
+    const empty = [question({ question: "" }), question({ question: "乙？" })];
+    const dup = [question({ question: "同一题？" }), question({ question: "同一题？" })];
+    const both = new Map([[0, draft(["A"])], [1, draft(["B"])]]);
+    expect(composeAnswers(empty, both)).toBeNull();
+    expect(composeAnswers(dup, both)).toBeNull();
+  });
+});
+
+describe("answersRepresentable", () => {
+  const q = (question: string): StructuredQuestion => ({ question, header: null, multiSelect: false, options: [] });
+
+  it("题面非空且互不相同才可键控", () => {
+    expect(answersRepresentable([q("甲？"), q("乙？")])).toBe(true);
+    expect(answersRepresentable([])).toBe(false);
+    expect(answersRepresentable([q("   ")])).toBe(false);
+    expect(answersRepresentable([q("甲？"), q("甲？")])).toBe(false);
   });
 });
 
