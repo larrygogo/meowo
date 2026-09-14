@@ -3619,7 +3619,7 @@ select.ns-input {
 /* 有审批卡时整条上移到卡片之上（7C-3）：它紧贴 composer，正好落在卡片盖住的那一段，
    「立即插话」按钮点不到。位移只发生在卡片出现/消失时，且只动这一条——transcript 与
    composer 仍然纹丝不动（C-9 的零位移约束说的是那两者）。 */
-.chat-queued { width: min(720px, calc(100% - 48px)); margin: 0 auto calc(var(--sp-8) + var(--chat-overlay-h, 0px)); display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-7) var(--sp-11); border: 1px dashed color-mix(in srgb, var(--cc-warn-vivid) 35%, transparent); border-radius: var(--r-9); color: var(--cc-text-dim); font-size: var(--fs-10-5); }
+.chat-queued { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto calc(var(--sp-8) + var(--chat-overlay-h, 0px)); display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-7) var(--sp-11); border: 1px dashed color-mix(in srgb, var(--cc-warn-vivid) 35%, transparent); border-radius: var(--r-9); color: var(--cc-text-dim); font-size: var(--fs-10-5); }
 .chat-queued-head { display: flex; align-items: center; gap: var(--sp-10); }
 /* 选择器必须点名 .chat-queued-head > button:此前的 `.chat-queued button` 会连列表里的
    ✕ 一起刷成 margin-left:auto 的药丸,把每条回执的文字挤没。 */
@@ -3931,8 +3931,13 @@ select.ns-input {
      改用文档流内的 ::before 占位——它随内容一起滚走，吸顶元素才能贴到顶。
      底部另加 --chat-overlay-h：审批卡从 composer 上沿向上溢出、盖住末尾几百像素，
      不补这段留白就滚不出来（7C-2，实高由 ChatWindow 的 overlay 观察者回写）。 */
-  padding: 0 max(34px, calc((100% - 720px) / 2)) calc(var(--sp-24) + var(--chat-overlay-h, 0px));
+  padding: 0 max(34px, calc((100% - var(--chat-col)) / 2)) calc(var(--sp-24) + var(--chat-overlay-h, 0px));
 }
+/* 对话阅读列宽（消息列/排队回执/审批卡/运行条/composer 同此一列）。设置「对话内容宽度」
+   选铺满时 appearance.ts 挂 data-chat-width="full"：100% 让 padding 退到 34px 兜底、
+   各卡片退到 calc(100% - 48px) 兜底，版式不需要第二套规则。 */
+:root { --chat-col: 720px; }
+:root[data-chat-width="full"] { --chat-col: 100%; }
 .chat-scroll::before { content: ""; display: block; height: var(--sp-24); }
 /* 屏外消息跳过 layout/paint（浏览器原生的"虚拟化"）：上千条的长会话里，可视区外的
    条目不再参与每轮渲染。选直接子块 = Transcript 的顶层条目；嵌套的小块不值得再管。
@@ -4340,7 +4345,7 @@ select.ns-input {
    position:relative 双作用:绘在 overlay 的渐变过渡之上(z-index:auto 的定位元素按
    树序后绘) + 给绝对定位的 × 收起钮(.chat-attention-dismiss)做锚点。
    max-height 兜住矮窗:窗口很矮时卡片压到上限、正文内部滚动,不顶进标题栏。 */
-.chat-approval { position: relative; width: min(720px, calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; max-height: min(70vh, 560px); padding: var(--sp-14) var(--sp-16); display: flex; flex-direction: column; gap: var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-16); background: var(--cc-bg); box-shadow: 0 10px 30px rgba(0,0,0,.10); font-size: var(--fs-12); animation: chat-approval-in .18s ease-out; }
+.chat-approval { position: relative; width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; max-height: min(70vh, 560px); padding: var(--sp-14) var(--sp-16); display: flex; flex-direction: column; gap: var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-16); background: var(--cc-bg); box-shadow: 0 10px 30px rgba(0,0,0,.10); font-size: var(--fs-12); animation: chat-approval-in .18s ease-out; }
 /* 入场动画:overlay 后卡片出现不再推挤任何内容,「从 0 高渐开」没有存在必要——
    改淡入 + 微浮起。reduced-motion 由文件末尾的全局通配兜底压成瞬完。 */
 @keyframes chat-approval-in {
@@ -4434,9 +4439,9 @@ select.ns-input {
   z-index: 9;
   margin: 0 auto var(--sp-18);
   flex: 0 0 auto;
-  /* 720px 是阅读列宽（排队回执/审批卡/运行条同此一列），不随密度缩放——缩放只改
+  /* --chat-col 是阅读列宽（排队回执/审批卡/运行条同此一列），不随密度缩放——缩放只改
      字号与间距，不改版式划分；窄窗由 calc(100% - 48px) 兜底。 */
-  width: min(720px, calc(100% - 48px));
+  width: min(var(--chat-col), calc(100% - 48px));
   min-height: calc(132px * var(--cc-ui));
   padding: var(--sp-14) var(--sp-16) var(--sp-12);
   display: flex;
@@ -4929,7 +4934,7 @@ select.ns-input {
    在文档流内、位于滚动区与 compose 之间(与审批条同一布局槽),限宽随 compose——
    滚动查看历史时它不再随内容滚出视口。 */
 /* 同 .chat-queued：有卡时上移，避开被卡片盖住的那一段（7C-3）。 */
-.chat-running { width: min(720px, calc(100% - 48px)); margin: 0 auto calc(var(--sp-8) + var(--chat-overlay-h, 0px)); flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); color: var(--cc-text-dim); font-size: var(--fs-12); }
+.chat-running { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto calc(var(--sp-8) + var(--chat-overlay-h, 0px)); flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); color: var(--cc-text-dim); font-size: var(--fs-12); }
 /* 活动文本恒单行:currentActivity 是最近一条命令的原文,长命令折行会把状态条撑成一坨
    多行原始文本(且每换一条活动高度都在跳)。截断展示,全文走 title 悬停。 */
 .chat-running:has(+ .chat-queued) { margin-bottom: var(--sp-8); }
@@ -5216,7 +5221,7 @@ select.ns-input {
 .chat-attention-dismiss.is-inline { position: static; width: auto; height: auto; padding: var(--sp-6) var(--sp-10); font-size: var(--fs-10-5); margin-right: auto; }
 /* 收起后的折叠条(7C-2):挂在 overlay 底部、卡片的位置上,窄一条不挡消息。
    宽度与卡片同轴居中,视觉上就是那张卡压扁后的残留,点一下原样展开。 */
-.chat-attention-collapsed { width: min(720px, calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; padding: var(--sp-7) var(--sp-14); display: flex; align-items: center; gap: var(--sp-8); border: 1px solid var(--cc-border); border-radius: var(--r-pill); background: var(--cc-bg); box-shadow: 0 6px 18px rgba(0,0,0,.08); color: var(--cc-text-dim); font-size: var(--fs-11); text-align: left; cursor: pointer; }
+.chat-attention-collapsed { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; padding: var(--sp-7) var(--sp-14); display: flex; align-items: center; gap: var(--sp-8); border: 1px solid var(--cc-border); border-radius: var(--r-pill); background: var(--cc-bg); box-shadow: 0 6px 18px rgba(0,0,0,.08); color: var(--cc-text-dim); font-size: var(--fs-11); text-align: left; cursor: pointer; }
 .chat-attention-collapsed::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--cc-warn-vivid); }
 .chat-attention-collapsed:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
 /* 选项列表:交互选择器的带勾选格选项、启动/信任/菜单卡的纯文本选项共用。

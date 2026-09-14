@@ -33,6 +33,7 @@ export const store: Store = {
     terminal_font_size: 12,
     terminal_line_height: "normal",
     terminal_scrollback: 5000,
+    chat_content_width: "fixed",
     sticker_style: "flat",
     sticker_color: "neutral",
     sticker_quota_providers: ["claude", "codex"],

@@ -603,6 +603,7 @@ export function getLiveSessionsPage(
 
 export type ThemeMode = "dark" | "light" | "system";
 export type TerminalLineHeight = "compact" | "normal" | "relaxed";
+export type ChatContentWidth = "fixed" | "full";
 
 export type Settings = {
   /** 桌面通知总开关（待交互 + 错误）。 */
@@ -648,6 +649,8 @@ export type Settings = {
   terminal_line_height: TerminalLineHeight;
   /** 终端回滚缓冲行数（xterm scrollback，500–50000）。缺省 5000。 */
   terminal_scrollback: number;
+  /** 对话内容列宽：fixed = 居中定宽阅读列（默认 720px）/ full = 铺满窗口。 */
+  chat_content_width: ChatContentWidth;
   /** 贴纸风格：elevated = 立体感（默认）/ flat = 扁平。 */
   sticker_style: StickerStyle;
   /** 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。 */
