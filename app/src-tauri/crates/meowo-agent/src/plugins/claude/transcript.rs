@@ -327,9 +327,10 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                         .map(str::to_string);
                                 }
                             }
-                            // GUI 代答 AskUserQuestion 走 PreToolUse deny,CC 把答案记成
+                            // 旧版 GUI 代答 AskUserQuestion 走 PreToolUse deny,CC 把答案记成
                             // error 回执——对用户它是「已作答」不是失败,按哨兵压平,
-                            // 否则对话流红块 + handoff 标 [失败]。在截断前的原始文本上
+                            // 否则历史对话流红块 + handoff 标 [失败]。新版走 allow +
+                            // updatedInput.answers,回执本就不是 error。在截断前的原始文本上
                             // 判(哨兵在文首,截断本伤不到,防御截断策略变化)。
                             let answered_by_meowo =
                                 text.contains(meowo_protocol::broker::QUESTION_ANSWER_MARKER);

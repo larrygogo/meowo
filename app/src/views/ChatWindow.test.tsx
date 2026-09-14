@@ -2432,7 +2432,7 @@ describe("ChatWindow", () => {
   });
 
   /** broker 挂起代答（answerable）：卡片是真正的作答面——多问题跨 tab、多选勾选、
-   *  自定义输入，提交把 `answer:<正文>` 发给 resolve 通道，不写一个 PTY 字节。
+   *  自定义输入，提交把 `answers:<JSON 映射>` 发给 resolve 通道，不写一个 PTY 字节。
    *  出口只有提交与「去终端作答」，刻意没有「仅收起」（收起=让 hook 干等 300s）。 */
   it("answerable 题面卡内作答:多问题多选提交 answer 正文", async () => {
     window.history.replaceState({}, "", "/?sessionId=32");
@@ -2491,7 +2491,11 @@ describe("ChatWindow", () => {
       const args = resolved![1] as { sessionId: number; requestId: string; choice: string };
       expect(args.sessionId).toBe(32);
       expect(args.requestId).toBe("request-answerable");
-      expect(args.choice).toBe("answer:晚饭 · 晚饭吃什么？ → 火锅\n配菜 · 配菜选哪些？ → 毛肚、虾滑、少放辣");
+      expect(args.choice.startsWith("answers:")).toBe(true);
+      expect(JSON.parse(args.choice.slice("answers:".length))).toEqual({
+        "晚饭吃什么？": "火锅",
+        "配菜选哪些？": "毛肚, 虾滑, 少放辣",
+      });
     });
     // 提交即收卡，且全程不写 PTY（代答走 resolve 通道，不是按键回放）。
     await waitFor(() => expect(screen.queryByText(/晚饭吃什么/)).toBeNull());

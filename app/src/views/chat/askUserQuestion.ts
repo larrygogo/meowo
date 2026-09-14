@@ -137,15 +137,17 @@ export function observeTranscriptForDismiss(
 /// custom 是自定义补充文本。二者可并存（选了选项还想补一句）。
 export type QuestionAnswerDraft = { selected: string[]; custom: string };
 
-/// 拼代答正文（`answer:<正文>` 的 payload，broker 会在前面统一包引导语）。
-/// 每题一行「题面 → 答案」，多选顿号拼接，自定义文本追加在选项之后。
-/// 任何一题既没点选也没自定义文本 → null（不可提交）；正文是给模型看的，不进 i18n。
-export function composeAnswerBody(
+/// 拼代答答案（`answers:<JSON>` 的 payload）：`问题原文 → 答案` 映射，形态与 CC 自己
+/// 表单交给 AskUserQuestion 的 `answers` 参数一致——reporter 原样塞进 updatedInput，
+/// 工具按问题原文取答案，故键必须是 question 原文（不带 header）。多选与 CC 表单同样
+/// 用 ", " 拼接，自定义文本追加在选项之后。
+/// 任何一题既没点选也没自定义文本 → null（不可提交）。
+export function composeAnswers(
   questions: StructuredQuestion[],
   answers: ReadonlyMap<number, QuestionAnswerDraft>,
-): string | null {
+): Record<string, string> | null {
   if (questions.length === 0) return null;
-  const lines: string[] = [];
+  const out: Record<string, string> = {};
   for (const [index, question] of questions.entries()) {
     const draft = answers.get(index);
     const selected = draft?.selected ?? [];
@@ -153,11 +155,9 @@ export function composeAnswerBody(
     if (selected.length === 0 && !custom) return null;
     const parts = [...selected];
     if (custom) parts.push(custom);
-    const title = (question.header ? `${question.header} · ${question.question}` : question.question)
-      || `问题 ${index + 1}`;
-    lines.push(`${title} → ${parts.join("、")}`);
+    out[question.question] = parts.join(", ");
   }
-  return lines.join("\n");
+  return out;
 }
 
 export function parseAskUserQuestions(input: string): StructuredQuestion[] {

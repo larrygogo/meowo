@@ -19,7 +19,7 @@ import { useShowWhenReady } from "../useShowWhenReady";
 import { collectSubagentReceipts, reduceChatEvents } from "../chat/reducer";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../chat/transcriptTodos";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
-import { composeAnswerBody, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
+import { composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
 import { useModelPresets } from "./chat/useModelPresets";
@@ -3247,19 +3247,19 @@ export function ChatWindow() {
       return next;
     });
   };
-  // 每题都有内容（点选或自定义）才可提交；正文即 answer: 的 payload。
-  const answerBody = composeAnswerBody(structuredQuestions, questionAnswers);
+  // 每题都有内容（点选或自定义）才可提交；映射即 answers: 的 payload。
+  const answerMap = composeAnswers(structuredQuestions, questionAnswers);
   const unansweredCount = structuredQuestions.filter((_, index) => {
     const draft = questionAnswers.get(index);
     return !(draft && (draft.selected.length > 0 || draft.custom.trim()));
   }).length;
-  // 提交：正文由这里拼，引导语由 broker 统一包上 → DenyWith 回 hook，agent 直接继续。
+  // 提交：答案映射 → broker 以 Answer 回 hook（allow + updatedInput.answers），agent 直接继续。
   // 复用 resolvingApproval 在途锁（与审批同类的终止动作）。
   const submitQuestionAnswers = async () => {
-    if (!questionAnswerable || !structuredQuestion || resolvingApproval || !answerBody) return;
+    if (!questionAnswerable || !structuredQuestion || resolvingApproval || !answerMap) return;
     setResolvingApproval(true);
     try {
-      await resolvePendingApproval(sessionId, structuredQuestion.requestId, `answer:${answerBody}`);
+      await resolvePendingApproval(sessionId, structuredQuestion.requestId, `answers:${JSON.stringify(answerMap)}`);
       setStructuredQuestion(null);
     } catch (error) {
       // 挂起可能已在别处结算（超时/回合终止）：说明原因，卡随下一拍轮询降级或消失。
@@ -3884,7 +3884,7 @@ export function ChatWindow() {
           {remoteUi()
             ? <span className="chat-remote-hint">{t.chat.answerOnDesktop}</span>
             : <button type="button" disabled={resolvingApproval} onClick={() => void sendQuestionToTerminal()}>{t.chat.goTerminal}</button>}
-          <button type="button" className="is-allow" disabled={resolvingApproval || !answerBody} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
+          <button type="button" className="is-allow" disabled={resolvingApproval || !answerMap} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
         </>}
       >
         <QuestionPanels
@@ -3893,9 +3893,9 @@ export function ChatWindow() {
           answers={questionAnswers}
           onSelect={selectQuestionOption}
           onCustom={setQuestionCustom}
-          onSubmit={() => { if (!resolvingApproval && answerBody) void submitQuestionAnswers(); }}
+          onSubmit={() => { if (!resolvingApproval && answerMap) void submitQuestionAnswers(); }}
         />
-        <span>{answerBody ? t.chat.questionAnswerReady : t.chat.questionAnswerIncomplete(unansweredCount)}</span>
+        <span>{answerMap ? t.chat.questionAnswerReady : t.chat.questionAnswerIncomplete(unansweredCount)}</span>
       </ApprovalCard>}
       {/* AskUserQuestion 的同步题面卡（展示形态）：broker 自动放行后从结构化参数渲染，与
           终端表单同步出现（先于屏幕识别）。可点选排队——作答按键要等识别确认表单在屏
