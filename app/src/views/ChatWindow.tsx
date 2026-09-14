@@ -19,7 +19,7 @@ import { useShowWhenReady } from "../useShowWhenReady";
 import { collectSubagentReceipts, reduceChatEvents } from "../chat/reducer";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../chat/transcriptTodos";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
-import { composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
+import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
 import { useModelPresets } from "./chat/useModelPresets";
@@ -3895,7 +3895,11 @@ export function ChatWindow() {
           onCustom={setQuestionCustom}
           onSubmit={() => { if (!resolvingApproval && answerMap) void submitQuestionAnswers(); }}
         />
-        <span>{answerMap ? t.chat.questionAnswerReady : t.chat.questionAnswerIncomplete(unansweredCount)}</span>
+        <span>{answerMap
+          ? t.chat.questionAnswerReady
+          : !answersRepresentable(structuredQuestions)
+            ? t.chat.questionNeedsTerminal
+            : t.chat.questionAnswerIncomplete(unansweredCount)}</span>
       </ApprovalCard>}
       {/* AskUserQuestion 的同步题面卡（展示形态）：broker 自动放行后从结构化参数渲染，与
           终端表单同步出现（先于屏幕识别）。可点选排队——作答按键要等识别确认表单在屏

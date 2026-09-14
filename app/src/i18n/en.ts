@@ -316,6 +316,7 @@ export const en: Dict = {
     questionAnswered: "Answered",
     questionAnswerReady: "Agent continues right after you submit",
     questionAnswerIncomplete: (count: number) => `${count} question${count === 1 ? "" : "s"} left`,
+    questionNeedsTerminal: "These questions can't be answered in the card — answer in the terminal",
     chatAboutThis: "Discuss with Agent",
     planTitle: "Agent is waiting for plan approval",
     approvalTool: "Requested tool",

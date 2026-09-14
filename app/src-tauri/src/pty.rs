@@ -2647,12 +2647,7 @@ impl PtyBroker {
                 let answers = serde_json::from_str::<serde_json::Value>(&value["answers:".len()..])
                     .ok()
                     .and_then(|v| v.as_object().cloned())
-                    .filter(|answers| {
-                        !answers.is_empty()
-                            && answers
-                                .values()
-                                .all(|a| a.as_str().is_some_and(|s| !s.trim().is_empty()))
-                    })
+                    .filter(|answers| answers_match_questions(&pending.request.input, answers))
                     .ok_or("无效的审批选项")?;
                 ApprovalDecision::Answer(answers)
             }
@@ -3690,6 +3685,34 @@ fn await_approval_outcome(
     }
 }
 
+/// 卡内代答的答案映射是否与挂起提问的题面一一对应。CC 的 AskUserQuestion 按问题原文
+/// 取答案：键必须恰好是全部题面（不多不漏），每题答案为非空字符串。题面本身不可键控
+/// （解析失败 / 无题 / 空题面 / 同文重题）时一律 false——那种提问只能交还终端表单作答。
+/// 与前端 askUserQuestion.ts 的 answersRepresentable 同一判据。
+fn answers_match_questions(
+    input: &str,
+    answers: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(input) else {
+        return false;
+    };
+    let Some(questions) = parsed.get("questions").and_then(|q| q.as_array()) else {
+        return false;
+    };
+    let mut keys = HashSet::new();
+    for question in questions {
+        let text = question.get("question").and_then(|q| q.as_str()).unwrap_or("");
+        if text.trim().is_empty() || !keys.insert(text) {
+            return false;
+        }
+    }
+    !keys.is_empty()
+        && answers.len() == keys.len()
+        && answers.iter().all(|(key, value)| {
+            keys.contains(key.as_str()) && value.as_str().is_some_and(|s| !s.trim().is_empty())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4340,6 +4363,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let mut request = approval_request(31, "AskUserQuestion");
         request.pre_tool_use = true;
+        request.input = r#"{"questions":[{"question":"晚饭吃什么？"}]}"#.into();
         broker.attach.approvals.lock().unwrap().insert(
             request.request_id.clone(),
             PendingApproval {
@@ -4373,13 +4397,15 @@ mod tests {
             .unwrap();
         assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Pass));
 
-        // 坏答案（非 JSON / 非对象 / 空映射 / 空答案 / 非字符串）一律拒收。
+        // 坏答案（非 JSON / 非对象 / 空映射 / 空答案 / 非字符串 / 键对不上题面）一律拒收。
         for bad in [
             "answers:晚饭 → 火锅",
             "answers:[]",
             "answers:{}",
             r#"answers:{"晚饭吃什么？":"  "}"#,
             r#"answers:{"晚饭吃什么？":1}"#,
+            r#"answers:{"午饭吃什么？":"火锅"}"#,
+            r#"answers:{"晚饭吃什么？":"火锅","":"x"}"#,
         ] {
             let (tx, _rx) = mpsc::channel();
             broker.attach.approvals.lock().unwrap().insert(
@@ -4460,6 +4486,44 @@ mod tests {
         assert_eq!(approval_summon_action(false, true, false), SummonAction::Summon);
         assert_eq!(approval_summon_action(false, false, true), SummonAction::Summon);
         assert_eq!(approval_summon_action(false, false, false), SummonAction::Summon);
+    }
+
+    /// 代答答案必须与挂起提问的题面一一对应：CC 按问题原文取答案，空键、多余键、漏题
+    /// 都会让工具拿到对不上的答案。题面本身不可键控（空题面 / 同文重题）时一律拒收——
+    /// 前端此时不给提交，只留「去终端作答」。
+    #[test]
+    fn answers_must_cover_exactly_the_held_questions() {
+        let input = r#"{"questions":[{"question":"晚饭吃什么？"},{"question":"配菜选哪些？"}]}"#;
+        let map = |json: &str| {
+            serde_json::from_str::<serde_json::Value>(json)
+                .unwrap()
+                .as_object()
+                .cloned()
+                .unwrap()
+        };
+        assert!(answers_match_questions(
+            input,
+            &map(r#"{"晚饭吃什么？":"火锅","配菜选哪些？":"毛肚, 虾滑"}"#)
+        ));
+        for bad in [
+            r#"{"晚饭吃什么？":"火锅"}"#,
+            r#"{"晚饭吃什么？":"火锅","配菜选哪些？":"毛肚","多余":"x"}"#,
+            r#"{"晚饭吃什么？":"火锅","":"毛肚"}"#,
+            r#"{"晚饭吃什么？":"火锅","配菜选哪些？":"  "}"#,
+            r#"{"晚饭吃什么？":"火锅","配菜选哪些？":1}"#,
+            r#"{}"#,
+        ] {
+            assert!(!answers_match_questions(input, &map(bad)), "{bad} 应被拒收");
+        }
+        let one = map(r#"{"晚饭吃什么？":"火锅"}"#);
+        for unkeyable in [
+            r#"{"questions":[]}"#,
+            r#"{"questions":[{"question":"晚饭吃什么？"},{"question":"晚饭吃什么？"}]}"#,
+            r#"{"questions":[{"question":"  "}]}"#,
+            r#"not json"#,
+        ] {
+            assert!(!answers_match_questions(unkeyable, &one), "{unkeyable} 不可键控");
+        }
     }
 
     fn approval_request(session_id: i64, tool: &str) -> ApprovalRequest {

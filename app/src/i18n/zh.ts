@@ -338,6 +338,8 @@ export const zh = {
     questionAnswered: "已作答",
     questionAnswerReady: "提交后 Agent 立即继续",
     questionAnswerIncomplete: (count: number) => `还有 ${count} 题未作答`,
+    // 题面无法按问题原文区分（空题面/同文重题），卡内提交会错位，只能交给终端表单。
+    questionNeedsTerminal: "这组问题无法在卡片内作答，请去终端作答",
     chatAboutThis: "先和 Agent 讨论",
     planTitle: "Agent 正在等待计划审批",
     approvalTool: "请求工具",

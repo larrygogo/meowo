@@ -141,12 +141,13 @@ export type QuestionAnswerDraft = { selected: string[]; custom: string };
 /// 表单交给 AskUserQuestion 的 `answers` 参数一致——reporter 原样塞进 updatedInput，
 /// 工具按问题原文取答案，故键必须是 question 原文（不带 header）。多选与 CC 表单同样
 /// 用 ", " 拼接，自定义文本追加在选项之后。
-/// 任何一题既没点选也没自定义文本 → null（不可提交）。
+/// 任何一题既没点选也没自定义文本 → null（不可提交）；题面不可键控（见
+/// answersRepresentable）同样 null——宁可不给提交，也不送出错位/被覆盖的答案。
 export function composeAnswers(
   questions: StructuredQuestion[],
   answers: ReadonlyMap<number, QuestionAnswerDraft>,
 ): Record<string, string> | null {
-  if (questions.length === 0) return null;
+  if (!answersRepresentable(questions)) return null;
   const out: Record<string, string> = {};
   for (const [index, question] of questions.entries()) {
     const draft = answers.get(index);
@@ -158,6 +159,19 @@ export function composeAnswers(
     out[question.question] = parts.join(", ");
   }
   return out;
+}
+
+/// 这组题面能否表达成 `问题原文 → 答案` 映射：CC 按问题原文取答案，空题面（纯选项题）
+/// 键不出来，同文重题会互相覆盖。不可键控时作答卡不给提交，只留「去终端作答」。
+/// 与后端 pty.rs 的 answers_match_questions 同一判据。
+export function answersRepresentable(questions: readonly StructuredQuestion[]): boolean {
+  if (questions.length === 0) return false;
+  const seen = new Set<string>();
+  for (const { question } of questions) {
+    if (!question.trim() || seen.has(question)) return false;
+    seen.add(question);
+  }
+  return true;
 }
 
 export function parseAskUserQuestions(input: string): StructuredQuestion[] {

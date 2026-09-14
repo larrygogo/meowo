@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answersRepresentable,
   composeAnswers,
   matchFocusedQuestion,
   matchOptionByLabel,
@@ -37,7 +38,7 @@ describe("composeAnswers", () => {
   });
 
   it("任一题空着(含纯空白自定义)即不可提交", () => {
-    const questions = [question({}), question({ multiSelect: true })];
+    const questions = [question({ question: "甲？" }), question({ question: "乙？", multiSelect: true })];
     expect(composeAnswers(questions, new Map([[0, draft(["A"])]]))).toBeNull();
     expect(
       composeAnswers(questions, new Map([[0, draft(["A"])], [1, draft([], "   ")]])),
@@ -50,6 +51,25 @@ describe("composeAnswers", () => {
     expect(composeAnswers(questions, new Map([[0, draft([], "没有了")]]))).toEqual({
       "还有什么要补充？": "没有了",
     });
+  });
+
+  it("题面不可键控(空题面/同文重题)时即使都答了也不可提交", () => {
+    const empty = [question({ question: "" }), question({ question: "乙？" })];
+    const dup = [question({ question: "同一题？" }), question({ question: "同一题？" })];
+    const both = new Map([[0, draft(["A"])], [1, draft(["B"])]]);
+    expect(composeAnswers(empty, both)).toBeNull();
+    expect(composeAnswers(dup, both)).toBeNull();
+  });
+});
+
+describe("answersRepresentable", () => {
+  const q = (question: string): StructuredQuestion => ({ question, header: null, multiSelect: false, options: [] });
+
+  it("题面非空且互不相同才可键控", () => {
+    expect(answersRepresentable([q("甲？"), q("乙？")])).toBe(true);
+    expect(answersRepresentable([])).toBe(false);
+    expect(answersRepresentable([q("   ")])).toBe(false);
+    expect(answersRepresentable([q("甲？"), q("甲？")])).toBe(false);
   });
 });
 
