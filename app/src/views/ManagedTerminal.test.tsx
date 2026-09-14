@@ -711,6 +711,63 @@ describe("ManagedTerminal", () => {
 
   /// 强制收尾（kill 静默无效后的末档）会把会话摘除但进程可能仍在：文案必须与正常
   /// 退出区分，不能一律说成「已退出」（zombie 残留时那是谎报）。
+  /**
+   * 别人替这个会话换了一代 PTY（切账号后把运行中的会话重启到新账号，命令发自设置窗）：
+   * 本窗口无从知道，沿用旧偏移会把新 PTY 从 0 起的输出全判成「已写过」丢弃——终端定格在
+   * 旧进程最后一帧、打字没有回显（用户实拍「切完账号终端页不刷新」）。`pty-restarted`
+   * 到达即走与就地重启同一条复位。
+   */
+  /** 写进 xterm 的内容里有没有这段文本。PTY 数据是 Uint8Array，只有宿主注解是字符串。 */
+  const wroteText = (needle: string) => write.mock.calls.some(([data]) =>
+    (typeof data === "string" ? data : new TextDecoder().decode(data as Uint8Array)).includes(needle));
+
+  it("pty-restarted 后新 PTY 从 0 起的输出照常上屏（不被旧偏移判成已写过）", async () => {
+    const old = "old process output"; // btoa 只吃 Latin-1，载荷保持 ASCII
+    let snapshotCalls = 0;
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        snapshotCalls += 1;
+        // 首帧给旧进程的画面（偏移已经推到 5000）；重启后的重拉给空快照，
+        // 新输出全靠实时帧上屏——正是此前被旧偏移吃掉的那批。
+        return Promise.resolve(snapshotCalls === 1
+          ? { ...noPty, active: true, managed: true, data: btoa(old), startOffset: 5000 - old.length, endOffset: 5000 }
+          : { ...noPty, active: true, managed: true, data: "", startOffset: 0, endOffset: 0 });
+      }
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(wroteText(old)).toBe(true));
+
+    // 旧进程被换掉：先 pty-exit，随后新 PTY 从 0 开始吐字。
+    eventHandlers.get("pty-exit")!({ payload: { sessionId: 163, code: null } });
+    await waitFor(() => expect(eventHandlers.get("pty-restarted")).toBeTruthy());
+    resetSpy.mockClear();
+    eventHandlers.get("pty-restarted")!({ payload: { sessionId: 163 } });
+    // reset = 走了就地重启的复位（偏移归零 + 重拉快照）。
+    await waitFor(() => expect(resetSpy).toHaveBeenCalled());
+
+    write.mockClear();
+    const fresh = "first frame on the new account";
+    eventHandlers.get("pty-output")!({ payload: { sessionId: 163, offset: 0, data: btoa(fresh) } });
+    await waitFor(() => expect(wroteText(fresh)).toBe(true));
+  });
+
+  /** 别家会话的重启不得复位本窗口（同一进程里多扇终端各看各的会话）。 */
+  it("pty-restarted 只认本会话", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ ...noPty, active: true, managed: true, data: btoa("mine"), endOffset: 4 });
+      }
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(eventHandlers.get("pty-restarted")).toBeTruthy());
+    resetSpy.mockClear();
+    eventHandlers.get("pty-restarted")!({ payload: { sessionId: 999 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(resetSpy).not.toHaveBeenCalled();
+  });
+
   it("forced 的 pty-exit 显示强制结束文案，与正常退出区分", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "managed_terminal_snapshot") {

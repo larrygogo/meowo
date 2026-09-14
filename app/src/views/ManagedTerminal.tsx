@@ -35,6 +35,7 @@ import { pushEscLayer } from "../escLayers";
 import { useDismissable } from "../hooks/useDismissable";
 import type { PtyExitEvent as ExitEvent } from "../generated/contracts/PtyExitEvent";
 import type { PtyOutputEvent as OutputEvent } from "../generated/contracts/PtyOutputEvent";
+import type { PtyRestartedEvent as RestartedEvent } from "../generated/contracts/PtyRestartedEvent";
 import { terminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention } from "../terminalAttention";
 import { remoteUi } from "../remoteMode";
 import { isMac } from "../platform";
@@ -1006,6 +1007,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     }, 5_000);
     let unOutput: (() => void) | undefined;
     let unExit: (() => void) | undefined;
+    let unRestarted: (() => void) | undefined;
     let cancelled = false;
     let hasWrittenOutput = false;
     let painted = false;
@@ -1484,14 +1486,23 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
         else bufferedExit = payload;
       }
     });
-    Promise.all([outputListener, exitListener]).then(([outputUnlisten, exitUnlisten]) => {
+    // 别人替这个会话换了一代 PTY（切账号后把运行中的会话重启到新账号，命令发自设置窗）：
+    // 本窗口无从知道进程换了代，沿用旧偏移会把新 PTY 从 0 起的输出全判成「已写过」丢弃——
+    // 画面定格在旧进程最后一帧、打字没回显。收到就走与就地重启同一条复位（rearm）。
+    // 本窗口自己发起的重启不发这条事件（那些路径在原地调 rearm），不会复位两遍。
+    const restartedListener = listen<RestartedEvent>("pty-restarted", ({ payload }) => {
+      if (payload.sessionId === sessionIdRef.current) rearmRef.current?.();
+    });
+    Promise.all([outputListener, exitListener, restartedListener]).then(([outputUnlisten, exitUnlisten, restartedUnlisten]) => {
       if (cancelled) {
         outputUnlisten();
         exitUnlisten();
+        restartedUnlisten();
         return;
       }
       unOutput = outputUnlisten;
       unExit = exitUnlisten;
+      unRestarted = restartedUnlisten;
       // 监听器就绪后再取快照；期间到达的帧按 offset 在快照之后去重回放。
       void inspectSnapshot();
     }).catch(() => {
@@ -1574,6 +1585,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       pendingMotion = null;
       unOutput?.();
       unExit?.();
+      unRestarted?.();
       unSettings?.();
       unExternal?.();
       // webgl 先于 terminal dispose(xterm 惯例:renderer addon 依赖 core 的 DOM 还在)。
