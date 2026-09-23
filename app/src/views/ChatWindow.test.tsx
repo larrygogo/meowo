@@ -3565,6 +3565,10 @@ describe("ChatWindow", () => {
       expect(await run(301, { composer: "abc", stashed: false })).toEqual(["\u0013", "hello", "\r"]);
     });
 
+    it("composer 有草稿且已有手动暂存:只按一次(标记按前按后都在,以 composer 变空为准)", async () => {
+      expect(await run(304, { composer: "abc", stashed: true })).toEqual(["\u0013", "hello", "\r"]);
+    });
+
     it("composer 为空(即使已有手动暂存):不按暂存键,免得放出旧暂存", async () => {
       expect(await run(302, { composer: "", stashed: true })).toEqual(["hello", "\r"]);
     });

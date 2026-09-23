@@ -465,6 +465,23 @@ async function submitToTerminal(sessionId: number, content: string, abortIf?: ()
   await writeManagedTerminal(sessionId, "\r");
 }
 
+/// 定位 composer 首行,返回提示符之后的文本(已 trim);认不出返回 null。提示行的上一行须
+/// 整行是边框:历史区回显的用户消息也可能以同一提示符开头。
+function composerDraftText(screen: string[] | null, stash: NonNullable<ChatUi["draft_stash"]>): string | null {
+  if (!screen) return null;
+  const isBorder = (line: string) => {
+    const trimmed = line.trim();
+    return trimmed !== "" && [...trimmed].every((char) => char === stash.composer_border);
+  };
+  for (let index = screen.length - 1; index > 0; index -= 1) {
+    const line = screen[index].trimStart();
+    if (isBorder(screen[index - 1]) && line.startsWith(stash.composer_prompt)) {
+      return line.slice(stash.composer_prompt.length).trim();
+    }
+  }
+  return null;
+}
+
 /// 发送前收起 composer 里用户在终端输入行留下的未提交草稿(issue #72:残留会拼进
 /// 消息)。CLI 在下一次提交后自己还原草稿,终端里的输入原样回来。判断全看仿真后的整屏
 /// (规格与取证见后端 DraftStash / tests/probe_draft_residual.rs):
@@ -477,25 +494,16 @@ async function submitToTerminal(sessionId: number, content: string, abortIf?: ()
 async function stashComposerDraft(sessionId: number, stash: NonNullable<ChatUi["draft_stash"]>): Promise<void> {
   try {
     const screen = await managedTerminalScreen(sessionId);
-    if (!screen) return;
-    // 提示行的上一行须整行是边框:历史区回显的用户消息也可能以同一提示符开头。
-    const isBorder = (line: string | undefined) => {
-      const trimmed = line?.trim() ?? "";
-      return trimmed !== "" && [...trimmed].every((char) => char === stash.composer_border);
-    };
-    let composer: string | undefined;
-    for (let index = screen.length - 1; index > 0 && composer === undefined; index -= 1) {
-      if (isBorder(screen[index - 1]) && screen[index].trimStart().startsWith(stash.composer_prompt)) composer = screen[index];
-    }
-    if (composer === undefined) return;
-    if (composer.trimStart().slice(stash.composer_prompt.length).trim() === "") return;
+    if (!composerDraftText(screen, stash)) return;
     const hasMarker = (lines: string[] | null) => !!lines?.some((line) => line.includes(stash.stashed_marker));
     const hadStash = hasMarker(screen);
     await writeManagedTerminal(sessionId, stash.input);
+    // 成功条件是 composer 变空,不看标记出现:用户已有手动暂存时标记按前按后都在,
+    // 靠标记判定会白等满整个轮询窗(PR #73 评审)。
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 50));
       const now = await managedTerminalScreen(sessionId);
-      if (!hadStash && hasMarker(now)) return;
+      if (composerDraftText(now, stash) === "") return;
       if (hadStash && !hasMarker(now)) {
         await writeManagedTerminal(sessionId, stash.input);
         return;
