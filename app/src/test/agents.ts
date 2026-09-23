@@ -215,6 +215,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端同源:粘贴键 kimi 在 Windows 上是 Alt+V(二进制里 win32 ? "alt+v" : ctrl("v")),
     // 其余声明该能力的(claude)是 Ctrl-V。
     clipboard_paste_input: provider === "kimi" ? "\u001bv" : provider === "claude" ? "\u0016" : null,
+    // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
+    draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。
     permission_prompt_races_hook: provider === "claude",
     version: null,

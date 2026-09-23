@@ -2435,12 +2435,9 @@ impl PtyBroker {
         &self,
         session_id: i64,
     ) -> Option<(crate::detect::ScreenSnapshot, String)> {
-        let managed = self
-            .sessions
-            .lock()
-            .ok()?
-            .get(&session_id)
-            .cloned()?;
+        // 走 lookup 解析临时 id → 真 id 的绑定:对话页在认领前后都可能持临时 id 读屏
+        // (managed_terminal_screen,issue #72),直接查表会在这窗口里恒 None,与 write 不对称。
+        let managed = self.lookup(session_id).ok().flatten()?;
         let snapshot = managed.probe.snapshot()?;
         Some((snapshot, managed.probe.provider.clone()))
     }

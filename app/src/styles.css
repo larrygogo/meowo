@@ -3961,7 +3961,9 @@ select.ns-input {
 /* 大图查看层：portal 到 body 的全窗覆盖层（理由见 ImageRef），滚轮缩放、拖拽平移，
    右上工具栏有缩放与关闭；点空白/Esc 也能关。 */
 .chat-lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, .78); }
-.chat-lightbox-stage { position: absolute; inset: 0; display: grid; place-items: center; padding: 48px; overflow: hidden; }
+/* 轨道必须显式定成 minmax(0,1fr)：隐式 auto 轨道随内容撑开，img 的 max-height:100%
+   无确定参照而失效，高图初始就溢出舞台被 overflow 切掉（无头 Edge 实测复现）。 */
+.chat-lightbox-stage { position: absolute; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: 48px; overflow: hidden; }
 .chat-lightbox-stage img { max-width: 100%; max-height: 100%; border-radius: var(--r-9); box-shadow: 0 24px 80px rgba(0, 0, 0, .5); cursor: grab; user-select: none; }
 .chat-lightbox-stage img:active { cursor: grabbing; }
 .chat-lightbox-bar { position: absolute; top: 14px; right: 14px; z-index: 2; display: flex; gap: var(--sp-6); }

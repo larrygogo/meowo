@@ -89,6 +89,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 托管 PTY（发送/打断/答题都经 write_managed_terminal 的按键序列）
     "managed_terminal_snapshot",
     "managed_terminal_grid",
+    "managed_terminal_screen",
     "managed_terminal_binding",
     "write_managed_terminal",
     "resize_managed_terminal",
@@ -977,6 +978,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(SessionArg);
             reply(crate::managed_terminal::managed_terminal_grid(state, a.session_id).await)
         }
+        "managed_terminal_screen" => {
+            let a = args!(SessionArg);
+            reply(crate::managed_terminal::managed_terminal_screen(state, a.session_id).await)
+        }
         "managed_terminal_snapshot" => {
             let a = args!(ManagedTerminalSnapshotArgs);
             reply(
@@ -1855,6 +1860,7 @@ mod tests {
             | "refresh_session_model"
             | "refresh_session_todos"
             | "managed_terminal_grid"
+            | "managed_terminal_screen"
             | "managed_terminal_binding"
             | "attach_background_session"
             | "session_launch_selections"
