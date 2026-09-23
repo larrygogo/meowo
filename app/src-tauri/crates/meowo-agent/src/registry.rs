@@ -147,6 +147,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 发送前收起 composer 残留草稿的按键与提示文案。默认 None:未经真机取证不声明。
+    fn draft_stash(&self) -> Option<crate::chat_ui::DraftStash> {
+        None
+    }
+
     /// Ctrl/Shift+Enter 在 composer 里「插入换行」的注入序列(取证见 claude 插件)。
     /// 终端传统编码把带修饰的 Enter 与裸 Enter 同编成 `\r`(修饰信息不存在),用户按
     /// 「换行」CLI 收到的却是「提交」——声明此序列后 GUI 终端替用户注入。None = 未经
@@ -219,6 +224,7 @@ pub trait AgentPlugin: Sync {
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
             clipboard_paste_input: self.clipboard_paste_input(ctx.version),
+            draft_stash: self.draft_stash(),
             version: ctx.version.map(str::to_string),
         }
     }
@@ -1016,6 +1022,12 @@ mod tests {
         // 会话生命周期所限抓不到运行中证据,但通行约定即 Esc,且「打断并发送」键错也低风险)。
         for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
             assert_eq!(by_id(id).unwrap().interrupt_input(), Some("\x1b"));
+        }
+
+        // 草稿暂存键只有 claude 经真机取证(issue #72);别家未验证不盲按。
+        assert_eq!(by_id("claude").unwrap().draft_stash().map(|s| s.input), Some("\x13"));
+        for id in ["codex", "kimi", "gemini", "opencode"] {
+            assert!(by_id(id).unwrap().draft_stash().is_none());
         }
 
         // 目录信任不是 Claude 私有概念：Gemini 当前使用同一标题，Codex 使用 directory

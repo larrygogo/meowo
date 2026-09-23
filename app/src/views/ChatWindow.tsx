@@ -9,7 +9,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { addSessionExtraDir, pickAndAddExtraDir, removeSessionExtraDir, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalSnapshot, openNewSessionWindow, probeSubagentStates, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, resolvePendingApproval, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, switchSessionProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval, type SubagentProbe } from "../api";
+import { addSessionExtraDir, pickAndAddExtraDir, removeSessionExtraDir, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, probeSubagentStates, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, resolvePendingApproval, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, switchSessionProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval, type SubagentProbe } from "../api";
 import { hasEscLayers, pushEscLayer } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSessionActions } from "../hooks/useSessionActions";
@@ -463,6 +463,47 @@ async function submitToTerminal(sessionId: number, content: string, abortIf?: ()
     throw new Error(abortReason);
   }
   await writeManagedTerminal(sessionId, "\r");
+}
+
+/// 发送前收起 composer 里用户在终端输入行留下的未提交草稿(issue #72:残留会拼进
+/// 消息)。CLI 在下一次提交后自己还原草稿,终端里的输入原样回来。判断全看仿真后的整屏
+/// (规格与取证见后端 DraftStash / tests/probe_draft_residual.rs):
+/// - 认不出 composer(无屏幕仿真、提示符不在屏上)→ 不按:画面不在预期形态时盲按
+///   暂存键,可能触发对方别的功能;
+/// - composer 空 → 不按:暂存键是切换语义,空 composer 上按会把旧暂存放出来;
+/// - 非空才按;按前有暂存标记、按后消失 = 放出了用户手动暂存的内容,再按一次收回。
+/// 任何环节失败都静默放行:最坏退回修复前的行为(草稿拼进消息),不能挡住发送。
+/// 已知代价:composer 非空且用户**另有**手动暂存时,新暂存会覆盖旧的(CLI 只存一份)。
+async function stashComposerDraft(sessionId: number, stash: NonNullable<ChatUi["draft_stash"]>): Promise<void> {
+  try {
+    const screen = await managedTerminalScreen(sessionId);
+    if (!screen) return;
+    // 提示行的上一行须整行是边框:历史区回显的用户消息也可能以同一提示符开头。
+    const isBorder = (line: string | undefined) => {
+      const trimmed = line?.trim() ?? "";
+      return trimmed !== "" && [...trimmed].every((char) => char === stash.composer_border);
+    };
+    let composer: string | undefined;
+    for (let index = screen.length - 1; index > 0 && composer === undefined; index -= 1) {
+      if (isBorder(screen[index - 1]) && screen[index].trimStart().startsWith(stash.composer_prompt)) composer = screen[index];
+    }
+    if (composer === undefined) return;
+    if (composer.trimStart().slice(stash.composer_prompt.length).trim() === "") return;
+    const hasMarker = (lines: string[] | null) => !!lines?.some((line) => line.includes(stash.stashed_marker));
+    const hadStash = hasMarker(screen);
+    await writeManagedTerminal(sessionId, stash.input);
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+      const now = await managedTerminalScreen(sessionId);
+      if (!hadStash && hasMarker(now)) return;
+      if (hadStash && !hasMarker(now)) {
+        await writeManagedTerminal(sessionId, stash.input);
+        return;
+      }
+    }
+  } catch {
+    // 放行:见函数注释。
+  }
 }
 
 /// 恢复/接管完成后的险区时间窗:这段时间内的发送启用 submitToTerminal 的写后回显验证。
@@ -2317,6 +2358,7 @@ export function ChatWindow() {
     const verify = Date.now() - resumedAtRef.current < RESUME_VERIFY_WINDOW_MS
       ? { message: t.chat.sendEchoTimeout }
       : undefined;
+    if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
     await submitToTerminal(sessionId, content, attentionAbort, verify);
     return true;
   });
@@ -2327,6 +2369,8 @@ export function ChatWindow() {
   /// 这里 finally 还原。任一张落地失败（剪贴板写不进、占位符超时）返回 false，
   /// 调用方回退指令文本。
   const sendWithClipboardImages = (content: string, marker: string, pasteInput: string, images: Attachment[]): Promise<boolean> => withSendGuard(async () => {
+    // 残留草稿要在贴图之前收走:占位符会接在草稿后面,正文提交时连草稿一起带走。
+    if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
     const before = await managedTerminalSnapshot(sessionId);
     const markerPattern = new RegExp(marker, "gi");
     const decoder = new TextDecoder();

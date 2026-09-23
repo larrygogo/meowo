@@ -3518,6 +3518,63 @@ describe("ChatWindow", () => {
   });
 
   /**
+   * issue #72:终端输入行里未提交的草稿不能拼进对话页发出的消息。发送前看仿真整屏:
+   * composer 非空才按暂存键(CLI 提交后自动还原草稿);空 composer 不按——暂存键是切换
+   * 语义,空时按会放出旧暂存;认不出 composer 也不按。屏幕按真机形态模拟(见
+   * tests/probe_draft_residual.rs):暂存后 composer 只剩提示符,上方常驻「› stashed」。
+   */
+  describe("发送前收起终端草稿", () => {
+    const run = async (sessionId: number, initial: { composer: string | null; stashed: boolean }) => {
+      window.history.replaceState({}, "", `/?sessionId=${sessionId}`);
+      let composer = initial.composer;
+      let stashed = initial.stashed;
+      invoke.mockImplementation((command: string, args?: { data?: string }) => {
+        if (command === "get_chat_history") return Promise.resolve({
+          sessionId, title: "草稿", status: "waiting", provider: "claude", cwd: "C:/repo",
+          supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+        });
+        if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+        if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+        if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+        if (command === "managed_terminal_screen") {
+          return Promise.resolve([
+            "❯ 上一回合的用户消息",
+            ...(stashed ? ["                          › stashed"] : []),
+            "────────",
+            ...(composer === null ? [] : [composer ? `❯ ${composer}` : "❯"]),
+            "────────",
+          ]);
+        }
+        if (command === "write_managed_terminal" && args?.data === "\u0013") {
+          // 真机切换语义:非空 → 暂存;空且有暂存 → 放回 composer。
+          if (composer) { stashed = true; composer = ""; } else if (stashed) { stashed = false; composer = "旧暂存"; }
+        }
+        return Promise.resolve();
+      });
+      render(<ChatWindow />);
+      const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+      fireEvent.change(input, { target: { value: "hello" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId, data: "\r" }), { timeout: 3_000 });
+      return invoke.mock.calls
+        .filter(([command]) => command === "write_managed_terminal")
+        .map(([, args]) => (args as { data: string }).data);
+    };
+
+    it("composer 有残留草稿:先按暂存键收走,再写正文提交", async () => {
+      expect(await run(301, { composer: "abc", stashed: false })).toEqual(["\u0013", "hello", "\r"]);
+    });
+
+    it("composer 为空(即使已有手动暂存):不按暂存键,免得放出旧暂存", async () => {
+      expect(await run(302, { composer: "", stashed: true })).toEqual(["hello", "\r"]);
+    });
+
+    it("屏上认不出 composer:不盲按暂存键", async () => {
+      expect(await run(303, { composer: null, stashed: false })).toEqual(["hello", "\r"]);
+    });
+  });
+
+  /**
    * 打断并发送已从 composer 上的常驻按钮降成 Ctrl+Enter：它和右边的圆钮都是「把话递
    * 出去」的入口，并排摆着只会让人先停下来分辨该按哪个。功能本身不能丢——顺序仍是
    * 先写中断键、再提交正文。

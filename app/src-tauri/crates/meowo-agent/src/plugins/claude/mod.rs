@@ -554,6 +554,19 @@ impl AgentPlugin for Claude {
         Some("\x1b")
     }
 
+    /// Ctrl-S 暂存 composer 草稿(多行整段),下一次提交后 CLI 自动还原;有暂存时 composer
+    /// 上方常驻 `› stashed`,composer 夹在两条 `─` 横线之间、空时渲染为独行 `❯`。2.1.280 真机取证
+    /// (tests/probe_draft_residual.rs);Ctrl-U/Ctrl-Y 不可替代:多行只剪一行,且空
+    /// composer 时会粘出更早删掉的文本。
+    fn draft_stash(&self) -> Option<crate::chat_ui::DraftStash> {
+        Some(crate::chat_ui::DraftStash {
+            input: "\x13",
+            composer_prompt: "❯",
+            composer_border: '─',
+            stashed_marker: "› stashed",
+        })
+    }
+
     /// ESC+CR(meta+return)= composer 插入换行,ink 官方识别;WT 的 /terminal-setup
     /// 给 Shift+Enter 配置的正是这条序列,xterm 默认的 Alt+Enter 有效亦同理(实拍确认)。
     fn newline_input(&self) -> Option<&'static str> {

@@ -370,6 +370,10 @@ export function managedTerminalSnapshot(sessionId: number, since?: number): Prom
 export function managedTerminalBinding(sessionId: number): Promise<number | null> {
   return invoke("managed_terminal_binding", { sessionId });
 }
+/** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
+export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {
+  return invoke("managed_terminal_screen", { sessionId });
+}
 export function writeManagedTerminal(sessionId: number, data: string): Promise<void> {
   return invoke("write_managed_terminal", { sessionId, data });
 }

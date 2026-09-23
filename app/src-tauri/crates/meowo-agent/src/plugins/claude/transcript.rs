@@ -217,11 +217,12 @@ fn skill_invocation_desc(skill: &str, args: Option<&serde_json::Value>) -> Strin
 // CC 对单图另有更紧的限制，这里只挡异常脏数据把临时目录写爆。
 use crate::fsutil::PASTE_MAX_BYTES;
 
-/// 把 queued_command 里的 base64 图片块落成本地文件，返回可写进 `[Image: source: …]`
-/// 引用的绝对路径。落盘走 fsutil 的共享原语（`$TEMP/meowo-paste/queued/`，在 asset 协议
-/// scope 内，前端才能渲染缩略图；与粘贴附件同归 OS 临时清理策略；按行 uuid + 块序号
-/// 命名幂等）。任何失败都返回 None：插话正文照常显示，只是这张图退化为不显示。
-fn persist_queued_image(base_id: &str, index: usize, ext: &str, data: &str) -> Option<PathBuf> {
+/// 把 user 行 / queued_command 里的内嵌 base64 图片块落成本地文件，返回可写进
+/// `[Image: source: …]` 引用的绝对路径。落盘走 fsutil 的共享原语（`$TEMP/meowo-paste/queued/`，
+/// 在 asset 协议 scope 内，前端才能渲染缩略图；与粘贴附件同归 TTL 清理，清掉后重解析
+/// 会按同名重建；按行 uuid + 块序号命名幂等）。任何失败都返回 None：正文照常显示，
+/// 只是这张图退化为不显示。
+fn persist_inline_image(base_id: &str, index: usize, ext: &str, data: &str) -> Option<PathBuf> {
     // uuid 之外的 id 形态（回退的 "message" 等）也进得来，过滤成文件名安全字符集。
     let safe_id: String = base_id
         .chars()
@@ -240,6 +241,56 @@ fn persist_queued_image(base_id: &str, index: usize, ext: &str, data: &str) -> O
         .decode(data.as_bytes())
         .ok()?;
     crate::fsutil::persist_paste_bytes(&format!("{safe_id}-{index}"), ext, &bytes)
+}
+
+/// content 数组里第 `index` 块若是内嵌 base64 图片，落盘并返回 `[Image: source: …]` 引用行。
+fn inline_image_ref(base_id: &str, index: usize, block: &serde_json::Value) -> Option<String> {
+    if block.get("type").and_then(|x| x.as_str()) != Some("image") {
+        return None;
+    }
+    let source = block.get("source")?;
+    if source.get("type").and_then(|x| x.as_str()) != Some("base64") {
+        return None;
+    }
+    // 渲染端按扩展名认图（Message.tsx 的 IMAGE_EXTENSIONS），未知类型不落盘。
+    let ext = match source.get("media_type").and_then(|x| x.as_str()) {
+        Some("image/png") => "png",
+        Some("image/jpeg") => "jpg",
+        Some("image/gif") => "gif",
+        Some("image/webp") => "webp",
+        _ => return None,
+    };
+    let data = source.get("data").and_then(|x| x.as_str())?;
+    let path = persist_inline_image(base_id, index, ext, data)?;
+    Some(format!("[Image: source: {}]", path.display()))
+}
+
+/// CC 贴图后紧跟一条 `isMeta` 伴随行，只含 `[Image: source: <image-cache 路径>]`（告诉
+/// 模型图从哪来）。它不能当图片来源：多账号 profile 下路径落在
+/// `~/.meowo/profiles/claude/<账号>/image-cache/`，不在 asset scope 内；且 CC 事后会清空
+/// image-cache，历史图必坏（实测本机两处 image-cache 目录均已不存在，终端贴图在对话里
+/// 看不到的根因）。图片改由同 promptId 主行的内嵌 base64 落盘提供（实测 412 条伴随行
+/// 全部配对到带 image 块的主行），伴随行整条丢弃，否则同一张图出两次。
+fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
+    if v.get("isMeta").and_then(|x| x.as_bool()) != Some(true) {
+        return false;
+    }
+    let Some(blocks) = content.and_then(|x| x.as_array()) else {
+        return false;
+    };
+    !blocks.is_empty()
+        && blocks.iter().all(|block| {
+            block.get("type").and_then(|x| x.as_str()) == Some("text")
+                && block
+                    .get("text")
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .is_some_and(|t| {
+                        t.starts_with("[Image: source: ")
+                            && t.ends_with(']')
+                            && t.matches('[').count() == 1
+                    })
+        })
 }
 
 fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
@@ -286,8 +337,20 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                     text: text.to_string(),
                 }];
             }
-            content
-                .and_then(|x| x.as_array())
+            if is_image_companion(&v, content) {
+                return Vec::new();
+            }
+            let blocks = content.and_then(|x| x.as_array());
+            // 终端 Ctrl-V 贴图落成「text 块 + 内嵌 base64 image 块」，没有本地路径——此前
+            // image 块被整个丢掉，对话里只剩「[Image #N] …」。落盘后以引用行并入同一条
+            // 用户消息（与 queued_command 同款形制），前端缩略图链路直接接住。
+            let image_refs: Vec<(usize, String)> = blocks
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(i, block)| inline_image_ref(base_id, i, block).map(|r| (i, r)))
+                .collect();
+            let mut events: Vec<TranscriptEvent> = blocks
                 .into_iter()
                 .flatten()
                 .enumerate()
@@ -353,7 +416,33 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         _ => None,
                     },
                 )
-                .collect()
+                .collect();
+            if !image_refs.is_empty() {
+                let refs = image_refs
+                    .iter()
+                    .map(|(_, r)| r.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                // 挂到最后一条用户正文上；纯贴图无正文时单独成条（id 取首张图的块序号，稳定）。
+                match events
+                    .iter_mut()
+                    .rev()
+                    .find_map(|e| match e {
+                        TranscriptEvent::UserMessage { text, .. } => Some(text),
+                        _ => None,
+                    }) {
+                    Some(text) => {
+                        text.push('\n');
+                        text.push_str(&refs);
+                    }
+                    None => events.push(TranscriptEvent::UserMessage {
+                        id: format!("{base_id}:{}", image_refs[0].0),
+                        timestamp,
+                        text: refs,
+                    }),
+                }
+            }
+            events
         }
         "assistant" => {
             // model=<synthetic> 是 CC 对「非模型产出的系统插入文案」的官方标记（API 错误
@@ -463,31 +552,11 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 .flatten()
                 .enumerate()
             {
-                if block.get("type").and_then(|x| x.as_str()) != Some("image") {
-                    continue;
-                }
-                let Some(source) = block.get("source") else {
-                    continue;
-                };
-                if source.get("type").and_then(|x| x.as_str()) != Some("base64") {
-                    continue;
-                }
-                // 渲染端按扩展名认图（Message.tsx 的 IMAGE_EXTENSIONS），未知类型不落盘。
-                let ext = match source.get("media_type").and_then(|x| x.as_str()) {
-                    Some("image/png") => "png",
-                    Some("image/jpeg") => "jpg",
-                    Some("image/gif") => "gif",
-                    Some("image/webp") => "webp",
-                    _ => continue,
-                };
-                let Some(data) = source.get("data").and_then(|x| x.as_str()) else {
-                    continue;
-                };
-                if let Some(path) = persist_queued_image(base_id, i, ext, data) {
+                if let Some(image_ref) = inline_image_ref(base_id, i, block) {
                     if !text.is_empty() {
                         text.push('\n');
                     }
-                    text.push_str(&format!("[Image: source: {}]", path.display()));
+                    text.push_str(&image_ref);
                 }
             }
             if text.is_empty() {
@@ -1740,6 +1809,50 @@ mod tests {
 
         let skill = r#"{"type":"attachment","uuid":"s1","attachment":{"type":"skill_listing","content":"..."}}"#;
         assert!(parse_chat_items(skill).is_empty());
+    }
+
+    /// 终端 Ctrl-V 贴图的实拍形态：主行「text + 内嵌 base64 image 块」，紧跟一条 isMeta
+    /// 伴随行指向 profile 下的 image-cache（asset scope 外、事后被 CC 清掉）。图片须取自
+    /// 主行 base64 并入同一条消息；伴随行整条丢弃，否则同图出两次。
+    #[test]
+    fn pasted_image_blocks_in_user_line_become_image_refs() {
+        let main = r#"{"type":"user","uuid":"u-paste-img","message":{"role":"user","content":[{"type":"text","text":"[Image #3] [Image #4] 对吗"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/4A=="}}]},"imagePasteIds":[3,4]}"#;
+        let items = parse_chat_items(main);
+        assert_eq!(items.len(), 1);
+        let ChatItem::UserText { id, text, .. } = &items[0] else {
+            panic!("expected UserText, got {:?}", items[0]);
+        };
+        assert_eq!(id, "u-paste-img:0");
+        let dir = std::env::temp_dir().join("meowo-paste").join("queued");
+        let (png, jpg) = (dir.join("u-paste-img-1.png"), dir.join("u-paste-img-2.jpg"));
+        assert_eq!(
+            text,
+            &format!(
+                "[Image #3] [Image #4] 对吗\n[Image: source: {}]\n[Image: source: {}]",
+                png.display(),
+                jpg.display()
+            )
+        );
+        assert!(png.exists() && jpg.exists());
+
+        // 纯贴图无正文：单独成条，id 取首张图的块序号。
+        let only = r#"{"type":"user","uuid":"u-paste-only","message":{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}}"#;
+        let only_png = dir.join("u-paste-only-0.png");
+        assert!(matches!(
+            &parse_chat_items(only)[..],
+            [ChatItem::UserText { id, text, .. }] if id == "u-paste-only:0"
+                && text == &format!("[Image: source: {}]", only_png.display())
+        ));
+
+        let companion = r#"{"type":"user","uuid":"m1","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"[Image: source: C:\\Users\\me\\.meowo\\profiles\\claude\\a\\image-cache\\s\\3.png]"},{"type":"text","text":"[Image: source: C:\\Users\\me\\.meowo\\profiles\\claude\\a\\image-cache\\s\\4.png]"}]}}"#;
+        assert!(parse_chat_items(companion).is_empty());
+        // 非伴随形态的 isMeta 文本（混有正文）不误吞。
+        let meta_text = r#"{"type":"user","uuid":"m2","isMeta":true,"message":{"content":[{"type":"text","text":"看 [Image: source: C:\\x.png]"}]}}"#;
+        assert_eq!(parse_chat_items(meta_text).len(), 1);
+
+        for path in [png, jpg, only_png] {
+            std::fs::remove_file(path).ok();
+        }
     }
 
     #[test]

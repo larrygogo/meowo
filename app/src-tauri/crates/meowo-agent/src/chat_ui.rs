@@ -117,6 +117,27 @@ pub enum SelectorAnchorKind {
     Chat,
 }
 
+/// composer 草稿的「收起 → 提交后自动还原」能力(issue #72)。对话页往 PTY 写正文前按
+/// `input` 收走用户在终端输入行里未提交的草稿,免得它拼进消息;CLI 在下一次提交后自己
+/// 还原草稿。判断全看**仿真后的整屏**(增量字节不可靠:渲染器按字符差分重绘):
+/// - 最下方「上一行整行都是 `composer_border` 字符、本行以 `composer_prompt` 开头」的行
+///   就是 composer 首行(边框约束防止把历史里回显的用户消息认成 composer);只剩提示符
+///   = 空,**不按键**。
+///   这一步不能省——键是切换语义,composer 空且已有暂存时按下 = 把暂存放回 composer。
+/// - 非空才按;`stashed_marker` 是「当前有暂存」的常驻标记,按前有、按后消失即误放出了
+///   用户手动暂存的内容,再按一次收回。
+///
+/// 取证见 tests/probe_draft_residual.rs。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct DraftStash {
+    pub input: &'static str,
+    pub composer_prompt: &'static str,
+    pub composer_border: char,
+    pub stashed_marker: &'static str,
+}
+
 /// 数字选择器的锚点项:该 provider 的选择器里**固有出现**的选项文案(小写子串匹配)。
 /// 识别层据此把「纯编号的连续 run」认定为选择器本体——会话正文里的普通编号列表没有
 /// 这些文案。声明前必须有该 provider 的真机取证;空 = 该 agent 的纯编号菜单不做卡片化
@@ -255,6 +276,9 @@ pub struct ChatUi {
     /// 触发原生图片粘贴的按键序列（claude 的 Ctrl-V = `\x16`；kimi 在 Windows 上是
     /// Alt+V = `\x1bv`，发 Ctrl-V 会被 composer 无视）。由插件声明，前端不自行猜键。
     pub clipboard_paste_input: Option<&'static str>,
+    /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
+    /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
+    pub draft_stash: Option<DraftStash>,
     /// 探测到的 CLI 版本，原样回传（展示/排障）。
     pub version: Option<String>,
 }

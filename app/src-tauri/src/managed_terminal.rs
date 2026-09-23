@@ -299,6 +299,27 @@ pub(crate) async fn managed_terminal_grid(
     .map_err(|e| e.to_string())?
 }
 
+/// 取托管 PTY 当前的**渲染后**整屏文本（自上而下，去尾部空白）。None = 该会话无屏幕
+/// 仿真（provider 无规则集时不建 parser，见 ScreenProbe）。
+///
+/// 对话页发送前收起 composer 草稿（issue #72）要判断「按下暂存键后草稿是否真的收走了」。
+/// 增量输出字节做不到：claude 的渲染器按字符差分重绘，提示行不变时一个字节都不重发，
+/// 变了也可能只重发局部（真机探针 tests/probe_draft_residual.rs）。只能看仿真后的画面。
+#[tauri::command]
+pub(crate) async fn managed_terminal_screen(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+) -> Result<Option<Vec<String>>, String> {
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(ptys
+            .screen_probe_snapshot(session_id)
+            .map(|(snapshot, _)| snapshot.lines))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn resize_managed_terminal(
     state: State<'_, super::AppState>,
