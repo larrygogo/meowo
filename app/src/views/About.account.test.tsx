@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   addAgentToUserPath: vi.fn(),
   openInstallLog: vi.fn(),
   checkAgentUpdates: vi.fn(),
+  installedAgentVersions: vi.fn(),
   getLiveSessionsPage: vi.fn(),
   // 多账号
   listProfiles: vi.fn(),
@@ -122,6 +123,7 @@ beforeEach(() => {
   api.checkProviderHooks.mockResolvedValue("installed");
   // 默认：版本探测返回空（无版本行/更新入口），验更新的用例再覆盖。
   api.checkAgentUpdates.mockResolvedValue([]);
+  api.installedAgentVersions.mockResolvedValue([]);
   // 默认：无活跃会话（点「更新」不弹确认），有会话的用例再覆盖。
   api.getLiveSessionsPage.mockResolvedValue({ items: [], next_cursor: null });
   // 默认：切账号后没有会话要重启（个别用例再覆盖）。
@@ -401,6 +403,15 @@ describe("AccountSection agent 卡", () => {
     render(<AccountSection />);
     const badge = await screen.findByTestId("agent-profile-claude");
     expect(badge.textContent).toBe(zh.account.activeProfileBadge("工作"));
+
+    // 账号名与邮箱相同（大小写不计）：徽章与下一行重复，隐藏。
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true, active_profile_name: "A@B.c" },
+    ]);
+    cleanup();
+    render(<AccountSection />);
+    await screen.findByTestId("agent-desc-claude");
+    expect(screen.queryByTestId("agent-profile-claude")).toBeNull();
   });
 
   it("模型卡内用官方账号 / API 中转二选一，预配置完整时可直接切换", async () => {
@@ -1236,6 +1247,28 @@ describe("AccountSection 版本与更新", () => {
       update_available: boolean;
     }>,
   ) => api.checkAgentUpdates.mockResolvedValue(list);
+
+  it("两段式：联网未返回时先显示本机版本，返回后补上更新入口", async () => {
+    api.installedAgentVersions.mockResolvedValue([
+      { provider: "claude", installed_version: "1.2.3", latest_version: null, update_available: false },
+    ]);
+    let resolveFull!: (v: unknown) => void;
+    api.checkAgentUpdates.mockReturnValue(new Promise((r) => { resolveFull = r; }));
+    render(<AccountSection />);
+    const row = await screen.findByTestId("agent-version-claude");
+    expect(row.textContent).toContain("1.2.3");
+    expect(screen.queryByTestId("agent-update-claude")).toBeNull();
+    resolveFull([{ provider: "claude", installed_version: "1.2.3", latest_version: "1.3.0", update_available: true }]);
+    await screen.findByTestId("agent-update-claude");
+
+    // 聚焦重查：本机阶段返回空表（后端出错吞成 []）时不得清掉已有的更新入口。
+    api.installedAgentVersions.mockResolvedValue([]);
+    api.checkAgentUpdates.mockReturnValue(new Promise(() => {}));
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(api.installedAgentVersions.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await act(async () => {});
+    expect(screen.getByTestId("agent-update-claude")).toBeTruthy();
+  });
 
   it("无新版：显示当前版本，无更新按钮", async () => {
     updates([{ provider: "claude", installed_version: "1.2.3", latest_version: "1.2.3", update_available: false }]);

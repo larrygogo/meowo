@@ -1024,6 +1024,11 @@ export function checkAgentUpdates(): Promise<AgentUpdateInfo[]> {
   return invoke("check_agent_updates");
 }
 
+/** 只探本机版本、不联网（latest_version 恒 null）：先把「当前 vX」亮出来，不等 checkAgentUpdates 的联网。 */
+export function installedAgentVersions(): Promise<AgentUpdateInfo[]> {
+  return invoke("installed_agent_versions");
+}
+
 /** 取消进行中的安装：后端强杀脚本进程树（直下路径丢弃结果），并补发 cancelled 的 install-done。 */
 export function cancelInstall(provider: AgentId): Promise<void> {
   return invoke("cancel_install", { provider });

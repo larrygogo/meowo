@@ -1338,6 +1338,7 @@ pub fn run() {
             agent_chat_ui,
             agent_models,
             agent_updates::check_agent_updates,
+            agent_updates::installed_agent_versions,
             profile::list_profiles,
             profile::create_profile,
             profile::rename_profile,

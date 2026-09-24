@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use meowo_agent::{Body, HttpRequest};
 
-/// 单个请求的超时。最多 5 个 agent 顺序拉取，最坏 ~25s，可接受。
+/// 单个请求的超时。各 agent 并行拉取（见 `for_each_installed`），最坏 ~5s。
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// 结果缓存时长：版本源不会分钟级变化，设置页反复打开不该每次都打 5 个请求。
 const CACHE_TTL: Duration = Duration::from_secs(600);
@@ -191,16 +191,48 @@ fn probe_one(plugin: &'static dyn meowo_agent::AgentPlugin) -> AgentUpdateInfo {
     info
 }
 
-/// 各已安装 agent 的版本与更新状态。ureq 是同步的，整体放 blocking 池（同 install.rs 的
-/// `resolve_install_body`）。多个 agent 顺序拉取：最多 5 个、各有 5s 超时，不引入并行复杂度。
-#[tauri::command]
-pub(crate) async fn check_agent_updates() -> Vec<AgentUpdateInfo> {
-    tauri::async_runtime::spawn_blocking(|| {
-        meowo_agent::all()
+/// 对每个已安装 agent 各开一条线程跑 `f`，按插件顺序收回结果。
+/// 为什么并行：顺序探测时总耗时是各 agent 之和（实测冷启动 `--version` gemini ~1s、
+/// opencode/kimi ~0.5s，再加各自一次联网），设置页首开要干等数秒；并行后只等最慢的那一个。
+/// agent 至多个位数，线程数有界；scope 保证返回前全部 join。
+fn for_each_installed(
+    f: fn(&'static dyn meowo_agent::AgentPlugin) -> AgentUpdateInfo,
+) -> Vec<AgentUpdateInfo> {
+    std::thread::scope(|s| {
+        let handles: Vec<_> = meowo_agent::all()
             .iter()
             .filter(|p| p.is_installed())
-            .map(|p| probe_one(*p))
-            .collect()
+            .map(|p| {
+                let p = *p;
+                s.spawn(move || f(p))
+            })
+            .collect();
+        // 单个探测 panic 不拖垮整批：丢掉那一条，其余照常返回（同「探测失败绝不报错」）。
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    })
+}
+
+/// 各已安装 agent 的版本与更新状态。ureq 是同步的，整体放 blocking 池（同 install.rs 的
+/// `resolve_install_body`）。
+#[tauri::command]
+pub(crate) async fn check_agent_updates() -> Vec<AgentUpdateInfo> {
+    tauri::async_runtime::spawn_blocking(|| for_each_installed(probe_one))
+        .await
+        .unwrap_or_default()
+}
+
+/// 只探本机版本、不联网：设置页先用它把「当前 vX」亮出来，联网的 `check_agent_updates`
+/// 回来再补「有新版」。此前版本行要等所有 agent 的联网都结束才出现（用户反馈「版本号加载很慢」）。
+/// `latest_version` 恒 None、`update_available` 恒 false——前端据此不给更新入口，语义与探测失败一致。
+#[tauri::command]
+pub(crate) async fn installed_agent_versions() -> Vec<AgentUpdateInfo> {
+    tauri::async_runtime::spawn_blocking(|| {
+        for_each_installed(|plugin| AgentUpdateInfo {
+            provider: plugin.id().as_str().to_string(),
+            installed_version: crate::probe_cli_version(plugin),
+            latest_version: None,
+            update_available: false,
+        })
     })
     .await
     .unwrap_or_default()

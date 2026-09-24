@@ -2545,6 +2545,9 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
   gap: var(--sp-8);
 }
 .provider-card-title .provider-name {
+  /* 名字不参与收缩也不折行：徽章一多「Claude Code」会被挤成两行（实拍），该让的是徽章。 */
+  flex: none;
+  white-space: nowrap;
   font-size: var(--fs-15);
   font-weight: 600;
   color: var(--cc-text);
@@ -2574,6 +2577,16 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
   color: var(--cc-accent-text);
   background: var(--cc-accent-soft);
   border-color: var(--cc-accent-border);
+}
+/* 账号名徽章：名字由用户起、常直接用邮箱，长度不可控——唯一允许收缩的徽章，超长省略
+   （完整值走 data-tip）。不能 capitalize：邮箱会被改成「Valougalinier125@Gmail.Com」（实拍）。 */
+.provider-badge-profile {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-transform: none;
 }
 .provider-badge-off {
   color: var(--cc-warn);
@@ -3235,6 +3248,10 @@ select.ns-input {
   font-size: var(--fs-12);
   color: var(--cc-text-dim);
   max-width: 60%;
+}
+/* 版本行里的更新进度：那一行本身就在标题列里，再限 60% 会把「安装中…」截成「安装...」（实拍）。 */
+.provider-card-version .agent-install-progress {
+  max-width: none;
 }
 .agent-install-step {
   overflow: hidden;
