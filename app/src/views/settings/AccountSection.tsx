@@ -1254,8 +1254,10 @@ export function AccountSection() {
     installedAgentVersions()
       .then((list) => {
         // 只补本机版本、不覆盖已有的联网结果：窗口聚焦重查时，更新入口不该先闪没再回来。
+        // 在 prev 上叠加而非重建：本段返回空表（后端 spawn_blocking 出错会吞成 []）时不能清空
+        // 已有结果；已卸载 agent 的残留由随后的联网结果整表替换清掉（PR #74 review）。
         setUpdateMap((prev) => {
-          const next: Record<string, AgentUpdateInfo> = {};
+          const next: Record<string, AgentUpdateInfo> = { ...prev };
           list.forEach((info) => {
             const old = prev[info.provider];
             next[info.provider] = old ? { ...old, installed_version: info.installed_version } : info;

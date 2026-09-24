@@ -1260,6 +1260,14 @@ describe("AccountSection 版本与更新", () => {
     expect(screen.queryByTestId("agent-update-claude")).toBeNull();
     resolveFull([{ provider: "claude", installed_version: "1.2.3", latest_version: "1.3.0", update_available: true }]);
     await screen.findByTestId("agent-update-claude");
+
+    // 聚焦重查：本机阶段返回空表（后端出错吞成 []）时不得清掉已有的更新入口。
+    api.installedAgentVersions.mockResolvedValue([]);
+    api.checkAgentUpdates.mockReturnValue(new Promise(() => {}));
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(api.installedAgentVersions.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await act(async () => {});
+    expect(screen.getByTestId("agent-update-claude")).toBeTruthy();
   });
 
   it("无新版：显示当前版本，无更新按钮", async () => {
