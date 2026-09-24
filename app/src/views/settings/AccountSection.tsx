@@ -30,6 +30,7 @@ import {
   addAgentToUserPath,
   openInstallLog,
   checkAgentUpdates,
+  installedAgentVersions,
   getLiveSessionsPage,
   type AgentUpdateInfo,
   type ProviderAccountPayload,
@@ -69,6 +70,12 @@ function IconDownload() {
       <line x1="12" y1="15" x2="12" y2="3" />
     </svg>
   );
+}
+
+/** 版本行只显版本号：`--version` 原样输出常带产品名（claude 实拍 `2.1.280 (Claude Code)`），
+ *  在标题正下方重复一遍名字纯属噪音。抠不出数字段就原样返回，不吞信息。 */
+function displayVersion(raw: string): string {
+  return raw.match(/\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?/)?.[0] ?? raw.trim();
 }
 
 function fmtResetIn(iso: string, t: Dict): string {
@@ -503,9 +510,15 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             <span className="provider-name">{name}</span>
             {!relayEnabled && isLoggedIn && acc?.plan && <span className="provider-badge provider-badge-plan">{acc.plan}</span>}
             {/* 活跃账号持续可见：切到过自定义账号就一直挂着这个徽章，防「切过一次就忘了」。
-                默认账号（active_profile_name 为空）不显示——没建过账号的用户零感知。 */}
-            {!relayEnabled && payload?.active_profile_name && (
-              <span className="provider-badge" data-testid={"agent-profile-" + provider}>
+                默认账号（active_profile_name 为空）不显示——没建过账号的用户零感知。
+                账号名就是下面那行邮箱时也不显示：同一串字挂两遍纯属噪音（用户要求隐藏）。 */}
+            {!relayEnabled && payload?.active_profile_name &&
+              payload.active_profile_name.trim().toLowerCase() !== desc.trim().toLowerCase() && (
+              <span
+                className="provider-badge provider-badge-profile"
+                data-testid={"agent-profile-" + provider}
+                data-tip={t.account.activeProfileBadge(payload.active_profile_name)}
+              >
                 {t.account.activeProfileBadge(payload.active_profile_name)}
               </span>
             )}
@@ -516,7 +529,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
               不给更新入口；check_agent_updates 整体失败时 updateInfo 为 null，同样什么都不显示。 */}
           {isInstalled && updateInfo?.installed_version && (
             <div className="provider-card-version" data-testid={"agent-version-" + provider}>
-              <span className="provider-card-version-current">{t.account.versionCurrent(updateInfo.installed_version)}</span>
+              <span className="provider-card-version-current">{t.account.versionCurrent(displayVersion(updateInfo.installed_version))}</span>
               {updateInfo.update_available && updateInfo.latest_version != null && (
                 installState === "installing" ? (
                   <div className="agent-install-progress" data-testid={"agent-installing-" + provider}>
@@ -1235,8 +1248,23 @@ export function AccountSection() {
   // provider → 版本/更新探测结果。探测失败静默降级为空：版本与更新入口整块不出现，
   // 不红字、不显示任何错误——版本探测是锦上添花，不该打扰账号页主流程。
   const [updateMap, setUpdateMap] = useState<Record<string, AgentUpdateInfo>>({});
+  // 两段式：先本机版本（纯本地，亚秒）后联网。联网要等各 agent 的远端源，版本行曾因此迟迟不出现。
+  // 串行而非并发：后者会让两条命令同时对同一 CLI 起 `--version`；串行时第二段直接命中后端版本缓存。
   const refreshAgentUpdates = () => {
-    checkAgentUpdates()
+    installedAgentVersions()
+      .then((list) => {
+        // 只补本机版本、不覆盖已有的联网结果：窗口聚焦重查时，更新入口不该先闪没再回来。
+        setUpdateMap((prev) => {
+          const next: Record<string, AgentUpdateInfo> = {};
+          list.forEach((info) => {
+            const old = prev[info.provider];
+            next[info.provider] = old ? { ...old, installed_version: info.installed_version } : info;
+          });
+          return next;
+        });
+      })
+      .catch(() => {})
+      .then(() => checkAgentUpdates())
       .then((list) => {
         const next: Record<string, AgentUpdateInfo> = {};
         list.forEach((info) => { next[info.provider] = info; });
