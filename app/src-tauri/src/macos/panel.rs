@@ -3,7 +3,7 @@
 #![allow(deprecated, unexpected_cfgs)]
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use tauri_nspanel::{
-    cocoa::appkit::{NSMainMenuWindowLevel, NSWindowCollectionBehavior},
+    cocoa::appkit::NSWindowCollectionBehavior,
     panel_delegate, ManagerExt, WebviewWindowExt,
 };
 use tauri_plugin_positioner::{Position, WindowExt};
@@ -16,6 +16,11 @@ const NS_NONACTIVATING_PANEL: i32 = 1 << 7; // NSWindowStyleMaskNonActivatingPan
 /// 并给了 minWidth/minHeight，Windows 上是能拖的）。
 #[allow(non_upper_case_globals)]
 const NS_RESIZABLE: i32 = 1 << 3;
+/// NSFloatingWindowLevel。贴纸常驻最前只需压过普通应用窗口（level 0）；早先用
+/// `NSMainMenuWindowLevel + 1`（25，即 NSStatusWindowLevel）比菜单栏（24）还高，
+/// 贴纸被拖到屏幕顶部时会盖住整条状态栏。Floating（3）在普通窗口之上、菜单栏之下。
+/// cocoa 0.26 只导出了 NSMainMenuWindowLevel，这里手写数值。
+const NS_FLOATING_WINDOW_LEVEL: i32 = 3;
 
 const RESIGN_EVENT: &str = "menubar_panel_did_resign_key";
 
@@ -65,7 +70,7 @@ pub fn convert_main_to_panel(app: &AppHandle) {
         }
     }));
 
-    panel.set_level(NSMainMenuWindowLevel + 1);
+    panel.set_level(NS_FLOATING_WINDOW_LEVEL);
     panel.set_style_mask(NS_NONACTIVATING_PANEL | NS_RESIZABLE);
     panel.set_collection_behaviour(
         NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
