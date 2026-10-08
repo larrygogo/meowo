@@ -11,6 +11,7 @@ import {
   primeFileToken,
   NEW_SESSION_EVENT,
 } from "./transport";
+import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../remoteMode";
 
 // fetch 桩:记录每次调用,按测试预置的响应回。
 function mockFetch(response: { status: number; body: string }) {
@@ -223,5 +224,28 @@ describe("remote transport", () => {
     // 主 token 换代(重配对)即弃旧降级凭据,回退主 token 直至重领。
     setToken("next-main");
     expect(convertFileSrc("C:/img/a.png")).toContain("token=next-main");
+  });
+
+  it("图片读失败时重领降级凭据:凭据换代才广播,并发失败只发一发,冷却期内不再敲门", async () => {
+    // 桌面重启:主 token 不变、降级凭据换代,开着的手机页拿旧凭据读图全 401。
+    setToken("main-tok");
+    const fetchFn = mockFetch({ status: 200, body: JSON.stringify("file-tok-new") });
+    const refreshed = vi.fn();
+    window.addEventListener(FILE_TOKEN_REFRESHED_EVENT, refreshed);
+    try {
+      // 一屏三张图同时失败
+      for (let i = 0; i < 3; i += 1) window.dispatchEvent(new CustomEvent(IMAGE_LOAD_FAILED_EVENT));
+      await vi.waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(String(fetchFn.mock.calls[0][0])).toContain("/rpc/file_access_token");
+      expect(convertFileSrc("C:/img/a.png")).toContain("token=file-tok-new");
+      // 重试后仍失败(文件真没了):冷却期内不再发 rpc,也就不会失败→重试死循环。
+      window.dispatchEvent(new CustomEvent(IMAGE_LOAD_FAILED_EVENT));
+      await Promise.resolve();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(refreshed).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener(FILE_TOKEN_REFRESHED_EVENT, refreshed);
+    }
   });
 });

@@ -8,10 +8,11 @@ import { en } from "../../i18n/en";
 import { type ChatItem } from "../../api";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { parseUserText, type CrossMessage } from "./localCommand";
+import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../../remoteMode";
 
 // Claude Code 把粘贴/引用的图片在 transcript 里记成一行「[Image: source: <本地路径>]」。
 // 原样渲染就是在气泡里摊一整行 C:\Users\... 路径——对话里最脏的元素。渲染成缩略图
-// （asset 协议已启用，scope 限定在 image-cache 与 meowo-paste 两个图片目录，见
+// （asset 协议已启用，scope 限定在各账号的 image-cache 与 meowo-paste 图片目录，见
 // tauri.conf.json）；scope 外/文件已删时 onError 回退成文件名徽章。
 // 路径**任何形式都不上屏**——包括 title：hover 提示与读屏都会念出它，而本地路径常含
 // 用户名等身份信息。要看是哪张图，缩略图本身与文件名就够了。
@@ -257,6 +258,14 @@ export function ImageRef({ path }: { path: string }) {
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const name = path.split(/[\\/]/).pop() || path;
+  // 远程端失败时可能只是 /file 凭据过期（桌面重启换代），挂着等 transport 重领后重试。
+  // 桌面端没人派发该事件，失败即终态，行为不变。
+  useEffect(() => {
+    if (!failed) return;
+    const retry = () => setFailed(false);
+    window.addEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
+    return () => window.removeEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
+  }, [failed]);
   if (failed) {
     return (
       <span className="chat-image-chip" data-tip={name}>
@@ -269,7 +278,10 @@ export function ImageRef({ path }: { path: string }) {
   return (
     <>
       <button type="button" className="chat-image-thumb-btn" data-tip={name} onClick={() => setExpanded(true)}>
-        <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => {
+          setFailed(true);
+          window.dispatchEvent(new CustomEvent(IMAGE_LOAD_FAILED_EVENT));
+        }} />
       </button>
       {/* 灯箱走 portal（在 Lightbox 内）：消息块开着 content-visibility（paint 包含），
           fixed 覆盖层留在消息里会被裁剪在消息框内。 */}
