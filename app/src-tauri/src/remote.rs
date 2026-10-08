@@ -1197,9 +1197,10 @@ struct FileQuery {
     token: String,
 }
 
-/// `/file?path=&token=`：替代 convertFileSrc 的图片/附件读取。scope 精确镜像
-/// tauri.conf.json 的 assetProtocol scope（`$HOME/.claude/image-cache/**` 与
-/// `$TEMP/meowo-paste/**`）——桌面端 convertFileSrc 本来也只放行这两处。
+/// `/file?path=&token=`：替代 convertFileSrc 的图片/附件读取。scope 镜像
+/// tauri.conf.json 的 assetProtocol scope（默认账号与各 profile 的 image-cache，
+/// 以及 `$TEMP/meowo-paste/**`）——桌面端 convertFileSrc 本来也只放行这几处。
+/// 静态 scope 只认 `~/.meowo` 数据根，这里按 `MEOWO_DB` 解析，口径略宽，不会更窄。
 async fn file_handler(State(ctx): State<Ctx>, Query(q): Query<FileQuery>) -> Response {
     // 主 token 或 /file 降级凭据(见 Ctx::file_token)均可:降级凭据是 <img src> 的
     // 常规载体,主 token 只在前端尚未领到降级凭据的首屏回退时出现。
@@ -1247,10 +1248,9 @@ fn sniff_image_ext(bytes: &[u8]) -> &'static str {
 }
 
 fn file_scope_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        roots.push(PathBuf::from(home).join(".claude").join("image-cache"));
-    }
+    // 默认账号 + 各 profile 的 image-cache（profile 设了 CLAUDE_CONFIG_DIR，图片不在
+    // ~/.claude 下）。每次请求现扫：新加的账号不必重启远程服务即可读图。
+    let mut roots = meowo_agent::plugins::claude::transcript::image_cache_dirs();
     roots.push(std::env::temp_dir().join("meowo-paste"));
     roots
 }

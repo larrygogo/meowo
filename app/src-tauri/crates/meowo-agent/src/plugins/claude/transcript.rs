@@ -940,6 +940,17 @@ pub(super) fn config_dirs() -> Vec<std::path::PathBuf> {
         .collect()
 }
 
+/// 全部账号的图片缓存目录（`<CLAUDE_CONFIG_DIR>/image-cache`）。transcript 里
+/// `[Image: source: …]` 指向的粘贴图落在这里，和 `projects/` 一样跟着 `CLAUDE_CONFIG_DIR`
+/// 走——只放行 `~/.claude/image-cache` 时，profile 账号会话里的图片一律读不到。
+/// 宿主远程 `/file` 据此划定可读范围。
+pub fn image_cache_dirs() -> Vec<std::path::PathBuf> {
+    config_dirs()
+        .into_iter()
+        .map(|dir| dir.join("image-cache"))
+        .collect()
+}
+
 /// Meowo 管理的 Claude 账号数据目录。Claude 会把 transcript 一并放进
 /// `CLAUDE_CONFIG_DIR/projects`，所以跨账号查看/恢复时必须把这些目录也纳入候选。
 fn managed_projects_dirs() -> Vec<std::path::PathBuf> {
@@ -2312,6 +2323,38 @@ mod tests {
             None => std::env::remove_var("MEOWO_DB"),
         }
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// 图片缓存跟着 CLAUDE_CONFIG_DIR 走:profile 账号里粘贴的图落在 profile 目录下,
+    /// 只放行 ~/.claude/image-cache 时远程 /file 读不到(手机端图片退化成文件名徽章)。
+    #[test]
+    fn image_cache_dirs_cover_default_and_managed_profiles() {
+        let home = std::env::temp_dir().join(format!("cc_image_cache_home_{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".meowo/profiles/claude/work")).unwrap();
+
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        let old_db = std::env::var("MEOWO_DB").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
+        let dirs = image_cache_dirs();
+        match old_home {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match old_db {
+            Some(value) => std::env::set_var("MEOWO_DB", value),
+            None => std::env::remove_var("MEOWO_DB"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert_eq!(
+            dirs,
+            vec![
+                home.join(".claude").join("image-cache"),
+                home.join(".meowo/profiles/claude/work").join("image-cache"),
+            ]
+        );
     }
 
     /// 跨 profile 恢复会话后,默认 ~/.claude 里留下的是不再增长的陈旧副本,续写发生在

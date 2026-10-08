@@ -34,3 +34,13 @@ export const SELECT_SESSION_EVENT = "meowo:remote-select-session";
  *  发现变化后派发此 DOM 事件(detail = 完整 Settings),appearance/i18n 等共享消费方在
  *  remoteUi() 下额外订阅它——桌面改主题/语言,手机不再要刷新才跟上。 */
 export const REMOTE_SETTINGS_EVENT = "meowo:remote-settings-changed";
+
+/** 图片加载失败的页内通知（ImageRef 派发、transport 监听）。<img> 拿不到 HTTP 状态码，
+ *  分不清「凭据过期」与「文件真没了」，所以交给 transport 重领 /file 降级凭据来判别：
+ *  桌面端重启后主 token 不变而降级凭据换代，开着的手机页拿旧凭据读图全 401，此前
+ *  图片一律定格成文件名徽章、要手动刷新才恢复。桌面没有监听者，派发即 no-op。 */
+export const IMAGE_LOAD_FAILED_EVENT = "meowo:image-load-failed";
+
+/** 降级凭据换代后的页内通知（transport 派发、已失败的 ImageRef 监听后重试一次）。
+ *  只在凭据**真的变了**才发：文件确实不在时重领拿到同一值，不发，避免失败→重试死循环。 */
+export const FILE_TOKEN_REFRESHED_EVENT = "meowo:file-token-refreshed";
