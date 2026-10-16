@@ -61,7 +61,7 @@ interrupt_input: string | null,
  */
 interrupt_presses: number, 
 /**
- * 运行中排队的提交键。Codex/Gemini 的 Enter 不等于排队（官方键盘文档）。
+ * 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
  */
 queue_input: string | null, 
 /**

@@ -110,6 +110,8 @@ struct LiveSignals {
     broker_approval: bool,
     /// agent 自建后台会话的索引(claude FleetView),与看板共享同一份 TTL 快照。
     runtimes: std::sync::Arc<super::session_query::SessionRuntimeIndex>,
+    /// 托管 PTY 的屏幕状态(见 ChatHistoryDto.screen_state),纯内存查表。
+    screen_state: Option<&'static str>,
 }
 
 /// errored 的重采样间隔:transcript 分析走共享 mtime 缓存,但 agent 流式输出期间文件
@@ -191,6 +193,7 @@ fn load_chat_history(
             header.last_event_at,
             super::now_ms(),
         ),
+        screen_state: live.screen_state.map(str::to_string),
         // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
         todos: store
             .task_id_of_session_pub(session_id)
@@ -540,6 +543,11 @@ pub(crate) async fn get_chat_history(
     let runtimes = state.session_runtimes.clone();
     let pty_live = state.ptys.is_active(session_id);
     let broker_approval = state.ptys.pending_approval(session_id).is_some();
+    let screen_state = state
+        .ptys
+        .screen_states()
+        .get(&session_id)
+        .map(|sight| sight.state);
     tauri::async_runtime::spawn_blocking(move || {
         load_chat_history(
             &db_path,
@@ -550,6 +558,7 @@ pub(crate) async fn get_chat_history(
                 pty_live,
                 runtimes: runtimes.snapshot(),
                 broker_approval,
+                screen_state,
             },
             session_id,
             ChatRead {

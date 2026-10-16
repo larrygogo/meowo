@@ -257,7 +257,8 @@ impl AgentPlugin for Codex {
         Some("/model")
     }
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
-    /// 见 docs/research/tui-menu-captures-2026-07.md)。
+    /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
+    /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
     fn queue_input(&self) -> Option<&'static str> {
         Some("\t")
     }
