@@ -4590,6 +4590,10 @@ select.ns-input {
 }
 .chat-todos > summary::-webkit-details-marker { display: none; }
 .chat-todos > summary {
+/* 组内改动行数：等宽数字、比摘要小一号，颜色与改动面板的增删记号同源。 */
+.chat-activity-delta { flex: 0 0 auto; display: inline-flex; gap: var(--sp-6); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; }
+.chat-activity-delta .is-add { color: var(--cc-ok-vivid); }
+.chat-activity-delta .is-del { color: var(--cc-err-vivid); }
   min-height: calc(42px * var(--cc-ui));
   padding: 0 var(--sp-17) 0 var(--sp-18);
   display: flex;
