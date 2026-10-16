@@ -720,10 +720,6 @@ export const en: Dict = {
     lineNormal: "Normal",
     lineRelaxed: "Relaxed",
     appearanceHint: "Changes apply instantly.",
-    // S-5 mini sticker preview beside the rows: sample title/subtitle; opacity & UI scale apply to it live.
-    appearancePreviewTag: "Preview · updates live with the settings below",
-    appearancePreviewTitle: "Tidy release scripts",
-    appearancePreviewSub: "~/projects/meowo",
     showQuotaOnSticker: "Show quota on sticker",
   },
   proxy: {

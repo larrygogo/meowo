@@ -2864,22 +2864,22 @@ mod tests {
 
     #[test]
     fn settings_appearance_defaults_and_back_compat() {
-        // 老文件缺外观字段 → 用缺省（dark / 100 / 100），不报错。
+        // 老文件缺外观字段 → 用缺省（dark / 100 / 112），不报错。
         let legacy: Settings = serde_json::from_str(r#"{"archive_hide_days":7}"#).unwrap();
         assert_eq!(legacy.theme, "dark");
         assert_eq!(legacy.opacity, 100);
-        assert_eq!(legacy.ui_scale, 100);
+        assert_eq!(legacy.ui_scale, 112);
         // 显式外观值被尊重。
         let custom: Settings =
-            serde_json::from_str(r#"{"theme":"light","opacity":80,"ui_scale":112}"#).unwrap();
+            serde_json::from_str(r#"{"theme":"light","opacity":80,"ui_scale":124}"#).unwrap();
         assert_eq!(custom.theme, "light");
         assert_eq!(custom.opacity, 80);
-        assert_eq!(custom.ui_scale, 112);
+        assert_eq!(custom.ui_scale, 124);
         // Default 与缺省函数一致。
         let d = Settings::default();
         assert_eq!(d.theme, "dark");
         assert_eq!(d.opacity, 100);
-        assert_eq!(d.ui_scale, 100);
+        assert_eq!(d.ui_scale, 112);
     }
 }
 

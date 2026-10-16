@@ -13,7 +13,9 @@ export const SETTINGS_DEFAULTS: Settings = {
   theme: "dark",
   // 与后端 settings.rs 的 default_opacity() 一致：曾占位 94，设置页读数先显 94% 再跳 100。
   opacity: 100,
-  ui_scale: 100,
+  // 与后端 settings.rs 的 default_ui_scale() 一致：档位 2026-10 整体上调一档
+  // （90/100/112 → 100/112/124），默认「中」随之为 112。
+  ui_scale: 112,
   resume_terminal: "terminal",
   language: "auto",
   terminal_open_mode: "card",

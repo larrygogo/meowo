@@ -1946,22 +1946,6 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
   overflow: hidden;
 }
 
-/* S-5 外观预览：迷你贴纸卡（复用 obm-card 造型）浮在「桌面」渐变上，实时反映
-   不透明度/界面缩放/贴纸色/风格——渐变底给低不透明度一个对照物，否则透明卡贴在
-   设置页底色上什么都看不出来。 */
-.ap-preview {
-  padding: var(--sp-10);
-  margin-bottom: var(--sp-16);
-  border-radius: var(--r-lg);
-  background: linear-gradient(135deg, var(--cc-accent-soft), var(--cc-surface-hover) 55%, var(--cc-accent-soft));
-}
-.ap-preview-card { border: 1px solid var(--cc-border); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
-.ap-preview-tag { font-size: var(--fs-10); color: var(--cc-text-faint); margin-bottom: var(--sp-6); }
-:root[data-sticker-style="flat"] .ap-preview-card { box-shadow: none; }
-.ap-preview-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3em; }
-.ap-preview-title { color: var(--cc-text); font-weight: 500; }
-.ap-preview-sub { font-size: 0.85em; color: var(--cc-text-faint); }
-
 /* 设置页卡片外的分组标题（标题放卡片里会像一个可交互设置项）。只有标题、不带副标题。 */
 .sec-caption { margin: var(--sp-18) var(--sp-6) var(--sp-8); font-size: 13.5px; font-weight: 600; color: var(--cc-text); }
 /* 设置 → 会话 → 已归档会话列表（看板已无「已归档」tab，这里是唯一管理入口）。

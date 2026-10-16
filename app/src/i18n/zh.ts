@@ -774,10 +774,6 @@ export const zh = {
     lineNormal: "标准",
     lineRelaxed: "宽松",
     appearanceHint: "更改即时生效。",
-    // S-5 行旁迷你贴纸预览：示例标题/副标，不透明度与界面缩放实时套在它身上。
-    appearancePreviewTag: "预览 · 随下方设置实时变化",
-    appearancePreviewTitle: "整理发布脚本",
-    appearancePreviewSub: "~/projects/meowo",
     showQuotaOnSticker: "在贴纸显示配额",
   },
   proxy: {
