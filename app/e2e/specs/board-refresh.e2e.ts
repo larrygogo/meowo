@@ -32,6 +32,8 @@ describe("贴纸看板：空闲刷新回归", () => {
     // 空闲观察 6 秒。修复后 db-watcher 仅在真实写入时才发事件，纯空闲应几乎为 0。
     await browser.pause(6_000);
     const after = (await readCount()) ?? 0;
+    const reasons = await browser.execute(() => (window as unknown as { __MEOWO_BOARD_REASONS__?: string[] }).__MEOWO_BOARD_REASONS__ ?? []);
+    console.log(`DIAG before=${before} after=${after} reasons=${JSON.stringify(reasons)}`);
 
     // 阈值给到 2：容忍 liveness 5s 轮询在存活集变化时至多 1 次合法刷新及边界抖动。
     // 修复前此处会是几十次（每 1~2s 一次）。

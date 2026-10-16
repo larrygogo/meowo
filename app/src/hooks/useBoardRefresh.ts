@@ -42,10 +42,11 @@ export function useBoardRefresh(doRefresh: () => void): () => void {
     else timerRef.current = window.setTimeout(fire, BOARD_REFRESH_THROTTLE_MS - since);
   }, []);
 
-  useTauriEvent("board-changed", () => {
+  useTauriEvent<string>("board-changed", (event) => {
     if (import.meta.env.VITE_E2E === "1") {
-      const w = window as typeof window & { __MEOWO_BOARD_CHANGED__?: number };
+      const w = window as typeof window & { __MEOWO_BOARD_CHANGED__?: number; __MEOWO_BOARD_REASONS__?: string[] };
       w.__MEOWO_BOARD_CHANGED__ = (w.__MEOWO_BOARD_CHANGED__ ?? 0) + 1;
+      (w.__MEOWO_BOARD_REASONS__ ??= []).push(`${Date.now()} ${String(event.payload)}`);
     }
     refresh();
   });
