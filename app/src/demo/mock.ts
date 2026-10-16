@@ -112,6 +112,7 @@ export function installMocks(): void {
           startup_attention_markers: ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"],
           selector_anchors: [{ marker: "type something", kind: "input" }, { marker: "chat about this", kind: "chat" }],
           interrupt_input: "",
+          interrupt_presses: 1,
           runtime_commands_pending: false,
           attachment_mention: true,
           clipboard_image_paste: "\\[Image #\\d",

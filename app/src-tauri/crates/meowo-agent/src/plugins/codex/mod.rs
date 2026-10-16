@@ -258,8 +258,28 @@ impl AgentPlugin for Codex {
     }
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\t")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// Ctrl+J（裸 LF）在 composer 里换行、不提交（tests/probe_tui_script.rs，0.162.1，
+    /// 2026-10-16）。Alt+Enter 同样可用，但取不带 ESC 前缀的那个——crossterm 拆包时 ESC 可能
+    /// 被单独认成 Esc，运行中就是一次中断。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
+    }
+    /// `@绝对路径 正文` 提交后模型自行读取该文件（实测 0.162.1：Read secret.txt → 答对）。
+    /// 与 kimi 同为文本级惯例。版本探测不到时兜底 false。
+    fn attachment_mention(&self, version: Option<&str>) -> bool {
+        version.is_some()
+    }
+    /// Ctrl-V 读系统剪贴板原生附加图片，composer 落出 `[Image #N]`；提交后模型答对了测试图
+    /// 的颜色（probe_tui_script 实测 0.162.1）。粘贴键用默认的 Ctrl-V。
+    fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
+        version.map(|_| r"\[Image #\d")
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
     fn slash_commands(&self) -> &'static [&'static str] {
@@ -269,6 +289,7 @@ impl AgentPlugin for Codex {
     }
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            menu_command: None,
             dimension: "collaboration",
             cycle_input: Some("\x1b[Z"),
             options: &[],

@@ -6,7 +6,11 @@ import type { ModeScreenMarker } from "./ModeScreenMarker";
  * ChatWindow 中一个独立的模式维度。`cycle_input` 与 `options` 可任选其一或同时存在；
  * 只读维度无需声明 control，仍可由 transcript 状态展示。
  */
-export type ModeControl = { dimension: string, cycle_input: string | null, options: Array<ModeOption>, 
+export type ModeControl = { dimension: string, 
+/**
+ * 菜单型模式必须等用户在 CLI 选择，不能把写入命令当成切换成功（Kimi Code 2.2 文档）。
+ */
+menu_command: string | null, cycle_input: string | null, options: Array<ModeOption>, 
 /**
  * 空表 = 该维度无屏幕回显能力，显示只随 transcript 状态走。
  */

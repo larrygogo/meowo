@@ -213,8 +213,63 @@ impl AgentPlugin for Gemini {
     /// Esc 中断当前回合(gemini CLI 的取消键即 Esc)。**约定推断**:本机 ConPTY 探针能启动
     /// gemini,但提交 prompt 后它立即 SessionEnd 退出,抓不到「生成中·esc to cancel」那一屏;
     /// 依据同 kimi(通行约定 + claude/codex 均 Esc)。「打断并发送」低风险(见 kimi 注释)。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\t")
+    }
+
+    // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。
+    // 未取证的屏幕标签不作乐观更新，避免把按键成功误当成某个权限档已经生效。
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            dimension: "approval",
+            menu_command: None,
+            cycle_input: Some("\x1b[Z"),
+            options: &[],
+            screen_markers: &[],
+        }];
+        &MODES
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// Ctrl+J（裸 LF）在输入框里换行、不提交（tests/probe_tui_script.rs，0.61，2026-10-16）。
+    /// 剪贴板贴图（Ctrl-V）虽然可用，但 gemini 会把图片落盘到工作目录的 `.gemini-clipboard/`
+    /// 再以 @路径 引用——等于往用户仓库里写文件，故不声明，图片照旧走指令文本。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
+    }
+    /// 工具确认框（源码 ToolConfirmationMessage，0.64 未变）。gemini 没有能代为决定的权限 hook，
+    /// 屏幕识别是 GUI 给出可操作审批的唯一通道。问句只认**行首是外框 │** 的那一行——模型
+    /// 正文里引用同一句不带框线，不该凭空弹卡锁输入框。真机屏（0.61，`--approval-mode default`）：
+    /// `│ Allow execution of [Shell]? │` 之下是 `│ ● 1. Allow once │ / 2. Allow for this session /
+    /// 3. No, suggest changes (esc)`。
+    ///
+    /// 额度耗尽框（0.64 真机，2026-10-16）：`│ Usage limit reached for gemini-3.8-flash. │` 下接
+    /// `● 1. Keep trying / 2. Stop`，取代输入框。不识别时对话页毫无提示，发出的正文落进这个
+    /// 框被丢弃、紧随的回车选中 Keep trying 再撞一次额度——用户只看到「发不了消息」。
+    /// 走通用卡（无结构化文法）：确认 = Enter = Keep trying，取消 = Esc = 「Request cancelled」
+    /// 并还回输入框（两键均经 probe_tui_script 实测）。
+    fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
+        &[
+            crate::chat_ui::AttentionPattern {
+                id: "gemini:command-approval",
+                patterns: &[
+                    r"^\s*│\s*allow execution of [^\n]*\?",
+                    r"^\s*│\s*apply this change\?",
+                    r"^\s*│\s*do you want to proceed\?",
+                ],
+                // 重绘不清屏，上一个确认框会残留在缓冲上方：取最后一次。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::FramedBox,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "gemini:usage-limit",
+                patterns: &[r"^\s*│\s*usage limit reached\b"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+            },
+        ]
     }
     /// `@路径` 是 gemini 的一等注入语法(官方文档;headless 实测提交 `@绝对路径` 能答出
     /// 文件内容)。版本探测不到时兜底 false。

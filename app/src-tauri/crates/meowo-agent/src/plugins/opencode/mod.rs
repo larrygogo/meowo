@@ -198,18 +198,78 @@ impl AgentPlugin for Opencode {
         Some("/models")
     }
     /// `opencode models` 直接把完整清单打到 stdout（每行一个 `provider/model`，实测
-    /// 2026-08-06 / 1.18.14）。有它就不必走 TUI 菜单那条路——opencode 的 TUI 输入在
-    /// ConPTY 下至今不通（`/models` 发不进去，两轮取证均如此），而这条命令一问就有，
-    /// 还不打扰正在跑的会话。
+    /// 2026-08-06 / 1.18.14）。不经 TUI 菜单、一问就有，还不打扰正在跑的会话。
     fn model_list_command(&self) -> Option<&'static [&'static str]> {
         Some(&["models"])
     }
-    /// Esc 中断当前回合。**约定推断**且**可用性存疑**:opencode 的全屏 Go TUI 在 ConPTY
-    /// 探针下输入通道整条不通(`/models` 都发不进去),故连 Esc 能不能被它收到都未验证——
-    /// 声明它只是让「打断并发送」按钮出现,实际是否奏效取决于 opencode 的输入路径是否可用
-    /// (这是比中断键更底层的兼容问题)。风险仍低(见 kimi 注释)。
+    /// Esc = opencode 默认 keybind `session_interrupt`（官方 keybinds 文档）。Windows 上它曾因
+    /// 「ConPTY 输入整条不通」被停用，但那是探针的误判：输入框画出前就发键、没答 OpenConsole
+    /// 的 DA1、在原始流里找字面串（opentui 按单元格差量重绘，字面串根本不连续）。按真实屏幕
+    /// 判定后，打包 OpenConsole 下原样字节均通（tests/probe_opencode_input.rs，2026-10-16）。
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// 运行中首按 Esc 只把状态行改成 "esc again to interrupt"，第二下才停（"Tool execution
+    /// aborted / interrupted"）；两个 Esc 合成一次写入被当成 Alt+Esc，一下都不算。分两次写、
+    /// 间隔 40ms 与 120ms 均停下（tests/probe_tui_script.rs，1.19.2，2026-10-16）。
+    fn interrupt_presses(&self) -> u8 {
+        2
+    }
+    /// 权限框（1.19.2 真机）：`△ Permission required` 标题 + 说明 + 横排选项
+    /// `Allow once   Allow always   Reject`（⇆ 切换、Enter 确认）。插件桥上报的 permission.asked
+    /// 只是观察事件，GUI 代为决定只能走屏幕。横排选项没有编号文法，落到通用卡：确认 = Enter
+    /// = 默认焦点 Allow once、取消 = Esc = Reject 并停下当前回合（两键均经 probe_tui_script 实测）。
+    fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
+        &[crate::chat_ui::AttentionPattern {
+            id: "opencode:command-approval",
+            patterns: &[r"△ permission required"],
+            last: true,
+            details: crate::chat_ui::AttentionDetails::None,
+        }]
+    }
+    /// 运行中按 Enter 即排队：消息带 QUEUED 标记挂在输入区上方，当前回合结束后自动执行
+    /// （probe_tui_script 实测，1.19.2）。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+    /// 默认 keybind `input_newline` 含 ctrl+j：裸 LF 在输入框里插入换行、不提交（实测 1.19.2）。
+    /// 不用 ESC+CR——ESC 前缀若被单独解析成 Esc，运行中就是半个中断。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
+    }
+    /// Tab = 默认 keybind `agent_cycle`，在 primary agent（build ⇄ plan）间轮换，输入框下方
+    /// 「Build · <模型>」行随之重绘（增量流去掉光标定位后连成 "Plan · Claude…"）。标记带上
+    /// ` · ` 分隔：单认 build/plan 太容易撞正文。用户自定义的 primary agent 也会进轮换，
+    /// 派生菜单只列内置两档，绕一圈切不到时前端会说明。
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MARKERS: [crate::ModeScreenMarker; 2] = [
+            crate::ModeScreenMarker {
+                marker: "build · ",
+                value: "build",
+            },
+            crate::ModeScreenMarker {
+                marker: "plan · ",
+                value: "plan",
+            },
+        ];
+        static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            dimension: "agent",
+            menu_command: None,
+            cycle_input: Some("\t"),
+            options: &[],
+            screen_markers: &MARKERS,
+        }];
+        &MODES
+    }
+    /// `@绝对路径 正文` 提交后模型读得到该文件（实测 1.19.2）。只有提及、没有正文时回车会被
+    /// @ 补全框（"No matching items"）吃掉，补空格也不收——这一形态由前端统一退回指令文本。
+    fn attachment_mention(&self, version: Option<&str>) -> bool {
+        version.is_some()
+    }
+    /// Ctrl-V 读系统剪贴板原生附加图片，输入框落出 `[Image N]`（没有 #）；提交后模型答对了
+    /// 测试图的颜色（probe_tui_script 实测 1.19.2）。粘贴键用默认的 Ctrl-V。
+    fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
+        version.map(|_| r"\[Image \d")
     }
     /// opencode 的切模型命令是 `/models`（复数，弹选择器），没有 `/model`/`/status`/`/clear`
     /// ——清上下文对应 `/new`。此前前端的通用 fallback 把这三个都补给它了。

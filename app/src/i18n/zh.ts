@@ -367,6 +367,9 @@ export const zh = {
     approvalTimedOut: "已超时，回落终端处理中",
     // 切到终端页的按钮一律用这个标签（7G-9：此前四处四种说法）。
     goTerminal: "去终端页",
+    // 终端视图下作答卡的「放行给终端」按钮（题面无法卡内表达时）：人已在终端页，
+    // 按下只是把挂起交还终端、表单随即出现在眼前，不是跳转——文案与 goTerminal 区分开。
+    questionAnswerInTerminal: "在终端作答",
     close: "关闭",
     renameSave: "保存",
     minimize: "最小化",
@@ -597,6 +600,14 @@ export const zh = {
     cycleMode: "点击轮换到下一个模式",
     modeUnreachable: "没能切到该模式，当前账号或参数下不可用",
     modelProbing: "正在读取模型清单…",
+    sendSessionChanged: "会话已切换，已停止旧会话的发送。",
+    imagePasteUnconfirmed: "图片附加未完成，消息未确认提交。请先到终端检查并清理未发送内容，再重试。",
+    terminalMenuCleared: "已在终端完成选择，可以发送",
+    imageDraftCleared: "已在终端清理，可以重试",
+    interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
+    busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
+    menuBusy: "请等待当前任务结束后切换模型或模式。",
+    modelSwitchUnconfirmed: "尚未确认模型已切换，未修改恢复配置。请到终端检查。",
     modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
     modelListUnavailableRemote: (command: string) => `读不到模型清单，请在桌面端用 ${command} 切换`,
     modelGoTerminal: "去终端页切换模型",
@@ -622,6 +633,7 @@ export const zh = {
     modeDimensions: {
       permission: "权限模式",
       collaboration: "协作模式",
+      agent: "Agent",
       work: "工作模式",
       approval: "审批策略",
       sandbox: "沙箱",
@@ -631,6 +643,7 @@ export const zh = {
       manual: "手动确认",
       acceptEdits: "自动接受编辑",
       plan: "计划模式",
+      build: "构建",
       auto: "自动",
       yolo: "YOLO",
       bypassPermissions: "跳过权限确认",

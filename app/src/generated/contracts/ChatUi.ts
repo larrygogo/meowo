@@ -11,6 +11,10 @@ import type { SlashCommand } from "./SlashCommand";
  */
 export type ChatUi = { slash_commands: Array<SlashCommand>, model_presets: Array<ModelPreset>, 
 /**
+ * 只有支持内联选择的 CLI 才声明；列举模型不代表能用同一协议选择模型。
+ */
+model_select_command: string | null, 
+/**
  * 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
  * 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
  */
@@ -51,6 +55,15 @@ permission_prompt_races_hook: boolean,
  * CLI 随即处理排队消息/接受新输入。None = 该 agent 的中断键未经取证,GUI 不提供入口。
  */
 interrupt_input: string | null, 
+/**
+ * 中断键要按几次(分次写入,间隔由前端定)。opencode 首按只提示 "esc again to interrupt",
+ * 第二下才停;两个 Esc 合成一次写入会被当成 Alt+Esc,一下都不算(真机取证见其插件)。
+ */
+interrupt_presses: number, 
+/**
+ * 运行中排队的提交键。Codex/Gemini 的 Enter 不等于排队（官方键盘文档）。
+ */
+queue_input: string | null, 
 /**
  * Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
  * None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。

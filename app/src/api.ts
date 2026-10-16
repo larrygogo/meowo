@@ -826,9 +826,9 @@ export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: n
  * 该 agent 的模型清单，**由 CLI 自己列举**（非交互子命令，后端带进程级缓存）。
  * 空表 = 该 CLI 没有列举子命令，调用方回落到「弹 TUI 菜单 + 屏幕识别」那条路。
  */
-export function agentModels(provider: string): Promise<string[]> {
+export function agentModels(provider: string, sessionId?: number): Promise<string[]> {
   // 旧后端/demo 对未知命令返回 undefined——统一兜成空表，调用方不必各自判空。
-  return invoke<string[] | null>("agent_models", { provider }).then((models) => models ?? []);
+  return invoke<string[] | null>("agent_models", { provider, sessionId: sessionId ?? null }).then((models) => models ?? []);
 }
 
 /**

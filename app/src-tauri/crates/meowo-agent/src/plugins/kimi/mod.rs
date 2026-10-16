@@ -447,8 +447,16 @@ impl AgentPlugin for Kimi {
     /// 「打断并发送」→ Esc 确实停下当前回合)。自动探针抓不到证据(kimi.exe 的 launcher
     /// shim 在 ConPTY 下即退),故走真机人工确认——与 claude(官方文档)/codex(状态行)
     /// 同为确证级别。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// Ctrl+J（裸 LF）在输入框里换行、不提交（tests/probe_tui_script.rs，2.2.0，2026-10-16）。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
     }
     /// `@` 是 kimi 自己的一等文件引用语法(官方文档;TUI 输 `@` 有补全)。它是**文本级**
     /// 惯例——wire.jsonl 实测 turn.prompt 原样保留 @路径文本、由模型自行读取,TUI 补全
@@ -492,24 +500,6 @@ impl AgentPlugin for Kimi {
             data: "/plan off",
             submit: true,
         }];
-        static MANUAL: [ModeInput; 2] = [
-            ModeInput {
-                data: "/yolo off",
-                submit: true,
-            },
-            ModeInput {
-                data: "/auto off",
-                submit: true,
-            },
-        ];
-        static YOLO: [ModeInput; 1] = [ModeInput {
-            data: "/yolo on",
-            submit: true,
-        }];
-        static AUTO: [ModeInput; 1] = [ModeInput {
-            data: "/auto on",
-            submit: true,
-        }];
         static WORK: [ModeOption; 2] = [
             ModeOption {
                 value: "default",
@@ -520,23 +510,10 @@ impl AgentPlugin for Kimi {
                 inputs: &PLAN_ON,
             },
         ];
-        static PERMISSION: [ModeOption; 3] = [
-            ModeOption {
-                value: "manual",
-                inputs: &MANUAL,
-            },
-            ModeOption {
-                value: "yolo",
-                inputs: &YOLO,
-            },
-            ModeOption {
-                value: "auto",
-                inputs: &AUTO,
-            },
-        ];
         static MODES: [ModeControl; 2] = [
             ModeControl {
                 dimension: "work",
+                menu_command: None,
                 cycle_input: Some("\x1b[Z"),
                 options: &WORK,
                 // kimi 的模式切换有 wire 事件即时落 transcript（telemetry 的 set_mode），
@@ -545,11 +522,13 @@ impl AgentPlugin for Kimi {
             },
             ModeControl {
                 dimension: "permission",
+                menu_command: Some("/permission"),
                 cycle_input: None,
-                options: &PERMISSION,
+                options: &[],
                 screen_markers: &[],
             },
         ];
+        // https://moonshotai.github.io/kimi-code/en/reference/slash-commands.html：权限命令打开菜单，不能盲发 on/off。
         // 旧 Python 版 kimi-cli 的命令和 wire 事件不同；只给已验证的 modern Kimi Code 声明。
         if crate::installation(crate::id::KIMI)
             .is_some_and(|installation| installation.variant_tag == "modern")

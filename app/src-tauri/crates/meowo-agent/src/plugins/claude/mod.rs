@@ -461,6 +461,10 @@ impl AgentPlugin for Claude {
     }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
+    fn model_select_command(&self) -> Option<&'static str> {
+        Some("/model")
+    }
+
     fn model_presets(&self) -> &'static [crate::ModelPreset] {
         // label 是学到真实菜单前的兜底，维护约定见 launch_options 里的注释。
         &[
@@ -532,6 +536,7 @@ impl AgentPlugin for Claude {
             },
         ];
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            menu_command: None,
             dimension: "permission",
             cycle_input: Some("\x1b[Z"),
             options: &[],
@@ -551,6 +556,10 @@ impl AgentPlugin for Claude {
         ]
     }
     /// Esc 中断当前回合(官方文档行为):中断后已完成的工作保留,排队消息随即被处理。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }

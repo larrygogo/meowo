@@ -168,6 +168,10 @@ pub enum AttentionDetails {
     /// 「▶ 问题标题」面板式：▶ 标题行 + display 块（kimi 官方源码取证 approval-panel.ts）。
     /// 附带语义：「Approve for this session」只记本会话，不是持久规则。
     ArrowPanel,
+    /// 圆角外框对话框式：`? 工具名  说明` 头行 + 内框正文 + 问句 + `│ ● 1. Allow once │`
+    /// 编号选项（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）。选项行带框线，
+    /// 以 ● 焦点做相对移动；「Allow for this session」只记本会话。
+    FramedBox,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。
@@ -220,6 +224,8 @@ pub struct ModeScreenMarker {
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct ModeControl {
     pub dimension: &'static str,
+    /// 菜单型模式必须等用户在 CLI 选择，不能把写入命令当成切换成功（Kimi Code 2.2 文档）。
+    pub menu_command: Option<&'static str>,
     pub cycle_input: Option<&'static str>,
     pub options: &'static [ModeOption],
     /// 空表 = 该维度无屏幕回显能力，显示只随 transcript 状态走。
@@ -233,6 +239,8 @@ pub struct ModeControl {
 pub struct ChatUi {
     pub slash_commands: Vec<SlashCommand>,
     pub model_presets: Vec<ModelPreset>,
+    /// 只有支持内联选择的 CLI 才声明；列举模型不代表能用同一协议选择模型。
+    pub model_select_command: Option<&'static str>,
     /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
     /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
     pub model_menu_command: Option<&'static str>,
@@ -258,6 +266,11 @@ pub struct ChatUi {
     /// 中断当前回合的按键序列(如 Esc)。运行中「强制插话」= 先写它停掉当前回合,
     /// CLI 随即处理排队消息/接受新输入。None = 该 agent 的中断键未经取证,GUI 不提供入口。
     pub interrupt_input: Option<&'static str>,
+    /// 中断键要按几次(分次写入,间隔由前端定)。opencode 首按只提示 "esc again to interrupt",
+    /// 第二下才停;两个 Esc 合成一次写入会被当成 Alt+Esc,一下都不算(真机取证见其插件)。
+    pub interrupt_presses: u8,
+    /// 运行中排队的提交键。Codex/Gemini 的 Enter 不等于排队（官方键盘文档）。
+    pub queue_input: Option<&'static str>,
     /// Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
     /// None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
     pub newline_input: Option<&'static str>,

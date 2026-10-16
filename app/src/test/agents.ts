@@ -114,7 +114,7 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
  * 未取证的 provider 为空（不做整句识别）。
  */
-const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" }[]> = {
+const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" }[]> = {
   claude: [
     {
       id: "claude:long-session-resume",
@@ -142,6 +142,22 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
       last: true,
       details: "arrow_panel",
     },
+  ],
+  gemini: [
+    {
+      id: "gemini:command-approval",
+      patterns: [
+        "^\\s*│\\s*allow execution of [^\\n]*\\?",
+        "^\\s*│\\s*apply this change\\?",
+        "^\\s*│\\s*do you want to proceed\\?",
+      ],
+      last: true,
+      details: "framed_box",
+    },
+    { id: "gemini:usage-limit", patterns: ["^\\s*│\\s*usage limit reached\\b"], last: true, details: "none" },
+  ],
+  opencode: [
+    { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "none" },
   ],
 };
 
@@ -172,12 +188,14 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     slash_commands: commands,
     attention_patterns: ATTENTION_PATTERNS[provider] ?? [],
     model_presets: MODEL_PRESETS[provider] ?? [],
+    model_select_command: provider === "claude" ? "/model" : null,
+    queue_input: provider === "codex" || provider === "gemini" ? "\t" : "\r",
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
     // opencode 的命令是 /models(复数)——与后端插件声明同源。
     model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",
     mode_controls: provider === "claude"
       ? [{
-        dimension: "permission", cycle_input: "\u001b[Z", options: [],
+        dimension: "permission", menu_command: null, cycle_input: "\u001b[Z", options: [],
         // 与后端 claude 插件同源：官方文档承诺的状态栏指示文本 → transcript 的 permissionMode 值。
         screen_markers: [
           { marker: "bypass permissions on", value: "bypassPermissions" },
@@ -189,8 +207,13 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
         ],
       }]
       : provider === "codex"
-        ? [{ dimension: "collaboration", cycle_input: "\u001b[Z", options: [], screen_markers: [] }]
-        : [],
+        ? [{ dimension: "collaboration", menu_command: null, cycle_input: "\u001b[Z", options: [], screen_markers: [] }]
+        : provider === "opencode"
+          ? [{
+            dimension: "agent", menu_command: null, cycle_input: "\t", options: [],
+            screen_markers: [{ marker: "build · ", value: "build" }, { marker: "plan · ", value: "plan" }],
+          }]
+          : [],
     startup_attention_markers: provider === "claude"
       ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
       : ["do you trust the files in this folder", "do you trust the contents of this directory"],
@@ -204,17 +227,22 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
       : [],
     // 与后端同源:五家都用 Esc 中断(claude/codex 确证,其余约定推断,见插件注释)。
     interrupt_input: "",
-    // 与后端同源:换行注入序列只有 claude 声明(ESC+CR,见其插件的取证注释)。
-    newline_input: provider === "claude" ? "\u001b\r" : null,
+    // 与后端同源:opencode 首按 Esc 只提示 "esc again to interrupt",须分两次写。
+    interrupt_presses: provider === "opencode" ? 2 : 1,
+    // 与后端同源:换行注入序列 claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF),见各插件的取证注释。
+    newline_input: provider === "claude" ? "\u001b\r" : "\n",
     runtime_commands_pending: false,
-    // 与后端同源:claude/gemini(提交时原生附加)与 kimi(@ 是它自己的文本级一等语法)
-    // 声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。
-    attachment_mention: provider === "claude" || provider === "gemini" || provider === "kimi",
-    // 与后端同源:claude/kimi 的 TUI 文档明确 Ctrl-V 读剪贴板原生附加图片,占位符各家不同。
-    clipboard_image_paste: provider === "claude" ? "\\[Image #\\d" : provider === "kimi" ? "\\[image[:# ]" : null,
+    // 与后端同源:claude/gemini(提交时原生附加)与 kimi/codex/opencode(@ 是文本级惯例,
+    // 模型自行读取)声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。
+    attachment_mention: true,
+    // 与后端同源:claude/kimi/codex/opencode 的 TUI 实测 Ctrl-V(kimi 是 Alt+V)读剪贴板原生附加
+    // 图片,占位符各家不同;gemini 会落盘到用户工作目录,刻意不声明。
+    clipboard_image_paste: provider === "claude" || provider === "codex" ? "\\[Image #\\d"
+      : provider === "kimi" ? "\\[image[:# ]"
+      : provider === "opencode" ? "\\[Image \\d" : null,
     // 与后端同源:粘贴键 kimi 在 Windows 上是 Alt+V(二进制里 win32 ? "alt+v" : ctrl("v")),
-    // 其余声明该能力的(claude)是 Ctrl-V。
-    clipboard_paste_input: provider === "kimi" ? "\u001bv" : provider === "claude" ? "\u0016" : null,
+    // 其余声明该能力的是 Ctrl-V。
+    clipboard_paste_input: provider === "kimi" ? "\u001bv" : provider === "gemini" ? null : "\u0016",
     // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
     draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。

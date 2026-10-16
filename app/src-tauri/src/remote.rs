@@ -286,9 +286,7 @@ pub(crate) struct RemoteAccessInfo {
 /// 只登记进 `generate_handler`（桌面 invoke），绝不进 `BRIDGED_COMMANDS`——远端不该
 /// 能读到 token 本身（它就是进门的凭据）。
 #[tauri::command]
-pub(crate) async fn remote_access_info(
-    app: tauri::AppHandle,
-) -> Result<RemoteAccessInfo, String> {
+pub(crate) async fn remote_access_info(app: tauri::AppHandle) -> Result<RemoteAccessInfo, String> {
     // token 惰性生成 + settings 读取 + IP 探测都可能触碰文件/网卡,挪进 blocking 池。
     let (settings, ips) = tauri::async_runtime::spawn_blocking(|| -> Result<_, String> {
         let settings = ensure_remote_token()?;
@@ -300,7 +298,10 @@ pub(crate) async fn remote_access_info(
     let (last_error, bound_port) = {
         let runtime = app.state::<RemoteRuntime>();
         let inner = runtime.inner.lock().unwrap_or_else(|e| e.into_inner());
-        (inner.last_error.clone(), inner.running.as_ref().map(|r| r.port))
+        (
+            inner.last_error.clone(),
+            inner.running.as_ref().map(|r| r.port),
+        )
     };
     Ok(RemoteAccessInfo {
         enabled: settings.remote_access_enabled,
@@ -769,9 +770,7 @@ bridged_args!(SetSessionNoteArgs {
     note: String
 });
 
-bridged_args!(StopManagedTerminalArgs {
-    session_id: i64
-});
+bridged_args!(StopManagedTerminalArgs { session_id: i64 });
 
 bridged_args!(GetChatHistoryArgs {
     session_id: i64,
@@ -836,7 +835,9 @@ bridged_args!(RegisterApprovalConsumerArgs {
     consumer_id: String
 });
 
-bridged_args!(UnregisterApprovalConsumerArgs { consumer_id: String });
+bridged_args!(UnregisterApprovalConsumerArgs {
+    consumer_id: String
+});
 
 bridged_args!(ResolvePendingApprovalArgs {
     session_id: i64,
@@ -857,7 +858,7 @@ bridged_args!(AgentChatUiArgs {
     session_id: Option<i64>
 });
 
-bridged_args!(AgentModelsArgs { provider: String });
+bridged_args!(AgentModelsArgs { provider: String, session_id: Option<i64> });
 
 bridged_args!(NewSessionArgs {
     cwd: String,
@@ -1126,7 +1127,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "agent_models" => {
             let a = args!(AgentModelsArgs);
-            reply_ok(crate::agent_models(a.provider).await)
+            reply_ok(crate::agent_models(a.provider, a.session_id).await)
         }
         "new_session" => {
             let a = args!(NewSessionArgs);
@@ -1380,9 +1381,12 @@ fn static_root(app: &tauri::AppHandle) -> Option<PathBuf> {
     // 2.11.2 实测静默打包不出任何文件(解包安装器验证过),不要改回去。仍保留 `_up_`
     // 探测位:列表形式修好后若有人切回,`..` 会折叠成 `_up_` 段,双探不误伤。
     let base = app.path().resource_dir().ok()?;
-    [base.join("dist-mobile"), base.join("_up_").join("dist-mobile")]
-        .into_iter()
-        .find(|d| d.is_dir())
+    [
+        base.join("dist-mobile"),
+        base.join("_up_").join("dist-mobile"),
+    ]
+    .into_iter()
+    .find(|d| d.is_dir())
 }
 
 /// URL path → 产物目录内相对路径。只接受 `[A-Za-z0-9._-]` 的单纯段（vite 产物
@@ -1539,13 +1543,19 @@ mod tests {
             enabled: true,
             port: 18620,
             token: "tok".into(),
-            ips: vec![IpCandidate { ip: "192.168.1.5".into(), kind: "lan" }],
+            ips: vec![IpCandidate {
+                ip: "192.168.1.5".into(),
+                kind: "lan",
+            }],
             last_error: Some("端口占用".into()),
             bound_port: Some(18621),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains(r#""lastError":"端口占用""#), "{json}");
-        assert!(json.contains(r#""ips":[{"ip":"192.168.1.5","kind":"lan"}]"#), "{json}");
+        assert!(
+            json.contains(r#""ips":[{"ip":"192.168.1.5","kind":"lan"}]"#),
+            "{json}"
+        );
         assert!(json.contains(r#""port":18620"#), "{json}");
         assert!(json.contains(r#""boundPort":18621"#), "{json}");
     }
@@ -1723,14 +1733,15 @@ mod tests {
             )
             .is_ok()
         );
-        assert!(
-            parse::<NewSessionArgs>(
-                br#"{"cwd":"C:/repo","provider":"claude","options":null,"extraDirs":null}"#
-            )
-            .is_ok()
-        );
+        assert!(parse::<NewSessionArgs>(
+            br#"{"cwd":"C:/repo","provider":"claude","options":null,"extraDirs":null}"#
+        )
+        .is_ok());
         assert!(parse::<ListSubdirectoriesArgs>(br#"{"path":null}"#).is_ok());
-        assert!(parse::<AgentChatUiArgs>(br#"{"provider":"claude","cwd":null,"sessionId":null}"#).is_ok());
+        assert!(
+            parse::<AgentChatUiArgs>(br#"{"provider":"claude","cwd":null,"sessionId":null}"#)
+                .is_ok()
+        );
     }
 
     /// 单臂样例校验：Ok = 样例能进该臂结构体；Err = 解析失败或缺样例。
@@ -1836,7 +1847,7 @@ mod tests {
             }
             // api.ts:818
             "agent_models" => {
-                parse::<AgentModelsArgs>(br#"{"provider":"claude"}"#).map(|_| ())
+                parse::<AgentModelsArgs>(br#"{"provider":"claude","sessionId":41}"#).map(|_| ())
             }
             // api.ts:941（options 可选、extraDirs 恒发——空也发 []，2026-08-31 事故的字段）
             "new_session" => parse::<NewSessionArgs>(
