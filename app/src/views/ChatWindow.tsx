@@ -899,8 +899,10 @@ export function ChatWindow() {
   // ——它已把 pid 判活、事件宽限与托管 PTY 活性(pty registry,随每次轮询新鲜)合并成
   // 单一真相。不要再引入前端自计的 PTY 活性标志(曾有 managedPtyActive:探测循环移交
   // ManagedTerminal 后停更,PTY 退出后悬死 true,把 tone 钉死「运行中」——已整根拆除)。
-  // history 未加载时按离线处理,避免首帧闪一下运行态。
-  const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored);
+  // history 未加载时按离线处理,避免首帧闪一下运行态。屏幕状态与侧栏同口径带上:gemini
+  // 启动即落 running、首条消息前无事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键
+  // Tab——正文停在输入框里发不出去(0.6.11 实机)。
+  const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, undefined, history?.screenState);
   const toneRef = useRef(tone);
   toneRef.current = tone;
   // 运行条活动展示：哨兵/空值/普通命令三分支统一收口（见 runningActivityView）。
