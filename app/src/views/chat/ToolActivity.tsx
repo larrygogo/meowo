@@ -25,10 +25,11 @@ export function friendlyToolName(name: string, t: ReturnType<typeof useT>): stri
 
 /// 按工具类型分图标：搜索 / 读文件 / 改文件 / 终端 / 网络 / 通用。
 /// 一组操作若全是同一个 `>_`，用户在展开列表里无法一眼区分做了什么。
-function ToolIcon({ name }: { name: string }) {
+/// 全部按 1.8 描边画：放大镜曾是填充轮廓（内外两圈），与笔/文件并排时明显发粗。
+export function ToolIcon({ name }: { name: string }) {
   const normalized = name.toLowerCase();
   const path = normalized.includes("grep") || normalized.includes("glob") || normalized.includes("search")
-    ? "M10.5 3a7.5 7.5 0 1 0 4.55 13.46L20 21.4 21.4 20l-4.94-4.95A7.5 7.5 0 0 0 10.5 3zm0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11z"
+    ? "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20"
     : normalized === "read" || normalized.includes("view_image") || normalized.includes("notebook")
     ? "M6 3h8l4 4v14H6zM14 3v5h5"
     : normalized === "write" || normalized === "edit" || normalized.includes("patch")
@@ -100,13 +101,23 @@ function Preview({ text, lang, tone, truncated }: { text: string; lang: string |
   );
 }
 
+/// 一次写入/编辑增删了多少行。Edit 按 old/new 的行数算（同终端里的「-3 +4」，不做
+/// 逐行 diff）；Write 只有新增。其余工具不改文件，返回 null。工具组摘要行据此汇总。
+export function lineDelta(detail: ToolDetail | null | undefined): { added: number; removed: number } | null {
+  if (detail?.kind === "write") return { added: detail.lines, removed: 0 };
+  if (detail?.kind === "edit") return { added: splitLines(detail.new).length, removed: splitLines(detail.old).length };
+  return null;
+}
+
 /// 标题行右侧的一枚小标：不展开也能看出规模——「写入 225 行」「-3 +12」「于 src」。
 function detailMeta(detail: ToolDetail, t: ReturnType<typeof useT>): string | null {
   switch (detail.kind) {
     case "write":
       return t.chat.toolWroteLines(detail.lines);
-    case "edit":
-      return t.chat.toolEditDelta(splitLines(detail.old).length, splitLines(detail.new).length);
+    case "edit": {
+      const delta = lineDelta(detail)!;
+      return t.chat.toolEditDelta(delta.removed, delta.added);
+    }
     case "command":
       return detail.description;
     case "read": {

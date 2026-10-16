@@ -17,7 +17,7 @@ function dayLabel(date: Date, t: Dict): string {
 }
 import { imageOnlyPaths, Message, UserImageGroup } from "./Message";
 import { SubagentBlock } from "./SubagentBlock";
-import { ActivityGroup, friendlyToolName, ToolActivity } from "./ToolActivity";
+import { ActivityGroup, friendlyToolName, lineDelta, ToolActivity, ToolIcon } from "./ToolActivity";
 import { isSubagentDelegation, type ToolResultItem, type ToolUseItem } from "./shared";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -175,13 +175,32 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
         kindCounts.set(name, (kindCounts.get(name) ?? 0) + 1);
       }
       const kinds = [...kindCounts.entries()];
+      // 这组改了多少行，挂在摘要行尾（Kimi 的「已编辑 2 个文件 +58 -0」同类信息）：
+      // 收起态下不展开也能看出这组是只读了读，还是真动了代码。
+      let added = 0;
+      let removed = 0;
+      let editTool: string | null = null;
+      const nameCounts = new Map<string, number>();
+      for (const tool of tools) {
+        if (tool.type !== "tool_use") continue;
+        nameCounts.set(tool.name, (nameCounts.get(tool.name) ?? 0) + 1);
+        const delta = lineDelta(tool.detail);
+        if (!delta) continue;
+        editTool ??= tool.name;
+        added += delta.added;
+        removed += delta.removed;
+      }
+      const touched = editTool !== null;
+      // 行首图标说这组主要在干什么：动过文件就是笔，否则取出现最多的那种工具。此前一律
+      // 是 >_，收起成一行后几组连排，图标给不出任何区分。
+      const iconTool = editTool ?? [...nameCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
       const label = kinds.slice(0, 3).map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(" · ")
         + (kinds.length > 3 ? " …" : "");
-      // 组里还有没回执的调用 = 正在跑：默认展开，用户当场看到在做什么（像终端那样）；
-      // 跑完后保持用户留下的开合。只在挂载时定一次（见 ActivityGroup）。
-      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen={pendingCount > 0} key={`tools-${tools[0].id}`}>
+      // 恒为收起的一行摘要，跑没跑完靠行尾跳动点、失败靠红字「N 个失败」表达。此前进行中
+      // 默认展开成卡片，2026-10 用户对照 Kimi 实拍嫌拥挤，定为「默认一行，点开才出明细」。
+      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen={false} key={`tools-${tools[0].id}`}>
         <summary className="chat-activity-summary">
-          <span className="chat-tool-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
+          <ToolIcon name={iconTool} />
           <span className="chat-activity-kinds">{label || t.chat.toolActivities(callCount || tools.length)}</span>
           {/* 7C-9：行级指示已降级为 aria-hidden（并行工具一多就是播报风暴），组头这一处
               是唯一的出口——但 aria-label 挂在无 role 的 span 上读屏取不到，等于全组静音。
@@ -193,6 +212,13 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
             </span>
           )}
           {failureCount > 0 && <span className="chat-activity-errors">{t.chat.toolFailures(failureCount)}</span>}
+          {/* 顺序同行级小标「-3 +4」：同一屏两种写法会让人以为是两种数。 */}
+          {touched && (
+            <span className="chat-activity-delta">
+              {removed > 0 && <span className="is-del">-{removed}</span>}
+              {added > 0 && <span className="is-add">+{added}</span>}
+            </span>
+          )}
           <span className="chat-tool-chevron">›</span>
         </summary>
         <div className="chat-activity-items">{tools.map((tool) => {

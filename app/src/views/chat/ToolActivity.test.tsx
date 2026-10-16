@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ToolActivity, ActivityGroup } from "./ToolActivity";
+import { ToolActivity, ActivityGroup, lineDelta } from "./ToolActivity";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 
 afterEach(cleanup);
@@ -75,5 +75,12 @@ describe("ToolActivity 详情", () => {
     unmount();
     render(<ActivityGroup className="chat-activity-group" defaultOpen={false}><summary>b</summary></ActivityGroup>);
     expect(document.querySelector("details")?.hasAttribute("open")).toBe(false);
+  });
+
+  it("lineDelta：Edit 按前后行数、Write 只算新增，其余工具不计", () => {
+    expect(lineDelta({ kind: "edit", path: "a.rs", old: "x\ny\nz\n", new: "x\n", replace_all: false, truncated: false })).toEqual({ added: 1, removed: 3 });
+    expect(lineDelta({ kind: "write", path: "a.rs", content: "", lines: 225, truncated: false })).toEqual({ added: 225, removed: 0 });
+    expect(lineDelta({ kind: "command", command: "ls", description: null })).toBeNull();
+    expect(lineDelta(null)).toBeNull();
   });
 });
