@@ -315,24 +315,16 @@ export function UserImageGroup({ paths }: { paths: string[] }) {
   );
 }
 
-/// 超过这个行数的思考过程收成预览态。与 styles.css 里 `.chat-reasoning.is-long` 的
-/// max-height 是同一个意思，改一个要顺带看另一个。
-const REASONING_PREVIEW_LINES = 6;
-
-/** 思考过程块。开合只在**首次挂载**时按当时长度定一次：流式期间行数越过阈值不再把
- *  open 从 true 翻成 false——用户正读着的思考被 React 收起是实拍投诉。之后 open 的
- *  vdom 值保持不变，用户手动开合(原生 details 行为)不会被渲染覆盖。 */
+/** 思考过程块：恒为收起的一行灰字，点开看全文。2026-10 用户对照 Kimi 客户端实拍
+ *  嫌对话区拥挤，定为「思考过程收成一行」——此前短思考摊开、长思考露 6 行预览，
+ *  每轮都多出一段灰字。open 不受控，开合完全归原生 details，流式更新不会把它弹开。 */
 function ReasoningBlock({ item }: { item: Extract<ChatItem, { type: "reasoning" | "reasoning_delta" }> }) {
   const t = useT();
-  const lines = item.text.split("\n").filter((line) => line.trim()).length;
-  const long = lines > REASONING_PREVIEW_LINES;
-  const [initialOpen] = useState(!long);
   return (
-    <details className={"chat-reasoning" + (long ? " is-long" : "")} open={initialOpen}>
+    <details className="chat-reasoning">
       <summary>
-        <span className="chat-timeline-dot" />
         {t.chat.reasoning}
-        {long && <span className="chat-reasoning-size">{t.chat.reasoningLines(lines)}</span>}
+        <span className="chat-tool-chevron">›</span>
       </summary>
       <div className="chat-md"><ChatMarkdown text={item.text} /></div>
     </details>

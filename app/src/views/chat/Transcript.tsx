@@ -177,9 +177,9 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
       const kinds = [...kindCounts.entries()];
       const label = kinds.slice(0, 3).map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(" · ")
         + (kinds.length > 3 ? " …" : "");
-      // 组里还有没回执的调用 = 正在跑：默认展开，用户当场看到在做什么（像终端那样）；
-      // 跑完后保持用户留下的开合。只在挂载时定一次（见 ActivityGroup）。
-      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen={pendingCount > 0} key={`tools-${tools[0].id}`}>
+      // 恒为收起的一行摘要，跑没跑完靠行尾跳动点、失败靠红字「N 个失败」表达。此前进行中
+      // 默认展开成卡片，2026-10 用户对照 Kimi 实拍嫌拥挤，定为「默认一行，点开才出明细」。
+      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen={false} key={`tools-${tools[0].id}`}>
         <summary className="chat-activity-summary">
           <span className="chat-tool-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
           <span className="chat-activity-kinds">{label || t.chat.toolActivities(callCount || tools.length)}</span>
