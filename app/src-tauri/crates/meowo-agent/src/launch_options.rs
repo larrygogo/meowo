@@ -3,7 +3,7 @@
 //! 只有插件声明过的字面量。
 //!
 //! 这与斜杠命令同一条原则：flag 表是 agent 的事实（claude 是 `--permission-mode plan`，
-//! codex 是 `--full-auto`，gemini 是 `--yolo`），归插件声明，GUI 零知识。未声明的 agent
+//! codex 是 `-a never -s workspace-write`，gemini 是 `--yolo`），归插件声明，GUI 零知识。未声明的 agent
 //! 面板上就没有这一栏——不给一个点了没效果的下拉。
 
 use serde::Serialize;

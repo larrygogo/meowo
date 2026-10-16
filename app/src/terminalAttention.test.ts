@@ -423,6 +423,78 @@ describe("terminalAttention", () => {
     expect(terminalAttention(prompt, [], false, false, { provider: "kimi", selectorAnchors: [] })).toBeNull();
   });
 
+  /// gemini 工具确认框(0.61 真机屏,`--approval-mode default` 下让它跑一条带重定向的 shell):
+  /// 选项行带外框 │,焦点是 ●。上一屏的确认框残留在上方时,按钮必须对准下方的活动框。
+  it("turns Gemini's framed confirmation box into focus-relative choices", () => {
+    const box = (command: string, focus: number) => [
+      "╭────────────────────────────────────────────╮",
+      `│ ? Shell  ${command}                         │`,
+      "│ ╭────────────────────────────────────────╮ │",
+      `│ │ ${command}                             │ │`,
+      "│ ╰────────────────────────────────────────╯ │",
+      "│ Allow execution of [Shell]?                │",
+      "│ Redirection detected. To auto-accept, press Shift+Tab │",
+      "│                                            │",
+      `│ ${focus === 1 ? "●" : " "} 1. Allow once                           │`,
+      `│ ${focus === 2 ? "●" : " "} 2. Allow for this session               │`,
+      `│ ${focus === 3 ? "●" : " "} 3. No, suggest changes (esc)            │`,
+      "╰────────────────────────────────────────────╯",
+    ];
+    const screen = [...box("echo stale > old.txt", 1), "✦ next step", ...box("echo meowo-probe > probe-out.txt", 2)].join("\n");
+    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+    expect(attention?.id).toBe("gemini:command-approval");
+    expect(attention?.details).toBe("framed_box");
+    // 详情只取活动框,残影里的旧命令不得混入。
+    expect(attention?.text).toContain("echo meowo-probe > probe-out.txt");
+    expect(attention?.text).not.toContain("echo stale");
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "Allow once",
+      "Allow for this session",
+      "No, suggest changes (esc)",
+    ]);
+    // 焦点在第 2 项:1 = ↑+回车,2 = 回车,3 = ↓+回车。
+    expect(attention?.options?.map((option) => option.input)).toEqual(["\x1b[A\r", "\r", "\x1b[B\r"]);
+    // 模型正文引用同一句(无外框)不弹卡。
+    expect(terminalAttention("Allow execution of [Shell]?\n1. Allow once", [], false, false, grammar("gemini"))).toBeNull();
+  });
+
+  /// opencode 权限框(1.19.2 真机):横排选项没有编号文法,只出卡不出选项按钮,
+  /// 由通用卡的 Enter(= 默认焦点 Allow once)/Esc(= Reject)作答。
+  it("recognizes OpenCode's permission prompt without inventing option buttons", () => {
+    const screen = [
+      "  ┃  △ Permission required",
+      "  ┃    ← Access external directory C:\\Windows",
+      "  ┃  Patterns",
+      "  ┃  - C:\\Windows\\*",
+      "  ┃   Allow once   Allow always   Reject          ctrl+f fullscreen  ⇆ select  enter confirm",
+    ].join("\n");
+    const attention = terminalAttention(screen, [], false, false, grammar("opencode"));
+    expect(attention?.id).toBe("opencode:command-approval");
+    expect(attention?.text).toContain("Access external directory");
+    expect(attention?.options).toBeUndefined();
+  });
+
+  /// gemini 额度耗尽框(0.64 真机):它取代输入框,不识别时对话页发的正文全被吞掉。
+  /// 选项行带外框 │,通用路径不拆按钮,由通用卡的 Enter(Keep trying)/Esc(取消请求)作答。
+  it("recognizes Gemini's usage-limit dialog that replaces the composer", () => {
+    const screen = [
+      " > say hi",
+      "╭──────────────────────────────────────────────╮",
+      "│                                              │",
+      "│ Usage limit reached for gemini-3.8-flash.    │",
+      "│ /stats model for usage details               │",
+      "│ /model to switch models.                     │",
+      "│                                              │",
+      "│ ● 1. Keep trying                             │",
+      "│   2. Stop                                    │",
+      "╰──────────────────────────────────────────────╯",
+    ].join("\n");
+    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+    expect(attention?.id).toBe("gemini:usage-limit");
+    expect(attention?.text).toContain("Usage limit reached");
+    expect(attention?.options).toBeUndefined();
+  });
+
   /// kimi 审批面板(ApprovalPanel):面板形态与按键语义为官方源码取证
   /// (apps/kimi-code/src/tui/components/dialogs/approval-panel.ts @ 0.29)。
   /// PermissionRequest hook 是 observation-only,屏幕识别是 GUI 审批的唯一通道。

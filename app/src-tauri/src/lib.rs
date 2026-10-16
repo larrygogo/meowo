@@ -52,43 +52,38 @@ use chat::{
     get_subagent_transcript, probe_subagent_states, refresh_session_model, refresh_session_todos,
     save_pasted_attachment, search_chat_transcripts,
 };
-use handoff::{get_session_lineage, switch_session_provider};
 use fsutil::{
     list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
     reveal_path_in_file_manager, search_project_files,
 };
 use git::{git_diff_summary, git_file_diff};
+use handoff::{get_session_lineage, switch_session_provider};
 use install::{
     add_agent_to_user_path, agent_path_gap, api_key_login, cancel_install, cancel_login,
     check_provider_hooks, install_agent, login_agent, logout_agent, open_install_log,
     repair_provider_hooks,
 };
 use managed_terminal::{
-    awaiting_interaction_sessions, dismiss_interactive_question, managed_terminal_binding,
-    managed_terminal_grid, managed_terminal_screen, managed_terminal_snapshot,
-    attach_background_session,
-    open_attached_terminal,
-    pending_interaction, register_approval_consumer, register_terminal_viewer,
-    resize_managed_terminal, screen_detect_explain, screen_detect_explain_text,
-    send_background_prompt,
-    resolve_pending_approval, start_managed_terminal, stop_managed_terminal,
+    attach_background_session, awaiting_interaction_sessions, dismiss_interactive_question,
+    managed_terminal_binding, managed_terminal_grid, managed_terminal_screen,
+    managed_terminal_snapshot, open_attached_terminal, pending_interaction,
+    register_approval_consumer, register_terminal_viewer, resize_managed_terminal,
+    resolve_pending_approval, screen_detect_explain, screen_detect_explain_text,
+    send_background_prompt, start_managed_terminal, stop_managed_terminal,
     unregister_approval_consumer, unregister_terminal_viewer, write_managed_terminal,
 };
 #[cfg(test)]
 use session_command::is_safe_id;
 use session_command::{
-    add_session_extra_dir, remove_session_extra_dir, rename_session, set_archived,
-    set_session_note,
+    add_session_extra_dir, remove_session_extra_dir, rename_session, set_archived, set_session_note,
 };
-use session_query::{
-    get_live_sessions_counts, get_live_sessions_page, recent_cwds,
-};
+use session_command::{session_launch_selections, set_session_launch_selection};
+use session_query::{get_live_sessions_counts, get_live_sessions_page, recent_cwds};
 #[cfg(test)]
 use session_query::{
     live_sessions_blocking, session_connected, tab_class, LiveContext, PageReq,
     SessionRuntimeIndex, RESUME_GRACE_MS,
 };
-use session_command::{session_launch_selections, set_session_launch_selection};
 use terminal::{
     apply_active_profile_to_sessions, focus_session, new_session, open_automation_settings,
     open_project_dir, restart_session_supported, resume_session, sessions_off_active_profile_count,
@@ -667,6 +662,16 @@ fn run_cli_capture(
     extra_args: &[&str],
     timeout: std::time::Duration,
 ) -> Option<String> {
+    run_cli_capture_in(plugin, extra_args, timeout, &[], None)
+}
+
+fn run_cli_capture_in(
+    plugin: &'static dyn meowo_agent::AgentPlugin,
+    extra_args: &[&str],
+    timeout: std::time::Duration,
+    env: &[(String, String)],
+    cwd: Option<&std::path::Path>,
+) -> Option<String> {
     let argv = plugin.launch_argv();
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])
@@ -674,6 +679,10 @@ fn run_cli_capture(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
+    cmd.envs(env.iter().cloned());
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -693,13 +702,19 @@ fn run_cli_capture(
     let deadline = std::time::Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                let _ = drain.join();
+                return None;
+            }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             _ => {
                 let _ = child.kill();
-                break;
+                let _ = child.wait();
+                let _ = drain.join();
+                return None;
             }
         }
     }
@@ -726,9 +741,7 @@ pub(crate) fn invalidate_cli_version_cache(provider: &str) {
 }
 
 /// 已装 CLI 的版本，`<launch_argv> --version` 探测，缓存见 [`CLI_VERSION_CACHE`]。
-pub(crate) fn probe_cli_version(
-    plugin: &'static dyn meowo_agent::AgentPlugin,
-) -> Option<String> {
+pub(crate) fn probe_cli_version(plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<String> {
     let id = plugin.id().as_str().to_string();
     // 中毒恢复而非 unwrap：缓存只是探测结果的备忘录，读到写一半的旧值无害；
     // panic 则让之后每次开对话窗都失败（本函数跑在 blocking 池，用户只会看到「打不开」）。
@@ -757,45 +770,51 @@ pub(crate) fn probe_cli_version(
 ///
 /// 存在的理由：模型清单必随 CLI 改版漂移，宿主维护一份必然过时；而唯一的替代方案——往会话
 /// PTY 里发 `/model`、把弹出的 TUI 菜单靠屏幕识别读回来——要求菜单形态经过取证，opencode
-/// 的 TUI 输入在 ConPTY 下至今不通（见 docs/research/tui-menu-captures-2026-07.md）。
+/// 的 `/models` 全屏选择器至今没有取证过。
 /// 这条路只要 CLI 有列举子命令就成立，而且完全不打扰正在跑的会话。
 ///
-/// 进程级缓存：清单只随重装/升级变化，而 CLI 冷启动要一秒上下，不能每次开菜单都付一次。
-/// 未声明该能力的 agent 返回空表——调用方据此回落到菜单识别通道。
+/// 模型清单受账号与项目配置影响，不能按 provider 永久缓存，失败结果也必须允许重试。
 #[tauri::command]
-async fn agent_models(provider: String) -> Vec<String> {
+async fn agent_models(provider: String, session_id: Option<i64>) -> Vec<String> {
     tauri::async_runtime::spawn_blocking(move || {
-        use std::collections::HashMap;
-        use std::sync::{LazyLock, Mutex};
-        static CACHE: LazyLock<Mutex<HashMap<String, Vec<String>>>> =
-            LazyLock::new(|| Mutex::new(HashMap::new()));
-
         let Some(plugin) = meowo_agent::resolve(Some(&provider)) else {
             return Vec::new();
         };
-        let key = plugin.id().as_str().to_string();
-        // 中毒恢复而非 unwrap：缓存只是备忘录，读到写一半的旧值无害（同 probe_cli_version）。
-        if let Some(hit) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-            return hit.clone();
-        }
         let Some(args) = plugin.model_list_command() else {
             return Vec::new();
         };
-        let models = run_cli_capture(plugin, args, std::time::Duration::from_secs(15))
-            .map(|txt| {
-                txt.lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        // 空结果同样入缓存：CLI 没这个子命令/跑失败时不该每次开菜单都重试一遍。
-        CACHE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(key, models.clone());
-        models
+        let (env, cwd) = if let Some(session_id) = session_id {
+            let Ok(store) = open_store(&db_path()) else {
+                return Vec::new();
+            };
+            let Ok(header) = store.session_header(session_id) else {
+                return Vec::new();
+            };
+            if header.provider != plugin.id().as_str() {
+                return Vec::new();
+            }
+            let Ok(profile) = store.session_profile(session_id) else {
+                return Vec::new();
+            };
+            (profile::env_of(plugin.id(), profile.as_deref()), header.cwd)
+        } else {
+            (Vec::new(), None)
+        };
+        run_cli_capture_in(
+            plugin,
+            args,
+            std::time::Duration::from_secs(15),
+            &env,
+            cwd.as_deref().map(std::path::Path::new),
+        )
+        .map(|txt| {
+            txt.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
     })
     .await
     .unwrap_or_default()
@@ -1115,7 +1134,9 @@ pub fn run() {
     // 进程级一次设定,让这类探测安静地返回错误。
     #[cfg(target_os = "windows")]
     unsafe {
-        use windows_sys::Win32::System::Diagnostics::Debug::{GetErrorMode, SetErrorMode, SEM_FAILCRITICALERRORS};
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            GetErrorMode, SetErrorMode, SEM_FAILCRITICALERRORS,
+        };
         SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS);
     }
     // ConPTY 来源诊断:应用目录里有打包的 conpty.dll(随安装分发 + OpenConsole.exe 宿主,
@@ -1664,7 +1685,10 @@ mod tests {
         assert_eq!(super::parse_legacy_main_position(raw), Some((-1280, 300)));
 
         assert_eq!(super::parse_legacy_main_position("{broken"), None);
-        assert_eq!(super::parse_legacy_main_position(r#"{"chat":{"x":1,"y":2}}"#), None);
+        assert_eq!(
+            super::parse_legacy_main_position(r#"{"chat":{"x":1,"y":2}}"#),
+            None
+        );
         assert_eq!(
             super::parse_legacy_main_position(r#"{"main":{"x":"left","y":2}}"#),
             None
@@ -1704,10 +1728,19 @@ mod tests {
     #[test]
     fn screen_blocked_notification_defers_and_dedupes() {
         // 让位：错误优先、已有 hook 事件驱动的待审批时不重复打扰。
-        assert_eq!(screen_blocked_fingerprint(true, false, Some("blocked")), None);
-        assert_eq!(screen_blocked_fingerprint(false, true, Some("blocked")), None);
+        assert_eq!(
+            screen_blocked_fingerprint(true, false, Some("blocked")),
+            None
+        );
+        assert_eq!(
+            screen_blocked_fingerprint(false, true, Some("blocked")),
+            None
+        );
         // 非 blocked 状态不发。
-        assert_eq!(screen_blocked_fingerprint(false, false, Some("working")), None);
+        assert_eq!(
+            screen_blocked_fingerprint(false, false, Some("working")),
+            None
+        );
         assert_eq!(screen_blocked_fingerprint(false, false, None), None);
         // blocked：发，且指纹稳定 —— 同一次阻塞期间不重复弹（agent 不产出、时间戳不动，
         // 指纹刻意不掺 last_event_at，见函数文档）。
@@ -1842,7 +1875,9 @@ mod tests {
             .find("harden_dll_search_path()")
             .expect("run() 必须调用 harden_dll_search_path()");
         // 允许它前面只有 macOS 的 bundle 迁移（那段在任何 DLL 加载之前 return/no-op）。
-        let migrate_data = body.find("migrate_legacy_data()").expect("migrate_legacy_data");
+        let migrate_data = body
+            .find("migrate_legacy_data()")
+            .expect("migrate_legacy_data");
         assert!(
             harden < migrate_data,
             "DLL 搜索路径收紧必须早于任何会加载 DLL 的初始化"
@@ -2054,7 +2089,10 @@ mod tests {
         assert!(!resume_argv_for(None, Some("SID")).is_empty());
     }
     use crate::settings::Settings;
-    use crate::snap::{center_on, clamp_strip_extent, clamp_target_for_drag, clamp_xy_to_work, edge_for_rect, intersection_area, preview_strip_rect, union_bbox, Edge, Rect};
+    use crate::snap::{
+        center_on, clamp_strip_extent, clamp_target_for_drag, clamp_xy_to_work, edge_for_rect,
+        intersection_area, preview_strip_rect, union_bbox, Edge, Rect,
+    };
 
     const WORK1: Rect = Rect {
         x: 0,
@@ -2158,8 +2196,14 @@ mod tests {
     #[test]
     fn tab_class_excludes_disconnected_sessions() {
         // 连着：三类各归其位。
-        assert_eq!(tab_class(true, "running", None, None, || false), Some("running"));
-        assert_eq!(tab_class(true, "waiting", None, None, || false), Some("waiting"));
+        assert_eq!(
+            tab_class(true, "running", None, None, || false),
+            Some("running")
+        );
+        assert_eq!(
+            tab_class(true, "waiting", None, None, || false),
+            Some("waiting")
+        );
         // pending_review 压过 status：正在等用户批准，不算「自主运行中」。
         assert_eq!(
             tab_class(true, "running", Some("approval"), None, || false),
@@ -2169,7 +2213,10 @@ mod tests {
         // 断开：一律不进这两个 tab，只作为历史留在「全部」里。
         // 尤其是这条——DB 里残留的 pending_review 曾让断开的会话挂在「待交互」里催人，
         // 点进去却只是个死掉的历史会话（兼容旧数据库中的 pending_review 残留）。
-        assert_eq!(tab_class(false, "running", Some("approval"), None, || false), None);
+        assert_eq!(
+            tab_class(false, "running", Some("approval"), None, || false),
+            None
+        );
         assert_eq!(tab_class(false, "waiting", None, None, || false), None);
         assert_eq!(tab_class(false, "running", None, None, || false), None);
 
@@ -2207,7 +2254,10 @@ mod tests {
             Some("running")
         );
         // 断开永远优先于一切。
-        assert_eq!(tab_class(false, "running", None, Some("idle"), || false), None);
+        assert_eq!(
+            tab_class(false, "running", None, Some("idle"), || false),
+            None
+        );
     }
 
     /// 已 ended 的会话不被**留在屏幕上的最后一屏**抬进「待交互」。
@@ -2648,32 +2698,92 @@ mod tests {
     #[test]
     fn preview_left_matches_collapse_geometry() {
         // scale=1：厚度 28；窗口 (y=400,h=400) 中心 600，ext=200 → 条 y=500。
-        let win = Rect { x: 0, y: 400, w: 360, h: 400 };
+        let win = Rect {
+            x: 0,
+            y: 400,
+            w: 360,
+            h: 400,
+        };
         let r = preview_strip_rect(Edge::Left, win, WORK, 200.0, 1.0);
-        assert_eq!(r, Rect { x: 0, y: 500, w: 28, h: 200 });
+        assert_eq!(
+            r,
+            Rect {
+                x: 0,
+                y: 500,
+                w: 28,
+                h: 200
+            }
+        );
     }
 
     #[test]
     fn preview_right_and_top() {
         // 右边：贴工作区右缘 1920-28。
-        let win = Rect { x: 1560, y: 400, w: 360, h: 400 };
+        let win = Rect {
+            x: 1560,
+            y: 400,
+            w: 360,
+            h: 400,
+        };
         let r = preview_strip_rect(Edge::Right, win, WORK, 200.0, 1.0);
-        assert_eq!(r, Rect { x: 1920 - 28, y: 500, w: 28, h: 200 });
+        assert_eq!(
+            r,
+            Rect {
+                x: 1920 - 28,
+                y: 500,
+                w: 28,
+                h: 200
+            }
+        );
         // 顶边：横条，以窗口中心水平居中（x=800+180-150），厚 28。
-        let top_win = Rect { x: 800, y: 0, w: 360, h: 400 };
+        let top_win = Rect {
+            x: 800,
+            y: 0,
+            w: 360,
+            h: 400,
+        };
         let r = preview_strip_rect(Edge::Top, top_win, WORK, 300.0, 1.0);
-        assert_eq!(r, Rect { x: 800 + 180 - 150, y: 0, w: 300, h: 28 });
+        assert_eq!(
+            r,
+            Rect {
+                x: 800 + 180 - 150,
+                y: 0,
+                w: 300,
+                h: 28
+            }
+        );
     }
 
     #[test]
     fn preview_scale_and_clamp() {
         // scale=1.5：厚度 42；ext 逻辑 100 → 物理 150，窗口中心即条中心（不位移）。
-        let win = Rect { x: 0, y: 445, w: 540, h: 150 };
+        let win = Rect {
+            x: 0,
+            y: 445,
+            w: 540,
+            h: 150,
+        };
         let r = preview_strip_rect(Edge::Left, win, WORK, 100.0, 1.5);
-        assert_eq!(r, Rect { x: 0, y: 445, w: 42, h: 150 });
+        assert_eq!(
+            r,
+            Rect {
+                x: 0,
+                y: 445,
+                w: 42,
+                h: 150
+            }
+        );
         // 主轴长度钳到工作区高度（W-5 口径），居中结果夹进工作区。
         let r = preview_strip_rect(Edge::Left, win, WORK, 99999.0, 1.0);
-        assert_eq!(r, Rect { x: 0, y: 0, w: 28, h: 1040 });
+        assert_eq!(
+            r,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 28,
+                h: 1040
+            }
+        );
     }
 
     // W-16：双屏（左右并排）钳位目标 = 相交面积最大的显示器工作区。
@@ -2864,22 +2974,22 @@ mod tests {
 
     #[test]
     fn settings_appearance_defaults_and_back_compat() {
-        // 老文件缺外观字段 → 用缺省（dark / 100 / 100），不报错。
+        // 老文件缺外观字段 → 用缺省（dark / 100 / 112），不报错。
         let legacy: Settings = serde_json::from_str(r#"{"archive_hide_days":7}"#).unwrap();
         assert_eq!(legacy.theme, "dark");
         assert_eq!(legacy.opacity, 100);
-        assert_eq!(legacy.ui_scale, 100);
+        assert_eq!(legacy.ui_scale, 112);
         // 显式外观值被尊重。
         let custom: Settings =
-            serde_json::from_str(r#"{"theme":"light","opacity":80,"ui_scale":112}"#).unwrap();
+            serde_json::from_str(r#"{"theme":"light","opacity":80,"ui_scale":124}"#).unwrap();
         assert_eq!(custom.theme, "light");
         assert_eq!(custom.opacity, 80);
-        assert_eq!(custom.ui_scale, 112);
+        assert_eq!(custom.ui_scale, 124);
         // Default 与缺省函数一致。
         let d = Settings::default();
         assert_eq!(d.theme, "dark");
         assert_eq!(d.opacity, 100);
-        assert_eq!(d.ui_scale, 100);
+        assert_eq!(d.ui_scale, 112);
     }
 }
 
@@ -2907,8 +3017,14 @@ mod new_session_tests {
     fn validate_cwd_strips_paired_quotes() {
         let tmp = std::env::temp_dir();
         let raw = tmp.to_str().unwrap().trim().to_string();
-        assert_eq!(validate_new_session_cwd(&format!("\"{raw}\"")).unwrap(), raw);
-        assert_eq!(validate_new_session_cwd(&format!("  \"{raw}\"  ")).unwrap(), raw);
+        assert_eq!(
+            validate_new_session_cwd(&format!("\"{raw}\"")).unwrap(),
+            raw
+        );
+        assert_eq!(
+            validate_new_session_cwd(&format!("  \"{raw}\"  ")).unwrap(),
+            raw
+        );
         assert_eq!(validate_new_session_cwd(&format!("'{raw}'")).unwrap(), raw);
         // 单边引号不剥:Unix 上它是合法文件名字符,剥掉会造出一个不存在的路径。
         assert!(validate_new_session_cwd(&format!("\"{raw}")).is_err());

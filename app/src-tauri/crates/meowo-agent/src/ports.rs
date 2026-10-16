@@ -97,9 +97,20 @@ pub trait KeychainPort: Sync {
 }
 
 /// 注入给能力方法的一组端口。
+pub trait LocalCliPort: Sync {
+    /// 仅执行本地非交互查询；失败或超时返回 None，不把诊断输出写入日志。
+    fn capture(&self, _argv: &[String], _env: &[(String, String)]) -> Option<String> {
+        None
+    }
+}
+
+pub struct NoLocalCli;
+impl LocalCliPort for NoLocalCli {}
+
 pub struct Ports<'a> {
     pub http: &'a dyn HttpPort,
     pub keychain: &'a dyn KeychainPort,
+    pub local_cli: &'a dyn LocalCliPort,
 }
 
 /// 无密钥链的平台（Windows / Linux），也可供单测使用。

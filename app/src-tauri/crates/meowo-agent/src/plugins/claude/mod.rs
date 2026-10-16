@@ -21,9 +21,9 @@
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
 pub mod account;
-mod screen;
 pub mod fleet;
 pub mod install;
+mod screen;
 pub mod setup;
 pub mod telemetry;
 pub mod transcript;
@@ -43,11 +43,12 @@ use crate::{
 /// 零新增字节，只能靠 hook）；不加自定义 timeout——压缩 hook 是纯落库，5s 足够。
 ///
 /// **此表须与 `scripts/install-hooks.mjs` 的 `SPECS` 保持一致**——由 meowo-app 的绊线测试守卫。
-static EVENTS: [HookEvent; 10] = [
+static EVENTS: [HookEvent; 11] = [
     HookEvent::matched("SessionStart", "*"),
     HookEvent::matched("UserPromptSubmit", "*"),
     HookEvent::matched("PostToolUse", "*"),
     HookEvent::matched("Stop", "*"),
+    HookEvent::matched("StopFailure", "*"),
     HookEvent::matched("SessionEnd", "*"),
     HookEvent::matched("PermissionRequest", "*").with_timeout(310),
     // AskUserQuestion 的代答桥挂在这条上（reporter 阻塞等 GUI 作答），超时与
@@ -460,6 +461,10 @@ impl AgentPlugin for Claude {
     }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
+    fn model_select_command(&self) -> Option<&'static str> {
+        Some("/model")
+    }
+
     fn model_presets(&self) -> &'static [crate::ModelPreset] {
         // label 是学到真实菜单前的兜底，维护约定见 launch_options 里的注释。
         &[
@@ -531,6 +536,7 @@ impl AgentPlugin for Claude {
             },
         ];
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            menu_command: None,
             dimension: "permission",
             cycle_input: Some("\x1b[Z"),
             options: &[],
@@ -550,6 +556,10 @@ impl AgentPlugin for Claude {
         ]
     }
     /// Esc 中断当前回合(官方文档行为):中断后已完成的工作保留,排队消息随即被处理。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }
@@ -787,8 +797,8 @@ mod tests {
     }
 
     #[test]
-    fn events_cover_the_ten_specs_with_matchers() {
-        assert_eq!(EVENTS.len(), 10);
+    fn events_cover_lifecycle_and_interaction_with_matchers() {
+        assert_eq!(EVENTS.len(), 11);
         // PreToolUse 恰两条，matcher 分别是两种工具；其余六条 matcher 均为 "*"。
         let pre: Vec<_> = EVENTS
             .iter()

@@ -188,8 +188,8 @@ export const en: Dict = {
       "approval.fullAuto": "Full auto",
       "approval.autoEdit": "Auto-accept edits",
       "approval.yolo": "Full auto (no sandbox)",
-      "permission.auto": "Auto",
-      "permission.yolo": "Full auto (auto-approve)",
+      "permission.auto": "Never ask (automatic decisions)",
+      "permission.yolo": "Ask when needed (auto-approve routine actions)",
       "work.default": "Default",
       "work.plan": "Plan mode",
     } as Record<string, string>,
@@ -340,6 +340,10 @@ export const en: Dict = {
     // Shared by the approval card and the question card (same fall-back-to-terminal semantics).
     approvalTimedOut: "Timed out — falling back to the terminal",
     goTerminal: "Go to terminal",
+    // Terminal-view variant of the answer card's release button (question not representable in
+    // the card): the user is already on the terminal page — pressing it hands the hang back to
+    // the terminal and the form appears right there, so the wording must differ from goTerminal.
+    questionAnswerInTerminal: "Answer in terminal",
     close: "Close",
     renameSave: "Save",
     minimize: "Minimize",
@@ -552,6 +556,14 @@ export const en: Dict = {
     cycleMode: "Click to cycle to the next mode",
     modeUnreachable: "Couldn't switch — unavailable for this account or launch flags",
     modelProbing: "Reading model list…",
+    sendSessionChanged: "Session changed. The previous send was stopped.",
+    imagePasteUnconfirmed: "Image attachment was not confirmed. Check and clear unsent content in the terminal before retrying.",
+    terminalMenuCleared: "Selection completed in terminal; allow sending",
+    imageDraftCleared: "Terminal draft cleared; allow retry",
+    interruptTimeout: "Interruption was not confirmed. Your draft is preserved; try again shortly.",
+    busySendUnavailable: "Queueing while this agent is busy has not been verified. Send after the current task finishes.",
+    menuBusy: "Wait for the current task to finish before changing the model or mode.",
+    modelSwitchUnconfirmed: "Model change was not confirmed. Resume settings were preserved; check the terminal.",
     modelListUnavailable: (command: string) => `Can't read the model list — use ${command} on the Terminal tab`,
     modelListUnavailableRemote: (command: string) => `Can't read the model list — use ${command} on the desktop`,
     modelGoTerminal: "Switch model in terminal",
@@ -572,6 +584,7 @@ export const en: Dict = {
     modeDimensions: {
       permission: "Permissions",
       collaboration: "Collaboration",
+      agent: "Agent",
       work: "Work mode",
       approval: "Approval policy",
       sandbox: "Sandbox",
@@ -581,6 +594,7 @@ export const en: Dict = {
       manual: "Manual",
       acceptEdits: "Accept edits",
       plan: "Plan mode",
+      build: "Build",
       auto: "Auto",
       yolo: "YOLO",
       bypassPermissions: "Bypass permissions",
@@ -719,10 +733,6 @@ export const en: Dict = {
     lineNormal: "Normal",
     lineRelaxed: "Relaxed",
     appearanceHint: "Changes apply instantly.",
-    // S-5 mini sticker preview beside the rows: sample title/subtitle; opacity & UI scale apply to it live.
-    appearancePreviewTag: "Preview · updates live with the settings below",
-    appearancePreviewTitle: "Tidy release scripts",
-    appearancePreviewSub: "~/projects/meowo",
     showQuotaOnSticker: "Show quota on sticker",
   },
   proxy: {

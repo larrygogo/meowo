@@ -6,4 +6,4 @@
  * 都不像就 `None`——按钮照常可用，只是详情区不做结构化拆解。
  * 此前前端按 pattern id（`"kimi:command-approval"`）猜格式，是变相的身份分支。
  */
-export type AttentionDetails = "none" | "proceed_box" | "arrow_panel";
+export type AttentionDetails = "none" | "proceed_box" | "arrow_panel" | "framed_box";

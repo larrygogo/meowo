@@ -456,9 +456,9 @@ const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] 
   { value: "flat", label: t.settings.styleFlat },
 ];
 const fontSizeOptions = (t: Dict): { value: number; label: string }[] => [
-  { value: 90, label: t.settings.fontSizeSmall },
-  { value: 100, label: t.settings.fontSizeNormal },
-  { value: 112, label: t.settings.fontSizeLarge },
+  { value: 100, label: t.settings.fontSizeSmall },
+  { value: 112, label: t.settings.fontSizeNormal },
+  { value: 124, label: t.settings.fontSizeLarge },
 ];
 
 const OPACITY_MIN = 25;
@@ -543,24 +543,6 @@ function AppearanceSection() {
   const backFill = Math.max(0, Math.min(100, ((termBackShown - TERM_SCROLLBACK_MIN) / (TERM_SCROLLBACK_MAX - TERM_SCROLLBACK_MIN)) * 100));
   return (
     <>
-      {/* S-5 行旁迷你贴纸预览：不透明度只影响贴纸/缩略条，界面缩放作用于贴纸窗与对话窗——
-          设置窗自身固定密度、两项都不吃，在本窗里调等于闭眼调，故预览卡代偿。
-          预览卡实时吃当前值（不透明度含拖动草稿）——底色走 --cc-bg-rgb（主题/贴纸色本窗
-          已套用），缩放只乘预览自己的字号。复用 Onboarding 的 obm-card/obm-dot 造型。 */}
-      <div className="ap-preview" aria-hidden="true">
-        {/* 实拍反馈「这是什么」：示例卡长得太像真会话，补一行自解释标签。 */}
-        <div className="ap-preview-tag">{t.settings.appearancePreviewTag}</div>
-        <div
-          className="obm-card ap-preview-card"
-          style={{ background: `rgba(var(--cc-bg-rgb), ${opacityShown / 100})`, fontSize: `${(12 * uiScale) / 100}px` }}
-        >
-          <span className="obm-dot obm-run" />
-          <div className="ap-preview-text">
-            <div className="ap-preview-title">{t.settings.appearancePreviewTitle}</div>
-            <div className="ap-preview-sub">{t.settings.appearancePreviewSub}</div>
-          </div>
-        </div>
-      </div>
       <div className="row-card">
         <div className="row">
           <div className="row-text">

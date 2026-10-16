@@ -65,6 +65,8 @@ jobs:
       - name: 前端单测
         working-directory: app
         run: bunx vitest run
+      - name: Agent 桥接契约
+        run: node scripts/test-agent-contracts.mjs
       - name: 构建前端(tsc + vite build)
         working-directory: app
         run: bun run build

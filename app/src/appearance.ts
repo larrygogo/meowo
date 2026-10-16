@@ -44,7 +44,8 @@ const CACHE_KEY = "meowo-appearance";
 const DEFAULTS: Appearance = {
   theme: "dark",
   opacity: 100,
-  ui_scale: 100,
+  // 档位整体上调一档（90/100/112 → 100/112/124，实拍反馈偏小），默认「中」= 112。
+  ui_scale: 112,
   sticker_style: DEFAULT_STICKER_STYLE,
   sticker_color: DEFAULT_STICKER_COLOR,
   chat_content_width: "fixed",

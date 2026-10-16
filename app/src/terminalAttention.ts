@@ -22,8 +22,9 @@ export type TerminalAttentionOption = {
 };
 /// 审批详情区的屏幕文法风格（后端 `AttentionDetails` 的镜像，插件随 AttentionPattern 声明）：
 /// proceed_box = 「Do you want to proceed?」框式（光标移动选择、记住=持久规则）；
-/// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）。缺省/none = 不做结构化拆解。
-export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel";
+/// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）；
+/// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。缺省/none = 不做结构化拆解。
+export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box";
 export type TerminalAttention = { id: string; text: string; options?: TerminalAttentionOption[]; details?: AttentionDetailsStyle };
 
 export function visibleTerminalText(text: string): string {
@@ -459,6 +460,20 @@ export function terminalAttention(
   if (!best) return null;
   // 详情区文法风格由插件随 AttentionPattern 声明（此前按 pattern id 猜，是变相身份分支）。
   const detailsStyle: AttentionDetailsStyle = best.details ?? "none";
+  // 框线对话框式(gemini 审批框):选项行形如 `│ ● 1. Allow once │`,行首的框线让下面按行首
+  // 编号提取的通用路径认不出。详情取命中行所在的**外框**整块(内框行以 │ 开头,向上/向下
+  // 找到的第一条 ╭/╰ 行就是外框边),选项复用 /model 对话框的框线解析——同样以 ● 焦点做
+  // 相对移动,找不到焦点不出按钮。
+  if (detailsStyle === "framed_box") {
+    const lines = visible.split("\n");
+    const matchedLine = visible.slice(0, best.index).split("\n").length - 1;
+    let top = matchedLine;
+    while (top > 0 && !/^\s*╭/.test(lines[top])) top -= 1;
+    let bottom = matchedLine;
+    while (bottom < lines.length - 1 && !/^\s*╰/.test(lines[bottom])) bottom += 1;
+    const box = lines.slice(top, bottom + 1).join("\n");
+    return { id: best.id, text: box, details: detailsStyle, options: detectFramedNumberedMenu(box)?.options };
+  }
   const approvalCard = detailsStyle !== "none";
   // 面板式的详情从标题行(▶ Run this command?)起取:best 可能命中面板底部的
   // 按键提示行,从那里截会把命令正文裁掉。同样取最后一个标题——首个会落在重绘残影上。
