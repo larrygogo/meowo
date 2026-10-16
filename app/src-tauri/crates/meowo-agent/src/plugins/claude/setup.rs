@@ -389,6 +389,7 @@ mod statusline_staleness_tests {
 
         let text = settings_pointing_at(&script);
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -418,6 +419,7 @@ mod statusline_staleness_tests {
 
         let text = settings_pointing_at(&script);
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -450,6 +452,7 @@ mod statusline_staleness_tests {
 
         let text = settings_pointing_at(&script);
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -476,6 +479,7 @@ mod statusline_staleness_tests {
 
         let text = settings_pointing_at(&script);
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -791,6 +795,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -818,6 +823,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -844,6 +850,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &dir,
         };
@@ -895,7 +902,7 @@ mod tests {
         let from_js = parse_mjs_specs(&src);
         assert_eq!(
             from_js.len(),
-            10,
+            11,
             "解析出的 SPECS 条数不对，脚本格式可能变了"
         );
 
@@ -942,6 +949,7 @@ mod tests {
             std::env::var("MEOWO_DIR").expect("请设置 MEOWO_DIR 指向临时目录"),
         );
         let ctx = WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &meowo_dir,
         };

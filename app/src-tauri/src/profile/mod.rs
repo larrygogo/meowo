@@ -175,7 +175,12 @@ pub(crate) fn wire_profile(
     let inst = installation_of(agent, id)?;
     let dir = crate::setup::meowo_dir();
     let reporter = crate::setup::sibling_reporter();
+    let version = plugin
+        .wiring()
+        .filter(|cap| cap.needs_cli_version())
+        .and_then(|_| crate::probe_cli_version(plugin));
     let ctx = WiringContext {
+        cli_version: version.as_deref(),
         fallback_reporter: reporter.as_deref(),
         meowo_dir: &dir,
     };

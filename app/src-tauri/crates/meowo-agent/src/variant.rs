@@ -28,8 +28,7 @@ impl DataDirSpec {
         self.probe_tagged(home).map(|(d, _)| d)
     }
 
-    /// 同 [`probe`](Self::probe)，并告知命中的是否为 env 覆盖。env 指向的目录**无法**判定属于哪个变体
-    /// （没有形态信号），故命中它的变体会把 tag 改成 `"env-override"`，而非谎报成自己的 tag。
+    /// 同 [`probe`](Self::probe)，并单独记录目录来源；目录覆盖不改变命中的实现规格。
     fn probe_tagged(&self, home: &Path) -> Option<(PathBuf, bool)> {
         if let Some(d) = self.env_override() {
             return d.is_dir().then_some((d, true));
@@ -48,10 +47,6 @@ impl DataDirSpec {
             .or_else(|| self.candidates.first().map(|c| home.join(c)))
     }
 }
-
-/// 环境变量指定数据目录时的变体标签。此时用的是首个变体的规则——env 目录的版本形态无从判定，
-/// 故不谎报成 `"modern"`/`"legacy"`，日志里如实标出。
-pub const ENV_OVERRIDE_TAG: &str = "env-override";
 
 /// 同一 agent 的一个版本形态——所有版本差异收敛于此。声明为 `const`，进 `&'static [Variant]`。
 #[derive(Debug, Clone, Copy)]
@@ -73,9 +68,7 @@ impl Variant {
     pub fn probe(&self, id: AgentId, home: &Path) -> Option<Installation> {
         let (data_dir, from_env) = self.data_dir.probe_tagged(home)?;
         let mut inst = self.installation_at(id, data_dir, Some(home));
-        if from_env {
-            inst.variant_tag = ENV_OVERRIDE_TAG;
-        }
+        inst.data_dir_from_env = from_env;
         Some(inst)
     }
 
@@ -90,6 +83,7 @@ impl Variant {
         Installation {
             id,
             variant_tag: self.tag,
+            data_dir_from_env: false,
             data_dir,
             hooks: self.hooks,
             auth: self.auth,
@@ -109,6 +103,8 @@ impl Variant {
 pub struct Installation {
     pub id: AgentId,
     pub variant_tag: &'static str,
+    /// KIMI_CODE_HOME 等变量只搬目录，不改变 CLI 实现；混作变体会让模式控件消失（2026-10 审计）。
+    pub data_dir_from_env: bool,
     pub data_dir: PathBuf,
     pub hooks: &'static HookSpec,
     pub auth: Option<&'static AuthScheme>,
@@ -426,8 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn env_override_is_tagged_honestly_not_as_first_variant() {
-        // env 覆盖指向的目录无形态信号：不能因为它命中了首个变体就报成 "modern"。
+    fn env_override_preserves_variant_and_records_directory_source() {
         let home = tmp("envtag");
         let target = home.join("some-copy");
         std::fs::create_dir_all(&target).unwrap();
@@ -438,7 +433,8 @@ mod tests {
         let inst = v
             .probe(AgentId::new("t"), &home)
             .expect("env 目录存在应命中");
-        assert_eq!(inst.variant_tag, ENV_OVERRIDE_TAG);
+        assert_eq!(inst.variant_tag, v.tag);
+        assert!(inst.data_dir_from_env);
         assert_eq!(inst.data_dir, target);
 
         // env 指向不存在的目录 → 不命中（detect 视为未配置），由 default_dir 兜底。

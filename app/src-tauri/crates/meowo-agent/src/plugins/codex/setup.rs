@@ -12,6 +12,77 @@ pub struct CodexWiring;
 pub static WIRING: CodexWiring = CodexWiring;
 
 impl WiringCap for CodexWiring {
+    fn needs_cli_version(&self) -> bool {
+        true
+    }
+
+    fn amend(
+        &self,
+        _inst: &Installation,
+        text: &str,
+        ctx: &crate::wiring::WiringContext,
+        _reporter: &str,
+    ) -> Result<String, RepairReason> {
+        // 0.162.1 已核实支持 SessionEnd/Interrupt；旧版本未必认识，不能因新增事件使整份 hooks 失效。
+        let current = ctx
+            .cli_version
+            .and_then(|version| {
+                let mut parts = version.split('.');
+                Some((
+                    parts.next()?.parse::<u32>().ok()?,
+                    parts.next()?.parse::<u32>().ok()?,
+                    parts.next()?.split('-').next()?.parse::<u32>().ok()?,
+                ))
+            })
+            .is_some_and(|version| version >= (0, 162, 1));
+        if current {
+            return Ok(text.into());
+        }
+        let mut root: Value =
+            serde_json::from_str(text).map_err(|_| RepairReason::ConfigUnreadable)?;
+        let mut changed = false;
+        for event in ["SessionEnd", "Interrupt"] {
+            if let Some(groups) = root
+                .pointer_mut(&format!("/hooks/{event}"))
+                .and_then(Value::as_array_mut)
+            {
+                for group in groups.iter_mut() {
+                    if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
+                        let before = handlers.len();
+                        handlers.retain(|handler| {
+                            !handler
+                                .get("command")
+                                .and_then(Value::as_str)
+                                .is_some_and(|command| claim_codex_cmd(command).is_some())
+                        });
+                        changed |= handlers.len() != before;
+                    }
+                }
+                groups.retain(|group| {
+                    !group
+                        .get("hooks")
+                        .and_then(Value::as_array)
+                        .is_some_and(Vec::is_empty)
+                });
+            }
+            if root
+                .pointer(&format!("/hooks/{event}"))
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            {
+                if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
+                    hooks.remove(event);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            serde_json::to_string_pretty(&root).map_err(|_| RepairReason::ConfigUnreadable)
+        } else {
+            Ok(text.into())
+        }
+    }
+
     fn after_write(&self, inst: &Installation, written: &str) -> Option<RepairReason> {
         write_trusted_hashes(inst, written)
     }
@@ -79,6 +150,8 @@ pub fn claimed_codex_entries(root: &Value) -> Vec<ClaimedEntry> {
 pub(crate) fn snake_event(ev: &str) -> &'static str {
     match ev {
         "SessionStart" => "session_start",
+        "SessionEnd" => "session_end",
+        "Interrupt" => "interrupt",
         "UserPromptSubmit" => "user_prompt_submit",
         "PostToolUse" => "post_tool_use",
         "Stop" => "stop",
@@ -229,8 +302,7 @@ mod tests {
     fn claimed_entries_extraction() {
         let v = wired("C:/x/meowo-reporter.exe");
         let entries = claimed_codex_entries(&v);
-        // 7 = 变体表 EVENTS 全量（含 PreCompact/PostCompact 两条压缩指示）。
-        assert_eq!(entries.len(), 7);
+        assert_eq!(entries.len(), 9);
         assert!(entries
             .iter()
             .all(|e| e.command.contains("--provider codex")));
@@ -243,13 +315,57 @@ mod tests {
         );
         assert!(entries
             .iter()
-            .filter(|e| e.event != "PermissionRequest")
+            .filter(|e| !matches!(
+                e.event.as_str(),
+                "PermissionRequest" | "SessionEnd" | "Interrupt"
+            ))
             .all(|e| e.timeout == 5));
         assert!(entries.iter().any(|e| e.event == "PermissionRequest"));
         // 全新单 handler 组场景：真实位置就是 0:0。
         assert!(entries
             .iter()
             .all(|e| e.group_idx == 0 && e.handler_idx == 0));
+    }
+
+    #[test]
+    fn lifecycle_hooks_are_version_gated_without_removing_user_handlers() {
+        let inst = crate::by_id("codex").unwrap().resolve().unwrap();
+        let text = serde_json::to_string(&wired("C:/x/meowo-reporter.exe")).unwrap();
+        for version in [None, Some("0.152.0"), Some("0.162.1"), Some("0.163.0")] {
+            let ctx = crate::wiring::WiringContext {
+                cli_version: version,
+                fallback_reporter: None,
+                meowo_dir: std::path::Path::new("."),
+            };
+            let amended = WIRING
+                .amend(&inst, &text, &ctx, "C:/x/meowo-reporter.exe")
+                .unwrap();
+            let root: Value = serde_json::from_str(&amended).unwrap();
+            assert_eq!(
+                root["hooks"].get("SessionEnd").is_some(),
+                matches!(version, Some("0.162.1" | "0.163.0"))
+            );
+            if version.is_none() {
+                let mut with_user: Value = serde_json::from_str(&text).unwrap();
+                with_user["hooks"]["SessionEnd"][0]["hooks"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"type":"command","command":"echo user-hook"}));
+                let amended = WIRING
+                    .amend(
+                        &inst,
+                        &with_user.to_string(),
+                        &ctx,
+                        "C:/x/meowo-reporter.exe",
+                    )
+                    .unwrap();
+                let root: Value = serde_json::from_str(&amended).unwrap();
+                assert_eq!(
+                    root["hooks"]["SessionEnd"][0]["hooks"][0]["command"],
+                    "echo user-hook"
+                );
+            }
+        }
     }
 
     #[test]
@@ -380,6 +496,7 @@ mod tests {
         use crate::registry::AgentPlugin;
         let meowo_dir = std::env::temp_dir();
         let ctx = crate::wiring::WiringContext {
+            cli_version: None,
             fallback_reporter: None,
             meowo_dir: &meowo_dir,
         };

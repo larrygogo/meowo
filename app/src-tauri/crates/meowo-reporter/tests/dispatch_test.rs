@@ -103,6 +103,139 @@ fn ev(json: &str) -> HookEvent {
     HookEvent::parse(json).unwrap()
 }
 
+#[test]
+fn failure_and_interrupt_settle_existing_turn_without_creating_ghost_sessions() {
+    for (provider, event) in [
+        ("claude", "StopFailure"),
+        ("kimi", "StopFailure"),
+        ("kimi", "Interrupt"),
+        ("codex", "Interrupt"),
+        ("opencode", "StopFailure"),
+    ] {
+        let store = Store::open_in_memory().unwrap();
+        let send = |event: &str, at| {
+            let payload =
+                serde_json::json!({"hook_event_name": event, "session_id": "s", "cwd": "/p"});
+            dispatch(&store, &ev(&payload.to_string()), at, provider).unwrap();
+        };
+        send("SessionStart", 100);
+        send("UserPromptSubmit", 200);
+        send("PreCompact", 300);
+        send("PermissionRequest", 400);
+        send(event, 500);
+        let sid = store.find_session_id_pub("s").unwrap().unwrap();
+        let tid = store.task_id_of_session_pub(sid).unwrap();
+        assert_eq!(
+            store.get_session(sid).unwrap().status,
+            "waiting",
+            "{provider}/{event}"
+        );
+        assert_eq!(store.session_pending_review(sid).unwrap(), None);
+        assert_eq!(store.get_task(tid).unwrap().current_activity, None);
+        send("SessionEnd", 600);
+        send(event, 700);
+        assert_eq!(store.get_session(sid).unwrap().status, "ended");
+        dispatch(
+            &store,
+            &ev(
+                &serde_json::json!({"hook_event_name": event, "session_id":"ghost", "cwd":"/p"})
+                    .to_string(),
+            ),
+            800,
+            provider,
+        )
+        .unwrap();
+        assert!(store.find_session_id_pub("ghost").unwrap().is_none());
+    }
+}
+
+#[test]
+fn permission_result_clears_denied_approval_even_without_posttooluse() {
+    for provider in ["kimi", "opencode"] {
+        let store = Store::open_in_memory().unwrap();
+        for (index, event) in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PermissionRequest",
+            "PermissionResult",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            dispatch(
+                &store,
+                &ev(
+                    &serde_json::json!({"hook_event_name":event,"session_id":"s","cwd":"/p"})
+                        .to_string(),
+                ),
+                100 + index as i64 * 10,
+                provider,
+            )
+            .unwrap();
+            let sid = store.find_session_id_pub("s").unwrap().unwrap();
+            assert_eq!(
+                store.session_pending_review(sid).unwrap().is_some(),
+                event == "PermissionRequest"
+            );
+        }
+    }
+}
+
+#[test]
+fn gemini_only_permission_notifications_mark_pending_and_legacy_compress_does_not_stick() {
+    let store = Store::open_in_memory().unwrap();
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"SessionStart","session_id":"g","cwd":"/p"}"#),
+        100,
+        "gemini",
+    )
+    .unwrap();
+    let sid = store.find_session_id_pub("g").unwrap().unwrap();
+    for (index, kind) in ["Info", "ToolPermission"].into_iter().enumerate() {
+        let payload = serde_json::json!({"hook_event_name":"Notification","session_id":"g","notification_type":kind});
+        dispatch(
+            &store,
+            &ev(&payload.to_string()),
+            200 + index as i64,
+            "gemini",
+        )
+        .unwrap();
+        assert_eq!(
+            store.session_pending_review(sid).unwrap().is_some(),
+            kind == "ToolPermission"
+        );
+    }
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"AfterTool","session_id":"g","tool_name":"run_shell_command"}"#),
+        300,
+        "gemini",
+    )
+    .unwrap();
+    assert_eq!(store.session_pending_review(sid).unwrap(), None);
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"AfterAgent","session_id":"g"}"#),
+        400,
+        "gemini",
+    )
+    .unwrap();
+    dispatch(
+        &store,
+        &ev(r#"{"hook_event_name":"PreCompress","session_id":"g"}"#),
+        500,
+        "gemini",
+    )
+    .unwrap();
+    assert_eq!(store.get_session(sid).unwrap().status, "waiting");
+    let tid = store.task_id_of_session_pub(sid).unwrap();
+    assert_ne!(
+        store.get_task(tid).unwrap().current_activity.as_deref(),
+        Some("__meowo_compacting__")
+    );
+}
+
 /// 测试默认走 claude provider；provider 行为单独在 kimi_session_tagged_with_provider 覆盖。
 fn disp(store: &Store, ev: &HookEvent, now_ms: i64) -> Result<(), meowo_store::StoreError> {
     dispatch(store, ev, now_ms, meowo_agent::id::CLAUDE.as_str())

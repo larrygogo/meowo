@@ -865,6 +865,7 @@ mod tests {
         let ports = Ports {
             http: &HugeExpiresIn,
             keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
         };
         let before = now_secs();
         let token = ensure_valid_kimi_token(&inst, &ports).expect("刷新应成功");

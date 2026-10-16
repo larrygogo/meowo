@@ -13,6 +13,8 @@ use crate::variant::Installation;
 
 /// 接线时宿主提供的上下文。插件因此不需要知道 `db_path()` 之类的 app 知识。
 pub struct WiringContext<'a> {
+    /// 外部 CLI 事件面会随版本扩展；未知版本只注册已验证的公共事件集。
+    pub cli_version: Option<&'a str>,
     /// 与当前 app 同版本的 reporter（app 同目录的 sidecar）。存在时必须优先于配置里的旧路径，
     /// 否则 GUI 已升级而 hooks 仍调用安装目录中的旧 reporter，新协议（如 GUI 审批）会静默失效。
     pub fallback_reporter: Option<&'a str>,
@@ -22,6 +24,9 @@ pub struct WiringContext<'a> {
 
 /// agent 专属的接线副作用。两个方法都有默认实现——只覆写自己需要的那个。
 pub trait WiringCap: Sync {
+    fn needs_cli_version(&self) -> bool {
+        false
+    }
     /// 落盘**之前**对配置文本的改写（claude 的 statusLine——它与 hooks 同住 settings.json，
     /// 无法靠 `after_write` 表达）。入参是 hooks 合并后的文本与已解析的 reporter 路径。
     ///

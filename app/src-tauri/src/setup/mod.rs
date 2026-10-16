@@ -50,7 +50,13 @@ fn auto_wire_enabled_from(debug: bool, flag: Option<&str>) -> bool {
 /// 接线一个 agent。`reporter` 由调用方预解析，避免 apply_all 里逐个重复查 sidecar。
 fn wire(plugin: &dyn meowo_agent::AgentPlugin, reporter: Option<&str>) -> Option<RepairReason> {
     let dir = meowo_dir();
+    let version = plugin
+        .wiring()
+        .filter(|cap| cap.needs_cli_version())
+        .and_then(|_| meowo_agent::by_id(plugin.id().as_str()))
+        .and_then(crate::probe_cli_version);
     let ctx = WiringContext {
+        cli_version: version.as_deref(),
         fallback_reporter: reporter,
         meowo_dir: &dir,
     };

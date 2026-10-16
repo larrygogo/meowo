@@ -28,15 +28,17 @@ use crate::{
     variant::{DataDirSpec, Variant},
 };
 
-/// 接线事件集：dispatch 消化面 ∩ codex 支持面。无 SessionEnd（codex 不支持，会话收尾靠
-/// Stop + liveness）；不配 PreToolUse（其 matcher 目标是 claude 专属工具）。
+/// 接线事件集：dispatch 消化面 ∩ codex 支持面。不配 PreToolUse（其 matcher 目标是 claude 专属工具）。
 /// PreCompact/PostCompact 的支持面已在实装二进制上取证（0.152.0 的 HookEventsToml 枚举
 /// 字符串里两个事件名俱在），供 /compact 期间显示「正在压缩」。
-static EVENTS: [HookEvent; 7] = [
+static EVENTS: [HookEvent; 9] = [
     HookEvent::plain("SessionStart"),
     HookEvent::plain("UserPromptSubmit"),
     HookEvent::plain("PostToolUse"),
     HookEvent::plain("Stop"),
+    // Codex 当前 hooks 文档支持正常关闭和中断收尾；两者预算上限 3s，不能沿用普通事件的 5s。
+    HookEvent::plain("SessionEnd").with_timeout(3),
+    HookEvent::plain("Interrupt").with_timeout(3),
     HookEvent::plain("PreCompact"),
     HookEvent::plain("PostCompact"),
     HookEvent::plain("PermissionRequest").with_timeout(310),
@@ -114,6 +116,11 @@ static LAUNCH: LaunchSpec = LaunchSpec {
             root: Root::DataDir,
             sub: "packages/standalone/current/bin",
         },
+        LaunchCandidate::Exe {
+            root: Root::Env("LOCALAPPDATA"),
+            sub: "Programs/OpenAI/Codex/bin",
+        },
+        LaunchCandidate::OnPath,
     ],
 };
 
@@ -293,7 +300,15 @@ impl AgentPlugin for Codex {
                 LaunchChoice {
                     id: "fullAuto",
                     label: "Full Auto",
-                    args: &["--full-auto"],
+                    // `--full-auto` 在 codex 0.16x 已移除（实测 0.162.1 `--help` 无此项，
+                    // 旧会话按残留选项启动即报 unexpected argument 直接退出）——它就是
+                    // `-a never -s workspace-write` 的速记，拆开写等价且新旧通吃。
+                    args: &[
+                        "--ask-for-approval",
+                        "never",
+                        "--sandbox",
+                        "workspace-write",
+                    ],
                     risk: false,
                 },
                 LaunchChoice {
@@ -388,7 +403,7 @@ mod tests {
         );
         assert!(EVENTS
             .iter()
-            .filter(|e| e.name != "PermissionRequest")
+            .filter(|e| !matches!(e.name, "PermissionRequest" | "SessionEnd" | "Interrupt"))
             .all(|e| e.timeout == 5));
     }
 
@@ -414,7 +429,12 @@ mod tests {
         );
         assert!(inst.is_configured());
         // 三处候选都没有 → 回退裸名。
-        assert_eq!(inst.launch_argv(), vec!["codex".to_string()]);
+        assert_eq!(
+            inst.launch_argv(),
+            LAUNCH
+                .probe(Some(&inst.data_dir), Some(&home))
+                .unwrap_or_else(|| vec!["codex".into()])
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }

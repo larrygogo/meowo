@@ -78,12 +78,15 @@ static AUTH: AuthScheme = AuthScheme {
 /// 这张表不驱动生成——模板里那几个 `hook_event_name` 是手写的实在代码。它的作用是让
 /// `has_reporter`（只看 `SessionStart`）等通用逻辑有据可依，并由下方绊线测试保证「表里声明的」
 /// 与「模板里真发的」永远是同一批。
-static EVENTS: [HookEvent; 7] = [
+static EVENTS: [HookEvent; 10] = [
     HookEvent::plain("SessionStart"),
     HookEvent::plain("UserPromptSubmit"),
     HookEvent::plain("PostToolUse"),
     HookEvent::plain("Stop"),
     HookEvent::plain("SessionEnd"),
+    HookEvent::plain("PermissionRequest"),
+    HookEvent::plain("PermissionResult"),
+    HookEvent::plain("StopFailure"),
     HookEvent::plain("PreCompact"),
     HookEvent::plain("PostCompact"),
 ];

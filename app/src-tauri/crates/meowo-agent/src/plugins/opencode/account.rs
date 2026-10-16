@@ -184,6 +184,7 @@ mod tests {
         let ports = Ports {
             http: &crate::ports::test_doubles::NoHttp,
             keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
         };
         // 本机 auth.json 大概率不存在，但环境变量提供了内容 → 仍算已连接。
         let inst = crate::by_id("opencode")
@@ -209,6 +210,7 @@ mod tests {
         let ports = Ports {
             http: &NoHttp,
             keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
         };
         let inst = crate::by_id("opencode")
             .unwrap()

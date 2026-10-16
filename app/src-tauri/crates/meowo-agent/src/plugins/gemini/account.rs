@@ -575,6 +575,7 @@ mod tests {
         let ports = Ports {
             http: &NoHttp,
             keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
         };
         let inst = crate::by_id("gemini")
             .unwrap()

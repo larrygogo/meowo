@@ -726,9 +726,7 @@ pub(crate) fn invalidate_cli_version_cache(provider: &str) {
 }
 
 /// 已装 CLI 的版本，`<launch_argv> --version` 探测，缓存见 [`CLI_VERSION_CACHE`]。
-pub(crate) fn probe_cli_version(
-    plugin: &'static dyn meowo_agent::AgentPlugin,
-) -> Option<String> {
+pub(crate) fn probe_cli_version(plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<String> {
     let id = plugin.id().as_str().to_string();
     // 中毒恢复而非 unwrap：缓存只是探测结果的备忘录，读到写一半的旧值无害；
     // panic 则让之后每次开对话窗都失败（本函数跑在 blocking 池，用户只会看到「打不开」）。
