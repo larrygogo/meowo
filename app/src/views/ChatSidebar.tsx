@@ -397,7 +397,18 @@ function readFolded(): Set<string> {
  * 子树跟着全量重建；父层回调已换稳定引用（resetTo/collapseSidebar 等）配合生效。
  */
 export const ChatSidebar = memo(ChatSidebarImpl);
-function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searchInputRef, onSelect, onCollapse }: {
+
+// 标题 hover 滚动的动画/复位定时器按内层 span 记账（WeakMap，条目卸载自动回收）。
+// 为什么不用纯 CSS 动画 + mouseenter 挂类：悬停过程中浏览器会因 transform 移动了
+// 命中目标、「⋯」按钮显隐、轮询重渲染等补发 mouseleave/mouseenter 对，每次都重启
+// CSS 动画会把进度打回 0——用户实拍到的「滚不起来、卡住」就是这么来的（实测复现：
+// 悬停 6s 后文字仍停在开头十几像素）。WAAPI 动画按元素持有，mouseenter 时若还在跑
+// 直接返回不重启；mouseleave 也不立刻复位，留 160ms 宽限——成对抖动里的 enter 会
+// 取消复位并因守卫返回，动画不间断，真正的离开才收拾干净。
+const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
+const titleScrollTimers = new WeakMap<HTMLElement, number>();
+
+function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onCollapse }: {
   activeId: number;
   /** 有待授权请求的非当前会话：靠这里的徽标召唤用户。后端 **会** 为 broker 接管的审批把
    *  窗口切到目标会话（见 pty.rs 的 ensure_approval_window），这里是切换竞态与
@@ -408,6 +419,9 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   visibleOrderRef?: MutableRefObject<number[]>;
   /** 搜索框句柄交给父层：Ctrl/Cmd+F 监听在 ChatWindow（侧栏收起后它仍要能把人带回来）。 */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>;
+  /** 停靠形态的栏宽（分栏柄拖拽，ChatWindow 持久化）。抽屉形态不传：CSS 的
+   *  width:100% 必须生效，内联值会盖掉它。 */
+  width?: number;
   onSelect: (id: number) => void;
   onCollapse: () => void;
 }) {
@@ -994,6 +1008,41 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           event.preventDefault();
           openMenuAt(item, event.clientX, event.clientY);
         }}
+        onMouseEnter={(event) => {
+          // 标题溢出时 hover 自动滚动（用户要求）：纯 CSS 测不出溢出（短标题不能被
+          // 平白推走），进条目时量一次，溢出才滚动。时长按「固定速度 × 实际距离」算：
+          // 统一 4s 会让长标题飞快、短标题蠕行（用户实拍）。jsdom 无 WAAPI，跳过。
+          const nameEl = event.currentTarget.querySelector<HTMLElement>(".chat-sidebar-name-text");
+          const inner = nameEl?.querySelector<HTMLElement>(".chat-sidebar-name-inner");
+          if (!nameEl || !inner || typeof inner.animate !== "function") return;
+          const pendingLeave = titleScrollTimers.get(inner);
+          if (pendingLeave) {
+            window.clearTimeout(pendingLeave);
+            titleScrollTimers.delete(inner);
+          }
+          // 还在跑（含 forwards 停在末尾）就不重启：重启会把进度打回 0，观感即「卡住」。
+          if (titleScrollAnims.has(inner)) return;
+          const overflow = nameEl.scrollWidth - nameEl.clientWidth;
+          if (overflow <= 4) return;
+          nameEl.classList.add("is-clip-scroll");
+          const anim = inner.animate(
+            [{ transform: "translateX(0)" }, { transform: `translateX(${-(overflow + 8)}px)` }],
+            { duration: Math.max((overflow / 60) * 1000, 1000), easing: "linear", fill: "forwards" },
+          );
+          titleScrollAnims.set(inner, anim);
+        }}
+        onMouseLeave={(event) => {
+          const nameEl = event.currentTarget.querySelector<HTMLElement>(".chat-sidebar-name-text");
+          const inner = nameEl?.querySelector<HTMLElement>(".chat-sidebar-name-inner");
+          if (!nameEl || !inner) return;
+          const timer = window.setTimeout(() => {
+            nameEl.classList.remove("is-clip-scroll");
+            titleScrollAnims.get(inner)?.cancel();
+            titleScrollAnims.delete(inner);
+            titleScrollTimers.delete(inner);
+          }, 160);
+          titleScrollTimers.set(inner, timer);
+        }}
       >
         {/* 状态指示兼 agent 标识：连接=品牌色徽标，未连接=灰（与贴纸同一套）。 */}
         <span
@@ -1024,8 +1073,12 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                   裸文本节点是匿名 flex item，容器上的 text-overflow 对它不生效——
                   长标题会溢出而不出省略号（实拍反馈）。
                   data-tip 也收窄到这里：挂整行容器时，悬到 ⋯ 按钮/目录行也弹标题（与
-                  看板 U1-1 同口径）。 */}
-              <span className="chat-sidebar-name-text" data-tip={item.task_title || undefined}>{item.task_title || t.sticker.waitingFirstInput}</span>
+                  看板 U1-1 同口径）。内层再包一层 span 作滚动体：hover 自动滚动时 transform
+                  只动内层，外层留作固定裁剪框——transform 加在 overflow:hidden 元素自身上
+                  会连裁剪框一起推走，文字与可视窗口相对静止，视觉上卡住（实测踩过）。 */}
+              <span className="chat-sidebar-name-text" data-tip={item.task_title || undefined}>
+                <span className="chat-sidebar-name-inner">{item.task_title || t.sticker.waitingFirstInput}</span>
+              </span>
               {/* 跨 provider 接续链徽标：点开列出链上各段（回看旧引擎的对话）。 */}
               {item.predecessor_id != null && (
                 <button
@@ -1125,7 +1178,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   };
 
   return (
-    <aside className="chat-sidebar">
+    <aside className="chat-sidebar" style={width != null ? { width } : undefined}>
       {/* macOS：红绿灯独占一行（52px 带内垂直居中），按钮行整行下移——挤在红绿灯
           右侧时「新建会话」CTA 会被压得只剩图标（实拍反馈）。条带本身也是拖拽区。
           折叠钮留在这一行（红绿灯右侧，Finder/Safari 的侧栏开关惯例位），图标与

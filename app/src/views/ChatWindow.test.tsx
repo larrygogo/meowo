@@ -1416,6 +1416,31 @@ describe("ChatWindow", () => {
     expect(localStorage.getItem("meowo-chat-sidebar-collapsed")).toBe("0");
   });
 
+  /** 侧栏分栏柄（用户要求：侧栏可拖）：separator 落在停靠侧栏与主列之间，键盘
+   *  ←/→ 步进调宽并落盘；jsdom 里 .chat-body 实测宽为 0，上限钳到下限 200，
+   *  正好一并验证钳制。抽屉形态（窄窗）与收起态不渲染柄。 */
+  it("侧栏分栏柄:键盘调宽并持久化,收起后消失", async () => {
+    window.history.replaceState({}, "", "/?sessionId=7");
+    localStorage.removeItem("meowo-chat-sidebar-width");
+    respondWithHistory({
+      sessionId: 7, title: "拖宽", status: "ended", provider: "claude", cwd: null,
+      supported: true, offset: 0, reset: false, pendingReview: null, items: [],
+    });
+    render(<ChatWindow />);
+    await screen.findByRole("button", { name: "收起会话列表" });
+    const resizer = screen.getByRole("separator", { name: "拖拽调整宽度" });
+    expect(resizer.getAttribute("aria-valuenow")).toBe("240");
+    // aside 吃到默认宽。
+    expect(document.querySelector(".chat-sidebar")?.getAttribute("style")).toContain("width: 240px");
+    // → 调宽：jsdom 无实测布局，上限 = max(200, 0-360) = 200，钳到下限并落盘。
+    fireEvent.keyDown(resizer, { key: "ArrowRight" });
+    expect(localStorage.getItem("meowo-chat-sidebar-width")).toBe("200");
+    expect(document.querySelector(".chat-sidebar")?.getAttribute("style")).toContain("width: 200px");
+    // 收起侧栏：柄随布局一起消失。
+    fireEvent.click(screen.getByRole("button", { name: "收起会话列表" }));
+    expect(screen.queryByRole("separator", { name: "拖拽调整宽度" })).toBeNull();
+  });
+
   it("外部占用时就地给出接管入口，确认后重放刚才那次发送", async () => {
     window.history.replaceState({}, "", "/?sessionId=15");
     const history = {

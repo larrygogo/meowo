@@ -3716,9 +3716,10 @@ select.ns-input {
 /* macOS：抽屉从窗口最顶展开，头部按钮必须给左上角的原生红绿灯让位（与其余 mac 头部同规）。 */
 :root.platform-macos .chat-sidebar-overlay-head { padding-left: 84px; }
 .chat-window .chat-sidebar-overlay .chat-sidebar { flex: 1; min-height: 0; width: 100%; background: transparent; border-right: 0; }
-/* 列宽不随密度缩放：208px 是侧栏与主列的版式划分（窄窗抽屉形态 244px 同理），
-   缩放只放大栏内文字/间距，长会话名由 .chat-sidebar-name-text 等的 ellipsis 消化。 */
-.chat-sidebar { width: 208px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
+/* 列宽不随密度缩放：240px 是侧栏与主列的版式默认（窄窗抽屉形态 244px 同理），
+   停靠形态用户可拖（.chat-sidebar-resizer），内联 width 覆盖本值；缩放只放大栏内
+   文字/间距，长会话名由 .chat-sidebar-name-text 等的 ellipsis 消化。 */
+.chat-sidebar { width: 240px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
 /* 高度对齐右列标题栏（.chat-bar 44px、macOS 52px、无底框），两列顶部视觉成一行。 */
 /* 左右缩进 8px 与工具条/列表/底部设置行同一条线（各行各排一套缩进就是「没对齐」）。
    不撑 52px 行高：按钮顶边与右侧会话卡片顶边同线（都从 chat-body 顶起算），
@@ -3856,6 +3857,9 @@ select.ns-input {
 .chat-sidebar-name { display: flex; align-items: center; gap: var(--sp-4); overflow: hidden; font-size: var(--fs-12); font-weight: 500; line-height: 1.4; }
 /* 截断落在文字自己的 span 上：flex 容器上的 text-overflow 管不到匿名文本 item。 */
 .chat-sidebar-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* hover 时右侧让出「⋯」按钮的占位：按钮是绝对定位浮在条目上的，标题末尾滚到右边时
+   会被它盖住最后一个字（用户实拍）——裁剪框收进来，滚动终点自然停在按钮左侧。 */
+.chat-sidebar-item:hover .chat-sidebar-name-text { padding-right: 26px; }
 .chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 600; }
 /* 置顶标记：与看板同一份 localStorage，这里只做标记（侧栏不做浮顶排序，见组件注释）。 */
 .chat-sidebar-star { flex: 0 0 auto; display: inline-flex; color: var(--cc-accent-text); }
@@ -3884,13 +3888,31 @@ select.ns-input {
 /* 就地编辑（重命名/便签）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
 .chat-sidebar-edit { width: 100%; min-width: 0; padding: var(--sp-2) var(--sp-5); border: 1px solid var(--cc-accent-border); border-radius: var(--r-5); color: var(--cc-text); background: var(--cc-bg); font: inherit; font-size: var(--fs-11); }
 .chat-sidebar-edit:focus { outline: none; border-color: var(--cc-accent); }
-/* 「⋯」菜单按钮（仅 card_menu_mode=button 时渲染，见 ChatSidebar）：常显——与贴纸的
-   .stk-menu-btn 同一设置同一表现（G-4），hover 才显会让触屏/新手找不到入口。
+/* 「⋯」菜单按钮（仅 card_menu_mode=button 时渲染，见 ChatSidebar）。2026-10 用户实拍
+   改决策：常显让每行标题尾部平白让出一块（「...」密密麻麻还很吵），改为 hover 条目才
+   淡入——右键/键盘路径不随显示态失效（触屏找不到入口的旧顾虑由右键菜单兜底，G-4
+   常显决策作废）。visibility 同步转：隐藏时不挡下方文字的点击/选中。
    **绝对定位**浮在条目右上角，不参与 flex 布局——参与的话每行平白让出一列 20px
    （会话名被截断）。底色不透明：它浮在文字上方，透明的话会与标题尾部糊在一起。 */
-.chat-sidebar-item-menu { position: absolute; right: var(--sp-6); top: var(--sp-6); width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-5); color: var(--cc-text-dim); background: color-mix(in srgb, var(--cc-text) 10%, var(--cc-bg)); cursor: pointer; }
+.chat-sidebar-item-menu { position: absolute; right: var(--sp-6); top: var(--sp-6); width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-5); color: var(--cc-text-dim); background: color-mix(in srgb, var(--cc-text) 10%, var(--cc-bg)); cursor: pointer; opacity: 0; visibility: hidden; transition: opacity .12s ease, visibility .12s ease; }
+.chat-sidebar-item:hover .chat-sidebar-item-menu,
+.chat-sidebar-item:focus-within .chat-sidebar-item-menu { opacity: 1; visibility: visible; }
 .chat-sidebar-item-menu:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text) 18%, var(--cc-bg)); }
 .chat-sidebar-item-menu svg { width: 14px; height: 14px; }
+/* 标题溢出时的 hover 自动滚动（用户实拍要求）：JS 在 mouseenter 量出溢出量，用 WAAPI
+   起一条「位移 -(overflow+8)、时长 overflow/60s（固定 60px/s，各长度标题同速）」的
+   linear forwards 动画；无溢出的条目不启动，短标题纹丝不动。滚动体只动内层 span：
+   外层是固定裁剪框（transform 加在 overflow:hidden 元素自身会连裁剪框一起推走，文字
+   与窗口相对静止——滚不动的那版就是这么卡的）。is-clip-scroll 同时把 text-overflow
+   切 clip——滚动中途末尾还挂着省略号会像没滚完（用户实拍）；动画本体由 JS 持有
+   （见 ChatSidebar.tsx 顶部注释：mouseenter 反复重启 CSS 动画会把进度打回 0，观感
+   即「卡住」，实拍复现过）。 */
+/* 内层默认保持 inline：text-overflow 的省略号只对裸文本生效，inline-block 子元素
+   不触发——静止时省略号必须正常；启动滚动才变 inline-block（transform 对非原子
+   inline 无效），同帧 text-overflow 已切 clip，ellipsis 的缺席无感知。 */
+.chat-sidebar-name-inner { white-space: nowrap; }
+.chat-sidebar-name-text.is-clip-scroll { text-overflow: clip; }
+.chat-sidebar-name-text.is-clip-scroll .chat-sidebar-name-inner { display: inline-block; }
 /* 动作失败提示：贴在列表与底栏之间，红字但不占常驻高度（4s 后自行消失）。 */
 .chat-sidebar-error { flex: 0 0 auto; padding: var(--sp-6) var(--sp-10); color: var(--cc-err-vivid); font-size: var(--fs-10); }
 /* G-16：全侧栏唯一的读屏汇总播报源——视觉隐藏但能被 live region 读到。
@@ -3983,6 +4005,16 @@ select.ns-input {
    的右 margin（面板左 margin 为 0），向左回半条缝（--sp-6/2）即正中，随 UI 缩放同步。
    平时隐身，hover/拖动亮一条 2px accent 细线。 */
 .chat-diff-resizer { flex: 0 0 0; z-index: 5; position: relative; cursor: col-resize; }
+/* 侧栏分栏柄：造型与 .chat-diff-resizer 完全同规。柄在停靠侧栏右缘——non-mac 下
+   右邻是对话卡的 6px 缝隙（.chat-main 的 margin-left），命中区/指示条向缝隙中心偏
+   +3px；mac 无卡片缝隙，柄正好压在侧栏与主列的接缝上，不偏移。 */
+.chat-sidebar-resizer { flex: 0 0 0; z-index: 5; position: relative; cursor: col-resize; }
+.chat-sidebar-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 12px; transform: translateX(-50%); }
+.chat-sidebar-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 2px; transform: translateX(-50%); border-radius: 1px; background: var(--cc-accent); opacity: 0; transition: opacity .12s ease; }
+:root:not(.platform-macos) .chat-sidebar-resizer::before,
+:root:not(.platform-macos) .chat-sidebar-resizer::after { left: calc(var(--sp-6) / 2); }
+.chat-sidebar-resizer:hover::after, .chat-body.is-sidebar-resizing .chat-sidebar-resizer::after { opacity: .7; }
+.chat-body.is-sidebar-resizing { user-select: none; cursor: col-resize; }
 .chat-diff-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 12px; transform: translateX(-50%); }
 .chat-diff-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 2px; transform: translateX(-50%); border-radius: 1px; background: var(--cc-accent); opacity: 0; transition: opacity .12s ease; }
 :root:not(.platform-macos) .chat-diff-resizer::before,

@@ -81,6 +81,12 @@ function initialSessionId(): number {
 }
 
 const SIDEBAR_COLLAPSED_KEY = "meowo-chat-sidebar-collapsed";
+/** 停靠侧栏宽度的持久化键与上下限。下限保列表可用；上限拖拽时按 .chat-body 实测宽
+ *  给对话区留 360px（与 diff 分栏同一口径）。240 是版式默认宽（用户可拖，2026-10
+ *  实拍反馈：208 偏窄，会话名普遍读不全）。 */
+const SIDEBAR_WIDTH_KEY = "meowo-chat-sidebar-width";
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_DEFAULT_WIDTH = 240;
 // 视图偏好：用户在终端就显示终端、在对话就显示对话（实拍反馈）。只记**明确的**视图
 // 选择（顶栏「对话/终端」切换、Ctrl+1/2）；程序性跳转（审批引导、后台会话兜底、
 // 探测失败落终端）不算——偏好表达「用户平时住在哪」，不是「上次被带去过哪」。
@@ -1127,6 +1133,11 @@ export function ChatWindow() {
   // 旧请求的错误不污染新卡（见 decideApproval 的 catch 与审批卡渲染处）。
   const [approvalError, setApprovalError] = useState<{ requestId: string; message: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
+  // 停靠侧栏宽随会话持久化（localStorage）；收起只藏不改宽，再展开原宽回来。
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return Number.isFinite(stored) && stored >= SIDEBAR_MIN_WIDTH ? stored : SIDEBAR_DEFAULT_WIDTH;
+  });
   // 窄窗（<880px）自动收起停靠侧栏：两列塞不下。此时开关切换的是**浮窗侧栏**（overlay，
   // 盖在主列上、不挤压布局），且不写收起偏好——窗口拉宽后回到用户原本的停靠选择。
   // jsdom 没有 matchMedia，恒按宽窗走（测试语义不变）。
@@ -1352,6 +1363,48 @@ export function ChatWindow() {
       handle.removeEventListener("pointerup", onUp);
       handle.removeEventListener("pointercancel", onUp);
       localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(lastWidth)));
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
+  // 侧栏分栏柄：与 startDiffResize 同套手法（pointer capture + 按帧合流 + 松手持久化），
+  // 方向相反——柄在侧栏右缘，向右拖变宽。起点读 aside 实测宽而非 state：与 diff 同款
+  // 的「state 被压过时从 state 起算会跳变」在这里对应窄窗回宽等口径。
+  const startSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const handle = event.currentTarget;
+    const body = handle.closest(".chat-body");
+    if (!body) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const sidebar = handle.previousElementSibling as HTMLElement | null;
+    const startWidth = sidebar ? sidebar.getBoundingClientRect().width : sidebarWidth;
+    const maxWidth = Math.max(SIDEBAR_MIN_WIDTH, body.getBoundingClientRect().width - 360);
+    let lastWidth = startWidth;
+    body.classList.add("is-sidebar-resizing");
+    // pointermove 每次都 setState 会以指针事件频率重渲整栏（几百行会话列表），
+    // 按帧合流，一帧至多提交一次宽度（与 diff 分栏同一课）。
+    let raf = 0;
+    const onMove = (move: PointerEvent) => {
+      lastWidth = Math.min(Math.max(startWidth + (move.clientX - startX), SIDEBAR_MIN_WIDTH), maxWidth);
+      if (!raf) {
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          setSidebarWidth(lastWidth);
+        });
+      }
+    };
+    const onUp = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      setSidebarWidth(lastWidth);
+      body.classList.remove("is-sidebar-resizing");
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(lastWidth)));
     };
     handle.addEventListener("pointermove", onMove);
     handle.addEventListener("pointerup", onUp);
@@ -3595,14 +3648,39 @@ export function ChatWindow() {
         </>
       )}
       <div className={"chat-body" + (diffOpen && diffMaximized && !diffCollapsed ? " is-diff-max" : "")}>
-      {!narrow && !sidebarCollapsed && <ChatSidebar
+      {/* 停靠侧栏 + 分栏柄：柄落在侧栏与主列的缝隙里，拖拽调宽（用户要求：侧栏可拖）。
+          窄窗抽屉形态与收起态不渲染（柄在停靠布局里才有意义）。键盘同规：separator
+          可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
+      {!narrow && !sidebarCollapsed && <>
+      <ChatSidebar
         activeId={sessionId}
         approvalAwaitingIds={approvalAwaitingIds}
         visibleOrderRef={sidebarOrderRef}
         searchInputRef={sidebarSearchRef}
+        width={sidebarWidth}
         onSelect={resetTo}
         onCollapse={collapseSidebar}
-      />}
+      />
+      <div
+        className="chat-sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t.chat.diffResize}
+        tabIndex={0}
+        aria-valuenow={Math.round(sidebarWidth)}
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          const body = event.currentTarget.closest(".chat-body");
+          const maxWidth = body ? Math.max(SIDEBAR_MIN_WIDTH, body.getBoundingClientRect().width - 360) : Number.MAX_SAFE_INTEGER;
+          const next = Math.min(Math.max(sidebarWidth + (event.key === "ArrowRight" ? 16 : -16), SIDEBAR_MIN_WIDTH), maxWidth);
+          setSidebarWidth(next);
+          localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(next)));
+        }}
+        onPointerDown={startSidebarResize}
+      />
+      </>}
       <div className="chat-main">
       <header className="chat-bar" data-tauri-drag-region>
         {isMac() && !sidebarVisible && sidebarToggleButton}

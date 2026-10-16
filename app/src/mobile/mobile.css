@@ -122,6 +122,10 @@ body.remote-ui .chat-sidebar-overlay-head {
     inset: -12px;
   }
 
+  /* 7M-9 尾：桌面端「⋯」已改 hover 才显（2026-10 用户实拍：常显密密麻麻还挡标题），
+     但远程端没有 hover——侧栏 ⋯ 是手机上星标/重命名/归档的唯一入口，必须常显。 */
+  body.remote-ui .chat-sidebar-item-menu { opacity: 1; visibility: visible; }
+
   /* ── 移动端字号标尺(按 2026-08 全量清单逐类抬升) ──
      桌面密度下 9–11.5px 的小字在手机上过小,而 16px 输入框(iOS 防缩放地板,降不得)
      又把周边文字压得更显迷你。整体缩放两条路已证伪(--cc-ui 只动 token 半边、zoom 破
