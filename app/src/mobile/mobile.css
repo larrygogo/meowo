@@ -145,6 +145,7 @@ body.remote-ui .chat-sidebar-overlay-head {
   body.remote-ui .chat-activity-summary,
   body.remote-ui .chat-todos > summary,
   body.remote-ui .chat-subagent > summary,
+  body.remote-ui .chat-reasoning summary,
   body.remote-ui .chat-reasoning { font-size: 12px; }
   body.remote-ui .chat-tool pre { font-size: 12px; }
   body.remote-ui .chat-todos-list li,

@@ -3438,13 +3438,6 @@ select.ns-input {
   border: 0;
   border-radius: var(--r-7);
   display: inline-grid;
-  /* 对话窗的小号字整体上提 1px（2026-10 对照 Kimi 实拍：9~11px 的辅助字成片出现，
-     读起来又小又挤）。只重映射 ≤11px 的档位，11.5px 及以上已逐处按 Kimi 比例校过，
-     不动；贴纸/设置页不在 .chat-window 内，保持紧凑。弹出菜单 portal 到 body，也不受影响。 */
-  --fs-9: calc(10px * var(--cc-ui));
-  --fs-10: calc(11px * var(--cc-ui));
-  --fs-10-5: calc(11.5px * var(--cc-ui));
-  --fs-11: calc(12px * var(--cc-ui));
   place-items: center;
   flex: 0 0 auto;
   color: var(--cc-text-faint);
@@ -3461,6 +3454,13 @@ select.ns-input {
    随内容自然占位，不再 absolute 浮层，也无需 --compose-h 实测补偿。 */
 /* 左右骨架：全高侧栏 + 内容列（chat-main 自己是纵向的 header/正文/输入）。 */
 .chat-window {
+  /* 对话窗的小号字整体上提 1px（2026-10 对照 Kimi 实拍：9~11px 的辅助字成片出现，
+     读起来又小又挤）。只重映射 ≤11px 的档位，11.5px 及以上已逐处按 Kimi 比例校过，
+     不动；贴纸/设置页不在 .chat-window 内，保持紧凑。弹出菜单 portal 到 body，也不受影响。 */
+  --fs-9: calc(10px * var(--cc-ui));
+  --fs-10: calc(11px * var(--cc-ui));
+  --fs-10-5: calc(11.5px * var(--cc-ui));
+  --fs-11: calc(12px * var(--cc-ui));
   height: 100vh;
   display: flex;
   /* 列向：顶部是独立顶栏行（Windows/Linux），其下 .chat-body 再横排 侧栏|主列。
@@ -4329,6 +4329,8 @@ select.ns-input {
 .chat-reasoning summary { min-height: calc(34px * var(--cc-ui)); padding: 0 var(--sp-12); display: flex; align-items: center; gap: var(--sp-9); list-style: none; cursor: pointer; border-radius: var(--r-9); color: var(--cc-text-dim); font-size: calc(14px * var(--cc-ui)); }
 .chat-reasoning summary:hover { background: color-mix(in srgb, var(--cc-text) 3.5%, transparent); }
 .chat-reasoning summary::-webkit-details-marker { display: none; }
+.chat-reasoning summary .chat-tool-chevron { margin-left: 0; font-size: calc(17px * var(--cc-ui)); }
+.chat-reasoning[open] summary .chat-tool-chevron { transform: rotate(90deg); }
 .chat-reasoning div { margin-top: var(--sp-8); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-text-dim); line-height: 1.65; user-select: text; }
 .chat-meta { margin: var(--sp-28) 0; display: flex; align-items: center; gap: var(--sp-10); color: var(--cc-text-faint); font-size: var(--fs-10); }
 .chat-meta span { height: 1px; flex: 1; background: var(--cc-border); }
@@ -4345,8 +4347,6 @@ select.ns-input {
   color: var(--cc-text-dim);
   background: var(--cc-surface-hover);
   border: 1px solid var(--cc-border);
-.chat-reasoning summary .chat-tool-chevron { margin-left: 0; font-size: calc(17px * var(--cc-ui)); }
-.chat-reasoning[open] summary .chat-tool-chevron { transform: rotate(90deg); }
   border-radius: var(--r-md);
   cursor: pointer;
 }
@@ -4567,12 +4567,18 @@ select.ns-input {
   list-style: none;
   cursor: pointer;
   color: var(--cc-text-dim);
-  font-size: var(--fs-11);
+  /* 过程行只比正文小一号、靠灰度降级：此前 11px 对 15px 正文差得太多，一屏里大小字
+     交错正是「挤」的观感来源（2026-10 对照 Kimi 实拍）。 */
+  font-size: calc(14px * var(--cc-ui));
 }
 .chat-activity-summary:hover { background: color-mix(in srgb, var(--cc-text) 3.5%, transparent); }
 /* kinds 现在是摘要的主文本（「运行终端 ×2 · 读取文件」），用 summary 的 dim 色而非 faint。 */
 .chat-activity-kinds { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-activity-errors { flex: 0 0 auto; color: color-mix(in srgb, var(--cc-err) 70%, var(--cc-text)); }
+/* 组内改动行数：等宽数字、比摘要小一号，颜色与改动面板的增删记号同源。 */
+.chat-activity-delta { flex: 0 0 auto; display: inline-flex; gap: var(--sp-6); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; }
+.chat-activity-delta .is-add { color: var(--cc-ok-vivid); }
+.chat-activity-delta .is-del { color: var(--cc-err-vivid); }
 /* chevron 紧跟文字(Claude Code 的「Ran 5 commands ›」形态),不推到行末——720px 宽的列里
    一个孤悬最右的大箭头只会把一行字拉成一块横幅。字号也从 23px 收到与行内文字相称。 */
 .chat-activity-summary .chat-tool-chevron { margin-left: 0; font-size: calc(17px * var(--cc-ui)); }
@@ -4590,10 +4596,6 @@ select.ns-input {
 }
 .chat-todos > summary::-webkit-details-marker { display: none; }
 .chat-todos > summary {
-/* 组内改动行数：等宽数字、比摘要小一号，颜色与改动面板的增删记号同源。 */
-.chat-activity-delta { flex: 0 0 auto; display: inline-flex; gap: var(--sp-6); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; }
-.chat-activity-delta .is-add { color: var(--cc-ok-vivid); }
-.chat-activity-delta .is-del { color: var(--cc-err-vivid); }
   min-height: calc(42px * var(--cc-ui));
   padding: 0 var(--sp-17) 0 var(--sp-18);
   display: flex;
@@ -4601,9 +4603,7 @@ select.ns-input {
   gap: var(--sp-9);
   list-style: none;
   cursor: pointer;
-  /* 过程行只比正文小一号、靠灰度降级：此前 11px 对 15px 正文差得太多，一屏里大小字
-     交错正是「挤」的观感来源（2026-10 对照 Kimi 实拍）。 */
-  font-size: calc(14px * var(--cc-ui));
+  font-size: var(--fs-11);
   color: var(--cc-text-dim);
 }
 .chat-todos > summary:hover { background: color-mix(in srgb, var(--cc-text) 3.5%, transparent); }
