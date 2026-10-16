@@ -2812,7 +2812,7 @@ export function ChatWindow() {
     }
     const outgoingBare = outgoingPrompt.trim();
     retryRef.current = () => sendPrompt();
-    // 运行中使用插件声明的排队键提交；Enter 在 Codex/Gemini 上并非排队协议。
+    // 运行中使用插件声明的排队键提交；Enter 在 Codex 上并非排队协议（是插话进当前回合）。
     // ——不记下来的话,消息在 GUI 上像消失了一样。发送成功后进排队清单,由轮询侧
     // 在它出现于 transcript / 回合结束时清除。
     const interjecting = toneRef.current === "running";

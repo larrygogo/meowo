@@ -1073,6 +1073,8 @@ mod tests {
         assert_eq!(limit.details, crate::chat_ui::AttentionDetails::None);
         // 运行中排队:opencode 的 Enter 即排队(QUEUED 标记)。
         assert_eq!(by_id("opencode").unwrap().queue_input(), Some("\r"));
+        // gemini 空闲时 Tab 不提交，运行态又是推断：只能用两种状态都成立的回车。
+        assert_eq!(by_id("gemini").unwrap().queue_input(), Some("\r"));
 
         // 草稿暂存键只有 claude 经真机取证(issue #72);别家未验证不盲按。
         assert_eq!(

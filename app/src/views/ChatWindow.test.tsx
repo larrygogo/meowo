@@ -67,8 +67,8 @@ describe("ChatWindow 适配回归", () => {
     .filter(([command, args]) => command === "write_managed_terminal" && args.sessionId === sessionId)
     .map(([, args]) => args.data);
 
-  it.each(["codex", "gemini"])("%s 运行中发送使用 Tab 排队", async (provider) => {
-    setup(501, provider, "running");
+  it("codex 运行中发送使用 Tab 排队", async () => {
+    setup(501, "codex", "running");
     render(<ChatWindow />);
     await screen.findByText("适配-501");
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
