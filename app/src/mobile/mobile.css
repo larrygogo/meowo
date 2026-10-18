@@ -62,6 +62,15 @@ body.remote-ui .chat-window.is-remote-compact .chat-main {
   box-shadow: none;
 }
 
+/* 输入框工具行在 390px 宽度下挤不下:加号、模型、权限、用量、停止、发送排成一行,
+   「126K/200K」这段字最宽,模型名被压成「O…」、权限钮成「权..」,两个都点不准
+   (2026-10 手机截图,输入框有字时停止与发送同时在场最挤)。用量环里已有百分比,
+   手机竖屏只留环。360px 宽的安卓机上还差约 24px:按钮本身只占 246px,6 个 10px 间距
+   吃掉 60px(右推弹簧 .chat-compose-hint 宽 0 也占两份间距),间距与下拉钮内边距各收一档。 */
+body.remote-ui .chat-window.is-remote-compact .chat-context-usage { display: none; }
+body.remote-ui .chat-window.is-remote-compact .chat-compose-actions { gap: 6px; }
+body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button { padding: 0 6px; }
+
 /* 触屏专属调优。远程页也会被桌面浏览器打开(同一局域网的另一台电脑),鼠标环境必须
    按 1:1 桌面密度渲染——这些规则无条件套用时,16px 输入框会撑肥侧栏搜索框、禁选中
    会让鼠标无法复制聊天文本。刻意不做钝器式 button min-height:紧凑图标按钮(筛选、
