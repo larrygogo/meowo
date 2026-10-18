@@ -5,5 +5,22 @@
 # tauri-utils 的 plist 解析。上游尚未发布修复版，`cargo update` 无解。
 # 本应用不解析任何外部/不可信 XML（仅系统通知与打包内部使用），实际攻击面极低。
 # 待上游发布跟进版后移除本忽略项。
+#
+# zip 4.6.1 的三条（RUSTSEC-2026-0367 SUID/SGID 位、-0368 解出的符号链接指向目标目录外、
+# -0369 Unix 权限穿过符号链接）修复版是 zip 9，但 tauri-plugin-updater 到 2.14.0 和
+# 3.0.0-alpha.3 都还锁在 zip ^4（2026-10 查 crates.io），`cargo update` 无解。
+# 实际碰不到，三点：
+#  - zip 只在 Windows 上编译（updater 的 cfg(windows) 依赖）。0367、0369 是 Unix 权限位问题，
+#    0368 公告写明在 macOS/Linux 上实测；
+#  - updater 先用 tauri.conf.json 里的公钥验 minisign 签名再解压，伪造压缩包要先拿到签名私钥；
+#  - createUpdaterArtifacts: true 是 v2 产物，Windows 更新包直接是 -setup.exe，
+#    不走 extract_zip 分支（updater.rs 里 is_zip 判定才解压）。
+# updater 升到 zip >= 9 后移除这三条。
 [advisories]
-ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
+ignore = [
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+]
