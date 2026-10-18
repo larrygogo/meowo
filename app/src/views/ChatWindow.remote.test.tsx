@@ -110,4 +110,27 @@ describe("ChatWindow 远程门控", () => {
     await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy(), { timeout: 3000 });
     expect(screen.queryByText("会话正在启动…")).toBeNull();
   });
+
+  it("远程窄屏:独立顶栏并进标题行,侧栏开关落在标题行", async () => {
+    // jsdom 无 matchMedia,ChatWindow 恒按宽窗走;这里装一个恒命中的替身模拟手机竖屏。
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      markRemoteUi();
+      window.history.replaceState({}, "", "/?sessionId=7");
+      runningSessionWithRepo();
+      const { container } = render(<ChatWindow />);
+      await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+
+      expect(container.querySelector(".chat-topbar")).toBeNull();
+      expect(container.querySelector(".chat-window.is-remote-compact")).toBeTruthy();
+      expect(container.querySelector(".chat-bar .chat-sidebar-open")).toBeTruthy();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });
