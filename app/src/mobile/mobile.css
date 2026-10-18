@@ -41,6 +41,27 @@ body.remote-ui .chat-sidebar-overlay-head {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* 手机竖屏(远程 + 窄窗,ChatWindow 挂 .is-remote-compact):独立顶栏已并进标题行,
+   安全区留白随之下放到标题行。抽屉头与标题行同高同左距,开关钮在抽屉开合时原地不动。 */
+body.remote-ui .chat-window.is-remote-compact .chat-bar,
+body.remote-ui .chat-window.is-remote-compact .chat-sidebar-overlay-head {
+  height: auto;
+  min-height: calc(44px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: var(--sp-12);
+  box-sizing: border-box;
+}
+
+/* 桌面的「浮起卡片」(左右底各 6px 缩进 + 描边 + 圆角 + 阴影)在 390px 宽的手机上是卡中卡,
+   还白吃 14px 宽度。远程 hostOs 恒 unknown,会命中桌面 :not(.platform-macos) 的卡片规则,
+   这里在手机竖屏拆掉外框,卡片底色保留(--cc-bg 混色链依赖它)。 */
+body.remote-ui .chat-window.is-remote-compact .chat-main {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 /* 触屏专属调优。远程页也会被桌面浏览器打开(同一局域网的另一台电脑),鼠标环境必须
    按 1:1 桌面密度渲染——这些规则无条件套用时,16px 输入框会撑肥侧栏搜索框、禁选中
    会让鼠标无法复制聊天文本。刻意不做钝器式 button min-height:紧凑图标按钮(筛选、
@@ -125,37 +146,34 @@ body.remote-ui .chat-sidebar-overlay-head {
   /* 7M-9 尾：桌面端「⋯」已改 hover 才显（2026-10 用户实拍：常显密密麻麻还挡标题），
      但远程端没有 hover——侧栏 ⋯ 是手机上星标/重命名/归档的唯一入口，必须常显。 */
   body.remote-ui .chat-sidebar-item-menu { opacity: 1; visibility: visible; }
+  /* 桌面的灰底是悬停反馈,常显后每行挂一块灰方块(2026-10 手机截图:三行三块,比标题还抢眼)。
+     只留图标,命中面仍由上面的 ::after 外扩保证。 */
+  body.remote-ui .chat-sidebar-item-menu { background: transparent; }
 
-  /* ── 移动端字号标尺(按 2026-08 全量清单逐类抬升) ──
+  /* 代码块复制/语言标签桌面是悬停才显,触屏只能靠「先点一下代码块」触发粘滞 hover,
+     出来后又绝对定位压住首行代码(2026-10 手机截图:「rust 复制」盖在代码上)。
+     远程走 HTTP 时没有剪贴板 API,手动框选很难,这个钮是手机上拿代码的主要途径。
+     触屏常显,并给代码块顶部让出一行。 */
+  body.remote-ui .chat-md-pre-tools,
+  body.remote-ui .chat-md-pre-tools button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  body.remote-ui .chat-md-pre > pre { padding-top: 34px; }
+
+  /* ── 移动端字号标尺(2026-08 全量清单逐类抬升,2026-10 随桌面 Kimi 比例改版重校) ──
      桌面密度下 9–11.5px 的小字在手机上过小,而 16px 输入框(iOS 防缩放地板,降不得)
      又把周边文字压得更显迷你。整体缩放两条路已证伪(--cc-ui 只动 token 半边、zoom 破
-     dvh),这里按层级重排:正文 14 / 标题与主控件 13–15 / 次要 12 / 地板 11。
-     只在触屏生效,桌面与桌面浏览器一像素不动。 */
+     dvh),这里只做逐类抬升。只在触屏生效,桌面与桌面浏览器一像素不动。
+     2026-10 桌面对话窗照 Kimi 比例整体放大(正文/气泡 15、过程行 13–14、.chat-window
+     内 ≤11px 档位各 +1px),此前钉的 12px 过程行、14px 气泡反倒把手机压得比桌面还小,
+     与桌面同值的也成了冗余——一并删掉,改为直接继承桌面。剩下的只保留仍高于桌面的项。
+     新增覆盖前先对一下桌面现值(远程端 --cc-ui 恒 1),别再写出「抬升」实为压低的规则。 */
 
-  /* 消息区:一问一答同号(用户气泡原 13 vs AI 正文 14);分隔线/辅助行抬到地板。 */
-  body.remote-ui .chat-message.is-user .chat-text { font-size: 14px; }
-  body.remote-ui .chat-day-sep,
-  body.remote-ui .chat-meta { font-size: 11px; }
+  /* 消息区:正文/气泡/过程行/代码块已随桌面改版到位,只剩空态与待办两处仍偏小。 */
   body.remote-ui .chat-empty { font-size: 13px; }
-  body.remote-ui .chat-sync-warn,
-  body.remote-ui .chat-load-earlier button,
-  body.remote-ui .chat-jump-latest { font-size: 12px; }
-  body.remote-ui .chat-md pre code { font-size: 12.5px; }
-  body.remote-ui .chat-md-lang,
-  body.remote-ui .chat-md-pre-tools button { font-size: 11px; }
-  body.remote-ui .chat-tool summary,
-  body.remote-ui .chat-tool-name,
-  body.remote-ui .chat-tool-summary,
-  body.remote-ui .chat-activity-summary,
-  body.remote-ui .chat-todos > summary,
-  body.remote-ui .chat-subagent > summary,
-  body.remote-ui .chat-reasoning summary,
-  body.remote-ui .chat-reasoning { font-size: 12px; }
-  body.remote-ui .chat-tool pre { font-size: 12px; }
   body.remote-ui .chat-todos-list li,
   body.remote-ui .chat-running { font-size: 13px; }
-  body.remote-ui .chat-command,
-  body.remote-ui .chat-image-chip { font-size: 12px; }
 
   /* composer 工具行:16px 输入框旁 11.5px 的模型/权限/用量显得迷你;
      触发钮抬到 13 后顺带修掉「钮 11.5 < 自己菜单项 12.5」的倒挂。 */
@@ -170,7 +188,6 @@ body.remote-ui .chat-sidebar-overlay-head {
   body.remote-ui .chat-queued-head > button,
   body.remote-ui .chat-queued-list li,
   body.remote-ui .chat-queued-dismiss { font-size: 11.5px; }
-  body.remote-ui .chat-compose-gate { font-size: 12px; }
 
   /* 审批/题面卡:按钮同时是触控目标,统一 13;标题 14 > 正文 13 > 注 11.5 的层级重排。 */
   body.remote-ui .chat-approval { font-size: 13px; }
