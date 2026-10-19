@@ -82,7 +82,7 @@ runtime_commands_pending: boolean,
 attachment_mention: boolean, 
 /**
  * 该 CLI 的 TUI 支持 Ctrl-V 原生粘贴剪贴板图片时,composer 里出现的占位符正则
- * (claude `\[Image #\d`、kimi `\[image[:# ]`)。前端在「剪贴板里仍是刚粘贴的那张图」
+ * (claude `\[Image ?#\d`、kimi `\[image[:# ]`)。前端在「剪贴板里仍是刚粘贴的那张图」
  * 时向 PTY 发粘贴键（见 `clipboard_paste_input`）触发原生图片附加,并用它从屏幕上
  * 验证成功;None = 不支持,图片一律走指令文本兜底。
  */

@@ -279,8 +279,10 @@ impl AgentPlugin for Codex {
     }
     /// Ctrl-V 读系统剪贴板原生附加图片，composer 落出 `[Image #N]`；提交后模型答对了测试图
     /// 的颜色（probe_tui_script 实测 0.162.1）。粘贴键用默认的 Ctrl-V。
+    /// 空格可省，理由同 claude：增量重绘会用光标定位跳过与上一帧相同的空白格（codex 侧
+    /// 未实测，ratatui 同为按格 diff 输出，按同一形态防）。
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
-        version.map(|_| r"\[Image #\d")
+        version.map(|_| r"\[Image ?#\d")
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
     fn slash_commands(&self) -> &'static [&'static str] {

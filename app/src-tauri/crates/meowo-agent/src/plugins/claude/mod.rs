@@ -456,8 +456,11 @@ impl AgentPlugin for Claude {
     }
     /// claude TUI 的 Ctrl-V 读系统剪贴板并把图片原生附加,composer 显示 `[Image #N]`。
     /// (@提及对图片无效——不产生图像块,故图片的原生化只有这条剪贴板通道。)
+    /// 空格可省：运行中贴图时 claude 增量重绘，那格空白与上一帧相同就用光标定位跳过，
+    /// 原始流是 `[Image\x1b[10G#1]`，剥掉控制码只剩 `[Image#1]`（pywinpty 实测 2.1.303，
+    /// 屏幕上 0.55s 已落出占位符，旧规则一直等不到 → 运行中发图必报「图片附加未完成」）。
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
-        version.map(|_| r"\[Image #\d")
+        version.map(|_| r"\[Image ?#\d")
     }
     /// claude 在 Windows（含 WSL）上的贴图键是 **Alt+V**：2.1.301~303 二进制里都是
     /// `Le=windows||wsl?"alt+v":"ctrl+v"`（Ctrl+V 会被 Windows Terminal 自己的粘贴吃掉）。
