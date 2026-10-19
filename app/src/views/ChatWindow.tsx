@@ -3763,6 +3763,10 @@ export function ChatWindow() {
   // 侧栏折叠/展开的统一开关（Kimi 式面板图标，两态共用一个钮）。Windows/Linux 常驻
   // 顶栏左上角；macOS 没有独立顶栏，折叠钮在侧栏头部（ChatSidebar 内，仅 mac 渲染）、
   // 折叠后的展开钮进标题栏行。
+  // 手机远程竖屏：独立顶栏在手机上只剩一个侧栏开关（窗口控制组远程隐藏、也无窗可拖），
+  // 却和下方标题行各占一整行，加上刘海安全区要吃掉 ~130px。并成一行：开关进标题行，
+  // 走 macOS 同款位置（2026-10 手机截图复核）。宽屏远程（平板/桌面浏览器）仍按桌面布局。
+  const compactChrome = remoteUi() && narrow;
   const sidebarToggleButton = (
     <button
       type="button"
@@ -3786,7 +3790,7 @@ export function ChatWindow() {
     : 0;
 
   return (
-    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "")}>
+    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "")}>
       <DevBadge />
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
@@ -3797,7 +3801,7 @@ export function ChatWindow() {
       {/* Windows/Linux：独立顶栏（拖拽区 + 标准 − □ × 控制组），会话标题分离到下方
           .chat-bar 标题行。macOS 不渲染此行——红绿灯嵌在 52px 标题栏行内
           （unify_titlebar_toolbar 垂直居中），布局保持原样不动。 */}
-      {!isMac() && (
+      {!isMac() && !compactChrome && (
         <header className="chat-topbar" data-tauri-drag-region>
           {sidebarToggleButton}
           {/* 最小化/最大化/关闭是桌面窗口能力,手机浏览器没有可控窗口——远程隐藏。 */}
@@ -3859,7 +3863,7 @@ export function ChatWindow() {
       </>}
       <div className="chat-main">
       <header className="chat-bar" data-tauri-drag-region>
-        {isMac() && !sidebarVisible && sidebarToggleButton}
+        {((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
         {history ? (
           <ChatTitleMenu
             title={history.title || t.chat.title}
