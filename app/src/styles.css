@@ -77,6 +77,15 @@
   --cc-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "PingFang SC", "Microsoft YaHei", monospace;
   --cc-code-bg: #161719;
   --cc-user-bubble: #1f4a3e;
+  /* 工具时间线/命令着色的色调。深色直接取语法色；浅色在 light 块里另配低饱和的一套——
+     语法色板是给代码高亮调的，拿来给工具名整行上色，在白底上一排彩虹（用户实拍「不协调」）。 */
+  --cc-tone-blue: var(--cc-syn-func);
+  --cc-tone-purple: var(--cc-syn-keyword);
+  --cc-tone-orange: var(--cc-syn-number);
+  --cc-tone-yellow: var(--cc-syn-type);
+  --cc-tone-green: var(--cc-accent-text);
+  --cc-tone-teal: var(--cc-syn-builtin);
+  --cc-tool-verb-weight: 700;
   /* 圆角规范(对齐 Claude Code / shadcn)：容器 rounded-lg=8，控件 rounded-md=6，小 rounded-sm=4 */
   --r-lg: 8px;
   --r-md: 6px;
@@ -150,9 +159,10 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --cc-bg-rgb: 247, 247, 249;
-  --cc-surface: rgba(0, 0, 0, 0.035);
-  --cc-surface-hover: rgba(0, 0, 0, 0.065);
-  --cc-border: rgba(0, 0, 0, 0.1);
+  /* 表面叠色/描边带一点暖调（纯黑透明叠在暖底上发灰发冷，与暖白卡面不搭）。 */
+  --cc-surface: rgba(60, 45, 20, 0.045);
+  --cc-surface-hover: rgba(60, 45, 20, 0.08);
+  --cc-border: rgba(50, 38, 15, 0.12);
   /* 强调色/文字色整体比深色板压暗一档，确保小字号在近白底（及卡片叠层）上达到 WCAG AA。 */
   --cc-accent: #12a67f;
   /* hover 下沉色：与 accent 同值时主按钮 hover 零反馈。压暗到 #11a078，
@@ -160,7 +170,8 @@
   --cc-accent-dim: #11a078;
   --cc-accent-soft: rgba(18, 166, 127, 0.15);
   --cc-accent-border: rgba(18, 166, 127, 0.42);
-  --cc-accent-text: #0b7c5c;
+  /* 再压深一档：暖白底比原冷白底略暗，#0b7c5c 在代码框上掉到 4.4:1。 */
+  --cc-accent-text: #087150;
   /* 浅色 accent（#12a67f）上的文字：深绿 #06281f 对比度 5.1:1 但实拍发闷（绿底黑字
      显脏，0.5.15 用户反馈），改白字——2.9:1 换来干净观感，与同版徽标/系统惯例一致。 */
   --cc-on-accent: #ffffff;
@@ -173,11 +184,13 @@
      深色 surface（约 #ececed）后只剩 4.23:1。校准面还要再进一层——**hover 态的卡面**
      （约 #e7e7e9）才是最亮的那张底，#636c67 落在它上面只有约 4.3:1（复核指出）。
      #5e6762：hover 卡面 4.59:1、静态卡面 4.8:1、裸底 5.2:1，三档都过线。 */
-  --cc-text-faint: #5e6762;
-  --cc-warn: #946410;
+  /* 2026-10 外壳转暖（#f1f0ec）后 hover 叠层更暗，#5e6762 掉到 4.45:1；#5a625d 三档 4.78~5.5。 */
+  --cc-text-faint: #5a625d;
+  --cc-warn: #84590c;
   --cc-err: #cf4434;
-  --cc-window-bg: #f6f6f7;
-  --cc-menu-bg: #fff;
+  /* 暖灰白外壳 + 米白浮层（原 #f6f6f7 / #fff 冷而纯，久看刺眼，2026-10 用户反馈）。 */
+  --cc-window-bg: #f1f0ec;
+  --cc-menu-bg: #fdfcf9;
   /* 圆点鲜亮色：浅色下用饱和中调（亮但在近白底上仍有存在感），不取文字用的暗色。 */
   --cc-ok-vivid: #17ab77;
   --cc-warn-vivid: #d99a1a;
@@ -192,8 +205,17 @@
   --cc-syn-type: #b45309;
   --cc-syn-attr: #b91c1c;
   --cc-syn-builtin: #0e7490;
-  --cc-code-bg: #f1f2f3;
-  --cc-user-bubble: #d9f2e8;
+  --cc-code-bg: #f0eee8;
+  --cc-user-bubble: #dcede4;
+  /* 浅色色调：GitHub 浅色系的中明度低饱和色，在近白卡面上都 ≥4.5:1；字重降一档，
+     粗体彩字在白底上发黑发重、和正文抢视线。 */
+  --cc-tone-blue: #0b5cad;
+  --cc-tone-purple: #7046b8;
+  --cc-tone-orange: #9a4a12;
+  --cc-tone-yellow: #8a5a00;
+  --cc-tone-green: #09704f;
+  --cc-tone-teal: #17707a;
+  --cc-tool-verb-weight: 600;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上；底部一道极淡暗边强化厚度。 */
   --card-elev: 0 1px 2px rgba(0, 0, 0, 0.09), 0 6px 16px -3px rgba(0, 0, 0, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
@@ -3693,7 +3715,7 @@ select.ns-input {
    后代都要贴卡片色混，贴外壳色会在卡里泛出脏边。
    macOS 不套卡片：红绿灯与 84px 留白按旧几何对齐，改动它需真机验证。 */
 :root:not(.platform-macos) .chat-main {
-  /* 卡片底只比外壳（#1c1c1e / #f6f6f7）抬极小一档：层次主要交给描边与阴影，
+  /* 卡片底只比外壳（#1c1c1e / #f1f0ec）抬极小一档：层次主要交给描边与阴影，
      底色差拉大会显得卡片像另一张纸（实拍反馈「色差太大」）。 */
   --chat-card-bg: #1f1f22;
   --cc-bg: var(--chat-card-bg);
@@ -3705,8 +3727,8 @@ select.ns-input {
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-main {
-  --chat-card-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  --chat-card-bg: #f8f7f3;
+  box-shadow: 0 6px 22px rgba(60, 45, 20, 0.05);
 }
 /* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 33,33,35），
    卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
@@ -4070,8 +4092,8 @@ select.ns-input {
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-body.is-diff-max .chat-diff-panel {
-  --cc-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  --cc-bg: #f8f7f3;
+  box-shadow: 0 6px 22px rgba(60, 45, 20, 0.05);
 }
 /* macOS 最大化时红绿灯仍在窗口左上（承载它的 .chat-bar 已隐藏），头行让位同其他 mac 头部。 */
 :root.platform-macos .chat-body.is-diff-max .chat-diff-head { padding-left: 84px; min-height: 52px; }
@@ -4088,8 +4110,8 @@ select.ns-input {
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-diff-panel {
-  --chat-card-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  --chat-card-bg: #f8f7f3;
+  box-shadow: 0 6px 22px rgba(60, 45, 20, 0.05);
 }
 /* 终端页签：.chat-window.is-terminal 在窗口作用域把整窗压成深色变量，
    但 :root[data-theme="light"] 在根上依旧命中——浅色主题的终端视图里，对话卡有
@@ -4541,9 +4563,11 @@ select.ns-input {
   border: 1px solid color-mix(in srgb, var(--cc-border) 88%, transparent);
   border-radius: 18px;
   background: color-mix(in srgb, var(--cc-bg) 96%, white 4%);
-  /* 投影加深一档（A+B 改版）：输入框是浮在对话上的操作台，此前 .10 的影子在深色底上几乎看不见。 */
+  /* 投影加深一档（A+B 改版）：输入框是浮在对话上的操作台，此前 .10 的影子在深色底上几乎看不见。
+     浅色另见下一条：同样的浓度在浅底上是一大团灰影（用户实拍「阴影太重」）。 */
   box-shadow: 0 12px 34px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.08);
 }
+:root[data-theme="light"] .chat-compose { box-shadow: 0 6px 18px rgba(60, 45, 20, 0.07), 0 1px 3px rgba(60, 45, 20, 0.05); }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }
 /* 与图片缩略图（76×56）同高同圆角：两种附件排在一行不再一高一矮、一方一扁。
    右侧 26px 内边距给悬浮 × 留位（× 统一悬浮右上角，见下方按钮规则）。 */
@@ -4670,7 +4694,7 @@ select.ns-input {
    整行，chevron 被挤成单独一行，首行与「⎿」之间空出一整行（用户实拍）。 */
 .chat-tool-call { min-width: 0; flex: 1 1 0%; display: flex; align-items: baseline; overflow: hidden; font-family: var(--cc-mono); font-size: var(--fs-12-5); }
 .chat-tool-call .chat-tool-summary { flex: 0 1 auto; color: var(--cc-text); }
-.chat-tool-verb { flex: 0 0 auto; color: var(--kind); font-weight: 700; }
+.chat-tool-verb { flex: 0 0 auto; color: var(--kind); font-weight: var(--cc-tool-verb-weight); }
 .chat-tool-paren { flex: 0 0 auto; color: var(--cc-text-faint); }
 .chat-tool-result { min-width: 0; flex: 0 0 100%; display: flex; gap: var(--sp-6); padding-left: var(--sp-6); color: var(--cc-text-faint); font: var(--fs-12)/1.55 var(--cc-mono); }
 .chat-tool-elbow { flex: 0 0 auto; }
@@ -4680,14 +4704,14 @@ select.ns-input {
 .chat-tool-out.is-error { color: color-mix(in srgb, var(--cc-err) 75%, var(--cc-text)); }
 .chat-tool-out-more { color: var(--cc-text-faint); }
 .chat-tool-verb, .chat-tool-icon[data-kind] { --kind: var(--cc-text-dim); }
-.chat-tool-verb[data-kind="search"], .chat-tool-icon[data-kind="search"] { --kind: var(--cc-syn-keyword); }
-.chat-tool-verb[data-kind="read"], .chat-tool-icon[data-kind="read"] { --kind: var(--cc-syn-func); }
+.chat-tool-verb[data-kind="search"], .chat-tool-icon[data-kind="search"] { --kind: var(--cc-tone-purple); }
+.chat-tool-verb[data-kind="read"], .chat-tool-icon[data-kind="read"] { --kind: var(--cc-tone-blue); }
 .chat-tool-verb[data-kind="write"], .chat-tool-icon[data-kind="write"],
-.chat-tool-verb[data-kind="edit"], .chat-tool-icon[data-kind="edit"] { --kind: var(--cc-syn-type); }
-.chat-tool-verb[data-kind="run"], .chat-tool-icon[data-kind="run"] { --kind: var(--cc-accent-text); }
-.chat-tool-verb[data-kind="web"], .chat-tool-icon[data-kind="web"] { --kind: var(--cc-syn-builtin); }
+.chat-tool-verb[data-kind="edit"], .chat-tool-icon[data-kind="edit"] { --kind: var(--cc-tone-yellow); }
+.chat-tool-verb[data-kind="run"], .chat-tool-icon[data-kind="run"] { --kind: var(--cc-tone-green); }
+.chat-tool-verb[data-kind="web"], .chat-tool-icon[data-kind="web"] { --kind: var(--cc-tone-teal); }
 .chat-tool-verb[data-kind="todo"], .chat-tool-icon[data-kind="todo"],
-.chat-tool-verb[data-kind="agent"], .chat-tool-icon[data-kind="agent"] { --kind: var(--cc-syn-number); }
+.chat-tool-verb[data-kind="agent"], .chat-tool-icon[data-kind="agent"] { --kind: var(--cc-tone-orange); }
 .chat-tool.is-error .chat-tool-verb { --kind: color-mix(in srgb, var(--cc-err) 75%, var(--cc-text)); }
 /* 过程组摘要的行首图标跟着主类型着色，收起成一行时也能扫出「这组在改代码/在跑命令」。 */
 .chat-activity-summary .chat-tool-icon { color: var(--kind); }
@@ -4952,9 +4976,9 @@ select.ns-input {
   place-items: center;
   border: 0;
   /* 主题色圆角方钮（A+B 改版）：此前黑白圆钮是全页唯一的高对比块，却和品牌色毫无关系。
-     字色写死深绿：浅色主题的强调绿同样够亮，深字两套主题都 ≥4.5:1。 */
+     字色走 --cc-on-accent：深色是深绿字，浅色是白字（0.5.15 用户反馈「绿底黑字显脏」）。 */
   border-radius: var(--r-12);
-  color: #0d1f19;
+  color: var(--cc-on-accent);
   background: var(--cc-accent);
 }
 .chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: color-mix(in srgb, var(--cc-text) 9%, var(--cc-bg)); opacity: 1; }
@@ -5585,16 +5609,16 @@ select.ns-input {
    色相取语法高亮 token；正文用对话正文色而非纯白，命令不再像整段加粗。 */
 .chat-cmd { color: var(--cc-chat-text); }
 .chat-cmd .chat-tool-ln { color: var(--cc-accent-text); }
-.chat-cmd-name { color: var(--cc-syn-func); font-weight: 600; }
-.chat-cmd-flag { color: var(--cc-syn-number); }
+.chat-cmd-name { color: var(--cc-tone-blue); font-weight: 600; }
+.chat-cmd-flag { color: var(--cc-tone-orange); }
 .chat-cmd-str { color: var(--cc-syn-string); }
-.chat-cmd-op { color: var(--cc-syn-keyword); }
-.chat-cmd-env, .chat-cmd-var { color: var(--cc-syn-builtin); }
+.chat-cmd-op { color: var(--cc-tone-purple); }
+.chat-cmd-env, .chat-cmd-var { color: var(--cc-tone-teal); }
 .chat-cmd-heredoc { color: var(--cc-text-dim); }
 /* 输出按行着色：diff 增删、段头、错误、警告。 */
 .chat-tool-output .is-add { color: var(--cc-ok-vivid); }
 .chat-tool-output .is-del { color: var(--cc-err-vivid); }
-.chat-tool-output .is-hunk { color: var(--cc-syn-func); }
+.chat-tool-output .is-hunk { color: var(--cc-tone-blue); }
 .chat-tool-output .is-err { color: color-mix(in srgb, var(--cc-err) 80%, var(--cc-text)); }
 .chat-tool-output .is-warn { color: var(--cc-warn); }
 /* 统一 diff（structuredPatch）：终端同款「行号 记号 代码」，增删交错带上下文。 */
