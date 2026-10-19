@@ -182,11 +182,13 @@ fn user_message_text(
     let Some(parts) = value.as_array() else {
         return value_text(value);
     };
-    let mut text = parts
-        .iter()
-        .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
-        .collect::<Vec<_>>()
-        .join("");
+    let mut text = strip_image_compression_notes(
+        &parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join(""),
+    );
     for (index, part) in parts.iter().enumerate() {
         let Some(url) = image_part_url(part) else {
             continue;
@@ -199,6 +201,53 @@ fn user_message_text(
         }
     }
     text
+}
+
+/// 图片超限被压缩时，kimi 在用户正文里图片所在处插一段 `<system>Image compressed to fit
+/// model limits: … </system>`（写给模型的，附原图路径），对话页会把它当用户原话显示（实拍
+/// 反馈）。只剥这一种开头的 `<system>` 段，没有闭合标签就原样保留。
+const IMAGE_COMPRESSION_NOTE: &str = "<system>Image compressed";
+
+fn strip_image_compression_notes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(IMAGE_COMPRESSION_NOTE) {
+        let Some(len) = rest[start..].find("</system>") else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        rest = &rest[start + len + "</system>".len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 用户敲 `/技能名 参数` 激活技能时，kimi 不记用户输入的那一行，只记一条
+/// `origin.kind=skill_activation` 的 turn.prompt，正文是整份技能说明（写给模型的，动辄
+/// 上百行）。还原成用户实际敲的命令行；非用户斜杠触发的返回 None（整条不显示）。
+/// 参数取自 `<kimi-skill-loaded … args="…">`，本机样本 args 全为空，非空时的转义形态
+/// 未实测，取到下一个 `">` 为止。
+fn skill_activation_command(value: &serde_json::Value) -> Option<String> {
+    let origin = value.get("origin")?;
+    if origin.get("trigger").and_then(|v| v.as_str()) != Some("user-slash") {
+        return None;
+    }
+    let name = origin
+        .get("skillName")
+        .and_then(|v| v.as_str())
+        .filter(|name| !name.is_empty())?;
+    let body = value_text(value.get("input")?);
+    let args = body
+        .find("<kimi-skill-loaded ")
+        .map(|start| &body[start..])
+        .and_then(|tag| tag.find(" args=\"").map(|at| &tag[at + 7..]))
+        .and_then(|rest| rest.find("\">").map(|end| rest[..end].trim()))
+        .unwrap_or("");
+    Some(if args.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("/{name} {args}")
+    })
 }
 
 fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
@@ -221,6 +270,23 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
     match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
         "turn.prompt" => {
             let id = chat_id("user", line);
+            // turn.prompt 也承载非用户输入（真机 main wire 统计：origin 为 task 的后台任务完成
+            // 通知、skill_activation 的技能说明）。只点名处理这两种：子任务 wire 的首条
+            // prompt 是 system_trigger，那是子任务侧车里该显示的任务描述，不能一并丢。
+            match value.pointer("/origin/kind").and_then(|v| v.as_str()) {
+                Some("task") => return Vec::new(),
+                Some("skill_activation") => {
+                    return skill_activation_command(&value)
+                        .map(|text| TranscriptEvent::UserMessage {
+                            id,
+                            timestamp,
+                            text,
+                        })
+                        .into_iter()
+                        .collect();
+                }
+                _ => {}
+            }
             let text = user_message_text(
                 value
                     .get("input")
@@ -1849,6 +1915,44 @@ mod tests {
             &parse_chat_items(thinking)[0],
             ChatItem::ReasoningDelta { text, .. } if text == "先分析"
         ));
+    }
+
+    fn user_texts(line: &str) -> Vec<String> {
+        parse_events(line, None)
+            .into_iter()
+            .filter_map(|event| match event {
+                TranscriptEvent::UserMessage { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 样本取自真机 main wire（正文截短）。
+    #[test]
+    fn chat_parser_hides_injected_turn_prompts() {
+        let task = r#"{"type":"turn.prompt","input":[{"type":"text","text":"<notification id=\"task:bash-eplyi8ls:completed\" category=\"task\">\nTitle: Background process completed\n</notification>"}],"origin":{"kind":"task"}}"#;
+        assert!(user_texts(task).is_empty());
+
+        let skill = r#"{"type":"turn.prompt","origin":{"kind":"skill_activation","skillName":"sub-skill.review","trigger":"user-slash"},"input":[{"type":"text","text":"User activated the skill \"sub-skill.review\". Follow the loaded skill instructions.\n\n<kimi-skill-loaded name=\"sub-skill.review\" trigger=\"user-slash\" source=\"builtin\" dir=\"builtin://sub-skill/review\" args=\"\">\n# Review sub-skills\n</kimi-skill-loaded>"}]}"#;
+        assert_eq!(user_texts(skill), vec!["/sub-skill.review"]);
+        let with_args = skill.replace(r#"args=\"\""#, r#"args=\"src/a.ts\""#);
+        assert_eq!(user_texts(&with_args), vec!["/sub-skill.review src/a.ts"]);
+        let not_slash = skill.replace("\"trigger\":\"user-slash\"", "\"trigger\":\"model\"");
+        assert!(user_texts(&not_slash).is_empty());
+
+        // 子任务 wire 的首条 prompt（system_trigger）照常显示。
+        let subagent = r#"{"type":"turn.prompt","origin":{"kind":"system_trigger","name":"subagent"},"input":[{"type":"text","text":"审查这个文件"}]}"#;
+        assert_eq!(user_texts(subagent), vec!["审查这个文件"]);
+    }
+
+    #[test]
+    fn chat_parser_strips_image_compression_note() {
+        let line = r#"{"type":"turn.prompt","origin":{"kind":"user"},"input":[{"type":"text","text":"还有为什么会显示这个<system>Image compressed to fit model limits: original 2025x218 image/png (63 KB) -> sent 2000x215 image/png (75 KB). Fine detail may be lost.</system>"},{"type":"text","text":"，能不能不要显示"}]}"#;
+        assert_eq!(user_texts(line), vec!["还有为什么会显示这个，能不能不要显示"]);
+        // 没有闭合标签、或不是压缩提示的 <system> 段，原样保留。
+        for text in ["看 <system>Image compressed 没闭合", "<system>别的</system>"] {
+            assert_eq!(strip_image_compression_notes(text), text);
+        }
     }
 
     #[test]
