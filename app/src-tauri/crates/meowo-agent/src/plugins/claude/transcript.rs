@@ -11,6 +11,7 @@ use crate::transcript::{
     preview_text, DiffHunk, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
     TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 /// 从 `<tag>值</tag>` 里抠值。task-notification 的格式是 CLI 固定生成的单层标签,
@@ -294,6 +295,50 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
         })
 }
 
+/// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
+/// `</pasted_content id="6bad">`（2.1.296 实测，id 是 4 位 hex）。这对标签是写给模型的，
+/// 不剥的话对话页会把它们当正文显示（用户实拍反馈）。只剥「整行就是标签、且开闭 id
+/// 配成对」的行：正文里引用到的标签字面量（行内、或没有配对）原样保留。
+fn strip_pasted_content_tags(text: &str) -> Cow<'_, str> {
+    if !text.contains("<pasted_content id=\"") {
+        return Cow::Borrowed(text);
+    }
+    fn tag_id<'a>(line: &'a str, open: &str) -> Option<&'a str> {
+        line.trim()
+            .strip_prefix(open)?
+            .strip_suffix("\">")
+            .filter(|id| !id.is_empty() && !id.contains('"'))
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut drop = vec![false; lines.len()];
+    for (i, line) in lines.iter().enumerate() {
+        if drop[i] {
+            continue;
+        }
+        let Some(id) = tag_id(line, "<pasted_content id=\"") else {
+            continue;
+        };
+        if let Some(close) = (i + 1..lines.len())
+            .find(|&j| !drop[j] && tag_id(lines[j], "</pasted_content id=\"") == Some(id))
+        {
+            drop[i] = true;
+            drop[close] = true;
+        }
+    }
+    if !drop.contains(&true) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        lines
+            .iter()
+            .zip(&drop)
+            .filter(|(_, d)| !**d)
+            .map(|(l, _)| *l)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
     parse_events(line, false)
 }
@@ -342,7 +387,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 return vec![TranscriptEvent::UserMessage {
                     id: base_id.to_string(),
                     timestamp,
-                    text: text.to_string(),
+                    text: strip_pasted_content_tags(text).into_owned(),
                 }];
             }
             if is_image_companion(&v, content) {
@@ -371,7 +416,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                             .map(|text| TranscriptEvent::UserMessage {
                                 id: format!("{base_id}:{i}"),
                                 timestamp: timestamp.clone(),
-                                text: text.to_string(),
+                                text: strip_pasted_content_tags(text).into_owned(),
                             }),
                         Some("tool_result") => {
                             let text = text_from_content(
@@ -581,7 +626,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             vec![TranscriptEvent::UserMessage {
                 id: base_id.to_string(),
                 timestamp,
-                text,
+                text: strip_pasted_content_tags(&text).into_owned(),
             }]
         }
         _ => Vec::new(),
@@ -1791,6 +1836,22 @@ mod tests {
             parse_transcript_events(boundary).as_slice(),
             [TranscriptEvent::Metadata { kind, .. }] if kind == "compact"
         ));
+    }
+
+    #[test]
+    fn chat_parser_strips_paired_pasted_content_tags() {
+        let line = r#"{"type":"user","uuid":"p1","message":{"role":"user","content":"\n\n<pasted_content id=\"8ac4\">\n需求可能需要改一下\nA + 随机\n</pasted_content id=\"8ac4\">"}}"#;
+        assert!(matches!(
+            parse_transcript_events(line).as_slice(),
+            [TranscriptEvent::UserMessage { text, .. }] if text == "\n\n需求可能需要改一下\nA + 随机"
+        ));
+        // 行内引用、或开闭 id 不配对的标签字面量是正文内容，不动。
+        for text in [
+            "看这个 <pasted_content id=\"1\"> 标签",
+            "<pasted_content id=\"aaaa\">\n正文\n</pasted_content id=\"bbbb\">",
+        ] {
+            assert_eq!(strip_pasted_content_tags(text), text);
+        }
     }
 
     #[test]
