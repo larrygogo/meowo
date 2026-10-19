@@ -615,6 +615,33 @@ async function stashComposerDraft(sessionId: number, stash: NonNullable<ChatUi["
   }
 }
 
+/// 上次发图失败留在 composer 里的占位符(`[Image #1]`)自动清掉,返回是否已确认干净。
+/// 失败那次只贴了图、正文没写(写前草稿已暂存),故 composer 里只有残图,Ctrl-U 整行删
+/// 不会误伤用户内容;原稿与附件仍在对话页输入框里,重发会重新贴。claude 2.1.303 实测:
+/// Ctrl-U 后再提交的 user 行不带 image 块,图随占位符一起丢弃。空 composer 显示灰色
+/// 提示语(`Try "…"`),所以判干净看「不再含占位符」而不是「为空」。
+/// 认不出 composer 或清后仍在 → false,调用方退回人工清理的拦截。
+async function clearPartialImageDraft(sessionId: number, stash: NonNullable<ChatUi["draft_stash"]>, marker: string): Promise<boolean> {
+  const pattern = new RegExp(marker, "i");
+  const residual = async () => {
+    const draft = composerDraftText(await managedTerminalScreen(sessionId), stash);
+    return draft === null ? null : pattern.test(draft);
+  };
+  try {
+    const before = await residual();
+    if (before === null) return false;
+    if (!before) return true;
+    await writeManagedTerminal(sessionId, "\x15");
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+      if (await residual() === false) return true;
+    }
+  } catch {
+    // 落到下面的人工清理拦截。
+  }
+  return false;
+}
+
 /// 恢复/接管完成后的险区时间窗:这段时间内的发送启用 submitToTerminal 的写后回显验证。
 /// 稳态终端不验证——占用检查、attention 识别与 abortIf 复核已经覆盖,逐条轮询屏幕只会
 /// 拖慢每次发送。
@@ -2582,7 +2609,12 @@ export function ChatWindow() {
     setSoftPromptNotice(false);
     setNeedsTakeover(false);
     try {
-      if (partialImageDraftsRef.current.has(sessionId)) {
+      // 上次发图失败的残图:能识别 composer 的 agent 在发送前自动清掉再继续(用户要求:
+      // 别拦着让人去终端手动清);识别不了的才退回拦截。清理要写终端,放在占用检查之后。
+      const partialDraft = partialImageDraftsRef.current.has(sessionId);
+      const autoClear = partialDraft && chatUi?.draft_stash && chatUi.clipboard_image_paste
+        ? { stash: chatUi.draft_stash, marker: chatUi.clipboard_image_paste } : null;
+      if (partialDraft && !autoClear) {
         setSendError(t.chat.imagePasteUnconfirmed);
         return false;
       }
@@ -2599,6 +2631,14 @@ export function ChatWindow() {
       }
       if (!await ensureWritableTerminal() || !isCurrentOperation()) return false;
       if (interactionBlockedRef.current) { setSendError(t.chat.terminalNeedsAttention); return false; }
+      if (autoClear) {
+        if (!await clearPartialImageDraft(sessionId, autoClear.stash, autoClear.marker) || !isCurrentOperation()) {
+          if (isCurrentOperation()) setSendError(t.chat.imagePasteUnconfirmed);
+          return false;
+        }
+        partialImageDraftsRef.current.delete(sessionId);
+        setImageDraftBlocked(false);
+      }
       return await body();
     } catch (error) {
       // 切走后再报错会把错误横幅挂到别的会话上;只对仍在看的发起会话落错。

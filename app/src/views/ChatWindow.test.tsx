@@ -159,6 +159,36 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(506).filter((text) => text === "\x16")).toHaveLength(1);
   });
 
+  it("上次发图残留的占位符，重发时自动 Ctrl-U 清掉再重贴，不再拦截", async () => {
+    const base = setup(510);
+    let pastes = 0;
+    let cleared = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\x16") pastes += 1;
+      if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
+      // 第一次贴图「没认出来」(占位符不进增量流)，第二次正常落出。
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(510, pastes >= 2 ? "[Image #1]" : ""));
+      // 空 composer 显示的是灰色提示语而不是空行（2.1.303 实拍）。
+      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-510");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText(zh.chat.imagePasteUnconfirmed, {}, { timeout: 4000 });
+    expect(writes(510)).not.toContain("\r");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(510)).toContain("\r"), { timeout: 4000 });
+    const sent = writes(510);
+    expect(sent.indexOf("\x15")).toBeLessThan(sent.lastIndexOf("\x16"));
+    expect(sent.filter((text) => text === "\x16")).toHaveLength(2);
+    expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+  });
+
   // claude 运行中贴图走增量重绘，占位符里的空格被光标定位跳过（2.1.303 实测原始流）。
   it("占位符空格被光标定位跳过时仍认作贴图成功并提交", async () => {
     const base = setup(509);
