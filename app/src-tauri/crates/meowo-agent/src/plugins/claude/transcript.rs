@@ -320,6 +320,13 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
     let content = v.pointer("/message/content");
     match kind {
         "user" => {
+            // 压缩后 CC 把整段摘要以 user 行写回（`isCompactSummary`，2.1.301 实测为纯字符串
+            // 正文「This session is being continued…」），它是喂模型的上下文、不是用户说的话。
+            // 不丢的话对话页在「上下文已压缩」分隔条下紧跟一大块用户气泡（用户实拍反馈）；
+            // CC 自己的终端也只显示分隔提示、不展开摘要。分隔条由 compact_boundary 行提供。
+            if v.get("isCompactSummary").and_then(|x| x.as_bool()) == Some(true) {
+                return Vec::new();
+            }
             if let Some(text) = content
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.trim().is_empty())
@@ -1773,6 +1780,17 @@ mod tests {
             Vec::<crate::AgentMode>::new(),
             "只采信 Claude transcript 的顶层权威字段"
         );
+    }
+
+    #[test]
+    fn chat_parser_drops_compact_summary_but_keeps_boundary() {
+        let summary = r#"{"type":"user","uuid":"s1","isVisibleInTranscriptOnly":true,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."}}"#;
+        assert!(parse_transcript_events(summary).is_empty());
+        let boundary = r#"{"type":"system","subtype":"compact_boundary","uuid":"b1"}"#;
+        assert!(matches!(
+            parse_transcript_events(boundary).as_slice(),
+            [TranscriptEvent::Metadata { kind, .. }] if kind == "compact"
+        ));
     }
 
     #[test]
