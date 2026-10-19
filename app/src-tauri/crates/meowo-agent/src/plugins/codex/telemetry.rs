@@ -173,6 +173,7 @@ fn completed_item_events(
                     text: detail,
                     is_error: item.get("status").and_then(|v| v.as_str()) == Some("failed"),
                     subagent: None,
+                    patch: None,
                 },
             ]
         }
@@ -276,6 +277,7 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
             vec![TranscriptEvent::ToolResult {
                 // codex 没有子任务概念（见 mod.rs 的 subagents 说明）。
                 subagent: None,
+                patch: None,
                 id: chat_id("result", line),
                 timestamp,
                 tool_call_id: payload

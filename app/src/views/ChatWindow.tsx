@@ -31,7 +31,10 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { ChatTitleMenu, ChatTodoMenu, type TodoPanelRow } from "./chat/TitleMenus";
 import { QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
-import { Transcript } from "./chat/Transcript";
+import { Transcript, type TranscriptAgent } from "./chat/Transcript";
+import { ChatCwdContext } from "./chat/ToolActivity";
+import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
+import { fmtElapsed, parseCliStatus, type CliStatus } from "./chat/cliStatus";
 import { ChatSidebar } from "./ChatSidebar";
 import { ChevronDownIcon } from "./sticker/icons";
 import { useStarred } from "./sticker/helpers";
@@ -426,6 +429,73 @@ function SnakeSpinner() {
     return () => window.clearInterval(timer);
   }, []);
   return <i className="chat-running-snake" aria-hidden="true">{SNAKE_FRAMES[frame]}</i>;
+}
+
+/// 屏幕上解析到的 CLI 状态行，带解析时刻。放在 ref 式小仓库里而不是 ChatWindow 的
+/// state：状态行每秒刷新（计时在跳），进 state 会让这个五千行的组件每秒整体重渲染。
+type CliStatusSnap = CliStatus & { at: number };
+function useCliStatusStore() {
+  return useMemo(() => {
+    let snap: CliStatusSnap | null = null;
+    const listeners = new Set<() => void>();
+    return {
+      get: () => snap,
+      set: (next: CliStatus | null) => {
+        snap = next && { ...next, at: Date.now() };
+        listeners.forEach((listener) => listener());
+      },
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+    };
+  }, []);
+}
+type CliStatusStore = ReturnType<typeof useCliStatusStore>;
+/// 屏幕解析结果的保鲜期：运行中状态行每秒重画，超过这个时长没再认到 = 屏幕上已经
+/// 没有它（回合刚结束/刚换回合），不能拿上一轮的旧耗时冒充当前。
+const CLI_STATUS_FRESH_MS = 3000;
+
+/// 运行条（2026-10 用户要求「内容改成终端这样的」）：首行照搬 CLI 状态行的动词与统计
+/// （`Composing… (41s · ↓ 427 tokens · thought for 4s)`），读不到屏幕（外部终端会话/
+/// 非 claude）时退回「正在运行… (本地计时)」；次行是 hook 报的最近命令，`⎿` 起头，
+/// 对应终端里状态行下方那一行。spinner 仍是贪吃蛇（用户指定形态，只改内容不改字符）。
+function RunningBar({ store, turnStartedAt, fallbackVerb, activity }: {
+  store: CliStatusStore;
+  turnStartedAt: number | null;
+  fallbackVerb: string;
+  activity: { text: string; tip: string | undefined } | null;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((value) => value + 1);
+    const unsubscribe = store.subscribe(bump);
+    // 本地计时与保鲜判定都要按秒推进，即便屏幕没有新输出。
+    const timer = window.setInterval(bump, 1000);
+    return () => { unsubscribe(); window.clearInterval(timer); };
+  }, [store]);
+  const now = Date.now();
+  const snap = store.get();
+  const fresh = snap && now - snap.at < CLI_STATUS_FRESH_MS ? snap : null;
+  const verb = fresh?.verb ?? fallbackVerb;
+  const detail = fresh ? fresh.detail : turnStartedAt !== null ? fmtElapsed(now - turnStartedAt) : null;
+  return (
+    <div className="chat-running" role="status">
+      <div className="chat-running-line">
+        <SnakeSpinner />
+        <span className="chat-running-verb">{verb}</span>
+        {/* 统计每秒都在变：不进读屏播报，否则活区每秒念一遍。 */}
+        {detail && <span className="chat-running-detail" aria-hidden="true">({detail})</span>}
+      </div>
+      {activity && (
+        <div className="chat-running-sub">
+          <span className="chat-running-elbow" aria-hidden="true">⎿</span>
+          {/* 长命令截断成单行，全文进 data-tip（见 runningActivityView）。 */}
+          <span className="chat-running-activity" data-tip={activity.tip}>{activity.text}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 
@@ -905,8 +975,22 @@ export function ChatWindow() {
   const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, undefined, history?.screenState);
   const toneRef = useRef(tone);
   toneRef.current = tone;
-  // 运行条活动展示：哨兵/空值/普通命令三分支统一收口（见 runningActivityView）。
-  const runningActivity = runningActivityView(history?.currentActivity, t.chat.compacting, t.chat.running);
+  // 运行条：压缩中的哨兵顶替首行动词；真实命令才进次行（空值/哨兵不占次行）。
+  const compactingNow = history?.currentActivity === COMPACTING_ACTIVITY;
+  const runningActivity = history?.currentActivity && !compactingNow
+    ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running)
+    : null;
+  const cliStatusStore = useCliStatusStore();
+  // 换会话清掉上一个会话的状态行，别让它在新会话的运行条上活 3 秒。
+  useEffect(() => cliStatusStore.set(null), [sessionId, cliStatusStore]);
+  // 状态行正则由插件声明（ChatUi.status_line_pattern）；没声明的 agent 不解析，运行条走本地计时。
+  const statusLinePatternRef = useRef<string | null>(null);
+  const handleScreen = useCallback((text: string) => {
+    const pattern = statusLinePatternRef.current;
+    if (!pattern) return;
+    const status = parseCliStatus(text, pattern);
+    if (status) cliStatusStore.set(status);
+  }, [cliStatusStore]);
   // claude 新版任务列表(TaskCreate/TaskUpdate)从时间线累积重建:CC 对这类 harness
   // 内部工具**不触发 PostToolUse hook**(实测:reporter 手喂事件能落库,真调用不触发),
   // hook 快照/增量两条路都收不到,transcript 是唯一来源。编号在 TaskCreate 回执文本
@@ -1368,6 +1452,8 @@ export function ChatWindow() {
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
+  // 运行条状态行解析读它（handleScreen 在上方声明，ref 在此处 chatUi 就位后同步）。
+  statusLinePatternRef.current = chatUi?.status_line_pattern ?? null;
   const [capabilityOffset, setCapabilityOffset] = useState(0);
   const provider = history?.provider;
   const cwd = history?.cwd ?? null;
@@ -1760,6 +1846,32 @@ export function ChatWindow() {
   const currentAgentDescriptor = provider
     ? agentsForOptions?.find((agent) => agent.id === provider) ?? null
     : null;
+  // 回合头署名。useMemo 保引用稳定:Transcript 是 memo 组件,每次渲染换新对象会让它白 memo。
+  const agentDisplayName = currentAgentDescriptor?.display_name ?? provider ?? null;
+  const transcriptAgent = useMemo<TranscriptAgent | null>(
+    () => (provider && agentDisplayName ? { provider, name: agentDisplayName, model: history?.model || null } : null),
+    [provider, agentDisplayName, history?.model],
+  );
+  // 空会话欢迎面板的事实条与起手入口。git 摘要是改动面板已在拉的同一份，不额外查询。
+  const welcomeInfo: WelcomeInfo | null = transcriptAgent && {
+    provider: transcriptAgent.provider,
+    name: transcriptAgent.name,
+    version: chatUi?.version ?? null,
+    model: transcriptAgent.model,
+    branch: gitSummary?.isRepo ? gitSummary.branch : null,
+    changes: gitSummary?.isRepo ? gitSummary.files.length : 0,
+  };
+  const welcomeCommands = (chatUi?.slash_commands ?? []).map((command) => command.name);
+  const pickStarter = (text: string) => {
+    setPrompt(text);
+    // 预填后光标放到末尾:斜杠命令接着打参数,@ 接着触发文件补全。
+    requestAnimationFrame(() => {
+      const input = promptInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(text.length, text.length);
+    });
+  };
   // switch_session_provider 会 spawn 宿主进程,是 /rpc 拒绝项——远程直接不给切换引擎分组,
   // 免得用户走完不可逆确认后收一句 404。
   const switchTargets = !remoteUi() && currentAgentDescriptor?.supports_chat_export
@@ -1810,6 +1922,21 @@ export function ChatWindow() {
     out.push({ type: "meta", id: "handoff-current", timestamp: null, kind: `handoff:${nameOf(provider ?? "")}` });
     return [...out, ...displayItems];
   }, [prefixSegments, displayItems, agentsForOptions, provider]);
+  // 运行条本地计时的起点（读不到屏幕状态行时用）：本轮 = 最后一条用户消息起；
+  // transcript 还没落这条（或不带时间戳）时退回「GUI 看到它开跑」的时刻。
+  const lastUserAt = useMemo(() => {
+    for (let index = timelineItems.length - 1; index >= 0; index -= 1) {
+      const item = timelineItems[index];
+      if (item.type !== "user_text") continue;
+      const at = Date.parse(item.timestamp ?? "");
+      return Number.isNaN(at) ? null : at;
+    }
+    return null;
+  }, [timelineItems]);
+  const runningSinceRef = useRef<number | null>(null);
+  if (tone !== "running") runningSinceRef.current = null;
+  else runningSinceRef.current ??= Date.now();
+  const turnStartedAt = tone === "running" ? lastUserAt ?? runningSinceRef.current : null;
   // 未读计数的口径：只数真实内容项。handoff 分隔条是 meta 行（结构标记，不是消息），
   // 混进 length 快照/差值会让「回到最新」徽章虚高 1。
   const timelineContentCount = useMemo(
@@ -3930,6 +4057,8 @@ export function ChatWindow() {
       {/* 两个视图都留在树上、用 CSS 切换可见性：此前三元表达式会在每次切 tab 时
           dispose + new Terminal()，还要把整个 backlog 重传并让 xterm 重放一遍 ANSI。
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
+      {/* 工具行里落在会话目录下的路径显示成相对路径（见 ToolActivity 的 relativize）。 */}
+      <ChatCwdContext.Provider value={cwd ?? null}>
       <main className="chat-scroll" ref={scrollRef} onScroll={onScroll} hidden={view !== "chat"}>
         {/* 同步失败降级：已有内容时只挂顶部细横幅继续渲染缓存的对话——轮询周期性地发，
             一次瞬时 IPC 抖动就整屏换错误行，比不提示更吓人。整屏错误只留给「一条都没有」。
@@ -3950,7 +4079,7 @@ export function ChatWindow() {
             /* 不提供结构化 transcript 的 agent：hook 落库的最近往来仍然是真实数据，先渲染它，
                「暂未提供结构化对话记录」降为其下的注脚——有什么就展示什么，而不是只报没有。 */
             provisional.length > 0
-              ? <><Transcript sessionId={sessionId} items={provisional} /><div className="chat-empty is-note">{t.chat.unsupported}</div></>
+              ? <><Transcript sessionId={sessionId} items={provisional} agent={transcriptAgent} /><div className="chat-empty is-note">{t.chat.unsupported}</div></>
               : <div className="chat-empty">{t.chat.unsupported}</div>
           )
           /* 空列表分两种事实：会话已在跑（transcript 尚未落第一条/尚未定位到）≠ 真的没有记录。
@@ -3959,7 +4088,7 @@ export function ChatWindow() {
              接续会话只看 timelineItems：当前段还没落字时，前序段历史已经撑起时间线。 */
           : timelineItems.length === 0 ? (
             provisional.length > 0
-              ? <Transcript sessionId={sessionId} items={provisional} />
+              ? <Transcript sessionId={sessionId} items={provisional} agent={transcriptAgent} />
               /* 负数临时 id = 新会话认领前，CLI 正在冷启动：此时说「没有记录」是谎报。 */
               : <div className="chat-empty">{sessionId < 0
                   ? <div>
@@ -3976,7 +4105,9 @@ export function ChatWindow() {
                         <div className="chat-remote-hint">{t.chat.startingOnDesktop}</div>
                       )}
                     </div>
-                  : tone === "running" ? t.chat.emptyWorking : t.chat.empty}</div>
+                  : tone === "running" ? t.chat.emptyWorking
+                  : welcomeInfo ? <WelcomePanel info={welcomeInfo} commands={welcomeCommands} mention={chatUi?.attachment_mention ?? false} onPick={pickStarter} />
+                  : t.chat.empty}</div>
           )
           : <>
             {hasEarlier && (
@@ -3993,7 +4124,7 @@ export function ChatWindow() {
             {showHandoffNote && !hasEarlier && (
               <div className="chat-empty is-note">{t.chat.handoffContinued}</div>
             )}
-            <Transcript sessionId={sessionId} items={timelineItems} />
+            <Transcript sessionId={sessionId} items={timelineItems} agent={transcriptAgent} />
             {/* 上翻后回到底部的悬浮出口：sticky 钉在滚动视口底缘，贴底时不渲染。
                 附带未读计数——用户据此判断「值不值得现在跳下去」。 */}
             {!atBottom && (
@@ -4007,18 +4138,17 @@ export function ChatWindow() {
             而不是插进消息流里——否则每改一次待办就多一条历史。 */}
         {!loading && todos.length > 0 && <TodoPanel todos={todos} />}
       </main>
+      </ChatCwdContext.Provider>
       {/* Agent 正在跑但 transcript 半天不落新行时，页面此前毫无动静，像卡死。
           运行条原在滚动流内、Transcript 之后——上翻历史就随内容滚出视口。移到 main 与
           compose 之间常驻:滚到哪里都看得见,有具体活动（最近命令）就显示出来。 */}
       {view === "chat" && !loading && tone === "running" && (
-        <div className="chat-running" role="status">
-          {/* 长命令被 CSS 截断成单行，全文进 data-tip。展示文本剥掉 cd 前缀
-              （见 trimActivityCdPrefix）；压缩期间哨兵映射成 t.chat.compacting，
-              原值不上屏也不进 tooltip（见 runningActivityView）。 */}
-          <SnakeSpinner /><span data-tip={runningActivity.tip}>
-            {runningActivity.text}
-          </span>
-        </div>
+        <RunningBar
+          store={cliStatusStore}
+          turnStartedAt={turnStartedAt}
+          fallbackVerb={compactingNow ? t.chat.compacting : t.chat.running}
+          activity={runningActivity}
+        />
       )}
       {/* 排队回执:运行中发出的插话被 CLI 排队到回合结束,期间 transcript 不显示——
           没有这条回执,消息在 GUI 上像消失了。中断键有声明时给「立即插话」出口;
@@ -4379,7 +4509,9 @@ export function ChatWindow() {
             expectMenu={menuWatching}
             grammar={attentionGrammar}
             newlineInput={chatUi?.newline_input ?? null}
+            imagePasteInput={chatUi?.clipboard_paste_input ?? "\x16"}
             onAttention={revealTerminalAttention}
+            onScreen={handleScreen}
             rearmRef={terminalRearmRef}
             gridRef={terminalGridRef}
             // T-14：外部视图在线初值（快照回报）；实时增删走 pty-external-viewers 事件。

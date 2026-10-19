@@ -247,6 +247,7 @@ pub trait AgentPlugin: Sync {
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
             clipboard_paste_input: self.clipboard_paste_input(ctx.version),
+            status_line_pattern: self.status_line_pattern(),
             draft_stash: self.draft_stash(),
             version: ctx.version.map(str::to_string),
         }
@@ -268,6 +269,12 @@ pub trait AgentPlugin: Sync {
     /// 发 Ctrl-V 会被 composer 整个无视（真机探针 tests/probe_clipboard_image.rs）。
     fn clipboard_paste_input(&self, _version: Option<&str>) -> Option<&'static str> {
         Some("\x16")
+    }
+
+    /// 终端界面运行中状态行的匹配正则（见 [`ChatUi::status_line_pattern`]）。默认不声明：
+    /// 没取证过的 CLI 不猜它的状态行长什么样。
+    fn status_line_pattern(&self) -> Option<&'static str> {
+        None
     }
 
     /// 附件是否可用该 CLI 的 `@路径` 提及注入。

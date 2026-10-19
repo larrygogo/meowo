@@ -459,6 +459,20 @@ impl AgentPlugin for Claude {
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
         version.map(|_| r"\[Image #\d")
     }
+    /// claude 在 Windows（含 WSL）上的贴图键是 **Alt+V**：2.1.301~303 二进制里都是
+    /// `Le=windows||wsl?"alt+v":"ctrl+v"`（Ctrl+V 会被 Windows Terminal 自己的粘贴吃掉）。
+    /// pywinpty 真机实测 2.1.303：`\x16` 8s 零反应；`\x1bv` 67ms 出 `Pasting…`、554ms
+    /// 落出 `[Image #1]`。此前发 Ctrl-V 一直靠指令文本静默兜底，0.6.11 改为部分粘贴即
+    /// 阻断后,Windows 上对话窗发图 100% 报「图片附加未完成」（用户实拍）。
+    fn clipboard_paste_input(&self, _version: Option<&str>) -> Option<&'static str> {
+        Some(if cfg!(windows) { "\x1bv" } else { "\x16" })
+    }
+    /// 输入框上方的运行中状态行：`✻ Composing… (41s · ↓ 427 tokens · thought for 4s)`
+    /// （2.1.303 实拍）。行首是闪烁 spinner 字形之一，动词 1~3 个词以「…」收尾；括号统计
+    /// 刚开跑时没有，有则以耗时数字开头——挡掉正文里恰好以 spinner 字形起头的普通行。
+    fn status_line_pattern(&self) -> Option<&'static str> {
+        Some(r"^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$")
+    }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
     fn model_select_command(&self) -> Option<&'static str> {
@@ -696,6 +710,23 @@ mod tests {
     fn terminal_title_capabilities_cover_slash_command_sessions() {
         assert!(Claude.sets_terminal_tab_title());
         assert!(Claude.writes_tab_token());
+    }
+
+    /// 对话页运行条照搬状态行的前提:claude 声明了整行锚定的状态行正则。匹配行为
+    /// 由前端 cliStatus.test.ts 用同一串正则测(本 crate 不依赖 regex)。
+    #[test]
+    fn declares_anchored_status_line_pattern() {
+        let pattern = Claude.status_line_pattern().expect("claude 应声明状态行正则");
+        assert!(pattern.starts_with('^') && pattern.ends_with('$'));
+        assert!(pattern.contains('…'));
+    }
+
+    /// 回归钉:Windows 上发 Ctrl-V claude 零反应,对话窗发图必报「图片附加未完成」。
+    #[test]
+    fn clipboard_paste_input_is_alt_v_on_windows() {
+        let expected = if cfg!(windows) { "\x1bv" } else { "\x16" };
+        assert_eq!(Claude.clipboard_paste_input(None), Some(expected));
+        assert_eq!(Claude.clipboard_paste_input(Some("2.1.303")), Some(expected));
     }
 
     fn probe_in(home: &std::path::Path) -> Option<crate::Installation> {

@@ -1,6 +1,14 @@
 import { type ChatItem } from "../../api";
 import type { Dict } from "../../i18n/zh";
 
+/// 去掉终端转义序列：CSI（颜色/光标，`ESC[2m`）、OSC（标题/超链接，BEL 或 ST 收尾）
+/// 与单字符 ESC 序列。命令回执原样带着 bun/vitest 的着色码，塞进 <pre> 里 ESC 显示成
+/// 「□[2m」乱码（2026-10 用户实拍）。只剥不渲染：回执是看结果，不是重现终端配色。
+const ANSI_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g;
+export function stripAnsi(text: string): string {
+  return text.includes("\x1b") ? text.replace(ANSI_RE, "") : text;
+}
+
 export type ToolUseItem = Extract<ChatItem, { type: "tool_use" }>;
 export type ToolResultItem = Extract<ChatItem, { type: "tool_result" }>;
 

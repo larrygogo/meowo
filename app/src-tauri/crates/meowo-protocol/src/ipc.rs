@@ -31,6 +31,17 @@ pub struct SubagentRef {
     pub count: u32,
 }
 
+/// 编辑类工具回执里的一段统一 diff（claude 的 `toolUseResult.structuredPatch` 原样搬运）。
+/// `lines` 每行首字符是 ` `/`-`/`+`；起始行号让对话页像终端一样标真实行号。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct DiffHunk {
+    pub old_start: u32,
+    pub new_start: u32,
+    pub lines: Vec<String>,
+}
+
 /// 一次委派的结局统计。挂在**主链的工具结果**上，于是折叠状态下就能显示进度——
 /// 不必先展开（展开要读侧车流，那是按需 I/O）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +219,10 @@ pub enum ChatItem {
         /// `tool_use_id` 配到对应的委派上，于是折叠状态下也能显示状态。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subagent: Option<SubagentOutcome>,
+        /// 编辑类工具的统一 diff（带真实行号与上下文）；插件拿不到时为 None，
+        /// 前端退回按 ToolDetail 的旧段/新段两块展示。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        patch: Option<Vec<DiffHunk>>,
     },
     Meta {
         id: String,
@@ -761,6 +776,7 @@ mod tests {
             text: "ok".into(),
             is_error: false,
             subagent: None,
+            patch: None,
         };
         let value = serde_json::to_value(item).unwrap();
         assert_eq!(value["type"], "tool_result");

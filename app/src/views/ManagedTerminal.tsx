@@ -301,7 +301,12 @@ type ManagedTerminalProps = {
   /// Ctrl/Shift+Enter「插入换行」的注入序列,插件声明经 chatUi 下发(claude 为 ESC+CR)。
   /// 缺省/null = 该 agent 未声明,带修饰的 Enter 保持终端原生语义(与裸 Enter 同码)。
   newlineInput?: string | null;
+  /// 剪贴板是位图时让 TUI 自己读剪贴板的贴图键,插件声明经 chatUi 下发。Windows 上
+  /// claude/kimi 是 Alt+V(`\x1bv`),发 Ctrl-V 零反应(pywinpty 实测 claude 2.1.303)。
+  imagePasteInput?: string;
   onAttention?: (attention: TerminalAttention | null) => void;
+  /// 每次屏幕扫描的整屏可见文本（对话页运行条据此照搬 CLI 的状态行，见 cliStatus.ts）。
+  onScreen?: (text: string) => void;
   /// 供父组件在自己重启 PTY 后触发偏移复位（对话页发送/切模式也会重启 PTY，
   /// 不止组件内部的 start/takeover 按钮）。
   rearmRef?: MutableRefObject<(() => void) | null>;
@@ -321,7 +326,7 @@ type ManagedTerminalProps = {
   onExternalViewers?: (online: boolean) => void;
 };
 
-export function ManagedTerminal({ sessionId, status, reviewPending = false, background = false, onBackgroundInput, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, newlineInput = null, onAttention, rearmRef: externalRearmRef, gridRef: externalGridRef, resumeOptions, takeoverExtra, cwd = null, onExternalViewers }: ManagedTerminalProps) {
+export function ManagedTerminal({ sessionId, status, reviewPending = false, background = false, onBackgroundInput, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, newlineInput = null, imagePasteInput = "\x16", onAttention, onScreen, rearmRef: externalRearmRef, gridRef: externalGridRef, resumeOptions, takeoverExtra, cwd = null, onExternalViewers }: ManagedTerminalProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -540,7 +545,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
   const expectMenuRef = useRef(expectMenu);
   const grammarRef = useRef(grammar);
   const newlineInputRef = useRef(newlineInput);
+  const imagePasteInputRef = useRef(imagePasteInput);
   const onAttentionRef = useRef(onAttention);
+  const onScreenRef = useRef(onScreen);
   const onExternalViewersRef = useRef(onExternalViewers);
   const visibleRef = useRef(visible);
   const cwdRef = useRef(cwd);
@@ -566,7 +573,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
   expectMenuRef.current = expectMenu;
   grammarRef.current = grammar;
   newlineInputRef.current = newlineInput;
+  imagePasteInputRef.current = imagePasteInput;
   onAttentionRef.current = onAttention;
+  onScreenRef.current = onScreen;
   onExternalViewersRef.current = onExternalViewers;
   visibleRef.current = visible;
   cwdRef.current = cwd;
@@ -794,7 +803,8 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     });
     // 上面的放行有个盲区：剪贴板是**图片**时 paste 事件没有文本数据，xterm 的 paste 监听
     // 不产生任何输入，^V 也早被拦下——claude 的原生贴图（^V 让 TUI 自己读系统剪贴板出
-    // [Image #N]）在终端页整条断掉。兜底：无文本而有文件（位图）的 paste，补发 ^V 给 CLI。
+    // [Image #N]）在终端页整条断掉。兜底：无文本而有文件（位图）的 paste，补发插件声明的
+    // 贴图键（imagePasteInput；Windows 上 claude/kimi 是 Alt+V）给 CLI。
     // 文本存在时不动——bracketed paste 的既有通路优先。
     const pasteImageFallback = (event: ClipboardEvent) => {
       const data = event.clipboardData;
@@ -805,7 +815,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       const hasImage = Array.from(data.files).some((file) => file.type.startsWith("image/"));
       if (!hasImage && data.getData("text")) return;
       event.preventDefault();
-      void writeManagedTerminal(sessionIdRef.current, "\x16").catch((e) => setError(formatBackendError(e, t.locale)));
+      void writeManagedTerminal(sessionIdRef.current, imagePasteInputRef.current).catch((e) => setError(formatBackendError(e, t.locale)));
     };
     host.addEventListener("paste", pasteImageFallback);
     // 右键 = 应用内菜单（U0-11：复制/粘贴/全选/搜索，复用上面的选区剪贴板逻辑与
@@ -1120,7 +1130,10 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     // 匹配到新提示时复位。
     let clearPublished = false;
     const reportAttention = (text: string) => {
-      if (text) lastScreenRef.current = text;
+      if (text) {
+        lastScreenRef.current = text;
+        onScreenRef.current?.(text);
+      }
       const attention = terminalAttention(
         text,
         attentionMarkersRef.current,
@@ -1840,7 +1853,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
               } else {
                 // 剪贴板没有文本（典型：截图位图）：回退发 ^V 让 TUI 自己读系统剪贴板
                 // （claude 的 [Image #N] 贴图），与键盘路径 pasteImageFallback 同语义。
-                void writeManagedTerminal(sessionIdRef.current, "\x16").catch((e) => setError(formatBackendError(e, t.locale)));
+                void writeManagedTerminal(sessionIdRef.current, imagePasteInputRef.current).catch((e) => setError(formatBackendError(e, t.locale)));
               }
               terminal.focus();
             }).catch((e) => setError(formatBackendError(e, t.locale))); // 读剪贴板失败必须可见，不许静默吞掉

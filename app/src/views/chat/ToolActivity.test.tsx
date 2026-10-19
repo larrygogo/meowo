@@ -43,20 +43,21 @@ describe("ToolActivity 详情", () => {
       detail: { kind: "edit", path: "x.rs", old: "let a = 1;", new: "let a = 1;\nlet b = 2;\nlet c = 3;", replace_all: true, truncated: false },
     };
     render(<ToolActivity item={item} result={{ ...done, tool_use_id: "t2" }} />);
-    expect(screen.getByText("-1 +3")).toBeTruthy();
+    // 规模写在第二行「⎿」摘要里（终端腔），不再是标题行的「-1 +3」胶囊。
+    expect(screen.getByText("新增 3 行，删除 1 行")).toBeTruthy();
     expect(document.querySelectorAll(".chat-tool-code.is-del .chat-tool-line").length).toBe(1);
     expect(document.querySelectorAll(".chat-tool-code.is-add .chat-tool-line").length).toBe(3);
     expect(screen.getByText("全部替换")).toBeTruthy();
   });
 
-  it("Bash：正在跑的调用挂载即展开，命令带 $ 记号，描述进标题行", () => {
+  it("Bash：正在跑的调用挂载即展开，命令带 $ 记号，描述进悬停提示", () => {
     const item: ToolUseItem = {
       type: "tool_use", id: "t3", timestamp: null, name: "Bash", summary: "cargo test",
       detail: { kind: "command", command: "cargo test", description: "跑测试" },
     };
     render(<ToolActivity item={item} />);
     expect(document.querySelector("details.chat-tool")?.hasAttribute("open")).toBe(true);
-    expect(screen.getByText("跑测试")).toBeTruthy();
+    expect(document.querySelector(".chat-tool-call")?.getAttribute("data-tip")).toBe("跑测试");
     expect(document.querySelector(".chat-tool-ln")?.textContent).toBe("$");
     expect(screen.getByText("正在执行，结果尚未返回…")).toBeTruthy();
   });

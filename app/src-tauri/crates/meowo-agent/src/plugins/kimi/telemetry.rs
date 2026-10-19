@@ -302,6 +302,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     tool_call_id,
                     // 子任务状态就写在这条结果里；顺手取出，折叠态才能显示进度。
                     subagent: KIMI_SUBAGENTS.detect_result(&text),
+                    patch: None,
                     text,
                     is_error: event
                         .get("isError")

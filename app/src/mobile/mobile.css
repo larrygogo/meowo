@@ -159,17 +159,6 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
      只留图标,命中面仍由上面的 ::after 外扩保证。 */
   body.remote-ui .chat-sidebar-item-menu { background: transparent; }
 
-  /* 代码块复制/语言标签桌面是悬停才显,触屏只能靠「先点一下代码块」触发粘滞 hover,
-     出来后又绝对定位压住首行代码(2026-10 手机截图:「rust 复制」盖在代码上)。
-     远程走 HTTP 时没有剪贴板 API,手动框选很难,这个钮是手机上拿代码的主要途径。
-     触屏常显,并给代码块顶部让出一行。 */
-  body.remote-ui .chat-md-pre-tools,
-  body.remote-ui .chat-md-pre-tools button {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  body.remote-ui .chat-md-pre > pre { padding-top: 34px; }
-
   /* ── 移动端字号标尺(2026-08 全量清单逐类抬升,2026-10 随桌面 Kimi 比例改版重校) ──
      桌面密度下 9–11.5px 的小字在手机上过小,而 16px 输入框(iOS 防缩放地板,降不得)
      又把周边文字压得更显迷你。整体缩放两条路已证伪(--cc-ui 只动 token 半边、zoom 破
