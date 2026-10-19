@@ -240,7 +240,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     attachment_mention: true,
     // 与后端同源:claude/kimi/codex/opencode 的 TUI 实测 Ctrl-V(kimi 是 Alt+V)读剪贴板原生附加
     // 图片,占位符各家不同;gemini 会落盘到用户工作目录,刻意不声明。
-    clipboard_image_paste: provider === "claude" || provider === "codex" ? "\\[Image #\\d"
+    clipboard_image_paste: provider === "claude" || provider === "codex" ? "\\[Image ?#\\d"
       : provider === "kimi" ? "\\[image[:# ]"
       : provider === "opencode" ? "\\[Image \\d" : null,
     // 与后端同源:粘贴键 kimi 在 Windows 上是 Alt+V(二进制里 win32 ? "alt+v" : ctrl("v")),

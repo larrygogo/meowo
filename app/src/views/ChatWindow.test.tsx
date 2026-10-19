@@ -159,6 +159,26 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(506).filter((text) => text === "\x16")).toHaveLength(1);
   });
 
+  // claude 运行中贴图走增量重绘，占位符里的空格被光标定位跳过（2.1.303 实测原始流）。
+  it("占位符空格被光标定位跳过时仍认作贴图成功并提交", async () => {
+    const base = setup(509);
+    let pasted = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\x16") pasted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(509, pasted ? "\x1b[2C\x1b[37B[Image\x1b[10G#1]\r" : ""));
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-509");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(509)).toContain("\r"));
+    expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+  });
+
   it("第一张已附加、第二张剪贴板失败时，不降级重发全部路径", async () => {
     const base = setup(507);
     let pasted = false;
