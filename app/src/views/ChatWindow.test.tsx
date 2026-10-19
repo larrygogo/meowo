@@ -43,18 +43,18 @@ import { terminalAttention } from "../terminalAttention";
 
 // 这些用例模拟真实的异步间隙与 CLI 回显，避免只验证「调用过 write」却漏掉误提交/丢草稿。
 describe("ChatWindow 适配回归", () => {
-  const history = (sessionId: number, provider = "claude", status = "waiting") => ({
-    sessionId, provider, status, title: `适配-${sessionId}`, cwd: "C:/repo", connected: true,
+  const history = (sessionId: number, provider = "claude", status = "waiting", screenState: string | null = null) => ({
+    sessionId, provider, status, screenState, title: `适配-${sessionId}`, cwd: "C:/repo", connected: true,
     supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "当前模型",
   });
   const snapshot = (sessionId: number, text = "") => ({
     sessionId, active: true, managed: true, data: b64utf8(text), startOffset: 0,
     endOffset: text.length, exited: false, exitCode: null,
   });
-  const setup = (sessionId: number, provider = "claude", status = "waiting") => {
+  const setup = (sessionId: number, provider = "claude", status = "waiting", screenState: string | null = null) => {
     window.history.replaceState({}, "", `/?sessionId=${sessionId}`);
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-      if (command === "get_chat_history") return Promise.resolve(history(Number(args?.sessionId), provider, status));
+      if (command === "get_chat_history") return Promise.resolve(history(Number(args?.sessionId), provider, status, screenState));
       if (command === "agent_chat_ui") return Promise.resolve(chatUi(provider));
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(Number(args?.sessionId)));
@@ -67,8 +67,8 @@ describe("ChatWindow 适配回归", () => {
     .filter(([command, args]) => command === "write_managed_terminal" && args.sessionId === sessionId)
     .map(([, args]) => args.data);
 
-  it.each(["codex", "gemini"])("%s 运行中发送使用 Tab 排队", async (provider) => {
-    setup(501, provider, "running");
+  it("codex 运行中发送使用 Tab 排队", async () => {
+    setup(501, "codex", "running");
     render(<ChatWindow />);
     await screen.findByText("适配-501");
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
@@ -76,6 +76,19 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(writes(501)).toContain("\t"));
     expect(writes(501)).not.toContain("\r");
+  });
+
+  // gemini 启动即落 running、首条消息前无事件纠正：屏幕已停在输入框（idle）时必须按回车
+  // 提交，按 Tab 正文会停在输入框里发不出去（0.6.11 实机）。
+  it("gemini DB 残留 running 但屏幕空闲时，发送用回车而非排队键", async () => {
+    setup(507, "gemini", "running", "idle");
+    render(<ChatWindow />);
+    await screen.findByText("适配-507");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "测试测试" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(507)).toContain("\r"));
+    expect(writes(507)).not.toContain("\t");
   });
 
   it("OpenCode 模型入口使用原生 /models，列举结果不会变成 /model id", async () => {

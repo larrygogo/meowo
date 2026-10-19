@@ -210,11 +210,12 @@ impl AgentPlugin for Gemini {
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
     }
-    /// Esc 中断当前回合(gemini CLI 的取消键即 Esc)。**约定推断**:本机 ConPTY 探针能启动
-    /// gemini,但提交 prompt 后它立即 SessionEnd 退出,抓不到「生成中·esc to cancel」那一屏;
-    /// 依据同 kimi(通行约定 + claude/codex 均 Esc)。「打断并发送」低风险(见 kimi 注释)。
+    /// 运行中排队用回车（probe_tui_script，0.64，2026-10-16）：回车与 Tab 运行中都会进
+    /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
+    /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
+    /// 消息，按回车两种状态都对。
     fn queue_input(&self) -> Option<&'static str> {
-        Some("\t")
+        Some("\r")
     }
 
     // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。
@@ -230,6 +231,7 @@ impl AgentPlugin for Gemini {
         &MODES
     }
 
+    /// Esc 中断当前回合：运行中状态行自述 `(esc to cancel, Ns)`（probe_tui_script，0.64）。
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }

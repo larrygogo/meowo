@@ -300,6 +300,12 @@ pub struct ChatHistoryDto {
     /// 或距最近事件不足宽限期）。status 是 hook 驱动的离散快照，进程死后 reaper 收尾前
     /// DB 里可能残留 running——前端展示运行态必须以此校正，否则出现「假运行中」。
     pub connected: bool,
+    /// 托管 PTY 的实时屏幕状态（"working" | "idle" | "blocked"，非托管为 None），与侧栏/看板
+    /// `LiveItem.screen_state` 同源。对话页的运行态必须同样经它校正：gemini 的 SessionStart
+    /// 就把 DB 置成 running、首个 BeforeAgent 之前没有任何事件纠正它，只看 DB 的对话页会把
+    /// 空闲会话当成「运行中」，发消息按了排队键 Tab 而非回车——正文停在输入框里发不出去
+    /// （0.6.11 实机，gemini 0.64）。
+    pub screen_state: Option<String>,
     /// 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
     /// 不做 transcript 分析的 agent（codex/kimi）恒为 false。
     pub errored: bool,

@@ -189,7 +189,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     attention_patterns: ATTENTION_PATTERNS[provider] ?? [],
     model_presets: MODEL_PRESETS[provider] ?? [],
     model_select_command: provider === "claude" ? "/model" : null,
-    queue_input: provider === "codex" || provider === "gemini" ? "\t" : "\r",
+    queue_input: provider === "codex" ? "\t" : "\r",
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
     // opencode 的命令是 /models(复数)——与后端插件声明同源。
     model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",

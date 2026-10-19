@@ -269,7 +269,7 @@ pub struct ChatUi {
     /// 中断键要按几次(分次写入,间隔由前端定)。opencode 首按只提示 "esc again to interrupt",
     /// 第二下才停;两个 Esc 合成一次写入会被当成 Alt+Esc,一下都不算(真机取证见其插件)。
     pub interrupt_presses: u8,
-    /// 运行中排队的提交键。Codex/Gemini 的 Enter 不等于排队（官方键盘文档）。
+    /// 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
     pub queue_input: Option<&'static str>,
     /// Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
     /// None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
