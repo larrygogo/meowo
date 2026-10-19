@@ -4417,6 +4417,10 @@ select.ns-input {
    纵向流式布局：头部 → 参数块 → 底部右对齐动作行；按钮全部收进动作行，
    不再与文案横向抢宽——按钮一多就挤高整卡的旧双列布局已废弃。 */
 .chat-approval-overlay { position: relative; z-index: 8; flex: 0 0 auto; height: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+/* 终端视图：提问卡两视图都渲染（用户要求），但这里没有 composer、消息列表也隐藏，DOM 上
+   overlay 排在终端面板之前，锚点落在面板顶缘——卡片向上溢出盖住标题栏还被裁掉（用户实拍）。
+   用 order 把它排到终端面板之后，锚点回到窗口底缘，卡片照旧从底部向上浮出。 */
+.chat-window.is-terminal .chat-approval-overlay { order: 1; }
 /* 卡片盖住消息列表底部是零位移的代价(可接受)——但文字不能在卡片上缘被生硬切断:
    有卡在场(is-active)时从锚点向上铺 72px 淡出渐变,滚动内容先淡没再没入卡底。
    pointer-events:none,不挡下方消息的点击与选中。 */
