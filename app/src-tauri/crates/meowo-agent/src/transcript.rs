@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// GUI 对话窗口消费的 provider 无关消息单元。终端 ANSI 只负责还原终端，结构化对话始终来自
 /// agent 自己的 transcript，避免把光标移动、spinner 和重绘误当正文。
 pub use meowo_protocol::ipc::{
-    ChatItem, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
+    ChatItem, DiffHunk, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
     ToolDetail,
 };
 
@@ -83,6 +83,8 @@ pub enum TranscriptEvent {
         is_error: bool,
         /// 该结果是子任务委派的回执时的结局统计（见 [`SubagentSpec::detect_result`]）。
         subagent: Option<SubagentOutcome>,
+        /// 编辑类工具的统一 diff（见 [`DiffHunk`]）；拿不到为 None。
+        patch: Option<Vec<DiffHunk>>,
     },
     Metadata {
         id: String,
@@ -172,6 +174,7 @@ impl From<TranscriptEvent> for ChatItem {
                 text,
                 is_error,
                 subagent,
+                patch,
             } => Self::ToolResult {
                 id,
                 timestamp,
@@ -179,6 +182,7 @@ impl From<TranscriptEvent> for ChatItem {
                 text,
                 is_error,
                 subagent,
+                patch,
             },
             TranscriptEvent::Metadata {
                 id,
@@ -1233,6 +1237,7 @@ mod tests {
                 text: "ok".into(),
                 is_error: false,
                 subagent: None,
+                patch: None,
             }),
             ChatItem::ToolResult {
                 id: "result".into(),
@@ -1241,6 +1246,7 @@ mod tests {
                 text: "ok".into(),
                 is_error: false,
                 subagent: None,
+                patch: None,
             }
         );
         assert_eq!(

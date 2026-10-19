@@ -324,6 +324,7 @@ mod tests {
                 text: long,
                 is_error: true,
                 subagent: None,
+                patch: None,
             },
         ];
         let out = render_history(&items, &meta());

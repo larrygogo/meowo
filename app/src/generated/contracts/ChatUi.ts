@@ -93,6 +93,12 @@ clipboard_image_paste: string | null,
  */
 clipboard_paste_input: string | null, 
 /**
+ * 终端界面里「运行中状态行」的匹配正则（claude 的 `✻ Composing… (41s · ↓ 427 tokens)`）：
+ * 捕获组 1 = 动词，2 = 括号统计（可缺）。对话页运行条据此照搬状态行内容；None = 不解析，
+ * 运行条退回本地计时。匹配的是对方界面文案，随版本改版会失效——规则须宁可漏认不可误认。
+ */
+status_line_pattern: string | null, 
+/**
  * 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
  * ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
  */

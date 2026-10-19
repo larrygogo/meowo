@@ -72,6 +72,20 @@
   --cc-syn-type: #e5c07b;
   --cc-syn-attr: #e06c75;
   --cc-syn-builtin: #56b6c2;
+  /* 对话页 A+B 改版：等宽栈（时间线标签/元数据/代码共用）、代码块底、用户气泡底。
+     工具类型配色不另起调色板，直接复用上面的 --cc-syn-*（深浅两套已按 4.5:1 校准）。 */
+  --cc-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "PingFang SC", "Microsoft YaHei", monospace;
+  --cc-code-bg: #161719;
+  --cc-user-bubble: #1f4a3e;
+  /* 工具时间线/命令着色的色调。深色直接取语法色；浅色在 light 块里另配低饱和的一套——
+     语法色板是给代码高亮调的，拿来给工具名整行上色，在白底上一排彩虹（用户实拍「不协调」）。 */
+  --cc-tone-blue: var(--cc-syn-func);
+  --cc-tone-purple: var(--cc-syn-keyword);
+  --cc-tone-orange: var(--cc-syn-number);
+  --cc-tone-yellow: var(--cc-syn-type);
+  --cc-tone-green: var(--cc-accent-text);
+  --cc-tone-teal: var(--cc-syn-builtin);
+  --cc-tool-verb-weight: 700;
   /* 圆角规范(对齐 Claude Code / shadcn)：容器 rounded-lg=8，控件 rounded-md=6，小 rounded-sm=4 */
   --r-lg: 8px;
   --r-md: 6px;
@@ -145,9 +159,10 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --cc-bg-rgb: 247, 247, 249;
-  --cc-surface: rgba(0, 0, 0, 0.035);
-  --cc-surface-hover: rgba(0, 0, 0, 0.065);
-  --cc-border: rgba(0, 0, 0, 0.1);
+  /* 表面叠色/描边带一点暖调（纯黑透明叠在暖底上发灰发冷，与暖白卡面不搭）。 */
+  --cc-surface: rgba(60, 45, 20, 0.045);
+  --cc-surface-hover: rgba(60, 45, 20, 0.08);
+  --cc-border: rgba(50, 38, 15, 0.12);
   /* 强调色/文字色整体比深色板压暗一档，确保小字号在近白底（及卡片叠层）上达到 WCAG AA。 */
   --cc-accent: #12a67f;
   /* hover 下沉色：与 accent 同值时主按钮 hover 零反馈。压暗到 #11a078，
@@ -155,7 +170,8 @@
   --cc-accent-dim: #11a078;
   --cc-accent-soft: rgba(18, 166, 127, 0.15);
   --cc-accent-border: rgba(18, 166, 127, 0.42);
-  --cc-accent-text: #0b7c5c;
+  /* 再压深一档：暖白底比原冷白底略暗，#0b7c5c 在代码框上掉到 4.4:1。 */
+  --cc-accent-text: #087150;
   /* 浅色 accent（#12a67f）上的文字：深绿 #06281f 对比度 5.1:1 但实拍发闷（绿底黑字
      显脏，0.5.15 用户反馈），改白字——2.9:1 换来干净观感，与同版徽标/系统惯例一致。 */
   --cc-on-accent: #ffffff;
@@ -168,11 +184,13 @@
      深色 surface（约 #ececed）后只剩 4.23:1。校准面还要再进一层——**hover 态的卡面**
      （约 #e7e7e9）才是最亮的那张底，#636c67 落在它上面只有约 4.3:1（复核指出）。
      #5e6762：hover 卡面 4.59:1、静态卡面 4.8:1、裸底 5.2:1，三档都过线。 */
-  --cc-text-faint: #5e6762;
-  --cc-warn: #946410;
+  /* 2026-10 外壳转暖（#f1f0ec）后 hover 叠层更暗，#5e6762 掉到 4.45:1；#5a625d 三档 4.78~5.5。 */
+  --cc-text-faint: #5a625d;
+  --cc-warn: #84590c;
   --cc-err: #cf4434;
-  --cc-window-bg: #f6f6f7;
-  --cc-menu-bg: #fff;
+  /* 暖灰白外壳 + 米白浮层（原 #f6f6f7 / #fff 冷而纯，久看刺眼，2026-10 用户反馈）。 */
+  --cc-window-bg: #f1f0ec;
+  --cc-menu-bg: #fdfcf9;
   /* 圆点鲜亮色：浅色下用饱和中调（亮但在近白底上仍有存在感），不取文字用的暗色。 */
   --cc-ok-vivid: #17ab77;
   --cc-warn-vivid: #d99a1a;
@@ -187,6 +205,17 @@
   --cc-syn-type: #b45309;
   --cc-syn-attr: #b91c1c;
   --cc-syn-builtin: #0e7490;
+  --cc-code-bg: #f0eee8;
+  --cc-user-bubble: #dcede4;
+  /* 浅色色调：GitHub 浅色系的中明度低饱和色，在近白卡面上都 ≥4.5:1；字重降一档，
+     粗体彩字在白底上发黑发重、和正文抢视线。 */
+  --cc-tone-blue: #0b5cad;
+  --cc-tone-purple: #7046b8;
+  --cc-tone-orange: #9a4a12;
+  --cc-tone-yellow: #8a5a00;
+  --cc-tone-green: #09704f;
+  --cc-tone-teal: #17707a;
+  --cc-tool-verb-weight: 600;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上；底部一道极淡暗边强化厚度。 */
   --card-elev: 0 1px 2px rgba(0, 0, 0, 0.09), 0 6px 16px -3px rgba(0, 0, 0, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
@@ -3686,7 +3715,7 @@ select.ns-input {
    后代都要贴卡片色混，贴外壳色会在卡里泛出脏边。
    macOS 不套卡片：红绿灯与 84px 留白按旧几何对齐，改动它需真机验证。 */
 :root:not(.platform-macos) .chat-main {
-  /* 卡片底只比外壳（#1c1c1e / #f6f6f7）抬极小一档：层次主要交给描边与阴影，
+  /* 卡片底只比外壳（#1c1c1e / #f1f0ec）抬极小一档：层次主要交给描边与阴影，
      底色差拉大会显得卡片像另一张纸（实拍反馈「色差太大」）。 */
   --chat-card-bg: #1f1f22;
   --cc-bg: var(--chat-card-bg);
@@ -3698,8 +3727,8 @@ select.ns-input {
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-main {
-  --chat-card-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  --chat-card-bg: #f8f7f3;
+  box-shadow: 0 6px 22px rgba(60, 45, 20, 0.05);
 }
 /* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 33,33,35），
    卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
@@ -3984,6 +4013,16 @@ select.ns-input {
   content-visibility: auto;
   contain-intrinsic-size: auto 60px;
 }
+/* 回合头（A+B 改版）：每轮回复前一行署名「图标 · 名称 · 模型 · 时间」，长对话里一眼找到
+   回合边界。紧随其后的过程行/思考行本靠负上边距贴住上一段话，这里归零，别压到署名上。 */
+.chat-turn-head { display: flex; align-items: center; gap: var(--sp-8); margin: 0 0 var(--sp-10); font-size: var(--fs-13); }
+.chat-turn-head + .chat-activity-group,
+.chat-turn-head + .chat-reasoning { margin-top: 0; }
+.chat-turn-mark { width: 26px; height: 26px; flex: 0 0 auto; display: grid; place-items: center; border-radius: var(--r-7); background: color-mix(in srgb, currentColor 16%, transparent); }
+.chat-turn-mark svg { width: 15px; height: 15px; }
+.chat-turn-name { color: var(--cc-text); font-weight: 700; }
+.chat-turn-model { padding: 0 var(--sp-7); border-radius: var(--r-7); background: var(--cc-surface); color: var(--cc-text-dim); font-size: var(--fs-11-5); line-height: 1.8; }
+.chat-turn-time { color: var(--cc-text-faint); font: var(--fs-11-5) var(--cc-mono); }
 .chat-message { margin: 0 0 calc(26px * var(--cc-ui)); }
 /* 图片附件缩略图（见 Message.tsx 的 ImageRef）：asset 协议加载本地图，加载失败降级为下面的徽章。
    缩略图不披气泡皮——气泡是「说的话」，图片是附件；多图同排不换行（溢出横向滚动）。 */
@@ -4053,8 +4092,8 @@ select.ns-input {
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-body.is-diff-max .chat-diff-panel {
-  --cc-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  --cc-bg: #f8f7f3;
+  box-shadow: 0 6px 22px rgba(60, 45, 20, 0.05);
 }
 /* macOS 最大化时红绿灯仍在窗口左上（承载它的 .chat-bar 已隐藏），头行让位同其他 mac 头部。 */
 :root.platform-macos .chat-body.is-diff-max .chat-diff-head { padding-left: 84px; min-height: 52px; }
@@ -4071,8 +4110,8 @@ select.ns-input {
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-diff-panel {
-  --chat-card-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  --chat-card-bg: #f8f7f3;
+  box-shadow: 0 6px 22px rgba(60, 45, 20, 0.05);
 }
 /* 终端页签：.chat-window.is-terminal 在窗口作用域把整窗压成深色变量，
    但 :root[data-theme="light"] 在根上依旧命中——浅色主题的终端视图里，对话卡有
@@ -4249,6 +4288,7 @@ select.ns-input {
   line-height: 1.58;
   color: color-mix(in srgb, var(--cc-err-vivid) 55%, var(--cc-text));
 }
+/* 用户气泡用主题色深底（A+B 改版）：此前 7% 灰底与助手正文同属灰阶，长对话里分不出谁说的。 */
 .chat-message.is-user {
   width: fit-content;
   max-width: 82%;
@@ -4256,7 +4296,7 @@ select.ns-input {
   padding: var(--sp-11) calc(15px * var(--cc-ui));
   border: 0;
   border-radius: 18px 18px var(--r-5) 18px;
-  background: color-mix(in srgb, var(--cc-text) 7%, var(--cc-bg));
+  background: var(--cc-user-bubble);
 }
 /* 字号 14→15px:中文字形比拉丁密,同磅值下 14px 的中文实际比 14px 的英文更难认;
    助手正文是这个窗口里唯一需要长时间连读的内容,值得比周边控件大一档。
@@ -4273,7 +4313,7 @@ select.ns-input {
   margin-left: auto;
   padding: var(--sp-11) calc(15px * var(--cc-ui));
   border-radius: 18px 18px var(--r-5) 18px;
-  background: color-mix(in srgb, var(--cc-text) 7%, var(--cc-bg));
+  background: var(--cc-user-bubble);
 }
 /* 斜杠命令（/clear、/loop …）：transcript 里是一条 XML 包裹的用户消息，这里渲染成
    命令徽章。用户气泡的底色去掉——它不是一句话，是一次操作，视觉上该更轻。 */
@@ -4327,7 +4367,7 @@ select.ns-input {
 .chat-tool summary { min-height: calc(38px * var(--cc-ui)); padding: 0 var(--sp-11) 0 var(--sp-14); display: flex; align-items: center; gap: var(--sp-9); cursor: pointer; font-size: var(--fs-13); list-style: none; border-radius: var(--r-9); }
 .chat-tool summary::-webkit-details-marker { display: none; }
 .chat-tool-name { flex: 0 0 auto; white-space: nowrap; color: var(--cc-text-dim); font-size: var(--fs-13); font-weight: 500; }
-.chat-tool-summary { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-family: inherit; font-size: var(--fs-13); }
+.chat-tool-summary { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-dim); font-family: var(--cc-mono); font-size: var(--fs-12-5); }
 /* max-height 40vh 与 reasoning 同口径：展开一条几千行的 Bash 输出曾把页面撑到几十屏，
    收起前回不到对话。
    **刻意不设 overscroll-behavior: contain**（此前设过，用户实拍反馈后撤除）：contain 只在
@@ -4367,6 +4407,21 @@ select.ns-input {
   cursor: pointer;
 }
 .chat-empty-cta:hover { color: var(--cc-text); }
+/* 空会话欢迎面板（A+B 改版定稿）：坐在 .chat-empty 的居中网格里，自己重设字号/颜色
+   （.chat-empty 是 12px 淡字的注脚腔）。事实条用等宽 key/value，起手入口是预填输入框的胶囊。 */
+.chat-welcome { width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: var(--sp-10); color: var(--cc-text-dim); font-size: var(--fs-13); }
+.chat-welcome-mark { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 18px; background: color-mix(in srgb, currentColor 16%, transparent); color: var(--cc-text-dim); }
+.chat-welcome-mark svg { width: 28px; height: 28px; }
+.chat-welcome-title { margin-top: var(--sp-4); color: var(--cc-text); font-size: calc(24px * var(--cc-ui)); font-weight: 800; letter-spacing: -.01em; }
+.chat-welcome-sub { color: var(--cc-text-dim); font-size: calc(14px * var(--cc-ui)); }
+.chat-welcome-facts { margin-top: var(--sp-6); padding: var(--sp-7) var(--sp-14); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-4) var(--sp-18); border: 1px solid var(--cc-border); border-radius: var(--r-10); background: var(--cc-surface); color: var(--cc-text-faint); font: var(--fs-12) var(--cc-mono); }
+.chat-welcome-facts b { margin-left: var(--sp-6); color: var(--cc-text); font-weight: 500; }
+.chat-welcome-facts em { margin-left: var(--sp-6); color: var(--cc-warn); font-style: normal; }
+.chat-welcome-chips { margin-top: var(--sp-8); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-8); }
+.chat-welcome-chips button { display: inline-flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-11); border: 1px solid var(--cc-border); border-radius: var(--r-9); background: var(--cc-surface); color: var(--cc-text-dim); font: inherit; font-size: var(--fs-12-5); cursor: pointer; }
+.chat-welcome-chips button:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
+.chat-welcome-chips button.is-primary { border-color: var(--cc-accent-border); background: var(--cc-accent-soft); color: var(--cc-accent-text); }
+.chat-welcome-chips code { color: var(--cc-accent-text); font: 500 var(--fs-12) var(--cc-mono); }
 /* 会话首读骨架屏：替代全屏「正在读取」文案，占位布局接近最终消息流（左长右短的气泡
    交替），内容到达时不跳变。超 150ms 才渲染（见 ChatWindow 的 loadingShown）。 */
 .chat-skeleton { display: flex; flex-direction: column; gap: var(--sp-14); padding: var(--sp-18); }
@@ -4384,6 +4439,10 @@ select.ns-input {
    纵向流式布局：头部 → 参数块 → 底部右对齐动作行；按钮全部收进动作行，
    不再与文案横向抢宽——按钮一多就挤高整卡的旧双列布局已废弃。 */
 .chat-approval-overlay { position: relative; z-index: 8; flex: 0 0 auto; height: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+/* 终端视图：提问卡两视图都渲染（用户要求），但这里没有 composer、消息列表也隐藏，DOM 上
+   overlay 排在终端面板之前，锚点落在面板顶缘——卡片向上溢出盖住标题栏还被裁掉（用户实拍）。
+   用 order 把它排到终端面板之后，锚点回到窗口底缘，卡片照旧从底部向上浮出。 */
+.chat-window.is-terminal .chat-approval-overlay { order: 1; }
 /* 卡片盖住消息列表底部是零位移的代价(可接受)——但文字不能在卡片上缘被生硬切断:
    有卡在场(is-active)时从锚点向上铺 72px 淡出渐变,滚动内容先淡没再没入卡底。
    pointer-events:none,不挡下方消息的点击与选中。 */
@@ -4502,10 +4561,13 @@ select.ns-input {
   align-items: flex-end;
   gap: var(--sp-8);
   border: 1px solid color-mix(in srgb, var(--cc-border) 88%, transparent);
-  border-radius: 16px;
+  border-radius: 18px;
   background: color-mix(in srgb, var(--cc-bg) 96%, white 4%);
-  box-shadow: 0 14px 38px rgba(0,0,0,.10), 0 2px 8px rgba(0,0,0,.05);
+  /* 投影加深一档（A+B 改版）：输入框是浮在对话上的操作台，此前 .10 的影子在深色底上几乎看不见。
+     浅色另见下一条：同样的浓度在浅底上是一大团灰影（用户实拍「阴影太重」）。 */
+  box-shadow: 0 12px 34px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.08);
 }
+:root[data-theme="light"] .chat-compose { box-shadow: 0 6px 18px rgba(60, 45, 20, 0.07), 0 1px 3px rgba(60, 45, 20, 0.05); }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }
 /* 与图片缩略图（76×56）同高同圆角：两种附件排在一行不再一高一矮、一方一扁。
    右侧 26px 内边距给悬浮 × 留位（× 统一悬浮右上角，见下方按钮规则）。 */
@@ -4592,7 +4654,8 @@ select.ns-input {
 .chat-activity-kinds { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-activity-errors { flex: 0 0 auto; color: color-mix(in srgb, var(--cc-err) 70%, var(--cc-text)); }
 /* 组内改动行数：等宽数字、比摘要小一号，颜色与改动面板的增删记号同源。 */
-.chat-activity-delta { flex: 0 0 auto; display: inline-flex; gap: var(--sp-6); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; }
+.chat-activity-delta { flex: 0 0 auto; display: inline-flex; gap: var(--sp-6); font: var(--fs-12) var(--cc-mono); font-variant-numeric: tabular-nums; }
+.chat-activity-time { flex: 0 0 auto; color: var(--cc-text-faint); font: var(--fs-12) var(--cc-mono); }
 .chat-activity-delta .is-add { color: var(--cc-ok-vivid); }
 .chat-activity-delta .is-del { color: var(--cc-err-vivid); }
 /* chevron 紧跟文字(Claude Code 的「Ran 5 commands ›」形态),不推到行末——720px 宽的列里
@@ -4600,7 +4663,58 @@ select.ns-input {
 .chat-activity-summary .chat-tool-chevron { margin-left: 0; font-size: calc(17px * var(--cc-ui)); }
 .chat-activity-group[open] > .chat-activity-summary { border-bottom: 1px solid color-mix(in srgb, var(--cc-border) 56%, transparent); }
 .chat-activity-group[open] > .chat-activity-summary .chat-tool-chevron { transform: rotate(90deg); }
-.chat-activity-items { padding: var(--sp-5) 0 var(--sp-12); }
+.chat-activity-items { position: relative; padding: var(--sp-5) 0 var(--sp-12); }
+/* ── 展开后的步骤时间线（A+B 改版定稿：B 的卡片外壳 + A 的终端时间线）──
+   竖线串起每步的状态点（完成绿/进行中琥珀环/失败红），行首是按类型着色的等宽短码。
+   竖线与点的横坐标都按 .chat-tool 的 sp-6 外边距 + summary 内 14px 起算，点心落在线上。 */
+/* 连接线只画在相邻两步之间：从本步状态点下沿到下一步状态点上沿（下一步的点在其
+   summary 顶部 sp-6+6px 处，故 bottom 取负值伸进去）。此前整列一根竖线，单条或末条下面
+   都拖出一截（用户实拍「怪怪的」）。 */
+.chat-activity-items > .chat-tool:not(:last-child)::after { content: ""; position: absolute; left: 18px; top: calc(var(--sp-6) + 15px); bottom: calc(-1 * (var(--sp-6) + 6px) - var(--sp-1)); width: 1px; background: color-mix(in srgb, var(--cc-border) 90%, transparent); pointer-events: none; }
+.chat-activity-items > .chat-tool > summary { position: relative; padding-left: 36px; }
+.chat-activity-items > .chat-tool > summary::before { content: ""; position: absolute; left: 14px; top: calc(var(--sp-6) + 6px); width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%; background: var(--cc-ok-vivid); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc-bg) 97%, var(--cc-text) 3%); }
+/* 跑着的那步：琥珀色缺口环原地旋转（用户实拍要求「转起来」），一眼区分「在跑」与「跑完」。
+   减动效偏好下由文末的兜底通配压停，停住的缺口环仍与实心点形状不同。 */
+.chat-activity-items > .chat-tool[data-state="running"] > summary::before { border: 2px solid var(--cc-warn-vivid); border-top-color: transparent; background: color-mix(in srgb, var(--cc-bg) 97%, var(--cc-text) 3%); animation: spin .8s linear infinite; }
+.chat-activity-items > .chat-tool[data-state="error"] > summary::before { background: var(--cc-err-vivid); }
+.chat-activity-items > .chat-tool.is-error > summary { background: color-mix(in srgb, var(--cc-err) 8%, transparent); }
+/* 展开区是一块终端底色的框（用户实拍：裸文本铺开与正文混成一片「太丑」）：命令在上、
+   输出在下，中间一道虚线；输出限高内滚，长日志不把对话撑出几屏。左缘 28px：比文字起点
+   （36px）收进（用户实拍嫌空），又给 18px 处的步骤连接线留出窄边，线一路连到下一步。 */
+.chat-activity-items > .chat-tool > .chat-tool-body { margin: var(--sp-2) var(--sp-12) var(--sp-8) 28px; padding: var(--sp-9) var(--sp-12); gap: var(--sp-8); border: 1px solid color-mix(in srgb, var(--cc-border) 80%, transparent); border-radius: var(--r-10); background: var(--cc-code-bg); }
+.chat-activity-items > .chat-tool > .chat-tool-body > pre { max-height: min(320px, 40vh); overflow: auto; color: var(--cc-text-dim); font-family: var(--cc-mono); }
+.chat-activity-items > .chat-tool > .chat-tool-body > * + pre { padding-top: var(--sp-8); border-top: 1px dashed color-mix(in srgb, var(--cc-border) 90%, transparent); }
+/* 命令展开后，第二行的「输出头几行」与框里的完整输出重复，收起它（结果摘要类的单句保留）。 */
+.chat-tool[open] > summary .chat-tool-result:has(> .chat-tool-out.is-output) { display: none; }
+/* ── 工具行照搬 claude 终端（2026-10 用户要求「像终端」）──
+   首行「Update(src/a.ts)」：动词按类型着色（色相取语法高亮 token，深浅两套都校准过对比度），
+   括号与参数是等宽正文；次行「⎿ 结果摘要」铺满整行（summary 换行，第二行 flex-basis 100%）。 */
+.chat-tool > summary { flex-wrap: wrap; align-content: flex-start; row-gap: var(--sp-2); padding-top: var(--sp-6); padding-bottom: var(--sp-6); }
+/* 基准宽 0：按剩余空间收缩，chevron 恒留在首行行尾。曾是 1 1 auto——长命令按内容宽占满
+   整行，chevron 被挤成单独一行，首行与「⎿」之间空出一整行（用户实拍）。 */
+.chat-tool-call { min-width: 0; flex: 1 1 0%; display: flex; align-items: baseline; overflow: hidden; font-family: var(--cc-mono); font-size: var(--fs-12-5); }
+.chat-tool-call .chat-tool-summary { flex: 0 1 auto; color: var(--cc-text); }
+.chat-tool-verb { flex: 0 0 auto; color: var(--kind); font-weight: var(--cc-tool-verb-weight); }
+.chat-tool-paren { flex: 0 0 auto; color: var(--cc-text-faint); }
+.chat-tool-result { min-width: 0; flex: 0 0 100%; display: flex; gap: var(--sp-6); padding-left: var(--sp-6); color: var(--cc-text-faint); font: var(--fs-12)/1.55 var(--cc-mono); }
+.chat-tool-elbow { flex: 0 0 auto; }
+.chat-tool-out { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-tool-out.is-output { color: var(--cc-text-dim); }
+.chat-tool-out.is-running { color: var(--cc-warn); }
+.chat-tool-out.is-error { color: color-mix(in srgb, var(--cc-err) 75%, var(--cc-text)); }
+.chat-tool-out-more { color: var(--cc-text-faint); }
+.chat-tool-verb, .chat-tool-icon[data-kind] { --kind: var(--cc-text-dim); }
+.chat-tool-verb[data-kind="search"], .chat-tool-icon[data-kind="search"] { --kind: var(--cc-tone-purple); }
+.chat-tool-verb[data-kind="read"], .chat-tool-icon[data-kind="read"] { --kind: var(--cc-tone-blue); }
+.chat-tool-verb[data-kind="write"], .chat-tool-icon[data-kind="write"],
+.chat-tool-verb[data-kind="edit"], .chat-tool-icon[data-kind="edit"] { --kind: var(--cc-tone-yellow); }
+.chat-tool-verb[data-kind="run"], .chat-tool-icon[data-kind="run"] { --kind: var(--cc-tone-green); }
+.chat-tool-verb[data-kind="web"], .chat-tool-icon[data-kind="web"] { --kind: var(--cc-tone-teal); }
+.chat-tool-verb[data-kind="todo"], .chat-tool-icon[data-kind="todo"],
+.chat-tool-verb[data-kind="agent"], .chat-tool-icon[data-kind="agent"] { --kind: var(--cc-tone-orange); }
+.chat-tool.is-error .chat-tool-verb { --kind: color-mix(in srgb, var(--cc-err) 75%, var(--cc-text)); }
+/* 过程组摘要的行首图标跟着主类型着色，收起成一行时也能扫出「这组在改代码/在跑命令」。 */
+.chat-activity-summary .chat-tool-icon { color: var(--kind); }
 
 /* Agent 的待办清单。不进时间线（它会被整份反复改写，进流里每改一次就多一条历史），
    固定在对话末尾；折叠时仍显示进度与当前项，收起来才不等于没有。 */
@@ -4861,14 +4975,16 @@ select.ns-input {
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 50%;
-  color: var(--cc-bg);
-  background: var(--cc-text);
+  /* 主题色圆角方钮（A+B 改版）：此前黑白圆钮是全页唯一的高对比块，却和品牌色毫无关系。
+     字色走 --cc-on-accent：深色是深绿字，浅色是白字（0.5.15 用户反馈「绿底黑字显脏」）。 */
+  border-radius: var(--r-12);
+  color: var(--cc-on-accent);
+  background: var(--cc-accent);
 }
 .chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: color-mix(in srgb, var(--cc-text) 9%, var(--cc-bg)); opacity: 1; }
 /* 远程有草稿时的独立停止钮(触屏无 Ctrl+Enter,主钮此时是发送):小一号,居于主钮左侧。 */
 .chat-compose .chat-send-button.chat-stop-secondary { width: 32px; height: 32px; }
-/* 停止态：主圆钮原地变成停止键，不换位置也不换形状——回合运行中输入框是空的时，右下角
+/* 停止态：主钮原地变成停止键，不换位置也不换形状——回合运行中输入框是空的时，右下角
    这颗钮唯一合理的动作就是「停」。常态仍是发送键的实心底色（免得一个常驻按钮把 composer
    染成告警区），hover 才亮出中止红。
    红色必须是**实心 err + 白图标**：此前用 32% err 混 --cc-text，浅色主题混近黑得深红棕
@@ -4984,11 +5100,18 @@ select.ns-input {
    在文档流内、位于滚动区与 compose 之间(与审批条同一布局槽),限宽随 compose——
    滚动查看历史时它不再随内容滚出视口。 */
 /* 同 .chat-queued：有卡时上移，避开被卡片盖住的那一段（7C-3）。 */
-.chat-running { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto calc(var(--sp-8) + var(--chat-overlay-h, 0px)); flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); color: var(--cc-text-dim); font-size: var(--fs-12); }
+.chat-running { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto calc(var(--sp-8) + var(--chat-overlay-h, 0px)); flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-2); color: var(--cc-text-dim); font-size: var(--fs-12); }
+/* 两行照搬终端（2026-10 用户要求）：首行「蛇 + 动词 + (统计)」，次行「⎿ 最近命令」。
+   统计用等宽数字，每秒跳动时宽度不抖。 */
+.chat-running-line, .chat-running-sub { min-width: 0; display: flex; align-items: center; gap: var(--sp-8); }
+.chat-running-verb { flex: 0 0 auto; color: var(--cc-accent-text); font-weight: 600; }
+.chat-running-detail { min-width: 0; color: var(--cc-text-faint); font-family: var(--cc-mono); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-running-sub { padding-left: var(--sp-6); color: var(--cc-text-faint); }
+.chat-running-elbow { flex: 0 0 auto; font-family: var(--cc-mono); }
 /* 活动文本恒单行:currentActivity 是最近一条命令的原文,长命令折行会把状态条撑成一坨
    多行原始文本(且每换一条活动高度都在跳)。截断展示,全文走 title 悬停。 */
 .chat-running:has(+ .chat-queued) { margin-bottom: var(--sp-8); }
-.chat-running span { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-running-activity { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--cc-mono); }
 /* 运行指示的「贪吃蛇」（用户指定形态，kimi TUI 同款盲文蛇）：2×4 盲文格内 3 个亮点
    沿环路爬行，帧字符由 SnakeSpinner 以 120ms 轮转。比原地呼吸的圆点更「在前进」；
    reduced-motion 下组件定格首帧。 */
@@ -5095,18 +5218,21 @@ select.ns-input {
    放大标题只作用于长消息——短气泡几乎不含 h1~h6，日常短回复的观感不变。
    字重 650→600：Inter 是可变字体、拉丁能渲染真 650，中文回落雅黑没有这一档会跳到 700，
    中英混排标题里中文偏粗、英文偏细（与 7G-14 同因，那轮收了 560/590 但漏了 650）。 */
-.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5, .chat-md h6 { margin: var(--sp-24) 0 var(--sp-10); font-weight: 600; line-height: 1.4; }
-.chat-md h1 { font-size: 1.32em; }
-.chat-md h2 { font-size: 1.2em; }
-.chat-md h3 { font-size: 1.1em; }
+/* 标题拉开层级（A+B 改版）：此前 600 字重、1.1~1.3 倍，和加粗正文几乎分不开，长回复没有骨架。 */
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5, .chat-md h6 { margin: var(--sp-24) 0 var(--sp-10); color: var(--cc-text); font-weight: 700; line-height: 1.4; letter-spacing: -.01em; }
+.chat-md h1 { font-size: 1.45em; font-weight: 800; }
+.chat-md h2 { font-size: 1.27em; font-weight: 800; }
+.chat-md h3 { font-size: 1.12em; }
 .chat-md h4, .chat-md h5, .chat-md h6 { font-size: 1em; }
 .chat-md ul, .chat-md ol { margin: 0 0 var(--sp-12); padding-left: var(--sp-22); }
 .chat-md li { margin: var(--sp-5) 0; }
 .chat-md li > ul, .chat-md li > ol { margin-bottom: 0; }
 /* 行内 code 的底色压到 5%（原 8%）并收窄内边距：一段里十几个标识符时，8% 的填色块
    会把正文切成碎片，阅读节奏被反复打断。文字色不变，对比度不受影响。 */
-.chat-md :not(pre) > code { padding: var(--sp-1) var(--sp-4); border-radius: var(--r-5); background: color-mix(in srgb, var(--cc-text) 5%, transparent); font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", "PingFang SC", "Microsoft YaHei", monospace; font-size: .92em; }
-.chat-md pre { margin: 0 0 var(--sp-12); padding: var(--sp-10) var(--sp-12); overflow-x: auto; border: 1px solid var(--cc-border); border-radius: var(--r-9); background: color-mix(in srgb, var(--cc-bg) 94%, var(--cc-text) 6%); }
+/* 行内代码上主题色（A+B 改版）：路径/命令/标识符是回复里最该被扫到的词，灰底灰字埋在正文里。 */
+.chat-md :not(pre) > code { padding: var(--sp-1) var(--sp-5); border-radius: var(--r-5); background: var(--cc-accent-soft); color: var(--cc-accent-text); font-family: var(--cc-mono); font-size: .88em; }
+/* 外框/底色归 .chat-md-pre 外壳（pre 恒由 CopyablePre 包着），这里只管内边距与横滚。 */
+.chat-md pre { margin: 0; padding: var(--sp-10) var(--sp-14); overflow-x: auto; }
 .chat-md pre code { padding: 0; background: transparent; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", "PingFang SC", "Microsoft YaHei", monospace; font-size: var(--fs-12-5); line-height: 1.6; }
 /* 含框线字符的代码块（模型画的结构图）由 renderGrid 钉到字符网格：宽字符锁 2ch、
    歧义符号锁 1ch，ch 基准取自本块的等宽字体，对齐不依赖用户装了哪款 CJK 字体。
@@ -5209,24 +5335,13 @@ select.ns-input {
 /* 命令条目右侧快捷键提示：与速查表同款 kbd 形态；无快捷键的命令不渲染。 */
 .chat-switcher-keys { flex: none; padding: 1px var(--sp-5); border: 1px solid var(--cc-border); border-bottom-width: 2px; border-radius: var(--r-5); background: var(--cc-surface); color: var(--cc-text-faint); font-size: var(--fs-10-5); font-family: inherit; }
 
-/* 代码块外壳：右上角悬浮「语言角标 + 复制」，hover/focus 才显形（阅读时不抢戏）。
-   容器 pointer-events:none + 按钮默认不可点：opacity:0 的隐形按钮此前仍吃点击——
-   用户点代码块右上角会「莫名其妙复制了」。触屏（hover:none）常驻显形且可点。 */
-.chat-md-pre { position: relative; }
-.chat-md-pre-tools { position: absolute; top: var(--sp-6); right: var(--sp-8); display: flex; align-items: center; gap: var(--sp-6); opacity: 0; transition: opacity var(--dur-base); pointer-events: none; }
-.chat-md-pre-tools button { pointer-events: none; }
-.chat-md-pre:hover .chat-md-pre-tools,
-.chat-md-pre:focus-within .chat-md-pre-tools { opacity: 1; }
-.chat-md-pre:hover .chat-md-pre-tools button,
-.chat-md-pre:focus-within .chat-md-pre-tools button { pointer-events: auto; }
-@media (hover: none) {
-  .chat-md-pre-tools { opacity: 1; }
-  .chat-md-pre-tools button { pointer-events: auto; }
-}
-.chat-md-lang { color: var(--cc-text-faint); font-size: var(--fs-10); text-transform: lowercase; }
-/* 复制按钮悬浮在代码上：底色同样要不透明基座，半透明表面色会被代码文字穿透。 */
-.chat-md-pre-tools button { padding: var(--sp-2) var(--sp-8); border: 1px solid var(--cc-border); border-radius: var(--r-5); background: linear-gradient(var(--cc-surface), var(--cc-surface)), rgb(var(--cc-bg-rgb)); color: var(--cc-text-dim); font-size: var(--fs-10); cursor: pointer; }
-.chat-md-pre-tools button:hover { color: var(--cc-text); background: linear-gradient(var(--cc-surface-hover), var(--cc-surface-hover)), rgb(var(--cc-bg-rgb)); }
+/* 代码块外壳（A+B 改版）：边框/圆角/底色归外壳，顶栏常驻「语言角标 + 复制」，pre 只管代码。
+   顶栏在文档流里：此前绝对定位悬浮在右上角，触屏常显时压住首行代码（手机实拍）。 */
+.chat-md-pre { margin: 0 0 var(--sp-12); overflow: hidden; border: 1px solid var(--cc-border); border-radius: var(--r-12); background: var(--cc-code-bg); }
+.chat-md-pre-head { min-height: calc(32px * var(--cc-ui)); padding: 0 var(--sp-8) 0 var(--sp-12); display: flex; align-items: center; gap: var(--sp-8); border-bottom: 1px solid color-mix(in srgb, var(--cc-border) 70%, transparent); }
+.chat-md-lang { padding: 0 var(--sp-6); border-radius: var(--r-5); background: color-mix(in srgb, var(--cc-syn-number) 16%, transparent); color: var(--cc-syn-number); font: 700 var(--fs-10-5)/1.7 var(--cc-mono); text-transform: lowercase; }
+.chat-md-pre-head button { margin-left: auto; padding: var(--sp-2) var(--sp-9); border: 0; border-radius: var(--r-7); background: var(--cc-surface); color: var(--cc-text-dim); font-size: var(--fs-11); cursor: pointer; }
+.chat-md-pre-head button:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
 
 /* 同步中断的顶部细横幅：正文继续渲染缓存内容，只在上缘提示（整屏错误留给空列表）。
    基座同样取不透明 rgb(--cc-bg-rgb)——--cc-bg 带窗口不透明度，sticky 浮层会被穿透。 */
@@ -5473,7 +5588,9 @@ select.ns-input {
    用户实拍：终端里 Write 一行「Wrote 225 lines to …」+ 正文预览 + 「+262 lines」，
    对话页此前只有一个路径摘要。标题行加规模小标（写入 N 行 / -a +b / 于 src），
    展开是带行号的预览，只露前十几行，余下折成「还有 N 行」。 */
-.chat-tool-meta { flex: 0 0 auto; max-width: 40%; padding: 0 var(--sp-6); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cc-text) 7%, transparent); color: var(--cc-text-dim); font-size: var(--fs-11-5); line-height: 1.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+/* A+B 改版：规模小标改成行尾等宽元数据（终端日志腔），去掉胶囊底——时间线上每行一颗胶囊太花。 */
+.chat-tool-meta { flex: 0 0 auto; max-width: 40%; color: var(--cc-text-faint); font: var(--fs-11-5)/1.7 var(--cc-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.chat-tool.is-error .chat-tool-meta { color: color-mix(in srgb, var(--cc-err) 70%, var(--cc-text)); }
 .chat-tool-body { display: flex; flex-direction: column; gap: var(--sp-6); margin: 0 0 var(--sp-2); padding: var(--sp-8) var(--sp-12) var(--sp-9) calc(var(--sp-14) + 18px + var(--sp-9)); border-radius: 0 0 var(--r-9) var(--r-9); background: color-mix(in srgb, var(--cc-text) 3%, transparent); }
 /* 回执 pre 已经在 body 里：底色/圆角/左缩进都由 body 统一给，自己不再叠一层。 */
 .chat-tool-body > pre { margin: 0; padding: 0; border-radius: 0; background: none; }
@@ -5488,6 +5605,30 @@ select.ns-input {
 .chat-tool-code.is-add .chat-tool-line { background: color-mix(in srgb, var(--cc-accent) 12%, transparent); }
 .chat-tool-code.is-add .chat-tool-ln { color: var(--cc-accent-text); }
 .chat-tool-diff { display: flex; flex-direction: column; gap: var(--sp-4); }
+/* 命令着色（terminalText.tsx 的手写分词）：命令名/参数/字符串/操作符/变量各一色，
+   色相取语法高亮 token；正文用对话正文色而非纯白，命令不再像整段加粗。 */
+.chat-cmd { color: var(--cc-chat-text); }
+.chat-cmd .chat-tool-ln { color: var(--cc-accent-text); }
+.chat-cmd-name { color: var(--cc-tone-blue); font-weight: 600; }
+.chat-cmd-flag { color: var(--cc-tone-orange); }
+.chat-cmd-str { color: var(--cc-syn-string); }
+.chat-cmd-op { color: var(--cc-tone-purple); }
+.chat-cmd-env, .chat-cmd-var { color: var(--cc-tone-teal); }
+.chat-cmd-heredoc { color: var(--cc-text-dim); }
+/* 输出按行着色：diff 增删、段头、错误、警告。 */
+.chat-tool-output .is-add { color: var(--cc-ok-vivid); }
+.chat-tool-output .is-del { color: var(--cc-err-vivid); }
+.chat-tool-output .is-hunk { color: var(--cc-tone-blue); }
+.chat-tool-output .is-err { color: color-mix(in srgb, var(--cc-err) 80%, var(--cc-text)); }
+.chat-tool-output .is-warn { color: var(--cc-warn); }
+/* 统一 diff（structuredPatch）：终端同款「行号 记号 代码」，增删交错带上下文。 */
+.chat-tool-udiff .chat-tool-ln { flex-basis: 4ch; }
+.chat-tool-mark { flex: 0 0 1ch; color: var(--cc-text-faint); user-select: none; }
+.chat-tool-udiff .chat-tool-line.is-del { background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
+.chat-tool-udiff .chat-tool-line.is-del .chat-tool-mark, .chat-tool-udiff .chat-tool-line.is-del .chat-tool-ln { color: color-mix(in srgb, var(--cc-err) 75%, var(--cc-text)); }
+.chat-tool-udiff .chat-tool-line.is-add { background: color-mix(in srgb, var(--cc-accent) 14%, transparent); }
+.chat-tool-udiff .chat-tool-line.is-add .chat-tool-mark, .chat-tool-udiff .chat-tool-line.is-add .chat-tool-ln { color: var(--cc-accent-text); }
+.chat-tool-line.is-gap { color: var(--cc-text-faint); }
 .chat-tool-more { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--fs-12); cursor: pointer; }
 .chat-tool-more:hover { color: var(--cc-text); }
 .chat-tool-note { color: var(--cc-text-faint); font-size: var(--fs-10-5); }

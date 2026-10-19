@@ -1,8 +1,11 @@
-import { memo, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
+import type { DiffHunk } from "../../generated/contracts/DiffHunk";
 import type { ToolDetail } from "../../generated/contracts/ToolDetail";
+import { fmtElapsed } from "./cliStatus";
+import { CommandLines, dedent, OutputBlock } from "./terminalText";
 import { highlightLines, languageForPath } from "./highlight";
-import { type ToolResultItem, type ToolUseItem } from "./shared";
+import { stripAnsi, type ToolResultItem, type ToolUseItem } from "./shared";
 
 /// 工具名的展示词。命中不了的原样回落成工具 id——比编一个错译好，但**常见工具**
 /// 必须都译到：此前只译了 Bash/Read/Write 三家，一组活动摘要读起来是
@@ -23,6 +26,24 @@ export function friendlyToolName(name: string, t: ReturnType<typeof useT>): stri
   return name;
 }
 
+export type ToolKind = "search" | "read" | "write" | "edit" | "run" | "web" | "todo" | "agent" | "other";
+
+/// 工具的语义类别，驱动时间线上的类型标签与配色（data-kind）。判定顺序与
+/// friendlyToolName 一致：网络类先于搜索类（web_search 含 "search"）。
+export function toolKind(name: string): ToolKind {
+  const normalized = name.toLowerCase();
+  if (normalized === "bash" || normalized === "exec" || normalized.includes("shell") || normalized.includes("terminal")) return "run";
+  if (normalized.includes("web") || normalized.includes("fetch") || normalized.includes("http")) return "web";
+  if (normalized.includes("grep") || normalized.includes("glob") || normalized.includes("search")) return "search";
+  if (normalized === "read" || normalized.includes("view_image")) return "read";
+  if (normalized === "write") return "write";
+  if (normalized === "edit" || normalized.includes("patch") || normalized.includes("notebook")) return "edit";
+  if (normalized.includes("todo")) return "todo";
+  if (normalized === "task" || normalized.includes("agent")) return "agent";
+  return "other";
+}
+
+
 /// 按工具类型分图标：搜索 / 读文件 / 改文件 / 终端 / 网络 / 通用。
 /// 一组操作若全是同一个 `>_`，用户在展开列表里无法一眼区分做了什么。
 /// 全部按 1.8 描边画：放大镜曾是填充轮廓（内外两圈），与笔/文件并排时明显发粗。
@@ -38,7 +59,7 @@ export function ToolIcon({ name }: { name: string }) {
     ? "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm-9 9h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9s1.3-6.6 3.8-9z"
     : "M4 17l6-6-6-6M12 19h8";
   return (
-    <span className="chat-tool-icon">
+    <span className="chat-tool-icon" data-kind={toolKind(name)}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={path} /></svg>
     </span>
   );
@@ -109,27 +130,6 @@ export function lineDelta(detail: ToolDetail | null | undefined): { added: numbe
   return null;
 }
 
-/// 标题行右侧的一枚小标：不展开也能看出规模——「写入 225 行」「-3 +12」「于 src」。
-function detailMeta(detail: ToolDetail, t: ReturnType<typeof useT>): string | null {
-  switch (detail.kind) {
-    case "write":
-      return t.chat.toolWroteLines(detail.lines);
-    case "edit": {
-      const delta = lineDelta(detail)!;
-      return t.chat.toolEditDelta(delta.removed, delta.added);
-    }
-    case "command":
-      return detail.description;
-    case "read": {
-      const parts: string[] = [];
-      if (detail.offset != null) parts.push(t.chat.toolReadFrom(detail.offset));
-      if (detail.limit != null) parts.push(t.chat.toolReadLimit(detail.limit));
-      return parts.length ? parts.join(" · ") : null;
-    }
-    case "search":
-      return detail.path ? t.chat.toolSearchIn(detail.path) : null;
-  }
-}
 
 /// 展开后的详情正文：Write 是带行号的内容预览，Edit 是删/增两段，Bash 是 `$ 命令`。
 /// Read / Search 的信息都已在标题行（路径 + 范围/模式），没有正文。
@@ -149,40 +149,173 @@ function DetailBody({ detail }: { detail: ToolDetail }): ReactNode {
       );
     }
     case "command":
-      return <CodeLines lines={splitLines(detail.command)} lang="bash" gutter={(index) => (index === 0 ? "$" : "")} />;
+      return <CommandLines command={detail.command} />;
     case "read":
     case "search":
       return null;
   }
 }
 
+/// 会话工作目录：工具行里落在它下面的路径显示成相对路径（终端里就是这样），
+/// 绝对路径的长前缀会把真正有用的文件名挤出可视区（2026-10 用户实拍）。
+export const ChatCwdContext = createContext<string | null>(null);
+
+/// 去掉 cwd 前缀。Windows 路径大小写不敏感、正反斜杠混用，比较前统一归一化。
+export function relativize(text: string, cwd: string | null): string {
+  if (!cwd) return text;
+  const norm = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+  const base = norm(cwd).replace(/\/+$/, "");
+  if (norm(text.slice(0, base.length + 1)) === `${base}/`) return text.slice(base.length + 1);
+  // 命令以「cd <cwd> && 」起头时剥掉这段（与运行条的 trimActivityCdPrefix 同一口径）。
+  const cd = /^cd\s+("[^"]*"|'[^']*'|\S+)\s+&&\s*/.exec(text);
+  if (cd && norm(cd[1].replace(/^["']|["']$/g, "")).replace(/\/+$/, "") === base) return text.slice(cd[0].length);
+  return text;
+}
+
+/// 终端里工具调用的动词：Edit 显示成 Update、Grep/Glob 显示成 Search（claude 终端的叫法），
+/// 其余原样用工具 id。这是「代码」不是文案，不随界面语言变。
+function toolVerb(name: string, kind: ToolKind): string {
+  if (kind === "edit") return "Update";
+  if (kind === "search") return "Search";
+  return name;
+}
+
+/// 回执正文的非空行（先剥终端着色码）。
+function outputLines(text: string): string[] {
+  return stripAnsi(text).split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
+}
+
+/// 运行中的那条每秒重渲染一次，第二行的计时才会走。跑完即停。
+function useSecondTick(active: boolean) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+}
+
+/// 统一 diff（claude 回执的 structuredPatch）：终端同款「行号 + -/+ + 代码」，增删交错、
+/// 带上下文。删行标旧文件行号、其余标新文件行号；多段之间放一行省略号。
+function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string | null }) {
+  return (
+    <div className="chat-tool-code chat-tool-udiff">
+      {hunks.map((hunk, hunkIndex) => {
+        const html = highlightLines(hunk.lines.map((line) => line.slice(1)), lang);
+        let oldNo = hunk.old_start;
+        let newNo = hunk.new_start;
+        return (
+          <div key={hunkIndex}>
+            {hunkIndex > 0 && <div className="chat-tool-line is-gap" aria-hidden="true"><span className="chat-tool-ln">⋯</span></div>}
+            {hunk.lines.map((line, index) => {
+              const mark = line[0] === "-" ? "-" : line[0] === "+" ? "+" : " ";
+              let number: number;
+              if (mark === "-") number = oldNo++;
+              else if (mark === "+") number = newNo++;
+              else { number = newNo++; oldNo++; }
+              return (
+                <div className={"chat-tool-line" + (mark === "-" ? " is-del" : mark === "+" ? " is-add" : "")} key={index}>
+                  <span className="chat-tool-ln" aria-hidden="true">{number}</span>
+                  <span className="chat-tool-mark" aria-hidden="true">{mark}</span>
+                  <span className="chat-tool-src" dangerouslySetInnerHTML={{ __html: html[index] || " " }} />
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const OUTPUT_HEAD_LINES = 3;
+
+/// 第二行「⎿ 结果摘要」：终端在每次调用下面写一句结果（Updated … with 1 addition、
+/// Read 160 lines、命令输出的头几行），对话页照搬这个形态。
+function ResultLine({ item, result, kind, detail, patch }: {
+  item: ToolUseItem;
+  result?: ToolResultItem;
+  kind: ToolKind;
+  detail: ToolDetail | null;
+  patch: DiffHunk[] | null;
+}) {
+  const t = useT();
+  const [mountedAt] = useState(() => Date.now());
+  useSecondTick(!result);
+  if (!result) {
+    const startedAt = Date.parse(item.timestamp ?? "");
+    const since = Number.isNaN(startedAt) ? mountedAt : startedAt;
+    return <span className="chat-tool-out is-running">{t.chat.toolRunningFor(fmtElapsed(Date.now() - since))}</span>;
+  }
+  const lines = outputLines(result.text);
+  if (result.is_error) return <span className="chat-tool-out is-error">{lines[0] ?? t.chat.toolNoOutput}</span>;
+  if (kind === "edit" || kind === "write") {
+    if (patch) {
+      const added = patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "+").length, 0);
+      const removed = patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "-").length, 0);
+      return <span className="chat-tool-out">{t.chat.toolEditSummary(added, removed)}</span>;
+    }
+    if (detail?.kind === "write") return <span className="chat-tool-out">{t.chat.toolWroteLines(detail.lines)}</span>;
+    const delta = lineDelta(detail);
+    if (delta) return <span className="chat-tool-out">{t.chat.toolEditSummary(delta.added, delta.removed)}</span>;
+  }
+  if (kind === "read") return <span className="chat-tool-out">{t.chat.toolReadLines(lines.length)}</span>;
+  if (kind === "search") return <span className="chat-tool-out">{lines.length ? t.chat.toolFoundLines(lines.length) : t.chat.toolNoOutput}</span>;
+  if (lines.length === 0) return <span className="chat-tool-out">{t.chat.toolNoOutput}</span>;
+  // 命令等：像终端一样露输出的头 3 行，余下折成「还有 N 行」，全文在展开区。
+  const head = dedent(lines.slice(0, OUTPUT_HEAD_LINES));
+  return (
+    <span className="chat-tool-out is-output">
+      {head.join("\n")}
+      {lines.length > head.length && <span className="chat-tool-out-more">{`\n… ${t.chat.toolMoreLines(lines.length - head.length)}`}</span>}
+    </span>
+  );
+}
+
 /// memo 理由同 Message：item/result 都来自 reducer，未变化时引用稳定。
+/// 形态照搬 claude 终端（2026-10 用户要求「像终端」）：首行「● Update(src/a.ts)」，
+/// 次行「⎿ 新增 3 行，删除 1 行」；展开区是 diff / 命令全文与完整输出。
 export const ToolActivity = memo(function ToolActivity({ item, result }: { item: ToolUseItem; result?: ToolResultItem }) {
   const t = useT();
+  const cwd = useContext(ChatCwdContext);
   const detail = item.detail ?? null;
-  // 挂载时还没回执 = 正在跑的那条：默认展开，命令/正文直接可见（用户要的正是
-  // 「当前在做什么」）。只在挂载时定一次，之后开合归用户——React 只在 prop 变化时
-  // 才碰 open 属性，值恒定就不会把用户收起的又弹开。
-  const [initialOpen] = useState(() => !result && detail !== null);
-  const meta = detail ? detailMeta(detail, t) : null;
+  const kind = toolKind(item.name);
+  const patch = result?.patch?.length ? result.patch : null;
+  // 开合只在挂载时定一次，之后归用户（React 只在 prop 变化时碰 open）。跑着的那条展开看
+  // 在做什么；编辑类恒展开——终端里 diff 就直接摊在调用下面。
+  const [initialOpen] = useState(() => (!result && detail !== null) || kind === "edit");
+  const command = detail?.kind === "command" ? detail : null;
+  const path = detail && "path" in detail ? detail.path : null;
   return (
-    <details className={"chat-tool" + (result?.is_error ? " is-error" : "")} open={initialOpen || undefined}>
+    <details
+      className={"chat-tool" + (result?.is_error ? " is-error" : "")}
+      // 时间线状态点读它：跑着 / 失败 / 完成三态。
+      data-state={!result ? "running" : result.is_error ? "error" : "done"}
+      open={initialOpen || undefined}
+    >
       <summary>
-        <ToolIcon name={item.name} />
-        <span className="chat-tool-name">{friendlyToolName(item.name, t)}</span>
-        <span className="chat-tool-summary">{item.summary}</span>
-        {meta && <span className="chat-tool-meta">{meta}</span>}
-        {/* 结果未到 = 工具还在跑：给行尾一个跳动指示，否则组头明明说「运行中」，
-            展开后却看不出是哪条没跑完。 */}
-        {/* 纯装饰:组头已经用一处 aria-label 播报「还有几条在跑」,每行再挂一个
-            role=status,并行工具一多读屏就被轮番打断,什么也听不清(7C-9)。 */}
-        {!result && <span className="chat-tool-pending" aria-hidden="true"><i /><i /><i /></span>}
+        {/* 命令描述不单独占一行（宽度不够时会被挤成孤零零的一行，用户实拍嫌丑），进悬停提示。 */}
+        <span className="chat-tool-call" data-tip={command?.description ?? undefined}>
+          <span className="chat-tool-verb" data-kind={kind} aria-hidden="true">{toolVerb(item.name, kind)}</span>
+          <span className="chat-tool-name chat-sronly">{friendlyToolName(item.name, t)}</span>
+          <span className="chat-tool-paren" aria-hidden="true">(</span>
+          <span className="chat-tool-summary">{relativize(item.summary, cwd)}</span>
+          <span className="chat-tool-paren" aria-hidden="true">)</span>
+        </span>
         <span className="chat-tool-chevron">›</span>
+        <span className="chat-tool-result">
+          <span className="chat-tool-elbow" aria-hidden="true">⎿</span>
+          <ResultLine item={item} result={result} kind={kind} detail={detail} patch={patch} />
+        </span>
       </summary>
       <div className="chat-tool-body">
-        {detail && <DetailBody detail={detail} />}
-        {/* summary 已经在标题行展示过，pre 里不再重复念一遍；这里只看回执本身。 */}
-        <pre>{result ? (result.text || t.chat.toolNoOutput) : t.chat.toolRunning}</pre>
+        {patch
+          ? <UnifiedDiff hunks={patch} lang={languageForPath(path ?? item.summary)} />
+          : detail && <DetailBody detail={detail} />}
+        {/* 编辑成功的回执只是一句「已更新」，diff 已经说明了一切，不再重复。 */}
+        {!(kind === "edit" && result && !result.is_error) && (
+          result ? <OutputBlock text={stripAnsi(result.text) || t.chat.toolNoOutput} /> : <pre>{t.chat.toolRunning}</pre>
+        )}
       </div>
     </details>
   );

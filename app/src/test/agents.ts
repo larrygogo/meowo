@@ -1,5 +1,8 @@
 import type { AgentDescriptor, ChatUi, LaunchOption, SlashCommand } from "../api";
 
+/** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
+export const CLAUDE_STATUS_LINE_PATTERN = String.raw`^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$`;
+
 /** 测试里已知的五家产品名。真实值由后端 `list_agents()` 下发（须与注册表的 display_name 同值）。 */
 const NAMES: Record<string, string> = {
   claude: "Claude Code",
@@ -243,6 +246,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端同源:粘贴键 kimi 在 Windows 上是 Alt+V(二进制里 win32 ? "alt+v" : ctrl("v")),
     // 其余声明该能力的是 Ctrl-V。
     clipboard_paste_input: provider === "kimi" ? "\u001bv" : provider === "gemini" ? null : "\u0016",
+    // 与后端同源:运行中状态行正则只有 claude 声明(plugins/claude status_line_pattern)。
+    status_line_pattern: provider === "claude" ? CLAUDE_STATUS_LINE_PATTERN : null,
     // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
     draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。

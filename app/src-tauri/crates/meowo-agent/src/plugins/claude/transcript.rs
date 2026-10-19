@@ -8,7 +8,7 @@
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
+    preview_text, DiffHunk, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
     TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 use std::path::{Path, PathBuf};
@@ -71,6 +71,7 @@ fn task_notification_result(
             // (forked skill)要靠它归属回启动回执登记的属主。
             task_id: tool_use_id.is_none().then_some(task_id).flatten(),
         }),
+        patch: None,
     })
 }
 
@@ -411,6 +412,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                     .unwrap_or(false)
                                     && !answered_by_meowo,
                                 subagent,
+                                patch: structured_patch(&v),
                             })
                         }
                         _ => None,
@@ -1715,6 +1717,39 @@ impl TranscriptSpec for ClaudeTranscript {
     }
 }
 
+/// 统一 diff 的行数上限：超过就不搬（前端退回旧段/新段展示）。一次 Write 覆盖大文件时
+/// structuredPatch 可达上万行，原样进 ChatItem 会把每轮历史轮询的载荷撑大几个数量级。
+const PATCH_MAX_LINES: usize = 400;
+/// 单行截断：压缩过的 JS/CSS 一行能有几十 KB。
+const PATCH_MAX_LINE_CHARS: usize = 400;
+
+/// 读编辑类回执的 `toolUseResult.structuredPatch`（2.1.303 实测：Edit/Write/MultiEdit 都有，
+/// 每段 `oldStart/newStart/lines`，行首 ` `/`-`/`+`）。空数组、缺字段、超限都返回 None。
+fn structured_patch(v: &serde_json::Value) -> Option<Vec<DiffHunk>> {
+    let hunks = v.pointer("/toolUseResult/structuredPatch")?.as_array()?;
+    let mut total = 0usize;
+    let mut out = Vec::with_capacity(hunks.len());
+    for hunk in hunks {
+        let lines: Vec<String> = hunk
+            .get("lines")?
+            .as_array()?
+            .iter()
+            .filter_map(|line| line.as_str())
+            .map(|line| line.chars().take(PATCH_MAX_LINE_CHARS).collect())
+            .collect();
+        total += lines.len();
+        if total > PATCH_MAX_LINES {
+            return None;
+        }
+        out.push(DiffHunk {
+            old_start: u32::try_from(hunk.get("oldStart")?.as_u64()?).ok()?,
+            new_start: u32::try_from(hunk.get("newStart")?.as_u64()?).ok()?,
+            lines,
+        });
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1754,6 +1789,16 @@ mod tests {
         assert!(
             matches!(&parse_chat_items(result)[0], ChatItem::ToolResult { tool_use_id: Some(id), text, is_error: false, .. } if id == "tool-1" && text == "ok")
         );
+
+        // 编辑回执的 structuredPatch 原样搬成统一 diff（对话页按真实行号渲染）；空数组不搬。
+        let edited = r#"{"type":"user","uuid":"u2","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"ok"}]},"toolUseResult":{"structuredPatch":[{"oldStart":26,"oldLines":2,"newStart":26,"newLines":2,"lines":[" keep","-old","+new"]}]}}"#;
+        let ChatItem::ToolResult { patch: Some(patch), .. } = &parse_chat_items(edited)[0] else {
+            panic!("应带上 structuredPatch");
+        };
+        assert_eq!((patch[0].old_start, patch[0].new_start), (26, 26));
+        assert_eq!(patch[0].lines, [" keep", "-old", "+new"]);
+        let empty = r#"{"type":"user","uuid":"u3","message":{"content":[{"type":"tool_result","tool_use_id":"tool-3","content":"ok"}]},"toolUseResult":{"structuredPatch":[]}}"#;
+        assert!(matches!(&parse_chat_items(empty)[0], ChatItem::ToolResult { patch: None, .. }));
 
         let sidechain = r#"{"type":"assistant","uuid":"sub","isSidechain":true,"message":{"content":[{"type":"text","text":"hidden"}]}}"#;
         assert!(parse_chat_items(sidechain).is_empty());

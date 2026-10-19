@@ -226,6 +226,12 @@ export const zh = {
     } as Record<string, string>,
     unsupported: "这个 Agent 暂未提供结构化对话记录",
     empty: "还没有可显示的对话记录",
+    // 空会话欢迎面板（A+B 改版）：替代整屏一行灰字，给出路而不是只报「没有」。
+    welcomeSub: "描述任务开始对话，截图和文件可直接拖入",
+    welcomeChanges: (count: number) => `${count} 处改动`,
+    welcomeMention: "引用文件",
+    welcomeReview: "审查未提交改动",
+    welcomeReviewPrompt: "帮我审查当前未提交的改动",
     // 会话 running 但 transcript 尚未落第一条时用它——此时说「没有记录」与运行指示自相矛盾。
     emptyWorking: "Agent 已开始工作，对话内容马上出现",
     // 新建会话认领前（负数临时 id）：CLI 正在冷启动，说「没有记录」是谎报。
@@ -591,6 +597,12 @@ export const zh = {
     toolReadFrom: (line: number) => `从第 ${line} 行起`,
     toolReadLimit: (count: number) => `最多 ${count} 行`,
     toolSearchIn: (path: string) => `于 ${path}`,
+    // 工具行第二行「⎿ 结果摘要」（照终端的 Update/Read 日志腔，2026-10 用户要求像终端）。
+    toolRunningFor: (elapsed: string) => `运行中… (${elapsed})`,
+    toolEditSummary: (added: number, removed: number) =>
+      added && removed ? `新增 ${added} 行，删除 ${removed} 行` : removed ? `删除 ${removed} 行` : `新增 ${added} 行`,
+    toolReadLines: (count: number) => `读取了 ${count} 行`,
+    toolFoundLines: (count: number) => `找到 ${count} 条结果`,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",

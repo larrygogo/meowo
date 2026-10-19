@@ -8,6 +8,7 @@ import { en } from "../../i18n/en";
 import { type ChatItem } from "../../api";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { parseUserText, type CrossMessage } from "./localCommand";
+import { stripAnsi } from "./shared";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../../remoteMode";
 
 // Claude Code 把粘贴/引用的图片在 transcript 里记成一行「[Image: source: <本地路径>]」。
@@ -375,10 +376,10 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
             <details className="chat-tool chat-command-out" key={index}>
               <summary>
                 <span className="chat-tool-name">{t.chat.commandOutput}</span>
-                <span className="chat-tool-summary">{out}</span>
+                <span className="chat-tool-summary">{stripAnsi(out)}</span>
                 <span className="chat-tool-chevron">›</span>
               </summary>
-              <pre>{out}</pre>
+              <pre>{stripAnsi(out)}</pre>
             </details>
           ))}
           {/* 后台任务通知默认收起：整段是 XML+JSON 的机器记录，一行摘要（通知自带的
@@ -449,9 +450,9 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
       <details className={"chat-tool chat-result" + (item.is_error ? " is-error" : "")}>
         <summary>
           <span className="chat-tool-icon is-file"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h8l4 4v14H6zM14 3v5h5" /></svg></span>
-          <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{item.text}</span><span className="chat-tool-chevron">›</span>
+          <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{stripAnsi(item.text)}</span><span className="chat-tool-chevron">›</span>
         </summary>
-        <pre>{item.text}</pre>
+        <pre>{stripAnsi(item.text)}</pre>
       </details>
     );
   }

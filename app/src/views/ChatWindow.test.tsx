@@ -338,7 +338,8 @@ describe("ChatWindow", () => {
     // 摘要直接写种类（「运行终端」），不再有「执行了 N 次工具调用」的计数短语。
     const activity = screen.getAllByText("运行终端")[0].closest("details");
     expect(activity?.className).toContain("chat-activity-group");
-    expect(activity?.hasAttribute("open")).toBe(false);
+    // 过程组默认展开成时间线卡片（A+B 改版后用户实拍要求）；思考过程仍收起，见上。
+    expect(activity?.hasAttribute("open")).toBe(true);
     expect(screen.queryByText("工具结果")).toBeNull();
     expect(invoke).toHaveBeenCalledWith("get_chat_history", { sessionId: 7, offset: 0 });
     fireEvent.change(screen.getByRole("combobox", { name: "发送消息给 Agent" }), { target: { value: "继续实现" } });

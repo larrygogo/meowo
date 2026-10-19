@@ -211,6 +211,11 @@ export const en: Dict = {
     } as Record<string, string>,
     unsupported: "This Agent does not provide structured conversation history yet",
     empty: "No conversation entries to display yet",
+    welcomeSub: "Describe a task to start. Drop in screenshots or files",
+    welcomeChanges: (count: number) => `${count} changed`,
+    welcomeMention: "Mention a file",
+    welcomeReview: "Review uncommitted changes",
+    welcomeReviewPrompt: "Review my current uncommitted changes",
     emptyWorking: "The Agent is already working — the conversation will appear shortly",
     emptyStarting: "Starting session…",
     pickSession: "Pick a session from the sidebar",
@@ -549,6 +554,13 @@ export const en: Dict = {
     toolReadFrom: (line: number) => `from line ${line}`,
     toolReadLimit: (count: number) => `up to ${count} lines`,
     toolSearchIn: (path: string) => `in ${path}`,
+    toolRunningFor: (elapsed: string) => `Running… (${elapsed})`,
+    toolEditSummary: (added: number, removed: number) =>
+      added && removed
+        ? `${added} ${added === 1 ? "addition" : "additions"} and ${removed} ${removed === 1 ? "removal" : "removals"}`
+        : removed ? `${removed} ${removed === 1 ? "removal" : "removals"}` : `${added} ${added === 1 ? "addition" : "additions"}`,
+    toolReadLines: (count: number) => `Read ${count} ${count === 1 ? "line" : "lines"}`,
+    toolFoundLines: (count: number) => `Found ${count} ${count === 1 ? "result" : "results"}`,
     model: "Model",
     switchModel: "Switch model",
     mode: "Mode",
