@@ -189,7 +189,11 @@ function proceedBoxApprovalDetails(text: string) {
   if (marker >= 0) before = before.slice(0, marker);
   // 审批框以工具头（"Bash command"）开头；只取最后一个工具头之后的内容，
   // 避免把上一屏残留的输出并进命令文本。
-  const header = before.reduce((found, line, index) => (/^bash command$/i.test(line) ? index : found), -1);
+  // 标题有变体(2.1.304 源码):「Bash command (unsandboxed)」「Bash command (runs on …)」,
+  // Windows 上还有「PowerShell command」——只认裸「Bash command」会让这些框认不出边界。
+  const HEADER = /^(bash|powershell) command(?: \(.*\))?$/i;
+  const header = before.reduce((found, line, index) => (HEADER.test(line) ? index : found), -1);
+  const tool = header >= 0 && /^powershell/i.test(before[header]) ? "PowerShell" : "Bash";
   if (header >= 0) before = before.slice(header + 1);
   before = before.filter((line) => !PROCEED_QUESTION.test(line));
   // 末行是「用途说明」这个判断，只有认出了框的边界（工具头或 requires-approval 行）
@@ -198,7 +202,7 @@ function proceedBoxApprovalDetails(text: string) {
   const framed = header >= 0 || marker >= 0;
   const description = framed && before.length >= 2 ? before[before.length - 1] : "";
   return {
-    tool: "Bash",
+    tool,
     // 长命令会按终端宽度硬换行成多行；除末行（用途说明）外全部并入命令整段显示，
     // 不能按「倒数第二行是命令」取——那只会摘到换行后的最后一个片段。
     command: (description ? before.slice(0, -1) : before).join("\n"),

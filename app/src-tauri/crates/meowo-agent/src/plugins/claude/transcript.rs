@@ -141,7 +141,9 @@ fn tool_summary(name: &str, input: Option<&serde_json::Value>) -> String {
         }
     }
     let key = match name {
-        "Bash" => "command",
+        // Windows 上 CC 另有 PowerShell 工具,入参形状与 Bash 相同;漏了它摘要会落到
+        // 整包 JSON 兜底(实拍:对话页显示 `PowerShell({"command":"Get-Process …`)。
+        "Bash" | "PowerShell" => "command",
         "WebSearch" => "query",
         "Read" | "Write" | "Edit" => "file_path",
         // 子任务委派：摘要取那句任务描述。缺了这条会落到下面的整包 JSON 兜底，
@@ -196,7 +198,7 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
                 truncated: old_cut || new_cut,
             })
         }
-        "Bash" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
+        "Bash" | "PowerShell" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
         "Read" => Some(ToolDetail::Read { path: text("file_path")?, offset: num("offset"), limit: num("limit") }),
         "Grep" | "Glob" => Some(ToolDetail::Search { pattern: text("pattern")?, path: text("path"), glob: text("glob") }),
         _ => None,
@@ -243,6 +245,23 @@ fn persist_inline_image(base_id: &str, index: usize, ext: &str, data: &str) -> O
         .decode(data.as_bytes())
         .ok()?;
     crate::fsutil::persist_paste_bytes(&format!("{safe_id}-{index}"), ext, &bytes)
+}
+
+/// thinking 块是不是 narration(模型说给用户听的过程旁白)。CC 2.1.304 起旁白以 `type:"thinking"`
+/// 落盘,终端里却按正文(● 行)显示;区分它的 `narration_block_indexes` 只在 stream 帧包装层,
+/// 不进 transcript。磁盘上唯一的判据是签名:base64 的 protobuf 头里带着块种类串,
+/// 实测真 thinking 为 `thinking`、旁白为 `narration`(全机 5222 块:有字的 689 块全是后者,
+/// 真 thinking 文本一律被隐去为空)。不认识的签名保守地当 thinking——宁可进折叠区,不冒充正文。
+fn is_narration_block(block: &serde_json::Value) -> bool {
+    use base64::Engine;
+    let Some(sig) = block.get("signature").and_then(|x| x.as_str()) else {
+        return false;
+    };
+    // 种类串在头部前 ~30 字节;只解码前 64 字符(4 的倍数,恰好 48 字节),不碰整段签名。
+    let head = sig.get(..64).unwrap_or(sig);
+    base64::engine::general_purpose::STANDARD
+        .decode(head.as_bytes())
+        .is_ok_and(|bytes| bytes.windows(9).any(|w| w == b"narration"))
 }
 
 /// content 数组里第 `index` 块若是内嵌 base64 图片，落盘并返回 `[Image: source: …]` 引用行。
@@ -570,10 +589,15 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         .get("thinking")
                         .and_then(|x| x.as_str())
                         .filter(|s| !s.trim().is_empty())
-                        .map(|text| TranscriptEvent::Reasoning {
-                            id: format!("{base_id}:{i}"),
-                            timestamp: timestamp.clone(),
-                            text: text.to_string(),
+                        .map(|text| {
+                            let id = format!("{base_id}:{i}");
+                            let timestamp = timestamp.clone();
+                            let text = text.to_string();
+                            if is_narration_block(block) {
+                                TranscriptEvent::AssistantMessage { id, timestamp, text }
+                            } else {
+                                TranscriptEvent::Reasoning { id, timestamp, text }
+                            }
                         }),
                     Some("tool_use") => {
                         let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
@@ -1914,6 +1938,33 @@ mod tests {
         ] {
             assert_eq!(strip_pasted_content_tags(text), text);
         }
+    }
+
+    /// 签名取自 2.1.304 真机 transcript(reverse-bot-gui 会话 de5471ea):同一条消息里一块真 thinking
+    /// (文本隐去为空)紧跟一块旁白,终端把后者显示成正文。
+    #[test]
+    fn narration_thinking_block_renders_as_assistant_text() {
+        let line = r#"{"type":"assistant","uuid":"n1","message":{"content":[
+            {"type":"thinking","thinking":"","signature":"CAQSigoKEAgTGAI4AUIIdGhpbmtpbmcSDA5AYo5pgFn7NHYJmBoMwgXy96URcVSQQyTAIjC94E9/tqTHxc1pOHHiy+M70fGJUDh2"},
+            {"type":"thinking","thinking":"GUI 进程已随终端退出","signature":"CAQSmAkKEQgTGAI4AUIJbmFycmF0aW9uEgzDahb4kK1KnbHb8dYaDNjZZ0Qt5S5DCS4xCCIwUt9v1qUUCGHSa4IzgbXYCMZydNb7"},
+            {"type":"thinking","thinking":"有字的真 thinking","signature":"CAQSigoKEAgTGAI4AUIIdGhpbmtpbmcSDA5AYo5pgFn7NHYJmBoMwgXy96URcVSQQyTAIjC94E9/tqTHxc1pOHHiy+M70fGJUDh2"},
+            {"type":"thinking","thinking":"无签名的旧格式"}
+        ]}}"#.replace('\n', "");
+        let items = parse_chat_items(&line);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], ChatItem::AssistantText { text, .. } if text == "GUI 进程已随终端退出"));
+        assert!(matches!(&items[1], ChatItem::Reasoning { text, .. } if text == "有字的真 thinking"));
+        assert!(matches!(&items[2], ChatItem::Reasoning { text, .. } if text == "无签名的旧格式"));
+    }
+
+    #[test]
+    fn powershell_tool_is_summarized_like_bash() {
+        let line = r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"ps1","name":"PowerShell","input":{"command":"Get-Process -Id 1","description":"查进程"}}]}}"#;
+        let ChatItem::ToolUse { summary, detail, .. } = &parse_chat_items(line)[0] else {
+            panic!("应解析出工具调用");
+        };
+        assert_eq!(summary, "Get-Process -Id 1");
+        assert!(matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "Get-Process -Id 1"));
     }
 
     #[test]
