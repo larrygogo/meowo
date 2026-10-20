@@ -372,6 +372,18 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             if v.get("isCompactSummary").and_then(|x| x.as_bool()) == Some(true) {
                 return Vec::new();
             }
+            // 工具注入给模型的内容：Skill 调用后 CC 把整份技能说明以 user 行写回
+            // （`isMeta` + `sourceToolUseID`，2.1.304 实测「Base directory for this skill…」），
+            // 不丢的话对话页把它显示成一大块用户气泡，像是用户自己发的（用户实拍反馈）。
+            // Skill 调用本身已作为工具卡出现在时间线上。只认带 sourceToolUseID 的：同为
+            // isMeta 的跨会话消息是真对话内容，要照常显示。
+            if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+                && v.get("sourceToolUseID")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|id| !id.is_empty())
+            {
+                return Vec::new();
+            }
             if let Some(text) = content
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.trim().is_empty())
@@ -1835,6 +1847,19 @@ mod tests {
         assert!(matches!(
             parse_transcript_events(boundary).as_slice(),
             [TranscriptEvent::Metadata { kind, .. }] if kind == "compact"
+        ));
+    }
+
+    /// 样本取自 2.1.304 真机：Skill 调用后写回的技能说明行（正文截短）。
+    #[test]
+    fn chat_parser_drops_tool_injected_meta_but_keeps_cross_session() {
+        let skill = r#"{"type":"user","uuid":"k1","isMeta":true,"turnCompanion":true,"sourceToolUseID":"toolu_017zj","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: C:\\Users\\me\\.claude\\skills\\pr-description\n\n# pr-description"}]}}"#;
+        assert!(parse_transcript_events(skill).is_empty());
+        // 同为 isMeta、但不是工具注入的跨会话消息：真对话内容，照常出用户消息。
+        let cross = r#"{"type":"user","uuid":"x1","isMeta":true,"message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from-name=\"a\">你好</cross-session-message>"}}"#;
+        assert!(matches!(
+            parse_transcript_events(cross).as_slice(),
+            [TranscriptEvent::UserMessage { .. }]
         ));
     }
 
