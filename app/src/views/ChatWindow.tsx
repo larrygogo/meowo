@@ -3108,6 +3108,11 @@ export function ChatWindow() {
   // 纯附件回执(attachmentOnly)例外:占位「（附件）」永不落盘,包含匹配恒失败——
   // 改认「水位线之后出现任意新 user_text,或 lastUserText 与快照不同」为证据。
   // 排队没有固定时限：长任务超过 15s 仍未消费时必须保留回执，直到出现实际消费证据。
+  // lastUserText 只在**没有 transcript**时算证据(那时对话页正靠它兜底渲染,见 provisional)。
+  // transcript 在场时它只证明「已提交」:claude 2.1.304 实测 UserPromptSubmit 在插话**入队
+  // 瞬间**就触发,正文要等注入(下一个工具边界,实拍 30s)才以 queued_command 落盘——认它
+  // 的话回执当场收走、消息却还不在 transcript 里,即「插话很快就消失了」(用户反馈)。
+  const hookIsEvidence = items.length === 0;
   useEffect(() => {
     setQueuedInterjections((current) => {
       if (current.length === 0) return current;
@@ -3115,8 +3120,7 @@ export function ChatWindow() {
       const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
       const recent = items.slice(-12);
       const next = current.filter(({ text, attachmentOnly, priorUserText, priorItemIds }) => {
-
-        const lastUserChanged = history?.lastUserText != null
+        const lastUserChanged = hookIsEvidence && history?.lastUserText != null
           && collapse(history.lastUserText) !== collapse(priorUserText ?? "");
         if (attachmentOnly) {
           return !lastUserChanged
@@ -3132,9 +3136,9 @@ export function ChatWindow() {
       });
       return next.length === current.length ? current : next;
     });
-  }, [tone, items, history?.lastUserText, echoSweep]);
-  // 乐观回显的消解：与排队回执同一套「包含 + 水位线」证据规则，但**不随 tone 清空**——
-  // 空闲态发送后 tone 会变 running，回显此刻正要发挥作用。15s 兜底防证据永不出现。
+  }, [tone, items, hookIsEvidence, history?.lastUserText, echoSweep]);
+  // 乐观回显的消解：与排队回执同一套「包含 + 水位线」证据规则（含 hookIsEvidence 口径），
+  // 但**不随 tone 清空**——空闲态发送后 tone 会变 running，回显此刻正要发挥作用。15s 兜底防证据永不出现。
   useEffect(() => {
     setPendingEchoes((current) => {
       if (current.length === 0) return current;
@@ -3143,7 +3147,7 @@ export function ChatWindow() {
       const now = Date.now();
       const next = current.filter(({ text, at, attachmentOnly, priorUserText, priorItemIds }) => {
         if (now - at > 15_000) return false;
-        const lastUserChanged = history?.lastUserText != null
+        const lastUserChanged = hookIsEvidence && history?.lastUserText != null
           && collapse(history.lastUserText) !== collapse(priorUserText ?? "");
         if (attachmentOnly) {
           // 纯附件回显:占位「（附件）」永不落盘,包含匹配恒失败,证据口径同排队回执。
@@ -3160,7 +3164,7 @@ export function ChatWindow() {
       });
       return next.length === current.length ? current : next;
     });
-  }, [items, history?.lastUserText, echoSweep]);
+  }, [items, hookIsEvidence, history?.lastUserText, echoSweep]);
   // 15s 兜底必须由**计时器**驱动。上面两个消解 effect 只在 items / lastUserText 变化时才重算，
   // 而兜底要覆盖的恰恰是「消息其实没进 composer」——那时 transcript 不再增长、lastUserText
   // 也不变,effect 永远不再执行,假回执(乐观回显的 user 气泡 / 排队回执条)就一直挂着。

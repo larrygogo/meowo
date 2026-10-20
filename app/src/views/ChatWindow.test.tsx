@@ -3838,8 +3838,17 @@ describe("ChatWindow", () => {
     // 多轮轮询过去,旧证据不变:回执必须还在。
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(screen.queryByText(/插话已排队/)).toBeTruthy();
-    // 新证据落盘(lastUserText 变成插话本身):这才消解。
+    // hook 在入队瞬间就把 lastUserText 改成插话本身(claude 2.1.304 实测),消息却还在队列里、
+    // transcript 没有它:transcript 在场时这不算消费证据,回执必须还在。
     current = { ...current, lastUserText: "ok" };
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(screen.queryByText(/插话已排队/)).toBeTruthy();
+    // 注入后以新条目落盘 transcript:这才消解。
+    current = {
+      ...current,
+      offset: 20,
+      items: [...(current.items as unknown[]), { type: "user_text", id: "u2", timestamp: null, text: "ok" }],
+    };
     await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
   });
 
