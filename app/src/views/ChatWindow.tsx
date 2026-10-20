@@ -3721,7 +3721,9 @@ export function ChatWindow() {
     } finally {
       setResolvingApproval(false);
     }
-    setView("terminal");
+    // 远程没有终端视图：放行后终端表单出现，由屏幕识别的作答卡（interactiveAttention）
+    // 接手，手机上逐题点选即可。
+    if (!remoteUi()) setView("terminal");
   };
   const commandApproval = commandAttention
     ? commandAttention.details === "arrow_panel"
@@ -4374,8 +4376,14 @@ export function ChatWindow() {
         title={t.chat.questionTitle}
         badge={questionTimedOut ? t.chat.approvalTimedOut : questionCountdown ? `${t.chat.questionPending} · ${questionCountdown}` : t.chat.questionPending}
         actions={<>
+          {/* 远程：卡本身就是作答面，直接提交。卡内答不了时放行挂起，终端表单经屏幕识别
+              变成作答卡回到手机上（此前一律「请在桌面端作答」，手机答不了题）。 */}
           {remoteUi()
-            ? <span className="chat-remote-hint">{t.chat.answerOnDesktop}</span>
+            ? !questionCardRepresentable && (
+              <button type="button" disabled={resolvingApproval} onClick={() => void sendQuestionToTerminal()}>
+                {t.chat.questionAnswerStepwise}
+              </button>
+            )
             // 终端视图下卡本身就是作答面，「去终端作答」只在卡内答不了（题面无法表达）
             // 时保留——按下即放行挂起、终端表单随即出现在眼前，文案换成「在终端作答」。
             : (view === "chat" || !questionCardRepresentable) && (
@@ -4397,7 +4405,7 @@ export function ChatWindow() {
         <span>{answerMap
           ? t.chat.questionAnswerReady
           : !questionCardRepresentable
-            ? t.chat.questionNeedsTerminal
+            ? (remoteUi() ? t.chat.questionNeedsStepwiseRemote : t.chat.questionNeedsTerminal)
             : t.chat.questionAnswerIncomplete(unansweredCount)}</span>
       </ApprovalCard>}
       {/* AskUserQuestion 的同步题面卡（展示形态）：broker 自动放行后从结构化参数渲染，与
@@ -4426,8 +4434,9 @@ export function ChatWindow() {
         <span>{!history?.ptyManaged
           ? (remoteUi() ? t.chat.answerOnDesktop : t.chat.questionExternalHint)
           : !queueableInCard
-          // 远程没有终端视图,「去终端作答」的指路改成「回桌面端」。
-          ? (remoteUi() ? t.chat.answerOnDesktop : t.chat.questionMultiHint)
+          // 远程没有终端视图:托管会话的终端表单一就绪,屏幕识别的作答卡就会接替本卡出现在
+          // 手机上(卡内有自定义输入),所以这里是「稍候」而不是「回桌面端」。
+          ? (remoteUi() ? t.chat.questionFormPendingRemote : t.chat.questionMultiHint)
           : queuedLabels.length > 0
           ? t.chat.queuedAnswerHint(queuedLabels.join("、"))
           : t.chat.questionFormLoading}</span>

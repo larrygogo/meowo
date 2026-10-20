@@ -281,8 +281,8 @@ export const zh = {
     codeCopy: "复制",
     codeCopied: "已复制",
     questionExpired: "提问卡已超时收起，可到终端页继续作答",
-    // 远程没有终端页（setView 被无害化），这三条的去处只能是桌面端（7C-4）。
-    questionExpiredRemote: "提问卡已超时收起，请在桌面端作答",
+    // 远程没有终端页：超时放行后终端表单经屏幕识别回到手机上作答，不必回桌面端。
+    questionExpiredRemote: "提问卡已超时收起，表单就绪后可在此作答",
     terminalApprovalBanner: "有 1 条待批准的请求",
     terminalApprovalGo: "去处理",
     toolResult: "工具结果",
@@ -375,6 +375,10 @@ export const zh = {
     // 终端视图下作答卡的「放行给终端」按钮（题面无法卡内表达时）：人已在终端页，
     // 按下只是把挂起交还终端、表单随即出现在眼前，不是跳转——文案与 goTerminal 区分开。
     questionAnswerInTerminal: "在终端作答",
+    // 远程没有终端视图：卡内答不了的题放行给终端表单，由屏幕识别的作答卡回到手机上。
+    questionAnswerStepwise: "转为逐题作答",
+    questionNeedsStepwiseRemote: "这组问题无法在卡片内作答，请转为逐题作答",
+    questionFormPendingRemote: "表单就绪后可在此作答，请稍候",
     close: "关闭",
     renameSave: "保存",
     minimize: "最小化",
