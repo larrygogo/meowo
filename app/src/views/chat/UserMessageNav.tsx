@@ -142,6 +142,9 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
             key={entry.id}
             data-nav-id={entry.id}
             className={"chat-msg-nav-item" + (entry.id === activeId ? " is-active" : "")}
+            // 收起态下文字是 display:none、横线 aria-hidden：读屏的浏览模式不聚焦就读，
+            // 没有显式名字就是一排无名按钮（PR #87 评审指出）。
+            aria-label={entry.kind === "image" ? t.chat.messageNavImage : entry.label}
             aria-current={entry.id === activeId ? "true" : undefined}
             onClick={() => jump(entry.id)}
           >

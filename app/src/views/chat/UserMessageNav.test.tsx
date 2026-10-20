@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createRef } from "react";
 import type { ChatItem } from "../../api";
 import { UserMessageNav, userNavEntries } from "./UserMessageNav";
@@ -62,7 +62,8 @@ describe("UserMessageNav", () => {
     const scrollIntoView = vi.fn();
     target.scrollIntoView = scrollIntoView;
     const nav = screen.getByRole("navigation", { name: "用户消息导航" });
-    const button = Array.from(nav.querySelectorAll("button")).find((el) => el.textContent === "第一条")!;
+    // 收起态文字不可见，按钮名字靠 aria-label 提供。
+    const button = within(nav).getByRole("button", { name: "第一条" });
     fireEvent.click(button);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "instant" });
     expect(button.getAttribute("aria-current")).toBe("true");
