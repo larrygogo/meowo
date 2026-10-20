@@ -229,6 +229,8 @@ export const en: Dict = {
     // the "Disconnected" status badge). Keep the two phrasings distinct.
     syncInterrupted: "Sync interrupted. Reconnecting, showing cached content.",
     jumpLatest: "Jump to latest",
+    messageNav: "Message navigator",
+    messageNavImage: "[Image]",
     switcherTitle: "Command palette",
     switcherPlaceholder: "Search sessions or commands (↑↓ to select, Enter to open / run)",
     switcherEmpty: "No matching sessions or commands",

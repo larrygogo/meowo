@@ -167,7 +167,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, agent = n
           merged.push(...more);
           next += 1;
         }
-        record.nodes.push(<UserImageGroup key={item.id} paths={merged} />);
+        record.nodes.push(<UserImageGroup key={item.id} paths={merged} anchorId={item.id} />);
         index = next;
         continue;
       }

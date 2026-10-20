@@ -246,6 +246,8 @@ export const zh = {
     // 与状态徽标里的「已断开」（agent 进程没了）是两种事实，措辞故意分开。
     syncInterrupted: "同步中断，正在重连，显示的是缓存",
     jumpLatest: "回到最新",
+    messageNav: "用户消息导航",
+    messageNavImage: "[图片]",
     switcherTitle: "命令面板",
     switcherPlaceholder: "搜索会话或命令（↑↓ 选择，Enter 打开 / 执行）",
     switcherEmpty: "没有匹配的会话或命令",

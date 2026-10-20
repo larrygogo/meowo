@@ -5307,6 +5307,34 @@ select.ns-input {
 :root[data-theme="light"] .chat-jump-latest { background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04); }
 :root[data-theme="light"] .chat-jump-latest:hover { background: color-mix(in srgb, var(--cc-text) 4%, #fff); }
 
+/* 右缘用户消息导航（UserMessageNav）：平时一列短横线，悬停/键盘聚焦展开成摘要列表。
+   外层只负责贴住滚动区的纵向范围并垂直居中，自身不吃指针——透明区域不能挡住正文的
+   选中与点击；只有列表本体接收指针。 */
+.chat-msg-nav { position: absolute; right: var(--sp-6); z-index: 6; display: flex; align-items: center; pointer-events: none; }
+.chat-msg-nav-list { pointer-events: auto; display: flex; flex-direction: column; gap: var(--sp-1); max-height: min(100%, 440px); overflow-y: auto; scrollbar-width: none; padding: var(--sp-5); border: 1px solid transparent; border-radius: var(--r-md); }
+.chat-msg-nav-item { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-10); flex: none; height: 28px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; border-radius: var(--r-5); background: none; color: var(--cc-text-faint); font: inherit; text-align: left; cursor: pointer; }
+.chat-msg-nav-label { display: none; flex: 1; min-width: 0; align-items: center; gap: var(--sp-6); font-size: var(--fs-12); }
+.chat-msg-nav-label svg { flex: none; }
+.chat-msg-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-msg-nav-dash { flex: none; width: 10px; height: 2px; border-radius: 1px; background: currentColor; opacity: 0.55; transition: width 0.15s ease, opacity 0.15s ease; }
+.chat-msg-nav-item.is-active { color: var(--cc-text); }
+.chat-msg-nav-item.is-active .chat-msg-nav-dash { width: 16px; opacity: 1; }
+/* 键盘聚焦才展开（:has(:focus-visible)）：用 :focus-within 的话鼠标点完一项按钮留着
+   焦点，移开后面板一直摊在正文上（实测）。 */
+.chat-msg-nav-list:hover,
+.chat-msg-nav-list:has(:focus-visible) { width: 300px; scrollbar-width: thin; border-color: var(--cc-border); background: linear-gradient(var(--cc-surface), var(--cc-surface)), rgb(var(--cc-bg-rgb)); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.32); }
+.chat-msg-nav-list:hover .chat-msg-nav-label,
+.chat-msg-nav-list:has(:focus-visible) .chat-msg-nav-label { display: flex; }
+.chat-msg-nav-list:hover .chat-msg-nav-item:hover,
+.chat-msg-nav-item:focus-visible { background: var(--cc-surface-hover); color: var(--cc-text); outline: none; }
+.chat-msg-nav-list:hover .chat-msg-nav-item.is-active { background: var(--cc-surface-hover); }
+:root[data-theme="light"] .chat-msg-nav-list:hover,
+:root[data-theme="light"] .chat-msg-nav-list:has(:focus-visible) { background: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05); }
+/* 跳转落点留白：气泡不贴着滚动区上沿。 */
+.chat-message[data-msg-id] { scroll-margin-top: var(--sp-16); }
+/* 触屏没有悬停，窄屏上横线会压住正文：手机远程页与窄窗都不挂。 */
+@media (hover: none), (max-width: 680px) { .chat-msg-nav { display: none; } }
+
 /* ? 快捷键速查表：双列 dl（组合键 / 描述）。 */
 .chat-shortcuts { width: min(420px, calc(100vw - 48px)); }
 .chat-shortcuts-list { display: flex; flex-direction: column; gap: var(--sp-6); margin: var(--sp-8) 0 0; }

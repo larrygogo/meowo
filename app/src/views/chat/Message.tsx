@@ -308,9 +308,9 @@ export function imageOnlyPaths(text: string): string[] | null {
 }
 
 /** 连续纯图片消息合并后的展示块（Transcript 专用）。 */
-export function UserImageGroup({ paths }: { paths: string[] }) {
+export function UserImageGroup({ paths, anchorId }: { paths: string[]; anchorId?: string }) {
   return (
-    <article className="chat-message is-user has-images">
+    <article className="chat-message is-user has-images" data-msg-id={anchorId}>
       <ImageRow images={paths.map((path, index) => ({ path, key: `${index}:${path}` }))} />
     </article>
   );
@@ -353,7 +353,7 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
       if (!parts.commands.length && !parts.stdout.length && !parts.notifications.length
         && !parts.crossMessages.length && !parts.text) return null;
       return (
-        <article className="chat-message is-user is-command">
+        <article className="chat-message is-user is-command" data-msg-id={item.id}>
           {parts.commands.map((command, index) => (
             <span className="chat-command" key={`${command.name}-${index}`}>
               <span className="chat-command-icon" aria-hidden="true">
@@ -401,7 +401,8 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
     // 有图时缩略图独立成行排在**气泡上方**、气泡只包正文（Claude Code 同款布局，
     // has-images 把气泡皮从 article 挪到 .chat-text 上）；纯图消息没有气泡，只有图。
     return (
-      <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-tip={timeTitle}>
+      // data-msg-id：右侧用户消息导航（UserMessageNav）按它定位、跳转。
+      <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-tip={timeTitle} data-msg-id={item.id}>
         {images.length > 0 && <ImageRow images={images} />}
         {body && <div className="chat-text">{body}</div>}
       </article>

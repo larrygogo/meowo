@@ -32,6 +32,7 @@ import { ChatTitleMenu, ChatTodoMenu, type TodoPanelRow } from "./chat/TitleMenu
 import { QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
+import { UserMessageNav } from "./chat/UserMessageNav";
 import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { fmtElapsed, parseCliStatus, type CliStatus } from "./chat/cliStatus";
@@ -4185,6 +4186,10 @@ export function ChatWindow() {
         {!loading && todos.length > 0 && <TodoPanel todos={todos} />}
       </main>
       </ChatCwdContext.Provider>
+      {/* 右缘用户消息导航：悬浮在滚动区之上、不随内容滚动，故放在 main 之外。 */}
+      {view === "chat" && !loading && timelineItems.length > 0 && (
+        <UserMessageNav items={timelineItems} scrollRef={scrollRef} />
+      )}
       {/* Agent 正在跑但 transcript 半天不落新行时，页面此前毫无动静，像卡死。
           运行条原在滚动流内、Transcript 之后——上翻历史就随内容滚出视口。移到 main 与
           compose 之间常驻:滚到哪里都看得见,有具体活动（最近命令）就显示出来。 */}
