@@ -295,6 +295,23 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
         })
 }
 
+/// 大图被缩小后 CC 补一条 `isMeta` 行告诉模型缩放比例：「[Image: original 2310x1152,
+/// displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]」
+/// （2.1.304 实测，纯字符串正文、整条只有这一句）。它是写给模型的，不丢的话对话页显示成
+/// 一条用户气泡（用户实拍反馈）。只认整条就是这一句的：混着别的文字的不动。
+fn is_image_scale_note(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
+    if v.get("isMeta").and_then(|x| x.as_bool()) != Some(true) {
+        return false;
+    }
+    let Some(text) = content.and_then(|x| x.as_str()).map(str::trim) else {
+        return false;
+    };
+    text.starts_with("[Image: original ")
+        && text.contains(", displayed at ")
+        && text.ends_with(']')
+        && text.matches('[').count() == 1
+}
+
 /// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
 /// `</pasted_content id="6bad">`（2.1.296 实测，id 是 4 位 hex）。这对标签是写给模型的，
 /// 不剥的话对话页会把它们当正文显示（用户实拍反馈）。只剥「整行就是标签、且开闭 id
@@ -382,6 +399,9 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                     .and_then(|x| x.as_str())
                     .is_some_and(|id| !id.is_empty())
             {
+                return Vec::new();
+            }
+            if is_image_scale_note(&v, content) {
                 return Vec::new();
             }
             if let Some(text) = content
@@ -1861,6 +1881,23 @@ mod tests {
             parse_transcript_events(cross).as_slice(),
             [TranscriptEvent::UserMessage { .. }]
         ));
+    }
+
+    /// 样本取自 2.1.304 真机：大图缩放说明行。
+    #[test]
+    fn chat_parser_drops_image_scale_note() {
+        let note = r#"{"type":"user","uuid":"n1","isMeta":true,"message":{"role":"user","content":"[Image: original 2310x1152, displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]"}}"#;
+        assert!(parse_transcript_events(note).is_empty());
+        // 不是 isMeta、或混着正文的，照常显示。
+        for line in [
+            r#"{"type":"user","uuid":"n2","message":{"role":"user","content":"[Image: original 2310x1152, displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]"}}"#,
+            r#"{"type":"user","uuid":"n3","isMeta":true,"message":{"role":"user","content":"看这张 [Image: original 2310x1152, displayed at 2000x997.]"}}"#,
+        ] {
+            assert!(matches!(
+                parse_transcript_events(line).as_slice(),
+                [TranscriptEvent::UserMessage { .. }]
+            ));
+        }
     }
 
     #[test]
