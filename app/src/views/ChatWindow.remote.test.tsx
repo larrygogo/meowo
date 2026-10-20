@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // 复刻 ChatWindow.test.tsx 的夹具(mock 按文件隔离,不能跨文件共享)。这里只关心门控,
 // 故 mock 尽量瘦:够渲染出标题栏与页签即可。
@@ -132,5 +132,61 @@ describe("ChatWindow 远程门控", () => {
     } finally {
       window.matchMedia = original;
     }
+  });
+});
+
+describe("ChatWindow 远程答题", () => {
+  // 远程无 push 事件(listen 是空订阅),题面只经 pending_interaction 轮询到达。
+  function questionSessionImpl(question: Record<string, unknown>) {
+    return (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question });
+      return runningSessionImpl(command, args);
+    };
+  }
+
+  it("可代答题面:手机上直接作答提交,不再指路桌面端", async () => {
+    markRemoteUi();
+    window.history.replaceState({}, "", "/?sessionId=7");
+    invoke.mockImplementation(questionSessionImpl({
+      sessionId: 7, requestId: "request-remote-answer", provider: "claude", toolName: "AskUserQuestion",
+      description: null, answerable: true, permissionSuggestions: [],
+      input: JSON.stringify({ questions: [{ question: "晚饭吃什么？", multiSelect: false, options: [{ label: "火锅" }, { label: "烧烤" }] }] }),
+    }));
+    render(<ChatWindow />);
+    expect(await screen.findByText(/晚饭吃什么/)).toBeTruthy();
+    expect(screen.queryByText(/请在桌面端作答/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "转为逐题作答" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /火锅/ }));
+    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+    await waitFor(() => {
+      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      expect(resolved).toBeTruthy();
+      const choice = (resolved![1] as { choice: string }).choice;
+      expect(JSON.parse(choice.slice("answers:".length))).toEqual({ "晚饭吃什么？": "火锅" });
+    });
+  });
+
+  it("卡内答不了的题面:转为逐题作答只放行挂起,不切终端页", async () => {
+    markRemoteUi();
+    window.history.replaceState({}, "", "/?sessionId=7");
+    // 两题同文:答案按题面原文键控,卡内无法表达(answersRepresentable=false)。
+    invoke.mockImplementation(questionSessionImpl({
+      sessionId: 7, requestId: "request-remote-stepwise", provider: "claude", toolName: "AskUserQuestion",
+      description: null, answerable: true, permissionSuggestions: [],
+      input: JSON.stringify({ questions: [
+        { header: "甲", question: "选哪个？", multiSelect: false, options: [{ label: "A" }] },
+        { header: "乙", question: "选哪个？", multiSelect: false, options: [{ label: "B" }] },
+      ] }),
+    }));
+    render(<ChatWindow />);
+    expect(await screen.findByText("这组问题无法在卡片内作答，请转为逐题作答")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "转为逐题作答" }));
+    await waitFor(() => {
+      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      expect((resolved?.[1] as { choice?: string } | undefined)?.choice).toBe("pass");
+    });
+    // 远程没有终端视图:仍停在对话页(输入框在场)。
+    expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();
   });
 });

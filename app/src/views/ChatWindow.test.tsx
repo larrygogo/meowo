@@ -1387,11 +1387,11 @@ describe("ChatWindow", () => {
     await screen.findByText("最近的消息");
     const button = await screen.findByRole("button", { name: "加载更早的对话" });
     // 被裁掉的消息此刻不在 DOM 里——这正是首屏省下的成本。
-    expect(screen.queryByText("很早以前的消息")).toBeNull();
+    expect(screen.queryByText("很早以前的消息", { selector: ".chat-text" })).toBeNull();
 
     // 第一屏：增量前插，不整段重读（无 full 参数）。
     fireEvent.click(button);
-    expect(await screen.findByText("中间的消息")).toBeTruthy();
+    expect(await screen.findByText("中间的消息", { selector: ".chat-text" })).toBeTruthy();
     expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 33, before: 120 }));
     expect(invoke).not.toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ full: true }));
     // 还没到文件头：入口保留，可以再点。
@@ -1399,10 +1399,10 @@ describe("ChatWindow", () => {
 
     // 第二屏翻到文件头（hasMore=false）：提示消失，已有消息不重复插入。
     fireEvent.click(again);
-    expect(await screen.findByText("很早以前的消息")).toBeTruthy();
+    expect(await screen.findByText("很早以前的消息", { selector: ".chat-text" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "加载更早的对话" })).toBeNull());
-    expect(screen.getAllByText("最近的消息")).toHaveLength(1);
-    expect(screen.getAllByText("中间的消息")).toHaveLength(1);
+    expect(screen.getAllByText("最近的消息", { selector: ".chat-text" })).toHaveLength(1);
+    expect(screen.getAllByText("中间的消息", { selector: ".chat-text" })).toHaveLength(1);
   });
 
   it("delays the loading skeleton until the first read takes >150ms", async () => {
@@ -3838,8 +3838,17 @@ describe("ChatWindow", () => {
     // 多轮轮询过去,旧证据不变:回执必须还在。
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(screen.queryByText(/插话已排队/)).toBeTruthy();
-    // 新证据落盘(lastUserText 变成插话本身):这才消解。
+    // hook 在入队瞬间就把 lastUserText 改成插话本身(claude 2.1.304 实测),消息却还在队列里、
+    // transcript 没有它:transcript 在场时这不算消费证据,回执必须还在。
     current = { ...current, lastUserText: "ok" };
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(screen.queryByText(/插话已排队/)).toBeTruthy();
+    // 注入后以新条目落盘 transcript:这才消解。
+    current = {
+      ...current,
+      offset: 20,
+      items: [...(current.items as unknown[]), { type: "user_text", id: "u2", timestamp: null, text: "ok" }],
+    };
     await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
   });
 
@@ -4608,7 +4617,7 @@ describe("ChatWindow", () => {
       { id: 80, provider: "kimi", startedAt: 3, endedAt: null, model: null },
     ]);
     expect(await screen.findByText("切换至 Kimi Code 继续，完整上下文已交接")).toBeTruthy();
-    expect(await screen.findByText("前序段旧问题")).toBeTruthy();
+    expect(await screen.findByText("前序段旧问题", { selector: ".chat-text" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /回到最新/ }).querySelector(".chat-jump-latest-count")).toBeNull();
 
     // 当前段真来一条新消息:徽章 +1。

@@ -32,6 +32,7 @@ import { ChatTitleMenu, ChatTodoMenu, type TodoPanelRow } from "./chat/TitleMenu
 import { QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
+import { UserMessageNav } from "./chat/UserMessageNav";
 import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { fmtElapsed, parseCliStatus, type CliStatus } from "./chat/cliStatus";
@@ -3108,6 +3109,11 @@ export function ChatWindow() {
   // 纯附件回执(attachmentOnly)例外:占位「（附件）」永不落盘,包含匹配恒失败——
   // 改认「水位线之后出现任意新 user_text,或 lastUserText 与快照不同」为证据。
   // 排队没有固定时限：长任务超过 15s 仍未消费时必须保留回执，直到出现实际消费证据。
+  // lastUserText 只在**没有 transcript**时算证据(那时对话页正靠它兜底渲染,见 provisional)。
+  // transcript 在场时它只证明「已提交」:claude 2.1.304 实测 UserPromptSubmit 在插话**入队
+  // 瞬间**就触发,正文要等注入(下一个工具边界,实拍 30s)才以 queued_command 落盘——认它
+  // 的话回执当场收走、消息却还不在 transcript 里,即「插话很快就消失了」(用户反馈)。
+  const hookIsEvidence = items.length === 0;
   useEffect(() => {
     setQueuedInterjections((current) => {
       if (current.length === 0) return current;
@@ -3115,8 +3121,7 @@ export function ChatWindow() {
       const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
       const recent = items.slice(-12);
       const next = current.filter(({ text, attachmentOnly, priorUserText, priorItemIds }) => {
-
-        const lastUserChanged = history?.lastUserText != null
+        const lastUserChanged = hookIsEvidence && history?.lastUserText != null
           && collapse(history.lastUserText) !== collapse(priorUserText ?? "");
         if (attachmentOnly) {
           return !lastUserChanged
@@ -3132,9 +3137,9 @@ export function ChatWindow() {
       });
       return next.length === current.length ? current : next;
     });
-  }, [tone, items, history?.lastUserText, echoSweep]);
-  // 乐观回显的消解：与排队回执同一套「包含 + 水位线」证据规则，但**不随 tone 清空**——
-  // 空闲态发送后 tone 会变 running，回显此刻正要发挥作用。15s 兜底防证据永不出现。
+  }, [tone, items, hookIsEvidence, history?.lastUserText, echoSweep]);
+  // 乐观回显的消解：与排队回执同一套「包含 + 水位线」证据规则（含 hookIsEvidence 口径），
+  // 但**不随 tone 清空**——空闲态发送后 tone 会变 running，回显此刻正要发挥作用。15s 兜底防证据永不出现。
   useEffect(() => {
     setPendingEchoes((current) => {
       if (current.length === 0) return current;
@@ -3143,7 +3148,7 @@ export function ChatWindow() {
       const now = Date.now();
       const next = current.filter(({ text, at, attachmentOnly, priorUserText, priorItemIds }) => {
         if (now - at > 15_000) return false;
-        const lastUserChanged = history?.lastUserText != null
+        const lastUserChanged = hookIsEvidence && history?.lastUserText != null
           && collapse(history.lastUserText) !== collapse(priorUserText ?? "");
         if (attachmentOnly) {
           // 纯附件回显:占位「（附件）」永不落盘,包含匹配恒失败,证据口径同排队回执。
@@ -3160,7 +3165,7 @@ export function ChatWindow() {
       });
       return next.length === current.length ? current : next;
     });
-  }, [items, history?.lastUserText, echoSweep]);
+  }, [items, hookIsEvidence, history?.lastUserText, echoSweep]);
   // 15s 兜底必须由**计时器**驱动。上面两个消解 effect 只在 items / lastUserText 变化时才重算，
   // 而兜底要覆盖的恰恰是「消息其实没进 composer」——那时 transcript 不再增长、lastUserText
   // 也不变,effect 永远不再执行,假回执(乐观回显的 user 气泡 / 排队回执条)就一直挂着。
@@ -3717,7 +3722,9 @@ export function ChatWindow() {
     } finally {
       setResolvingApproval(false);
     }
-    setView("terminal");
+    // 远程没有终端视图：放行后终端表单出现，由屏幕识别的作答卡（interactiveAttention）
+    // 接手，手机上逐题点选即可。
+    if (!remoteUi()) setView("terminal");
   };
   const commandApproval = commandAttention
     ? commandAttention.details === "arrow_panel"
@@ -4179,6 +4186,10 @@ export function ChatWindow() {
         {!loading && todos.length > 0 && <TodoPanel todos={todos} />}
       </main>
       </ChatCwdContext.Provider>
+      {/* 右缘用户消息导航：悬浮在滚动区之上、不随内容滚动，故放在 main 之外。 */}
+      {view === "chat" && !loading && timelineItems.length > 0 && (
+        <UserMessageNav items={timelineItems} scrollRef={scrollRef} />
+      )}
       {/* Agent 正在跑但 transcript 半天不落新行时，页面此前毫无动静，像卡死。
           运行条原在滚动流内、Transcript 之后——上翻历史就随内容滚出视口。移到 main 与
           compose 之间常驻:滚到哪里都看得见,有具体活动（最近命令）就显示出来。 */}
@@ -4370,8 +4381,14 @@ export function ChatWindow() {
         title={t.chat.questionTitle}
         badge={questionTimedOut ? t.chat.approvalTimedOut : questionCountdown ? `${t.chat.questionPending} · ${questionCountdown}` : t.chat.questionPending}
         actions={<>
+          {/* 远程：卡本身就是作答面，直接提交。卡内答不了时放行挂起，终端表单经屏幕识别
+              变成作答卡回到手机上（此前一律「请在桌面端作答」，手机答不了题）。 */}
           {remoteUi()
-            ? <span className="chat-remote-hint">{t.chat.answerOnDesktop}</span>
+            ? !questionCardRepresentable && (
+              <button type="button" disabled={resolvingApproval} onClick={() => void sendQuestionToTerminal()}>
+                {t.chat.questionAnswerStepwise}
+              </button>
+            )
             // 终端视图下卡本身就是作答面，「去终端作答」只在卡内答不了（题面无法表达）
             // 时保留——按下即放行挂起、终端表单随即出现在眼前，文案换成「在终端作答」。
             : (view === "chat" || !questionCardRepresentable) && (
@@ -4393,7 +4410,7 @@ export function ChatWindow() {
         <span>{answerMap
           ? t.chat.questionAnswerReady
           : !questionCardRepresentable
-            ? t.chat.questionNeedsTerminal
+            ? (remoteUi() ? t.chat.questionNeedsStepwiseRemote : t.chat.questionNeedsTerminal)
             : t.chat.questionAnswerIncomplete(unansweredCount)}</span>
       </ApprovalCard>}
       {/* AskUserQuestion 的同步题面卡（展示形态）：broker 自动放行后从结构化参数渲染，与
@@ -4422,8 +4439,9 @@ export function ChatWindow() {
         <span>{!history?.ptyManaged
           ? (remoteUi() ? t.chat.answerOnDesktop : t.chat.questionExternalHint)
           : !queueableInCard
-          // 远程没有终端视图,「去终端作答」的指路改成「回桌面端」。
-          ? (remoteUi() ? t.chat.answerOnDesktop : t.chat.questionMultiHint)
+          // 远程没有终端视图:托管会话的终端表单一就绪,屏幕识别的作答卡就会接替本卡出现在
+          // 手机上(卡内有自定义输入),所以这里是「稍候」而不是「回桌面端」。
+          ? (remoteUi() ? t.chat.questionFormPendingRemote : t.chat.questionMultiHint)
           : queuedLabels.length > 0
           ? t.chat.queuedAnswerHint(queuedLabels.join("、"))
           : t.chat.questionFormLoading}</span>

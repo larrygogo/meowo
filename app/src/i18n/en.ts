@@ -229,6 +229,8 @@ export const en: Dict = {
     // the "Disconnected" status badge). Keep the two phrasings distinct.
     syncInterrupted: "Sync interrupted. Reconnecting, showing cached content.",
     jumpLatest: "Jump to latest",
+    messageNav: "Message navigator",
+    messageNavImage: "[Image]",
     switcherTitle: "Command palette",
     switcherPlaceholder: "Search sessions or commands (↑↓ to select, Enter to open / run)",
     switcherEmpty: "No matching sessions or commands",
@@ -262,7 +264,7 @@ export const en: Dict = {
     codeCopy: "Copy",
     codeCopied: "Copied",
     questionExpired: "The question card timed out and closed; keep answering on the Terminal tab",
-    questionExpiredRemote: "The question card timed out and closed; answer it on the desktop",
+    questionExpiredRemote: "The question card timed out. You can answer here once the form is ready",
     terminalApprovalBanner: "1 request pending approval",
     terminalApprovalGo: "Review",
     toolResult: "Tool result",
@@ -349,6 +351,9 @@ export const en: Dict = {
     // the card): the user is already on the terminal page — pressing it hands the hang back to
     // the terminal and the form appears right there, so the wording must differ from goTerminal.
     questionAnswerInTerminal: "Answer in terminal",
+    questionAnswerStepwise: "Answer step by step",
+    questionNeedsStepwiseRemote: "These questions can't be answered in the card. Answer step by step instead",
+    questionFormPendingRemote: "You can answer here once the form is ready",
     close: "Close",
     renameSave: "Save",
     minimize: "Minimize",

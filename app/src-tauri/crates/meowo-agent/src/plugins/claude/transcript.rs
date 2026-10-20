@@ -295,6 +295,23 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
         })
 }
 
+/// 大图被缩小后 CC 补一条 `isMeta` 行告诉模型缩放比例：「[Image: original 2310x1152,
+/// displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]」
+/// （2.1.304 实测，纯字符串正文、整条只有这一句）。它是写给模型的，不丢的话对话页显示成
+/// 一条用户气泡（用户实拍反馈）。只认整条就是这一句的：混着别的文字的不动。
+fn is_image_scale_note(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
+    if v.get("isMeta").and_then(|x| x.as_bool()) != Some(true) {
+        return false;
+    }
+    let Some(text) = content.and_then(|x| x.as_str()).map(str::trim) else {
+        return false;
+    };
+    text.starts_with("[Image: original ")
+        && text.contains(", displayed at ")
+        && text.ends_with(']')
+        && text.matches('[').count() == 1
+}
+
 /// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
 /// `</pasted_content id="6bad">`（2.1.296 实测，id 是 4 位 hex）。这对标签是写给模型的，
 /// 不剥的话对话页会把它们当正文显示（用户实拍反馈）。只剥「整行就是标签、且开闭 id
@@ -370,6 +387,21 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             // 不丢的话对话页在「上下文已压缩」分隔条下紧跟一大块用户气泡（用户实拍反馈）；
             // CC 自己的终端也只显示分隔提示、不展开摘要。分隔条由 compact_boundary 行提供。
             if v.get("isCompactSummary").and_then(|x| x.as_bool()) == Some(true) {
+                return Vec::new();
+            }
+            // 工具注入给模型的内容：Skill 调用后 CC 把整份技能说明以 user 行写回
+            // （`isMeta` + `sourceToolUseID`，2.1.304 实测「Base directory for this skill…」），
+            // 不丢的话对话页把它显示成一大块用户气泡，像是用户自己发的（用户实拍反馈）。
+            // Skill 调用本身已作为工具卡出现在时间线上。只认带 sourceToolUseID 的：同为
+            // isMeta 的跨会话消息是真对话内容，要照常显示。
+            if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+                && v.get("sourceToolUseID")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|id| !id.is_empty())
+            {
+                return Vec::new();
+            }
+            if is_image_scale_note(&v, content) {
                 return Vec::new();
             }
             if let Some(text) = content
@@ -1836,6 +1868,36 @@ mod tests {
             parse_transcript_events(boundary).as_slice(),
             [TranscriptEvent::Metadata { kind, .. }] if kind == "compact"
         ));
+    }
+
+    /// 样本取自 2.1.304 真机：Skill 调用后写回的技能说明行（正文截短）。
+    #[test]
+    fn chat_parser_drops_tool_injected_meta_but_keeps_cross_session() {
+        let skill = r#"{"type":"user","uuid":"k1","isMeta":true,"turnCompanion":true,"sourceToolUseID":"toolu_017zj","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: C:\\Users\\me\\.claude\\skills\\pr-description\n\n# pr-description"}]}}"#;
+        assert!(parse_transcript_events(skill).is_empty());
+        // 同为 isMeta、但不是工具注入的跨会话消息：真对话内容，照常出用户消息。
+        let cross = r#"{"type":"user","uuid":"x1","isMeta":true,"message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from-name=\"a\">你好</cross-session-message>"}}"#;
+        assert!(matches!(
+            parse_transcript_events(cross).as_slice(),
+            [TranscriptEvent::UserMessage { .. }]
+        ));
+    }
+
+    /// 样本取自 2.1.304 真机：大图缩放说明行。
+    #[test]
+    fn chat_parser_drops_image_scale_note() {
+        let note = r#"{"type":"user","uuid":"n1","isMeta":true,"message":{"role":"user","content":"[Image: original 2310x1152, displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]"}}"#;
+        assert!(parse_transcript_events(note).is_empty());
+        // 不是 isMeta、或混着正文的，照常显示。
+        for line in [
+            r#"{"type":"user","uuid":"n2","message":{"role":"user","content":"[Image: original 2310x1152, displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]"}}"#,
+            r#"{"type":"user","uuid":"n3","isMeta":true,"message":{"role":"user","content":"看这张 [Image: original 2310x1152, displayed at 2000x997.]"}}"#,
+        ] {
+            assert!(matches!(
+                parse_transcript_events(line).as_slice(),
+                [TranscriptEvent::UserMessage { .. }]
+            ));
+        }
     }
 
     #[test]
