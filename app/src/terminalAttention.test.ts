@@ -11,6 +11,23 @@ describe("terminalAttention", () => {
     expect(terminalNeedsAttention(prompt, ["do you trust the contents of this directory"])).toBe(true);
   });
 
+  it("reads the 2.1.304 trust screen: ST-terminated title OSC and CHA word gaps", () => {
+    // claude 2.1.304 经 portable-pty 实抓(2026-10-21)的精简版:开屏 ST 结尾的标题 OSC、
+    // 词间用 ESC[nG 跳列不出空格、选项无编号且光标停在「No, exit」、屏末 BEL 结尾的 OSC 查询。
+    const prompt = "\x1b]0;claude\x1b\\\x1b[?25l\r\n"
+      + "\x1b[2G\x1b[1mAccessing\x1b[12Gworkspace:\x1b[22m\r\n\r\n"
+      + "\x1b[2G\x1b[38;2;177;185;249m❯\x1b[4GNo,\x1b[8Gexit\x1b[39m\r\n"
+      + "\x1b[4GYes,\x1b[9GI\x1b[11Gtrust\x1b[17Gthis\x1b[22Gfolder\r\n\r\n"
+      + "\x1b[2GEnter\x1b[8Gto\x1b[11Gconfirm\x1b[19G·\x1b[21GEsc\x1b[25Gto\x1b[28Gcancel\r\n"
+      + "\x1b[1C\x1b[4A\x1b[>0q\x1b]7501;?\x07\x1b[c";
+    const attention = terminalAttention(prompt, ["trust this folder"]);
+    expect(attention?.id).toBe("provider:trust this folder");
+    expect(attention?.options?.map((option) => [option.label, option.input])).toEqual([
+      ["No, exit", "\r"],
+      ["Yes, I trust this folder", "\x1b[B\r"],
+    ]);
+  });
+
   it("detects a credential/token step even when the provider did not declare its wording", () => {
     const prompt = "\x1b[2JOAuth token has been revoked\r\nRun /login to sign in\r\nPress Enter to continue · Esc to cancel";
     const attention = terminalAttention(prompt, []);

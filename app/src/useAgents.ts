@@ -29,7 +29,12 @@ export function useAgents(): {
   const [agents, setAgents] = useState<AgentDescriptor[] | null>(null);
   // 事件订阅里的 reload 可能晚于卸载才 resolve:卸载后不得再 setState。
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // 挂载时置回 true:StrictMode(dev)会挂-卸-挂各跑一遍 effect,只在卸载时置 false 的话
+  // 第二次挂载后它永远是 false——ChatWindow 里粘贴落盘回来全被当成「已卸载」丢掉(dev 实测)。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const reload = () => {
     listAgents().then((list) => { if (mountedRef.current) setAgents(list); }).catch(() => {});
   };

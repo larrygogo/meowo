@@ -163,13 +163,15 @@ describe("ChatWindow 适配回归", () => {
     const base = setup(510);
     let pastes = 0;
     let cleared = false;
+    // 首发时整屏仿真认不出 composer(清不了残图、不能降级 → 报错);重发时才认得出。
+    let recognizable = false;
     invoke.mockImplementation((command, args) => {
       if (command === "write_managed_terminal" && args?.data === "\x16") pastes += 1;
       if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
       // 第一次贴图「没认出来」(占位符不进增量流)，第二次正常落出。
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(510, pastes >= 2 ? "[Image #1]" : ""));
       // 空 composer 显示的是灰色提示语而不是空行（2.1.303 实拍）。
-      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      if (command === "managed_terminal_screen") return Promise.resolve(!recognizable ? null : ["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
       return base(command, args);
     });
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
@@ -181,12 +183,40 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.keyDown(box(), { key: "Enter" });
     await screen.findByText(zh.chat.imagePasteUnconfirmed, {}, { timeout: 4000 });
     expect(writes(510)).not.toContain("\r");
+    recognizable = true;
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(writes(510)).toContain("\r"), { timeout: 4000 });
     const sent = writes(510);
     expect(sent.indexOf("\x15")).toBeLessThan(sent.lastIndexOf("\x16"));
     expect(sent.filter((text) => text === "\x16")).toHaveLength(2);
     expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+  });
+
+  it("占位符超时但残图能清掉：自动清理并改走文本路径发出，不打扰用户", async () => {
+    const base = setup(511);
+    let cleared = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
+      // 占位符始终不进增量流(超时),但整屏仿真里能看到 composer 上的残图。
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(511, ""));
+      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-511");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(511)).toContain("\r"), { timeout: 4000 });
+    const sent = writes(511);
+    // 先清残图,再写带路径的文本正文,最后回车。
+    const body = sent.findIndex((text) => String(text).includes("C:\\repo\\shot.png"));
+    expect(body).toBeGreaterThan(sent.indexOf("\x15"));
+    expect(String(sent[body])).toContain("看图");
+    expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+    await waitFor(() => expect(box().value).toBe(""));
   });
 
   // claude 运行中贴图走增量重绘，占位符里的空格被光标定位跳过（2.1.303 实测原始流）。
@@ -591,6 +621,66 @@ describe("ChatWindow", () => {
     expect(await screen.findByAltText("shot.png")).toBeTruthy();
   });
 
+  it("新会话认领(临时 id → 真 id)时，已粘的图和打的字跟过去", async () => {
+    window.history.replaceState({}, "", "/?sessionId=-9");
+    let claimed = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "managed_terminal_binding") return Promise.resolve(claimed ? 77 : null);
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 77, title: "认领后", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: Number(args?.sessionId), active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "save_pasted_attachment") {
+        return Promise.resolve(`C:/tmp/meowo-paste/1-0/${(args as { fileName: string }).fileName}`);
+      }
+      return Promise.resolve(null);
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    fireEvent.change(input, { target: { value: "看看这张图" } });
+    const file = { name: "shot.png", arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    expect(await screen.findByAltText("shot.png")).toBeTruthy();
+
+    claimed = true;
+    await waitFor(() => expect(screen.getByText("认领后")).toBeTruthy());
+    expect(screen.getByAltText("shot.png")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).value).toBe("看看这张图");
+  });
+
+  it("新会话认领撞上图片落盘在途：落盘回来的图不丢", async () => {
+    window.history.replaceState({}, "", "/?sessionId=-10");
+    let claimed = false;
+    let finishSave: (path: string) => void = () => {};
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "managed_terminal_binding") return Promise.resolve(claimed ? 78 : null);
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 78, title: "认领后在途", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: Number(args?.sessionId), active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "save_pasted_attachment") return new Promise((resolve) => { finishSave = resolve; });
+      return Promise.resolve(null);
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    const file = { name: "late.png", arrayBuffer: () => Promise.resolve(new Uint8Array([1]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_pasted_attachment", expect.anything()));
+
+    claimed = true;
+    await waitFor(() => expect(screen.getByText("认领后在途")).toBeTruthy());
+    finishSave("C:/tmp/meowo-paste/2-0/late.png");
+    expect(await screen.findByAltText("late.png")).toBeTruthy();
+  });
+
   it("手敲交互式内置命令（/config）走菜单识别通道：清空输入框并打开识别窗口", async () => {
     window.history.replaceState({}, "", "/?sessionId=52");
     invoke.mockImplementation((command: string) => {
@@ -958,6 +1048,29 @@ describe("ChatWindow", () => {
     expect(await screen.findByRole("button", { name: "Yes, I trust this folder" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "对话" }).className).toContain("is-active");
     expect(invoke).not.toHaveBeenCalledWith("start_managed_terminal", expect.anything());
+  });
+
+  it("shows the trust card for a temp session before it is claimed", async () => {
+    // 新建会话认领前只有临时负 id、没有 history;claude 2.1.304 的信任页又在 hook 认领之前,
+    // provider 只能从后端 pending 启动登记取(2026-10-21 dev 实拍:对话页一直「会话正在启动…」)。
+    window.history.replaceState({}, "", "/?sessionId=-7");
+    const prompt = "\x1b]0;claude\x1b\\\r\n"
+      + "\x1b[2G\x1b[38;2;177;185;249m❯\x1b[4GNo,\x1b[8Gexit\x1b[39m\r\n"
+      + "\x1b[4GYes,\x1b[9GI\x1b[11Gtrust\x1b[17Gthis\x1b[22Gfolder\r\n\r\n"
+      + "\x1b[2GEnter\x1b[8Gto\x1b[11Gconfirm\x1b[19G·\x1b[21GEsc\x1b[25Gto\x1b[28Gcancel\r\n"
+      + "\x1b]7501;?\x07";
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/new-repo" });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ sessionId: -7, active: true, managed: true, data: btoa(unescape(encodeURIComponent(prompt))), startOffset: 0, endOffset: prompt.length, exited: false, exitCode: null });
+      }
+      return Promise.resolve(null);
+    });
+    render(<ChatWindow />);
+
+    expect(await screen.findByRole("button", { name: "Yes, I trust this folder" })).toBeTruthy();
+    expect(screen.getByText("是否信任此文件夹？")).toBeTruthy();
   });
 
   it("renders assistant markdown but keeps user text verbatim", async () => {
