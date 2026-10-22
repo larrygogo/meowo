@@ -120,7 +120,7 @@ pub fn dispatch(
                             None => store.touch_session(sid, now_ms)?,
                         }
                     }
-                    Some("Bash") => {
+                    Some("Bash" | "PowerShell") => {
                         if let Some(cmd) = ev.bash_command() {
                             store.set_current_activity(sid, &format!("› {cmd}"), now_ms)?;
                         }

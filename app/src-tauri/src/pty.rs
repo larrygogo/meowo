@@ -2133,6 +2133,15 @@ impl PtyBroker {
             .unwrap_or_default()
     }
 
+    /// 单条版 [`Self::pending_launches`](对话窗按临时 id 取,不必整表拷贝)。
+    pub(crate) fn pending_launch(&self, temp_id: i64) -> Option<PendingLaunch> {
+        self.attach
+            .pending_launches
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&temp_id).cloned())
+    }
+
     /// 单会话版 [`Self::active_session_ids`](对话窗轮询按会话取,不必整表拷贝)。
     pub(crate) fn is_active(&self, session_id: i64) -> bool {
         self.sessions

@@ -46,7 +46,8 @@ export function isBackgroundShell(
   item: ToolUseItem,
   outcomes: Map<string, unknown>,
 ): boolean {
-  return item.name === "Bash" && outcomes.has(item.id);
+  // PowerShell 工具(Windows 上的 CC)同样有 run_in_background,判据一致。
+  return (item.name === "Bash" || item.name === "PowerShell") && outcomes.has(item.id);
 }
 
 /// 子任务执行时长的短格式:秒级起报,超一小时丢掉秒(读的是量级,不是秒表)。

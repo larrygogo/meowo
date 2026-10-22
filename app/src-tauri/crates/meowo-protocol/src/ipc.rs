@@ -375,6 +375,18 @@ pub struct SwitchStartedDto {
     pub handoff_path: String,
 }
 
+/// `managed_terminal_pending_launch` 的返回：临时负 id 认领前的 provider/cwd。对话页靠它
+/// 在认领前就拿到该家的启动识别规则——claude 的目录信任页出现在 hook 认领之前(未信任
+/// 目录不跑 hook),不提前拿,信任页永远认不出、对话页一直停在「会话正在启动…」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PendingLaunchDto {
+    pub provider: String,
+    pub cwd: Option<String>,
+}
+
 /// 接续链上的一段会话（`get_session_lineage` 的行，按时间升序）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
