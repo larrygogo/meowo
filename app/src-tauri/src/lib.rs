@@ -48,9 +48,9 @@ mod window;
 
 // run() 的 generate_handler 以裸标识符登记这些命令，须在 crate 根作用域可见。
 use chat::{
-    clipboard_restore, clipboard_set_image, clipboard_text, get_chat_history,
-    get_subagent_transcript, probe_subagent_states, refresh_session_model, refresh_session_todos,
-    save_pasted_attachment, search_chat_transcripts,
+    capture_screen_region, clipboard_restore, clipboard_set_image, clipboard_text,
+    get_chat_history, get_subagent_transcript, probe_subagent_states, refresh_session_model,
+    refresh_session_todos, save_pasted_attachment, search_chat_transcripts,
 };
 use fsutil::{
     list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
@@ -1264,6 +1264,7 @@ pub fn run() {
             refresh_session_todos,
             save_pasted_attachment,
             clipboard_set_image,
+            capture_screen_region,
             clipboard_restore,
             clipboard_text,
             open_chat_window,

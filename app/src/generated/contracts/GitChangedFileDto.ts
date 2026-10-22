@@ -11,4 +11,9 @@ path: string,
 /**
  * 归一化状态字母：M/A/D/T 取自 porcelain 的 X 或 Y；未跟踪（??）记为 "U"。
  */
-status: string, };
+status: string, 
+/**
+ * 相对 HEAD 的增删行数（`git diff --numstat`；未跟踪文件按行数全记为新增）。
+ * 二进制、仓库还没有提交、未跟踪文件过大或过多时数不出来，为 None，前端不显示。
+ */
+additions: number | null, deletions: number | null, };

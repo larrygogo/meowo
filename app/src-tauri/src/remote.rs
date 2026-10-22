@@ -1498,6 +1498,8 @@ mod tests {
             "set_autostart",
             "clipboard_text",
             "clipboard_set_image",
+            // 读回的是这台电脑的屏幕内容，手机端不许触发。
+            "capture_screen_region",
         ];
         for cmd in FORBIDDEN {
             assert!(

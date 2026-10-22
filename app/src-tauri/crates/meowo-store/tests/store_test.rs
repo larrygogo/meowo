@@ -879,6 +879,37 @@ fn last_ai_and_user_text_set_with_cleaning() {
     assert_eq!(s.last_ai_text.as_deref(), Some("调研 完成。 结论更微妙"));
 }
 
+#[test]
+fn last_ai_text_keeps_the_closing_question() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, _) = store.start_session(pid, "cc1", 100).unwrap();
+    let last = |store: &Store| {
+        store
+            .live_sessions(None, None, None, None, 1000)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.session.cc_session_id == "cc1")
+            .unwrap()
+            .last_ai_text
+    };
+
+    // 长回复以问句收尾:存问句,前面有话加「…」(截前 200 字会把它截掉)。
+    let long = format!("{}\n\n**要我接着把测试也补上吗？**", "已经改完了解析器。".repeat(40));
+    store.set_last_ai_text(sid, &long, 120).unwrap();
+    assert_eq!(last(&store).as_deref(), Some("…要我接着把测试也补上吗？"));
+
+    // 整条就是一句问话:原样存,不加「…」。
+    store.set_last_ai_text(sid, "要继续吗?", 120).unwrap();
+    assert_eq!(last(&store).as_deref(), Some("要继续吗?"));
+
+    // 问句后面跟着选项清单:最后一行不是问句,照旧存开头。
+    store
+        .set_last_ai_text(sid, "选哪个方案？\n1. 灰度\n2. 全量", 120)
+        .unwrap();
+    assert_eq!(last(&store).as_deref(), Some("选哪个方案？ 1. 灰度 2. 全量"));
+}
+
 // == Task 2: PendingReview ==
 #[test]
 fn pending_review_set_and_clear() {

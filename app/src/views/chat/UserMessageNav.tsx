@@ -36,6 +36,12 @@ export function userNavEntries(items: readonly ChatItem[]): UserNavEntry[] {
   return out;
 }
 
+/// 悬停时横线按离光标的远近变长：悬停项最长，往两边每隔一行短一档，像 Dock 放大
+/// （用户要求，对照截图）。离得远的回到常规长度。
+const DASH_BASE = 10;
+const DASH_STEPS = [20, 16, 13];
+export const dashWidth = (index: number, hovered: number) => DASH_STEPS[Math.abs(index - hovered)] ?? DASH_BASE;
+
 const escapeId = (id: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"'));
 
 /// 对话页右缘的用户消息导航：每条用户消息一根短横线，当前读到的那条高亮加长；
@@ -48,6 +54,7 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   const t = useT();
   const entries = useMemo(() => userNavEntries(items), [items]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
   const [box, setBox] = useState<{ top: number; height: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef(entries);
@@ -135,8 +142,13 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
       aria-label={t.chat.messageNav}
       style={box ? { top: box.top, height: box.height } : undefined}
     >
-      <div className="chat-msg-nav-list" ref={listRef}>
-        {entries.map((entry) => (
+      <div
+        className="chat-msg-nav-list"
+        ref={listRef}
+        onMouseLeave={() => setHovered(null)}
+        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHovered(null); }}
+      >
+        {entries.map((entry, index) => (
           <button
             type="button"
             key={entry.id}
@@ -147,6 +159,8 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
             aria-label={entry.kind === "image" ? t.chat.messageNavImage : entry.label}
             aria-current={entry.id === activeId ? "true" : undefined}
             onClick={() => jump(entry.id)}
+            onMouseEnter={() => setHovered(index)}
+            onFocus={() => setHovered(index)}
           >
             <span className="chat-msg-nav-label">
               {entry.kind === "command" && (
@@ -154,7 +168,11 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
               )}
               <span className="chat-msg-nav-text">{entry.kind === "image" ? t.chat.messageNavImage : entry.label}</span>
             </span>
-            <i className="chat-msg-nav-dash" aria-hidden="true" />
+            <i
+              className="chat-msg-nav-dash"
+              aria-hidden="true"
+              style={hovered === null ? undefined : { width: dashWidth(index, hovered) }}
+            />
           </button>
         ))}
       </div>

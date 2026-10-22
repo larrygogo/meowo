@@ -539,6 +539,15 @@ pub(crate) fn is_viewing_session(
 ///   需要决策的事悄悄藏起来，而用户可能正看着别的窗口区域、或只是让它开着没在读。
 ///
 /// 判据取通知种类而不是「有没有 pending」，让每个调用点的意图显式可读。
+/// 「等待你回复」的正文：agent 以问句收尾时（store 的 set_last_ai_text 会把那句存下来）
+/// 在标题下面带上它，不点开就知道它停下来在问什么。普通收尾只写标题，跟以前一样。
+pub(crate) fn waiting_body(title: &str, last_ai_text: Option<&str>) -> String {
+    match last_ai_text.map(str::trim) {
+        Some(text) if text.ends_with('?') || text.ends_with('？') => format!("{title}\n{text}"),
+        _ => title.to_string(),
+    }
+}
+
 pub(crate) fn suppressed_by_viewing(kind: NotifyKind, viewing: bool) -> bool {
     viewing && matches!(kind, NotifyKind::Waiting)
 }
@@ -1093,7 +1102,7 @@ pub(crate) fn spawn_liveness_watch(
                                 show_session_notification(
                                     &app,
                                     format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),
-                                    display_title.clone(),
+                                    waiting_body(&display_title, s.last_ai_text.as_deref()),
                                     s.session.id,
                                     pid,
                                     display_title.clone(),
@@ -1308,6 +1317,19 @@ mod transcript_watch_tests {
         let mut out: HashSet<i64> = HashSet::new();
         collect_transcript_hits(&ev, &watched, &mut out);
         assert_eq!(out, [1, 2].into_iter().collect());
+    }
+}
+
+#[cfg(test)]
+mod waiting_body_tests {
+    use super::waiting_body;
+
+    #[test]
+    fn appends_the_closing_question_only() {
+        assert_eq!(waiting_body("修解析器", Some("…要我把测试也补上吗？")), "修解析器\n…要我把测试也补上吗？");
+        assert_eq!(waiting_body("修解析器", Some("Shall I continue? ")), "修解析器\nShall I continue?");
+        assert_eq!(waiting_body("修解析器", Some("已经全部改完。")), "修解析器");
+        assert_eq!(waiting_body("修解析器", None), "修解析器");
     }
 }
 

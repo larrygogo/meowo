@@ -262,6 +262,10 @@ export function savePastedAttachment(fileName: string, dataBase64: string): Prom
 export function clipboardSetImage(path: string): Promise<void> {
   return invoke("clipboard_set_image", { path });
 }
+/** 拉起系统框选截图，截完落进粘贴目录回路径；取消/超时回 null。只在桌面端用（不进远程白名单）。 */
+export function captureScreenRegion(): Promise<string | null> {
+  return invoke("capture_screen_region");
+}
 /** 还原 clipboardSetImage 快照下来的剪贴板内容；没有快照时为空操作。 */
 export function clipboardRestore(): Promise<void> {
   return invoke("clipboard_restore");
