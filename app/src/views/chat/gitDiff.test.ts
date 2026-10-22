@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFileTree, diffLineClass } from "./gitDiff";
+import { buildFileTree, diffLineClass, sessionTouchedPaths, touchedByPath } from "./gitDiff";
 
 describe("diffLineClass", () => {
   it("classifies additions and deletions", () => {
@@ -106,5 +106,26 @@ describe("buildFileTree", () => {
     const tree = buildFileTree([file("a.ts", "A"), file("d/gone.ts", "D")]);
     expect(tree[0].children![0].file?.status).toBe("D");
     expect(tree[1].file?.status).toBe("A");
+  });
+});
+
+describe("sessionTouchedPaths / touchedByPath", () => {
+  const tool = (kind: string, path: string) => ({ type: "tool_use", detail: { kind, path } });
+
+  it("只收 Edit/Write 的路径,相对路径按会话 cwd 补全", () => {
+    expect(sessionTouchedPaths([
+      tool("edit", "C:\\Repo\\app\\src\\A.ts"),
+      tool("read", "C:\\Repo\\README.md"),
+      tool("write", "docs/new.md"),
+      { type: "user_text", detail: null },
+    ], "C:\\Repo\\app")).toEqual(["c:/repo/app/src/a.ts", "c:/repo/app/docs/new.md"]);
+  });
+
+  it("面板 cwd 是仓库子目录也能对上;同名文件在别的仓不算", () => {
+    const touched = ["c:/repo/app/src/a.ts", "d:/other/src/b.ts"];
+    expect(touchedByPath(touched, "C:\\Repo\\app", "app/src/a.ts")).toBe(true);
+    expect(touchedByPath(touched, "C:\\Repo", "app/src/a.ts")).toBe(true);
+    expect(touchedByPath(touched, "C:\\Repo", "src/b.ts")).toBe(false);
+    expect(touchedByPath(touched, "C:\\Repo", "app/src/c.ts")).toBe(false);
   });
 });

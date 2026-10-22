@@ -68,4 +68,20 @@ describe("UserMessageNav", () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "instant" });
     expect(button.getAttribute("aria-current")).toBe("true");
   });
+
+  it("悬停时横线按离光标的远近变长,移开恢复", () => {
+    const scrollRef = createRef<HTMLElement>();
+    const items = ["a", "b", "c", "d", "e", "f"].map((id) => user(id, "消息 " + id));
+    render(<>
+      <main ref={scrollRef}>{items.map((item) => <article key={item.id} data-msg-id={item.id} />)}</main>
+      <UserMessageNav items={items} scrollRef={scrollRef} />
+    </>);
+    const nav = screen.getByRole("navigation", { name: "用户消息导航" });
+    const buttons = within(nav).getAllByRole("button");
+    const widths = () => buttons.map((button) => button.querySelector<HTMLElement>(".chat-msg-nav-dash")!.style.width);
+    fireEvent.mouseEnter(buttons[2]);
+    expect(widths()).toEqual(["13px", "16px", "20px", "16px", "13px", "10px"]);
+    fireEvent.mouseLeave(nav.querySelector(".chat-msg-nav-list")!);
+    expect(widths()).toEqual(["", "", "", "", "", ""]);
+  });
 });

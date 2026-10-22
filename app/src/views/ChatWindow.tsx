@@ -9,7 +9,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { addSessionExtraDir, pickAndAddExtraDir, removeSessionExtraDir, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, probeSubagentStates, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, resolvePendingApproval, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, switchSessionProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval, type SubagentProbe } from "../api";
+import { addSessionExtraDir, pickAndAddExtraDir, removeSessionExtraDir, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, captureScreenRegion, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, probeSubagentStates, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, resolvePendingApproval, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, switchSessionProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval, type SubagentProbe } from "../api";
 import { hasEscLayers, pushEscLayer } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSessionActions } from "../hooks/useSessionActions";
@@ -33,6 +33,10 @@ import { QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
 import { UserMessageNav } from "./chat/UserMessageNav";
+import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
+import { sessionTouchedPaths } from "./chat/gitDiff";
+import { ApprovalScopeTags } from "./chat/ApprovalScopeTags";
+import { ImageAnnotator } from "./chat/ImageAnnotator";
 import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { fmtElapsed, parseCliStatus, type CliStatus } from "./chat/cliStatus";
@@ -128,6 +132,8 @@ function pickFilesViaInput(): Promise<File[]> {
 }
 /** 改动/文件停靠面板的宽度持久化键（localStorage 既有 meowo-* 命名惯例）。 */
 const DIFF_WIDTH_KEY = "meowo-diff-panel-width";
+const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
+const NO_TOUCHED_PATHS: readonly string[] = [];
 /** 面板宽度上下限：下限保面板可用，上限在拖拽时给对话区留 MIN_CHAT 动态计算。 */
 const DIFF_PANEL_MIN_WIDTH = 280;
 const DIFF_PANEL_DEFAULT_WIDTH = 400;
@@ -1629,6 +1635,32 @@ export function ChatWindow() {
   // 面板的激活仓(多仓会话:主仓 + 各附加目录之一)。null = 主仓;换会话重置。
   const [diffDir, setDiffDir] = useState<string | null>(null);
   const diffCwd = diffDir ?? cwd;
+  // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
+  // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
+  const [reviewComments, setReviewComments] = useState<ReadonlyMap<number, readonly ReviewComment[]>>(new Map());
+  const sessionReviewComments = reviewComments.get(sessionId) ?? NO_REVIEW_COMMENTS;
+  const setSessionReviewComments = useCallback((update: (list: readonly ReviewComment[]) => readonly ReviewComment[]) => {
+    setReviewComments((prev) => {
+      const next = new Map(prev);
+      const list = update(prev.get(sessionId) ?? NO_REVIEW_COMMENTS);
+      if (list.length > 0) next.set(sessionId, list);
+      else next.delete(sessionId);
+      return next;
+    });
+  }, [sessionId]);
+  const addReviewComment = useCallback((comment: Omit<ReviewComment, "id" | "dir">) => {
+    if (!diffCwd) return;
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    setSessionReviewComments((list) => [...list, { ...comment, id, dir: diffCwd }]);
+  }, [diffCwd, setSessionReviewComments]);
+  const removeReviewComment = useCallback((id: string) => {
+    setSessionReviewComments((list) => list.filter((comment) => comment.id !== id));
+  }, [setSessionReviewComments]);
+  // 「只看本会话改的」的依据。items 每轮轮询都换新引用,用拼接键稳住,别让 memo 的
+  // GitDiffView 跟着每帧重渲染。只算已加载的这段时间线:很早以前改过、还没翻到的
+  // 那部分历史不在里面。
+  const touchedKey = useMemo(() => sessionTouchedPaths(items, cwd).join("\0"), [items, cwd]);
+  const touchedPaths = useMemo(() => (touchedKey ? touchedKey.split("\0") : NO_TOUCHED_PATHS), [touchedKey]);
   // 会话的全部目录。extraDirs 数组每轮历史轮询都是新引用,用 join 键稳住
   // useMemo——否则 dirs 每帧换新引用,memo 的 GitDiffView 白 memo。
   const extraDirsKey = (history?.extraDirs ?? []).join("\0");
@@ -1923,6 +1955,23 @@ export function ChatWindow() {
     model: transcriptAgent.model,
     branch: gitSummary?.isRepo ? gitSummary.branch : null,
     changes: gitSummary?.isRepo ? gitSummary.files.length : 0,
+  };
+  // 评论拼成文字接在已打的字后面,光标放到末尾:用户可能还想补一句总的要求再发。
+  const insertReviewComments = () => {
+    const block = formatReviewComments(sessionReviewComments, cwd, {
+      intro: t.chat.reviewCommentsIntro,
+      removedLine: t.chat.reviewCommentsRemovedLine,
+    });
+    const current = promptRef.current.trimEnd();
+    const text = current ? `${current}\n\n${block}` : block;
+    setPrompt(text);
+    setSessionReviewComments(() => []);
+    requestAnimationFrame(() => {
+      const input = promptInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(text.length, text.length);
+    });
   };
   const welcomeCommands = (chatUi?.slash_commands ?? []).map((command) => command.name);
   const pickStarter = (text: string) => {
@@ -3534,6 +3583,46 @@ export function ChatWindow() {
       : attachmentsRef.current.length + fresh.length > 12 ? t.chat.attachmentLimit(12) : "");
     setAttachments((current) => [...current, ...fresh].slice(0, 12));
   };
+  /// 截图标注：path 是要标的图；replace 非空时标完替换掉这张附件（给已有附件补标注），
+  /// 否则作为新附件加进来（刚截的图）。
+  const [annotating, setAnnotating] = useState<{ path: string; replace: string | null } | null>(null);
+  const captureScreen = async () => {
+    try {
+      const path = await captureScreenRegion();
+      if (path && isCurrentOperation()) setAnnotating({ path, replace: null });
+    } catch (error) {
+      setAttachmentNotice(formatBackendError(error, t.locale));
+    }
+  };
+  const finishAnnotation = async ({ png, notes }: { png: Blob | null; notes: string[] }) => {
+    const target = annotating;
+    setAnnotating(null);
+    if (!target) return;
+    let path = target.path;
+    if (png) {
+      try {
+        path = await savePastedAttachment("screenshot-annotated.png", base64OfBuffer(await png.arrayBuffer()));
+      } catch (error) {
+        setAttachmentNotice(formatBackendError(error, t.locale));
+        return;
+      }
+    }
+    if (!isCurrentOperation()) return;
+    const next = attachmentOf(path);
+    setAttachments((current) => {
+      if (target.replace) return current.map((file) => (file.path === target.replace ? next : file));
+      if (current.some((file) => file.path === path)) return current;
+      return [...current, next].slice(0, 12);
+    });
+    // 编号与图上的红框一一对应;没写字的框不出现在文字里,但编号不重排。
+    const lines = notes.map((note, index) => (note ? `${index + 1}. ${note}` : "")).filter(Boolean);
+    if (lines.length > 0) {
+      const block = `${t.chat.annotateNotesIntro}\n${lines.join("\n")}`;
+      const current = promptRef.current.trimEnd();
+      setPrompt(current ? `${current}\n\n${block}` : block);
+    }
+    requestAnimationFrame(() => promptInputRef.current?.focus());
+  };
   // Esc=拒绝的两段式确认:焦点几乎总在输入框,空框时随手一个 Esc(常见意图是取消聚焦/
   // 收心流)不该直接替 agent 递出一个不可撤销的正式拒绝。第一下只把拒绝按钮点亮成
   // 「再按 Esc 确认」,3s 内第二下才真拒;点按钮拒绝不受影响(鼠标点击是明确意图)。
@@ -4376,6 +4465,7 @@ export function ChatWindow() {
         </>}
       >
         {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
+        {commandApproval.command && <ApprovalScopeTags tool={commandApproval.tool} input={commandApproval.command} dirs={diffDirs} />}
         {commandApproval.description && <span>{commandApproval.description}</span>}
         {commandApproval.question && <span>{commandApproval.question}</span>}
         {commandApproval.command && <ApprovalCommandDetail
@@ -4558,6 +4648,7 @@ export function ChatWindow() {
       >
         {approval ? <>
           <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{approval.toolName}</code></div>
+          <ApprovalScopeTags tool={approval.toolName} input={approval.input} dirs={diffDirs} />
           {approval.description && <span>{approval.description}</span>}
           {approval.input && <ApprovalCommandDetail
             label={t.chat.approvalInput}
@@ -4714,6 +4805,14 @@ export function ChatWindow() {
             </button>
           ))}
         </div>}
+        {sessionReviewComments.length > 0 && <div className="chat-review-bar">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span className="chat-review-bar-label">{t.chat.reviewComments(sessionReviewComments.length)}</span>
+          <button type="button" onClick={() => setSessionReviewComments(() => [])}>{t.chat.reviewCommentsClear}</button>
+          <button type="button" className="is-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
+        </div>}
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
             /* 图片附件给真缩略图（点开进灯箱，与 transcript 图片同一套 ImageRef）；
@@ -4721,6 +4820,10 @@ export function ChatWindow() {
             <div className="chat-attachment is-image" key={file.path} data-tip={file.path}>
               <ImageRef path={file.path} />
               <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
+              {/* 已有的图也能补标注(粘贴进来的截图最常见):标完换成带框的那张。 */}
+              {!remoteUi() && <button type="button" className="chat-attachment-annotate" aria-label={`${t.chat.annotate} ${file.name}`} data-tip={t.chat.annotate} onClick={() => setAnnotating({ path: file.path, replace: file.path })}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+              </button>}
             </div>
           ) : (
             <div className="chat-attachment" key={file.path} data-tip={file.path}>
@@ -4902,6 +5005,13 @@ export function ChatWindow() {
           <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} onClick={() => void chooseAttachments()}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65"><path d="M12 5v14M5 12h14" /></svg>
           </button>
+          {/* 截的是这台电脑的屏幕,手机远程页不出(后端命令也不在远程白名单)。 */}
+          {!remoteUi() && <button type="button" className="chat-attach-button" aria-label={t.chat.screenshot} data-tip={t.chat.screenshot} onClick={() => void captureScreen()}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+              <rect x="8.5" y="8.5" width="7" height="7" rx="1" />
+            </svg>
+          </button>}
           {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model" ref={modelMenuUi.ref} onKeyDown={modelMenuUi.onKeyDown}>
             <button
               ref={modelMenuUi.btnRef}
@@ -5326,11 +5436,22 @@ export function ChatWindow() {
             maximized={diffMaximized}
             onCollapse={collapseDiffPanel}
             onToggleMaximize={toggleDiffMaximize}
+            comments={sessionReviewComments}
+            onAddComment={addReviewComment}
+            onRemoveComment={removeReviewComment}
+            touchedPaths={touchedPaths}
           />
           </Suspense>
         </>
       )}
       </div>
+      {annotating && (
+        <ImageAnnotator
+          path={annotating.path}
+          onDone={(result) => void finishAnnotation(result)}
+          onClose={() => setAnnotating(null)}
+        />
+      )}
       {renaming && history && (
         <RenameModal
           initial={history.title || ""}

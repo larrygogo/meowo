@@ -1062,13 +1062,23 @@ impl Store {
 
     /// 落最近一条 AI 正文:折叠空白 + 截断 200 字符;空/全空白不覆盖旧值。
     /// 不动 last_event_at——Stop 的兄弟 set_session_status 已刷新它。
+    ///
+    /// 回合以一句问话收尾时(「要我接着改测试吗?」)存的是那句问话:长回复截前 200 字,
+    /// 结尾的问题正好被截掉,看板卡片上只剩开头的总结,看不出 agent 停下来在等什么
+    /// (对照 WorkBuddy 被吐槽最多的「做一半停下等回复」)。前面还有话时加「…」。
     pub fn set_last_ai_text(
         &self,
         session_id: i64,
         text: &str,
         now_ms: i64,
     ) -> Result<(), StoreError> {
-        let cleaned = truncate_chars(&sanitize_prompt(text), 200);
+        let full = sanitize_prompt(text);
+        let cleaned = match trailing_question(text) {
+            Some(question) if question.chars().count() < full.chars().count() => {
+                truncate_chars(&format!("…{question}"), 200)
+            }
+            _ => truncate_chars(&full, 200),
+        };
         if cleaned.is_empty() {
             return Ok(());
         }
@@ -1852,6 +1862,20 @@ fn norm_dir(p: &str) -> String {
 /// 按字符（非字节）截断，避免切坏多字节中文。
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+/// 正文最后一行是问句就取出来(去掉 markdown 的引用/列表/加粗记号)。只看最后一行:
+/// 问句后面还跟着选项清单的,最后一行是选项,不算,宁可照旧显示开头。
+fn trailing_question(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).rfind(|line| !line.is_empty())?;
+    let line = line
+        .trim_start_matches(['>', '-', '*', '#', ' '])
+        .trim_matches('*')
+        .trim();
+    let question = sanitize_prompt(line);
+    let ends_with_mark = question.ends_with('?') || question.ends_with('？');
+    // 一个问号成不了问句(「?」「`a?`」),至少两个字。
+    (ends_with_mark && question.chars().count() >= 2).then_some(question)
 }
 
 /// 移除形如 `[Image #N]`（以及任意 `[Image ...]`）的占位标记。

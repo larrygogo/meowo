@@ -55,12 +55,80 @@ fn git_diff_summary_blocking(cwd: &str) -> Result<GitDiffSummaryDto, String> {
     if !status.status.success() {
         return Err("git status 执行失败".into());
     }
+    let mut files = parse_porcelain_z(&status.stdout);
+    fill_line_counts(dir, &mut files);
     Ok(GitDiffSummaryDto {
         git_available: true,
         is_repo: true,
         branch,
-        files: parse_porcelain_z(&status.stdout),
+        files,
     })
+}
+
+/// 未跟踪文件最多数这么多个：-uall 下没进 .gitignore 的产物目录能有上千个文件，
+/// 每个都读一遍盘会把摘要拖慢（摘要在面板每次可见时重拉）。超出的不显示行数。
+const MAX_UNTRACKED_COUNTED: usize = 200;
+
+/// 给变更清单补上增删行数（文件列表上的 `+12 −3`，对照 Codex/Claude 桌面版的改动面板）。
+/// 数不出来就留 None：行数只是辅助信息，任何一步失败都不能让摘要报错。
+fn fill_line_counts(dir: &str, files: &mut [GitChangedFileDto]) {
+    // 仓库还没有任何提交时 HEAD 不存在，这条会失败，跟踪文件就都不显示行数。
+    if let Ok(output) = git_output(dir, &["diff", "HEAD", "--numstat", "-z", "--no-renames"]) {
+        if output.status.success() {
+            let counts = parse_numstat_z(&output.stdout);
+            for file in files.iter_mut() {
+                if let Some(&(added, deleted)) = counts.get(file.path.as_str()) {
+                    file.additions = Some(added);
+                    file.deletions = Some(deleted);
+                }
+            }
+        }
+    }
+    for file in files.iter_mut().filter(|file| file.status == "U").take(MAX_UNTRACKED_COUNTED) {
+        if let Some(lines) = untracked_line_count(dir, &file.path) {
+            file.additions = Some(lines);
+            file.deletions = Some(0);
+        }
+    }
+}
+
+/// `git diff --numstat -z --no-renames`：每条是 `<增>\t<删>\t<路径>\0`，二进制文件的增删是 `-`，跳过。
+fn parse_numstat_z(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)> {
+    let mut counts = std::collections::HashMap::new();
+    for entry in bytes.split(|b| *b == 0) {
+        let text = String::from_utf8_lossy(entry);
+        let mut parts = text.splitn(3, '\t');
+        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        if let (Ok(added), Ok(deleted)) = (added.parse(), deleted.parse()) {
+            counts.insert(path.to_string(), (added, deleted));
+        }
+    }
+    counts
+}
+
+/// 未跟踪文件的行数：超过 diff 上限或像二进制就不数（那种文件 diff 里也看不全）。
+fn untracked_line_count(dir: &str, path: &str) -> Option<u32> {
+    use std::io::Read;
+    let full_path = crate::fsutil::resolve_inside(dir, path).ok()?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(full_path)
+        .ok()?
+        .take((MAX_DIFF_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_DIFF_BYTES || bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0) {
+        return None;
+    }
+    Some(count_lines(&bytes))
+}
+
+/// 与 `str::lines` 同一算法：末尾没有换行的最后一行也算一行。
+fn count_lines(bytes: &[u8]) -> u32 {
+    let newlines = bytes.iter().filter(|b| **b == b'\n').count();
+    let tail = usize::from(bytes.last().is_some_and(|b| *b != b'\n'));
+    u32::try_from(newlines + tail).unwrap_or(u32::MAX)
 }
 
 /// 单个文件的 diff。tracked 走 `git diff HEAD -- <path>`（staged+unstaged 合一）；
@@ -222,7 +290,12 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitChangedFileDto> {
             }
             (other as char).to_string()
         };
-        files.push(GitChangedFileDto { path, status });
+        files.push(GitChangedFileDto {
+            path,
+            status,
+            additions: None,
+            deletions: None,
+        });
     }
     files
 }
@@ -230,6 +303,23 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitChangedFileDto> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numstat_z_parses_counts_and_skips_binary() {
+        let raw = b"12\t3\tsrc/a.rs\0-\t-\tlogo.png\x000\t7\tdocs/\xe8\xaf\xb4\xe6\x98\x8e.md\0";
+        let counts = parse_numstat_z(raw);
+        assert_eq!(counts.get("src/a.rs"), Some(&(12, 3)));
+        assert_eq!(counts.get("docs/说明.md"), Some(&(0, 7)));
+        assert!(!counts.contains_key("logo.png"));
+    }
+
+    #[test]
+    fn count_lines_matches_str_lines() {
+        assert_eq!(count_lines(b""), 0);
+        assert_eq!(count_lines(b"a"), 1);
+        assert_eq!(count_lines(b"a\nb\n"), 2);
+        assert_eq!(count_lines(b"a\nb"), 2);
+    }
 
     #[test]
     fn porcelain_z_maps_status_letters() {

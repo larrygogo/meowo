@@ -4179,6 +4179,25 @@ select.ns-input {
 .chat-diff-sign { display: inline-block; width: 18px; text-align: center; user-select: none; }
 .chat-diff-text .is-add .chat-diff-sign { color: var(--cc-ok-vivid); }
 .chat-diff-text .is-del .chat-diff-sign { color: var(--cc-err-vivid); }
+/* 行评论（diffComments.ts）：悬停行时左缘内边距里冒出「+」，平时不占位也不抢眼。 */
+.chat-diff-row { position: relative; }
+.chat-diff-cmt-add { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 12px; height: 16px; padding: 0; border: 0; border-radius: var(--r-3); background: var(--cc-accent); color: var(--cc-window-bg); font: 600 11px/16px system-ui, sans-serif; text-align: center; cursor: pointer; opacity: 0; }
+.chat-diff-row:hover .chat-diff-cmt-add, .chat-diff-cmt-add:focus-visible { opacity: 1; }
+/* 评论块插在被评论的行下面。pre 随最长行撑宽、横向会滚，评论块用 sticky + 100cqw
+   钉在可视宽度内，不然长行文件里评论框会跟着代码一起被推到屏外。 */
+.chat-diff-scroll { container-type: inline-size; }
+.chat-diff-text > .chat-diff-cmt { content-visibility: visible; position: sticky; left: 0; box-sizing: border-box; width: 100cqw; display: flex; align-items: flex-start; gap: var(--sp-8); margin: var(--sp-4) 0; padding: var(--sp-6) var(--sp-10) var(--sp-6) var(--sp-12); border-left: 2px solid var(--cc-accent); background: var(--cc-surface); font-family: "Inter Variable", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: var(--fs-12); white-space: pre-wrap; }
+.chat-diff-cmt-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-diff-cmt-remove { flex: none; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-3); background: none; color: var(--cc-text-faint); cursor: pointer; }
+.chat-diff-cmt-remove:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+.chat-diff-text > .chat-diff-cmt.is-form { flex-direction: column; align-items: stretch; }
+.chat-diff-cmt.is-form textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px; padding: var(--sp-6) var(--sp-8); border: 1px solid var(--cc-border); border-radius: var(--r-5); background: var(--cc-bg); color: var(--cc-text); font: inherit; outline: none; }
+.chat-diff-cmt.is-form textarea:focus { border-color: var(--cc-accent); }
+.chat-diff-cmt-actions { display: flex; justify-content: flex-end; gap: var(--sp-6); }
+.chat-diff-cmt-actions button { height: 24px; padding: 0 var(--sp-10); border: 1px solid var(--cc-border); border-radius: var(--r-5); background: none; color: var(--cc-text-dim); font: inherit; cursor: pointer; }
+.chat-diff-cmt-actions button.is-primary { border-color: transparent; background: var(--cc-text); color: var(--cc-window-bg); }
+.chat-diff-cmt-actions button:disabled { opacity: 0.4; cursor: default; }
+.chat-diff-cmt-count { margin-left: auto; min-width: 16px; height: 16px; padding: 0 var(--sp-4); border-radius: 8px; background: var(--cc-accent-soft); color: var(--cc-accent-text); font-size: var(--fs-10); line-height: 16px; text-align: center; }
 /* 文件预览的行号槽：右对齐、右描边、不可选中；宽度随最大行号位数（--ln-w 内联给定）。 */
 .chat-diff-text.is-code > div { padding: 0 var(--sp-12) 0 0; }
 /* 行号槽：全局是 border-box，min-width 会把左右 padding（共 18px > 1ch）吞进去，
@@ -4213,6 +4232,13 @@ select.ns-input {
 .chat-diff-search { flex: 0 0 auto; width: calc(100% - 2 * var(--sp-8)); margin: var(--sp-8) var(--sp-8) var(--sp-4); padding: var(--sp-4) var(--sp-8); border: 1px solid transparent; border-radius: var(--r-md); background: color-mix(in srgb, var(--cc-text) 5%, transparent); color: var(--cc-text); font-size: var(--fs-11-5); outline: none; }
 .chat-diff-search:hover { background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
 .chat-diff-search::placeholder { color: var(--cc-text-faint); }
+.chat-diff-only-session { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); margin: 0 var(--sp-8) var(--sp-4); padding: 0 var(--sp-8); color: var(--cc-text-dim); font-size: var(--fs-11); cursor: pointer; user-select: none; }
+.chat-diff-only-session input { margin: 0; accent-color: var(--cc-accent); }
+/* 文件行与分支行末尾的增删行数（git diff --numstat）。 */
+.chat-diff-lines { flex: none; margin-left: auto; display: flex; gap: var(--sp-4); font-family: var(--cc-mono); font-size: var(--fs-10); }
+.chat-diff-lines .is-add { color: var(--cc-ok-vivid); }
+.chat-diff-lines .is-del { color: var(--cc-err-vivid); }
+.chat-diff-lines + .chat-diff-cmt-count { margin-left: var(--sp-4); }
 .chat-diff-search:focus { border-color: var(--cc-border); background: var(--cc-surface); }
 .chat-diff-tree { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 0 var(--sp-8) var(--sp-8); }
 .chat-diff-tree-dir, .chat-diff-tree-file { width: 100%; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); border: 0; border-radius: var(--r-7); background: transparent; color: var(--cc-text-dim); font-size: var(--fs-12); line-height: 1.4; cursor: pointer; text-align: left; }
@@ -4486,6 +4512,11 @@ select.ns-input {
 .chat-approval-badge { flex: 0 0 auto; padding: 1px var(--sp-7); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, transparent); color: color-mix(in srgb, var(--cc-warn-vivid) 88%, var(--cc-text)); font-size: var(--fs-9); line-height: 1.7; white-space: nowrap; }
 .chat-approval-copy > span { color: var(--cc-text-dim); font-size: var(--fs-12); line-height: 1.55; overflow-wrap: anywhere; }
 .chat-approval-tool { display: flex; align-items: center; gap: var(--sp-7); color: var(--cc-text-faint); font-size: var(--fs-10); }
+/* 影响范围标签（approvalScope.ts）：工作区外/删除/高风险用警示色，其余中性。 */
+.chat-approval-scope { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
+.chat-approval-scope span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px var(--sp-7); border-radius: var(--r-5); background: color-mix(in srgb, var(--cc-text) 6%, transparent); color: var(--cc-text-dim); font-size: var(--fs-10); }
+.chat-approval-scope span.is-warn { background: color-mix(in srgb, var(--cc-err-vivid) 14%, transparent); color: var(--cc-err-vivid); }
+.chat-approval-scope span.is-ok { background: color-mix(in srgb, var(--cc-ok-vivid) 12%, transparent); color: var(--cc-ok-vivid); }
 .chat-approval-tool code { padding: 1px var(--sp-6); border: 1px solid var(--cc-border); border-radius: var(--r-5); color: var(--cc-text); background: color-mix(in srgb, var(--cc-text) 4%, transparent); font: var(--fs-11)/1.4 ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", "PingFang SC", "Microsoft YaHei", monospace; }
 /* 「完整参数 <命令>」排成一行起头而不是上下两块：命令本身才是要读的东西，标签退成
    同一行的前缀，省掉一次视线折返。flex-wrap 给详情工具行(展开/复制)让出整行。 */
@@ -4568,6 +4599,14 @@ select.ns-input {
   box-shadow: 0 12px 34px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.08);
 }
 :root[data-theme="light"] .chat-compose { box-shadow: 0 6px 18px rgba(60, 45, 20, 0.07), 0 1px 3px rgba(60, 45, 20, 0.05); }
+/* 改动面板攒下的行评论：在输入框顶上提示条数，点「插入输入框」才拼进正文。 */
+.chat-review-bar { order: 0; flex: 0 0 100%; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-2) var(--sp-2) var(--sp-4); color: var(--cc-text-dim); font-size: var(--fs-11); }
+.chat-review-bar svg { flex: none; color: var(--cc-accent-text); }
+.chat-review-bar-label { flex: 1; min-width: 0; }
+.chat-review-bar button { height: 22px; padding: 0 var(--sp-8); border: 1px solid var(--cc-border); border-radius: var(--r-5); background: none; color: var(--cc-text-dim); font: inherit; cursor: pointer; }
+.chat-review-bar button:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
+.chat-review-bar button.is-primary { border-color: transparent; background: var(--cc-text); color: var(--cc-window-bg); }
+.chat-review-bar button.is-primary:hover { background: color-mix(in srgb, var(--cc-text) 85%, var(--cc-window-bg)); }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }
 /* 与图片缩略图（76×56）同高同圆角：两种附件排在一行不再一高一矮、一方一扁。
    右侧 26px 内边距给悬浮 × 留位（× 统一悬浮右上角，见下方按钮规则）。 */
@@ -4594,6 +4633,21 @@ select.ns-input {
 .chat-compose .chat-attachment button:not(.chat-image-thumb-btn):hover { color: #fff; background: rgba(0, 0, 0, 0.78); }
 /* 图片附件：缩略图本体即卡片（点开进灯箱，ImageRef），移除钮悬浮右上角。
    宽度回落为内容宽（文件卡的 220px 定宽不适用于 76px 缩略图）。 */
+/* 图片附件左下角的「标注」：悬停才出，不和右上角的 × 抢位置。 */
+.chat-compose .chat-attachment button.chat-attachment-annotate { top: auto; right: auto; bottom: 3px; left: 3px; opacity: 0; }
+.chat-attachment:hover button.chat-attachment-annotate, .chat-compose .chat-attachment button.chat-attachment-annotate:focus-visible { opacity: 1; }
+/* 截图标注弹层（ImageAnnotator）：画布按可用区域等比缩小，框画在原图坐标上。 */
+.chat-modal.chat-annotator { width: min(800px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; }
+.chat-annotator-hint { color: var(--cc-text-dim); font-size: var(--fs-11); }
+.chat-annotator-stage { display: grid; place-items: center; padding: var(--sp-8); border-radius: var(--r-9); background: color-mix(in srgb, var(--cc-text) 5%, transparent); }
+.chat-annotator-stage canvas { display: block; max-width: 100%; cursor: crosshair; touch-action: none; }
+.chat-annotator-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-6); }
+.chat-annotator-notes li { display: flex; align-items: center; gap: var(--sp-8); }
+.chat-annotator-num { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--r-3); background: #ff3b30; color: #fff; font-size: var(--fs-11); font-weight: 600; }
+.chat-annotator-notes input { flex: 1; min-width: 0; height: 28px; padding: 0 var(--sp-8); border: 1px solid var(--cc-border); border-radius: var(--r-5); background: var(--cc-bg); color: var(--cc-text); font: inherit; font-size: var(--fs-12); outline: none; }
+.chat-annotator-notes input:focus { border-color: var(--cc-accent); }
+.chat-annotator-notes button { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--r-5); background: none; color: var(--cc-text-faint); cursor: pointer; }
+.chat-annotator-notes button:hover { background: var(--cc-surface-hover); color: var(--cc-text); }
 .chat-attachment.is-image { position: relative; width: auto; max-width: none; height: auto; padding: 0; border: 0; background: transparent; }
 /* 缩略图容器按钮：压过 `.chat-compose button` 的 accent 皮肤（同 slash-item / model-button
    的老坑）——否则被强制 38px 高 + 14px 内边距 + accent 底，图片被按钮裁没。 */

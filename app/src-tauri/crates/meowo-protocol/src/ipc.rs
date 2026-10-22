@@ -577,6 +577,12 @@ pub struct GitChangedFileDto {
     pub path: String,
     /// 归一化状态字母：M/A/D/T 取自 porcelain 的 X 或 Y；未跟踪（??）记为 "U"。
     pub status: String,
+    /// 相对 HEAD 的增删行数（`git diff --numstat`；未跟踪文件按行数全记为新增）。
+    /// 二进制、仓库还没有提交、未跟踪文件过大或过多时数不出来，为 None，前端不显示。
+    #[serde(default)]
+    pub additions: Option<u32>,
+    #[serde(default)]
+    pub deletions: Option<u32>,
 }
 
 /// 对话页「Diff」按钮的可见性与弹层文件列表的数据源。
