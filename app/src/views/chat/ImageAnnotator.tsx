@@ -29,6 +29,8 @@ export function ImageAnnotator({ path, onDone, onClose }: {
   const dragRef = useRef<{ x: number; y: number } | null>(null);
 
   // 走 asset 协议读回原图：协议带同源 CORS 头，画进 canvas 不会被污染，toBlob 才导得出来。
+  // fetch 归 CSP 的 connect-src 管（<img> 归 img-src），tauri.conf.json 里两处都要放行 asset。
+  // 0.6.16 只放了 img-src，正式版标注窗一律「图片读取失败」；dev 走 devUrl 不带 CSP，测不出来。
   useEffect(() => {
     let cancelled = false;
     fetch(convertFileSrc(path))
