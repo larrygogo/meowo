@@ -261,6 +261,20 @@ pub(crate) fn managed_terminal_binding(
 }
 
 #[tauri::command]
+pub(crate) fn managed_terminal_pending_launch(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+) -> Option<meowo_protocol::ipc::PendingLaunchDto> {
+    state
+        .ptys
+        .pending_launch(session_id)
+        .map(|launch| meowo_protocol::ipc::PendingLaunchDto {
+            provider: launch.provider,
+            cwd: launch.cwd,
+        })
+}
+
+#[tauri::command]
 pub(crate) async fn write_managed_terminal(
     state: State<'_, super::AppState>,
     session_id: i64,

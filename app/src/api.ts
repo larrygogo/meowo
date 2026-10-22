@@ -24,6 +24,7 @@ import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTe
 import type { LineageEntryDto } from "./generated/contracts/LineageEntryDto";
 import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDto";
 import type { SwitchStartedDto } from "./generated/contracts/SwitchStartedDto";
+import type { PendingLaunchDto } from "./generated/contracts/PendingLaunchDto";
 import type { PendingInteractionDto } from "./generated/contracts/PendingInteractionDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
@@ -369,6 +370,10 @@ export function managedTerminalSnapshot(sessionId: number, since?: number): Prom
 }
 export function managedTerminalBinding(sessionId: number): Promise<number | null> {
   return invoke("managed_terminal_binding", { sessionId });
+}
+/** 临时负 id 认领前的 provider/cwd；null = 不是 pending 启动（已认领或从未存在）。 */
+export function managedTerminalPendingLaunch(sessionId: number): Promise<PendingLaunchDto | null> {
+  return invoke("managed_terminal_pending_launch", { sessionId });
 }
 /** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
 export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {

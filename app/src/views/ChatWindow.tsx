@@ -9,7 +9,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { addSessionExtraDir, pickAndAddExtraDir, removeSessionExtraDir, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, probeSubagentStates, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, resolvePendingApproval, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, switchSessionProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval, type SubagentProbe } from "../api";
+import { addSessionExtraDir, pickAndAddExtraDir, removeSessionExtraDir, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, probeSubagentStates, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, resolvePendingApproval, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, switchSessionProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval, type SubagentProbe } from "../api";
 import { hasEscLayers, pushEscLayer } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSessionActions } from "../hooks/useSessionActions";
@@ -652,6 +652,16 @@ async function clearPartialImageDraft(sessionId: number, stash: NonNullable<Chat
 /// 拖慢每次发送。
 const RESUME_VERIFY_WINDOW_MS = 15_000;
 
+/// 贴图后等占位符（`[Image #N]`）落出的轮询次数，每次 250ms。claude 在 Windows 上读剪贴板图片
+/// 是串行起两个 PowerShell（ContainsImage 检查 + GetImage 存 PNG，2.1.304 源码），之后还要
+/// sharp 缩放：本机实测两个进程合计约 2.7s，机器忙时更久。原先只等 1.5s，图片晚到时被判
+/// 「附加未完成」，迟到的 [Image #N] 又留在终端输入框里，下一次发送被要求去终端清理。
+/// 放宽到 10s；测试环境保持 1.5s，免得超时用例每条多等十秒。
+const IMAGE_PASTE_LANDING_POLLS = import.meta.env.MODE === "test" ? 6 : 40;
+/// 放弃原生贴图、清掉残图之后再观察多久:迟到的 [Image #N] 可能在 Ctrl-U 之后才落出,
+/// 落出就再清一次,免得它粘进下一条消息。
+const LATE_IMAGE_GRACE_MS = import.meta.env.MODE === "test" ? 100 : 1500;
+
 type TerminalStartupResult = "ready" | TerminalAttention;
 
 type TerminalReadyMessages = {
@@ -970,7 +980,12 @@ export function ChatWindow() {
   // 组件是否还挂着。用于挡住**在途异步链的晚到副作用**：窗口关掉后，PTY 写入这类带
   // 外部后果的动作绝不能再发出去（setState 晚到只是无害的 no-op，写终端不是）。
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // 挂载时置回 true:StrictMode(dev)会挂-卸-挂各跑一遍 effect,只在卸载时置 false 的话
+  // 第二次挂载后它永远是 false——ChatWindow 里粘贴落盘回来全被当成「已卸载」丢掉(dev 实测)。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   // broker 审批/题面的接收通道（租约注册、push 监听、轮询兜底、领养、倒计时）抽在
   // useApprovalChannel.ts;本组件保留「回应」侧——queuedAnswers 的排队作答（点选的答案
   // 先记下,等屏幕识别确认表单在屏后才落键,绝不向未确认就绪的表单盲写）与 decideApproval。
@@ -984,6 +999,8 @@ export function ChatWindow() {
   interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current);
   const isCurrentOperation = () => mountedRef.current && activeSessionRef.current === sessionId
     && sessionEpochRef.current === operationEpoch;
+  /// 最近一次认领(临时 id → 真 id)。在途的粘贴落盘回来时,本会话若已被认领,结果仍归它。
+  const claimedRef = useRef<{ from: number; to: number } | null>(null);
   // 排队中的点选答案，按问题 keyed（键=问题下标，值=label 列表）：单选至多一条（点即换）、
   // 多选可攒多条，屏幕识别确认该题在屏后才落键（多问题先认第几题，见落键 effect 注释）。
   const [queuedAnswers, setQueuedAnswers] = useState<ReadonlyMap<number, readonly string[]>>(new Map());
@@ -1487,8 +1504,21 @@ export function ChatWindow() {
   // 运行条状态行解析读它（handleScreen 在上方声明，ref 在此处 chatUi 就位后同步）。
   statusLinePatternRef.current = chatUi?.status_line_pattern ?? null;
   const [capabilityOffset, setCapabilityOffset] = useState(0);
-  const provider = history?.provider;
-  const cwd = history?.cwd ?? null;
+  // 临时负 id 认领前没有 history,provider/cwd 取后端 pending 启动登记。claude 的目录信任页
+  // 出现在 hook 认领之前(未信任目录不跑 hook),不提前拿到该家的识别规则,信任页永远认不出,
+  // 对话页一直停在「会话正在启动…」(2026-10-21 dev 实拍)。
+  const [pendingLaunch, setPendingLaunch] = useState<{ sessionId: number; provider: string; cwd: string | null } | null>(null);
+  useEffect(() => {
+    if (sessionId >= 0) return;
+    let cancelled = false;
+    managedTerminalPendingLaunch(sessionId).then((launch) => {
+      if (!cancelled && launch) setPendingLaunch({ sessionId, provider: launch.provider, cwd: launch.cwd });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionId]);
+  const launchInfo = pendingLaunch?.sessionId === sessionId ? pendingLaunch : null;
+  const provider = history?.provider ?? launchInfo?.provider;
+  const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
   // 「查看改动」入口：仅当 cwd 落在 git 仓库内时后端才回 isRepo=true，按钮据此显隐。
   // 换会话（cwd 变化）重取；取不到/非仓库时保持 null，入口不出现。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
@@ -1705,10 +1735,10 @@ export function ChatWindow() {
   // 识别文法:provider 门控(claude 专有整句规则只对 claude 生效)+ 插件声明的选择器
   // 锚点。chatUi 未就绪时锚点为空——ManagedTerminal 的 grammarKey 复扫会在其到达后补投。
   const attentionGrammar = useMemo<AttentionGrammar>(() => ({
-    provider: history?.provider,
+    provider,
     selectorAnchors: chatUi?.selector_anchors ?? [],
     attentionPatterns: chatUi?.attention_patterns ?? [],
-  }), [history?.provider, chatUi]);
+  }), [provider, chatUi]);
   // 文法的**值**指纹。下面的 PTY 探测 effect 只能依赖它,不能依赖 attentionGrammar 对象:
   // runtime 清单未就绪时(claude 常态)chatUi 每 2s 被重新拉取一次,即便内容一字未变也是
   // 新对象 → 新 grammar 引用 → effect 拆掉重建 → since 归零 → 整份 PTY backlog(上限
@@ -1741,7 +1771,8 @@ export function ChatWindow() {
   // 启动阻塞属于会话状态，不属于终端视图。即使用户从未打开终端 tab，也先用轻量增量
   // snapshot 探测 PTY；发现活跃 PTY 后在屏幕外挂载 xterm，还原 ANSI 当前屏并持续识别选择器。
   useEffect(() => {
-    if (sessionId <= 0) return;
+    // 临时负 id 也要探:信任页正是认领之前的阻塞,只等真 id 就永远等不到。
+    if (sessionId === 0) return;
     let cancelled = false;
     let timer = 0;
     let since = 0;
@@ -2054,14 +2085,27 @@ export function ChatWindow() {
     return () => { sizes.disconnect(); children.disconnect(); };
   }, []);
 
-  const resetTo = useCallback((id: number) => {
+  /// claim=true:临时负 id 被认领成真 id。这不是换会话——同一个 PTY、同一个 CLI 进程,只是
+  /// 换了编号。原先一律按换会话处理:输入框的字和已粘的图存进临时 id 名下、换上真 id 的
+  /// 空草稿,认领那一刻全部消失(用户反馈「新会话无法粘贴图片」即此)。
+  const resetTo = useCallback((id: number, claim = false) => {
     if (!Number.isSafeInteger(id) || id === 0) return;
     if (id === activeSessionRef.current) return;
-    draftsRef.current.set(activeSessionRef.current, {
-      prompt: promptRef.current,
-      attachments: attachmentsRef.current,
-    });
-    const draft = draftsRef.current.get(id);
+    const from = activeSessionRef.current;
+    let draft: { prompt: string; attachments: Attachment[] } | undefined;
+    if (claim) {
+      draft = { prompt: promptRef.current, attachments: attachmentsRef.current };
+      draftsRef.current.delete(from);
+      // 终端输入框里残留的图片占位也属于同一个 PTY,跟着换编号。
+      if (partialImageDraftsRef.current.delete(from)) partialImageDraftsRef.current.add(id);
+      claimedRef.current = { from, to: id };
+    } else {
+      draftsRef.current.set(from, {
+        prompt: promptRef.current,
+        attachments: attachmentsRef.current,
+      });
+      draft = draftsRef.current.get(id);
+    }
     // 常驻只为省下同一会话内来回切 tab 的 dispose/new Terminal。换会话时 ManagedTerminal
     // 内部按会话复位（sessionChangedRef），不再随 key 重挂——继续记着「显示过」只会让
     // 每次切换都在后台白挂一个终端（xterm 创建 + 两个 listen + 一次全量 backlog 拉取）。
@@ -2296,7 +2340,7 @@ export function ChatWindow() {
     if (sessionId >= 0) return;
     let cancelled = false;
     const resolve = () => managedTerminalBinding(sessionId).then((id) => {
-      if (!cancelled && id) resetTo(id);
+      if (!cancelled && id) resetTo(id, true);
     }).catch(() => {});
     void resolve();
     const timer = window.setInterval(() => void resolve(), 250);
@@ -2675,7 +2719,8 @@ export function ChatWindow() {
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现
   /// 再贴下一张，全部落地后提交正文。剪贴板是发送通道的耗材：首次写入前后端自动快照，
-  /// 这里 finally 还原。只有首张尚未粘贴时才允许文本降级；部分写入必须保留原稿等待人工清理。
+  /// 这里 finally 还原。首张尚未粘贴、或已贴的残图确认清干净时才降级到文本路径；清不掉的
+  /// 残图必须保留原稿等待人工清理(带着残图降级会重复附图)。
   const sendWithClipboardImages = async (content: string, marker: string, pasteInput: string, images: Attachment[], submitInput: string): Promise<"sent" | "fallback" | "blocked"> => {
     let fallbackSafe = false;
     const sent = await withSendGuard(async () => {
@@ -2686,6 +2731,18 @@ export function ChatWindow() {
       let tail = "";
       let since = before.endOffset;
       let pasteStarted = false;
+      // 原生贴图没确认上(占位符超时、剪贴板中途被占):清掉 composer 里贴了一半的残图,
+      // 改走文本路径(附图片路径,agent 自己读图)把同一条消息发出去。用户要求「无感」:
+      // 原先直接报「图片附加未完成」让人去终端手动清理(2026-10-21 实拍)。残图清不掉
+      // (认不出 composer)才退回报错——带着残图降级会重复附图。
+      const abandonNativePaste = async (): Promise<boolean> => {
+        const stash = chatUi?.draft_stash;
+        if (!stash || !await clearPartialImageDraft(sessionId, stash, marker)) return false;
+        await new Promise((resolve) => window.setTimeout(resolve, LATE_IMAGE_GRACE_MS));
+        if (!await clearPartialImageDraft(sessionId, stash, marker)) return false;
+        partialImageDraftsRef.current.delete(sessionId);
+        return true;
+      };
       try {
         for (let index = 0; index < images.length; index += 1) {
           const cancelled = attentionAbort();
@@ -2693,7 +2750,7 @@ export function ChatWindow() {
           try { await clipboardSetImage(images[index].path); }
           catch {
             // 只有尚未向 PTY 粘贴任何图片时才可自动降级，否则第一张会随文本路径重复发送。
-            if (!pasteStarted) { fallbackSafe = true; return false; }
+            if (!pasteStarted || await abandonNativePaste()) { fallbackSafe = true; return false; }
             throw new Error(t.chat.imagePasteUnconfirmed);
           }
           const afterClipboard = attentionAbort();
@@ -2702,7 +2759,7 @@ export function ChatWindow() {
           partialImageDraftsRef.current.add(sessionId);
           await writeManagedTerminal(sessionId, pasteInput);
           let landed = false;
-          for (let attempt = 0; attempt < 6 && !landed; attempt += 1) {
+          for (let attempt = 0; attempt < IMAGE_PASTE_LANDING_POLLS && !landed; attempt += 1) {
             await new Promise((resolve) => window.setTimeout(resolve, 250));
             const cancelled = attentionAbort();
             if (cancelled) throw new Error(cancelled);
@@ -2712,7 +2769,10 @@ export function ChatWindow() {
             tail = appendTerminalText(tail, snapshot.data, decoder);
             landed = (visibleTerminalText(tail).match(markerPattern) ?? []).length >= index + 1;
           }
-          if (!landed) throw new Error(t.chat.imagePasteUnconfirmed);
+          if (!landed) {
+            if (await abandonNativePaste()) { fallbackSafe = true; return false; }
+            throw new Error(t.chat.imagePasteUnconfirmed);
+          }
         }
         await submitToTerminal(sessionId, content, attentionAbort, undefined, submitInput);
         partialImageDraftsRef.current.delete(sessionId);
@@ -3024,7 +3084,7 @@ export function ChatWindow() {
       }
     };
     // 原生图片附加:仅当「附件全部是图片 + 插件声明 TUI 支持剪贴板图片粘贴」。逐张写
-    // 剪贴板让 TUI 自己读。部分粘贴失败后绝不自动降级，避免重复附图或提交缺图消息。
+    // 剪贴板让 TUI 自己读。部分粘贴失败时先清残图,清干净才降级,避免重复附图或提交缺图消息。
     // 远程跳过:clipboard_set_image 是 /rpc 拒绝项,必 404 再回退——省掉每张图两发白请求。
     const clipMarker = !remoteUi() && chatUi?.clipboard_image_paste;
     if (clipMarker && attachments.length > 0 && attachments.every((file) => file.image)) {
@@ -3460,7 +3520,9 @@ export function ChatWindow() {
       // ImageRef 按路径回读即可——base64 常驻 state 是每图 1.33 倍体积的白付内存（评审）。
       return { ...attachmentOf(path), size: file.size };
     }));
-    if (!isCurrentOperation()) return;
+    const claimed = claimedRef.current;
+    const claimedSelf = mountedRef.current && claimed?.from === sessionId && activeSessionRef.current === claimed.to;
+    if (!isCurrentOperation() && !claimedSelf) return;
     const fresh = results
       .filter((entry): entry is PromiseFulfilledResult<Attachment & { size: number }> => entry.status === "fulfilled")
       .map((entry) => entry.value);

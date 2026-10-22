@@ -91,6 +91,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "managed_terminal_grid",
     "managed_terminal_screen",
     "managed_terminal_binding",
+    "managed_terminal_pending_launch",
     "write_managed_terminal",
     "resize_managed_terminal",
     "start_managed_terminal",
@@ -997,6 +998,13 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 a.session_id,
             ))
         }
+        "managed_terminal_pending_launch" => {
+            let a = args!(SessionArg);
+            reply_ok(crate::managed_terminal::managed_terminal_pending_launch(
+                state,
+                a.session_id,
+            ))
+        }
         "write_managed_terminal" => {
             let a = args!(WriteManagedTerminalArgs);
             reply(
@@ -1864,7 +1872,8 @@ mod tests {
             }
             // sessionId 单参臂，共用 SessionArg——出处：api.ts:967 getSessionLineage /
             // :218 refreshSessionModel / :229 refreshSessionTodos / :381 managedTerminalGrid /
-            // :365 managedTerminalBinding / :331 attachBackgroundSession /
+            // :365 managedTerminalBinding / :368 managedTerminalPendingLaunch /
+            // :331 attachBackgroundSession /
             // :349 sessionLaunchSelections / :421 pendingInteraction /
             // :425 dismissInteractiveQuestion
             "get_session_lineage"
@@ -1873,6 +1882,7 @@ mod tests {
             | "managed_terminal_grid"
             | "managed_terminal_screen"
             | "managed_terminal_binding"
+            | "managed_terminal_pending_launch"
             | "attach_background_session"
             | "session_launch_selections"
             | "pending_interaction"

@@ -80,7 +80,12 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
   // 卸载后晚到的拉取结果不得再 setState（同文件 3s 轮询路径用局部 cancelled；
   // onToggle 触发的首次拉取在 effect 之外，只能用 ref）。
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // 挂载时置回 true:StrictMode(dev)会挂-卸-挂各跑一遍 effect,只在卸载时置 false 的话
+  // 第二次挂载后它永远是 false——ChatWindow 里粘贴落盘回来全被当成「已卸载」丢掉(dev 实测)。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const subagent = item.subagent;
   // 侧车流和主 transcript 一样是逐条事件（kimi 更是 chunk 级增量），必须走同一套归一化——
   // 直接渲染原始事件会把一句话散成几十个碎片气泡。

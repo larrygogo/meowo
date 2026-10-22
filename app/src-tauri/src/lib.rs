@@ -65,12 +65,13 @@ use install::{
 };
 use managed_terminal::{
     attach_background_session, awaiting_interaction_sessions, dismiss_interactive_question,
-    managed_terminal_binding, managed_terminal_grid, managed_terminal_screen,
-    managed_terminal_snapshot, open_attached_terminal, pending_interaction,
-    register_approval_consumer, register_terminal_viewer, resize_managed_terminal,
-    resolve_pending_approval, screen_detect_explain, screen_detect_explain_text,
-    send_background_prompt, start_managed_terminal, stop_managed_terminal,
-    unregister_approval_consumer, unregister_terminal_viewer, write_managed_terminal,
+    managed_terminal_binding, managed_terminal_grid, managed_terminal_pending_launch,
+    managed_terminal_screen, managed_terminal_snapshot, open_attached_terminal,
+    pending_interaction, register_approval_consumer, register_terminal_viewer,
+    resize_managed_terminal, resolve_pending_approval, screen_detect_explain,
+    screen_detect_explain_text, send_background_prompt, start_managed_terminal,
+    stop_managed_terminal, unregister_approval_consumer, unregister_terminal_viewer,
+    write_managed_terminal,
 };
 #[cfg(test)]
 use session_command::is_safe_id;
@@ -1276,6 +1277,7 @@ pub fn run() {
             managed_terminal_grid,
             managed_terminal_screen,
             managed_terminal_binding,
+            managed_terminal_pending_launch,
             write_managed_terminal,
             resize_managed_terminal, send_background_prompt,
             screen_detect_explain,
