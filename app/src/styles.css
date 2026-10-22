@@ -5386,7 +5386,8 @@ select.ns-input {
 :root[data-theme="light"] .chat-msg-nav-list:has(:focus-visible) { background: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05); }
 /* 跳转落点留白：气泡不贴着滚动区上沿。 */
 .chat-message[data-msg-id] { scroll-margin-top: var(--sp-16); }
-/* 触屏没有悬停，窄屏上横线会压住正文：手机远程页与窄窗都不挂。 */
+/* 触屏没有悬停，窄屏上横线会压住正文：手机远程页与窄窗都不挂。
+   查询串与 UserMessageNav.tsx 的 NAV_HIDDEN_QUERY 同口径（那边据此停掉滚动监听），改动要同步。 */
 @media (hover: none), (max-width: 680px) { .chat-msg-nav { display: none; } }
 
 /* ? 快捷键速查表：双列 dl（组合键 / 描述）。 */
