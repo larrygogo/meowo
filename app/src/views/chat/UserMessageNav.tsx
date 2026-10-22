@@ -44,6 +44,13 @@ export const dashWidth = (index: number, hovered: number) => DASH_STEPS[Math.abs
 
 const escapeId = (id: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"'));
 
+/// 与 styles.css 里 `.chat-msg-nav { display: none }` 的媒体查询同口径，改一处要同步另一处。
+/// 隐藏时 CSS 只是不画，滚动监听照跑：手机远程页 300 轮长会话实测（4x 降速）滚动期间
+/// 这里的逐帧定位吃掉约 1s 脚本时间，帧间隔中位数掉到 33ms——「网页端滚动卡」即此。
+const NAV_HIDDEN_QUERY = "(hover: none), (max-width: 680px)";
+// jsdom 没有 matchMedia，按显示处理（测试语义不变）。
+const navHiddenNow = () => typeof window.matchMedia === "function" && window.matchMedia(NAV_HIDDEN_QUERY).matches;
+
 /// 对话页右缘的用户消息导航：每条用户消息一根短横线，当前读到的那条高亮加长；
 /// 悬停展开成消息摘要列表，点一条跳到它（用户要求，对照 Codex/Claude 客户端实拍）。
 /// 绝对定位在 .chat-main（position: relative）里、贴着滚动区，不随内容滚走。
@@ -59,11 +66,20 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   const listRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
+  const [hidden, setHidden] = useState(navHiddenNow);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(NAV_HIDDEN_QUERY);
+    const sync = () => setHidden(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   // 贴住滚动区的纵向范围（标题行/运行条/composer 高度随时在变，写死 top/bottom 会错位）。
   useEffect(() => {
     const scroller = scrollRef.current;
-    if (!scroller) return;
+    if (!scroller || hidden) return;
     const measure = () => setBox((current) => {
       const next = { top: scroller.offsetTop, height: scroller.clientHeight };
       return current && current.top === next.top && current.height === next.height ? current : next;
@@ -73,13 +89,14 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
     const observer = new ResizeObserver(measure);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [scrollRef]);
+  }, [scrollRef, hidden]);
 
   // 当前项 = 顶端已滚过视口上 1/3 线的最后一条用户消息；贴底时恒为最后一条
   // （末条往往很短，到底了也越不过那条线，不特判会永远亮倒数第二条）。
   useEffect(() => {
     const scroller = scrollRef.current;
-    if (!scroller) return;
+    if (!scroller || hidden) return;
+    const ids = new Set(entries.map((entry) => entry.id));
     let frame = 0;
     const update = () => {
       frame = 0;
@@ -90,14 +107,18 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
         return;
       }
       const line = scroller.getBoundingClientRect().top + scroller.clientHeight / 3;
-      let current: string | null = list[0].id;
-      for (const entry of list) {
-        const el = scroller.querySelector(`[data-msg-id="${escapeId(entry.id)}"]`);
-        if (!el) continue;
-        if (el.getBoundingClientRect().top > line) break;
-        current = entry.id;
+      // 每帧只扫一遍 DOM，再按文档顺序二分：此前逐条 querySelector + 量位置，
+      // 长会话每帧 O(条数 × DOM)，是滚动卡顿的大头（见 NAV_HIDDEN_QUERY 处的实测）。
+      const els = Array.from(scroller.querySelectorAll<HTMLElement>("[data-msg-id]"))
+        .filter((el) => ids.has(el.dataset.msgId ?? ""));
+      let lo = 0;
+      let hi = els.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (els[mid].getBoundingClientRect().top > line) hi = mid;
+        else lo = mid + 1;
       }
-      setActiveId(current);
+      setActiveId(lo > 0 ? els[lo - 1].dataset.msgId ?? list[0].id : list[0].id);
     };
     const schedule = () => { if (!frame) frame = window.requestAnimationFrame(update); };
     schedule();
@@ -106,7 +127,7 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
       scroller.removeEventListener("scroll", schedule);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [scrollRef, entries]);
+  }, [scrollRef, entries, hidden]);
 
   // 消息多到列表要滚时，让当前项留在列表可视范围内。只动列表自己的 scrollTop——
   // scrollIntoView 会连带滚动外层，把对话区一起拽走。
@@ -122,7 +143,8 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   }, [activeId]);
 
   // 只有一条时没有可跳的地方，不占位。
-  if (entries.length < 2) return null;
+  // 隐藏态也不渲染：CSS 的 display:none 只是不画，几百个按钮照样挂在 DOM 里。
+  if (entries.length < 2 || hidden) return null;
   // 屏外条目是 content-visibility: auto（高度按估值占位），滚过去的途中它们逐个真渲染、
   // 高度变化，一次 scrollIntoView 落点会偏（实测停在目标上方一屏多）。所以用瞬时滚动，
   // 再连续几帧重新对齐，直到沿途布局稳定。平滑滚动在这里只会把偏差放大。

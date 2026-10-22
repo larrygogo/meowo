@@ -69,6 +69,22 @@ describe("UserMessageNav", () => {
     expect(button.getAttribute("aria-current")).toBe("true");
   });
 
+  it("触屏/窄窗命中隐藏查询时不渲染、不挂滚动监听", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    try {
+      const scrollRef = createRef<HTMLElement>();
+      const items = [user("u1", "第一条"), user("u2", "第二条")];
+      const main = document.createElement("main");
+      const addListener = vi.spyOn(main, "addEventListener");
+      (scrollRef as { current: HTMLElement }).current = main;
+      render(<UserMessageNav items={items} scrollRef={scrollRef} />);
+      expect(screen.queryByRole("navigation", { name: "用户消息导航" })).toBeNull();
+      expect(addListener).not.toHaveBeenCalledWith("scroll", expect.anything(), expect.anything());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("悬停时横线按离光标的远近变长,移开恢复", () => {
     const scrollRef = createRef<HTMLElement>();
     const items = ["a", "b", "c", "d", "e", "f"].map((id) => user(id, "消息 " + id));
