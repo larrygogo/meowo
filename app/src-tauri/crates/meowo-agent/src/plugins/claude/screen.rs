@@ -164,6 +164,8 @@ pub(super) static RULES: &[ScreenRule] = &[
             Matcher::Contains(&["do you want to proceed?"]),
             Matcher::AnyContains(&[
                 "bash command",
+                // Windows 上 PowerShell 工具的审批框标题(2.1.304 源码:「PowerShell command」)。
+                "powershell command",
                 "bash(",
                 "contains expansion",
                 "tab to amend",

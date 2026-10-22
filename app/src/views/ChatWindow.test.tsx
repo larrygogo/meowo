@@ -2119,6 +2119,40 @@ describe("ChatWindow", () => {
     expect(screen.queryByText(/Searched for 3 patterns/)).toBeNull();
   });
 
+  /// 2.1.304 源码里审批框标题有变体:Windows 的「PowerShell command」与沙箱外的
+  /// 「… (unsandboxed)」。此前只认裸「Bash command」,框边界认不出,上一屏输出整段并进命令区。
+  it("PowerShell / unsandboxed 标题也认作框边界,工具名如实显示", async () => {
+    window.history.replaceState({}, "", "/?sessionId=48");
+    const prompt = [
+      "\x1b[2J● 上一屏的残留输出",
+      "PowerShell command (unsandboxed)",
+      "Get-Process -Id 62844",
+      "查进程",
+      "Do you want to proceed?",
+      "> 1. Yes",
+      "  2. No",
+    ].join("\r\n");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 48, title: "PowerShell 审批", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "approval", items: [],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 48, active: true, managed: true, data: btoa(unescape(encodeURIComponent(prompt))), startOffset: 0, endOffset: prompt.length,
+        exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
+    expect(screen.getByText(/Get-Process -Id 62844/)).toBeTruthy();
+    expect(screen.queryByText(/上一屏的残留输出/)).toBeNull();
+    expect(document.querySelector(".chat-approval-tool code")?.textContent).toBe("PowerShell");
+  });
+
   it("shows Kimi's approval panel as actionable GUI choices (digit keys)", async () => {
     window.history.replaceState({}, "", "/?sessionId=47");
     const prompt = [
