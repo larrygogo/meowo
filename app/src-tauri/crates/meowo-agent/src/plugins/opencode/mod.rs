@@ -23,6 +23,8 @@
 
 pub mod account;
 mod screen;
+mod store;
+mod telemetry;
 
 use crate::{
     auth::{AuthScheme, CredentialSource},
@@ -305,6 +307,10 @@ impl AgentPlugin for Opencode {
             }
         })
     }
+    fn telemetry(&self) -> Option<&'static dyn crate::caps::TelemetryCap> {
+        Some(&telemetry::TELEMETRY)
+    }
+
     fn account(&self) -> Option<&'static dyn crate::account::AccountCap> {
         Some(&account::ACCOUNT)
     }
