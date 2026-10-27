@@ -420,6 +420,13 @@ pub trait TranscriptSpec: Sync {
         None
     }
 
+    /// 这份 transcript 是否声明「会话已转到另一个 id 继续」，是则返回新会话 id。
+    /// agent 自己写下的接续标记是换绑 PTY 的强证据：同一个终端换了会话 id、认领方又是
+    /// 另一个进程时，靠它把「agent 主动接续」和「嵌套 agent 误认领」分开。默认没有此标记。
+    fn continued_in(&self, _path: &Path) -> Option<String> {
+        None
+    }
+
     /// 此 transcript 是否提供结构化对话。与解析入口分开声明，避免用假数据探测能力。
     fn supports_chat(&self) -> bool {
         false
