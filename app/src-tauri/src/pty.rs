@@ -852,6 +852,30 @@ fn nested_claim_hijacks_reclaim(
     }
 }
 
+/// 旧会话的 transcript 是否声明已接续到新会话（见 `TranscriptSpec::continued_in`）。
+/// 两段必须同一 agent；任一环节读不到都按「没有声明」处理，回到 pid 守卫的原判定。
+fn agent_declared_continuation(old_sid: i64, new_sid: i64) -> bool {
+    let Ok(store) = crate::open_store(&crate::db_path()) else {
+        return false;
+    };
+    let (Ok(old), Ok(new)) = (store.session_header(old_sid), store.session_header(new_sid))
+    else {
+        return false;
+    };
+    if old.provider != new.provider {
+        return false;
+    }
+    let Some(spec) = meowo_agent::by_id(&old.provider)
+        .and_then(|agent| agent.telemetry())
+        .and_then(|telemetry| telemetry.transcript())
+    else {
+        return false;
+    };
+    spec.resolve_transcript_path(None, old.cwd.as_deref(), &old.cc_session_id)
+        .and_then(|path| spec.continued_in(&path))
+        .is_some_and(|id| id == new.cc_session_id)
+}
+
 /// broker/launch token 与 remote.rs 同一口径：OS RNG 不可用即失败，拒绝弱随机回退。
 /// attach 服务虽只听 loopback，token 却是本机任意进程都能来试的唯一门闩——
 /// pid+时间戳可预测，回退等于把门闩换成摆设。
@@ -3279,7 +3303,13 @@ impl PtyBroker {
         // 会话落库）；旧进程已死 = 同一终端手动重启 agent，PTY 真换主，放行。
         // claim_pid 缺失（旧 reporter / owner_pid 上溯失败）时不开库、直接放行——守卫
         // 只在证据齐全时收紧，宁可漏挡不可错杀真 /clear。
-        if let Some(claim) = claim_pid {
+        //
+        // 例外：agent 自己在旧 transcript 里声明「已转到新会话继续」。claude 2.1.311 会中途把
+        // 会话交给 daemon 托管：认领方是 daemon 拉起的新进程，原 TUI 还活着、留在终端里显示
+        // 新会话——守卫会把它判成嵌套误认领，PTY 留在旧行，对话页从此停在交接那一刻
+        // （实拍 1293 → 1323）。接续标记指名道姓地指向这次认领的会话，比 pid 关系更可信；
+        // 同批派生的其它新会话不是标记指向的那个，照旧拦下。
+        if let Some(claim) = claim_pid.filter(|_| !agent_declared_continuation(old_sid, new_sid)) {
             let old_pid = crate::open_store(&crate::db_path())
                 .ok()
                 .and_then(|store| store.session_pid(old_sid).ok().flatten());

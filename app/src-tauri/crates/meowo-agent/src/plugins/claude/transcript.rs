@@ -1247,6 +1247,43 @@ fn full_skill_scan(path: &std::path::Path) -> (Option<Vec<crate::SlashCommand>>,
     (latest, start + (offset + scanned) as u64)
 }
 
+/// 2.1.311 起 claude 会在会话中途把它转成 daemon 托管的后台会话：fork 出新 id 继续写
+/// 新文件，旧文件末尾留一行 `{"type":"continued-in","continuedInSessionId":…}` 后不再写入
+/// （实拍 f3686466 → 985116a7）。标记只会出现在文件尾部，读末尾 64 KiB 就够，不扫长会话全文。
+///
+/// 判定看整行解析后的**顶层** type：工具输出里引用到同样字符串的行（Read/Grep 了这份
+/// transcript）只是嵌在别的记录的字段里，顶层 type 不是它，不会喂出幽灵接续。
+/// 子串只作解析前的预筛，不依赖字段顺序。
+fn continued_in_session(path: &std::path::Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 64 * 1024;
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(WINDOW);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    continued_in_from_tail(&tail, start > 0)
+}
+
+fn continued_in_from_tail(tail: &[u8], starts_mid_line: bool) -> Option<String> {
+    let text = String::from_utf8_lossy(tail);
+    // 窗口起点可能切在一条记录中间，第一段残片不算一行。
+    let lines = text.lines().skip(usize::from(starts_mid_line));
+    lines
+        .filter(|line| line.contains(r#""continued-in""#))
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value.get("type").and_then(|t| t.as_str()) == Some("continued-in"))
+        .filter_map(|value| {
+            value
+                .get("continuedInSessionId")
+                .and_then(|id| id.as_str())
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_string)
+        })
+        .last()
+}
+
 /// skill 清单的增量扫描缓存。ChatWindow 在 `runtime_commands_pending` 期间随每次 650ms
 /// 轮询重新探测；无缓存时每次都重读最多 8 MiB 窗口 + 重扫。缓存后：文件未变只花一次
 /// stat；transcript 追加（流式会话的常态）只读并扫新增的字节——JSONL 只追加不改写，
@@ -1769,6 +1806,10 @@ impl TranscriptSpec for ClaudeTranscript {
         runtime_skill_commands(path)
     }
 
+    fn continued_in(&self, path: &std::path::Path) -> Option<String> {
+        continued_in_session(path)
+    }
+
     fn resolve_transcript_path(
         &self,
         transcript_path: Option<&str>,
@@ -1861,6 +1902,48 @@ fn structured_patch(v: &serde_json::Value) -> Option<Vec<DiffHunk>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 实拍形状（2.1.311，f3686466 末两行）：cost-state 之后紧跟 continued-in。
+    const CONTINUED_TAIL: &str = concat!(
+        r#"{"type":"cost-state","sessionId":"f3686466","totalCostUSD":8.71}"#,
+        "
+",
+        r#"{"type":"continued-in","timestamp":"2026-10-27T07:23:16.888Z","sessionId":"f3686466","continuedInSessionId":"985116a7"}"#,
+        "
+",
+    );
+
+    #[test]
+    fn continued_in_reads_marker_from_tail() {
+        assert_eq!(
+            continued_in_from_tail(CONTINUED_TAIL.as_bytes(), false).as_deref(),
+            Some("985116a7")
+        );
+    }
+
+    #[test]
+    fn continued_in_ignores_marker_quoted_inside_other_records() {
+        // 会话里 Read 过别人的 transcript：标记串嵌在工具结果里，顶层 type 是 user。
+        let quoted = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"{"type":"continued-in","continuedInSessionId":"evil"}"}]}}"#,
+            "
+",
+        );
+        assert_eq!(continued_in_from_tail(quoted.as_bytes(), false), None);
+    }
+
+    #[test]
+    fn continued_in_skips_partial_first_line_of_window() {
+        // 窗口切在标记行中间：残片不能被当成一整行解析出来。
+        let cut = &CONTINUED_TAIL[CONTINUED_TAIL.find("{\"type\":\"continued-in").unwrap() + 1..];
+        assert_eq!(continued_in_from_tail(cut.as_bytes(), true), None);
+    }
+
+    #[test]
+    fn continued_in_absent_for_ordinary_transcript() {
+        let tail = r#"{"type":"assistant","message":{"content":[]}}"#;
+        assert_eq!(continued_in_from_tail(tail.as_bytes(), false), None);
+    }
 
     #[test]
     fn extracts_permission_mode_from_user_and_mode_records() {
