@@ -327,7 +327,9 @@ html, body {
   max-height: none;
   display: flex;
   flex-direction: column;
-  overflow-y: hidden;
+  /* 两轴都裁：只写 overflow-y 时 x 轴按规范变 auto，底栏一溢出 macOS 就在贴纸底部
+     画一条横向滚动条（实拍）。 */
+  overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
   backdrop-filter: blur(30px);
@@ -457,7 +459,10 @@ button.stab {
 .stk-bar {
   flex: none;
   display: flex; align-items: center;
-  gap: calc(11px * var(--cc-ui));
+  /* 窄窗兜底：用量屏压到最窄仍放不下时，按钮组换到第二行，不再被挤出可视区。
+     macOS 面板默认只有 340 宽，叠上 112% 缩放和五颗按钮，原先置顶钮被裁掉一半（实拍）。 */
+  flex-wrap: wrap;
+  gap: calc(6px * var(--cc-ui)) calc(8px * var(--cc-ui));
   margin: var(--sp-2) 0 var(--sp-6);
   padding: calc(7px * var(--cc-ui)) calc(10px * var(--cc-ui)) calc(7px * var(--cc-ui)) calc(6px * var(--cc-ui)); /* 左内边距更小：用量槽再靠左一点 */
   border-radius: var(--r-14);
@@ -528,17 +533,23 @@ button.stab {
 /* 用量「凹陷读数屏」：内陷凹槽面板(同 .tabseg 槽材质，深浅自适应、不过黑)，物理感来自内陷阴影。
    屏内每行 = 标签 + 凹槽里的发光液柱 + 百分比。颜色随主题(状态色变量)。 */
 .stk-uscreen {
-  flex: none;
-  display: flex; flex-direction: column; justify-content: center;
-  gap: calc(4px * var(--cc-ui));
-  padding: calc(6px * var(--cc-ui)) calc(10px * var(--cc-ui));
+  /* 宽度在「最窄」与「内容自然宽」之间伸缩：basis 0 + min-content 让换行判定按最窄算，
+     先压液柱、实在放不下才让按钮换行；max-content 封顶，宽窗下不会把屏拉成长条。 */
+  flex: 1 1 0; min-width: min-content; max-width: max-content;
+  /* 三列网格：标签列按最长标签自适应（中英文都对齐，不再靠写死的 min-width），
+     液柱列 12~46 之间伸缩，数值列定宽。窄窗时只有液柱变短。 */
+  display: grid;
+  grid-template-columns: max-content minmax(calc(12px * var(--cc-ui)), calc(46px * var(--cc-ui))) max-content;
+  align-items: center; align-content: center;
+  gap: calc(4px * var(--cc-ui)) calc(7px * var(--cc-ui));
+  padding: calc(6px * var(--cc-ui)) calc(8px * var(--cc-ui));
   border-radius: var(--r-10);
   background: rgba(0, 0, 0, 0.3);
   box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.06); /* 更深内陷 + 底沿微高光 */
 }
 :root[data-theme="light"] .stk-uscreen { background: rgba(0, 0, 0, 0.09); box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.17), inset 0 -1px 0 rgba(255, 255, 255, 0.7); }
-.stk-urow { display: flex; align-items: center; gap: calc(7px * var(--cc-ui)); font-size: calc(9.5px * var(--cc-ui)); line-height: 1; }
-.stk-ulabel { flex: none; min-width: calc(58px * var(--cc-ui)); font-weight: 600; }
+.stk-urow { display: contents; font-size: calc(9.5px * var(--cc-ui)); line-height: 1; } /* 行本身不占格，子元素直接进 .stk-uscreen 的网格 */
+.stk-ulabel { font-weight: 600; white-space: nowrap; }
 /* Apple 产品式雕刻：标签 + 百分比为单色、刻入凹槽——雕刻质感由「上沿暗 / 下沿亮」的
    text-shadow 承担；文字色走已校准的 --cc-text-dim（曾写死 0.4/0.46 alpha 绕过 token，
    9.5px 小字在四种主题组合下全部只有 3.3~3.8:1，是全应用对比度最差的常驻文本）。
@@ -553,7 +564,7 @@ button.stab {
 }
 /* 屏内凹槽轨道 + 发光液柱(顶部高光做出物理「液柱」质感) */
 .stk-utrack {
-  flex: 1; min-width: calc(46px * var(--cc-ui)); height: calc(5px * var(--cc-ui));
+  height: calc(5px * var(--cc-ui));
   border-radius: var(--r-3); overflow: hidden;
   background: rgba(0, 0, 0, 0.3); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
 }
@@ -562,12 +573,12 @@ button.stab {
 .stk-ufill.is-ok { background: var(--cc-ok-vivid); }
 .stk-ufill.is-warn { background: var(--cc-warn-vivid); }
 .stk-ufill.is-high { background: var(--cc-err-vivid); }
-.stk-uval { flex: none; min-width: calc(30px * var(--cc-ui)); text-align: right; font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", "PingFang SC", "Microsoft YaHei", monospace; font-variant-numeric: tabular-nums; }
+.stk-uval { grid-column: 3; min-width: 4ch; text-align: right; /* 等宽字体下 4ch 正好放下「100%」；余额行没有液柱，钉第 3 列才对齐 */ font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", "PingFang SC", "Microsoft YaHei", monospace; font-variant-numeric: tabular-nums; }
 /* 底栏配额标签式：一排品牌图标小标签，点选切换显示对应 provider 的用量 */
 /* 刷新失败后的陈旧读数（7B-8）：降饱和 + 压暗，数字仍可读，但一眼看得出不是新值。
    tip 里写着上次更新时刻。 */
 .stk-uscreen.is-stale { filter: saturate(0.35); opacity: 0.75; }
-.stk-utabs { display: flex; gap: calc(3px * var(--cc-ui)); padding-bottom: calc(3px * var(--cc-ui)); }
+.stk-utabs { grid-column: 1 / -1; display: flex; gap: calc(3px * var(--cc-ui)); padding-bottom: calc(3px * var(--cc-ui)); }
 .stk-utab {
   display: flex; align-items: center; justify-content: center;
   padding: calc(2px * var(--cc-ui)) calc(4px * var(--cc-ui)); border-radius: var(--r-sm);
@@ -683,6 +694,7 @@ button.stab {
   inset: 0;
   border-radius: 13px; /* 比 .stk-ind 的 14px 略小，扣掉 1px 边框 */
   overflow: hidden; /* 裁掉旋转亮段的圆角外溢 → 光点贴着圆角矩形边框跑 */
+  isolation: isolate; /* 自成层叠上下文，子层的 z-index 只在徽标内部比较 */
   background: var(--bc-track);
 }
 /* waiting 与 pending 同黄（红绿灯语言，与侧栏状态点同一约定）：颜色只说明「要你」，
@@ -724,6 +736,9 @@ button.stab {
 }
 .run-mask {
   position: absolute;
+  /* 显式叠在闪烁的 .run-sweep 之上：mac 的 WebKit 把带动画的 sweep 单独提成合成层后，
+     未设 z-index 的遮罩和中心圆被它盖住，待交互徽标成了一整块黄（实拍）。 */
+  z-index: 1;
   /* 与 .run-badge(圆角 13) 严格同心：内圆角 = 外圆角 − inset = 13 − 2 = 11，光环四周等宽、
      拐角圆润度与外框一致（旧值 inset 1.6 / r 11.5 非整数，拐角发胖且小数在非整 DPI 下渲染发糊）。 */
   inset: 2px;
@@ -732,6 +747,7 @@ button.stab {
 }
 .run-core {
   position: absolute;
+  z-index: 2;
   top: 50%;
   left: 50%;
   width: calc(24px * var(--cc-ui));
