@@ -876,6 +876,35 @@ fn agent_declared_continuation(old_sid: i64, new_sid: i64) -> bool {
         .is_some_and(|id| id == new.cc_session_id)
 }
 
+/// 认领方是否在旧 PTY 的进程树**之外**（真 → 拒绝换绑，见 [`PtyBroker::handle_reclaim`]）。
+/// 合法的换代只可能来自 PTY 子进程本身（/clear 原地换代）或它的后代（壳里手动重启 agent）。
+/// 树外进程能拿到 launch token，只能是继承了环境变量后又脱离了进程树——claude 2.1.311
+/// 会在会话中途拉起 `claude daemon`（经 WMI 启动，父进程是 WmiPrvSE），由它派生的
+/// 后台会话带着同一个 token 来认领，把托管终端从原会话抢走：原会话的对话页变成
+/// 「在外部终端运行」，中断也失效（2026-10-27 实拍）。这道判定只看 meowo 自己 spawn 的
+/// child_pid，与 DB 里记的 pid 无关；DB 的 pid 是 hook 写的，不一定可靠。
+/// agent 在 transcript 里声明了接续的那一个新会话不走这道判定（见 [`agent_declared_continuation`]）。
+/// 向上走父链而不是展开子孙：链短、不扫全表。父链断掉（中间进程已退出）按树外处理，
+/// 因为合法认领方在 SessionStart 时其祖先必然都还活着。
+fn claim_outside_pty_tree(
+    claim_pid: u32,
+    child_pid: u32,
+    parent_of: &HashMap<u32, u32>,
+) -> bool {
+    let mut cur = claim_pid;
+    // 层数上限兼防 pid 复用造成的伪环。
+    for _ in 0..32 {
+        if cur == child_pid {
+            return false;
+        }
+        match parent_of.get(&cur) {
+            Some(&parent) if parent != 0 && parent != cur => cur = parent,
+            _ => return true,
+        }
+    }
+    true
+}
+
 /// broker/launch token 与 remote.rs 同一口径：OS RNG 不可用即失败，拒绝弱随机回退。
 /// attach 服务虽只听 loopback，token 却是本机任意进程都能来试的唯一门闩——
 /// pid+时间戳可预测，回退等于把门闩换成摆设。
@@ -3309,7 +3338,21 @@ impl PtyBroker {
         // 新会话——守卫会把它判成嵌套误认领，PTY 留在旧行，对话页从此停在交接那一刻
         // （实拍 1293 → 1323）。接续标记指名道姓地指向这次认领的会话，比 pid 关系更可信；
         // 同批派生的其它新会话不是标记指向的那个，照旧拦下。
+        // 下面的进程树检查同样受这个例外豁免：交接目标本来就在树外，同批的其它后台会话
+        // 则两道检查都过不去（实拍 1318 被同批的 1319 抢走终端）。
         if let Some(claim) = claim_pid.filter(|_| !agent_declared_continuation(old_sid, new_sid)) {
+            let child_pid = self
+                .sessions
+                .lock()
+                .ok()
+                .and_then(|sessions| sessions.get(&old_sid).and_then(|m| m.child_pid));
+            if let Some(child) = child_pid {
+                if claim_outside_pty_tree(claim, child, &crate::proc::parent_map()) {
+                    return Err(format!(
+                        "拒绝换代：认领方 pid {claim} 不在旧会话 {old_sid} 的 PTY 进程树内（agent 守护进程派生的后台会话误认领）"
+                    ));
+                }
+            }
             let old_pid = crate::open_store(&crate::db_path())
                 .ok()
                 .and_then(|store| store.session_pid(old_sid).ok().flatten());
@@ -5201,6 +5244,35 @@ mod tests {
         assert!(!nested_claim_hijacks_reclaim(62732, None, |_| {
             panic!("没有旧 pid 不该判活")
         }));
+    }
+
+    /// 换代守卫：claude daemon 派生的后台会话不在 PTY 进程树内，不许抢托管终端。
+    /// 进程链取自 2026-10-27 实拍：meowo(27888) → claude(68524) 是托管会话；
+    /// WmiPrvSE(8100) → daemon(66548) → bg-pty-host(21396) → claude(64980) 是抢走 PTY 的后台会话。
+    #[test]
+    fn claim_from_outside_the_pty_tree_is_rejected() {
+        let parent_of: HashMap<u32, u32> = [
+            (68524, 27888),
+            (66548, 8100),
+            (21396, 66548),
+            (64980, 21396),
+            // 合法后代：托管会话 Bash 里起的子进程。
+            (70001, 68524),
+            (70002, 70001),
+        ]
+        .into_iter()
+        .collect();
+        // PTY 子进程本身认领 = /clear 原地换代。
+        assert!(!claim_outside_pty_tree(68524, 68524, &parent_of));
+        // 树内后代：交给后面的嵌套守卫裁决，这一层放行。
+        assert!(!claim_outside_pty_tree(70002, 68524, &parent_of));
+        // daemon 派生的后台会话：树外，拒绝。
+        assert!(claim_outside_pty_tree(64980, 68524, &parent_of));
+        // 进程表里查不到的 pid（父链断开）也按树外处理。
+        assert!(claim_outside_pty_tree(99999, 68524, &parent_of));
+        // pid 复用造成的伪环不能死循环。
+        let cyclic: HashMap<u32, u32> = [(1, 2), (2, 1)].into_iter().collect();
+        assert!(claim_outside_pty_tree(1, 68524, &cyclic));
     }
 
     /// 凭据分级：注入 agent 环境的 scoped reporter token 只许认领自己那次 launch、

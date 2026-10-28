@@ -251,18 +251,28 @@ pub(crate) fn conhost_children() -> HashSet<u32> {
     HashSet::new()
 }
 
+/// 进程表的 pid → 父 pid 映射，两平台同口径。杀子孙树与 PTY 换代守卫（判认领方是否
+/// 在托管进程树内）共用。
+pub(crate) fn parent_map() -> std::collections::HashMap<u32, u32> {
+    #[cfg(target_os = "windows")]
+    {
+        snapshot_processes()
+            .into_iter()
+            .map(|(pid, (ppid, _))| (pid, ppid))
+            .collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        snapshot_ppids()
+    }
+}
+
 pub(crate) fn kill_descendants(root: u32) {
     let self_pid = std::process::id();
     if root == self_pid {
         return;
     }
-    #[cfg(target_os = "windows")]
-    let parent_of: std::collections::HashMap<u32, u32> = snapshot_processes()
-        .into_iter()
-        .map(|(pid, (ppid, _))| (pid, ppid))
-        .collect();
-    #[cfg(not(target_os = "windows"))]
-    let parent_of = snapshot_ppids();
+    let parent_of = parent_map();
     for pid in descendant_pids(&parent_of, root) {
         if pid != self_pid {
             kill_pid(pid);
