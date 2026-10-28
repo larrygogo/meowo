@@ -767,7 +767,8 @@ impl ParseState {
         let has_task_signal = line.contains("Async agent launched")
             || line.contains(BACKGROUND_SHELL_PREFIX)
             || line.contains("<task-notification>")
-            || line.contains("<retrieval_status>");
+            || line.contains("<retrieval_status>")
+            || line.contains("Successfully stopped task");
         if !has_title && !has_assistant && !has_task_signal {
             return;
         }
@@ -845,7 +846,8 @@ impl ParseState {
     /// - user 行的 `<task-notification>`(内容字符串或 text 块);
     /// - **排队形态**的通知——主 agent 正忙时通知不落 user 行,记成 queue-operation
     ///   enqueue(通知生成时结局已定,即为结束信号)与 attachment/queued_command(送达);
-    /// - TaskOutput 拉取回执(`<retrieval_status>` + 终态 status)。
+    /// - TaskOutput 拉取回执(`<retrieval_status>` + 终态 status);
+    /// - TaskStop 成功回执(停掉的任务不再发通知)。
     ///
     /// isSidechain 行不看:子任务自己的委派不算主会话的后台工作。
     fn fold_task_signals(&mut self, v: &serde_json::Value) {
@@ -917,6 +919,11 @@ impl ParseState {
             if let Some(id) = launch_agent_id(text) {
                 self.running_tasks.insert(id);
             }
+            return;
+        }
+        // TaskStop 停掉的任务不会再有通知,停成功即出集。
+        if let Some(id) = stopped_task_id(text) {
+            self.running_tasks.remove(&id);
             return;
         }
         if !text.trim_start().starts_with("<retrieval_status>") {
@@ -1507,6 +1514,16 @@ impl SubagentSpec for ClaudeSubagents {
                 task_id: launch_agent_id(output),
             });
         }
+        // 3. 主 agent 用 `TaskStop` 停掉的任务**同样不发通知**(2026-10-22 实拍:停掉的
+        //    vite 后台命令在面板上挂了一夜「运行中」)。主动停掉是收尾不是出错,记完成。
+        if let Some(task_id) = stopped_task_id(output) {
+            return Some(SubagentOutcome {
+                running: 0,
+                completed: 1,
+                failed: 0,
+                task_id: Some(task_id),
+            });
+        }
         // TaskOutput 回执(实拍形态):`<retrieval_status>…</retrieval_status>` 开头,
         // 带 `<task_id>` 与 `<status>completed|running|failed</status>`。
         // 没有 task_id 的检索错误(<retrieval_status>error)不认——归不到任何委派。
@@ -1528,6 +1545,24 @@ impl SubagentSpec for ClaudeSubagents {
             task_id: Some(task_id),
         })
     }
+}
+
+/// `TaskStop` 成功回执的固定开头。真机取证(CC 2.1.3xx):回执正文是一段 JSON,
+/// `{"message":"Successfully stopped task: bvokc4arn (…)","task_id":"bvokc4arn",…}`。
+const TASK_STOP_PREFIX: &str = "{\"message\":\"Successfully stopped task";
+
+/// TaskStop 成功回执 → 被停掉的任务 id。行首锚定(理由同 [`is_launch_receipt`]):
+/// 引用这句话的 Read/Grep 结果不能把别人的任务误判成已停。停失败的回执不是这个开头,不认。
+fn stopped_task_id(output: &str) -> Option<String> {
+    let head = output.trim_start();
+    if !head.starts_with(TASK_STOP_PREFIX) {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(head).ok()?;
+    v.get("task_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// 后台 Bash(`run_in_background`)启动回执的固定开头,后面紧跟任务 id。
@@ -3184,6 +3219,39 @@ mod tests {
 
         // 完成通知的 <task-id> 就是 shell id——结局侧无需改动即可了结。
         content.push_str(r#"{"type":"user","uuid":"n1","message":{"content":"<task-notification>\n<task-id>b78nfkj1v</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>completed</status>\n<summary>Background command \"gh run watch\" completed (exit code 0)</summary>\n</task-notification>"}}"#);
+        content.push('\n');
+        std::fs::write(&p, &content).unwrap();
+        assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 0);
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// TaskStop 停掉的后台任务不会再有 task-notification:停成功的回执本身就是结局,
+    /// 否则会话结束后面板上那条仍挂「运行中」(2026-10-22 实拍)。
+    #[test]
+    fn task_stop_receipt_settles_background_task() {
+        // 真机回执原文(CC 把 JSON 串当工具回执正文)。
+        let stop = r#"{"message":"Successfully stopped task: bvokc4arn (bunx vite --port 5199)","task_id":"bvokc4arn","task_type":"local_bash","command":"bunx vite --port 5199"}"#;
+        let outcome = CLAUDE_SUBAGENTS.detect_result(stop).expect("停成功应产出结局");
+        assert_eq!((outcome.running, outcome.completed, outcome.failed), (0, 1, 0));
+        // task_id 是前端把这条回执归回原后台调用的外键。
+        assert_eq!(outcome.task_id.as_deref(), Some("bvokc4arn"));
+        // 引用这句话的源码/日志不认(行首锚定)。
+        assert!(CLAUDE_SUBAGENTS
+            .detect_result(r#"12  /// {"message":"Successfully stopped task: x","task_id":"x"}"#)
+            .is_none());
+
+        let mut content = String::from(
+            r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: bvokc4arn. Output is being written to: C:\tmp\bvokc4arn.output."}]}}"#,
+        );
+        content.push('\n');
+        let p = write_tmp("busy_bg_stopped", &content);
+        assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 1);
+        let line = serde_json::json!({
+            "type": "user",
+            "uuid": "s1",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t2", "content": stop}]},
+        });
+        content.push_str(&line.to_string());
         content.push('\n');
         std::fs::write(&p, &content).unwrap();
         assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 0);
