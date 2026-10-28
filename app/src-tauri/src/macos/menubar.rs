@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
 
@@ -259,6 +259,69 @@ pub fn build_tray_menu(
         builder = builder.item(chat);
     }
     builder.items(&[&recall, &guide, &settings, &website, &quit]).build()
+}
+
+/// 应用主菜单自定义项的 id。与托盘菜单的 "settings" 等错开：两套菜单的事件都会
+/// 经各自 handler 派发，id 不同才不会在托盘 handler 里被重复响应。
+const APP_MENU_SETTINGS_ID: &str = "appmenu.settings";
+/// 「关于 Meowo」不走系统 About 面板（只有名字和版本号），而是打开本应用的更新窗口：
+/// 版本号、检查更新、安装都在那里，和设置 → 关于一致。
+const APP_MENU_ABOUT_ID: &str = "appmenu.about";
+
+/// macOS 顶部应用主菜单（Accessory 模式下不可见；打开设置窗/对话窗切到 Regular 时露出）。
+/// 不建它 Tauri 会自动装一套写死英文的默认菜单（File / Edit / View / Window / Help），
+/// 中文界面下顶栏仍是英文。这里按语言自建，切语言时随托盘菜单一起重建（apply_language）。
+/// 编辑菜单的 撤销/剪切/拷贝/粘贴/全选 必须保留：WKWebView 的 ⌘Z/⌘X/⌘C/⌘V/⌘A 靠这些
+/// predefined 项派发，没有菜单项快捷键就失灵。File/View/Help 没有本应用用得上的项，不建。
+pub fn build_app_menu(app: &AppHandle, lang: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let pkg = app.package_info();
+    let t = |key: &str| crate::tr(lang, key);
+    let app_menu = SubmenuBuilder::new(app, pkg.name.clone())
+        .item(&MenuItemBuilder::with_id(APP_MENU_ABOUT_ID, t("menu.about")).build(app)?)
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(APP_MENU_SETTINGS_ID, t("menu.settings"))
+                .accelerator("Cmd+,")
+                .build(app)?,
+        )
+        .separator()
+        .item(&PredefinedMenuItem::services(app, Some(t("menu.services")))?)
+        .separator()
+        .item(&PredefinedMenuItem::hide(app, Some(t("menu.hide")))?)
+        .item(&PredefinedMenuItem::hide_others(app, Some(t("menu.hideOthers")))?)
+        .item(&PredefinedMenuItem::show_all(app, Some(t("menu.showAll")))?)
+        .separator()
+        .item(&PredefinedMenuItem::quit(app, Some(t("menu.quit")))?)
+        .build()?;
+    let edit_menu = SubmenuBuilder::new(app, t("menu.edit"))
+        .item(&PredefinedMenuItem::undo(app, Some(t("menu.undo")))?)
+        .item(&PredefinedMenuItem::redo(app, Some(t("menu.redo")))?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, Some(t("menu.cut")))?)
+        .item(&PredefinedMenuItem::copy(app, Some(t("menu.copy")))?)
+        .item(&PredefinedMenuItem::paste(app, Some(t("menu.paste")))?)
+        .item(&PredefinedMenuItem::select_all(app, Some(t("menu.selectAll")))?)
+        .build()?;
+    let window_menu = SubmenuBuilder::new(app, t("menu.window"))
+        .item(&PredefinedMenuItem::minimize(app, Some(t("menu.minimize")))?)
+        .separator()
+        .item(&PredefinedMenuItem::close_window(app, Some(t("menu.close")))?)
+        .build()?;
+    MenuBuilder::new(app)
+        .items(&[&app_menu, &edit_menu, &window_menu])
+        .build()
+}
+
+/// 装上应用主菜单并接自定义项的事件（setup 里调用一次；之后切语言只 set_menu 重建，
+/// handler 按 id 匹配不用重挂）。
+pub fn setup_app_menu(app: &AppHandle, lang: &str) -> tauri::Result<()> {
+    app.set_menu(build_app_menu(app, lang)?)?;
+    app.on_menu_event(|app, event| match event.id().as_ref() {
+        APP_MENU_SETTINGS_ID => crate::open_settings_window(app),
+        APP_MENU_ABOUT_ID => crate::open_update_window(app.clone()),
+        _ => {}
+    });
+    Ok(())
 }
 
 /// 创建 macOS 状态栏托盘：左键切换面板，右键弹「设置 / 退出」菜单。

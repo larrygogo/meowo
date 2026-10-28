@@ -92,7 +92,7 @@ use terminal::{
 };
 use window::{
     open_chat_window, open_latest_chat, open_new_session_window, open_onboarding, open_settings,
-    open_update_window, recall_center, set_panel_keep_open, show_sticker,
+    open_update_window, recall_center, set_panel_appearance, set_panel_keep_open, show_sticker,
 };
 // 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流），
 // 由 session_query 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
@@ -1342,6 +1342,7 @@ pub fn run() {
             open_onboarding,
             open_update_window,
             recall_center,
+            set_panel_appearance,
             set_panel_keep_open,
             show_sticker,
             open_link,
@@ -1534,6 +1535,10 @@ pub fn run() {
                 crate::macos::panel::convert_main_to_panel(app.handle());
                 crate::macos::panel::setup_resign_listener(app.handle());
                 crate::macos::menubar::setup_tray(app.handle())?;
+                {
+                    let boot = crate::load_settings();
+                    crate::macos::menubar::setup_app_menu(app.handle(), crate::ui_lang(&boot))?;
+                }
                 crate::macos::notify::init(app.handle());
             }
             #[cfg(not(target_os = "macos"))]

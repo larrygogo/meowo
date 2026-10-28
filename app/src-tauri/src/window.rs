@@ -631,6 +631,16 @@ pub(crate) fn set_panel_keep_open(open: bool) {
     let _ = open;
 }
 
+/// 贴纸面板外观跟应用主题（macOS 原生材质的深/浅）：theme 为 "dark"/"light" 强制，
+/// None（前端 theme=system）跟随系统。非 macOS 空操作，前端只在 macOS 贴纸窗调用。
+#[tauri::command]
+pub(crate) fn set_panel_appearance(app: tauri::AppHandle, theme: Option<String>) {
+    #[cfg(target_os = "macos")]
+    crate::macos::panel::set_appearance(&app, theme.as_deref());
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, theme);
+}
+
 /// 把窗口可靠带到前台。普通 set_focus 在 Windows 上受前台锁限制：托盘点击授予的
 /// SetForegroundWindow 权限只在点击后的极短窗口内有效，稍有延迟（查库、WebView 首帧）
 /// 就被拒——窗口显示了却垫在当前前台窗口身后，用户看到的就是「点了没反应」
@@ -879,6 +889,11 @@ pub(crate) fn apply_language(app: &tauri::AppHandle, lang: &str, chat_enabled: b
         if let Ok(menu) = crate::macos::menubar::build_tray_menu(app, lang, chat_enabled) {
             let _ = tray.set_menu(Some(menu));
         }
+    }
+    // macOS 顶部应用主菜单同样按语言重建（见 menubar::build_app_menu）。
+    #[cfg(target_os = "macos")]
+    if let Ok(menu) = crate::macos::menubar::build_app_menu(app, lang) {
+        let _ = app.set_menu(menu);
     }
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.set_title(tr(lang, "window.settings"));

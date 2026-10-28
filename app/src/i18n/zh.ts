@@ -282,6 +282,8 @@ export const zh = {
     termSearchWrapped: (direction: "next" | "prev"): string => (direction === "next" ? "已到末尾，回绕到第一个匹配" : "已到开头，回绕到最后一个匹配"),
     codeCopy: "复制",
     codeCopied: "已复制",
+    copyMessage: "复制消息",
+    messageCopied: "已复制消息",
     questionExpired: "提问卡已超时收起，可到终端页继续作答",
     // 远程没有终端页：超时放行后终端表单经屏幕识别回到手机上作答，不必回桌面端。
     questionExpiredRemote: "提问卡已超时收起，表单就绪后可在此作答",
@@ -898,6 +900,9 @@ export const zh = {
     gateErrExpired: "桌面端令牌已更换或失效，请重新扫码或粘贴新令牌",
     gateErrInvalid: "令牌不对，请核对后重试",
     gateErrUnreachable: "连不上桌面端，请检查网络或确认桌面端仍在运行",
+    sessionListTitle: "会话",
+    sessionListSubtitle: "继续桌面上的工作",
+    backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>
       `端口 ${configured} 未生效，实际监听 ${actual}，二维码按实际生成`,

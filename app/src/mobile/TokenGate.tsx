@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getToken, setToken, clearToken, onAuthLost, probeToken, primeFileToken } from "./transport";
 import { useT } from "../i18n";
+import logoUrl from "../../src-tauri/icons/128x128@2x.png";
 
 export function TokenGate({ children, onReady }: { children: ReactNode; onReady?: () => void }) {
   const t = useT();
@@ -48,6 +49,10 @@ export function TokenGate({ children, onReady }: { children: ReactNode; onReady?
   return (
     <div className="remote-gate">
       <div className="remote-gate-card">
+        <div className="remote-gate-brand">
+          <img src={logoUrl} width="42" height="42" alt="" />
+          <span>Meowo</span>
+        </div>
         <h1>{t.remote.gateTitle}</h1>
         <p>{t.remote.gateHint}</p>
         {error === "expired" && <p className="remote-gate-err" role="alert">{t.remote.gateErrExpired}</p>}

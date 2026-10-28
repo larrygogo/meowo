@@ -263,6 +263,8 @@ export const en: Dict = {
     termSearchWrapped: (direction) => (direction === "next" ? "Reached the end; wrapped to the first match" : "Reached the start; wrapped to the last match"),
     codeCopy: "Copy",
     codeCopied: "Copied",
+    copyMessage: "Copy message",
+    messageCopied: "Message copied",
     questionExpired: "The question card timed out and closed; keep answering on the Terminal tab",
     questionExpiredRemote: "The question card timed out. You can answer here once the form is ready",
     terminalApprovalBanner: "1 request pending approval",
@@ -844,6 +846,9 @@ export const en: Dict = {
     gateErrExpired: "The desktop token changed or expired. Scan again, or paste the new token.",
     gateErrInvalid: "That token is not valid. Check it and try again.",
     gateErrUnreachable: "Can't reach the desktop app. Check the network, or make sure it is still running.",
+    sessionListTitle: "Sessions",
+    sessionListSubtitle: "Pick up where you left off on desktop",
+    backToSessions: "Back to sessions",
     boundMismatch: (configured, actual) =>
       `Configured port ${configured} didn't take effect in this instance; actually listening on ${actual} (possibly changed by another instance). The QR code uses the actual port`,
   },

@@ -5,6 +5,7 @@
 //     独立窗口不下发——它们的版式按固定密度设计（定尺寸窗口），保持 --cc-ui 恒 1 零回归。
 // 数据源是 ~/.meowo/settings.json，经 get_settings 读取；任一窗口改设置后后端广播
 // settings-changed，这里实时重套用（顺带做了设置窗口里的明暗即时预览）。
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getSettings, type ChatContentWidth, type Settings, type StickerStyle, type ThemeMode } from "./api";
 import { remoteUi, REMOTE_SETTINGS_EVENT } from "./remoteMode";
@@ -53,6 +54,7 @@ const DEFAULTS: Appearance = {
 
 let current: Appearance = DEFAULTS;
 let scaleEnabled = false;
+let panelEnabled = false;
 
 function clampPct(n: number, lo: number, hi: number): number {
   if (!Number.isFinite(n)) return hi;
@@ -77,7 +79,7 @@ function apply(a: Appearance): void {
   // 桌面三个入口查不到、直接跳过。色值与 styles.css 的 --cc-window-bg 两档一致
   // (meta 的 content 吃不了 var())。
   const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (themeColor) themeColor.content = theme === "light" ? "#f6f6f7" : "#1c1c1e";
+  if (themeColor) themeColor.content = theme === "light" ? "#f1f0ec" : "#191a1c";
   // 贴纸风格（立体感/扁平）：CSS 用 [data-sticker-style="flat"] 抹平所有立体效果。
   root.setAttribute("data-sticker-style", a.sticker_style);
   // 对话内容列宽：CSS 用 [data-chat-width="full"] 把 --chat-col 从 720px 换成 100%。
@@ -89,6 +91,12 @@ function apply(a: Appearance): void {
   root.style.setProperty("--cc-opacity", String(clampPct(a.opacity, 25, 100) / 100));
   if (scaleEnabled) {
     root.style.setProperty("--cc-ui", String(clampPct(a.ui_scale, 50, 200) / 100));
+  }
+  // macOS 贴纸面板的原生材质（NSVisualEffectView Popover）按窗口 NSAppearance 出深/浅，
+  // 跟 data-theme 同步推给后端；system 模式传 null 让它跟随系统。platform-macos 是
+  // main.tsx 按 UA 同步打的标记，比 isMacPanel()（异步探测）在首帧就可用。
+  if (panelEnabled && root.classList.contains("platform-macos")) {
+    invoke("set_panel_appearance", { theme: a.theme === "system" ? null : theme }).catch(() => {});
   }
 }
 
@@ -125,9 +133,11 @@ function writeCache(a: Appearance): void {
  * 启动时调用：先用缓存同步套用（避免浅色用户首屏闪深色），再异步拉真实设置校正，
  * 并订阅 settings-changed 实时套用、prefers-color-scheme 跟随系统。
  * @param opts.scale 是否套用界面缩放（贴纸窗与对话窗传 true，其余独立窗口固定密度不传）。
+ * @param opts.panel 是否为贴纸主窗（macOS 上把主题同步给原生面板材质；只有它需要）。
  */
-export function bootAppearance(opts: { scale: boolean }): void {
+export function bootAppearance(opts: { scale: boolean; panel?: boolean }): void {
   scaleEnabled = opts.scale;
+  panelEnabled = opts.panel === true;
   apply(readCache());
   // settings-changed 是权威实时源：先注册监听，一旦收到过，就让稍后才 resolve 的初始 getSettings
   // 不再覆盖（消除 fetch-vs-subscribe 竞态——否则 in-flight 的旧读取结果可能压掉刚到的新值）。
