@@ -1,6 +1,6 @@
-/* 手机远程 UI 的样式补丁。全部圈在 body.remote-ui 下,桌面各窗永不套用(远程门控标志同源,
-   见 remoteMode.ts)。只做三件事:适配移动视口高度与安全区、放大触控热区与字号、把桌面窗口
-   语义的浮层(新建会话)改成全屏 sheet。ChatWindow/ChatSidebar 的既有布局尽量原样复用。 */
+/* 手机远程 UI 的样式层。桌面窗口能力相关的规则圈在 body.remote-ui 下,远程专属列表页
+   与配对页使用独立类名。覆盖列表优先导航、视口/安全区、触控热区、对话与审批密度,
+   并把桌面独立窗口语义的新建会话改成全屏 sheet；宽屏远程仍复用桌面双栏布局。 */
 
 html,
 body {
@@ -221,6 +221,38 @@ body.remote-ui .chat-sidebar-overlay-head {
   body.remote-ui .ns-profile-hint { font-size: 12px; }
 }
 
+/* 手机远程的列表页是一等页面，不再是盖在空对话上的抽屉。宽屏不会进入这个形态。 */
+body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
+.remote-session-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--cc-window-bg);
+}
+.remote-session-list-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: calc(18px + env(safe-area-inset-top, 0px)) 20px 14px;
+}
+.remote-session-list-head img { border-radius: 10px; }
+.remote-session-list-head h1 { margin: 0; font-size: 21px; line-height: 1.25; letter-spacing: -0.02em; }
+.remote-session-list-head p { margin: 3px 0 0; color: var(--cc-text-faint); font-size: 12px; }
+.remote-session-list > .chat-sidebar {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+.remote-session-list .chat-sidebar-head { padding: 0 12px 8px; }
+.remote-session-list .chat-sidebar-search { padding: 0 12px 10px; }
+.remote-session-list .chat-sidebar-list { padding: 4px 12px 12px; }
+.remote-session-list .chat-sidebar-item { min-height: 58px; }
+.remote-session-list .chat-sidebar-footer { padding-left: 12px; }
+
 /* 懒加载 ChatWindow 期间的占位(7M-1)。整屏同底色 + 一行说明:1.2MB 的 chunk 走
    中继要好几秒,白屏在手机上读起来就是「挂了」。 */
 .remote-boot {
@@ -242,58 +274,95 @@ body.remote-ui .chat-sidebar-overlay-head {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: var(--cc-window-bg);
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: radial-gradient(circle at 50% 12%, var(--cc-accent-soft), transparent 34%), var(--cc-window-bg);
   color: var(--cc-text);
 }
 
 .remote-gate-card {
-  width: min(360px, 100%);
+  width: min(380px, 100%);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 13px;
+  padding: 26px;
+  border: 1px solid var(--cc-border);
+  border-radius: 18px;
+  background: var(--cc-panel-bg);
+  box-shadow: var(--cc-shadow-panel);
 }
 
-.remote-gate-card h1 {
-  margin: 0;
-  font-size: 20px;
-}
-
-.remote-gate-card p {
-  margin: 0;
-  opacity: 0.75;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
+.remote-gate-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; }
+.remote-gate-brand img { border-radius: 12px; }
+.remote-gate-brand span { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+.remote-gate-card h1 { margin: 0; font-size: 20px; text-align: center; letter-spacing: -0.015em; }
+.remote-gate-card > p { text-align: center; }
+.remote-gate-card p { margin: 0; color: var(--cc-text-dim); font-size: 14px; line-height: 1.55; }
 .remote-gate-card .remote-gate-err {
-  opacity: 1;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cc-err) 9%, transparent);
   color: var(--cc-err);
   font-size: 13px;
+  text-align: left;
 }
-
 .remote-gate-card input {
-  height: 44px;
-  padding: 0 12px;
-  border-radius: 8px;
+  height: 46px;
+  margin-top: 6px;
+  padding: 0 13px;
+  border-radius: 10px;
   border: 1px solid var(--cc-border);
+  outline: none;
   background: var(--cc-surface);
   color: inherit;
   font-size: 16px;
+  transition: border-color var(--dur-fast), background var(--dur-fast);
 }
-
+.remote-gate-card input:focus { border-color: var(--cc-accent-border); background: var(--cc-surface-hover); }
 .remote-gate-card button {
-  height: 44px;
+  height: 46px;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--cc-accent);
   color: var(--cc-on-accent);
   font-size: 15px;
   font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast), opacity var(--dur-fast);
 }
+.remote-gate-card button:hover:not(:disabled) { background: var(--cc-accent-dim); }
+.remote-gate-card button:disabled { opacity: 0.45; cursor: default; }
 
-.remote-gate-card button:disabled {
-  opacity: 0.5;
+@media (max-width: 699px) {
+  body.remote-ui .chat-topbar { min-height: calc(48px + env(safe-area-inset-top, 0px)); }
+  body.remote-ui .chat-bar { height: 48px; padding: 0 12px; gap: 8px; }
+  body.remote-ui .chat-title { font-size: 15px; }
+  body.remote-ui .chat-title-project { display: none; }
+  body.remote-ui .chat-title-btn { padding-left: 6px; padding-right: 6px; margin-left: -6px; }
+  body.remote-ui .chat-title-agent { width: 18px; height: 18px; }
+  body.remote-ui .chat-compose {
+    width: calc(100% - 24px);
+    margin-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    padding: 11px 12px 10px;
+    border-radius: 14px;
+  }
+  body.remote-ui .chat-compose textarea { min-height: 44px; padding-left: 4px; padding-right: 4px; }
+  body.remote-ui .chat-compose-actions { gap: 6px; }
+  body.remote-ui .chat-compose .chat-model-button { padding-left: 7px; padding-right: 7px; }
+  body.remote-ui .chat-approval {
+    width: calc(100% - 24px);
+    max-height: min(68dvh, 560px);
+    padding: 14px;
+    border-radius: 16px;
+  }
+  body.remote-ui .chat-approval-actions { gap: 10px; }
+  body.remote-ui .chat-approval-actions .is-deny + .is-allow { margin-inline-start: 4px; }
+  body.remote-ui .chat-approval button { min-height: 36px; }
+  .remote-new-session-overlay .ns-titlebar { padding: 14px 16px; }
+  .remote-new-session-overlay .ns-body { padding: 16px; gap: 16px; }
+  .remote-new-session-overlay .ns-options { grid-template-columns: 1fr; margin-top: 4px; padding: 12px; }
+  .remote-new-session-overlay .ns-actions { padding: 12px 16px; background: var(--cc-window-bg); }
+  .remote-new-session-overlay .ns-btn { min-height: 42px; }
+  .remote-new-session-overlay .ns-profile-hint { flex: 1; min-width: 0; }
 }
 
 /* 新建会话浮层:桌面是独立窗口,远程改全屏 sheet 盖在会话列表上。

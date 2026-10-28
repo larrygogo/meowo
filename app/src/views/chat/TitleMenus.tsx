@@ -9,14 +9,17 @@ import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 import { useMenuPopup } from "../menu";
 import { ArchiveIcon, ChevronDownIcon, TopIcon } from "../sticker/icons";
+import { agentAssets, tintStyle } from "../../providers";
+import { folderName } from "../../paths";
 import { durationText } from "./shared";
 import { TodoBadge } from "./TodoBadge";
 
 /** 标题胶囊 + 会话动作菜单（Kimi 式）：标题本身是触发钮（▾），置顶/打开目录/重命名/
  *  归档都收进菜单——标题栏只留「正在看哪条 + 状态 + 视图切换」。重命名走独立 modal
  *  （onRename 只负责打开它）。 */
-export function ChatTitleMenu({ title, cwd, archived, archiving, starred, onToggleStar, onRename, onToggleArchived, t }: {
+export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starred, onToggleStar, onRename, onToggleArchived, t }: {
   title: string;
+  provider: string;
   cwd: string | null;
   archived: boolean;
   archiving: boolean;
@@ -27,14 +30,17 @@ export function ChatTitleMenu({ title, cwd, archived, archiving, starred, onTogg
   t: ReturnType<typeof useT>;
 }) {
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({ align: "left" });
+  const { Icon } = agentAssets(provider);
   // 先收菜单再执行动作：动作可能弹确认/切会话，菜单不该压在那些之上。
   const pick = (action: () => void) => { setOpen(false); btnRef.current?.focus(); action(); };
   return (
     <div className="dd chat-title-menu" ref={ref} onKeyDown={onKeyDown}>
       <button ref={btnRef} type="button" className="chat-title-btn" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+        <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true"><Icon /></span>
         <span className="chat-title">{title}</span>
         <ChevronDownIcon className="chat-title-chev" />
       </button>
+      {cwd && <span className="chat-title-project" data-tip={cwd}>{folderName(cwd)}</span>}
       {open && (
         /* 不铺 pos.width：菜单宽随内容（.dd .dd-menu 的 min-width: max-content），
            只沿用左对齐与视口钳制。 */

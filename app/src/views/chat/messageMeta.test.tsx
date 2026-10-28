@@ -1,12 +1,15 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Message } from "./Message";
 import { Transcript } from "./Transcript";
 import { ChatMarkdown } from "../ChatMarkdown";
 import type { ChatItem } from "../../api";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Reflect.deleteProperty(navigator, "clipboard");
+});
 
 const user = (id: string, timestamp: string | null, text = `消息 ${id}`): ChatItem =>
   ({ type: "user_text", id, timestamp, text });
@@ -56,6 +59,18 @@ describe("Message 悬停时间", () => {
   it("timestamp 为 null 时不挂 data-tip", () => {
     const { container } = render(<Message item={user("u", null, "你好")} />);
     expect(container.querySelector("article[data-tip]")).toBeNull();
+  });
+});
+
+describe("Message 复制", () => {
+  it("助手消息可直接复制原文并给出完成反馈", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<Message item={{ type: "assistant_text", id: "a", timestamp: null, text: "完整回复" }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "已复制消息" })).toBeTruthy());
+    expect(writeText).toHaveBeenCalledWith("完整回复");
   });
 });
 

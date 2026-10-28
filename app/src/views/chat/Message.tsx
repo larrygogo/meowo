@@ -8,6 +8,29 @@ import { en } from "../../i18n/en";
 import { type ChatItem } from "../../api";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { parseUserText, type CrossMessage } from "./localCommand";
+import { copyPlainText } from "./clipboard";
+
+function MessageCopyButton({ text }: { text: string }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void copyPlainText(text).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  const label = copied ? t.chat.messageCopied : t.chat.copyMessage;
+  return (
+    <button type="button" className="chat-message-copy" aria-label={label} data-tip={label} onClick={copy}>
+      {copied ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2" /><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" /></svg>
+      )}
+    </button>
+  );
+}
 
 // Claude Code 把粘贴/引用的图片在 transcript 里记成一行「[Image: source: <本地路径>]」。
 // 原样渲染就是在气泡里摊一整行 C:\Users\... 路径——对话里最脏的元素。渲染成缩略图
@@ -399,6 +422,7 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
       <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-tip={timeTitle}>
         {images.length > 0 && <ImageRow images={images} />}
         {body && <div className="chat-text">{body}</div>}
+        {body && <MessageCopyButton text={body} />}
       </article>
     );
   }
@@ -420,6 +444,7 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
     return (
       <article className="chat-message is-assistant" data-tip={timeTitle}>
         <div className="chat-text chat-md"><ChatMarkdown text={item.text} /></div>
+        {item.text.trim() && <MessageCopyButton text={item.text} />}
       </article>
     );
   }

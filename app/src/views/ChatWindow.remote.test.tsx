@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-// 复刻 ChatWindow.test.tsx 的夹具(mock 按文件隔离,不能跨文件共享)。这里只关心门控,
-// 故 mock 尽量瘦:够渲染出标题栏与页签即可。
+// 复刻 ChatWindow.test.tsx 的夹具(mock 按文件隔离,不能跨文件共享)。覆盖远程能力门控
+// 与窄屏「列表 ↔ 对话」导航；mock 只提供这些流程需要的命令。
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({
   invoke,
@@ -22,8 +22,27 @@ vi.mock("./ManagedTerminal", () => ({
 import { ChatWindow } from "./ChatWindow";
 import { markRemoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 
+function setNarrow(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: (query: string) => ({
+      matches: query === "(max-width: 880px)" ? matches : false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }),
+  });
+}
+
 // git 仓库 + 运行中会话:diff 入口(需 cwd)与「终端」页签都应在桌面态出现。
 function runningSessionImpl(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  if (command === "get_live_sessions_page") {
+    return Promise.resolve([{
+      session: { id: 7, cc_session_id: "cc-7", status: "running", last_event_at: Date.now() },
+      task_title: "门控用例", project_name: "repo", cwd: "C:/repo", provider: "claude",
+      connected: true, pending_review: null, busy_subagents: 0, extra_dirs: [],
+    }]);
+  }
   if (command === "get_chat_history") {
     const h = {
       connected: true, sessionId: 7, title: "门控用例", status: "running",
@@ -51,6 +70,7 @@ afterEach(() => {
   (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
   document.body.classList.remove("remote-ui");
   window.history.replaceState({}, "", "/");
+  Reflect.deleteProperty(window, "matchMedia");
   localStorage.clear();
 });
 
@@ -59,31 +79,50 @@ describe("ChatWindow 远程门控", () => {
     window.history.replaceState({}, "", "/?sessionId=7");
     runningSessionWithRepo();
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("门控用例").length).toBeGreaterThan(0));
 
     expect(screen.getByRole("button", { name: "终端" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "对话" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "查看改动" })).toBeTruthy();
   });
 
-  it("远程态:终端页签与改动入口一并隐藏(输入框仍在,可发消息)", async () => {
+  it("宽屏远程:保留停靠侧栏,隐藏终端页签与改动入口", async () => {
     markRemoteUi();
+    setNarrow(false);
     window.history.replaceState({}, "", "/?sessionId=7");
     runningSessionWithRepo();
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("门控用例").length).toBeGreaterThan(0));
 
-    // 页签整块与 diff 入口被 remoteUi() 门控掉。
+    expect(screen.getByRole("button", { name: "收起会话列表" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "终端" })).toBeNull();
     expect(screen.queryByRole("button", { name: "对话" })).toBeNull();
     expect(screen.queryByRole("button", { name: "查看改动" })).toBeNull();
-    // 但对话核心(发消息)不受影响。
     expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();
+  });
+
+  it("手机远程:首开进会话列表,可选会话并返回,返回后不再恢复上次会话", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+
+    const item = await screen.findByRole("button", { name: /门控用例/ });
+    expect(screen.getByText("继续桌面上的工作")).toBeTruthy();
+    expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull();
+    fireEvent.click(item);
+    await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    await waitFor(() => expect(localStorage.getItem("meowo-remote-last-session")).toBe("7"));
+
+    fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
+    await screen.findByText("继续桌面上的工作");
+    expect(screen.queryByRole("combobox", { name: "发送消息给 Agent" })).toBeNull();
+    expect(localStorage.getItem("meowo-remote-last-session")).toBeNull();
   });
 
   it("远程态:新建会话事件选中临时 id(启动中占位),binding 认领后落到真会话", async () => {
     markRemoteUi();
-    // 无 ?sessionId、无存储恢复 → sessionId=0 空态(用户实拍反馈的落点)。
+    setNarrow(true);
     // 认领结果挂进我们手里的 deferred:负 id 生效的那一拍 resolve() 就发出(挂载即
     // void resolve(),不等 250ms 节拍),mock 若立即兑现,占位「会话正在启动…」只在
     // 相邻两次 commit 之间存在,waitFor 首拍经常抓不到——全量跑高负载下 flake 过。
@@ -98,16 +137,16 @@ describe("ChatWindow 远程门控", () => {
       return runningSessionImpl(command, args);
     });
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("从侧栏选择一个会话")).toBeTruthy());
+    await screen.findByText("继续桌面上的工作");
 
     // RemoteApp 在 NewSessionPanel 启动成功后派发:临时负 id 即导航句柄。
     window.dispatchEvent(new CustomEvent(SELECT_SESSION_EVENT, { detail: -3 }));
     await waitFor(() => expect(screen.getByText("会话正在启动…")).toBeTruthy());
-    expect(screen.queryByText("从侧栏选择一个会话")).toBeNull();
+    expect(document.querySelector(".chat-window.is-remote-list")).toBeNull();
 
     // 放行认领:原地重绑成真会话,空态/占位都退场。
     releaseClaim!(7);
-    await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(screen.getAllByText("门控用例").length).toBeGreaterThan(0), { timeout: 3000 });
     expect(screen.queryByText("会话正在启动…")).toBeNull();
   });
 });

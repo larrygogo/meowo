@@ -54,9 +54,15 @@
   --cc-warn: #e0a23c;
   --cc-err: #e0584c;
   /* 独立窗口底色（设置/引导/更新窗）：不能走 --cc-bg（带贴纸半透明度会透桌面），各窗统一取此。 */
-  --cc-window-bg: #1c1c1e;
+  --cc-window-bg: #191a1c;
+  /* 工作区只分「外壳 / 内容 / 浮层」三层，避免每张卡各自混出相近却不同的灰色。 */
+  --cc-panel-bg: #202124;
+  --cc-panel-raised: #242528;
+  --cc-selected: rgba(255, 255, 255, 0.075);
+  --cc-shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.16), 0 10px 28px rgba(0, 0, 0, 0.14);
+  --cc-shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.32);
   /* 浮层菜单/气泡底色（右键菜单/下拉/模型菜单/tooltip）：必须不透明，否则透出底下内容。 */
-  --cc-menu-bg: #2e2e2c;
+  --cc-menu-bg: #28292c;
   /* 状态指示点的鲜亮色（缩略条/卡片小圆点）：与文字调色板解耦，浅色下不跟随变暗，保持醒目。 */
   --cc-ok-vivid: #4ec9a5;
   --cc-warn-vivid: #e0a23c;
@@ -171,7 +177,12 @@
   --cc-text-faint: #5e6762;
   --cc-warn: #946410;
   --cc-err: #cf4434;
-  --cc-window-bg: #f6f6f7;
+  --cc-window-bg: #f3f3f5;
+  --cc-panel-bg: #fbfbfc;
+  --cc-panel-raised: #ffffff;
+  --cc-selected: rgba(0, 0, 0, 0.055);
+  --cc-shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.035), 0 10px 26px rgba(0, 0, 0, 0.045);
+  --cc-shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.14);
   --cc-menu-bg: #fff;
   /* 圆点鲜亮色：浅色下用饱和中调（亮但在近白底上仍有存在感），不取文字用的暗色。 */
   --cc-ok-vivid: #17ab77;
@@ -229,7 +240,7 @@
 :root[data-theme="light"] .usage-track { background: rgba(0, 0, 0, 0.08); }
 :root[data-theme="light"] .settings { background: var(--cc-window-bg); }
 :root[data-theme="light"] .side { background: rgba(0, 0, 0, 0.035); }
-:root[data-theme="light"] .dd-menu { background: var(--cc-menu-bg); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
+:root[data-theme="light"] .dd-menu { background: var(--cc-menu-bg); box-shadow: var(--cc-shadow-popup); }
 :root[data-theme="light"] .pswitch { background: rgba(0, 0, 0, 0.16); }
 /* 开启态强调色轨道必须比上面的 off 覆盖更具体，否则被盖成灰色 → 看不出开关。 */
 :root[data-theme="light"] .pswitch.on { background: var(--cc-accent); }
@@ -431,13 +442,21 @@ button.stab {
   gap: calc(11px * var(--cc-ui));
   margin: var(--sp-2) 0 var(--sp-6);
   padding: calc(7px * var(--cc-ui)) calc(10px * var(--cc-ui)) calc(7px * var(--cc-ui)) calc(6px * var(--cc-ui)); /* 左内边距更小：用量槽再靠左一点 */
-  border-radius: var(--r-14);
+  border-radius: var(--r-12);
   background: var(--cc-surface); /* 同 .stk-card：凸起纸卡，深浅自动适配 */
-  border: 1px solid var(--cc-border);
+  border: 1px solid color-mix(in srgb, var(--cc-border) 86%, transparent);
   box-shadow: var(--card-elev);
 }
-/* 控制按钮组在右(margin-auto 推到最右；无用量时也靠右) */
-.stk-bar-actions { margin-left: auto; display: flex; align-items: center; gap: calc(6px * var(--cc-ui)); }
+/* 控制按钮组在右(margin-auto 推到最右；无用量时也靠右)。
+   允许换行：开了对话入口后是 5 颗按钮，与用量屏并排在 320~340px 宽的贴纸里放不下，
+   整条贴纸冒出横向滚动条、置顶钮被挤出可视区。按钮组设成可收缩 + wrap——空间够时
+   仍是一行；不够时 flex 把它压到剩余宽度，按钮自动折成两行（用量屏本就两三行高，
+   底栏不会因此变高）；无用量屏或贴纸拉宽时又回到单行，不需要断点。 */
+.stk-bar-actions {
+  margin-left: auto; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: calc(6px * var(--cc-ui));
+}
 /* 终端定位提示：浮在底栏上方，不改变列表高度；带动作的提示由用户明确关闭。 */
 /* toast 统一栈（P1-2）：焦点提示、归档撤销、首启导入提示同栈纵向堆叠——三者曾各自
    锚在同一 bottom（同 .stk-focus-toast 原位），同屏互压。焦点提示在栈底（原位），
@@ -731,13 +750,13 @@ button.stab {
 }
 .stk-card {
   position: relative; /* 供星标小星角标绝对定位 */
-  padding: calc(10px * var(--cc-ui)) calc(11px * var(--cc-ui));
+  padding: calc(11px * var(--cc-ui)) calc(12px * var(--cc-ui));
   margin-bottom: calc(6px * var(--cc-ui));
   background: var(--cc-surface);
-  border: 1px solid var(--cc-border);
+  border: 1px solid color-mix(in srgb, var(--cc-border) 86%, transparent);
   box-shadow: var(--card-elev);
   transition: background var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-base), transform var(--dur-base);
-  border-radius: var(--r-16);
+  border-radius: var(--r-12);
 }
 .stk-card:last-child { margin-bottom: 0; }
 /* 跳转/恢复请求在飞：变暗 + 等待光标，告诉用户「点到了，别再点」（重复请求已被代码拒绝，
@@ -1742,6 +1761,12 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 /* macOS：贴纸面板用更大的圆角，配合原生毛玻璃(NSVisualEffectView)的 radius(见 panel.rs GLASS_RADIUS)，二者须一致。 */
 :root.platform-macos .sticker {
   border-radius: var(--r-16);
+  /* 原生材质：Rust 侧（macos/panel.rs）在透明窗下垫了 NSVisualEffectView（Popover 材质，
+     深浅随主题），这里不再铺实心底色，只留一层薄着色让贴纸色预设仍有倾向；
+     「贴纸不透明度」在 macOS 上调的是这层着色的浓淡（100% → 0.6，25% → 0.15）。
+     backdrop-filter 去掉：透明窗里采样不到桌面，只会白白提成合成层。 */
+  background: rgba(var(--cc-bg-rgb), calc(var(--cc-opacity) * 0.6));
+  backdrop-filter: none;
 }
 
 /* 左侧栏 */
@@ -2041,11 +2066,11 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
   /* 嵌在设置页的滚动区里：滚到底不再把整页带着跑。 */
   overscroll-behavior: contain;
   background: var(--cc-menu-bg);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-md);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  border: 1px solid color-mix(in srgb, var(--cc-border) 82%, transparent);
+  border-radius: var(--r-12);
+  box-shadow: var(--cc-shadow-popup);
   z-index: 50;
-  animation: dd-pop 0.12s ease-out;
+  animation: dd-pop var(--dur-base) cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 /* Dropdown 把菜单 inline 钉成与按钮等宽，超长选项此前被 nowrap 硬截、无省略。
    利用 CSS 宽度钳制：min-width/max-width 优先于 inline width——inline 值（按钮宽）成为下限，
@@ -3498,6 +3523,9 @@ select.ns-input {
 .chat-title-btn:hover { background: var(--cc-surface-hover); }
 .chat-title-btn .chat-title { cursor: pointer; }
 .chat-title-chev { flex: 0 0 auto; opacity: .55; }
+.chat-title-agent { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-md); }
+.chat-title-agent svg { width: 15px; height: 15px; }
+.chat-title-project { flex: 0 1 auto; min-width: 0; max-width: 160px; margin-left: var(--sp-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--fs-11); user-select: none; }
 /* diff 面板头行的仓切换 + 附加目录管理(用户指定收拢于此)。
    按钮外形与右侧「文件/更改」页签壳同参(同底色/圆角,竖向 padding = 壳 3 + 钮 4),
    两者同排等高——不同高会像两套控件(用户实拍)。 */
@@ -3693,27 +3721,25 @@ select.ns-input {
    后代都要贴卡片色混，贴外壳色会在卡里泛出脏边。
    macOS 不套卡片：红绿灯与 84px 留白按旧几何对齐，改动它需真机验证。 */
 :root:not(.platform-macos) .chat-main {
-  /* 卡片底只比外壳（#1c1c1e / #f6f6f7）抬极小一档：层次主要交给描边与阴影，
-     底色差拉大会显得卡片像另一张纸（实拍反馈「色差太大」）。 */
-  --chat-card-bg: #1f1f22;
+  /* 内容卡与窗口外壳共用三层表面 token，深浅主题只换色、不改变窗口几何。 */
+  --chat-card-bg: var(--cc-panel-bg);
   --cc-bg: var(--chat-card-bg);
   background: var(--chat-card-bg);
-  margin: 0 var(--sp-6) var(--sp-6);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-9);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.26);
+  margin: 0 var(--sp-8) var(--sp-8);
+  border: 1px solid color-mix(in srgb, var(--cc-border) 82%, transparent);
+  border-radius: var(--r-12);
+  box-shadow: var(--cc-shadow-panel);
   overflow: hidden;
 }
 :root[data-theme="light"]:not(.platform-macos) .chat-main {
-  --chat-card-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--cc-shadow-panel);
 }
 /* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 33,33,35），
    卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
 :root:not(.platform-macos) .chat-window.is-terminal .chat-main,
 :root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-main {
   --chat-card-bg: #212123;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.26);
+  box-shadow: var(--cc-shadow-panel);
 }
 /* 外壳统一底色：侧栏不再自带更深的混色与右分割线（卡片已承担分区语义）。 */
 :root:not(.platform-macos) .chat-sidebar { background: transparent; border-right: 0; }
@@ -3732,28 +3758,20 @@ select.ns-input {
 /* macOS：抽屉从窗口最顶展开，头部按钮必须给左上角的原生红绿灯让位（与其余 mac 头部同规）。 */
 :root.platform-macos .chat-sidebar-overlay-head { padding-left: 84px; }
 .chat-window .chat-sidebar-overlay .chat-sidebar { flex: 1; min-height: 0; width: 100%; background: transparent; border-right: 0; }
-/* 列宽不随密度缩放：208px 是侧栏与主列的版式划分（窄窗抽屉形态 244px 同理），
+/* 列宽不随密度缩放：224px 给标题与状态副行留出辨识度；窄窗抽屉仍为 244px。
    缩放只放大栏内文字/间距，长会话名由 .chat-sidebar-name-text 等的 ellipsis 消化。 */
-.chat-sidebar { width: 208px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
-/* 高度对齐右列标题栏（.chat-bar 44px、macOS 52px、无底框），两列顶部视觉成一行。 */
-/* 左右缩进 8px 与工具条/列表/底部设置行同一条线（各行各排一套缩进就是「没对齐」）。
-   不撑 52px 行高：按钮顶边与右侧会话卡片顶边同线（都从 chat-body 顶起算），
-   与下方工具条只隔 4px——先前撑满行高垂直居中让这里空出一大圈（实拍反馈）。 */
-/* 右缘只留 1px：行尾的筛选钮要与下方列表的滚动条右缘对齐（滚动条贴 nav 右缘 0 起，
-   头部再垫 8px 就永远差一截——实拍反馈）；按钮 28px 宽、图标居中，自带视觉留白。 */
+.chat-sidebar { width: 224px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
 .chat-sidebar-head { padding: 0 1px var(--sp-4) var(--sp-8); display: flex; align-items: center; gap: var(--sp-6); flex: 0 0 auto; }
-/* 侧栏搜索行（Ctrl/Cmd+F 聚焦）：安静的行内输入，聚焦才亮描边。 */
-.chat-sidebar-search { position: relative; flex: 0 0 auto; padding: 0 var(--sp-8) var(--sp-6); }
-/* 幽灵形态(标题栏幽灵按钮同款设计语言):平时融入侧栏底色不抢戏——一圈实边框在一列
-   无边框条目里像个突兀的方盒(实拍反馈"与整体样式不符");hover 微亮、聚焦才显边。 */
-.chat-sidebar-search input { width: 100%; padding: var(--sp-4) var(--sp-22) var(--sp-4) var(--sp-8); border: 1px solid transparent; border-radius: var(--r-md); background: color-mix(in srgb, var(--cc-text) 5%, transparent); color: var(--cc-text); font-size: var(--fs-11-5); outline: none; }
+.chat-sidebar-search { position: relative; flex: 0 0 auto; padding: 0 var(--sp-8) var(--sp-8); }
+.chat-sidebar-search-icon { position: absolute; left: calc(var(--sp-8) + var(--sp-9)); top: calc(50% - var(--sp-4)); transform: translateY(-50%); color: var(--cc-text-faint); pointer-events: none; }
+.chat-sidebar-search input { width: 100%; height: calc(30px * var(--cc-ui)); padding: var(--sp-4) var(--sp-22) var(--sp-4) calc(var(--sp-24) + var(--sp-5)); border: 1px solid transparent; border-radius: var(--r-9); background: color-mix(in srgb, var(--cc-text) 5%, transparent); color: var(--cc-text); font-size: var(--fs-11-5); outline: none; transition: background var(--dur-fast), border-color var(--dur-fast); }
 .chat-sidebar-search input:hover { background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
 .chat-sidebar-search input::placeholder { color: var(--cc-text-faint); }
-.chat-sidebar-search input:focus { border-color: var(--cc-border); background: var(--cc-surface); }
-.chat-sidebar-search-x { position: absolute; top: 50%; right: calc(var(--sp-8) + var(--sp-4)); transform: translateY(calc(-50% - 3px)); border: 0; background: none; color: var(--cc-text-faint); font-size: var(--fs-13); line-height: 1; cursor: pointer; padding: var(--sp-2); }
+.chat-sidebar-search input:focus { border-color: color-mix(in srgb, var(--cc-accent) 34%, var(--cc-border)); background: var(--cc-surface); }
+.chat-sidebar-search:focus-within .chat-sidebar-search-icon { color: var(--cc-text-dim); }
+.chat-sidebar-search-x { position: absolute; top: 50%; right: calc(var(--sp-8) + var(--sp-4)); transform: translateY(calc(-50% - 4px)); border: 0; background: none; color: var(--cc-text-faint); font-size: var(--fs-13); line-height: 1; cursor: pointer; padding: var(--sp-2); }
 .chat-sidebar-search-x:hover { color: var(--cc-text); }
-/* 整宽「新建会话」：与底部「打开设置」同款幽灵按钮（无描边、左对齐、hover 亮底），
-   首尾两行视觉成对。 */
+/* 新建与设置都是侧栏的导航动作：轻表面、左对齐，不把品牌色浪费在常驻按钮上。 */
 .chat-sidebar-new {
   flex: 1;
   min-width: 0;
@@ -3761,16 +3779,18 @@ select.ns-input {
   align-items: center;
   gap: var(--sp-9);
   padding: var(--sp-8) var(--sp-10);
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--r-9);
-  color: var(--cc-text-dim);
-  background: transparent;
+  color: var(--cc-text);
+  background: color-mix(in srgb, var(--cc-text) 5%, transparent);
   font: inherit;
-  font-size: var(--fs-11-5);
+  font-size: var(--fs-12);
+  font-weight: 550;
   text-align: left;
   cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
 }
-.chat-sidebar-new:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
+.chat-sidebar-new:hover { color: var(--cc-text); background: var(--cc-surface-hover); border-color: var(--cc-border); }
 .chat-sidebar-new svg { flex: 0 0 auto; }
 .chat-sidebar-new span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-sidebar-toggle { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: var(--r-md); color: var(--cc-text-dim); background: transparent; cursor: pointer; }
@@ -3846,9 +3866,9 @@ select.ns-input {
 .chat-sidebar-retry:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
 /* 选中态只用中性底色，无左缘条。position:relative 是「⋯」菜单按钮的定位锚（它绝对
    定位浮在右上角，见 .chat-sidebar-item-menu——不占位才不会让每行平白让出一列）。 */
-.chat-sidebar-item { position: relative; display: flex; align-items: flex-start; gap: var(--sp-9); padding: var(--sp-8) var(--sp-10); border: 0; border-radius: var(--r-9); color: var(--cc-text-dim); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.chat-sidebar-item { position: relative; display: flex; align-items: flex-start; gap: var(--sp-9); padding: var(--sp-8) var(--sp-10); border: 0; border-radius: var(--r-9); color: var(--cc-text-dim); background: transparent; font: inherit; text-align: left; cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
 .chat-sidebar-item:hover { background: var(--cc-surface-hover); }
-.chat-sidebar-item.is-active { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text) 7%, transparent); }
+.chat-sidebar-item.is-active { color: var(--cc-text); background: var(--cc-selected); }
 /* agent 徽标：连接=品牌色（tintStyle inline 注入），断开=灰。对齐标题行视觉中线。
    图标是固定 px 图形，不随密度缩放（同贴纸窗的 svg 图标例）；旁的文字都走 --fs-* 阶梯。 */
 .chat-sidebar-agent-icon { position: relative; flex: 0 0 auto; margin-top: var(--sp-1); display: inline-flex; align-items: center; }
@@ -3968,7 +3988,33 @@ select.ns-input {
   content-visibility: auto;
   contain-intrinsic-size: auto 60px;
 }
-.chat-message { margin: 0 0 calc(26px * var(--cc-ui)); }
+.chat-message { position: relative; margin: 0 0 calc(26px * var(--cc-ui)); }
+.chat-message-copy {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 2;
+  width: 24px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--r-md);
+  background: var(--cc-panel-raised);
+  color: var(--cc-text-faint);
+  opacity: .45;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
+}
+.chat-message:hover > .chat-message-copy,
+.chat-message:focus-within > .chat-message-copy { opacity: 1; pointer-events: auto; }
+.chat-message-copy:hover { color: var(--cc-text); background: var(--cc-surface-hover); }
+@media (hover: none) {
+  /* 触屏没有稳定的 hover 落点，常显会盖住气泡首行；代码块复制仍独立可用。 */
+  .chat-message-copy { display: none; }
+}
 /* 图片附件缩略图（见 Message.tsx 的 ImageRef）：asset 协议加载本地图，加载失败降级为下面的徽章。
    缩略图不披气泡皮——气泡是「说的话」，图片是附件；多图同排不换行（溢出横向滚动）。 */
 .chat-image-thumb-btn { display: block; flex: 0 0 auto; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
@@ -4018,35 +4064,27 @@ select.ns-input {
    留 6px 不贴侧栏），最大化后窗口语言仍是「一张卡」。mac 不套卡片（同 .chat-main 的
    旧几何约束）；--cc-bg 重指向卡色，面板内 color-mix(var(--cc-bg)…) 的后代贴卡混色。 */
 :root:not(.platform-macos) .chat-body.is-diff-max .chat-diff-panel {
-  --cc-bg: #1f1f22;
+  --cc-bg: var(--cc-panel-bg);
   background: var(--cc-bg);
-  margin: 0 var(--sp-6) var(--sp-6);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-9);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.26);
+  margin: 0 var(--sp-8) var(--sp-8);
+  border: 1px solid color-mix(in srgb, var(--cc-border) 82%, transparent);
+  border-radius: var(--r-12);
+  box-shadow: var(--cc-shadow-panel);
   overflow: hidden;
-}
-:root[data-theme="light"]:not(.platform-macos) .chat-body.is-diff-max .chat-diff-panel {
-  --cc-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
 }
 /* macOS 最大化时红绿灯仍在窗口左上（承载它的 .chat-bar 已隐藏），头行让位同其他 mac 头部。 */
 :root.platform-macos .chat-body.is-diff-max .chat-diff-head { padding-left: 84px; min-height: 52px; }
 /* Windows/Linux：面板与 .chat-main 同款浮起圆角卡片（规则见 .chat-main 上方注释），
    两张卡并排、各自 margin 留出缝隙；macOS 维持平直停靠（同 .chat-main 不套卡的约定）。 */
 :root:not(.platform-macos) .chat-diff-panel {
-  --chat-card-bg: #1f1f22;
+  --chat-card-bg: var(--cc-panel-bg);
   --cc-bg: var(--chat-card-bg);
   background: var(--chat-card-bg);
-  margin: 0 var(--sp-6) var(--sp-6) 0;
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-9);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.26);
+  margin: 0 var(--sp-8) var(--sp-8) 0;
+  border: 1px solid color-mix(in srgb, var(--cc-border) 82%, transparent);
+  border-radius: var(--r-12);
+  box-shadow: var(--cc-shadow-panel);
   overflow: hidden;
-}
-:root[data-theme="light"]:not(.platform-macos) .chat-diff-panel {
-  --chat-card-bg: #fbfbfc;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.05);
 }
 /* 终端页签：.chat-window.is-terminal 在窗口作用域把整窗压成深色变量，
    但 :root[data-theme="light"] 在根上依旧命中——浅色主题的终端视图里，对话卡有
@@ -4055,12 +4093,12 @@ select.ns-input {
 :root:not(.platform-macos) .chat-window.is-terminal .chat-diff-panel,
 :root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-diff-panel {
   --chat-card-bg: #212123;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.26);
+  box-shadow: var(--cc-shadow-panel);
 }
 :root:not(.platform-macos) .chat-window.is-terminal .chat-body.is-diff-max .chat-diff-panel,
 :root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-body.is-diff-max .chat-diff-panel {
   --cc-bg: #212123;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.26);
+  box-shadow: var(--cc-shadow-panel);
 }
 /* --cc-syn-* 的终端压深已并入 .chat-window.is-terminal 统一变量块，面板不再单独特调。 */
 .chat-diff-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-10); border-bottom: 1px solid var(--cc-border); }
@@ -4295,8 +4333,8 @@ select.ns-input {
 .chat-crossmsg-more:hover { color: var(--cc-text); }
 .chat-command-out summary { min-height: calc(30px * var(--cc-ui)); padding: 0 var(--sp-10); }
 .chat-command-out pre { padding: var(--sp-8) var(--sp-10); }
-.chat-tool { position: relative; margin: var(--sp-1) var(--sp-6); border: 0; border-radius: var(--r-9); color: var(--cc-text-dim); background: transparent; }
-.chat-tool summary { min-height: calc(38px * var(--cc-ui)); padding: 0 var(--sp-11) 0 var(--sp-14); display: flex; align-items: center; gap: var(--sp-9); cursor: pointer; font-size: var(--fs-11); list-style: none; border-radius: var(--r-9); }
+.chat-tool { position: relative; margin: var(--sp-1) var(--sp-4); border: 0; border-radius: var(--r-9); color: var(--cc-text-dim); background: transparent; }
+.chat-tool summary { min-height: calc(36px * var(--cc-ui)); padding: 0 var(--sp-10); display: flex; align-items: center; gap: var(--sp-8); cursor: pointer; font-size: var(--fs-11); list-style: none; border-radius: var(--r-9); }
 .chat-tool summary::-webkit-details-marker { display: none; }
 .chat-tool-name { flex: 0 0 auto; white-space: nowrap; color: var(--cc-text-dim); font-size: var(--fs-11); font-weight: 500; }
 .chat-tool-summary { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-family: inherit; font-size: var(--fs-11); }
@@ -4364,7 +4402,7 @@ select.ns-input {
    position:relative 双作用:绘在 overlay 的渐变过渡之上(z-index:auto 的定位元素按
    树序后绘) + 给绝对定位的 × 收起钮(.chat-attention-dismiss)做锚点。
    max-height 兜住矮窗:窗口很矮时卡片压到上限、正文内部滚动,不顶进标题栏。 */
-.chat-approval { position: relative; width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; max-height: min(70vh, 560px); padding: var(--sp-14) var(--sp-16); display: flex; flex-direction: column; gap: var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-16); background: var(--cc-bg); box-shadow: 0 10px 30px rgba(0,0,0,.10); font-size: var(--fs-12); animation: chat-approval-in .18s ease-out; }
+.chat-approval { position: relative; width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; max-height: min(70vh, 560px); padding: var(--sp-14) var(--sp-16); display: flex; flex-direction: column; gap: var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-16); background: var(--cc-panel-raised); box-shadow: var(--cc-shadow-panel); font-size: var(--fs-12); animation: chat-approval-in .18s ease-out; }
 /* 入场动画:overlay 后卡片出现不再推挤任何内容,「从 0 高渐开」没有存在必要——
    改淡入 + 微浮起。reduced-motion 由文件末尾的全局通配兜底压成瞬完。 */
 @keyframes chat-approval-in {
@@ -4461,17 +4499,18 @@ select.ns-input {
   /* --chat-col 是阅读列宽（排队回执/审批卡/运行条同此一列），不随密度缩放——缩放只改
      字号与间距，不改版式划分；窄窗由 calc(100% - 48px) 兜底。 */
   width: min(var(--chat-col), calc(100% - 48px));
-  min-height: calc(132px * var(--cc-ui));
-  padding: var(--sp-14) var(--sp-16) var(--sp-12);
+  min-height: 0;
+  padding: var(--sp-12) var(--sp-14) var(--sp-10);
   display: flex;
   flex-wrap: wrap;
   align-content: flex-start;
   align-items: flex-end;
   gap: var(--sp-8);
   border: 1px solid color-mix(in srgb, var(--cc-border) 88%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--cc-bg) 96%, white 4%);
-  box-shadow: 0 14px 38px rgba(0,0,0,.10), 0 2px 8px rgba(0,0,0,.05);
+  border-radius: var(--r-14);
+  background: var(--cc-panel-raised);
+  box-shadow: 0 8px 24px rgba(0,0,0,.10), 0 1px 3px rgba(0,0,0,.05);
+  transition: border-color var(--dur-base), box-shadow var(--dur-base);
 }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }
 /* 与图片缩略图（76×56）同高同圆角：两种附件排在一行不再一高一矮、一方一扁。
@@ -4506,7 +4545,7 @@ select.ns-input {
 .chat-attachment.is-image .chat-image-thumb { width: 76px; height: 56px; border-radius: var(--r-9); box-shadow: none; }
 /* 工具行按钮统一 28px 高 + 常规小圆角（用户不要药丸/纯圆）：附件、模型、模式一排等高。 */
 .chat-compose .chat-attach-button { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--r-7); color: var(--cc-text-dim); background: transparent; }
-.chat-compose textarea { order: 1; width: 100%; min-height: calc(62px * var(--cc-ui)); max-height: calc(150px * var(--cc-ui)); flex: 0 0 100%; padding: var(--sp-3) var(--sp-8); resize: none; border: 0; border-radius: 0; outline: none; color: var(--cc-text); background: transparent; font-family: inherit; font-size: var(--fs-13); line-height: 1.6; }
+.chat-compose textarea { order: 1; width: 100%; min-height: calc(52px * var(--cc-ui)); max-height: calc(150px * var(--cc-ui)); flex: 0 0 100%; padding: var(--sp-3) var(--sp-6); resize: none; border: 0; border-radius: 0; outline: none; color: var(--cc-text); background: transparent; font-family: inherit; font-size: var(--fs-13); line-height: 1.6; }
 /* compose 内按钮的中性基座：只放全员共用的交互位（布局弹性/手型/禁用态）。
    此前这里是发送按钮的 accent 皮（38px 绿底绿描边），而受益者早已全部自带完整样式，
    皮只剩被逐个用更高特异性「解毒」的份（两次用户实拍撞色都由它引起）。新按钮从此
@@ -4814,7 +4853,7 @@ select.ns-input {
   border-left: 1px dashed color-mix(in srgb, var(--cc-text-faint) 45%, transparent);
 }
 .chat-timeline-dot { width: 7px; height: 7px; margin-left: var(--sp-5); border-radius: 50%; background: var(--cc-text-faint); }
-.chat-compose:focus-within { border-color: color-mix(in srgb, var(--cc-text) 26%, var(--cc-border)); box-shadow: 0 16px 42px rgba(0,0,0,.13), 0 2px 8px rgba(0,0,0,.05); }
+.chat-compose:focus-within { border-color: color-mix(in srgb, var(--cc-accent) 32%, var(--cc-border)); box-shadow: 0 10px 28px rgba(0,0,0,.10), 0 0 0 3px color-mix(in srgb, var(--cc-accent) 7%, transparent); }
 /* 7G-2：占位符原来在 faint 上再兑 78% 透明，落到 3.4:1——而它是「Enter 发送 /
    Shift+Enter 换行」这条约定的**唯一**说明位。直接用 faint（已按叠层重校，见 7G-1）。 */
 .chat-compose textarea::placeholder { color: var(--cc-text-faint); }
@@ -4833,7 +4872,10 @@ select.ns-input {
   border-radius: 50%;
   color: var(--cc-bg);
   background: var(--cc-text);
+  transition: background var(--dur-fast), transform var(--dur-fast);
 }
+.chat-compose .chat-send-button:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-text) 86%, var(--cc-bg)); }
+.chat-compose .chat-send-button:active:not(:disabled) { transform: scale(.94); }
 .chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: color-mix(in srgb, var(--cc-text) 9%, var(--cc-bg)); opacity: 1; }
 /* 远程有草稿时的独立停止钮(触屏无 Ctrl+Enter,主钮此时是发送):小一号,居于主钮左侧。 */
 .chat-compose .chat-send-button.chat-stop-secondary { width: 32px; height: 32px; }

@@ -47,9 +47,13 @@ pub fn convert_main_to_panel(app: &AppHandle) {
 
     // 玻璃质感：在透明窗后垫一层 NSVisualEffectView(毛玻璃)，圆角与 CSS .sticker 一致。
     // backdrop-filter 在透明 Tauri 窗里模糊不到桌面，必须用原生特效。state=Active：非激活面板也保持磨砂
-    // (不随失焦变暗)；降低贴纸不透明度(--cc-opacity)时即透出磨砂玻璃而非桌面。转 panel 前应用，特效随 contentView 保留。
+    // (不随失焦变暗)。转 panel 前应用，特效随 contentView 保留。
+    // 材质用 Popover（系统菜单栏弹出面板同款）而非 HudWindow：HUD 是深色专用，浅色主题下
+    // 发黑；Popover 按窗口 NSAppearance 出深/浅两套，外观由 set_appearance 跟应用主题同步。
+    // CSS 侧 :root.platform-macos .sticker 只铺一层薄着色，材质默认就透出来（贴纸不透明度
+    // 设置在 macOS 上调的是着色浓淡）。
     let _ = window.set_effects(tauri::utils::config::WindowEffectsConfig {
-        effects: vec![tauri::utils::WindowEffect::HudWindow],
+        effects: vec![tauri::utils::WindowEffect::Popover],
         state: Some(tauri::utils::WindowEffectState::Active),
         radius: Some(GLASS_RADIUS),
         color: None,
@@ -81,6 +85,44 @@ pub fn convert_main_to_panel(app: &AppHandle) {
 
     // 启动即隐藏，等托盘点击再显示。
     panel.order_out(None);
+}
+
+/// 贴纸面板的 NSAppearance 跟应用主题走：Some("dark"/"light") 强制，None 跟随系统。
+/// 只设在面板这一扇窗上，不走 tao 的 set_theme——那是改 NSApplication.appearance，
+/// 会把托盘菜单等系统控件一起染色，也会让 window.theme() 读不到真实系统明暗
+/// （window_background_color 在 theme=system 时靠它）。
+/// 原生材质（Popover）与 WKWebView 的 prefers-color-scheme 都随窗口外观变，后者无害：
+/// 前端主题由 data-theme 决定，不读媒体查询（system 模式下本就传 None 跟系统）。
+pub fn set_appearance(app: &AppHandle, theme: Option<&str>) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSString;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(ptr) = window.ns_window() else {
+        return;
+    };
+    let name = match theme {
+        Some("dark") => Some("NSAppearanceNameDarkAqua"),
+        Some("light") => Some("NSAppearanceNameAqua"),
+        _ => None,
+    };
+    // SAFETY：ns_window 返回的是当前存活的 NSWindow（面板仍是同一对象，nspanel 只换了 class）；
+    // appearanceNamed: 返回 autoreleased 对象，setAppearance: 内部自行 retain，
+    // 这里只传裸指针不接管所有权。命令在主线程执行（sync command），满足 AppKit 线程要求。
+    unsafe {
+        let win: *mut AnyObject = ptr.cast();
+        let appearance: *mut AnyObject = match name {
+            Some(n) => {
+                let s = NSString::from_str(n);
+                msg_send![class!(NSAppearance), appearanceNamed: &*s]
+            }
+            None => std::ptr::null_mut(),
+        };
+        let _: () = msg_send![win, setAppearance: appearance];
+    }
 }
 
 /// 失焦自动隐藏的监听器（在 setup 里调用一次）。

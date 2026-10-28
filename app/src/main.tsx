@@ -62,7 +62,7 @@ const label = (() => {
 })();
 
 // 套用外观设置（明暗/不透明度各窗都套；界面缩放下发贴纸窗与对话窗）。
-bootAppearance({ scale: label === "main" || label === "chat" });
+bootAppearance({ scale: label === "main" || label === "chat", panel: label === "main" });
 
 // 渲染前先探测宿主平台：isMacPanel 等同步判定在首帧与各 effect 中即正确，
 // 消除「effect 跑在探测 resolve 前、guard 固化为 false」的竞态。

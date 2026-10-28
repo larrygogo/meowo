@@ -48,6 +48,7 @@ import { WindowControls } from "./WindowControls";
 import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
 import { remoteUi, NEW_SESSION_EVENT, SELECT_SESSION_EVENT } from "../remoteMode";
+import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
@@ -76,7 +77,7 @@ function initialSessionId(): number {
       return stored;
     }
   }
-  // 0 = 尚未选中任何会话(仅远程首开会出现):渲染「去侧栏选会话」空态,不是加载态。
+  // 0 = 尚未选中任何会话：窄屏远程渲染全屏列表，宽屏远程保留「去侧栏选会话」空态。
   return 0;
 }
 
@@ -1153,6 +1154,12 @@ export function ChatWindow() {
   const sidebarVisible = narrow ? overlaySidebar : !sidebarCollapsed;
   const toggleSidebar = () => {
     if (narrow) {
+      if (remoteUi()) {
+        restoredSessionId = 0;
+        try { localStorage.removeItem(REMOTE_LAST_SESSION_KEY); } catch { /* 隐私模式退化为每次手选 */ }
+        resetTo(0);
+        return;
+      }
       setOverlaySidebar((prev) => !prev);
       return;
     }
@@ -1173,8 +1180,8 @@ export function ChatWindow() {
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const sidebarVisibleRef = useRef(sidebarVisible);
   sidebarVisibleRef.current = sidebarVisible;
-  // Ctrl+F 与命令面板的「聚焦搜索」走同一动作：收起时先展开（窄窗开抽屉）再聚焦，
-  // 收起→展开要过一拍渲染搜索框才挂得上。
+  // Ctrl+F 与命令面板的「聚焦搜索」走同一动作：桌面窄窗开抽屉，远程窄屏回列表页；
+  // 视图切换后要过一拍渲染，搜索框才挂得上。
   const focusSidebarSearch = () => {
     if (!sidebarVisibleRef.current) toggleSidebarRef.current();
     requestAnimationFrame(() => {
@@ -1219,17 +1226,6 @@ export function ChatWindow() {
     window.addEventListener(NEW_SESSION_EVENT, close);
     return () => window.removeEventListener(NEW_SESSION_EVENT, close);
   }, []);
-  // 远程首开没有会话上下文:窄屏自动拉开抽屉让用户先选,别对着「去侧栏选会话」空态干瞪眼。
-  // 一次性:横竖屏切换会翻转 narrow 重跑 effect,不加闩的话手动收起的抽屉会被强行
-  // 重开(自审 L13)。
-  const autoDrawerDoneRef = useRef(false);
-  useEffect(() => {
-    if (autoDrawerDoneRef.current) return;
-    if (remoteUi() && sessionId === 0 && narrow) {
-      autoDrawerDoneRef.current = true;
-      setOverlaySidebar(true);
-    }
-  }, [sessionId, narrow]);
   // 远程记住最后看的会话:刷新/重开页面直接回到它(桌面开窗恒带 query,不用这条)。
   useEffect(() => {
     if (remoteUi() && sessionId > 0) {
@@ -1785,7 +1781,8 @@ export function ChatWindow() {
   }, []);
 
   const resetTo = useCallback((id: number) => {
-    if (!Number.isSafeInteger(id) || id === 0) return;
+    // 远程窄屏的 0 是真实的「会话列表」页面；桌面保留旧守卫，不会误入无会话空态。
+    if (!Number.isSafeInteger(id) || (id === 0 && !remoteUi())) return;
     if (id === activeSessionRef.current) return;
     draftsRef.current.set(activeSessionRef.current, {
       prompt: promptRef.current,
@@ -3531,22 +3528,34 @@ export function ChatWindow() {
     if (diffDir !== null && !diffDirs.includes(diffDir)) setDiffDir(null);
   }, [diffDir, diffDirs]);
 
-  // 侧栏折叠/展开的统一开关（Kimi 式面板图标，两态共用一个钮）。Windows/Linux 常驻
-  // 顶栏左上角；macOS 没有独立顶栏，折叠钮在侧栏头部（ChatSidebar 内，仅 mac 渲染）、
-  // 折叠后的展开钮进标题栏行。
+  const remoteListMode = remoteUi() && narrow && sessionId === 0;
+  const remoteBackMode = remoteUi() && narrow && sessionId !== 0;
+  const showRemoteSessions = useCallback(() => {
+    restoredSessionId = 0;
+    try { localStorage.removeItem(REMOTE_LAST_SESSION_KEY); } catch { /* 隐私模式退化为每次手选 */ }
+    setOverlaySidebar(false);
+    resetTo(0);
+  }, [resetTo]);
+  // 手机远程用「列表 ↔ 对话」导航；其余平台保留侧栏折叠/展开按钮。
   const sidebarToggleButton = (
     <button
       type="button"
-      className="chat-sidebar-open"
-      aria-label={sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
-      data-tip={sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
-      aria-expanded={sidebarVisible}
-      onClick={toggleSidebar}
+      className={"chat-sidebar-open" + (remoteBackMode ? " is-back" : "")}
+      aria-label={remoteBackMode ? t.remote.backToSessions : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
+      data-tip={remoteBackMode ? undefined : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
+      aria-expanded={remoteBackMode ? undefined : sidebarVisible}
+      onClick={remoteBackMode ? showRemoteSessions : toggleSidebar}
     >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
-        <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
-        <path d="M9.5 4.5v15" />
-      </svg>
+      {remoteBackMode ? (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m14.5 5-7 7 7 7" />
+        </svg>
+      ) : (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
+          <path d="M9.5 4.5v15" />
+        </svg>
+      )}
     </button>
   );
 
@@ -3557,7 +3566,7 @@ export function ChatWindow() {
     : 0;
 
   return (
-    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "")}>
+    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (remoteListMode ? " is-remote-list" : "")}>
       <DevBadge />
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
@@ -3565,10 +3574,19 @@ export function ChatWindow() {
           <span>{view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
         </div>
       )}
+      {remoteListMode && (
+        <RemoteSessionList
+          activeId={sessionId}
+          approvalAwaitingIds={approvalAwaitingIds}
+          visibleOrderRef={sidebarOrderRef}
+          searchInputRef={sidebarSearchRef}
+          onSelect={selectFromOverlay}
+        />
+      )}
       {/* Windows/Linux：独立顶栏（拖拽区 + 标准 − □ × 控制组），会话标题分离到下方
           .chat-bar 标题行。macOS 不渲染此行——红绿灯嵌在 52px 标题栏行内
           （unify_titlebar_toolbar 垂直居中），布局保持原样不动。 */}
-      {!isMac() && (
+      {!isMac() && !remoteListMode && (
         <header className="chat-topbar" data-tauri-drag-region>
           {sidebarToggleButton}
           {/* 最小化/最大化/关闭是桌面窗口能力,手机浏览器没有可控窗口——远程隐藏。 */}
@@ -3609,6 +3627,7 @@ export function ChatWindow() {
         {history ? (
           <ChatTitleMenu
             title={history.title || t.chat.title}
+            provider={history.provider}
             cwd={history.cwd}
             archived={history.archived}
             archiving={archiving}

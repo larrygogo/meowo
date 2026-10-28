@@ -1184,6 +1184,10 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
       )}
       {/* 会话搜索（Ctrl/Cmd+F 聚焦）：标题/仓库名下沉后端 LIKE，与看板同一条通道。 */}
       <div className="chat-sidebar-search">
+        <svg className="chat-sidebar-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+          <circle cx="10.8" cy="10.8" r="6.3" />
+          <path d="m15.5 15.5 4 4" />
+        </svg>
         <input
           ref={(el) => { if (searchInputRef) searchInputRef.current = el; }}
           value={search}
