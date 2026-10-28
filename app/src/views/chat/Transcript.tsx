@@ -15,9 +15,10 @@ function dayLabel(date: Date, t: Dict): string {
   if (diffDays === 1) return t.chat.dateYesterday;
   return date.toLocaleDateString(t.locale);
 }
+import { agentAssets, tintStyle } from "../../providers";
 import { imageOnlyPaths, Message, UserImageGroup } from "./Message";
 import { SubagentBlock } from "./SubagentBlock";
-import { ActivityGroup, friendlyToolName, ToolActivity } from "./ToolActivity";
+import { ActivityGroup, friendlyToolName, lineDelta, ToolActivity, ToolIcon } from "./ToolActivity";
 import { isSubagentDelegation, type ToolResultItem, type ToolUseItem } from "./shared";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -33,9 +34,50 @@ type BlockRec = {
   nodes: JSX.Element[];
 };
 
+/// 回合头的署名信息（A+B 改版：每轮回复前一行「图标 · 名称 · 模型 · 时间」）。
+/// 没有它（provider 未知）就不画回合头，退回旧的无署名排版。
+export type TranscriptAgent = { provider: string; name: string; model: string | null };
+
+/// 过程组耗时：<1 分钟写秒，再长写「分秒」。等宽短码，与时间线标签同一副终端腔。
+function fmtSpan(ms: number): string {
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const seconds = total % 60;
+  return `${Math.floor(total / 60)}m${seconds ? `${String(seconds).padStart(2, "0")}s` : ""}`;
+}
+
+function TurnHeader({ agent, timestamp }: { agent: TranscriptAgent; timestamp: string | null }) {
+  const { Icon } = agentAssets(agent.provider);
+  const date = timestamp ? new Date(timestamp) : null;
+  const time = date && !Number.isNaN(date.getTime())
+    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+    : null;
+  return (
+    <div className="chat-turn-head">
+      <span className="chat-turn-mark" style={tintStyle(agent.provider)} aria-hidden="true"><Icon /></span>
+      <span className="chat-turn-name">{agent.name}</span>
+      {agent.model && <span className="chat-turn-model">{agent.model}</span>}
+      {time && <time className="chat-turn-time">{time}</time>}
+    </div>
+  );
+}
+
+/// 回合的起点：助手侧条目（文本/思考/工具/回合错误），且往前跳过 meta 后紧挨着用户消息
+/// 或时间线开头。meta（日期/接续分隔等）不算回合内容，夹在中间不打断判定。
+function startsTurn(items: ChatItem[], index: number): boolean {
+  const type = items[index].type;
+  if (type === "user_text" || type === "meta") return false;
+  for (let prev = index - 1; prev >= 0; prev -= 1) {
+    if (items[prev].type === "meta") continue;
+    return items[prev].type === "user_text";
+  }
+  return true;
+}
+
 type BlockCache = {
   sessionId: number;
   t: Dict;
+  agentKey: string;
   items: ChatItem[];
   blocks: BlockRec[];
   outcomes: Map<string, SubagentOutcomeInfo>;
@@ -49,8 +91,13 @@ type BlockCache = {
 /// 流式期间 items 每批(200ms 的 pty-output 合流)都换新引用,memo 帮不上——此前每批
 /// 都从头全量重建整棵块数组,长会话是 O(n²)。现在按块做增量缓存:reducer 的写时复制
 /// 保证未变条目同引用,据此找到首个变化下标,之前的块原样复用,只重算尾部。
-export const Transcript = memo(function Transcript({ sessionId, items }: { sessionId: number; items: ChatItem[] }) {
+export const Transcript = memo(function Transcript({ sessionId, items, agent = null }: { sessionId: number; items: ChatItem[]; agent?: TranscriptAgent | null }) {
   const t = useT();
+  // 署名变了（换模型/认领后才知道 provider）整表重算：回合头散在各块里，没法局部改。
+  const agentKey = agent ? `${agent.provider}\0${agent.name}\0${agent.model ?? ""}` : "";
+  // 跨 provider 接续时，前序段是别家 agent 说的话：署名只挂在当前段（handoff-current
+  // 分隔之后），宁可前序段没有回合头，也不把别家的回复署成当前 agent。
+  const ownFrom = agent ? items.findIndex((item) => item.id === "handoff-current") + 1 : 0;
   // 委派的结局写在**主链的工具回执**上，而回执往往排在委派之后若干条（TaskOutput 拉取
   // 的结局甚至挂在别的调用上，靠 task_id 归回原委派）。关联规则收敛在
   // collectSubagentReceipts——与标题栏进度面板同一份。没有回执 = 派出去了还没回来 = 在跑。
@@ -59,7 +106,7 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
   const cacheRef = useRef<BlockCache | null>(null);
   const cache = cacheRef.current;
   let reuse: BlockRec[] = [];
-  if (cache && cache.sessionId === sessionId && cache.t === t && cache.blocks.length > 0) {
+  if (cache && cache.sessionId === sessionId && cache.t === t && cache.agentKey === agentKey && cache.blocks.length > 0) {
     const common = Math.min(cache.items.length, items.length);
     let firstChanged = 0;
     while (firstChanged < common && cache.items[firstChanged] === items[firstChanged]) firstChanged += 1;
@@ -102,6 +149,9 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
     const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, nodes: [] };
     blocks.push(record);
     pushDaySep(record, item);
+    if (agent && index >= ownFrom && startsTurn(items, index)) {
+      record.nodes.push(<TurnHeader key={`turn-${item.id}`} agent={agent} timestamp={item.timestamp} />);
+    }
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
     // 逐条渲染是竖着摞一列大图；用户视角那是「一次发的几张图」，该排在一起。
     if (item.type === "user_text") {
@@ -117,7 +167,7 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
           merged.push(...more);
           next += 1;
         }
-        record.nodes.push(<UserImageGroup key={item.id} paths={merged} />);
+        record.nodes.push(<UserImageGroup key={item.id} paths={merged} anchorId={item.id} />);
         index = next;
         continue;
       }
@@ -175,13 +225,38 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
         kindCounts.set(name, (kindCounts.get(name) ?? 0) + 1);
       }
       const kinds = [...kindCounts.entries()];
+      // 这组改了多少行，挂在摘要行尾（Kimi 的「已编辑 2 个文件 +58 -0」同类信息）：
+      // 收起态下不展开也能看出这组是只读了读，还是真动了代码。
+      let added = 0;
+      let removed = 0;
+      let editTool: string | null = null;
+      const nameCounts = new Map<string, number>();
+      for (const tool of tools) {
+        if (tool.type !== "tool_use") continue;
+        nameCounts.set(tool.name, (nameCounts.get(tool.name) ?? 0) + 1);
+        const delta = lineDelta(tool.detail);
+        if (!delta) continue;
+        editTool ??= tool.name;
+        added += delta.added;
+        removed += delta.removed;
+      }
+      const touched = editTool !== null;
+      // 行首图标说这组主要在干什么：动过文件就是笔，否则取出现最多的那种工具。此前一律
+      // 是 >_，收起成一行后几组连排，图标给不出任何区分。
+      const iconTool = editTool ?? [...nameCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+      // 整组跑完才报耗时（首条调用 → 末条回执的时间戳差）：还在跑的组数字一直在变，
+      // 写一个过时的值不如不写。缺时间戳的 provider 自然不显示。
+      const startedAt = Date.parse(tools[0].timestamp ?? "");
+      const endedAt = Date.parse(tools[tools.length - 1].timestamp ?? "");
+      const span = pendingCount === 0 && endedAt - startedAt >= 1000 ? fmtSpan(endedAt - startedAt) : null;
       const label = kinds.slice(0, 3).map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(" · ")
         + (kinds.length > 3 ? " …" : "");
-      // 组里还有没回执的调用 = 正在跑：默认展开，用户当场看到在做什么（像终端那样）；
-      // 跑完后保持用户留下的开合。只在挂载时定一次（见 ActivityGroup）。
-      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen={pendingCount > 0} key={`tools-${tools[0].id}`}>
+      // 默认展开成「卡片 + 步骤时间线」（2026-10 A+B 改版后用户实拍要求「直接展开」）。
+      // 沿革：此前进行中展开、后因对照 Kimi 嫌拥挤改成恒收起一行；时间线把每步压成一行
+      // 短码 + 路径后不再拥挤，故改回展开。开合仍只在挂载时定一次，用户收起的不会被弹开。
+      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen key={`tools-${tools[0].id}`}>
         <summary className="chat-activity-summary">
-          <span className="chat-tool-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
+          <ToolIcon name={iconTool} />
           <span className="chat-activity-kinds">{label || t.chat.toolActivities(callCount || tools.length)}</span>
           {/* 7C-9：行级指示已降级为 aria-hidden（并行工具一多就是播报风暴），组头这一处
               是唯一的出口——但 aria-label 挂在无 role 的 span 上读屏取不到，等于全组静音。
@@ -193,6 +268,14 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
             </span>
           )}
           {failureCount > 0 && <span className="chat-activity-errors">{t.chat.toolFailures(failureCount)}</span>}
+          {/* 顺序同行级小标「-3 +4」：同一屏两种写法会让人以为是两种数。 */}
+          {touched && (
+            <span className="chat-activity-delta">
+              {removed > 0 && <span className="is-del">-{removed}</span>}
+              {added > 0 && <span className="is-add">+{added}</span>}
+            </span>
+          )}
+          {span && <span className="chat-activity-time">{span}</span>}
           <span className="chat-tool-chevron">›</span>
         </summary>
         <div className="chat-activity-items">{tools.map((tool) => {
@@ -207,6 +290,6 @@ export const Transcript = memo(function Transcript({ sessionId, items }: { sessi
     record.nodes.push(<Message key={item.id} item={item} />);
     index += 1;
   }
-  cacheRef.current = { sessionId, t, items, blocks, outcomes, settledAt };
+  cacheRef.current = { sessionId, t, agentKey, items, blocks, outcomes, settledAt };
   return <>{blocks.flatMap((block) => block.nodes)}</>;
 });

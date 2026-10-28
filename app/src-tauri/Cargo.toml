@@ -1,6 +1,6 @@
 [package]
 name = "meowo-app"
-version = "0.6.10"
+version = "0.6.18"
 edition = "2021"
 
 # 全部 Rust 都住在 app/src-tauri 下:本包既是 Tauri 应用 crate,也是 workspace 根
@@ -121,7 +121,7 @@ dunce = "1"
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
 # 点击 toast 后从"通知中心"移除本应用的已投递通知（tauri-winrt-notification 本身不暴露历史清除）。

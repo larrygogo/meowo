@@ -250,21 +250,29 @@ fn read_auth_json(inst: &Installation) -> Option<Value> {
     serde_json::from_str(&s).ok()
 }
 
-fn auth_mode(auth_json: &Value) -> &str {
-    auth_json
-        .get("auth_mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-}
-
 // ═══ AccountCap impl ═══
 
 pub struct CodexAccount;
 pub static ACCOUNT: CodexAccount = CodexAccount;
 
 impl AccountCap for CodexAccount {
-    fn account(&self, inst: &Installation, _ports: &Ports) -> Option<Account> {
-        parse_codex_account(&read_auth_json(inst)?)
+    fn account(&self, inst: &Installation, ports: &Ports) -> Option<Account> {
+        match credential_store(inst)?.as_str() {
+            "file" => parse_codex_account(&read_auth_json(inst)?),
+            "keyring" | "auto" => {
+                // Codex 0.162.1 在 Windows 默认使用加密 secrets 后端，不能把 keyring 当 auth.json 读。
+                // 让 CLI 自己解析后端；只取登录类型，不导出 token，也不误读残留文件里的旧账号。
+                let mut argv = inst.launch_argv();
+                argv.extend(["login".into(), "status".into()]);
+                let env = vec![(
+                    "CODEX_HOME".into(),
+                    inst.data_dir.to_string_lossy().into_owned(),
+                )];
+                parse_login_status(&ports.local_cli.capture(&argv, &env)?)
+            }
+            // ephemeral 凭据属于运行中的进程，另起 CLI 无法证明它的登录身份。
+            _ => None,
+        }
     }
 
     /// codex 的用量**不联网**：rate_limits 快照就写在最近一份 rollout 里，尾扫即可。
@@ -277,10 +285,48 @@ impl AccountCap for CodexAccount {
         Ok(parse_codex_usage(&payload))
     }
 
-    fn usage_supported(&self, inst: &Installation, _ports: &Ports) -> bool {
+    fn usage_supported(&self, inst: &Installation, ports: &Ports) -> bool {
         // 仅 chatgpt 模式（订阅）有 rate_limits
-        read_auth_json(inst).is_some_and(|auth| auth_mode(&auth) == "chatgpt")
+        self.account(inst, ports)
+            .is_some_and(|account| account.login_label.as_deref() == Some("chatgpt"))
     }
+}
+
+fn credential_store(inst: &Installation) -> Option<String> {
+    let raw = match std::fs::read_to_string(inst.data_dir.join("config.toml")) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some("file".into()),
+        Err(_) => return None,
+    };
+    let doc = raw.parse::<toml_edit::DocumentMut>().ok()?;
+    Some(
+        doc.get("cli_auth_credentials_store")
+            .map_or(Some("file"), |item| item.as_str())?
+            .into(),
+    )
+}
+
+fn parse_login_status(output: &str) -> Option<Account> {
+    let label = if output
+        .lines()
+        .any(|line| line.trim() == "Logged in using ChatGPT")
+    {
+        "chatgpt"
+    } else if output
+        .lines()
+        .any(|line| line.trim().starts_with("Logged in using an API key"))
+    {
+        "API Key"
+    } else {
+        return None;
+    };
+    Some(Account {
+        email: None,
+        display_name: None,
+        organization: None,
+        plan: None,
+        login_label: Some(label.into()),
+    })
 }
 
 // ═══ Tests ═══
@@ -289,6 +335,55 @@ impl AccountCap for CodexAccount {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn configured_store_controls_identity_and_never_falls_back_to_stale_credentials() {
+        struct Status;
+        impl crate::ports::LocalCliPort for Status {
+            fn capture(&self, argv: &[String], env: &[(String, String)]) -> Option<String> {
+                assert_eq!(&argv[argv.len() - 2..], ["login", "status"]);
+                assert_eq!(env.len(), 1);
+                assert_eq!(env[0].0, "CODEX_HOME");
+                Some("Logged in using ChatGPT\n".into())
+            }
+        }
+        let root = std::env::temp_dir().join(format!("meowo-codex-stores-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let inst = super::super::VARIANTS[0].installation_at(crate::id::CODEX, root.clone(), None);
+        std::fs::write(
+            root.join("auth.json"),
+            r#"{"auth_mode":"apikey","OPENAI_API_KEY":"stale"}"#,
+        )
+        .unwrap();
+        let ports = Ports {
+            http: &crate::ports::test_doubles::NoHttp,
+            keychain: &crate::ports::NoKeychain,
+            local_cli: &Status,
+        };
+        for mode in ["file", "keyring", "auto", "ephemeral", "unknown"] {
+            std::fs::write(
+                root.join("config.toml"),
+                format!("cli_auth_credentials_store = \"{mode}\"\n"),
+            )
+            .unwrap();
+            let account = ACCOUNT.account(&inst, &ports);
+            match mode {
+                "file" => assert_eq!(account.unwrap().login_label.as_deref(), Some("API Key")),
+                "keyring" | "auto" => {
+                    assert_eq!(account.unwrap().login_label.as_deref(), Some("chatgpt"));
+                    assert!(ACCOUNT.usage_supported(&inst, &ports));
+                    let unavailable = Ports {
+                        local_cli: &crate::ports::NoLocalCli,
+                        ..ports
+                    };
+                    assert!(ACCOUNT.account(&inst, &unavailable).is_none());
+                }
+                _ => assert!(account.is_none()),
+            }
+        }
+        assert!(parse_login_status("Not logged in").is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     // ── base64url ──
 

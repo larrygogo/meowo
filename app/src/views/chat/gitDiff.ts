@@ -75,3 +75,41 @@ export function buildFileTree(files: { path: string; status: string }[]): FileTr
 
   return sortNodes(collapse(roots));
 }
+
+/** 路径比较用的统一形态：正斜杠、去尾斜杠、小写（Windows 路径不分大小写，大小写不同的
+ *  同名文件在别的平台上几乎碰不到）。 */
+function normPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * 本会话里编辑类工具碰过的文件（归一化的绝对路径）。只认插件解析出结构化详情的工具，
+ * 目前只有 claude 的 Edit/Write 带这个；其他 agent 返回空数组，面板据此不出过滤开关。
+ * 相对路径按会话 cwd 补全。
+ */
+export function sessionTouchedPaths(items: readonly { type: string; detail?: { kind: string; path?: string | null } | null }[], cwd: string | null): string[] {
+  const out = new Set<string>();
+  for (const item of items) {
+    if (item.type !== "tool_use" || !item.detail) continue;
+    const { kind, path } = item.detail;
+    if ((kind !== "edit" && kind !== "write") || !path) continue;
+    const absolute = /^([a-zA-Z]:)?[\\/]/.test(path) || !cwd ? path : `${cwd}/${path}`;
+    out.add(normPath(absolute));
+  }
+  return [...out];
+}
+
+/**
+ * 变更清单里的文件（相对仓库根）是不是本会话改的。前端不知道仓库根在哪：
+ * 面板 cwd 可能是仓库里的子目录。所以反过来验：绝对路径以 `/<rel>` 结尾，且剩下的
+ * 前缀是面板 cwd 本身或它的上级目录，那个前缀就是仓库根。
+ */
+export function touchedByPath(touched: readonly string[], cwd: string, rel: string): boolean {
+  const suffix = "/" + normPath(rel);
+  const dir = normPath(cwd);
+  return touched.some((path) => {
+    if (!path.endsWith(suffix)) return false;
+    const root = path.slice(0, path.length - suffix.length);
+    return dir === root || dir.startsWith(root + "/");
+  });
+}

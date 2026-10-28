@@ -45,7 +45,8 @@ const CACHE_KEY = "meowo-appearance";
 const DEFAULTS: Appearance = {
   theme: "dark",
   opacity: 100,
-  ui_scale: 100,
+  // 档位整体上调一档（90/100/112 → 100/112/124，实拍反馈偏小），默认「中」= 112。
+  ui_scale: 112,
   sticker_style: DEFAULT_STICKER_STYLE,
   sticker_color: DEFAULT_STICKER_COLOR,
   chat_content_width: "fixed",
@@ -78,7 +79,7 @@ function apply(a: Appearance): void {
   // 桌面三个入口查不到、直接跳过。色值与 styles.css 的 --cc-window-bg 两档一致
   // (meta 的 content 吃不了 var())。
   const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (themeColor) themeColor.content = theme === "light" ? "#f3f3f5" : "#191a1c";
+  if (themeColor) themeColor.content = theme === "light" ? "#f1f0ec" : "#191a1c";
   // 贴纸风格（立体感/扁平）：CSS 用 [data-sticker-style="flat"] 抹平所有立体效果。
   root.setAttribute("data-sticker-style", a.sticker_style);
   // 对话内容列宽：CSS 用 [data-chat-width="full"] 把 --chat-col 从 720px 换成 100%。

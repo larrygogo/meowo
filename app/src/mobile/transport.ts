@@ -13,7 +13,7 @@
 import { mockIPC, mockWindows, mockConvertFileSrc } from "@tauri-apps/api/mocks";
 // open_new_session_window 转成的页内导航事件。常量本体在 remoteMode(ChatWindow 也要
 // 监听它收抽屉,不能反向 import 移动端模块),这里转出口保持 mobile 侧引用不变。
-import { NEW_SESSION_EVENT } from "../remoteMode";
+import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, NEW_SESSION_EVENT } from "../remoteMode";
 
 const TOKEN_KEY = "meowo.remote.token";
 const AUTH_LOST_EVENT = "meowo:remote-auth-lost";
@@ -118,6 +118,32 @@ export function primeFileToken(): void {
     })
     .catch(() => {
       /* 领不到就一直用主 token 回退,功能不受损 */
+    });
+}
+
+/** 图片读失败时重领降级凭据(见 remoteMode 的 IMAGE_LOAD_FAILED_EVENT)。一屏多图同时
+ *  401 只发一发(in-flight 复用);文件真没了时每张失败图都会来敲门,冷却期内直接略过,
+ *  不让 404/403 图片把 rpc 刷成轮询。凭据变了才广播,已失败的图片据此重试一次。 */
+const FILE_TOKEN_REFRESH_COOLDOWN_MS = 5_000;
+let fileTokenRefreshing: Promise<void> | null = null;
+let fileTokenRefreshedAt = 0;
+
+function refreshFileToken(): void {
+  if (fileTokenRefreshing || !getToken()) return;
+  if (Date.now() - fileTokenRefreshedAt < FILE_TOKEN_REFRESH_COOLDOWN_MS) return;
+  fileTokenRefreshing = rpc("file_access_token", {})
+    .then((t) => {
+      if (typeof t === "string" && t && t !== fileToken) {
+        fileToken = t;
+        window.dispatchEvent(new CustomEvent(FILE_TOKEN_REFRESHED_EVENT));
+      }
+    })
+    .catch(() => {
+      /* 主 token 也失效会走 401 → announceAuthLost 回配对页;断网则下次失败再试 */
+    })
+    .finally(() => {
+      fileTokenRefreshing = null;
+      fileTokenRefreshedAt = Date.now();
     });
 }
 
@@ -242,6 +268,7 @@ export function installRemoteTransport(): void {
       return `/file?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
     };
   }
+  window.addEventListener(IMAGE_LOAD_FAILED_EVENT, refreshFileToken);
 
   mockIPC(async (cmd, args) => {
     // — 事件/窗口/插件桥:远程无真窗口,给最小可用桩 —

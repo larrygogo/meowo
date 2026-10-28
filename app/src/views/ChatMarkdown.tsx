@@ -139,13 +139,15 @@ function CopyablePre({ children }: { children?: ReactNode }) {
     const cls = (children as { props?: { className?: string } }).props?.className ?? "";
     lang = /language-(\w+)/.exec(cls)?.[1] ?? null;
   }
+  // 顶栏常驻（A+B 改版定稿）：语言角标 + 复制。此前悬停才显形，代码块看着像一段没有出处
+  // 的灰底文字，复制入口也要先找；顶栏占一行但不压代码，阅读时不抢戏的诉求仍然成立。
   return (
     <div className="chat-md-pre">
-      <pre ref={preRef}>{children}</pre>
-      <div className="chat-md-pre-tools">
+      <div className="chat-md-pre-head">
         {lang && <span className="chat-md-lang">{lang}</span>}
         <button type="button" onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
       </div>
+      <pre ref={preRef}>{children}</pre>
     </div>
   );
 }

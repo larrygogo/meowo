@@ -220,6 +220,85 @@ pub fn parse_keychain_account(attrs: &str) -> Option<String> {
 // ═══ 注入点 ═══
 
 static KEYCHAIN: SystemKeychain = SystemKeychain;
+static LOCAL_CLI: SystemLocalCli = SystemLocalCli;
+
+struct SystemLocalCli;
+
+impl meowo_agent::ports::LocalCliPort for SystemLocalCli {
+    fn capture(&self, argv: &[String], env: &[(String, String)]) -> Option<String> {
+        type CacheKey = (Vec<String>, Vec<(String, String)>);
+        type CacheValue = (std::time::Instant, Option<String>);
+        static CACHE: OnceLock<std::sync::Mutex<HashMap<CacheKey, CacheValue>>> = OnceLock::new();
+        let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
+        let key = (argv.to_vec(), env.to_vec());
+        // 登录轮询会重复询问 account/usage_supported；短缓存避免每次起两个 CLI，又能在下一轮反映登录变化。
+        if let Some((at, output)) = cache.get(&key) {
+            if at.elapsed() < std::time::Duration::from_secs(1) {
+                return output.clone();
+            }
+        }
+        let output = capture_local_cli(argv, env);
+        cache.retain(|_, (at, _)| at.elapsed() < std::time::Duration::from_secs(1));
+        cache.insert(key, (std::time::Instant::now(), output.clone()));
+        output
+    }
+}
+
+fn capture_local_cli(argv: &[String], env: &[(String, String)]) -> Option<String> {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(argv.first()?);
+    command
+        .args(&argv[1..])
+        .envs(env.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().ok()?;
+    let (send, receive) = std::sync::mpsc::channel();
+    // login status 把结果写到 stderr；两条管道同时排水，任何一条填满都不能卡住退出。
+    for pipe in [
+        Box::new(child.stdout.take()?) as Box<dyn std::io::Read + Send>,
+        Box::new(child.stderr.take()?),
+    ] {
+        let send = send.clone();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.take(65_536).read_to_end(&mut bytes);
+            let _ = send.send(bytes);
+        });
+    }
+    drop(send);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let success = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
+        }
+    };
+    if !success {
+        return None;
+    }
+    let mut output = String::new();
+    for _ in 0..2 {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        output.push_str(&String::from_utf8(receive.recv_timeout(remaining).ok()?).ok()?);
+        output.push('\n');
+    }
+    Some(output)
+}
 
 /// 一组绑定到具体 agent 的宿主端口。
 ///
@@ -249,6 +328,7 @@ impl HostPorts {
         meowo_agent::Ports {
             http: &self.http,
             keychain: &KEYCHAIN,
+            local_cli: &LOCAL_CLI,
         }
     }
 }

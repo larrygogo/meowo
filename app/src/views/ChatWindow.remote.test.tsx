@@ -149,4 +149,83 @@ describe("ChatWindow 远程门控", () => {
     await waitFor(() => expect(screen.getAllByText("门控用例").length).toBeGreaterThan(0), { timeout: 3000 });
     expect(screen.queryByText("会话正在启动…")).toBeNull();
   });
+
+  it("远程窄屏:独立顶栏并进标题行,侧栏开关落在标题行", async () => {
+    // jsdom 无 matchMedia,ChatWindow 恒按宽窗走;这里装一个恒命中的替身模拟手机竖屏。
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      markRemoteUi();
+      window.history.replaceState({}, "", "/?sessionId=7");
+      runningSessionWithRepo();
+      const { container } = render(<ChatWindow />);
+      await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+
+      expect(container.querySelector(".chat-topbar")).toBeNull();
+      expect(container.querySelector(".chat-window.is-remote-compact")).toBeTruthy();
+      expect(container.querySelector(".chat-bar .chat-sidebar-open")).toBeTruthy();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+});
+
+describe("ChatWindow 远程答题", () => {
+  // 远程无 push 事件(listen 是空订阅),题面只经 pending_interaction 轮询到达。
+  function questionSessionImpl(question: Record<string, unknown>) {
+    return (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question });
+      return runningSessionImpl(command, args);
+    };
+  }
+
+  it("可代答题面:手机上直接作答提交,不再指路桌面端", async () => {
+    markRemoteUi();
+    window.history.replaceState({}, "", "/?sessionId=7");
+    invoke.mockImplementation(questionSessionImpl({
+      sessionId: 7, requestId: "request-remote-answer", provider: "claude", toolName: "AskUserQuestion",
+      description: null, answerable: true, permissionSuggestions: [],
+      input: JSON.stringify({ questions: [{ question: "晚饭吃什么？", multiSelect: false, options: [{ label: "火锅" }, { label: "烧烤" }] }] }),
+    }));
+    render(<ChatWindow />);
+    expect(await screen.findByText(/晚饭吃什么/)).toBeTruthy();
+    expect(screen.queryByText(/请在桌面端作答/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "转为逐题作答" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /火锅/ }));
+    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+    await waitFor(() => {
+      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      expect(resolved).toBeTruthy();
+      const choice = (resolved![1] as { choice: string }).choice;
+      expect(JSON.parse(choice.slice("answers:".length))).toEqual({ "晚饭吃什么？": "火锅" });
+    });
+  });
+
+  it("卡内答不了的题面:转为逐题作答只放行挂起,不切终端页", async () => {
+    markRemoteUi();
+    window.history.replaceState({}, "", "/?sessionId=7");
+    // 两题同文:答案按题面原文键控,卡内无法表达(answersRepresentable=false)。
+    invoke.mockImplementation(questionSessionImpl({
+      sessionId: 7, requestId: "request-remote-stepwise", provider: "claude", toolName: "AskUserQuestion",
+      description: null, answerable: true, permissionSuggestions: [],
+      input: JSON.stringify({ questions: [
+        { header: "甲", question: "选哪个？", multiSelect: false, options: [{ label: "A" }] },
+        { header: "乙", question: "选哪个？", multiSelect: false, options: [{ label: "B" }] },
+      ] }),
+    }));
+    render(<ChatWindow />);
+    expect(await screen.findByText("这组问题无法在卡片内作答，请转为逐题作答")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "转为逐题作答" }));
+    await waitFor(() => {
+      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      expect((resolved?.[1] as { choice?: string } | undefined)?.choice).toBe("pass");
+    });
+    // 远程没有终端视图:仍停在对话页(输入框在场)。
+    expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();
+  });
 });

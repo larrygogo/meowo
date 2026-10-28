@@ -168,6 +168,10 @@ pub enum AttentionDetails {
     /// 「▶ 问题标题」面板式：▶ 标题行 + display 块（kimi 官方源码取证 approval-panel.ts）。
     /// 附带语义：「Approve for this session」只记本会话，不是持久规则。
     ArrowPanel,
+    /// 圆角外框对话框式：`? 工具名  说明` 头行 + 内框正文 + 问句 + `│ ● 1. Allow once │`
+    /// 编号选项（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）。选项行带框线，
+    /// 以 ● 焦点做相对移动；「Allow for this session」只记本会话。
+    FramedBox,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。
@@ -220,6 +224,8 @@ pub struct ModeScreenMarker {
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct ModeControl {
     pub dimension: &'static str,
+    /// 菜单型模式必须等用户在 CLI 选择，不能把写入命令当成切换成功（Kimi Code 2.2 文档）。
+    pub menu_command: Option<&'static str>,
     pub cycle_input: Option<&'static str>,
     pub options: &'static [ModeOption],
     /// 空表 = 该维度无屏幕回显能力，显示只随 transcript 状态走。
@@ -233,6 +239,8 @@ pub struct ModeControl {
 pub struct ChatUi {
     pub slash_commands: Vec<SlashCommand>,
     pub model_presets: Vec<ModelPreset>,
+    /// 只有支持内联选择的 CLI 才声明；列举模型不代表能用同一协议选择模型。
+    pub model_select_command: Option<&'static str>,
     /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
     /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
     pub model_menu_command: Option<&'static str>,
@@ -258,6 +266,11 @@ pub struct ChatUi {
     /// 中断当前回合的按键序列(如 Esc)。运行中「强制插话」= 先写它停掉当前回合,
     /// CLI 随即处理排队消息/接受新输入。None = 该 agent 的中断键未经取证,GUI 不提供入口。
     pub interrupt_input: Option<&'static str>,
+    /// 中断键要按几次(分次写入,间隔由前端定)。opencode 首按只提示 "esc again to interrupt",
+    /// 第二下才停;两个 Esc 合成一次写入会被当成 Alt+Esc,一下都不算(真机取证见其插件)。
+    pub interrupt_presses: u8,
+    /// 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
+    pub queue_input: Option<&'static str>,
     /// Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
     /// None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
     pub newline_input: Option<&'static str>,
@@ -269,13 +282,17 @@ pub struct ChatUi {
     /// 探测不到版本一律 false——宁可多一段指令文本,不可发出对方不认的语法。
     pub attachment_mention: bool,
     /// 该 CLI 的 TUI 支持 Ctrl-V 原生粘贴剪贴板图片时,composer 里出现的占位符正则
-    /// (claude `\[Image #\d`、kimi `\[image[:# ]`)。前端在「剪贴板里仍是刚粘贴的那张图」
+    /// (claude `\[Image ?#\d`、kimi `\[image[:# ]`)。前端在「剪贴板里仍是刚粘贴的那张图」
     /// 时向 PTY 发粘贴键（见 `clipboard_paste_input`）触发原生图片附加,并用它从屏幕上
     /// 验证成功;None = 不支持,图片一律走指令文本兜底。
     pub clipboard_image_paste: Option<&'static str>,
     /// 触发原生图片粘贴的按键序列（claude 的 Ctrl-V = `\x16`；kimi 在 Windows 上是
     /// Alt+V = `\x1bv`，发 Ctrl-V 会被 composer 无视）。由插件声明，前端不自行猜键。
     pub clipboard_paste_input: Option<&'static str>,
+    /// 终端界面里「运行中状态行」的匹配正则（claude 的 `✻ Composing… (41s · ↓ 427 tokens)`）：
+    /// 捕获组 1 = 动词，2 = 括号统计（可缺）。对话页运行条据此照搬状态行内容；None = 不解析，
+    /// 运行条退回本地计时。匹配的是对方界面文案，随版本改版会失效——规则须宁可漏认不可误认。
+    pub status_line_pattern: Option<&'static str>,
     /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
     /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
     pub draft_stash: Option<DraftStash>,

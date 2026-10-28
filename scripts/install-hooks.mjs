@@ -46,6 +46,7 @@ const SPECS = [
   ["UserPromptSubmit", "*"],
   ["PostToolUse", "*"],
   ["Stop", "*"],
+  ["StopFailure", "*"],
   ["SessionEnd", "*"],
   ["PermissionRequest", "*"],
   ["PreToolUse", "AskUserQuestion"],

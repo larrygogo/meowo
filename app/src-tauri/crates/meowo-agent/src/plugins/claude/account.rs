@@ -660,6 +660,7 @@ mod tests {
         let ports = Ports {
             http: &NoHttp,
             keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
         };
         // 本机大概率没有 claude 凭据文件 → 读不到 OAuth → 不支持用量。真有凭据时也只是返回 true，
         // 两种取值都不该发起网络请求（NoHttp 会 panic）。
@@ -746,6 +747,7 @@ mod tests {
         let ports = Ports {
             http: &HugeExpiresIn,
             keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
         };
         let before = now_ms();
         let token = ensure_valid_token(&inst, &ports).expect("刷新应成功");

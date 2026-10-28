@@ -28,15 +28,17 @@ use crate::{
     variant::{DataDirSpec, Variant},
 };
 
-/// 接线事件集：dispatch 消化面 ∩ codex 支持面。无 SessionEnd（codex 不支持，会话收尾靠
-/// Stop + liveness）；不配 PreToolUse（其 matcher 目标是 claude 专属工具）。
+/// 接线事件集：dispatch 消化面 ∩ codex 支持面。不配 PreToolUse（其 matcher 目标是 claude 专属工具）。
 /// PreCompact/PostCompact 的支持面已在实装二进制上取证（0.152.0 的 HookEventsToml 枚举
 /// 字符串里两个事件名俱在），供 /compact 期间显示「正在压缩」。
-static EVENTS: [HookEvent; 7] = [
+static EVENTS: [HookEvent; 9] = [
     HookEvent::plain("SessionStart"),
     HookEvent::plain("UserPromptSubmit"),
     HookEvent::plain("PostToolUse"),
     HookEvent::plain("Stop"),
+    // Codex 当前 hooks 文档支持正常关闭和中断收尾；两者预算上限 3s，不能沿用普通事件的 5s。
+    HookEvent::plain("SessionEnd").with_timeout(3),
+    HookEvent::plain("Interrupt").with_timeout(3),
     HookEvent::plain("PreCompact"),
     HookEvent::plain("PostCompact"),
     HookEvent::plain("PermissionRequest").with_timeout(310),
@@ -114,6 +116,11 @@ static LAUNCH: LaunchSpec = LaunchSpec {
             root: Root::DataDir,
             sub: "packages/standalone/current/bin",
         },
+        LaunchCandidate::Exe {
+            root: Root::Env("LOCALAPPDATA"),
+            sub: "Programs/OpenAI/Codex/bin",
+        },
+        LaunchCandidate::OnPath,
     ],
 };
 
@@ -250,9 +257,32 @@ impl AgentPlugin for Codex {
         Some("/model")
     }
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
-    /// 见 docs/research/tui-menu-captures-2026-07.md)。
+    /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
+    /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\t")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// Ctrl+J（裸 LF）在 composer 里换行、不提交（tests/probe_tui_script.rs，0.162.1，
+    /// 2026-10-16）。Alt+Enter 同样可用，但取不带 ESC 前缀的那个——crossterm 拆包时 ESC 可能
+    /// 被单独认成 Esc，运行中就是一次中断。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
+    }
+    /// `@绝对路径 正文` 提交后模型自行读取该文件（实测 0.162.1：Read secret.txt → 答对）。
+    /// 与 kimi 同为文本级惯例。版本探测不到时兜底 false。
+    fn attachment_mention(&self, version: Option<&str>) -> bool {
+        version.is_some()
+    }
+    /// Ctrl-V 读系统剪贴板原生附加图片，composer 落出 `[Image #N]`；提交后模型答对了测试图
+    /// 的颜色（probe_tui_script 实测 0.162.1）。粘贴键用默认的 Ctrl-V。
+    /// 空格可省，理由同 claude：增量重绘会用光标定位跳过与上一帧相同的空白格（codex 侧
+    /// 未实测，ratatui 同为按格 diff 输出，按同一形态防）。
+    fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
+        version.map(|_| r"\[Image ?#\d")
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
     fn slash_commands(&self) -> &'static [&'static str] {
@@ -262,6 +292,7 @@ impl AgentPlugin for Codex {
     }
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            menu_command: None,
             dimension: "collaboration",
             cycle_input: Some("\x1b[Z"),
             options: &[],
@@ -293,7 +324,15 @@ impl AgentPlugin for Codex {
                 LaunchChoice {
                     id: "fullAuto",
                     label: "Full Auto",
-                    args: &["--full-auto"],
+                    // `--full-auto` 在 codex 0.16x 已移除（实测 0.162.1 `--help` 无此项，
+                    // 旧会话按残留选项启动即报 unexpected argument 直接退出）——它就是
+                    // `-a never -s workspace-write` 的速记，拆开写等价且新旧通吃。
+                    args: &[
+                        "--ask-for-approval",
+                        "never",
+                        "--sandbox",
+                        "workspace-write",
+                    ],
                     risk: false,
                 },
                 LaunchChoice {
@@ -388,7 +427,7 @@ mod tests {
         );
         assert!(EVENTS
             .iter()
-            .filter(|e| e.name != "PermissionRequest")
+            .filter(|e| !matches!(e.name, "PermissionRequest" | "SessionEnd" | "Interrupt"))
             .all(|e| e.timeout == 5));
     }
 
@@ -414,7 +453,12 @@ mod tests {
         );
         assert!(inst.is_configured());
         // 三处候选都没有 → 回退裸名。
-        assert_eq!(inst.launch_argv(), vec!["codex".to_string()]);
+        assert_eq!(
+            inst.launch_argv(),
+            LAUNCH
+                .probe(Some(&inst.data_dir), Some(&home))
+                .unwrap_or_else(|| vec!["codex".into()])
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }

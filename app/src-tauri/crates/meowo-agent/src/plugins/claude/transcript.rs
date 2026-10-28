@@ -8,9 +8,10 @@
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
+    preview_text, DiffHunk, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
     TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 /// 从 `<tag>值</tag>` 里抠值。task-notification 的格式是 CLI 固定生成的单层标签,
@@ -71,6 +72,7 @@ fn task_notification_result(
             // (forked skill)要靠它归属回启动回执登记的属主。
             task_id: tool_use_id.is_none().then_some(task_id).flatten(),
         }),
+        patch: None,
     })
 }
 
@@ -139,7 +141,9 @@ fn tool_summary(name: &str, input: Option<&serde_json::Value>) -> String {
         }
     }
     let key = match name {
-        "Bash" => "command",
+        // Windows 上 CC 另有 PowerShell 工具,入参形状与 Bash 相同;漏了它摘要会落到
+        // 整包 JSON 兜底(实拍:对话页显示 `PowerShell({"command":"Get-Process …`)。
+        "Bash" | "PowerShell" => "command",
         "WebSearch" => "query",
         "Read" | "Write" | "Edit" => "file_path",
         // 子任务委派：摘要取那句任务描述。缺了这条会落到下面的整包 JSON 兜底，
@@ -194,7 +198,7 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
                 truncated: old_cut || new_cut,
             })
         }
-        "Bash" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
+        "Bash" | "PowerShell" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
         "Read" => Some(ToolDetail::Read { path: text("file_path")?, offset: num("offset"), limit: num("limit") }),
         "Grep" | "Glob" => Some(ToolDetail::Search { pattern: text("pattern")?, path: text("path"), glob: text("glob") }),
         _ => None,
@@ -241,6 +245,23 @@ fn persist_inline_image(base_id: &str, index: usize, ext: &str, data: &str) -> O
         .decode(data.as_bytes())
         .ok()?;
     crate::fsutil::persist_paste_bytes(&format!("{safe_id}-{index}"), ext, &bytes)
+}
+
+/// thinking 块是不是 narration(模型说给用户听的过程旁白)。CC 2.1.304 起旁白以 `type:"thinking"`
+/// 落盘,终端里却按正文(● 行)显示;区分它的 `narration_block_indexes` 只在 stream 帧包装层,
+/// 不进 transcript。磁盘上唯一的判据是签名:base64 的 protobuf 头里带着块种类串,
+/// 实测真 thinking 为 `thinking`、旁白为 `narration`(全机 5222 块:有字的 689 块全是后者,
+/// 真 thinking 文本一律被隐去为空)。不认识的签名保守地当 thinking——宁可进折叠区,不冒充正文。
+fn is_narration_block(block: &serde_json::Value) -> bool {
+    use base64::Engine;
+    let Some(sig) = block.get("signature").and_then(|x| x.as_str()) else {
+        return false;
+    };
+    // 种类串在头部前 ~30 字节;只解码前 64 字符(4 的倍数,恰好 48 字节),不碰整段签名。
+    let head = sig.get(..64).unwrap_or(sig);
+    base64::engine::general_purpose::STANDARD
+        .decode(head.as_bytes())
+        .is_ok_and(|bytes| bytes.windows(9).any(|w| w == b"narration"))
 }
 
 /// content 数组里第 `index` 块若是内嵌 base64 图片，落盘并返回 `[Image: source: …]` 引用行。
@@ -293,6 +314,67 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
         })
 }
 
+/// 大图被缩小后 CC 补一条 `isMeta` 行告诉模型缩放比例：「[Image: original 2310x1152,
+/// displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]」
+/// （2.1.304 实测，纯字符串正文、整条只有这一句）。它是写给模型的，不丢的话对话页显示成
+/// 一条用户气泡（用户实拍反馈）。只认整条就是这一句的：混着别的文字的不动。
+fn is_image_scale_note(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
+    if v.get("isMeta").and_then(|x| x.as_bool()) != Some(true) {
+        return false;
+    }
+    let Some(text) = content.and_then(|x| x.as_str()).map(str::trim) else {
+        return false;
+    };
+    text.starts_with("[Image: original ")
+        && text.contains(", displayed at ")
+        && text.ends_with(']')
+        && text.matches('[').count() == 1
+}
+
+/// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
+/// `</pasted_content id="6bad">`（2.1.296 实测，id 是 4 位 hex）。这对标签是写给模型的，
+/// 不剥的话对话页会把它们当正文显示（用户实拍反馈）。只剥「整行就是标签、且开闭 id
+/// 配成对」的行：正文里引用到的标签字面量（行内、或没有配对）原样保留。
+fn strip_pasted_content_tags(text: &str) -> Cow<'_, str> {
+    if !text.contains("<pasted_content id=\"") {
+        return Cow::Borrowed(text);
+    }
+    fn tag_id<'a>(line: &'a str, open: &str) -> Option<&'a str> {
+        line.trim()
+            .strip_prefix(open)?
+            .strip_suffix("\">")
+            .filter(|id| !id.is_empty() && !id.contains('"'))
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut drop = vec![false; lines.len()];
+    for (i, line) in lines.iter().enumerate() {
+        if drop[i] {
+            continue;
+        }
+        let Some(id) = tag_id(line, "<pasted_content id=\"") else {
+            continue;
+        };
+        if let Some(close) = (i + 1..lines.len())
+            .find(|&j| !drop[j] && tag_id(lines[j], "</pasted_content id=\"") == Some(id))
+        {
+            drop[i] = true;
+            drop[close] = true;
+        }
+    }
+    if !drop.contains(&true) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        lines
+            .iter()
+            .zip(&drop)
+            .filter(|(_, d)| !**d)
+            .map(|(l, _)| *l)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
     parse_events(line, false)
 }
@@ -319,6 +401,28 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
     let content = v.pointer("/message/content");
     match kind {
         "user" => {
+            // 压缩后 CC 把整段摘要以 user 行写回（`isCompactSummary`，2.1.301 实测为纯字符串
+            // 正文「This session is being continued…」），它是喂模型的上下文、不是用户说的话。
+            // 不丢的话对话页在「上下文已压缩」分隔条下紧跟一大块用户气泡（用户实拍反馈）；
+            // CC 自己的终端也只显示分隔提示、不展开摘要。分隔条由 compact_boundary 行提供。
+            if v.get("isCompactSummary").and_then(|x| x.as_bool()) == Some(true) {
+                return Vec::new();
+            }
+            // 工具注入给模型的内容：Skill 调用后 CC 把整份技能说明以 user 行写回
+            // （`isMeta` + `sourceToolUseID`，2.1.304 实测「Base directory for this skill…」），
+            // 不丢的话对话页把它显示成一大块用户气泡，像是用户自己发的（用户实拍反馈）。
+            // Skill 调用本身已作为工具卡出现在时间线上。只认带 sourceToolUseID 的：同为
+            // isMeta 的跨会话消息是真对话内容，要照常显示。
+            if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+                && v.get("sourceToolUseID")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|id| !id.is_empty())
+            {
+                return Vec::new();
+            }
+            if is_image_scale_note(&v, content) {
+                return Vec::new();
+            }
             if let Some(text) = content
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.trim().is_empty())
@@ -334,7 +438,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 return vec![TranscriptEvent::UserMessage {
                     id: base_id.to_string(),
                     timestamp,
-                    text: text.to_string(),
+                    text: strip_pasted_content_tags(text).into_owned(),
                 }];
             }
             if is_image_companion(&v, content) {
@@ -363,7 +467,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                             .map(|text| TranscriptEvent::UserMessage {
                                 id: format!("{base_id}:{i}"),
                                 timestamp: timestamp.clone(),
-                                text: text.to_string(),
+                                text: strip_pasted_content_tags(text).into_owned(),
                             }),
                         Some("tool_result") => {
                             let text = text_from_content(
@@ -411,6 +515,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                     .unwrap_or(false)
                                     && !answered_by_meowo,
                                 subagent,
+                                patch: structured_patch(&v),
                             })
                         }
                         _ => None,
@@ -484,10 +589,15 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         .get("thinking")
                         .and_then(|x| x.as_str())
                         .filter(|s| !s.trim().is_empty())
-                        .map(|text| TranscriptEvent::Reasoning {
-                            id: format!("{base_id}:{i}"),
-                            timestamp: timestamp.clone(),
-                            text: text.to_string(),
+                        .map(|text| {
+                            let id = format!("{base_id}:{i}");
+                            let timestamp = timestamp.clone();
+                            let text = text.to_string();
+                            if is_narration_block(block) {
+                                TranscriptEvent::AssistantMessage { id, timestamp, text }
+                            } else {
+                                TranscriptEvent::Reasoning { id, timestamp, text }
+                            }
                         }),
                     Some("tool_use") => {
                         let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
@@ -572,7 +682,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             vec![TranscriptEvent::UserMessage {
                 id: base_id.to_string(),
                 timestamp,
-                text,
+                text: strip_pasted_content_tags(&text).into_owned(),
             }]
         }
         _ => Vec::new(),
@@ -940,6 +1050,17 @@ pub(super) fn config_dirs() -> Vec<std::path::PathBuf> {
         .collect()
 }
 
+/// 全部账号的图片缓存目录（`<CLAUDE_CONFIG_DIR>/image-cache`）。transcript 里
+/// `[Image: source: …]` 指向的粘贴图落在这里，和 `projects/` 一样跟着 `CLAUDE_CONFIG_DIR`
+/// 走——只放行 `~/.claude/image-cache` 时，profile 账号会话里的图片一律读不到。
+/// 宿主远程 `/file` 据此划定可读范围。
+pub fn image_cache_dirs() -> Vec<std::path::PathBuf> {
+    config_dirs()
+        .into_iter()
+        .map(|dir| dir.join("image-cache"))
+        .collect()
+}
+
 /// Meowo 管理的 Claude 账号数据目录。Claude 会把 transcript 一并放进
 /// `CLAUDE_CONFIG_DIR/projects`，所以跨账号查看/恢复时必须把这些目录也纳入候选。
 fn managed_projects_dirs() -> Vec<std::path::PathBuf> {
@@ -1124,6 +1245,43 @@ fn full_skill_scan(path: &std::path::Path) -> (Option<Vec<crate::SlashCommand>>,
     let offset = newline + 1;
     let scanned = scan_complete_lines(&tail[offset..], &mut latest);
     (latest, start + (offset + scanned) as u64)
+}
+
+/// 2.1.311 起 claude 会在会话中途把它转成 daemon 托管的后台会话：fork 出新 id 继续写
+/// 新文件，旧文件末尾留一行 `{"type":"continued-in","continuedInSessionId":…}` 后不再写入
+/// （实拍 f3686466 → 985116a7）。标记只会出现在文件尾部，读末尾 64 KiB 就够，不扫长会话全文。
+///
+/// 判定看整行解析后的**顶层** type：工具输出里引用到同样字符串的行（Read/Grep 了这份
+/// transcript）只是嵌在别的记录的字段里，顶层 type 不是它，不会喂出幽灵接续。
+/// 子串只作解析前的预筛，不依赖字段顺序。
+fn continued_in_session(path: &std::path::Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 64 * 1024;
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(WINDOW);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    continued_in_from_tail(&tail, start > 0)
+}
+
+fn continued_in_from_tail(tail: &[u8], starts_mid_line: bool) -> Option<String> {
+    let text = String::from_utf8_lossy(tail);
+    // 窗口起点可能切在一条记录中间，第一段残片不算一行。
+    let lines = text.lines().skip(usize::from(starts_mid_line));
+    lines
+        .filter(|line| line.contains(r#""continued-in""#))
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value.get("type").and_then(|t| t.as_str()) == Some("continued-in"))
+        .filter_map(|value| {
+            value
+                .get("continuedInSessionId")
+                .and_then(|id| id.as_str())
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_string)
+        })
+        .last()
 }
 
 /// skill 清单的增量扫描缓存。ChatWindow 在 `runtime_commands_pending` 期间随每次 650ms
@@ -1648,6 +1806,10 @@ impl TranscriptSpec for ClaudeTranscript {
         runtime_skill_commands(path)
     }
 
+    fn continued_in(&self, path: &std::path::Path) -> Option<String> {
+        continued_in_session(path)
+    }
+
     fn resolve_transcript_path(
         &self,
         transcript_path: Option<&str>,
@@ -1704,9 +1866,84 @@ impl TranscriptSpec for ClaudeTranscript {
     }
 }
 
+/// 统一 diff 的行数上限：超过就不搬（前端退回旧段/新段展示）。一次 Write 覆盖大文件时
+/// structuredPatch 可达上万行，原样进 ChatItem 会把每轮历史轮询的载荷撑大几个数量级。
+const PATCH_MAX_LINES: usize = 400;
+/// 单行截断：压缩过的 JS/CSS 一行能有几十 KB。
+const PATCH_MAX_LINE_CHARS: usize = 400;
+
+/// 读编辑类回执的 `toolUseResult.structuredPatch`（2.1.303 实测：Edit/Write/MultiEdit 都有，
+/// 每段 `oldStart/newStart/lines`，行首 ` `/`-`/`+`）。空数组、缺字段、超限都返回 None。
+fn structured_patch(v: &serde_json::Value) -> Option<Vec<DiffHunk>> {
+    let hunks = v.pointer("/toolUseResult/structuredPatch")?.as_array()?;
+    let mut total = 0usize;
+    let mut out = Vec::with_capacity(hunks.len());
+    for hunk in hunks {
+        let lines: Vec<String> = hunk
+            .get("lines")?
+            .as_array()?
+            .iter()
+            .filter_map(|line| line.as_str())
+            .map(|line| line.chars().take(PATCH_MAX_LINE_CHARS).collect())
+            .collect();
+        total += lines.len();
+        if total > PATCH_MAX_LINES {
+            return None;
+        }
+        out.push(DiffHunk {
+            old_start: u32::try_from(hunk.get("oldStart")?.as_u64()?).ok()?,
+            new_start: u32::try_from(hunk.get("newStart")?.as_u64()?).ok()?,
+            lines,
+        });
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 实拍形状（2.1.311，f3686466 末两行）：cost-state 之后紧跟 continued-in。
+    const CONTINUED_TAIL: &str = concat!(
+        r#"{"type":"cost-state","sessionId":"f3686466","totalCostUSD":8.71}"#,
+        "
+",
+        r#"{"type":"continued-in","timestamp":"2026-10-27T07:23:16.888Z","sessionId":"f3686466","continuedInSessionId":"985116a7"}"#,
+        "
+",
+    );
+
+    #[test]
+    fn continued_in_reads_marker_from_tail() {
+        assert_eq!(
+            continued_in_from_tail(CONTINUED_TAIL.as_bytes(), false).as_deref(),
+            Some("985116a7")
+        );
+    }
+
+    #[test]
+    fn continued_in_ignores_marker_quoted_inside_other_records() {
+        // 会话里 Read 过别人的 transcript：标记串嵌在工具结果里，顶层 type 是 user。
+        let quoted = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"{"type":"continued-in","continuedInSessionId":"evil"}"}]}}"#,
+            "
+",
+        );
+        assert_eq!(continued_in_from_tail(quoted.as_bytes(), false), None);
+    }
+
+    #[test]
+    fn continued_in_skips_partial_first_line_of_window() {
+        // 窗口切在标记行中间：残片不能被当成一整行解析出来。
+        let cut = &CONTINUED_TAIL[CONTINUED_TAIL.find("{\"type\":\"continued-in").unwrap() + 1..];
+        assert_eq!(continued_in_from_tail(cut.as_bytes(), true), None);
+    }
+
+    #[test]
+    fn continued_in_absent_for_ordinary_transcript() {
+        let tail = r#"{"type":"assistant","message":{"content":[]}}"#;
+        assert_eq!(continued_in_from_tail(tail.as_bytes(), false), None);
+    }
 
     #[test]
     fn extracts_permission_mode_from_user_and_mode_records() {
@@ -1730,6 +1967,90 @@ mod tests {
     }
 
     #[test]
+    fn chat_parser_drops_compact_summary_but_keeps_boundary() {
+        let summary = r#"{"type":"user","uuid":"s1","isVisibleInTranscriptOnly":true,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."}}"#;
+        assert!(parse_transcript_events(summary).is_empty());
+        let boundary = r#"{"type":"system","subtype":"compact_boundary","uuid":"b1"}"#;
+        assert!(matches!(
+            parse_transcript_events(boundary).as_slice(),
+            [TranscriptEvent::Metadata { kind, .. }] if kind == "compact"
+        ));
+    }
+
+    /// 样本取自 2.1.304 真机：Skill 调用后写回的技能说明行（正文截短）。
+    #[test]
+    fn chat_parser_drops_tool_injected_meta_but_keeps_cross_session() {
+        let skill = r#"{"type":"user","uuid":"k1","isMeta":true,"turnCompanion":true,"sourceToolUseID":"toolu_017zj","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: C:\\Users\\me\\.claude\\skills\\pr-description\n\n# pr-description"}]}}"#;
+        assert!(parse_transcript_events(skill).is_empty());
+        // 同为 isMeta、但不是工具注入的跨会话消息：真对话内容，照常出用户消息。
+        let cross = r#"{"type":"user","uuid":"x1","isMeta":true,"message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from-name=\"a\">你好</cross-session-message>"}}"#;
+        assert!(matches!(
+            parse_transcript_events(cross).as_slice(),
+            [TranscriptEvent::UserMessage { .. }]
+        ));
+    }
+
+    /// 样本取自 2.1.304 真机：大图缩放说明行。
+    #[test]
+    fn chat_parser_drops_image_scale_note() {
+        let note = r#"{"type":"user","uuid":"n1","isMeta":true,"message":{"role":"user","content":"[Image: original 2310x1152, displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]"}}"#;
+        assert!(parse_transcript_events(note).is_empty());
+        // 不是 isMeta、或混着正文的，照常显示。
+        for line in [
+            r#"{"type":"user","uuid":"n2","message":{"role":"user","content":"[Image: original 2310x1152, displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]"}}"#,
+            r#"{"type":"user","uuid":"n3","isMeta":true,"message":{"role":"user","content":"看这张 [Image: original 2310x1152, displayed at 2000x997.]"}}"#,
+        ] {
+            assert!(matches!(
+                parse_transcript_events(line).as_slice(),
+                [TranscriptEvent::UserMessage { .. }]
+            ));
+        }
+    }
+
+    #[test]
+    fn chat_parser_strips_paired_pasted_content_tags() {
+        let line = r#"{"type":"user","uuid":"p1","message":{"role":"user","content":"\n\n<pasted_content id=\"8ac4\">\n需求可能需要改一下\nA + 随机\n</pasted_content id=\"8ac4\">"}}"#;
+        assert!(matches!(
+            parse_transcript_events(line).as_slice(),
+            [TranscriptEvent::UserMessage { text, .. }] if text == "\n\n需求可能需要改一下\nA + 随机"
+        ));
+        // 行内引用、或开闭 id 不配对的标签字面量是正文内容，不动。
+        for text in [
+            "看这个 <pasted_content id=\"1\"> 标签",
+            "<pasted_content id=\"aaaa\">\n正文\n</pasted_content id=\"bbbb\">",
+        ] {
+            assert_eq!(strip_pasted_content_tags(text), text);
+        }
+    }
+
+    /// 签名取自 2.1.304 真机 transcript(reverse-bot-gui 会话 de5471ea):同一条消息里一块真 thinking
+    /// (文本隐去为空)紧跟一块旁白,终端把后者显示成正文。
+    #[test]
+    fn narration_thinking_block_renders_as_assistant_text() {
+        let line = r#"{"type":"assistant","uuid":"n1","message":{"content":[
+            {"type":"thinking","thinking":"","signature":"CAQSigoKEAgTGAI4AUIIdGhpbmtpbmcSDA5AYo5pgFn7NHYJmBoMwgXy96URcVSQQyTAIjC94E9/tqTHxc1pOHHiy+M70fGJUDh2"},
+            {"type":"thinking","thinking":"GUI 进程已随终端退出","signature":"CAQSmAkKEQgTGAI4AUIJbmFycmF0aW9uEgzDahb4kK1KnbHb8dYaDNjZZ0Qt5S5DCS4xCCIwUt9v1qUUCGHSa4IzgbXYCMZydNb7"},
+            {"type":"thinking","thinking":"有字的真 thinking","signature":"CAQSigoKEAgTGAI4AUIIdGhpbmtpbmcSDA5AYo5pgFn7NHYJmBoMwgXy96URcVSQQyTAIjC94E9/tqTHxc1pOHHiy+M70fGJUDh2"},
+            {"type":"thinking","thinking":"无签名的旧格式"}
+        ]}}"#.replace('\n', "");
+        let items = parse_chat_items(&line);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], ChatItem::AssistantText { text, .. } if text == "GUI 进程已随终端退出"));
+        assert!(matches!(&items[1], ChatItem::Reasoning { text, .. } if text == "有字的真 thinking"));
+        assert!(matches!(&items[2], ChatItem::Reasoning { text, .. } if text == "无签名的旧格式"));
+    }
+
+    #[test]
+    fn powershell_tool_is_summarized_like_bash() {
+        let line = r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"ps1","name":"PowerShell","input":{"command":"Get-Process -Id 1","description":"查进程"}}]}}"#;
+        let ChatItem::ToolUse { summary, detail, .. } = &parse_chat_items(line)[0] else {
+            panic!("应解析出工具调用");
+        };
+        assert_eq!(summary, "Get-Process -Id 1");
+        assert!(matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "Get-Process -Id 1"));
+    }
+
+    #[test]
     fn chat_parser_extracts_text_tools_and_skips_sidechain() {
         let assistant = r#"{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:00Z","message":{"content":[{"type":"thinking","thinking":"先检查项目"},{"type":"text","text":"我来处理"},{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"cargo test"}}]}}"#;
         let items = parse_chat_items(assistant);
@@ -1743,6 +2064,16 @@ mod tests {
         assert!(
             matches!(&parse_chat_items(result)[0], ChatItem::ToolResult { tool_use_id: Some(id), text, is_error: false, .. } if id == "tool-1" && text == "ok")
         );
+
+        // 编辑回执的 structuredPatch 原样搬成统一 diff（对话页按真实行号渲染）；空数组不搬。
+        let edited = r#"{"type":"user","uuid":"u2","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"ok"}]},"toolUseResult":{"structuredPatch":[{"oldStart":26,"oldLines":2,"newStart":26,"newLines":2,"lines":[" keep","-old","+new"]}]}}"#;
+        let ChatItem::ToolResult { patch: Some(patch), .. } = &parse_chat_items(edited)[0] else {
+            panic!("应带上 structuredPatch");
+        };
+        assert_eq!((patch[0].old_start, patch[0].new_start), (26, 26));
+        assert_eq!(patch[0].lines, [" keep", "-old", "+new"]);
+        let empty = r#"{"type":"user","uuid":"u3","message":{"content":[{"type":"tool_result","tool_use_id":"tool-3","content":"ok"}]},"toolUseResult":{"structuredPatch":[]}}"#;
+        assert!(matches!(&parse_chat_items(empty)[0], ChatItem::ToolResult { patch: None, .. }));
 
         let sidechain = r#"{"type":"assistant","uuid":"sub","isSidechain":true,"message":{"content":[{"type":"text","text":"hidden"}]}}"#;
         assert!(parse_chat_items(sidechain).is_empty());
@@ -2312,6 +2643,38 @@ mod tests {
             None => std::env::remove_var("MEOWO_DB"),
         }
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// 图片缓存跟着 CLAUDE_CONFIG_DIR 走:profile 账号里粘贴的图落在 profile 目录下,
+    /// 只放行 ~/.claude/image-cache 时远程 /file 读不到(手机端图片退化成文件名徽章)。
+    #[test]
+    fn image_cache_dirs_cover_default_and_managed_profiles() {
+        let home = std::env::temp_dir().join(format!("cc_image_cache_home_{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".meowo/profiles/claude/work")).unwrap();
+
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        let old_db = std::env::var("MEOWO_DB").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
+        let dirs = image_cache_dirs();
+        match old_home {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match old_db {
+            Some(value) => std::env::set_var("MEOWO_DB", value),
+            None => std::env::remove_var("MEOWO_DB"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert_eq!(
+            dirs,
+            vec![
+                home.join(".claude").join("image-cache"),
+                home.join(".meowo/profiles/claude/work").join("image-cache"),
+            ]
+        );
     }
 
     /// 跨 profile 恢复会话后,默认 ~/.claude 里留下的是不再增长的陈旧副本,续写发生在

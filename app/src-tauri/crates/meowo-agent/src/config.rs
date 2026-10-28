@@ -335,6 +335,31 @@ mod kimi_toml {
             return Merge::Abandon;
         };
 
+        // Python Kimi 不认识 Node 版的审批/中断事件；迁移时只移除我方过去误写的条目，用户脚本保留。
+        let mut index = 0;
+        while index < arr.len() {
+            let obsolete = arr.get(index).is_some_and(|table| {
+                let event = table
+                    .get("event")
+                    .and_then(|item| item.as_str())
+                    .unwrap_or_default();
+                matches!(
+                    event,
+                    "PermissionRequest" | "PermissionResult" | "Interrupt"
+                ) && !spec.events.iter().any(|declared| declared.name == event)
+                    && table
+                        .get("command")
+                        .and_then(|item| item.as_str())
+                        .is_some_and(|command| spec.command.claim(command, agent_id).is_some())
+            });
+            if obsolete {
+                arr.remove(index);
+                changed = true;
+            } else {
+                index += 1;
+            }
+        }
+
         for ev in spec.events {
             // 同一 event 下只留一条我方 hook：第一条更新路径，其余删除。不去重则重复条目每次
             // 事件各派生一个 reporter 进程，且污染每接线一轮翻一倍、永不收敛（详见
@@ -814,22 +839,40 @@ mod opencode_ts {
 const MEOWO_REPORTER = __MEOWO_REPORTER__
 const MEOWO_PROVIDER = __MEOWO_PROVIDER__
 
+let reporting = Promise.resolve()
+
 function meowoReport(payload) {
   // 没有 session_id 就无从落库，直接丢弃（reporter 侧同样会拒，这里省一次进程派生）。
-  if (!payload.session_id) return
-  try {
-    const proc = Bun.spawn([MEOWO_REPORTER, "--provider", MEOWO_PROVIDER], {
+  if (!payload.session_id) return Promise.resolve()
+  // 审批请求和解除可紧挨着到达；按事件顺序等 reporter 落库，防解除先写、请求后写留下幽灵审批。
+  reporting = reporting.then(async () => {
+    let proc
+    let timer
+    try {
+    proc = Bun.spawn([MEOWO_REPORTER, "--provider", MEOWO_PROVIDER], {
       stdin: "pipe",
       stdout: "ignore",
       stderr: "ignore",
     })
     proc.stdin.write(JSON.stringify(payload))
     proc.stdin.end()
-    // 别让这个短命子进程拖住 opencode 自己的退出。
     proc.unref?.()
-  } catch {
+    // 与普通 hook 一样限制 5s；上报失败不能永久阻塞 OpenCode 的插件队列。
+    await Promise.race([
+      proc.exited,
+      new Promise((resolve) => { timer = setTimeout(() => {
+        try { proc.kill() } catch {}
+        resolve()
+      }, 5000) }),
+    ])
+    } catch {
     // 上报是尽力而为：出了任何岔子都不能把宿主 opencode 带崩。
-  }
+      try { proc?.kill() } catch {}
+    } finally {
+      clearTimeout(timer)
+    }
+  })
+  return reporting
 }
 
 export const MeowoReporter = async ({ directory }) => ({
@@ -837,7 +880,7 @@ export const MeowoReporter = async ({ directory }) => ({
     const props = event?.properties ?? {}
     switch (event?.type) {
       case "session.created":
-        meowoReport({
+        await meowoReport({
           hook_event_name: "SessionStart",
           session_id: props.info?.id,
           cwd: props.info?.directory ?? directory,
@@ -845,35 +888,46 @@ export const MeowoReporter = async ({ directory }) => ({
         break
       // opencode 每个回合跑完都发一次 idle——这正是 claude 的 Stop 语义。
       case "session.idle":
-        meowoReport({ hook_event_name: "Stop", session_id: props.sessionID, cwd: directory })
+        await meowoReport({ hook_event_name: "Stop", session_id: props.sessionID, cwd: directory })
         break
       // opencode 没有「会话结束」这一概念，删除会话是唯一确定的终结信号。进程退出的收尾
       // 因此与 codex 一样，交给 meowo-app 的判活去 reap，不在这里硬凑一个 SessionEnd。
       case "session.deleted":
-        meowoReport({
+        await meowoReport({
           hook_event_name: "SessionEnd",
           session_id: props.info?.id,
           cwd: props.info?.directory ?? directory,
         })
         break
-      // 压缩完成 ≈ PostCompact。session id 字段名按 session.idle 的 props.sessionID 类推，
-      // 未经真机压缩验证；取不到时 meowoReport 静默丢弃（模板风格本来就是尽力而为）。
+      case "permission.asked":
+        await meowoReport({
+          hook_event_name: "PermissionRequest", session_id: props.sessionID, cwd: directory,
+          tool_name: props.permission, tool_input: props.metadata,
+        })
+        break
+      case "permission.replied":
+        await meowoReport({ hook_event_name: "PermissionResult", session_id: props.sessionID, cwd: directory })
+        break
+      case "session.error":
+        await meowoReport({ hook_event_name: "StopFailure", session_id: props.sessionID, cwd: directory })
+        break
+      // OpenCode 官方 SDK 的 session.compacted 负载以 sessionID 关联会话。
       case "session.compacted":
-        meowoReport({ hook_event_name: "PostCompact", session_id: props.sessionID, cwd: directory })
+        await meowoReport({ hook_event_name: "PostCompact", session_id: props.sessionID, cwd: directory })
         break
     }
   },
   // 压缩开始 ≈ PreCompact。session id 字段名按 chat.message 的 input?.sessionID 类推，
   // 同样未经真机压缩验证。
   "experimental.session.compacting": async (input) => {
-    meowoReport({ hook_event_name: "PreCompact", session_id: input?.sessionID, cwd: directory })
+    await meowoReport({ hook_event_name: "PreCompact", session_id: input?.sessionID, cwd: directory })
   },
   "chat.message": async (input, output) => {
     const text = (output?.parts ?? [])
       .filter((part) => part?.type === "text" && typeof part.text === "string")
       .map((part) => part.text)
       .join("")
-    meowoReport({
+    await meowoReport({
       hook_event_name: "UserPromptSubmit",
       session_id: input?.sessionID,
       cwd: directory,
@@ -881,7 +935,7 @@ export const MeowoReporter = async ({ directory }) => ({
     })
   },
   "tool.execute.after": async (input) => {
-    meowoReport({
+    await meowoReport({
       hook_event_name: "PostToolUse",
       session_id: input?.sessionID,
       cwd: directory,

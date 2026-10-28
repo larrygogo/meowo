@@ -1095,6 +1095,22 @@ describe("ManagedTerminal", () => {
     expect(pasteSpy).not.toHaveBeenCalled();
   });
 
+  /** Windows 上 claude/kimi 的贴图键是 Alt+V:写死 ^V 时终端页贴截图零反应(pywinpty 实测 claude 2.1.303)。 */
+  it("位图回退发插件声明的贴图键,而非写死 ^V", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ ...noPty, active: true, data: btoa("hi"), endOffset: 2 });
+      if (command === "clipboard_text") return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={164} status="running" imagePasteInput={"\x1bv"} />);
+    const host = document.querySelector(".managed-terminal-host")!;
+    await screen.findByRole("button", { name: "在外部终端同步打开" });
+    fireEvent.contextMenu(host);
+    fireEvent.click(Array.from(document.querySelectorAll<HTMLButtonElement>(".ctx-menu .ctx-item"))[1]);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 164, data: "\x1bv" }));
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 164, data: "\x16" });
+  });
+
   it("右键菜单(U0-11):全选走 terminal.selectAll,搜索打开终端内搜索条", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "managed_terminal_snapshot") return Promise.resolve({ ...noPty, active: true, data: btoa("hi"), endOffset: 2 });

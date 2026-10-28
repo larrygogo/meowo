@@ -23,7 +23,7 @@
 //! | `AfterTool` | `PostToolUse` | 工具跑完 |
 //! | `AfterAgent` | `Stop` | 回合结束（负载带 `prompt_response`＝AI 正文） |
 //! | `SessionEnd` | `SessionEnd` | 会话收尾 |
-//! | `PreCompress` | `PreCompact` | /compress 开始（无 PostCompress，滞留取舍见 EVENTS 注释） |
+//! `PreCompress` 没有完成配对，暂不写入「正在压缩」，避免手动压缩后永久挂起。
 
 pub mod account;
 mod screen;
@@ -71,11 +71,7 @@ static EVENTS: [HookEvent; 6] = [
     HookEvent::plain("AfterTool").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
     HookEvent::plain("AfterAgent").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
     HookEvent::plain("SessionEnd").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
-    // gemini 只有 PreCompress、**没有 PostCompress**（bundle 事件枚举取证过）。故 /compress
-    // 完成后没有任何事件把状态翻回 waiting——会滞留在 running+压缩中，直到下一个回合自愈
-    // （BeforeAgent→running、AfterAgent→waiting）；看板/侧栏因 screenState=idle 仍显示正确的
-    // 等待态，滞留只影响 DB status 与无屏幕通道的展示面。半修，但比完全没有指示强。
-    HookEvent::plain("PreCompress").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
+    HookEvent::plain("Notification").with_timeout(GEMINI_HOOK_TIMEOUT_MS),
 ];
 
 /// Gemini 0.50 支持的全部 hook 事件。写进一条它不认识的 event 会怎样尚未实测，但 kimi 的前车之鉴
@@ -200,9 +196,8 @@ impl AgentPlugin for Gemini {
             "BeforeAgent" => "UserPromptSubmit",
             "AfterAgent" => "Stop",
             "AfterTool" => "PostToolUse",
-            // dispatch 只认规范名 PreCompact；gemini 侧叫 PreCompress（无对应的 Post 事件，
-            // 滞留取舍见 EVENTS 的注释）。
-            "PreCompress" => "PreCompact",
+            // 0.61 / 官方 hooks reference 仍无完成事件。兼容旧接线留下的 PreCompress，不能再置永久 running。
+            "PreCompress" => "",
             other => other,
         }
     }
@@ -215,11 +210,68 @@ impl AgentPlugin for Gemini {
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
     }
-    /// Esc 中断当前回合(gemini CLI 的取消键即 Esc)。**约定推断**:本机 ConPTY 探针能启动
-    /// gemini,但提交 prompt 后它立即 SessionEnd 退出,抓不到「生成中·esc to cancel」那一屏;
-    /// 依据同 kimi(通行约定 + claude/codex 均 Esc)。「打断并发送」低风险(见 kimi 注释)。
+    /// 运行中排队用回车（probe_tui_script，0.64，2026-10-16）：回车与 Tab 运行中都会进
+    /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
+    /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
+    /// 消息，按回车两种状态都对。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+
+    // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。
+    // 未取证的屏幕标签不作乐观更新，避免把按键成功误当成某个权限档已经生效。
+    fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            dimension: "approval",
+            menu_command: None,
+            cycle_input: Some("\x1b[Z"),
+            options: &[],
+            screen_markers: &[],
+        }];
+        &MODES
+    }
+
+    /// Esc 中断当前回合：运行中状态行自述 `(esc to cancel, Ns)`（probe_tui_script，0.64）。
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// Ctrl+J（裸 LF）在输入框里换行、不提交（tests/probe_tui_script.rs，0.61，2026-10-16）。
+    /// 剪贴板贴图（Ctrl-V）虽然可用，但 gemini 会把图片落盘到工作目录的 `.gemini-clipboard/`
+    /// 再以 @路径 引用——等于往用户仓库里写文件，故不声明，图片照旧走指令文本。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
+    }
+    /// 工具确认框（源码 ToolConfirmationMessage，0.64 未变）。gemini 没有能代为决定的权限 hook，
+    /// 屏幕识别是 GUI 给出可操作审批的唯一通道。问句只认**行首是外框 │** 的那一行——模型
+    /// 正文里引用同一句不带框线，不该凭空弹卡锁输入框。真机屏（0.61，`--approval-mode default`）：
+    /// `│ Allow execution of [Shell]? │` 之下是 `│ ● 1. Allow once │ / 2. Allow for this session /
+    /// 3. No, suggest changes (esc)`。
+    ///
+    /// 额度耗尽框（0.64 真机，2026-10-16）：`│ Usage limit reached for gemini-3.8-flash. │` 下接
+    /// `● 1. Keep trying / 2. Stop`，取代输入框。不识别时对话页毫无提示，发出的正文落进这个
+    /// 框被丢弃、紧随的回车选中 Keep trying 再撞一次额度——用户只看到「发不了消息」。
+    /// 走通用卡（无结构化文法）：确认 = Enter = Keep trying，取消 = Esc = 「Request cancelled」
+    /// 并还回输入框（两键均经 probe_tui_script 实测）。
+    fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
+        &[
+            crate::chat_ui::AttentionPattern {
+                id: "gemini:command-approval",
+                patterns: &[
+                    r"^\s*│\s*allow execution of [^\n]*\?",
+                    r"^\s*│\s*apply this change\?",
+                    r"^\s*│\s*do you want to proceed\?",
+                ],
+                // 重绘不清屏，上一个确认框会残留在缓冲上方：取最后一次。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::FramedBox,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "gemini:usage-limit",
+                patterns: &[r"^\s*│\s*usage limit reached\b"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+            },
+        ]
     }
     /// `@路径` 是 gemini 的一等注入语法(官方文档;headless 实测提交 `@绝对路径` 能答出
     /// 文件内容)。版本探测不到时兜底 false。
@@ -489,7 +541,7 @@ mod tests {
     #[test]
     fn every_declared_event_maps_to_a_canonical_name_dispatch_handles() {
         // dispatch 的消化面（见 meowo_reporter::dispatch）。
-        const CANONICAL: [&str; 7] = [
+        const CANONICAL: [&str; 8] = [
             "SessionStart",
             "UserPromptSubmit",
             "PostToolUse",
@@ -497,6 +549,7 @@ mod tests {
             "SessionEnd",
             "PreCompact",
             "PostCompact",
+            "Notification",
         ];
         for ev in EVENTS {
             let mapped = Gemini.canonical_event(ev.name);
@@ -511,7 +564,7 @@ mod tests {
         assert_eq!(Gemini.canonical_event("BeforeAgent"), "UserPromptSubmit");
         assert_eq!(Gemini.canonical_event("AfterAgent"), "Stop");
         assert_eq!(Gemini.canonical_event("AfterTool"), "PostToolUse");
-        assert_eq!(Gemini.canonical_event("PreCompress"), "PreCompact");
+        assert_eq!(Gemini.canonical_event("PreCompress"), "");
         // 同名的原样透传。
         assert_eq!(Gemini.canonical_event("SessionStart"), "SessionStart");
         assert_eq!(Gemini.canonical_event("SessionEnd"), "SessionEnd");

@@ -24,6 +24,7 @@ import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTe
 import type { LineageEntryDto } from "./generated/contracts/LineageEntryDto";
 import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDto";
 import type { SwitchStartedDto } from "./generated/contracts/SwitchStartedDto";
+import type { PendingLaunchDto } from "./generated/contracts/PendingLaunchDto";
 import type { PendingInteractionDto } from "./generated/contracts/PendingInteractionDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
@@ -262,6 +263,10 @@ export function savePastedAttachment(fileName: string, dataBase64: string): Prom
 export function clipboardSetImage(path: string): Promise<void> {
   return invoke("clipboard_set_image", { path });
 }
+/** 拉起系统框选截图，截完落进粘贴目录回路径；取消/超时回 null。只在桌面端用（不进远程白名单）。 */
+export function captureScreenRegion(): Promise<string | null> {
+  return invoke("capture_screen_region");
+}
 /** 还原 clipboardSetImage 快照下来的剪贴板内容；没有快照时为空操作。 */
 export function clipboardRestore(): Promise<void> {
   return invoke("clipboard_restore");
@@ -369,6 +374,10 @@ export function managedTerminalSnapshot(sessionId: number, since?: number): Prom
 }
 export function managedTerminalBinding(sessionId: number): Promise<number | null> {
   return invoke("managed_terminal_binding", { sessionId });
+}
+/** 临时负 id 认领前的 provider/cwd；null = 不是 pending 启动（已认领或从未存在）。 */
+export function managedTerminalPendingLaunch(sessionId: number): Promise<PendingLaunchDto | null> {
+  return invoke("managed_terminal_pending_launch", { sessionId });
 }
 /** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
 export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {
@@ -826,9 +835,9 @@ export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: n
  * 该 agent 的模型清单，**由 CLI 自己列举**（非交互子命令，后端带进程级缓存）。
  * 空表 = 该 CLI 没有列举子命令，调用方回落到「弹 TUI 菜单 + 屏幕识别」那条路。
  */
-export function agentModels(provider: string): Promise<string[]> {
+export function agentModels(provider: string, sessionId?: number): Promise<string[]> {
   // 旧后端/demo 对未知命令返回 undefined——统一兜成空表，调用方不必各自判空。
-  return invoke<string[] | null>("agent_models", { provider }).then((models) => models ?? []);
+  return invoke<string[] | null>("agent_models", { provider, sessionId: sessionId ?? null }).then((models) => models ?? []);
 }
 
 /**

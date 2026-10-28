@@ -16,7 +16,9 @@ fn default_opacity() -> u32 {
     100
 }
 fn default_ui_scale() -> u32 {
-    100
+    // 档位 2026-10 整体上调一档（前端 fontSizeOptions 90/100/112 → 100/112/124，
+    // 实拍反馈默认偏小），默认「中」随之为 112。老用户已落盘的值不受影响。
+    112
 }
 fn default_resume_terminal() -> String {
     "terminal".to_string()

@@ -106,6 +106,14 @@ pub trait AgentPlugin: Sync {
         &[]
     }
 
+    fn model_select_command(&self) -> Option<&'static str> {
+        None
+    }
+
+    fn queue_input(&self) -> Option<&'static str> {
+        None
+    }
+
     /// 会话内可交互的模式维度。空 = 没有稳定且经过验证的切换方式。
     fn mode_controls(&self) -> &'static [crate::chat_ui::ModeControl] {
         &[]
@@ -145,6 +153,11 @@ pub trait AgentPlugin: Sync {
     /// 这个键是 GUI 上唯一能叫停当前回合的手段,故不取证也宁可给。
     fn interrupt_input(&self) -> Option<&'static str> {
         None
+    }
+
+    /// 中断键连按次数(见 ChatUi 字段注释)。默认一次。
+    fn interrupt_presses(&self) -> u8 {
+        1
     }
 
     /// 发送前收起 composer 残留草稿的按键与提示文案。默认 None:未经真机取证不声明。
@@ -208,9 +221,17 @@ pub trait AgentPlugin: Sync {
                 menu_slash_commands.push(command);
             }
         }
+        for control in self.mode_controls() {
+            if let Some(command) = control.menu_command {
+                if !menu_slash_commands.contains(&command) {
+                    menu_slash_commands.push(command);
+                }
+            }
+        }
         crate::chat_ui::ChatUi {
             slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
             model_presets: self.model_presets().to_vec(),
+            model_select_command: self.model_select_command(),
             model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             menu_slash_commands,
@@ -219,11 +240,14 @@ pub trait AgentPlugin: Sync {
             attention_patterns: self.attention_patterns().to_vec(),
             permission_prompt_races_hook: self.permission_prompt_races_hook(),
             interrupt_input: self.interrupt_input(),
+            interrupt_presses: self.interrupt_presses(),
+            queue_input: self.queue_input(),
             newline_input: self.newline_input(),
             runtime_commands_pending,
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
             clipboard_paste_input: self.clipboard_paste_input(ctx.version),
+            status_line_pattern: self.status_line_pattern(),
             draft_stash: self.draft_stash(),
             version: ctx.version.map(str::to_string),
         }
@@ -247,12 +271,18 @@ pub trait AgentPlugin: Sync {
         Some("\x16")
     }
 
+    /// 终端界面运行中状态行的匹配正则（见 [`ChatUi::status_line_pattern`]）。默认不声明：
+    /// 没取证过的 CLI 不猜它的状态行长什么样。
+    fn status_line_pattern(&self) -> Option<&'static str> {
+        None
+    }
+
     /// 附件是否可用该 CLI 的 `@路径` 提及注入。
     ///
     /// 只有**实测**过该家把 @提及当自己的惯例处理的 agent 才该返回 true:claude/gemini
     /// 是提交时原生附加(禁用读文件工具仍能答出内容);kimi 的 @ 是文本级一等语法
     /// (wire.jsonl 实测原样入 prompt、模型自行读取,与用户手敲等价);codex/opencode
-    /// 未验证前不开。version 是宿主探测到的已装 CLI 版本——探测不到时应返回 false
+    /// 同属文本级(@绝对路径 实测模型自行读取)。version 是宿主探测到的已装 CLI 版本——探测不到时应返回 false
     /// 兜底:宁可多一段指令文本,不可发出对方不认的语法。
     fn attachment_mention(&self, _version: Option<&str>) -> bool {
         false
@@ -329,7 +359,7 @@ pub trait AgentPlugin: Sync {
     ///
     /// 优先级高于 [`Self::model_menu_command`]：能直接问出来就不必往会话的 PTY 里发命令、
     /// 弹 TUI 菜单、再靠屏幕识别把它读回来——那条路要求菜单形态经过取证（codex 被自更新器
-    /// 拦住、opencode 的 TUI 输入在 ConPTY 下不通，两家至今取不到，见
+    /// 拦住、opencode 的选择器形态未取证，两家至今取不到，见
     /// docs/research/tui-menu-captures-2026-07.md），而这条只要 CLI 有这个子命令就成立，
     /// 且完全不打扰正在跑的会话。
     ///
@@ -893,46 +923,43 @@ mod tests {
             );
         }
 
-        // @提及注入:只有实测过的 claude/gemini(提交时原生附加)与 kimi(@ 是它自己的
-        // 文本级一等语法,模型自行读取)声明,且版本探测不到时必须兜底 false(宁可多一段
-        // 指令文本,不可发出对方不认的语法)。
-        for id in ["claude", "gemini", "kimi"] {
+        // @提及注入:只有实测过的 claude/gemini(提交时原生附加)、kimi(@ 是它自己的
+        // 文本级一等语法,模型自行读取)与 codex/opencode(@绝对路径 实测可读)声明,且版本
+        // 探测不到时必须兜底 false(宁可多一段指令文本,不可发出对方不认的语法)。
+        for id in ["claude", "codex", "gemini", "kimi", "opencode"] {
             assert!(by_id(id).unwrap().attachment_mention(Some("1.0.0")), "{id}");
             assert!(
                 !by_id(id).unwrap().attachment_mention(None),
                 "{id} 版本未知须兜底"
             );
         }
-        for id in ["codex", "opencode"] {
-            assert!(
-                !by_id(id).unwrap().attachment_mention(Some("1.0.0")),
-                "{id} 的 @提及未经验证,不该声明"
-            );
-        }
-        // Ctrl-V 原生图片粘贴:只有文档/实测确认 TUI 会读系统剪贴板的 claude/kimi 声明,
-        // 占位符正则非空。claude 版本未知时兜底 None;kimi 相反——探测不到就不声明会让前端
+        // Ctrl-V 原生图片粘贴:只有实测确认 TUI 会读系统剪贴板的 claude/kimi/codex/opencode
+        // 声明,占位符正则非空。claude 版本未知时兜底 None;kimi 相反——探测不到就不声明会让前端
         // 静默退回文本通道、把注入指令原文整段打进 TUI(实拍),能力已真机实测,故版本未知
         // 也照声明(理由见 plugins/kimi/mod.rs 的 clipboard_image_paste)。
-        for id in ["claude", "kimi"] {
+        for id in ["claude", "kimi", "codex", "opencode"] {
             let marker = by_id(id).unwrap().clipboard_image_paste(Some("1.0.0"));
             assert!(marker.is_some_and(|m| !m.is_empty()), "{id}");
         }
         assert!(
-            by_id("claude").unwrap().clipboard_image_paste(None).is_none(),
+            by_id("claude")
+                .unwrap()
+                .clipboard_image_paste(None)
+                .is_none(),
             "claude 版本未知须兜底"
         );
         assert!(
             by_id("kimi").unwrap().clipboard_image_paste(None).is_some(),
             "kimi 版本未知仍声明(探测失败不等于能力缺失)"
         );
-        for id in ["codex", "gemini", "opencode"] {
-            assert!(
-                by_id(id)
-                    .unwrap()
-                    .clipboard_image_paste(Some("1.0.0"))
-                    .is_none(),
-                "{id} 的剪贴板图片粘贴未经验证,不该声明"
-            );
+        // gemini 的贴图会落盘到用户工作目录的 .gemini-clipboard/,刻意不声明。
+        assert!(by_id("gemini")
+            .unwrap()
+            .clipboard_image_paste(Some("1.0.0"))
+            .is_none());
+        // 换行注入:claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
+        for id in ["codex", "gemini", "kimi", "opencode"] {
+            assert_eq!(by_id(id).unwrap().newline_input(), Some("\n"), "{id}");
         }
 
         // TUI 权限框与 PermissionRequest hook 并行竞速:仅 claude 经官方文档+实测取证。
@@ -954,9 +981,20 @@ mod tests {
             by_id("codex").unwrap().mode_controls()[0].dimension,
             "collaboration"
         );
-        for id in ["gemini", "opencode"] {
-            assert!(by_id(id).unwrap().mode_controls().is_empty());
-        }
+        assert_eq!(
+            by_id("gemini").unwrap().mode_controls()[0].dimension,
+            "approval"
+        );
+        // opencode 的 Tab 轮换 primary agent;回显标记带 ` · ` 分隔,防止单词撞正文。
+        let opencode_mode = &by_id("opencode").unwrap().mode_controls()[0];
+        assert_eq!(
+            (opencode_mode.dimension, opencode_mode.cycle_input),
+            ("agent", Some("\t"))
+        );
+        assert!(opencode_mode
+            .screen_markers
+            .iter()
+            .all(|m| m.marker.ends_with(" · ")));
 
         // claude 的 cycle 是盲切且空闲期 transcript 不写模式记录，屏幕回显标记是唯一的
         // 即时反馈通道：六个文档承诺的模式都要在表里，value 与 transcript 的
@@ -1018,14 +1056,38 @@ mod tests {
         }
 
         // 中断键:五家都用 Esc。确证——claude(官方文档)/codex(状态行实测)/
-        // kimi(用户真机确认);约定推断——gemini/opencode(见各插件注释:探针受 launcher/
-        // 会话生命周期所限抓不到运行中证据,但通行约定即 Esc,且「打断并发送」键错也低风险)。
+        // kimi(用户真机确认)/opencode(probe_tui_script 实测);约定推断——gemini(见其插件注释)。
+        // opencode 首按只提示 "esc again to interrupt",须连按两下;其余一下即停。
         for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
             assert_eq!(by_id(id).unwrap().interrupt_input(), Some("\x1b"));
+            let presses = if id == "opencode" { 2 } else { 1 };
+            assert_eq!(by_id(id).unwrap().interrupt_presses(), presses, "{id}");
         }
+        // 审批卡统一 id 约定 `<agent>:command-approval`(前端按后缀定卡片标题)。gemini 的确认框
+        // 有框线编号文法;opencode 是横排选项,不做结构化拆解、落通用卡。
+        for (id, details) in [
+            ("gemini", crate::chat_ui::AttentionDetails::FramedBox),
+            ("opencode", crate::chat_ui::AttentionDetails::None),
+        ] {
+            let pattern = by_id(id).unwrap().attention_patterns()[0];
+            assert_eq!(pattern.id, format!("{id}:command-approval"));
+            assert!(pattern.last, "{id} 审批框会残留在缓冲上方,必须取最后一次");
+            assert_eq!(pattern.details, details);
+        }
+        // gemini 额度耗尽框取代输入框：不识别，对话页发出的正文会被它吞掉(插件注释有实测)。
+        let limit = by_id("gemini").unwrap().attention_patterns()[1];
+        assert_eq!(limit.id, "gemini:usage-limit");
+        assert_eq!(limit.details, crate::chat_ui::AttentionDetails::None);
+        // 运行中排队:opencode 的 Enter 即排队(QUEUED 标记)。
+        assert_eq!(by_id("opencode").unwrap().queue_input(), Some("\r"));
+        // gemini 空闲时 Tab 不提交，运行态又是推断：只能用两种状态都成立的回车。
+        assert_eq!(by_id("gemini").unwrap().queue_input(), Some("\r"));
 
         // 草稿暂存键只有 claude 经真机取证(issue #72);别家未验证不盲按。
-        assert_eq!(by_id("claude").unwrap().draft_stash().map(|s| s.input), Some("\x13"));
+        assert_eq!(
+            by_id("claude").unwrap().draft_stash().map(|s| s.input),
+            Some("\x13")
+        );
         for id in ["codex", "kimi", "gemini", "opencode"] {
             assert!(by_id(id).unwrap().draft_stash().is_none());
         }

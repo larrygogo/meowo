@@ -21,6 +21,9 @@ pub struct HookEvent {
     pub prompt: Option<serde_json::Value>,
     #[serde(default)]
     pub tool_name: Option<String>,
+    /// Gemini 的 Notification 也用于普通通知，只把官方 ToolPermission 当成待审批。
+    #[serde(default)]
+    pub notification_type: Option<String>,
     #[serde(default)]
     pub tool_input: Option<serde_json::Value>,
     /// PostToolUse 携带的工具结果。目前只有增量待办要读它——TaskCreate 分配的任务编号

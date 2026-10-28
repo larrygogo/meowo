@@ -9,6 +9,8 @@ import { type ChatItem } from "../../api";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { parseUserText, type CrossMessage } from "./localCommand";
 import { copyPlainText } from "./clipboard";
+import { stripAnsi } from "./shared";
+import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../../remoteMode";
 
 function MessageCopyButton({ text }: { text: string }) {
   const t = useT();
@@ -34,7 +36,7 @@ function MessageCopyButton({ text }: { text: string }) {
 
 // Claude Code 把粘贴/引用的图片在 transcript 里记成一行「[Image: source: <本地路径>]」。
 // 原样渲染就是在气泡里摊一整行 C:\Users\... 路径——对话里最脏的元素。渲染成缩略图
-// （asset 协议已启用，scope 限定在 image-cache 与 meowo-paste 两个图片目录，见
+// （asset 协议已启用，scope 限定在各账号的 image-cache 与 meowo-paste 图片目录，见
 // tauri.conf.json）；scope 外/文件已删时 onError 回退成文件名徽章。
 // 路径**任何形式都不上屏**——包括 title：hover 提示与读屏都会念出它，而本地路径常含
 // 用户名等身份信息。要看是哪张图，缩略图本身与文件名就够了。
@@ -280,6 +282,14 @@ export function ImageRef({ path }: { path: string }) {
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const name = path.split(/[\\/]/).pop() || path;
+  // 远程端失败时可能只是 /file 凭据过期（桌面重启换代），挂着等 transport 重领后重试。
+  // 桌面端没人派发该事件，失败即终态，行为不变。
+  useEffect(() => {
+    if (!failed) return;
+    const retry = () => setFailed(false);
+    window.addEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
+    return () => window.removeEventListener(FILE_TOKEN_REFRESHED_EVENT, retry);
+  }, [failed]);
   if (failed) {
     return (
       <span className="chat-image-chip" data-tip={name}>
@@ -292,7 +302,10 @@ export function ImageRef({ path }: { path: string }) {
   return (
     <>
       <button type="button" className="chat-image-thumb-btn" data-tip={name} onClick={() => setExpanded(true)}>
-        <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => {
+          setFailed(true);
+          window.dispatchEvent(new CustomEvent(IMAGE_LOAD_FAILED_EVENT));
+        }} />
       </button>
       {/* 灯箱走 portal（在 Lightbox 内）：消息块开着 content-visibility（paint 包含），
           fixed 覆盖层留在消息里会被裁剪在消息框内。 */}
@@ -318,32 +331,24 @@ export function imageOnlyPaths(text: string): string[] | null {
 }
 
 /** 连续纯图片消息合并后的展示块（Transcript 专用）。 */
-export function UserImageGroup({ paths }: { paths: string[] }) {
+export function UserImageGroup({ paths, anchorId }: { paths: string[]; anchorId?: string }) {
   return (
-    <article className="chat-message is-user has-images">
+    <article className="chat-message is-user has-images" data-msg-id={anchorId}>
       <ImageRow images={paths.map((path, index) => ({ path, key: `${index}:${path}` }))} />
     </article>
   );
 }
 
-/// 超过这个行数的思考过程收成预览态。与 styles.css 里 `.chat-reasoning.is-long` 的
-/// max-height 是同一个意思，改一个要顺带看另一个。
-const REASONING_PREVIEW_LINES = 6;
-
-/** 思考过程块。开合只在**首次挂载**时按当时长度定一次：流式期间行数越过阈值不再把
- *  open 从 true 翻成 false——用户正读着的思考被 React 收起是实拍投诉。之后 open 的
- *  vdom 值保持不变，用户手动开合(原生 details 行为)不会被渲染覆盖。 */
+/** 思考过程块：恒为收起的一行灰字，点开看全文。2026-10 用户对照 Kimi 客户端实拍
+ *  嫌对话区拥挤，定为「思考过程收成一行」——此前短思考摊开、长思考露 6 行预览，
+ *  每轮都多出一段灰字。open 不受控，开合完全归原生 details，流式更新不会把它弹开。 */
 function ReasoningBlock({ item }: { item: Extract<ChatItem, { type: "reasoning" | "reasoning_delta" }> }) {
   const t = useT();
-  const lines = item.text.split("\n").filter((line) => line.trim()).length;
-  const long = lines > REASONING_PREVIEW_LINES;
-  const [initialOpen] = useState(!long);
   return (
-    <details className={"chat-reasoning" + (long ? " is-long" : "")} open={initialOpen}>
+    <details className="chat-reasoning">
       <summary>
-        <span className="chat-timeline-dot" />
         {t.chat.reasoning}
-        {long && <span className="chat-reasoning-size">{t.chat.reasoningLines(lines)}</span>}
+        <span className="chat-tool-chevron">›</span>
       </summary>
       <div className="chat-md"><ChatMarkdown text={item.text} /></div>
     </details>
@@ -371,7 +376,7 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
       if (!parts.commands.length && !parts.stdout.length && !parts.notifications.length
         && !parts.crossMessages.length && !parts.text) return null;
       return (
-        <article className="chat-message is-user is-command">
+        <article className="chat-message is-user is-command" data-msg-id={item.id}>
           {parts.commands.map((command, index) => (
             <span className="chat-command" key={`${command.name}-${index}`}>
               <span className="chat-command-icon" aria-hidden="true">
@@ -394,10 +399,10 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
             <details className="chat-tool chat-command-out" key={index}>
               <summary>
                 <span className="chat-tool-name">{t.chat.commandOutput}</span>
-                <span className="chat-tool-summary">{out}</span>
+                <span className="chat-tool-summary">{stripAnsi(out)}</span>
                 <span className="chat-tool-chevron">›</span>
               </summary>
-              <pre>{out}</pre>
+              <pre>{stripAnsi(out)}</pre>
             </details>
           ))}
           {/* 后台任务通知默认收起：整段是 XML+JSON 的机器记录，一行摘要（通知自带的
@@ -419,7 +424,8 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
     // 有图时缩略图独立成行排在**气泡上方**、气泡只包正文（Claude Code 同款布局，
     // has-images 把气泡皮从 article 挪到 .chat-text 上）；纯图消息没有气泡，只有图。
     return (
-      <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-tip={timeTitle}>
+      // data-msg-id：右侧用户消息导航（UserMessageNav）按它定位、跳转。
+      <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-tip={timeTitle} data-msg-id={item.id}>
         {images.length > 0 && <ImageRow images={images} />}
         {body && <div className="chat-text">{body}</div>}
         {body && <MessageCopyButton text={body} />}
@@ -470,9 +476,9 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
       <details className={"chat-tool chat-result" + (item.is_error ? " is-error" : "")}>
         <summary>
           <span className="chat-tool-icon is-file"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h8l4 4v14H6zM14 3v5h5" /></svg></span>
-          <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{item.text}</span><span className="chat-tool-chevron">›</span>
+          <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{stripAnsi(item.text)}</span><span className="chat-tool-chevron">›</span>
         </summary>
-        <pre>{item.text}</pre>
+        <pre>{stripAnsi(item.text)}</pre>
       </details>
     );
   }

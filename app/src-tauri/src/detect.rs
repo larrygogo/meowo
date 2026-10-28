@@ -578,6 +578,21 @@ mod tests {
     }
 
     #[test]
+    fn powershell_permission_prompt_is_blocked() {
+        let s = snap(&[
+            " PowerShell command",
+            "   Get-Process -Id 1",
+            " Do you want to proceed?",
+            " \u{276F} 1. Yes",
+            "   2. No",
+        ]);
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Blocked, "bash_permission_prompt"))
+        );
+    }
+
+    #[test]
     fn generic_permission_prompt_is_blocked() {
         let s = snap(&[
             "────────────────────────",

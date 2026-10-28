@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -7,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MutableRefObject,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -36,7 +38,8 @@ import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
-import { buildFileTree, diffLineClass, type FileTreeNode } from "./gitDiff";
+import { buildFileTree, diffLineClass, touchedByPath, type FileTreeNode } from "./gitDiff";
+import { diffLineAnchors, type DiffLineAnchor, type ReviewComment } from "./diffComments";
 import { highlightLines, languageForPath } from "./highlight";
 
 /** 后端对二进制 diff 给的占位行（见 git.rs untracked_file_diff / GitFileDiffDto 注释）。 */
@@ -447,7 +450,7 @@ function DirSwitcher({ cwd, dirs, onDirChange, onAddDir, onRemoveDir }: {
 }
 
 export const GitDiffView = memo(GitDiffViewImpl);
-function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summary, width, collapsed, maximized, onCollapse, onToggleMaximize }: {
+function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths }: {
   /** 面板的激活仓:主仓或某个附加目录(--add-dir)。文件树与更改都对着它。 */
   cwd: string;
   /** 会话的全部目录(主仓在首)。仓切换与附加目录管理都在头行的 DirSwitcher。 */
@@ -466,10 +469,20 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
   maximized: boolean;
   onCollapse: () => void;
   onToggleMaximize: () => void;
+  /** 本会话攒着的改动评论（全部仓）；面板只显示激活仓的那些。 */
+  comments: readonly ReviewComment[];
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  onRemoveComment: (id: string) => void;
+  /** 本会话编辑工具碰过的文件（见 sessionTouchedPaths）；空数组 = 认不出，不出过滤开关。 */
+  touchedPaths: readonly string[];
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo;
   const [tab, setTab] = useState<"changes" | "files">(changesAvailable ? "changes" : "files");
+  // 评论框开着时 Esc 只关评论框：面板的 Esc 监听挂在捕获段、先于评论框收到按键，
+  // 不在这里分流的话一按 Esc 整个面板就收起了，写了一半的评论也看不见了。
+  const escOverrideRef = useRef<(() => void) | null>(null);
+  const dirComments = useMemo(() => comments.filter((comment) => comment.dir === cwd), [comments, cwd]);
 
   // Esc 折叠面板。挂捕获段并拦住传播（ChatWindow 有全局 Esc=拒绝审批的监听，
   // 且焦点可能在 composer 输入框里——那里的 Esc 处理器不查层栈，只有捕获段
@@ -480,8 +493,12 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
+      // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。
+      if (document.querySelector(".chat-modal-overlay")) return;
       event.stopPropagation();
-      onCollapse();
+      if (escOverrideRef.current) escOverrideRef.current();
+      else onCollapse();
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
@@ -554,14 +571,33 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
       </header>
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
       {tab === "changes" && changesAvailable && summary
-        ? <ChangesView key={cwd} cwd={cwd} summary={summary} />
+        ? (
+          <ChangesView
+            key={cwd}
+            cwd={cwd}
+            summary={summary}
+            comments={dirComments}
+            touchedPaths={touchedPaths}
+            onAddComment={onAddComment}
+            onRemoveComment={onRemoveComment}
+            escOverrideRef={escOverrideRef}
+          />
+        )
         : <FilesView key={cwd} cwd={cwd} />}
     </aside>
   );
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto }) {
+function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRemoveComment, escOverrideRef }: {
+  cwd: string;
+  summary: GitDiffSummaryDto;
+  comments: readonly ReviewComment[];
+  touchedPaths: readonly string[];
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  onRemoveComment: (id: string) => void;
+  escOverrideRef: MutableRefObject<(() => void) | null>;
+}) {
   const t = useT();
   // 当前查看的文件（null = 文件树形态）；diff 结果按路径缓存，往返切换不重复拉取。
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -598,13 +634,35 @@ function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto
 
   const fileByPath = useMemo(() => new Map(summary.files.map((file) => [file.path, file])), [summary.files]);
 
+  // 「只看本会话改的」：工作区里常混着用户手改的、别的并行会话改的文件。只有认得出
+  // 编辑路径的 agent（touchedPaths 非空）才出这个开关。
+  const [onlySession, setOnlySession] = useState(false);
+  const sessionFiles = useMemo(
+    () => (touchedPaths.length > 0 ? new Set(summary.files.filter((file) => touchedByPath(touchedPaths, cwd, file.path)).map((file) => file.path)) : null),
+    [touchedPaths, cwd, summary.files],
+  );
+  const filterSession = onlySession && !!sessionFiles;
+  const visibleFiles = useMemo(
+    () => (filterSession && sessionFiles ? summary.files.filter((file) => sessionFiles.has(file.path)) : summary.files),
+    [filterSession, sessionFiles, summary.files],
+  );
+  // 合计跟着当前列表走：过滤到本会话时显示的就是本会话改了多少。
+  const totals = useMemo(() => {
+    const counted = visibleFiles.filter((file) => file.additions != null && file.deletions != null);
+    if (counted.length === 0) return null;
+    return {
+      additions: counted.reduce((sum, file) => sum + (file.additions ?? 0), 0),
+      deletions: counted.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
+    };
+  }, [visibleFiles]);
+
   const tree = useMemo(() => {
     const query = search.trim().toLowerCase();
     const files = query
-      ? summary.files.filter((file) => file.path.toLowerCase().includes(query))
-      : summary.files;
+      ? visibleFiles.filter((file) => file.path.toLowerCase().includes(query))
+      : visibleFiles;
     return buildFileTree(files);
-  }, [summary.files, search]);
+  }, [visibleFiles, search]);
 
   // 按需拉单文件 diff：一次会话改动可以很大，不随摘要预取全部。
   // 已缓存（含加载中/失败）的路径跳过，失败结果回树后重新点开即重试。
@@ -677,6 +735,33 @@ function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto
     () => (activeDiff && activeDiff.diff.trim() !== BINARY_PLACEHOLDER ? estimateMaxColumns(activeDiff.diff.split("\n")) : 0),
     [activeDiff],
   );
+  const anchors = useMemo(() => (activeDiff ? diffLineAnchors(activeDiff.diff) : []), [activeDiff]);
+  const commentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const comment of comments) counts.set(comment.path, (counts.get(comment.path) ?? 0) + 1);
+    return counts;
+  }, [comments]);
+
+  // 正在写评论的那一行（同一时间只开一个框）；换文件就关掉。
+  const [editing, setEditing] = useState<DiffLineAnchor | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  useEffect(() => {
+    setEditing(null);
+    setCommentDraft("");
+  }, [selectedPath]);
+  useEffect(() => {
+    if (!editing) return;
+    escOverrideRef.current = () => setEditing(null);
+    return () => { escOverrideRef.current = null; };
+  }, [editing, escOverrideRef]);
+  const saveComment = () => {
+    const text = commentDraft.trim();
+    if (!editing || !selectedPath || !text) return;
+    onAddComment({ path: selectedPath, side: editing.side, line: editing.line, code: editing.code, text });
+    setEditing(null);
+    setCommentDraft("");
+  };
+  const sameAnchor = (a: DiffLineAnchor, b: { side: string; line: number }) => a.side === b.side && a.line === b.line;
 
   const renderTree = (nodes: FileTreeNode[], depth: number): ReactNode =>
     nodes.map((node) =>
@@ -713,6 +798,10 @@ function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto
             <span className={`chat-diff-status is-${node.file.status.toLowerCase()}`}>{node.file.status}</span>
           )}
           <span className="chat-diff-path">{node.name}</span>
+          {node.file && <LineCounts file={fileByPath.get(node.file.path)} />}
+          {node.file && commentCounts.get(node.file.path) && (
+            <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(node.file.path)!)}>{commentCounts.get(node.file.path)}</span>
+          )}
         </button>
       ),
     );
@@ -756,11 +845,55 @@ function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto
               if (html == null) return <div key={index} className={cls || undefined}>{line || " "}</div>;
               // add/del/上下文行：符号列（+/−/空，不可选中）+ 逐 token 着色的正文。
               const sign = cls === "is-add" ? "+" : cls === "is-del" ? "−" : "";
+              const anchor = anchors[index];
+              const lineComments = anchor ? comments.filter((comment) => comment.path === selectedPath && sameAnchor(anchor, comment)) : [];
+              const isEditing = !!anchor && !!editing && sameAnchor(anchor, editing);
               return (
-                <div key={index} className={cls || undefined}>
-                  <span className="chat-diff-sign">{sign || " "}</span>
-                  <span dangerouslySetInnerHTML={{ __html: html || " " }} />
-                </div>
+                <Fragment key={index}>
+                  <div className={(cls ? cls + " " : "") + "chat-diff-row"}>
+                    {/* 悬停行时左缘出「+」：写一句意见，攒几条再一起插进输入框发给 agent
+                        （对照 Codex/Claude 桌面版的 diff 行评论；纯文本，五家 CLI 通吃）。 */}
+                    {anchor && (
+                      <button
+                        type="button"
+                        className="chat-diff-cmt-add"
+                        aria-label={t.chat.diffCommentAdd}
+                        data-tip={t.chat.diffCommentAdd}
+                        onClick={() => { setEditing(anchor); setCommentDraft(""); }}
+                      >+</button>
+                    )}
+                    <span className="chat-diff-sign">{sign || " "}</span>
+                    <span dangerouslySetInnerHTML={{ __html: html || " " }} />
+                  </div>
+                  {lineComments.map((comment) => (
+                    <div key={comment.id} className="chat-diff-cmt">
+                      <span className="chat-diff-cmt-text">{comment.text}</span>
+                      <button type="button" className="chat-diff-cmt-remove" aria-label={t.chat.diffCommentRemove} data-tip={t.chat.diffCommentRemove} onClick={() => onRemoveComment(comment.id)}>×</button>
+                    </div>
+                  ))}
+                  {isEditing && (
+                    <div className="chat-diff-cmt is-form">
+                      <textarea
+                        autoFocus
+                        rows={2}
+                        value={commentDraft}
+                        placeholder={t.chat.diffCommentPlaceholder}
+                        onChange={(event) => setCommentDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          // IME 合成中的 Enter 是选词，不是提交。
+                          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                            event.preventDefault();
+                            saveComment();
+                          }
+                        }}
+                      />
+                      <div className="chat-diff-cmt-actions">
+                        <button type="button" onClick={() => setEditing(null)}>{t.chat.diffCommentCancel}</button>
+                        <button type="button" className="is-primary" disabled={!commentDraft.trim()} onClick={saveComment}>{t.chat.diffCommentSave}</button>
+                      </div>
+                    </div>
+                  )}
+                </Fragment>
               );
             })}
           </pre>
@@ -789,13 +922,16 @@ function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto
   return (
     <>
       {/* 分支名放页签内部而非面板头行：这里整行宽度可用，长分支名截断不挤布局。 */}
-      {summary.branch && (
-        <div className="chat-diff-branchline" data-tip={summary.branch}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-            <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-          </svg>
-          <span>{summary.branch}</span>
+      {(summary.branch || totals) && (
+        <div className="chat-diff-branchline" data-tip={summary.branch ?? undefined}>
+          {summary.branch && <>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
+              <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
+            </svg>
+            <span>{summary.branch}</span>
+          </>}
+          <LineCounts file={totals ?? undefined} />
         </div>
       )}
       <input
@@ -810,7 +946,15 @@ function ChangesView({ cwd, summary }: { cwd: string; summary: GitDiffSummaryDto
         }}
         onCompositionEnd={(event) => setSearch(event.currentTarget.value)}
       />
-      <div className="chat-diff-tree">{renderTree(tree, 0)}</div>
+      {sessionFiles && (
+        <label className="chat-diff-only-session" data-tip={t.chat.diffOnlySessionTip}>
+          <input type="checkbox" checked={onlySession} onChange={(event) => setOnlySession(event.target.checked)} />
+          {t.chat.diffOnlySession(sessionFiles.size)}
+        </label>
+      )}
+      {filterSession && visibleFiles.length === 0
+        ? <div className="chat-diff-empty">{t.chat.diffNoSessionChanges}</div>
+        : <div className="chat-diff-tree">{renderTree(tree, 0)}</div>}
       {ctxMenu && (
         <PathContextMenu
           cwd={cwd}
@@ -1229,6 +1373,17 @@ function FilesView({ cwd }: { cwd: string }) {
         />
       )}
     </>
+  );
+}
+
+/** 文件或合计的 `+12 −3`；后端数不出来（二进制等）时两项都是 null，不占位。 */
+function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
+  if (!file || file.additions == null || file.deletions == null) return null;
+  return (
+    <span className="chat-diff-lines">
+      {file.additions > 0 && <span className="is-add">+{file.additions}</span>}
+      {file.deletions > 0 && <span className="is-del">−{file.deletions}</span>}
+    </span>
   );
 }
 

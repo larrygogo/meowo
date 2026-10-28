@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// GUI 对话窗口消费的 provider 无关消息单元。终端 ANSI 只负责还原终端，结构化对话始终来自
 /// agent 自己的 transcript，避免把光标移动、spinner 和重绘误当正文。
 pub use meowo_protocol::ipc::{
-    ChatItem, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
+    ChatItem, DiffHunk, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
     ToolDetail,
 };
 
@@ -83,6 +83,8 @@ pub enum TranscriptEvent {
         is_error: bool,
         /// 该结果是子任务委派的回执时的结局统计（见 [`SubagentSpec::detect_result`]）。
         subagent: Option<SubagentOutcome>,
+        /// 编辑类工具的统一 diff（见 [`DiffHunk`]）；拿不到为 None。
+        patch: Option<Vec<DiffHunk>>,
     },
     Metadata {
         id: String,
@@ -172,6 +174,7 @@ impl From<TranscriptEvent> for ChatItem {
                 text,
                 is_error,
                 subagent,
+                patch,
             } => Self::ToolResult {
                 id,
                 timestamp,
@@ -179,6 +182,7 @@ impl From<TranscriptEvent> for ChatItem {
                 text,
                 is_error,
                 subagent,
+                patch,
             },
             TranscriptEvent::Metadata {
                 id,
@@ -413,6 +417,13 @@ pub trait TranscriptSpec: Sync {
 
     /// None 表示权威清单尚未出现；Some（包括空 Vec）表示已经观测到本会话的完整清单。
     fn runtime_slash_commands(&self, _path: &Path) -> Option<Vec<crate::chat_ui::SlashCommand>> {
+        None
+    }
+
+    /// 这份 transcript 是否声明「会话已转到另一个 id 继续」，是则返回新会话 id。
+    /// agent 自己写下的接续标记是换绑 PTY 的强证据：同一个终端换了会话 id、认领方又是
+    /// 另一个进程时，靠它把「agent 主动接续」和「嵌套 agent 误认领」分开。默认没有此标记。
+    fn continued_in(&self, _path: &Path) -> Option<String> {
         None
     }
 
@@ -1233,6 +1244,7 @@ mod tests {
                 text: "ok".into(),
                 is_error: false,
                 subagent: None,
+                patch: None,
             }),
             ChatItem::ToolResult {
                 id: "result".into(),
@@ -1241,6 +1253,7 @@ mod tests {
                 text: "ok".into(),
                 is_error: false,
                 subagent: None,
+                patch: None,
             }
         );
         assert_eq!(

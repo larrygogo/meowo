@@ -22,8 +22,9 @@ export type TerminalAttentionOption = {
 };
 /// 审批详情区的屏幕文法风格（后端 `AttentionDetails` 的镜像，插件随 AttentionPattern 声明）：
 /// proceed_box = 「Do you want to proceed?」框式（光标移动选择、记住=持久规则）；
-/// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）。缺省/none = 不做结构化拆解。
-export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel";
+/// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）；
+/// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。缺省/none = 不做结构化拆解。
+export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box";
 export type TerminalAttention = { id: string; text: string; options?: TerminalAttentionOption[]; details?: AttentionDetailsStyle };
 
 export function visibleTerminalText(text: string): string {
@@ -31,8 +32,10 @@ export function visibleTerminalText(text: string): string {
   // ManagedTerminal 时把历史信任页再次报成当前状态。
   const clearAt = Math.max(text.lastIndexOf("\x1b[2J"), text.lastIndexOf("\x1b[3J"));
   const currentScreen = clearAt >= 0 ? text.slice(clearAt) : text;
-  return currentScreen
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+  // OSC 体内不能跨过 ESC:claude 2.1.304 开屏先发 ST 结尾的标题 `ESC]0;claude ESC\`,
+  // 屏末再发 BEL 结尾的 `ESC]7501;?BEL`。原先 `[^\x07]*` 贪婪吞到后一个 BEL,整屏文字被删光,
+  // 信任页因此认不出、对话页一直停在「会话正在启动…」(2026-10-21 portable-pty 实抓)。
+  return expandCursorColumns(currentScreen.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, ""))
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\r(?!\n)/g, "\n")
     .split("\n")
@@ -40,7 +43,41 @@ export function visibleTerminalText(text: string): string {
     .filter((line, index, lines) => line.trim() && line !== lines[index - 1])
     .slice(-80)
     .join("\n")
-    .trim();
+    // 只削尾部:首行缩进是选项块对齐的依据(detectAnchoredCursorMenu 按缩进圈选项),
+    // 光标行恰好是首行时 .trim() 会让它和下面的选项对不上。空行上面已经滤掉了。
+    .trimEnd();
+}
+
+/// 东亚宽字符占两列;只为让列号估算别偏大(偏大会少补空格、单词粘连),不求完全精确。
+const WIDE_CHAR = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/;
+
+/// 把横向光标移动还原成空格。claude 2.1.304 的渲染器不再输出词间空格,改用 CHA(`ESC[nG`)
+/// 跳到下一个词的列:信任页原文是 `ESC[4GYes,ESC[9GI ESC[11Gtrust…`(2026-10-21 实抓),
+/// 直接剥掉 CSI 就成了 `Yes,Itrustthisfolder`,所有按短语认屏的规则都对不上。
+/// CHA 按当前列补到目标列,CUF(`ESC[nC`)补 n 个空格;其余 CSI 留给后面统一剥。
+function expandCursorColumns(text: string): string {
+  let column = 0;
+  let out = "";
+  for (const match of text.matchAll(/\x1b\[([0-?]*)([ -/]*[@-~])|\r|\n|[^\x1b\r\n]+|\x1b/g)) {
+    const [token, params, final] = match;
+    if (final === "G" || final === "C") {
+      const count = Math.max(1, Number.parseInt(params, 10) || 1);
+      const pad = final === "G" ? count - 1 - column : count;
+      if (pad > 0) {
+        out += " ".repeat(pad);
+        column += pad;
+      }
+    } else if (final !== undefined) {
+      out += token;
+    } else if (token === "\r" || token === "\n") {
+      out += token;
+      column = 0;
+    } else {
+      out += token;
+      for (const char of token) column += WIDE_CHAR.test(char) ? 2 : 1;
+    }
+  }
+  return out;
 }
 
 /// 从终端可见文本里识别当前模式：命中位置**最靠后**的标记胜出——模式切换的重绘按时间
@@ -364,12 +401,25 @@ function detectAnchoredCursorMenu(
 ): { lines: string[]; focused: number } | null {
   const lines = visible.split("\n");
   const fromLine = visible.slice(0, fromIndex).split("\n").length - 1;
-  const focusedLine = lines.findIndex((line, index) => index > fromLine && /^\s*[❯›]\s+\S/.test(line));
-  if (focusedLine < 0) return null;
   const textIndent = (line: string): number => {
     const match = /^(\s*)([❯›]\s+)?/.exec(line);
     return (match?.[1]?.length ?? 0) + (match?.[2]?.length ?? 0);
   };
+  const cursorLine = (line: string) => /^\s*[❯›]\s+\S/.test(line);
+  let focusedLine = lines.findIndex((line, index) => index > fromLine && cursorLine(line));
+  // 锚点本身就是选项行、光标停在它上方的另一项:claude 2.1.304 信任页去掉了编号并把
+  // 「❯ No, exit」排在第一项,命中的 "trust this folder" 在第二项(2026-10-21 实抓)。
+  // 只沿锚点所在的同缩进块往上找,不会捞到上一屏残留的别的光标。
+  if (focusedLine < 0 && lines[fromLine] !== undefined) {
+    const anchorIndent = textIndent(lines[fromLine]);
+    for (let line = fromLine - 1; line >= 0 && lines[line].trim() && textIndent(lines[line]) === anchorIndent; line -= 1) {
+      if (cursorLine(lines[line])) {
+        focusedLine = line;
+        break;
+      }
+    }
+  }
+  if (focusedLine < 0) return null;
   const target = textIndent(lines[focusedLine]);
   const optionLine = (line: string) =>
     line.trim().length > 0 && textIndent(line) === target && !/[。？！?!.：:]$/.test(line.trim());
@@ -459,6 +509,20 @@ export function terminalAttention(
   if (!best) return null;
   // 详情区文法风格由插件随 AttentionPattern 声明（此前按 pattern id 猜，是变相身份分支）。
   const detailsStyle: AttentionDetailsStyle = best.details ?? "none";
+  // 框线对话框式(gemini 审批框):选项行形如 `│ ● 1. Allow once │`,行首的框线让下面按行首
+  // 编号提取的通用路径认不出。详情取命中行所在的**外框**整块(内框行以 │ 开头,向上/向下
+  // 找到的第一条 ╭/╰ 行就是外框边),选项复用 /model 对话框的框线解析——同样以 ● 焦点做
+  // 相对移动,找不到焦点不出按钮。
+  if (detailsStyle === "framed_box") {
+    const lines = visible.split("\n");
+    const matchedLine = visible.slice(0, best.index).split("\n").length - 1;
+    let top = matchedLine;
+    while (top > 0 && !/^\s*╭/.test(lines[top])) top -= 1;
+    let bottom = matchedLine;
+    while (bottom < lines.length - 1 && !/^\s*╰/.test(lines[bottom])) bottom += 1;
+    const box = lines.slice(top, bottom + 1).join("\n");
+    return { id: best.id, text: box, details: detailsStyle, options: detectFramedNumberedMenu(box)?.options };
+  }
   const approvalCard = detailsStyle !== "none";
   // 面板式的详情从标题行(▶ Run this command?)起取:best 可能命中面板底部的
   // 按键提示行,从那里截会把命令正文裁掉。同样取最后一个标题——首个会落在重绘残影上。

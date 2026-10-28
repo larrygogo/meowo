@@ -41,6 +41,265 @@ import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
 
+// 这些用例模拟真实的异步间隙与 CLI 回显，避免只验证「调用过 write」却漏掉误提交/丢草稿。
+describe("ChatWindow 适配回归", () => {
+  const history = (sessionId: number, provider = "claude", status = "waiting", screenState: string | null = null) => ({
+    sessionId, provider, status, screenState, title: `适配-${sessionId}`, cwd: "C:/repo", connected: true,
+    supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "当前模型",
+  });
+  const snapshot = (sessionId: number, text = "") => ({
+    sessionId, active: true, managed: true, data: b64utf8(text), startOffset: 0,
+    endOffset: text.length, exited: false, exitCode: null,
+  });
+  const setup = (sessionId: number, provider = "claude", status = "waiting", screenState: string | null = null) => {
+    window.history.replaceState({}, "", `/?sessionId=${sessionId}`);
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve(history(Number(args?.sessionId), provider, status, screenState));
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi(provider));
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(Number(args?.sessionId)));
+      return Promise.resolve();
+    });
+    return invoke.getMockImplementation()!;
+  };
+  const box = () => screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+  const writes = (sessionId: number) => invoke.mock.calls
+    .filter(([command, args]) => command === "write_managed_terminal" && args.sessionId === sessionId)
+    .map(([, args]) => args.data);
+
+  it("codex 运行中发送使用 Tab 排队", async () => {
+    setup(501, "codex", "running");
+    render(<ChatWindow />);
+    await screen.findByText("适配-501");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "下一回合处理" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(501)).toContain("\t"));
+    expect(writes(501)).not.toContain("\r");
+  });
+
+  // gemini 启动即落 running、首条消息前无事件纠正：屏幕已停在输入框（idle）时必须按回车
+  // 提交，按 Tab 正文会停在输入框里发不出去（0.6.11 实机）。
+  it("gemini DB 残留 running 但屏幕空闲时，发送用回车而非排队键", async () => {
+    setup(507, "gemini", "running", "idle");
+    render(<ChatWindow />);
+    await screen.findByText("适配-507");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "测试测试" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(507)).toContain("\r"));
+    expect(writes(507)).not.toContain("\t");
+  });
+
+  it("OpenCode 模型入口使用原生 /models，列举结果不会变成 /model id", async () => {
+    const base = setup(502, "opencode");
+    invoke.mockImplementation((command, args) => command === "agent_models"
+      ? Promise.resolve(["anthropic/claude-sonnet"]) : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-502");
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    await waitFor(() => expect(writes(502)).toContain("/models"));
+    expect(writes(502).some((text) => String(text).startsWith("/model "))).toBe(false);
+    expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(false);
+    expect(writes(502)).not.toContain("\x1b");
+  });
+
+  it("发送期间 A→B→A，旧提交不回车也不清除新草稿", async () => {
+    const base = setup(503);
+    let release!: () => void;
+    invoke.mockImplementation((command, args) => command === "write_managed_terminal" && args?.data === "旧内容"
+      ? new Promise<void>((resolve) => { release = resolve; }) : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-503");
+    fireEvent.change(box(), { target: { value: "旧内容" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 504 }));
+    await screen.findByText("适配-504");
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 503 }));
+    await screen.findByText("适配-503");
+    fireEvent.change(box(), { target: { value: "返回后新写的草稿" } });
+    await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 400)); });
+    expect(box().value).toBe("返回后新写的草稿");
+    expect(writes(503)).not.toContain("\r");
+    expect(writes(503)).not.toContain("\x15");
+  });
+
+  it("同一会话发送期间继续编辑，成功后保留新内容", async () => {
+    const base = setup(505);
+    let release!: () => void;
+    invoke.mockImplementation((command, args) => command === "write_managed_terminal" && args?.data === "已提交内容"
+      ? new Promise<void>((resolve) => { release = resolve; }) : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-505");
+    fireEvent.change(box(), { target: { value: "已提交内容" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    fireEvent.change(box(), { target: { value: "后来输入的草稿" } });
+    await act(async () => { release(); });
+    await waitFor(() => expect(writes(505)).toContain("\r"));
+    expect(box().value).toBe("后来输入的草稿");
+  });
+
+  it("图片占位符超时不提交，保留原稿并阻止自动重贴", async () => {
+    setup(506);
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-506");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText(zh.chat.imagePasteUnconfirmed, {}, { timeout: 4000 });
+    expect(writes(506)).not.toContain("\r");
+    expect(box().value).toBe("看图");
+    expect(screen.getByAltText("shot.png")).toBeTruthy();
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(writes(506).filter((text) => text === "\x16")).toHaveLength(1);
+  });
+
+  it("上次发图残留的占位符，重发时自动 Ctrl-U 清掉再重贴，不再拦截", async () => {
+    const base = setup(510);
+    let pastes = 0;
+    let cleared = false;
+    // 首发时整屏仿真认不出 composer(清不了残图、不能降级 → 报错);重发时才认得出。
+    let recognizable = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\x16") pastes += 1;
+      if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
+      // 第一次贴图「没认出来」(占位符不进增量流)，第二次正常落出。
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(510, pastes >= 2 ? "[Image #1]" : ""));
+      // 空 composer 显示的是灰色提示语而不是空行（2.1.303 实拍）。
+      if (command === "managed_terminal_screen") return Promise.resolve(!recognizable ? null : ["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-510");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText(zh.chat.imagePasteUnconfirmed, {}, { timeout: 4000 });
+    expect(writes(510)).not.toContain("\r");
+    recognizable = true;
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(510)).toContain("\r"), { timeout: 4000 });
+    const sent = writes(510);
+    expect(sent.indexOf("\x15")).toBeLessThan(sent.lastIndexOf("\x16"));
+    expect(sent.filter((text) => text === "\x16")).toHaveLength(2);
+    expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+  });
+
+  it("占位符超时但残图能清掉：自动清理并改走文本路径发出，不打扰用户", async () => {
+    const base = setup(511);
+    let cleared = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
+      // 占位符始终不进增量流(超时),但整屏仿真里能看到 composer 上的残图。
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(511, ""));
+      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-511");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(511)).toContain("\r"), { timeout: 4000 });
+    const sent = writes(511);
+    // 先清残图,再写带路径的文本正文,最后回车。
+    const body = sent.findIndex((text) => String(text).includes("C:\\repo\\shot.png"));
+    expect(body).toBeGreaterThan(sent.indexOf("\x15"));
+    expect(String(sent[body])).toContain("看图");
+    expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+    await waitFor(() => expect(box().value).toBe(""));
+  });
+
+  // claude 运行中贴图走增量重绘，占位符里的空格被光标定位跳过（2.1.303 实测原始流）。
+  it("占位符空格被光标定位跳过时仍认作贴图成功并提交", async () => {
+    const base = setup(509);
+    let pasted = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\x16") pasted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(509, pasted ? "\x1b[2C\x1b[37B[Image\x1b[10G#1]\r" : ""));
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-509");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("shot.png");
+    fireEvent.change(box(), { target: { value: "看图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(509)).toContain("\r"));
+    expect(screen.queryByText(zh.chat.imagePasteUnconfirmed)).toBeNull();
+  });
+
+  it("第一张已附加、第二张剪贴板失败时，不降级重发全部路径", async () => {
+    const base = setup(507);
+    let pasted = false;
+    let clipboardCalls = 0;
+    invoke.mockImplementation((command, args) => {
+      if (command === "clipboard_set_image") return ++clipboardCalls === 2
+        ? Promise.reject(new Error("clipboard occupied")) : Promise.resolve();
+      if (command === "write_managed_terminal" && args?.data === "\x16") pasted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(507, pasted ? "[Image #1]" : ""));
+      return base(command, args);
+    });
+    openDialog.mockResolvedValueOnce(["C:\\repo\\one.png", "C:\\repo\\two.png"]);
+    render(<ChatWindow />);
+    await screen.findByText("适配-507");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await screen.findByAltText("two.png");
+    fireEvent.change(box(), { target: { value: "比较两张图" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText(zh.chat.imagePasteUnconfirmed);
+    expect(writes(507)).toEqual(["\x16"]);
+    expect(box().value).toBe("比较两张图");
+  });
+
+  it("交互卡仅收起后可编辑，但不能把消息和回车写进选择器", async () => {
+    setup(508);
+    render(<ChatWindow />);
+    await screen.findByText("适配-508");
+    await waitFor(() => expect(terminalProps.current?.onAttention).toBeTypeOf("function"));
+    const attention = terminalAttention("Which model?\n❯ 1. Sonnet\n  2. Opus\nEnter to select · Esc to cancel", [], false, true);
+    expect(attention).toBeTruthy();
+    act(() => (terminalProps.current!.onAttention as (value: unknown) => void)(attention));
+    fireEvent.click(await screen.findByRole("button", { name: "仅收起" }));
+    fireEvent.change(box(), { target: { value: "不应该替我选择模型" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText(zh.chat.terminalNeedsAttention);
+    expect(writes(508)).toHaveLength(0);
+    expect(box().value).toBe("不应该替我选择模型");
+  });
+
+  it.each([true, false])("模型保存需要 CLI 新确认行：confirmed=%s", async (confirmed) => {
+    const base = setup(509);
+    let submitted = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(509,
+        submitted && confirmed ? "Set model to Sonnet 5 (claude-sonnet-5)" : ""));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-509");
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Sonnet/ }));
+    if (confirmed) {
+      await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(true));
+    } else {
+      await screen.findByText(zh.chat.modelSwitchUnconfirmed, {}, { timeout: 4000 });
+      expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(false);
+    }
+  });
+});
+
 /// UTF-8 → base64。btoa 只吃 latin1,含中文的终端回显必须先转字节,否则直接抛
 /// InvalidCharacterError(生产端 decodeBase64 按 UTF-8 字节解码,两头对齐)。
 function b64utf8(text: string): string {
@@ -64,6 +323,7 @@ function respondWithHistory(history: unknown, approval: unknown = null) {
       return Promise.resolve(h);
     }
     if (command === "pending_interaction") return Promise.resolve({ approval, question: null });
+    if (command === "agent_chat_ui") return Promise.resolve(chatUi((history as { provider: string }).provider));
     if (command === "managed_terminal_binding") return Promise.resolve(null);
     if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 1, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
     return Promise.resolve();
@@ -152,14 +412,14 @@ describe("ChatWindow", () => {
     expect(invoke).toHaveBeenCalledWith("open_project_dir", { cwd: "C:/repo" });
     expect(screen.getByText("开始")).toBeTruthy();
     expect(screen.getByText("我来实现")).toBeTruthy();
-    // 短思考直接摊开，不为几行内容加一次点击（长的才收成预览态，见下一个用例）。
+    // 思考过程恒为收起的一行（用户对照 Kimi 定），内容仍在 DOM 里供点开。
     const reasoning = screen.getByText("先检查现有协议").closest("details");
-    expect(reasoning?.hasAttribute("open")).toBe(true);
-    expect(reasoning?.className).not.toContain("is-long");
+    expect(reasoning?.hasAttribute("open")).toBe(false);
     // 摘要直接写种类（「运行终端」），不再有「执行了 N 次工具调用」的计数短语。
     const activity = screen.getAllByText("运行终端")[0].closest("details");
     expect(activity?.className).toContain("chat-activity-group");
-    expect(activity?.hasAttribute("open")).toBe(false);
+    // 过程组默认展开成时间线卡片（A+B 改版后用户实拍要求）；思考过程仍收起，见上。
+    expect(activity?.hasAttribute("open")).toBe(true);
     expect(screen.queryByText("工具结果")).toBeNull();
     expect(invoke).toHaveBeenCalledWith("get_chat_history", { sessionId: 7, offset: 0 });
     fireEvent.change(screen.getByRole("combobox", { name: "发送消息给 Agent" }), { target: { value: "继续实现" } });
@@ -296,7 +556,7 @@ describe("ChatWindow", () => {
     let sentMenuCommand = false;
     invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
-        sessionId: 18, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
+        sessionId: 18, title: "换模型", status: "waiting", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
       });
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
@@ -359,6 +619,66 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_pasted_attachment", { fileName: "shot.png", dataBase64: "AQID" }));
     // 图片附件渲染为缩略图（ImageRef），文件名在 img 的 alt 上而不再是文本 chip。
     expect(await screen.findByAltText("shot.png")).toBeTruthy();
+  });
+
+  it("新会话认领(临时 id → 真 id)时，已粘的图和打的字跟过去", async () => {
+    window.history.replaceState({}, "", "/?sessionId=-9");
+    let claimed = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "managed_terminal_binding") return Promise.resolve(claimed ? 77 : null);
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 77, title: "认领后", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: Number(args?.sessionId), active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "save_pasted_attachment") {
+        return Promise.resolve(`C:/tmp/meowo-paste/1-0/${(args as { fileName: string }).fileName}`);
+      }
+      return Promise.resolve(null);
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    fireEvent.change(input, { target: { value: "看看这张图" } });
+    const file = { name: "shot.png", arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    expect(await screen.findByAltText("shot.png")).toBeTruthy();
+
+    claimed = true;
+    await waitFor(() => expect(screen.getByText("认领后")).toBeTruthy());
+    expect(screen.getByAltText("shot.png")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).value).toBe("看看这张图");
+  });
+
+  it("新会话认领撞上图片落盘在途：落盘回来的图不丢", async () => {
+    window.history.replaceState({}, "", "/?sessionId=-10");
+    let claimed = false;
+    let finishSave: (path: string) => void = () => {};
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "managed_terminal_binding") return Promise.resolve(claimed ? 78 : null);
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 78, title: "认领后在途", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: Number(args?.sessionId), active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "save_pasted_attachment") return new Promise((resolve) => { finishSave = resolve; });
+      return Promise.resolve(null);
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    const file = { name: "late.png", arrayBuffer: () => Promise.resolve(new Uint8Array([1]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_pasted_attachment", expect.anything()));
+
+    claimed = true;
+    await waitFor(() => expect(screen.getByText("认领后在途")).toBeTruthy());
+    finishSave("C:/tmp/meowo-paste/2-0/late.png");
+    expect(await screen.findByAltText("late.png")).toBeTruthy();
   });
 
   it("手敲交互式内置命令（/config）走菜单识别通道：清空输入框并打开识别窗口", async () => {
@@ -447,32 +767,11 @@ describe("ChatWindow", () => {
 
     fireEvent.click(button);
     await waitFor(() => expect(sentModel()).toBe(1));
-    // 识别窗口开着时再点：只收起（发 Esc），绝不重发——重发会变成 `Search: /model/model`。
+    // 识别尚未确认菜单时再点：不重发，也不盲发可能中断任务的 Esc。
     await waitFor(() => expect(terminalProps.current?.expectMenu).toBe(true));
     fireEvent.click(button);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 19, data: "\x1b" }));
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 19, data: "\x1b" });
     expect(sentModel()).toBe(1);
-  });
-
-  it("长思考收成预览态：内容仍在 DOM 里，标题给出行数", async () => {
-    window.history.replaceState({}, "", "/?sessionId=22");
-    const long = Array.from({ length: 30 }, (_, i) => `推理第 ${i + 1} 步`).join("\n");
-    respondWithHistory({
-      sessionId: 22, title: "长推理", status: "running", provider: "claude", cwd: "C:/repo",
-      supported: true, offset: 0, reset: false, pendingReview: null,
-      items: [{ type: "reasoning", id: "r1", timestamp: null, text: long }],
-    });
-    render(<ChatWindow />);
-
-    // 预览态：details 不展开，但内容**不是**被藏起来——CSS 会显示开头几行并渐隐，
-    // 所以节点必须仍在 DOM 里（也让浏览器内搜索、屏幕阅读器仍能命中）。
-    const first = await screen.findByText(/推理第 1 步/);
-    const details = first.closest("details");
-    expect(details?.hasAttribute("open")).toBe(false);
-    expect(details?.className).toContain("is-long");
-    expect(screen.getByText("30 行")).toBeTruthy();
-    // 末尾那步也在 DOM 里，只是被 max-height 裁掉了视觉。
-    expect(screen.getByText(/推理第 30 步/)).toBeTruthy();
   });
 
   it("shows the provider capability fallback", async () => {
@@ -751,6 +1050,29 @@ describe("ChatWindow", () => {
     expect(invoke).not.toHaveBeenCalledWith("start_managed_terminal", expect.anything());
   });
 
+  it("shows the trust card for a temp session before it is claimed", async () => {
+    // 新建会话认领前只有临时负 id、没有 history;claude 2.1.304 的信任页又在 hook 认领之前,
+    // provider 只能从后端 pending 启动登记取(2026-10-21 dev 实拍:对话页一直「会话正在启动…」)。
+    window.history.replaceState({}, "", "/?sessionId=-7");
+    const prompt = "\x1b]0;claude\x1b\\\r\n"
+      + "\x1b[2G\x1b[38;2;177;185;249m❯\x1b[4GNo,\x1b[8Gexit\x1b[39m\r\n"
+      + "\x1b[4GYes,\x1b[9GI\x1b[11Gtrust\x1b[17Gthis\x1b[22Gfolder\r\n\r\n"
+      + "\x1b[2GEnter\x1b[8Gto\x1b[11Gconfirm\x1b[19G·\x1b[21GEsc\x1b[25Gto\x1b[28Gcancel\r\n"
+      + "\x1b]7501;?\x07";
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/new-repo" });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") {
+        return Promise.resolve({ sessionId: -7, active: true, managed: true, data: btoa(unescape(encodeURIComponent(prompt))), startOffset: 0, endOffset: prompt.length, exited: false, exitCode: null });
+      }
+      return Promise.resolve(null);
+    });
+    render(<ChatWindow />);
+
+    expect(await screen.findByRole("button", { name: "Yes, I trust this folder" })).toBeTruthy();
+    expect(screen.getByText("是否信任此文件夹？")).toBeTruthy();
+  });
+
   it("renders assistant markdown but keeps user text verbatim", async () => {
     window.history.replaceState({}, "", "/?sessionId=21");
     respondWithHistory({
@@ -870,7 +1192,8 @@ describe("ChatWindow", () => {
     // 模型菜单：选择预设即向 PTY 发送 /model <id>。
     fireEvent.click(screen.getByRole("button", { name: "切换模型" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /^Sonnet/ }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 31, data: "/model sonnet" }));
+    await screen.findByText(zh.chat.menuBusy);
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 31, data: "/model sonnet" });
   });
 
   it("keeps probing a pending runtime skill listing and exposes code-review when it arrives", async () => {
@@ -978,10 +1301,10 @@ describe("ChatWindow", () => {
     // 每步都要等一轮 650ms 轮询,8 个步骤加起来超出 5s 默认时限。
   }, 15_000);
 
-  it("renders Codex mode dimensions and sends direct Kimi mode actions", async () => {
+  it("renders Kimi mode dimensions and opens the native permission selector", async () => {
     window.history.replaceState({}, "", "/?sessionId=41");
     const history = {
-      sessionId: 41, title: "Kimi 模式", status: "running", provider: "kimi", cwd: "C:/repo",
+      sessionId: 41, title: "Kimi 模式", status: "waiting", connected: true, provider: "kimi", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, model: null,
       agentModes: [
         { dimension: "work", value: "default" },
@@ -999,23 +1322,19 @@ describe("ChatWindow", () => {
         // 与 ChatUi 真实形状对齐(必填字段全给):此前缺 menu_slash_commands 等新字段,
         // 全靠生产码的可选链兜底侥幸通过,是唯一漏网的 mock。取值保持中性(空表/null),
         // 不引入本用例无关的菜单行为。
-        slash_commands: [], model_presets: [], version: "0.26.0",
+        slash_commands: [], model_presets: [], model_select_command: null, queue_input: "\r", version: "2.2.0",
         model_menu_command: null, menu_slash_commands: [],
         startup_attention_markers: [], selector_anchors: [], interrupt_input: null, runtime_commands_pending: false,
         attachment_mention: false, clipboard_image_paste: null, clipboard_paste_input: null,
         mode_controls: [
           {
-            dimension: "work", cycle_input: "\u001b[Z", options: [
+            dimension: "work", menu_command: null, cycle_input: "\u001b[Z", options: [
               { value: "default", inputs: [{ data: "/plan off", submit: true }] },
               { value: "plan", inputs: [{ data: "/plan on", submit: true }] },
             ], screen_markers: [],
           },
           {
-            dimension: "permission", cycle_input: null, options: [
-              { value: "manual", inputs: [{ data: "/yolo off", submit: true }, { data: "/auto off", submit: true }] },
-              { value: "yolo", inputs: [{ data: "/yolo on", submit: true }] },
-              { value: "auto", inputs: [{ data: "/auto on", submit: true }] },
-            ], screen_markers: [],
+            dimension: "permission", menu_command: "/permission", cycle_input: null, options: [], screen_markers: [],
           },
         ],
       });
@@ -1027,11 +1346,10 @@ describe("ChatWindow", () => {
     expect(screen.getByText("默认")).toBeTruthy();
     expect(screen.getByText("手动确认")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "YOLO" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "/yolo on" }));
-    // Enter 隔 SUBMIT_GAP_MS 才发（见 submitToTerminal），同样要 waitFor。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "/permission" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "\r" }));
-    expect(await screen.findByText("YOLO")).toBeTruthy();
+    expect(screen.getByText("手动确认")).toBeTruthy();
+    expect(invoke.mock.calls.some(([cmd, args]) => cmd === "write_managed_terminal" && String(args.data).includes("/yolo"))).toBe(false);
   });
 
   it("cycle 盲切后从终端屏幕回显真实落点（claude 空闲期 transcript 不写模式记录）", async () => {
@@ -1182,11 +1500,11 @@ describe("ChatWindow", () => {
     await screen.findByText("最近的消息");
     const button = await screen.findByRole("button", { name: "加载更早的对话" });
     // 被裁掉的消息此刻不在 DOM 里——这正是首屏省下的成本。
-    expect(screen.queryByText("很早以前的消息")).toBeNull();
+    expect(screen.queryByText("很早以前的消息", { selector: ".chat-text" })).toBeNull();
 
     // 第一屏：增量前插，不整段重读（无 full 参数）。
     fireEvent.click(button);
-    expect(await screen.findByText("中间的消息")).toBeTruthy();
+    expect(await screen.findByText("中间的消息", { selector: ".chat-text" })).toBeTruthy();
     expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 33, before: 120 }));
     expect(invoke).not.toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ full: true }));
     // 还没到文件头：入口保留，可以再点。
@@ -1194,10 +1512,10 @@ describe("ChatWindow", () => {
 
     // 第二屏翻到文件头（hasMore=false）：提示消失，已有消息不重复插入。
     fireEvent.click(again);
-    expect(await screen.findByText("很早以前的消息")).toBeTruthy();
+    expect(await screen.findByText("很早以前的消息", { selector: ".chat-text" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "加载更早的对话" })).toBeNull());
-    expect(screen.getAllByText("最近的消息")).toHaveLength(1);
-    expect(screen.getAllByText("中间的消息")).toHaveLength(1);
+    expect(screen.getAllByText("最近的消息", { selector: ".chat-text" })).toHaveLength(1);
+    expect(screen.getAllByText("中间的消息", { selector: ".chat-text" })).toHaveLength(1);
   });
 
   it("delays the loading skeleton until the first read takes >150ms", async () => {
@@ -1414,6 +1732,31 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开会话列表" }));
     expect(await screen.findByRole("button", { name: "收起会话列表" })).toBeTruthy();
     expect(localStorage.getItem("meowo-chat-sidebar-collapsed")).toBe("0");
+  });
+
+  /** 侧栏分栏柄（用户要求：侧栏可拖）：separator 落在停靠侧栏与主列之间，键盘
+   *  ←/→ 步进调宽并落盘；jsdom 里 .chat-body 实测宽为 0，上限钳到下限 200，
+   *  正好一并验证钳制。抽屉形态（窄窗）与收起态不渲染柄。 */
+  it("侧栏分栏柄:键盘调宽并持久化,收起后消失", async () => {
+    window.history.replaceState({}, "", "/?sessionId=7");
+    localStorage.removeItem("meowo-chat-sidebar-width");
+    respondWithHistory({
+      sessionId: 7, title: "拖宽", status: "ended", provider: "claude", cwd: null,
+      supported: true, offset: 0, reset: false, pendingReview: null, items: [],
+    });
+    render(<ChatWindow />);
+    await screen.findByRole("button", { name: "收起会话列表" });
+    const resizer = screen.getByRole("separator", { name: "拖拽调整宽度" });
+    expect(resizer.getAttribute("aria-valuenow")).toBe("240");
+    // aside 吃到默认宽。
+    expect(document.querySelector(".chat-sidebar")?.getAttribute("style")).toContain("width: 240px");
+    // → 调宽：jsdom 无实测布局，上限 = max(200, 0-360) = 200，钳到下限并落盘。
+    fireEvent.keyDown(resizer, { key: "ArrowRight" });
+    expect(localStorage.getItem("meowo-chat-sidebar-width")).toBe("200");
+    expect(document.querySelector(".chat-sidebar")?.getAttribute("style")).toContain("width: 200px");
+    // 收起侧栏：柄随布局一起消失。
+    fireEvent.click(screen.getByRole("button", { name: "收起会话列表" }));
+    expect(screen.queryByRole("separator", { name: "拖拽调整宽度" })).toBeNull();
   });
 
   it("外部占用时就地给出接管入口，确认后重放刚才那次发送", async () => {
@@ -1887,6 +2230,40 @@ describe("ChatWindow", () => {
     expect(screen.getByText(/lark-cli attendance query/)).toBeTruthy();
     expect(screen.queryByText(/Web Search/)).toBeNull();
     expect(screen.queryByText(/Searched for 3 patterns/)).toBeNull();
+  });
+
+  /// 2.1.304 源码里审批框标题有变体:Windows 的「PowerShell command」与沙箱外的
+  /// 「… (unsandboxed)」。此前只认裸「Bash command」,框边界认不出,上一屏输出整段并进命令区。
+  it("PowerShell / unsandboxed 标题也认作框边界,工具名如实显示", async () => {
+    window.history.replaceState({}, "", "/?sessionId=48");
+    const prompt = [
+      "\x1b[2J● 上一屏的残留输出",
+      "PowerShell command (unsandboxed)",
+      "Get-Process -Id 62844",
+      "查进程",
+      "Do you want to proceed?",
+      "> 1. Yes",
+      "  2. No",
+    ].join("\r\n");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 48, title: "PowerShell 审批", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "approval", items: [],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 48, active: true, managed: true, data: btoa(unescape(encodeURIComponent(prompt))), startOffset: 0, endOffset: prompt.length,
+        exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
+    expect(screen.getByText(/Get-Process -Id 62844/)).toBeTruthy();
+    expect(screen.queryByText(/上一屏的残留输出/)).toBeNull();
+    expect(document.querySelector(".chat-approval-tool code")?.textContent).toBe("PowerShell");
   });
 
   it("shows Kimi's approval panel as actionable GUI choices (digit keys)", async () => {
@@ -2576,6 +2953,126 @@ describe("ChatWindow", () => {
     expect(screen.getByText(/已选「毛肚」/)).toBeTruthy();
   });
 
+  /** 提问卡两视图都出（用户要求）：终端视图下 broker 挂起时终端画面上没有表单，
+   *  不渲染卡的话用户对「agent 在等」毫无感知。可表达题面在终端视图不出
+   * 「去终端作答」（卡本身就是作答面），点选提交照常走 broker 直达。 */
+  it("终端视图下也渲染可作答题面卡：无「在终端作答」，可直接提交", async () => {
+    window.history.replaceState({}, "", "/?sessionId=37");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 37, title: "终端视图提问", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+        ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 37, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(screen.getByText("终端视图提问")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "终端" }));
+    expect(screen.getByText("PTY 37")).toBeTruthy();
+    act(() => {
+      eventListeners.get("interactive-question")?.({ payload: {
+        sessionId: 37, requestId: "request-term-view", provider: "claude", toolName: "AskUserQuestion",
+        description: null, answerable: true,
+        input: JSON.stringify({ questions: [{ question: "终端里也能看到吗？", multiSelect: false, options: [{ label: "能" }] }] }),
+        permissionSuggestions: [],
+      } });
+    });
+    // 卡在终端视图渲染（题面与终端画面同时在场），且不被拉回对话页。
+    expect(await screen.findByText(/终端里也能看到吗/)).toBeTruthy();
+    expect(screen.getByText("PTY 37")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "去终端页" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "在终端作答" })).toBeNull();
+    // 点选 + 提交：broker 直达，不经过终端按键。
+    fireEvent.click(screen.getByRole("button", { name: /能/ }));
+    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+    await waitFor(() => {
+      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      expect(resolved).toBeTruthy();
+      const args = resolved![1] as { requestId: string; choice: string };
+      expect(args.requestId).toBe("request-term-view");
+      expect(args.choice.startsWith("answers:")).toBe(true);
+    });
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 37, data: expect.anything() });
+  });
+
+  /** 终端视图下题面无法在卡内表达（同文重题）时：提交不可用，「在终端作答」是唯
+   *  一出口——按下只把挂起交还终端（resolve pass），人已经在终端页，不再切视图。 */
+  it("终端视图下不可表达的题面保留「在终端作答」", async () => {
+    window.history.replaceState({}, "", "/?sessionId=38");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 38, title: "重题会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+        ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 38, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(screen.getByText("重题会话")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "终端" }));
+    act(() => {
+      eventListeners.get("interactive-question")?.({ payload: {
+        sessionId: 38, requestId: "request-dup", provider: "claude", toolName: "AskUserQuestion",
+        description: null, answerable: true,
+        input: JSON.stringify({ questions: [
+          { question: "选哪个？", multiSelect: false, options: [{ label: "甲" }] },
+          { question: "选哪个？", multiSelect: false, options: [{ label: "乙" }] },
+        ] }),
+        permissionSuggestions: [],
+      } });
+    });
+    expect(await screen.findByText(/这组问题无法在卡片内作答/)).toBeTruthy();
+    const release = screen.getByRole("button", { name: "在终端作答" });
+    fireEvent.click(release);
+    await waitFor(() => {
+      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      expect(resolved).toBeTruthy();
+      expect((resolved![1] as { choice: string }).choice).toBe("pass");
+    });
+    // 人已在终端页：不切视图（终端画面仍在）。
+    expect(screen.getByText("PTY 38")).toBeTruthy();
+  });
+
+  /** 同步展示卡（broker 自动放行）在终端视图同样渲染：点选排队写的按键落进终端表
+   *  单（两边同步），但「去终端页」按钮在终端视图无意义，不出。 */
+  it("终端视图下同步展示卡不出「去终端页」", async () => {
+    window.history.replaceState({}, "", "/?sessionId=39");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 39, title: "同步题面", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+        ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 39, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(screen.getByText("同步题面")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "终端" }));
+    act(() => {
+      eventListeners.get("interactive-question")?.({ payload: {
+        sessionId: 39, requestId: "request-sync", provider: "claude", toolName: "AskUserQuestion",
+        description: null, answerable: false,
+        input: JSON.stringify({ questions: [{ question: "火锅还是寿司？", multiSelect: false, options: [{ label: "火锅" }, { label: "寿司" }] }] }),
+        permissionSuggestions: [],
+      } });
+    });
+    expect(await screen.findByText(/火锅还是寿司/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "去终端页" })).toBeNull();
+    // 点选排队照常可用：排进队列并提示，落键等屏幕识别确认（此处不驱动识别）。
+    fireEvent.click(screen.getByRole("button", { name: /火锅/ }));
+    expect(screen.getByText(/已选「火锅」/)).toBeTruthy();
+  });
+
   /** C-11 尾：多问题展示卡按问题 keyed 排队 + 聚焦题识别落键。两题都点上答案后，
    *  屏幕停在第 2 题（题面原文在屏）→ 只落第 2 题的答案，第 1 题的排队保留等轮到它。 */
   it("多问题展示卡按问题排队：识别出第 2 题在屏时只落第 2 题的答案", async () => {
@@ -2981,6 +3478,19 @@ describe("ChatWindow", () => {
     // 等提交回车落地(SUBMIT_GAP_MS 之后),sending 才复位,下一次发送才不会被守卫吞掉。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 21, data: "\r" }));
 
+    // 只有附件、没有正文 → 退回指令文本:opencode 的 @ 补全框会吃掉「@路径」收尾的回车。
+    const submits = () => invoke.mock.calls.filter(([command, args]) => command === "write_managed_terminal"
+      && (args as { data: string }).data === "\r").length;
+    openDialog.mockResolvedValueOnce(["C:\\repo\\notes.txt"]);
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    await waitFor(() => expect(screen.getByText("notes.txt")).toBeTruthy());
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+      sessionId: 21,
+      data: "\u001b[200~请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：\n- C:\\repo\\notes.txt\u001b[201~",
+    }));
+    await waitFor(() => expect(submits()).toBe(2));
+
     // 图片 → 剪贴板写失败,退回指令文本(原生附加见下两个用例)。
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
     fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
@@ -3380,7 +3890,7 @@ describe("ChatWindow", () => {
    * GUI 必须给排队回执,否则消息像消失了。中断键有声明(claude)时提供「立即插话」,
    * 它只发中断键(队列由 CLI 自己接着处理);回合结束回执自动消解。
    */
-  it("运行中插话显示排队回执,可立即插话,回合结束自动消解", async () => {
+  it("运行中插话显示排队回执,可立即插话,收到消费证据才消解", async () => {
     window.history.replaceState({}, "", "/?sessionId=93");
     let current: Record<string, unknown> = {
       sessionId: 93, title: "排队回执", status: "running", provider: "claude", cwd: "C:/repo",
@@ -3404,6 +3914,9 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 93, data: "\u001b" }));
 
     current = { ...current, status: "waiting" };
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(screen.getByText(/插话已排队/)).toBeTruthy();
+    current = { ...current, lastUserText: "插一句" };
     await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
   });
 
@@ -3472,8 +3985,17 @@ describe("ChatWindow", () => {
     // 多轮轮询过去,旧证据不变:回执必须还在。
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(screen.queryByText(/插话已排队/)).toBeTruthy();
-    // 新证据落盘(lastUserText 变成插话本身):这才消解。
+    // hook 在入队瞬间就把 lastUserText 改成插话本身(claude 2.1.304 实测),消息却还在队列里、
+    // transcript 没有它:transcript 在场时这不算消费证据,回执必须还在。
     current = { ...current, lastUserText: "ok" };
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(screen.queryByText(/插话已排队/)).toBeTruthy();
+    // 注入后以新条目落盘 transcript:这才消解。
+    current = {
+      ...current,
+      offset: 20,
+      items: [...(current.items as unknown[]), { type: "user_text", id: "u2", timestamp: null, text: "ok" }],
+    };
     await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
   });
 
@@ -3585,9 +4107,11 @@ describe("ChatWindow", () => {
    */
   it("打断并发送(Ctrl+Enter):先写中断键(Esc)再提交正文", async () => {
     window.history.replaceState({}, "", "/?sessionId=94");
-    invoke.mockImplementation((command: string) => {
+    let interrupted = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "write_managed_terminal" && args?.data === "\u001b") interrupted = true;
       if (command === "get_chat_history") return Promise.resolve({
-        sessionId: 94, title: "强制插话", status: "running", provider: "claude", cwd: "C:/repo",
+        sessionId: 94, title: "强制插话", status: interrupted ? "waiting" : "running", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
       });
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
@@ -3648,6 +4172,27 @@ describe("ChatWindow", () => {
     expect((await screen.findByRole("button", { name: "发送" })).className).toContain("chat-send-button");
     expect(screen.queryByRole("button", { name: "中断" })).toBeNull();
     expect(screen.queryByRole("button", { name: "打断并发送" })).toBeNull();
+  });
+
+  /// opencode 首按 Esc 只提示 "esc again to interrupt";两个 Esc 合成一次写入又被当成 Alt+Esc。
+  /// 插件声明 interrupt_presses=2 时,中断键必须**分两次**写。
+  it("中断键声明连按两次的 agent(opencode):Esc 分两次写入", async () => {
+    window.history.replaceState({}, "", "/?sessionId=196");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 196, title: "双 Esc", status: "running", provider: "opencode", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("opencode"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 196, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: "中断" }));
+    const writes = () => invoke.mock.calls.filter(([command, args]) => command === "write_managed_terminal"
+      && (args as { sessionId: number }).sessionId === 196).map(([, args]) => (args as { data: string }).data);
+    await waitFor(() => expect(writes()).toEqual(["\u001b", "\u001b"]));
   });
 
   /**
@@ -4219,7 +4764,7 @@ describe("ChatWindow", () => {
       { id: 80, provider: "kimi", startedAt: 3, endedAt: null, model: null },
     ]);
     expect(await screen.findByText("切换至 Kimi Code 继续，完整上下文已交接")).toBeTruthy();
-    expect(await screen.findByText("前序段旧问题")).toBeTruthy();
+    expect(await screen.findByText("前序段旧问题", { selector: ".chat-text" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /回到最新/ }).querySelector(".chat-jump-latest-count")).toBeNull();
 
     // 当前段真来一条新消息:徽章 +1。

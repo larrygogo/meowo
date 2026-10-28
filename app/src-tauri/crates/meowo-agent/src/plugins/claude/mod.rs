@@ -21,9 +21,9 @@
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
 pub mod account;
-mod screen;
 pub mod fleet;
 pub mod install;
+mod screen;
 pub mod setup;
 pub mod telemetry;
 pub mod transcript;
@@ -43,11 +43,12 @@ use crate::{
 /// 零新增字节，只能靠 hook）；不加自定义 timeout——压缩 hook 是纯落库，5s 足够。
 ///
 /// **此表须与 `scripts/install-hooks.mjs` 的 `SPECS` 保持一致**——由 meowo-app 的绊线测试守卫。
-static EVENTS: [HookEvent; 10] = [
+static EVENTS: [HookEvent; 11] = [
     HookEvent::matched("SessionStart", "*"),
     HookEvent::matched("UserPromptSubmit", "*"),
     HookEvent::matched("PostToolUse", "*"),
     HookEvent::matched("Stop", "*"),
+    HookEvent::matched("StopFailure", "*"),
     HookEvent::matched("SessionEnd", "*"),
     HookEvent::matched("PermissionRequest", "*").with_timeout(310),
     // AskUserQuestion 的代答桥挂在这条上（reporter 阻塞等 GUI 作答），超时与
@@ -455,11 +456,32 @@ impl AgentPlugin for Claude {
     }
     /// claude TUI 的 Ctrl-V 读系统剪贴板并把图片原生附加,composer 显示 `[Image #N]`。
     /// (@提及对图片无效——不产生图像块,故图片的原生化只有这条剪贴板通道。)
+    /// 空格可省：运行中贴图时 claude 增量重绘，那格空白与上一帧相同就用光标定位跳过，
+    /// 原始流是 `[Image\x1b[10G#1]`，剥掉控制码只剩 `[Image#1]`（pywinpty 实测 2.1.303，
+    /// 屏幕上 0.55s 已落出占位符，旧规则一直等不到 → 运行中发图必报「图片附加未完成」）。
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
-        version.map(|_| r"\[Image #\d")
+        version.map(|_| r"\[Image ?#\d")
+    }
+    /// claude 在 Windows（含 WSL）上的贴图键是 **Alt+V**：2.1.301~303 二进制里都是
+    /// `Le=windows||wsl?"alt+v":"ctrl+v"`（Ctrl+V 会被 Windows Terminal 自己的粘贴吃掉）。
+    /// pywinpty 真机实测 2.1.303：`\x16` 8s 零反应；`\x1bv` 67ms 出 `Pasting…`、554ms
+    /// 落出 `[Image #1]`。此前发 Ctrl-V 一直靠指令文本静默兜底，0.6.11 改为部分粘贴即
+    /// 阻断后,Windows 上对话窗发图 100% 报「图片附加未完成」（用户实拍）。
+    fn clipboard_paste_input(&self, _version: Option<&str>) -> Option<&'static str> {
+        Some(if cfg!(windows) { "\x1bv" } else { "\x16" })
+    }
+    /// 输入框上方的运行中状态行：`✻ Composing… (41s · ↓ 427 tokens · thought for 4s)`
+    /// （2.1.303 实拍）。行首是闪烁 spinner 字形之一，动词 1~3 个词以「…」收尾；括号统计
+    /// 刚开跑时没有，有则以耗时数字开头——挡掉正文里恰好以 spinner 字形起头的普通行。
+    fn status_line_pattern(&self) -> Option<&'static str> {
+        Some(r"^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$")
     }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
+    fn model_select_command(&self) -> Option<&'static str> {
+        Some("/model")
+    }
+
     fn model_presets(&self) -> &'static [crate::ModelPreset] {
         // label 是学到真实菜单前的兜底，维护约定见 launch_options 里的注释。
         &[
@@ -531,6 +553,7 @@ impl AgentPlugin for Claude {
             },
         ];
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
+            menu_command: None,
             dimension: "permission",
             cycle_input: Some("\x1b[Z"),
             options: &[],
@@ -550,6 +573,10 @@ impl AgentPlugin for Claude {
         ]
     }
     /// Esc 中断当前回合(官方文档行为):中断后已完成的工作保留,排队消息随即被处理。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }
@@ -688,6 +715,23 @@ mod tests {
         assert!(Claude.writes_tab_token());
     }
 
+    /// 对话页运行条照搬状态行的前提:claude 声明了整行锚定的状态行正则。匹配行为
+    /// 由前端 cliStatus.test.ts 用同一串正则测(本 crate 不依赖 regex)。
+    #[test]
+    fn declares_anchored_status_line_pattern() {
+        let pattern = Claude.status_line_pattern().expect("claude 应声明状态行正则");
+        assert!(pattern.starts_with('^') && pattern.ends_with('$'));
+        assert!(pattern.contains('…'));
+    }
+
+    /// 回归钉:Windows 上发 Ctrl-V claude 零反应,对话窗发图必报「图片附加未完成」。
+    #[test]
+    fn clipboard_paste_input_is_alt_v_on_windows() {
+        let expected = if cfg!(windows) { "\x1bv" } else { "\x16" };
+        assert_eq!(Claude.clipboard_paste_input(None), Some(expected));
+        assert_eq!(Claude.clipboard_paste_input(Some("2.1.303")), Some(expected));
+    }
+
     fn probe_in(home: &std::path::Path) -> Option<crate::Installation> {
         VARIANTS[0].probe(id::CLAUDE, home)
     }
@@ -787,8 +831,8 @@ mod tests {
     }
 
     #[test]
-    fn events_cover_the_ten_specs_with_matchers() {
-        assert_eq!(EVENTS.len(), 10);
+    fn events_cover_lifecycle_and_interaction_with_matchers() {
+        assert_eq!(EVENTS.len(), 11);
         // PreToolUse 恰两条，matcher 分别是两种工具；其余六条 matcher 均为 "*"。
         let pre: Vec<_> = EVENTS
             .iter()

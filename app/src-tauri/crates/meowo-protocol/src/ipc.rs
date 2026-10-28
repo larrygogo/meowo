@@ -31,6 +31,17 @@ pub struct SubagentRef {
     pub count: u32,
 }
 
+/// 编辑类工具回执里的一段统一 diff（claude 的 `toolUseResult.structuredPatch` 原样搬运）。
+/// `lines` 每行首字符是 ` `/`-`/`+`；起始行号让对话页像终端一样标真实行号。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct DiffHunk {
+    pub old_start: u32,
+    pub new_start: u32,
+    pub lines: Vec<String>,
+}
+
 /// 一次委派的结局统计。挂在**主链的工具结果**上，于是折叠状态下就能显示进度——
 /// 不必先展开（展开要读侧车流，那是按需 I/O）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +219,10 @@ pub enum ChatItem {
         /// `tool_use_id` 配到对应的委派上，于是折叠状态下也能显示状态。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subagent: Option<SubagentOutcome>,
+        /// 编辑类工具的统一 diff（带真实行号与上下文）；插件拿不到时为 None，
+        /// 前端退回按 ToolDetail 的旧段/新段两块展示。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        patch: Option<Vec<DiffHunk>>,
     },
     Meta {
         id: String,
@@ -300,6 +315,12 @@ pub struct ChatHistoryDto {
     /// 或距最近事件不足宽限期）。status 是 hook 驱动的离散快照，进程死后 reaper 收尾前
     /// DB 里可能残留 running——前端展示运行态必须以此校正，否则出现「假运行中」。
     pub connected: bool,
+    /// 托管 PTY 的实时屏幕状态（"working" | "idle" | "blocked"，非托管为 None），与侧栏/看板
+    /// `LiveItem.screen_state` 同源。对话页的运行态必须同样经它校正：gemini 的 SessionStart
+    /// 就把 DB 置成 running、首个 BeforeAgent 之前没有任何事件纠正它，只看 DB 的对话页会把
+    /// 空闲会话当成「运行中」，发消息按了排队键 Tab 而非回车——正文停在输入框里发不出去
+    /// （0.6.11 实机，gemini 0.64）。
+    pub screen_state: Option<String>,
     /// 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
     /// 不做 transcript 分析的 agent（codex/kimi）恒为 false。
     pub errored: bool,
@@ -352,6 +373,18 @@ pub struct SwitchStartedDto {
     #[cfg_attr(test, ts(type = "number"))]
     pub temp_id: i64,
     pub handoff_path: String,
+}
+
+/// `managed_terminal_pending_launch` 的返回：临时负 id 认领前的 provider/cwd。对话页靠它
+/// 在认领前就拿到该家的启动识别规则——claude 的目录信任页出现在 hook 认领之前(未信任
+/// 目录不跑 hook),不提前拿,信任页永远认不出、对话页一直停在「会话正在启动…」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PendingLaunchDto {
+    pub provider: String,
+    pub cwd: Option<String>,
 }
 
 /// 接续链上的一段会话（`get_session_lineage` 的行，按时间升序）。
@@ -544,6 +577,12 @@ pub struct GitChangedFileDto {
     pub path: String,
     /// 归一化状态字母：M/A/D/T 取自 porcelain 的 X 或 Y；未跟踪（??）记为 "U"。
     pub status: String,
+    /// 相对 HEAD 的增删行数（`git diff --numstat`；未跟踪文件按行数全记为新增）。
+    /// 二进制、仓库还没有提交、未跟踪文件过大或过多时数不出来，为 None，前端不显示。
+    #[serde(default)]
+    pub additions: Option<u32>,
+    #[serde(default)]
+    pub deletions: Option<u32>,
 }
 
 /// 对话页「Diff」按钮的可见性与弹层文件列表的数据源。
@@ -755,6 +794,7 @@ mod tests {
             text: "ok".into(),
             is_error: false,
             subagent: None,
+            patch: None,
         };
         let value = serde_json::to_value(item).unwrap();
         assert_eq!(value["type"], "tool_result");

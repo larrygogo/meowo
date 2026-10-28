@@ -110,6 +110,8 @@ struct LiveSignals {
     broker_approval: bool,
     /// agent 自建后台会话的索引(claude FleetView),与看板共享同一份 TTL 快照。
     runtimes: std::sync::Arc<super::session_query::SessionRuntimeIndex>,
+    /// 托管 PTY 的屏幕状态(见 ChatHistoryDto.screen_state),纯内存查表。
+    screen_state: Option<&'static str>,
 }
 
 /// errored 的重采样间隔:transcript 分析走共享 mtime 缓存,但 agent 流式输出期间文件
@@ -191,6 +193,7 @@ fn load_chat_history(
             header.last_event_at,
             super::now_ms(),
         ),
+        screen_state: live.screen_state.map(str::to_string),
         // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
         todos: store
             .task_id_of_session_pub(session_id)
@@ -540,6 +543,11 @@ pub(crate) async fn get_chat_history(
     let runtimes = state.session_runtimes.clone();
     let pty_live = state.ptys.is_active(session_id);
     let broker_approval = state.ptys.pending_approval(session_id).is_some();
+    let screen_state = state
+        .ptys
+        .screen_states()
+        .get(&session_id)
+        .map(|sight| sight.state);
     tauri::async_runtime::spawn_blocking(move || {
         load_chat_history(
             &db_path,
@@ -550,6 +558,7 @@ pub(crate) async fn get_chat_history(
                 pty_live,
                 runtimes: runtimes.snapshot(),
                 broker_approval,
+                screen_state,
             },
             session_id,
             ChatRead {
@@ -784,6 +793,91 @@ pub(crate) async fn clipboard_set_image(path: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 截图等待的上限：系统截图层没有「用户按了 Esc」的信号可等，等不到新图就当放弃了。
+#[cfg(target_os = "windows")]
+const SCREEN_CAPTURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+/// 再点一次截图时让上一次还在等的那轮退出，不然两轮都等到同一张图会附两遍。
+static SCREEN_CAPTURE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 输入框的「截图」按钮：拉起系统的框选截图，用户截完把图落进粘贴目录，返回路径；
+/// 取消、超时、被新一轮顶掉都回 None（对照 Kimi 桌面端的截图标注）。
+///
+/// Windows 走系统截图层 `ms-screenclip:`，它只会把结果放进剪贴板，所以记下剪贴板的
+/// 序号、等它变了再读图。这和 clipboard_set_image 注释里「不把剪贴板图片读回渲染层」
+/// 不冲突：只读用户这一次亲手截的那张，剪贴板原有内容（序号没变）一概不碰。
+/// macOS 用 `screencapture -i`，它自己等用户框选，Esc 就不出文件。
+#[tauri::command]
+pub(crate) async fn capture_screen_region() -> Result<Option<String>, String> {
+    let generation = SCREEN_CAPTURE_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || capture_screen_region_blocking(generation))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "windows")]
+fn capture_screen_region_blocking(generation: u64) -> Result<Option<String>, String> {
+    use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
+    let before = unsafe { GetClipboardSequenceNumber() };
+    std::process::Command::new("explorer.exe")
+        .arg("ms-screenclip:")
+        .spawn()
+        .map_err(|e| format!("无法打开截图：{e}"))?;
+    let started = std::time::Instant::now();
+    while started.elapsed() < SCREEN_CAPTURE_TIMEOUT {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if SCREEN_CAPTURE_GEN.load(std::sync::atomic::Ordering::SeqCst) != generation {
+            return Ok(None);
+        }
+        if unsafe { GetClipboardSequenceNumber() } == before {
+            continue;
+        }
+        // 截图层往剪贴板里分几次写格式，序号一变就读可能还没有位图：读不到接着等。
+        let Ok(mut clipboard) = arboard::Clipboard::new() else { continue };
+        let Ok(image) = clipboard.get_image() else { continue };
+        return save_capture_png(image.width as u32, image.height as u32, image.bytes.into_owned()).map(Some);
+    }
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_screen_region_blocking(_generation: u64) -> Result<Option<String>, String> {
+    let dir = paste_root().join(format!("{}-capture", super::now_ms()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("screenshot.png");
+    // -i 交互框选，-x 不放快门声；用户按 Esc 时退出码 0 但不出文件。
+    let status = std::process::Command::new("screencapture")
+        .arg("-i")
+        .arg("-x")
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("无法打开截图：{e}"))?;
+    if status.success() && path.is_file() {
+        Ok(Some(path.to_string_lossy().into_owned()))
+    } else {
+        let _ = std::fs::remove_dir(&dir);
+        Ok(None)
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn capture_screen_region_blocking(_generation: u64) -> Result<Option<String>, String> {
+    Err("当前系统不支持截图，可以截好后直接粘贴".into())
+}
+
+#[cfg(target_os = "windows")]
+fn save_capture_png(width: u32, height: u32, rgba: Vec<u8>) -> Result<String, String> {
+    let image = image::RgbaImage::from_raw(width, height, rgba).ok_or("截图数据不完整")?;
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    let dir = paste_root().join(format!("{}-capture", super::now_ms()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("screenshot.png");
+    std::fs::write(&path, png).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// 还原 `clipboard_set_image` 快照下来的剪贴板内容；没有快照时为空操作。

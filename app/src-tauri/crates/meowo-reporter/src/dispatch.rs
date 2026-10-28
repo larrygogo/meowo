@@ -120,7 +120,7 @@ pub fn dispatch(
                             None => store.touch_session(sid, now_ms)?,
                         }
                     }
-                    Some("Bash") => {
+                    Some("Bash" | "PowerShell") => {
                         if let Some(cmd) = ev.bash_command() {
                             store.set_current_activity(sid, &format!("› {cmd}"), now_ms)?;
                         }
@@ -192,6 +192,32 @@ pub fn dispatch(
                         now_ms,
                     )?;
                 }
+            }
+        }
+        "StopFailure" | "Interrupt" => {
+            // Claude/Kimi 官方 hooks 文档：失败或手动中断替代 Stop。只收尾已有会话，且不把错误串当 AI 正文。
+            if let Some(sid) = lookup_session(store, ev)? {
+                store.clear_pending_review(sid, now_ms)?;
+                store.clear_current_activity(sid, now_ms)?;
+                store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
+            }
+        }
+        "PermissionResult" => {
+            // 审批拒绝后未必会有 PostToolUse；Kimi/OpenCode 的解除事件必须自行摘掉等待标记。
+            if let Some(sid) = lookup_session(store, ev)? {
+                let kind = match ev.tool_name.as_deref() {
+                    Some("ExitPlanMode") => PendingReview::Plan,
+                    Some("AskUserQuestion") => PendingReview::Question,
+                    _ => PendingReview::Approval,
+                };
+                store.clear_pending_review_kind(sid, kind, now_ms)?;
+                store.touch_session(sid, now_ms)?;
+            }
+        }
+        "Notification" if ev.notification_type.as_deref() == Some("ToolPermission") => {
+            if let Some(sid) = lookup_session(store, ev)? {
+                store.revive_if_ended_running(sid, now_ms)?;
+                store.set_pending_review(sid, PendingReview::Approval, now_ms)?;
             }
         }
         "SessionEnd" => {
@@ -415,7 +441,9 @@ fn lookup_or_create(
     }
     match ev.cwd.as_deref() {
         // 懒创建的行不存在旧值，覆写与否等价；传 true 保持「新行必写 cwd」。
-        Some(cwd) => Ok(Some(create_session(store, ev, cwd, provider, now_ms, true)?)),
+        Some(cwd) => Ok(Some(create_session(
+            store, ev, cwd, provider, now_ms, true,
+        )?)),
         None => Ok(None),
     }
 }

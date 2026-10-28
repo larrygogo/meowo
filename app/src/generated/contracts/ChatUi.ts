@@ -11,6 +11,10 @@ import type { SlashCommand } from "./SlashCommand";
  */
 export type ChatUi = { slash_commands: Array<SlashCommand>, model_presets: Array<ModelPreset>, 
 /**
+ * 只有支持内联选择的 CLI 才声明；列举模型不代表能用同一协议选择模型。
+ */
+model_select_command: string | null, 
+/**
  * 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
  * 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
  */
@@ -52,6 +56,15 @@ permission_prompt_races_hook: boolean,
  */
 interrupt_input: string | null, 
 /**
+ * 中断键要按几次(分次写入,间隔由前端定)。opencode 首按只提示 "esc again to interrupt",
+ * 第二下才停;两个 Esc 合成一次写入会被当成 Alt+Esc,一下都不算(真机取证见其插件)。
+ */
+interrupt_presses: number, 
+/**
+ * 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
+ */
+queue_input: string | null, 
+/**
  * Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
  * None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
  */
@@ -69,7 +82,7 @@ runtime_commands_pending: boolean,
 attachment_mention: boolean, 
 /**
  * 该 CLI 的 TUI 支持 Ctrl-V 原生粘贴剪贴板图片时,composer 里出现的占位符正则
- * (claude `\[Image #\d`、kimi `\[image[:# ]`)。前端在「剪贴板里仍是刚粘贴的那张图」
+ * (claude `\[Image ?#\d`、kimi `\[image[:# ]`)。前端在「剪贴板里仍是刚粘贴的那张图」
  * 时向 PTY 发粘贴键（见 `clipboard_paste_input`）触发原生图片附加,并用它从屏幕上
  * 验证成功;None = 不支持,图片一律走指令文本兜底。
  */
@@ -79,6 +92,12 @@ clipboard_image_paste: string | null,
  * Alt+V = `\x1bv`，发 Ctrl-V 会被 composer 无视）。由插件声明，前端不自行猜键。
  */
 clipboard_paste_input: string | null, 
+/**
+ * 终端界面里「运行中状态行」的匹配正则（claude 的 `✻ Composing… (41s · ↓ 427 tokens)`）：
+ * 捕获组 1 = 动词，2 = 括号统计（可缺）。对话页运行条据此照搬状态行内容；None = 不解析，
+ * 运行条退回本地计时。匹配的是对方界面文案，随版本改版会失效——规则须宁可漏认不可误认。
+ */
+status_line_pattern: string | null, 
 /**
  * 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
  * ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。

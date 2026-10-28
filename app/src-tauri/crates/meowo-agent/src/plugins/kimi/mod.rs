@@ -5,8 +5,7 @@
 //! | `modern` | Node 版 **Kimi Code** | `~/.kimi-code` | 无顶层 `hooks` 键 | `<data>/bin/kimi` |
 //! | `legacy` | 旧 Python 版 **kimi-cli** | `~/.kimi` | `hooks = []` 空内联数组 | `~/.local/bin/kimi` 等 |
 //!
-//! 两者的 hook 配置格式与 hook stdin 载荷（session_id/cwd/hook_event_name）实测一致，故共用
-//! 同一份 [`HookSpec`]——差的只是目录与「空内联数组」这一形态，都已在声明里表达。
+//! 两者共用 TOML 格式与 stdin 载荷；事件集按实现区分，不能把新版事件写入旧 Python 配置。
 
 pub mod account;
 mod screen;
@@ -26,13 +25,16 @@ use crate::{
 /// 用于卡片「待交互」显示。PreCompact/PostCompact 是压缩进行期间的「正在压缩」指示通道
 /// （transcript 在压缩期间零新增字节，只能靠 hook；白名单 EVENT_WHITELIST 已含这两个名字，
 /// kimi 0.29 二进制确认支持）。
-static EVENTS: [HookEvent; 8] = [
+static EVENTS: [HookEvent; 11] = [
     HookEvent::plain("SessionStart"),
     HookEvent::plain("UserPromptSubmit"),
     HookEvent::plain("PostToolUse"),
     HookEvent::plain("Stop"),
+    HookEvent::plain("StopFailure"),
+    HookEvent::plain("Interrupt"),
     HookEvent::plain("SessionEnd"),
     HookEvent::plain("PermissionRequest"),
+    HookEvent::plain("PermissionResult"),
     HookEvent::plain("PreCompact"),
     HookEvent::plain("PostCompact"),
 ];
@@ -71,6 +73,22 @@ static HOOKS: HookSpec = HookSpec {
         with_provider: true,
         ps_call_operator: false,
     },
+};
+
+// Python kimi-cli 官方 hooks 表只有 13 类事件，不能把 Node 版的审批/中断事件写过去导致配置失败。
+static LEGACY_EVENTS: [HookEvent; 8] = [
+    HookEvent::plain("SessionStart"),
+    HookEvent::plain("UserPromptSubmit"),
+    HookEvent::plain("PostToolUse"),
+    HookEvent::plain("Stop"),
+    HookEvent::plain("StopFailure"),
+    HookEvent::plain("SessionEnd"),
+    HookEvent::plain("PreCompact"),
+    HookEvent::plain("PostCompact"),
+];
+static LEGACY_HOOKS: HookSpec = HookSpec {
+    events: &LEGACY_EVENTS,
+    ..HOOKS
 };
 
 /// 来源：kimi-code 开源包 `packages/oauth/src/constants.ts`。
@@ -195,7 +213,7 @@ static VARIANTS: [Variant; 2] = [
             env: Some("KIMI_SHARE_DIR"),
             candidates: &[".kimi"],
         },
-        hooks: &HOOKS,
+        hooks: &LEGACY_HOOKS,
         auth: Some(&AUTH_LEGACY),
         launch: &LAUNCH_LEGACY,
         // 旧 Python 版没有工作区信任这道确认屏。
@@ -301,6 +319,56 @@ impl crate::RelayCap for KimiRelay {
     }
 }
 
+fn modern_launch_options() -> &'static [crate::LaunchOption] {
+    use crate::{LaunchChoice, LaunchOption};
+    static OPTIONS: [LaunchOption; 2] = [
+        LaunchOption {
+            id: "permission",
+            default: "default",
+            choices: &[
+                LaunchChoice {
+                    id: "default",
+                    label: "Default",
+                    args: &[],
+                    risk: false,
+                },
+                LaunchChoice {
+                    id: "auto",
+                    label: "Never Ask",
+                    args: &["--auto"],
+                    // Kimi 2.2.0 --help：auto 永不询问；yolo 仍询问高风险操作，不能按名字猜权限。
+                    risk: true,
+                },
+                LaunchChoice {
+                    id: "yolo",
+                    label: "Ask When Needed",
+                    args: &["--yolo"],
+                    risk: false,
+                },
+            ],
+        },
+        LaunchOption {
+            id: "work",
+            default: "default",
+            choices: &[
+                LaunchChoice {
+                    id: "default",
+                    label: "Default",
+                    args: &[],
+                    risk: false,
+                },
+                LaunchChoice {
+                    id: "plan",
+                    label: "Plan",
+                    args: &["--plan"],
+                    risk: false,
+                },
+            ],
+        },
+    ];
+    &OPTIONS
+}
+
 impl AgentPlugin for Kimi {
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
@@ -358,56 +426,10 @@ impl AgentPlugin for Kimi {
     /// （`kimi provider` 可增删），不是产品固定值。本表只放插件能担保的字面量——
     /// 硬编码一份别名清单，用户改了 provider 后就会静默传一个不存在的模型。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
-        static OPTIONS: [LaunchOption; 2] = [
-            LaunchOption {
-                id: "permission",
-                default: "default",
-                choices: &[
-                    LaunchChoice {
-                        id: "default",
-                        label: "Default",
-                        args: &[],
-                        risk: false,
-                    },
-                    LaunchChoice {
-                        id: "auto",
-                        label: "Auto",
-                        args: &["--auto"],
-                        risk: false,
-                    },
-                    LaunchChoice {
-                        id: "yolo",
-                        label: "Yolo",
-                        args: &["--yolo"],
-                        risk: true,
-                    },
-                ],
-            },
-            LaunchOption {
-                id: "work",
-                default: "default",
-                choices: &[
-                    LaunchChoice {
-                        id: "default",
-                        label: "Default",
-                        args: &[],
-                        risk: false,
-                    },
-                    LaunchChoice {
-                        id: "plan",
-                        label: "Plan",
-                        args: &["--plan"],
-                        risk: false,
-                    },
-                ],
-            },
-        ];
-        // 同 mode_controls：只给已验证的 modern Kimi Code；旧 Python kimi-cli 的 flag 不同。
         if crate::installation(crate::id::KIMI)
             .is_some_and(|installation| installation.variant_tag == "modern")
         {
-            &OPTIONS
+            modern_launch_options()
         } else {
             &[]
         }
@@ -425,8 +447,16 @@ impl AgentPlugin for Kimi {
     /// 「打断并发送」→ Esc 确实停下当前回合)。自动探针抓不到证据(kimi.exe 的 launcher
     /// shim 在 ConPTY 下即退),故走真机人工确认——与 claude(官方文档)/codex(状态行)
     /// 同为确证级别。
+    fn queue_input(&self) -> Option<&'static str> {
+        Some("\r")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
+    }
+    /// Ctrl+J（裸 LF）在输入框里换行、不提交（tests/probe_tui_script.rs，2.2.0，2026-10-16）。
+    fn newline_input(&self) -> Option<&'static str> {
+        Some("\n")
     }
     /// `@` 是 kimi 自己的一等文件引用语法(官方文档;TUI 输 `@` 有补全)。它是**文本级**
     /// 惯例——wire.jsonl 实测 turn.prompt 原样保留 @路径文本、由模型自行读取,TUI 补全
@@ -452,8 +482,9 @@ impl AgentPlugin for Kimi {
     /// `\x1bv`（传统 Meta 编码）~40ms 落出 `[image #1 (120×48)]`。kitty CSI-u 编码的
     /// Alt+V（`ESC[118;3u`）反而不被认——kimi 虽推 kitty 协议，这个键的匹配走的是
     /// 传统 ESC 前缀形态。版本门不设：两版二进制行为一致，探测不到版本时按现状声明。
+    /// 非 Windows 按同一行 `ctrl("v")` 退回 Ctrl-V（读码推断，mac 未实测）。
     fn clipboard_paste_input(&self, _version: Option<&str>) -> Option<&'static str> {
-        Some("\x1bv")
+        Some(if cfg!(windows) { "\x1bv" } else { "\x16" })
     }
     /// kimi 的 `/model` 同样是交互式菜单（二进制里的命令描述就是 `/model: switch model`，
     /// 且失败提示是「Run /model to select one first」），不接受内联参数，故不声明模型预设。
@@ -470,24 +501,6 @@ impl AgentPlugin for Kimi {
             data: "/plan off",
             submit: true,
         }];
-        static MANUAL: [ModeInput; 2] = [
-            ModeInput {
-                data: "/yolo off",
-                submit: true,
-            },
-            ModeInput {
-                data: "/auto off",
-                submit: true,
-            },
-        ];
-        static YOLO: [ModeInput; 1] = [ModeInput {
-            data: "/yolo on",
-            submit: true,
-        }];
-        static AUTO: [ModeInput; 1] = [ModeInput {
-            data: "/auto on",
-            submit: true,
-        }];
         static WORK: [ModeOption; 2] = [
             ModeOption {
                 value: "default",
@@ -498,23 +511,10 @@ impl AgentPlugin for Kimi {
                 inputs: &PLAN_ON,
             },
         ];
-        static PERMISSION: [ModeOption; 3] = [
-            ModeOption {
-                value: "manual",
-                inputs: &MANUAL,
-            },
-            ModeOption {
-                value: "yolo",
-                inputs: &YOLO,
-            },
-            ModeOption {
-                value: "auto",
-                inputs: &AUTO,
-            },
-        ];
         static MODES: [ModeControl; 2] = [
             ModeControl {
                 dimension: "work",
+                menu_command: None,
                 cycle_input: Some("\x1b[Z"),
                 options: &WORK,
                 // kimi 的模式切换有 wire 事件即时落 transcript（telemetry 的 set_mode），
@@ -523,11 +523,13 @@ impl AgentPlugin for Kimi {
             },
             ModeControl {
                 dimension: "permission",
+                menu_command: Some("/permission"),
                 cycle_input: None,
-                options: &PERMISSION,
+                options: &[],
                 screen_markers: &[],
             },
         ];
+        // https://moonshotai.github.io/kimi-code/en/reference/slash-commands.html：权限命令打开菜单，不能盲发 on/off。
         // 旧 Python 版 kimi-cli 的命令和 wire 事件不同；只给已验证的 modern Kimi Code 声明。
         if crate::installation(crate::id::KIMI)
             .is_some_and(|installation| installation.variant_tag == "modern")
@@ -613,10 +615,59 @@ mod tests {
     }
 
     #[test]
+    fn permission_tiers_follow_kimi_2_2_help_and_legacy_hooks_stay_separate() {
+        let permission = modern_launch_options()
+            .iter()
+            .find(|option| option.id == "permission")
+            .unwrap();
+        let auto = permission
+            .choices
+            .iter()
+            .find(|choice| choice.id == "auto")
+            .unwrap();
+        let yolo = permission
+            .choices
+            .iter()
+            .find(|choice| choice.id == "yolo")
+            .unwrap();
+        assert_eq!(
+            (auto.label, auto.args, auto.risk),
+            ("Never Ask", ["--auto"].as_slice(), true)
+        );
+        assert_eq!(
+            (yolo.label, yolo.args, yolo.risk),
+            ("Ask When Needed", ["--yolo"].as_slice(), false)
+        );
+        assert!(!LEGACY_EVENTS.iter().any(|event| matches!(
+            event.name,
+            "PermissionRequest" | "PermissionResult" | "Interrupt"
+        )));
+        assert!(EVENTS.iter().any(|event| event.name == "Interrupt"));
+    }
+
+    #[test]
     fn terminal_title_capabilities_cover_old_and_new_kimi() {
         let plugin = Kimi;
         assert!(plugin.sets_terminal_tab_title());
         assert!(plugin.writes_tab_token());
+    }
+
+    #[test]
+    fn legacy_migration_removes_only_our_unsupported_events() {
+        let old = "[[hooks]]\nevent = \"PermissionRequest\"\ncommand = \"C:/old/meowo-reporter.exe --provider kimi\"\n\n[[hooks]]\nevent = \"Notification\"\ncommand = \"echo user-notification\"\n";
+        let crate::EnsureOutcome::Changed(text) =
+            LEGACY_HOOKS.ensure_hooks(old, "C:/new/meowo-reporter.exe", "kimi")
+        else {
+            panic!("旧接线应迁移");
+        };
+        let doc = text.parse::<toml_edit::DocumentMut>().unwrap();
+        let hooks = doc["hooks"].as_array_of_tables().unwrap();
+        assert!(!hooks
+            .iter()
+            .any(|hook| hook["event"].as_str() == Some("PermissionRequest")));
+        assert!(hooks
+            .iter()
+            .any(|hook| hook["command"].as_str() == Some("echo user-notification")));
     }
 
     #[test]
@@ -626,7 +677,10 @@ mod tests {
         // 是否探到,marker 声明必须一致。
         let plugin = Kimi;
         assert_eq!(plugin.clipboard_image_paste(None), Some(r"\[image[:# ]"));
-        assert_eq!(plugin.clipboard_image_paste(Some("1.0")), Some(r"\[image[:# ]"));
+        assert_eq!(
+            plugin.clipboard_image_paste(Some("1.0")),
+            Some(r"\[image[:# ]")
+        );
     }
 
     #[test]
@@ -634,8 +688,9 @@ mod tests {
         // 回归钉:kimi(win32)的贴图键是 Alt+V(`\x1bv`),不是通用的 Ctrl-V。发错键
         // composer 零反应,占位符超时后前端静默回退指令文本(用户实拍故障)。
         let plugin = Kimi;
-        assert_eq!(plugin.clipboard_paste_input(None), Some("\x1bv"));
-        assert_eq!(plugin.clipboard_paste_input(Some("0.29.0")), Some("\x1bv"));
+        let expected = if cfg!(windows) { "\x1bv" } else { "\x16" };
+        assert_eq!(plugin.clipboard_paste_input(None), Some(expected));
+        assert_eq!(plugin.clipboard_paste_input(Some("0.29.0")), Some(expected));
     }
 
     #[test]

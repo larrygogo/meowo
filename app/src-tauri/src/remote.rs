@@ -91,6 +91,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "managed_terminal_grid",
     "managed_terminal_screen",
     "managed_terminal_binding",
+    "managed_terminal_pending_launch",
     "write_managed_terminal",
     "resize_managed_terminal",
     "start_managed_terminal",
@@ -286,9 +287,7 @@ pub(crate) struct RemoteAccessInfo {
 /// 只登记进 `generate_handler`（桌面 invoke），绝不进 `BRIDGED_COMMANDS`——远端不该
 /// 能读到 token 本身（它就是进门的凭据）。
 #[tauri::command]
-pub(crate) async fn remote_access_info(
-    app: tauri::AppHandle,
-) -> Result<RemoteAccessInfo, String> {
+pub(crate) async fn remote_access_info(app: tauri::AppHandle) -> Result<RemoteAccessInfo, String> {
     // token 惰性生成 + settings 读取 + IP 探测都可能触碰文件/网卡,挪进 blocking 池。
     let (settings, ips) = tauri::async_runtime::spawn_blocking(|| -> Result<_, String> {
         let settings = ensure_remote_token()?;
@@ -300,7 +299,10 @@ pub(crate) async fn remote_access_info(
     let (last_error, bound_port) = {
         let runtime = app.state::<RemoteRuntime>();
         let inner = runtime.inner.lock().unwrap_or_else(|e| e.into_inner());
-        (inner.last_error.clone(), inner.running.as_ref().map(|r| r.port))
+        (
+            inner.last_error.clone(),
+            inner.running.as_ref().map(|r| r.port),
+        )
     };
     Ok(RemoteAccessInfo {
         enabled: settings.remote_access_enabled,
@@ -769,9 +771,7 @@ bridged_args!(SetSessionNoteArgs {
     note: String
 });
 
-bridged_args!(StopManagedTerminalArgs {
-    session_id: i64
-});
+bridged_args!(StopManagedTerminalArgs { session_id: i64 });
 
 bridged_args!(GetChatHistoryArgs {
     session_id: i64,
@@ -836,7 +836,9 @@ bridged_args!(RegisterApprovalConsumerArgs {
     consumer_id: String
 });
 
-bridged_args!(UnregisterApprovalConsumerArgs { consumer_id: String });
+bridged_args!(UnregisterApprovalConsumerArgs {
+    consumer_id: String
+});
 
 bridged_args!(ResolvePendingApprovalArgs {
     session_id: i64,
@@ -857,7 +859,7 @@ bridged_args!(AgentChatUiArgs {
     session_id: Option<i64>
 });
 
-bridged_args!(AgentModelsArgs { provider: String });
+bridged_args!(AgentModelsArgs { provider: String, session_id: Option<i64> });
 
 bridged_args!(NewSessionArgs {
     cwd: String,
@@ -996,6 +998,13 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 a.session_id,
             ))
         }
+        "managed_terminal_pending_launch" => {
+            let a = args!(SessionArg);
+            reply_ok(crate::managed_terminal::managed_terminal_pending_launch(
+                state,
+                a.session_id,
+            ))
+        }
         "write_managed_terminal" => {
             let a = args!(WriteManagedTerminalArgs);
             reply(
@@ -1126,7 +1135,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "agent_models" => {
             let a = args!(AgentModelsArgs);
-            reply_ok(crate::agent_models(a.provider).await)
+            reply_ok(crate::agent_models(a.provider, a.session_id).await)
         }
         "new_session" => {
             let a = args!(NewSessionArgs);
@@ -1197,9 +1206,10 @@ struct FileQuery {
     token: String,
 }
 
-/// `/file?path=&token=`：替代 convertFileSrc 的图片/附件读取。scope 精确镜像
-/// tauri.conf.json 的 assetProtocol scope（`$HOME/.claude/image-cache/**` 与
-/// `$TEMP/meowo-paste/**`）——桌面端 convertFileSrc 本来也只放行这两处。
+/// `/file?path=&token=`：替代 convertFileSrc 的图片/附件读取。scope 镜像
+/// tauri.conf.json 的 assetProtocol scope（默认账号与各 profile 的 image-cache，
+/// 以及 `$TEMP/meowo-paste/**`）——桌面端 convertFileSrc 本来也只放行这几处。
+/// 静态 scope 只认 `~/.meowo` 数据根，这里按 `MEOWO_DB` 解析，口径略宽，不会更窄。
 async fn file_handler(State(ctx): State<Ctx>, Query(q): Query<FileQuery>) -> Response {
     // 主 token 或 /file 降级凭据(见 Ctx::file_token)均可:降级凭据是 <img src> 的
     // 常规载体,主 token 只在前端尚未领到降级凭据的首屏回退时出现。
@@ -1247,10 +1257,9 @@ fn sniff_image_ext(bytes: &[u8]) -> &'static str {
 }
 
 fn file_scope_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        roots.push(PathBuf::from(home).join(".claude").join("image-cache"));
-    }
+    // 默认账号 + 各 profile 的 image-cache（profile 设了 CLAUDE_CONFIG_DIR，图片不在
+    // ~/.claude 下）。每次请求现扫：新加的账号不必重启远程服务即可读图。
+    let mut roots = meowo_agent::plugins::claude::transcript::image_cache_dirs();
     roots.push(std::env::temp_dir().join("meowo-paste"));
     roots
 }
@@ -1380,9 +1389,12 @@ fn static_root(app: &tauri::AppHandle) -> Option<PathBuf> {
     // 2.11.2 实测静默打包不出任何文件(解包安装器验证过),不要改回去。仍保留 `_up_`
     // 探测位:列表形式修好后若有人切回,`..` 会折叠成 `_up_` 段,双探不误伤。
     let base = app.path().resource_dir().ok()?;
-    [base.join("dist-mobile"), base.join("_up_").join("dist-mobile")]
-        .into_iter()
-        .find(|d| d.is_dir())
+    [
+        base.join("dist-mobile"),
+        base.join("_up_").join("dist-mobile"),
+    ]
+    .into_iter()
+    .find(|d| d.is_dir())
 }
 
 /// URL path → 产物目录内相对路径。只接受 `[A-Za-z0-9._-]` 的单纯段（vite 产物
@@ -1494,6 +1506,8 @@ mod tests {
             "set_autostart",
             "clipboard_text",
             "clipboard_set_image",
+            // 读回的是这台电脑的屏幕内容，手机端不许触发。
+            "capture_screen_region",
         ];
         for cmd in FORBIDDEN {
             assert!(
@@ -1539,13 +1553,19 @@ mod tests {
             enabled: true,
             port: 18620,
             token: "tok".into(),
-            ips: vec![IpCandidate { ip: "192.168.1.5".into(), kind: "lan" }],
+            ips: vec![IpCandidate {
+                ip: "192.168.1.5".into(),
+                kind: "lan",
+            }],
             last_error: Some("端口占用".into()),
             bound_port: Some(18621),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains(r#""lastError":"端口占用""#), "{json}");
-        assert!(json.contains(r#""ips":[{"ip":"192.168.1.5","kind":"lan"}]"#), "{json}");
+        assert!(
+            json.contains(r#""ips":[{"ip":"192.168.1.5","kind":"lan"}]"#),
+            "{json}"
+        );
         assert!(json.contains(r#""port":18620"#), "{json}");
         assert!(json.contains(r#""boundPort":18621"#), "{json}");
     }
@@ -1723,14 +1743,15 @@ mod tests {
             )
             .is_ok()
         );
-        assert!(
-            parse::<NewSessionArgs>(
-                br#"{"cwd":"C:/repo","provider":"claude","options":null,"extraDirs":null}"#
-            )
-            .is_ok()
-        );
+        assert!(parse::<NewSessionArgs>(
+            br#"{"cwd":"C:/repo","provider":"claude","options":null,"extraDirs":null}"#
+        )
+        .is_ok());
         assert!(parse::<ListSubdirectoriesArgs>(br#"{"path":null}"#).is_ok());
-        assert!(parse::<AgentChatUiArgs>(br#"{"provider":"claude","cwd":null,"sessionId":null}"#).is_ok());
+        assert!(
+            parse::<AgentChatUiArgs>(br#"{"provider":"claude","cwd":null,"sessionId":null}"#)
+                .is_ok()
+        );
     }
 
     /// 单臂样例校验：Ok = 样例能进该臂结构体；Err = 解析失败或缺样例。
@@ -1836,7 +1857,7 @@ mod tests {
             }
             // api.ts:818
             "agent_models" => {
-                parse::<AgentModelsArgs>(br#"{"provider":"claude"}"#).map(|_| ())
+                parse::<AgentModelsArgs>(br#"{"provider":"claude","sessionId":41}"#).map(|_| ())
             }
             // api.ts:941（options 可选、extraDirs 恒发——空也发 []，2026-08-31 事故的字段）
             "new_session" => parse::<NewSessionArgs>(
@@ -1853,7 +1874,8 @@ mod tests {
             }
             // sessionId 单参臂，共用 SessionArg——出处：api.ts:967 getSessionLineage /
             // :218 refreshSessionModel / :229 refreshSessionTodos / :381 managedTerminalGrid /
-            // :365 managedTerminalBinding / :331 attachBackgroundSession /
+            // :365 managedTerminalBinding / :368 managedTerminalPendingLaunch /
+            // :331 attachBackgroundSession /
             // :349 sessionLaunchSelections / :421 pendingInteraction /
             // :425 dismissInteractiveQuestion
             "get_session_lineage"
@@ -1862,6 +1884,7 @@ mod tests {
             | "managed_terminal_grid"
             | "managed_terminal_screen"
             | "managed_terminal_binding"
+            | "managed_terminal_pending_launch"
             | "attach_background_session"
             | "session_launch_selections"
             | "pending_interaction"
