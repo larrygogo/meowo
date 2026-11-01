@@ -133,18 +133,72 @@ export function reconcileOutgoing(
 
 const EMPTY: readonly OutgoingPrompt[] = [];
 
+/// 发送失败的回执按会话存进 localStorage：刷新页面、手机页被系统回收后，失败的那条和
+/// 它的原文（含附件路径）还在，回来照样能重发或放回输入框（对照微信保留发送失败的消息）。
+/// 只存 failed：发送中的那条页面没了就不知道到底写没写进去，存下来反而可能重复发送。
+const FAILED_KEY_PREFIX = "meowo-outgoing-failed:";
+type StoredFailed = Pick<OutgoingPrompt, "kind" | "text" | "attachmentOnly" | "at" | "draft">;
+
+function readFailed(sessionId: number): StoredFailed[] {
+  try {
+    const raw = localStorage.getItem(FAILED_KEY_PREFIX + sessionId);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is StoredFailed => !!entry && typeof entry === "object"
+      && (entry.kind === "echo" || entry.kind === "queued") && typeof entry.text === "string");
+  } catch {
+    return [];
+  }
+}
+
+function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
+  try {
+    const failed: StoredFailed[] = list.filter((prompt) => prompt.phase === "failed")
+      .map(({ kind, text, attachmentOnly, at, draft }) => ({ kind, text, attachmentOnly, at, draft }));
+    if (failed.length === 0) localStorage.removeItem(FAILED_KEY_PREFIX + sessionId);
+    else localStorage.setItem(FAILED_KEY_PREFIX + sessionId, JSON.stringify(failed));
+  } catch {
+    // 隐私模式/配额满：退回只在内存里留着。
+  }
+}
+
+/// 失败回执不参与对账，水位线用不上；恢复时给一个空的。
+const EMPTY_ANCHOR: OutgoingAnchor = { lastItemId: null, priorItemIds: new Set(), priorUserText: null };
+
 export function createOutgoingStore() {
   const bySession = new Map<number, readonly OutgoingPrompt[]>();
   const listeners = new Set<() => void>();
+  // 已从 localStorage 读过失败回执的会话：每个会话只在第一次用到时读一次。
+  const hydrated = new Set<number>();
   let nextId = 0;
+  const hydrate = (sessionId: number) => {
+    if (hydrated.has(sessionId)) return;
+    hydrated.add(sessionId);
+    const restored = readFailed(sessionId).map((entry): OutgoingPrompt => {
+      nextId += 1;
+      return { ...entry, id: nextId, phase: "failed", settledAt: null, anchor: EMPTY_ANCHOR };
+    });
+    // 不通知订阅者：可能正处在 useSyncExternalStore 的取快照里，只把数据就位。
+    if (restored.length > 0) bySession.set(sessionId, [...restored, ...(bySession.get(sessionId) ?? EMPTY)]);
+  };
   const put = (sessionId: number, list: readonly OutgoingPrompt[]) => {
+    const before = bySession.get(sessionId) ?? EMPTY;
     if (list.length === 0) bySession.delete(sessionId);
     else bySession.set(sessionId, list);
+    // 失败回执有增减才写盘：发送中 → 已写入这类高频推进不碰 localStorage。
+    const failedCount = (items: readonly OutgoingPrompt[]) => items.filter((prompt) => prompt.phase === "failed").length;
+    if (failedCount(before) !== failedCount(list) || before.some((prompt) => prompt.phase === "failed" && !list.includes(prompt))) {
+      writeFailed(sessionId, list);
+    }
     listeners.forEach((listener) => listener());
   };
   return {
-    get: (sessionId: number): readonly OutgoingPrompt[] => bySession.get(sessionId) ?? EMPTY,
+    get: (sessionId: number): readonly OutgoingPrompt[] => {
+      hydrate(sessionId);
+      return bySession.get(sessionId) ?? EMPTY;
+    },
     add(sessionId: number, draft: { kind: OutgoingKind; text: string; attachmentOnly: boolean; anchor: OutgoingAnchor; at?: number; phase?: OutgoingPhase; draft?: OutgoingPrompt["draft"] }): number {
+      hydrate(sessionId);
       nextId += 1;
       const prompt: OutgoingPrompt = {
         id: nextId,
@@ -185,6 +239,7 @@ export function createOutgoingStore() {
     /// 测试隔离用：仓库是模块级的，跨用例会残留。
     reset() {
       bySession.clear();
+      hydrated.clear();
       nextId = 0;
       listeners.forEach((listener) => listener());
     },

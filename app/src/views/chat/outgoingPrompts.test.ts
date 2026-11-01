@@ -143,3 +143,24 @@ describe("createOutgoingStore", () => {
     expect(calls).toBe(3);
   });
 });
+
+/** 发送失败的回执落 localStorage：刷新/页面被回收后换一个仓库实例，失败的那条和原文还在。 */
+describe("createOutgoingStore 失败回执持久化", () => {
+  it("失败的回执跨仓库实例保留，收掉后不再恢复；发送中的不落盘", () => {
+    localStorage.clear();
+    const first = createOutgoingStore();
+    const failedId = first.add(7, { kind: "echo", text: "没发出去", attachmentOnly: false, anchor: anchorFrom([], null), phase: "sending", draft: { prompt: "没发出去", attachments: [] } });
+    first.add(7, { kind: "echo", text: "还在发", attachmentOnly: false, anchor: anchorFrom([], null), phase: "sending" });
+    first.update(7, failedId, { phase: "failed" });
+
+    const second = createOutgoingStore();
+    const restored = second.get(7);
+    expect(restored.map((prompt) => [prompt.text, prompt.phase])).toEqual([["没发出去", "failed"]]);
+    expect(restored[0].draft).toEqual({ prompt: "没发出去", attachments: [] });
+    // 取快照是稳定引用（useSyncExternalStore 的要求）。
+    expect(second.get(7)).toBe(restored);
+
+    second.dismiss(7, restored[0].id);
+    expect(createOutgoingStore().get(7)).toEqual([]);
+  });
+});
