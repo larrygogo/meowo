@@ -421,7 +421,7 @@ describe("ChatSidebar", () => {
    * connected-first + 时间倒序原样透过来——用户原来靠什么找会话，分组后还靠什么找。
    * 组折起来时，组头的汇总点是这一组唯一的状态出口，必须取组内最强的召唤。
    */
-  it("分组开关:组序由已有排序派生,组头汇总最强状态,可折叠并记住", async () => {
+  it("分组开关:组序由已有排序派生,组头汇总最强状态,可折叠并记住,当前组切入时展开一次", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "recent_cwds") return Promise.resolve([]);
       if (command !== "get_live_sessions_page") return Promise.resolve();
@@ -455,12 +455,13 @@ describe("ChatSidebar", () => {
     expect(screen.queryByRole("button", { name: /临时活儿/ })).toBeNull();
     expect(heads[0].querySelector(".chat-sidebar-dot")?.className).toContain("is-waiting");
 
-    // 7C-6：当前打开的会话所在的组折不动——日期分桶（键恒为 date:today）折过一次后，
-    // 第二天的新会话会连同用户正开着的那条一起被藏掉。折它只是空操作。
+    // 当前打开的会话所在的组也能折（用户反馈折不起来）：主动点就照办。
     fireEvent.click(heads[1]);
-    expect(screen.getByRole("button", { name: /改侧栏/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /改侧栏/ })).toBeNull();
 
     // 侧栏收起时本组件整个卸载，目录组的折叠状态与开关都得落盘，回来才不是全展开。
+    // 7C-6：再打开时当前会话所在的组若折着，自动展开一次——折过的组里藏着正开着的那条
+    // 会话，用户一进来就找不到自己在哪。别的组的折叠照旧保留。
     cleanup();
     render(<ChatSidebar activeId={2} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     expect(await screen.findByRole("button", { name: /改侧栏/ })).toBeTruthy();

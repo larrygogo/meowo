@@ -973,13 +973,27 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
       // 有搜索词时一律不折：用户明确在找某条会话,命中了却被藏进「显示 N 个
       // 未运行」等于告诉他「搜不到」。
       const canCollapse = !search.trim() && group.items.some((item) => item.connected) && idle.length > 0;
-      // 当前会话所在的组强制展开（7C-6）：日期分桶的键是固定的 `date:today`，折过一次
-      // 之后，第二天的新会话全落进同一个折起来的桶里——用户打开的那条会话自己不见了。
-      const isFolded = folded.has(group.key) && !group.items.some((item) => item.session.id === activeId);
+      // 当前会话所在的组不再强制展开（用户反馈折不起来）。7C-6 要防的「打开的会话落进
+      // 折起来的组、自己看不见」改由下面的 effect 在切换会话时展开一次。
+      const isFolded = folded.has(group.key);
       const shown = canCollapse && !revealed.has(group.key) ? group.items.filter(live) : group.items;
       return { group, isFolded, canCollapse, idleCount: idle.length, shown: isFolded ? [] : shown };
     });
   }, [groups, folded, revealed, search, activeId, starred]);
+
+  // 切到一个会话时，它所在的组若折着就展开一次（7C-6：日期分桶的键固定，折过一次后
+  // 第二天的新会话全落进同一个折着的桶，打开的那条自己看不见）。每个会话只展开一次：
+  // 之后用户主动折起就照办，不再跟他抢。分组随列表异步加载，找到所在组才算办完。
+  const unfoldedForRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!groups || unfoldedForRef.current === activeId) return;
+    const home = groups.find((group) => group.items.some((item) => item.session.id === activeId));
+    if (!home) return;
+    unfoldedForRef.current = activeId;
+    if (folded.has(home.key)) toggleFolded(home.key);
+    // folded 不进依赖：只在会话切换/分组就位时判一次，用户之后折起不该触发重新展开。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, activeId]);
 
   // C-17：侧栏列表 roving tabindex——上百条会话只占一个 Tab 停靠点，↑↓/Home/End 在
   // 条目间搬 DOM 焦点。可停靠条目取当前选中的那条（没被渲染出来时退回首条渲染项）。
@@ -1458,7 +1472,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                       attention={attention}
                       trailing={renderGroupCheck(group.items, folderName(group.cwd) || t.chat.sidebarNoDir)}
                       folded={isFolded}
-                      onToggle={() => { if (!group.items.some((item) => item.session.id === activeId)) toggleFolded(group.key); }}
+                      onToggle={() => toggleFolded(group.key)}
                       leading={
                         <>
                           <ChevronDownIcon className={"chat-sidebar-caret" + (isFolded ? " is-folded" : "")} size={10} strokeWidth={2.6} />
@@ -1473,10 +1487,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                       className="chat-sidebar-group-head"
                       aria-expanded={!isFolded}
                       data-tip={group.cwd ?? undefined}
-                      // 当前会话所在的组折不动（见 renderedGroups 的 isFolded）——那就连
-                      // 状态也别写：否则点它看着没反应，等切到别的会话后这组突然自己折起来
-                      // （复核指出的小怪异）。
-                      onClick={() => { if (!group.items.some((item) => item.session.id === activeId)) toggleFolded(group.key); }}
+                      onClick={() => toggleFolded(group.key)}
                     >
                       <ChevronDownIcon className={"chat-sidebar-caret" + (isFolded ? " is-folded" : "")} size={10} strokeWidth={2.6} />
                       <span className="chat-sidebar-group-name">{group.label || t.chat.sidebarNoDir}</span>
