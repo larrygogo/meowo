@@ -5659,6 +5659,11 @@ select.ns-input {
 .chat-md-table-copy:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-md table { margin: 0 0 var(--sp-12); border-collapse: collapse; font-size: .95em; display: block; overflow-x: auto; }
 .chat-md th, .chat-md td { padding: var(--sp-4) var(--sp-10); border: var(--hairline) solid var(--cc-border); }
+/* 单元格不吃正文的「任意处断行」（.chat-text 的 overflow-wrap:anywhere）：窄屏上浏览器会把
+   短列压到一个字宽，表头和提交号竖着排成一列（手机实拍）。改成只在词间断行、每列至少
+   4em，内联代码不折行；整表放不下就横滑（table 已是 display:block + overflow-x:auto）。 */
+.chat-md th, .chat-md td { overflow-wrap: normal; word-break: normal; min-width: 4em; }
+.chat-md td code, .chat-md th code { white-space: nowrap; }
 .chat-md th { background: var(--fill-hover); }
 .chat-md input[type="checkbox"] { margin-right: var(--sp-5); }
 /* 文件面板 markdown 预览的文档化排版：.chat-md 的标题与间距是按聊天气泡收敛的
