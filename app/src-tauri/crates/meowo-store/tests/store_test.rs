@@ -1174,8 +1174,8 @@ fn migrate_adds_lineage_columns_to_v9_database() {
     }
 }
 
-/// v11 老库 open 后:SCHEMA 重跑 + ALTER 补列(v12 工作组遗留结构 + v13 附加目录),
-/// extra_dirs 读写全链路可用。
+/// v11 老库 open 后:SCHEMA 重跑 + ALTER 补列(v12 工作组遗留结构 + v13 附加目录)。
+/// 附加目录功能已去掉,extra_dirs 列是刻意保留的死结构,这里只钉住迁移仍把它补上。
 #[test]
 fn migrate_adds_v12_v13_columns_to_v11_database() {
     let path = std::env::temp_dir().join(format!("meowo-mig-v11-{}.db", std::process::id()));
@@ -1208,46 +1208,14 @@ fn migrate_adds_v12_v13_columns_to_v11_database() {
         .unwrap();
     }
     let store = Store::open(&path).unwrap();
-    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
-    let (sid, _) = store.start_session(pid, "s", 1).unwrap();
-    store
-        .set_session_extra_dirs(sid, r#"["C:/w/api"]"#)
-        .expect("v11 老库 open 后 extra_dirs 列应已补上");
-    assert_eq!(
-        store.session_extra_dirs(sid).unwrap().as_deref(),
-        Some(r#"["C:/w/api"]"#)
-    );
-
     drop(store);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.prepare("SELECT extra_dirs FROM sessions")
+        .expect("v11 老库 open 后 extra_dirs 列应已补上");
+    drop(conn);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
-}
-
-/// 已有会话中途附加目录:merge 去重(斜杠/大小写/尾斜杠归一),与主 cwd 相同的拒绝,
-/// 重复添加 no-op(返回 false,调用方据此免发广播)。
-#[test]
-fn add_session_extra_dir_merges_and_dedupes() {
-    let store = Store::open_in_memory().unwrap();
-    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
-    let (sid, _) = store.start_session(pid, "s", 100).unwrap();
-    store.set_session_cwd(sid, r"C:\w\web", 110).unwrap();
-
-    assert!(store.add_session_extra_dir(sid, r"C:\w\api").unwrap());
-    // 斜杠写法不同的同一目录 = 重复;主 cwd 也拒绝。
-    assert!(!store.add_session_extra_dir(sid, "C:/w/api/").unwrap());
-    assert!(!store.add_session_extra_dir(sid, "C:/w/web").unwrap());
-    assert!(store.add_session_extra_dir(sid, r"C:\w\proto").unwrap());
-
-    let json = store.session_extra_dirs(sid).unwrap().unwrap();
-    let dirs: Vec<String> = serde_json::from_str(&json).unwrap();
-    assert_eq!(dirs, vec![r"C:\w\api".to_string(), r"C:\w\proto".to_string()]);
-
-    // 移除:斜杠写法不同也定位得到(与 add 同一归一口径);清单清空写回 NULL。
-    assert!(store.remove_session_extra_dir(sid, "C:/w/API").unwrap());
-    assert!(!store.remove_session_extra_dir(sid, "C:/w/api").unwrap(), "重复移除 no-op");
-    assert!(store.remove_session_extra_dir(sid, r"C:\w\proto").unwrap());
-    assert_eq!(store.session_extra_dirs(sid).unwrap(), None, "清空后回到 NULL");
 }
 
 // == 跨 provider 接续链 ==

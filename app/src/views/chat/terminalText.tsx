@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { highlightLines } from "./highlight";
 
 /// 工具展开区里命令与输出的着色（2026-10 用户实拍：通用 hljs bash 只认得 cd/head 与字符串，
 /// 管道/&&/参数/环境变量全是一片白，「高亮不够好」）。这里按终端读者的扫读习惯手写一个
@@ -76,9 +77,10 @@ export function dedent(lines: string[]): string[] {
 const DIFF_MARKER = /^(@@ |diff --git |Diff in |--- |\+\+\+ )/;
 
 /// 输出按行着色：整段像 diff 时 +/- 行染增删色；error/FAIL 行红、warning 行黄。
-/// 只着色不改字——复制出来的仍是原文。
-export function OutputBlock({ text }: { text: string }) {
+/// 已知语言（读取的文件、JSON 回执）走 hljs；日志不做自动语言猜测。只着色不改字。
+export function OutputBlock({ text, lang = null }: { text: string; lang?: string | null }) {
   const lines = text.split("\n");
+  const highlighted = lang ? highlightLines(lines, lang) : null;
   const diff = lines.some((line) => DIFF_MARKER.test(line));
   return (
     <pre className="chat-tool-output">
@@ -89,7 +91,12 @@ export function OutputBlock({ text }: { text: string }) {
           : /^\s*(error|ERROR|FAIL|FAILED|✗|×)\b/.test(line) || /^\s*error(\[|:)/.test(line) ? "err"
           : /^\s*(warning|WARN)\b/i.test(line) ? "warn"
           : null;
-        const content = index < lines.length - 1 ? `${line}\n` : line;
+        const newline = index < lines.length - 1 ? "\n" : "";
+        if (highlighted) {
+          const html = (highlighted[index] || " ") + newline;
+          return <span key={index} className={tone ? `is-${tone}` : undefined} dangerouslySetInnerHTML={{ __html: html }} />;
+        }
+        const content = line + newline;
         return tone ? <span key={index} className={`is-${tone}`}>{content}</span> : content;
       })}
     </pre>

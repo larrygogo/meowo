@@ -12,6 +12,11 @@ export function stripAnsi(text: string): string {
 export type ToolUseItem = Extract<ChatItem, { type: "tool_use" }>;
 export type ToolResultItem = Extract<ChatItem, { type: "tool_result" }>;
 
+/// 回执正文的非空行（先剥终端着色码）。
+export function outputLines(text: string): string[] {
+  return stripAnsi(text).split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
+}
+
 /// 这条工具调用是不是一次子任务委派。对话流的子任务块与标题栏进度面板共用同一条判据
 /// ——两处一旦分叉，就会出现「面板里有、对话流里没有」这类自相矛盾的画面。
 ///
@@ -48,6 +53,15 @@ export function isBackgroundShell(
 ): boolean {
   // PowerShell 工具(Windows 上的 CC)同样有 run_in_background,判据一致。
   return (item.name === "Bash" || item.name === "PowerShell") && outcomes.has(item.id);
+}
+
+/// 过程类条目的耗时短格式：<1 分钟写秒，再长写「分秒」。等宽短码，与时间线标签同一副终端腔
+/// （活动组、思考块共用；子任务面板那种带单位的写法走 durationText）。
+export function fmtSpan(ms: number): string {
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const seconds = total % 60;
+  return `${Math.floor(total / 60)}m${seconds ? `${String(seconds).padStart(2, "0")}s` : ""}`;
 }
 
 /// 子任务执行时长的短格式:秒级起报,超一小时丢掉秒(读的是量级,不是秒表)。

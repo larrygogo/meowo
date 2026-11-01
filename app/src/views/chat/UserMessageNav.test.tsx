@@ -31,6 +31,11 @@ describe("userNavEntries", () => {
     ]);
   });
 
+  it("去掉 CLI 粘贴图片留下的 [Image #N] 占位符;只剩占位符的算图片项", () => {
+    const entries = userNavEntries([user("a", "[Image #4] 为什么这个滚动条里有重复"), user("b", "[Image #5]")]);
+    expect(entries.map((entry) => [entry.label, entry.kind])).toEqual([["为什么这个滚动条里有重复", "text"], ["", "image"]]);
+  });
+
   it("连续纯图消息与 Transcript 一样并成一组,只留组首", () => {
     const entries = userNavEntries([
       user("i1", "[Image: source: C:\\tmp\\a.png]"),
@@ -85,19 +90,18 @@ describe("UserMessageNav", () => {
     }
   });
 
-  it("悬停时横线按离光标的远近变长,移开恢复", () => {
+  it("每条一根竖条、标题随条渲染(悬停展开靠 CSS);阅读列右侧没有留白时贴右缘", () => {
     const scrollRef = createRef<HTMLElement>();
-    const items = ["a", "b", "c", "d", "e", "f"].map((id) => user(id, "消息 " + id));
+    const items = ["a", "b", "c"].map((id) => user(id, "消息 " + id));
     render(<>
       <main ref={scrollRef}>{items.map((item) => <article key={item.id} data-msg-id={item.id} />)}</main>
       <UserMessageNav items={items} scrollRef={scrollRef} />
     </>);
     const nav = screen.getByRole("navigation", { name: "用户消息导航" });
     const buttons = within(nav).getAllByRole("button");
-    const widths = () => buttons.map((button) => button.querySelector<HTMLElement>(".chat-msg-nav-dash")!.style.width);
-    fireEvent.mouseEnter(buttons[2]);
-    expect(widths()).toEqual(["13px", "16px", "20px", "16px", "13px", "10px"]);
-    fireEvent.mouseLeave(nav.querySelector(".chat-msg-nav-list")!);
-    expect(widths()).toEqual(["", "", "", "", "", ""]);
+    expect(buttons.map((button) => button.querySelector(".chat-msg-nav-bar") !== null)).toEqual([true, true, true]);
+    expect(buttons.map((button) => button.querySelector(".chat-msg-nav-text")?.textContent)).toEqual(["消息 a", "消息 b", "消息 c"]);
+    // jsdom 里滚动区宽度为 0,两侧没有留白 → 退到窗口右缘、标题往左展开。
+    expect(nav.classList.contains("is-edge")).toBe(true);
   });
 });

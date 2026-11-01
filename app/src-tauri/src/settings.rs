@@ -234,6 +234,10 @@ pub(crate) struct Settings {
     /// 窗口侧唯一的取得口是配对命令 remote_access_info（见 without_remote_token）。
     #[serde(default)]
     pub(crate) remote_access_token: String,
+    /// 手机推送（Bark）地址，Bark App 里复制的 `https://api.day.app/<key>/`。空 = 不推送。
+    /// 会话需要关注时推一条到手机，见 push.rs。
+    #[serde(default)]
+    pub(crate) bark_url: String,
     /// 贴纸主窗口几何（W-17，见 [`StickerWindowState`]）。兼容老 settings.json：缺席 →
     /// 全 None/false，前端启动时从 localStorage 旧键（及后端从 window-state 旧文件）一次性迁移。
     #[serde(default)]
@@ -276,6 +280,7 @@ impl Default for Settings {
             remote_access_port: default_remote_port(),
             remote_access_bind: default_remote_bind(),
             remote_access_token: String::new(),
+            bark_url: String::new(),
             sticker_window: StickerWindowState::default(),
         }
     }
@@ -309,6 +314,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "notify.pending.plan") => "Plan awaiting approval",
         ("en", "notify.blocked") => "The Agent is waiting for input",
         ("en", "notify.open") => "Open session",
+        ("en", "notify.pushTest") => "Phone push is working",
         ("en", "tray.chat") => "Open chat window",
         ("en", "tray.recall") => "Recall sticker",
         ("en", "tray.guide") => "Getting started",
@@ -343,6 +349,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "notify.pending.plan") => "计划待批准",
         (_, "notify.blocked") => "Agent 正在等待输入",
         (_, "notify.open") => "打开会话",
+        (_, "notify.pushTest") => "手机推送已接通",
         (_, "tray.chat") => "打开对话窗口",
         (_, "tray.recall") => "找回贴纸",
         (_, "tray.guide") => "使用引导",

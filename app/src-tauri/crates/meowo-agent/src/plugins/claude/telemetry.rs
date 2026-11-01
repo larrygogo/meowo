@@ -15,6 +15,7 @@ impl TelemetryCap for ClaudeTelemetry {
         StopOutputs {
             last_ai: ctx.last_assistant_message.map(str::to_string),
             model: None,
+            effort: None,
         }
     }
 

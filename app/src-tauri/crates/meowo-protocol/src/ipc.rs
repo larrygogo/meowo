@@ -165,6 +165,11 @@ pub enum ChatItem {
         id: String,
         timestamp: Option<String>,
         text: String,
+        /// 回合进行中被 CLI 插入的话（claude queued_command）。前端据此标「回合中插入」、
+        /// 结算插话回执。false 不下发，旧前端/旧缓存缺字段按 false。
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[cfg_attr(test, ts(type = "boolean", optional))]
+        interjected: bool,
     },
     AssistantText {
         id: String,
@@ -208,6 +213,9 @@ pub enum ChatItem {
         /// 结构化详情（见 [`ToolDetail`]）；插件认不得的工具为 None。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<ToolDetail>,
+        /// ExitPlanMode 的完整计划文档（Kimi 在 display.plan 中携带）；普通工具为 None。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan: Option<String>,
     },
     ToolResult {
         id: String,
@@ -228,7 +236,29 @@ pub enum ChatItem {
         id: String,
         timestamp: Option<String>,
         kind: String,
+        /// 分隔条的附加事实（目前只有压缩：触发方式、压缩前 token、摘要正文）。
+        /// provider 拿不到时为 None，前端照旧只显示一句「上下文已压缩」。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compaction: Option<CompactionDetail>,
     },
+}
+
+/// 压缩分隔条的细节（对照 Kimi 的「已自动压缩上下文（before → after tokens）· 查看摘要」）。
+/// 压缩后用户最想知道的是「它还记得什么」：摘要正文就是答案，此前被整条丢弃。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct CompactionDetail {
+    /// "auto"（上下文将满时 CLI 自己压的）/ "manual"（用户 /compact）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    /// 压缩前的上下文 token 数。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "number | null", optional))]
+    pub pre_tokens: Option<u64>,
+    /// 压缩摘要正文（喂回模型的那份上下文）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,16 +325,28 @@ pub struct ChatHistoryDto {
     pub status: String,
     pub provider: String,
     pub cwd: Option<String>,
-    /// 附加目录(--add-dir):会话除 cwd 外还能访问的仓。空 = 单目录会话。
-    /// 标题菜单按它列出完整目录清单——加了目录必须看得见。
-    pub extra_dirs: Vec<String>,
     pub supported: bool,
     pub items: Vec<ChatItem>,
+    /// 最近的完整计划。items 只是首屏尾部窗口，计划可能已经被裁出窗口。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub plan: Option<String>,
     #[cfg_attr(test, ts(type = "number"))]
     pub offset: u64,
     pub reset: bool,
+    /// 这次 reset 源于 CLI 撤回了最近几轮（transcript 里出现撤回记录）。前端平时不采信
+    /// 「reset 但 items 为空」（文件重写途中的瞬态），撤掉唯一一轮时整读结果确实为空，
+    /// 靠它放行。false 不下发。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(type = "boolean", optional))]
+    pub undone: bool,
     pub pending_review: Option<PendingReviewKind>,
     pub model: Option<String>,
+    /// 当前思考程度（statusline 的 `effort.level`，如 "high"）。模型不支持思考程度时
+    /// CLI 不报，这里为 None，前端据此不显示档位控件。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub effort: Option<String>,
     pub agent_modes: Vec<AgentModeDto>,
     #[cfg_attr(test, ts(type = "number | null"))]
     pub context_pct: Option<i64>,
@@ -363,7 +405,7 @@ pub struct ChatHistoryDto {
     pub superseded_by: Option<i64>,
 }
 
-/// `switch_session_provider` 的返回：新会话的临时负 id（前端拿它走既有的 binding
+/// `copy_session_to_provider` 的返回：新会话的临时负 id（前端拿它走既有的 binding
 /// 轮询换真 id）+ 交接文件路径（注入 prompt 时引用；注入失败落回输入框当草稿）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -598,6 +640,10 @@ pub struct GitDiffSummaryDto {
     pub is_repo: bool,
     /// 当前分支名；detached HEAD 或查询失败时为 None。
     pub branch: Option<String>,
+    /// 相对上游分支领先 / 落后的提交数（对照 Kimi 改动面板的「领先远程 / 落后远程」：agent 提交
+    /// 之后要不要推送，一眼可见）。按本地记录的远程分支算，不自动 fetch。没有上游时为 None。
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
     pub files: Vec<GitChangedFileDto>,
 }
 
@@ -783,6 +829,17 @@ mod tests {
         assert_eq!(dto_value["permissionSuggestions"], serde_json::json!([]));
         assert_eq!(dto_value["sessionId"], 7);
         assert_eq!(dto_value["requestId"], "req-1");
+    }
+
+    /// interjected 只在为真时下发；缺字段（旧后端/旧缓存）按 false 读回。
+    #[test]
+    fn user_text_interjected_is_omitted_when_false() {
+        let plain = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: false };
+        assert!(serde_json::to_value(&plain).unwrap().get("interjected").is_none());
+        let steered = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: true };
+        assert_eq!(serde_json::to_value(&steered).unwrap()["interjected"], true);
+        let old: ChatItem = serde_json::from_str(r#"{"type":"user_text","id":"u","timestamp":null,"text":"hi"}"#).unwrap();
+        assert_eq!(old, plain);
     }
 
     #[test]

@@ -29,18 +29,20 @@ export function userNavEntries(items: readonly ChatItem[]): UserNavEntry[] {
       continue;
     }
     const { body, images } = splitUserText(parts.text);
-    const label = body.replace(/\s+/g, " ").trim();
+    // CLI 粘贴图片在正文里留的 `[Image #N]` 占位符不是用户写的字，目录里去掉（用户实拍）。
+    const label = body.replace(/\[Image #\d+\]/g, " ").replace(/\s+/g, " ").trim();
     if (label) out.push({ id: item.id, label, kind: "text" });
-    else if (images.length > 0) out.push({ id: item.id, label: "", kind: "image" });
+    else if (images.length > 0 || /\[Image #\d+\]/.test(body)) out.push({ id: item.id, label: "", kind: "image" });
   }
   return out;
 }
 
-/// 悬停时横线按离光标的远近变长：悬停项最长，往两边每隔一行短一档，像 Dock 放大
-/// （用户要求，对照截图）。离得远的回到常规长度。
-const DASH_BASE = 10;
-const DASH_STEPS = [20, 16, 13];
-export const dashWidth = (index: number, hovered: number) => DASH_STEPS[Math.abs(index - hovered)] ?? DASH_BASE;
+/// 竖条贴在阅读列右侧的最小留白：标题要在这段空白里滑出来，不够就改贴窗口右缘、
+/// 标题往左展开（Kimi 的 ConversationToc 不够 160px 时直接隐藏；meowo 有「铺满」宽度
+/// 选项，那时根本没有右侧留白，隐藏等于永远没有导航）。
+const SIDE_MIN = 160;
+/// 竖条与阅读列的间距（Kimi 同值）。
+const SIDE_GAP = 14;
 
 const escapeId = (id: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"'));
 
@@ -51,8 +53,9 @@ const NAV_HIDDEN_QUERY = "(hover: none), (max-width: 680px)";
 // jsdom 没有 matchMedia，按显示处理（测试语义不变）。
 const navHiddenNow = () => typeof window.matchMedia === "function" && window.matchMedia(NAV_HIDDEN_QUERY).matches;
 
-/// 对话页右缘的用户消息导航：每条用户消息一根短横线，当前读到的那条高亮加长；
-/// 悬停展开成消息摘要列表，点一条跳到它（用户要求，对照 Codex/Claude 客户端实拍）。
+/// 用户消息目录（对照 Kimi 的 ConversationToc，用户 2026-10-29 要求替换此前「横线 + 悬停
+/// 弹出列表」的形态）：阅读列右侧一列 3px 竖条，平时半透明；悬停整列不透明，标题从竖条
+/// 旁原地滑出，不弹卡片；当前读到的那条竖条加深，悬停的那条变强调色。点一条跳到它。
 /// 绝对定位在 .chat-main（position: relative）里、贴着滚动区，不随内容滚走。
 export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }: {
   items: readonly ChatItem[];
@@ -61,8 +64,7 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   const t = useT();
   const entries = useMemo(() => userNavEntries(items), [items]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<number | null>(null);
-  const [box, setBox] = useState<{ top: number; height: number } | null>(null);
+  const [box, setBox] = useState<{ top: number; height: number; left: number | null } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -80,9 +82,16 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller || hidden) return;
+    // 横向：阅读列右缘 + 14px；右侧留白不够 SIDE_MIN 时 left=null，退到窗口右缘。
+    // --chat-col 是 720px 或 100%（铺满），百分比按整宽算。
     const measure = () => setBox((current) => {
-      const next = { top: scroller.offsetTop, height: scroller.clientHeight };
-      return current && current.top === next.top && current.height === next.height ? current : next;
+      const width = scroller.clientWidth;
+      const raw = getComputedStyle(scroller).getPropertyValue("--chat-col").trim();
+      const col = raw.endsWith("px") ? Number.parseFloat(raw) : Number.NaN;
+      const colWidth = Number.isFinite(col) ? Math.min(col, width) : width;
+      const left = (width - colWidth) / 2 - SIDE_GAP >= SIDE_MIN ? scroller.offsetLeft + (width + colWidth) / 2 + SIDE_GAP : null;
+      const next = { top: scroller.offsetTop, height: scroller.clientHeight, left };
+      return current && current.top === next.top && current.height === next.height && current.left === next.left ? current : next;
     });
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -160,17 +169,12 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   };
   return (
     <nav
-      className="chat-msg-nav"
+      className={"chat-msg-nav" + (box?.left == null ? " is-edge" : "")}
       aria-label={t.chat.messageNav}
-      style={box ? { top: box.top, height: box.height } : undefined}
+      style={box ? { top: box.top, height: box.height, left: box.left ?? undefined } : undefined}
     >
-      <div
-        className="chat-msg-nav-list"
-        ref={listRef}
-        onMouseLeave={() => setHovered(null)}
-        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHovered(null); }}
-      >
-        {entries.map((entry, index) => (
+      <div className="chat-msg-nav-list" ref={listRef}>
+        {entries.map((entry) => (
           <button
             type="button"
             key={entry.id}
@@ -181,20 +185,14 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
             aria-label={entry.kind === "image" ? t.chat.messageNavImage : entry.label}
             aria-current={entry.id === activeId ? "true" : undefined}
             onClick={() => jump(entry.id)}
-            onMouseEnter={() => setHovered(index)}
-            onFocus={() => setHovered(index)}
           >
+            <i className="chat-msg-nav-bar" aria-hidden="true" />
             <span className="chat-msg-nav-label">
               {entry.kind === "command" && (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8" /></svg>
               )}
               <span className="chat-msg-nav-text">{entry.kind === "image" ? t.chat.messageNavImage : entry.label}</span>
             </span>
-            <i
-              className="chat-msg-nav-dash"
-              aria-hidden="true"
-              style={hovered === null ? undefined : { width: dashWidth(index, hovered) }}
-            />
           </button>
         ))}
       </div>

@@ -85,19 +85,47 @@ pub(super) static RULES: &[ScreenRule] = &[
         Matcher::Contains(&["run a dynamic workflow?", "esc to cancel"]),
     )
     .visible(),
-    // /btw 覆盖层挂着说明后台仍在跑。
+    // auto 模式的环境学习引导（2.1.314 实拍：首个回合结束后弹出）：
+    // `Teach auto mode about your environment?` + 开关行 + `←/→ to change · Enter to continue ·
+    // Esc to cancel`。没有 enter to select，上面的表单规则认不出，会落回 idle：对话页照常让
+    // 发消息，打出的字全喂进这个对话框（探针实测第二条消息被它吞掉）。
+    ScreenRule::new(
+        "auto_mode_setup_prompt",
+        ScreenState::Blocked,
+        980,
+        Region::AfterLastRule,
+        Matcher::Contains(&["teach auto mode about your environment?", "esc to cancel"]),
+    )
+    .visible(),
+    // /btw 覆盖层作答中（2.1.314 实拍）：`/btw <问题>` + `· Answering…` + `Esc to close`。
+    // 逐字对齐原始规则 `^\s*/btw(?:\s|$)` 与 `esc to close\s*$`：
+    // `/btw` 后必须是空白或行尾（否则 `/btwhatever` 也命中），提示必须在**行尾**
+    // （否则「press esc to close this dialog」这类正文会把空闲误判成运行中——
+    // 该规则 975 优先级，会压过提示框的 idle 判定）。
+    // 原规则只认这两条，答完的覆盖层也命中：答案摆着等人看，状态却一直「运行中」。
+    // 答完的提示行多出 `c to copy`，按它分开两种形态（答案区较高，取底部 40 行）。
     ScreenRule::new(
         "btw_overlay_working",
         ScreenState::Working,
         975,
-        Region::BottomNonEmpty(5),
-        // 逐字对齐原始规则 `^\s*/btw(?:\s|$)` 与 `esc to close\s*$`：
-        // `/btw` 后必须是空白或行尾（否则 `/btwhatever` 也命中），提示必须在**行尾**
-        // （否则「press esc to close this dialog」这类正文会把空闲误判成运行中——
-        // 该规则 975 优先级，会压过提示框的 idle 判定）。
+        Region::BottomNonEmpty(40),
         Matcher::All(&[
             Matcher::LineRegex(r"^\s*/btw(?:\s|$)"),
             Matcher::LineRegex(r"esc to close\s*$"),
+            Matcher::Not(&[Matcher::Contains(&["c to copy"])]),
+        ]),
+    )
+    .visible(),
+    // /btw 答完：覆盖层吞按键（`c` 复制、`f` 分叉），对话页这时发消息会被它当快捷键吃掉，
+    // 判 blocked 让发送走「先去终端处理」。对话页自己发起的侧问读完答案即收起覆盖层。
+    ScreenRule::new(
+        "btw_overlay_answered",
+        ScreenState::Blocked,
+        975,
+        Region::BottomNonEmpty(40),
+        Matcher::All(&[
+            Matcher::LineRegex(r"^\s*/btw(?:\s|$)"),
+            Matcher::LineRegex(r"c to copy.*esc to close\s*$"),
         ]),
     )
     .visible(),

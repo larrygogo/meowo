@@ -220,7 +220,7 @@ describe("App", () => {
       todo_done: 0, todo_total: 0, todos: [], pid: null, archived: false, archived_at: null,
       cwd: "C:/work/proj", context_pct: null, context_window: null, model: null, note: null,
       pending_review: null, last_ai_text: null, last_user_text: null, provider: "codex",
-      profile: null, predecessor_id: null, extra_dirs: [],
+      profile: null, predecessor_id: null,
       connected: true, pty_managed: true, endable: true, background: false, errored: false,
       error_label: null, error_raw: null, busy_subagents: 0, preview: null,
       profile_name: null, foreign: false,

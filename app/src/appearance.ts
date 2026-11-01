@@ -14,7 +14,7 @@ import { remoteUi, REMOTE_SETTINGS_EVENT } from "./remoteMode";
  *  dark/light = 该色在深/浅主题下实际套用的贴纸底色 RGB（低饱和微染，配合不透明+毛玻璃才不刺眼）。 */
 export type StickerColorPreset = { swatch: string; dark: string; light: string };
 export const STICKER_COLORS: Record<string, StickerColorPreset> = {
-  neutral: { swatch: "#ffffff", dark: "33, 33, 35", light: "247, 247, 249" }, // 无色（默认，中性不染色；swatch 白底红斜杠示意「无」）
+  neutral: { swatch: "#ffffff", dark: "18, 18, 18", light: "255, 255, 255" }, // 无色（默认，中性不染色；swatch 白底红斜杠示意「无」）
   classic: { swatch: "#d97757", dark: "38, 38, 36", light: "250, 249, 245" }, // 经典原色（暖褐）
   slate: { swatch: "#5b8db8", dark: "29, 37, 47", light: "239, 244, 250" }, // 石青
   moss: { swatch: "#6fae6a", dark: "30, 41, 33", light: "239, 248, 240" }, // 苔绿
@@ -61,6 +61,34 @@ function clampPct(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+// 手机远程页的明暗模式只记在这台手机上（用户要求：手机和桌面不在同一个环境里用，
+// 桌面选深色不代表手机上也要深色）。默认跟随手机系统。贴纸色、列宽等其余外观仍随桌面。
+const REMOTE_THEME_KEY = "meowo.remote.theme";
+
+export function remoteThemeMode(): ThemeMode {
+  try {
+    const v = localStorage.getItem(REMOTE_THEME_KEY);
+    if (v === "light" || v === "dark" || v === "system") return v;
+  } catch {
+    /* 隐私模式读不到：按默认 */
+  }
+  return "system";
+}
+
+export function setRemoteThemeMode(mode: ThemeMode): void {
+  try {
+    localStorage.setItem(REMOTE_THEME_KEY, mode);
+  } catch {
+    /* 写不进去只影响下次打开，本次照样套用 */
+  }
+  apply(current, mode);
+}
+
+/** 生效的明暗模式：远程页用手机本地那份，桌面各窗用设置里的。 */
+function themeModeOf(a: Appearance): ThemeMode {
+  return remoteUi() ? remoteThemeMode() : a.theme;
+}
+
 /** 把外观模式解析为实际生效的深/浅；system 时读系统偏好。 */
 function resolveTheme(t: ThemeMode): "dark" | "light" {
   if (t === "light") return "light";
@@ -70,16 +98,16 @@ function resolveTheme(t: ThemeMode): "dark" | "light" {
   return "dark";
 }
 
-function apply(a: Appearance): void {
+function apply(a: Appearance, mode: ThemeMode = themeModeOf(a)): void {
   current = a;
   const root = document.documentElement;
-  const theme = resolveTheme(a.theme);
+  const theme = resolveTheme(mode);
   root.setAttribute("data-theme", theme);
   // 手机浏览器的状态栏/地址栏底色跟随主题(7M-10)。只有 mobile.html 挂了这个 meta,
   // 桌面三个入口查不到、直接跳过。色值与 styles.css 的 --cc-window-bg 两档一致
   // (meta 的 content 吃不了 var())。
   const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (themeColor) themeColor.content = theme === "light" ? "#f1f0ec" : "#191a1c";
+  if (themeColor) themeColor.content = theme === "light" ? "#ffffff" : "#121212";
   // 贴纸风格（立体感/扁平）：CSS 用 [data-sticker-style="flat"] 抹平所有立体效果。
   root.setAttribute("data-sticker-style", a.sticker_style);
   // 对话内容列宽：CSS 用 [data-chat-width="full"] 把 --chat-col 从 720px 换成 100%。
@@ -169,6 +197,6 @@ export function bootAppearance(opts: { scale: boolean; panel?: boolean }): void 
   window
     .matchMedia("(prefers-color-scheme: light)")
     .addEventListener("change", () => {
-      if (current.theme === "system") apply(current);
+      if (themeModeOf(current) === "system") apply(current);
     });
 }

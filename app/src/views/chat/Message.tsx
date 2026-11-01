@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -9,10 +9,13 @@ import { type ChatItem } from "../../api";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { parseUserText, type CrossMessage } from "./localCommand";
 import { copyPlainText } from "./clipboard";
-import { stripAnsi } from "./shared";
+import { fmtSpan, stripAnsi } from "./shared";
+import { ChatActionsContext } from "./chatActions";
+import { EchoActionsContext, EchoPhaseContext, outgoingIdOf } from "./outgoingPrompts";
+import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../../remoteMode";
 
-function MessageCopyButton({ text }: { text: string }) {
+export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -24,11 +27,11 @@ function MessageCopyButton({ text }: { text: string }) {
   };
   const label = copied ? t.chat.messageCopied : t.chat.copyMessage;
   return (
-    <button type="button" className="chat-message-copy" aria-label={label} data-tip={label} onClick={copy}>
+    <button type="button" className={className} aria-label={label} data-tip={label} onClick={copy}>
       {copied ? (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
       ) : (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2" /><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" /></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2" /><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" /></svg>
       )}
     </button>
   );
@@ -219,7 +222,7 @@ function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: 
         <button type="button" className="chat-lightbox-zoom" aria-label={t.chat.zoomReset} data-tip={t.chat.zoomReset} onClick={reset}>{Math.round(scale * 100)}%</button>
         <button type="button" aria-label={t.chat.zoomIn} data-tip={t.chat.zoomIn} onClick={() => setScale((s) => clampScale(s * 1.25))}>+</button>
         <button type="button" aria-label={t.chat.lightboxClose} data-tip={t.chat.lightboxClose} onClick={onClose}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>
     </div>,
@@ -341,13 +344,42 @@ export function UserImageGroup({ paths, anchorId }: { paths: string[]; anchorId?
 
 /** 思考过程块：恒为收起的一行灰字，点开看全文。2026-10 用户对照 Kimi 客户端实拍
  *  嫌对话区拥挤，定为「思考过程收成一行」——此前短思考摊开、长思考露 6 行预览，
- *  每轮都多出一段灰字。open 不受控，开合完全归原生 details，流式更新不会把它弹开。 */
-function ReasoningBlock({ item }: { item: Extract<ChatItem, { type: "reasoning" | "reasoning_delta" }> }) {
+ *  每轮都多出一段灰字。开合只随用户点击变（按会话记住），流式更新不会把它弹开。 */
+function ReasoningBlock({ item, nextStamp = null }: { item: Extract<ChatItem, { type: "reasoning" | "reasoning_delta" }>; nextStamp?: string | null }) {
   const t = useT();
+  // reasoning_delta 是还在流的那条，reasoning 是收尾后的定稿——用它区分「在跑 / 跑完」。
+  const live = item.type === "reasoning_delta";
+  const reasoningDetails = useRememberedDetails(`reasoning:${item.id}`);
+  const startedAt = Date.parse(item.timestamp ?? "");
+  const [elapsed, setElapsed] = useState(() => (live && Number.isFinite(startedAt) ? Date.now() - startedAt : null));
+
+  useEffect(() => {
+    if (!live || !Number.isFinite(startedAt)) return;
+    setElapsed(Date.now() - startedAt);
+    const timer = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    return () => clearInterval(timer);
+  }, [live, startedAt]);
+
+  // 跑完的：用下一条非 meta 条目的时间戳收尾（思考自己没有结束时间）。
+  // 还在跑的：每秒 tick，转定稿后数字停在最后一次 tick 上不再动。
+  let span: string | null = null;
+  if (elapsed !== null && elapsed >= 1000) {
+    span = fmtSpan(elapsed);
+  } else if (!live) {
+    const endedAt = Date.parse(nextStamp ?? "");
+    if (Number.isFinite(startedAt) && Number.isFinite(endedAt) && endedAt - startedAt >= 1000) {
+      span = fmtSpan(endedAt - startedAt);
+    }
+  }
+
   return (
-    <details className="chat-reasoning">
+    <details className="chat-reasoning" {...reasoningDetails}>
       <summary>
-        {t.chat.reasoning}
+        <span className="chat-reasoning-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" /></svg>
+        </span>
+        {live ? t.chat.reasoningLive : t.chat.reasoning}
+        {span && <span className="chat-reasoning-time">{span}</span>}
         <span className="chat-tool-chevron">›</span>
       </summary>
       <div className="chat-md"><ChatMarkdown text={item.text} /></div>
@@ -358,14 +390,139 @@ function ReasoningBlock({ item }: { item: Extract<ChatItem, { type: "reasoning" 
 /// memo：流式期间 items 引用每轮都变（Transcript 整棵重建），但未变化的条目经
 /// reducer 的写时复制保持同一引用——memo 让重渲染只落在真正变化的那条上，
 /// parseUserText / split 这类逐条解析不再全量重跑。
-export const Message = memo(function Message({ item }: { item: ChatItem }) {
+/// 回合出错卡。最新的那张带「继续」：失败只给一个最短的恢复动作（对照 Kimi 的
+/// turnFailed 卡）——发一句「继续」让 Agent 接着做；旧的出错卡后面已有新内容，不出按钮。
+function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn_error" }>; latest: boolean }) {
   const t = useT();
-  // hover 显示精确时间：统一走 data-tip 自绘浮层（全仓不再混用原生 title，G-5）。
-  // 上面「路径不进 title」的纪律针对身份信息，时间无此虑。timestamp 缺失就整个不挂。
+  const actions = useContext(ChatActionsContext);
+  const [busy, setBusy] = useState(false);
+  return (
+    <article className="chat-message is-turn-error" role="alert">
+      <div className="chat-turn-error-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>
+        {item.label}
+      </div>
+      <div className="chat-text">{item.text}</div>
+      {latest && actions && (
+        <div className="chat-turn-error-actions">
+          <button
+            type="button"
+            className="chat-turn-error-continue"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void actions.sendText(t.chat.turnErrorContinueText).finally(() => setBusy(false));
+            }}
+          >
+            {t.chat.turnErrorContinue}
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/// 用户消息页脚的「撤回」（对照 Kimi 的 undoTooltip「撤回消息」）：对话窗声明这条此刻可撤
+///（当前段、非插话、会话空闲、CLI 支持）才出现，其余时候整颗不渲染，不留灰按钮。
+function UndoButton({ id, text }: { id: string; text: string }) {
+  const t = useT();
+  const actions = useContext(ChatActionsContext);
+  if (!actions?.undoFrom || !actions.undoableIds?.has(id)) return null;
+  const undo = actions.undoFrom;
+  return (
+    <button type="button" className="chat-turn-copy" aria-label={t.chat.undoTip} data-tip={t.chat.undoTip} onClick={() => undo(id, text)}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+    </button>
+  );
+}
+
+/// 用户气泡正文：超过 10 行收起并渐隐，底部给「展开全部」（对照 Kimi 的 u-text-wrap.is-clamped）。
+/// 贴进来的一大段日志、报错原样摊开能占好几屏，回答被挤到看不见的地方；用户自己写的
+/// 话通常一眼就认得，看开头足够。超没超按实测高度判（同 CrossMessageBlock），展开态按会话记住。
+function UserBubbleText({ id, body }: { id: string; body: string }) {
+  const t = useT();
+  const [expanded, setExpanded] = useRememberedOpen(`user:${id}`, false);
+  const textRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    // +4 容差：亚像素行高会让恰好 10 行的消息虚报溢出。
+    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 4);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [body]);
+  const clamped = !expanded;
+  return (
+    <div className={"chat-user-text" + (clamped && overflowing ? " is-clamped" : "")}>
+      <div ref={textRef} className={"chat-text" + (clamped ? " is-clampable" : "")}>{body}</div>
+      {(overflowing || expanded) && (
+        <button type="button" className="chat-user-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          {expanded ? t.chat.approvalCollapse : t.chat.approvalExpand}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/// 压缩分隔条（对照 Kimi 的「已自动压缩上下文（tokens）· 查看摘要」）：压缩后用户最想知道
+/// 它还记得什么，摘要就是答案。摘要默认收起、限高滚动（动辄上万字），开合按会话记住。
+/// provider 没给细节时退回一句「上下文已压缩」。
+function CompactDivider({ item, summary }: { item: Extract<ChatItem, { type: "meta" }>; summary: string | null }) {
+  const t = useT();
+  const [open, setOpen] = useRememberedOpen(`compact:${item.id}`, false);
+  const auto = item.compaction?.trigger === "auto";
+  const pre = item.compaction?.pre_tokens;
+  return (
+    <>
+      <div className="chat-meta chat-compact">
+        <span />
+        {auto ? t.chat.compactAuto : t.chat.compact}
+        {pre ? <small className="chat-meta-sub">{t.chat.compactPreTokens(Math.round(pre / 1000))}</small> : null}
+        {summary && (
+          <button type="button" className="chat-meta-link" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? t.chat.compactHideSummary : t.chat.compactViewSummary}
+          </button>
+        )}
+        <span />
+      </div>
+      {summary && open && <div className="chat-compact-summary chat-md"><ChatMarkdown text={summary} /></div>}
+    </>
+  );
+}
+
+/// 发送失败的回显页脚：标注 + 「重发」「放回输入框」。
+function EchoFailedActions({ itemId, actions }: { itemId: string; actions: { retry: (id: number) => void; restore: (id: number) => void } | null }) {
+  const t = useT();
+  const id = outgoingIdOf(itemId);
+  return (
+    <>
+      <span className="chat-user-note is-warn" role="alert">{t.chat.echoFailed}</span>
+      {actions && id != null && <>
+        <button type="button" className="chat-user-action" onClick={() => actions.retry(id)}>{t.chat.echoRetry}</button>
+        <button type="button" className="chat-user-action" onClick={() => actions.restore(id)}>{t.chat.echoRestore}</button>
+      </>}
+    </>
+  );
+}
+
+/// 默认收起、开合按会话记住的 <details>（键见 foldMemory）：Message 里的分支不能直接调 hook。
+function RememberedDetails({ memoryKey, className, children }: { memoryKey: string; className: string; children: ReactNode }) {
+  return <details className={className} {...useRememberedDetails(memoryKey)}>{children}</details>;
+}
+
+export const Message = memo(function Message({ item, nextStamp = null, latest = false, compactSummary = null }: { item: ChatItem; nextStamp?: string | null; latest?: boolean; compactSummary?: string | null }) {
+  const t = useT();
+  const echoPhase = useContext(EchoPhaseContext).get(item.id);
+  const echoActions = useContext(EchoActionsContext);
+  // 不再挂悬停的完整时间浮层：时间已在回合页脚常显，整段正文一悬停就弹日期是噪音（用户要求）。
   const stampDate = item.timestamp ? new Date(item.timestamp) : null;
-  const timeTitle = stampDate && !Number.isNaN(stampDate.getTime())
-    ? stampDate.toLocaleString(t.locale)
-    : undefined;
+  const timeText = stampDate && !Number.isNaN(stampDate.getTime())
+    ? stampDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+    : null;
   if (item.type === "user_text") {
     // 斜杠命令在 transcript 里是一条 XML 包裹的用户消息。渲染成命令徽章 + 可展开输出，
     // 而不是把 <command-name> 这类标签摊在对话里让人自己读。
@@ -396,39 +553,49 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
           {body && <div className="chat-text">{body}</div>}
           {/* 命令输出默认收起：/clear 之类没什么可看，/cost、/status 却能刷一屏。 */}
           {parts.stdout.map((out, index) => (
-            <details className="chat-tool chat-command-out" key={index}>
+            <RememberedDetails className="chat-tool chat-command-out" memoryKey={`cmd:${item.id}:${index}`} key={index}>
               <summary>
                 <span className="chat-tool-name">{t.chat.commandOutput}</span>
                 <span className="chat-tool-summary">{stripAnsi(out)}</span>
                 <span className="chat-tool-chevron">›</span>
               </summary>
               <pre>{stripAnsi(out)}</pre>
-            </details>
+            </RememberedDetails>
           ))}
           {/* 后台任务通知默认收起：整段是 XML+JSON 的机器记录，一行摘要（通知自带的
               <summary>，如「Agent "/code-review" finished」）足够定位，想看细节再展开。 */}
           {parts.notifications.map((note, index) => (
-            <details className="chat-tool chat-command-out" key={`notify-${index}`}>
+            <RememberedDetails className="chat-tool chat-command-out" memoryKey={`notify:${item.id}:${index}`} key={`notify-${index}`}>
               <summary>
                 <span className="chat-tool-name">{t.chat.taskNotification}</span>
                 <span className="chat-tool-summary">{/<summary>([\s\S]*?)<\/summary>/.exec(note)?.[1]?.trim() || note}</span>
                 <span className="chat-tool-chevron">›</span>
               </summary>
               <pre>{note}</pre>
-            </details>
+            </RememberedDetails>
           ))}
         </article>
       );
     }
     // 用户消息保持原文（用户不是在写 markdown，行首 # 变大标题只会失真）。
-    // 有图时缩略图独立成行排在**气泡上方**、气泡只包正文（Claude Code 同款布局，
-    // has-images 把气泡皮从 article 挪到 .chat-text 上）；纯图消息没有气泡，只有图。
+    // 气泡只包正文；时间与复制在气泡外右下方（Kimi 的用户回合页脚）。
     return (
       // data-msg-id：右侧用户消息导航（UserMessageNav）按它定位、跳转。
-      <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-tip={timeTitle} data-msg-id={item.id}>
+      <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-msg-id={item.id}>
         {images.length > 0 && <ImageRow images={images} />}
-        {body && <div className="chat-text">{body}</div>}
-        {body && <MessageCopyButton text={body} />}
+        {body && <UserBubbleText id={item.id} body={body} />}
+        {(body || timeText || echoPhase || item.interjected) && <div className="chat-user-foot">
+          {/* 来源与送达是这条消息的事实，标在页脚：中途插入解释它为何出现在回复中间；
+              未确认是回显超时仍不见落盘，照实说，不悄悄撤掉。 */}
+          {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{t.chat.interjectedBadge}</span>}
+          {echoPhase === "uncertain" && <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{t.chat.echoUncertain}</span>}
+          {/* 先上屏再发送：写终端期间转一个小圈；没写进去就照实标失败，给重发与放回输入框。 */}
+          {echoPhase === "sending" && <span className="chat-user-note is-sending" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
+          {echoPhase === "failed" && <EchoFailedActions itemId={item.id} actions={echoActions} />}
+          {body && <MessageCopyButton text={body} className="chat-turn-copy" />}
+          {body && <UndoButton id={item.id} text={body} />}
+          {timeText && <time className="chat-turn-time">{timeText}</time>}
+        </div>}
       </article>
     );
   }
@@ -436,21 +603,12 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
     // 回合错误（API Error 等，CC 以 model=<synthetic> 写盘的系统插入文案）：这不是模型
     // 说的话，套错误皮而不是正文皮——红标签一眼可辨故障，原文保留供排查。原文是固定
     // 短句不是 markdown，直接平铺。
-    return (
-      <article className="chat-message is-turn-error" role="alert">
-        <div className="chat-turn-error-label">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>
-          {item.label}
-        </div>
-        <div className="chat-text">{item.text}</div>
-      </article>
-    );
+    return <TurnErrorCard item={item} latest={latest} />;
   }
   if (item.type === "assistant_text" || item.type === "assistant_delta") {
     return (
-      <article className="chat-message is-assistant" data-tip={timeTitle}>
+      <article className="chat-message is-assistant">
         <div className="chat-text chat-md"><ChatMarkdown text={item.text} /></div>
-        {item.text.trim() && <MessageCopyButton text={item.text} />}
       </article>
     );
   }
@@ -458,28 +616,28 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
     // 长推理默认收成**预览**（显示开头几行并渐隐），而不是整段藏起来——既能一眼看到
     // agent 在想什么，又不会让上百行把结论和后续对话挤出屏幕。短的直接摊开，
     // 没必要为几行内容加一次点击。开合定夺在 ReasoningBlock(首挂载一次,流式不翻转)。
-    return <ReasoningBlock item={item} />;
+    return <ReasoningBlock item={item} nextStamp={nextStamp} />;
   }
   if (item.type === "tool_use") {
     return (
-      <details className="chat-tool">
+      <RememberedDetails className="chat-tool" memoryKey={`tool:${item.id}`}>
         <summary>
-          <span className="chat-tool-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
+          <span className="chat-tool-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
           <span className="chat-tool-name">{item.name}</span><span className="chat-tool-summary">{item.summary}</span><span className="chat-tool-chevron">›</span>
         </summary>
         <pre>{item.summary}</pre>
-      </details>
+      </RememberedDetails>
     );
   }
   if (item.type === "tool_result") {
     return (
-      <details className={"chat-tool chat-result" + (item.is_error ? " is-error" : "")}>
+      <RememberedDetails className={"chat-tool chat-result" + (item.is_error ? " is-error" : "")} memoryKey={`result:${item.id}`}>
         <summary>
-          <span className="chat-tool-icon is-file"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h8l4 4v14H6zM14 3v5h5" /></svg></span>
+          <span className="chat-tool-icon is-file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h8l4 4v14H6zM14 3v5h5" /></svg></span>
           <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{stripAnsi(item.text)}</span><span className="chat-tool-chevron">›</span>
         </summary>
         <pre>{stripAnsi(item.text)}</pre>
-      </details>
+      </RememberedDetails>
     );
   }
   if (item.type === "meta" && item.kind.startsWith("handoff:")) {
@@ -487,5 +645,13 @@ export const Message = memo(function Message({ item }: { item: ChatItem }) {
     // prefixItems 组装）：前序段历史内联在上方，分隔条标明从哪一段起换了引擎。
     return <div className="chat-meta"><span />{t.chat.handoffDivider(item.kind.slice("handoff:".length))}<span /></div>;
   }
-  return <div className="chat-meta"><span />{t.chat.compact}<span /></div>;
+  // 复制到其他引擎的新会话：开头那条「请读交接文件」换成一句来历说明，路径原文不上屏。
+  if (item.type === "meta" && item.kind === "handoff-copied") {
+    return <div className="chat-meta"><span />{t.chat.handoffCopied}<span /></div>;
+  }
+  // 中断分隔条：CLI 记下的「用户按了 Esc」，标明上方那轮回复是被打断的、不是自然结束。
+  if (item.type === "meta" && item.kind === "interrupted") {
+    return <div className="chat-meta"><span />{t.chat.turnInterrupted}<span /></div>;
+  }
+  return <CompactDivider item={item} summary={compactSummary} />;
 });

@@ -21,6 +21,7 @@
 //! 故直查包内的 `bin/claude.exe`（该 npm 包分发的是原生二进制，不是 JS 入口）。
 
 pub mod account;
+mod catalog;
 pub mod fleet;
 pub mod install;
 mod screen;
@@ -313,10 +314,12 @@ impl AgentPlugin for Claude {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
-    /// 一个会话访问多个目录（实测 `claude --help`）：每个附加目录一对 `--add-dir <dir>`。
-    /// 跨仓同一需求开一个会话的基座——agent 在同一上下文里协调所有仓的改动。
-    fn extra_dir_flag(&self) -> Option<&'static str> {
-        Some("--add-dir")
+    /// `--resume <id> --fork-session`：恢复时换新 session id，原会话不动（`claude --help`，2.1.314）。
+    fn fork_mode(&self) -> Option<crate::ForkMode> {
+        Some(crate::ForkMode::Args {
+            before: &["--resume"],
+            after: &["--fork-session"],
+        })
     }
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
@@ -476,6 +479,34 @@ impl AgentPlugin for Claude {
     fn status_line_pattern(&self) -> Option<&'static str> {
         Some(r"^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$")
     }
+    /// 请求失败自动重试时 spinner 区画的那一行（2.1.312 包内渲染源码，重试不落 transcript）：
+    /// `<错误> · Retrying in 5s · attempt 2/10`、`No response from the API after 30s ·
+    /// retrying, waiting up to 1m · attempt 2/10`、`Auto mode check unavailable · next try in
+    /// 5s · attempt 2/10 · esc to interrupt`。只认带「上限」的三种；容量排队的 `next try in …
+    /// · attempt 3`（无上限）是在等空位，不是失败，不算。锚在行尾，正文里引用的半句不会命中。
+    fn retry_line_pattern(&self) -> Option<&'static str> {
+        Some(r"· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$")
+    }
+    /// `/effort <档位>`（2.1.314 包内：immediate 命令，成功回 `Set effort level to <Level>: …`；
+    /// 档位全集 low/medium/high/xhigh/max，xhigh/max 只部分模型支持，不支持时 CLI 报
+    /// `Effort '<x>' isn't …`）。当前档位由 statusline 的 `effort.level` 上报。
+    fn effort_control(&self) -> Option<crate::chat_ui::EffortControl> {
+        Some(crate::chat_ui::EffortControl {
+            command: "/effort",
+            levels: &["low", "medium", "high", "xhigh", "max"],
+            confirm_pattern: r"set effort level to (\w+)",
+            reject_pattern: r"effort '[^']+' isn't",
+        })
+    }
+    /// 家族别名 → 当前版本的显示名（`opus` → `Opus 5.5`），读装着的 claude 可执行里内嵌的
+    /// 模型目录（见 catalog.rs）。别名本身是稳定契约，过时的只是插件内置的标签。
+    fn model_catalog(&self, _env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
+        crate::installation(crate::id::CLAUDE)
+            .and_then(|inst| inst.launch)
+            .and_then(|argv| argv.into_iter().next())
+            .map(|exe| catalog::family_catalog(std::path::Path::new(&exe)))
+            .unwrap_or_default()
+    }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
     fn model_select_command(&self) -> Option<&'static str> {
@@ -577,6 +608,12 @@ impl AgentPlugin for Claude {
         Some("\r")
     }
 
+    /// 排队消息在下一个工具边界插进当前回合，不等回合结束（2.1.304 实拍：注入后以
+    /// queued_command 落盘，入队到落盘约 30s）。
+    fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
+        Some(crate::chat_ui::QueueDelivery::NextStep)
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }
@@ -591,6 +628,50 @@ impl AgentPlugin for Claude {
             composer_prompt: "❯",
             composer_border: '─',
             stashed_marker: "› stashed",
+        })
+    }
+
+    /// `/rewind` 打开回退菜单（2.1.314 真机取证，tests/probe_claude_rewind.rs）：只取「Restore
+    /// conversation」——与 kimi 撤回同一语义，文件不动；有代码改动时它是第 2 项、没有时是
+    /// 第 1 项，按文案找。回退零写入 transcript，下一条消息从回退点长出新分支（读取层按
+    /// parentUuid 收回被放弃的分支，见 ClaudeTranscript::chat_line_mark）。原文回到 composer，
+    /// 双 Esc 清空（多行整段；Ctrl-U 只清一行）；空 composer 的双 Esc 会打开回退菜单，前端
+    /// 先认出框里是原文才按。
+    fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
+        Some(crate::chat_ui::UndoControl {
+            command: "/rewind",
+            count_arg: false,
+            restores_files: false,
+            reject_pattern: None,
+            input_clear: Some(crate::chat_ui::UndoInputClear {
+                inputs: &["\x1b", "\x1b"],
+                composer: crate::chat_ui::UndoComposer::Prompt {
+                    prompt: "❯",
+                    border: '─',
+                },
+            }),
+            menu: Some(crate::chat_ui::UndoMenu {
+                title: "Rewind",
+                ready_marker: "❯ (current)",
+                step_input: "\x1b[A",
+                selected_prefix: "❯",
+                enter_input: "\r",
+                quote_prefix: "│",
+                option_label: "Restore conversation",
+                cancel_input: "\x1b",
+            }),
+        })
+    }
+
+    /// `/btw <问题>`：旁路作答、零写入 transcript（2.1.314 探针实测，见 chat_ui::SideQuestion）。
+    /// 答案区每按一次 ↓ 下移 3 行。
+    fn side_question(&self) -> Option<crate::chat_ui::SideQuestion> {
+        Some(crate::chat_ui::SideQuestion {
+            command: "/btw",
+            footer_marker: "esc to close",
+            ready_marker: "c to copy",
+            scroll_input: "\x1b[B",
+            close_input: "\x1b",
         })
     }
 
@@ -717,6 +798,13 @@ mod tests {
 
     /// 对话页运行条照搬状态行的前提:claude 声明了整行锚定的状态行正则。匹配行为
     /// 由前端 cliStatus.test.ts 用同一串正则测(本 crate 不依赖 regex)。
+    #[test]
+    fn declares_retry_line_pattern_anchored_at_line_end() {
+        let pattern = Claude.retry_line_pattern().expect("claude 应声明重试行正则");
+        assert!(pattern.ends_with('$'));
+        assert!(pattern.contains(r"attempt (\d+)/(\d+)"));
+    }
+
     #[test]
     fn declares_anchored_status_line_pattern() {
         let pattern = Claude.status_line_pattern().expect("claude 应声明状态行正则");

@@ -192,7 +192,54 @@ function rpcTimeout(cmd: string, args: unknown): number {
   return SLOW_COMMANDS.has(cmd) ? 90_000 : 20_000;
 }
 
+// 切回前台即重发（对照 Kimi 的 visibilitychange 重连）：手机锁屏或切走 app 时页面被冻结，
+// 在途请求多半骑在已经断掉的连接上（换网、NAT 回收），回来后要等满超时才失败——增量
+// 8s 里对话停在离开那一刻，首读 90s 里一直转圈。回到前台就撤掉这些请求立刻重发。
+// 只放只读命令：写命令客户端撤了服务端照样执行，重发会做两遍。
+const RESUMABLE_COMMANDS = new Set(["get_chat_history", "get_live_sessions_page", "managed_terminal_screen"]);
+/** 在后台待够这么久才重发：切走一两秒连接多半还活着，撤掉反而白等一轮。 */
+const RESUME_STALE_MS = 2_000;
+const RESUMED = new Error("remote/resumed");
+const resumable = new Set<AbortController>();
+let hiddenAt = 0;
+let watchingResume = false;
+
+function watchResume(): void {
+  if (watchingResume || typeof document === "undefined") return;
+  watchingResume = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      return;
+    }
+    const away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    if (away < RESUME_STALE_MS) return;
+    for (const request of resumable) request.abort(RESUMED);
+  });
+}
+
 async function rpc(cmd: string, args: unknown): Promise<unknown> {
+  if (!RESUMABLE_COMMANDS.has(cmd)) return rpcOnce(cmd, args, null);
+  const own = new AbortController();
+  resumable.add(own);
+  try {
+    return await rpcOnce(cmd, args, own);
+  } catch (e) {
+    if (own.signal.reason === RESUMED) return rpc(cmd, args);
+    throw e;
+  } finally {
+    resumable.delete(own);
+  }
+}
+
+/** 超时与「切回前台撤销」合成一个信号。不用 AbortSignal.any：iOS 17.4 以下没有。 */
+function linkSignal(timeout: AbortSignal | undefined, own: AbortController): AbortSignal {
+  timeout?.addEventListener("abort", () => own.abort(timeout.reason), { once: true });
+  return own.signal;
+}
+
+async function rpcOnce(cmd: string, args: unknown, own: AbortController | null): Promise<unknown> {
   const token = getToken();
   // 只接受普通对象载荷:数组/TypedArray/字符串 stringify 后必被后端结构体拒收(400),
   // 二进制还会静默丢数据——在前端就抛清楚。
@@ -208,7 +255,7 @@ async function rpc(cmd: string, args: unknown): Promise<unknown> {
         "X-Meowo-Token": token ?? "",
       },
       body: JSON.stringify(args ?? {}),
-      signal: rpcSignal(rpcTimeout(cmd, args)),
+      signal: own ? linkSignal(rpcSignal(rpcTimeout(cmd, args)), own) : rpcSignal(rpcTimeout(cmd, args)),
     });
   } catch (e) {
     const name = (e as { name?: string } | null)?.name;
@@ -269,6 +316,7 @@ export function installRemoteTransport(): void {
     };
   }
   window.addEventListener(IMAGE_LOAD_FAILED_EVENT, refreshFileToken);
+  watchResume();
 
   mockIPC(async (cmd, args) => {
     // — 事件/窗口/插件桥:远程无真窗口,给最小可用桩 —

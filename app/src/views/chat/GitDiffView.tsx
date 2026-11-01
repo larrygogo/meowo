@@ -32,9 +32,9 @@ import {
 } from "../../api";
 import { FileMarkdown } from "./FileMarkdown";
 import { useMenuPopup } from "../menu";
-import { FolderPlusIcon } from "../sticker/icons";
 import { folderName } from "../../paths";
 import { pushEscLayer } from "../../escLayers";
+import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
@@ -347,7 +347,7 @@ function OpenSplitButton({ cwd, rel }: { cwd: string; rel: string }) {
           if (rect) setMenu({ x: rect.left, y: rect.bottom + 4 });
         }}
       >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
@@ -381,85 +381,12 @@ type FetchEntry<T> = { loading: boolean; error: string | null; data: T | null };
  * memo：折叠只是 display:none 不卸载，不隔断的话 ChatWindow 每次击键都要对面板里
  * 可能上千行的文件 DOM 做全量 reconcile；父层回调已换稳定引用配合生效。
  */
-/** 面板头行的仓切换 + 附加目录管理菜单(用户指定收拢于此):行点选切换激活仓(当前
- *  项打勾),附加目录行尾 ✕ 移除(落库侧,下次恢复不再带上),菜单尾「附加目录」添加。 */
-function DirSwitcher({ cwd, dirs, onDirChange, onAddDir, onRemoveDir }: {
-  cwd: string;
-  dirs: string[];
-  onDirChange: (dir: string) => void;
-  onAddDir: (() => void) | null;
-  onRemoveDir: (dir: string) => void;
-}) {
-  const t = useT();
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({ align: "left" });
-  const pick = (action: () => void) => { setOpen(false); btnRef.current?.focus(); action(); };
-  return (
-    <div className="dd chat-diff-dirs" ref={ref} onKeyDown={onKeyDown}>
-      <button ref={btnRef} type="button" className="chat-diff-dirs-btn" aria-haspopup="menu" aria-expanded={open} data-tip={`${t.chat.dirsSection} · ${cwd}`} onClick={toggle}>
-        <FolderIcon />
-        <span className="chat-diff-dirs-name">{folderName(cwd)}</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
-      {open && (
-        <div className="dd-menu chat-dirs-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, left: pos.left }}>
-          {dirs.map((dir, i) => {
-            // 首项是主仓(会话根,不可移除);其余为附加目录。
-            const isMain = i === 0;
-            const active = dir === cwd;
-            return (
-              // 行是 div 而非 button:× 要住在行**内部**(用户指定),button 套 button
-              // 非法。键盘可达靠 role+tabIndex,Enter/Space 由 useMenuPopup 显式 click。
-              // 选中态 = 整行 active 背景(is-active),不再用勾。
-              // 菜单内刻意用原生 title：TooltipLayer 对 .dd-menu 区域静默（自绘提示会糊在菜单上）。
-              <div
-                key={dir}
-                role="menuitem"
-                tabIndex={-1}
-                className={"dd-item chat-dirs-item" + (active ? " is-active" : "")}
-                title={dir}
-                onClick={() => pick(() => onDirChange(dir))}
-              >
-                <span className="dd-label">{folderName(dir)}</span>
-                {!isMain && (
-                  <button
-                    type="button"
-                    className="chat-dirs-x"
-                    aria-label={t.newSession.extraDirRemove}
-                    title={t.newSession.extraDirRemove}
-                    onClick={(e) => { e.stopPropagation(); pick(() => onRemoveDir(dir)); }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          {onAddDir && (
-            <>
-              <div className="sf-sep" role="separator" />
-              <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onAddDir)}>
-                <span className="chat-title-action-ico"><FolderPlusIcon /></span>
-                <span className="dd-label">{t.chat.addExtraDir}</span>
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export const GitDiffView = memo(GitDiffViewImpl);
-function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths }: {
-  /** 面板的激活仓:主仓或某个附加目录(--add-dir)。文件树与更改都对着它。 */
+export type DiffPanelTab = "changes" | "files";
+
+function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange }: {
+  /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
-  /** 会话的全部目录(主仓在首)。仓切换与附加目录管理都在头行的 DirSwitcher。 */
-  dirs: string[];
-  onDirChange: (dir: string) => void;
-  /** 中途附加目录;会话 provider 不支持时传 null 隐藏该动作。 */
-  onAddDir: (() => void) | null;
-  /** 移除附加目录(落库侧,下次恢复不再带上)。 */
-  onRemoveDir: (dir: string) => void;
   summary: GitDiffSummaryDto | null;
   /** 停靠宽度（px，ChatWindow 侧的分栏柄拖动改写）；最大化时忽略（面板占满整宽）。 */
   width: number;
@@ -475,10 +402,20 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
   onRemoveComment: (id: string) => void;
   /** 本会话编辑工具碰过的文件（见 sessionTouchedPaths）；空数组 = 认不出，不出过滤开关。 */
   touchedPaths: readonly string[];
+  /** 最近一轮（最后一条用户消息之后）编辑工具碰过的文件，口径同 touchedPaths。 */
+  turnTouchedPaths?: readonly string[];
+  /** ChatWindow 顶栏直达入口需要受控切页；独立使用时保留内部状态。 */
+  activeTab?: DiffPanelTab;
+  onTabChange?: (tab: DiffPanelTab) => void;
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo;
-  const [tab, setTab] = useState<"changes" | "files">(changesAvailable ? "changes" : "files");
+  const [internalTab, setInternalTab] = useState<DiffPanelTab>(changesAvailable ? "changes" : "files");
+  const tab = activeTab ?? internalTab;
+  const selectTab = (next: DiffPanelTab) => {
+    setInternalTab(next);
+    onTabChange?.(next);
+  };
   // 评论框开着时 Esc 只关评论框：面板的 Esc 监听挂在捕获段、先于评论框收到按键，
   // 不在这里分流的话一按 Esc 整个面板就收起了，写了一半的评论也看不见了。
   const escOverrideRef = useRef<(() => void) | null>(null);
@@ -516,21 +453,28 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
       {/* 最大化时对话卡（含承载窗口拖拽区的 .chat-bar）整体隐藏，
           面板头行因此也要是拖拽区；行内按钮不带该属性，点击不受影响（同 .chat-bar 约定）。 */}
       <header className="chat-diff-head" data-tauri-drag-region>
-        {/* 仓切换 + 附加目录管理(用户指定收拢于此):选中的仓即 cwd,文件树与更改整体
-            跟随;summary 由 ChatWindow 按激活仓重拉,非 git 仓自动只剩「文件」页签。
-            多仓或支持附加时才渲染——单仓且不支持附加的 agent 界面零变化。 */}
-        {(dirs.length > 1 || onAddDir) && (
-          <DirSwitcher cwd={cwd} dirs={dirs} onDirChange={onDirChange} onAddDir={onAddDir} onRemoveDir={onRemoveDir} />
+        {/* 手机上面板铺满全屏、只有「更改」一页：孤零零一个分段页签加右上角收起图标读不出
+          「这是哪、怎么回去」（用户实拍）。改成与对话页同款的返回箭头 + 标题。 */}
+        {remoteUi() && (
+          <>
+            <button type="button" className="chat-diff-back" aria-label={t.chat.diffBack} onClick={onCollapse}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+            <span className="chat-diff-title">{t.chat.diffChangesTab}</span>
+          </>
         )}
-        <div className="chat-diff-tabs">
-          <button type="button" className={tab === "files" || !changesAvailable ? "is-active" : ""} onClick={() => setTab("files")}>
+        {!remoteUi() && <div className="chat-diff-tabs">
+          {/* 远程只放行改动列表（remote.rs 模块头「例外」），「文件」页签要读任意文件，不给。 */}
+          {!remoteUi() && <button type="button" className={tab === "files" || !changesAvailable ? "is-active" : ""} onClick={() => selectTab("files")}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
             {t.chat.filesTab}
-          </button>
+          </button>}
           {changesAvailable && (
-            <button type="button" className={tab === "changes" ? "is-active" : ""} onClick={() => setTab("changes")}>
+            <button type="button" className={tab === "changes" ? "is-active" : ""} onClick={() => selectTab("changes")}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
                 <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
@@ -538,12 +482,12 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
               {t.chat.diffChangesTab}
             </button>
           )}
-        </div>
+        </div>}
         {/* 分支名刻意不显示：长分支名（feat/xxx-日期-作者）会把头行挤到换行。 */}
         <span className="chat-diff-spacer" />
         {/* 最大化/还原：隐藏对话卡让面板占满整宽。图标走对角箭头——展开时两角向外，
-            最大化后两角向内（还原）。 */}
-        <button
+            最大化后两角向内（还原）。远程页面板恒占满全屏，不给这颗钮。 */}
+        {!remoteUi() && <button
           type="button"
           className="chat-diff-action"
           data-tip={maximized ? t.chat.diffRestore : t.chat.diffMaximize}
@@ -559,15 +503,15 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
               <path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" />
             </svg>
           )}
-        </button>
+        </button>}
         {/* 折叠：面板收成隐藏（不卸载，状态保留）。图标与侧栏开关同款「面板+分隔线」，
             镜像到右缘（面板在右侧，线靠右）。 */}
-        <button type="button" className="chat-diff-action" data-tip={t.chat.diffCollapse} aria-label={t.chat.diffCollapse} onClick={onCollapse}>
+        {!remoteUi() && <button type="button" className="chat-diff-action" data-tip={t.chat.diffCollapse} aria-label={t.chat.diffCollapse} onClick={onCollapse}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
             <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
             <path d="M14.5 4.5v15" />
           </svg>
-        </button>
+        </button>}
       </header>
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
       {tab === "changes" && changesAvailable && summary
@@ -578,22 +522,24 @@ function GitDiffViewImpl({ cwd, dirs, onDirChange, onAddDir, onRemoveDir, summar
             summary={summary}
             comments={dirComments}
             touchedPaths={touchedPaths}
+            turnTouchedPaths={turnTouchedPaths}
             onAddComment={onAddComment}
             onRemoveComment={onRemoveComment}
             escOverrideRef={escOverrideRef}
           />
         )
-        : <FilesView key={cwd} cwd={cwd} />}
+        : !remoteUi() && <FilesView key={cwd} cwd={cwd} />}
     </aside>
   );
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRemoveComment, escOverrideRef }: {
+function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef }: {
   cwd: string;
   summary: GitDiffSummaryDto;
   comments: readonly ReviewComment[];
   touchedPaths: readonly string[];
+  turnTouchedPaths: readonly string[];
   onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
   onRemoveComment: (id: string) => void;
   escOverrideRef: MutableRefObject<(() => void) | null>;
@@ -620,6 +566,9 @@ function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRem
   // 树行右键的路径菜单（复制/定位/打开方式）。已删除文件（status D）盘上无实体，不出菜单。
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; rel: string; isDir: boolean } | null>(null);
   const openCtxMenu = (event: ReactMouseEvent, rel: string, isDir: boolean) => {
+    // 远程页不给路径菜单：里面全是在桌面上开程序/定位文件的动作，手机上点了没有意义
+    // （远程桥也不放行），长按交还浏览器默认行为。
+    if (remoteUi()) return;
     event.preventDefault();
     setCtxMenu({ x: event.clientX, y: event.clientY, rel, isDir });
   };
@@ -634,17 +583,23 @@ function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRem
 
   const fileByPath = useMemo(() => new Map(summary.files.map((file) => [file.path, file])), [summary.files]);
 
-  // 「只看本会话改的」：工作区里常混着用户手改的、别的并行会话改的文件。只有认得出
-  // 编辑路径的 agent（touchedPaths 非空）才出这个开关。
-  const [onlySession, setOnlySession] = useState(false);
+  // 改动范围：全部 / 本会话 / 本轮。工作区里常混着用户手改的、别的并行会话改的文件；
+  // 「本轮」再收窄到最后一条用户消息之后（对照 Kimi 的「本轮改动」）。只列文件，单文件
+  // diff 仍是相对上次提交的全部改动。只有认得出编辑路径的 agent（touchedPaths 非空）才出开关。
+  const [scope, setScope] = useState<"all" | "session" | "turn">("all");
   const sessionFiles = useMemo(
     () => (touchedPaths.length > 0 ? new Set(summary.files.filter((file) => touchedByPath(touchedPaths, cwd, file.path)).map((file) => file.path)) : null),
     [touchedPaths, cwd, summary.files],
   );
-  const filterSession = onlySession && !!sessionFiles;
+  const turnFiles = useMemo(
+    () => new Set(summary.files.filter((file) => touchedByPath(turnTouchedPaths, cwd, file.path)).map((file) => file.path)),
+    [turnTouchedPaths, cwd, summary.files],
+  );
+  const scopeFiles = !sessionFiles ? null : scope === "session" ? sessionFiles : scope === "turn" ? turnFiles : null;
+  const filterSession = !!scopeFiles;
   const visibleFiles = useMemo(
-    () => (filterSession && sessionFiles ? summary.files.filter((file) => sessionFiles.has(file.path)) : summary.files),
-    [filterSession, sessionFiles, summary.files],
+    () => (scopeFiles ? summary.files.filter((file) => scopeFiles.has(file.path)) : summary.files),
+    [scopeFiles, summary.files],
   );
   // 合计跟着当前列表走：过滤到本会话时显示的就是本会话改了多少。
   const totals = useMemo(() => {
@@ -913,7 +868,7 @@ function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRem
           <BackButton label={t.chat.diffBack} onClick={() => setSelectedPath(null)} />
           {selected && <span className={`chat-diff-status is-${selected.status.toLowerCase()}`}>{selected.status}</span>}
           <span className="chat-diff-path" data-tip={selectedPath}>{selectedPath}</span>
-          {selected && selected.status !== "D" && <OpenSplitButton cwd={cwd} rel={selectedPath} />}
+          {selected && selected.status !== "D" && !remoteUi() && <OpenSplitButton cwd={cwd} rel={selectedPath} />}
         </div>
         {fileView}
       </>
@@ -925,11 +880,14 @@ function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRem
       {(summary.branch || totals) && (
         <div className="chat-diff-branchline" data-tip={summary.branch ?? undefined}>
           {summary.branch && <>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
               <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
             </svg>
             <span>{summary.branch}</span>
+            {/* 旧后端不下发 ahead/behind（手机页可能先于安装版更新），按缺省处理。 */}
+            {!!summary.ahead && <em className="chat-diff-divergence" data-tip={t.chat.diffAheadTip(summary.ahead)}>↑{summary.ahead}</em>}
+            {!!summary.behind && <em className="chat-diff-divergence" data-tip={t.chat.diffBehindTip(summary.behind)}>↓{summary.behind}</em>}
           </>}
           <LineCounts file={totals ?? undefined} />
         </div>
@@ -947,13 +905,18 @@ function ChangesView({ cwd, summary, comments, touchedPaths, onAddComment, onRem
         onCompositionEnd={(event) => setSearch(event.currentTarget.value)}
       />
       {sessionFiles && (
-        <label className="chat-diff-only-session" data-tip={t.chat.diffOnlySessionTip}>
-          <input type="checkbox" checked={onlySession} onChange={(event) => setOnlySession(event.target.checked)} />
-          {t.chat.diffOnlySession(sessionFiles.size)}
-        </label>
+        <div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
+          <button type="button" aria-pressed={scope === "all"} onClick={() => setScope("all")}>{t.chat.diffScopeAll}</button>
+          <button type="button" aria-pressed={scope === "session"} data-tip={t.chat.diffOnlySessionTip} onClick={() => setScope("session")}>
+            {t.chat.diffScopeSession(sessionFiles.size)}
+          </button>
+          <button type="button" aria-pressed={scope === "turn"} data-tip={t.chat.diffOnlyTurnTip} onClick={() => setScope("turn")}>
+            {t.chat.diffScopeTurn(turnFiles.size)}
+          </button>
+        </div>
       )}
       {filterSession && visibleFiles.length === 0
-        ? <div className="chat-diff-empty">{t.chat.diffNoSessionChanges}</div>
+        ? <div className="chat-diff-empty">{scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
         : <div className="chat-diff-tree">{renderTree(tree, 0)}</div>}
       {ctxMenu && (
         <PathContextMenu
@@ -1398,7 +1361,7 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
 
 function FolderIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
@@ -1426,7 +1389,7 @@ function OpenIcon() {
 
 function CopyIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
@@ -1435,7 +1398,7 @@ function CopyIcon() {
 
 function RevealIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
     </svg>
   );
@@ -1443,7 +1406,7 @@ function RevealIcon() {
 
 function EditorIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="16 18 22 12 16 6" />
       <polyline points="8 6 2 12 8 18" />
     </svg>
@@ -1452,7 +1415,7 @@ function EditorIcon() {
 
 function AppWindowIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="2" y="4" width="20" height="16" rx="2" />
       <path d="M10 4v4" />
       <path d="M2 8h20" />

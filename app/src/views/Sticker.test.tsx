@@ -50,7 +50,7 @@ import { relayEnabledSignature, Sticker } from "./Sticker";
 import { cardTone, match } from "./sticker/helpers";
 import { EmptyState } from "./sticker/EmptyState";
 import { UsageScreen } from "./sticker/UsageScreen";
-import type { LiveSession, ProviderUsage } from "../api";
+import { sessionTone, type LiveSession, type ProviderUsage } from "../api";
 import { zh } from "../i18n/zh";
 
 // jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
@@ -175,6 +175,15 @@ describe("tab 归属与卡片状态环同源", () => {
     expect(cardTone(l)).toBe("pending");
     expect(match("waiting", l)).toBe(true);
     expect(match("running", l)).toBe(false);
+  });
+
+  it("待交互压过出错，与侧栏 sessionTone 同序；没在等交互时出错照样红环", () => {
+    const blocked = mk({ screen_state: "blocked", connected: true, errored: true });
+    expect(cardTone(blocked)).toBe("pending");
+    expect(sessionTone(true, "running", null, true, 0, "blocked")).toBe("pending");
+    const idle = mk({ screen_state: "idle", connected: true, errored: true });
+    expect(cardTone(idle)).toBe("error");
+    expect(sessionTone(true, "running", null, true, 0, "idle")).toBe("error");
   });
 
   it("屏幕 working 压过 DB waiting：绿环卡归运行中", () => {
@@ -421,7 +430,7 @@ describe("Sticker", () => {
     const menu = document.querySelector(".ctx-menu")!;
     expect(menu).toBeTruthy();
     const labels = Array.from(menu.querySelectorAll(".ctx-item")).map((el) => el.textContent);
-    expect(labels).toEqual([zh.sticker.star, zh.sticker.noteAdd, zh.sticker.renameTitle, zh.sticker.archive, zh.sticker.newSession]);
+    expect(labels).toEqual([zh.sticker.star, zh.sticker.noteAdd, zh.sticker.renameTitle, zh.sticker.archive]);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(document.querySelector(".ctx-menu")).toBeNull();
   });
@@ -564,7 +573,7 @@ describe("Sticker", () => {
     await settingsApplied();
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
     const labels = Array.from(document.querySelectorAll(".ctx-item")).map((el) => el.textContent);
-    expect(labels).toEqual([zh.sticker.unstar, zh.sticker.noteEdit, zh.sticker.renameTitle, zh.sticker.archive, zh.sticker.newSession]);
+    expect(labels).toEqual([zh.sticker.unstar, zh.sticker.noteEdit, zh.sticker.renameTitle, zh.sticker.archive]);
     localStorage.removeItem("meowo-starred");
   });
 
@@ -586,12 +595,11 @@ describe("Sticker", () => {
     expect(animated.length).toBeGreaterThan(0);
   });
 
-  it("菜单「新建会话」用当前会话的 cwd 和 provider 打开新建窗口", async () => {
-    const { container } = render(<Sticker filter="all" data={[mk({ cwd: "C:\\\\proj", provider: "kimi" })]} />);
+  it("卡片菜单里没有「新建会话」（用户要求去掉，新建走标题栏按钮）", async () => {
+    const { container } = render(<Sticker filter="all" data={[mk()]} />);
     await settingsApplied();
     fireEvent.contextMenu(container.querySelector(".stk-card")!);
-    fireEvent.click(screen.getByText(zh.sticker.newSession));
-    expect(invokeMock).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:\\\\proj", provider: "kimi" });
+    expect(screen.getByRole("menu").textContent).not.toContain(zh.sticker.newSession);
   });
 
   it("点归档即同步回调 onArchiveOptimistic（不等 IPC 往返），并发出 set_archived", async () => {

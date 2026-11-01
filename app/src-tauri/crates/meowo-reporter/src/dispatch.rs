@@ -179,6 +179,11 @@ pub fn dispatch(
                 if let Some(model) = out.model {
                     store.set_session_context(&ev.session_id, None, None, Some(&model), now_ms)?;
                 }
+                // 思考程度（kimi 读会话日志）：只在读到时写，读不到不清——claude 的档位由
+                // statusline 维护，这里的 None 只代表「此 agent 不从 Stop 报档位」。
+                if let Some(effort) = out.effort.as_deref() {
+                    store.set_session_effort(&ev.session_id, Some(effort))?;
+                }
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
                 if let Some(c) = read_context(provider, ev) {

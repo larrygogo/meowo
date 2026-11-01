@@ -51,6 +51,19 @@ pub enum SlashSource {
     Project,
 }
 
+/// 运行中提交的消息何时被 agent 读到。GUI 的排队回执与输入框提示按它说话——
+/// 一句统一的「本回合结束后处理」对边干边读的 claude 是错的。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum QueueDelivery {
+    /// 在下一个工具边界插进当前回合，不打断。
+    NextStep,
+    /// 排到本回合结束后再处理。
+    TurnEnd,
+}
+
 /// 一条斜杠命令。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -232,6 +245,121 @@ pub struct ModeControl {
     pub screen_markers: &'static [ModeScreenMarker],
 }
 
+/// 思考程度（effort）的切换能力（对照 Kimi 模型菜单里的「思考 Low/High/Max」）。
+/// 当前档位不在这里：它随会话、随模型变，由 statusline 上报（模型不支持时不报，前端据此不显示）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct EffortControl {
+    /// 带参切换的命令（claude `/effort high`，切换后屏幕回一行 `Set effort level to High…`）。
+    pub command: &'static str,
+    /// 可选档位（小写，即命令参数）。某些档位只有部分模型支持，选了不支持的 CLI 自己会拒，
+    /// 前端照实报错，不在这里按模型猜。空表 = 档位随模型变，由模型目录给（kimi 的
+    /// `support_efforts`）。
+    pub levels: &'static [&'static str],
+    /// 切换成功的屏幕确认行（捕获组 1 = 生效的档位）。只认命令之后的新输出。
+    /// 两条正则都按**不区分大小写**匹配（前端带 i 标志编译，故不写内联 `(?i)`——JS 不认）。
+    pub confirm_pattern: &'static str,
+    /// CLI 拒绝切换的屏幕行（整行原样带给用户）。
+    pub reject_pattern: &'static str,
+}
+
+/// 撤回最近几轮对话的能力（对照 Kimi 桌面版用户消息上的「撤回」：这条及之后移出上下文，
+/// 原文放回输入框）。轮数由前端按「非插话的用户消息」数——插件须保证 transcript 里插话标了
+/// interjected，否则计数与 CLI 对不上。撤回是否生效以 transcript 为准（被撤的消息从对话里
+/// 消失），不认屏幕。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct UndoControl {
+    /// 撤回命令。
+    pub command: &'static str,
+    /// true = 命令带轮数参数（kimi `/undo 2`，一次撤到任意一条）；false = 一次只撤最近一轮
+    /// （opencode `/undo` 不收参数），前端只给最后一条用户消息挂撤回。
+    pub count_arg: bool,
+    /// 撤回是否连带还原工作区文件（opencode 按快照回滚；kimi 不碰文件）。确认框据此说清后果。
+    pub restores_files: bool,
+    /// CLI 拒绝撤回的屏幕行（整行原样带给用户；前端带 i 标志编译）。None = 未取证。
+    pub reject_pattern: Option<&'static str>,
+    /// CLI 撤回后把原文放回**它自己的**输入框时（opencode / claude），清掉它的方式。原文已放进
+    /// 对话页输入框，终端里那份不清，下一次发送会拼在新消息前面（真机复现过）。None = 不放回。
+    pub input_clear: Option<UndoInputClear>,
+    /// 撤回命令打开的是选择菜单（claude `/rewind`）时的操作规格；None = 命令直接生效。
+    /// 菜单式撤回**不写 transcript**（claude 回退零写入，下一条消息才长出新分支），成败只能
+    /// 看屏幕：原文回到 CLI 输入框即成，前端随之在本地收掉被撤的消息。
+    pub menu: Option<UndoMenu>,
+}
+
+/// 撤回后清终端输入框：先在屏幕上认出输入框、确认里面是原文才按键——清空键在空输入框上
+/// 另有含义（opencode 的 Ctrl-C 空框是退出，claude 的双 Esc 空框是打开回退菜单）。按后复核。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct UndoInputClear {
+    /// 依次发送的清空键（分开写：两个 Esc 合成一次写入会被当成 Alt+Esc）。
+    pub inputs: &'static [&'static str],
+    pub composer: UndoComposer,
+}
+
+/// 屏幕上认输入框的方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UndoComposer {
+    /// 底边行（`bottom_prefix` 开头）之上、连续以 `row_prefix` 开头的行（opencode 的 `┃`/`╹`）。
+    Block {
+        row_prefix: &'static str,
+        bottom_prefix: &'static str,
+    },
+    /// 以 `prompt` 开头、上一行整行是 `border` 的那行起（claude 的 `❯` 夹在 `─` 横线间，同
+    /// DraftStash）。
+    Prompt { prompt: &'static str, border: char },
+}
+
+/// 菜单式撤回的操作规格（claude `/rewind`，2.1.314 真机取证，tests/probe_claude_rewind.rs）：
+/// 列表从旧到新、光标停在最底的当前位置，按 `step_input` k 次落到倒数第 k 条用户消息；
+/// 回车进确认页，确认页用 `quote_prefix` 引出所选消息全文，选项随有无代码改动变化，按
+/// 文案找 `option_label` 那一项的数字。每一步都先核对屏幕（选中行、引文）与要撤的消息
+/// 对得上才往下走，对不上按 `cancel_input` 退出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct UndoMenu {
+    /// 菜单标题行（整行，trim 后相等）：其下才是菜单区，区分历史区里同样带 `❯` 的用户消息。
+    pub title: &'static str,
+    /// 菜单就绪的标志行（trim 后相等）。
+    pub ready_marker: &'static str,
+    pub step_input: &'static str,
+    /// 选中行前缀。
+    pub selected_prefix: &'static str,
+    pub enter_input: &'static str,
+    pub quote_prefix: &'static str,
+    pub option_label: &'static str,
+    pub cancel_input: &'static str,
+}
+
+/// 侧问（对照 Kimi 的「侧边聊天」：基于当前会话上下文的只读问答，不进对话记录）：CLI 原生的
+/// 旁路提问，`<command> <问题>` 提交后弹覆盖层作答，**答案不写 transcript**，只在屏幕上
+/// （claude `/btw`，2.1.314 探针 probe_claude_rewind 实测）。前端从屏幕上把答案读下来显示在
+/// 对话页，再按 `close_input` 收起覆盖层——不收的话覆盖层吞掉后续按键（`c` 复制、`f` 分叉）。
+///
+/// 覆盖层形态：`<command> <问题>` 一行、答案区、底部提示行。作答中提示行只有 `Esc to close`，
+/// 答完变成 `↑/↓ to scroll · c to copy · f to fork · Esc to close`。答案超出一屏时答案区是
+/// 滚动窗口，每按一次 `scroll_input` 下移几行，前端逐窗拼接。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct SideQuestion {
+    pub command: &'static str,
+    /// 提示行的固定结尾（小写比较）：答案区到它的上一行为止。
+    pub footer_marker: &'static str,
+    /// 提示行含它（小写比较）= 已答完。
+    pub ready_marker: &'static str,
+    pub scroll_input: &'static str,
+    pub close_input: &'static str,
+}
+
 /// 对话页能力总装的结果，原样下发前端。
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -244,6 +372,19 @@ pub struct ChatUi {
     /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
     /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
     pub model_menu_command: Option<&'static str>,
+    /// 思考程度切换（见 [`EffortControl`]）；None = 不支持或未取证。
+    pub effort: Option<EffortControl>,
+    /// 撤回最近几轮（见 [`UndoControl`]）；None = 不支持或未取证。
+    pub undo: Option<UndoControl>,
+    /// 侧问（见 [`SideQuestion`]）；None = 不支持或未取证。
+    pub side_question: Option<SideQuestion>,
+    /// 能否分叉会话（插件声明了 [`crate::ForkMode`]）。分叉由后端 fork_session 完成，前端只管给不给入口。
+    pub fork: bool,
+    /// 在自己的终端里恢复本会话的命令前缀：裸可执行名 + resume 子命令（`["claude", "--resume"]`），
+    /// 前端接上会话 id 供「复制恢复命令」（对照 Kimi 会话菜单的「复制 Session ID」：复制 id 几乎
+    /// 都是为了到终端里接着跑，直接给命令省一步）。用裸名而非绝对路径：用户自己的终端有 PATH。
+    /// 空 = 不支持恢复。
+    pub resume_command: Vec<String>,
     /// Provider 声明的模式交互能力。模式的真实当前值由 transcript 增量独立提供。
     pub mode_controls: Vec<ModeControl>,
     /// 裸发送会弹出交互界面的内置命令（含 `model_menu_command`，总装时并入）。
@@ -271,6 +412,8 @@ pub struct ChatUi {
     pub interrupt_presses: u8,
     /// 运行中排队的提交键。Codex 的 Enter 不等于排队（官方键盘文档）；gemini 0.64 实测 Enter 即排队。
     pub queue_input: Option<&'static str>,
+    /// 用 queue_input 提交的消息何时被读到。None = 未取证，GUI 只说「已交给 Agent」。
+    pub queue_delivery: Option<QueueDelivery>,
     /// Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
     /// None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
     pub newline_input: Option<&'static str>,
@@ -293,6 +436,10 @@ pub struct ChatUi {
     /// 捕获组 1 = 动词，2 = 括号统计（可缺）。对话页运行条据此照搬状态行内容；None = 不解析，
     /// 运行条退回本地计时。匹配的是对方界面文案，随版本改版会失效——规则须宁可漏认不可误认。
     pub status_line_pattern: Option<&'static str>,
+    /// 终端界面里「请求失败、正在自动重试」那一行的匹配正则：捕获组 1 = 第几次，2 = 上限。
+    /// 这类重试不落 transcript，屏幕是唯一证据；不认的话重试期间对话页像卡死。
+    /// 同 status_line_pattern：对方界面文案，宁可漏认不可误认。None = 不解析。
+    pub retry_line_pattern: Option<&'static str>,
     /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
     /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
     pub draft_stash: Option<DraftStash>,

@@ -22,9 +22,9 @@ describe("终端式工具行", () => {
     const item = { type: "tool_use" as const, id: "t1", timestamp: null, name: "Bash", summary: "ls" };
     const { rerender } = render(<ToolActivity item={item} />);
     const verb = document.querySelector(".chat-tool-verb")!;
-    expect(verb.textContent).toBe("Bash");
+    expect(verb.textContent).toBe("运行");
     expect(verb.getAttribute("data-kind")).toBe("run");
-    expect(document.querySelector(".chat-tool-call")?.textContent).toBe("Bash运行终端(ls)");
+    expect(document.querySelector(".chat-tool-summary")?.textContent).toBe("ls");
     expect(document.querySelector(".chat-tool")?.getAttribute("data-state")).toBe("running");
     expect(document.querySelector(".chat-tool-out.is-running")?.textContent).toMatch(/^运行中… \(\d+s\)$/);
     expect(screen.getByText("运行终端").className).toContain("chat-sronly");
@@ -43,12 +43,12 @@ describe("终端式工具行", () => {
     };
     render(<ToolActivity item={item} result={result("t3", [`${ESC}[32ma${ESC}[39m`, "b", "c", "d", "e"].join("\n"))} />);
     expect(document.querySelector(".chat-tool-meta")).toBeNull();
-    expect(document.querySelector(".chat-tool-call")?.getAttribute("data-tip")).toBe("Run tests");
+    expect(document.querySelector(".chat-tool-summary")?.getAttribute("data-tip")).toBe("Run tests");
     expect(document.querySelector(".chat-tool-out")?.textContent).toBe(["a", "b", "c", "… 还有 2 行"].join("\n"));
     expect(document.querySelector(".chat-tool-body pre")?.textContent).toBe(["a", "b", "c", "d", "e"].join("\n"));
   });
 
-  it("Edit 叫 Update，带 structuredPatch 时按真实行号渲染统一 diff，默认展开", () => {
+  it("Edit 默认一行收起，展开后按真实行号渲染统一 diff", () => {
     const item = {
       type: "tool_use" as const, id: "t4", timestamp: null, name: "Edit", summary: "C:/repo/src/a.ts",
       detail: { kind: "edit" as const, path: "C:/repo/src/a.ts", old: "old", new: "new", replace_all: false, truncated: false },
@@ -58,10 +58,14 @@ describe("终端式工具行", () => {
         <ToolActivity item={item} result={result("t4", "ok", { patch: [{ old_start: 26, new_start: 26, lines: [" keep", "-old", "+new", " tail"] }] })} />
       </ChatCwdContext.Provider>,
     );
-    expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("Update");
+    expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("编辑");
     // 会话目录下的路径显示成相对路径。
-    expect(document.querySelector(".chat-tool-summary")?.textContent).toBe("src/a.ts");
-    expect(document.querySelector(".chat-tool-out")?.textContent).toBe("新增 1 行，删除 1 行");
+    expect(document.querySelector(".chat-tool-summary")?.textContent).toBe("src/ a.ts");
+    expect(document.querySelector(".chat-edit-card-head")?.textContent).toContain("+1");
+    expect(document.querySelector(".chat-edit-card-head")?.textContent).toContain("-1");
+    expect(document.querySelector(".chat-tool-result")).toBeNull();
+    expect(document.querySelector("details.chat-tool")?.hasAttribute("open")).toBe(false);
+    fireEvent.click(document.querySelector(".chat-tool > summary")!);
     expect(document.querySelector("details.chat-tool")?.hasAttribute("open")).toBe(true);
     const rows = [...document.querySelectorAll(".chat-tool-udiff .chat-tool-line")].map((row) =>
       `${row.querySelector(".chat-tool-ln")?.textContent}${row.querySelector(".chat-tool-mark")?.textContent}`);
@@ -77,7 +81,7 @@ describe("终端式工具行", () => {
     </>);
     const outs = [...document.querySelectorAll(".chat-tool-out")].map((node) => node.textContent);
     expect(outs).toEqual(["读取了 2 行", "找到 3 条结果"]);
-    expect(document.querySelectorAll(".chat-tool-verb")[1].textContent).toBe("Search");
+    expect(document.querySelectorAll(".chat-tool-verb")[1].textContent).toBe("搜索");
   });
 
   it("relativize：大小写/斜杠不敏感地剥 cwd 前缀与 cd 前缀，目录外的路径原样", () => {
@@ -125,8 +129,8 @@ describe("命令与输出着色", () => {
   });
 });
 
-describe("回合头", () => {
-  it("每轮回复前挂一次署名；工具组与正文同属一轮不重复挂", () => {
+describe("回合结构", () => {
+  it("不显示助手署名头；工具组与正文同属一轮，页脚不重复", () => {
     const items: ChatItem[] = [
       user("u1"), reply("a1"),
       user("u2"),
@@ -135,34 +139,111 @@ describe("回合头", () => {
       reply("a2"),
     ];
     render(<Transcript sessionId={1} items={items} agent={agent} />);
-    expect(document.querySelectorAll(".chat-turn-head")).toHaveLength(2);
-    expect(screen.getAllByText("Claude Code")).toHaveLength(2);
-    expect(screen.getAllByText("Opus 5.5")).toHaveLength(2);
-  });
-
-  it("不知道 agent 时不画回合头", () => {
-    render(<Transcript sessionId={1} items={[user("u1"), reply("a1")]} />);
     expect(document.querySelector(".chat-turn-head")).toBeNull();
+    expect(document.querySelectorAll(".chat-turn-foot")).toHaveLength(2);
   });
 
-  it("跨 provider 接续：前序段是别家的回复，只给当前段署名", () => {
+  it("工具调用把回复切成多节时，页脚只在整段末尾出现一次并复制全部正文", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const items: ChatItem[] = [
-      user("u0"), reply("a0"),
-      { type: "meta", id: "handoff-current", timestamp: null, kind: "handoff:Claude Code" },
-      user("u1"), reply("a1"),
+      user("u1"),
+      { type: "assistant_text", id: "a1", timestamp: null, text: "第一节" },
+      { type: "tool_use", id: "t1", timestamp: null, name: "Read", summary: "a.ts" },
+      { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
+      { type: "assistant_text", id: "a2", timestamp: null, text: "第二节" },
+      user("u2"),
     ];
     render(<Transcript sessionId={1} items={items} agent={agent} />);
-    expect(document.querySelectorAll(".chat-turn-head")).toHaveLength(1);
+    expect(document.querySelectorAll(".chat-turn-foot")).toHaveLength(1);
+    fireEvent.click(document.querySelector(".chat-turn-foot .chat-turn-copy")!);
+    expect(await screen.findByRole("button", { name: "已复制消息" })).toBeTruthy();
+    expect(writeText).toHaveBeenCalledWith("第一节\n\n第二节");
   });
 
-  it("过程组整组跑完才在摘要上报耗时", () => {
+  it("回合末尾只给一组时间与复制，复制这一整段助手正文", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const timestamp = "2026-10-19T10:00:38Z";
+    const items: ChatItem[] = [
+      user("u1"),
+      { type: "assistant_text", id: "a1", timestamp, text: "完整回复" },
+    ];
+    render(<Transcript sessionId={1} items={items} agent={agent} />);
+    expect(document.querySelectorAll(".chat-turn-foot")).toHaveLength(1);
+    expect(document.querySelector(".chat-turn-head")).toBeNull();
+    expect(document.querySelector(".chat-turn-foot time")?.textContent).toBe(
+      new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+    );
+    expect(document.querySelector(".chat-message.is-assistant .chat-message-copy")).toBeNull();
+    fireEvent.click(document.querySelector(".chat-turn-foot .chat-turn-copy")!);
+    expect(await screen.findByRole("button", { name: "已复制消息" })).toBeTruthy();
+    expect(writeText).toHaveBeenCalledWith("完整回复");
+  });
+
+  it("用户消息的时间与复制在气泡外的右下页脚", () => {
+    const timestamp = "2026-10-19T09:31:00Z";
+    render(<Transcript sessionId={1} items={[{ type: "user_text", id: "u1", timestamp, text: "提问" }]} />);
+    expect(document.querySelector(".chat-user-foot time")?.textContent).toBe(
+      new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+    );
+    expect(document.querySelector(".chat-user-foot .chat-turn-copy")).toBeTruthy();
+    expect(document.querySelector(".chat-message.is-user > .chat-message-copy")).toBeNull();
+  });
+
+  it("单条工具原样平铺，≥2 条才收成汇总块；跑完的汇总块收起并写完成态摘要", () => {
+    const items: ChatItem[] = [
+      user("u0"),
+      { type: "tool_use", id: "t0", timestamp: null, name: "Bash", summary: "ls" },
+      { type: "tool_result", id: "r0", timestamp: null, tool_use_id: "t0", text: "ok", is_error: false },
+      reply("a0"),
+      user("u1"),
+      { type: "tool_use", id: "t1", timestamp: null, name: "Bash", summary: "pwd" },
+      { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
+      { type: "tool_use", id: "t2", timestamp: null, name: "Read", summary: "a.ts" },
+      { type: "tool_result", id: "r2", timestamp: null, tool_use_id: "t2", text: "boom", is_error: true },
+      reply("a1"),
+    ];
+    render(<Transcript sessionId={1} items={items} agent={agent} />);
+    const folds = document.querySelectorAll(".turn-fold");
+    expect(folds).toHaveLength(1);
+    expect(folds[0].classList.contains("is-open")).toBe(false);
+    expect(folds[0].textContent).toContain("已运行 1 条命令 · 读取了 1 个文件（1 失败）");
+  });
+
+  it("运行中的汇总块展开并写「正在做什么」，跑完（正文到达）自动收起", () => {
+    // 折叠记忆按块 id 存在模块里，id 不能和上一条用例撞。
+    const running: ChatItem[] = [
+      user("u1"),
+      { type: "tool_use", id: "run-t1", timestamp: null, name: "Bash", summary: "pwd" },
+      { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "run-t1", text: "ok", is_error: false },
+      { type: "tool_use", id: "run-t2", timestamp: null, name: "Read", summary: "a.ts", detail: { kind: "read", path: "src/a.ts", offset: null, limit: null } },
+    ];
+    const { rerender } = render(<Transcript sessionId={2} items={running} agent={agent} working />);
+    const fold = () => document.querySelector(".turn-fold")!;
+    expect(fold().classList.contains("is-open")).toBe(true);
+    expect(fold().querySelector(".turn-fold-lead")?.textContent).toBe("正在读取 src/a.ts");
+    expect(fold().textContent).toContain("已运行 1 条命令");
+    rerender(<Transcript sessionId={2} items={[
+      ...running,
+      { type: "tool_result", id: "r2", timestamp: null, tool_use_id: "run-t2", text: "ok", is_error: false },
+      reply("a1"),
+    ]} agent={agent} working />);
+    expect(fold().classList.contains("is-open")).toBe(false);
+    expect(fold().querySelector(".turn-fold-lead")).toBeNull();
+  });
+
+  it("连续工具渲染成扁平行，不包分组卡片也不逐行放复制钮", () => {
     const items: ChatItem[] = [
       user("u1"),
       { type: "tool_use", id: "t1", timestamp: "2026-10-19T10:00:00Z", name: "Bash", summary: "ls" },
       { type: "tool_result", id: "r1", timestamp: "2026-10-19T10:00:38Z", tool_use_id: "t1", text: "ok", is_error: false },
     ];
     render(<Transcript sessionId={1} items={items} agent={agent} />);
-    expect(document.querySelector(".chat-activity-time")?.textContent).toBe("38s");
+    expect(document.querySelector(".chat-activity-group")).toBeNull();
+    expect(document.querySelectorAll(".chat-flat-steps > .chat-tool")).toHaveLength(1);
+    expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("运行");
+    expect(document.querySelector(".chat-tool-copy")).toBeNull();
   });
 });
 

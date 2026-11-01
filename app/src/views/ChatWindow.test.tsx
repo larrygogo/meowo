@@ -36,10 +36,12 @@ vi.mock("./ManagedTerminal", async () => {
   };
 });
 
-import { ChatWindow, submitGapMs } from "./ChatWindow";
+import { ChatWindow } from "./ChatWindow";
+import { submitGapMs } from "./chat/terminalSubmit";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
+import { outgoingStore } from "./chat/outgoingPrompts";
 
 // 这些用例模拟真实的异步间隙与 CLI 回显，避免只验证「调用过 write」却漏掉误提交/丢草稿。
 describe("ChatWindow 适配回归", () => {
@@ -78,6 +80,36 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(501)).not.toContain("\r");
   });
 
+  // 插话进了对话记录后，排队区不再挂它的回执：对话里已经有「回合中插入」的那条，
+  // 回执再挂一份就是同一句话显示两遍（用户实拍）。
+  it("插话出现在对话记录后，排队区不再重复显示", async () => {
+    const base = setup(508, "codex", "running");
+    let landed = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history" && landed) {
+        return Promise.resolve({
+          ...history(508, "codex", "running"),
+          items: [{ type: "user_text", id: "u-in", timestamp: null, text: "顺手改个名", interjected: true }],
+          offset: 1,
+        });
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-508");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "顺手改个名" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    landed = true;
+    // 时限短于旧版「已插入」回执的 2.5s 停留：对话里一出现，排队区就该同时没有它。
+    await waitFor(() => {
+      expect(document.querySelector(".chat-message.is-user")).toBeTruthy();
+      expect(document.querySelector(".chat-queued-stack")).toBeNull();
+    }, { timeout: 1_500 });
+    expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
+  });
+
   // gemini 启动即落 running、首条消息前无事件纠正：屏幕已停在输入框（idle）时必须按回车
   // 提交，按 Tab 正文会停在输入框里发不出去（0.6.11 实机）。
   it("gemini DB 残留 running 但屏幕空闲时，发送用回车而非排队键", async () => {
@@ -104,7 +136,9 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(502)).not.toContain("\x1b");
   });
 
-  it("发送期间 A→B→A，旧提交不回车也不清除新草稿", async () => {
+  // 先上屏再发送（用户要求：切回列表不该取消发送）：切走再切回，在途的那条照样写完并回车，
+  // 输入框里返回后新写的草稿不受影响（那条早在点发送时就从输入框挪进了气泡）。
+  it("发送期间 A→B→A，旧提交照常写完，不清除新草稿", async () => {
     const base = setup(503);
     let release!: () => void;
     invoke.mockImplementation((command, args) => command === "write_managed_terminal" && args?.data === "旧内容"
@@ -121,8 +155,83 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "返回后新写的草稿" } });
     await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 400)); });
     expect(box().value).toBe("返回后新写的草稿");
-    expect(writes(503)).not.toContain("\r");
+    expect(writes(503)).toContain("\r");
     expect(writes(503)).not.toContain("\x15");
+  });
+
+  // 先上屏再发送（用户要求，对照微信）：点发送即出气泡并标「发送中」、输入框立刻清空，
+  // 不再让输入框转圈；写进终端后「发送中」消失。
+  it("点发送即上屏：气泡标发送中、输入框立刻清空，写完后标注消失", async () => {
+    const base = setup(511);
+    let release!: () => void;
+    invoke.mockImplementation((command, args) => command === "write_managed_terminal" && args?.data === "先上屏"
+      ? new Promise<void>((resolve) => { release = resolve; }) : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-511");
+    fireEvent.change(box(), { target: { value: "先上屏" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect((await screen.findAllByText("先上屏")).length).toBeGreaterThan(0);
+    expect(screen.getByText(zh.chat.echoSending)).toBeTruthy();
+    expect(box().value).toBe("");
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await act(async () => { release(); });
+    await waitFor(() => expect(writes(511)).toContain("\r"));
+    await waitFor(() => expect(screen.queryByText(zh.chat.echoSending)).toBeNull());
+  });
+
+  // 失败时输入框里已经在写新内容：不覆盖它，留一个「发送失败」气泡，放回输入框接在新内容前面。
+  it("发送失败且已在写新内容时留失败气泡，可放回输入框", async () => {
+    const base = setup(512);
+    let fail!: (reason: string) => void;
+    invoke.mockImplementation((command, args) => command === "write_managed_terminal" && args?.data === "会失败的话"
+      ? new Promise<void>((_, reject) => { fail = reject; }) : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-512");
+    fireEvent.change(box(), { target: { value: "会失败的话" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(fail).toBeTypeOf("function"));
+    fireEvent.change(box(), { target: { value: "新草稿" } });
+    await act(async () => { fail("写入终端失败"); });
+    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
+    expect(box().value).toBe("新草稿");
+    expect(writes(512)).not.toContain("\r");
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.echoRestore }));
+    expect(box().value).toBe("会失败的话\n\n新草稿");
+    expect(screen.queryByText(zh.chat.echoFailed)).toBeNull();
+  });
+
+  // 终端没起来时发送、拉起终端期间切走：照样拉起、等就绪、写完回车（用户要求切走不取消）；
+  // 等待进度这类界面提示不跟到别的会话上。
+  it("终端未启动时发送后切走，照样拉起终端并发出", async () => {
+    const base = setup(514);
+    let started = false;
+    let wrote = false;
+    let releaseStart!: () => void;
+    invoke.mockImplementation((command, args) => {
+      if (Number(args?.sessionId) === 514) {
+        if (command === "start_managed_terminal") {
+          return new Promise<void>((resolve) => { releaseStart = () => { started = true; resolve(); }; });
+        }
+        if (command === "managed_terminal_snapshot") {
+          return Promise.resolve(started
+            ? snapshot(514, wrote ? "ready ❯ 切走也要发" : "ready ❯")
+            : { ...snapshot(514), active: false, managed: false });
+        }
+        if (command === "write_managed_terminal" && args?.data === "切走也要发") wrote = true;
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-514");
+    fireEvent.change(box(), { target: { value: "切走也要发" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(releaseStart).toBeTypeOf("function"));
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 515 }));
+    await screen.findByText("适配-515");
+    await act(async () => { releaseStart(); });
+    await waitFor(() => expect(writes(514)).toContain("\r"), { timeout: 5_000 });
+    expect(writes(514)).toContain("切走也要发");
+    expect(screen.queryByText(zh.chat.terminalNeedsAttention)).toBeNull();
   });
 
   it("同一会话发送期间继续编辑，成功后保留新内容", async () => {
@@ -298,6 +407,324 @@ describe("ChatWindow 适配回归", () => {
       expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(false);
     }
   });
+
+  /// 菜单型 CLI（kimi 的 /model 不接受参数）：模型目录直接读配置列出，不必先读清单；
+  /// 点选后发 /model，菜单画出来就按第一列名称替用户选中——K3 不能落到 K3-256k 上。
+  it("kimi 模型直接列出,点选后在 CLI 菜单里自动选中", async () => {
+    const base = setup(511, "kimi");
+    invoke.mockImplementation((command, args) => {
+      if (command === "agent_model_catalog") return Promise.resolve([
+        { id: "kimi-code/k3-256k", label: "K3-256k", group: "managed:kimi-code", efforts: [] },
+        { id: "kimi-code/k3.1-pro", label: "K3.1 Pro", group: "managed:kimi-code", efforts: ["low", "high", "max"] },
+        { id: "kimi-code/k3", label: "K3", group: "managed:kimi-code", efforts: [] },
+      ]);
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-511");
+    // 目录随会话打开就去取（读配置文件，几毫秒）；等它到位再点，模拟真实时序。
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    expect(await screen.findByText("managed:kimi-code")).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "读取模型清单" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "K3" }));
+    await waitFor(() => expect(writes(511)).toContain("/model"));
+    await waitFor(() => expect(terminalProps.current?.onAttention).toBeTypeOf("function"));
+    const menu = terminalAttention([
+      "\x1b[2JSelect a model  (type to search)",
+      "Tab toggle provider · ↑↓ navigate · Enter select · Esc cancel",
+      "  K3-256k            Kimi Code",
+      "❯ K3.1 Pro           Kimi Code ← current",
+      "  K3                 Kimi Code",
+    ].join("\r\n"), [], false, true);
+    expect(menu?.id).toBe("interactive:cursor-menu");
+    act(() => (terminalProps.current!.onAttention as (value: unknown) => void)(menu));
+    await waitFor(() => expect(writes(511)).toContain("\x1b[B\r"));
+    // 全程静默：CLI 的菜单卡与「正在识别」条都不上屏（用户实拍反馈）。
+    expect(screen.queryByText(zh.chat.slashMenuOpened)).toBeNull();
+    expect(screen.queryByText("Select a model  (type to search)")).toBeNull();
+  });
+
+  /// 当前屏没有点选的模型（kimi 列表分页、分 provider 标签页）：把名字打进菜单搜索框，
+  /// 过滤后的菜单重画再认一次；搜过仍没有才收掉（Esc 两下：先清搜索词再关菜单）并报一句。
+  /// 全程不把 CLI 菜单卡甩上来。
+  it.each(["found", "missing"])("kimi 点选的模型不在当前屏时先搜索再选：%s", async (mode) => {
+    const base = setup(512, "kimi");
+    invoke.mockImplementation((command, args) => {
+      if (command === "agent_model_catalog") return Promise.resolve([
+        { id: "反向推理/DeepSeek-V4.1-Flash-1017", label: "DeepSeek V4.1 Flash", group: "反向推理", efforts: [] },
+      ]);
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-512");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "DeepSeek V4.1 Flash" }));
+    await waitFor(() => expect(writes(512)).toContain("/model"));
+    await waitFor(() => expect(terminalProps.current?.onAttention).toBeTypeOf("function"));
+    const show = (rows: string[]) => {
+      const menu = terminalAttention([
+        "\x1b[2JSelect a model",
+        "Tab toggle provider · ↑↓ navigate · Enter select · Esc cancel",
+        ...rows,
+      ].join("\r\n"), [], false, true);
+      act(() => (terminalProps.current!.onAttention as (value: unknown) => void)(menu));
+    };
+    show(["❯ K3.1 Pro           Kimi Code ← current", "  K3                 Kimi Code"]);
+    await waitFor(() => expect(writes(512)).toContain("DeepSeek V4.1 Flash"));
+    if (mode === "found") {
+      show(["❯ DeepSeek V4.1 Flash (local TensorFold)   反向推理", "  DeepSeek V4.1 Pro   反向推理"]);
+      await waitFor(() => expect(writes(512).filter((data) => data === "\r").length).toBeGreaterThan(1));
+    } else {
+      show(["❯ K3.1 Pro           Kimi Code ← current", "  K3                 Kimi Code"]);
+      await waitFor(() => expect(writes(512).filter((data) => data === "\x1b")).toHaveLength(2));
+      expect(await screen.findByText(zh.chat.modelPickNotFound("DeepSeek V4.1 Flash"))).toBeTruthy();
+    }
+    expect(screen.queryByText("Select a model")).toBeNull();
+  });
+
+  /// kimi 的思考档位随模型（模型目录的 support_efforts，前面补 off）；切换走 /effort <档位>，
+  /// 认 `Thinking set to <档位>.`。
+  it("kimi 思考档位按当前模型列出并切换", async () => {
+    const base = setup(513, "kimi");
+    let submitted = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return base(command, args).then((h: object) => ({ ...h, model: "K3.1 Pro", effort: "high" }));
+      if (command === "agent_model_catalog") return Promise.resolve([
+        { id: "kimi-code/k3.1-pro", label: "K3.1 Pro", group: "managed:kimi-code", efforts: ["off", "low", "high", "max"] },
+      ]);
+      if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(513, submitted ? "Thinking set to max." : ""));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-513");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
+    expect(await screen.findByText("· High")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    expect(screen.getByRole("radio", { name: "Off" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Max" }));
+    await waitFor(() => expect(writes(513)).toContain("/effort max"));
+    expect(await screen.findByText("· Max", {}, { timeout: 4000 })).toBeTruthy();
+  });
+
+  /// 撤回（对照 Kimi 用户消息上的「撤回」）：轮数 = 这条起往后的非插话用户消息数；
+  /// 被撤的消息从对话里消失才算成（undone 的空 reset 也要照单清屏），原文放回输入框；
+  /// CLI 拒绝时把原话带出来，输入框不动。
+  it.each(["done", "rejected"])("kimi 撤回消息：%s", async (mode) => {
+    const base = setup(514, "kimi");
+    let submitted = false;
+    const items = [
+      { type: "user_text", id: "u1", timestamp: null, text: "先做甲" },
+      { type: "assistant_text", id: "a1", timestamp: null, text: "甲做完了" },
+      { type: "user_text", id: "u2", timestamp: null, text: "再做乙" },
+      { type: "user_text", id: "u3", timestamp: null, text: "顺便看看", interjected: true },
+      { type: "assistant_text", id: "a2", timestamp: null, text: "乙做完了" },
+    ];
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return base(command, args).then((h: object) => submitted && mode === "done"
+        ? { ...h, reset: true, undone: true, offset: 10, items: [] }
+        : { ...h, offset: 5, items });
+      if (command === "confirm_dialog") return Promise.resolve(true);
+      if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(514,
+        submitted && mode === "rejected" ? "Nothing to undo: would cross a compaction boundary" : ""));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("甲做完了");
+    // 插话不单独给撤回（它不是一轮）：两条正常用户消息各一颗。
+    const undoButtons = await screen.findAllByRole("button", { name: zh.chat.undoTip });
+    expect(undoButtons).toHaveLength(2);
+    fireEvent.click(undoButtons[0]);
+    await waitFor(() => expect(writes(514)).toContain("/undo 2"));
+    if (mode === "done") {
+      await screen.findByText(zh.chat.undoDone, {}, { timeout: 4000 });
+      expect(screen.queryByText("甲做完了")).toBeNull();
+      expect(box().value).toBe("先做甲");
+    } else {
+      await screen.findByText(zh.chat.undoRejected("Nothing to undo: would cross a compaction boundary"), {}, { timeout: 4000 });
+      expect(box().value).toBe("");
+    }
+  });
+
+  /// claude 撤回（2.1.314 probe_claude_rewind）：`/rewind` 打开菜单，上移 N 格、核对选中行与
+  /// 确认页引文、按「Restore conversation」的数字（有代码改动时是第 2 项）；不写 transcript，
+  /// 以原文回到 CLI 输入框为准，本地收掉被撤的消息，再双 Esc 清 CLI 输入框。选中的不是要撤的
+  /// 那条就退出菜单报错，什么都不撤。
+  it.each(["done", "mismatch"])("claude 撤回消息：%s", async (mode) => {
+    const base = setup(516, "claude");
+    const items = [
+      { type: "user_text", id: "u1", timestamp: null, text: "先做甲" },
+      { type: "assistant_text", id: "a1", timestamp: null, text: "甲做完了" },
+      { type: "user_text", id: "u2", timestamp: null, text: "再做乙" },
+      { type: "assistant_text", id: "a2", timestamp: null, text: "乙做完了" },
+    ];
+    // 模拟 claude 整屏：列表从旧到新，光标初始在最底的 (current)。
+    let stage: "idle" | "list" | "confirm" | "restored" | "cleared" = "idle";
+    let ups = 0;
+    let escs = 0;
+    let typed = "";
+    const listed = mode === "done" ? ["先做甲", "再做乙"] : ["别的消息", "再做乙"];
+    const composer = (text: string) => ["────────", `❯ ${text}`, "────────"];
+    const screenNow = () => {
+      if (stage === "list") {
+        const rows = [...listed, "(current)"];
+        const at = rows.length - 1 - ups;
+        return ["❯ 先做甲", "● 甲做完了", "▔▔▔▔", "   Rewind", ...rows.map((row, index) => (index === at ? "   ❯ " : "     ") + row), "   Enter to continue · Esc to cancel"];
+      }
+      if (stage === "confirm") return ["   Rewind", "   │ 先做甲", "   │ (9s ago)", "   ❯ 1. Restore code and conversation", "     2. Restore conversation", "     3. Restore code"];
+      if (stage === "restored") return ["❯ 先做甲", ...composer("先做甲")];
+      return ["❯ 先做甲", "● 甲做完了", ...composer("")];
+    };
+    invoke.mockImplementation((command, args) => {
+      // 真实后端的增量只带新内容：首读给全量，之后空增量（撤回不写 transcript）。
+      if (command === "get_chat_history") return base(command, args).then((h: object) => ({ ...h, offset: 5, items: args?.offset ? [] : items }));
+      if (command === "confirm_dialog") return Promise.resolve(true);
+      if (command === "managed_terminal_screen") return Promise.resolve(screenNow());
+      if (command === "write_managed_terminal") {
+        const data = String(args?.data);
+        if (data === "\r" && typed.endsWith("/rewind")) { stage = "list"; typed = ""; }
+        else if (data === "\r" && stage === "list") stage = "confirm";
+        else if (data === "\u001b[A" && stage === "list") ups += 1;
+        else if (data === "2" && stage === "confirm") stage = "restored";
+        else if (data === "\u001b") {
+          escs += 1;
+          if (stage === "list" || stage === "confirm") stage = "idle";
+          else if (stage === "restored" && escs >= 2) stage = "cleared";
+        } else typed += data;
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("甲做完了");
+    // 菜单式能撤任意一条：两条用户消息各一颗。
+    const undoButtons = await screen.findAllByRole("button", { name: zh.chat.undoTip });
+    expect(undoButtons).toHaveLength(2);
+    fireEvent.click(undoButtons[0]);
+    await waitFor(() => expect(writes(516)).toContain("/rewind"));
+    if (mode === "done") {
+      await screen.findByText(zh.chat.undoDone, {}, { timeout: 6000 });
+      expect(ups).toBe(2);
+      expect(writes(516)).toContain("2");
+      expect(stage).toBe("cleared");
+      expect(screen.queryByText("甲做完了")).toBeNull();
+      expect(box().value).toBe("先做甲");
+    } else {
+      await screen.findByText(zh.chat.undoMenuMismatch, {}, { timeout: 6000 });
+      expect(stage).toBe("idle");
+      expect(screen.queryAllByText("甲做完了").length).toBeGreaterThan(0);
+      expect(box().value).toBe("");
+    }
+  }, 15000);
+
+  /// claude 侧问（2.1.314 probe_claude_rewind 实测 /btw）：答案只在终端覆盖层、不写 transcript。
+  /// 对话页拦下 `/btw <问题>`，读下覆盖层里的答案挂成侧问卡，读完按 Esc 收起覆盖层。
+  it("claude 侧问：/btw 的答案挂成卡片并收起覆盖层", async () => {
+    const base = setup(517, "claude");
+    let stage: "idle" | "answering" | "answered" = "idle";
+    let polls = 0;
+    let typed = "";
+    const screenNow = () => {
+      if (stage === "idle") return ["❯ 先做甲", "● 甲做完了", "────────", "❯ ", "────────"];
+      if (stage === "answering" && polls++ < 1) return ["▔▔▔▔", "    /btw 刚才做了什么？", "      · Answering…", "    Esc to close"];
+      stage = "answered";
+      return ["▔▔▔▔", "    /btw 刚才做了什么？", "      做了甲。", "      没做乙。", "    ↑/↓ to scroll · c to copy · f to fork · Esc to close"];
+    };
+    invoke.mockImplementation((command, args) => {
+      if (command === "managed_terminal_screen") return Promise.resolve(screenNow());
+      if (command === "write_managed_terminal") {
+        const data = String(args?.data);
+        if (data === "\r" && typed.includes("/btw 刚才做了什么？")) { stage = "answering"; typed = ""; }
+        else if (data === "\u001b") stage = "idle";
+        else typed += data;
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-517");
+    // 侧问通道依赖 chatUi 声明：等它到位再发，否则走的是普通发送。
+    await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "agent_chat_ui")).toBe(true));
+    await act(async () => {});
+    fireEvent.change(box(), { target: { value: "/btw 刚才做了什么？" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(await screen.findByText(/做了甲。\s*没做乙。/, {}, { timeout: 6000 })).toBeTruthy();
+    expect(stage).toBe("idle");
+    expect(box().value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.sideQuestionClose }));
+    expect(screen.queryByText(/做了甲/)).toBeNull();
+  }, 15000);
+
+  /// opencode 撤回（1.19.3 probe_opencode_undo）：`/undo` 不带参、一次一轮，只挂最后一条；
+  /// 确认框说清会还原文件；撤唯一一轮靠换代重导（reset 不带 undone）也要清屏；原文被 CLI
+  /// 放回它自己的输入框，认出后按 Ctrl-C 清掉——认不出输入框则不按（空框 Ctrl-C 是退出）。
+  it.each(["cleared", "unrecognized"])("opencode 撤回消息：%s", async (mode) => {
+    const base = setup(515, "opencode");
+    let submitted = false;
+    let cleared = false;
+    const items = [
+      { type: "user_text", id: "u1", timestamp: null, text: "先做甲" },
+      { type: "assistant_text", id: "a1", timestamp: null, text: "甲做完了" },
+    ];
+    const confirms: unknown[] = [];
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return base(command, args).then((h: object) => submitted
+        ? { ...h, reset: true, offset: 0, items: [] }
+        : { ...h, offset: 5, items });
+      if (command === "confirm_dialog") { confirms.push(args); return Promise.resolve(true); }
+      if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
+      if (command === "write_managed_terminal" && args?.data === "\u0003") cleared = true;
+      if (command === "managed_terminal_screen") return Promise.resolve(mode === "unrecognized"
+        ? ["  先做甲"]
+        : ["  ┃  先做甲", "  ┃", ...(submitted && !cleared ? ["  ┃  先做甲"] : ["  ┃"]), "  ┃  Build · model", "  ╹▀▀▀▀"]);
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("甲做完了");
+    const undoButtons = await screen.findAllByRole("button", { name: zh.chat.undoTip });
+    expect(undoButtons).toHaveLength(1);
+    fireEvent.click(undoButtons[0]);
+    await waitFor(() => expect(writes(515)).toContain("/undo"));
+    expect(writes(515)).not.toContain("/undo 1");
+    expect(JSON.stringify(confirms)).toContain(zh.chat.undoConfirmFiles);
+    await waitFor(() => expect(screen.queryByText("甲做完了")).toBeNull(), { timeout: 4000 });
+    expect(box().value).toBe("先做甲");
+    if (mode === "cleared") {
+      await screen.findByText(zh.chat.undoDone, {}, { timeout: 4000 });
+      expect(cleared).toBe(true);
+    } else {
+      await screen.findByText(zh.chat.undoInputResidue, {}, { timeout: 4000 });
+      expect(cleared).toBe(false);
+    }
+  });
+
+  /// 思考程度（对照 Kimi 模型菜单的「思考」分段）：statusline 报了档位才显示；切换写
+  /// `/effort <档位>`，只认 CLI 的确认行，被拒时把 CLI 原话带出来。
+  it.each(["confirmed", "rejected"])("思考程度切换需要 CLI 确认行：%s", async (mode) => {
+    const base = setup(510);
+    let submitted = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return base(command, args).then((h: object) => ({ ...h, effort: "high" }));
+      if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(510,
+        !submitted ? "" : mode === "confirmed" ? "Set effort level to Max: deepest reasoning" : "Effort 'max' isn't supported by this model"));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-510");
+    expect(await screen.findByText("· High")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Max" }));
+    await waitFor(() => expect(writes(510)).toContain("/effort max"));
+    if (mode === "confirmed") {
+      expect(await screen.findByText("· Max", {}, { timeout: 4000 })).toBeTruthy();
+    } else {
+      await screen.findByText(zh.chat.effortRejected("Effort 'max' isn't supported by this model"), {}, { timeout: 4000 });
+    }
+  });
 });
 
 /// UTF-8 → base64。btoa 只吃 latin1,含中文的终端回显必须先转字节,否则直接抛
@@ -335,6 +762,8 @@ afterEach(() => {
   invoke.mockReset();
   openDialog.mockReset();
   eventListeners.clear();
+  // 发出消息的仓库是模块级、按会话分仓的：几个用例共用会话号，不清会串。
+  outgoingStore.reset();
   window.history.replaceState({}, "", "/");
   // 侧栏折叠状态持久化在 localStorage，不清会串到下一个用例。
   localStorage.clear();
@@ -357,30 +786,13 @@ describe("ChatWindow", () => {
     fireEvent.keyDown(box, { key: "Enter" });
     return box as HTMLTextAreaElement;
   };
-  it("手打 /add-dir 走附加目录命令：引号交后端剥，终端里不再写第二条", async () => {
+  // 附加目录功能已去掉：Meowo 不再替 /add-dir 落库，只剥掉引号原样交给 CLI。
+  it("手打 /add-dir 只剥引号原样发给 CLI，不再落库", async () => {
     window.history.replaceState({}, "", "/?sessionId=7");
     respondWithHistory(addDirHistory);
-    const base = invoke.getMockImplementation()!;
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) =>
-      command === "add_session_extra_dir" ? Promise.resolve(true) : base(command, args));
-    const box = await typeAddDir();
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("add_session_extra_dir", { sessionId: 7, dir: "C:\\work\\x y" }));
-    await waitFor(() => expect(box.value).toBe(""));
-    // 等过一个提交间隔，确认没有任何 /add-dir 文本写进 PTY。
-    await new Promise((resolve) => setTimeout(resolve, submitGapMs("/add-dir x") + 50));
-    const written = invoke.mock.calls
-      .filter(([command]) => command === "write_managed_terminal")
-      .map(([, args]) => (args as { data: string }).data);
-    expect(written.some((data) => data.includes("/add-dir"))).toBe(false);
-  });
-  it("手打 /add-dir 被后端拒绝时回退：剥掉引号原样发给 CLI", async () => {
-    window.history.replaceState({}, "", "/?sessionId=7");
-    respondWithHistory(addDirHistory);
-    const base = invoke.getMockImplementation()!;
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) =>
-      command === "add_session_extra_dir" ? Promise.reject(new Error("该 Agent 不支持附加目录")) : base(command, args));
     await typeAddDir();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "/add-dir C:\\work\\x y" }));
+    expect(invoke.mock.calls.some(([command]) => command === "add_session_extra_dir")).toBe(false);
   });
 
   it("renders structured transcript entries", async () => {
@@ -412,14 +824,16 @@ describe("ChatWindow", () => {
     expect(invoke).toHaveBeenCalledWith("open_project_dir", { cwd: "C:/repo" });
     expect(screen.getByText("开始")).toBeTruthy();
     expect(screen.getByText("我来实现")).toBeTruthy();
+    // 思考 + 工具两条收成一个汇总块；点开汇总块看逐条。
+    const fold = document.querySelector<HTMLButtonElement>(".turn-fold-head");
+    if (fold?.getAttribute("aria-expanded") === "false") fireEvent.click(fold);
     // 思考过程恒为收起的一行（用户对照 Kimi 定），内容仍在 DOM 里供点开。
     const reasoning = screen.getByText("先检查现有协议").closest("details");
     expect(reasoning?.hasAttribute("open")).toBe(false);
-    // 摘要直接写种类（「运行终端」），不再有「执行了 N 次工具调用」的计数短语。
+    // 每条工具调用独立成行（Kimi 式扁平行），不再有分组卡片；有回执的调用默认收起。
     const activity = screen.getAllByText("运行终端")[0].closest("details");
-    expect(activity?.className).toContain("chat-activity-group");
-    // 过程组默认展开成时间线卡片（A+B 改版后用户实拍要求）；思考过程仍收起，见上。
-    expect(activity?.hasAttribute("open")).toBe(true);
+    expect(activity?.className).toContain("chat-tool");
+    expect(activity?.hasAttribute("open")).toBe(false);
     expect(screen.queryByText("工具结果")).toBeNull();
     expect(invoke).toHaveBeenCalledWith("get_chat_history", { sessionId: 7, offset: 0 });
     fireEvent.change(screen.getByRole("combobox", { name: "发送消息给 Agent" }), { target: { value: "继续实现" } });
@@ -491,8 +905,8 @@ describe("ChatWindow", () => {
     };
     toggle(true);
     expect(await screen.findByText("子任务的结论")).toBeTruthy();
-    // 嵌套时间线沿用同一套渲染：里面的工具调用照样分组。
-    expect(document.querySelector(".chat-subagent .chat-activity-group")).toBeTruthy();
+    // 嵌套时间线沿用同一套渲染：里面的工具调用也是扁平行。
+    expect(document.querySelector(".chat-subagent .chat-flat-steps .chat-tool")).toBeTruthy();
 
     // 折叠再展开不该重复请求（结果缓存在组件里）。
     const calls = invoke.mock.calls.filter(([command]) => command === "get_subagent_transcript").length;
@@ -510,7 +924,7 @@ describe("ChatWindow", () => {
     let done = false;
     invoke.mockImplementation((command: string) => {
       if (command === "get_chat_history") return Promise.resolve({
-        sessionId: 17, title: "批量", status: "running", provider: "kimi", cwd: "C:/repo",
+        sessionId: 17, title: "批量", status: "running", connected: true, provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null,
         items: done
           ? [swarm, {
@@ -708,6 +1122,10 @@ describe("ChatWindow", () => {
     // 横幅（识别不出的面板也有「切到终端/收起」的出口）。
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
     expect(await screen.findByText("命令界面已在终端打开，正在识别可选项…")).toBeTruthy();
+    // 识别不出来时「收起」也得真把终端里的菜单关掉（发 Esc）——此前这里是空操作，
+    // 看不到终端的手机上菜单就一直开着。
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 52, data: "\x1b" }));
     // 普通消息不受影响：带参数的命令不是「裸命令」，不走菜单通道。
   });
 
@@ -794,7 +1212,8 @@ describe("ChatWindow", () => {
       currentActivity: null, items: [],
     });
     render(<ChatWindow />);
-    expect(await screen.findByText("Agent 已开始工作，对话内容马上出现")).toBeTruthy();
+    // 信号由对话末尾的运行行给出：本轮还没有任何输出，说「请求中」。
+    expect((await screen.findByText("请求中…")).closest(".chat-running")).toBeTruthy();
     expect(screen.queryByText("还没有可显示的对话记录")).toBeNull();
     // 会话结束且确实没有记录时，仍然如实说「没有」。
   });
@@ -970,7 +1389,8 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\x15" }), { timeout: 5_000 });
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
     expect(await screen.findByText(/消息未进入终端/)).toBeTruthy();
-    expect(input.value).toBe("go on");
+    // 先上屏再发送后，失败的原文退回输入框（人还在、输入框空着时）。
+    await waitFor(() => expect(input.value).toBe("go on"));
   });
 
   it("opens a non-Claude startup trust prompt in the terminal without typing the chat message into it", async () => {
@@ -1160,9 +1580,16 @@ describe("ChatWindow", () => {
     // agent logo（标题栏最前，aria-label=provider）+ 运行指示（有活动时显示活动文本）。
     // agent 徽标已从标题栏移除（实拍反馈），不再断言它。
     expect(screen.getByText("Bash: cargo test")).toBeTruthy();
-    // 上下文用量环：环内百分比 + 环右已用/总量（63% × 200K ≈ 126K）。
-    expect(screen.getByText("63")).toBeTruthy();
-    expect(screen.getByText("126K/200K")).toBeTruthy();
+    // 上下文用量只显示圆环；百分比与窗口详情保留在 tooltip，不再上屏。
+    const meter = screen.getByRole("img", { name: "上下文已用 63%（窗口 200K）" });
+    expect(meter.getAttribute("data-tip")).toBe("上下文已用 63%（窗口 200K）");
+    expect(meter.querySelector(".chat-context-pct")).toBeNull();
+    expect(meter.querySelector(".chat-context-usage")).toBeNull();
+    expect(screen.queryByText("126K/200K")).toBeNull();
+    // 截图入口移除；用量紧邻模型左侧。
+    expect(screen.queryByRole("button", { name: "截图" })).toBeNull();
+    const model = meter.parentElement!.querySelector(".chat-model-select")!;
+    expect(meter.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // "/" 前缀弹补全；选中后填入输入框并留出参数位，不自动发送。
     const input = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "/mo" } });
@@ -1258,9 +1685,21 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     await screen.findByText("初始标题");
     expect(screen.getByText("Bash: 第一步")).toBeTruthy();
-    expect(screen.getByText("10")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "上下文已用 10%（窗口 200K）" })).toBeTruthy();
     // 模式按钮只显示当前值，维度名在 aria-label/tooltip 里。
     expect(screen.getByText("默认")).toBeTruthy();
+    // 工具行顺序固定为附件 → 权限 → 用量 → 模型。
+    const meter = screen.getByRole("img", { name: "上下文已用 10%（窗口 200K）" });
+    const actions = meter.parentElement!;
+    const ordered = [
+      actions.querySelector(".chat-attach-button")!,
+      screen.getByRole("button", { name: "切换模式: 权限模式" }),
+      meter,
+      actions.querySelector(".chat-model-select")!,
+    ];
+    for (let i = 0; i < ordered.length - 1; i += 1) {
+      expect(ordered[i].compareDocumentPosition(ordered[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
 
     // 权限模式现在是下拉（选项由屏幕回显标记派生）：点按钮开菜单、点某项才发 cycle 键。
     fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
@@ -1273,7 +1712,7 @@ describe("ChatWindow", () => {
     expect(await screen.findByText("Bash: 第二步")).toBeTruthy();
 
     current = { ...base, currentActivity: "Bash: 第二步", contextPct: 42 };
-    expect(await screen.findByText("42")).toBeTruthy();
+    await waitFor(() => expect(document.querySelector(".chat-context")?.getAttribute("data-tip")).toBe("上下文已用 42%（窗口 200K）"));
 
     current = { ...base, currentActivity: "Bash: 第二步", contextPct: 42, title: "改后标题" };
     expect(await screen.findByText("改后标题")).toBeTruthy();
@@ -1355,7 +1794,7 @@ describe("ChatWindow", () => {
   it("cycle 盲切后从终端屏幕回显真实落点（claude 空闲期 transcript 不写模式记录）", async () => {
     window.history.replaceState({}, "", "/?sessionId=51");
     const base = {
-      sessionId: 51, title: "屏幕回显", status: "running", provider: "claude", cwd: "C:/repo",
+      sessionId: 51, title: "屏幕回显", status: "running", provider: "claude", cwd: "C:/repo", connected: true,
       supported: true, offset: 0, reset: false, pendingReview: null, model: null,
       agentModes: [{ dimension: "permission", value: "default" }],
       contextPct: null, contextWindow: null, currentActivity: null, hasMore: false, items: [],
@@ -1370,6 +1809,7 @@ describe("ChatWindow", () => {
       if (command === "get_chat_history") return Promise.resolve(current);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude"]));
       if (command === "write_managed_terminal" && (args as { data?: string } | undefined)?.data === "[Z") {
         // CLI 收到 Shift+Tab 后重绘出新指示。
         out += screenText;
@@ -1386,6 +1826,11 @@ describe("ChatWindow", () => {
     current = { ...base, agentModes: [] };
     // 只有 cycle 键的维度也给下拉：选项由屏幕回显标记派生，选中后循环按到位（cycleToMode）。
     fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    // 每档带一行后果说明（对照 Kimi 权限菜单）：启动项声明过的用启动说明，运行中才有的 auto 按值补。
+    // 说明不进名字，读屏名字仍只报档名。
+    expect(await screen.findByText("改文件自动，跑命令先问你")).toBeTruthy();
+    const autoItem = screen.getByRole("menuitem", { name: "自动" });
+    expect(document.getElementById(autoItem.getAttribute("aria-describedby") ?? "")?.textContent).toBe("安全操作自动，有风险的才问你");
     fireEvent.click(screen.getByRole("menuitem", { name: /计划/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 51, data: "\u001b[Z" }));
     // transcript 静默，但屏幕是 CLI 自己画的权威状态——标签应据它回显为「计划」。
@@ -1461,6 +1906,10 @@ describe("ChatWindow", () => {
     const item = await screen.findByRole("menuitem", { name: "跳过权限确认" });
     expect(screen.queryByRole("menuitem", { name: "权限：沿用原设置" })).toBeNull();
     expect(item.className).toContain("is-active");
+    // 高风险档（插件 risk 声明）：按钮与该菜单项都转危险色（对照 Kimi 的 perm-pill），普通档不带。
+    expect(screen.getByRole("button", { name: "切换模式: 权限模式" }).className).toContain("is-risk");
+    expect(item.className).toContain("is-risk");
+    expect(screen.getByRole("menuitem", { name: /默认/ }).className).not.toContain("is-risk");
   });
 
   it("offers to load earlier messages when the first read was truncated", async () => {
@@ -1529,11 +1978,11 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     const { container } = render(<ChatWindow />);
-    // 首帧不得有占位：快读（<150ms）不该闪骨架/文案造成三段跳。
-    expect(container.querySelector(".chat-skeleton")).toBeNull();
+    // 首帧不得有占位：快读（<150ms）不该闪加载态造成三段跳。
+    expect(container.querySelector(".chat-loading")).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 200));
-    await waitFor(() => expect(container.querySelector(".chat-skeleton")).not.toBeNull());
-    // 数据到达后骨架消失、内容落地。
+    await waitFor(() => expect(container.querySelector(".chat-loading")).not.toBeNull());
+    // 数据到达后加载态消失、内容落地。
     resolveHistory({
       sessionId: 44, title: "慢会话", status: "running", provider: "claude", cwd: null,
       supported: true, offset: 0, reset: false, pendingReview: null,
@@ -1541,7 +1990,7 @@ describe("ChatWindow", () => {
       items: [{ type: "user_text", id: "u1", timestamp: null, text: "慢会话内容" }],
     });
     await screen.findByText("慢会话内容");
-    expect(container.querySelector(".chat-skeleton")).toBeNull();
+    expect(container.querySelector(".chat-loading")).toBeNull();
   });
 
   it("keeps the terminal mounted across tab switches", async () => {
@@ -1564,6 +2013,35 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(terminalMounts.count).toBe(1);
+  });
+
+  /// Alt+↑/↓ 按侧栏眼前的顺序切上一条/下一条（对照 Kimi「上一条/下一条」）；到头不循环。
+  it("Alt+↑/↓ 按侧栏顺序切换会话", async () => {
+    window.history.replaceState({}, "", "/?sessionId=7");
+    invoke.mockImplementation((command: string, args: { sessionId?: number }) => {
+      if (command === "get_chat_history") {
+        return Promise.resolve({
+          sessionId: args?.sessionId ?? 7, title: `会话 ${args?.sessionId}`, status: "running",
+          provider: "claude", cwd: null, supported: true, offset: 0, reset: false,
+          pendingReview: null, items: [],
+        });
+      }
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "get_live_sessions_page") {
+        return Promise.resolve([
+          { session: { id: 7, cc_session_id: "a", status: "running" }, project_name: "p", task_title: "第一条", connected: true, pending_review: null, provider: "claude", cwd: "C:/a" },
+          { session: { id: 42, cc_session_id: "b", status: "running" }, project_name: "p", task_title: "第二条", connected: true, pending_review: null, provider: "claude", cwd: "C:/b" },
+        ]);
+      }
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await screen.findByRole("button", { name: /第二条/ });
+    const current = () => invoke.mock.calls.filter(([command]) => command === "get_chat_history").at(-1)?.[1]?.sessionId;
+    fireEvent.keyDown(window, { key: "ArrowUp", altKey: true });
+    expect(current()).toBe(7);
+    fireEvent.keyDown(window, { key: "ArrowDown", altKey: true });
+    await waitFor(() => expect(current()).toBe(42));
   });
 
   it("keeps terminal view when switching sessions from the sidebar", async () => {
@@ -1618,18 +2096,63 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     // 归档入口收进标题菜单（Kimi 式）：点标题开菜单再点「归档」。
     fireEvent.click(await screen.findByRole("button", { name: /要收起的会话/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "归档" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "标记完成" }));
     expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 7, archived: true });
     // 翻面后菜单项变成「取消归档」——它是这条会话已归档的唯一提示（菜单点完即收，重开验证）。
     fireEvent.click(screen.getByRole("button", { name: /要收起的会话/ }));
-    expect(await screen.findByRole("menuitem", { name: "取消归档" })).toBeTruthy();
+    expect(await screen.findByRole("menuitem", { name: "恢复进行中" })).toBeTruthy();
 
     archiveFails = true;
-    fireEvent.click(screen.getByRole("menuitem", { name: "取消归档" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "恢复进行中" }));
     // 失败回滚：错误可见，重开菜单仍是归档态（取消归档）。
     expect(await screen.findByText(/db busy/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /要收起的会话/ }));
-    expect(await screen.findByRole("menuitem", { name: "取消归档" })).toBeTruthy();
+    expect(await screen.findByRole("menuitem", { name: "恢复进行中" })).toBeTruthy();
+  });
+
+  /// 「标记完成」直达钮（对照 Kimi 标题栏）：一击完成，不必进标题菜单；完成后钮随即消失
+  /// （恢复进行中仍走标题菜单）。
+  it("顶栏「标记完成」一击完成当前会话，完成后钮消失", async () => {
+    window.history.replaceState({}, "", "/?sessionId=7");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 7, title: "做完的会话", status: "ended", provider: "claude", cwd: null,
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], archived: false,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "get_live_sessions_page") return Promise.resolve([]);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: "标记完成" }));
+    expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 7, archived: true });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "标记完成" })).toBeNull());
+  });
+
+  /// 标记完成会顺带结束会话：Agent 正在干活时先确认（取消则什么都不发），停着时直接完成。
+  it.each([false, true])("运行中标记完成先确认，确认=%s", async (answer) => {
+    window.history.replaceState({}, "", "/?sessionId=7");
+    const confirms: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 7, title: "跑着的会话", status: "running", provider: "claude", cwd: null,
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], archived: false,
+        connected: true, ptyManaged: true, screenState: "working",
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "confirm_dialog") { confirms.push(args); return Promise.resolve(answer); }
+      if (command === "get_live_sessions_page") return Promise.resolve([]);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: "标记完成" }));
+    await waitFor(() => expect(JSON.stringify(confirms)).toContain(zh.chat.markDoneRunningConfirm));
+    if (answer) {
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 7, archived: true }));
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(invoke).not.toHaveBeenCalledWith("set_archived", expect.anything());
+    }
   });
 
   /// 归档 = 收纳：侧栏里当场消失，右边却还停在它的对话上等于「收起来了还摊在桌上」。
@@ -1650,8 +2173,9 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: /要收起的/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "归档" }));
-    expect(await screen.findByText("下一条")).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "标记完成" }));
+    // 看标题栏（侧栏条目也叫「下一条」，且标题现在首读前就先摆出来）。
+    await waitFor(() => expect(document.querySelector(".chat-bar .chat-title")?.textContent).toBe("下一条"));
   });
 
   /// Ctrl/Cmd+K 命令面板：会话上百条时侧栏翻页太慢，这是键盘用户的主通道；
@@ -1678,9 +2202,9 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.getAllByRole("button", { name: /当前会话/ }).length).toBeGreaterThan(0));
     fireEvent.keyDown(window, { key: "k", code: "KeyK", ctrlKey: true });
     const input = await screen.findByPlaceholderText(zh.chat.switcherPlaceholder);
-    // 首屏（空查询）即列出最近会话 + 命令组全列（2 会话 + 8 命令）
+    // 首屏（空查询）即列出最近会话 + 命令组全列（2 会话 + 9 命令）
     const options = await screen.findAllByRole("option");
-    expect(options).toHaveLength(10);
+    expect(options).toHaveLength(11);
     expect(screen.getByText(zh.chat.switcherGroupCommands)).toBeTruthy();
     // ↓ 移到第二条（目标会话），Enter 切换
     fireEvent.keyDown(input, { key: "ArrowDown" });
@@ -1795,8 +2319,8 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     expect(await screen.findByText(/在外部终端运行/)).toBeTruthy();
-    // 输入不能丢：接管后要原样重发这条。
-    expect(input.value).toBe("别起第二个");
+    // 输入不能丢：失败的原文退回输入框，接管后要原样重发这条。
+    await waitFor(() => expect(input.value).toBe("别起第二个"));
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", expect.anything());
 
     // 接管是破坏性的（杀掉外部进程），必须显式确认；取消（队列首个 false）则什么都不做。
@@ -2037,9 +2561,10 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 16, data: "\r" }), { timeout: 3_000 });
   });
 
-  it("shows elapsed seconds and a terminal shortcut while waiting for the terminal to be ready", async () => {
-    // T-8:就绪等待(最长 45s)此前只有转圈,用户分不清「还在启动」还是「卡死」。
-    // 头 2 秒不报(快启动是常态,等待条不该一闪而过);之后显示已等秒数 + 「去终端页看」。
+  it("does not show the terminal-wait banner during a normal startup wait", async () => {
+    // T-8 的等待条(已等秒数 + 「去终端页」)只在等得够久(TERMINAL_WAIT_NOTICE_S=20s,
+    // 多半卡住)时出现:正常启动 5–15 秒,期间发送钮转圈就够,逢恢复必出横幅是噪声
+    // (用户实拍「能不能不要显示」)。
     window.history.replaceState({}, "", "/?sessionId=17");
     const history = {
       sessionId: 17, title: "慢启动", status: "ended", provider: "claude", cwd: "C:/repo",
@@ -2070,10 +2595,10 @@ describe("ChatWindow", () => {
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "继续" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    expect(await screen.findByText(/正在等待 Agent 终端就绪，已等 \d+ 秒/, {}, { timeout: 6_000 })).toBeTruthy();
-    // 等待条里的那个钮(chat-send-takeover)。7G-9 后标签统一成「去终端页」,
-    // 与顶部视图切换的「终端」页签不再同名。
-    expect(screen.getAllByRole("button", { name: "去终端页" }).some((b) => b.className.includes("chat-send-takeover"))).toBe(true);
+    await waitFor(() => expect(started).toBe(true));
+    // 过了旧阈值(2s)仍在等:等待条不出。
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(screen.queryByText(/正在等待 Agent 终端就绪/)).toBeNull();
     // 放行就绪:等待条收起、消息送达。把在途链路走完再收工,别留轮询污染后面的用例
     // (与上一个用例的「等回车落地」同一纪律)。
     ready = true;
@@ -2490,7 +3015,8 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     expect(await screen.findByText("运行测试")).toBeTruthy();
-    expect(screen.getByText("{\"command\":\"cargo test\"}")).toBeTruthy();
+    // Bash 参数只摆命令本身（commandOfInput），不摆 JSON 外壳。
+    expect(screen.getByText("cargo test")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^允许并记住（此项目、本机）/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
       sessionId: 12, requestId: "request-1", choice: "suggestion:0",
@@ -2541,6 +3067,44 @@ describe("ChatWindow", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
       sessionId: 13, requestId: "request-esc", choice: "deny",
+    }));
+  });
+
+  /** 对照 Kimi 审批卡：数字键 1 = 允许一次（焦点在输入框时让开），「说明并拒绝」把理由带给 Agent。 */
+  it("审批卡数字键 1 允许一次，附理由拒绝带上理由", async () => {
+    window.history.replaceState({}, "", "/?sessionId=23");
+    let pending: unknown = {
+      sessionId: 23, requestId: "request-keys", provider: "claude", toolName: "Bash",
+      description: "跑测试", input: "cargo test", permissionSuggestions: [],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 23, title: "审批快捷键", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: "approval", items: [], connected: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: pending, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await screen.findByRole("button", { name: "允许一次" });
+    // 焦点在输入框：数字键属于输入，不能替用户放行。
+    const input = screen.getByRole("combobox", { name: "发送消息给 Agent" });
+    input.focus();
+    fireEvent.keyDown(input, { key: "1" });
+    expect(invoke.mock.calls.some(([command]) => command === "resolve_pending_approval")).toBe(false);
+    input.blur();
+    fireEvent.keyDown(window, { key: "1" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+      sessionId: 23, requestId: "request-keys", choice: "allow_once",
+    }));
+    // 换一条新请求：附理由拒绝。
+    pending = { ...(pending as object), requestId: "request-reason" };
+    fireEvent.click(await screen.findByRole("button", { name: "说明并拒绝" }, { timeout: 3000 }));
+    fireEvent.change(screen.getByRole("textbox", { name: "说明拒绝原因…" }), { target: { value: "先别跑全量" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交并拒绝" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+      sessionId: 23, requestId: "request-reason", choice: "deny:先别跑全量",
     }));
   });
 
@@ -3655,242 +4219,180 @@ describe("ChatWindow", () => {
     expect(screen.queryByText("结束会话")).toBeNull();
   });
 
-  /**
-   * 标题栏任务进度入口:常驻清单图标,点开浮出「进度」面板——done/total 计数与
-   * 完整清单都在面板里,不必翻到滚动区最底部找 TodoPanel。
-   */
-  it("标题栏任务图标点开显示进度面板", async () => {
+  it("底部进度面板带清单图标，可用 pill 或 Esc 关闭", async () => {
     window.history.replaceState({}, "", "/?sessionId=95");
     respondWithHistory({
       sessionId: 95, title: "带任务", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
-      todos: [
-        { content: "已完成的一步", status: "completed" },
-        { content: "正在做的一步", status: "in_progress" },
-        { content: "还没做的一步", status: "pending" },
-      ],
+      todos: [{ content: "已完成的一步", status: "completed" }],
     });
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("带任务")).toBeTruthy());
-    const btn = document.querySelector(".chat-todo-btn");
-    expect(btn).toBeTruthy();
-    fireEvent.click(btn!);
-    const panel = document.querySelector(".chat-todo-panel");
-    expect(panel).toBeTruthy();
-    expect(panel!.textContent).toContain("进度");
-    expect(panel!.textContent).toContain("1/3");
-    expect(panel!.textContent).toContain("正在做的一步");
-    expect(panel!.textContent).toContain("还没做的一步");
+    const pill = await screen.findByRole("button", { name: "当前进度 1/1" });
+    fireEvent.click(pill);
+    expect(document.querySelector(".panel-todos .dock-work-title-icon")).toBeTruthy();
+    expect(document.querySelector(".panel-todos .dock-work-close")).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.querySelector(".panel-todos")).toBeNull();
+    fireEvent.click(pill);
+    expect(document.querySelector(".panel-todos")).toBeTruthy();
+    fireEvent.click(pill);
+    expect(document.querySelector(".panel-todos")).toBeNull();
+  });
+
+  it("停靠栏面板点外部关闭，点面板内不关，入口胶囊照常开合", async () => {
+    window.history.replaceState({}, "", "/?sessionId=96");
+    respondWithHistory({
+      sessionId: 96, title: "点外关闭", status: "waiting", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+      agentModes: [{ dimension: "permission", value: "plan" }],
+    });
+    render(<ChatWindow />);
+    const pill = await screen.findByRole("button", { name: "计划" });
+    fireEvent.pointerDown(pill);
+    fireEvent.click(pill);
+    const hint = await screen.findByText("计划模式已开启，写出的计划会显示在这里");
+    fireEvent.pointerDown(hint);
+    expect(screen.getByText("计划模式已开启，写出的计划会显示在这里")).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(screen.queryByText("计划模式已开启，写出的计划会显示在这里")).toBeNull());
+  });
+
+  it("计划与后台 Bash 入口按需出现：没有数据不出入口，计划模式开着才出计划入口", async () => {
+    window.history.replaceState({}, "", "/?sessionId=95");
+    respondWithHistory({
+      sessionId: 95, title: "空任务", status: "waiting", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+      agentModes: [{ dimension: "permission", value: "plan" }],
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: "计划" }));
+    expect(await screen.findByText("计划模式已开启，写出的计划会显示在这里")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "后台 Bash" })).toBeNull();
   });
 
   /**
-   * 面板收着时入口必须能看出里面有活儿(实拍反馈「入口上看不出在执行」):
-   * 有在跑的子任务 → 图标挂脉冲小点;面板里子任务行尾显示执行时长(结束的定格总用时)。
+   * 吸底的两条规矩（手机上滚动条抽搐的修复）：内容自己长高（折叠块展开、代码高亮）
+   * 不经 items 变化，也要在下一帧前钉回底部；手指按在屏幕上时一律让路，不跟人抢位置。
    */
-  it("进度入口带活动小点,面板子任务行尾显示执行时长", async () => {
-    window.history.replaceState({}, "", "/?sessionId=99");
-    respondWithHistory({
-      sessionId: 99, title: "带时长", status: "running", provider: "claude", cwd: "C:/repo",
-      supported: true, offset: 0, reset: false, pendingReview: null, connected: true,
-      items: [
-        { type: "tool_use", id: "sa_run", timestamp: "2026-08-18T04:00:00.000Z", name: "Agent", summary: "在跑的委派", subagent: { description: "在跑的委派", agent_type: null, count: 1 } },
-        { type: "tool_use", id: "sa_done", timestamp: "2026-08-18T04:00:00.000Z", name: "Agent", summary: "完成的委派", subagent: { description: "完成的委派", agent_type: null, count: 1 } },
-        {
-          type: "tool_result", id: "sr_done", timestamp: "2026-08-18T04:02:05.000Z", tool_use_id: "sa_done",
-          text: "done", is_error: false, subagent: { running: 0, completed: 1, failed: 0 },
-        },
-      ],
+  it("内容长高时钉回底部,触摸期间不抢滚动位置", async () => {
+    window.history.replaceState({}, "", "/?sessionId=96");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 96, title: "吸底", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 1, reset: false, pendingReview: null, connected: true,
+        items: [{ type: "assistant_text", id: "a1", timestamp: null, text: "第一段回答" }],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      return Promise.resolve();
     });
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("带时长")).toBeTruthy());
-    // 有委派没回执 = 在跑 → 入口图标右上角有脉冲小点。
-    expect(document.querySelector(".chat-todo-btn .chat-todo-live")).toBeTruthy();
-    fireEvent.click(document.querySelector(".chat-todo-btn")!);
-    const panel = document.querySelector(".chat-todo-panel")!;
-    // 完成的委派定格总用时(04:00:00 → 04:02:05);在跑的行尾也有滴答的已耗时。
-    expect(panel.textContent).toContain("2 分 5 秒");
-    const times = panel.querySelectorAll(".chat-todo-panel-time");
-    expect(times.length).toBe(2);
+    expect(await screen.findByText("第一段回答")).toBeTruthy();
+    const scroller = document.querySelector(".chat-scroll") as HTMLElement;
+    let height = 1000;
+    Object.defineProperty(scroller, "scrollHeight", { get: () => height, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true });
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    const grow = async () => {
+      height += 300;
+      scroller.appendChild(document.createElement("div"));
+      await frame();
+      await frame();
+    };
+
+    scroller.scrollTop = 500;
+    await grow();
+    expect(scroller.scrollTop).toBe(1300);
+
+    // 手指按下后内容再长：位置不动。
+    fireEvent.touchStart(scroller);
+    scroller.scrollTop = 1000;
+    await grow();
+    expect(scroller.scrollTop).toBe(1000);
   });
 
   /**
-   * 多发委派(kimi AgentSwarm)在面板里逐分支一行,与 kimi TUI 的 001/002… 对齐,
-   * 不再合并成「×N」。分支级状态由侧车探测下发:probe.branches[i] 按序号对应行,
-   * 有分支标签时替换掉初始的 `#N` 后缀;探测仍按 tool_use id 一次(剥 `#` 后缀去重)。
+   * 进会话落在最新消息的另一半：条目是 content-visibility:auto，滚到底后底部几条才长回实高，
+   * 这一步不改 DOM（用户实拍「每次打开不在最新」）。顶层条目的尺寸变化也得钉回底部。
    */
-  it("多发委派逐分支一行,probe 分支结果逐行更新状态与标签", async () => {
-    window.history.replaceState({}, "", "/?sessionId=100");
-    respondWithHistory({
-      sessionId: 100, title: "并发委派", status: "running", provider: "kimi", cwd: "C:/repo",
-      supported: true, offset: 0, reset: false, pendingReview: null, connected: true,
-      items: [
-        { type: "tool_use", id: "sw1", timestamp: "2026-08-28T08:00:00.000Z", name: "AgentSwarm", summary: "审阅改动", subagent: { description: "审阅改动", agent_type: null, count: 2 } },
-      ],
+  it("条目长回实高(不改 DOM)时仍钉回底部", async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const observedEls: Element[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(cb: ResizeObserverCallback) { callbacks.push(cb); }
+      observe(target: Element) { observedEls.push(target); }
+      unobserve() {}
+      disconnect() {}
     });
-    const base = invoke.getMockImplementation()!;
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-      if (command === "probe_subagent_states") {
+    try {
+      window.history.replaceState({}, "", "/?sessionId=97");
+      invoke.mockImplementation((command: string) => {
+        if (command === "get_chat_history") return Promise.resolve({
+          sessionId: 97, title: "占位", status: "ended", provider: "claude", cwd: "C:/repo",
+          supported: true, offset: 1, reset: false, pendingReview: null, connected: true,
+          items: [{ type: "assistant_text", id: "a1", timestamp: null, text: "最后一条回答" }],
+        });
+        if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+        if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+        return Promise.resolve();
+      });
+      render(<ChatWindow />);
+      const message = (await screen.findByText("最后一条回答")).closest(".chat-scroll > *") as Element;
+      await waitFor(() => expect(observedEls).toContain(message));
+      const scroller = document.querySelector(".chat-scroll") as HTMLElement;
+      Object.defineProperty(scroller, "scrollHeight", { value: 3000, configurable: true });
+      Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true });
+      for (const cb of callbacks) cb([], {} as ResizeObserver);
+      expect(scroller.scrollTop).toBe(3000);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /**
+   * 重新进入会话落在最新消息（对照 Kimi：对话区按会话 id 重置吸底，阅读位置不跨会话）：
+   * 在 A 会话上翻到半截、切到 B，B 必须贴底，不能沿用 A 的「已脱离底部」。
+   */
+  it("换会话后落在最新消息,不沿用上一个会话的上翻位置", async () => {
+    window.history.replaceState({}, "", "/?sessionId=7");
+    invoke.mockImplementation((command: string, args: { sessionId?: number }) => {
+      if (command === "get_chat_history") {
+        const id = args?.sessionId ?? 7;
         return Promise.resolve({
-          sw1: {
-            status: "running",
-            branches: [
-              { label: "agent-1", status: "completed", finished_at: "2026-08-28T08:03:05.000Z" },
-              { label: "agent-2", status: "running" },
-            ],
-          },
+          sessionId: id, title: `会话 ${id}`, status: "ended", provider: "claude", cwd: null,
+          supported: true, offset: 1, reset: false, pendingReview: null,
+          items: [{ type: "assistant_text", id: `a-${id}`, timestamp: null, text: `回答 ${id}` }],
         });
       }
-      return base(command, args);
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "get_live_sessions_page") {
+        return Promise.resolve([
+          { session: { id: 7, cc_session_id: "a", status: "ended" }, project_name: "p", task_title: "会话 7", connected: true, pending_review: null, provider: "claude", cwd: "C:/a" },
+          { session: { id: 42, cc_session_id: "b", status: "ended" }, project_name: "p", task_title: "另一个会话", connected: true, pending_review: null, provider: "claude", cwd: "C:/b" },
+        ]);
+      }
+      return Promise.resolve();
     });
     render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("并发委派")).toBeTruthy());
-    // 面板收着时不探测:probe 是按需 I/O,不并进历史轮询。
-    expect(invoke).not.toHaveBeenCalledWith("probe_subagent_states", expect.anything());
-    fireEvent.click(document.querySelector(".chat-todo-btn")!);
-    const panel = document.querySelector(".chat-todo-panel")!;
-    // 一行一分支,初始标题带 #N 序号;不再出现合并的 ×N。
-    expect(panel.textContent).toContain("审阅改动 #1");
-    expect(panel.textContent).toContain("审阅改动 #2");
-    expect(panel.textContent).not.toContain("×2");
-    // 探测按 tool_use id 一次下发,剥掉了分支行的 `#` 后缀。
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("probe_subagent_states", { sessionId: 100, toolUseIds: ["sw1"] }),
-    );
-    // 分支实测到达:已完成的分支换上侧车标签并定格,还在跑的保持进行中。
-    await waitFor(() => {
-      expect(panel.textContent).toContain("审阅改动 agent-1");
-      expect(panel.textContent).toContain("审阅改动 agent-2");
-    });
-    const lis = [...panel.querySelectorAll(".chat-todo-panel-list li")];
-    const byText = (text: string) => lis.find((li) => li.textContent?.includes(text))!;
-    expect(byText("agent-1").className).toContain("is-completed");
-    expect(byText("agent-2").className).toContain("is-in_progress");
-    // 完成的分支定格真实执行时长(08:00:00 → 08:03:05),不再按「委派→现在」滴答。
-    expect(byText("agent-1").textContent).toContain("3 分 5 秒");
-  });
+    expect(await screen.findByText("回答 7")).toBeTruthy();
+    const scroller = document.querySelector(".chat-scroll") as HTMLElement;
+    Object.defineProperty(scroller, "scrollHeight", { value: 2000, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true });
+    // 在 A 会话上翻：脱离底部，跟随关闭。
+    scroller.scrollTop = 200;
+    fireEvent.scroll(scroller);
 
-  /**
-   * 后台 Bash(`run_in_background`)也是「主回合停了还在跑」的活儿,面板必须看得见
-   * (2026-08-27 实拍:`gh run watch` 在后台跑,会话报「等你输入」、面板一片空白)。
-   * 委派证据只有启动回执 `Command running in background with ID: …`——后端据此给出
-   * running 结局统计,前端靠它反认(isBackgroundShell)。
-   */
-  it("面板收下在跑的后台 Bash,对话流里它仍是普通工具块", async () => {
-    window.history.replaceState({}, "", "/?sessionId=96");
-    respondWithHistory({
-      sessionId: 96, title: "后台命令", status: "waiting", provider: "claude", cwd: "C:/repo",
-      supported: true, offset: 0, reset: false, pendingReview: null, connected: true,
-      items: [
-        { type: "tool_use", id: "bg1", timestamp: "2026-08-27T02:00:00.000Z", name: "Bash", summary: "gh run watch 33033677918" },
-        {
-          type: "tool_result", id: "br1", timestamp: "2026-08-27T02:00:01.000Z", tool_use_id: "bg1",
-          text: "Command running in background with ID: b78nfkj1v.", is_error: false,
-          subagent: { running: 1, completed: 0, failed: 0, task_id: "b78nfkj1v" },
-        },
-      ],
-    });
-    render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("后台命令")).toBeTruthy());
-    // 有活儿在跑 → 入口挂脉冲小点。
-    expect(document.querySelector(".chat-todo-btn .chat-todo-live")).toBeTruthy();
-    fireEvent.click(document.querySelector(".chat-todo-btn")!);
-    const panel = document.querySelector(".chat-todo-panel")!;
-    expect(panel.textContent).toContain("gh run watch 33033677918");
-    expect(panel.querySelector(".chat-todo-panel-list li")!.className).toContain("is-in_progress");
-    // 但对话流不给它子任务块:没侧车流可展开,命令与输出本来就在工具块里。
-    expect(document.querySelector(".chat-subagent")).toBeNull();
-  });
-
-  /**
-   * claude 新版任务列表(TaskCreate/TaskUpdate)不触发 hook,DB 恒空——面板必须能从
-   * 时间线的工具调用/回执里累积重建:编号从回执文本抠,状态由 TaskUpdate 摘要 JSON 驱动。
-   */
-  it("DB 无任务时面板从时间线的 TaskCreate/TaskUpdate 重建任务列表", async () => {
-    window.history.replaceState({}, "", "/?sessionId=97");
-    respondWithHistory({
-      sessionId: 97, title: "重建任务", status: "running", provider: "claude", cwd: "C:/repo",
-      supported: true, offset: 4, reset: false, pendingReview: null, connected: true,
-      items: [
-        { type: "tool_use", id: "tc1", timestamp: null, name: "TaskCreate", summary: "第一步:探索结构" },
-        { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "tc1", text: "Task #1 created successfully: 第一步:探索结构", is_error: false },
-        { type: "tool_use", id: "tc2", timestamp: null, name: "TaskCreate", summary: "第二步:实现功能" },
-        { type: "tool_result", id: "r2", timestamp: null, tool_use_id: "tc2", text: "Task #2 created successfully: 第二步:实现功能", is_error: false },
-        { type: "tool_use", id: "tu1", timestamp: null, name: "TaskUpdate", summary: '{"taskId":"1","status":"in_progress","subject":null}' },
-      ],
-    });
-    render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("重建任务")).toBeTruthy());
-    fireEvent.click(document.querySelector(".chat-todo-btn")!);
-    const panel = document.querySelector(".chat-todo-panel");
-    expect(panel).toBeTruthy();
-    expect(panel!.textContent).toContain("0/2");
-    expect(panel!.textContent).toContain("第一步:探索结构");
-    expect(panel!.textContent).toContain("第二步:实现功能");
-    // 进行中的排最前(排序规则),且行状态类正确。
-    expect(panel!.querySelector(".chat-todo-panel-list li")!.className).toContain("is-in_progress");
-  });
-
-  /**
-   * 不堆积:任务/子任务列表跨回合只增不减,长会话会把历史旧账全堆进面板。
-   * 已完成项只显示**最后一条用户消息之后**完成的;未完成/在跑的恒显示。
-   */
-  it("旧回合完成的任务与子任务被收走,未完成的恒显示", async () => {
-    window.history.replaceState({}, "", "/?sessionId=98");
-    respondWithHistory({
-      sessionId: 98, title: "不堆积", status: "running", provider: "claude", cwd: "C:/repo",
-      supported: true, offset: 9, reset: false, pendingReview: null, connected: true,
-      items: [
-        // 第一轮:任务 1 建立并完成、一个子任务派出并回执 → 都属于旧账。
-        { type: "user_text", id: "u1", timestamp: null, text: "做第一件事" },
-        { type: "tool_use", id: "tc1", timestamp: null, name: "TaskCreate", summary: "旧任务" },
-        { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "tc1", text: "Task #1 created successfully: 旧任务", is_error: false },
-        { type: "tool_use", id: "tu1", timestamp: null, name: "TaskUpdate", summary: '{"taskId":"1","status":"completed","subject":null}' },
-        { type: "tool_use", id: "sa1", timestamp: null, name: "Agent", summary: "旧委派", subagent: { description: "旧委派", agent_type: null, count: 1 } },
-        { type: "tool_result", id: "sr1", timestamp: null, tool_use_id: "sa1", text: "done", is_error: false },
-        // 第二轮:新指令后建了任务 2(未完成)+ 任务 3(本轮完成)。
-        { type: "user_text", id: "u2", timestamp: null, text: "继续第二件事" },
-        { type: "tool_use", id: "tc2", timestamp: null, name: "TaskCreate", summary: "新任务" },
-        { type: "tool_result", id: "r2", timestamp: null, tool_use_id: "tc2", text: "Task #2 created successfully: 新任务", is_error: false },
-        { type: "tool_use", id: "tc3", timestamp: null, name: "TaskCreate", summary: "本轮已完成任务" },
-        { type: "tool_result", id: "r3", timestamp: null, tool_use_id: "tc3", text: "Task #3 created successfully: 本轮已完成任务", is_error: false },
-        { type: "tool_use", id: "tu3", timestamp: null, name: "TaskUpdate", summary: '{"taskId":"3","status":"completed","subject":null}' },
-      ],
-    });
-    render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("不堆积")).toBeTruthy());
-    fireEvent.click(document.querySelector(".chat-todo-btn")!);
-    const panel = document.querySelector(".chat-todo-panel")!;
-    // 旧回合完成的任务与已回执的旧委派收走;本轮完成的、未完成的都在。
-    expect(panel.textContent).toContain("新任务");
-    expect(panel.textContent).toContain("本轮已完成任务");
-    expect(panel.textContent).not.toContain("旧任务");
-    expect(panel.textContent).not.toContain("旧委派");
-    expect(panel.textContent).toContain("1/2");
-  });
-
-  it("无任务时图标仍在,面板显示骨架空态", async () => {
-    window.history.replaceState({}, "", "/?sessionId=96");
-    respondWithHistory({
-      sessionId: 96, title: "无任务", status: "running", provider: "claude", cwd: "C:/repo",
-      supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
-    });
-    render(<ChatWindow />);
-    await waitFor(() => expect(screen.getByText("无任务")).toBeTruthy());
-    const btn = document.querySelector(".chat-todo-btn");
-    expect(btn).toBeTruthy();
-    // 没有任何在跑的任务/子任务 → 不挂活动小点。
-    expect(document.querySelector(".chat-todo-live")).toBeNull();
-    fireEvent.click(btn!);
-    expect(document.querySelector(".chat-todo-skeleton")).toBeTruthy();
-    expect(screen.getByText("任务进度将显示在这里")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /另一个会话/ }));
+    expect(await screen.findByText("回答 42")).toBeTruthy();
+    await waitFor(() => expect(scroller.scrollTop).toBe(2000));
   });
 
   /**
    * 运行中插话:CLI 把回合中收到的消息排队到回合结束,期间 transcript 不显示——
-   * GUI 必须给排队回执,否则消息像消失了。中断键有声明(claude)时提供「立即插话」,
+   * GUI 必须给排队回执,否则消息像消失了。中断键有声明(claude)时提供「中断并处理」,
    * 它只发中断键(队列由 CLI 自己接着处理);回合结束回执自动消解。
    */
-  it("运行中插话显示排队回执,可立即插话,收到消费证据才消解", async () => {
+  it("运行中插话显示排队回执,可中断并处理,收到消费证据才消解", async () => {
     window.history.replaceState({}, "", "/?sessionId=93");
     let current: Record<string, unknown> = {
       sessionId: 93, title: "排队回执", status: "running", provider: "claude", cwd: "C:/repo",
@@ -3908,16 +4410,23 @@ describe("ChatWindow", () => {
     fireEvent.change(input, { target: { value: "插一句" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 93, data: "插一句" }), { timeout: 3_000 });
-    expect(await screen.findByText("1 条插话已排队，本回合结束后处理")).toBeTruthy();
+    expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
+    // 对话末尾的运行行先说插话的去向（用户此刻最关心的事），压过「工作中/请求中」。
+    expect(screen.getByText("等这一步完成后插入你的插话").closest(".chat-running")).toBeTruthy();
+    // 排队的插话以气泡排在对话末尾（下一轮将出现的位置），不再藏进输入框上方的胶囊。
+    const bubble = screen.getByText("插一句", { selector: ".chat-queued-bubble" });
+    expect(bubble.closest(".chat-scroll")).toBeTruthy();
+    expect(document.querySelector(".dock-workbar")?.textContent ?? "").not.toContain("等待插入");
+    fireEvent.click(screen.getByText("1 条插话等待插入当前回合"));
 
-    fireEvent.click(screen.getByRole("button", { name: "立即插话" }));
+    fireEvent.click(screen.getByRole("button", { name: "中断并处理" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 93, data: "\u001b" }));
 
     current = { ...current, status: "waiting" };
     await new Promise((resolve) => setTimeout(resolve, 800));
-    expect(screen.getByText(/插话已排队/)).toBeTruthy();
+    expect(screen.getAllByText(/等待插入/).length).toBeGreaterThan(0);
     current = { ...current, lastUserText: "插一句" };
-    await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
+    await waitFor(() => expect(screen.queryByText(/等待插入/)).toBeNull(), { timeout: 3_000 });
   });
 
   /**
@@ -3942,14 +4451,14 @@ describe("ChatWindow", () => {
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "插一句" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByText("1 条插话已排队，本回合结束后处理")).toBeTruthy();
+    expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
 
     current = {
       ...current,
       offset: 10,
       items: [{ type: "user_text", id: "u9", timestamp: null, text: "[Image #1] 插一句\n请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：\n- C:\\tmp\\x.png" }],
     };
-    await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
+    await waitFor(() => expect(screen.queryByText(/等待插入/)).toBeNull(), { timeout: 3_000 });
     // 会话仍在运行(新回合),消解不靠回合结束——运行条(徽标已移除)仍在即为证。
     expect(document.querySelector(".chat-running")).toBeTruthy();
   });
@@ -3981,22 +4490,22 @@ describe("ChatWindow", () => {
     await screen.findByText("ok, run the tests");
     fireEvent.change(input, { target: { value: "ok" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByText("1 条插话已排队，本回合结束后处理")).toBeTruthy();
+    expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
     // 多轮轮询过去,旧证据不变:回执必须还在。
     await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(screen.queryByText(/插话已排队/)).toBeTruthy();
+    expect(screen.queryByText(/等待插入/)).toBeTruthy();
     // hook 在入队瞬间就把 lastUserText 改成插话本身(claude 2.1.304 实测),消息却还在队列里、
     // transcript 没有它:transcript 在场时这不算消费证据,回执必须还在。
     current = { ...current, lastUserText: "ok" };
     await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(screen.queryByText(/插话已排队/)).toBeTruthy();
+    expect(screen.queryByText(/等待插入/)).toBeTruthy();
     // 注入后以新条目落盘 transcript:这才消解。
     current = {
       ...current,
       offset: 20,
       items: [...(current.items as unknown[]), { type: "user_text", id: "u2", timestamp: null, text: "ok" }],
     };
-    await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
+    await waitFor(() => expect(screen.queryByText(/等待插入/)).toBeNull(), { timeout: 3_000 });
   });
 
   /**
@@ -4027,14 +4536,14 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
     await waitFor(() => expect(screen.getByAltText("shot.png")).toBeTruthy());
     fireEvent.keyDown(box(), { key: "Enter" });
-    expect(await screen.findByText("1 条插话已排队，本回合结束后处理")).toBeTruthy();
+    expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
     // transcript 落盘的是图片引用行,不含占位文本——旧的包含匹配在此永不消解。
     current = {
       ...current,
       offset: 10,
       items: [{ type: "user_text", id: "u9", timestamp: null, text: "[Image: source: C:\\cache\\shot.png]" }],
     };
-    await waitFor(() => expect(screen.queryByText(/插话已排队/)).toBeNull(), { timeout: 3_000 });
+    await waitFor(() => expect(screen.queryByText(/等待插入/)).toBeNull(), { timeout: 3_000 });
     // 会话仍在运行(打断后无缝进入新回合):消解不靠回合结束。
     expect(document.querySelector(".chat-running")).toBeTruthy();
   });
@@ -4221,11 +4730,12 @@ describe("ChatWindow", () => {
     fireEvent.change(input, { target: { value: "第二句" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 97, data: "第二句" }), { timeout: 3_000 });
-    expect(await screen.findByText("2 条插话已排队，本回合结束后处理")).toBeTruthy();
+    expect(await screen.findByText("2 条插话等待插入当前回合")).toBeTruthy();
+    fireEvent.click(screen.getByText("2 条插话等待插入当前回合"));
 
     const writesBefore = invoke.mock.calls.filter(([command]) => command === "write_managed_terminal").length;
     fireEvent.click(screen.getAllByRole("button", { name: "移除这条回执" })[0]);
-    expect(await screen.findByText("1 条插话已排队，本回合结束后处理")).toBeTruthy();
+    expect((await screen.findAllByText("1 条插话等待插入当前回合")).length).toBeGreaterThan(0);
     // 被移除的是第一条,第二条还挂着(按 id 删,不受重复文本/自动消解并发影响)。
     expect(screen.queryByText("第一句")).toBeNull();
     expect(screen.queryByText("第二句")).toBeTruthy();
@@ -4283,12 +4793,14 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
-    expect((input as HTMLTextAreaElement).placeholder).toBe(zh.chat.inputPlaceholder);
+    // 运行中的会话占位是排队说明（随 Agent 能力而定），这里只钉「出错前后不变、不变成尚未接管」。
+    const before = (input as HTMLTextAreaElement).placeholder;
+    expect(before).not.toBe(zh.chat.inputUnavailable);
     fireEvent.change(input, { target: { value: "发不出去" } });
     fireEvent.keyDown(input, { key: "Enter" });
     // 错误条出现（真实原因），占位符纹丝不动，也不冒出接管入口。
     await screen.findByRole("alert");
-    expect((input as HTMLTextAreaElement).placeholder).toBe(zh.chat.inputPlaceholder);
+    expect((input as HTMLTextAreaElement).placeholder).toBe(before);
     expect(screen.queryByRole("button", { name: zh.chat.terminalTakeover })).toBeNull();
   });
 
@@ -4349,11 +4861,11 @@ describe("ChatWindow", () => {
   });
 
   /**
-   * 存活的 running 会话:常驻运行条在滚动流**之外**(原实现在 .chat-scroll 里,
-   * 上翻历史即滚出视口),窗口标题带 ▶ 前缀让任务栏可感知。标题栏状态徽标已移除,
-   * 断言它不复活。
+   * 存活的 running 会话:运行行是对话流的最后一行(对照 Kimi,不再是输入框上方的常驻栏),
+   * 本轮还没有任何输出时说「请求中」;窗口标题带 ▶ 前缀让任务栏可感知。标题栏状态徽标
+   * 已移除,断言它不复活。
    */
-  it("存活 running 会话:滚动流外的常驻运行条+窗口标题记号", async () => {
+  it("存活 running 会话:对话末尾的运行行+窗口标题记号", async () => {
     window.history.replaceState({}, "", "/?sessionId=91");
     respondWithHistory({
       sessionId: 91, title: "跑着的会话", status: "running", provider: "claude", cwd: "C:/repo",
@@ -4366,7 +4878,8 @@ describe("ChatWindow", () => {
     expect(document.querySelector(".chat-live")).toBeNull();
     const strip = document.querySelector(".chat-running");
     expect(strip).toBeTruthy();
-    expect(strip!.closest(".chat-scroll")).toBeNull();
+    expect(strip!.closest(".chat-scroll")).toBeTruthy();
+    expect(strip!.textContent).toContain("请求中…");
     expect(strip!.textContent).toContain("› cargo test");
     await waitFor(() => expect(setTitleMock).toHaveBeenCalledWith("▶ 跑着的会话 · Meowo"));
   });
@@ -4408,13 +4921,12 @@ describe("ChatWindow", () => {
   });
 
   /**
-   * 跨 provider 切换（切换引擎）:模型下拉出现「切换引擎」分组,点目标 agent 展开二级,
-   * 点档位先 appConfirm(破坏性:要杀当前进程)——取消不发命令;确认后调
-   * switch_session_provider,窗口切到返回的临时负 id(保持当前视图:对话页给启动占位)。
+   * 复制到其他引擎(用户要求:转移不如直接复制):模型市场出现「复制到新会话」分组,点档位
+   * 直接调 copy_session_to_provider——原会话不结束,所以不弹确认、也不发结束命令;
+   * 窗口切到返回的临时负 id(对话页给启动占位)。
    */
-  it("切换引擎:下拉分组→确认→调 switch 命令并切到临时会话", async () => {
+  it("复制到新会话:下拉分组→调复制命令并切到临时会话,原会话不结束", async () => {
     window.history.replaceState({}, "", "/?sessionId=61");
-    const confirmAnswers: boolean[] = [false, true];
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 61, title: "换引擎", status: "running", provider: "claude", cwd: "C:/repo",
@@ -4424,8 +4936,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
       if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
-      if (command === "confirm_dialog") return Promise.resolve(confirmAnswers.shift() ?? false);
-      if (command === "switch_session_provider") {
+      if (command === "copy_session_to_provider") {
         return Promise.resolve({ tempId: -5, handoffPath: "C:/tmp/meowo-handoff/1-61/handoff.md" });
       }
       if (command === "managed_terminal_binding") return Promise.resolve(null);
@@ -4434,33 +4945,82 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
 
-    // claude 有静态预设,模型按钮直接开 GUI 下拉;分组与已装的其他 agent 在列。
+    // claude 有静态预设:模型按钮先开就地菜单,「更多模型…」进模型市场;其他已装 agent 按引擎分组。
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    expect(await screen.findByText("切换引擎")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "更多模型…" }));
+    expect(await screen.findByText("复制到新会话 · Codex")).toBeTruthy();
     // 未安装的 agent 不列(descriptors 里 kimi/gemini/opencode 均未装)。
-    expect(screen.queryByRole("menuitem", { name: /Kimi/ })).toBeNull();
+    expect(screen.queryByText(/Kimi/)).toBeNull();
 
-    // 展开 Codex 二级:无预设 → 只有「默认模型」。
-    fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
-    const defaultModel = await screen.findByRole("menuitem", { name: "默认模型" });
-
-    // 第一次点:确认框弹出但用户取消 → 不发 switch 命令。
-    fireEvent.click(defaultModel);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
-    expect(invoke.mock.calls.some(([command]) => command === "switch_session_provider")).toBe(false);
-
-    // 再点一次并确认 → 调命令,窗口切到临时负 id;用户此刻在对话页,视图不动,
-    // 对话页渲染启动占位。
-    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
+    // Codex 无已学预设 → 分组内只提供「默认模型」。
     fireEvent.click(await screen.findByRole("menuitem", { name: "默认模型" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("switch_session_provider", {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("copy_session_to_provider", {
       sessionId: 61, targetProvider: "codex", options: undefined,
     }));
     expect(await screen.findByText("会话正在启动…")).toBeTruthy();
+    expect(invoke.mock.calls.some(([command]) => command === "confirm_dialog")).toBe(false);
+    expect(invoke.mock.calls.some(([command]) => command === "stop_managed_terminal")).toBe(false);
   });
 
-  it("切换引擎:来源不支持导出(supports_chat_export=false)时不显示分组", async () => {
+  /// 分叉会话（对照 Kimi 会话菜单）：标题菜单里给入口，调 fork_session 后切到返回的临时会话；
+  /// 运行中置灰（回合到一半分出去的上下文是残缺的）。
+  it.each(["waiting", "running"])("分叉会话:标题菜单入口(%s)", async (status) => {
+    window.history.replaceState({}, "", "/?sessionId=63");
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 63, title: "想分叉", status, provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "Opus",
+        connected: true, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "fork_session") return Promise.resolve(-7);
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 63, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /想分叉/ }));
+    const item = await screen.findByRole("menuitem", { name: "分叉会话" }) as HTMLButtonElement;
+    if (status === "running") {
+      await waitFor(() => expect(item.disabled).toBe(true));
+      return;
+    }
+    expect(item.disabled).toBe(false);
+    fireEvent.click(item);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("fork_session", { sessionId: 63, cols: 100, rows: 30 }));
+    expect(await screen.findByText("会话正在启动…")).toBeTruthy();
+  });
+
+  /// 复制恢复命令（对照 Kimi「复制 Session ID」）：带 cd 的完整命令，到终端粘贴即可接着跑。
+  /// 会话还在这里跑时回执换成「先结束」的提醒，免得两个进程同写一份会话。
+  it.each([
+    [false, "已复制恢复命令"],
+    [true, "已复制，先在这里结束会话再运行"],
+  ])("复制恢复命令:标题菜单复制 cd + resume 命令并给回执(connected=%s)", async (connected, notice) => {
+    window.history.replaceState({}, "", "/?sessionId=64");
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 64, title: "接着跑", status: "waiting", provider: "claude", cwd: "C:/repo",
+        ccSessionId: "b730cb79-2542", supported: true, offset: 0, reset: false, pendingReview: null,
+        items: [], model: "Opus", connected, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 64, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /接着跑/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "复制恢复命令" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('cd "C:/repo"; claude --resume b730cb79-2542'));
+    expect(await screen.findByText(notice)).toBeTruthy();
+  });
+
+  it("复制到新会话:来源不支持导出(supports_chat_export=false)时不显示分组", async () => {
     window.history.replaceState({}, "", "/?sessionId=62");
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
@@ -4480,16 +5040,17 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    // 模型档照常;「切换引擎」分组整个不出现——没有可交接的历史,给入口就是给假承诺。
+    // 模型档照常;「复制到新会话」分组整个不出现——没有可交接的历史,给入口就是给假承诺。
     expect((await screen.findAllByRole("menuitem", { name: /Sonnet/ })).length).toBeGreaterThan(0);
-    expect(screen.queryByText("切换引擎")).toBeNull();
+    expect(screen.queryByText(/复制到新会话 ·/)).toBeNull();
   });
 
   /**
-   * 交接注入:切换产生的新会话(provider=目标、predecessorId 非空)在终端就绪后,
-   * 自动把「请读交接文件」写进 PTY 并回车;注入语引用 switch 返回的文件路径。
+   * 交接注入:复制出来的新会话(binding 认领出的真 id,没有接续链)在终端就绪后,
+   * 自动把「请读交接文件」写进 PTY 并回车;注入语引用复制命令返回的文件路径。
+   * 注入语落进 transcript 后不以用户气泡出现,换成一句来历说明。
    */
-  it("切换引擎:新会话就绪后自动注入交接提示", async () => {
+  it("复制到新会话:新会话就绪后自动注入交接提示", async () => {
     window.history.replaceState({}, "", "/?sessionId=63");
     const handoffPath = "C:/tmp/meowo-handoff/1-63/handoff.md";
     const injectPrompt = zh.chat.handoffPrompt(handoffPath);
@@ -4502,18 +5063,18 @@ describe("ChatWindow", () => {
           supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "Opus",
           connected: true, predecessorId: null, supersededBy: null,
         });
-        // 切换后的新会话:目标 provider + 接续链已落库。
+        // 复制出来的新会话:目标 provider,独立会话没有接续链;注入语已落进 transcript。
         return Promise.resolve({
           sessionId: 64, title: "新会话", status: "running", provider: "codex", cwd: "C:/repo",
-          supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
-          connected: true, predecessorId: 63, supersededBy: null,
+          supported: true, offset: 0, reset: false, pendingReview: null,
+          items: [{ type: "user_text", id: "h1", timestamp: null, text: injectPrompt }], model: null,
+          connected: true, predecessorId: null, supersededBy: null,
         });
       }
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
       if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
-      if (command === "confirm_dialog") return Promise.resolve(true);
-      if (command === "switch_session_provider") {
+      if (command === "copy_session_to_provider") {
         switched = true;
         return Promise.resolve({ tempId: -7, handoffPath });
       }
@@ -4532,9 +5093,11 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Codex/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "更多模型…" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "默认模型" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("switch_session_provider", expect.anything()));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("copy_session_to_provider", expect.anything()));
+    expect(await screen.findByText("上下文从另一段会话复制而来")).toBeTruthy();
+    expect(screen.queryByText(new RegExp(handoffPath))).toBeNull();
 
     // 注入语作为正文写进 PTY(与回车分两次写,先到正文即可断言)。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
@@ -4616,11 +5179,11 @@ describe("ChatWindow", () => {
   });
 
   /**
-   * 切换引擎入口不与模型清单就绪耦合:codex/kimi 这类无内联预设的 CLI,模型清单要先
-   * 静默探测 /model 菜单学到标签才拼得出;若「切换引擎」分组躲在同一道门后,这些来源
-   * 就永远切不回去(点按钮只会触发探测)。有切换目标时下拉必须直开。
+   * 复制到新会话入口不与模型清单就绪耦合:codex/kimi 这类无内联预设的 CLI,模型清单要先
+   * 静默探测 /model 菜单学到标签才拼得出;若「复制到新会话」分组躲在同一道门后,这些来源
+   * 就永远切不回去(点按钮只会触发探测)。有切换目标时菜单照开、不自动探测,读清单给显式入口。
    */
-  it("切换引擎:模型清单未学到时下拉仍直开,分组可达且不触发探测", async () => {
+  it("复制到新会话:模型清单未学到时下拉仍直开,分组可达且不触发探测", async () => {
     window.history.replaceState({}, "", "/?sessionId=67");
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
@@ -4636,10 +5199,18 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    // 下拉直开:同 agent 的切换入口(探测通道,菜单项形态)与「切换引擎」分组都在。
-    expect(await screen.findByText("切换引擎")).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: /Claude Code/ })).toBeTruthy();
+    // 就地菜单照开:清单没学到时给「读取模型清单」显式入口,「更多模型…」进市场切引擎。
+    expect(await screen.findByRole("menuitem", { name: "读取模型清单" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "更多模型…" }));
+    expect(await screen.findByText("复制到新会话 · Claude Code")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "默认模型" })).toBeTruthy();
     // 没学到清单不该触发 /model 探测(那会往终端里写命令、弹 TUI 菜单)。
+    expect(invoke.mock.calls.some(([command, args]) =>
+      command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
+    // 显式入口在回合运行中同样受「先等任务结束」保护，不往忙着的终端里写命令。
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "读取模型清单" }));
+    expect(await screen.findByText(zh.chat.menuBusy)).toBeTruthy();
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
   });
@@ -4697,9 +5268,10 @@ describe("ChatWindow", () => {
   /**
    * 未读徽章口径:快照与差值都只数真实内容项。脱离底部期间到达的 handoff 分隔条
    * (meta 行)与前序段旧历史都不算未读(快照同步抬高,同 loadEarlier 前插);只有
-   * 真正的新消息才 +1。
+   * 真正的新消息才 +1。工具调用/结果与思考块也不算(屏幕上折成一行「已运行 N 条
+   * 命令」,按条数算徽章一跳几十,用户反馈数字不准)。
    */
-  it("脱离底部后:接续分隔条与旧历史不计未读,新消息才 +1", async () => {
+  it("脱离底部后:接续分隔条、旧历史、工具与思考不计未读,新消息才 +1", async () => {
     window.history.replaceState({}, "", "/?sessionId=80");
     // lineage 拉到一半挂起:先把「脱离底部」的快照落下来,再放行前序段到达。
     let resolveLineage!: (value: unknown) => void;
@@ -4709,7 +5281,12 @@ describe("ChatWindow", () => {
       { type: "user_text", id: "u1", timestamp: null, text: "当前段的问题" },
       { type: "assistant_text", id: "a1", timestamp: null, text: "当前段的回答" },
       ...(newMessageArrived
-        ? [{ type: "assistant_text", id: "a2", timestamp: null, text: "刚落地的新消息" }]
+        ? [
+          { type: "reasoning", id: "r2", timestamp: null, text: "想一想" },
+          { type: "tool_use", id: "t2", timestamp: null, name: "Bash", summary: "cargo test" },
+          { type: "tool_result", id: "tr2", timestamp: null, tool_use_id: "t2", text: "ok", is_error: false },
+          { type: "assistant_text", id: "a2", timestamp: null, text: "刚落地的新消息" },
+        ]
         : []),
     ];
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
@@ -4767,7 +5344,7 @@ describe("ChatWindow", () => {
     expect(await screen.findByText("前序段旧问题", { selector: ".chat-text" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /回到最新/ }).querySelector(".chat-jump-latest-count")).toBeNull();
 
-    // 当前段真来一条新消息:徽章 +1。
+    // 当前段来了思考 + 一次工具往返 + 一条正文:只有正文算,徽章 +1。
     newMessageArrived = true;
     await waitFor(() => {
       const badge = screen.getByRole("button", { name: /回到最新/ }).querySelector(".chat-jump-latest-count");

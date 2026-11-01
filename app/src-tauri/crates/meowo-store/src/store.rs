@@ -58,9 +58,6 @@ pub struct SessionHeader {
     /// 本会话已被哪个后继接替。Some 时对话窗渲染「已切换至…」横幅并禁发——
     /// 向被接替的会话续话会让链分叉（set_session_lineage 拒绝分叉与之呼应）。
     pub superseded_by: Option<i64>,
-    /// 附加目录(--add-dir,extra_dirs 列的解析结果)。空 = 单目录会话。
-    /// 对话窗标题菜单按它列出会话的完整目录清单。
-    pub extra_dirs: Vec<String>,
 }
 
 /// 接续链上的一段会话（session_lineage_chain 的行）。model 来自 session_context
@@ -79,6 +76,8 @@ pub struct LineageEntry {
 #[derive(Debug, Clone, Default)]
 pub struct SessionContext {
     pub model: Option<String>,
+    /// 思考程度（statusline 的 `effort.level`）；模型不支持时 CLI 不报，为 None。
+    pub effort: Option<String>,
     pub used_pct: Option<i64>,
     pub window_size: Option<i64>,
 }
@@ -199,13 +198,14 @@ impl Store {
     ///     `ix_sessions_status_lea`——每次刷新都是全表扫 + 临时 B 树排序后才 LIMIT
     ///     (query.rs 的 `dropping_the_board_index_degrades_the_plan` 把这条反证钉住)。
     ///     纯加索引,不动表结构与数据。
+    /// v17: session_context 加 effort 列（statusline 的思考程度，模型菜单的档位控件读它）。
     /// v16: 丢掉 `events` 表。它自建库起就写着「预留给后续计划的事件审计流」,至今全仓
     ///     零读写(SQL 层 grep `FROM/INTO/UPDATE/DELETE events` 无命中)。留着不是零成本:
     ///     每次新库都要建它、每个读 schema 的人都要先确认它是不是活的。真要做审计流时
     ///     再按那时的形状建, 比迁就一张三年没用过的空壳划算。
     ///     与 v12 的 `work_groups` 不同——那张表是**刻意保留**的(降版本要再做一版迁移、
     ///     空表零成本), 勿一并删。
-    const USER_VERSION: i64 = 16;
+    const USER_VERSION: i64 = 17;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -220,7 +220,7 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 17] = [
+        const ALTERS: [&str; 18] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
@@ -247,6 +247,8 @@ impl Store {
             "ALTER TABLE sessions ADD COLUMN extra_dirs TEXT",
             // 「上一任务」残留标记（v14）：老库补齐后全是 0 = 现状语义，正是我们要的。
             "ALTER TABLE todos ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
+            // 思考程度（v17）：老库补齐后全是 NULL = 未上报，档位控件不显示。
+            "ALTER TABLE session_context ADD COLUMN effort TEXT",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -352,6 +354,17 @@ impl Store {
                  updated_at = excluded.updated_at
              WHERE excluded.updated_at >= session_context.updated_at",
             rusqlite::params![cc_session_id, used_pct, window_size, model, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// 写入某会话的思考程度（statusline 的 `effort.level`）。与上下文分开写、且 None 也照写：
+    /// 换到不支持思考程度的模型后 CLI 不再报这个字段，旧档位必须清掉，否则控件会挂着
+    /// 一个对当前模型无意义的值。只更新已有行——行由同一次 statusline 的 set_session_context 建。
+    pub fn set_session_effort(&self, cc_session_id: &str, effort: Option<&str>) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE session_context SET effort = ?2 WHERE cc_session_id = ?1",
+            rusqlite::params![cc_session_id, effort],
         )?;
         Ok(())
     }
@@ -1377,8 +1390,7 @@ impl Store {
             .query_row(
                 "SELECT s.cc_session_id, s.status, s.cwd, s.provider, s.pending_review, \
                         t.title, t.current_activity, s.last_user_text, s.last_ai_text, \
-                        s.pid, s.last_event_at, s.archived, s.predecessor_id, s.superseded_by, \
-                        s.extra_dirs \
+                        s.pid, s.last_event_at, s.archived, s.predecessor_id, s.superseded_by \
                  FROM sessions s LEFT JOIN tasks t ON t.session_id = s.id \
                  WHERE s.id = ?1 ORDER BY t.id DESC LIMIT 1",
                 [session_id],
@@ -1406,11 +1418,6 @@ impl Store {
                         archived: row.get::<_, i64>(11)? != 0,
                         predecessor_id: row.get(12)?,
                         superseded_by: row.get(13)?,
-                        // 解析失败按空处理:附加目录是增强信息,坏数据不该拦掉整个头部。
-                        extra_dirs: row
-                            .get::<_, Option<String>>(14)?
-                            .and_then(|json| serde_json::from_str(&json).ok())
-                            .unwrap_or_default(),
                     })
                 },
             )
@@ -1422,13 +1429,14 @@ impl Store {
     /// 按事件懒建行，这里不假定行存在。看板走批量 flatten，这条是对话窗口的单条读法。
     pub fn session_context(&self, cc_session_id: &str) -> Result<SessionContext, StoreError> {
         match self.conn.query_row(
-            "SELECT model, used_pct, window_size FROM session_context WHERE cc_session_id = ?1",
+            "SELECT model, used_pct, window_size, effort FROM session_context WHERE cc_session_id = ?1",
             [cc_session_id],
             |row| {
                 Ok(SessionContext {
                     model: row.get(0)?,
                     used_pct: row.get(1)?,
                     window_size: row.get(2)?,
+                    effort: row.get(3)?,
                 })
             },
         ) {
@@ -1630,84 +1638,6 @@ impl Store {
         Ok(())
     }
 
-    /// 记下会话的附加目录（JSON 字符串数组,claim 认领时写入）。resume/接管重启按它回放
-    /// 附加目录 flag——不回放的话恢复的进程就丢了那些仓的访问权。store 不解析内容,原样存取。
-    pub fn set_session_extra_dirs(&self, session_id: i64, json: &str) -> Result<(), StoreError> {
-        self.conn.execute(
-            "UPDATE sessions SET extra_dirs = ?1 WHERE id = ?2",
-            rusqlite::params![json, session_id],
-        )?;
-        Ok(())
-    }
-
-    /// 往会话的附加目录里 merge 一个新目录（已有会话中途 /add-dir 的落库半边）。
-    /// 归一比较（斜杠方向 + ASCII 大小写 + 尾斜杠）去重，与主 cwd 相同的也拒绝。
-    /// 返回是否真的新增——重复添加是 no-op，调用方据此决定要不要发广播。
-    pub fn add_session_extra_dir(&self, session_id: i64, dir: &str) -> Result<bool, StoreError> {
-        let d = dir.trim();
-        if d.is_empty() {
-            return Err(StoreError::InvalidInput("目录不能为空".into()));
-        }
-        let cwd: Option<String> = self
-            .conn
-            .query_row("SELECT cwd FROM sessions WHERE id = ?1", [session_id], |r| r.get(0))?;
-        if cwd.as_deref().is_some_and(|c| norm_dir(c) == norm_dir(d)) {
-            return Ok(false);
-        }
-        let mut dirs: Vec<String> = self
-            .session_extra_dirs(session_id)?
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default();
-        if dirs.iter().any(|x| norm_dir(x) == norm_dir(d)) {
-            return Ok(false);
-        }
-        dirs.push(d.to_string());
-        let json = serde_json::to_string(&dirs)
-            .map_err(|e| StoreError::InvalidInput(e.to_string()))?;
-        self.set_session_extra_dirs(session_id, &json)?;
-        Ok(true)
-    }
-
-    /// 移除一个附加目录（落库侧）：归一比较定位,移除后清单为空则写回 NULL(回到单目录
-    /// 会话)。语义是「下次恢复不再带上」——运行中进程已持有的权限没有运行时撤销命令,
-    /// 收不回,调用方文案不得承诺即时撤权。返回是否真的移除(没找到 = no-op)。
-    pub fn remove_session_extra_dir(&self, session_id: i64, dir: &str) -> Result<bool, StoreError> {
-        let mut dirs: Vec<String> = self
-            .session_extra_dirs(session_id)?
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default();
-        let before = dirs.len();
-        dirs.retain(|x| norm_dir(x) != norm_dir(dir));
-        if dirs.len() == before {
-            return Ok(false);
-        }
-        if dirs.is_empty() {
-            self.conn.execute(
-                "UPDATE sessions SET extra_dirs = NULL WHERE id = ?1",
-                [session_id],
-            )?;
-        } else {
-            let json = serde_json::to_string(&dirs)
-                .map_err(|e| StoreError::InvalidInput(e.to_string()))?;
-            self.set_session_extra_dirs(session_id, &json)?;
-        }
-        Ok(true)
-    }
-
-    /// 会话的附加目录 JSON（`None` = 单目录会话）。
-    pub fn session_extra_dirs(&self, session_id: i64) -> Result<Option<String>, StoreError> {
-        let r = self.conn.query_row(
-            "SELECT extra_dirs FROM sessions WHERE id = ?1",
-            [session_id],
-            |row| row.get::<_, Option<String>>(0),
-        );
-        match r {
-            Ok(v) => Ok(v),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
     /// 该会话跑在哪个账号上（`None` = 默认账号）。
     pub fn session_profile(&self, session_id: i64) -> Result<Option<String>, StoreError> {
         let r = self.conn.query_row(
@@ -1836,6 +1766,18 @@ impl Store {
         Ok(out)
     }
 
+    /// `dir` 是否为某个会话的工作目录（逐字比较，前端传的就是库里存的串）。
+    /// 远程桥放行 git 只读命令时拿它收口：手机端只能看会话自己目录里的改动，
+    /// 不能借 git 命令把任意路径当仓库来读。
+    pub fn is_session_dir(&self, dir: &str) -> Result<bool, StoreError> {
+        let as_cwd: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE cwd = ?1)",
+            [dir],
+            |r| r.get(0),
+        )?;
+        Ok(as_cwd)
+    }
+
     /// 手动归档/取消归档某会话。不更新 last_event_at，避免排序乱跳。
     /// 归档时记录 archived_at（用于「归档超过 N 天自动隐藏」）；取消归档清空。
     pub fn set_session_archived(
@@ -1851,12 +1793,6 @@ impl Store {
         )?;
         Ok(())
     }
-}
-
-/// 目录的去重比较键:斜杠方向归一 + 去尾斜杠 + ASCII 不分大小写(Windows 路径习惯)。
-/// add/remove_session_extra_dir 共用——两边口径不一致会出现「删不掉刚加的目录」。
-fn norm_dir(p: &str) -> String {
-    p.replace('\\', "/").trim_end_matches('/').to_ascii_lowercase()
 }
 
 /// 按字符（非字节）截断，避免切坏多字节中文。
@@ -2152,6 +2088,20 @@ mod recent_cwds_tests {
         );
         // limit 生效。
         assert_eq!(store.recent_cwds(1).unwrap(), vec!["C:/projA".to_string()]);
+    }
+
+    /// 远程桥 git 只读命令的目录收口：只放行会话的工作目录，别的一律不认。
+    #[test]
+    fn is_session_dir_accepts_cwd_only() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store
+            .upsert_project_by_root("C:/root", "root", 100)
+            .unwrap();
+        let (id, _) = store.start_session(pid, "s1", 100).unwrap();
+        store.set_session_cwd(id, "C:/projA", 100).unwrap();
+        assert!(store.is_session_dir("C:/projA").unwrap());
+        assert!(!store.is_session_dir("C:/").unwrap());
+        assert!(!store.is_session_dir("C:/projA/../secret").unwrap());
     }
 }
 

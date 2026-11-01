@@ -1,4 +1,4 @@
-import { memo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openLink } from "../api";
@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
 // --cc-syn-* 主题变量全部现成，不另引第二套高亮引擎——两处不分叉。
 import { highlightCode, languageForFence } from "./chat/highlight";
+import { copyPlainText } from "./chat/clipboard";
 
 /** 文件面板的 FileMarkdown 复用同一份 remark 插件表——渲染规则两处不分叉。 */
 export const PLUGINS = [remarkGfm];
@@ -94,6 +95,27 @@ function renderGrid(text: string): ReactNode[] {
   return out;
 }
 
+/// 代码块自动换行（对照 Kimi 代码块的「开启自动换行」）：长命令、长日志行在窄窗口和手机上
+/// 只能横向拖着读，读到行尾就看不到行首。做成一个**全局**偏好而不是逐块开关：想换行的人
+/// 是嫌横滚难读，这个诉求对每个代码块都一样，逐块点是重复劳动。按设备记住（localStorage）。
+const CODE_WRAP_KEY = "meowo-chat-code-wrap";
+const codeWrapListeners = new Set<() => void>();
+function readCodeWrap(): boolean {
+  try { return localStorage.getItem(CODE_WRAP_KEY) === "1"; } catch { return false; }
+}
+let codeWrap = readCodeWrap();
+function setCodeWrap(next: boolean) {
+  codeWrap = next;
+  try { localStorage.setItem(CODE_WRAP_KEY, next ? "1" : "0"); } catch { /* 隐私模式：只在本次生效 */ }
+  codeWrapListeners.forEach((listener) => listener());
+}
+function useCodeWrap(): boolean {
+  return useSyncExternalStore((listener) => {
+    codeWrapListeners.add(listener);
+    return () => { codeWrapListeners.delete(listener); };
+  }, () => codeWrap);
+}
+
 /** 带复制按钮与语言角标的代码块外壳。AI 输出的代码是最高频「要拿走」的内容，
  *  此前只能跨滚动区手动框选。文本从 DOM 取（innerText）——网格重排（chat-md-diagram）
  *  后 children 已不是纯文本，从 props 拼会丢字。 */
@@ -101,6 +123,24 @@ function CopyablePre({ children }: { children?: ReactNode }) {
   const t = useT();
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
+  const wrap = useCodeWrap();
+  // 换行钮只在真的有横向溢出（或已开换行、要能关回去）时出现：短代码块挂一个点了没变化的
+  // 按钮只是噪声。框图不给——它的对齐靠一行不断，换行就散架。
+  const [overflowing, setOverflowing] = useState(false);
+  const [diagram, setDiagram] = useState(false);
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el) return;
+    const measure = () => {
+      setDiagram(el.querySelector(".chat-md-diagram") !== null);
+      setOverflowing(el.scrollWidth > el.clientWidth + 1);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [children]);
   const copy = () => {
     const text = preRef.current?.innerText ?? "";
     if (!text) return;
@@ -142,12 +182,66 @@ function CopyablePre({ children }: { children?: ReactNode }) {
   // 顶栏常驻（A+B 改版定稿）：语言角标 + 复制。此前悬停才显形，代码块看着像一段没有出处
   // 的灰底文字，复制入口也要先找；顶栏占一行但不压代码，阅读时不抢戏的诉求仍然成立。
   return (
-    <div className="chat-md-pre">
+    <div className={"chat-md-pre" + (wrap && !diagram ? " is-wrapped" : "")}>
       <div className="chat-md-pre-head">
         {lang && <span className="chat-md-lang">{lang}</span>}
-        <button type="button" onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
+        {!diagram && (overflowing || wrap) && (
+          <button type="button" className="chat-md-pre-wrap" aria-pressed={wrap} onClick={() => setCodeWrap(!wrap)}>
+            {wrap ? t.chat.codeUnwrap : t.chat.codeWrap}
+          </button>
+        )}
+        <button type="button" className="chat-md-pre-copy" onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
       </div>
       <pre ref={preRef}>{children}</pre>
+    </div>
+  );
+}
+
+/// 表格 → markdown 源样式的纯文本（单元格里的 | 转义、换行压成空格）。
+export function tableToMarkdown(table: HTMLTableElement): string {
+  const rows = Array.from(table.rows).map((row) =>
+    Array.from(row.cells).map((cell) => (cell.textContent ?? "").replace(/\s+/g, " ").trim().replace(/\|/g, "\\|")));
+  if (rows.length === 0) return "";
+  const line = (cells: string[]) => `| ${cells.join(" | ")} |`;
+  const out = [line(rows[0])];
+  if (table.tHead) out.push(line(rows[0].map(() => "---")));
+  for (const row of rows.slice(1)) out.push(line(row));
+  return out.join("\n");
+}
+
+/// 带「复制表格」的表格外壳（对照 Kimi 的 copyTable）：AI 列的对比表、清单常要贴进文档
+/// 或表格软件，框选表格会把相邻正文一起带走、单元格边界也丢了。富文本同时给 HTML 与
+/// markdown：贴进飞书/Excel 是真表格，贴进编辑器或聊天框是 markdown 源。
+function CopyableTable({ children }: { children?: ReactNode }) {
+  const t = useT();
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const table = tableRef.current;
+    if (!table) return;
+    const text = tableToMarkdown(table);
+    let ok = false;
+    // 明文 HTTP 的远程页没有 ClipboardItem/clipboard.write，退回只给纯文本。
+    if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([table.outerHTML], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        })]);
+        ok = true;
+      } catch { /* 权限拒绝：走纯文本 */ }
+    }
+    if (!ok) ok = await copyPlainText(text);
+    if (!ok) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="chat-md-table">
+      <table ref={tableRef}>{children}</table>
+      <button type="button" className="chat-md-table-copy" onClick={() => void copy()}>
+        {copied ? t.chat.codeCopied : t.chat.tableCopy}
+      </button>
     </div>
   );
 }
@@ -163,6 +257,7 @@ function keepUrl(url: string): string {
 /** 导出供 chat/FileMarkdown.tsx 复用（它只覆写 img，其余规则原样继承）。 */
 export const components: Components = {
   pre: ({ children }) => <CopyablePre>{children}</CopyablePre>,
+  table: ({ children }) => <CopyableTable>{children}</CopyableTable>,
   // ASCII 框图的对齐前提是「中文恰为两倍拉丁宽」，但代码字体 Consolas 没有中文字形，
   // 中文会回退到比例失配的雅黑；Windows 自带字体里也不存在框线半角 + 中文两倍宽的组合。
   // 故检测到框线字符的代码块直接按网格重排（见 renderGrid）；普通代码块原样输出。

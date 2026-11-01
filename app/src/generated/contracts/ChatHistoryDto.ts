@@ -9,12 +9,22 @@ export type ChatHistoryDto = { sessionId: number,
  * CLI 侧会话 id：前端以它为键的动作（重命名 rename_session、置顶 STAR_KEY）
  * 从对话窗标题菜单发起时需要，数字主键替代不了。
  */
-ccSessionId: string, title: string, status: string, provider: string, cwd: string | null, 
+ccSessionId: string, title: string, status: string, provider: string, cwd: string | null, supported: boolean, items: Array<ChatItem>, 
 /**
- * 附加目录(--add-dir):会话除 cwd 外还能访问的仓。空 = 单目录会话。
- * 标题菜单按它列出完整目录清单——加了目录必须看得见。
+ * 最近的完整计划。items 只是首屏尾部窗口，计划可能已经被裁出窗口。
  */
-extraDirs: Array<string>, supported: boolean, items: Array<ChatItem>, offset: number, reset: boolean, pendingReview: PendingReviewKind | null, model: string | null, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, currentActivity: string | null, 
+plan?: string, offset: number, reset: boolean, 
+/**
+ * 这次 reset 源于 CLI 撤回了最近几轮（transcript 里出现撤回记录）。前端平时不采信
+ * 「reset 但 items 为空」（文件重写途中的瞬态），撤掉唯一一轮时整读结果确实为空，
+ * 靠它放行。false 不下发。
+ */
+undone?: boolean, pendingReview: PendingReviewKind | null, model: string | null, 
+/**
+ * 当前思考程度（statusline 的 `effort.level`，如 "high"）。模型不支持思考程度时
+ * CLI 不报，这里为 None，前端据此不显示档位控件。
+ */
+effort?: string, agentModes: Array<AgentModeDto>, contextPct: number | null, contextWindow: number | null, currentActivity: string | null, 
 /**
  * 会话进程是否仍被认为存活（与看板 `session_connected` 同口径：pid 在进程表里，
  * 或距最近事件不足宽限期）。status 是 hook 驱动的离散快照，进程死后 reaper 收尾前

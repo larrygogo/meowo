@@ -773,3 +773,37 @@ fn live_progress_counts_only_non_stale_todos() {
     let live = store.live_sessions(None, None, None, None, 1000).unwrap();
     assert_eq!((live[0].todo_done, live[0].todo_total), (0, 1));
 }
+
+/// 对话侧栏默认按创建时间排:后端必须按 started_at 倒序分页,游标时间位也用 started_at。
+/// 只在前端重排已加载的一页时,新建但一直没动的会话可能不在第一页(用户反馈顺序不对)。
+#[test]
+fn live_sessions_scan_by_created_orders_and_paginates_on_started_at() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    // 创建顺序 old < mid < new;活跃顺序反过来:old 最近还在动。
+    let (old, _) = store.start_session(pid, "old", 100).unwrap();
+    let (mid, _) = store.start_session(pid, "mid", 200).unwrap();
+    let (new, _) = store.start_session(pid, "new", 300).unwrap();
+    store.on_user_prompt(new, "新建没动", 310).unwrap();
+    store.on_user_prompt(mid, "中间", 400).unwrap();
+    store.on_user_prompt(old, "老会话又动了", 500).unwrap();
+
+    let ids = |rows: &[meowo_store::LiveSession]| -> Vec<String> {
+        rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
+    };
+    // 默认(最近活跃)不受影响。
+    let by_activity = store.live_sessions_scan(Some("all"), None, None, None, None, false, 10).unwrap();
+    assert_eq!(ids(&by_activity), ["old", "mid", "new"]);
+    // 按创建时间:首页两条是 new、mid;游标 = 末条的 (started_at, id),续页拿到 old。
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, true, 2).unwrap();
+    assert_eq!(ids(&first), ["new", "mid"]);
+    let tail = &first[1].session;
+    let rest = store
+        .live_sessions_scan(Some("all"), None, None, Some(tail.started_at), Some(tail.id), true, 2)
+        .unwrap();
+    assert_eq!(ids(&rest), ["old"]);
+    // waiting tab 恒按等待时长:by_created 不改它的排序。
+    let waiting_a = store.live_sessions_scan(Some("waiting"), None, None, None, None, true, 10).unwrap();
+    let waiting_b = store.live_sessions_scan(Some("waiting"), None, None, None, None, false, 10).unwrap();
+    assert_eq!(ids(&waiting_a), ids(&waiting_b));
+}

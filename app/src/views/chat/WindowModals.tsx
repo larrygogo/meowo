@@ -237,9 +237,8 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
   );
 }
 
-/** `?` 唤出的快捷键速查表：快捷键体系逐步长出来了（Ctrl+K/B/1/2/N/F…），
- *  没有一张总表就等于只有装了肌肉记忆的人用得上。纯静态展示，Esc/点外关闭。 */
-export function ShortcutSheet({ onClose }: { onClose: () => void }) {
+/** 对话窗速查表与设置页共用同一份清单，避免新增快捷键只补到其中一处。 */
+export function ShortcutList() {
   const t = useT();
   const rows: Array<[string, string]> = [
     ["Ctrl+K", t.chat.shortcutSwitcher],
@@ -247,6 +246,8 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
     ["Ctrl+1 / Ctrl+2", t.chat.shortcutViews],
     ["Ctrl+N", t.chat.shortcutNewSession],
     ["Ctrl+F", t.chat.shortcutSearch],
+    ["Alt+↑ / Alt+↓", t.chat.shortcutPrevNext],
+    ["Ctrl+Shift+F", t.chat.searchTranscript],
     ["Enter", t.chat.shortcutSend],
     ["Shift+Enter", t.chat.shortcutNewline],
     ["Ctrl+Enter", t.chat.shortcutInterruptSend],
@@ -256,8 +257,7 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
     ["?", t.chat.shortcutSheet],
   ];
   return (
-    <AppModal label={t.chat.shortcutsTitle} className="chat-shortcuts" onClose={onClose}>
-      <div className="chat-modal-title">{t.chat.shortcutsTitle}</div>
+    <>
       <dl className="chat-shortcuts-list">
         {rows.map(([keys, desc]) => (
           <div className="chat-shortcuts-row" key={keys}>
@@ -271,6 +271,17 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
       {/* 终端视图的让位说明:Ctrl+K/B/N/1/2 被应用导航占用、readline 编辑键失效,
           Ctrl+F 也不抢 xterm 焦点——这些"静默失效"必须有一处写明,否则无从排查。 */}
       <div className="chat-shortcuts-note">{t.chat.shortcutTerminalNote}</div>
+    </>
+  );
+}
+
+/** `?` 唤出的快捷键速查表：纯静态展示，Esc/点外关闭。 */
+export function ShortcutSheet({ onClose }: { onClose: () => void }) {
+  const t = useT();
+  return (
+    <AppModal label={t.chat.shortcutsTitle} className="chat-shortcuts" onClose={onClose}>
+      <div className="chat-modal-title">{t.chat.shortcutsTitle}</div>
+      <ShortcutList />
     </AppModal>
   );
 }

@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   setSettings: vi.fn(),
   remoteAccessInfo: vi.fn(),
+  testBarkPush: vi.fn(),
 }));
 vi.mock("../../api", async (o) => ({ ...(await o<typeof import("../../api")>()), ...api }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -61,6 +62,24 @@ describe("RemoteAccessCard", () => {
     expect(document.querySelector(".remote-qr svg")).toBeTruthy();
     // 选中候选的可达性说明如实标注。
     expect(screen.getByText(zh.remote.hintTailscale)).toBeTruthy();
+  });
+
+  // 手机推送(Bark):远程访问关着也能配;测试用输入框里的草稿,不必先保存;失焦才落盘。
+  it("Bark 推送:测试用草稿地址,失败给原因,失焦落盘 bark_url", async () => {
+    api.getSettings.mockResolvedValue({ ...SETTINGS_DEFAULTS });
+    api.remoteAccessInfo.mockResolvedValue({ enabled: false, port: 18620, token: TOKEN, ips: [], lastError: null });
+    api.testBarkPush.mockRejectedValueOnce("push/invalid_url").mockResolvedValueOnce(undefined);
+    render(<RemoteAccessCard />);
+    const input = await screen.findByRole("textbox", { name: zh.remote.pushLabel });
+    fireEvent.change(input, { target: { value: "https://api.day.app/KEY/" } });
+    fireEvent.click(screen.getByRole("button", { name: zh.remote.pushTest }));
+    expect(await screen.findByText("推送地址无效，请从 Bark App 里复制")).toBeTruthy();
+    expect(api.testBarkPush).toHaveBeenCalledWith("https://api.day.app/KEY/");
+    expect(api.setSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: zh.remote.pushTest }));
+    expect(await screen.findByText(zh.remote.pushTestOk)).toBeTruthy();
+    fireEvent.blur(input);
+    await waitFor(() => expect(api.setSettings).toHaveBeenCalledWith(expect.objectContaining({ bark_url: "https://api.day.app/KEY/" })));
   });
 
   it("关闭态点开关:落盘 remote_access_enabled=true", async () => {

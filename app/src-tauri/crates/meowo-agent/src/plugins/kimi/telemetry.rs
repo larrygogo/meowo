@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, TranscriptEvent,
-    TranscriptInfo, TranscriptParser, TranscriptSpec,
+    preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
+    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec,
 };
 
 fn chat_id(prefix: &str, line: &str) -> String {
@@ -77,6 +77,48 @@ fn value_text(value: &serde_json::Value) -> String {
             .collect::<Vec<_>>()
             .join(""),
         other => other.to_string(),
+    }
+}
+
+const DETAIL_TEXT_MAX_CHARS: usize = 16_000;
+
+fn clip_detail(text: &str) -> (String, bool) {
+    if text.chars().count() > DETAIL_TEXT_MAX_CHARS {
+        (text.chars().take(DETAIL_TEXT_MAX_CHARS).collect(), true)
+    } else {
+        (text.to_string(), false)
+    }
+}
+
+/// Kimi 的编辑参数与 Claude 同语义但路径叫 `path`。必须在这里落成结构化详情，
+/// 前端的增删行数、diff 与语法高亮才有输入；此前 detail 恒为 None，只剩一行结果文案。
+fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDetail> {
+    let input = input?;
+    let text = |key: &str| input.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    let path = || text("path").or_else(|| text("file_path"));
+    let num = |key: &str| input.get(key).and_then(|v| v.as_u64()).map(|v| v.min(u32::MAX as u64) as u32);
+    match name {
+        "Write" => {
+            let full = text("content")?;
+            let lines = full.lines().count() as u32;
+            let (content, truncated) = clip_detail(&full);
+            Some(ToolDetail::Write { path: path()?, content, lines, truncated })
+        }
+        "Edit" => {
+            let (old, old_cut) = clip_detail(&text("old_string")?);
+            let (new, new_cut) = clip_detail(&text("new_string")?);
+            Some(ToolDetail::Edit {
+                path: path()?,
+                old,
+                new,
+                replace_all: input.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false),
+                truncated: old_cut || new_cut,
+            })
+        }
+        "Bash" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
+        "Read" => Some(ToolDetail::Read { path: path()?, offset: num("offset"), limit: num("limit") }),
+        "Grep" | "Glob" => Some(ToolDetail::Search { pattern: text("pattern")?, path: path(), glob: text("glob") }),
+        _ => None,
     }
 }
 
@@ -281,6 +323,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                             id,
                             timestamp,
                             text,
+                            interjected: false,
                         })
                         .into_iter()
                         .collect();
@@ -300,6 +343,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     id,
                     timestamp,
                     text,
+                    interjected: false,
                 })
                 .into_iter()
                 .collect()
@@ -330,11 +374,19 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                 wire_dir,
                 &id,
             );
+            // 回合进行中插入的话（steer）：kimi 给 origin 打 inTurn（包内 markInTurnOrigin），
+            // 另写 turn.steer、不写 turn.prompt。标出来既给「回合中插入」角标，也让撤回的
+            // 轮数计数跳过它——kimi 的 /undo 不把插话算一轮（isUndoAnchorOrigin）。
+            let interjected = message
+                .pointer("/origin/inTurn")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             (!text.trim().is_empty())
                 .then_some(TranscriptEvent::UserMessage {
                     id,
                     timestamp,
                     text,
+                    interjected,
                 })
                 .into_iter()
                 .collect()
@@ -434,7 +486,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                             .map(str::to_string)
                             .unwrap_or_else(|| stable_id("tool")),
                         timestamp,
-                        name,
+                        name: name.clone(),
                         // 子任务的摘要取那句描述；否则整包 args（含上千字 prompt）会把摘要行淹掉。
                         summary: subagent
                             .as_ref()
@@ -443,7 +495,13 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                             .or_else(|| args.map(value_text))
                             .unwrap_or_default(),
                         subagent,
-                        detail: None,
+                        detail: tool_detail(&name, args),
+                        plan: part
+                            .get("display")
+                            .and_then(|display| display.get("plan"))
+                            .and_then(|plan| plan.as_str())
+                            .filter(|plan| !plan.trim().is_empty())
+                            .map(str::to_string),
                     }]
                 }
                 _ => Vec::new(),
@@ -459,8 +517,42 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
             id: chat_id("compact", line),
             timestamp,
             kind: "compact".into(),
+            compaction: None,
         }],
         _ => Vec::new(),
+    }
+}
+
+/// 撤回回放的行标记（kimi.exe 包内取证）：
+/// - 一轮的起点 = `turn.prompt`，且 origin 是用户亲自发的（kind 缺省/`user`），或用户斜杠触发的
+///   技能/插件命令（`trigger=user-slash`）——同包内 `isUndoAnchorTurnOrigin`。后台任务通知、
+///   重试、注入不算；插话不写 turn.prompt（另写 turn.steer），天然不算。
+/// - `/undo N` 追加三行：`agent.switched`（分支树）、`context.undo {count}`（给顺序读者的兼容行）、
+///   `context.undone`。只认中间那行，分支树不必懂。
+fn chat_line_mark(line: &str) -> Option<crate::ChatLineMark> {
+    // 绝大多数行两样都不是：先按字面量筛，免得每行整解析一次 JSON。
+    if !line.contains("\"turn.prompt\"") && !line.contains("\"context.undo\"") {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    match value.get("type").and_then(|v| v.as_str())? {
+        "context.undo" => value
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .filter(|count| *count > 0)
+            .map(|count| crate::ChatLineMark::Undo(count as usize)),
+        "turn.prompt" => {
+            let origin = value.get("origin");
+            let kind = origin.and_then(|o| o.get("kind")).and_then(|v| v.as_str());
+            let trigger = origin.and_then(|o| o.get("trigger")).and_then(|v| v.as_str());
+            let anchor = match kind {
+                None | Some("user") => true,
+                Some("skill_activation" | "plugin_command") => trigger == Some("user-slash"),
+                Some(_) => false,
+            };
+            anchor.then_some(crate::ChatLineMark::TurnStart)
+        }
+        _ => None,
     }
 }
 
@@ -963,6 +1055,10 @@ impl TranscriptSpec for KimiTranscript {
         }
     }
 
+    fn chat_line_mark(&self, line: &str) -> Option<crate::ChatLineMark> {
+        chat_line_mark(line)
+    }
+
     fn default_agent_modes(&self) -> Vec<crate::AgentMode> {
         vec![
             crate::AgentMode::new("work", "default"),
@@ -1127,6 +1223,12 @@ pub struct WireSummary {
     pub last_ai: Option<String>,
     /// 模型展示名（由模型 alias 映射，见 model_display）。
     pub model: Option<String>,
+    /// 最近一次生效的模型别名（`config.update.modelAlias`）：读文件时据它到 config.toml
+    /// 换成 `display_name`（纯解析阶段不碰文件系统）。
+    pub model_alias: Option<String>,
+    /// 当前思考程度：`config.update`（切换时写）与每次 `llm.request`（每回合都带）里的
+    /// `thinkingEffort`，取最后一条（2.4.0 实测：high/max/on/off）。
+    pub effort: Option<String>,
 }
 
 /// 模型 alias → 展示名。alias 形如 "kimi-code/kimi-for-coding"；取末段，已知模型映射成 kimi
@@ -1146,11 +1248,19 @@ fn model_display(alias: &str) -> String {
 pub fn parse_wire(content: &str) -> WireSummary {
     let mut buf = String::new();
     let mut model: Option<String> = None;
+    let mut model_alias: Option<String> = None;
+    let mut effort: Option<String> = None;
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if kind == "config.update" || kind == "llm.request" {
+            if let Some(level) = v.get("thinkingEffort").and_then(|x| x.as_str()) {
+                effort = Some(level.to_string());
+            }
+        }
+        match kind {
             // 新用户回合开始 → 清空，使最终缓冲只剩最后一回合的 AI 文本。
             "turn.prompt" => buf.clear(),
             "context.append_message" => {
@@ -1165,6 +1275,7 @@ pub fn parse_wire(content: &str) -> WireSummary {
             "config.update" => {
                 if let Some(a) = v.get("modelAlias").and_then(|m| m.as_str()) {
                     model = Some(model_display(a));
+                    model_alias = Some(a.to_string());
                 }
             }
             "context.append_loop_event" => {
@@ -1185,6 +1296,8 @@ pub fn parse_wire(content: &str) -> WireSummary {
     WireSummary {
         last_ai: (!s.is_empty()).then(|| s.to_string()),
         model,
+        model_alias,
+        effort,
     }
 }
 
@@ -1224,18 +1337,39 @@ pub fn read_summary(session_id: &str) -> Option<WireSummary> {
         .join("wire.jsonl");
     let size = std::fs::metadata(&wire).ok()?.len();
     if size <= FULL_READ_CAP {
-        return Some(parse_wire(&std::fs::read_to_string(&wire).ok()?));
+        return Some(with_display_name(parse_wire(&std::fs::read_to_string(&wire).ok()?)));
     }
     let head = read_range(&wire, 0, HEAD_BYTES).unwrap_or_default();
     let tail = read_range(&wire, size.saturating_sub(TAIL_BYTES), TAIL_BYTES).unwrap_or_default();
     let tail_summary = parse_wire(&tail);
-    Some(WireSummary {
+    let head_summary = parse_wire(&head);
+    Some(with_display_name(WireSummary {
         // 模型**不只**在头部：会话中途 `/model` 切换会在文件后段再写一条 `config.update`
         // （实测尾部可见 `kimi-for-coding → k3 → kimi-for-coding` 这样的切换序列）。
         // 只读头部的话，切换后界面永远停在最初那个模型上。尾部优先、头部兜底。
-        model: tail_summary.model.or_else(|| parse_wire(&head).model),
+        model: tail_summary.model.or(head_summary.model),
+        model_alias: tail_summary.model_alias.or(head_summary.model_alias),
+        // 每回合的 llm.request 都带档位，尾部窗口里几乎必有；头部兜底新会话。
+        effort: tail_summary.effort.or(head_summary.effort),
         last_ai: tail_summary.last_ai,
-    })
+    }))
+}
+
+/// 模型名换成 config.toml 里用户看到的 `display_name`（K3.1 Pro，而不是别名末段 k3.1-pro）：
+/// kimi 自己的底栏与 /model 菜单都显示它，GUI 按钮也该一致，模型菜单的打勾才对得上。
+/// 配置读不到或没写 display_name 时保留原映射。
+fn with_display_name(mut summary: WireSummary) -> WireSummary {
+    let display = summary.model_alias.as_deref().and_then(|alias| {
+        let content = std::fs::read_to_string(kimi_install()?.config_path()).ok()?;
+        super::parse_model_catalog(&content)
+            .into_iter()
+            .find(|entry| entry.id == alias && entry.label != alias)
+            .map(|entry| entry.label)
+    });
+    if display.is_some() {
+        summary.model = display;
+    }
+    summary
 }
 
 /// 从 wire.jsonl 文本取**最后一条** usage.record 的 (used_input_tokens, model_alias)。
@@ -1464,6 +1598,7 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
             Some(s) => crate::caps::StopOutputs {
                 last_ai: s.last_ai,
                 model: s.model,
+                effort: s.effort,
             },
             None => crate::caps::StopOutputs::default(),
         }
@@ -1868,6 +2003,140 @@ mod tests {
         assert_eq!(s.model.as_deref(), Some("K2.7 Code"));
     }
 
+    /// 思考程度取最后一条 config.update / llm.request 的 thinkingEffort（2.4.0 实测形制：
+    /// 切换时 config.update 写一次，之后每次请求都带）。
+    #[test]
+    fn parse_wire_tracks_latest_thinking_effort() {
+        let wire = r#"
+{"type":"config.update","modelAlias":"kimi-code/k3.1-pro","thinkingEffort":"high"}
+{"type":"llm.request","thinkingEffort":"high"}
+{"type":"config.update","thinkingEffort":"max"}
+{"type":"llm.request","thinkingEffort":"max"}
+"#;
+        let s = parse_wire(wire);
+        assert_eq!(s.effort.as_deref(), Some("max"));
+        assert_eq!(s.model_alias.as_deref(), Some("kimi-code/k3.1-pro"));
+        assert_eq!(parse_wire("{\"type\":\"turn.prompt\"}").effort, None);
+    }
+
+    /// 每条用户消息双写（turn.prompt + append_message，戳差 ≤1ms），整读只留一条；
+    /// 真人隔几秒连发两条相同消息两条都留（接续会话的前序段整读、不经前端 reducer）。
+    #[test]
+    fn full_read_drops_double_written_user_prompt() {
+        let wire = concat!(
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"改一下"}],"origin":{"kind":"user"},"time":1793243645616}"#, "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"改一下"}],"origin":{"kind":"user"}},"time":1793243645617}"#, "\n",
+            r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"好"}},"time":1793243646000}"#, "\n",
+            r#"{"type":"turn.prompt","input":"继续","time":1793243700000}"#, "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":"继续"},"time":1793243700001}"#, "\n",
+            r#"{"type":"turn.prompt","input":"继续","time":1793243705000}"#, "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":"继续"},"time":1793243705000}"#, "\n",
+        );
+        let dir = std::env::temp_dir().join(format!("meowo-kimi-dup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wire.jsonl");
+        std::fs::write(&path, wire).unwrap();
+        let delta = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, 0, None);
+        let users: Vec<_> = delta
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::UserText { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users, vec!["改一下", "继续", "继续"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `/undo N` 的回放（记录形态取自 kimi.exe 包内 buildUndoSwitchRecords）：撤回追加
+    /// agent.switched / context.undo / context.undone 三行，只按中间那行收回最近 N 轮。
+    /// 插话（origin.inTurn）不算一轮、标 interjected；增量读到撤回改为整读并带 reset+undone。
+    #[test]
+    fn undo_record_retracts_recent_turns() {
+        let turn = |text: &str, time: u64| {
+            format!(
+                concat!(
+                    r#"{{"type":"turn.prompt","input":[{{"type":"text","text":"{t}"}}],"origin":{{"kind":"user"}},"time":{a}}}"#, "\n",
+                    r#"{{"type":"context.append_message","message":{{"role":"user","content":[{{"type":"text","text":"{t}"}}],"origin":{{"kind":"user"}}}},"time":{b}}}"#, "\n",
+                    r#"{{"type":"context.append_loop_event","event":{{"type":"content.part","uuid":"p{a}","part":{{"type":"text","text":"答{t}"}}}},"time":{c}}}"#, "\n",
+                ),
+                t = text, a = time, b = time + 1, c = time + 500,
+            )
+        };
+        let steer = concat!(
+            r#"{"type":"turn.steer","input":"顺便看看","time":1793243720000}"#, "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":"顺便看看","origin":{"kind":"user","inTurn":true}},"time":1793243720001}"#, "\n",
+        );
+        let undo = |count: u32| {
+            format!(
+                concat!(
+                    r#"{{"type":"agent.switched","agentId":"main","branch":"b1","reason":"undo","turns":{n},"time":1}}"#, "\n",
+                    r#"{{"type":"context.undo","agentId":"main","count":{n},"time":1}}"#, "\n",
+                    r#"{{"type":"context.undone","agentId":"main","turns":{n},"time":1}}"#, "\n",
+                ),
+                n = count,
+            )
+        };
+        let users = |items: &[ChatItem]| -> Vec<(String, bool)> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    ChatItem::UserText { text, interjected, .. } => Some((text.clone(), *interjected)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let dir = std::env::temp_dir().join(format!("meowo-kimi-undo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wire.jsonl");
+        let mut wire = format!("{}{}{steer}", turn("甲", 1793243600000), turn("乙", 1793243700000));
+        std::fs::write(&path, &wire).unwrap();
+        let first = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, 0, None);
+        assert_eq!(
+            users(&first.items),
+            vec![("甲".into(), false), ("乙".into(), false), ("顺便看看".into(), true)]
+        );
+        assert!(!first.undone);
+
+        // 撤 1 轮：乙连同回合中的插话一起收回，甲那一轮原样保留。
+        wire.push_str(&undo(1));
+        std::fs::write(&path, &wire).unwrap();
+        let delta = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, first.offset, first.mtime);
+        assert!(delta.reset && delta.undone, "增量里出现撤回必须整读重灌");
+        assert_eq!(users(&delta.items), vec![("甲".into(), false)]);
+        // 回答正文跟着各自那一轮走（正文块的条目形态不在本测试关心范围，按内容判）。
+        let shown = format!("{:?}", delta.items);
+        assert!(shown.contains("答甲") && !shown.contains("答乙"), "items={shown}");
+
+        // 撤回后接着聊，再把剩下的全撤：结果为空也带 undone（前端据此放行空 reset）。
+        wire.push_str(&turn("丙", 1793243800000));
+        std::fs::write(&path, &wire).unwrap();
+        let next = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, delta.offset, delta.mtime);
+        assert!(!next.reset);
+        assert_eq!(users(&next.items), vec![("丙".into(), false)]);
+        wire.push_str(&undo(2));
+        std::fs::write(&path, &wire).unwrap();
+        let empty = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, next.offset, next.mtime);
+        assert!(empty.reset && empty.undone);
+        assert!(empty.items.is_empty(), "items={:?}", empty.items);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 轮起点只认用户亲自发的 turn.prompt 与用户斜杠触发的技能（同 kimi isUndoAnchorTurnOrigin）。
+    #[test]
+    fn turn_start_mark_follows_kimi_undo_anchor_rule() {
+        use crate::ChatLineMark::TurnStart;
+        let mark = |origin: &str| chat_line_mark(&format!(r#"{{"type":"turn.prompt","input":"x","origin":{origin}}}"#));
+        assert_eq!(mark(r#"{"kind":"user"}"#), Some(TurnStart));
+        assert_eq!(chat_line_mark(r#"{"type":"turn.prompt","input":"x"}"#), Some(TurnStart));
+        assert_eq!(mark(r#"{"kind":"skill_activation","trigger":"user-slash"}"#), Some(TurnStart));
+        assert_eq!(mark(r#"{"kind":"skill_activation","trigger":"model"}"#), None);
+        assert_eq!(mark(r#"{"kind":"task"}"#), None);
+        assert_eq!(chat_line_mark(r#"{"type":"context.undo","count":0}"#), None);
+        assert_eq!(chat_line_mark(r#"{"type":"context.append_message","message":{"role":"user"}}"#), None);
+    }
+
     #[test]
     fn none_when_no_text_parts() {
         let wire = r#"{"type":"turn.prompt","input":"hi"}
@@ -2142,6 +2411,32 @@ mod tests {
             ChatItem::ToolResult { tool_use_id: Some(id), text, .. }
                 if id == "tool-1" && text == "all green"
         ));
+    }
+
+    #[test]
+    fn edit_call_carries_diff_detail() {
+        let line = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"edit-1","name":"Edit","args":{"path":"src/auth.rs","old_string":"let a = 1;","new_string":"let a = 1;\nlet b = 2;","replace_all":false}}}"#;
+        let ChatItem::ToolUse {
+            detail: Some(ToolDetail::Edit { path, old, new, replace_all, truncated }),
+            ..
+        } = &parse_chat_items(line)[0]
+        else {
+            panic!("Edit 应带结构化 diff 详情");
+        };
+        assert_eq!(path, "src/auth.rs");
+        assert_eq!(old, "let a = 1;");
+        assert_eq!(new, "let a = 1;\nlet b = 2;");
+        assert!(!replace_all);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn exit_plan_mode_carries_plan_document() {
+        let line = r##"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"plan-1","name":"ExitPlanMode","args":{},"display":{"kind":"plan_review","plan":"# 改造计划\n\n## 第一步"}}}"##;
+        let ChatItem::ToolUse { plan: Some(plan), .. } = &parse_chat_items(line)[0] else {
+            panic!("ExitPlanMode 应保留完整计划文档");
+        };
+        assert_eq!(plan, "# 改造计划\n\n## 第一步");
     }
 
     /// kimi 的子任务归属只写在 `Agent` 工具结果的**自然语言正文**里，没有结构化字段。

@@ -40,6 +40,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   remote_access_port: 18620,
   remote_access_bind: "all",
   remote_access_token: "",
+  bark_url: "",
 };
 
 // ── 模块级共享态（每个 webview 窗口一份）──

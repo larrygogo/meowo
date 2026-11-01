@@ -1,7 +1,8 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Message } from "./Message";
+import { ChatActionsContext } from "./chatActions";
 import type { ChatItem } from "../../api";
 
 afterEach(cleanup);
@@ -30,5 +31,22 @@ describe("Message turn_error", () => {
   it("不套模型正文的皮(is-assistant)", () => {
     render(<Message item={item} />);
     expect(screen.getByRole("alert").className).not.toContain("is-assistant");
+  });
+
+  it("最新的出错卡给「继续」，点击以用户身份发送「继续」；旧的出错卡不给", () => {
+    const sendText = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <Message item={item} latest />
+      </ChatActionsContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    expect(sendText).toHaveBeenCalledWith("继续");
+    rerender(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <Message item={item} />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "继续" })).toBeNull();
   });
 });

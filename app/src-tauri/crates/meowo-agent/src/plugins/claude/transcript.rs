@@ -8,7 +8,7 @@
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, DiffHunk, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
+    preview_text, DiffHunk, CompactionDetail, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
     TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 use std::borrow::Cow;
@@ -71,6 +71,53 @@ fn task_notification_result(
             // 自带 tool-use-id 时直接落到原委派上,不必再路由;只有 task-id 的
             // (forked skill)要靠它归属回启动回执登记的属主。
             task_id: tool_use_id.is_none().then_some(task_id).flatten(),
+        }),
+        patch: None,
+    })
+}
+
+/// 子代理收尾时发回主会话的回报（queued_command，origin.kind = "peer"）→ 该委派的结局回执。
+/// 后台委派的启动回执只说「已派出」，真正的结论就在这条回报里；按 senderTaskId（= 启动回执
+/// 里的 agentId）挂载，前端经 task_id 路由归回原委派，与 forked skill 的通知同一条路。
+///
+/// 只认正文以 `[Subagent hand-back]` 起头的收尾回报（行首锚定，见 transcript 引用污染）；
+/// 子代理中途发来的普通消息不是结局，也不是用户说的话，返回 None 由调用方丢弃。
+fn peer_handback_result(
+    origin: &serde_json::Value,
+    base_id: &str,
+    timestamp: Option<String>,
+) -> Option<TranscriptEvent> {
+    let body = origin.get("body").and_then(|x| x.as_str())?;
+    if !body.trim_start().starts_with("[Subagent hand-back]") {
+        return None;
+    }
+    let task_id = origin
+        .get("senderTaskId")
+        .or_else(|| origin.get("from"))
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    // 回报正文前是一段固定的说明框（「The report follows:」），之后每行被统一缩进两格。
+    let report = body
+        .split_once("The report follows:")
+        .map(|(_, rest)| {
+            rest.lines()
+                .map(|line| line.strip_prefix("  ").unwrap_or(line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_else(|| body.to_string());
+    Some(TranscriptEvent::ToolResult {
+        id: base_id.to_string(),
+        timestamp,
+        tool_call_id: Some(task_id.clone()),
+        text: report.trim().to_string(),
+        is_error: false,
+        subagent: Some(SubagentOutcome {
+            running: 0,
+            completed: 1,
+            failed: 0,
+            task_id: Some(task_id),
         }),
         patch: None,
     })
@@ -314,6 +361,27 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
         })
 }
 
+/// 用户按 Esc 中断回合后 CC 写进 transcript 的标记（2.1.312 实拍两种：回合中途
+/// `[Request interrupted by user]`，打断工具调用时 `… for tool use]`，后者与紧跟的新消息
+/// 同在一行的不同 text 块里）。它不是用户说的话：原样显示就是一个写着英文方括号的用户
+/// 气泡。转成「已手动终止」分隔标记（对照 Kimi 的 turnInterrupted）。整块恰为标记才认，
+/// 用户在消息里引用这句不会被吞（见 transcript 引用污染的教训）。
+fn interrupt_marker(text: &str) -> bool {
+    matches!(
+        text.trim(),
+        "[Request interrupted by user]" | "[Request interrupted by user for tool use]"
+    )
+}
+
+fn interrupted_event(id: String, timestamp: Option<String>) -> TranscriptEvent {
+    TranscriptEvent::Metadata {
+        id,
+        timestamp,
+        kind: "interrupted".into(),
+        compaction: None,
+    }
+}
+
 /// 大图被缩小后 CC 补一条 `isMeta` 行告诉模型缩放比例：「[Image: original 2310x1152,
 /// displayed at 2000x997. Multiply coordinates by 1.16 to map to original image.]」
 /// （2.1.304 实测，纯字符串正文、整条只有这一句）。它是写给模型的，不丢的话对话页显示成
@@ -403,10 +471,35 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
         "user" => {
             // 压缩后 CC 把整段摘要以 user 行写回（`isCompactSummary`，2.1.301 实测为纯字符串
             // 正文「This session is being continued…」），它是喂模型的上下文、不是用户说的话。
-            // 不丢的话对话页在「上下文已压缩」分隔条下紧跟一大块用户气泡（用户实拍反馈）；
-            // CC 自己的终端也只显示分隔提示、不展开摘要。分隔条由 compact_boundary 行提供。
+            // 当成用户气泡显示是错的（用户实拍反馈）；但它回答了压缩后最要紧的问题「它还记得
+            // 什么」，对照 Kimi 的「查看摘要」改成 compact_summary 标记，前端挂到紧邻在前的
+            // 分隔条上、默认收起（2.1.312 实拍：摘要行紧跟 compact_boundary，parentUuid 指向它）。
             if v.get("isCompactSummary").and_then(|x| x.as_bool()) == Some(true) {
-                return Vec::new();
+                let text = content.map(text_from_content).unwrap_or_default();
+                if text.trim().is_empty() {
+                    return Vec::new();
+                }
+                return vec![TranscriptEvent::Metadata {
+                    id: base_id.to_string(),
+                    timestamp,
+                    kind: "compact_summary".into(),
+                    compaction: Some(CompactionDetail {
+                        summary: Some(text),
+                        ..CompactionDetail::default()
+                    }),
+                }];
+            }
+            // 子代理收尾回报的第二种落盘形制：主会话空闲时不走排队（queued_command），而是
+            // 直接写成 isMeta 的 user 行，`origin` 挂在行顶层（2.1.312 实拍）。同样转成委派
+            // 回执，不然又以用户气泡出现（用户实拍反馈）。只认收尾回报：其他 peer 消息
+            // （跨会话对话）仍按下面的规则照常显示。
+            if let Some(origin) = v
+                .get("origin")
+                .filter(|o| o.get("kind").and_then(|x| x.as_str()) == Some("peer"))
+            {
+                if let Some(event) = peer_handback_result(origin, base_id, timestamp.clone()) {
+                    return vec![event];
+                }
             }
             // 工具注入给模型的内容：Skill 调用后 CC 把整份技能说明以 user 行写回
             // （`isMeta` + `sourceToolUseID`，2.1.304 实测「Base directory for this skill…」），
@@ -423,6 +516,17 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             if is_image_scale_note(&v, content) {
                 return Vec::new();
             }
+            // CC 随回合塞给模型的系统提醒（isMeta、正文整段是 `<system-reminder>…`，2.1.312 实拍：
+            // 压缩后补一条 `<tools-used-before-summary>`）。它是给模型的上下文，不是用户说的话，
+            // 不丢就顶着用户气泡出现（用户实拍反馈）。判据行首锚定 + 限 isMeta：用户自己在消息里
+            // 引用这段标签时不会被吞（见 transcript 引用污染的教训）。
+            if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+                && content
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|text| text.trim_start().starts_with("<system-reminder>"))
+            {
+                return Vec::new();
+            }
             if let Some(text) = content
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.trim().is_empty())
@@ -435,10 +539,14 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 if let Some(event) = task_notification_result(text, base_id, timestamp.clone()) {
                     return vec![event];
                 }
+                if interrupt_marker(text) {
+                    return vec![interrupted_event(base_id.to_string(), timestamp)];
+                }
                 return vec![TranscriptEvent::UserMessage {
                     id: base_id.to_string(),
                     timestamp,
                     text: strip_pasted_content_tags(text).into_owned(),
+                    interjected: false,
                 }];
             }
             if is_image_companion(&v, content) {
@@ -464,10 +572,17 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                             .get("text")
                             .and_then(|x| x.as_str())
                             .filter(|s| !s.trim().is_empty())
-                            .map(|text| TranscriptEvent::UserMessage {
-                                id: format!("{base_id}:{i}"),
-                                timestamp: timestamp.clone(),
-                                text: strip_pasted_content_tags(text).into_owned(),
+                            .map(|text| {
+                                let id = format!("{base_id}:{i}");
+                                if interrupt_marker(text) {
+                                    return interrupted_event(id, timestamp.clone());
+                                }
+                                TranscriptEvent::UserMessage {
+                                    id,
+                                    timestamp: timestamp.clone(),
+                                    text: strip_pasted_content_tags(text).into_owned(),
+                                    interjected: false,
+                                }
                             }),
                         Some("tool_result") => {
                             let text = text_from_content(
@@ -544,6 +659,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         id: format!("{base_id}:{}", image_refs[0].0),
                         timestamp,
                         text: refs,
+                        interjected: false,
                     }),
                 }
             }
@@ -612,6 +728,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                             summary: tool_summary(name, block.get("input")),
                             subagent: CLAUDE_SUBAGENTS.detect_call(name, block.get("input")),
                             detail: tool_detail(name, block.get("input")),
+                            plan: None,
                         })
                     }
                     _ => None,
@@ -620,10 +737,24 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             .collect()
         }
         "system" if v.get("subtype").and_then(|x| x.as_str()) == Some("compact_boundary") => {
+            // compactMetadata 带触发方式与压缩前 token（2.1.312 实拍
+            // `{"trigger":"auto","preTokens":592064,…}`）：分隔条据此写「已自动压缩」与规模。
+            let meta = v.get("compactMetadata");
+            let trigger = meta
+                .and_then(|m| m.get("trigger"))
+                .and_then(|x| x.as_str())
+                .map(str::to_string);
+            let pre_tokens = meta.and_then(|m| m.get("preTokens")).and_then(|x| x.as_u64());
+            let detail = (trigger.is_some() || pre_tokens.is_some()).then_some(CompactionDetail {
+                trigger,
+                pre_tokens,
+                summary: None,
+            });
             vec![TranscriptEvent::Metadata {
                 id: base_id.to_string(),
                 timestamp,
                 kind: "compact".into(),
+                compaction: detail,
             }]
         }
         // 运行中排队的插话被 CLI 送入时**不落普通 user 行**：记成 attachment/queued_command，
@@ -638,6 +769,23 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 != Some("queued_command")
             {
                 return Vec::new();
+            }
+            // 排队送入的不只有用户插话：子代理/队友发回主会话的消息同样记成 queued_command、
+            // commandMode 也是 "prompt"，只能靠 origin.kind 区分（2.1.302+ 实拍：用户插话是
+            // "human"，子代理回报是 "peer"）。不分的话子代理的长篇回报会顶着用户气泡出现，
+            // 像是用户自己发的（用户实拍反馈）。老版本没有 origin，按用户插话处理。
+            if let Some(origin) = attachment.and_then(|a| a.get("origin")) {
+                match origin.get("kind").and_then(|x| x.as_str()) {
+                    None | Some("human") => {}
+                    Some("peer") => {
+                        return peer_handback_result(origin, base_id, timestamp)
+                            .into_iter()
+                            .collect();
+                    }
+                    // task-notification 走下面按正文识别的既有分支；其余未知来源都不是用户说的话。
+                    Some("task-notification") => {}
+                    Some(_) => return Vec::new(),
+                }
             }
             let prompt = attachment.and_then(|a| a.get("prompt"));
             let mut text = match prompt {
@@ -683,6 +831,9 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 id: base_id.to_string(),
                 timestamp,
                 text: strip_pasted_content_tags(&text).into_owned(),
+                // 走 queued_command 送入 = 回合进行中被 CLI 在工具边界插进去的话。
+                // 前端靠这个结构信号标「回合中插入」并结算插话回执，不必靠文本猜。
+                interjected: true,
             }]
         }
         _ => Vec::new(),
@@ -1833,6 +1984,30 @@ impl TranscriptSpec for ClaudeTranscript {
             .unwrap_or_default()
     }
 
+    /// transcript 是 parentUuid 树：`/rewind`（双击 Esc）回退时零写入，下一条消息从更早的
+    /// 节点长出新分支（2.1.314 实测，tests/probe_claude_rewind.rs）。顺序读会把被放弃的分支
+    /// 和新分支拼在一起，claude 自己 --resume 时只显示新分支。本机 63 份 transcript 扫出的
+    /// 5 处跳接全是这种回退重发（打错字重发、被拦后重试、撤掉没回复的图），故按主链节点
+    /// 交给读取层判分叉（见 ChatLineMark::Link）。sidechain 不在主链上。
+    fn chat_line_mark(&self, line: &str) -> Option<crate::ChatLineMark> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Node {
+            uuid: Option<String>,
+            parent_uuid: Option<String>,
+            #[serde(default)]
+            is_sidechain: bool,
+        }
+        let node: Node = serde_json::from_str(line).ok()?;
+        if node.is_sidechain {
+            return None;
+        }
+        Some(crate::ChatLineMark::Link {
+            id: node.uuid?,
+            parent: node.parent_uuid,
+        })
+    }
+
     fn supports_runtime_slash_commands(&self) -> bool {
         true
     }
@@ -2001,14 +2176,51 @@ mod tests {
         );
     }
 
+    /// 摘要不再以用户气泡出现，改成 compact_summary 标记供分隔条「查看摘要」；分隔条带上
+    /// compactMetadata 的触发方式与压缩前 token（2.1.312 实拍形制）。
     #[test]
-    fn chat_parser_drops_compact_summary_but_keeps_boundary() {
+    fn chat_parser_turns_compact_summary_into_meta_and_keeps_boundary() {
         let summary = r#"{"type":"user","uuid":"s1","isVisibleInTranscriptOnly":true,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."}}"#;
-        assert!(parse_transcript_events(summary).is_empty());
+        assert!(matches!(
+            parse_transcript_events(summary).as_slice(),
+            [TranscriptEvent::Metadata { kind, compaction: Some(CompactionDetail { summary: Some(text), .. }), .. }]
+                if kind == "compact_summary" && text.starts_with("This session is being continued")
+        ));
         let boundary = r#"{"type":"system","subtype":"compact_boundary","uuid":"b1"}"#;
         assert!(matches!(
             parse_transcript_events(boundary).as_slice(),
-            [TranscriptEvent::Metadata { kind, .. }] if kind == "compact"
+            [TranscriptEvent::Metadata { kind, compaction: None, .. }] if kind == "compact"
+        ));
+        let auto = r#"{"type":"system","subtype":"compact_boundary","uuid":"b2","compactMetadata":{"trigger":"auto","preTokens":592064,"durationMs":57464}}"#;
+        assert!(matches!(
+            parse_transcript_events(auto).as_slice(),
+            [TranscriptEvent::Metadata { kind, compaction: Some(CompactionDetail { trigger: Some(trigger), pre_tokens: Some(592064), summary: None }), .. }]
+                if kind == "compact" && trigger == "auto"
+        ));
+    }
+
+    /// 样本取自 2.1.312 真机：中断标记转成 interrupted 分隔，同一行里紧跟的新消息照常显示；
+    /// 用户引用这句话（不是整块恰好等于标记）不吞。
+    #[test]
+    fn chat_parser_turns_interrupt_marker_into_meta() {
+        let plain = r#"{"type":"user","uuid":"i1","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#;
+        assert!(matches!(
+            parse_transcript_events(plain).as_slice(),
+            [TranscriptEvent::Metadata { kind, .. }] if kind == "interrupted"
+        ));
+        let string_form = r#"{"type":"user","uuid":"i2","message":{"role":"user","content":"[Request interrupted by user]"}}"#;
+        assert!(matches!(
+            parse_transcript_events(string_form).as_slice(),
+            [TranscriptEvent::Metadata { kind, .. }] if kind == "interrupted"
+        ));
+        let with_prompt = r#"{"type":"user","uuid":"i3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"The user doesn't want to proceed."},{"type":"text","text":"[Request interrupted by user for tool use]\n"},{"type":"text","text":"插话在对话里做了吗"}]}}"#;
+        let events = parse_transcript_events(with_prompt);
+        assert!(events.iter().any(|e| matches!(e, TranscriptEvent::Metadata { kind, .. } if kind == "interrupted")));
+        assert!(events.iter().any(|e| matches!(e, TranscriptEvent::UserMessage { text, .. } if text == "插话在对话里做了吗")));
+        let quoted = r#"{"type":"user","uuid":"i4","message":{"role":"user","content":"为什么会出现 [Request interrupted by user]"}}"#;
+        assert!(matches!(
+            parse_transcript_events(quoted).as_slice(),
+            [TranscriptEvent::UserMessage { .. }]
         ));
     }
 
@@ -2017,6 +2229,12 @@ mod tests {
     fn chat_parser_drops_tool_injected_meta_but_keeps_cross_session() {
         let skill = r#"{"type":"user","uuid":"k1","isMeta":true,"turnCompanion":true,"sourceToolUseID":"toolu_017zj","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: C:\\Users\\me\\.claude\\skills\\pr-description\n\n# pr-description"}]}}"#;
         assert!(parse_transcript_events(skill).is_empty());
+        // 随回合注入给模型的系统提醒（isMeta + 行首 <system-reminder>）：丢弃；
+        // 用户自己消息里引用这段标签（非 isMeta）照常显示。
+        let reminder = r#"{"type":"user","uuid":"r1","isMeta":true,"turnCompanion":true,"message":{"role":"user","content":"<system-reminder>\n<tools-used-before-summary>TaskStop, ToolSearch</tools-used-before-summary>\n</system-reminder>"}}"#;
+        assert!(parse_chat_items(reminder).is_empty());
+        let quoted = r#"{"type":"user","uuid":"r2","message":{"role":"user","content":"<system-reminder> 这是什么"}}"#;
+        assert_eq!(parse_chat_items(quoted).len(), 1);
         // 同为 isMeta、但不是工具注入的跨会话消息：真对话内容，照常出用户消息。
         let cross = r#"{"type":"user","uuid":"x1","isMeta":true,"message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from-name=\"a\">你好</cross-session-message>"}}"#;
         assert!(matches!(
@@ -2140,6 +2358,51 @@ mod tests {
     /// 无本地路径：落盘成临时文件后以 `[Image: source: …]` 行并入正文，接上前端现成的
     /// 缩略图链路；其余 attachment 子类型（skill_listing 等）照旧不进时间线。
     #[test]
+    fn queued_peer_handback_is_subagent_receipt_not_user_message() {
+        // 2.1.312 实拍形制：子代理收尾回报以 origin.kind = "peer" 排队送入。
+        let handback = r#"{"type":"attachment","uuid":"p1","timestamp":"2026-10-29T07:32:38Z","isSidechain":false,"attachment":{"type":"queued_command","prompt":"<agent-message from=\"a228\">\n[Subagent hand-back] ...","commandMode":"prompt","origin":{"kind":"peer","from":"a228","senderTaskId":"a228","name":"general-purpose","body":"[Subagent hand-back] The text below is the final report. The report follows:\n  ## 规格\n  \n  - 第一条"}}}"#;
+        let items = parse_chat_items(handback);
+        assert_eq!(items.len(), 1, "{items:?}");
+        match &items[0] {
+            ChatItem::ToolResult { tool_use_id, text, subagent, .. } => {
+                assert_eq!(tool_use_id.as_deref(), Some("a228"));
+                assert_eq!(text, "## 规格\n\n- 第一条");
+                let outcome = subagent.as_ref().expect("结局统计");
+                assert_eq!((outcome.running, outcome.completed, outcome.task_id.as_deref()), (0, 1, Some("a228")));
+            }
+            other => panic!("应为子任务回执: {other:?}"),
+        }
+        // 主会话空闲时的形制：isMeta 的 user 行、origin 挂在行顶层，同样转成回执。
+        let idle = r#"{"type":"user","uuid":"p4","isMeta":true,"origin":{"kind":"peer","from":"a228","senderTaskId":"a228","body":"[Subagent hand-back] x. The report follows:\n  结论"},"message":{"role":"user","content":"Another Claude session sent a message:\n<agent-message from=\"a228\">\n[Subagent hand-back] x\n</agent-message>"}}"#;
+        assert!(matches!(
+            parse_chat_items(idle).as_slice(),
+            [ChatItem::ToolResult { text, .. }] if text == "结论"
+        ));
+        // 子代理中途发来的普通消息既不是结局也不是用户的话：丢弃。
+        let chatter = r#"{"type":"attachment","uuid":"p2","attachment":{"type":"queued_command","prompt":"进度更新","commandMode":"prompt","origin":{"kind":"peer","from":"a228","body":"进度更新"}}}"#;
+        assert!(parse_chat_items(chatter).is_empty());
+        // 用户自己排队的插话（origin.kind = "human"）照旧是用户消息。
+        let human = r#"{"type":"attachment","uuid":"p3","attachment":{"type":"queued_command","prompt":"继续","commandMode":"prompt","origin":{"kind":"human"}}}"#;
+        assert!(matches!(parse_chat_items(human).as_slice(), [ChatItem::UserText { text, .. }] if text == "继续"));
+    }
+
+    /// 插话走 queued_command 送入，带 interjected 结构标记；普通 user 行（一轮的开头）不带。
+    /// 前端靠它标「回合中插入」并结算回执，标错会把每条消息都标成插话。
+    #[test]
+    fn queued_command_marks_interjected_but_plain_user_line_does_not() {
+        let queued = r#"{"type":"attachment","uuid":"p4","attachment":{"type":"queued_command","prompt":"顺便加个测试","commandMode":"prompt","origin":{"kind":"human"}}}"#;
+        assert!(matches!(
+            parse_chat_items(queued).as_slice(),
+            [ChatItem::UserText { interjected: true, .. }]
+        ));
+        let plain = r#"{"type":"user","uuid":"u5","message":{"role":"user","content":"开始吧"}}"#;
+        assert!(matches!(
+            parse_chat_items(plain).as_slice(),
+            [ChatItem::UserText { interjected: false, .. }]
+        ));
+    }
+
+    #[test]
     fn queued_command_attachment_becomes_user_message_with_images() {
         let queued = r#"{"type":"attachment","uuid":"q1-test-image","timestamp":"2026-08-11T04:02:17Z","isSidechain":false,"attachment":{"type":"queued_command","prompt":[{"type":"text","text":"这里还要再加一个排序"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}}"#;
         let items = parse_chat_items(queued);
@@ -2243,6 +2506,55 @@ mod tests {
         let third = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, second.offset, second.mtime);
         assert!(third.items.is_empty());
         assert_eq!(third.offset, second.offset);
+        std::fs::remove_file(path).ok();
+    }
+
+    /// `/rewind` 回退后重发（2.1.314 真机形态，probe_claude_rewind）：新提示的 parentUuid 指回
+    /// 第一轮末尾，被放弃的第二轮整段收回；增量批次读到新提示时标 undone 改走整读。
+    #[test]
+    fn rewind_fork_retracts_abandoned_branch() {
+        use std::io::Write;
+        let texts = |items: &[crate::ChatItem]| {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    crate::ChatItem::UserText { text, .. } | crate::ChatItem::AssistantText { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let head = concat!(
+            r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"content":"先做甲"}}"#, "\n",
+            r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"text","text":"甲好了"}]}}"#, "\n",
+            r#"{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"a1"}"#, "\n",
+            r#"{"type":"user","uuid":"u2","parentUuid":"d1","message":{"content":"再做乙"}}"#, "\n",
+            // 同一轮里的 sidechain 与跳接（只隔了附件）不算分叉。
+            r#"{"type":"assistant","uuid":"s1","parentUuid":"zz","isSidechain":true,"message":{"content":[{"type":"text","text":"子任务"}]}}"#, "\n",
+            r#"{"type":"attachment","uuid":"t2","parentUuid":"u2"}"#, "\n",
+            r#"{"type":"assistant","uuid":"a2","parentUuid":"u2","message":{"content":[{"type":"text","text":"乙好了"}]}}"#, "\n",
+        );
+        let path = write_tmp("rewind-fork", head);
+        let first = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, 0, None);
+        assert_eq!(texts(&first.items), ["先做甲", "甲好了", "再做乙", "乙好了"]);
+        assert!(!first.undone);
+
+        let fork = concat!(
+            r#"{"type":"file-history-snapshot","messageId":"x"}"#, "\n",
+            r#"{"type":"user","uuid":"u3","parentUuid":"d1","message":{"content":"改做丙"}}"#, "\n",
+        );
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(fork.as_bytes()).unwrap();
+        let next = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, first.offset, first.mtime);
+        assert!(next.reset && next.undone);
+        assert_eq!(texts(&next.items), ["先做甲", "甲好了", "改做丙"]);
+        // 整读本身也收回（首次打开就是回退过的会话）。
+        let whole = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, 0, None);
+        assert_eq!(texts(&whole.items), ["先做甲", "甲好了", "改做丙"]);
+        // 之后的普通增量不再触发整读。
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap()
+            .write_all(concat!(r#"{"type":"assistant","uuid":"a3","parentUuid":"u3","message":{"content":[{"type":"text","text":"丙好了"}]}}"#, "\n").as_bytes()).unwrap();
+        let tail = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, next.offset, next.mtime);
+        assert!(!tail.reset && !tail.undone);
+        assert_eq!(texts(&tail.items), ["丙好了"]);
         std::fs::remove_file(path).ok();
     }
 

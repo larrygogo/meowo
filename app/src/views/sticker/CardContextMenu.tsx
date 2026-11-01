@@ -1,8 +1,9 @@
-// 卡片右键/菜单按钮弹出的操作菜单：置顶/便签/重命名/归档/新建会话/打开目录。
+// 卡片右键/菜单按钮弹出的操作菜单：置顶/便签/重命名/归档/打开目录。
+// 不放「新建会话」（用户要求去掉）：新建入口在侧栏头部与看板标题栏，Ctrl+N 也在。
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useDismissable } from "../../hooks/useDismissable";
 import { useT } from "../../i18n";
-import { ArchiveIcon, FolderIcon, FolderPlusIcon, NoteIcon, PencilIcon, PlusIcon, StopIcon, TopIcon } from "./icons";
+import { ArchiveIcon, CheckIcon, FolderIcon, NoteIcon, PencilIcon, StopIcon, TopIcon } from "./icons";
 
 // 卡片右键菜单：置顶/便签/重命名/归档收拢于此（替代原 hover 图标行，卡片标题行更干净）。
 // fixed 定位 + useLayoutEffect 钳位：贴纸窗口小，菜单贴边时向内收、不被窗口边缘裁掉。
@@ -18,9 +19,8 @@ export function CardContextMenu({
   onNote,
   onRename,
   onArchive,
-  onNewSession,
+  onSelectMode = null,
   onOpenDir,
-  onAddDir,
   onEndSession,
   onClose,
 }: {
@@ -33,12 +33,10 @@ export function CardContextMenu({
   onNote: () => void;
   onRename: () => void;
   onArchive: () => void;
-  /** 用当前会话的路径和模型新建会话。 */
-  onNewSession: () => void;
+  /** 进入多选（侧栏批量归档）；贴纸没有多选态，不传即隐藏。 */
+  onSelectMode?: (() => void) | null;
   /** 打开项目目录；会话无 cwd（旧数据）时传 null 隐藏该项。 */
   onOpenDir: (() => void) | null;
-  /** 附加目录(一个会话跨多仓,--add-dir):会话 provider 未声明该能力时传 null 隐藏。 */
-  onAddDir: (() => void) | null;
   /** 结束会话（杀托管 PTY）；仅本 GUI 托管的会话可结束，其余传 null 隐藏该项。 */
   onEndSession: (() => void) | null;
   onClose: () => void;
@@ -123,22 +121,17 @@ export function CardContextMenu({
         <ArchiveIcon archived={archived} />
         {archived ? t.sticker.unarchive : t.sticker.archive}
       </button>
-      <div className="ctx-sep" role="separator" />
-      <button type="button" role="menuitem" className="ctx-item" onClick={act(onNewSession)}>
-        <PlusIcon />
-        {t.sticker.newSession}
-      </button>
-      {(onOpenDir || onAddDir) && <div className="ctx-sep" role="separator" />}
+      {onSelectMode && (
+        <button type="button" role="menuitem" className="ctx-item" onClick={act(onSelectMode)}>
+          <CheckIcon />
+          {t.chat.selectMode}
+        </button>
+      )}
+      {onOpenDir && <div className="ctx-sep" role="separator" />}
       {onOpenDir && (
         <button type="button" role="menuitem" className="ctx-item" onClick={act(onOpenDir)}>
           <FolderIcon />
           {t.sticker.openProjectDir}
-        </button>
-      )}
-      {onAddDir && (
-        <button type="button" role="menuitem" className="ctx-item" onClick={act(onAddDir)}>
-          <FolderPlusIcon />
-          {t.chat.addExtraDir}
         </button>
       )}
       {onEndSession && (

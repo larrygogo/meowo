@@ -18,6 +18,13 @@ vi.mock("@tauri-apps/api/window", () => ({
 vi.mock("./ManagedTerminal", () => ({
   ManagedTerminal: (props: { sessionId: number }) => <div>PTY {props.sessionId}</div>,
 }));
+// 这里只验顶栏入口到受控页签的接线；文件树/diff 内容由 GitDiffView 的组件测试覆盖，
+// 不把懒加载 chunk 的时序变成全量测试的不稳定因素。
+vi.mock("./chat/GitDiffView", () => ({
+  GitDiffView: ({ activeTab }: { activeTab: "changes" | "files" }) => activeTab === "files"
+    ? <input placeholder="搜索文件名或内容…" />
+    : <div>工作区没有改动</div>,
+}));
 
 import { ChatWindow } from "./ChatWindow";
 import { markRemoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
@@ -40,7 +47,7 @@ function runningSessionImpl(command: string, args?: Record<string, unknown>): Pr
     return Promise.resolve([{
       session: { id: 7, cc_session_id: "cc-7", status: "running", last_event_at: Date.now() },
       task_title: "门控用例", project_name: "repo", cwd: "C:/repo", provider: "claude",
-      connected: true, pending_review: null, busy_subagents: 0, extra_dirs: [],
+      connected: true, pending_review: null, busy_subagents: 0,
     }]);
   }
   if (command === "get_chat_history") {
@@ -55,6 +62,8 @@ function runningSessionImpl(command: string, args?: Record<string, unknown>): Pr
     return Promise.resolve(h);
   }
   if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+  if (command === "git_diff_summary") return Promise.resolve({ gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null, files: [] });
+  if (command === "list_dir_entries") return Promise.resolve([]);
   if (command === "managed_terminal_binding") return Promise.resolve(null);
   if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 7, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
   return Promise.resolve();
@@ -75,7 +84,29 @@ afterEach(() => {
 });
 
 describe("ChatWindow 远程门控", () => {
-  it("桌面态:终端页签与改动入口都在场", async () => {
+  // 有待回答的提问、却既没有 broker 题面也没认出终端表单：手机上没有终端页可去，
+  // 卡里直接给终端画面和按键，不再写「请在桌面端作答」（用户实拍反馈）。
+  it("手机远程:认不出的提问给终端画面与按键,按键写进终端", async () => {
+    markRemoteUi();
+    setNarrow(false);
+    window.history.replaceState({}, "", "/?sessionId=7");
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") {
+        return (runningSessionImpl(command, args) as Promise<Record<string, unknown>>)
+          .then((h) => ({ ...h, status: "waiting", pendingReview: "question" }));
+      }
+      if (command === "managed_terminal_screen") return Promise.resolve(["", " > 1. 深色界面", "   2. 浅色界面", ""]);
+      return runningSessionImpl(command, args);
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText("没认出选项，可直接操作终端")).toBeTruthy();
+    expect(screen.queryByText("请在桌面端作答，完成后本卡自动关闭")).toBeNull();
+    expect(await screen.findByText(/1\. 深色界面/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "↓" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "\x1b[B" }));
+  });
+
+  it("桌面态:文件/改动入口直达同一面板的对应页签", async () => {
     window.history.replaceState({}, "", "/?sessionId=7");
     runningSessionWithRepo();
     render(<ChatWindow />);
@@ -83,10 +114,14 @@ describe("ChatWindow 远程门控", () => {
 
     expect(screen.getByRole("button", { name: "终端" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "对话" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "查看改动" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "文件" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "文件" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(await screen.findByPlaceholderText("搜索文件名或内容…")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "查看改动" }));
+    expect(await screen.findByText("工作区没有改动")).toBeTruthy();
   });
 
-  it("宽屏远程:保留停靠侧栏,隐藏终端页签与改动入口", async () => {
+  it("宽屏远程:保留停靠侧栏,隐藏终端页签与文件入口,改动入口放行", async () => {
     markRemoteUi();
     setNarrow(false);
     window.history.replaceState({}, "", "/?sessionId=7");
@@ -97,7 +132,9 @@ describe("ChatWindow 远程门控", () => {
     expect(screen.getByRole("button", { name: "收起会话列表" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "终端" })).toBeNull();
     expect(screen.queryByRole("button", { name: "对话" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "查看改动" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "文件" })).toBeNull();
+    // 改动列表按用户决定放行（remote.rs 模块头「例外」，后端收口到会话目录与改动清单）。
+    expect(await screen.findByRole("button", { name: "查看改动" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();
   });
 
@@ -118,6 +155,99 @@ describe("ChatWindow 远程门控", () => {
     await screen.findByText("继续桌面上的工作");
     expect(screen.queryByRole("combobox", { name: "发送消息给 Agent" })).toBeNull();
     expect(localStorage.getItem("meowo-remote-last-session")).toBeNull();
+  });
+
+  // 进会话压一条历史记录：Safari 左缘右滑 / 安卓返回键（= 浏览器后退）回到会话列表，
+  // 而不是退出整个页面（用户问「会话页向右滑能不能返回」）。
+  it("手机远程:浏览器后退(右滑返回)从会话回到列表", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    await waitFor(() => expect((window.history.state as { meowoChat?: boolean } | null)?.meowoChat).toBe(true));
+    window.history.back();
+    await screen.findByText("继续桌面上的工作");
+    expect(screen.queryByRole("combobox", { name: "发送消息给 Agent" })).toBeNull();
+  });
+
+  // 看过的会话再进：直接用快照出画面（对照 Kimi 的会话池），只从记住的 offset 续读增量，
+  // 不再整读（offset=0）——手机上「返回列表再点回来」此前次次骨架屏重读整段。
+  it("手机远程:返回列表再进同一会话,直接出内容且只读增量", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await screen.findByText("在跑");
+    fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
+    await screen.findByText("继续桌面上的工作");
+    const fullReads = () => invoke.mock.calls.filter(([c, a]) => c === "get_chat_history" && (a as { offset: number }).offset === 0).length;
+    const before = fullReads();
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    // 同步可见：不经骨架屏、不等任何请求。
+    expect(screen.getByText("在跑")).toBeTruthy();
+    expect(document.querySelector(".chat-loading")).toBeNull();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 7, offset: 10 })));
+    expect(fullReads()).toBe(before);
+  });
+
+  // 列表上按下即预取首屏（对照 Kimi 的 prefetchMainTranscript）：点进去时接过同一发请求，
+  // 不重复整读；读完再点则直接用快照出画面。
+  it("手机远程:按下列表项即预取,点进去不重复整读", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    const item = await screen.findByRole("button", { name: /门控用例/ });
+    const fullReads = () => invoke.mock.calls.filter(([c, a]) => c === "get_chat_history" && (a as { sessionId: number; offset: number }).sessionId === 7 && (a as { offset: number }).offset === 0).length;
+    expect(fullReads()).toBe(0);
+    fireEvent.pointerDown(item);
+    expect(fullReads()).toBe(1);
+    fireEvent.click(item);
+    await screen.findByText("在跑");
+    expect(fullReads()).toBe(1);
+  });
+
+  // 首读未回时顶栏先摆列表里的真实标题（对照 Kimi），不是通用的「会话对话」占位。
+  it("手机远程:点进会话首读未回时,顶栏已是该会话标题", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return new Promise(() => {});
+      return runningSessionImpl(command, args);
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await waitFor(() => expect(document.querySelector(".chat-bar .chat-title")?.textContent).toBe("门控用例"));
+    expect(document.querySelector(".chat-bar .chat-title-menu")?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  // 回合在跑时手机占位也要说清发出去会怎样（此前一律「发消息给 Agent」，发完才知道排没排队）。
+  it("手机远程:回合运行中,输入框占位说明发送后的去向", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await screen.findByText("在跑");
+    const box = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    await waitFor(() => expect(box.getAttribute("placeholder")).not.toBe("发消息给 Agent"));
+    expect(["发送会插入当前回合，不打断它", "发送后排队，当前任务结束再发", "当前任务结束后才能发送"]).toContain(box.getAttribute("placeholder"));
+  });
+
+  // 手机没有 Ctrl+Shift+F 也没有命令面板：标题菜单是对话内搜索唯一的入口（Kimi 手机上可搜）。
+  it("手机远程:标题菜单可打开对话内搜索", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await screen.findByText("在跑");
+    fireEvent.click(document.querySelector(".chat-bar .chat-title-btn") as HTMLElement);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "在对话中搜索" }));
+    expect(await screen.findByLabelText("在对话中搜索")).toBeTruthy();
   });
 
   it("远程态:新建会话事件选中临时 id(启动中占位),binding 认领后落到真会话", async () => {
@@ -168,6 +298,41 @@ describe("ChatWindow 远程门控", () => {
       expect(container.querySelector(".chat-topbar")).toBeNull();
       expect(container.querySelector(".chat-window.is-remote-compact")).toBeTruthy();
       expect(container.querySelector(".chat-bar .chat-sidebar-open")).toBeTruthy();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+});
+
+describe("ChatWindow 远程底部面板", () => {
+  /// 对照 Kimi 手机端：键盘弹起后输入框上方放不下菜单，斜杠命令改走底部面板。面板自带搜索框，
+  /// 与输入框共用同一份文本；没有命中也不收（边打边消失的搜索框没法用）；Esc 只收面板、不丢字。
+  it("手机上打 / 弹出命令面板，搜索框与输入框同一份文本", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      markRemoteUi();
+      window.history.replaceState({}, "", "/?sessionId=7");
+      runningSessionWithRepo();
+      render(<ChatWindow />);
+      await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+      const composer = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+      fireEvent.change(composer, { target: { value: "/" } });
+      const search = await screen.findByRole("textbox", { name: "搜索命令" }) as HTMLInputElement;
+      expect(screen.getByRole("dialog", { name: "命令" })).toBeTruthy();
+      expect(search.value).toBe("/");
+
+      fireEvent.change(search, { target: { value: "/xyz" } });
+      expect(screen.getByText("没有匹配的命令")).toBeTruthy();
+      expect(composer.value).toBe("/xyz");
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "命令" })).toBeNull());
+      expect(composer.value).toBe("/xyz");
     } finally {
       window.matchMedia = original;
     }

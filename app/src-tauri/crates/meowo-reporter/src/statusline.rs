@@ -26,6 +26,12 @@ pub fn record(store: &Store, input: &str, now_ms: i64) {
         .and_then(|m| m.get("display_name"))
         .and_then(|x| x.as_str());
     let _ = store.set_session_context(sid, used_pct, window, model, now_ms);
+    // 思考程度（2.1.314 起 statusline 带 `effort.level`，仅模型支持时才有）：缺字段即清空。
+    let effort = v
+        .get("effort")
+        .and_then(|e| e.get("level"))
+        .and_then(|x| x.as_str());
+    let _ = store.set_session_effort(sid, effort);
 }
 
 /// 无下游 statusLine 时 meowo-reporter 自渲染的极简状态栏：`<模型> · NN% ctx`。
@@ -69,6 +75,19 @@ mod tests {
             .unwrap();
         assert_eq!(s.context_pct, Some(42));
         assert_eq!(s.context_window, Some(1_000_000));
+    }
+
+    /// 2.1.314 起 statusline 带 `effort.level`（仅模型支持思考程度时）：记下；换到不支持的
+    /// 模型后字段消失，旧档位必须清掉。
+    #[test]
+    fn record_tracks_effort_and_clears_it_when_absent() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let _ = store.start_session(pid, "s-eff", 1).unwrap();
+        record(&store, r#"{"session_id":"s-eff","model":{"display_name":"Opus 5.5"},"effort":{"level":"high"}}"#, 100);
+        assert_eq!(store.session_context("s-eff").unwrap().effort.as_deref(), Some("high"));
+        record(&store, r#"{"session_id":"s-eff","model":{"display_name":"Haiku 4.5"}}"#, 200);
+        assert_eq!(store.session_context("s-eff").unwrap().effort, None);
     }
 
     #[test]

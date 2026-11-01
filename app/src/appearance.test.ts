@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { STICKER_COLORS, STICKER_COLOR_KEYS, bootAppearance, stickerBgRgb } from "./appearance";
+import { STICKER_COLORS, STICKER_COLOR_KEYS, bootAppearance, setRemoteThemeMode, stickerBgRgb } from "./appearance";
+import { markRemoteUi, REMOTE_SETTINGS_EVENT } from "./remoteMode";
 
 describe("stickerBgRgb", () => {
   it("已知预设按主题取深/浅一套底色 RGB", () => {
@@ -77,5 +78,42 @@ describe("bootAppearance 的界面缩放（--cc-ui）下发", () => {
     // 越界值按 settings.rs 的 50–200 钳位（手改 settings.json 的兜底）。
     listenHandlers[0]({ payload: { ui_scale: 500 } });
     expect(document.documentElement.style.getPropertyValue("--cc-ui")).toBe("2");
+  });
+});
+
+// 手机远程页的明暗只记在手机本地（用户要求：手机与桌面使用环境不同）：桌面设置改主题
+// 不带动手机，手机上选了什么就是什么；默认跟随手机系统。
+describe("远程页明暗模式独立于桌面设置", () => {
+  let systemLight = false;
+  beforeEach(() => {
+    localStorage.clear();
+    systemLight = false;
+    window.matchMedia = vi.fn().mockImplementation(() => ({
+      get matches() { return systemLight; },
+      addEventListener: () => {},
+    }));
+    markRemoteUi();
+  });
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+    document.body.classList.remove("remote-ui");
+    document.documentElement.removeAttribute("data-theme");
+    localStorage.clear();
+  });
+
+  it("默认跟随手机系统，桌面设成深色也不跟", () => {
+    systemLight = true;
+    bootAppearance({ scale: false });
+    window.dispatchEvent(new CustomEvent(REMOTE_SETTINGS_EVENT, { detail: { theme: "dark" } }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("手机上选定的模式立即生效并记住，桌面改主题不覆盖", () => {
+    bootAppearance({ scale: false });
+    setRemoteThemeMode("light");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    window.dispatchEvent(new CustomEvent(REMOTE_SETTINGS_EVENT, { detail: { theme: "dark" } }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(localStorage.getItem("meowo.remote.theme")).toBe("light");
   });
 });

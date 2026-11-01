@@ -29,7 +29,6 @@ import { useT, repairFailMessage } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { useEscClose } from "../hooks/useEscClose";
 import { remoteUi } from "../remoteMode";
-import { isMac } from "../platform";
 
 function FolderIcon() {
   return (
@@ -119,9 +118,6 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
   // 启动选项的选择（option id → choice id）。选项表由插件经 descriptor 声明；换 agent 清空
   // ——不同 agent 的选项 id 可能撞名（如都叫 approval）但语义不同，残留会串。
   const [opts, setOpts] = useState<Record<string, string>>({});
-  // 附加目录(一个需求跨 N 仓 = 一个会话 + --add-dir):agent 在同一上下文里看到
-  // 所有仓,跨仓改动自己协调——不必开 N 个会话再让用户当人肉消息总线。
-  const [extraDirs, setExtraDirs] = useState<string[]>([]);
   // null = 尚未拿到账号（或取不到）→ 不显示未登录提示，避免误闪/误报。
   const [loggedIn, setLoggedIn] = useState<Record<string, boolean> | null>(null);
   // 各 provider 当前活跃账号的展示名（null = 默认账号）。非默认账号活跃时在启动按钮旁提示，
@@ -236,22 +232,6 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
       setProvider(avail[0]);
     }
   }, [avail, provider]);
-  // 附加目录只对声明支持的 agent 开放(claude --add-dir);切到不支持的 agent 时清空,
-  // 静默带过去会让后端如实拒绝、启动直接报错。
-  const supportsExtraDirs = agents?.find((a) => a.id === provider)?.supports_extra_dirs ?? false;
-  useEffect(() => {
-    if (!supportsExtraDirs) setExtraDirs([]);
-  }, [supportsExtraDirs]);
-  const toggleExtraDir = (dir: string) => {
-    const key = pathKey(dir);
-    if (key === pathKey(normalizePath(cwd.trim()))) return; // 主目录不重复附加
-    setExtraDirs((prev) =>
-      prev.some((x) => pathKey(x) === key) ? prev.filter((x) => pathKey(x) !== key) : [...prev, dir]);
-  };
-  async function pickExtraDir() {
-    const picked = await open({ directory: true });
-    if (typeof picked === "string") toggleExtraDir(normalizePath(picked));
-  }
   // 换 agent 重置选择（不同 agent 的选项 id 可能撞名但语义不同，残留会串），
   // 但优先回填本 provider 上次的选择——见 LAUNCH_OPTS_KEY。
   useEffect(() => setOpts(loadStoredOpts()[provider] ?? {}), [provider]);
@@ -314,9 +294,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
       // 输入框里躺的是用户原样粘的串:资源管理器「复制为路径」带引号,后端按字面
       // 找不到(7T-4)。只剥引号,不动斜杠方向——发给后端的 cwd 保持用户写法。
       const dir = unquotePath(cwd);
-      // 附加目录剔除与主目录重复的(归一比较):agent 对同一目录拿两份授权无意义。
-      const extras = extraDirs.filter((d) => pathKey(d) !== pathKey(dir));
-      const tempId = await newSession(dir, provider, opts, extras);
+      const tempId = await newSession(dir, provider, opts);
       saveStoredOpts(provider, opts); // 启动成功才记：失败的组合不该成为下次的默认
       // 「正在启动」的可见反馈由看板的占位卡承担（后端把 pending PTY 合成负 id 占位项
       // 合入看板查询，认领出真卡后对账撤下），面板这里启动成功直接自关即可。
@@ -401,22 +379,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
 
       <div className="ns-body">
         <label className="ns-field">
-          <span className="ns-label ns-label-row">
-            {t.newSession.dir}
-            {/* 附加目录:跨仓同一需求开**一个**会话(agent 在同一上下文里协调所有仓),
-                每个附加目录以 --add-dir 进 argv。最近列表 Ctrl+点击可快捷附加。 */}
-            {supportsExtraDirs && (
-              <button
-                type="button"
-                className="ns-extra-add"
-                data-testid="ns-extra-add"
-                data-tip={t.newSession.extraDirsTip}
-                onClick={(e) => { e.preventDefault(); void pickExtraDir(); }}
-              >
-                + {t.newSession.extraDirsAdd}
-              </button>
-            )}
-          </span>
+          <span className="ns-label">{t.newSession.dir}</span>
           <div className="ns-picker">
             <div className="ns-dir-row">
               <input
@@ -445,21 +408,6 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                 </button>
               )}
             </div>
-            {extraDirs.length > 0 && (
-              <div className="ns-extra-list" data-testid="ns-extra-list">
-                {extraDirs.map((d) => (
-                  <span key={d} className="ns-extra-chip" data-tip={d}>
-                    {d.split(/[\\/]/).filter(Boolean).pop() ?? d}
-                    <button
-                      type="button"
-                      className="ns-extra-x"
-                      aria-label={t.newSession.extraDirRemove}
-                      onClick={(e) => { e.preventDefault(); setExtraDirs((prev) => prev.filter((x) => x !== d)); }}
-                    >×</button>
-                  </span>
-                ))}
-              </div>
-            )}
             {browse && (
               <div className="ns-dirbrowse" data-testid="ns-dirbrowse">
                 <div className="ns-dirbrowse-head">
@@ -518,17 +466,9 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                     className={
                       "ns-recent-item"
                       + (cwdNorm === r ? " is-on" : "")
-                      + (extraDirs.some((x) => pathKey(x) === pathKey(r)) ? " is-extra" : "")
                     }
-                    data-tip={supportsExtraDirs ? `${r}\n${isMac() ? t.newSession.extraDirsHintMac : t.newSession.extraDirsHint}` : r}
-                    onClick={(e) => {
-                      // Ctrl/Cmd+点击 = 加为/移出附加目录(与侧栏多选同一手势);普通点击 = 设主目录。
-                      if (supportsExtraDirs && (e.ctrlKey || e.metaKey)) {
-                        toggleExtraDir(r);
-                        return;
-                      }
-                      setCwd(r);
-                    }}
+                    data-tip={r}
+                    onClick={() => setCwd(r)}
                   >
                     <FolderIcon />
                     <span className="ns-recent-name">{r.split(/[\\/]/).filter(Boolean).pop() ?? r}</span>
@@ -612,7 +552,9 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                       label: t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label,
                       // 高风险档（契约 risk=true）警示色 + 副标题，与普通档拉开视觉。
                       risky: choice.risk,
-                      sub: choice.risk ? t.newSession.riskyChoiceSub : undefined,
+                      // 每档配一行后果说明；没配说明的高风险档退回通用风险提示。
+                      sub: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
+                        ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
                     }))}
                     onChange={(v) => setOpts((m) => ({ ...m, [option.id]: v }))}
                   />

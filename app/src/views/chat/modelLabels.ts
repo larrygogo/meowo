@@ -81,3 +81,24 @@ export function applyLearnedLabels<T extends { id: string; label: string }>(
     return label ? { ...preset, label } : preset;
   });
 }
+
+/**
+ * 当前模型对应哪个预设（菜单打勾用）。CLI 报出的当前模型名常比菜单标签多出小版本号
+ * （状态行是 "Opus 5.5"、菜单写 "Opus 5"，实拍），整串比对就一个都勾不上。先比规范化后的
+ * 全名；不中再按「当前名包含别名」取最长的别名（与 applyLearnedLabels 同一口径）。
+ */
+export function currentPresetId<T extends { id: string; label: string }>(presets: T[], current: string | null | undefined): string | null {
+  if (!current) return null;
+  const wanted = normalize(current);
+  const exact = presets.find((preset) => normalize(preset.label) === wanted || normalize(preset.id) === wanted);
+  if (exact) return exact.id;
+  // 带分组前缀的别名（kimi `反向推理/DeepSeek-V4.1-Flash-1017`）：CLI 报的当前模型只是斜杠后那段。
+  const suffix = presets.find((preset) => preset.id.includes("/") && normalize(preset.id.slice(preset.id.lastIndexOf("/") + 1)) === wanted);
+  if (suffix) return suffix.id;
+  let best: T | null = null;
+  for (const preset of presets) {
+    const id = normalize(preset.id);
+    if (id && wanted.includes(id) && (!best || id.length > normalize(best.id).length)) best = preset;
+  }
+  return best?.id ?? null;
+}

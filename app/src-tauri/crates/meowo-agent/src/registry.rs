@@ -17,6 +17,41 @@ pub struct ModelPreset {
     pub label: &'static str,
 }
 
+/// 分叉会话的方式（对照 Kimi 桌面版会话菜单的「分叉会话」：从这里另开一条线试别的方向，
+/// 原会话原样保留）。各家 CLI 都有原生分叉，带着完整上下文（工具结果、思考），比渲染出来的
+/// 交接摘要保真，故不走 handoff。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForkMode {
+    /// 启动参数直接分叉：`<before> <会话id> <after>` 接在启动 argv（含回放的启动选项）之后。
+    Args {
+        before: &'static [&'static str],
+        after: &'static [&'static str],
+    },
+    /// 先跑一条非交互命令复制出新会话（`<启动 argv> <args> [<cwd_flag> <目录>] <会话id>`），
+    /// 从输出里按 `new_id_pattern`（捕获组 1）取新会话 id，再按 resume_args 打开它。
+    Command {
+        args: &'static [&'static str],
+        cwd_flag: Option<&'static str>,
+        new_id_pattern: &'static str,
+    },
+}
+
+/// 用户本机配置里的一个模型（对照 Kimi 桌面版的模型菜单：直接读 CLI 的配置文件列出，
+/// 不必先让 CLI 弹一次菜单）。与 [`ModelPreset`] 不同：这是用户自己增删的，宿主不维护。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ModelCatalogEntry {
+    /// CLI 认的模型别名（kimi `[models."<别名>"]`）。
+    pub id: String,
+    /// 展示名（kimi `display_name`；缺省回退别名）。CLI 自己的菜单也显示它，自动选中按它对。
+    pub label: String,
+    /// 分组（kimi 的 `provider`，如 `managed:kimi-code`）；菜单按它分段。
+    pub group: Option<String>,
+    /// 该模型支持的思考档位（kimi `support_efforts`）；空 = 未声明。
+    pub efforts: Vec<String>,
+}
+
 /// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
 pub trait AgentPlugin: Sync {
     fn id(&self) -> AgentId;
@@ -51,10 +86,8 @@ pub trait AgentPlugin: Sync {
         &[]
     }
 
-    /// 「附加目录」flag：一个会话访问多个目录（跨仓同一需求 = 一个 agent 一个上下文，
-    /// 每个附加目录以 `<flag> <dir>` 一对追加进启动/恢复 argv，claude 为 `--add-dir`）。
-    /// None = 不支持，新建面板不给附加入口——给出走不通的入口比不给更糟。
-    fn extra_dir_flag(&self) -> Option<&'static str> {
+    /// 分叉会话的方式（见 [`ForkMode`]）。None = 不支持，前端不给入口。
+    fn fork_mode(&self) -> Option<ForkMode> {
         None
     }
 
@@ -111,6 +144,11 @@ pub trait AgentPlugin: Sync {
     }
 
     fn queue_input(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// 见 [`crate::chat_ui::QueueDelivery`]。只在取证过的插件里声明。
+    fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
         None
     }
 
@@ -242,12 +280,26 @@ pub trait AgentPlugin: Sync {
             interrupt_input: self.interrupt_input(),
             interrupt_presses: self.interrupt_presses(),
             queue_input: self.queue_input(),
+            queue_delivery: self.queue_delivery(),
             newline_input: self.newline_input(),
             runtime_commands_pending,
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
             clipboard_paste_input: self.clipboard_paste_input(ctx.version),
             status_line_pattern: self.status_line_pattern(),
+            retry_line_pattern: self.retry_line_pattern(),
+            effort: self.effort_control(),
+            undo: self.undo_control(),
+            side_question: self.side_question(),
+            fork: self.fork_mode().is_some(),
+            resume_command: if self.resume_args().is_empty() {
+                Vec::new()
+            } else {
+                std::iter::once(self.launch_stem())
+                    .chain(self.resume_args().iter().copied())
+                    .map(str::to_string)
+                    .collect()
+            },
             draft_stash: self.draft_stash(),
             version: ctx.version.map(str::to_string),
         }
@@ -274,6 +326,26 @@ pub trait AgentPlugin: Sync {
     /// 终端界面运行中状态行的匹配正则（见 [`ChatUi::status_line_pattern`]）。默认不声明：
     /// 没取证过的 CLI 不猜它的状态行长什么样。
     fn status_line_pattern(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// 自动重试行的匹配正则（见 [`ChatUi::retry_line_pattern`]）。默认不声明。
+    fn retry_line_pattern(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// 思考程度切换（见 [`ChatUi::effort`]）。默认不声明。
+    fn effort_control(&self) -> Option<crate::chat_ui::EffortControl> {
+        None
+    }
+
+    /// 撤回最近几轮（见 [`ChatUi::undo`]）。默认不声明。
+    fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
+        None
+    }
+
+    /// 侧问（见 [`ChatUi::side_question`]）。默认不声明。
+    fn side_question(&self) -> Option<crate::chat_ui::SideQuestion> {
         None
     }
 
@@ -366,6 +438,12 @@ pub trait AgentPlugin: Sync {
     /// 返回的是**追加在启动 argv 之后**的参数（不含可执行本身）。输出按行解析，空行忽略。
     fn model_list_command(&self) -> Option<&'static [&'static str]> {
         None
+    }
+
+    /// 直接读 CLI 配置文件得到的模型目录（见 [`ModelCatalogEntry`]）。`env` 是该会话的
+    /// 启动环境（多账号时数据目录由环境变量指向别处）。默认没有：配置格式未取证的 CLI 不猜。
+    fn model_catalog(&self, _env: &[(String, String)]) -> Vec<ModelCatalogEntry> {
+        Vec::new()
     }
 
     /// PermissionRequest hook 的决策输出会被该 agent **采纳**（阻塞式审批，如 claude/codex 的
@@ -514,11 +592,14 @@ pub trait AgentPlugin: Sync {
             return i.launch_argv();
         }
         // 连默认落点都推不出（home 缺失）：回退首选变体声明的裸名。
-        let stem = self
-            .variants()
+        vec![self.launch_stem().to_string()]
+    }
+
+    /// 首选变体声明的裸可执行名（`claude` / `kimi` …），用户在自己终端里敲的那个。
+    fn launch_stem(&self) -> &'static str {
+        self.variants()
             .first()
-            .map_or(self.id().as_str(), |v| v.launch.stem);
-        vec![stem.to_string()]
+            .map_or(self.id().as_str(), |v| v.launch.stem)
     }
 
     /// 恢复断开会话的完整 argv = 启动 argv + resume 子命令 + session_id。
@@ -768,6 +849,22 @@ mod tests {
         // 仍是精确 basename 比对，不做子串匹配。
         assert!(!gemini.owns_process("nodemon"));
         assert!(!gemini.owns_process("node-gyp.exe"));
+    }
+
+    /// 「复制恢复命令」的前缀用裸可执行名：用户在自己终端里敲的是 `claude`，不是安装路径。
+    /// 前端测试夹具（src/test/agents.ts 的 resume_command）与此同源。
+    #[test]
+    fn resume_command_prefix_uses_bare_stem() {
+        let cases = [
+            (crate::id::CLAUDE, "claude"),
+            (crate::id::KIMI, "kimi"),
+            (crate::id::CODEX, "codex"),
+            (crate::id::GEMINI, "gemini"),
+            (crate::id::OPENCODE, "opencode"),
+        ];
+        for (id, stem) in cases {
+            assert_eq!(by_id(id.as_str()).unwrap().launch_stem(), stem, "{id}");
+        }
     }
 
     /// resume argv = 启动 argv + 该 agent 声明的 resume 子命令 + session_id。

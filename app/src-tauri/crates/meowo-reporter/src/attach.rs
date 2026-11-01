@@ -26,7 +26,7 @@ pub(crate) fn request_approval(
     // 而不是走 PermissionRequest 的自动放行。
     pre_tool_use: bool,
 ) -> Option<ApprovalDecision> {
-    let (endpoint, token, protocol) = approval_broker()?;
+    let primary = approval_broker()?;
     let request_id = format!(
         "{}-{:x}",
         std::process::id(),
@@ -59,33 +59,81 @@ pub(crate) fn request_approval(
         permission_suggestions: permission_suggestions.to_vec(),
         pre_tool_use,
     };
+    match send_approval(&primary, &payload) {
+        ApprovalAttempt::Answered(decision) => decision,
+        // 环境变量里的 broker 连不上或当场拒了凭据：多半是 Meowo 重启过（升级安装后
+        // 重开），会话进程却还活着、托管终端也被新实例接着用——env 记的是旧实例的端口
+        // 和 scoped token。不退回 discovery 的话，这个会话此后每一次审批/提问都漏接，
+        // 只剩终端里的表单（实拍：手机端卡在「请在桌面端作答」）。discovery 文件由当前
+        // 活着的实例写、带判活。只在**端点不同**（换过实例）时退回：同一实例拒了 scoped
+        // token 是跨会话提交的防线（见 app 侧 handle_approval），不能拿 full token 绕过。
+        ApprovalAttempt::Unreachable => match discovery_broker() {
+            Some(fallback) if fallback.0 != primary.0 => match send_approval(&fallback, &payload) {
+                ApprovalAttempt::Answered(decision) => decision,
+                ApprovalAttempt::Unreachable => None,
+            },
+            _ => None,
+        },
+    }
+}
+
+/// 一次审批请求的结局。Unreachable 只表示「这个 broker 根本没受理」（连不上、握手写失败、
+/// 或建连后立刻被关——凭据不对时 broker 不回任何字节就断开），可以换一个 broker 再试；
+/// Answered 表示对端受理过（含等满超时无人作答的 None），绝不重试，免得让用户等两轮。
+enum ApprovalAttempt {
+    Unreachable,
+    Answered(Option<ApprovalDecision>),
+}
+
+/// 判「当场被拒」的时限：凭据错误时 broker 校验后立即断开，远小于此；真等用户作答至少
+/// 也是人的反应时间。空响应且早于它返回 = 没受理。
+const REJECTED_WITHIN: Duration = Duration::from_secs(3);
+
+fn send_approval(broker: &(String, String, u16), payload: &ApprovalRequest) -> ApprovalAttempt {
+    let (endpoint, token, protocol) = broker;
+    let Some(addr) = endpoint.to_socket_addrs().ok().and_then(|mut a| a.next()) else {
+        return ApprovalAttempt::Unreachable;
+    };
     // 305s 读超时是给**用户**决策留的时间，前提是对端确实是 Meowo。建连则必须有独立上限：
     // 裸 connect 在对端端口被无关进程回收时会一直挂着，把 PermissionRequest hook 拖满
     // 310s（install-hooks.mjs 为审批放宽的上限），期间 agent 完全卡死。
-    let addr = endpoint.to_socket_addrs().ok()?.next()?;
-    let mut stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).ok()?;
-    stream
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) else {
+        return ApprovalAttempt::Unreachable;
+    };
+    if stream
         .set_write_timeout(Some(Duration::from_secs(2)))
-        .ok()?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(305)))
-        .ok()?;
-    if protocol >= CURRENT_PROTOCOL_VERSION {
+        .and_then(|_| stream.set_read_timeout(Some(Duration::from_secs(305))))
+        .is_err()
+    {
+        return ApprovalAttempt::Unreachable;
+    }
+    let started = std::time::Instant::now();
+    let written = if *protocol >= CURRENT_PROTOCOL_VERSION {
         write_v2_handshake(
             &mut stream,
             &BrokerRequest::Approval {
-                token,
-                request: payload,
+                token: token.clone(),
+                request: payload.clone(),
             },
         )
-        .ok()?;
+        .is_ok()
     } else {
-        let handshake = encode_legacy_approval(&token, &payload).ok()?;
-        stream.write_all(handshake.as_bytes()).ok()?;
+        encode_legacy_approval(token, payload)
+            .ok()
+            .is_some_and(|handshake| stream.write_all(handshake.as_bytes()).is_ok())
+    };
+    if !written {
+        return ApprovalAttempt::Unreachable;
     }
     let mut response = String::new();
-    stream.read_to_string(&mut response).ok()?;
-    ApprovalDecision::from_wire(&response)
+    let read = stream.read_to_string(&mut response);
+    if response.trim().is_empty() && started.elapsed() < REJECTED_WITHIN {
+        return ApprovalAttempt::Unreachable;
+    }
+    if read.is_err() {
+        return ApprovalAttempt::Answered(None);
+    }
+    ApprovalAttempt::Answered(ApprovalDecision::from_wire(&response))
 }
 
 fn approval_broker() -> Option<(String, String, u16)> {
@@ -102,6 +150,11 @@ fn approval_broker() -> Option<(String, String, u16)> {
         }
         _ => {}
     }
+    discovery_broker()
+}
+
+/// 当前活着的 Meowo 实例写下的 broker 地址（`~/.meowo` 的 discovery 文件）。
+fn discovery_broker() -> Option<(String, String, u16)> {
     let path = crate::db_path()?.parent()?.join(APPROVAL_BROKER_FILE);
     let discovery: BrokerDiscovery = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     if discovery.endpoint.is_empty() || discovery.token.is_empty() {
@@ -424,6 +477,64 @@ pub(crate) fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_request() -> ApprovalRequest {
+        ApprovalRequest {
+            session_id: 7,
+            request_id: "req-12345678".into(),
+            provider: "claude".into(),
+            tool_name: "AskUserQuestion".into(),
+            description: None,
+            input: String::new(),
+            permission_suggestions: vec![],
+            pre_tool_use: true,
+        }
+    }
+
+    /// 起一个只接一次连接的假 broker：读完握手后按 reply 回包（None = 不回字节直接断开，
+    /// 即凭据不对时 broker 的行为）。
+    fn fake_broker(reply: Option<&'static str>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            // 读干净整段握手再回包：留着未读字节就关闭，Windows 会发 RST，客户端读不到回包。
+            stream
+                .set_read_timeout(Some(Duration::from_millis(300)))
+                .unwrap();
+            let mut buf = [0u8; 4096];
+            while matches!(stream.read(&mut buf), Ok(n) if n > 0) {}
+            if let Some(reply) = reply {
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        endpoint
+    }
+
+    /// 换过 Meowo 实例后 env 里的 broker 失效：连不上与「当场拒收」都要判成 Unreachable，
+    /// 调用方才会退回 discovery；对端受理并作答的照常返回决定。
+    #[test]
+    fn send_approval_tells_unreachable_from_answered() {
+        let dead = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().to_string()
+        };
+        let request = sample_request();
+        assert!(matches!(
+            send_approval(&(dead, "t".into(), CURRENT_PROTOCOL_VERSION), &request),
+            ApprovalAttempt::Unreachable
+        ));
+        let rejecting = fake_broker(None);
+        assert!(matches!(
+            send_approval(&(rejecting, "t".into(), CURRENT_PROTOCOL_VERSION), &request),
+            ApprovalAttempt::Unreachable
+        ));
+        let answering = fake_broker(Some("allow\n"));
+        assert!(matches!(
+            send_approval(&(answering, "t".into(), CURRENT_PROTOCOL_VERSION), &request),
+            ApprovalAttempt::Answered(Some(ApprovalDecision::Allow))
+        ));
+    }
 
     #[test]
     fn parses_exact_flag_values() {

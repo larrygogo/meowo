@@ -27,6 +27,8 @@ struct ChatMtimeEntry {
     /// 上次解析的 transcript 路径。跨 profile 恢复会把会话文件复制到另一个数据目录，
     /// 路径解析随 mtime 切到新文件——字节偏移是对旧文件的记账，必须察觉切换并全量重读。
     path: std::path::PathBuf,
+    /// 计划可能早于已加载的历史窗口，不能靠增量 items 在每次轮询里重新发现。
+    plan: Option<String>,
 }
 
 impl ChatMtimes {
@@ -43,14 +45,21 @@ impl ChatMtimes {
         seen_version: Option<u64>,
         mtime: std::time::SystemTime,
         path: std::path::PathBuf,
+        plan: Option<String>,
     ) {
         if self.entries.get(&session_id).map(|e| e.version) != seen_version {
             return;
         }
-        self.put(session_id, mtime, path);
+        self.put(session_id, mtime, path, plan);
     }
 
-    fn put(&mut self, session_id: i64, mtime: std::time::SystemTime, path: std::path::PathBuf) {
+    fn put(
+        &mut self,
+        session_id: i64,
+        mtime: std::time::SystemTime,
+        path: std::path::PathBuf,
+        plan: Option<String>,
+    ) {
         self.tick += 1;
         let version = self.tick;
         self.entries.insert(
@@ -59,6 +68,7 @@ impl ChatMtimes {
                 mtime,
                 version,
                 path,
+                plan,
             },
         );
         if self.entries.len() > Self::CAP {
@@ -168,11 +178,12 @@ fn load_chat_history(
         status: header.status.clone(),
         provider: header.provider.clone(),
         cwd: header.cwd.clone(),
-        extra_dirs: header.extra_dirs.clone(),
         supported: false,
         items: Vec::new(),
+        plan: None,
         offset,
         reset: false,
+        undone: false,
         pending_review: super::session_query::pending_review_live(
             &header.provider,
             header.pending_review.as_deref(),
@@ -180,6 +191,7 @@ fn load_chat_history(
         )
         .and_then(PendingReviewKind::from_stored),
         model: context.model,
+        effort: context.effort,
         agent_modes: Vec::new(),
         context_pct: context.used_pct,
         context_window: context.window_size,
@@ -300,11 +312,21 @@ fn load_chat_history(
     if path_changed && offset > 0 {
         delta.reset = true;
     }
+    // 只有从头重读能判定「计划已不存在」；普通增量没带计划只表示没有新计划。
+    let plan = if base_offset == 0 || delta.reset {
+        delta.plan.clone()
+    } else {
+        delta.plan.clone().or_else(|| {
+            prev.as_ref().and_then(|entry| entry.plan.clone())
+        })
+    };
     if let (Ok(mut seen), Some(mtime)) = (chat_mtimes.lock(), delta.mtime) {
-        seen.put_if_current(session_id, prev_version, mtime, path.clone());
+        seen.put_if_current(session_id, prev_version, mtime, path.clone(), plan.clone());
     }
     history.offset = delta.offset;
     history.reset = delta.reset;
+    history.undone = delta.undone;
+    history.plan = plan;
     history.agent_modes = delta
         .agent_modes
         .into_iter()
@@ -406,7 +428,7 @@ fn refresh_model(db_path: &Path, session_id: i64) -> Result<Option<String>, Stri
     let header = store
         .session_header(session_id)
         .map_err(|e| e.to_string())?;
-    let model = meowo_agent::by_id(&header.provider)
+    let out = meowo_agent::by_id(&header.provider)
         .and_then(|agent| agent.telemetry())
         .map(|telemetry| {
             telemetry.stop_outputs(&meowo_agent::caps::HookContext {
@@ -415,8 +437,8 @@ fn refresh_model(db_path: &Path, session_id: i64) -> Result<Option<String>, Stri
                 last_assistant_message: None,
             })
         })
-        .and_then(|out| out.model);
-    if let Some(model) = model.as_deref() {
+        .unwrap_or_default();
+    if let Some(model) = out.model.as_deref() {
         store
             .set_session_context(
                 &header.cc_session_id,
@@ -427,7 +449,13 @@ fn refresh_model(db_path: &Path, session_id: i64) -> Result<Option<String>, Stri
             )
             .map_err(|e| e.to_string())?;
     }
-    Ok(model)
+    // 切思考程度同样不产生 Stop（kimi 的 /effort）：一并刷新，对话页的档位才跟得上。
+    if let Some(effort) = out.effort.as_deref() {
+        store
+            .set_session_effort(&header.cc_session_id, Some(effort))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(out.model)
 }
 
 #[tauri::command]
@@ -1149,12 +1177,13 @@ mod tests {
         let base = std::time::SystemTime::UNIX_EPOCH;
         let newer = base + std::time::Duration::from_secs(10);
         let mut cache = ChatMtimes::default();
-        cache.put(7, base, any_path());
+        cache.put(7, base, any_path(), Some("计划".into()));
         let version_a = cache.get(7).map(|entry| entry.version);
         let version_b = version_a;
-        cache.put_if_current(7, version_b, newer, any_path());
-        cache.put_if_current(7, version_a, base, any_path());
+        cache.put_if_current(7, version_b, newer, any_path(), Some("计划".into()));
+        cache.put_if_current(7, version_a, base, any_path(), None);
         assert_eq!(cache.get(7).map(|entry| entry.mtime), Some(newer));
+        assert_eq!(cache.get(7).and_then(|entry| entry.plan).as_deref(), Some("计划"));
     }
 
     #[test]
@@ -1162,13 +1191,14 @@ mod tests {
         let base = std::time::SystemTime::UNIX_EPOCH;
         let mut cache = ChatMtimes::default();
         let hot = 1_i64;
-        cache.put(hot, base, any_path());
+        cache.put(hot, base, any_path(), None);
         for i in 0..(ChatMtimes::CAP as i64 + 5) {
-            cache.put(100 + i, base, any_path());
+            cache.put(100 + i, base, any_path(), None);
             cache.put(
                 hot,
                 base + std::time::Duration::from_secs(i as u64 + 1),
                 any_path(),
+                None,
             );
         }
         assert!(cache.entries.len() <= ChatMtimes::CAP);
@@ -1181,7 +1211,7 @@ mod tests {
     fn mtime_cache_remembers_the_transcript_path_per_session() {
         let base = std::time::SystemTime::UNIX_EPOCH;
         let mut cache = ChatMtimes::default();
-        cache.put(7, base, std::path::PathBuf::from("old.jsonl"));
+        cache.put(7, base, std::path::PathBuf::from("old.jsonl"), None);
         let prev = cache.get(7).expect("entry");
         // 模拟 load_chat_history 的路径切换判定:跨 profile 恢复后解析到的新文件
         // 必须被认作「换了文件」,触发从头重读,而不是沿用旧文件的字节偏移。
@@ -1191,6 +1221,7 @@ mod tests {
             Some(prev.version),
             base,
             std::path::PathBuf::from("new.jsonl"),
+            None,
         );
         assert_eq!(
             cache.get(7).map(|entry| entry.path),

@@ -25,6 +25,24 @@ body.remote-ui .chat-window {
   height: var(--app-height, 100dvh);
 }
 
+/* 改动面板在手机上铺满全屏（ChatWindow 远程恒按最大化渲染），头行顶到状态栏/刘海下：
+   与对话顶栏同样把安全区加在原高度之外（7M-2 同款）。 */
+body.remote-ui .chat-diff-head {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+/* 头行的返回箭头与标题：与对话页标题行同一读法（‹ + 名称），箭头单独成钮、不带字。 */
+body.remote-ui .chat-diff-head .chat-diff-back { padding: 6px; margin-left: -4px; color: var(--cc-text-dim); }
+body.remote-ui .chat-diff-title { min-width: 0; color: var(--cc-text); font-size: 15px; font-weight: 600; }
+
+/* 远程页关掉对话条目的 content-visibility:auto（用户反馈手机上滑动很卡）。屏外条目先按
+   60px 占位，上滑到跟前才排版长回实高，WebKit 不替这种长高做滚动锚定：Playwright WebKit
+   实测上滑 200 帧里视口内容被顶下去 ~380px 多次，iOS 惯性滚动随之被打断；关掉后为零，
+   Chromium 有锚定也为零。WebKit 自报支持 overflow-anchor，所以没法用 @supports 区分。
+   手机页首读有条数上限，全量排版的成本有界。 */
+body.remote-ui .chat-scroll > * {
+  content-visibility: visible;
+}
+
 /* 顶栏拖拽区在真浏览器里无意义(没有可拖的窗口),但仍占 data-tauri-drag-region 的高度做安全区留白。
    7M-2:桌面规则是 height:42px 定高,加上 padding-top 后刘海机(safe-area 44~59px)的内容盒
    被吃成负数,☰ 直接溢出压到下面的标题行。改 min-height 把安全区**加**在 42px 之外。
@@ -43,6 +61,20 @@ body.remote-ui .chat-sidebar-overlay-head {
 
 /* 手机竖屏(远程 + 窄窗,ChatWindow 挂 .is-remote-compact):独立顶栏已并进标题行,
    安全区留白随之下放到标题行。抽屉头与标题行同高同左距,开关钮在抽屉开合时原地不动。 */
+/* 添加到主屏幕后(iOS 26 standalone)顶部发虚:Safari 找顶边第一个 sticky/fixed 且有实底的
+   全宽元素,拿它的颜色铺状态栏;找不到就在状态栏+顶栏上盖一层系统模糊(用户实拍,标题和
+   按钮整行发白)。顶栏原本透明底、也不是 sticky,所以给它 sticky + 与所在面板同色的实底。
+   父容器本身不滚动,sticky 不改变版式,只是让 Safari 认得出这是顶栏。 */
+body.remote-ui .chat-bar,
+body.remote-ui .chat-diff-head,
+body.remote-ui .chat-sidebar-overlay-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--cc-bg);
+}
+body.remote-ui .chat-sidebar-overlay-head { background: var(--cc-window-bg); }
+
 body.remote-ui .chat-window.is-remote-compact .chat-bar,
 body.remote-ui .chat-window.is-remote-compact .chat-sidebar-overlay-head {
   height: auto;
@@ -63,11 +95,9 @@ body.remote-ui .chat-window.is-remote-compact .chat-main {
 }
 
 /* 输入框工具行在 390px 宽度下挤不下:加号、模型、权限、用量、停止、发送排成一行,
-   「126K/200K」这段字最宽,模型名被压成「O…」、权限钮成「权..」,两个都点不准
-   (2026-10 手机截图,输入框有字时停止与发送同时在场最挤)。用量环里已有百分比,
-   手机竖屏只留环。360px 宽的安卓机上还差约 24px:按钮本身只占 246px,6 个 10px 间距
+   模型名与权限钮曾被挤得点不准(2026-10 手机截图)。用量详情现已全局收进 tooltip,
+   可见区域只有圆环。360px 宽的安卓机上还差约 24px:按钮本身只占 246px,6 个 10px 间距
    吃掉 60px(右推弹簧 .chat-compose-hint 宽 0 也占两份间距),间距与下拉钮内边距各收一档。 */
-body.remote-ui .chat-window.is-remote-compact .chat-context-usage { display: none; }
 body.remote-ui .chat-window.is-remote-compact .chat-compose-actions { gap: 6px; }
 body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button { padding: 0 6px; }
 
@@ -107,6 +137,11 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui [role="button"] { touch-action: manipulation; }
   /* 问题卡的自定义回答框同样钉 16px：iOS 对 <16px 的输入框聚焦即整页自动放大（7M-11）。 */
   body.remote-ui .chat-approval-custom input { font-size: 16px; }
+  /* 对话内搜索条：同理钉 16px；桌面 22px 的上下条/关闭钮手指点不准，放到 36px。
+     铺满宽度，窄屏上桌面那条右上角的浮条连输入框都挤不下。 */
+  body.remote-ui .chat-search { left: var(--chat-strip-gap); padding: var(--sp-4) var(--sp-8); }
+  body.remote-ui .chat-search-input { font-size: 16px; min-width: 0; }
+  body.remote-ui .chat-search-btn { width: 36px; height: 36px; }
 
   /* 消息正文/代码块同样放开:HTTP 非 secure context 下 navigator.clipboard 不存在,
      复制按钮走 execCommand 回退,手动框选是最后一条兜底——全禁了内容一个字拿不走。 */
@@ -148,9 +183,22 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   /* 复核补：这三个也在 44px 以下——进度面板入口 38px、侧栏开关 40px、
      搜索清除 41px（前两个是远程端的常用入口，点偏就是另一个动作）。 */
   body.remote-ui .chat-todo-btn::after,
-  body.remote-ui .chat-sidebar-open::after {
+  body.remote-ui .chat-sidebar-open::after,
+  /* 对照 Kimi 触屏规则（a-cpbtn 加大复制钮命中面、q-rm 排队消息的删除钮外扩到 44px）：
+     代码块/表格的「复制」只有 18px 高，排队插话的 ✕ 18px，回到最新 26px，外扩 6px 后
+     仍点不准（手机仿真实测）。 */
+  body.remote-ui .chat-md-pre-copy::after,
+  body.remote-ui .chat-md-table-copy::after,
+  body.remote-ui .chat-queued-dismiss::after,
+  body.remote-ui .chat-jump-latest::after,
+  /* 改动面板的收起钮（手机上它就是「回到对话」）与文件页的返回钮。 */
+  body.remote-ui .chat-diff-action::after,
+  body.remote-ui .chat-diff-back::after {
     inset: -12px;
   }
+
+  /* 「进行中 / 已完成」页签文字只有 30px 高：给足 44px 的命中高度（不改字号）。 */
+  body.remote-ui .chat-sidebar-tabs button { min-height: 44px; }
 
   /* 7M-9 尾：桌面端「⋯」已改 hover 才显（2026-10 用户实拍：常显密密麻麻还挡标题），
      但远程端没有 hover——侧栏 ⋯ 是手机上星标/重命名/归档的唯一入口，必须常显。 */
@@ -158,6 +206,50 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   /* 桌面的灰底是悬停反馈,常显后每行挂一块灰方块(2026-10 手机截图:三行三块,比标题还抢眼)。
      只留图标,命中面仍由上面的 ::after 外扩保证。 */
   body.remote-ui .chat-sidebar-item-menu { background: transparent; }
+  /* ⋯ 绝对定位浮在标题行右端,桌面只在悬停时盖一下;常显后长标题的省略号直接顶到 ⋯ 上
+     (手机仿真截图「标…⋯」连成一串)。标题行让出按钮宽度。 */
+  body.remote-ui .chat-sidebar-name { padding-right: calc(var(--icon-button-xs) + var(--sp-4)); }
+
+  /* 对照 Kimi 手机端的三条触屏规矩（2026-10-29 逐条比对其 hover:none / 640px 规则）：
+     1. 悬停才出现的按钮在触屏上常显——触屏没有悬停，藏着就等于没有。附件卡的「标注」
+        此前在手机上点不到。
+     2. 菜单行至少 44px 高：斜杠/@文件/下拉菜单的行约 32px，手指一点就串到邻行。
+     3. 向上弹出的菜单按「键盘之上实际看得见的高度」封顶（--app-height 由 main.tsx 的
+        visualViewport 写入）：键盘弹起时斜杠菜单的固定 264px、模型菜单的不封顶，都会把
+        菜单顶到标题栏底下去。 */
+  body.remote-ui .chat-compose .chat-attachment button.chat-attachment-annotate { opacity: 1; }
+  body.remote-ui .chat-slash-item,
+  body.remote-ui .chat-model-item,
+  body.remote-ui .dd-item { min-height: 44px; }
+  /* 行已够 44px,不再要按钮通用的 ::after 外扩:外扩的 6px 越出菜单内容区,把 overflow:auto
+     的菜单撑出横竖两条滚动条(手机仿真截图,标题菜单、模型面板),相邻行的命中面还互相压一截。 */
+  body.remote-ui .chat-slash-item::after,
+  body.remote-ui .chat-model-item::after,
+  body.remote-ui .dd-item::after { inset: 0; }
+  /* 审批/提问卡的正文是 overflow:auto 的滚动区，贴边的「展开全部」「复制命令」、选项行外扩
+     6px 越界，卡里横竖各挂一条滚动条（手机仿真截图）。滚动区四周垫 6px 再用负边距抵回：
+     版式不动，外扩落在垫出来的内边距里，命中面照样保留。 */
+  body.remote-ui .chat-approval-copy { padding: 6px; margin: -6px; }
+
+  /* 对照 Kimi 手机端的可展开行（tp-row.expandable 触屏 44px、ch-row 用 :active 反馈）：
+     工作摘要、思考、工具行是手机上最常点的东西，34px 一行上下紧挨着，点「运行」常串到
+     「读取」。行与行相邻，不能靠 ::after 外扩（会压到邻行），只能把行本身拉到 44px。
+     悬停底色在触屏上点完会一直挂着（iOS 粘滞 hover，仿真截图里摘要行点开后留一块灰底），
+     改成只在按下时给反馈。 */
+  body.remote-ui .turn-fold-head,
+  body.remote-ui .chat-tool > summary,
+  body.remote-ui .chat-flat-steps > .chat-tool > summary { min-height: 44px; }
+  body.remote-ui .turn-fold-head:hover,
+  body.remote-ui .chat-flat-steps > .chat-tool > summary:hover { background: transparent; }
+  body.remote-ui .turn-fold-head:active,
+  body.remote-ui .chat-flat-steps > .chat-tool > summary:active { background: var(--fill-hover); }
+  body.remote-ui .chat-compose .chat-slash-item { align-items: center; }
+  body.remote-ui .chat-slash-menu { max-height: min(264px, calc(var(--app-height, 100dvh) * 0.42)); }
+  body.remote-ui .chat-model-menu { max-height: calc(var(--app-height, 100dvh) * 0.6); overflow-y: auto; }
+  /* 停靠面板头的分段筛选与关闭钮：桌面 22~24px 高，手指点不准相邻的「运行中/已完成」。
+     对照 Kimi 手机端 dock-work-head-actions 统一 44px 触控尺寸。 */
+  body.remote-ui .chat-task-filter > button { min-height: 44px; padding-left: 12px; padding-right: 12px; }
+  body.remote-ui .dock-work-close { width: 44px; height: 44px; }
 
   /* ── 移动端字号标尺(2026-08 全量清单逐类抬升,2026-10 随桌面 Kimi 比例改版重校) ──
      桌面密度下 9–11.5px 的小字在手机上过小,而 16px 输入框(iOS 防缩放地板,降不得)
@@ -179,29 +271,27 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-context,
   body.remote-ui .chat-model-item-name { font-size: 13px; }
   body.remote-ui .chat-model-item-desc,
-  body.remote-ui .chat-model-group { font-size: 11.5px; }
+  body.remote-ui .chat-model-group { font-size: 12px; }
   body.remote-ui .chat-send-error,
   body.remote-ui .chat-send-takeover { font-size: 12px; }
-  body.remote-ui .chat-queued,
-  body.remote-ui .chat-queued-head > button,
-  body.remote-ui .chat-queued-list li,
-  body.remote-ui .chat-queued-dismiss { font-size: 11.5px; }
+  body.remote-ui .chat-queued-head,
+  body.remote-ui .chat-queued-dismiss { font-size: 12px; }
 
   /* 审批/题面卡:按钮同时是触控目标,统一 13;标题 14 > 正文 13 > 注 11.5 的层级重排。 */
   body.remote-ui .chat-approval { font-size: 13px; }
   body.remote-ui .chat-approval-copy strong { font-size: 14px; }
   body.remote-ui .chat-approval button,
   body.remote-ui .chat-approval-options b { font-size: 13px; }
-  body.remote-ui .chat-approval-options small { font-size: 11.5px; }
+  body.remote-ui .chat-approval-options small { font-size: 12px; }
   body.remote-ui .chat-question-tabs button { font-size: 12px; }
-  body.remote-ui .chat-approval-copy pre { font-size: 11.5px; }
+  body.remote-ui .chat-approval-copy pre { font-size: 12px; }
   body.remote-ui .chat-approval-tool { font-size: 11px; }
   body.remote-ui .chat-approval-tool code { font-size: 12px; }
   body.remote-ui .chat-remote-hint { font-size: 12px; }
 
-  /* 侧栏抽屉:手机的主导航面。列表标题 13.5/副行 11,头部按钮与 16px 搜索框看齐。 */
+  /* 侧栏抽屉:手机的主导航面。列表标题 14/副行 11,头部按钮与 16px 搜索框看齐。 */
   body.remote-ui .chat-sidebar-new { font-size: 13px; }
-  body.remote-ui .chat-sidebar-name { font-size: 13.5px; }
+  body.remote-ui .chat-sidebar-name { font-size: 14px; }
   body.remote-ui .chat-sidebar-meta,
   body.remote-ui .chat-sidebar-note,
   body.remote-ui .chat-sidebar-group-head,
@@ -213,21 +303,16 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-sidebar-deep-title { font-size: 12px; }
   body.remote-ui .sf-menu .dd-item { font-size: 13px; }
 
-  /* 待办面板与顶栏弹层。 */
-  body.remote-ui .chat-todo-panel-title,
-  body.remote-ui .chat-todo-panel li { font-size: 13px; }
-  body.remote-ui .chat-todos-count,
-  body.remote-ui .chat-todo-panel-time { font-size: 11px; }
-  body.remote-ui .chat-todo-panel-collapse,
-  body.remote-ui .chat-todo-panel-hint { font-size: 12px; }
+  /* 待办计数与顶栏弹层。 */
+  body.remote-ui .chat-todos-count { font-size: 11px; }
   body.remote-ui .chat-modal-title { font-size: 14px; }
   body.remote-ui .chat-modal-error { font-size: 12px; }
 
-  /* 通用下拉与新建会话 sheet:基准 14,主动作/浏览钮与 16px 输入框协调,标题对齐会话标题 15。 */
+  /* 通用下拉与新建会话 sheet:基准 14,主动作/浏览钮与 16px 输入框协调,标题对齐会话标题 16。 */
   body.remote-ui .dd-btn,
   body.remote-ui .dd-item { font-size: 13px; }
   body.remote-ui .ns-window { font-size: 14px; }
-  body.remote-ui .ns-title { font-size: 15px; }
+  body.remote-ui .ns-title { font-size: 16px; }
   body.remote-ui .ns-label,
   body.remote-ui .ns-option-label { font-size: 12px; }
   body.remote-ui .ns-browse,
@@ -259,6 +344,9 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list-head img { border-radius: 10px; }
 .remote-session-list-head h1 { margin: 0; font-size: 21px; line-height: 1.25; letter-spacing: -0.02em; }
 .remote-session-list-head p { margin: 3px 0 0; color: var(--cc-text-faint); font-size: 12px; }
+/* 外观切换贴页头右侧；标题块吃掉剩余宽度把它推过去。 */
+.remote-session-list-head > div:not(.remote-theme) { flex: 1; min-width: 0; }
+.remote-theme { flex: 0 0 auto; }
 .remote-session-list > .chat-sidebar {
   flex: 1;
   min-height: 0;
@@ -343,7 +431,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   border-radius: 10px;
   background: var(--cc-accent);
   color: var(--cc-on-accent);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--dur-fast), opacity var(--dur-fast);
@@ -354,7 +442,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 @media (max-width: 699px) {
   body.remote-ui .chat-topbar { min-height: calc(48px + env(safe-area-inset-top, 0px)); }
   body.remote-ui .chat-bar { height: 48px; padding: 0 12px; gap: 8px; }
-  body.remote-ui .chat-title { font-size: 15px; }
+  body.remote-ui .chat-title { font-size: 16px; }
   body.remote-ui .chat-title-project { display: none; }
   body.remote-ui .chat-title-btn { padding-left: 6px; padding-right: 6px; margin-left: -6px; }
   body.remote-ui .chat-title-agent { width: 18px; height: 18px; }
@@ -381,6 +469,10 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   .remote-new-session-overlay .ns-options { grid-template-columns: 1fr; margin-top: 4px; padding: 12px; }
   .remote-new-session-overlay .ns-actions { padding: 12px 16px; background: var(--cc-window-bg); }
   .remote-new-session-overlay .ns-btn { min-height: 42px; }
+  /* 最近目录与浏览目录共用这一行：桌面行高约 23px，手指点下去常落到相邻一行。
+     列表上限跟着放高，手机上新建页下半屏本来就空着。 */
+  .remote-new-session-overlay .ns-recent-item { min-height: 40px; }
+  .remote-new-session-overlay .ns-dirbrowse-list { max-height: 45dvh; }
   .remote-new-session-overlay .ns-profile-hint { flex: 1; min-width: 0; }
 }
 

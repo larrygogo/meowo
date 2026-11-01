@@ -69,9 +69,6 @@ pub struct AgentDescriptor {
     /// 覆盖面是**插件声明的事实**、会随取证进展变（谁声明了看各插件的 `CROSS_ACCOUNT`，
     /// 有绊线测试钉着矩阵），前端不得按 id 反推。
     pub moves_sessions_across_accounts: bool,
-    /// 这个 agent 支不支持**一个会话访问多个目录**（＝插件声明了 `extra_dir_flag`）。
-    /// 为 true 时新建面板给「附加目录」入口（跨仓同一需求开一个会话）；false 不显示。
-    pub supports_extra_dirs: bool,
     /// 新建会话的启动选项（选择 → CLI flag 映射，由插件声明）。空 = 面板不给选项栏。
     /// 前端只回传 choice id，翻译成 argv 在后端按这张表进行——用户输入进不了命令行。
     pub launch_options: &'static [crate::LaunchOption],
@@ -104,7 +101,6 @@ impl AgentDescriptor {
                 .and_then(|telemetry| telemetry.transcript())
                 .is_some_and(|spec| spec.supports_chat()),
             moves_sessions_across_accounts: plugin.cross_account_session().is_some(),
-            supports_extra_dirs: plugin.extra_dir_flag().is_some(),
             launch_options: plugin.launch_options(),
             relay,
         }

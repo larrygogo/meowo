@@ -55,6 +55,12 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: resolve(__dirname, "mobile.html"),
+      output: {
+        // 产物名只留 remote.rs 静态托管认的字符：Logo 源文件叫 `128x128@2x.png`，带 `@` 的
+        // 文件名被白名单拒成 404，手机页的 Logo 一直是裂图（用户实拍）。后端已放行 `@`，
+        // 这里再换掉是让旧安装版（热换 dist-mobile 时）也能取到。
+        assetFileNames: (asset) => `assets/${(asset.names?.[0] ?? asset.name ?? "asset").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]/g, "-")}-[hash][extname]`,
+      },
     },
   },
 });

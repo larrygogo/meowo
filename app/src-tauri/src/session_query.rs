@@ -187,6 +187,8 @@ pub(crate) struct LiveItem {
     /// 前端卡片状态环与 tab 分组按它把「主回合停了但后台在干活」的会话画成运行中——
     /// 必须与后端 tab_class 的 background_busy 同口径，否则环色与所在 tab 打架。
     busy_subagents: u32,
+    /// 回合结束时用户没在看它（见 watch::is_unread）；打开该会话即清。
+    unread: bool,
     /// 来自**另一个实例的库**（dev 构建只读聚合安装版 `~/.meowo/board.db` 的会话，
     /// 见 [`foreign_live_items`]）。前端据此标注来源并收起全部操作入口——这些会话的
     /// PTY/审批/收尾都归安装版，本实例只有观察权。id 已加 [`FOREIGN_ID_OFFSET`] 防撞：
@@ -211,6 +213,8 @@ fn resolve_profile_name(
 /// 翻页游标：**SQL 扫描位置**（排序前）。响应里的 items 会做 connected-first 排序，
 /// 末项不再是本页时间上最旧的一条——拿末项当游标会重复/漏页（旧版 loadMore 的坑）。
 /// 调用方翻下一页必须回传这里给出的 cursor，而不是自己从 items 推。
+/// 对调用方是不透明的：按创建时间分页时 `last_event_at` 装的是 started_at（字段名沿用，
+/// 换名会让手机上没刷新的旧页面翻不了页）。
 #[derive(serde::Serialize, Clone, Copy)]
 pub(crate) struct PageCursor {
     pub(crate) last_event_at: i64,
@@ -402,7 +406,10 @@ pub(crate) async fn get_live_sessions_page(
     // 是否附带「正在启动」占位卡(pending PTY:已起 PTY、CLI 还没写库的新会话,负 id)。
     // 同样只有贴纸看板传 true——占位卡不可点、没有会话详情,其它消费方给了也是死路。
     include_pending: Option<bool>,
+    // 排序:"created" = 按创建时间倒序分页(对话侧栏默认);其余/缺省 = 按最近活跃。
+    order: Option<String>,
 ) -> Result<LiveSessionsPage, String> {
+    let by_created = order.as_deref() == Some("created");
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
     // 采样进 spawn_blocking,理由同 get_live_sessions_counts。
@@ -433,6 +440,7 @@ pub(crate) async fn get_live_sessions_page(
                 before_last_event_at,
                 before_id,
                 limit,
+                by_created,
             },
         )?;
         // 「正在启动」占位卡只进首页(无游标):占位不属于 SQL 扫描,翻页游标语义不变。
@@ -593,7 +601,6 @@ fn pending_placeholder_item(
             provider: info.provider.clone(),
             profile: None,
             predecessor_id: None,
-            extra_dirs: Vec::new(),
         },
         connected: true,
         pty_managed: true,
@@ -608,6 +615,7 @@ fn pending_placeholder_item(
         screen_state: None,
         screen_assumed: false,
         busy_subagents: 0,
+        unread: false,
         foreign: false,
     }
 }
@@ -767,6 +775,8 @@ pub(crate) struct PageReq {
     pub(crate) before_last_event_at: Option<i64>,
     pub(crate) before_id: Option<i64>,
     pub(crate) limit: usize,
+    /// 按创建时间倒序分页（对话侧栏的默认排序），见 build_live_sessions_sql。
+    pub(crate) by_created: bool,
 }
 
 /// 单页条数上限。limit 是 IPC/远程桥入参，不钳制时超大值会让 `Vec::with_capacity`
@@ -835,14 +845,19 @@ pub(crate) fn live_sessions_blocking(
     let mut items: Vec<LiveItem> = Vec::with_capacity(page.limit);
     // Some = 页满/到达扫描上限时的续扫位置；None = 已扫到底。
     let mut next_cursor: Option<PageCursor> = None;
+    // waiting tab 恒按等待时长排（store 里同样忽略 by_created），游标位要跟 SQL 的排序键一致。
+    let by_created = page.by_created && filter != "waiting";
+    let sort_key = |session: &LiveSession| {
+        if by_created { session.session.started_at } else { session.session.last_event_at }
+    };
     'fill: loop {
         let sessions = store
-            .live_sessions_filtered(Some(filter), search, cwd, cursor_ts, cursor_id, batch_limit)
+            .live_sessions_scan(Some(filter), search, cwd, cursor_ts, cursor_id, by_created, batch_limit)
             .map_err(|e| e.to_string())?;
         let raw_len = sessions.len();
         let batch_tail = sessions
             .last()
-            .map(|session| (session.session.last_event_at, session.session.id));
+            .map(|session| (sort_key(session), session.session.id));
         for mut session in sessions {
             scanned += 1;
             // 「待批准」的存活校正,与下面 connected 校正 status 是同一套路数(见
@@ -856,7 +871,7 @@ pub(crate) fn live_sessions_blocking(
             )
             .map(str::to_string);
             let scan_pos = PageCursor {
-                last_event_at: session.session.last_event_at,
+                last_event_at: sort_key(&session),
                 id: session.session.id,
             };
             let pty_managed = live.pty_live.contains(&session.session.id);
@@ -919,8 +934,11 @@ pub(crate) fn live_sessions_blocking(
         cursor_ts = Some(timestamp);
         cursor_id = Some(id);
     }
-    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。
-    items.sort_by_key(|item| std::cmp::Reverse(item.connected));
+    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。按创建时间排时不做：
+    // 要的就是位置不随运行状态变（用户反馈列表顶部一直在跳）。
+    if !by_created {
+        items.sort_by_key(|item| std::cmp::Reverse(item.connected));
+    }
     // 本页有归属自定义账号的会话才读一次 settings——全默认账号（没建过 profile 的用户）
     // 不为一个恒空的字段在热路径上付一次读盘。
     if items.iter().any(|item| item.inner.profile.is_some()) {
@@ -1002,6 +1020,7 @@ fn enrich(
     if dropped_from_list(db_title.trim(), connected, &session.todos) {
         return None;
     }
+    let unread = crate::watch::is_unread(session.session.id);
     Some(LiveItem {
         inner: session,
         connected,
@@ -1025,6 +1044,7 @@ fn enrich(
         screen_state: None,
         screen_assumed: false,
         busy_subagents,
+        unread,
         // 外库标记由 foreign_live_items 在聚合时置真，本库路径恒为 false。
         foreign: false,
     })
@@ -1323,6 +1343,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 60,
+                by_created: false,
             },
         )
         .unwrap();
@@ -1404,6 +1425,7 @@ mod tests {
                     before_last_event_at: cursor.map(|c| c.0),
                     before_id: cursor.map(|c| c.1),
                     limit: PAGE,
+                    by_created: false,
                 },
             )
             .unwrap();
@@ -1474,6 +1496,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: usize::MAX,
+                by_created: false,
             },
         )
         .unwrap();
@@ -1530,6 +1553,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: total as usize + 100,
+                by_created: false,
             },
         )
         .unwrap()
@@ -1669,6 +1693,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 10,
+                by_created: false,
             },
         )
         .unwrap();

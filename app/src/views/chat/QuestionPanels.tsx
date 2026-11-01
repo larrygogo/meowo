@@ -99,7 +99,9 @@ export function QuestionPanels(props: QuestionPanelsProps) {
         {item.question && <span className="chat-approval-prewrap">{item.header ? `${item.header} · ${item.question}` : item.question}</span>}
         {props.mode === "answer" ? (
           <>
-            <div className="chat-approval-options">
+            {/* 单选画圆点、多选画方框（对照系统控件的通用约定）：此前一律方框打勾，
+                单选题看起来像能多选。 */}
+            <div className={"chat-approval-options" + (item.multiSelect ? "" : " is-single")}>
               {item.options.map((option, optionIndex) => {
                 const selected = draft.selected.includes(option.label);
                 return (
@@ -109,7 +111,7 @@ export function QuestionPanels(props: QuestionPanelsProps) {
                     key={`${optionIndex}:${option.label}`}
                     onClick={() => props.onSelect(index, option.label)}
                   >
-                    <i aria-hidden="true">{selected ? "✓" : ""}</i>
+                    <i aria-hidden="true">{selected && item.multiSelect ? "✓" : ""}</i>
                     <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
                   </button>
                 );

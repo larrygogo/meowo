@@ -72,6 +72,7 @@ fn completed_item_events(
                     id: id("user"),
                     timestamp,
                     text,
+                    interjected: false,
                 })
                 .into_iter()
                 .collect()
@@ -165,6 +166,7 @@ fn completed_item_events(
                     summary,
                     subagent: None,
                     detail: None,
+                    plan: None,
                 },
                 TranscriptEvent::ToolResult {
                     id: format!("{call_id}-out"),
@@ -200,6 +202,7 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                     id: chat_id("user", line),
                     timestamp,
                     text,
+                    interjected: false,
                 })
                 .into_iter()
                 .collect()
@@ -270,6 +273,7 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                 // （payload 带 turn_id / model_context_window）而非委派。
                 subagent: None,
                 detail: None,
+                plan: None,
             }]
         }
         ("response_item", "function_call_output")
@@ -326,6 +330,7 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
             id: chat_id("compact", line),
             timestamp,
             kind: "compact".into(),
+            compaction: None,
         }],
         _ => Vec::new(),
     }
@@ -353,10 +358,13 @@ impl TranscriptSpec for CodexTranscript {
         _cwd: Option<&str>,
         session_id: &str,
     ) -> Option<PathBuf> {
-        transcript_path
+        // 回溯后续写段另起文件（分页历史，见 lineage.rs）：先找当前段，再按 history_base 拼。
+        let known = transcript_path
             .map(PathBuf::from)
             .filter(|p| p.exists())
-            .or_else(|| find_rollout(session_id))
+            .or_else(|| find_rollout(session_id))?;
+        let current = super::lineage::current_rollout(&known, session_id);
+        Some(super::lineage::chat_path(&current, session_id))
     }
 
     fn resolve_title(
@@ -370,6 +378,32 @@ impl TranscriptSpec for CodexTranscript {
 
     fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
         parse_transcript_events(line)
+    }
+
+    /// 回溯（TUI 双击 Esc 编辑上一条）不改写 rollout，追加 `event_msg/thread_rolled_back
+    /// {num_turns}`（本机实拍 0.144），与 kimi 的 context.undo 同形，交给读取层回放。轮的边界
+    /// 按 codex 源码 `is_user_turn_boundary`：每条非上下文注入的用户消息，插话也算一轮——即
+    /// 我们产出 UserMessage 的那些行（老版本 `user_message`、0.148+ `item_completed/UserMessage`，
+    /// 同一版本只写其一，本机 40 份 rollout 核对）。
+    fn chat_line_mark(&self, line: &str) -> Option<crate::ChatLineMark> {
+        if line.contains("\"thread_rolled_back\"") {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let payload = value.get("payload")?;
+            if value.get("type")?.as_str()? != "event_msg"
+                || payload.get("type")?.as_str()? != "thread_rolled_back"
+            {
+                return None;
+            }
+            let turns = payload.get("num_turns")?.as_u64()?;
+            return (turns > 0).then_some(crate::ChatLineMark::Undo(turns as usize));
+        }
+        if !line.contains("\"user_message\"") && !line.contains("\"UserMessage\"") {
+            return None;
+        }
+        parse_transcript_events(line)
+            .iter()
+            .any(|event| matches!(event, TranscriptEvent::UserMessage { .. }))
+            .then_some(crate::ChatLineMark::TurnStart)
     }
 
     fn agent_modes_from_line(&self, line: &str) -> Vec<crate::AgentMode> {
@@ -582,6 +616,8 @@ pub fn read_context(
         .map(PathBuf::from)
         .filter(|p| p.exists())
         .or_else(|| find_rollout(session_id))?;
+    // 最新的 token_count 在当前续写段末尾（回溯后根段不再增长，见 lineage.rs）。
+    let path = super::lineage::current_rollout(&path, session_id);
     const TAIL_BYTES: u64 = 256 * 1024;
     let text = read_tail(&path, TAIL_BYTES)?;
     let (used, window) = parse_context(&text)?;
@@ -608,6 +644,7 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
         crate::caps::StopOutputs {
             last_ai: ctx.last_assistant_message.map(str::to_string),
             model: read_model(ctx.transcript_path, ctx.session_id),
+            effort: None,
         }
     }
 
@@ -623,6 +660,36 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回溯记录 `thread_rolled_back {num_turns}`（本机 0.144 实拍形态）：插话也算一轮（codex
+    /// is_user_turn_boundary）；增量读到时整读重灌，被撤的那轮从对话里收回。
+    #[test]
+    fn thread_rollback_retracts_recent_turns() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("meowo_codex_rollback_{}.jsonl", std::process::id()));
+        let body = concat!(
+            r#"{"timestamp":"2026-07-17T03:00:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"先做甲"}}"#, "\n",
+            r#"{"timestamp":"2026-07-17T03:00:01.000Z","type":"event_msg","payload":{"type":"agent_message","message":"甲好了"}}"#, "\n",
+            r#"{"timestamp":"2026-07-17T03:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"再做乙"}}"#, "\n",
+            r#"{"timestamp":"2026-07-17T03:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"顺便看看"}}"#, "\n",
+            r#"{"timestamp":"2026-07-17T03:00:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"乙好了"}}"#, "\n",
+        );
+        std::fs::write(&path, body).unwrap();
+        let first = crate::read_chat_delta(&CODEX_TRANSCRIPT, &path, 0, None);
+        assert_eq!(first.items.len(), 5);
+        // 插话也是一轮：撤 2 轮 = 从「再做乙」起全收回。
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap()
+            .write_all(concat!(r#"{"timestamp":"2026-07-17T03:46:03.741Z","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":2}}"#, "\n").as_bytes())
+            .unwrap();
+        let next = crate::read_chat_delta(&CODEX_TRANSCRIPT, &path, first.offset, first.mtime);
+        assert!(next.reset && next.undone);
+        let texts: Vec<String> = next.items.iter().filter_map(|item| match item {
+            ChatItem::UserText { text, .. } | ChatItem::AssistantText { text, .. } => Some(text.clone()),
+            _ => None,
+        }).collect();
+        assert_eq!(texts, ["先做甲", "甲好了"]);
+        std::fs::remove_file(path).ok();
+    }
 
     /// rollout 查找必须覆盖**受管 profile 目录**：meowo-app 进程没有 `CODEX_HOME`，
     /// 只查默认目录的话，多账号下的 codex 会话上下文/切换引擎/跨账号搬迁会全部静默落空

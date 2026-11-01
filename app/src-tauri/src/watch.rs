@@ -500,8 +500,13 @@ pub(crate) fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
 /// screen_blocked_fingerprint):waiting 期间任何事件时间戳的跳动(迟到的活动尾巴、
 /// 跨 provider 接替等)都会让掺了时间戳的指纹漂移,同一次等待反复弹通知。同一次等待
 /// 只发一条,status 离开 waiting 后条目被清掉,下一回合再等待才重新通知。
-pub(crate) fn waiting_fingerprint(errored: bool, has_pending: bool, status: &str) -> Option<String> {
-    if errored || has_pending || status != "waiting" {
+///
+/// `background_busy`:主回合停了但后台子任务/后台 Bash 还在跑——此时不是「等你」,不发
+/// (与前端 activityTone 的 busySubagents 同口径,原料同为 TranscriptInfo::busy_subagents)。
+/// 后台跑完后 CLI 自动续跑的那一回合结束时才发,一次任务只提醒一次(对照 Kimi:后台工作
+/// 只在原地留痕,不打断)。
+pub(crate) fn waiting_fingerprint(errored: bool, has_pending: bool, status: &str, background_busy: bool) -> Option<String> {
+    if errored || has_pending || status != "waiting" || background_busy {
         None
     } else {
         Some("waiting".to_string())
@@ -582,6 +587,26 @@ pub(crate) fn decision_toast(kind: NotifyKind) -> bool {
 /// 按 prev=None 自然补发一条（已解决的走指纹 None 分支自清，不会误弹）。
 /// 不做成跨线程共享 map：liveness 线程是 map 的唯一写者，一个 AtomicBool 单次交接足够。
 static RESET_DECISION_RENOTIFY: AtomicBool = AtomicBool::new(false);
+
+/// 会话级「未读」（对照 Kimi：回合结束时用户没在看才标未读，打开即清）。只存内存：
+/// 它是「这次开着 Meowo 期间错过了什么」，重启后从头算即可，不值一次库迁移。
+/// 标记点 = 「等待你回复」那次转换（与通知同一判据，不论通知开关）；清除点 = 用户正在看。
+static UNREAD: std::sync::Mutex<std::collections::BTreeSet<i64>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+pub(crate) fn is_unread(session_id: i64) -> bool {
+    UNREAD.lock().map(|set| set.contains(&session_id)).unwrap_or(false)
+}
+
+fn set_unread(session_id: i64, unread: bool) {
+    if let Ok(mut set) = UNREAD.lock() {
+        if unread {
+            set.insert(session_id);
+        } else {
+            set.remove(&session_id);
+        }
+    }
+}
 
 /// 见 RESET_DECISION_RENOTIFY。仅 Windows/macOS 的通知点击路径调用。
 #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
@@ -927,7 +952,7 @@ pub(crate) fn spawn_liveness_watch(
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
                     let meowo_agent::TranscriptInfo {
-                        mut title, error, ..
+                        mut title, error, busy_subagents, ..
                     } = agent_transcript(&s.provider)
                         .filter(|spec| spec.supports_analysis())
                         .and_then(|spec| {
@@ -976,6 +1001,9 @@ pub(crate) fn spawn_liveness_watch(
                     // 「等待你回复」会被抑制），但判定收敛在一处——将来加新通知种类时
                     // 必须显式表态，不会漏考虑。
                     let viewing = is_viewing_session(chat_focused, &viewed, s.session.id);
+                    if viewing {
+                        set_unread(s.session.id, false);
+                    }
 
                     // 错误通知（优先）。
                     if let Some(e) = &error {
@@ -983,6 +1011,14 @@ pub(crate) fn spawn_liveness_watch(
                         let suppressed = suppressed_by_viewing(NotifyKind::Error, viewing);
                         let fired = seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
                         attention_fired |= fired;
+                        if fired {
+                            crate::push::push_session(&settings, crate::push::PushMessage {
+                                title: format!("{} · {}", s.project_name, tr(lang, "notify.error")),
+                                body: format!("{} · {}", display_title, e.label),
+                                session_id: s.session.id,
+                                urgent: false,
+                            });
+                        }
                         if fired && notify_on {
                             // 标题带项目名：多会话并行时通知中心里堆着一排相同的状态标题，
                             // 必须逐条点开正文才分得清是谁在叫（四类通知同此）。
@@ -1012,12 +1048,20 @@ pub(crate) fn spawn_liveness_watch(
                             let suppressed = suppressed_by_viewing(NotifyKind::Pending, viewing);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
+                            let key = match s.pending_review.as_deref() {
+                                Some("question") => "notify.pending.question",
+                                Some("plan") => "notify.pending.plan",
+                                _ => "notify.pending.approval",
+                            };
+                            if fired {
+                                crate::push::push_session(&settings, crate::push::PushMessage {
+                                    title: format!("{} · {}", s.project_name, tr(lang, key)),
+                                    body: display_title.clone(),
+                                    session_id: s.session.id,
+                                    urgent: true,
+                                });
+                            }
                             if fired && notify_on {
-                                let key = match s.pending_review.as_deref() {
-                                    Some("question") => "notify.pending.question",
-                                    Some("plan") => "notify.pending.plan",
-                                    _ => "notify.pending.approval",
-                                };
                                 show_session_notification(
                                     &app,
                                     format!("{} · {}", s.project_name, tr(lang, key)),
@@ -1058,6 +1102,14 @@ pub(crate) fn spawn_liveness_watch(
                             let suppressed = suppressed_by_viewing(NotifyKind::Blocked, viewing);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
+                            if fired {
+                                crate::push::push_session(&settings, crate::push::PushMessage {
+                                    title: format!("{} · {}", s.project_name, tr(lang, "notify.blocked")),
+                                    body: display_title.clone(),
+                                    session_id: s.session.id,
+                                    urgent: true,
+                                });
+                            }
                             if fired && notify_on {
                                 show_session_notification(
                                     &app,
@@ -1089,6 +1141,7 @@ pub(crate) fn spawn_liveness_watch(
                         error.is_some(),
                         s.pending_review.is_some(),
                         &s.session.status,
+                        busy_subagents > 0,
                     ) {
                         Some(fp) => {
                             let prev = notified_waiting.get(&sid).map(|s| s.as_str());
@@ -1098,6 +1151,15 @@ pub(crate) fn spawn_liveness_watch(
                             let suppressed = suppressed_by_viewing(NotifyKind::Waiting, viewing);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
+                            if fired {
+                                set_unread(s.session.id, true);
+                                crate::push::push_session(&settings, crate::push::PushMessage {
+                                    title: format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),
+                                    body: waiting_body(&display_title, s.last_ai_text.as_deref()),
+                                    session_id: s.session.id,
+                                    urgent: false,
+                                });
+                            }
                             if fired && notify_on {
                                 show_session_notification(
                                     &app,

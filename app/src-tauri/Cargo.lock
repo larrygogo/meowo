@@ -2674,6 +2674,7 @@ name = "meowo-agent"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "memchr",
  "meowo-protocol",
  "rusqlite",
  "serde",
@@ -2685,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "meowo-app"
-version = "0.6.18"
+version = "0.6.19"
 dependencies = [
  "arboard",
  "axum",

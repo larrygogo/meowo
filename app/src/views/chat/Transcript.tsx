@@ -15,10 +15,12 @@ function dayLabel(date: Date, t: Dict): string {
   if (diffDays === 1) return t.chat.dateYesterday;
   return date.toLocaleDateString(t.locale);
 }
-import { agentAssets, tintStyle } from "../../providers";
-import { imageOnlyPaths, Message, UserImageGroup } from "./Message";
+import { imageOnlyPaths, Message, MessageCopyButton, UserImageGroup } from "./Message";
 import { SubagentBlock } from "./SubagentBlock";
-import { ActivityGroup, friendlyToolName, lineDelta, ToolActivity, ToolIcon } from "./ToolActivity";
+import { ToolActivity } from "./ToolActivity";
+import { TurnChanges } from "./TurnChanges";
+import { TurnFold } from "./TurnFold";
+import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem, type ToolUseItem } from "./shared";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
@@ -34,50 +36,37 @@ type BlockRec = {
   nodes: JSX.Element[];
 };
 
-/// 回合头的署名信息（A+B 改版：每轮回复前一行「图标 · 名称 · 模型 · 时间」）。
-/// 没有它（provider 未知）就不画回合头，退回旧的无署名排版。
+/// 时间与整段复制统一收在回合末尾，对齐 Kimi 的大段回复结构。
 export type TranscriptAgent = { provider: string; name: string; model: string | null };
 
-/// 过程组耗时：<1 分钟写秒，再长写「分秒」。等宽短码，与时间线标签同一副终端腔。
-function fmtSpan(ms: number): string {
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${total}s`;
-  const seconds = total % 60;
-  return `${Math.floor(total / 60)}m${seconds ? `${String(seconds).padStart(2, "0")}s` : ""}`;
-}
-
-function TurnHeader({ agent, timestamp }: { agent: TranscriptAgent; timestamp: string | null }) {
-  const { Icon } = agentAssets(agent.provider);
+function TurnFooter({ text, timestamp }: { text: string; timestamp: string | null }) {
   const date = timestamp ? new Date(timestamp) : null;
   const time = date && !Number.isNaN(date.getTime())
     ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
     : null;
   return (
-    <div className="chat-turn-head">
-      <span className="chat-turn-mark" style={tintStyle(agent.provider)} aria-hidden="true"><Icon /></span>
-      <span className="chat-turn-name">{agent.name}</span>
-      {agent.model && <span className="chat-turn-model">{agent.model}</span>}
+    <div className="chat-turn-foot">
       {time && <time className="chat-turn-time">{time}</time>}
+      <MessageCopyButton text={text} className="chat-turn-copy" />
     </div>
   );
 }
 
-/// 回合的起点：助手侧条目（文本/思考/工具/回合错误），且往前跳过 meta 后紧挨着用户消息
-/// 或时间线开头。meta（日期/接续分隔等）不算回合内容，夹在中间不打断判定。
-function startsTurn(items: ChatItem[], index: number): boolean {
-  const type = items[index].type;
-  if (type === "user_text" || type === "meta") return false;
-  for (let prev = index - 1; prev >= 0; prev -= 1) {
-    if (items[prev].type === "meta") continue;
-    return items[prev].type === "user_text";
+/// 该条目之后第一条非 meta 条目的时间戳——思考块用它算「想了多久」。思考只在收尾时留下
+/// 一条带戳的记录，自己没有结束时间，就近取下一条的。到底还没有（流式尾条）返回 null，
+/// 由组件按秒自己 tick。
+function nextStamp(items: ChatItem[], index: number): string | null {
+  for (let next = index + 1; next < items.length; next += 1) {
+    const candidate = items[next];
+    if (candidate.type === "meta") continue;
+    return candidate.timestamp;
   }
-  return true;
+  return null;
 }
 
 type BlockCache = {
   sessionId: number;
   t: Dict;
-  agentKey: string;
   items: ChatItem[];
   blocks: BlockRec[];
   outcomes: Map<string, SubagentOutcomeInfo>;
@@ -91,13 +80,8 @@ type BlockCache = {
 /// 流式期间 items 每批(200ms 的 pty-output 合流)都换新引用,memo 帮不上——此前每批
 /// 都从头全量重建整棵块数组,长会话是 O(n²)。现在按块做增量缓存:reducer 的写时复制
 /// 保证未变条目同引用,据此找到首个变化下标,之前的块原样复用,只重算尾部。
-export const Transcript = memo(function Transcript({ sessionId, items, agent = null }: { sessionId: number; items: ChatItem[]; agent?: TranscriptAgent | null }) {
+export const Transcript = memo(function Transcript({ sessionId, items, working = false }: { sessionId: number; items: ChatItem[]; agent?: TranscriptAgent | null; working?: boolean }) {
   const t = useT();
-  // 署名变了（换模型/认领后才知道 provider）整表重算：回合头散在各块里，没法局部改。
-  const agentKey = agent ? `${agent.provider}\0${agent.name}\0${agent.model ?? ""}` : "";
-  // 跨 provider 接续时，前序段是别家 agent 说的话：署名只挂在当前段（handoff-current
-  // 分隔之后），宁可前序段没有回合头，也不把别家的回复署成当前 agent。
-  const ownFrom = agent ? items.findIndex((item) => item.id === "handoff-current") + 1 : 0;
   // 委派的结局写在**主链的工具回执**上，而回执往往排在委派之后若干条（TaskOutput 拉取
   // 的结局甚至挂在别的调用上，靠 task_id 归回原委派）。关联规则收敛在
   // collectSubagentReceipts——与标题栏进度面板同一份。没有回执 = 派出去了还没回来 = 在跑。
@@ -106,7 +90,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, agent = n
   const cacheRef = useRef<BlockCache | null>(null);
   const cache = cacheRef.current;
   let reuse: BlockRec[] = [];
-  if (cache && cache.sessionId === sessionId && cache.t === t && cache.agentKey === agentKey && cache.blocks.length > 0) {
+  if (cache && cache.sessionId === sessionId && cache.t === t && cache.blocks.length > 0) {
     const common = Math.min(cache.items.length, items.length);
     let firstChanged = 0;
     while (firstChanged < common && cache.items[firstChanged] === items[firstChanged]) firstChanged += 1;
@@ -149,9 +133,6 @@ export const Transcript = memo(function Transcript({ sessionId, items, agent = n
     const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, nodes: [] };
     blocks.push(record);
     pushDaySep(record, item);
-    if (agent && index >= ownFrom && startsTurn(items, index)) {
-      record.nodes.push(<TurnHeader key={`turn-${item.id}`} agent={agent} timestamp={item.timestamp} />);
-    }
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
     // 逐条渲染是竖着摞一列大图；用户视角那是「一次发的几张图」，该排在一起。
     if (item.type === "user_text") {
@@ -171,125 +152,155 @@ export const Transcript = memo(function Transcript({ sessionId, items, agent = n
         index = next;
         continue;
       }
-    }
-    // 子任务委派不并进「N 次工具操作」那一坨：它代表一整段独立工作，值得单独一行，
-    // 且展开的是子任务时间线而不是一段参数文本。
-    if (item.type === "tool_use" && isSubagentDelegation(item, outcomes)) {
-      record.subagentId = item.id;
-      record.nodes.push(<SubagentBlock
-        key={item.id}
-        sessionId={sessionId}
-        item={item}
-        outcome={outcomes.get(item.id)}
-        settled={settledAt.has(item.id)}
-        finishedAt={finishedTs.get(item.id) ?? null}
-      />);
+      record.nodes.push(<Message key={item.id} item={item} />);
       index += 1;
       continue;
     }
-    if (item.type === "tool_use" || item.type === "tool_result") {
-      const tools: Array<ToolUseItem | ToolResultItem> = [];
-      while (index < items.length) {
-        const candidate = items[index];
-        // 子任务在上面已单独成块；遇到它就断组，别把它吞进这坨里。
-        if (candidate.type === "tool_use" && isSubagentDelegation(candidate, outcomes)) break;
-        if (candidate.type !== "tool_use" && candidate.type !== "tool_result") break;
-        tools.push(candidate);
+    if (item.type === "meta") {
+      // 压缩摘要挂到紧邻在前的分隔条上（「查看摘要」），不单独成行；前面不是分隔条的孤立
+      // 摘要（读窗口恰好从它开始）直接略过——没有分隔条它就没有落脚处。
+      if (item.kind === "compact_summary") {
         index += 1;
+        continue;
       }
-      const results = new Map<string, ToolResultItem>();
-      for (const tool of tools) {
-        if (tool.type === "tool_result" && tool.tool_use_id) results.set(tool.tool_use_id, tool);
-      }
-      // 会被某次调用认领的回执先一次性算好。曾在下面的 map 里边填边查:回执排在其
-      // 调用之前(乱序落盘)时,先被当成独立消息渲染一遍,又被 ToolActivity 当结果
-      // 渲染一遍——同一条回执上屏两次。
-      const consumed = new Set<string>();
-      for (const tool of tools) {
-        if (tool.type !== "tool_use") continue;
-        const result = results.get(tool.id);
-        if (result) consumed.add(result.id);
-      }
-      const callCount = tools.filter((tool) => tool.type === "tool_use").length;
-      const failureCount = tools.filter((tool) => tool.type === "tool_result" && tool.is_error).length;
-      // 无回执的调用 = 还在跑：收起态此前完全看不出这组是「跑完了」还是「卡住了」，
-      // 只能展开逐条找。摘要上复用单条工具的同一枚跳动点（.chat-tool-pending）。
-      const pendingCount = tools.filter((tool) => tool.type === "tool_use" && !results.has(tool.id)).length;
-      // 摘要直接说做了什么（「运行终端 ×2 · 读取文件」，Claude Code 的
-      // 「Ran 2 commands, read a file」同款），不再是「执行了 N 次工具调用」+
-      // 重复的种类列表——同一行两段文字说的是同一件事。种类只列前 3 个。
-      const kindCounts = new Map<string, number>();
-      for (const tool of tools) {
-        if (tool.type !== "tool_use") continue;
-        const name = friendlyToolName(tool.name, t);
-        kindCounts.set(name, (kindCounts.get(name) ?? 0) + 1);
-      }
-      const kinds = [...kindCounts.entries()];
-      // 这组改了多少行，挂在摘要行尾（Kimi 的「已编辑 2 个文件 +58 -0」同类信息）：
-      // 收起态下不展开也能看出这组是只读了读，还是真动了代码。
-      let added = 0;
-      let removed = 0;
-      let editTool: string | null = null;
-      const nameCounts = new Map<string, number>();
-      for (const tool of tools) {
-        if (tool.type !== "tool_use") continue;
-        nameCounts.set(tool.name, (nameCounts.get(tool.name) ?? 0) + 1);
-        const delta = lineDelta(tool.detail);
-        if (!delta) continue;
-        editTool ??= tool.name;
-        added += delta.added;
-        removed += delta.removed;
-      }
-      const touched = editTool !== null;
-      // 行首图标说这组主要在干什么：动过文件就是笔，否则取出现最多的那种工具。此前一律
-      // 是 >_，收起成一行后几组连排，图标给不出任何区分。
-      const iconTool = editTool ?? [...nameCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-      // 整组跑完才报耗时（首条调用 → 末条回执的时间戳差）：还在跑的组数字一直在变，
-      // 写一个过时的值不如不写。缺时间戳的 provider 自然不显示。
-      const startedAt = Date.parse(tools[0].timestamp ?? "");
-      const endedAt = Date.parse(tools[tools.length - 1].timestamp ?? "");
-      const span = pendingCount === 0 && endedAt - startedAt >= 1000 ? fmtSpan(endedAt - startedAt) : null;
-      const label = kinds.slice(0, 3).map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(" · ")
-        + (kinds.length > 3 ? " …" : "");
-      // 默认展开成「卡片 + 步骤时间线」（2026-10 A+B 改版后用户实拍要求「直接展开」）。
-      // 沿革：此前进行中展开、后因对照 Kimi 嫌拥挤改成恒收起一行；时间线把每步压成一行
-      // 短码 + 路径后不再拥挤，故改回展开。开合仍只在挂载时定一次，用户收起的不会被弹开。
-      record.nodes.push(<ActivityGroup className={"chat-activity-group" + (failureCount ? " is-error" : "")} defaultOpen key={`tools-${tools[0].id}`}>
-        <summary className="chat-activity-summary">
-          <ToolIcon name={iconTool} />
-          <span className="chat-activity-kinds">{label || t.chat.toolActivities(callCount || tools.length)}</span>
-          {/* 7C-9：行级指示已降级为 aria-hidden（并行工具一多就是播报风暴），组头这一处
-              是唯一的出口——但 aria-label 挂在无 role 的 span 上读屏取不到，等于全组静音。
-              role=status 让它成为可播报的活区，文本进 sr-only 的伴随节点（点点本身是装饰）。 */}
-          {pendingCount > 0 && (
-            <span className="chat-tool-pending" role="status">
-              <span className="chat-sronly">{t.chat.toolRunning}</span>
-              <i aria-hidden="true" /><i aria-hidden="true" /><i aria-hidden="true" />
-            </span>
-          )}
-          {failureCount > 0 && <span className="chat-activity-errors">{t.chat.toolFailures(failureCount)}</span>}
-          {/* 顺序同行级小标「-3 +4」：同一屏两种写法会让人以为是两种数。 */}
-          {touched && (
-            <span className="chat-activity-delta">
-              {removed > 0 && <span className="is-del">-{removed}</span>}
-              {added > 0 && <span className="is-add">+{added}</span>}
-            </span>
-          )}
-          {span && <span className="chat-activity-time">{span}</span>}
-          <span className="chat-tool-chevron">›</span>
-        </summary>
-        <div className="chat-activity-items">{tools.map((tool) => {
-          if (tool.type === "tool_use") {
-            return <ToolActivity key={tool.id} item={tool} result={results.get(tool.id)} />;
-          }
-          return consumed.has(tool.id) ? null : <Message key={tool.id} item={tool} />;
-        })}</div>
-      </ActivityGroup>);
+      const following = items[index + 1];
+      const summary = item.kind === "compact" && following?.type === "meta" && following.kind === "compact_summary"
+        ? following.compaction?.summary ?? null
+        : null;
+      record.nodes.push(<Message key={item.id} item={item} compactSummary={summary} />);
+      index += summary !== null ? 2 : 1;
       continue;
     }
-    record.nodes.push(<Message key={item.id} item={item} />);
-    index += 1;
+    // assistant 回合：从当前条目一直收集到下一个 user/meta 或结尾。思考、工具、正文
+    // 同属一个回合；不再额外显示 provider/model 回合头。
+    const turnItems: ChatItem[] = [];
+    let next = index;
+    while (next < items.length && items[next].type !== "user_text" && items[next].type !== "meta") {
+      const entry = items[next];
+      // 一个回合只装一段 assistant 正文：遇到下一段正文就结束当前回合。
+      // 思考/工具围绕这段正文归属同一回合，已完成回合才能折叠过程。
+      if ((entry.type === "assistant_text" || entry.type === "assistant_delta")
+        && turnItems.some((existing) => existing.type === "assistant_text" || existing.type === "assistant_delta")) {
+        break;
+      }
+      turnItems.push(entry);
+      next += 1;
+    }
+    const processItems = turnItems.filter((entry) =>
+      entry.type === "reasoning" || entry.type === "reasoning_delta" || entry.type === "tool_use" || entry.type === "tool_result",
+    );
+    const bodyItems = turnItems.filter((entry) =>
+      entry.type === "assistant_text" || entry.type === "assistant_delta" || entry.type === "turn_error",
+    );
+    const isLive = next >= items.length;
+    const firstStamp = Date.parse(turnItems[0]?.timestamp ?? "");
+    const lastStamp = Date.parse(turnItems[turnItems.length - 1]?.timestamp ?? "");
+    const durationMs = Number.isFinite(firstStamp) && Number.isFinite(lastStamp) ? Math.max(0, lastStamp - firstStamp) : null;
+
+    const renderProcess = () => {
+      const nodes: JSX.Element[] = [];
+      let cursor = 0;
+      while (cursor < processItems.length) {
+        const entry = processItems[cursor];
+        if (entry.type === "reasoning" || entry.type === "reasoning_delta") {
+          const globalIndex = items.indexOf(entry);
+          nodes.push(<Message key={entry.id} item={entry} nextStamp={nextStamp(items, globalIndex)} />);
+          cursor += 1;
+          continue;
+        }
+        if (entry.type === "tool_use" && isSubagentDelegation(entry, outcomes)) {
+          nodes.push(<SubagentBlock
+            key={entry.id}
+            sessionId={sessionId}
+            item={entry}
+            outcome={outcomes.get(entry.id)}
+            settled={settledAt.has(entry.id)}
+            finishedAt={finishedTs.get(entry.id) ?? null}
+          />);
+          cursor += 1;
+          continue;
+        }
+        // 连续工具调用/回执：保持原有配对，逐行渲染。
+        const tools: Array<ToolUseItem | ToolResultItem> = [];
+        while (cursor < processItems.length) {
+          const candidate = processItems[cursor];
+          if (candidate.type === "tool_use" && isSubagentDelegation(candidate, outcomes)) break;
+          if (candidate.type !== "tool_use" && candidate.type !== "tool_result") break;
+          tools.push(candidate);
+          cursor += 1;
+        }
+        if (tools.length === 0) continue;
+        const results = new Map<string, ToolResultItem>();
+        for (const tool of tools) {
+          if (tool.type === "tool_result" && tool.tool_use_id) results.set(tool.tool_use_id, tool);
+        }
+        const consumed = new Set<string>();
+        for (const tool of tools) {
+          if (tool.type !== "tool_use") continue;
+          const result = results.get(tool.id);
+          if (result) consumed.add(result.id);
+        }
+        nodes.push(
+          <div className="chat-flat-steps" key={`tools-${tools[0].id}`}>
+            {tools.map((tool) => {
+              if (tool.type === "tool_use") {
+                return <ToolActivity key={tool.id} item={tool} result={results.get(tool.id)} />;
+              }
+              return consumed.has(tool.id) ? null : <Message key={tool.id} item={tool} />;
+            })}
+          </div>,
+        );
+      }
+      return nodes;
+    };
+
+    // 只有一条思考/工具时原样平铺，≥2 条才收成汇总块（Kimi 的 ActivityRun 分组规则）：
+    // 单条工具外面再套一层「已运行 1 条命令」是重复信息。工具与它的回执算一条。
+    const units = processItems.filter((entry) => entry.type !== "tool_result").length;
+    // 运行中 = 会话在工作、这一段在末尾、后面还没有正文（正文一到，这段过程就算结束）。
+    const running = working && isLive && bodyItems.length === 0;
+    if (units === 1) {
+      record.nodes.push(...renderProcess());
+    } else if (processItems.length > 0) {
+      record.nodes.push(
+        <TurnFold
+          key={`fold-${turnItems[0].id}`}
+          id={turnItems[0].id}
+          items={processItems}
+          durationMs={durationMs}
+          running={running}
+        >
+          {renderProcess()}
+        </TurnFold>,
+      );
+    }
+    for (const entry of bodyItems) {
+      // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
+      const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
+      record.nodes.push(<Message key={entry.id} item={entry} latest={latest} />);
+    }
+    // 页脚只挂在整段回复的末尾（下一条是用户消息/meta 或到底）：一段回复被工具调用切成
+    // 多节时，Kimi 也只在最后给一组时间与复制，逐节挂会把一屏刷成一串时间戳。
+    // 复制取整段回复的全部正文、改动卡片汇总整段回复的编辑——往回扫到这段回复的起点，
+    // 增量缓存从中间重算时也拿得全。
+    const replyEnds = next >= items.length || items[next].type === "user_text" || items[next].type === "meta";
+    if (replyEnds) {
+      let start = index;
+      while (start > 0 && items[start - 1].type !== "user_text" && items[start - 1].type !== "meta") start -= 1;
+      const reply = items.slice(start, next);
+      record.nodes.push(<TurnChanges key={`changes-${turnItems[0].id}`} items={reply} />);
+      const copyText = reply
+        .filter((entry) => entry.type === "assistant_text" || entry.type === "assistant_delta")
+        .map((entry) => entry.text)
+        .filter((text) => text.trim())
+        .join("\n\n");
+      if (copyText) {
+        record.nodes.push(<TurnFooter key={`foot-${turnItems[0].id}`} text={copyText} timestamp={turnItems[turnItems.length - 1]?.timestamp ?? null} />);
+      }
+    }
+    index = next;
   }
-  cacheRef.current = { sessionId, t, agentKey, items, blocks, outcomes, settledAt };
-  return <>{blocks.flatMap((block) => block.nodes)}</>;
+  cacheRef.current = { sessionId, t, items, blocks, outcomes, settledAt };
+  // 折叠块的开合按会话各记一份（最近 4 个会话），切走再回来原样还原，见 foldMemory。
+  return <FoldScopeContext.Provider value={foldScope(sessionId)}>{blocks.flatMap((block) => block.nodes)}</FoldScopeContext.Provider>;
 });

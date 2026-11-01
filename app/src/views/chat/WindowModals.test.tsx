@@ -5,7 +5,7 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
-import { QuickSwitcher, type PaletteCommand } from "./WindowModals";
+import { QuickSwitcher, ShortcutSheet, type PaletteCommand } from "./WindowModals";
 import type { LiveSession } from "../../api";
 import { zh } from "../../i18n/zh";
 
@@ -142,5 +142,20 @@ describe("QuickSwitcher 命令面板（U1-14）", () => {
     // 重新打开场景下 ArrowDown 一次再 Enter 才跳别的会话——这里直接测点击。
     fireEvent.click(screen.getByRole("option", { name: /别的会话/ }));
     expect(props.onPick).toHaveBeenCalledWith(8);
+  });
+});
+
+describe("ShortcutSheet 快捷键速查表", () => {
+  afterEach(cleanup);
+
+  it("复用完整快捷键清单并可按 Esc 关闭", () => {
+    const onClose = vi.fn();
+    render(<ShortcutSheet onClose={onClose} />);
+    const dialog = screen.getByRole("dialog", { name: zh.chat.shortcutsTitle });
+    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(14);
+    expect(dialog.textContent).toContain("Ctrl+Shift+F");
+    expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

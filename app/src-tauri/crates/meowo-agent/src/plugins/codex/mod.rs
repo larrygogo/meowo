@@ -14,6 +14,7 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
+mod lineage;
 mod screen;
 pub mod setup;
 pub mod telemetry;
@@ -251,6 +252,26 @@ impl AgentPlugin for Codex {
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
     }
+    /// `codex fork <SESSION_ID>`：起交互界面并分叉出新线程（`codex fork --help`，0.166）。
+    fn fork_mode(&self) -> Option<crate::ForkMode> {
+        Some(crate::ForkMode::Args {
+            before: &["fork"],
+            after: &[],
+        })
+    }
+    /// 模型目录读 `$CODEX_HOME/models_cache.json`：codex 自己从服务端拉回、给 `/model` 菜单
+    /// 用的那份缓存（0.163 实测：`models[].slug/display_name/visibility/supported_reasoning_levels`）。
+    /// 只列 `visibility = "list"` 的——`hide` 的（内部审查模型等）codex 菜单里也不出现。
+    fn model_catalog(&self, env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
+        let home = env
+            .iter()
+            .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
+            .map(|(_, value)| std::path::PathBuf::from(value))
+            .or_else(|| crate::installation(crate::id::CODEX).map(|inst| inst.data_dir));
+        home.and_then(|home| std::fs::read_to_string(home.join("models_cache.json")).ok())
+            .map(|content| parse_models_cache(&content))
+            .unwrap_or_default()
+    }
     /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
     /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
     fn model_menu_command(&self) -> Option<&'static str> {
@@ -261,6 +282,11 @@ impl AgentPlugin for Codex {
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
     fn queue_input(&self) -> Option<&'static str> {
         Some("\t")
+    }
+
+    /// Tab 是「排到本回合结束后」;插进当前回合的是 Enter(官方键盘文档,见 queue_input)。
+    fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
+        Some(crate::chat_ui::QueueDelivery::TurnEnd)
     }
 
     fn interrupt_input(&self) -> Option<&'static str> {
@@ -405,8 +431,64 @@ impl AgentPlugin for Codex {
     }
 }
 
+/// 解析 codex 的 `models_cache.json`（见 `model_catalog`）。格式不认得即空表，不猜。
+fn parse_models_cache(content: &str) -> Vec<crate::ModelCatalogEntry> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return Vec::new();
+    };
+    let Some(models) = value.get("models").and_then(|m| m.as_array()) else {
+        return Vec::new();
+    };
+    models
+        .iter()
+        .filter(|model| model.get("visibility").and_then(|v| v.as_str()) != Some("hide"))
+        .filter_map(|model| {
+            let id = model.get("slug").and_then(|v| v.as_str())?.to_string();
+            let label = model
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .filter(|name| !name.is_empty())
+                .map_or_else(|| id.clone(), str::to_string);
+            let efforts = model
+                .get("supported_reasoning_levels")
+                .and_then(|v| v.as_array())
+                .map(|levels| {
+                    levels
+                        .iter()
+                        .filter_map(|level| level.get("effort").and_then(|e| e.as_str()))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(crate::ModelCatalogEntry {
+                id,
+                label,
+                group: None,
+                efforts,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    /// 样本形制取自本机 codex 0.163 的 models_cache.json（描述截短）。
+    #[test]
+    fn models_cache_lists_visible_models_with_reasoning_levels() {
+        let content = r#"{"fetched_at":"x","models":[
+            {"slug":"gpt-6.1-sol","display_name":"GPT-6.1-Sol","visibility":"list",
+             "supported_reasoning_levels":[{"effort":"low","description":"a"},{"effort":"max","description":"b"}]},
+            {"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide"},
+            {"slug":"gpt-5.6-luna","visibility":"list"}
+        ]}"#;
+        let catalog = parse_models_cache(content);
+        assert_eq!(catalog.len(), 2);
+        assert_eq!(catalog[0].label, "GPT-6.1-Sol");
+        assert_eq!(catalog[0].efforts, vec!["low", "max"]);
+        assert_eq!(catalog[1].label, "gpt-5.6-luna");
+        assert!(parse_models_cache("not json").is_empty());
+    }
+
     use super::*;
 
     #[test]

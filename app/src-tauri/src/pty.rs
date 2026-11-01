@@ -311,9 +311,6 @@ struct AttachState {
     /// 不发生时这条暂存自然过期，旧会话**不会**被错误标记为已接替——这是切换失败的
     /// 关键防线（用户仍可 resume 回旧引擎）。
     pending_lineage: Mutex<HashMap<String, i64>>,
-    /// launch_token → 附加目录列表(--add-dir 已进 argv,这里是**落库**用的原件)。
-    /// claim 认领时序列化进 sessions.extra_dirs,resume/接管按它回放。
-    pending_extra_dirs: Mutex<HashMap<String, Vec<String>>>,
     bindings: Mutex<HashMap<i64, i64>>,
     approvals: Mutex<HashMap<String, PendingApproval>>,
     /// 显式注册的 GUI 审批消费者。窗口存在/可见不等于已经订阅了目标 session。
@@ -443,7 +440,6 @@ impl PtyBroker {
                 pending_launches: Mutex::new(HashMap::new()),
                 pending_launch_args: Mutex::new(HashMap::new()),
                 pending_lineage: Mutex::new(HashMap::new()),
-                pending_extra_dirs: Mutex::new(HashMap::new()),
                 bindings: Mutex::new(HashMap::new()),
                 approvals: Mutex::new(HashMap::new()),
                 approval_consumers: Mutex::new(HashMap::new()),
@@ -1887,8 +1883,6 @@ impl PtyBroker {
         launch_selections: &HashMap<String, String>,
         // 跨 provider 切换时 = 被接替的旧会话 id；普通新建传 None。claim 认领时落接续链。
         predecessor: Option<i64>,
-        // 附加目录(--add-dir 原件,argv 由调用方拼好):claim 时落库供 resume 回放。
-        extra_dirs: &[String],
     ) -> Result<i64, String> {
         let endpoint = self
             .attach
@@ -1925,11 +1919,6 @@ impl PtyBroker {
                 map.insert(launch_token.clone(), old_sid);
             }
         }
-        if !extra_dirs.is_empty() {
-            if let Ok(mut map) = self.attach.pending_extra_dirs.lock() {
-                map.insert(launch_token.clone(), extra_dirs.to_vec());
-            }
-        }
         let mut launch_env = env.to_vec();
         // MEOWO_PTY_TOKEN 刻意不在这里注入：start_spawned 统一换发 scoped reporter token
         // （凭据分级，见那里的注释），这里只补 launch 专用的认领凭据。
@@ -1963,9 +1952,6 @@ impl PtyBroker {
                 map.remove(&launch_token);
             }
             if let Ok(mut map) = self.attach.pending_lineage.lock() {
-                map.remove(&launch_token);
-            }
-            if let Ok(mut map) = self.attach.pending_extra_dirs.lock() {
                 map.remove(&launch_token);
             }
             return Err(error);
@@ -2681,6 +2667,16 @@ impl PtyBroker {
         let decision = match choice {
             "allow_once" => ApprovalDecision::Allow,
             "deny" => ApprovalDecision::Deny,
+            // 附理由拒绝（对照 Kimi「说明拒绝原因… / 提交并拒绝」）：理由经 reporter 作为
+            // 拒绝说明回给模型，它据此调整做法而不是只知道「被拒了」。空理由按普通拒绝。
+            value if value.starts_with("deny:") => {
+                let reason = value["deny:".len()..].trim();
+                if reason.is_empty() {
+                    ApprovalDecision::Deny
+                } else {
+                    ApprovalDecision::DenyWith(reason.to_string())
+                }
+            }
             value if value.starts_with("suggestion:") => {
                 let index = value["suggestion:".len()..]
                     .parse::<usize>()
@@ -3289,22 +3285,6 @@ impl PtyBroker {
                 if let Err(e) = store.set_session_lineage(real_id, old_sid) {
                     eprintln!("接续链落库失败（{old_sid} → {real_id}）: {e}");
                 }
-            }
-        }
-        // 附加目录落库(resume/接管重启的回放依据):best-effort 与 launch_args 同款,
-        // 失败只丢一次回放依据,不阻断认领。
-        let extra_dirs = self
-            .attach
-            .pending_extra_dirs
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(launch_token));
-        if let Some(dirs) = extra_dirs.filter(|d| !d.is_empty()) {
-            if let (Ok(store), Ok(json)) = (
-                crate::open_store(&crate::db_path()),
-                serde_json::to_string(&dirs),
-            ) {
-                let _ = store.set_session_extra_dirs(real_id, &json);
             }
         }
         // 保持 Arc 活到映射完成，避免极短命进程在重绑边界提前析构。
@@ -5473,6 +5453,22 @@ mod tests {
             rx.recv().unwrap(),
             ApprovalDecision::AllowWithPermissions(vec![suggestion])
         );
+    }
+
+    /// 附理由拒绝：`deny:<理由>` → DenyWith（理由去首尾空白）；空理由退回普通 Deny。
+    #[test]
+    fn deny_choice_carries_reason_to_model() {
+        let broker = PtyBroker::default();
+        let rx = seed_pending_approval(&broker, 9, "request-deny-reason");
+        broker
+            .resolve_approval_choice(9, "request-deny-reason", "deny:  别动生产配置 ")
+            .unwrap();
+        assert_eq!(rx.recv().unwrap(), ApprovalDecision::DenyWith("别动生产配置".into()));
+        let rx = seed_pending_approval(&broker, 9, "request-deny-empty");
+        broker
+            .resolve_approval_choice(9, "request-deny-empty", "deny:   ")
+            .unwrap();
+        assert_eq!(rx.recv().unwrap(), ApprovalDecision::Deny);
     }
 
     /// 测试固件：向审批表塞一条挂起请求，返回决策接收端。

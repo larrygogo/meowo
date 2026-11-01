@@ -2,7 +2,7 @@
 //! 确认屏。
 //!
 //! 为什么要做：对话页只渲染结构化 chat，看不到也答不了这道 TUI 提示；信任屏期间 agent 不触发
-//! 任何 hook，新会话不落库——跨 agent 切换（`switch_session_provider`）表现为「切换后什么都
+//! 任何 hook，新会话不落库——跨 agent 切换（`copy_session_to_provider`）表现为「切换后什么都
 //! 没了」。取证、算法向量与安全权衡全在 `docs/research/kimi-workspace-trust-2026-09.md`
 //! （活文档，**勿移动**）；kimi 改算法时按该文件的复跑方法重新取证，别凭记忆改这里。
 //!

@@ -75,6 +75,72 @@ describe("remote transport 的 open_link scheme 白名单", () => {
   });
 });
 
+describe("remote transport 切回前台重发", () => {
+  // 第一发挂住直到被撤（模拟锁屏期间断掉的连接），之后的请求正常返回。
+  function hangFirstFetch() {
+    let calls = 0;
+    const fn = vi.fn((_url: string, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ fresh: true }) });
+    });
+    vi.stubGlobal("fetch", fn);
+    return fn;
+  }
+  function setHidden(hidden: boolean) {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+  afterEach(() => {
+    delete (document as { hidden?: boolean }).hidden;
+  });
+
+  it("在后台待过一阵再回来：挂着的只读请求撤掉重发，调用方拿到新结果", async () => {
+    setToken("tok");
+    const fetchFn = hangFirstFetch();
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const pending = invoke("get_chat_history", { sessionId: 1, offset: 5 });
+    setHidden(true);
+    now.mockReturnValue(10_000);
+    setHidden(false);
+    await expect(pending).resolves.toEqual({ fresh: true });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("写命令不重发：撤了服务端照样执行，重发会做两遍", async () => {
+    setToken("tok");
+    const fetchFn = hangFirstFetch();
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    let settled = false;
+    void invoke("write_managed_terminal", { sessionId: 1, data: "x" }).finally(() => { settled = true; });
+    setHidden(true);
+    now.mockReturnValue(10_000);
+    setHidden(false);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("切走一两秒就回来不撤：连接多半还活着", async () => {
+    setToken("tok");
+    const fetchFn = hangFirstFetch();
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    void invoke("get_chat_history", { sessionId: 1, offset: 5 });
+    setHidden(true);
+    now.mockReturnValue(1_500);
+    setHidden(false);
+    await Promise.resolve();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("remote transport", () => {
   it("invoke 转 POST /rpc/<cmd>,带 X-Meowo-Token 与原样 camelCase 参数", async () => {
     setToken("tok-123");

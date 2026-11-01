@@ -6,6 +6,7 @@ import { reduceChatEvents } from "../../chat/reducer";
 import { TodoBadge } from "./TodoBadge";
 import { Transcript } from "./Transcript";
 import { durationText, type ToolUseItem } from "./shared";
+import { useRememberedOpen } from "./foldMemory";
 
 /// 一次子任务委派。子任务的过程不在主 transcript 里（住在 provider 的侧车流），
 /// 故这里只在**用户展开时**才去取——一个会话可能派出几十个子任务，跟着历史轮询一起读
@@ -76,7 +77,7 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
   const [runs, setRuns] = useState<SubagentRun[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useRememberedOpen(`subagent:${item.id}`, false);
   // 卸载后晚到的拉取结果不得再 setState（同文件 3s 轮询路径用局部 cancelled；
   // onToggle 触发的首次拉取在 effect 之外，只能用 ref）。
   const mountedRef = useRef(true);
@@ -102,6 +103,9 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
       .catch((e) => { if (mountedRef.current) setError(formatBackendError(e, t.locale)); })
       .finally(() => { if (mountedRef.current) setLoading(false); });
   };
+  // 切会话回来时记忆里是展开的：没有 toggle 可等，挂载时自己拉一次。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) load(); }, []);
   // 展开着且还有分支在跑时定期重取：子任务边跑边写，静态快照会一直停在打开那一刻。
   // 收起或全部结束就停——不给已完结的子任务留一个永动的轮询。
   const hasRunning = runs?.some((run) => run.status === "running") ?? false;
@@ -148,14 +152,17 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
     ? durationText(endMs - startMs, t)
     : null;
   return (
-    <details className="chat-subagent" onToggle={(event) => {
-      setOpen(event.currentTarget.open);
-      if (event.currentTarget.open) load();
+    <details className="chat-subagent" open={open || undefined} onToggle={(event) => {
+      // 带着记忆里的展开态挂载时浏览器也会派发一次 toggle（next === open），不重复拉取。
+      const next = event.currentTarget.open;
+      if (next === open) return;
+      setOpen(next);
+      if (next) load();
     }}>
       <summary>
         {/* 在跑时图标本体脉冲:折叠状态下扫一眼就能看出「里面有活儿」,不必凑近读徽标小字。 */}
         <span className={"chat-subagent-icon" + (isRunning ? " is-running" : "")}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="5" r="2.4" /><circle cx="5.5" cy="18.5" r="2.4" /><circle cx="18.5" cy="18.5" r="2.4" />
             <path d="M12 7.4v3.2M12 10.6H5.5v5.5M12 10.6h6.5v5.5" />
           </svg>

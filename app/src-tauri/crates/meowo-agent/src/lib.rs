@@ -77,7 +77,8 @@ pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
 pub use registry::{
-    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ModelPreset, DEFAULT_ID,
+    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, ModelCatalogEntry, ModelPreset,
+    DEFAULT_ID,
 };
 pub use relay::{
     RelayCap, RelayConfig, RelayEnvOption, RelayModelAuth, RelayModelRequest, RelayOption,
@@ -86,7 +87,7 @@ pub use relay::{
 pub use transcript::{
     default_resolve_cwd, read_chat_delta, read_chat_delta_paged, read_chat_window, AgentMode,
     ChatDelta, ChatItem, ChatWindow, TranscriptCache, TranscriptEvent, TranscriptInfo,
-    TranscriptParser, TranscriptSpec, TurnError,
+    ChatLineMark, TranscriptParser, TranscriptSpec, TurnError,
 };
 pub use trust::{trust_key, WorkspaceTrustSpec};
 pub use variant::{DataDirSpec, Installation, Variant};
