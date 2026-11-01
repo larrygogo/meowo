@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { applyLearnedLabels, loadLearnedLabels, saveLearnedLabels } from "./modelLabels";
+import { applyLearnedLabels, currentPresetId, loadLearnedLabels, saveLearnedLabels } from "./modelLabels";
 
 const presets = [
   { id: "fable", label: "Fable" },
@@ -57,5 +57,21 @@ describe("模型标签学习", () => {
     saveLearnedLabels("kimi", "1.0.0", ["K2"]);
     expect(loadLearnedLabels("claude", "2.1.0")).toEqual(["Opus 5"]);
     expect(loadLearnedLabels("kimi", "1.0.0")).toEqual(["K2"]);
+  });
+});
+
+describe("currentPresetId", () => {
+  const presets = [
+    { id: "opus", label: "Opus 5" },
+    { id: "opusplan", label: "Opus Plan" },
+    { id: "sonnet", label: "Sonnet 5" },
+  ];
+  /// 状态行报 "Opus 5.5"、菜单写 "Opus 5"（实拍）：整串比对一个都勾不上，按别名取最长匹配。
+  it("全名对不上时按别名最长匹配", () => {
+    expect(currentPresetId(presets, "Opus 5.5")).toBe("opus");
+    expect(currentPresetId(presets, "Opus Plan")).toBe("opusplan");
+    expect(currentPresetId(presets, "sonnet")).toBe("sonnet");
+    expect(currentPresetId(presets, "Haiku 4.5")).toBeNull();
+    expect(currentPresetId(presets, null)).toBeNull();
   });
 });

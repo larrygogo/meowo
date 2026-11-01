@@ -57,7 +57,7 @@ use fsutil::{
     reveal_path_in_file_manager, search_project_files,
 };
 use git::{git_diff_summary, git_file_diff};
-use handoff::{get_session_lineage, switch_session_provider};
+use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
     add_agent_to_user_path, agent_path_gap, api_key_login, cancel_install, cancel_login,
     check_provider_hooks, install_agent, login_agent, logout_agent, open_install_log,
@@ -75,9 +75,7 @@ use managed_terminal::{
 };
 #[cfg(test)]
 use session_command::is_safe_id;
-use session_command::{
-    add_session_extra_dir, remove_session_extra_dir, rename_session, set_archived, set_session_note,
-};
+use session_command::{rename_session, set_archived, set_session_note};
 use session_command::{session_launch_selections, set_session_launch_selection};
 use session_query::{get_live_sessions_counts, get_live_sessions_page, recent_cwds};
 #[cfg(test)]
@@ -86,9 +84,9 @@ use session_query::{
     SessionRuntimeIndex, RESUME_GRACE_MS,
 };
 use terminal::{
-    apply_active_profile_to_sessions, focus_session, new_session, open_automation_settings,
-    open_project_dir, restart_session_supported, resume_session, sessions_off_active_profile_count,
-    takeover_managed_terminal,
+    apply_active_profile_to_sessions, focus_session, fork_session, new_session,
+    open_automation_settings, open_project_dir, restart_session_supported, resume_session,
+    sessions_off_active_profile_count, takeover_managed_terminal,
 };
 use window::{
     open_chat_window, open_latest_chat, open_new_session_window, open_onboarding, open_settings,
@@ -821,6 +819,33 @@ async fn agent_models(provider: String, session_id: Option<i64>) -> Vec<String> 
     .unwrap_or_default()
 }
 
+/// 该 agent 在用户本机配置里的模型目录（插件读 CLI 自己的配置文件，见
+/// `AgentPlugin::model_catalog`）。对照 Kimi 桌面版：模型菜单一打开就列出，不必先往会话
+/// PTY 发 `/model` 弹一次菜单再靠屏幕识别读回来。读文件、不起进程，失败即空表。
+/// 多账号会话按其 profile 的环境找配置（kimi 的 `KIMI_CODE_HOME`）。
+#[tauri::command]
+async fn agent_model_catalog(provider: String, session_id: Option<i64>) -> Vec<meowo_agent::ModelCatalogEntry> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(plugin) = meowo_agent::resolve(Some(&provider)) else {
+            return Vec::new();
+        };
+        let env = session_id
+            .and_then(|session_id| {
+                let store = open_store(&db_path()).ok()?;
+                let header = store.session_header(session_id).ok()?;
+                if header.provider != plugin.id().as_str() {
+                    return None;
+                }
+                let profile = store.session_profile(session_id).ok()?;
+                Some(profile::env_of(plugin.id(), profile.as_deref()))
+            })
+            .unwrap_or_default();
+        plugin.model_catalog(&env)
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// 对话页能力：按会话查询（provider + cwd），由**安装实况**组装——插件的内置表 ∪ 用户/项目
 /// 目录里发现的自定义命令 + 探测到的 CLI 版本。装了新命令、换了版本，下次打开会话就反映。
 /// 未知 provider → None，前端降级为不补全、不给模型菜单。
@@ -1272,6 +1297,7 @@ pub fn run() {
             snap_layout::set_caption_overlay_rects,
             start_managed_terminal,
             takeover_managed_terminal,
+            fork_session,
             session_launch_selections,
             set_session_launch_selection,
             managed_terminal_snapshot,
@@ -1317,8 +1343,6 @@ pub fn run() {
             rename_session,
             set_archived,
             set_session_note,
-            add_session_extra_dir,
-            remove_session_extra_dir,
             get_autostart,
             set_autostart,
             get_settings,
@@ -1362,6 +1386,7 @@ pub fn run() {
             list_agents,
             agent_chat_ui,
             agent_models,
+            agent_model_catalog,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,
@@ -1371,7 +1396,7 @@ pub fn run() {
             profile::delete_profile,
             profile::merge_profile_into_default,
             new_session,
-            switch_session_provider,
+            copy_session_to_provider,
             get_session_lineage,
             install_agent,
             cancel_install,
@@ -2952,17 +2977,19 @@ mod tests {
     #[test]
     fn waiting_fingerprint_rules() {
         // 错误优先:无指纹。
-        assert_eq!(waiting_fingerprint(true, false, "waiting"), None);
+        assert_eq!(waiting_fingerprint(true, false, "waiting", false), None);
         // pending 优先:无 waiting 指纹(让位 pending)。
-        assert_eq!(waiting_fingerprint(false, true, "waiting"), None);
+        assert_eq!(waiting_fingerprint(false, true, "waiting", false), None);
         // 纯 waiting:指纹恒为 "waiting"(不掺时间戳,同一次等待只弹一次;
         // status 离开 waiting 后条目被清,下一回合重新通知)。
         assert_eq!(
-            waiting_fingerprint(false, false, "waiting").as_deref(),
+            waiting_fingerprint(false, false, "waiting", false).as_deref(),
             Some("waiting")
         );
         // 非 waiting 状态:None。
-        assert_eq!(waiting_fingerprint(false, false, "running"), None);
+        assert_eq!(waiting_fingerprint(false, false, "running", false), None);
+        // 后台子任务/后台 Bash 还在跑：主回合停了也不是「等你」，不发。
+        assert_eq!(waiting_fingerprint(false, false, "waiting", true), None);
     }
 
     #[test]

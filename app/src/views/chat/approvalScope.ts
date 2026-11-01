@@ -48,6 +48,17 @@ export function approvalScope(tool: string | null | undefined, input: string, di
   return tags;
 }
 
+/** Bash 一类参数里除 command 外只有这些附带键时，卡片只摆命令本身：用户要判断的是这条
+ *  命令，`{"command":"…"}` 的 JSON 外壳只是噪音，「复制命令」也该复制命令而不是 JSON。
+ *  多出别的键（看不全会做什么）时返回 null，调用方照旧展示完整参数。 */
+const COMMAND_SIDE_KEYS = new Set(["command", "description", "timeout", "run_in_background"]);
+
+export function commandOfInput(input: string): string | null {
+  const parsed = parseObject(input);
+  if (!parsed || typeof parsed.command !== "string" || !parsed.command.trim()) return null;
+  return Object.keys(parsed).every((key) => COMMAND_SIDE_KEYS.has(key)) ? parsed.command : null;
+}
+
 function parseObject(input: string): Record<string, unknown> | null {
   const text = input.trim();
   if (!text.startsWith("{")) return null;

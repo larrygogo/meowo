@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::transcript::ChatItem;
 use crate::{
     caps::{HookContext, StopOutputs, TelemetryCap, TodoSnapshot},
-    transcript::{ChatOnlyParser, ToolDetail, TranscriptEvent, TranscriptParser, TranscriptSpec},
+    transcript::{ChatOnlyParser, CompactionDetail, ToolDetail, TranscriptEvent, TranscriptParser, TranscriptSpec},
 };
 
 use super::store;
@@ -24,7 +24,11 @@ impl TelemetryCap for OpencodeTelemetry {
     /// 桥接插件构造的 Stop 负载不带正文（`session.idle` 事件本身只有 sessionID），从库里读。
     fn stop_outputs(&self, ctx: &HookContext) -> StopOutputs {
         let (last_ai, model) = store::last_reply(ctx.session_id).unwrap_or_default();
-        StopOutputs { last_ai, model }
+        StopOutputs {
+            last_ai,
+            model,
+            effort: None,
+        }
     }
 
     fn read_todos(&self, ctx: &HookContext) -> Option<Vec<TodoSnapshot>> {
@@ -112,14 +116,23 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
 fn user_events(msg: &str, timestamp: Option<String>, parts: Option<&Value>) -> Vec<TranscriptEvent> {
     let parts = parts.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     // /compact 落成一条带 `compaction` part 的用户消息：画成分隔条，不当用户的话。
-    if parts
+    if let Some(part) = parts
         .iter()
-        .any(|p| p.get("type").and_then(Value::as_str) == Some("compaction"))
+        .find(|p| p.get("type").and_then(Value::as_str) == Some("compaction"))
     {
+        // part 自带 `auto`（上下文将满时自动压 / 用户 /compact），分隔条据此区分说法。
+        let trigger = part
+            .get("auto")
+            .and_then(Value::as_bool)
+            .map(|auto| if auto { "auto" } else { "manual" }.to_string());
         return vec![TranscriptEvent::Metadata {
             id: format!("{msg}:compact"),
             timestamp,
             kind: "compact".into(),
+            compaction: trigger.map(|trigger| CompactionDetail {
+                trigger: Some(trigger),
+                ..CompactionDetail::default()
+            }),
         }];
     }
     let mut lines: Vec<String> = parts
@@ -143,6 +156,7 @@ fn user_events(msg: &str, timestamp: Option<String>, parts: Option<&Value>) -> V
         id: msg.to_string(),
         timestamp,
         text,
+        interjected: false,
     }]
 }
 
@@ -232,6 +246,7 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
         detail: tool_detail(&name, input),
         name,
         subagent: None,
+        plan: None,
     };
     let (text, is_error) = match status {
         "completed" => (
@@ -431,7 +446,8 @@ mod tests {
         .to_string();
         assert!(matches!(
             parse_chat_items(&line).as_slice(),
-            [ChatItem::Meta { kind, .. }] if kind == "compact"
+            [ChatItem::Meta { kind, compaction: Some(detail), .. }]
+                if kind == "compact" && detail.trigger.as_deref() == Some("manual")
         ));
     }
 

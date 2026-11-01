@@ -478,6 +478,59 @@ mod tests {
         assert!(evaluate("wezterm", &snap(&["anything"])).is_none());
     }
 
+    /// auto 模式环境学习引导（2.1.314 实拍逐行复刻）：标题是空闲的 ✳，开关行以 ❯ 开头，
+    /// 必须判 blocked——判成 idle 时对话页发出的消息会被这个对话框吞掉。
+    #[test]
+    fn auto_mode_setup_dialog_is_blocked() {
+        let s = snap_titled(
+            &[
+                "\u{273B} Saut\u{e9}ed for 2s \u{00B7} done 22:37",
+                "\u{2594}\u{2594}\u{2594}\u{2594}\u{2594}\u{2594}\u{2594}\u{2594}",
+                "   Teach auto mode about your environment?",
+                "   Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other",
+                "     How you use Claude here     Mixed",
+                "   \u{276F} Also scan shell history     true",
+                "     Also scan your other repos  false",
+                "     Continue",
+                "   \u{2190}/\u{2192} to change \u{00B7} Enter to continue \u{00B7} Esc to cancel",
+            ],
+            "\u{2733} Claude Code",
+        );
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Blocked, "auto_mode_setup_prompt"))
+        );
+    }
+
+    /// /btw 覆盖层两种形态（2.1.314 实拍逐行复刻）：作答中 = working；答完 = blocked——
+    /// 覆盖层吞按键（`c` 复制、`f` 分叉），旧规则把它一直判成运行中，对话页照常发消息就被吃掉。
+    #[test]
+    fn btw_overlay_answering_works_and_answered_blocks() {
+        let rule = "\u{2594}".repeat(40);
+        let answering = snap_titled(
+            &[
+                "\u{273B} Churned for 2s \u{00B7} done 22:47",
+                rule.as_str(),
+                "    /btw \u{5217}\u{51FA} 1 \u{5230} 60",
+                "      \u{00B7} Answering\u{2026}",
+                "    Esc to close",
+            ],
+            "\u{2733} Claude Code",
+        );
+        assert_eq!(
+            state_of(evaluate("claude", &answering)),
+            Some((ScreenState::Working, "btw_overlay_working"))
+        );
+        let mut answered: Vec<String> = vec![rule.clone(), "    /btw \u{5217}\u{51FA} 1 \u{5230} 60".into()];
+        answered.extend((1..=26).map(|n| format!("      {n}")));
+        answered.push("    \u{2191}/\u{2193} to scroll \u{00B7} c to copy \u{00B7} f to fork \u{00B7} Esc to close".into());
+        let answered = ScreenSnapshot::new(answered, Some("\u{2733} Claude Code".into()));
+        assert_eq!(
+            state_of(evaluate("claude", &answered)),
+            Some((ScreenState::Blocked, "btw_overlay_answered"))
+        );
+    }
+
     /// 标题盲文 spinner 帧 → working（最高优先级，压过屏幕上的一切）。
     #[test]
     fn braille_title_wins_as_working() {

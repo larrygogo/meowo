@@ -44,16 +44,19 @@ describe("Transcript 日期分隔条", () => {
   });
 });
 
-describe("Message 悬停时间", () => {
-  it("带 timestamp 的用户/AI 气泡挂 data-tip", () => {
+describe("Message 时间", () => {
+  it("用户时间在页脚，消息上不挂悬停的完整时间", () => {
+    const timestamp = "2026-08-16T10:00:00Z";
     const { container } = render(
       <>
-        <Message item={user("u", "2026-08-16T10:00:00Z", "你好")} />
+        <Message item={user("u", timestamp, "你好")} />
         <Message item={{ type: "assistant_text", id: "a", timestamp: "2026-08-16T10:01:00Z", text: "在" }} />
       </>,
     );
-    const tipped = container.querySelectorAll("article[data-tip]");
-    expect(tipped).toHaveLength(2);
+    expect(container.querySelectorAll("article[data-tip]")).toHaveLength(0);
+    expect(container.querySelector(".chat-user-foot time")?.textContent).toBe(
+      new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+    );
   });
 
   it("timestamp 为 null 时不挂 data-tip", () => {
@@ -63,14 +66,19 @@ describe("Message 悬停时间", () => {
 });
 
 describe("Message 复制", () => {
-  it("助手消息可直接复制原文并给出完成反馈", async () => {
+  it("助手正文不再逐段显示复制按钮（由回合末尾统一提供）", () => {
+    render(<Message item={{ type: "assistant_text", id: "a", timestamp: null, text: "完整回复" }} />);
+    expect(screen.queryByRole("button", { name: "复制消息" })).toBeNull();
+  });
+
+  it("用户消息仍可复制原文并给出完成反馈", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-    render(<Message item={{ type: "assistant_text", id: "a", timestamp: null, text: "完整回复" }} />);
+    render(<Message item={{ type: "user_text", id: "u", timestamp: null, text: "完整提问" }} />);
 
     fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "已复制消息" })).toBeTruthy());
-    expect(writeText).toHaveBeenCalledWith("完整回复");
+    expect(writeText).toHaveBeenCalledWith("完整提问");
   });
 });
 

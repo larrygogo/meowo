@@ -119,8 +119,12 @@ function activity(l: Item): "pending" | "running" | "waiting" | null {
 export type CardTone = "offline" | "error" | "pending" | "running" | "waiting" | "on";
 export function cardTone(l: Item): CardTone {
   if (!l.connected) return "offline";
+  // 待交互压过出错，与侧栏 sessionTone 同序：侧栏先改了这档而这里没跟，同一个挂着审批的
+  // 会话在侧栏是琥珀、在看板是红环。出错只是上一轮断了，审批挂着时 Agent 正卡着等你。
+  const a = activity(l);
+  if (a === "pending") return a;
   if (l.errored) return "error";
-  return activity(l) ?? "on";
+  return a ?? "on";
 }
 
 /** 徽标置信度（T-15 的两层「不自信」）：tone 只回答「画成哪一档」，本函数回答

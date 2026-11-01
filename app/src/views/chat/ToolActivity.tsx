@@ -1,11 +1,16 @@
-import { createContext, memo, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, memo, useEffect, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import type { DiffHunk } from "../../generated/contracts/DiffHunk";
 import type { ToolDetail } from "../../generated/contracts/ToolDetail";
-import { fmtElapsed } from "./cliStatus";
-import { CommandLines, dedent, OutputBlock } from "./terminalText";
 import { highlightLines, languageForPath } from "./highlight";
-import { stripAnsi, type ToolResultItem, type ToolUseItem } from "./shared";
+import { toolKind } from "./ToolIcon";
+import { BashTool } from "./tools/BashTool";
+import { ReadTool } from "./tools/ReadTool";
+import { EditTool } from "./tools/EditTool";
+import { GenericTool } from "./tools/GenericTool";
+
+export { toolKind, ToolIcon, toolShortName } from "./ToolIcon";
+export type { ToolKind } from "./ToolIcon";
 
 /// 工具名的展示词。命中不了的原样回落成工具 id——比编一个错译好，但**常见工具**
 /// 必须都译到：此前只译了 Bash/Read/Write 三家，一组活动摘要读起来是
@@ -26,134 +31,127 @@ export function friendlyToolName(name: string, t: ReturnType<typeof useT>): stri
   return name;
 }
 
-export type ToolKind = "search" | "read" | "write" | "edit" | "run" | "web" | "todo" | "agent" | "other";
+type DiffOperation = { kind: " " | "-" | "+"; text: string };
+export type TextDiff = { hunks: DiffHunk[]; added: number; removed: number };
 
-/// 工具的语义类别，驱动时间线上的类型标签与配色（data-kind）。判定顺序与
-/// friendlyToolName 一致：网络类先于搜索类（web_search 含 "search"）。
-export function toolKind(name: string): ToolKind {
-  const normalized = name.toLowerCase();
-  if (normalized === "bash" || normalized === "exec" || normalized.includes("shell") || normalized.includes("terminal")) return "run";
-  if (normalized.includes("web") || normalized.includes("fetch") || normalized.includes("http")) return "web";
-  if (normalized.includes("grep") || normalized.includes("glob") || normalized.includes("search")) return "search";
-  if (normalized === "read" || normalized.includes("view_image")) return "read";
-  if (normalized === "write") return "write";
-  if (normalized === "edit" || normalized.includes("patch") || normalized.includes("notebook")) return "edit";
-  if (normalized.includes("todo")) return "todo";
-  if (normalized === "task" || normalized.includes("agent")) return "agent";
-  return "other";
-}
-
-
-/// 按工具类型分图标：搜索 / 读文件 / 改文件 / 终端 / 网络 / 通用。
-/// 一组操作若全是同一个 `>_`，用户在展开列表里无法一眼区分做了什么。
-/// 全部按 1.8 描边画：放大镜曾是填充轮廓（内外两圈），与笔/文件并排时明显发粗。
-export function ToolIcon({ name }: { name: string }) {
-  const normalized = name.toLowerCase();
-  const path = normalized.includes("grep") || normalized.includes("glob") || normalized.includes("search")
-    ? "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20"
-    : normalized === "read" || normalized.includes("view_image") || normalized.includes("notebook")
-    ? "M6 3h8l4 4v14H6zM14 3v5h5"
-    : normalized === "write" || normalized === "edit" || normalized.includes("patch")
-    ? "M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17zM13.5 6.5l3 3"
-    : normalized.includes("fetch") || normalized.includes("web") || normalized.includes("http")
-    ? "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm-9 9h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9s1.3-6.6 3.8-9z"
-    : "M4 17l6-6-6-6M12 19h8";
-  return (
-    <span className="chat-tool-icon" data-kind={toolKind(name)}>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={path} /></svg>
-    </span>
-  );
-}
-
-/// 预览露出的行数上限。CC 终端里 Write 也只露十来行再写「+262 lines」——整篇摊开会把
-/// 对话流顶掉几屏，而用户要的是「看一眼在写什么」，不是在对话页读文件。
-const PREVIEW_LINES = 12;
-
-/// 拆行：末尾的换行不算一行（"a\nb\n" 是两行），与后端 `lines()` 的口径一致。
+/// 拆行：末尾的换行不算一行；空字符串是 0 行，不是 1 个空行。
 function splitLines(text: string): string[] {
+  if (!text) return [];
   const lines = text.split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   return lines;
 }
 
-/// 带行号（或 diff 的 +/- 记号）的代码行。高亮复用文件面板那套 hljs——highlightLines
-/// 逐行对齐，失败整体退纯文本，不会出现错位。
-function CodeLines({ lines, lang, start = 1, tone, gutter }: {
-  lines: string[];
-  lang: string | null;
-  start?: number;
-  tone?: "add" | "del";
-  /// 自定义行首记号（终端命令用 `$`）；缺省是行号，diff 态是 +/-。
-  gutter?: (index: number) => string;
-}) {
-  const html = highlightLines(lines, lang);
-  const mark = (index: number) => gutter ? gutter(index) : tone ? (tone === "add" ? "+" : "-") : String(start + index);
-  return (
-    <div className={"chat-tool-code" + (tone ? ` is-${tone}` : "")}>
-      {html.map((line, index) => (
-        <div className="chat-tool-line" key={index}>
-          <span className="chat-tool-ln" aria-hidden="true">{mark(index)}</span>
-          <span className="chat-tool-src" dangerouslySetInnerHTML={{ __html: line || " " }} />
-        </div>
-      ))}
-    </div>
-  );
+const DIFF_CONTEXT_LINES = 2;
+const MAX_LCS_CELLS = 1_000_000;
+
+/// 逐行 LCS：只把真正增删的行标成 +/-，公共前后缀保留为上下文。
+/// 先剥公共前后缀，典型「大段里改一行」只需比较中间几行；整块替换才走全量兜底。
+function diffOperations(oldText: string, newText: string): DiffOperation[] {
+  const oldLines = splitLines(oldText);
+  const newLines = splitLines(newText);
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix
+    && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]) suffix += 1;
+  const oldMiddle = oldLines.slice(prefix, oldLines.length - suffix);
+  const newMiddle = newLines.slice(prefix, newLines.length - suffix);
+  const before = oldLines.slice(0, prefix).map((text) => ({ kind: " " as const, text }));
+  const after = oldLines.slice(oldLines.length - suffix).map((text) => ({ kind: " " as const, text }));
+  if ((oldMiddle.length + 1) * (newMiddle.length + 1) > MAX_LCS_CELLS) {
+    return [
+      ...before,
+      ...oldMiddle.map((text) => ({ kind: "-" as const, text })),
+      ...newMiddle.map((text) => ({ kind: "+" as const, text })),
+      ...after,
+    ];
+  }
+  const width = newMiddle.length + 1;
+  const dp = Array.from({ length: oldMiddle.length + 1 }, () => new Uint32Array(width));
+  for (let i = 1; i <= oldMiddle.length; i += 1) {
+    for (let j = 1; j <= newMiddle.length; j += 1) {
+      dp[i][j] = oldMiddle[i - 1] === newMiddle[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const middle: DiffOperation[] = [];
+  let i = oldMiddle.length;
+  let j = newMiddle.length;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldMiddle[i - 1] === newMiddle[j - 1]) {
+      middle.push({ kind: " ", text: oldMiddle[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      middle.push({ kind: "+", text: newMiddle[j - 1] });
+      j -= 1;
+    } else {
+      middle.push({ kind: "-", text: oldMiddle[i - 1] });
+      i -= 1;
+    }
+  }
+  middle.reverse();
+  return [...before, ...middle, ...after];
 }
 
-/// 长正文只露前 PREVIEW_LINES 行，余下折成「还有 N 行 · 展开全部」；展开后可收回。
-/// 后端截断过的正文在展开到底时提示「只保留了开头」——不能让用户以为文件就这么长。
-function Preview({ text, lang, tone, truncated }: { text: string; lang: string | null; tone?: "add" | "del"; truncated?: boolean }) {
-  const t = useT();
-  const [all, setAll] = useState(false);
-  const lines = splitLines(text);
-  const shown = all ? lines : lines.slice(0, PREVIEW_LINES);
-  const rest = lines.length - shown.length;
-  const foldable = lines.length > PREVIEW_LINES;
-  return (
-    <>
-      <CodeLines lines={shown} lang={lang} tone={tone} />
-      {foldable && (
-        <button type="button" className="chat-tool-more" onClick={() => setAll((value) => !value)}>
-          {all ? t.chat.toolShowLess : `${t.chat.toolMoreLines(rest)} · ${t.chat.toolShowAll}`}
-        </button>
-      )}
-      {truncated && all && <div className="chat-tool-note">{t.chat.toolTruncated}</div>}
-    </>
-  );
+/// 从编辑前后文本生成统一 diff 与真实增删计数；计数和预览共用，杜绝两处算法漂移。
+export function diffText(oldText: string, newText: string): TextDiff {
+  const operations = diffOperations(oldText, newText);
+  let added = 0;
+  let removed = 0;
+  for (const line of operations) {
+    if (line.kind === "+") added += 1;
+    else if (line.kind === "-") removed += 1;
+  }
+  const hunks: DiffHunk[] = [];
+  let cursor = 0;
+  while (cursor < operations.length) {
+    while (cursor < operations.length && operations[cursor].kind === " ") cursor += 1;
+    if (cursor >= operations.length) break;
+    const firstChange = cursor;
+    let lastChange = cursor;
+    for (let next = cursor + 1; next < operations.length; next += 1) {
+      if (operations[next].kind === " ") continue;
+      if (next - lastChange > DIFF_CONTEXT_LINES * 2 + 1) break;
+      lastChange = next;
+    }
+    const start = Math.max(0, firstChange - DIFF_CONTEXT_LINES);
+    const end = Math.min(operations.length, lastChange + DIFF_CONTEXT_LINES + 1);
+    const oldBefore = operations.slice(0, start).filter((line) => line.kind !== "+").length;
+    const newBefore = operations.slice(0, start).filter((line) => line.kind !== "-").length;
+    hunks.push({
+      old_start: oldBefore + 1,
+      new_start: newBefore + 1,
+      lines: operations.slice(start, end).map((line) => `${line.kind}${line.text}`),
+    });
+    cursor = lastChange + 1;
+  }
+  return { hunks, added, removed };
 }
 
-/// 一次写入/编辑增删了多少行。Edit 按 old/new 的行数算（同终端里的「-3 +4」，不做
-/// 逐行 diff）；Write 只有新增。其余工具不改文件，返回 null。工具组摘要行据此汇总。
+/// 一次写入/编辑真实增删了多少行；其余工具不改文件，返回 null。
 export function lineDelta(detail: ToolDetail | null | undefined): { added: number; removed: number } | null {
   if (detail?.kind === "write") return { added: detail.lines, removed: 0 };
-  if (detail?.kind === "edit") return { added: splitLines(detail.new).length, removed: splitLines(detail.old).length };
+  if (detail?.kind === "edit") {
+    const { added, removed } = diffText(detail.old, detail.new);
+    return { added, removed };
+  }
   return null;
 }
 
-
-/// 展开后的详情正文：Write 是带行号的内容预览，Edit 是删/增两段，Bash 是 `$ 命令`。
-/// Read / Search 的信息都已在标题行（路径 + 范围/模式），没有正文。
-function DetailBody({ detail }: { detail: ToolDetail }): ReactNode {
-  const t = useT();
-  switch (detail.kind) {
-    case "write":
-      return <Preview text={detail.content} lang={languageForPath(detail.path)} truncated={detail.truncated} />;
-    case "edit": {
-      const lang = languageForPath(detail.path);
-      return (
-        <div className="chat-tool-diff">
-          {detail.replace_all && <div className="chat-tool-note">{t.chat.toolReplaceAll}</div>}
-          <Preview text={detail.old} lang={lang} tone="del" />
-          <Preview text={detail.new} lang={lang} tone="add" truncated={detail.truncated} />
-        </div>
-      );
-    }
-    case "command":
-      return <CommandLines command={detail.command} />;
-    case "read":
-    case "search":
-      return null;
-  }
+/// 一次 Edit/Write 的落地结果：优先用回执里的真实 patch，没有就按 old/new 现算。
+/// 工具行与回合末尾的「文件已修改」卡片共用这一份口径，两处的增删数才对得上。
+export function editOutcome(item: import("./shared").ToolUseItem, result?: import("./shared").ToolResultItem) {
+  const detail = item.detail && (item.detail.kind === "edit" || item.detail.kind === "write") ? item.detail : null;
+  const generated = !result?.patch?.length && detail?.kind === "edit" ? diffText(detail.old, detail.new) : null;
+  const patch = result?.patch?.length ? result.patch : generated?.hunks ?? null;
+  const delta = generated ? { added: generated.added, removed: generated.removed } : patch ? {
+    added: patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "+").length, 0),
+    removed: patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "-").length, 0),
+  } : lineDelta(detail);
+  return { detail, path: detail?.path ?? item.summary, patch, delta };
 }
 
 /// 会话工作目录：工具行里落在它下面的路径显示成相对路径（终端里就是这样），
@@ -172,32 +170,36 @@ export function relativize(text: string, cwd: string | null): string {
   return text;
 }
 
-/// 终端里工具调用的动词：Edit 显示成 Update、Grep/Glob 显示成 Search（claude 终端的叫法），
-/// 其余原样用工具 id。这是「代码」不是文案，不随界面语言变。
-function toolVerb(name: string, kind: ToolKind): string {
-  if (kind === "edit") return "Update";
-  if (kind === "search") return "Search";
-  return name;
-}
-
-/// 回执正文的非空行（先剥终端着色码）。
-function outputLines(text: string): string[] {
-  return stripAnsi(text).split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
-}
-
-/// 运行中的那条每秒重渲染一次，第二行的计时才会走。跑完即停。
-function useSecondTick(active: boolean) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [active]);
+/// 工具行的参数摘要（对齐 Kimi 的 BashTool/ReadTool/EditTool）：命令全文、文件路径、
+/// 搜索模式，而不是把 JSON 参数原样摊开。没有结构化 detail 时尝试从 JSON 摘要里提取。
+export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | null): string {
+  const detail = item.detail;
+  if (detail?.kind === "command") return detail.command;
+  if (detail?.kind === "read" || detail?.kind === "write" || detail?.kind === "edit") {
+    const path = relativize(detail.path, cwd).replace(/\\/g, "/");
+    const index = path.lastIndexOf("/");
+    // Kimi 的目录与文件名分两段显示，中间留一个空格。
+    return index >= 0 ? `${path.slice(0, index + 1)} ${path.slice(index + 1)}` : path;
+  }
+  if (detail?.kind === "search") return [detail.pattern, detail.path && relativize(detail.path, cwd)].filter(Boolean).join(" ");
+  const raw = item.summary.trim();
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const command = parsed.command ?? parsed.cmd ?? parsed.script;
+      const path = parsed.path ?? parsed.file_path ?? parsed.filePath;
+      const pattern = parsed.pattern ?? parsed.query ?? parsed.search;
+      if (typeof command === "string") return command;
+      if (typeof pattern === "string") return [pattern, typeof path === "string" ? relativize(path, cwd) : ""].filter(Boolean).join(" ");
+      if (typeof path === "string") return relativize(path, cwd);
+    } catch { /* 不是 JSON 就按原文摘要 */ }
+  }
+  return raw;
 }
 
 /// 统一 diff（claude 回执的 structuredPatch）：终端同款「行号 + -/+ + 代码」，增删交错、
 /// 带上下文。删行标旧文件行号、其余标新文件行号；多段之间放一行省略号。
-function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string | null }) {
+export function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string | null }) {
   return (
     <div className="chat-tool-code chat-tool-udiff">
       {hunks.map((hunk, hunkIndex) => {
@@ -228,102 +230,58 @@ function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string | null }
   );
 }
 
-const OUTPUT_HEAD_LINES = 3;
-
-/// 第二行「⎿ 结果摘要」：终端在每次调用下面写一句结果（Updated … with 1 addition、
-/// Read 160 lines、命令输出的头几行），对话页照搬这个形态。
-function ResultLine({ item, result, kind, detail, patch }: {
-  item: ToolUseItem;
-  result?: ToolResultItem;
-  kind: ToolKind;
-  detail: ToolDetail | null;
-  patch: DiffHunk[] | null;
-}) {
-  const t = useT();
-  const [mountedAt] = useState(() => Date.now());
-  useSecondTick(!result);
-  if (!result) {
-    const startedAt = Date.parse(item.timestamp ?? "");
-    const since = Number.isNaN(startedAt) ? mountedAt : startedAt;
-    return <span className="chat-tool-out is-running">{t.chat.toolRunningFor(fmtElapsed(Date.now() - since))}</span>;
-  }
-  const lines = outputLines(result.text);
-  if (result.is_error) return <span className="chat-tool-out is-error">{lines[0] ?? t.chat.toolNoOutput}</span>;
-  if (kind === "edit" || kind === "write") {
-    if (patch) {
-      const added = patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "+").length, 0);
-      const removed = patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "-").length, 0);
-      return <span className="chat-tool-out">{t.chat.toolEditSummary(added, removed)}</span>;
-    }
-    if (detail?.kind === "write") return <span className="chat-tool-out">{t.chat.toolWroteLines(detail.lines)}</span>;
-    const delta = lineDelta(detail);
-    if (delta) return <span className="chat-tool-out">{t.chat.toolEditSummary(delta.added, delta.removed)}</span>;
-  }
-  if (kind === "read") return <span className="chat-tool-out">{t.chat.toolReadLines(lines.length)}</span>;
-  if (kind === "search") return <span className="chat-tool-out">{lines.length ? t.chat.toolFoundLines(lines.length) : t.chat.toolNoOutput}</span>;
-  if (lines.length === 0) return <span className="chat-tool-out">{t.chat.toolNoOutput}</span>;
-  // 命令等：像终端一样露输出的头 3 行，余下折成「还有 N 行」，全文在展开区。
-  const head = dedent(lines.slice(0, OUTPUT_HEAD_LINES));
-  return (
-    <span className="chat-tool-out is-output">
-      {head.join("\n")}
-      {lines.length > head.length && <span className="chat-tool-out-more">{`\n… ${t.chat.toolMoreLines(lines.length - head.length)}`}</span>}
-    </span>
-  );
-}
-
-/// memo 理由同 Message：item/result 都来自 reducer，未变化时引用稳定。
-/// 形态照搬 claude 终端（2026-10 用户要求「像终端」）：首行「● Update(src/a.ts)」，
-/// 次行「⎿ 新增 3 行，删除 1 行」；展开区是 diff / 命令全文与完整输出。
-export const ToolActivity = memo(function ToolActivity({ item, result }: { item: ToolUseItem; result?: ToolResultItem }) {
-  const t = useT();
-  const cwd = useContext(ChatCwdContext);
-  const detail = item.detail ?? null;
+/// 工具调用按类型分派到独立渲染器（对照 Kimi 的 ToolCall → BashTool/ReadTool/EditTool/GenericTool）。
+export const ToolActivity = memo(function ToolActivity({ item, result }: { item: import("./shared").ToolUseItem; result?: import("./shared").ToolResultItem }) {
   const kind = toolKind(item.name);
-  const patch = result?.patch?.length ? result.patch : null;
-  // 开合只在挂载时定一次，之后归用户（React 只在 prop 变化时碰 open）。跑着的那条展开看
-  // 在做什么；编辑类恒展开——终端里 diff 就直接摊在调用下面。
-  const [initialOpen] = useState(() => (!result && detail !== null) || kind === "edit");
-  const command = detail?.kind === "command" ? detail : null;
-  const path = detail && "path" in detail ? detail.path : null;
-  return (
-    <details
-      className={"chat-tool" + (result?.is_error ? " is-error" : "")}
-      // 时间线状态点读它：跑着 / 失败 / 完成三态。
-      data-state={!result ? "running" : result.is_error ? "error" : "done"}
-      open={initialOpen || undefined}
-    >
-      <summary>
-        {/* 命令描述不单独占一行（宽度不够时会被挤成孤零零的一行，用户实拍嫌丑），进悬停提示。 */}
-        <span className="chat-tool-call" data-tip={command?.description ?? undefined}>
-          <span className="chat-tool-verb" data-kind={kind} aria-hidden="true">{toolVerb(item.name, kind)}</span>
-          <span className="chat-tool-name chat-sronly">{friendlyToolName(item.name, t)}</span>
-          <span className="chat-tool-paren" aria-hidden="true">(</span>
-          <span className="chat-tool-summary">{relativize(item.summary, cwd)}</span>
-          <span className="chat-tool-paren" aria-hidden="true">)</span>
-        </span>
-        <span className="chat-tool-chevron">›</span>
-        <span className="chat-tool-result">
-          <span className="chat-tool-elbow" aria-hidden="true">⎿</span>
-          <ResultLine item={item} result={result} kind={kind} detail={detail} patch={patch} />
-        </span>
-      </summary>
-      <div className="chat-tool-body">
-        {patch
-          ? <UnifiedDiff hunks={patch} lang={languageForPath(path ?? item.summary)} />
-          : detail && <DetailBody detail={detail} />}
-        {/* 编辑成功的回执只是一句「已更新」，diff 已经说明了一切，不再重复。 */}
-        {!(kind === "edit" && result && !result.is_error) && (
-          result ? <OutputBlock text={stripAnsi(result.text) || t.chat.toolNoOutput} /> : <pre>{t.chat.toolRunning}</pre>
-        )}
-      </div>
-    </details>
-  );
+  switch (kind) {
+    case "run": return <BashTool item={item} result={result} />;
+    case "read": return <ReadTool item={item} result={result} />;
+    case "write":
+    case "edit": return <EditTool item={item} result={result} />;
+    default: return <GenericTool item={item} result={result} />;
+  }
 });
 
-/// 活动组容器：挂载时组里还有没回执的调用（= 正在跑）就默认展开，用户当场看到正在做
-/// 什么；跑完后保持用户留下的开合状态。open 只在挂载时定一次（理由见 ToolActivity）。
-export function ActivityGroup({ defaultOpen, className, children }: { defaultOpen: boolean; className: string; children: ReactNode }) {
-  const [initialOpen] = useState(() => defaultOpen);
-  return <details className={className} open={initialOpen || undefined}>{children}</details>;
+/// 收起后内容多留一瞬间，与 CSS 里 chat-strip-out 的时长同源（时长略短于动画会砍掉尾帧）。
+const COLLAPSE_GRACE_MS = 200;
+
+/// 活动组开合的记忆，放在组件之外：Transcript 随流式到达会重建条目，组件实例的寿命比
+/// 用户意图短，记在 state 里一重挂载就丢（Kimi 的 TurnFold 同样是把展开态存在 inject
+/// 进来的共享 Map 里）。换会话时由 Transcript 清空——旧会话的组 id 不会再出现。
+const groupOpenMemory = new Map<string, boolean>();
+
+export function resetActivityGroupMemory(): void {
+  groupOpenMemory.clear();
+}
+
+/// 活动组容器：首次挂载时组里还有没回执的调用（= 正在跑）就默认展开，用户当场看到正在
+/// 做什么；此后一律以记忆为准，用户收过的组不会被下一条结果弹开。
+///
+/// shown 只决定内容留在不在 DOM 里（收起后多留 200ms 走完出场动画）；expanded 是意图。
+/// 两态拆开是照抄 Kimi 的 TurnFold。进场没有用它那套双 requestAnimationFrame 而是用
+/// keyframes：双 rAF 依赖「先画收起态那一帧」，重挂载频繁的流式列表里会看到内容闪一下。
+export function ActivityGroup({ id, defaultOpen, className, children }: { id: string; defaultOpen: boolean; className: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(() => groupOpenMemory.get(id) ?? defaultOpen);
+  const [shown, setShown] = useState(expanded);
+
+  useEffect(() => {
+    groupOpenMemory.set(id, expanded);
+    if (expanded) {
+      setShown(true);
+      return;
+    }
+    const timer = setTimeout(() => setShown(false), COLLAPSE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [id, expanded]);
+
+  return (
+    <details
+      className={className}
+      open={shown || undefined}
+      data-motion={expanded ? undefined : "out"}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      {children}
+    </details>
+  );
 }

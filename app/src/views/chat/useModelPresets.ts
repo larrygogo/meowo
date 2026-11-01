@@ -6,7 +6,7 @@
  * 静默探测/菜单编排仍在 ChatWindow（与 sendText、终端 attention 交织），这里只管数据。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { agentModels, type ChatUi, type ModelPreset } from "../../api";
+import { agentModelCatalog, agentModels, type ChatUi, type ModelCatalogEntry, type ModelPreset } from "../../api";
 import type { TerminalAttentionOption } from "../../terminalAttention";
 import { applyLearnedLabels, loadLearnedLabels, saveLearnedLabels } from "./modelLabels";
 
@@ -38,13 +38,45 @@ export function useModelPresets(provider: string | null, chatUi: ChatUi | null, 
       .catch(() => { if (!cancelled) setListing({ key: listKey, models: [] }); });
     return () => { cancelled = true; };
   }, [provider, sessionId, listKey, chatUi?.model_select_command]);
+  // 菜单型 CLI（kimi：/model 不接受参数）的模型目录直接读它的配置文件（对照 Kimi 桌面版）：
+  // 菜单一打开就列出，不必先让 CLI 弹一次菜单、再靠屏幕识别读回来。选中时仍走 CLI 菜单。
+  const [catalog, setCatalog] = useState<{ key: string; models: ModelCatalogEntry[] }>({ key: "", models: [] });
+  const modelCatalog = catalog.key === listKey ? catalog.models : [];
+  const menuOnly = !!chatUi && !chatUi.model_select_command && !!chatUi.model_menu_command;
+  // 能内联选择的（claude）也读目录：不是为了列清单，是为了把内置标签换成装着的那一版的
+  // 真实显示名（插件写着 Opus 5，CLI 早已是 Opus 5.5——用户实拍「模型名不准」）。
+  const wantsCatalog = menuOnly || !!chatUi?.model_select_command;
+  useEffect(() => {
+    if (!provider || !wantsCatalog) return;
+    let cancelled = false;
+    agentModelCatalog(provider, sessionId)
+      .then((models) => { if (!cancelled) setCatalog({ key: listKey, models }); })
+      .catch(() => { if (!cancelled) setCatalog({ key: listKey, models: [] }); });
+    return () => { cancelled = true; };
+  }, [provider, sessionId, listKey, wantsCatalog]);
   const modelPresets = useMemo<ModelPreset[]>(() => {
     if (listedModels.length > 0) return listedModels.map((id) => ({ id, label: id }));
-    return applyLearnedLabels(chatUi?.model_presets ?? [], loadLearnedLabels(provider, version));
-  }, [listedModels, chatUi?.model_presets, learnedModelLabels, provider, version]);
+    return applyCatalogLabels(
+      applyLearnedLabels(chatUi?.model_presets ?? [], loadLearnedLabels(provider, version)),
+      menuOnly ? [] : modelCatalog,
+    );
+  }, [listedModels, chatUi?.model_presets, learnedModelLabels, provider, version, menuOnly, modelCatalog]);
   const modelMenuCommand = chatUi?.model_menu_command ?? null;
   // 能直接下拉 = 清单已知（内置别名或学到的真实清单），且标签已是真的/该 CLI 无菜单可学。
   const modelDropdownReady = !!chatUi?.model_select_command && modelPresets.length > 0
     && (listedModels.length > 0 || learnedModelLabels !== null || !modelMenuCommand);
-  return { modelPresets: chatUi?.model_select_command ? modelPresets : [], modelMenuCommand, modelDropdownReady, learnModelLabels };
+  // 目录只对菜单型 CLI 当清单用；能内联选择的已经折进 modelPresets 的标签里，再单列会重复。
+  return { modelPresets: chatUi?.model_select_command ? modelPresets : [], modelCatalog: menuOnly ? modelCatalog : [], modelMenuCommand, modelDropdownReady, learnModelLabels };
+}
+
+/// 用目录里的家族显示名改写预设标签（claude：`opus` → `Opus 5.5`，`opus[1m]` → `Opus 5.5 (1M)`）。
+/// 目录里没有的预设（opusplan 这类组合别名）保留原标签。
+export function applyCatalogLabels<T extends { id: string; label: string }>(presets: T[], catalog: readonly ModelCatalogEntry[]): T[] {
+  if (catalog.length === 0) return presets;
+  const byFamily = new Map(catalog.map((entry) => [entry.id, entry.label]));
+  return presets.map((preset) => {
+    const long = /\[1m\]$/i.test(preset.id);
+    const name = byFamily.get(long ? preset.id.replace(/\[1m\]$/i, "") : preset.id);
+    return name ? { ...preset, label: long ? `${name} (1M)` : name } : preset;
+  });
 }

@@ -1,9 +1,8 @@
-//! 跨 provider 会话切换：把当前会话的结构化历史导出成交接文件，结束旧进程，
-//! 在同一工作目录用目标 agent 起新会话，并经 pending 暂存把接续链留给 claim 落库。
+//! 把会话复制到另一个 provider：导出当前会话的结构化历史成交接文件，在同一工作目录
+//! 用目标 agent 起一个**独立的**新会话，由前端把「请读交接文件」发进去。
 //!
-//! 流程顺序是安全性的一部分：**先导出、后杀进程**——导出失败时旧会话分毫未动；
-//! 接续链只在 claim 认领时写库——目标 CLI 起不来时旧会话不会被错误标记为已接替，
-//! 用户仍可 resume 回旧引擎。
+//! 原会话不结束、不标记接替，也不串接续链（用户要求：转移不如直接复制）——两边各自
+//! 继续，想回原引擎直接回原会话即可。早先「切换引擎」留下的接续链数据照常回看。
 
 use std::collections::HashMap;
 
@@ -14,7 +13,7 @@ use meowo_protocol::ipc::{LineageEntryDto, SwitchStartedDto};
 const HANDOFF_FILE: &str = "handoff.md";
 
 #[tauri::command]
-pub(crate) async fn switch_session_provider(
+pub(crate) async fn copy_session_to_provider(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
     session_id: i64,
@@ -23,18 +22,15 @@ pub(crate) async fn switch_session_provider(
 ) -> Result<SwitchStartedDto, String> {
     let broker = state.ptys.clone();
     let db = state.db_path.clone();
-    // 文件 IO + 杀进程 + DB + PTY spawn，全程不碰主线程消息泵（命令线程纪律）。
+    // 文件 IO + DB + PTY spawn，全程不碰主线程消息泵（命令线程纪律）。
     tauri::async_runtime::spawn_blocking(move || {
         let store = crate::open_store(&db)?;
         let header = store
             .session_header(session_id)
             .map_err(|e| e.to_string())?;
-        if header.superseded_by.is_some() {
-            return Err("该会话已被接替，请在最新的延续会话上切换".into());
-        }
         let source = meowo_agent::by_id(&header.provider).ok_or("未知来源 agent")?;
         // 来源门槛 = 现成的结构化 transcript 能力谓词，不新增能力槽也不按身份分支：
-        // 没有结构化历史就没有可交接的东西（gemini/opencode 只能当切换目标）。
+        // 没有结构化历史就没有可交接的东西（gemini/opencode 只能当复制目标）。
         let spec = source
             .telemetry()
             .and_then(|telemetry| telemetry.transcript())
@@ -47,10 +43,10 @@ pub(crate) async fn switch_session_provider(
         let cwd = header
             .cwd
             .clone()
-            .ok_or("会话缺少工作目录，无法在原目录延续")?;
+            .ok_or("会话缺少工作目录，无法在原目录复制")?;
         let dir = crate::terminal::validate_new_session_cwd(&cwd)?;
 
-        // == 导出（先导后杀：这里失败旧会话分毫未动）==
+        // == 导出 ==
         let transcript = spec
             .resolve_transcript_path(None, header.cwd.as_deref(), &header.cc_session_id)
             .ok_or("未找到会话记录文件")?;
@@ -75,18 +71,6 @@ pub(crate) async fn switch_session_provider(
         let handoff_path = handoff_dir.join(HANDOFF_FILE);
         std::fs::write(&handoff_path, &body).map_err(|e| format!("写入交接文件失败: {e}"))?;
 
-        // == 结束旧进程（判活口径与 takeover 相同，含 pid 归属校验——换代残留的 pid
-        // 属于别的会话，杀不得）==
-        if crate::terminal::session_agent_alive(&store, session_id)? {
-            if let Some(pid) = store.session_pid(session_id).map_err(|e| e.to_string())? {
-                crate::terminal::terminate_agent_for_restart(pid)?;
-            }
-        }
-        // 显式收尾而不等 reaper：看板不留「假运行中」窗口。
-        store
-            .end_session(session_id, crate::now_ms())
-            .map_err(|e| e.to_string())?;
-
         // == 起新会话（与 new_session 同构）。刻意**不继承**旧 launch_args：不同 agent
         // 的 option id 会撞名，旧选择对新 provider 无意义甚至有害。==
         let selections = options.unwrap_or_default();
@@ -102,7 +86,7 @@ pub(crate) async fn switch_session_provider(
             active_profile.as_deref(),
         );
         // 本次痛点：目标 kimi 停在「是否信任此目录」屏，对话页答不了、hook 不来、新会话不落库，
-        // 而旧会话已收尾——看板上表现为「切换后什么都没了」。起进程前替用户预写信任记录
+        // 看板上表现为「复制后新会话没出现」。起进程前替用户预写信任记录
         // （用户亲手选定目录与目标 agent，语义上已表达这份信任；codex 的 trusted_hash 是同一先例）。
         crate::terminal::pretrust_workspace(&target_provider, active_profile.as_deref(), &dir);
         let temp_id = broker
@@ -115,22 +99,12 @@ pub(crate) async fn switch_session_provider(
                 30,
                 target.id().as_str(),
                 &selections,
-                Some(session_id),
-                // 附加目录不随换代继承:目标 agent 未必声明该 flag,argv 也在本函数按目标
-                // agent 重新构造——静默带过去等于对用户谎报访问范围。
-                &[],
+                // 不串接续链：复制出来的是独立会话，原会话照常可用。
+                None,
             )
-            // 失败时旧进程已杀、DB 已 end_session，不做复杂回滚——但报错必须给出两条出路：
-            // 旧会话仍可手动 resume 回旧引擎（接续链只在 claim 时落库，它没被标记已接替）；
-            // 交接文件刻意留在盘上不删，路径随报错给出，用户可手动喂给新 agent。
-            .map_err(|e| {
-                format!(
-                    "启动新会话失败: {e}。旧会话已结束，可在会话列表中手动 resume 恢复；\
-                     交接文件已保留: {}",
-                    handoff_path.display()
-                )
-            })?;
-        crate::watch::emit_board_changed(&app, "switch_provider");
+            // 原会话没动过，失败只需说清楚；交接文件留在盘上，路径随报错给出，可手动喂给新 agent。
+            .map_err(|e| format!("启动新会话失败: {e}。交接文件已保留: {}", handoff_path.display()))?;
+        crate::watch::emit_board_changed(&app, "copy_to_provider");
         Ok(SwitchStartedDto {
             temp_id,
             handoff_path: handoff_path.to_string_lossy().into_owned(),

@@ -25,6 +25,8 @@ pub struct HookContext<'a> {
 pub struct StopOutputs {
     pub last_ai: Option<String>,
     pub model: Option<String>,
+    /// 当前思考程度（kimi 从会话日志读；claude 走 statusline，不在此处）。
+    pub effort: Option<String>,
 }
 
 /// 会话上下文占用快照。

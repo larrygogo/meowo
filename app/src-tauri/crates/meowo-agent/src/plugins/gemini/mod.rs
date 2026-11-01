@@ -218,6 +218,11 @@ impl AgentPlugin for Gemini {
         Some("\r")
     }
 
+    /// 运行中回车进 `Queued (press ↑ to edit)`，当前回答结束后才发出（probe_tui_script，0.64）。
+    fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
+        Some(crate::chat_ui::QueueDelivery::TurnEnd)
+    }
+
     // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。
     // 未取证的屏幕标签不作乐观更新，避免把按键成功误当成某个权限档已经生效。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {

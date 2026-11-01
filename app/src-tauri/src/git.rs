@@ -29,6 +29,8 @@ fn git_diff_summary_blocking(cwd: &str) -> Result<GitDiffSummaryDto, String> {
         git_available: false,
         is_repo: false,
         branch: None,
+        ahead: None,
+        behind: None,
         files: vec![],
     };
     // spawn 失败（git 未安装/被拦）不算错误——前端只是不显示按钮。
@@ -57,12 +59,29 @@ fn git_diff_summary_blocking(cwd: &str) -> Result<GitDiffSummaryDto, String> {
     }
     let mut files = parse_porcelain_z(&status.stdout);
     fill_line_counts(dir, &mut files);
+    let (ahead, behind) = match upstream_divergence(dir) {
+        Some((ahead, behind)) => (Some(ahead), Some(behind)),
+        None => (None, None),
+    };
     Ok(GitDiffSummaryDto {
         git_available: true,
         is_repo: true,
         branch,
+        ahead,
+        behind,
         files,
     })
+}
+
+/// 相对上游的 (领先, 落后) 提交数：`rev-list --left-right --count HEAD...@{upstream}` 输出
+/// 「左侧独有 右侧独有」。没设上游、detached HEAD 都会失败，返回 None（前端不显示）。
+fn upstream_divergence(dir: &str) -> Option<(u32, u32)> {
+    let output = git_output(dir, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+        .ok()
+        .filter(|output| output.status.success())?;
+    let text = stdout_text(&output.stdout);
+    let mut counts = text.split_whitespace().map(str::parse::<u32>);
+    Some((counts.next()?.ok()?, counts.next()?.ok()?))
 }
 
 /// 未跟踪文件最多数这么多个：-uall 下没进 .gitignore 的产物目录能有上千个文件，
@@ -410,6 +429,35 @@ mod tests {
         assert!(text.contains("中文"), "GBK diff 被解成了：{text}");
         // 纯 ASCII / UTF-8 输出照旧原样。
         assert_eq!(stdout_text("diff --git 中".as_bytes()), "diff --git 中");
+    }
+
+    /// 领先/落后按本地记录的上游分支算：本地多提交一个 = 领先 1；没上游 = None。
+    #[test]
+    fn upstream_divergence_counts_commits_against_tracking_branch() {
+        let root = std::env::temp_dir().join(format!("meowo-git-ahead-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let origin = root.join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        let run = |dir: &Path, args: &[&str]| {
+            let output = git_output(dir.to_str().unwrap(), args).unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        };
+        let commit = |dir: &Path, message: &str| {
+            run(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", message]);
+        };
+        run(&origin, &["init", "-q"]);
+        commit(&origin, "base");
+        assert_eq!(upstream_divergence(origin.to_str().unwrap()), None);
+        let clone = root.join("clone");
+        run(&root, &["clone", "-q", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+        assert_eq!(upstream_divergence(clone.to_str().unwrap()), Some((0, 0)));
+        commit(&clone, "local");
+        commit(&origin, "remote");
+        // 没 fetch：远程新提交还看不到，只数出本地领先的那个。
+        assert_eq!(upstream_divergence(clone.to_str().unwrap()), Some((1, 0)));
+        run(&clone, &["fetch", "-q"]);
+        assert_eq!(upstream_divergence(clone.to_str().unwrap()), Some((1, 1)));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

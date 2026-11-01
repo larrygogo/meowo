@@ -7,7 +7,7 @@
 // - `Dropdown`（选值）、`ActionMenu`（执行动作）：本文件内的组件，fixed 定位；
 // - 对话窗模型/模式菜单：CSS 绝对定位 + 互斥状态在父组件，受控复用 `useMenuPopup`；
 // - RelayAccess 的 ModelPicker 是 combobox（输入过滤 + aria-activedescendant），模式不同，不并入。
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
 import { useDismissable } from "../hooks/useDismissable";
 import { CheckIcon, ChevronDownIcon } from "./sticker/icons";
 
@@ -184,6 +184,7 @@ export function Dropdown<T extends string | number>({
 }) {
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({ align });
   const cur = options.find((o) => o.value === value);
+  const subId = useId();
   return (
     <div className="dd" ref={ref} onKeyDown={onKeyDown}>
       <button
@@ -210,11 +211,14 @@ export function Dropdown<T extends string | number>({
       </span>
       {open && (
         <div className="dd-menu" role="listbox" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, left: pos.left, right: pos.right, width: pos.width }}>
-          {options.map((o) => (
+          {options.map((o, index) => (
             <button
               type="button"
               role="option"
               aria-selected={o.value === value}
+              // 副标题是说明不是名字：名字只留档名，说明挂 describedby，读屏先报档名再补后果。
+              aria-label={o.sub ? o.label : undefined}
+              aria-describedby={o.sub ? `${subId}-${index}` : undefined}
               key={o.value}
               className={"dd-item" + (o.value === value ? " sel" : "") + (o.muted ? " muted" : "") + (o.risky ? " risk" : "")}
               onClick={() => {
@@ -227,7 +231,7 @@ export function Dropdown<T extends string | number>({
                 {o.icon && <span className="dd-ico">{o.icon}</span>}
                 <span className="dd-label">
                   {o.label}
-                  {o.sub && <span className="dd-sub">{o.sub}</span>}
+                  {o.sub && <span className="dd-sub" id={`${subId}-${index}`}>{o.sub}</span>}
                 </span>
               </span>
               {o.value === value && <CheckIcon className="dd-check" />}

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto } from "../../api";
 import type { ReviewComment } from "./diffComments";
 import { GitDiffView } from "./GitDiffView";
+import { markRemoteUi } from "../../remoteMode";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -11,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 const DIFF = ["diff --git a/src/a.ts b/src/a.ts", "--- a/src/a.ts", "+++ b/src/a.ts", "@@ -10,2 +10,2 @@", " keep", "-old", "+new"].join("\n");
-const summary: GitDiffSummaryDto = { gitAvailable: true, isRepo: true, branch: "main", files: [{ path: "src/a.ts", status: "M", additions: 1, deletions: 1 }] };
+const summary: GitDiffSummaryDto = { gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null, files: [{ path: "src/a.ts", status: "M", additions: 1, deletions: 1 }] };
 
 afterEach(cleanup);
 
@@ -26,10 +27,6 @@ function renderPanel(comments: ReviewComment[] = [], touchedPaths: string[] = []
   render(
     <GitDiffView
       cwd={"C:\\repo"}
-      dirs={["C:\\repo"]}
-      onDirChange={() => {}}
-      onAddDir={null}
-      onRemoveDir={() => {}}
       summary={summary}
       width={420}
       collapsed={false}
@@ -46,7 +43,7 @@ function renderPanel(comments: ReviewComment[] = [], touchedPaths: string[] = []
 }
 
 describe("GitDiffView 行数与本会话过滤", () => {
-  it("文件后面显示增删行数;勾上「只看本会话改的」只留会话碰过的文件", () => {
+  it("文件后面显示增删行数;改动范围切本会话 / 本轮只留对应碰过的文件", () => {
     const many: GitDiffSummaryDto = {
       ...summary,
       files: [
@@ -58,10 +55,10 @@ describe("GitDiffView 行数与本会话过滤", () => {
     vi.mocked(invoke).mockResolvedValue([]);
     render(
       <GitDiffView
-        cwd={"C:\\repo"} dirs={["C:\\repo"]} onDirChange={() => {}} onAddDir={null} onRemoveDir={() => {}}
-        summary={many} width={420} collapsed={false} maximized={false} onCollapse={() => {}} onToggleMaximize={() => {}}
+        cwd={"C:\\repo"}        summary={many} width={420} collapsed={false} maximized={false} onCollapse={() => {}} onToggleMaximize={() => {}}
         comments={[]} onAddComment={() => {}} onRemoveComment={() => {}}
-        touchedPaths={["c:/repo/src/a.ts"]}
+        touchedPaths={["c:/repo/src/a.ts", "c:/repo/src/b.ts"]}
+        turnTouchedPaths={["c:/repo/src/b.ts"]}
       />,
     );
     const rowA = screen.getByRole("button", { name: /a\.ts/ });
@@ -70,9 +67,31 @@ describe("GitDiffView 行数与本会话过滤", () => {
     // 二进制数不出行数,不显示。
     expect(screen.getByRole("button", { name: /logo\.png/ }).querySelector(".chat-diff-lines")).toBeNull();
 
-    fireEvent.click(screen.getByLabelText("只看本会话改的（1）"));
-    expect(screen.queryByRole("button", { name: /b\.ts/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "本会话 2" }));
+    expect(screen.queryByRole("button", { name: /logo\.png/ })).toBeNull();
     expect(screen.getByRole("button", { name: /a\.ts/ })).toBeTruthy();
+    // 本轮（最后一条用户消息之后）只碰了 b.ts。
+    fireEvent.click(screen.getByRole("button", { name: "本轮 1" }));
+    expect(screen.queryByRole("button", { name: /a\.ts/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /b\.ts/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    expect(screen.getByRole("button", { name: /logo\.png/ })).toBeTruthy();
+  });
+});
+
+describe("GitDiffView 分支行", () => {
+  /// 领先/落后远程（对照 Kimi）：agent 提交后没推送，分支行直接显示 ↑N；为 0 或没有上游不显示。
+  it("分支名后显示领先/落后远程的提交数", () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const props = {
+      cwd: "C:\\repo",      width: 420, collapsed: false, maximized: false, onCollapse: () => {}, onToggleMaximize: () => {},
+      comments: [], onAddComment: () => {}, onRemoveComment: () => {}, touchedPaths: [],
+    };
+    const { rerender } = render(<GitDiffView {...props} summary={{ ...summary, ahead: 2, behind: 0 }} />);
+    expect(screen.getByText("↑2").getAttribute("data-tip")).toBe("领先远程 2 个提交，尚未推送");
+    expect(screen.queryByText(/↓/)).toBeNull();
+    rerender(<GitDiffView {...props} summary={{ ...summary, ahead: null, behind: null }} />);
+    expect(screen.queryByText(/↑/)).toBeNull();
   });
 });
 
@@ -109,5 +128,40 @@ describe("GitDiffView 行评论", () => {
     const note = await screen.findByText("命名再想想");
     fireEvent.click(within(note.parentElement!).getByRole("button", { name: "删除评论" }));
     expect(onRemoveComment).toHaveBeenCalledWith("c1");
+  });
+});
+
+describe("GitDiffView 受控页签", () => {
+  it("顶栏可直达文件树，面板内切页通过回调交给上层", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const onTabChange = vi.fn();
+    render(
+      <GitDiffView
+        cwd={"C:\\repo"}        summary={summary} width={420} collapsed={false} maximized={false} onCollapse={() => {}} onToggleMaximize={() => {}}
+        comments={[]} onAddComment={() => {}} onRemoveComment={() => {}} touchedPaths={[]}
+        activeTab="files" onTabChange={onTabChange}
+      />,
+    );
+    expect(await screen.findByPlaceholderText("搜索文件名或内容…")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "更改" }));
+    expect(onTabChange).toHaveBeenCalledWith("changes");
+  });
+});
+
+describe("GitDiffView 远程头行", () => {
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+    document.body.classList.remove("remote-ui");
+  });
+
+  // 手机上只有「更改」一页：头行给返回箭头 + 标题，不再是单个分段页签 + 收起图标（用户实拍）。
+  it("手机头行是「返回 + 更改」，返回即收起面板", async () => {
+    markRemoteUi();
+    const { onCollapse } = renderPanel();
+    expect(screen.queryByRole("button", { name: "收起面板" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "更改" })).toBeNull();
+    expect(document.querySelector(".chat-diff-title")?.textContent).toBe("更改");
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(onCollapse).toHaveBeenCalled();
   });
 });

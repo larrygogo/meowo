@@ -13,6 +13,9 @@ serde_json = { workspace = true }
 toml_edit = { workspace = true }
 sha2 = "0.10"
 base64 = "0.22"
+# claude 模型目录：在约 300MB 的可执行里分块定位内嵌 model-catalog（见 plugins/claude/catalog.rs）。
+# 早已是传递依赖，不新增下载。
+memchr = "2"
 # 只给 opencode 用：它不写会话日志，对话全在自己的 SQLite 库里（见 plugins/opencode/store.rs）。
 # reporter 经 meowo-store 早已链接同一份 bundled sqlite，不增加二进制体积。
 rusqlite = { workspace = true }
@@ -38,3 +41,7 @@ path = "tests/fleet_live.rs"
 [[test]]
 name = "todo_live"
 path = "tests/todo_live.rs"
+
+[[test]]
+name = "rewind_live"
+path = "tests/rewind_live.rs"

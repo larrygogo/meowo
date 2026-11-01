@@ -8,8 +8,12 @@
 //!
 //! 只追加的前提是**只导出已定稿的 part**：opencode 的 part 是原地更新的（文本流式增长、工具
 //! pending→running→completed），写进文件后就改不了了。定稿判据见 [`part_settled`]；遇到第一个
-//! 未定稿的 part 即停，后面的等下一轮。消息被撤回（`/undo` 删掉尾部消息）时游标指向的消息不复
-//! 存在，此时整份重导到**新一代文件名**——宿主按「路径变了」重置前端，不会把旧偏移套到新内容上。
+//! 未定稿的 part 即停，后面的等下一轮。消息被撤回时已导出的尾部作废，此时整份重导到**新一代
+//! 文件名**——宿主按「路径变了」重置前端，不会把旧偏移套到新内容上。
+//!
+//! 撤回分两步落库（1.19.3 实测，tests/probe_opencode_undo.rs）：`/undo` 只在 `session.revert`
+//! 记回退点 `messageID`，消息行原样留着（`/redo` 还能恢复）；下次发言时才真删。导出按回退点
+//! 截断——它之后的消息视同不存在，与 opencode 自己的界面一致。
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -169,27 +173,30 @@ pub(super) fn materialize(session_id: &str) -> Option<PathBuf> {
 
 fn export_locked(conn: &Connection, session_id: &str, dir: &Path, safe: &str) -> Option<PathBuf> {
     let current = latest_generation(dir, safe);
+    let until = revert_point(conn, session_id);
     if let Some((gen, path)) = &current {
         let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let cursor = last_cursor(path);
         let resumable = match &cursor {
-            Some(cursor) => message_exists(conn, &cursor.msg),
+            // 已导出到回退点或之后 = 刚撤回，尾部作废；/redo 撤销回退点时游标仍在前面，原地续写即可。
+            Some(cursor) => message_exists(conn, &cursor.msg)
+                && until.as_deref().is_none_or(|until| cursor.msg.as_str() < until),
             // 空文件（还没导出过任何定稿内容）可以原地续写；非空却读不出游标＝文件坏了，重导。
             None => len == 0,
         };
         if resumable {
-            let lines = collect_lines(conn, session_id, cursor.as_ref()).ok()?;
+            let lines = collect_lines(conn, session_id, cursor.as_ref(), until.as_deref()).ok()?;
             append_lines(path, &lines).ok()?;
             return Some(path.clone());
         }
         let next = dir.join(format!("{safe}.{}.jsonl", gen + 1));
-        let lines = collect_lines(conn, session_id, None).ok()?;
+        let lines = collect_lines(conn, session_id, None, until.as_deref()).ok()?;
         write_fresh(&next, &lines).ok()?;
         let _ = std::fs::remove_file(path);
         return Some(next);
     }
     let path = dir.join(format!("{safe}.0.jsonl"));
-    let lines = collect_lines(conn, session_id, None).ok()?;
+    let lines = collect_lines(conn, session_id, None, until.as_deref()).ok()?;
     write_fresh(&path, &lines).ok()?;
     Some(path)
 }
@@ -252,6 +259,17 @@ fn cursor_of(line: &[u8]) -> Option<Cursor> {
     })
 }
 
+/// 撤回的回退点：`session.revert` 的 `messageID`，该消息及之后都已撤回。`/undo` 只写
+/// messageID；revert 另有 partID（撤到某条消息中途）的形态，`/undo` 不产生，按整条处理。
+fn revert_point(conn: &Connection, session_id: &str) -> Option<String> {
+    let raw: String = conn
+        .query_row("SELECT revert FROM session WHERE id = ?1", [session_id], |row| row.get(0))
+        .optional()
+        .ok()??;
+    let revert: Value = serde_json::from_str(&raw).ok()?;
+    revert.get("messageID")?.as_str().map(str::to_string)
+}
+
 fn message_exists(conn: &Connection, id: &str) -> bool {
     conn.query_row("SELECT 1 FROM message WHERE id = ?1", [id], |_| Ok(()))
         .optional()
@@ -276,18 +294,19 @@ fn write_fresh(path: &Path, lines: &[String]) -> std::io::Result<()> {
 /// 一条消息：(id, 消息正文, 按 id 升序的 (part id, part 正文))。
 type MessageRow = (String, Value, Vec<(String, Value)>);
 
-/// 读会话的全部消息（按 id 升序 = 时间序）及其 part。
+/// 读会话 `[from_msg, until)` 的消息（按 id 升序 = 时间序）及其 part。
 fn load_messages(
     conn: &Connection,
     session_id: &str,
     from_msg: &str,
+    until: Option<&str>,
 ) -> rusqlite::Result<Vec<MessageRow>> {
     let mut msgs = conn.prepare(
-        "SELECT id, data FROM message WHERE session_id = ?1 AND id >= ?2 ORDER BY id",
+        "SELECT id, data FROM message WHERE session_id = ?1 AND id >= ?2 AND (?3 IS NULL OR id < ?3) ORDER BY id",
     )?;
     let mut parts = conn.prepare("SELECT id, data FROM part WHERE message_id = ?1 ORDER BY id")?;
     let rows = msgs
-        .query_map([session_id, from_msg], |row| {
+        .query_map(rusqlite::params![session_id, from_msg, until], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -326,14 +345,15 @@ fn part_settled(part: &Value) -> bool {
     }
 }
 
-/// 从游标之后收集「已定稿前缀」，每条一行（含换行）。
+/// 从游标之后收集「已定稿前缀」，每条一行（含换行）。`until` = 撤回回退点（不含）。
 fn collect_lines(
     conn: &Connection,
     session_id: &str,
     after: Option<&Cursor>,
+    until: Option<&str>,
 ) -> rusqlite::Result<Vec<String>> {
     let from = after.map(|c| c.msg.as_str()).unwrap_or("");
-    let messages = load_messages(conn, session_id, from)?;
+    let messages = load_messages(conn, session_id, from, until)?;
     let total = messages.len();
     let mut lines = Vec::new();
     let mut push = |line: Value| lines.push(format!("{line}\n"));
@@ -539,10 +559,10 @@ pub(super) mod test_support {
     pub fn memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE session (id TEXT PRIMARY KEY);
+            "CREATE TABLE session (id TEXT PRIMARY KEY, revert TEXT);
              CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
              CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT);
-             INSERT INTO session VALUES ('ses_1');",
+             INSERT INTO session VALUES ('ses_1', NULL);",
         )
         .unwrap();
         conn
@@ -569,7 +589,7 @@ pub(super) mod test_support {
             msg: msg.into(),
             key: key.into(),
         });
-        collect_lines(conn, "ses_1", after.as_ref()).unwrap()
+        collect_lines(conn, "ses_1", after.as_ref(), None).unwrap()
     }
 
     pub fn cursor(line: &str) -> (String, String) {
@@ -672,6 +692,44 @@ mod tests {
         assert!(next.ends_with("ses_1.1.jsonl"), "{next:?}");
         assert!(!first.exists());
         assert_eq!(std::fs::read_to_string(&next).unwrap().lines().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_hides_reverted_turn_until_redo() {
+        let dir = std::env::temp_dir().join(format!("meowo_oc_revert_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = memory_db();
+        msg(&conn, "msg_1", json!({"role": "user", "time": {"created": 1}}));
+        part(&conn, "prt_1", "msg_1", json!({"type": "text", "text": "先做甲"}));
+        msg(&conn, "msg_2", json!({"role": "assistant", "time": {"created": 2, "completed": 3}}));
+        part(&conn, "prt_2", "msg_2", json!({"type": "text", "text": "好", "time": {"start": 2, "end": 3}}));
+        msg(&conn, "msg_3", json!({"role": "user", "time": {"created": 4}}));
+        part(&conn, "prt_3", "msg_3", json!({"type": "text", "text": "再做乙"}));
+        msg(&conn, "msg_4", json!({"role": "assistant", "time": {"created": 5, "completed": 6}}));
+        part(&conn, "prt_4", "msg_4", json!({"type": "text", "text": "行", "time": {"start": 5, "end": 6}}));
+        let first = export(&conn, &dir);
+        assert_eq!(std::fs::read_to_string(&first).unwrap().lines().count(), 4);
+
+        // /undo：只写回退点、消息行还在（真机形态）→ 换代重导，只剩回退点之前。
+        let set_revert = |value: Option<&str>| {
+            conn.execute("UPDATE session SET revert = ?1", [value]).unwrap();
+        };
+        set_revert(Some(r#"{"messageID":"msg_3","snapshot":"abc","diff":""}"#));
+        let undone = export(&conn, &dir);
+        assert_ne!(undone, first);
+        let body = std::fs::read_to_string(&undone).unwrap();
+        assert_eq!(body.lines().count(), 2);
+        assert!(!body.contains("再做乙"));
+        // 回退点不变时原地续写，不再换代。
+        assert_eq!(export(&conn, &dir), undone);
+
+        // /redo 撤掉回退点：游标在前面，原地续写回来。
+        set_revert(None);
+        let redone = export(&conn, &dir);
+        assert_eq!(redone, undone);
+        assert_eq!(std::fs::read_to_string(&redone).unwrap().lines().count(), 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

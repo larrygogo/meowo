@@ -215,6 +215,7 @@ mod tests {
             id: "u".into(),
             timestamp: None,
             text: text.into(),
+            interjected: false,
         }
     }
 
@@ -296,6 +297,7 @@ mod tests {
                 id: "m".into(),
                 timestamp: None,
                 kind: "compact".into(),
+                compaction: None,
             },
             user("正文"),
         ];
@@ -316,6 +318,7 @@ mod tests {
                 summary: "cargo test".into(),
                 subagent: None,
                 detail: None,
+                plan: None,
             },
             ChatItem::ToolResult {
                 id: "t1r".into(),

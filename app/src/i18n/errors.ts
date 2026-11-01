@@ -23,6 +23,9 @@ export const ENTRIES: ErrorEntry[] = [
   // 7M-7：远程传输层的错误此前是硬编码中文串、直接上屏，既不进这张表也不双语。
   // 改成 `remote/<code>` 结构化 reason（与后端「模块/代码」同规），文案落回这里。
   { m: "remote/timeout", exact: true, zh: "与桌面端失去连接，正在重试", en: "Lost connection to the desktop app; retrying" },
+  // 远程桥 git 只读命令的收口（remote.rs ensure_session_dir / 改动清单校验）。
+  { m: "remote/not_session_dir", exact: true, zh: "只能查看会话目录里的改动", en: "Only changes in the session folder can be viewed" },
+  { m: "remote/not_changed_file", exact: true, zh: "这个文件不在改动列表里", en: "This file is not in the change list" },
   { m: "remote/unauthorized", exact: true, zh: "配对已失效，请重新扫码", en: "Pairing expired; scan the code again" },
   { m: "remote/not_json", exact: true, zh: "响应异常，网络可能被中间设备拦截", en: "Unexpected response; the network may be intercepting requests" },
   // tail：状态码与命令名是排障的全部线索，译文吞掉它等于比改前更难查（复核指出）。
@@ -68,9 +71,6 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "Agent 启动后立即退出", tail: true, zh: "Agent 启动后立即退出", en: "The agent exited right after starting; check the Terminal tab —" },
   { m: "该会话所属账号", zh: "会话所属账号已被删除，无法恢复", en: "This session's account was deleted; it can't be resumed" },
   { m: "请选择工作目录", exact: true, zh: "请选择工作目录", en: "Pick a working directory" },
-  // anywhere:覆盖「该 Agent 不支持附加目录」与「{display_name} 不支持附加目录」两种形态。
-  { m: "不支持附加目录", anywhere: true, en: "This agent doesn't support extra directories" },
-  { m: "目录不能为空", exact: true, zh: "目录不能为空", en: "Directory can't be empty" },
   { m: "无法定位当前账号目录", exact: true, zh: "找不到当前账号的数据目录", en: "Couldn't locate the current account directory" },
   { m: "内部状态异常", zh: "内部状态异常，请重启 Meowo", en: "Internal error — restart Meowo" },
   // ── 审批 ──
@@ -92,12 +92,11 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "后台会话拒绝了这条消息", tail: true, zh: "后台会话拒绝了这条消息", en: "The background session rejected this message" },
   { m: "消息为空", exact: true, zh: "消息为空", en: "Empty message" },
   // ── 切换引擎(handoff)──
-  { m: "该会话已被接替", zh: "会话已被接替，请到最新的延续会话上操作", en: "This session was superseded; switch from the latest continuation" },
   { m: "该 Agent 不提供结构化会话记录，无法携带上下文切换", exact: true, zh: "该 Agent 无结构化记录，无法携带上下文切换", en: "This agent has no structured transcript; can't switch with context" },
   { m: "会话记录为空，没有可交接的上下文", exact: true, zh: "会话记录为空，没有可交接的内容", en: "The transcript is empty; nothing to hand off" },
   { m: "未找到会话记录文件", exact: true, zh: "找不到会话记录文件", en: "Transcript file not found" },
   { m: "找不到会话记录文件", exact: true, zh: "找不到会话记录文件", en: "Transcript file not found" },
-  { m: "会话缺少工作目录", zh: "会话缺少工作目录，无法在原目录延续", en: "The session has no working directory; can't continue in place" },
+  { m: "会话缺少工作目录", zh: "会话缺少工作目录，无法在原目录启动", en: "The session has no working directory; can't start it in place" },
   { m: "写入交接文件失败", tail: true, zh: "写入交接文件失败", en: "Couldn't write the handoff file" },
   // ── 对话记录 ──
   { m: "该 Agent 不提供结构化会话记录", exact: true, zh: "该 Agent 不提供结构化会话记录", en: "This agent doesn't provide a structured transcript" },

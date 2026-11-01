@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalScope } from "./approvalScope";
+import { approvalScope, commandOfInput } from "./approvalScope";
 
 const dirs = ["C:\\work\\repo", "D:\\lib"];
 const json = (value: object) => JSON.stringify(value, null, 2);
@@ -31,5 +31,16 @@ describe("approvalScope", () => {
   it("屏幕识别的卡只有命令原文;截断成半截的 JSON 也能捞出命令", () => {
     expect(approvalScope("Bash", "git push --force origin main", dirs)).toEqual([{ kind: "risky" }, { kind: "network" }]);
     expect(approvalScope("Bash", '{\n  "command": "rm notes.txt",\n  "description": "很长很长\n…', dirs)).toEqual([{ kind: "delete" }]);
+  });
+});
+
+describe("commandOfInput", () => {
+  it("Bash 参数只剩命令和附带键时取出命令本身", () => {
+    expect(commandOfInput(JSON.stringify({ command: "cargo test", description: "运行测试", timeout: 60000 }))).toBe("cargo test");
+  });
+  it("多出别的键、没有命令、或不是 JSON 时不取，照旧展示完整参数", () => {
+    expect(commandOfInput(JSON.stringify({ command: "ls", dangerouslyDisableSandbox: true }))).toBeNull();
+    expect(commandOfInput(JSON.stringify({ file_path: "a.ts" }))).toBeNull();
+    expect(commandOfInput("ls -la")).toBeNull();
   });
 });

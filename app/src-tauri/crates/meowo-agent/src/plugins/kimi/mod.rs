@@ -419,6 +419,16 @@ impl AgentPlugin for Kimi {
     fn resume_args(&self) -> &'static [&'static str] {
         &["-r"]
     }
+    /// `kimi fork -y --cwd <目录> <id>` 是非交互的：复制出新会话就退出，打印
+    /// `Forked to session_<新id> ("Fork: <标题>") in 499ms`（2.4.0 实测）；会话按工作目录查找，
+    /// 不带 --cwd 在别的目录下跑会报 not found。之后按 `-r <新id>` 打开。
+    fn fork_mode(&self) -> Option<crate::ForkMode> {
+        Some(crate::ForkMode::Command {
+            args: &["fork", "-y"],
+            cwd_flag: Some("--cwd"),
+            new_id_pattern: r"Forked to (session_[0-9a-fA-F-]+)",
+        })
+    }
     /// 启动 flag 取自 `kimi --help`（kimi-code 0.2x 实测）：`--auto` / `-y, --yolo` 是权限档，
     /// `--plan` 是计划模式。维度 id 与 [`Self::mode_controls`] 对齐，前端两处共用同一套文案。
     ///
@@ -437,6 +447,50 @@ impl AgentPlugin for Kimi {
     /// kimi 的待办工具叫 `TodoList`，参数是整份快照 `{todos:[{title,status}]}`。
     fn todo_snapshot_tools(&self) -> &'static [&'static str] {
         &["TodoList"]
+    }
+    /// `/effort <档位>`（kimi.exe 2.4.0 包内 handleEffortCommand：带参即切，不弹选择器；
+    /// 成功回 `Thinking set to <档位>.`，模型不支持时回 `Unsupported thinking effort "<x>"
+    /// for <别名>. Available: …`，回合进行中回 `Cannot switch models while streaming…`）。
+    /// 档位随模型变（`support_efforts`），由模型目录给，这里不列。当前档位读会话日志。
+    fn effort_control(&self) -> Option<crate::chat_ui::EffortControl> {
+        Some(crate::chat_ui::EffortControl {
+            command: "/effort",
+            levels: &[],
+            confirm_pattern: r"(?:thinking set to|with thinking) (\w+)",
+            reject_pattern: r"unsupported thinking effort|cannot switch models while streaming|failed to switch model",
+        })
+    }
+    /// `/undo N` 撤最近 N 轮（kimi.exe 包内 `src/tui/commands/undo.ts`：带参直接撤，不弹菜单；
+    /// 只在空闲时可用）。撤回在 wire 里追加 `context.undo {count}`，解析层据此收回消息
+    /// （见 telemetry 的 chat_line_mark）。拒绝文案同取自该文件。
+    fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
+        Some(crate::chat_ui::UndoControl {
+            command: "/undo",
+            count_arg: true,
+            restores_files: false,
+            reject_pattern: Some(r"cannot undo while streaming|nothing to undo|failed to undo|run /undo again"),
+            input_clear: None,
+            menu: None,
+        })
+    }
+    /// 模型目录直接读 `config.toml` 的 `[models."<别名>"]`（kimi CLI 自己就这么读：
+    /// `displayName: e.display_name, supportEfforts: e.support_efforts`，kimi.exe 0.4x 包内）。
+    /// 多账号会话的 `KIMI_CODE_HOME` 指向 profile 目录，配置也在那里。
+    fn model_catalog(&self, env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
+        let home = env
+            .iter()
+            .find(|(key, value)| key == "KIMI_CODE_HOME" && !value.is_empty())
+            .map(|(_, value)| std::path::PathBuf::from(value));
+        let path = match home {
+            Some(home) => home.join("config.toml"),
+            None => match telemetry::kimi_install() {
+                Some(inst) => inst.config_path(),
+                None => return Vec::new(),
+            },
+        };
+        std::fs::read_to_string(path)
+            .map(|content| parse_model_catalog(&content))
+            .unwrap_or_default()
     }
     /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
     /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
@@ -583,11 +637,123 @@ impl AgentPlugin for Kimi {
     }
 }
 
+/// 逐行解析 `config.toml` 的 `[models."<别名>"]` 段（不引 toml 依赖，同 telemetry 的
+/// `context_window` 既有范式）。只取菜单要的三项：显示名、所属 provider、支持的思考档位。
+/// `[models."x".sub]` 这类子表不算模型段；多行数组不解析（kimi 自己写出的是单行）。
+fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
+    fn toml_str(value: &str) -> Option<String> {
+        let inner = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+        Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
+    }
+    let mut out = Vec::new();
+    let mut current: Option<crate::ModelCatalogEntry> = None;
+    // `always_thinking` 的模型没有 off 档（kimi 的 segmentsFor），段尾统一补。
+    let mut always_on = false;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            out.extend(current.take().map(|entry| with_off(entry, always_on)));
+            always_on = false;
+            if let Some(alias) = line
+                .strip_prefix("[models.\"")
+                .and_then(|rest| rest.strip_suffix("\"]"))
+            {
+                current = Some(crate::ModelCatalogEntry {
+                    id: alias.to_string(),
+                    label: alias.to_string(),
+                    group: None,
+                    efforts: Vec::new(),
+                });
+            }
+            continue;
+        }
+        let Some(entry) = current.as_mut() else {
+            continue;
+        };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "display_name" => {
+                if let Some(label) = toml_str(value).filter(|label| !label.is_empty()) {
+                    entry.label = label;
+                }
+            }
+            "provider" => entry.group = toml_str(value),
+            "capabilities" => always_on = value.contains("\"always_thinking\""),
+            "support_efforts" => {
+                entry.efforts = value
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',')
+                    .filter_map(toml_str)
+                    .collect();
+            }
+            _ => {}
+        }
+    }
+    out.extend(current.map(|entry| with_off(entry, always_on)));
+    out
+}
+
+/// kimi 的档位列表 = `support_efforts`，非 always_thinking 的模型前面多一个 `off`
+/// （kimi.exe `segmentsFor`）。没声明 support_efforts 的是开关型模型，不给档位。
+fn with_off(mut entry: crate::ModelCatalogEntry, always_on: bool) -> crate::ModelCatalogEntry {
+    if !entry.efforts.is_empty() && !always_on {
+        entry.efforts.insert(0, "off".to_string());
+    }
+    entry
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::variant::Installation;
     use std::path::Path;
+
+    /// 样本形制取自本机 kimi-code 生成的 config.toml（2026-10，敏感字段已去）。
+    #[test]
+    fn model_catalog_reads_display_name_provider_and_efforts() {
+        let content = r#"default_model = "kimi-code/kimi-for-coding"
+
+[thinking]
+effort = "high"
+
+[providers."managed:kimi-code"]
+base_url = "https://example.invalid"
+
+[models."kimi-code/k3.1-pro"]
+provider = "managed:kimi-code"
+model = "k3.1-pro"
+display_name = "K3.1 Pro"
+support_efforts = [ "low", "high", "max" ]
+
+[models."kimi-code/k3"]
+provider = "managed:kimi-code"
+capabilities = [ "thinking", "always_thinking" ]
+display_name = "K3"
+support_efforts = [ "low", "high" ]
+
+[models."反向推理/DeepSeek-V4.1-Flash-1017"]
+provider = "反向推理"
+model = "DeepSeek-V4.1-Flash-1017"
+
+[models."kimi-code/k3.1-pro".extra]
+display_name = "不是模型段"
+"#;
+        let catalog = parse_model_catalog(content);
+        assert_eq!(catalog.len(), 3);
+        // always_thinking 的模型没有 off 档。
+        assert_eq!(catalog[1].efforts, vec!["low", "high"]);
+        assert_eq!(catalog[0].id, "kimi-code/k3.1-pro");
+        assert_eq!(catalog[0].label, "K3.1 Pro");
+        assert_eq!(catalog[0].group.as_deref(), Some("managed:kimi-code"));
+        assert_eq!(catalog[0].efforts, vec!["off", "low", "high", "max"]);
+        // 没写 display_name 的回退别名，菜单上至少认得出是哪个。
+        assert_eq!(catalog[2].label, "反向推理/DeepSeek-V4.1-Flash-1017");
+        assert!(catalog[2].efforts.is_empty());
+    }
 
     /// 直接对变体表 probe（不碰真实 home，也不读 env）。
     fn probe_at(home: &Path) -> Option<Installation> {

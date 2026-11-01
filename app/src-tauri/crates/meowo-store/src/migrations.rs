@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS session_context (
     used_pct      INTEGER,
     window_size   INTEGER,
     model         TEXT,
+    effort        TEXT,
     updated_at    INTEGER NOT NULL
 );
 

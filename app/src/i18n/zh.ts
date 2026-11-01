@@ -65,8 +65,9 @@ export const zh = {
     renameTitle: "重命名",
     renamePlaceholder: "输入名称，回车保存",
     renameHint: "改名后需在该终端 /resume 生效",
-    archive: "归档",
-    unarchive: "取消归档",
+    // 对照 Kimi：把「归档」说成「标记完成」，会话是「进行中 → 已完成」的任务流（底层仍是 archived 字段）。
+    archive: "标记完成",
+    unarchive: "恢复进行中",
     openProjectDir: "打开项目目录",
     cardMenu: "更多操作",
     openChat: "查看完整对话",
@@ -93,8 +94,8 @@ export const zh = {
     historyDivider: (n: number) => `历史会话 · ${n}`,
     renameFailed: "重命名失败，请稍后再试。",
     noteFailed: "便签保存失败，请稍后再试。",
-    archiveFailed: "归档失败，请稍后再试。",
-    archivedNotice: "已归档，可在「设置 → 会话」找回",
+    archiveFailed: "标记完成失败，请稍后再试。",
+    archivedNotice: "已完成，可在「设置 → 会话」找回",
     archiveUndo: "撤销",
     focusConnecting: "会话正在连接，请稍后再试。",
     focusHostOnly: "已打开终端，请手动切到对应标签页。",
@@ -118,7 +119,7 @@ export const zh = {
     foreignTip: "由安装版 Meowo 托管（只读展示）",
     reopenSupported: "使用支持的终端重新打开",
     reopen: "重新打开",
-    reopenConfirm: "原会话仍在运行，将先结束它再重新打开。",
+    reopenConfirm: "原会话仍在运行，将先结束再重新打开。对话记录保留。",
     // 确认框主按钮（S-14）：说后果，不用通用「确定」。
     reopenConfirmLabel: "结束并重开",
     reopening: "正在重新打开…",
@@ -141,13 +142,6 @@ export const zh = {
     title: "新建会话",
     dir: "工作目录",
     dirPlaceholder: "选择或输入项目目录",
-    // 附加目录:跨仓同一需求开一个会话(--add-dir),仅声明支持的 agent 显示入口。
-    extraDirsAdd: "附加目录",
-    extraDirsTip: "同一会话访问多个仓库",
-    extraDirsHint: "Ctrl+点击加为附加目录",
-    // macOS 上处理器收的是 metaKey，提示得跟着改口（7T-7）。
-    extraDirsHintMac: "⌘+点击加为附加目录",
-    extraDirRemove: "移除附加目录",
     browse: "浏览…",
     up: "上一级",
     pickHere: "用这个目录",
@@ -208,6 +202,20 @@ export const zh = {
       "work.default": "默认",
       "work.plan": "计划模式",
     } as Record<string, string>,
+    // 每档一行「什么自动做、什么仍会问你」（对照 Kimi 权限菜单的 *Desc）：档名只是代号，
+    // 选档时真正要比较的是后果。键同 launchChoice；默认审批档 codex 与 gemini 语义不同，不配。
+    launchChoiceDesc: {
+      "permission.default": "读取自动，修改和命令都先问你",
+      "permission.plan": "只调研和出计划，不改文件",
+      "permission.acceptEdits": "改文件自动，跑命令先问你",
+      "permission.bypassPermissions": "所有操作直接执行，不再询问",
+      "permission.yolo": "常规操作自动，高危操作仍会问你",
+      "permission.auto": "全部自动完成，只有计划仍需审阅",
+      "approval.readOnly": "只能读，修改和命令都被拦下",
+      "approval.fullAuto": "沙箱内自动执行，越界才问你",
+      "approval.autoEdit": "改文件自动，跑命令先问你",
+      "approval.yolo": "所有操作直接执行，不再询问",
+    } as Record<string, string>,
     // 高风险档(契约 LaunchChoice.risk=true)的副标题:与普通档拉开视觉,一句话说清代价。
     riskyChoiceSub: "跳过人工确认，Agent 可自主执行高风险操作",
     // relay 启用时模型由中转固定(后端 --model 压轴,面板选的不生效):置灰并注明固定值。
@@ -233,7 +241,6 @@ export const zh = {
     welcomeReview: "审查未提交改动",
     welcomeReviewPrompt: "帮我审查当前未提交的改动",
     // 会话 running 但 transcript 尚未落第一条时用它——此时说「没有记录」与运行指示自相矛盾。
-    emptyWorking: "Agent 已开始工作，对话内容马上出现",
     // 新建会话认领前（负数临时 id）：CLI 正在冷启动，说「没有记录」是谎报。
     emptyStarting: "会话正在启动…",
     pickSession: "从侧栏选择一个会话",
@@ -242,6 +249,7 @@ export const zh = {
     // 「加载更早」失败行（此前 catch 静默吞掉，按钮只是默默复原）。
     loadEarlierFailed: "加载更早的对话失败，请重试",
     loadError: "读取对话失败，正在重试",
+    loadingConversation: "正在加载对话…",
     // 同步中断（C-18）：轮询 IPC 连续失败才单列——它只说「窗口与后端的通道断了」，
     // 与状态徽标里的「已断开」（agent 进程没了）是两种事实，措辞故意分开。
     syncInterrupted: "同步中断，正在重连，显示的是缓存",
@@ -263,6 +271,7 @@ export const zh = {
     shortcutViews: "切换 对话 / 终端 视图",
     shortcutNewSession: "新建会话",
     shortcutSearch: "搜索会话",
+    shortcutPrevNext: "切到侧栏的上一条 / 下一条会话",
     shortcutSend: "发送消息",
     shortcutNewline: "换行",
     shortcutInterruptSend: "中断当前回合并发送",
@@ -280,8 +289,20 @@ export const zh = {
     // 到底/到顶后自动回绕的提示（与「无匹配」区分：addon-search 不回绕，落空≠没有）。
     // 显式标注 string：字面量联合会让 en 的译文类型对不上（Dict = typeof zh）。
     termSearchWrapped: (direction: "next" | "prev"): string => (direction === "next" ? "已到末尾，回绕到第一个匹配" : "已到开头，回绕到最后一个匹配"),
+    // 对话区内搜索（TranscriptSearch）：只标高亮 + 上下条，不替换原生 Ctrl+F。
+    searchTranscript: "在对话中搜索",
+    searchPlaceholder: "搜索对话内容",
+    searchPrev: "上一处匹配",
+    searchNext: "下一处匹配",
+    searchNoMatch: "无匹配",
+    searchCount: (current: number, total: number) => `${current}/${total}`,
+    searchMarksCapped: (max: number) => `仅标出前 ${max} 处`,
+    // 选中正文后的气泡：把这段话引进输入框，接着写回应。
     codeCopy: "复制",
     codeCopied: "已复制",
+    codeWrap: "自动换行",
+    codeUnwrap: "取消换行",
+    tableCopy: "复制表格",
     copyMessage: "复制消息",
     messageCopied: "已复制消息",
     questionExpired: "提问卡已超时收起，可到终端页继续作答",
@@ -304,19 +325,73 @@ export const zh = {
     runAgent: "派出子任务",
     listDir: "列出目录",
     toolActivities: (count: number) => `执行了 ${count} 次工具调用`,
+    turnToolSummaries: {
+      run: (count: number) => `已运行 ${count} 条命令`,
+      read: (count: number) => `读取了 ${count} 个文件`,
+      write: (count: number) => `已写入 ${count} 个文件`,
+      edit: (count: number) => `已编辑 ${count} 处`,
+      search: (count: number) => `搜索了 ${count} 个模式`,
+      web: (count: number) => `已执行 ${count} 次浏览器操作`,
+      todo: (count: number) => `已更新 ${count} 次清单`,
+      agent: (count: number) => `已派出 ${count} 个子任务`,
+      other: (count: number) => `执行了 ${count} 次工具调用`,
+    },
+    turnChangedFiles: (count: number) => `${count} 个文件已修改`,
+    turnChangedMore: (count: number) => `还有 ${count} 个文件`,
+    turnChangedLess: "收起",
     toolFailures: (count: number) => `${count} 个失败`,
     reasoning: "思考过程",
+    turnErrorContinue: "继续",
+    turnErrorContinueText: "继续",
+    reasoningLive: "思考中…",
+    turnToolDoing: {
+      run: "正在运行命令",
+      read: (subject: string) => `正在读取 ${subject}`,
+      edit: (subject: string) => `正在编辑 ${subject}`,
+      write: (subject: string) => `正在写入 ${subject}`,
+      search: (subject: string) => `正在搜索 ${subject}`,
+      web: (subject: string) => `正在抓取 ${subject}`,
+      other: "正在执行…",
+    },
+    turnToolFailed: (count: number) => `（${count} 失败）`,
     compact: "上下文已压缩",
+    // 用户按 Esc 中断回合后 CLI 写下的标记，时间线里以分隔条出现（对照 Kimi 的 turnInterrupted）。
+    turnInterrupted: "已手动终止",
+    // 压缩分隔条的细节（对照 Kimi 的 compactedAuto / viewSummary）：CLI 自己压的要说清是自动，
+    // 压缩前规模与摘要回答「它还记得什么」。
+    compactAuto: "已自动压缩上下文",
+    compactPreTokens: (k: number) => `压缩前 ${k}K tokens`,
+    compactViewSummary: "查看摘要",
+    compactHideSummary: "收起摘要",
     compacting: "正在压缩上下文…",
+    // 对话末尾的运行行（对照 Kimi：还没有任何输出叫「请求中」，有了叫「工作中」；
+    // 插话的去向优先于它们，因为那是用户此刻最关心的那件事）
+    requesting: "请求中…",
+    working: "工作中…",
+    steerWaiting: "等这一步完成后插入你的插话",
+    steerInjected: "已插入，正在继续处理",
+    // 手机上的底部面板（斜杠命令）
+    slashSheetTitle: "命令",
+    slashSheetSearch: "搜索命令",
+    slashSheetEmpty: "没有匹配的命令",
+    // 自动重试优先于一切说法：此刻「没动静」的真正原因（重试不落对话记录，只在终端画面上）
+    workingRetry: (attempt: number, max: number) => `请求失败，正在重试（第 ${attempt}/${max} 次）`,
     inputLabel: "发送消息给 Agent",
+    inputPlaceholderRunning: "Enter 排队 · Ctrl+Enter 中断并发送",
+    inputPlaceholderQueue: "Enter 排队，当前任务结束后发送",
+    // Agent 边干边读（claude）：运行中提交不是排队，而是插进当前回合
+    inputPlaceholderSteer: "Enter 插入当前回合 · Ctrl+Enter 中断并发送",
+    inputPlaceholderSteerOnly: "Enter 插入当前回合，不打断它",
+    inputPlaceholderBusy: "当前任务结束后才能发送",
     inputPlaceholder: "发消息给 Agent（Shift+Enter 换行）",
     inputPlaceholderRemote: "发消息给 Agent",
+    // 手机上回合在跑时的说法：没有 Enter/Ctrl+Enter 可讲，只说发出去会怎样。
+    inputPlaceholderRemoteSteer: "发送会插入当前回合，不打断它",
+    inputPlaceholderRemoteQueue: "发送后排队，当前任务结束再发",
     inputUnavailable: "会话尚未接管，请先切到终端页",
     sendBackgroundSession: "后台会话可发消息和结束。斜杠菜单、审批等操作请回派出它的终端。",
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
     sendBackgroundQueued: "已发给后台会话。若它未处理，内容还在输入框，可直接重发。",
-    // 手打 /add-dir 命中已记录的目录：后端不再写终端，界面上得有回音。
-    extraDirExists: "该目录已是附加目录",
     sendBackgroundNoAttachments: "后台会话暂不支持附件，请只发文字。",
     inputLocked: "终端正在等待选择，请先用上方卡片或终端页处理",
     inputLockedRemote: "终端正在等待选择，请先用上方卡片处理",
@@ -339,6 +414,15 @@ export const zh = {
     questionExternalHint: "请回到运行它的终端作答，完成后本卡自动关闭",
     questionMultiHint: "没有可点选的选项，请到终端作答，完成后本卡自动关闭",
     answerOnDesktop: "请在桌面端作答，完成后本卡自动关闭",
+    // 手机上认不出终端交互时的兜底作答面（RemoteTerminalKeys）。
+    remoteKeysHint: "没认出选项，可直接操作终端",
+    remoteOpenKeys: "操作终端",
+    remoteScreenLabel: "终端画面",
+    remoteScreenEmpty: "正在读取终端画面…",
+    remoteKeyEnter: "回车",
+    remoteTypePlaceholder: "输入文字，发送到终端",
+    remoteTypeSend: "发到终端",
+    remoteKeyFailed: "按键没送达，请重试",
     // 远程启动久等（7M-8）：阻塞多半是桌面终端上的信任目录/登录询问。
     startingOnDesktop: "启动等待中，请在桌面端确认",
     customAnswerPlaceholder: "输入其他回答",
@@ -353,11 +437,15 @@ export const zh = {
     planTitle: "Agent 正在等待计划审批",
     approvalTool: "请求工具",
     approvalInput: "完整参数",
+    approvalCommand: "命令",
     // 长命令详情的两个出口:展开全部(摘掉 pre 限高)与复制命令(见 ApprovalCommandDetail)。
     approvalExpand: "展开全部",
     approvalCollapse: "收起",
     copyCommand: "复制命令",
     approvalReadingTerminal: "正在读取 Agent 的选项…",
+    denyWithReason: "说明并拒绝",
+    denyReasonPlaceholder: "说明拒绝原因…",
+    denyReasonSubmit: "提交并拒绝",
     allowOnce: "允许一次",
     allowRemember: "允许并记住",
     allowSession: "本会话内允许",
@@ -400,7 +488,7 @@ export const zh = {
     terminalTakeover: "结束外部进程并接管",
     resumeKeepOptions: "权限：沿用原设置",
     resumePermissionTip: "恢复时的权限模式，选择后会记住",
-    terminalTakeoverConfirm: "将结束外部终端里的进程，在这里继续会话。",
+    terminalTakeoverConfirm: "将结束外部终端的进程，在此继续。对话记录保留。",
     terminalStarting: "正在启动终端…",
     terminalInitializing: "正在初始化 Agent…",
     // 正常退出（码 0）不标退出码：那是常态不是异常，退出卡片描边同规（ManagedTerminal is-clean）。
@@ -413,7 +501,9 @@ export const zh = {
     endSession: "结束会话",
     endAndResume: "结束并恢复",
     // 结束会话的各入口(标题栏/侧栏/贴纸卡片)共用同一段确认文案(confirmStopSession)。
-    endSessionConfirm: "将终止正在运行的任务，确定结束？",
+    endSessionConfirm: "将终止正在运行的任务，对话记录保留。确定结束？",
+    // 标记完成会顺带结束会话（后端 set_archived）。只在 Agent 正在干活时才拦一下。
+    markDoneRunningConfirm: "Agent 还在运行，标记完成会结束它。",
     terminalAttach: "在外部终端同步打开",
     // 悬停在终端里的链接/文件路径上时,右下角的操作提示(T-4:此前 Ctrl+点击无任何界面表达)。
     terminalLinkHint: "Ctrl+点击打开链接",
@@ -437,6 +527,30 @@ export const zh = {
     slashMenuDismiss: "收起",
     todos: "待办",
     todoProgress: (done: number, total: number) => `${done}/${total}`,
+    // composer 上方的待办折叠条（Kimi 式）：收起时只显示进度，点开看完整清单。
+    todoStripProgress: (done: number, total: number) => `当前进度 ${done}/${total}`,
+    // 已完成回合的折叠摘要（Kimi TurnFold）：工作了 Ns。
+    turnWorked: "工作了",
+    unread: "有新回复",
+    groupAttention: (count: number) => `${count} 项待处理`,
+    // 任务面板（Kimi TasksPane）：后台 Bash / 子代理 / 待办。
+    plan: "计划",
+    planPending: "待审批",
+    planApproved: "已通过",
+    planEmpty: "计划模式已开启，写出的计划会显示在这里",
+    tasksBackground: "后台 Bash",
+    tasksSubagents: "子代理",
+    toolDone: "已完成",
+    tasksEmpty: "暂无任务",
+    tasksRunningCount: (count: number) => `${count} 运行中`,
+    taskFilters: { recent: "最近", running: "进行中", done: "已完成", all: "全部" },
+    taskEmpty: { recent: "暂无最近任务", running: "暂无运行中的任务", done: "暂无已完成的任务", all: "暂无任务" },
+    taskStates: { run: "运行中", done: "已完成", fail: "失败" },
+    // 模型市场（Kimi ModelPicker）：搜索、收藏、空结果。
+    modelSearchPlaceholder: "搜索模型或提供商…",
+    modelStar: "收藏模型",
+    modelUnstar: "取消收藏",
+    modelSearchEmpty: "没有匹配的模型",
     // 「上一任务」残留区（stale）：用户已开新回合、新任务的清单还没写出来时,旧任务的
     // 待办收进这个弱化折叠区,不再冒充当前进度。
     todoPrevTask: (done: number, total: number) => `上一任务 ${done}/${total}`,
@@ -484,9 +598,18 @@ export const zh = {
     scopeRisky: "高风险命令",
     scopeNetwork: "会访问网络",
     scopeInside: "只改工作区内的文件",
-    diffOnlySession:(n: number) => `只看本会话改的（${n}）`,
+    // 差异面板的改动范围（全部 / 本会话 / 本轮，本轮对照 Kimi 的「本轮改动」）。
+    // 分支行的领先/落后远程（按本地记录的远程分支算，不自动拉取）。
+    diffAheadTip: (n: number) => `领先远程 ${n} 个提交，尚未推送`,
+    diffBehindTip: (n: number) => `落后远程 ${n} 个提交`,
+    diffScopeLabel: "改动范围",
+    diffScopeAll: "全部",
+    diffScopeSession: (n: number) => `本会话 ${n}`,
+    diffScopeTurn: (n: number) => `本轮 ${n}`,
     diffOnlySessionTip: "只列本会话改的",
+    diffOnlyTurnTip: "只列最近一轮改的",
     diffNoSessionChanges: "这个会话还没改过这里的文件",
+    diffNoTurnChanges: "这一轮还没改过这里的文件",
     diffCommentAdd: "评论这一行",
     diffCommentPlaceholder: "写下对这一行的意见，Enter 添加",
     diffCommentSave: "添加",
@@ -530,9 +653,28 @@ export const zh = {
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
     terminalInitTimeout: "终端长时间无输出，可能启动失败。可结束会话后重试，对话记录不受影响。",
     queuedInterjections: (n: number) => `${n} 条插话已排队，本回合结束后处理`,
+    // composer 上方的队列折叠条（Kimi 式）：收起时一行提示，点开逐条查看/移除。
+    // 运行中发出的消息何时被读到，按插件声明照实说（null = 未取证，不许诺时机）
+    queuePending: (n: number, delivery: "next_step" | "turn_end" | null) =>
+      delivery === "next_step" ? `${n} 条插话等待插入当前回合`
+        : delivery === "turn_end" ? `${n} 条消息排队中，本回合结束后处理`
+        : `${n} 条消息已交给 Agent`,
+    queueInserted: "插话已插入当前回合",
+    queueLabel: "排队中的消息",
+    queuedInsertedTag: "已插入",
+    // 回显超时仍不见落盘：照实标出来，而不是悄悄撤掉
+    echoUncertain: "未确认送达",
+    // 先上屏再发送：写终端期间的气泡标注，与失败后的两个出口。
+    echoSending: "发送中",
+    echoFailed: "发送失败",
+    echoRetry: "重发",
+    echoRestore: "放回输入框",
+    echoUncertainTip: "对话记录里还没出现这条，可到终端页确认",
+    interjectedBadge: "回合中插入",
+    interjectedBadgeTip: "Agent 在干活途中读到了这条",
     queuedAttachmentOnly: "（附件）",
-    interjectNow: "立即插话",
-    interjectNowTip: "中断当前回合，立即处理插话",
+    interjectNow: "中断并处理",
+    interjectNowTip: "停下当前回合，立刻处理这些消息",
     queuedDismiss: "移除这条回执",
     queuedDismissTip: "仅移除回执，消息仍会执行",
     interruptAndSendTip: "Ctrl+Enter 中断并发送，Enter 排队",
@@ -545,7 +687,7 @@ export const zh = {
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
     unrecognizedPromptNotice: "终端似乎在等待选择，消息已发出。若无响应请到终端页确认。",
-    unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出。若无响应请在桌面端确认。",
+    unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
     terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
     trustPromptTitle: "是否信任此文件夹？",
@@ -573,11 +715,16 @@ export const zh = {
     sidebarExpand: "展开会话列表",
     sidebarEmpty: "暂无会话",
     sidebarEmptyDir: "该目录下暂无会话",
-    // 已归档视图的专属空态：沿用「暂无会话」会把「没归档过」读成「会话全没了」。
-    sidebarEmptyArchived: "没有已归档的会话",
+    // 已完成视图的专属空态：沿用「暂无会话」会把「还没完成过」读成「会话全没了」。
+    sidebarEmptyArchived: "还没有已完成的会话",
+    // 侧栏顶部的两个标签页（对照 Kimi 的 tabOpen / tabDone）。
+    sidebarTabOpen: "进行中",
+    sidebarTabDone: "已完成",
     sidebarSearch: "搜索标题 / 仓库…",
     sidebarSearchClear: "清空搜索",
     sidebarEmptySearch: "没有匹配的会话",
+    // 对话窗里的完成提示：侧栏「已完成」页就能找回，不必指向更深的设置页（贴纸仍用 sticker.archivedNotice）
+    archivedNotice: "已完成，可在侧栏「已完成」找回",
     // 对话内容全文搜索（显式动作：扫 transcript 文件，不随击键触发）。
     searchTranscripts: "搜索对话内容",
     searchTranscriptsRunning: "正在搜索对话内容…",
@@ -585,8 +732,11 @@ export const zh = {
     searchTranscriptsHits: "对话内容命中",
     // 侧栏批量归档（多选态）。
     selectedCount: (n: number) => `已选 ${n} 条`,
-    archiveSelected: "归档所选",
+    archiveSelected: "标记完成",
     cancelSelect: "取消多选",
+    selectMode: "多选",
+    selectGroup: (name: string) => `选中「${name}」整组`,
+    selectRangeHint: "Shift+点击可连选",
     // 拖拽文件到对话窗的落点遮罩。
     dropToAttach: "松开以添加附件",
     dropToTerminal: "松开以插入路径",
@@ -600,10 +750,6 @@ export const zh = {
     // G-16：视觉隐藏的侧栏状态汇总播报（全侧栏唯一的 live region）。
     sidebarLiveSummary: (approval: number, waiting: number, error: number) =>
       `会话状态汇总：${approval} 个待批准，${waiting} 个等待输入，${error} 个出错`,
-    // 标题菜单「目录」小节:主仓 + 附加目录的完整清单,尾接附加动作。
-    dirsSection: "目录",
-    // 中途附加目录(标题菜单):/add-dir 即时生效 + 落库供恢复回放。
-    addExtraDir: "附加目录",
     sidebarNoDir: "未记录目录",
     groupNone: "不分组",
     groupByDir: "按目录",
@@ -651,6 +797,7 @@ export const zh = {
     sendSessionChanged: "会话已切换，已停止旧会话的发送。",
     imagePasteUnconfirmed: "图片附加未完成，消息未确认提交。请先到终端检查并清理未发送内容，再重试。",
     terminalMenuCleared: "已在终端完成选择，可以发送",
+    closeTerminalMenu: "关闭终端里的菜单",
     imageDraftCleared: "已在终端清理，可以重试",
     interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
     busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
@@ -659,16 +806,60 @@ export const zh = {
     modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
     modelListUnavailableRemote: (command: string) => `读不到模型清单，请在桌面端用 ${command} 切换`,
     modelGoTerminal: "去终端页切换模型",
-    // 跨 provider 切换（切换引擎）：模型下拉的分组标题、确认文案与交接注入语。
-    switchProvider: "切换引擎",
-    switchProviderConfirm: (from: string, to: string) =>
-      `将结束 ${from} 进程，导出对话交接给 ${to} 继续。原会话仍可回看。`,
-    // 确认框主按钮（S-14）：说清要结束当前进程。
-    switchProviderConfirmLabel: "结束进程并切换",
+    modelListUnavailableShort: "读不到模型清单",
+    // 就地模型菜单（对照 Kimi）：换模型的代价写在做决定的地方。
+    modelCacheHint: "换模型或思考程度会使提示词缓存失效，多耗 token",
+    modelMore: "更多模型…",
+    modelLoad: "读取模型清单",
+    modelPickNotFound: (name: string) => `终端的模型菜单里没找到 ${name}，请到终端页切换`,
+    modelStarred: "已收藏",
+    effortLabel: "思考",
+    effortUnconfirmed: "尚未确认思考程度已切换，请到终端检查",
+    // 撤回（对照 Kimi 用户消息上的「撤回」）：这条及之后移出上下文，原文放回输入框
+    undo: "撤回",
+    undoTip: "撤回这条及之后的对话",
+    undoTitle: "撤回消息",
+    undoConfirm: "这条消息及之后的对话会移出上下文，原文放回输入框。已修改的文件不受影响。",
+    // opencode 的撤回按快照回滚整个工作区（probe_opencode_undo 实测连没碰过的文件也回到当时）。
+    undoConfirmFiles: "这条消息及之后的对话会撤回，原文放回输入框。工作区文件会一并还原到发这条消息之前。",
+    undoConfirmLabel: "撤回",
+    undoBusy: "任务运行中，结束后才能撤回",
+    undoRejected: (line: string) => `撤回未完成：${line}`,
+    undoUnconfirmed: "尚未确认已撤回，请到终端检查",
+    undoDone: "已撤回，原文已放回输入框",
+    undoInputResidue: "终端输入框还留着原文，请先清空",
+    // 选中对话里的文字后浮出的按钮：以引用块带进输入框（对照 Kimi 选区浮条的「添加到对话」）。
+    // 会话菜单的「分叉会话」（对照 Kimi）：用 CLI 原生分叉另开一条线，原会话不动。
+    forkSession: "分叉会话",
+    forkTip: "从当前进度另开一个会话，原会话不动",
+    forkBusy: "任务运行中，结束后才能分叉",
+    // 「复制恢复命令」（对照 Kimi「复制 Session ID」）：带 cd，到终端粘贴即可接着跑。
+    copyResumeCommand: "复制恢复命令",
+    resumeCommandTip: "在自己的终端里接着跑这个会话",
+    resumeCommandCopied: "已复制恢复命令",
+    // 侧问卡（/btw）：答案只读一次挂在 composer 上方，不进对话记录。
+    sideQuestionTag: "侧问",
+    sideQuestionTip: "不写入对话记录，关闭后消失",
+    sideQuestionAnswering: "正在回答…",
+    sideQuestionFailed: "没读到回答，请到终端查看",
+    sideQuestionClose: "关闭侧问",
+    // 会话仍在本应用里跑：两边同时恢复会写乱同一份会话。
+    resumeCommandCopiedLive: "已复制，先在这里结束会话再运行",
+    copyFailed: "复制失败，请重试",
+    quoteSelection: "引用",
+    undoComposerBusy: "终端输入框里有未发送的内容，清空后再撤回",
+    // 菜单式撤回（claude /rewind）每一步核对屏幕，选中项或引文与要撤的消息对不上就退出菜单。
+    undoMenuMismatch: "撤回菜单与所选消息对不上，已取消",
+    // CLI 拒绝某档位时原样带出它的说法（如当前模型不支持 Max）。
+    effortRejected: (line: string) => `思考程度未切换：${line}`,
+    // 复制到其他引擎（原会话不动，另起一个带上下文的新会话）：模型下拉的分组标题与交接注入语。
+    switchProvider: "复制到新会话",
     switchProviderDefaultModel: "默认模型",
-    // 注入语是发给新 agent 的正文，随界面语言走。
+    // 注入语是发给新 agent 的正文，随界面语言走。开头「请先完整阅读文件 」是识别前缀，勿改。
     handoffPrompt: (path: string) =>
-      `请先完整阅读文件 ${path}，它是本会话此前在另一个 CLI 中的上下文交接。读完后直接继续其中的任务，不要复述文件内容。`,
+      `请先完整阅读文件 ${path}，它是另一个 CLI 里一段会话的完整上下文。读完后接着其中的任务继续，不要复述文件内容。`,
+    // 复制出来的会话开头，替代那条注入语显示。
+    handoffCopied: "上下文从另一段会话复制而来",
     handoffInjectFailed: "交接提示未自动发出，已放回输入框，请手动发送",
     // 接续链的回看呈现：已被接替的旧段（禁发 + 引导去链尾）与新段的来历注脚。
     supersededBanner: "本会话已切换引擎，在新会话中继续。此处仅供回看",
@@ -702,6 +893,32 @@ export const zh = {
       "read-only": "只读",
       "workspace-write": "工作区可写",
       "danger-full-access": "完全访问",
+    } as Record<string, string>,
+    // composer 权限 pill 的简短显示（对齐 Kimi 的「必要时询问」）：新会话菜单仍用
+    // launchChoice 的完整说明，这里只负责按钮上的一行字。
+    modeShortNames: {
+      "permission.yolo": "必要时询问",
+      "permission.auto": "自动",
+      "permission.default": "默认",
+      "permission.plan": "计划模式",
+      "permission.bypassPermissions": "跳过权限确认",
+    } as Record<string, string>,
+    // 只在运行中出现、启动项里没有的模式（Claude 的 auto / dontAsk）的一行说明，
+    // 与 launchChoiceDesc 同一用途。按值取，只用于权限维度。
+    modeDesc: {
+      auto: "安全操作自动，有风险的才问你",
+      dontAsk: "未预先允许的操作一律拒绝",
+    } as Record<string, string>,
+    // 工具行的简短动作名（对齐 Kimi 的 tools.label.*）：运行/读取/写入/编辑…
+    toolShortNames: {
+      run: "运行",
+      read: "读取",
+      write: "写入",
+      edit: "编辑",
+      search: "搜索",
+      web: "网页",
+      todo: "待办",
+      agent: "子任务",
     } as Record<string, string>,
     modelDesc: {
       fable: "能力高于 Opus 的旗舰档",
@@ -747,15 +964,15 @@ export const zh = {
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
-    nav: { general: "通用", sessions: "会话", appearance: "外观", network: "网络", account: "账号与用量", about: "关于" },
+    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", network: "网络", account: "账号与用量", about: "关于" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
-    archivedSessions: "已归档会话",
-    archivedEmpty: "暂无已归档会话",
+    archivedSessions: "已完成会话",
+    archivedEmpty: "还没有已完成的会话",
     archivedLoadMore: "加载更多",
-    archivedLoadFailed: "已归档会话加载失败",
-    unarchiveFailed: "放回看板失败，请稍后再试",
+    archivedLoadFailed: "已完成会话加载失败",
+    unarchiveFailed: "恢复进行中失败，请稍后再试",
     cardsGroup: "卡片",
     updateTag: "新版本",
     close: "关闭",
@@ -902,6 +1119,8 @@ export const zh = {
     gateErrUnreachable: "连不上桌面端，请检查网络或确认桌面端仍在运行",
     sessionListTitle: "会话",
     sessionListSubtitle: "继续桌面上的工作",
+    // 手机页的明暗模式只存在这台手机上，与桌面设置无关。
+    themeLabel: "外观",
     backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>
@@ -1015,7 +1234,7 @@ export const zh = {
     update: "更新",
     // 仿 updater.restartConfirm：更新 = 重跑幂等安装（装的就是 latest），会重拉 agent 本体，
     // 该 Agent 运行中的会话可能当场出事，必须先说清后果。
-    updateConfirm: (n: number) => `更新将中断该 Agent 的 ${n} 个运行中的会话，继续？`,
+    updateConfirm: (n: number) => `更新将中断该 Agent 的 ${n} 个运行中的会话，对话记录保留。继续？`,
     // 提示条要低调：它对多数人是背景噪音（装完就在 PATH 上），只有少数人需要点它。
     // 完整路径挪进 tooltip（pathGapDetail），正文只留一句「为什么该点」。
     pathGap: "终端里敲不出命令？",
@@ -1069,7 +1288,7 @@ export const zh = {
     installingHint: "应用即将重启，请勿关闭",
     // 重启会终止全部 Meowo 托管的 PTY 会话（退出收尾 shutdown，见 lib.rs RunEvent::Exit）——
     // 有托管会话在跑时必须先确认，不能静默杀掉。
-    restartConfirm: (n: number) => `重启将中断 ${n} 个运行中的会话，继续？`,
+    restartConfirm: (n: number) => `重启将中断 ${n} 个运行中的会话，对话记录保留。继续？`,
     downloading: "正在下载更新…",
     downloadingPct: (p: number) => `正在下载更新… ${p}%`,
     // S-13：下载可取消；取消后回到「发现新版本」可重新下载。
@@ -1144,7 +1363,7 @@ export const zh = {
         "每个会话一张卡片，颜色即状态：绿运行、黄待交互、灰已断开。",
         "点卡片直达终端，已断开的点开即恢复。",
         "会话需要你回复时归入「待交互」，并通知一次。",
-        "卡片右上角「⋯」菜单：置顶、便签、改名、归档。",
+        "卡片右上角「⋯」菜单：置顶、便签、改名、标记完成。",
       ],
     },
     window: {

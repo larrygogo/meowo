@@ -11,6 +11,7 @@ import type { LiveSessionCounts } from "./generated/contracts/LiveSessionCounts"
 import type { Session as SessionDto } from "./generated/contracts/Session";
 import type { Todo as TodoRowDto } from "./generated/contracts/Todo";
 import type { ModelPreset } from "./generated/contracts/ModelPreset";
+import type { ModelCatalogEntry } from "./generated/contracts/ModelCatalogEntry";
 import type { ModeControl } from "./generated/contracts/ModeControl";
 import type { ModeInput } from "./generated/contracts/ModeInput";
 import type { ModeOption } from "./generated/contracts/ModeOption";
@@ -67,7 +68,7 @@ export type AgentId = string;
 export type AgentDescriptor = Omit<AgentDescriptorDto, "id"> & { id: AgentId };
 
 // 启动选项 / 模型预设 / 斜杠命令 / 模式控制：全部由 ts-rs 生成，原名重导出。
-export type { LaunchChoice, LaunchOption, ModelPreset, SlashCommand, ModeInput, ModeOption, ModeScreenMarker, ModeControl };
+export type { LaunchChoice, LaunchOption, ModelPreset, ModelCatalogEntry, SlashCommand, ModeInput, ModeOption, ModeScreenMarker, ModeControl };
 
 /**
  * 对话页能力，由**安装实况**组装：插件内置表 ∪ 用户/项目目录里发现的自定义命令 + CLI 版本。
@@ -136,6 +137,8 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
    * 但它非零时，卡片环与分组都按「运行中」处理——后台委派还在独立干活，不该催人。
    */
   busy_subagents: number;
+  /** 回合结束时用户没在看这个会话（后端 watch 标记，打开即清）。可选：旧后端不带。 */
+  unread?: boolean;
   /** 最近一条 AI 正文的轻推预览（清洗+截断），hover 卡片时速览；无正文回合为 null。 */
   preview: string | null;
   /** 所属账号的展示名（profile 已删时回退 id 本身）；null = 默认账号，不显示徽章。 */
@@ -149,26 +152,6 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
 };
 
 export type { LiveSessionCounts };
-
-/** 已有会话中途附加目录的落库半边（resume 回放依据）。运行中进程的即时生效由调用方
- *  另经发送通道发 `/add-dir <dir>`。返回是否真的新增（重复目录 no-op）。 */
-export function addSessionExtraDir(sessionId: number, dir: string): Promise<boolean> {
-  return invoke("add_session_extra_dir", { sessionId, dir });
-}
-
-/** 移除一个附加目录(落库侧,下次恢复不再带上;运行中进程已持有的权限收不回)。 */
-export function removeSessionExtraDir(sessionId: number, dir: string): Promise<boolean> {
-  return invoke("remove_session_extra_dir", { sessionId, dir });
-}
-
-/** 选目录并附加到会话(对话窗 diff 面板 / 侧栏条目菜单共用,免得两处各自漂移):
- *  用户取消返回 null;失败抛原始错误,由调用方走各自的提示通道。 */
-export async function pickAndAddExtraDir(sessionId: number): Promise<boolean | null> {
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({ directory: true });
-  if (typeof picked !== "string") return null;
-  return addSessionExtraDir(sessionId, picked);
-}
 
 export type ChatItem = GeneratedChatItem;
 export type ChatHistory = ChatHistoryDto;
@@ -292,8 +275,9 @@ export function isExternallyHeld(status?: string): boolean {
  * 优先级:connected 为假时绝不展示「在跑/在等」——DB 的 running 在进程死后、reaper
  * 收尾前是滞留值,直接展示就是假运行中;ended 同理让位于存活观测(恢复会话的轮询
  * 窗口期 DB 还挂着旧 'ended',而 PTY 已在跑,此时按 waiting 过渡而不是谎报已结束);
- * errored(出错,数据源为 LiveSession.errored / ChatHistoryDto.errored)高于 pending:
- * 出错必须先被看见;pending(待审批/待交互)高于 waiting:有明确动作召唤。
+ * pending(待审批/待交互)高于 errored(出错,数据源为 LiveSession.errored /
+ * ChatHistoryDto.errored),errored 高于其余:先处理卡住 Agent 的那件事,再看上一轮的错。
+ * 看板 cardTone 同序。
  */
 /** `focus_session` 的返回值（后端 terminal.rs 同名结果的镜像）：跳转外部终端的结局分类。 */
 export type FocusSessionResult =
@@ -318,8 +302,11 @@ export function sessionTone(
   screenState?: string | null,
 ): SessionTone {
   if (!connected) return status === "ended" ? "ended" : "offline";
-  if (errored) return "error";
   const activity = activityTone({ status, pendingReview, screenState, busySubagents });
+  // 需要人做决定的（审批/提问/屏幕阻塞）压过出错（对照 Kimi 的优先级：待审批 > 待回答 > 失败）：
+  // 出错只是「上一轮断了」，而审批挂着时 Agent 正卡在那里等你，先处理它才能继续。
+  if (activity === "pending") return activity;
+  if (errored) return "error";
   if (activity) return activity;
   // 阶梯没结论:已 ended(PTY 还挂着才算连着)如实归「已结束」,别再画成等你输入;
   // 其余按「在等你」兜底——连着又说不出在干嘛,最可能就是停在提示符上。
@@ -382,6 +369,11 @@ export function managedTerminalPendingLaunch(sessionId: number): Promise<Pending
 /** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
 export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {
   return invoke("managed_terminal_screen", { sessionId });
+}
+/// 分叉会话：后端用 CLI 原生分叉起一个独立的新会话，返回其临时 id（认领后换真 id）。
+/// 远程桥未开放（前端在远程模式下不给入口）。
+export function forkSession(sessionId: number, cols: number, rows: number): Promise<number> {
+  return invoke("fork_session", { sessionId, cols, rows });
 }
 export function writeManagedTerminal(sessionId: number, data: string): Promise<void> {
   return invoke("write_managed_terminal", { sessionId, data });
@@ -835,6 +827,14 @@ export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: n
  * 该 agent 的模型清单，**由 CLI 自己列举**（非交互子命令，后端带进程级缓存）。
  * 空表 = 该 CLI 没有列举子命令，调用方回落到「弹 TUI 菜单 + 屏幕识别」那条路。
  */
+/**
+ * 该 agent 在用户本机配置里的模型目录（后端读 CLI 自己的配置文件，不起进程、不碰会话）。
+ * 空表 = 该 CLI 没声明这项能力或配置读不到。
+ */
+export function agentModelCatalog(provider: string, sessionId?: number): Promise<ModelCatalogEntry[]> {
+  return invoke<ModelCatalogEntry[] | null>("agent_model_catalog", { provider, sessionId: sessionId ?? null }).then((models) => models ?? []);
+}
+
 export function agentModels(provider: string, sessionId?: number): Promise<string[]> {
   // 旧后端/demo 对未知命令返回 undefined——统一兜成空表，调用方不必各自判空。
   return invoke<string[] | null>("agent_models", { provider, sessionId: sessionId ?? null }).then((models) => models ?? []);
@@ -955,12 +955,11 @@ export function refreshUsage(provider: string): Promise<ProviderUsage> {
 export type HooksStatus = "installed" | "missing" | "unknown";
 
 /** 新建一个全新会话：起托管 PTY，视图与终端类型由设置的 session_open_in / resume_terminal 决定。 */
-/** `options`：启动选项的选择（option id → choice id），映射成 flag 由后端按插件声明表完成。
- *  `extraDirs`：附加目录（跨仓同一需求 = 一个会话 + --add-dir）;仅声明支持的 agent 接受。 */
+/** `options`：启动选项的选择（option id → choice id），映射成 flag 由后端按插件声明表完成。 */
 /** 返回：桌面命令回 () → null（reveal 开窗即导航，前端无需句柄）；远程桥回临时负 id，
  *  移动页据此选中新会话（ChatWindow 的 binding 轮询认领后重绑成真 id）。 */
-export function newSession(cwd: string, provider: AgentId, options?: Record<string, string>, extraDirs: string[] = []): Promise<number | null> {
-  return invoke("new_session", { cwd, provider, options, extraDirs });
+export function newSession(cwd: string, provider: AgentId, options?: Record<string, string>): Promise<number | null> {
+  return invoke("new_session", { cwd, provider, options });
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
@@ -972,16 +971,15 @@ export type SwitchStarted = SwitchStartedDto;
 export type LineageEntry = LineageEntryDto;
 
 /**
- * 跨 provider 切换：结束当前会话进程，把结构化历史导出成交接文件，在同一目录用
- * 目标 agent 起新会话（返回临时负 id，走既有 binding 轮询换真 id）。接续链由后端
- * 在 claim 认领时落库——目标 CLI 起不来时旧会话不会被标记为已接替。
+ * 把会话复制到另一个 provider：结构化历史导出成交接文件，在同一目录用目标 agent 起一个
+ * 独立的新会话（返回临时负 id，走既有 binding 轮询换真 id）。原会话不结束、不串接续链。
  */
-export function switchSessionProvider(
+export function copySessionToProvider(
   sessionId: number,
   targetProvider: AgentId,
   options?: Record<string, string>,
 ): Promise<SwitchStarted> {
-  return invoke("switch_session_provider", { sessionId, targetProvider, options });
+  return invoke("copy_session_to_provider", { sessionId, targetProvider, options });
 }
 
 /** 接续链回看（按时间升序）。不在链上的会话返回仅含自身的单段。 */

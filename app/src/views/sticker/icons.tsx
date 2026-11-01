@@ -1,13 +1,15 @@
 // 贴纸看板用到的全部行内 SVG 图标（lucide 风格）。纯展示，无状态。
 import type { Tab } from "./types";
 
-export function ArchiveIcon({ archived }: { archived: boolean }) {
+/** 「标记完成 / 恢复进行中」的图标（底层仍是 archived 字段，名字沿用）。对照 Kimi 的
+ *  state-done：未完成画圆圈对勾，已完成画回退箭头——此前是归档箱，和「标记完成」的文案对不上。 */
+export function ArchiveIcon({ archived, size = 13 }: { archived: boolean; size?: number }) {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect width="20" height="5" x="2" y="3" rx="1" />
-      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
-      {archived ? <path d="m9 15 3-3 3 3" /> /* 还原：向上箭头 */ : <path d="M10 12h4" /> /* 归档：把手 */}
+      {archived
+        ? <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></>
+        : <><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.5 2.5 4.5-5" /></>}
     </svg>
   );
 }
@@ -90,18 +92,6 @@ export function FolderIcon() {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
-    </svg>
-  );
-}
-
-export function FolderPlusIcon() {
-  // lucide folder-plus：右键菜单「附加目录」用（一个会话跨多仓,--add-dir）
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-      <path d="M12 10v6" />
-      <path d="M9 13h6" />
     </svg>
   );
 }

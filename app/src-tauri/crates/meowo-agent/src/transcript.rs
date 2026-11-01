@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// GUI 对话窗口消费的 provider 无关消息单元。终端 ANSI 只负责还原终端，结构化对话始终来自
 /// agent 自己的 transcript，避免把光标移动、spinner 和重绘误当正文。
 pub use meowo_protocol::ipc::{
-    ChatItem, DiffHunk, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
+    ChatItem, DiffHunk, CompactionDetail, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
     ToolDetail,
 };
 
@@ -36,6 +36,9 @@ pub enum TranscriptEvent {
         id: String,
         timestamp: Option<String>,
         text: String,
+        /// 回合进行中由 CLI 插入（不是一轮的开头）。只有能从日志结构上认出来的
+        /// provider 才置 true（claude 的 queued_command），其余一律 false。
+        interjected: bool,
     },
     AssistantMessage {
         id: String,
@@ -74,6 +77,8 @@ pub enum TranscriptEvent {
         subagent: Option<SubagentRef>,
         /// 结构化详情（写入正文 / 编辑前后 / 命令…），插件认不得的工具为 None。
         detail: Option<ToolDetail>,
+        /// ExitPlanMode 的完整计划文档（Kimi 在 display.plan 中携带）；普通工具为 None。
+        plan: Option<String>,
     },
     ToolResult {
         id: String,
@@ -90,6 +95,7 @@ pub enum TranscriptEvent {
         id: String,
         timestamp: Option<String>,
         kind: String,
+        compaction: Option<CompactionDetail>,
     },
 }
 
@@ -100,10 +106,12 @@ impl From<TranscriptEvent> for ChatItem {
                 id,
                 timestamp,
                 text,
+                interjected,
             } => Self::UserText {
                 id,
                 timestamp,
                 text,
+                interjected,
             },
             TranscriptEvent::AssistantMessage {
                 id,
@@ -159,6 +167,7 @@ impl From<TranscriptEvent> for ChatItem {
                 summary,
                 subagent,
                 detail,
+                plan,
             } => Self::ToolUse {
                 id,
                 timestamp,
@@ -166,6 +175,7 @@ impl From<TranscriptEvent> for ChatItem {
                 summary,
                 subagent,
                 detail,
+                plan,
             },
             TranscriptEvent::ToolResult {
                 id,
@@ -188,10 +198,12 @@ impl From<TranscriptEvent> for ChatItem {
                 id,
                 timestamp,
                 kind,
+                compaction,
             } => Self::Meta {
                 id,
                 timestamp,
                 kind,
+                compaction,
             },
         }
     }
@@ -203,16 +215,37 @@ impl From<TranscriptEvent> for ChatItem {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ChatDelta {
     pub items: Vec<ChatItem>,
+    /// 本批记录里的最近计划；在首屏裁剪前提取，避免计划随较早历史一起被丢掉。
+    pub plan: Option<String>,
     /// 本批完整记录中各维度最后一次出现的模式值；普通增量可能为空。
     pub agent_modes: Vec<AgentMode>,
     pub start: u64,
     pub offset: u64,
     pub reset: bool,
+    /// 本批记录里有撤回（见 [`ChatLineMark::Undo`] / [`ChatLineMark::Link`]）：此时必为整读，
+    /// items 为空也可信。
+    pub undone: bool,
     /// 本次读到的文件 mtime，调用方原样带回下一轮做「等长重写」检测。
     /// 光比长度不够：CLI 压缩/重写 transcript 后字节数可能与上次**完全相同**，
     /// 只看 len 会认为无变化而静默漏掉整段新内容。
     #[serde(skip)]
     pub mtime: Option<std::time::SystemTime>,
+}
+
+/// 撤回语义的行标记。CLI 撤回不改写 transcript，两种落法：
+/// - 追加一条「撤掉最后 N 轮」的记录（kimi `context.undo {count}`，给只会顺序读的读者留的
+///   兼容行）。读取层顺序回放：遇到 `Undo(n)` 就把倒数第 n 个 `TurnStart` 那行起的消息收回。
+/// - 什么都不写，下一条消息从更早的节点长出新分支（claude `/rewind` / 双击 Esc：transcript
+///   是 parentUuid 树，2.1.314 实测回退本身零写入）。读取层见 `Link`：用户提示的 parent 不是
+///   上一个节点、而指向更早的节点且其后出现过用户提示，就把那个节点之后的消息全部收回。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatLineMark {
+    /// 一轮的起点（可被撤回的用户输入；插话、后台通知不算）。
+    TurnStart,
+    /// 撤掉最近 n 轮。
+    Undo(usize),
+    /// 主链上的一个节点：自身 id 与父 id。只在该行产出用户提示时才用来判分叉。
+    Link { id: String, parent: Option<String> },
 }
 
 /// Provider transcript 中观测到的一个独立模式维度。
@@ -402,6 +435,11 @@ pub trait TranscriptSpec: Sync {
     /// 从一条完整 transcript 记录中提取零到多个模式维度更新。默认不支持。
     fn agent_modes_from_line(&self, _line: &str) -> Vec<AgentMode> {
         Vec::new()
+    }
+
+    /// 这一行对「撤回」的意义（见 [`ChatLineMark`]）。默认没有撤回语义。
+    fn chat_line_mark(&self, _line: &str) -> Option<ChatLineMark> {
+        None
     }
 
     /// 从文件头开始读取时使用的初始模式。只声明协议有确定默认值的维度；后续记录会覆盖它。
@@ -641,10 +679,12 @@ pub fn read_chat_delta_paged(
         DeltaOutcome::Unreadable => {
             return ChatDelta {
                 items: Vec::new(),
+                plan: None,
                 agent_modes: Vec::new(),
                 start: offset,
                 offset,
                 reset: false,
+                undone: false,
                 mtime: prev_mtime,
             };
         }
@@ -653,7 +693,24 @@ pub fn read_chat_delta_paged(
     };
     let base = if reset { 0 } else { offset };
     let consumed = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let (mut lines, agent_modes) = parse_chat_region(spec, path, base, &buf[..consumed]);
+    let region = parse_chat_region(spec, path, base, &buf[..consumed]);
+    // 增量批次里出现撤回：被撤的消息多半早已下发，增量收不回来——改为从文件头整读，
+    // 按 reset 下发让前端清空重灌。undone 告诉前端「整读结果为空也是真的」（撤掉了唯一一轮）。
+    if region.undone && base > 0 {
+        let mut full = read_chat_delta_paged(spec, path, 0, None, page_size);
+        full.reset = true;
+        full.undone = true;
+        return full;
+    }
+    let ChatRegion { mut lines, agent_modes, undone } = region;
+    let plan = lines.iter().rev().find_map(|(_, items)| {
+        items.iter().rev().find_map(|item| match item {
+            ChatItem::ToolUse { plan: Some(plan), .. } if !plan.trim().is_empty() => {
+                Some(plan.clone())
+            }
+            _ => None,
+        })
+    });
     // 只有整读（首屏/reset 重读）才裁首屏：增量赶上来的大批次裁了会丢消息。
     let start = if base == 0 {
         tail_window_start(&mut lines, base, page_size)
@@ -663,10 +720,12 @@ pub fn read_chat_delta_paged(
     let items = lines.into_iter().flat_map(|(_, items)| items).collect();
     ChatDelta {
         items,
+        plan,
         agent_modes,
         start,
         offset: base + consumed as u64,
         reset,
+        undone,
         mtime,
     }
 }
@@ -695,7 +754,7 @@ pub fn read_chat_window(
     let mut buf = Vec::new();
     file.take(end).read_to_end(&mut buf).ok()?;
     let consumed = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let (mut lines, _) = parse_chat_region(spec, path, 0, &buf[..consumed]);
+    let mut lines = parse_chat_region(spec, path, 0, &buf[..consumed]).lines;
     let start = tail_window_start(&mut lines, 0, page_size);
     let items = lines.into_iter().flat_map(|(_, items)| items).collect();
     Some(ChatWindow {
@@ -713,14 +772,24 @@ fn parse_chat_region(
     path: &Path,
     base: u64,
     buf: &[u8],
-) -> (Vec<(u64, Vec<ChatItem>)>, Vec<AgentMode>) {
-    let mut lines = Vec::new();
+) -> ChatRegion {
+    let mut lines: Vec<(u64, Vec<ChatItem>)> = Vec::new();
+    // 本段里各轮起点所在的行下标（撤回回放用），以及本段有没有撤回记录。
+    let mut turn_starts: Vec<usize> = Vec::new();
+    let mut undone = false;
     let mut agent_modes = if base == 0 {
         spec.default_agent_modes()
     } else {
         Vec::new()
     };
     let mut pos = base;
+    // 上一条产出的消息若是用户消息，记下它（双写判重用）；中间隔了任何别的消息就清空。
+    let mut last_user: Option<(String, Option<String>)> = None;
+    // 分叉判定（见 ChatLineMark::Link）：节点 id → (所在行下标, 截至该行的用户提示数)；上一个
+    // 节点 id（增量批次的第一个节点之前，按需从 base 之前回读）；本段已见的用户提示数。
+    let mut link_at: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+    let mut last_link: Option<String> = None;
+    let mut prompts = 0usize;
     for chunk in buf.split_inclusive(|b| *b == b'\n') {
         let start = pos;
         pos += chunk.len() as u64;
@@ -736,14 +805,138 @@ fn parse_chat_region(
                 agent_modes.push(mode);
             }
         }
-        let items = spec
-            .parse_transcript_line_in(path, line)
-            .into_iter()
-            .map(ChatItem::from)
-            .collect();
+        let mut link = None;
+        match spec.chat_line_mark(line) {
+            Some(ChatLineMark::Link { id, parent }) => link = Some((id, parent)),
+            Some(ChatLineMark::TurnStart) => turn_starts.push(lines.len()),
+            Some(ChatLineMark::Undo(count)) => {
+                undone = true;
+                // 本段里不够 n 轮（增量批次只含末尾几行）时整段收回；调用方见 undone
+                // 会改为从文件头重读，那时起点都在段内，回放是准的。
+                let cut = turn_starts.len().saturating_sub(count);
+                let from = turn_starts.get(cut).copied().unwrap_or(0);
+                for (_, items) in &mut lines[from..] {
+                    items.clear();
+                }
+                turn_starts.truncate(cut);
+                last_user = None;
+                lines.push((start, Vec::new()));
+                continue;
+            }
+            None => {}
+        }
+        let mut items: Vec<ChatItem> = Vec::new();
+        for item in spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from) {
+            if let ChatItem::UserText { text, timestamp, .. } = &item {
+                let key = text.trim().to_string();
+                if last_user.as_ref().is_some_and(|(prev, prev_ts)| {
+                    *prev == key && within_double_write(prev_ts.as_deref(), timestamp.as_deref())
+                }) {
+                    continue;
+                }
+                last_user = Some((key, timestamp.clone()));
+            } else {
+                last_user = None;
+            }
+            items.push(item);
+        }
+        if let Some((id, parent)) = link {
+            let prompt = items.iter().any(|item| matches!(item, ChatItem::UserText { .. }));
+            if prompt {
+                if let Some(parent) = parent.filter(|parent| Some(parent) != last_link.as_ref()) {
+                    match link_at.get(&parent) {
+                        // 分叉点之后出现过用户提示 = 那之后的整段被放弃了（回退后重发）。
+                        // 没出现过的（只隔了附件、系统行）不算：那是同一轮里的正常跳接。
+                        Some(&(at, seen)) if prompts > seen => {
+                            for (_, items) in &mut lines[at + 1..] {
+                                items.clear();
+                            }
+                            undone = true;
+                            last_user = None;
+                        }
+                        Some(_) => {}
+                        // 分叉点在本段之前（增量批次）：本段收不回已下发的消息，标 undone 让
+                        // 调用方从文件头整读。批次首个节点之前的「上一个节点」按需回读；
+                        // 回读不到（窗口外/不可读）就不判，宁可漏收不误收。
+                        None if base > 0 => {
+                            let previous = match &last_link {
+                                Some(previous) => Some(previous.clone()),
+                                None => last_link_before(spec, path, base),
+                            };
+                            if previous.is_some_and(|previous| previous != parent) {
+                                undone = true;
+                            }
+                        }
+                        None => {}
+                    }
+                }
+                prompts += 1;
+            }
+            link_at.insert(id.clone(), (lines.len(), prompts));
+            last_link = Some(id);
+        }
         lines.push((start, items));
     }
-    (lines, agent_modes)
+    ChatRegion { lines, agent_modes, undone }
+}
+
+/// `base` 之前最后一个主链节点的 id（增量批次判分叉用：批次里第一条用户提示的 parent 该是它）。
+/// 只往回看一个窗口，找不到返回 None（调用方按「不知道」处理，不判分叉）。
+fn last_link_before(spec: &dyn TranscriptSpec, path: &Path, base: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 512 * 1024;
+    let mut file = std::fs::File::open(path).ok()?;
+    let start = base.saturating_sub(WINDOW);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = vec![0; (base - start) as usize];
+    file.read_exact(&mut buf).ok()?;
+    let body = if start == 0 {
+        &buf[..]
+    } else {
+        // 窗口首行多半是半截，跳过。
+        &buf[buf.iter().position(|b| *b == b'\n').map_or(buf.len(), |i| i + 1)..]
+    };
+    body.split(|b| *b == b'\n').rev().find_map(|chunk| {
+        let line = String::from_utf8_lossy(chunk);
+        match spec.chat_line_mark(line.trim_end_matches('\r')) {
+            Some(ChatLineMark::Link { id, .. }) => Some(id),
+            _ => None,
+        }
+    })
+}
+
+/// [`parse_chat_region`] 的结果：逐行（行起始字节，该行消息）、本段折叠出的模式、本段是否含撤回。
+struct ChatRegion {
+    lines: Vec<(u64, Vec<ChatItem>)>,
+    agent_modes: Vec<AgentMode>,
+    undone: bool,
+}
+
+/// kimi 每条用户消息双写（`turn.prompt` + `context.append_message`，真机全量核对：前者
+/// 后面必紧跟后者，正文一致）。前端 reducer 的相邻判重只覆盖增量轮询；接续会话的前序段
+/// 不经 reducer，于是整段用户消息成对双显（用户实拍）。在解析层统一消掉，所有读取路径
+/// 一处生效。双写两行的时间戳实测最多差 1ms，用户真连发两条相同消息必然隔得更久，与
+/// reducer 同一个 2s 容差；缺时间戳的不判重（宁可双显，不吞用户消息）。
+fn within_double_write(prev: Option<&str>, next: Option<&str>) -> bool {
+    match (prev, next) {
+        (Some(a), Some(b)) => {
+            a == b
+                || (a.get(..10) == b.get(..10)
+                    && matches!((day_millis(a), day_millis(b)), (Some(x), Some(y)) if x.abs_diff(y) <= 2_000))
+        }
+        _ => false,
+    }
+}
+
+/// `YYYY-MM-DDTHH:MM:SS(.fff)Z` 的当日毫秒数（日期另比）。只认 UTC `Z` 结尾的形态——
+/// 各插件落 ChatItem 时统一写这种；别的形态返回 None，调用方退回严格同戳。
+fn day_millis(ts: &str) -> Option<u64> {
+    let time = ts.strip_suffix('Z')?.get(11..)?;
+    let (hms, frac) = time.split_once('.').unwrap_or((time, ""));
+    let mut parts = hms.split(':').map(|part| part.parse::<u64>().ok());
+    let (h, m, sec) = (parts.next()??, parts.next()??, parts.next()??);
+    let ms = format!("{frac:0<3}").get(..3)?.parse::<u64>().ok()?;
+    Some(((h * 60 + m) * 60 + sec) * 1000 + ms)
 }
 
 /// 尾部裁剪：只留最后 `page_size` 条消息，整行为单位（边界行的消息要么全留要么全走，
@@ -1010,8 +1203,8 @@ mod tests {
         p
     }
 
-    /// 测试用最小 spec：行格式 `m<N>:<tag>` 产出 N 条 Meta 消息（id 为 `<tag>-<i>`），
-    /// 用来造「一行多条」的边界行，不依赖任何真实 provider 的解析细节。
+    /// 测试用最小 spec：`m<N>:<tag>` 产出 N 条 Meta 消息（id 为 `<tag>-<i>`），
+    /// `p:<正文>` 产出一条计划。可造「一行多条」的边界与首屏外的计划。
     struct StubSpec;
 
     impl TranscriptSpec for StubSpec {
@@ -1030,6 +1223,17 @@ mod tests {
             None
         }
         fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
+            if let Some(plan) = line.strip_prefix("p:") {
+                return vec![TranscriptEvent::ToolCall {
+                    id: "plan".into(),
+                    timestamp: None,
+                    name: "ExitPlanMode".into(),
+                    summary: String::new(),
+                    subagent: None,
+                    detail: None,
+                    plan: Some(plan.into()),
+                }];
+            }
             let Some((n, tag)) = line
                 .strip_prefix('m')
                 .and_then(|rest| rest.split_once(':'))
@@ -1042,6 +1246,7 @@ mod tests {
                     id: format!("{tag}-{i}"),
                     timestamp: None,
                     kind: "stub".into(),
+                    compaction: None,
                 })
                 .collect()
         }
@@ -1053,6 +1258,20 @@ mod tests {
             .iter()
             .map(|(n, tag)| format!("m{n}:{tag}\n"))
             .collect()
+    }
+
+    #[test]
+    fn paged_history_keeps_latest_plan_outside_visible_items() {
+        let path = write_tmp(
+            "plan_outside_page",
+            "p:# 旧计划\nm1:one\np:# 最新计划\nm1:two\nm1:three\n",
+        );
+        let delta = read_chat_delta_paged(&StubSpec, &path, 0, None, 1);
+        assert_eq!(delta.items.len(), 1);
+        assert!(delta.items.iter().all(|item| matches!(item, ChatItem::Meta { .. })));
+        assert_eq!(delta.plan.as_deref(), Some("# 最新计划"));
+        assert!(delta.start > 0);
+        let _ = std::fs::remove_file(path);
     }
 
     /// 多发委派（kimi `AgentSwarm`）探测用最小 subagent spec：`locate_streams` 返回预制
@@ -1261,11 +1480,13 @@ mod tests {
                 id: "compact".into(),
                 timestamp,
                 kind: "compact".into(),
+                compaction: None,
             }),
             ChatItem::Meta {
                 id: "compact".into(),
                 timestamp: Some("2026-07-19T10:00:00Z".into()),
                 kind: "compact".into(),
+                compaction: None,
             }
         );
     }

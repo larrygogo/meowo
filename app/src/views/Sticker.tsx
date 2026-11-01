@@ -1418,17 +1418,6 @@ export function Sticker({
                               {folderName(l.cwd)}
                             </span>
                           )}
-                          {/* 附加目录标:一个会话跨 N 仓(--add-dir),tip 列全部目录。
-                              可选链防御:旧后端/测试固件的行没有该字段。 */}
-                          {(l.extra_dirs?.length ?? 0) > 0 && (
-                            <span
-                              className="stk-extradirs"
-                              data-testid="stk-extradirs"
-                              data-tip={[l.cwd, ...l.extra_dirs].filter(Boolean).join(" · ")}
-                            >
-                              +{l.extra_dirs.length}
-                            </span>
-                          )}
                           {/* Agent 从这个会话派生出去的后台作业**不在卡片上留痕**：它们自己
                               不建卡（见后端 hidden_background），源会话卡上也不标数——用户既
                               管不了这些作业（终端按键无效、发消息在手动模式下不会被执行），
@@ -1567,14 +1556,9 @@ export function Sticker({
                 setFocusNotice({ kind: "failed", item, detail: t.sticker.archiveFailed });
               });
           }}
-          onNewSession={() =>
-            openNewSessionWindow({ cwd: ctxItem.cwd, provider: ctxItem.provider }).catch(() => {})
-          }
           onOpenDir={
             ctxItem.cwd ? () => openProjectDir(ctxItem.cwd!).catch(() => {}) : null
           }
-          // 附加目录入口不上贴纸(用户指定):贴纸是监控视野,操作入口在对话窗。
-          onAddDir={null}
           onEndSession={
             // 结束入口按 endable 口径（与对话窗标题栏同源）：本 GUI 托管的 PTY，或进程
             // 仍活着的孤儿会话（broker 已收掉 PTY 记录，后端按 pid 杀树兜底）。确认+停止走

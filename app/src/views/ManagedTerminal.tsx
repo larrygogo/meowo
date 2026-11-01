@@ -618,7 +618,8 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       // settings-changed 热应用。
       scrollback: 5000,
       // 绿色只留给光标这一格宽的点缀；选区是成片色块，用低饱和灰绿保持清爽。
-      theme: { background: "#151617", foreground: "#e7e9e8", cursor: "#55d6ae", selectionBackground: "#31403a" },
+      // 底色与对话视图同档（--cc-bg / --cc-window-bg = #121212），切页签时不跳色。
+      theme: { background: "#121212", foreground: "#e7e9e8", cursor: "#55d6ae", selectionBackground: "#31403a" },
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);

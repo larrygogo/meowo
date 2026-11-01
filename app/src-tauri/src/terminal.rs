@@ -1604,36 +1604,6 @@ fn resolve_resume_plan(
 /// 进程都会重置成 CLI 默认（实拍反馈「每次接管权限模式都会变」）。
 /// 插入点在 launch 前缀之后、resume 子命令之前，与首次启动的参数次序一致。
 /// 读库/解析失败一律静默跳过：回放是增强，不能因此拦掉恢复本身。
-/// 把会话的附加目录拼回恢复 argv（sessions.extra_dirs，claim 时落库）：每个目录一对
-/// `<flag> <dir>`，插入点与 [`splice_stored_launch_args`] 相同（launch 前缀之后、resume
-/// 子命令之前）。不回放的话恢复的进程就丢了那些仓的访问权——附加目录是**启动参数**。
-/// 已消失的目录跳过（agent 对不存在的目录报错会拦掉整次恢复）；读库失败静默跳过。
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn splice_stored_extra_dirs(resume: &mut Vec<String>, provider: &str, sid: i64) {
-    let Some(agent) = meowo_agent::resolve(Some(provider)) else { return };
-    let Some(flag) = agent.extra_dir_flag() else { return };
-    let Ok(store) = open_store(&db_path()) else { return };
-    let dirs: Vec<String> = store
-        .session_extra_dirs(sid)
-        .ok()
-        .flatten()
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default();
-    let args: Vec<String> = dirs
-        .into_iter()
-        .filter(|d| std::path::Path::new(d).is_dir())
-        .flat_map(|d| [flag.to_string(), d])
-        .collect();
-    if args.is_empty() {
-        return;
-    }
-    let sub_len = agent.resume_args().len();
-    let insert_at = resume.len().saturating_sub(sub_len + 1);
-    for (offset, arg) in args.into_iter().enumerate() {
-        resume.insert(insert_at + offset, arg);
-    }
-}
-
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn splice_stored_launch_args(
     resume: &mut Vec<String>,
@@ -1944,7 +1914,7 @@ pub(crate) fn validate_new_session_cwd(cwd: &str) -> Result<String, String> {
 /// `terminal` 仅为旧前端兼容参数：托管模式下用哪个外部终端由设置里的 `resume_terminal` 决定。
 #[tauri::command]
 // 参数形状即前端 invoke 的调用契约(与 get_live_sessions_page 同一豁免理由):
-// cwd/options/workGroup/extraDirs 都是正交的启动维度,合并成 struct 破坏旧前端兼容。
+// cwd/options 都是正交的启动维度,合并成 struct 破坏旧前端兼容。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn new_session(
     app: tauri::AppHandle,
@@ -1953,16 +1923,13 @@ pub(crate) async fn new_session(
     provider: String,
     terminal: Option<String>,
     options: Option<std::collections::HashMap<String, String>>,
-    // 附加目录(跨仓同一需求 = 一个会话):每个以 agent 声明的 flag(claude --add-dir)
-    // 进 argv;原件 claim 时落库,resume/接管重启回放。
-    extra_dirs: Option<Vec<String>>,
 ) -> Result<(), String> {
     // 参数为兼容旧前端保留；托管模式不再由这里预选外部终端，视图与终端类型分别由
     // session_open_in / resume_terminal 决定。
     let _ = terminal;
     let reveal_broker = state.ptys.clone();
     let window_app = app.clone();
-    let temp_id = new_session_inner(app, state.ptys.clone(), cwd, provider, options, extra_dirs).await?;
+    let temp_id = new_session_inner(app, state.ptys.clone(), cwd, provider, options).await?;
     // 用临时负 id 就能 attach：claim 只改注册表的键，subscriber 挂在 ManagedPty 上，
     // 认领前后都指着同一个 PTY，不会断流。
     tauri::async_runtime::spawn_blocking(move || {
@@ -1981,29 +1948,9 @@ pub(crate) async fn new_session_inner(
     cwd: String,
     provider: String,
     options: Option<std::collections::HashMap<String, String>>,
-    // 附加目录(跨仓同一需求 = 一个会话):每个以 agent 声明的 flag(claude --add-dir)
-    // 进 argv;原件 claim 时落库,resume/接管重启回放。
-    extra_dirs: Option<Vec<String>>,
 ) -> Result<i64, String> {
     let dir = validate_new_session_cwd(&cwd)?;
     let agent = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
-    // 附加目录:逐个过与主目录同款的存在性校验(拼进 argv 的路径必须真实),并剔除
-    // 与主目录重复的。声明了才支持——没声明的 agent 收到附加目录要如实拒绝,
-    // 静默丢弃会让用户以为 agent 看得到那些仓。
-    let extras: Vec<String> = {
-        let mut out = Vec::new();
-        for d in extra_dirs.unwrap_or_default() {
-            let v = validate_new_session_cwd(&d)?;
-            if v != dir && !out.contains(&v) {
-                out.push(v);
-            }
-        }
-        out
-    };
-    let extra_flag = agent.extra_dir_flag();
-    if !extras.is_empty() && extra_flag.is_none() {
-        return Err(format!("{} 不支持附加目录", agent.display_name()));
-    }
     // 启动选项：前端只回传 choice id，此处按插件声明表翻译成 flag——未知 id 被忽略/落默认，
     // 用户输入永远进不了 argv。放在 relay 增补**之前**：中转声明的 `--model` 必须最后压轴
     // （中转端点只认它配置的那个模型，用户选的别名对它无意义，claude 以最后一个 --model 为准）。
@@ -2016,13 +1963,6 @@ pub(crate) async fn new_session_inner(
         agent.launch_options(),
         &selections,
     ));
-    // 附加目录:每个一对 `<flag> <dir>`(路径已过存在性校验)。
-    if let Some(flag) = extra_flag {
-        for d in &extras {
-            argv.push(flag.to_string());
-            argv.push(d.clone());
-        }
-    }
     let argv = crate::relay::augment_argv(agent.id(), argv);
     // 代理 + 中转 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等），三者都在
     // `launch_env_for_profile` 里。
@@ -2047,7 +1987,6 @@ pub(crate) async fn new_session_inner(
             &provider,
             &selections,
             None,
-            &extras,
         )
     })
     .await
@@ -2170,6 +2109,173 @@ pub(crate) async fn takeover_managed_terminal(
         let _ = (app, state, session_id, cols, rows, options);
         Err("当前平台不支持".into())
     }
+}
+
+/// 分叉会话（对照 Kimi 会话菜单的「分叉会话」）：用 CLI 原生分叉在原目录起一个**独立的**新会话，
+/// 带着到此为止的完整上下文；原会话不动、不收尾、不标记接替（与切换引擎的 handoff 相反）。
+/// 返回新会话的临时 id，前端据此切过去；真 id 在新进程首个 hook 时认领。
+///
+/// argv 与恢复同源：先按恢复计划拼（启动选项、附加目录回放都在其中），再把末尾的「恢复子命令
+/// + id」换成分叉尾巴——权限模式等启动参数随分叉沿用。新会话按新建口径过一遍中转增补。
+#[tauri::command]
+pub(crate) async fn fork_session(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    session_id: i64,
+    cols: u16,
+    rows: u16,
+) -> Result<i64, String> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let broker = state.ptys.clone();
+        let db = state.db_path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let store = open_store(&db)?;
+            let session = store.get_session(session_id).map_err(|e| e.to_string())?;
+            let provider = store
+                .session_provider(session_id)
+                .map_err(|e| e.to_string())?;
+            let cwd = store.session_cwd(session_id).map_err(|e| e.to_string())?;
+            let plugin = meowo_agent::resolve(Some(&provider)).ok_or("未知 agent")?;
+            let mode = plugin.fork_mode().ok_or("该 Agent 不支持分叉会话")?;
+            if !plugin.is_installed() {
+                return Err(format!(
+                    "{} 未安装或已被卸载，无法分叉会话。请到 设置 → Agent 重新安装",
+                    plugin.display_name()
+                ));
+            }
+            ensure_session_profile_available(&provider, &session.cc_session_id)?;
+            let (resolved, mut argv) =
+                resolve_resume_plan(&session.cc_session_id, cwd.as_deref(), &provider);
+            if argv.is_empty() {
+                return Err("该 Agent 不支持恢复会话，无法分叉".into());
+            }
+            let dir = validate_new_session_cwd(
+                &resolved.ok_or("会话缺少工作目录，无法在原目录分叉")?,
+            )?;
+            splice_stored_launch_args(&mut argv, &provider, session_id, None);
+            argv.truncate(argv.len().saturating_sub(plugin.resume_args().len() + 1));
+            let mut argv = crate::relay::augment_argv(plugin.id(), argv);
+            // 跨账号的 agent 先把资料迁到活跃账号（与恢复同一纪律），分叉命令与新进程都按它的 env 跑。
+            let target_profile =
+                prepare_session_for_active_profile(&provider, &session.cc_session_id)?;
+            pretrust_workspace(&provider, target_profile.as_deref(), &dir);
+            let env = launch_env_for_resume_target(&provider, target_profile.as_deref());
+            match mode {
+                meowo_agent::ForkMode::Args { before, after } => {
+                    argv.extend(before.iter().map(|s| s.to_string()));
+                    argv.push(session.cc_session_id.clone());
+                    argv.extend(after.iter().map(|s| s.to_string()));
+                }
+                meowo_agent::ForkMode::Command {
+                    args,
+                    cwd_flag,
+                    new_id_pattern,
+                } => {
+                    let new_id = run_fork_command(
+                        &plugin.launch_argv(),
+                        args,
+                        cwd_flag,
+                        new_id_pattern,
+                        &dir,
+                        &session.cc_session_id,
+                        &env,
+                    )?;
+                    argv.extend(plugin.resume_args().iter().map(|s| s.to_string()));
+                    argv.push(new_id);
+                }
+            }
+            // 选择随临时会话暂存，claim 时落到新会话行上——之后它自己的恢复也照此回放。
+            let selections: std::collections::HashMap<String, String> = store
+                .session_launch_args(session_id)
+                .ok()
+                .flatten()
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default();
+            let temp_id = broker.start_pending(
+                app.clone(),
+                &argv,
+                Some(&dir),
+                &env,
+                cols,
+                rows,
+                plugin.id().as_str(),
+                &selections,
+                None,
+            )?;
+            emit_board_changed(&app, "fork");
+            Ok(temp_id)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (app, state, session_id, cols, rows);
+        Err("当前平台不支持".into())
+    }
+}
+
+/// 跑非交互的分叉命令（kimi `fork -y --cwd <目录> <id>`），从输出取新会话 id。不开控制台窗口；
+/// 30s 不返回就杀掉报错——它正常不到 1 秒，卡住多半是弹了交互提示。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn run_fork_command(
+    launch: &[String],
+    args: &[&str],
+    cwd_flag: Option<&str>,
+    new_id_pattern: &str,
+    dir: &str,
+    session_id: &str,
+    env: &[(String, String)],
+) -> Result<String, String> {
+    use std::io::Read as _;
+    let (exe, rest) = launch.split_first().ok_or("缺少可执行")?;
+    let mut command = std::process::Command::new(exe);
+    command.args(rest).args(args);
+    if let Some(flag) = cwd_flag {
+        command.args([flag, dir]);
+    }
+    command
+        .arg(session_id)
+        .current_dir(dir)
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command.spawn().map_err(|e| format!("分叉命令启动失败: {e}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("分叉命令 30 秒未返回，已终止".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let mut output = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_string(&mut output);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_string(&mut output);
+    }
+    let pattern = regex::Regex::new(new_id_pattern).map_err(|e| e.to_string())?;
+    pattern
+        .captures(&output)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+        .ok_or_else(|| {
+            let line = output.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("无输出");
+            format!("分叉失败：{line}")
+        })
 }
 
 /// 切换账号后，把该 agent **正在托管运行**的会话就地重启到新账号上。
@@ -2683,8 +2789,6 @@ fn prepare_resume_launch(
     }
     // 回放会话的启动选项（权限模式等；接管时的改选合并写回），恢复后的进程与选择同参。
     splice_stored_launch_args(&mut resume, provider, sid, option_overrides);
-    // 回放附加目录（--add-dir）：恢复的进程与首次启动同一份跨仓访问范围。
-    splice_stored_extra_dirs(&mut resume, provider, sid);
     // takeover 在调用前已经结束旧进程；普通 resume 的旧进程本就不在。此刻复制能拿到
     // 完整的最后一帧 transcript，也不会与 Claude 正在追加同一个文件发生竞争。
     let target_profile = prepare_session_for_active_profile(provider, session_id)?;

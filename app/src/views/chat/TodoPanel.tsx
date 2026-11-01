@@ -1,9 +1,9 @@
 import { useT } from "../../i18n";
 import { TodoBadge } from "./TodoBadge";
 
-type TodoRow = { content: string; status: string; stale?: boolean };
+export type TodoRow = { content: string; status: string; stale?: boolean };
 
-function TodoListItems({ todos }: { todos: TodoRow[] }) {
+export function TodoListItems({ todos }: { todos: TodoRow[] }) {
   return (
     <ul className="chat-todos-list">
       {todos.map((todo, index) => (
@@ -36,33 +36,33 @@ export function TodoPanel({ todos }: { todos: TodoRow[] }) {
           <span className="chat-todos-title">{t.chat.todoPrevTask(staleDone, staleTodos.length)}</span>
           <span className="chat-tool-chevron">›</span>
         </summary>
-        <TodoListItems todos={staleTodos} />
+        <div className="chat-todos-panel">
+          <TodoListItems todos={staleTodos} />
+        </div>
       </details>
     );
   }
 
   const done = fresh.filter((todo) => todo.status === "completed").length;
-  const current = fresh.find((todo) => todo.status === "in_progress");
   return (
-    <details className="chat-todos" open>
+    <details className="chat-todos">
       <summary>
-        <span className="chat-todos-title">{t.chat.todos}</span>
-        <span className="chat-todos-count">{t.chat.todoProgress(done, fresh.length)}</span>
-        {/* 折叠时也要能看出「此刻在做什么」，否则收起来就等于没有。 */}
-        {current && <span className="chat-todos-current">{current.content}</span>}
+        <span className="chat-todos-title">{t.chat.todoStripProgress(done, fresh.length)}</span>
         <span className="chat-tool-chevron">›</span>
       </summary>
-      <TodoListItems todos={fresh} />
-      {staleTodos.length > 0 && (
-        /* 上一任务的残留：默认折叠的弱化区,不与当前清单混排(混排会把旧账算进进度)。 */
-        <details className="chat-todos-stale">
-          <summary>
-            <span className="chat-todos-stale-title">{t.chat.todoPrevTask(staleDone, staleTodos.length)}</span>
-            <span className="chat-tool-chevron">›</span>
-          </summary>
-          <TodoListItems todos={staleTodos} />
-        </details>
-      )}
+      <div className="chat-todos-panel">
+        <TodoListItems todos={fresh} />
+        {staleTodos.length > 0 && (
+          /* 上一任务的残留：默认折叠的弱化区,不与当前清单混排(混排会把旧账算进进度)。 */
+          <details className="chat-todos-stale">
+            <summary>
+              <span className="chat-todos-stale-title">{t.chat.todoPrevTask(staleDone, staleTodos.length)}</span>
+              <span className="chat-tool-chevron">›</span>
+            </summary>
+            <TodoListItems todos={staleTodos} />
+          </details>
+        )}
+      </div>
     </details>
   );
 }

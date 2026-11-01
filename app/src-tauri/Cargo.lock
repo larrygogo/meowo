@@ -2674,6 +2674,7 @@ name = "meowo-agent"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "memchr",
  "meowo-protocol",
  "rusqlite",
  "serde",

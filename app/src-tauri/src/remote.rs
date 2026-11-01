@@ -21,7 +21,13 @@
 //!    - 窗口几何/桌面语义：`snap_*` / `open_chat_window` / `confirm_dialog` 等
 //!    - 登录/安装/更新类：`login_agent` / `install_agent` / `check_update` 等
 //!    - 文件浏览类：`read_file_text` / `list_dir_entries` / `search_project_files`
-//!      / `git_*`（任意本地文件读，v1 砍掉）
+//!      / 其余 `git_*`（任意本地文件读，v1 砍掉）
+//!
+//! 例外（2026-10-31 用户决定，对照 Kimi 手机端的改动列表）：`git_diff_summary` /
+//! `git_file_diff` 放行，但两道收口——目录必须是某会话的 cwd 或附加目录
+//! （store `is_session_dir`，逐字比较）；单文件 diff 的路径必须出现在该目录此刻的
+//! 改动清单里，未跟踪读盘只认状态为 U 的条目。手机端因此只能看 agent 工作目录里
+//! 「改了什么」，不能借它读任意文件。
 //!
 //! 注意：白名单内的 `write_managed_terminal` 本身就等于「在宿主机上执行任意命令」
 //! （往 agent CLI 的 PTY 写任意按键）——这是产品功能（远程发消息/打断/答题），
@@ -115,9 +121,13 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "list_agents",
     "agent_chat_ui",
     "agent_models",
+    "agent_model_catalog",
     "new_session",
     "check_provider_hooks",
     "list_subdirectories",
+    // 改动列表（只读，收口见模块头「例外」一节）
+    "git_diff_summary",
+    "git_file_diff",
     // 只读杂项
     "get_settings",
     "host_os",
@@ -752,6 +762,44 @@ bridged_args!(SearchChatTranscriptsArgs { query: String });
 
 bridged_args!(RecentCwdsArgs { limit: usize });
 
+bridged_args!(GitDiffSummaryArgs { cwd: String });
+
+bridged_args!(GitFileDiffArgs {
+    cwd: String,
+    path: String,
+    untracked: bool
+});
+
+/// 单文件 diff 的路径收口：必须逐字是改动清单里的一项；要读盘（untracked）的只认 U 条目。
+fn changed_file_listed(
+    summary: &meowo_protocol::ipc::GitDiffSummaryDto,
+    path: &str,
+    untracked: bool,
+) -> bool {
+    summary
+        .files
+        .iter()
+        .any(|f| f.path == path && (!untracked || f.status == "U"))
+}
+
+/// git 只读命令的目录收口：只认会话自己的工作目录 / 附加目录（理由见模块头「例外」）。
+async fn ensure_session_dir(app: &tauri::AppHandle, dir: &str) -> Result<(), String> {
+    let db_path = app.state::<crate::AppState>().db_path.clone();
+    let dir = dir.to_string();
+    let known = tauri::async_runtime::spawn_blocking(move || {
+        crate::open_store(&db_path)?
+            .is_session_dir(&dir)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if known {
+        Ok(())
+    } else {
+        Err("remote/not_session_dir".into())
+    }
+}
+
 bridged_args!(RenameSessionArgs {
     #[serde(default)]
     cwd: Option<String>,
@@ -860,6 +908,7 @@ bridged_args!(AgentChatUiArgs {
 });
 
 bridged_args!(AgentModelsArgs { provider: String, session_id: Option<i64> });
+bridged_args!(AgentModelCatalogArgs { provider: String, session_id: Option<i64> });
 
 bridged_args!(NewSessionArgs {
     cwd: String,
@@ -870,9 +919,10 @@ bridged_args!(NewSessionArgs {
     terminal: Option<String>,
     #[serde(default)]
     options: Option<std::collections::HashMap<String, String>>,
-    // 移动页与桌面共用 NewSessionPanel，api.ts 恒带 extraDirs（空也为 []）——
-    // 缺这个字段 deny_unknown_fields 会把手机端每次新建都打成 400。
+    // 附加目录已按用户要求去掉，新页面不再发它。字段仍收下并忽略：手机上没刷新的旧页面
+    // 还会带 extraDirs，deny_unknown_fields 会把它们的每次新建都打成 400。
     #[serde(default)]
+    #[allow(dead_code)]
     extra_dirs: Option<Vec<String>>
 });
 
@@ -928,6 +978,29 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "recent_cwds" => {
             let a = args!(RecentCwdsArgs);
             reply(crate::session_query::recent_cwds(state, a.limit).await)
+        }
+        "git_diff_summary" => {
+            let a = args!(GitDiffSummaryArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_diff_summary(a.cwd).await)
+        }
+        "git_file_diff" => {
+            let a = args!(GitFileDiffArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            // 路径必须是这个目录此刻的改动文件：untracked 分支直接读盘，不收口就是任意文件读
+            // （`../` 或绝对路径）。多跑一次 status 的代价换这道门，手机上点一个文件才一次。
+            let listed = match crate::git::git_diff_summary(a.cwd.clone()).await {
+                Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
+                Err(e) => return reply::<()>(Err(e)),
+            };
+            if !listed {
+                return reply::<()>(Err("remote/not_changed_file".into()));
+            }
+            reply(crate::git::git_file_diff(a.cwd, a.path, a.untracked).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -1137,6 +1210,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(AgentModelsArgs);
             reply_ok(crate::agent_models(a.provider, a.session_id).await)
         }
+        "agent_model_catalog" => {
+            let a = args!(AgentModelCatalogArgs);
+            reply_ok(crate::agent_model_catalog(a.provider, a.session_id).await)
+        }
         "new_session" => {
             let a = args!(NewSessionArgs);
             // 只启动托管 PTY，不 reveal（桌面命令的 reveal_session 会在宿主机弹窗/开
@@ -1153,7 +1230,6 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     a.cwd,
                     a.provider,
                     a.options,
-                    a.extra_dirs,
                 )
                 .await,
             )
@@ -1397,8 +1473,9 @@ fn static_root(app: &tauri::AppHandle) -> Option<PathBuf> {
     .find(|d| d.is_dir())
 }
 
-/// URL path → 产物目录内相对路径。只接受 `[A-Za-z0-9._-]` 的单纯段（vite 产物
-/// 命名域），任何 `..`/盘符/反斜杠/空段直接拒绝。`/` → mobile.html。纯函数便于单测。
+/// URL path → 产物目录内相对路径。只接受 `[A-Za-z0-9._@-]` 的单纯段（vite 产物
+/// 命名域；`@` 来自 `128x128@2x.png` 这类图标名，曾被拒成 404 致手机页 Logo 裂图），
+/// 任何 `..`/盘符/反斜杠/空段直接拒绝。`/` → mobile.html。纯函数便于单测。
 fn sanitize_static_path(path: &str) -> Option<String> {
     if path == "/" {
         return Some("mobile.html".into());
@@ -1409,7 +1486,7 @@ fn sanitize_static_path(path: &str) -> Option<String> {
             || seg.starts_with('.')
             || !seg
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
         {
             return None;
         }
@@ -1499,8 +1576,8 @@ mod tests {
             "read_file_text",
             "list_dir_entries",
             "search_project_files",
-            "git_diff_summary",
-            "git_file_diff",
+            // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
+            // ensure_session_dir + changed_file_listed，由各自的单测钉住；其余 git_* 仍拒。
             "snap_expand",
             "snap_collapse",
             "set_autostart",
@@ -1676,6 +1753,10 @@ mod tests {
             sanitize_static_path("/assets/index-abc.js").as_deref(),
             Some("assets/index-abc.js")
         );
+        assert_eq!(
+            sanitize_static_path("/assets/128x128@2x-B30btFIc.png").as_deref(),
+            Some("assets/128x128@2x-B30btFIc.png")
+        );
         assert!(sanitize_static_path("/../secret").is_none());
         assert!(sanitize_static_path("/assets/../../x").is_none());
         assert!(sanitize_static_path("/a\\b").is_none());
@@ -1730,6 +1811,35 @@ mod tests {
     /// 在 sample_payload_parse_check 缺样例会撞 `_` 臂失败——样例与命令同生同灭，
     /// 与 every_bridged_command_has_a_dispatch_arm 同思路。
     #[test]
+    fn changed_file_listed_only_admits_listed_paths() {
+        use meowo_protocol::ipc::{GitChangedFileDto, GitDiffSummaryDto};
+        let file = |path: &str, status: &str| GitChangedFileDto {
+            path: path.into(),
+            status: status.into(),
+            additions: None,
+            deletions: None,
+        };
+        let summary = GitDiffSummaryDto {
+            git_available: true,
+            is_repo: true,
+            branch: None,
+            ahead: None,
+            behind: None,
+            files: vec![file("src/a.ts", "M"), file("notes.md", "U")],
+        };
+        assert!(changed_file_listed(&summary, "src/a.ts", false));
+        assert!(changed_file_listed(&summary, "notes.md", true));
+        // 读盘分支只认未跟踪条目；清单外的路径（含 ../ 与绝对路径）一律拒。
+        assert!(!changed_file_listed(&summary, "src/a.ts", true));
+        assert!(!changed_file_listed(&summary, "../secret.txt", true));
+        assert!(!changed_file_listed(
+            &summary,
+            "C:/Users/me/.ssh/id_rsa",
+            true
+        ));
+    }
+
+    #[test]
     fn every_bridged_command_sample_payload_parses() {
         for cmd in BRIDGED_COMMANDS {
             if let Err(e) = sample_payload_parse_check(cmd) {
@@ -1772,6 +1882,13 @@ mod tests {
             }
             // api.ts:946
             "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8}"#).map(|_| ()),
+            // api.ts:502（gitDiffSummary）
+            "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            // api.ts:507（gitFileDiff）
+            "git_file_diff" => parse::<GitFileDiffArgs>(
+                br#"{"cwd":"C:/repo","path":"src/a.ts","untracked":false}"#,
+            )
+            .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）
             "rename_session" => parse::<RenameSessionArgs>(
                 br#"{"cwd":"C:/repo","sessionId":"cc-abc","title":"renamed","provider":"claude"}"#,
@@ -1858,6 +1975,10 @@ mod tests {
             // api.ts:818
             "agent_models" => {
                 parse::<AgentModelsArgs>(br#"{"provider":"claude","sessionId":41}"#).map(|_| ())
+            }
+            // api.ts agentModelCatalog（sessionId 可 null）
+            "agent_model_catalog" => {
+                parse::<AgentModelCatalogArgs>(br#"{"provider":"kimi","sessionId":41}"#).map(|_| ())
             }
             // api.ts:941（options 可选、extraDirs 恒发——空也发 []，2026-08-31 事故的字段）
             "new_session" => parse::<NewSessionArgs>(

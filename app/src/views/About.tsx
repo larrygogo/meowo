@@ -20,6 +20,7 @@ import { AccountSection } from "./settings/AccountSection";
 import { NetworkSection } from "./settings/NetworkSection";
 import { applySettingsFilter } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
+import { ShortcutList } from "./chat/WindowModals";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -27,8 +28,8 @@ const SITE = "meowo.io";
 const SITE_URL = "https://meowo.io";
 const openExt = (url: string) => invoke("open_url", { url }).catch((e) => console.error("[about] 打开链接失败：", url, e));
 
-type Section = "general" | "sessions" | "appearance" | "network" | "account" | "about";
-const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "network", "account", "about"];
+type Section = "general" | "sessions" | "appearance" | "shortcuts" | "network" | "account" | "about";
+const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "network", "account", "about"];
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -99,6 +100,16 @@ function IconAppearance() {
   );
 }
 
+// 键盘：快捷键分区。
+function IconKeyboard() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2.5" />
+      <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8" />
+    </svg>
+  );
+}
+
 // 地球：网络/代理。
 function IconGlobe() {
   return (
@@ -110,7 +121,9 @@ function IconGlobe() {
   );
 }
 
-
+function ShortcutsSection() {
+  return <div className="row-card settings-shortcuts"><ShortcutList /></div>;
+}
 
 // 通用：应用级设置（语言、自启、更新、通知）。会话与卡片的行为在 SessionsSection。
 function GeneralSection() {
@@ -780,7 +793,7 @@ export function About() {
   // 分区记忆：每次开窗回 general 让最常改的分区（外观/Agent）永远多点一次。
   const [sec, setSec] = useState<Section>(() => {
     const s = localStorage.getItem("meowo-settings-section");
-    return s === "general" || s === "sessions" || s === "appearance" || s === "network" || s === "account" || s === "about"
+    return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "network" || s === "account" || s === "about"
       ? s
       : "general";
   });
@@ -824,6 +837,7 @@ export function About() {
       general: t.settings.nav.general,
       sessions: t.settings.nav.sessions,
       appearance: t.settings.nav.appearance,
+      shortcuts: t.settings.nav.shortcuts,
       network: t.settings.nav.network,
       account: t.settings.nav.account,
       about: t.settings.nav.about,
@@ -896,6 +910,10 @@ export function About() {
             <IconAppearance />
             <span>{t.settings.nav.appearance}</span>
           </button>
+          <button className={"nav-item" + (sec === "shortcuts" ? " on" : "")} aria-current={sec === "shortcuts" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("shortcuts"); }}>
+            <IconKeyboard />
+            <span>{t.settings.nav.shortcuts}</span>
+          </button>
           <button className={"nav-item" + (sec === "network" ? " on" : "")} aria-current={sec === "network" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("network"); }}>
             <IconGlobe />
             <span>{t.settings.nav.network}</span>
@@ -938,6 +956,8 @@ export function About() {
                 <SessionsSection />
               ) : s === "appearance" ? (
                 <AppearanceSection />
+              ) : s === "shortcuts" ? (
+                <ShortcutsSection />
               ) : s === "network" ? (
                 <NetworkSection />
               ) : s === "account" ? (

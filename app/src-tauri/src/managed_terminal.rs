@@ -408,6 +408,21 @@ pub(crate) async fn stop_managed_terminal(
     .map_err(|e| e.to_string())?
 }
 
+/// 「标记完成」顺带结束会话（用户要求：做完一件事要勾掉也要关掉，两步合一）。只走两条
+/// 无副作用的路：托管 PTY 直接 stop；broker 没有 PTY 但进程还活着的孤儿按 pid 收。后台会话
+/// 不碰——它的 kill 要先 attach 画面，标记完成不该顺手接上一个用户没打开过的后台会话。
+/// 会话本来就没在跑时什么都不做。返回 Err 只给调用方记日志：完成状态已落库，不因结束失败回滚。
+pub(crate) fn end_session_for_done(
+    ptys: &crate::pty::PtyBroker,
+    db_path: &std::path::Path,
+    session_id: i64,
+) -> Result<(), String> {
+    if ptys.is_managed(session_id) {
+        return ptys.stop(session_id);
+    }
+    stop_orphan_by_pid(db_path, session_id, &crate::proc::agent_pids_snapshot()).unwrap_or(Ok(()))
+}
+
 /// broker 无 PTY 时的结束兜底（孤儿会话）：会话记录有 pid 且进程仍活着，按 pid 杀整棵树
 /// 并落 ended。树杀复用 proc 的 kill_pid + kill_descendants——与升级链 escalate_stop
 /// 同一套（kill_descendants 不含 root，root 由 kill_pid 负责，分工与 escalate_stop 里

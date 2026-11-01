@@ -30,3 +30,9 @@ for (const name of ["localStorage", "sessionStorage"] as const) {
     Object.defineProperty(globalThis, name, { value: new MemoryStorage(), configurable: true });
   }
 }
+
+// 对话页的会话快照缓存是模块级的（views/chat/historyCache）：不清的话，上一个用例看过的会话
+// 会在下一个用例切换时被直接恢复，用例之间互相串味。
+import { afterEach } from "vitest";
+import { clearHistoryCache } from "./views/chat/historyCache";
+afterEach(() => clearHistoryCache());

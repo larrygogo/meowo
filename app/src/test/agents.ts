@@ -3,6 +3,9 @@ import type { AgentDescriptor, ChatUi, LaunchOption, SlashCommand } from "../api
 /** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
 export const CLAUDE_STATUS_LINE_PATTERN = String.raw`^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$`;
 
+/** 与 plugins/claude 的 retry_line_pattern 同一串（改一边必须同步另一边）。 */
+export const CLAUDE_RETRY_LINE_PATTERN = String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$`;
+
 /** 测试里已知的五家产品名。真实值由后端 `list_agents()` 下发（须与注册表的 display_name 同值）。 */
 const NAMES: Record<string, string> = {
   claude: "Claude Code",
@@ -193,6 +196,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     model_presets: MODEL_PRESETS[provider] ?? [],
     model_select_command: provider === "claude" ? "/model" : null,
     queue_input: provider === "codex" ? "\t" : "\r",
+    // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
+    queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
     // opencode 的命令是 /models(复数)——与后端插件声明同源。
     model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",
@@ -248,6 +253,31 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     clipboard_paste_input: provider === "kimi" ? "\u001bv" : provider === "gemini" ? null : "\u0016",
     // 与后端同源:运行中状态行正则只有 claude 声明(plugins/claude status_line_pattern)。
     status_line_pattern: provider === "claude" ? CLAUDE_STATUS_LINE_PATTERN : null,
+    retry_line_pattern: provider === "claude" ? CLAUDE_RETRY_LINE_PATTERN : null,
+    // 与后端同源:思考程度切换 claude(2.1.314)与 kimi(2.4.0)都是 /effort <档位>。
+    effort: provider === "claude"
+      ? { command: "/effort", levels: ["low", "medium", "high", "xhigh", "max"], confirm_pattern: String.raw`set effort level to (\w+)`, reject_pattern: String.raw`effort '[^']+' isn't` }
+      // kimi 档位随模型（模型目录的 support_efforts），静态表留空。
+      : provider === "kimi"
+        ? { command: "/effort", levels: [], confirm_pattern: String.raw`(?:thinking set to|with thinking) (\w+)`, reject_pattern: String.raw`unsupported thinking effort|cannot switch models while streaming|failed to switch model` }
+        : null,
+    // 与后端同源:原生分叉 claude/codex/opencode(启动参数)、kimi(fork 子命令后 -r 打开)。
+    fork: ["claude", "codex", "opencode", "kimi"].includes(provider),
+    // 与后端同源:claude `/btw` 侧问(2.1.314 探针实测)。
+    side_question: provider === "claude"
+      ? { command: "/btw", footer_marker: "esc to close", ready_marker: "c to copy", scroll_input: "\x1b[B", close_input: "\x1b" }
+      : null,
+    // 与后端同源:裸可执行名 + 各家 resume_args。
+    resume_command: ({ claude: ["claude", "--resume"], codex: ["codex", "resume"], kimi: ["kimi", "-r"], opencode: ["opencode", "--session"], gemini: ["gemini", "--resume"] } as Record<string, string[]>)[provider] ?? [],
+    // 与后端同源:kimi `/undo N`(2.4.0 包内取证);opencode `/undo` 一次一轮、还原文件、
+    // 原文放回它的输入框(1.19.3 probe_opencode_undo);claude `/rewind` 菜单(2.1.314 probe_claude_rewind)。
+    undo: provider === "kimi"
+      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|nothing to undo|failed to undo|run /undo again`, input_clear: null, menu: null }
+      : provider === "opencode"
+        ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, input_clear: { inputs: ["\u0003"], composer: { kind: "block", row_prefix: "┃", bottom_prefix: "╹" } }, menu: null }
+        : provider === "claude"
+          ? { command: "/rewind", count_arg: false, restores_files: false, reject_pattern: null, input_clear: { inputs: ["\u001b", "\u001b"], composer: { kind: "prompt", prompt: "❯", border: "─" } }, menu: { title: "Rewind", ready_marker: "❯ (current)", step_input: "\u001b[A", selected_prefix: "❯", enter_input: "\r", quote_prefix: "│", option_label: "Restore conversation", cancel_input: "\u001b" } }
+          : null,
     // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
     draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。
@@ -333,7 +363,6 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     // opencode 的会话存储没取证过,gemini 压根不支持多账号。
     moves_sessions_across_accounts: MOVES_SESSIONS_ACROSS_ACCOUNTS.has(id),
     // 与后端事实对齐:目前只有 claude 声明了附加目录 flag(--add-dir)。
-    supports_extra_dirs: id === "claude",
     launch_options: LAUNCH_OPTIONS[id] ?? [],
     relay: RELAYS[id],
   }));

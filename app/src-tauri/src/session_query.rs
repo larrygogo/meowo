@@ -187,6 +187,8 @@ pub(crate) struct LiveItem {
     /// 前端卡片状态环与 tab 分组按它把「主回合停了但后台在干活」的会话画成运行中——
     /// 必须与后端 tab_class 的 background_busy 同口径，否则环色与所在 tab 打架。
     busy_subagents: u32,
+    /// 回合结束时用户没在看它（见 watch::is_unread）；打开该会话即清。
+    unread: bool,
     /// 来自**另一个实例的库**（dev 构建只读聚合安装版 `~/.meowo/board.db` 的会话，
     /// 见 [`foreign_live_items`]）。前端据此标注来源并收起全部操作入口——这些会话的
     /// PTY/审批/收尾都归安装版，本实例只有观察权。id 已加 [`FOREIGN_ID_OFFSET`] 防撞：
@@ -593,7 +595,6 @@ fn pending_placeholder_item(
             provider: info.provider.clone(),
             profile: None,
             predecessor_id: None,
-            extra_dirs: Vec::new(),
         },
         connected: true,
         pty_managed: true,
@@ -608,6 +609,7 @@ fn pending_placeholder_item(
         screen_state: None,
         screen_assumed: false,
         busy_subagents: 0,
+        unread: false,
         foreign: false,
     }
 }
@@ -1002,6 +1004,7 @@ fn enrich(
     if dropped_from_list(db_title.trim(), connected, &session.todos) {
         return None;
     }
+    let unread = crate::watch::is_unread(session.session.id);
     Some(LiveItem {
         inner: session,
         connected,
@@ -1025,6 +1028,7 @@ fn enrich(
         screen_state: None,
         screen_assumed: false,
         busy_subagents,
+        unread,
         // 外库标记由 foreign_live_items 在聚合时置真，本库路径恒为 false。
         foreign: false,
     })

@@ -17,4 +17,9 @@ isRepo: boolean,
 /**
  * 当前分支名；detached HEAD 或查询失败时为 None。
  */
-branch: string | null, files: Array<GitChangedFileDto>, };
+branch: string | null, 
+/**
+ * 相对上游分支领先 / 落后的提交数（对照 Kimi 改动面板的「领先远程 / 落后远程」：agent 提交
+ * 之后要不要推送，一眼可见）。按本地记录的远程分支算，不自动 fetch。没有上游时为 None。
+ */
+ahead: number | null, behind: number | null, files: Array<GitChangedFileDto>, };

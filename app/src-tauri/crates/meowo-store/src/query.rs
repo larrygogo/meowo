@@ -87,9 +87,6 @@ pub struct LiveSession {
     ///（点开可回看链上历史各段）；None = 普通会话。
     #[cfg_attr(test, ts(type = "number | null"))]
     pub predecessor_id: Option<i64>,
-    /// 附加目录（一个会话经 --add-dir 访问的其它仓）。空 = 单目录会话。
-    /// 卡片按它显示「+N」；JSON 解析在此层做，前端拿到即用。
-    pub extra_dirs: Vec<String>,
 }
 
 /// 转义 SQL LIKE 通配符，使用户输入里的 `%` `_` `\` 作字面量匹配（配合 `LIKE … ESCAPE '\'`）。
@@ -122,8 +119,7 @@ fn build_live_sessions_sql(
     const SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
             p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
             sc.used_pct, sc.window_size, sc.model, sn.note,
-            s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id,
-            s.extra_dirs
+            s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id
      FROM sessions s
      JOIN projects p ON p.id = s.project_id
      -- 关联子查询取每会话最新一张 task：ux_tasks_session 建立前的旧库可能一会话
@@ -310,7 +306,6 @@ impl Store {
                 let provider: Option<String> = r.get(23)?;
                 let profile: Option<String> = r.get(24)?;
                 let predecessor_id: Option<i64> = r.get(25)?;
-                let extra_dirs_json: Option<String> = r.get(26)?;
                 Ok((
                     session,
                     project_name,
@@ -331,7 +326,7 @@ impl Store {
                     last_user_text,
                     provider,
                     profile,
-                    (predecessor_id, extra_dirs_json),
+                    predecessor_id,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -360,7 +355,7 @@ impl Store {
             last_user_text,
             provider,
             profile,
-            (predecessor_id, extra_dirs_json),
+            predecessor_id,
         ) in rows
         {
             let todos = task_id
@@ -401,10 +396,6 @@ impl Store {
                     .unwrap_or_else(|| crate::DEFAULT_PROVIDER.to_string()),
                 profile,
                 predecessor_id,
-                // 解析失败按空处理:附加目录是增强信息,坏数据不该让整页列表报错。
-                extra_dirs: extra_dirs_json
-                    .and_then(|json| serde_json::from_str(&json).ok())
-                    .unwrap_or_default(),
             });
         }
         Ok(out)

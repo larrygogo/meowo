@@ -192,6 +192,13 @@ impl AgentPlugin for Opencode {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--session"]
     }
+    /// `--session <id> --fork`：继续时分叉（`opencode --help`，1.19.3）。
+    fn fork_mode(&self) -> Option<crate::ForkMode> {
+        Some(crate::ForkMode::Args {
+            before: &["--session"],
+            after: &["--fork"],
+        })
+    }
     /// opencode 的切模型命令是 **`/models`**(复数,弹选择器;没有 `/model`——下方
     /// slash_commands 的注释与 registry 测试都钉着这一事实,此前这里却声明成 `/model`,
     /// 发出去是 unknown command,模型按钮 20 秒识别窗白等)。菜单不接受内联参数,故无
@@ -233,6 +240,32 @@ impl AgentPlugin for Opencode {
     /// （probe_tui_script 实测，1.19.2）。
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
+    }
+
+    /// QUEUED 标记挂在输入区上方，当前回合结束后自动执行（probe_tui_script，1.19.2）。
+    fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
+        Some(crate::chat_ui::QueueDelivery::TurnEnd)
+    }
+    /// 1.19.3 真机取证（tests/probe_opencode_undo.rs）：`/undo` 不收参数、一次撤最近一轮；
+    /// 库里只在 session.revert 记回退点（导出按它截断，见 store.rs），下次发言才真删；工作区
+    /// 文件按快照一并回滚（连 agent 没碰过的文件也回到当时的样子）；原文放回它自己的输入框。
+    /// 清输入框用默认 keybind `input_clear`（Ctrl-C，多行整段清；Ctrl-U 只清当前行且在行首
+    /// 不并行，实测清不净）。Ctrl-C 在空输入框上是退出，故前端先认出输入框里的原文才按。
+    fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
+        Some(crate::chat_ui::UndoControl {
+            command: "/undo",
+            count_arg: false,
+            restores_files: true,
+            reject_pattern: None,
+            input_clear: Some(crate::chat_ui::UndoInputClear {
+                inputs: &["\x03"],
+                composer: crate::chat_ui::UndoComposer::Block {
+                    row_prefix: "┃",
+                    bottom_prefix: "╹",
+                },
+            }),
+            menu: None,
+        })
     }
     /// 默认 keybind `input_newline` 含 ctrl+j：裸 LF 在输入框里插入换行、不提交（实测 1.19.2）。
     /// 不用 ESC+CR——ESC 前缀若被单独解析成 Esc，运行中就是半个中断。
