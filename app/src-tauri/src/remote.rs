@@ -755,7 +755,10 @@ bridged_args!(GetLiveSessionsPageArgs {
     #[serde(default)]
     include_foreign: Option<bool>,
     #[serde(default)]
-    include_pending: Option<bool>
+    include_pending: Option<bool>,
+    // 对话侧栏按创建时间排时才发（api.ts 只在 "created" 时带这个键）。
+    #[serde(default)]
+    order: Option<String>
 });
 
 bridged_args!(SearchChatTranscriptsArgs { query: String });
@@ -960,6 +963,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     a.limit,
                     a.include_foreign,
                     a.include_pending,
+                    a.order,
                 )
                 .await,
             )
@@ -1873,7 +1877,7 @@ mod tests {
             // api.ts:566（getLiveSessionsPage：filter/limit 恒有，search/cwd/游标键恒发、
             // 空值发 null，includeForeign/includePending 恒发）
             "get_live_sessions_page" => parse::<GetLiveSessionsPageArgs>(
-                br#"{"filter":"running","search":"fix","cwd":"C:/repo","beforeLastEventAt":1725000000000,"beforeId":42,"limit":50,"includeForeign":false,"includePending":true}"#,
+                br#"{"filter":"running","search":"fix","cwd":"C:/repo","beforeLastEventAt":1725000000000,"beforeId":42,"limit":50,"includeForeign":false,"includePending":true,"order":"created"}"#,
             )
             .map(|_| ()),
             // api.ts:526

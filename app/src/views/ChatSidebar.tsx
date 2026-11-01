@@ -333,9 +333,9 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
                   </button>
                 );
               })}
-              {/* 非默认档只排已加载的这一页（翻页新条目追加尾部）：不说明的话,
-                  乱序看起来就是「排序坏了」。 */}
-              {sortMode !== "recent" && <div className="sf-note">{t.chat.sortPartialNote}</div>}
+              {/* 「按名称」只排已加载的这一页（翻页新条目追加尾部）：不说明的话,
+                  乱序看起来就是「排序坏了」。创建时间与最近活跃由后端分页，排的是全量。 */}
+              {sortMode === "name" && <div className="sf-note">{t.chat.sortPartialNote}</div>}
             </>
           ) : (
             <>
@@ -504,6 +504,10 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     const stored = localStorage.getItem(SORT_MODE_KEY);
     return stored === "recent" || stored === "name" ? stored : "created";
   });
+  // 「创建时间」交给后端分页（后端按 started_at 倒序扫），否则只能重排已加载的一页：
+  // 新建但一直没动的会话可能根本不在第一页。load 是稳定回调，读 ref。
+  const sortModeRef = useRef(sortMode);
+  sortModeRef.current = sortMode;
   // 折叠的组(按 pathKey)。侧栏收起时本组件整个卸载,不落盘的话回来全展开了。
   const [folded, setFolded] = useState<Set<string>>(readFolded);
 
@@ -545,9 +549,12 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     // 靠滚动翻页找会话的路是断的,此前只能退回看板去搜。
     const q = searchRef.current.trim() || null;
     const arch = archivedViewRef.current;
-    return getLiveSessionsPage(arch ? "archived" : "all", q, null, lim, dir)
+    const order = sortModeRef.current === "created" ? "created" : "activity";
+    return getLiveSessionsPage(arch ? "archived" : "all", q, null, lim, dir, false, false, order)
       .then((page) => {
         if (!mountedRef.current) return;
+        // 排序切换期间发出的旧请求：装的是另一种顺序的首页，丢弃。
+        if ((sortModeRef.current === "created" ? "created" : "activity") !== order) return;
         // 切目录/改搜索词/切归档视图期间发出的旧请求回来了:它装的是旧条件的会话,
         // 原样落盘会让列表与筛选状态对不上。丢弃。
         if (dirFilterRef.current !== dir) return;
@@ -674,6 +681,23 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     setGrowing(false);
     void loadRef.current("refresh");
   }, [dirFilter]);
+
+  // 在「创建时间」与其它排序之间切换 = 后端换了扫描顺序,首页内容可能完全不同:回到
+  // 首页重取(与切目录同一套重置语义)。最近活跃 ↔ 按名称只是前端重排,不必重取。
+  const prevOrderRef = useRef(sortMode === "created");
+  useEffect(() => {
+    const byCreated = sortMode === "created";
+    if (prevOrderRef.current === byCreated) return;
+    prevOrderRef.current = byCreated;
+    prevLimitRef.current = PAGE_LIMIT;
+    limitRef.current = PAGE_LIMIT;
+    setLimit(PAGE_LIMIT);
+    setReachedEnd(false);
+    setLoadFailed(false);
+    growingRef.current = false;
+    setGrowing(false);
+    void loadRef.current("refresh");
+  }, [sortMode]);
 
   // 切换已归档视图 = 换数据源:与切目录同一套重置语义。
   const prevArchRef = useRef(false);

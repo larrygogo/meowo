@@ -107,12 +107,17 @@ fn escape_like(s: &str) -> String {
 /// 若测试自己抄一份 SQL,抄本与实现必然漂移——`ix_sessions_board`(store.rs v15)
 /// 哪天因谓词改写而失效时,对着抄本的测试照旧全绿,而看板在大库上悄悄退回全表扫。
 /// 现在两边共用同一份构造,抄本不存在。
+///
+/// `by_created`:按创建时间(started_at)倒序分页,游标的时间位也换成 started_at。对话侧栏
+/// 默认按创建时间排,只在已加载的一页里重排的话,新建但一直没动的会话可能根本不在
+/// 第一页(用户反馈列表顺序不对)。waiting tab 不受影响,它的语义就是等最久优先。
 fn build_live_sessions_sql(
     filter: Option<&str>,
     search: Option<&str>,
     cwd: Option<&str>,
     before_last_event_at: Option<i64>,
     before_id: Option<i64>,
+    by_created: bool,
     limit: usize,
 ) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
@@ -182,10 +187,13 @@ fn build_live_sessions_sql(
 
     // waiting 等最久优先（ASC），游标取「更大」的；其它 DESC，游标取「更小」的。
     let asc = matches!(filter, Some("waiting"));
+    let by_created = by_created && !asc;
     if let (Some(ts), Some(id)) = (before_last_event_at, before_id) {
         // 整体括起：AND 优先级高于 OR，不加括号第二个 OR 分支会绕过 filter（4035ec5 回归）。
         if asc {
             conditions.push("((s.last_event_at > ?) OR (s.last_event_at = ? AND s.id > ?))".into());
+        } else if by_created {
+            conditions.push("((s.started_at < ?) OR (s.started_at = ? AND s.id < ?))".into());
         } else {
             conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
         }
@@ -201,6 +209,8 @@ fn build_live_sessions_sql(
     };
     let order = if asc {
         "s.last_event_at ASC, s.id ASC"
+    } else if by_created {
+        "s.started_at DESC, s.id DESC"
     } else {
         "s.last_event_at DESC, s.id DESC"
     };
@@ -273,8 +283,24 @@ impl Store {
         before_id: Option<i64>,
         limit: usize,
     ) -> Result<Vec<LiveSession>, StoreError> {
+        self.live_sessions_scan(filter, search, cwd, before_last_event_at, before_id, false, limit)
+    }
+
+    /// [`Self::live_sessions_filtered`] 再多一个排序开关:`by_created` 时按创建时间倒序,
+    /// 游标的时间位传 started_at(见 build_live_sessions_sql)。
+    #[allow(clippy::too_many_arguments)]
+    pub fn live_sessions_scan(
+        &self,
+        filter: Option<&str>,
+        search: Option<&str>,
+        cwd: Option<&str>,
+        before_key: Option<i64>,
+        before_id: Option<i64>,
+        by_created: bool,
+        limit: usize,
+    ) -> Result<Vec<LiveSession>, StoreError> {
         let (sql, params) =
-            build_live_sessions_sql(filter, search, cwd, before_last_event_at, before_id, limit);
+            build_live_sessions_sql(filter, search, cwd, before_key, before_id, by_created, limit);
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(params.iter()), |r| {
@@ -558,7 +584,7 @@ mod tests {
     /// 对**真正执行的那条 SQL**取查询计划。用 `build_live_sessions_sql` 而非抄写的
     /// 字面量:谓词一旦改写到用不上索引,这里立刻红,而不是等大库上用户报「越滚越卡」。
     fn plan(store: &Store, filter: &str, search: Option<&str>) -> String {
-        let (sql, params) = build_live_sessions_sql(Some(filter), search, None, None, None, 50);
+        let (sql, params) = build_live_sessions_sql(Some(filter), search, None, None, None, false, 50);
         let mut stmt = store
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
@@ -597,7 +623,7 @@ mod tests {
     fn paging_cursor_keeps_the_index_order() {
         let store = Store::open_in_memory().unwrap();
         let (sql, params) =
-            build_live_sessions_sql(Some("all"), None, None, Some(1_700_000_000), Some(42), 50);
+            build_live_sessions_sql(Some("all"), None, None, Some(1_700_000_000), Some(42), false, 50);
         let mut stmt = store
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))

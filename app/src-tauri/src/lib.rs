@@ -1982,6 +1982,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 2,
+                by_created: false,
             },
         )
         .unwrap();

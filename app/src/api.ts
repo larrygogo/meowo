@@ -572,7 +572,9 @@ export function getLiveSessionsPage(
   includeForeign = false,
   /** 附带「正在启动」占位卡(pending PTY:已起 PTY、CLI 未写库的新会话,负 id)——
       同样只有贴纸看板传 true;占位卡不可点,其它消费方给了也是死路。 */
-  includePending = false
+  includePending = false,
+  /** 排序:"created" 让后端按创建时间倒序分页(对话侧栏默认)。游标对调用方不透明,原样回传即可。 */
+  order: "activity" | "created" = "activity",
 ): Promise<LiveSessionsPage> {
   return invoke<unknown>("get_live_sessions_page", {
     filter,
@@ -585,6 +587,8 @@ export function getLiveSessionsPage(
     limit,
     includeForeign,
     includePending,
+    // 只在需要时带键：remote.rs 的桥是 deny_unknown_fields，缺省形态保持与旧后端一致。
+    ...(order === "created" ? { order } : {}),
   }).then((res) => {
     // 旧后端 / demo mock 仍返回裸数组：给不满 limit 视作到底，满页时按旧约定用末项续查
     // （旧后端本就只有这套语义）。undefined = 后端没有该命令，静默降级为空列表。
