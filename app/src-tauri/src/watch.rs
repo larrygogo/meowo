@@ -1011,6 +1011,14 @@ pub(crate) fn spawn_liveness_watch(
                         let suppressed = suppressed_by_viewing(NotifyKind::Error, viewing);
                         let fired = seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
                         attention_fired |= fired;
+                        if fired {
+                            crate::push::push_session(&settings, crate::push::PushMessage {
+                                title: format!("{} · {}", s.project_name, tr(lang, "notify.error")),
+                                body: format!("{} · {}", display_title, e.label),
+                                session_id: s.session.id,
+                                urgent: false,
+                            });
+                        }
                         if fired && notify_on {
                             // 标题带项目名：多会话并行时通知中心里堆着一排相同的状态标题，
                             // 必须逐条点开正文才分得清是谁在叫（四类通知同此）。
@@ -1040,12 +1048,20 @@ pub(crate) fn spawn_liveness_watch(
                             let suppressed = suppressed_by_viewing(NotifyKind::Pending, viewing);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
+                            let key = match s.pending_review.as_deref() {
+                                Some("question") => "notify.pending.question",
+                                Some("plan") => "notify.pending.plan",
+                                _ => "notify.pending.approval",
+                            };
+                            if fired {
+                                crate::push::push_session(&settings, crate::push::PushMessage {
+                                    title: format!("{} · {}", s.project_name, tr(lang, key)),
+                                    body: display_title.clone(),
+                                    session_id: s.session.id,
+                                    urgent: true,
+                                });
+                            }
                             if fired && notify_on {
-                                let key = match s.pending_review.as_deref() {
-                                    Some("question") => "notify.pending.question",
-                                    Some("plan") => "notify.pending.plan",
-                                    _ => "notify.pending.approval",
-                                };
                                 show_session_notification(
                                     &app,
                                     format!("{} · {}", s.project_name, tr(lang, key)),
@@ -1086,6 +1102,14 @@ pub(crate) fn spawn_liveness_watch(
                             let suppressed = suppressed_by_viewing(NotifyKind::Blocked, viewing);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
+                            if fired {
+                                crate::push::push_session(&settings, crate::push::PushMessage {
+                                    title: format!("{} · {}", s.project_name, tr(lang, "notify.blocked")),
+                                    body: display_title.clone(),
+                                    session_id: s.session.id,
+                                    urgent: true,
+                                });
+                            }
                             if fired && notify_on {
                                 show_session_notification(
                                     &app,
@@ -1129,6 +1153,12 @@ pub(crate) fn spawn_liveness_watch(
                             attention_fired |= fired;
                             if fired {
                                 set_unread(s.session.id, true);
+                                crate::push::push_session(&settings, crate::push::PushMessage {
+                                    title: format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),
+                                    body: waiting_body(&display_title, s.last_ai_text.as_deref()),
+                                    session_id: s.session.id,
+                                    urgent: false,
+                                });
                             }
                             if fired && notify_on {
                                 show_session_notification(

@@ -681,6 +681,8 @@ export type Settings = {
   /** 远程访问 token。由 remote_access_info 惰性生成落盘；get_settings 不返回明文(恒空串),
    *  set_settings 忽略回传值(后端以磁盘值为准)。 */
   remote_access_token: string;
+  /** 手机推送（Bark）地址。空 = 不推送；会话需要关注时推到手机（后端 push.rs）。 */
+  bark_url: string;
   /** 贴纸主窗口几何（W-17）。设置窗不编辑它；后端 set_settings 落盘前以磁盘值回填。
    *  读写走 windowState.ts 的 get/set_sticker_window_state，这里仅为快照对齐。 */
   sticker_window?: {
@@ -889,6 +891,11 @@ export function remoteAccessInfo(): Promise<RemoteAccessInfo> {
 /** 重新生成远程访问令牌（桌面专用）。换发即吊销:server 重启,已配对手机全部回配对页。 */
 export function regenerateRemoteToken(): Promise<void> {
   return invoke("regenerate_remote_token");
+}
+
+/** 设置页「发一条测试」：用输入框里的 Bark 地址（不必先保存）推一条到手机。桌面专用。 */
+export function testBarkPush(url: string): Promise<void> {
+  return invoke("test_bark_push", { url });
 }
 
 /** 全部会话里正在等用户的清单(审批+同步题面)。远程徽标 3s 扫描用——push 事件到不了

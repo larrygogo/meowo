@@ -18,7 +18,7 @@ use std::sync::{OnceLock, RwLock};
 ///
 /// `ureq::Agent` 内部是 `Arc`，clone 便宜且共享连接池，故按代理串缓存即可让同代理的请求复用连接。
 /// 设置改了 → 解析出的代理串变了 → 自然落到新 key，无需任何失效逻辑。
-fn agent_for(proxy: Option<&str>) -> ureq::Agent {
+pub(crate) fn agent_for(proxy: Option<&str>) -> ureq::Agent {
     static CACHE: OnceLock<RwLock<HashMap<String, ureq::Agent>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
     let key = proxy.unwrap_or_default().to_string();

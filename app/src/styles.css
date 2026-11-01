@@ -2292,6 +2292,8 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 
 /* 手机远程配对卡：端口窄输入 + 扫码区。 */
 .remote-port-input { width: 96px; text-align: center; }
+/* Bark 地址输入框：占满行内剩余宽度，测试按钮贴在右侧。 */
+.remote-push-input { flex: 1 1 auto; min-width: 0; }
 /* 非法端口（7S-6）：输入留在框里，边框转红 + 行内说明，不再静默弹回默认值。
    说明行占满一整行，得让这一 .row 可换行——.row 通用规则是 nowrap，复核发现
    flex-basis 100% 又 shrink 0 的说明行会把「端口」标签挤到 0 宽。 */

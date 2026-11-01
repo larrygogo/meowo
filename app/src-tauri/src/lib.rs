@@ -14,6 +14,7 @@ mod git;
 mod openwith;
 mod ports;
 mod pty;
+mod push;
 mod relay;
 #[cfg(target_os = "windows")]
 mod seed;
@@ -1351,6 +1352,7 @@ pub fn run() {
             set_sticker_window_state,
             remote::remote_access_info,
             remote::regenerate_remote_token,
+            push::test_bark_push,
             mark_onboarding_seen,
             get_effective_proxy,
             get_relay_secret_status,

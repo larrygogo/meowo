@@ -35,6 +35,11 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/not_ready", exact: true, zh: "远程服务还没就绪，请稍后重试", en: "The remote service isn't ready yet; try again shortly" },
   { m: "remote/bad_args", tail: true, zh: "远程请求参数不合法", en: "Invalid arguments for the remote request" },
   { m: "remote/http_", tail: true, zh: "远程请求失败", en: "Remote request failed" },
+  // ── 手机推送（push.rs）──
+  { m: "push/invalid_url", exact: true, zh: "推送地址无效，请从 Bark App 里复制", en: "Invalid push URL; copy it from the Bark app" },
+  { m: "push/missing_key", exact: true, zh: "推送地址缺少设备 key", en: "The push URL is missing the device key" },
+  { m: "push/http_", tail: true, zh: "推送服务器拒绝了请求", en: "The push server rejected the request" },
+  { m: "push/send_failed", tail: true, zh: "推送没发出去，检查网络或代理", en: "Push failed; check the network or proxy" },
   // ── 会话 / 终端 ──
   { m: "无效 session_id", exact: true, zh: "会话已失效，请重新打开", en: "Session is no longer valid; reopen it" },
   { m: "会话不存在", exact: true, zh: "会话不存在", en: "Session not found" },

@@ -267,6 +267,15 @@ fn local_ips() -> Vec<IpCandidate> {
     out
 }
 
+/// 手机推送里「点开回到会话」链接用的地址：候选首位（Tailscale 优先，与设置页二维码默认
+/// 选中项一致）。只绑本机时手机根本连不上，不给链接。
+pub(crate) fn preferred_ip(bind: &str) -> Option<String> {
+    if bind == "loopback" {
+        return None;
+    }
+    local_ips().into_iter().next().map(|candidate| candidate.ip)
+}
+
 /// 单个可达地址候选。`kind`（"tailscale" / "lan"）供前端标注可达条件——地址本身
 /// 说明不了「手机在什么情况下连得上」，标签才说明得了。
 #[derive(serde::Serialize)]

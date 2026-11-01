@@ -1106,6 +1106,14 @@ export const zh = {
     regenerateConfirm: "重新生成后，已配对的手机需重新扫码。",
     noIp: "取不到局域网地址，请在手机浏览器手动输入本机 IP",
     offHint: "关闭时手机无法连接",
+    // 手机推送（Bark）：远程页是 http，浏览器不给推送，改由电脑调 Bark 推到手机。
+    pushLabel: "手机推送（Bark）",
+    pushDesc: "会话需要你时推送到手机",
+    pushPrivacy: "推送内容经 Bark 服务器转发",
+    pushPlaceholder: "https://api.day.app/你的key",
+    pushTest: "发一条测试",
+    pushTesting: "发送中…",
+    pushTestOk: "已发送，看看手机",
     startError: (e: string) => `启动失败：${e}`,
     // ── 手机端配对闸门（7M-7：此前整页文案硬编码在 TokenGate 里，且用的是半角标点）──
     gateTitle: "Meowo 远程",

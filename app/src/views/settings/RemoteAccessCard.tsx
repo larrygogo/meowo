@@ -5,7 +5,7 @@
 // 落盘后由后端 remote::apply 热生效；token 由 remote_access_info 惰性生成（首次开启才产生）。
 import { useCallback, useEffect, useState } from "react";
 import { renderSVG } from "uqr";
-import { regenerateRemoteToken, remoteAccessInfo, type RemoteAccessInfo, type RemoteBindMode } from "../../api";
+import { regenerateRemoteToken, remoteAccessInfo, testBarkPush, type RemoteAccessInfo, type RemoteBindMode } from "../../api";
 import { appConfirm } from "../../confirm";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -47,6 +47,55 @@ function PortInput({ value, onCommit }: { value: number; onCommit: (port: number
       />
       {invalid && <div className="proxy-err remote-port-err" role="alert">{t.remote.portInvalid}</div>}
     </>
+  );
+}
+
+/// 手机推送（Bark）一行：地址草稿失焦/回车才落盘（同 PortInput），旁边「发一条测试」直接用
+/// 草稿测——填完先测通再走开，不用等保存。远程访问关着也能用：推送只要电脑能连上 Bark。
+function BarkPushRow({ value, onCommit }: { value: string; onCommit: (url: string) => void }) {
+  const t = useT();
+  const [text, setText] = useState(value);
+  const [status, setStatus] = useState<{ kind: "testing" | "ok" } | { kind: "error"; message: string } | null>(null);
+  useEffect(() => { setText(value); }, [value]);
+  const commit = () => {
+    const next = text.trim();
+    if (next !== value) onCommit(next);
+  };
+  const test = () => {
+    if (!text.trim() || status?.kind === "testing") return;
+    setStatus({ kind: "testing" });
+    testBarkPush(text.trim())
+      .then(() => setStatus({ kind: "ok" }))
+      .catch((error) => setStatus({ kind: "error", message: formatBackendError(error, t.locale) }));
+  };
+  return (
+    <div className="row remote-push-row">
+      <div className="row-text">
+        <div className="row-label">{t.remote.pushLabel}</div>
+        <div className="row-desc">{t.remote.pushDesc}</div>
+        <div className="remote-url-row">
+          <input
+            className="ns-input remote-push-input"
+            type="url"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={t.remote.pushPlaceholder}
+            aria-label={t.remote.pushLabel}
+            value={text}
+            onChange={(e) => { setText(e.target.value); setStatus(null); }}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          />
+          <button type="button" className="remote-copy" disabled={!text.trim() || status?.kind === "testing"} onClick={test}>
+            {status?.kind === "testing" ? t.remote.pushTesting : t.remote.pushTest}
+          </button>
+        </div>
+        {status?.kind === "ok" && <div className="row-desc" role="status">{t.remote.pushTestOk}</div>}
+        {status?.kind === "error" && <div className="proxy-err" role="alert">{status.message}</div>}
+        {/* 内容出本机的事实写在旁边：项目名、会话标题、在等什么都会经过 Bark 服务器。 */}
+        {text.trim() && <div className="row-desc">{t.remote.pushPrivacy}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -234,6 +283,7 @@ export function RemoteAccessCard() {
           </div>
         </div>
       )}
+      <BarkPushRow value={settings?.bark_url ?? ""} onCommit={(url) => { void patch({ bark_url: url }); }} />
     </div>
   );
 }

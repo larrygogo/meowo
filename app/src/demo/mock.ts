@@ -43,6 +43,7 @@ export const store: Store = {
     remote_access_port: 18620,
     remote_access_bind: "all",
     remote_access_token: "",
+    bark_url: "",
   },
 };
 
