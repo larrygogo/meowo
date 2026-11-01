@@ -36,7 +36,8 @@ vi.mock("./ManagedTerminal", async () => {
   };
 });
 
-import { ChatWindow, submitGapMs } from "./ChatWindow";
+import { ChatWindow } from "./ChatWindow";
+import { submitGapMs } from "./chat/terminalSubmit";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
