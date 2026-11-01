@@ -80,6 +80,36 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(501)).not.toContain("\r");
   });
 
+  // 插话进了对话记录后，排队区不再挂它的回执：对话里已经有「回合中插入」的那条，
+  // 回执再挂一份就是同一句话显示两遍（用户实拍）。
+  it("插话出现在对话记录后，排队区不再重复显示", async () => {
+    const base = setup(508, "codex", "running");
+    let landed = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history" && landed) {
+        return Promise.resolve({
+          ...history(508, "codex", "running"),
+          items: [{ type: "user_text", id: "u-in", timestamp: null, text: "顺手改个名", interjected: true }],
+          offset: 1,
+        });
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-508");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "顺手改个名" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    landed = true;
+    // 时限短于旧版「已插入」回执的 2.5s 停留：对话里一出现，排队区就该同时没有它。
+    await waitFor(() => {
+      expect(document.querySelector(".chat-message.is-user")).toBeTruthy();
+      expect(document.querySelector(".chat-queued-stack")).toBeNull();
+    }, { timeout: 1_500 });
+    expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
+  });
+
   // gemini 启动即落 running、首条消息前无事件纠正：屏幕已停在输入框（idle）时必须按回车
   // 提交，按 Tab 正文会停在输入框里发不出去（0.6.11 实机）。
   it("gemini DB 残留 running 但屏幕空闲时，发送用回车而非排队键", async () => {

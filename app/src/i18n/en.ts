@@ -609,9 +609,7 @@ export const en: Dict = {
         : delivery === "turn_end" ? `${what} queued for after this turn`
         : `${what} handed to the agent`;
     },
-    queueInserted: "Inserted into this turn",
     queueLabel: "Queued messages",
-    queuedInsertedTag: "Inserted",
     echoUncertain: "Not confirmed",
     echoSending: "Sending",
     echoFailed: "Failed to send",

@@ -3769,8 +3769,6 @@ select.ns-input {
 .chat-queued-bubble { min-width: 0; max-width: min(100%, 560px); padding: var(--sp-8) calc(15px * var(--cc-ui)); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); background: var(--cc-user-bubble); color: var(--cc-chat-text); font-size: var(--text-base); line-height: var(--leading-body); white-space: pre-wrap; overflow-wrap: anywhere; opacity: .7; }
 .chat-queued-dismiss { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); line-height: 1; cursor: pointer; }
 .chat-queued-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
-/* 已插入：气泡恢复实色、前面挂「已插入」，停留片刻再收起——让「被读到」这一下被看见。 */
-.chat-queued-turn.is-inserted .chat-queued-bubble { opacity: 1; }
 .chat-queued-tag { flex: 0 0 auto; color: var(--cc-ok-vivid); font-size: var(--text-xs); }
 /* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
    .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤

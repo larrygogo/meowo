@@ -522,6 +522,9 @@ export function ChatWindow() {
   const pendingEchoes = useMemo(() => outgoing.filter((prompt) => prompt.kind === "echo"), [outgoing]);
   const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending").length;
   const queuedInserted = queuedInterjections.some((prompt) => prompt.phase === "inserted");
+  // 排队区只放还没进对话的：已插入的那条此刻已经以「回合中插入」的气泡出现在对话里，
+  // 回执再挂一份就是同一句话显示两遍（用户实拍）。已插入的状态仍由运行条那句交代。
+  const queuedShown = useMemo(() => queuedInterjections.filter((prompt) => prompt.phase !== "inserted"), [queuedInterjections]);
   // 回显气泡的状态（未确认要在气泡上照实标出来），经 context 交给 Message。
   const echoPhases = useMemo(
     () => new Map(pendingEchoes.map((echo) => [echoItemId(echo.id), echo.phase] as const)),
@@ -4147,10 +4150,10 @@ export function ChatWindow() {
         {/* 排队中的插话是对话的「下一轮」，就排在它将要出现的地方（对照 Kimi 的 q-stack：
             运行行之下、右对齐、淡一档的用户气泡）。不像 Kimi 那样给拖拽排序和编辑——
             消息已经写进 CLI，队列归它管，界面只说真话：状态、升级为中断、撤掉回执。 */}
-        {!loading && queuedInterjections.length > 0 && (
+        {!loading && queuedShown.length > 0 && (
           <section className="chat-queued-stack" aria-label={t.chat.queueLabel}>
             <div className="chat-queued-head">
-              <span>{queuedPending > 0 ? t.chat.queuePending(queuedPending, chatUi?.queue_delivery ?? null) : t.chat.queueInserted}</span>
+              <span>{queuedPending > 0 ? t.chat.queuePending(queuedPending, chatUi?.queue_delivery ?? null) : ""}</span>
               {/* 中断是升级动作：只在还有没读到的消息时给，整个栈一个。 */}
               {canInterrupt && queuedPending > 0 && (
                 <button type="button" className="chat-queued-interrupt" data-tip={t.chat.interjectNowTip} disabled={interrupting} onClick={sendInterrupt}>
@@ -4158,9 +4161,8 @@ export function ChatWindow() {
                 </button>
               )}
             </div>
-            {queuedInterjections.map((item) => (
-              <div key={item.id} className={"chat-queued-turn" + (item.phase === "inserted" ? " is-inserted" : "") + (item.phase === "failed" ? " is-failed" : "")}>
-                {item.phase === "inserted" && <span className="chat-queued-tag">{t.chat.queuedInsertedTag}</span>}
+            {queuedShown.map((item) => (
+              <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" ? " is-failed" : "")}>
                 {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
                 {item.phase === "failed" && <>
                   <span className="chat-queued-tag is-warn" role="alert">{t.chat.echoFailed}</span>

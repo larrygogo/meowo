@@ -659,9 +659,7 @@ export const zh = {
       delivery === "next_step" ? `${n} 条插话等待插入当前回合`
         : delivery === "turn_end" ? `${n} 条消息排队中，本回合结束后处理`
         : `${n} 条消息已交给 Agent`,
-    queueInserted: "插话已插入当前回合",
     queueLabel: "排队中的消息",
-    queuedInsertedTag: "已插入",
     // 回显超时仍不见落盘：照实标出来，而不是悄悄撤掉
     echoUncertain: "未确认送达",
     // 先上屏再发送：写终端期间的气泡标注，与失败后的两个出口。
