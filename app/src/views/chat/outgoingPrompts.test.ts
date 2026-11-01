@@ -118,6 +118,21 @@ describe("reconcileOutgoing", () => {
     const list = [prompt("queued", "x", []), prompt("echo", "y", [])];
     expect(reconcileOutgoing(list, ev([], 0, { ended: true }))).toEqual([]);
   });
+
+  // 用户实拍：发出后切到侧栏，回来时首读只给最新一屏。Agent 期间产出几十条，发送时的锚点
+  // 不在窗口里、这条话也不在尾部 12 条里——按落盘时间划线仍要认出来。
+  it("锚点被挤出窗口时按落盘时间认领", () => {
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 1, 8, 0, s)).toISOString();
+    const stamped = (item: ChatItem, s: number): ChatItem => ({ ...item, timestamp: at(s) });
+    const before = [stamped(user("u0", "继续"), 0), stamped(reply("a0"), 1)];
+    const list = [prompt("echo", "继续", before, { at: 0 })];
+    const work = Array.from({ length: 20 }, (_, i) => stamped(reply(`w${i}`), 10 + i));
+    const page = [stamped(user("u1", "继续"), 5), ...work];
+    expect(reconcileOutgoing(list, ev(page, 1_000))).toEqual([]);
+    // 同文的旧消息（早于划线）不算：只剩旧消息时不能被它收走。
+    const stale = [stamped(user("u-old", "继续"), -30), ...work];
+    expect(reconcileOutgoing(list, ev(stale, 1_000))).toBe(list);
+  });
 });
 
 describe("createOutgoingStore", () => {

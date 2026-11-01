@@ -23,6 +23,11 @@ export type OutgoingPhase = "sending" | "failed" | "pending" | "inserted" | "unc
 export type OutgoingAnchor = {
   /// 入队时 transcript 窗口的最后一条：它之后的条目才算新证据。
   lastItemId: string | null;
+  /// 入队时窗口里最晚的落盘时间（宿主机时钟，毫秒）。锚点不在窗口里时按它划线：发出后切走、
+  /// 回来时首读只给最新一屏，Agent 这期间干的活一多，锚点和这条话都早已不在尾部 12 条里，
+  /// 原先的兜底永远对不上，气泡一直挂着「未确认送达」（用户实拍）。和条目时间同一个时钟，
+  /// 不受手机与电脑时钟偏差影响。
+  lastItemAt: number | null;
   /// 入队时尾部 12 条里的 user_text：锚点被翻页挤出窗口时的兜底水位线。
   priorItemIds: ReadonlySet<string>;
   /// 入队时 hook 记的最近用户输入：只在没有 transcript 时拿来比对。
@@ -57,9 +62,20 @@ export const INSERTED_LINGER_MS = 2_500;
 
 const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
 
+const itemTime = (item: ChatItem): number | null => {
+  const at = item.timestamp ? Date.parse(item.timestamp) : NaN;
+  return Number.isFinite(at) ? at : null;
+};
+
 export function anchorFrom(items: readonly ChatItem[], lastUserText: string | null | undefined): OutgoingAnchor {
+  let lastItemAt: number | null = null;
+  for (const item of items) {
+    const at = itemTime(item);
+    if (at != null && (lastItemAt == null || at > lastItemAt)) lastItemAt = at;
+  }
   return {
     lastItemId: items.length > 0 ? items[items.length - 1].id : null,
+    lastItemAt,
     priorItemIds: new Set(items.slice(-12).filter((item) => item.type === "user_text").map((item) => item.id)),
     priorUserText: lastUserText ?? null,
   };
@@ -67,13 +83,20 @@ export function anchorFrom(items: readonly ChatItem[], lastUserText: string | nu
 
 type UserTextItem = Extract<ChatItem, { type: "user_text" }>;
 
-/// 入队之后才出现的用户消息。锚点还在窗口里就取它之后的全部；被挤出去了退回
-/// 「尾部 12 条里不在快照中的」——短插话（ok/继续）不能子串命中上一回合的旧消息。
+/// 入队之后才出现的用户消息。锚点还在窗口里就取它之后的全部；被挤出去了按入队时的
+/// 落盘时间划线，晚于它的才算；连时间都没有才退回「尾部 12 条里不在快照中的」——
+/// 短插话（ok/继续）不能子串命中上一回合的旧消息。
 function newUserTexts(items: readonly ChatItem[], anchor: OutgoingAnchor): UserTextItem[] {
+  const isNew = (item: ChatItem): item is UserTextItem => item.type === "user_text" && !anchor.priorItemIds.has(item.id);
   const at = anchor.lastItemId == null ? -1 : items.findIndex((item) => item.id === anchor.lastItemId);
-  const tail = at >= 0 ? items.slice(at + 1) : items.slice(-12);
-  return tail.filter((item): item is UserTextItem =>
-    item.type === "user_text" && !anchor.priorItemIds.has(item.id));
+  if (at >= 0) return items.slice(at + 1).filter(isNew);
+  const tail = new Set(items.slice(-12));
+  const since = anchor.lastItemAt;
+  return items.filter((item): item is UserTextItem => {
+    if (!isNew(item)) return false;
+    const stamp = since == null ? null : itemTime(item);
+    return stamp == null || since == null ? tail.has(item) : stamp > since;
+  });
 }
 
 /// 按证据推进每条消息的状态。纯函数；无变化时原样返回同一个数组（调用方据此短路）。
@@ -163,7 +186,7 @@ function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
 }
 
 /// 失败回执不参与对账，水位线用不上；恢复时给一个空的。
-const EMPTY_ANCHOR: OutgoingAnchor = { lastItemId: null, priorItemIds: new Set(), priorUserText: null };
+const EMPTY_ANCHOR: OutgoingAnchor = { lastItemId: null, lastItemAt: null, priorItemIds: new Set(), priorUserText: null };
 
 export function createOutgoingStore() {
   const bySession = new Map<number, readonly OutgoingPrompt[]>();

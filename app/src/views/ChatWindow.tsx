@@ -2919,13 +2919,16 @@ export function ChatWindow() {
   // 转未确认、「已插入」停留后收起，那时 items 不再变化，光靠依赖项这一步永远轮不到。
   const [outgoingTick, setOutgoingTick] = useState(0);
   useEffect(() => {
+    // 首读还没回来时 items 是空的：这时拿它对账，切走超过 15s 的回显会先被判成「未确认送达」，
+    // 等首读到了才收起，白闪一下。证据没到就不对账。
+    if (loading) return;
     outgoingStore.reconcile(sessionId, {
       items,
       lastUserText: history?.lastUserText,
       ended: history?.status === "ended",
       now: Date.now(),
     });
-  }, [sessionId, items, history?.lastUserText, history?.status, outgoingTick]);
+  }, [sessionId, loading, items, history?.lastUserText, history?.status, outgoingTick]);
   useEffect(() => {
     if (outgoing.length === 0) return;
     const timer = window.setInterval(() => setOutgoingTick((n) => n + 1), 1_000);
