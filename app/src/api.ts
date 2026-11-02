@@ -538,6 +538,17 @@ export function openPathWith(cwd: string, rel: string, opener: string): Promise<
   return invoke("open_path_with", { cwd, rel, opener });
 }
 
+/** 对话窗标题栏「用编辑器打开」：本机装了的、能打开目录的编辑器（Windows 带 exe 图标）。
+ *  系统文件管理器不在其中，前端恒列（走 openProjectDir）。 */
+export function listFolderEditors(): Promise<FileOpenerDto[]> {
+  return invoke("list_folder_editors");
+}
+
+/** 用指定编辑器（listFolderEditors 的 id）打开会话目录。 */
+export function openFolderIn(cwd: string, editor: string): Promise<void> {
+  return invoke("open_folder_in", { cwd, editor });
+}
+
 /** 在系统文件管理器里定位（选中）cwd 内的文件/目录。 */
 export function revealPathInFileManager(cwd: string, rel: string): Promise<void> {
   return invoke("reveal_path_in_file_manager", { cwd, rel });

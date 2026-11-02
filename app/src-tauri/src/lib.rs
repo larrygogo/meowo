@@ -6,6 +6,7 @@ mod bgpty;
 mod chat;
 mod confirm;
 mod detect;
+mod editors;
 #[cfg(target_os = "windows")]
 mod envpath;
 mod fsutil;
@@ -1341,6 +1342,8 @@ pub fn run() {
             search_project_files,
             list_file_openers,
             open_path_with,
+            editors::list_folder_editors,
+            editors::open_folder_in,
             reveal_path_in_file_manager,
             rename_session,
             set_archived,

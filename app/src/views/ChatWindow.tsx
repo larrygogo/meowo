@@ -80,6 +80,7 @@ import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
+import { GitStatusChip, OpenInEditor } from "./chat/TitleBarTools";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
@@ -3756,48 +3757,8 @@ export function ChatWindow() {
         {/* 标题栏刻意不放运行状态徽标（实拍反馈嫌吵）：运行态已有多处冗余信号——
             窗口标题的 ▶ 标记、对话区底部的脉冲指示条、侧栏状态点。 */}
         {/* 标题栏不放任务进度入口（用户要求取消）：待办走底部停靠栏的「当前进度」，子任务在对话流里。 */}
-        {/* 文件/改动直达入口共用同一停靠面板；再次点击当前入口才折叠，切入口不收起。
-            远程只放行改动列表（remote.rs 模块头「例外」），「文件」入口仍隐藏。 */}
-        {!remoteUi() && cwd && (
-          <button
-            type="button"
-            className={"chat-todo-btn" + (diffOpen && !diffCollapsed && diffTab === "files" ? " is-active" : "")}
-            data-tip={t.chat.filesTab}
-            aria-label={t.chat.filesTab}
-            aria-pressed={diffOpen && !diffCollapsed && diffTab === "files"}
-            onClick={() => {
-              if (diffOpen && !diffCollapsed && diffTab === "files") { collapseDiffPanel(); return; }
-              setDiffTab("files");
-              setDiffOpen(true);
-              setDiffCollapsed(false);
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            </svg>
-          </button>
-        )}
-        {cwd && gitSummary?.isRepo && (
-          <button
-            type="button"
-            className={"chat-todo-btn chat-diff-btn" + (diffOpen && !diffCollapsed && diffTab === "changes" ? " is-active" : "")}
-            data-tip={t.chat.diff}
-            aria-label={t.chat.diff}
-            aria-pressed={diffOpen && !diffCollapsed && diffTab === "changes"}
-            onClick={() => {
-              if (diffOpen && !diffCollapsed && diffTab === "changes") { collapseDiffPanel(); return; }
-              setDiffTab("changes");
-              setDiffOpen(true);
-              setDiffCollapsed(false);
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-              <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-            </svg>
-            {gitSummary.files.length > 0 && <span className="chat-diff-btn-count">{gitSummary.files.length}</span>}
-          </button>
-        )}
+        {/* 标题栏右侧照 Kimi：[用编辑器打开 ▾] [分支 ↑领先 +增-删] [终端] [侧边面板]。
+            「标记完成」「结束会话」是 Meowo 自己的收尾动作，留在它们前面。 */}
         {/* endable 口径:托管 PTY 或进程仍活着的孤儿会话(后端按 pid 杀树兜底),见 ChatHistoryDto。
             远程不再隐藏:stop_managed_terminal 已进 /rpc 白名单(remote.rs 头注释记录了放行理由),
             确认框在手机上走 window.confirm(transport 的 confirm_dialog 替身)。 */}
@@ -3822,12 +3783,57 @@ export function ChatWindow() {
             {endingSession ? t.chat.terminalStopping : t.chat.endSession}
           </button>
         )}
-        {/* 终端页签在远程无意义(见 setView 说明):只留对话页,不给死按钮。 */}
+        {/* 用编辑器打开会话目录（宿主执行类，远程隐藏）。 */}
+        {!remoteUi() && cwd && <OpenInEditor cwd={cwd} onError={setSendError} />}
+        {/* 分支 + 改动：点开 / 收起改动页签（远程放行改动列表，remote.rs 模块头「例外」）。 */}
+        {cwd && gitSummary?.isRepo && (
+          <GitStatusChip
+            summary={gitSummary}
+            active={diffOpen && !diffCollapsed && diffTab === "changes"}
+            onToggle={() => {
+              if (diffOpen && !diffCollapsed && diffTab === "changes") { collapseDiffPanel(); return; }
+              setDiffTab("changes");
+              setDiffOpen(true);
+              setDiffCollapsed(false);
+            }}
+          />
+        )}
+        {/* 终端：对话与终端两个视图之间切换（原「对话 | 终端」页签收成一颗开关，对照 Kimi）。
+            远程没有终端视图（见 setView 说明），不给死按钮。 */}
         {!remoteUi() && (
-          <div className="chat-view-tabs">
-            <button type="button" className={view === "chat" ? "is-active" : ""} aria-pressed={view === "chat"} onClick={() => { rememberViewPref("chat"); setView("chat"); }}>{t.chat.conversation}</button>
-            <button type="button" className={view === "terminal" ? "is-active" : ""} aria-pressed={view === "terminal"} onClick={() => { rememberViewPref("terminal"); setView("terminal"); }}>{t.chat.terminal}</button>
-          </div>
+          <button
+            type="button"
+            className={"chat-todo-btn" + (view === "terminal" ? " is-active" : "")}
+            data-tip={t.chat.terminal}
+            aria-label={t.chat.terminal}
+            aria-pressed={view === "terminal"}
+            onClick={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4.5" width="18" height="15" rx="3" /><path d="m7.5 9.5 3 2.5-3 2.5M13 15h4" />
+            </svg>
+          </button>
+        )}
+        {/* 侧边面板（文件 / 改动停靠面板）开合，回到上次看的页签；不是仓库就只有文件页。
+            远程不放行文件页，面板只能经改动入口打开。 */}
+        {!remoteUi() && cwd && (
+          <button
+            type="button"
+            className={"chat-todo-btn" + (diffOpen && !diffCollapsed ? " is-active" : "")}
+            data-tip={t.chat.togglePanel}
+            aria-label={t.chat.togglePanel}
+            aria-pressed={diffOpen && !diffCollapsed}
+            onClick={() => {
+              if (diffOpen && !diffCollapsed) { collapseDiffPanel(); return; }
+              if (!gitSummary?.isRepo) setDiffTab("files");
+              setDiffOpen(true);
+              setDiffCollapsed(false);
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
+            </svg>
+          </button>
         )}
       </header>
       {/* 两个视图都留在树上、用 CSS 切换可见性：此前三元表达式会在每次切 tab 时

@@ -848,7 +848,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.getByText("实现同步对话")).toBeTruthy());
     // 标题是动作菜单触发钮（Kimi 式）：主仓路径入口在菜单的「打开项目目录」;
     // 多仓的目录清单与附加管理在 diff 面板头行的仓菜单(用户指定)。
-    fireEvent.click(screen.getByRole("button", { name: /实现同步对话/ }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "打开项目目录" }));
     expect(invoke).toHaveBeenCalledWith("open_project_dir", { cwd: "C:/repo" });
     expect(screen.getByText("开始")).toBeTruthy();
@@ -1461,7 +1461,7 @@ describe("ChatWindow", () => {
     // 卡片在场时 composer 锁定但**不卸载**:textarea 还是同一个节点(草稿不丢),只是禁用。
     expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.getByText("PTY 14")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "对话" }).className).toContain("is-active");
+    expect(screen.getByRole("button", { name: "终端" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByText("PTY 14").closest(".chat-terminal-pane")?.className).toContain("is-background");
     expect(screen.getByText("PTY 14").closest(".chat-terminal-pane")?.getAttribute("aria-hidden")).toBe("true");
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 14, data: "继续修复" });
@@ -1469,7 +1469,8 @@ describe("ChatWindow", () => {
     // 原始终端页已经显示 TUI，不再叠加 GUI 卡片；切回对话后仍可直接点击结构化选项。
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    // 终端是开关：再点一次回到对话。
+    fireEvent.click(screen.getByRole("button", { name: "终端" }));
     fireEvent.click(await screen.findByRole("button", { name: "Yes, continue" }));
     // 光标已停在第一项：相对移动为 0，直接回车确认，不再盲按上键绕圈。
     expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 14, data: "\r" });
@@ -1495,7 +1496,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     expect(await screen.findByRole("button", { name: "Yes, I trust this folder" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "对话" }).className).toContain("is-active");
+    expect(screen.getByRole("button", { name: "终端" }).getAttribute("aria-pressed")).toBe("false");
     expect(invoke).not.toHaveBeenCalledWith("start_managed_terminal", expect.anything());
   });
 
@@ -2039,7 +2040,8 @@ describe("ChatWindow", () => {
     expect(terminalMounts.count).toBe(1);
 
     // 切回对话再切回终端：终端留在树上（隐藏），不得重建。
-    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    // 终端是开关：再点一次回到对话。
+    fireEvent.click(screen.getByRole("button", { name: "终端" }));
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(terminalMounts.count).toBe(1);
   });
@@ -2124,18 +2126,18 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     // 归档入口收进标题菜单（Kimi 式）：点标题开菜单再点「归档」。
-    fireEvent.click(await screen.findByRole("button", { name: /要收起的会话/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "标记完成" }));
     expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 7, archived: true });
     // 翻面后菜单项变成「取消归档」——它是这条会话已归档的唯一提示（菜单点完即收，重开验证）。
-    fireEvent.click(screen.getByRole("button", { name: /要收起的会话/ }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     expect(await screen.findByRole("menuitem", { name: "恢复进行中" })).toBeTruthy();
 
     archiveFails = true;
     fireEvent.click(screen.getByRole("menuitem", { name: "恢复进行中" }));
     // 失败回滚：错误可见，重开菜单仍是归档态（取消归档）。
     expect(await screen.findByText(/db busy/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /要收起的会话/ }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     expect(await screen.findByRole("menuitem", { name: "恢复进行中" })).toBeTruthy();
   });
 
@@ -2201,7 +2203,7 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /要收起的/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "标记完成" }));
     // 看标题栏（侧栏条目也叫「下一条」，且标题现在首读前就先摆出来）。
     await waitFor(() => expect(document.querySelector(".chat-bar .chat-title")?.textContent).toBe("下一条"));
@@ -5065,7 +5067,7 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /想分叉/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
     const item = await screen.findByRole("menuitem", { name: "分叉会话" }) as HTMLButtonElement;
     if (status === "running") {
       await waitFor(() => expect(item.disabled).toBe(true));
@@ -5099,7 +5101,7 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /接着跑/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "复制恢复命令" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('cd "C:/repo"; claude --resume b730cb79-2542'));
     expect(await screen.findByText(notice)).toBeTruthy();

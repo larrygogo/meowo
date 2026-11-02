@@ -106,19 +106,22 @@ describe("ChatWindow 远程门控", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "\x1b[B" }));
   });
 
-  it("桌面态:文件/改动入口直达同一面板的对应页签", async () => {
+  it("桌面态:侧边面板开关与分支改动胶囊共用同一停靠面板", async () => {
     window.history.replaceState({}, "", "/?sessionId=7");
     runningSessionWithRepo();
     render(<ChatWindow />);
     await waitFor(() => expect(screen.getAllByText("门控用例").length).toBeGreaterThan(0));
 
     expect(screen.getByRole("button", { name: "终端" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "对话" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "文件" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "文件" }).getAttribute("aria-pressed")).toBe("true"));
-    expect(await screen.findByPlaceholderText("搜索文件名或内容…")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: "查看改动" }));
+    // 标题栏右侧照 Kimi：侧边面板开关打开停靠面板（是仓库时落在改动页签；页签切换由
+    // GitDiffView 自己的测试覆盖，这里它是替身），分支改动胶囊同样开合这块面板。
+    fireEvent.click(await screen.findByRole("button", { name: "侧边面板" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "侧边面板" }).getAttribute("aria-pressed")).toBe("true"));
     expect(await screen.findByText("工作区没有改动")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看改动" }).getAttribute("aria-pressed")).toBe("true");
+    // 胶囊再点一次收起面板。
+    fireEvent.click(screen.getByRole("button", { name: "查看改动" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "侧边面板" }).getAttribute("aria-pressed")).toBe("false"));
   });
 
   it("宽屏远程:保留停靠侧栏,隐藏终端页签与文件入口,改动入口放行", async () => {
@@ -131,8 +134,7 @@ describe("ChatWindow 远程门控", () => {
 
     expect(screen.getByRole("button", { name: "收起会话列表" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "终端" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "对话" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "文件" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "侧边面板" })).toBeNull();
     // 改动列表按用户决定放行（remote.rs 模块头「例外」，后端收口到会话目录与改动清单）。
     expect(await screen.findByRole("button", { name: "查看改动" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();

@@ -35,6 +35,10 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/not_ready", exact: true, zh: "远程服务还没就绪，请稍后重试", en: "The remote service isn't ready yet; try again shortly" },
   { m: "remote/bad_args", tail: true, zh: "远程请求参数不合法", en: "Invalid arguments for the remote request" },
   { m: "remote/http_", tail: true, zh: "远程请求失败", en: "Remote request failed" },
+  // ── 用编辑器打开目录（editors.rs）──
+  { m: "editor/dir_missing", exact: true, zh: "项目目录不存在", en: "Project directory not found" },
+  { m: "editor/not_found", exact: true, zh: "没找到这个编辑器，可能已卸载", en: "Editor not found; it may have been uninstalled" },
+  { m: "editor/spawn_failed", tail: true, zh: "编辑器没能打开", en: "Couldn't open the editor" },
   // ── 手机推送（push.rs）──
   { m: "push/invalid_url", exact: true, zh: "推送地址无效，请从 Bark App 里复制", en: "Invalid push URL; copy it from the Bark app" },
   { m: "push/missing_key", exact: true, zh: "推送地址缺少设备 key", en: "The push URL is missing the device key" },

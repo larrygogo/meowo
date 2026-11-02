@@ -3672,13 +3672,16 @@ select.ns-input {
    窗都不触发（实拍反馈）。穿透后点击落在 chat-bar：拖窗与点外关闭双恢复。 */
 .chat-title-menu { flex: 1; min-width: 0; display: flex; align-items: center; pointer-events: none; }
 .chat-title-menu > * { pointer-events: auto; }
-.chat-title-btn { display: inline-flex; align-items: center; gap: var(--sp-6); min-width: 0; max-width: 100%; padding: var(--sp-5) var(--sp-10); margin-left: calc(var(--sp-10) * -1); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
-.chat-title-btn:hover { background: var(--fill-hover); }
-.chat-title-btn .chat-title { cursor: pointer; }
-.chat-title-chev { flex: 0 0 auto; opacity: .55; }
+/* 「agent · 项目 / 标题 ⋯」面包屑（对照 Kimi）：项目名淡、标题实，动作收进 ⋯。 */
+.chat-title-menu { gap: var(--sp-6); }
+.chat-title-btn { flex: 0 0 auto; width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; cursor: pointer; }
+.chat-title-btn:hover, .chat-title-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--fill-hover); }
+.chat-title-btn.is-placeholder { cursor: default; opacity: .5; }
 .chat-title-agent { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); }
 .chat-title-agent svg { width: 15px; height: 15px; }
-.chat-title-btn:hover .chat-title-chev { opacity: .9; }
+.chat-title-project { flex: 0 1 auto; min-width: 2em; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-base); cursor: default; user-select: none; }
+.chat-title-sep { flex: none; color: var(--cc-text-faint); opacity: .6; user-select: none; }
+.chat-title-menu .chat-title { flex: 0 1 auto; min-width: 0; }
 .chat-title-actions { min-width: 200px; }
 .chat-title-actions .dd-item { justify-content: flex-start; gap: var(--sp-8); padding: var(--sp-7) var(--sp-10); }
 .chat-title-actions .dd-item:disabled { opacity: .5; cursor: default; }
@@ -3707,6 +3710,26 @@ select.ns-input {
 .chat-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-base); font-weight: 500; letter-spacing: 0; cursor: default; user-select: none; }
 /* 标题栏任务进度入口(参考 Claude 桌面版,用户指定形态):常驻清单图标钮,点开浮出
    「进度」面板。图标钮与侧栏开关钮同一视觉规格。 */
+/* 用编辑器打开（分体按钮，对照 Kimi）：主钮放编辑器图标，▾ 换打开方式，外圈一条细框。 */
+.tb-open { display: inline-flex; align-items: stretch; height: var(--icon-button-sm); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); overflow: hidden; flex: none; }
+.tb-open-main, .tb-open-chev { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--cc-text-dim); cursor: pointer; }
+.tb-open-main { width: calc(var(--icon-button-sm) + 4px); }
+.tb-open-main img { width: 16px; height: 16px; }
+.tb-open-chev { width: 20px; border-left: var(--hairline) solid var(--cc-border); }
+.tb-open-main:hover, .tb-open-chev:hover, .tb-open-chev.open { color: var(--cc-text); background: var(--fill-hover); }
+.tb-open-menu { min-width: 200px; }
+.tb-open-menu .dd-ico img { width: 16px; height: 16px; }
+/* 分支 + 改动：一枚胶囊，分支名可截短，领先数 / 增删行各一枚小药丸（Kimi 同款配色）。 */
+.tb-git { display: inline-flex; align-items: center; gap: var(--sp-6); min-width: 0; max-width: 320px; height: var(--icon-button-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.tb-git:hover, .tb-git.is-active { color: var(--cc-text); background: var(--fill-hover); }
+.tb-git svg { flex: none; }
+.tb-git-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-git-pill { flex: none; display: inline-flex; align-items: center; gap: var(--sp-4); height: 20px; padding: 0 var(--sp-6); border: var(--hairline) solid var(--cc-border); border-radius: 999px; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.tb-git-pill.is-ahead { color: var(--cc-warn); border-color: color-mix(in srgb, var(--cc-warn) 45%, transparent); }
+.tb-git-pill.is-behind { color: var(--cc-text-dim); }
+.tb-git-pill.is-diff { border-color: color-mix(in srgb, var(--cc-ok-vivid) 40%, transparent); }
+.tb-git-add { color: var(--cc-ok-vivid); }
+.tb-git-del { color: var(--cc-err-vivid); }
 .chat-todo-btn { position: relative; width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-dim); background: transparent; cursor: pointer; }
 /* 活动小点:面板里有任务/子任务在跑时挂在图标右上角脉冲——面板收着时入口上必须能看出
    「里面有活儿」(实拍反馈)。位置对齐 .chat-diff-btn-count 的角标语言,复用运行指示的脉冲。 */

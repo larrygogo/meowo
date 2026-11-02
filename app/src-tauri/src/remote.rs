@@ -1602,6 +1602,9 @@ mod tests {
             "open_link",
             "open_path_with",
             "open_project_dir",
+            // 在宿主上拉起编辑器（对话窗标题栏），与打开目录同属宿主执行类。
+            "open_folder_in",
+            "list_folder_editors",
             "reveal_path_in_file_manager",
             "open_attached_terminal",
             "open_chat_window",

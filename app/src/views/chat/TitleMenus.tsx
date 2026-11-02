@@ -7,7 +7,15 @@ import { openProjectDir } from "../../api";
 import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 import { useMenuPopup } from "../menu";
-import { ArchiveIcon, ChevronDownIcon, TopIcon } from "../sticker/icons";
+import { ArchiveIcon, TopIcon } from "../sticker/icons";
+
+function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
+    </svg>
+  );
+}
 import { agentAssets, tintStyle } from "../../providers";
 import { folderName } from "../../paths";
 
@@ -40,12 +48,17 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
   const pick = (action: () => void) => { setOpen(false); btnRef.current?.focus(); action(); };
   return (
     <div className="dd chat-title-menu" ref={ref} onKeyDown={onKeyDown}>
-      <button ref={btnRef} type="button" className="chat-title-btn" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
-        <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true"><Icon /></span>
-        <span className="chat-title">{title}</span>
-        <ChevronDownIcon className="chat-title-chev" />
+      {/* 「项目 / 标题 ⋯」面包屑（对照 Kimi 标题栏）：标题与项目都是拖窗区，动作收在 ⋯ 里。
+          前面留一枚 agent 小图标：Meowo 托管多家 CLI，正在跟谁说话要一眼可见（Kimi 只有一家）。 */}
+      <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true" data-tauri-drag-region><Icon /></span>
+      {cwd && <>
+        <span className="chat-title-project" data-tip={cwd} data-tauri-drag-region>{folderName(cwd)}</span>
+        <span className="chat-title-sep" aria-hidden="true" data-tauri-drag-region>/</span>
+      </>}
+      <span className="chat-title" data-tauri-drag-region>{title}</span>
+      <button ref={btnRef} type="button" className="chat-title-btn" aria-label={t.chat.sessionActions} data-tip={t.chat.sessionActions} aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+        <MoreIcon />
       </button>
-      {cwd && <span className="chat-title-project" data-tip={cwd}>{folderName(cwd)}</span>}
       {open && (
         /* 不铺 pos.width：菜单宽随内容（.dd .dd-menu 的 min-width: max-content），
            只沿用左对齐与视口钳制。 */
@@ -110,12 +123,13 @@ export function ChatTitlePlaceholder({ title, provider, cwd }: { title: string; 
   const { Icon } = agentAssets(provider);
   return (
     <div className="dd chat-title-menu" aria-busy="true" data-tauri-drag-region>
-      <span className="chat-title-btn" data-tauri-drag-region>
-        <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true"><Icon /></span>
-        <span className="chat-title" data-tauri-drag-region>{title}</span>
-        <ChevronDownIcon className="chat-title-chev" />
-      </span>
-      {cwd && <span className="chat-title-project" data-tip={cwd}>{folderName(cwd)}</span>}
+      <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true" data-tauri-drag-region><Icon /></span>
+      {cwd && <>
+        <span className="chat-title-project" data-tip={cwd} data-tauri-drag-region>{folderName(cwd)}</span>
+        <span className="chat-title-sep" aria-hidden="true" data-tauri-drag-region>/</span>
+      </>}
+      <span className="chat-title" data-tauri-drag-region>{title}</span>
+      <span className="chat-title-btn is-placeholder" aria-hidden="true"><MoreIcon /></span>
     </div>
   );
 }
