@@ -1421,6 +1421,7 @@ pub fn run() {
             open_install_log,
             recent_cwds,
             open_new_session_window,
+            window::open_session_admin,
             open_latest_chat
         ])
         .on_window_event(move |window, event| {

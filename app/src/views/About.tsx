@@ -448,7 +448,27 @@ function SessionsSection() {
         </div>
       </div>
       <SettingsError error={patchError} onDismiss={clearPatchError} />
-      <ArchivedSessions />
+      {/* 已完成会话：开着对话功能时只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、
+          时间筛，批量恢复；设置里再摆一份简陋的列表是两处管同一件事（用户确认）。轻量模式没有
+          对话窗可去，留着原来的列表，否则没处把会话恢复成进行中。 */}
+      {chatOn ? (
+        <>
+          <div className="sec-caption">{t.settings.archivedSessions}</div>
+          <div className="row-card">
+            <div className="row">
+              <div className="row-text">
+                <div className="row-label">{t.settings.archivedInAdmin}</div>
+                <div className="row-desc">{t.settings.archivedInAdminDesc}</div>
+              </div>
+              <button type="button" className="sbtn" onClick={() => void invoke("open_session_admin").catch(() => {})}>
+                {t.settings.archivedOpenAdmin}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <ArchivedSessions />
+      )}
     </>
   );
 }

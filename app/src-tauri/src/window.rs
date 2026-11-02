@@ -355,6 +355,18 @@ pub(crate) fn open_new_session_window(
     std::thread::spawn(move || open_new_session_window_impl(&app, cwd, provider));
 }
 
+/// 前端调用（设置页「会话 · 已完成会话」）：打开对话窗的会话管理页、预选「已完成」。
+/// 与 open_new_session_window 同理由走子线程。对话功能关闭（轻量模式）时 open_chat_window_target
+/// 自己回落设置窗——设置页里点这个入口就是原地不动，入口本身由前端在轻量模式下隐藏。
+#[tauri::command]
+pub(crate) fn open_session_admin(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        if let Err(error) = open_chat_window_target(&app, ChatTarget::AdminDone, true) {
+            eprintln!("打开会话管理失败: {error}");
+        }
+    });
+}
+
 /// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
 pub(crate) fn open_new_session_window_impl(
     app: &tauri::AppHandle,
@@ -701,6 +713,8 @@ pub(crate) enum ChatTarget {
         cwd: Option<String>,
         provider: Option<String>,
     },
+    /// 会话管理页，预选「已完成」（设置页「已完成会话」的入口：那里不再自带一份列表）。
+    AdminDone,
 }
 
 impl ChatTarget {
@@ -724,6 +738,7 @@ impl ChatTarget {
                 }
                 url
             }
+            ChatTarget::AdminDone => "index.html?admin=done".to_string(),
         }
     }
 }
@@ -770,6 +785,9 @@ pub(crate) fn open_chat_window_target(
                     serde_json::json!({ "cwd": cwd, "provider": provider }),
                 )
                 .map_err(|e| format!("打开新建会话页失败: {e}"))?,
+            ChatTarget::AdminDone => w
+                .emit("chat-open-admin", "done")
+                .map_err(|e| format!("打开会话管理失败: {e}"))?,
         }
         if activate {
             let _ = w.show();
@@ -1245,6 +1263,7 @@ mod chat_target_tests {
     #[test]
     fn 新建会话页的开窗地址带预填且转义() {
         assert_eq!(ChatTarget::Session(42).url(), "index.html?sessionId=42");
+        assert_eq!(ChatTarget::AdminDone.url(), "index.html?admin=done");
         assert_eq!(
             ChatTarget::NewSession { cwd: None, provider: None }.url(),
             "index.html?newSession=1"

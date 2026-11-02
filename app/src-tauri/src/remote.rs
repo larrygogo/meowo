@@ -1615,6 +1615,8 @@ mod tests {
             "list_folder_editors",
             // 往宿主磁盘写文件（对话导出），同属宿主执行类。
             "export_text_file",
+            // 在宿主上开窗。
+            "open_session_admin",
             "reveal_path_in_file_manager",
             "open_attached_terminal",
             "open_chat_window",

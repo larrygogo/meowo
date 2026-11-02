@@ -163,11 +163,13 @@ function pageList(current: number, count: number): (number | "gap")[] {
   return out;
 }
 
-export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [] }: {
+export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialStatus = DEFAULT_FILTERS.status }: {
   onBack: () => void;
   onOpen: (sessionId: number) => void;
   /** 打开时预选的工作区（新建会话页「最近会话 · 查看更多」带进来的那一个）。 */
   initialWorkspaces?: string[];
+  /** 打开时预选的状态（设置页「已完成会话」入口带进来的「已完成」）。 */
+  initialStatus?: Filters["status"];
 }) {
   const t = useT();
   const [workspaceOptions, setWorkspaceOptions] = useState<{ value: string; label: string }[]>([]);
@@ -187,8 +189,8 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [] }: {
   }, []);
 
   // draft = 筛选条上正在改的，applied = 「查询」后生效的。
-  const [draft, setDraft] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, workspaces: initialWorkspaces }));
-  const [applied, setApplied] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, workspaces: initialWorkspaces }));
+  const [draft, setDraft] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, workspaces: initialWorkspaces, status: initialStatus }));
+  const [applied, setApplied] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, workspaces: initialWorkspaces, status: initialStatus }));
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [rows, setRows] = useState<LiveSession[] | null>(null);

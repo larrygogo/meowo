@@ -1595,7 +1595,10 @@ export function ChatWindow() {
     }).catch(() => {});
   }, []);
   // 会话管理页（对照 Kimi Code）：从侧栏菜单打开，在侧栏或管理页里选任何会话都回到对话。
-  const [adminOpen, setAdminOpen] = useState(false);
+  // 设置页「已完成会话」入口经后端开窗带 ?admin=done：首屏就是会话管理页、筛在已完成。
+  const [adminOpen, setAdminOpen] = useState(() => new URLSearchParams(window.location.search).get("admin") === "done");
+  const [adminStatus, setAdminStatus] = useState<"all" | "open" | "done">(() =>
+    new URLSearchParams(window.location.search).get("admin") === "done" ? "done" : "all");
   // 新建会话页（对照 Kimi：不弹窗，主区就地换成新建页）。nonce 让再点一次「新建会话」
   // 换一份干净的表单（带上新的预填）。
   const [newSessionOpen, setNewSessionOpen] = useState(initialNewSession);
@@ -1605,7 +1608,15 @@ export function ChatWindow() {
   newSessionOpenRef.current = newSessionOpen != null;
   // 管理页打开时预选的工作区：新建页「最近会话 · 查看更多」带进来；侧栏菜单进来的不预选。
   const [adminWorkspaces, setAdminWorkspaces] = useState<string[]>([]);
-  const openAdmin = useCallback(() => { setNewSessionOpen(null); setAdminWorkspaces([]); setAdminOpen(true); }, []);
+  const openAdmin = useCallback(() => { setNewSessionOpen(null); setAdminWorkspaces([]); setAdminStatus("all"); setAdminOpen(true); }, []);
+  // 窗口已开时，设置页的入口经后端发 chat-open-admin 到这里。
+  useTauriEvent<string>("chat-open-admin", () => {
+    setOverlaySidebar(false);
+    setNewSessionOpen(null);
+    setAdminWorkspaces([]);
+    setAdminStatus("done");
+    setAdminOpen(true);
+  });
   const selectSession = useCallback((id: number) => {
     setAdminOpen(false);
     setNewSessionOpen(null);
@@ -3773,7 +3784,7 @@ export function ChatWindow() {
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
       {adminOpen && (
         <div className="chat-main chat-admin-main">
-          <SessionAdmin key={adminWorkspaces.join("|")} initialWorkspaces={adminWorkspaces} onBack={() => setAdminOpen(false)} onOpen={selectSession} />
+          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={() => setAdminOpen(false)} onOpen={selectSession} />
         </div>
       )}
       {newSessionOpen && !adminOpen && (
@@ -3783,7 +3794,7 @@ export function ChatWindow() {
             prefill={newSessionOpen}
             droppedPath={newSessionDrop}
             onOpenSession={selectSession}
-            onMoreSessions={(dir) => { setNewSessionOpen(null); setAdminWorkspaces([dir]); setAdminOpen(true); }}
+            onMoreSessions={(dir) => { setNewSessionOpen(null); setAdminWorkspaces([dir]); setAdminStatus("all"); setAdminOpen(true); }}
             onLaunched={(tempId, launchedProvider, message) => {
               // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
               if (message) {
