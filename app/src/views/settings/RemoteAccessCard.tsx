@@ -14,7 +14,12 @@ import { Switch, SettingsError } from "./widgets";
 import { Dropdown } from "../menu";
 
 /// 端口输入：本地草稿 + 失焦/回车提交（同 NetworkSection 的 UrlInput，避免每键一存打后端）。
-function PortInput({ value, onCommit }: { value: number; onCommit: (port: number) => void }) {
+function PortInput({ value, onCommit, conflict }: {
+  value: number;
+  onCommit: (port: number) => void;
+  /** 启动时这个端口被占用的说明：与「端口不合法」同一位置、同一红框（报错贴着出问题的那一项）。 */
+  conflict?: string | null;
+}) {
   const t = useT();
   const [text, setText] = useState(String(value));
   // 7S-6：非法输入此前**静默**回退成磁盘值（默认 18620），用户看着自己敲的 70000
@@ -32,12 +37,12 @@ function PortInput({ value, onCommit }: { value: number; onCommit: (port: number
   return (
     <>
       <input
-        className={"ns-input remote-port-input" + (invalid ? " is-invalid" : "")}
+        className={"ns-input remote-port-input" + (invalid || conflict ? " is-invalid" : "")}
         type="text"
         inputMode="numeric"
         autoComplete="off"
         spellCheck={false}
-        aria-invalid={invalid || undefined}
+        aria-invalid={invalid || !!conflict || undefined}
         value={text}
         onChange={(e) => { setText(e.target.value); setInvalid(false); }}
         onBlur={commit}
@@ -45,7 +50,9 @@ function PortInput({ value, onCommit }: { value: number; onCommit: (port: number
           if (e.key === "Enter") e.currentTarget.blur();
         }}
       />
-      {invalid && <div className="proxy-err remote-port-err" role="alert">{t.remote.portInvalid}</div>}
+      {invalid
+        ? <div className="proxy-err remote-port-err" role="alert">{t.remote.portInvalid}</div>
+        : conflict && <div className="proxy-err remote-port-err" role="alert">{conflict}</div>}
     </>
   );
 }
@@ -175,8 +182,11 @@ export function RemoteAccessCard() {
   const candidates = info?.ips ?? [];
   const ipOptions = candidates.map((c) => ({ value: c.ip, label: `${kindLabel(c.kind)} · ${c.ip}` }));
   const selectedKind = candidates.find((c) => c.ip === selectedIp)?.kind ?? null;
+  // 启动失败是端口被占：贴在端口行说（换个端口就是解法），不另起一块报错。
+  const portConflict = info?.lastError === "remote/port_in_use" ? formatBackendError(info.lastError, t.locale) : null;
 
   return (
+    <>
     <div className="row-card remote-access-card">
       <div className="row">
         <div className="row-text">
@@ -191,7 +201,7 @@ export function RemoteAccessCard() {
           <div className="row-label">{t.remote.port}</div>
           <div className="row-desc">{t.remote.portDesc}</div>
         </div>
-        <PortInput value={port} onCommit={changePort} />
+        <PortInput value={port} onCommit={changePort} conflict={portConflict} />
       </div>
 
       <div className="row">
@@ -203,18 +213,6 @@ export function RemoteAccessCard() {
         <Dropdown value={bind} options={bindOptions} onChange={changeBind} />
       </div>
 
-      {/* 7S-7：两条错误行此前是裸 div——没有 ×（错误不会自己消失）、启动失败那条连
-          role=alert 都没有，读屏完全静默。与其余四个分区统一走 SettingsError。 */}
-      <SettingsError error={patchError} onDismiss={clearPatchError} />
-      {/* 自己 format 一次再套语境句，并告诉 SettingsError 别再 format——两边都做的话，
-          「启动失败：绑定端口 18620 失败：…」这种双前缀就出来了（复核指出）。 */}
-      {info?.lastError && (
-        <SettingsError
-          preformatted
-          error={t.remote.startError(formatBackendError(info.lastError, t.locale))}
-          onDismiss={() => setInfo((cur) => (cur ? { ...cur, lastError: null } : cur))}
-        />
-      )}
 
       {/* 配置与实际监听分叉（多实例共享 settings.json，另一实例改端口写盘而本实例
           listener 未跟随）：不是错误——本实例服务本身健康，但配置值已不可信，说明白。 */}
@@ -276,14 +274,20 @@ export function RemoteAccessCard() {
             </div>
           </div>
         ))}
-      {!enabled && (
-        <div className="row">
-          <div className="row-text">
-            <div className="row-desc">{t.remote.offHint}</div>
-          </div>
-        </div>
-      )}
       <BarkPushRow value={settings?.bark_url ?? ""} onCommit={(url) => { void patch({ bark_url: url }); }} />
     </div>
+    {/* 报错放在卡片外、紧跟其后（此前夹在卡片两行之间，用户实拍「位置不对」）。端口被占贴在端口行
+        （portConflict），这里只剩保存失败与其余启动失败。7S-7：错误统一走 SettingsError（带 ×、role=alert）。 */}
+    <SettingsError error={patchError} onDismiss={clearPatchError} />
+    {/* 自己 format 一次再套语境句，并告诉 SettingsError 别再 format——两边都做的话，
+        「启动失败：绑定端口 18620 失败：…」这种双前缀就出来了（复核指出）。 */}
+    {info?.lastError && !portConflict && (
+      <SettingsError
+        preformatted
+        error={t.remote.startError(formatBackendError(info.lastError, t.locale))}
+        onDismiss={() => setInfo((cur) => (cur ? { ...cur, lastError: null } : cur))}
+      />
+    )}
+    </>
   );
 }

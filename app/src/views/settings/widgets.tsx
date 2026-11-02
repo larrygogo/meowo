@@ -20,16 +20,15 @@ export function SettingsError({ error, onDismiss, preformatted }: {
 }) {
   const t = useT();
   if (!error) return null;
+  // 提示块而非一行红字：图标 + 文字 + 关闭钮，浅红底圆角（用户实拍「报错样式好丑」）。
   return (
-    <div className="sec-hint proxy-err" role="alert">
-      {preformatted ? error : formatBackendError(error, t.locale)}
-      <button
-        type="button"
-        aria-label={t.settings.close}
-        style={{ appearance: "none", background: "none", border: "none", padding: 0, marginLeft: 6, font: "inherit", color: "inherit", cursor: "pointer" }}
-        onClick={onDismiss}
-      >
-        ×
+    <div className="settings-error" role="alert">
+      <svg className="settings-error-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5.5M12 16.5h.01" />
+      </svg>
+      <span className="settings-error-text">{preformatted ? error : formatBackendError(error, t.locale)}</span>
+      <button type="button" className="settings-error-close" aria-label={t.settings.close} data-tip={t.settings.close} onClick={onDismiss}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
       </button>
     </div>
   );

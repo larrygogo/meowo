@@ -27,8 +27,10 @@ import { formatBackendError } from "../i18n/errors";
  *  用户每开一个会话都要重选两次下拉，且极易忘记而以默认档起会话——恢复路径早有持久化
  *  （会话存档回放），新建路径此前完全没有。localStorage 即可：这是 UI 预填偏好，
  *  未知 id 由后端声明表忽略/落默认，脏数据无害。 */
+/// 设置页「会话」里的新建会话默认值读写的也是这一份（对照 Kimi 的「Agent 默认值」）：
+/// 两边改的是同一件事，新建时改了会记住，设置里改了下次新建就预选它。
 const LAUNCH_OPTS_KEY = "meowo-launch-selections";
-function loadStoredOpts(): Record<string, Record<string, string>> {
+export function loadStoredOpts(): Record<string, Record<string, string>> {
   try {
     const raw = JSON.parse(localStorage.getItem(LAUNCH_OPTS_KEY) ?? "{}");
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
@@ -36,7 +38,7 @@ function loadStoredOpts(): Record<string, Record<string, string>> {
     return {};
   }
 }
-function saveStoredOpts(provider: string, opts: Record<string, string>) {
+export function saveStoredOpts(provider: string, opts: Record<string, string>) {
   try {
     localStorage.setItem(LAUNCH_OPTS_KEY, JSON.stringify({ ...loadStoredOpts(), [provider]: opts }));
   } catch {

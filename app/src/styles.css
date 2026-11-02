@@ -2034,13 +2034,17 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 /* 右内容 */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .main-bar {
-  height: 40px;
+  height: 44px;
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 var(--sp-8);
+  justify-content: space-between;
+  gap: var(--sp-12);
+  padding: 0 var(--sp-8) 0 calc(var(--sp-28) + var(--sp-6));
 }
+/* 标题栏里一行安静的小标题（对照 Kimi）：20px 粗体压在内容上方太突兀（用户实拍），
+   与卡片行标题同级的字号，只靠位置表明「这是哪一页」。 */
+.main-bar-title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; color: var(--cc-text); }
 /* macOS：独立窗口（设置/引导/更新/新建会话/对话）改用原生标题栏 Overlay（见 window.rs），
    系统红绿灯在左上——自绘的右侧关闭按钮全部隐藏，有左侧内容的标题栏给红绿灯留位。
    贴纸与确认弹窗仍是无边框窗口，不涉及。 */
@@ -2143,6 +2147,23 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 }
 
 /* 设置页卡片外的分组标题（标题放卡片里会像一个可交互设置项）。只有标题、不带副标题。 */
+/* 设置页报错提示块（SettingsError）：浅红底 + 图标 + 关闭钮，与卡片同圆角。 */
+.settings-error { display: flex; align-items: flex-start; gap: var(--sp-8); margin: var(--sp-10) 0 0; padding: var(--sp-10) var(--sp-10) var(--sp-10) var(--sp-12); border: var(--hairline) solid color-mix(in srgb, var(--cc-err) 35%, transparent); border-radius: var(--r-12); background: color-mix(in srgb, var(--cc-err) 10%, transparent); color: var(--cc-err-text); font-size: var(--fs-12-5); line-height: 1.5; }
+.settings-error-icon { flex: none; margin-top: 2px; }
+.settings-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.settings-error-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; margin: -1px 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; opacity: .7; cursor: pointer; }
+.settings-error-close:hover { opacity: 1; background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
+/* 分区内的页标题只在搜索态显示（各分区平铺时当分隔）；平时标题在 .main-bar 里。 */
+.sec-title { display: none; margin: 0 var(--sp-6) var(--sp-10); font-size: var(--fs-13); font-weight: 600; color: var(--cc-text-faint); }
+.main-body.is-searching .sec-title { display: block; }
+.main-body.is-searching .main-sec + .main-sec .sec-title { margin-top: var(--sp-24); }
+/* 分区的第一个分组标题顶上不再留 18px（标题栏已经给了间距）。 */
+.sec-caption.is-first { margin-top: 0; }
+/* 快捷键键帽：一键一枚，组合之间「/」分隔（设置页快捷键分区）。 */
+.kbd-combos { flex: none; display: inline-flex; align-items: center; gap: var(--sp-6); }
+.kbd-combo { display: inline-flex; align-items: center; gap: 3px; }
+.kbd-or { margin-right: var(--sp-2); color: var(--cc-text-faint); font-size: var(--text-xs); }
+.kbd-combos kbd { min-width: 22px; height: 22px; padding: 0 var(--sp-6); display: inline-grid; place-items: center; border: var(--hairline) solid var(--cc-border); border-bottom-width: 2px; border-radius: var(--radius-sm); background: var(--cc-surface); color: var(--cc-text-dim); font: 500 var(--text-xs)/1 inherit; }
 .sec-caption { margin: var(--sp-18) var(--sp-6) var(--sp-8); font-size: var(--fs-13); font-weight: 600; color: var(--cc-text); }
 /* 设置 → 会话 → 已归档会话列表（看板已无「已归档」tab，这里是唯一管理入口）。
    限高内滚：归档可能积上百条，不能撑满设置页。 */
@@ -2270,7 +2291,10 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 .dd-item.risk { color: var(--cc-err); }
 .dd-item.risk:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); color: var(--cc-err); }
 /* 选项下的风险副标题：独立成行、可换行（父级 .dd-item 整行 nowrap）。 */
-.dd-item .dd-sub { display: block; font-size: var(--fs-10-5); color: var(--cc-err); opacity: 0.85; white-space: normal; }
+/* 说明行默认灰；只有高风险档（.risk）才转红。此前一律红字，普通档的说明也像警告
+   （新建页权限菜单用户实拍「说明全是红的」）。 */
+.dd-item .dd-sub { display: block; font-size: var(--fs-10-5); color: var(--cc-text-faint); white-space: normal; }
+.dd-item.risk .dd-sub { color: var(--cc-err); opacity: 0.85; }
 
 /* 文本色不再叠 opacity：--cc-text-faint 已是最淡合法档，再乘必然击穿对比度基线（浅色下实测 2.87:1）。 */
 .sec-hint { font-size: var(--fs-12); color: var(--cc-text-faint); margin-top: var(--sp-14); padding-left: var(--sp-2); }
@@ -2291,7 +2315,8 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 .row-text > .proxy-err { margin-top: var(--sp-4); color: var(--cc-err); }
 
 /* 手机远程配对卡：端口窄输入 + 扫码区。 */
-.remote-port-input { width: 96px; text-align: center; }
+/* 带上 .ns-input 才压得过它后面的 width:100%（设置页实拍：端口框被拉满半行）。 */
+.ns-input.remote-port-input { flex: none; width: 96px; text-align: center; }
 /* Bark 地址输入框：占满行内剩余宽度，测试按钮贴在右侧。 */
 .remote-push-input { flex: 1 1 auto; min-width: 0; }
 /* 非法端口（7S-6）：输入留在框里，边框转红 + 行内说明，不再静默弹回默认值。
@@ -2299,7 +2324,7 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
    flex-basis 100% 又 shrink 0 的说明行会把「端口」标签挤到 0 宽。 */
 .remote-port-row { flex-wrap: wrap; }
 .remote-port-input.is-invalid { border-color: var(--cc-err); }
-.remote-port-err { flex: 0 0 100%; margin-top: var(--sp-4); text-align: right; font-size: var(--fs-10-5); }
+.remote-port-err { flex: 0 0 100%; margin-top: var(--sp-4); text-align: right; font-size: var(--fs-11); color: var(--cc-err-text); }
 /* 配对行:二维码钉在行右控件位,不随 .row 通用规则漂移(此前该类无定义,布局全靠
    .row 撑——自审 L9)。 */
 .remote-pair-row .remote-qr { margin-left: auto; }
@@ -2319,9 +2344,10 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
   margin-top: var(--sp-6);
 }
 /* 地址不明文上屏,行内是复制与重新生成两颗按钮(完整地址走剪贴板)。 */
+/* stretch：测试 / 复制钮与输入框等高（设置页实拍：按钮比输入框矮一截）。 */
 .remote-url-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: var(--sp-6);
   margin-top: var(--sp-6);
 }
@@ -2330,8 +2356,9 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
    不存在的变量（等于没有 hover 反馈）。改吃真实 token。 */
 .remote-copy {
   flex: none;
-  padding: var(--sp-2) var(--sp-8);
-  border-radius: var(--r-sm);
+  padding: 0 var(--sp-12);
+  border-radius: var(--r-md);
+  font-size: var(--fs-12-5);
   border: 1px solid var(--cc-border);
   background: var(--cc-surface);
   color: var(--cc-text);

@@ -589,7 +589,15 @@ async fn apply_with(
                     let _ = e;
                 }
                 Err(e) => {
-                    set_error(Some(format!("绑定 {bind_addr}:{port16} 失败：{e}")));
+                    // 结构化原因（模块/代码），文案由前端 errors.ts 双语映射。端口被占（最常见：
+                    // dev 与安装版两个实例同开）单独一码；系统原文只在其余情形跟在后面供排查——
+                    // 此前原样上屏「通常每个套接字地址只允许使用一次 (os error 10048)」（用户实拍）。
+                    let reason = if e.kind() == std::io::ErrorKind::AddrInUse {
+                        "remote/port_in_use".to_string()
+                    } else {
+                        format!("remote/bind_failed：{bind_addr}:{port16} {e}")
+                    };
+                    set_error(Some(reason));
                     return;
                 }
             }

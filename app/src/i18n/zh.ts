@@ -346,6 +346,8 @@ export const zh = {
     shortcutSlashComplete: "选中斜杠命令补全",
     shortcutHistory: "取回上一条消息（输入框为空时）",
     shortcutSheet: "打开本速查表",
+    shortcutGroupWindow: "窗口",
+    shortcutGroupInput: "输入框",
     // 终端视图的让位说明（速查表底注）：静默失效的键必须有一处写明。
     shortcutTerminalNote: "终端视图中 Ctrl+K/B/N/1/2 由应用占用，Ctrl+F 是终端搜索",
     // 终端内搜索条（Ctrl+F，xterm addon-search）。
@@ -1070,7 +1072,7 @@ export const zh = {
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
-    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", network: "网络", account: "账号与用量", about: "关于" },
+    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", account: "账号与用量", about: "关于" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -1080,6 +1082,11 @@ export const zh = {
     archivedLoadFailed: "已完成会话加载失败",
     unarchiveFailed: "恢复进行中失败，请稍后再试",
     cardsGroup: "卡片",
+    // 设置页分组（对照 Kimi 设置的分节）。
+    runGroup: "运行",
+    launchDefaultDesc: (agent: string) => `新建 ${agent} 会话时预选，新建时改了也会记住`,
+    notifyGroup: "通知",
+    stickerGroup: "贴纸",
     updateTag: "新版本",
     close: "关闭",
     autostart: "开机自启",
