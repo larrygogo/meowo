@@ -53,7 +53,7 @@ bun run test:e2e     # = node e2e/run.mjs：构建 E2E 二进制 → 跑 wdio �
 
 - `wdio.conf.ts` 里的二进制路径指向 workspace 根（app/src-tauri）的 `target/debug/meowo-app(.exe)`（`--no-bundle` 产物，名字取自 cargo package）。
 - 首次运行会下载 driver、并做一次 debug 构建，较慢；之后走增量。
-- `package.json` 的 `overrides` 把 `@wdio/native-utils` 钉到 `2.5.0`：`@wdio/tauri-service@1.2.0` 的代码 import 了 `installMockSyncOverride`，却把该依赖精确锁在缺此导出的 `2.4.0`（上游发布 bug），不覆盖会在启动 wdio 时报 `SyntaxError`。上游修版后可移除此 override。
+- Rust 侧 `tauri-plugin-wdio*` 与 JS 侧 `@wdio/tauri-plugin` / `@wdio/tauri-service` 要同版本一起升。插件要拿 tauri 交出来的 WebView2 对象，它依赖的 `webview2-com` / `windows` 必须和 tauri 用的同一版：tauri 2.12 换到 webview2-com 0.39 后，插件 1.2.0 编不过（2026-11 CI 实拍），1.5.1 才跟上。
 
 ## 验证记录
 
