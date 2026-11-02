@@ -2034,17 +2034,13 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 /* 右内容 */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .main-bar {
-  height: 44px;
+  height: 40px;
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-12);
-  padding: 0 var(--sp-8) 0 calc(var(--sp-28) + var(--sp-6));
+  justify-content: flex-end;
+  padding: 0 var(--sp-8);
 }
-/* 标题栏里一行安静的小标题（对照 Kimi）：20px 粗体压在内容上方太突兀（用户实拍），
-   与卡片行标题同级的字号，只靠位置表明「这是哪一页」。 */
-.main-bar-title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; color: var(--cc-text); }
 /* macOS：独立窗口（设置/引导/更新/新建会话/对话）改用原生标题栏 Overlay（见 window.rs），
    系统红绿灯在左上——自绘的右侧关闭按钮全部隐藏，有左侧内容的标题栏给红绿灯留位。
    贴纸与确认弹窗仍是无边框窗口，不涉及。 */
@@ -2153,7 +2149,7 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 .settings-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .settings-error-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; margin: -1px 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; opacity: .7; cursor: pointer; }
 .settings-error-close:hover { opacity: 1; background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
-/* 分区内的页标题只在搜索态显示（各分区平铺时当分隔）；平时标题在 .main-bar 里。 */
+/* 分区内的页标题只在搜索态显示（各分区平铺时当分隔）；平时不显示，由左栏高亮表明所在页。 */
 .sec-title { display: none; margin: 0 var(--sp-6) var(--sp-10); font-size: var(--fs-13); font-weight: 600; color: var(--cc-text-faint); }
 .main-body.is-searching .sec-title { display: block; }
 .main-body.is-searching .main-sec + .main-sec .sec-title { margin-top: var(--sp-24); }

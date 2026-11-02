@@ -1041,10 +1041,9 @@ export function About() {
       </aside>
 
       <main className="main">
-        {/* 页标题与关闭钮同一行（对照 Kimi）：此前标题另起一行压在 40px 标题栏下面，顶部空出
-            一大截（用户实拍）。搜索时各分区平铺，标题改由分区内的 .sec-title 各自显示。 */}
+        {/* 不放页标题（用户试过顶部标题两版都嫌突兀）：在哪一页由左栏高亮说明，右侧直接是内容。
+            搜索时各分区平铺，才由分区内的 .sec-title 当分隔。 */}
         <div className="main-bar" data-tauri-drag-region>
-          <h1 className="main-bar-title" data-tauri-drag-region>{searching ? "" : t.settings.nav[sec]}</h1>
           <button className="winclose" data-tip={t.settings.close} onClick={close} aria-label={t.settings.close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="6" y1="6" x2="18" y2="18" />
