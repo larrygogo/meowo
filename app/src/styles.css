@@ -3971,6 +3971,10 @@ select.ns-input {
 .sa-search { display: flex; align-items: center; gap: 7px; padding: 5px 9px; color: var(--cc-text-faint); }
 .sa-search-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); }
 .sa-opts { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+/* 选项撑满整行：<button> 即便 display:flex 也不会自己拉满宽度，高亮只包住文字（用户实拍）。 */
+.sa-menu .dd-item { width: 100%; }
+.sa-opts .sa-opt { font-weight: 400; }
+.sa-opts .sa-opt .sa-cb { flex: none; pointer-events: none; }
 .sa-menu-empty { padding: 5px 9px; color: var(--cc-text-faint); font-size: var(--text-sm); }
 .sa-check { flex: none; width: 14px; display: inline-flex; color: var(--cc-text-dim); }
 .sa-check svg { width: 14px; height: 14px; }

@@ -125,16 +125,20 @@ function WorkspacePicker({ options, value, onChange }: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3" /><path d="m15.5 15.5 4 4" /></svg>
             <input className="sa-search-input" autoFocus value={query} placeholder={t.admin.searchWorkspace} aria-label={t.admin.searchWorkspace} onChange={(event) => setQuery(event.target.value)} />
           </div>
+          {/* 多选：每项前一个复选框（与表格同款 .sa-cb），没选是空框、选中填色打勾——此前只在选中时
+              出一个勾，没选的那格是空白，看不出这是多选、也分不清选没选（用户实拍）。 */}
           <div className="sa-opts">
             {!query.trim() && options.length > 0 && (
-              <button type="button" role="option" aria-selected={allOn} className="dd-item sf-opt" onClick={() => onChange(allOn ? [] : options.map((option) => option.value))}>
-                <span className="sa-check">{allOn && <CheckIcon />}</span>
+              <button type="button" role="option" aria-selected={allOn} className="dd-item sf-opt sa-opt" onClick={() => onChange(allOn ? [] : options.map((option) => option.value))}>
+                <span className={"sa-cb" + (allOn ? " on" : value.length > 0 ? " ind" : "")} aria-hidden="true">
+                  {allOn ? <CheckIcon /> : value.length > 0 ? <span className="sa-cb-dash" /> : null}
+                </span>
                 <span className="dd-label">{t.admin.selectAll}</span>
               </button>
             )}
             {shown.map((option) => (
-              <button key={option.value} type="button" role="option" aria-selected={value.includes(option.value)} className="dd-item sf-opt" data-tip={option.value} onClick={() => flip(option.value)}>
-                <span className="sa-check">{value.includes(option.value) && <CheckIcon />}</span>
+              <button key={option.value} type="button" role="option" aria-selected={value.includes(option.value)} className="dd-item sf-opt sa-opt" data-tip={option.value} onClick={() => flip(option.value)}>
+                <span className={"sa-cb" + (value.includes(option.value) ? " on" : "")} aria-hidden="true">{value.includes(option.value) && <CheckIcon />}</span>
                 <span className="dd-label sa-ws-name">{option.label}</span>
               </button>
             ))}
