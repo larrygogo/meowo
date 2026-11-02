@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Tauri 事件反而直接给**源路径**,附件协议正好只要路径)。
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
@@ -60,7 +60,7 @@ import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { parseCliRetry, parseCliStatus } from "./chat/cliStatus";
 import { ChatSidebar } from "./ChatSidebar";
-import { ArchiveIcon, ChevronDownIcon } from "./sticker/icons";
+import { ChevronDownIcon } from "./sticker/icons";
 import { useStarred } from "./sticker/helpers";
 // 终端视图独立成 chunk：xterm 及其插件约 500KB，占对话窗 chunk 四成。手机远程页钉在对话页，
 // 终端只为屏幕识别按需挂载（terminalMonitorNeeded），首屏不该为它多等 1.2MB 里的一半。
@@ -80,15 +80,15 @@ import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
-import { GitStatusChip, OpenInEditor, PullRequestChip } from "./chat/TitleBarTools";
+import { ChatTitleBar } from "./chat/ChatTitleBar";
+import { useConversationExport } from "./chat/useConversationExport";
 import { AddMenu } from "./chat/AddMenu";
-import { finalAnswer, transcriptMarkdown } from "./chat/exportMarkdown";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
-import { agentName, exportTextFile, getPullRequest, listAgents, type AgentDescriptor, type PullRequestDto } from "../api";
+import { listAgents, type AgentDescriptor } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
 
@@ -821,19 +821,6 @@ export function ChatWindow() {
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
-  // 当前分支的 PR（对照 Kimi 标题栏）：换目录 / 换分支时查一次，之后 3 分钟一次——gh 要联网，
-  // 不跟改动摘要的轮询走（后端另按目录缓存 60s）。手机不查：桌面专用命令，桥上不放行。
-  const [pullRequest, setPullRequest] = useState<PullRequestDto | null>(null);
-  const prBranch = gitSummary?.isRepo ? gitSummary.branch : null;
-  useEffect(() => {
-    setPullRequest(null);
-    if (!cwd || !prBranch || remoteUi()) return;
-    let alive = true;
-    const load = () => void getPullRequest(cwd).then((pr) => { if (alive) setPullRequest(pr ?? null); }).catch(() => {});
-    load();
-    const timer = window.setInterval(load, 180_000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, [cwd, prBranch]);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffTab, setDiffTab] = useState<DiffPanelTab>("changes");
   // 折叠/最大化都只在面板已挂载（diffOpen）后才有意义；折叠不卸载——面板内的
@@ -853,6 +840,16 @@ export function ChatWindow() {
     setDiffCollapsed(false);
   }, []);
   const changeDiffTab = useCallback((tab: DiffPanelTab) => setDiffTab(tab), []);
+  /// 标题栏开合停靠面板：tab = 点了哪个入口（改动胶囊为 "changes"，侧边面板开关为 null）。
+  /// 面板正开着且就是这个入口（侧边面板开关不挑页签）→ 收起；否则打开到该页签。侧边面板开关
+  /// 回到上次的页签，不是仓库时只有文件页。
+  const toggleDock = (tab: DiffPanelTab | null) => {
+    if (diffOpen && !diffCollapsed && (tab === null || diffTab === tab)) { collapseDiffPanel(); return; }
+    if (tab) setDiffTab(tab);
+    else if (!gitSummary?.isRepo) setDiffTab("files");
+    setDiffOpen(true);
+    setDiffCollapsed(false);
+  };
   const diffCwd = cwd;
   // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
   // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
@@ -2448,34 +2445,15 @@ export function ChatWindow() {
     : null;
   // 会话还在这里跑着就去终端恢复，会有两个进程写同一份会话（对照 Kimi 的「会话已被其他进程
   // 更新」警告：它是事后发现，我们在复制这一刻就能提醒）。命令照给，只把回执换成提醒。
-  // 对话导出（对照 Kimi 会话菜单）：只拿已渲染的时间线（含接续的前序段），内容规则见 exportMarkdown。
-  const exportItems = timelineItems;
-  const conversationMarkdown = () => transcriptMarkdown(exportItems, {
-    title: history?.title || t.chat.title,
-    user: t.chat.exportYou,
-    agent: provider ? agentName(agentsForOptions ?? [], provider) : t.chat.title,
+  // 会话菜单的导出（复制对话 / 最终回答 / 导出文件）：chat/useConversationExport。
+  const conversationExport = useConversationExport({
+    items: timelineItems,
+    title: history?.title,
+    provider,
+    agents: agentsForOptions,
+    onNotice: (text) => setCopyNotice({ text }),
+    onError: setSendError,
   });
-  const copyConversation = () => {
-    void copyPlainText(conversationMarkdown()).then((ok) => setCopyNotice({ text: ok ? t.chat.conversationCopied : t.chat.copyFailed }));
-  };
-  // 导出会话为 .md（对照 Kimi「导出会话」）：系统保存框选路径，文件名默认取会话标题（去掉
-  // 文件名里不能用的字符）。取消保存框不报错。
-  const exportConversation = async () => {
-    const base = (history?.title || t.chat.title).replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 80) || "conversation";
-    const path = await saveDialog({ defaultPath: `${base}.md`, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(() => null);
-    if (!path) return;
-    try {
-      await exportTextFile(path, conversationMarkdown());
-      setCopyNotice({ text: t.chat.conversationExported });
-    } catch (error) {
-      setSendError(formatBackendError(error, t.locale));
-    }
-  };
-  const copyFinalAnswer = () => {
-    const text = finalAnswer(exportItems);
-    if (!text) return;
-    void copyPlainText(text).then((ok) => setCopyNotice({ text: ok ? t.chat.finalAnswerCopied : t.chat.copyFailed }));
-  };
   const copyResumeCommand = (command: string) => {
     const live = !!history?.connected;
     void copyPlainText(command).then((ok) => setCopyNotice(
@@ -3806,9 +3784,9 @@ export function ChatWindow() {
         </div>
       )}
       <div className="chat-main" hidden={adminOpen || !!newSessionOpen}>
-      <header className="chat-bar" data-tauri-drag-region>
-        {((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
-        {history ? (
+      <ChatTitleBar
+        leading={((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
+        title={history ? (
           <ChatTitleMenu
             title={history.title || t.chat.title}
             provider={history.provider}
@@ -3820,9 +3798,9 @@ export function ChatWindow() {
             onRename={() => setRenaming(true)}
             onFork={chatUi?.fork && sessionId > 0 && !remoteUi() ? () => void forkCurrent() : undefined}
             onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
-            onCopyConversation={exportItems.length > 0 ? copyConversation : undefined}
-            onCopyFinalAnswer={finalAnswer(exportItems) ? copyFinalAnswer : undefined}
-            onExportConversation={exportItems.length > 0 && !remoteUi() ? () => void exportConversation() : undefined}
+            onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
+            onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}
+            onExportConversation={conversationExport.hasContent && !remoteUi() ? () => void conversationExport.exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
@@ -3840,89 +3818,18 @@ export function ChatWindow() {
                 </div>;
           })()
         )}
-        {/* 标题栏刻意不放运行状态徽标（实拍反馈嫌吵）：运行态已有多处冗余信号——
-            窗口标题的 ▶ 标记、对话区底部的脉冲指示条、侧栏状态点。 */}
-        {/* 标题栏不放任务进度入口（用户要求取消）：待办走底部停靠栏的「当前进度」，子任务在对话流里。 */}
-        {/* 标题栏右侧照 Kimi：[用编辑器打开 ▾] [分支 ↑领先 +增-删] [终端] [侧边面板]。
-            「标记完成」「结束会话」是 Meowo 自己的收尾动作，留在它们前面。 */}
-        {/* endable 口径:托管 PTY 或进程仍活着的孤儿会话(后端按 pid 杀树兜底),见 ChatHistoryDto。
-            远程不再隐藏:stop_managed_terminal 已进 /rpc 白名单(remote.rs 头注释记录了放行理由),
-            确认框在手机上走 window.confirm(transport 的 confirm_dialog 替身)。 */}
-        {/* 「标记完成」直达钮（对照 Kimi 标题栏的 markSessionDone）：做完一件事就勾掉，
-            是对话页最高频的收尾动作，不该藏在标题菜单的第二层。已完成的会话不出这颗钮，
-            「恢复进行中」仍在标题菜单里（低频）。 */}
-        {history && !history.archived && sessionId > 0 && (
-          <button
-            type="button"
-            className="chat-todo-btn"
-            data-tip={t.sticker.archive}
-            aria-label={t.sticker.archive}
-            disabled={archiving}
-            onClick={() => void toggleArchived()}
-          >
-            {/* 16px 与同排的文件/改动入口图标对齐（菜单里的同款是 13px）。 */}
-            <ArchiveIcon archived={false} size={16} />
-          </button>
-        )}
-        {history?.endable && (
-          <button type="button" className="chat-end" disabled={endingSession} onClick={() => void endSession()}>
-            {endingSession ? t.chat.terminalStopping : t.chat.endSession}
-          </button>
-        )}
-        {/* 用编辑器打开会话目录（宿主执行类，远程隐藏）。 */}
-        {!remoteUi() && cwd && <OpenInEditor cwd={cwd} onError={setSendError} />}
-        {/* 分支 + 改动：点开 / 收起改动页签（远程放行改动列表，remote.rs 模块头「例外」）。 */}
-        {cwd && gitSummary?.isRepo && (
-          <GitStatusChip
-            summary={gitSummary}
-            active={diffOpen && !diffCollapsed && diffTab === "changes"}
-            onToggle={() => {
-              if (diffOpen && !diffCollapsed && diffTab === "changes") { collapseDiffPanel(); return; }
-              setDiffTab("changes");
-              setDiffOpen(true);
-              setDiffCollapsed(false);
-            }}
-          />
-        )}
-        {pullRequest && <PullRequestChip pr={pullRequest} />}
-        {/* 终端：对话与终端两个视图之间切换（原「对话 | 终端」页签收成一颗开关，对照 Kimi）。
-            远程没有终端视图（见 setView 说明），不给死按钮。 */}
-        {!remoteUi() && (
-          <button
-            type="button"
-            className={"chat-todo-btn" + (view === "terminal" ? " is-active" : "")}
-            data-tip={t.chat.terminal}
-            aria-label={t.chat.terminal}
-            aria-pressed={view === "terminal"}
-            onClick={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="3" y="4.5" width="18" height="15" rx="3" /><path d="m7.5 9.5 3 2.5-3 2.5M13 15h4" />
-            </svg>
-          </button>
-        )}
-        {/* 侧边面板（文件 / 改动停靠面板）开合，回到上次看的页签；不是仓库就只有文件页。
-            远程不放行文件页，面板只能经改动入口打开。 */}
-        {!remoteUi() && cwd && (
-          <button
-            type="button"
-            className={"chat-todo-btn" + (diffOpen && !diffCollapsed ? " is-active" : "")}
-            data-tip={t.chat.togglePanel}
-            aria-label={t.chat.togglePanel}
-            aria-pressed={diffOpen && !diffCollapsed}
-            onClick={() => {
-              if (diffOpen && !diffCollapsed) { collapseDiffPanel(); return; }
-              if (!gitSummary?.isRepo) setDiffTab("files");
-              setDiffOpen(true);
-              setDiffCollapsed(false);
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
-              <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
-            </svg>
-          </button>
-        )}
-      </header>
+        archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
+        end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
+        cwd={cwd}
+        gitSummary={gitSummary}
+        changesOpen={diffOpen && !diffCollapsed && diffTab === "changes"}
+        panelOpen={diffOpen && !diffCollapsed}
+        terminalOn={view === "terminal"}
+        onToggleChanges={() => toggleDock("changes")}
+        onTogglePanel={() => toggleDock(null)}
+        onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
+        onError={setSendError}
+      />
       {/* 两个视图都留在树上、用 CSS 切换可见性：此前三元表达式会在每次切 tab 时
           dispose + new Terminal()，还要把整个 backlog 重传并让 xterm 重放一遍 ANSI。
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
