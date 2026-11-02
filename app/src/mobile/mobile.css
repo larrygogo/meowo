@@ -371,9 +371,51 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list-head img { border-radius: 10px; }
 .remote-session-list-head h1 { margin: 0; font-size: 21px; line-height: 1.25; letter-spacing: -0.02em; }
 .remote-session-list-head p { margin: 3px 0 0; color: var(--cc-text-faint); font-size: 12px; }
-/* 外观切换贴页头右侧；标题块吃掉剩余宽度把它推过去。 */
-.remote-session-list-head > div:not(.remote-theme) { flex: 1; min-width: 0; }
-.remote-theme { flex: 0 0 auto; }
+/* 设置齿轮贴页头右侧；标题块吃掉剩余宽度把它推过去。 */
+.remote-session-list-head > div:not(.remote-settings) { flex: 1; min-width: 0; }
+.remote-settings { position: relative; flex: 0 0 auto; }
+.remote-settings-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  color: var(--cc-text-dim);
+  background: transparent;
+}
+.remote-settings-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--cc-selected); }
+/* 面板从齿轮下方往左展开，宽度卡在屏宽内（两侧各留 16px）。 */
+.remote-settings-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(340px, calc(100vw - 32px));
+  padding: 6px 14px 12px;
+  border-radius: var(--radius-md);
+  color: var(--cc-text);
+  background: var(--cc-menu-bg);
+  box-shadow: var(--cc-shadow-popup);
+}
+.remote-settings-group {
+  margin-top: 10px;
+  color: var(--cc-text-faint);
+  font-size: 12px;
+}
+.remote-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 0;
+}
+.remote-settings-text { flex: 1; min-width: 0; }
+.remote-settings-label { font-size: 14px; }
+.remote-settings-desc { margin-top: 2px; color: var(--cc-text-faint); font-size: 12px; }
+.remote-settings-row .pswitch { flex: 0 0 auto; }
+.remote-settings-error { margin-top: 6px; color: var(--cc-err); font-size: 12px; }
 .remote-session-list > .chat-sidebar {
   flex: 1;
   min-height: 0;

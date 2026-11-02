@@ -490,6 +490,16 @@ export function setWorkspaceOrder(order: string[]): Promise<void> {
   return invoke("set_workspace_order", { order });
 }
 
+/** 「运行时防止休眠」开关。手机设置面板用（整份 setSettings 在远程禁止；远程桥 SetKeepAwakeArgs 同形）。 */
+export function setKeepAwake(enabled: boolean): Promise<void> {
+  return invoke("set_keep_awake", { enabled });
+}
+
+/** 暂停 / 恢复手机推送，只动开关不动地址（远程桥 SetPushPausedArgs 同形）。 */
+export function setPushPaused(paused: boolean): Promise<void> {
+  return invoke("set_push_paused", { paused });
+}
+
 /** 归档 / 还原会话（键为 DB 数字主键，不是 cc_session_id）。 */
 export function setArchived(sessionId: number, archived: boolean): Promise<void> {
   return invoke("set_archived", { sessionId, archived });
@@ -734,6 +744,8 @@ export type Settings = {
   remote_access_token: string;
   /** 手机推送（Bark）地址。空 = 不推送；会话需要关注时推到手机（后端 push.rs）。 */
   bark_url: string;
+  /** 暂停手机推送（地址保留）。手机设置面板和桌面推送行都能拨。 */
+  bark_paused?: boolean;
   /** 侧栏工作区组的手动顺序（路径）。空 = 没排过。桌面拖、手机长按拖分组头写入。 */
   workspace_order: string[];
   /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */

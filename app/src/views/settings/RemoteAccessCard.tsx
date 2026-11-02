@@ -59,7 +59,13 @@ function PortInput({ value, onCommit, conflict }: {
 
 /// 手机推送（Bark）一行：地址草稿失焦/回车才落盘（同 PortInput），旁边「发一条测试」直接用
 /// 草稿测——填完先测通再走开，不用等保存。远程访问关着也能用：推送只要电脑能连上 Bark。
-function BarkPushRow({ value, onCommit }: { value: string; onCommit: (url: string) => void }) {
+/// 填了地址后右侧多一个开关：手机设置面板能暂停推送，电脑这边得看得见、拨得回来。
+function BarkPushRow({ value, paused, onCommit, onTogglePaused }: {
+  value: string;
+  paused: boolean;
+  onCommit: (url: string) => void;
+  onTogglePaused: () => void;
+}) {
   const t = useT();
   const [text, setText] = useState(value);
   const [status, setStatus] = useState<{ kind: "testing" | "ok" } | { kind: "error"; message: string } | null>(null);
@@ -102,6 +108,7 @@ function BarkPushRow({ value, onCommit }: { value: string; onCommit: (url: strin
         {/* 内容出本机的事实写在旁边：项目名、会话标题、在等什么都会经过 Bark 服务器。 */}
         {text.trim() && <div className="row-desc">{t.remote.pushPrivacy}</div>}
       </div>
+      {value.trim() && <Switch checked={!paused} onChange={onTogglePaused} label={t.remote.pushToggle} />}
     </div>
   );
 }
@@ -274,7 +281,12 @@ export function RemoteAccessCard() {
             </div>
           </div>
         ))}
-      <BarkPushRow value={settings?.bark_url ?? ""} onCommit={(url) => { void patch({ bark_url: url }); }} />
+      <BarkPushRow
+        value={settings?.bark_url ?? ""}
+        paused={settings?.bark_paused ?? false}
+        onCommit={(url) => { void patch({ bark_url: url }); }}
+        onTogglePaused={() => { void patch({ bark_paused: !(settings?.bark_paused ?? false) }); }}
+      />
     </div>
     {/* 报错放在卡片外、紧跟其后（此前夹在卡片两行之间，用户实拍「位置不对」）。端口被占贴在端口行
         （portConflict），这里只剩保存失败与其余启动失败。7S-7：错误统一走 SettingsError（带 ×、role=alert）。 */}
