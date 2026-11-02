@@ -262,6 +262,32 @@ describe("ChatWindow 适配回归", () => {
     expect(screen.queryByText(zh.chat.terminalNeedsAttention)).toBeNull();
   });
 
+  /// 「+」菜单（对照 Kimi 的 addMenu）：命令 / 提及原来只能靠打字触发，这里给入口。
+  /// 「@」插在光标处（前面补空格）；「/」只在开头生效，输入框有字时置灰。
+  it("「+」菜单把提及 / 命令的触发符放进输入框", async () => {
+    const base = setup(520);
+    invoke.mockImplementation(async (command, args) => {
+      const result = await base(command, args);
+      return command === "agent_chat_ui"
+        ? { ...(result as object), slash_commands: [{ name: "/help", description: "help" }], attachment_mention: true }
+        : result;
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-520");
+    // 命令清单随 agent_chat_ui 异步到达，到了「+」才变成菜单。
+    const plus = await screen.findByRole("button", { name: "添加" });
+    fireEvent.change(box(), { target: { value: "看看" } });
+    box().setSelectionRange(2, 2);
+    fireEvent.click(plus);
+    expect((screen.getByRole("menuitem", { name: "命令" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("menuitem", { name: "提及" }));
+    expect(box().value).toBe("看看 @");
+    fireEvent.change(box(), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "命令" }));
+    expect(box().value).toBe("/");
+  });
+
   it("同一会话发送期间继续编辑，成功后保留新内容", async () => {
     const base = setup(505);
     let release!: () => void;
@@ -283,7 +309,7 @@ describe("ChatWindow 适配回归", () => {
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
     render(<ChatWindow />);
     await screen.findByText("适配-506");
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await screen.findByAltText("shot.png");
     fireEvent.change(box(), { target: { value: "看图" } });
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -314,7 +340,7 @@ describe("ChatWindow 适配回归", () => {
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
     render(<ChatWindow />);
     await screen.findByText("适配-510");
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await screen.findByAltText("shot.png");
     fireEvent.change(box(), { target: { value: "看图" } });
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -342,7 +368,7 @@ describe("ChatWindow 适配回归", () => {
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
     render(<ChatWindow />);
     await screen.findByText("适配-511");
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await screen.findByAltText("shot.png");
     fireEvent.change(box(), { target: { value: "看图" } });
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -368,7 +394,7 @@ describe("ChatWindow 适配回归", () => {
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
     render(<ChatWindow />);
     await screen.findByText("适配-509");
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await screen.findByAltText("shot.png");
     fireEvent.change(box(), { target: { value: "看图" } });
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -390,7 +416,7 @@ describe("ChatWindow 适配回归", () => {
     openDialog.mockResolvedValueOnce(["C:\\repo\\one.png", "C:\\repo\\two.png"]);
     render(<ChatWindow />);
     await screen.findByText("适配-507");
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await screen.findByAltText("two.png");
     fireEvent.change(box(), { target: { value: "比较两张图" } });
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -758,6 +784,18 @@ describe("ChatWindow 适配回归", () => {
 
 /// UTF-8 → base64。btoa 只吃 latin1,含中文的终端回显必须先转字节,否则直接抛
 /// InvalidCharacterError(生产端 decodeBase64 按 UTF-8 字节解码,两头对齐)。
+/// 选附件：agent 有命令或支持提及时「+」是菜单（对照 Kimi 的 addMenu），从「文件」一项进；
+/// 否则「+」一点就是选文件。
+function pickAttachments() {
+  const menu = screen.queryByRole("button", { name: "添加" });
+  if (menu) {
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByRole("menuitem", { name: "文件" }));
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+  }
+}
+
 function b64utf8(text: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 }
@@ -1336,7 +1374,8 @@ describe("ChatWindow", () => {
     });
     openDialog.mockResolvedValue(["C:/tmp/design.png", "C:/tmp/spec.pdf"]);
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: "添加图片或文件" }));
+    await screen.findByRole("button", { name: /^(添加|添加图片或文件)$/ });
+    pickAttachments();
     // 图片附件是缩略图（alt=文件名），非图片仍是文本 chip。
     expect(await screen.findByAltText("design.png")).toBeTruthy();
     expect(screen.getByText("spec.pdf")).toBeTruthy();
@@ -4121,7 +4160,7 @@ describe("ChatWindow", () => {
 
     // 纯文本文件 + 无空白路径 → 原生 @提及,不再有指令文本。
     openDialog.mockResolvedValueOnce(["C:\\repo\\notes.txt"]);
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await waitFor(() => expect(screen.getByText("notes.txt")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "看看这个" } });
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -4133,7 +4172,7 @@ describe("ChatWindow", () => {
     const submits = () => invoke.mock.calls.filter(([command, args]) => command === "write_managed_terminal"
       && (args as { data: string }).data === "\r").length;
     openDialog.mockResolvedValueOnce(["C:\\repo\\notes.txt"]);
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await waitFor(() => expect(screen.getByText("notes.txt")).toBeTruthy());
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
@@ -4144,7 +4183,7 @@ describe("ChatWindow", () => {
 
     // 图片 → 剪贴板写失败,退回指令文本(原生附加见下两个用例)。
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     // 图片附件是缩略图（alt=文件名）。
     await waitFor(() => expect(screen.getByAltText("shot.png")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "看图" } });
@@ -4620,7 +4659,7 @@ describe("ChatWindow", () => {
     const box = () => screen.getByRole("combobox", { name: "发送消息给 Agent" });
     // 只挂附件、不写正文:回执文本只能是占位「（附件）」。
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
-    fireEvent.click(screen.getByRole("button", { name: "添加图片或文件" }));
+    pickAttachments();
     await waitFor(() => expect(screen.getByAltText("shot.png")).toBeTruthy());
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();

@@ -5887,6 +5887,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 高风险档：文字与盾牌图标都转危险色（Kimi 的 perm-auto）。 */
 :is(.chat-compose, .nsp-composer) .chat-mode-button.is-risk, :is(.chat-compose, .nsp-composer) .chat-mode-button.is-risk .chat-mode-icon { color: var(--cc-err-text); }
 .chat-model-item.is-risk .chat-model-item-name { color: var(--cc-err-text); }
+/* 「+」菜单：图标 + 名字 + 一行说明，与权限菜单同款项（对照 Kimi 的 addMenu）。 */
+.chat-add-menu { min-width: 240px; }
+.chat-add-ico { flex: 0 0 auto; width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--radius-md); color: var(--cc-text-dim); background: var(--fill-hover); }
+.chat-model-item:disabled { opacity: .5; cursor: default; }
+.chat-model-item:disabled:hover { background: transparent; }
 /* 「切换引擎」分组（跨 provider 切换）：分组标题 + agent 行（可展开二级模型档）。 */
 .chat-model-group { margin: var(--sp-6) 0 var(--sp-2); padding: var(--sp-4) var(--sp-11) 0; border-top: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 600; }
 .chat-switch-agent-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 16px; }

@@ -81,6 +81,7 @@ import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { GitStatusChip, OpenInEditor } from "./chat/TitleBarTools";
+import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
@@ -1191,6 +1192,24 @@ export function ChatWindow() {
     });
   };
   const welcomeCommands = (chatUi?.slash_commands ?? []).map((command) => command.name);
+  /// 「+」菜单把触发符放进输入框：「/」只在开头生效（slashMatchesFor），且只在空输入框时给；
+  /// 「@」插在光标处，前面不是空白时补一个空格（@ 补全要求 token 前是空白或行首）。
+  const insertIntoPrompt = (token: string, atStart = false) => {
+    const current = promptRef.current;
+    const input = promptInputRef.current;
+    const caret = atStart ? 0 : (input?.selectionStart ?? current.length);
+    const before = current.slice(0, caret);
+    const insert = !atStart && before && !/\s$/.test(before) ? ` ${token}` : token;
+    const next = before + insert + current.slice(caret);
+    const at = before.length + insert.length;
+    setPrompt(next);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(at, at);
+    });
+  };
   const pickStarter = (text: string) => {
     setPrompt(text);
     // 预填后光标放到末尾:斜杠命令接着打参数,@ 接着触发文件补全。
@@ -4664,9 +4683,13 @@ export function ChatWindow() {
           }}
         />
         <div className="chat-compose-actions">
-          <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} onClick={() => void chooseAttachments()}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
+          <AddMenu
+            phone={compactChrome}
+            onFiles={() => void chooseAttachments()}
+            onCommand={(chatUi?.slash_commands?.length ?? 0) > 0 ? () => insertIntoPrompt("/", true) : undefined}
+            commandBlocked={prompt.trim().length > 0}
+            onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
+          />
           {(() => {
             const states = history?.agentModes ?? [];
             const controls = new Map(modeControls.map((control) => [control.dimension, control]));

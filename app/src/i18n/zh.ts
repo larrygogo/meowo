@@ -462,6 +462,16 @@ export const zh = {
     send: "发送",
     sending: "发送中…",
     attach: "添加图片或文件",
+    // 输入框「+」菜单（对照 Kimi 的 addMenu）。
+    addMenu: "添加",
+    addFiles: "文件",
+    addFilesDesc: "图片或文件作为附件",
+    addCommand: "命令",
+    addCommandDesc: "内置命令或技能",
+    // 斜杠命令只在开头生效（slashMatchesFor），输入框有字时这一项置灰。
+    addCommandBlocked: "先清空输入框才能用",
+    addMention: "提及",
+    addMentionDesc: "提及项目里的文件",
     chooseAttachments: "选择要发送给 Agent 的图片或文件",
     removeAttachment: "移除附件",
     // 附件徽章：图片/文件的类型小标签（compose 附件行 8px 等宽小块）。
