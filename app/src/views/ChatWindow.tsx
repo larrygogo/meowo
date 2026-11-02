@@ -2879,7 +2879,38 @@ export function ChatWindow() {
     setAttachments((current) => [...(files as Attachment[]).filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
     promptInputRef.current?.focus();
   };
-  const echoActions = { retry: retryOutgoing, restore: restoreOutgoing };
+  // 未确认送达的回显：读一次终端画面，看这段话是不是还停在 CLI 输入框里（没按下回车）。
+  // 每条只读一次；认得出输入框的插件才判（claude 的 draft_stash、opencode 的撤回输入框规格），
+  // 认不出一律不算卡住，退回「重发 / 放回输入框」。
+  const [stuckEchoes, setStuckEchoes] = useState<ReadonlySet<number>>(() => new Set());
+  const probedEchoesRef = useRef(new Set<number>());
+  useEffect(() => {
+    const stash = chatUi?.draft_stash;
+    const clear = chatUi?.undo?.input_clear;
+    if (!stash && !clear) return;
+    for (const echo of pendingEchoes) {
+      if (echo.phase !== "uncertain" || echo.attachmentOnly || probedEchoesRef.current.has(echo.id)) continue;
+      probedEchoesRef.current.add(echo.id);
+      const sid = sessionId;
+      void managedTerminalScreen(sid).catch(() => null).then((screen) => {
+        const head = echo.text.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12) ?? "";
+        if (!head || activeSessionRef.current !== sid) return;
+        const stuck = stash
+          ? (composerDraftText(screen, stash) ?? "").startsWith(head)
+          : (undoneInputRows(screen, clear!, echo.text) ?? 0) > 0;
+        if (stuck) setStuckEchoes((prev) => new Set(prev).add(echo.id));
+      });
+    }
+  }, [pendingEchoes, chatUi, sessionId]);
+  /// 「提交」：替用户在 CLI 输入框里按一次回车，回显转回「已写入」重新计时等落盘。
+  const submitStuckEcho = (id: number) => {
+    setStuckEchoes((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    const input = toneRef.current === "running" ? chatUi?.queue_input ?? "\r" : "\r";
+    void writeManagedTerminal(sessionId, input)
+      .then(() => outgoingStore.update(sessionId, id, { phase: "pending", at: Date.now() }))
+      .catch((error) => setSendError(formatBackendError(error, t.locale)));
+  };
+  const echoActions = { retry: retryOutgoing, restore: restoreOutgoing, submit: submitStuckEcho, stuck: stuckEchoes };
   // 中断键的写法（按几次、隔多久）见 chat/terminalInput.writeInterruptKeys。
   const writeInterrupt = (input: string) =>
     writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), input, chatUi?.interrupt_presses ?? 1);

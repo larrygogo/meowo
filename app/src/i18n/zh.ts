@@ -667,7 +667,11 @@ export const zh = {
     echoFailed: "发送失败",
     echoRetry: "重发",
     echoRestore: "放回输入框",
-    echoUncertainTip: "对话记录里还没出现这条，可到终端页确认",
+    echoUncertainTip: "对话记录里还没出现这条，可以重发或放回输入框",
+    // 读终端画面确认这段话还停在 CLI 输入框里（没按下回车）。
+    echoStuck: "停在终端输入框里",
+    echoStuckTip: "这段话还在 CLI 的输入框里，没有提交",
+    echoSubmit: "提交",
     // CLI 回了送达回执（入队记录）：消息已进它的队列，还没轮到处理。
     echoQueued: "已排队",
     echoQueuedTip: "Agent 还在忙，这条已进它的队列",

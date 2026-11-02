@@ -314,5 +314,12 @@ export const outgoingIdOf = (itemId: string): number | null => {
   return match ? Number(match[1]) : null;
 };
 
-/// 发送失败的气泡上的两个出口（对话窗提供；对话窗之外为 null，不渲染按钮）。
-export const EchoActionsContext = createContext<{ retry: (id: number) => void; restore: (id: number) => void } | null>(null);
+/// 发送失败 / 未确认送达的气泡上的出口（对话窗提供；对话窗之外为 null，不渲染按钮）。
+/// stuck = 读终端画面确认「这段话还停在 CLI 输入框里」的回显，给「提交」而不是「重发」。
+export type EchoActions = {
+  retry: (id: number) => void;
+  restore: (id: number) => void;
+  submit: (id: number) => void;
+  stuck: ReadonlySet<number>;
+};
+export const EchoActionsContext = createContext<EchoActions | null>(null);
