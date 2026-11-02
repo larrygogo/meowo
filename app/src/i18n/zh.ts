@@ -140,6 +140,14 @@ export const zh = {
   },
   newSession: {
     title: "新建会话",
+    // 对话窗里的新建会话页（对照 Kimi：主区就地开，第一句话随会话一起发出）。
+    pagePlaceholder: "输入消息开始新对话…",
+    pickFolder: "选择文件夹…",
+    workspaceRequired: "请先选择工作区",
+    start: "开始",
+    // 新建页的小下拉只显示选中项，几个「默认」并排分不清是谁的默认，带上选项名。
+    defaultOf: (option: string) => `默认${option}`,
+    firstPromptFailed: "第一句话没发出去，已放回输入框",
     dir: "工作目录",
     dirPlaceholder: "选择或输入项目目录",
     browse: "浏览…",

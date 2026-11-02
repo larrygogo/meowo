@@ -5193,6 +5193,49 @@ describe("ChatWindow", () => {
     }), { timeout: 3_000 });
   }, 15_000);
 
+  /**
+   * 新建会话不弹窗(对照 Kimi):对话窗主区就是新建页,写下第一句话发出去 → 起会话、
+   * 切到临时 id,认领成真 id 且终端就绪后把这句话写进 PTY(与复制交接同一条注入路)。
+   */
+  it("新建会话页:第一句话随新会话一起发出", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let launched = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "check_provider_hooks") return Promise.resolve("installed");
+      if (command === "new_session") { launched = true; return Promise.resolve(-9); }
+      if (command === "managed_terminal_binding") return Promise.resolve(launched ? 71 : null);
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 71, title: "新会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+        connected: true, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 71, active: true, managed: true, data: b64utf8("claude ready\n修一下登录页"),
+        startOffset: 0, endOffset: 64, exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    fireEvent.change(input, { target: { value: "修一下登录页" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("new_session", expect.objectContaining({ provider: "claude" })));
+    // 起完会话新建页让位给对话主区。
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+      sessionId: 71, data: "修一下登录页",
+    }), { timeout: 8_000 });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+      sessionId: 71, data: "\r",
+    }), { timeout: 3_000 });
+  }, 15_000);
+
   /// 已被接替的旧段只读:composer 禁用、上方挂「已切换引擎」横幅(向它续话会让接续链
   /// 分叉),唯一动作是「前往新会话」——直接切到链尾。
   it("已被接替的会话禁发,横幅引导前往新会话", async () => {

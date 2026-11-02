@@ -130,6 +130,12 @@ export const en: Dict = {
   },
   newSession: {
     title: "New session",
+    pagePlaceholder: "Type a message to start a new conversation…",
+    pickFolder: "Choose folder…",
+    workspaceRequired: "Choose a workspace first",
+    start: "Start",
+    defaultOf: (option: string) => `Default ${option.toLowerCase()}`,
+    firstPromptFailed: "First message wasn't sent. It's back in the input box",
     dir: "Working directory",
     dirPlaceholder: "Pick or type a project directory",
     browse: "Browse…",

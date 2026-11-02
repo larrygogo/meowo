@@ -341,8 +341,10 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     }
 }
 
-/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
-/// 传入 cwd/provider 时，新建面板会预填该路径并选中该模型。
+/// 前端调用：新建会话（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
+/// 传入 cwd/provider 时，新建表单会预填该路径并选中该模型。
+/// 对话功能开着时不再弹独立小窗：打开对话窗、主区切到新建会话页（对照 Kimi，用户要求
+/// 「新建会话的时候不要再弹新的窗口」）；关掉对话功能（轻量模式）时没有对话窗可去，仍走小窗。
 /// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
 #[tauri::command]
 pub(crate) fn open_new_session_window(
@@ -359,6 +361,13 @@ pub(crate) fn open_new_session_window_impl(
     cwd: Option<String>,
     provider: Option<String>,
 ) {
+    if crate::settings::load_settings().chat_enabled {
+        let target = ChatTarget::NewSession { cwd, provider };
+        if let Err(error) = open_chat_window_target(app, target, true) {
+            eprintln!("打开新建会话页失败: {error}");
+        }
+        return;
+    }
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app, "new-session");
@@ -685,11 +694,53 @@ pub(crate) fn open_latest_chat(app: tauri::AppHandle) {
     open_latest_chat_window(&app);
 }
 
+/// 对话窗打开后停在哪：某个会话，或新建会话页（带可选预填）。
+pub(crate) enum ChatTarget {
+    Session(i64),
+    NewSession {
+        cwd: Option<String>,
+        provider: Option<String>,
+    },
+}
+
+impl ChatTarget {
+    /// 新建对话窗时的页面地址（前端 ChatWindow 按 query 决定首屏）。
+    fn url(&self) -> String {
+        match self {
+            ChatTarget::Session(id) => format!("index.html?sessionId={id}"),
+            ChatTarget::NewSession { cwd, provider } => {
+                let mut url = "index.html?newSession=1".to_string();
+                if let Some(c) = cwd {
+                    url.push_str(&format!(
+                        "&cwd={}",
+                        percent_encode(c.as_bytes(), NON_ALPHANUMERIC)
+                    ));
+                }
+                if let Some(p) = provider {
+                    url.push_str(&format!(
+                        "&provider={}",
+                        percent_encode(p.as_bytes(), NON_ALPHANUMERIC)
+                    ));
+                }
+                url
+            }
+        }
+    }
+}
+
 /// `activate`：true = 用户主动打开（点卡片/托盘/通知），照常抢焦点；
 /// false = 审批/提问唤醒——窗口要出现但不夺焦（用户可能正在外部终端打字，实拍反馈）。
 pub(crate) fn open_chat_window_impl(
     app: &tauri::AppHandle,
     session_id: i64,
+    activate: bool,
+) -> Result<(), String> {
+    open_chat_window_target(app, ChatTarget::Session(session_id), activate)
+}
+
+pub(crate) fn open_chat_window_target(
+    app: &tauri::AppHandle,
+    target: ChatTarget,
     activate: bool,
 ) -> Result<(), String> {
     // 对话功能关闭（轻量模式）时的唯一闸门：四个开窗变体（command/detached/quiet/latest）
@@ -709,8 +760,17 @@ pub(crate) fn open_chat_window_impl(
         use tauri::Emitter;
         // emit 失败绝不能静默：窗口会照常聚焦，但停留在旧会话——用户点了卡片 A，
         // 看到的却是会话 B，比不弹窗更具误导性。
-        w.emit("chat-session-changed", session_id)
-            .map_err(|e| format!("切换会话失败: {e}"))?;
+        match &target {
+            ChatTarget::Session(session_id) => w
+                .emit("chat-session-changed", *session_id)
+                .map_err(|e| format!("切换会话失败: {e}"))?,
+            ChatTarget::NewSession { cwd, provider } => w
+                .emit(
+                    "chat-new-session",
+                    serde_json::json!({ "cwd": cwd, "provider": provider }),
+                )
+                .map_err(|e| format!("打开新建会话页失败: {e}"))?,
+        }
         if activate {
             let _ = w.show();
             raise_window(&w);
@@ -721,7 +781,7 @@ pub(crate) fn open_chat_window_impl(
         }
         return Ok(());
     }
-    let url = format!("index.html?sessionId={session_id}");
+    let url = target.url();
     let builder = tauri::WebviewWindowBuilder::new(app, "chat", tauri::WebviewUrl::App(url.into()))
         .title("Meowo · Chat")
         .inner_size(960.0, 760.0)
@@ -1152,3 +1212,25 @@ mod click_through_tests {
     }
 }
 
+
+#[cfg(test)]
+mod chat_target_tests {
+    use super::ChatTarget;
+
+    #[test]
+    fn 新建会话页的开窗地址带预填且转义() {
+        assert_eq!(ChatTarget::Session(42).url(), "index.html?sessionId=42");
+        assert_eq!(
+            ChatTarget::NewSession { cwd: None, provider: None }.url(),
+            "index.html?newSession=1"
+        );
+        assert_eq!(
+            ChatTarget::NewSession {
+                cwd: Some(r"C:\my proj".into()),
+                provider: Some("claude".into()),
+            }
+            .url(),
+            "index.html?newSession=1&cwd=C%3A%5Cmy%20proj&provider=claude"
+        );
+    }
+}

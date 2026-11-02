@@ -79,6 +79,7 @@ import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
+import { NewSessionPage } from "./chat/NewSessionPage";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
@@ -94,6 +95,14 @@ const REMOTE_LAST_SESSION_KEY = "meowo-remote-last-session";
 /** initialSessionId 若用了存储恢复,记下该 id:恢复目标可能已被删/归档,首次加载
  *  失败要放弃恢复回空态,而不是卡在「读取失败」(自审 M4)。 */
 let restoredSessionId = 0;
+
+type NewSessionPrefill = { cwd?: string | null; provider?: string | null };
+/** 后端带 ?newSession=1 开窗（贴纸等窗外入口的「新建会话」）时首屏直接是新建会话页。 */
+function initialNewSession(): (NewSessionPrefill & { nonce: number }) | null {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("newSession") !== "1") return null;
+  return { cwd: query.get("cwd"), provider: query.get("provider"), nonce: 0 };
+}
 
 function initialSessionId(): number {
   const value = new URLSearchParams(window.location.search).get("sessionId");
@@ -1139,10 +1148,10 @@ export function ChatWindow() {
   const [switchTarget, setSwitchTarget] = useState<AgentId | null>(null);
   const [switchPresets, setSwitchPresets] = useState<Record<string, ModelPreset[]>>({});
   useEffect(() => { if (!modelPickerOpen) setSwitchTarget(null); }, [modelPickerOpen]);
-  // 待注入的交接：复制命令返回后记下文件路径、目标 provider 与临时 id，新会话认领成真 id
-  //（realId，binding 轮询里记下）、终端就绪后由注入 effect 消费。ref 而非 state：注入是
-  // 流程记账，不驱动渲染。
-  const handoffRef = useRef<{ path: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null } | null>(null);
+  // 待注入的第一句话：复制到其他引擎的交接提示，或新建会话页里写下的第一句话。记下要发的话、
+  // 目标 provider 与临时 id，新会话认领成真 id（realId，binding 轮询里记下）、终端就绪后由注入
+  // effect 消费。ref 而非 state：注入是流程记账，不驱动渲染。
+  const handoffRef = useRef<{ prompt: string; failMessage: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null } | null>(null);
   // 当前会话 provider 的 descriptor：切换入口的可见性由后端下发的能力位决定
   //（supports_chat_export），前端不判 id——守卫测试盯着。
   const currentAgentDescriptor = provider
@@ -1549,20 +1558,32 @@ export function ChatWindow() {
   }, []);
   // 会话管理页（对照 Kimi Code）：从侧栏菜单打开，在侧栏或管理页里选任何会话都回到对话。
   const [adminOpen, setAdminOpen] = useState(false);
-  const openAdmin = useCallback(() => setAdminOpen(true), []);
+  // 新建会话页（对照 Kimi：不弹窗，主区就地换成新建页）。nonce 让再点一次「新建会话」
+  // 换一份干净的表单（带上新的预填）。
+  const [newSessionOpen, setNewSessionOpen] = useState(initialNewSession);
+  const openAdmin = useCallback(() => { setNewSessionOpen(null); setAdminOpen(true); }, []);
   const selectSession = useCallback((id: number) => {
     setAdminOpen(false);
+    setNewSessionOpen(null);
     resetTo(id);
   }, [resetTo]);
   const selectFromOverlay = useCallback((id: number) => {
     setOverlaySidebar(false);
     setAdminOpen(false);
+    setNewSessionOpen(null);
     resetTo(id);
   }, [resetTo]);
   const openAdminFromOverlay = useCallback(() => {
     setOverlaySidebar(false);
+    setNewSessionOpen(null);
     setAdminOpen(true);
   }, []);
+  // 窗内窗外的「新建会话」都经后端发 chat-new-session 到这里（侧栏按钮、Ctrl+N、贴纸…）。
+  useTauriEvent<NewSessionPrefill>("chat-new-session", (event) => {
+    setOverlaySidebar(false);
+    setAdminOpen(false);
+    setNewSessionOpen({ cwd: event.payload?.cwd, provider: event.payload?.provider, nonce: Date.now() });
+  });
   // 远程新建会话启动成功:RemoteApp 把临时负 id 经页内事件送回来(桥不 reveal,这是移动端
   // 唯一的导航通路)。选中走侧栏点选同一条 resetTo 通道;负 id 由上面的 binding 轮询
   // (managed_terminal_binding 在远程白名单内)在认领后原地重绑成真 id。桌面此事件永不派发。
@@ -1739,7 +1760,12 @@ export function ChatWindow() {
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
-    listen<number>("chat-session-changed", (event) => resetTo(event.payload)).then((fn) => {
+    // 被带去某个会话（点卡片、通知、新会话 reveal）时新建页 / 管理页让位。
+    listen<number>("chat-session-changed", (event) => {
+      setNewSessionOpen(null);
+      setAdminOpen(false);
+      resetTo(event.payload);
+    }).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
     return () => { cancelled = true; un?.(); };
@@ -2342,7 +2368,7 @@ export function ChatWindow() {
     setSendError("");
     try {
       const started = await copySessionToProvider(sessionId, target.id, model ? { model } : undefined);
-      handoffRef.current = { path: started.handoffPath, expectProvider: target.id, at: Date.now(), tempId: started.tempId, realId: null };
+      handoffRef.current = { prompt: t.chat.handoffPrompt(started.handoffPath), failMessage: t.chat.handoffInjectFailed, expectProvider: target.id, at: Date.now(), tempId: started.tempId, realId: null };
       resetTo(started.tempId);
     } catch (error) {
       setSendError(formatBackendError(error, t.locale));
@@ -2397,7 +2423,7 @@ export function ChatWindow() {
     if (pending.realId !== sessionId) return;
     if (terminalAttention) return; // 等用户处理完启动交互，attention 清除后重跑
     let cancelled = false;
-    const injectPrompt = t.chat.handoffPrompt(pending.path);
+    const injectPrompt = pending.prompt;
     handoffInjectingRef.current = true;
     (async () => {
       try {
@@ -2413,7 +2439,7 @@ export function ChatWindow() {
           setTerminalAttention(startup);
           return;
         }
-        await submitToTerminal(sessionId, injectPrompt, undefined, { message: t.chat.handoffInjectFailed });
+        await submitToTerminal(sessionId, injectPrompt, undefined, { message: pending.failMessage });
         if (cancelled) return;
         handoffRef.current = null;
       } catch (error) {
@@ -3656,7 +3682,22 @@ export function ChatWindow() {
           <SessionAdmin onBack={() => setAdminOpen(false)} onOpen={selectSession} />
         </div>
       )}
-      <div className="chat-main" hidden={adminOpen}>
+      {newSessionOpen && !adminOpen && (
+        <div className="chat-main chat-newsession-main">
+          <NewSessionPage
+            key={newSessionOpen.nonce}
+            prefill={newSessionOpen}
+            onLaunched={(tempId, launchedProvider, message) => {
+              // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
+              if (message) {
+                handoffRef.current = { prompt: message, failMessage: t.newSession.firstPromptFailed, expectProvider: launchedProvider, at: Date.now(), tempId, realId: null };
+              }
+              selectSession(tempId);
+            }}
+          />
+        </div>
+      )}
+      <div className="chat-main" hidden={adminOpen || !!newSessionOpen}>
       <header className="chat-bar" data-tauri-drag-region>
         {((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
         {history ? (

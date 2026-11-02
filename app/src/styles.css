@@ -3814,6 +3814,39 @@ select.ns-input {
 .chat-main[hidden] { display: none !important; }
 
 /* ── 会话管理页（对照 Kimi Code .session-admin / .sa-*，变量换成 Meowo 的）── */
+/* 新建会话页（对照 Kimi：主区正中一个输入框，下方一排工作区 / Agent / 启动选项小下拉）。
+   输入框外观与对话页 composer 同一套（圆角、底色、阴影、黑白反相发送钮）。 */
+.nsp { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: var(--sp-24) var(--sp-24) 12vh; background: var(--cc-bg); }
+.nsp-center { width: min(var(--chat-col), 100%); display: flex; flex-direction: column; gap: var(--sp-10); }
+.nsp-title { margin: 0 0 var(--sp-10); text-align: center; font-size: 22px; font-weight: 600; color: var(--cc-text); letter-spacing: .01em; }
+.nsp-composer { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12) var(--sp-8) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-composer); background: color-mix(in srgb, var(--cc-bg) 96%, white 4%); box-shadow: var(--shadow-input); transition: border-color var(--dur-base); }
+.nsp-composer:focus-within { border-color: color-mix(in srgb, var(--cc-text) 22%, var(--cc-border)); }
+.nsp-input { width: 100%; min-height: 72px; max-height: 240px; padding: var(--sp-3) var(--sp-8); resize: none; border: 0; outline: none; color: var(--cc-text); background: transparent; font-family: inherit; font-size: var(--text-base); line-height: var(--leading-body); field-sizing: content; }
+.nsp-input::placeholder { color: var(--cc-text-faint); }
+.nsp-bar { display: flex; align-items: center; gap: var(--sp-8); }
+.nsp-chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); }
+/* 下拉收成无框小钮（Kimi 输入框底部的选择器形态），悬停才显底。 */
+.nsp-chip .dd-btn { min-width: 0; max-width: 220px; height: 30px; padding: 0 var(--sp-8); gap: var(--sp-4); border-color: transparent; border-radius: 999px; background: transparent; color: var(--cc-text-dim); }
+.nsp-chip .dd-btn:hover:not(:disabled), .nsp-chip .dd-btn.open { background: var(--fill-hover); border-color: transparent; color: var(--cc-text); }
+.nsp-chip .dd-btn:disabled { opacity: .5; cursor: default; }
+.nsp-chip .dd-ico { width: 15px; height: 15px; }
+.nsp-chip .dd-ico svg { width: 14px; height: 14px; }
+.nsp-agent-mark { display: inline-flex; }
+.nsp-send { flex: none; width: var(--icon-button-md); height: var(--icon-button-md); padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-bg); background: var(--cc-text); cursor: pointer; transition: background var(--dur-fast), transform var(--dur-fast); }
+.nsp-send:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-text) 82%, var(--cc-bg)); }
+.nsp-send:active:not(:disabled) { transform: scale(.94); }
+.nsp-send:disabled { color: var(--cc-text-faint); background: color-mix(in srgb, var(--cc-text) 9%, var(--cc-bg)); cursor: default; }
+.nsp-spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nsp-spin .8s linear infinite; }
+@keyframes nsp-spin { to { transform: rotate(360deg); } }
+.nsp-notes { display: flex; flex-direction: column; gap: var(--sp-4); padding: 0 var(--sp-8); }
+.nsp-note { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.nsp-note.is-warn { color: var(--cc-text-dim); }
+.nsp-note.is-error { color: var(--cc-err-text); }
+/* macOS 没有独立顶栏（红绿灯嵌在 52px 标题行），新建页顶上留一条拖拽区，窗口照样能拖。 */
+.nsp-drag { position: absolute; top: 0; left: 0; right: 0; height: 52px; }
+.nsp-note-btn { height: 22px; padding: 0 var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: none; color: var(--cc-text-dim); font: inherit; cursor: pointer; }
+.nsp-note-btn:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
+.nsp-note-btn:disabled { opacity: .5; cursor: default; }
 .session-admin { display: flex; flex-direction: column; min-width: 0; height: 100%; background: var(--cc-bg); position: relative; }
 .sa-head { flex: none; display: flex; align-items: center; gap: var(--sp-6); height: 48px; padding: 0 var(--sp-16); border-bottom: var(--hairline) solid var(--cc-border); }
 .sa-back { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
