@@ -3945,6 +3945,8 @@ select.ns-input {
   background: var(--chat-card-bg);
   border-top: var(--hairline) solid var(--cc-border);
   border-left: var(--hairline) solid var(--cc-border);
+  /* 两条边框在左上角交成直角很生硬（用户实拍「边上为什么是直角」），对照 Kimi 收成圆角。 */
+  border-top-left-radius: var(--r-12);
   overflow: hidden;
 }
 /* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 18,18,18 之上叠一层
@@ -4429,15 +4431,20 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 指示条对照 Kimi 的分栏柄（.rh-bar）：平时与悬停都不显示（鼠标经过边缘就亮一整条蓝线，用户实拍
    「好丑」），只在真正拖动时出一条 1px 的中性灰线。命中区与光标不变，照样一抓就能拖。 */
 .chat-sidebar-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 1px; transform: translateX(-50%); background: color-mix(in srgb, var(--cc-text) 28%, transparent); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
-:root:not(.platform-macos) .chat-sidebar-resizer::before,
-:root:not(.platform-macos) .chat-sidebar-resizer::after { left: calc(var(--sp-6) / 2); }
+/* 非 mac 主列已贴着外壳平铺（10-29 取消了 6px 卡片缝），柄就在主列左边框上：指示条与边框
+   完全重叠、同宽，拖动时只是把这条边框压深（实拍：此前沿用旧缝隙的 +3px 偏移，拖动时边框旁
+   另出一条线）。从圆角下方开始，不从弧形角上戳出来。 */
+:root:not(.platform-macos) .chat-sidebar-resizer::after { top: var(--r-12); bottom: 0; width: 1px; transform: none; background: color-mix(in srgb, var(--cc-text) 45%, transparent); }
 .chat-body.is-sidebar-resizing .chat-sidebar-resizer::after { opacity: 1; }
 .chat-body.is-sidebar-resizing { user-select: none; cursor: col-resize; }
 .chat-diff-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 12px; transform: translateX(-50%); }
 .chat-diff-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 2px; transform: translateX(-50%); border-radius: 1px; background: var(--cc-accent); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
-:root:not(.platform-macos) .chat-diff-resizer::before,
-:root:not(.platform-macos) .chat-diff-resizer::after { left: calc(var(--sp-6) / -2); }
 .chat-diff-resizer:hover::after, .chat-body.is-diff-resizing .chat-diff-resizer::after { opacity: .7; }
+/* 非 mac 同侧栏柄：面板左边框就是分界，指示条与它重叠同宽，只在拖动时压深成灰线
+   （此前沿用旧卡片缝的 -3px 偏移、悬停亮蓝线，与侧栏柄实拍的毛病一样）。 */
+:root:not(.platform-macos) .chat-diff-resizer::after { top: 0; bottom: 0; width: 1px; transform: none; border-radius: 0; background: color-mix(in srgb, var(--cc-text) 45%, transparent); }
+:root:not(.platform-macos) .chat-diff-resizer:hover::after { opacity: 0; }
+:root:not(.platform-macos) .chat-body.is-diff-resizing .chat-diff-resizer::after { opacity: 1; }
 /* 折叠/最大化时分栏无意义，柄随面板一起藏。 */
 .chat-diff-resizer.is-hidden, .chat-body.is-diff-max .chat-diff-resizer { display: none; }
 /* 拖动期间全局禁选中 + 强制列向光标：指针移出柄后仍保持拖拽语义。 */
@@ -4455,6 +4462,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   background: var(--cc-bg);
   border-top: var(--hairline) solid var(--cc-border);
   border-left: var(--hairline) solid var(--cc-border);
+  /* 最大化时面板顶替主列的位置，左上角同主列收圆角。 */
+  border-top-left-radius: var(--r-12);
   overflow: hidden;
 }
 /* macOS 最大化时红绿灯仍在窗口左上（承载它的 .chat-bar 已隐藏），头行让位同其他 mac 头部。 */
