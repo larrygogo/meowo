@@ -4292,10 +4292,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    +3px；mac 无卡片缝隙，柄正好压在侧栏与主列的接缝上，不偏移。 */
 .chat-sidebar-resizer { flex: 0 0 0; z-index: 5; position: relative; cursor: col-resize; }
 .chat-sidebar-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 12px; transform: translateX(-50%); }
-.chat-sidebar-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 2px; transform: translateX(-50%); border-radius: 1px; background: var(--cc-accent); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+/* 指示条对照 Kimi 的分栏柄（.rh-bar）：平时与悬停都不显示（鼠标经过边缘就亮一整条蓝线，用户实拍
+   「好丑」），只在真正拖动时出一条 1px 的中性灰线。命中区与光标不变，照样一抓就能拖。 */
+.chat-sidebar-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 1px; transform: translateX(-50%); background: color-mix(in srgb, var(--cc-text) 28%, transparent); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 :root:not(.platform-macos) .chat-sidebar-resizer::before,
 :root:not(.platform-macos) .chat-sidebar-resizer::after { left: calc(var(--sp-6) / 2); }
-.chat-sidebar-resizer:hover::after, .chat-body.is-sidebar-resizing .chat-sidebar-resizer::after { opacity: .7; }
+.chat-body.is-sidebar-resizing .chat-sidebar-resizer::after { opacity: 1; }
 .chat-body.is-sidebar-resizing { user-select: none; cursor: col-resize; }
 .chat-diff-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 12px; transform: translateX(-50%); }
 .chat-diff-resizer::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 0; width: 2px; transform: translateX(-50%); border-radius: 1px; background: var(--cc-accent); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
