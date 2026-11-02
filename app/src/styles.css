@@ -2159,7 +2159,11 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
 .kbd-combos { flex: none; display: inline-flex; align-items: center; gap: var(--sp-6); }
 .kbd-combo { display: inline-flex; align-items: center; gap: 3px; }
 .kbd-or { margin-right: var(--sp-2); color: var(--cc-text-faint); font-size: var(--text-xs); }
-.kbd-combos kbd { min-width: 22px; height: 22px; padding: 0 var(--sp-6); display: inline-grid; place-items: center; border: var(--hairline) solid var(--cc-border); border-bottom-width: 2px; border-radius: var(--radius-sm); background: var(--cc-surface); color: var(--cc-text-dim); font: 500 var(--text-xs)/1 inherit; }
+/* 字体属性分开写：font 简写里放 inherit 会让整条声明作废，键帽退回浏览器默认的大字号（用户实拍「太大」）。 */
+.kbd-combos kbd { min-width: 20px; height: 20px; padding: 0 var(--sp-5); display: inline-grid; place-items: center; border: var(--hairline) solid var(--cc-border); border-bottom-width: 1.5px; border-radius: 5px; background: var(--cc-surface); color: var(--cc-text-dim); font-family: inherit; font-size: 11px; font-weight: 500; line-height: 1; }
+/* 快捷键只是清单：行比开关行收紧，说明用常规字重。 */
+.shortcut-card .row { padding-top: var(--sp-8); padding-bottom: var(--sp-8); }
+.shortcut-card .row-label { font-weight: 400; }
 .sec-caption { margin: var(--sp-18) var(--sp-6) var(--sp-8); font-size: var(--fs-13); font-weight: 600; color: var(--cc-text); }
 /* 设置 → 会话 → 已归档会话列表（看板已无「已归档」tab，这里是唯一管理入口）。
    限高内滚：归档可能积上百条，不能撑满设置页。 */

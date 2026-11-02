@@ -145,7 +145,7 @@ function ShortcutsSection() {
         // Fragment 而非外包 div：设置搜索要求分组标题与卡片直接挂在分区下（searchFilter）。
         <Fragment key={group.title}>
           <div className={"sec-caption" + (index === 0 ? " is-first" : "")}>{group.title}</div>
-          <div className="row-card">
+          <div className="row-card shortcut-card">
             {group.rows.map(([keys, desc]) => (
               <div className="row" key={keys}>
                 <div className="row-text"><div className="row-label">{desc}</div></div>
