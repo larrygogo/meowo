@@ -406,9 +406,9 @@ describe("ChatSidebar", () => {
     await waitFor(() => expect(args).toHaveLength(2));
     expect(args[1]).toEqual({ search: null, cwd: null, limit: 120 });
 
-    // 筛选弹层（Linear 式）：图标钮 → 「目录」行 → 选项列表。
-    fireEvent.click(screen.getByRole("button", { name: "筛选与分组" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /^目录/ }));
+    // 视图与排序弹层（对照 Kimi Code）：图标钮 → 底部「工作区」行 → 选项列表。
+    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /^工作区/ }));
     fireEvent.click(await screen.findByRole("option", { name: "scratch" }));
     expect(await screen.findByRole("button", { name: /临时活儿/ })).toBeTruthy();
     expect(args[args.length - 1]).toEqual({ search: null, cwd: "D:/tmp/scratch", limit: 60 });
@@ -440,8 +440,8 @@ describe("ChatSidebar", () => {
     expect(screen.queryByRole("button", { name: /^scratch/ })).toBeNull();
 
     // 分组入口在筛选弹层里：单面板扁平化后选项直接内联,图标钮 → 选「按目录」。
-    fireEvent.click(screen.getByRole("button", { name: "筛选与分组" }));
-    fireEvent.click(screen.getByRole("option", { name: "按目录" }));
+    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
+    fireEvent.click(screen.getByRole("option", { name: "按工作区分组" }));
     const list = screen.getByRole("navigation");
     const heads = within(list).getAllByRole("button").filter((b) => b.className.includes("group-head"));
     expect(heads.map((h) => h.textContent)).toEqual(["scratch1", "meowo2"]);
@@ -586,7 +586,7 @@ describe("ChatSidebar", () => {
     // 默认「创建时间」：不跟后端的活跃顺序走。
     expect(itemNames()).toEqual(["alpha", "等待首次输入", "beta"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "筛选与分组" }));
+    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
     fireEvent.click(screen.getByRole("option", { name: "按名称" }));
     expect(itemNames()).toEqual(["alpha", "beta", "等待首次输入"]);
     expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("name");

@@ -226,9 +226,28 @@ function groupByState(items: LiveSession[], t: Dict, approvals: ReadonlySet<numb
   }));
 }
 
-/** 侧栏的筛选/分组弹层：单面板扁平化——「分组」「排序」的选项直接内联为 radio 行,
- *  选中即应用并收起(旧版是 根→子面板→选项 三级,改一项要 3 击);仅「目录」因列表
- *  无上限保留子面板。 */
+/** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
+const SF_ICON_PATHS: Record<GroupMode | SortMode | "dir-filter", string> = {
+  none: "M5 7h14M5 12h14M5 17h14",
+  dir: "M6 4v12a2 2 0 0 0 2 2h4M6 9h6M15 6.5h4v4h-4zM15 15.5h4v4h-4z",
+  date: "M5 6h14v13H5zM5 10h14M9 4v4M15 4v4",
+  state: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3",
+  recent: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 8v4l2.5 2",
+  created: "M5 5h14v14H5zM12 9v6M9 12h6",
+  name: "M4 18l3.5-10L11 18M5.2 15h4.6M14 7h6l-6 10h6",
+  "dir-filter": "M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z",
+};
+function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
+  return (
+    <svg className="sf-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={SF_ICON_PATHS[name]} />
+    </svg>
+  );
+}
+
+/** 侧栏的视图/排序弹层（对照 Kimi Code 侧栏菜单）：「视图」「排序」两节，每项图标 + 文案，
+ *  选中项只在右侧打勾、文字不变色；选中即应用并收起。目录筛选沉到分隔线下面当一个入口，
+ *  因列表无上限保留子面板。 */
 function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortMode, sortLabels, onDir, onGroup, onSort, t }: {
   dirValue: string | null;
   dirOptions: { value: string; label: string }[];
@@ -293,11 +312,6 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
         <div className="dd-menu sf-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
           {view === "root" ? (
             <>
-              <button type="button" role="menuitem" className="dd-item sf-row" onClick={() => setView("dir")}>
-                <span>{t.chat.sidebarFilterDir}</span>
-                <span className="sf-val"><span className="sf-val-text">{dirLabel}</span>{chevron}</span>
-              </button>
-              <div className="sf-sep" role="separator" />
               <div className="sf-caption">{t.chat.sidebarFilterGroup}</div>
               {(["none", "dir", "date", "state"] as const).map((mode) => {
                 const selected = groupMode === mode;
@@ -307,15 +321,15 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
                     type="button"
                     role="option"
                     aria-selected={selected}
-                    className={"dd-item" + (selected ? " sel" : "")}
+                    className={"dd-item sf-opt" + (selected ? " sel" : "")}
                     onClick={() => pick(() => onGroup(mode))}
                   >
+                    <SfIcon name={mode} />
                     <span className="dd-label">{groupLabels[mode]}</span>
                     {selected && check}
                   </button>
                 );
               })}
-              <div className="sf-sep" role="separator" />
               <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
               {(["recent", "created", "name"] as const).map((mode) => {
                 const selected = sortMode === mode;
@@ -325,9 +339,10 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
                     type="button"
                     role="option"
                     aria-selected={selected}
-                    className={"dd-item" + (selected ? " sel" : "")}
+                    className={"dd-item sf-opt" + (selected ? " sel" : "")}
                     onClick={() => pick(() => onSort(mode))}
                   >
+                    <SfIcon name={mode} />
                     <span className="dd-label">{sortLabels[mode]}</span>
                     {selected && check}
                   </button>
@@ -336,6 +351,12 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
               {/* 「按名称」只排已加载的这一页（翻页新条目追加尾部）：不说明的话,
                   乱序看起来就是「排序坏了」。创建时间与最近活跃由后端分页，排的是全量。 */}
               {sortMode === "name" && <div className="sf-note">{t.chat.sortPartialNote}</div>}
+              <div className="sf-sep" role="separator" />
+              <button type="button" role="menuitem" className="dd-item sf-opt sf-row" onClick={() => setView("dir")}>
+                <SfIcon name="dir-filter" />
+                <span className="dd-label">{t.chat.sidebarFilterDir}</span>
+                <span className="sf-val"><span className="sf-val-text">{dirLabel}</span>{chevron}</span>
+              </button>
             </>
           ) : (
             <>

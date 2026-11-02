@@ -705,9 +705,9 @@ export const zh = {
     // 「取消」实发 Esc 的后果说明：与零副作用的「仅收起」是两回事，必须对用户说出来。
     terminalPromptCancelTip: "向终端发送 Esc，可能中断正在执行的回合",
     sidebarTitle: "会话",
-    sidebarFilterTip: "筛选与分组",
-    sidebarFilterDir: "目录",
-    sidebarFilterGroup: "分组",
+    sidebarFilterTip: "视图与排序",
+    sidebarFilterDir: "工作区",
+    sidebarFilterGroup: "视图",
     sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
     sidebarActionFailed: "操作失败，请稍后再试。",
@@ -751,19 +751,20 @@ export const zh = {
     // 首载失败的独立错误行（P1-1）：不降级成「暂无会话」，故障不能被读成「会话全没了」。
     sidebarLoadFailed: "加载会话失败",
     sidebarRetry: "重试",
-    sidebarDirAll: "全部目录",
+    sidebarDirAll: "全部工作区",
     sidebarShowIdle: (n: number) => `显示 ${n} 个未运行会话`,
     sidebarHideIdle: "收起未运行会话",
     // G-16：视觉隐藏的侧栏状态汇总播报（全侧栏唯一的 live region）。
     sidebarLiveSummary: (approval: number, waiting: number, error: number) =>
       `会话状态汇总：${approval} 个待批准，${waiting} 个等待输入，${error} 个出错`,
     sidebarNoDir: "未记录目录",
-    groupNone: "不分组",
-    groupByDir: "按目录",
-    groupByDate: "按日期",
-    groupByState: "按状态",
-    sortRecent: "最近活跃",
-    sortCreated: "创建时间",
+    // 对照 Kimi Code 侧栏菜单的说法（平铺列表 / 按工作区分组 / 按最近活动）。
+    groupNone: "平铺列表",
+    groupByDir: "按工作区分组",
+    groupByDate: "按日期分组",
+    groupByState: "按状态分组",
+    sortRecent: "按最近活动",
+    sortCreated: "按创建时间",
     sortName: "按名称",
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     sortPartialNote: "仅排序已加载的会话",
