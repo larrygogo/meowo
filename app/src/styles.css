@@ -4004,8 +4004,10 @@ select.ns-input {
 /* 手动排序的拖拽（sidebarDrag），对照 Kimi Code 排队消息的拖拽：被拖的那条降到 .45，落点是画在
    两条之间缝隙里的一根 2px 圆头细线。此前在条目内侧描边，被圆角掰成一道弧，很难看（用户实拍）。 */
 .chat-sidebar-item.is-dragging { opacity: .45; }
-/* 拖拽影子：复制的行跟着鼠标走，浮在列表上方；不接指针，落点判定才能穿过它看到下面的行。 */
-.sidebar-drag-ghost { position: fixed; left: 0; top: 0; margin: 0; z-index: 1000; pointer-events: none; opacity: .92; border-radius: var(--radius-md); background: var(--cc-bg); box-shadow: 0 6px 18px rgba(0, 0, 0, .28), 0 0 0 var(--hairline) var(--cc-border); }
+/* 拖拽影子：复制的行跟着鼠标走，浮在列表上方；不接指针，落点判定才能穿过它看到下面的行。
+   带上 .chat-sidebar 前缀：后面 .chat-sidebar-item 的 position: relative / 透明底同优先级会盖掉它
+   （实拍：会话行拖动看不到影子，分组头没这条样式所以正常）。 */
+.chat-sidebar .sidebar-drag-ghost { position: fixed; left: 0; top: 0; margin: 0; z-index: 1000; pointer-events: none; opacity: .95; border-radius: var(--radius-md); color: var(--cc-text); background: var(--cc-panel-raised); box-shadow: 0 6px 18px rgba(0, 0, 0, .28), 0 0 0 var(--hairline) var(--cc-border); }
 .chat-sidebar-item.is-drop-before::before,
 .chat-sidebar-item.is-drop-after::after { content: ""; position: absolute; left: var(--sp-6); right: var(--sp-6); height: 2px; border-radius: 999px; background: var(--cc-accent); pointer-events: none; z-index: 1; }
 .chat-sidebar-item.is-drop-before::before { top: -2px; }

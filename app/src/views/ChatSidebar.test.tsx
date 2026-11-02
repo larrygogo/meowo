@@ -709,7 +709,12 @@ describe("ChatSidebar", () => {
       fireEvent.pointerDown(first, { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
       fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
       await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      // 会话行也有影子（实拍：只有分组有）；影子不带选中态，松手收掉。
+      const ghost = document.querySelector(".sidebar-drag-ghost");
+      expect(ghost?.textContent).toContain("丙");
+      expect(ghost?.classList.contains("is-active")).toBe(false);
       fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      expect(document.querySelector(".sidebar-drag-ghost")).toBeNull();
     } finally {
       document.elementFromPoint = original;
     }

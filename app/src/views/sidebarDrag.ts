@@ -91,6 +91,8 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
         grabY = startY - rect.top;
         ghost = source.cloneNode(true) as HTMLElement;
         ghost.removeAttribute("id");
+        // 选中 / 勾选态的半透明底同优先级会盖掉影子的实底，影子里不带这些状态。
+        ghost.classList.remove("is-active", "is-checked", "is-dragging", "is-drop-before", "is-drop-after");
         ghost.classList.add("sidebar-drag-ghost");
         ghost.style.width = `${rect.width}px`;
         // 挂在侧栏里而不是 body 下：行样式多是 .chat-sidebar 下的后代选择器，挂出去就走样。
