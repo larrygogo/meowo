@@ -241,6 +241,13 @@ pub enum ChatItem {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compaction: Option<CompactionDetail>,
     },
+    /// 送达回执：CLI 正忙，把这条用户消息收进了自己的队列（对照 Kimi 的 prompt:accepted）。
+    /// 不进对话时间线，前端只拿它推进发出消息的状态（发送中 → 已排队 → 已读到）。
+    PromptQueued {
+        id: String,
+        timestamp: Option<String>,
+        text: String,
+    },
 }
 
 /// 压缩分隔条的细节（对照 Kimi 的「已自动压缩上下文（before → after tokens）· 查看摘要」）。

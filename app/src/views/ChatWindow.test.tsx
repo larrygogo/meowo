@@ -110,6 +110,34 @@ describe("ChatWindow 适配回归", () => {
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
 
+  // 对照 Kimi 的 prompt:accepted：CLI 记下入队就是送达回执。排队回执标「已收到」，
+  // 回执本身不出现在对话里（它不是一句话，正文之后会以用户消息再出现）。
+  it("CLI 的送达回执把排队消息标成已收到，回执不进对话", async () => {
+    const base = setup(509, "codex", "running");
+    let acked = false;
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history" && acked) {
+        return Promise.resolve({
+          ...history(509, "codex", "running"),
+          items: [{ type: "prompt_queued", id: "queued:t:6", timestamp: "2026-11-01T08:00:00Z", text: "顺手改个名" }],
+          offset: 1,
+        });
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-509");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "顺手改个名" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    expect(screen.queryByText(zh.chat.queuedAccepted)).toBeNull();
+    acked = true;
+    await screen.findByText(zh.chat.queuedAccepted, {}, { timeout: 4000 });
+    expect(document.querySelector(".chat-message.is-user")).toBeNull();
+    expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
+  });
+
   // gemini 启动即落 running、首条消息前无事件纠正：屏幕已停在输入框（idle）时必须按回车
   // 提交，按 Tab 正文会停在输入框里发不出去（0.6.11 实机）。
   it("gemini DB 残留 running 但屏幕空闲时，发送用回车而非排队键", async () => {
@@ -691,7 +719,8 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(515)).not.toContain("/undo 1");
     expect(JSON.stringify(confirms)).toContain(zh.chat.undoConfirmFiles);
     await waitFor(() => expect(screen.queryByText("甲做完了")).toBeNull(), { timeout: 4000 });
-    expect(box().value).toBe("先做甲");
+    // 旧消息消失与输入框回填是先后两步：CI 慢机器上断言落在两步之间就挂（v0.6.19 发版实遇）。
+    await waitFor(() => expect(box().value).toBe("先做甲"), { timeout: 4000 });
     if (mode === "cleared") {
       await screen.findByText(zh.chat.undoDone, {}, { timeout: 4000 });
       expect(cleared).toBe(true);

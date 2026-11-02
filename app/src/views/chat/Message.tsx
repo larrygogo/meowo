@@ -589,6 +589,8 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
               未确认是回显超时仍不见落盘，照实说，不悄悄撤掉。 */}
           {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{t.chat.interjectedBadge}</span>}
           {echoPhase === "uncertain" && <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{t.chat.echoUncertain}</span>}
+          {/* 发出时以为空闲、其实 CLI 还在忙：它把这条收进了队列，照实说「已排队」。 */}
+          {echoPhase === "accepted" && <span className="chat-user-note" data-tip={t.chat.echoQueuedTip}>{t.chat.echoQueued}</span>}
           {/* 先上屏再发送：写终端期间转一个小圈；没写进去就照实标失败，给重发与放回输入框。 */}
           {echoPhase === "sending" && <span className="chat-user-note is-sending" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
           {echoPhase === "failed" && <EchoFailedActions itemId={item.id} actions={echoActions} />}
@@ -653,5 +655,7 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
   if (item.type === "meta" && item.kind === "interrupted") {
     return <div className="chat-meta"><span />{t.chat.turnInterrupted}<span /></div>;
   }
+  // 送达回执在 reduceChatEvents 就滤掉了，走到这里说明有绕过它的来源，不画。
+  if (item.type === "prompt_queued") return null;
   return <CompactDivider item={item} summary={compactSummary} />;
 });

@@ -30,7 +30,7 @@ import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
-import { anchorFrom, echoItemId, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts } from "./chat/outgoingPrompts";
+import { anchorFrom, echoItemId, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
 import { ANCHOR_PX, countsAsUnseen, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
@@ -430,6 +430,8 @@ export function ChatWindow() {
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [history, setHistory] = useState<ChatHistory | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
+  // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
+  const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
   // 异步流程里读最新消息（撤回要等被撤的那条从对话里消失）。
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -520,7 +522,7 @@ export function ChatWindow() {
   const outgoing = useOutgoingPrompts(sessionId);
   const queuedInterjections = useMemo(() => outgoing.filter((prompt) => prompt.kind === "queued"), [outgoing]);
   const pendingEchoes = useMemo(() => outgoing.filter((prompt) => prompt.kind === "echo"), [outgoing]);
-  const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending").length;
+  const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending" || prompt.phase === "accepted").length;
   const queuedInserted = queuedInterjections.some((prompt) => prompt.phase === "inserted");
   // 排队区只放还没进对话的：已插入的那条此刻已经以「回合中插入」的气泡出现在对话里，
   // 回执再挂一份就是同一句话显示两遍（用户实拍）。已插入的状态仍由运行条那句交代。
@@ -1538,7 +1540,7 @@ export function ChatWindow() {
         for (const entry of predecessors) {
           const full = await getChatHistory(entry.id, 0, true).catch(() => null);
           if (cancelled) return;
-          segments.push({ provider: entry.provider, items: full && full.supported !== false ? full.items : [] });
+          segments.push({ provider: entry.provider, items: full && full.supported !== false ? full.items.filter((item) => item.type !== "prompt_queued") : [] });
         }
         if (!cancelled) {
           // 前序段是旧历史（同 loadEarlier 的前插）：未读快照同步抬高，否则接续段
@@ -1725,6 +1727,7 @@ export function ChatWindow() {
       return next;
     });
     setItems([]);
+    setQueueAcks([]);
     setPrefixSegments([]);
     setHistory(null);
     setQuestionCustomText("");
@@ -1905,6 +1908,11 @@ export function ChatWindow() {
         return sameHistoryMeta(prev, merged) ? prev : merged;
       });
       setItems((prev) => next.items.length || reset ? reduceChatEvents(prev, next.items, reset) : prev);
+      if (!emptyReset) {
+        const acks = next.items.filter((item): item is PromptAck => item.type === "prompt_queued");
+        if (reset) setQueueAcks(acks);
+        else if (acks.length > 0) setQueueAcks((prev) => [...prev, ...acks]);
+      }
       setLoading(false);
       setFailed(false);
       failStreakRef.current = 0;
@@ -2924,11 +2932,12 @@ export function ChatWindow() {
     if (loading) return;
     outgoingStore.reconcile(sessionId, {
       items,
+      acks: queueAcks,
       lastUserText: history?.lastUserText,
       ended: history?.status === "ended",
       now: Date.now(),
     });
-  }, [sessionId, loading, items, history?.lastUserText, history?.status, outgoingTick]);
+  }, [sessionId, loading, items, queueAcks, history?.lastUserText, history?.status, outgoingTick]);
   useEffect(() => {
     if (outgoing.length === 0) return;
     const timer = window.setInterval(() => setOutgoingTick((n) => n + 1), 1_000);
@@ -4167,6 +4176,8 @@ export function ChatWindow() {
             {queuedShown.map((item) => (
               <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" ? " is-failed" : "")}>
                 {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
+                {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
+                {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.queuedAcceptedTip}>{t.chat.queuedAccepted}</span>}
                 {item.phase === "failed" && <>
                   <span className="chat-queued-tag is-warn" role="alert">{t.chat.echoFailed}</span>
                   <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>

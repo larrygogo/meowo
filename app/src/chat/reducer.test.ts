@@ -10,6 +10,14 @@ const user = (id: string, text: string): ChatItem => ({
 });
 
 describe("reduceChatEvents", () => {
+  it("送达回执不进渲染序列", () => {
+    const items = reduceChatEvents([], [
+      { type: "prompt_queued", id: "q1", timestamp: null, text: "继续" },
+      { type: "user_text", id: "u1", timestamp: null, text: "继续" },
+    ], true);
+    expect(items.map((item) => item.type)).toEqual(["user_text"]);
+  });
+
   it("merges assistant deltas across polling boundaries", () => {
     const first = reduceChatEvents([], [{
       type: "assistant_delta",

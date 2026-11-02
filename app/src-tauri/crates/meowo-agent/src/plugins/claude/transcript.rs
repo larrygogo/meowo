@@ -836,6 +836,30 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 interjected: true,
             }]
         }
+        // CLI 正忙时用户发来的话先入队，记一行 queue-operation enqueue（2.1.31x 实拍：入队
+        // 当刻写盘；插进回合时再记 remove + attachment/queued_command，回合结束才处理的
+        // 落成普通 user 行）。这行是「CLI 收下了」的直接证据，对照 Kimi 的 prompt:accepted：
+        // 前端拿它把发出的消息标成「已排队」，不再干等十几秒后报「未确认送达」。
+        // 只认人发的话：子代理回报（<agent-message）和后台任务通知（<task-notification>）
+        // 同样走这条队列，它们不是用户发的。行上没有 uuid，id 用时间戳加正文长度拼出来。
+        "queue-operation" => {
+            if v.get("operation").and_then(|x| x.as_str()) != Some("enqueue") {
+                return Vec::new();
+            }
+            let Some(raw) = v.get("content").and_then(|x| x.as_str()) else {
+                return Vec::new();
+            };
+            let head = raw.trim_start();
+            if head.is_empty() || head.starts_with("<agent-message") || head.starts_with("<task-notification>") {
+                return Vec::new();
+            }
+            let text = strip_pasted_content_tags(raw.trim()).trim().to_string();
+            vec![TranscriptEvent::PromptQueued {
+                id: format!("queued:{}:{}", timestamp.as_deref().unwrap_or(""), raw.len()),
+                timestamp,
+                text,
+            }]
+        }
         _ => Vec::new(),
     }
 }
@@ -2384,6 +2408,30 @@ mod tests {
         // 用户自己排队的插话（origin.kind = "human"）照旧是用户消息。
         let human = r#"{"type":"attachment","uuid":"p3","attachment":{"type":"queued_command","prompt":"继续","commandMode":"prompt","origin":{"kind":"human"}}}"#;
         assert!(matches!(parse_chat_items(human).as_slice(), [ChatItem::UserText { text, .. }] if text == "继续"));
+    }
+
+    /// CLI 正忙时用户的话先入队：enqueue 行解析成送达回执，子代理回报、后台通知与出队记账不算。
+    #[test]
+    fn chat_parser_turns_human_enqueue_into_prompt_queued() {
+        let human = r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-01T04:16:55.516Z","sessionId":"s","content":"<pasted_content id=\"7436\">\n为什么会重复\n</pasted_content id=\"7436\">"}"#;
+        let items = parse_chat_items(human);
+        assert_eq!(items.len(), 1);
+        let ChatItem::PromptQueued { id, timestamp, text } = &items[0] else {
+            panic!("应为 PromptQueued：{items:?}");
+        };
+        assert_eq!(text, "为什么会重复");
+        assert_eq!(timestamp.as_deref(), Some("2026-11-01T04:16:55.516Z"));
+        assert!(id.starts_with("queued:2026-11-01T04:16:55.516Z:"));
+        for skipped in [
+            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"<task-notification>
+<task-id>b1</task-id>"}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"<agent-message from="a1">
+报告"}"#,
+            r#"{"type":"queue-operation","operation":"remove","timestamp":"t","content":"继续"}"#,
+            r#"{"type":"queue-operation","operation":"dequeue","timestamp":"t"}"#,
+        ] {
+            assert!(parse_chat_items(skipped).is_empty(), "{skipped}");
+        }
     }
 
     /// 插话走 queued_command 送入，带 interjected 结构标记；普通 user 行（一轮的开头）不带。

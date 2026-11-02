@@ -133,6 +133,23 @@ describe("reconcileOutgoing", () => {
     const stale = [stamped(user("u-old", "继续"), -30), ...work];
     expect(reconcileOutgoing(list, ev(stale, 1_000))).toBe(list);
   });
+
+  // 对照 Kimi 的 prompt:accepted：CLI 正忙时 claude 把用户的话记一行入队，这就是送达回执。
+  it("送达回执把消息推进到已排队，一条回执只认一条，发送前的旧回执不算", () => {
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 1, 8, 0, s)).toISOString();
+    const ack = (id: string, text: string, s: number): ChatItem => ({ type: "prompt_queued", id, timestamp: at(s), text });
+    const before = [{ ...reply("a0"), timestamp: at(10) }];
+    const list = [prompt("queued", "继续", before), prompt("echo", "继续", before)];
+    const stale = ack("q-old", "继续", 5);
+    const first = reconcileOutgoing(list, { ...ev(before), acks: [stale, ack("q1", "继续", 12)] });
+    expect(first.map((p) => p.phase)).toEqual(["accepted", "pending"]);
+    const both = reconcileOutgoing(first, { ...ev(before), acks: [stale, ack("q1", "继续", 12), ack("q2", "继续", 13)] });
+    expect(both.map((p) => [p.phase, p.ackId])).toEqual([["accepted", "q1"], ["accepted", "q2"]]);
+    // 已排队的回显过了 15s 也不判未确认；正文落盘后照常收走。
+    expect(reconcileOutgoing(both, { ...ev(before, ECHO_CONFIRM_MS * 4), acks: [] })).toBe(both);
+    const landed = reconcileOutgoing(both, ev([...before, { ...user("u1", "继续", true), timestamp: at(30) }, { ...user("u2", "继续"), timestamp: at(40) }], 50_000));
+    expect(landed.map((p) => [p.kind, p.phase])).toEqual([["queued", "inserted"]]);
+  });
 });
 
 describe("createOutgoingStore", () => {

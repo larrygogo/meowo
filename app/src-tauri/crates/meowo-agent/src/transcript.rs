@@ -97,6 +97,14 @@ pub enum TranscriptEvent {
         kind: String,
         compaction: Option<CompactionDetail>,
     },
+    /// CLI 收下了一条用户消息、排进了自己的队列（它正忙，还没开始处理）。不是对话内容，
+    /// 只是送达回执：前端拿它确认「这条已经进了 CLI」，不必等它落成 user 行再猜。
+    /// 只有日志里记了入队动作的 provider 才产出（claude 的 queue-operation enqueue）。
+    PromptQueued {
+        id: String,
+        timestamp: Option<String>,
+        text: String,
+    },
 }
 
 impl From<TranscriptEvent> for ChatItem {
@@ -204,6 +212,15 @@ impl From<TranscriptEvent> for ChatItem {
                 timestamp,
                 kind,
                 compaction,
+            },
+            TranscriptEvent::PromptQueued {
+                id,
+                timestamp,
+                text,
+            } => Self::PromptQueued {
+                id,
+                timestamp,
+                text,
             },
         }
     }

@@ -668,6 +668,11 @@ export const zh = {
     echoRetry: "重发",
     echoRestore: "放回输入框",
     echoUncertainTip: "对话记录里还没出现这条，可到终端页确认",
+    // CLI 回了送达回执（入队记录）：消息已进它的队列，还没轮到处理。
+    echoQueued: "已排队",
+    echoQueuedTip: "Agent 还在忙，这条已进它的队列",
+    queuedAccepted: "已收到",
+    queuedAcceptedTip: "Agent 已收下，轮到时就处理",
     interjectedBadge: "回合中插入",
     interjectedBadgeTip: "Agent 在干活途中读到了这条",
     queuedAttachmentOnly: "（附件）",

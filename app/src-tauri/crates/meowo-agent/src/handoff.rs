@@ -109,7 +109,8 @@ fn render_item(item: &ChatItem, meta: &HandoffMeta) -> Option<String> {
             meta.from_provider_name
         )),
         // 内部思考对续接方没有交接价值且体量大；Meta 是渲染提示（compact 边界等）。
-        ChatItem::Reasoning { .. } | ChatItem::Meta { .. } => None,
+        // PromptQueued 是送达回执，正文随后会以用户消息再出现一次。
+        ChatItem::Reasoning { .. } | ChatItem::Meta { .. } | ChatItem::PromptQueued { .. } => None,
         // delta 在 reduce 阶段已并入最终件，落到这里说明流末尾有孤儿 delta——按正文对待。
         ChatItem::AssistantDelta { text, .. } => Some(format!(
             "## 助手（{}）\n\n{text}\n",
