@@ -132,6 +132,13 @@ pub trait AgentPlugin: Sync {
         &[]
     }
 
+    /// 设置 › 扩展页：该 agent **用户级**装了哪些技能、MCP、命令、钩子、插件（只读）。
+    /// `inst` 是默认账号的实况，数据目录随 `CLAUDE_CONFIG_DIR` 这类变量走。
+    /// 位置是各家自己的事，归插件声明；扫描助手在 [`crate::extensions`]。空 = 不支持列出。
+    fn extensions(&self, _inst: &Installation) -> Vec<crate::extensions::ExtensionGroupDto> {
+        Vec::new()
+    }
+
     /// 对话页快速切模型的预设（前端发送 `/model <id>`）。只有 `/model` 接受**内联参数**的
     /// agent 才该声明——交互式菜单型的 `/model` 在对话页发出去用户什么也看不见。
     /// 空 = 不提供快捷切换（前端只展示当前模型，不给菜单）。

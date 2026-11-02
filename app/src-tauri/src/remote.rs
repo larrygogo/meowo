@@ -1639,6 +1639,8 @@ mod tests {
             "clipboard_set_image",
             // 读回的是这台电脑的屏幕内容，手机端不许触发。
             "capture_screen_region",
+            // 本机各 agent 装了哪些技能/MCP/钩子（设置 › 扩展页），手机用不着，不外露。
+            "list_agent_extensions",
         ];
         for cmd in FORBIDDEN {
             assert!(

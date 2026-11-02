@@ -4,6 +4,7 @@ import { appConfirm } from "./confirm";
 import type { AgentDescriptor as AgentDescriptorDto } from "./generated/contracts/AgentDescriptor";
 import type { ChatUi as ChatUiDto } from "./generated/contracts/ChatUi";
 import type { ChatHistoryDto } from "./generated/contracts/ChatHistoryDto";
+import type { AgentExtensionsDto } from "./generated/contracts/AgentExtensionsDto";
 import type { LaunchChoice } from "./generated/contracts/LaunchChoice";
 import type { LaunchOption } from "./generated/contracts/LaunchOption";
 import type { LiveSession as LiveSessionDto } from "./generated/contracts/LiveSession";
@@ -872,6 +873,11 @@ export function availableTerminals(): Promise<ResumeTerminal[]> {
 /** 全部已注册 agent 及其本机安装状态。展示名、安装态都来自这里，前端不再硬编码 agent 名单。 */
 export function listAgents(): Promise<AgentDescriptor[]> {
   return invoke("list_agents");
+}
+
+/** 设置 › 扩展：每个已安装 agent 在用户级装的技能、MCP、命令、钩子、插件（只读，桌面专用）。 */
+export function listAgentExtensions(): Promise<AgentExtensionsDto[]> {
+  return invoke("list_agent_extensions");
 }
 
 /**

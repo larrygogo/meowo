@@ -285,6 +285,35 @@ impl AgentPlugin for Gemini {
     }
     /// gemini 没有 `/status`/`/compact`——对应物叫 `/stats` 与 `/compress`。此前前端的通用
     /// fallback 给它补全 `/status`，发进去只会报 unknown command。
+    /// Gemini：`skills/` 与共享的 `~/.agents/skills`、`settings.json` 的 MCP 与钩子、
+    /// `commands/*.toml`、`extensions/`（位置取自其 bundle 的 `Storage.getUser*Dir`）。
+    fn extensions(
+        &self,
+        inst: &crate::variant::Installation,
+    ) -> Vec<crate::extensions::ExtensionGroupDto> {
+        use crate::extensions as ext;
+        let dir = &inst.data_dir;
+        let settings_path = dir.join("settings.json");
+        let settings = ext::read_json(&settings_path);
+        [
+            ext::skills_group(&dir.join("skills"), false),
+            ext::shared_agent_skills(),
+            ext::mcp_group_from_json(
+                &settings_path,
+                settings.as_ref().and_then(|s| s.get("mcpServers")),
+            ),
+            ext::gemini_commands_group(&dir.join("commands")),
+            ext::gemini_extensions_group(&dir.join("extensions")),
+            ext::hooks_group_from_json(
+                &settings_path,
+                settings.as_ref().and_then(|s| s.get("hooks")),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
             "/chat",

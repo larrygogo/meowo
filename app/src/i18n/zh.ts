@@ -1086,7 +1086,7 @@ export const zh = {
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
-    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", account: "账号与用量", about: "关于" },
+    nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", account: "账号与用量", extensions: "扩展", about: "关于" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
@@ -1416,6 +1416,32 @@ export const zh = {
     // 模型专属周限(Fable/Opus 等),模型名由 API 下发。
     laneModelWeekly: (model: string) => `${model} · 每周`,
     laneBalance: "余额",
+  },
+  // 设置 › 扩展（对照 Kimi「插件」页）：各 agent 装了什么，只读。
+  extensions: {
+    loadFailed: "扩展清单读取失败",
+    noAgents: "还没有装任何 agent",
+    empty: "没有装技能、MCP 或插件",
+    openDataDir: "打开配置目录",
+    reveal: "在文件夹中显示",
+    shared: "几家共用",
+    off: "已关闭",
+    kinds: { skill: "技能", mcp: "MCP 服务", command: "自定义命令", agent: "子代理", plugin: "插件", hook: "钩子" },
+    counts: {
+      skill: (n: number) => `${n} 个技能`,
+      mcp: (n: number) => `${n} 个 MCP 服务`,
+      command: (n: number) => `${n} 个命令`,
+      agent: (n: number) => `${n} 个子代理`,
+      plugin: (n: number) => `${n} 个插件`,
+      hook: (n: number) => `${n} 个钩子`,
+    },
+    hookCommands: (n: number) => `${n} 条命令`,
+    // Meowo 自己装进各家的状态上报（钩子 / opencode 插件）：合成一行，说明别删。
+    managedName: "Meowo 状态上报",
+    managedTag: "Meowo 自带",
+    managedHooksDesc: (n: number) => `挂在 ${n} 个事件上，看板靠它显示状态`,
+    managedDesc: "看板靠它显示会话状态",
+    readOnlyHint: "这里只能查看。要增删，改各家自己的配置。",
   },
   updater: {
     checking: "正在检查更新…",

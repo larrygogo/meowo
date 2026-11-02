@@ -655,6 +655,30 @@ async fn list_agents() -> Vec<meowo_agent::descriptor::AgentDescriptor> {
     .unwrap_or_default()
 }
 
+/// 设置 › 扩展页：每个**已安装** agent 在用户级装了哪些技能、MCP、命令、钩子、插件（只读，
+/// 位置由各插件声明，见 `meowo_agent::extensions`）。只看默认账号。要读好几个配置文件
+/// （`~/.claude.json` 可能有几 MB），放 blocking 池。不进远程白名单：手机上用不着，
+/// 也没必要把这台电脑装了什么给远端看。
+#[tauri::command]
+async fn list_agent_extensions() -> Vec<meowo_agent::extensions::AgentExtensionsDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        meowo_agent::all()
+            .iter()
+            .filter_map(|agent| {
+                let inst = agent.detect()?;
+                Some(meowo_agent::extensions::AgentExtensionsDto {
+                    provider: agent.id().as_str().to_string(),
+                    display_name: agent.display_name().to_string(),
+                    data_dir: inst.data_dir.to_string_lossy().into_owned(),
+                    groups: agent.extensions(&inst),
+                })
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// 以插件的 `launch_argv` 起子进程跑一个**非交互**子命令，有界等待后返回 stdout 全文。
 /// 正常亚秒返回，但一个挂死的 CLI 不该把 blocking 线程一起挂死——过 deadline 即 kill。
 /// `probe_cli_version`（`--version`，5s）与 `agent_models`（模型清单，15s）共用；
@@ -1394,6 +1418,7 @@ pub fn run() {
             host_os,
             available_terminals,
             list_agents,
+            list_agent_extensions,
             agent_chat_ui,
             agent_models,
             agent_model_catalog,

@@ -17,6 +17,7 @@ import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
 import { Switch, Segmented, SwatchPicker, FontSizeSlider, SettingsError } from "./settings/widgets";
 import { Dropdown } from "./menu";
 import { AccountSection } from "./settings/AccountSection";
+import { ExtensionsSection } from "./settings/ExtensionsSection";
 import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
 import { NetworkSection } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
@@ -32,8 +33,8 @@ const openExt = (url: string) => invoke("open_url", { url }).catch((e) => consol
 
 // 「手机远程」单独成区（用户要求从「网络」里拆出来，对照 Kimi 设置的「远程控制」独立一栏）：
 // 它是一项功能（扫码、配对、推送），不是网络参数；「网络」只留代理。
-type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "account" | "about";
-const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "about"];
+type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "account" | "extensions" | "about";
+const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "extensions", "about"];
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -120,6 +121,15 @@ function IconPhone() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" />
       <line x1="10.5" y1="18" x2="13.5" y2="18" />
+    </svg>
+  );
+}
+
+// 拼图块：扩展（技能 / MCP / 插件）。
+function IconPuzzle() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15.4 4.6a2.4 2.4 0 1 0-4.8 0V6H7a1 1 0 0 0-1 1v3.6h1.4a2.4 2.4 0 1 1 0 4.8H6V19a1 1 0 0 0 1 1h3.6v-1.4a2.4 2.4 0 1 1 4.8 0V20H19a1 1 0 0 0 1-1v-3.6h-1.4a2.4 2.4 0 1 1 0-4.8H20V7a1 1 0 0 0-1-1h-3.6z" />
     </svg>
   );
 }
@@ -934,7 +944,7 @@ export function About() {
   // 分区记忆：每次开窗回 general 让最常改的分区（外观/Agent）永远多点一次。
   const [sec, setSec] = useState<Section>(() => {
     const s = localStorage.getItem("meowo-settings-section");
-    return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "about"
+    return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "extensions" || s === "about"
       ? s
       : "general";
   });
@@ -982,6 +992,7 @@ export function About() {
       remote: t.settings.nav.remote,
       network: t.settings.nav.network,
       account: t.settings.nav.account,
+      extensions: t.settings.nav.extensions,
       about: t.settings.nav.about,
     };
     const apply = () => {
@@ -1068,6 +1079,10 @@ export function About() {
             <IconAgent />
             <span>{t.settings.nav.account}</span>
           </button>
+          <button className={"nav-item" + (sec === "extensions" ? " on" : "")} aria-current={sec === "extensions" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("extensions"); }}>
+            <IconPuzzle />
+            <span>{t.settings.nav.extensions}</span>
+          </button>
           <button className={"nav-item" + (sec === "about" ? " on" : "")} aria-current={sec === "about" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("about"); }}>
             <IconInfo />
             <span>{t.settings.nav.about}</span>
@@ -1115,6 +1130,8 @@ export function About() {
                 <NetworkSection />
               ) : s === "account" ? (
                 <AccountSection />
+              ) : s === "extensions" ? (
+                <ExtensionsSection />
               ) : (
                 <AboutSection status={status} newVersion={newVersion} />
               )}
