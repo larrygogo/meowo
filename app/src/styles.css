@@ -3921,16 +3921,9 @@ select.ns-input {
 .chat-sidebar-item.is-drop-after::after { bottom: -2px; }
 body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !important; user-select: none; }
 .sf-opt:hover .sf-ico { color: var(--cc-text-dim); }
-.sf-row > .dd-label { flex: 0 0 auto; }
-.sf-row > .sf-val { margin-left: auto; }
-.sf-val { display: inline-flex; align-items: center; gap: var(--sp-4); min-width: 0; color: var(--cc-text-faint); }
-.sf-val-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sf-sep { flex: 0 0 auto; height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
-.sf-back { justify-content: flex-start; gap: var(--sp-6); color: var(--cc-text-faint); }
 /* 扁平化筛选面板的小节标题（分组 / 排序 直接内联为 radio 行,不再进二级面板） */
 .sf-caption { padding: var(--sp-5) var(--sp-10) var(--sp-3); font-size: var(--text-xs); color: var(--cc-text-faint); user-select: none; }
 /* 排序范围注(非默认档只排已加载页):小字说明,不参与交互。 */
-.sf-note { padding: var(--sp-2) var(--sp-8) var(--sp-4); font-size: var(--fs-10); color: var(--cc-text-faint); user-select: none; }
 .chat-sidebar-toggle.is-on { color: var(--cc-text); background: var(--fill-selected); }
 .chat-sidebar-list {
   flex: 1;
@@ -4083,6 +4076,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 不要上下渐隐遮罩（对照 Kimi，它的列表没有）：顶部 14px 渐隐带压在紧贴「会话」小节标题的第一行
    上，看着像被模糊了；遮罩还会把列表里打开的菜单（分组头右键）裁在列表边界外（用户实拍两处）。 */
 .chat-sidebar-list { padding: var(--sp-2) var(--sp-8) var(--sp-8); gap: 1px; -webkit-mask-image: none; mask-image: none; }
+/* 工作区筛选标签：一枚小胶囊，名称 + ×。 */
+.chat-sidebar-scope { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2); align-self: flex-start; max-width: calc(100% - 2 * var(--sp-8)); margin: 0 var(--sp-8) var(--sp-4); padding: 2px var(--sp-2) 2px var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: 999px; color: var(--cc-text-dim); font-size: var(--text-xs); }
+.chat-sidebar-scope-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-sidebar-scope-x { flex: 0 0 auto; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--cc-text-faint); font-size: var(--text-sm); line-height: 1; cursor: pointer; }
+.chat-sidebar-scope-x:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-sidebar-group { gap: 1px; }
 .chat-sidebar-group + .chat-sidebar-group { margin-top: var(--sp-4); }
 .chat-sidebar-item { align-items: flex-start; gap: 6px; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); color: var(--cc-text); }

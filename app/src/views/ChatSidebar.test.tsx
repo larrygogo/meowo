@@ -406,14 +406,19 @@ describe("ChatSidebar", () => {
     await waitFor(() => expect(args).toHaveLength(2));
     expect(args[1]).toEqual({ search: null, cwd: null, limit: 120 });
 
-    // 视图与排序弹层（对照 Kimi Code）：图标钮 → 底部「工作区」行 → 选项列表。
-    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /^工作区/ }));
-    fireEvent.click(await screen.findByRole("option", { name: "scratch" }));
+    // 筛选从「工作空间」页签进入（对照 Kimi，视图菜单里不再有工作区筛选）：⋯ → 只看这个工作区的会话。
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
     expect(await screen.findByRole("button", { name: /临时活儿/ })).toBeTruthy();
     expect(args[args.length - 1]).toEqual({ search: null, cwd: "D:/tmp/scratch", limit: 60 });
     // 上一个目录的会话不能残留。
     expect(screen.queryByRole("button", { name: /会话 0/ })).toBeNull();
+    // 筛选生效时列表上方有一枚标签，点 × 退出筛选。
+    expect(screen.getByText("只看 scratch")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "取消筛选" }));
+    await waitFor(() => expect(args[args.length - 1]).toEqual({ search: null, cwd: null, limit: 60 }));
+    expect(screen.queryByText("只看 scratch")).toBeNull();
   });
 
   /**
@@ -469,26 +474,6 @@ describe("ChatSidebar", () => {
     expect(screen.queryByRole("button", { name: /临时活儿/ })).toBeNull();
   });
 
-  /** 按状态分组：组序按召唤强度（出错 > 运行中 > 已结束），不派生原排序——
-   *  状态视图的意义就是「先看要处理的」。 */
-  it("按状态分组:组序按召唤强度", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "recent_cwds") return Promise.resolve([]);
-      if (command !== "get_live_sessions_page") return Promise.resolve();
-      return Promise.resolve([
-        session(1, "在跑的", { connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
-        session(2, "出错的", { connected: true, errored: true, session: { id: 2, cc_session_id: "cc-2", status: "running" } } as Partial<LiveSession>),
-        session(3, "结束的"),
-      ]);
-    });
-    localStorage.setItem("meowo-chat-sidebar-group-mode", "state");
-    render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
-    await screen.findByRole("button", { name: /在跑的/ });
-    const list = screen.getByRole("navigation");
-    const heads = within(list).getAllByRole("button").filter((b) => b.className.includes("group-head"));
-    expect(heads.map((h) => h.textContent)).toEqual(["出错了1", "运行中1", "已结束1"]);
-  });
-
   /** 批量清理旧会话（对照 Kimi 会话管理页）：右键「多选」是显式入口，Shift+点击连选，
    *  分组头的勾选圈整组增删，最后一次归档。 */
   it("多选:右键进入、Shift 连选、整组勾选后批量归档", async () => {
@@ -539,32 +524,32 @@ describe("ChatSidebar", () => {
       if (command === "recent_cwds") return Promise.resolve([]);
       if (command !== "get_live_sessions_page") return Promise.resolve();
       return Promise.resolve([
-        session(1, "在跑的", { connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
-        session(2, "结束一"),
-        session(3, "结束二"),
+        session(1, "在跑的", { cwd: "C:/w/live", connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
+        session(2, "结束一", { cwd: "C:/w/old" }),
+        session(3, "结束二", { cwd: "C:/w/old" }),
       ]);
     });
-    localStorage.setItem("meowo-chat-sidebar-group-mode", "state");
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
     render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     // 不在多选态时组头不出勾选圈。
     await screen.findByRole("button", { name: /结束一/ });
     expect(screen.queryByRole("checkbox", { name: /整组/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /结束一/ }), { ctrlKey: true });
-    const group = screen.getByRole("checkbox", { name: "选中「已结束」整组" });
+    const group = screen.getByRole("checkbox", { name: "选中「old」整组" });
     expect(group.getAttribute("aria-checked")).toBe("mixed");
     fireEvent.click(group);
     expect(screen.getByText("已选 2 条")).toBeTruthy();
     expect(group.getAttribute("aria-checked")).toBe("true");
-    // 运行中组不受影响；再点整组取消，选中清空即退出多选。
-    expect(screen.getByRole("checkbox", { name: "选中「运行中」整组" }).getAttribute("aria-checked")).toBe("false");
+    // 另一组不受影响；再点整组取消，选中清空即退出多选。
+    expect(screen.getByRole("checkbox", { name: "选中「live」整组" }).getAttribute("aria-checked")).toBe("false");
     fireEvent.click(group);
     expect(screen.queryByText(/已选/)).toBeNull();
   });
 
-  /** 排序入口在视图与排序弹层。默认「手动排序」：后端按手动键分页（没拖过 = 创建时间倒序），
-   *  前端原样采用，在跑的会话不因新事件换位置（用户反馈列表顶部一直乱动）；「按名称」在前端
-   *  重排已加载页，未命名会话沉底，选择与分组一样落盘。 */
-  it("排序:默认手动排序交给后端,按名称重排列表,未命名沉底,选择落盘", async () => {
+  /** 排序入口在视图与排序弹层（对照 Kimi 只有两种）。默认「手动排序」：后端按手动键分页（没拖过 =
+   *  创建时间倒序），前端原样采用，在跑的会话不因新事件换位置（用户反馈列表顶部一直乱动）；
+   *  切到「按最近活动」后端换回活跃顺序，选择与分组一样落盘。 */
+  it("排序:默认手动排序交给后端,可切按最近活动,选择落盘", async () => {
     const orders: unknown[] = [];
     invoke.mockImplementation((command: string, args?: { order?: string }) => {
       if (command === "recent_cwds") return Promise.resolve([]);
@@ -591,9 +576,12 @@ describe("ChatSidebar", () => {
     expect(itemNames()).toEqual(["alpha", "等待首次输入", "beta"]);
 
     fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
-    fireEvent.click(screen.getByRole("option", { name: "按名称" }));
-    expect(itemNames()).toEqual(["alpha", "beta", "等待首次输入"]);
-    expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("name");
+    // 菜单照 Kimi：视图两种、排序两种。
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["平铺列表", "按工作区分组", "手动排序", "按最近活动"]);
+    fireEvent.click(screen.getByRole("option", { name: "按最近活动" }));
+    await waitFor(() => expect(orders.length).toBeGreaterThan(1));
+    expect(orders[orders.length - 1]).toBeUndefined();
+    expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("recent");
   });
 
   /** 「工作空间」页签（对照 Kimi Code）：列出会话用过的目录，点一行就在那里新建会话；

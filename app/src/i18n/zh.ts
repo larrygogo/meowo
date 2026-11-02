@@ -706,7 +706,6 @@ export const zh = {
     terminalPromptCancelTip: "向终端发送 Esc，可能中断正在执行的回合",
     sidebarTitle: "会话",
     sidebarFilterTip: "视图与排序",
-    sidebarFilterDir: "工作区",
     sidebarFilterGroup: "视图",
     sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
@@ -729,6 +728,8 @@ export const zh = {
     sidebarTabDone: "已完成",
     sidebarSearch: "搜索",
     sidebarFoldAll: "全部折叠",
+    sidebarScopeOnly: (name: string) => `只看 ${name}`,
+    sidebarScopeClear: "取消筛选",
     // 「工作空间」页签（对照 Kimi Code）：工作区就是会话用过的目录。
     sidebarTabWorkspaces: "工作空间",
     sidebarWorkspaces: "工作区",
@@ -760,7 +761,6 @@ export const zh = {
     // 首载失败的独立错误行（P1-1）：不降级成「暂无会话」，故障不能被读成「会话全没了」。
     sidebarLoadFailed: "加载会话失败",
     sidebarRetry: "重试",
-    sidebarDirAll: "全部工作区",
     sidebarShowIdle: (n: number) => `显示 ${n} 个未运行会话`,
     sidebarHideIdle: "收起未运行会话",
     // G-16：视觉隐藏的侧栏状态汇总播报（全侧栏唯一的 live region）。
@@ -770,18 +770,12 @@ export const zh = {
     // 对照 Kimi Code 侧栏菜单的说法（平铺列表 / 按工作区分组 / 按最近活动）。
     groupNone: "平铺列表",
     groupByDir: "按工作区分组",
-    groupByDate: "按日期分组",
-    groupByState: "按状态分组",
     sortRecent: "按最近活动",
     // 手动排序：没拖过时就是创建时间倒序（新会话在最上面），桌面可拖动调整。
     sortManual: "手动排序",
-    sortName: "按名称",
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
-    sortPartialNote: "仅排序已加载的会话",
     dateToday: "今天",
     dateYesterday: "昨天",
-    dateThisWeek: "近 7 天",
-    dateEarlier: "更早",
     running: "正在运行…",
     contextTip: (pct: number, kw: number) => `上下文已用 ${pct}%（窗口 ${kw}K）`,
     contextShort: (pct: number) => `上下文已用 ${pct}%`,

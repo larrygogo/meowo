@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { moveNextTo, useSessionDrag } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
@@ -15,7 +15,7 @@ import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
 import { editorKeyDown, fmtAgo, fmtWaited, useStarred } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
-import { CheckIcon, ChevronDownIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
+import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
@@ -35,14 +35,14 @@ const SORT_MODE_KEY = "meowo-chat-sidebar-sort-mode";
 const FOLDED_KEY = "meowo-chat-sidebar-folded-dirs";
 
 /** 分组方式（Claude Code 侧栏 Group by 同款）：不分组 / 按目录 / 按日期 / 按状态。 */
-type GroupMode = "none" | "dir" | "date" | "state";
+type GroupMode = "none" | "dir";
 
 /** 排序方式（对照 Kimi Code 侧栏：手动排序 / 按最近活动）：
  *  - manual：手动排序，默认。后端按手动键分页，没拖过的按创建时间倒序，新会话在最上面；
  *    桌面上可以拖着调位置（见 sidebarDrag），手机只按这个顺序显示。
  *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
  *  - name：按名称，前端排**已加载的这一页**。 */
-type SortMode = "manual" | "recent" | "name";
+type SortMode = "manual" | "recent";
 
 /** 会话行右侧的紧凑时间（对照 Kimi Code 侧栏的「3d」「4h」）：一列窄窄的数字，不抢标题的宽度。 */
 function fmtShortAgo(ms: number, t: Dict): string {
@@ -112,65 +112,12 @@ function groupByDir(items: LiveSession[]): DirGroup[] {
   return groups;
 }
 
-/** 按最后活跃时间分桶：今天 / 昨天 / 近 7 天 / 更早。桶序固定（新→旧）——
- *  connected-first 排序会把「老但还连着」的会话排最前，按首条位置派生组序会乱。 */
-function groupByDate(items: LiveSession[], t: Dict): DirGroup[] {
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
-  const today = dayStart.getTime();
-  const buckets = [
-    { key: "date:today", label: t.chat.dateToday, min: today },
-    { key: "date:yesterday", label: t.chat.dateYesterday, min: today - 86_400_000 },
-    { key: "date:week", label: t.chat.dateThisWeek, min: today - 6 * 86_400_000 },
-    { key: "date:earlier", label: t.chat.dateEarlier, min: Number.NEGATIVE_INFINITY },
-  ];
-  const groups: DirGroup[] = buckets.map((bucket) => ({ key: bucket.key, cwd: null, label: bucket.label, items: [] }));
-  for (const item of items) {
-    const index = buckets.findIndex((bucket) => item.session.last_event_at >= bucket.min);
-    groups[index === -1 ? buckets.length - 1 : index].items.push(item);
-  }
-  return groups.filter((group) => group.items.length > 0);
-}
-
-/** 按状态分桶，组序按召唤强度（待处理 > 出错 > 等待 > 运行中 > 离线 > 已结束）——
- *  状态视图的意义就是「先看要处理的」，此处不派生原有排序。待处理组内审批排在提问前
- *  （审批卡着的是正在执行的动作），其余组内保持原顺序。 */
-const STATE_GROUP_ORDER: SessionTone[] = ["pending", "error", "waiting", "running", "offline", "ended"];
-function pendingRank(item: LiveSession, approvals: ReadonlySet<number>): number {
-  if (approvals.has(item.session.id)) return 0;
-  if (item.pending_review && item.pending_review !== "question") return 1;
-  if (item.pending_review === "question") return 2;
-  return 3;
-}
-function groupByState(items: LiveSession[], t: Dict, approvals: ReadonlySet<number> = new Set()): DirGroup[] {
-  const map = new Map<SessionTone, LiveSession[]>();
-  for (const item of items) {
-    const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state);
-    const bucket = map.get(tone);
-    if (bucket) bucket.push(item);
-    else map.set(tone, [item]);
-  }
-  const pending = map.get("pending");
-  // 稳定排序：同档内保持原顺序。
-  if (pending) pending.sort((a, b) => pendingRank(a, approvals) - pendingRank(b, approvals));
-  return STATE_GROUP_ORDER.filter((tone) => map.has(tone)).map((tone) => ({
-    key: `state:${tone}`,
-    cwd: null,
-    label: t.chat.status[tone],
-    items: map.get(tone)!,
-  }));
-}
-
 /** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
-const SF_ICON_PATHS: Record<GroupMode | SortMode | "dir-filter", string> = {
+const SF_ICON_PATHS: Record<GroupMode | SortMode, string> = {
   none: "M5 7h14M5 12h14M5 17h14",
   dir: "M6 4v12a2 2 0 0 0 2 2h4M6 9h6M15 6.5h4v4h-4zM15 15.5h4v4h-4z",
-  date: "M5 6h14v13H5zM5 10h14M9 4v4M15 4v4",
-  state: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3",
   recent: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 8v4l2.5 2",
   manual: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
-  name: "M4 18l3.5-10L11 18M5.2 15h4.6M14 7h6l-6 10h6",
-  "dir-filter": "M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z",
 };
 function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
   return (
@@ -180,57 +127,43 @@ function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
   );
 }
 
-/** 侧栏的视图/排序弹层（对照 Kimi Code 侧栏菜单）：「视图」「排序」两节，每项图标 + 文案，
- *  选中项只在右侧打勾、文字不变色；选中即应用并收起。目录筛选沉到分隔线下面当一个入口，
- *  因列表无上限保留子面板。 */
-function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortMode, sortLabels, onDir, onGroup, onSort, t }: {
-  dirValue: string | null;
-  dirOptions: { value: string; label: string }[];
+/** 侧栏的视图/排序弹层（对照 Kimi Code 侧栏菜单，选项也照它）：「视图」平铺列表 / 按工作区分组，
+ *  「排序」手动排序 / 按最近活动；每项图标 + 文案，选中项只在右侧打勾、文字不变色，选中即应用并收起。
+ *  按日期 / 按状态分组、按名称排序、工作区筛选已去掉——筛选改由「工作空间」页签里的
+ *  「只看这个工作区的会话」进入，生效时列表上方有一枚可关闭的标签。 */
+function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGroup, onSort, t }: {
   groupMode: GroupMode;
   groupLabels: Record<GroupMode, string>;
   sortMode: SortMode;
   sortLabels: Record<SortMode, string>;
-  onDir: (value: string | null) => void;
   onGroup: (mode: GroupMode) => void;
   onSort: (mode: SortMode) => void;
   t: Dict;
 }) {
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown, relayout } = useMenuPopup({});
-  const [view, setView] = useState<"root" | "dir">("root");
-  // 关闭即回根视图：下次打开不该停在上次翻到的子面板。
-  useEffect(() => { if (!open) setView("root"); }, [open]);
-  // 子视图切换后（根↔目录/分组）：
-  // 1) 重测定位——首开测量只见过 2 行高的根视图，目录列表长出来会伸出窗口底边；
-  // 2) 焦点接力——刚获焦的那一行随视图卸载，焦点落回 body、roving 键盘导航断线，
-  //    把焦点落到新视图首项（只在视图真的切换时抢，打开菜单本身仍不抢焦点）。
-  const prevViewRef = useRef(view);
-  useLayoutEffect(() => {
-    relayout();
-    if (prevViewRef.current !== view) {
-      prevViewRef.current = view;
-      ref.current?.querySelector<HTMLElement>('[role="menuitem"], [role="option"]')?.focus();
-    }
-  }, [view, relayout, ref]);
-  const dirLabel = dirValue
-    ? dirOptions.find((option) => option.value === dirValue)?.label ?? folderName(dirValue)
-    : t.chat.sidebarDirAll;
-  const chevron = (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18" /></svg>
-  );
-  const back = (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18" /></svg>
-  );
+  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   const check = <CheckIcon className="dd-check" />;
-  // 选中即应用并收起：筛选是「一次性的快速动作」，留着面板反而多一步关闭。
+  // 选中即应用并收起：切视图 / 排序是「一次性的快速动作」，留着面板反而多一步关闭。
   const pick = (apply: () => void) => { apply(); setOpen(false); btnRef.current?.focus(); };
+  const option = <M extends string>(mode: M, selected: boolean, label: string, onPick: () => void, icon: keyof typeof SF_ICON_PATHS) => (
+    <button
+      key={mode}
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={"dd-item sf-opt" + (selected ? " sel" : "")}
+      onClick={() => pick(onPick)}
+    >
+      <SfIcon name={icon} />
+      <span className="dd-label">{label}</span>
+      {selected && check}
+    </button>
+  );
   return (
     <div className="dd" ref={ref} onKeyDown={onKeyDown}>
       <button
         ref={btnRef}
         type="button"
-        // 7C-5：筛选/归档视图一旦生效，列表只是「少了很多会话」，界面上没有任何痕迹。
-        // 钮上挂一个小点标记「当前有筛选」（归档视图另有可关闭的状态条，见列表顶部）。
-        className={"chat-sidebar-filter" + (dirValue ? " is-active" : "")}
+        className="chat-sidebar-filter"
         aria-label={t.chat.sidebarFilterTip}
         data-tip={t.chat.sidebarFilterTip}
         aria-haspopup="menu"
@@ -245,82 +178,10 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
       </button>
       {open && (
         <div className="dd-menu sf-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
-          {view === "root" ? (
-            <>
-              <div className="sf-caption">{t.chat.sidebarFilterGroup}</div>
-              {(["none", "dir", "date", "state"] as const).map((mode) => {
-                const selected = groupMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={"dd-item sf-opt" + (selected ? " sel" : "")}
-                    onClick={() => pick(() => onGroup(mode))}
-                  >
-                    <SfIcon name={mode} />
-                    <span className="dd-label">{groupLabels[mode]}</span>
-                    {selected && check}
-                  </button>
-                );
-              })}
-              <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
-              {(["manual", "recent", "name"] as const).map((mode) => {
-                const selected = sortMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={"dd-item sf-opt" + (selected ? " sel" : "")}
-                    onClick={() => pick(() => onSort(mode))}
-                  >
-                    <SfIcon name={mode} />
-                    <span className="dd-label">{sortLabels[mode]}</span>
-                    {selected && check}
-                  </button>
-                );
-              })}
-              {/* 「按名称」只排已加载的这一页（翻页新条目追加尾部）：不说明的话,
-                  乱序看起来就是「排序坏了」。创建时间与最近活跃由后端分页，排的是全量。 */}
-              {sortMode === "name" && <div className="sf-note">{t.chat.sortPartialNote}</div>}
-              <div className="sf-sep" role="separator" />
-              <button type="button" role="menuitem" className="dd-item sf-opt sf-row" onClick={() => setView("dir")}>
-                <SfIcon name="dir-filter" />
-                <span className="dd-label">{t.chat.sidebarFilterDir}</span>
-                <span className="sf-val"><span className="sf-val-text">{dirLabel}</span>{chevron}</span>
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" role="menuitem" className="dd-item sf-back" onClick={() => setView("root")}>
-                {back}
-                <span>{t.chat.sidebarFilterDir}</span>
-              </button>
-              <div className="sf-sep" role="separator" />
-              {[{ value: "", label: t.chat.sidebarDirAll }, ...dirOptions].map((option) => {
-                const selected = (dirValue ?? "") === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={"dd-item" + (selected ? " sel" : "")}
-                    // 菜单内刻意用原生 title：TooltipLayer 对 .dd-menu 区域静默
-                    // （自绘提示会糊在菜单上，见 Tooltip.tsx tipEl 的注释）。
-                    title={option.value || undefined}
-                    onClick={() => pick(() => onDir(option.value || null))}
-                  >
-                    <span className="dd-label">{option.label}</span>
-                    {selected && check}
-                  </button>
-                );
-              })}
-            </>
-          )}
+          <div className="sf-caption">{t.chat.sidebarFilterGroup}</div>
+          {(["none", "dir"] as const).map((mode) => option(mode, groupMode === mode, groupLabels[mode], () => onGroup(mode), mode))}
+          <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
+          {(["manual", "recent"] as const).map((mode) => option(mode, sortMode === mode, sortLabels[mode], () => onSort(mode), mode))}
         </div>
       )}
     </div>
@@ -451,7 +312,9 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 分组方式默认不分组:不用的人一个像素都感知不到。旧布尔开关(只有按目录一档)自动迁移。
   const [groupMode, setGroupMode] = useState<GroupMode>(() => {
     const stored = localStorage.getItem(GROUP_MODE_KEY);
-    if (stored === "none" || stored === "dir" || stored === "date" || stored === "state") return stored;
+    if (stored === "none" || stored === "dir") return stored;
+    // 按日期 / 按状态分组已去掉（对照 Kimi 只留两种视图），存着旧值的回到平铺列表。
+    if (stored === "date" || stored === "state") return "none";
     return localStorage.getItem(GROUPED_KEY) === "1" ? "dir" : "none";
   });
   // 排序方式默认「创建时间」，同分组一样落盘。不默认「最近活跃」：几个会话同时在跑时，
@@ -459,8 +322,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 新会话出现在顶上，之后位置不动。
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const stored = localStorage.getItem(SORT_MODE_KEY);
-    // 旧版的「创建时间」并入手动排序：没拖过时两者顺序完全一样。
-    return stored === "recent" || stored === "name" ? stored : "manual";
+    // 旧版的「创建时间」并入手动排序（没拖过时两者顺序完全一样）；「按名称」已去掉，同样回到手动排序。
+    return stored === "recent" ? stored : "manual";
   });
   // 「创建时间」交给后端分页（后端按 started_at 倒序扫），否则只能重排已加载的一页：
   // 新建但一直没动的会话可能根本不在第一页。load 是稳定回调，读 ref。
@@ -875,28 +738,18 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 分组开着时排序发生在**分组之前**:组内置顶在前,而组序由「组内第一条的位置」派生,
   // 于是含置顶会话的目录也跟着上浮——两套顺序不打架。
   const ordered = useMemo(() => {
-    if (!sessions || (starred.size === 0 && sortMode !== "name")) return sessions;
+    if (!sessions || starred.size === 0) return sessions;
     const rank = (item: LiveSession) => (starred.has(item.session.cc_session_id) ? 0 : 1);
     return [...sessions].sort((a, b) => {
       const star = rank(a) - rank(b);
       if (star !== 0) return star;
-      if (sortMode === "name") {
-        // 未命名会话沉底（空串与 DB sentinel「(未命名会话)」同口径，见 EditorInput 的
-        // initial）：一排未命名插在人起的名字中间只会打断扫读。
-        const an = a.task_title !== UNNAMED_SESSION_SENTINEL ? a.task_title : "";
-        const bn = b.task_title !== UNNAMED_SESSION_SENTINEL ? b.task_title : "";
-        if (!an || !bn) return an ? -1 : bn ? 1 : 0;
-        return an.localeCompare(bn);
-      }
       return 0;
     });
   }, [sessions, starred, sortMode]);
 
   const groups = useMemo(() => {
-    if (!ordered || groupMode === "none") return null;
-    if (groupMode === "dir") return groupByDir(ordered);
-    if (groupMode === "date") return groupByDate(ordered, t);
-    return groupByState(ordered, t, approvalAwaitingIds);
+    if (!ordered || groupMode !== "dir") return null;
+    return groupByDir(ordered);
   }, [groupMode, ordered, t, approvalAwaitingIds]);
   // 「会话」小节的全部折叠 / 展开（对照 Kimi）：全都折着时展开全部，否则折起全部。
   const allGroupsFolded = !!groups && groups.length > 0 && groups.every((group) => folded.has(group.key));
@@ -1398,18 +1251,23 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           </button>
         )}
         {!workspacesView && <SidebarFilterMenu
-          dirValue={dirFilter}
-          dirOptions={dirOptions}
           groupMode={groupMode}
-          groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir, date: t.chat.groupByDate, state: t.chat.groupByState }}
+          groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir }}
           sortMode={sortMode}
-          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent, name: t.chat.sortName }}
-          onDir={setDirFilter}
+          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent }}
           onGroup={changeGroupMode}
           onSort={changeSortMode}
           t={t}
         />}
       </div>
+      {/* 工作区筛选生效时的标签（筛选从「工作空间」页签进入）：列表少了很多会话，界面上得有
+          痕迹，也得有一键退出的地方（7C-5 的老问题，原先靠菜单钮上的小点）。 */}
+      {dirFilter && !workspacesView && (
+        <div className="chat-sidebar-scope">
+          <span className="chat-sidebar-scope-label" data-tip={dirFilter}>{t.chat.sidebarScopeOnly(folderName(dirFilter) || dirFilter)}</span>
+          <button type="button" className="chat-sidebar-scope-x" aria-label={t.chat.sidebarScopeClear} data-tip={t.chat.sidebarScopeClear} onClick={() => setDirFilter(null)}>×</button>
+        </div>
+      )}
       {workspacesView ? (
         <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
           <WorkspaceDirectory
@@ -1492,7 +1350,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                 || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state) === "pending").length;
               return (
                 <div className="chat-sidebar-group" key={group.key}>
-                  {groupMode === "dir" ? (
                     <WorkspaceHeader
                       cwd={group.cwd}
                       count={group.items.length}
@@ -1511,23 +1368,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                       summary={groupDot}
                       onFilter={setDirFilter}
                     />
-                  ) : (
-                    <div className="chat-sidebar-group-row">
-                    <button
-                      type="button"
-                      className="chat-sidebar-group-head"
-                      aria-expanded={!isFolded}
-                      data-tip={group.cwd ?? undefined}
-                      onClick={() => toggleFolded(group.key)}
-                    >
-                      <ChevronDownIcon className={"chat-sidebar-caret" + (isFolded ? " is-folded" : "")} size={10} strokeWidth={2.6} />
-                      <span className="chat-sidebar-group-name">{group.label || t.chat.sidebarNoDir}</span>
-                      {groupDot}
-                      <span className="chat-sidebar-group-count">{group.items.length}</span>
-                    </button>
-                    {renderGroupCheck(group.items, group.label || t.chat.sidebarNoDir)}
-                    </div>
-                  )}
                   {shown.map(renderItem)}
                   {/* 未运行的会话默认收起：一个跑了一阵的目录里，历史会话能堆到几十条，
                       把当前真正在跑的那一两条挤出视野。折起来但不丢——点一下就回来。 */}
