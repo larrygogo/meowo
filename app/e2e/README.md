@@ -37,7 +37,8 @@ bun run test:e2e     # = node e2e/run.mjs：构建 E2E 二进制 → 跑 wdio �
 
 ### 前置依赖
 
-- **Node 22 LTS**。⚠️ Node ≥ 26 与 WebdriverIO 不兼容（[webdriverio#15265](https://github.com/webdriverio/webdriverio/issues/15265)：Node 26 的 undici v8 拒绝 wdio 设的 Content-Length/Connection 头），`run.mjs` 会预检拦截并提示。用 `fnm`/`nvm` 切到 22，或用便携版 Node 22 的 `node.exe` 执行 `e2e/run.mjs`。
+- **Node 22 或更新**（CI 用 26）。Node 26 曾跑不了（[webdriverio#15265](https://github.com/webdriverio/webdriverio/issues/15265)：undici v8 拒收 wdio 设的 Content-Length/Connection 头），webdriver 9.30 修掉了，`@wdio/*` 要在 9.30 以上。
+- **本机有会话在跑时别跑**。E2E 是 debug 构建，和安装版、dev 实例共用 `~/.meowo`（设置、PTY 中转都在里面）。开着 dev 实例时它还锁着 `target/debug`，可设 `CARGO_TARGET_DIR` 换目录，wdio.conf 会跟着找二进制。
 - **Rust 工具链**（构建 app）。
 - **Windows**：`@wdio/tauri-service` 会按本机 WebView2 版本自动下载匹配的 `msedgedriver`（`autoDownloadEdgeDriver: true`）。需要 WebView2 Runtime（Win11 自带）。
 - **Linux**：`webkit2gtk-driver`（`sudo apt-get install -y webkit2gtk-driver` 等）。

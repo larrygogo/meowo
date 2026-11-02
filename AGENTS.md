@@ -12,7 +12,7 @@ cd app/src-tauri && cargo clippy --workspace --all-targets   # 必须零警告�
 cd app/src-tauri && cargo test       # 或按 crate：cargo test -p meowo-store 等
 ```
 
-- E2E：`cd app && node e2e/run.mjs`——**需要 Node 22 LTS**（Node ≥26 的 undici 与 wdio 不兼容，run.mjs 会预检拒绝）。会构建 E2E 专用二进制（`--features e2e`），WDIO 权限文件临时拷入跑完即删。
+- E2E：`cd app && node e2e/run.mjs`——Node 22 或更新（CI 钉 26）。debug 构建共用 `~/.meowo`，本机有会话在跑时别跑，CI 上手动触发 CI workflow 即可跑 e2e。会构建 E2E 专用二进制（`--features e2e`），WDIO 权限文件临时拷入跑完即删。
 - 前端契约：`app/src/generated/contracts/` 由 ts-rs 在 `cargo test` 时生成，改了后端 DTO 要跑测试再提交生成物；CI 校验无 diff。
 - i18n：`zh.ts` 是基准，`Dict = typeof zh` 编译期对齐——加键 zh/en 必须同步，有 key 集奇偶测试。
 

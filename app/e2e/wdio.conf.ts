@@ -5,14 +5,12 @@ import type { TauriCapabilities } from "@wdio/tauri-service";
 // 本文件在 ESM 下运行（app/package.json "type":"module"），无 __dirname → 从 import.meta.url 求。
 const here = dirname(fileURLToPath(import.meta.url));
 
-// E2E 二进制路径：Cargo workspace 根在 app/src-tauri，target 也在它下面
-// （app/e2e → app → src-tauri → target/debug）。
+// E2E 二进制路径：Cargo workspace 根在 app/src-tauri，target 默认也在它下面
+// （app/e2e → app → src-tauri → target/debug）。设了 CARGO_TARGET_DIR 就跟它走：本机开着 dev
+// 实例时它锁着 target/debug/meowo-app.exe，构建会报 os error 5，得换个 target 目录跑。
 // 名字取自 cargo package "meowo-app"（e2e/run.mjs 用 `tauri build --debug --no-bundle` 产出，不改名）。
 const appBinary = join(
-  here,
-  "..",
-  "src-tauri",
-  "target",
+  process.env.CARGO_TARGET_DIR || join(here, "..", "src-tauri", "target"),
   "debug",
   process.platform === "win32" ? "meowo-app.exe" : "meowo-app",
 );
