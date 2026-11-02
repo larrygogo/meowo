@@ -3817,8 +3817,12 @@ select.ns-input {
 /* 新建会话页（对照 Kimi：主区正中一个输入框，下方一排工作区 / Agent / 启动选项小下拉）。
    输入框外观与对话页 composer 同一套（圆角、底色、阴影、黑白反相发送钮）。 */
 .nsp { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: var(--sp-24) var(--sp-24) 12vh; background: var(--cc-bg); }
-.nsp-center { width: min(var(--chat-col), 100%); display: flex; flex-direction: column; gap: var(--sp-10); }
-.nsp-title { margin: 0 0 var(--sp-10); text-align: center; font-size: 22px; font-weight: 600; color: var(--cc-text); letter-spacing: .01em; }
+/* 固定阅读宽（对照 Kimi 约 700px）：不跟「对话宽度：铺满」走，铺满时输入框横贯整列、工作区钮孤悬左端（用户实拍「太丑」）。 */
+.nsp-center { width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
+.nsp-hero { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-24); }
+.nsp-hero-mark { width: 52px; height: 52px; display: grid; place-items: center; border-radius: var(--radius-xl); background: color-mix(in srgb, currentColor 16%, transparent); color: var(--cc-text-dim); }
+.nsp-hero-mark svg { width: 28px; height: 28px; }
+.nsp-hero-title { margin: var(--sp-6) 0 0; color: var(--cc-text); font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
 .nsp-composer { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12) var(--sp-8) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-composer); background: color-mix(in srgb, var(--cc-bg) 96%, white 4%); box-shadow: var(--shadow-input); transition: border-color var(--dur-base); }
 .nsp-composer:focus-within { border-color: color-mix(in srgb, var(--cc-text) 22%, var(--cc-border)); }
 .nsp-input { width: 100%; min-height: 72px; max-height: 240px; padding: var(--sp-3) var(--sp-8); resize: none; border: 0; outline: none; color: var(--cc-text); background: transparent; font-family: inherit; font-size: var(--text-base); line-height: var(--leading-body); field-sizing: content; }
@@ -3833,7 +3837,7 @@ select.ns-input {
 .nsp-chip .dd-ico svg { width: 14px; height: 14px; }
 .nsp-agent-mark { display: inline-flex; }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
-.nsp-ws { align-self: flex-start; margin-left: var(--sp-12); }
+.nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
 .nsp-ws-btn { display: inline-flex; align-items: center; gap: var(--sp-6); max-width: 360px; height: 30px; padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: var(--fill-hover); font: inherit; font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background var(--dur-fast); }
 .nsp-ws-btn:hover, .nsp-ws-btn.open { background: var(--fill-selected); }
 .nsp-ws-btn.is-empty { color: var(--cc-text-dim); font-weight: 500; }

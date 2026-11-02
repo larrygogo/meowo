@@ -68,7 +68,15 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
     <div className="nsp" data-testid="new-session-page">
       <div className="nsp-drag" data-tauri-drag-region />
       <div className="nsp-center">
-        <h1 className="nsp-title">{t.newSession.title}</h1>
+        {/* 头部标识是「要起哪家 agent」：Meowo 托管多家 CLI，图标跟着下面的 Agent 下拉变（与空会话
+            欢迎面板同一套标识）。名字不再写一遍，下拉里已经有了。Kimi 在这放品牌字标，它只有一家。 */}
+        <div className="nsp-hero">
+          {(() => {
+            const { Icon } = agentAssets(provider);
+            return <span className="nsp-hero-mark" style={tintStyle(provider)} aria-hidden="true"><Icon /></span>;
+          })()}
+          <h1 className="nsp-hero-title">{t.newSession.title}</h1>
+        </div>
         {/* 工作区在输入框上方单列（对照 Kimi）：它决定会话在哪跑，分量比底部那排选项重。 */}
         <WorkspacePicker
           cwd={cwd}
