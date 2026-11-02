@@ -764,6 +764,7 @@ export const en: Dict = {
     sidebarTabWorkspaces: "Workspaces",
     sidebarWorkspaces: "Workspaces",
     wsNewHere: "New session in this workspace",
+    wsAdd: "Add workspace…",
     wsShowSessions: "Show this workspace's sessions",
     wsOptions: "Options",
     wsEmpty: "No workspaces yet",

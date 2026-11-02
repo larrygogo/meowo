@@ -4342,6 +4342,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-more { padding-left: calc(var(--sp-8) + 16px + 6px); border-radius: var(--radius-sm); }
 /* 「工作空间」页签的目录行（对照 Kimi .ws-dir）：文件夹 + 名称，下面一行路径；悬停出「⋯」，
    名称和路径右侧让出按钮的位置。 */
+/* 「添加工作区…」：工作空间页签顶部一行，图标与目录行对齐，字色比目录名淡一档。 */
+.chat-ws-add { display: flex; align-items: center; gap: var(--sp-8); width: 100%; margin-bottom: var(--sp-4); padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.chat-ws-add:hover { color: var(--cc-text); background: var(--fill-hover); }
+.chat-ws-add svg { flex: none; color: var(--cc-text-faint); }
 .chat-ws-dir { position: relative; display: block; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); cursor: pointer; user-select: none; }
 .chat-ws-dir + .chat-ws-dir { margin-top: 2px; }
 .chat-ws-dir:hover, .chat-ws-dir.is-menu-open { background: var(--fill-hover); }

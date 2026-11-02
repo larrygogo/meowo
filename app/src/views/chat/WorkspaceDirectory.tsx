@@ -6,6 +6,7 @@
 /// 只看这个工作区的会话（切回进行中并按它筛选）、打开文件夹（桌面）。
 
 import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../../i18n";
 import { openNewSessionWindow, openProjectDir } from "../../api";
 import { remoteUi } from "../../remoteMode";
@@ -95,6 +96,18 @@ function WorkspaceRow({ cwd, label, onFilter }: { cwd: string; label: string; on
   );
 }
 
+/// 「添加工作区…」（对照 Kimi 的 addWorkspace）：Meowo 的工作区就是会话用过的目录，没开过会话的
+/// 新项目在这个页签里没有入口。桌面弹系统目录框、选好直接进新建会话页（预填它）；手机弹不出
+/// 系统目录框，打开新建会话面板，用它的逐级目录浏览选。
+async function addWorkspace() {
+  if (remoteUi()) {
+    void openNewSessionWindow().catch(() => {});
+    return;
+  }
+  const picked = await open({ directory: true }).catch(() => null);
+  if (typeof picked === "string") void openNewSessionWindow({ cwd: picked }).catch(() => {});
+}
+
 export function WorkspaceDirectory({ options, onFilter }: {
   /// 工作区（侧栏筛选同一份清单：已按路径归一去重，同名目录带上一级消歧）。
   options: readonly { value: string; label: string }[];
@@ -102,10 +115,17 @@ export function WorkspaceDirectory({ options, onFilter }: {
   onFilter: (cwd: string) => void;
 }) {
   const t = useT();
-  if (options.length === 0) return <div className="chat-sidebar-empty">{t.chat.wsEmpty}</div>;
   return (
     <>
-      {options.map((option) => <WorkspaceRow key={option.value} cwd={option.value} label={option.label} onFilter={onFilter} />)}
+      <button type="button" className="chat-ws-add" onClick={() => void addWorkspace()}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" /><path d="M12 11v5M9.5 13.5h5" />
+        </svg>
+        <span>{t.chat.wsAdd}</span>
+      </button>
+      {options.length === 0
+        ? <div className="chat-sidebar-empty">{t.chat.wsEmpty}</div>
+        : options.map((option) => <WorkspaceRow key={option.value} cwd={option.value} label={option.label} onFilter={onFilter} />)}
     </>
   );
 }

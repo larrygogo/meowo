@@ -832,6 +832,7 @@ export const zh = {
     sidebarTabWorkspaces: "工作空间",
     sidebarWorkspaces: "工作区",
     wsNewHere: "在此工作区新建会话",
+    wsAdd: "添加工作区…",
     wsShowSessions: "只看这个工作区的会话",
     wsOptions: "选项",
     wsEmpty: "暂无工作区",

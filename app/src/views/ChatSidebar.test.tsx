@@ -14,6 +14,8 @@ vi.mock("@tauri-apps/api/event", () => ({
 // 侧栏内折叠钮是 macOS 专属（非 mac 的折叠/展开统一在 ChatWindow 顶栏），按平台分测。
 const isMacMock = vi.hoisted(() => vi.fn(() => false));
 vi.mock("../platform", () => ({ isMac: isMacMock }));
+const dialogOpen = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: dialogOpen }));
 
 import { ChatSidebar } from "./ChatSidebar";
 import type { LiveSession } from "../api";
@@ -604,6 +606,11 @@ describe("ChatSidebar", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "搜索" }), { target: { value: "" } });
     fireEvent.click(screen.getByText("C:/w/meowo"));
     expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
+    // 「添加工作区…」（对照 Kimi）：系统目录框选一个没开过会话的目录，直接带着它去新建会话。
+    dialogOpen.mockResolvedValueOnce("D:/new-project");
+    fireEvent.click(screen.getByRole("button", { name: "添加工作区…" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "D:/new-project", provider: undefined }));
+    expect(dialogOpen).toHaveBeenCalledWith({ directory: true });
     fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
     fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
     expect(screen.getByRole("tab", { name: "进行中" }).getAttribute("aria-selected")).toBe("true");
