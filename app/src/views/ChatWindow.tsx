@@ -76,7 +76,8 @@ import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
 import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
-import { performUndo, undoneInputRows } from "./chat/undoTerminal";
+import { performUndo } from "./chat/undoTerminal";
+import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
@@ -2600,37 +2601,20 @@ export function ChatWindow() {
     setAttachments((current) => [...files.filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
     promptInputRef.current?.focus();
   };
-  // 未确认送达的回显：读一次终端画面，看这段话是不是还停在 CLI 输入框里（没按下回车）。
-  // 每条只读一次；认得出输入框的插件才判（claude 的 draft_stash、opencode 的撤回输入框规格），
-  // 认不出一律不算卡住，退回「重发 / 放回输入框」。
-  const [stuckEchoes, setStuckEchoes] = useState<ReadonlySet<number>>(() => new Set());
-  const probedEchoesRef = useRef(new Set<number>());
-  useEffect(() => {
-    const stash = chatUi?.draft_stash;
-    const clear = chatUi?.undo?.input_clear;
-    if (!stash && !clear) return;
-    for (const echo of pendingEchoes) {
-      if (echo.phase !== "uncertain" || echo.attachmentOnly || probedEchoesRef.current.has(echo.id)) continue;
-      probedEchoesRef.current.add(echo.id);
-      const sid = sessionId;
-      void managedTerminalScreen(sid).catch(() => null).then((screen) => {
-        const head = echo.text.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12) ?? "";
-        if (!head || activeSessionRef.current !== sid) return;
-        const stuck = stash
-          ? (composerDraftText(screen, stash) ?? "").startsWith(head)
-          : (undoneInputRows(screen, clear!, echo.text) ?? 0) > 0;
-        if (stuck) setStuckEchoes((prev) => new Set(prev).add(echo.id));
-      });
-    }
-  }, [pendingEchoes, chatUi, sessionId]);
-  /// 「提交」：替用户在 CLI 输入框里按一次回车，回显转回「已写入」重新计时等落盘。
-  const submitStuckEcho = (id: number) => {
-    setStuckEchoes((prev) => { const next = new Set(prev); next.delete(id); return next; });
-    const input = toneRef.current === "running" ? chatUi?.queue_input ?? "\r" : "\r";
-    void writeManagedTerminal(sessionId, input)
-      .then(() => outgoingStore.update(sessionId, id, { phase: "pending", at: Date.now() }))
-      .catch((error) => setSendError(formatBackendError(error, t.locale)));
-  };
+  // 对账、计时、卡在输入框的探测与「提交」见 chat/useOutgoingUpkeep。
+  const { stuck: stuckEchoes, submit: submitStuckEcho } = useOutgoingUpkeep({
+    sessionId,
+    outgoing,
+    loading,
+    items,
+    acks: queueAcks,
+    lastUserText: history?.lastUserText,
+    ended: history?.status === "ended",
+    chatUi,
+    isActive: (sid) => activeSessionRef.current === sid,
+    running: () => toneRef.current === "running",
+    onError: (error) => setSendError(formatBackendError(error, t.locale)),
+  });
   const echoActions = { retry: retryOutgoing, restore: restoreOutgoing, submit: submitStuckEcho, stuck: stuckEchoes };
   // 中断键的写法（按几次、隔多久）见 chat/terminalInput.writeInterruptKeys。
   const writeInterrupt = (input: string) =>
@@ -2675,27 +2659,6 @@ export function ChatWindow() {
   /// 手动移除一条排队回执。**只动 GUI 记账**:消息已经写进 PTY,CLI 队列里的它照常
   /// 在回合结束后执行——按钮文案与 tip 必须说清这点,否则用户会以为消息被撤回了。
   const dismissQueued = (id: number) => outgoingStore.dismiss(sessionId, id);
-  // 对账：证据（transcript / hook 记的最近输入 / 会话结束）一变就推进状态，规则见
-  // outgoingPrompts.reconcileOutgoing。计时器负责「证据永不到达」的那一侧——回显 15s
-  // 转未确认、「已插入」停留后收起，那时 items 不再变化，光靠依赖项这一步永远轮不到。
-  const [outgoingTick, setOutgoingTick] = useState(0);
-  useEffect(() => {
-    // 首读还没回来时 items 是空的：这时拿它对账，切走超过 15s 的回显会先被判成「未确认送达」，
-    // 等首读到了才收起，白闪一下。证据没到就不对账。
-    if (loading) return;
-    outgoingStore.reconcile(sessionId, {
-      items,
-      acks: queueAcks,
-      lastUserText: history?.lastUserText,
-      ended: history?.status === "ended",
-      now: Date.now(),
-    });
-  }, [sessionId, loading, items, queueAcks, history?.lastUserText, history?.status, outgoingTick]);
-  useEffect(() => {
-    if (outgoing.length === 0) return;
-    const timer = window.setInterval(() => setOutgoingTick((n) => n + 1), 1_000);
-    return () => window.clearInterval(timer);
-  }, [outgoing.length]);
   /// 斜杠命令直通 PTY——CLI 的 composer 收到 "/xxx" + 回车会当命令执行，无需特殊协议。
   const sendSlash = (command: string) => {
     if (sending) return;
