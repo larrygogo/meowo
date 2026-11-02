@@ -252,8 +252,18 @@ pub(crate) async fn get_session_admin_page(
 ) -> Result<SessionAdminPage, String> {
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
+    let runtimes = state.session_runtimes.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let limit = page_size.clamp(1, ADMIN_PAGE_MAX);
+        // 后台会话与侧栏 / 角标同口径整个不列（见 hidden_background）：管理页曾漏了这条，
+        // 查出一批侧栏里找不到的「进行中」（用户实拍）。在 SQL 里排除，分页与总数才对得上。
+        let exclude_cc_ids: Vec<String> = runtimes
+            .snapshot()
+            .values()
+            .flat_map(|sessions| sessions.iter())
+            .filter(|(_, runtime)| runtime.background)
+            .map(|(id, _)| id.clone())
+            .collect();
         let query = meowo_store::AdminQuery {
             cwds: workspaces,
             archived: match status.as_deref() {
@@ -263,6 +273,7 @@ pub(crate) async fn get_session_admin_page(
             },
             updated_before: updated_before_days
                 .map(|days| super::now_ms() - i64::from(days) * 86_400_000),
+            exclude_cc_ids,
             offset: page.saturating_mul(limit),
             limit,
         };

@@ -890,6 +890,11 @@ fn session_admin_page_filters_pages_and_counts() {
     // 分页：第二页从第 3 条起，总数不变。
     let (rows, total) = store.session_admin_page(&AdminQuery { limit: 2, offset: 2, ..Default::default() }).unwrap();
     assert_eq!((ids(&rows), total), (vec!["b".into(), "a".into()], 4));
+    // 排除的会话（agent 自建的后台会话，侧栏也不列）：不出现、也不计入总数。
+    assert_eq!(
+        page(AdminQuery { exclude_cc_ids: vec!["c".into(), "nobody".into()], ..Default::default() }),
+        (vec!["d".into(), "b".into(), "a".into()], 3)
+    );
     // 被接替的旧段不算。
     store.set_session_lineage(d, b).unwrap();
     assert_eq!(page(AdminQuery::default()).1, 3);

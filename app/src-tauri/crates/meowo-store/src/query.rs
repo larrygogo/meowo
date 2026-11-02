@@ -48,6 +48,9 @@ pub struct AdminQuery {
     pub archived: Option<bool>,
     /// 只要最后更新早于此刻（ms）的会话；None = 不限。
     pub updated_before: Option<i64>,
+    /// 不列的会话（cc_session_id）：agent 自建的后台会话。侧栏与角标都把它们整个藏了
+    /// （app 层 hidden_background），管理页同口径，否则这里查出一批侧栏里找不到的「进行中」。
+    pub exclude_cc_ids: Vec<String>,
     pub offset: usize,
     pub limit: usize,
 }
@@ -375,6 +378,11 @@ impl Store {
         if let Some(before) = query.updated_before {
             conditions.push("s.last_event_at < ?".into());
             params.push(Value::Integer(before));
+        }
+        if !query.exclude_cc_ids.is_empty() {
+            let marks = vec!["?"; query.exclude_cc_ids.len()].join(", ");
+            conditions.push(format!("s.cc_session_id NOT IN ({marks})"));
+            params.extend(query.exclude_cc_ids.iter().cloned().map(Value::Text));
         }
         let where_clause = format!("WHERE {}", conditions.join(" AND "));
         let total: i64 = self.conn.query_row(
