@@ -4907,7 +4907,10 @@ select.ns-input {
 
 /* 工作区分组头（对照 Kimi WorkspaceHome）：名称 + 附加目录 + 操作按钮。 */
 .chat-workspace-head { display: flex; align-items: center; gap: var(--sp-6); }
-.chat-workspace-name { font-weight: 500; color: var(--cc-text); }
+/* 名字单行、放不下打省略号：此前没设，侧栏窄时 reverse-bot-gui 在连字符处折成两行（用户实拍）。
+   组头按钮占满剩余宽度，各组的数字和行尾按钮才能上下对齐，不跟着名字长短错位。 */
+.chat-workspace-head > .chat-sidebar-group-head { flex: 1 1 auto; min-width: 0; }
+.chat-workspace-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--cc-text); }
 /* 未读点：强调色小圆点（Kimi 的 unread-dot，属于强调色配额里的「小指示物」）。 */
 .chat-sidebar-unread { flex: 0 0 auto; width: 7px; height: 7px; margin-left: var(--sp-4); border-radius: 50%; background: var(--cc-accent); }
 .chat-workspace-attention { flex: 0 0 auto; color: var(--cc-warn-vivid); font-size: var(--text-xs); font-weight: 400; }
