@@ -729,6 +729,13 @@ export const zh = {
     sidebarTabDone: "已完成",
     sidebarSearch: "搜索",
     sidebarFoldAll: "全部折叠",
+    // 「工作空间」页签（对照 Kimi Code）：工作区就是会话用过的目录。
+    sidebarTabWorkspaces: "工作空间",
+    sidebarWorkspaces: "工作区",
+    wsNewHere: "在此工作区新建会话",
+    wsShowSessions: "只看这个工作区的会话",
+    wsOptions: "选项",
+    wsEmpty: "暂无工作区",
     sidebarUnfoldAll: "全部展开",
     sidebarSearchClear: "清空搜索",
     sidebarEmptySearch: "没有匹配的会话",

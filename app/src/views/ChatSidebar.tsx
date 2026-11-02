@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { moveNextTo, useSessionDrag } from "./sidebarDrag";
+import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { confirmStopSession, getLiveSessionsPage, getSessionLineage, moveSessionRank, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LineageEntry, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { remoteUi } from "../remoteMode";
@@ -507,6 +508,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 已归档视图:数据走后端现成的 "archived" 过滤(与设置页 ArchivedSessions 同一通道),
   // 条目菜单里自然出现「取消归档」——归档(卡片菜单)与取回自此对称。不落盘:临时视图。
   const [archivedView, setArchivedView] = useState(false);
+  // 「工作空间」页签（对照 Kimi Code 的第三个页签）：列表换成工作区目录，不落盘。
+  const [workspacesView, setWorkspacesView] = useState(false);
   const archivedViewRef = useRef(archivedView);
   archivedViewRef.current = archivedView;
   const [dirs, setDirs] = useState<string[]>([]);
@@ -549,6 +552,11 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 会话搜索:输入防抖 300ms 后下沉后端(searchRef 是 load 的同步读源)。
   // 不落盘——搜索是临时视图,残留的词会让下次打开的列表被静默过滤(看板踩过同款坑)。
   const [search, setSearch] = useState("");
+  // 工作空间页签里顶部搜索框改为过滤工作区（对照 Kimi「搜索会话或工作区」）：名称或路径包含即中。
+  const workspaceOptions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q ? dirOptions.filter((option) => option.label.toLowerCase().includes(q) || option.value.toLowerCase().includes(q)) : dirOptions;
+  }, [dirOptions, search]);
   const searchRef = useRef("");
   // searchRef 是防抖后（300ms）才落的 load 读源;深度搜索判活性要的是**当前**词,故另用
   // 一个每渲染同步的镜像 ref(本仓 xxxRef.current = xxx 惯例),回包时与它比即可。
@@ -1455,17 +1463,24 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             key={String(done)}
             type="button"
             role="tab"
-            aria-selected={archivedView === done}
-            className={archivedView === done ? "is-active" : ""}
-            onClick={() => setArchivedView(done)}
+            aria-selected={!workspacesView && archivedView === done}
+            className={!workspacesView && archivedView === done ? "is-active" : ""}
+            onClick={() => { setWorkspacesView(false); setArchivedView(done); }}
           >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
         ))}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspacesView}
+          className={workspacesView ? "is-active" : ""}
+          onClick={() => setWorkspacesView(true)}
+        >{t.chat.sidebarTabWorkspaces}</button>
       </div>
       {/* 「会话」小节标题（对照 Kimi Code）：右侧两个小图标——全部折叠 / 展开（分组时才有）、
           视图与排序。 */}
       <div className="chat-sidebar-section">
-        <span className="chat-sidebar-section-label">{t.chat.sidebarTitle}</span>
-        {groups && groups.length > 0 && (
+        <span className="chat-sidebar-section-label">{workspacesView ? t.chat.sidebarWorkspaces : t.chat.sidebarTitle}</span>
+        {!workspacesView && groups && groups.length > 0 && (
           <button
             type="button"
             className="chat-sidebar-section-btn"
@@ -1478,7 +1493,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             </svg>
           </button>
         )}
-        <SidebarFilterMenu
+        {!workspacesView && <SidebarFilterMenu
           dirValue={dirFilter}
           dirOptions={dirOptions}
           groupMode={groupMode}
@@ -1489,8 +1504,16 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           onGroup={changeGroupMode}
           onSort={changeSortMode}
           t={t}
-        />
+        />}
       </div>
+      {workspacesView ? (
+        <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
+          <WorkspaceDirectory
+            options={workspaceOptions}
+            onFilter={(cwd) => { setDirFilter(cwd); setArchivedView(false); setWorkspacesView(false); }}
+          />
+        </nav>
+      ) : (
       <nav
         ref={listRef}
         className="chat-sidebar-list"
@@ -1656,6 +1679,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           </div>
         )}
       </nav>
+      )}
       {/* G-16：全侧栏唯一的读屏汇总播报源（视觉隐藏），取代每条会话一个 role=status。 */}
       <div className="chat-sidebar-sronly" role="status">{liveSummary}</div>
       {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}

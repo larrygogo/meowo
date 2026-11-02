@@ -4117,6 +4117,23 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-workspace-head:hover .chat-workspace-action,
 .chat-workspace-head:focus-within .chat-workspace-action { opacity: 1; pointer-events: auto; }
 .chat-sidebar-more { padding-left: calc(var(--sp-8) + 16px + 6px); border-radius: var(--radius-sm); }
+/* 「工作空间」页签的目录行（对照 Kimi .ws-dir）：文件夹 + 名称，下面一行路径；悬停出「⋯」，
+   名称和路径右侧让出按钮的位置。 */
+.chat-ws-dir { position: relative; display: block; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); cursor: pointer; user-select: none; }
+.chat-ws-dir + .chat-ws-dir { margin-top: 2px; }
+.chat-ws-dir:hover, .chat-ws-dir.is-menu-open { background: var(--fill-hover); }
+.chat-ws-dir:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 2px var(--cc-accent)); }
+.chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
+.chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 450; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
+.chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }
+.chat-ws-dir-act .chat-sidebar-item-menu { position: static; background: transparent; }
+.chat-ws-dir:hover .chat-ws-dir-act .chat-sidebar-item-menu,
+.chat-ws-dir.is-menu-open .chat-ws-dir-act .chat-sidebar-item-menu,
+.chat-ws-dir:focus-within .chat-ws-dir-act .chat-sidebar-item-menu { opacity: 1; visibility: visible; }
+.chat-ws-dir-act .chat-sidebar-item-menu:hover { background: var(--fill-hover); }
 /* 动作失败提示：贴在列表与底栏之间，红字但不占常驻高度（4s 后自行消失）。 */
 .chat-sidebar-error { flex: 0 0 auto; padding: var(--sp-6) var(--sp-10); color: var(--cc-err-vivid); font-size: var(--text-xs); }
 /* G-16：全侧栏唯一的读屏汇总播报源——视觉隐藏但能被 live region 读到。

@@ -596,6 +596,32 @@ describe("ChatSidebar", () => {
     expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("name");
   });
 
+  /** 「工作空间」页签（对照 Kimi Code）：列出会话用过的目录，点一行就在那里新建会话；
+   *  「⋯ → 只看这个工作区的会话」切回进行中并按它筛选。顶部搜索在这个页签里过滤工作区。 */
+  it("工作空间页签:列出工作区,点击新建,菜单里可按工作区筛选会话", async () => {
+    const pages: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo", "C:/w/reverse-bot-gui"]);
+      if (command === "get_live_sessions_page") { pages.push(args); return Promise.resolve([session(1, "甲")]); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    expect(screen.getByText("C:/w/meowo")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /甲/ })).toBeNull();
+    // 搜索框在这个页签里过滤工作区。
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索" }), { target: { value: "reverse" } });
+    expect(screen.queryByText("C:/w/meowo")).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索" }), { target: { value: "" } });
+    fireEvent.click(screen.getByText("C:/w/meowo"));
+    expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
+    fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
+    expect(screen.getByRole("tab", { name: "进行中" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/reverse-bot-gui" }));
+  });
+
   /** 「会话」小节的全部折叠 / 展开（对照 Kimi Code）：只在分组时出现，一键折起所有组，再点全部展开。 */
   it("全部折叠:一键折起所有分组,再点全部展开", async () => {
     localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
