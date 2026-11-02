@@ -802,8 +802,6 @@ export const en: Dict = {
     supersededGo: "Go to new session",
     handoffContinued: "Continues an earlier session; context carried over",
     handoffDivider: (name: string) => `Switched to ${name} — full context carried over`,
-    lineageBadge: "Engine switch history",
-    lineageCurrent: "current",
     modeDimensions: {
       permission: "Permissions",
       collaboration: "Collaboration",

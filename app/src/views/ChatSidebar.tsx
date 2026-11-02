@@ -2,13 +2,12 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { invoke } from "@tauri-apps/api/core";
 import { moveNextTo, useSessionDrag } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
-import { confirmStopSession, getLiveSessionsPage, getSessionLineage, moveSessionRank, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LineageEntry, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { confirmStopSession, getLiveSessionsPage, moveSessionRank, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { agentAssets, tintStyle } from "../providers";
 import { folderName, parentSegment, pathKey } from "../paths";
 import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
@@ -67,84 +66,6 @@ const TONE_RANK: Record<SessionTone, number> = {
 
 type DirGroup = { key: string; cwd: string | null; label: string; items: LiveSession[] };
 
-/** 接续链弹层：列出跨 provider 切换链上的各段（provider 图标 + 模型 + 起始日期），
- *  尾段标「当前」，点旧段回看。定位与 CardContextMenu 同款：fixed + 视口钳位；
- *  关闭语义走 useDismissable（全项目同一份）：点外关且拦截这次点击（防顺手触发条目
- *  点击切走会话）、Esc 关且 preventDefault（不标记的话同一次按键会冒泡到窗口级
- *  「Esc=拒绝审批」，收弹层顺带武装了拒绝）、侧栏滚动/窗口缩放也关（fixed 坐标在
- *  打开时一次测量，滚动后即错位）。 */
-function LineagePopover({ x, y, entries, onPick, onClose }: {
-  x: number;
-  y: number;
-  entries: LineageEntry[];
-  onPick: (id: number) => void;
-  onClose: () => void;
-}) {
-  const t = useT();
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: x, top: y });
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const pad = 4;
-    setPos({
-      left: Math.max(pad, Math.min(x, window.innerWidth - el.offsetWidth - pad)),
-      top: Math.max(pad, Math.min(y, window.innerHeight - el.offsetHeight - pad)),
-    });
-  }, [x, y]);
-  useDismissable(ref, {
-    onClose,
-    outsideEvent: "click",
-    interceptOutsideClick: true,
-    closeOnResize: true,
-    closeOnScroll: true,
-  });
-  // 挂载即聚焦首项 + ↑↓/Home/End 在条目间搬焦点（roving，与 useMenuPopup 同款）：
-  // 此前弹层对键盘用户完全不可达——打开了也不知道焦点在哪。
-  useLayoutEffect(() => {
-    ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-  }, []);
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
-    if (items.length === 0) return;
-    const at = items.indexOf(document.activeElement as HTMLElement);
-    if (at < 0) return;
-    const next = e.key === "ArrowDown" ? (at + 1) % items.length
-      : e.key === "ArrowUp" ? (at - 1 + items.length) % items.length
-      : e.key === "Home" ? 0
-      : e.key === "End" ? items.length - 1
-      : null;
-    if (next === null) return;
-    e.preventDefault();
-    items[next]?.focus();
-  };
-  const last = entries[entries.length - 1];
-  return (
-    <div ref={ref} className="dd-menu chat-sidebar-lineage-menu" role="menu" style={{ position: "fixed", left: pos.left, top: pos.top }} onKeyDown={onKeyDown}>
-      {entries.map((entry) => {
-        const { Icon } = agentAssets(entry.provider);
-        const current = entry === last;
-        return (
-          <button
-            type="button"
-            key={entry.id}
-            role="menuitem"
-            className="dd-item"
-            onClick={() => { onClose(); onPick(entry.id); }}
-          >
-            <span className="chat-sidebar-lineage-ico" style={tintStyle(entry.provider)}><Icon /></span>
-            <span className="dd-label">
-              {entry.model ?? entry.provider}
-              {" · "}
-              {new Date(entry.startedAt).toLocaleDateString()}
-            </span>
-            {current && <span className="chat-sidebar-lineage-now">{t.chat.lineageCurrent}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /** 就地编辑输入框。草稿是**本组件的**局部状态：此前草稿放在 ChatSidebar 里，每次按键
  *  setState 都让整个侧栏（无虚拟化，几百条全在 DOM）重渲染一遍——重命名逐字卡顿的根因。
@@ -476,7 +397,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   const [syncLost, setSyncLost] = useState(false);
   const refreshFailStreakRef = useRef(0);
   // 接续链弹层（跨 provider 切换的回看入口）：点链徽标时惰性取链上各段。
-  const [lineageMenu, setLineageMenu] = useState<{ x: number; y: number; entries: LineageEntry[] } | null>(null);
   // 翻页用「从头取 limit 条」而不是游标续传：整段重取让 board-changed 刷新走同一条
   // 路径，不必维护「已加载的页」这份额外状态。到底与否看后端带回的 next_cursor。
   const [limit, setLimit] = useState(PAGE_LIMIT);
@@ -1290,24 +1210,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               <span className="chat-sidebar-name-text" data-tip={item.task_title || undefined}>
                 <span className="chat-sidebar-name-inner">{item.task_title || t.sticker.waitingFirstInput}</span>
               </span>
-              {/* 跨 provider 接续链徽标：点开列出链上各段（回看旧引擎的对话）。 */}
-              {item.predecessor_id != null && (
-                <button
-                  type="button"
-                  className="chat-sidebar-lineage"
-                  aria-label={t.chat.lineageBadge}
-                  data-tip={t.chat.lineageBadge}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    void getSessionLineage(item.session.id)
-                      .then((entries) => setLineageMenu({ x: rect.left, y: rect.bottom + 4, entries }))
-                      .catch(() => {});
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
-                </button>
-              )}
             </span>
           )}
           {/* 目录行 = 目录名 + 附加目录标(+N,与贴纸卡同款) + 最后活跃时间同排——前两者曾是
@@ -1699,15 +1601,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           <button type="button" className="is-primary" onClick={archiveSelected}>{t.chat.archiveSelected}</button>
           <button type="button" onClick={() => setSelectedIds(new Set())}>{t.chat.cancelSelect}</button>
         </div>
-      )}
-      {lineageMenu && (
-        <LineagePopover
-          x={lineageMenu.x}
-          y={lineageMenu.y}
-          entries={lineageMenu.entries}
-          onPick={onSelect}
-          onClose={() => setLineageMenu(null)}
-        />
       )}
       {ctxMenu && ctxItem && (
         <CardContextMenu

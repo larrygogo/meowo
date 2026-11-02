@@ -885,8 +885,6 @@ export const zh = {
     handoffContinued: "由另一段会话切换而来，上下文已交接",
     // 时间线里的段间分隔条：前序段历史内联在上方，分隔条标明从哪一段起换了引擎。
     handoffDivider: (name: string) => `切换至 ${name} 继续，完整上下文已交接`,
-    lineageBadge: "引擎切换历史",
-    lineageCurrent: "当前",
     modeDimensions: {
       permission: "权限模式",
       collaboration: "协作模式",

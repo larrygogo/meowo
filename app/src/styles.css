@@ -4014,11 +4014,6 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-star { flex: 0 0 auto; display: inline-flex; color: var(--cc-accent-text); }
 .chat-sidebar-star svg { width: 11px; height: 11px; }
 /* 接续链徽标（跨 provider 切换过的会话）：贴着标题的小链形按钮，点开回看链上各段。 */
-.chat-sidebar-lineage { flex: 0 0 auto; display: inline-flex; align-items: center; padding: 0 var(--sp-2); border: 0; background: transparent; color: var(--cc-text-faint); cursor: pointer; }
-.chat-sidebar-lineage:hover { color: var(--cc-text); }
-.chat-sidebar-lineage-menu { padding: var(--sp-6); }
-.chat-sidebar-lineage-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 15px; }
-.chat-sidebar-lineage-now { flex: 0 0 auto; margin-left: var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-sidebar-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 目录行:目录名与 +N 附加标同排(纵排容器里两个块级兄弟会让 +N 掉行)。
    baseline 对齐:胶囊带背景,center 下文字基线与目录名错位(用户实拍)。 */

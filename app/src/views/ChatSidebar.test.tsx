@@ -866,42 +866,6 @@ describe("ChatSidebar", () => {
     expect(invoke).toHaveBeenCalledWith("open_new_session_window");
   });
 
-  /// 跨 provider 接续链：predecessor_id 非空的卡片带链徽标，点开列出链上各段
-  ///（惰性调 get_session_lineage），点旧段回看、不触发卡片自身的切会话。
-  it("接续链徽标:点开弹层列出链上各段,点旧段回看", async () => {
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-      if (command === "get_live_sessions_page") {
-        return Promise.resolve([
-          session(21, "换过引擎的", { predecessor_id: 20, provider: "codex" } as Partial<LiveSession>),
-          session(9, "普通会话"),
-        ]);
-      }
-      if (command === "get_session_lineage") {
-        expect(args).toEqual({ sessionId: 21 });
-        return Promise.resolve([
-          { id: 20, provider: "claude", startedAt: 1_700_000_000_000, endedAt: 1_700_003_600_000, model: "Opus" },
-          { id: 21, provider: "codex", startedAt: 1_700_003_600_000, endedAt: null, model: null },
-        ]);
-      }
-      return Promise.resolve();
-    });
-    const onSelect = vi.fn();
-    render(<ChatSidebar activeId={21} approvalAwaitingIds={new Set()} onSelect={onSelect} onCollapse={() => {}} />);
-    await screen.findByRole("button", { name: /换过引擎的/ });
-    // 普通会话没有徽标；接续会话有。
-    const badges = screen.getAllByRole("button", { name: "引擎切换历史" });
-    expect(badges.length).toBe(1);
-
-    fireEvent.click(badges[0]);
-    // 弹层列出两段：旧段显示模型名，尾段标「当前」。
-    const old = await screen.findByRole("menuitem", { name: /Opus/ });
-    expect(screen.getByText("当前")).toBeTruthy();
-    // 点旧段回看；卡片自身的 onSelect(21) 不该被这次点击顺手触发。
-    fireEvent.click(old);
-    expect(onSelect).toHaveBeenCalledWith(20);
-    expect(onSelect).not.toHaveBeenCalledWith(21);
-  });
-
   describe("可访问性:roving tabindex + 单一汇总播报(C-17/G-16)", () => {
     const renderThree = async () => {
       invoke.mockImplementation((command: string) => {
