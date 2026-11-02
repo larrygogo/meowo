@@ -538,6 +538,11 @@ export function openPathWith(cwd: string, rel: string, opener: string): Promise<
   return invoke("open_path_with", { cwd, rel, opener });
 }
 
+/** 把文本存成文件（「导出会话」：路径来自系统保存框，后端只认 .md / .txt）。 */
+export function exportTextFile(path: string, text: string): Promise<void> {
+  return invoke("export_text_file", { path, text });
+}
+
 /** 对话窗标题栏「用编辑器打开」：本机装了的、能打开目录的编辑器（Windows 带 exe 图标）。
  *  系统文件管理器不在其中，前端恒列（走 openProjectDir）。 */
 export function listFolderEditors(): Promise<FileOpenerDto[]> {

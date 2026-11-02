@@ -526,6 +526,28 @@ fn open_path_with_blocking(cwd: &str, rel: &str, opener: &str) -> Result<(), Str
     }
 }
 
+/// 把文本存成文件（对话窗「导出会话」：前端用系统保存框选好路径，内容是导出的 Markdown）。
+/// 只认 .md / .txt：路径来自保存框，但这仍是一个「往任意路径写字」的口子，扩展名收窄后
+/// 写不成可执行文件或配置文件。宿主执行类，远程禁用（remote.rs 的禁止清单）。
+#[tauri::command]
+pub(crate) async fn export_text_file(path: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || export_text_blocking(&path, &text))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn export_text_blocking(path: &str, text: &str) -> Result<(), String> {
+    let target = Path::new(path.trim());
+    let allowed = target
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("txt"));
+    if !allowed {
+        return Err("export/bad_extension".into());
+    }
+    std::fs::write(target, text).map_err(|e| format!("export/write_failed：{e}"))
+}
+
 /// 在系统文件管理器里定位（选中）cwd 内的文件/目录。
 #[tauri::command]
 pub(crate) async fn reveal_path_in_file_manager(cwd: String, rel: String) -> Result<(), String> {
@@ -564,6 +586,20 @@ fn reveal_path_blocking(cwd: &str, rel: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn 导出只写_md_与_txt() {
+        let dir = TempDir::new();
+        let md = dir.0.join("对话.md");
+        export_text_blocking(&md.to_string_lossy(), "# 标题\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&md).unwrap(), "# 标题\n");
+        let exe = dir.0.join("evil.exe");
+        assert_eq!(
+            export_text_blocking(&exe.to_string_lossy(), "x").unwrap_err(),
+            "export/bad_extension"
+        );
+        assert!(!exe.exists());
+    }
 
     /// 每个用例一个独立临时目录，落盘结构后返回路径；Drop 时自动清掉。
     struct TempDir(PathBuf);

@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Tauri 事件反而直接给**源路径**,附件协议正好只要路径)。
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
@@ -88,7 +88,7 @@ import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWith
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
-import { agentName, listAgents, type AgentDescriptor } from "../api";
+import { agentName, exportTextFile, listAgents, type AgentDescriptor } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
 
@@ -2426,13 +2426,26 @@ export function ChatWindow() {
   // 更新」警告：它是事后发现，我们在复制这一刻就能提醒）。命令照给，只把回执换成提醒。
   // 对话导出（对照 Kimi 会话菜单）：只拿已渲染的时间线（含接续的前序段），内容规则见 exportMarkdown。
   const exportItems = timelineItems;
+  const conversationMarkdown = () => transcriptMarkdown(exportItems, {
+    title: history?.title || t.chat.title,
+    user: t.chat.exportYou,
+    agent: provider ? agentName(agentsForOptions ?? [], provider) : t.chat.title,
+  });
   const copyConversation = () => {
-    const markdown = transcriptMarkdown(exportItems, {
-      title: history?.title || t.chat.title,
-      user: t.chat.exportYou,
-      agent: provider ? agentName(agentsForOptions ?? [], provider) : t.chat.title,
-    });
-    void copyPlainText(markdown).then((ok) => setCopyNotice({ text: ok ? t.chat.conversationCopied : t.chat.copyFailed }));
+    void copyPlainText(conversationMarkdown()).then((ok) => setCopyNotice({ text: ok ? t.chat.conversationCopied : t.chat.copyFailed }));
+  };
+  // 导出会话为 .md（对照 Kimi「导出会话」）：系统保存框选路径，文件名默认取会话标题（去掉
+  // 文件名里不能用的字符）。取消保存框不报错。
+  const exportConversation = async () => {
+    const base = (history?.title || t.chat.title).replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 80) || "conversation";
+    const path = await saveDialog({ defaultPath: `${base}.md`, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(() => null);
+    if (!path) return;
+    try {
+      await exportTextFile(path, conversationMarkdown());
+      setCopyNotice({ text: t.chat.conversationExported });
+    } catch (error) {
+      setSendError(formatBackendError(error, t.locale));
+    }
   };
   const copyFinalAnswer = () => {
     const text = finalAnswer(exportItems);
@@ -3785,6 +3798,7 @@ export function ChatWindow() {
             onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
             onCopyConversation={exportItems.length > 0 ? copyConversation : undefined}
             onCopyFinalAnswer={finalAnswer(exportItems) ? copyFinalAnswer : undefined}
+            onExportConversation={exportItems.length > 0 && !remoteUi() ? () => void exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}

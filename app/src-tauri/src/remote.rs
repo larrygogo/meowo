@@ -1613,6 +1613,8 @@ mod tests {
             // 在宿主上拉起编辑器（对话窗标题栏），与打开目录同属宿主执行类。
             "open_folder_in",
             "list_folder_editors",
+            // 往宿主磁盘写文件（对话导出），同属宿主执行类。
+            "export_text_file",
             "reveal_path_in_file_manager",
             "open_attached_terminal",
             "open_chat_window",

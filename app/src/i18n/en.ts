@@ -866,6 +866,8 @@ export const en: Dict = {
     copyResumeCommand: "Copy resume command",
     copyConversation: "Copy conversation as Markdown",
     copyFinalAnswer: "Copy final answer only",
+    exportConversation: "Export conversation…",
+    conversationExported: "Conversation exported",
     conversationCopied: "Conversation copied",
     finalAnswerCopied: "Final answer copied",
     exportYou: "You",

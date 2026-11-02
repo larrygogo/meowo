@@ -22,7 +22,7 @@ import { folderName } from "../../paths";
 /** 标题胶囊 + 会话动作菜单（Kimi 式）：标题本身是触发钮（▾），置顶/打开目录/重命名/
  *  归档都收进菜单——标题栏只留「正在看哪条 + 状态 + 视图切换」。重命名走独立 modal
  *  （onRename 只负责打开它）。 */
-export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starred, onToggleStar, onRename, onFork, forkDisabled, onCopyResume, onCopyConversation, onCopyFinalAnswer, onToggleArchived, onSearch, t }: {
+export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starred, onToggleStar, onRename, onFork, forkDisabled, onCopyResume, onCopyConversation, onCopyFinalAnswer, onExportConversation, onToggleArchived, onSearch, t }: {
   title: string;
   provider: string;
   cwd: string | null;
@@ -40,6 +40,8 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
   /** 复制整段对话为 Markdown / 只复制最后一条回答（对照 Kimi 会话菜单）。没有可复制的内容时不传。 */
   onCopyConversation?: () => void;
   onCopyFinalAnswer?: () => void;
+  /** 导出会话为 .md 文件（对照 Kimi「导出会话」）；宿主执行类，远程不传。 */
+  onExportConversation?: () => void;
   onToggleArchived: () => void;
   /** 在对话中搜索。桌面另有 Ctrl+Shift+F，手机没有快捷键也没有命令面板，这里是唯一入口。 */
   onSearch?: () => void;
@@ -124,6 +126,14 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7" /></svg>
               </span>
               <span className="dd-label">{t.chat.copyFinalAnswer}</span>
+            </button>
+          )}
+          {onExportConversation && (
+            <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onExportConversation)}>
+              <span className="chat-title-action-ico">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" /></svg>
+              </span>
+              <span className="dd-label">{t.chat.exportConversation}</span>
             </button>
           )}
           <button type="button" role="menuitem" className="dd-item" disabled={archiving} onClick={() => pick(onToggleArchived)}>

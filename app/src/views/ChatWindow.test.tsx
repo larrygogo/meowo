@@ -3,11 +3,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 
 const invoke = vi.hoisted(() => vi.fn());
 const openDialog = vi.hoisted(() => vi.fn());
+const saveDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({
   invoke,
   convertFileSrc: (path: string) => `asset://localhost/${encodeURIComponent(path)}`,
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog, save: saveDialog }));
 // 捕获事件回调：审批类用例需要手动投递 pending-approval，验证「别的会话要授权时不切窗」。
 const eventListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 vi.mock("@tauri-apps/api/event", () => ({
@@ -5193,6 +5194,15 @@ describe("ChatWindow", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "仅复制最终回答" }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("已修好。"));
     expect(await screen.findByText("已复制最终回答")).toBeTruthy();
+    // 导出会话：系统保存框默认文件名取会话标题，同一份 Markdown 交给后端写盘。
+    saveDialog.mockResolvedValueOnce("D:/out/修登录页.md");
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "导出会话…" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("export_text_file", {
+      path: "D:/out/修登录页.md",
+      text: (writeText.mock.calls[0] as unknown as [string])[0],
+    }));
+    expect(saveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "修登录页.md" }));
   });
 
   it("复制到新会话:来源不支持导出(supports_chat_export=false)时不显示分组", async () => {

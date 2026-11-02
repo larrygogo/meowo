@@ -949,6 +949,8 @@ export const zh = {
     // 会话菜单的导出（对照 Kimi「复制全部对话为 Markdown / 仅复制最终总结」）。
     copyConversation: "复制对话为 Markdown",
     copyFinalAnswer: "仅复制最终回答",
+    exportConversation: "导出会话…",
+    conversationExported: "已导出会话",
     conversationCopied: "已复制对话",
     finalAnswerCopied: "已复制最终回答",
     exportYou: "你",

@@ -1343,6 +1343,7 @@ pub fn run() {
             search_project_files,
             list_file_openers,
             open_path_with,
+            fsutil::export_text_file,
             editors::list_folder_editors,
             editors::open_folder_in,
             reveal_path_in_file_manager,
