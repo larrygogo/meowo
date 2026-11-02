@@ -1021,13 +1021,19 @@ impl TranscriptSpec for KimiTranscript {
             })
     }
 
+    /// kimi 自己的会话标题：`state.json` 的 `title`，只认它起的（`titleKind: generated`）
+    /// 和用户改的（`custom` / `isCustomTitle`）。`replaceable` 是首句截出来的临时名，和
+    /// Meowo 自己的临时标题同源，不采。
     fn resolve_title(
         &self,
         _transcript_path: Option<&str>,
         _cwd: Option<&str>,
-        _session_id: &str,
+        session_id: &str,
     ) -> Option<String> {
-        None
+        let dir = session_dir(session_id)?;
+        let text = std::fs::read_to_string(dir.join("state.json")).ok()?;
+        let state: serde_json::Value = serde_json::from_str(&text).ok()?;
+        kimi_state_title(&state)
     }
 
     fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
@@ -1556,6 +1562,21 @@ pub fn read_context(session_id: &str) -> Option<crate::caps::ContextUsage> {
     })
 }
 
+/// `state.json` 里可采用的标题（见 KimiTranscript::resolve_title）。
+fn kimi_state_title(state: &serde_json::Value) -> Option<String> {
+    let kind = state.get("titleKind").and_then(|k| k.as_str());
+    let custom = state.get("isCustomTitle").and_then(|c| c.as_bool()) == Some(true);
+    if !(custom || matches!(kind, Some("generated") | Some("custom"))) {
+        return None;
+    }
+    state
+        .get("title")
+        .and_then(|t| t.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
 /// 把某 kimi 会话改成自定义标题：改写 session `state.json` 的 `title` + `isCustomTitle=true`
 /// （后者阻止 kimi 之后用 AI 标题覆盖，与 claude 的 custom-title 同义），使 kimi 自身会话列表与
 /// `kimi -r` 列表也显示新名。其余字段原样保留。写回走 [`crate::fsutil::write_atomic`]
@@ -1616,6 +1637,14 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
         set_custom_title(session_id, title)
     }
 
+    fn resolves_transcript_title(&self) -> bool {
+        true
+    }
+
+    fn transcript_title_generated(&self) -> bool {
+        true
+    }
+
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
         Some(&KIMI_TRANSCRIPT)
     }
@@ -1623,6 +1652,35 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn state_title_only_counts_generated_or_custom() {
+        use serde_json::json;
+        let title = super::kimi_state_title;
+        assert_eq!(
+            title(&json!({"title": "排查报错", "titleKind": "generated"})).as_deref(),
+            Some("排查报错")
+        );
+        assert_eq!(
+            title(&json!({"title": "我的名字", "titleKind": "custom", "isCustomTitle": true}))
+                .as_deref(),
+            Some("我的名字")
+        );
+        assert_eq!(
+            title(&json!({"title": "旧版自定义", "isCustomTitle": true})).as_deref(),
+            Some("旧版自定义")
+        );
+        // 首句截出来的临时名、没有标记的老会话：不采。
+        assert_eq!(
+            title(&json!({"title": "帮我看看这个报错", "titleKind": "replaceable"})),
+            None
+        );
+        assert_eq!(title(&json!({"title": "老会话"})), None);
+        assert_eq!(
+            title(&json!({"title": "  ", "titleKind": "generated"})),
+            None
+        );
+    }
     /// 跨账号搬过来的会话在目标账号里**没有索引条目**（索引是 kimi 自己维护的账本，
     /// `sessionDir` 还是绝对路径，我们不替它编）。没有扫目录这条兜底，搬过去的会话读不到
     /// transcript：对话页空白、上下文与改名一并静默落空。

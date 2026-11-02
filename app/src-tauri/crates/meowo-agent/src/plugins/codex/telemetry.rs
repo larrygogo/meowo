@@ -367,13 +367,19 @@ impl TranscriptSpec for CodexTranscript {
         Some(super::lineage::chat_path(&current, session_id))
     }
 
+    /// codex 自己起的线程名：`<CODEX_HOME>/session_index.jsonl` 里该会话**最后一条**的
+    /// `thread_name`（它按追加写，/rename 也是再追加一条）。实测是模型概括的短句，
+    /// 如「Identify dominant color」，不是首句原文。
     fn resolve_title(
         &self,
         _transcript_path: Option<&str>,
         _cwd: Option<&str>,
-        _session_id: &str,
+        session_id: &str,
     ) -> Option<String> {
-        None
+        std::iter::once(codex_home())
+            .flatten()
+            .chain(managed_codex_homes())
+            .find_map(|home| thread_name_in(&home.join("session_index.jsonl"), session_id))
     }
 
     fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
@@ -483,6 +489,24 @@ fn find_rollout(session_id: &str) -> Option<PathBuf> {
         .flatten()
         .chain(managed_codex_homes())
         .find_map(|home| walk_find(&home.join("sessions"), &suffix, 6))
+}
+
+/// 某份 `session_index.jsonl` 里该会话最后一次记下的线程名。空名不算。
+fn thread_name_in(index: &Path, session_id: &str) -> Option<String> {
+    let content = std::fs::read_to_string(index).ok()?;
+    // 从尾往前找：追加写的索引里最新一条在最后，找到就停，不用把整份都解析一遍。
+    content
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v.get("id").and_then(|id| id.as_str()) == Some(session_id))
+        .find_map(|v| {
+            v.get("thread_name")
+                .and_then(|n| n.as_str())
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(str::to_string)
+        })
 }
 
 /// Meowo 管理的 codex profile 数据目录（每个 profile 根就是它的 `CODEX_HOME`，见
@@ -652,6 +676,14 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
         read_context(ctx.transcript_path, ctx.session_id)
     }
 
+    fn resolves_transcript_title(&self) -> bool {
+        true
+    }
+
+    fn transcript_title_generated(&self) -> bool {
+        true
+    }
+
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
         Some(&CODEX_TRANSCRIPT)
     }
@@ -659,6 +691,35 @@ impl crate::caps::TelemetryCap for CodexTelemetry {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn thread_name_takes_the_last_entry_for_the_session() {
+        let dir = std::env::temp_dir().join(format!("meowo-codex-idx-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let index = dir.join("session_index.jsonl");
+        std::fs::write(
+            &index,
+            concat!(
+                r#"{"id":"a","thread_name":"First name","updated_at":"t1"}"#,
+                "\n",
+                r#"{"id":"b","thread_name":"Other","updated_at":"t2"}"#,
+                "\n",
+                r#"{"id":"a","thread_name":"Renamed","updated_at":"t3"}"#,
+                "\n",
+                r#"{"id":"c","thread_name":"  ","updated_at":"t4"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            super::thread_name_in(&index, "a").as_deref(),
+            Some("Renamed")
+        );
+        assert_eq!(super::thread_name_in(&index, "b").as_deref(), Some("Other"));
+        assert_eq!(super::thread_name_in(&index, "c"), None);
+        assert_eq!(super::thread_name_in(&index, "missing"), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
     use super::*;
 
     /// 回溯记录 `thread_rolled_back {num_turns}`（本机 0.144 实拍形态）：插话也算一轮（codex

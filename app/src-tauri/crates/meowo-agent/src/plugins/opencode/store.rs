@@ -99,6 +99,26 @@ pub(super) fn open_for_session(session_id: &str) -> Option<Connection> {
     None
 }
 
+/// 会话标题（顶层会话；子任务会话不管）。opencode 建会话时先填「New session - <ISO 时间>」
+/// （子会话「Child session - …」），第一轮后才换成模型起的标题，占位的不算。
+pub(super) fn session_title(session_id: &str) -> Option<String> {
+    let conn = open_for_session(session_id)?;
+    let title: String = conn
+        .query_row(
+            "SELECT title FROM session WHERE id = ?1 AND parent_id IS NULL",
+            [session_id],
+            |row| row.get(0),
+        )
+        .ok()?;
+    usable_title(&title)
+}
+
+fn usable_title(title: &str) -> Option<String> {
+    let title = title.trim();
+    let placeholder = title.starts_with("New session - ") || title.starts_with("Child session - ");
+    (!title.is_empty() && !placeholder).then(|| title.to_string())
+}
+
 fn db_path_of(session_id: &str) -> Option<PathBuf> {
     DB_OF.lock().ok().and_then(|m| m.get(session_id).cloned())
 }
@@ -604,6 +624,23 @@ pub(super) mod test_support {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn placeholder_titles_are_not_usable() {
+        assert_eq!(
+            super::usable_title("Fix login bug").as_deref(),
+            Some("Fix login bug")
+        );
+        assert_eq!(
+            super::usable_title("New session - 2026-11-02T10:00:00.000Z"),
+            None
+        );
+        assert_eq!(
+            super::usable_title("Child session - 2026-11-02T10:00:00.000Z"),
+            None
+        );
+        assert_eq!(super::usable_title("   "), None);
+    }
     use super::test_support::*;
     use super::*;
 

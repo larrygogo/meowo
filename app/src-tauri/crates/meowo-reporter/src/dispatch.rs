@@ -314,7 +314,7 @@ fn apply_title(
     now_ms: i64,
     provider: &str,
 ) -> Result<(), StoreError> {
-    // 是否由 transcript 解析标题由 agent 决定（claude 是；kimi/codex 否，靠首条 prompt 命名）。
+    // 是否由 transcript 解析标题由 agent 决定。没解析到时保留首条 prompt 起的临时标题。
     let Some(agent) = telemetry(provider) else {
         return Ok(());
     };
@@ -335,7 +335,12 @@ fn apply_title(
         cwd_owned.as_deref(),
         &ev.session_id,
     ) {
-        store.set_session_title(sid, &title, now_ms)?;
+        // agent 自己起的标题不覆盖用户在 Meowo 里改的名字（tasks.title_locked）。
+        if agent.transcript_title_generated() {
+            store.adopt_agent_title(sid, &title, now_ms)?;
+        } else {
+            store.set_session_title(sid, &title, now_ms)?;
+        }
     }
     Ok(())
 }

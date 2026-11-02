@@ -40,6 +40,14 @@ impl TelemetryCap for OpencodeTelemetry {
         )
     }
 
+    fn resolves_transcript_title(&self) -> bool {
+        true
+    }
+
+    fn transcript_title_generated(&self) -> bool {
+        true
+    }
+
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
         Some(&TRANSCRIPT)
     }
@@ -62,10 +70,10 @@ impl TranscriptSpec for OpencodeTranscript {
         store::materialize(session_id)
     }
 
-    /// 标题走首条 prompt（与 codex/kimi 同）；opencode 自己生成的标题在库里，但与看板的
-    /// 命名口径不一致，不采信。
-    fn resolve_title(&self, _: Option<&str>, _: Option<&str>, _: &str) -> Option<String> {
-        None
+    /// opencode 自己用小模型起的标题（库里 session.title）。2026-11 起采用（用户定：各家都用
+    /// agent 自己起的标题，同 Claude 的 ai-title）；还没起好时是「New session - 时间」，不采。
+    fn resolve_title(&self, _: Option<&str>, _: Option<&str>, session_id: &str) -> Option<String> {
+        store::session_title(session_id)
     }
 
     fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
