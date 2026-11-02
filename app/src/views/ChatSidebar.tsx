@@ -1,20 +1,21 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { confirmStopSession, getLiveSessionsPage, getSessionLineage, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LineageEntry, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { applyGroupOrder, moveNextTo, usePointerReorder, useSessionDrag } from "./sidebarDrag";
+import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
+import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setSettings, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { agentAssets, tintStyle } from "../providers";
 import { folderName, parentSegment, pathKey } from "../paths";
 import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
-import { editorKeyDown, fmtAgo, fmtWaited, useStarred } from "./sticker/helpers";
+import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, useStarred } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
-import { CheckIcon, ChevronDownIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
+import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
@@ -34,12 +35,14 @@ const SORT_MODE_KEY = "meowo-chat-sidebar-sort-mode";
 const FOLDED_KEY = "meowo-chat-sidebar-folded-dirs";
 
 /** 分组方式（Claude Code 侧栏 Group by 同款）：不分组 / 按目录 / 按日期 / 按状态。 */
-type GroupMode = "none" | "dir" | "date" | "state";
+type GroupMode = "none" | "dir";
 
-/** 排序方式：最近活跃（默认 = 后端 connected-first + 时间倒序原样透传）/ 创建时间 / 名称。
- *  非默认档在前端排**已加载的这一页**：排序不同于筛选，翻页不完整只影响顺序的全局性，
- *  不会让会话消失；改后端排序则要连 SQL 游标一起换口径，不值当。 */
-type SortMode = "recent" | "created" | "name";
+/** 排序方式（对照 Kimi Code 侧栏：手动排序 / 按最近活动）：
+ *  - manual：手动排序，默认。后端按手动键分页，没拖过的按创建时间倒序，新会话在最上面；
+ *    桌面上可以拖着调位置（见 sidebarDrag），手机只按这个顺序显示。
+ *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
+ *  - name：按名称，前端排**已加载的这一页**。 */
+type SortMode = "manual" | "recent";
 
 /** 无 cwd 的会话归到同一组（后端 cwd 可空:ping 型/早期数据）。以 NUL 开头，不可能与路径撞车。 */
 const NO_DIR = String.fromCharCode(0) + "no-dir";
@@ -53,84 +56,6 @@ const TONE_RANK: Record<SessionTone, number> = {
 
 type DirGroup = { key: string; cwd: string | null; label: string; items: LiveSession[] };
 
-/** 接续链弹层：列出跨 provider 切换链上的各段（provider 图标 + 模型 + 起始日期），
- *  尾段标「当前」，点旧段回看。定位与 CardContextMenu 同款：fixed + 视口钳位；
- *  关闭语义走 useDismissable（全项目同一份）：点外关且拦截这次点击（防顺手触发条目
- *  点击切走会话）、Esc 关且 preventDefault（不标记的话同一次按键会冒泡到窗口级
- *  「Esc=拒绝审批」，收弹层顺带武装了拒绝）、侧栏滚动/窗口缩放也关（fixed 坐标在
- *  打开时一次测量，滚动后即错位）。 */
-function LineagePopover({ x, y, entries, onPick, onClose }: {
-  x: number;
-  y: number;
-  entries: LineageEntry[];
-  onPick: (id: number) => void;
-  onClose: () => void;
-}) {
-  const t = useT();
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: x, top: y });
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const pad = 4;
-    setPos({
-      left: Math.max(pad, Math.min(x, window.innerWidth - el.offsetWidth - pad)),
-      top: Math.max(pad, Math.min(y, window.innerHeight - el.offsetHeight - pad)),
-    });
-  }, [x, y]);
-  useDismissable(ref, {
-    onClose,
-    outsideEvent: "click",
-    interceptOutsideClick: true,
-    closeOnResize: true,
-    closeOnScroll: true,
-  });
-  // 挂载即聚焦首项 + ↑↓/Home/End 在条目间搬焦点（roving，与 useMenuPopup 同款）：
-  // 此前弹层对键盘用户完全不可达——打开了也不知道焦点在哪。
-  useLayoutEffect(() => {
-    ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-  }, []);
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
-    if (items.length === 0) return;
-    const at = items.indexOf(document.activeElement as HTMLElement);
-    if (at < 0) return;
-    const next = e.key === "ArrowDown" ? (at + 1) % items.length
-      : e.key === "ArrowUp" ? (at - 1 + items.length) % items.length
-      : e.key === "Home" ? 0
-      : e.key === "End" ? items.length - 1
-      : null;
-    if (next === null) return;
-    e.preventDefault();
-    items[next]?.focus();
-  };
-  const last = entries[entries.length - 1];
-  return (
-    <div ref={ref} className="dd-menu chat-sidebar-lineage-menu" role="menu" style={{ position: "fixed", left: pos.left, top: pos.top }} onKeyDown={onKeyDown}>
-      {entries.map((entry) => {
-        const { Icon } = agentAssets(entry.provider);
-        const current = entry === last;
-        return (
-          <button
-            type="button"
-            key={entry.id}
-            role="menuitem"
-            className="dd-item"
-            onClick={() => { onClose(); onPick(entry.id); }}
-          >
-            <span className="chat-sidebar-lineage-ico" style={tintStyle(entry.provider)}><Icon /></span>
-            <span className="dd-label">
-              {entry.model ?? entry.provider}
-              {" · "}
-              {new Date(entry.startedAt).toLocaleDateString()}
-            </span>
-            {current && <span className="chat-sidebar-lineage-now">{t.chat.lineageCurrent}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /** 就地编辑输入框。草稿是**本组件的**局部状态：此前草稿放在 ChatSidebar 里，每次按键
  *  setState 都让整个侧栏（无虚拟化，几百条全在 DOM）重渲染一遍——重命名逐字卡顿的根因。
@@ -177,106 +102,66 @@ function groupByDir(items: LiveSession[]): DirGroup[] {
   return groups;
 }
 
-/** 按最后活跃时间分桶：今天 / 昨天 / 近 7 天 / 更早。桶序固定（新→旧）——
- *  connected-first 排序会把「老但还连着」的会话排最前，按首条位置派生组序会乱。 */
-function groupByDate(items: LiveSession[], t: Dict): DirGroup[] {
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
-  const today = dayStart.getTime();
-  const buckets = [
-    { key: "date:today", label: t.chat.dateToday, min: today },
-    { key: "date:yesterday", label: t.chat.dateYesterday, min: today - 86_400_000 },
-    { key: "date:week", label: t.chat.dateThisWeek, min: today - 6 * 86_400_000 },
-    { key: "date:earlier", label: t.chat.dateEarlier, min: Number.NEGATIVE_INFINITY },
-  ];
-  const groups: DirGroup[] = buckets.map((bucket) => ({ key: bucket.key, cwd: null, label: bucket.label, items: [] }));
-  for (const item of items) {
-    const index = buckets.findIndex((bucket) => item.session.last_event_at >= bucket.min);
-    groups[index === -1 ? buckets.length - 1 : index].items.push(item);
-  }
-  return groups.filter((group) => group.items.length > 0);
+/** 工作区顺序存进设置用的键：pathKey 会按本机平台改斜杠方向，桌面（Windows）与手机算出来的
+ *  不一样，存下来的顺序在另一端就对不上。统一成正斜杠再存、再比。 */
+function orderKey(groupKey: string): string {
+  return groupKey.replace(/\\/g, "/");
 }
 
-/** 按状态分桶，组序按召唤强度（待处理 > 出错 > 等待 > 运行中 > 离线 > 已结束）——
- *  状态视图的意义就是「先看要处理的」，此处不派生原有排序。待处理组内审批排在提问前
- *  （审批卡着的是正在执行的动作），其余组内保持原顺序。 */
-const STATE_GROUP_ORDER: SessionTone[] = ["pending", "error", "waiting", "running", "offline", "ended"];
-function pendingRank(item: LiveSession, approvals: ReadonlySet<number>): number {
-  if (approvals.has(item.session.id)) return 0;
-  if (item.pending_review && item.pending_review !== "question") return 1;
-  if (item.pending_review === "question") return 2;
-  return 3;
-}
-function groupByState(items: LiveSession[], t: Dict, approvals: ReadonlySet<number> = new Set()): DirGroup[] {
-  const map = new Map<SessionTone, LiveSession[]>();
-  for (const item of items) {
-    const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state);
-    const bucket = map.get(tone);
-    if (bucket) bucket.push(item);
-    else map.set(tone, [item]);
-  }
-  const pending = map.get("pending");
-  // 稳定排序：同档内保持原顺序。
-  if (pending) pending.sort((a, b) => pendingRank(a, approvals) - pendingRank(b, approvals));
-  return STATE_GROUP_ORDER.filter((tone) => map.has(tone)).map((tone) => ({
-    key: `state:${tone}`,
-    cwd: null,
-    label: t.chat.status[tone],
-    items: map.get(tone)!,
-  }));
+/** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
+const SF_ICON_PATHS: Record<GroupMode | SortMode, string> = {
+  none: "M5 7h14M5 12h14M5 17h14",
+  dir: "M6 4v12a2 2 0 0 0 2 2h4M6 9h6M15 6.5h4v4h-4zM15 15.5h4v4h-4z",
+  recent: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 8v4l2.5 2",
+  manual: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+};
+function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
+  return (
+    <svg className="sf-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={SF_ICON_PATHS[name]} />
+    </svg>
+  );
 }
 
-/** 侧栏的筛选/分组弹层：单面板扁平化——「分组」「排序」的选项直接内联为 radio 行,
- *  选中即应用并收起(旧版是 根→子面板→选项 三级,改一项要 3 击);仅「目录」因列表
- *  无上限保留子面板。 */
-function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortMode, sortLabels, onDir, onGroup, onSort, t }: {
-  dirValue: string | null;
-  dirOptions: { value: string; label: string }[];
+/** 侧栏的视图/排序弹层（对照 Kimi Code 侧栏菜单，选项也照它）：「视图」平铺列表 / 按工作区分组，
+ *  「排序」手动排序 / 按最近活动；每项图标 + 文案，选中项只在右侧打勾、文字不变色，选中即应用并收起。
+ *  按日期 / 按状态分组、按名称排序、工作区筛选已去掉——筛选改由「工作空间」页签里的
+ *  「只看这个工作区的会话」进入，生效时列表上方有一枚可关闭的标签。 */
+function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGroup, onSort, onAdmin, t }: {
   groupMode: GroupMode;
   groupLabels: Record<GroupMode, string>;
   sortMode: SortMode;
   sortLabels: Record<SortMode, string>;
-  onDir: (value: string | null) => void;
   onGroup: (mode: GroupMode) => void;
   onSort: (mode: SortMode) => void;
+  /// 分隔线下的「会话管理」（对照 Kimi）：打开会话管理页。
+  onAdmin?: () => void;
   t: Dict;
 }) {
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown, relayout } = useMenuPopup({});
-  const [view, setView] = useState<"root" | "dir">("root");
-  // 关闭即回根视图：下次打开不该停在上次翻到的子面板。
-  useEffect(() => { if (!open) setView("root"); }, [open]);
-  // 子视图切换后（根↔目录/分组）：
-  // 1) 重测定位——首开测量只见过 2 行高的根视图，目录列表长出来会伸出窗口底边；
-  // 2) 焦点接力——刚获焦的那一行随视图卸载，焦点落回 body、roving 键盘导航断线，
-  //    把焦点落到新视图首项（只在视图真的切换时抢，打开菜单本身仍不抢焦点）。
-  const prevViewRef = useRef(view);
-  useLayoutEffect(() => {
-    relayout();
-    if (prevViewRef.current !== view) {
-      prevViewRef.current = view;
-      ref.current?.querySelector<HTMLElement>('[role="menuitem"], [role="option"]')?.focus();
-    }
-  }, [view, relayout, ref]);
-  const dirLabel = dirValue
-    ? dirOptions.find((option) => option.value === dirValue)?.label ?? folderName(dirValue)
-    : t.chat.sidebarDirAll;
-  const chevron = (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18" /></svg>
-  );
-  const back = (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18" /></svg>
-  );
+  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   const check = <CheckIcon className="dd-check" />;
-  // 选中即应用并收起：筛选是「一次性的快速动作」，留着面板反而多一步关闭。
+  // 选中即应用并收起：切视图 / 排序是「一次性的快速动作」，留着面板反而多一步关闭。
   const pick = (apply: () => void) => { apply(); setOpen(false); btnRef.current?.focus(); };
+  const option = <M extends string>(mode: M, selected: boolean, label: string, onPick: () => void, icon: keyof typeof SF_ICON_PATHS) => (
+    <button
+      key={mode}
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={"dd-item sf-opt" + (selected ? " sel" : "")}
+      onClick={() => pick(onPick)}
+    >
+      <SfIcon name={icon} />
+      <span className="dd-label">{label}</span>
+      {selected && check}
+    </button>
+  );
   return (
     <div className="dd" ref={ref} onKeyDown={onKeyDown}>
       <button
         ref={btnRef}
         type="button"
-        // 7C-5：筛选/归档视图一旦生效，列表只是「少了很多会话」，界面上没有任何痕迹。
-        // 钮上挂一个小点标记「当前有筛选」（归档视图另有可关闭的状态条，见列表顶部）。
-        className={"chat-sidebar-filter" + (dirValue ? " is-active" : "")}
+        className="chat-sidebar-filter"
         aria-label={t.chat.sidebarFilterTip}
         data-tip={t.chat.sidebarFilterTip}
         aria-haspopup="menu"
@@ -291,80 +176,17 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
       </button>
       {open && (
         <div className="dd-menu sf-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
-          {view === "root" ? (
-            <>
-              <button type="button" role="menuitem" className="dd-item sf-row" onClick={() => setView("dir")}>
-                <span>{t.chat.sidebarFilterDir}</span>
-                <span className="sf-val"><span className="sf-val-text">{dirLabel}</span>{chevron}</span>
-              </button>
-              <div className="sf-sep" role="separator" />
-              <div className="sf-caption">{t.chat.sidebarFilterGroup}</div>
-              {(["none", "dir", "date", "state"] as const).map((mode) => {
-                const selected = groupMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={"dd-item" + (selected ? " sel" : "")}
-                    onClick={() => pick(() => onGroup(mode))}
-                  >
-                    <span className="dd-label">{groupLabels[mode]}</span>
-                    {selected && check}
-                  </button>
-                );
-              })}
-              <div className="sf-sep" role="separator" />
-              <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
-              {(["recent", "created", "name"] as const).map((mode) => {
-                const selected = sortMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={"dd-item" + (selected ? " sel" : "")}
-                    onClick={() => pick(() => onSort(mode))}
-                  >
-                    <span className="dd-label">{sortLabels[mode]}</span>
-                    {selected && check}
-                  </button>
-                );
-              })}
-              {/* 「按名称」只排已加载的这一页（翻页新条目追加尾部）：不说明的话,
-                  乱序看起来就是「排序坏了」。创建时间与最近活跃由后端分页，排的是全量。 */}
-              {sortMode === "name" && <div className="sf-note">{t.chat.sortPartialNote}</div>}
-            </>
-          ) : (
-            <>
-              <button type="button" role="menuitem" className="dd-item sf-back" onClick={() => setView("root")}>
-                {back}
-                <span>{t.chat.sidebarFilterDir}</span>
-              </button>
-              <div className="sf-sep" role="separator" />
-              {[{ value: "", label: t.chat.sidebarDirAll }, ...dirOptions].map((option) => {
-                const selected = (dirValue ?? "") === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={"dd-item" + (selected ? " sel" : "")}
-                    // 菜单内刻意用原生 title：TooltipLayer 对 .dd-menu 区域静默
-                    // （自绘提示会糊在菜单上，见 Tooltip.tsx tipEl 的注释）。
-                    title={option.value || undefined}
-                    onClick={() => pick(() => onDir(option.value || null))}
-                  >
-                    <span className="dd-label">{option.label}</span>
-                    {selected && check}
-                  </button>
-                );
-              })}
-            </>
-          )}
+          <div className="sf-caption">{t.chat.sidebarFilterGroup}</div>
+          {(["none", "dir"] as const).map((mode) => option(mode, groupMode === mode, groupLabels[mode], () => onGroup(mode), mode))}
+          <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
+          {(["manual", "recent"] as const).map((mode) => option(mode, sortMode === mode, sortLabels[mode], () => onSort(mode), mode))}
+          {onAdmin && <>
+            <div className="sf-sep" role="separator" />
+            <button type="button" role="menuitem" className="dd-item sf-opt" onClick={() => { setOpen(false); onAdmin(); }}>
+              <svg className="sf-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></svg>
+              <span className="dd-label">{t.admin.entry}</span>
+            </button>
+          </>}
         </div>
       )}
     </div>
@@ -406,8 +228,10 @@ export const ChatSidebar = memo(ChatSidebarImpl);
 const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
 const titleScrollTimers = new WeakMap<HTMLElement, number>();
 
-function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onPrefetch, onCollapse }: {
+function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
   activeId: number;
+  /** 主区正开着新建会话页：「新建会话」行高亮（对照 Kimi），会话行都不高亮。 */
+  newSessionActive?: boolean;
   /** 有待授权请求的非当前会话：靠这里的徽标召唤用户。后端 **会** 为 broker 接管的审批把
    *  窗口切到目标会话（见 pty.rs 的 ensure_approval_window），这里是切换竞态与
    *  「消费者已注册在别的会话」时的兜底。 */
@@ -424,6 +248,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   /** 预取首屏（父层 historyCache）：手指按下、鼠标悬停片刻即触发，点进去时多半已有快照。 */
   onPrefetch?: (id: number) => void;
   onCollapse: () => void;
+  /** 打开会话管理页（视图与排序菜单底部的「会话管理」）。不传就不显示这一项。 */
+  onOpenAdmin?: () => void;
 }) {
   const t = useT();
   // 悬停预取的延时：鼠标划过列表不该每条都读一遍，停留这么久才算「可能要点」。
@@ -441,7 +267,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   const [syncLost, setSyncLost] = useState(false);
   const refreshFailStreakRef = useRef(0);
   // 接续链弹层（跨 provider 切换的回看入口）：点链徽标时惰性取链上各段。
-  const [lineageMenu, setLineageMenu] = useState<{ x: number; y: number; entries: LineageEntry[] } | null>(null);
   // 翻页用「从头取 limit 条」而不是游标续传：整段重取让 board-changed 刷新走同一条
   // 路径，不必维护「已加载的页」这份额外状态。到底与否看后端带回的 next_cursor。
   const [limit, setLimit] = useState(PAGE_LIMIT);
@@ -473,6 +298,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 已归档视图:数据走后端现成的 "archived" 过滤(与设置页 ArchivedSessions 同一通道),
   // 条目菜单里自然出现「取消归档」——归档(卡片菜单)与取回自此对称。不落盘:临时视图。
   const [archivedView, setArchivedView] = useState(false);
+  // 「工作空间」页签（对照 Kimi Code 的第三个页签）：列表换成工作区目录，不落盘。
+  const [workspacesView, setWorkspacesView] = useState(false);
   const archivedViewRef = useRef(archivedView);
   archivedViewRef.current = archivedView;
   const [dirs, setDirs] = useState<string[]>([]);
@@ -494,7 +321,9 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 分组方式默认不分组:不用的人一个像素都感知不到。旧布尔开关(只有按目录一档)自动迁移。
   const [groupMode, setGroupMode] = useState<GroupMode>(() => {
     const stored = localStorage.getItem(GROUP_MODE_KEY);
-    if (stored === "none" || stored === "dir" || stored === "date" || stored === "state") return stored;
+    if (stored === "none" || stored === "dir") return stored;
+    // 按日期 / 按状态分组已去掉（对照 Kimi 只留两种视图），存着旧值的回到平铺列表。
+    if (stored === "date" || stored === "state") return "none";
     return localStorage.getItem(GROUPED_KEY) === "1" ? "dir" : "none";
   });
   // 排序方式默认「创建时间」，同分组一样落盘。不默认「最近活跃」：几个会话同时在跑时，
@@ -502,7 +331,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 新会话出现在顶上，之后位置不动。
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const stored = localStorage.getItem(SORT_MODE_KEY);
-    return stored === "recent" || stored === "name" ? stored : "created";
+    // 旧版的「创建时间」并入手动排序（没拖过时两者顺序完全一样）；「按名称」已去掉，同样回到手动排序。
+    return stored === "recent" ? stored : "manual";
   });
   // 「创建时间」交给后端分页（后端按 started_at 倒序扫），否则只能重排已加载的一页：
   // 新建但一直没动的会话可能根本不在第一页。load 是稳定回调，读 ref。
@@ -514,6 +344,11 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 会话搜索:输入防抖 300ms 后下沉后端(searchRef 是 load 的同步读源)。
   // 不落盘——搜索是临时视图,残留的词会让下次打开的列表被静默过滤(看板踩过同款坑)。
   const [search, setSearch] = useState("");
+  // 工作空间页签里顶部搜索框改为过滤工作区（对照 Kimi「搜索会话或工作区」）：名称或路径包含即中。
+  const workspaceOptions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q ? dirOptions.filter((option) => option.label.toLowerCase().includes(q) || option.value.toLowerCase().includes(q)) : dirOptions;
+  }, [dirOptions, search]);
   const searchRef = useRef("");
   // searchRef 是防抖后（300ms）才落的 load 读源;深度搜索判活性要的是**当前**词,故另用
   // 一个每渲染同步的镜像 ref(本仓 xxxRef.current = xxx 惯例),回包时与它比即可。
@@ -549,12 +384,12 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     // 靠滚动翻页找会话的路是断的,此前只能退回看板去搜。
     const q = searchRef.current.trim() || null;
     const arch = archivedViewRef.current;
-    const order = sortModeRef.current === "created" ? "created" : "activity";
+    const order = sortModeRef.current === "manual" ? "manual" : "activity";
     return getLiveSessionsPage(arch ? "archived" : "all", q, null, lim, dir, false, false, order)
       .then((page) => {
         if (!mountedRef.current) return;
         // 排序切换期间发出的旧请求：装的是另一种顺序的首页，丢弃。
-        if ((sortModeRef.current === "created" ? "created" : "activity") !== order) return;
+        if ((sortModeRef.current === "manual" ? "manual" : "activity") !== order) return;
         // 切目录/改搜索词/切归档视图期间发出的旧请求回来了:它装的是旧条件的会话,
         // 原样落盘会让列表与筛选状态对不上。丢弃。
         if (dirFilterRef.current !== dir) return;
@@ -682,11 +517,11 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     void loadRef.current("refresh");
   }, [dirFilter]);
 
-  // 在「创建时间」与其它排序之间切换 = 后端换了扫描顺序,首页内容可能完全不同:回到
-  // 首页重取(与切目录同一套重置语义)。最近活跃 ↔ 按名称只是前端重排,不必重取。
-  const prevOrderRef = useRef(sortMode === "created");
+  // 在「手动排序」与其它排序之间切换 = 后端换了扫描顺序,首页内容可能完全不同:回到
+  // 首页重取(与切目录同一套重置语义)。最近活动 ↔ 按名称只是前端重排,不必重取。
+  const prevOrderRef = useRef(sortMode === "manual");
   useEffect(() => {
-    const byCreated = sortMode === "created";
+    const byCreated = sortMode === "manual";
     if (prevOrderRef.current === byCreated) return;
     prevOrderRef.current = byCreated;
     prevLimitRef.current = PAGE_LIMIT;
@@ -750,7 +585,12 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 首帧占位与后端真实默认(button)一致,与看板同步改过——占位 context 会让 ⋯ 按钮延迟弹入。
   const [menuMode, setMenuMode] = useState<CardMenuMode>("button");
   // 远程钉死 button 档:桌面设置若是 context(仅右键),触屏根本够不着菜单。
-  useSettingsEffect((s) => setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button")));
+  // 工作区组的手动顺序（设置里的 workspace_order）：桌面拖分组头写入，手机只读同一份。
+  const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
+  useSettingsEffect((s) => {
+    setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button"));
+    setWorkspaceOrder(s.workspace_order ?? []);
+  });
   // 菜单内容按 id 现查:刷新后置顶/便签/归档态自动跟上,会话消失则菜单自然收起。
   const ctxItem = ctxMenu ? (sessions ?? []).find((s) => s.session.id === ctxMenu.sid) ?? null : null;
   // 置顶与看板共用同一份 localStorage(键沿用 meowo-starred,改键会丢用户已有数据),
@@ -912,30 +752,79 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 分组开着时排序发生在**分组之前**:组内置顶在前,而组序由「组内第一条的位置」派生,
   // 于是含置顶会话的目录也跟着上浮——两套顺序不打架。
   const ordered = useMemo(() => {
-    if (!sessions || (starred.size === 0 && sortMode === "recent")) return sessions;
+    if (!sessions || starred.size === 0) return sessions;
     const rank = (item: LiveSession) => (starred.has(item.session.cc_session_id) ? 0 : 1);
     return [...sessions].sort((a, b) => {
       const star = rank(a) - rank(b);
       if (star !== 0) return star;
-      if (sortMode === "created") return b.session.started_at - a.session.started_at;
-      if (sortMode === "name") {
-        // 未命名会话沉底（空串与 DB sentinel「(未命名会话)」同口径，见 EditorInput 的
-        // initial）：一排未命名插在人起的名字中间只会打断扫读。
-        const an = a.task_title !== UNNAMED_SESSION_SENTINEL ? a.task_title : "";
-        const bn = b.task_title !== UNNAMED_SESSION_SENTINEL ? b.task_title : "";
-        if (!an || !bn) return an ? -1 : bn ? 1 : 0;
-        return an.localeCompare(bn);
-      }
       return 0;
     });
   }, [sessions, starred, sortMode]);
 
   const groups = useMemo(() => {
-    if (!ordered || groupMode === "none") return null;
-    if (groupMode === "dir") return groupByDir(ordered);
-    if (groupMode === "date") return groupByDate(ordered, t);
-    return groupByState(ordered, t, approvalAwaitingIds);
-  }, [groupMode, ordered, t, approvalAwaitingIds]);
+    if (!ordered || groupMode !== "dir") return null;
+    // 手动排序时组序也归用户（对照 Kimi 可拖的分组头）；按最近活动时组序随组内会话的位置。
+    return sortMode === "manual" ? applyGroupOrder(groupByDir(ordered), workspaceOrder, (group) => orderKey(group.key)) : groupByDir(ordered);
+  }, [groupMode, ordered, sortMode, workspaceOrder]);
+  // 拖分组头调整工作区顺序（手动排序、按工作区分组、桌面、非多选态）。落下即本地先排，再把整份
+  // 顺序写进设置；写失败报错并回到设置里原来的顺序。
+  const groupKeys = useMemo(() => (groups ?? []).map((group) => group.key), [groups]);
+  const groupDrag = usePointerReorder<string>({
+    enabled: sortMode === "manual" && groupMode === "dir" && !remoteUi() && selectedIds.size === 0,
+    attr: "groupKey",
+    parse: (raw) => raw || null,
+    bucketOf: (key) => (groupKeys.includes(key) ? "groups" : null),
+    listOf: () => groupKeys,
+    onMove: (key, above, below) => {
+      const next = moveNextTo(groupKeys, (entry) => entry, key, above, below).map(orderKey);
+      setWorkspaceOrder(next);
+      getSettings()
+        .then((settings) => setSettings({ ...settings, workspace_order: next }))
+        .catch(() => {
+          if (!mountedRef.current) return;
+          setActionError(t.chat.sidebarActionFailed);
+          void getSettings().then((settings) => setWorkspaceOrder(settings.workspace_order ?? [])).catch(() => {});
+        });
+    },
+  });
+  // 「会话」小节的全部折叠 / 展开（对照 Kimi）：全都折着时展开全部，否则折起全部。
+  const allGroupsFolded = !!groups && groups.length > 0 && groups.every((group) => folded.has(group.key));
+  const toggleAllFolded = () => setFolded(() => {
+    const next = new Set<string>(allGroupsFolded ? [] : (groups ?? []).map((group) => group.key));
+    localStorage.setItem(FOLDED_KEY, JSON.stringify([...next].filter(isDirGroupKey)));
+    return next;
+  });
+  // 拖拽的桶：同一分组 + 同为置顶 / 非置顶（理由见 sidebarDrag）。桶内顺序取组的全部条目
+  // （含收起的未运行会话），落点邻居才和后端的全局顺序对得上。
+  const dragBuckets = useMemo(() => {
+    const bucketOf = new Map<number, string>();
+    const lists = new Map<string, number[]>();
+    const lanes = groups ? groups.map((group) => ({ key: group.key, items: group.items })) : [{ key: "flat", items: ordered ?? [] }];
+    for (const lane of lanes) {
+      for (const item of lane.items) {
+        const bucket = `${lane.key}\u0000${starred.has(item.session.cc_session_id) ? 1 : 0}`;
+        bucketOf.set(item.session.id, bucket);
+        const list = lists.get(bucket) ?? [];
+        list.push(item.session.id);
+        lists.set(bucket, list);
+      }
+    }
+    return { bucketOf, lists };
+  }, [groups, ordered, starred]);
+  // 拖拽（手动排序、桌面、非多选态）：落下即本地先挪，再写后端；写失败重取回真实顺序。
+  const drag = useSessionDrag({
+    enabled: sortMode === "manual" && !remoteUi() && selectedIds.size === 0,
+    bucketOf: (id) => dragBuckets.bucketOf.get(id) ?? null,
+    listOf: (bucket) => dragBuckets.lists.get(bucket) ?? [],
+    onMove: (id, above, below) => {
+      setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
+      moveSessionRank(id, above, below).catch(() => {
+        if (!mountedRef.current) return;
+        setActionError(t.chat.sidebarActionFailed);
+        void loadRef.current("refresh");
+      });
+    },
+  });
 
   // 显示顺序镜像:分组模式的组序由 ordered 派生、组内亦是 ordered 序,写 ordered 即可。
   // 卸载清空——收起的侧栏没有「用户看到的顺序」,父层归档跳转退回后端现查。
@@ -1064,7 +953,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 平铺与分组共用同一份条目渲染:两套 JSX 会各自漂移(状态点口径、标题回退文案),
   // 那正是「贴纸报错、侧栏亮绿点」那类不一致的来源。
   const renderItem = (item: LiveSession) => {
-    const Icon = agentAssets(item.provider).Icon;
     const dir = folderName(item.cwd);
     // 与对话窗标题栏同一套口径(sessionTone,含 errored——贴纸的错误优先级由此
     // 对齐,不再出现「贴纸报错、侧栏亮绿点」)。offline/ended 不加点——图标置灰
@@ -1084,12 +972,19 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
         key={item.session.id}
         role="button"
         tabIndex={item.session.id === tabbableId ? 0 : -1}
-        className={"chat-sidebar-item" + (item.session.id === activeId ? " is-active" : "") + (selectedIds.has(item.session.id) ? " is-checked" : "")}
+        data-session-id={item.session.id}
+        className={"chat-sidebar-item" + (item.session.id === activeId ? " is-active" : "") + (selectedIds.has(item.session.id) ? " is-checked" : "")
+          + (drag.dragId === item.session.id ? " is-dragging" : "")
+          + (drag.dropAt?.id === item.session.id && drag.dragId !== item.session.id ? (drag.dropAt.after ? " is-drop-after" : " is-drop-before") : "")}
         aria-current={item.session.id === activeId ? "true" : undefined}
         // 多选态是切换语义，用 aria-pressed：aria-selected 对 role=button 无效（读屏收不到）。
         aria-pressed={selectedIds.size > 0 ? selectedIds.has(item.session.id) : undefined}
         // 预取：触屏按下即读（到点击生效还有一百多毫秒），鼠标悬停 150ms 再读。多选态点行是勾选，不预取。
-        onPointerDown={() => { if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id); }}
+        onPointerDown={(event) => {
+          if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id);
+          // 手动排序下按住拖动即调位置（行内按钮、编辑框不起拖）。
+          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea")) drag.onPointerDown(event, item.session.id);
+        }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse" || !onPrefetch) return;
           window.clearTimeout(prefetchTimerRef.current);
@@ -1097,6 +992,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
         }}
         onPointerLeave={() => window.clearTimeout(prefetchTimerRef.current)}
         onClick={(event) => {
+          // 刚拖完松手的那次 click 不算点击，不然拖完会顺手打开会话。
+          if (drag.swallowClick()) return;
           // 编辑态下点条目只用于收起编辑器，不切会话（输入框自身已 stopPropagation）。
           if (editing || noting) { setEditingId(null); setNotingId(null); return; }
           // Ctrl/Cmd+点击 = 进入多选/增删(批量标记完成)。多选态下**普通点击整行也是增删**,
@@ -1167,17 +1064,17 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           titleScrollTimers.set(inner, timer);
         }}
       >
-        {/* 状态指示兼 agent 标识：连接=品牌色徽标，未连接=灰（与贴纸同一套）。 */}
-        <span
-          className={"chat-sidebar-agent-icon" + (item.connected ? "" : " is-off")}
-          style={tintStyle(item.provider, item.connected)}
-          role="img"
-          aria-label={item.provider}
-        >
-          <Icon />
+        {/* 左侧 16px 状态位（对照 Kimi Code 会话行的 lead）：待授权 > 运行/待处理/出错 > 未读，
+            没有状态就空着，标题照样对齐。agent 徽标不再占位：一行只留标题和时间。 */}
+        <span className="chat-sidebar-lead">
           {awaitingApproval
             ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.chat.sidebarApproval} data-tip={t.chat.sidebarApproval} />
-            : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />}
+            : showDot
+              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />
+              // 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。
+              : item.unread && item.session.id !== activeId && (
+                <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
+              )}
         </span>
         <span className="chat-sidebar-text">
           {editing ? (
@@ -1202,28 +1099,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               <span className="chat-sidebar-name-text" data-tip={item.task_title || undefined}>
                 <span className="chat-sidebar-name-inner">{item.task_title || t.sticker.waitingFirstInput}</span>
               </span>
-              {/* 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。 */}
-              {item.unread && item.session.id !== activeId && (
-                <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
-              )}
-              {/* 跨 provider 接续链徽标：点开列出链上各段（回看旧引擎的对话）。 */}
-              {item.predecessor_id != null && (
-                <button
-                  type="button"
-                  className="chat-sidebar-lineage"
-                  aria-label={t.chat.lineageBadge}
-                  data-tip={t.chat.lineageBadge}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    void getSessionLineage(item.session.id)
-                      .then((entries) => setLineageMenu({ x: rect.left, y: rect.bottom + 4, entries }))
-                      .catch(() => {});
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
-                </button>
-              )}
             </span>
           )}
           {/* 目录行 = 目录名 + 附加目录标(+N,与贴纸卡同款) + 最后活跃时间同排——前两者曾是
@@ -1231,16 +1106,10 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               +N 照显(组头只写主仓,跨仓信息组头没有);时间恒显——此前条目完全没有时间信息,
               「哪条是刚才动的」只能靠猜。waiting 态改「已等待 X」警示色(与看板 B-3 同款,
               fmtWaited 复用 sticker/helpers):等待时长是召唤信号,「X 前」读不出急迫。 */}
-          {!noting && (
+          {/* 副行只在不按工作区分组时出现（对照 Kimi：平铺列表才在标题下写工作区名）。 */}
+          {!noting && dir && groupMode !== "dir" && (
             <span className="chat-sidebar-metaline">
-              {dir && groupMode !== "dir" && <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>}
-              {/* 旧库/合成数据可能缺 last_event_at：NaN 会让 Intl.RelativeTimeFormat 直接
-                  抛 RangeError 炸掉整棵侧栏，缺失时宁可不显示。 */}
-              {Number.isFinite(item.session.last_event_at) && (
-                <span className={"chat-sidebar-meta chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")}>
-                  {tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : fmtAgo(item.session.last_event_at, t)}
-                </span>
-              )}
+              <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
             </span>
           )}
           {/* 便签写完要看得见，否则「添加便签」等于写进黑洞。编辑中的那条让位给输入框。 */}
@@ -1256,6 +1125,16 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             />
           )}
         </span>
+        {/* 右侧：时间（对照 Kimi 的紧凑「3d」），等待中换成「已等待 X」警示色；悬停时让位给「⋯」。
+            旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
+        <span className="chat-sidebar-act">
+          {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
+            <span className={"chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")} data-tip={tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : undefined}>
+              {/* 等待中也用紧凑写法（「6m」），只换警示色：「已等待 6 分钟」在这一列太长（用户实拍），
+                  左侧黄点已经说明它在等你，这里只交代等了多久。完整说法进悬停提示。 */}
+              {fmtShortAgo(item.session.last_event_at, t)}
+            </span>
+          )}
         {selectedIds.size > 0 ? (
           /* 多选态:右侧换成勾选圈(未选空心/选中实心勾),点它增删不必按住 Ctrl。
              「⋯」菜单此间让位——多选时的动作在底部操作条上。 */
@@ -1291,6 +1170,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             }}
           ><MoreIcon /></button>
         )}
+        </span>
       </div>
     );
   };
@@ -1319,44 +1199,21 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
       )}
       {/* 窗口无系统装饰，侧栏顶部也要能拖动窗口——与右列标题栏同为 drag region。
           头部即「新建会话」按钮（Kimi 式整宽 CTA），不再放「会话」标题 + 迷你加号。 */}
+      {/* 顶部两行入口（对照 Kimi Code 侧栏）：「新建会话」「搜索」都是图标加文字的平铺行，
+          不再是整宽按钮加输入框。视图与排序挪到下面的「会话」小节标题。 */}
       <div className="chat-sidebar-head" data-tauri-drag-region>
         <button
           type="button"
-          className="chat-sidebar-new"
+          className={"chat-sidebar-new" + (newSessionActive ? " is-active" : "")}
+          aria-current={newSessionActive ? "page" : undefined}
           onClick={() => void openNewSessionWindow().catch(() => {})}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 8.5v7M8.5 12h7" />
           </svg>
           <span>{t.sticker.newSession}</span>
         </button>
-        <SidebarFilterMenu
-          dirValue={dirFilter}
-          dirOptions={dirOptions}
-          groupMode={groupMode}
-          groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir, date: t.chat.groupByDate, state: t.chat.groupByState }}
-          sortMode={sortMode}
-          sortLabels={{ recent: t.chat.sortRecent, created: t.chat.sortCreated, name: t.chat.sortName }}
-          onDir={setDirFilter}
-          onGroup={changeGroupMode}
-          onSort={changeSortMode}
-          t={t}
-        />
-      </div>
-      {/* 「进行中 / 已完成」两个标签页（对照 Kimi 的 tabOpen / tabDone）：已完成就是 archived，
-          此前藏在「筛选 → 已归档会话」里、进去后还得靠一条状态条说明「换了一批会话」（7C-5）。
-          做成常驻标签页，当前看的是哪一批一眼可见，取回也只要一击。 */}
-      <div className="chat-sidebar-tabs" role="tablist" aria-label={t.chat.sidebarTitle}>
-        {([false, true] as const).map((done) => (
-          <button
-            key={String(done)}
-            type="button"
-            role="tab"
-            aria-selected={archivedView === done}
-            className={archivedView === done ? "is-active" : ""}
-            onClick={() => setArchivedView(done)}
-          >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
-        ))}
       </div>
       {/* 会话搜索（Ctrl/Cmd+F 聚焦）：标题/仓库名下沉后端 LIKE，与看板同一条通道。 */}
       <div className="chat-sidebar-search">
@@ -1391,6 +1248,72 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           >×</button>
         )}
       </div>
+      {/* 「进行中 / 已完成」两个标签页（对照 Kimi 的 tabOpen / tabDone）：已完成就是 archived，
+          此前藏在「筛选 → 已归档会话」里、进去后还得靠一条状态条说明「换了一批会话」（7C-5）。
+          做成常驻标签页，当前看的是哪一批一眼可见，取回也只要一击。 */}
+      <div className="chat-sidebar-tabs" role="tablist" aria-label={t.chat.sidebarTitle}>
+        {([false, true] as const).map((done) => (
+          <button
+            key={String(done)}
+            type="button"
+            role="tab"
+            aria-selected={!workspacesView && archivedView === done}
+            className={!workspacesView && archivedView === done ? "is-active" : ""}
+            onClick={() => { setWorkspacesView(false); setArchivedView(done); }}
+          >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
+        ))}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspacesView}
+          className={workspacesView ? "is-active" : ""}
+          onClick={() => setWorkspacesView(true)}
+        >{t.chat.sidebarTabWorkspaces}</button>
+      </div>
+      {/* 「会话」小节标题（对照 Kimi Code）：右侧两个小图标——全部折叠 / 展开（分组时才有）、
+          视图与排序。 */}
+      <div className="chat-sidebar-section">
+        <span className="chat-sidebar-section-label">{workspacesView ? t.chat.sidebarWorkspaces : t.chat.sidebarTitle}</span>
+        {!workspacesView && groups && groups.length > 0 && (
+          <button
+            type="button"
+            className="chat-sidebar-section-btn"
+            aria-label={allGroupsFolded ? t.chat.sidebarUnfoldAll : t.chat.sidebarFoldAll}
+            data-tip={allGroupsFolded ? t.chat.sidebarUnfoldAll : t.chat.sidebarFoldAll}
+            onClick={toggleAllFolded}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {allGroupsFolded ? <path d="M8 9l4-4 4 4M8 15l4 4 4-4" /> : <path d="M8 5l4 4 4-4M8 19l4-4 4 4" />}
+            </svg>
+          </button>
+        )}
+        {!workspacesView && <SidebarFilterMenu
+          groupMode={groupMode}
+          groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir }}
+          sortMode={sortMode}
+          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent }}
+          onGroup={changeGroupMode}
+          onSort={changeSortMode}
+          onAdmin={onOpenAdmin}
+          t={t}
+        />}
+      </div>
+      {/* 工作区筛选生效时的标签（筛选从「工作空间」页签进入）：列表少了很多会话，界面上得有
+          痕迹，也得有一键退出的地方（7C-5 的老问题，原先靠菜单钮上的小点）。 */}
+      {dirFilter && !workspacesView && (
+        <div className="chat-sidebar-scope">
+          <span className="chat-sidebar-scope-label" data-tip={dirFilter}>{t.chat.sidebarScopeOnly(folderName(dirFilter) || dirFilter)}</span>
+          <button type="button" className="chat-sidebar-scope-x" aria-label={t.chat.sidebarScopeClear} data-tip={t.chat.sidebarScopeClear} onClick={() => setDirFilter(null)}>×</button>
+        </div>
+      )}
+      {workspacesView ? (
+        <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
+          <WorkspaceDirectory
+            options={workspaceOptions}
+            onFilter={(cwd) => { setDirFilter(cwd); setArchivedView(false); setWorkspacesView(false); }}
+          />
+        </nav>
+      ) : (
       <nav
         ref={listRef}
         className="chat-sidebar-list"
@@ -1464,39 +1387,38 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               const attention = group.items.filter((item) => approvalAwaitingIds.has(item.session.id)
                 || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state) === "pending").length;
               return (
-                <div className="chat-sidebar-group" key={group.key}>
-                  {groupMode === "dir" ? (
+                <div
+                  key={group.key}
+                  data-group-key={group.key}
+                  className={"chat-sidebar-group"
+                    + (groupDrag.dragId === group.key ? " is-dragging" : "")
+                    + (groupDrag.dropAt?.id === group.key && groupDrag.dragId !== group.key ? (groupDrag.dropAt.after ? " is-drop-after" : " is-drop-before") : "")}
+                  // 按住分组头拖动调整工作区顺序；组里的会话行、头上的按钮各管各的。
+                  onPointerDown={(event) => {
+                    const target = event.target as HTMLElement;
+                    if (!target.closest(".chat-sidebar-group-head") || target.closest(".chat-sidebar-item, .chat-workspace-action, .chat-sidebar-check-btn")) return;
+                    groupDrag.onPointerDown(event, group.key, target.closest<HTMLElement>(".chat-sidebar-group-head"));
+                  }}
+                >
                     <WorkspaceHeader
                       cwd={group.cwd}
                       count={group.items.length}
                       attention={attention}
                       trailing={renderGroupCheck(group.items, folderName(group.cwd) || t.chat.sidebarNoDir)}
                       folded={isFolded}
-                      onToggle={() => toggleFolded(group.key)}
+                      // 刚拖完分组头松手的那次 click 不算折叠。
+                      onToggle={() => { if (!groupDrag.swallowClick()) toggleFolded(group.key); }}
                       leading={
-                        <>
-                          <ChevronDownIcon className={"chat-sidebar-caret" + (isFolded ? " is-folded" : "")} size={10} strokeWidth={2.6} />
-                          {groupDot}
-                        </>
+                        // 对照 Kimi 的分组头：文件夹图标代替折叠箭头，折着是合上的文件夹。
+                        <svg className="chat-workspace-folder" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          {isFolded
+                            ? <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" />
+                            : <path d="M3.5 17V7a2 2 0 0 1 2-2h5l2 2.5h6a2 2 0 0 1 2 2V11M3.5 17l2.2-5.2a1.5 1.5 0 0 1 1.4-.9H20a1 1 0 0 1 .9 1.4L18.6 18a1.5 1.5 0 0 1-1.4 1H5.5a2 2 0 0 1-2-2z" />}
+                        </svg>
                       }
+                      summary={groupDot}
+                      onFilter={setDirFilter}
                     />
-                  ) : (
-                    <div className="chat-sidebar-group-row">
-                    <button
-                      type="button"
-                      className="chat-sidebar-group-head"
-                      aria-expanded={!isFolded}
-                      data-tip={group.cwd ?? undefined}
-                      onClick={() => toggleFolded(group.key)}
-                    >
-                      <ChevronDownIcon className={"chat-sidebar-caret" + (isFolded ? " is-folded" : "")} size={10} strokeWidth={2.6} />
-                      <span className="chat-sidebar-group-name">{group.label || t.chat.sidebarNoDir}</span>
-                      {groupDot}
-                      <span className="chat-sidebar-group-count">{group.items.length}</span>
-                    </button>
-                    {renderGroupCheck(group.items, group.label || t.chat.sidebarNoDir)}
-                    </div>
-                  )}
                   {shown.map(renderItem)}
                   {/* 未运行的会话默认收起：一个跑了一阵的目录里，历史会话能堆到几十条，
                       把当前真正在跑的那一两条挤出视野。折起来但不丢——点一下就回来。 */}
@@ -1553,6 +1475,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           </div>
         )}
       </nav>
+      )}
       {/* G-16：全侧栏唯一的读屏汇总播报源（视觉隐藏），取代每条会话一个 role=status。 */}
       <div className="chat-sidebar-sronly" role="status">{liveSummary}</div>
       {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
@@ -1571,15 +1494,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           <button type="button" className="is-primary" onClick={archiveSelected}>{t.chat.archiveSelected}</button>
           <button type="button" onClick={() => setSelectedIds(new Set())}>{t.chat.cancelSelect}</button>
         </div>
-      )}
-      {lineageMenu && (
-        <LineagePopover
-          x={lineageMenu.x}
-          y={lineageMenu.y}
-          entries={lineageMenu.entries}
-          onPick={onSelect}
-          onClose={() => setLineageMenu(null)}
-        />
       )}
       {ctxMenu && ctxItem && (
         <CardContextMenu

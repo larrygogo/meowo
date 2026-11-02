@@ -1,6 +1,6 @@
 [package]
 name = "meowo-app"
-version = "0.6.19"
+version = "0.7.1"
 edition = "2021"
 
 # 全部 Rust 都住在 app/src-tauri 下:本包既是 Tauri 应用 crate,也是 workspace 根
@@ -121,13 +121,14 @@ dunce = "1"
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Power", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
 # 点击 toast 后从"通知中心"移除本应用的已投递通知（tauri-winrt-notification 本身不暴露历史清除）。
-# 版本与 tauri-winrt-notification 内部的 windows 0.61 对齐，避免拉入第二份 windows 副本。
+# 版本跟 tauri 2.12 / wry 用的 windows 0.62 走（webview2-com 0.39 的接口类型来自它，版本不同 cast 不上）。
+# tauri-winrt-notification 0.7 还锁在 0.61，这份副本上游跟进前去不掉，两边不互传类型。
 # Win32_* 特性给 openwith.rs（「打开方式」枚举 + 图标提取）：COM/Shell/GDI/图标。
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "UI_Notifications",
   "Win32_Foundation",
   "Win32_System_Com",
@@ -139,8 +140,8 @@ windows = { version = "0.61", features = [
 # 修正 auto-launch 写 Run 项时路径不加引号的问题（含空格路径会失败）：enable 后重写为带引号路径。
 winreg = "0.55"
 # 生产构建关 WebView2 浏览器加速键（window.rs disable_browser_accelerators）。
-# tauri/wry 已传递依赖同版本（0.38.2，windows-core 0.61 系），提为直接依赖不引第二份副本。
-webview2-com = "0.38"
+# tauri/wry 已传递依赖同版本（0.39，windows-core 0.62 系），提为直接依赖不引第二份副本。
+webview2-com = "0.39"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 钉 rev 不跟踪分支：lock 重建 / cargo update 不会静默拉到上游新提交（与 Cargo.lock 锁定提交一致）。

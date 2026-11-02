@@ -81,6 +81,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 会话列表/侧栏
     "get_live_sessions_page",
     "get_live_sessions_counts",
+    // 会话管理页（只读；批量标记完成复用 set_archived）
+    "get_session_admin_page",
     "get_session_lineage",
     "search_chat_transcripts",
     "recent_cwds",
@@ -587,7 +589,15 @@ async fn apply_with(
                     let _ = e;
                 }
                 Err(e) => {
-                    set_error(Some(format!("绑定 {bind_addr}:{port16} 失败：{e}")));
+                    // 结构化原因（模块/代码），文案由前端 errors.ts 双语映射。端口被占（最常见：
+                    // dev 与安装版两个实例同开）单独一码；系统原文只在其余情形跟在后面供排查——
+                    // 此前原样上屏「通常每个套接字地址只允许使用一次 (os error 10048)」（用户实拍）。
+                    let reason = if e.kind() == std::io::ErrorKind::AddrInUse {
+                        "remote/port_in_use".to_string()
+                    } else {
+                        format!("remote/bind_failed：{bind_addr}:{port16} {e}")
+                    };
+                    set_error(Some(reason));
                     return;
                 }
             }
@@ -768,6 +778,16 @@ bridged_args!(GetLiveSessionsPageArgs {
     // 对话侧栏按创建时间排时才发（api.ts 只在 "created" 时带这个键）。
     #[serde(default)]
     order: Option<String>
+});
+
+bridged_args!(GetSessionAdminPageArgs {
+    workspaces: Vec<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    updated_before_days: Option<u32>,
+    page: usize,
+    page_size: usize
 });
 
 bridged_args!(SearchChatTranscriptsArgs { query: String });
@@ -978,7 +998,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             )
         }
         "get_live_sessions_counts" => {
-            reply(crate::session_query::get_live_sessions_counts(state).await)
+            reply(crate::session_query::get_live_sessions_counts(app.clone()).await)
         }
         "get_session_lineage" => {
             let a = args!(SessionArg);
@@ -991,6 +1011,20 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "recent_cwds" => {
             let a = args!(RecentCwdsArgs);
             reply(crate::session_query::recent_cwds(state, a.limit).await)
+        }
+        "get_session_admin_page" => {
+            let a = args!(GetSessionAdminPageArgs);
+            reply(
+                crate::session_query::get_session_admin_page(
+                    state,
+                    a.workspaces,
+                    a.status,
+                    a.updated_before_days,
+                    a.page,
+                    a.page_size,
+                )
+                .await,
+            )
         }
         "git_diff_summary" => {
             let a = args!(GitDiffSummaryArgs);
@@ -1576,6 +1610,13 @@ mod tests {
             "open_link",
             "open_path_with",
             "open_project_dir",
+            // 在宿主上拉起编辑器（对话窗标题栏），与打开目录同属宿主执行类。
+            "open_folder_in",
+            "list_folder_editors",
+            // 往宿主磁盘写文件（对话导出），同属宿主执行类。
+            "export_text_file",
+            // 在宿主上开窗。
+            "open_session_admin",
             "reveal_path_in_file_manager",
             "open_attached_terminal",
             "open_chat_window",
@@ -1895,6 +1936,11 @@ mod tests {
             }
             // api.ts:946
             "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8}"#).map(|_| ()),
+            // api.ts getSessionAdminPage：五个键恒发，status / updatedBeforeDays 空值发 null。
+            "get_session_admin_page" => parse::<GetSessionAdminPageArgs>(
+                br#"{"workspaces":["C:/repo"],"status":"open","updatedBeforeDays":7,"page":0,"pageSize":20}"#,
+            )
+            .map(|_| ()),
             // api.ts:502（gitDiffSummary）
             "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
             // api.ts:507（gitFileDiff）

@@ -87,8 +87,10 @@ describe("RemoteAccessCard", () => {
     api.remoteAccessInfo.mockResolvedValue({ enabled: false, port: 18620, token: "", ips: [], lastError: null });
     render(<RemoteAccessCard />);
 
-    // 关闭态只显开关 + 端口 + 关闭提示,不渲染二维码。
-    expect(await screen.findByText(zh.remote.offHint)).toBeTruthy();
+    // 关闭态只显开关 + 端口,不渲染二维码;也不再单占一行写「关闭时手机无法连接」
+    // (开关的说明已经讲清楚了,设置页实拍那一行是孤零零的空行)。
+    await screen.findByRole("switch", { name: zh.remote.enable });
+    expect(screen.queryByText(zh.remote.offHint)).toBeNull();
     expect(document.querySelector(".remote-qr")).toBeNull();
 
     fireEvent.click(screen.getByRole("switch", { name: zh.remote.enable }));

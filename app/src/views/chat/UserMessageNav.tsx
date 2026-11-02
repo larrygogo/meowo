@@ -43,6 +43,10 @@ export function userNavEntries(items: readonly ChatItem[]): UserNavEntry[] {
 const SIDE_MIN = 160;
 /// 竖条与阅读列的间距（Kimi 同值）。
 const SIDE_GAP = 14;
+/// 标题展开的上限与贴右缘的留白（Kimi ConversationToc 的 240 / 12）：标题最多滑到滚动区右缘前
+/// 12px，空间不够就截短，不会滑出窗口。
+const EXPAND_MAX = 240;
+const EXPAND_EDGE = 12;
 
 const escapeId = (id: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"'));
 
@@ -64,7 +68,7 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
   const t = useT();
   const entries = useMemo(() => userNavEntries(items), [items]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [box, setBox] = useState<{ top: number; height: number; left: number | null } | null>(null);
+  const [box, setBox] = useState<{ top: number; height: number; left: number | null; expand: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -90,8 +94,11 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
       const col = raw.endsWith("px") ? Number.parseFloat(raw) : Number.NaN;
       const colWidth = Number.isFinite(col) ? Math.min(col, width) : width;
       const left = (width - colWidth) / 2 - SIDE_GAP >= SIDE_MIN ? scroller.offsetLeft + (width + colWidth) / 2 + SIDE_GAP : null;
-      const next = { top: scroller.offsetTop, height: scroller.clientHeight, left };
-      return current && current.top === next.top && current.height === next.height && current.left === next.left ? current : next;
+      // 标题可展开宽度：竖条右侧到滚动区右缘（贴窗口右缘时标题往左展开，按左侧阅读列外的空间算）。
+      const room = left != null ? scroller.offsetLeft + width - left - EXPAND_EDGE : (width - colWidth) / 2 + colWidth - EXPAND_EDGE;
+      const expand = Math.max(0, Math.min(EXPAND_MAX, Math.round(room)));
+      const next = { top: scroller.offsetTop, height: scroller.clientHeight, left, expand };
+      return current && current.top === next.top && current.height === next.height && current.left === next.left && current.expand === next.expand ? current : next;
     });
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -171,7 +178,7 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
     <nav
       className={"chat-msg-nav" + (box?.left == null ? " is-edge" : "")}
       aria-label={t.chat.messageNav}
-      style={box ? { top: box.top, height: box.height, left: box.left ?? undefined } : undefined}
+      style={box ? { top: box.top, height: box.height, left: box.left ?? undefined, ["--nav-expand" as string]: `${box.expand}px` } : undefined}
     >
       <div className="chat-msg-nav-list" ref={listRef}>
         {entries.map((entry) => (

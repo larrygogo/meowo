@@ -35,6 +35,16 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/not_ready", exact: true, zh: "远程服务还没就绪，请稍后重试", en: "The remote service isn't ready yet; try again shortly" },
   { m: "remote/bad_args", tail: true, zh: "远程请求参数不合法", en: "Invalid arguments for the remote request" },
   { m: "remote/http_", tail: true, zh: "远程请求失败", en: "Remote request failed" },
+  // 远程服务启动时绑定端口失败（remote.rs serve）。占用多半是另一个 Meowo 实例开着远程。
+  { m: "remote/port_in_use", exact: true, zh: "端口被其它程序占用，换个端口或关掉占用它的程序", en: "The port is in use; pick another or close the program using it" },
+  { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
+  // ── 导出会话（fsutil.rs export_text_file）──
+  { m: "export/bad_extension", exact: true, zh: "只能导出成 .md 或 .txt 文件", en: "Export only to .md or .txt files" },
+  { m: "export/write_failed", tail: true, zh: "文件没能写入", en: "Couldn't write the file" },
+  // ── 用编辑器打开目录（editors.rs）──
+  { m: "editor/dir_missing", exact: true, zh: "项目目录不存在", en: "Project directory not found" },
+  { m: "editor/not_found", exact: true, zh: "没找到这个编辑器，可能已卸载", en: "Editor not found; it may have been uninstalled" },
+  { m: "editor/spawn_failed", tail: true, zh: "编辑器没能打开", en: "Couldn't open the editor" },
   // ── 手机推送（push.rs）──
   { m: "push/invalid_url", exact: true, zh: "推送地址无效，请从 Bark App 里复制", en: "Invalid push URL; copy it from the Bark app" },
   { m: "push/missing_key", exact: true, zh: "推送地址缺少设备 key", en: "The push URL is missing the device key" },

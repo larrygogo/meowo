@@ -29,6 +29,7 @@ import type { PendingLaunchDto } from "./generated/contracts/PendingLaunchDto";
 import type { PendingInteractionDto } from "./generated/contracts/PendingInteractionDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
+import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
 import type { FileTextDto } from "./generated/contracts/FileTextDto";
@@ -462,6 +463,26 @@ export function renameSession(
   return invoke("rename_session", { cwd, sessionId: ccSessionId, title, provider });
 }
 
+/** 会话管理页的一页（对照 Kimi Code 的会话管理）。 */
+export type SessionAdminPage = { items: LiveSession[]; total: number };
+/** 会话管理页查询。status：all / open（进行中）/ done（已完成）；updatedBeforeDays：只要 N 天以前
+ *  更新过的，null 不限；page 从 0 起。五个键恒发（远程桥 deny_unknown_fields，样例见 remote.rs）。 */
+export function getSessionAdminPage(query: { workspaces: string[]; status: "all" | "open" | "done"; updatedBeforeDays: number | null; page: number; pageSize: number }): Promise<SessionAdminPage> {
+  return invoke("get_session_admin_page", {
+    workspaces: query.workspaces,
+    status: query.status === "all" ? null : query.status,
+    updatedBeforeDays: query.updatedBeforeDays,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+}
+
+/** 侧栏拖拽排序：把会话挪到 aboveId 正下方（没有 above 时挂到 belowId 正上方）。桌面专用，
+ *  远程桥不开放（手机只按这个顺序显示）。 */
+export function moveSessionRank(sessionId: number, aboveId: number | null, belowId: number | null): Promise<void> {
+  return invoke("move_session_rank", { sessionId, aboveId, belowId });
+}
+
 /** 归档 / 还原会话（键为 DB 数字主键，不是 cc_session_id）。 */
 export function setArchived(sessionId: number, archived: boolean): Promise<void> {
   return invoke("set_archived", { sessionId, archived });
@@ -478,6 +499,12 @@ export function openProjectDir(cwd: string): Promise<void> {
 }
 
 /** 工作目录的 git 改动摘要；`isRepo` 为 false 时前端不显示「Diff」入口。 */
+/** 当前分支的 Pull Request（gh pr view；没装 gh / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
+export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
+  return invoke("git_pull_request", { cwd });
+}
+export type { PullRequestDto };
+
 export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
   return invoke("git_diff_summary", { cwd });
 }
@@ -516,6 +543,22 @@ export function listFileOpeners(cwd: string, rel: string): Promise<FileOpenerDto
 /** 用指定应用（opener=清单里的 id）或系统默认应用（opener="default"）打开 cwd 内的文件/目录。 */
 export function openPathWith(cwd: string, rel: string, opener: string): Promise<void> {
   return invoke("open_path_with", { cwd, rel, opener });
+}
+
+/** 把文本存成文件（「导出会话」：路径来自系统保存框，后端只认 .md / .txt）。 */
+export function exportTextFile(path: string, text: string): Promise<void> {
+  return invoke("export_text_file", { path, text });
+}
+
+/** 对话窗标题栏「用编辑器打开」：本机装了的、能打开目录的编辑器（Windows 带 exe 图标）。
+ *  系统文件管理器不在其中，前端恒列（走 openProjectDir）。 */
+export function listFolderEditors(): Promise<FileOpenerDto[]> {
+  return invoke("list_folder_editors");
+}
+
+/** 用指定编辑器（listFolderEditors 的 id）打开会话目录。 */
+export function openFolderIn(cwd: string, editor: string): Promise<void> {
+  return invoke("open_folder_in", { cwd, editor });
 }
 
 /** 在系统文件管理器里定位（选中）cwd 内的文件/目录。 */
@@ -573,8 +616,9 @@ export function getLiveSessionsPage(
   /** 附带「正在启动」占位卡(pending PTY:已起 PTY、CLI 未写库的新会话,负 id)——
       同样只有贴纸看板传 true;占位卡不可点,其它消费方给了也是死路。 */
   includePending = false,
-  /** 排序:"created" 让后端按创建时间倒序分页(对话侧栏默认)。游标对调用方不透明,原样回传即可。 */
-  order: "activity" | "created" = "activity",
+  /** 排序:"manual" = 手动排序(对话侧栏默认,没拖过等于创建时间倒序);"created" = 创建时间倒序。
+      游标对调用方不透明,原样回传即可。 */
+  order: "activity" | "created" | "manual" = "activity",
 ): Promise<LiveSessionsPage> {
   return invoke<unknown>("get_live_sessions_page", {
     filter,
@@ -588,7 +632,7 @@ export function getLiveSessionsPage(
     includeForeign,
     includePending,
     // 只在需要时带键：remote.rs 的桥是 deny_unknown_fields，缺省形态保持与旧后端一致。
-    ...(order === "created" ? { order } : {}),
+    ...(order !== "activity" ? { order } : {}),
   }).then((res) => {
     // 旧后端 / demo mock 仍返回裸数组：给不满 limit 视作到底，满页时按旧约定用末项续查
     // （旧后端本就只有这套语义）。undefined = 后端没有该命令，静默降级为空列表。
@@ -683,6 +727,10 @@ export type Settings = {
   remote_access_token: string;
   /** 手机推送（Bark）地址。空 = 不推送；会话需要关注时推到手机（后端 push.rs）。 */
   bark_url: string;
+  /** 侧栏工作区组的手动顺序（路径）。空 = 没排过。桌面拖分组头写入，手机只读。 */
+  workspace_order: string[];
+  /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
+  keep_awake_while_running: boolean;
   /** 贴纸主窗口几何（W-17）。设置窗不编辑它；后端 set_settings 落盘前以磁盘值回填。
    *  读写走 windowState.ts 的 get/set_sticker_window_state，这里仅为快照对齐。 */
   sticker_window?: {

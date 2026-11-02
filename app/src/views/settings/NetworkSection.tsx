@@ -33,7 +33,6 @@ import { useAgentListRefresh } from "../../useAgents";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./state";
 import { Segmented, Switch, SettingsError } from "./widgets";
 import { Dropdown } from "../menu";
-import { RemoteAccessCard } from "./RemoteAccessCard";
 
 /// 每个模型行的模式，比全局多一个「跟随默认」（= per_agent 里没有该条目）。
 type RowMode = ProxyMode | "follow";
@@ -222,7 +221,7 @@ export function NetworkSection() {
 
   return (
     <>
-      <RemoteAccessCard />
+      {/* 手机远程已独立成「手机远程」分区（About.tsx），这里只剩代理。 */}
       <div className="row-card">
         <div className="row">
           <div className="row-text">

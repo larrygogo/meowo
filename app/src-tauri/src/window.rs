@@ -341,8 +341,10 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     }
 }
 
-/// 前端调用：打开「新建会话」窗口（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
-/// 传入 cwd/provider 时，新建面板会预填该路径并选中该模型。
+/// 前端调用：新建会话（贴纸底栏 + 按钮 / 空状态 CTA / 会话卡片菜单）。
+/// 传入 cwd/provider 时，新建表单会预填该路径并选中该模型。
+/// 对话功能开着时不再弹独立小窗：打开对话窗、主区切到新建会话页（对照 Kimi，用户要求
+/// 「新建会话的时候不要再弹新的窗口」）；关掉对话功能（轻量模式）时没有对话窗可去，仍走小窗。
 /// 与 open_settings 同理由走子线程创建：同步 command 在主线程 build 会阻塞消息泵致白屏。
 #[tauri::command]
 pub(crate) fn open_new_session_window(
@@ -353,12 +355,31 @@ pub(crate) fn open_new_session_window(
     std::thread::spawn(move || open_new_session_window_impl(&app, cwd, provider));
 }
 
+/// 前端调用（设置页「会话 · 已完成会话」）：打开对话窗的会话管理页、预选「已完成」。
+/// 与 open_new_session_window 同理由走子线程。对话功能关闭（轻量模式）时 open_chat_window_target
+/// 自己回落设置窗——设置页里点这个入口就是原地不动，入口本身由前端在轻量模式下隐藏。
+#[tauri::command]
+pub(crate) fn open_session_admin(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        if let Err(error) = open_chat_window_target(&app, ChatTarget::AdminDone, true) {
+            eprintln!("打开会话管理失败: {error}");
+        }
+    });
+}
+
 /// 打开（或聚焦）新建会话窗口。label 为 "new-session"（main.tsx 按此 label 路由到面板页）。
 pub(crate) fn open_new_session_window_impl(
     app: &tauri::AppHandle,
     cwd: Option<String>,
     provider: Option<String>,
 ) {
+    if crate::settings::load_settings().chat_enabled {
+        let target = ChatTarget::NewSession { cwd, provider };
+        if let Err(error) = open_chat_window_target(app, target, true) {
+            eprintln!("打开新建会话页失败: {error}");
+        }
+        return;
+    }
     // macOS：纯托盘 App 的窗口需临时切 Regular 激活策略才能获焦（同设置窗口）。
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app, "new-session");
@@ -685,11 +706,56 @@ pub(crate) fn open_latest_chat(app: tauri::AppHandle) {
     open_latest_chat_window(&app);
 }
 
+/// 对话窗打开后停在哪：某个会话，或新建会话页（带可选预填）。
+pub(crate) enum ChatTarget {
+    Session(i64),
+    NewSession {
+        cwd: Option<String>,
+        provider: Option<String>,
+    },
+    /// 会话管理页，预选「已完成」（设置页「已完成会话」的入口：那里不再自带一份列表）。
+    AdminDone,
+}
+
+impl ChatTarget {
+    /// 新建对话窗时的页面地址（前端 ChatWindow 按 query 决定首屏）。
+    fn url(&self) -> String {
+        match self {
+            ChatTarget::Session(id) => format!("index.html?sessionId={id}"),
+            ChatTarget::NewSession { cwd, provider } => {
+                let mut url = "index.html?newSession=1".to_string();
+                if let Some(c) = cwd {
+                    url.push_str(&format!(
+                        "&cwd={}",
+                        percent_encode(c.as_bytes(), NON_ALPHANUMERIC)
+                    ));
+                }
+                if let Some(p) = provider {
+                    url.push_str(&format!(
+                        "&provider={}",
+                        percent_encode(p.as_bytes(), NON_ALPHANUMERIC)
+                    ));
+                }
+                url
+            }
+            ChatTarget::AdminDone => "index.html?admin=done".to_string(),
+        }
+    }
+}
+
 /// `activate`：true = 用户主动打开（点卡片/托盘/通知），照常抢焦点；
 /// false = 审批/提问唤醒——窗口要出现但不夺焦（用户可能正在外部终端打字，实拍反馈）。
 pub(crate) fn open_chat_window_impl(
     app: &tauri::AppHandle,
     session_id: i64,
+    activate: bool,
+) -> Result<(), String> {
+    open_chat_window_target(app, ChatTarget::Session(session_id), activate)
+}
+
+pub(crate) fn open_chat_window_target(
+    app: &tauri::AppHandle,
+    target: ChatTarget,
     activate: bool,
 ) -> Result<(), String> {
     // 对话功能关闭（轻量模式）时的唯一闸门：四个开窗变体（command/detached/quiet/latest）
@@ -709,8 +775,20 @@ pub(crate) fn open_chat_window_impl(
         use tauri::Emitter;
         // emit 失败绝不能静默：窗口会照常聚焦，但停留在旧会话——用户点了卡片 A，
         // 看到的却是会话 B，比不弹窗更具误导性。
-        w.emit("chat-session-changed", session_id)
-            .map_err(|e| format!("切换会话失败: {e}"))?;
+        match &target {
+            ChatTarget::Session(session_id) => w
+                .emit("chat-session-changed", *session_id)
+                .map_err(|e| format!("切换会话失败: {e}"))?,
+            ChatTarget::NewSession { cwd, provider } => w
+                .emit(
+                    "chat-new-session",
+                    serde_json::json!({ "cwd": cwd, "provider": provider }),
+                )
+                .map_err(|e| format!("打开新建会话页失败: {e}"))?,
+            ChatTarget::AdminDone => w
+                .emit("chat-open-admin", "done")
+                .map_err(|e| format!("打开会话管理失败: {e}"))?,
+        }
         if activate {
             let _ = w.show();
             raise_window(&w);
@@ -721,10 +799,12 @@ pub(crate) fn open_chat_window_impl(
         }
         return Ok(());
     }
-    let url = format!("index.html?sessionId={session_id}");
+    let url = target.url();
     let builder = tauri::WebviewWindowBuilder::new(app, "chat", tauri::WebviewUrl::App(url.into()))
         .title("Meowo · Chat")
-        .inner_size(960.0, 760.0)
+        // 首开 1200 宽（用户要求加大）：侧栏 + 阅读列 + 改动面板 + 标题栏一排工具，960 挤。
+        // 高度不动：768 高的笔记本屏连 760 都已贴边。窗口状态插件不记尺寸（只记位置），每次开窗都是它。
+        .inner_size(1200.0, 760.0)
         .min_inner_size(620.0, 480.0)
         .resizable(true)
         // 安静唤醒的新窗口不带初始焦点（冷启动首帧 show 的激活行为随之收敛）。
@@ -955,6 +1035,23 @@ fn dev_badge_icon(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static
 #[cfg(not(target_os = "macos"))]
 static TRAY_CLICK_GEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// 最近一次双击的时刻。Windows 双击的消息序列是「抬起 → 双击 → 抬起」：上面的世代只作废了
+/// 双击**之前**那次单击，双击**之后**还会再来一次左键抬起，它另起一个单击定时器、一个双击
+/// 窗口期后把贴纸开合一遍——用户看到的就是「双击托盘弹出的是贴纸」（实拍反馈）。紧跟在双击
+/// 之后（一个双击窗口期内）的抬起不算单击。
+#[cfg(not(target_os = "macos"))]
+static TRAY_LAST_DOUBLE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// 这次左键抬起是不是双击的尾巴（双击之后一个双击窗口期内）。
+#[cfg(not(target_os = "macos"))]
+fn tray_click_trails_double(now: std::time::Instant) -> bool {
+    TRAY_LAST_DOUBLE
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .is_some_and(|at| now.saturating_duration_since(at) <= tray_click_debounce())
+}
+
 /// 单击消抖窗口取**系统双击时间**（Windows 默认 500ms，控制面板可调）。曾写死 300ms：
 /// 正常手速的双击（间隔 300~500ms）在 300ms 定时器到点时第二击还没到，先漏出一次
 /// 单击把贴纸开合了，随后系统仍认出双击、对话窗也开——两窗齐弹（实拍反馈）。
@@ -1032,6 +1129,9 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     // 只投递消息不读文件，主线程直调（同 macOS panel::toggle_panel）。
                     // 延迟一个系统双击窗口期：紧随其后是双击则这次开合作废
                     // （见 TRAY_CLICK_GEN；窗口期取值理由见 tray_click_debounce）。
+                    if tray_click_trails_double(std::time::Instant::now()) {
+                        return;
+                    }
                     let gen = TRAY_CLICK_GEN.fetch_add(1, Ordering::SeqCst) + 1;
                     let app = tray.app_handle().clone();
                     std::thread::spawn(move || {
@@ -1049,6 +1149,9 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     ..
                 } => {
                     TRAY_CLICK_GEN.fetch_add(1, Ordering::SeqCst);
+                    if let Ok(mut last) = TRAY_LAST_DOUBLE.lock() {
+                        *last = Some(std::time::Instant::now());
+                    }
                     let app = tray.app_handle().clone();
                     std::thread::spawn(move || {
                         if crate::settings::load_settings().chat_enabled {
@@ -1152,3 +1255,42 @@ mod click_through_tests {
     }
 }
 
+
+#[cfg(test)]
+mod chat_target_tests {
+    use super::ChatTarget;
+
+    #[test]
+    fn 新建会话页的开窗地址带预填且转义() {
+        assert_eq!(ChatTarget::Session(42).url(), "index.html?sessionId=42");
+        assert_eq!(ChatTarget::AdminDone.url(), "index.html?admin=done");
+        assert_eq!(
+            ChatTarget::NewSession { cwd: None, provider: None }.url(),
+            "index.html?newSession=1"
+        );
+        assert_eq!(
+            ChatTarget::NewSession {
+                cwd: Some(r"C:\my proj".into()),
+                provider: Some("claude".into()),
+            }
+            .url(),
+            "index.html?newSession=1&cwd=C%3A%5Cmy%20proj&provider=claude"
+        );
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tray_click_tests {
+    use super::{tray_click_debounce, tray_click_trails_double, TRAY_LAST_DOUBLE};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn 双击之后紧跟的左键抬起不算单击() {
+        let at = Instant::now();
+        *TRAY_LAST_DOUBLE.lock().unwrap() = Some(at);
+        assert!(tray_click_trails_double(at + Duration::from_millis(50)));
+        assert!(!tray_click_trails_double(
+            at + tray_click_debounce() + Duration::from_millis(50)
+        ));
+    }
+}

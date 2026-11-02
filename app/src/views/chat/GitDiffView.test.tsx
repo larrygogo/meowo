@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto } from "../../api";
 import type { ReviewComment } from "./diffComments";
@@ -163,5 +163,62 @@ describe("GitDiffView 远程头行", () => {
     expect(document.querySelector(".chat-diff-title")?.textContent).toBe("更改");
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onCollapse).toHaveBeenCalled();
+  });
+});
+
+describe("GitDiffView 列表 / 树形（对照 Kimi 改动面板）", () => {
+  afterEach(() => localStorage.clear());
+  it("默认列表一行一个完整路径，行头是状态方块；切到树形按目录收拢并记住", () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const props = {
+      cwd: "C:\repo", width: 420, collapsed: false, maximized: false, onCollapse: () => {}, onToggleMaximize: () => {},
+      comments: [], onAddComment: () => {}, onRemoveComment: () => {}, touchedPaths: [],
+    };
+    const files = [
+      { path: "app/shot.png", status: "U", additions: null, deletions: null },
+      { path: "app/src/views/chat/PillSelect.tsx", status: "A", additions: 80, deletions: 0 },
+      { path: "README.md", status: "D", additions: 0, deletions: 3 },
+    ];
+    const { unmount } = render(<GitDiffView {...props} summary={{ ...summary, files }} />);
+    expect(screen.getByText("3 个文件")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "列表" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("app/src/views/chat/PillSelect.tsx")).toBeTruthy();
+    // 新增 / 未跟踪是「+」，删除是「−」，读屏报状态名。
+    expect(screen.getByRole("img", { name: "新文件，未跟踪" }).textContent).toBe("+");
+    expect(screen.getByRole("img", { name: "已删除" }).textContent).toBe("−");
+
+    fireEvent.click(screen.getByRole("button", { name: "树形" }));
+    expect(screen.queryByText("app/src/views/chat/PillSelect.tsx")).toBeNull();
+    expect(screen.getByText("PillSelect.tsx")).toBeTruthy();
+    unmount();
+    render(<GitDiffView {...props} summary={{ ...summary, files }} />);
+    expect(screen.getByRole("button", { name: "树形" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("GitDiffView 文件页：树与预览同时在场（对照 Kimi）", () => {
+  it("点文件后树仍挂着并标出当前文件，宽面板由 CSS 并排、窄面板只显示预览", async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "list_dir_entries") return [
+        { name: "a.ts", relPath: "a.ts", isDir: false },
+        { name: "b.ts", relPath: "b.ts", isDir: false },
+      ];
+      if (command === "read_file_text") return { relPath: "a.ts", text: "export const a = 1;\n", truncated: false, binary: false };
+      return [];
+    });
+    const { container } = render(
+      <GitDiffView cwd="C:\repo" summary={summary} width={420} collapsed={false} maximized={false}
+        onCollapse={() => {}} onToggleMaximize={() => {}} comments={[]} onAddComment={() => {}} onRemoveComment={() => {}}
+        touchedPaths={[]} activeTab="files" onTabChange={() => {}} />,
+    );
+    fireEvent.click(await screen.findByText("a.ts"));
+    // 高亮把代码拆成多段，按预览区整段文本断言。
+    await waitFor(() => expect(container.querySelector(".chat-files-preview pre")?.textContent).toContain("export const a"));
+    const files = container.querySelector(".chat-files")!;
+    expect(files.className).toContain("has-selection");
+    // 树没卸载：并排时直接点下一个文件，不用先返回。
+    const row = within(files.querySelector(".chat-files-browse") as HTMLElement).getByText("a.ts").closest("button")!;
+    expect(row.getAttribute("aria-current")).toBe("true");
+    expect(within(files.querySelector(".chat-files-browse") as HTMLElement).getByText("b.ts")).toBeTruthy();
   });
 });

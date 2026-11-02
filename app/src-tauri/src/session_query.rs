@@ -228,14 +228,95 @@ pub(crate) struct LiveSessionsPage {
     pub(crate) next_cursor: Option<PageCursor>,
 }
 
+/// 会话管理页的一页（对照 Kimi Code 的会话管理）：这一页的会话 + 当前条件下的总数。
+#[derive(serde::Serialize)]
+pub(crate) struct SessionAdminPage {
+    pub(crate) items: Vec<LiveSession>,
+    pub(crate) total: i64,
+}
+
+/// 会话管理页的单页上限：页长选项最大 100，「选中当前条件下的全部」按 200 一页拉。
+const ADMIN_PAGE_MAX: usize = 200;
+
+/// 会话管理页查询。`status`："open" 进行中 / "done" 已完成 / 其余为全部；`updated_before_days`：
+/// 只要 N 天以前更新过的（批量清理旧会话用）；`page` 从 0 起。标题与侧栏同一套解析（claude 的
+/// 名字要从 transcript 里补），两边不会叫出两个名字。
+#[tauri::command]
+pub(crate) async fn get_session_admin_page(
+    state: State<'_, super::AppState>,
+    workspaces: Vec<String>,
+    status: Option<String>,
+    updated_before_days: Option<u32>,
+    page: usize,
+    page_size: usize,
+) -> Result<SessionAdminPage, String> {
+    let db_path = state.db_path.clone();
+    let tx_cache = state.tx_cache.clone();
+    let runtimes = state.session_runtimes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let limit = page_size.clamp(1, ADMIN_PAGE_MAX);
+        // 后台会话与侧栏 / 角标同口径整个不列（见 hidden_background）：管理页曾漏了这条，
+        // 查出一批侧栏里找不到的「进行中」（用户实拍）。在 SQL 里排除，分页与总数才对得上。
+        let exclude_cc_ids: Vec<String> = runtimes
+            .snapshot()
+            .values()
+            .flat_map(|sessions| sessions.iter())
+            .filter(|(_, runtime)| runtime.background)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let query = meowo_store::AdminQuery {
+            cwds: workspaces,
+            archived: match status.as_deref() {
+                Some("open") => Some(false),
+                Some("done") => Some(true),
+                _ => None,
+            },
+            updated_before: updated_before_days
+                .map(|days| super::now_ms() - i64::from(days) * 86_400_000),
+            exclude_cc_ids,
+            offset: page.saturating_mul(limit),
+            limit,
+        };
+        let store = super::open_store(&db_path)?;
+        let (mut items, total) = store.session_admin_page(&query).map_err(|e| e.to_string())?;
+        for session in &mut items {
+            if !super::agent_resolves_transcript_title(&session.provider) {
+                continue;
+            }
+            let info = analyze_transcript(
+                &tx_cache,
+                &session.provider,
+                session.cwd.as_deref(),
+                &session.session.cc_session_id,
+            );
+            if let Some(title) = info.and_then(|info| info.title) {
+                session.task_title = title;
+            }
+        }
+        Ok(SessionAdminPage { items, total })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn get_live_sessions_counts(
-    state: State<'_, super::AppState>,
+    app: tauri::AppHandle,
 ) -> Result<meowo_store::query::LiveSessionCounts, String> {
-    let db_path = state.db_path.clone();
     // 进程表采样在 spawn_blocking 里做:冷采样 Windows 上要 30-120ms,不能挂在
     // async-runtime 线程上(且采样持缓存互斥锁,并发命令会排队其后)。
-    let snapshots = state.process_snapshots.clone();
+    tauri::async_runtime::spawn_blocking(move || live_counts_now(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 角标统计的同步本体：命令（看板 / 手机）与「运行时防止休眠」的巡检线程（power.rs）共用，
+/// 「有没有会话在跑」只有这一个口径。会阻塞（进程表采样 + 读库），只能在后台线程调用。
+pub(crate) fn live_counts_now(
+    app: &tauri::AppHandle,
+) -> Result<meowo_store::query::LiveSessionCounts, String> {
+    use tauri::Manager;
+    let state = app.state::<super::AppState>();
     // 托管 PTY 活跃 = 进程必在(meowo 自己 spawn 的),hook 未认领 pid / 事件宽限过期时兜底。
     let pty_live = state.ptys.active_session_ids();
     // 审批存活与屏幕状态:tab 归属(tab_class)的另外两样原料,必须与列表同一来源采样,
@@ -246,37 +327,31 @@ pub(crate) async fn get_live_sessions_counts(
     // 数得到,否则「运行中 N」与列表又打架。它们按运行中计(PTY 已起、屏幕检测尚未
     // 接管),total 同步 +N(与列表口径:占位卡进「全部」与「运行中」两个 tab)。
     let pendings = state.ptys.pending_launches().len() as i64;
-    let runtimes = state.session_runtimes.clone();
-    let tx_cache = state.tx_cache.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let alive = snapshots.snapshot();
-        let runtimes = runtimes.snapshot();
-        let store = super::open_store(&db_path)?;
-        let mut counts = counts_for_store(
-            &store,
-            &tx_cache,
-            &alive,
-            &pty_live,
-            &runtimes,
-            &approvals,
-            &screen_states,
-        )?;
-        // 外库(安装版)会话也计入角标——列表并入了外库卡(get_live_sessions_page 的
-        // include_foreign),数字必须与列表同视野,否则出现「待交互 0 但列表挂着一排
-        // 待交互卡」的打架现场(实拍反馈)。险闸与失败降级同 foreign_live_items:
-        // 聚合不上就只数本库,宁可少数不报错。
-        if let Some(foreign) = foreign_counts(&db_path, &tx_cache, &alive, &runtimes) {
-            counts.total += foreign.total;
-            counts.running += foreign.running;
-            counts.waiting += foreign.waiting;
-            counts.archived += foreign.archived;
-        }
-        counts.total += pendings;
-        counts.running += pendings;
-        Ok(counts)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let alive = state.process_snapshots.snapshot();
+    let runtimes = state.session_runtimes.snapshot();
+    let store = super::open_store(&state.db_path)?;
+    let mut counts = counts_for_store(
+        &store,
+        &state.tx_cache,
+        &alive,
+        &pty_live,
+        &runtimes,
+        &approvals,
+        &screen_states,
+    )?;
+    // 外库(安装版)会话也计入角标——列表并入了外库卡(get_live_sessions_page 的
+    // include_foreign),数字必须与列表同视野,否则出现「待交互 0 但列表挂着一排
+    // 待交互卡」的打架现场(实拍反馈)。险闸与失败降级同 foreign_live_items:
+    // 聚合不上就只数本库,宁可少数不报错。
+    if let Some(foreign) = foreign_counts(&state.db_path, &state.tx_cache, &alive, &runtimes) {
+        counts.total += foreign.total;
+        counts.running += foreign.running;
+        counts.waiting += foreign.waiting;
+        counts.archived += foreign.archived;
+    }
+    counts.total += pendings;
+    counts.running += pendings;
+    Ok(counts)
 }
 
 /// 单个库的角标统计(总数/运行中/待交互/归档)。本库与外库共用同一口径——外库把
@@ -406,10 +481,15 @@ pub(crate) async fn get_live_sessions_page(
     // 是否附带「正在启动」占位卡(pending PTY:已起 PTY、CLI 还没写库的新会话,负 id)。
     // 同样只有贴纸看板传 true——占位卡不可点、没有会话详情,其它消费方给了也是死路。
     include_pending: Option<bool>,
-    // 排序:"created" = 按创建时间倒序分页(对话侧栏默认);其余/缺省 = 按最近活跃。
+    // 排序:"manual" = 手动排序(对话侧栏默认,没拖过等于创建时间倒序);"created" = 按创建
+    // 时间倒序(旧手机页仍会传);其余/缺省 = 按最近活跃。
     order: Option<String>,
 ) -> Result<LiveSessionsPage, String> {
-    let by_created = order.as_deref() == Some("created");
+    let order = match order.as_deref() {
+        Some("manual") => meowo_store::ListOrder::Manual,
+        Some("created") => meowo_store::ListOrder::Created,
+        _ => meowo_store::ListOrder::Activity,
+    };
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
     // 采样进 spawn_blocking,理由同 get_live_sessions_counts。
@@ -440,7 +520,7 @@ pub(crate) async fn get_live_sessions_page(
                 before_last_event_at,
                 before_id,
                 limit,
-                by_created,
+                order,
             },
         )?;
         // 「正在启动」占位卡只进首页(无游标):占位不属于 SQL 扫描,翻页游标语义不变。
@@ -601,6 +681,7 @@ fn pending_placeholder_item(
             provider: info.provider.clone(),
             profile: None,
             predecessor_id: None,
+            manual_key: info.started_at.saturating_mul(1024),
         },
         connected: true,
         pty_managed: true,
@@ -775,8 +856,8 @@ pub(crate) struct PageReq {
     pub(crate) before_last_event_at: Option<i64>,
     pub(crate) before_id: Option<i64>,
     pub(crate) limit: usize,
-    /// 按创建时间倒序分页（对话侧栏的默认排序），见 build_live_sessions_sql。
-    pub(crate) by_created: bool,
+    /// 排序方式（对话侧栏默认手动排序），见 build_live_sessions_sql。
+    pub(crate) order: meowo_store::ListOrder,
 }
 
 /// 单页条数上限。limit 是 IPC/远程桥入参，不钳制时超大值会让 `Vec::with_capacity`
@@ -845,14 +926,16 @@ pub(crate) fn live_sessions_blocking(
     let mut items: Vec<LiveItem> = Vec::with_capacity(page.limit);
     // Some = 页满/到达扫描上限时的续扫位置；None = 已扫到底。
     let mut next_cursor: Option<PageCursor> = None;
-    // waiting tab 恒按等待时长排（store 里同样忽略 by_created），游标位要跟 SQL 的排序键一致。
-    let by_created = page.by_created && filter != "waiting";
-    let sort_key = |session: &LiveSession| {
-        if by_created { session.session.started_at } else { session.session.last_event_at }
+    // waiting tab 恒按等待时长排（store 里同样忽略 order），游标位要跟 SQL 的排序键一致。
+    let order = if filter == "waiting" { meowo_store::ListOrder::Activity } else { page.order };
+    let sort_key = |session: &LiveSession| match order {
+        meowo_store::ListOrder::Created => session.session.started_at,
+        meowo_store::ListOrder::Manual => session.manual_key,
+        meowo_store::ListOrder::Activity => session.session.last_event_at,
     };
     'fill: loop {
         let sessions = store
-            .live_sessions_scan(Some(filter), search, cwd, cursor_ts, cursor_id, by_created, batch_limit)
+            .live_sessions_scan(Some(filter), search, cwd, cursor_ts, cursor_id, order, batch_limit)
             .map_err(|e| e.to_string())?;
         let raw_len = sessions.len();
         let batch_tail = sessions
@@ -934,9 +1017,9 @@ pub(crate) fn live_sessions_blocking(
         cursor_ts = Some(timestamp);
         cursor_id = Some(id);
     }
-    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。按创建时间排时不做：
-    // 要的就是位置不随运行状态变（用户反馈列表顶部一直在跳）。
-    if !by_created {
+    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。按创建时间 / 手动排序时不做：
+    // 要的就是位置不随运行状态变（用户反馈列表顶部一直在跳），手动拖的位置更不能被挤走。
+    if order == meowo_store::ListOrder::Activity {
         items.sort_by_key(|item| std::cmp::Reverse(item.connected));
     }
     // 本页有归属自定义账号的会话才读一次 settings——全默认账号（没建过 profile 的用户）
@@ -1343,7 +1426,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 60,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();
@@ -1425,7 +1508,7 @@ mod tests {
                     before_last_event_at: cursor.map(|c| c.0),
                     before_id: cursor.map(|c| c.1),
                     limit: PAGE,
-                    by_created: false,
+                    order: meowo_store::ListOrder::Activity,
                 },
             )
             .unwrap();
@@ -1496,7 +1579,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: usize::MAX,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();
@@ -1553,7 +1636,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: total as usize + 100,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap()
@@ -1693,7 +1776,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 10,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();

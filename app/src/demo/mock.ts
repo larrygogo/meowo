@@ -44,6 +44,8 @@ export const store: Store = {
     remote_access_bind: "all",
     remote_access_token: "",
     bark_url: "",
+    workspace_order: [],
+    keep_awake_while_running: true,
   },
 };
 

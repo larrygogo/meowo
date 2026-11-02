@@ -74,6 +74,20 @@ describe("applySettingsFilter（设置搜索过滤，S-1）", () => {
     expect(shown(sec(body, "general"))).toBe(false);
   });
 
+  it("分区页标题（.sec-title）跟随分区：有命中留着当分隔，没命中随分区一起藏", () => {
+    const body = build();
+    for (const sec of body.querySelectorAll(".main-sec")) {
+      const title = document.createElement("h1");
+      title.className = "sec-title";
+      title.textContent = sec.getAttribute("data-sec") ?? "";
+      sec.prepend(title);
+    }
+    applySettingsFilter(body, "语言", NAV);
+    const title = (sec: string) => body.querySelector<HTMLElement>(`[data-sec="${sec}"] .sec-title`)!;
+    expect(title("general").style.display).toBe("");
+    expect(title("appearance").style.display).toBe("none");
+  });
+
   it("分组标题跟随本组卡片：组内无命中时标题一并隐藏", () => {
     const body = build();
     applySettingsFilter(body, "主题", NAV);

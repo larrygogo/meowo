@@ -39,6 +39,7 @@ import {
   type HooksStatus,
 } from "../../api";
 import { agentAssets } from "../../providers";
+import { AgentAppIcon } from "../chat/AgentAppIcon";
 import { useT, repairFailMessage } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
@@ -224,7 +225,6 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
   updateInfo: AgentUpdateInfo | null;
 }) {
   const t = useT();
-  const assets = agentAssets(provider);
   const acc = payload?.account ?? null;
 
   // 后台安装态从页面级 useInstallOperations 派生（installOp prop）：状态曾住在本卡片里，
@@ -496,15 +496,8 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
   return (
     <div className="row-card provider-card" data-testid={"agent-card-" + provider}>
       <div className="provider-card-head">
-        <div
-          className={"provider-card-icon" + (assets.needsTile ? " provider-card-icon-tile" : "")}
-          data-agent={provider}
-          // claude 是 currentColor 绘制的裸 logomark，无方框时得由容器给品牌橙（--cc-claude），
-          // 否则会继承文字色变灰。有方框的（若日后有）由 .provider-card-icon-tile 自己给白。
-          style={!assets.needsTile && assets.tint ? { color: `var(${assets.tint})` } : undefined}
-        >
-          <assets.Icon />
-        </div>
+        {/* 与新建会话页、欢迎面板同一枚应用图标（AgentAppIcon），卡片里不套方底（44px 外框）。 */}
+        <AgentAppIcon provider={provider} />
         <div className="provider-card-title">
           <div className="provider-card-title-row">
             <span className="provider-name">{name}</span>

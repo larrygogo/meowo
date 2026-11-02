@@ -2,7 +2,7 @@
 //! 不经 shell 直接 spawn git（路径作为独立 argv，无注入面）；子进程可能被杀软拖慢，
 //! 统一走 spawn_blocking，不进主线程（同类教训见 terminal.rs open_project_dir 的注释）。
 
-use meowo_protocol::ipc::{GitChangedFileDto, GitDiffSummaryDto, GitFileDiffDto};
+use meowo_protocol::ipc::{GitChangedFileDto, GitDiffSummaryDto, GitFileDiffDto, PullRequestDto};
 use std::path::Path;
 use std::process::Command;
 
@@ -246,6 +246,83 @@ fn untracked_file_diff(dir: &str, path: &str) -> Result<GitFileDiffDto, String> 
     })
 }
 
+/// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」）。走 `gh pr view`：
+/// 没装 gh、没登录、不是 GitHub 仓库、分支没有 PR 都是 None（不报错，前端不显示）。
+/// gh 要联网，按目录缓存 60s：标题栏每次重渲染不该打一次 GitHub API。
+#[tauri::command]
+pub(crate) async fn git_pull_request(cwd: String) -> Result<Option<PullRequestDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(pull_request_cached(&cwd)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+const PR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+type PrCache = std::collections::HashMap<String, (std::time::Instant, Option<PullRequestDto>)>;
+
+fn pull_request_cached(cwd: &str) -> Option<PullRequestDto> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<PrCache>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let key = cwd.trim().to_string();
+    if let Some((at, value)) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
+        if at.elapsed() < PR_CACHE_TTL {
+            return value;
+        }
+    }
+    let value = pull_request_blocking(&key);
+    if let Ok(mut map) = cache.lock() {
+        map.insert(key, (std::time::Instant::now(), value.clone()));
+    }
+    value
+}
+
+fn pull_request_blocking(dir: &str) -> Option<PullRequestDto> {
+    if dir.is_empty() || !Path::new(dir).is_dir() {
+        return None;
+    }
+    let mut command = Command::new("gh");
+    command
+        .current_dir(dir)
+        .args(["pr", "view", "--json", "number,state,isDraft,url,title"]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW，同 git_output
+    }
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_pull_request(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// `gh pr view --json number,state,isDraft,url,title` 的输出 → DTO。草稿是 OPEN + isDraft。
+fn parse_pull_request(json: &str) -> Option<PullRequestDto> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let number = u32::try_from(value.get("number")?.as_u64()?).ok()?;
+    let draft = value
+        .get("isDraft")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let state = match value.get("state")?.as_str()? {
+        "OPEN" if draft => "draft",
+        "OPEN" => "open",
+        "MERGED" => "merged",
+        "CLOSED" => "closed",
+        _ => return None,
+    };
+    Some(PullRequestDto {
+        number,
+        state: state.to_string(),
+        url: value.get("url")?.as_str()?.to_string(),
+        title: value
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 fn git_output(dir: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(args);
@@ -321,6 +398,26 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitChangedFileDto> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn 解析_gh_pr_view_输出_草稿与合并都认得() {
+        let pr = parse_pull_request(r#"{"number":42,"state":"OPEN","isDraft":true,"url":"https://github.com/o/r/pull/42","title":"t"}"#).unwrap();
+        assert_eq!(
+            (pr.number, pr.state.as_str(), pr.url.as_str()),
+            (42, "draft", "https://github.com/o/r/pull/42")
+        );
+        let state_of = |json: &str| parse_pull_request(json).unwrap().state;
+        assert_eq!(
+            state_of(r#"{"number":7,"state":"MERGED","isDraft":false,"url":"u","title":""}"#),
+            "merged"
+        );
+        assert_eq!(
+            state_of(r#"{"number":7,"state":"OPEN","isDraft":false,"url":"u","title":""}"#),
+            "open"
+        );
+        assert!(parse_pull_request("no pull requests found").is_none());
+    }
+
     use super::*;
 
     #[test]

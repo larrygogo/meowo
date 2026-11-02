@@ -260,6 +260,18 @@ fn handler_icon_data_url(handler: &IAssocHandler) -> Option<String> {
         if location.trim().is_empty() || location.starts_with('@') {
             return None;
         }
+        icon_location_data_url(&location, index)
+    }
+}
+
+/// exe 自带的主图标 → PNG data URL（标题栏「用编辑器打开」按钮用，见 editors.rs）。
+pub(crate) fn exe_icon_data_url(path: &Path) -> Option<String> {
+    icon_location_data_url(&path.to_string_lossy(), 0)
+}
+
+/// 图标位置（文件 + 序号）→ PNG data URL。
+fn icon_location_data_url(location: &str, index: i32) -> Option<String> {
+    unsafe {
         let wide: Vec<u16> = location.encode_utf16().chain([0]).collect();
         let mut hicon = HICON::default();
         // nIconSize 低字 = 大图标尺寸；只要大图标（高字 0 = 不要小图标槽）。

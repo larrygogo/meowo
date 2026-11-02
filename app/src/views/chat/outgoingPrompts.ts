@@ -10,15 +10,18 @@
 
 import { createContext, useSyncExternalStore } from "react";
 import type { ChatItem } from "../../api";
+import type { Attachment } from "./drafts";
 
 /// echo = 空闲时发出，先以用户气泡挂在对话末尾；queued = 运行中发出，进排队回执。
 export type OutgoingKind = "echo" | "queued";
 /// sending：点了发送、还在往终端写（先上屏再发，像聊天软件那样，用户要求）。
 /// failed：没写进去——气泡留着并给「重发 / 放回输入框」，不悄悄吞掉用户打的字。
 /// pending：已写进终端，还没在对话记录里见到。
+/// accepted：CLI 回了送达回执（它正忙，把这条收进了自己的队列，对照 Kimi 的 prompt:accepted），
+/// 还没轮到处理。有了这个回执就不会再判「未确认送达」——消息确实进了 CLI。
 /// inserted：queued 已被读到（短暂停留，让用户看见这一下状态变化再收起）。
 /// uncertain：echo 超时仍无证据——可能根本没进 CLI 的输入框，照实标出来。
-export type OutgoingPhase = "sending" | "failed" | "pending" | "inserted" | "uncertain";
+export type OutgoingPhase = "sending" | "failed" | "pending" | "accepted" | "inserted" | "uncertain";
 
 export type OutgoingAnchor = {
   /// 入队时 transcript 窗口的最后一条：它之后的条目才算新证据。
@@ -44,12 +47,18 @@ export type OutgoingPrompt = {
   phase: OutgoingPhase;
   settledAt: number | null;
   anchor: OutgoingAnchor;
-  /// 发出时的原始草稿（正文 + 附件），失败后重发 / 放回输入框用。附件类型归 ChatWindow 管。
-  draft?: { prompt: string; attachments: readonly unknown[] };
+  /// 发出时的原始草稿（正文 + 附件），失败后重发 / 放回输入框用。
+  draft?: { prompt: string; attachments: readonly Attachment[] };
+  /// 认领到的送达回执 id：一条回执只确认一条消息（连发两句「继续」各认各的）。
+  ackId?: string;
 };
+
+export type PromptAck = Extract<ChatItem, { type: "prompt_queued" }>;
 
 export type OutgoingEvidence = {
   items: readonly ChatItem[];
+  /// CLI 的送达回执（目前只有 claude 记入队动作）。没有这类证据的 provider 传空。
+  acks?: readonly PromptAck[];
   lastUserText: string | null | undefined;
   ended: boolean;
   now: number;
@@ -117,6 +126,8 @@ export function reconcileOutgoing(
     return kept.length === prompts.length ? prompts : kept;
   }
   const used = new Set<string>();
+  // 已被认领的回执跨轮次保留在消息身上，这里先全部记为占用。
+  const usedAcks = new Set(prompts.flatMap((prompt) => (prompt.ackId ? [prompt.ackId] : [])));
   const hookIsEvidence = evidence.items.length === 0;
   let changed = false;
   const next: OutgoingPrompt[] = [];
@@ -143,6 +154,22 @@ export function reconcileOutgoing(
       changed = true;
       if (prompt.kind === "queued") next.push({ ...prompt, phase: "inserted", settledAt: evidence.now });
       continue;
+    }
+    // 送达回执：发出之后（按宿主机时钟晚于发送时窗口里最晚的一条）入队、正文对得上的那条。
+    if (prompt.phase === "pending" || prompt.phase === "uncertain") {
+      const since = prompt.anchor.lastItemAt;
+      const ack = (evidence.acks ?? []).find((entry) => {
+        if (usedAcks.has(entry.id)) return false;
+        const stamp = itemTime(entry);
+        if (since != null && (stamp == null || stamp <= since)) return false;
+        return prompt.attachmentOnly || collapse(entry.text).includes(needle);
+      });
+      if (ack) {
+        usedAcks.add(ack.id);
+        changed = true;
+        next.push({ ...prompt, phase: "accepted", ackId: ack.id });
+        continue;
+      }
     }
     if (prompt.kind === "echo" && prompt.phase === "pending" && evidence.now - prompt.at > ECHO_CONFIRM_MS) {
       changed = true;
@@ -288,5 +315,12 @@ export const outgoingIdOf = (itemId: string): number | null => {
   return match ? Number(match[1]) : null;
 };
 
-/// 发送失败的气泡上的两个出口（对话窗提供；对话窗之外为 null，不渲染按钮）。
-export const EchoActionsContext = createContext<{ retry: (id: number) => void; restore: (id: number) => void } | null>(null);
+/// 发送失败 / 未确认送达的气泡上的出口（对话窗提供；对话窗之外为 null，不渲染按钮）。
+/// stuck = 读终端画面确认「这段话还停在 CLI 输入框里」的回显，给「提交」而不是「重发」。
+export type EchoActions = {
+  retry: (id: number) => void;
+  restore: (id: number) => void;
+  submit: (id: number) => void;
+  stuck: ReadonlySet<number>;
+};
+export const EchoActionsContext = createContext<EchoActions | null>(null);

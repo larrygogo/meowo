@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -17,10 +17,12 @@ import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
 import { Switch, Segmented, SwatchPicker, FontSizeSlider, SettingsError } from "./settings/widgets";
 import { Dropdown } from "./menu";
 import { AccountSection } from "./settings/AccountSection";
+import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
 import { NetworkSection } from "./settings/NetworkSection";
+import { RemoteAccessCard } from "./settings/RemoteAccessCard";
 import { applySettingsFilter } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
-import { ShortcutList } from "./chat/WindowModals";
+import { KeyCombos, shortcutGroups } from "./chat/WindowModals";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -28,8 +30,10 @@ const SITE = "meowo.io";
 const SITE_URL = "https://meowo.io";
 const openExt = (url: string) => invoke("open_url", { url }).catch((e) => console.error("[about] 打开链接失败：", url, e));
 
-type Section = "general" | "sessions" | "appearance" | "shortcuts" | "network" | "account" | "about";
-const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "network", "account", "about"];
+// 「手机远程」单独成区（用户要求从「网络」里拆出来，对照 Kimi 设置的「远程控制」独立一栏）：
+// 它是一项功能（扫码、配对、推送），不是网络参数；「网络」只留代理。
+type Section = "general" | "sessions" | "appearance" | "shortcuts" | "remote" | "network" | "account" | "about";
+const SECTION_ORDER: Section[] = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "about"];
 
 
 // 打开未连接会话用的终端：按平台给不同选项。WKWebView 的 UA 含 "Mac"/"Win"，与 main.tsx 同步判定一致。
@@ -111,6 +115,15 @@ function IconKeyboard() {
 }
 
 // 地球：网络/代理。
+function IconPhone() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" />
+      <line x1="10.5" y1="18" x2="13.5" y2="18" />
+    </svg>
+  );
+}
+
 function IconGlobe() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -121,8 +134,30 @@ function IconGlobe() {
   );
 }
 
+// 快捷键：与其它分区同一套行式卡片——说明在左、键帽在右，分「窗口」「输入框」两组。
+// 此前直接塞进 `?` 速查表的两栏清单（键位右对齐挤成一列、说明跟在后面），在设置页里
+// 读起来是倒的（用户实拍「好丑」）。数据与速查表共用 shortcutGroups。
 function ShortcutsSection() {
-  return <div className="row-card settings-shortcuts"><ShortcutList /></div>;
+  const t = useT();
+  return (
+    <>
+      {shortcutGroups(t).map((group, index) => (
+        // Fragment 而非外包 div：设置搜索要求分组标题与卡片直接挂在分区下（searchFilter）。
+        <Fragment key={group.title}>
+          <div className={"sec-caption" + (index === 0 ? " is-first" : "")}>{group.title}</div>
+          <div className="row-card shortcut-card">
+            {group.rows.map(([keys, desc]) => (
+              <div className="row" key={keys}>
+                <div className="row-text"><div className="row-label">{desc}</div></div>
+                <KeyCombos keys={keys} />
+              </div>
+            ))}
+          </div>
+        </Fragment>
+      ))}
+      <div className="sec-hint">{t.chat.shortcutTerminalNote}</div>
+    </>
+  );
 }
 
 // 通用：应用级设置（语言、自启、更新、通知）。会话与卡片的行为在 SessionsSection。
@@ -161,14 +196,16 @@ function GeneralSection() {
   const flashOn = settings?.attention_flash_enabled ?? true;
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const chatOn = settings?.chat_enabled ?? true;
-  const clickThroughOn = settings?.click_through_enabled ?? false;
+  const keepAwakeOn = settings?.keep_awake_while_running ?? true;
+  const toggleKeepAwake = () => patch({ keep_awake_while_running: !keepAwakeOn });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
   const toggleFlash = () => patch({ attention_flash_enabled: !flashOn });
   const toggleAutoUpdate = () => patch({ auto_update_enabled: !autoUpdateOn });
   const toggleChat = () => patch({ chat_enabled: !chatOn });
-  const toggleClickThrough = () => patch({ click_through_enabled: !clickThroughOn });
   return (
     <>
+      {/* 分组（对照 Kimi 设置的「通用 / 通知」分节）：此前八个不相干的开关挤在一张卡里，
+          找一项得从头扫到尾。贴纸专属的「点击穿透」挪去外观页的「贴纸」组。 */}
       <div className="row-card">
         <div className="row">
           <div className="row-text">
@@ -188,6 +225,17 @@ function GeneralSection() {
           </div>
           <Switch checked={autostart} onChange={toggleAutostart} disabled={autostartDisabled} label={t.settings.autostart} />
         </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.autoUpdate}</div>
+            <div className="row-desc">{t.settings.autoUpdateDesc}</div>
+          </div>
+          <Switch checked={autoUpdateOn} onChange={toggleAutoUpdate} label={t.settings.autoUpdate} />
+        </div>
+      </div>
+
+      <div className="sec-caption">{t.settings.runGroup}</div>
+      <div className="row-card">
         {/* 对话窗口功能总开关（轻量模式）。放 General：轻量模式下点任何 chat 入口都会
             落到设置窗，这里是用户找回完整功能的地方，必须在首屏分区就看得见。 */}
         <div className="row">
@@ -197,13 +245,18 @@ function GeneralSection() {
           </div>
           <Switch checked={chatOn} onChange={toggleChat} label={t.settings.chatFeature} />
         </div>
-        <div className="row">
+        {/* 运行时防止休眠（对照 Kimi「防止休眠」，见 power.rs）。Linux 后端未实装，不给无效开关。 */}
+        {(IS_WIN || IS_MAC) && <div className="row">
           <div className="row-text">
-            <div className="row-label">{t.settings.autoUpdate}</div>
-            <div className="row-desc">{t.settings.autoUpdateDesc}</div>
+            <div className="row-label">{t.settings.keepAwake}</div>
+            <div className="row-desc">{t.settings.keepAwakeDesc}</div>
           </div>
-          <Switch checked={autoUpdateOn} onChange={toggleAutoUpdate} label={t.settings.autoUpdate} />
-        </div>
+          <Switch checked={keepAwakeOn} onChange={toggleKeepAwake} label={t.settings.keepAwake} />
+        </div>}
+      </div>
+
+      <div className="sec-caption">{t.settings.notifyGroup}</div>
+      <div className="row-card">
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.notify}</div>
@@ -230,14 +283,6 @@ function GeneralSection() {
           </div>
           <Switch checked={flashOn} onChange={toggleFlash} label={t.settings.attentionFlash} />
         </div>}
-        {/* 点击穿透(W-8)仅 Windows 实装(macOS 面板失焦自隐、无此问题),同样按平台显示。 */}
-        {IS_WIN && <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.clickThrough}</div>
-            <div className="row-desc">{t.settings.clickThroughDesc}</div>
-          </div>
-          <Switch checked={clickThroughOn} onChange={toggleClickThrough} label={t.settings.clickThrough} />
-        </div>}
       </div>
       {autostartErr && <div className="sec-hint proxy-err" role="alert">{t.settings.autostartFailed}</div>}
       <SettingsError error={patchError} onDismiss={clearPatchError} />
@@ -246,6 +291,43 @@ function GeneralSection() {
 }
 
 // 会话：新建/打开/归档等会话行为，外加看板卡片的展示与交互（独立成第二张卡）。
+/// 默认 Agent 的启动选项默认值（与新建会话的选项记忆同一份，见 useNewSessionForm）。
+function LaunchDefaultRows({ agent }: { agent: AgentDescriptor }) {
+  const t = useT();
+  const [stored, setStored] = useState(() => loadStoredOpts()[agent.id] ?? {});
+  useEffect(() => setStored(loadStoredOpts()[agent.id] ?? {}), [agent.id]);
+  return (
+    <>
+      {(agent.launch_options ?? []).map((option) => {
+        const optionLabel = t.newSession.launchOption[option.id] ?? option.id;
+        return (
+          <div className="row" key={option.id}>
+            <div className="row-text">
+              <div className="row-label">{t.newSession.defaultOf(optionLabel)}</div>
+              <div className="row-desc">{t.settings.launchDefaultDesc(agent.display_name)}</div>
+            </div>
+            <Dropdown
+              value={stored[option.id] ?? option.default}
+              options={option.choices.map((choice) => ({
+                value: choice.id,
+                label: t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label,
+                risky: choice.risk,
+                sub: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
+                  ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
+              }))}
+              onChange={(value) => {
+                const next = { ...stored, [option.id]: value };
+                setStored(next);
+                saveStoredOpts(agent.id, next);
+              }}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function SessionsSection() {
   const t = useT();
   const [settings, patch, patchError, clearPatchError] = useSettingsState();
@@ -293,6 +375,12 @@ function SessionsSection() {
             onChange={(v) => patch({ default_agent: v })}
           />
         </div>
+        {/* 新建会话的默认权限 / 模型（对照 Kimi「Agent 默认值」）：此前只在新建时悄悄记住上一次
+            的选择，设置里看不到也改不了。按默认 Agent 声明的启动选项逐项给。 */}
+        {(() => {
+          const descriptor = agents.find((agent) => agent.id === defaultAgent);
+          return descriptor ? <LaunchDefaultRows agent={descriptor} /> : null;
+        })()}
         {/* 轻量模式（chat_enabled=off）下后端强制走外部终端：行保留但置灰、原因写进
             row-desc——整行隐藏会让用户以为设置项消失了。 */}
         <div className="row">
@@ -360,7 +448,27 @@ function SessionsSection() {
         </div>
       </div>
       <SettingsError error={patchError} onDismiss={clearPatchError} />
-      <ArchivedSessions />
+      {/* 已完成会话：开着对话功能时只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、
+          时间筛，批量恢复；设置里再摆一份简陋的列表是两处管同一件事（用户确认）。轻量模式没有
+          对话窗可去，留着原来的列表，否则没处把会话恢复成进行中。 */}
+      {chatOn ? (
+        <>
+          <div className="sec-caption">{t.settings.archivedSessions}</div>
+          <div className="row-card">
+            <div className="row">
+              <div className="row-text">
+                <div className="row-label">{t.settings.archivedInAdmin}</div>
+                <div className="row-desc">{t.settings.archivedInAdminDesc}</div>
+              </div>
+              <button type="button" className="sbtn" onClick={() => void invoke("open_session_admin").catch(() => {})}>
+                {t.settings.archivedOpenAdmin}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <ArchivedSessions />
+      )}
     </>
   );
 }
@@ -543,6 +651,8 @@ function AppearanceSection() {
   const termLine = settings?.terminal_line_height ?? SETTINGS_DEFAULTS.terminal_line_height;
   const termBack = settings?.terminal_scrollback ?? SETTINGS_DEFAULTS.terminal_scrollback;
   const chatWidth = settings?.chat_content_width ?? SETTINGS_DEFAULTS.chat_content_width;
+  const clickThroughOn = settings?.click_through_enabled ?? false;
+  const toggleClickThrough = () => patch({ click_through_enabled: !clickThroughOn });
   // 滑杆草稿（拖动中本地显示，松手才提交）：见 useSliderDraft。
   const opacityDraft = useSliderDraft((v) => void patch({ opacity: v }));
   const termFontDraft = useSliderDraft((v) => void patch({ terminal_font_size: v }));
@@ -578,6 +688,11 @@ function AppearanceSection() {
           </div>
           <Segmented value={chatWidth} options={chatWidthOptions(t)} onChange={(v) => patch({ chat_content_width: v })} label={t.settings.chatWidth} />
         </div>
+      </div>
+
+      {/* 贴纸专属的几项单独成组：此前与外观模式、界面缩放混在一张卡里，分不清哪些只管贴纸。 */}
+      <div className="sec-caption">{t.settings.stickerGroup}</div>
+      <div className="row-card">
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.stickerStyle}</div>
@@ -612,6 +727,14 @@ function AppearanceSection() {
             aria-label={t.settings.opacity}
           />
         </div>
+        {/* 点击穿透(W-8)仅 Windows 实装(macOS 面板失焦自隐、无此问题),按平台显示。 */}
+        {IS_WIN && <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.clickThrough}</div>
+            <div className="row-desc">{t.settings.clickThroughDesc}</div>
+          </div>
+          <Switch checked={clickThroughOn} onChange={toggleClickThrough} label={t.settings.clickThrough} />
+        </div>}
       </div>
 
       <div className="sec-caption">{t.settings.terminalGroup}</div>
@@ -793,7 +916,7 @@ export function About() {
   // 分区记忆：每次开窗回 general 让最常改的分区（外观/Agent）永远多点一次。
   const [sec, setSec] = useState<Section>(() => {
     const s = localStorage.getItem("meowo-settings-section");
-    return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "network" || s === "account" || s === "about"
+    return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "about"
       ? s
       : "general";
   });
@@ -838,6 +961,7 @@ export function About() {
       sessions: t.settings.nav.sessions,
       appearance: t.settings.nav.appearance,
       shortcuts: t.settings.nav.shortcuts,
+      remote: t.settings.nav.remote,
       network: t.settings.nav.network,
       account: t.settings.nav.account,
       about: t.settings.nav.about,
@@ -914,6 +1038,10 @@ export function About() {
             <IconKeyboard />
             <span>{t.settings.nav.shortcuts}</span>
           </button>
+          <button className={"nav-item" + (sec === "remote" ? " on" : "")} aria-current={sec === "remote" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("remote"); }}>
+            <IconPhone />
+            <span>{t.settings.nav.remote}</span>
+          </button>
           <button className={"nav-item" + (sec === "network" ? " on" : "")} aria-current={sec === "network" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("network"); }}>
             <IconGlobe />
             <span>{t.settings.nav.network}</span>
@@ -933,6 +1061,8 @@ export function About() {
       </aside>
 
       <main className="main">
+        {/* 不放页标题（用户试过顶部标题两版都嫌突兀）：在哪一页由左栏高亮说明，右侧直接是内容。
+            搜索时各分区平铺，才由分区内的 .sec-title 当分隔。 */}
         <div className="main-bar" data-tauri-drag-region>
           <button className="winclose" data-tip={t.settings.close} onClick={close} aria-label={t.settings.close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -941,7 +1071,7 @@ export function About() {
             </svg>
           </button>
         </div>
-        <div className="main-body" ref={bodyRef}>
+        <div className={"main-body" + (searching ? " is-searching" : "")} ref={bodyRef}>
           {searching && noHits && <div className="settings-noresults">{t.settings.searchNoResults}</div>}
           {/* 搜索态挂载全部分区并平铺（data-sec 供过滤识别导航名命中），
               各分区的行级显隐由 searchFilter 直写 style.display（hidden 归 React 管）。
@@ -950,6 +1080,9 @@ export function About() {
               不是遗漏，勿当 bug「修」掉。 */}
           {SECTION_ORDER.filter((s) => searching || visited.has(s)).map((s) => (
             <div key={s} className="main-sec" data-sec={s} hidden={searching ? false : s !== sec}>
+              {/* 页标题（对照 Kimi 设置每页顶部的标题）：此前右侧只有一摞卡片，在哪一页只能回头
+                  看左栏高亮；搜索结果平铺各分区时它也是分隔。 */}
+              <h1 className="sec-title">{t.settings.nav[s]}</h1>
               {s === "general" ? (
                 <GeneralSection />
               ) : s === "sessions" ? (
@@ -958,6 +1091,8 @@ export function About() {
                 <AppearanceSection />
               ) : s === "shortcuts" ? (
                 <ShortcutsSection />
+              ) : s === "remote" ? (
+                <RemoteAccessCard />
               ) : s === "network" ? (
                 <NetworkSection />
               ) : s === "account" ? (

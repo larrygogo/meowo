@@ -45,4 +45,4 @@ patch?: Array<DiffHunk> | null, } | { "type": "meta", id: string, timestamp: str
  * 分隔条的附加事实（目前只有压缩：触发方式、压缩前 token、摘要正文）。
  * provider 拿不到时为 None，前端照旧只显示一句「上下文已压缩」。
  */
-compaction?: CompactionDetail | null, };
+compaction?: CompactionDetail | null, } | { "type": "prompt_queued", id: string, timestamp: string | null, text: string, };

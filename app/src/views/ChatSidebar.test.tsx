@@ -14,6 +14,8 @@ vi.mock("@tauri-apps/api/event", () => ({
 // 侧栏内折叠钮是 macOS 专属（非 mac 的折叠/展开统一在 ChatWindow 顶栏），按平台分测。
 const isMacMock = vi.hoisted(() => vi.fn(() => false));
 vi.mock("../platform", () => ({ isMac: isMacMock }));
+const dialogOpen = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: dialogOpen }));
 
 import { ChatSidebar } from "./ChatSidebar";
 import type { LiveSession } from "../api";
@@ -246,7 +248,10 @@ describe("ChatSidebar", () => {
     Object.defineProperty(list, "scrollTop", { value: 600, configurable: true });
   }
 
-  it("滚到底继续翻页，直到后端给不满一页", async () => {
+  // 150 行 + 按无障碍名查询在全量并发跑时很慢（单跑 1s 内、全量会超默认 1s 等待），
+  // 放宽查询等待与用例上限：这里测的是翻页节奏，不是渲染速度。
+  it("滚到底继续翻页，直到后端给不满一页", { timeout: 15_000 }, async () => {
+    const slow = { timeout: 5_000 };
     const all = Array.from({ length: 150 }, (_, i) => session(1000 - i, `会话 ${i}`));
     const limits: number[] = [];
     invoke.mockImplementation((command: string, args: { limit: number }) => {
@@ -255,7 +260,7 @@ describe("ChatSidebar", () => {
       return Promise.resolve(all.slice(0, args.limit));
     });
     render(<ChatSidebar activeId={1000} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
-    await screen.findByRole("button", { name: /会话 0/ });
+    await screen.findByRole("button", { name: /会话 0/ }, slow);
     expect(limits).toEqual([60]);
     expect(screen.queryByRole("button", { name: /会话 60/ })).toBeNull();
 
@@ -263,11 +268,11 @@ describe("ChatSidebar", () => {
     fakeScrolledToBottom(list);
 
     fireEvent.scroll(list);
-    await screen.findByRole("button", { name: /会话 60/ });
+    await screen.findByRole("button", { name: /会话 60/ }, slow);
     expect(limits).toEqual([60, 120]);
 
     fireEvent.scroll(list);
-    await screen.findByRole("button", { name: /会话 149/ });
+    await screen.findByRole("button", { name: /会话 149/ }, slow);
     expect(limits).toEqual([60, 120, 180]);
 
     // 150 < 180：后端已经给不满，到此为止，再滚也不应该再发请求。
@@ -406,14 +411,19 @@ describe("ChatSidebar", () => {
     await waitFor(() => expect(args).toHaveLength(2));
     expect(args[1]).toEqual({ search: null, cwd: null, limit: 120 });
 
-    // 筛选弹层（Linear 式）：图标钮 → 「目录」行 → 选项列表。
-    fireEvent.click(screen.getByRole("button", { name: "筛选与分组" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /^目录/ }));
-    fireEvent.click(await screen.findByRole("option", { name: "scratch" }));
+    // 筛选从「工作空间」页签进入（对照 Kimi，视图菜单里不再有工作区筛选）：⋯ → 只看这个工作区的会话。
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
     expect(await screen.findByRole("button", { name: /临时活儿/ })).toBeTruthy();
     expect(args[args.length - 1]).toEqual({ search: null, cwd: "D:/tmp/scratch", limit: 60 });
     // 上一个目录的会话不能残留。
     expect(screen.queryByRole("button", { name: /会话 0/ })).toBeNull();
+    // 筛选生效时列表上方有一枚标签，点 × 退出筛选。
+    expect(screen.getByText("只看 scratch")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "取消筛选" }));
+    await waitFor(() => expect(args[args.length - 1]).toEqual({ search: null, cwd: null, limit: 60 }));
+    expect(screen.queryByText("只看 scratch")).toBeNull();
   });
 
   /**
@@ -440,11 +450,12 @@ describe("ChatSidebar", () => {
     expect(screen.queryByRole("button", { name: /^scratch/ })).toBeNull();
 
     // 分组入口在筛选弹层里：单面板扁平化后选项直接内联,图标钮 → 选「按目录」。
-    fireEvent.click(screen.getByRole("button", { name: "筛选与分组" }));
-    fireEvent.click(screen.getByRole("option", { name: "按目录" }));
+    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
+    fireEvent.click(screen.getByRole("option", { name: "按工作区分组" }));
     const list = screen.getByRole("navigation");
     const heads = within(list).getAllByRole("button").filter((b) => b.className.includes("group-head"));
-    expect(heads.map((h) => h.textContent)).toEqual(["scratch1", "meowo2"]);
+    // 组头对照 Kimi：文件夹图标 + 组名，不显示计数。
+    expect(heads.map((h) => h.textContent)).toEqual(["scratch", "meowo"]);
     // scratch 组只有一条 waiting，meowo 组里 running 最强（另一条已断开不参与）。
     expect(heads[0].querySelector(".chat-sidebar-dot")?.className).toContain("is-waiting");
     expect(heads[1].querySelector(".chat-sidebar-dot")?.className).toContain("is-running");
@@ -466,26 +477,6 @@ describe("ChatSidebar", () => {
     render(<ChatSidebar activeId={2} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     expect(await screen.findByRole("button", { name: /改侧栏/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /临时活儿/ })).toBeNull();
-  });
-
-  /** 按状态分组：组序按召唤强度（出错 > 运行中 > 已结束），不派生原排序——
-   *  状态视图的意义就是「先看要处理的」。 */
-  it("按状态分组:组序按召唤强度", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "recent_cwds") return Promise.resolve([]);
-      if (command !== "get_live_sessions_page") return Promise.resolve();
-      return Promise.resolve([
-        session(1, "在跑的", { connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
-        session(2, "出错的", { connected: true, errored: true, session: { id: 2, cc_session_id: "cc-2", status: "running" } } as Partial<LiveSession>),
-        session(3, "结束的"),
-      ]);
-    });
-    localStorage.setItem("meowo-chat-sidebar-group-mode", "state");
-    render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
-    await screen.findByRole("button", { name: /在跑的/ });
-    const list = screen.getByRole("navigation");
-    const heads = within(list).getAllByRole("button").filter((b) => b.className.includes("group-head"));
-    expect(heads.map((h) => h.textContent)).toEqual(["出错了1", "运行中1", "已结束1"]);
   });
 
   /** 批量清理旧会话（对照 Kimi 会话管理页）：右键「多选」是显式入口，Shift+点击连选，
@@ -538,40 +529,42 @@ describe("ChatSidebar", () => {
       if (command === "recent_cwds") return Promise.resolve([]);
       if (command !== "get_live_sessions_page") return Promise.resolve();
       return Promise.resolve([
-        session(1, "在跑的", { connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
-        session(2, "结束一"),
-        session(3, "结束二"),
+        session(1, "在跑的", { cwd: "C:/w/live", connected: true, session: { id: 1, cc_session_id: "cc-1", status: "running" } } as Partial<LiveSession>),
+        session(2, "结束一", { cwd: "C:/w/old" }),
+        session(3, "结束二", { cwd: "C:/w/old" }),
       ]);
     });
-    localStorage.setItem("meowo-chat-sidebar-group-mode", "state");
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
     render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     // 不在多选态时组头不出勾选圈。
     await screen.findByRole("button", { name: /结束一/ });
     expect(screen.queryByRole("checkbox", { name: /整组/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /结束一/ }), { ctrlKey: true });
-    const group = screen.getByRole("checkbox", { name: "选中「已结束」整组" });
+    const group = screen.getByRole("checkbox", { name: "选中「old」整组" });
     expect(group.getAttribute("aria-checked")).toBe("mixed");
     fireEvent.click(group);
     expect(screen.getByText("已选 2 条")).toBeTruthy();
     expect(group.getAttribute("aria-checked")).toBe("true");
-    // 运行中组不受影响；再点整组取消，选中清空即退出多选。
-    expect(screen.getByRole("checkbox", { name: "选中「运行中」整组" }).getAttribute("aria-checked")).toBe("false");
+    // 另一组不受影响；再点整组取消，选中清空即退出多选。
+    expect(screen.getByRole("checkbox", { name: "选中「live」整组" }).getAttribute("aria-checked")).toBe("false");
     fireEvent.click(group);
     expect(screen.queryByText(/已选/)).toBeNull();
   });
 
-  /** 排序入口与目录/分组同在筛选弹层（第三行）。默认「创建时间」：在跑的会话不因新事件
-   *  换位置（用户反馈列表顶部一直乱动）；「按名称」在前端重排已加载页，未命名会话沉底，
-   *  选择与分组一样落盘。 */
-  it("排序:默认按创建时间,按名称重排列表,未命名沉底,选择落盘", async () => {
-    invoke.mockImplementation((command: string) => {
+  /** 排序入口在视图与排序弹层（对照 Kimi 只有两种）。默认「手动排序」：后端按手动键分页（没拖过 =
+   *  创建时间倒序），前端原样采用，在跑的会话不因新事件换位置（用户反馈列表顶部一直乱动）；
+   *  切到「按最近活动」后端换回活跃顺序，选择与分组一样落盘。 */
+  it("排序:默认手动排序交给后端,可切按最近活动,选择落盘", async () => {
+    const orders: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: { order?: string }) => {
       if (command === "recent_cwds") return Promise.resolve([]);
       if (command !== "get_live_sessions_page") return Promise.resolve();
+      orders.push(args?.order);
       return Promise.resolve([
-        // 后端按最近活跃给序；创建时间是 alpha 最新。
-        session(1, "beta", { session: { id: 1, cc_session_id: "cc-1", status: "ended", started_at: 100 } } as Partial<LiveSession>),
+        // 后端给的手动顺序：alpha 最新建。
         session(2, "alpha", { session: { id: 2, cc_session_id: "cc-2", status: "ended", started_at: 300 } } as Partial<LiveSession>),
         session(3, "", { session: { id: 3, cc_session_id: "cc-3", status: "ended", started_at: 200 } } as Partial<LiveSession>),
+        session(1, "beta", { session: { id: 1, cc_session_id: "cc-1", status: "ended", started_at: 100 } } as Partial<LiveSession>),
       ]);
     });
     render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
@@ -583,13 +576,162 @@ describe("ChatSidebar", () => {
         // 首帧默认已改 button 模式，⋯ 常驻，按有无标题文本过滤。
         .map((b) => b.querySelector(".chat-sidebar-name-text")?.textContent)
         .filter((n): n is string => n != null);
-    // 默认「创建时间」：不跟后端的活跃顺序走。
+    // 默认「手动排序」：请求带 order=manual，顺序原样采用后端的。
+    expect(orders[0]).toBe("manual");
     expect(itemNames()).toEqual(["alpha", "等待首次输入", "beta"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "筛选与分组" }));
-    fireEvent.click(screen.getByRole("option", { name: "按名称" }));
-    expect(itemNames()).toEqual(["alpha", "beta", "等待首次输入"]);
-    expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("name");
+    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
+    // 菜单照 Kimi：视图两种、排序两种。
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["平铺列表", "按工作区分组", "手动排序", "按最近活动"]);
+    fireEvent.click(screen.getByRole("option", { name: "按最近活动" }));
+    await waitFor(() => expect(orders.length).toBeGreaterThan(1));
+    expect(orders[orders.length - 1]).toBeUndefined();
+    expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("recent");
+  });
+
+  /** 「工作空间」页签（对照 Kimi Code）：列出会话用过的目录，点一行就在那里新建会话；
+   *  「⋯ → 只看这个工作区的会话」切回进行中并按它筛选。顶部搜索在这个页签里过滤工作区。 */
+  it("工作空间页签:列出工作区,点击新建,菜单里可按工作区筛选会话", async () => {
+    const pages: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo", "C:/w/reverse-bot-gui"]);
+      if (command === "get_live_sessions_page") { pages.push(args); return Promise.resolve([session(1, "甲")]); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    expect(screen.getByText("C:/w/meowo")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /甲/ })).toBeNull();
+    // 搜索框在这个页签里过滤工作区。
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索" }), { target: { value: "reverse" } });
+    expect(screen.queryByText("C:/w/meowo")).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索" }), { target: { value: "" } });
+    fireEvent.click(screen.getByText("C:/w/meowo"));
+    expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
+    // 「添加工作区…」（对照 Kimi）：系统目录框选一个没开过会话的目录，直接带着它去新建会话。
+    dialogOpen.mockResolvedValueOnce("D:/new-project");
+    fireEvent.click(screen.getByRole("button", { name: "添加工作区…" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "D:/new-project", provider: undefined }));
+    expect(dialogOpen).toHaveBeenCalledWith({ directory: true });
+    fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
+    expect(screen.getByRole("tab", { name: "进行中" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/reverse-bot-gui" }));
+  });
+
+  /** 工作区右键菜单（对照 Kimi 的 onContextmenu）：工作空间页签的目录行、会话列表的分组头都能右键，
+   *  菜单同一个；分组头上选「只看这个工作区的会话」即按它筛选。 */
+  it("工作区右键菜单:目录行与分组头都能右键,分组头可按工作区筛选", async () => {
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    const pages: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo"]);
+      if (command === "get_live_sessions_page") { pages.push(args); return Promise.resolve([session(1, "甲", { cwd: "C:/w/meowo" })]); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    // 分组头右键 → 工作区菜单 → 只看这个工作区的会话。
+    const head = within(screen.getByRole("navigation")).getAllByRole("button").find((b) => b.className.includes("group-head"))!;
+    fireEvent.contextMenu(head, { clientX: 40, clientY: 60 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
+    await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/meowo" }));
+    // 工作空间页签的目录行右键 → 同一个菜单，选「在此工作区新建会话」。
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.contextMenu(screen.getByText("C:/w/meowo"), { clientX: 40, clientY: 60 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "在此工作区新建会话" }));
+    expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
+  });
+
+  /** 拖分组头调整工作区顺序（对照 Kimi 可拖的分组头）：设置里的 workspace_order 决定组序；
+   *  拖完本地先排、整份顺序写回设置，松手那次 click 不折叠。 */
+  it("工作区分组:按设置里的顺序排,拖分组头改顺序并写回设置", async () => {
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    const saved: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: { settings?: { workspace_order?: string[] } }) => {
+      if (command === "get_live_sessions_page") return Promise.resolve([session(1, "甲", { cwd: "C:/w/a" }), session(2, "乙", { cwd: "C:/w/b" }), session(3, "丙", { cwd: "C:/w/c" })]);
+      if (command === "get_settings") return Promise.resolve({ card_menu_mode: "button", workspace_order: ["c:/w/c", "c:/w/a", "c:/w/b"] });
+      if (command === "set_settings") { saved.push(args?.settings?.workspace_order); return Promise.resolve(); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    const heads = () => within(screen.getByRole("navigation")).getAllByRole("button").filter((b) => b.className.includes("group-head"));
+    await waitFor(() => expect(heads().map((h) => h.textContent)).toEqual(["c", "a", "b"]));
+    // 把 c 拖到 b 下面。
+    const last = heads()[2].closest<HTMLElement>("[data-group-key]")!;
+    last.getBoundingClientRect = () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON: () => ({}) });
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => last;
+    try {
+      fireEvent.pointerDown(heads()[0], { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
+      await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      // 拖动中有一份组头的影子跟着鼠标，松手就收掉。
+      expect(document.querySelectorAll(".sidebar-drag-ghost")).toHaveLength(1);
+      expect(document.querySelector(".sidebar-drag-ghost")?.textContent).toBe("c");
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      expect(document.querySelector(".sidebar-drag-ghost")).toBeNull();
+      fireEvent.click(heads()[0]);
+    } finally {
+      document.elementFromPoint = original;
+    }
+    expect(heads().map((h) => h.textContent)).toEqual(["a", "b", "c"]);
+    await waitFor(() => expect(saved).toEqual([["c:/w/a", "c:/w/b", "c:/w/c"]]));
+    // 松手那次 click 没有把组折起来。
+    expect(screen.getByRole("button", { name: /甲/ })).toBeTruthy();
+  });
+
+  /** 「会话」小节的全部折叠 / 展开（对照 Kimi Code）：只在分组时出现，一键折起所有组，再点全部展开。 */
+  it("全部折叠:一键折起所有分组,再点全部展开", async () => {
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    invoke.mockImplementation((command: string) => command === "get_live_sessions_page"
+      ? Promise.resolve([session(1, "甲", { cwd: "C:/w/a" }), session(2, "乙", { cwd: "C:/w/b" })])
+      : Promise.resolve());
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    fireEvent.click(screen.getByRole("button", { name: "全部折叠" }));
+    expect(screen.queryByRole("button", { name: /甲/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /乙/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "全部展开" }));
+    expect(screen.getByRole("button", { name: /甲/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /乙/ })).toBeTruthy();
+  });
+
+  /** 手动排序下按住拖动调位置（对照 Kimi Code）：落下即本地先挪，再把新邻居交给后端。 */
+  it("手动排序:拖到另一条下方,本地先挪并把新邻居写回后端", async () => {
+    const moves: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "get_live_sessions_page") return Promise.resolve([session(3, "丙"), session(2, "乙"), session(1, "甲")]);
+      if (command === "move_session_rank") { moves.push(args); return Promise.resolve(); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={3} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    const row = async (name: string) => (await screen.findByRole("button", { name: new RegExp(name) })) as HTMLElement;
+    const first = await row("丙");
+    const last = await row("甲");
+    // jsdom 没有布局：落点行与它的位置手动给。
+    last.getBoundingClientRect = () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON: () => ({}) });
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => last;
+    try {
+      fireEvent.pointerDown(first, { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
+      await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      // 会话行也有影子（实拍：只有分组有）；影子不带选中态，松手收掉。
+      const ghost = document.querySelector(".sidebar-drag-ghost");
+      expect(ghost?.textContent).toContain("丙");
+      expect(ghost?.classList.contains("is-active")).toBe(false);
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      expect(document.querySelector(".sidebar-drag-ghost")).toBeNull();
+    } finally {
+      document.elementFromPoint = original;
+    }
+    expect(moves).toEqual([{ sessionId: 3, aboveId: 1, belowId: null }]);
+    const names = within(screen.getByRole("navigation")).getAllByRole("button")
+      .map((b) => b.querySelector(".chat-sidebar-name-text")?.textContent).filter(Boolean);
+    expect(names).toEqual(["乙", "甲", "丙"]);
   });
 
   /**
@@ -764,42 +906,6 @@ describe("ChatSidebar", () => {
     expect(buttons.length).toBe(2);
     fireEvent.click(buttons[1]);
     expect(invoke).toHaveBeenCalledWith("open_new_session_window");
-  });
-
-  /// 跨 provider 接续链：predecessor_id 非空的卡片带链徽标，点开列出链上各段
-  ///（惰性调 get_session_lineage），点旧段回看、不触发卡片自身的切会话。
-  it("接续链徽标:点开弹层列出链上各段,点旧段回看", async () => {
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-      if (command === "get_live_sessions_page") {
-        return Promise.resolve([
-          session(21, "换过引擎的", { predecessor_id: 20, provider: "codex" } as Partial<LiveSession>),
-          session(9, "普通会话"),
-        ]);
-      }
-      if (command === "get_session_lineage") {
-        expect(args).toEqual({ sessionId: 21 });
-        return Promise.resolve([
-          { id: 20, provider: "claude", startedAt: 1_700_000_000_000, endedAt: 1_700_003_600_000, model: "Opus" },
-          { id: 21, provider: "codex", startedAt: 1_700_003_600_000, endedAt: null, model: null },
-        ]);
-      }
-      return Promise.resolve();
-    });
-    const onSelect = vi.fn();
-    render(<ChatSidebar activeId={21} approvalAwaitingIds={new Set()} onSelect={onSelect} onCollapse={() => {}} />);
-    await screen.findByRole("button", { name: /换过引擎的/ });
-    // 普通会话没有徽标；接续会话有。
-    const badges = screen.getAllByRole("button", { name: "引擎切换历史" });
-    expect(badges.length).toBe(1);
-
-    fireEvent.click(badges[0]);
-    // 弹层列出两段：旧段显示模型名，尾段标「当前」。
-    const old = await screen.findByRole("menuitem", { name: /Opus/ });
-    expect(screen.getByText("当前")).toBeTruthy();
-    // 点旧段回看；卡片自身的 onSelect(21) 不该被这次点击顺手触发。
-    fireEvent.click(old);
-    expect(onSelect).toHaveBeenCalledWith(20);
-    expect(onSelect).not.toHaveBeenCalledWith(21);
   });
 
   describe("可访问性:roving tabindex + 单一汇总播报(C-17/G-16)", () => {

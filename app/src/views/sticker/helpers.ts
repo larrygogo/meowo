@@ -26,6 +26,17 @@ function agoFormatter(locale: string): Intl.RelativeTimeFormat {
   return rtf;
 }
 
+/** 会话行右侧的紧凑时间（对照 Kimi Code 侧栏的「3d」「4h」）：一列窄窄的数字，不抢标题的宽度。
+ *  侧栏会话行与新建会话页的「最近会话」共用。 */
+export function fmtShortAgo(ms: number, t: Dict): string {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return t.time.now;
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 export function fmtAgo(ms: number, t: Dict): string {
   const m = Math.floor((Date.now() - ms) / 60000);
   if (m < 1) return t.time.now;

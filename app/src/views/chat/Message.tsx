@@ -11,7 +11,7 @@ import { parseUserText, type CrossMessage } from "./localCommand";
 import { copyPlainText } from "./clipboard";
 import { fmtSpan, stripAnsi } from "./shared";
 import { ChatActionsContext } from "./chatActions";
-import { EchoActionsContext, EchoPhaseContext, outgoingIdOf } from "./outgoingPrompts";
+import { EchoActionsContext, EchoPhaseContext, outgoingIdOf, type EchoActions } from "./outgoingPrompts";
 import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../../remoteMode";
 
@@ -495,12 +495,36 @@ function CompactDivider({ item, summary }: { item: Extract<ChatItem, { type: "me
 }
 
 /// 发送失败的回显页脚：标注 + 「重发」「放回输入框」。
-function EchoFailedActions({ itemId, actions }: { itemId: string; actions: { retry: (id: number) => void; restore: (id: number) => void } | null }) {
+function EchoFailedActions({ itemId, actions }: { itemId: string; actions: EchoActions | null }) {
   const t = useT();
   const id = outgoingIdOf(itemId);
   return (
     <>
       <span className="chat-user-note is-warn" role="alert">{t.chat.echoFailed}</span>
+      {actions && id != null && <>
+        <button type="button" className="chat-user-action" onClick={() => actions.retry(id)}>{t.chat.echoRetry}</button>
+        <button type="button" className="chat-user-action" onClick={() => actions.restore(id)}>{t.chat.echoRestore}</button>
+      </>}
+    </>
+  );
+}
+
+/// 未确认送达的出口（手机上也不能只剩「去终端页看看」）。对话窗读过终端画面：这段话还停在
+/// CLI 输入框里，就给「提交」替你按一次回车；输入框里没有或认不出，给「重发 / 放回输入框」。
+function EchoUncertainActions({ itemId, actions }: { itemId: string; actions: EchoActions | null }) {
+  const t = useT();
+  const id = outgoingIdOf(itemId);
+  if (actions && id != null && actions.stuck.has(id)) {
+    return (
+      <>
+        <span className="chat-user-note is-warn" data-tip={t.chat.echoStuckTip}>{t.chat.echoStuck}</span>
+        <button type="button" className="chat-user-action" onClick={() => actions.submit(id)}>{t.chat.echoSubmit}</button>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{t.chat.echoUncertain}</span>
       {actions && id != null && <>
         <button type="button" className="chat-user-action" onClick={() => actions.retry(id)}>{t.chat.echoRetry}</button>
         <button type="button" className="chat-user-action" onClick={() => actions.restore(id)}>{t.chat.echoRestore}</button>
@@ -588,7 +612,9 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
           {/* 来源与送达是这条消息的事实，标在页脚：中途插入解释它为何出现在回复中间；
               未确认是回显超时仍不见落盘，照实说，不悄悄撤掉。 */}
           {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{t.chat.interjectedBadge}</span>}
-          {echoPhase === "uncertain" && <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{t.chat.echoUncertain}</span>}
+          {echoPhase === "uncertain" && <EchoUncertainActions itemId={item.id} actions={echoActions} />}
+          {/* 发出时以为空闲、其实 CLI 还在忙：它把这条收进了队列，照实说「已排队」。 */}
+          {echoPhase === "accepted" && <span className="chat-user-note" data-tip={t.chat.echoQueuedTip}>{t.chat.echoQueued}</span>}
           {/* 先上屏再发送：写终端期间转一个小圈；没写进去就照实标失败，给重发与放回输入框。 */}
           {echoPhase === "sending" && <span className="chat-user-note is-sending" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
           {echoPhase === "failed" && <EchoFailedActions itemId={item.id} actions={echoActions} />}
@@ -653,5 +679,7 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
   if (item.type === "meta" && item.kind === "interrupted") {
     return <div className="chat-meta"><span />{t.chat.turnInterrupted}<span /></div>;
   }
+  // 送达回执在 reduceChatEvents 就滤掉了，走到这里说明有绕过它的来源，不画。
+  if (item.type === "prompt_queued") return null;
   return <CompactDivider item={item} summary={compactSummary} />;
 });

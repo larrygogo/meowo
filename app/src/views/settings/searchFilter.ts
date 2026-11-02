@@ -6,6 +6,7 @@
 // - 卡：`.row-card` 自身文本命中（如 agent 名「kimi」）整卡保留；否则有命中行才保留；
 // - 分组标题 `.sec-caption`：跟随其后（到下一个标题前）卡片的可见性；
 // - 分区 `.main-sec`：导航名命中（如「外观」）整区保留，否则无可见行/卡时整区隐藏；
+// - 页标题 `.sec-title`：跟随分区——搜索结果把各分区平铺，标题正好当分隔；
 // - 其余直挂内容（.sec-hint / 外观预览 / 关于页脚等）：搜索时让位。
 //
 // 显示切换一律走 style.display 而不是 hidden 属性：.row 等类的 display:flex 会盖掉
@@ -70,6 +71,8 @@ export function applySettingsFilter(body: HTMLElement, q: string, navLabels: Rec
         caption = kid;
       } else if (kid.classList.contains("row-card")) {
         if (kid.style.display !== "none") groupVisible = true;
+      } else if (kid.classList.contains("sec-title")) {
+        setDisplay(kid, secVisible);
       } else if (kid.classList.contains("account-agent-switch")) {
         // 7S-4：账号分区一次只渲染**当前** agent 的卡，别家的名字（"codex"）搜不到；
         // 而通往别家的唯一入口正是这个切换器，搜索时把它一并藏掉就成了死路——

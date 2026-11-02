@@ -1,4 +1,4 @@
-use meowo_store::{SessionStatus, Store};
+use meowo_store::{ListOrder, SessionStatus, Store};
 
 // ===== Task 1: live_sessions =====
 
@@ -792,18 +792,110 @@ fn live_sessions_scan_by_created_orders_and_paginates_on_started_at() {
         rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
     };
     // 默认(最近活跃)不受影响。
-    let by_activity = store.live_sessions_scan(Some("all"), None, None, None, None, false, 10).unwrap();
+    let by_activity = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Activity, 10).unwrap();
     assert_eq!(ids(&by_activity), ["old", "mid", "new"]);
     // 按创建时间:首页两条是 new、mid;游标 = 末条的 (started_at, id),续页拿到 old。
-    let first = store.live_sessions_scan(Some("all"), None, None, None, None, true, 2).unwrap();
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Created, 2).unwrap();
     assert_eq!(ids(&first), ["new", "mid"]);
     let tail = &first[1].session;
     let rest = store
-        .live_sessions_scan(Some("all"), None, None, Some(tail.started_at), Some(tail.id), true, 2)
+        .live_sessions_scan(Some("all"), None, None, Some(tail.started_at), Some(tail.id), ListOrder::Created, 2)
         .unwrap();
     assert_eq!(ids(&rest), ["old"]);
     // waiting tab 恒按等待时长:by_created 不改它的排序。
-    let waiting_a = store.live_sessions_scan(Some("waiting"), None, None, None, None, true, 10).unwrap();
-    let waiting_b = store.live_sessions_scan(Some("waiting"), None, None, None, None, false, 10).unwrap();
+    let waiting_a = store.live_sessions_scan(Some("waiting"), None, None, None, None, ListOrder::Created, 10).unwrap();
+    let waiting_b = store.live_sessions_scan(Some("waiting"), None, None, None, None, ListOrder::Activity, 10).unwrap();
     assert_eq!(ids(&waiting_a), ids(&waiting_b));
+}
+
+/// 侧栏手动排序：没拖过等于创建时间倒序；拖到两条之间取中值；空隙用尽时整体挪开再插；
+/// 游标按手动键续页。
+#[test]
+fn manual_order_defaults_to_created_and_follows_moves() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let (a, _) = store.start_session(pid, "a", 100).unwrap();
+    let (b, _) = store.start_session(pid, "b", 200).unwrap();
+    let (c, _) = store.start_session(pid, "c", 300).unwrap();
+    let (d, _) = store.start_session(pid, "d", 301).unwrap();
+    for (id, text) in [(a, "甲"), (b, "乙"), (c, "丙"), (d, "丁")] {
+        store.on_user_prompt(id, text, 400).unwrap();
+    }
+    let ids = |rows: &[meowo_store::LiveSession]| -> Vec<String> {
+        rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
+    };
+    let manual = |store: &Store| ids(&store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 10).unwrap());
+    assert_eq!(manual(&store), ["d", "c", "b", "a"]);
+
+    // 把 a 拖到 d 正下方。
+    store.move_session_rank(a, Some(d), None).unwrap();
+    assert_eq!(manual(&store), ["d", "a", "c", "b"]);
+    // 把 b 拖到最上面（没有 above，挂在 d 正上方）。
+    store.move_session_rank(b, None, Some(d)).unwrap();
+    assert_eq!(manual(&store), ["b", "d", "a", "c"]);
+    // 反复插进同一个缝（c、d 创建时间只差 1ms，键差 1024），空隙用尽后整体挪开，顺序仍对。
+    for _ in 0..15 {
+        store.move_session_rank(a, Some(d), None).unwrap();
+        store.move_session_rank(c, Some(d), None).unwrap();
+    }
+    assert_eq!(manual(&store), ["b", "d", "c", "a"]);
+    // 游标按手动键续页。
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 2).unwrap();
+    assert_eq!(ids(&first), ["b", "d"]);
+    let tail = &first[1];
+    let rest = store
+        .live_sessions_scan(Some("all"), None, None, Some(tail.manual_key), Some(tail.session.id), ListOrder::Manual, 10)
+        .unwrap();
+    assert_eq!(ids(&rest), ["c", "a"]);
+    // 新会话没拖过，出现在最上面。
+    let (e, _) = store.start_session(pid, "e", 500).unwrap();
+    store.on_user_prompt(e, "戊", 501).unwrap();
+    assert_eq!(manual(&store)[0], "e");
+}
+
+/// 会话管理页：工作区多选（斜杠写法不同也算同一个）、状态、最后更新时间三种筛选叠加，
+/// 按页码分页并给总数；空壳会话与被接替的旧段不算。
+#[test]
+fn session_admin_page_filters_pages_and_counts() {
+    use meowo_store::AdminQuery;
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let make = |cc: &str, cwd: &str, at: i64, prompt: Option<&str>| {
+        let (id, _) = store.start_session(pid, cc, at).unwrap();
+        store.set_session_cwd(id, cwd, at).unwrap();
+        if let Some(text) = prompt {
+            store.on_user_prompt(id, text, at).unwrap();
+        }
+        id
+    };
+    let a = make("a", "C:/w/meowo", 100, Some("甲"));
+    let b = make("b", r"C:\w\meowo\", 200, Some("乙"));
+    let _c = make("c", "C:/w/other", 300, Some("丙"));
+    let _shell = make("shell", "C:/w/meowo", 400, None);
+    let d = make("d", "C:/w/meowo", 500, Some("丁"));
+    store.set_session_archived(a, true, 600).unwrap();
+    let ids = |rows: &[meowo_store::LiveSession]| rows.iter().map(|r| r.session.cc_session_id.clone()).collect::<Vec<_>>();
+    let page = |query: AdminQuery| {
+        let (rows, total) = store.session_admin_page(&AdminQuery { limit: 10, ..query }).unwrap();
+        (ids(&rows), total)
+    };
+    // 全部：最后更新倒序，空壳不算。
+    assert_eq!(page(AdminQuery::default()), (vec!["d".into(), "c".into(), "b".into(), "a".into()], 4));
+    // 工作区：两种斜杠写法都命中。
+    let meowo = page(AdminQuery { cwds: vec!["C:/w/meowo".into()], ..Default::default() });
+    assert_eq!(meowo.1, 3);
+    // 状态 + 时间：进行中且最后更新早于 450。
+    assert_eq!(page(AdminQuery { archived: Some(false), updated_before: Some(450), ..Default::default() }), (vec!["c".into(), "b".into()], 2));
+    assert_eq!(page(AdminQuery { archived: Some(true), ..Default::default() }), (vec!["a".into()], 1));
+    // 分页：第二页从第 3 条起，总数不变。
+    let (rows, total) = store.session_admin_page(&AdminQuery { limit: 2, offset: 2, ..Default::default() }).unwrap();
+    assert_eq!((ids(&rows), total), (vec!["b".into(), "a".into()], 4));
+    // 排除的会话（agent 自建的后台会话，侧栏也不列）：不出现、也不计入总数。
+    assert_eq!(
+        page(AdminQuery { exclude_cc_ids: vec!["c".into(), "nobody".into()], ..Default::default() }),
+        (vec!["d".into(), "b".into(), "a".into()], 3)
+    );
+    // 被接替的旧段不算。
+    store.set_session_lineage(d, b).unwrap();
+    assert_eq!(page(AdminQuery::default()).1, 3);
 }

@@ -238,24 +238,53 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
 }
 
 /** 对话窗速查表与设置页共用同一份清单，避免新增快捷键只补到其中一处。 */
+/// 快捷键清单（唯一数据源）：`?` 速查表与设置页「快捷键」共用，分「窗口」「输入框」两组。
+export function shortcutGroups(t: ReturnType<typeof useT>): { title: string; rows: Array<[string, string]> }[] {
+  return [
+    {
+      title: t.chat.shortcutGroupWindow,
+      rows: [
+        ["Ctrl+K", t.chat.shortcutSwitcher],
+        ["Ctrl+N", t.chat.shortcutNewSession],
+        ["Ctrl+B", t.chat.shortcutSidebar],
+        ["Ctrl+1 / Ctrl+2", t.chat.shortcutViews],
+        ["Ctrl+F", t.chat.shortcutSearch],
+        ["Alt+↑ / Alt+↓", t.chat.shortcutPrevNext],
+        ["Ctrl+Shift+F", t.chat.searchTranscript],
+        ["?", t.chat.shortcutSheet],
+      ],
+    },
+    {
+      title: t.chat.shortcutGroupInput,
+      rows: [
+        ["Enter", t.chat.shortcutSend],
+        ["Shift+Enter", t.chat.shortcutNewline],
+        ["Ctrl+Enter", t.chat.shortcutInterruptSend],
+        ["Tab / ↑↓", t.chat.shortcutSlashComplete],
+        ["↑", t.chat.shortcutHistory],
+        ["Esc", t.chat.shortcutDeny],
+      ],
+    },
+  ];
+}
+
+/// 一组键位：「Ctrl+Shift+F」拆成一枚枚键帽（对照系统设置的写法），多套组合之间用「/」。
+export function KeyCombos({ keys }: { keys: string }) {
+  return (
+    <span className="kbd-combos">
+      {keys.split(" / ").map((combo, index) => (
+        <span className="kbd-combo" key={combo}>
+          {index > 0 && <span className="kbd-or">/</span>}
+          {combo === "+" ? <kbd>+</kbd> : combo.split("+").map((key) => <kbd key={key}>{key}</kbd>)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function ShortcutList() {
   const t = useT();
-  const rows: Array<[string, string]> = [
-    ["Ctrl+K", t.chat.shortcutSwitcher],
-    ["Ctrl+B", t.chat.shortcutSidebar],
-    ["Ctrl+1 / Ctrl+2", t.chat.shortcutViews],
-    ["Ctrl+N", t.chat.shortcutNewSession],
-    ["Ctrl+F", t.chat.shortcutSearch],
-    ["Alt+↑ / Alt+↓", t.chat.shortcutPrevNext],
-    ["Ctrl+Shift+F", t.chat.searchTranscript],
-    ["Enter", t.chat.shortcutSend],
-    ["Shift+Enter", t.chat.shortcutNewline],
-    ["Ctrl+Enter", t.chat.shortcutInterruptSend],
-    ["Tab / ↑↓", t.chat.shortcutSlashComplete],
-    ["↑", t.chat.shortcutHistory],
-    ["Esc", t.chat.shortcutDeny],
-    ["?", t.chat.shortcutSheet],
-  ];
+  const rows = shortcutGroups(t).flatMap((group) => group.rows);
   return (
     <>
       <dl className="chat-shortcuts-list">

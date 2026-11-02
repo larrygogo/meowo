@@ -205,7 +205,8 @@ impl Store {
     ///     再按那时的形状建, 比迁就一张三年没用过的空壳划算。
     ///     与 v12 的 `work_groups` 不同——那张表是**刻意保留**的(降版本要再做一版迁移、
     ///     空表零成本), 勿一并删。
-    const USER_VERSION: i64 = 17;
+    /// v18: sessions 加 manual_rank 列（侧栏「手动排序」拖出来的位置）。
+    const USER_VERSION: i64 = 18;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -220,7 +221,7 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 18] = [
+        const ALTERS: [&str; 19] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
@@ -249,6 +250,8 @@ impl Store {
             "ALTER TABLE todos ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
             // 思考程度（v17）：老库补齐后全是 NULL = 未上报，档位控件不显示。
             "ALTER TABLE session_context ADD COLUMN effort TEXT",
+            // 手动排序位置（v18）：老库补齐后全是 NULL = 没拖过，按创建时间排，正是我们要的。
+            "ALTER TABLE sessions ADD COLUMN manual_rank INTEGER",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -689,11 +692,19 @@ impl Store {
 
     /// 开新回合的 touch（UserPromptSubmit 的文本/纯图片两条路）：无条件把 waiting
     /// 复活为 running——用户开口就是新回合，不受迟到窗约束。
+    ///
+    /// 已完成（归档）的会话里开口 = 接着做这件事，同时取消归档、回到「进行中」（用户要求：
+    /// 「在已完成的会话里恢复了它，把它变成进行中」）。对话窗、手机、终端里直接打字都走这里。
+    /// 只看开口不看进程：恢复后没说话、只是翻看，不算接着做。
+    /// 时序守卫：归档时刻晚于这次开口的不动——先说了话、随后才点「标记完成」，迟到的 hook
+    /// 不能把刚完成的会话又拽回进行中（hook 按到达时刻盖戳的竞态，同 last_event_at 守卫）。
     pub fn touch_session_turn_open(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions
              SET last_event_at = ?1,
-                 status = CASE WHEN status = 'waiting' THEN 'running' ELSE status END
+                 status = CASE WHEN status = 'waiting' THEN 'running' ELSE status END,
+                 archived = CASE WHEN archived = 1 AND COALESCE(archived_at, 0) <= ?1 THEN 0 ELSE archived END,
+                 archived_at = CASE WHEN archived = 1 AND COALESCE(archived_at, 0) <= ?1 THEN NULL ELSE archived_at END
              WHERE id = ?2 AND last_event_at <= ?1",
             rusqlite::params![now_ms, session_id],
         )?;
@@ -1922,6 +1933,35 @@ mod latest_session_tests {
         // 全部归档 → None。
         store.set_session_archived(old, true, 700).unwrap();
         assert_eq!(store.latest_session_id().unwrap(), None);
+    }
+
+    /// 已完成的会话里开口（UserPromptSubmit）= 接着做，自动回到进行中；但比归档时刻还早的
+    /// 迟到开口不许把刚完成的会话拽回来。
+    #[test]
+    fn user_turn_in_archived_session_reopens_it_unless_stale() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store
+            .upsert_project_by_root("C:/root", "root", 100)
+            .unwrap();
+        let (sid, _) = store.start_session(pid, "s-1", 100).unwrap();
+        let archived = |store: &Store| -> (i64, Option<i64>) {
+            store
+                .conn
+                .query_row(
+                    "SELECT archived, archived_at FROM sessions WHERE id = ?1",
+                    [sid],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap()
+        };
+
+        store.set_session_archived(sid, true, 500).unwrap();
+        // 迟到的开口（发生在归档之前）：不动。
+        store.touch_session_turn_open(sid, 400).unwrap();
+        assert_eq!(archived(&store), (1, Some(500)));
+        // 归档之后再开口：回到进行中，归档时刻清掉。
+        store.touch_session_turn_open(sid, 900).unwrap();
+        assert_eq!(archived(&store), (0, None));
     }
 }
 

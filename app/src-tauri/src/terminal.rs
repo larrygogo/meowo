@@ -1923,7 +1923,7 @@ pub(crate) async fn new_session(
     provider: String,
     terminal: Option<String>,
     options: Option<std::collections::HashMap<String, String>>,
-) -> Result<(), String> {
+) -> Result<i64, String> {
     // 参数为兼容旧前端保留；托管模式不再由这里预选外部终端，视图与终端类型分别由
     // session_open_in / resume_terminal 决定。
     let _ = terminal;
@@ -1936,7 +1936,10 @@ pub(crate) async fn new_session(
         reveal_session(&window_app, &reveal_broker, temp_id)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    // 临时 id 交回前端：对话窗里的新建会话页要凭它把第一句话记到这条会话上，认领成真 id
+    // 后再发进去（对照 Kimi：在新建会话页输入第一句话即开聊）。
+    Ok(temp_id)
 }
 
 /// `new_session` 的启动段：校验 cwd、翻译启动选项、由托管 PTY 裸启动 CLI，返回临时

@@ -23,6 +23,9 @@ export function reduceChatEvents(
   };
 
   for (const item of incoming) {
+    // 送达回执不是对话内容（正文随后会以 user_text 再出现一次），不进渲染序列。
+    // 发出消息的对账从原始批次里单独拣它（ChatWindow refresh）。
+    if (item.type === "prompt_queued") continue;
     const last = next[next.length - 1];
     if (item.type !== "assistant_delta" && item.type !== "reasoning_delta") {
       // 同一语义事件可能被 Provider 同时写进两个兼容日志入口；只消除相邻且完全等价的记录，

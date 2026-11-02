@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Message } from "./Message";
 import { Transcript } from "./Transcript";
 import { resetFoldMemory } from "./foldMemory";
-import { EchoPhaseContext, type OutgoingPhase } from "./outgoingPrompts";
+import { EchoActionsContext, EchoPhaseContext, type EchoActions, type OutgoingPhase } from "./outgoingPrompts";
 import type { ChatItem } from "../../api";
 
 afterEach(() => { cleanup(); resetFoldMemory(); });
@@ -31,6 +31,37 @@ describe("Message 用户消息标注", () => {
     cleanup();
     renderWith("uncertain");
     expect(screen.getByText("未确认送达")).toBeTruthy();
+  });
+
+  // 未确认送达要给出口，手机上不能只剩「去终端页看看」：还停在输入框里给「提交」，否则重发 / 放回。
+  it("未确认送达：卡在输入框给提交，否则给重发与放回输入框", () => {
+    const item: ChatItem = { type: "user_text", id: "echo-7", timestamp: null, text: "在吗" };
+    const calls: string[] = [];
+    const renderWith = (stuck: boolean) => {
+      const actions: EchoActions = {
+        retry: (id) => calls.push(`retry:${id}`),
+        restore: (id) => calls.push(`restore:${id}`),
+        submit: (id) => calls.push(`submit:${id}`),
+        stuck: new Set(stuck ? [7] : []),
+      };
+      return render(
+        <EchoActionsContext.Provider value={actions}>
+          <EchoPhaseContext.Provider value={new Map([["echo-7", "uncertain" as OutgoingPhase]])}>
+            <Message item={item} />
+          </EchoPhaseContext.Provider>
+        </EchoActionsContext.Provider>,
+      );
+    };
+    renderWith(false);
+    fireEvent.click(screen.getByRole("button", { name: "重发" }));
+    fireEvent.click(screen.getByRole("button", { name: "放回输入框" }));
+    expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
+    cleanup();
+    renderWith(true);
+    expect(screen.getByText("停在终端输入框里")).toBeTruthy();
+    expect(screen.queryByText("未确认送达")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(calls).toEqual(["retry:7", "restore:7", "submit:7"]);
   });
 });
 

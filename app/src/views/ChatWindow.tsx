@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -30,7 +30,7 @@ import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
-import { anchorFrom, echoItemId, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts } from "./chat/outgoingPrompts";
+import { anchorFrom, echoItemId, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
 import { ANCHOR_PX, countsAsUnseen, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
@@ -60,7 +60,7 @@ import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { parseCliRetry, parseCliStatus } from "./chat/cliStatus";
 import { ChatSidebar } from "./ChatSidebar";
-import { ArchiveIcon, ChevronDownIcon } from "./sticker/icons";
+import { ChevronDownIcon } from "./sticker/icons";
 import { useStarred } from "./sticker/helpers";
 // 终端视图独立成 chunk：xterm 及其插件约 500KB，占对话窗 chunk 四成。手机远程页钉在对话页，
 // 终端只为屏幕识别按需挂载（terminalMonitorNeeded），首屏不该为它多等 1.2MB 里的一半。
@@ -76,6 +76,16 @@ import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
 import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
+import { performUndo } from "./chat/undoTerminal";
+import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { SessionAdmin } from "./chat/SessionAdmin";
+import { NewSessionPage } from "./chat/NewSessionPage";
+import { ChatTitleBar } from "./chat/ChatTitleBar";
+import { useConversationExport } from "./chat/useConversationExport";
+import { useMainPages } from "./chat/useMainPages";
+import { AddMenu } from "./chat/AddMenu";
+import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
+import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
@@ -140,13 +150,8 @@ function pickFilesViaInput(): Promise<File[]> {
     input.click();
   });
 }
-/** 改动/文件停靠面板的宽度持久化键（localStorage 既有 meowo-* 命名惯例）。 */
-const DIFF_WIDTH_KEY = "meowo-diff-panel-width";
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
-/** 面板宽度上下限：下限保面板可用，上限在拖拽时给对话区留 MIN_CHAT 动态计算。 */
-const DIFF_PANEL_MIN_WIDTH = 280;
-const DIFF_PANEL_DEFAULT_WIDTH = 400;
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
 /// 据此保留旧引用即可跳过整窗重渲染。
@@ -175,70 +180,6 @@ function sameHistoryMeta(prev: ChatHistory | null, next: ChatHistory): boolean {
   return true;
 }
 
-type Attachment = { path: string; name: string; image: boolean;
-  /** 字节数，仅粘贴来源有（File.size 现成）；文件选择器只给路径，拿大小要多一次 IPC，不值。 */
-  size?: number };
-
-/** 附件卡片的体积行。附件都是本地小文件，GB 档没有出场机会。 */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 100 * 1024 ? 1 : 0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
-
-function attachmentOf(path: string): Attachment {
-  const name = path.split(/[\\/]/).pop() || path;
-  const extension = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
-  return { path, name, image: IMAGE_EXTENSIONS.has(extension) };
-}
-
-/** 草稿持久化（localStorage）：关窗/重启不丢——此前只在内存 Map，窗口一关半屏提示词
- *  就没了（附件反而因落盘临时文件幸存）。只存正式会话（负数临时 id 认领后会换号）；
- *  LRU 保 20 条防膨胀。
- *  每会话一个 key：可同时开多个对话窗，整表「读-改-写」会让后写方覆盖先写方（另一窗
- *  草稿静默丢），各写各的 key 才没有竞态。 */
-const DRAFTS_KEY = "meowo-chat-drafts"; // 旧版整表格式，首次读取时拆成按会话 key 后删除
-const DRAFT_KEY_PREFIX = "meowo-chat-draft:";
-type StoredDraft = { prompt: string; attachments: Attachment[]; at?: number };
-/** 校验一条草稿的形状；坏数据返回 null（当无草稿）。 */
-function parseStoredDraft(value: unknown): { prompt: string; attachments: Attachment[] } | null {
-  const draft = value as StoredDraft | null;
-  if (typeof draft?.prompt !== "string") return null;
-  const attachments = Array.isArray(draft.attachments)
-    ? draft.attachments.filter((file) => file && typeof file.path === "string")
-    : [];
-  return { prompt: draft.prompt, attachments };
-}
-function loadStoredDrafts(): Map<number, { prompt: string; attachments: Attachment[] }> {
-  const map = new Map<number, { prompt: string; attachments: Attachment[] }>();
-  try {
-    // 旧版整表迁移：逐条落成按会话 key 再删整表；中途失败留下次启动再迁（整表还在）。
-    const legacy = localStorage.getItem(DRAFTS_KEY);
-    if (legacy) {
-      for (const [id, value] of Object.entries(JSON.parse(legacy) as Record<string, StoredDraft>)) {
-        // 落盘用 parseStoredDraft 的规范化结果而不是原始 value——否则未清洗的
-        // attachments(以及非数字 at)会被原样迁进新格式。at 非数字时按现在计,
-        // 保证 LRU 清扫有可比较的时间戳。
-        const parsed = parseStoredDraft(value);
-        if (!parsed) continue;
-        const at = typeof value?.at === "number" ? value.at : Date.now();
-        localStorage.setItem(DRAFT_KEY_PREFIX + id, JSON.stringify({ ...parsed, at }));
-      }
-      localStorage.removeItem(DRAFTS_KEY);
-    }
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith(DRAFT_KEY_PREFIX)) continue;
-      const id = Number(key.slice(DRAFT_KEY_PREFIX.length));
-      if (!Number.isSafeInteger(id)) continue;
-      const draft = parseStoredDraft(JSON.parse(localStorage.getItem(key) || "null"));
-      if (draft) map.set(id, draft);
-    }
-  } catch { /* 坏数据当无草稿 */ }
-  return map;
-}
-
 // 交接注入语（两种界面语言的模板前缀，见 i18n handoffPrompt）+ 交接目录标记：识别
 // transcript 里那条「请读交接文件」的机器消息。前序段历史内联进时间线后，它再以用户
 // 气泡出现只是重复分隔条已说的内容——显示层滤掉；items 记账层保留原文，水位线等
@@ -248,177 +189,10 @@ function isHandoffInjectedPrompt(text: string): boolean {
   return text.includes("meowo-handoff") && HANDOFF_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix));
 }
 
-function promptWithAttachments(prompt: string, attachments: Attachment[], instruction: (files: string) => string, mention = false): string {
-  if (!attachments.length) return prompt;
-  // @提及是提交时的原生附加(claude/gemini 实测,由插件按版本声明 attachment_mention)。
-  // 三个硬性例外整条退回指令文本,保持单一注入形态:
-  // - 路径含空白:提及解析在空白处截断(claude 实测),后半截变成正文;
-  // - 图片:@提及不会作为图像块附加(claude -p 实测,模型明说看不到),指令文本反而
-  //   能引导 agent 用自己的读图工具打开。
-  // - 没有正文:opencode 的 @ 补全框在「@路径」收尾时吃掉回车(补空格也不收,实测 1.19.2),
-  //   消息就卡在输入框里。只剩附件时指令文本对谁都成立。
-  if (mention && prompt.trim() && attachments.every((file) => !file.image && !/\s/.test(file.path))) {
-    return `${attachments.map((file) => `@${file.path}`).join(" ")} ${prompt.trim()}`;
-  }
-  // 指令文案随界面语言（i18n），不能硬编码中文——英文界面会把中文指令发给 agent。
-  const directive = instruction(attachments.map((file) => `- ${file.path}`).join("\n"));
-  return prompt.trim() ? `${prompt.trim()}\n\n${directive}` : directive;
-}
-
-/// ArrayBuffer → base64。btoa 只吃字符串且实参展开有调用栈上限，分块拼接。
-function base64OfBuffer(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
 // 稳定的空数组：`?? []` 每次渲染都是新引用，作为 props/依赖会让下游 memo/effect 空转
 // （chatUi 未就绪时每轮历史轮询都渲染一次，ManagedTerminal 的标记 key 就白算一次）。
 const EMPTY_MARKERS: string[] = [];
 
-
-type UndoInputClearSpec = NonNullable<NonNullable<ChatUi["undo"]>["input_clear"]>;
-type UndoMenuSpec = NonNullable<NonNullable<ChatUi["undo"]>["menu"]>;
-
-/// 原文非空行（trim 后）。屏幕核对只拿行首一小段比：从行首起排，不受折行影响。
-function undoTextLines(text: string): string[] {
-  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-}
-
-/// 输入框里含原文的行数（规格见后端 UndoInputClear / UndoComposer），认不出输入框返回 null。
-/// - block（opencode）：底边行之上连续以 row_prefix 开头的行，数含原文末行开头的行。计数而非
-///   判有无：历史区里同样带前缀的行可能和输入框连成一片，撤回前后比数才分得清。
-/// - prompt（claude）：以 prompt 开头、上一行整行是 border 的那行（同 DraftStash 的认法），
-///   首行以原文首行开头记 1。历史区的用户消息也以 prompt 开头，但上一行不是横线。
-function undoneInputRows(screen: string[] | null, clear: UndoInputClearSpec, text: string): number | null {
-  const lines = undoTextLines(text);
-  if (!screen || lines.length === 0) return null;
-  const composer = clear.composer;
-  if (composer.kind === "prompt") {
-    const draft = composerDraftText(screen, { input: "", composer_prompt: composer.prompt, composer_border: composer.border, stashed_marker: "" });
-    if (draft === null) return null;
-    return draft !== "" && draft.startsWith(lines[0].slice(0, 12)) ? 1 : 0;
-  }
-  const snippet = lines[lines.length - 1].slice(0, 12);
-  let bottom = screen.length - 1;
-  while (bottom >= 0 && !screen[bottom].trimStart().startsWith(composer.bottom_prefix)) bottom -= 1;
-  if (bottom < 0) return null;
-  let rows = 0;
-  let count = 0;
-  for (let index = bottom - 1; index >= 0 && screen[index].trimStart().startsWith(composer.row_prefix); index -= 1) {
-    rows += 1;
-    if (screen[index].includes(snippet)) count += 1;
-  }
-  return rows > 0 ? count : null;
-}
-
-/// 菜单式撤回（claude /rewind，规格见后端 UndoMenu）：打开菜单 → 上移 turns 格 → 核对选中行
-/// → 回车 → 核对确认页引文 → 按「option_label」那一项的数字 → 等原文回到 CLI 输入框。
-/// 每一步先看屏幕再按键：要撤的是哪条消息只有屏幕上那份列表说了算，计数与 CLI 对不上时宁可
-/// 退出菜单报错，也不能撤错。菜单已由调用方用撤回命令打开。
-async function runUndoMenu(sessionId: number, menu: UndoMenuSpec, clear: UndoInputClearSpec | null, turns: number, text: string): Promise<"done" | "mismatch" | "timeout"> {
-  const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-  const first = undoTextLines(text)[0] ?? "";
-  // 标题行之下才是菜单区：历史区里的用户消息同样以 ❯ 开头。
-  const menuRows = (screen: string[] | null) => {
-    if (!screen) return null;
-    const title = screen.map((row) => row.trim()).lastIndexOf(menu.title);
-    return title < 0 ? null : screen.slice(title + 1);
-  };
-  const poll = async <T,>(read: (rows: string[] | null, screen: string[] | null) => T | null, times = 20): Promise<T | null> => {
-    for (let attempt = 0; attempt < times; attempt += 1) {
-      const screen = await managedTerminalScreen(sessionId);
-      const value = read(menuRows(screen), screen);
-      if (value !== null) return value;
-      await sleep(150);
-    }
-    return null;
-  };
-  // 列表项被截断时以 … 结尾：截断前的部分与原文首行开头一致才算同一条。
-  const sameMessage = (shown: string) => {
-    const head = shown.trim().replace(/…$/, "").trim();
-    return head.length > 0 && first.length > 0 && (first.startsWith(head) || head.startsWith(first));
-  };
-  const cancel = async () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (menuRows(await managedTerminalScreen(sessionId)) === null) return;
-      await writeManagedTerminal(sessionId, menu.cancel_input);
-      await sleep(300);
-    }
-  };
-  try {
-    if (await poll((rows) => rows?.some((row) => row.trim() === menu.ready_marker) ? true : null) === null) {
-      await cancel();
-      return "timeout";
-    }
-    for (let step = 0; step < turns; step += 1) {
-      await writeManagedTerminal(sessionId, menu.step_input);
-      await sleep(120);
-    }
-    const prefix = `${menu.selected_prefix} `;
-    const selected = await poll((rows) => {
-      const row = rows?.find((line) => line.trimStart().startsWith(prefix));
-      return row && row.trim() !== menu.ready_marker ? row.trimStart().slice(prefix.length) : null;
-    }, 10);
-    if (selected === null || !sameMessage(selected)) { await cancel(); return "mismatch"; }
-    await writeManagedTerminal(sessionId, menu.enter_input);
-    const quoted = await poll((rows) => {
-      const row = rows?.find((line) => line.trimStart().startsWith(menu.quote_prefix));
-      return row ? row.trimStart().slice(menu.quote_prefix.length) : null;
-    }, 10);
-    if (quoted === null || !sameMessage(quoted.slice(0, Math.min(quoted.length, 12)))) { await cancel(); return "mismatch"; }
-    // 选项随有无代码改动变化（有改动时它是第 2 项），按文案找数字。
-    const option = new RegExp(`^[❯↑↓\\s]*(\\d+)\\.\\s+${menu.option_label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`);
-    const digit = await poll((rows) => rows?.map((row) => option.exec(row)?.[1]).find(Boolean) ?? null, 10);
-    if (digit === null) { await cancel(); return "mismatch"; }
-    await writeManagedTerminal(sessionId, digit);
-    // 生效 = 菜单收起、原文回到 CLI 输入框（菜单式撤回不写 transcript，只能看屏幕）。
-    const done = await poll((rows, screen) => rows === null && (!clear || (undoneInputRows(screen, clear, text) ?? 0) > 0) ? true : null);
-    if (done === null) { await cancel(); return "timeout"; }
-    return "done";
-  } catch {
-    await cancel().catch(() => undefined);
-    return "timeout";
-  }
-}
-
-/// 撤回后清掉 CLI 放回它自己输入框的原文（opencode / claude）。原文已在对话页输入框里，终端那份
-/// 不清会拼进下一条消息（真机复现过）。清空键在空输入框上另有含义（退出 / 打开回退菜单），所以
-/// 只在「比撤回前多出了原文行」时才按，按后数回基线才算干净。baseline = 发撤回命令前的
-/// undoneInputRows。
-/// 返回是否已确认干净。
-async function clearUndoneInput(sessionId: number, clear: UndoInputClearSpec, text: string, baseline: number | null): Promise<boolean> {
-  if (baseline === null) return false;
-  const rows = async () => undoneInputRows(await managedTerminalScreen(sessionId), clear, text);
-  try {
-    let now: number | null = null;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      now = await rows();
-      if (now !== null && now > baseline) break;
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
-    }
-    // 认得出输入框、没多出原文 = 本来就干净；认不出输入框则不敢按。
-    if (now === null) return false;
-    if (now <= baseline) return true;
-    // 逐个分开写：两个 Esc 合成一次写入会被当成 Alt+Esc（claude 的清空是双 Esc）。
-    for (const [index, input] of clear.inputs.entries()) {
-      if (index > 0) await new Promise((resolve) => window.setTimeout(resolve, 300));
-      await writeManagedTerminal(sessionId, input);
-    }
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
-      const after = await rows();
-      if (after !== null && after <= baseline) return true;
-    }
-  } catch {
-    // 落到调用方的提示。
-  }
-  return false;
-}
 
 /** 终端就绪等待超过这么多秒才上横幅（之前只有发送钮转圈，见横幅处注释）。 */
 const TERMINAL_WAIT_NOTICE_S = 20;
@@ -430,6 +204,8 @@ export function ChatWindow() {
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [history, setHistory] = useState<ChatHistory | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
+  // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
+  const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
   // 异步流程里读最新消息（撤回要等被撤的那条从对话里消失）。
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -520,7 +296,7 @@ export function ChatWindow() {
   const outgoing = useOutgoingPrompts(sessionId);
   const queuedInterjections = useMemo(() => outgoing.filter((prompt) => prompt.kind === "queued"), [outgoing]);
   const pendingEchoes = useMemo(() => outgoing.filter((prompt) => prompt.kind === "echo"), [outgoing]);
-  const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending").length;
+  const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending" || prompt.phase === "accepted").length;
   const queuedInserted = queuedInterjections.some((prompt) => prompt.phase === "inserted");
   // 排队区只放还没进对话的：已插入的那条此刻已经以「回合中插入」的气泡出现在对话里，
   // 回执再挂一份就是同一句话显示两遍（用户实拍）。已插入的状态仍由运行条那句交代。
@@ -650,29 +426,7 @@ export function ChatWindow() {
   // 每会话一个 key,只写/删自己这条——多窗并存互不覆盖,无读-改-写竞态。
   useEffect(() => {
     if (sessionId <= 0) return;
-    const timer = window.setTimeout(() => {
-      try {
-        if (!prompt.trim() && attachments.length === 0) {
-          localStorage.removeItem(DRAFT_KEY_PREFIX + sessionId);
-        } else {
-          const draft: StoredDraft = { prompt, attachments, at: Date.now() };
-          localStorage.setItem(DRAFT_KEY_PREFIX + sessionId, JSON.stringify(draft));
-        }
-        // LRU 保 20 条:先收集再删——localStorage.key 按下标枚举,边删边数会跳项。
-        const stored: { key: string; at: number }[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (!key?.startsWith(DRAFT_KEY_PREFIX)) continue;
-          let at = 0;
-          try { at = (JSON.parse(localStorage.getItem(key) || "{}") as StoredDraft).at ?? 0; } catch { /* 坏数据排最旧 */ }
-          stored.push({ key, at });
-        }
-        if (stored.length > 20) {
-          stored.sort((a, b) => b.at - a.at);
-          for (const stale of stored.slice(20)) localStorage.removeItem(stale.key);
-        }
-      } catch { /* 存储失败不影响输入 */ }
-    }, 400);
+    const timer = window.setTimeout(() => saveStoredDraft(sessionId, prompt, attachments), 400);
     return () => window.clearTimeout(timer);
   }, [sessionId, prompt, attachments]);
   // submitToTerminal 回车前复核用的实时镜像:闭包里读 state 会拿到过期值。
@@ -834,8 +588,9 @@ export function ChatWindow() {
   // 镜像为空,退回后端现查（toggleArchived 的 fallbackNext）。
   const sidebarOrderRef = useRef<number[]>([]);
   // 归档动作与撤销条统一走 useSessionActions（C-13）：与侧栏入口同一条 set_archived、
-  // 同一个「下一条」取序、同一个 8s 撤销窗。撤销条数组承载批量归档,这里恒为单条。
-  const { archiveUndo, archive: archiveSessions, undoArchive, dismissUndo } = useSessionActions({
+  // 同一个「下一条」取序。对话窗不挂撤销条（用户实拍「不要显示这个」），完成的会话从
+  // 侧栏「已完成」找回。
+  const { archive: archiveSessions } = useSessionActions({
     onNavigate: (id) => resetTo(id),
     onError: (message) => setSendError(message),
   });
@@ -1065,53 +820,8 @@ export function ChatWindow() {
   // 打开文件、树展开与 diff/目录缓存全部保留，再展开时原样回来。换会话照旧整体重置。
   const [diffCollapsed, setDiffCollapsed] = useState(false);
   const [diffMaximized, setDiffMaximized] = useState(false);
-  // 面板宽度随会话持久化（localStorage）；折叠只藏不改宽，再展开原宽回来。
-  const [diffWidth, setDiffWidth] = useState(() => {
-    const stored = Number(localStorage.getItem(DIFF_WIDTH_KEY));
-    return Number.isFinite(stored) && stored >= DIFF_PANEL_MIN_WIDTH ? stored : DIFF_PANEL_DEFAULT_WIDTH;
-  });
-  // 拖拽分栏柄：pointer capture 挂在柄上，移出窗口也不丢事件；宽度上限按
-  // .chat-body 实测宽给对话区留 ≥360px（CSS 的 max-width:40vw 仍是窗口缩小的兜底）。
-  const startDiffResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const handle = event.currentTarget;
-    const body = handle.parentElement;
-    if (!body) return;
-    event.preventDefault();
-    handle.setPointerCapture(event.pointerId);
-    const startX = event.clientX;
-    const panel = body.querySelector<HTMLElement>(".chat-diff-panel");
-    // 以实测宽为起点：state 宽可能被 40vw 上限压小，从 state 起算会跳变。
-    const startWidth = panel ? panel.getBoundingClientRect().width : diffWidth;
-    const maxWidth = Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - 360);
-    let lastWidth = startWidth;
-    body.classList.add("is-diff-resizing");
-    // pointermove 每次都 setState 会以指针事件频率重渲整个面板子树,开着大文件时拖不动;
-    // 按帧合流,一帧至多提交一次宽度。
-    let raf = 0;
-    const onMove = (move: PointerEvent) => {
-      lastWidth = Math.min(Math.max(startWidth + (startX - move.clientX), DIFF_PANEL_MIN_WIDTH), maxWidth);
-      if (!raf) {
-        raf = requestAnimationFrame(() => {
-          raf = 0;
-          setDiffWidth(lastWidth);
-        });
-      }
-    };
-    const onUp = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = 0;
-      setDiffWidth(lastWidth);
-      body.classList.remove("is-diff-resizing");
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onUp);
-      localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(lastWidth)));
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onUp);
-  };
+  // 面板宽度：拖拽 / 键盘调宽与持久化见 chat/useDiffPanelWidth。
+  const diffResize = useDiffPanelWidth();
   // 稳定引用给 memo 的 GitDiffView:内联箭头函数每次击键换新引用,面板即使折叠也要
   // 对几千行文件 DOM 做全量 reconcile,还连带 Esc 层监听每渲染拆装一次。
   const collapseDiffPanel = useCallback(() => {
@@ -1123,6 +833,16 @@ export function ChatWindow() {
     setDiffCollapsed(false);
   }, []);
   const changeDiffTab = useCallback((tab: DiffPanelTab) => setDiffTab(tab), []);
+  /// 标题栏开合停靠面板：tab = 点了哪个入口（改动胶囊为 "changes"，侧边面板开关为 null）。
+  /// 面板正开着且就是这个入口（侧边面板开关不挑页签）→ 收起；否则打开到该页签。侧边面板开关
+  /// 回到上次的页签，不是仓库时只有文件页。
+  const toggleDock = (tab: DiffPanelTab | null) => {
+    if (diffOpen && !diffCollapsed && (tab === null || diffTab === tab)) { collapseDiffPanel(); return; }
+    if (tab) setDiffTab(tab);
+    else if (!gitSummary?.isRepo) setDiffTab("files");
+    setDiffOpen(true);
+    setDiffCollapsed(false);
+  };
   const diffCwd = cwd;
   // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
   // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
@@ -1260,7 +980,11 @@ export function ChatWindow() {
     ? capabilityOffset
     : transcriptCapabilitiesReady ? 1 : 0;
   const startupAttentionMarkerKey = (chatUi?.startup_attention_markers ?? []).join("\0");
-  const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan";
+  // 屏幕识别要不要去认编号选择表单。hook 写的 pendingReview 之外，broker 带来的结构化题面
+  // 也算：hook 漏写或被后台任务的事件冲掉时（用户实拍：会话挂着后台 Bash），题面卡照样
+  // 显示、照样收下点选的答案，识别却一直不开，答案永远等不到「表单就绪」，去终端页也一样。
+  const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan"
+    || structuredQuestion != null;
   // 识别文法:provider 门控(claude 专有整句规则只对 claude 生效)+ 插件声明的选择器
   // 锚点。chatUi 未就绪时锚点为空——ManagedTerminal 的 grammarKey 复扫会在其到达后补投。
   const attentionGrammar = useMemo<AttentionGrammar>(() => ({
@@ -1430,10 +1154,10 @@ export function ChatWindow() {
   const [switchTarget, setSwitchTarget] = useState<AgentId | null>(null);
   const [switchPresets, setSwitchPresets] = useState<Record<string, ModelPreset[]>>({});
   useEffect(() => { if (!modelPickerOpen) setSwitchTarget(null); }, [modelPickerOpen]);
-  // 待注入的交接：复制命令返回后记下文件路径、目标 provider 与临时 id，新会话认领成真 id
-  //（realId，binding 轮询里记下）、终端就绪后由注入 effect 消费。ref 而非 state：注入是
-  // 流程记账，不驱动渲染。
-  const handoffRef = useRef<{ path: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null } | null>(null);
+  // 待注入的第一句话：复制到其他引擎的交接提示，或新建会话页里写下的第一句话。记下要发的话、
+  // 目标 provider 与临时 id，新会话认领成真 id（realId，binding 轮询里记下）、终端就绪后由注入
+  // effect 消费。ref 而非 state：注入是流程记账，不驱动渲染。
+  const handoffRef = useRef<{ prompt: string; failMessage: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null } | null>(null);
   // 当前会话 provider 的 descriptor：切换入口的可见性由后端下发的能力位决定
   //（supports_chat_export），前端不判 id——守卫测试盯着。
   const currentAgentDescriptor = provider
@@ -1472,6 +1196,24 @@ export function ChatWindow() {
     });
   };
   const welcomeCommands = (chatUi?.slash_commands ?? []).map((command) => command.name);
+  /// 「+」菜单把触发符放进输入框：「/」只在开头生效（slashMatchesFor），且只在空输入框时给；
+  /// 「@」插在光标处，前面不是空白时补一个空格（@ 补全要求 token 前是空白或行首）。
+  const insertIntoPrompt = (token: string, atStart = false) => {
+    const current = promptRef.current;
+    const input = promptInputRef.current;
+    const caret = atStart ? 0 : (input?.selectionStart ?? current.length);
+    const before = current.slice(0, caret);
+    const insert = !atStart && before && !/\s$/.test(before) ? ` ${token}` : token;
+    const next = before + insert + current.slice(caret);
+    const at = before.length + insert.length;
+    setPrompt(next);
+    requestAnimationFrame(() => {
+      const el = promptInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(at, at);
+    });
+  };
   const pickStarter = (text: string) => {
     setPrompt(text);
     // 预填后光标放到末尾:斜杠命令接着打参数,@ 接着触发文件补全。
@@ -1538,7 +1280,7 @@ export function ChatWindow() {
         for (const entry of predecessors) {
           const full = await getChatHistory(entry.id, 0, true).catch(() => null);
           if (cancelled) return;
-          segments.push({ provider: entry.provider, items: full && full.supported !== false ? full.items : [] });
+          segments.push({ provider: entry.provider, items: full && full.supported !== false ? full.items.filter((item) => item.type !== "prompt_queued") : [] });
         }
         if (!cancelled) {
           // 前序段是旧历史（同 loadEarlier 的前插）：未读快照同步抬高，否则接续段
@@ -1725,6 +1467,7 @@ export function ChatWindow() {
       return next;
     });
     setItems([]);
+    setQueueAcks([]);
     setPrefixSegments([]);
     setHistory(null);
     setQuestionCustomText("");
@@ -1812,7 +1555,10 @@ export function ChatWindow() {
       if (at < 0) return;
       const next = order[at + (e.key === "ArrowUp" ? -1 : 1)];
       e.preventDefault();
-      if (next !== undefined) resetTo(next);
+      if (next === undefined) return;
+      // 用户主动换会话：新建页 / 管理页让位，不然主区还盖着、换了也看不见。
+      leavePages();
+      resetTo(next);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1837,21 +1583,11 @@ export function ChatWindow() {
       });
     }).catch(() => {});
   }, []);
-  const selectFromOverlay = useCallback((id: number) => {
-    setOverlaySidebar(false);
-    resetTo(id);
-  }, [resetTo]);
-  // 远程新建会话启动成功:RemoteApp 把临时负 id 经页内事件送回来(桥不 reveal,这是移动端
-  // 唯一的导航通路)。选中走侧栏点选同一条 resetTo 通道;负 id 由上面的 binding 轮询
-  // (managed_terminal_binding 在远程白名单内)在认领后原地重绑成真 id。桌面此事件永不派发。
-  useEffect(() => {
-    const select = (e: Event) => {
-      const id = (e as CustomEvent<unknown>).detail;
-      if (typeof id === "number") selectFromOverlay(id);
-    };
-    window.addEventListener(SELECT_SESSION_EVENT, select);
-    return () => window.removeEventListener(SELECT_SESSION_EVENT, select);
-  }, [selectFromOverlay]);
+  // 主区的新建会话页 / 会话管理页：开合、入口事件、选会话时让位（chat/useMainPages）。
+  const {
+    adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
+    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
+  } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
 
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
@@ -1905,6 +1641,11 @@ export function ChatWindow() {
         return sameHistoryMeta(prev, merged) ? prev : merged;
       });
       setItems((prev) => next.items.length || reset ? reduceChatEvents(prev, next.items, reset) : prev);
+      if (!emptyReset) {
+        const acks = next.items.filter((item): item is PromptAck => item.type === "prompt_queued");
+        if (reset) setQueueAcks(acks);
+        else if (acks.length > 0) setQueueAcks((prev) => [...prev, ...acks]);
+      }
       setLoading(false);
       setFailed(false);
       failStreakRef.current = 0;
@@ -2012,7 +1753,11 @@ export function ChatWindow() {
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
-    listen<number>("chat-session-changed", (event) => resetTo(event.payload)).then((fn) => {
+    // 被带去某个会话（点卡片、通知、新会话 reveal）时新建页 / 管理页让位。
+    listen<number>("chat-session-changed", (event) => {
+      leavePages();
+      resetTo(event.payload);
+    }).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
     return () => { cancelled = true; un?.(); };
@@ -2144,12 +1889,19 @@ export function ChatWindow() {
   // 输入框随内容长高（上限与 CSS max-height:150px 对齐）：rows=1 + min-height 曾把高度
   // 钉死不动，max-height 是死代码——写 5 行提示词只能在 3 行可视高的框里内部滚动。
   // 依赖 prompt 而非 onChange：清空发送、恢复草稿等程序化赋值也要跟着缩/涨。
+  // 展开编辑（对照 Kimi「展开输入框进行多行编辑」）：长提示词在 150px 的框里只能内部滚着改，
+  // 展开后编辑区拉高到约半屏。内容写长了才给展开钮；清空（发送后）自动收回。
+  const [composerExpanded, setComposerExpanded] = useState(false);
+  const promptLong = prompt.split("\n").length >= 4 || prompt.length > 300;
+  useEffect(() => { if (!prompt) setComposerExpanded(false); }, [prompt]);
   useEffect(() => {
     const el = promptInputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
-  }, [prompt, view]);
+    const cap = composerExpanded ? Math.min(Math.round(window.innerHeight * 0.55), 560) : 150;
+    // 展开态直接给满高度，空行少时也是一块完整的编辑区，不是只长一点点。
+    el.style.height = `${composerExpanded ? cap : Math.min(el.scrollHeight, cap)}px`;
+  }, [prompt, view, composerExpanded]);
 
   /// 向上翻一屏被首读裁掉的更早消息，并保持用户当前看的那一行不动。
   /// 增量翻页：before = 当前窗口首行字节（earliestRef），后端只解析还没展示过的那段，
@@ -2372,73 +2124,45 @@ export function ChatWindow() {
     if (!control.count_arg && !control.menu && turns !== 1) return;
     const yes = await appConfirm(control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm, { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
     if (!yes || !isCurrentOperation()) return;
-    const menu = control.menu;
-    if (menu) {
-      await withSendGuard(async () => {
-        // 不走草稿暂存：claude 的暂存在下一次提交（就是这条 /rewind）后自动还原，会和撤回放回
-        // 的原文挤在一起。输入框不空就请用户先清。
-        const stash = chatUi?.draft_stash;
-        const draft = stash ? composerDraftText(await managedTerminalScreen(sessionId).catch(() => null), stash) : "";
-        if (draft) { setSendError(t.chat.undoComposerBusy); return false; }
-        await submitToTerminal(sessionId, control.command, attentionAbort);
-        const outcome = await runUndoMenu(sessionId, menu, control.input_clear, turns, text);
-        if (!isCurrentOperation()) return false;
-        if (outcome !== "done") {
-          setSendError(outcome === "mismatch" ? t.chat.undoMenuMismatch : t.chat.undoUnconfirmed);
-          return false;
-        }
-        setItems((current) => {
-          const at = current.findIndex((item) => item.id === id);
-          return at < 0 ? current : current.slice(0, at);
-        });
-        setPrompt((current) => current.trim() ? `${text}\n\n${current}` : text);
-        const clean = !control.input_clear || await clearUndoneInput(sessionId, control.input_clear, text, 0);
-        if (clean) setUndoNotice(true);
-        else setSendError(t.chat.undoInputResidue);
-        promptInputRef.current?.focus();
-        return true;
-      });
-      return;
-    }
+    // 终端协议在 chat/undoTerminal；这里只管界面：收掉本地消息、原文放回输入框、按结局报错。
     await withSendGuard(async () => {
-      const before = await managedTerminalSnapshot(sessionId);
-      if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
-      const inputBaseline = control.input_clear
-        ? undoneInputRows(await managedTerminalScreen(sessionId).catch(() => null), control.input_clear, text)
-        : null;
-      await submitToTerminal(sessionId, control.count_arg ? `${control.command} ${turns}` : control.command, attentionAbort);
-      const reject = control.reject_pattern ? new RegExp(control.reject_pattern, "i") : null;
-      const decoder = new TextDecoder();
-      let since = before.endOffset;
-      let tail = "";
-      undoPendingRef.current = true;
-      try {
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-          if (!isCurrentOperation()) return false;
+      const outcome = await performUndo({
+        sessionId,
+        control,
+        turns,
+        text,
+        draftStash: chatUi?.draft_stash,
+        attentionAbort,
+        isCurrent: isCurrentOperation,
+        stillHas: async () => {
           await refreshRef.current?.();
-          if (!itemsRef.current.some((item) => item.id === id)) {
-            // 输入框里已有草稿就接在原文后面，不覆盖用户正在写的东西。
-            setPrompt((current) => current.trim() ? `${text}\n\n${current}` : text);
-            const clean = !control.input_clear || await clearUndoneInput(sessionId, control.input_clear, text, inputBaseline);
-            if (clean) setUndoNotice(true);
-            else setSendError(t.chat.undoInputResidue);
-            promptInputRef.current?.focus();
-            return true;
+          return itemsRef.current.some((item) => item.id === id);
+        },
+        onUndone: () => {
+          // 菜单式撤回不写 transcript：本地先收掉被撤的消息（下一条落盘时读取层按分叉收回）。
+          if (control.menu) {
+            setItems((current) => {
+              const at = current.findIndex((item) => item.id === id);
+              return at < 0 ? current : current.slice(0, at);
+            });
           }
-          if (!reject) continue;
-          const snapshot = await managedTerminalSnapshot(sessionId, since);
-          if (!snapshot.active || snapshot.endOffset < since) continue;
-          since = snapshot.endOffset;
-          tail = appendTerminalText(tail, snapshot.data, decoder);
-          const line = visibleTerminalText(tail).split(/\r?\n/).find((row) => reject.test(row));
-          if (line) { setSendError(t.chat.undoRejected(line.trim())); return false; }
-        }
-      } finally {
-        undoPendingRef.current = false;
+          // 输入框里已有草稿就接在原文后面，不覆盖用户正在写的东西。
+          setPrompt((current) => current.trim() ? `${text}\n\n${current}` : text);
+        },
+        onPending: (pending) => { undoPendingRef.current = pending; },
+      });
+      switch (outcome.kind) {
+        case "done":
+          if (outcome.clean) setUndoNotice(true);
+          else setSendError(t.chat.undoInputResidue);
+          promptInputRef.current?.focus();
+          return true;
+        case "composer_busy": setSendError(t.chat.undoComposerBusy); return false;
+        case "mismatch": setSendError(t.chat.undoMenuMismatch); return false;
+        case "rejected": setSendError(t.chat.undoRejected(outcome.line)); return false;
+        case "unconfirmed": setSendError(t.chat.undoUnconfirmed); return false;
+        case "stale": return false;
       }
-      setSendError(t.chat.undoUnconfirmed);
-      return false;
     });
   };
   const undoFromRef = useRef(undoFrom);
@@ -2643,7 +2367,7 @@ export function ChatWindow() {
     setSendError("");
     try {
       const started = await copySessionToProvider(sessionId, target.id, model ? { model } : undefined);
-      handoffRef.current = { path: started.handoffPath, expectProvider: target.id, at: Date.now(), tempId: started.tempId, realId: null };
+      handoffRef.current = { prompt: t.chat.handoffPrompt(started.handoffPath), failMessage: t.chat.handoffInjectFailed, expectProvider: target.id, at: Date.now(), tempId: started.tempId, realId: null };
       resetTo(started.tempId);
     } catch (error) {
       setSendError(formatBackendError(error, t.locale));
@@ -2660,6 +2384,15 @@ export function ChatWindow() {
     : null;
   // 会话还在这里跑着就去终端恢复，会有两个进程写同一份会话（对照 Kimi 的「会话已被其他进程
   // 更新」警告：它是事后发现，我们在复制这一刻就能提醒）。命令照给，只把回执换成提醒。
+  // 会话菜单的导出（复制对话 / 最终回答 / 导出文件）：chat/useConversationExport。
+  const conversationExport = useConversationExport({
+    items: timelineItems,
+    title: history?.title,
+    provider,
+    agents: agentsForOptions,
+    onNotice: (text) => setCopyNotice({ text }),
+    onError: setSendError,
+  });
   const copyResumeCommand = (command: string) => {
     const live = !!history?.connected;
     void copyPlainText(command).then((ok) => setCopyNotice(
@@ -2698,7 +2431,7 @@ export function ChatWindow() {
     if (pending.realId !== sessionId) return;
     if (terminalAttention) return; // 等用户处理完启动交互，attention 清除后重跑
     let cancelled = false;
-    const injectPrompt = t.chat.handoffPrompt(pending.path);
+    const injectPrompt = pending.prompt;
     handoffInjectingRef.current = true;
     (async () => {
       try {
@@ -2714,7 +2447,7 @@ export function ChatWindow() {
           setTerminalAttention(startup);
           return;
         }
-        await submitToTerminal(sessionId, injectPrompt, undefined, { message: t.chat.handoffInjectFailed });
+        await submitToTerminal(sessionId, injectPrompt, undefined, { message: pending.failMessage });
         if (cancelled) return;
         handoffRef.current = null;
       } catch (error) {
@@ -2858,7 +2591,7 @@ export function ChatWindow() {
     const entry = outgoingStore.get(sessionId).find((item) => item.id === id);
     if (!entry?.draft) return;
     outgoingStore.dismiss(sessionId, id);
-    void sendPrompt({ prompt: entry.draft.prompt, attachments: entry.draft.attachments as Attachment[] });
+    void sendPrompt({ prompt: entry.draft.prompt, attachments: [...entry.draft.attachments] });
   };
   /// 失败气泡的「放回输入框」：收掉回执，原文接在输入框已有内容前面，附件一并放回。
   const restoreOutgoing = (id: number) => {
@@ -2867,10 +2600,24 @@ export function ChatWindow() {
     outgoingStore.dismiss(sessionId, id);
     const { prompt: text, attachments: files } = entry.draft;
     setPrompt((current) => (current.trim() && text ? `${text}\n\n${current}` : current || text));
-    setAttachments((current) => [...(files as Attachment[]).filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
+    setAttachments((current) => [...files.filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
     promptInputRef.current?.focus();
   };
-  const echoActions = { retry: retryOutgoing, restore: restoreOutgoing };
+  // 对账、计时、卡在输入框的探测与「提交」见 chat/useOutgoingUpkeep。
+  const { stuck: stuckEchoes, submit: submitStuckEcho } = useOutgoingUpkeep({
+    sessionId,
+    outgoing,
+    loading,
+    items,
+    acks: queueAcks,
+    lastUserText: history?.lastUserText,
+    ended: history?.status === "ended",
+    chatUi,
+    isActive: (sid) => activeSessionRef.current === sid,
+    running: () => toneRef.current === "running",
+    onError: (error) => setSendError(formatBackendError(error, t.locale)),
+  });
+  const echoActions = { retry: retryOutgoing, restore: restoreOutgoing, submit: submitStuckEcho, stuck: stuckEchoes };
   // 中断键的写法（按几次、隔多久）见 chat/terminalInput.writeInterruptKeys。
   const writeInterrupt = (input: string) =>
     writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), input, chatUi?.interrupt_presses ?? 1);
@@ -2914,26 +2661,6 @@ export function ChatWindow() {
   /// 手动移除一条排队回执。**只动 GUI 记账**:消息已经写进 PTY,CLI 队列里的它照常
   /// 在回合结束后执行——按钮文案与 tip 必须说清这点,否则用户会以为消息被撤回了。
   const dismissQueued = (id: number) => outgoingStore.dismiss(sessionId, id);
-  // 对账：证据（transcript / hook 记的最近输入 / 会话结束）一变就推进状态，规则见
-  // outgoingPrompts.reconcileOutgoing。计时器负责「证据永不到达」的那一侧——回显 15s
-  // 转未确认、「已插入」停留后收起，那时 items 不再变化，光靠依赖项这一步永远轮不到。
-  const [outgoingTick, setOutgoingTick] = useState(0);
-  useEffect(() => {
-    // 首读还没回来时 items 是空的：这时拿它对账，切走超过 15s 的回显会先被判成「未确认送达」，
-    // 等首读到了才收起，白闪一下。证据没到就不对账。
-    if (loading) return;
-    outgoingStore.reconcile(sessionId, {
-      items,
-      lastUserText: history?.lastUserText,
-      ended: history?.status === "ended",
-      now: Date.now(),
-    });
-  }, [sessionId, loading, items, history?.lastUserText, history?.status, outgoingTick]);
-  useEffect(() => {
-    if (outgoing.length === 0) return;
-    const timer = window.setInterval(() => setOutgoingTick((n) => n + 1), 1_000);
-    return () => window.clearInterval(timer);
-  }, [outgoing.length]);
   /// 斜杠命令直通 PTY——CLI 的 composer 收到 "/xxx" + 回车会当命令执行，无需特殊协议。
   const sendSlash = (command: string) => {
     if (sending) return;
@@ -3341,6 +3068,18 @@ export function ChatWindow() {
     try { webview = getCurrentWebview(); } catch { return; }
     webview.onDragDropEvent((event) => {
       if (event.payload.type === "over") return;
+      // 新建页开着时对话主区是藏起来的：拖进来的东西不能暗挂到旧会话的 composer 上。
+      // 对照 Kimi，拖文件夹进来就是选它当工作区（是不是文件夹由新建页去核实）。
+      if (newSessionOpenRef.current) {
+        if (event.payload.type === "drop") {
+          setDragHover(false);
+          const path = event.payload.paths?.[0];
+          if (path) dropFolder(path);
+          return;
+        }
+        setDragHover(event.payload.type === "enter");
+        return;
+      }
       // 终端页没有附件概念:拖入文件按终端惯例把**路径**打进输入行(含空白的加引号、
       // 多个以空格分隔),不把文件暗挂到对话页的 composer 上。遮罩文案随页面切换。
       if (viewRef.current === "terminal") {
@@ -3469,10 +3208,24 @@ export function ChatWindow() {
   const commandAttention = terminalAttention && terminalAttention.details && terminalAttention.details !== "none"
     && (terminalAttention.details !== "framed_box" || terminalAttention.options?.length) ? terminalAttention : null;
   const interactiveAttention = terminalAttention?.id === "interactive:numbered-selector" ? terminalAttention : null;
-  // 屏幕识别就绪 → 可作答的交互选择器接管，结构化题面的展示卡退场（同一份题面不双卡）。
+  // 屏幕识别就绪 → 可作答的交互选择器接管，结构化题面的展示卡藏起来（同一份题面不双卡）。
+  // 题面本身留到表单从屏上消失才清：多问题表单靠它反查当前是第几题，排队的答案也跟着它
+  // 存亡。此前一认出表单就清掉题面，第 2 题起的排队答案全被连带清空（只有第 1 题落得下），
+  // 识别的开关也跟着关掉。消失要连续 3s 才算：答完一题切到下一题的那一下，画面会短暂
+  // 认不出表单。
+  const [questionFormSeen, setQuestionFormSeen] = useState(false);
   useEffect(() => {
-    if (interactiveAttention) setStructuredQuestion(null);
-  }, [interactiveAttention]);
+    if (interactiveAttention) { setQuestionFormSeen(true); return; }
+    if (!questionFormSeen) return;
+    const timer = window.setTimeout(() => {
+      setQuestionFormSeen(false);
+      setStructuredQuestion(null);
+    }, 3_000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setStructuredQuestion 来自 hook，稳定
+  }, [interactiveAttention, questionFormSeen]);
+  // 换会话 / 题面在别处了结：表单的「见过」标记一起归零。
+  useEffect(() => { if (!structuredQuestion) setQuestionFormSeen(false); }, [structuredQuestion]);
   const structuredQuestions = useMemo(
     () => (structuredQuestion ? parseAskUserQuestions(structuredQuestion.input) : []),
     [structuredQuestion],
@@ -3871,7 +3624,7 @@ export function ChatWindow() {
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
         <div className="chat-drop-overlay" aria-hidden="true">
-          <span>{view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
+          <span>{newSessionOpen ? t.newSession.dropToWorkspace : view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
         </div>
       )}
       {remoteListMode && (
@@ -3903,13 +3656,15 @@ export function ChatWindow() {
           <div className="chat-sidebar-overlay" hidden={!overlaySidebar}>
             <div className="chat-sidebar-overlay-head">{sidebarToggleButton}</div>
             <ChatSidebar
-              activeId={sessionId}
+              activeId={newSessionOpen ? 0 : sessionId}
+              newSessionActive={newSessionOpen != null}
               approvalAwaitingIds={approvalAwaitingIds}
               visibleOrderRef={sidebarOrderRef}
               searchInputRef={sidebarSearchRef}
               onSelect={selectFromOverlay}
               onPrefetch={prefetchSession}
               onCollapse={closeOverlaySidebar}
+              onOpenAdmin={openAdminFromOverlay}
             />
           </div>
         </>
@@ -3920,14 +3675,16 @@ export function ChatWindow() {
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
       {!narrow && !sidebarCollapsed && <>
       <ChatSidebar
-        activeId={sessionId}
+        activeId={newSessionOpen ? 0 : sessionId}
+        newSessionActive={newSessionOpen != null}
         approvalAwaitingIds={approvalAwaitingIds}
         visibleOrderRef={sidebarOrderRef}
         searchInputRef={sidebarSearchRef}
         width={sidebarWidth}
-        onSelect={resetTo}
+        onSelect={selectSession}
         onPrefetch={prefetchSession}
         onCollapse={collapseSidebar}
+        onOpenAdmin={openAdmin}
       />
       <div
         className="chat-sidebar-resizer"
@@ -3941,10 +3698,34 @@ export function ChatWindow() {
         onPointerDown={startSidebarResize}
       />
       </>}
-      <div className="chat-main">
-      <header className="chat-bar" data-tauri-drag-region>
-        {((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
-        {history ? (
+      {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
+      {adminOpen && (
+        <div className="chat-main chat-admin-main">
+          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={closeAdmin} onOpen={selectSession} />
+        </div>
+      )}
+      {newSessionOpen && !adminOpen && (
+        <div className="chat-main chat-newsession-main">
+          <NewSessionPage
+            key={newSessionOpen.nonce}
+            prefill={newSessionOpen}
+            droppedPath={newSessionDrop}
+            onOpenSession={selectSession}
+            onMoreSessions={openAdminFor}
+            onLaunched={(tempId, launchedProvider, message) => {
+              // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
+              if (message) {
+                handoffRef.current = { prompt: message, failMessage: t.newSession.firstPromptFailed, expectProvider: launchedProvider, at: Date.now(), tempId, realId: null };
+              }
+              selectSession(tempId);
+            }}
+          />
+        </div>
+      )}
+      <div className="chat-main" hidden={adminOpen || !!newSessionOpen}>
+      <ChatTitleBar
+        leading={((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
+        title={history ? (
           <ChatTitleMenu
             title={history.title || t.chat.title}
             provider={history.provider}
@@ -3956,6 +3737,9 @@ export function ChatWindow() {
             onRename={() => setRenaming(true)}
             onFork={chatUi?.fork && sessionId > 0 && !remoteUi() ? () => void forkCurrent() : undefined}
             onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
+            onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
+            onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}
+            onExportConversation={conversationExport.hasContent && !remoteUi() ? () => void conversationExport.exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
@@ -3973,83 +3757,18 @@ export function ChatWindow() {
                 </div>;
           })()
         )}
-        {/* 标题栏刻意不放运行状态徽标（实拍反馈嫌吵）：运行态已有多处冗余信号——
-            窗口标题的 ▶ 标记、对话区底部的脉冲指示条、侧栏状态点。 */}
-        {/* 标题栏不放任务进度入口（用户要求取消）：待办走底部停靠栏的「当前进度」，子任务在对话流里。 */}
-        {/* 文件/改动直达入口共用同一停靠面板；再次点击当前入口才折叠，切入口不收起。
-            远程只放行改动列表（remote.rs 模块头「例外」），「文件」入口仍隐藏。 */}
-        {!remoteUi() && cwd && (
-          <button
-            type="button"
-            className={"chat-todo-btn" + (diffOpen && !diffCollapsed && diffTab === "files" ? " is-active" : "")}
-            data-tip={t.chat.filesTab}
-            aria-label={t.chat.filesTab}
-            aria-pressed={diffOpen && !diffCollapsed && diffTab === "files"}
-            onClick={() => {
-              if (diffOpen && !diffCollapsed && diffTab === "files") { collapseDiffPanel(); return; }
-              setDiffTab("files");
-              setDiffOpen(true);
-              setDiffCollapsed(false);
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            </svg>
-          </button>
-        )}
-        {cwd && gitSummary?.isRepo && (
-          <button
-            type="button"
-            className={"chat-todo-btn chat-diff-btn" + (diffOpen && !diffCollapsed && diffTab === "changes" ? " is-active" : "")}
-            data-tip={t.chat.diff}
-            aria-label={t.chat.diff}
-            aria-pressed={diffOpen && !diffCollapsed && diffTab === "changes"}
-            onClick={() => {
-              if (diffOpen && !diffCollapsed && diffTab === "changes") { collapseDiffPanel(); return; }
-              setDiffTab("changes");
-              setDiffOpen(true);
-              setDiffCollapsed(false);
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-              <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-            </svg>
-            {gitSummary.files.length > 0 && <span className="chat-diff-btn-count">{gitSummary.files.length}</span>}
-          </button>
-        )}
-        {/* endable 口径:托管 PTY 或进程仍活着的孤儿会话(后端按 pid 杀树兜底),见 ChatHistoryDto。
-            远程不再隐藏:stop_managed_terminal 已进 /rpc 白名单(remote.rs 头注释记录了放行理由),
-            确认框在手机上走 window.confirm(transport 的 confirm_dialog 替身)。 */}
-        {/* 「标记完成」直达钮（对照 Kimi 标题栏的 markSessionDone）：做完一件事就勾掉，
-            是对话页最高频的收尾动作，不该藏在标题菜单的第二层。已完成的会话不出这颗钮，
-            「恢复进行中」仍在标题菜单里（低频）。 */}
-        {history && !history.archived && sessionId > 0 && (
-          <button
-            type="button"
-            className="chat-todo-btn"
-            data-tip={t.sticker.archive}
-            aria-label={t.sticker.archive}
-            disabled={archiving}
-            onClick={() => void toggleArchived()}
-          >
-            {/* 16px 与同排的文件/改动入口图标对齐（菜单里的同款是 13px）。 */}
-            <ArchiveIcon archived={false} size={16} />
-          </button>
-        )}
-        {history?.endable && (
-          <button type="button" className="chat-end" disabled={endingSession} onClick={() => void endSession()}>
-            {endingSession ? t.chat.terminalStopping : t.chat.endSession}
-          </button>
-        )}
-        {/* 终端页签在远程无意义(见 setView 说明):只留对话页,不给死按钮。 */}
-        {!remoteUi() && (
-          <div className="chat-view-tabs">
-            <button type="button" className={view === "chat" ? "is-active" : ""} aria-pressed={view === "chat"} onClick={() => { rememberViewPref("chat"); setView("chat"); }}>{t.chat.conversation}</button>
-            <button type="button" className={view === "terminal" ? "is-active" : ""} aria-pressed={view === "terminal"} onClick={() => { rememberViewPref("terminal"); setView("terminal"); }}>{t.chat.terminal}</button>
-          </div>
-        )}
-      </header>
+        archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
+        end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
+        cwd={cwd}
+        gitSummary={gitSummary}
+        changesOpen={diffOpen && !diffCollapsed && diffTab === "changes"}
+        panelOpen={diffOpen && !diffCollapsed}
+        terminalOn={view === "terminal"}
+        onToggleChanges={() => toggleDock("changes")}
+        onTogglePanel={() => toggleDock(null)}
+        onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
+        onError={setSendError}
+      />
       {/* 两个视图都留在树上、用 CSS 切换可见性：此前三元表达式会在每次切 tab 时
           dispose + new Terminal()，还要把整个 backlog 重传并让 xterm 重放一遍 ANSI。
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
@@ -4167,6 +3886,8 @@ export function ChatWindow() {
             {queuedShown.map((item) => (
               <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" ? " is-failed" : "")}>
                 {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
+                {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
+                {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.queuedAcceptedTip}>{t.chat.queuedAccepted}</span>}
                 {item.phase === "failed" && <>
                   <span className="chat-queued-tag is-warn" role="alert">{t.chat.echoFailed}</span>
                   <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
@@ -4212,15 +3933,6 @@ export function ChatWindow() {
       {/* 右缘用户消息导航：悬浮在滚动区之上、不随内容滚动，故放在 main 之外。 */}
       {view === "chat" && !loading && timelineItems.length > 0 && (
         <UserMessageNav items={timelineItems} scrollRef={scrollRef} />
-      )}
-      {/* 归档撤销条:归档动作本身无确认,跳转又可能把人带去别的会话——8s 内一键撤销
-          并跳回,不必去筛选菜单里翻「已归档」。 */}
-      {archiveUndo != null && (
-        <div className="chat-send-error chat-archive-undo" role="status">
-          <span>{t.chat.archivedNotice}</span>
-          <button type="button" className="chat-send-takeover" onClick={() => undoArchive({ onUndone: (ids) => resetTo(ids[0]), errorMessage: (reason) => formatBackendError(reason, t.locale) })}>{t.sticker.archiveUndo}</button>
-          <button type="button" className="chat-send-takeover" onClick={dismissUndo}>{t.chat.slashMenuDismiss}</button>
-        </div>
       )}
       {/* ── 审批/题面 overlay(C-9 彻底零位移):各类卡统一走 ApprovalCard 外壳(标题/徽章/
           正文/左右动作组一套视觉),全部渲染进这个零高度容器——容器自身不占文档流
@@ -4402,7 +4114,7 @@ export function ChatWindow() {
           （interactiveAttention 接管后此卡退场）；全无选项的纯开放问题没得点，走
           「去终端作答」。旧 reporter/降级（挂起超时）场景都落在这里。两视图都渲染：
           卡内点选排队写的按键落进终端表单，用户在终端画面里能直接看到同步效果。 */}
-      {structuredQuestions.length > 0 && !terminalAttention && !approval && !questionAnswerable && <ApprovalCard
+      {structuredQuestions.length > 0 && !terminalAttention && !questionFormSeen && !approval && !questionAnswerable && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
         title={t.chat.questionTitle}
@@ -4560,7 +4272,21 @@ export function ChatWindow() {
             </div>
           )}
           {/* sessionId=0(远程未选会话)没有可发送的对象,composer 整体不渲染。 */}
-          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "")}>
+          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
+          {(promptLong || composerExpanded) && !compactChrome && (
+            <button
+              type="button"
+              className="chat-compose-expand"
+              aria-label={composerExpanded ? t.chat.composerCollapse : t.chat.composerExpand}
+              data-tip={composerExpanded ? t.chat.composerCollapse : t.chat.composerExpand}
+              aria-pressed={composerExpanded}
+              onClick={() => { setComposerExpanded((v) => !v); promptInputRef.current?.focus(); }}
+            >
+              {composerExpanded
+                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
+                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>}
+            </button>
+          )}
         {/* T-14：外部终端连着同一 PTY 时输入无互斥——先把「可能交错」说在 composer
             上方，免得两边打字串行后用户以为是 agent 故障。只在确实可写的托管会话上挂。 */}
         {externalViewersOnline && history?.ptyManaged === true && supersededTo == null && !composerGated && (
@@ -4885,9 +4611,13 @@ export function ChatWindow() {
           }}
         />
         <div className="chat-compose-actions">
-          <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} onClick={() => void chooseAttachments()}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
+          <AddMenu
+            phone={compactChrome}
+            onFiles={() => void chooseAttachments()}
+            onCommand={(chatUi?.slash_commands?.length ?? 0) > 0 ? () => insertIntoPrompt("/", true) : undefined}
+            commandBlocked={prompt.trim().length > 0}
+            onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
+          />
           {(() => {
             const states = history?.agentModes ?? [];
             const controls = new Map(modeControls.map((control) => [control.dimension, control]));
@@ -5119,10 +4849,10 @@ export function ChatWindow() {
               />
             )}
           </div>}
-          {/* 「Enter ↵」提示已按用户要求取消(占位提示里写着 Enter 发送,按钮旁再标一遍
-              是重复)。空元素本身不能省——它的 margin-left:auto 负责把圆钮顶到最右。
+          {/* 「Enter ↵」提示已按用户要求取消(占位提示里写着 Enter 发送,按钮旁再标一遍是重复)。
+              它留下的空占位也去掉了：夹在模型钮与发送钮之间，flex gap 两边各算一次，两钮隔开
+              16px 还多（用户实拍「这个间隔很奇怪」）。圆钮靠右改由 CSS 负责（见 .chat-compose-actions）。
               Ctrl+Enter=打断并发送的说明挂在发送圆钮的 data-tip 上(回合在跑且有草稿时)。 */}
-          <span className="chat-compose-hint" />
           {/* 触屏没有 Ctrl+Enter:有草稿时主圆钮已是发送,回合还在跑的话停止另给一颗——
               否则手机上必须先清空输入框才能叫停。桌面有快捷键与空框停止,不渲染。 */}
           {remoteUi() && canInterrupt && hasDraft && (
@@ -5252,21 +4982,12 @@ export function ChatWindow() {
             role="separator"
             aria-orientation="vertical"
             aria-label={t.chat.diffResize}
-            // separator 是 WAI-ARIA 的可聚焦部件：只给鼠标拖拽等于键盘用户调不了宽度。
-            // ← 变宽、→ 变窄（柄在面板左侧，与拖拽方向一致），步进 24px。
+            // 可聚焦：← 变宽、→ 变窄（见 useDiffPanelWidth）。
             tabIndex={0}
-            aria-valuenow={Math.round(diffWidth)}
+            aria-valuenow={Math.round(diffResize.width)}
             aria-valuemin={DIFF_PANEL_MIN_WIDTH}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-              event.preventDefault();
-              const body = event.currentTarget.parentElement;
-              const maxWidth = body ? Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - 360) : Number.MAX_SAFE_INTEGER;
-              const next = Math.min(Math.max(diffWidth + (event.key === "ArrowLeft" ? 24 : -24), DIFF_PANEL_MIN_WIDTH), maxWidth);
-              setDiffWidth(next);
-              localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(next)));
-            }}
-            onPointerDown={startDiffResize}
+            onKeyDown={diffResize.onKeyDown}
+            onPointerDown={diffResize.onPointerDown}
           />}
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
@@ -5274,7 +4995,7 @@ export function ChatWindow() {
           <GitDiffView
             cwd={cwd}
             summary={gitSummary}
-            width={diffWidth}
+            width={diffResize.width}
             collapsed={diffCollapsed}
             // 手机屏放不下并排两栏：远程恒按最大化铺满，收起即回到对话。
             maximized={diffMaximized || remoteUi()}
@@ -5311,7 +5032,7 @@ export function ChatWindow() {
         <QuickSwitcher
           activeId={sessionId}
           commands={paletteCommands}
-          onPick={(id) => resetTo(id)}
+          onPick={selectSession}
           onCommand={runPaletteCommand}
           onClose={() => setSwitcherOpen(false)}
         />
