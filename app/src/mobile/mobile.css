@@ -93,6 +93,17 @@ body.remote-ui .chat-window.is-remote-compact .chat-main {
   border-radius: 0;
   box-shadow: none;
 }
+/* 改动页在手机上是最大化的停靠面板，桌面那套「顶替主列、左上角收圆角 + 上左细线」跟着命中，
+   整屏页面左上角平白一个圆角（2026-11 手机实拍）。和上面的 .chat-main 一样拆掉外框。 */
+/* 选择器带上 .chat-body.is-diff-max：桌面那条是 (0,5,0)，不带压不过。 */
+body.remote-ui .chat-window.is-remote-compact .chat-diff-panel,
+body.remote-ui .chat-window.is-remote-compact .chat-body.is-diff-max .chat-diff-panel {
+  border: 0;
+  border-radius: 0;
+}
+/* 标题栏放不下完整分支名：长分支把会话标题挤得只剩两个点（2026-11 手机实拍）。
+   手机上分支胶囊只留图标和改动数，分支名在点开的改动页头行里有。 */
+body.remote-ui .chat-window.is-remote-compact .tb-git-branch { display: none; }
 
 /* 输入框工具行在 390px 宽度下挤不下:加号、模型、权限、用量、停止、发送排成一行,
    模型名与权限钮曾被挤得点不准(2026-10 手机截图)。用量详情现已全局收进 tooltip,
