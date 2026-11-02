@@ -50,6 +50,28 @@ pub(crate) async fn rename_session(
     .map_err(|e| e.to_string())?
 }
 
+/// 侧栏拖拽排序：把会话挪到 `above_id` 正下方（或没有 above 时 `below_id` 正上方）。
+/// 只有桌面侧栏调用；手机页只按这个顺序显示，不开放写入口（远程 /rpc 白名单不含它）。
+#[tauri::command]
+pub(crate) async fn move_session_rank(
+    app: tauri::AppHandle,
+    state: State<'_, super::AppState>,
+    session_id: i64,
+    above_id: Option<i64>,
+    below_id: Option<i64>,
+) -> Result<(), String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        super::open_store(&db_path)?
+            .move_session_rank(session_id, above_id, below_id)
+            .map_err(|error| error.to_string())?;
+        super::watch::emit_board_changed(&app, "move_session_rank");
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn set_archived(
     app: tauri::AppHandle,

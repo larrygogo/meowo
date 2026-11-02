@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { confirmStopSession, getLiveSessionsPage, getSessionLineage, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LineageEntry, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { moveNextTo, useSessionDrag } from "./sidebarDrag";
+import { confirmStopSession, getLiveSessionsPage, getSessionLineage, moveSessionRank, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LineageEntry, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
@@ -36,10 +37,12 @@ const FOLDED_KEY = "meowo-chat-sidebar-folded-dirs";
 /** 分组方式（Claude Code 侧栏 Group by 同款）：不分组 / 按目录 / 按日期 / 按状态。 */
 type GroupMode = "none" | "dir" | "date" | "state";
 
-/** 排序方式：最近活跃（默认 = 后端 connected-first + 时间倒序原样透传）/ 创建时间 / 名称。
- *  非默认档在前端排**已加载的这一页**：排序不同于筛选，翻页不完整只影响顺序的全局性，
- *  不会让会话消失；改后端排序则要连 SQL 游标一起换口径，不值当。 */
-type SortMode = "recent" | "created" | "name";
+/** 排序方式（对照 Kimi Code 侧栏：手动排序 / 按最近活动）：
+ *  - manual：手动排序，默认。后端按手动键分页，没拖过的按创建时间倒序，新会话在最上面；
+ *    桌面上可以拖着调位置（见 sidebarDrag），手机只按这个顺序显示。
+ *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
+ *  - name：按名称，前端排**已加载的这一页**。 */
+type SortMode = "manual" | "recent" | "name";
 
 /** 无 cwd 的会话归到同一组（后端 cwd 可空:ping 型/早期数据）。以 NUL 开头，不可能与路径撞车。 */
 const NO_DIR = String.fromCharCode(0) + "no-dir";
@@ -233,7 +236,7 @@ const SF_ICON_PATHS: Record<GroupMode | SortMode | "dir-filter", string> = {
   date: "M5 6h14v13H5zM5 10h14M9 4v4M15 4v4",
   state: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3",
   recent: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 8v4l2.5 2",
-  created: "M5 5h14v14H5zM12 9v6M9 12h6",
+  manual: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
   name: "M4 18l3.5-10L11 18M5.2 15h4.6M14 7h6l-6 10h6",
   "dir-filter": "M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z",
 };
@@ -331,7 +334,7 @@ function SidebarFilterMenu({ dirValue, dirOptions, groupMode, groupLabels, sortM
                 );
               })}
               <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
-              {(["recent", "created", "name"] as const).map((mode) => {
+              {(["manual", "recent", "name"] as const).map((mode) => {
                 const selected = sortMode === mode;
                 return (
                   <button
@@ -523,7 +526,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 新会话出现在顶上，之后位置不动。
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const stored = localStorage.getItem(SORT_MODE_KEY);
-    return stored === "recent" || stored === "name" ? stored : "created";
+    // 旧版的「创建时间」并入手动排序：没拖过时两者顺序完全一样。
+    return stored === "recent" || stored === "name" ? stored : "manual";
   });
   // 「创建时间」交给后端分页（后端按 started_at 倒序扫），否则只能重排已加载的一页：
   // 新建但一直没动的会话可能根本不在第一页。load 是稳定回调，读 ref。
@@ -570,12 +574,12 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     // 靠滚动翻页找会话的路是断的,此前只能退回看板去搜。
     const q = searchRef.current.trim() || null;
     const arch = archivedViewRef.current;
-    const order = sortModeRef.current === "created" ? "created" : "activity";
+    const order = sortModeRef.current === "manual" ? "manual" : "activity";
     return getLiveSessionsPage(arch ? "archived" : "all", q, null, lim, dir, false, false, order)
       .then((page) => {
         if (!mountedRef.current) return;
         // 排序切换期间发出的旧请求：装的是另一种顺序的首页，丢弃。
-        if ((sortModeRef.current === "created" ? "created" : "activity") !== order) return;
+        if ((sortModeRef.current === "manual" ? "manual" : "activity") !== order) return;
         // 切目录/改搜索词/切归档视图期间发出的旧请求回来了:它装的是旧条件的会话,
         // 原样落盘会让列表与筛选状态对不上。丢弃。
         if (dirFilterRef.current !== dir) return;
@@ -703,11 +707,11 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     void loadRef.current("refresh");
   }, [dirFilter]);
 
-  // 在「创建时间」与其它排序之间切换 = 后端换了扫描顺序,首页内容可能完全不同:回到
-  // 首页重取(与切目录同一套重置语义)。最近活跃 ↔ 按名称只是前端重排,不必重取。
-  const prevOrderRef = useRef(sortMode === "created");
+  // 在「手动排序」与其它排序之间切换 = 后端换了扫描顺序,首页内容可能完全不同:回到
+  // 首页重取(与切目录同一套重置语义)。最近活动 ↔ 按名称只是前端重排,不必重取。
+  const prevOrderRef = useRef(sortMode === "manual");
   useEffect(() => {
-    const byCreated = sortMode === "created";
+    const byCreated = sortMode === "manual";
     if (prevOrderRef.current === byCreated) return;
     prevOrderRef.current = byCreated;
     prevLimitRef.current = PAGE_LIMIT;
@@ -933,12 +937,11 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 分组开着时排序发生在**分组之前**:组内置顶在前,而组序由「组内第一条的位置」派生,
   // 于是含置顶会话的目录也跟着上浮——两套顺序不打架。
   const ordered = useMemo(() => {
-    if (!sessions || (starred.size === 0 && sortMode === "recent")) return sessions;
+    if (!sessions || (starred.size === 0 && sortMode !== "name")) return sessions;
     const rank = (item: LiveSession) => (starred.has(item.session.cc_session_id) ? 0 : 1);
     return [...sessions].sort((a, b) => {
       const star = rank(a) - rank(b);
       if (star !== 0) return star;
-      if (sortMode === "created") return b.session.started_at - a.session.started_at;
       if (sortMode === "name") {
         // 未命名会话沉底（空串与 DB sentinel「(未命名会话)」同口径，见 EditorInput 的
         // initial）：一排未命名插在人起的名字中间只会打断扫读。
@@ -957,6 +960,37 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     if (groupMode === "date") return groupByDate(ordered, t);
     return groupByState(ordered, t, approvalAwaitingIds);
   }, [groupMode, ordered, t, approvalAwaitingIds]);
+  // 拖拽的桶：同一分组 + 同为置顶 / 非置顶（理由见 sidebarDrag）。桶内顺序取组的全部条目
+  // （含收起的未运行会话），落点邻居才和后端的全局顺序对得上。
+  const dragBuckets = useMemo(() => {
+    const bucketOf = new Map<number, string>();
+    const lists = new Map<string, number[]>();
+    const lanes = groups ? groups.map((group) => ({ key: group.key, items: group.items })) : [{ key: "flat", items: ordered ?? [] }];
+    for (const lane of lanes) {
+      for (const item of lane.items) {
+        const bucket = `${lane.key}\u0000${starred.has(item.session.cc_session_id) ? 1 : 0}`;
+        bucketOf.set(item.session.id, bucket);
+        const list = lists.get(bucket) ?? [];
+        list.push(item.session.id);
+        lists.set(bucket, list);
+      }
+    }
+    return { bucketOf, lists };
+  }, [groups, ordered, starred]);
+  // 拖拽（手动排序、桌面、非多选态）：落下即本地先挪，再写后端；写失败重取回真实顺序。
+  const drag = useSessionDrag({
+    enabled: sortMode === "manual" && !remoteUi() && selectedIds.size === 0,
+    bucketOf: (id) => dragBuckets.bucketOf.get(id) ?? null,
+    listOf: (bucket) => dragBuckets.lists.get(bucket) ?? [],
+    onMove: (id, above, below) => {
+      setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
+      moveSessionRank(id, above, below).catch(() => {
+        if (!mountedRef.current) return;
+        setActionError(t.chat.sidebarActionFailed);
+        void loadRef.current("refresh");
+      });
+    },
+  });
 
   // 显示顺序镜像:分组模式的组序由 ordered 派生、组内亦是 ordered 序,写 ordered 即可。
   // 卸载清空——收起的侧栏没有「用户看到的顺序」,父层归档跳转退回后端现查。
@@ -1105,12 +1139,19 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
         key={item.session.id}
         role="button"
         tabIndex={item.session.id === tabbableId ? 0 : -1}
-        className={"chat-sidebar-item" + (item.session.id === activeId ? " is-active" : "") + (selectedIds.has(item.session.id) ? " is-checked" : "")}
+        data-session-id={item.session.id}
+        className={"chat-sidebar-item" + (item.session.id === activeId ? " is-active" : "") + (selectedIds.has(item.session.id) ? " is-checked" : "")
+          + (drag.dragId === item.session.id ? " is-dragging" : "")
+          + (drag.dropAt?.id === item.session.id && drag.dragId !== item.session.id ? (drag.dropAt.after ? " is-drop-after" : " is-drop-before") : "")}
         aria-current={item.session.id === activeId ? "true" : undefined}
         // 多选态是切换语义，用 aria-pressed：aria-selected 对 role=button 无效（读屏收不到）。
         aria-pressed={selectedIds.size > 0 ? selectedIds.has(item.session.id) : undefined}
         // 预取：触屏按下即读（到点击生效还有一百多毫秒），鼠标悬停 150ms 再读。多选态点行是勾选，不预取。
-        onPointerDown={() => { if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id); }}
+        onPointerDown={(event) => {
+          if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id);
+          // 手动排序下按住拖动即调位置（行内按钮、编辑框不起拖）。
+          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea")) drag.onPointerDown(event, item.session.id);
+        }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse" || !onPrefetch) return;
           window.clearTimeout(prefetchTimerRef.current);
@@ -1118,6 +1159,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
         }}
         onPointerLeave={() => window.clearTimeout(prefetchTimerRef.current)}
         onClick={(event) => {
+          // 刚拖完松手的那次 click 不算点击，不然拖完会顺手打开会话。
+          if (drag.swallowClick()) return;
           // 编辑态下点条目只用于收起编辑器，不切会话（输入框自身已 stopPropagation）。
           if (editing || noting) { setEditingId(null); setNotingId(null); return; }
           // Ctrl/Cmd+点击 = 进入多选/增删(批量标记完成)。多选态下**普通点击整行也是增删**,
@@ -1357,7 +1400,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           groupMode={groupMode}
           groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir, date: t.chat.groupByDate, state: t.chat.groupByState }}
           sortMode={sortMode}
-          sortLabels={{ recent: t.chat.sortRecent, created: t.chat.sortCreated, name: t.chat.sortName }}
+          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent, name: t.chat.sortName }}
           onDir={setDirFilter}
           onGroup={changeGroupMode}
           onSort={changeSortMode}

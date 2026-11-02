@@ -764,7 +764,8 @@ export const zh = {
     groupByDate: "按日期分组",
     groupByState: "按状态分组",
     sortRecent: "按最近活动",
-    sortCreated: "按创建时间",
+    // 手动排序：没拖过时就是创建时间倒序（新会话在最上面），桌面可拖动调整。
+    sortManual: "手动排序",
     sortName: "按名称",
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     sortPartialNote: "仅排序已加载的会话",

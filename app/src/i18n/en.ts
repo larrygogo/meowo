@@ -700,7 +700,7 @@ export const en: Dict = {
     groupByDate: "Group by date",
     groupByState: "Group by status",
     sortRecent: "Recent activity",
-    sortCreated: "Date created",
+    sortManual: "Manual",
     sortName: "By name",
     sortPartialNote: "Sorts loaded sessions only",
     dateToday: "Today",

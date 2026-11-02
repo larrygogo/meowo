@@ -205,7 +205,8 @@ impl Store {
     ///     再按那时的形状建, 比迁就一张三年没用过的空壳划算。
     ///     与 v12 的 `work_groups` 不同——那张表是**刻意保留**的(降版本要再做一版迁移、
     ///     空表零成本), 勿一并删。
-    const USER_VERSION: i64 = 17;
+    /// v18: sessions 加 manual_rank 列（侧栏「手动排序」拖出来的位置）。
+    const USER_VERSION: i64 = 18;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -220,7 +221,7 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 18] = [
+        const ALTERS: [&str; 19] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
@@ -249,6 +250,8 @@ impl Store {
             "ALTER TABLE todos ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
             // 思考程度（v17）：老库补齐后全是 NULL = 未上报，档位控件不显示。
             "ALTER TABLE session_context ADD COLUMN effort TEXT",
+            // 手动排序位置（v18）：老库补齐后全是 NULL = 没拖过，按创建时间排，正是我们要的。
+            "ALTER TABLE sessions ADD COLUMN manual_rank INTEGER",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {

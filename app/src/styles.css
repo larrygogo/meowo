@@ -3912,6 +3912,11 @@ select.ns-input {
 .sf-opt > .dd-label { flex: 1 1 auto; }
 .sf-opt .dd-check { margin-left: auto; color: var(--cc-text-dim); }
 .sf-ico { flex: 0 0 auto; color: var(--cc-text-faint); }
+/* 手动排序的拖拽（sidebarDrag）：被拖的那条变淡，落点画一条强调色横线（上沿 / 下沿）。 */
+.chat-sidebar-item.is-dragging { opacity: .45; }
+.chat-sidebar-item.is-drop-before { box-shadow: inset 0 2px 0 var(--cc-accent); }
+.chat-sidebar-item.is-drop-after { box-shadow: inset 0 -2px 0 var(--cc-accent); }
+body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !important; user-select: none; }
 .sf-opt:hover .sf-ico { color: var(--cc-text-dim); }
 .sf-row > .dd-label { flex: 0 0 auto; }
 .sf-row > .sf-val { margin-left: auto; }

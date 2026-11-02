@@ -39,6 +39,22 @@ pub struct LiveCandidate {
     pub cwd: Option<String>,
 }
 
+/// 列表的排序方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListOrder {
+    /// 最近活跃倒序（看板）。
+    Activity,
+    /// 创建时间倒序。
+    Created,
+    /// 手动排序（侧栏拖拽）：键为 [`MANUAL_KEY`]，没拖过的按创建时间。
+    Manual,
+}
+
+/// 手动排序的键：拖过的取 manual_rank，没拖过的取 started_at × 1024。乘 1024 是给相邻两条之间
+/// 留插入空隙：拖到两条中间取中值，整数中值能连续对半十来次，空隙用尽时由
+/// [`Store::move_session_rank`] 整体挪开。没拖过时手动顺序等于创建时间倒序。
+pub const MANUAL_KEY: &str = "COALESCE(s.manual_rank, s.started_at * 1024)";
+
 /// 当前活跃区的一张会话卡。
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -87,6 +103,10 @@ pub struct LiveSession {
     ///（点开可回看链上历史各段）；None = 普通会话。
     #[cfg_attr(test, ts(type = "number | null"))]
     pub predecessor_id: Option<i64>,
+    /// 手动排序键（[`MANUAL_KEY`]）：只给分页游标用，不下发前端。
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub manual_key: i64,
 }
 
 /// 转义 SQL LIKE 通配符，使用户输入里的 `%` `_` `\` 作字面量匹配（配合 `LIKE … ESCAPE '\'`）。
@@ -117,14 +137,15 @@ fn build_live_sessions_sql(
     cwd: Option<&str>,
     before_last_event_at: Option<i64>,
     before_id: Option<i64>,
-    by_created: bool,
+    order: ListOrder,
     limit: usize,
 ) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
     const SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
             p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
             sc.used_pct, sc.window_size, sc.model, sn.note,
-            s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id
+            s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id,
+            COALESCE(s.manual_rank, s.started_at * 1024)
      FROM sessions s
      JOIN projects p ON p.id = s.project_id
      -- 关联子查询取每会话最新一张 task：ux_tasks_session 建立前的旧库可能一会话
@@ -186,14 +207,17 @@ fn build_live_sessions_sql(
     }
 
     // waiting 等最久优先（ASC），游标取「更大」的；其它 DESC，游标取「更小」的。
+    // waiting tab 恒按等待时长排，忽略 order。
     let asc = matches!(filter, Some("waiting"));
-    let by_created = by_created && !asc;
+    let order = if asc { ListOrder::Activity } else { order };
     if let (Some(ts), Some(id)) = (before_last_event_at, before_id) {
         // 整体括起：AND 优先级高于 OR，不加括号第二个 OR 分支会绕过 filter（4035ec5 回归）。
         if asc {
             conditions.push("((s.last_event_at > ?) OR (s.last_event_at = ? AND s.id > ?))".into());
-        } else if by_created {
+        } else if order == ListOrder::Created {
             conditions.push("((s.started_at < ?) OR (s.started_at = ? AND s.id < ?))".into());
+        } else if order == ListOrder::Manual {
+            conditions.push(format!("(({MANUAL_KEY} < ?) OR ({MANUAL_KEY} = ? AND s.id < ?))"));
         } else {
             conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
         }
@@ -207,14 +231,16 @@ fn build_live_sessions_sql(
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
-    let order = if asc {
-        "s.last_event_at ASC, s.id ASC"
-    } else if by_created {
-        "s.started_at DESC, s.id DESC"
+    let order_by = if asc {
+        "s.last_event_at ASC, s.id ASC".to_string()
     } else {
-        "s.last_event_at DESC, s.id DESC"
+        match order {
+            ListOrder::Created => "s.started_at DESC, s.id DESC".to_string(),
+            ListOrder::Manual => format!("{MANUAL_KEY} DESC, s.id DESC"),
+            ListOrder::Activity => "s.last_event_at DESC, s.id DESC".to_string(),
+        }
     };
-    let sql = format!("{} {} ORDER BY {} LIMIT ?", SELECT, where_clause, order);
+    let sql = format!("{} {} ORDER BY {} LIMIT ?", SELECT, where_clause, order_by);
     params.push(Value::Integer(limit as i64));
 
     (sql, params)
@@ -283,7 +309,7 @@ impl Store {
         before_id: Option<i64>,
         limit: usize,
     ) -> Result<Vec<LiveSession>, StoreError> {
-        self.live_sessions_scan(filter, search, cwd, before_last_event_at, before_id, false, limit)
+        self.live_sessions_scan(filter, search, cwd, before_last_event_at, before_id, ListOrder::Activity, limit)
     }
 
     /// [`Self::live_sessions_filtered`] 再多一个排序开关:`by_created` 时按创建时间倒序,
@@ -296,11 +322,11 @@ impl Store {
         cwd: Option<&str>,
         before_key: Option<i64>,
         before_id: Option<i64>,
-        by_created: bool,
+        order: ListOrder,
         limit: usize,
     ) -> Result<Vec<LiveSession>, StoreError> {
         let (sql, params) =
-            build_live_sessions_sql(filter, search, cwd, before_key, before_id, by_created, limit);
+            build_live_sessions_sql(filter, search, cwd, before_key, before_id, order, limit);
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(params.iter()), |r| {
@@ -332,6 +358,7 @@ impl Store {
                 let provider: Option<String> = r.get(23)?;
                 let profile: Option<String> = r.get(24)?;
                 let predecessor_id: Option<i64> = r.get(25)?;
+                let manual_key: i64 = r.get(26)?;
                 Ok((
                     session,
                     project_name,
@@ -353,6 +380,7 @@ impl Store {
                     provider,
                     profile,
                     predecessor_id,
+                    manual_key,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -382,6 +410,7 @@ impl Store {
             provider,
             profile,
             predecessor_id,
+            manual_key,
         ) in rows
         {
             let todos = task_id
@@ -422,9 +451,70 @@ impl Store {
                     .unwrap_or_else(|| crate::DEFAULT_PROVIDER.to_string()),
                 profile,
                 predecessor_id,
+                manual_key,
             });
         }
         Ok(out)
+    }
+
+    /// 侧栏拖拽：把会话挪到 `above` 的正下方，或（没有 above 时）`below` 的正上方。
+    ///
+    /// 位置取新邻居两键的中值，邻居按**全库**的手动键找（不限当前 tab / 筛选）：只要全局顺序
+    /// 对，任何子集里看到的相对顺序都对。中值挤不下（两键相邻）时，把那一侧的会话整体挪开
+    /// 一段再插——一条 UPDATE，罕见。两个都没给（列表里只剩它自己）不动。
+    pub fn move_session_rank(&self, id: i64, above: Option<i64>, below: Option<i64>) -> Result<(), StoreError> {
+        // 挪到最上 / 最下、或空隙用尽整体挪开时的步长：1024 = 1ms 的创建时间。不能大：拖到顶的
+        // 会话只该比原来的第一条高一点，之后新建的会话照样出现在它上面。
+        const GAP: i64 = 1024;
+        const KEY: &str = "COALESCE(manual_rank, started_at * 1024)";
+        let tx = self.conn.unchecked_transaction()?;
+        let key_of = |sid: i64| -> Result<i64, StoreError> {
+            Ok(tx.query_row(&format!("SELECT {KEY} FROM sessions WHERE id = ?1"), [sid], |r| r.get(0))?)
+        };
+        let rank = if let Some(above) = above.filter(|&a| a != id) {
+            let hi = key_of(above)?;
+            let lo: Option<i64> = tx.query_row(
+                &format!("SELECT MAX({KEY}) FROM sessions WHERE {KEY} < ?1 AND id != ?2"),
+                rusqlite::params![hi, id],
+                |r| r.get(0),
+            )?;
+            match lo {
+                Some(lo) if hi - lo >= 2 => lo + (hi - lo) / 2,
+                Some(lo) => {
+                    tx.execute(
+                        &format!("UPDATE sessions SET manual_rank = {KEY} - ?1 WHERE {KEY} <= ?2 AND id != ?3"),
+                        rusqlite::params![GAP, lo, id],
+                    )?;
+                    let lo = lo - GAP;
+                    lo + (hi - lo) / 2
+                }
+                None => hi - GAP,
+            }
+        } else if let Some(below) = below.filter(|&b| b != id) {
+            let lo = key_of(below)?;
+            let hi: Option<i64> = tx.query_row(
+                &format!("SELECT MIN({KEY}) FROM sessions WHERE {KEY} > ?1 AND id != ?2"),
+                rusqlite::params![lo, id],
+                |r| r.get(0),
+            )?;
+            match hi {
+                Some(hi) if hi - lo >= 2 => lo + (hi - lo) / 2,
+                Some(hi) => {
+                    tx.execute(
+                        &format!("UPDATE sessions SET manual_rank = {KEY} + ?1 WHERE {KEY} >= ?2 AND id != ?3"),
+                        rusqlite::params![GAP, hi, id],
+                    )?;
+                    let hi = hi + GAP;
+                    lo + (hi - lo) / 2
+                }
+                None => lo + GAP,
+            }
+        } else {
+            return Ok(());
+        };
+        tx.execute("UPDATE sessions SET manual_rank = ?1 WHERE id = ?2", rusqlite::params![rank, id])?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// 贴纸角标里**纯 SQL 数得出**的两个总数：`(total, archived)`。
@@ -584,7 +674,7 @@ mod tests {
     /// 对**真正执行的那条 SQL**取查询计划。用 `build_live_sessions_sql` 而非抄写的
     /// 字面量:谓词一旦改写到用不上索引,这里立刻红,而不是等大库上用户报「越滚越卡」。
     fn plan(store: &Store, filter: &str, search: Option<&str>) -> String {
-        let (sql, params) = build_live_sessions_sql(Some(filter), search, None, None, None, false, 50);
+        let (sql, params) = build_live_sessions_sql(Some(filter), search, None, None, None, super::ListOrder::Activity, 50);
         let mut stmt = store
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
@@ -623,7 +713,7 @@ mod tests {
     fn paging_cursor_keeps_the_index_order() {
         let store = Store::open_in_memory().unwrap();
         let (sql, params) =
-            build_live_sessions_sql(Some("all"), None, None, Some(1_700_000_000), Some(42), false, 50);
+            build_live_sessions_sql(Some("all"), None, None, Some(1_700_000_000), Some(42), super::ListOrder::Activity, 50);
         let mut stmt = store
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))

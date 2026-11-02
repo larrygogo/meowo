@@ -6,5 +6,5 @@ pub mod store;
 
 pub use error::StoreError;
 pub use models::*;
-pub use query::LiveSession;
+pub use query::{ListOrder, LiveSession};
 pub use store::Store;

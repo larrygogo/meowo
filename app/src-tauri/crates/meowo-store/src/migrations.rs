@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- 附加目录（JSON 字符串数组）：一个会话经 agent 的附加目录 flag（claude --add-dir）
     -- 访问的其它仓。resume/接管重启时回放——不回放的话恢复的进程就丢了这些仓的访问权。
     -- NULL = 单目录会话。旧库由 migrate 的 ALTER 补齐。
-    extra_dirs     TEXT
+    extra_dirs     TEXT,
+    -- 侧栏「手动排序」拖出来的位置（v18）。NULL = 没拖过，排序键退回 started_at * 1024
+    -- （见 query.rs MANUAL_KEY）：没拖过时手动顺序就是创建时间倒序，新会话出现在最上面。
+    manual_rank    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

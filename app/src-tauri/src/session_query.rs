@@ -406,10 +406,15 @@ pub(crate) async fn get_live_sessions_page(
     // 是否附带「正在启动」占位卡(pending PTY:已起 PTY、CLI 还没写库的新会话,负 id)。
     // 同样只有贴纸看板传 true——占位卡不可点、没有会话详情,其它消费方给了也是死路。
     include_pending: Option<bool>,
-    // 排序:"created" = 按创建时间倒序分页(对话侧栏默认);其余/缺省 = 按最近活跃。
+    // 排序:"manual" = 手动排序(对话侧栏默认,没拖过等于创建时间倒序);"created" = 按创建
+    // 时间倒序(旧手机页仍会传);其余/缺省 = 按最近活跃。
     order: Option<String>,
 ) -> Result<LiveSessionsPage, String> {
-    let by_created = order.as_deref() == Some("created");
+    let order = match order.as_deref() {
+        Some("manual") => meowo_store::ListOrder::Manual,
+        Some("created") => meowo_store::ListOrder::Created,
+        _ => meowo_store::ListOrder::Activity,
+    };
     let db_path = state.db_path.clone();
     let tx_cache = state.tx_cache.clone();
     // 采样进 spawn_blocking,理由同 get_live_sessions_counts。
@@ -440,7 +445,7 @@ pub(crate) async fn get_live_sessions_page(
                 before_last_event_at,
                 before_id,
                 limit,
-                by_created,
+                order,
             },
         )?;
         // 「正在启动」占位卡只进首页(无游标):占位不属于 SQL 扫描,翻页游标语义不变。
@@ -601,6 +606,7 @@ fn pending_placeholder_item(
             provider: info.provider.clone(),
             profile: None,
             predecessor_id: None,
+            manual_key: info.started_at.saturating_mul(1024),
         },
         connected: true,
         pty_managed: true,
@@ -775,8 +781,8 @@ pub(crate) struct PageReq {
     pub(crate) before_last_event_at: Option<i64>,
     pub(crate) before_id: Option<i64>,
     pub(crate) limit: usize,
-    /// 按创建时间倒序分页（对话侧栏的默认排序），见 build_live_sessions_sql。
-    pub(crate) by_created: bool,
+    /// 排序方式（对话侧栏默认手动排序），见 build_live_sessions_sql。
+    pub(crate) order: meowo_store::ListOrder,
 }
 
 /// 单页条数上限。limit 是 IPC/远程桥入参，不钳制时超大值会让 `Vec::with_capacity`
@@ -845,14 +851,16 @@ pub(crate) fn live_sessions_blocking(
     let mut items: Vec<LiveItem> = Vec::with_capacity(page.limit);
     // Some = 页满/到达扫描上限时的续扫位置；None = 已扫到底。
     let mut next_cursor: Option<PageCursor> = None;
-    // waiting tab 恒按等待时长排（store 里同样忽略 by_created），游标位要跟 SQL 的排序键一致。
-    let by_created = page.by_created && filter != "waiting";
-    let sort_key = |session: &LiveSession| {
-        if by_created { session.session.started_at } else { session.session.last_event_at }
+    // waiting tab 恒按等待时长排（store 里同样忽略 order），游标位要跟 SQL 的排序键一致。
+    let order = if filter == "waiting" { meowo_store::ListOrder::Activity } else { page.order };
+    let sort_key = |session: &LiveSession| match order {
+        meowo_store::ListOrder::Created => session.session.started_at,
+        meowo_store::ListOrder::Manual => session.manual_key,
+        meowo_store::ListOrder::Activity => session.session.last_event_at,
     };
     'fill: loop {
         let sessions = store
-            .live_sessions_scan(Some(filter), search, cwd, cursor_ts, cursor_id, by_created, batch_limit)
+            .live_sessions_scan(Some(filter), search, cwd, cursor_ts, cursor_id, order, batch_limit)
             .map_err(|e| e.to_string())?;
         let raw_len = sessions.len();
         let batch_tail = sessions
@@ -934,9 +942,9 @@ pub(crate) fn live_sessions_blocking(
         cursor_ts = Some(timestamp);
         cursor_id = Some(id);
     }
-    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。按创建时间排时不做：
-    // 要的就是位置不随运行状态变（用户反馈列表顶部一直在跳）。
-    if !by_created {
+    // 稳定排序：已连接的顶到最前，同组内保持 SQL 的时间倒序。按创建时间 / 手动排序时不做：
+    // 要的就是位置不随运行状态变（用户反馈列表顶部一直在跳），手动拖的位置更不能被挤走。
+    if order == meowo_store::ListOrder::Activity {
         items.sort_by_key(|item| std::cmp::Reverse(item.connected));
     }
     // 本页有归属自定义账号的会话才读一次 settings——全默认账号（没建过 profile 的用户）
@@ -1343,7 +1351,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 60,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();
@@ -1425,7 +1433,7 @@ mod tests {
                     before_last_event_at: cursor.map(|c| c.0),
                     before_id: cursor.map(|c| c.1),
                     limit: PAGE,
-                    by_created: false,
+                    order: meowo_store::ListOrder::Activity,
                 },
             )
             .unwrap();
@@ -1496,7 +1504,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: usize::MAX,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();
@@ -1553,7 +1561,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: total as usize + 100,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap()
@@ -1693,7 +1701,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 10,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();

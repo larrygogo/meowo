@@ -76,7 +76,7 @@ use managed_terminal::{
 };
 #[cfg(test)]
 use session_command::is_safe_id;
-use session_command::{rename_session, set_archived, set_session_note};
+use session_command::{move_session_rank, rename_session, set_archived, set_session_note};
 use session_command::{session_launch_selections, set_session_launch_selection};
 use session_query::{get_live_sessions_counts, get_live_sessions_page, recent_cwds};
 #[cfg(test)]
@@ -1343,6 +1343,7 @@ pub fn run() {
             reveal_path_in_file_manager,
             rename_session,
             set_archived,
+            move_session_rank,
             set_session_note,
             get_autostart,
             set_autostart,
@@ -1984,7 +1985,7 @@ mod tests {
                 before_last_event_at: None,
                 before_id: None,
                 limit: 2,
-                by_created: false,
+                order: meowo_store::ListOrder::Activity,
             },
         )
         .unwrap();

@@ -560,18 +560,20 @@ describe("ChatSidebar", () => {
     expect(screen.queryByText(/已选/)).toBeNull();
   });
 
-  /** 排序入口与目录/分组同在筛选弹层（第三行）。默认「创建时间」：在跑的会话不因新事件
-   *  换位置（用户反馈列表顶部一直乱动）；「按名称」在前端重排已加载页，未命名会话沉底，
-   *  选择与分组一样落盘。 */
-  it("排序:默认按创建时间,按名称重排列表,未命名沉底,选择落盘", async () => {
-    invoke.mockImplementation((command: string) => {
+  /** 排序入口在视图与排序弹层。默认「手动排序」：后端按手动键分页（没拖过 = 创建时间倒序），
+   *  前端原样采用，在跑的会话不因新事件换位置（用户反馈列表顶部一直乱动）；「按名称」在前端
+   *  重排已加载页，未命名会话沉底，选择与分组一样落盘。 */
+  it("排序:默认手动排序交给后端,按名称重排列表,未命名沉底,选择落盘", async () => {
+    const orders: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: { order?: string }) => {
       if (command === "recent_cwds") return Promise.resolve([]);
       if (command !== "get_live_sessions_page") return Promise.resolve();
+      orders.push(args?.order);
       return Promise.resolve([
-        // 后端按最近活跃给序；创建时间是 alpha 最新。
-        session(1, "beta", { session: { id: 1, cc_session_id: "cc-1", status: "ended", started_at: 100 } } as Partial<LiveSession>),
+        // 后端给的手动顺序：alpha 最新建。
         session(2, "alpha", { session: { id: 2, cc_session_id: "cc-2", status: "ended", started_at: 300 } } as Partial<LiveSession>),
         session(3, "", { session: { id: 3, cc_session_id: "cc-3", status: "ended", started_at: 200 } } as Partial<LiveSession>),
+        session(1, "beta", { session: { id: 1, cc_session_id: "cc-1", status: "ended", started_at: 100 } } as Partial<LiveSession>),
       ]);
     });
     render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
@@ -583,13 +585,44 @@ describe("ChatSidebar", () => {
         // 首帧默认已改 button 模式，⋯ 常驻，按有无标题文本过滤。
         .map((b) => b.querySelector(".chat-sidebar-name-text")?.textContent)
         .filter((n): n is string => n != null);
-    // 默认「创建时间」：不跟后端的活跃顺序走。
+    // 默认「手动排序」：请求带 order=manual，顺序原样采用后端的。
+    expect(orders[0]).toBe("manual");
     expect(itemNames()).toEqual(["alpha", "等待首次输入", "beta"]);
 
     fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
     fireEvent.click(screen.getByRole("option", { name: "按名称" }));
     expect(itemNames()).toEqual(["alpha", "beta", "等待首次输入"]);
     expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("name");
+  });
+
+  /** 手动排序下按住拖动调位置（对照 Kimi Code）：落下即本地先挪，再把新邻居交给后端。 */
+  it("手动排序:拖到另一条下方,本地先挪并把新邻居写回后端", async () => {
+    const moves: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "get_live_sessions_page") return Promise.resolve([session(3, "丙"), session(2, "乙"), session(1, "甲")]);
+      if (command === "move_session_rank") { moves.push(args); return Promise.resolve(); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={3} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    const row = async (name: string) => (await screen.findByRole("button", { name: new RegExp(name) })) as HTMLElement;
+    const first = await row("丙");
+    const last = await row("甲");
+    // jsdom 没有布局：落点行与它的位置手动给。
+    last.getBoundingClientRect = () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON: () => ({}) });
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => last;
+    try {
+      fireEvent.pointerDown(first, { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
+      await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+    } finally {
+      document.elementFromPoint = original;
+    }
+    expect(moves).toEqual([{ sessionId: 3, aboveId: 1, belowId: null }]);
+    const names = within(screen.getByRole("navigation")).getAllByRole("button")
+      .map((b) => b.querySelector(".chat-sidebar-name-text")?.textContent).filter(Boolean);
+    expect(names).toEqual(["乙", "甲", "丙"]);
   });
 
   /**

@@ -1,4 +1,4 @@
-use meowo_store::{SessionStatus, Store};
+use meowo_store::{ListOrder, SessionStatus, Store};
 
 // ===== Task 1: live_sessions =====
 
@@ -792,18 +792,63 @@ fn live_sessions_scan_by_created_orders_and_paginates_on_started_at() {
         rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
     };
     // 默认(最近活跃)不受影响。
-    let by_activity = store.live_sessions_scan(Some("all"), None, None, None, None, false, 10).unwrap();
+    let by_activity = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Activity, 10).unwrap();
     assert_eq!(ids(&by_activity), ["old", "mid", "new"]);
     // 按创建时间:首页两条是 new、mid;游标 = 末条的 (started_at, id),续页拿到 old。
-    let first = store.live_sessions_scan(Some("all"), None, None, None, None, true, 2).unwrap();
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Created, 2).unwrap();
     assert_eq!(ids(&first), ["new", "mid"]);
     let tail = &first[1].session;
     let rest = store
-        .live_sessions_scan(Some("all"), None, None, Some(tail.started_at), Some(tail.id), true, 2)
+        .live_sessions_scan(Some("all"), None, None, Some(tail.started_at), Some(tail.id), ListOrder::Created, 2)
         .unwrap();
     assert_eq!(ids(&rest), ["old"]);
     // waiting tab 恒按等待时长:by_created 不改它的排序。
-    let waiting_a = store.live_sessions_scan(Some("waiting"), None, None, None, None, true, 10).unwrap();
-    let waiting_b = store.live_sessions_scan(Some("waiting"), None, None, None, None, false, 10).unwrap();
+    let waiting_a = store.live_sessions_scan(Some("waiting"), None, None, None, None, ListOrder::Created, 10).unwrap();
+    let waiting_b = store.live_sessions_scan(Some("waiting"), None, None, None, None, ListOrder::Activity, 10).unwrap();
     assert_eq!(ids(&waiting_a), ids(&waiting_b));
+}
+
+/// 侧栏手动排序：没拖过等于创建时间倒序；拖到两条之间取中值；空隙用尽时整体挪开再插；
+/// 游标按手动键续页。
+#[test]
+fn manual_order_defaults_to_created_and_follows_moves() {
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let (a, _) = store.start_session(pid, "a", 100).unwrap();
+    let (b, _) = store.start_session(pid, "b", 200).unwrap();
+    let (c, _) = store.start_session(pid, "c", 300).unwrap();
+    let (d, _) = store.start_session(pid, "d", 301).unwrap();
+    for (id, text) in [(a, "甲"), (b, "乙"), (c, "丙"), (d, "丁")] {
+        store.on_user_prompt(id, text, 400).unwrap();
+    }
+    let ids = |rows: &[meowo_store::LiveSession]| -> Vec<String> {
+        rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
+    };
+    let manual = |store: &Store| ids(&store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 10).unwrap());
+    assert_eq!(manual(&store), ["d", "c", "b", "a"]);
+
+    // 把 a 拖到 d 正下方。
+    store.move_session_rank(a, Some(d), None).unwrap();
+    assert_eq!(manual(&store), ["d", "a", "c", "b"]);
+    // 把 b 拖到最上面（没有 above，挂在 d 正上方）。
+    store.move_session_rank(b, None, Some(d)).unwrap();
+    assert_eq!(manual(&store), ["b", "d", "a", "c"]);
+    // 反复插进同一个缝（c、d 创建时间只差 1ms，键差 1024），空隙用尽后整体挪开，顺序仍对。
+    for _ in 0..15 {
+        store.move_session_rank(a, Some(d), None).unwrap();
+        store.move_session_rank(c, Some(d), None).unwrap();
+    }
+    assert_eq!(manual(&store), ["b", "d", "c", "a"]);
+    // 游标按手动键续页。
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 2).unwrap();
+    assert_eq!(ids(&first), ["b", "d"]);
+    let tail = &first[1];
+    let rest = store
+        .live_sessions_scan(Some("all"), None, None, Some(tail.manual_key), Some(tail.session.id), ListOrder::Manual, 10)
+        .unwrap();
+    assert_eq!(ids(&rest), ["c", "a"]);
+    // 新会话没拖过，出现在最上面。
+    let (e, _) = store.start_session(pid, "e", 500).unwrap();
+    store.on_user_prompt(e, "戊", 501).unwrap();
+    assert_eq!(manual(&store)[0], "e");
 }
