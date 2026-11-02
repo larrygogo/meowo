@@ -209,7 +209,10 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   }
 
   /* 「进行中 / 已完成」页签文字只有 30px 高：给足 44px 的命中高度（不改字号）。 */
-  body.remote-ui .chat-sidebar-tabs button { min-height: 44px; }
+  /* 不直接把按钮撑到 44px：页签胶囊会变成一大块（2026-11 手机实拍嫌太大）。可见高度 32px，
+     命中面靠 ::after 上下各外扩 6px 补到 44px。左右不外扩，相邻页签只隔 2px，外扩会互相抢点。 */
+  body.remote-ui .chat-sidebar-tabs button { min-height: 32px; padding-top: 0; padding-bottom: 0; }
+  body.remote-ui .chat-sidebar-tabs button::after { inset: -6px 0; }
 
   /* 7M-9 尾：桌面端「⋯」已改 hover 才显（2026-10 用户实拍：常显密密麻麻还挡标题），
      但远程端没有 hover——侧栏 ⋯ 是手机上星标/重命名/归档的唯一入口，必须常显。 */
