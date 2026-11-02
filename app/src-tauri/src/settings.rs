@@ -242,6 +242,10 @@ pub(crate) struct Settings {
     /// 桌面侧栏拖分组头时写入；手机只读、按同一顺序显示。空 = 没排过，组序随组内会话位置。
     #[serde(default)]
     pub(crate) workspace_order: Vec<String>,
+    /// 有会话在跑时防止电脑休眠（对照 Kimi「防止休眠」：电脑睡过去，跑到一半的 agent 就停了）。
+    /// 只拦系统休眠、不拦息屏；没有会话在跑立刻交还系统的休眠策略。见 power.rs。
+    #[serde(default = "default_true")]
+    pub(crate) keep_awake_while_running: bool,
     /// 贴纸主窗口几何（W-17，见 [`StickerWindowState`]）。兼容老 settings.json：缺席 →
     /// 全 None/false，前端启动时从 localStorage 旧键（及后端从 window-state 旧文件）一次性迁移。
     #[serde(default)]
@@ -286,6 +290,7 @@ impl Default for Settings {
             remote_access_token: String::new(),
             bark_url: String::new(),
             workspace_order: Vec::new(),
+            keep_awake_while_running: true,
             sticker_window: StickerWindowState::default(),
         }
     }
@@ -950,6 +955,17 @@ mod tests {
         let v: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(v.terminal_scrollback, 5000);
         assert_eq!(Settings::default().terminal_scrollback, 5000);
+    }
+
+    #[test]
+    fn old_settings_json_keeps_awake_while_running_by_default() {
+        // 老 settings.json 无此字段：默认开（运行中防止休眠），与 Settings::default 一致。
+        let v: Settings = serde_json::from_str("{}").unwrap();
+        assert!(v.keep_awake_while_running);
+        assert!(Settings::default().keep_awake_while_running);
+        let off: Settings =
+            serde_json::from_str(r#"{"keep_awake_while_running":false}"#).unwrap();
+        assert!(!off.keep_awake_while_running);
     }
 
     #[test]

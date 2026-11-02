@@ -990,7 +990,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             )
         }
         "get_live_sessions_counts" => {
-            reply(crate::session_query::get_live_sessions_counts(state).await)
+            reply(crate::session_query::get_live_sessions_counts(app.clone()).await)
         }
         "get_session_lineage" => {
             let a = args!(SessionArg);

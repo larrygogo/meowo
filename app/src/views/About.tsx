@@ -162,6 +162,8 @@ function GeneralSection() {
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   const clickThroughOn = settings?.click_through_enabled ?? false;
+  const keepAwakeOn = settings?.keep_awake_while_running ?? true;
+  const toggleKeepAwake = () => patch({ keep_awake_while_running: !keepAwakeOn });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
   const toggleFlash = () => patch({ attention_flash_enabled: !flashOn });
   const toggleAutoUpdate = () => patch({ auto_update_enabled: !autoUpdateOn });
@@ -188,6 +190,14 @@ function GeneralSection() {
           </div>
           <Switch checked={autostart} onChange={toggleAutostart} disabled={autostartDisabled} label={t.settings.autostart} />
         </div>
+        {/* 运行时防止休眠（对照 Kimi「防止休眠」，见 power.rs）。Linux 后端未实装，不给无效开关。 */}
+        {(IS_WIN || IS_MAC) && <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.keepAwake}</div>
+            <div className="row-desc">{t.settings.keepAwakeDesc}</div>
+          </div>
+          <Switch checked={keepAwakeOn} onChange={toggleKeepAwake} label={t.settings.keepAwake} />
+        </div>}
         {/* 对话窗口功能总开关（轻量模式）。放 General：轻量模式下点任何 chat 入口都会
             落到设置窗，这里是用户找回完整功能的地方，必须在首屏分区就看得见。 */}
         <div className="row">

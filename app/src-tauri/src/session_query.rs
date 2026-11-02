@@ -290,12 +290,22 @@ pub(crate) async fn get_session_admin_page(
 
 #[tauri::command]
 pub(crate) async fn get_live_sessions_counts(
-    state: State<'_, super::AppState>,
+    app: tauri::AppHandle,
 ) -> Result<meowo_store::query::LiveSessionCounts, String> {
-    let db_path = state.db_path.clone();
     // 进程表采样在 spawn_blocking 里做:冷采样 Windows 上要 30-120ms,不能挂在
     // async-runtime 线程上(且采样持缓存互斥锁,并发命令会排队其后)。
-    let snapshots = state.process_snapshots.clone();
+    tauri::async_runtime::spawn_blocking(move || live_counts_now(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 角标统计的同步本体：命令（看板 / 手机）与「运行时防止休眠」的巡检线程（power.rs）共用，
+/// 「有没有会话在跑」只有这一个口径。会阻塞（进程表采样 + 读库），只能在后台线程调用。
+pub(crate) fn live_counts_now(
+    app: &tauri::AppHandle,
+) -> Result<meowo_store::query::LiveSessionCounts, String> {
+    use tauri::Manager;
+    let state = app.state::<super::AppState>();
     // 托管 PTY 活跃 = 进程必在(meowo 自己 spawn 的),hook 未认领 pid / 事件宽限过期时兜底。
     let pty_live = state.ptys.active_session_ids();
     // 审批存活与屏幕状态:tab 归属(tab_class)的另外两样原料,必须与列表同一来源采样,
@@ -306,37 +316,31 @@ pub(crate) async fn get_live_sessions_counts(
     // 数得到,否则「运行中 N」与列表又打架。它们按运行中计(PTY 已起、屏幕检测尚未
     // 接管),total 同步 +N(与列表口径:占位卡进「全部」与「运行中」两个 tab)。
     let pendings = state.ptys.pending_launches().len() as i64;
-    let runtimes = state.session_runtimes.clone();
-    let tx_cache = state.tx_cache.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let alive = snapshots.snapshot();
-        let runtimes = runtimes.snapshot();
-        let store = super::open_store(&db_path)?;
-        let mut counts = counts_for_store(
-            &store,
-            &tx_cache,
-            &alive,
-            &pty_live,
-            &runtimes,
-            &approvals,
-            &screen_states,
-        )?;
-        // 外库(安装版)会话也计入角标——列表并入了外库卡(get_live_sessions_page 的
-        // include_foreign),数字必须与列表同视野,否则出现「待交互 0 但列表挂着一排
-        // 待交互卡」的打架现场(实拍反馈)。险闸与失败降级同 foreign_live_items:
-        // 聚合不上就只数本库,宁可少数不报错。
-        if let Some(foreign) = foreign_counts(&db_path, &tx_cache, &alive, &runtimes) {
-            counts.total += foreign.total;
-            counts.running += foreign.running;
-            counts.waiting += foreign.waiting;
-            counts.archived += foreign.archived;
-        }
-        counts.total += pendings;
-        counts.running += pendings;
-        Ok(counts)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    let alive = state.process_snapshots.snapshot();
+    let runtimes = state.session_runtimes.snapshot();
+    let store = super::open_store(&state.db_path)?;
+    let mut counts = counts_for_store(
+        &store,
+        &state.tx_cache,
+        &alive,
+        &pty_live,
+        &runtimes,
+        &approvals,
+        &screen_states,
+    )?;
+    // 外库(安装版)会话也计入角标——列表并入了外库卡(get_live_sessions_page 的
+    // include_foreign),数字必须与列表同视野,否则出现「待交互 0 但列表挂着一排
+    // 待交互卡」的打架现场(实拍反馈)。险闸与失败降级同 foreign_live_items:
+    // 聚合不上就只数本库,宁可少数不报错。
+    if let Some(foreign) = foreign_counts(&state.db_path, &state.tx_cache, &alive, &runtimes) {
+        counts.total += foreign.total;
+        counts.running += foreign.running;
+        counts.waiting += foreign.waiting;
+        counts.archived += foreign.archived;
+    }
+    counts.total += pendings;
+    counts.running += pendings;
+    Ok(counts)
 }
 
 /// 单个库的角标统计(总数/运行中/待交互/归档)。本库与外库共用同一口径——外库把

@@ -1015,6 +1015,8 @@ export const en: Dict = {
     sessionOpenInChat: "Chat window",
     sessionOpenInTerminal: "External terminal",
     sessionOpenInLite: "Fixed to external terminal in lite mode",
+    keepAwake: "Keep awake while running",
+    keepAwakeDesc: "No sleep while a session runs; the screen still turns off",
     chatFeature: "Chat window",
     chatFeatureDesc: "Off = lite mode: stickers only, everything happens in the terminal",
     cardMenu: "Card menu",

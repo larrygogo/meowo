@@ -42,6 +42,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   remote_access_token: "",
   bark_url: "",
   workspace_order: [],
+  keep_awake_while_running: true,
 };
 
 // ── 模块级共享态（每个 webview 窗口一份）──

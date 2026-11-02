@@ -14,6 +14,7 @@ mod git;
 #[cfg(target_os = "windows")]
 mod openwith;
 mod ports;
+mod power;
 mod pty;
 mod push;
 mod relay;
@@ -1645,6 +1646,8 @@ pub fn run() {
             // 对话页的 transcript 文件监听（C-14 push 通道）：独立于 board 合流直发
             // chat-transcript，对话窗据此提前拉增量，定时轮询只作最终兜底。
             spawn_transcript_watcher(app.handle().clone(), path.clone());
+            // 有会话在跑时防止电脑休眠（设置可关），见 power.rs。
+            power::spawn_keep_awake(app.handle().clone());
             // 跨重启通知清场：上一进程残留的 toast 全是死链接（on_activated 是进程内闭包），
             // 在 liveness 补发新 toast 之前整清，保证通知中心里每条都可点（详见函数注释）。
             #[cfg(target_os = "windows")]

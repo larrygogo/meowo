@@ -717,6 +717,8 @@ export type Settings = {
   bark_url: string;
   /** 侧栏工作区组的手动顺序（路径）。空 = 没排过。桌面拖分组头写入，手机只读。 */
   workspace_order: string[];
+  /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
+  keep_awake_while_running: boolean;
   /** 贴纸主窗口几何（W-17）。设置窗不编辑它；后端 set_settings 落盘前以磁盘值回填。
    *  读写走 windowState.ts 的 get/set_sticker_window_state，这里仅为快照对齐。 */
   sticker_window?: {

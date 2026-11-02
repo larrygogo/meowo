@@ -1116,6 +1116,9 @@ export const zh = {
     sessionOpenInChat: "对话窗口",
     sessionOpenInTerminal: "外部终端",
     sessionOpenInLite: "轻量模式下固定为外部终端",
+    // 运行时防止休眠（power.rs）：只拦系统休眠、不拦息屏，没会话在跑就交还系统。
+    keepAwake: "运行时防止休眠",
+    keepAwakeDesc: "有会话在跑时电脑不睡，屏幕照常熄灭",
     chatFeature: "对话窗口功能",
     chatFeatureDesc: "关闭进入轻量模式：只保留贴纸，一切在终端进行",
     cardMenu: "卡片菜单",
