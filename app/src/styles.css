@@ -5544,6 +5544,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-compose-actions > .chat-model-select { margin-left: auto; }
 .chat-compose-actions > .chat-context { margin-left: auto; }
 .chat-compose-actions > .chat-context + .chat-model-select { margin-left: 0; }
+/* 模型钮与发送钮紧挨成一组（对照 Kimi：模型下拉锚在发送钮左侧 4px）；两者都没有时发送钮自己靠右。 */
+.chat-compose-actions > .chat-model-select + .chat-send-button { margin-left: calc(var(--sp-4) - var(--sp-8)); }
+.chat-compose-actions:not(:has(> .chat-context, > .chat-model-select)) > .chat-send-button:not(.chat-send-button ~ .chat-send-button) { margin-left: auto; }
 .chat-compose .chat-attach-button:hover { background: var(--fill-selected); }
 /* min-width:0 + ellipsis：缩放到上限时动作行容量临界，提示文字（「Enter 发送…」）横向
    截断让位，而不是把发送钮顶出 composer（同 .chat-model-label 的既有范式）。 */

@@ -4898,10 +4898,10 @@ export function ChatWindow() {
               />
             )}
           </div>}
-          {/* 「Enter ↵」提示已按用户要求取消(占位提示里写着 Enter 发送,按钮旁再标一遍
-              是重复)。空元素本身不能省——它的 margin-left:auto 负责把圆钮顶到最右。
+          {/* 「Enter ↵」提示已按用户要求取消(占位提示里写着 Enter 发送,按钮旁再标一遍是重复)。
+              它留下的空占位也去掉了：夹在模型钮与发送钮之间，flex gap 两边各算一次，两钮隔开
+              16px 还多（用户实拍「这个间隔很奇怪」）。圆钮靠右改由 CSS 负责（见 .chat-compose-actions）。
               Ctrl+Enter=打断并发送的说明挂在发送圆钮的 data-tip 上(回合在跑且有草稿时)。 */}
-          <span className="chat-compose-hint" />
           {/* 触屏没有 Ctrl+Enter:有草稿时主圆钮已是发送,回合还在跑的话停止另给一颗——
               否则手机上必须先清空输入框才能叫停。桌面有快捷键与空框停止,不渲染。 */}
           {remoteUi() && canInterrupt && hasDraft && (
