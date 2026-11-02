@@ -4114,6 +4114,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-workspace-action { position: absolute; top: 50%; transform: translateY(-50%); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
 .chat-workspace-action:last-of-type { right: var(--sp-4); }
 .chat-workspace-action:nth-last-of-type(2) { right: calc(var(--sp-4) + var(--icon-button-xs) + 2px); }
+.chat-workspace-head.is-menu-open > .chat-sidebar-group-head { background: var(--fill-hover); }
 .chat-workspace-head:hover .chat-workspace-action,
 .chat-workspace-head:focus-within .chat-workspace-action { opacity: 1; pointer-events: auto; }
 .chat-sidebar-more { padding-left: calc(var(--sp-8) + 16px + 6px); border-radius: var(--radius-sm); }

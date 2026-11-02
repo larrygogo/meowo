@@ -1605,6 +1605,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                         </svg>
                       }
                       summary={groupDot}
+                      onFilter={setDirFilter}
                     />
                   ) : (
                     <div className="chat-sidebar-group-row">

@@ -622,6 +622,30 @@ describe("ChatSidebar", () => {
     await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/reverse-bot-gui" }));
   });
 
+  /** 工作区右键菜单（对照 Kimi 的 onContextmenu）：工作空间页签的目录行、会话列表的分组头都能右键，
+   *  菜单同一个；分组头上选「只看这个工作区的会话」即按它筛选。 */
+  it("工作区右键菜单:目录行与分组头都能右键,分组头可按工作区筛选", async () => {
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    const pages: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/w/meowo"]);
+      if (command === "get_live_sessions_page") { pages.push(args); return Promise.resolve([session(1, "甲", { cwd: "C:/w/meowo" })]); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    // 分组头右键 → 工作区菜单 → 只看这个工作区的会话。
+    const head = within(screen.getByRole("navigation")).getAllByRole("button").find((b) => b.className.includes("group-head"))!;
+    fireEvent.contextMenu(head, { clientX: 40, clientY: 60 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
+    await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/meowo" }));
+    // 工作空间页签的目录行右键 → 同一个菜单，选「在此工作区新建会话」。
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.contextMenu(screen.getByText("C:/w/meowo"), { clientX: 40, clientY: 60 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "在此工作区新建会话" }));
+    expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
+  });
+
   /** 「会话」小节的全部折叠 / 展开（对照 Kimi Code）：只在分组时出现，一键折起所有组，再点全部展开。 */
   it("全部折叠:一键折起所有分组,再点全部展开", async () => {
     localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
