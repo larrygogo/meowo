@@ -727,7 +727,9 @@ export const zh = {
     // 侧栏顶部的两个标签页（对照 Kimi 的 tabOpen / tabDone）。
     sidebarTabOpen: "进行中",
     sidebarTabDone: "已完成",
-    sidebarSearch: "搜索标题 / 仓库…",
+    sidebarSearch: "搜索",
+    sidebarFoldAll: "全部折叠",
+    sidebarUnfoldAll: "全部展开",
     sidebarSearchClear: "清空搜索",
     sidebarEmptySearch: "没有匹配的会话",
     // 对话窗里的完成提示：侧栏「已完成」页就能找回，不必指向更深的设置页（贴纸仍用 sticker.archivedNotice）

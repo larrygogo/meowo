@@ -3912,10 +3912,13 @@ select.ns-input {
 .sf-opt > .dd-label { flex: 1 1 auto; }
 .sf-opt .dd-check { margin-left: auto; color: var(--cc-text-dim); }
 .sf-ico { flex: 0 0 auto; color: var(--cc-text-faint); }
-/* 手动排序的拖拽（sidebarDrag）：被拖的那条变淡，落点画一条强调色横线（上沿 / 下沿）。 */
+/* 手动排序的拖拽（sidebarDrag），对照 Kimi Code 排队消息的拖拽：被拖的那条降到 .45，落点是画在
+   两条之间缝隙里的一根 2px 圆头细线。此前在条目内侧描边，被圆角掰成一道弧，很难看（用户实拍）。 */
 .chat-sidebar-item.is-dragging { opacity: .45; }
-.chat-sidebar-item.is-drop-before { box-shadow: inset 0 2px 0 var(--cc-accent); }
-.chat-sidebar-item.is-drop-after { box-shadow: inset 0 -2px 0 var(--cc-accent); }
+.chat-sidebar-item.is-drop-before::before,
+.chat-sidebar-item.is-drop-after::after { content: ""; position: absolute; left: var(--sp-6); right: var(--sp-6); height: 2px; border-radius: 999px; background: var(--cc-accent); pointer-events: none; z-index: 1; }
+.chat-sidebar-item.is-drop-before::before { top: -2px; }
+.chat-sidebar-item.is-drop-after::after { bottom: -2px; }
 body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !important; user-select: none; }
 .sf-opt:hover .sf-ico { color: var(--cc-text-dim); }
 .sf-row > .dd-label { flex: 0 0 auto; }
@@ -4056,6 +4059,64 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-name-inner { white-space: nowrap; }
 .chat-sidebar-name-text.is-clip-scroll { text-overflow: clip; }
 .chat-sidebar-name-text.is-clip-scroll .chat-sidebar-name-inner { display: inline-block; }
+
+/* ── 对照 Kimi Code 侧栏（用户要求「完全参考」）──────────────────────────────────
+   数值取自 Kimi 的 SessionRow / 分组头样式：行内边距 8px、左侧 16px 状态位、6px 间距；
+   标题单行字重 450、超长右端渐隐；右侧紧凑时间字重 475 等宽数字，悬停让位给操作按钮。
+   顶部「新建会话」「搜索」是平铺行，页签是分段胶囊，列表上方一条「会话」小节标题。 */
+.chat-sidebar-head { flex-direction: column; align-items: stretch; gap: 2px; padding: 0 var(--sp-8) 2px; }
+.chat-sidebar-new { flex: 0 0 auto; gap: var(--sp-10); padding: var(--sp-8) var(--sp-10); border: 0; background: transparent; font-weight: 500; }
+.chat-sidebar-new:hover { background: var(--fill-hover); border-color: transparent; }
+.chat-sidebar-search { padding: 0 var(--sp-8) var(--sp-8); }
+.chat-sidebar-search-icon { left: calc(var(--sp-8) + var(--sp-10)); top: calc(50% - var(--sp-5)); width: 16px; height: 16px; color: var(--cc-text); }
+.chat-sidebar-search input { padding-left: calc(var(--sp-10) + 16px + var(--sp-10)); background: transparent; font-weight: 500; }
+.chat-sidebar-search input::placeholder { color: var(--cc-text); }
+.chat-sidebar-search input:hover { background: var(--fill-hover); }
+.chat-sidebar-search input:focus { background: var(--cc-surface); }
+.chat-sidebar-search input:focus::placeholder { color: var(--cc-text-faint); }
+.chat-sidebar-tabs { gap: 2px; margin: 0 var(--sp-8) var(--sp-10); padding: 3px; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--cc-text) 3%, transparent); }
+.chat-sidebar-tabs button { flex: 1; padding: var(--sp-5) 0; border-radius: var(--radius-md); color: var(--cc-text-dim); font-weight: 500; }
+.chat-sidebar-tabs button.is-active { background: var(--fill-selected); }
+.chat-sidebar-tabs button.is-active::after { display: none; }
+.chat-sidebar-section { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 var(--sp-8) 2px calc(var(--sp-8) + var(--sp-8)); }
+.chat-sidebar-section-label { flex: 1; min-width: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; user-select: none; }
+.chat-sidebar-section-btn,
+.chat-sidebar-section .chat-sidebar-filter { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; cursor: pointer; }
+.chat-sidebar-section-btn:hover,
+.chat-sidebar-section .chat-sidebar-filter:hover { color: var(--cc-text); background: var(--fill-hover); }
+.chat-sidebar-section .chat-sidebar-filter svg { width: 14px; height: 14px; }
+.chat-sidebar-list { padding: var(--sp-2) var(--sp-8) var(--sp-8); gap: 1px; }
+.chat-sidebar-group { gap: 1px; }
+.chat-sidebar-group + .chat-sidebar-group { margin-top: var(--sp-4); }
+.chat-sidebar-item { align-items: flex-start; gap: 6px; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); color: var(--cc-text); }
+.chat-sidebar-item.is-active { background: var(--fill-selected); }
+.chat-sidebar-lead { flex: 0 0 16px; height: calc(var(--text-sm) * 1.4); display: inline-flex; align-items: center; justify-content: center; }
+.chat-sidebar-lead .chat-sidebar-dot { position: static; width: 7px; height: 7px; box-shadow: none; }
+.chat-sidebar-lead .chat-sidebar-unread { margin: 0; }
+.chat-sidebar-name { font-weight: 450; line-height: 1.4; }
+.chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 450; }
+/* 标题吃满整行再做右端渐隐（Kimi 的 mask，不用省略号）：短标题的盒子同样铺满，渐隐只落在空白处。 */
+.chat-sidebar-name-text { flex: 1; text-overflow: clip; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-sidebar-metaline { margin-top: 2px; }
+.chat-sidebar-act { position: relative; flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: flex-end; min-width: 24px; height: calc(var(--text-sm) * 1.4); }
+.chat-sidebar-time { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 475; font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-sidebar-item:hover .chat-sidebar-act:has(.chat-sidebar-item-menu) .chat-sidebar-time { opacity: 0; visibility: hidden; }
+.chat-sidebar-act .chat-sidebar-item-menu { right: -6px; top: 50%; transform: translateY(-50%); background: transparent; }
+.chat-sidebar-act .chat-sidebar-item-menu:hover { background: var(--fill-hover); }
+.chat-sidebar-act .chat-sidebar-check-btn { margin: 0; }
+/* 分组头（对照 Kimi .gh）：文件夹图标 + 偏灰的组名，不显示计数；操作按钮悬停才出现。 */
+.chat-workspace-head { position: relative; gap: 2px; }
+.chat-workspace-head > .chat-sidebar-group-head { gap: 6px; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); color: var(--cc-text-dim); font-size: var(--text-sm); font-weight: 500; letter-spacing: 0; }
+.chat-workspace-head > .chat-sidebar-group-head:hover { color: var(--cc-text-dim); background: var(--fill-hover); }
+.chat-workspace-folder { flex: 0 0 16px; color: var(--cc-text-faint); }
+.chat-workspace-head .chat-workspace-name { color: var(--cc-text-dim); font-weight: 500; }
+.chat-workspace-head .chat-sidebar-dot { position: static; flex: 0 0 auto; width: 7px; height: 7px; box-shadow: none; }
+.chat-workspace-action { position: absolute; top: 50%; transform: translateY(-50%); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-workspace-action:last-of-type { right: var(--sp-4); }
+.chat-workspace-action:nth-last-of-type(2) { right: calc(var(--sp-4) + var(--icon-button-xs) + 2px); }
+.chat-workspace-head:hover .chat-workspace-action,
+.chat-workspace-head:focus-within .chat-workspace-action { opacity: 1; pointer-events: auto; }
+.chat-sidebar-more { padding-left: calc(var(--sp-8) + 16px + 6px); border-radius: var(--radius-sm); }
 /* 动作失败提示：贴在列表与底栏之间，红字但不占常驻高度（4s 后自行消失）。 */
 .chat-sidebar-error { flex: 0 0 auto; padding: var(--sp-6) var(--sp-10); color: var(--cc-err-vivid); font-size: var(--text-xs); }
 /* G-16：全侧栏唯一的读屏汇总播报源——视觉隐藏但能被 live region 读到。

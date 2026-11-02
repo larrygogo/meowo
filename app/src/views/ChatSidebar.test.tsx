@@ -444,7 +444,8 @@ describe("ChatSidebar", () => {
     fireEvent.click(screen.getByRole("option", { name: "按工作区分组" }));
     const list = screen.getByRole("navigation");
     const heads = within(list).getAllByRole("button").filter((b) => b.className.includes("group-head"));
-    expect(heads.map((h) => h.textContent)).toEqual(["scratch1", "meowo2"]);
+    // 组头对照 Kimi：文件夹图标 + 组名，不显示计数。
+    expect(heads.map((h) => h.textContent)).toEqual(["scratch", "meowo"]);
     // scratch 组只有一条 waiting，meowo 组里 running 最强（另一条已断开不参与）。
     expect(heads[0].querySelector(".chat-sidebar-dot")?.className).toContain("is-waiting");
     expect(heads[1].querySelector(".chat-sidebar-dot")?.className).toContain("is-running");
@@ -593,6 +594,22 @@ describe("ChatSidebar", () => {
     fireEvent.click(screen.getByRole("option", { name: "按名称" }));
     expect(itemNames()).toEqual(["alpha", "beta", "等待首次输入"]);
     expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("name");
+  });
+
+  /** 「会话」小节的全部折叠 / 展开（对照 Kimi Code）：只在分组时出现，一键折起所有组，再点全部展开。 */
+  it("全部折叠:一键折起所有分组,再点全部展开", async () => {
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    invoke.mockImplementation((command: string) => command === "get_live_sessions_page"
+      ? Promise.resolve([session(1, "甲", { cwd: "C:/w/a" }), session(2, "乙", { cwd: "C:/w/b" })])
+      : Promise.resolve());
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    fireEvent.click(screen.getByRole("button", { name: "全部折叠" }));
+    expect(screen.queryByRole("button", { name: /甲/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /乙/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "全部展开" }));
+    expect(screen.getByRole("button", { name: /甲/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /乙/ })).toBeTruthy();
   });
 
   /** 手动排序下按住拖动调位置（对照 Kimi Code）：落下即本地先挪，再把新邻居交给后端。 */

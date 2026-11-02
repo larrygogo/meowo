@@ -44,6 +44,16 @@ type GroupMode = "none" | "dir" | "date" | "state";
  *  - name：按名称，前端排**已加载的这一页**。 */
 type SortMode = "manual" | "recent" | "name";
 
+/** 会话行右侧的紧凑时间（对照 Kimi Code 侧栏的「3d」「4h」）：一列窄窄的数字，不抢标题的宽度。 */
+function fmtShortAgo(ms: number, t: Dict): string {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return t.time.now;
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 /** 无 cwd 的会话归到同一组（后端 cwd 可空:ping 型/早期数据）。以 NUL 开头，不可能与路径撞车。 */
 const NO_DIR = String.fromCharCode(0) + "no-dir";
 
@@ -960,6 +970,13 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
     if (groupMode === "date") return groupByDate(ordered, t);
     return groupByState(ordered, t, approvalAwaitingIds);
   }, [groupMode, ordered, t, approvalAwaitingIds]);
+  // 「会话」小节的全部折叠 / 展开（对照 Kimi）：全都折着时展开全部，否则折起全部。
+  const allGroupsFolded = !!groups && groups.length > 0 && groups.every((group) => folded.has(group.key));
+  const toggleAllFolded = () => setFolded(() => {
+    const next = new Set<string>(allGroupsFolded ? [] : (groups ?? []).map((group) => group.key));
+    localStorage.setItem(FOLDED_KEY, JSON.stringify([...next].filter(isDirGroupKey)));
+    return next;
+  });
   // 拖拽的桶：同一分组 + 同为置顶 / 非置顶（理由见 sidebarDrag）。桶内顺序取组的全部条目
   // （含收起的未运行会话），落点邻居才和后端的全局顺序对得上。
   const dragBuckets = useMemo(() => {
@@ -1119,7 +1136,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 平铺与分组共用同一份条目渲染:两套 JSX 会各自漂移(状态点口径、标题回退文案),
   // 那正是「贴纸报错、侧栏亮绿点」那类不一致的来源。
   const renderItem = (item: LiveSession) => {
-    const Icon = agentAssets(item.provider).Icon;
     const dir = folderName(item.cwd);
     // 与对话窗标题栏同一套口径(sessionTone,含 errored——贴纸的错误优先级由此
     // 对齐,不再出现「贴纸报错、侧栏亮绿点」)。offline/ended 不加点——图标置灰
@@ -1231,17 +1247,17 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           titleScrollTimers.set(inner, timer);
         }}
       >
-        {/* 状态指示兼 agent 标识：连接=品牌色徽标，未连接=灰（与贴纸同一套）。 */}
-        <span
-          className={"chat-sidebar-agent-icon" + (item.connected ? "" : " is-off")}
-          style={tintStyle(item.provider, item.connected)}
-          role="img"
-          aria-label={item.provider}
-        >
-          <Icon />
+        {/* 左侧 16px 状态位（对照 Kimi Code 会话行的 lead）：待授权 > 运行/待处理/出错 > 未读，
+            没有状态就空着，标题照样对齐。agent 徽标不再占位：一行只留标题和时间。 */}
+        <span className="chat-sidebar-lead">
           {awaitingApproval
             ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.chat.sidebarApproval} data-tip={t.chat.sidebarApproval} />
-            : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />}
+            : showDot
+              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />
+              // 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。
+              : item.unread && item.session.id !== activeId && (
+                <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
+              )}
         </span>
         <span className="chat-sidebar-text">
           {editing ? (
@@ -1266,10 +1282,6 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               <span className="chat-sidebar-name-text" data-tip={item.task_title || undefined}>
                 <span className="chat-sidebar-name-inner">{item.task_title || t.sticker.waitingFirstInput}</span>
               </span>
-              {/* 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。 */}
-              {item.unread && item.session.id !== activeId && (
-                <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
-              )}
               {/* 跨 provider 接续链徽标：点开列出链上各段（回看旧引擎的对话）。 */}
               {item.predecessor_id != null && (
                 <button
@@ -1295,16 +1307,10 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               +N 照显(组头只写主仓,跨仓信息组头没有);时间恒显——此前条目完全没有时间信息,
               「哪条是刚才动的」只能靠猜。waiting 态改「已等待 X」警示色(与看板 B-3 同款,
               fmtWaited 复用 sticker/helpers):等待时长是召唤信号,「X 前」读不出急迫。 */}
-          {!noting && (
+          {/* 副行只在不按工作区分组时出现（对照 Kimi：平铺列表才在标题下写工作区名）。 */}
+          {!noting && dir && groupMode !== "dir" && (
             <span className="chat-sidebar-metaline">
-              {dir && groupMode !== "dir" && <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>}
-              {/* 旧库/合成数据可能缺 last_event_at：NaN 会让 Intl.RelativeTimeFormat 直接
-                  抛 RangeError 炸掉整棵侧栏，缺失时宁可不显示。 */}
-              {Number.isFinite(item.session.last_event_at) && (
-                <span className={"chat-sidebar-meta chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")}>
-                  {tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : fmtAgo(item.session.last_event_at, t)}
-                </span>
-              )}
+              <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
             </span>
           )}
           {/* 便签写完要看得见，否则「添加便签」等于写进黑洞。编辑中的那条让位给输入框。 */}
@@ -1320,6 +1326,14 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             />
           )}
         </span>
+        {/* 右侧：时间（对照 Kimi 的紧凑「3d」），等待中换成「已等待 X」警示色；悬停时让位给「⋯」。
+            旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
+        <span className="chat-sidebar-act">
+          {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
+            <span className={"chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")}>
+              {tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : fmtShortAgo(item.session.last_event_at, t)}
+            </span>
+          )}
         {selectedIds.size > 0 ? (
           /* 多选态:右侧换成勾选圈(未选空心/选中实心勾),点它增删不必按住 Ctrl。
              「⋯」菜单此间让位——多选时的动作在底部操作条上。 */
@@ -1355,6 +1369,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             }}
           ><MoreIcon /></button>
         )}
+        </span>
       </div>
     );
   };
@@ -1383,44 +1398,20 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
       )}
       {/* 窗口无系统装饰，侧栏顶部也要能拖动窗口——与右列标题栏同为 drag region。
           头部即「新建会话」按钮（Kimi 式整宽 CTA），不再放「会话」标题 + 迷你加号。 */}
+      {/* 顶部两行入口（对照 Kimi Code 侧栏）：「新建会话」「搜索」都是图标加文字的平铺行，
+          不再是整宽按钮加输入框。视图与排序挪到下面的「会话」小节标题。 */}
       <div className="chat-sidebar-head" data-tauri-drag-region>
         <button
           type="button"
           className="chat-sidebar-new"
           onClick={() => void openNewSessionWindow().catch(() => {})}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 8.5v7M8.5 12h7" />
           </svg>
           <span>{t.sticker.newSession}</span>
         </button>
-        <SidebarFilterMenu
-          dirValue={dirFilter}
-          dirOptions={dirOptions}
-          groupMode={groupMode}
-          groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir, date: t.chat.groupByDate, state: t.chat.groupByState }}
-          sortMode={sortMode}
-          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent, name: t.chat.sortName }}
-          onDir={setDirFilter}
-          onGroup={changeGroupMode}
-          onSort={changeSortMode}
-          t={t}
-        />
-      </div>
-      {/* 「进行中 / 已完成」两个标签页（对照 Kimi 的 tabOpen / tabDone）：已完成就是 archived，
-          此前藏在「筛选 → 已归档会话」里、进去后还得靠一条状态条说明「换了一批会话」（7C-5）。
-          做成常驻标签页，当前看的是哪一批一眼可见，取回也只要一击。 */}
-      <div className="chat-sidebar-tabs" role="tablist" aria-label={t.chat.sidebarTitle}>
-        {([false, true] as const).map((done) => (
-          <button
-            key={String(done)}
-            type="button"
-            role="tab"
-            aria-selected={archivedView === done}
-            className={archivedView === done ? "is-active" : ""}
-            onClick={() => setArchivedView(done)}
-          >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
-        ))}
       </div>
       {/* 会话搜索（Ctrl/Cmd+F 聚焦）：标题/仓库名下沉后端 LIKE，与看板同一条通道。 */}
       <div className="chat-sidebar-search">
@@ -1454,6 +1445,51 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             onClick={() => setSearch("")}
           >×</button>
         )}
+      </div>
+      {/* 「进行中 / 已完成」两个标签页（对照 Kimi 的 tabOpen / tabDone）：已完成就是 archived，
+          此前藏在「筛选 → 已归档会话」里、进去后还得靠一条状态条说明「换了一批会话」（7C-5）。
+          做成常驻标签页，当前看的是哪一批一眼可见，取回也只要一击。 */}
+      <div className="chat-sidebar-tabs" role="tablist" aria-label={t.chat.sidebarTitle}>
+        {([false, true] as const).map((done) => (
+          <button
+            key={String(done)}
+            type="button"
+            role="tab"
+            aria-selected={archivedView === done}
+            className={archivedView === done ? "is-active" : ""}
+            onClick={() => setArchivedView(done)}
+          >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
+        ))}
+      </div>
+      {/* 「会话」小节标题（对照 Kimi Code）：右侧两个小图标——全部折叠 / 展开（分组时才有）、
+          视图与排序。 */}
+      <div className="chat-sidebar-section">
+        <span className="chat-sidebar-section-label">{t.chat.sidebarTitle}</span>
+        {groups && groups.length > 0 && (
+          <button
+            type="button"
+            className="chat-sidebar-section-btn"
+            aria-label={allGroupsFolded ? t.chat.sidebarUnfoldAll : t.chat.sidebarFoldAll}
+            data-tip={allGroupsFolded ? t.chat.sidebarUnfoldAll : t.chat.sidebarFoldAll}
+            onClick={toggleAllFolded}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {allGroupsFolded ? <path d="M8 9l4-4 4 4M8 15l4 4 4-4" /> : <path d="M8 5l4 4 4-4M8 19l4-4 4 4" />}
+            </svg>
+          </button>
+        )}
+        <SidebarFilterMenu
+          dirValue={dirFilter}
+          dirOptions={dirOptions}
+          groupMode={groupMode}
+          groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir, date: t.chat.groupByDate, state: t.chat.groupByState }}
+          sortMode={sortMode}
+          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent, name: t.chat.sortName }}
+          onDir={setDirFilter}
+          onGroup={changeGroupMode}
+          onSort={changeSortMode}
+          t={t}
+        />
       </div>
       <nav
         ref={listRef}
@@ -1538,11 +1574,14 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                       folded={isFolded}
                       onToggle={() => toggleFolded(group.key)}
                       leading={
-                        <>
-                          <ChevronDownIcon className={"chat-sidebar-caret" + (isFolded ? " is-folded" : "")} size={10} strokeWidth={2.6} />
-                          {groupDot}
-                        </>
+                        // 对照 Kimi 的分组头：文件夹图标代替折叠箭头，折着是合上的文件夹。
+                        <svg className="chat-workspace-folder" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          {isFolded
+                            ? <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" />
+                            : <path d="M3.5 17V7a2 2 0 0 1 2-2h5l2 2.5h6a2 2 0 0 1 2 2V11M3.5 17l2.2-5.2a1.5 1.5 0 0 1 1.4-.9H20a1 1 0 0 1 .9 1.4L18.6 18a1.5 1.5 0 0 1-1.4 1H5.5a2 2 0 0 1-2-2z" />}
+                        </svg>
                       }
+                      summary={groupDot}
                     />
                   ) : (
                     <div className="chat-sidebar-group-row">
