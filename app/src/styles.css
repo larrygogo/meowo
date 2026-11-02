@@ -6099,42 +6099,42 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    选中与点击；只有列表本体接收指针。 */
 /* z-index:6 与令牌层的 5/8/9 同一条链（吸底钮 5 < 导航 6 < 审批卡 8 < broker 卡 9），
    命名档里插不进这一格，保持字面值。 */
-/* 用户消息目录（对照 Kimi 的 ConversationToc）：竖条列垂直居中、平时半透明；悬停后标题
-   从竖条旁滑出（max-width 过渡），不弹卡片。贴阅读列右侧时标题往右展开；留白不够时
-   （is-edge，含「铺满」宽度）贴窗口右缘、标题往左展开，整列垫一块底板、标题右对齐贴着竖条
-   （逐条垫底色压在正文上东一块西一块，用户实拍）。 */
+/* 用户消息目录（对照 Kimi 的 ConversationToc）：竖条列垂直居中、平时半透明，悬停后标题从竖条旁展开。
+   贴阅读列右侧时往右展开；留白不够时（is-edge，含「铺满」宽度）贴窗口右缘往左展开、垫一块底板。
+   展开不再逐条拉 max-width：每条各自 0→220px 走同一条先快后慢的曲线，短标题一瞬到头、长标题
+   慢慢长，看着快慢不一（用户实拍）。改为标题按自身宽度排好、左对齐成一列，整列用 clip-path 从
+   竖条一侧整体揭开——所有标题同一速度、同一时刻露出。被裁掉的部分也不接指针，收起时不挡正文。 */
 .chat-msg-nav { position: absolute; z-index: 6; display: flex; flex-direction: column; justify-content: center; pointer-events: none; opacity: 0.5; transition: opacity var(--dur-base) var(--ease-out); }
 .chat-msg-nav.is-edge { right: 0; }
 .chat-msg-nav:hover, .chat-msg-nav:has(:focus-visible) { opacity: 1; }
 /* 整列变实也等悬停意图（Kimi 同款）：鼠标只是路过时一点不动，不是先亮一下再缩回去。 */
 .chat-msg-nav:hover:not(:has(:focus-visible)) { transition-delay: var(--dur-hover-intent); }
-.chat-msg-nav-list { pointer-events: auto; display: flex; flex-direction: column; gap: 7px; max-height: calc(100% - 160px); padding: var(--sp-8) 0; overflow-y: auto; scrollbar-width: none; }
+/* --nav-peek：收起时露出的竖条带宽度（竖条 + 两侧一点余量），其余裁掉。 */
+.chat-msg-nav-list { --nav-peek: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 7px; max-height: calc(100% - 160px); padding: var(--sp-8) 0; overflow-y: auto; scrollbar-width: none; clip-path: inset(0 calc(100% - var(--nav-peek)) 0 0); transition: clip-path .22s var(--ease-out); }
 .chat-msg-nav-list::-webkit-scrollbar { display: none; }
+.chat-msg-nav:hover .chat-msg-nav-list, .chat-msg-nav:has(:focus-visible) .chat-msg-nav-list { clip-path: inset(0 0 0 0); }
 .chat-msg-nav-item { display: flex; align-items: center; gap: var(--sp-10); flex: none; height: 18px; padding: 0; border: 0; background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); text-align: left; white-space: nowrap; cursor: pointer; }
-.chat-msg-nav.is-edge .chat-msg-nav-item { flex-direction: row-reverse; }
 .chat-msg-nav-bar { flex: none; width: 3px; height: 14px; border-radius: var(--radius-full); background: var(--cc-text); opacity: 0.25; transition: opacity var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
-/* 标题滑出 .22s（Kimi 同值），最宽到滚动区右缘前（--nav-expand 由组件按实际空间量出）。 */
-.chat-msg-nav-label { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; max-width: 0; overflow: hidden; opacity: 0; transition: max-width .22s var(--ease-out), opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+/* 标题最宽到滚动区右缘前（--nav-expand 由组件按实际空间量出，Kimi 的 240/12）。 */
+.chat-msg-nav-label { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; max-width: min(220px, max(0px, calc(var(--nav-expand, 240px) - 13px))); overflow: hidden; transition: color var(--dur-fast) var(--ease-out); }
 .chat-msg-nav-label svg { flex: none; }
 .chat-msg-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-msg-nav:hover .chat-msg-nav-bar, .chat-msg-nav:has(:focus-visible) .chat-msg-nav-bar { height: 18px; opacity: 0.35; }
-.chat-msg-nav:hover .chat-msg-nav-label, .chat-msg-nav:has(:focus-visible) .chat-msg-nav-label { max-width: min(220px, max(0px, calc(var(--nav-expand, 240px) - 13px))); opacity: 1; }
-/* 贴右缘形态：标题往左展开压在正文上，垫一块底板。底板始终在（内边距不变，竖条不跳），平时透明；
-   展开时与标题同一节拍淡入、宽度随标题一起长——此前底板一悬停就整块 220px 弹出来，标题才从 0
-   慢慢长，两者不同步（用户实拍「动效奇怪」）。不用 backdrop-filter：它不能过渡，只会闪一下。 */
-.chat-msg-nav.is-edge .chat-msg-nav-list { padding: var(--sp-8) var(--sp-10); border-radius: var(--radius-md) 0 0 var(--radius-md); background: transparent; box-shadow: none; transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-.chat-msg-nav.is-edge:hover .chat-msg-nav-list, .chat-msg-nav.is-edge:has(:focus-visible) .chat-msg-nav-list { background: var(--cc-menu-bg); box-shadow: var(--shadow-menu); }
-.chat-msg-nav.is-edge:hover:not(:has(:focus-visible)) .chat-msg-nav-list { transition-delay: var(--dur-hover-intent); }
-.chat-msg-nav.is-edge .chat-msg-nav-label { justify-content: flex-end; }
+/* 贴右缘形态：竖条在右、标题在左（左对齐成一列，与 Kimi 的目录同读法），底板随揭开一起出现。
+   收起时只露右缘那条竖条带，底板透明；展开时底板与标题同一节拍淡入。阴影会被 clip-path 裁掉，
+   改用一圈细描边勾出底板。 */
+.chat-msg-nav.is-edge .chat-msg-nav-list { --nav-peek: 22px; padding: var(--sp-8) var(--sp-10); border: var(--hairline) solid transparent; border-right: 0; border-radius: var(--radius-md) 0 0 var(--radius-md); background: transparent; clip-path: inset(0 0 0 calc(100% - var(--nav-peek))); transition: clip-path .22s var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
+.chat-msg-nav.is-edge:hover .chat-msg-nav-list, .chat-msg-nav.is-edge:has(:focus-visible) .chat-msg-nav-list { clip-path: inset(0 0 0 0); background: var(--cc-menu-bg); border-color: var(--cc-border); }
+.chat-msg-nav.is-edge .chat-msg-nav-item { flex-direction: row-reverse; }
+.chat-msg-nav.is-edge .chat-msg-nav-label { flex: 1 1 auto; justify-content: flex-start; }
 .chat-msg-nav-item.is-active .chat-msg-nav-bar { height: 18px; opacity: 0.65; }
 .chat-msg-nav-item.is-active .chat-msg-nav-label { color: var(--cc-text); }
 .chat-msg-nav-item:hover .chat-msg-nav-bar, .chat-msg-nav-item:focus-visible .chat-msg-nav-bar { background: var(--cc-accent); opacity: 1; }
 .chat-msg-nav-item:hover .chat-msg-nav-label, .chat-msg-nav-item:focus-visible .chat-msg-nav-label { color: var(--cc-accent-text); }
 .chat-msg-nav-item:focus-visible { outline: none; }
-/* 悬停意图延迟（Kimi 的 --duration-hover-intent）：竖条立即响应，标题晚 .25s 才滑出——鼠标只是路过时不展开。
-   键盘聚焦不延迟。 */
-.chat-msg-nav:hover:not(:has(:focus-visible)) .chat-msg-nav-label { transition-delay: var(--dur-hover-intent), var(--dur-hover-intent), 0s; }
-/* 竖条变高也等同一个悬停意图（Kimi：opacity 立即、height 延迟），与标题一起动，不各动各的。 */
+/* 悬停意图延迟（Kimi 的 --duration-hover-intent）：揭开、底板、竖条变高都等 .25s 再一起动——
+   鼠标只是路过时不展开。收起不等。键盘聚焦不延迟。 */
+.chat-msg-nav:hover:not(:has(:focus-visible)) .chat-msg-nav-list { transition-delay: var(--dur-hover-intent); }
 .chat-msg-nav:hover:not(:has(:focus-visible)) .chat-msg-nav-bar { transition-delay: 0s, var(--dur-hover-intent), 0s; }
 /* 展开只认悬停与键盘聚焦（:has(:focus-visible)）：用 :focus-within 的话鼠标点完一项按钮留着
    焦点，移开后标题一直摊在正文上（实测）。 */
