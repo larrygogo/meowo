@@ -27,6 +27,14 @@ bundler 渲染自定义模板时只把**渲染结果**写进 `target/release/nsi
 
 ## 升级 @tauri-apps/cli 的同步流程（SOP）
 
+> `app/package.json` 把 `@tauri-apps/cli` 精确钉在 `2.11.2`，没跟 tauri crate 升 2.12。
+> 2026-11 v0.7.1 发版时试过直接升 2.12.4：新版 `utils.nsh` 的 `CheckIfAppIsRunning` 改用系统
+> Restart Manager（第一个参数从 exe 名变成完整路径），要靠新模板里的 `!include "Win\RestartManager.nsh"`，
+> 我们的 fork 没有，Windows 打包在 makensis 报 `macro named "RestartManager_StartSession" not found`。
+> 新上游还动了重装检测（抽出 `FindWixInstall`），落在 fork 剥掉 UI 的那段逻辑里，补丁套不干净，
+> 要手工合并再跑下面的验证矩阵。CLI 不校验自己和 tauri crate 的版本（只校验 crate 和 npm 包），
+> 所以先钉旧版不影响构建。升级时按下面的流程走，别直接 `bun add`。
+
 1. 升级 `app/package.json` 的 `@tauri-apps/cli` 并安装。
 2. 取新上游模板（两种取法，任选并交叉验证）：
    - GitHub：`https://raw.githubusercontent.com/tauri-apps/tauri/tauri-cli-vX.Y.Z/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi`
