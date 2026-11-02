@@ -852,3 +852,45 @@ fn manual_order_defaults_to_created_and_follows_moves() {
     store.on_user_prompt(e, "戊", 501).unwrap();
     assert_eq!(manual(&store)[0], "e");
 }
+
+/// 会话管理页：工作区多选（斜杠写法不同也算同一个）、状态、最后更新时间三种筛选叠加，
+/// 按页码分页并给总数；空壳会话与被接替的旧段不算。
+#[test]
+fn session_admin_page_filters_pages_and_counts() {
+    use meowo_store::AdminQuery;
+    let store = Store::open_in_memory().unwrap();
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let make = |cc: &str, cwd: &str, at: i64, prompt: Option<&str>| {
+        let (id, _) = store.start_session(pid, cc, at).unwrap();
+        store.set_session_cwd(id, cwd, at).unwrap();
+        if let Some(text) = prompt {
+            store.on_user_prompt(id, text, at).unwrap();
+        }
+        id
+    };
+    let a = make("a", "C:/w/meowo", 100, Some("甲"));
+    let b = make("b", r"C:\w\meowo\", 200, Some("乙"));
+    let _c = make("c", "C:/w/other", 300, Some("丙"));
+    let _shell = make("shell", "C:/w/meowo", 400, None);
+    let d = make("d", "C:/w/meowo", 500, Some("丁"));
+    store.set_session_archived(a, true, 600).unwrap();
+    let ids = |rows: &[meowo_store::LiveSession]| rows.iter().map(|r| r.session.cc_session_id.clone()).collect::<Vec<_>>();
+    let page = |query: AdminQuery| {
+        let (rows, total) = store.session_admin_page(&AdminQuery { limit: 10, ..query }).unwrap();
+        (ids(&rows), total)
+    };
+    // 全部：最后更新倒序，空壳不算。
+    assert_eq!(page(AdminQuery::default()), (vec!["d".into(), "c".into(), "b".into(), "a".into()], 4));
+    // 工作区：两种斜杠写法都命中。
+    let meowo = page(AdminQuery { cwds: vec!["C:/w/meowo".into()], ..Default::default() });
+    assert_eq!(meowo.1, 3);
+    // 状态 + 时间：进行中且最后更新早于 450。
+    assert_eq!(page(AdminQuery { archived: Some(false), updated_before: Some(450), ..Default::default() }), (vec!["c".into(), "b".into()], 2));
+    assert_eq!(page(AdminQuery { archived: Some(true), ..Default::default() }), (vec!["a".into()], 1));
+    // 分页：第二页从第 3 条起，总数不变。
+    let (rows, total) = store.session_admin_page(&AdminQuery { limit: 2, offset: 2, ..Default::default() }).unwrap();
+    assert_eq!((ids(&rows), total), (vec!["b".into(), "a".into()], 4));
+    // 被接替的旧段不算。
+    store.set_session_lineage(d, b).unwrap();
+    assert_eq!(page(AdminQuery::default()).1, 3);
+}

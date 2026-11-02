@@ -131,13 +131,15 @@ function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
  *  「排序」手动排序 / 按最近活动；每项图标 + 文案，选中项只在右侧打勾、文字不变色，选中即应用并收起。
  *  按日期 / 按状态分组、按名称排序、工作区筛选已去掉——筛选改由「工作空间」页签里的
  *  「只看这个工作区的会话」进入，生效时列表上方有一枚可关闭的标签。 */
-function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGroup, onSort, t }: {
+function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGroup, onSort, onAdmin, t }: {
   groupMode: GroupMode;
   groupLabels: Record<GroupMode, string>;
   sortMode: SortMode;
   sortLabels: Record<SortMode, string>;
   onGroup: (mode: GroupMode) => void;
   onSort: (mode: SortMode) => void;
+  /// 分隔线下的「会话管理」（对照 Kimi）：打开会话管理页。
+  onAdmin?: () => void;
   t: Dict;
 }) {
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
@@ -182,6 +184,13 @@ function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGro
           {(["none", "dir"] as const).map((mode) => option(mode, groupMode === mode, groupLabels[mode], () => onGroup(mode), mode))}
           <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
           {(["manual", "recent"] as const).map((mode) => option(mode, sortMode === mode, sortLabels[mode], () => onSort(mode), mode))}
+          {onAdmin && <>
+            <div className="sf-sep" role="separator" />
+            <button type="button" role="menuitem" className="dd-item sf-opt" onClick={() => { setOpen(false); onAdmin(); }}>
+              <svg className="sf-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></svg>
+              <span className="dd-label">{t.admin.entry}</span>
+            </button>
+          </>}
         </div>
       )}
     </div>
@@ -223,7 +232,7 @@ export const ChatSidebar = memo(ChatSidebarImpl);
 const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
 const titleScrollTimers = new WeakMap<HTMLElement, number>();
 
-function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onPrefetch, onCollapse }: {
+function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
   activeId: number;
   /** 有待授权请求的非当前会话：靠这里的徽标召唤用户。后端 **会** 为 broker 接管的审批把
    *  窗口切到目标会话（见 pty.rs 的 ensure_approval_window），这里是切换竞态与
@@ -241,6 +250,8 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   /** 预取首屏（父层 historyCache）：手指按下、鼠标悬停片刻即触发，点进去时多半已有快照。 */
   onPrefetch?: (id: number) => void;
   onCollapse: () => void;
+  /** 打开会话管理页（视图与排序菜单底部的「会话管理」）。不传就不显示这一项。 */
+  onOpenAdmin?: () => void;
 }) {
   const t = useT();
   // 悬停预取的延时：鼠标划过列表不该每条都读一遍，停留这么久才算「可能要点」。
@@ -1257,6 +1268,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
           sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent }}
           onGroup={changeGroupMode}
           onSort={changeSortMode}
+          onAdmin={onOpenAdmin}
           t={t}
         />}
       </div>

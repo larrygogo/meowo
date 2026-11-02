@@ -78,7 +78,7 @@ use managed_terminal::{
 use session_command::is_safe_id;
 use session_command::{move_session_rank, rename_session, set_archived, set_session_note};
 use session_command::{session_launch_selections, set_session_launch_selection};
-use session_query::{get_live_sessions_counts, get_live_sessions_page, recent_cwds};
+use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, recent_cwds};
 #[cfg(test)]
 use session_query::{
     live_sessions_blocking, session_connected, tab_class, LiveContext, PageReq,
@@ -1280,6 +1280,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_live_sessions_counts,
             get_live_sessions_page,
+            get_session_admin_page,
             get_chat_history,
             search_chat_transcripts,
             confirm::confirm_dialog,

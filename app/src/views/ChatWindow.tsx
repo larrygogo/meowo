@@ -78,6 +78,7 @@ import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { SessionAdmin } from "./chat/SessionAdmin";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
@@ -1546,10 +1547,22 @@ export function ChatWindow() {
       });
     }).catch(() => {});
   }, []);
-  const selectFromOverlay = useCallback((id: number) => {
-    setOverlaySidebar(false);
+  // 会话管理页（对照 Kimi Code）：从侧栏菜单打开，在侧栏或管理页里选任何会话都回到对话。
+  const [adminOpen, setAdminOpen] = useState(false);
+  const openAdmin = useCallback(() => setAdminOpen(true), []);
+  const selectSession = useCallback((id: number) => {
+    setAdminOpen(false);
     resetTo(id);
   }, [resetTo]);
+  const selectFromOverlay = useCallback((id: number) => {
+    setOverlaySidebar(false);
+    setAdminOpen(false);
+    resetTo(id);
+  }, [resetTo]);
+  const openAdminFromOverlay = useCallback(() => {
+    setOverlaySidebar(false);
+    setAdminOpen(true);
+  }, []);
   // 远程新建会话启动成功:RemoteApp 把临时负 id 经页内事件送回来(桥不 reveal,这是移动端
   // 唯一的导航通路)。选中走侧栏点选同一条 resetTo 通道;负 id 由上面的 binding 轮询
   // (managed_terminal_binding 在远程白名单内)在认领后原地重绑成真 id。桌面此事件永不派发。
@@ -3604,6 +3617,7 @@ export function ChatWindow() {
               onSelect={selectFromOverlay}
               onPrefetch={prefetchSession}
               onCollapse={closeOverlaySidebar}
+              onOpenAdmin={openAdminFromOverlay}
             />
           </div>
         </>
@@ -3619,9 +3633,10 @@ export function ChatWindow() {
         visibleOrderRef={sidebarOrderRef}
         searchInputRef={sidebarSearchRef}
         width={sidebarWidth}
-        onSelect={resetTo}
+        onSelect={selectSession}
         onPrefetch={prefetchSession}
         onCollapse={collapseSidebar}
+        onOpenAdmin={openAdmin}
       />
       <div
         className="chat-sidebar-resizer"
@@ -3635,7 +3650,13 @@ export function ChatWindow() {
         onPointerDown={startSidebarResize}
       />
       </>}
-      <div className="chat-main">
+      {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
+      {adminOpen && (
+        <div className="chat-main chat-admin-main">
+          <SessionAdmin onBack={() => setAdminOpen(false)} onOpen={selectSession} />
+        </div>
+      )}
+      <div className="chat-main" hidden={adminOpen}>
       <header className="chat-bar" data-tauri-drag-region>
         {((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
         {history ? (

@@ -3810,6 +3810,95 @@ select.ns-input {
 /* position:relative 是窄窗浮窗侧栏（.chat-sidebar-overlay/scrim）的定位锚点。 */
 .chat-body { flex: 1; min-height: 0; display: flex; flex-direction: row; position: relative; }
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* 会话管理页打开时对话主列只藏不卸（.chat-main 的 display:flex 会盖掉 hidden 属性）。 */
+.chat-main[hidden] { display: none !important; }
+
+/* ── 会话管理页（对照 Kimi Code .session-admin / .sa-*，变量换成 Meowo 的）── */
+.session-admin { display: flex; flex-direction: column; min-width: 0; height: 100%; background: var(--cc-bg); position: relative; }
+.sa-head { flex: none; display: flex; align-items: center; gap: var(--sp-6); height: 48px; padding: 0 var(--sp-16); border-bottom: var(--hairline) solid var(--cc-border); }
+.sa-back { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
+.sa-back:hover { color: var(--cc-text); background: var(--fill-hover); }
+.sa-title { margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--cc-text); user-select: none; }
+.sa-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.sa-page { display: flex; flex-direction: column; padding: var(--sp-24) var(--sp-16); }
+.sa-subtitle { margin: 0 0 var(--sp-10); color: var(--cc-text-dim); font-size: var(--text-base); line-height: 1.6; }
+.sa-filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-6); margin-bottom: var(--sp-10); }
+.sa-f-label { margin-left: var(--sp-6); color: var(--cc-text-dim); font-size: var(--text-sm); user-select: none; }
+.sa-f-label:first-child { margin-left: 0; }
+.sa-f-actions { display: inline-flex; align-items: center; gap: var(--sp-6); margin-left: var(--sp-6); }
+.sa-select { display: inline-flex; align-items: center; gap: var(--sp-5); min-height: 30px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.sa-select:hover, .sa-select.is-open { background: var(--fill-hover); }
+.sa-ws-select { max-width: 340px; padding: 0 var(--sp-8) 0 var(--sp-6); }
+.sa-select-chev { flex: none; color: var(--cc-text-faint); }
+.sa-tag { display: inline-flex; align-items: center; gap: 1px; height: 20px; padding: 0 2px 0 var(--sp-5); border-radius: var(--radius-xs); background: var(--fill-selected); font-size: var(--text-xs); }
+.sa-tag-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-tag-x { width: 16px; height: 16px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
+.sa-tag-x:hover { color: var(--cc-text); background: var(--fill-hover); }
+.sa-tag-more { color: var(--cc-text-dim); font-size: var(--text-xs); }
+.sa-menu { min-width: 180px; }
+.sa-ws-menu { width: 260px; }
+.sa-search { display: flex; align-items: center; gap: 7px; padding: 5px 9px; color: var(--cc-text-faint); }
+.sa-search-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); }
+.sa-opts { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+.sa-menu-empty { padding: 5px 9px; color: var(--cc-text-faint); font-size: var(--text-sm); }
+.sa-check { flex: none; width: 14px; display: inline-flex; color: var(--cc-text-dim); }
+.sa-check svg { width: 14px; height: 14px; }
+.sa-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.sa-dot--open { background: var(--cc-ok-vivid); }
+.sa-dot--done { background: var(--cc-accent); }
+.sa-btn-q { display: inline-flex; align-items: center; gap: var(--sp-5); height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }
+.sa-btn-q:hover { background: var(--fill-hover); }
+.sa-btn-q--primary { border-color: var(--cc-accent); background: var(--cc-accent); color: #fff; }
+.sa-btn-q--primary:hover { background: color-mix(in srgb, var(--cc-accent) 88%, #fff); }
+.sa-batch { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-6); margin-bottom: var(--sp-8); }
+.sa-batch-count { margin-right: var(--sp-2); color: var(--cc-text-dim); font-size: var(--text-sm); white-space: nowrap; }
+.sa-batch-link { display: inline-flex; align-items: center; height: 24px; padding: 0 var(--sp-2); border: 0; background: transparent; color: var(--cc-accent); font: inherit; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; cursor: pointer; }
+.sa-batch-link:hover { text-decoration: underline; }
+.sa-batch-link:disabled { color: var(--cc-text-faint); cursor: default; text-decoration: none; }
+.sa-batch-spacer { flex: 1; }
+.sa-table-card { border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--cc-bg); overflow-x: auto; transition: opacity var(--dur-fast) var(--ease-out); }
+.sa-table-card.is-loading { opacity: .45; pointer-events: none; }
+.sa-table-card table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: fixed; }
+.sa-col-cb { width: 36px; }
+.sa-col-status { width: 88px; }
+.sa-col-title { width: max(200px, 22%); }
+.sa-col-ws { width: 120px; }
+.sa-col-time { width: 112px; }
+.sa-col-act { width: 76px; }
+.sa-table-card thead th { height: 32px; padding: 0 var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; text-align: left; white-space: nowrap; user-select: none; }
+.sa-table-card th.sa-col-cb, .sa-table-card td.sa-col-cb { padding-right: 0; }
+.sa-table-card tbody td { height: 40px; padding: 0 var(--sp-10); border-bottom: var(--hairline) solid color-mix(in srgb, var(--cc-border) 60%, transparent); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.sa-table-card tbody tr:last-child td { border-bottom: 0; }
+.sa-table-card tbody tr:hover, .sa-table-card tbody tr.is-selected { background: var(--fill-hover); }
+.sa-cb { width: 16px; height: 16px; display: inline-grid; place-items: center; padding: 0; border: var(--hairline) solid color-mix(in srgb, var(--cc-text) 35%, transparent); border-radius: var(--radius-xs); background: transparent; color: #fff; vertical-align: middle; cursor: pointer; }
+.sa-cb:hover { border-color: var(--cc-text-faint); }
+.sa-cb.on, .sa-cb.ind { border-color: var(--cc-accent); background: var(--cc-accent); }
+.sa-cb svg { width: 11px; height: 11px; }
+.sa-cb-dash { width: 8px; height: 2px; border-radius: 1px; background: #fff; }
+.sa-st { display: inline-flex; align-items: center; gap: var(--sp-5); }
+.sa-st--open { color: var(--cc-ok-vivid); }
+.sa-st--done { color: var(--cc-accent); }
+.sa-title-cell { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font-weight: 500; }
+.sa-ws { display: inline-flex; max-width: 100%; color: var(--cc-text-dim); }
+.sa-ws span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-prompt { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--cc-text-dim); }
+.sa-time { color: var(--cc-text-dim); font-family: var(--cc-mono); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sa-none { color: var(--cc-text-faint); }
+.sa-act { display: flex; align-items: center; gap: 2px; }
+.sa-icon-btn { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
+.sa-icon-btn:hover { color: var(--cc-text); background: var(--fill-hover); }
+.sa-state { display: flex; align-items: center; justify-content: center; padding: 40px var(--sp-16); }
+.sa-empty { color: var(--cc-text-faint); font-size: var(--text-sm); }
+.sa-pager { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-10); margin-top: var(--sp-10); }
+.sa-total { color: var(--cc-text-dim); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.sa-pager-right { display: flex; align-items: center; gap: var(--sp-10); }
+.sa-pages { display: flex; align-items: center; gap: 2px; }
+.sa-pg { min-width: 26px; height: 26px; display: inline-grid; place-items: center; padding: 0 var(--sp-5); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+.sa-pg:hover { color: var(--cc-text); background: var(--fill-hover); }
+.sa-pg.cur { color: var(--cc-text); background: var(--fill-selected); font-weight: 500; }
+.sa-pg:disabled { opacity: .38; cursor: default; background: transparent; }
+.sa-ellipsis { padding: 0 var(--sp-2); color: var(--cc-text-faint); font-size: var(--text-sm); }
+.sa-toast { position: absolute; left: 50%; bottom: var(--sp-16); transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: var(--cc-shadow-popup); color: var(--cc-text); font-size: var(--text-sm); white-space: nowrap; z-index: 20; }
 /* Windows/Linux：主内容列（标题行 + 正文 + 输入框）平铺在外壳里（对照 Kimi，用户 2026-10-29
    定：取代此前四周留白 + 圆角 + 阴影的浮起卡片）。顶栏与侧栏用较深的窗口底色，主列稍亮一档，
    两者之间只用一条细线分隔——常驻区域靠底色差与细线分层，阴影只留给浮层。
@@ -3922,6 +4011,7 @@ select.ns-input {
 body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !important; user-select: none; }
 .sf-opt:hover .sf-ico { color: var(--cc-text-dim); }
 /* 扁平化筛选面板的小节标题（分组 / 排序 直接内联为 radio 行,不再进二级面板） */
+.sf-sep { flex: 0 0 auto; height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
 .sf-caption { padding: var(--sp-5) var(--sp-10) var(--sp-3); font-size: var(--text-xs); color: var(--cc-text-faint); user-select: none; }
 /* 排序范围注(非默认档只排已加载页):小字说明,不参与交互。 */
 .chat-sidebar-toggle.is-on { color: var(--cc-text); background: var(--fill-selected); }

@@ -228,6 +228,66 @@ pub(crate) struct LiveSessionsPage {
     pub(crate) next_cursor: Option<PageCursor>,
 }
 
+/// 会话管理页的一页（对照 Kimi Code 的会话管理）：这一页的会话 + 当前条件下的总数。
+#[derive(serde::Serialize)]
+pub(crate) struct SessionAdminPage {
+    pub(crate) items: Vec<LiveSession>,
+    pub(crate) total: i64,
+}
+
+/// 会话管理页的单页上限：页长选项最大 100，「选中当前条件下的全部」按 200 一页拉。
+const ADMIN_PAGE_MAX: usize = 200;
+
+/// 会话管理页查询。`status`："open" 进行中 / "done" 已完成 / 其余为全部；`updated_before_days`：
+/// 只要 N 天以前更新过的（批量清理旧会话用）；`page` 从 0 起。标题与侧栏同一套解析（claude 的
+/// 名字要从 transcript 里补），两边不会叫出两个名字。
+#[tauri::command]
+pub(crate) async fn get_session_admin_page(
+    state: State<'_, super::AppState>,
+    workspaces: Vec<String>,
+    status: Option<String>,
+    updated_before_days: Option<u32>,
+    page: usize,
+    page_size: usize,
+) -> Result<SessionAdminPage, String> {
+    let db_path = state.db_path.clone();
+    let tx_cache = state.tx_cache.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let limit = page_size.clamp(1, ADMIN_PAGE_MAX);
+        let query = meowo_store::AdminQuery {
+            cwds: workspaces,
+            archived: match status.as_deref() {
+                Some("open") => Some(false),
+                Some("done") => Some(true),
+                _ => None,
+            },
+            updated_before: updated_before_days
+                .map(|days| super::now_ms() - i64::from(days) * 86_400_000),
+            offset: page.saturating_mul(limit),
+            limit,
+        };
+        let store = super::open_store(&db_path)?;
+        let (mut items, total) = store.session_admin_page(&query).map_err(|e| e.to_string())?;
+        for session in &mut items {
+            if !super::agent_resolves_transcript_title(&session.provider) {
+                continue;
+            }
+            let info = analyze_transcript(
+                &tx_cache,
+                &session.provider,
+                session.cwd.as_deref(),
+                &session.session.cc_session_id,
+            );
+            if let Some(title) = info.and_then(|info| info.title) {
+                session.task_title = title;
+            }
+        }
+        Ok(SessionAdminPage { items, total })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn get_live_sessions_counts(
     state: State<'_, super::AppState>,

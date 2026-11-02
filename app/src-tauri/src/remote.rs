@@ -81,6 +81,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 会话列表/侧栏
     "get_live_sessions_page",
     "get_live_sessions_counts",
+    // 会话管理页（只读；批量标记完成复用 set_archived）
+    "get_session_admin_page",
     "get_session_lineage",
     "search_chat_transcripts",
     "recent_cwds",
@@ -770,6 +772,16 @@ bridged_args!(GetLiveSessionsPageArgs {
     order: Option<String>
 });
 
+bridged_args!(GetSessionAdminPageArgs {
+    workspaces: Vec<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    updated_before_days: Option<u32>,
+    page: usize,
+    page_size: usize
+});
+
 bridged_args!(SearchChatTranscriptsArgs { query: String });
 
 bridged_args!(RecentCwdsArgs { limit: usize });
@@ -991,6 +1003,20 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "recent_cwds" => {
             let a = args!(RecentCwdsArgs);
             reply(crate::session_query::recent_cwds(state, a.limit).await)
+        }
+        "get_session_admin_page" => {
+            let a = args!(GetSessionAdminPageArgs);
+            reply(
+                crate::session_query::get_session_admin_page(
+                    state,
+                    a.workspaces,
+                    a.status,
+                    a.updated_before_days,
+                    a.page,
+                    a.page_size,
+                )
+                .await,
+            )
         }
         "git_diff_summary" => {
             let a = args!(GitDiffSummaryArgs);
@@ -1895,6 +1921,11 @@ mod tests {
             }
             // api.ts:946
             "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8}"#).map(|_| ()),
+            // api.ts getSessionAdminPage：五个键恒发，status / updatedBeforeDays 空值发 null。
+            "get_session_admin_page" => parse::<GetSessionAdminPageArgs>(
+                br#"{"workspaces":["C:/repo"],"status":"open","updatedBeforeDays":7,"page":0,"pageSize":20}"#,
+            )
+            .map(|_| ()),
             // api.ts:502（gitDiffSummary）
             "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
             // api.ts:507（gitFileDiff）

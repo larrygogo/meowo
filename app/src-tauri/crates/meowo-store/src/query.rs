@@ -39,6 +39,19 @@ pub struct LiveCandidate {
     pub cwd: Option<String>,
 }
 
+/// 会话管理页的一次查询（见 [`Store::session_admin_page`]）。
+#[derive(Debug, Clone, Default)]
+pub struct AdminQuery {
+    /// 工作区（多选）；空 = 全部。
+    pub cwds: Vec<String>,
+    /// Some(false) = 进行中，Some(true) = 已完成，None = 全部。
+    pub archived: Option<bool>,
+    /// 只要最后更新早于此刻（ms）的会话；None = 不限。
+    pub updated_before: Option<i64>,
+    pub offset: usize,
+    pub limit: usize,
+}
+
 /// 列表的排序方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListOrder {
@@ -121,6 +134,21 @@ fn escape_like(s: &str) -> String {
     out
 }
 
+/// 会话卡列表的列（与 [`Store::run_live_query`] 的逐列映射一一对应）。看板分页与会话管理页共用。
+const LIVE_SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
+            p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
+            sc.used_pct, sc.window_size, sc.model, sn.note,
+            s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id,
+            COALESCE(s.manual_rank, s.started_at * 1024)
+     FROM sessions s
+     JOIN projects p ON p.id = s.project_id
+     -- 关联子查询取每会话最新一张 task：ux_tasks_session 建立前的旧库可能一会话
+     -- 多卡，裸 JOIN t.session_id 会扇出重复行（列表重复卡、计数虚高）。与
+     -- task_id_of_session 的「最新卡」口径一致；其余三处 tasks JOIN 同式同义。
+     LEFT JOIN tasks t ON t.id = (SELECT MAX(t2.id) FROM tasks t2 WHERE t2.session_id = s.id)
+     LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
+     LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id";
+
 /// 构造 [`Store::live_sessions_filtered`] 实际执行的 SQL 与参数。
 ///
 /// **抽成纯函数只为一件事:让测试能对真正跑的那条语句做 `EXPLAIN QUERY PLAN`。**
@@ -141,19 +169,6 @@ fn build_live_sessions_sql(
     limit: usize,
 ) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
-    const SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
-            p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
-            sc.used_pct, sc.window_size, sc.model, sn.note,
-            s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id,
-            COALESCE(s.manual_rank, s.started_at * 1024)
-     FROM sessions s
-     JOIN projects p ON p.id = s.project_id
-     -- 关联子查询取每会话最新一张 task：ux_tasks_session 建立前的旧库可能一会话
-     -- 多卡，裸 JOIN t.session_id 会扇出重复行（列表重复卡、计数虚高）。与
-     -- task_id_of_session 的「最新卡」口径一致；其余三处 tasks JOIN 同式同义。
-     LEFT JOIN tasks t ON t.id = (SELECT MAX(t2.id) FROM tasks t2 WHERE t2.session_id = s.id)
-     LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
-     LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id";
 
     let mut conditions: Vec<String> = Vec::new();
     let mut params: Vec<Value> = Vec::new();
@@ -240,7 +255,7 @@ fn build_live_sessions_sql(
             ListOrder::Activity => "s.last_event_at DESC, s.id DESC".to_string(),
         }
     };
-    let sql = format!("{} {} ORDER BY {} LIMIT ?", SELECT, where_clause, order_by);
+    let sql = format!("{} {} ORDER BY {} LIMIT ?", LIVE_SELECT, where_clause, order_by);
     params.push(Value::Integer(limit as i64));
 
     (sql, params)
@@ -327,7 +342,59 @@ impl Store {
     ) -> Result<Vec<LiveSession>, StoreError> {
         let (sql, params) =
             build_live_sessions_sql(filter, search, cwd, before_key, before_id, order, limit);
-        let mut stmt = self.conn.prepare(&sql)?;
+        self.run_live_query(&sql, &params)
+    }
+
+    /// 会话管理页（对照 Kimi Code 的会话管理）：按工作区（多选）、状态、最后更新时间筛选，
+    /// 按页码分页，同时给总数。只看「未被接替的链尾」，与看板同口径；从没发过一句话的空壳会话
+    /// （无标题、无最近输入）不算——它们没有可管理的内容。顺序固定为最后更新倒序。
+    pub fn session_admin_page(&self, query: &AdminQuery) -> Result<(Vec<LiveSession>, i64), StoreError> {
+        use rusqlite::types::Value;
+        let mut conditions: Vec<String> = vec![
+            "s.superseded_by IS NULL".into(),
+            "NOT (COALESCE(TRIM(t.title), '') IN ('', '(未命名会话)') AND COALESCE(TRIM(s.last_user_text), '') = '')".into(),
+            "LOWER(COALESCE(t.title, '')) != 'ping'".into(),
+        ];
+        let mut params: Vec<Value> = Vec::new();
+        if let Some(archived) = query.archived {
+            conditions.push("s.archived = ?".into());
+            params.push(Value::Integer(i64::from(archived)));
+        }
+        let dirs: Vec<String> = query
+            .cwds
+            .iter()
+            .map(|dir| dir.trim().replace('\\', "/").trim_end_matches('/').to_string())
+            .filter(|dir| !dir.is_empty())
+            .collect();
+        if !dirs.is_empty() {
+            // 斜杠归一 + 去尾斜杠后精确比较，与侧栏目录筛选同一规则。
+            let any = vec!["RTRIM(REPLACE(s.cwd, '\\', '/'), '/') = ? COLLATE NOCASE"; dirs.len()].join(" OR ");
+            conditions.push(format!("({any})"));
+            params.extend(dirs.into_iter().map(Value::Text));
+        }
+        if let Some(before) = query.updated_before {
+            conditions.push("s.last_event_at < ?".into());
+            params.push(Value::Integer(before));
+        }
+        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+        let total: i64 = self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM sessions s
+                 LEFT JOIN tasks t ON t.id = (SELECT MAX(t2.id) FROM tasks t2 WHERE t2.session_id = s.id)
+                 {where_clause}"
+            ),
+            rusqlite::params_from_iter(params.iter()),
+            |r| r.get(0),
+        )?;
+        let sql = format!("{LIVE_SELECT} {where_clause} ORDER BY s.last_event_at DESC, s.id DESC LIMIT ? OFFSET ?");
+        params.push(Value::Integer(query.limit as i64));
+        params.push(Value::Integer(query.offset as i64));
+        Ok((self.run_live_query(&sql, &params)?, total))
+    }
+
+    /// 执行一条以 [`LIVE_SELECT`] 开头的查询，逐行组装成会话卡（批量补上 todos）。
+    fn run_live_query(&self, sql: &str, params: &[rusqlite::types::Value]) -> Result<Vec<LiveSession>, StoreError> {
+        let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(params.iter()), |r| {
                 let session = Session {

@@ -462,6 +462,20 @@ export function renameSession(
   return invoke("rename_session", { cwd, sessionId: ccSessionId, title, provider });
 }
 
+/** 会话管理页的一页（对照 Kimi Code 的会话管理）。 */
+export type SessionAdminPage = { items: LiveSession[]; total: number };
+/** 会话管理页查询。status：all / open（进行中）/ done（已完成）；updatedBeforeDays：只要 N 天以前
+ *  更新过的，null 不限；page 从 0 起。五个键恒发（远程桥 deny_unknown_fields，样例见 remote.rs）。 */
+export function getSessionAdminPage(query: { workspaces: string[]; status: "all" | "open" | "done"; updatedBeforeDays: number | null; page: number; pageSize: number }): Promise<SessionAdminPage> {
+  return invoke("get_session_admin_page", {
+    workspaces: query.workspaces,
+    status: query.status === "all" ? null : query.status,
+    updatedBeforeDays: query.updatedBeforeDays,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+}
+
 /** 侧栏拖拽排序：把会话挪到 aboveId 正下方（没有 above 时挂到 belowId 正上方）。桌面专用，
  *  远程桥不开放（手机只按这个顺序显示）。 */
 export function moveSessionRank(sessionId: number, aboveId: number | null, belowId: number | null): Promise<void> {
