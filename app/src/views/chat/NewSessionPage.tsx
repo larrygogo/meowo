@@ -4,7 +4,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { type AgentId, agentName, listSubdirectories } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
-import { Dropdown } from "../menu";
+import { PillSelect } from "./PillSelect";
+import { AgentAppIcon } from "./AgentAppIcon";
+
+function ShieldIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>;
+}
 import { useT } from "../../i18n";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -71,10 +76,10 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
         {/* 头部标识是「要起哪家 agent」：Meowo 托管多家 CLI，图标跟着下面的 Agent 下拉变（与空会话
             欢迎面板同一套标识）。名字不再写一遍，下拉里已经有了。Kimi 在这放品牌字标，它只有一家。 */}
         <div className="nsp-hero">
-          {(() => {
-            const { Icon } = agentAssets(provider);
-            return <span className="nsp-hero-mark" style={tintStyle(provider)} aria-hidden="true"><Icon /></span>;
-          })()}
+          {/* 与设置页 agent 卡片同一套应用图标外框（provider-card-icon）：自带方块的（codex /
+              opencode / kimi）铺满，裸 logomark（claude / gemini）留一圈边。此前一律套一块着色
+              方底，codex 的黑方块被套成方中方、几家大小都不一样（用户实拍）。 */}
+          <AgentAppIcon provider={provider} className="nsp-hero-mark" tiled />
           <h1 className="nsp-hero-title">{t.newSession.title}</h1>
         </div>
         {/* 工作区在输入框上方单列（对照 Kimi）：它决定会话在哪跑，分量比底部那排选项重。 */}
@@ -98,41 +103,52 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
           />
           <div className="nsp-bar">
             <div className="nsp-chips">
+              {/* 底部这排与对话页 composer 的权限 / 模型胶囊同一套（PillSelect）：短名上胶囊、
+                  完整名 + 灰色说明进菜单，高风险档才标红。 */}
               {avail && avail.length > 0 && (
-                <span className="nsp-chip" data-testid="nsp-agent">
-                  <Dropdown
-                    align="left"
-                    value={provider}
-                    options={avail.map((id) => {
-                      const { Icon } = agentAssets(id);
-                      return { value: id, label: agentName(agents ?? [], id), icon: <span className="nsp-agent-mark" style={tintStyle(id)}><Icon /></span> };
-                    })}
-                    onChange={(value) => { setProvider(value); setError(null); }}
-                  />
-                </span>
+                <PillSelect
+                  testId="nsp-agent"
+                  variant="model"
+                  label={t.newSession.agent}
+                  value={provider}
+                  options={avail.map((id) => {
+                    const { Icon } = agentAssets(id);
+                    return { value: id, label: agentName(agents ?? [], id), icon: <span className="nsp-agent-mark" style={tintStyle(id)}><Icon /></span> };
+                  })}
+                  onChange={(value) => { setProvider(value); setError(null); }}
+                />
               )}
               {launchOptions.map((option) => {
                 // relay 启用时 model 档由中转固定：置灰，悬停说明固定成了什么。
                 const pinned = option.id === "model" ? relayPins[provider] : undefined;
                 const optionLabel = t.newSession.launchOption[option.id] ?? option.id;
+                // 权限一类（权限 / 审批）配盾牌图标、胶囊用对话页的短名；「默认」带上维度名，
+                // 模型的默认档没有图标可认，写成「默认模型」。
+                const guard = option.id === "permission" || option.id === "approval";
                 return (
-                  <span key={option.id} className="nsp-chip" data-tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : optionLabel} data-testid={"nsp-option-" + option.id}>
-                    <Dropdown
-                      align="left"
-                      disabled={pinned !== undefined}
-                      value={opts[option.id] ?? option.default}
-                      options={option.choices.map((choice) => ({
+                  <PillSelect
+                    key={option.id}
+                    testId={"nsp-option-" + option.id}
+                    variant={guard ? "mode" : "model"}
+                    icon={guard ? <ShieldIcon /> : undefined}
+                    label={optionLabel}
+                    tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : optionLabel}
+                    disabled={pinned !== undefined}
+                    value={opts[option.id] ?? option.default}
+                    options={option.choices.map((choice) => {
+                      const name = t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
+                      return {
                         value: choice.id,
-                        label: choice.id === "default"
-                          ? t.newSession.defaultOf(optionLabel)
-                          : t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label,
-                        risky: choice.risk,
-                        sub: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
+                        label: name,
+                        short: t.chat.modeShortNames[`${option.id}.${choice.id}`]
+                          ?? (choice.id === "default" && !guard ? t.newSession.defaultOf(optionLabel) : name),
+                        risk: choice.risk,
+                        desc: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
                           ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
-                      }))}
-                      onChange={(value) => setOpts((current) => ({ ...current, [option.id]: value }))}
-                    />
-                  </span>
+                      };
+                    })}
+                    onChange={(value) => setOpts((current) => ({ ...current, [option.id]: value }))}
+                  />
                 );
               })}
             </div>

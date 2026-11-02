@@ -2712,6 +2712,12 @@ body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(-
   width: 82%;
   height: 82%;
 }
+/* 套了品牌方底的裸 logomark（AgentAppIcon tiled）：图标居中占六成，与自带方块的 codex 等
+   内部图形比例相当。选择器带 data-agent 才压得过上面按 agent 收边的规则。 */
+.provider-card-icon.provider-card-icon-tile[data-agent] svg {
+  width: 58%;
+  height: 58%;
+}
 .provider-card-title {
   flex: 1;
   min-width: 0;
@@ -3843,8 +3849,8 @@ select.ns-input {
 /* 固定阅读宽（对照 Kimi 约 700px）：不跟「对话宽度：铺满」走，铺满时输入框横贯整列、工作区钮孤悬左端（用户实拍「太丑」）。 */
 .nsp-center { width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
 .nsp-hero { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-24); }
-.nsp-hero-mark { width: 52px; height: 52px; display: grid; place-items: center; border-radius: var(--radius-xl); background: color-mix(in srgb, currentColor 16%, transparent); color: var(--cc-text-dim); }
-.nsp-hero-mark svg { width: 28px; height: 28px; }
+/* 外框与图标排布走 .provider-card-icon（AgentAppIcon），这里只定尺寸。 */
+.provider-card-icon.nsp-hero-mark { width: 52px; height: 52px; border-radius: 14px; }
 .nsp-hero-title { margin: var(--sp-6) 0 0; color: var(--cc-text); font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
 .nsp-composer { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12) var(--sp-8) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-composer); background: color-mix(in srgb, var(--cc-bg) 96%, white 4%); box-shadow: var(--shadow-input); transition: border-color var(--dur-base); }
 .nsp-composer:focus-within { border-color: color-mix(in srgb, var(--cc-text) 22%, var(--cc-border)); }
@@ -3852,12 +3858,6 @@ select.ns-input {
 .nsp-input::placeholder { color: var(--cc-text-faint); }
 .nsp-bar { display: flex; align-items: center; gap: var(--sp-8); }
 .nsp-chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); }
-/* 下拉收成无框小钮（Kimi 输入框底部的选择器形态），悬停才显底。 */
-.nsp-chip .dd-btn { min-width: 0; max-width: 220px; height: 30px; padding: 0 var(--sp-8); gap: var(--sp-4); border-color: transparent; border-radius: 999px; background: transparent; color: var(--cc-text-dim); }
-.nsp-chip .dd-btn:hover:not(:disabled), .nsp-chip .dd-btn.open { background: var(--fill-hover); border-color: transparent; color: var(--cc-text); }
-.nsp-chip .dd-btn:disabled { opacity: .5; cursor: default; }
-.nsp-chip .dd-ico { width: 15px; height: 15px; }
-.nsp-chip .dd-ico svg { width: 14px; height: 14px; }
 .nsp-agent-mark { display: inline-flex; }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
 .nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
@@ -4890,8 +4890,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 空会话欢迎面板（A+B 改版定稿）：坐在 .chat-empty 的居中网格里，自己重设字号/颜色
    （.chat-empty 是 12px 淡字的注脚腔）。事实条用等宽 key/value，起手入口是预填输入框的胶囊。 */
 .chat-welcome { width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: var(--sp-10); color: var(--cc-text-dim); font-size: var(--text-base); }
-.chat-welcome-mark { width: 56px; height: 56px; display: grid; place-items: center; border-radius: var(--radius-xl); background: color-mix(in srgb, currentColor 16%, transparent); color: var(--cc-text-dim); }
-.chat-welcome-mark svg { width: 28px; height: 28px; }
+.provider-card-icon.chat-welcome-mark { width: 52px; height: 52px; border-radius: 14px; }
 .chat-welcome-title { margin-top: var(--sp-4); color: var(--cc-text); font-size: calc(24px * var(--cc-ui)); font-weight: 700; letter-spacing: -.01em; }
 .chat-welcome-sub { color: var(--cc-text-dim); font-size: var(--text-base); }
 .chat-welcome-facts { margin-top: var(--sp-6); padding: var(--sp-7) var(--sp-14); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-4) var(--sp-18); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-surface); color: var(--cc-text-faint); font: var(--text-xs) var(--cc-mono); }
@@ -5793,9 +5792,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    用更高特异性重置回中性，否则整个菜单被刷成大片主题色。 */
 /* 无描边（实拍反馈「不要圆框」）：静态是纯文字，hover 的胶囊底自己就是可点暗示。
    留 1px 透明边占位，hover 出现底色时尺寸不跳。 */
-.chat-compose .chat-model-button { display: inline-flex; align-items: center; gap: var(--sp-4); height: calc(32px * var(--cc-ui)); min-height: 0; max-width: 100%; padding: 0 var(--sp-10); border: var(--hairline) solid transparent; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font-size: var(--text-base); cursor: pointer; }
-.chat-compose .chat-model-button:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-hover); }
-.chat-compose .chat-model-button:disabled { cursor: default; opacity: .8; }
+:is(.chat-compose, .nsp-composer) .chat-model-button { display: inline-flex; align-items: center; gap: var(--sp-4); height: calc(32px * var(--cc-ui)); min-height: 0; max-width: 100%; padding: 0 var(--sp-10); border: var(--hairline) solid transparent; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font-size: var(--text-base); cursor: pointer; }
+:is(.chat-compose, .nsp-composer) .chat-model-button:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-hover); }
+:is(.chat-compose, .nsp-composer) .chat-model-button:disabled { cursor: default; opacity: .8; }
 .chat-model-icon, .chat-mode-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; color: var(--cc-text-dim); }
 /* 上下文用量：可见区域只留高亮圆环，详情在 tooltip。60% 起转黄、85% 起转红。 */
 .chat-context { display: inline-flex; align-items: center; flex: 0 0 auto; color: var(--cc-text-faint); }
@@ -5809,8 +5808,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-context.is-full .chat-context-ring-fg { stroke: var(--cc-err-vivid); }
 .chat-compose .chat-slash-menu .dd-item { height: auto; min-height: 0; padding: var(--sp-7) var(--sp-10); border: 0; border-radius: var(--radius-xs); color: var(--cc-text-dim); background: transparent; }
 .chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-hover); }
-.chat-compose .chat-model-item { height: auto; min-height: 0; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; }
-.chat-compose .chat-model-item:hover { background: var(--fill-hover); }
+:is(.chat-compose, .nsp-composer) .chat-model-item { height: auto; min-height: 0; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; }
+:is(.chat-compose, .nsp-composer) .chat-model-item:hover { background: var(--fill-hover); }
 /* 模型菜单：双行卡片项（名称 + 描述），当前模型右侧打勾。表面/阴影仍继承 .dd-menu。 */
 .chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; padding: var(--sp-6); border-radius: var(--radius-lg); }
 .chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); background: transparent; text-align: left; cursor: pointer; }
@@ -5856,15 +5855,15 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-model-pill-effort { color: var(--cc-accent-text); }
 /* 模型钮照 Kimi 的 model-pill：全圆角、正文色、中等字重；菜单开着时铺一层强调色浅底、箭头朝上——
    一眼看出这个菜单是从哪颗钮弹出来的。 */
-.chat-compose .chat-model-select .chat-model-button { border-radius: var(--radius-full); color: var(--cc-text); font-weight: 500; }
-.chat-compose .chat-model-select .chat-model-button[aria-expanded="true"] { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
+:is(.chat-compose, .nsp-composer) .chat-model-select .chat-model-button { border-radius: var(--radius-full); color: var(--cc-text); font-weight: 500; }
+:is(.chat-compose, .nsp-composer) .chat-model-select .chat-model-button[aria-expanded="true"] { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
 .chat-model-chevron { flex: none; transition: transform var(--dur-base) var(--ease-in-out); }
 .chat-model-button[aria-expanded="true"] .chat-model-chevron { transform: rotate(180deg); }
 /* 模式钮（权限等）与模型钮同一套胶囊（Kimi 的 perm-pill 与 model-pill 共用样式）。 */
-.chat-compose .chat-mode-button { border-radius: var(--radius-full); color: var(--cc-text); font-weight: 500; }
-.chat-compose .chat-mode-button[aria-expanded="true"] { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
+:is(.chat-compose, .nsp-composer) .chat-mode-button { border-radius: var(--radius-full); color: var(--cc-text); font-weight: 500; }
+:is(.chat-compose, .nsp-composer) .chat-mode-button[aria-expanded="true"] { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
 /* 高风险档：文字与盾牌图标都转危险色（Kimi 的 perm-auto）。 */
-.chat-compose .chat-mode-button.is-risk, .chat-compose .chat-mode-button.is-risk .chat-mode-icon { color: var(--cc-err-text); }
+:is(.chat-compose, .nsp-composer) .chat-mode-button.is-risk, :is(.chat-compose, .nsp-composer) .chat-mode-button.is-risk .chat-mode-icon { color: var(--cc-err-text); }
 .chat-model-item.is-risk .chat-model-item-name { color: var(--cc-err-text); }
 /* 「切换引擎」分组（跨 provider 切换）：分组标题 + agent 行（可展开二级模型档）。 */
 .chat-model-group { margin: var(--sp-6) 0 var(--sp-2); padding: var(--sp-4) var(--sp-11) 0; border-top: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 600; }

@@ -1,4 +1,4 @@
-import { agentAssets, tintStyle } from "../../providers";
+import { AgentAppIcon } from "./AgentAppIcon";
 import { useT } from "../../i18n";
 
 /// 欢迎面板里优先露出的内置命令：按这个顺序挑当前 agent 确实支持的（slash_commands
@@ -23,11 +23,11 @@ export function WelcomePanel({ info, commands, mention, onPick }: {
   onPick: (text: string) => void;
 }) {
   const t = useT();
-  const { Icon } = agentAssets(info.provider);
   const starters = STARTER_COMMANDS.filter((name) => commands.includes(name));
   return (
     <div className="chat-welcome">
-      <span className="chat-welcome-mark" style={tintStyle(info.provider)} aria-hidden="true"><Icon /></span>
+      {/* 与新建会话页头部同一枚应用图标（AgentAppIcon）：此前套着色方底，codex 成了方中方。 */}
+      <AgentAppIcon provider={info.provider} className="chat-welcome-mark" tiled />
       <div className="chat-welcome-title">{info.name}</div>
       <div className="chat-welcome-sub">{t.chat.welcomeSub}</div>
       <div className="chat-welcome-facts">
