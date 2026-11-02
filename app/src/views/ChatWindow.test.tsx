@@ -3716,6 +3716,62 @@ describe("ChatWindow", () => {
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 36, data: "\x1b[B\r" });
   });
 
+  /** 用户实拍：hook 没写上 pendingReview（会话挂着后台 Bash），题面卡照样收下两题的答案，
+   *  识别却一直没开，答案永远等不到「表单就绪」。题面在就要开识别；认出表单后题面不能清，
+   *  第 1 题落完，第 2 题的排队答案还得在。 */
+  it("多问题展示卡：pendingReview 缺席也开识别，两题的排队答案依次落进表单", async () => {
+    window.history.replaceState({}, "", "/?sessionId=37");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 37, title: "两题会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+        ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 37, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(screen.getByText("两题会话")).toBeTruthy());
+    expect(terminalProps.current?.interactivePrompt).toBeFalsy();
+    act(() => {
+      eventListeners.get("interactive-question")?.({ payload: {
+        sessionId: 37, requestId: "request-two", provider: "claude", toolName: "AskUserQuestion",
+        description: null, answerable: false,
+        input: JSON.stringify({ questions: [
+          { header: "GUI 限制", question: "「一个激活码只能登录一个 GUI」按哪种算？", multiSelect: false, options: [{ label: "绑定一台电脑（推荐）" }, { label: "同一时间只能有一个 GUI 在线" }] },
+          { header: "多机器", question: "大于 0 时，码可以登录多个 GUI 吗？", multiSelect: false, options: [{ label: "不行，GUI 永远只有一个（推荐）" }, { label: "可以，和以前一样" }] },
+        ] }),
+        permissionSuggestions: [],
+      } });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /同一时间只能有一个 GUI 在线/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /多机器/ }));
+    fireEvent.click(screen.getByRole("button", { name: /不行，GUI 永远只有一个/ }));
+    // 题面在，识别就开（不再只看 pendingReview）。
+    await waitFor(() => expect(terminalProps.current?.interactivePrompt).toBe(true));
+    const form = (tabs: string, question: string, options: string[]) => [
+      `\x1b[2J←  ${tabs}  ✔ Submit  →`,
+      question,
+      ...options.map((label, index) => `${index === 0 ? "❯" : " "} ${index + 1}. ${label}`),
+      `  ${options.length + 1}. Type something.`,
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ].join("\r\n");
+    const inject = (screenText: string) => {
+      const attention = terminalAttention(screenText, [], true);
+      expect(attention?.id).toBe("interactive:numbered-selector");
+      act(() => { (terminalProps.current?.onAttention as (a: unknown) => void)(attention); });
+    };
+    // 第 1 题在屏：落「同一时间只能有一个 GUI 在线」（下移一格 + 回车）。
+    inject(form("☐ GUI 限制  ☐ 多机器", "「一个激活码只能登录一个 GUI」按哪种算？", ["绑定一台电脑（推荐）", "同一时间只能有一个 GUI 在线"]));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 37, data: "\x1b[B\r" }));
+    // 识别接管后开关仍开着，第 2 题在屏时它的排队答案还在：❯ 已停在「不行…」，直接回车。
+    expect(terminalProps.current?.interactivePrompt).toBe(true);
+    inject(form("☒ GUI 限制  ☐ 多机器", "大于 0 时，码可以登录多个 GUI 吗？", ["不行，GUI 永远只有一个（推荐）", "可以，和以前一样"]));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 37, data: "\r" }));
+  });
+
   /** C-11：单问题多选的展示卡（非 answerable 路径）可点选排队——勾选累加进
    *  queuedAnswers 并提示「已选…」，再点取消；多问题的跨题落键见上个用例。 */
   it("单问题多选展示卡可点选排队：勾选累加、再点取消", async () => {

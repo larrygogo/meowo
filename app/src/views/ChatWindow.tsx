@@ -964,7 +964,11 @@ export function ChatWindow() {
     ? capabilityOffset
     : transcriptCapabilitiesReady ? 1 : 0;
   const startupAttentionMarkerKey = (chatUi?.startup_attention_markers ?? []).join("\0");
-  const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan";
+  // 屏幕识别要不要去认编号选择表单。hook 写的 pendingReview 之外，broker 带来的结构化题面
+  // 也算：hook 漏写或被后台任务的事件冲掉时（用户实拍：会话挂着后台 Bash），题面卡照样
+  // 显示、照样收下点选的答案，识别却一直不开，答案永远等不到「表单就绪」，去终端页也一样。
+  const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan"
+    || structuredQuestion != null;
   // 识别文法:provider 门控(claude 专有整句规则只对 claude 生效)+ 插件声明的选择器
   // 锚点。chatUi 未就绪时锚点为空——ManagedTerminal 的 grammarKey 复扫会在其到达后补投。
   const attentionGrammar = useMemo<AttentionGrammar>(() => ({
@@ -3145,10 +3149,24 @@ export function ChatWindow() {
   const commandAttention = terminalAttention && terminalAttention.details && terminalAttention.details !== "none"
     && (terminalAttention.details !== "framed_box" || terminalAttention.options?.length) ? terminalAttention : null;
   const interactiveAttention = terminalAttention?.id === "interactive:numbered-selector" ? terminalAttention : null;
-  // 屏幕识别就绪 → 可作答的交互选择器接管，结构化题面的展示卡退场（同一份题面不双卡）。
+  // 屏幕识别就绪 → 可作答的交互选择器接管，结构化题面的展示卡藏起来（同一份题面不双卡）。
+  // 题面本身留到表单从屏上消失才清：多问题表单靠它反查当前是第几题，排队的答案也跟着它
+  // 存亡。此前一认出表单就清掉题面，第 2 题起的排队答案全被连带清空（只有第 1 题落得下），
+  // 识别的开关也跟着关掉。消失要连续 3s 才算：答完一题切到下一题的那一下，画面会短暂
+  // 认不出表单。
+  const [questionFormSeen, setQuestionFormSeen] = useState(false);
   useEffect(() => {
-    if (interactiveAttention) setStructuredQuestion(null);
-  }, [interactiveAttention]);
+    if (interactiveAttention) { setQuestionFormSeen(true); return; }
+    if (!questionFormSeen) return;
+    const timer = window.setTimeout(() => {
+      setQuestionFormSeen(false);
+      setStructuredQuestion(null);
+    }, 3_000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setStructuredQuestion 来自 hook，稳定
+  }, [interactiveAttention, questionFormSeen]);
+  // 换会话 / 题面在别处了结：表单的「见过」标记一起归零。
+  useEffect(() => { if (!structuredQuestion) setQuestionFormSeen(false); }, [structuredQuestion]);
   const structuredQuestions = useMemo(
     () => (structuredQuestion ? parseAskUserQuestions(structuredQuestion.input) : []),
     [structuredQuestion],
@@ -4071,7 +4089,7 @@ export function ChatWindow() {
           （interactiveAttention 接管后此卡退场）；全无选项的纯开放问题没得点，走
           「去终端作答」。旧 reporter/降级（挂起超时）场景都落在这里。两视图都渲染：
           卡内点选排队写的按键落进终端表单，用户在终端画面里能直接看到同步效果。 */}
-      {structuredQuestions.length > 0 && !terminalAttention && !approval && !questionAnswerable && <ApprovalCard
+      {structuredQuestions.length > 0 && !terminalAttention && !questionFormSeen && !approval && !questionAnswerable && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
         title={t.chat.questionTitle}
