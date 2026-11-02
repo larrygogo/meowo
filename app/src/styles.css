@@ -214,6 +214,10 @@
   --radius-full: 999px;
   --radius-dock-pill: 10px;
   --radius-composer: 32px;
+  /* 超椭圆圆角（对照 Kimi 的 --corner-shape-composer）：同样 32px，弯角从直边渐变过去，
+     不是一段四分之一圆——输入框一长高，普通圆角四角鼓成半个胶囊（用户实拍「圆角奇怪」）。
+     不支持 corner-shape 的内核忽略这条，退回普通圆角。 */
+  --corner-shape-composer: superellipse(1.5);
   --fill-hover: rgba(255, 255, 255, 0.05);
   --fill-selected: rgba(255, 255, 255, 0.1);
   --fill-selected-hover: rgba(255, 255, 255, 0.14);
@@ -3879,7 +3883,7 @@ select.ns-input {
 /* 外框与图标排布走 .provider-card-icon（AgentAppIcon），这里只定尺寸。 */
 .provider-card-icon.nsp-hero-mark { width: 52px; height: 52px; border-radius: 14px; }
 .nsp-hero-title { margin: var(--sp-6) 0 0; color: var(--cc-text); font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
-.nsp-composer { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12) var(--sp-8) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-composer); background: color-mix(in srgb, var(--cc-bg) 96%, white 4%); box-shadow: var(--shadow-input); transition: border-color var(--dur-base); }
+.nsp-composer { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12) var(--sp-8) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-composer); corner-shape: var(--corner-shape-composer); background: color-mix(in srgb, var(--cc-bg) 96%, white 4%); box-shadow: var(--shadow-input); transition: border-color var(--dur-base); }
 .nsp-composer:focus-within { border-color: color-mix(in srgb, var(--cc-text) 22%, var(--cc-border)); }
 .nsp-input { width: 100%; min-height: 72px; max-height: 240px; padding: var(--sp-3) var(--sp-8); resize: none; border: 0; outline: none; color: var(--cc-text); background: transparent; font-family: inherit; font-size: var(--text-base); line-height: var(--leading-body); field-sizing: content; }
 .nsp-input::placeholder { color: var(--cc-text-faint); }
@@ -5125,6 +5129,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   gap: var(--sp-8);
   border: var(--hairline) solid var(--cc-border);
   border-radius: var(--radius-composer);
+  corner-shape: var(--corner-shape-composer);
   background: color-mix(in srgb, var(--cc-bg) 96%, white 4%);
   box-shadow: var(--shadow-input);
   transition: border-color var(--dur-base), box-shadow var(--dur-base);
