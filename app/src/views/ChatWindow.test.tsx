@@ -5223,11 +5223,15 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     const input = await screen.findByTestId("nsp-input");
     await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    // 新建页开着时侧栏高亮的是「新建会话」这一行（对照 Kimi）。
+    const newRow = document.querySelector(".chat-sidebar-new");
+    expect(newRow?.className).toContain("is-active");
     fireEvent.change(input, { target: { value: "修一下登录页" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("new_session", expect.objectContaining({ provider: "claude" })));
     // 起完会话新建页让位给对话主区。
     await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    expect(document.querySelector(".chat-sidebar-new")?.className).not.toContain("is-active");
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
       sessionId: 71, data: "修一下登录页",
     }), { timeout: 8_000 });

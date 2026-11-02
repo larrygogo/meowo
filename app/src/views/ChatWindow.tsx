@@ -1531,7 +1531,11 @@ export function ChatWindow() {
       if (at < 0) return;
       const next = order[at + (e.key === "ArrowUp" ? -1 : 1)];
       e.preventDefault();
-      if (next !== undefined) resetTo(next);
+      if (next === undefined) return;
+      // 用户主动换会话：新建页 / 管理页让位，不然主区还盖着、换了也看不见。
+      setNewSessionOpen(null);
+      setAdminOpen(false);
+      resetTo(next);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1561,6 +1565,10 @@ export function ChatWindow() {
   // 新建会话页（对照 Kimi：不弹窗，主区就地换成新建页）。nonce 让再点一次「新建会话」
   // 换一份干净的表单（带上新的预填）。
   const [newSessionOpen, setNewSessionOpen] = useState(initialNewSession);
+  // 新建页开着时拖进窗口的文件夹（交给新建页设为工作区）。拖拽订阅只挂一次，经 ref 读开合。
+  const [newSessionDrop, setNewSessionDrop] = useState<{ path: string; nonce: number } | null>(null);
+  const newSessionOpenRef = useRef(false);
+  newSessionOpenRef.current = newSessionOpen != null;
   const openAdmin = useCallback(() => { setNewSessionOpen(null); setAdminOpen(true); }, []);
   const selectSession = useCallback((id: number) => {
     setAdminOpen(false);
@@ -1582,6 +1590,7 @@ export function ChatWindow() {
   useTauriEvent<NewSessionPrefill>("chat-new-session", (event) => {
     setOverlaySidebar(false);
     setAdminOpen(false);
+    setNewSessionDrop(null);
     setNewSessionOpen({ cwd: event.payload?.cwd, provider: event.payload?.provider, nonce: Date.now() });
   });
   // 远程新建会话启动成功:RemoteApp 把临时负 id 经页内事件送回来(桥不 reveal,这是移动端
@@ -3060,6 +3069,18 @@ export function ChatWindow() {
     try { webview = getCurrentWebview(); } catch { return; }
     webview.onDragDropEvent((event) => {
       if (event.payload.type === "over") return;
+      // 新建页开着时对话主区是藏起来的：拖进来的东西不能暗挂到旧会话的 composer 上。
+      // 对照 Kimi，拖文件夹进来就是选它当工作区（是不是文件夹由新建页去核实）。
+      if (newSessionOpenRef.current) {
+        if (event.payload.type === "drop") {
+          setDragHover(false);
+          const path = event.payload.paths?.[0];
+          if (path) setNewSessionDrop({ path, nonce: Date.now() });
+          return;
+        }
+        setDragHover(event.payload.type === "enter");
+        return;
+      }
       // 终端页没有附件概念:拖入文件按终端惯例把**路径**打进输入行(含空白的加引号、
       // 多个以空格分隔),不把文件暗挂到对话页的 composer 上。遮罩文案随页面切换。
       if (viewRef.current === "terminal") {
@@ -3604,7 +3625,7 @@ export function ChatWindow() {
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
         <div className="chat-drop-overlay" aria-hidden="true">
-          <span>{view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
+          <span>{newSessionOpen ? t.newSession.dropToWorkspace : view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
         </div>
       )}
       {remoteListMode && (
@@ -3636,7 +3657,8 @@ export function ChatWindow() {
           <div className="chat-sidebar-overlay" hidden={!overlaySidebar}>
             <div className="chat-sidebar-overlay-head">{sidebarToggleButton}</div>
             <ChatSidebar
-              activeId={sessionId}
+              activeId={newSessionOpen ? 0 : sessionId}
+              newSessionActive={newSessionOpen != null}
               approvalAwaitingIds={approvalAwaitingIds}
               visibleOrderRef={sidebarOrderRef}
               searchInputRef={sidebarSearchRef}
@@ -3654,7 +3676,8 @@ export function ChatWindow() {
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
       {!narrow && !sidebarCollapsed && <>
       <ChatSidebar
-        activeId={sessionId}
+        activeId={newSessionOpen ? 0 : sessionId}
+        newSessionActive={newSessionOpen != null}
         approvalAwaitingIds={approvalAwaitingIds}
         visibleOrderRef={sidebarOrderRef}
         searchInputRef={sidebarSearchRef}
@@ -3687,6 +3710,7 @@ export function ChatWindow() {
           <NewSessionPage
             key={newSessionOpen.nonce}
             prefill={newSessionOpen}
+            droppedPath={newSessionDrop}
             onLaunched={(tempId, launchedProvider, message) => {
               // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
               if (message) {
@@ -5051,7 +5075,7 @@ export function ChatWindow() {
         <QuickSwitcher
           activeId={sessionId}
           commands={paletteCommands}
-          onPick={(id) => resetTo(id)}
+          onPick={selectSession}
           onCommand={runPaletteCommand}
           onClose={() => setSwitcherOpen(false)}
         />

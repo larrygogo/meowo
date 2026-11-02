@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   listAgents: vi.fn(),
   getAccounts: vi.fn(),
+  listSubdirectories: vi.fn(),
 }));
 vi.mock("../../api", async (orig) => ({ ...(await orig<typeof import("../../api")>()), ...api }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
@@ -88,5 +89,18 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     await screen.findByTestId("nsp-error");
     expect(onLaunched).not.toHaveBeenCalled();
     expect((screen.getByTestId("nsp-input") as HTMLTextAreaElement).value).toBe("你好");
+  });
+
+  it("拖进窗口的文件夹设为工作区，拖进文件则说明不是文件夹", async () => {
+    api.listSubdirectories.mockImplementation((path: string) =>
+      path.endsWith(".txt") ? Promise.reject("不是目录") : Promise.resolve({ path, parent: null, dirs: [] }));
+    const { rerender } = render(<NewSessionPage prefill={{}} droppedPath={null} onLaunched={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("meowo"));
+    rerender(<NewSessionPage prefill={{}} droppedPath={{ path: "F:/dropped/app", nonce: 1 }} onLaunched={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("app"));
+    rerender(<NewSessionPage prefill={{}} droppedPath={{ path: "F:/notes.txt", nonce: 2 }} onLaunched={vi.fn()} />);
+    expect((await screen.findByTestId("nsp-error")).textContent).toBe(zh.newSession.dropNotFolder);
+    // 工作区保持上一次拖进来的文件夹。
+    expect(screen.getByTestId("nsp-workspace").textContent).toContain("app");
   });
 });

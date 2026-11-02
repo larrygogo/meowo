@@ -145,6 +145,9 @@ export const zh = {
     pickFolder: "选择文件夹…",
     workspaceRequired: "请先选择工作区",
     start: "开始",
+    // 新建页开着时往窗口里拖文件夹 = 选它当工作区（对照 Kimi「松开鼠标添加工作区」）。
+    dropToWorkspace: "松开鼠标设为工作区",
+    dropNotFolder: "拖进来的不是文件夹",
     // 新建页的小下拉只显示选中项，几个「默认」并排分不清是谁的默认，带上选项名。
     defaultOf: (option: string) => `默认${option}`,
     firstPromptFailed: "第一句话没发出去，已放回输入框",

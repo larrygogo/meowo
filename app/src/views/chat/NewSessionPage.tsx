@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { type AgentId, agentName } from "../../api";
+import { type AgentId, agentName, listSubdirectories } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
 import { Dropdown } from "../menu";
@@ -25,8 +25,10 @@ function FolderIcon() {
 
 const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
 
-export function NewSessionPage({ prefill, onLaunched }: {
+export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
   prefill: { cwd?: string | null; provider?: string | null };
+  /** 拖进窗口的路径（nonce 区分同一路径的两次拖入）。是文件夹就设为工作区。 */
+  droppedPath?: { path: string; nonce: number } | null;
   /** 启动成功：临时负 id、用的 agent、第一句话（可为空）。 */
   onLaunched: (tempId: number, provider: AgentId, message: string) => void;
 }) {
@@ -38,6 +40,17 @@ export function NewSessionPage({ prefill, onLaunched }: {
   const textRef = useRef<HTMLTextAreaElement>(null);
   // 打开即可打字：九成场景目录已按最近一次预填好，第一步就是写第一句话。
   useEffect(() => textRef.current?.focus(), []);
+
+  useEffect(() => {
+    if (!droppedPath) return;
+    let cancelled = false;
+    // 拖拽只给路径不说类型：能列子目录的才是文件夹（拖进来的文件会被它拒掉）。
+    listSubdirectories(droppedPath.path)
+      .then(() => { if (!cancelled) { setCwd(normalizePath(droppedPath.path)); setError(null); } })
+      .catch(() => { if (!cancelled) setError(t.newSession.dropNotFolder); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只由一次新的拖入驱动
+  }, [droppedPath?.nonce]);
 
   async function pickFolder() {
     const picked = await open({ directory: true });

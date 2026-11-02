@@ -134,6 +134,8 @@ export const en: Dict = {
     pickFolder: "Choose folder…",
     workspaceRequired: "Choose a workspace first",
     start: "Start",
+    dropToWorkspace: "Drop to use as workspace",
+    dropNotFolder: "That's not a folder",
     defaultOf: (option: string) => `Default ${option.toLowerCase()}`,
     firstPromptFailed: "First message wasn't sent. It's back in the input box",
     dir: "Working directory",

@@ -4184,6 +4184,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-head { flex-direction: column; align-items: stretch; gap: 2px; padding: 0 var(--sp-8) 2px; }
 .chat-sidebar-new { flex: 0 0 auto; gap: var(--sp-10); padding: var(--sp-8) var(--sp-10); border: 0; background: transparent; font-weight: 500; }
 .chat-sidebar-new:hover { background: var(--fill-hover); border-color: transparent; }
+.chat-sidebar-new.is-active { color: var(--cc-text); background: var(--fill-selected); }
 .chat-sidebar-search { padding: 0 var(--sp-8) var(--sp-8); }
 .chat-sidebar-search-icon { left: calc(var(--sp-8) + var(--sp-10)); top: calc(50% - var(--sp-5)); width: 16px; height: 16px; color: var(--cc-text); }
 .chat-sidebar-search input { padding-left: calc(var(--sp-10) + 16px + var(--sp-10)); background: transparent; font-weight: 500; }
