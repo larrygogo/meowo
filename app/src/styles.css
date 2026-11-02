@@ -4685,6 +4685,19 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-lines .is-del { color: var(--cc-err-vivid); }
 .chat-diff-lines + .chat-diff-cmt-count { margin-left: var(--sp-4); }
 .chat-diff-search:focus { border-color: var(--cc-border); background: var(--cc-surface); }
+/* 文件页：树（browse）与预览（preview）。窄面板逐级进出：选了文件只显示预览，没选只显示树；
+   面板够宽（≥560px，拖宽或最大化）时并排，对照 Kimi 的文件页，返回钮不再需要。 */
+.chat-files { flex: 1; min-height: 0; display: flex; }
+.chat-files-browse, .chat-files-preview { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.chat-files.has-selection > .chat-files-browse { display: none; }
+.chat-files .chat-diff-tree-file.is-selected { color: var(--cc-text); background: var(--fill-selected); }
+.chat-files:not(.has-selection) > .chat-files-preview { display: none; }
+@container diff-panel (min-width: 560px) {
+  /* 选择器与上面窄面板的显隐规则同特异性，才压得过它们。 */
+  .chat-files > .chat-files-browse, .chat-files.has-selection > .chat-files-browse { display: flex; flex: 0 0 clamp(200px, 34%, 300px); border-right: var(--hairline) solid var(--cc-border); }
+  .chat-files > .chat-files-preview, .chat-files:not(.has-selection) > .chat-files-preview { display: flex; }
+  .chat-files .chat-files-preview .chat-diff-back { display: none; }
+}
 .chat-diff-tree { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 0 var(--sp-8) var(--sp-8); }
 .chat-diff-tree-dir, .chat-diff-tree-file { width: 100%; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); cursor: pointer; text-align: left; }
 .chat-diff-tree-dir svg { flex: 0 0 auto; }

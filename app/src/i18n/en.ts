@@ -606,6 +606,7 @@ export const en: Dict = {
     diffSearchPlaceholder: "Search files…",
     diffFileCount: (n: number) => `${n} file${n === 1 ? "" : "s"}`,
     diffLayoutLabel: "List layout",
+    filesPickToPreview: "Pick a file on the left to preview",
     diffLayoutList: "List",
     diffLayoutTree: "Tree",
     diffStatusName: { A: "Added", U: "New, untracked", D: "Deleted", M: "Modified", R: "Renamed", T: "Type changed" } as Record<string, string>,

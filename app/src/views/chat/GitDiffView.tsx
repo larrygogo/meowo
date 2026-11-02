@@ -1173,7 +1173,9 @@ function FilesView({ cwd }: { cwd: string }) {
         <button
           key={entry.relPath}
           type="button"
-          className="chat-diff-tree-file"
+          // 并排时树与预览同屏，正在看的那个文件要在树上标出来。
+          className={"chat-diff-tree-file" + (entry.relPath === selectedPath ? " is-selected" : "")}
+          aria-current={entry.relPath === selectedPath ? "true" : undefined}
           style={indent(depth)}
           onClick={() => openFile(entry.relPath)}
           onContextMenu={(event) => openCtxMenu(event, entry.relPath, false)}
@@ -1255,6 +1257,9 @@ function FilesView({ cwd }: { cwd: string }) {
     );
   })();
 
+  // 文件树与预览两块都渲染，由 CSS 按面板宽度排布（对照 Kimi 的文件页：树在左、预览在右）：
+  // 面板窄（默认 400px）时照旧逐级进出，宽到能并排时两块同屏，点一个看一个不用来回返回。
+  let preview: ReactNode = <div className="chat-diff-empty">{t.chat.filesPickToPreview}</div>;
   if (selectedPath) {
     const kind = previewKindOf(selectedPath);
     // md 与 svg 提供「预览/源码」切换（svg 本质是文本）；位图没有可读源码，不出切换。
@@ -1315,7 +1320,7 @@ function FilesView({ cwd }: { cwd: string }) {
         </>
       );
     })();
-    return (
+    preview = (
       <>
         <div className="chat-diff-filehead">
           <BackButton label={t.chat.diffBack} onClick={() => setSelectedPath(null)} />
@@ -1337,7 +1342,8 @@ function FilesView({ cwd }: { cwd: string }) {
     );
   }
   return (
-    <>
+    <div className={"chat-files" + (selectedPath ? " has-selection" : "")}>
+      <div className="chat-files-browse">
       <input
         type="text"
         className="chat-diff-search"
@@ -1351,6 +1357,8 @@ function FilesView({ cwd }: { cwd: string }) {
         onCompositionEnd={(event) => setSearch(event.currentTarget.value)}
       />
       {searchActive ? searchView : <div className="chat-diff-tree">{renderDir("", 0)}</div>}
+      </div>
+      <div className="chat-files-preview">{preview}</div>
       {ctxMenu && (
         <PathContextMenu
           cwd={cwd}
@@ -1361,11 +1369,10 @@ function FilesView({ cwd }: { cwd: string }) {
           onClose={() => setCtxMenu(null)}
         />
       )}
-    </>
+    </div>
   );
 }
 
-/** 文件或合计的 `+12 −3`；后端数不出来（二进制等）时两项都是 null，不占位。 */
 /// 改动状态的小方块（对照 Kimi 改动列表的 +）：新增 / 未跟踪「+」、删除「−」，其余用字母。
 /// 字母本身不进读屏名字，按状态给一句话。
 function StatusBadge({ status }: { status: string }) {
@@ -1386,6 +1393,7 @@ function saveDiffLayout(layout: "list" | "tree") {
   try { localStorage.setItem(DIFF_LAYOUT_KEY, layout); } catch { /* 隐私模式：只是不记 */ }
 }
 
+/** 文件或合计的 `+12 −3`；后端数不出来（二进制等）时两项都是 null，不占位。 */
 function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
   if (!file || file.additions == null || file.deletions == null) return null;
   return (

@@ -661,6 +661,7 @@ export const zh = {
     // 改动列表（对照 Kimi）：文件数、列表 / 树形切换、状态方块的读屏名。
     diffFileCount: (n: number) => `${n} 个文件`,
     diffLayoutLabel: "列表显示方式",
+    filesPickToPreview: "选择左侧文件预览",
     diffLayoutList: "列表",
     diffLayoutTree: "树形",
     diffStatusName: { A: "新增", U: "新文件，未跟踪", D: "已删除", M: "已修改", R: "已重命名", T: "类型变化" } as Record<string, string>,

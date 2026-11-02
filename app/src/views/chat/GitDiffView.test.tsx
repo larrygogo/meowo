@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto } from "../../api";
 import type { ReviewComment } from "./diffComments";
@@ -193,5 +193,32 @@ describe("GitDiffView 列表 / 树形（对照 Kimi 改动面板）", () => {
     unmount();
     render(<GitDiffView {...props} summary={{ ...summary, files }} />);
     expect(screen.getByRole("button", { name: "树形" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("GitDiffView 文件页：树与预览同时在场（对照 Kimi）", () => {
+  it("点文件后树仍挂着并标出当前文件，宽面板由 CSS 并排、窄面板只显示预览", async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "list_dir_entries") return [
+        { name: "a.ts", relPath: "a.ts", isDir: false },
+        { name: "b.ts", relPath: "b.ts", isDir: false },
+      ];
+      if (command === "read_file_text") return { relPath: "a.ts", text: "export const a = 1;\n", truncated: false, binary: false };
+      return [];
+    });
+    const { container } = render(
+      <GitDiffView cwd="C:\repo" summary={summary} width={420} collapsed={false} maximized={false}
+        onCollapse={() => {}} onToggleMaximize={() => {}} comments={[]} onAddComment={() => {}} onRemoveComment={() => {}}
+        touchedPaths={[]} activeTab="files" onTabChange={() => {}} />,
+    );
+    fireEvent.click(await screen.findByText("a.ts"));
+    // 高亮把代码拆成多段，按预览区整段文本断言。
+    await waitFor(() => expect(container.querySelector(".chat-files-preview pre")?.textContent).toContain("export const a"));
+    const files = container.querySelector(".chat-files")!;
+    expect(files.className).toContain("has-selection");
+    // 树没卸载：并排时直接点下一个文件，不用先返回。
+    const row = within(files.querySelector(".chat-files-browse") as HTMLElement).getByText("a.ts").closest("button")!;
+    expect(row.getAttribute("aria-current")).toBe("true");
+    expect(within(files.querySelector(".chat-files-browse") as HTMLElement).getByText("b.ts")).toBeTruthy();
   });
 });
