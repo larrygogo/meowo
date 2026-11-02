@@ -82,6 +82,7 @@ import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
 import { useConversationExport } from "./chat/useConversationExport";
+import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
@@ -98,14 +99,6 @@ const REMOTE_LAST_SESSION_KEY = "meowo-remote-last-session";
 /** initialSessionId 若用了存储恢复,记下该 id:恢复目标可能已被删/归档,首次加载
  *  失败要放弃恢复回空态,而不是卡在「读取失败」(自审 M4)。 */
 let restoredSessionId = 0;
-
-type NewSessionPrefill = { cwd?: string | null; provider?: string | null };
-/** 后端带 ?newSession=1 开窗（贴纸等窗外入口的「新建会话」）时首屏直接是新建会话页。 */
-function initialNewSession(): (NewSessionPrefill & { nonce: number }) | null {
-  const query = new URLSearchParams(window.location.search);
-  if (query.get("newSession") !== "1") return null;
-  return { cwd: query.get("cwd"), provider: query.get("provider"), nonce: 0 };
-}
 
 function initialSessionId(): number {
   const value = new URLSearchParams(window.location.search).get("sessionId");
@@ -1564,8 +1557,7 @@ export function ChatWindow() {
       e.preventDefault();
       if (next === undefined) return;
       // 用户主动换会话：新建页 / 管理页让位，不然主区还盖着、换了也看不见。
-      setNewSessionOpen(null);
-      setAdminOpen(false);
+      leavePages();
       resetTo(next);
     };
     window.addEventListener("keydown", onKey);
@@ -1591,63 +1583,11 @@ export function ChatWindow() {
       });
     }).catch(() => {});
   }, []);
-  // 会话管理页（对照 Kimi Code）：从侧栏菜单打开，在侧栏或管理页里选任何会话都回到对话。
-  // 设置页「已完成会话」入口经后端开窗带 ?admin=done：首屏就是会话管理页、筛在已完成。
-  const [adminOpen, setAdminOpen] = useState(() => new URLSearchParams(window.location.search).get("admin") === "done");
-  const [adminStatus, setAdminStatus] = useState<"all" | "open" | "done">(() =>
-    new URLSearchParams(window.location.search).get("admin") === "done" ? "done" : "all");
-  // 新建会话页（对照 Kimi：不弹窗，主区就地换成新建页）。nonce 让再点一次「新建会话」
-  // 换一份干净的表单（带上新的预填）。
-  const [newSessionOpen, setNewSessionOpen] = useState(initialNewSession);
-  // 新建页开着时拖进窗口的文件夹（交给新建页设为工作区）。拖拽订阅只挂一次，经 ref 读开合。
-  const [newSessionDrop, setNewSessionDrop] = useState<{ path: string; nonce: number } | null>(null);
-  const newSessionOpenRef = useRef(false);
-  newSessionOpenRef.current = newSessionOpen != null;
-  // 管理页打开时预选的工作区：新建页「最近会话 · 查看更多」带进来；侧栏菜单进来的不预选。
-  const [adminWorkspaces, setAdminWorkspaces] = useState<string[]>([]);
-  const openAdmin = useCallback(() => { setNewSessionOpen(null); setAdminWorkspaces([]); setAdminStatus("all"); setAdminOpen(true); }, []);
-  // 窗口已开时，设置页的入口经后端发 chat-open-admin 到这里。
-  useTauriEvent<string>("chat-open-admin", () => {
-    setOverlaySidebar(false);
-    setNewSessionOpen(null);
-    setAdminWorkspaces([]);
-    setAdminStatus("done");
-    setAdminOpen(true);
-  });
-  const selectSession = useCallback((id: number) => {
-    setAdminOpen(false);
-    setNewSessionOpen(null);
-    resetTo(id);
-  }, [resetTo]);
-  const selectFromOverlay = useCallback((id: number) => {
-    setOverlaySidebar(false);
-    setAdminOpen(false);
-    setNewSessionOpen(null);
-    resetTo(id);
-  }, [resetTo]);
-  const openAdminFromOverlay = useCallback(() => {
-    setOverlaySidebar(false);
-    setNewSessionOpen(null);
-    setAdminOpen(true);
-  }, []);
-  // 窗内窗外的「新建会话」都经后端发 chat-new-session 到这里（侧栏按钮、Ctrl+N、贴纸…）。
-  useTauriEvent<NewSessionPrefill>("chat-new-session", (event) => {
-    setOverlaySidebar(false);
-    setAdminOpen(false);
-    setNewSessionDrop(null);
-    setNewSessionOpen({ cwd: event.payload?.cwd, provider: event.payload?.provider, nonce: Date.now() });
-  });
-  // 远程新建会话启动成功:RemoteApp 把临时负 id 经页内事件送回来(桥不 reveal,这是移动端
-  // 唯一的导航通路)。选中走侧栏点选同一条 resetTo 通道;负 id 由上面的 binding 轮询
-  // (managed_terminal_binding 在远程白名单内)在认领后原地重绑成真 id。桌面此事件永不派发。
-  useEffect(() => {
-    const select = (e: Event) => {
-      const id = (e as CustomEvent<unknown>).detail;
-      if (typeof id === "number") selectFromOverlay(id);
-    };
-    window.addEventListener(SELECT_SESSION_EVENT, select);
-    return () => window.removeEventListener(SELECT_SESSION_EVENT, select);
-  }, [selectFromOverlay]);
+  // 主区的新建会话页 / 会话管理页：开合、入口事件、选会话时让位（chat/useMainPages）。
+  const {
+    adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
+    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
+  } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
 
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
@@ -1815,8 +1755,7 @@ export function ChatWindow() {
     let cancelled = false;
     // 被带去某个会话（点卡片、通知、新会话 reveal）时新建页 / 管理页让位。
     listen<number>("chat-session-changed", (event) => {
-      setNewSessionOpen(null);
-      setAdminOpen(false);
+      leavePages();
       resetTo(event.payload);
     }).then((fn) => {
       if (cancelled) fn(); else un = fn;
@@ -3135,7 +3074,7 @@ export function ChatWindow() {
         if (event.payload.type === "drop") {
           setDragHover(false);
           const path = event.payload.paths?.[0];
-          if (path) setNewSessionDrop({ path, nonce: Date.now() });
+          if (path) dropFolder(path);
           return;
         }
         setDragHover(event.payload.type === "enter");
@@ -3762,7 +3701,7 @@ export function ChatWindow() {
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
       {adminOpen && (
         <div className="chat-main chat-admin-main">
-          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={() => setAdminOpen(false)} onOpen={selectSession} />
+          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={closeAdmin} onOpen={selectSession} />
         </div>
       )}
       {newSessionOpen && !adminOpen && (
@@ -3772,7 +3711,7 @@ export function ChatWindow() {
             prefill={newSessionOpen}
             droppedPath={newSessionDrop}
             onOpenSession={selectSession}
-            onMoreSessions={(dir) => { setNewSessionOpen(null); setAdminWorkspaces([dir]); setAdminStatus("all"); setAdminOpen(true); }}
+            onMoreSessions={openAdminFor}
             onLaunched={(tempId, launchedProvider, message) => {
               // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
               if (message) {
