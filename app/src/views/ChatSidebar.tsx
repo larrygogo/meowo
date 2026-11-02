@@ -1404,7 +1404,7 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
                   onPointerDown={(event) => {
                     const target = event.target as HTMLElement;
                     if (!target.closest(".chat-sidebar-group-head") || target.closest(".chat-sidebar-item, .chat-workspace-action, .chat-sidebar-check-btn")) return;
-                    groupDrag.onPointerDown(event, group.key);
+                    groupDrag.onPointerDown(event, group.key, target.closest<HTMLElement>(".chat-sidebar-group-head"));
                   }}
                 >
                     <WorkspaceHeader

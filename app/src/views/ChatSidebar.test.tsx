@@ -658,7 +658,11 @@ describe("ChatSidebar", () => {
       fireEvent.pointerDown(heads()[0], { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
       fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
       await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      // 拖动中有一份组头的影子跟着鼠标，松手就收掉。
+      expect(document.querySelectorAll(".sidebar-drag-ghost")).toHaveLength(1);
+      expect(document.querySelector(".sidebar-drag-ghost")?.textContent).toBe("c");
       fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      expect(document.querySelector(".sidebar-drag-ghost")).toBeNull();
       fireEvent.click(heads()[0]);
     } finally {
       document.elementFromPoint = original;

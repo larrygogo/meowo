@@ -57,12 +57,19 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
   useEffect(() => () => cleanupRef.current?.(), []);
 
   const selector = `[data-${attr.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]`;
-  const onPointerDown = (event: ReactPointerEvent<HTMLElement>, id: K) => {
+  /// ghostSource：跟手「影子」照着谁复制，默认按下的那个元素（分组只复制组头，不复制整组）。
+  const onPointerDown = (event: ReactPointerEvent<HTMLElement>, id: K, ghostSource?: HTMLElement | null) => {
     if (!enabled || event.button !== 0 || event.pointerType === "touch") return;
     const bucket = bucketOf(id);
     if (bucket == null) return;
     const startX = event.clientX;
     const startY = event.clientY;
+    // 指针拖拽没有浏览器自带的拖拽影像（用户实拍反馈「拖的时候没有影子」），自己复制一份跟着鼠标走。
+    // currentTarget 只在事件分发期间有效，按下时就记住。
+    const source = ghostSource ?? event.currentTarget;
+    let ghost: HTMLElement | null = null;
+    let grabX = 0;
+    let grabY = 0;
     let started = false;
     let target: DropAt<K> | null = null;
     const pick = (x: number, y: number): DropAt<K> | null => {
@@ -79,8 +86,18 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
         started = true;
         setDragId(id);
         document.body.classList.add("is-sidebar-dragging");
+        const rect = source.getBoundingClientRect();
+        grabX = startX - rect.left;
+        grabY = startY - rect.top;
+        ghost = source.cloneNode(true) as HTMLElement;
+        ghost.removeAttribute("id");
+        ghost.classList.add("sidebar-drag-ghost");
+        ghost.style.width = `${rect.width}px`;
+        // 挂在侧栏里而不是 body 下：行样式多是 .chat-sidebar 下的后代选择器，挂出去就走样。
+        (source.closest(".chat-sidebar") ?? document.body).appendChild(ghost);
       }
       e.preventDefault();
+      if (ghost) ghost.style.transform = `translate(${e.clientX - grabX}px, ${e.clientY - grabY}px)`;
       target = pick(e.clientX, e.clientY);
       setDropAt(target);
     };
@@ -108,6 +125,8 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("keydown", key, true);
       document.body.classList.remove("is-sidebar-dragging");
+      ghost?.remove();
+      ghost = null;
       cleanupRef.current = null;
     };
   };
