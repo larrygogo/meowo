@@ -10,6 +10,7 @@
 
 import { createContext, useSyncExternalStore } from "react";
 import type { ChatItem } from "../../api";
+import type { Attachment } from "./drafts";
 
 /// echo = 空闲时发出，先以用户气泡挂在对话末尾；queued = 运行中发出，进排队回执。
 export type OutgoingKind = "echo" | "queued";
@@ -46,8 +47,8 @@ export type OutgoingPrompt = {
   phase: OutgoingPhase;
   settledAt: number | null;
   anchor: OutgoingAnchor;
-  /// 发出时的原始草稿（正文 + 附件），失败后重发 / 放回输入框用。附件类型归 ChatWindow 管。
-  draft?: { prompt: string; attachments: readonly unknown[] };
+  /// 发出时的原始草稿（正文 + 附件），失败后重发 / 放回输入框用。
+  draft?: { prompt: string; attachments: readonly Attachment[] };
   /// 认领到的送达回执 id：一条回执只确认一条消息（连发两句「继续」各认各的）。
   ackId?: string;
 };

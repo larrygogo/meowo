@@ -77,6 +77,7 @@ import { isMac } from "../platform";
 import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo, undoneInputRows } from "./chat/undoTerminal";
+import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
@@ -176,70 +177,6 @@ function sameHistoryMeta(prev: ChatHistory | null, next: ChatHistory): boolean {
   return true;
 }
 
-type Attachment = { path: string; name: string; image: boolean;
-  /** 字节数，仅粘贴来源有（File.size 现成）；文件选择器只给路径，拿大小要多一次 IPC，不值。 */
-  size?: number };
-
-/** 附件卡片的体积行。附件都是本地小文件，GB 档没有出场机会。 */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 100 * 1024 ? 1 : 0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
-
-function attachmentOf(path: string): Attachment {
-  const name = path.split(/[\\/]/).pop() || path;
-  const extension = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
-  return { path, name, image: IMAGE_EXTENSIONS.has(extension) };
-}
-
-/** 草稿持久化（localStorage）：关窗/重启不丢——此前只在内存 Map，窗口一关半屏提示词
- *  就没了（附件反而因落盘临时文件幸存）。只存正式会话（负数临时 id 认领后会换号）；
- *  LRU 保 20 条防膨胀。
- *  每会话一个 key：可同时开多个对话窗，整表「读-改-写」会让后写方覆盖先写方（另一窗
- *  草稿静默丢），各写各的 key 才没有竞态。 */
-const DRAFTS_KEY = "meowo-chat-drafts"; // 旧版整表格式，首次读取时拆成按会话 key 后删除
-const DRAFT_KEY_PREFIX = "meowo-chat-draft:";
-type StoredDraft = { prompt: string; attachments: Attachment[]; at?: number };
-/** 校验一条草稿的形状；坏数据返回 null（当无草稿）。 */
-function parseStoredDraft(value: unknown): { prompt: string; attachments: Attachment[] } | null {
-  const draft = value as StoredDraft | null;
-  if (typeof draft?.prompt !== "string") return null;
-  const attachments = Array.isArray(draft.attachments)
-    ? draft.attachments.filter((file) => file && typeof file.path === "string")
-    : [];
-  return { prompt: draft.prompt, attachments };
-}
-function loadStoredDrafts(): Map<number, { prompt: string; attachments: Attachment[] }> {
-  const map = new Map<number, { prompt: string; attachments: Attachment[] }>();
-  try {
-    // 旧版整表迁移：逐条落成按会话 key 再删整表；中途失败留下次启动再迁（整表还在）。
-    const legacy = localStorage.getItem(DRAFTS_KEY);
-    if (legacy) {
-      for (const [id, value] of Object.entries(JSON.parse(legacy) as Record<string, StoredDraft>)) {
-        // 落盘用 parseStoredDraft 的规范化结果而不是原始 value——否则未清洗的
-        // attachments(以及非数字 at)会被原样迁进新格式。at 非数字时按现在计,
-        // 保证 LRU 清扫有可比较的时间戳。
-        const parsed = parseStoredDraft(value);
-        if (!parsed) continue;
-        const at = typeof value?.at === "number" ? value.at : Date.now();
-        localStorage.setItem(DRAFT_KEY_PREFIX + id, JSON.stringify({ ...parsed, at }));
-      }
-      localStorage.removeItem(DRAFTS_KEY);
-    }
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith(DRAFT_KEY_PREFIX)) continue;
-      const id = Number(key.slice(DRAFT_KEY_PREFIX.length));
-      if (!Number.isSafeInteger(id)) continue;
-      const draft = parseStoredDraft(JSON.parse(localStorage.getItem(key) || "null"));
-      if (draft) map.set(id, draft);
-    }
-  } catch { /* 坏数据当无草稿 */ }
-  return map;
-}
-
 // 交接注入语（两种界面语言的模板前缀，见 i18n handoffPrompt）+ 交接目录标记：识别
 // transcript 里那条「请读交接文件」的机器消息。前序段历史内联进时间线后，它再以用户
 // 气泡出现只是重复分隔条已说的内容——显示层滤掉；items 记账层保留原文，水位线等
@@ -247,34 +184,6 @@ function loadStoredDrafts(): Map<number, { prompt: string; attachments: Attachme
 const HANDOFF_PROMPT_PREFIXES = ["请先完整阅读文件 ", "Please read the file "];
 function isHandoffInjectedPrompt(text: string): boolean {
   return text.includes("meowo-handoff") && HANDOFF_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix));
-}
-
-function promptWithAttachments(prompt: string, attachments: Attachment[], instruction: (files: string) => string, mention = false): string {
-  if (!attachments.length) return prompt;
-  // @提及是提交时的原生附加(claude/gemini 实测,由插件按版本声明 attachment_mention)。
-  // 三个硬性例外整条退回指令文本,保持单一注入形态:
-  // - 路径含空白:提及解析在空白处截断(claude 实测),后半截变成正文;
-  // - 图片:@提及不会作为图像块附加(claude -p 实测,模型明说看不到),指令文本反而
-  //   能引导 agent 用自己的读图工具打开。
-  // - 没有正文:opencode 的 @ 补全框在「@路径」收尾时吃掉回车(补空格也不收,实测 1.19.2),
-  //   消息就卡在输入框里。只剩附件时指令文本对谁都成立。
-  if (mention && prompt.trim() && attachments.every((file) => !file.image && !/\s/.test(file.path))) {
-    return `${attachments.map((file) => `@${file.path}`).join(" ")} ${prompt.trim()}`;
-  }
-  // 指令文案随界面语言（i18n），不能硬编码中文——英文界面会把中文指令发给 agent。
-  const directive = instruction(attachments.map((file) => `- ${file.path}`).join("\n"));
-  return prompt.trim() ? `${prompt.trim()}\n\n${directive}` : directive;
-}
-
-/// ArrayBuffer → base64。btoa 只吃字符串且实参展开有调用栈上限，分块拼接。
-function base64OfBuffer(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 // 稳定的空数组：`?? []` 每次渲染都是新引用，作为 props/依赖会让下游 memo/effect 空转
@@ -514,29 +423,7 @@ export function ChatWindow() {
   // 每会话一个 key,只写/删自己这条——多窗并存互不覆盖,无读-改-写竞态。
   useEffect(() => {
     if (sessionId <= 0) return;
-    const timer = window.setTimeout(() => {
-      try {
-        if (!prompt.trim() && attachments.length === 0) {
-          localStorage.removeItem(DRAFT_KEY_PREFIX + sessionId);
-        } else {
-          const draft: StoredDraft = { prompt, attachments, at: Date.now() };
-          localStorage.setItem(DRAFT_KEY_PREFIX + sessionId, JSON.stringify(draft));
-        }
-        // LRU 保 20 条:先收集再删——localStorage.key 按下标枚举,边删边数会跳项。
-        const stored: { key: string; at: number }[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (!key?.startsWith(DRAFT_KEY_PREFIX)) continue;
-          let at = 0;
-          try { at = (JSON.parse(localStorage.getItem(key) || "{}") as StoredDraft).at ?? 0; } catch { /* 坏数据排最旧 */ }
-          stored.push({ key, at });
-        }
-        if (stored.length > 20) {
-          stored.sort((a, b) => b.at - a.at);
-          for (const stale of stored.slice(20)) localStorage.removeItem(stale.key);
-        }
-      } catch { /* 存储失败不影响输入 */ }
-    }, 400);
+    const timer = window.setTimeout(() => saveStoredDraft(sessionId, prompt, attachments), 400);
     return () => window.clearTimeout(timer);
   }, [sessionId, prompt, attachments]);
   // submitToTerminal 回车前复核用的实时镜像:闭包里读 state 会拿到过期值。
@@ -2701,7 +2588,7 @@ export function ChatWindow() {
     const entry = outgoingStore.get(sessionId).find((item) => item.id === id);
     if (!entry?.draft) return;
     outgoingStore.dismiss(sessionId, id);
-    void sendPrompt({ prompt: entry.draft.prompt, attachments: entry.draft.attachments as Attachment[] });
+    void sendPrompt({ prompt: entry.draft.prompt, attachments: [...entry.draft.attachments] });
   };
   /// 失败气泡的「放回输入框」：收掉回执，原文接在输入框已有内容前面，附件一并放回。
   const restoreOutgoing = (id: number) => {
@@ -2710,7 +2597,7 @@ export function ChatWindow() {
     outgoingStore.dismiss(sessionId, id);
     const { prompt: text, attachments: files } = entry.draft;
     setPrompt((current) => (current.trim() && text ? `${text}\n\n${current}` : current || text));
-    setAttachments((current) => [...(files as Attachment[]).filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
+    setAttachments((current) => [...files.filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
     promptInputRef.current?.focus();
   };
   // 未确认送达的回显：读一次终端画面，看这段话是不是还停在 CLI 输入框里（没按下回车）。
