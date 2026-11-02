@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 
-const api = vi.hoisted(() => ({ listFolderEditors: vi.fn(), openFolderIn: vi.fn(), openProjectDir: vi.fn() }));
+const api = vi.hoisted(() => ({ listFolderEditors: vi.fn(), openFolderIn: vi.fn(), openProjectDir: vi.fn(), openLink: vi.fn() }));
 vi.mock("../../api", async (orig) => ({ ...(await orig<typeof import("../../api")>()), ...api }));
 
-import { GitStatusChip, OpenInEditor } from "./TitleBarTools";
+import { GitStatusChip, OpenInEditor, PullRequestChip } from "./TitleBarTools";
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
   api.openFolderIn.mockResolvedValue(undefined);
   api.openProjectDir.mockResolvedValue(undefined);
+  api.openLink.mockResolvedValue(undefined);
   localStorage.clear();
 });
 afterEach(() => cleanup());
@@ -76,5 +77,16 @@ describe("标题栏：分支与改动胶囊", () => {
     />);
     expect(screen.getByRole("button", { name: "查看改动" }).textContent).toBe("main");
     expect(screen.getByRole("button", { name: "查看改动" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("标题栏：当前分支的 Pull Request（对照 Kimi）", () => {
+  it("显示编号与状态，按状态上色，点一下在浏览器打开", () => {
+    render(<PullRequestChip pr={{ number: 42, state: "merged", url: "https://github.com/o/r/pull/42", title: "修登录页" }} />);
+    const chip = screen.getByRole("button", { name: "打开 Pull Request #42：修登录页" });
+    expect(chip.textContent).toBe("#42已合并");
+    expect(chip.className).toContain("is-merged");
+    fireEvent.click(chip);
+    expect(api.openLink).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
   });
 });

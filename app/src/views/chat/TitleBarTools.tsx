@@ -5,7 +5,7 @@
  * 文件面板里「打开方式」是按单个文件的关联走的；这里打开的是整个目录，清单由后端按安装位置探测。
  */
 import { useEffect, useState } from "react";
-import { listFolderEditors, openFolderIn, openProjectDir, type GitDiffSummaryDto } from "../../api";
+import { listFolderEditors, openFolderIn, openLink, openProjectDir, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
 import type { FileOpenerDto } from "../../generated/contracts/FileOpenerDto";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -120,6 +120,23 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
         </div>
       )}
     </div>
+  );
+}
+
+/// 当前分支的 Pull Request（对照 Kimi 标题栏的「打开 Pull Request」+ 状态）：编号 + 状态，
+/// 按状态配色（开着绿、草稿灰、已合并紫、已关闭红），点一下在浏览器打开。
+export function PullRequestChip({ pr }: { pr: PullRequestDto }) {
+  const t = useT();
+  const tip = t.chat.prOpenTip(pr.number, pr.title);
+  return (
+    <button type="button" className={`tb-pr is-${pr.state}`} aria-label={tip} data-tip={tip} onClick={() => void openLink(pr.url).catch(() => {})}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="18" r="2.2" />
+        <path d="M6 8.2v7.6M18 15.8V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5" />
+      </svg>
+      <span>#{pr.number}</span>
+      <span className="tb-pr-state">{t.chat.prState[pr.state] ?? pr.state}</span>
+    </button>
   );
 }
 

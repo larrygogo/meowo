@@ -561,6 +561,9 @@ export const zh = {
     terminal: "终端",
     // 标题栏右侧（对照 Kimi）：用编辑器打开、分支与改动、终端、侧边面板。
     openWith: (name: string) => `用 ${name} 打开`,
+    // 当前分支的 Pull Request（对照 Kimi 标题栏的 PR 状态）。
+    prState: { open: "已打开", draft: "草稿", merged: "已合并", closed: "已关闭" } as Record<string, string>,
+    prOpenTip: (n: number, title: string) => `打开 Pull Request #${n}${title ? `：${title}` : ""}`,
     chooseOpener: "选择打开方式",
     sessionActions: "会话操作",
     fileManager: "文件资源管理器",

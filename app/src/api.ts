@@ -29,6 +29,7 @@ import type { PendingLaunchDto } from "./generated/contracts/PendingLaunchDto";
 import type { PendingInteractionDto } from "./generated/contracts/PendingInteractionDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
+import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
 import type { FileTextDto } from "./generated/contracts/FileTextDto";
@@ -498,6 +499,12 @@ export function openProjectDir(cwd: string): Promise<void> {
 }
 
 /** 工作目录的 git 改动摘要；`isRepo` 为 false 时前端不显示「Diff」入口。 */
+/** 当前分支的 Pull Request（gh pr view；没装 gh / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
+export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
+  return invoke("git_pull_request", { cwd });
+}
+export type { PullRequestDto };
+
 export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
   return invoke("git_diff_summary", { cwd });
 }

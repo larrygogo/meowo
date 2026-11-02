@@ -517,6 +517,8 @@ export const en: Dict = {
     conversation: "Conversation",
     terminal: "Terminal",
     openWith: (name: string) => `Open in ${name}`,
+    prState: { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" } as Record<string, string>,
+    prOpenTip: (n: number, title: string) => `Open pull request #${n}${title ? `: ${title}` : ""}`,
     chooseOpener: "Choose how to open",
     sessionActions: "Session actions",
     fileManager: "File Explorer",

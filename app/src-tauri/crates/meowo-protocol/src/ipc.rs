@@ -654,6 +654,20 @@ pub struct GitDiffSummaryDto {
     pub files: Vec<GitChangedFileDto>,
 }
 
+/// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。
+/// 由 `gh pr view` 取得；没装 gh / 没登录 / 分支没有 PR 时命令返回 None，前端不显示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDto {
+    pub number: u32,
+    /// `open` / `draft` / `merged` / `closed`。
+    pub state: String,
+    pub url: String,
+    pub title: String,
+}
+
 /// 单个文件的统一 diff 文本。未跟踪文件的 `diff` 是合成的伪 diff
 /// （`--- /dev/null` / `+++ b/<path>` 头 + 每行加 `+` 前缀）；二进制文件只有
 /// 一行占位 "(binary file)"。

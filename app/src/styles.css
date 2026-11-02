@@ -3766,6 +3766,14 @@ select.ns-input {
 .tb-git-pill.is-behind { color: var(--cc-text-dim); }
 .tb-git-pill.is-diff { border-color: color-mix(in srgb, var(--cc-ok-vivid) 40%, transparent); }
 .tb-git-add { color: var(--cc-ok-vivid); }
+/* 当前分支 PR：编号 + 状态小字，按状态配色（GitHub 惯例：开着绿、草稿灰、已合并紫、已关闭红）。 */
+.tb-pr { --pr-color: var(--cc-ok-vivid); display: inline-flex; align-items: center; gap: var(--sp-4); flex: none; height: var(--icon-button-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+.tb-pr:hover { color: var(--cc-text); background: var(--fill-hover); }
+.tb-pr svg { color: var(--pr-color); }
+.tb-pr-state { padding: 1px var(--sp-6); border-radius: 999px; font-size: var(--text-xs); color: var(--pr-color); background: color-mix(in srgb, var(--pr-color) 14%, transparent); }
+.tb-pr.is-draft { --pr-color: var(--cc-text-faint); }
+.tb-pr.is-merged { --pr-color: #a371f7; }
+.tb-pr.is-closed { --pr-color: var(--cc-err-vivid); }
 .tb-git-del { color: var(--cc-err-vivid); }
 .chat-todo-btn { position: relative; width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-dim); background: transparent; cursor: pointer; }
 /* 活动小点:面板里有任务/子任务在跑时挂在图标右上角脉冲——面板收着时入口上必须能看出

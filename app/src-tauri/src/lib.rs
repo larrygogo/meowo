@@ -59,7 +59,7 @@ use fsutil::{
     list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
     reveal_path_in_file_manager, search_project_files,
 };
-use git::{git_diff_summary, git_file_diff};
+use git::{git_diff_summary, git_file_diff, git_pull_request};
 use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
     add_agent_to_user_path, agent_path_gap, api_key_login, cancel_install, cancel_login,
@@ -1337,6 +1337,7 @@ pub fn run() {
             macos::notify::open_notification_settings,
             git_diff_summary,
             git_file_diff,
+            git_pull_request,
             list_dir_entries,
             read_file_text,
             read_image_preview,

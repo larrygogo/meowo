@@ -80,7 +80,7 @@ import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
-import { GitStatusChip, OpenInEditor } from "./chat/TitleBarTools";
+import { GitStatusChip, OpenInEditor, PullRequestChip } from "./chat/TitleBarTools";
 import { AddMenu } from "./chat/AddMenu";
 import { finalAnswer, transcriptMarkdown } from "./chat/exportMarkdown";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
@@ -88,7 +88,7 @@ import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWith
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
-import { agentName, exportTextFile, listAgents, type AgentDescriptor } from "../api";
+import { agentName, exportTextFile, getPullRequest, listAgents, type AgentDescriptor, type PullRequestDto } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
 
@@ -821,6 +821,19 @@ export function ChatWindow() {
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
+  // 当前分支的 PR（对照 Kimi 标题栏）：换目录 / 换分支时查一次，之后 3 分钟一次——gh 要联网，
+  // 不跟改动摘要的轮询走（后端另按目录缓存 60s）。手机不查：桌面专用命令，桥上不放行。
+  const [pullRequest, setPullRequest] = useState<PullRequestDto | null>(null);
+  const prBranch = gitSummary?.isRepo ? gitSummary.branch : null;
+  useEffect(() => {
+    setPullRequest(null);
+    if (!cwd || !prBranch || remoteUi()) return;
+    let alive = true;
+    const load = () => void getPullRequest(cwd).then((pr) => { if (alive) setPullRequest(pr ?? null); }).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 180_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [cwd, prBranch]);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffTab, setDiffTab] = useState<DiffPanelTab>("changes");
   // 折叠/最大化都只在面板已挂载（diffOpen）后才有意义；折叠不卸载——面板内的
@@ -3860,6 +3873,7 @@ export function ChatWindow() {
             }}
           />
         )}
+        {pullRequest && <PullRequestChip pr={pullRequest} />}
         {/* 终端：对话与终端两个视图之间切换（原「对话 | 终端」页签收成一颗开关，对照 Kimi）。
             远程没有终端视图（见 setView 说明），不给死按钮。 */}
         {!remoteUi() && (
