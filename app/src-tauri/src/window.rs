@@ -1015,6 +1015,23 @@ fn dev_badge_icon(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static
 #[cfg(not(target_os = "macos"))]
 static TRAY_CLICK_GEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// 最近一次双击的时刻。Windows 双击的消息序列是「抬起 → 双击 → 抬起」：上面的世代只作废了
+/// 双击**之前**那次单击，双击**之后**还会再来一次左键抬起，它另起一个单击定时器、一个双击
+/// 窗口期后把贴纸开合一遍——用户看到的就是「双击托盘弹出的是贴纸」（实拍反馈）。紧跟在双击
+/// 之后（一个双击窗口期内）的抬起不算单击。
+#[cfg(not(target_os = "macos"))]
+static TRAY_LAST_DOUBLE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// 这次左键抬起是不是双击的尾巴（双击之后一个双击窗口期内）。
+#[cfg(not(target_os = "macos"))]
+fn tray_click_trails_double(now: std::time::Instant) -> bool {
+    TRAY_LAST_DOUBLE
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .is_some_and(|at| now.saturating_duration_since(at) <= tray_click_debounce())
+}
+
 /// 单击消抖窗口取**系统双击时间**（Windows 默认 500ms，控制面板可调）。曾写死 300ms：
 /// 正常手速的双击（间隔 300~500ms）在 300ms 定时器到点时第二击还没到，先漏出一次
 /// 单击把贴纸开合了，随后系统仍认出双击、对话窗也开——两窗齐弹（实拍反馈）。
@@ -1092,6 +1109,9 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     // 只投递消息不读文件，主线程直调（同 macOS panel::toggle_panel）。
                     // 延迟一个系统双击窗口期：紧随其后是双击则这次开合作废
                     // （见 TRAY_CLICK_GEN；窗口期取值理由见 tray_click_debounce）。
+                    if tray_click_trails_double(std::time::Instant::now()) {
+                        return;
+                    }
                     let gen = TRAY_CLICK_GEN.fetch_add(1, Ordering::SeqCst) + 1;
                     let app = tray.app_handle().clone();
                     std::thread::spawn(move || {
@@ -1109,6 +1129,9 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     ..
                 } => {
                     TRAY_CLICK_GEN.fetch_add(1, Ordering::SeqCst);
+                    if let Ok(mut last) = TRAY_LAST_DOUBLE.lock() {
+                        *last = Some(std::time::Instant::now());
+                    }
                     let app = tray.app_handle().clone();
                     std::thread::spawn(move || {
                         if crate::settings::load_settings().chat_enabled {
@@ -1232,5 +1255,21 @@ mod chat_target_tests {
             .url(),
             "index.html?newSession=1&cwd=C%3A%5Cmy%20proj&provider=claude"
         );
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tray_click_tests {
+    use super::{tray_click_debounce, tray_click_trails_double, TRAY_LAST_DOUBLE};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn 双击之后紧跟的左键抬起不算单击() {
+        let at = Instant::now();
+        *TRAY_LAST_DOUBLE.lock().unwrap() = Some(at);
+        assert!(tray_click_trails_double(at + Duration::from_millis(50)));
+        assert!(!tray_click_trails_double(
+            at + tray_click_debounce() + Duration::from_millis(50)
+        ));
     }
 }
