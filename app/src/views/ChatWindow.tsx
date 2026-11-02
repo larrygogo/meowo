@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -78,6 +78,7 @@ import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
@@ -143,13 +144,8 @@ function pickFilesViaInput(): Promise<File[]> {
     input.click();
   });
 }
-/** 改动/文件停靠面板的宽度持久化键（localStorage 既有 meowo-* 命名惯例）。 */
-const DIFF_WIDTH_KEY = "meowo-diff-panel-width";
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
-/** 面板宽度上下限：下限保面板可用，上限在拖拽时给对话区留 MIN_CHAT 动态计算。 */
-const DIFF_PANEL_MIN_WIDTH = 280;
-const DIFF_PANEL_DEFAULT_WIDTH = 400;
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
 /// 据此保留旧引用即可跳过整窗重渲染。
@@ -818,53 +814,8 @@ export function ChatWindow() {
   // 打开文件、树展开与 diff/目录缓存全部保留，再展开时原样回来。换会话照旧整体重置。
   const [diffCollapsed, setDiffCollapsed] = useState(false);
   const [diffMaximized, setDiffMaximized] = useState(false);
-  // 面板宽度随会话持久化（localStorage）；折叠只藏不改宽，再展开原宽回来。
-  const [diffWidth, setDiffWidth] = useState(() => {
-    const stored = Number(localStorage.getItem(DIFF_WIDTH_KEY));
-    return Number.isFinite(stored) && stored >= DIFF_PANEL_MIN_WIDTH ? stored : DIFF_PANEL_DEFAULT_WIDTH;
-  });
-  // 拖拽分栏柄：pointer capture 挂在柄上，移出窗口也不丢事件；宽度上限按
-  // .chat-body 实测宽给对话区留 ≥360px（CSS 的 max-width:40vw 仍是窗口缩小的兜底）。
-  const startDiffResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const handle = event.currentTarget;
-    const body = handle.parentElement;
-    if (!body) return;
-    event.preventDefault();
-    handle.setPointerCapture(event.pointerId);
-    const startX = event.clientX;
-    const panel = body.querySelector<HTMLElement>(".chat-diff-panel");
-    // 以实测宽为起点：state 宽可能被 40vw 上限压小，从 state 起算会跳变。
-    const startWidth = panel ? panel.getBoundingClientRect().width : diffWidth;
-    const maxWidth = Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - 360);
-    let lastWidth = startWidth;
-    body.classList.add("is-diff-resizing");
-    // pointermove 每次都 setState 会以指针事件频率重渲整个面板子树,开着大文件时拖不动;
-    // 按帧合流,一帧至多提交一次宽度。
-    let raf = 0;
-    const onMove = (move: PointerEvent) => {
-      lastWidth = Math.min(Math.max(startWidth + (startX - move.clientX), DIFF_PANEL_MIN_WIDTH), maxWidth);
-      if (!raf) {
-        raf = requestAnimationFrame(() => {
-          raf = 0;
-          setDiffWidth(lastWidth);
-        });
-      }
-    };
-    const onUp = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = 0;
-      setDiffWidth(lastWidth);
-      body.classList.remove("is-diff-resizing");
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onUp);
-      localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(lastWidth)));
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onUp);
-  };
+  // 面板宽度：拖拽 / 键盘调宽与持久化见 chat/useDiffPanelWidth。
+  const diffResize = useDiffPanelWidth();
   // 稳定引用给 memo 的 GitDiffView:内联箭头函数每次击键换新引用,面板即使折叠也要
   // 对几千行文件 DOM 做全量 reconcile,还连带 Esc 层监听每渲染拆装一次。
   const collapseDiffPanel = useCallback(() => {
@@ -4970,21 +4921,12 @@ export function ChatWindow() {
             role="separator"
             aria-orientation="vertical"
             aria-label={t.chat.diffResize}
-            // separator 是 WAI-ARIA 的可聚焦部件：只给鼠标拖拽等于键盘用户调不了宽度。
-            // ← 变宽、→ 变窄（柄在面板左侧，与拖拽方向一致），步进 24px。
+            // 可聚焦：← 变宽、→ 变窄（见 useDiffPanelWidth）。
             tabIndex={0}
-            aria-valuenow={Math.round(diffWidth)}
+            aria-valuenow={Math.round(diffResize.width)}
             aria-valuemin={DIFF_PANEL_MIN_WIDTH}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-              event.preventDefault();
-              const body = event.currentTarget.parentElement;
-              const maxWidth = body ? Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - 360) : Number.MAX_SAFE_INTEGER;
-              const next = Math.min(Math.max(diffWidth + (event.key === "ArrowLeft" ? 24 : -24), DIFF_PANEL_MIN_WIDTH), maxWidth);
-              setDiffWidth(next);
-              localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(next)));
-            }}
-            onPointerDown={startDiffResize}
+            onKeyDown={diffResize.onKeyDown}
+            onPointerDown={diffResize.onPointerDown}
           />}
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
@@ -4992,7 +4934,7 @@ export function ChatWindow() {
           <GitDiffView
             cwd={cwd}
             summary={gitSummary}
-            width={diffWidth}
+            width={diffResize.width}
             collapsed={diffCollapsed}
             // 手机屏放不下并排两栏：远程恒按最大化铺满，收起即回到对话。
             maximized={diffMaximized || remoteUi()}
