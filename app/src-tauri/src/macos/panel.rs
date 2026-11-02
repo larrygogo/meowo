@@ -57,6 +57,8 @@ pub fn convert_main_to_panel(app: &AppHandle) {
         state: Some(tauri::utils::WindowEffectState::Active),
         radius: Some(GLASS_RADIUS),
         color: None,
+        // tauri 2.12 新增的字段，只作用于 Liquid Glass 特效。这里用的是 Popover，填 false 保持原样。
+        interactive: false,
     });
 
     let panel = match window.to_panel() {
