@@ -248,7 +248,10 @@ describe("ChatSidebar", () => {
     Object.defineProperty(list, "scrollTop", { value: 600, configurable: true });
   }
 
-  it("滚到底继续翻页，直到后端给不满一页", async () => {
+  // 150 行 + 按无障碍名查询在全量并发跑时很慢（单跑 1s 内、全量会超默认 1s 等待），
+  // 放宽查询等待与用例上限：这里测的是翻页节奏，不是渲染速度。
+  it("滚到底继续翻页，直到后端给不满一页", { timeout: 15_000 }, async () => {
+    const slow = { timeout: 5_000 };
     const all = Array.from({ length: 150 }, (_, i) => session(1000 - i, `会话 ${i}`));
     const limits: number[] = [];
     invoke.mockImplementation((command: string, args: { limit: number }) => {
@@ -257,7 +260,7 @@ describe("ChatSidebar", () => {
       return Promise.resolve(all.slice(0, args.limit));
     });
     render(<ChatSidebar activeId={1000} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
-    await screen.findByRole("button", { name: /会话 0/ });
+    await screen.findByRole("button", { name: /会话 0/ }, slow);
     expect(limits).toEqual([60]);
     expect(screen.queryByRole("button", { name: /会话 60/ })).toBeNull();
 
@@ -265,11 +268,11 @@ describe("ChatSidebar", () => {
     fakeScrolledToBottom(list);
 
     fireEvent.scroll(list);
-    await screen.findByRole("button", { name: /会话 60/ });
+    await screen.findByRole("button", { name: /会话 60/ }, slow);
     expect(limits).toEqual([60, 120]);
 
     fireEvent.scroll(list);
-    await screen.findByRole("button", { name: /会话 149/ });
+    await screen.findByRole("button", { name: /会话 149/ }, slow);
     expect(limits).toEqual([60, 120, 180]);
 
     // 150 < 180：后端已经给不满，到此为止，再滚也不应该再发请求。
