@@ -13,18 +13,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, ".."); // app/
 const capDst = join(appDir, "src-tauri", "capabilities", "wdio.json");
 
-// Node ≥ 26 预检：其内置 undici v8 严格执行 Fetch 规范，拒绝 wdio `webdriver` 手动设的
-// Content-Length / Connection 头，创建会话时报 UND_ERR_INVALID_ARG（webdriverio#15265）。
-// 快速失败并给出指引，好过让用户对着一屏 undici 栈发懵。修复前请用 Node 22 LTS 跑 E2E。
-const nodeMajor = Number(process.versions.node.split(".")[0]);
-if (nodeMajor >= 26) {
-  console.error(
-    `\n✗ 当前 Node ${process.versions.node} 与 WebdriverIO 不兼容（webdriverio#15265）：\n` +
-      `  Node ≥ 26 的 undici v8 会拒绝 wdio 设的 Content-Length/Connection 请求头，创建会话即失败。\n` +
-      `  请用 Node 22 LTS 跑 E2E（如 \`fnm use 22\` / \`nvm use 22\`，或用便携版 Node 22 的 node.exe 直接执行 e2e/run.mjs）。\n`,
-  );
-  process.exit(1);
-}
+// Node 版本：webdriverio#15265（Node ≥ 26 的 undici v8 拒收 wdio 手动设的 Content-Length /
+// Connection 头）已在 webdriver 9.30 修掉，@wdio/* 升到 9.32 后 Node 26 实测可跑，原先的
+// 「Node ≥ 26 直接拒跑」预检随之去掉。
 
 function run(bin, args, env = {}) {
   console.log(`\n▶ ${bin} ${args.join(" ")}`);
@@ -71,10 +62,9 @@ try {
     { VITE_E2E: "1" },
   );
   // 跑 WDIO（embedded provider：首次会自动匹配/下载 msedgedriver）。
-  // 必须用 Node（preflight 已保证 ≤22）而不是 bun：bun 的 fetch 与 Node≥26 的 undici 同样
-  // 拒绝 wdio webdriver 手动设置的 Content-Length/Connection 头（实测 bun 下创建会话即
-  // UND_ERR_INVALID_ARG）——预检挡了 Node 版本却没换运行时，等于白挡。process.execPath
-  // 即当前 Node；`bun x` 只是装包/解析便利，不能用来跑 wdio 本体。
+  // 用 Node（process.execPath）跑 wdio 本体，不用 bun：当初 bun 的 fetch 也拒收那两个头
+  // （实测创建会话即 UND_ERR_INVALID_ARG）。webdriver 9.30 起不再设它们，bun 下没复测过，
+  // 不冒这个险。`bun x` 只是装包/解析便利。
   const require = createRequire(import.meta.url);
   // @wdio/cli 的 exports 只放 "."，bin 不能直接 resolve——从主入口推包根再进 bin。
   const wdioBin = join(dirname(require.resolve("@wdio/cli")), "..", "bin", "wdio.js");
