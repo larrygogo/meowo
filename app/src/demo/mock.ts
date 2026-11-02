@@ -46,6 +46,8 @@ export const store: Store = {
     bark_url: "",
     workspace_order: [],
     keep_awake_while_running: true,
+    notification_sound: true,
+    chat_turn_folding: false,
   },
 };
 

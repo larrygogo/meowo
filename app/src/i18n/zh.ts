@@ -625,6 +625,8 @@ export const zh = {
     todoStripProgress: (done: number, total: number) => `当前进度 ${done}/${total}`,
     // 已完成回合的折叠摘要（Kimi TurnFold）：工作了 Ns。
     turnWorked: "工作了",
+    // 回合级折叠（设置「消息自动折叠」）的摘要行：工作了 2m13s。
+    replyWorked: (duration: string) => `工作了 ${duration}`,
     unread: "有新回复",
     groupAttention: (count: number) => `${count} 项待处理`,
     // 任务面板（Kimi TasksPane）：后台 Bash / 子代理 / 待办。
@@ -1141,6 +1143,8 @@ export const zh = {
     // 运行时防止休眠（power.rs）：只拦系统休眠、不拦息屏，没会话在跑就交还系统。
     keepAwake: "运行时防止休眠",
     keepAwakeDesc: "有会话在跑时电脑不睡，屏幕照常熄灭",
+    notifySound: "通知提示音",
+    notifySoundDesc: "系统通知弹出时响一声",
     chatFeature: "对话窗口功能",
     chatFeatureDesc: "关闭进入轻量模式：只保留贴纸，一切在终端进行",
     cardMenu: "卡片菜单",
@@ -1163,6 +1167,9 @@ export const zh = {
     chatWidthDesc: "居中定宽便于阅读，或铺满整个窗口",
     chatWidthFixed: "定宽",
     chatWidthFull: "铺满",
+    // 对照 Kimi「消息自动折叠」：回合结束后只留最终回答，过程收成「工作了 2m13s」一行。
+    turnFolding: "消息自动折叠",
+    turnFoldingDesc: "回合结束后收起工作过程，只留最终回答",
     stickerStyle: "贴纸风格",
     stickerStyleDesc: "卡片立体投影，或扁平描边",
     styleElevated: "立体感",

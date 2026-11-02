@@ -246,6 +246,15 @@ pub(crate) struct Settings {
     /// 只拦系统休眠、不拦息屏；没有会话在跑立刻交还系统的休眠策略。见 power.rs。
     #[serde(default = "default_true")]
     pub(crate) keep_awake_while_running: bool,
+    /// 系统通知是否带提示音（对照 Kimi「通知提示音」）。只管声音，通知照弹；关掉后 Windows
+    /// toast 走 silent、macOS 不挂 sound。老 settings.json 缺席 = 开，与改之前的行为一致。
+    #[serde(default = "default_true")]
+    pub(crate) notification_sound: bool,
+    /// 对话里回合结束后，把最终回答之前的工作过程（思考、工具、中途的话）收成一行
+    /// （对照 Kimi「消息自动折叠」）。默认关：Kimi 也默认关，展开看过程是多数人的习惯。
+    /// 纯显示偏好，只有对话窗读（含手机页）。
+    #[serde(default)]
+    pub(crate) chat_turn_folding: bool,
     /// 贴纸主窗口几何（W-17，见 [`StickerWindowState`]）。兼容老 settings.json：缺席 →
     /// 全 None/false，前端启动时从 localStorage 旧键（及后端从 window-state 旧文件）一次性迁移。
     #[serde(default)]
@@ -291,6 +300,8 @@ impl Default for Settings {
             bark_url: String::new(),
             workspace_order: Vec::new(),
             keep_awake_while_running: true,
+            notification_sound: true,
+            chat_turn_folding: false,
             sticker_window: StickerWindowState::default(),
         }
     }
@@ -966,6 +977,21 @@ mod tests {
         let off: Settings =
             serde_json::from_str(r#"{"keep_awake_while_running":false}"#).unwrap();
         assert!(!off.keep_awake_while_running);
+    }
+
+    #[test]
+    fn old_settings_json_defaults_notification_sound_on_and_turn_folding_off() {
+        // 老 settings.json 无这两个字段：提示音保持原来的「有声」，回合折叠保持原来的「不折」。
+        let v: Settings = serde_json::from_str("{}").unwrap();
+        assert!(v.notification_sound);
+        assert!(!v.chat_turn_folding);
+        assert!(Settings::default().notification_sound);
+        assert!(!Settings::default().chat_turn_folding);
+        let flipped: Settings =
+            serde_json::from_str(r#"{"notification_sound":false,"chat_turn_folding":true}"#)
+                .unwrap();
+        assert!(!flipped.notification_sound);
+        assert!(flipped.chat_turn_folding);
     }
 
     #[test]

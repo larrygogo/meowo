@@ -667,6 +667,7 @@ pub(crate) fn show_session_notification(
     title_based: bool,
     kind: NotifyKind,
     lang: String,
+    sound: bool,
 ) {
     use tauri_winrt_notification::{Duration as ToastDuration, Toast};
     // 安装版用 bundle identifier（解析到开始菜单快捷方式 → 显示 Meowo+图标 + 点击可激活）；
@@ -681,6 +682,10 @@ pub(crate) fn show_session_notification(
     let click_app = app.clone();
     let _ = app.run_on_main_thread(move || {
         let mut toast = Toast::new(&app_id).title(&title).text1(&body);
+        // 设置里关了「通知提示音」：只静音，通知照弹（None = <audio silent="true"/>）。
+        if !sound {
+            toast = toast.sound(None);
+        }
         // 审批类（待审批/屏幕阻塞）：Long 时长 + 「打开会话」按钮——要人做决定的通知
         // 默认 5s 一闪而过，通知中心里的残留条目又没有入口。按钮与点正文的激活参数
         // 都汇入同一个 on_activated 回调，落点逻辑无需区分。
@@ -802,12 +807,14 @@ pub(crate) fn show_session_notification(
     // 决策版 toast 仅 Windows（macOS 点击跳转已有）。
     _kind: NotifyKind,
     _lang: String,
+    sound: bool,
 ) {
     crate::macos::notify::post(crate::macos::notify::NotifyJob {
         title,
         body,
         session_id,
         pid,
+        sound,
     });
 }
 
@@ -826,6 +833,7 @@ pub(crate) fn show_session_notification(
     _title_based: bool,
     _kind: NotifyKind,
     _lang: String,
+    _sound: bool,
 ) {
 }
 
@@ -898,6 +906,7 @@ pub(crate) fn spawn_liveness_watch(
                 let settings = load_settings();
                 let notify_on = settings.notifications_enabled;
                 let lang = ui_lang(&settings);
+                let sound = settings.notification_sound;
                 // 本轮是否有新的需关注事件(与 toast 同一套指纹判定,但不受 notify_on 门控):
                 // 循环末尾据此请求一次任务栏注意力。
                 let mut attention_fired = false;
@@ -1034,6 +1043,7 @@ pub(crate) fn spawn_liveness_watch(
                                 title_based,
                                 NotifyKind::Error,
                                 lang.to_string(),
+                                sound,
                             );
                         }
                         notified.insert(sid.clone(), e.fingerprint.clone());
@@ -1074,6 +1084,7 @@ pub(crate) fn spawn_liveness_watch(
                                     title_based,
                                     NotifyKind::Pending,
                                     lang.to_string(),
+                                    sound,
                                 );
                             }
                             // 启动首轮（seeded=false）不播种待审批指纹：pending 指纹不随时间推进，
@@ -1123,6 +1134,7 @@ pub(crate) fn spawn_liveness_watch(
                                     title_based,
                                     NotifyKind::Blocked,
                                     lang.to_string(),
+                                    sound,
                                 );
                             }
                             // 与待审批同理：blocked 指纹恒为 "blocked"（刻意不掺时间戳），首轮播种
@@ -1173,6 +1185,7 @@ pub(crate) fn spawn_liveness_watch(
                                     title_based,
                                     NotifyKind::Waiting,
                                     lang.to_string(),
+                                    sound,
                                 );
                             }
                             // 被「正在看」抑制时不写指纹：抑制的前提「他就在屏幕前」只在此刻成立。

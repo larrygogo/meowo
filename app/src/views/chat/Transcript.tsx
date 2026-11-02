@@ -19,7 +19,7 @@ import { imageOnlyPaths, Message, MessageCopyButton, UserImageGroup } from "./Me
 import { SubagentBlock } from "./SubagentBlock";
 import { ToolActivity } from "./ToolActivity";
 import { TurnChanges } from "./TurnChanges";
-import { TurnFold } from "./TurnFold";
+import { ReplyFold, TurnFold } from "./TurnFold";
 import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem, type ToolUseItem } from "./shared";
 
@@ -28,12 +28,18 @@ type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
 /// 增量缓存的块记录。start = 该块首条 item 的下标;lastDayBefore = 进入该块时的日期
 /// 分隔游标(复算从此块起步时要还原它);subagentId = 子任务块对应的 tool_use id——
 /// 该块的徽标读的是整个 items 里的回执,复用前必须核对 outcomes/settled 没变;
-/// nodes = 该块产出的元素(块本体,可能前置一条日期分隔条)。
+/// nodes = 该块产出的元素(块本体,可能前置一条日期分隔条,daySep 标记有没有)。
+/// reply = 所属回复的起点下标(assistant 段才有;一段回复被正文切成多段时各段同值);
+/// fold = 回合级折叠的切点,只挂在「已结束且开着消息自动折叠」那段回复的最后一段上:
+/// nodes[0..at) 与同回复前面各段一起收进 ReplyFold。见文件末尾的拼装。
 type BlockRec = {
   start: number;
   lastDayBefore: string | null;
   subagentId: string | null;
   nodes: JSX.Element[];
+  daySep: boolean;
+  reply: number | null;
+  fold: { at: number; id: string; durationMs: number | null } | null;
 };
 
 /// 时间与整段复制统一收在回合末尾，对齐 Kimi 的大段回复结构。
@@ -67,6 +73,7 @@ function nextStamp(items: ChatItem[], index: number): string | null {
 type BlockCache = {
   sessionId: number;
   t: Dict;
+  foldTurns: boolean;
   items: ChatItem[];
   blocks: BlockRec[];
   outcomes: Map<string, SubagentOutcomeInfo>;
@@ -80,7 +87,14 @@ type BlockCache = {
 /// 流式期间 items 每批(200ms 的 pty-output 合流)都换新引用,memo 帮不上——此前每批
 /// 都从头全量重建整棵块数组,长会话是 O(n²)。现在按块做增量缓存:reducer 的写时复制
 /// 保证未变条目同引用,据此找到首个变化下标,之前的块原样复用,只重算尾部。
-export const Transcript = memo(function Transcript({ sessionId, items, working = false }: { sessionId: number; items: ChatItem[]; agent?: TranscriptAgent | null; working?: boolean }) {
+export const Transcript = memo(function Transcript({ sessionId, items, working = false, foldTurns = false }: {
+  sessionId: number;
+  items: ChatItem[];
+  agent?: TranscriptAgent | null;
+  working?: boolean;
+  /** 设置「消息自动折叠」：已结束的回复只露最终回答，过程收成一行。 */
+  foldTurns?: boolean;
+}) {
   const t = useT();
   // 委派的结局写在**主链的工具回执**上，而回执往往排在委派之后若干条（TaskOutput 拉取
   // 的结局甚至挂在别的调用上，靠 task_id 归回原委派）。关联规则收敛在
@@ -90,7 +104,8 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
   const cacheRef = useRef<BlockCache | null>(null);
   const cache = cacheRef.current;
   let reuse: BlockRec[] = [];
-  if (cache && cache.sessionId === sessionId && cache.t === t && cache.blocks.length > 0) {
+  // 折叠开关一变,旧块里记的切点全部作废,整体重算(开关很少动,不值得做细)。
+  if (cache && cache.sessionId === sessionId && cache.t === t && cache.foldTurns === foldTurns && cache.blocks.length > 0) {
     const common = Math.min(cache.items.length, items.length);
     let firstChanged = 0;
     while (firstChanged < common && cache.items[firstChanged] === items[firstChanged]) firstChanged += 1;
@@ -122,6 +137,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
     const key = date.toDateString();
     if (key === lastDay) return;
     lastDay = key;
+    record.daySep = true;
     record.nodes.push(
       <div className="chat-day-sep" role="separator" key={`day-${item.id}`}>
         <span>{dayLabel(date, t)}</span>
@@ -130,7 +146,8 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
   };
   for (let index = resume ? resume.start : 0; index < items.length;) {
     const item = items[index];
-    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, nodes: [] };
+    const previous = blocks[blocks.length - 1];
+    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, nodes: [], daySep: false, reply: null, fold: null };
     blocks.push(record);
     pushDaySep(record, item);
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
@@ -193,6 +210,11 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       entry.type === "assistant_text" || entry.type === "assistant_delta" || entry.type === "turn_error",
     );
     const isLive = next >= items.length;
+    // 所属回复:紧挨着的前一条不是用户消息/meta,说明还在同一段回复里,沿用上一段的起点。
+    const before = items[index - 1];
+    record.reply = before && before.type !== "user_text" && before.type !== "meta" && previous?.reply != null
+      ? previous.reply
+      : index;
     const firstStamp = Date.parse(turnItems[0]?.timestamp ?? "");
     const lastStamp = Date.parse(turnItems[turnItems.length - 1]?.timestamp ?? "");
     const durationMs = Number.isFinite(firstStamp) && Number.isFinite(lastStamp) ? Math.max(0, lastStamp - firstStamp) : null;
@@ -274,6 +296,8 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
         </TurnFold>,
       );
     }
+    // 正文之前的节点都是过程:回合级折叠从这里切开,之后的正文/改动/页脚留在外面。
+    const bodyAt = record.nodes.length;
     for (const entry of bodyItems) {
       // 出错卡只有在它就是时间线末尾时才给「继续」（后面已有新内容的旧错误不必再续）。
       const latest = entry.type === "turn_error" && next >= items.length && entry === bodyItems[bodyItems.length - 1];
@@ -297,10 +321,57 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       if (copyText) {
         record.nodes.push(<TurnFooter key={`foot-${turnItems[0].id}`} text={copyText} timestamp={turnItems[turnItems.length - 1]?.timestamp ?? null} />);
       }
+      // 回合级折叠(对照 Kimi):回复已结束(运行中不折,过程要看得见)、最后一段有正文、
+      // 正文之前确实有东西可收(前面还有别的段,或本段有思考/工具)。
+      const settled = !(working && isLive);
+      const finalText = bodyItems.some((entry) => (entry.type === "assistant_text" || entry.type === "assistant_delta") && entry.text.trim());
+      const replyStart = record.reply ?? index;
+      const hasEarlier = replyStart < index;
+      if (foldTurns && settled && finalText && (hasEarlier || bodyAt > (record.daySep ? 1 : 0))) {
+        // 时长从用户发出那句算起(没有就从回复第一条),到这段回复最后一条。
+        const asked = items[replyStart - 1];
+        const fromStamp = Date.parse((asked?.type === "user_text" ? asked.timestamp : null) ?? items[replyStart].timestamp ?? "");
+        const toStamp = Date.parse(items[next - 1]?.timestamp ?? "");
+        const spanMs = Number.isFinite(fromStamp) && Number.isFinite(toStamp) ? Math.max(0, toStamp - fromStamp) : null;
+        record.fold = { at: bodyAt, id: items[replyStart].id, durationMs: spanMs };
+      }
     }
     index = next;
   }
-  cacheRef.current = { sessionId, t, items, blocks, outcomes, settledAt };
+  cacheRef.current = { sessionId, t, foldTurns, items, blocks, outcomes, settledAt };
+  // 拼装:同一段回复的各块连在一起;最后一块带 fold 的,把它切点之前和前面各块的节点收进
+  // ReplyFold。日期分隔条提到折叠外面:它标的是日期,收进去就看不出跨了天。
+  const nodes: JSX.Element[] = [];
+  for (let at = 0; at < blocks.length;) {
+    const block = blocks[at];
+    let end = at + 1;
+    if (block.reply !== null) {
+      while (end < blocks.length && blocks[end].reply === block.reply) end += 1;
+    }
+    const last = blocks[end - 1];
+    if (!last.fold) {
+      for (let k = at; k < end; k += 1) nodes.push(...blocks[k].nodes);
+      at = end;
+      continue;
+    }
+    const seps: JSX.Element[] = [];
+    const folded: JSX.Element[] = [];
+    for (let k = at; k < end; k += 1) {
+      const own = k === end - 1 ? blocks[k].nodes.slice(0, last.fold.at) : blocks[k].nodes;
+      if (blocks[k].daySep) {
+        seps.push(own[0]);
+        folded.push(...own.slice(1));
+      } else {
+        folded.push(...own);
+      }
+    }
+    nodes.push(...seps);
+    if (folded.length > 0) {
+      nodes.push(<ReplyFold key={`reply-${last.fold.id}`} id={last.fold.id} durationMs={last.fold.durationMs}>{folded}</ReplyFold>);
+    }
+    nodes.push(...last.nodes.slice(last.fold.at));
+    at = end;
+  }
   // 折叠块的开合按会话各记一份（最近 4 个会话），切走再回来原样还原，见 foldMemory。
-  return <FoldScopeContext.Provider value={foldScope(sessionId)}>{blocks.flatMap((block) => block.nodes)}</FoldScopeContext.Provider>;
+  return <FoldScopeContext.Provider value={foldScope(sessionId)}>{nodes}</FoldScopeContext.Provider>;
 });
