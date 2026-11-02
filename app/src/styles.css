@@ -5558,6 +5558,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 7G-2：占位符原来在 faint 上再兑 78% 透明，落到 3.4:1——而它是「Enter 发送 /
    Shift+Enter 换行」这条约定的**唯一**说明位。直接用 faint（已按叠层重校，见 7G-1）。 */
 .chat-compose textarea::placeholder { color: var(--cc-text-faint); }
+/* 展开编辑钮：右上角，淡出不抢字；展开态解除 150px 上限（高度由组件按半屏给）。 */
+.chat-compose-expand { position: absolute; top: var(--sp-8); right: var(--sp-12); z-index: 1; width: 24px; height: 24px; min-height: 0; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; }
+.chat-compose .chat-compose-expand:hover { color: var(--cc-text); background: var(--fill-hover); }
+.chat-compose.is-expanded textarea { max-height: none; }
+/* 有展开钮时正文右侧让出位置，长行不钻到钮底下。 */
+.chat-compose:has(> .chat-compose-expand) textarea { padding-right: var(--sp-24); }
 .chat-compose-actions { order: 2; width: 100%; display: flex; align-items: center; gap: var(--sp-8); }
 /* Kimi toolbar 左右分栏：附件与权限在左，用量 + 模型同组靠右；无用量时模型自己靠右。 */
 .chat-compose-actions > .chat-model-select { margin-left: auto; }

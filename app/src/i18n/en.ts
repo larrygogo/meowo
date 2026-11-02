@@ -429,6 +429,8 @@ export const en: Dict = {
     sending: "Sending…",
     attach: "Add images or files",
     addMenu: "Add",
+    composerExpand: "Expand input",
+    composerCollapse: "Collapse input",
     addFiles: "Files",
     addFilesDesc: "Attach images or files",
     addCommand: "Command",

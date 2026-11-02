@@ -288,6 +288,21 @@ describe("ChatWindow 适配回归", () => {
     expect(box().value).toBe("/");
   });
 
+  /// 展开编辑（对照 Kimi）：写长了才出展开钮，展开后编辑区拉高，清空即收回。
+  it("长提示词可以展开输入框编辑，清空后自动收回", async () => {
+    setup(521);
+    render(<ChatWindow />);
+    await screen.findByText("适配-521");
+    expect(screen.queryByRole("button", { name: "展开输入框" })).toBeNull();
+    fireEvent.change(box(), { target: { value: ["一", "二", "三", "四"].join(String.fromCharCode(10)) } });
+    fireEvent.click(screen.getByRole("button", { name: "展开输入框" }));
+    expect(box().closest(".chat-compose")?.className).toContain("is-expanded");
+    expect(screen.getByRole("button", { name: "收起输入框" })).toBeTruthy();
+    fireEvent.change(box(), { target: { value: "" } });
+    await waitFor(() => expect(box().closest(".chat-compose")?.className).not.toContain("is-expanded"));
+    expect(screen.queryByRole("button", { name: /输入框$/ })).toBeNull();
+  });
+
   it("同一会话发送期间继续编辑，成功后保留新内容", async () => {
     const base = setup(505);
     let release!: () => void;

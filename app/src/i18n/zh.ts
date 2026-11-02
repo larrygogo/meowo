@@ -464,6 +464,8 @@ export const zh = {
     attach: "添加图片或文件",
     // 输入框「+」菜单（对照 Kimi 的 addMenu）。
     addMenu: "添加",
+    composerExpand: "展开输入框",
+    composerCollapse: "收起输入框",
     addFiles: "文件",
     addFilesDesc: "图片或文件作为附件",
     addCommand: "命令",

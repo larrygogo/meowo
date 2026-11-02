@@ -1926,12 +1926,19 @@ export function ChatWindow() {
   // 输入框随内容长高（上限与 CSS max-height:150px 对齐）：rows=1 + min-height 曾把高度
   // 钉死不动，max-height 是死代码——写 5 行提示词只能在 3 行可视高的框里内部滚动。
   // 依赖 prompt 而非 onChange：清空发送、恢复草稿等程序化赋值也要跟着缩/涨。
+  // 展开编辑（对照 Kimi「展开输入框进行多行编辑」）：长提示词在 150px 的框里只能内部滚着改，
+  // 展开后编辑区拉高到约半屏。内容写长了才给展开钮；清空（发送后）自动收回。
+  const [composerExpanded, setComposerExpanded] = useState(false);
+  const promptLong = prompt.split("\n").length >= 4 || prompt.length > 300;
+  useEffect(() => { if (!prompt) setComposerExpanded(false); }, [prompt]);
   useEffect(() => {
     const el = promptInputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
-  }, [prompt, view]);
+    const cap = composerExpanded ? Math.min(Math.round(window.innerHeight * 0.55), 560) : 150;
+    // 展开态直接给满高度，空行少时也是一块完整的编辑区，不是只长一点点。
+    el.style.height = `${composerExpanded ? cap : Math.min(el.scrollHeight, cap)}px`;
+  }, [prompt, view, composerExpanded]);
 
   /// 向上翻一屏被首读裁掉的更早消息，并保持用户当前看的那一行不动。
   /// 增量翻页：before = 当前窗口首行字节（earliestRef），后端只解析还没展示过的那段，
@@ -4358,7 +4365,21 @@ export function ChatWindow() {
             </div>
           )}
           {/* sessionId=0(远程未选会话)没有可发送的对象,composer 整体不渲染。 */}
-          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "")}>
+          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
+          {(promptLong || composerExpanded) && !compactChrome && (
+            <button
+              type="button"
+              className="chat-compose-expand"
+              aria-label={composerExpanded ? t.chat.composerCollapse : t.chat.composerExpand}
+              data-tip={composerExpanded ? t.chat.composerCollapse : t.chat.composerExpand}
+              aria-pressed={composerExpanded}
+              onClick={() => { setComposerExpanded((v) => !v); promptInputRef.current?.focus(); }}
+            >
+              {composerExpanded
+                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
+                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>}
+            </button>
+          )}
         {/* T-14：外部终端连着同一 PTY 时输入无互斥——先把「可能交错」说在 composer
             上方，免得两边打字串行后用户以为是 agent 故障。只在确实可写的托管会话上挂。 */}
         {externalViewersOnline && history?.ptyManaged === true && supersededTo == null && !composerGated && (
