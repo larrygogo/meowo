@@ -7,23 +7,11 @@ import { normalizePath, pathKey } from "../../paths";
 import { Dropdown } from "../menu";
 import { useT } from "../../i18n";
 import { useNewSessionForm } from "../useNewSessionForm";
+import { WorkspacePicker } from "./WorkspacePicker";
 
 /// 对话窗里的新建会话页（对照 Kimi Code：新建会话不弹窗，主区就地换成一个输入框，
-/// 下面一排工作区 / Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
+/// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
 /// 表单逻辑与独立窗口面板共用 useNewSessionForm，这里只管长相与「第一句话」。
-
-/// 「选择文件夹…」在工作区下拉里的占位值：路径里不会出现 NUL。
-const PICK_FOLDER = "\u0000pick";
-
-function FolderIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
-  );
-}
-
-const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
 
 export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
   prefill: { cwd?: string | null; provider?: string | null };
@@ -75,18 +63,19 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
 
   // 预填的目录（卡片菜单「在此工作区新建」）可能不在最近列表里，补在最前面。
   const dirs = cwd && !recent.some((dir) => pathKey(dir) === pathKey(cwd)) ? [cwd, ...recent] : recent;
-  const workspaceOptions = [
-    ...(cwd ? [] : [{ value: "", label: t.newSession.workspaceRequired, muted: true, icon: <FolderIcon /> }]),
-    ...dirs.map((dir) => ({ value: dir, label: baseName(dir), sub: dir, icon: <FolderIcon /> })),
-    { value: PICK_FOLDER, label: t.newSession.pickFolder },
-  ];
-  const selectedDir = dirs.find((dir) => pathKey(dir) === pathKey(cwd)) ?? cwd;
 
   return (
     <div className="nsp" data-testid="new-session-page">
       <div className="nsp-drag" data-tauri-drag-region />
       <div className="nsp-center">
         <h1 className="nsp-title">{t.newSession.title}</h1>
+        {/* 工作区在输入框上方单列（对照 Kimi）：它决定会话在哪跑，分量比底部那排选项重。 */}
+        <WorkspacePicker
+          cwd={cwd}
+          dirs={dirs}
+          onPick={(dir) => { setCwd(dir); setError(null); }}
+          onPickFolder={() => void pickFolder()}
+        />
         <div className={"nsp-composer" + (busy ? " is-busy" : "")}>
           <textarea
             ref={textRef}
@@ -101,17 +90,6 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
           />
           <div className="nsp-bar">
             <div className="nsp-chips">
-              <span className="nsp-chip" data-tip={cwd || undefined} data-testid="nsp-workspace">
-                <Dropdown
-                  align="left"
-                  value={selectedDir}
-                  options={workspaceOptions}
-                  onChange={(value) => {
-                    if (value === PICK_FOLDER) void pickFolder();
-                    else { setCwd(value); setError(null); }
-                  }}
-                />
-              </span>
               {avail && avail.length > 0 && (
                 <span className="nsp-chip" data-testid="nsp-agent">
                   <Dropdown

@@ -75,6 +75,12 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     render(<NewSessionPage prefill={{}} onLaunched={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("meowo"));
     fireEvent.click(screen.getByTestId("nsp-workspace").querySelector("button")!);
+    // 菜单照 Kimi：「最近的文件夹」一节，每项名字 + 完整路径，当前工作区标为选中。
+    expect(screen.getByText(zh.newSession.recentFolders)).toBeTruthy();
+    const options = screen.getAllByRole("option");
+    expect(options[0].getAttribute("aria-selected")).toBe("true");
+    expect(options[0].textContent).toContain("meowo");
+    expect(options[1].getAttribute("aria-selected")).toBe("false");
     fireEvent.click(await screen.findByText(zh.newSession.pickFolder));
     await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("proj"));
   });

@@ -143,6 +143,8 @@ export const zh = {
     // 对话窗里的新建会话页（对照 Kimi：主区就地开，第一句话随会话一起发出）。
     pagePlaceholder: "输入消息开始新对话…",
     pickFolder: "选择文件夹…",
+    chooseWorkspace: "选择工作区",
+    recentFolders: "最近的文件夹",
     workspaceRequired: "请先选择工作区",
     start: "开始",
     // 新建页开着时往窗口里拖文件夹 = 选它当工作区（对照 Kimi「松开鼠标添加工作区」）。

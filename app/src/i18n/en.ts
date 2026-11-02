@@ -132,6 +132,8 @@ export const en: Dict = {
     title: "New session",
     pagePlaceholder: "Type a message to start a new conversation…",
     pickFolder: "Choose folder…",
+    chooseWorkspace: "Choose workspace",
+    recentFolders: "Recent folders",
     workspaceRequired: "Choose a workspace first",
     start: "Start",
     dropToWorkspace: "Drop to use as workspace",
