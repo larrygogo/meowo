@@ -8,6 +8,7 @@ import {
   reconcileOutgoing,
   type OutgoingKind,
   type OutgoingPrompt,
+  type PromptAck,
 } from "./outgoingPrompts";
 
 const user = (id: string, text: string, interjected?: boolean): ChatItem =>
@@ -137,7 +138,7 @@ describe("reconcileOutgoing", () => {
   // 对照 Kimi 的 prompt:accepted：CLI 正忙时 claude 把用户的话记一行入队，这就是送达回执。
   it("送达回执把消息推进到已排队，一条回执只认一条，发送前的旧回执不算", () => {
     const at = (s: number) => new Date(Date.UTC(2026, 10, 1, 8, 0, s)).toISOString();
-    const ack = (id: string, text: string, s: number): ChatItem => ({ type: "prompt_queued", id, timestamp: at(s), text });
+    const ack = (id: string, text: string, s: number): PromptAck => ({ type: "prompt_queued", id, timestamp: at(s), text });
     const before = [{ ...reply("a0"), timestamp: at(10) }];
     const list = [prompt("queued", "继续", before), prompt("echo", "继续", before)];
     const stale = ack("q-old", "继续", 5);

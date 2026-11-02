@@ -836,8 +836,9 @@ export function ChatWindow() {
   // 镜像为空,退回后端现查（toggleArchived 的 fallbackNext）。
   const sidebarOrderRef = useRef<number[]>([]);
   // 归档动作与撤销条统一走 useSessionActions（C-13）：与侧栏入口同一条 set_archived、
-  // 同一个「下一条」取序、同一个 8s 撤销窗。撤销条数组承载批量归档,这里恒为单条。
-  const { archiveUndo, archive: archiveSessions, undoArchive, dismissUndo } = useSessionActions({
+  // 同一个「下一条」取序。对话窗不挂撤销条（用户实拍「不要显示这个」），完成的会话从
+  // 侧栏「已完成」找回。
+  const { archive: archiveSessions } = useSessionActions({
     onNavigate: (id) => resetTo(id),
     onError: (message) => setSendError(message),
   });
@@ -4223,15 +4224,6 @@ export function ChatWindow() {
       {/* 右缘用户消息导航：悬浮在滚动区之上、不随内容滚动，故放在 main 之外。 */}
       {view === "chat" && !loading && timelineItems.length > 0 && (
         <UserMessageNav items={timelineItems} scrollRef={scrollRef} />
-      )}
-      {/* 归档撤销条:归档动作本身无确认,跳转又可能把人带去别的会话——8s 内一键撤销
-          并跳回,不必去筛选菜单里翻「已归档」。 */}
-      {archiveUndo != null && (
-        <div className="chat-send-error chat-archive-undo" role="status">
-          <span>{t.chat.archivedNotice}</span>
-          <button type="button" className="chat-send-takeover" onClick={() => undoArchive({ onUndone: (ids) => resetTo(ids[0]), errorMessage: (reason) => formatBackendError(reason, t.locale) })}>{t.sticker.archiveUndo}</button>
-          <button type="button" className="chat-send-takeover" onClick={dismissUndo}>{t.chat.slashMenuDismiss}</button>
-        </div>
       )}
       {/* ── 审批/题面 overlay(C-9 彻底零位移):各类卡统一走 ApprovalCard 外壳(标题/徽章/
           正文/左右动作组一套视觉),全部渲染进这个零高度容器——容器自身不占文档流
