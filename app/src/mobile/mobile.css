@@ -217,9 +217,16 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   /* 桌面的灰底是悬停反馈,常显后每行挂一块灰方块(2026-10 手机截图:三行三块,比标题还抢眼)。
      只留图标,命中面仍由上面的 ::after 外扩保证。 */
   body.remote-ui .chat-sidebar-item-menu { background: transparent; }
-  /* ⋯ 绝对定位浮在标题行右端,桌面只在悬停时盖一下;常显后长标题的省略号直接顶到 ⋯ 上
-     (手机仿真截图「标…⋯」连成一串)。标题行让出按钮宽度。 */
-  body.remote-ui .chat-sidebar-name { padding-right: calc(var(--icon-button-xs) + var(--sp-4)); }
+  /* 桌面的 ⋯ 浮在时间上，悬停时和时间互换；手机没有悬停、⋯ 常显，两个叠成「刚刚⋯」
+     (2026-11 手机实拍)。手机上 ⋯ 回到文档流，排在时间后面。右侧 -6px 让图标边缘对齐行内边距，
+     和桌面浮层时的位置一样。 */
+  body.remote-ui .chat-sidebar-act { gap: var(--sp-4); }
+  body.remote-ui .chat-sidebar-act .chat-sidebar-item-menu { position: static; transform: none; margin-right: -6px; }
+  /* 点过的行在触屏上会留着 :hover / 焦点，桌面「悬停藏时间、失焦藏 ⋯」的互换规则（0,5,0~0,6,0）
+     会把点过那行的时间或 ⋯ 藏掉。并排之后不需要互换，两条都钉成常显。 */
+  body.remote-ui .chat-sidebar-item.chat-sidebar-item .chat-sidebar-act .chat-sidebar-time,
+  body.remote-ui .chat-sidebar-item.chat-sidebar-item:is(:hover, :focus-within, :focus-visible) .chat-sidebar-act .chat-sidebar-item-menu,
+  body.remote-ui .chat-sidebar-item.chat-sidebar-item:is(:hover, :focus-within, :focus-visible) .chat-sidebar-act .chat-sidebar-time { opacity: 1; visibility: visible; }
 
   /* 对照 Kimi 手机端的三条触屏规矩（2026-10-29 逐条比对其 hover:none / 640px 规则）：
      1. 悬停才出现的按钮在触屏上常显——触屏没有悬停，藏着就等于没有。附件卡的「标注」
