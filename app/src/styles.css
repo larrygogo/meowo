@@ -4097,7 +4097,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-metaline { margin-top: 2px; }
 .chat-sidebar-act { position: relative; flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: flex-end; min-width: 24px; height: calc(var(--text-sm) * 1.4); }
 .chat-sidebar-time { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 475; font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-fast) var(--ease-out); }
-.chat-sidebar-item:hover .chat-sidebar-act:has(.chat-sidebar-item-menu) .chat-sidebar-time { opacity: 0; visibility: hidden; }
+/* 时间与「⋯」同一个触发条件互换：悬停，或键盘把焦点移到这一行（:focus-visible）。鼠标点过的那行
+   焦点一直在（:focus-within），原先「⋯」随它常亮、时间却只在悬停时让位，两者叠在一起（用户实拍）。 */
+.chat-sidebar-item:is(:hover, :focus-visible) .chat-sidebar-act:has(.chat-sidebar-item-menu) .chat-sidebar-time { opacity: 0; visibility: hidden; }
+.chat-sidebar-item:focus-within:not(:hover):not(:focus-visible) .chat-sidebar-act .chat-sidebar-item-menu { opacity: 0; visibility: hidden; }
+.chat-sidebar-item:focus-visible .chat-sidebar-act .chat-sidebar-item-menu { opacity: 1; visibility: visible; }
 .chat-sidebar-act .chat-sidebar-item-menu { right: -6px; top: 50%; transform: translateY(-50%); background: transparent; }
 .chat-sidebar-act .chat-sidebar-item-menu:hover { background: var(--fill-hover); }
 .chat-sidebar-act .chat-sidebar-check-btn { margin: 0; }
