@@ -377,6 +377,9 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 }
 .remote-session-list .chat-sidebar-head { padding: 0 12px 8px; }
 .remote-session-list .chat-sidebar-search { padding: 0 12px 10px; }
+/* 搜索图标是绝对定位，桌面按外边距 8px 写死 left；这里外边距是 12px，图标比「新建会话」的
+   往左偏 4px（2026-11 手机实拍）。跟着外边距 + 按钮内边距 10px 算。 */
+.remote-session-list .chat-sidebar-search-icon { left: calc(12px + var(--sp-10)); }
 .remote-session-list .chat-sidebar-list { padding: 4px 12px 12px; }
 .remote-session-list .chat-sidebar-item { min-height: 58px; }
 .remote-session-list .chat-sidebar-footer { padding-left: 12px; }
