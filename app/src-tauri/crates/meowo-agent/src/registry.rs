@@ -1318,20 +1318,26 @@ mod tests {
     }
 
     /// 能力槽的降级语义：不声明 telemetry 的 agent，调用方拿到 None 而不是一个空实现。
-    /// 三家目前都有 telemetry 与结构化 transcript；只有 claude 从 transcript 解析标题。
+    /// 标题：claude 读 ai-title/custom-title（不受 Meowo 改名锁限制）；kimi/codex/opencode
+    /// 读它们自己起的标题，属于「生成的」，用户在 Meowo 改过名就不覆盖（2026-11 用户定）。
     #[test]
     fn telemetry_slot_reflects_declared_capabilities() {
         let claude = by_id("claude").unwrap().telemetry().expect("claude 有遥测");
         assert!(claude.transcript().is_some());
         assert!(claude.resolves_transcript_title());
+        assert!(!claude.transcript_title_generated());
 
-        for id in ["kimi", "codex"] {
+        for id in ["kimi", "codex", "opencode"] {
             let t = by_id(id)
                 .unwrap()
                 .telemetry()
                 .unwrap_or_else(|| panic!("{id} 有遥测"));
             assert!(t.transcript().is_some(), "{id} 提供结构化对话 transcript");
-            assert!(!t.resolves_transcript_title(), "{id} 的标题走首条 prompt");
+            assert!(t.resolves_transcript_title(), "{id} 读它自己起的标题");
+            assert!(
+                t.transcript_title_generated(),
+                "{id} 的标题是生成的，受改名锁约束"
+            );
         }
 
         // codex 不支持重命名回写（走 app-server JSON-RPC，成本高）→ 默认实现返回 false。

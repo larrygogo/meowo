@@ -206,7 +206,8 @@ impl Store {
     ///     与 v12 的 `work_groups` 不同——那张表是**刻意保留**的(降版本要再做一版迁移、
     ///     空表零成本), 勿一并删。
     /// v18: sessions 加 manual_rank 列（侧栏「手动排序」拖出来的位置）。
-    const USER_VERSION: i64 = 18;
+    /// v19: tasks 加 title_locked 列（用户改过名，agent 自起的标题不再覆盖）。
+    const USER_VERSION: i64 = 19;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -221,7 +222,7 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 19] = [
+        const ALTERS: [&str; 20] = [
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
@@ -252,6 +253,9 @@ impl Store {
             "ALTER TABLE session_context ADD COLUMN effort TEXT",
             // 手动排序位置（v18）：老库补齐后全是 NULL = 没拖过，按创建时间排，正是我们要的。
             "ALTER TABLE sessions ADD COLUMN manual_rank INTEGER",
+            // 标题锁（v19）：老库补齐后全是 0 = 没改过名，agent 起的标题可以接管。老会话
+            // 里用户改过的名字没留记录，会被 agent 标题覆盖一次——可接受（改名少，再改一次即锁）。
+            "ALTER TABLE tasks ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -566,6 +570,53 @@ impl Store {
         self.conn.execute(
             "UPDATE tasks SET title = ?1, updated_at = ?2 \
              WHERE id = ?3 AND updated_at <= ?2 \
+               AND EXISTS (SELECT 1 FROM sessions \
+                           WHERE id = tasks.session_id AND last_event_at <= ?2)",
+            rusqlite::params![t, now_ms, tid],
+        )?;
+        Ok(())
+    }
+
+    /// 用户在 Meowo 里改名：写标题并上锁，之后 agent 自起的标题不再覆盖（见 adopt_agent_title）。
+    /// 时间守卫同 set_session_title。空标题忽略。
+    pub fn rename_session_title(
+        &self,
+        session_id: i64,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let t = truncate_chars(title.trim(), 80);
+        if t.is_empty() {
+            return Ok(());
+        }
+        let tid = self.task_id_of_session(session_id)?;
+        self.conn.execute(
+            "UPDATE tasks SET title = ?1, title_locked = 1, updated_at = ?2 \
+             WHERE id = ?3 AND updated_at <= ?2 \
+               AND EXISTS (SELECT 1 FROM sessions \
+                           WHERE id = tasks.session_id AND last_event_at <= ?2)",
+            rusqlite::params![t, now_ms, tid],
+        )?;
+        Ok(())
+    }
+
+    /// 采用 agent 自己起的标题（codex thread_name、kimi 生成标题、opencode 标题）：同
+    /// set_session_title，但用户改过名（title_locked）的不动。Claude 的 custom-title 是
+    /// 用户在 CLI 里 /rename 的结果，仍走 set_session_title，不受锁限制。
+    pub fn adopt_agent_title(
+        &self,
+        session_id: i64,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let t = truncate_chars(title.trim(), 80);
+        if t.is_empty() {
+            return Ok(());
+        }
+        let tid = self.task_id_of_session(session_id)?;
+        self.conn.execute(
+            "UPDATE tasks SET title = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND title_locked = 0 AND title <> ?1 AND updated_at <= ?2 \
                AND EXISTS (SELECT 1 FROM sessions \
                            WHERE id = tasks.session_id AND last_event_at <= ?2)",
             rusqlite::params![t, now_ms, tid],
@@ -2352,5 +2403,52 @@ mod todo_delta_placeholder_tests {
         let todos = store.list_todos(tid).unwrap();
         assert_eq!(todos.len(), 1, "换绑而不是补建第二行");
         assert_eq!(todos[0].status.as_str(), "in_progress");
+    }
+}
+
+#[cfg(test)]
+mod title_lock_tests {
+    use super::*;
+
+    /// agent 自己起的标题（codex/kimi/opencode）替换首句临时标题；用户在 Meowo 里改过名
+    /// 之后就锁住，agent 再起的标题不覆盖。Claude 的 custom-title 走 set_session_title，不受锁限制。
+    #[test]
+    fn agent_title_replaces_provisional_but_not_user_rename() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store
+            .upsert_project_by_root("C:/root", "root", 100)
+            .unwrap();
+        let (sid, _) = store.start_session(pid, "s-title", 100).unwrap();
+        store
+            .on_user_prompt(sid, "帮我看看这个报错是怎么回事", 200)
+            .unwrap();
+        assert_eq!(
+            store.session_title(sid).unwrap().as_deref(),
+            Some("帮我看看这个报错是怎么回事")
+        );
+
+        store.adopt_agent_title(sid, "排查报错", 300).unwrap();
+        assert_eq!(
+            store.session_title(sid).unwrap().as_deref(),
+            Some("排查报错")
+        );
+
+        store
+            .rename_session_title(sid, "我自己的名字", 400)
+            .unwrap();
+        store
+            .adopt_agent_title(sid, "agent 新起的名字", 500)
+            .unwrap();
+        assert_eq!(
+            store.session_title(sid).unwrap().as_deref(),
+            Some("我自己的名字")
+        );
+
+        // CLI 里 /rename（claude custom-title）仍然生效。
+        store.set_session_title(sid, "CLI 里改的", 600).unwrap();
+        assert_eq!(
+            store.session_title(sid).unwrap().as_deref(),
+            Some("CLI 里改的")
+        );
     }
 }

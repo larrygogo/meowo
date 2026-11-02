@@ -67,7 +67,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     column_locked    INTEGER NOT NULL DEFAULT 0,
     current_activity TEXT,
     created_at       INTEGER NOT NULL,
-    updated_at       INTEGER NOT NULL
+    updated_at       INTEGER NOT NULL,
+    -- 用户在 Meowo 里改过名（v19）：1 = 标题是用户定的，agent 自己起的标题（codex
+    -- thread_name、kimi 生成标题、opencode 标题）不再覆盖它。见 Store::adopt_agent_title。
+    title_locked     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS todos (

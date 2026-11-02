@@ -40,7 +40,8 @@ pub(crate) async fn rename_session(
         }
         if let Ok(store) = super::open_store(&db_path) {
             if let Ok(Some(id)) = store.find_session_id_pub(&session_id) {
-                let _ = store.set_session_title(id, &title, super::now_ms());
+                // 上锁：之后 agent 自己起的标题（codex/kimi/opencode）不再覆盖用户定的名字。
+                let _ = store.rename_session_title(id, &title, super::now_ms());
             }
         }
         super::watch::emit_board_changed(&app, "rename");

@@ -159,7 +159,6 @@ pub trait TelemetryCap: Sync {
     }
 
     /// 该 agent 的 transcript 规格：提供「定位 + 标题解析 + 增量分析」。
-    /// codex/kimi 的 spec 只供结构化对话；标题仍走首条 prompt、预览/模型走 stop_outputs。
     fn transcript(&self) -> Option<&'static dyn TranscriptSpec> {
         None
     }
@@ -167,6 +166,13 @@ pub trait TelemetryCap: Sync {
     /// 是否由 transcript 解析标题。与 [`transcript`](Self::transcript) 刻意分开：可以有
     /// 「提供了 transcript 规格（供预览/上下文分析）但标题另有来源」的 agent。
     fn resolves_transcript_title(&self) -> bool {
+        false
+    }
+
+    /// 解析出的标题是不是 agent **自己起的**（codex thread_name、kimi 生成标题、opencode 标题）。
+    /// true → reporter 用 `adopt_agent_title` 写，用户在 Meowo 里改过名就不覆盖；false（claude）
+    /// → 标题来自 CLI 里的 /rename 或它的 ai-title，照旧直接写。
+    fn transcript_title_generated(&self) -> bool {
         false
     }
 
