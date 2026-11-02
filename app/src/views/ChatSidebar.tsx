@@ -1240,8 +1240,10 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
             旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
         <span className="chat-sidebar-act">
           {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
-            <span className={"chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")}>
-              {tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : fmtShortAgo(item.session.last_event_at, t)}
+            <span className={"chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")} data-tip={tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : undefined}>
+              {/* 等待中也用紧凑写法（「6m」），只换警示色：「已等待 6 分钟」在这一列太长（用户实拍），
+                  左侧黄点已经说明它在等你，这里只交代等了多久。完整说法进悬停提示。 */}
+              {fmtShortAgo(item.session.last_event_at, t)}
             </span>
           )}
         {selectedIds.size > 0 ? (
