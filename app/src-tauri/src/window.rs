@@ -784,7 +784,9 @@ pub(crate) fn open_chat_window_target(
     let url = target.url();
     let builder = tauri::WebviewWindowBuilder::new(app, "chat", tauri::WebviewUrl::App(url.into()))
         .title("Meowo · Chat")
-        .inner_size(960.0, 760.0)
+        // 首开 1200 宽（用户要求加大）：侧栏 + 阅读列 + 改动面板 + 标题栏一排工具，960 挤。
+        // 高度不动：768 高的笔记本屏连 760 都已贴边。窗口状态插件不记尺寸（只记位置），每次开窗都是它。
+        .inner_size(1200.0, 760.0)
         .min_inner_size(620.0, 480.0)
         .resizable(true)
         // 安静唤醒的新窗口不带初始焦点（冷启动首帧 show 的激活行为随之收敛）。
