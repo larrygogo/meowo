@@ -945,6 +945,12 @@ export const zh = {
     forkBusy: "任务运行中，结束后才能分叉",
     // 「复制恢复命令」（对照 Kimi「复制 Session ID」）：带 cd，到终端粘贴即可接着跑。
     copyResumeCommand: "复制恢复命令",
+    // 会话菜单的导出（对照 Kimi「复制全部对话为 Markdown / 仅复制最终总结」）。
+    copyConversation: "复制对话为 Markdown",
+    copyFinalAnswer: "仅复制最终回答",
+    conversationCopied: "已复制对话",
+    finalAnswerCopied: "已复制最终回答",
+    exportYou: "你",
     resumeCommandTip: "在自己的终端里接着跑这个会话",
     resumeCommandCopied: "已复制恢复命令",
     // 侧问卡（/btw）：答案只读一次挂在 composer 上方，不进对话记录。

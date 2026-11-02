@@ -5161,6 +5161,40 @@ describe("ChatWindow", () => {
     expect(await screen.findByText(notice)).toBeTruthy();
   });
 
+  /// 会话菜单导出（对照 Kimi「复制全部对话为 Markdown / 仅复制最终总结」）。
+  it("会话菜单复制整段对话为 Markdown，或只复制最后一条回答", async () => {
+    window.history.replaceState({}, "", "/?sessionId=66");
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 66, title: "修登录页", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 2, reset: false, pendingReview: null, model: "Opus",
+        connected: true, predecessorId: null, supersededBy: null,
+        items: [
+          { type: "user_text", id: "u1", timestamp: null, text: "表单校验坏了" },
+          { type: "assistant_text", id: "a1", timestamp: null, text: "已修好。" },
+        ],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude"]));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 66, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await screen.findAllByText("已修好。");
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "复制对话为 Markdown" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      ["# 修登录页", "---", "**你**", "表单校验坏了", "---", "**Claude Code**", "已修好。"].join("\n\n") + "\n",
+    ));
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "仅复制最终回答" }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("已修好。"));
+    expect(await screen.findByText("已复制最终回答")).toBeTruthy();
+  });
+
   it("复制到新会话:来源不支持导出(supports_chat_export=false)时不显示分组", async () => {
     window.history.replaceState({}, "", "/?sessionId=62");
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {

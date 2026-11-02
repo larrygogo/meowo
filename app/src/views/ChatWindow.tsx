@@ -82,12 +82,13 @@ import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { GitStatusChip, OpenInEditor } from "./chat/TitleBarTools";
 import { AddMenu } from "./chat/AddMenu";
+import { finalAnswer, transcriptMarkdown } from "./chat/exportMarkdown";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
-import { listAgents, type AgentDescriptor } from "../api";
+import { agentName, listAgents, type AgentDescriptor } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
 
@@ -2423,6 +2424,21 @@ export function ChatWindow() {
     : null;
   // 会话还在这里跑着就去终端恢复，会有两个进程写同一份会话（对照 Kimi 的「会话已被其他进程
   // 更新」警告：它是事后发现，我们在复制这一刻就能提醒）。命令照给，只把回执换成提醒。
+  // 对话导出（对照 Kimi 会话菜单）：只拿已渲染的时间线（含接续的前序段），内容规则见 exportMarkdown。
+  const exportItems = timelineItems;
+  const copyConversation = () => {
+    const markdown = transcriptMarkdown(exportItems, {
+      title: history?.title || t.chat.title,
+      user: t.chat.exportYou,
+      agent: provider ? agentName(agentsForOptions ?? [], provider) : t.chat.title,
+    });
+    void copyPlainText(markdown).then((ok) => setCopyNotice({ text: ok ? t.chat.conversationCopied : t.chat.copyFailed }));
+  };
+  const copyFinalAnswer = () => {
+    const text = finalAnswer(exportItems);
+    if (!text) return;
+    void copyPlainText(text).then((ok) => setCopyNotice({ text: ok ? t.chat.finalAnswerCopied : t.chat.copyFailed }));
+  };
   const copyResumeCommand = (command: string) => {
     const live = !!history?.connected;
     void copyPlainText(command).then((ok) => setCopyNotice(
@@ -3767,6 +3783,8 @@ export function ChatWindow() {
             onRename={() => setRenaming(true)}
             onFork={chatUi?.fork && sessionId > 0 && !remoteUi() ? () => void forkCurrent() : undefined}
             onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
+            onCopyConversation={exportItems.length > 0 ? copyConversation : undefined}
+            onCopyFinalAnswer={finalAnswer(exportItems) ? copyFinalAnswer : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
