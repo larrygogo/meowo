@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dropNeighbors, moveNextTo } from "./sidebarDrag";
+import { applyGroupOrder, dropNeighbors, moveNextTo } from "./sidebarDrag";
 
 describe("拖拽落点", () => {
   const list = [1, 2, 3, 4];
@@ -25,5 +25,13 @@ describe("本地先挪", () => {
   });
   it("邻居不在已加载列表里时原样返回", () => {
     expect(moveNextTo(items, idOf, 1, 9, null).map(idOf)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("工作区组的手动顺序", () => {
+  const groups = ["a", "b", "c", "new"].map((key) => ({ key }));
+  it("排过的按顺序，新工作区放最上面，没排过时原样", () => {
+    expect(applyGroupOrder(groups, ["c", "a", "b"], (group) => group.key).map((group) => group.key)).toEqual(["new", "c", "a", "b"]);
+    expect(applyGroupOrder(groups, [], (group) => group.key).map((group) => group.key)).toEqual(["a", "b", "c", "new"]);
   });
 });

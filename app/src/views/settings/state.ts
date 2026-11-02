@@ -41,6 +41,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   remote_access_bind: "all",
   remote_access_token: "",
   bark_url: "",
+  workspace_order: [],
 };
 
 // ── 模块级共享态（每个 webview 窗口一份）──

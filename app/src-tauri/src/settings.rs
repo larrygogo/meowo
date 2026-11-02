@@ -238,6 +238,10 @@ pub(crate) struct Settings {
     /// 会话需要关注时推一条到手机，见 push.rs。
     #[serde(default)]
     pub(crate) bark_url: String,
+    /// 侧栏「按工作区分组 + 手动排序」时工作区组的顺序（路径，前端按斜杠 / 大小写归一后比较）。
+    /// 桌面侧栏拖分组头时写入；手机只读、按同一顺序显示。空 = 没排过，组序随组内会话位置。
+    #[serde(default)]
+    pub(crate) workspace_order: Vec<String>,
     /// 贴纸主窗口几何（W-17，见 [`StickerWindowState`]）。兼容老 settings.json：缺席 →
     /// 全 None/false，前端启动时从 localStorage 旧键（及后端从 window-state 旧文件）一次性迁移。
     #[serde(default)]
@@ -281,6 +285,7 @@ impl Default for Settings {
             remote_access_bind: default_remote_bind(),
             remote_access_token: String::new(),
             bark_url: String::new(),
+            workspace_order: Vec::new(),
             sticker_window: StickerWindowState::default(),
         }
     }

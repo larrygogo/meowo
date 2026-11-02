@@ -634,6 +634,41 @@ describe("ChatSidebar", () => {
     expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
   });
 
+  /** 拖分组头调整工作区顺序（对照 Kimi 可拖的分组头）：设置里的 workspace_order 决定组序；
+   *  拖完本地先排、整份顺序写回设置，松手那次 click 不折叠。 */
+  it("工作区分组:按设置里的顺序排,拖分组头改顺序并写回设置", async () => {
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    const saved: unknown[] = [];
+    invoke.mockImplementation((command: string, args?: { settings?: { workspace_order?: string[] } }) => {
+      if (command === "get_live_sessions_page") return Promise.resolve([session(1, "甲", { cwd: "C:/w/a" }), session(2, "乙", { cwd: "C:/w/b" }), session(3, "丙", { cwd: "C:/w/c" })]);
+      if (command === "get_settings") return Promise.resolve({ card_menu_mode: "button", workspace_order: ["c:/w/c", "c:/w/a", "c:/w/b"] });
+      if (command === "set_settings") { saved.push(args?.settings?.workspace_order); return Promise.resolve(); }
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    const heads = () => within(screen.getByRole("navigation")).getAllByRole("button").filter((b) => b.className.includes("group-head"));
+    await waitFor(() => expect(heads().map((h) => h.textContent)).toEqual(["c", "a", "b"]));
+    // 把 c 拖到 b 下面。
+    const last = heads()[2].closest<HTMLElement>("[data-group-key]")!;
+    last.getBoundingClientRect = () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON: () => ({}) });
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => last;
+    try {
+      fireEvent.pointerDown(heads()[0], { button: 0, pointerType: "mouse", clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
+      await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      fireEvent.click(heads()[0]);
+    } finally {
+      document.elementFromPoint = original;
+    }
+    expect(heads().map((h) => h.textContent)).toEqual(["a", "b", "c"]);
+    await waitFor(() => expect(saved).toEqual([["c:/w/a", "c:/w/b", "c:/w/c"]]));
+    // 松手那次 click 没有把组折起来。
+    expect(screen.getByRole("button", { name: /甲/ })).toBeTruthy();
+  });
+
   /** 「会话」小节的全部折叠 / 展开（对照 Kimi Code）：只在分组时出现，一键折起所有组，再点全部展开。 */
   it("全部折叠:一键折起所有分组,再点全部展开", async () => {
     localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");

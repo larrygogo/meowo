@@ -9,11 +9,11 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-export type DropAt = { id: number; after: boolean };
+export type DropAt<K = number> = { id: K; after: boolean };
 
 /// 落点 → 新位置的上下邻居。list 是拖动前这个桶里的显示顺序（含被拖的那条）。
 /// above = 落下后紧挨在它上面的那条，below = 紧挨在下面的那条；落回原位返回 null（不用动）。
-export function dropNeighbors(list: readonly number[], dragged: number, drop: DropAt): { above: number | null; below: number | null } | null {
+export function dropNeighbors<K>(list: readonly K[], dragged: K, drop: DropAt<K>): { above: K | null; below: K | null } | null {
   if (drop.id === dragged || !list.includes(drop.id)) return null;
   const rest = list.filter((id) => id !== dragged);
   const index = rest.indexOf(drop.id) + (drop.after ? 1 : 0);
@@ -25,7 +25,7 @@ export function dropNeighbors(list: readonly number[], dragged: number, drop: Dr
 }
 
 /// 本地先挪（乐观更新）：把 id 那条挪到 above 正下方，没有 above 时挪到 below 正上方。
-export function moveNextTo<T>(items: readonly T[], idOf: (item: T) => number, id: number, above: number | null, below: number | null): T[] {
+export function moveNextTo<T, K = number>(items: readonly T[], idOf: (item: T) => K, id: K, above: K | null, below: K | null): T[] {
   const moving = items.find((item) => idOf(item) === id);
   if (!moving) return [...items];
   const rest = items.filter((item) => idOf(item) !== id);
@@ -39,33 +39,37 @@ export function moveNextTo<T>(items: readonly T[], idOf: (item: T) => number, id
 /// 按下后移动多少像素才算开始拖：小于它仍是点击。
 const DRAG_THRESHOLD = 4;
 
-export function useSessionDrag({ enabled, bucketOf, listOf, onMove }: {
+/// 指针拖拽重排（会话行、工作区分组头共用）。`attr` 是行上 data-* 属性的 dataset 名，
+/// `parse` 把属性值还原成 id；落点只认同一个桶里的行。
+export function usePointerReorder<K extends string | number>({ enabled, attr, parse, bucketOf, listOf, onMove }: {
   enabled: boolean;
-  /// 会话所在的桶（同一分组 + 同为置顶 / 非置顶）。
-  bucketOf: (id: number) => string | null;
-  /// 桶里当前的显示顺序。
-  listOf: (bucket: string) => readonly number[];
-  onMove: (id: number, above: number | null, below: number | null) => void;
+  attr: string;
+  parse: (raw: string) => K | null;
+  bucketOf: (id: K) => string | null;
+  listOf: (bucket: string) => readonly K[];
+  onMove: (id: K, above: K | null, below: K | null) => void;
 }) {
-  const [dragId, setDragId] = useState<number | null>(null);
-  const [dropAt, setDropAt] = useState<DropAt | null>(null);
+  const [dragId, setDragId] = useState<K | null>(null);
+  const [dropAt, setDropAt] = useState<DropAt<K> | null>(null);
   // 刚拖完：吞掉松手后紧跟着的那次 click，不然拖完会顺手打开会话。
   const suppressClickRef = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cleanupRef.current?.(), []);
 
-  const onPointerDown = (event: ReactPointerEvent<HTMLElement>, id: number) => {
+  const selector = `[data-${attr.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]`;
+  const onPointerDown = (event: ReactPointerEvent<HTMLElement>, id: K) => {
     if (!enabled || event.button !== 0 || event.pointerType === "touch") return;
     const bucket = bucketOf(id);
     if (bucket == null) return;
     const startX = event.clientX;
     const startY = event.clientY;
     let started = false;
-    let target: DropAt | null = null;
-    const pick = (x: number, y: number): DropAt | null => {
-      const row = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-session-id]");
-      const over = row ? Number(row.dataset.sessionId) : NaN;
-      if (!row || !Number.isFinite(over) || bucketOf(over) !== bucket) return null;
+    let target: DropAt<K> | null = null;
+    const pick = (x: number, y: number): DropAt<K> | null => {
+      const row = document.elementFromPoint(x, y)?.closest<HTMLElement>(selector);
+      const raw = row?.dataset[attr];
+      const over = raw == null ? null : parse(raw);
+      if (!row || over == null || bucketOf(over) !== bucket) return null;
       const rect = row.getBoundingClientRect();
       return { id: over, after: y > rect.top + rect.height / 2 };
     };
@@ -115,4 +119,31 @@ export function useSessionDrag({ enabled, bucketOf, listOf, onMove }: {
     /// 点击处理前先问一句：刚拖完的那次 click 不算点击。
     swallowClick: () => suppressClickRef.current,
   };
+}
+
+/// 会话行的拖拽（data-session-id）。
+export function useSessionDrag(options: {
+  enabled: boolean;
+  /// 会话所在的桶（同一分组 + 同为置顶 / 非置顶）。
+  bucketOf: (id: number) => string | null;
+  /// 桶里当前的显示顺序。
+  listOf: (bucket: string) => readonly number[];
+  onMove: (id: number, above: number | null, below: number | null) => void;
+}) {
+  return usePointerReorder<number>({
+    ...options,
+    attr: "sessionId",
+    parse: (raw) => { const id = Number(raw); return Number.isFinite(id) ? id : null; },
+  });
+}
+
+/// 工作区组按手动顺序排（对照 Kimi 可拖的分组头）：排过的按 order 里的位置；没排过的（新工作区）
+/// 放在最上面，保持原来的相对顺序——与新会话出现在最上面同一个规矩。keyOf 取组的归一路径键。
+export function applyGroupOrder<T>(groups: readonly T[], order: readonly string[], keyOf: (group: T) => string): T[] {
+  if (order.length === 0) return [...groups];
+  const rank = new Map(order.map((key, index) => [key, index]));
+  const fresh = groups.filter((group) => !rank.has(keyOf(group)));
+  const known = groups.filter((group) => rank.has(keyOf(group)))
+    .sort((a, b) => rank.get(keyOf(a))! - rank.get(keyOf(b))!);
+  return [...fresh, ...known];
 }

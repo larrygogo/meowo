@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { moveNextTo, useSessionDrag } from "./sidebarDrag";
+import { applyGroupOrder, moveNextTo, usePointerReorder, useSessionDrag } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
-import { confirmStopSession, getLiveSessionsPage, moveSessionRank, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setSettings, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
@@ -110,6 +110,12 @@ function groupByDir(items: LiveSession[]): DirGroup[] {
     group.items.push(item);
   }
   return groups;
+}
+
+/** 工作区顺序存进设置用的键：pathKey 会按本机平台改斜杠方向，桌面（Windows）与手机算出来的
+ *  不一样，存下来的顺序在另一端就对不上。统一成正斜杠再存、再比。 */
+function orderKey(groupKey: string): string {
+  return groupKey.replace(/\\/g, "/");
 }
 
 /** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
@@ -587,7 +593,12 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
   // 首帧占位与后端真实默认(button)一致,与看板同步改过——占位 context 会让 ⋯ 按钮延迟弹入。
   const [menuMode, setMenuMode] = useState<CardMenuMode>("button");
   // 远程钉死 button 档:桌面设置若是 context(仅右键),触屏根本够不着菜单。
-  useSettingsEffect((s) => setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button")));
+  // 工作区组的手动顺序（设置里的 workspace_order）：桌面拖分组头写入，手机只读同一份。
+  const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
+  useSettingsEffect((s) => {
+    setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button"));
+    setWorkspaceOrder(s.workspace_order ?? []);
+  });
   // 菜单内容按 id 现查:刷新后置顶/便签/归档态自动跟上,会话消失则菜单自然收起。
   const ctxItem = ctxMenu ? (sessions ?? []).find((s) => s.session.id === ctxMenu.sid) ?? null : null;
   // 置顶与看板共用同一份 localStorage(键沿用 meowo-starred,改键会丢用户已有数据),
@@ -760,8 +771,30 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
 
   const groups = useMemo(() => {
     if (!ordered || groupMode !== "dir") return null;
-    return groupByDir(ordered);
-  }, [groupMode, ordered, t, approvalAwaitingIds]);
+    // 手动排序时组序也归用户（对照 Kimi 可拖的分组头）；按最近活动时组序随组内会话的位置。
+    return sortMode === "manual" ? applyGroupOrder(groupByDir(ordered), workspaceOrder, (group) => orderKey(group.key)) : groupByDir(ordered);
+  }, [groupMode, ordered, sortMode, workspaceOrder]);
+  // 拖分组头调整工作区顺序（手动排序、按工作区分组、桌面、非多选态）。落下即本地先排，再把整份
+  // 顺序写进设置；写失败报错并回到设置里原来的顺序。
+  const groupKeys = useMemo(() => (groups ?? []).map((group) => group.key), [groups]);
+  const groupDrag = usePointerReorder<string>({
+    enabled: sortMode === "manual" && groupMode === "dir" && !remoteUi() && selectedIds.size === 0,
+    attr: "groupKey",
+    parse: (raw) => raw || null,
+    bucketOf: (key) => (groupKeys.includes(key) ? "groups" : null),
+    listOf: () => groupKeys,
+    onMove: (key, above, below) => {
+      const next = moveNextTo(groupKeys, (entry) => entry, key, above, below).map(orderKey);
+      setWorkspaceOrder(next);
+      getSettings()
+        .then((settings) => setSettings({ ...settings, workspace_order: next }))
+        .catch(() => {
+          if (!mountedRef.current) return;
+          setActionError(t.chat.sidebarActionFailed);
+          void getSettings().then((settings) => setWorkspaceOrder(settings.workspace_order ?? [])).catch(() => {});
+        });
+    },
+  });
   // 「会话」小节的全部折叠 / 展开（对照 Kimi）：全都折着时展开全部，否则折起全部。
   const allGroupsFolded = !!groups && groups.length > 0 && groups.every((group) => folded.has(group.key));
   const toggleAllFolded = () => setFolded(() => {
@@ -1361,14 +1394,27 @@ function ChatSidebarImpl({ activeId, approvalAwaitingIds, visibleOrderRef, searc
               const attention = group.items.filter((item) => approvalAwaitingIds.has(item.session.id)
                 || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state) === "pending").length;
               return (
-                <div className="chat-sidebar-group" key={group.key}>
+                <div
+                  key={group.key}
+                  data-group-key={group.key}
+                  className={"chat-sidebar-group"
+                    + (groupDrag.dragId === group.key ? " is-dragging" : "")
+                    + (groupDrag.dropAt?.id === group.key && groupDrag.dragId !== group.key ? (groupDrag.dropAt.after ? " is-drop-after" : " is-drop-before") : "")}
+                  // 按住分组头拖动调整工作区顺序；组里的会话行、头上的按钮各管各的。
+                  onPointerDown={(event) => {
+                    const target = event.target as HTMLElement;
+                    if (!target.closest(".chat-sidebar-group-head") || target.closest(".chat-sidebar-item, .chat-workspace-action, .chat-sidebar-check-btn")) return;
+                    groupDrag.onPointerDown(event, group.key);
+                  }}
+                >
                     <WorkspaceHeader
                       cwd={group.cwd}
                       count={group.items.length}
                       attention={attention}
                       trailing={renderGroupCheck(group.items, folderName(group.cwd) || t.chat.sidebarNoDir)}
                       folded={isFolded}
-                      onToggle={() => toggleFolded(group.key)}
+                      // 刚拖完分组头松手的那次 click 不算折叠。
+                      onToggle={() => { if (!groupDrag.swallowClick()) toggleFolded(group.key); }}
                       leading={
                         // 对照 Kimi 的分组头：文件夹图标代替折叠箭头，折着是合上的文件夹。
                         <svg className="chat-workspace-folder" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
