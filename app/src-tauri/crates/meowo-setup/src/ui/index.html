@@ -54,7 +54,10 @@ body[data-view="home"] .winback { visibility: visible; }
 .winclose:disabled { opacity: .35; cursor: default; }
 .winclose:disabled:hover { background: transparent; color: var(--faint); }
 
-main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 0 48px; }
+/* 各页在窗口里垂直居中：此前一律顶着标题栏往下排，「安装中」只有一百多像素高，下面空出大半个
+   窗口，比例很怪（用户实拍）。底部留出与标题栏等高的 40px，内容落在整个窗口的视觉中心而不是
+   标题栏以下区域的中心。自定义安装展开时内容变高，跟着展开动画平滑上移。 */
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 48px 40px; }
 section { display: none; width: 100%; flex-direction: column; align-items: center; animation: fade .22s ease; }
 body[data-view="lang"] #view-lang,
 body[data-view="home"] #view-home,
@@ -63,7 +66,7 @@ body[data-view="done"] #view-done,
 body[data-view="error"] #view-error { display: flex; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.logo { width: 96px; height: 96px; margin-top: 8px; -webkit-user-drag: none; }
+.logo { width: 96px; height: 96px; -webkit-user-drag: none; }
 h1 { margin: 14px 0 4px; font-size: 30px; font-weight: 650; letter-spacing: .5px; }
 .tagline { color: var(--dim); font-size: 13px; }
 .note { color: var(--faint); font-size: 12px; margin-top: 10px; min-height: 16px; }
