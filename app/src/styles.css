@@ -4080,7 +4080,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-section-btn:hover,
 .chat-sidebar-section .chat-sidebar-filter:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-sidebar-section .chat-sidebar-filter svg { width: 14px; height: 14px; }
-.chat-sidebar-list { padding: var(--sp-2) var(--sp-8) var(--sp-8); gap: 1px; }
+/* 不要上下渐隐遮罩（对照 Kimi，它的列表没有）：顶部 14px 渐隐带压在紧贴「会话」小节标题的第一行
+   上，看着像被模糊了；遮罩还会把列表里打开的菜单（分组头右键）裁在列表边界外（用户实拍两处）。 */
+.chat-sidebar-list { padding: var(--sp-2) var(--sp-8) var(--sp-8); gap: 1px; -webkit-mask-image: none; mask-image: none; }
 .chat-sidebar-group { gap: 1px; }
 .chat-sidebar-group + .chat-sidebar-group { margin-top: var(--sp-4); }
 .chat-sidebar-item { align-items: flex-start; gap: 6px; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); color: var(--cc-text); }
