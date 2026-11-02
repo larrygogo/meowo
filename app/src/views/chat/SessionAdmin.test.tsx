@@ -53,6 +53,12 @@ describe("会话管理页（对照 Kimi Code）", () => {
     expect(queries[queries.length - 1].page).toBe(2);
   });
 
+  it("从新建页「查看更多」进来时预选那个工作区", async () => {
+    render(<SessionAdmin onBack={() => {}} onOpen={() => {}} initialWorkspaces={["C:/w/meowo"]} />);
+    expect(await screen.findByText("会话2")).toBeTruthy();
+    expect(queries[0].workspaces).toEqual(["C:/w/meowo"]);
+  });
+
   it("筛选改完点「查询」才生效：工作空间多选、状态、N 天以前", async () => {
     render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
     await screen.findByText("会话2");

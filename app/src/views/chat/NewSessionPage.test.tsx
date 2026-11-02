@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   listAgents: vi.fn(),
   getAccounts: vi.fn(),
   listSubdirectories: vi.fn(),
+  getSessionAdminPage: vi.fn(),
 }));
 vi.mock("../../api", async (orig) => ({ ...(await orig<typeof import("../../api")>()), ...api }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
@@ -108,5 +109,23 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     expect((await screen.findByTestId("nsp-error")).textContent).toBe(zh.newSession.dropNotFolder);
     // 工作区保持上一次拖进来的文件夹。
     expect(screen.getByTestId("nsp-workspace").textContent).toContain("app");
+  });
+
+  it("输入框下列出这个工作区的最近会话，点一条回到它，查看更多带着工作区去管理页", async () => {
+    const row = (id: number, title: string) => ({ session: { id, last_event_at: Date.now() - 3 * 3600_000 }, provider: "claude", task_title: title });
+    api.getSessionAdminPage.mockResolvedValue({ items: [row(11, "修登录页"), row(12, "")], total: 9 });
+    const onOpenSession = vi.fn();
+    const onMoreSessions = vi.fn();
+    render(<NewSessionPage prefill={{}} onLaunched={vi.fn()} onOpenSession={onOpenSession} onMoreSessions={onMoreSessions} />);
+    const section = await screen.findByTestId("nsp-recent");
+    expect(api.getSessionAdminPage).toHaveBeenCalledWith(expect.objectContaining({ workspaces: [normalizePath("C:/work/meowo")], page: 0, pageSize: 5 }));
+    expect(section.textContent).toContain("修登录页");
+    expect(section.textContent).toContain("3h");
+    // 还没输入过的会话用占位标题，不是空白行。
+    expect(section.textContent).toContain(zh.sticker.waitingFirstInput);
+    fireEvent.click(screen.getByRole("button", { name: /修登录页/ }));
+    expect(onOpenSession).toHaveBeenCalledWith(11);
+    fireEvent.click(screen.getByRole("button", { name: zh.newSession.moreSessions }));
+    expect(onMoreSessions).toHaveBeenCalledWith(normalizePath("C:/work/meowo"));
   });
 });

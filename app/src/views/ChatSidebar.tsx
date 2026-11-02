@@ -13,7 +13,7 @@ import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
-import { editorKeyDown, fmtAgo, fmtWaited, useStarred } from "./sticker/helpers";
+import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, useStarred } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
@@ -43,16 +43,6 @@ type GroupMode = "none" | "dir";
  *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
  *  - name：按名称，前端排**已加载的这一页**。 */
 type SortMode = "manual" | "recent";
-
-/** 会话行右侧的紧凑时间（对照 Kimi Code 侧栏的「3d」「4h」）：一列窄窄的数字，不抢标题的宽度。 */
-function fmtShortAgo(ms: number, t: Dict): string {
-  const m = Math.floor((Date.now() - ms) / 60000);
-  if (m < 1) return t.time.now;
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
 
 /** 无 cwd 的会话归到同一组（后端 cwd 可空:ping 型/早期数据）。以 NUL 开头，不可能与路径撞车。 */
 const NO_DIR = String.fromCharCode(0) + "no-dir";

@@ -147,6 +147,9 @@ export const zh = {
     recentFolders: "最近的文件夹",
     workspaceRequired: "请先选择工作区",
     start: "开始",
+    recentSessions: "最近会话",
+    moreSessions: "查看更多",
+    moreSessionsTip: "在会话管理页查看这个工作区的全部会话",
     // 新建页开着时往窗口里拖文件夹 = 选它当工作区（对照 Kimi「松开鼠标添加工作区」）。
     dropToWorkspace: "松开鼠标设为工作区",
     dropNotFolder: "拖进来的不是文件夹",

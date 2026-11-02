@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { type AgentId, agentName, listSubdirectories } from "../../api";
+import { type AgentId, type LiveSession, agentName, getSessionAdminPage, listSubdirectories } from "../../api";
+import { fmtShortAgo } from "../sticker/helpers";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
 import { PillSelect } from "./PillSelect";
@@ -18,8 +19,15 @@ import { WorkspacePicker } from "./WorkspacePicker";
 /// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
 /// 表单逻辑与独立窗口面板共用 useNewSessionForm，这里只管长相与「第一句话」。
 
-export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
+/** 「最近会话」列几条（对照 Kimi 新建页输入框下的最近会话，更多去会话管理页）。 */
+const RECENT_LIMIT = 5;
+
+export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession, onMoreSessions }: {
   prefill: { cwd?: string | null; provider?: string | null };
+  /** 点「最近会话」里的一条：直接回到那条会话接着聊。 */
+  onOpenSession?: (sessionId: number) => void;
+  /** 「查看更多」：去会话管理页，预选当前工作区。 */
+  onMoreSessions?: (cwd: string) => void;
   /** 拖进窗口的路径（nonce 区分同一路径的两次拖入）。是文件夹就设为工作区。 */
   droppedPath?: { path: string; nonce: number } | null;
   /** 启动成功：临时负 id、用的 agent、第一句话（可为空）。 */
@@ -44,6 +52,22 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只由一次新的拖入驱动
   }, [droppedPath?.nonce]);
+
+  // 这个工作区最近的几条会话（对照 Kimi）：想做的事往往接着某条旧会话做更合适，
+  // 新建前顺手给出来，免得同一件事开出好几条会话。换工作区跟着换。
+  const [recentSessions, setRecentSessions] = useState<{ cwd: string; items: LiveSession[]; total: number } | null>(null);
+  useEffect(() => {
+    const dir = cwd.trim();
+    if (!dir || !onOpenSession) { setRecentSessions(null); return; }
+    let alive = true;
+    // 输入时每个字都会改 cwd：稍等一下再查，选目录 / 点最近项是一次到位的。
+    const timer = window.setTimeout(() => {
+      getSessionAdminPage({ workspaces: [dir], status: "all", updatedBeforeDays: null, page: 0, pageSize: RECENT_LIMIT })
+        .then((page) => { if (alive) setRecentSessions({ cwd: dir, items: page.items, total: page.total }); })
+        .catch(() => { if (alive) setRecentSessions(null); });
+    }, 200);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [cwd, onOpenSession]);
 
   async function pickFolder() {
     const picked = await open({ directory: true });
@@ -200,6 +224,29 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched }: {
           {activeProfiles[provider] && <div className="nsp-note">{t.newSession.activeProfile(activeProfiles[provider]!)}</div>}
           {error && <div className="nsp-note is-error" role="alert" data-testid="nsp-error">{error}</div>}
         </div>
+
+        {recentSessions && recentSessions.items.length > 0 && onOpenSession && (
+          <section className="nsp-recent" aria-label={t.newSession.recentSessions} data-testid="nsp-recent">
+            <div className="nsp-recent-head">
+              <span>{t.newSession.recentSessions}</span>
+              {onMoreSessions && recentSessions.total > recentSessions.items.length && (
+                <button type="button" className="nsp-recent-more" data-tip={t.newSession.moreSessionsTip} onClick={() => onMoreSessions(recentSessions.cwd)}>
+                  {t.newSession.moreSessions}
+                </button>
+              )}
+            </div>
+            {recentSessions.items.map((session) => {
+              const { Icon } = agentAssets(session.provider);
+              return (
+                <button type="button" key={session.session.id} className="nsp-recent-row" onClick={() => onOpenSession(session.session.id)}>
+                  <span className="nsp-recent-agent" style={tintStyle(session.provider)} aria-hidden="true"><Icon /></span>
+                  <span className="nsp-recent-title">{session.task_title || t.sticker.waitingFirstInput}</span>
+                  <span className="nsp-recent-time">{fmtShortAgo(session.session.last_event_at, t)}</span>
+                </button>
+              );
+            })}
+          </section>
+        )}
       </div>
     </div>
   );
