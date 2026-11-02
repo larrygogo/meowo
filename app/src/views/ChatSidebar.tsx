@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardE
 import { invoke } from "@tauri-apps/api/core";
 import { applyGroupOrder, moveNextTo, usePointerReorder, useSessionDrag } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
-import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setSettings, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
@@ -39,7 +39,7 @@ type GroupMode = "none" | "dir";
 
 /** 排序方式（对照 Kimi Code 侧栏：手动排序 / 按最近活动）：
  *  - manual：手动排序，默认。后端按手动键分页，没拖过的按创建时间倒序，新会话在最上面；
- *    桌面上可以拖着调位置（见 sidebarDrag），手机只按这个顺序显示。
+ *    桌面按住拖、手机长按后拖都能调位置（见 sidebarDrag）。
  *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
  *  - name：按名称，前端排**已加载的这一页**。 */
 type SortMode = "manual" | "recent";
@@ -585,7 +585,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 首帧占位与后端真实默认(button)一致,与看板同步改过——占位 context 会让 ⋯ 按钮延迟弹入。
   const [menuMode, setMenuMode] = useState<CardMenuMode>("button");
   // 远程钉死 button 档:桌面设置若是 context(仅右键),触屏根本够不着菜单。
-  // 工作区组的手动顺序（设置里的 workspace_order）：桌面拖分组头写入，手机只读同一份。
+  // 工作区组的手动顺序（设置里的 workspace_order）：桌面 / 手机拖分组头写入，两端读同一份。
   const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
   useSettingsEffect((s) => {
     setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button"));
@@ -766,11 +766,11 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // 手动排序时组序也归用户（对照 Kimi 可拖的分组头）；按最近活动时组序随组内会话的位置。
     return sortMode === "manual" ? applyGroupOrder(groupByDir(ordered), workspaceOrder, (group) => orderKey(group.key)) : groupByDir(ordered);
   }, [groupMode, ordered, sortMode, workspaceOrder]);
-  // 拖分组头调整工作区顺序（手动排序、按工作区分组、桌面、非多选态）。落下即本地先排，再把整份
-  // 顺序写进设置；写失败报错并回到设置里原来的顺序。
+  // 拖分组头调整工作区顺序（手动排序、按工作区分组、非多选态；手机长按后拖）。落下即本地先排，
+  // 再把整份顺序写进设置；写失败报错并回到设置里原来的顺序。
   const groupKeys = useMemo(() => (groups ?? []).map((group) => group.key), [groups]);
   const groupDrag = usePointerReorder<string>({
-    enabled: sortMode === "manual" && groupMode === "dir" && !remoteUi() && selectedIds.size === 0,
+    enabled: sortMode === "manual" && groupMode === "dir" && selectedIds.size === 0,
     attr: "groupKey",
     parse: (raw) => raw || null,
     bucketOf: (key) => (groupKeys.includes(key) ? "groups" : null),
@@ -778,8 +778,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     onMove: (key, above, below) => {
       const next = moveNextTo(groupKeys, (entry) => entry, key, above, below).map(orderKey);
       setWorkspaceOrder(next);
-      getSettings()
-        .then((settings) => setSettings({ ...settings, workspace_order: next }))
+      // 只写这一个字段（不走整份 setSettings）：读改写两步之间别处改的设置会被旧快照盖掉，
+      // 且手机端调不了 setSettings。
+      saveWorkspaceOrder(next)
         .catch(() => {
           if (!mountedRef.current) return;
           setActionError(t.chat.sidebarActionFailed);
@@ -811,9 +812,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     }
     return { bucketOf, lists };
   }, [groups, ordered, starred]);
-  // 拖拽（手动排序、桌面、非多选态）：落下即本地先挪，再写后端；写失败重取回真实顺序。
+  // 拖拽（手动排序、非多选态；手机长按后拖）：落下即本地先挪，再写后端；写失败重取回真实顺序。
   const drag = useSessionDrag({
-    enabled: sortMode === "manual" && !remoteUi() && selectedIds.size === 0,
+    enabled: sortMode === "manual" && selectedIds.size === 0,
     bucketOf: (id) => dragBuckets.bucketOf.get(id) ?? null,
     listOf: (bucket) => dragBuckets.lists.get(bucket) ?? [],
     onMove: (id, above, below) => {
@@ -823,6 +824,11 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         setActionError(t.chat.sidebarActionFailed);
         void loadRef.current("refresh");
       });
+    },
+    // 手机长按没挪就松手 = 开菜单（iOS 长按不派发 contextmenu，Android 的那次被拖拽吞掉了）。
+    onHold: (id, x, y) => {
+      const item = sessions?.find((entry) => entry.session.id === id);
+      if (item) openMenuAt(item, x, y);
     },
   });
 
@@ -1024,6 +1030,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           // 右键恒开菜单：条目上右键出上下文菜单是通用惯例，不随设置失效——
           // card_menu_mode 只决定「⋯」按钮是否常驻，不再关掉右键这条路。
           event.preventDefault();
+          // 触屏长按归拖拽管：拖起来时 Android 补发的这次不开菜单，没挪就松手由 onHold 开。
+          if (drag.swallowContextMenu()) return;
           openMenuAt(item, event.clientX, event.clientY);
         }}
         onMouseEnter={(event) => {
