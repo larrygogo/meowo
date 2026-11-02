@@ -308,6 +308,38 @@ impl AgentPlugin for Opencode {
     }
     /// opencode 的切模型命令是 `/models`（复数，弹选择器），没有 `/model`/`/status`/`/clear`
     /// ——清上下文对应 `/new`。此前前端的通用 fallback 把这三个都补给它了。
+    /// opencode：配置目录下 `{skill,skills}/`、`{command,commands}/`、`{agent,agents}/`、
+    /// `{plugin,plugins}/`（取自其二进制里的 glob），共享的 `~/.agents/skills`，
+    /// 以及 `opencode.json(c)` 的 `mcp`。
+    fn extensions(
+        &self,
+        inst: &crate::variant::Installation,
+    ) -> Vec<crate::extensions::ExtensionGroupDto> {
+        use crate::extensions::{self as ext, ExtensionKind};
+        let dir = &inst.data_dir;
+        let config = ["opencode.jsonc", "opencode.json"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|path| path.is_file());
+        let parsed = config.as_deref().and_then(ext::read_json);
+        [
+            ext::first_dir(dir, &["skill", "skills"]).and_then(|d| ext::skills_group(&d, false)),
+            ext::shared_agent_skills(),
+            config.as_deref().and_then(|path| {
+                ext::mcp_group_from_json(path, parsed.as_ref().and_then(|c| c.get("mcp")))
+            }),
+            ext::first_dir(dir, &["command", "commands"])
+                .and_then(|d| ext::markdown_group(&d, ExtensionKind::Command)),
+            ext::first_dir(dir, &["agent", "agents"])
+                .and_then(|d| ext::markdown_group(&d, ExtensionKind::Agent)),
+            ext::first_dir(dir, &["plugin", "plugins"])
+                .and_then(|d| ext::opencode_plugins_group(&d)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
             "/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo",

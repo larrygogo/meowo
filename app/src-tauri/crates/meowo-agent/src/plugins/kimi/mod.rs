@@ -542,6 +542,30 @@ impl AgentPlugin for Kimi {
     }
     /// kimi 的 `/model` 同样是交互式菜单（二进制里的命令描述就是 `/model: switch model`，
     /// 且失败提示是「Run /model to select one first」），不接受内联参数，故不声明模型预设。
+    /// Kimi Code：`skills/` 与共享的 `~/.agents/skills`、`mcp.json`、`config.toml` 的钩子。
+    /// 旧版 Python kimi-cli（`~/.kimi`）的布局不同，不列。
+    fn extensions(
+        &self,
+        inst: &crate::variant::Installation,
+    ) -> Vec<crate::extensions::ExtensionGroupDto> {
+        use crate::extensions as ext;
+        if inst.variant_tag != "modern" {
+            return Vec::new();
+        }
+        let dir = &inst.data_dir;
+        let mcp_path = dir.join("mcp.json");
+        let mcp = ext::read_json(&mcp_path);
+        [
+            ext::skills_group(&dir.join("skills"), false),
+            ext::shared_agent_skills(),
+            ext::mcp_group_from_json(&mcp_path, mcp.as_ref().and_then(|m| m.get("mcpServers"))),
+            ext::hooks_group_from_kimi_toml(&dir.join("config.toml")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
     fn slash_commands(&self) -> &'static [&'static str] {
         &["/clear", "/compact", "/help", "/model", "/status"]
     }

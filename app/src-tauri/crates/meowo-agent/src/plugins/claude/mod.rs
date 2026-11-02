@@ -321,6 +321,41 @@ impl AgentPlugin for Claude {
             after: &["--fork-session"],
         })
     }
+    /// Claude：技能、`~/.claude.json` 的用户级 MCP、自定义命令与子代理、钩子、插件。
+    /// `.claude.json` 在设了 `CLAUDE_CONFIG_DIR` 时跟数据目录走，否则在 home 下（Kimi 迁移文档）。
+    fn extensions(
+        &self,
+        inst: &crate::variant::Installation,
+    ) -> Vec<crate::extensions::ExtensionGroupDto> {
+        use crate::extensions::{self as ext, ExtensionKind};
+        let dir = &inst.data_dir;
+        let claude_json = if inst.data_dir_from_env {
+            dir.join(".claude.json")
+        } else {
+            crate::home_dir().unwrap_or_default().join(".claude.json")
+        };
+        let settings_path = dir.join("settings.json");
+        let settings = ext::read_json(&settings_path);
+        let user_config = ext::read_json(&claude_json);
+        [
+            ext::skills_group(&dir.join("skills"), false),
+            ext::mcp_group_from_json(
+                &claude_json,
+                user_config.as_ref().and_then(|c| c.get("mcpServers")),
+            ),
+            ext::markdown_group(&dir.join("commands"), ExtensionKind::Command),
+            ext::markdown_group(&dir.join("agents"), ExtensionKind::Agent),
+            ext::claude_plugins_group(dir, settings.as_ref()),
+            ext::hooks_group_from_json(
+                &settings_path,
+                settings.as_ref().and_then(|s| s.get("hooks")),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
             "/add-dir", "/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp",

@@ -3529,6 +3529,22 @@ select.ns-input {
 .account-agent-switch .dd-btn.open { border-color: transparent; }
 .account-agent-switch .dd-menu { min-width: 190px; }
 
+/* 设置 › 扩展（ExtensionsSection）：顶部一行计数摘要，各组标题右侧挂「在文件夹中显示」。 */
+.ext-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); margin: 0 var(--sp-6) var(--sp-4); font-size: var(--fs-12); color: var(--cc-text-dim); }
+.ext-caption { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
+.ext-faint { font-weight: 400; color: var(--cc-text-faint); }
+.ext-link { flex: none; padding: 0; border: 0; background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--fs-12); font-weight: 400; cursor: pointer; }
+.ext-link:hover { color: var(--cc-text); }
+/* 技能描述动辄一大段：两行就够认出是干什么的，全文在文件里。 */
+.ext-card .row-desc { -webkit-line-clamp: 2; }
+.ext-card .row { padding-top: var(--sp-10); padding-bottom: var(--sp-10); }
+.ext-meta { flex: none; display: flex; align-items: center; gap: var(--sp-6); }
+.ext-chip { display: inline-block; padding: 1px var(--sp-6); border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text-faint); font-size: var(--fs-11); line-height: 1.6; white-space: nowrap; }
+.ext-chip.is-off { color: var(--cc-text-dim); }
+.ext-chip.is-meowo { margin-left: var(--sp-6); vertical-align: 1px; }
+.ext-icon-btn { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
+.ext-icon-btn:hover { color: var(--cc-text); background: var(--fill-hover); }
+
 .profile-list { display: flex; flex-direction: column; gap: var(--sp-6); }
 .profile-list-head {
   font-size: var(--fs-11);

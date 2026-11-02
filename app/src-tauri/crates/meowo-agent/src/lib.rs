@@ -31,6 +31,7 @@ pub mod chat_ui;
 pub mod codec;
 pub mod config;
 pub mod descriptor;
+pub mod extensions;
 pub mod fsutil;
 pub mod handoff;
 pub mod id;

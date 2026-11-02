@@ -311,6 +311,28 @@ impl AgentPlugin for Codex {
         version.map(|_| r"\[Image ?#\d")
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
+    /// Codex：自己的 `skills/`（跳过自带的 `.system`）与共享的 `~/.agents/skills`、
+    /// `config.toml` 的 MCP、`prompts/` 自定义命令、`hooks.json` 钩子。
+    fn extensions(
+        &self,
+        inst: &crate::variant::Installation,
+    ) -> Vec<crate::extensions::ExtensionGroupDto> {
+        use crate::extensions::{self as ext, ExtensionKind};
+        let dir = &inst.data_dir;
+        let hooks_path = dir.join("hooks.json");
+        let hooks = ext::read_json(&hooks_path);
+        [
+            ext::skills_group(&dir.join("skills"), false),
+            ext::shared_agent_skills(),
+            ext::mcp_group_from_codex_toml(&dir.join("config.toml")),
+            ext::markdown_group(&dir.join("prompts"), ExtensionKind::Command),
+            ext::hooks_group_from_json(&hooks_path, hooks.as_ref().and_then(|h| h.get("hooks"))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
             "/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status",
