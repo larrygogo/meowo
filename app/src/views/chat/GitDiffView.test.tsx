@@ -165,3 +165,33 @@ describe("GitDiffView 远程头行", () => {
     expect(onCollapse).toHaveBeenCalled();
   });
 });
+
+describe("GitDiffView 列表 / 树形（对照 Kimi 改动面板）", () => {
+  afterEach(() => localStorage.clear());
+  it("默认列表一行一个完整路径，行头是状态方块；切到树形按目录收拢并记住", () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const props = {
+      cwd: "C:\repo", width: 420, collapsed: false, maximized: false, onCollapse: () => {}, onToggleMaximize: () => {},
+      comments: [], onAddComment: () => {}, onRemoveComment: () => {}, touchedPaths: [],
+    };
+    const files = [
+      { path: "app/shot.png", status: "U", additions: null, deletions: null },
+      { path: "app/src/views/chat/PillSelect.tsx", status: "A", additions: 80, deletions: 0 },
+      { path: "README.md", status: "D", additions: 0, deletions: 3 },
+    ];
+    const { unmount } = render(<GitDiffView {...props} summary={{ ...summary, files }} />);
+    expect(screen.getByText("3 个文件")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "列表" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("app/src/views/chat/PillSelect.tsx")).toBeTruthy();
+    // 新增 / 未跟踪是「+」，删除是「−」，读屏报状态名。
+    expect(screen.getByRole("img", { name: "新文件，未跟踪" }).textContent).toBe("+");
+    expect(screen.getByRole("img", { name: "已删除" }).textContent).toBe("−");
+
+    fireEvent.click(screen.getByRole("button", { name: "树形" }));
+    expect(screen.queryByText("app/src/views/chat/PillSelect.tsx")).toBeNull();
+    expect(screen.getByText("PillSelect.tsx")).toBeTruthy();
+    unmount();
+    render(<GitDiffView {...props} summary={{ ...summary, files }} />);
+    expect(screen.getByRole("button", { name: "树形" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});

@@ -4551,14 +4551,33 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-branchline { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); margin: var(--sp-8) var(--sp-8) 0; padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-diff-branchline svg { flex: 0 0 auto; }
 .chat-diff-branchline span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-diff-divergence { flex: 0 0 auto; font-style: normal; font-variant-numeric: tabular-nums; color: var(--cc-text-dim); }
+.chat-diff-divergence { flex: 0 0 auto; font-style: normal; font-variant-numeric: tabular-nums; color: var(--cc-accent-text); }
+/* 分支名等宽（对照 Kimi）：分支是标识符，等宽更好认。 */
+.chat-diff-branchline > span:not(.chat-diff-filecount):not(.chat-diff-lines) { flex: 0 1 auto; min-width: 4em; color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; }
+.chat-diff-branchline > .chat-diff-lines { flex: none; }
+.chat-diff-filecount { flex: 0 0 auto; color: var(--cc-text-faint); }
+/* 列表 / 树形分段切换，靠行尾。 */
+.chat-diff-layout { flex: none; margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); }
+.chat-diff-layout button { display: inline-flex; align-items: center; gap: var(--sp-4); height: 22px; padding: 0 var(--sp-8); border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-diff-layout button:hover { color: var(--cc-text); }
+.chat-diff-layout button[aria-pressed="true"] { color: var(--cc-text); background: var(--fill-selected); }
+/* 面板窄时切换钮只留图标（文字在读屏名里），把宽度让给分支名。 */
+.chat-diff-panel { container-type: inline-size; container-name: diff-panel; }
+@container diff-panel (max-width: 440px) {
+  .chat-diff-layout button { padding: 0 var(--sp-6); font-size: 0; gap: 0; }
+  .chat-diff-branchline > .chat-diff-lines { display: none; }
+}
+/* 列表形态一行一个完整路径：路径过长从左截断看不到文件名，这里靠 tooltip 补全。 */
+.chat-diff-tree-file.is-flat .chat-diff-path { color: var(--cc-text); }
 .chat-diff-action { width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-dim); background: transparent; cursor: pointer; }
 .chat-diff-action:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 状态字母徽章：M 黄 / A、U 绿 / D 红，与 diff 行配色同语义。 */
-.chat-diff-status { flex: 0 0 auto; width: 16px; text-align: center; font-size: var(--text-xs); font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; }
-.chat-diff-status.is-m, .chat-diff-status.is-t { color: var(--cc-warn-vivid); }
-.chat-diff-status.is-a, .chat-diff-status.is-u { color: var(--cc-ok-vivid); }
-.chat-diff-status.is-d { color: var(--cc-err-vivid); }
+/* 状态小方块（对照 Kimi 改动列表）：同色系浅底 + 符号，新增「+」、删除「−」、其余字母。 */
+.chat-diff-status { flex: 0 0 auto; width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px; font-size: 11px; line-height: 1; font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; color: var(--cc-text-dim); background: var(--fill-hover); }
+.chat-diff-status.is-m, .chat-diff-status.is-t { color: var(--cc-warn-vivid); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, transparent); }
+.chat-diff-status.is-a, .chat-diff-status.is-u { color: var(--cc-ok-vivid); background: color-mix(in srgb, var(--cc-ok-vivid) 14%, transparent); }
+.chat-diff-status.is-d { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 14%, transparent); }
+.chat-diff-status.is-r { color: var(--cc-accent-text); background: color-mix(in srgb, var(--cc-accent) 14%, transparent); }
 /* 头部省略（rtl 技巧）：挤压时「…」出现在开头，保住最有信息量的文件名尾段；树行的
    短名不截断、不受影响。路径是纯 LTR 字符（ASCII/CJK），RTL 基准方向只挪省略号位置、
    不打乱字序——但首尾要补 LRM：. / 等中性符落在边界会跳到另一端（.gitignore 会被

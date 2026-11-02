@@ -611,13 +611,15 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
     };
   }, [visibleFiles]);
 
-  const tree = useMemo(() => {
+  const listedFiles = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const files = query
-      ? visibleFiles.filter((file) => file.path.toLowerCase().includes(query))
-      : visibleFiles;
-    return buildFileTree(files);
+    return query ? visibleFiles.filter((file) => file.path.toLowerCase().includes(query)) : visibleFiles;
   }, [visibleFiles, search]);
+  const tree = useMemo(() => buildFileTree(listedFiles), [listedFiles]);
+  // 列表 / 树形（对照 Kimi 改动面板）：列表一行一个完整路径，改动散在多个目录时一眼扫完；
+  // 树形按目录收拢。默认列表，选了就记住。
+  const [layout, setLayoutState] = useState<"list" | "tree">(readDiffLayout);
+  const setLayout = (next: "list" | "tree") => { setLayoutState(next); saveDiffLayout(next); };
 
   // 按需拉单文件 diff：一次会话改动可以很大，不随摘要预取全部。
   // 已缓存（含加载中/失败）的路径跳过，失败结果回树后重新点开即重试。
@@ -749,9 +751,7 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
           onClick={() => node.file && setSelectedPath(node.file.path)}
           onContextMenu={node.file && node.file.status !== "D" ? (event) => openCtxMenu(event, node.file!.path, false) : undefined}
         >
-          {node.file && (
-            <span className={`chat-diff-status is-${node.file.status.toLowerCase()}`}>{node.file.status}</span>
-          )}
+          {node.file && <StatusBadge status={node.file.status} />}
           <span className="chat-diff-path">{node.name}</span>
           {node.file && <LineCounts file={fileByPath.get(node.file.path)} />}
           {node.file && commentCounts.get(node.file.path) && (
@@ -866,7 +866,7 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
       <>
         <div className="chat-diff-filehead">
           <BackButton label={t.chat.diffBack} onClick={() => setSelectedPath(null)} />
-          {selected && <span className={`chat-diff-status is-${selected.status.toLowerCase()}`}>{selected.status}</span>}
+          {selected && <StatusBadge status={selected.status} />}
           <span className="chat-diff-path" data-tip={selectedPath}>{selectedPath}</span>
           {selected && selected.status !== "D" && !remoteUi() && <OpenSplitButton cwd={cwd} rel={selectedPath} />}
         </div>
@@ -876,9 +876,9 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
   }
   return (
     <>
-      {/* 分支名放页签内部而非面板头行：这里整行宽度可用，长分支名截断不挤布局。 */}
-      {(summary.branch || totals) && (
-        <div className="chat-diff-branchline" data-tip={summary.branch ?? undefined}>
+      {/* 分支名放页签内部而非面板头行：这里整行宽度可用，长分支名截断不挤布局。
+          行尾照 Kimi 放文件数与「列表 / 树形」切换。 */}
+      <div className="chat-diff-branchline" data-tip={summary.branch ?? undefined}>
           {summary.branch && <>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
@@ -890,8 +890,18 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
             {!!summary.behind && <em className="chat-diff-divergence" data-tip={t.chat.diffBehindTip(summary.behind)}>↓{summary.behind}</em>}
           </>}
           <LineCounts file={totals ?? undefined} />
-        </div>
-      )}
+          <span className="chat-diff-filecount">{t.chat.diffFileCount(listedFiles.length)}</span>
+          <div className="chat-diff-layout" role="group" aria-label={t.chat.diffLayoutLabel}>
+            <button type="button" aria-pressed={layout === "list"} onClick={() => setLayout("list")}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+              {t.chat.diffLayoutList}
+            </button>
+            <button type="button" aria-pressed={layout === "tree"} onClick={() => setLayout("tree")}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="6" rx="1.5" /><rect x="14" y="10" width="7" height="5" rx="1.5" /><rect x="14" y="17" width="7" height="4" rx="1.5" /><path d="M6.5 9v9.5H14M6.5 12.5H14" /></svg>
+              {t.chat.diffLayoutTree}
+            </button>
+          </div>
+      </div>
       <input
         type="text"
         className="chat-diff-search"
@@ -917,7 +927,23 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
       )}
       {filterSession && visibleFiles.length === 0
         ? <div className="chat-diff-empty">{scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
-        : <div className="chat-diff-tree">{renderTree(tree, 0)}</div>}
+        : <div className="chat-diff-tree">{layout === "tree" ? renderTree(tree, 0) : listedFiles.map((file) => (
+          <button
+            key={file.path}
+            type="button"
+            className="chat-diff-tree-file is-flat"
+            data-tip={file.path}
+            onClick={() => setSelectedPath(file.path)}
+            onContextMenu={file.status !== "D" ? (event) => openCtxMenu(event, file.path, false) : undefined}
+          >
+            <StatusBadge status={file.status} />
+            <span className="chat-diff-path">{file.path}</span>
+            <LineCounts file={file} />
+            {commentCounts.get(file.path) && (
+              <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(file.path)!)}>{commentCounts.get(file.path)}</span>
+            )}
+          </button>
+        ))}</div>}
       {ctxMenu && (
         <PathContextMenu
           cwd={cwd}
@@ -1340,6 +1366,26 @@ function FilesView({ cwd }: { cwd: string }) {
 }
 
 /** 文件或合计的 `+12 −3`；后端数不出来（二进制等）时两项都是 null，不占位。 */
+/// 改动状态的小方块（对照 Kimi 改动列表的 +）：新增 / 未跟踪「+」、删除「−」，其余用字母。
+/// 字母本身不进读屏名字，按状态给一句话。
+function StatusBadge({ status }: { status: string }) {
+  const t = useT();
+  const glyph = status === "A" || status === "U" ? "+" : status === "D" ? "−" : status;
+  return (
+    <span className={`chat-diff-status is-${status.toLowerCase()}`} role="img" aria-label={t.chat.diffStatusName[status] ?? status} data-tip={t.chat.diffStatusName[status] ?? status}>
+      {glyph}
+    </span>
+  );
+}
+
+const DIFF_LAYOUT_KEY = "meowo-diff-layout";
+function readDiffLayout(): "list" | "tree" {
+  try { return localStorage.getItem(DIFF_LAYOUT_KEY) === "tree" ? "tree" : "list"; } catch { return "list"; }
+}
+function saveDiffLayout(layout: "list" | "tree") {
+  try { localStorage.setItem(DIFF_LAYOUT_KEY, layout); } catch { /* 隐私模式：只是不记 */ }
+}
+
 function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
   if (!file || file.additions == null || file.deletions == null) return null;
   return (
