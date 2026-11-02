@@ -247,6 +247,57 @@ describe("回合结构", () => {
   });
 });
 
+/** 设置「消息自动折叠」：已结束的回复只露最终回答，过程（含中途的话）收成「工作了 …」一行。 */
+describe("回合级折叠", () => {
+  // 一段回复被中途的话切成两段：工具 → 「先看看」→ 工具 → 最终回答。
+  const turn = (prefix: string): ChatItem[] => [
+    { type: "user_text", id: `${prefix}-u`, timestamp: "2026-11-02T10:00:00Z", text: "改一下" },
+    { type: "tool_use", id: `${prefix}-t1`, timestamp: "2026-11-02T10:00:05Z", name: "Bash", summary: "ls" },
+    { type: "tool_result", id: `${prefix}-r1`, timestamp: "2026-11-02T10:00:06Z", tool_use_id: `${prefix}-t1`, text: "ok", is_error: false },
+    { type: "assistant_text", id: `${prefix}-a1`, timestamp: "2026-11-02T10:00:10Z", text: "先看看" },
+    { type: "tool_use", id: `${prefix}-t2`, timestamp: "2026-11-02T10:01:00Z", name: "Read", summary: "a.ts" },
+    { type: "tool_result", id: `${prefix}-r2`, timestamp: "2026-11-02T10:01:01Z", tool_use_id: `${prefix}-t2`, text: "ok", is_error: false },
+    { type: "assistant_text", id: `${prefix}-a2`, timestamp: "2026-11-02T10:02:13Z", text: "改好了" },
+  ];
+  const replyFold = () => document.querySelector(".turn-fold.is-reply");
+
+  it("关着（默认）不折：过程与中途的话照常平铺", () => {
+    render(<Transcript sessionId={31} items={turn("off")} agent={agent} />);
+    expect(replyFold()).toBeNull();
+    expect(screen.getByText("先看看")).toBeTruthy();
+  });
+
+  it("开着：中途的话和工具收进一行「工作了 2m13s」，默认收起，只露最终回答；点开能看到过程", () => {
+    render(<Transcript sessionId={32} items={turn("on")} agent={agent} foldTurns />);
+    expect(replyFold()?.querySelector(".turn-fold-summary")?.textContent).toBe("工作了 2m13s");
+    expect(replyFold()?.classList.contains("is-open")).toBe(false);
+    expect(screen.queryByText("先看看")).toBeNull();
+    expect(screen.getByText("改好了")).toBeTruthy();
+    expect(document.querySelectorAll(".turn-fold")).toHaveLength(1);
+    fireEvent.click(replyFold()!.querySelector(".turn-fold-head")!);
+    expect(screen.getByText("先看看")).toBeTruthy();
+    // 里面原有的工具汇总行（ActivityRun 那一层）原样嵌在回合折叠里，同 Kimi。
+    const inner = replyFold()!.querySelector(".turn-fold-body .turn-fold");
+    expect(inner?.textContent).toContain("已运行 1 条命令 · 读取了 1 个文件");
+  });
+
+  it("运行中不折，回合结束（working 落下）才收起", () => {
+    const items = turn("live");
+    const { rerender } = render(<Transcript sessionId={33} items={items} agent={agent} working foldTurns />);
+    expect(replyFold()).toBeNull();
+    expect(screen.getByText("先看看")).toBeTruthy();
+    rerender(<Transcript sessionId={33} items={items} agent={agent} working={false} foldTurns />);
+    expect(replyFold()).not.toBeNull();
+    expect(screen.queryByText("先看看")).toBeNull();
+  });
+
+  it("只有一句回答、前面什么过程都没有的回复不套折叠", () => {
+    render(<Transcript sessionId={34} items={[user("plain-u"), reply("plain-a", "直接答")]} agent={agent} foldTurns />);
+    expect(replyFold()).toBeNull();
+    expect(screen.getByText("直接答")).toBeTruthy();
+  });
+});
+
 describe("空会话欢迎面板", () => {
   const info: WelcomeInfo = { provider: "claude", name: "Claude Code", version: "2.1.303", model: "Opus 5.5", branch: "main", changes: 5 };
 

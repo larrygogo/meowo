@@ -43,6 +43,8 @@ export const SETTINGS_DEFAULTS: Settings = {
   bark_url: "",
   workspace_order: [],
   keep_awake_while_running: true,
+  notification_sound: true,
+  chat_turn_folding: false,
 };
 
 // ── 模块级共享态（每个 webview 窗口一份）──

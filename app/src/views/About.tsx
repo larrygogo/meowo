@@ -198,6 +198,8 @@ function GeneralSection() {
   const chatOn = settings?.chat_enabled ?? true;
   const keepAwakeOn = settings?.keep_awake_while_running ?? true;
   const toggleKeepAwake = () => patch({ keep_awake_while_running: !keepAwakeOn });
+  const soundOn = settings?.notification_sound ?? true;
+  const toggleSound = () => patch({ notification_sound: !soundOn });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
   const toggleFlash = () => patch({ attention_flash_enabled: !flashOn });
   const toggleAutoUpdate = () => patch({ auto_update_enabled: !autoUpdateOn });
@@ -264,6 +266,14 @@ function GeneralSection() {
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} label={t.settings.notify} />
         </div>
+        {/* 提示音只在通知开着时有意义：通知关了就不给这一行，免得开着它却什么也听不到。 */}
+        {notifyOn && <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.notifySound}</div>
+            <div className="row-desc">{t.settings.notifySoundDesc}</div>
+          </div>
+          <Switch checked={soundOn} onChange={toggleSound} label={t.settings.notifySound} />
+        </div>}
         {/* 系统层授权被拒时，应用内开关再开也是静默——必须在此处可见并给出直达入口。 */}
         {IS_MAC && sysNotifyDenied && (
           <div className="row">
@@ -651,6 +661,7 @@ function AppearanceSection() {
   const termLine = settings?.terminal_line_height ?? SETTINGS_DEFAULTS.terminal_line_height;
   const termBack = settings?.terminal_scrollback ?? SETTINGS_DEFAULTS.terminal_scrollback;
   const chatWidth = settings?.chat_content_width ?? SETTINGS_DEFAULTS.chat_content_width;
+  const turnFolding = settings?.chat_turn_folding ?? SETTINGS_DEFAULTS.chat_turn_folding;
   const clickThroughOn = settings?.click_through_enabled ?? false;
   const toggleClickThrough = () => patch({ click_through_enabled: !clickThroughOn });
   // 滑杆草稿（拖动中本地显示，松手才提交）：见 useSliderDraft。
@@ -687,6 +698,13 @@ function AppearanceSection() {
             <div className="row-desc">{t.settings.chatWidthDesc}</div>
           </div>
           <Segmented value={chatWidth} options={chatWidthOptions(t)} onChange={(v) => patch({ chat_content_width: v })} label={t.settings.chatWidth} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.turnFolding}</div>
+            <div className="row-desc">{t.settings.turnFoldingDesc}</div>
+          </div>
+          <Switch checked={turnFolding} onChange={() => patch({ chat_turn_folding: !turnFolding })} label={t.settings.turnFolding} />
         </div>
       </div>
 

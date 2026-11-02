@@ -731,6 +731,10 @@ export type Settings = {
   workspace_order: string[];
   /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
   keep_awake_while_running: boolean;
+  /** 系统通知带提示音（关掉只静音，通知照弹）。 */
+  notification_sound: boolean;
+  /** 回合结束后把最终回答之前的工作过程收成一行（对照 Kimi「消息自动折叠」）。 */
+  chat_turn_folding: boolean;
   /** 贴纸主窗口几何（W-17）。设置窗不编辑它；后端 set_settings 落盘前以磁盘值回填。
    *  读写走 windowState.ts 的 get/set_sticker_window_state，这里仅为快照对齐。 */
   sticker_window?: {

@@ -58,6 +58,24 @@ function doneClauses(tools: ToolUseItem[], results: Map<string, ToolResultItem>,
     t.chat.turnToolSummaries[kind](done) + (failed > 0 ? t.chat.turnToolFailed(failed) : ""));
 }
 
+/// 回合级折叠（设置「消息自动折叠」，对照 Kimi 的 TurnFold）：一整段回复跑完后，最终回答
+/// 之前的全部工作过程（思考、工具、活动汇总、中途的话）收成「工作了 2m13s」一行。
+/// 只在回合结束后由 Transcript 套上；运行中不套，过程照常平铺。默认收起，开合按回复记忆。
+export function ReplyFold({ id, durationMs, children }: { id: string; durationMs: number | null; children: ReactNode }) {
+  const t = useT();
+  const [open, setOpen] = useRememberedOpen(`reply:${id}`, false);
+  const summary = durationMs !== null && durationMs >= 1000 ? t.chat.replyWorked(fmtSpan(durationMs)) : t.chat.turnWorked;
+  return (
+    <div className={"turn-fold is-reply" + (open ? " is-open" : "")}>
+      <button type="button" className="turn-fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="turn-fold-summary">{summary}</span>
+        <span className="chat-tool-chevron">›</span>
+      </button>
+      {open && <div className="turn-fold-body">{children}</div>}
+    </div>
+  );
+}
+
 export const TurnFold = memo(function TurnFold({ id, items, durationMs, running = false, children }: {
   id: string;
   items: ProcessItem[];

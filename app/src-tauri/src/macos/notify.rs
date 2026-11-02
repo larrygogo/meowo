@@ -24,6 +24,8 @@ pub struct NotifyJob {
     pub body: String,
     pub session_id: i64,
     pub pid: i64,
+    /// 设置里的「通知提示音」：false 时不挂 sound，通知静默送达。
+    pub sound: bool,
 }
 
 /// 点击跳转需要的两件套：打开对话窗口的句柄 + 判会话归属的 broker。init 时一并种下。
@@ -257,8 +259,10 @@ fn deliver(job: NotifyJob) {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(&job.title));
     content.setBody(&NSString::from_str(&job.body));
-    let sound = UNNotificationSound::defaultSound();
-    content.setSound(Some(&sound));
+    if job.sound {
+        let sound = UNNotificationSound::defaultSound();
+        content.setSound(Some(&sound));
+    }
     // trigger=None：立即投递。
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
         &NSString::from_str(&identifier),

@@ -12,6 +12,7 @@ import { appConfirm } from "../confirm";
 import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
+import { useSettingsEffect } from "../hooks/useSettings";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
@@ -1165,6 +1166,9 @@ export function ChatWindow() {
     : null;
   // 回合头署名。useMemo 保引用稳定:Transcript 是 memo 组件,每次渲染换新对象会让它白 memo。
   const agentDisplayName = currentAgentDescriptor?.display_name ?? provider ?? null;
+  // 设置「消息自动折叠」：已结束的回复只露最终回答（Transcript 拼装时套 ReplyFold）。
+  const [foldTurns, setFoldTurns] = useState(false);
+  useSettingsEffect((settings) => setFoldTurns(settings.chat_turn_folding === true));
   const transcriptAgent = useMemo<TranscriptAgent | null>(
     () => (provider && agentDisplayName ? { provider, name: agentDisplayName, model: history?.model || null } : null),
     [provider, agentDisplayName, history?.model],
@@ -3847,7 +3851,7 @@ export function ChatWindow() {
             {showHandoffNote && !hasEarlier && (
               <div className="chat-empty is-note">{t.chat.handoffContinued}</div>
             )}
-            <Transcript sessionId={sessionId} items={timelineItems} agent={transcriptAgent} working={tone === "running"} />
+            <Transcript sessionId={sessionId} items={timelineItems} agent={transcriptAgent} working={tone === "running"} foldTurns={foldTurns} />
             {/* 上翻后回到底部的悬浮出口：sticky 钉在滚动视口底缘，贴底时不渲染。
                 附带未读计数——用户据此判断「值不值得现在跳下去」。 */}
             {!atBottom && (
