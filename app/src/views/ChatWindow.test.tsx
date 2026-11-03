@@ -2440,12 +2440,12 @@ describe("ChatWindow", () => {
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", expect.anything());
 
     // 接管是破坏性的（杀掉外部进程），必须显式确认；取消（队列首个 false）则什么都不做。
-    fireEvent.click(screen.getByRole("button", { name: "结束外部进程并接管" }));
+    fireEvent.click(screen.getByRole("button", { name: "结束并接管" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     expect(invoke).not.toHaveBeenCalledWith("takeover_managed_terminal", expect.anything());
 
     // 再点一次（队列次个 true）→ 确认接管。
-    fireEvent.click(screen.getByRole("button", { name: "结束外部进程并接管" }));
+    fireEvent.click(screen.getByRole("button", { name: "结束并接管" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("takeover_managed_terminal", { sessionId: 15, cols: 100, rows: 30 }));
     // 接管成功后自动重放刚才那次发送，用户不必重打一遍。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 15, data: "别起第二个" }), { timeout: 3_000 });
@@ -2453,7 +2453,7 @@ describe("ChatWindow", () => {
 
   /** C-8：接管条的显隐挂 needsTakeover 而不是 sendError。打字会清掉 sendError（输入框
    *  onChange 的 setSendError("")），但外部进程还活着，接管入口不能跟着消失——此前
-   *  一敲键盘「结束外部进程并接管」按钮就没了，needsTakeover 还悬着。 */
+   *  一敲键盘「结束并接管」按钮就没了，needsTakeover 还悬着。 */
   it("打字清掉发送错误后,接管入口仍在(C-8)", async () => {
     window.history.replaceState({}, "", "/?sessionId=21");
     invoke.mockImplementation((command: string) => {
@@ -2474,10 +2474,10 @@ describe("ChatWindow", () => {
     fireEvent.change(input, { target: { value: "在吗" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     // 发送被拒 → 接管入口出现。
-    expect(await screen.findByRole("button", { name: "结束外部进程并接管" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "结束并接管" })).toBeTruthy();
     // 继续打字：错误文本被清掉,但接管入口必须留在原地。
     fireEvent.change(input, { target: { value: "在吗?" } });
-    expect(screen.getByRole("button", { name: "结束外部进程并接管" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "结束并接管" })).toBeTruthy();
   });
 
   /** 会话被外部终端占用（后端明确 ptyManaged=false）时门卡横幅给出接管动线，composer
@@ -2507,7 +2507,7 @@ describe("ChatWindow", () => {
     // 门卡态：输入框在但禁用——草稿不藏，只是发不出去。
     const gatedBox = screen.getByRole("combobox", { name: "发送消息给 Agent" });
     expect((gatedBox as HTMLTextAreaElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "结束外部进程并接管" }));
+    fireEvent.click(screen.getByRole("button", { name: "结束并接管" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("takeover_managed_terminal", { sessionId: 19, cols: 100, rows: 30 }));
     // ptyManaged 随下一轮轮询翻真 → 门卡撤下，composer 解禁。
     const box = await screen.findByRole("combobox", { name: "发送消息给 Agent" }, { timeout: 3_000 });

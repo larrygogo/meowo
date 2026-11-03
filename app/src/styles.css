@@ -5729,7 +5729,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-compose-gate { width: 100%; display: flex; align-items: center; gap: var(--sp-8) var(--sp-12); flex-wrap: wrap; padding: var(--sp-2) var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-base); line-height: var(--leading-normal); }
 /* 外部视图在线提示（T-14）：纯告知、无动作，比门卡再弱一档。 */
 .chat-compose-gate.is-external-viewers { color: var(--cc-text-faint); }
-.chat-compose-gate > span { flex: 1 1 auto; min-width: 220px; }
+/* 文字与按钮同一行（用户实拍：长文案 + 固定 220px 起步把按钮挤到第二行）；窄到放不下才换行。 */
+.chat-compose-gate > span { flex: 1 1 auto; min-width: 12em; }
 .chat-compose-gate-error { color: var(--cc-err-text); font-size: var(--text-base); }
 /* 动作组可缩可换行：右侧文件/更改面板分走宽度后，下拉 + 接管按钮一度顶出
    门卡右缘被卡片裁掉（0.5.15 实拍）。换行后按钮落到下一行，下拉再收窄兜底。 */
@@ -5737,6 +5738,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-compose-gate-actions .chat-resume-permission,
 .chat-compose-gate-actions .dd { flex: 0 1 auto; min-width: 0; }
 .chat-compose-gate-actions .dd-btn { max-width: 100%; }
+/* 横幅里的权限下拉按内容宽度：通用的 168px 起步在这里比内容宽一截，空占一行的位置。 */
+.chat-compose-gate-actions .chat-resume-permission .dd-btn { min-width: 0; }
 .chat-compose .chat-send-takeover {
   flex: 0 0 auto;
   height: calc(28px * var(--cc-ui));
