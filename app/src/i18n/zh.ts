@@ -579,7 +579,7 @@ export const zh = {
     // 没接上旁路 ≠ 会话结束：worker 可能还在跑，只是花名册/socket 暂时查不到。
     terminalBackgroundLost: "没接上后台会话的画面。它可能还在跑，试试重新接入。",
     terminalBackgroundRetry: "重新接入",
-    terminalTakeover: "结束外部进程并接管",
+    terminalTakeover: "结束并接管",
     resumeKeepOptions: "权限：沿用原设置",
     resumePermissionTip: "恢复时的权限模式，选择后会记住",
     terminalTakeoverConfirm: "将结束外部终端的进程，在此继续。对话记录保留。",
@@ -747,7 +747,8 @@ export const zh = {
     terminalReadyTimeout: "等待 Agent 终端就绪超时，请在终端页查看状态",
     // 就绪等待的进度横幅（waitForTerminalReady 报送整秒）：秒数 + 「去终端页看」。
     terminalWaitingReady: (seconds: number) => `正在等待 Agent 终端就绪，已等 ${seconds} 秒。可去终端页查看启动进度。`,
-    sendNeedsTakeover: "会话在外部终端运行。接管将结束那个进程，在这里继续。",
+    // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
+    sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
     resumeSession: "恢复会话",
     terminalNeedsAttention: "Agent 在等启动确认，请先在交互卡片中选择，再重新发送。",

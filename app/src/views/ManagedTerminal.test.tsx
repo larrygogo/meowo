@@ -637,7 +637,7 @@ describe("ManagedTerminal", () => {
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
     // 没有托管 PTY 的运行中会话必须给出接管入口，而不是把用户丢在一块黑屏上。
-    expect(await screen.findByRole("button", { name: "结束外部进程并接管" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "结束并接管" })).toBeTruthy();
     expect(screen.getByText(/会话在外部终端运行/)).toBeTruthy();
   });
 
@@ -1579,7 +1579,7 @@ describe("ManagedTerminal", () => {
       return Promise.resolve();
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
-    const button = await screen.findByRole("button", { name: "结束外部进程并接管" });
+    const button = await screen.findByRole("button", { name: "结束并接管" });
     button.click();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     await waitFor(() =>
@@ -1595,7 +1595,7 @@ describe("ManagedTerminal", () => {
       return Promise.resolve();
     });
     render(<ManagedTerminal sessionId={163} status="running" />);
-    const button = await screen.findByRole("button", { name: "结束外部进程并接管" });
+    const button = await screen.findByRole("button", { name: "结束并接管" });
     button.click();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("confirm_dialog", expect.anything()));
     expect(invoke.mock.calls.some(([command]) => command === "takeover_managed_terminal")).toBe(false);

@@ -533,7 +533,7 @@ export const en: Dict = {
     terminalBackgroundGone: "This background session ended and its conversation was never saved, so it can't be resumed. Its last output is kept above.",
     terminalBackgroundLost: "Couldn't attach to this background session. It may still be running — try attaching again.",
     terminalBackgroundRetry: "Attach again",
-    terminalTakeover: "Stop external process and take over",
+    terminalTakeover: "Stop and take over",
     resumeKeepOptions: "Permissions: keep current",
     resumePermissionTip: "Permission mode for resume; your pick is remembered",
     terminalTakeoverConfirm: "This stops the external terminal process and continues here. The conversation is kept.",
@@ -688,7 +688,7 @@ export const en: Dict = {
     terminalReadyTimeout: "Timed out waiting for the Agent terminal to become ready; check the Terminal tab",
     // 就绪等待的进度横幅（waitForTerminalReady 报送整秒）：秒数 + 「去终端页看」。
     terminalWaitingReady: (seconds: number) => `Waiting for the Agent terminal to be ready… ${seconds}s elapsed. Check the Terminal tab for startup progress.`,
-    sendNeedsTakeover: "Running in an external terminal. Taking over stops that process and continues here.",
+    sendNeedsTakeover: "Running in an external terminal. Taking over stops it.",
     composerGateEnded: "This session has ended. Resume it to continue chatting.",
     resumeSession: "Resume session",
     terminalNeedsAttention: "The Agent awaits a startup confirmation. Pick an option in the card, then send again.",
