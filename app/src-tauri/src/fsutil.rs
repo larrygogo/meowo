@@ -35,6 +35,29 @@ pub(crate) fn resolve_inside(cwd: &str, rel: &str) -> Result<PathBuf, String> {
     Ok(full)
 }
 
+/// resolve_inside 的字面版：不跟随联接/符号链接，只按路径分量判断仍在 cwd 内
+/// （`..` 逐级回退，越过 cwd 即拒；绝对路径须以 cwd 开头），目标须存在。
+/// 只给「在文件管理器里定位」用，见 reveal_path_blocking 的说明。
+fn resolve_inside_lexically(cwd: &str, rel: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let root = Path::new(cwd.trim());
+    let mut out = PathBuf::new();
+    for comp in root.join(rel).components() {
+        match comp {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    let root_norm: PathBuf = root
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir))
+        .collect();
+    (out.starts_with(&root_norm) && std::fs::symlink_metadata(&out).is_ok()).then_some(out)
+}
+
 /// 把可能不是 UTF-8 的文本字节解码成 String：严格 UTF-8 成功则用之；失败按 GBK 解
 /// （中文 Windows 上 GBK 源码文件常见，无脑 lossy 会整屏 U+FFFD）；仍失败才 lossy 兜底。
 /// git.rs 的 diff 查看器与这里的文件查看器共用，两边口径必须一致。
@@ -557,7 +580,16 @@ pub(crate) async fn reveal_path_in_file_manager(cwd: String, rel: String) -> Res
 }
 
 fn reveal_path_blocking(cwd: &str, rel: &str) -> Result<(), String> {
-    let target = resolve_inside(cwd, rel)?;
+    let target = match resolve_inside(cwd, rel) {
+        Ok(target) => target,
+        // 目录里的联接/符号链接指向外部时，按真实路径判就是越界。实拍：lark 的技能装在
+        // ~/.agents/skills，~/.claude/skills 下只放目录联接，设置「扩展」页点「在文件夹中
+        // 显示」全报「路径超出工作目录」。定位只是让文件管理器选中一项，选中的是目录里
+        // 那个联接本身，不跟随过去，也就不暴露外部内容；所以退一步按字面路径判包含。
+        // 读文件/列目录（list_dir_entries / read_file_text）仍走严格校验，不受影响。
+        Err(e) if e == "路径超出工作目录" => resolve_inside_lexically(cwd, rel).ok_or(e)?,
+        Err(e) => return Err(e),
+    };
     #[cfg(target_os = "windows")]
     {
         // `/select,路径` 是单个 argv：explorer 语法如此，含空格也无需引号
@@ -653,6 +685,44 @@ mod tests {
         assert!(resolve_inside(tmp.path(), "../..").is_err());
         assert!(resolve_inside(tmp.path(), "sub/../..").is_err());
         assert!(resolve_inside(tmp.path(), "不存在").is_err());
+    }
+
+    /// 字面包含判断：目录里指向外部的链接本身算在内（定位只选中链接），`..` 越界与不存在仍拒。
+    #[test]
+    fn resolve_inside_lexically_keeps_links_but_rejects_escape() {
+        let tmp = TempDir::new();
+        let root = Path::new(tmp.path());
+        std::fs::create_dir_all(root.join("skills/own")).unwrap();
+        let outside = TempDir::new();
+        let link = root.join("skills").join("linked");
+        // Windows 建目录符号链接要权限，用联接（与实拍的 lark 技能同形）；其余平台用符号链接。
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(outside.path())
+            .output()
+            .is_ok_and(|o| o.status.success());
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(outside.path(), &link).is_ok();
+        assert!(made, "建链接失败");
+
+        let skills = root.join("skills");
+        let skills = skills.to_str().unwrap();
+        // 严格校验跟随链接，判越界；字面判断认它在内，返回的是链接本身的路径。
+        assert_eq!(
+            resolve_inside(skills, "linked").unwrap_err(),
+            "路径超出工作目录"
+        );
+        assert_eq!(
+            resolve_inside_lexically(skills, "linked"),
+            Some(Path::new(skills).join("linked"))
+        );
+        assert!(resolve_inside_lexically(skills, "own").is_some());
+        assert!(resolve_inside_lexically(skills, "..").is_none());
+        assert!(resolve_inside_lexically(skills, "linked/../../..").is_none());
+        assert!(resolve_inside_lexically(skills, "不存在").is_none());
+        assert!(resolve_inside_lexically(skills, outside.path()).is_none());
     }
 
     #[test]

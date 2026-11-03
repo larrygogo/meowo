@@ -9,6 +9,7 @@ import type { AgentExtensionsDto } from "../../generated/contracts/AgentExtensio
 import type { ExtensionGroupDto } from "../../generated/contracts/ExtensionGroupDto";
 import type { ExtensionKind } from "../../generated/contracts/ExtensionKind";
 import { useT } from "../../i18n";
+import { formatBackendError } from "../../i18n/errors";
 import { agentAssets } from "../../providers";
 import { Dropdown } from "../menu";
 import { SettingsError } from "./widgets";
@@ -56,7 +57,7 @@ export function ExtensionsSection() {
     try { localStorage.setItem(PICKED_KEY, id); } catch { /* 隐私模式：只是不记 */ }
   };
   const reveal = (dir: string, name: string) => {
-    revealPathInFileManager(dir, name).catch((e) => setError(String(e)));
+    revealPathInFileManager(dir, name).catch((e) => setError(formatBackendError(e, t.locale)));
   };
 
   if (failed && !list) {
