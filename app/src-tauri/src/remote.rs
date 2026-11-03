@@ -92,6 +92,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 侧栏手动排序（手机长按拖动）：只改顺序，不碰会话内容与其它设置。
     "move_session_rank",
     "set_workspace_order",
+    // 手机设置面板的两个开关：各只改一个字段，set_settings 仍然禁止。
+    "set_keep_awake",
+    "set_push_paused",
     // 对话流
     "get_chat_history",
     "get_subagent_transcript",
@@ -859,6 +862,10 @@ bridged_args!(MoveSessionRankArgs {
 
 bridged_args!(SetWorkspaceOrderArgs { order: Vec<String> });
 
+bridged_args!(SetKeepAwakeArgs { enabled: bool });
+
+bridged_args!(SetPushPausedArgs { paused: bool });
+
 bridged_args!(SetSessionNoteArgs {
     session_id: String,
     note: String
@@ -1092,6 +1099,14 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "set_workspace_order" => {
             let a = args!(SetWorkspaceOrderArgs);
             reply(crate::settings::set_workspace_order(app.clone(), a.order).await)
+        }
+        "set_keep_awake" => {
+            let a = args!(SetKeepAwakeArgs);
+            reply(crate::settings::set_keep_awake(app.clone(), a.enabled).await)
+        }
+        "set_push_paused" => {
+            let a = args!(SetPushPausedArgs);
+            reply(crate::settings::set_push_paused(app.clone(), a.paused).await)
         }
         "set_archived" => {
             let a = args!(SetArchivedArgs);
@@ -1994,6 +2009,9 @@ mod tests {
             "set_workspace_order" => {
                 parse::<SetWorkspaceOrderArgs>(br#"{"order":["C:/repo","D:/other"]}"#).map(|_| ())
             }
+            // api.ts setKeepAwake / setPushPaused
+            "set_keep_awake" => parse::<SetKeepAwakeArgs>(br#"{"enabled":false}"#).map(|_| ()),
+            "set_push_paused" => parse::<SetPushPausedArgs>(br#"{"paused":true}"#).map(|_| ()),
             // api.ts:456
             "set_archived" => {
                 parse::<SetArchivedArgs>(br#"{"sessionId":7,"archived":true}"#).map(|_| ())

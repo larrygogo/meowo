@@ -1267,6 +1267,15 @@ export const zh = {
     sessionListSubtitle: "继续桌面上的工作",
     // 手机页的明暗模式只存在这台手机上，与桌面设置无关。
     themeLabel: "外观",
+    // 手机设置面板：分两组，让人一眼分清哪些只改这台手机、哪些改的是电脑。
+    settingsLabel: "设置",
+    settingsPhone: "这台手机",
+    settingsDesktop: "电脑",
+    foldDesc: "只在这台手机上生效",
+    keepAwakeDesc: "有会话在跑时电脑不睡",
+    pushToggle: "手机推送",
+    pushToggleDesc: "暂停后地址保留",
+    settingFailed: "没改成，请稍后再试",
     backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>
