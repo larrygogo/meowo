@@ -943,7 +943,8 @@ impl ParseState {
             || line.contains(BACKGROUND_SHELL_PREFIX)
             || line.contains("<task-notification>")
             || line.contains("<retrieval_status>")
-            || line.contains("Successfully stopped task");
+            || line.contains("Successfully stopped task")
+            || line.contains("resumedAgentId");
         if !has_title && !has_assistant && !has_task_signal {
             return;
         }
@@ -1094,6 +1095,11 @@ impl ParseState {
             if let Some(id) = launch_agent_id(text) {
                 self.running_tasks.insert(id);
             }
+            return;
+        }
+        // 续上已结束的子代理:重新入集,等它下一条完成通知出集(见 resumed_agent_id)。
+        if let Some(id) = resumed_agent_id(text) {
+            self.running_tasks.insert(id);
             return;
         }
         // TaskStop 停掉的任务不会再有通知,停成功即出集。
@@ -1689,6 +1695,15 @@ impl SubagentSpec for ClaudeSubagents {
                 task_id: launch_agent_id(output),
             });
         }
+        // 续上已结束的子代理:按 task_id 归回原委派,重新记为在跑(见 resumed_agent_id)。
+        if let Some(task_id) = resumed_agent_id(output) {
+            return Some(SubagentOutcome {
+                running: 1,
+                completed: 0,
+                failed: 0,
+                task_id: Some(task_id),
+            });
+        }
         // 3. 主 agent 用 `TaskStop` 停掉的任务**同样不发通知**(2026-10-22 实拍:停掉的
         //    vite 后台命令在面板上挂了一夜「运行中」)。主动停掉是收尾不是出错,记完成。
         if let Some(task_id) = stopped_task_id(output) {
@@ -1735,6 +1750,25 @@ fn stopped_task_id(output: &str) -> Option<String> {
     }
     let v: serde_json::Value = serde_json::from_str(head).ok()?;
     v.get("task_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// SendMessage 把一个**已结束**的子代理续上时的回执(CC 2.1.317 实拍):
+/// `{"success":true,"message":"Resuming agent a872837","resumedAgentId":"a8728370da5331a1f",…}`。
+/// 子代理还在跑时发的消息只是排队(`Message queued for delivery…`),没有 resumedAgentId,不认。
+///
+/// 续上的子代理不会再发启动回执,完成通知却照旧挂回最初那次委派。不认它的话,第一次完成后
+/// 委派就定格在「完成」,续上这段在对话页和看板上都看不见(用户实拍:终端里两个子代理在跑,
+/// 对话页一个都没有)。行首锚定 `{`,引用这段 JSON 的 Read/Grep 结果不误判。
+fn resumed_agent_id(output: &str) -> Option<String> {
+    let head = output.trim_start();
+    if !head.starts_with('{') || !head.contains("\"resumedAgentId\"") {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(head).ok()?;
+    v.get("resumedAgentId")
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -3587,6 +3621,52 @@ mod tests {
 
     /// TaskStop 停掉的后台任务不会再有 task-notification:停成功的回执本身就是结局,
     /// 否则会话结束后面板上那条仍挂「运行中」(2026-10-22 实拍)。
+    /// SendMessage 续上已结束的子代理(CC 2.1.317 实拍回执):重新记为在跑,直到它下一条
+    /// 完成通知。不认的话续上这段在对话页、看板都看不见(用户实拍反馈)。
+    #[test]
+    fn send_message_resume_marks_subagent_running_again() {
+        let resume = r#"{"success":true,"message":"Resuming agent a872837","resumedAgentId":"a8728370da5331a1f","pin":{"id":"a8728370da5331a1f","name":"a8728370da5331a1f","ref":"6212ac"}}"#;
+        let outcome = CLAUDE_SUBAGENTS.detect_result(resume).expect("续上应产出结局");
+        assert_eq!((outcome.running, outcome.completed, outcome.failed), (1, 0, 0));
+        assert_eq!(outcome.task_id.as_deref(), Some("a8728370da5331a1f"));
+        // 子代理还在跑时的消息只是排队,没有 resumedAgentId,不认;引用这段 JSON 的输出不认。
+        let queued = r#"{"success":true,"message":"Message queued for delivery to a8728370da5331a1f at its next tool round.","pin":{"id":"a8728370da5331a1f"}}"#;
+        assert!(CLAUDE_SUBAGENTS.detect_result(queued).is_none());
+        assert!(CLAUDE_SUBAGENTS
+            .detect_result(r#"12  {"message":"Resuming agent a872837","resumedAgentId":"a8728370da5331a1f"}"#)
+            .is_none());
+
+        // 后端计数:启动 → 完成通知出集 → 续上重新入集 → 再次完成通知出集。
+        let receipt = |uuid: &str, text: &str| {
+            serde_json::json!({
+                "type": "user",
+                "uuid": uuid,
+                "message": {"content": [{"type": "tool_result", "tool_use_id": format!("t_{uuid}"), "content": text}]},
+            })
+            .to_string()
+        };
+        let notify = |uuid: &str| {
+            serde_json::json!({
+                "type": "user",
+                "uuid": uuid,
+                "message": {"content": "<task-notification>\n<task-id>a8728370da5331a1f</task-id>\n<tool-use-id>t_l1</tool-use-id>\n<status>completed</status>\n</task-notification>"},
+            })
+            .to_string()
+        };
+        let mut st = ParseState::default();
+        st.fold_line(&receipt(
+            "l1",
+            "Async agent launched successfully.\nagentId: a8728370da5331a1f (internal ID - do not mention to user.)",
+        ));
+        assert_eq!(st.to_info().busy_subagents, 1);
+        st.fold_line(&notify("n1"));
+        assert_eq!(st.to_info().busy_subagents, 0);
+        st.fold_line(&receipt("r1", resume));
+        assert_eq!(st.to_info().busy_subagents, 1, "续上后重新算在跑");
+        st.fold_line(&notify("n2"));
+        assert_eq!(st.to_info().busy_subagents, 0);
+    }
+
     #[test]
     fn task_stop_receipt_settles_background_task() {
         // 真机回执原文(CC 把 JSON 串当工具回执正文)。
