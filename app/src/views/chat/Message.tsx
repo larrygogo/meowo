@@ -13,7 +13,8 @@ import { fmtSpan, stripAnsi } from "./shared";
 import { ChatActionsContext } from "./chatActions";
 import { EchoActionsContext, EchoPhaseContext, outgoingIdOf, type EchoActions } from "./outgoingPrompts";
 import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
-import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT } from "../../remoteMode";
+import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from "../../remoteMode";
+import { openSettingsAt } from "../../settingsNav";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
@@ -392,19 +393,36 @@ function ReasoningBlock({ item, nextStamp = null }: { item: Extract<ChatItem, { 
 /// parseUserText / split 这类逐条解析不再全量重跑。
 /// 回合出错卡。最新的那张带「继续」：失败只给一个最短的恢复动作（对照 Kimi 的
 /// turnFailed 卡）——发一句「继续」让 Agent 接着做；旧的出错卡后面已有新内容，不出按钮。
+///
+/// 下一步（对照 Kimi 错误文案的「原因 + 下一步」）：登录失效时光点「继续」只会再错一次，
+/// 要先说清该去登录；连不上 API 时提示查网络和代理。判据是后端写的中文标签（各 agent
+/// 插件共用，见 claude classify_error / codex / opencode），其余标签照旧只给「继续」。
+const LOGIN_ERROR_LABELS = new Set(["需要重新登录", "认证失败"]);
+const NETWORK_ERROR_LABELS = new Set(["无法连接 API"]);
+
 function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn_error" }>; latest: boolean }) {
   const t = useT();
   const actions = useContext(ChatActionsContext);
   const [busy, setBusy] = useState(false);
+  const login = LOGIN_ERROR_LABELS.has(item.label);
+  const hint = login ? t.chat.turnErrorLoginHint : NETWORK_ERROR_LABELS.has(item.label) ? t.chat.turnErrorNetworkHint : null;
   return (
     <article className="chat-message is-turn-error" role="alert">
       <div className="chat-turn-error-label">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>
-        {item.label}
+        {/* 标签是后端写的中文 sentinel，英文界面要经 errorLabels 翻译（看板卡片同一张表）。 */}
+        {t.errorLabels[item.label] ?? item.label}
       </div>
       <div className="chat-text">{item.text}</div>
+      {latest && hint && <div className="chat-turn-error-hint">{hint}</div>}
       {latest && actions && (
         <div className="chat-turn-error-actions">
+          {/* 登录入口在设置的「账号与用量」。open_settings 是宿主命令，手机上点了没反应，不给。 */}
+          {login && !remoteUi() && (
+            <button type="button" className="chat-turn-error-continue" onClick={() => openSettingsAt("account")}>
+              {t.chat.turnErrorLoginGo}
+            </button>
+          )}
           <button
             type="button"
             className="chat-turn-error-continue"

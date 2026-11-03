@@ -24,6 +24,7 @@ import { RemoteAccessCard } from "./settings/RemoteAccessCard";
 import { applySettingsFilter } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { KeyCombos, shortcutGroups } from "./chat/WindowModals";
+import { SETTINGS_SECTION_KEY } from "../settingsNav";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -937,16 +938,19 @@ function AboutSection({
   );
 }
 
+function asSection(s: string | null): Section | null {
+  return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "extensions" || s === "about"
+    ? s
+    : null;
+}
+
 export function About() {
   const t = useT();
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
   useShowWhenReady();
   // 分区记忆：每次开窗回 general 让最常改的分区（外观/Agent）永远多点一次。
   const [sec, setSec] = useState<Section>(() => {
-    const s = localStorage.getItem("meowo-settings-section");
-    return s === "general" || s === "sessions" || s === "appearance" || s === "shortcuts" || s === "remote" || s === "network" || s === "account" || s === "extensions" || s === "about"
-      ? s
-      : "general";
+    try { return asSection(localStorage.getItem(SETTINGS_SECTION_KEY)) ?? "general"; } catch { return "general"; }
   });
   // S-2：访问过的分区保持挂载（hidden 隐藏代替卸载）——此前 main-body 带 key={sec} 整树
   // 重挂，每次切回账号分区都重发联网配额查询、切回会话分区重拉归档首页。未访问的分区
@@ -955,8 +959,22 @@ export function About() {
   const pickSec = (next: Section) => {
     setSec(next);
     setVisited((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
-    try { localStorage.setItem("meowo-settings-section", next); } catch { /* 隐私模式禁写 */ }
+    try { localStorage.setItem(SETTINGS_SECTION_KEY, next); } catch { /* 隐私模式禁写 */ }
   };
+  // 别的窗口经 openSettingsAt 指定分区时，设置窗若已开着只会被聚焦——跟着 storage 事件切过去
+  // （出错卡的「去登录」要直达账号页，落在上次停留的分区等于让人再找一遍）。
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== SETTINGS_SECTION_KEY) return;
+      const next = asSection(event.newValue);
+      if (next) {
+        setSec(next);
+        setVisited((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   const close = () => getCurrentWindow().close().catch(() => {});
   useEscClose(close); // 弹出式任务窗的基本预期：Esc 关窗（输入框内让位）
   // 设置窗口也服从自动更新开关；关闭时不做后台检查，用户仍可从「关于」手动打开更新窗口检查。
