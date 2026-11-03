@@ -926,6 +926,10 @@ pub(crate) fn classify_error(text: &str, synthetic: bool) -> Option<&'static str
     None
 }
 
+/// ScheduleWakeup 回执的两种开头（见 ParseState::fold_wakeup_receipt）。
+const WAKEUP_SCHEDULED_PREFIX: &str = "Next wakeup scheduled for";
+const LOOP_STOPPED_PREFIX: &str = "Loop stopped";
+
 /// 增量解析的累积状态：标题（custom/ai 分开存，custom 优先）、最近一条 assistant 正文、
 /// 最近一条 usage、还在跑的后台子任务集。逐行 fold，故对「只追加」的 transcript 可跨
 /// 多次调用累积，无需重头扫。
@@ -940,6 +944,12 @@ struct ParseState {
     /// user 行的 task-notification、排队送入的通知(queue-operation/attachment)、
     /// TaskOutput 拉取回执。主回合结束后这里非空 = 后台还有活儿在跑。
     running_tasks: std::collections::HashSet<String>,
+    /// 定好的下次唤醒（ScheduleWakeup，即 /loop 自定节奏）的到点时刻，Unix 毫秒。
+    /// Claude 定完唤醒就结束本回合，到点再自己接着干——这段空档和后台任务在跑同理，
+    /// 不是「等你」。按回执里的「(in Ns)」加该行时间戳算，`stop` 回执清掉。
+    /// 到点触发那一刻的写盘形态本机还没实拍到（7 次都在到点前取消），所以不靠触发信号
+    /// 收尾：过了到点时刻自然失效，触发后的新回合本来就是运行中。
+    wakeup_until_ms: Option<i64>,
 }
 
 impl ParseState {
@@ -953,7 +963,9 @@ impl ParseState {
             || line.contains(BACKGROUND_SHELL_PREFIX)
             || line.contains("<task-notification>")
             || line.contains("<retrieval_status>")
-            || line.contains("Successfully stopped task");
+            || line.contains("Successfully stopped task")
+            || line.contains(WAKEUP_SCHEDULED_PREFIX)
+            || line.contains(LOOP_STOPPED_PREFIX);
         if !has_title && !has_assistant && !has_task_signal {
             return;
         }
@@ -1046,6 +1058,10 @@ impl ParseState {
                     self.settle_from_notification(text);
                     return;
                 }
+                let line_ms = v
+                    .get("timestamp")
+                    .and_then(|x| x.as_str())
+                    .and_then(crate::codec::iso8601_to_unix_ms);
                 for block in content.and_then(|x| x.as_array()).into_iter().flatten() {
                     match block.get("type").and_then(|x| x.as_str()) {
                         Some("tool_result") => {
@@ -1053,6 +1069,7 @@ impl ParseState {
                                 block.get("content").unwrap_or(&serde_json::Value::Null),
                             );
                             self.fold_tool_result_text(&text);
+                            self.fold_wakeup_receipt(&text, line_ms);
                         }
                         Some("text") => {
                             if let Some(text) = block.get("text").and_then(|x| x.as_str()) {
@@ -1121,8 +1138,37 @@ impl ParseState {
         }
     }
 
+    /// ScheduleWakeup 的回执（实拍 2.1.3xx）：定时是「Next wakeup scheduled for 23:14:00
+    /// (in 1253s). …」，停止是「Loop stopped — …」。必须以前缀开头才认，引用这段文案的
+    /// 工具输出（读 transcript、讨论这套机制）不该误设。缺时间戳的行没法换算到点时刻，不设。
+    fn fold_wakeup_receipt(&mut self, text: &str, line_ms: Option<i64>) {
+        let text = text.trim_start();
+        if text.starts_with(LOOP_STOPPED_PREFIX) {
+            self.wakeup_until_ms = None;
+            return;
+        }
+        if !text.starts_with(WAKEUP_SCHEDULED_PREFIX) {
+            return;
+        }
+        let delay_secs = text
+            .split_once("(in ")
+            .and_then(|(_, rest)| rest.split_once("s)"))
+            .and_then(|(n, _)| n.trim().parse::<i64>().ok());
+        if let (Some(at), Some(secs)) = (line_ms, delay_secs) {
+            self.wakeup_until_ms = Some(at + secs * 1000);
+        }
+    }
+
     /// 从累积状态产出 TranscriptInfo。
     fn to_info(&self) -> TranscriptInfo {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        self.to_info_at(now_ms)
+    }
+
+    /// to_info 的可测版：唤醒是否还没到点取决于「此刻」，测试注入时间。
+    fn to_info_at(&self, now_ms: i64) -> TranscriptInfo {
         let error = self.last_text.as_ref().and_then(|(text, synthetic)| {
             classify_error(text, *synthetic).map(|label| TurnError {
                 label: label.to_string(),
@@ -1145,7 +1191,9 @@ impl ParseState {
             context_tokens: self.last_usage,
             context_pct,
             preview: self.last_text.as_ref().and_then(|(t, _)| preview_text(t)),
-            busy_subagents: self.running_tasks.len() as u32,
+            // 没到点的唤醒按一件后台工作计：状态判定只看「有没有」，不展示具体数目。
+            busy_subagents: self.running_tasks.len() as u32
+                + u32::from(self.wakeup_until_ms.is_some_and(|at| at > now_ms)),
         }
     }
 }
@@ -3565,6 +3613,37 @@ mod tests {
         };
         assert_eq!(tool_use_id.as_deref(), Some("toolu_q"));
         assert_eq!(subagent.as_ref().unwrap().completed, 1);
+    }
+
+    /// 定好的唤醒（ScheduleWakeup）没到点前算后台工作：回合停了也不是「等你」。
+    /// 回执文案取自本机 transcript 实拍（2026-10-20）。
+    #[test]
+    fn pending_wakeup_counts_as_background_work_until_due() {
+        let receipt = |ts: &str, text: &str| format!(
+            r#"{{"type":"user","timestamp":"{ts}","message":{{"content":[{{"type":"tool_result","tool_use_id":"t_w","content":"{text}"}}]}}}}"#
+        );
+        let scheduled = receipt(
+            "2026-10-20T14:53:06.714Z",
+            "Next wakeup scheduled for 23:14:00 (in 1253s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn.",
+        );
+        let at = crate::codec::iso8601_to_unix_ms("2026-10-20T14:53:06.714Z").unwrap();
+        let mut st = ParseState::default();
+        st.fold_line(&scheduled);
+        assert_eq!(st.to_info_at(at + 1_000).busy_subagents, 1, "到点前算在跑");
+        assert_eq!(st.to_info_at(at + 1_253_000 + 1).busy_subagents, 0, "过了到点自然失效");
+
+        // stop 回执清掉。
+        st.fold_line(&receipt(
+            "2026-10-20T14:56:08.182Z",
+            "Loop stopped — cancelled 1 pending wakeup(s); no further dynamic-loop wakeups scheduled.",
+        ));
+        assert_eq!(st.to_info_at(at + 1_000).busy_subagents, 0);
+
+        // 引用回执文案的工具输出（不以前缀开头）不误设；缺时间戳的行不设。
+        let mut st = ParseState::default();
+        st.fold_line(&receipt("2026-10-20T14:53:06.714Z", "     1	Next wakeup scheduled for 23:14:00 (in 1253s)."));
+        st.fold_line(&scheduled.replace(r#""timestamp":"2026-10-20T14:53:06.714Z","#, ""));
+        assert_eq!(st.to_info_at(at + 1_000).busy_subagents, 0);
     }
 
     /// busy_subagents:启动回执入集,三种结局信号(user 行通知/排队通知/TaskOutput 终态
