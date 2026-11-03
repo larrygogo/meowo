@@ -34,6 +34,24 @@ describe("后台任务", () => {
     ]);
   });
 
+  it("子代理完成后被 SendMessage 续上：变回运行中，下一条完成通知再收尾", () => {
+    // 回执形态照 CC 2.1.317 实拍：续上回执挂在 SendMessage 自己的调用上，靠 task_id
+    // 归回最初那次委派；之后的完成通知仍挂在最初的委派上。
+    const use: ChatItem = {
+      type: "tool_use", id: "toolu_a", timestamp: "2026-11-03T06:20:00Z", name: "Agent", summary: "rs 导出 schema",
+      subagent: { description: "rs 导出 schema", agent_type: "general-purpose", count: 1 },
+    };
+    const launched: ChatItem = { type: "tool_result", id: "r1", timestamp: "2026-11-03T06:20:01Z", tool_use_id: "toolu_a", text: "Async agent launched", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a87" } };
+    const done = (id: string, ts: string): ChatItem => ({ type: "tool_result", id, timestamp: ts, tool_use_id: "toolu_a", text: "done", is_error: false, subagent: { running: 0, completed: 1, failed: 0 } });
+    const send: ChatItem = { type: "tool_use", id: "toolu_s", timestamp: "2026-11-03T06:38:52Z", name: "SendMessage", summary: "纠正字段" };
+    const resumed: ChatItem = { type: "tool_result", id: "r3", timestamp: "2026-11-03T06:38:52Z", tool_use_id: "toolu_s", text: "Resuming agent a87", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a87" } };
+    const states = (items: ChatItem[]) => collectBackgroundTasks(items).subagents.map((task) => [task.id, task.state]);
+
+    expect(states([use, launched, done("r2", "2026-11-03T06:36:00Z")])).toEqual([["toolu_a", "done"]]);
+    expect(states([use, launched, done("r2", "2026-11-03T06:36:00Z"), send, resumed])).toEqual([["toolu_a", "run"]]);
+    expect(states([use, launched, done("r2", "2026-11-03T06:36:00Z"), send, resumed, done("r4", "2026-11-03T06:45:00Z")])).toEqual([["toolu_a", "done"]]);
+  });
+
   it("「最近」= 全部运行中 + 最近结束的 5 条，结束的按完成时刻倒序", () => {
     const task = (id: string, state: BackgroundTask["state"], sortKey: string): BackgroundTask => ({ id, name: id, meta: null, state, durationMs: null, sortKey });
     const tasks = [task("old", "done", "01"), task("run", "run", "02"), ...["03", "04", "05", "06", "07"].map((key) => task(key, "done", key)), task("bad", "fail", "08")];
