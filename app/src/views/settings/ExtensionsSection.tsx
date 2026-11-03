@@ -56,6 +56,7 @@ export function ExtensionsSection() {
     try { localStorage.setItem(PICKED_KEY, id); } catch { /* 隐私模式：只是不记 */ }
   };
   const reveal = (dir: string, name: string) => {
+    // 原样交给 SettingsError：它自己会走 formatBackendError，这里再译一遍就是双重翻译。
     revealPathInFileManager(dir, name).catch((e) => setError(String(e)));
   };
 
