@@ -238,8 +238,11 @@ pub(crate) struct Settings {
     /// 会话需要关注时推一条到手机，见 push.rs。
     #[serde(default)]
     pub(crate) bark_url: String,
+    /// 暂停手机推送（地址留着，只是先不推）。开会、睡觉时在手机上临时关掉，不用删了地址再填回来。
+    #[serde(default)]
+    pub(crate) bark_paused: bool,
     /// 侧栏「按工作区分组 + 手动排序」时工作区组的顺序（路径，前端按斜杠 / 大小写归一后比较）。
-    /// 桌面侧栏拖分组头时写入；手机只读、按同一顺序显示。空 = 没排过，组序随组内会话位置。
+    /// 桌面拖、手机长按拖分组头时经 set_workspace_order 写入，两端按同一顺序显示。空 = 没排过，组序随组内会话位置。
     #[serde(default)]
     pub(crate) workspace_order: Vec<String>,
     /// 有会话在跑时防止电脑休眠（对照 Kimi「防止休眠」：电脑睡过去，跑到一半的 agent 就停了）。
@@ -298,6 +301,7 @@ impl Default for Settings {
             remote_access_bind: default_remote_bind(),
             remote_access_token: String::new(),
             bark_url: String::new(),
+            bark_paused: false,
             workspace_order: Vec::new(),
             keep_awake_while_running: true,
             notification_sound: true,
@@ -642,6 +646,53 @@ pub(crate) async fn mark_onboarding_seen() -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 工作区分组的手动顺序（侧栏拖分组头）。单独开口子而不走 set_settings：手机页也要能拖，
+/// 而 set_settings 在远程是禁区（整份设置写入能反手开大暴露面），这里只碰这一个字段。
+/// 条数与单条长度设上限，防远程端塞超大载荷进 settings.json。
+#[tauri::command]
+pub(crate) async fn set_workspace_order(
+    app: tauri::AppHandle,
+    order: Vec<String>,
+) -> Result<(), String> {
+    const MAX_ENTRIES: usize = 1000;
+    const MAX_PATH_LEN: usize = 4096;
+    if order.len() > MAX_ENTRIES || order.iter().any(|p| p.len() > MAX_PATH_LEN) {
+        return Err("settings/workspace_order_too_large".into());
+    }
+    patch_settings(app, move |s| s.workspace_order = order).await
+}
+
+/// 「有会话在跑时防止休眠」开关。手机也能拨：出门后才发现没开，电脑睡过去任务就停了。
+/// power.rs 每拍读设置，改完下一拍生效。
+#[tauri::command]
+pub(crate) async fn set_keep_awake(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    patch_settings(app, move |s| s.keep_awake_while_running = enabled).await
+}
+
+/// 暂停 / 恢复手机推送。只动开关不动地址：远程端改不了推送发到哪。
+#[tauri::command]
+pub(crate) async fn set_push_paused(app: tauri::AppHandle, paused: bool) -> Result<(), String> {
+    patch_settings(app, move |s| s.bark_paused = paused).await
+}
+
+/// 只改设置里的个别字段（手机也调得到的那几个窄口子共用）：落盘后发 settings-changed，
+/// 桌面各窗立刻跟上，手机靠轮询 get_settings 跟上。
+async fn patch_settings(
+    app: tauri::AppHandle,
+    patch: impl FnOnce(&mut Settings) + Send + 'static,
+) -> Result<(), String> {
+    let settings = tauri::async_runtime::spawn_blocking(move || {
+        update_settings(|s| {
+            patch(s);
+            Ok(s.clone())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let _ = app.emit("settings-changed", without_remote_token(settings));
+    Ok(())
 }
 
 /// `set_sticker_window_state` 落盘前的兜底钳值（与前端 windowState.ts 同口径）：尺寸须落在

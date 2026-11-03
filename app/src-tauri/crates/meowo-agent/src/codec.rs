@@ -82,6 +82,37 @@ pub fn unix_to_iso8601(ts: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
+/// ISO 8601 UTC 字符串（CC transcript 的 `2026-10-20T14:53:06.714Z` 形态）→ Unix 毫秒。
+/// 只认 `Z` 结尾的 UTC 写法（CC 写盘恒为此形），其它（带时区偏移/畸形）返回 None。
+/// 与 [`unix_to_iso8601`] 互逆，同样不引 chrono（Hinnant days_from_civil）。
+pub fn iso8601_to_unix_ms(s: &str) -> Option<i64> {
+    let s = s.strip_suffix('Z')?;
+    let (date, time) = s.split_once('T')?;
+    let mut d = date.splitn(3, '-').map(|x| x.parse::<i64>().ok());
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let (hms, frac) = time.split_once('.').unwrap_or((time, ""));
+    let mut t = hms.splitn(3, ':').map(|x| x.parse::<i64>().ok());
+    let (h, min, sec) = (t.next()??, t.next()??, t.next()??);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&day) || h > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    // 小数秒只取前三位当毫秒（不足补零），超出精度的位直接丢。
+    let ms = if frac.is_empty() {
+        0
+    } else {
+        let digits: String = frac.chars().take(3).collect();
+        format!("{digits:0<3}").parse::<i64>().ok()?
+    };
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(((days * 86400 + h * 3600 + min * 60 + sec) * 1000) + ms)
+}
+
 /// 将自 1970-01-01 起的天数转换为 (year, month, day)（格里历）。
 /// 实现来自 Howard Hinnant civil_from_days 算法，正确处理所有闰年。
 fn days_to_ymd(z: u64) -> (u64, u64, u64) {
@@ -133,5 +164,20 @@ mod tests {
         assert_eq!(unix_to_iso8601(951_868_800), "2000-03-01T00:00:00Z");
         // 负数钳到纪元。
         assert_eq!(unix_to_iso8601(-5), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn iso8601_to_unix_ms_inverts_and_reads_millis() {
+        assert_eq!(iso8601_to_unix_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso8601_to_unix_ms("2024-02-29T00:00:00Z"), Some(1_709_164_800_000));
+        assert_eq!(iso8601_to_unix_ms("2000-03-01T00:00:00.5Z"), Some(951_868_800_500));
+        // CC transcript 实拍形态。
+        assert_eq!(iso8601_to_unix_ms("2026-10-20T14:53:06.714Z"), Some(1_792_507_986_714));
+        for ts in [0, 951_868_800, 1_709_164_800, 1_792_507_986] {
+            assert_eq!(iso8601_to_unix_ms(&unix_to_iso8601(ts)), Some(ts * 1000));
+        }
+        assert_eq!(iso8601_to_unix_ms("2026-10-20T14:53:06+08:00"), None);
+        assert_eq!(iso8601_to_unix_ms("2026-13-01T00:00:00Z"), None);
+        assert_eq!(iso8601_to_unix_ms("not a time"), None);
     }
 }

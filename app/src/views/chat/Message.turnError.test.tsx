@@ -1,6 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const invokeMock = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock, convertFileSrc: (p: string) => p }));
+
 import { Message } from "./Message";
 import { ChatActionsContext } from "./chatActions";
 import type { ChatItem } from "../../api";
@@ -48,5 +51,37 @@ describe("Message turn_error", () => {
       </ChatActionsContext.Provider>,
     );
     expect(screen.queryByRole("button", { name: "继续" })).toBeNull();
+  });
+
+  it("登录失效：提示先登录，「去登录」直达设置的账号页，「继续」仍在", () => {
+    invokeMock.mockResolvedValue(undefined);
+    const sendText = vi.fn().mockResolvedValue(true);
+    render(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <Message item={{ ...item, label: "需要重新登录", text: "Not logged in · Please run /login" }} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.getByText("重新登录后点「继续」")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "去登录" }));
+    expect(localStorage.getItem("meowo-settings-section")).toBe("account");
+    expect(invokeMock).toHaveBeenCalledWith("open_settings");
+    expect(screen.getByRole("button", { name: "继续" })).toBeTruthy();
+  });
+
+  it("连不上 API 提示查网络；一般 API 错误不加提示也不给「去登录」", () => {
+    const sendText = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <Message item={{ ...item, label: "无法连接 API" }} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.getByText("检查网络或代理后点「继续」")).toBeTruthy();
+    rerender(
+      <ChatActionsContext.Provider value={{ sendText }}>
+        <Message item={item} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.queryByText("检查网络或代理后点「继续」")).toBeNull();
+    expect(screen.queryByRole("button", { name: "去登录" })).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getSubagentTranscript, type ChatItem, type SubagentRun } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -30,15 +30,25 @@ function StatusBadge({ tone, text }: { tone: string; text: string }) {
 
 /// 子任务时间线的容器：限高 + 内部滚动。子任务动辄几十上百条，直接铺开会把主对话
 /// 挤到几屏之外，用户想收起时还得一路往回滚。
-function SubagentTimeline({ sessionId, items }: { sessionId: number; items: ChatItem[] }) {
+function SubagentTimeline({ sessionId, items, launchId }: { sessionId: number; items: ChatItem[]; launchId: string }) {
   const t = useT();
+  const ancestors = useContext(SubagentAncestors);
+  const chain = useMemo(() => new Set(ancestors).add(launchId), [ancestors, launchId]);
   if (items.length === 0) return <div className="chat-subagent-hint">{t.chat.subagentEmpty}</div>;
   return (
     <div className="chat-subagent-scroll">
-      <Transcript sessionId={sessionId} items={items} />
+      <SubagentAncestors.Provider value={chain}>
+        <Transcript sessionId={sessionId} items={items} />
+      </SubagentAncestors.Provider>
     </div>
   );
 }
+
+/// 当前时间线所在的委派链（各层子任务块的调用 id）。fork 子任务的侧车会带着「派出自己」
+/// 的那条调用（与主链同 id），后端已经滤掉（read_subagent_chat）；这里再兜一层：链上已有的
+/// id 不再渲染子任务块，否则展开又拉回同一份侧车，自己套自己无限嵌套（用户实拍反馈）。
+/// 侧车格式再变时宁可少显示一条回声，也不能把对话页撑爆。
+const SubagentAncestors = createContext<ReadonlySet<string>>(new Set());
 
 /// 结局统计 → 徽标。多个分支时报出数量，单个只说状态。
 function outcomeBadge(
@@ -62,7 +72,7 @@ function outcomeBadge(
 
 /// memo 理由同 Message；它还持有局部状态与展开时的 3s 轮询，白重渲染的代价更高。
 /// outcome 是 tool_result 条目上的对象，条目不变则引用不变，浅比较可命中。
-export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outcome, settled, finishedAt }: {
+type SubagentBlockProps = {
   sessionId: number;
   item: ToolUseItem;
   /// 主链回执带来的结局统计——**不必展开**就有，展开才拉的是时间线本身。
@@ -72,7 +82,15 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
   /// 最终回执的时间戳(TaskOutput 拉取的结局已按 task_id 归回)。与委派时刻相减得
   /// 执行时长;在跑时不用它,用滴答的当前时刻算已耗时。
   finishedAt?: string | null;
-}) {
+};
+
+export const SubagentBlock = memo(function SubagentBlock(props: SubagentBlockProps) {
+  const ancestors = useContext(SubagentAncestors);
+  if (ancestors.has(props.item.id)) return null;
+  return <SubagentBlockBody {...props} />;
+});
+
+function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: SubagentBlockProps) {
   const t = useT();
   const [runs, setRuns] = useState<SubagentRun[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -184,7 +202,7 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
           // 单个分支直接铺开；一次派一批（swarm 可达十几个）则每个分支各自折叠，
           // 否则一次展开会把十几条完整时间线全部倒进页面。
           : runs.length === 1
-          ? <SubagentTimeline sessionId={sessionId} items={runs[0].items} />
+          ? <SubagentTimeline sessionId={sessionId} items={runs[0].items} launchId={item.id} />
           : runs.map((run, index) => (
             <details className="chat-subagent-branch" key={run.label ?? index}>
               <summary>
@@ -193,10 +211,10 @@ export const SubagentBlock = memo(function SubagentBlock({ sessionId, item, outc
                 <span className="chat-subagent-branch-count">{t.chat.subagentSteps(run.items.length)}</span>
                 <span className="chat-tool-chevron">›</span>
               </summary>
-              <SubagentTimeline sessionId={sessionId} items={run.items} />
+              <SubagentTimeline sessionId={sessionId} items={run.items} launchId={item.id} />
             </details>
           )))}
       </div>
     </details>
   );
-});
+}

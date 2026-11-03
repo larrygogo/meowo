@@ -412,6 +412,10 @@ export const zh = {
     reasoning: "思考过程",
     turnErrorContinue: "继续",
     turnErrorContinueText: "继续",
+    // 出错卡的下一步（对照 Kimi「原因 + 下一步」）：只给能自己解决的两类，其余照旧只有「继续」。
+    turnErrorLoginHint: "重新登录后点「继续」",
+    turnErrorLoginGo: "去登录",
+    turnErrorNetworkHint: "检查网络或代理后点「继续」",
     reasoningLive: "思考中…",
     turnToolDoing: {
       run: "正在运行命令",
@@ -1082,6 +1086,9 @@ export const zh = {
     "工具调用解析失败": "工具调用解析失败",
     "需要重新登录": "需要重新登录",
     "认证失败": "认证失败",
+    "无法连接 API": "无法连接 API",
+    "API 请求出错": "API 请求出错",
+    "回合出错": "回合出错",
   } as Record<string, string>,
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
@@ -1267,6 +1274,15 @@ export const zh = {
     sessionListSubtitle: "继续桌面上的工作",
     // 手机页的明暗模式只存在这台手机上，与桌面设置无关。
     themeLabel: "外观",
+    // 手机设置面板：分两组，让人一眼分清哪些只改这台手机、哪些改的是电脑。
+    settingsLabel: "设置",
+    settingsPhone: "这台手机",
+    settingsDesktop: "电脑",
+    foldDesc: "只在这台手机上生效",
+    keepAwakeDesc: "有会话在跑时电脑不睡",
+    pushToggle: "手机推送",
+    pushToggleDesc: "暂停后地址保留",
+    settingFailed: "没改成，请稍后再试",
     backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>

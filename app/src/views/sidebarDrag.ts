@@ -4,6 +4,10 @@
 /// Windows 上 WebView2 会把网页内的 HTML5 拖拽一并截走，dragover/drop 根本到不了页面。
 /// 指针事件不受它影响，鼠标和触控笔都能用。
 ///
+/// 触屏（手机页）改成长按起拖：手指一按下就拖会和列表滚动抢手势，用户上下划列表全成了挪会话。
+/// 长按到点之前手指动了就是在滚动，放手不管；到点之后才接管手势、拦住页面滚动。长按到点但没挪
+/// 就松手，交给 onHold（会话行用它开菜单，iOS 没有长按出的 contextmenu）。
+///
 /// 只能在同一个「桶」里拖：同一分组、同为置顶或同为非置顶。跨组拖没有意义（组由工作区 /
 /// 日期 / 状态决定，不由位置决定），跨置顶边界拖了也会被置顶浮顶规则弹回去。
 
@@ -38,30 +42,40 @@ export function moveNextTo<T, K = number>(items: readonly T[], idOf: (item: T) =
 
 /// 按下后移动多少像素才算开始拖：小于它仍是点击。
 const DRAG_THRESHOLD = 4;
+/// 触屏长按多久起拖。比系统长按菜单（Android 约 500ms）短，拖起来之后再到的 contextmenu 一律拦掉。
+const LONG_PRESS_MS = 350;
+/// 长按到点前手指挪了多远算「在滚动」，放弃这次长按。浏览器开始滚动的门槛比它大，滚动不受影响。
+const LONG_PRESS_SLOP = 8;
 
 /// 指针拖拽重排（会话行、工作区分组头共用）。`attr` 是行上 data-* 属性的 dataset 名，
 /// `parse` 把属性值还原成 id；落点只认同一个桶里的行。
-export function usePointerReorder<K extends string | number>({ enabled, attr, parse, bucketOf, listOf, onMove }: {
+export function usePointerReorder<K extends string | number>({ enabled, attr, parse, bucketOf, listOf, onMove, onHold }: {
   enabled: boolean;
   attr: string;
   parse: (raw: string) => K | null;
   bucketOf: (id: K) => string | null;
   listOf: (bucket: string) => readonly K[];
   onMove: (id: K, above: K | null, below: K | null) => void;
+  /// 触屏长按到点但没挪就松手（坐标是按下的位置）。
+  onHold?: (id: K, x: number, y: number) => void;
 }) {
   const [dragId, setDragId] = useState<K | null>(null);
   const [dropAt, setDropAt] = useState<DropAt<K> | null>(null);
   // 刚拖完：吞掉松手后紧跟着的那次 click，不然拖完会顺手打开会话。
   const suppressClickRef = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
+  // 触屏长按进行中（按下到松手）。期间 Android 长按弹的 contextmenu 归这里管，行上别再开菜单。
+  const touchHoldRef = useRef(false);
   useEffect(() => () => cleanupRef.current?.(), []);
 
   const selector = `[data-${attr.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]`;
   /// ghostSource：跟手「影子」照着谁复制，默认按下的那个元素（分组只复制组头，不复制整组）。
   const onPointerDown = (event: ReactPointerEvent<HTMLElement>, id: K, ghostSource?: HTMLElement | null) => {
-    if (!enabled || event.button !== 0 || event.pointerType === "touch") return;
+    if (!enabled || event.button !== 0) return;
     const bucket = bucketOf(id);
     if (bucket == null) return;
+    cleanupRef.current?.();
+    const touch = event.pointerType === "touch";
     const startX = event.clientX;
     const startY = event.clientY;
     // 指针拖拽没有浏览器自带的拖拽影像（用户实拍反馈「拖的时候没有影子」），自己复制一份跟着鼠标走。
@@ -71,6 +85,8 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
     let grabX = 0;
     let grabY = 0;
     let started = false;
+    let moved = false;
+    let holdTimer = 0;
     let target: DropAt<K> | null = null;
     const pick = (x: number, y: number): DropAt<K> | null => {
       const row = document.elementFromPoint(x, y)?.closest<HTMLElement>(selector);
@@ -80,24 +96,35 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
       const rect = row.getBoundingClientRect();
       return { id: over, after: y > rect.top + rect.height / 2 };
     };
+    const begin = () => {
+      started = true;
+      setDragId(id);
+      document.body.classList.add("is-sidebar-dragging");
+      const rect = source.getBoundingClientRect();
+      grabX = startX - rect.left;
+      grabY = startY - rect.top;
+      ghost = source.cloneNode(true) as HTMLElement;
+      ghost.removeAttribute("id");
+      // 选中 / 勾选态的半透明底同优先级会盖掉影子的实底，影子里不带这些状态。
+      ghost.classList.remove("is-active", "is-checked", "is-dragging", "is-drop-before", "is-drop-after");
+      ghost.classList.add("sidebar-drag-ghost");
+      ghost.style.width = `${rect.width}px`;
+      // 挂在侧栏里而不是 body 下：行样式多是 .chat-sidebar 下的后代选择器，挂出去就走样。
+      (source.closest(".chat-sidebar") ?? document.body).appendChild(ghost);
+      ghost.style.transform = `translate(${startX - grabX}px, ${startY - grabY}px)`;
+    };
     const move = (e: PointerEvent) => {
-      if (!started) {
-        if (Math.abs(e.clientY - startY) < DRAG_THRESHOLD && Math.abs(e.clientX - startX) < DRAG_THRESHOLD) return;
-        started = true;
-        setDragId(id);
-        document.body.classList.add("is-sidebar-dragging");
-        const rect = source.getBoundingClientRect();
-        grabX = startX - rect.left;
-        grabY = startY - rect.top;
-        ghost = source.cloneNode(true) as HTMLElement;
-        ghost.removeAttribute("id");
-        // 选中 / 勾选态的半透明底同优先级会盖掉影子的实底，影子里不带这些状态。
-        ghost.classList.remove("is-active", "is-checked", "is-dragging", "is-drop-before", "is-drop-after");
-        ghost.classList.add("sidebar-drag-ghost");
-        ghost.style.width = `${rect.width}px`;
-        // 挂在侧栏里而不是 body 下：行样式多是 .chat-sidebar 下的后代选择器，挂出去就走样。
-        (source.closest(".chat-sidebar") ?? document.body).appendChild(ghost);
+      const far = (limit: number) => Math.abs(e.clientY - startY) >= limit || Math.abs(e.clientX - startX) >= limit;
+      if (touch && !started) {
+        // 长按还没到点手指就走了：用户在滚列表，这次不拖。
+        if (far(LONG_PRESS_SLOP)) finish(false);
+        return;
       }
+      if (!started) {
+        if (!far(DRAG_THRESHOLD)) return;
+        begin();
+      }
+      if (far(DRAG_THRESHOLD)) moved = true;
       e.preventDefault();
       if (ghost) ghost.style.transform = `translate(${e.clientX - grabX}px, ${e.clientY - grabY}px)`;
       target = pick(e.clientX, e.clientY);
@@ -110,6 +137,10 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
       window.setTimeout(() => { suppressClickRef.current = false; }, 0);
       setDragId(null);
       setDropAt(null);
+      if (touch && !moved) {
+        if (commit) onHold?.(id, startX, startY);
+        return;
+      }
       if (!commit || !target) return;
       const neighbors = dropNeighbors(listOf(bucket), id, target);
       if (neighbors) onMove(id, neighbors.above, neighbors.below);
@@ -117,11 +148,28 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
     const up = () => finish(true);
     const cancel = () => finish(false);
     const key = (e: KeyboardEvent) => { if (e.key === "Escape") finish(false); };
+    // 拖起来之后拦住页面滚动：指针事件的 preventDefault 管不了触屏滚动，得拦 touchmove，
+    // 且必须是非被动监听（window 上默认被动，preventDefault 会被忽略）。到点前不拦，滚动照常。
+    const touchMove = (e: TouchEvent) => { if (started && e.cancelable) e.preventDefault(); };
+    if (touch) {
+      touchHoldRef.current = true;
+      holdTimer = window.setTimeout(() => {
+        begin();
+        setDropAt(null);
+        // 拖起来了给一下震动反馈（Android 支持，iOS Safari 没有这个 API，静默跳过）。
+        navigator.vibrate?.(10);
+      }, LONG_PRESS_MS);
+      window.addEventListener("touchmove", touchMove, { passive: false });
+    }
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("keydown", key, true);
     cleanupRef.current = () => {
+      window.clearTimeout(holdTimer);
+      window.removeEventListener("touchmove", touchMove);
+      // contextmenu 在松手后才派发的情况也要拦住，留到下一拍再放开。
+      if (touch) window.setTimeout(() => { touchHoldRef.current = false; }, 0);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
@@ -139,6 +187,8 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
     onPointerDown,
     /// 点击处理前先问一句：刚拖完的那次 click 不算点击。
     swallowClick: () => suppressClickRef.current,
+    /// contextmenu 处理前先问一句：触屏长按的菜单由 onHold 开，别再开一次。
+    swallowContextMenu: () => touchHoldRef.current,
   };
 }
 
@@ -150,6 +200,7 @@ export function useSessionDrag(options: {
   /// 桶里当前的显示顺序。
   listOf: (bucket: string) => readonly number[];
   onMove: (id: number, above: number | null, below: number | null) => void;
+  onHold?: (id: number, x: number, y: number) => void;
 }) {
   return usePointerReorder<number>({
     ...options,

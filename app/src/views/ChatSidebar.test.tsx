@@ -649,10 +649,11 @@ describe("ChatSidebar", () => {
   it("工作区分组:按设置里的顺序排,拖分组头改顺序并写回设置", async () => {
     localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
     const saved: unknown[] = [];
-    invoke.mockImplementation((command: string, args?: { settings?: { workspace_order?: string[] } }) => {
+    invoke.mockImplementation((command: string, args?: { order?: string[] }) => {
       if (command === "get_live_sessions_page") return Promise.resolve([session(1, "甲", { cwd: "C:/w/a" }), session(2, "乙", { cwd: "C:/w/b" }), session(3, "丙", { cwd: "C:/w/c" })]);
       if (command === "get_settings") return Promise.resolve({ card_menu_mode: "button", workspace_order: ["c:/w/c", "c:/w/a", "c:/w/b"] });
-      if (command === "set_settings") { saved.push(args?.settings?.workspace_order); return Promise.resolve(); }
+      if (command === "set_settings") throw new Error("组序只能经 set_workspace_order 写");
+      if (command === "set_workspace_order") { saved.push(args?.order); return Promise.resolve(); }
       return Promise.resolve();
     });
     render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
@@ -732,6 +733,62 @@ describe("ChatSidebar", () => {
     const names = within(screen.getByRole("navigation")).getAllByRole("button")
       .map((b) => b.querySelector(".chat-sidebar-name-text")?.textContent).filter(Boolean);
     expect(names).toEqual(["乙", "甲", "丙"]);
+  });
+
+  /** 手机长按起拖：一按就拖会和列表滚动抢手势，长按到点才拖；没到点就挪了是在滚动；长按没挪松手开菜单。 */
+  describe("触屏长按", () => {
+    const setup = async () => {
+      const moves: unknown[] = [];
+      invoke.mockImplementation((command: string, args?: unknown) => {
+        if (command === "get_live_sessions_page") return Promise.resolve([session(3, "丙"), session(2, "乙"), session(1, "甲")]);
+        if (command === "move_session_rank") { moves.push(args); return Promise.resolve(); }
+        return Promise.resolve();
+      });
+      render(<ChatSidebar activeId={3} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+      const first = (await screen.findByRole("button", { name: /丙/ })) as HTMLElement;
+      const last = (await screen.findByRole("button", { name: /甲/ })) as HTMLElement;
+      last.getBoundingClientRect = () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON: () => ({}) });
+      return { moves, first, last };
+    };
+    const hold = () => act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    let original: typeof document.elementFromPoint;
+    beforeEach(() => { original = document.elementFromPoint; });
+    afterEach(() => { document.elementFromPoint = original; });
+
+    it("长按到点后拖动,照样调位置", async () => {
+      const { moves, first, last } = await setup();
+      document.elementFromPoint = () => last;
+      fireEvent.pointerDown(first, { button: 0, pointerType: "touch", clientX: 10, clientY: 10 });
+      await hold();
+      expect(document.querySelector(".sidebar-drag-ghost")).not.toBeNull();
+      fireEvent.pointerMove(window, { clientX: 10, clientY: 130 });
+      await waitFor(() => expect(last.className).toContain("is-drop-after"));
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      expect(moves).toEqual([{ sessionId: 3, aboveId: 1, belowId: null }]);
+    });
+
+    it("没到点就挪了是在滚列表,不拖", async () => {
+      const { moves, first, last } = await setup();
+      document.elementFromPoint = () => last;
+      fireEvent.pointerDown(first, { button: 0, pointerType: "touch", clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 10, clientY: 60 });
+      await hold();
+      expect(document.querySelector(".sidebar-drag-ghost")).toBeNull();
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 130 });
+      expect(moves).toEqual([]);
+    });
+
+    it("长按没挪就松手,弹出会话菜单;Android 补发的 contextmenu 不再开第二次", async () => {
+      const { moves, first } = await setup();
+      fireEvent.pointerDown(first, { button: 0, pointerType: "touch", clientX: 10, clientY: 10 });
+      await hold();
+      fireEvent.contextMenu(first, { clientX: 10, clientY: 10 });
+      expect(screen.queryByRole("menuitem", { name: "标记完成" })).toBeNull();
+      fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
+      expect(await screen.findByRole("menuitem", { name: "标记完成" })).toBeTruthy();
+      expect(document.querySelector(".sidebar-drag-ghost")).toBeNull();
+      expect(moves).toEqual([]);
+    });
   });
 
   /**

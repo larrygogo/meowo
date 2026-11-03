@@ -76,6 +76,7 @@ import { WindowControls } from "./WindowControls";
 import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
 import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
+import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
@@ -1167,8 +1168,17 @@ export function ChatWindow() {
   // 回合头署名。useMemo 保引用稳定:Transcript 是 memo 组件,每次渲染换新对象会让它白 memo。
   const agentDisplayName = currentAgentDescriptor?.display_name ?? provider ?? null;
   // 设置「消息自动折叠」：已结束的回复只露最终回答（Transcript 拼装时套 ReplyFold）。
-  const [foldTurns, setFoldTurns] = useState(false);
-  useSettingsEffect((settings) => setFoldTurns(settings.chat_turn_folding === true));
+  // 手机页优先用手机自己拨的那份（见 remotePrefs），没拨过跟电脑。
+  const [desktopFold, setDesktopFold] = useState(false);
+  const [phoneFold, setPhoneFold] = useState(() => (remoteUi() ? remoteTurnFolding() : null));
+  useSettingsEffect((settings) => setDesktopFold(settings.chat_turn_folding === true));
+  useEffect(() => {
+    if (!remoteUi()) return;
+    const sync = () => setPhoneFold(remoteTurnFolding());
+    window.addEventListener(REMOTE_PREFS_EVENT, sync);
+    return () => window.removeEventListener(REMOTE_PREFS_EVENT, sync);
+  }, []);
+  const foldTurns = phoneFold ?? desktopFold;
   const transcriptAgent = useMemo<TranscriptAgent | null>(
     () => (provider && agentDisplayName ? { provider, name: agentDisplayName, model: history?.model || null } : null),
     [provider, agentDisplayName, history?.model],

@@ -52,7 +52,7 @@ pub(crate) async fn rename_session(
 }
 
 /// 侧栏拖拽排序：把会话挪到 `above_id` 正下方（或没有 above 时 `below_id` 正上方）。
-/// 只有桌面侧栏调用；手机页只按这个顺序显示，不开放写入口（远程 /rpc 白名单不含它）。
+/// 桌面拖动、手机长按拖动都走这里（远程白名单已放行：只改顺序，不碰会话内容）。
 #[tauri::command]
 pub(crate) async fn move_session_rank(
     app: tauri::AppHandle,

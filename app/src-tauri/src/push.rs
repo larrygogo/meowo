@@ -101,10 +101,10 @@ fn should_push(session_id: i64, fingerprint: &str, now: Instant) -> bool {
     true
 }
 
-/// watch.rs 通知判定命中时调用。没填地址就什么都不做；发送在独立线程里，失败只打日志——
+/// watch.rs 通知判定命中时调用。没填地址或暂停了就什么都不做；发送在独立线程里，失败只打日志——
 /// 通知循环不能被网络卡住。
 pub(crate) fn push_session(settings: &crate::settings::Settings, message: PushMessage) {
-    if settings.bark_url.trim().is_empty() {
+    if settings.bark_url.trim().is_empty() || settings.bark_paused {
         return;
     }
     let Ok(url) = normalize_bark_url(&settings.bark_url) else {
