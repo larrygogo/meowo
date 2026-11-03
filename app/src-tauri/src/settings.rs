@@ -346,6 +346,11 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "tray.settings") => "Settings",
         ("en", "tray.website") => "Website",
         ("en", "tray.quit") => "Quit",
+        ("en", "quit.confirmTitle") => "Quit Meowo?",
+        ("en", "quit.confirmMessage") => {
+            "Sessions still running: {n}. Quitting stops them. Their history is kept, so you can resume later."
+        }
+        ("en", "quit.confirmQuit") => "Quit",
         ("en", "window.settings") => "Settings",
         ("en", "window.updater") => "Software Update",
         ("en", "window.newSession") => "New Session",
@@ -381,6 +386,9 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "tray.settings") => "设置",
         (_, "tray.website") => "官方网站",
         (_, "tray.quit") => "退出",
+        (_, "quit.confirmTitle") => "退出 Meowo？",
+        (_, "quit.confirmMessage") => "{n} 个会话还在运行，退出会中断它们。对话记录不受影响，之后可以恢复。",
+        (_, "quit.confirmQuit") => "退出",
         (_, "window.settings") => "设置",
         (_, "window.updater") => "软件更新",
         (_, "window.newSession") => "新建会话",
@@ -964,6 +972,17 @@ pub(crate) fn open_link(url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 退出确认的正文靠 `{n}` 填会话数（window.rs request_quit），改文案时占位符丢了就会显示成
+    /// 没有数字的半句话；两种语言都得有一个专门的标题和按钮，不能落到 tr 的兜底空串。
+    #[test]
+    fn quit_confirm_texts_carry_count_placeholder() {
+        for lang in ["zh", "en"] {
+            assert!(tr(lang, "quit.confirmMessage").contains("{n}"), "{lang}");
+            assert!(!tr(lang, "quit.confirmTitle").is_empty(), "{lang}");
+            assert!(!tr(lang, "quit.confirmQuit").is_empty(), "{lang}");
+        }
+    }
 
     #[test]
     fn default_agent_defaults_to_claude() {

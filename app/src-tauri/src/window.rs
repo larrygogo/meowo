@@ -1113,7 +1113,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             "website" => {
                 let _ = crate::settings::open_url(crate::settings::SITE_URL.to_string());
             }
-            "quit" => app.exit(0),
+            "quit" => request_quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -1238,6 +1238,48 @@ pub(crate) fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> S
         }
     }
     format!("Meowo · {}", parts.join(" · "))
+}
+
+/// 托盘「退出」。退出会杀掉 Meowo 托管的全部 agent 进程（见 lib.rs 的 RunEvent::Exit 收尾），
+/// 跑到一半的任务就断了，此前一点即退、没有任何提示。对照 Kimi Code 的退出确认：有托管会话
+/// 正在运行时先问一句，没有就直接退。等你回答 / 审批的会话不拦，恢复后进度不丢。
+pub(crate) fn request_quit(app: &tauri::AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // 确认框开着时再点一次「退出」不再弹第二个。
+    static ASKING: AtomicBool = AtomicBool::new(false);
+    if ASKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let count_app = app.clone();
+        // 查库、读设置都是文件 IO，放进 blocking 池。统计失败按「没在跑」处理：宁可照常退出，
+        // 也不能让「退出」点了没反应。
+        let (running, lang) = tauri::async_runtime::spawn_blocking(move || {
+            let running = crate::session_query::managed_running_now(&count_app).unwrap_or(0);
+            (running, ui_lang(&load_settings()))
+        })
+        .await
+        .unwrap_or((0, "zh"));
+        let quit = running <= 0 || {
+            let message = tr(lang, "quit.confirmMessage").replace("{n}", &running.to_string());
+            crate::confirm::ask(
+                app.clone(),
+                None,
+                tr(lang, "quit.confirmTitle").to_string(),
+                message,
+                true,
+                Some(tr(lang, "quit.confirmQuit").to_string()),
+            )
+            .await
+            // 确认框建不起来（理论上不发生）就照常退出：用户明确点了「退出」。
+            .unwrap_or(true)
+        };
+        ASKING.store(false, Ordering::SeqCst);
+        if quit {
+            app.exit(0);
+        }
+    });
 }
 
 #[cfg(all(test, target_os = "windows"))]

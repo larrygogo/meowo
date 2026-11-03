@@ -338,6 +338,7 @@ pub(crate) fn live_counts_now(
         &runtimes,
         &approvals,
         &screen_states,
+        &|_| true,
     )?;
     // 外库(安装版)会话也计入角标——列表并入了外库卡(get_live_sessions_page 的
     // include_foreign),数字必须与列表同视野,否则出现「待交互 0 但列表挂着一排
@@ -367,6 +368,8 @@ fn counts_for_store(
     runtimes: &SessionRuntimeIndex,
     approvals: &std::collections::HashSet<i64>,
     screen_states: &std::collections::HashMap<i64, super::pty::ScreenSight>,
+    // 只数哪些会话（running / waiting 两项；total / archived 不受它影响）。
+    keep: &dyn Fn(i64) -> bool,
 ) -> Result<meowo_store::query::LiveSessionCounts, String> {
     let (mut total, mut archived) = store.live_sessions_totals().map_err(|e| e.to_string())?;
     // 列表把后台会话整个藏了（见 hidden_background），总数也得同口径扣掉。不能只在
@@ -388,6 +391,9 @@ fn counts_for_store(
     let now = super::now_ms();
     let (mut running, mut waiting) = (0i64, 0i64);
     for candidate in candidates {
+        if !keep(candidate.id) {
+            continue;
+        }
         // 后台会话列表里看不到（enrich 无条件丢弃），running/waiting 也不能数——
         // 否则用户会对着一个找不到对应卡片的数字发懵。total 已在上面按同一口径扣过。
         if hidden_background(
@@ -446,6 +452,32 @@ fn counts_for_store(
     })
 }
 
+/// Meowo 自己托管、此刻正在运行的会话数（退出确认用：退出只会杀托管的 PTY，外部终端里
+/// 跑的不受影响，所以只数托管的）。「运行中」与看板角标同一口径（tab_class），等你回答 /
+/// 审批的不算：那些停着等人，退出后恢复会话不丢进度。启动中的占位会话算运行中。
+pub(crate) fn managed_running_now(app: &tauri::AppHandle) -> Result<i64, String> {
+    use tauri::Manager;
+    let state = app.state::<super::AppState>();
+    let pty_live = state.ptys.active_session_ids();
+    let approvals = state.ptys.approval_session_ids();
+    let screen_states = state.ptys.screen_states();
+    let pendings = state.ptys.pending_launches().len() as i64;
+    let alive = state.process_snapshots.snapshot();
+    let runtimes = state.session_runtimes.snapshot();
+    let store = super::open_store(&state.db_path)?;
+    let counts = counts_for_store(
+        &store,
+        &state.tx_cache,
+        &alive,
+        &pty_live,
+        &runtimes,
+        &approvals,
+        &screen_states,
+        &|id| pty_live.contains(&id),
+    )?;
+    Ok(counts.running + pendings)
+}
+
 /// 外库的角标贡献。打开/险闸/查询任何一步失败都返回 None(只数本库)。
 fn foreign_counts(
     own_db: &Path,
@@ -460,7 +492,17 @@ fn foreign_counts(
     }
     let empty = std::collections::HashSet::new();
     let no_screens = std::collections::HashMap::new();
-    counts_for_store(&store, tx_cache, alive, &empty, runtimes, &empty, &no_screens).ok()
+    counts_for_store(
+        &store,
+        tx_cache,
+        alive,
+        &empty,
+        runtimes,
+        &empty,
+        &no_screens,
+        &|_| true,
+    )
+    .ok()
 }
 
 #[tauri::command]

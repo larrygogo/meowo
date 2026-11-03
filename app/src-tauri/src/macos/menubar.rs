@@ -345,7 +345,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "website" => {
                 let _ = crate::settings::open_url(crate::settings::SITE_URL.to_string());
             }
-            "quit" => app.exit(0),
+            "quit" => crate::window::request_quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
