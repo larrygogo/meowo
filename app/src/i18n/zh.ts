@@ -412,6 +412,10 @@ export const zh = {
     reasoning: "思考过程",
     turnErrorContinue: "继续",
     turnErrorContinueText: "继续",
+    // 出错卡的下一步（对照 Kimi「原因 + 下一步」）：只给能自己解决的两类，其余照旧只有「继续」。
+    turnErrorLoginHint: "重新登录后点「继续」",
+    turnErrorLoginGo: "去登录",
+    turnErrorNetworkHint: "检查网络或代理后点「继续」",
     reasoningLive: "思考中…",
     turnToolDoing: {
       run: "正在运行命令",
@@ -1082,6 +1086,9 @@ export const zh = {
     "工具调用解析失败": "工具调用解析失败",
     "需要重新登录": "需要重新登录",
     "认证失败": "认证失败",
+    "无法连接 API": "无法连接 API",
+    "API 请求出错": "API 请求出错",
+    "回合出错": "回合出错",
   } as Record<string, string>,
   settings: {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」

@@ -906,6 +906,16 @@ pub(crate) fn classify_error(text: &str, synthetic: bool) -> Option<&'static str
     // mid-response. …」「API Error: upstream stream disconnected: unexpected EOF」
     // 「Unable to connect to API (ECONNRESET)」。都以固定前缀开头，synthetic 门内按前缀分两类。
     if synthetic {
+        // 本机 transcript 实拍（2026-11）：未登录时 CC 写「Not logged in · Please run /login」，
+        // 不以「Please run /login」开头，上面的规则漏判，会话就静静停着、出错卡也不出。
+        // 组织关了订阅入口时写「Your organization has disabled Claude subscription access…」。
+        // 两句都是短句开头、容易和正常回答撞上，故放在 synthetic 门内判。
+        if t.starts_with("Not logged in") {
+            return Some("需要重新登录");
+        }
+        if t.starts_with("Your organization has disabled") {
+            return Some("认证失败");
+        }
         if t.starts_with("Unable to connect to API") {
             return Some("无法连接 API");
         }
@@ -2655,6 +2665,22 @@ mod tests {
         assert_eq!(
             classify_error("Unable to connect to API (ECONNRESET)", true),
             Some("无法连接 API")
+        );
+        // 登录类（实拍文案）：未登录、组织关了订阅入口。门外不判，免得正常回答撞上。
+        assert_eq!(
+            classify_error("Not logged in · Please run /login", true),
+            Some("需要重新登录")
+        );
+        assert_eq!(
+            classify_error(
+                "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access",
+                true
+            ),
+            Some("认证失败")
+        );
+        assert_eq!(
+            classify_error("Not logged in · Please run /login", false),
+            None
         );
         // synthetic 的非错误插入文案（如队列消息「No response requested.」）不判错。
         assert_eq!(classify_error("No response requested.", true), None);

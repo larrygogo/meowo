@@ -4823,6 +4823,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 .chat-turn-error-label {
 .chat-turn-error-actions { display: flex; gap: var(--sp-8); margin-top: var(--sp-8); }
+/* 出错卡的下一步提示：比原文弱一档，读完原文再看该做什么。 */
+.chat-turn-error-hint { margin-top: var(--sp-6); color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-turn-error-continue { height: 30px; padding: 0 var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .chat-turn-error-continue:hover:not(:disabled) { background: var(--fill-hover); }
 .chat-turn-error-continue:disabled { opacity: .5; cursor: default; }
