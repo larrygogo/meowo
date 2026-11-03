@@ -127,6 +127,12 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
     user-select: none;
   }
 
+  /* 侧栏长按起拖（sidebarDrag）：iOS 长按会弹出系统的预览 / 拷贝浮层，盖住拖拽，关掉。 */
+  body.remote-ui .chat-sidebar-item,
+  body.remote-ui .chat-sidebar-group-head {
+    -webkit-touch-callout: none;
+  }
+
   /* 输入框/文本域放开选择与缩放,否则手机上无法选中已输入文本、粘贴不便。 */
   body.remote-ui input,
   body.remote-ui textarea {

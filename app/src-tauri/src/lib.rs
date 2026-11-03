@@ -127,7 +127,7 @@ use relay::{get_relay_secret_status, get_relay_secrets, list_relay_models, set_r
 use settings::{
     get_autostart, get_effective_proxy, get_settings, get_sticker_window_state,
     mark_onboarding_seen, open_link, open_url, set_autostart, set_settings,
-    set_sticker_window_state,
+    set_sticker_window_state, set_workspace_order,
 };
 use snap::{
     cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
@@ -1386,6 +1386,7 @@ pub fn run() {
             remote::regenerate_remote_token,
             push::test_bark_push,
             mark_onboarding_seen,
+            set_workspace_order,
             get_effective_proxy,
             get_relay_secret_status,
             get_relay_secrets,

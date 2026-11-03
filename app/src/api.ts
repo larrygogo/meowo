@@ -478,10 +478,16 @@ export function getSessionAdminPage(query: { workspaces: string[]; status: "all"
   });
 }
 
-/** 侧栏拖拽排序：把会话挪到 aboveId 正下方（没有 above 时挂到 belowId 正上方）。桌面专用，
- *  远程桥不开放（手机只按这个顺序显示）。 */
+/** 侧栏拖拽排序：把会话挪到 aboveId 正下方（没有 above 时挂到 belowId 正上方）。
+ *  桌面拖动、手机长按拖动共用（远程桥 MoveSessionRankArgs 同形）。 */
 export function moveSessionRank(sessionId: number, aboveId: number | null, belowId: number | null): Promise<void> {
   return invoke("move_session_rank", { sessionId, aboveId, belowId });
+}
+
+/** 写工作区分组的手动顺序。只碰 workspace_order 一个字段：手机也要能拖分组头，
+ *  而整份 setSettings 在远程是禁区（远程桥 SetWorkspaceOrderArgs 同形）。 */
+export function setWorkspaceOrder(order: string[]): Promise<void> {
+  return invoke("set_workspace_order", { order });
 }
 
 /** 归档 / 还原会话（键为 DB 数字主键，不是 cc_session_id）。 */
@@ -728,7 +734,7 @@ export type Settings = {
   remote_access_token: string;
   /** 手机推送（Bark）地址。空 = 不推送；会话需要关注时推到手机（后端 push.rs）。 */
   bark_url: string;
-  /** 侧栏工作区组的手动顺序（路径）。空 = 没排过。桌面拖分组头写入，手机只读。 */
+  /** 侧栏工作区组的手动顺序（路径）。空 = 没排过。桌面拖、手机长按拖分组头写入。 */
   workspace_order: string[];
   /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
   keep_awake_while_running: boolean;

@@ -239,7 +239,7 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) bark_url: String,
     /// 侧栏「按工作区分组 + 手动排序」时工作区组的顺序（路径，前端按斜杠 / 大小写归一后比较）。
-    /// 桌面侧栏拖分组头时写入；手机只读、按同一顺序显示。空 = 没排过，组序随组内会话位置。
+    /// 桌面拖、手机长按拖分组头时经 set_workspace_order 写入，两端按同一顺序显示。空 = 没排过，组序随组内会话位置。
     #[serde(default)]
     pub(crate) workspace_order: Vec<String>,
     /// 有会话在跑时防止电脑休眠（对照 Kimi「防止休眠」：电脑睡过去，跑到一半的 agent 就停了）。
@@ -642,6 +642,32 @@ pub(crate) async fn mark_onboarding_seen() -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 工作区分组的手动顺序（侧栏拖分组头）。单独开口子而不走 set_settings：手机页也要能拖，
+/// 而 set_settings 在远程是禁区（整份设置写入能反手开大暴露面），这里只碰这一个字段。
+/// 条数与单条长度设上限，防远程端塞超大载荷进 settings.json。
+#[tauri::command]
+pub(crate) async fn set_workspace_order(
+    app: tauri::AppHandle,
+    order: Vec<String>,
+) -> Result<(), String> {
+    const MAX_ENTRIES: usize = 1000;
+    const MAX_PATH_LEN: usize = 4096;
+    if order.len() > MAX_ENTRIES || order.iter().any(|p| p.len() > MAX_PATH_LEN) {
+        return Err("settings/workspace_order_too_large".into());
+    }
+    let settings = tauri::async_runtime::spawn_blocking(move || {
+        update_settings(|s| {
+            s.workspace_order = order;
+            Ok(s.clone())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    // 另一端（桌面 ↔ 手机）的侧栏靠 settings-changed / 轮询 get_settings 跟上新顺序。
+    let _ = app.emit("settings-changed", without_remote_token(settings));
+    Ok(())
 }
 
 /// `set_sticker_window_state` 落盘前的兜底钳值（与前端 windowState.ts 同口径）：尺寸须落在
