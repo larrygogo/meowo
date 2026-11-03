@@ -94,13 +94,33 @@ const HEIGHT: f64 = 208.0;
 pub(crate) async fn confirm_dialog(
     app: AppHandle,
     window: tauri::Window,
-    state: tauri::State<'_, super::AppState>,
     title: String,
     message: String,
     danger: Option<bool>,
     confirm_label: Option<String>,
 ) -> Result<bool, String> {
-    let confirms = state.confirms.clone();
+    ask(
+        app,
+        Some(window),
+        title,
+        message,
+        danger.unwrap_or(false),
+        confirm_label,
+    )
+    .await
+}
+
+/// 后端自己要问一句时用（如托盘「退出」时还有会话在跑）。`parent` 为 None 时没有所属窗口：
+/// 不禁用任何窗口，确认框居中在主屏。
+pub(crate) async fn ask(
+    app: AppHandle,
+    parent: Option<tauri::Window>,
+    title: String,
+    message: String,
+    danger: bool,
+    confirm_label: Option<String>,
+) -> Result<bool, String> {
+    let confirms = app.state::<super::AppState>().confirms.clone();
     let id = confirms.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, mut rx) = tauri::async_runtime::channel::<bool>(1);
     // 中毒恢复（与本文件其余取锁处及全仓策略一致）：确认框是删除/结束会话等破坏性操作的
@@ -115,7 +135,7 @@ pub(crate) async fn confirm_dialog(
                 ConfirmPayload {
                     title,
                     message,
-                    danger: danger.unwrap_or(false),
+                    danger,
                     confirm_label,
                 },
                 Some(tx),
@@ -135,12 +155,15 @@ pub(crate) async fn confirm_dialog(
     // 跟随父窗,且点击被禁用的父窗时系统会把焦点弹回本窗(配合下方 set_enabled)。
     // 拿不到对应 WebviewWindow(理论上不发生)就退化为独立置顶窗,不拦流程。
     #[cfg(any(windows, target_os = "macos"))]
-    let builder = match app.get_webview_window(window.label()) {
+    let builder = match parent
+        .as_ref()
+        .and_then(|window| app.get_webview_window(window.label()))
+    {
         Some(parent) => builder.parent(&parent).map_err(|error| {
             confirms.remove(id);
             error.to_string()
         })?,
-        None => builder,
+        None => builder.center(),
     };
     // macOS:无边框窗口不自动圆角,设透明由前端 .app-confirm.is-window 的 border-radius
     // 呈现(同设置/更新窗口)。
@@ -158,11 +181,13 @@ pub(crate) async fn confirm_dialog(
     // 副屏上时落点整体偏移(实拍:双屏下确认框弹到莫名其妙的位置,用户根本没察觉)。
     // 物理坐标是全桌面唯一坐标系,不经任何换算;此刻窗口还没 show,挪动不可见。
     // 任一项拿不到就留在系统默认落点。
-    if let (Ok(pos), Ok(size), Ok(scale)) = (
-        window.outer_position(),
-        window.outer_size(),
-        window.scale_factor(),
-    ) {
+    if let Some((Ok(pos), Ok(size), Ok(scale))) = parent.as_ref().map(|window| {
+        (
+            window.outer_position(),
+            window.outer_size(),
+            window.scale_factor(),
+        )
+    }) {
         let x = pos.x + ((size.width as f64 - WIDTH * scale) / 2.0).round() as i32;
         let y = pos.y + ((size.height as f64 - HEIGHT * scale) / 2.0).round() as i32;
         let _ = confirm_window.set_position(tauri::PhysicalPosition::new(x, y));
@@ -194,21 +219,27 @@ pub(crate) async fn confirm_dialog(
     // 一大截,视觉上凭空多出一块巨大灰板(实拍反馈)。mac 退化为置顶非模态,
     // 与 parent() 的子窗关系配合已足够把确认框钉在父窗前。
     #[cfg(not(target_os = "macos"))]
-    if confirms.parent_disabled(window.label()) {
-        let _ = window.set_enabled(false);
+    if let Some(window) = &parent {
+        if confirms.parent_disabled(window.label()) {
+            let _ = window.set_enabled(false);
+        }
     }
     let ok = rx.recv().await.unwrap_or(false);
     confirms.remove(id);
     // 先恢复父窗、再关模态窗(Win32 模态收尾定式):顺序反了的话,销毁瞬间系统找不到
     // 可激活的所属窗口,焦点会飞到别的应用。收尾后把焦点交还父窗。
     #[cfg(not(target_os = "macos"))]
-    if confirms.parent_released(window.label()) {
-        let _ = window.set_enabled(true);
+    if let Some(window) = &parent {
+        if confirms.parent_released(window.label()) {
+            let _ = window.set_enabled(true);
+        }
     }
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.close();
     }
-    let _ = window.set_focus();
+    if let Some(window) = &parent {
+        let _ = window.set_focus();
+    }
     Ok(ok)
 }
 
