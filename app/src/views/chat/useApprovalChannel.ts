@@ -80,6 +80,10 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
   // 事实本身。收起后的折叠条要靠它判活（7C-2 尾，复核指出：题面被收起后若在终端答掉
   // 或超时，折叠条会永远挂着，点开是一张已死的卡）。
   const [liveQuestionId, setLiveQuestionId] = useState<string | null>(null);
+  // 用户「仅收起」的那张题面卡的 requestId。挂起还在后端表里，下面的轮询每拍都会取回它；
+  // 不认这个 id 的话，收起的卡 2.5s 内就被塞回来（用户实拍：卡关不掉，又盖住终端里的
+  // 真表单，两头都答不了）。由 ChatWindow 在收起/展开时维护。
+  const collapsedQuestionIdRef = useRef<string | null>(null);
   // 非当前会话的待授权请求：侧边栏亮徽标召唤用户自己过去。注意后端 **会** 为 broker 接管的
   // 审批把窗口切到目标会话（见 pty.rs 的 ensure_approval_window，不切的代价是请求 10s 后
   // 回落 TUI），所以这里是兜底：切换竞态期间、以及消费者已注册在别的会话时到达的请求。
@@ -141,7 +145,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
       // 已有同一 requestId 的题面卡时不重复设置，避免打断点选状态；answerable 翻转
       // （挂起结算/超时 → 作答卡降级为展示卡）必须放行——它正是靠这条轮询传递的。
       setLiveQuestionId(question ? question.requestId : null);
-      if (question) {
+      if (question && question.requestId !== collapsedQuestionIdRef.current) {
         setStructuredQuestion((current) => {
           if (
             current?.requestId === question.requestId
@@ -301,5 +305,6 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     brokerOwnsReview, setBrokerOwnsReview,
     // 交出去给消解逻辑清空:卡了结时必须连领养暂存一起清,否则切走再切回弹幽灵卡。
     lastInteractiveQuestionRef,
+    collapsedQuestionIdRef,
   };
 }

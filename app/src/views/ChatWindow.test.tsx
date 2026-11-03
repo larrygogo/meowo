@@ -3479,6 +3479,19 @@ describe("ChatWindow", () => {
     // 判活逻辑自己秒清（复核实测 2.5s 内），恢复入口没了——只断言「折叠条出现过」抓不住
     // 那条回归（最终态同样是消失），得直接钉住「没去清后端表」。
     expect(dismissCalls()).toBe(0);
+    // 挂起还在，轮询每拍都会取回它：收起的卡不能被轮询塞回来（用户实拍：卡关不掉，
+    // 又盖住终端里的真表单）。等过两拍轮询再看。
+    const pollsBefore = invoke.mock.calls.filter((call) => call[0] === "pending_interaction").length;
+    await waitFor(
+      () => expect(invoke.mock.calls.filter((call) => call[0] === "pending_interaction").length).toBeGreaterThan(pollsBefore + 1),
+      { timeout: 8_000 },
+    );
+    expect(screen.queryByText(/接下来做哪一步/)).toBeNull();
+    // 折叠条展开照常，再收起一次留给下面的了结断言。
+    fireEvent.click(screen.getByRole("button", { name: "已收起提问，点击展开" }));
+    expect(await screen.findByText(/接下来做哪一步/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "仅收起" }));
+    expect(await screen.findByRole("button", { name: "已收起提问，点击展开" })).toBeTruthy();
 
     // 在终端答掉/超时：下一轮轮询回 question:null，折叠条必须自己消失。
     questionAlive = false;

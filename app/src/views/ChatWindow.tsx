@@ -473,7 +473,7 @@ export function ChatWindow() {
     structuredQuestion, setStructuredQuestion, liveQuestionId,
     approvalAwaitingIds, setApprovalAwaitingIds,
     brokerOwnsReview, setBrokerOwnsReview,
-    lastInteractiveQuestionRef,
+    lastInteractiveQuestionRef, collapsedQuestionIdRef,
   } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
   interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current);
   const isCurrentOperation = () => mountedRef.current && activeSessionRef.current === sessionId
@@ -3208,6 +3208,7 @@ export function ChatWindow() {
     // liveQuestionId 变 null、判活逻辑把折叠条**自己秒杀**（复核实测：收起后 2.5s 内
     // 恢复入口就没了）。收起这一次要让它跳过——挂起还在，只是卡收起来了。
     collapsingQuestionRef.current = true;
+    collapsedQuestionIdRef.current = structuredQuestion?.requestId ?? null;
     setDismissedQuestion(structuredQuestion);
     setStructuredQuestion(null);
   };
@@ -3218,6 +3219,10 @@ export function ChatWindow() {
     if (!dismissedQuestion) return;
     if (liveQuestionId !== dismissedQuestion.requestId) setDismissedQuestion(null);
   }, [liveQuestionId, dismissedQuestion]);
+  // 折叠条没了（展开/了结/换会话），轮询就不必再替它挡同一个 requestId。
+  useEffect(() => {
+    if (!dismissedQuestion) collapsedQuestionIdRef.current = null;
+  }, [dismissedQuestion, collapsedQuestionIdRef]);
   // 审批卡门控：插件声明了详情文法风格（details）的提示才走命令审批卡——不再枚举 pattern id。
   // 框线式没认出 ● 焦点时不出选项按钮(相对移动起点未知);此时退回通用卡,至少还有 Esc/Enter。
   const commandAttention = terminalAttention && terminalAttention.details && terminalAttention.details !== "none"
