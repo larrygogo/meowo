@@ -577,13 +577,33 @@ pub fn read_subagent_chat(
         .locate_streams(main_transcript, tool_use_id)
         .into_iter()
         .filter_map(|stream| {
+            let mut items = read_stream(subagents, &stream.path)?;
+            items.retain(|item| !is_inherited_launch(item, tool_use_id));
             Some(SubagentRun {
                 label: stream.label,
                 status: stream.status,
-                items: read_stream(subagents, &stream.path)?,
+                items,
             })
         })
         .collect()
+}
+
+/// 侧车流里「派出这个子任务」那一截，不属于子任务自己的工作，展示时去掉。
+///
+/// claude 的 fork 子任务继承父会话上下文（实拍 2.1.317，侧车头 4 行）：
+/// `fork-context-ref` 引用行，之后是父会话里**派出它的那条 Agent 调用**（id 与主链完全
+/// 相同），再是回执「Fork started — that fork is you.」，以及同一行里一大段
+/// `<fork-boilerplate>` 说明。前端时间线见到 Agent 调用就挂子任务块、展开又按同一个
+/// id 拉回同一份侧车——自己套自己，无限嵌套（用户实拍反馈）。
+///
+/// 按 id 判而不按文案：任何 provider 的侧车里出现「派出自己」的调用与回执都是父链回声。
+fn is_inherited_launch(item: &ChatItem, launch_id: &str) -> bool {
+    match item {
+        ChatItem::ToolUse { id, .. } => id == launch_id,
+        ChatItem::ToolResult { tool_use_id, .. } => tool_use_id.as_deref() == Some(launch_id),
+        ChatItem::UserText { text, .. } => text.trim_start().starts_with("<fork-boilerplate>"),
+        _ => false,
+    }
 }
 
 /// 实测一次**未结**委派此刻的状态——主链回执还没落盘时的唯一来源。

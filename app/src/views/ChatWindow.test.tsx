@@ -998,6 +998,36 @@ describe("ChatWindow", () => {
     expect(invoke.mock.calls.filter(([command]) => command === "get_subagent_transcript").length).toBe(calls);
   });
 
+  it("子任务时间线里出现派出它自己的调用（fork 回声）时不再嵌套", async () => {
+    window.history.replaceState({}, "", "/?sessionId=9");
+    const launch = {
+      type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "web 端重测",
+      subagent: { description: "web 端重测", agent_type: "fork", count: 1 },
+    };
+    invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 9, title: "派活", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 10, reset: false, pendingReview: null,
+        items: (args.offset as number) >= 10 ? [] : [{ type: "user_text", id: "u1", timestamp: null, text: "查一下" }, launch],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 9, active: false, managed: false, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
+      // fork 的侧车开头带着派出它的那条调用，与主链同 id（实拍 2.1.317）。后端已滤掉；
+      // 这里模拟格式变了没滤掉的情况，前端不得再挂子任务块，否则展开又拉回自己，无限嵌套。
+      if (command === "get_subagent_transcript") return Promise.resolve([{ label: "agent-0", status: "running", items: [launch] }]);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const details = (await screen.findByText("web 端重测")).closest("details")!;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_subagent_transcript", { sessionId: 9, toolUseId: "toolu_1" }));
+    await waitFor(() => expect(document.querySelector(".chat-subagent-scroll")).toBeTruthy());
+    expect(document.querySelectorAll(".chat-subagent")).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([command]) => command === "get_subagent_transcript")).toHaveLength(1);
+  });
+
   it("不展开也显示子任务状态：无回执=在跑，有回执=按结局统计", async () => {
     window.history.replaceState({}, "", "/?sessionId=17");
     const swarm = {

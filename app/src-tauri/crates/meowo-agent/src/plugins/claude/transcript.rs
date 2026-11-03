@@ -3487,6 +3487,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// fork 子任务的侧车开头是父链回声（实拍 2.1.317）：派出它的 Agent 调用（与主链同 id）、
+    /// 「Fork started」回执、`<fork-boilerplate>` 说明。不去掉的话前端见调用就挂子任务块、
+    /// 展开又拉回这份侧车，无限嵌套（用户实拍反馈）。只留子任务自己的输出。
+    #[test]
+    fn fork_subagent_stream_drops_inherited_launch() {
+        let root = std::env::temp_dir().join(format!("claude-fork-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let project = root.join("projects/proj");
+        let main = project.join("session-1.jsonl");
+        let subagents = project.join("session-1/subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        std::fs::write(&main, "").unwrap();
+        std::fs::write(
+            subagents.join("agent-f1.meta.json"),
+            r#"{"agentType":"fork","isFork":true,"description":"重测","toolUseId":"toolu_fork","spawnDepth":1}"#,
+        )
+        .unwrap();
+        let lines = [
+            r#"{"type":"fork-context-ref","agentId":"f1","parentSessionId":"p","parentLastUuid":"u0","contextLength":456}"#,
+            r#"{"parentUuid":null,"isSidechain":true,"agentId":"f1","type":"assistant","uuid":"a1","timestamp":"2026-11-03T06:28:09.635Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fork","name":"Agent","input":{"description":"重测","subagent_type":"fork","prompt":"重测一下"}}]}}"#,
+            r#"{"parentUuid":"a1","isSidechain":true,"agentId":"f1","type":"user","uuid":"u1","timestamp":"2026-11-03T06:28:09.646Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fork","content":[{"type":"text","text":"Fork started — that fork is you."}]},{"type":"text","text":"<fork-boilerplate>\nYou are a worker fork.\n</fork-boilerplate>"}]}}"#,
+            r#"{"parentUuid":"u1","isSidechain":true,"agentId":"f1","type":"assistant","uuid":"a2","timestamp":"2026-11-03T06:28:10.937Z","message":{"role":"assistant","content":[{"type":"text","text":"重测完成"}]}}"#,
+        ];
+        std::fs::write(subagents.join("agent-f1.jsonl"), lines.join("\n") + "\n").unwrap();
+
+        let runs = crate::transcript::read_subagent_chat(&CLAUDE_TRANSCRIPT, &main, "toolu_fork");
+        let items = &runs[0].items;
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, ChatItem::ToolUse { id, .. } if id == "toolu_fork")),
+            "派出自己的调用不能留在子任务时间线里，实际：{items:?}"
+        );
+        assert!(
+            matches!(items.as_slice(), [ChatItem::AssistantText { text, .. }] if text == "重测完成"),
+            "只剩子任务自己的输出，实际：{items:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 主 agent 正忙时后台任务的完成通知走排队送入——不落 user 行,记成 queued_command
     /// attachment(实拍取证)。必须同款转译成合成回执:不认它,子任务徽标永远「运行中」,
     /// 通知原文还会以一坨 XML 出现在时间线里。
