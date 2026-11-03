@@ -3703,6 +3703,9 @@ select.ns-input {
 /* 顶栏高度不随 --cc-ui：窗口 chrome（拖拽带/窗口控制钮/mac 红绿灯带）保持固定几何，
    栏内文字走 --fs-* 阶梯，1.12 倍下 15px 标题在 44px 行高内仍有余量。 */
 .chat-bar {
+  /* 窄窗口按标题行自身宽度逐级收起次要信息（见文件后部 @container chat-bar），
+     与侧栏宽窄无关：侧栏展开时主列同样会变窄。 */
+  container: chat-bar / inline-size;
   height: var(--chat-bar-h);
   padding: 0 var(--sp-18) 0 var(--sp-22);
   display: flex;
@@ -3735,6 +3738,25 @@ select.ns-input {
 .chat-title-project { flex: 0 1 auto; min-width: 2em; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-base); cursor: default; user-select: none; }
 .chat-title-sep { flex: none; color: var(--cc-text-faint); opacity: .6; user-select: none; }
 .chat-title-menu .chat-title { flex: 0 1 auto; min-width: 0; }
+/* 标题优先（窄窗实拍：标题挤成「m...」，分支名、PR 状态却完整摆着）。flex:1 的起始
+   宽度是 0，标题只能分到别人剩下的；改成按内容起步并保底一段宽度，分支胶囊再用大
+   收缩系数先让位（分支名自带省略号）。 */
+.chat-title-menu { flex: 1 1 auto; min-width: min(16em, 40cqi); }
+.chat-bar .tb-git { flex-shrink: 1000; }
+/* 再窄就整项收起，按重要程度：PR 状态字与领先/落后计数 → PR 胶囊、分支名、项目名 →
+   「用编辑器打开」。改动数仍留在分支图标旁；PR 与分支在侧边面板的改动页里都看得到。
+   选择器带 .chat-bar 前缀：.tb-pr 等的 display 声明写在本段之后，同特异性会盖掉这里。 */
+@container chat-bar (max-width: 760px) {
+  .chat-bar .tb-pr-state, .chat-bar .tb-git-pill.is-ahead, .chat-bar .tb-git-pill.is-behind { display: none; }
+}
+@container chat-bar (max-width: 620px) {
+  .chat-bar .tb-pr, .chat-bar .tb-git-branch, .chat-bar .chat-title-project, .chat-bar .chat-title-sep { display: none; }
+  /* 分支名收起后只剩图标与改动数，按内容保底，否则改动数会压到旁边的终端钮上。 */
+  .chat-bar .tb-git { min-width: auto; }
+}
+@container chat-bar (max-width: 480px) {
+  .chat-bar .tb-open { display: none; }
+}
 .chat-title-actions { min-width: 200px; }
 .chat-title-actions .dd-item { justify-content: flex-start; gap: var(--sp-8); padding: var(--sp-7) var(--sp-10); }
 .chat-title-actions .dd-item:disabled { opacity: .5; cursor: default; }
