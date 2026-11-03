@@ -4067,6 +4067,14 @@ select.ns-input {
   border-top-left-radius: var(--r-12);
   overflow: hidden;
 }
+/* 侧栏没停靠（窄窗抽屉 / 手动收起）时左侧没有要分界的东西，左边线和圆角只剩一道悬空的
+   弧（用户实拍「小窗口这里就不要圆角了」）：主列贴边铺满，只留与顶栏之间那条横线。
+   改动面板最大化时顶替主列的位置，同理。 */
+:root:not(.platform-macos) .chat-window.is-sidebar-undocked .chat-main,
+:root:not(.platform-macos) .chat-window.is-sidebar-undocked .chat-body.is-diff-max .chat-diff-panel {
+  border-left: 0;
+  border-top-left-radius: 0;
+}
 /* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 18,18,18 之上叠一层
    --cc-surface ≈ #1f1f1f），卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
 :root:not(.platform-macos) .chat-window.is-terminal .chat-main,

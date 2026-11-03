@@ -3623,7 +3623,7 @@ export function ChatWindow() {
   );
 
   return (
-    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "")}>
+    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "")}>
       <DevBadge />
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
