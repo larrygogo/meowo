@@ -4125,7 +4125,9 @@ select.ns-input {
    会盖过 UA 的 [hidden]{display:none}，必须显式压回。 */
 .chat-sidebar-scrim[hidden],
 .chat-sidebar-overlay[hidden] { display: none; }
-.chat-sidebar-overlay-head { height: 42px; flex: 0 0 auto; display: flex; align-items: center; padding: 0 var(--sp-12); }
+.chat-sidebar-overlay-head { height: 42px; flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); padding: 0 var(--sp-12); }
+/* 左上角 logo：顶栏与抽屉头部各一枚、同尺寸同间距，开关钮位置两边一致。 */
+.chat-app-logo { flex: none; width: 18px; height: 18px; margin: 0 var(--sp-2); user-select: none; }
 /* macOS：抽屉从窗口最顶展开，头部按钮必须给左上角的原生红绿灯让位（与其余 mac 头部同规）。 */
 :root.platform-macos .chat-sidebar-overlay-head { padding-left: 84px; }
 .chat-window .chat-sidebar-overlay .chat-sidebar { flex: 1; min-height: 0; width: 100%; background: transparent; border-right: 0; }

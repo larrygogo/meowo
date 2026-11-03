@@ -94,6 +94,7 @@ import { Dropdown, useMenuPopup } from "./menu";
 import { listAgents, type AgentDescriptor } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
+import appLogoUrl from "../../src-tauri/icons/64x64.png";
 
 
 /** 远程刷新后回到上次看的会话(桌面开窗恒带 ?sessionId,不落到这条)。 */
@@ -3610,6 +3611,8 @@ export function ChatWindow() {
   // 手机远程用「列表 ↔ 对话」导航；其余平台保留侧栏折叠/展开按钮。
   // 独立顶栏与标题行在手机合并为一行，避免窗口控制与刘海安全区吃掉过多高度。
   const compactChrome = remoteUi() && narrow;
+  // 窗口左上角的应用 logo（用户要求）。只是标识，不可点；同样是拖拽区，按住它照样能拖窗。
+  const appLogo = <img className="chat-app-logo" src={appLogoUrl} width={18} height={18} alt="" draggable={false} data-tauri-drag-region />;
   const sidebarToggleButton = (
     <button
       type="button"
@@ -3656,6 +3659,7 @@ export function ChatWindow() {
           （unify_titlebar_toolbar 垂直居中），布局保持原样不动。 */}
       {!isMac() && !compactChrome && !remoteListMode && (
         <header className="chat-topbar" data-tauri-drag-region>
+          {appLogo}
           {sidebarToggleButton}
           {/* 最小化/最大化/关闭是桌面窗口能力,手机浏览器没有可控窗口——远程隐藏。 */}
           {!remoteUi() && <WindowControls onClose={close} />}
@@ -3668,7 +3672,8 @@ export function ChatWindow() {
         <>
           <div className="chat-sidebar-scrim" hidden={!overlaySidebar} onClick={() => setOverlaySidebar(false)} />
           <div className="chat-sidebar-overlay" hidden={!overlaySidebar}>
-            <div className="chat-sidebar-overlay-head">{sidebarToggleButton}</div>
+            {/* 与顶栏同样先摆 logo：开关钮才和顶栏里那颗对齐，抽屉展开时看起来原地不动。 */}
+            <div className="chat-sidebar-overlay-head">{appLogo}{sidebarToggleButton}</div>
             <ChatSidebar
               activeId={newSessionOpen ? 0 : sessionId}
               newSessionActive={newSessionOpen != null}
