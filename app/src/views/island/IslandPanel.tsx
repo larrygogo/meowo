@@ -1,6 +1,6 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
-// 第 1 页：最要紧的几个会话（不放额度，用户要求会话页只看会话）；第 2 页（有额度数据才有）：各 agent 的额度。
-// 完整列表（搜索、菜单、归档……）不塞进这里：右上「全部」打开原来的贴纸列表。
+// 前几页：会话，按要紧程度每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
+// 各 agent 的额度。完整列表（搜索、菜单、归档……）不塞进这里，从托盘「找回贴纸」进。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
@@ -11,7 +11,7 @@ import { byUrgency, sessionTitle } from "../Island";
 import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 
-/// 面板上最多列几个会话。更多的去「全部」里看。
+/// 每页列几个会话。面板去掉「全部」按钮后，多于这个数的会话翻页看（左右箭头 / 圆点）。
 const MAX_ROWS = 3;
 
 /// 用量页的泳道顺序：短窗口在前，再是周/7 天，再是模型专属周限，其余殿后。
@@ -53,12 +53,16 @@ export function IslandPanel({
   const now = useNow();
   const panelRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(initialPage);
-  const rows = useMemo(() => byUrgency(sessions).slice(0, MAX_ROWS), [sessions]);
+  const ordered = useMemo(() => byUrgency(sessions), [sessions]);
+  // 会话分页：每页 MAX_ROWS 个，至少一页（空态也占一页）；用量页排在最后。
+  const sessionPages = Math.max(1, Math.ceil(ordered.length / MAX_ROWS));
   // 用量页按「显示配额」的设置顺序排，设置里没有的殿后。
   const usageProviders = [...quotaProviders, ...Object.keys(usage)]
     .filter((p, i, all) => all.indexOf(p) === i && primaryLane(usage[p]) != null);
-  const pages = usageProviders.length > 0 ? 2 : 1;
+  const pages = sessionPages + (usageProviders.length > 0 ? 1 : 0);
   const current = Math.min(page, pages - 1);
+  const onUsagePage = current >= sessionPages;
+  const rows = ordered.slice(current * MAX_ROWS, current * MAX_ROWS + MAX_ROWS);
 
   useLayoutEffect(() => {
     const el = panelRef.current;
@@ -89,7 +93,7 @@ export function IslandPanel({
       <div ref={panelRef} className={`isl-notch isl-panel${pages > 1 ? " is-paged" : ""}`}>
         <div className="isl-panel-head" onPointerDown={onPointerDownDrag}>
           <span className="isl-panel-title">
-            Meowo <span className="isl-accent">{current === 0 ? t.island.panelSessions : t.island.panelUsage}</span>
+            Meowo <span className="isl-accent">{onUsagePage ? t.island.panelUsage : t.island.panelSessions}</span>
           </span>
           <span className="isl-panel-meta">
             {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}
@@ -97,7 +101,7 @@ export function IslandPanel({
           </span>
         </div>
 
-        {current === 0 ? (
+        {!onUsagePage ? (
           <div className="isl-panel-body">
             <div className="isl-rows">
               {rows.length === 0 && <div className="isl-empty">{t.island.idle}</div>}

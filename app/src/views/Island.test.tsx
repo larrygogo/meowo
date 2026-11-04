@@ -336,6 +336,20 @@ describe("IslandPanel 展开面板", () => {
       />,
     );
 
+  it("会话多于 3 个时翻页看：每页 3 个，最后是用量页", () => {
+    const sessions = Array.from({ length: 5 }, (_, i) => mk({ task_title: `第${i + 1}个`, lastEventAt: 10_000 - i }));
+    const usage = { claude: { lanes: [lane("five_hour", 43)], note: null } } as unknown as Record<string, ProviderUsage>;
+    const { container } = renderPanel({ sessions, usage });
+    const titles = () => [...container.querySelectorAll(".isl-row-title")].map((el) => el.textContent);
+    expect(titles()).toEqual(["第1个", "第2个", "第3个"]);
+    expect(container.querySelectorAll(".isl-dots-nav button")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: zh.island.nextPage }));
+    expect(titles()).toEqual(["第4个", "第5个"]);
+    fireEvent.click(screen.getByRole("button", { name: zh.island.nextPage }));
+    expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(1);
+    expect(screen.getByText(zh.island.panelUsage)).toBeTruthy();
+  });
+
   it("最多列 3 个最要紧的会话，点一行打开它", () => {
     const onOpenSession = vi.fn();
     const pending = mk({ pending_review: "approval", task_title: "要批的" });
