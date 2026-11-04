@@ -44,6 +44,8 @@ const ISLAND_ALERT_MS_DEFAULT = 6_000;
 function islandAlertSwitch(kind: string): string {
   return kind === "plan" || kind === "blocked" ? "approval" : kind;
 }
+/// 鼠标从提醒上移开后，提醒再留多久才缩回。
+const ISLAND_ALERT_LINGER_MS = 3_000;
 /// 收回动画时长，与 styles.css 的 .island-shell.is-leaving 同源。
 const ISLAND_LEAVE_MS = 180;
 
@@ -527,6 +529,23 @@ export function App() {
   }, [grow]);
 
   // 提醒排队：一次只弹一条，弹完缩回再弹下一条。
+  // 提醒到点缩回胶囊，再弹队列里的下一条。pumpAlert 经 ref 取，两者互相引用。
+  const pumpAlertRef = useRef<() => void>(() => {});
+  const finishAlert = useCallback(() => {
+    alertTimerRef.current = null;
+    if (islandModeRef.current !== "alert") return;
+    setAlert(null);
+    islandModeRef.current = "compact";
+    setIslandMode("compact");
+    layoutCompact()
+      .catch(() => {})
+      // 两条提醒之间留一拍，别让人以为是同一条换了字。
+      .finally(() => window.setTimeout(() => pumpAlertRef.current(), 300));
+  }, [layoutCompact]);
+  const armAlertTimer = useCallback((ms: number) => {
+    if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
+    alertTimerRef.current = window.setTimeout(finishAlert, ms);
+  }, [finishAlert]);
   const pumpAlert = useCallback(() => {
     if (islandModeRef.current !== "compact" || alertTimerRef.current != null) return;
     const next = alertQueueRef.current.shift();
@@ -535,18 +554,20 @@ export function App() {
     islandModeRef.current = "alert";
     setIslandMode("alert");
     layout(ISLAND_ALERT_SIZE.width, ISLAND_ALERT_SIZE.height).catch((err) => console.error("[island] 弹出提醒失败：", err));
-    alertTimerRef.current = window.setTimeout(() => {
+    armAlertTimer(islandAlertMsRef.current);
+  }, [layout, armAlertTimer]);
+  pumpAlertRef.current = pumpAlert;
+  // 鼠标停在提醒上：倒计时暂停，提醒一直留着；移开后再留 ISLAND_ALERT_LINGER_MS 给人去点。
+  // 此前停上去会触发「悬停展开」，提醒被换成面板，还没看完就没了（用户反馈）。
+  const onAlertHover = useCallback((hovering: boolean) => {
+    if (islandModeRef.current !== "alert") return;
+    if (hovering) {
+      if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
       alertTimerRef.current = null;
-      if (islandModeRef.current !== "alert") return;
-      setAlert(null);
-      islandModeRef.current = "compact";
-      setIslandMode("compact");
-      layoutCompact()
-        .catch(() => {})
-        // 两条提醒之间留一拍，别让人以为是同一条换了字。
-        .finally(() => window.setTimeout(pumpAlert, 300));
-    }, islandAlertMsRef.current);
-  }, [layout, layoutCompact]);
+    } else {
+      armAlertTimer(ISLAND_ALERT_LINGER_MS);
+    }
+  }, [armAlertTimer]);
 
   useEffect(() => {
     if (isMacPanel()) return;
@@ -864,6 +885,7 @@ export function App() {
       onActivate={expand}
       onOpenSession={openSession}
       onPointerDownDrag={onPillPointerDown}
+      onAlertHover={onAlertHover}
     />
   );
 }

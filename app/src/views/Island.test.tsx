@@ -186,6 +186,25 @@ describe("Island 提醒", () => {
     expect(onActivate).not.toHaveBeenCalled();
   });
 
+  // 用户反馈：鼠标移上提醒，提醒就被换成展开面板，还没看完就没了。提醒在场时悬停只留住它。
+  it("鼠标停在提醒上只报告「在看」，不触发展开", () => {
+    vi.useFakeTimers();
+    const onHoverIntent = vi.fn();
+    const onAlertHover = vi.fn();
+    const { container } = renderIsland({
+      alert: { sessionId: 3, kind: "approval", title: "批一下", project: "p", detail: null },
+      onHoverIntent,
+      onAlertHover,
+    });
+    const notch = container.querySelector(".isl-notch")!;
+    fireEvent.pointerEnter(notch);
+    vi.advanceTimersByTime(1_000);
+    expect(onAlertHover).toHaveBeenLastCalledWith(true);
+    expect(onHoverIntent).not.toHaveBeenCalled();
+    fireEvent.pointerLeave(notch);
+    expect(onAlertHover).toHaveBeenLastCalledWith(false);
+  });
+
   it("未命名会话的提醒显示「等待首次输入」", () => {
     renderIsland({ alert: { sessionId: 1, kind: "waiting", title: "(未命名会话)", project: "p", detail: null } });
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

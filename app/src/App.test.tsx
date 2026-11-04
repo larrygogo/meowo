@@ -351,6 +351,29 @@ describe("App", () => {
     expect(await screen.findByText("计划待确认")).toBeTruthy();
   });
 
+  it("鼠标停在提醒上提醒不走；移开后几秒才缩回", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { container } = render(<App />);
+      await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+      act(() => {
+        emitIslandAlert({ payload: { sessionId: 5, kind: "approval", title: "停住看看", project: "p", detail: null } });
+      });
+      expect(await screen.findByText("停住看看")).toBeTruthy();
+      const notch = container.querySelector(".isl-notch")!;
+      fireEvent.pointerEnter(notch);
+      // 远超默认停留 6 秒：人在看，提醒不走，也没被换成展开面板。
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(screen.getByText("停住看看")).toBeTruthy();
+      expect(container.querySelector(".isl-panel")).toBeNull();
+      fireEvent.pointerLeave(notch);
+      await act(async () => { vi.advanceTimersByTime(3_500); });
+      await waitFor(() => expect(screen.queryByText("停住看看")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("展开着的时候不弹提醒（人就在看列表）", async () => {
     render(<App />);
     await expandIsland();

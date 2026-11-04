@@ -97,6 +97,7 @@ export function Island({
   onActivate,
   onOpenSession,
   onPointerDownDrag,
+  onAlertHover,
 }: {
   sessions: readonly Item[];
   compactStyle: IslandCompactStyle;
@@ -113,6 +114,8 @@ export function Island({
   onOpenSession: (sessionId: number) => void;
   /** 按下胶囊：交给 App 判断是点击还是左右拖动。 */
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
+  /** 鼠标进出提醒：App 据此暂停/恢复提醒的倒计时。 */
+  onAlertHover?: (hovering: boolean) => void;
 }) {
   const t = useT();
   const now = useNow();
@@ -210,9 +213,17 @@ export function Island({
         aria-label={t.island.ariaLabel}
         onPointerEnter={() => {
           clearHover();
+          // 提醒在场时悬停只是「我在看」：留住提醒，不展开（展开会把提醒换成面板）。
+          if (alert) {
+            onAlertHover?.(true);
+            return;
+          }
           hoverTimer.current = window.setTimeout(() => { hoverTimer.current = null; onHoverIntent(); }, 250);
         }}
-        onPointerLeave={clearHover}
+        onPointerLeave={() => {
+          clearHover();
+          if (alert) onAlertHover?.(false);
+        }}
         onPointerDown={(event) => {
           clearHover();
           onPointerDownDrag(event);
