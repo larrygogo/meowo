@@ -5447,6 +5447,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    见 .chat-compose 的注释）。上一条与它同特异性且写在后面，会把它降成 1——模型/斜杠菜单
    向上探出时就被「回到最新」浮钮压住（实拍）。 */
 .chat-dock > .chat-compose { z-index: 9; }
+/* Apple 的 WebKit 一律退回普通圆角：iOS 27.3 Safari 实拍（2026-11-04），带 superellipse 的
+   corner-shape 让整个输入框不绘制——排版、命中都在（点得进 textarea），只是看不见，留一块空白；
+   改回 round 立刻恢复。用 -apple-system-body 字体关键字认 WebKit：Chromium（Windows 的 WebView2）
+   不认这个值，桌面端超椭圆照旧。macOS WKWebView 同内核，一起退。 */
+@supports (font: -apple-system-body) {
+  .chat-compose, .nsp-composer { corner-shape: round; }
+}
 /* 内缩 16px（对照 Kimi：padding = dock-inline + space-4）：输入框圆角 32px，胶囊贴着外框边缘会悬在弧线上方，视觉上像错位。 */
 .dock-workbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-6); width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-6); padding: 0 var(--sp-16); box-sizing: border-box; }
 /* 胶囊不做全圆（对照 Kimi：只有徽标/开关全圆，控件一律圆角矩形；停靠栏胶囊 10px）。 */
