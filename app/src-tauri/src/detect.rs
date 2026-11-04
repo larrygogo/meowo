@@ -1112,14 +1112,21 @@ mod tests {
         // 先跑一次让正则进缓存（首次编译不计入——线上也只付一次）。
         let _ = evaluate("codex", &snap);
 
-        let rounds = 200;
-        let started = std::time::Instant::now();
-        for _ in 0..rounds {
-            let _ = evaluate("claude", &snap);
-            let _ = evaluate("codex", &snap);
-            let _ = evaluate("kimi", &snap);
-        }
-        let per_eval = started.elapsed() / (rounds * 3);
+        // 分批计时取最快一批：整体平均会被 CI 共享机器的一次抢占拉高（macOS CI 实测
+        // 1.09ms 误报）。缓存失效时每一批都慢，最快那批照样超标，拦截能力不变。
+        let (batches, rounds) = (10u32, 20u32);
+        let per_eval = (0..batches)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                for _ in 0..rounds {
+                    let _ = evaluate("claude", &snap);
+                    let _ = evaluate("codex", &snap);
+                    let _ = evaluate("kimi", &snap);
+                }
+                started.elapsed() / (rounds * 3)
+            })
+            .min()
+            .unwrap();
         // 阈值取 1ms：实测在开发机上是微秒级，留足 CI 慢机器的余量，只拦「缓存失效」
         // 这种量级的退化（重编译正则会让单次跳到几十微秒以上并随规则数线性增长）。
         assert!(
