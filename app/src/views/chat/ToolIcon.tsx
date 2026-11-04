@@ -40,6 +40,11 @@ export function ToolIcon({ name }: { name: string }) {
 
 /// 工具行的简短动作名（对齐 Kimi 的 tools.label.*）：运行/读取/写入/编辑…
 export function toolShortName(name: string, kind: ToolKind, t: ReturnType<typeof useT>): string {
-  if (kind === "other") return name;
+  if (kind === "other") {
+    // MCP 工具原名是 `mcp__<服务>__<工具>`，双下划线读着像乱码（本机近两周出现数百次）。
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+    if (mcp) return `${mcp[1]} · ${mcp[2]}`;
+    return t.chat.toolOtherNames[name] ?? name;
+  }
   return t.chat.toolShortNames[kind] ?? name;
 }
