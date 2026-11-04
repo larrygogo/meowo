@@ -3,7 +3,7 @@ import { createRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 const { invoke } = vi.hoisted(() => ({
-  invoke: vi.fn((command: string) => Promise.resolve(command === "file_mention_candidates" ? ["src/", "src/main.rs"] : null)),
+  invoke: vi.fn((command: string, _args?: unknown) => Promise.resolve(command === "file_mention_candidates" ? ["src/", "src/main.rs"] : null)),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("../../remoteMode", async (importOriginal) => ({
