@@ -17,7 +17,8 @@ import type { IslandCompactStyle } from "./api";
 import { type Item, type Tab } from "./views/sticker/types";
 import { Island, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT } from "./views/Island";
 import { IslandPanel } from "./views/island/IslandPanel";
-import { pickIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
+import { orderIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
+import { byUrgency } from "./views/Island";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
@@ -477,7 +478,15 @@ export function App() {
     }
   });
   const usage = useIslandUsage();
-  const islandUsage = useMemo(() => pickIslandUsage(usage, quotaProviders), [usage, quotaProviders]);
+  // 额度按「正在用的」排：在跑/要处理的会话的 agent 在前，再按设置顺序。
+  const activeProviders = useMemo(
+    () => byUrgency(stripSessions).map((item) => item.provider).filter((p, i, all) => all.indexOf(p) === i),
+    [stripSessions],
+  );
+  const islandUsages = useMemo(
+    () => orderIslandUsage(usage, quotaProviders, activeProviders),
+    [usage, quotaProviders, activeProviders],
+  );
 
   // 收起即卸载 Sticker，searchOpen（Sticker 局部态）随之丢失；若搜索词留在这里，
   // 再打开完整列表时仍被后端过滤、底栏却没有搜索框，空结果会被误读成「会话全丢了」。离开
@@ -879,8 +888,7 @@ export function App() {
       sessions={stripSessions}
       compactStyle={islandCompact}
       alert={islandMode === "alert" ? alert : null}
-      usagePct={islandUsage?.pct ?? null}
-      usageProvider={islandUsage?.provider}
+      usages={islandUsages}
       onMeasure={onMeasure}
       onHoverIntent={expand}
       onActivate={expand}

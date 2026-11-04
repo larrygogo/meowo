@@ -40,7 +40,8 @@ export function IslandPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(0);
   const rows = useMemo(() => byUrgency(sessions).slice(0, MAX_ROWS), [sessions]);
-  const main = pickIslandUsage(usage, quotaProviders);
+  // 大环显示「正在用的」那家：面板里列的会话用的 agent 优先，再按设置顺序。
+  const main = pickIslandUsage(usage, quotaProviders, byUrgency(sessions).map((item) => item.provider));
   const usageProviders = Object.keys(usage).filter((p) => primaryLane(usage[p]) != null);
   const pages = usageProviders.length > 0 ? 2 : 1;
   const current = Math.min(page, pages - 1);
@@ -137,6 +138,22 @@ export function IslandPanel({
           </div>
         )}
 
+        {pages > 1 && (
+          <>
+            <button
+              type="button"
+              className="isl-page-arrow is-prev"
+              aria-label={t.island.prevPage}
+              onClick={() => setPage((current + pages - 1) % pages)}
+            >‹</button>
+            <button
+              type="button"
+              className="isl-page-arrow is-next"
+              aria-label={t.island.nextPage}
+              onClick={() => setPage((current + 1) % pages)}
+            >›</button>
+          </>
+        )}
         {pages > 1 && (
           <div className="isl-dots-nav" role="tablist">
             {Array.from({ length: pages }, (_, i) => (

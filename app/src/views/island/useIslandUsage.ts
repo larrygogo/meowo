@@ -61,12 +61,29 @@ export function primaryLane(usage: ProviderUsage | undefined): { pct: number; ki
   return any ? { pct: any.used_pct as number, kind: any.kind } : null;
 }
 
-/// 按「贴纸底栏显示配额」的设置顺序，挑第一个有数据的 provider 作岛上的额度环。
-export function pickIslandUsage(usage: Record<string, ProviderUsage>, providers: readonly string[]): IslandUsage | null {
-  const ordered = [...providers, ...Object.keys(usage).filter((p) => !providers.includes(p))];
+/// 岛上额度的排序：先按「正在用的」（activeProviders：在跑/要处理的会话的 agent，按要紧程度），
+/// 再按「贴纸底栏显示配额」的设置顺序，最后是其余有数据的。只留有数据的。
+/// 此前只按设置顺序取第一个：设置里 kimi 排第一，会话全是 claude 时环上也固定是 kimi（用户反馈）。
+export function orderIslandUsage(
+  usage: Record<string, ProviderUsage>,
+  providers: readonly string[],
+  activeProviders: readonly string[] = [],
+): IslandUsage[] {
+  const ordered = [...activeProviders, ...providers, ...Object.keys(usage)]
+    .filter((p, i, all) => all.indexOf(p) === i);
+  const out: IslandUsage[] = [];
   for (const provider of ordered) {
     const lane = primaryLane(usage[provider]);
-    if (lane) return { provider, ...lane };
+    if (lane) out.push({ provider, ...lane });
   }
-  return null;
+  return out;
+}
+
+/// 最该显示的那一家（展开面板的大环用）。
+export function pickIslandUsage(
+  usage: Record<string, ProviderUsage>,
+  providers: readonly string[],
+  activeProviders: readonly string[] = [],
+): IslandUsage | null {
+  return orderIslandUsage(usage, providers, activeProviders)[0] ?? null;
 }

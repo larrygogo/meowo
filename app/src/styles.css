@@ -6880,6 +6880,19 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-panel-body.is-usage { justify-content: center; gap: 28px; padding: 6px 0 4px; }
 .isl-usage-cell { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .isl-dots-nav { display: flex; justify-content: center; gap: 5px; margin-top: 10px; }
+/* 左右翻页箭头（照参考图）：贴面板两侧、垂直居中的小圆钮。 */
+.isl-panel { position: relative; }
+.isl-page-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--isl-chip-hover); color: var(--isl-text-2);
+  font: 700 15px/1 system-ui, sans-serif;
+  display: grid; place-items: center; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.isl-page-arrow:hover { background: #48484a; color: var(--isl-text); }
+.isl-page-arrow.is-prev { left: 4px; }
+.isl-page-arrow.is-next { right: 4px; }
 .isl-dots-nav button {
   width: 5px; height: 5px; padding: 0; border: 0; border-radius: 3px;
   background: var(--isl-faint); cursor: pointer;

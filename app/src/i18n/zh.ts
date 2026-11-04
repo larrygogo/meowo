@@ -45,6 +45,8 @@ export const zh = {
     todo: (done: number, total: number) => `待办 ${done}/${total}`,
     usageLane: { five_hour: "5 小时用量", seven_day: "7 天用量", weekly: "本周用量", other: "用量" } as Record<string, string>,
     page: (n: number) => `第 ${n} 页`,
+    prevPage: "上一页",
+    nextPage: "下一页",
   },
   sticker: {
     openChatWindow: "打开对话窗口",

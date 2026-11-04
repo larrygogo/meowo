@@ -2,8 +2,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
-import { pickIslandUsage, primaryLane } from "./island/useIslandUsage";
-import { UsageRing, usageColor } from "./island/islandParts";
+import { orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
+import { UsageRing, usageColor, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
 import type { ProviderUsage } from "../api";
@@ -38,7 +38,7 @@ const renderIsland = (props: Partial<Parameters<typeof Island>[0]> = {}) =>
       sessions={[]}
       compactStyle="counts"
       alert={null}
-      usagePct={null}
+      usages={[]}
       onMeasure={noop}
       onHoverIntent={noop}
       onActivate={noop}
@@ -109,6 +109,19 @@ describe("额度", () => {
     expect(pickIslandUsage(usage, ["claude", "codex"])).toEqual({ provider: "codex", pct: 40, kind: "weekly" });
     expect(pickIslandUsage({}, ["claude"])).toBeNull();
   });
+
+  // 用户反馈：设置里 kimi 排第一，会话全是 claude 时环上也固定是 kimi。正在用的 agent 排前面。
+  it("正在用的 agent 排在设置顺序前面", () => {
+    const usage = {
+      kimi: { lanes: [lane("five_hour", 7)], note: null },
+      claude: { lanes: [lane("five_hour", 43)], note: null },
+      codex: { lanes: [lane("weekly", 18)], note: null },
+    } as unknown as Record<string, ProviderUsage>;
+    const order = (active: string[]) => orderIslandUsage(usage, ["kimi", "codex", "claude"], active).map((u) => u.provider);
+    expect(order([])).toEqual(["kimi", "codex", "claude"]);
+    expect(order(["claude"])).toEqual(["claude", "kimi", "codex"]);
+    expect(pickIslandUsage(usage, ["kimi", "codex", "claude"], ["claude"])?.provider).toBe("claude");
+  });
 });
 
 describe("额度环", () => {
@@ -120,27 +133,30 @@ describe("额度环", () => {
 
   it("中间每 4 秒在百分比和 agent logo 之间翻一次", () => {
     vi.useFakeTimers();
-    const { container } = render(<UsageRing pct={43} provider="claude" />);
+    const { container } = render(<UsageRing entries={[{ provider: "claude", pct: 43 }]} />);
     const flip = () => container.querySelector(".isl-usage-flip")!;
     expect(flip().classList.contains("is-logo")).toBe(false);
-    act(() => { vi.advanceTimersByTime(4_000); });
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS); });
     expect(flip().classList.contains("is-logo")).toBe(true);
-    act(() => { vi.advanceTimersByTime(4_000); });
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS); });
     expect(flip().classList.contains("is-logo")).toBe(false);
   });
 
-  it("不知道是哪家的额度时不翻，只显示数字", () => {
+  it("几家都有额度时轮流显示：A 的数字 → A 的 logo → B 的数字", () => {
     vi.useFakeTimers();
-    const { container } = render(<UsageRing pct={43} />);
-    act(() => { vi.advanceTimersByTime(8_000); });
-    expect(container.querySelector(".isl-usage-flip")?.classList.contains("is-logo")).toBe(false);
-    expect(container.querySelector(".isl-usage-logo")).toBeNull();
+    const { container } = render(<UsageRing entries={[{ provider: "claude", pct: 43 }, { provider: "kimi", pct: 7 }]} />);
+    const value = () => container.querySelector(".isl-usage-val")?.textContent;
+    expect(value()).toBe("43");
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS * 2); });
+    expect(value()).toBe("7");
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS * 2); });
+    expect(value()).toBe("43");
   });
 });
 
 describe("Island 收起", () => {
   it("概览：额度环、时间、每个会话一颗带环的 agent 图标", () => {
-    const { container } = renderIsland({ sessions: [mk(), mk({ pending_review: "approval" })], usagePct: 82 });
+    const { container } = renderIsland({ sessions: [mk(), mk({ pending_review: "approval" })], usages: [{ provider: "claude", pct: 82 }] });
     expect(container.querySelector(".isl-usage-val")?.textContent).toBe("82");
     expect(container.querySelector(".isl-clock")?.textContent).toMatch(/^\d{2}:\d{2}$/);
     expect(container.querySelectorAll(".isl-agent")).toHaveLength(2);
@@ -286,5 +302,21 @@ describe("IslandPanel 展开面板", () => {
     fireEvent.click(screen.getByRole("tab", { name: zh.island.page(2) }));
     expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(2);
     expect(screen.getByText("Codex")).toBeTruthy();
+  });
+
+  it("左右箭头翻页，到头绕回", () => {
+    const usage = { claude: { lanes: [lane("five_hour", 43)], note: null } } as unknown as Record<string, ProviderUsage>;
+    const { container } = renderPanel({ usage });
+    fireEvent.click(screen.getByRole("button", { name: zh.island.nextPage }));
+    expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: zh.island.nextPage }));
+    expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: zh.island.prevPage }));
+    expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(1);
+  });
+
+  it("只有一页时不出箭头", () => {
+    renderPanel();
+    expect(screen.queryByRole("button", { name: zh.island.nextPage })).toBeNull();
   });
 });

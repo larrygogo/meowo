@@ -113,6 +113,9 @@ export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
   );
 }
 
+/// 额度环中间翻一次的间隔。
+export const USAGE_FLIP_MS = 3_500;
+
 /// 额度的颜色：还宽裕是绿，过六成转琥珀，过八成五转红。一眼看出离用完还有多远，
 /// 不用读数字（此前一圈淡灰，用户嫌不灵动）。
 export function usageColor(pct: number): string {
@@ -126,15 +129,23 @@ export function usageTrack(pct: number): string {
 }
 
 /// 额度环（收起胶囊上的小环）。中间每隔几秒在「百分比」和「是哪家的额度」（agent logo）之间
-/// 上下翻一次：光一个数字读不出是谁的额度，翻动本身也让它活起来。没有数据时不渲染（调用方判断）。
-export function UsageRing({ pct, provider, size = 30 }: { pct: number; provider?: string; size?: number }) {
-  const value = Math.round(Math.min(100, Math.max(0, pct)));
-  const [showLogo, setShowLogo] = useState(false);
+/// 上下翻一次：光一个数字读不出是谁的额度，翻动本身也让它活起来。有几家额度时轮流显示：
+/// A 的数字 → A 的 logo → B 的数字 → B 的 logo……没有数据时不渲染（调用方判断）。
+export function UsageRing({ entries, size = 30 }: {
+  entries: readonly { provider: string; pct: number }[];
+  size?: number;
+}) {
+  // 相位：偶数 = 某家的数字，奇数 = 它的 logo；每 USAGE_FLIP_MS 前进一步，跨家循环。
+  const [phase, setPhase] = useState(0);
   useEffect(() => {
-    if (!provider) return;
-    const id = window.setInterval(() => setShowLogo((v) => !v), 4_000);
+    setPhase(0);
+    const id = window.setInterval(() => setPhase((p) => p + 1), USAGE_FLIP_MS);
     return () => window.clearInterval(id);
-  }, [provider]);
+  }, [entries.length]);
+  const entry = entries[Math.floor(phase / 2) % Math.max(1, entries.length)] ?? entries[0];
+  const showLogo = phase % 2 === 1;
+  const provider = entry?.provider;
+  const value = Math.round(Math.min(100, Math.max(0, entry?.pct ?? 0)));
   const { Icon } = agentAssets(provider ?? "");
   return (
     <Ring size={size} stroke={3.5} value={value / 100} color={usageColor(value)} track={usageTrack(value)} className="isl-usage">

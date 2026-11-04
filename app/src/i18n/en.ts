@@ -41,6 +41,8 @@ export const en: Dict = {
     todo: (done: number, total: number) => `To-dos ${done}/${total}`,
     usageLane: { five_hour: "5-hour usage", seven_day: "7-day usage", weekly: "Weekly usage", other: "Usage" } as Record<string, string>,
     page: (n: number) => `Page ${n}`,
+    prevPage: "Previous page",
+    nextPage: "Next page",
   },
   sticker: {
     openChatWindow: "Open chat window",
