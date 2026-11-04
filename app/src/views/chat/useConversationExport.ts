@@ -5,6 +5,7 @@ import { agentName, exportTextFile, type AgentDescriptor, type ChatItem } from "
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { copyPlainText } from "./clipboard";
+import { remoteUi } from "../../remoteMode";
 import { finalAnswer, transcriptMarkdown } from "./exportMarkdown";
 
 export function useConversationExport({ items, title, provider, agents, onNotice, onError }: {
@@ -34,6 +35,21 @@ export function useConversationExport({ items, title, provider, agents, onNotice
   // 取消保存框不报错。
   const exportConversation = async () => {
     const base = (title || t.chat.title).replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 80) || "conversation";
+    // 手机端：宿主写文件（export_text_file）是远程拒绝项，也不该写到电脑上。直接让手机
+    // 浏览器下载，文件落在手机里。
+    if (remoteUi()) {
+      const url = URL.createObjectURL(new Blob([markdown()], { type: "text/markdown;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${base}.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // 立即回收会让部分移动浏览器还没开始下载就丢了数据，延后一拍。
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      onNotice(t.chat.conversationExported);
+      return;
+    }
     const path = await saveDialog({ defaultPath: `${base}.md`, filters: [{ name: "Markdown", extensions: ["md"] }] }).catch(() => null);
     if (!path) return;
     try {

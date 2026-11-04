@@ -16,6 +16,13 @@
     <!-- 手机浏览器状态栏/地址栏底色。首帧给深色默认值,主题解析后由 appearance.ts 改写
          (7M-10:此前完全没有,配对页与状态栏之间一条撞色边)。 -->
     <meta name="theme-color" content="#121212" />
+    <!-- 添加到主屏幕后全屏打开、用 Meowo 图标（清单与图标由 vite.mobile.config 的
+         homeScreenAssets 产出）。状态栏样式不设：black-translucent 在浅色主题下是白字压浅底。 -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Meowo" />
     <title>Meowo 远程</title>
     <script>
       // 与 src/i18n/index.tsx 的 readCache/resolveLang 同一判定,改一处要同步另一处。

@@ -3775,7 +3775,7 @@ export function ChatWindow() {
             onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
             onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
             onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}
-            onExportConversation={conversationExport.hasContent && !remoteUi() ? () => void conversationExport.exportConversation() : undefined}
+            onExportConversation={conversationExport.hasContent ? () => void conversationExport.exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
