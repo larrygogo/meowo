@@ -219,8 +219,8 @@ describe("Island 收起", () => {
     expect(container.querySelector(".isl-agent-badge")?.textContent).toBe("!");
   });
 
-  // 用户嫌整圈亮色环又重又看不出状态：跑完的不画亮弧，没看过的亮小绿点；在跑才有亮弧。
-  it("会话图标：跑完不画亮弧、没看过的亮绿点；在跑才有亮弧", () => {
+  // 用户嫌整圈亮色环又重又看不出状态：跑完的不画亮弧，没看过的亮小蓝点（未读）；在跑才有亮弧。
+  it("会话图标：跑完不画亮弧、没看过的亮蓝点；在跑才有亮弧", () => {
     const done = mk({ status: "waiting", unread: true });
     const seen = mk({ status: "waiting", unread: false });
     const running = mk({ todo_done: 1, todo_total: 4 });

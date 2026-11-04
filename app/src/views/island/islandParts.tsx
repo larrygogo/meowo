@@ -214,7 +214,7 @@ function arcOf(item: Item, tone: string): number | null | undefined {
 }
 
 /// 会话图标：深灰圆底座里放 agent logo，外面一圈很淡的品牌色底轨，亮弧按 arcOf 画。
-/// 角标：要处理「!」、出错「×」、跑完但你还没看过的亮一个小绿点。
+/// 角标：要处理「!」、出错「×」、跑完但你还没看过的亮一个小蓝点（未读）。
 export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number; tip?: string }) {
   const tone = cardTone(item);
   const color = ringColor(item, tone);
