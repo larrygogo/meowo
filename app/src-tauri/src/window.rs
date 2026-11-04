@@ -535,7 +535,7 @@ pub(crate) fn chat_window_in_view(app: &tauri::AppHandle) -> bool {
 ///
 /// Windows 上原生 `ShowWindow` 之后**必须**再补一次 `window.show()` 同步 tao 的标志位，
 /// 否则贴纸会在后续某次窗口标志变更时凭空消失，详见函数内注释。
-fn show_window_no_activate(window: &tauri::WebviewWindow) {
+pub(crate) fn show_window_no_activate(window: &tauri::WebviewWindow) {
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};

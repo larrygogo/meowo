@@ -162,11 +162,91 @@ pub(crate) fn island_drag_end(window: tauri::WebviewWindow) -> Result<Option<f64
     Ok(Some(center_ratio(work_of(&monitor), pos.x, size.width as i32)))
 }
 
+/// 全屏程序在前台时（游戏、全屏视频、演示模式）岛该怎么办。岛恒置顶、贴在屏幕顶部正中，
+/// 不藏的话会盖在全屏画面上，还挡住那一块的点击。只恢复我们自己藏的：别的原因隐藏的窗口
+/// （启动还没就绪、用户关掉）不该被这里弄出来。
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum FullscreenAction {
+    Hide,
+    Show,
+    Nothing,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn fullscreen_action(fullscreen: bool, hidden_by_us: bool, visible: bool) -> FullscreenAction {
+    match (fullscreen, hidden_by_us) {
+        (true, false) if visible => FullscreenAction::Hide,
+        (false, true) => FullscreenAction::Show,
+        _ => FullscreenAction::Nothing,
+    }
+}
+
+/// Windows 自己判断「有全屏程序 / 演示模式」的那套状态（系统据此暂停通知横幅）。
+#[cfg(target_os = "windows")]
+fn fullscreen_app_running() -> bool {
+    use windows_sys::Win32::UI::Shell::{
+        SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_APP, QUNS_BUSY,
+        QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    };
+    let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
+    // SAFETY: 传入有效的输出指针；失败时 state 不可信，按「不是全屏」处理。
+    let hr = unsafe { SHQueryUserNotificationState(&mut state) };
+    // QUNS_APP：应用商店类应用全屏运行（本机实测正常时返回 5 = 可接收通知）。
+    hr >= 0
+        && matches!(
+            state,
+            QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE | QUNS_APP
+        )
+}
+
+/// 后台每 1.5 秒查一次全屏状态：进全屏把岛藏起来，退出再不抢焦点地显示回来。
+#[cfg(target_os = "windows")]
+pub(crate) fn spawn_fullscreen_watch(app: tauri::AppHandle) {
+    use tauri::Manager as _;
+    let _ = std::thread::Builder::new()
+        .name("island-fullscreen".into())
+        .spawn(move || {
+            let mut hidden_by_us = false;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let Some(window) = app.get_webview_window("main") else {
+                    continue;
+                };
+                let visible = window.is_visible().unwrap_or(false);
+                match fullscreen_action(fullscreen_app_running(), hidden_by_us, visible) {
+                    FullscreenAction::Hide => {
+                        if window.hide().is_ok() {
+                            hidden_by_us = true;
+                        }
+                    }
+                    FullscreenAction::Show => {
+                        crate::window::show_window_no_activate(&window);
+                        hidden_by_us = false;
+                    }
+                    FullscreenAction::Nothing => {}
+                }
+            }
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const WORK: Work = Work { x: 0, y: 0, w: 1920, h: 1040 };
+
+    #[test]
+    fn fullscreen_hides_only_visible_island_and_restores_only_what_it_hid() {
+        // 进全屏：岛可见就藏；本来就不可见（启动没就绪、用户关掉）不动。
+        assert_eq!(fullscreen_action(true, false, true), FullscreenAction::Hide);
+        assert_eq!(fullscreen_action(true, false, false), FullscreenAction::Nothing);
+        // 全屏中保持藏着。
+        assert_eq!(fullscreen_action(true, true, false), FullscreenAction::Nothing);
+        // 退出全屏：只恢复我们藏的。
+        assert_eq!(fullscreen_action(false, true, false), FullscreenAction::Show);
+        assert_eq!(fullscreen_action(false, false, false), FullscreenAction::Nothing);
+    }
 
     #[test]
     fn place_centers_and_sticks_to_top() {

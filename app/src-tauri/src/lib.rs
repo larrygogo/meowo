@@ -1372,6 +1372,9 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") {
                     crate::window::show_after_grace(&w, false);
                 }
+                // 灵动岛：全屏程序在前台时藏起来，不盖住全屏画面（见 island.rs）。
+                #[cfg(target_os = "windows")]
+                island::spawn_fullscreen_watch(app.handle().clone());
             }
             // 点击穿透（W-8）：开机按持久化设置生效一次；之后由 set_settings 热更新。
             // 非 Windows 为 no-op。
