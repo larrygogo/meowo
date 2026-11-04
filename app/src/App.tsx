@@ -880,6 +880,7 @@ export function App() {
       compactStyle={islandCompact}
       alert={islandMode === "alert" ? alert : null}
       usagePct={islandUsage?.pct ?? null}
+      usageProvider={islandUsage?.provider}
       onMeasure={onMeasure}
       onHoverIntent={expand}
       onActivate={expand}

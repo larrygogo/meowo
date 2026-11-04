@@ -44,12 +44,18 @@ export function Ring({ size, stroke, value, color, track, children, className }:
 }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
+  // 定量进度用 dashoffset 画：挂载时从 0 扫到位（CSS 动画从 --isl-c 起），数值变了平滑滑过去
+  // （dashoffset 上的 transition）。不定进度是一段固定长度的弧整体转圈。
   const filled = value == null ? c * 0.28 : c * Math.min(1, Math.max(0, value));
+  const arc = value == null
+    ? { strokeDasharray: `${filled} ${c}` }
+    : { strokeDasharray: `${c} ${c}`, strokeDashoffset: c - filled, style: { "--isl-c": `${c}` } as React.CSSProperties };
   return (
     <span className={`isl-ring${value == null ? " is-spin" : ""}${className ? ` ${className}` : ""}`} style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
         <circle
+          className={value == null ? undefined : "isl-ring-arc"}
           cx={size / 2}
           cy={size / 2}
           r={r}
@@ -57,7 +63,7 @@ export function Ring({ size, stroke, value, color, track, children, className }:
           stroke={color}
           strokeWidth={stroke}
           strokeLinecap="round"
-          strokeDasharray={`${filled} ${c}`}
+          {...arc}
         />
       </svg>
       {children != null && <span className="isl-ring-body">{children}</span>}
@@ -107,14 +113,35 @@ export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
   );
 }
 
-/// 额度环：中间是已用百分比。没有数据时不渲染（调用方判断）。
-export function UsageRing({ pct, size = 30 }: { pct: number; size?: number }) {
+/// 额度的颜色：还宽裕是绿，过六成转琥珀，过八成五转红。一眼看出离用完还有多远，
+/// 不用读数字（此前一圈淡灰，用户嫌不灵动）。
+export function usageColor(pct: number): string {
+  if (pct >= 85) return "var(--isl-err)";
+  if (pct >= 60) return "var(--isl-warn)";
+  return "var(--isl-ok)";
+}
+
+export function usageTrack(pct: number): string {
+  return `color-mix(in srgb, ${usageColor(pct)} 22%, #000)`;
+}
+
+/// 额度环（收起胶囊上的小环）。中间每隔几秒在「百分比」和「是哪家的额度」（agent logo）之间
+/// 上下翻一次：光一个数字读不出是谁的额度，翻动本身也让它活起来。没有数据时不渲染（调用方判断）。
+export function UsageRing({ pct, provider, size = 30 }: { pct: number; provider?: string; size?: number }) {
   const value = Math.round(Math.min(100, Math.max(0, pct)));
-  // 用得越多越醒目：过八成转琥珀，满了转红，免得额度快没了还是一圈淡灰。
-  const color = value >= 100 ? "var(--isl-err)" : value >= 80 ? "var(--isl-warn)" : "var(--isl-text-2)";
+  const [showLogo, setShowLogo] = useState(false);
+  useEffect(() => {
+    if (!provider) return;
+    const id = window.setInterval(() => setShowLogo((v) => !v), 4_000);
+    return () => window.clearInterval(id);
+  }, [provider]);
+  const { Icon } = agentAssets(provider ?? "");
   return (
-    <Ring size={size} stroke={3.5} value={value / 100} color={color} track="var(--isl-track)" className="isl-usage">
-      <span className="isl-usage-val">{value}</span>
+    <Ring size={size} stroke={3.5} value={value / 100} color={usageColor(value)} track={usageTrack(value)} className="isl-usage">
+      <span className={`isl-usage-flip${showLogo && provider ? " is-logo" : ""}`}>
+        <span className="isl-usage-val">{value}</span>
+        {provider && <span className="isl-usage-logo" style={tintStyle(provider)}><Icon /></span>}
+      </span>
     </Ring>
   );
 }

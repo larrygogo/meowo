@@ -6767,6 +6767,19 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 @keyframes isl-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 .isl-ring-body { position: relative; display: grid; place-items: center; }
 .isl-usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 定量进度：挂载时从 0 扫到位，数值变了平滑滑过去。 */
+.isl-ring-arc { transition: stroke-dashoffset 0.6s cubic-bezier(0.3, 0.8, 0.3, 1), stroke 0.4s ease; animation: isl-sweep 0.9s cubic-bezier(0.3, 0.8, 0.3, 1); }
+@keyframes isl-sweep { from { stroke-dashoffset: var(--isl-c); } }
+/* 额度环中间的数字与 logo 上下翻：两层叠在一起，只露一层。 */
+.isl-usage-flip { position: relative; display: block; width: 20px; height: 14px; overflow: hidden; }
+.isl-usage-flip > span {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  transition: transform 0.45s cubic-bezier(0.3, 0.8, 0.3, 1.2), opacity 0.3s ease;
+}
+.isl-usage-logo { transform: translateY(110%); opacity: 0; }
+.isl-usage-logo svg, .isl-usage-logo img { width: 13px !important; height: 13px !important; }
+.isl-usage-flip.is-logo .isl-usage-val { transform: translateY(-110%); opacity: 0; }
+.isl-usage-flip.is-logo .isl-usage-logo { transform: translateY(0); opacity: 1; }
 .isl-agent { position: relative; display: inline-flex; flex: none; }
 .isl-agent-logo { width: 20px; height: 20px; display: grid; place-items: center; }
 /* logo 要几乎撑满环内（参考图），原始 11~13px 的徽标在 32px 的环里只占一小点，环里空空的。 */
@@ -6896,5 +6909,6 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .isl-eye-balls, .isl-eye-pair, .isl-spark, .isl-dot, .isl-ring.is-spin > svg { animation: none !important; }
+  .isl-eye-balls, .isl-eye-pair, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
+  .isl-ring-arc, .isl-usage-flip > span { transition: none !important; }
 }

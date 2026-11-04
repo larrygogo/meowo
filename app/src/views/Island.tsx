@@ -92,6 +92,7 @@ export function Island({
   compactStyle,
   alert,
   usagePct,
+  usageProvider,
   onMeasure,
   onHoverIntent,
   onActivate,
@@ -105,6 +106,8 @@ export function Island({
   alert: IslandAlertEvent | null;
   /** 额度环的已用百分比；null = 没有额度数据，不画环。 */
   usagePct: number | null;
+  /** 额度是哪家的（额度环中间轮流露出它的 logo）。 */
+  usageProvider?: string;
   /** 刘海本体（不含耳朵）的实测宽度，App 据此让窗口贴合。 */
   onMeasure: (width: number) => void;
   /** 鼠标在胶囊上停够 250ms（U1-9：屏幕顶边常有鼠标路过，不能一碰就展开）。 */
@@ -189,7 +192,7 @@ export function Island({
     const more = ordered.length - shown.length;
     return (
       <>
-        {usagePct != null && <UsageRing pct={usagePct} />}
+        {usagePct != null && <UsageRing pct={usagePct} provider={usageProvider} />}
         <Eyes tone={tone} />
         <Clock now={now} locale={t.locale} />
         {shown.length > 0 && (

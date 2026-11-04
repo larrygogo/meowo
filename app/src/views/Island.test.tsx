@@ -3,6 +3,8 @@ import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { pickIslandUsage, primaryLane } from "./island/useIslandUsage";
+import { UsageRing, usageColor } from "./island/islandParts";
+import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
 import type { ProviderUsage } from "../api";
 import { zh } from "../i18n/zh";
@@ -106,6 +108,33 @@ describe("额度", () => {
     } as unknown as Record<string, ProviderUsage>;
     expect(pickIslandUsage(usage, ["claude", "codex"])).toEqual({ provider: "codex", pct: 40, kind: "weekly" });
     expect(pickIslandUsage({}, ["claude"])).toBeNull();
+  });
+});
+
+describe("额度环", () => {
+  it("颜色随用量变：宽裕绿、过六成琥珀、过八成五红", () => {
+    expect(usageColor(20)).toBe("var(--isl-ok)");
+    expect(usageColor(60)).toBe("var(--isl-warn)");
+    expect(usageColor(90)).toBe("var(--isl-err)");
+  });
+
+  it("中间每 4 秒在百分比和 agent logo 之间翻一次", () => {
+    vi.useFakeTimers();
+    const { container } = render(<UsageRing pct={43} provider="claude" />);
+    const flip = () => container.querySelector(".isl-usage-flip")!;
+    expect(flip().classList.contains("is-logo")).toBe(false);
+    act(() => { vi.advanceTimersByTime(4_000); });
+    expect(flip().classList.contains("is-logo")).toBe(true);
+    act(() => { vi.advanceTimersByTime(4_000); });
+    expect(flip().classList.contains("is-logo")).toBe(false);
+  });
+
+  it("不知道是哪家的额度时不翻，只显示数字", () => {
+    vi.useFakeTimers();
+    const { container } = render(<UsageRing pct={43} />);
+    act(() => { vi.advanceTimersByTime(8_000); });
+    expect(container.querySelector(".isl-usage-flip")?.classList.contains("is-logo")).toBe(false);
+    expect(container.querySelector(".isl-usage-logo")).toBeNull();
   });
 });
 

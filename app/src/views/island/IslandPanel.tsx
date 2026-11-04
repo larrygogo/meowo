@@ -7,7 +7,7 @@ import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
-import { AgentRing, Ring, useNow } from "./islandParts";
+import { AgentRing, Ring, useNow, usageColor, usageTrack } from "./islandParts";
 import { pickIslandUsage, primaryLane } from "./useIslandUsage";
 
 /// 面板上最多列几个会话。更多的去「全部」里看。
@@ -112,7 +112,7 @@ export function IslandPanel({
             </div>
             {main && (
               <div className="isl-side">
-                <Ring size={84} stroke={6} value={main.pct / 100} color="var(--isl-blue)" track="var(--isl-blue-track)">
+                <Ring size={84} stroke={6} value={main.pct / 100} color={usageColor(main.pct)} track={usageTrack(main.pct)}>
                   <span className="isl-big-val">{Math.round(main.pct)}<small>%</small></span>
                 </Ring>
                 <span className="isl-side-label">{providerLabel(main.provider)} {laneLabel(main.kind)}</span>
@@ -126,7 +126,7 @@ export function IslandPanel({
               if (!lane) return null;
               return (
                 <div key={provider} className="isl-usage-cell">
-                  <Ring size={64} stroke={5} value={lane.pct / 100} color="var(--isl-blue)" track="var(--isl-blue-track)">
+                  <Ring size={64} stroke={5} value={lane.pct / 100} color={usageColor(lane.pct)} track={usageTrack(lane.pct)}>
                     <span className="isl-mid-val">{Math.round(lane.pct)}<small>%</small></span>
                   </Ring>
                   <span className="isl-side-label">{providerLabel(provider)}</span>
