@@ -303,7 +303,7 @@ describe("App", () => {
     expect(calls[calls.length - 1]).toEqual({ width: 360, height: 440, centerRatio: null });
   });
 
-  it("点一下胶囊（没拖动）就展开面板；面板里点「全部」打开完整列表", async () => {
+  it("点一下胶囊（没拖动）就展开面板；托盘「找回贴纸」打开完整列表", async () => {
     const { container } = render(<App />);
     const pill = await waitFor(() => {
       const el = container.querySelector(".isl-notch");
@@ -315,7 +315,7 @@ describe("App", () => {
     await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("island_drag_begin");
     expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null });
-    fireEvent.click(screen.getByRole("button", { name: zh.island.showAll }));
+    await act(async () => { emitRecallSticker(); });
     await waitFor(() => expect(container.querySelector(".island-shell.is-full")).toBeTruthy());
     expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
   });

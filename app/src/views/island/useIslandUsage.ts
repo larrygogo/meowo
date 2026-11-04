@@ -79,6 +79,16 @@ export function orderIslandUsage(
   return out;
 }
 
+/// 收起胶囊上额度环轮换的那几家：只取岛上正有会话的 agent（用户要求，2026-11-04：岛上两个
+/// claude 会话时环上还在轮 kimi 的额度，不相干）。都没数据就是空，额度环不画。
+export function liveIslandUsage(
+  usage: Record<string, ProviderUsage>,
+  providers: readonly string[],
+  liveProviders: readonly string[],
+): IslandUsage[] {
+  return orderIslandUsage(usage, providers, liveProviders).filter((u) => liveProviders.includes(u.provider));
+}
+
 /// 最该显示的那一家（展开面板的大环用）。
 export function pickIslandUsage(
   usage: Record<string, ProviderUsage>,

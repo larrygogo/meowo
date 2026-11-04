@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
-import { orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
+import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, remainingColor, remainingOf, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
@@ -123,6 +123,17 @@ describe("额度", () => {
     expect(order([])).toEqual(["kimi", "codex", "claude"]);
     expect(order(["claude"])).toEqual(["claude", "kimi", "codex"]);
     expect(pickIslandUsage(usage, ["kimi", "codex", "claude"], ["claude"])?.provider).toBe("claude");
+  });
+
+  // 用户要求：额度环只轮换岛上正有会话的 agent。
+  it("收起胶囊的额度环只取岛上有会话的 agent，没有就不画", () => {
+    const usage = {
+      kimi: { lanes: [lane("five_hour", 7)], note: null },
+      claude: { lanes: [lane("seven_day", 4)], note: null },
+    } as unknown as Record<string, ProviderUsage>;
+    expect(liveIslandUsage(usage, ["kimi", "claude"], ["claude"]).map((u) => u.provider)).toEqual(["claude"]);
+    expect(liveIslandUsage(usage, ["kimi", "claude"], ["codex"])).toEqual([]);
+    expect(liveIslandUsage(usage, ["kimi", "claude"], [])).toEqual([]);
   });
 });
 
@@ -337,12 +348,10 @@ describe("IslandPanel 展开面板", () => {
     expect(onOpenSession).toHaveBeenCalledWith(pending.session.id);
   });
 
-  it("「全部」打开完整列表；没有额度数据时只有一页、不出翻页点", () => {
-    const onShowAll = vi.fn();
-    const { container } = renderPanel({ onShowAll });
+  it("面板上不放「全部」按钮（用户要求）；没有额度数据时只有一页、不出翻页点", () => {
+    const { container } = renderPanel();
     expect(screen.getByText(zh.island.idle)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: zh.island.showAll }));
-    expect(onShowAll).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: zh.island.showAll })).toBeNull();
     expect(container.querySelector(".isl-dots-nav")).toBeNull();
   });
 

@@ -17,7 +17,7 @@ import type { IslandCompactStyle } from "./api";
 import { type Item, type Tab } from "./views/sticker/types";
 import { Island, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT } from "./views/Island";
 import { IslandPanel } from "./views/island/IslandPanel";
-import { orderIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
+import { liveIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
 import { byUrgency } from "./views/Island";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
@@ -484,7 +484,7 @@ export function App() {
     [stripSessions],
   );
   const islandUsages = useMemo(
-    () => orderIslandUsage(usage, quotaProviders, activeProviders),
+    () => liveIslandUsage(usage, quotaProviders, activeProviders),
     [usage, quotaProviders, activeProviders],
   );
 

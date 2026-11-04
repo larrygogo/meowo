@@ -33,7 +33,6 @@ export function IslandPanel({
   usage,
   quotaProviders,
   onOpenSession,
-  onShowAll,
   onMeasure,
   onPointerDownDrag,
   initialPage = 0,
@@ -42,7 +41,8 @@ export function IslandPanel({
   usage: Record<string, ProviderUsage>;
   quotaProviders: readonly string[];
   onOpenSession: (sessionId: number) => void;
-  onShowAll: () => void;
+  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「找回贴纸」进。保留参数兼容调用方。 */
+  onShowAll?: () => void;
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
@@ -91,12 +91,6 @@ export function IslandPanel({
           <span className="isl-panel-title">
             Meowo <span className="isl-accent">{current === 0 ? t.island.panelSessions : t.island.panelUsage}</span>
           </span>
-          <button
-            type="button"
-            className="isl-btn is-ghost"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={onShowAll}
-          >{t.island.showAll}</button>
           <span className="isl-panel-meta">
             {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}
             <b>{now.toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false })}</b>
