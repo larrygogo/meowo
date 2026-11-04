@@ -6635,3 +6635,124 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-side-answer-close:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-side-answer-body { margin-top: var(--sp-4); max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-chat-text); font-size: var(--text-sm); line-height: var(--leading-body); user-select: text; }
 .chat-side-answer-body.is-muted { color: var(--cc-text-faint); }
+
+/* ── 灵动岛（Windows 贴纸的新形态，2026-11-04 用户决定替换贴边缩略条）──────────────
+   窗口贴屏幕顶边，所以形状是「从顶上垂下来」：顶边平、底下两角圆。胶囊在窗口里水平居中，
+   窗口按中心点对称长大时它不挪位，展开动画（clip-path）从它的轮廓长出来、收回时缩回去。
+   颜色/透明度沿用贴纸的 --cc-bg（外观设置里的贴纸颜色与透明度照样生效）。 */
+.island-stage {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+}
+.island-pill {
+  /* flex:none 且不设 max-width：胶囊按内容取自然宽度，即使窗口暂时比它窄也照实测量，
+     App 据此把窗口放宽（窗口跟着内容走，而不是内容被窗口夹住、永远量出旧宽度）。 */
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  box-sizing: border-box;
+  padding: 0 var(--sp-14) 0 var(--sp-12);
+  background: var(--cc-bg);
+  color: var(--cc-text);
+  border: 1px solid var(--cc-border);
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  font-size: var(--fs-12);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+.island-pill:focus-visible { box-shadow: inset 0 0 0 2px var(--cc-accent); }
+.island-pill.is-alert {
+  width: 100%;
+  gap: var(--sp-12);
+  padding: 0 var(--sp-10) 0 var(--sp-16);
+  border-radius: 0 0 22px 22px;
+  animation: island-grow 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+@keyframes island-grow {
+  from { clip-path: inset(0 28% 44% 28% round 0 0 18px 18px); }
+  to { clip-path: inset(0 0 0 0 round 0 0 22px 22px); }
+}
+
+/* 眼睛：Meowo 标志。在跑左右张望，要你处理琥珀色一闪一闪，跑完等输入琥珀静止，出错变红，闲着偶尔眨眼。 */
+.island-eyes { flex: none; overflow: visible; fill: var(--cc-text-dim); }
+.island-eyes-pair { transform-box: fill-box; transform-origin: center; }
+.island-eyes[data-tone="running"] { fill: var(--cc-ok-vivid); }
+.island-eyes[data-tone="running"] .island-eyes-pair { animation: island-look 2.6s ease-in-out infinite; }
+.island-eyes[data-tone="pending"] { fill: var(--cc-warn-vivid); animation: island-pulse 1.4s ease-in-out infinite; }
+.island-eyes[data-tone="waiting"] { fill: var(--cc-warn-vivid); }
+.island-eyes[data-tone="error"] { fill: var(--cc-err-vivid); }
+.island-eyes[data-tone="idle"] .island-eyes-pair { animation: cstrip-eyes-blink 5s ease-in-out infinite; }
+@keyframes island-look {
+  0%, 18% { transform: translateX(0); }
+  28%, 44% { transform: translateX(-2px); }
+  56%, 72% { transform: translateX(2px); }
+  82%, 100% { transform: translateX(0); }
+}
+@keyframes island-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+.island-text { display: inline-flex; align-items: center; gap: var(--sp-10); }
+.island-text.is-faint { color: var(--cc-text-faint); }
+.island-count { display: inline-flex; align-items: center; gap: var(--sp-5); font-variant-numeric: tabular-nums; }
+.island-dots { display: inline-flex; align-items: center; gap: var(--sp-5); }
+/* 色点与缩略条同一套红绿灯语言（G-17）：绿=agent 侧、黄=要你、红=出错，闪烁说明急不急。 */
+.island-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--cc-text-faint); }
+.island-dot.is-on { background: var(--cc-ok-vivid); opacity: 0.55; }
+.island-dot.is-running { background: var(--cc-ok-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
+.island-dot.is-waiting { background: var(--cc-warn-vivid); }
+.island-dot.is-pending { background: var(--cc-warn-vivid); animation: cstrip-pulse 1.8s ease-in-out infinite; }
+.island-dot.is-error { background: var(--cc-err-vivid); }
+.island-title { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.island-sep { color: var(--cc-text-faint); }
+.island-state { color: var(--cc-text-dim); }
+.island-state.is-pending { color: var(--cc-warn-vivid); }
+.island-state.is-error { color: var(--cc-err-vivid); }
+
+.island-alert { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.island-alert-title { font-size: var(--fs-13); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.island-alert-sub {
+  display: flex; align-items: center; gap: var(--sp-5);
+  font-size: var(--fs-11); color: var(--cc-text-dim);
+  overflow: hidden; text-overflow: ellipsis;
+}
+.island-open {
+  flex: none;
+  height: 26px;
+  padding: 0 var(--sp-12);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--cc-border);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.island-open:hover { background: var(--fill-hover); }
+
+/* 展开：完整列表（Sticker）从胶囊轮廓长出来；收回时缩回胶囊，播完 App 再缩窗口。 */
+.island-shell { height: 100%; }
+.island-shell .sticker { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.island-shell.is-entering { animation: island-unfold 0.24s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.island-shell.is-leaving { animation: island-fold 0.18s ease-in forwards; }
+@keyframes island-unfold {
+  from {
+    clip-path: inset(0 calc(50% - var(--island-pill-w) / 2) calc(100% - var(--island-pill-h))
+      calc(50% - var(--island-pill-w) / 2) round 0 0 18px 18px);
+  }
+  to { clip-path: inset(0 0 0 0 round 0 0 14px 14px); }
+}
+@keyframes island-fold {
+  from { clip-path: inset(0 0 0 0 round 0 0 14px 14px); }
+  to {
+    clip-path: inset(0 calc(50% - var(--island-pill-w) / 2) calc(100% - var(--island-pill-h))
+      calc(50% - var(--island-pill-w) / 2) round 0 0 18px 18px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .island-pill.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
+  .island-eyes, .island-eyes-pair, .island-dot { animation: none !important; }
+}

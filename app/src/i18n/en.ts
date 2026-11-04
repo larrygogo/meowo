@@ -29,6 +29,13 @@ export const en: Dict = {
     searchTitle: "No matching sessions",
     searchHint: "Try a different keyword",
   },
+  island: {
+    finished: "Waiting for input",
+    idle: "No running sessions",
+    toneLabel: { pending: "Needs you", error: "Error", running: "Running", waiting: "Waiting for input", on: "Online", offline: "Disconnected" } as Record<string, string>,
+    ariaLabel: "Meowo island. Click to show sessions",
+    open: "Open",
+  },
   sticker: {
     openChatWindow: "Open chat window",
     openSettings: "Settings",

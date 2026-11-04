@@ -1759,16 +1759,19 @@ export function Sticker({
                 <GearIcon />
                 {hasUpdate && <span className="stk-dot" aria-hidden="true" />}
               </button>
-              {/* pin 在 macOS 面板也渲染（W-12）：那边语义是「保持打开」，见 pinTip。 */}
-              <button
-                type="button"
-                className={"stk-act " + (pinned ? "stk-pin-on" : "")}
-                data-tip={pinTip}
-                aria-label={pinTip}
-                onClick={togglePin}
-              >
-                <PinIcon pinned={pinned} />
-              </button>
+              {/* pin 在 macOS 面板也渲染（W-12）：那边语义是「保持打开」，见 pinTip。
+                  Windows 换成灵动岛后恒置顶（App 传 snapped），置顶开关没有意义，不渲染。 */}
+              {(isMacPanel() || !snapped) && (
+                <button
+                  type="button"
+                  className={"stk-act " + (pinned ? "stk-pin-on" : "")}
+                  data-tip={pinTip}
+                  aria-label={pinTip}
+                  onClick={togglePin}
+                >
+                  <PinIcon pinned={pinned} />
+                </button>
+              )}
             </div>
           </>
         )}

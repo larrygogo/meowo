@@ -49,6 +49,7 @@ let emitBoardChanged: () => void = () => {};
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (event: string, cb: () => void) => {
     if (event === "board-changed") emitBoardChanged = cb;
+    if (event === "recall-sticker") emitRecallSticker = cb;
     return Promise.resolve(() => {});
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -61,12 +62,22 @@ vi.mock("@tauri-apps/api/window", () => ({
     setAlwaysOnTop: vi.fn(() => Promise.resolve()),
     outerSize: vi.fn(() => Promise.resolve({ width: 340, height: 440 })),
     scaleFactor: vi.fn(() => Promise.resolve(1)),
+    onScaleChanged: vi.fn(() => Promise.resolve(() => {})),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(() => Promise.resolve(null)) }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(() => Promise.resolve()) }));
 
 import { App } from "./App";
+import { invoke } from "@tauri-apps/api/core";
+
+let emitRecallSticker: () => void = () => {};
+/** Windows 上贴纸已换成灵动岛：启动是收起的胶囊，Sticker 要展开后才挂载（托盘「找回贴纸」= 展开）。 */
+const renderExpanded = async () => {
+  render(<App />);
+  await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+  await act(async () => { emitRecallSticker(); });
+};
 
 const mk = (id: number) => ({
   session: {
@@ -124,7 +135,7 @@ describe("App loadMore 重入守卫", () => {
       return Promise.resolve(Array.from({ length: 100 }, (_, i) => mk(i + 1)));
     });
 
-    render(<App />);
+    await renderExpanded();
     // 首屏 100 条落定（page.length == limit，reachedEnd 不置位，loadMore 可用）。
     await waitFor(() => expect(stickerProps.data).toHaveLength(100));
 
@@ -145,7 +156,7 @@ describe("App loadMore 重入守卫", () => {
       return Promise.resolve(Array.from({ length: 100 }, (_, i) => mk(i + 1)));
     });
 
-    render(<App />);
+    await renderExpanded();
     await waitFor(() => expect(stickerProps.data).toHaveLength(100));
 
     await act(async () => {
@@ -174,7 +185,7 @@ describe("App board-changed 增量刷新（B-6）", () => {
       return Promise.resolve([{ ...mk(150), task_title: "t-150-new" }, ...firstPage.slice(0, 99)]);
     });
 
-    render(<App />);
+    await renderExpanded();
     await waitFor(() => expect(stickerProps.data).toHaveLength(100));
     await act(async () => {
       await stickerProps.loadMore!();

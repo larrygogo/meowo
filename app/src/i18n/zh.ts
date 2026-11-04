@@ -32,6 +32,14 @@ export const zh = {
     searchTitle: "没有匹配的会话",
     searchHint: "换个关键词试试",
   },
+  // 灵动岛（Windows 贴纸的新形态）。
+  island: {
+    finished: "等待输入",
+    idle: "没有运行中的会话",
+    toneLabel: { pending: "待处理", error: "出错", running: "运行中", waiting: "等待输入", on: "在线", offline: "已断开" } as Record<string, string>,
+    ariaLabel: "Meowo 灵动岛，点击展开会话列表",
+    open: "打开",
+  },
   sticker: {
     openChatWindow: "打开对话窗口",
     openSettings: "打开设置",
