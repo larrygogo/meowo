@@ -665,9 +665,14 @@ export function App() {
     target.addEventListener("pointercancel", finish);
   }, []);
 
+  // 点胶囊上的会话图标（没拖动）直接打开那个会话；点别处展开面板。openSession 定义在后面，经 ref 取。
+  const openSessionRef = useRef<(sessionId: number) => void>(() => {});
   const onPillPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    startDrag(event.currentTarget, event.pointerId, event.screenX, expand);
+    const hit = (event.target as HTMLElement | null)?.closest?.("[data-session-id]");
+    const sessionId = hit ? Number(hit.getAttribute("data-session-id")) : NaN;
+    const onClick = Number.isFinite(sessionId) ? () => openSessionRef.current(sessionId) : expand;
+    startDrag(event.currentTarget, event.pointerId, event.screenX, onClick);
   }, [startDrag, expand]);
 
   const onPanelHeadPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
@@ -827,6 +832,7 @@ export function App() {
     setIslandMode("compact");
     layoutCompact().catch(() => {}).finally(() => pumpAlert());
   }, [collapse, layoutCompact, pumpAlert]);
+  openSessionRef.current = openSession;
 
   if (!isMacPanel() && !bootReady) {
     return null;

@@ -319,6 +319,32 @@ describe("App", () => {
     expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
   });
 
+  // 点胶囊上的会话图标直接打开那个会话；点胶囊别处才展开面板。
+  it("点胶囊上的会话图标直接打开它，不展开面板", async () => {
+    const row = {
+      session: { id: 77, cc_session_id: "s-77", status: "running", last_event_at: 1000, started_at: 0, ended_at: null, project_id: 1 },
+      project_name: "p", task_title: "点我打开", current_activity: null, column: "todo", todo_done: 0, todo_total: 0,
+      todos: [], pid: null, connected: true, archived: false, archived_at: null, cwd: "/p", errored: false,
+      error_label: null, error_raw: null, preview: null, note: null, context_pct: null, context_window: null,
+      model: null, pending_review: null, last_ai_text: null, last_user_text: null, provider: "claude",
+      screen_state: "working",
+    };
+    getLiveSessionsPage.mockImplementation((filter: string, search: string | null) =>
+      Promise.resolve(search === null && filter === "running" ? [row] : []));
+    const { container } = render(<App />);
+    const icon = await waitFor(() => {
+      const el = container.querySelector('[data-session-id="77"]');
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(icon.getAttribute("title")).toContain("点我打开");
+    const notch = container.querySelector(".isl-notch") as HTMLElement;
+    fireEvent.pointerDown(icon, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(notch, { button: 0, pointerId: 1, screenX: 100 });
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 77 }));
+    expect(container.querySelector(".isl-panel")).toBeNull();
+  });
+
   it("收到提醒时胶囊弹出会话标题与状态，点「打开」进对话窗", async () => {
     render(<App />);
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));

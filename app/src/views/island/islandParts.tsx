@@ -215,7 +215,7 @@ function arcOf(item: Item, tone: string): number | null | undefined {
 
 /// 会话图标：深灰圆底座里放 agent logo，外面一圈很淡的品牌色底轨，亮弧按 arcOf 画。
 /// 角标：要处理「!」、出错「×」、跑完但你还没看过的亮一个小绿点。
-export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
+export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number; tip?: string }) {
   const tone = cardTone(item);
   const color = ringColor(item, tone);
   const track = `color-mix(in srgb, ${color} 22%, #000)`;
@@ -224,7 +224,8 @@ export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
   const unread = tone === "waiting" && item.unread === true;
   return (
-    <span className="isl-agent" data-tone={tone}>
+    // data-session-id：收起胶囊上点图标直接打开这个会话（App 的按下处理按它分流）。
+    <span className="isl-agent" data-tone={tone} data-session-id={item.session.id} title={tip}>
       <Ring size={size} stroke={2.5} value={arc ?? 0} color={arc === undefined ? "transparent" : color} track={track}>
         <span className="isl-agent-logo" style={tintStyle(item.provider)}><Icon /></span>
       </Ring>

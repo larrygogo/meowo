@@ -185,7 +185,14 @@ export function Island({
         <Clock now={now} locale={t.locale} />
         {shown.length > 0 && (
           <span className="isl-agents">
-            {shown.map((item) => <AgentRing key={item.session.id} item={item} />)}
+            {/* 悬停提示「标题 · 状态」：一排同家的图标长得一样，不提示分不清谁是谁。 */}
+            {shown.map((item) => (
+              <AgentRing
+                key={item.session.id}
+                item={item}
+                tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${t.island.toneLabel[cardTone(item)] ?? ""}`}
+              />
+            ))}
             {more > 0 && <span className="isl-more">+{more}</span>}
           </span>
         )}

@@ -233,6 +233,14 @@ describe("Island 收起", () => {
     expect(arcStroke(byTone("running")[0])).not.toBe("transparent");
   });
 
+  it("会话图标带「标题 · 状态」的悬停提示与会话 id", () => {
+    const item = mk({ task_title: "改登录页", pending_review: "approval" });
+    const { container } = renderIsland({ sessions: [item] });
+    const icon = container.querySelector(".isl-agent")!;
+    expect(icon.getAttribute("title")).toBe(`改登录页 · ${zh.island.toneLabel.pending}`);
+    expect(icon.getAttribute("data-session-id")).toBe(String(item.session.id));
+  });
+
   it("概览：没有额度数据就不画额度环；会话多于 4 个折成「+N」", () => {
     const sessions = Array.from({ length: 6 }, () => mk());
     const { container } = renderIsland({ sessions });
