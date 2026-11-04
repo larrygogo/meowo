@@ -47,8 +47,39 @@ function precompressBrotli(): Plugin {
   };
 }
 
+// 「添加到主屏幕」：应用清单 + 图标放在根路径（文件名固定，清单里要按名引用）。图标直接取
+// src-tauri/icons 的现成文件，不在仓库里另存一份副本。不带 start_url：令牌只存在
+// localStorage（URL 里的 #token 读完即清，防泄露），起始页写死成什么都不会带上令牌。
+// iOS 主屏应用与 Safari 不共享存储，第一次打开要在配对页粘贴一次令牌。
+function homeScreenAssets(): Plugin {
+  const icon = (name: string) => readFileSync(resolve(__dirname, "src-tauri/icons", name));
+  return {
+    name: "meowo:home-screen-assets",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "apple-touch-icon.png", source: icon("128x128@2x.png") });
+      this.emitFile({ type: "asset", fileName: "icon-512.png", source: icon("icon.png") });
+      this.emitFile({
+        type: "asset",
+        fileName: "manifest.json",
+        source: JSON.stringify({
+          name: "Meowo",
+          short_name: "Meowo",
+          display: "standalone",
+          background_color: "#121212",
+          theme_color: "#121212",
+          icons: [
+            { src: "/apple-touch-icon.png", sizes: "256x256", type: "image/png" },
+            { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+          ],
+        }),
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), precompressBrotli()],
+  plugins: [react(), precompressBrotli(), homeScreenAssets()],
   base: "/",
   build: {
     outDir: resolve(__dirname, "dist-mobile"),
