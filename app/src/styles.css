@@ -6708,7 +6708,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   white-space: nowrap;
   cursor: pointer;
 }
-.isl-clock { font-size: 20px; font-weight: 600; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; }
+.isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
 .isl-agents { display: flex; align-items: center; gap: 9px; }
 .isl-more { font-size: 12px; font-weight: 600; color: var(--isl-dim); }
 .isl-dots { display: inline-flex; align-items: center; gap: 6px; }
@@ -6722,26 +6722,27 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-faint { color: var(--isl-dim); font-size: 13px; }
 
 /* 状态文字的颜色 */
-.isl-state { font-size: 12px; font-weight: 600; color: var(--isl-dim); flex: none; }
+.isl-state { font-size: 12px; font-weight: 600; color: var(--isl-text-2); flex: none; }
 .isl-state.is-running { color: var(--isl-ok); }
 .isl-state.is-pending { color: var(--isl-warn); }
 .isl-state.is-error { color: var(--isl-err); }
 .isl-sep { color: var(--isl-faint); margin: 0 4px; }
 
-/* 眼睛 */
-.isl-eyes { position: relative; display: inline-flex; align-items: center; gap: 3px; padding: 0 7px; flex: none; }
-.isl-eye { width: 9px; height: 12px; border-radius: 50%; background: #fff; transform-origin: center; }
+/* 眼睛：跑完/闲着眯成两道弧，在跑睁眼张望，要处理琥珀闪，出错红。 */
+.isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
-.isl-eyes.is-small .isl-eye { width: 7px; height: 10px; }
-.isl-eyes[data-tone="running"] .isl-eye { animation: isl-look 2.6s ease-in-out infinite; }
-.isl-eyes[data-tone="pending"] .isl-eye { background: var(--isl-warn); animation: isl-pulse 1.4s ease-in-out infinite; }
-.isl-eyes[data-tone="error"] .isl-eye { background: var(--isl-err); }
-.isl-eyes[data-tone="idle"] .isl-eye { animation: isl-blink 5s ease-in-out infinite; }
-.isl-spark { position: absolute; top: -5px; font-size: 11px; font-weight: 800; line-height: 1; color: var(--isl-ok); }
-.isl-spark.is-l { left: -2px; }
-.isl-spark.is-r { right: -3px; top: -8px; }
-.isl-spark.is-warn { color: var(--isl-warn); }
+.isl-eye-pair { display: block; overflow: visible; }
+.isl-eye-balls { transform-box: fill-box; transform-origin: center; }
+.isl-eyes[data-tone="running"] .isl-eye-balls { animation: isl-look 2.6s ease-in-out infinite; }
+.isl-eyes[data-tone="pending"] { color: var(--isl-warn); }
+.isl-eyes[data-tone="pending"] .isl-eye-balls { animation: isl-pulse 1.4s ease-in-out infinite; }
+.isl-eyes[data-tone="error"] { color: var(--isl-err); }
+.isl-spark { position: absolute; top: -3px; font-size: 9px; font-weight: 800; line-height: 1; color: var(--isl-ok); opacity: 0.85; }
+.isl-spark.is-l { left: -1px; }
+.isl-spark.is-r { right: -2px; top: -6px; }
 .isl-eyes[data-tone="running"] .isl-spark { animation: isl-twinkle 2.6s ease-in-out infinite; }
+/* 跑完/闲着的弧形眼睛偶尔眨一下（压扁再弹回），不至于一动不动。 */
+.isl-eyes[data-tone="idle"] .isl-eye-pair, .isl-eyes[data-tone="waiting"] .isl-eye-pair { animation: isl-blink 6s ease-in-out infinite; transform-origin: center; }
 .isl-eyes[data-tone="running"] .isl-spark.is-r { animation-delay: 1.3s; }
 @keyframes isl-look {
   0%, 18% { transform: translateX(0); }
@@ -6767,8 +6768,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-ring-body { position: relative; display: grid; place-items: center; }
 .isl-usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .isl-agent { position: relative; display: inline-flex; flex: none; }
-.isl-agent-logo { width: 16px; height: 16px; display: grid; place-items: center; }
-.isl-agent-logo svg, .isl-agent-logo img { width: 15px !important; height: 15px !important; }
+.isl-agent-logo { width: 20px; height: 20px; display: grid; place-items: center; }
+/* logo 要几乎撑满环内（参考图），原始 11~13px 的徽标在 32px 的环里只占一小点，环里空空的。 */
+.isl-agent-logo svg, .isl-agent-logo img { width: 19px !important; height: 19px !important; }
 .isl-agent-badge {
   position: absolute; right: -4px; bottom: -4px;
   min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
@@ -6894,5 +6896,5 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .isl-eye, .isl-spark, .isl-dot, .isl-ring.is-spin > svg { animation: none !important; }
+  .isl-eye-balls, .isl-eye-pair, .isl-spark, .isl-dot, .isl-ring.is-spin > svg { animation: none !important; }
 }

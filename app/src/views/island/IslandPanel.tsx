@@ -4,7 +4,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage } from "../../api";
 import { useT } from "../../i18n";
-import { cardTone } from "../sticker/helpers";
+import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
 import { AgentRing, Ring, useNow } from "./islandParts";
@@ -83,9 +83,11 @@ export function IslandPanel({
               {rows.length === 0 && <div className="isl-empty">{t.island.idle}</div>}
               {rows.map((item) => {
                 const tone = cardTone(item);
+                // 不放 current_activity：那是原始工具串（Read: 加完整路径、› cd 加命令），塞进这一行
+                // 像调试输出（用户实拍嫌丑）。项目 · 多久前 · 待办 就够认出是哪个。
                 const detail = [
                   item.project_name,
-                  item.current_activity || item.preview,
+                  fmtAgo(item.session.last_event_at, t),
                   item.todo_total > 0 ? t.island.todo(item.todo_done, item.todo_total) : null,
                 ].filter(Boolean).join(" · ");
                 return (

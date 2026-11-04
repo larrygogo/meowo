@@ -7,15 +7,26 @@ import type { Item } from "../sticker/types";
 
 export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
 
-/// 两只眼睛（Meowo 标志）。在跑：左右张望，两侧冒绿色「+」；要处理：琥珀色、冒「!」；
-/// 出错：红；跑完等输入：静止的白；闲着：偶尔眨眼。动作全在 CSS。
+/// 两只眼睛（Meowo 标志）。在跑：睁眼左右张望，两侧冒小「+」；要处理：琥珀色、一闪一闪；
+/// 出错：红；跑完/闲着：眯成两道弯弯的弧（照参考图，实心椭圆一直睁着显得呆）。动作全在 CSS。
 export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolean }) {
+  const closed = tone === "waiting" || tone === "idle";
   return (
     <span className={`isl-eyes${small ? " is-small" : ""}`} data-tone={tone} aria-hidden="true">
       {!small && tone === "running" && <span className="isl-spark is-l">+</span>}
-      {!small && tone === "pending" && <span className="isl-spark is-l is-warn">!</span>}
-      <span className="isl-eye" />
-      <span className="isl-eye" />
+      <svg className="isl-eye-pair" width={small ? 18 : 22} height={small ? 11 : 14} viewBox="0 0 22 14">
+        {closed ? (
+          <g fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
+            <path d="M1.8 9.5 Q5.5 3 9.2 9.5" />
+            <path d="M12.8 9.5 Q16.5 3 20.2 9.5" />
+          </g>
+        ) : (
+          <g className="isl-eye-balls" fill="currentColor">
+            <ellipse cx="5.5" cy="7" rx="4.2" ry="5.6" />
+            <ellipse cx="16.5" cy="7" rx="4.2" ry="5.6" />
+          </g>
+        )}
+      </svg>
       {!small && tone === "running" && <span className="isl-spark is-r">+</span>}
     </span>
   );
@@ -54,13 +65,23 @@ export function Ring({ size, stroke, value, color, track, children, className }:
   );
 }
 
-/// 各状态的环色（实色 / 底轨）。
-const TONE_COLORS: Record<string, [string, string]> = {
-  running: ["var(--isl-ok)", "var(--isl-ok-track)"],
-  pending: ["var(--isl-warn)", "var(--isl-warn-track)"],
-  error: ["var(--isl-err)", "var(--isl-err-track)"],
-  waiting: ["var(--isl-dim)", "var(--isl-track)"],
+/// 环色：照参考图用各家品牌色（Claude 橙、Codex 紫……），跑完的会话也是一整圈亮色，不再是
+/// 死气沉沉的灰。只有要人处理（琥珀）和出错（红）换成状态色，一眼能从一排图标里挑出来。
+const BRAND_COLORS: Record<string, string> = {
+  claude: "#d97757",
+  codex: "#a970ff",
+  kimi: "#4f8cff",
+  gemini: "#7b8cff",
+  opencode: "#c7c7cc",
 };
+const STATE_COLORS: Record<string, string> = {
+  pending: "var(--isl-warn)",
+  error: "var(--isl-err)",
+};
+
+function ringColor(item: Item, tone: string): string {
+  return STATE_COLORS[tone] ?? BRAND_COLORS[item.provider] ?? "var(--isl-text-2)";
+}
 
 /// 会话进度：有待办按完成比例；在跑但没待办 = 不定进度（转圈）；其余整圈。
 function progressOf(item: Item, tone: string): number | null {
@@ -68,10 +89,12 @@ function progressOf(item: Item, tone: string): number | null {
   return tone === "running" ? null : 1;
 }
 
-/// 带进度环的 agent 图标：环色 = 状态，环长 = 待办进度。要处理的会话角上带「!」，出错带「×」。
+/// 带进度环的 agent 图标：环色 = 品牌色（要处理琥珀、出错红），环长 = 待办进度，在跑没待办时转圈。
+/// 要处理的会话角上带「!」，出错带「×」。
 export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
   const tone = cardTone(item);
-  const [color, track] = TONE_COLORS[tone] ?? TONE_COLORS.waiting;
+  const color = ringColor(item, tone);
+  const track = `color-mix(in srgb, ${color} 24%, #000)`;
   const { Icon } = agentAssets(item.provider);
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
   return (
