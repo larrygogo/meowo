@@ -6728,21 +6728,30 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-state.is-error { color: var(--isl-err); }
 .isl-sep { color: var(--isl-faint); margin: 0 4px; }
 
-/* 眼睛：跑完/闲着眯成两道弧，在跑睁眼张望，要处理琥珀闪，出错红。 */
+/* 眼睛：白眼珠黑瞳孔，瞳孔跟着鼠标转、不定时眨眼；要处理琥珀睁大弹跳，出错红叉，跑完 ^ ^，
+   闲久了睡着冒 z。各形态在 islandParts.tsx 的 Eyes 里切。 */
 .isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
 .isl-eye-pair { display: block; overflow: visible; }
-.isl-eye-balls { transform-box: fill-box; transform-origin: center; }
-.isl-eyes[data-tone="running"] .isl-eye-balls { animation: isl-look 2.6s ease-in-out infinite; }
-.isl-eyes[data-tone="pending"] { color: var(--isl-warn); }
-.isl-eyes[data-tone="pending"] .isl-eye-balls { animation: isl-pulse 1.4s ease-in-out infinite; }
+.isl-sclera { fill: #fff; }
+.isl-pupil { fill: #000; transition: transform 0.14s ease-out; }
+.isl-eye-open { transform-box: fill-box; transform-origin: center; transition: transform 0.07s ease-in; }
+.isl-eye-open.is-blink { transform: scaleY(0.12); }
+/* 眼白任何状态都是白的（用户要求）；要处理靠睁大、弹跳和旁边的琥珀「!」表达。 */
+.isl-spark.is-warn { color: var(--isl-warn); font-size: 11px; top: -5px; }
+.isl-eyes[data-mode="wide"] .isl-eye-pair { animation: isl-bounce 1.1s ease-in-out infinite; }
 .isl-eyes[data-tone="error"] { color: var(--isl-err); }
+@keyframes isl-bounce { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-2px); } 60% { transform: translateY(0.5px); } }
+/* 睡着冒的 z：从右上方慢慢飘起、淡出，一个接一个。 */
+.isl-zz { position: absolute; right: -4px; top: -6px; font-size: 9px; font-weight: 800; color: var(--isl-dim); animation: isl-zz 2.6s ease-in infinite; }
+@keyframes isl-zz { 0% { opacity: 0; transform: translate(0, 4px) scale(0.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(5px, -8px) scale(1.15); } }
 .isl-spark { position: absolute; top: -3px; font-size: 9px; font-weight: 800; line-height: 1; color: var(--isl-ok); opacity: 0.85; }
 .isl-spark.is-l { left: -1px; }
 .isl-spark.is-r { right: -2px; top: -6px; }
 .isl-eyes[data-tone="running"] .isl-spark { animation: isl-twinkle 2.6s ease-in-out infinite; }
-/* 跑完/闲着的弧形眼睛偶尔眨一下（压扁再弹回），不至于一动不动。 */
-.isl-eyes[data-tone="idle"] .isl-eye-pair, .isl-eyes[data-tone="waiting"] .isl-eye-pair { animation: isl-blink 6s ease-in-out infinite; transform-origin: center; }
+/* 跑完的 ^ ^ 轻轻上下晃，像在笑。 */
+.isl-eyes[data-mode="happy"] .isl-eye-pair { animation: isl-giggle 2.4s ease-in-out infinite; }
+@keyframes isl-giggle { 0%, 70%, 100% { transform: translateY(0); } 80% { transform: translateY(-1.5px); } 90% { transform: translateY(0); } }
 .isl-eyes[data-tone="running"] .isl-spark.is-r { animation-delay: 1.3s; }
 @keyframes isl-look {
   0%, 18% { transform: translateX(0); }
@@ -6933,6 +6942,6 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .isl-eye-balls, .isl-eye-pair, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
+  .isl-eye-pair, .isl-zz, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
   .isl-ring-arc, .isl-usage-flip > span { transition: none !important; }
 }

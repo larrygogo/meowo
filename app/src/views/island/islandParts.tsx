@@ -1,35 +1,150 @@
 // 灵动岛的零件：眼睛、带进度环的 agent 图标、额度环、时钟。收起胶囊、提醒、展开面板共用。
 // 视觉照用户给的参考图（2026-11-04）：纯黑底、白字、环形进度、状态用颜色而不是文字堆叠。
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { agentAssets, tintStyle } from "../../providers";
 import { cardTone } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 
 export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
 
-/// 两只眼睛（Meowo 标志）。在跑：睁眼左右张望，两侧冒小「+」；要处理：琥珀色、一闪一闪；
-/// 出错：红；跑完/闲着：眯成两道弯弯的弧（照参考图，实心椭圆一直睁着显得呆）。动作全在 CSS。
+/// 两只眼睛（Meowo 标志）。用户要求「做得有趣些」（2026-11-04）：
+/// - 在跑 / 闲着：白眼珠黑瞳孔，瞳孔跟着屏幕上的鼠标转，不定时眨眼（偶尔连眨两下）；在跑时旁边冒小「+」
+/// - 要处理：睁大、轻轻弹跳，旁边一个琥珀「!」（眼白始终是白的，用户要求）
+/// - 出错：红色「× ×」
+/// - 跑完等输入：眯成「^ ^」
+/// - 闲着超过 10 分钟：睡着，眼睛合成两道线，冒「z」
 export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolean }) {
-  const closed = tone === "waiting" || tone === "idle";
+  const sleepy = useSleepy(tone === "idle");
+  const mode: EyeMode = tone === "error" ? "dead"
+    : tone === "waiting" ? "happy"
+    : sleepy ? "sleep"
+    : tone === "pending" ? "wide"
+    : "open";
+  const looking = mode === "open" || mode === "wide";
+  const look = useCursorLook(looking);
+  const blink = useBlink(mode === "open");
   return (
-    <span className={`isl-eyes${small ? " is-small" : ""}`} data-tone={tone} aria-hidden="true">
+    <span className={`isl-eyes${small ? " is-small" : ""}`} data-tone={tone} data-mode={mode} aria-hidden="true">
       {!small && tone === "running" && <span className="isl-spark is-l">+</span>}
-      <svg className="isl-eye-pair" width={small ? 18 : 22} height={small ? 11 : 14} viewBox="0 0 22 14">
-        {closed ? (
+      {!small && mode === "wide" && <span className="isl-spark is-l is-warn">!</span>}
+      <svg className="isl-eye-pair" width={small ? 20 : 26} height={small ? 13 : 16} viewBox="0 0 26 16">
+        {mode === "dead" ? (
+          <g fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+            <path d="M3 4.5l7 7M10 4.5l-7 7" />
+            <path d="M16 4.5l7 7M23 4.5l-7 7" />
+          </g>
+        ) : mode === "happy" ? (
           <g fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
-            <path d="M1.8 9.5 Q5.5 3 9.2 9.5" />
-            <path d="M12.8 9.5 Q16.5 3 20.2 9.5" />
+            <path d="M2.5 10.5 Q6.5 3.5 10.5 10.5" />
+            <path d="M15.5 10.5 Q19.5 3.5 23.5 10.5" />
+          </g>
+        ) : mode === "sleep" ? (
+          <g fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+            <path d="M2.5 9 Q6.5 11.5 10.5 9" />
+            <path d="M15.5 9 Q19.5 11.5 23.5 9" />
           </g>
         ) : (
-          <g className="isl-eye-balls" fill="currentColor">
-            <ellipse cx="5.5" cy="7" rx="4.2" ry="5.6" />
-            <ellipse cx="16.5" cy="7" rx="4.2" ry="5.6" />
+          <g className={`isl-eye-open${blink ? " is-blink" : ""}`}>
+            {[6.5, 19.5].map((cx) => (
+              <g key={cx}>
+                <ellipse className="isl-sclera" cx={cx} cy={8} rx={mode === "wide" ? 5.6 : 5} ry={mode === "wide" ? 7.2 : 6.6} />
+                <circle
+                  className="isl-pupil"
+                  cx={cx}
+                  cy={8}
+                  r={mode === "wide" ? 1.9 : 2.5}
+                  style={{ transform: `translate(${look.x * 2.2}px, ${look.y * 2.6}px)` }}
+                />
+              </g>
+            ))}
           </g>
         )}
       </svg>
       {!small && tone === "running" && <span className="isl-spark is-r">+</span>}
+      {!small && mode === "sleep" && <span className="isl-zz">z</span>}
     </span>
   );
+}
+
+type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep";
+
+/// 鼠标相对岛中心的方向，归一到 -1..1。只在需要「看」的时候轮询（110ms 一次，瞳孔有 CSS 过渡，
+/// 看着是连续转的）。页面不可见时暂停。island_cursor 只读光标与窗口位置，很便宜。
+function useCursorLook(active: boolean): { x: number; y: number } {
+  const [look, setLook] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    if (!active) {
+      setLook({ x: 0, y: 0 });
+      return;
+    }
+    let cancelled = false;
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      invoke<[number, number] | null>("island_cursor")
+        .then((pos) => {
+          if (cancelled || !pos) return;
+          const [dx, dy] = pos;
+          // 横向在 150px 内由中间转到最边，纵向 60px：鼠标在屏幕下方远处时眼睛朝下看到底。
+          const x = Math.max(-1, Math.min(1, dx / 150));
+          const y = Math.max(-1, Math.min(1, dy / 60));
+          setLook((prev) => (Math.abs(prev.x - x) < 0.05 && Math.abs(prev.y - y) < 0.05 ? prev : { x, y }));
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = window.setInterval(tick, 110);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [active]);
+  return look;
+}
+
+/// 不定时眨眼：2.5~6 秒一次，两成概率连眨两下。固定节奏的眨眼看两遍就假了。
+function useBlink(active: boolean): boolean {
+  const [blink, setBlink] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        const twice = Math.random() < 0.2;
+        setBlink(true);
+        timer = window.setTimeout(() => {
+          setBlink(false);
+          if (twice) {
+            timer = window.setTimeout(() => {
+              setBlink(true);
+              timer = window.setTimeout(() => { setBlink(false); schedule(); }, 130);
+            }, 160);
+          } else {
+            schedule();
+          }
+        }, 130);
+      }, 2_500 + Math.random() * 3_500);
+    };
+    schedule();
+    return () => {
+      window.clearTimeout(timer);
+      setBlink(false);
+    };
+  }, [active]);
+  return blink;
+}
+
+/// 闲着超过 10 分钟就「睡着」。一有会话（不再闲着）立刻醒。
+export const EYES_SLEEP_AFTER_MS = 10 * 60_000;
+function useSleepy(idle: boolean): boolean {
+  const [sleepy, setSleepy] = useState(false);
+  useEffect(() => {
+    setSleepy(false);
+    if (!idle) return;
+    const id = window.setTimeout(() => setSleepy(true), EYES_SLEEP_AFTER_MS);
+    return () => window.clearTimeout(id);
+  }, [idle]);
+  return sleepy;
 }
 
 /// 环形进度。value 为 0..1；null = 不定进度（转圈的一段弧）。

@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string) => Promise.resolve(null as unknown)) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
-import { UsageRing, usageColor, USAGE_FLIP_MS } from "./island/islandParts";
+import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usageColor, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
 import type { ProviderUsage } from "../api";
@@ -40,7 +43,6 @@ const renderIsland = (props: Partial<Parameters<typeof Island>[0]> = {}) =>
       alert={null}
       usages={[]}
       onMeasure={noop}
-      onHoverIntent={noop}
       onActivate={noop}
       onOpenSession={noop}
       onPointerDownDrag={noop}
@@ -154,6 +156,42 @@ describe("额度环", () => {
   });
 });
 
+describe("眼睛", () => {
+  const mode = (container: HTMLElement) => container.querySelector(".isl-eyes")?.getAttribute("data-mode");
+
+  it("每种状态一个表情：在跑睁眼、要处理睁大、出错叉叉、跑完 ^ ^", () => {
+    expect(mode(render(<Eyes tone="running" />).container)).toBe("open");
+    cleanup();
+    expect(mode(render(<Eyes tone="pending" />).container)).toBe("wide");
+    cleanup();
+    expect(mode(render(<Eyes tone="error" />).container)).toBe("dead");
+    cleanup();
+    expect(mode(render(<Eyes tone="waiting" />).container)).toBe("happy");
+  });
+
+  it("闲着超过 10 分钟睡着、冒 z；一有会话就醒", () => {
+    vi.useFakeTimers();
+    const { container, rerender } = render(<Eyes tone="idle" />);
+    expect(mode(container)).toBe("open");
+    act(() => { vi.advanceTimersByTime(EYES_SLEEP_AFTER_MS + 1_000); });
+    expect(mode(container)).toBe("sleep");
+    expect(container.querySelector(".isl-zz")).toBeTruthy();
+    rerender(<Eyes tone="running" />);
+    expect(mode(container)).toBe("open");
+  });
+
+  it("瞳孔朝鼠标的方向转", async () => {
+    invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "island_cursor" ? [300, 120] : null));
+    const { container } = render(<Eyes tone="running" />);
+    // 鼠标在右下方远处：瞳孔往右下挪到头。
+    await vi.waitFor(() => {
+      const transform = (container.querySelector(".isl-pupil") as SVGElement | null)?.style.transform ?? "";
+      expect(transform).toBe("translate(2.2px, 2.6px)");
+    });
+    invoke.mockImplementation(() => Promise.resolve(null));
+  });
+});
+
 describe("Island 收起", () => {
   it("概览：额度环、时间、每个会话一颗带环的 agent 图标", () => {
     const { container } = renderIsland({ sessions: [mk(), mk({ pending_review: "approval" })], usages: [{ provider: "claude", pct: 82 }] });
@@ -192,20 +230,17 @@ describe("Island 收起", () => {
     expect(container.querySelectorAll(".isl-dot")).toHaveLength(6);
   });
 
-  // U1-9：屏幕顶边常有鼠标路过，停够 250ms 才展开，路过不展开。
-  it("鼠标停够 250ms 才算要展开，提前移开不算", () => {
+  // 用户要求（2026-11-04）：只点击展开，鼠标停上去不展开。
+  it("鼠标停在胶囊上不展开", () => {
     vi.useFakeTimers();
-    const onHoverIntent = vi.fn();
-    const { container } = renderIsland({ onHoverIntent });
+    const onActivate = vi.fn();
+    const onPointerDownDrag = vi.fn();
+    const { container } = renderIsland({ onActivate, onPointerDownDrag });
     const notch = container.querySelector(".isl-notch")!;
     fireEvent.pointerEnter(notch);
-    vi.advanceTimersByTime(200);
-    fireEvent.pointerLeave(notch);
-    vi.advanceTimersByTime(500);
-    expect(onHoverIntent).not.toHaveBeenCalled();
-    fireEvent.pointerEnter(notch);
-    vi.advanceTimersByTime(260);
-    expect(onHoverIntent).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(2_000);
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(onPointerDownDrag).not.toHaveBeenCalled();
   });
 });
 
@@ -234,18 +269,18 @@ describe("Island 提醒", () => {
   // 用户反馈：鼠标移上提醒，提醒就被换成展开面板，还没看完就没了。提醒在场时悬停只留住它。
   it("鼠标停在提醒上只报告「在看」，不触发展开", () => {
     vi.useFakeTimers();
-    const onHoverIntent = vi.fn();
+    const onActivate = vi.fn();
     const onAlertHover = vi.fn();
     const { container } = renderIsland({
       alert: { sessionId: 3, kind: "approval", title: "批一下", project: "p", detail: null },
-      onHoverIntent,
+      onActivate,
       onAlertHover,
     });
     const notch = container.querySelector(".isl-notch")!;
     fireEvent.pointerEnter(notch);
     vi.advanceTimersByTime(1_000);
     expect(onAlertHover).toHaveBeenLastCalledWith(true);
-    expect(onHoverIntent).not.toHaveBeenCalled();
+    expect(onActivate).not.toHaveBeenCalled();
     fireEvent.pointerLeave(notch);
     expect(onAlertHover).toHaveBeenLastCalledWith(false);
   });

@@ -93,7 +93,6 @@ export function Island({
   alert,
   usages,
   onMeasure,
-  onHoverIntent,
   onActivate,
   onOpenSession,
   onPointerDownDrag,
@@ -107,8 +106,6 @@ export function Island({
   usages: readonly { provider: string; pct: number }[];
   /** 刘海本体（不含耳朵）的实测宽度，App 据此让窗口贴合。 */
   onMeasure: (width: number) => void;
-  /** 鼠标在胶囊上停够 250ms（U1-9：屏幕顶边常有鼠标路过，不能一碰就展开）。 */
-  onHoverIntent: () => void;
   /** 点一下胶囊（没拖动）。 */
   onActivate: () => void;
   onOpenSession: (sessionId: number) => void;
@@ -120,7 +117,6 @@ export function Island({
   const t = useT();
   const now = useNow();
   const notchRef = useRef<HTMLDivElement>(null);
-  const hoverTimer = useRef<number | null>(null);
   const counts = useMemo(() => islandCounts(sessions), [sessions]);
   const tone = islandTone(counts);
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
@@ -137,11 +133,6 @@ export function Island({
     observer.observe(el);
     return () => observer.disconnect();
   }, [alert, compactStyle, onMeasure]);
-
-  const clearHover = () => {
-    if (hoverTimer.current != null) window.clearTimeout(hoverTimer.current);
-    hoverTimer.current = null;
-  };
 
   const alertLabel = (event: IslandAlertEvent) => {
     switch (event.kind) {
@@ -211,23 +202,11 @@ export function Island({
         role="button"
         tabIndex={0}
         aria-label={t.island.ariaLabel}
-        onPointerEnter={() => {
-          clearHover();
-          // 提醒在场时悬停只是「我在看」：留住提醒，不展开（展开会把提醒换成面板）。
-          if (alert) {
-            onAlertHover?.(true);
-            return;
-          }
-          hoverTimer.current = window.setTimeout(() => { hoverTimer.current = null; onHoverIntent(); }, 250);
-        }}
-        onPointerLeave={() => {
-          clearHover();
-          if (alert) onAlertHover?.(false);
-        }}
-        onPointerDown={(event) => {
-          clearHover();
-          onPointerDownDrag(event);
-        }}
+        // 只点击展开，悬停不展开（用户要求，2026-11-04）。提醒在场时悬停是「我在看」：
+        // 留住提醒、暂停倒计时。
+        onPointerEnter={() => { if (alert) onAlertHover?.(true); }}
+        onPointerLeave={() => { if (alert) onAlertHover?.(false); }}
+        onPointerDown={onPointerDownDrag}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();

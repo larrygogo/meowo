@@ -890,7 +890,6 @@ export function App() {
       alert={islandMode === "alert" ? alert : null}
       usages={islandUsages}
       onMeasure={onMeasure}
-      onHoverIntent={expand}
       onActivate={expand}
       onOpenSession={openSession}
       onPointerDownDrag={onPillPointerDown}

@@ -119,6 +119,19 @@ pub(crate) fn island_layout(
     Ok(())
 }
 
+/// 光标相对岛中心的位置（逻辑像素，x 向右、y 向下为正）。眼睛据此看向鼠标。
+/// 只读光标与窗口位置，与 cursor_over_window 同量级，同步命令即可。取不到时 None。
+#[tauri::command]
+pub(crate) fn island_cursor(window: tauri::WebviewWindow) -> Option<(f64, f64)> {
+    let cursor = window.cursor_position().ok()?;
+    let pos = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    let scale = window.scale_factor().ok()?.max(0.1);
+    let cx = f64::from(pos.x) + f64::from(size.width) / 2.0;
+    let cy = f64::from(pos.y) + f64::from(size.height) / 2.0;
+    Some(((cursor.x - cx) / scale, (cursor.y - cy) / scale))
+}
+
 /// 开始左右拖：记下光标与窗口的起点。
 #[tauri::command]
 pub(crate) fn island_drag_begin(window: tauri::WebviewWindow) -> Result<(), String> {

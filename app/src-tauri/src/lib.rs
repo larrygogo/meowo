@@ -1375,6 +1375,7 @@ pub fn run() {
             island::island_drag_begin,
             island::island_drag_update,
             island::island_drag_end,
+            island::island_cursor,
             diaglog::export_diag_log,
             file_mention_candidates,
             list_file_openers,
