@@ -424,10 +424,10 @@
 | 7T-2 | 文件路径链接在含中文的行上错位，每个宽字符左偏 1 格，Ctrl+点击打不开（T-4 未覆盖坐标口径） | `ManagedTerminal.tsx:600-604` | `line.getCell(i).getWidth()` 把字符串下标映射到单元格下标 | 已修 |
 | 7T-3 | 终端字号首帧按 12 起，settings 晚到再重排，PTY 多吃一次 resize（U1-17 第 5 处首帧占位） | `ManagedTerminal.tsx:572-576,997` | 挂载前先拿 settings 再 new Terminal，或由 ChatWindow 传入 | 已修 |
 | 7T-4 | 带引号的目录路径（资源管理器「复制为路径」）被拒为「目录不存在」 | `NewSessionPanel.tsx:290`、`paths.ts:8-14`、`terminal.rs:1791` | normalizePath 剥首尾成对引号 | 已修 |
-| 7T-5 | 新建面板打开无初始焦点，目录已预填却回车无反应（U1-15 预填后暴露） | `NewSessionPanel.tsx:393-402` | 输入框 autoFocus 并全选，或有预填时焦点落启动按钮 | 部分（复核：autoFocus 无 remoteUi() 门控，手机端打开新建面板即弹软键盘） |
+| 7T-5 | 新建面板打开无初始焦点，目录已预填却回车无反应（U1-15 预填后暴露） | `NewSessionPanel.tsx:393-402` | 输入框 autoFocus 并全选，或有预填时焦点落启动按钮 | 已修（复核：autoFocus 无 remoteUi() 门控，手机端打开新建面板即弹软键盘）（11-04 核对：NewSessionPanel 聚焦已按 remoteUi() 门控） |
 | 7T-6 | 输入框 Enter 绕过启动按钮禁用条件，未装 CLI/检测中照发 newSession | `NewSessionPanel.tsx:401` vs `:642,283` | 抽 canLaunch 守卫，Enter 与按钮共用 | 已修 |
 | 7T-7 | macOS 上「Ctrl+点击」提示教错键，处理器实际收 metaKey（未经本机验证） | `zh.ts:372-373,137`、`ManagedTerminal.tsx:554,606`、`NewSessionPanel.tsx:496` | 文案走 `isMac()` 写「⌘+点击」 | 已修 |
-| 7T-8 | 未检测到 CLI 时是死胡同，无按钮无去处（S-11 在引导里说了去哪装） | `NewSessionPanel.tsx:520-523`、`zh.ts:151` | 警示行加「去安装」按钮调 open_settings | 部分（复核：「去安装」钮在远程是死点击，transport 对 open_settings 静默返回 null，需门控） |
+| 7T-8 | 未检测到 CLI 时是死胡同，无按钮无去处（S-11 在引导里说了去哪装） | `NewSessionPanel.tsx:520-523`、`zh.ts:151` | 警示行加「去安装」按钮调 open_settings | 已修（复核：「去安装」钮在远程是死点击，transport 对 open_settings 静默返回 null，需门控）（11-04 核对：「去安装」在远程已换成说明文案） |
 | 7T-9 | 预填 Agent 未安装时静默换成别的 | `NewSessionPanel.tsx:215-217` | Agent 区下留一行「X 未安装，已改用 Y」 | 已修 |
 | 7T-10 | 终端右键菜单 Esc 关闭后焦点落空，继续打字没反应（U0-11 焦点归还漏了） | `ManagedTerminal.tsx:1905-1917`、`useDismissable.ts:79` | onClose 补 `terminalRef.focus()` 或传 escFocusReturn | 已修 |
 
@@ -474,12 +474,12 @@
 | 7M-1 | **配对后整屏空白数秒**：Suspense fallback 为 null，ChatWindow chunk 1.2MB 走 Tailscale 中继像卡死（C-12 骨架屏只覆盖窗内切会话） | `mobile/main.tsx:48-53,92` | fallback 换同底色「正在加载」行；考虑拆 hljs/xterm 出远程 chunk | 已修 |
 | 7M-2 | 刘海机顶栏：42px 定高 + safe-area padding-top 被吃空，☰ 溢出到标题行；抽屉头未留白 | `mobile.css:27-29` × `styles.css:3538-3545,3596` | `.chat-topbar` 改 `min-height: calc(42px + env(safe-area-inset-top))`，抽屉头同步 | 已修 |
 | 7M-3 | iOS 软键盘弹出时 100dvh 页面被整体顶走，composer 可能藏在键盘后；全仓无 visualViewport 处理（调研标「待真机确认」至今未收口） | `mobile.css:15-24` | visualViewport resize 写 `--app-height`；安卓 `interactive-widget=resizes-content` | 已修（复核回归修补：与 7M-11 互斥，双指放大也触发 visualViewport resize，未判 scale 会把 --app-height 压成缩放后高度并滚回原点；加 scale>1.01 跳过。iOS 真机未验） |
-| 7M-4 | 桌面离线最长 60s 才提示（20s 超时 × 3 次），文案「后端」是黑话且含分号 | `transport.ts:165`、`ChatWindow.tsx:1842-1845`、`zh.ts:226` | 轮询类超时压到 5s；远程文案「与桌面端失去连接，正在重试」 | 已修（复核遗留：remote/timeout 译文「正在重试」也用在不重试的发送路径，措辞待中性化） |
+| 7M-4 | 桌面离线最长 60s 才提示（20s 超时 × 3 次），文案「后端」是黑话且含分号 | `transport.ts:165`、`ChatWindow.tsx:1842-1845`、`zh.ts:226` | 轮询类超时压到 5s；远程文案「与桌面端失去连接，正在重试」 | 已修（复核遗留：remote/timeout 译文「正在重试」也用在不重试的发送路径，措辞待中性化）（11-04：remote/timeout 改为「连不上桌面端，请求超时」，不再说正在重试） |
 | 7M-5 | 手动配对后主题/语言最长 12s 才纠正，中途整页闪换（setInterval 无首发） | `mobile/main.tsx:35-46` | 轮询体抽函数，TokenGate 验证通过时立即调一次 | 已修 |
 | 7M-6 | 配对失败不分「令牌错」与「连不上」，401 与网络异常同回 false | `TokenGate.tsx:51-53`、`transport.ts:85-99` | probeToken 回三态 ok / unauthorized / unreachable | 已修 |
-| 7M-7 | 远程错误文案硬编码中文、半角标点，errors.ts 无 remote sentinel（S-9 改造漏网） | `TokenGate.tsx:46-69`、`mobile.html:12`、`transport.ts:154-264`、`remote.rs:654,680,698,1149` | 闸门文案入 `remote.*` 字典；remote.rs 改 `remote/<code>` 结构化 reason 并补映射 | 部分（复核：四段落地；mobile.html <title> 仍硬编码中文，remote/http_ 映射丢状态码、bad_payload 丢 cmd） |
+| 7M-7 | 远程错误文案硬编码中文、半角标点，errors.ts 无 remote sentinel（S-9 改造漏网） | `TokenGate.tsx:46-69`、`mobile.html:12`、`transport.ts:154-264`、`remote.rs:654,680,698,1149` | 闸门文案入 `remote.*` 字典；remote.rs 改 `remote/<code>` 结构化 reason 并补映射 | 已修（复核：四段落地；mobile.html <title> 仍硬编码中文，remote/http_ 映射丢状态码、bad_payload 丢 cmd）（11-04 核对：bad_payload/http_ 已带 tail 保留命令名与状态码，标题由 main.tsx 按语言设置） |
 | 7M-8 | 远程新建会话遇目录信任/登录询问时「正在启动…」永远转，无出口文案（T-8 的出口按钮被 `!remoteUi()` 门掉） | `ChatWindow.tsx:3488-3497,575-580` | 远程 startingSlow 时渲染「启动等待中，请在桌面端确认」 | 已修 |
-| 7M-9 | 关键小按钮触控热区 32～38px 不足 44px：侧栏 ⋯（远程唯一星标/重命名/归档入口，误点直接打开会话）、审批 ✕ 与「拒绝」相邻 | `styles.css:3765,4999,3641,3419`、`mobile.css:84-91` | 触屏块对这四类改 `inset: -12px` | 部分（复核：点名的 .chat-todo-btn 未扩仍 38px，抽屉 ☰ 40px、搜索 × 41px 亦不足 44） |
+| 7M-9 | 关键小按钮触控热区 32～38px 不足 44px：侧栏 ⋯（远程唯一星标/重命名/归档入口，误点直接打开会话）、审批 ✕ 与「拒绝」相邻 | `styles.css:3765,4999,3641,3419`、`mobile.css:84-91` | 触屏块对这四类改 `inset: -12px` | 已修（复核：点名的 .chat-todo-btn 未扩仍 38px，抽屉 ☰ 40px、搜索 × 41px 亦不足 44）（11-04 核对：todo/侧栏开关/搜索清除均已外扩到 -12px） |
 | 7M-10 | 配对页不跟主题（--bg/--fg/--panel 未定义恒落深色），无 theme-color | `mobile.css:199-242`、`mobile.html` | 改用 `--cc-*` token，补 meta theme-color | 已修 |
 | 7M-11 | 安卓 `maximum-scale=1` 禁双指缩放，与「放大交给系统」注释矛盾 | `mobile.html:7-10` × `mobile.css:37-40` | 去 maximum-scale，输入控件钉 16px，`touch-action: manipulation` | 已修（复核补漏：.chat-approval-custom input 仍 13px 已钉 16px，mobile.html 头注释同步） |
 | 7M-12 | 触屏残留桌面键盘语义：审批卡「拒绝 Esc」徽章、长按发送钮弹 Ctrl+Enter 说明（G-15 长按 tooltip 带过来的） | `ChatWindow.tsx:3792-3794,4428`、`zh.ts:457` | 两处加 `!remoteUi()` 门控 | 已修 |
