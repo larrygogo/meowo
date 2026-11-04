@@ -208,6 +208,20 @@ describe("Island 收起", () => {
     expect(container.querySelector(".isl-agent-badge")?.textContent).toBe("!");
   });
 
+  // 用户嫌整圈亮色环又重又看不出状态：跑完的不画亮弧，没看过的亮小绿点；在跑才有亮弧。
+  it("会话图标：跑完不画亮弧、没看过的亮绿点；在跑才有亮弧", () => {
+    const done = mk({ status: "waiting", unread: true });
+    const seen = mk({ status: "waiting", unread: false });
+    const running = mk({ todo_done: 1, todo_total: 4 });
+    const { container } = renderIsland({ sessions: [done, seen, running] });
+    const agents = [...container.querySelectorAll(".isl-agent")];
+    const arcStroke = (el: Element) => el.querySelectorAll("circle")[1]?.getAttribute("stroke");
+    const byTone = (tone: string) => agents.filter((a) => a.getAttribute("data-tone") === tone);
+    expect(byTone("waiting").map(arcStroke)).toEqual(["transparent", "transparent"]);
+    expect(container.querySelectorAll(".isl-agent-badge.is-unread")).toHaveLength(1);
+    expect(arcStroke(byTone("running")[0])).not.toBe("transparent");
+  });
+
   it("概览：没有额度数据就不画额度环；会话多于 4 个折成「+N」", () => {
     const sessions = Array.from({ length: 6 }, () => mk());
     const { container } = renderIsland({ sessions });

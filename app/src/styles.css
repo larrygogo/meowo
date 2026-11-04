@@ -6792,9 +6792,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-ring-stack { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
 .isl-ring-caption { font-size: 10px; color: var(--isl-dim); }
 .isl-agent { position: relative; display: inline-flex; flex: none; }
-.isl-agent-logo { width: 20px; height: 20px; display: grid; place-items: center; }
+/* 深灰圆底座：logo 不再直接贴在黑底上发散；与外圈之间留一道缝。 */
+.isl-agent-logo { width: 23px; height: 23px; border-radius: 50%; background: var(--isl-chip); display: grid; place-items: center; }
 /* logo 要几乎撑满环内（参考图），原始 11~13px 的徽标在 32px 的环里只占一小点，环里空空的。 */
-.isl-agent-logo svg, .isl-agent-logo img { width: 19px !important; height: 19px !important; }
+.isl-agent-logo svg, .isl-agent-logo img { width: 15px !important; height: 15px !important; }
 .isl-agent-badge {
   position: absolute; right: -4px; bottom: -4px;
   min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
@@ -6804,6 +6805,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 .isl-agent-badge.is-pending { background: var(--isl-warn); }
 .isl-agent-badge.is-error { background: var(--isl-err); color: #fff; }
+/* 跑完但还没看过：右下角一个小绿点。 */
+.isl-agent-badge.is-unread { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--isl-ok); }
 
 /* 提醒 */
 .isl-notch.is-alert {

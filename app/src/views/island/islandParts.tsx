@@ -204,26 +204,32 @@ function ringColor(item: Item, tone: string): string {
   return STATE_COLORS[tone] ?? BRAND_COLORS[item.provider] ?? "var(--isl-text-2)";
 }
 
-/// 会话进度：有待办按完成比例；在跑但没待办 = 不定进度（转圈）；其余整圈。
-function progressOf(item: Item, tone: string): number | null {
-  if (item.todo_total > 0) return item.todo_done / item.todo_total;
-  return tone === "running" ? null : 1;
+/// 亮弧只在有含义时出现（用户嫌整圈亮色环又重又看不出状态）：
+/// 要处理 / 出错整圈状态色；在跑有待办按完成比例、没待办转一小段；跑完不画亮弧（只剩淡淡的底轨）。
+/// 返回 undefined = 不画亮弧。
+function arcOf(item: Item, tone: string): number | null | undefined {
+  if (tone === "pending" || tone === "error") return 1;
+  if (tone === "running") return item.todo_total > 0 ? item.todo_done / item.todo_total : null;
+  return undefined;
 }
 
-/// 带进度环的 agent 图标：环色 = 品牌色（要处理琥珀、出错红），环长 = 待办进度，在跑没待办时转圈。
-/// 要处理的会话角上带「!」，出错带「×」。
+/// 会话图标：深灰圆底座里放 agent logo，外面一圈很淡的品牌色底轨，亮弧按 arcOf 画。
+/// 角标：要处理「!」、出错「×」、跑完但你还没看过的亮一个小绿点。
 export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
   const tone = cardTone(item);
   const color = ringColor(item, tone);
-  const track = `color-mix(in srgb, ${color} 24%, #000)`;
+  const track = `color-mix(in srgb, ${color} 22%, #000)`;
+  const arc = arcOf(item, tone);
   const { Icon } = agentAssets(item.provider);
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
+  const unread = tone === "waiting" && item.unread === true;
   return (
     <span className="isl-agent" data-tone={tone}>
-      <Ring size={size} stroke={3} value={progressOf(item, tone)} color={color} track={track}>
+      <Ring size={size} stroke={2.5} value={arc ?? 0} color={arc === undefined ? "transparent" : color} track={track}>
         <span className="isl-agent-logo" style={tintStyle(item.provider)}><Icon /></span>
       </Ring>
       {badge && <span className={`isl-agent-badge is-${tone}`}>{badge}</span>}
+      {unread && <span className="isl-agent-badge is-unread" aria-hidden="true" />}
     </span>
   );
 }
