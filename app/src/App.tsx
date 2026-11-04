@@ -12,6 +12,8 @@ import {
 } from "./api";
 import { Sticker } from "./views/Sticker";
 import { useBoardRefresh } from "./hooks/useBoardRefresh";
+import { useSettingsEffect } from "./hooks/useSettings";
+import type { IslandCompactStyle } from "./api";
 import { type Item, type Tab } from "./views/sticker/types";
 import { Island, ISLAND_ALERT_SIZE, ISLAND_PILL_HEIGHT } from "./views/Island";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
@@ -30,8 +32,12 @@ import {
 type IslandMode = "compact" | "alert" | "expanded";
 /// 胶囊最窄宽度（逻辑像素）：空态也得是一颗好点的胶囊，不是一条缝。
 const ISLAND_PILL_MIN_WIDTH = 120;
-/// 提醒停留时长。
-const ISLAND_ALERT_MS = 6_000;
+/// 提醒停留时长的缺省值（设置里可改 4 / 6 / 10 秒）。
+const ISLAND_ALERT_MS_DEFAULT = 6_000;
+/// 提醒种类 → 设置里的开关。计划确认、屏幕上挂着交互都算「等待审批」，用户分不出也不必分。
+function islandAlertSwitch(kind: string): string {
+  return kind === "plan" || kind === "blocked" ? "approval" : kind;
+}
 /// 收回动画时长，与 styles.css 的 .island-shell.is-leaving 同源。
 const ISLAND_LEAVE_MS = 180;
 
@@ -440,6 +446,17 @@ export function App() {
   const [pillWidth, setPillWidth] = useState(ISLAND_PILL_MIN_WIDTH);
   const pillWidthRef = useRef(ISLAND_PILL_MIN_WIDTH);
   const draggingRef = useRef(false);
+  // 设置：收起样式、哪些事弹提醒、提醒停留多久（实时跟随设置页改动）。
+  const [islandCompact, setIslandCompact] = useState<IslandCompactStyle>("counts");
+  const islandAlertsRef = useRef<string[] | null>(null);
+  const islandAlertMsRef = useRef(ISLAND_ALERT_MS_DEFAULT);
+  useSettingsEffect((settings) => {
+    if (settings.island_compact) setIslandCompact(settings.island_compact);
+    if (Array.isArray(settings.island_alerts)) islandAlertsRef.current = settings.island_alerts;
+    if (typeof settings.island_alert_seconds === "number") {
+      islandAlertMsRef.current = Math.min(30, Math.max(2, settings.island_alert_seconds)) * 1000;
+    }
+  });
 
   // 收起即卸载 Sticker，searchOpen（Sticker 局部态）随之丢失；若搜索词留在这里，
   // 再展开时列表仍被后端过滤、底栏却没有搜索框，空结果会被误读成「会话全丢了」。收起时清空，
@@ -468,13 +485,16 @@ export function App() {
         .catch(() => {})
         // 两条提醒之间留一拍，别让人以为是同一条换了字。
         .finally(() => window.setTimeout(pumpAlert, 300));
-    }, ISLAND_ALERT_MS);
+    }, islandAlertMsRef.current);
   }, [layout]);
 
   useEffect(() => {
     if (isMacPanel()) return;
     const un = listen<IslandAlertEvent>("island-alert", (event) => {
       if (islandModeRef.current === "expanded") return;
+      // 设置还没读到时（启动头一两秒）按全开处理，宁可多弹一次也别漏掉要人处理的事。
+      const enabled = islandAlertsRef.current;
+      if (enabled && !enabled.includes(islandAlertSwitch(event.payload.kind))) return;
       alertQueueRef.current.push(event.payload);
       pumpAlert();
     });
@@ -762,7 +782,7 @@ export function App() {
   return (
     <Island
       sessions={stripSessions}
-      compactStyle="counts"
+      compactStyle={islandCompact}
       alert={islandMode === "alert" ? alert : null}
       onMeasure={onMeasure}
       onHoverIntent={() => void expand()}

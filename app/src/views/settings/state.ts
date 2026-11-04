@@ -31,6 +31,9 @@ export const SETTINGS_DEFAULTS: Settings = {
   // 占位与真实默认（appearance.ts / 后端 settings.rs）保持一致：flat / neutral。
   sticker_style: "flat",
   sticker_color: "neutral",
+  island_compact: "counts",
+  island_alerts: ["waiting", "approval", "question", "error"],
+  island_alert_seconds: 6,
   // 首帧占位（get_settings() resolve 前）。真实默认值由后端 settings 给，前端不据此做任何判断。
   sticker_quota_providers: ["claude"],
   default_agent: "claude",

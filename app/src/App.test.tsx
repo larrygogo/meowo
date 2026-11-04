@@ -8,6 +8,8 @@ let emitBoardChanged: () => void = () => {};
 let emitIslandAlert: (e: { payload: unknown }) => void = () => {};
 let emitRecallSticker: () => void = () => {};
 const unlisten = vi.fn();
+// 个别用例要改设置（如灵动岛的提醒开关）：合进 getSettings mock 的返回值。
+let extraSettings: Record<string, unknown> = {};
 
 // jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
 // mock 一个足够大的滚动容器，让测试里的卡片进入可视区并被挂载。
@@ -88,6 +90,7 @@ vi.mock("./api", () => ({
       sticker_color: "classic",
       sticker_quota_providers: ["claude"],
       default_agent: "claude",
+      ...extraSettings,
     }),
   getAccounts: () => Promise.resolve([]),
   firstImportNotice: () => Promise.resolve(null),
@@ -136,6 +139,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(() => Promise.resolve(undefined));
   localStorage.clear();
+  extraSettings = {};
 });
 afterEach(() => cleanup());
 
@@ -290,6 +294,23 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: zh.island.open }));
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 7 }));
     await waitFor(() => expect(screen.queryByText("修登录页")).toBeNull());
+  });
+
+  it("提醒按设置开关过滤：关掉「会话跑完」就不弹它，计划确认算在「等待审批」里", async () => {
+    extraSettings = { island_alerts: ["approval"] };
+    render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    // 等设置读进来（getSettings 是异步的）。
+    await new Promise((r) => setTimeout(r, 20));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 1, kind: "waiting", title: "跑完了", project: "p", detail: null } });
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText("跑完了")).toBeNull();
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 2, kind: "plan", title: "计划待确认", project: "p", detail: null } });
+    });
+    expect(await screen.findByText("计划待确认")).toBeTruthy();
   });
 
   it("展开着的时候不弹提醒（人就在看列表）", async () => {

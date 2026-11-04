@@ -45,6 +45,18 @@ fn default_card_menu_mode() -> String {
     "button".to_string()
 }
 /// 贴纸风格：flat = 扁平（默认），elevated = 立体感。
+fn default_island_compact() -> String {
+    "counts".into()
+}
+
+fn default_island_alerts() -> Vec<String> {
+    ["waiting", "approval", "question", "error"].map(String::from).to_vec()
+}
+
+fn default_island_alert_seconds() -> u32 {
+    6
+}
+
 fn default_sticker_style() -> String {
     "flat".to_string()
 }
@@ -187,6 +199,15 @@ pub(crate) struct Settings {
     /// 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。缺省 neutral，兼容老 settings.json。
     #[serde(default = "default_sticker_color")]
     pub(crate) sticker_color: String,
+    /// 灵动岛（Windows）收起时显示什么：counts（状态计数，默认）/ focus（最要紧的会话）/ minimal（只有色点）。
+    #[serde(default = "default_island_compact")]
+    pub(crate) island_compact: String,
+    /// 哪些事让灵动岛弹提醒：waiting（跑完）/ approval（含计划确认、屏幕上挂着交互）/ question / error。缺省全开。
+    #[serde(default = "default_island_alerts")]
+    pub(crate) island_alerts: Vec<String>,
+    /// 提醒停留秒数（前端给 4 / 6 / 10 三档）。缺省 6。
+    #[serde(default = "default_island_alert_seconds")]
+    pub(crate) island_alert_seconds: u32,
     /// 在贴纸底栏显示配额的 provider key 列表（如 "claude"/"kimi"/"codex"）。
     /// 缺省 ["claude"]，旧 settings.json 无此字段时反序列化给默认，不 panic。
     #[serde(default = "default_sticker_quota_providers")]
@@ -290,6 +311,9 @@ impl Default for Settings {
             chat_content_width: default_chat_content_width(),
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),
+            island_compact: default_island_compact(),
+            island_alerts: default_island_alerts(),
+            island_alert_seconds: default_island_alert_seconds(),
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
             proxy: crate::proxy::ProxySettings::default(),
