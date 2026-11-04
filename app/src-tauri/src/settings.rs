@@ -111,6 +111,9 @@ pub(crate) struct StickerWindowState {
     pub(crate) x: Option<i32>,
     #[serde(default)]
     pub(crate) y: Option<i32>,
+    /// 灵动岛中心点在所在屏工作区里的横向比例（0..1，用户左右拖过才有）。None = 居中。
+    #[serde(default)]
+    pub(crate) island_center: Option<f64>,
 }
 
 /// 应用设置（持久化到 ~/.meowo/settings.json）。
@@ -717,6 +720,7 @@ fn sanitize_sticker_window(mut s: StickerWindowState) -> StickerWindowState {
         .filter(|e| matches!(e.as_str(), "left" | "right" | "top"));
     s.x = s.x.map(|v| v.clamp(-100_000, 100_000));
     s.y = s.y.map(|v| v.clamp(-100_000, 100_000));
+    s.island_center = s.island_center.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
     s
 }
 
@@ -1201,6 +1205,7 @@ mod tests {
             pinned: true,
             x: Some(100),
             y: Some(200),
+            island_center: None,
         };
 
         preserve_independently_managed_fields(&mut incoming, &current);
@@ -1230,6 +1235,7 @@ mod tests {
                 pinned: true,
                 x: Some(100),
                 y: Some(200),
+                island_center: None,
             },
             "贴纸几何不得被设置窗旧快照盖掉（W-17）"
         );
@@ -1255,6 +1261,7 @@ mod tests {
             pinned: true,
             x: Some(9_999_999),
             y: Some(-9_999_999),
+            island_center: None,
         });
         assert_eq!(s.normal_width, None);
         assert_eq!(s.normal_height, None);
@@ -1270,6 +1277,7 @@ mod tests {
             pinned: false,
             x: Some(-1600), // 多屏负坐标是合法位置
             y: Some(0),
+            island_center: None,
         };
         assert_eq!(sanitize_sticker_window(ok.clone()), ok);
     }

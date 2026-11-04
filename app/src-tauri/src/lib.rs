@@ -12,6 +12,7 @@ mod editors;
 mod envpath;
 mod fsutil;
 mod git;
+mod island;
 #[cfg(target_os = "windows")]
 mod openwith;
 mod ports;
@@ -1370,6 +1371,10 @@ pub fn run() {
             read_image_preview,
             search_project_files,
             diaglog::diag_log,
+            island::island_layout,
+            island::island_drag_begin,
+            island::island_drag_update,
+            island::island_drag_end,
             diaglog::export_diag_log,
             file_mention_candidates,
             list_file_openers,
@@ -1467,7 +1472,8 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             if let tauri::WindowEvent::Moved(pos) = event {
                 // 出屏约束与吸附只作用于贴纸主窗口；设置等其它窗口不受限制。
-                if window.label() != "main" {
+                // 灵动岛自己管定位（贴顶、只能左右拖，见 island.rs），旧的吸边判定整段让路。
+                if window.label() != "main" || island::active() {
                     return;
                 }
                 let Ok(size) = window.outer_size() else {

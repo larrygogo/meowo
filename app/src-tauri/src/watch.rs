@@ -553,6 +553,28 @@ pub(crate) fn waiting_body(title: &str, last_ai_text: Option<&str>) -> String {
     }
 }
 
+/// 灵动岛提醒：只发主窗口。发不出去（窗口未建/已关）静默，系统通知与推送照常。
+fn emit_island_alert(
+    app: &tauri::AppHandle,
+    session_id: i64,
+    kind: &str,
+    title: &str,
+    project: &str,
+    detail: Option<String>,
+) {
+    let _ = app.emit_to(
+        "main",
+        "island-alert",
+        meowo_protocol::ipc::IslandAlertEvent {
+            session_id,
+            kind: kind.to_string(),
+            title: title.to_string(),
+            project: project.to_string(),
+            detail,
+        },
+    );
+}
+
 pub(crate) fn suppressed_by_viewing(kind: NotifyKind, viewing: bool) -> bool {
     viewing && matches!(kind, NotifyKind::Waiting)
 }
@@ -1021,6 +1043,7 @@ pub(crate) fn spawn_liveness_watch(
                         let fired = seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
                         attention_fired |= fired;
                         if fired {
+                            emit_island_alert(&app, s.session.id, "error", &display_title, &s.project_name, Some(e.label.clone()));
                             crate::push::push_session(&settings, crate::push::PushMessage {
                                 title: format!("{} · {}", s.project_name, tr(lang, "notify.error")),
                                 body: format!("{} · {}", display_title, e.label),
@@ -1064,6 +1087,12 @@ pub(crate) fn spawn_liveness_watch(
                                 _ => "notify.pending.approval",
                             };
                             if fired {
+                                let kind = match s.pending_review.as_deref() {
+                                    Some("question") => "question",
+                                    Some("plan") => "plan",
+                                    _ => "approval",
+                                };
+                                emit_island_alert(&app, s.session.id, kind, &display_title, &s.project_name, None);
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, key)),
                                     body: display_title.clone(),
@@ -1114,6 +1143,7 @@ pub(crate) fn spawn_liveness_watch(
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
                             if fired {
+                                emit_island_alert(&app, s.session.id, "blocked", &display_title, &s.project_name, None);
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, "notify.blocked")),
                                     body: display_title.clone(),
@@ -1165,6 +1195,7 @@ pub(crate) fn spawn_liveness_watch(
                             attention_fired |= fired;
                             if fired {
                                 set_unread(s.session.id, true);
+                                emit_island_alert(&app, s.session.id, "waiting", &display_title, &s.project_name, None);
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),
                                     body: waiting_body(&display_title, s.last_ai_text.as_deref()),
