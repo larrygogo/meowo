@@ -19,6 +19,8 @@ export interface StickerWindowState {
   /** 正常态窗口左上角（物理像素）；null = 未记录过（交 OS 默认摆放）。 */
   x: number | null;
   y: number | null;
+  /** 灵动岛中心点在所在屏工作区里的横向比例（0..1）；null = 居中。与后端 island_center 同构。 */
+  island_center: number | null;
 }
 
 // 正常窗口最小尺寸：与 tauri.conf.json 的 minWidth/minHeight、snap.rs 的 STICKER_MIN_* 对齐。
@@ -54,6 +56,8 @@ function sanitize(raw: unknown): StickerWindowState {
     pinned: o.pinned === true,
     x: pos(o.x),
     y: pos(o.y),
+    island_center: typeof o.island_center === "number" && Number.isFinite(o.island_center)
+      ? Math.min(1, Math.max(0, o.island_center)) : null,
   };
 }
 

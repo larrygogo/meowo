@@ -739,6 +739,12 @@ export type Settings = {
   sticker_style: StickerStyle;
   /** 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。 */
   sticker_color: string;
+  /** 灵动岛（Windows）收起时显示什么。 */
+  island_compact: IslandCompactStyle;
+  /** 哪些事让灵动岛弹提醒：waiting / approval（含计划确认、屏幕上挂着交互）/ question / error。 */
+  island_alerts: string[];
+  /** 提醒停留秒数（4 / 6 / 10）。 */
+  island_alert_seconds: number;
   /** 在贴纸底栏显示配额的 agent id 列表（后端给默认值）。 */
   sticker_quota_providers: AgentId[];
   /** 「新建会话」面板默认选中的 agent（后端给默认值）。 */
@@ -896,6 +902,8 @@ export type TerminalOpenMode = "card" | "button";
 export type SessionOpenIn = "chat" | "terminal";
 export type CardMenuMode = "context" | "button";
 export type StickerStyle = "elevated" | "flat";
+/** 灵动岛收起时的样式：状态计数 / 最要紧的会话 / 只有色点。 */
+export type IslandCompactStyle = "counts" | "focus" | "minimal";
 
 /** 本机实际可用的「打开未连接会话」终端 key（供设置页过滤下拉项）。 */
 export function availableTerminals(): Promise<ResumeTerminal[]> {

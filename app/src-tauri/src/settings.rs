@@ -45,6 +45,18 @@ fn default_card_menu_mode() -> String {
     "button".to_string()
 }
 /// 贴纸风格：flat = 扁平（默认），elevated = 立体感。
+fn default_island_compact() -> String {
+    "counts".into()
+}
+
+fn default_island_alerts() -> Vec<String> {
+    ["waiting", "approval", "question", "error"].map(String::from).to_vec()
+}
+
+fn default_island_alert_seconds() -> u32 {
+    6
+}
+
 fn default_sticker_style() -> String {
     "flat".to_string()
 }
@@ -111,6 +123,9 @@ pub(crate) struct StickerWindowState {
     pub(crate) x: Option<i32>,
     #[serde(default)]
     pub(crate) y: Option<i32>,
+    /// 灵动岛中心点在所在屏工作区里的横向比例（0..1，用户左右拖过才有）。None = 居中。
+    #[serde(default)]
+    pub(crate) island_center: Option<f64>,
 }
 
 /// 应用设置（持久化到 ~/.meowo/settings.json）。
@@ -184,6 +199,15 @@ pub(crate) struct Settings {
     /// 贴纸底色预设 key（neutral/classic/slate/moss/plum/rose/amber）。缺省 neutral，兼容老 settings.json。
     #[serde(default = "default_sticker_color")]
     pub(crate) sticker_color: String,
+    /// 灵动岛（Windows）收起时显示什么：counts（状态计数，默认）/ focus（最要紧的会话）/ minimal（只有色点）。
+    #[serde(default = "default_island_compact")]
+    pub(crate) island_compact: String,
+    /// 哪些事让灵动岛弹提醒：waiting（跑完）/ approval（含计划确认、屏幕上挂着交互）/ question / error。缺省全开。
+    #[serde(default = "default_island_alerts")]
+    pub(crate) island_alerts: Vec<String>,
+    /// 提醒停留秒数（前端给 4 / 6 / 10 三档）。缺省 6。
+    #[serde(default = "default_island_alert_seconds")]
+    pub(crate) island_alert_seconds: u32,
     /// 在贴纸底栏显示配额的 provider key 列表（如 "claude"/"kimi"/"codex"）。
     /// 缺省 ["claude"]，旧 settings.json 无此字段时反序列化给默认，不 panic。
     #[serde(default = "default_sticker_quota_providers")]
@@ -287,6 +311,9 @@ impl Default for Settings {
             chat_content_width: default_chat_content_width(),
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),
+            island_compact: default_island_compact(),
+            island_alerts: default_island_alerts(),
+            island_alert_seconds: default_island_alert_seconds(),
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
             proxy: crate::proxy::ProxySettings::default(),
@@ -717,6 +744,7 @@ fn sanitize_sticker_window(mut s: StickerWindowState) -> StickerWindowState {
         .filter(|e| matches!(e.as_str(), "left" | "right" | "top"));
     s.x = s.x.map(|v| v.clamp(-100_000, 100_000));
     s.y = s.y.map(|v| v.clamp(-100_000, 100_000));
+    s.island_center = s.island_center.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
     s
 }
 
@@ -1201,6 +1229,7 @@ mod tests {
             pinned: true,
             x: Some(100),
             y: Some(200),
+            island_center: None,
         };
 
         preserve_independently_managed_fields(&mut incoming, &current);
@@ -1230,6 +1259,7 @@ mod tests {
                 pinned: true,
                 x: Some(100),
                 y: Some(200),
+                island_center: None,
             },
             "贴纸几何不得被设置窗旧快照盖掉（W-17）"
         );
@@ -1255,6 +1285,7 @@ mod tests {
             pinned: true,
             x: Some(9_999_999),
             y: Some(-9_999_999),
+            island_center: None,
         });
         assert_eq!(s.normal_width, None);
         assert_eq!(s.normal_height, None);
@@ -1270,6 +1301,7 @@ mod tests {
             pinned: false,
             x: Some(-1600), // 多屏负坐标是合法位置
             y: Some(0),
+            island_center: None,
         };
         assert_eq!(sanitize_sticker_window(ok.clone()), ok);
     }

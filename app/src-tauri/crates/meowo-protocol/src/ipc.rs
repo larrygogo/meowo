@@ -604,6 +604,25 @@ pub struct BoardUrgentEvent {
     pub state: String,
 }
 
+/// 灵动岛提醒（`island-alert`，只发给主窗口）。与系统通知同源：watch 的通知判定（指纹去重、
+/// 启动首轮播种、「正看着就不打扰」）走完、决定要提醒时同时发它，但不受「系统通知」开关
+/// 影响——关了系统通知的人照样要岛上弹一下。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct IslandAlertEvent {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub session_id: i64,
+    /// `waiting`（跑完等你）/ `approval` / `question` / `plan` / `blocked`（屏幕上挂着交互）/ `error`。
+    pub kind: String,
+    /// 会话展示标题。
+    pub title: String,
+    pub project: String,
+    /// 补充说明：出错时是错误标签，其余为空。
+    pub detail: Option<String>,
+}
+
 /// 对话页 transcript 变更推送（`chat-transcript`，C-14）。后端 watch 到该会话的
 /// transcript 文件写入时直发（不走 board 合流），对话窗据此提前拉增量——外部终端
 /// 会话没有 pty-output，这条是它的实时通道；定时轮询降级为最终兜底。

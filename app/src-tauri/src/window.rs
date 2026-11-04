@@ -535,7 +535,7 @@ pub(crate) fn chat_window_in_view(app: &tauri::AppHandle) -> bool {
 ///
 /// Windows 上原生 `ShowWindow` 之后**必须**再补一次 `window.show()` 同步 tao 的标志位，
 /// 否则贴纸会在后续某次窗口标志变更时凭空消失，详见函数内注释。
-fn show_window_no_activate(window: &tauri::WebviewWindow) {
+pub(crate) fn show_window_no_activate(window: &tauri::WebviewWindow) {
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
@@ -547,9 +547,9 @@ fn show_window_no_activate(window: &tauri::WebviewWindow) {
             // tao 从不监听 WM_SHOWWINDOW 回填，于是它一直以为贴纸是隐藏的。而
             // `WindowFlags::apply_diff` 末尾有一句**无条件**的「新标志里没有 VISIBLE 就
             // ShowWindow(SW_HIDE)」——此后任何改窗口标志的调用都会顺手把贴纸藏掉：
-            // snap_expand/snap_collapse/snap_restore/unsnap 的 `set_resizable`、
-            // `set_always_on_top`、点击穿透的 `set_ignore_cursor_events` 全在此列。
-            // 实拍症状：折叠条上悬停等偷看展开（snap_expand 第一句就是 set_resizable(true)），
+            // island_layout 的 `set_resizable` / `set_always_on_top`、点击穿透的
+            // `set_ignore_cursor_events` 全在此列。
+            // 实拍症状（旧贴边缩略条时代）：悬停偷看展开第一句就是 set_resizable(true)，
             // 贴纸整个不见——它 skipTaskbar + transparent，任务栏也没入口，只能托盘「找回
             // 贴纸」；而找回走的 `recall_center` 里正好有一句 tauri 的 `show()`，把 VISIBLE
             // 补上后当次会话就不再复现（「有时候才出现」的由来）。
@@ -575,7 +575,7 @@ pub(crate) fn show_sticker(window: tauri::WebviewWindow) {
 /// 点击穿透（W-8）：开启后贴纸不接收任何鼠标事件——opacity 可低至 25%，几乎看不见的
 /// 置顶窗若照常吃掉鼠标就是桌面地雷。按住 Alt 临时恢复交互：穿透窗收不到键鼠，
 /// 修饰键状态只能全局拿——WH_KEYBOARD_LL 钩子方案更重，这里 50ms 轮询
-/// GetAsyncKeyState（与 snap.rs pointer_left_down 同一原语）。仅 Windows 实装：
+/// GetAsyncKeyState（读左键/修饰键的同一原语）。仅 Windows 实装：
 /// macOS 面板失焦自隐、无此问题，设置项也只对 Windows 显示。
 #[cfg(target_os = "windows")]
 static CLICK_THROUGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -871,10 +871,10 @@ pub(crate) fn open_chat_window_target(
 }
 
 /// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/聚焦。
-/// 折叠态的「展开 + 还原正常尺寸」由前端在调用本命令前完成（snap_restore），故这里只按当前尺寸居中。
 /// 置顶是**临时**的（W-6）：先置顶确保浮到所有窗口（含其它置顶窗口）之上，聚焦后按调用方给的
 /// 用户 pin 偏好还原——「找回」只把窗口带到眼前，不替用户改写置顶偏好。
-#[tauri::command]
+/// 只剩托盘找回（recall_sticker）这一个调用方，前端不再直接调，故不再注册为命令。
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn recall_center(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
     let _ = window.unminimize();
     let _ = window.show();
@@ -902,7 +902,7 @@ pub(crate) fn recall_center(window: tauri::WebviewWindow, pinned: bool) -> Resul
     Ok(())
 }
 
-/// 托盘「找回贴纸」：唤起主窗口并通知前端执行完整找回（展开折叠 + 居中到主屏 + 置顶）。
+/// 托盘「找回贴纸」：唤起主窗口并通知前端执行完整找回（岛展开成完整列表 + 置顶）。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -911,7 +911,7 @@ pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
         // 原生层几何救援，不依赖 webview 活着：WebView2 浏览器进程崩溃后窗口 JS 全灭，
         // 下面 emit 的事件无人处理，「找回」就彻底失灵（实拍：吸附细条卡在屏边，重启
         // 才恢复）。窗口还是细条尺寸就先撑回正常最小尺寸，再居中主屏；前端若活着，
-        // 随后会按它记录的正常尺寸精确还原（snap_restore + recall_center），终态一致。
+        // 随后收到 recall-sticker 会用 island_layout 重新贴顶摆成完整列表，终态一致。
         let scale = w.scale_factor().unwrap_or(1.0);
         if let Ok(size) = w.outer_size() {
             let logical = size.to_logical::<f64>(scale);

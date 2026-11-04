@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth } from "../api";
+import { availableTerminals, exportDiagLog, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -594,6 +594,10 @@ const themeOptions = (t: Dict): { value: ThemeMode; label: string }[] => [
   { value: "light", label: t.settings.themeLight },
   { value: "system", label: t.settings.themeSystem },
 ];
+const ISLAND_COMPACT_STYLES: IslandCompactStyle[] = ["counts", "focus", "minimal"];
+const ISLAND_ALERT_SECONDS = [4, 6, 10];
+const ISLAND_ALERT_KINDS = ["waiting", "approval", "question", "error"] as const;
+
 const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] => [
   { value: "elevated", label: t.settings.styleElevated },
   { value: "flat", label: t.settings.styleFlat },
@@ -668,6 +672,9 @@ function AppearanceSection() {
   const opacity = settings?.opacity ?? SETTINGS_DEFAULTS.opacity;
   const uiScale = settings?.ui_scale ?? SETTINGS_DEFAULTS.ui_scale;
   const stickerStyle = settings?.sticker_style ?? SETTINGS_DEFAULTS.sticker_style;
+  const islandCompact = settings?.island_compact ?? SETTINGS_DEFAULTS.island_compact;
+  const islandAlerts = settings?.island_alerts ?? SETTINGS_DEFAULTS.island_alerts;
+  const islandAlertSeconds = settings?.island_alert_seconds ?? SETTINGS_DEFAULTS.island_alert_seconds;
   const stickerColor = settings?.sticker_color ?? SETTINGS_DEFAULTS.sticker_color;
   const termFont = settings?.terminal_font_size ?? SETTINGS_DEFAULTS.terminal_font_size;
   const termLine = settings?.terminal_line_height ?? SETTINGS_DEFAULTS.terminal_line_height;
@@ -766,6 +773,59 @@ function AppearanceSection() {
           <Switch checked={clickThroughOn} onChange={toggleClickThrough} label={t.settings.clickThrough} />
         </div>}
       </div>
+
+      {/* 灵动岛只在 Windows（2026-11-04 起替换贴边缩略条），macOS 仍是菜单栏面板。 */}
+      {IS_WIN && <>
+        <div className="sec-caption">{t.settings.islandGroup}</div>
+        <div className="row-card">
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandCompact}</div>
+              <div className="row-desc">{t.settings.islandCompactDesc}</div>
+            </div>
+            <Segmented
+              value={islandCompact}
+              options={ISLAND_COMPACT_STYLES.map((value) => ({ value, label: t.settings.islandCompactOptions[value] }))}
+              onChange={(v) => patch({ island_compact: v })}
+              label={t.settings.islandCompact}
+            />
+          </div>
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandAlertSeconds}</div>
+              <div className="row-desc">{t.settings.islandAlertSecondsDesc}</div>
+            </div>
+            <Segmented
+              value={islandAlertSeconds}
+              options={ISLAND_ALERT_SECONDS.map((value) => ({ value, label: t.settings.islandSeconds(value) }))}
+              onChange={(v) => patch({ island_alert_seconds: v })}
+              label={t.settings.islandAlertSeconds}
+            />
+          </div>
+          <div className="row row-col">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandAlerts}</div>
+              <div className="row-desc">{t.settings.islandAlertsDesc}</div>
+            </div>
+          </div>
+          {ISLAND_ALERT_KINDS.map((kind) => (
+            <div className="row" key={kind}>
+              <div className="row-text">
+                <div className="row-label">{t.settings.islandAlertKinds[kind]}</div>
+              </div>
+              <Switch
+                checked={islandAlerts.includes(kind)}
+                onChange={() => patch({
+                  island_alerts: islandAlerts.includes(kind)
+                    ? islandAlerts.filter((k) => k !== kind)
+                    : [...islandAlerts, kind],
+                })}
+                label={t.settings.islandAlertKinds[kind]}
+              />
+            </div>
+          ))}
+        </div>
+      </>}
 
       <div className="sec-caption">{t.settings.terminalGroup}</div>
       <div className="row-card">

@@ -1,3 +1,4 @@
+// 应用已改用灵动岛（views/Island.tsx），本组件只为官网演示（demo/）与海报（poster/）保留。
 import { useEffect, useMemo, useRef } from "react";
 import { LiveSession } from "../api";
 import { useT } from "../i18n";
@@ -97,7 +98,7 @@ export function CollapsedStrip({
     // 而非 button——button 会把内部状态点的 img 语义压掉，状态点的可访问文本就丢了。
     // data-tauri-drag-region：README 承诺的「拖离边缘恢复」此前根本做不到（条上没有拖拽
     // 区，按住毫无反应）。挂上后 App 的 mousedown 捕获会进入拖拽流程，拖离边缘松手时
-    // handleDragRelease 走 snap_restore 还原普通窗口；原地点一下（不位移）不触发任何切换。
+    // 拖离边缘松手即还原普通窗口；原地点一下（不位移）不触发任何切换。
     <div
       className={"cstrip cstrip-" + edge}
       role="group"

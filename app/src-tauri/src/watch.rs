@@ -553,6 +553,43 @@ pub(crate) fn waiting_body(title: &str, last_ai_text: Option<&str>) -> String {
     }
 }
 
+/// 「跑完」提醒带上 agent 最后一句话的开头：只看「等待输入 · 项目名」得点进去才知道它做完了什么。
+/// 取第一行非空文本、去掉行首的 Markdown 标记（标题 #、列表 - * 等），过长截断。
+fn island_preview(last_ai_text: Option<&str>) -> Option<String> {
+    const MAX_CHARS: usize = 80;
+    let line = last_ai_text?
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>', ' ']).trim())
+        .find(|l| !l.is_empty())?;
+    if line.chars().count() <= MAX_CHARS {
+        Some(line.to_string())
+    } else {
+        Some(line.chars().take(MAX_CHARS).collect::<String>() + "…")
+    }
+}
+
+/// 灵动岛提醒：只发主窗口。发不出去（窗口未建/已关）静默，系统通知与推送照常。
+fn emit_island_alert(
+    app: &tauri::AppHandle,
+    session_id: i64,
+    kind: &str,
+    title: &str,
+    project: &str,
+    detail: Option<String>,
+) {
+    let _ = app.emit_to(
+        "main",
+        "island-alert",
+        meowo_protocol::ipc::IslandAlertEvent {
+            session_id,
+            kind: kind.to_string(),
+            title: title.to_string(),
+            project: project.to_string(),
+            detail,
+        },
+    );
+}
+
 pub(crate) fn suppressed_by_viewing(kind: NotifyKind, viewing: bool) -> bool {
     viewing && matches!(kind, NotifyKind::Waiting)
 }
@@ -1021,6 +1058,7 @@ pub(crate) fn spawn_liveness_watch(
                         let fired = seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
                         attention_fired |= fired;
                         if fired {
+                            emit_island_alert(&app, s.session.id, "error", &display_title, &s.project_name, Some(e.label.clone()));
                             crate::push::push_session(&settings, crate::push::PushMessage {
                                 title: format!("{} · {}", s.project_name, tr(lang, "notify.error")),
                                 body: format!("{} · {}", display_title, e.label),
@@ -1064,6 +1102,12 @@ pub(crate) fn spawn_liveness_watch(
                                 _ => "notify.pending.approval",
                             };
                             if fired {
+                                let kind = match s.pending_review.as_deref() {
+                                    Some("question") => "question",
+                                    Some("plan") => "plan",
+                                    _ => "approval",
+                                };
+                                emit_island_alert(&app, s.session.id, kind, &display_title, &s.project_name, None);
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, key)),
                                     body: display_title.clone(),
@@ -1114,6 +1158,7 @@ pub(crate) fn spawn_liveness_watch(
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
                             if fired {
+                                emit_island_alert(&app, s.session.id, "blocked", &display_title, &s.project_name, None);
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, "notify.blocked")),
                                     body: display_title.clone(),
@@ -1165,6 +1210,7 @@ pub(crate) fn spawn_liveness_watch(
                             attention_fired |= fired;
                             if fired {
                                 set_unread(s.session.id, true);
+                                emit_island_alert(&app, s.session.id, "waiting", &display_title, &s.project_name, island_preview(s.last_ai_text.as_deref()));
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),
                                     body: waiting_body(&display_title, s.last_ai_text.as_deref()),
@@ -1532,5 +1578,25 @@ mod tests {
         h.join().expect("发送端断开后合流线程应退出");
         // 断开前已入队的事件不丢：leading 或 trailing 必送达过。
         assert_eq!(recv_within(&out, Duration::from_millis(0)), Some("last"));
+    }
+
+    #[test]
+    fn island_preview_takes_first_meaningful_line() {
+        use super::island_preview;
+        assert_eq!(island_preview(None), None);
+        assert_eq!(island_preview(Some("  
+
+")), None);
+        assert_eq!(
+            island_preview(Some("
+## 改好了
+- 测试全过")).as_deref(),
+            Some("改好了")
+        );
+        assert_eq!(island_preview(Some("- 第一条")).as_deref(), Some("第一条"));
+        let long = "字".repeat(100);
+        let cut = island_preview(Some(&long)).unwrap();
+        assert_eq!(cut.chars().count(), 81);
+        assert!(cut.ends_with('…'));
     }
 }

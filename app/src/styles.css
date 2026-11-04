@@ -1423,7 +1423,7 @@ button.stab {
   user-select: none;
 }
 
-/* 拖拽靠近边缘时，对应一侧发光提示（内容不变，松手才折叠） */
+/* 吸边发光条：应用本身已改灵动岛不再吸边，只剩官网演示（demo/DemoStage）在用，故保留 */
 .snap-glow {
   position: fixed;
   z-index: 9999;
@@ -1437,51 +1437,6 @@ button.stab {
 .snap-glow-right { top: 14px; bottom: 14px; right: 0; width: 4px; border-radius: var(--r-3) 0 0 var(--r-3); }
 .snap-glow-top { left: 14px; right: 14px; top: 0; height: 4px; border-radius: 0 0 var(--r-3) var(--r-3); }
 @keyframes snap-glow-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-/* W-2：吸附落点预览——拖拽靠近屏幕边缘时，沿候选边画缩略条的幽灵轮廓（厚度 28px
-   与真实折叠条一致，主轴长度由 App 按 stripExtent 内联给出，贴窗口内缘；候选边判定
-   阈值 20px，此刻窗口内缘与屏幕工作区边缘基本重合，轮廓即落点形状）。
-   与 4px 发光条配套：glow 指「会吸到哪条边」，ghost 指「落下后是什么形状」。 */
-.snap-ghost {
-  position: fixed;
-  z-index: 9998;
-  pointer-events: none;
-  box-sizing: border-box;
-  border: 2px dashed var(--cc-accent-border);
-  background: var(--cc-accent-soft);
-  animation: snap-glow-pulse 0.9s ease-in-out infinite;
-}
-.snap-ghost-left { left: 0; top: 50%; transform: translateY(-50%); width: 28px; border-radius: 0 var(--r-lg) var(--r-lg) 0; }
-.snap-ghost-right { right: 0; top: 50%; transform: translateY(-50%); width: 28px; border-radius: var(--r-lg) 0 0 var(--r-lg); }
-.snap-ghost-top { top: 0; left: 50%; transform: translateX(-50%); height: 28px; border-radius: 0 0 var(--r-lg) var(--r-lg); }
-
-/* W-2 原生吸附预览条（Windows，snap-preview 窗口的全部内容）：与 .snap-ghost 同色系
-   （虚线描边 + accent 浅底 + 同步呼吸）。圆角按候选边与真实缩略条同形态（.cstrip-{edge}
-   同款）——贴屏边的一侧直角、自由侧圆角；当前边由 Rust 经 body[data-edge] 逐帧推送。
-   该窗由 Rust 逐帧定位到屏幕边缘、点击穿透；本元素只管填满窗口并呈现主题色。 */
-.snap-preview-bar {
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  border: 2px dashed var(--cc-accent-border);
-  background: var(--cc-accent-soft);
-  border-radius: var(--r-lg);
-  animation: snap-glow-pulse 0.9s ease-in-out infinite;
-}
-body[data-edge="top"] .snap-preview-bar { border-radius: 0 0 var(--r-lg) var(--r-lg); }
-body[data-edge="left"] .snap-preview-bar { border-radius: 0 var(--r-lg) var(--r-lg) 0; }
-body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(--r-lg); }
-
-/* W-4：展开过渡占位——snap_expand/snap_restore 落地前窗口仍是 28px 细条几何，全量看板
-   此刻渲染会被压进细条宽度造成布局抖动；先铺一块与贴纸同底色/边框/圆角的纯色块
-   （尺寸余量与 .sticker 同口径），尺寸落地后再挂载内容。 */
-.snap-expanding {
-  width: calc(100% - 2px);
-  height: calc(100% - 2px);
-  background: var(--cc-bg);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-14);
-  backdrop-filter: blur(30px);
-}
 
 /* ===== 设置面板（无边框独立窗口：左侧栏 + 右内容） ===== */
 .settings {
@@ -6642,3 +6597,323 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-side-answer-close:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-side-answer-body { margin-top: var(--sp-4); max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-chat-text); font-size: var(--text-sm); line-height: var(--leading-body); user-select: text; }
 .chat-side-answer-body.is-muted { color: var(--cc-text-faint); }
+
+/* ── 灵动岛（Windows 贴纸的新形态，2026-11-04 用户决定替换贴边缩略条）──────────────
+   视觉照用户给的参考图：纯黑刘海贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接，底下大圆角；
+   白字、环形进度、状态靠颜色。刻意不跟主题色走：刘海要和屏幕顶边的黑融成一体，浅色主题下
+   做成白底就成了一块贴在桌面上的白牌子。窗口宽 = 刘海本体 + 两侧耳朵（Island.tsx 的 ISLAND_EAR）。 */
+.isl-stage, .island-shell {
+  --isl-ink: #000;
+  --isl-text: #f5f5f7;
+  --isl-text-2: #d1d1d6;
+  --isl-dim: #8e8e93;
+  --isl-faint: #636366;
+  --isl-chip: #1c1c1e;
+  --isl-chip-hover: #2c2c2e;
+  --isl-track: #3a3a3c;
+  --isl-ok: #30d158;
+  --isl-ok-track: #123a1f;
+  --isl-warn: #ff9f0a;
+  --isl-warn-track: #40300a;
+  --isl-err: #ff453a;
+  --isl-err-track: #44150f;
+  --isl-blue: #409cff;
+  --isl-blue-track: #1d3350;
+  --isl-ear: 14px;
+}
+.isl-stage {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  /* 刘海高度由内容/形态决定，不随窗口拉伸：展开时窗口先长大，刘海若跟着拉高，尺寸变化会
+     触发测量、把窗口又缩回去，列表就被挤进 36px 高的窗口里（DEV 实拍）。 */
+  align-items: flex-start;
+  color: var(--isl-text);
+  user-select: none;
+}
+.isl-notch {
+  /* flex:none 且不设 max-width：按内容取自然宽度，即使窗口暂时比它窄也照实测量，
+     App 据此把窗口放宽（窗口跟着内容走，而不是内容被窗口夹住、永远量出旧宽度）。 */
+  flex: none;
+  position: relative;
+  box-sizing: border-box;
+  background: var(--isl-ink);
+  border-radius: 0 0 22px 22px;
+  outline: none;
+}
+/* 两只「耳朵」：刘海外侧各一块方角，挖掉靠下那一侧的四分之一圆，黑色顺着屏幕顶边弯进去。 */
+.isl-notch::before, .isl-notch::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: var(--isl-ear);
+  height: var(--isl-ear);
+  pointer-events: none;
+}
+.isl-notch::before {
+  left: calc(-1 * var(--isl-ear));
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--isl-ear) - 0.5px), var(--isl-ink) var(--isl-ear));
+}
+.isl-notch::after {
+  right: calc(-1 * var(--isl-ear));
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--isl-ear) - 0.5px), var(--isl-ink) var(--isl-ear));
+}
+.isl-notch:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-blue); }
+
+/* 收起 */
+.isl-notch.is-compact {
+  height: 46px; /* 与 Island.tsx 的 ISLAND_PILL_HEIGHT 同源 */
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
+.isl-agents { display: flex; align-items: center; gap: 9px; }
+.isl-more { font-size: 12px; font-weight: 600; color: var(--isl-dim); }
+.isl-dots { display: inline-flex; align-items: center; gap: 6px; }
+.isl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--isl-faint); }
+.isl-dot.is-running { background: var(--isl-ok); animation: isl-pulse 1.2s ease-in-out infinite; }
+.isl-dot.is-pending { background: var(--isl-warn); animation: isl-pulse 1.4s ease-in-out infinite; }
+.isl-dot.is-waiting { background: var(--isl-text-2); }
+.isl-dot.is-error { background: var(--isl-err); }
+.isl-focus { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.isl-focus-title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
+.isl-faint { color: var(--isl-dim); font-size: 13px; }
+
+/* 状态文字的颜色 */
+.isl-state { font-size: 12px; font-weight: 600; color: var(--isl-text-2); flex: none; }
+.isl-state.is-running { color: var(--isl-ok); }
+.isl-state.is-pending { color: var(--isl-warn); }
+.isl-state.is-error { color: var(--isl-err); }
+.isl-sep { color: var(--isl-faint); margin: 0 4px; }
+
+/* 眼睛：白眼珠黑瞳孔，瞳孔跟着鼠标转、不定时眨眼；要处理琥珀睁大弹跳，出错红叉，跑完 ^ ^，
+   闲久了睡着冒 z。各形态在 islandParts.tsx 的 Eyes 里切。 */
+.isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
+.isl-eyes.is-small { padding: 0; }
+.isl-eye-pair { display: block; overflow: visible; }
+.isl-sclera { fill: #fff; }
+.isl-pupil { fill: #000; transition: transform 0.14s ease-out; }
+.isl-eye-open { transform-box: fill-box; transform-origin: center; transition: transform 0.07s ease-in; }
+.isl-eye-open.is-blink { transform: scaleY(0.12); }
+/* 眼白任何状态都是白的（用户要求）；要处理靠睁大、弹跳和旁边的琥珀「!」表达。 */
+.isl-spark.is-warn { color: var(--isl-warn); font-size: 11px; top: -5px; }
+.isl-eyes[data-mode="wide"] .isl-eye-pair { animation: isl-bounce 1.1s ease-in-out infinite; }
+.isl-eyes[data-tone="error"] { color: var(--isl-err); }
+@keyframes isl-bounce { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-2px); } 60% { transform: translateY(0.5px); } }
+/* 睡着冒的 z：从右上方慢慢飘起、淡出，一个接一个。 */
+.isl-zz { position: absolute; right: -4px; top: -6px; font-size: 9px; font-weight: 800; color: var(--isl-dim); animation: isl-zz 2.6s ease-in infinite; }
+@keyframes isl-zz { 0% { opacity: 0; transform: translate(0, 4px) scale(0.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(5px, -8px) scale(1.15); } }
+.isl-spark { position: absolute; top: -3px; font-size: 9px; font-weight: 800; line-height: 1; color: var(--isl-ok); opacity: 0.85; }
+.isl-spark.is-l { left: -1px; }
+.isl-spark.is-r { right: -2px; top: -6px; }
+.isl-eyes[data-tone="running"] .isl-spark { animation: isl-twinkle 2.6s ease-in-out infinite; }
+/* 跑完的 ^ ^ 轻轻上下晃，像在笑。 */
+.isl-eyes[data-mode="happy"] .isl-eye-pair { animation: isl-giggle 2.4s ease-in-out infinite; }
+@keyframes isl-giggle { 0%, 70%, 100% { transform: translateY(0); } 80% { transform: translateY(-1.5px); } 90% { transform: translateY(0); } }
+.isl-eyes[data-tone="running"] .isl-spark.is-r { animation-delay: 1.3s; }
+@keyframes isl-look {
+  0%, 18% { transform: translateX(0); }
+  28%, 44% { transform: translateX(-2px); }
+  56%, 72% { transform: translateX(2px); }
+  82%, 100% { transform: translateX(0); }
+}
+@keyframes isl-blink {
+  0%, 88% { transform: scaleY(1); }
+  90% { transform: scaleY(0.1); }
+  92% { transform: scaleY(1); }
+  94% { transform: scaleY(0.1); }
+  96%, 100% { transform: scaleY(1); }
+}
+@keyframes isl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes isl-twinkle { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+
+/* 环 */
+.isl-ring { position: relative; display: inline-grid; place-items: center; flex: none; }
+.isl-ring > svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.isl-ring.is-spin > svg { animation: isl-spin 1.4s linear infinite; }
+@keyframes isl-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+.isl-ring-body { position: relative; display: grid; place-items: center; }
+.isl-usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.3px; }
+/* 定量进度：挂载时从 0 扫到位，数值变了平滑滑过去。 */
+.isl-ring-arc { transition: stroke-dashoffset 0.6s cubic-bezier(0.3, 0.8, 0.3, 1), stroke 0.4s ease; animation: isl-sweep 0.9s cubic-bezier(0.3, 0.8, 0.3, 1); }
+@keyframes isl-sweep { from { stroke-dashoffset: var(--isl-c); } }
+/* 额度环：中间剩余百分比，右下角哪家的 logo（同会话图标的角标）；换家时淡入。 */
+.isl-usage-wrap { position: relative; display: inline-flex; flex: none; }
+.isl-usage-swap { position: relative; display: inline-flex; animation: isl-fade-in 0.4s ease; }
+@keyframes isl-fade-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+.isl-usage-badge {
+  position: absolute; right: -4px; bottom: -4px;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--isl-ink); display: grid; place-items: center;
+}
+.isl-usage-badge svg, .isl-usage-badge img { width: 11px !important; height: 11px !important; }
+.isl-ring-stack { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.isl-ring-caption { font-size: 10px; color: var(--isl-dim); }
+.isl-agent { position: relative; display: inline-flex; flex: none; }
+/* 深灰圆底座：logo 不再直接贴在黑底上发散；与外圈之间留一道缝。 */
+.isl-agent-logo { width: 23px; height: 23px; border-radius: 50%; background: var(--isl-chip); display: grid; place-items: center; }
+/* logo 要几乎撑满环内（参考图），原始 11~13px 的徽标在 32px 的环里只占一小点，环里空空的。 */
+.isl-agent-logo svg, .isl-agent-logo img { width: 15px !important; height: 15px !important; }
+.isl-agent-badge {
+  position: absolute; right: -4px; bottom: -4px;
+  min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
+  border-radius: 8px; border: 2px solid var(--isl-ink);
+  display: grid; place-items: center;
+  font-size: 9px; font-weight: 800; line-height: 1; color: #000;
+}
+.isl-agent-badge.is-pending { background: var(--isl-warn); }
+.isl-agent-badge.is-error { background: var(--isl-err); color: #fff; }
+/* 跑完但还没看过：右下角一个小蓝点（「未读」的通用颜色）。曾用绿点，用户读成「已完成 / 在跑」——
+   Meowo 里绿色一直是在跑、正常的意思，未读不能再占它。 */
+.isl-agent-badge.is-unread { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--isl-blue); }
+
+/* 提醒 */
+.isl-notch.is-alert {
+  width: calc(100% - var(--isl-ear) * 2);
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px 0 22px;
+  border-radius: 0 0 24px 24px;
+  cursor: pointer;
+  animation: isl-grow 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+@keyframes isl-grow {
+  from { clip-path: inset(0 28% 34% 28% round 0 0 22px 22px); }
+  to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
+}
+.isl-alert-icon { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--isl-chip); color: var(--isl-text-2); }
+.isl-alert-icon.is-pending { background: var(--isl-warn-track); color: var(--isl-warn); }
+.isl-alert-icon.is-error { background: var(--isl-err-track); color: var(--isl-err); }
+.isl-alert-icon.is-waiting { background: var(--isl-ok-track); color: var(--isl-ok); }
+.isl-alert-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.isl-alert-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.isl-alert-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.isl-alert-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--isl-text-2); }
+.isl-alert-more { flex: none; height: 18px; padding: 0 7px; border-radius: 9px; background: var(--isl-chip-hover); color: var(--isl-text-2); font-size: 11px; line-height: 18px; }
+.isl-alert-sub { display: flex; align-items: center; font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; }
+
+/* 按钮 */
+.isl-btn {
+  flex: none;
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 15px;
+  border: 0;
+  background: var(--isl-chip-hover);
+  color: var(--isl-text);
+  font: inherit;
+  font-size: 13px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+.isl-btn.is-primary { background: #fff; color: #000; font-weight: 600; }
+.isl-btn.is-primary:hover { background: #e5e5ea; }
+.isl-btn.is-dark { height: 26px; padding: 0 12px; font-size: 12px; }
+.isl-btn.is-ghost { height: 24px; padding: 0 10px; font-size: 12px; background: var(--isl-chip); color: var(--isl-text-2); }
+.isl-btn.is-ghost:hover { background: var(--isl-chip-hover); color: var(--isl-text); }
+
+/* 展开面板 */
+.isl-panel {
+  width: calc(100% - var(--isl-ear) * 2);
+  padding: 14px 22px 12px;
+  border-radius: 0 0 26px 26px;
+}
+.isl-panel-head { display: flex; align-items: center; gap: 10px; cursor: grab; }
+.isl-panel-title { font-size: 15px; font-weight: 700; }
+.isl-accent { color: var(--isl-warn); }
+.isl-panel-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--isl-dim); }
+.isl-panel-meta b { color: var(--isl-text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.isl-panel-body { display: flex; gap: 18px; margin-top: 12px; }
+.isl-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.isl-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: var(--isl-chip);
+  cursor: pointer;
+  outline: none;
+}
+.isl-row:hover { background: var(--isl-chip-hover); }
+.isl-row:hover .isl-btn.is-dark { background: #3a3a3c; }
+.isl-row:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-blue); }
+.isl-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.isl-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-row-sub { font-size: 11px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-empty { padding: 18px 0; display: flex; flex-direction: column; align-items: center; gap: 12px; font-size: 13px; color: var(--isl-dim); }
+.isl-side {
+  width: 124px; flex: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border-left: 1px solid var(--isl-chip-hover);
+}
+.isl-big-val { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.isl-mid-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.isl-big-val small, .isl-mid-val small { font-size: 11px; color: var(--isl-dim); font-weight: 500; margin-left: 1px; }
+.isl-side-label { font-size: 11px; color: var(--isl-text-2); text-align: center; }
+.isl-side-sub { font-size: 11px; color: var(--isl-dim); margin-top: -4px; }
+.isl-panel-body.is-usage { justify-content: center; align-items: stretch; gap: 0; padding: 2px 0 4px; flex-wrap: wrap; }
+/* 每家一栏：栏顶 logo + 名字，下面每档额度一个环；栏与栏之间一道细线。 */
+.isl-usage-group { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 18px; }
+.isl-usage-group + .isl-usage-group { border-left: 1px solid var(--isl-chip-hover); }
+.isl-usage-head { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--isl-text-2); }
+.isl-usage-head-logo { display: grid; place-items: center; width: 14px; height: 14px; }
+.isl-usage-head-logo svg, .isl-usage-head-logo img { width: 13px !important; height: 13px !important; }
+.isl-usage-lanes { display: flex; gap: 14px; }
+.isl-usage-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 50px; }
+.isl-usage-cell .isl-mid-val { font-size: 14px; }
+.isl-usage-cell .isl-side-sub { margin-top: 0; white-space: nowrap; }
+.isl-dots-nav { display: flex; justify-content: center; gap: 5px; margin-top: 10px; }
+/* 左右翻页箭头（照参考图）：贴面板两侧、垂直居中的小圆钮。 */
+.isl-panel { position: relative; }
+.isl-page-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--isl-chip-hover); color: var(--isl-text-2);
+  font: 700 15px/1 system-ui, sans-serif;
+  display: grid; place-items: center; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.isl-page-arrow:hover { background: #48484a; color: var(--isl-text); }
+/* 有翻页时面板左右各让出一条给箭头，箭头放在这条留白里，不再压在会话行和额度环上（用户实拍嫌挤）。 */
+.isl-panel.is-paged { padding-left: 40px; padding-right: 40px; }
+.isl-page-arrow.is-prev { left: 10px; }
+.isl-page-arrow.is-next { right: 10px; }
+.isl-dots-nav button {
+  width: 5px; height: 5px; padding: 0; border: 0; border-radius: 3px;
+  background: var(--isl-faint); cursor: pointer;
+  transition: width 0.2s ease, background 0.2s ease;
+}
+.isl-dots-nav button.is-on { width: 16px; background: var(--isl-text-2); }
+
+/* 展开/收回：面板与完整列表都从胶囊轮廓长出来；收回时缩回去，播完 App 再缩窗口。
+   完整列表（原贴纸）保留主题色，只把顶边改平、贴住屏幕顶。 */
+.island-shell { height: 100%; }
+.island-shell.is-full .sticker { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.island-shell.is-entering { animation: island-unfold 0.26s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.island-shell.is-leaving { animation: island-fold 0.18s ease-in forwards; }
+@keyframes island-unfold {
+  from {
+    clip-path: inset(0 calc(50% - var(--island-pill-w) / 2) calc(100% - var(--island-pill-h))
+      calc(50% - var(--island-pill-w) / 2) round 0 0 22px 22px);
+  }
+  to { clip-path: inset(0 0 0 0 round 0 0 26px 26px); }
+}
+@keyframes island-fold {
+  from { clip-path: inset(0 0 0 0 round 0 0 26px 26px); }
+  to {
+    clip-path: inset(0 calc(50% - var(--island-pill-w) / 2) calc(100% - var(--island-pill-h))
+      calc(50% - var(--island-pill-w) / 2) round 0 0 22px 22px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
+  .isl-eye-pair, .isl-zz, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
+  .isl-ring-arc { transition: none !important; }
+  .isl-usage-swap { animation: none !important; }
+}

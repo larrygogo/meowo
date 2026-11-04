@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, fireEvent, waitFor, screen } from "@testing-library/react";
+import { render, cleanup, fireEvent, waitFor, screen, act } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 
 const getLiveSessionsCounts = vi.fn();
 const getLiveSessionsPage = vi.fn();
 let emitBoardChanged: () => void = () => {};
-let emitSnapChanged: (e: { payload: { edge: "left" | "right" | "top" | null } }) => void = () => {};
+let emitIslandAlert: (e: { payload: unknown }) => void = () => {};
 let emitRecallSticker: () => void = () => {};
 const unlisten = vi.fn();
+// 个别用例要改设置（如灵动岛的提醒开关）：合进 getSettings mock 的返回值。
+let extraSettings: Record<string, unknown> = {};
 
 // jsdom 没有真实视口尺寸，@tanstack/react-virtual 会以为 .stk-scroll 高度为 0 而不渲染卡片。
 // mock 一个足够大的滚动容器，让测试里的卡片进入可视区并被挂载。
@@ -15,7 +17,12 @@ const defaultRect: DOMRect = {
   top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
   toJSON: () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0 }),
 };
+// 胶囊的实测宽度（灵动岛测量回调用）；个别用例改它来模拟内容变宽。
+let pillRectWidth = 0;
 vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement): DOMRect {
+  if (this.classList.contains("island-pill")) {
+    return { ...defaultRect, width: pillRectWidth, right: pillRectWidth, toJSON: () => ({}) };
+  }
   if (this.classList.contains("stk-scroll")) {
     return {
       ...defaultRect,
@@ -34,9 +41,12 @@ vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(func
 });
 const mockScrollRect = { top: 0, left: 0, bottom: 600, right: 400, width: 400, height: 600, x: 0, y: 0 };
 const mockItemRect = { top: 0, left: 0, bottom: 82, right: 400, width: 400, height: 82, x: 0, y: 0 };
+// 记下所有观察者，个别用例手动再触发一次（模拟窗口改尺寸时的测量回调）。
+const resizeObservers: { fire: () => void }[] = [];
 class MockResizeObserver {
   constructor(private cb: ResizeObserverCallback) {}
   observe(target: Element) {
+    resizeObservers.push({ fire: () => this.cb([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver) });
     const isScroll = target.classList.contains("stk-scroll");
     const rect = isScroll ? mockScrollRect : mockItemRect;
     this.cb([{
@@ -53,6 +63,7 @@ class MockResizeObserver {
 vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
 vi.mock("./api", () => ({
+  openNewSessionWindow: () => Promise.resolve(),
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
   // 与真实 api.ts 同款归一化：允许各测试继续用「裸数组」写 mock 数据，这里补上
   // { items, next_cursor } 包装（给满 limit → 用末项当游标；给不满 → 到底）。
@@ -88,6 +99,7 @@ vi.mock("./api", () => ({
       sticker_color: "classic",
       sticker_quota_providers: ["claude"],
       default_agent: "claude",
+      ...extraSettings,
     }),
   getAccounts: () => Promise.resolve([]),
   firstImportNotice: () => Promise.resolve(null),
@@ -97,13 +109,12 @@ vi.mock("./api", () => ({
   agentName: (agents: { id: string; display_name: string }[], id: string) =>
     agents.find((a) => a.id === id)?.display_name ?? id,
 }));
-// 按事件名分别路由：board-changed → emitBoardChanged；snap-changed → emitSnapChanged
-// （真实吸边靠 Tauri 后端无法在 jsdom 测，但拖拽中卸载的轮询泄漏可以模拟事件验证）。
+// 按事件名分别路由：board-changed / recall-sticker / island-alert 各自记下最新的回调。
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: (event: string, cb: (e: { payload: { edge: "left" | "right" | "top" | null } }) => void) => {
+  listen: (event: string, cb: (e: { payload: unknown }) => void) => {
     if (event === "board-changed") emitBoardChanged = cb as () => void;
-    if (event === "snap-changed") emitSnapChanged = cb;
     if (event === "recall-sticker") emitRecallSticker = cb as unknown as () => void;
+    if (event === "island-alert") emitIslandAlert = cb;
     return Promise.resolve(unlisten);
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -117,6 +128,7 @@ vi.mock("@tauri-apps/api/window", () => ({
     setAlwaysOnTop: vi.fn(() => Promise.resolve()),
     outerSize: vi.fn(() => Promise.resolve({ width: 340, height: 440 })),
     scaleFactor: vi.fn(() => Promise.resolve(1)),
+    onScaleChanged: vi.fn(() => Promise.resolve(() => {})),
   }),
 }));
 // 更新检查相关插件：jsdom 无后端，给空实现（check 返回无更新）。
@@ -136,6 +148,9 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(() => Promise.resolve(undefined));
   localStorage.clear();
+  extraSettings = {};
+  pillRectWidth = 0;
+  resizeObservers.length = 0;
 });
 afterEach(() => cleanup());
 
@@ -147,12 +162,21 @@ const seedWindowState = (s: {
   pinned: boolean;
   x: number | null;
   y: number | null;
+  island_center?: number | null;
 }) => {
   vi.mocked(invoke).mockImplementation((cmd: string) =>
     Promise.resolve(cmd === "get_sticker_window_state" ? s : undefined)
   );
 };
-const EMPTY_WS = { normal_width: null, normal_height: null, snap_edge: null, pinned: false, x: null, y: null };
+const EMPTY_WS = { normal_width: null, normal_height: null, snap_edge: null, pinned: false, x: null, y: null, island_center: null };
+
+/** Windows 上贴纸已换成灵动岛：启动是收起的胶囊，看完整列表得先打开（托盘「找回贴纸」= 打开完整列表）。 */
+const expandIsland = async () => {
+  await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+  await act(async () => { emitRecallSticker(); });
+  await waitFor(() => expect(document.querySelector(".island-shell.is-full")).toBeTruthy());
+};
+const layoutCalls = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "island_layout").map(([, args]) => args);
 
 describe("App", () => {
   it("挂载时拉取 counts 和第 0 页", async () => {
@@ -170,6 +194,7 @@ describe("App", () => {
       return new Promise((r) => { resolvePage = r as (v: unknown[]) => void; });
     });
     render(<App />);
+    await expandIsland();
     await waitFor(() => expect(screen.getByText(zh.sticker.loading)).toBeTruthy());
     expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
     resolvePage([]);
@@ -190,6 +215,7 @@ describe("App", () => {
       return Promise.resolve([]);
     });
     render(<App />);
+    await expandIsland();
     await waitFor(() => expect(screen.getByText(zh.sticker.loadFailed)).toBeTruthy());
     expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
 
@@ -234,6 +260,7 @@ describe("App", () => {
     getLiveSessionsPage.mockImplementation((_f: string, search: string | null) =>
       Promise.resolve(search === null ? [] : [pendingRow]));
     render(<App />);
+    await expandIsland();
     await screen.findByTestId("stk-starting-card");
     // 认领完成：后端不再上报占位，真实行（同 provider+cwd、started_at 更晚）进首页。
     getLiveSessionsPage.mockImplementation((_f: string, search: string | null) =>
@@ -243,52 +270,161 @@ describe("App", () => {
     await screen.findByText("真实会话");
   });
 
-  // 回归（W-6）：「找回贴纸」曾永久改写用户的置顶偏好。现在只做临时置顶（recall_center
-  // 带上当前偏好，聚焦后由后端还原），持久化偏好（W-17 起在 settings.json）不动。
-  it("找回贴纸不改写 pin 偏好：recall_center 带当前偏好，不写 localStorage", async () => {
+  // 灵动岛（2026-11-04 起替换 Windows 贴纸的贴边缩略条）。托盘「找回贴纸」就是展开列表，
+  // 不再有居中 + 临时置顶那一套（岛恒置顶）。
+  it("托盘找回贴纸：按记住的正常尺寸展开成完整列表", async () => {
+    seedWindowState({ ...EMPTY_WS, normal_width: 400, normal_height: 460 });
     render(<App />);
-    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
-    emitRecallSticker();
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("recall_center", { pinned: false })
-    );
-    expect(localStorage.getItem("meowo-pinned")).toBeNull();
+    await expandIsland();
+    expect(layoutCalls()).toContainEqual({ width: 400, height: 460, centerRatio: null });
   });
 
-  it("找回贴纸：用户本就置顶时 recall_center 带 pinned=true（保持置顶）", async () => {
-    seedWindowState({ ...EMPTY_WS, pinned: true });
+  // 回归（DEV 实拍）：展开时窗口先长大，胶囊的测量回调恰在这时触发，按胶囊宽度把窗口又缩了
+  // 回去，列表被挤进 36px 高的窗口里。形态切换进行中，测量不得改窗口尺寸。
+  it("展开途中胶囊测量回调触发，不会把窗口缩回胶囊大小", async () => {
+    let finishExpand: () => void = () => {};
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown) => {
+      const a = args as { height?: number } | undefined;
+      if (cmd === "island_layout" && a?.height === 440) {
+        return new Promise<void>((r) => { finishExpand = r; }) as never;
+      }
+      return Promise.resolve(undefined) as never;
+    });
     render(<App />);
-    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
-    emitRecallSticker();
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("recall_center", { pinned: true })
-    );
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    await act(async () => { emitRecallSticker(); });
+    await waitFor(() => expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null }));
+    // 窗口改尺寸途中：胶囊被测到新宽度。
+    pillRectWidth = 195;
+    act(() => resizeObservers.forEach((o) => o.fire()));
+    await act(async () => { finishExpand(); });
+    await waitFor(() => expect(document.querySelector(".island-shell")).toBeTruthy());
+    const calls = layoutCalls();
+    expect(calls[calls.length - 1]).toEqual({ width: 360, height: 440, centerRatio: null });
   });
 
-  // 回归：拖拽中途卸载组件，90ms 的 pointer_left_down 松手轮询必须随 cleanup 停掉——
-  // 否则 interval 泄漏，卸载后仍持续打 IPC 空转。
-  it("拖拽中途卸载：松手轮询 pointer_left_down 随卸载停止，不泄漏", async () => {
-    // 左键一直按着（resolve true）：轮询不会自己停，只能指望卸载时的 cleanup。
-    vi.mocked(invoke).mockImplementation((cmd: string) =>
-      Promise.resolve(cmd === "pointer_left_down" ? true : undefined)
-    );
-    const { container, unmount } = render(<App />);
-    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
+  it("点一下胶囊（没拖动）就展开面板；托盘「找回贴纸」打开完整列表", async () => {
+    const { container } = render(<App />);
+    const pill = await waitFor(() => {
+      const el = container.querySelector(".isl-notch");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 101 });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("island_drag_begin");
+    expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null });
+    await act(async () => { emitRecallSticker(); });
+    await waitFor(() => expect(container.querySelector(".island-shell.is-full")).toBeTruthy());
+    expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
+  });
 
-    // mousedown 命中拖拽区 → 进入拖拽态；随后 snap-changed 近边 → 启动松手轮询。
-    fireEvent.mouseDown(container.querySelector(".drag")!);
-    emitSnapChanged({ payload: { edge: "left" } });
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("pointer_left_down")
-    );
+  // 点胶囊上的会话图标直接打开那个会话；点胶囊别处才展开面板。
+  it("点胶囊上的会话图标直接打开它，不展开面板", async () => {
+    const row = {
+      session: { id: 77, cc_session_id: "s-77", status: "running", last_event_at: 1000, started_at: 0, ended_at: null, project_id: 1 },
+      project_name: "p", task_title: "点我打开", current_activity: null, column: "todo", todo_done: 0, todo_total: 0,
+      todos: [], pid: null, connected: true, archived: false, archived_at: null, cwd: "/p", errored: false,
+      error_label: null, error_raw: null, preview: null, note: null, context_pct: null, context_window: null,
+      model: null, pending_review: null, last_ai_text: null, last_user_text: null, provider: "claude",
+      screen_state: "working",
+    };
+    getLiveSessionsPage.mockImplementation((filter: string, search: string | null) =>
+      Promise.resolve(search === null && filter === "running" ? [row] : []));
+    const { container } = render(<App />);
+    const icon = await waitFor(() => {
+      const el = container.querySelector('[data-session-id="77"]');
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(icon.getAttribute("title")).toContain("点我打开");
+    const notch = container.querySelector(".isl-notch") as HTMLElement;
+    fireEvent.pointerDown(icon, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(notch, { button: 0, pointerId: 1, screenX: 100 });
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 77 }));
+    expect(container.querySelector(".isl-panel")).toBeNull();
+  });
 
-    unmount();
-    const pollCalls = () =>
-      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "pointer_left_down").length;
-    const atUnmount = pollCalls();
-    // 轮询若还活着，300ms（>3 个周期）内必然再触发数次。
-    await new Promise((r) => setTimeout(r, 300));
-    expect(pollCalls()).toBe(atUnmount);
+  it("收到提醒时胶囊弹出会话标题与状态，点「打开」进对话窗", async () => {
+    render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 7, kind: "approval", title: "修登录页", project: "web", detail: null } });
+    });
+    expect(await screen.findByText("修登录页")).toBeTruthy();
+    expect(screen.getByText(zh.pending.approval)).toBeTruthy();
+    expect(layoutCalls()).toContainEqual({ width: 548, height: 68, centerRatio: null });
+    fireEvent.click(screen.getByRole("button", { name: zh.island.open }));
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 7 }));
+    await waitFor(() => expect(screen.queryByText("修登录页")).toBeNull());
+  });
+
+  it("提醒按设置开关过滤：关掉「会话跑完」就不弹它，计划确认算在「等待审批」里", async () => {
+    extraSettings = { island_alerts: ["approval"] };
+    render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    // 等设置读进来（getSettings 是异步的）。
+    await new Promise((r) => setTimeout(r, 20));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 1, kind: "waiting", title: "跑完了", project: "p", detail: null } });
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText("跑完了")).toBeNull();
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 2, kind: "plan", title: "计划待确认", project: "p", detail: null } });
+    });
+    expect(await screen.findByText("计划待确认")).toBeTruthy();
+  });
+
+  it("鼠标停在提醒上提醒不走；移开后几秒才缩回", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { container } = render(<App />);
+      await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+      act(() => {
+        emitIslandAlert({ payload: { sessionId: 5, kind: "approval", title: "停住看看", project: "p", detail: null } });
+      });
+      expect(await screen.findByText("停住看看")).toBeTruthy();
+      const notch = container.querySelector(".isl-notch")!;
+      fireEvent.pointerEnter(notch);
+      // 远超默认停留 6 秒：人在看，提醒不走，也没被换成展开面板。
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(screen.getByText("停住看看")).toBeTruthy();
+      expect(container.querySelector(".isl-panel")).toBeNull();
+      fireEvent.pointerLeave(notch);
+      await act(async () => { vi.advanceTimersByTime(3_500); });
+      await waitFor(() => expect(screen.queryByText("停住看看")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("几条提醒一起来：排队一条条弹、显示还剩几条；同一会话只保留最新的", async () => {
+    render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    const alertOf = (sessionId: number, title: string) =>
+      ({ payload: { sessionId, kind: "waiting", title, project: "p", detail: null } });
+    act(() => {
+      emitIslandAlert(alertOf(1, "第一条"));
+      emitIslandAlert(alertOf(2, "第二条"));
+      emitIslandAlert(alertOf(3, "第三条"));
+    });
+    expect(await screen.findByText("第一条")).toBeTruthy();
+    expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+    // 会话 2 又来一条：替换排队中的旧的，不再多排一条。
+    act(() => { emitIslandAlert(alertOf(2, "第二条（新）")); });
+    expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+  });
+
+  it("展开着的时候不弹提醒（人就在看列表）", async () => {
+    render(<App />);
+    await expandIsland();
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 7, kind: "question", title: "不该弹出来", project: "web", detail: null } });
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText("不该弹出来")).toBeNull();
   });
 
   it("清空搜索时恢复搜索前的列表顺序", async () => {
@@ -340,6 +476,7 @@ describe("App", () => {
     });
 
     const { container } = render(<App />);
+    await expandIsland();
     const titles = () =>
       Array.from(container.querySelectorAll(".stk-title")).map((el) => el.textContent);
     await waitFor(() => expect(titles()).toEqual(["B", "A"]));
@@ -354,27 +491,20 @@ describe("App", () => {
     await waitFor(() => expect(titles()).toEqual(["B", "A"]));
   });
 
-  // 单一真相源（W-17）：main 窗口尺寸/吸附边/置顶由 settings.json 的 sticker_window 持有
-  // （window-state 插件对 main 已 denylist，位置由后端 setup 从 settings 恢复）。非吸附态启动
-  // 无条件按记住的正常尺寸（默认 {360,440}）snap_restore 还原，且不走折叠分支。
-  it("非吸附态启动按 settings 尺寸还原正常尺寸(snap_restore)，不折叠", async () => {
+  // 启动：按 settings 记住的横向位置把胶囊贴顶摆好（缺省居中 0.5），再显示窗口。
+  it("启动把胶囊贴顶摆放：没记过位置时居中", async () => {
     render(<App />);
     await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
-        "snap_restore",
-        expect.objectContaining({ width: 360, height: 440 })
-      )
+      expect(layoutCalls()).toContainEqual({ width: 148, height: 46, centerRatio: 0.5 })
     );
-    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("snap_collapse", expect.anything());
   });
 
-  it("吸附态启动(settings.snap_edge 有边)走折叠分支，不触发尺寸还原", async () => {
-    seedWindowState({ ...EMPTY_WS, snap_edge: "left" });
+  it("启动按记住的横向位置摆放；旧的吸附边不再生效", async () => {
+    seedWindowState({ ...EMPTY_WS, snap_edge: "left", island_center: 0.3 });
     render(<App />);
     await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("snap_collapse", expect.anything())
+      expect(layoutCalls()).toContainEqual({ width: 148, height: 46, centerRatio: 0.3 })
     );
-    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("snap_restore", expect.anything());
   });
 
   // W-17 一次性迁移：旧版三套 localStorage 键（尺寸/吸附边/置顶）在 settings 字段缺席时
@@ -386,95 +516,46 @@ describe("App", () => {
     render(<App />);
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_sticker_window_state", {
-        state: { normal_width: 420, normal_height: 500, snap_edge: "top", pinned: true, x: null, y: null },
+        state: { normal_width: 420, normal_height: 500, snap_edge: "top", pinned: true, x: null, y: null, island_center: null },
       })
     );
     expect(localStorage.getItem("meowo-normal-size")).toBeNull();
     expect(localStorage.getItem("meowo-snap-edge")).toBeNull();
     expect(localStorage.getItem("meowo-pinned")).toBeNull();
-    // 迁移来的吸附边生效：走折叠分支。
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("snap_collapse", expect.anything())
-    );
   });
 
   it("W-17：settings 已有几何值时，残留旧键不覆盖（仅清除），不触发迁移写", async () => {
     seedWindowState({ ...EMPTY_WS, normal_width: 400, normal_height: 460 });
     localStorage.setItem("meowo-normal-size", JSON.stringify({ w: 999, h: 999 }));
     render(<App />);
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
-        "snap_restore",
-        expect.objectContaining({ width: 400, height: 460 })
-      )
-    );
+    await expandIsland();
+    expect(layoutCalls()).toContainEqual({ width: 400, height: 460, centerRatio: null });
     expect(localStorage.getItem("meowo-normal-size")).toBeNull();
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("set_sticker_window_state", expect.anything());
   });
 
-  it("W-17：切换置顶经 set_sticker_window_state 落盘，不再写 localStorage", async () => {
+  it("岛恒置顶：展开的列表里不显示置顶开关", async () => {
     render(<App />);
-    await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
-    fireEvent.click(await screen.findByLabelText(zh.sticker.pinOff));
-    await screen.findByLabelText(zh.sticker.pinOn);
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_sticker_window_state", {
-        state: expect.objectContaining({ pinned: true }),
-      })
-    );
-    expect(localStorage.getItem("meowo-pinned")).toBeNull();
+    await expandIsland();
+    expect(screen.queryByLabelText(zh.sticker.pinOff)).toBeNull();
+    expect(screen.queryByLabelText(zh.sticker.pinOn)).toBeNull();
   });
 
-  // 回归（W-4）：展开过渡期（snap_restore 未落地）窗口仍是 28px 细条几何，直接渲染
-  // 全量看板会被压进细条宽度造成布局抖动。过渡期必须渲染 .snap-expanding 纯色占位，
-  // 落地后才挂载看板。
-  it("W-4：找回展开过渡期渲染纯色占位，snap_restore 落地后才挂载看板", async () => {
-    let resolveRestore: () => void = () => {};
-    vi.mocked(invoke).mockImplementation((cmd: string) => {
-      if (cmd === "get_sticker_window_state") {
-        return Promise.resolve({ ...EMPTY_WS, snap_edge: "right" });
-      }
-      return cmd === "snap_restore"
-        ? new Promise<void>((r) => { resolveRestore = r; })
-        : Promise.resolve(undefined);
-    });
-    const { container } = render(<App />);
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith("snap_collapse", expect.anything())
-    );
-    emitRecallSticker();
-    await waitFor(() => expect(container.querySelector(".snap-expanding")).toBeTruthy());
-    // 占位期间缩略条不得回闪（展开瞬间渲染缩略条正是 expanding 闸门要防的）。
-    expect(container.querySelector(".cstrip")).toBeNull();
-    resolveRestore();
-    await waitFor(() => expect(container.querySelector(".snap-expanding")).toBeNull());
-  });
-
-  // 回归：尺寸基准曾被「吸附态拖角缩成细条」的尺寸毒化(实测 {80,240}/{136,20})。
-  // 读入时的 sanitize 须把低于最小尺寸的值丢弃、回落默认 {360,440}，否则还原会用毒化的
-  // 细条尺寸、把窗口缩成细条。（W-17 起折叠态禁 resizable，细条已拖不出来；这里是纵深防御。）
-  it("settings 尺寸被细条尺寸毒化时，启动回落默认 {360,440} 再 snap_restore", async () => {
+  // 回归：尺寸基准曾被「吸附态拖角缩成细条」的尺寸毒化(实测 {80,240}/{136,20})。读入时的
+  // sanitize 须把低于最小尺寸的值丢弃、回落默认 {360,440}，否则展开会用毒化的细条尺寸。
+  it("settings 尺寸被细条尺寸毒化时，展开回落默认 {360,440}", async () => {
     seedWindowState({ ...EMPTY_WS, normal_width: 80, normal_height: 37 });
     render(<App />);
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
-        "snap_restore",
-        expect.objectContaining({ width: 360, height: 440 })
-      )
-    );
+    await expandIsland();
+    expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
   });
 
-  // 回归：异常大值/非有限数(settings.json 被手改坏)不能直接喂给 set_size，否则设出极端窗口。
-  // sanitize 须校验上界(<=20000)与有限数，超界则回落默认 {360,440}。
-  it("settings 尺寸异常大值时，启动回落默认 {360,440}，不设出极端窗口", async () => {
+  // 回归：异常大值/非有限数(settings.json 被手改坏)不能直接喂给窗口，否则设出极端窗口。
+  it("settings 尺寸异常大值时，展开回落默认 {360,440}，不设出极端窗口", async () => {
     seedWindowState({ ...EMPTY_WS, normal_width: 999999, normal_height: 999999 });
     render(<App />);
-    await waitFor(() =>
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith(
-        "snap_restore",
-        expect.objectContaining({ width: 360, height: 440 })
-      )
-    );
+    await expandIsland();
+    expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
   });
 
   // 回归：running tab 下刷新时，若某会话已从 running 迁移到 waiting，后端 running 分页不再返回它；
@@ -530,6 +611,7 @@ describe("App", () => {
     });
 
     render(<App />);
+    await expandIsland();
     await waitFor(() => expect(screen.getByText("A")).toBeTruthy());
     await waitFor(() => expect(screen.getByText("B")).toBeTruthy());
 
@@ -593,6 +675,7 @@ describe("App", () => {
     });
 
     render(<App />);
+    await expandIsland();
     await waitFor(() => {
       const titles = Array.from(document.querySelectorAll(".stk-title")).map((el) => el.textContent);
       expect(titles).toEqual(["B", "A"]);
