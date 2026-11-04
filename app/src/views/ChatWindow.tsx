@@ -9,7 +9,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -520,7 +520,10 @@ export function ChatWindow() {
   // 状态行正则由插件声明（ChatUi.status_line_pattern）；没声明的 agent 不解析，运行条走本地计时。
   const statusLinePatternRef = useRef<string | null>(null);
   const retryLinePatternRef = useRef<string | null>(null);
+  // 终端最近一帧（屏幕识别吃的同一份文本），供提问卡迟迟认不出表单时写诊断。
+  const lastScreenRef = useRef("");
   const handleScreen = useCallback((text: string) => {
+    lastScreenRef.current = text;
     const pattern = statusLinePatternRef.current;
     if (pattern) {
       const status = parseCliStatus(text, pattern);
@@ -3285,6 +3288,25 @@ export function ChatWindow() {
   // 作答卡（broker 挂起代答）：题面来自挂起路径且会话托管时，卡片就是作答面——
   // 多选/多问题/自定义输入全部可答，不再依赖屏幕识别与排队落键。
   const questionAnswerable = !!structuredQuestion?.answerable && history?.ptyManaged !== false;
+  // 题面卡在场、终端表单 8s 还没被屏幕识别接管：写一条诊断，带上识别看到的屏幕末尾。
+  // 用户实拍过卡在这一步（卡上答不了、终端表单被盖住），当时没留下任何现场，只能等复现。
+  // 每道题只记一次；手机端不写（远程桥不放行，写的也是宿主磁盘）。
+  const loggedQuestionRef = useRef<string | null>(null);
+  const waitingForQuestionForm = !!structuredQuestion && !questionAnswerable && history?.ptyManaged === true
+    && !questionFormSeen && !remoteUi();
+  useEffect(() => {
+    const requestId = structuredQuestion?.requestId;
+    if (!waitingForQuestionForm || !requestId || loggedQuestionRef.current === requestId) return;
+    const timer = window.setTimeout(() => {
+      loggedQuestionRef.current = requestId;
+      const tail = lastScreenRef.current.split("\n").map((line) => line.trimEnd()).filter(Boolean)
+        .slice(-12).map((line) => line.slice(0, 200));
+      diagLog("question", `提问卡出现 8s 仍未认出终端表单 · provider=${provider ?? "?"} · view=${view}`
+        + ` · attention=${terminalAttention?.id ?? "none"} · 屏幕末尾: ${tail.length ? tail.join(" ⏎ ") : "（无画面）"}`);
+    }, 8_000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按「是否在等」与题目切换重新计时
+  }, [waitingForQuestionForm, structuredQuestion?.requestId]);
   // 全部题目都能在卡内表达（题面非空且不重复）时，终端视图下的卡本身就是作答面，
   // 「放行给终端」按钮藏掉；表达不了的题目（提交会错位）它仍是唯一出口，保留。
   const questionCardRepresentable = answersRepresentable(structuredQuestions);

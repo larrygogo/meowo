@@ -3,7 +3,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
-import { availableTerminals, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth } from "../api";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { availableTerminals, exportDiagLog, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -853,6 +854,21 @@ function AboutSection({
       : hasUpdate ? { label: t.about.updateTo(newVersion ?? ""), primary: true }
       : { label: t.about.checkUpdate, primary: false };
 
+  // 诊断日志导出：保存框选位置，成功后按钮短暂显示「已导出」；失败走错误框（取消保存框不算失败）。
+  const [diagExported, setDiagExported] = useState(false);
+  const exportDiag = async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const path = await saveDialog({ defaultPath: `meowo-diag-${stamp}.txt`, filters: [{ name: "Text", extensions: ["txt", "log"] }] }).catch(() => null);
+    if (!path) return;
+    try {
+      await exportDiagLog(path);
+      setDiagExported(true);
+      window.setTimeout(() => setDiagExported(false), 2_000);
+    } catch (e) {
+      void appConfirm(formatBackendError(e, t.locale), { title: t.about.diagLog });
+    }
+  };
+
   const verText = `v${version || "—"}`;
   // checking/error 也要有话说：曾经两态都落空串——打开「关于」十秒空窗、检查失败一片安静。
   // unknown（关了自动更新、从未检查）只显示版本号，不谎报「已是最新」。
@@ -908,6 +924,15 @@ function AboutSection({
           </div>
           <button className="sbtn" onClick={() => void invoke("open_onboarding").catch((e) => console.error("[about] 打开引导窗口失败：", e))}>
             {t.about.open}
+          </button>
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.about.diagLog}</div>
+            <div className="row-desc">{t.about.diagLogDesc}</div>
+          </div>
+          <button className="sbtn" onClick={() => void exportDiag()}>
+            {diagExported ? t.about.diagLogExported : t.about.diagLogExport}
           </button>
         </div>
       </div>

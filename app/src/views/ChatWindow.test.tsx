@@ -3771,6 +3771,50 @@ describe("ChatWindow", () => {
     expect(screen.getByText(/已选「火锅」/)).toBeTruthy();
   });
 
+  /** 题面卡在场、8s 还没认出终端表单：写一条诊断（带识别看到的屏幕），每题只记一次。
+   *  用户实拍过卡在这一步，当时没留下任何现场。 */
+  it("提问卡迟迟认不出终端表单时写一条诊断日志", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      window.history.replaceState({}, "", "/?sessionId=41");
+      invoke.mockImplementation((command: string) => {
+        if (command === "get_chat_history") return Promise.resolve({
+          sessionId: 41, title: "诊断题面", status: "running", provider: "claude", cwd: "C:/repo",
+          supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+          ptyManaged: true,
+        });
+        if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+        if (command === "managed_terminal_binding") return Promise.resolve(null);
+        if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 41, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+        return Promise.resolve();
+      });
+      render(<ChatWindow />);
+      await waitFor(() => expect(screen.getByText("诊断题面")).toBeTruthy());
+      act(() => {
+        eventListeners.get("interactive-question")?.({ payload: {
+          sessionId: 41, requestId: "request-diag", provider: "claude", toolName: "AskUserQuestion",
+          description: null, answerable: false,
+          input: JSON.stringify({ questions: [{ question: "火锅还是寿司？", multiSelect: false, options: [{ label: "火锅" }, { label: "寿司" }] }] }),
+          permissionSuggestions: [],
+        } });
+      });
+      expect(await screen.findByText(/火锅还是寿司/)).toBeTruthy();
+      const diagCalls = () => invoke.mock.calls.filter((call) => call[0] === "diag_log");
+      await act(async () => { vi.advanceTimersByTime(7_000); });
+      expect(diagCalls()).toHaveLength(0);
+      await act(async () => { vi.advanceTimersByTime(2_000); });
+      await waitFor(() => expect(diagCalls()).toHaveLength(1));
+      const args = diagCalls()[0][1] as { scope: string; message: string };
+      expect(args.scope).toBe("question");
+      expect(args.message).toContain("未认出终端表单");
+      // 同一道题不重复记。
+      await act(async () => { vi.advanceTimersByTime(20_000); });
+      expect(diagCalls()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   /** C-11 尾：多问题展示卡按问题 keyed 排队 + 聚焦题识别落键。两题都点上答案后，
    *  屏幕停在第 2 题（题面原文在屏）→ 只落第 2 题的答案，第 1 题的排队保留等轮到它。 */
   it("多问题展示卡按问题排队：识别出第 2 题在屏时只落第 2 题的答案", async () => {

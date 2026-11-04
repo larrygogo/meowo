@@ -1539,6 +1539,10 @@ export const zh = {
     changelog: "更新日志",
     guide: "使用引导",
     guideDesc: "重看首次引导",
+    diagLog: "诊断日志",
+    diagLogDesc: "出问题时导出，发给开发者排查",
+    diagLogExport: "导出",
+    diagLogExported: "已导出",
   },
   onboarding: {
     skip: "跳过",

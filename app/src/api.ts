@@ -571,6 +571,15 @@ export function openPathWith(cwd: string, rel: string, opener: string): Promise<
 export function exportTextFile(path: string, text: string): Promise<void> {
   return invoke("export_text_file", { path, text });
 }
+/** 写一条诊断进日志（安装版落 ~/.meowo/logs，dev 打终端）。尽力而为，失败静默。
+ *  远程桥不放行它（往宿主写盘），手机端调用方须自己跳过。 */
+export function diagLog(scope: string, message: string): void {
+  void invoke("diag_log", { scope, message }).catch(() => {});
+}
+/** 设置 › 关于：把诊断日志导出成一个文本文件。 */
+export function exportDiagLog(path: string): Promise<void> {
+  return invoke("export_diag_log", { path });
+}
 
 /** 对话窗标题栏「用编辑器打开」：本机装了的、能打开目录的编辑器（Windows 带 exe 图标）。
  *  系统文件管理器不在其中，前端恒列（走 openProjectDir）。 */

@@ -6,6 +6,7 @@ mod bgpty;
 mod chat;
 mod confirm;
 mod detect;
+mod diaglog;
 mod editors;
 #[cfg(target_os = "windows")]
 mod envpath;
@@ -1182,6 +1183,8 @@ pub fn run() {
         return;
     }
     harden_dll_search_path();
+    // 安装版把 stderr 接进 ~/.meowo/logs（dev 不接）。要赶在任何 eprintln! 之前。
+    diaglog::install();
     // 关掉系统级「严重错误」模态:空光驱/断链网络盘在被探测(如远程目录浏览的盘符
     // 枚举 is_dir)时,默认会在宿主机弹「请将磁盘插入驱动器」硬模态并卡住调用线程。
     // 进程级一次设定,让这类探测安静地返回错误。
@@ -1366,6 +1369,8 @@ pub fn run() {
             read_file_text,
             read_image_preview,
             search_project_files,
+            diaglog::diag_log,
+            diaglog::export_diag_log,
             file_mention_candidates,
             list_file_openers,
             open_path_with,
