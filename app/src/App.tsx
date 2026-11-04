@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   getLiveSessionsCounts,
   getLiveSessionsPage,
+  openNewSessionWindow,
   LiveSession,
   LiveSessionCounts,
   PageCursor,
@@ -893,6 +894,10 @@ export function App() {
             onShowAll={showAll}
             onMeasure={onPanelMeasure}
             onPointerDownDrag={onPanelHeadPointerDown}
+            onNewSession={() => {
+              openNewSessionWindow().catch((err) => console.error("[island] 打开新建会话失败：", err));
+              collapse();
+            }}
           />
         )}
       </div>

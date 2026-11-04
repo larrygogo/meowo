@@ -17,6 +17,7 @@ vi.mock("./views/Sticker", () => ({
 }));
 
 vi.mock("./api", () => ({
+  openNewSessionWindow: () => Promise.resolve(),
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
   // 与真实 api.ts 同款归一化：mock 数据继续写裸数组，这里补 { items, next_cursor } 包装
   // （给满 limit → 用末项当游标；给不满 → 到底）。

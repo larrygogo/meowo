@@ -379,6 +379,16 @@ describe("IslandPanel 展开面板", () => {
     expect(onOpenSession).toHaveBeenCalledWith(pending.session.id);
   });
 
+  it("新建会话：标题旁的按钮与空态按钮都能开", () => {
+    const onNewSession = vi.fn();
+    renderPanel({ onNewSession });
+    const buttons = screen.getAllByRole("button", { name: new RegExp(zh.sticker.newSession) });
+    // 空态时两个：标题旁一个、空态里一个。
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((button) => fireEvent.click(button));
+    expect(onNewSession).toHaveBeenCalledTimes(2);
+  });
+
   it("面板上不放「全部」按钮（用户要求）；没有额度数据时只有一页、不出翻页点", () => {
     const { container } = renderPanel();
     expect(screen.getByText(zh.island.idle)).toBeTruthy();

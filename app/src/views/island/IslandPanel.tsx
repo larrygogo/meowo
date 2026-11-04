@@ -36,6 +36,7 @@ export function IslandPanel({
   onMeasure,
   onPointerDownDrag,
   initialPage = 0,
+  onNewSession,
 }: {
   sessions: readonly Item[];
   usage: Record<string, ProviderUsage>;
@@ -48,6 +49,8 @@ export function IslandPanel({
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
   /** 打开时停在第几页（0 起）。 */
   initialPage?: number;
+  /** 新建会话（标题旁的「＋」与空态按钮）。 */
+  onNewSession?: () => void;
 }) {
   const t = useT();
   const now = useNow();
@@ -95,6 +98,15 @@ export function IslandPanel({
           <span className="isl-panel-title">
             Meowo <span className="isl-accent">{onUsagePage ? t.island.panelUsage : t.island.panelSessions}</span>
           </span>
+          {/* 原来「全部」的位置放新建：开新会话不用再绕去托盘或完整列表。 */}
+          {onNewSession && (
+            <button
+              type="button"
+              className="isl-btn is-ghost"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onNewSession}
+            >＋ {t.sticker.newSession}</button>
+          )}
           <span className="isl-panel-meta">
             {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}
             <b>{now.toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false })}</b>
@@ -104,7 +116,14 @@ export function IslandPanel({
         {!onUsagePage ? (
           <div className="isl-panel-body">
             <div className="isl-rows">
-              {rows.length === 0 && <div className="isl-empty">{t.island.idle}</div>}
+              {rows.length === 0 && (
+                <div className="isl-empty">
+                  <span>{t.island.idle}</span>
+                  {onNewSession && (
+                    <button type="button" className="isl-btn is-primary" onClick={onNewSession}>＋ {t.sticker.newSession}</button>
+                  )}
+                </div>
+              )}
               {rows.map((item) => {
                 const tone = cardTone(item);
                 // 不放 current_activity：那是原始工具串（Read: 加完整路径、› cd 加命令），塞进这一行

@@ -6839,7 +6839,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .isl-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isl-row-sub { font-size: 11px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.isl-empty { padding: 22px 0; text-align: center; font-size: 13px; color: var(--isl-dim); }
+.isl-empty { padding: 18px 0; display: flex; flex-direction: column; align-items: center; gap: 12px; font-size: 13px; color: var(--isl-dim); }
 .isl-side {
   width: 124px; flex: none;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
