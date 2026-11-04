@@ -332,14 +332,14 @@ describe("IslandPanel 展开面板", () => {
     expect(container.querySelector(".isl-dots-nav")).toBeNull();
   });
 
-  it("有额度数据：会话页带额度大环，翻到第二页看各家额度", () => {
+  it("会话页不放额度（用户要求），翻到第二页看各家额度，按设置顺序排", () => {
     const usage = {
       claude: { lanes: [lane("five_hour", 43)], note: null },
       codex: { lanes: [lane("weekly", 18)], note: null },
     } as unknown as Record<string, ProviderUsage>;
     const { container } = renderPanel({ usage });
-    // 大环同样显示剩余：已用 43% → 剩 57。
-    expect(container.querySelector(".isl-big-val")?.textContent).toContain("57");
+    expect(container.querySelector(".isl-big-val")).toBeNull();
+    expect(container.querySelector(".isl-side")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: zh.island.page(2) }));
     expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(2);
     expect(screen.getByText("Codex")).toBeTruthy();

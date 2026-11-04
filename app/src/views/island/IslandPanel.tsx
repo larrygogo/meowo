@@ -1,5 +1,5 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
-// 第 1 页：最要紧的几个会话 + 额度大环；第 2 页（有额度数据才有）：各 agent 的额度。
+// 第 1 页：最要紧的几个会话（不放额度，用户要求会话页只看会话）；第 2 页（有额度数据才有）：各 agent 的额度。
 // 完整列表（搜索、菜单、归档……）不塞进这里：右上「全部」打开原来的贴纸列表。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
@@ -9,7 +9,7 @@ import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
 import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandParts";
-import { pickIslandUsage, primaryLane } from "./useIslandUsage";
+import { primaryLane } from "./useIslandUsage";
 
 /// 面板上最多列几个会话。更多的去「全部」里看。
 const MAX_ROWS = 3;
@@ -54,9 +54,9 @@ export function IslandPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(initialPage);
   const rows = useMemo(() => byUrgency(sessions).slice(0, MAX_ROWS), [sessions]);
-  // 大环显示「正在用的」那家：面板里列的会话用的 agent 优先，再按设置顺序。
-  const main = pickIslandUsage(usage, quotaProviders, byUrgency(sessions).map((item) => item.provider));
-  const usageProviders = Object.keys(usage).filter((p) => primaryLane(usage[p]) != null);
+  // 用量页按「显示配额」的设置顺序排，设置里没有的殿后。
+  const usageProviders = [...quotaProviders, ...Object.keys(usage)]
+    .filter((p, i, all) => all.indexOf(p) === i && primaryLane(usage[p]) != null);
   const pages = usageProviders.length > 0 ? 2 : 1;
   const current = Math.min(page, pages - 1);
 
@@ -71,7 +71,6 @@ export function IslandPanel({
     return () => observer.disconnect();
   }, [onMeasure, current]);
 
-  const laneLabel = (kind: string) => t.island.usageLane[kind] ?? t.island.usageLane.other;
   // 泳道全名与贴纸底栏同一套叫法（t.account.lane*），两处说法一致。
   const laneName = (lane: UsageLane) => {
     switch (lane.kind) {
@@ -137,17 +136,6 @@ export function IslandPanel({
                 );
               })}
             </div>
-            {main && (
-              <div className="isl-side">
-                <Ring size={84} stroke={6} value={remainingOf(main.pct) / 100} color={remainingColor(remainingOf(main.pct))} track="var(--isl-track)">
-                  <span className="isl-ring-stack">
-                    <span className="isl-big-val">{remainingOf(main.pct)}<small>%</small></span>
-                    <span className="isl-ring-caption">{t.island.remaining}</span>
-                  </span>
-                </Ring>
-                <span className="isl-side-label">{providerLabel(main.provider)} {laneLabel(main.kind)}</span>
-              </div>
-            )}
           </div>
         ) : (
           <div className="isl-panel-body is-usage">
