@@ -1,0 +1,115 @@
+// 灵动岛的零件：眼睛、带进度环的 agent 图标、额度环、时钟。收起胶囊、提醒、展开面板共用。
+// 视觉照用户给的参考图（2026-11-04）：纯黑底、白字、环形进度、状态用颜色而不是文字堆叠。
+import { useEffect, useState } from "react";
+import { agentAssets, tintStyle } from "../../providers";
+import { cardTone } from "../sticker/helpers";
+import type { Item } from "../sticker/types";
+
+export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
+
+/// 两只眼睛（Meowo 标志）。在跑：左右张望，两侧冒绿色「+」；要处理：琥珀色、冒「!」；
+/// 出错：红；跑完等输入：静止的白；闲着：偶尔眨眼。动作全在 CSS。
+export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolean }) {
+  return (
+    <span className={`isl-eyes${small ? " is-small" : ""}`} data-tone={tone} aria-hidden="true">
+      {!small && tone === "running" && <span className="isl-spark is-l">+</span>}
+      {!small && tone === "pending" && <span className="isl-spark is-l is-warn">!</span>}
+      <span className="isl-eye" />
+      <span className="isl-eye" />
+      {!small && tone === "running" && <span className="isl-spark is-r">+</span>}
+    </span>
+  );
+}
+
+/// 环形进度。value 为 0..1；null = 不定进度（转圈的一段弧）。
+export function Ring({ size, stroke, value, color, track, children, className }: {
+  size: number;
+  stroke: number;
+  value: number | null;
+  color: string;
+  track: string;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const filled = value == null ? c * 0.28 : c * Math.min(1, Math.max(0, value));
+  return (
+    <span className={`isl-ring${value == null ? " is-spin" : ""}${className ? ` ${className}` : ""}`} style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${filled} ${c}`}
+        />
+      </svg>
+      {children != null && <span className="isl-ring-body">{children}</span>}
+    </span>
+  );
+}
+
+/// 各状态的环色（实色 / 底轨）。
+const TONE_COLORS: Record<string, [string, string]> = {
+  running: ["var(--isl-ok)", "var(--isl-ok-track)"],
+  pending: ["var(--isl-warn)", "var(--isl-warn-track)"],
+  error: ["var(--isl-err)", "var(--isl-err-track)"],
+  waiting: ["var(--isl-dim)", "var(--isl-track)"],
+};
+
+/// 会话进度：有待办按完成比例；在跑但没待办 = 不定进度（转圈）；其余整圈。
+function progressOf(item: Item, tone: string): number | null {
+  if (item.todo_total > 0) return item.todo_done / item.todo_total;
+  return tone === "running" ? null : 1;
+}
+
+/// 带进度环的 agent 图标：环色 = 状态，环长 = 待办进度。要处理的会话角上带「!」，出错带「×」。
+export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
+  const tone = cardTone(item);
+  const [color, track] = TONE_COLORS[tone] ?? TONE_COLORS.waiting;
+  const { Icon } = agentAssets(item.provider);
+  const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
+  return (
+    <span className="isl-agent" data-tone={tone}>
+      <Ring size={size} stroke={3} value={progressOf(item, tone)} color={color} track={track}>
+        <span className="isl-agent-logo" style={tintStyle(item.provider)}><Icon /></span>
+      </Ring>
+      {badge && <span className={`isl-agent-badge is-${tone}`}>{badge}</span>}
+    </span>
+  );
+}
+
+/// 额度环：中间是已用百分比。没有数据时不渲染（调用方判断）。
+export function UsageRing({ pct, size = 30 }: { pct: number; size?: number }) {
+  const value = Math.round(Math.min(100, Math.max(0, pct)));
+  // 用得越多越醒目：过八成转琥珀，满了转红，免得额度快没了还是一圈淡灰。
+  const color = value >= 100 ? "var(--isl-err)" : value >= 80 ? "var(--isl-warn)" : "var(--isl-text-2)";
+  return (
+    <Ring size={size} stroke={3.5} value={value / 100} color={color} track="var(--isl-track)" className="isl-usage">
+      <span className="isl-usage-val">{value}</span>
+    </Ring>
+  );
+}
+
+/// 每 15 秒刷新一次的「现在」，时钟和日期用。
+export function useNow(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+  return now;
+}
+
+export function Clock({ now, locale }: { now: Date; locale: string }) {
+  return (
+    <span className="isl-clock">
+      {now.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false })}
+    </span>
+  );
+}

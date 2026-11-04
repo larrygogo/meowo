@@ -169,11 +169,11 @@ const seedWindowState = (s: {
 };
 const EMPTY_WS = { normal_width: null, normal_height: null, snap_edge: null, pinned: false, x: null, y: null, island_center: null };
 
-/** Windows 上贴纸已换成灵动岛：启动是收起的胶囊，看列表得先展开（托盘「找回贴纸」= 展开）。 */
+/** Windows 上贴纸已换成灵动岛：启动是收起的胶囊，看完整列表得先打开（托盘「找回贴纸」= 打开完整列表）。 */
 const expandIsland = async () => {
   await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
   await act(async () => { emitRecallSticker(); });
-  await waitFor(() => expect(document.querySelector(".island-shell")).toBeTruthy());
+  await waitFor(() => expect(document.querySelector(".island-shell.is-full")).toBeTruthy());
 };
 const layoutCalls = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "island_layout").map(([, args]) => args);
 
@@ -303,17 +303,21 @@ describe("App", () => {
     expect(calls[calls.length - 1]).toEqual({ width: 360, height: 440, centerRatio: null });
   });
 
-  it("点一下胶囊（没拖动）就展开列表", async () => {
+  it("点一下胶囊（没拖动）就展开面板；面板里点「全部」打开完整列表", async () => {
     const { container } = render(<App />);
     const pill = await waitFor(() => {
-      const el = container.querySelector(".island-pill");
+      const el = container.querySelector(".isl-notch");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
     fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
     fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 101 });
-    await waitFor(() => expect(container.querySelector(".island-shell")).toBeTruthy());
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("island_drag_begin");
+    expect(layoutCalls()).toContainEqual({ width: 588, height: 250, centerRatio: null });
+    fireEvent.click(screen.getByRole("button", { name: zh.island.showAll }));
+    await waitFor(() => expect(container.querySelector(".island-shell.is-full")).toBeTruthy());
+    expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
   });
 
   it("收到提醒时胶囊弹出会话标题与状态，点「打开」进对话窗", async () => {
@@ -324,7 +328,7 @@ describe("App", () => {
     });
     expect(await screen.findByText("修登录页")).toBeTruthy();
     expect(screen.getByText(zh.pending.approval)).toBeTruthy();
-    expect(layoutCalls()).toContainEqual({ width: 380, height: 64, centerRatio: null });
+    expect(layoutCalls()).toContainEqual({ width: 548, height: 68, centerRatio: null });
     fireEvent.click(screen.getByRole("button", { name: zh.island.open }));
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 7 }));
     await waitFor(() => expect(screen.queryByText("修登录页")).toBeNull());
@@ -425,7 +429,7 @@ describe("App", () => {
   it("启动把胶囊贴顶摆放：没记过位置时居中", async () => {
     render(<App />);
     await waitFor(() =>
-      expect(layoutCalls()).toContainEqual({ width: 120, height: 36, centerRatio: 0.5 })
+      expect(layoutCalls()).toContainEqual({ width: 148, height: 46, centerRatio: 0.5 })
     );
   });
 
@@ -433,7 +437,7 @@ describe("App", () => {
     seedWindowState({ ...EMPTY_WS, snap_edge: "left", island_center: 0.3 });
     render(<App />);
     await waitFor(() =>
-      expect(layoutCalls()).toContainEqual({ width: 120, height: 36, centerRatio: 0.3 })
+      expect(layoutCalls()).toContainEqual({ width: 148, height: 46, centerRatio: 0.3 })
     );
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("snap_collapse", expect.anything());
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("snap_restore", expect.anything());

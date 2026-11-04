@@ -1,31 +1,37 @@
-// 灵动岛（Windows 贴纸的新形态，2026-11-04 用户决定替换贴边缩略条）。
+// 灵动岛（Windows 贴纸的新形态，2026-11-04 用户决定替换贴边缩略条；视觉照用户给的参考图）。
 //
-// 本组件只画「胶囊」这一层：收起时的状态摘要，或有事时弹出的提醒。展开成完整列表由
-// App 渲染 Sticker 完成，形态切换的窗口尺寸也由 App 驱动（island.rs 按中心点对称改尺寸）。
-// 胶囊在窗口里水平居中：窗口长大/缩小时它在屏幕上的位置不动，展开动画从它的轮廓长出来。
+// 本组件画「刘海」这一层：收起时的胶囊，或有事时弹出的提醒。展开面板在 island/IslandPanel，
+// 完整列表仍是 Sticker；形态切换的窗口尺寸由 App 驱动（island.rs 按中心点对称改尺寸）。
+// 刘海纯黑、贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接——耳朵在刘海左右各占 ISLAND_EAR，
+// 窗口宽度要把它算进去。胶囊在窗口里水平居中：窗口长大时它不挪位，展开动画从它的轮廓长出来。
 import { useLayoutEffect, useMemo, useRef } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
 import { cardTone } from "./sticker/helpers";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
+import { AgentRing, Clock, Eyes, UsageRing, useNow, type IslandTone } from "./island/islandParts";
 
+export type { IslandTone } from "./island/islandParts";
 export type IslandCompactStyle = "counts" | "focus" | "minimal";
-export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
 
-/// 胶囊收起时的高度（逻辑像素）。App 按它和测得的宽度摆窗口。
-export const ISLAND_PILL_HEIGHT = 36;
-/// 提醒形态的尺寸。
-export const ISLAND_ALERT_SIZE = { width: 380, height: 64 } as const;
+/// 刘海两侧「耳朵」的宽度（逻辑像素）。窗口宽 = 刘海本体 + 2 × 耳朵。
+export const ISLAND_EAR = 14;
+/// 收起胶囊的高度。
+export const ISLAND_PILL_HEIGHT = 46;
+/// 提醒形态的窗口尺寸（含耳朵）。
+export const ISLAND_ALERT_SIZE = { width: 520 + ISLAND_EAR * 2, height: 68 } as const;
+/// 胶囊上最多摆几个会话图标，再多折成「+N」。
+const MAX_AGENTS = 4;
 
 type Counts = { pending: number; error: number; running: number; waiting: number };
 
-function live(items: readonly Item[]): Item[] {
+export function liveSessions(items: readonly Item[]): Item[] {
   return items.filter((item) => !item.archived && item.connected);
 }
 
 export function islandCounts(items: readonly Item[]): Counts {
   const counts: Counts = { pending: 0, error: 0, running: 0, waiting: 0 };
-  for (const item of live(items)) {
+  for (const item of liveSessions(items)) {
     const tone = cardTone(item);
     if (tone === "pending" || tone === "error" || tone === "running" || tone === "waiting") counts[tone] += 1;
   }
@@ -41,29 +47,42 @@ export function islandTone(counts: Counts): IslandTone {
   return "idle";
 }
 
-/// 「最要紧的那一个」：待处理 > 出错 > 未读的跑完 > 跑完 > 在跑（同档取最近有动静的）。
-export function focusSession(items: readonly Item[]): Item | null {
-  const rank = (item: Item) => {
-    const tone = cardTone(item);
-    if (tone === "pending") return 0;
-    if (tone === "error") return 1;
-    if (tone === "waiting") return item.unread ? 2 : 3;
-    if (tone === "running") return 4;
-    return 9;
-  };
-  const candidates = live(items).filter((item) => rank(item) < 9);
-  candidates.sort((a, b) => rank(a) - rank(b) || b.session.last_event_at - a.session.last_event_at);
-  return candidates[0] ?? null;
+function urgency(item: Item): number {
+  const tone = cardTone(item);
+  if (tone === "pending") return 0;
+  if (tone === "error") return 1;
+  if (tone === "waiting") return item.unread ? 2 : 3;
+  if (tone === "running") return 4;
+  return 9;
 }
 
-/// 两只眼睛（Meowo 标志）。动作全在 CSS：在跑左右张望、待处理琥珀色一闪一闪、出错变红、闲着偶尔眨眼。
-function Eyes({ tone }: { tone: IslandTone }) {
+/// 按要紧程度排：待处理 > 出错 > 未读的跑完 > 跑完 > 在跑（同档取最近有动静的）。
+export function byUrgency(items: readonly Item[]): Item[] {
+  return liveSessions(items)
+    .filter((item) => urgency(item) < 9)
+    .sort((a, b) => urgency(a) - urgency(b) || b.session.last_event_at - a.session.last_event_at);
+}
+
+export function focusSession(items: readonly Item[]): Item | null {
+  return byUrgency(items)[0] ?? null;
+}
+
+export function sessionTitle(item: Item, fallback: string): string {
+  return item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : fallback;
+}
+
+/// 提醒左侧的状态图标：审批是盾牌、提问是问号、跑完是对勾、出错是感叹号。
+function AlertIcon({ kind }: { kind: string }) {
+  const path = kind === "question"
+    ? "M9.2 9a2.9 2.9 0 1 1 4.1 2.6c-.8.4-1.3 1-1.3 1.9v.5M12 17.2v.1"
+    : kind === "waiting"
+    ? "M5 12.5l4.2 4.2L19 7"
+    : kind === "error"
+    ? "M12 7v6M12 16.5v.1"
+    : "M12 3l8 4v5c0 4.5-3.3 8-8 9-4.7-1-8-4.5-8-9V7zM12 9v4M12 16.2v.1";
   return (
-    <svg className="island-eyes" data-tone={tone} width={22} height={14} viewBox="0 0 22 14" aria-hidden="true">
-      <g className="island-eyes-pair">
-        <ellipse cx="5.5" cy="7" rx="4.5" ry="5.5" />
-        <ellipse cx="16.5" cy="7" rx="4.5" ry="5.5" />
-      </g>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={path} />
     </svg>
   );
 }
@@ -72,6 +91,7 @@ export function Island({
   sessions,
   compactStyle,
   alert,
+  usagePct,
   onMeasure,
   onHoverIntent,
   onActivate,
@@ -82,7 +102,9 @@ export function Island({
   compactStyle: IslandCompactStyle;
   /** 正在弹出的提醒；null = 收起态。 */
   alert: IslandAlertEvent | null;
-  /** 胶囊内容的实测宽度（逻辑像素），App 据此让窗口贴合。 */
+  /** 额度环的已用百分比；null = 没有额度数据，不画环。 */
+  usagePct: number | null;
+  /** 刘海本体（不含耳朵）的实测宽度，App 据此让窗口贴合。 */
   onMeasure: (width: number) => void;
   /** 鼠标在胶囊上停够 250ms（U1-9：屏幕顶边常有鼠标路过，不能一碰就展开）。 */
   onHoverIntent: () => void;
@@ -93,16 +115,17 @@ export function Island({
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
 }) {
   const t = useT();
-  const pillRef = useRef<HTMLDivElement>(null);
+  const now = useNow();
+  const notchRef = useRef<HTMLDivElement>(null);
   const hoverTimer = useRef<number | null>(null);
   const counts = useMemo(() => islandCounts(sessions), [sessions]);
   const tone = islandTone(counts);
-  const focus = useMemo(() => (compactStyle === "focus" ? focusSession(sessions) : null), [compactStyle, sessions]);
+  const ordered = useMemo(() => byUrgency(sessions), [sessions]);
 
-  // 收起态的宽度随内容变（数字位数、标题长短），实测后上报。提醒形态尺寸固定，不量。
+  // 收起态的宽度随内容变（会话个数、标题长短），实测后上报。提醒形态尺寸固定，不量。
   useLayoutEffect(() => {
     if (alert) return;
-    const el = pillRef.current;
+    const el = notchRef.current;
     if (!el) return;
     const report = () => onMeasure(Math.ceil(el.getBoundingClientRect().width));
     report();
@@ -131,45 +154,56 @@ export function Island({
     ? alert.kind === "error" ? "error" : alert.kind === "waiting" ? "waiting" : "pending"
     : tone;
 
-  const summary = () => {
+  const compact = () => {
     if (compactStyle === "minimal") {
-      const dots = live(sessions).slice(0, 6);
       return (
-        <span className="island-dots">
-          {dots.map((item) => <span key={item.session.id} className={`island-dot is-${cardTone(item)}`} />)}
-        </span>
+        <>
+          <Eyes tone={tone} />
+          <span className="isl-dots">
+            {liveSessions(sessions).slice(0, 6).map((item) => (
+              <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
+            ))}
+          </span>
+        </>
       );
     }
     if (compactStyle === "focus") {
-      if (!focus) return <span className="island-text is-faint">{t.island.idle}</span>;
-      const focusTone = cardTone(focus);
+      const focus = ordered[0];
       return (
-        <span className="island-text">
-          <span className="island-title">{focus.task_title && focus.task_title !== UNNAMED_SESSION_SENTINEL ? focus.task_title : t.sticker.waitingFirstInput}</span>
-          <span className="island-sep">·</span>
-          <span className={`island-state is-${focusTone}`}>{t.island.toneLabel[focusTone] ?? focusTone}</span>
-        </span>
+        <>
+          <Eyes tone={tone} />
+          {focus ? (
+            <span className="isl-focus">
+              <span className="isl-focus-title">{sessionTitle(focus, t.sticker.waitingFirstInput)}</span>
+              <span className={`isl-state is-${cardTone(focus)}`}>{t.island.toneLabel[cardTone(focus)] ?? ""}</span>
+            </span>
+          ) : <span className="isl-faint">{t.island.idle}</span>}
+        </>
       );
     }
-    const parts = (["pending", "error", "running", "waiting"] as const).filter((key) => counts[key] > 0);
-    if (parts.length === 0) return <span className="island-text is-faint">{t.island.idle}</span>;
+    // 概览（默认）：额度环 · 眼睛 · 时间 · 每个会话一颗带进度环的 agent 图标。
+    const shown = ordered.slice(0, MAX_AGENTS);
+    const more = ordered.length - shown.length;
     return (
-      <span className="island-text">
-        {parts.map((key) => (
-          <span key={key} className="island-count">
-            <span className={`island-dot is-${key}`} />
-            {counts[key]} {t.island.toneLabel[key]}
+      <>
+        {usagePct != null && <UsageRing pct={usagePct} />}
+        <Eyes tone={tone} />
+        <Clock now={now} locale={t.locale} />
+        {shown.length > 0 && (
+          <span className="isl-agents">
+            {shown.map((item) => <AgentRing key={item.session.id} item={item} />)}
+            {more > 0 && <span className="isl-more">+{more}</span>}
           </span>
-        ))}
-      </span>
+        )}
+      </>
     );
   };
 
   return (
-    <div className="island-stage">
+    <div className="isl-stage">
       <div
-        ref={pillRef}
-        className={`island-pill${alert ? " is-alert" : ""}`}
+        ref={notchRef}
+        className={`isl-notch ${alert ? "is-alert" : "is-compact"}`}
         data-tone={alertTone}
         role="button"
         tabIndex={0}
@@ -190,28 +224,31 @@ export function Island({
           }
         }}
       >
-        <Eyes tone={alertTone} />
         {alert ? (
-          <span className="island-alert">
-            <span className="island-alert-title">{alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput}</span>
-            <span className="island-alert-sub">
-              <span className={`island-state is-${alertTone}`}>{alertLabel(alert)}</span>
-              {alert.project && <><span className="island-sep">·</span>{alert.project}</>}
+          <>
+            <Eyes tone={alertTone} small />
+            <span className={`isl-alert-icon is-${alertTone}`}><AlertIcon kind={alert.kind} /></span>
+            <span className="isl-alert-text">
+              <span className="isl-alert-title">
+                {alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput}
+              </span>
+              <span className="isl-alert-sub">
+                <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>
+                {alert.project && <><span className="isl-sep">·</span>{alert.project}</>}
+              </span>
             </span>
-          </span>
-        ) : summary()}
-        {alert && (
-          <button
-            type="button"
-            className="island-open"
-            // 按钮上按下不该开始拖动，也不该冒泡成「点胶囊 = 展开」。
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenSession(alert.sessionId);
-            }}
-          >{t.island.open}</button>
-        )}
+            <button
+              type="button"
+              className="isl-btn is-primary"
+              // 按钮上按下不该开始拖动，也不该冒泡成「点胶囊 = 展开」。
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenSession(alert.sessionId);
+              }}
+            >{t.island.open}</button>
+          </>
+        ) : compact()}
       </div>
     </div>
   );

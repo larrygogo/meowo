@@ -15,7 +15,9 @@ import { useBoardRefresh } from "./hooks/useBoardRefresh";
 import { useSettingsEffect } from "./hooks/useSettings";
 import type { IslandCompactStyle } from "./api";
 import { type Item, type Tab } from "./views/sticker/types";
-import { Island, ISLAND_ALERT_SIZE, ISLAND_PILL_HEIGHT } from "./views/Island";
+import { Island, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT } from "./views/Island";
+import { IslandPanel } from "./views/island/IslandPanel";
+import { pickIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
@@ -29,7 +31,11 @@ import {
   updateStickerWindowState,
 } from "./windowState";
 
-type IslandMode = "compact" | "alert" | "expanded";
+type IslandMode = "compact" | "alert" | "expanded" | "full";
+/// 展开面板的窗口宽度（含两侧耳朵）。高度按面板实测。
+const ISLAND_PANEL_WIDTH = 560 + ISLAND_EAR * 2;
+/// 面板没量过之前先按这个高度摆（三行会话 + 页码点的常见高度）。
+const ISLAND_PANEL_HEIGHT_GUESS = 250;
 /// 胶囊最窄宽度（逻辑像素）：空态也得是一颗好点的胶囊，不是一条缝。
 const ISLAND_PILL_MIN_WIDTH = 120;
 /// 提醒停留时长的缺省值（设置里可改 4 / 6 / 10 秒）。
@@ -431,10 +437,14 @@ export function App() {
   }, [refresh]);
 
   // ── 灵动岛（Windows）────────────────────────────────────────────────────────
-  // 2026-11-04 用户决定：Windows 贴纸整体换成顶部居中的灵动岛（替换贴边缩略条），只能左右拖。
-  // 三种形态：收起（胶囊）/ 提醒（有事时弹几秒）/ 展开（完整列表）。窗口几何由 island.rs 管，
-  // 按当前中心点对称改尺寸，胶囊在窗口里水平居中：窗口长大时它在屏幕上不挪位，展开动画从
-  // 它的轮廓长出来。macOS 仍是菜单栏面板，下面每段都先判 isMacPanel()。
+  // 2026-11-04 用户决定：Windows 贴纸整体换成顶部居中的灵动岛（替换贴边缩略条），只能左右拖；
+  // 视觉照用户给的参考图（纯黑刘海、环形进度、分页面板）。四种形态：
+  //   compact  收起的胶囊（额度环 · 眼睛 · 时间 · 会话图标）
+  //   alert    有事时弹几秒的提醒
+  //   expanded 悬停/点击展开的黑色面板（最要紧的会话 + 额度）
+  //   full     「全部」/ 托盘找回打开的完整列表（原贴纸）
+  // 窗口几何由 island.rs 管，按当前中心点对称改尺寸；刘海在窗口里水平居中，窗口长大时它在
+  // 屏幕上不挪位，展开动画从它的轮廓长出来。macOS 仍是菜单栏面板，下面每段都先判 isMacPanel()。
   const [islandMode, setIslandMode] = useState<IslandMode>("compact");
   const islandModeRef = useRef<IslandMode>("compact");
   islandModeRef.current = islandMode;
@@ -442,59 +452,107 @@ export function App() {
   const [alert, setAlert] = useState<IslandAlertEvent | null>(null);
   const alertQueueRef = useRef<IslandAlertEvent[]>([]);
   const alertTimerRef = useRef<number | null>(null);
-  // 胶囊实测宽度（逻辑像素）。展开/收起动画以它为起止轮廓，窗口收回时按它定尺寸。
+  // 胶囊（刘海本体，不含耳朵）的实测宽度。展开/收起动画以它为起止轮廓，窗口收回时按它定尺寸。
   const [pillWidth, setPillWidth] = useState(ISLAND_PILL_MIN_WIDTH);
   const pillWidthRef = useRef(ISLAND_PILL_MIN_WIDTH);
+  // 面板实测高度（宽度固定）。首次展开前没量过，先按一个常见高度摆，量到后再贴合。
+  const panelHeightRef = useRef(ISLAND_PANEL_HEIGHT_GUESS);
   const draggingRef = useRef(false);
-  // 形态切换进行中（窗口正在改尺寸）：期间胶囊的测量不得去改窗口尺寸。展开时窗口先长大，
+  // 形态切换进行中（窗口正在改尺寸）：期间的测量不得去改窗口尺寸。展开时窗口先长大，
   // 此刻任何「按胶囊宽度摆窗口」的调用都会把它缩回去，列表被挤进胶囊大小（DEV 实拍）。
   const transitioningRef = useRef(false);
-  // 设置：收起样式、哪些事弹提醒、提醒停留多久（实时跟随设置页改动）。
+  // 设置：收起样式、哪些事弹提醒、提醒停留多久、额度环取哪家（实时跟随设置页改动）。
   const [islandCompact, setIslandCompact] = useState<IslandCompactStyle>("counts");
+  const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   const islandAlertsRef = useRef<string[] | null>(null);
   const islandAlertMsRef = useRef(ISLAND_ALERT_MS_DEFAULT);
   useSettingsEffect((settings) => {
     if (settings.island_compact) setIslandCompact(settings.island_compact);
+    if (Array.isArray(settings.sticker_quota_providers)) setQuotaProviders(settings.sticker_quota_providers);
     if (Array.isArray(settings.island_alerts)) islandAlertsRef.current = settings.island_alerts;
     if (typeof settings.island_alert_seconds === "number") {
       islandAlertMsRef.current = Math.min(30, Math.max(2, settings.island_alert_seconds)) * 1000;
     }
   });
+  const usage = useIslandUsage();
+  const islandUsage = useMemo(() => pickIslandUsage(usage, quotaProviders), [usage, quotaProviders]);
 
   // 收起即卸载 Sticker，searchOpen（Sticker 局部态）随之丢失；若搜索词留在这里，
-  // 再展开时列表仍被后端过滤、底栏却没有搜索框，空结果会被误读成「会话全丢了」。收起时清空，
-  // 走 changeSearch 的完整清空路径（恢复搜索前列表 + 作废在途搜索请求）。
+  // 再打开完整列表时仍被后端过滤、底栏却没有搜索框，空结果会被误读成「会话全丢了」。离开
+  // 完整列表时清空，走 changeSearch 的完整清空路径（恢复搜索前列表 + 作废在途搜索请求）。
   useEffect(() => {
-    if (!isMacPanel() && islandMode !== "expanded" && search) changeSearch("");
+    if (!isMacPanel() && islandMode !== "full" && search) changeSearch("");
   }, [islandMode, search, changeSearch]);
 
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
     invoke("island_layout", { width, height, centerRatio }), []);
+  const layoutCompact = useCallback((centerRatio: number | null = null) =>
+    layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio), [layout]);
 
-  // 提醒排队：一次只弹一条，弹完缩回再弹下一条。展开着的时候不弹（人就在看列表）。
+  /// 切到一个更大的形态：先把窗口放大（刘海居中，屏幕位置不动），再换内容、播动画。
+  /// 顺序反过来会让内容先在小窗口里挤一帧（W-4 同一课）。
+  const grow = useCallback(async (mode: "expanded" | "full", width: number, height: number) => {
+    if (alertTimerRef.current != null) {
+      window.clearTimeout(alertTimerRef.current);
+      alertTimerRef.current = null;
+    }
+    transitioningRef.current = true;
+    try {
+      await layout(width, height);
+    } catch (err) {
+      transitioningRef.current = false;
+      console.error("[island] 展开失败：", err);
+      return;
+    }
+    // 展开着不弹提醒：排队的那些在面板/列表里都看得到，作废。
+    alertQueueRef.current = [];
+    setAlert(null);
+    // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是新形态，不会去缩窗口。
+    islandModeRef.current = mode;
+    setIslandMode(mode);
+    transitioningRef.current = false;
+    loadStrip();
+  }, [layout, loadStrip]);
+
+  const expand = useCallback(() => {
+    const mode = islandModeRef.current;
+    if (isMacPanel() || mode === "expanded" || mode === "full" || draggingRef.current) return;
+    void grow("expanded", ISLAND_PANEL_WIDTH, panelHeightRef.current);
+  }, [grow]);
+
+  const showAll = useCallback(() => {
+    if (isMacPanel() || islandModeRef.current === "full") return;
+    const { w, h } = normalSize();
+    void grow("full", w, h);
+  }, [grow]);
+
+  // 提醒排队：一次只弹一条，弹完缩回再弹下一条。
   const pumpAlert = useCallback(() => {
     if (islandModeRef.current !== "compact" || alertTimerRef.current != null) return;
     const next = alertQueueRef.current.shift();
     if (!next) return;
     setAlert(next);
+    islandModeRef.current = "alert";
     setIslandMode("alert");
     layout(ISLAND_ALERT_SIZE.width, ISLAND_ALERT_SIZE.height).catch((err) => console.error("[island] 弹出提醒失败：", err));
     alertTimerRef.current = window.setTimeout(() => {
       alertTimerRef.current = null;
       if (islandModeRef.current !== "alert") return;
       setAlert(null);
+      islandModeRef.current = "compact";
       setIslandMode("compact");
-      layout(pillWidthRef.current, ISLAND_PILL_HEIGHT)
+      layoutCompact()
         .catch(() => {})
         // 两条提醒之间留一拍，别让人以为是同一条换了字。
         .finally(() => window.setTimeout(pumpAlert, 300));
     }, islandAlertMsRef.current);
-  }, [layout]);
+  }, [layout, layoutCompact]);
 
   useEffect(() => {
     if (isMacPanel()) return;
     const un = listen<IslandAlertEvent>("island-alert", (event) => {
-      if (islandModeRef.current === "expanded") return;
+      const mode = islandModeRef.current;
+      if (mode === "expanded" || mode === "full") return;
       // 设置还没读到时（启动头一两秒）按全开处理，宁可多弹一次也别漏掉要人处理的事。
       const enabled = islandAlertsRef.current;
       if (enabled && !enabled.includes(islandAlertSwitch(event.payload.kind))) return;
@@ -507,45 +565,20 @@ export function App() {
     };
   }, [pumpAlert]);
 
-  const expand = useCallback(async () => {
-    if (isMacPanel() || islandModeRef.current === "expanded" || draggingRef.current) return;
-    if (alertTimerRef.current != null) {
-      window.clearTimeout(alertTimerRef.current);
-      alertTimerRef.current = null;
-    }
-    // 先把窗口放大（胶囊居中，屏幕位置不动），再挂列表并播放从胶囊长出来的动画。
-    // 顺序反过来会让列表先在胶囊大小的窗口里挤一帧（W-4 同一课）。
-    const { w, h } = normalSize();
-    transitioningRef.current = true;
-    try {
-      await layout(w, h);
-    } catch (err) {
-      transitioningRef.current = false;
-      console.error("[island] 展开失败：", err);
-      return;
-    }
-    // 展开着不弹提醒：排队的那些在列表里都看得到，作废。
-    alertQueueRef.current = [];
-    setAlert(null);
-    // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是 expanded，不会去缩窗口。
-    islandModeRef.current = "expanded";
-    setIslandMode("expanded");
-    transitioningRef.current = false;
-    loadStrip();
-  }, [layout, loadStrip]);
-
   const collapse = useCallback(() => {
-    if (isMacPanel() || islandModeRef.current !== "expanded") return;
+    const mode = islandModeRef.current;
+    if (isMacPanel() || (mode !== "expanded" && mode !== "full")) return;
     setClosing(true);
-    // 先播收回动画（列表缩回胶囊轮廓），播完再把窗口缩小。
+    // 先播收回动画（缩回胶囊轮廓），播完再把窗口缩小。
     window.setTimeout(() => {
       setClosing(false);
+      islandModeRef.current = "compact";
       setIslandMode("compact");
-      layout(pillWidthRef.current, ISLAND_PILL_HEIGHT)
+      layoutCompact()
         .catch((err) => console.error("[island] 收起失败：", err))
         .finally(() => pumpAlert());
     }, ISLAND_LEAVE_MS);
-  }, [layout, pumpAlert]);
+  }, [layoutCompact, pumpAlert]);
 
   const onMeasure = useCallback((width: number) => {
     const next = Math.max(ISLAND_PILL_MIN_WIDTH, width);
@@ -553,8 +586,14 @@ export function App() {
     if (next === pillWidthRef.current) return;
     pillWidthRef.current = next;
     setPillWidth(next);
-    if (islandModeRef.current === "compact" && !transitioningRef.current) {
-      layout(next, ISLAND_PILL_HEIGHT).catch(() => {});
+    if (islandModeRef.current === "compact" && !transitioningRef.current) layoutCompact().catch(() => {});
+  }, [layoutCompact]);
+
+  const onPanelMeasure = useCallback((height: number) => {
+    if (height <= 0 || height === panelHeightRef.current) return;
+    panelHeightRef.current = height;
+    if (islandModeRef.current === "expanded" && !transitioningRef.current) {
+      layout(ISLAND_PANEL_WIDTH, height).catch(() => {});
     }
   }, [layout]);
 
@@ -598,10 +637,15 @@ export function App() {
 
   const onPillPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    startDrag(event.currentTarget, event.pointerId, event.screenX, () => void expand());
+    startDrag(event.currentTarget, event.pointerId, event.screenX, expand);
   }, [startDrag, expand]);
 
-  // 展开态下列表顶部原本是系统拖拽区（data-tauri-drag-region），那会连上下一起拖、还会
+  const onPanelHeadPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    startDrag(event.currentTarget, event.pointerId, event.screenX, () => {});
+  }, [startDrag]);
+
+  // 完整列表顶部原本是系统拖拽区（data-tauri-drag-region），那会连上下一起拖、还会
   // 双击最大化。岛模式在 capture 阶段截下它，改走同一套左右拖。
   useEffect(() => {
     if (isMacPanel()) return;
@@ -624,14 +668,14 @@ export function App() {
     };
   }, [startDrag]);
 
-  // 托盘「找回贴纸」：岛本来就在顶上，找回就是展开列表。
+  // 托盘「找回贴纸」：岛本来就在顶上，找回就是打开完整列表。
   useEffect(() => {
     if (isMacPanel()) return;
-    const un = listen("recall-sticker", () => void expand());
+    const un = listen("recall-sticker", () => showAll());
     return () => {
       un.then((f) => f());
     };
-  }, [expand]);
+  }, [showAll]);
 
   // 换显示器缩放（拖到另一块屏、系统改缩放）：按当前形态的逻辑尺寸重摆一次。
   useEffect(() => {
@@ -642,10 +686,10 @@ export function App() {
         .onScaleChanged(() => {
           const mode = islandModeRef.current;
           const { w, h } = normalSize();
-          const [width, height] = mode === "expanded" ? [w, h]
-            : mode === "alert" ? [ISLAND_ALERT_SIZE.width, ISLAND_ALERT_SIZE.height]
-            : [pillWidthRef.current, ISLAND_PILL_HEIGHT];
-          layout(width, height).catch(() => {});
+          if (mode === "full") layout(w, h).catch(() => {});
+          else if (mode === "expanded") layout(ISLAND_PANEL_WIDTH, panelHeightRef.current).catch(() => {});
+          else if (mode === "alert") layout(ISLAND_ALERT_SIZE.width, ISLAND_ALERT_SIZE.height).catch(() => {});
+          else layoutCompact().catch(() => {});
         })
         .then((f) => { un = f; })
         .catch(() => {});
@@ -653,7 +697,7 @@ export function App() {
       /* 非 Tauri 环境（测试/浏览器）忽略 */
     }
     return () => un?.();
-  }, [layout]);
+  }, [layout, layoutCompact]);
 
   // 启动：读 settings 的位置与置顶偏好，按记住的横向位置把胶囊贴顶摆好再显示（bootReady 闸门，
   // 几何落地前不渲染、不显示，W-4/W-17）。macOS 面板只取 pin 偏好，异步套用不挡首帧。
@@ -670,7 +714,7 @@ export function App() {
         const s = await initStickerWindowState();
         if (cancelled) return;
         applyPinned(s.pinned);
-        await layout(pillWidthRef.current, ISLAND_PILL_HEIGHT, s.island_center ?? 0.5);
+        await layoutCompact(s.island_center ?? 0.5);
       } catch (err) {
         console.error("[island] 启动摆放失败：", err);
       } finally {
@@ -686,9 +730,10 @@ export function App() {
   }, []);
 
   // 展开态收回：不用 DOM 的 mouseleave（窗口缩放时会误报一串假 leave/enter），轮询真实光标，
-  // 连续两次确认在窗口外才收回。焦点还在列表里（键盘操作中）或开着右键菜单时不收。
+  // 连续两次确认在窗口外才收回。完整列表里焦点还在（键盘操作中）或开着右键菜单时不收；
+  // 面板不算这一条：点一下会话行焦点就留在行上，算进去的话面板永远收不回去。
   useEffect(() => {
-    if (isMacPanel() || islandMode !== "expanded" || closing) return;
+    if (isMacPanel() || (islandMode !== "expanded" && islandMode !== "full") || closing) return;
     let outCount = 0;
     const id = window.setInterval(() => {
       if (draggingRef.current) {
@@ -717,9 +762,9 @@ export function App() {
     return () => window.clearInterval(id);
   }, [islandMode, closing, collapse]);
 
-  // 展开态的键盘出口：Esc 收回（P2-12 同一课）。注册 Esc 层，展开的列表本身就是一层浮层。
+  // 展开态的键盘出口：Esc 收回（P2-12 同一课）。注册 Esc 层，展开的面板/列表本身就是一层浮层。
   useEffect(() => {
-    if (isMacPanel() || islandMode !== "expanded") return;
+    if (isMacPanel() || (islandMode !== "expanded" && islandMode !== "full")) return;
     const popLayer = pushEscLayer();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
@@ -735,16 +780,23 @@ export function App() {
     };
   }, [islandMode, collapse]);
 
-  const openAlertSession = useCallback((sessionId: number) => {
+  // 打开某个会话的对话窗：提醒里点「打开」后缩回胶囊；面板里点会话后收起面板。
+  const openSession = useCallback((sessionId: number) => {
     invoke("open_chat_window", { sessionId }).catch((err) => console.error("[island] 打开会话失败：", err));
+    const mode = islandModeRef.current;
+    if (mode === "expanded") {
+      collapse();
+      return;
+    }
     if (alertTimerRef.current != null) {
       window.clearTimeout(alertTimerRef.current);
       alertTimerRef.current = null;
     }
     setAlert(null);
+    islandModeRef.current = "compact";
     setIslandMode("compact");
-    layout(pillWidthRef.current, ISLAND_PILL_HEIGHT).catch(() => {}).finally(() => pumpAlert());
-  }, [layout, pumpAlert]);
+    layoutCompact().catch(() => {}).finally(() => pumpAlert());
+  }, [collapse, layoutCompact, pumpAlert]);
 
   if (!isMacPanel() && !bootReady) {
     return null;
@@ -781,13 +833,23 @@ export function App() {
   if (isMacPanel()) {
     return <div style={{ height: "100%" }}>{sticker}</div>;
   }
-  if (islandMode === "expanded") {
+  if (islandMode === "expanded" || islandMode === "full") {
     return (
       <div
-        className={"island-shell" + (closing ? " is-leaving" : " is-entering")}
+        className={`island-shell${islandMode === "full" ? " is-full" : ""}${closing ? " is-leaving" : " is-entering"}`}
         style={{ "--island-pill-w": `${pillWidth}px`, "--island-pill-h": `${ISLAND_PILL_HEIGHT}px` } as React.CSSProperties}
       >
-        {sticker}
+        {islandMode === "full" ? sticker : (
+          <IslandPanel
+            sessions={stripSessions}
+            usage={usage}
+            quotaProviders={quotaProviders}
+            onOpenSession={openSession}
+            onShowAll={showAll}
+            onMeasure={onPanelMeasure}
+            onPointerDownDrag={onPanelHeadPointerDown}
+          />
+        )}
       </div>
     );
   }
@@ -796,10 +858,11 @@ export function App() {
       sessions={stripSessions}
       compactStyle={islandCompact}
       alert={islandMode === "alert" ? alert : null}
+      usagePct={islandUsage?.pct ?? null}
       onMeasure={onMeasure}
-      onHoverIntent={() => void expand()}
-      onActivate={() => void expand()}
-      onOpenSession={openAlertSession}
+      onHoverIntent={expand}
+      onActivate={expand}
+      onOpenSession={openSession}
       onPointerDownDrag={onPillPointerDown}
     />
   );

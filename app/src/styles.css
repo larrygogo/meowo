@@ -6637,126 +6637,262 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-side-answer-body.is-muted { color: var(--cc-text-faint); }
 
 /* ── 灵动岛（Windows 贴纸的新形态，2026-11-04 用户决定替换贴边缩略条）──────────────
-   窗口贴屏幕顶边，所以形状是「从顶上垂下来」：顶边平、底下两角圆。胶囊在窗口里水平居中，
-   窗口按中心点对称长大时它不挪位，展开动画（clip-path）从它的轮廓长出来、收回时缩回去。
-   颜色/透明度沿用贴纸的 --cc-bg（外观设置里的贴纸颜色与透明度照样生效）。 */
-.island-stage {
+   视觉照用户给的参考图：纯黑刘海贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接，底下大圆角；
+   白字、环形进度、状态靠颜色。刻意不跟主题色走：刘海要和屏幕顶边的黑融成一体，浅色主题下
+   做成白底就成了一块贴在桌面上的白牌子。窗口宽 = 刘海本体 + 两侧耳朵（Island.tsx 的 ISLAND_EAR）。 */
+.isl-stage, .island-shell {
+  --isl-ink: #000;
+  --isl-text: #f5f5f7;
+  --isl-text-2: #d1d1d6;
+  --isl-dim: #8e8e93;
+  --isl-faint: #636366;
+  --isl-chip: #1c1c1e;
+  --isl-chip-hover: #2c2c2e;
+  --isl-track: #3a3a3c;
+  --isl-ok: #30d158;
+  --isl-ok-track: #123a1f;
+  --isl-warn: #ff9f0a;
+  --isl-warn-track: #40300a;
+  --isl-err: #ff453a;
+  --isl-err-track: #44150f;
+  --isl-blue: #409cff;
+  --isl-blue-track: #1d3350;
+  --isl-ear: 14px;
+}
+.isl-stage {
   height: 100%;
   display: flex;
   justify-content: center;
-  /* 胶囊高度写死，不随窗口拉伸：展开时窗口先长大，胶囊若跟着拉高，尺寸变化会触发测量、
-     把窗口又缩回胶囊大小，列表就被挤进 36px 高的窗口里（DEV 实拍）。 */
+  /* 刘海高度由内容/形态决定，不随窗口拉伸：展开时窗口先长大，刘海若跟着拉高，尺寸变化会
+     触发测量、把窗口又缩回去，列表就被挤进 36px 高的窗口里（DEV 实拍）。 */
   align-items: flex-start;
+  color: var(--isl-text);
+  user-select: none;
 }
-.island-pill {
-  /* flex:none 且不设 max-width：胶囊按内容取自然宽度，即使窗口暂时比它窄也照实测量，
+.isl-notch {
+  /* flex:none 且不设 max-width：按内容取自然宽度，即使窗口暂时比它窄也照实测量，
      App 据此把窗口放宽（窗口跟着内容走，而不是内容被窗口夹住、永远量出旧宽度）。 */
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-8);
+  position: relative;
   box-sizing: border-box;
-  padding: 0 var(--sp-14) 0 var(--sp-12);
-  background: var(--cc-bg);
-  color: var(--cc-text);
-  border: 1px solid var(--cc-border);
-  border-top: 0;
-  border-radius: 0 0 18px 18px;
-  height: 36px; /* 与 Island.tsx 的 ISLAND_PILL_HEIGHT 同源 */
-  font-size: var(--fs-12);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
+  background: var(--isl-ink);
+  border-radius: 0 0 22px 22px;
   outline: none;
 }
-.island-pill:focus-visible { box-shadow: inset 0 0 0 2px var(--cc-accent); }
-.island-pill.is-alert {
-  width: 100%;
-  height: 100%;
-  gap: var(--sp-12);
-  padding: 0 var(--sp-10) 0 var(--sp-16);
-  border-radius: 0 0 22px 22px;
-  animation: island-grow 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+/* 两只「耳朵」：刘海外侧各一块方角，挖掉靠下那一侧的四分之一圆，黑色顺着屏幕顶边弯进去。 */
+.isl-notch::before, .isl-notch::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: var(--isl-ear);
+  height: var(--isl-ear);
+  pointer-events: none;
 }
-@keyframes island-grow {
-  from { clip-path: inset(0 28% 44% 28% round 0 0 18px 18px); }
-  to { clip-path: inset(0 0 0 0 round 0 0 22px 22px); }
+.isl-notch::before {
+  left: calc(-1 * var(--isl-ear));
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--isl-ear) - 0.5px), var(--isl-ink) var(--isl-ear));
 }
+.isl-notch::after {
+  right: calc(-1 * var(--isl-ear));
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--isl-ear) - 0.5px), var(--isl-ink) var(--isl-ear));
+}
+.isl-notch:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-blue); }
 
-/* 眼睛：Meowo 标志。在跑左右张望，要你处理琥珀色一闪一闪，跑完等输入琥珀静止，出错变红，闲着偶尔眨眼。 */
-.island-eyes { flex: none; overflow: visible; fill: var(--cc-text-dim); }
-.island-eyes-pair { transform-box: fill-box; transform-origin: center; }
-.island-eyes[data-tone="running"] { fill: var(--cc-ok-vivid); }
-.island-eyes[data-tone="running"] .island-eyes-pair { animation: island-look 2.6s ease-in-out infinite; }
-.island-eyes[data-tone="pending"] { fill: var(--cc-warn-vivid); animation: island-pulse 1.4s ease-in-out infinite; }
-.island-eyes[data-tone="waiting"] { fill: var(--cc-warn-vivid); }
-.island-eyes[data-tone="error"] { fill: var(--cc-err-vivid); }
-.island-eyes[data-tone="idle"] .island-eyes-pair { animation: cstrip-eyes-blink 5s ease-in-out infinite; }
-@keyframes island-look {
+/* 收起 */
+.isl-notch.is-compact {
+  height: 46px; /* 与 Island.tsx 的 ISLAND_PILL_HEIGHT 同源 */
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.isl-clock { font-size: 20px; font-weight: 600; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; }
+.isl-agents { display: flex; align-items: center; gap: 9px; }
+.isl-more { font-size: 12px; font-weight: 600; color: var(--isl-dim); }
+.isl-dots { display: inline-flex; align-items: center; gap: 6px; }
+.isl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--isl-faint); }
+.isl-dot.is-running { background: var(--isl-ok); animation: isl-pulse 1.2s ease-in-out infinite; }
+.isl-dot.is-pending { background: var(--isl-warn); animation: isl-pulse 1.4s ease-in-out infinite; }
+.isl-dot.is-waiting { background: var(--isl-text-2); }
+.isl-dot.is-error { background: var(--isl-err); }
+.isl-focus { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.isl-focus-title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
+.isl-faint { color: var(--isl-dim); font-size: 13px; }
+
+/* 状态文字的颜色 */
+.isl-state { font-size: 12px; font-weight: 600; color: var(--isl-dim); flex: none; }
+.isl-state.is-running { color: var(--isl-ok); }
+.isl-state.is-pending { color: var(--isl-warn); }
+.isl-state.is-error { color: var(--isl-err); }
+.isl-sep { color: var(--isl-faint); margin: 0 4px; }
+
+/* 眼睛 */
+.isl-eyes { position: relative; display: inline-flex; align-items: center; gap: 3px; padding: 0 7px; flex: none; }
+.isl-eye { width: 9px; height: 12px; border-radius: 50%; background: #fff; transform-origin: center; }
+.isl-eyes.is-small { padding: 0; }
+.isl-eyes.is-small .isl-eye { width: 7px; height: 10px; }
+.isl-eyes[data-tone="running"] .isl-eye { animation: isl-look 2.6s ease-in-out infinite; }
+.isl-eyes[data-tone="pending"] .isl-eye { background: var(--isl-warn); animation: isl-pulse 1.4s ease-in-out infinite; }
+.isl-eyes[data-tone="error"] .isl-eye { background: var(--isl-err); }
+.isl-eyes[data-tone="idle"] .isl-eye { animation: isl-blink 5s ease-in-out infinite; }
+.isl-spark { position: absolute; top: -5px; font-size: 11px; font-weight: 800; line-height: 1; color: var(--isl-ok); }
+.isl-spark.is-l { left: -2px; }
+.isl-spark.is-r { right: -3px; top: -8px; }
+.isl-spark.is-warn { color: var(--isl-warn); }
+.isl-eyes[data-tone="running"] .isl-spark { animation: isl-twinkle 2.6s ease-in-out infinite; }
+.isl-eyes[data-tone="running"] .isl-spark.is-r { animation-delay: 1.3s; }
+@keyframes isl-look {
   0%, 18% { transform: translateX(0); }
   28%, 44% { transform: translateX(-2px); }
   56%, 72% { transform: translateX(2px); }
   82%, 100% { transform: translateX(0); }
 }
-@keyframes island-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-
-.island-text { display: inline-flex; align-items: center; gap: var(--sp-10); }
-.island-text.is-faint { color: var(--cc-text-faint); }
-.island-count { display: inline-flex; align-items: center; gap: var(--sp-5); font-variant-numeric: tabular-nums; }
-.island-dots { display: inline-flex; align-items: center; gap: var(--sp-5); }
-/* 色点与缩略条同一套红绿灯语言（G-17）：绿=agent 侧、黄=要你、红=出错，闪烁说明急不急。 */
-.island-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--cc-text-faint); }
-.island-dot.is-on { background: var(--cc-ok-vivid); opacity: 0.55; }
-.island-dot.is-running { background: var(--cc-ok-vivid); animation: cstrip-pulse 1.2s ease-in-out infinite; }
-.island-dot.is-waiting { background: var(--cc-warn-vivid); }
-.island-dot.is-pending { background: var(--cc-warn-vivid); animation: cstrip-pulse 1.8s ease-in-out infinite; }
-.island-dot.is-error { background: var(--cc-err-vivid); }
-.island-title { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.island-sep { color: var(--cc-text-faint); }
-.island-state { color: var(--cc-text-dim); }
-.island-state.is-pending { color: var(--cc-warn-vivid); }
-.island-state.is-error { color: var(--cc-err-vivid); }
-
-.island-alert { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.island-alert-title { font-size: var(--fs-13); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-.island-alert-sub {
-  display: flex; align-items: center; gap: var(--sp-5);
-  font-size: var(--fs-11); color: var(--cc-text-dim);
-  overflow: hidden; text-overflow: ellipsis;
+@keyframes isl-blink {
+  0%, 88% { transform: scaleY(1); }
+  90% { transform: scaleY(0.1); }
+  92% { transform: scaleY(1); }
+  94% { transform: scaleY(0.1); }
+  96%, 100% { transform: scaleY(1); }
 }
-.island-open {
+@keyframes isl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes isl-twinkle { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+
+/* 环 */
+.isl-ring { position: relative; display: inline-grid; place-items: center; flex: none; }
+.isl-ring > svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.isl-ring.is-spin > svg { animation: isl-spin 1.4s linear infinite; }
+@keyframes isl-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+.isl-ring-body { position: relative; display: grid; place-items: center; }
+.isl-usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.isl-agent { position: relative; display: inline-flex; flex: none; }
+.isl-agent-logo { width: 16px; height: 16px; display: grid; place-items: center; }
+.isl-agent-logo svg, .isl-agent-logo img { width: 15px !important; height: 15px !important; }
+.isl-agent-badge {
+  position: absolute; right: -4px; bottom: -4px;
+  min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
+  border-radius: 8px; border: 2px solid var(--isl-ink);
+  display: grid; place-items: center;
+  font-size: 9px; font-weight: 800; line-height: 1; color: #000;
+}
+.isl-agent-badge.is-pending { background: var(--isl-warn); }
+.isl-agent-badge.is-error { background: var(--isl-err); color: #fff; }
+
+/* 提醒 */
+.isl-notch.is-alert {
+  width: calc(100% - var(--isl-ear) * 2);
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px 0 22px;
+  border-radius: 0 0 24px 24px;
+  cursor: pointer;
+  animation: isl-grow 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+@keyframes isl-grow {
+  from { clip-path: inset(0 28% 34% 28% round 0 0 22px 22px); }
+  to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
+}
+.isl-alert-icon { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--isl-chip); color: var(--isl-text-2); }
+.isl-alert-icon.is-pending { background: var(--isl-warn-track); color: var(--isl-warn); }
+.isl-alert-icon.is-error { background: var(--isl-err-track); color: var(--isl-err); }
+.isl-alert-icon.is-waiting { background: var(--isl-ok-track); color: var(--isl-ok); }
+.isl-alert-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.isl-alert-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-alert-sub { display: flex; align-items: center; font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; }
+
+/* 按钮 */
+.isl-btn {
   flex: none;
-  height: 26px;
-  padding: 0 var(--sp-12);
-  border-radius: var(--r-pill);
-  border: 1px solid var(--cc-border);
-  background: var(--cc-surface);
-  color: var(--cc-text);
-  font-size: var(--fs-12);
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 15px;
+  border: 0;
+  background: var(--isl-chip-hover);
+  color: var(--isl-text);
+  font: inherit;
+  font-size: 13px;
+  display: inline-grid;
+  place-items: center;
   cursor: pointer;
 }
-.island-open:hover { background: var(--fill-hover); }
+.isl-btn.is-primary { background: #fff; color: #000; font-weight: 600; }
+.isl-btn.is-primary:hover { background: #e5e5ea; }
+.isl-btn.is-dark { height: 26px; padding: 0 12px; font-size: 12px; }
+.isl-btn.is-ghost { height: 24px; padding: 0 10px; font-size: 12px; background: var(--isl-chip); color: var(--isl-text-2); }
+.isl-btn.is-ghost:hover { background: var(--isl-chip-hover); color: var(--isl-text); }
 
-/* 展开：完整列表（Sticker）从胶囊轮廓长出来；收回时缩回胶囊，播完 App 再缩窗口。 */
+/* 展开面板 */
+.isl-panel {
+  width: calc(100% - var(--isl-ear) * 2);
+  padding: 14px 22px 12px;
+  border-radius: 0 0 26px 26px;
+}
+.isl-panel-head { display: flex; align-items: center; gap: 10px; cursor: grab; }
+.isl-panel-title { font-size: 15px; font-weight: 700; }
+.isl-accent { color: var(--isl-warn); }
+.isl-panel-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--isl-dim); }
+.isl-panel-meta b { color: var(--isl-text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.isl-panel-body { display: flex; gap: 18px; margin-top: 12px; }
+.isl-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.isl-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: var(--isl-chip);
+  cursor: pointer;
+  outline: none;
+}
+.isl-row:hover { background: var(--isl-chip-hover); }
+.isl-row:hover .isl-btn.is-dark { background: #3a3a3c; }
+.isl-row:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-blue); }
+.isl-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.isl-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-row-sub { font-size: 11px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-empty { padding: 22px 0; text-align: center; font-size: 13px; color: var(--isl-dim); }
+.isl-side {
+  width: 124px; flex: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border-left: 1px solid var(--isl-chip-hover);
+}
+.isl-big-val { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.isl-mid-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.isl-big-val small, .isl-mid-val small { font-size: 11px; color: var(--isl-dim); font-weight: 500; margin-left: 1px; }
+.isl-side-label { font-size: 11px; color: var(--isl-text-2); text-align: center; }
+.isl-side-sub { font-size: 11px; color: var(--isl-dim); margin-top: -4px; }
+.isl-panel-body.is-usage { justify-content: center; gap: 28px; padding: 6px 0 4px; }
+.isl-usage-cell { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.isl-dots-nav { display: flex; justify-content: center; gap: 5px; margin-top: 10px; }
+.isl-dots-nav button {
+  width: 5px; height: 5px; padding: 0; border: 0; border-radius: 3px;
+  background: var(--isl-faint); cursor: pointer;
+  transition: width 0.2s ease, background 0.2s ease;
+}
+.isl-dots-nav button.is-on { width: 16px; background: var(--isl-text-2); }
+
+/* 展开/收回：面板与完整列表都从胶囊轮廓长出来；收回时缩回去，播完 App 再缩窗口。
+   完整列表（原贴纸）保留主题色，只把顶边改平、贴住屏幕顶。 */
 .island-shell { height: 100%; }
-.island-shell .sticker { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
-.island-shell.is-entering { animation: island-unfold 0.24s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.island-shell.is-full .sticker { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.island-shell.is-entering { animation: island-unfold 0.26s cubic-bezier(0.2, 0.9, 0.3, 1); }
 .island-shell.is-leaving { animation: island-fold 0.18s ease-in forwards; }
 @keyframes island-unfold {
   from {
     clip-path: inset(0 calc(50% - var(--island-pill-w) / 2) calc(100% - var(--island-pill-h))
-      calc(50% - var(--island-pill-w) / 2) round 0 0 18px 18px);
+      calc(50% - var(--island-pill-w) / 2) round 0 0 22px 22px);
   }
-  to { clip-path: inset(0 0 0 0 round 0 0 14px 14px); }
+  to { clip-path: inset(0 0 0 0 round 0 0 26px 26px); }
 }
 @keyframes island-fold {
-  from { clip-path: inset(0 0 0 0 round 0 0 14px 14px); }
+  from { clip-path: inset(0 0 0 0 round 0 0 26px 26px); }
   to {
     clip-path: inset(0 calc(50% - var(--island-pill-w) / 2) calc(100% - var(--island-pill-h))
-      calc(50% - var(--island-pill-w) / 2) round 0 0 18px 18px);
+      calc(50% - var(--island-pill-w) / 2) round 0 0 22px 22px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .island-pill.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .island-eyes, .island-eyes-pair, .island-dot { animation: none !important; }
+  .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
+  .isl-eye, .isl-spark, .isl-dot, .isl-ring.is-spin > svg { animation: none !important; }
 }
