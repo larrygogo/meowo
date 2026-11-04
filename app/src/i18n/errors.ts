@@ -39,6 +39,10 @@ export const ENTRIES: ErrorEntry[] = [
   // 远程服务启动时绑定端口失败（remote.rs serve）。占用多半是另一个 Meowo 实例开着远程。
   { m: "remote/port_in_use", exact: true, zh: "端口被其它程序占用，换个端口或关掉占用它的程序", en: "The port is in use; pick another or close the program using it" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
+  // ── 诊断日志（diaglog.rs）──
+  { m: "diag/bad_extension", exact: true, zh: "只能导出成 .txt 或 .log 文件", en: "Export only to .txt or .log files" },
+  { m: "diag/no_log", exact: true, zh: "还没有诊断日志，开发版不写日志", en: "No diagnostic log yet. Dev builds don't write one." },
+  { m: "diag/write_failed", tail: true, zh: "日志没能导出", en: "Couldn't export the log" },
   // ── 导出会话（fsutil.rs export_text_file）──
   { m: "export/bad_extension", exact: true, zh: "只能导出成 .md 或 .txt 文件", en: "Export only to .md or .txt files" },
   { m: "export/write_failed", tail: true, zh: "文件没能写入", en: "Couldn't write the file" },

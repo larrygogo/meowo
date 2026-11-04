@@ -1404,6 +1404,10 @@ export const en: Dict = {
     changelog: "Changelog",
     guide: "Getting started",
     guideDesc: "Replay the first-run guide",
+    diagLog: "Diagnostic log",
+    diagLogDesc: "Export it when something goes wrong and send it to the developer",
+    diagLogExport: "Export",
+    diagLogExported: "Exported",
   },
   onboarding: {
     skip: "Skip",
