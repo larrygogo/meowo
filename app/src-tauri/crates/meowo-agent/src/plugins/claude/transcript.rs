@@ -1967,6 +1967,13 @@ impl ClaudeSubagents {
     /// 代价：刚派出去、侧车还没落盘的那几秒里，同款的既有委派也一并展不开，随后自愈。
     fn locate_forked(main_transcript: &Path, tool_use_id: &str) -> Option<PathBuf> {
         let dir = Self::stream_dir(main_transcript)?;
+        // 先走精确外键：回执行上的 agentId 直接就是侧车文件名。description 配对只留给
+        // 回执不带 agentId 的旧会话——CC 2.1.317 起 meta 的 description 会被截成
+        // `/code-review https://github.com/Org/re…`，与主链的完整 `/<skill> <args>` 永远
+        // 对不上，长参数的 forked skill 一律展开空白（本机真实会话的 live 测试转红）。
+        if let Some(stream) = Self::forked_stream_by_agent_id(main_transcript, &dir, tool_use_id) {
+            return Some(stream);
+        }
         let (desc, ordinal, total) = Self::skill_call_key(main_transcript, tool_use_id)?;
         let mut matches: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
         for entry in std::fs::read_dir(&dir).ok()?.flatten() {
@@ -2011,6 +2018,48 @@ impl ClaudeSubagents {
         }
         matches.sort_by_key(|(born, _)| *born);
         matches.into_iter().nth(ordinal).map(|(_, path)| path)
+    }
+
+    /// forked skill 启动回执行上的 `toolUseResult.agentId` → `agent-<id>.jsonl`。
+    /// 只认结构：tool_result 的 tool_use_id 对得上、且 `toolUseResult.status == "forked"`，
+    /// 会话正文里引用同样的字串不算（Read/Grep 读到协议串会喂出幽灵任务，有前科）。id 要拼进文件名，
+    /// 只收字母数字，防路径穿越。
+    fn forked_stream_by_agent_id(main_transcript: &Path, dir: &Path, tool_use_id: &str) -> Option<PathBuf> {
+        let text = std::fs::read_to_string(main_transcript).ok()?;
+        for line in text.lines() {
+            if !line.contains(tool_use_id) || !line.contains("\"agentId\"") {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let Some(result) = value.get("toolUseResult") else {
+                continue;
+            };
+            if result.get("status").and_then(|v| v.as_str()) != Some("forked") {
+                continue;
+            }
+            let answers_call = value
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+                .is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        block.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                            && block.get("tool_use_id").and_then(|v| v.as_str()) == Some(tool_use_id)
+                    })
+                });
+            if !answers_call {
+                continue;
+            }
+            let id = result.get("agentId").and_then(|v| v.as_str())?;
+            if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return None;
+            }
+            let stream = dir.join(format!("agent-{id}.jsonl"));
+            return stream.is_file().then_some(stream);
+        }
+        None
     }
 
     /// 回主 transcript 捞出这条 `Skill` 调用的 `/<skill> <args>`、它是第几次同款调用
@@ -3960,6 +4009,37 @@ c".into(), lines: 3, truncated: false })
 
     /// forked skill 的侧车定位:meta 没有 toolUseId,只能靠 description 配对;同一命令
     /// 跑多次则按**序号**配对(侧车先后以 meta 的写入时刻为准)。
+    /// CC 2.1.317 实拍：meta 的 description 被截成 `/code-review https://github.com/Org/re…`，
+    /// 按描述配对永远对不上。回执行上的 `toolUseResult.agentId` 是精确外键，优先用它。
+    #[test]
+    fn locate_forked_uses_agent_id_from_launch_receipt() {
+        let root = std::env::temp_dir().join(format!("cc_forked_aid_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("sess").join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = root.join("sess.jsonl");
+        let call = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t_cr","name":"Skill","input":{"skill":"code-review","args":"https://github.com/Org/repo-with-a-long-name/pull/74"}}]}}"#;
+        // 正文里引用了同样的 id 与 agentId 串（用户贴日志），结构不对，不能当回执。
+        let quoted = r#"{"type":"user","message":{"content":"t_cr \"agentId\":\"bogus\""}}"#;
+        let receipt = r#"{"type":"user","toolUseResult":{"status":"forked","background":true,"agentId":"a108ba9414fa60d87"},"message":{"content":[{"type":"tool_result","tool_use_id":"t_cr","content":"Skill \"code-review\" launched (forked execution, running in the background)."}]}}"#;
+        std::fs::write(&main, format!("{call}\n{quoted}\n{receipt}\n")).unwrap();
+        std::fs::write(
+            dir.join("agent-a108ba9414fa60d87.meta.json"),
+            r#"{"agentType":"general-purpose","description":"/code-review https://github.com/Org/repo-with-a…","name":"code-review","spawnDepth":1}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("agent-a108ba9414fa60d87.jsonl"), "").unwrap();
+        let pick = ClaudeSubagents::locate_forked(&main, "t_cr")
+            .map(|p| p.file_stem().unwrap().to_str().unwrap().to_string());
+        assert_eq!(pick.as_deref(), Some("agent-a108ba9414fa60d87"));
+
+        // agentId 里带路径字符：拒收，不拼文件名。
+        let evil = receipt.replace("a108ba9414fa60d87", "..\\..\\x");
+        std::fs::write(&main, format!("{call}\n{evil}\n")).unwrap();
+        assert_eq!(ClaudeSubagents::forked_stream_by_agent_id(&main, &dir, "t_cr"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn locate_forked_pairs_repeated_invocations_in_order() {
         let root = std::env::temp_dir().join(format!("cc_forked_{}", std::process::id()));
