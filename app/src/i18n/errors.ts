@@ -22,7 +22,8 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 远程桥(手机端) ──
   // 7M-7：远程传输层的错误此前是硬编码中文串、直接上屏，既不进这张表也不双语。
   // 改成 `remote/<code>` 结构化 reason（与后端「模块/代码」同规），文案落回这里。
-  { m: "remote/timeout", exact: true, zh: "与桌面端失去连接，正在重试", en: "Lost connection to the desktop app; retrying" },
+  // 不说「正在重试」：轮询会自己重试，但发消息等一次性请求超时就是失败了，那样说是误导。
+  { m: "remote/timeout", exact: true, zh: "连不上桌面端，请求超时", en: "Couldn't reach the desktop app. The request timed out." },
   // 远程桥 git 只读命令的收口（remote.rs ensure_session_dir / 改动清单校验）。
   { m: "remote/not_session_dir", exact: true, zh: "只能查看会话目录里的改动", en: "Only changes in the session folder can be viewed" },
   { m: "remote/not_changed_file", exact: true, zh: "这个文件不在改动列表里", en: "This file is not in the change list" },
