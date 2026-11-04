@@ -323,6 +323,15 @@ describe("Island 提醒", () => {
     expect(onAlertHover).toHaveBeenLastCalledWith(false);
   });
 
+  it("跑完的提醒带 agent 最后一句话；没有时显示项目名", () => {
+    renderIsland({ alert: { sessionId: 4, kind: "waiting", title: "改登录页", project: "web", detail: "已经改好了，测试全过" } });
+    expect(screen.getByText("已经改好了，测试全过")).toBeTruthy();
+    expect(screen.queryByText("web")).toBeNull();
+    cleanup();
+    renderIsland({ alert: { sessionId: 4, kind: "waiting", title: "改登录页", project: "web", detail: null } });
+    expect(screen.getByText("web")).toBeTruthy();
+  });
+
   it("未命名会话的提醒显示「等待首次输入」", () => {
     renderIsland({ alert: { sessionId: 1, kind: "waiting", title: "(未命名会话)", project: "p", detail: null } });
     expect(screen.getByText(zh.sticker.waitingFirstInput)).toBeTruthy();

@@ -237,7 +237,10 @@ export function Island({
               </span>
               <span className="isl-alert-sub">
                 <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>
-                {alert.project && <><span className="isl-sep">·</span>{alert.project}</>}
+                {/* 跑完的提醒带 agent 最后一句话（后端取的第一行），比项目名更能说明它做完了什么。 */}
+                {alert.kind === "waiting" && alert.detail
+                  ? <><span className="isl-sep">·</span><span className="isl-alert-detail" title={alert.detail}>{alert.detail}</span></>
+                  : alert.project && <><span className="isl-sep">·</span>{alert.project}</>}
               </span>
             </span>
             <button
