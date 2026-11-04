@@ -16,8 +16,17 @@ use tauri::State;
 pub(crate) struct ChatMtimes {
     entries: std::collections::HashMap<i64, ChatMtimeEntry>,
     tick: u64,
-    /// errored 的节流缓存:(采样时刻, 值)。见 [`ERRORED_SAMPLE_MS`]。
-    errored: std::collections::HashMap<i64, (i64, bool)>,
+    /// transcript 采样的节流缓存:(采样时刻, 结果)。见 [`ERRORED_SAMPLE_MS`]。
+    errored: std::collections::HashMap<i64, (i64, TranscriptSample)>,
+}
+
+/// 对话窗从 transcript 分析器取的两样东西,一起节流。
+#[derive(Clone, Default)]
+struct TranscriptSample {
+    errored: bool,
+    /// agent 自己起的标题(claude 的 ai-title / custom-title)。None = 还没起或该 agent 不从
+    /// transcript 取标题,此时顶栏用 DB 标题。
+    title: Option<String>,
 }
 
 #[derive(Clone)]
@@ -83,14 +92,14 @@ impl ChatMtimes {
         }
     }
 
-    fn errored_cached(&self, session_id: i64, now_ms: i64) -> Option<bool> {
+    fn sample_cached(&self, session_id: i64, now_ms: i64) -> Option<TranscriptSample> {
         self.errored
             .get(&session_id)
             .filter(|(sampled_at, _)| now_ms.saturating_sub(*sampled_at) < ERRORED_SAMPLE_MS)
-            .map(|(_, value)| *value)
+            .map(|(_, value)| value.clone())
     }
 
-    fn put_errored(&mut self, session_id: i64, now_ms: i64, value: bool) {
+    fn put_sample(&mut self, session_id: i64, now_ms: i64, value: TranscriptSample) {
         self.errored.insert(session_id, (now_ms, value));
         if self.errored.len() > Self::CAP {
             let oldest = self
@@ -243,7 +252,7 @@ fn load_chat_history(
         predecessor_id: header.predecessor_id,
         superseded_by: header.superseded_by,
     };
-    // errored 与侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
+    // errored 与标题都和侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
     // 5s 节流:agent 流式输出期间 transcript 每轮都在变,每轮全采样会对同一批新增字节
     // 做两遍解析(分析器 + 下面的聊天增量各一遍)且解析持共享缓存锁;错误徽标容忍 ~5s 延迟。
     {
@@ -251,24 +260,35 @@ fn load_chat_history(
         let cached = chat_mtimes
             .lock()
             .ok()
-            .and_then(|seen| seen.errored_cached(session_id, now_ms));
-        history.errored = match cached {
+            .and_then(|seen| seen.sample_cached(session_id, now_ms));
+        let sample = match cached {
             Some(value) => value,
             None => {
-                let value = super::session_query::analyze_transcript(
+                let info = super::session_query::analyze_transcript(
                     tx_cache,
                     &history.provider,
                     history.cwd.as_deref(),
                     &header.cc_session_id,
-                )
-                .map(|info| info.error.is_some())
-                .unwrap_or(false);
+                );
+                let value = TranscriptSample {
+                    errored: info.as_ref().is_some_and(|info| info.error.is_some()),
+                    title: info
+                        .and_then(|info| info.title)
+                        .filter(|_| super::agent_resolves_transcript_title(&history.provider)),
+                };
                 if let Ok(mut seen) = chat_mtimes.lock() {
-                    seen.put_errored(session_id, now_ms, value);
+                    seen.put_sample(session_id, now_ms, value.clone());
                 }
                 value
             }
         };
+        history.errored = sample.errored;
+        // 侧栏/看板列表显示的是 transcript 里 claude 起的标题(live_item 覆盖 task_title),
+        // DB 要等这一回合的 Stop hook 才同步。顶栏只读 DB 时首回合内两边对不上
+        // (2026-11-04 手机实拍:顶栏是首条 prompt,侧栏已是 ai-title)。
+        if let Some(title) = sample.title {
+            history.title = title;
+        }
     }
     let spec = meowo_agent::by_id(&history.provider)
         .and_then(|agent| agent.telemetry())
