@@ -231,44 +231,46 @@ export function AgentRing({ item, size = 32 }: { item: Item; size?: number }) {
 /// 额度环中间翻一次的间隔。
 export const USAGE_FLIP_MS = 3_500;
 
-/// 额度的颜色：还宽裕是绿，过六成转琥珀，过八成五转红。一眼看出离用完还有多远，
-/// 不用读数字（此前一圈淡灰，用户嫌不灵动）。
-export function usageColor(pct: number): string {
-  if (pct >= 85) return "var(--isl-err)";
-  if (pct >= 60) return "var(--isl-warn)";
+/// 额度一律显示「剩余」，像电量：环满 = 还宽裕。此前显示已用，用了 4% 时环几乎是空的，
+/// 一眼看去像「快没了」（用户嫌怪）。颜色也按剩余：宽裕绿、不到四成琥珀、不到一成五红。
+export function remainingOf(usedPct: number): number {
+  return Math.round(Math.min(100, Math.max(0, 100 - usedPct)));
+}
+
+export function remainingColor(remaining: number): string {
+  if (remaining <= 15) return "var(--isl-err)";
+  if (remaining <= 40) return "var(--isl-warn)";
   return "var(--isl-ok)";
 }
 
-export function usageTrack(pct: number): string {
-  return `color-mix(in srgb, ${usageColor(pct)} 22%, #000)`;
-}
-
-/// 额度环（收起胶囊上的小环）。中间每隔几秒在「百分比」和「是哪家的额度」（agent logo）之间
-/// 上下翻一次：光一个数字读不出是谁的额度，翻动本身也让它活起来。有几家额度时轮流显示：
-/// A 的数字 → A 的 logo → B 的数字 → B 的 logo……没有数据时不渲染（调用方判断）。
-export function UsageRing({ entries, size = 30 }: {
+/// 额度环（收起胶囊上的小环）：中间是剩余百分比，右下角是哪家的 logo（与右边会话图标的角标同一种
+/// 做法）。几家都有额度时每隔几秒淡入淡出换下一家。尺寸、粗细与会话图标的环一致，底轨中性灰。
+/// 没有数据时不渲染（调用方判断）。
+export function UsageRing({ entries, size = 32 }: {
   entries: readonly { provider: string; pct: number }[];
   size?: number;
 }) {
-  // 相位：偶数 = 某家的数字，奇数 = 它的 logo；每 USAGE_FLIP_MS 前进一步，跨家循环。
-  const [phase, setPhase] = useState(0);
+  const [index, setIndex] = useState(0);
   useEffect(() => {
-    setPhase(0);
-    const id = window.setInterval(() => setPhase((p) => p + 1), USAGE_FLIP_MS);
+    setIndex(0);
+    if (entries.length < 2) return;
+    const id = window.setInterval(() => setIndex((i) => i + 1), USAGE_FLIP_MS);
     return () => window.clearInterval(id);
   }, [entries.length]);
-  const entry = entries[Math.floor(phase / 2) % Math.max(1, entries.length)] ?? entries[0];
-  const showLogo = phase % 2 === 1;
-  const provider = entry?.provider;
-  const value = Math.round(Math.min(100, Math.max(0, entry?.pct ?? 0)));
-  const { Icon } = agentAssets(provider ?? "");
+  const entry = entries[index % Math.max(1, entries.length)] ?? entries[0];
+  const provider = entry?.provider ?? "";
+  const remaining = remainingOf(entry?.pct ?? 0);
+  const { Icon } = agentAssets(provider);
   return (
-    <Ring size={size} stroke={3.5} value={value / 100} color={usageColor(value)} track={usageTrack(value)} className="isl-usage">
-      <span className={`isl-usage-flip${showLogo && provider ? " is-logo" : ""}`}>
-        <span className="isl-usage-val">{value}</span>
-        {provider && <span className="isl-usage-logo" style={tintStyle(provider)}><Icon /></span>}
+    <span className="isl-usage-wrap" data-provider={provider}>
+      {/* key 随家换：换家时整块重挂，淡入动画重播。 */}
+      <span key={provider} className="isl-usage-swap">
+        <Ring size={size} stroke={3} value={remaining / 100} color={remainingColor(remaining)} track="var(--isl-track)" className="isl-usage">
+          <span className="isl-usage-val">{remaining}</span>
+        </Ring>
+        {provider && <span className="isl-usage-badge" style={tintStyle(provider)}><Icon /></span>}
       </span>
-    </Ring>
+    </span>
   );
 }
 

@@ -8,7 +8,7 @@ import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
-import { AgentRing, Ring, useNow, usageColor, usageTrack } from "./islandParts";
+import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandParts";
 import { pickIslandUsage, primaryLane } from "./useIslandUsage";
 
 /// 面板上最多列几个会话。更多的去「全部」里看。
@@ -139,8 +139,11 @@ export function IslandPanel({
             </div>
             {main && (
               <div className="isl-side">
-                <Ring size={84} stroke={6} value={main.pct / 100} color={usageColor(main.pct)} track={usageTrack(main.pct)}>
-                  <span className="isl-big-val">{Math.round(main.pct)}<small>%</small></span>
+                <Ring size={84} stroke={6} value={remainingOf(main.pct) / 100} color={remainingColor(remainingOf(main.pct))} track="var(--isl-track)">
+                  <span className="isl-ring-stack">
+                    <span className="isl-big-val">{remainingOf(main.pct)}<small>%</small></span>
+                    <span className="isl-ring-caption">{t.island.remaining}</span>
+                  </span>
                 </Ring>
                 <span className="isl-side-label">{providerLabel(main.provider)} {laneLabel(main.kind)}</span>
               </div>
@@ -160,11 +163,11 @@ export function IslandPanel({
                   </span>
                   <div className="isl-usage-lanes">
                     {shownLanes(usage[provider]).map((lane, i) => {
-                      const pct = lane.used_pct as number;
+                      const left = remainingOf(lane.used_pct as number);
                       return (
                         <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell">
-                          <Ring size={50} stroke={4.5} value={pct / 100} color={usageColor(pct)} track={usageTrack(pct)}>
-                            <span className="isl-mid-val">{Math.round(pct)}<small>%</small></span>
+                          <Ring size={50} stroke={4.5} value={left / 100} color={remainingColor(left)} track="var(--isl-track)">
+                            <span className="isl-mid-val">{left}<small>%</small></span>
                           </Ring>
                           <span className="isl-side-sub">{laneName(lane)}</span>
                         </div>

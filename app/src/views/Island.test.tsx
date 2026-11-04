@@ -6,7 +6,7 @@ import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
-import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usageColor, USAGE_FLIP_MS } from "./island/islandParts";
+import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, remainingColor, remainingOf, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
 import type { ProviderUsage } from "../api";
@@ -127,32 +127,36 @@ describe("额度", () => {
 });
 
 describe("额度环", () => {
-  it("颜色随用量变：宽裕绿、过六成琥珀、过八成五红", () => {
-    expect(usageColor(20)).toBe("var(--isl-ok)");
-    expect(usageColor(60)).toBe("var(--isl-warn)");
-    expect(usageColor(90)).toBe("var(--isl-err)");
+  // 用户嫌怪：显示已用时，用了 4% 环几乎是空的，像快没了。改成像电量一样显示剩余。
+  it("显示剩余，颜色按剩余：宽裕绿、不到四成琥珀、不到一成五红", () => {
+    expect(remainingOf(4)).toBe(96);
+    expect(remainingOf(130)).toBe(0);
+    expect(remainingColor(96)).toBe("var(--isl-ok)");
+    expect(remainingColor(40)).toBe("var(--isl-warn)");
+    expect(remainingColor(10)).toBe("var(--isl-err)");
   });
 
-  it("中间每 4 秒在百分比和 agent logo 之间翻一次", () => {
+  it("中间是剩余百分比，右下角是哪家的 logo；只有一家时不轮换", () => {
     vi.useFakeTimers();
-    const { container } = render(<UsageRing entries={[{ provider: "claude", pct: 43 }]} />);
-    const flip = () => container.querySelector(".isl-usage-flip")!;
-    expect(flip().classList.contains("is-logo")).toBe(false);
-    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS); });
-    expect(flip().classList.contains("is-logo")).toBe(true);
-    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS); });
-    expect(flip().classList.contains("is-logo")).toBe(false);
+    const { container } = render(<UsageRing entries={[{ provider: "claude", pct: 4 }]} />);
+    expect(container.querySelector(".isl-usage-val")?.textContent).toBe("96");
+    expect(container.querySelector(".isl-usage-badge")).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS * 3); });
+    expect(container.querySelector(".isl-usage-wrap")?.getAttribute("data-provider")).toBe("claude");
   });
 
-  it("几家都有额度时轮流显示：A 的数字 → A 的 logo → B 的数字", () => {
+  it("几家都有额度时轮流显示", () => {
     vi.useFakeTimers();
     const { container } = render(<UsageRing entries={[{ provider: "claude", pct: 43 }, { provider: "kimi", pct: 7 }]} />);
-    const value = () => container.querySelector(".isl-usage-val")?.textContent;
-    expect(value()).toBe("43");
-    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS * 2); });
-    expect(value()).toBe("7");
-    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS * 2); });
-    expect(value()).toBe("43");
+    const shown = () => [
+      container.querySelector(".isl-usage-wrap")?.getAttribute("data-provider"),
+      container.querySelector(".isl-usage-val")?.textContent,
+    ];
+    expect(shown()).toEqual(["claude", "57"]);
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS); });
+    expect(shown()).toEqual(["kimi", "93"]);
+    act(() => { vi.advanceTimersByTime(USAGE_FLIP_MS); });
+    expect(shown()).toEqual(["claude", "57"]);
   });
 });
 
@@ -195,7 +199,8 @@ describe("眼睛", () => {
 describe("Island 收起", () => {
   it("概览：额度环、时间、每个会话一颗带环的 agent 图标", () => {
     const { container } = renderIsland({ sessions: [mk(), mk({ pending_review: "approval" })], usages: [{ provider: "claude", pct: 82 }] });
-    expect(container.querySelector(".isl-usage-val")?.textContent).toBe("82");
+    // 额度环显示剩余：已用 82% → 剩 18。
+    expect(container.querySelector(".isl-usage-val")?.textContent).toBe("18");
     expect(container.querySelector(".isl-clock")?.textContent).toMatch(/^\d{2}:\d{2}$/);
     expect(container.querySelectorAll(".isl-agent")).toHaveLength(2);
     // 要处理的会话排最前、角上带「!」。
@@ -333,7 +338,8 @@ describe("IslandPanel 展开面板", () => {
       codex: { lanes: [lane("weekly", 18)], note: null },
     } as unknown as Record<string, ProviderUsage>;
     const { container } = renderPanel({ usage });
-    expect(container.querySelector(".isl-big-val")?.textContent).toContain("43");
+    // 大环同样显示剩余：已用 43% → 剩 57。
+    expect(container.querySelector(".isl-big-val")?.textContent).toContain("57");
     fireEvent.click(screen.getByRole("tab", { name: zh.island.page(2) }));
     expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(2);
     expect(screen.getByText("Codex")).toBeTruthy();
@@ -351,7 +357,8 @@ describe("IslandPanel 展开面板", () => {
     expect(cells).toHaveLength(2);
     expect(cells[0].textContent).toContain(zh.account.laneFiveHour);
     expect(cells[1].textContent).toContain(zh.account.laneWeekly);
-    expect(cells[1].textContent).toContain("79");
+    // 已用 79% → 剩 21。
+    expect(cells[1].textContent).toContain("21");
   });
 
   it("左右箭头翻页，到头绕回", () => {

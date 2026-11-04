@@ -6775,20 +6775,22 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-ring.is-spin > svg { animation: isl-spin 1.4s linear infinite; }
 @keyframes isl-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 .isl-ring-body { position: relative; display: grid; place-items: center; }
-.isl-usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.isl-usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.3px; }
 /* 定量进度：挂载时从 0 扫到位，数值变了平滑滑过去。 */
 .isl-ring-arc { transition: stroke-dashoffset 0.6s cubic-bezier(0.3, 0.8, 0.3, 1), stroke 0.4s ease; animation: isl-sweep 0.9s cubic-bezier(0.3, 0.8, 0.3, 1); }
 @keyframes isl-sweep { from { stroke-dashoffset: var(--isl-c); } }
-/* 额度环中间的数字与 logo 上下翻：两层叠在一起，只露一层。 */
-.isl-usage-flip { position: relative; display: block; width: 20px; height: 14px; overflow: hidden; }
-.isl-usage-flip > span {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  transition: transform 0.45s cubic-bezier(0.3, 0.8, 0.3, 1.2), opacity 0.3s ease;
+/* 额度环：中间剩余百分比，右下角哪家的 logo（同会话图标的角标）；换家时淡入。 */
+.isl-usage-wrap { position: relative; display: inline-flex; flex: none; }
+.isl-usage-swap { position: relative; display: inline-flex; animation: isl-fade-in 0.4s ease; }
+@keyframes isl-fade-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+.isl-usage-badge {
+  position: absolute; right: -4px; bottom: -4px;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--isl-ink); display: grid; place-items: center;
 }
-.isl-usage-logo { transform: translateY(110%); opacity: 0; }
-.isl-usage-logo svg, .isl-usage-logo img { width: 13px !important; height: 13px !important; }
-.isl-usage-flip.is-logo .isl-usage-val { transform: translateY(-110%); opacity: 0; }
-.isl-usage-flip.is-logo .isl-usage-logo { transform: translateY(0); opacity: 1; }
+.isl-usage-badge svg, .isl-usage-badge img { width: 11px !important; height: 11px !important; }
+.isl-ring-stack { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.isl-ring-caption { font-size: 10px; color: var(--isl-dim); }
 .isl-agent { position: relative; display: inline-flex; flex: none; }
 .isl-agent-logo { width: 20px; height: 20px; display: grid; place-items: center; }
 /* logo 要几乎撑满环内（参考图），原始 11~13px 的徽标在 32px 的环里只占一小点，环里空空的。 */
@@ -6943,5 +6945,6 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
   .isl-eye-pair, .isl-zz, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
-  .isl-ring-arc, .isl-usage-flip > span { transition: none !important; }
+  .isl-ring-arc { transition: none !important; }
+  .isl-usage-swap { animation: none !important; }
 }
