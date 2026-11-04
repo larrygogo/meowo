@@ -756,6 +756,8 @@ export const zh = {
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
     resumeSession: "恢复会话",
     terminalNeedsAttention: "Agent 在等启动确认，请先在交互卡片中选择，再重新发送。",
+    // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
+    questionNeedsAnswer: "Agent 在等你回答提问，答完再发送。",
     sendEchoTimeout: "消息未进入终端，已撤回。请切到终端页确认状态后重试。",
     terminalStreamStalled: "终端画面卡住了，不会自行恢复。点「结束并恢复」即可，对话记录不受影响。",
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
@@ -801,6 +803,7 @@ export const zh = {
     attentionDismissTip: "仅收起卡片，不发送按键",
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
+    questionFoldedInTerminal: "终端里有待答的提问，点此展开卡片",
     unrecognizedPromptNotice: "终端似乎在等待选择，消息已发出。若无响应请到终端页确认。",
     unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",

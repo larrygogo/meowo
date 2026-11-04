@@ -3733,9 +3733,10 @@ describe("ChatWindow", () => {
     expect(screen.getByText("PTY 38")).toBeTruthy();
   });
 
-  /** 同步展示卡（broker 自动放行）在终端视图同样渲染：点选排队写的按键落进终端表
-   *  单（两边同步），但「去终端页」按钮在终端视图无意义，不出。 */
-  it("终端视图下同步展示卡不出「去终端页」", async () => {
+  /** 同步展示卡（broker 自动放行）在终端视图先收成一条提示：卡浮在 composer 上方，正好
+   *  盖住终端底部的真表单（用户实拍：识别没接管时两头都答不了）。点开后照旧可点选排队，
+   *  「去终端页」按钮在终端视图无意义，不出。 */
+  it("终端视图下同步展示卡先收成提示条，点开后不出「去终端页」", async () => {
     window.history.replaceState({}, "", "/?sessionId=39");
     invoke.mockImplementation((command: string) => {
       if (command === "get_chat_history") return Promise.resolve({
@@ -3759,6 +3760,10 @@ describe("ChatWindow", () => {
         permissionSuggestions: [],
       } });
     });
+    // 终端页：卡不盖住终端，只留提示条。
+    const fold = await screen.findByRole("button", { name: "终端里有待答的提问，点此展开卡片" });
+    expect(screen.queryByText(/火锅还是寿司/)).toBeNull();
+    fireEvent.click(fold);
     expect(await screen.findByText(/火锅还是寿司/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "去终端页" })).toBeNull();
     // 点选排队照常可用：排进队列并提示，落键等屏幕识别确认（此处不驱动识别）。

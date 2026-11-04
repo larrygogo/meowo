@@ -476,6 +476,12 @@ export function ChatWindow() {
     lastInteractiveQuestionRef, collapsedQuestionIdRef,
   } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
   interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current);
+  // 拦住发送时的说明：只剩提问卡（展开或收起）在拦时说「在等你回答」，其余仍是交互卡通用说法。
+  // 此前一律说「在等启动确认」，回合中途的提问也这么说，用户看不懂该做什么（用户实拍）。
+  const blockedByQuestionRef = useRef(false);
+  blockedByQuestionRef.current = !!(structuredQuestion || dismissedQuestion)
+    && !(terminalAttention || dismissedAttention || approval || terminalMenuOpenRef.current);
+  const blockedMessage = () => (blockedByQuestionRef.current ? t.chat.questionNeedsAnswer : t.chat.terminalNeedsAttention);
   const isCurrentOperation = () => mountedRef.current && activeSessionRef.current === sessionId
     && sessionEpochRef.current === operationEpoch;
   /// 最近一次认领(临时 id → 真 id)。在途的粘贴落盘回来时,本会话若已被认领,结果仍归它。
@@ -2060,7 +2066,7 @@ export function ChatWindow() {
       if (blocked()) {
         if (isCurrentOperation()) {
           terminalEverShownRef.current = true;
-          setSendError(t.chat.terminalNeedsAttention);
+          setSendError(blockedMessage());
         }
         return false;
       }
@@ -2072,7 +2078,7 @@ export function ChatWindow() {
       }
       if (!await ensureWritableTerminal(detached) || !alive()) return false;
       if (blocked()) {
-        if (isCurrentOperation()) setSendError(t.chat.terminalNeedsAttention);
+        if (isCurrentOperation()) setSendError(blockedMessage());
         return false;
       }
       if (autoClear) {
@@ -2103,11 +2109,11 @@ export function ChatWindow() {
   /// 回车前复核(见 submitToTerminal 的 abortIf):正文落下后、回车发出前,交互提示
   /// 恰好弹出的话,这个回车会替用户回答它——命中就中止提交。
   const attentionAbort = () => !isCurrentOperation() ? t.chat.sendSessionChanged
-    : interactionBlockedRef.current ? t.chat.terminalNeedsAttention : null;
+    : interactionBlockedRef.current ? blockedMessage() : null;
   /// 正文消息的回车前复核：切走会话不再算中止理由（用户要求切走也照发），只看发起会话
   /// 是不是弹出了交互提示——回车会替用户回答它。
   const detachedAbort = () => (isCurrentOperation() ? interactionBlockedRef.current : blockedAfterLeave())
-    ? t.chat.terminalNeedsAttention : null;
+    ? blockedMessage() : null;
   /// 恢复/接管的完成时刻:险区窗口内(RESUME_VERIFY_WINDOW_MS)的发送做写后回显验证。
   const resumedAtRef = useRef(0);
   /// 发送一段文本到会话（消息正文与斜杠命令共用）。返回是否真的送达。
@@ -2651,7 +2657,7 @@ export function ChatWindow() {
       }
       if (!isCurrentOperation()) return;
       if (toneRef.current === "running") { setSendError(t.chat.interruptTimeout); return; }
-      if (attentionAbort()) { setSendError(t.chat.terminalNeedsAttention); return; }
+      if (attentionAbort()) { setSendError(blockedMessage()); return; }
       interruptLockRef.current = null;
       await sendPrompt();
     } catch (error) {
@@ -3246,6 +3252,12 @@ export function ChatWindow() {
   }, [interactiveAttention, questionFormSeen]);
   // 换会话 / 题面在别处了结：表单的「见过」标记一起归零。
   useEffect(() => { if (!structuredQuestion) setQuestionFormSeen(false); }, [structuredQuestion]);
+  // 终端页的题面展示卡默认收成一条提示：卡片浮在 composer 上方，正好盖住终端底部的真表单。
+  // 识别没接管时（卡还在），用户在终端里既看不到表单、卡上又答不了（用户实拍）。
+  // 记的是用户在终端页点开过的那张卡，换一轮提问重新收起。对话页不受影响。
+  const [questionOpenInTerminal, setQuestionOpenInTerminal] = useState<string | null>(null);
+  const questionFoldedInTerminal = view === "terminal" && !!structuredQuestion
+    && questionOpenInTerminal !== structuredQuestion.requestId;
   const structuredQuestions = useMemo(
     () => (structuredQuestion ? parseAskUserQuestions(structuredQuestion.input) : []),
     [structuredQuestion],
@@ -4138,7 +4150,14 @@ export function ChatWindow() {
           （interactiveAttention 接管后此卡退场）；全无选项的纯开放问题没得点，走
           「去终端作答」。旧 reporter/降级（挂起超时）场景都落在这里。两视图都渲染：
           卡内点选排队写的按键落进终端表单，用户在终端画面里能直接看到同步效果。 */}
-      {structuredQuestions.length > 0 && !terminalAttention && !questionFormSeen && !approval && !questionAnswerable && <ApprovalCard
+      {structuredQuestions.length > 0 && !terminalAttention && !questionFormSeen && !approval && !questionAnswerable && questionFoldedInTerminal && (
+        <button
+          type="button"
+          className="chat-attention-collapsed"
+          onClick={() => setQuestionOpenInTerminal(structuredQuestion?.requestId ?? null)}
+        >{t.chat.questionFoldedInTerminal}</button>
+      )}
+      {structuredQuestions.length > 0 && !terminalAttention && !questionFormSeen && !approval && !questionAnswerable && !questionFoldedInTerminal && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
         title={t.chat.questionTitle}
