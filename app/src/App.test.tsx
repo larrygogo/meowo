@@ -17,7 +17,12 @@ const defaultRect: DOMRect = {
   top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
   toJSON: () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0 }),
 };
+// 胶囊的实测宽度（灵动岛测量回调用）；个别用例改它来模拟内容变宽。
+let pillRectWidth = 0;
 vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement): DOMRect {
+  if (this.classList.contains("island-pill")) {
+    return { ...defaultRect, width: pillRectWidth, right: pillRectWidth, toJSON: () => ({}) };
+  }
   if (this.classList.contains("stk-scroll")) {
     return {
       ...defaultRect,
@@ -36,9 +41,12 @@ vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(func
 });
 const mockScrollRect = { top: 0, left: 0, bottom: 600, right: 400, width: 400, height: 600, x: 0, y: 0 };
 const mockItemRect = { top: 0, left: 0, bottom: 82, right: 400, width: 400, height: 82, x: 0, y: 0 };
+// 记下所有观察者，个别用例手动再触发一次（模拟窗口改尺寸时的测量回调）。
+const resizeObservers: { fire: () => void }[] = [];
 class MockResizeObserver {
   constructor(private cb: ResizeObserverCallback) {}
   observe(target: Element) {
+    resizeObservers.push({ fire: () => this.cb([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver) });
     const isScroll = target.classList.contains("stk-scroll");
     const rect = isScroll ? mockScrollRect : mockItemRect;
     this.cb([{
@@ -140,6 +148,8 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(() => Promise.resolve(undefined));
   localStorage.clear();
   extraSettings = {};
+  pillRectWidth = 0;
+  resizeObservers.length = 0;
 });
 afterEach(() => cleanup());
 
@@ -267,6 +277,30 @@ describe("App", () => {
     await expandIsland();
     expect(layoutCalls()).toContainEqual({ width: 400, height: 460, centerRatio: null });
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("recall_center", expect.anything());
+  });
+
+  // 回归（DEV 实拍）：展开时窗口先长大，胶囊的测量回调恰在这时触发，按胶囊宽度把窗口又缩了
+  // 回去，列表被挤进 36px 高的窗口里。形态切换进行中，测量不得改窗口尺寸。
+  it("展开途中胶囊测量回调触发，不会把窗口缩回胶囊大小", async () => {
+    let finishExpand: () => void = () => {};
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown) => {
+      const a = args as { height?: number } | undefined;
+      if (cmd === "island_layout" && a?.height === 440) {
+        return new Promise<void>((r) => { finishExpand = r; }) as never;
+      }
+      return Promise.resolve(undefined) as never;
+    });
+    render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    await act(async () => { emitRecallSticker(); });
+    await waitFor(() => expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null }));
+    // 窗口改尺寸途中：胶囊被测到新宽度。
+    pillRectWidth = 195;
+    act(() => resizeObservers.forEach((o) => o.fire()));
+    await act(async () => { finishExpand(); });
+    await waitFor(() => expect(document.querySelector(".island-shell")).toBeTruthy());
+    const calls = layoutCalls();
+    expect(calls[calls.length - 1]).toEqual({ width: 360, height: 440, centerRatio: null });
   });
 
   it("点一下胶囊（没拖动）就展开列表", async () => {

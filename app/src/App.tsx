@@ -446,6 +446,9 @@ export function App() {
   const [pillWidth, setPillWidth] = useState(ISLAND_PILL_MIN_WIDTH);
   const pillWidthRef = useRef(ISLAND_PILL_MIN_WIDTH);
   const draggingRef = useRef(false);
+  // 形态切换进行中（窗口正在改尺寸）：期间胶囊的测量不得去改窗口尺寸。展开时窗口先长大，
+  // 此刻任何「按胶囊宽度摆窗口」的调用都会把它缩回去，列表被挤进胶囊大小（DEV 实拍）。
+  const transitioningRef = useRef(false);
   // 设置：收起样式、哪些事弹提醒、提醒停留多久（实时跟随设置页改动）。
   const [islandCompact, setIslandCompact] = useState<IslandCompactStyle>("counts");
   const islandAlertsRef = useRef<string[] | null>(null);
@@ -513,16 +516,21 @@ export function App() {
     // 先把窗口放大（胶囊居中，屏幕位置不动），再挂列表并播放从胶囊长出来的动画。
     // 顺序反过来会让列表先在胶囊大小的窗口里挤一帧（W-4 同一课）。
     const { w, h } = normalSize();
+    transitioningRef.current = true;
     try {
       await layout(w, h);
     } catch (err) {
+      transitioningRef.current = false;
       console.error("[island] 展开失败：", err);
       return;
     }
     // 展开着不弹提醒：排队的那些在列表里都看得到，作废。
     alertQueueRef.current = [];
     setAlert(null);
+    // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是 expanded，不会去缩窗口。
+    islandModeRef.current = "expanded";
     setIslandMode("expanded");
+    transitioningRef.current = false;
     loadStrip();
   }, [layout, loadStrip]);
 
@@ -541,9 +549,13 @@ export function App() {
 
   const onMeasure = useCallback((width: number) => {
     const next = Math.max(ISLAND_PILL_MIN_WIDTH, width);
+    // 宽度没变就不动窗口：测量回调在窗口改尺寸、字体加载等时候都会触发，多数时候宽度根本没变。
+    if (next === pillWidthRef.current) return;
     pillWidthRef.current = next;
     setPillWidth(next);
-    if (islandModeRef.current === "compact") layout(next, ISLAND_PILL_HEIGHT).catch(() => {});
+    if (islandModeRef.current === "compact" && !transitioningRef.current) {
+      layout(next, ISLAND_PILL_HEIGHT).catch(() => {});
+    }
   }, [layout]);
 
   // 左右拖：按下后横向挪过 3px 才算拖动，否则松手当一次点击。位置由后端按真实光标算
