@@ -61,7 +61,7 @@ export function IslandPanel({
 
   return (
     <div className="isl-stage">
-      <div ref={panelRef} className="isl-notch isl-panel">
+      <div ref={panelRef} className={`isl-notch isl-panel${pages > 1 ? " is-paged" : ""}`}>
         <div className="isl-panel-head" onPointerDown={onPointerDownDrag}>
           <span className="isl-panel-title">
             Meowo <span className="isl-accent">{current === 0 ? t.island.panelSessions : t.island.panelUsage}</span>

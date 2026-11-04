@@ -314,7 +314,7 @@ describe("App", () => {
     fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 101 });
     await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("island_drag_begin");
-    expect(layoutCalls()).toContainEqual({ width: 588, height: 250, centerRatio: null });
+    expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null });
     fireEvent.click(screen.getByRole("button", { name: zh.island.showAll }));
     await waitFor(() => expect(container.querySelector(".island-shell.is-full")).toBeTruthy());
     expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });

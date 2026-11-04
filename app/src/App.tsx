@@ -34,7 +34,7 @@ import {
 
 type IslandMode = "compact" | "alert" | "expanded" | "full";
 /// 展开面板的窗口宽度（含两侧耳朵）。高度按面板实测。
-const ISLAND_PANEL_WIDTH = 560 + ISLAND_EAR * 2;
+const ISLAND_PANEL_WIDTH = 600 + ISLAND_EAR * 2;
 /// 面板没量过之前先按这个高度摆（三行会话 + 页码点的常见高度）。
 const ISLAND_PANEL_HEIGHT_GUESS = 250;
 /// 胶囊最窄宽度（逻辑像素）：空态也得是一颗好点的胶囊，不是一条缝。

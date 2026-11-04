@@ -6891,8 +6891,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   transition: background 0.15s ease, color 0.15s ease;
 }
 .isl-page-arrow:hover { background: #48484a; color: var(--isl-text); }
-.isl-page-arrow.is-prev { left: 4px; }
-.isl-page-arrow.is-next { right: 4px; }
+/* 有翻页时面板左右各让出一条给箭头，箭头放在这条留白里，不再压在会话行和额度环上（用户实拍嫌挤）。 */
+.isl-panel.is-paged { padding-left: 40px; padding-right: 40px; }
+.isl-page-arrow.is-prev { left: 10px; }
+.isl-page-arrow.is-next { right: 10px; }
 .isl-dots-nav button {
   width: 5px; height: 5px; padding: 0; border: 0; border-radius: 3px;
   background: var(--isl-faint); cursor: pointer;
