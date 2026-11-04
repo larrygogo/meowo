@@ -123,7 +123,7 @@ export function App() {
   }, [filter]);
   // 窗口置顶偏好（W-17）：存 settings.json，启动时读入；切换经 togglePin 原子落盘。
   const [pinned, setPinned] = useState(false);
-  const pinnedRef = useRef(false); // 同步镜像：recall/snap_restore 等回调里取最新值不依赖闭包
+  const pinnedRef = useRef(false); // 同步镜像：togglePin 等回调里取最新值不依赖闭包
   const applyPinned = useCallback((p: boolean) => {
     pinnedRef.current = p;
     setPinned(p);

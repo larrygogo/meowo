@@ -30,7 +30,6 @@ pub mod proxy;
 mod remote;
 mod settings;
 pub mod snap;
-mod snap_preview;
 mod term_script;
 #[cfg(target_os = "windows")]
 mod wezterm;
@@ -95,7 +94,7 @@ use terminal::{
 };
 use window::{
     open_chat_window, open_latest_chat, open_new_session_window, open_onboarding, open_settings,
-    open_update_window, recall_center, set_panel_appearance, set_panel_keep_open, show_sticker,
+    open_update_window, set_panel_appearance, set_panel_keep_open, show_sticker,
 };
 // 连接判定的进程事实源统一走 proc::agent_pids_snapshot（按平台分流），
 // 由 session_query 缓存成一份跨命令共享的快照；lib 这一层不再直接碰进程表。
@@ -131,18 +130,10 @@ use settings::{
     mark_onboarding_seen, open_link, open_url, set_autostart, set_keep_awake, set_push_paused,
     set_settings, set_sticker_window_state, set_workspace_order,
 };
-use snap::{
-    cursor_over_window, pointer_left_down, snap_collapse, snap_expand, snap_restore, unsnap,
-};
-// 出屏约束/吸边检测（run 的窗口事件闭包）只在 Windows 用这些几何符号
-// （W-18：吸边整体门控 Windows；macOS 面板模式本无吸边，Linux 原语恒假值半坏）。
+use snap::cursor_over_window;
+// 出屏救援（setup 里开机把贴纸拉回可视区）只在 Windows 做：macOS 面板位置归 menubar 管。
 #[cfg(target_os = "windows")]
 use snap::pull_on_screen;
-#[cfg(target_os = "windows")]
-use snap::{
-    clamp_target_for_drag, clamp_xy_to_work, edge_for_rect, union_bbox, Edge, Rect, SnapPayload,
-    SNAP_THRESHOLD,
-};
 
 use meowo_store::Store;
 use std::path::PathBuf;
@@ -917,31 +908,10 @@ mod win_constrain {
     };
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_DISPLAYCHANGE, WM_EXITSIZEMOVE,
-        WM_SETTINGCHANGE, WM_SIZING, WM_WINDOWPOSCHANGING,
+        GetWindowRect, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_WINDOWPOSCHANGING,
     };
 
     const SUBCLASS_ID: usize = 0x00CC_4A0B;
-
-    /// 用户拖边框缩放时通知前端用的 AppHandle（启动时注入）。
-    static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
-    /// 本次缩放手势是否已通知过（一次拖拽只发一次 user-resized）。
-    static RESIZE_EMITTED: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
-    /// 显示器拓扑世代：WM_DISPLAYCHANGE / WM_SETTINGCHANGE(工作区变化) 到达即 +1（W-9）。
-    /// lib.rs 的 Moved 处理按世代缓存各显示器工作区，只有世代变化才重新枚举，
-    /// 拖拽期间不再逐 Moved 全量枚举。
-    static DISPLAY_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-    /// 注入 AppHandle（在装子类时一并调用）。
-    pub fn set_app(app: tauri::AppHandle) {
-        let _ = APP.set(app);
-    }
-
-    /// 当前显示器拓扑世代（见 DISPLAY_GENERATION）。
-    pub fn display_generation() -> u64 {
-        DISPLAY_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
-    }
 
     /// 收集所有显示器工作区(rcWork)。
     struct WorkAreas {
@@ -1044,36 +1014,6 @@ mod win_constrain {
                     }
                 }
             }
-        } else if msg == WM_DISPLAYCHANGE || msg == WM_SETTINGCHANGE {
-            // 显示器拔插/分辨率变化（WM_DISPLAYCHANGE）、任务栏自动隐藏等工作区变化
-            // （WM_SETTINGCHANGE，SPI_SETWORKAREA）：递增世代，让 Moved 处理的显示器
-            // 缓存失效（W-9）。世代只是失效信号，多 bump 无害。
-            DISPLAY_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        } else if msg == WM_SIZING {
-            // WM_SIZING 仅在用户拖边框缩放时发（程序 set_size 不发）→ 通知前端解除吸附。
-            // 一次拖拽手势只发一次，避免刷屏。
-            use std::sync::atomic::Ordering;
-            if !RESIZE_EMITTED.swap(true, Ordering::Relaxed) {
-                if let Some(app) = APP.get() {
-                    use tauri::Emitter;
-                    let _ = app.emit("user-resized", ());
-                }
-            }
-        } else if msg == WM_EXITSIZEMOVE {
-            // 移动/缩放手势结束：吸附预览条（W-2）兜底隐藏——松手未吸附/取消拖拽时
-            // 候选边可能还停在 Some 而 Moved 不再来，不能指望下一帧 Moved 清。
-            if let Some(app) = APP.get() {
-                crate::snap_preview::hide(app);
-            }
-            // 缩放/移动手势结束：若本次确实缩放过（发过 user-resized），通知前端"缩放结束"，
-            // 供其按缩放前的吸附状态重新吸回。复位标志，下次拖拽可再次通知。
-            use std::sync::atomic::Ordering;
-            if RESIZE_EMITTED.swap(false, Ordering::Relaxed) {
-                if let Some(app) = APP.get() {
-                    use tauri::Emitter;
-                    let _ = app.emit("user-resize-end", ());
-                }
-            }
         }
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
@@ -1084,18 +1024,6 @@ mod win_constrain {
             SetWindowSubclass(hwnd as HWND, Some(subclass_proc), SUBCLASS_ID, 0);
         }
     }
-}
-
-/// 贴纸 Moved 处理的共享缓存（W-9）。显示器工作区列表按「显示器世代」缓存——世代由
-/// win_constrain 子类在 WM_DISPLAYCHANGE 时递增，世代不变就直接复用，拖拽期间不再每个
-/// Moved 全量枚举显示器；snap-changed 也只在吸附边**变化**时 emit，不再逐 Moved 重发。
-#[cfg(target_os = "windows")]
-#[derive(Default)]
-struct MovedSnapCache {
-    /// (上次枚举时的显示器世代, 各显示器工作区)。
-    monitors: Option<(u64, Vec<Rect>)>,
-    /// 上次 emit 的吸附边；None = 尚未 emit 过（首帧必须发一次，让前端拿到初始态）。
-    last_edge: Option<Option<Edge>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1123,56 +1051,6 @@ fn harden_dll_search_path() {
             );
         }
     }
-}
-
-/// W-17：main 窗口位置改由 settings.json 的 sticker_window 持有（window-state 插件对 main 已
-/// denylist）。settings 尚无位置时，一次性继承插件旧文件（.window-state.json）里的 main 坐标
-/// 并落盘——升级用户的窗口不跳位。恢复/迁移失败都只打日志：位置只是摆放偏好，丢了由 OS 默认
-/// 摆放 + pull_on_screen 兜底可见性。macOS 面板位置归 menubar/positioner 管，不走这里。
-#[cfg(not(target_os = "macos"))]
-fn restore_sticker_window_position(app: &tauri::AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    let saved = crate::settings::load_settings().sticker_window;
-    let pos = match (saved.x, saved.y) {
-        (Some(x), Some(y)) => Some((x, y)),
-        _ => legacy_window_state_position(app).inspect(|&(x, y)| {
-            if let Err(e) = crate::settings::update_settings(|s| {
-                s.sticker_window.x = Some(x);
-                s.sticker_window.y = Some(y);
-                Ok(())
-            }) {
-                eprintln!("[window-state] 迁移旧位置到 settings 失败（下次启动重试）: {e}");
-            }
-        }),
-    };
-    if let Some((x, y)) = pos {
-        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-    }
-}
-
-/// 读 window-state 插件旧文件里 main 的上次位置（物理像素）。
-#[cfg(not(target_os = "macos"))]
-fn legacy_window_state_position(app: &tauri::AppHandle) -> Option<(i32, i32)> {
-    let path = app
-        .path()
-        .app_config_dir()
-        .ok()?
-        .join(tauri_plugin_window_state::DEFAULT_FILENAME);
-    let raw = std::fs::read_to_string(path).ok()?;
-    parse_legacy_main_position(&raw)
-}
-
-/// 解析 .window-state.json 的 main 条目（插件 WindowState 的 x/y 即物理像素坐标）。
-/// 文件损坏/无 main 条目/坐标非整数都返回 None（= 没有可继承的旧位置）。纯函数便于单测。
-#[cfg(not(target_os = "macos"))]
-fn parse_legacy_main_position(raw: &str) -> Option<(i32, i32)> {
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let m = v.get("main")?;
-    let x = i32::try_from(m.get("x")?.as_i64()?).ok()?;
-    let y = i32::try_from(m.get("y")?.as_i64()?).ok()?;
-    Some((x, y))
 }
 
 pub fn run() {
@@ -1228,9 +1106,6 @@ pub fn run() {
         eprintln!("启动 PTY attach 服务失败: {error}");
     }
     let builder = tauri::Builder::default();
-    // 贴纸 Moved 处理的缓存（W-9，见 MovedSnapCache）：随 on_window_event 闭包共享。
-    #[cfg(target_os = "windows")]
-    let moved_snap_cache = Arc::new(Mutex::new(MovedSnapCache::default()));
     // single-instance 必须最先注册（官方要求，越早越能拦住二次启动）。仅 release：
     // debug 构建豁免——本机开发的常态是「安装版自启 + dev 版并行」，同 identifier 的
     // single-instance 会把 dev 实例当二次启动当场掐死，开发流程整个断掉；双开的已知
@@ -1259,9 +1134,8 @@ pub fn run() {
         // 生产构建关掉 WebView2 浏览器加速键（打印/刷新/另存/原生查找等整族，详见函数注释）。
         // on_page_load 是覆盖全部窗口（含后建的对话/确认窗）的唯一集中挂点。
         .on_page_load(|webview, _payload| window::disable_browser_accelerators(webview))
-        // W-17：main（贴纸）窗口的几何整体移出本插件——位置/尺寸/吸附边/置顶统一由 settings.json
-        // 的 sticker_window 原子持有（settings.rs；位置在 setup 里 restore_sticker_window_position
-        // 恢复，尺寸/吸附由前端 snap 逻辑权威设定）。此前「位置靠插件、尺寸/吸附边/置顶靠三套
+        // W-17：main（贴纸）窗口的几何整体移出本插件——尺寸/置顶统一由 settings.json 的
+        // sticker_window 原子持有（settings.rs），位置由灵动岛按记住的中心比例自己摆（island.rs）。此前「位置靠插件、尺寸/吸附边/置顶靠三套
         // localStorage 键」四处分写无原子性，清空 WebView 存储即半吊子状态；且吸附态退出会把
         // 「细条几何」存进插件文件，与 localStorage 的吸附态不同步——重启读不到吸附边却被还原成
         // 细条尺寸，渲染完整贴纸而没真正吸附。denylist 后插件只管其余窗口（位置），且：
@@ -1280,9 +1154,7 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::VISIBLE
                         | tauri_plugin_window_state::StateFlags::DECORATIONS,
                 ))
-                // snap-preview（W-2 吸附预览条）也排除：位置/显隐由 Moved 处理逐帧驱动，
-                // 插件恢复旧位置只会与定位打架。
-                .with_denylist(&["main", "snap-preview"])
+                .with_denylist(&["main"])
                 .build(),
         )
         .plugin(tauri_plugin_autostart::init(
@@ -1414,20 +1286,12 @@ pub fn run() {
             open_settings,
             open_onboarding,
             open_update_window,
-            recall_center,
             set_panel_appearance,
             set_panel_keep_open,
             show_sticker,
             open_link,
             open_url,
-            snap_collapse,
-            snap_expand,
-            snap_restore,
-            unsnap,
-            snap_preview::snap_preview_set_extent,
-            snap_preview::snap_preview_ready,
             cursor_over_window,
-            pointer_left_down,
             get_accounts,
             refresh_usage,
             host_os,
@@ -1464,125 +1328,6 @@ pub fn run() {
             window::open_session_admin,
             open_latest_chat
         ])
-        .on_window_event(move |window, event| {
-            // macOS：面板模式，无出屏约束/吸边；不处理 Moved（避免与 positioner 抢位置、误发 snap-changed）。
-            // Linux：吸边整体不做（W-18——cursor_over_window/pointer_left_down 两原语在非 Windows
-            // 恒返回假值，吸边「看起来支持实则坏掉」；半坏不如不做），出屏约束也无对应子类实现。
-            #[cfg(not(target_os = "windows"))]
-            let _ = (window, event);
-            #[cfg(target_os = "windows")]
-            if let tauri::WindowEvent::Moved(pos) = event {
-                // 出屏约束与吸附只作用于贴纸主窗口；设置等其它窗口不受限制。
-                // 灵动岛自己管定位（贴顶、只能左右拖，见 island.rs），旧的吸边判定整段让路。
-                if window.label() != "main" || island::active() {
-                    return;
-                }
-                let Ok(size) = window.outer_size() else {
-                    return;
-                };
-                let win = Rect {
-                    x: pos.x,
-                    y: pos.y,
-                    w: size.width as i32,
-                    h: size.height as i32,
-                };
-
-                // 各显示器工作区（W-9）：按显示器世代缓存，仅 WM_DISPLAYCHANGE（世代+1）后
-                // 重新枚举；拖拽期间每个 Moved 全量枚举显示器 ×2 的开销由此消除。
-                let gen = win_constrain::display_generation();
-                let works: Vec<Rect> = {
-                    let mut cache = moved_snap_cache.lock().unwrap();
-                    match &cache.monitors {
-                        Some((g, ws)) if *g == gen => ws.clone(),
-                        _ => {
-                            let Ok(ms) = window.available_monitors() else {
-                                return;
-                            };
-                            let ws: Vec<Rect> = ms
-                                .iter()
-                                .map(|m| {
-                                    let wa = m.work_area();
-                                    Rect {
-                                        x: wa.position.x,
-                                        y: wa.position.y,
-                                        w: wa.size.width as i32,
-                                        h: wa.size.height as i32,
-                                    }
-                                })
-                                .collect();
-                            if ws.is_empty() {
-                                return; // 显示器尚未枚举完（开机早期）：本次不约束不检测
-                            }
-                            cache.monitors = Some((gen, ws.clone()));
-                            ws
-                        }
-                    }
-                };
-
-                // 限制贴纸不被拖出屏幕（W-16）：钳进「相交面积最大的显示器」工作区——并集
-                // 包围盒在非矩形排布下留「死区」，窗口可被拖进死区整块消失。越界就立刻拉回，
-                // 拖到边缘即停（吸边仍在界内，不受影响）。
-                let drag_target = clamp_target_for_drag(win, &works);
-                if let Some(target) = drag_target {
-                    let (cx, cy) = clamp_xy_to_work(win, target);
-                    if (cx, cy) != (win.x, win.y) {
-                        let _ = window.set_position(tauri::PhysicalPosition::new(cx, cy));
-                        return; // 钳正后会再触发一次 Moved（已在界内），那次再算吸附边
-                    }
-                }
-
-                // 贴边检测（W-16）：只对**虚拟桌面外侧边**（并集包围盒的边）吸附——双屏
-                // 内侧边是鼠标的必经之路，内侧可吸 + 零延迟展开 = 必然误触。
-                if let Some(vwork) = union_bbox(&works) {
-                    // 阈值按缩放放大：SNAP_THRESHOLD 是逻辑手感（20 逻辑像素），而这里全程
-                    // 物理像素比较——不乘 scale 的话 150% 屏上等效只剩 13 逻辑像素、200% 剩
-                    // 10，同一拖拽动作「有时吸得住有时吸不住」，用户会归因为随机故障
-                    // （条厚度 STRIP_W_LOGICAL 早就乘了 scale，两处度量此前口径不一）。
-                    let scale = window.scale_factor().unwrap_or(1.0);
-                    let threshold = (f64::from(SNAP_THRESHOLD) * scale).round() as i32;
-                    let edge = edge_for_rect(win, vwork, threshold);
-                    let changed = {
-                        let mut cache = moved_snap_cache.lock().unwrap();
-                        let changed = cache.last_edge != Some(edge);
-                        if changed {
-                            cache.last_edge = Some(edge);
-                        }
-                        changed
-                    };
-                    // W-2 原生吸附预览窗：候选边存在期间每帧驱动（沿边拖动时预览条位置跟随
-                    // 窗口），边消失的那帧隐藏一次；其余帧不碰预览窗。几何取相交面积最大的
-                    // 显示器工作区（与 snap_collapse 落点同口径）。返回 false = 预览窗不可
-                    // 用（创建失败熔断），前端回退画窗口内缘的 .snap-ghost 虚线框。
-                    let native = if edge.is_some() || changed {
-                        // 预览条只在真实拖拽（左键按下）中显影：启动时的位置恢复、程序化
-                        // set_position 等非拖拽移动同样产生 Moved + 候选边（实测开机恢复
-                        // 到顶边即触发 edge=Some(Top)），不该让预览条在屏边闪现/残留。
-                        let drag_edge = edge.filter(|_| crate::snap::pointer_left_down());
-                        snap_preview::update(
-                            window.app_handle(),
-                            drag_edge,
-                            win,
-                            drag_target.unwrap_or(vwork),
-                            scale,
-                        )
-                    } else {
-                        // 无候选边且非变化帧：预览窗已隐藏，无需再碰；此值不随事件发出。
-                        true
-                    };
-                    // W-9：吸附边没变就不重发——拖拽期间逐 Moved emit 是无谓的 IPC 刷屏。
-                    if changed {
-                        let _ = window.emit("snap-changed", SnapPayload { edge, native });
-                    }
-                }
-            }
-            // 贴纸失焦 = 拖拽不可能继续，预览条兜底隐藏（幂等，预览窗未创建时是空操作）。
-            #[cfg(target_os = "windows")]
-            if let tauri::WindowEvent::Focused(false) = event {
-                if window.label() == "main" {
-                    snap_preview::hide(window.app_handle());
-                }
-            }
-        })
         .setup(move |app| {
             // 【临时测试后门，验证外部终端恢复链路，测完删除】
             #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -1634,11 +1379,7 @@ pub fn run() {
                 app.handle(),
                 crate::settings::load_settings().click_through_enabled,
             );
-            // W-17：main 位置从 settings 恢复（window-state 插件对 main 已 denylist）；
-            // settings 无位置时一次性继承插件旧文件里的 main 坐标。
-            #[cfg(not(target_os = "macos"))]
-            restore_sticker_window_position(app.handle());
-            // 位置恢复（settings，W-17）后，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
+            // 前端 island_layout 摆好位置之前，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 pull_on_screen(&w, false);
@@ -1666,7 +1407,6 @@ pub fn run() {
                 }
                 // 装上位置约束子类：在移动生效前硬钳坐标，彻底拖不出屏幕。
                 if let Ok(h) = w.hwnd() {
-                    win_constrain::set_app(app.handle().clone()); // 供子类拖边框缩放时通知前端
                     win_constrain::install(h.0 as isize);
                 }
             }
@@ -1710,11 +1450,6 @@ pub fn run() {
                     window::open_onboarding_window(&handle);
                 });
             }
-            // W-2 吸附预览窗预热：子线程延迟到启动空闲点预建（保持 hidden，READY 握手
-            // 照走、不 show），消掉首次拖拽「建窗 + WebView2 首帧」的无预览窗口期。
-            // 与拖拽懒建同走 CREATING 门互斥；失败走既有 BROKEN 熔断，不拖慢启动。
-            #[cfg(target_os = "windows")]
-            snap_preview::prewarm(app.handle().clone());
             Ok(())
         })
         .build({
@@ -1760,32 +1495,6 @@ mod tests {
         is_viewing_session, pending_fingerprint, screen_blocked_fingerprint, should_notify,
         suppressed_by_viewing, waiting_fingerprint, NotifyKind,
     };
-
-    /// W-17：window-state 插件旧文件里 main 坐标的解析——正常文件取值（含多屏负坐标）；
-    /// 损坏/无 main 条目/坐标非整数一律 None（按「没有可继承的旧位置」处理）。
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn legacy_window_state_main_position_parsing() {
-        let raw = r#"{"main":{"width":360,"height":440,"x":-1280,"y":300,"prev_x":0,"prev_y":0,
-                       "maximized":false,"visible":true,"decorated":false,"fullscreen":false},
-                       "chat":{"x":10,"y":20}}"#;
-        assert_eq!(super::parse_legacy_main_position(raw), Some((-1280, 300)));
-
-        assert_eq!(super::parse_legacy_main_position("{broken"), None);
-        assert_eq!(
-            super::parse_legacy_main_position(r#"{"chat":{"x":1,"y":2}}"#),
-            None
-        );
-        assert_eq!(
-            super::parse_legacy_main_position(r#"{"main":{"x":"left","y":2}}"#),
-            None
-        );
-        assert_eq!(
-            super::parse_legacy_main_position(r#"{"main":{"x":1}}"#),
-            None,
-            "只有一个坐标不成对，不继承"
-        );
-    }
 
     /// 通知抑制的非对称：用户正看着某会话时不弹它的「等待你回复」（他就在屏幕前），
     /// 但要人做决定的通知（错误/待审批/屏幕阻塞）**永不抑制**——抑制它等于把需要
@@ -2177,10 +1886,7 @@ mod tests {
         assert!(!resume_argv_for(None, Some("SID")).is_empty());
     }
     use crate::settings::Settings;
-    use crate::snap::{
-        center_on, clamp_strip_extent, clamp_target_for_drag, clamp_xy_to_work, edge_for_rect,
-        intersection_area, preview_strip_rect, union_bbox, Edge, Rect,
-    };
+    use crate::snap::{clamp_xy_to_work, intersection_area, Rect};
 
     const WORK1: Rect = Rect {
         x: 0,
@@ -2559,29 +2265,6 @@ mod tests {
     }
 
     #[test]
-    fn center_on_centers_clamps_and_preserves_center() {
-        // 基本居中：300 长里放 60 → 起点 +120。
-        assert_eq!(center_on(100, 300, 60, 0, 1000), 220);
-        // 右/下越界 → 夹到工作区末尾内。
-        assert_eq!(center_on(950, 300, 60, 0, 1000), 940);
-        // 左/上越界（负） → 夹到工作区起点。
-        assert_eq!(center_on(-50, 100, 60, 0, 1000), 0);
-        // 重测一致：换长度后中心不变（220 中心=250 → 新起点 210，中心仍 250）。
-        assert_eq!(center_on(220, 60, 80, 0, 1000) + 80 / 2, 220 + 60 / 2);
-    }
-
-    #[test]
-    fn clamp_strip_extent_caps_to_work_axis() {
-        // 工作区内：原样保留。
-        assert_eq!(clamp_strip_extent(500, 1040), 500);
-        // 超出工作区主轴：钳到工作区长度（W-5：60 会话的条超出 1080p 工作区会被屏幕裁掉）。
-        assert_eq!(clamp_strip_extent(1046, 1040), 1040);
-        // 下限 1px；工作区异常为 0/负 时也不设出 0 尺寸的窗。
-        assert_eq!(clamp_strip_extent(0, 1040), 1);
-        assert_eq!(clamp_strip_extent(500, 0), 1);
-    }
-
-    #[test]
     fn safe_id_accepts_uuid_and_kimi() {
         // claude 的 UUID 与 kimi 的 session_<uuid> 都应通过（focus/resume/rename/note 共用此校验）。
         assert!(is_safe_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
@@ -2659,346 +2342,6 @@ mod tests {
         assert_eq!(tab_match_score("⠐ 任意标题", ""), 0);
         assert_eq!(tab_match_score("⠐ 任意标题", "  "), 0);
         assert_eq!(tab_match_score("⠐ (未命名会话)", "(未命名会话)"), 0);
-    }
-
-    const WORK: Rect = Rect {
-        x: 0,
-        y: 0,
-        w: 1920,
-        h: 1040,
-    };
-
-    // L/R 用例统一用 y=400（远离顶部），避免被顶部判定干扰。
-    #[test]
-    fn left_within_threshold() {
-        let win = Rect {
-            x: 5,
-            y: 400,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
-    }
-
-    #[test]
-    fn right_within_threshold() {
-        let win = Rect {
-            x: 1920 - 300 - 5,
-            y: 400,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Right));
-    }
-
-    #[test]
-    fn top_within_threshold() {
-        let win = Rect {
-            x: 800,
-            y: 8,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Top));
-    }
-
-    #[test]
-    fn center_is_none() {
-        let win = Rect {
-            x: 800,
-            y: 400,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), None);
-    }
-
-    #[test]
-    fn threshold_boundary_inclusive() {
-        let win = Rect {
-            x: 20,
-            y: 400,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Left));
-    }
-
-    #[test]
-    fn just_outside_threshold_none() {
-        let win = Rect {
-            x: 21,
-            y: 400,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), None);
-    }
-
-    #[test]
-    fn picks_nearer_edge() {
-        // 左距 5 < 右距 10，y 远离顶部 → 取左。
-        let work = Rect {
-            x: 0,
-            y: 0,
-            w: 320,
-            h: 1040,
-        };
-        let win = Rect {
-            x: 5,
-            y: 400,
-            w: 305,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
-    }
-
-    #[test]
-    fn top_nearer_than_left() {
-        // 左上角附近：顶距 3 < 左距 10 → 取顶。
-        let win = Rect {
-            x: 10,
-            y: 3,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, WORK, 20), Some(Edge::Top));
-    }
-
-    #[test]
-    fn respects_work_area_offset() {
-        let work = Rect {
-            x: 100,
-            y: 0,
-            w: 1000,
-            h: 1040,
-        };
-        let win = Rect {
-            x: 110,
-            y: 400,
-            w: 300,
-            h: 400,
-        };
-        assert_eq!(edge_for_rect(win, work, 20), Some(Edge::Left));
-    }
-
-    // W-2：吸附落点预览条几何——与 snap_collapse 同一套贴边/居中/钳制公式。
-    #[test]
-    fn preview_left_matches_collapse_geometry() {
-        // scale=1：厚度 28；窗口 (y=400,h=400) 中心 600，ext=200 → 条 y=500。
-        let win = Rect {
-            x: 0,
-            y: 400,
-            w: 360,
-            h: 400,
-        };
-        let r = preview_strip_rect(Edge::Left, win, WORK, 200.0, 1.0);
-        assert_eq!(
-            r,
-            Rect {
-                x: 0,
-                y: 500,
-                w: 28,
-                h: 200
-            }
-        );
-    }
-
-    #[test]
-    fn preview_right_and_top() {
-        // 右边：贴工作区右缘 1920-28。
-        let win = Rect {
-            x: 1560,
-            y: 400,
-            w: 360,
-            h: 400,
-        };
-        let r = preview_strip_rect(Edge::Right, win, WORK, 200.0, 1.0);
-        assert_eq!(
-            r,
-            Rect {
-                x: 1920 - 28,
-                y: 500,
-                w: 28,
-                h: 200
-            }
-        );
-        // 顶边：横条，以窗口中心水平居中（x=800+180-150），厚 28。
-        let top_win = Rect {
-            x: 800,
-            y: 0,
-            w: 360,
-            h: 400,
-        };
-        let r = preview_strip_rect(Edge::Top, top_win, WORK, 300.0, 1.0);
-        assert_eq!(
-            r,
-            Rect {
-                x: 800 + 180 - 150,
-                y: 0,
-                w: 300,
-                h: 28
-            }
-        );
-    }
-
-    #[test]
-    fn preview_scale_and_clamp() {
-        // scale=1.5：厚度 42；ext 逻辑 100 → 物理 150，窗口中心即条中心（不位移）。
-        let win = Rect {
-            x: 0,
-            y: 445,
-            w: 540,
-            h: 150,
-        };
-        let r = preview_strip_rect(Edge::Left, win, WORK, 100.0, 1.5);
-        assert_eq!(
-            r,
-            Rect {
-                x: 0,
-                y: 445,
-                w: 42,
-                h: 150
-            }
-        );
-        // 主轴长度钳到工作区高度（W-5 口径），居中结果夹进工作区。
-        let r = preview_strip_rect(Edge::Left, win, WORK, 99999.0, 1.0);
-        assert_eq!(
-            r,
-            Rect {
-                x: 0,
-                y: 0,
-                w: 28,
-                h: 1040
-            }
-        );
-    }
-
-    // W-16：双屏（左右并排）钳位目标 = 相交面积最大的显示器工作区。
-    const MON_L: Rect = Rect {
-        x: 0,
-        y: 0,
-        w: 1920,
-        h: 1040,
-    };
-    const MON_R: Rect = Rect {
-        x: 1920,
-        y: 0,
-        w: 1920,
-        h: 1040,
-    };
-
-    #[test]
-    fn union_bbox_of_side_by_side() {
-        assert_eq!(
-            union_bbox(&[MON_L, MON_R]),
-            Some(Rect {
-                x: 0,
-                y: 0,
-                w: 3840,
-                h: 1040,
-            })
-        );
-        assert_eq!(union_bbox(&[]), None);
-        assert_eq!(union_bbox(&[MON_L]), Some(MON_L));
-    }
-
-    #[test]
-    fn clamp_target_picks_max_intersection_monitor() {
-        // 窗口跨在双屏分界上，偏右屏（相交面积更大）→ 目标是右屏。
-        let straddle_right = Rect {
-            x: 1800,
-            y: 300,
-            w: 360,
-            h: 330,
-        };
-        assert_eq!(
-            clamp_target_for_drag(straddle_right, &[MON_L, MON_R]),
-            Some(MON_R)
-        );
-        // 偏左屏 → 目标是左屏。
-        let straddle_left = Rect {
-            x: 1700,
-            y: 300,
-            w: 360,
-            h: 330,
-        };
-        assert_eq!(
-            clamp_target_for_drag(straddle_left, &[MON_L, MON_R]),
-            Some(MON_L)
-        );
-        // 完全落在左屏内 → 左屏。
-        let inside_left = Rect {
-            x: 100,
-            y: 100,
-            w: 360,
-            h: 330,
-        };
-        assert_eq!(
-            clamp_target_for_drag(inside_left, &[MON_L, MON_R]),
-            Some(MON_L)
-        );
-    }
-
-    #[test]
-    fn clamp_target_falls_back_to_bbox_when_off_all_monitors() {
-        // 与所有屏都无交集（拖拽连续移动不可能到达，分辨率瞬变兜底）→ 退回并集包围盒。
-        let off = Rect {
-            x: -2000,
-            y: -2000,
-            w: 360,
-            h: 330,
-        };
-        assert_eq!(
-            clamp_target_for_drag(off, &[MON_L, MON_R]),
-            union_bbox(&[MON_L, MON_R])
-        );
-        assert_eq!(clamp_target_for_drag(off, &[]), None);
-    }
-
-    #[test]
-    fn staggered_layout_dead_zone_not_snap_edge() {
-        // 非矩形排布：右屏下移 200px。包围盒顶 y=0 之下、右屏顶 y=200 之上有 1920×200
-        // 死区。钳位目标取相交最大屏后窗口恒完整落在某屏内，贴边检测用包围盒——
-        // 右屏内的窗口顶边（y=200）距包围盒顶 200 > 阈值，不吸顶（外侧边才不吸错）。
-        let mon_r_low = Rect {
-            x: 1920,
-            y: 200,
-            w: 1920,
-            h: 1040,
-        };
-        let works = [MON_L, mon_r_low];
-        let win_right_top = Rect {
-            x: 2200,
-            y: 200,
-            w: 360,
-            h: 330,
-        };
-        let target = clamp_target_for_drag(win_right_top, &works).unwrap();
-        let (cx, cy) = clamp_xy_to_work(win_right_top, target);
-        let clamped = Rect {
-            x: cx,
-            y: cy,
-            ..win_right_top
-        };
-        let bbox = union_bbox(&works).unwrap();
-        assert_eq!(edge_for_rect(clamped, bbox, 20), None);
-        // 左屏顶（包围盒外侧边）仍正常吸顶。
-        let win_left_top = Rect {
-            x: 300,
-            y: 0,
-            w: 360,
-            h: 330,
-        };
-        assert_eq!(edge_for_rect(win_left_top, bbox, 20), Some(Edge::Top));
-        // 双屏内侧边（左屏右缘 x=1920）不是包围盒的边 → 不吸（W-16 防误触）。
-        let win_inner = Rect {
-            x: 1920 - 360,
-            y: 300,
-            w: 360,
-            h: 330,
-        };
-        assert_eq!(edge_for_rect(win_inner, bbox, 20), None);
     }
 
     #[test]

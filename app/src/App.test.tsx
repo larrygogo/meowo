@@ -276,7 +276,6 @@ describe("App", () => {
     render(<App />);
     await expandIsland();
     expect(layoutCalls()).toContainEqual({ width: 400, height: 460, centerRatio: null });
-    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("recall_center", expect.anything());
   });
 
   // 回归（DEV 实拍）：展开时窗口先长大，胶囊的测量回调恰在这时触发，按胶囊宽度把窗口又缩了
@@ -462,8 +461,6 @@ describe("App", () => {
     await waitFor(() =>
       expect(layoutCalls()).toContainEqual({ width: 148, height: 46, centerRatio: 0.3 })
     );
-    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("snap_collapse", expect.anything());
-    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("snap_restore", expect.anything());
   });
 
   // W-17 一次性迁移：旧版三套 localStorage 键（尺寸/吸附边/置顶）在 settings 字段缺席时

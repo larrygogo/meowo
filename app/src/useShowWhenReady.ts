@@ -13,9 +13,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
  *   普通 show() 在 Windows 上会激活窗口抢焦点（W-7），故改走 Rust 的 show_sticker 命令
  *   （SW_SHOWNOACTIVATE 路径，无声显形）。
  * `enabled: false` 给 macOS 面板模式的贴纸：显隐归 menubar 管，前端不得越权 show。
- * `ready`（默认 true）是**响应式**的额外闸门：贴纸以折叠态启动时要等 snap_collapse
- *   落地再显示——窗口此刻还是 360×440 的默认尺寸，先 show 会闪一帧「大框里挂几个圆点、
- *   随后骤缩成条」。false → true 的那次翻转触发显示；后端 show_after_grace 兜底不变。
+ * `ready`（默认 true）是**响应式**的额外闸门：贴纸启动时要等 island_layout 把窗口摆成
+ *   胶囊再显示——窗口此刻还是 tauri.conf 的默认尺寸，先 show 会闪一帧「大框随后骤缩成岛」。
+ *   false → true 的那次翻转触发显示；后端 show_after_grace 兜底不变。
  */
 export function useShowWhenReady(opts?: { focus?: boolean; enabled?: boolean; ready?: boolean }): void {
   const focus = opts?.focus ?? true;

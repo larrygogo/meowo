@@ -183,7 +183,7 @@ export function Sticker({
   loadError?: boolean;
   /** 重试回调：重新发起首页加载。 */
   onRetry?: () => void;
-  /** 吸附展开（偷看）态：置顶归后端 snap_* 管，此时 pin 开关只记偏好、不写窗口。 */
+  /** 灵动岛态：置顶归后端 island_layout 管，此时 pin 开关只记偏好、不写窗口。 */
   snapped?: boolean;
   /** 切 tab/搜索的首页请求在途（B-4）：保留旧列表灰化直到新数据就绪。 */
   switching?: boolean;
@@ -274,9 +274,8 @@ export function Sticker({
       invoke("set_panel_keep_open", { open: pinned }).catch(() => {});
       return;
     }
-    // 吸附展开（偷看）态不写：snap_expand 已强制置顶保证贴边窗口可见，这里若按 pinned=false
-    // 覆盖回去，展开的看板会立刻沉到活动窗口之下（表现为「悬停后闪一下就没了」）。
-    // 置顶偏好照常由 togglePin 落盘（settings，W-17），还原普通窗口时由 snap_restore(pinned) 统一套用。
+    // 灵动岛态不写：island_layout 恒置顶保证岛可见，这里若按 pinned=false 覆盖回去，
+    // 展开的列表会立刻沉到活动窗口之下（表现为「悬停后闪一下就没了」）。
     if (snapped) return;
     // 非 Tauri 环境（测试/浏览器）下 getCurrentWindow 会抛错，吞掉即可。
     try {
@@ -301,7 +300,7 @@ export function Sticker({
     ? pinned ? t.sticker.keepOpenOn : t.sticker.keepOpenOff
     : pinned ? t.sticker.pinOn : t.sticker.pinOff;
 
-  // 托盘「找回贴纸」只做临时置顶（recall_center 聚焦后按 pin 偏好还原，W-6），不改写
+  // 托盘「找回贴纸」只做临时置顶（后端聚焦后按 pin 偏好还原，W-6），不改写
   // 持久化的 pin 偏好、不动这里的 pinned 状态——用户的置顶偏好不被「找回」顺手改掉。
 
   // 会话置顶：置顶的会话永远排到列表最前（跨重启保留）。与「置顶窗口(alwaysOnTop)」是两回事——

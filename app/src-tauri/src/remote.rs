@@ -1704,8 +1704,6 @@ mod tests {
             "search_project_files",
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
             // ensure_session_dir + changed_file_listed，由各自的单测钉住；其余 git_* 仍拒。
-            "snap_expand",
-            "snap_collapse",
             "set_autostart",
             "clipboard_text",
             "clipboard_set_image",

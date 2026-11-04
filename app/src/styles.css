@@ -1423,7 +1423,7 @@ button.stab {
   user-select: none;
 }
 
-/* 拖拽靠近边缘时，对应一侧发光提示（内容不变，松手才折叠） */
+/* 吸边发光条：应用本身已改灵动岛不再吸边，只剩官网演示（demo/DemoStage）在用，故保留 */
 .snap-glow {
   position: fixed;
   z-index: 9999;
@@ -1437,51 +1437,6 @@ button.stab {
 .snap-glow-right { top: 14px; bottom: 14px; right: 0; width: 4px; border-radius: var(--r-3) 0 0 var(--r-3); }
 .snap-glow-top { left: 14px; right: 14px; top: 0; height: 4px; border-radius: 0 0 var(--r-3) var(--r-3); }
 @keyframes snap-glow-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-/* W-2：吸附落点预览——拖拽靠近屏幕边缘时，沿候选边画缩略条的幽灵轮廓（厚度 28px
-   与真实折叠条一致，主轴长度由 App 按 stripExtent 内联给出，贴窗口内缘；候选边判定
-   阈值 20px，此刻窗口内缘与屏幕工作区边缘基本重合，轮廓即落点形状）。
-   与 4px 发光条配套：glow 指「会吸到哪条边」，ghost 指「落下后是什么形状」。 */
-.snap-ghost {
-  position: fixed;
-  z-index: 9998;
-  pointer-events: none;
-  box-sizing: border-box;
-  border: 2px dashed var(--cc-accent-border);
-  background: var(--cc-accent-soft);
-  animation: snap-glow-pulse 0.9s ease-in-out infinite;
-}
-.snap-ghost-left { left: 0; top: 50%; transform: translateY(-50%); width: 28px; border-radius: 0 var(--r-lg) var(--r-lg) 0; }
-.snap-ghost-right { right: 0; top: 50%; transform: translateY(-50%); width: 28px; border-radius: var(--r-lg) 0 0 var(--r-lg); }
-.snap-ghost-top { top: 0; left: 50%; transform: translateX(-50%); height: 28px; border-radius: 0 0 var(--r-lg) var(--r-lg); }
-
-/* W-2 原生吸附预览条（Windows，snap-preview 窗口的全部内容）：与 .snap-ghost 同色系
-   （虚线描边 + accent 浅底 + 同步呼吸）。圆角按候选边与真实缩略条同形态（.cstrip-{edge}
-   同款）——贴屏边的一侧直角、自由侧圆角；当前边由 Rust 经 body[data-edge] 逐帧推送。
-   该窗由 Rust 逐帧定位到屏幕边缘、点击穿透；本元素只管填满窗口并呈现主题色。 */
-.snap-preview-bar {
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  border: 2px dashed var(--cc-accent-border);
-  background: var(--cc-accent-soft);
-  border-radius: var(--r-lg);
-  animation: snap-glow-pulse 0.9s ease-in-out infinite;
-}
-body[data-edge="top"] .snap-preview-bar { border-radius: 0 0 var(--r-lg) var(--r-lg); }
-body[data-edge="left"] .snap-preview-bar { border-radius: 0 var(--r-lg) var(--r-lg) 0; }
-body[data-edge="right"] .snap-preview-bar { border-radius: var(--r-lg) 0 0 var(--r-lg); }
-
-/* W-4：展开过渡占位——snap_expand/snap_restore 落地前窗口仍是 28px 细条几何，全量看板
-   此刻渲染会被压进细条宽度造成布局抖动；先铺一块与贴纸同底色/边框/圆角的纯色块
-   （尺寸余量与 .sticker 同口径），尺寸落地后再挂载内容。 */
-.snap-expanding {
-  width: calc(100% - 2px);
-  height: calc(100% - 2px);
-  background: var(--cc-bg);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--r-14);
-  backdrop-filter: blur(30px);
-}
 
 /* ===== 设置面板（无边框独立窗口：左侧栏 + 右内容） ===== */
 .settings {

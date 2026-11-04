@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { TooltipLayer } from "./Tooltip";
-import { SnapPreview } from "./views/SnapPreview";
 import { lockdownInProduction, suppressNativeFind } from "./devtools-guard";
 import { installInputModality } from "./input-modality";
 import { bootAppearance } from "./appearance";
@@ -74,9 +73,6 @@ void detectHostOs().then(() => {
         <React.Suspense fallback={null}>
           {label === "about" ? (
             <About />
-          ) : label === "snap-preview" ? (
-            // W-2 吸附落点预览条（Windows）：极简单色块，静态引入不拆 chunk。
-            <SnapPreview />
           ) : label === "updater" ? (
             <Updater />
           ) : label === "new-session" ? (

@@ -4,23 +4,11 @@
 //! 提醒 / 展开成完整列表）只是尺寸不同：前端给逻辑宽高，这里按**当前中心点**左右对称
 //! 地放大缩小，所以从胶囊长成列表时不会往一边歪。
 //!
-//! 拖动不用系统拖拽（`start_dragging` 会连上下一起拖，还会进旧的吸边判定）：前端按下时
+//! 拖动不用系统拖拽（`start_dragging` 会连上下一起拖）：前端按下时
 //! 调 begin、移动时调 update、松手时调 end，由这里读真实光标位置算横坐标。拖过显示器边界
 //! 就落到那块屏的顶边。
-//!
-//! 岛模式下 lib.rs 的 Moved 吸边逻辑整段跳过（见 [`active`]），两套定位互不打架。
 
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "windows")]
-use tauri::Manager as _;
 use std::sync::Mutex;
-
-static ACTIVE: AtomicBool = AtomicBool::new(false);
-
-/// 岛模式是否已接管主窗口定位。lib.rs 的 Moved 吸边据此让路。
-pub(crate) fn active() -> bool {
-    ACTIVE.load(Ordering::Relaxed)
-}
 
 /// 拖动起点：(光标物理 x, 窗口左上角物理 x)。
 static DRAG: Mutex<Option<(f64, i32)>> = Mutex::new(None);
@@ -73,7 +61,7 @@ fn monitor_at(window: &tauri::WebviewWindow, x: f64, y: f64) -> Option<tauri::wi
 }
 
 /// 设定岛的尺寸（逻辑宽高）并贴顶摆放。`center_ratio` 给了就按它定中心（启动时还原记住的
-/// 位置），否则保持当前中心（形态切换）。首次调用即进入岛模式。
+/// 位置），否则保持当前中心（形态切换）。
 #[tauri::command]
 pub(crate) fn island_layout(
     window: tauri::WebviewWindow,
@@ -81,9 +69,6 @@ pub(crate) fn island_layout(
     height: f64,
     center_ratio: Option<f64>,
 ) -> Result<(), String> {
-    ACTIVE.store(true, Ordering::Relaxed);
-    #[cfg(target_os = "windows")]
-    crate::snap_preview::hide(window.app_handle());
     let monitor = window
         .current_monitor()
         .ok()
