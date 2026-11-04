@@ -46,6 +46,7 @@ export const zh = {
     usageLane: { five_hour: "5 小时用量", seven_day: "7 天用量", weekly: "本周用量", other: "用量" } as Record<string, string>,
     page: (n: number) => `第 ${n} 页`,
     remaining: "剩余",
+    moreAlerts: (n: number) => `还有 ${n} 条`,
     prevPage: "上一页",
     nextPage: "下一页",
   },

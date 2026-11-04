@@ -42,6 +42,7 @@ export const en: Dict = {
     usageLane: { five_hour: "5-hour usage", seven_day: "7-day usage", weekly: "Weekly usage", other: "Usage" } as Record<string, string>,
     page: (n: number) => `Page ${n}`,
     remaining: "left",
+    moreAlerts: (n: number) => `${n} more`,
     prevPage: "Previous page",
     nextPage: "Next page",
   },

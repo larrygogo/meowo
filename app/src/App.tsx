@@ -454,6 +454,8 @@ export function App() {
   const [closing, setClosing] = useState(false);
   const [alert, setAlert] = useState<IslandAlertEvent | null>(null);
   const alertQueueRef = useRef<IslandAlertEvent[]>([]);
+  // 队列里还排着几条（不含正在弹的那条），提醒卡片上显示「还有 N 条」。
+  const [alertQueued, setAlertQueued] = useState(0);
   const alertTimerRef = useRef<number | null>(null);
   // 胶囊（刘海本体，不含耳朵）的实测宽度。展开/收起动画以它为起止轮廓，窗口收回时按它定尺寸。
   const [pillWidth, setPillWidth] = useState(ISLAND_PILL_MIN_WIDTH);
@@ -517,6 +519,7 @@ export function App() {
     }
     // 展开着不弹提醒：排队的那些在面板/列表里都看得到，作废。
     alertQueueRef.current = [];
+    setAlertQueued(0);
     setAlert(null);
     // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是新形态，不会去缩窗口。
     islandModeRef.current = mode;
@@ -558,6 +561,7 @@ export function App() {
   const pumpAlert = useCallback(() => {
     if (islandModeRef.current !== "compact" || alertTimerRef.current != null) return;
     const next = alertQueueRef.current.shift();
+    setAlertQueued(alertQueueRef.current.length);
     if (!next) return;
     setAlert(next);
     islandModeRef.current = "alert";
@@ -586,7 +590,12 @@ export function App() {
       // 设置还没读到时（启动头一两秒）按全开处理，宁可多弹一次也别漏掉要人处理的事。
       const enabled = islandAlertsRef.current;
       if (enabled && !enabled.includes(islandAlertSwitch(event.payload.kind))) return;
-      alertQueueRef.current.push(event.payload);
+      // 同一会话排队中的旧提醒换成新的：一个会话接连变状态时只弹最新的那条，不连弹好几次。
+      alertQueueRef.current = [
+        ...alertQueueRef.current.filter((queued) => queued.sessionId !== event.payload.sessionId),
+        event.payload,
+      ];
+      setAlertQueued(alertQueueRef.current.length);
       pumpAlert();
     });
     return () => {
@@ -894,6 +903,7 @@ export function App() {
       sessions={stripSessions}
       compactStyle={islandCompact}
       alert={islandMode === "alert" ? alert : null}
+      alertQueued={alertQueued}
       usages={islandUsages}
       onMeasure={onMeasure}
       onActivate={expand}

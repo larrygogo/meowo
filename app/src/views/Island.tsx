@@ -97,6 +97,7 @@ export function Island({
   onOpenSession,
   onPointerDownDrag,
   onAlertHover,
+  alertQueued = 0,
 }: {
   sessions: readonly Item[];
   compactStyle: IslandCompactStyle;
@@ -113,6 +114,8 @@ export function Island({
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
   /** 鼠标进出提醒：App 据此暂停/恢复提醒的倒计时。 */
   onAlertHover?: (hovering: boolean) => void;
+  /** 提醒队列里还排着几条（不含正在弹的）。 */
+  alertQueued?: number;
 }) {
   const t = useT();
   const now = useNow();
@@ -226,8 +229,11 @@ export function Island({
             <Eyes tone={alertTone} small />
             <span className={`isl-alert-icon is-${alertTone}`}><AlertIcon kind={alert.kind} /></span>
             <span className="isl-alert-text">
-              <span className="isl-alert-title">
-                {alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput}
+              <span className="isl-alert-title-row">
+                <span className="isl-alert-title">
+                  {alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput}
+                </span>
+                {alertQueued > 0 && <span className="isl-alert-more">{t.island.moreAlerts(alertQueued)}</span>}
               </span>
               <span className="isl-alert-sub">
                 <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>

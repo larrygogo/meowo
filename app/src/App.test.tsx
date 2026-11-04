@@ -399,6 +399,23 @@ describe("App", () => {
     }
   });
 
+  it("几条提醒一起来：排队一条条弹、显示还剩几条；同一会话只保留最新的", async () => {
+    render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    const alertOf = (sessionId: number, title: string) =>
+      ({ payload: { sessionId, kind: "waiting", title, project: "p", detail: null } });
+    act(() => {
+      emitIslandAlert(alertOf(1, "第一条"));
+      emitIslandAlert(alertOf(2, "第二条"));
+      emitIslandAlert(alertOf(3, "第三条"));
+    });
+    expect(await screen.findByText("第一条")).toBeTruthy();
+    expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+    // 会话 2 又来一条：替换排队中的旧的，不再多排一条。
+    act(() => { emitIslandAlert(alertOf(2, "第二条（新）")); });
+    expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+  });
+
   it("展开着的时候不弹提醒（人就在看列表）", async () => {
     render(<App />);
     await expandIsland();
