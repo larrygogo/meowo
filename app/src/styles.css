@@ -6877,8 +6877,17 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-big-val small, .isl-mid-val small { font-size: 11px; color: var(--isl-dim); font-weight: 500; margin-left: 1px; }
 .isl-side-label { font-size: 11px; color: var(--isl-text-2); text-align: center; }
 .isl-side-sub { font-size: 11px; color: var(--isl-dim); margin-top: -4px; }
-.isl-panel-body.is-usage { justify-content: center; gap: 28px; padding: 6px 0 4px; }
-.isl-usage-cell { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.isl-panel-body.is-usage { justify-content: center; align-items: stretch; gap: 0; padding: 2px 0 4px; flex-wrap: wrap; }
+/* 每家一栏：栏顶 logo + 名字，下面每档额度一个环；栏与栏之间一道细线。 */
+.isl-usage-group { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 18px; }
+.isl-usage-group + .isl-usage-group { border-left: 1px solid var(--isl-chip-hover); }
+.isl-usage-head { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--isl-text-2); }
+.isl-usage-head-logo { display: grid; place-items: center; width: 14px; height: 14px; }
+.isl-usage-head-logo svg, .isl-usage-head-logo img { width: 13px !important; height: 13px !important; }
+.isl-usage-lanes { display: flex; gap: 14px; }
+.isl-usage-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 50px; }
+.isl-usage-cell .isl-mid-val { font-size: 14px; }
+.isl-usage-cell .isl-side-sub { margin-top: 0; white-space: nowrap; }
 .isl-dots-nav { display: flex; justify-content: center; gap: 5px; margin-top: 10px; }
 /* 左右翻页箭头（照参考图）：贴面板两侧、垂直居中的小圆钮。 */
 .isl-panel { position: relative; }

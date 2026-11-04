@@ -304,6 +304,21 @@ describe("IslandPanel 展开面板", () => {
     expect(screen.getByText("Codex")).toBeTruthy();
   });
 
+  // 用户问「为什么只有一个用量」：每家的每档额度都要列出来，不只主泳道。
+  it("用量页每家每档额度一个环，叫法与贴纸底栏一致", () => {
+    const usage = {
+      codex: { lanes: [lane("weekly", 79), lane("five_hour", 30), lane("other", null)], note: null },
+    } as unknown as Record<string, ProviderUsage>;
+    const { container } = renderPanel({ usage });
+    fireEvent.click(screen.getByRole("button", { name: zh.island.nextPage }));
+    const cells = container.querySelectorAll(".isl-usage-group .isl-usage-cell");
+    // 没有百分比的那档不画；短窗口排在前面。
+    expect(cells).toHaveLength(2);
+    expect(cells[0].textContent).toContain(zh.account.laneFiveHour);
+    expect(cells[1].textContent).toContain(zh.account.laneWeekly);
+    expect(cells[1].textContent).toContain("79");
+  });
+
   it("左右箭头翻页，到头绕回", () => {
     const usage = { claude: { lanes: [lane("five_hour", 43)], note: null } } as unknown as Record<string, ProviderUsage>;
     const { container } = renderPanel({ usage });

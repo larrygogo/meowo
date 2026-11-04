@@ -2,7 +2,8 @@
 // 第 1 页：最要紧的几个会话 + 额度大环；第 2 页（有额度数据才有）：各 agent 的额度。
 // 完整列表（搜索、菜单、归档……）不塞进这里：右上「全部」打开原来的贴纸列表。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ProviderUsage } from "../../api";
+import type { ProviderUsage, UsageLane } from "../../api";
+import { agentAssets, tintStyle } from "../../providers";
 import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
@@ -12,6 +13,16 @@ import { pickIslandUsage, primaryLane } from "./useIslandUsage";
 
 /// 面板上最多列几个会话。更多的去「全部」里看。
 const MAX_ROWS = 3;
+
+/// 用量页的泳道顺序：短窗口在前，再是周/7 天，再是模型专属周限，其余殿后。
+const LANE_ORDER = ["five_hour", "seven_day", "weekly", "model_weekly", "opus", "balance", "other"];
+
+function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
+  if (!usage) return [];
+  return usage.lanes
+    .filter((lane) => lane.used_pct != null)
+    .sort((a, b) => LANE_ORDER.indexOf(a.kind) - LANE_ORDER.indexOf(b.kind));
+}
 
 function providerLabel(provider: string): string {
   return provider ? provider[0].toUpperCase() + provider.slice(1) : provider;
@@ -25,6 +36,7 @@ export function IslandPanel({
   onShowAll,
   onMeasure,
   onPointerDownDrag,
+  initialPage = 0,
 }: {
   sessions: readonly Item[];
   usage: Record<string, ProviderUsage>;
@@ -34,11 +46,13 @@ export function IslandPanel({
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
+  /** 打开时停在第几页（0 起）。 */
+  initialPage?: number;
 }) {
   const t = useT();
   const now = useNow();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(initialPage);
   const rows = useMemo(() => byUrgency(sessions).slice(0, MAX_ROWS), [sessions]);
   // 大环显示「正在用的」那家：面板里列的会话用的 agent 优先，再按设置顺序。
   const main = pickIslandUsage(usage, quotaProviders, byUrgency(sessions).map((item) => item.provider));
@@ -58,6 +72,18 @@ export function IslandPanel({
   }, [onMeasure, current]);
 
   const laneLabel = (kind: string) => t.island.usageLane[kind] ?? t.island.usageLane.other;
+  // 泳道全名与贴纸底栏同一套叫法（t.account.lane*），两处说法一致。
+  const laneName = (lane: UsageLane) => {
+    switch (lane.kind) {
+      case "five_hour": return t.account.laneFiveHour;
+      case "seven_day": return t.account.laneSevenDay;
+      case "weekly": return t.account.laneWeekly;
+      case "opus": return t.account.laneOpus;
+      case "model_weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
+      case "balance": return t.account.laneBalance;
+      default: return t.island.usageLane.other;
+    }
+  };
 
   return (
     <div className="isl-stage">
@@ -122,16 +148,29 @@ export function IslandPanel({
           </div>
         ) : (
           <div className="isl-panel-body is-usage">
+            {/* 每家一栏、每档额度一个环：此前每家只取一个主泳道，5 小时与本周、模型周限只露一个，
+                用户问「为什么只有一个用量」。 */}
             {usageProviders.map((provider) => {
-              const lane = primaryLane(usage[provider]);
-              if (!lane) return null;
+              const { Icon } = agentAssets(provider);
               return (
-                <div key={provider} className="isl-usage-cell">
-                  <Ring size={64} stroke={5} value={lane.pct / 100} color={usageColor(lane.pct)} track={usageTrack(lane.pct)}>
-                    <span className="isl-mid-val">{Math.round(lane.pct)}<small>%</small></span>
-                  </Ring>
-                  <span className="isl-side-label">{providerLabel(provider)}</span>
-                  <span className="isl-side-sub">{laneLabel(lane.kind)}</span>
+                <div key={provider} className="isl-usage-group">
+                  <span className="isl-usage-head">
+                    <span className="isl-usage-head-logo" style={tintStyle(provider)}><Icon /></span>
+                    {providerLabel(provider)}
+                  </span>
+                  <div className="isl-usage-lanes">
+                    {shownLanes(usage[provider]).map((lane, i) => {
+                      const pct = lane.used_pct as number;
+                      return (
+                        <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell">
+                          <Ring size={50} stroke={4.5} value={pct / 100} color={usageColor(pct)} track={usageTrack(pct)}>
+                            <span className="isl-mid-val">{Math.round(pct)}<small>%</small></span>
+                          </Ring>
+                          <span className="isl-side-sub">{laneName(lane)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}
