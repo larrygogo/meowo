@@ -550,6 +550,11 @@ export function readImagePreview(cwd: string, rel: string): Promise<ImagePreview
 export function searchProjectFiles(cwd: string, query: string): Promise<SearchResultDto> {
   return invoke("search_project_files", { cwd, query });
 }
+/** 输入框 `@` 补全候选（只回相对路径，目录带 `/`，不读文件内容）。手机端用它：上面两个
+ *  文件浏览命令是远程拒绝项。传参改动须同步 remote.rs 的 FileMentionCandidatesArgs。 */
+export function fileMentionCandidates(cwd: string, query: string): Promise<string[]> {
+  return invoke("file_mention_candidates", { cwd, query });
+}
 
 /** 文件面板「打开」菜单：能打开该文件的应用清单（Windows 为系统「打开方式」推荐列表，
  *  含图标；其余平台为探测到的编辑器）。目录返回空；系统默认应用不在其中，前端恒列。 */

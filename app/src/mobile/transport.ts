@@ -172,6 +172,7 @@ let fakeListenerId = 0;
 const SLOW_COMMANDS = new Set([
   "save_pasted_attachment",
   "new_session",
+  "fork_session",
   "start_managed_terminal",
   "takeover_managed_terminal",
   "attach_background_session",

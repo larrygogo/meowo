@@ -3759,7 +3759,7 @@ export function ChatWindow() {
             starred={!!history.ccSessionId && starredSet.has(history.ccSessionId)}
             onToggleStar={toggleStar}
             onRename={() => setRenaming(true)}
-            onFork={chatUi?.fork && sessionId > 0 && !remoteUi() ? () => void forkCurrent() : undefined}
+            onFork={chatUi?.fork && sessionId > 0 ? () => void forkCurrent() : undefined}
             onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
             onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
             onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}

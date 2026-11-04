@@ -309,6 +309,87 @@ fn search_project_files_blocking(cwd: &str, query: &str) -> Result<SearchResultD
     Ok(SearchResultDto { files, truncated })
 }
 
+/// `@` 补全候选的条数上限（菜单只露 8 行）。
+const MENTION_MAX: usize = 8;
+
+/// 输入框 `@` 文件补全的候选：只回文件/目录名（相对路径，目录带 `/`），**不读文件内容**。
+/// 手机端靠它补全——search_project_files 会把命中行的内容带回去，list_dir_entries 能列任意
+/// 子目录的元数据，两者都是远程拒绝项（任意本地文件读，见 remote.rs 模块头）。规则与桌面
+/// composerCompletion 一致：含 `/` 或不足 2 字符时浏览对应目录、末段做前缀过滤；否则按名称
+/// 子串跨目录搜。含空白的路径剔除（claude 的提及解析在空白处截断）。
+#[tauri::command]
+pub(crate) async fn file_mention_candidates(cwd: String, query: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || file_mention_candidates_blocking(&cwd, &query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn file_mention_candidates_blocking(cwd: &str, query: &str) -> Result<Vec<String>, String> {
+    let (dir_part, leaf) = match query.rfind('/') {
+        Some(i) => (&query[..i], &query[i + 1..]),
+        None => ("", query),
+    };
+    let leaf_lower = leaf.to_lowercase();
+    let usable = |rel: &str| !rel.chars().any(char::is_whitespace);
+    if query.contains('/') || leaf.chars().count() < 2 {
+        // 目录浏览：resolve_inside 拦住 `..` / 绝对路径 / 指向外面的链接。
+        let dir = resolve_inside(cwd, dir_part)?;
+        let mut entries: Vec<(bool, String)> = std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.to_lowercase().starts_with(&leaf_lower) {
+                    return None;
+                }
+                let is_dir = entry.file_type().ok()?.is_dir();
+                Some((is_dir, name))
+            })
+            .collect();
+        entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        return Ok(entries
+            .into_iter()
+            .map(|(is_dir, name)| {
+                let rel = if dir_part.is_empty() { name } else { format!("{dir_part}/{name}") };
+                if is_dir { format!("{rel}/") } else { rel }
+            })
+            .filter(|rel| usable(rel))
+            .take(MENTION_MAX)
+            .collect());
+    }
+    // 跨目录按名称搜：遍历纪律同 search_project_files（显式栈、跳过依赖目录、条目上限、
+    // 不跟随链接目录），只是不碰文件内容。
+    let root = resolve_inside(cwd, "")?;
+    let mut hits: Vec<String> = Vec::new();
+    let mut visited = 0usize;
+    let mut stack: Vec<(PathBuf, String)> = vec![(root, String::new())];
+    'walk: while let Some((dir, rel_base)) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else { continue };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            visited += 1;
+            if visited > SEARCH_MAX_ENTRIES || hits.len() >= MENTION_MAX {
+                break 'walk;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(file_type) = entry.file_type() else { continue };
+            let rel = if rel_base.is_empty() { name.clone() } else { format!("{rel_base}/{name}") };
+            if file_type.is_dir() {
+                if !SEARCH_SKIP_DIRS.contains(&name.as_str()) {
+                    stack.push((entry.path(), rel));
+                }
+                continue;
+            }
+            if file_type.is_file() && name.to_lowercase().contains(&leaf_lower) && usable(&rel) {
+                hits.push(rel);
+            }
+        }
+    }
+    hits.sort();
+    Ok(hits)
+}
+
 /// 单文件内容匹配：返回（展示用命中行 ≤ SEARCH_MAX_HITS_PER_FILE 条，命中总行数）。
 /// 太大/读失败/二进制一律按 (空, 0) 跳过——搜索是尽力而为的扫描，
 /// 单个文件的问题不该让整次搜索失败。
@@ -685,6 +766,37 @@ mod tests {
         assert!(resolve_inside(tmp.path(), "../..").is_err());
         assert!(resolve_inside(tmp.path(), "sub/../..").is_err());
         assert!(resolve_inside(tmp.path(), "不存在").is_err());
+    }
+
+    /// `@` 补全候选：浏览与按名搜索都只回路径，内容命中不算；`..` 出不了工作目录。
+    #[test]
+    fn file_mention_candidates_returns_names_only_and_stays_inside() {
+        let tmp = TempDir::new();
+        let root = Path::new(tmp.path());
+        std::fs::create_dir_all(root.join("src/main")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("src/lib.rs"), "// main 只在内容里").unwrap();
+        std::fs::write(root.join("node_modules/pkg/main.js"), "").unwrap();
+        std::fs::write(root.join("my notes.md"), "").unwrap();
+        let cwd = root.to_str().unwrap();
+
+        // 浏览：目录在前带 `/`，末段按前缀过滤，含空白的剔除。
+        assert_eq!(
+            file_mention_candidates_blocking(cwd, "").unwrap(),
+            vec!["node_modules/".to_string(), "src/".to_string()]
+        );
+        assert_eq!(
+            file_mention_candidates_blocking(cwd, "src/ma").unwrap(),
+            vec!["src/main/".to_string(), "src/main.rs".to_string()]
+        );
+        // 按名搜索：lib.rs 的内容里有 main，但不算命中；依赖目录不进。
+        assert_eq!(
+            file_mention_candidates_blocking(cwd, "main").unwrap(),
+            vec!["src/main.rs".to_string()]
+        );
+        // 越界被拦。
+        assert!(file_mention_candidates_blocking(cwd, "../").is_err());
     }
 
     /// 字面包含判断：目录里指向外部的链接本身算在内（定位只选中链接），`..` 越界与不存在仍拒。

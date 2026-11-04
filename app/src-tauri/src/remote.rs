@@ -23,6 +23,11 @@
 //!    - 文件浏览类：`read_file_text` / `list_dir_entries` / `search_project_files`
 //!      / 其余 `git_*`（任意本地文件读，v1 砍掉）
 //!
+//! 例外（2026-11-04 用户决定）：`file_mention_candidates` 放行，供输入框 `@` 补全。它只回
+//! 文件/目录名、不读文件内容，目录同样过 `ensure_session_dir`；子目录浏览经 `resolve_inside`
+//! 拦住 `..`、绝对路径和指向外面的链接。读内容的 `search_project_files` 与能列任意目录的
+//! `list_dir_entries` 仍拒。
+//!
 //! 例外（2026-10-31 用户决定，对照 Kimi 手机端的改动列表）：`git_diff_summary` /
 //! `git_file_diff` 放行，但两道收口——目录必须是某会话的 cwd 或附加目录
 //! （store `is_session_dir`，逐字比较）；单文件 diff 的路径必须出现在该目录此刻的
@@ -131,11 +136,16 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "agent_models",
     "agent_model_catalog",
     "new_session",
+    // 分叉会话（2026-11-04 用户决定放行）：与 new_session 同级——在原会话目录起一个新的托管
+    // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
+    "fork_session",
     "check_provider_hooks",
     "list_subdirectories",
     // 改动列表（只读，收口见模块头「例外」一节）
     "git_diff_summary",
     "git_file_diff",
+    // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
+    "file_mention_candidates",
     // 只读杂项
     "get_settings",
     "host_os",
@@ -801,6 +811,8 @@ bridged_args!(SearchChatTranscriptsArgs { query: String });
 bridged_args!(RecentCwdsArgs { limit: usize });
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
+bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
+bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
 
 bridged_args!(GitFileDiffArgs {
     cwd: String,
@@ -1052,6 +1064,17 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::git::git_diff_summary(a.cwd).await)
+        }
+        "file_mention_candidates" => {
+            let a = args!(FileMentionCandidatesArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::fsutil::file_mention_candidates(a.cwd, a.query).await)
+        }
+        "fork_session" => {
+            let a = args!(ForkSessionArgs);
+            reply(crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows).await)
         }
         "git_file_diff" => {
             let a = args!(GitFileDiffArgs);
@@ -1674,6 +1697,7 @@ mod tests {
             "install_downloaded_update",
             "read_file_text",
             "list_dir_entries",
+            // 读内容的全文搜索仍拒：手机 `@` 补全走只回名字的 file_mention_candidates。
             "search_project_files",
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
             // ensure_session_dir + changed_file_listed，由各自的单测钉住；其余 git_* 仍拒。
@@ -2099,6 +2123,10 @@ mod tests {
                 parse::<AgentModelCatalogArgs>(br#"{"provider":"kimi","sessionId":41}"#).map(|_| ())
             }
             // api.ts:941（options 可选、extraDirs 恒发——空也发 []，2026-08-31 事故的字段）
+            // api.ts forkSession
+            "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),
+            // api.ts fileMentionCandidates
+            "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,
             )
