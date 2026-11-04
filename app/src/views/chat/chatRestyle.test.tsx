@@ -92,9 +92,15 @@ describe("终端式工具行", () => {
   });
 
   it("未识别的工具原样用工具 id 作动词", () => {
+    expect(toolKind("SomeNewTool")).toBe("other");
+    render(<ToolActivity item={{ type: "tool_use", id: "t2", timestamp: null, name: "SomeNewTool", summary: "" }} />);
+    expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("SomeNewTool");
+  });
+
+  it("MCP 工具的动词去掉 mcp__ 前缀，显示成「服务 · 工具」", () => {
     expect(toolKind("mcp__x__do")).toBe("other");
-    render(<ToolActivity item={{ type: "tool_use", id: "t2", timestamp: null, name: "mcp__x__do", summary: "" }} />);
-    expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("mcp__x__do");
+    render(<ToolActivity item={{ type: "tool_use", id: "t3", timestamp: null, name: "mcp__x__do", summary: "" }} />);
+    expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("x · do");
   });
 });
 

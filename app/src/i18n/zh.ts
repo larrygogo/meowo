@@ -1050,6 +1050,28 @@ export const zh = {
       todo: "待办",
       agent: "子任务",
     } as Record<string, string>,
+    // 归不进上面几类的工具按原名精确对照。只收本机实测高频的 claude 工具（11-04 统计近两周
+    // 43 个会话：TaskStop 71 次、Skill 54、SendMessage 38、AskUserQuestion 31…），此前原样
+    // 显示英文名。没收录的照旧回落成原名，比编一个错译好。
+    toolOtherNames: {
+      Skill: "技能",
+      SendMessage: "发消息",
+      AskUserQuestion: "提问",
+      TaskStop: "停止任务",
+      TaskOutput: "任务输出",
+      TaskCreate: "新建任务",
+      TaskUpdate: "更新任务",
+      TaskList: "任务列表",
+      TaskGet: "查看任务",
+      Monitor: "监视",
+      ScheduleWakeup: "定时唤醒",
+      CronCreate: "定时任务",
+      CronDelete: "取消定时",
+      CronList: "定时列表",
+      PushNotification: "推送通知",
+      ExitPlanMode: "提交计划",
+      EnterPlanMode: "进入计划",
+    } as Record<string, string>,
     modelDesc: {
       fable: "能力高于 Opus 的旗舰档",
       opus: "最强推理，复杂任务首选",
