@@ -13,7 +13,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import { listDirEntries, searchProjectFiles } from "../../api";
+import { fileMentionCandidates, listDirEntries, searchProjectFiles } from "../../api";
 import { pushEscLayer } from "../../escLayers";
 import { remoteUi } from "../../remoteMode";
 
@@ -39,9 +39,7 @@ export function useAtFileCompletion({ cwd, prompt, setPrompt, promptInputRef }: 
   const atSeqRef = useRef(0);
   const atActive = atFiles.length ? Math.min(atIndex, atFiles.length - 1) : -1;
   useEffect(() => {
-    // 远程:list_dir_entries / search_project_files 是 /rpc 拒绝项(v1 砍文件浏览),
-    // 补全永远给不出候选——干脆不出菜单,免得看着像坏了。
-    if (atQuery === null || !cwd || remoteUi()) { setAtFiles([]); return; }
+    if (atQuery === null || !cwd) { setAtFiles([]); return; }
     const seq = ++atSeqRef.current;
     // 两种模式:
     // - 目录浏览:`@` 一打出立即列 cwd 顶层(Claude Code 惯例——不是打满 2 个字符才有
@@ -58,7 +56,12 @@ export function useAtFileCompletion({ cwd, prompt, setPrompt, promptInputRef }: 
         setAtFiles(list.slice(0, 8));
         setAtIndex(0);
       };
-      if (browse) {
+      // 远程:list_dir_entries / search_project_files 是 /rpc 拒绝项(前者能列任意目录,
+      // 后者带回文件内容)。手机走只回名字的 file_mention_candidates,浏览/搜索的分法在后端
+      // 按同一规则做(2026-11-04 用户决定放行)。
+      if (remoteUi()) {
+        fileMentionCandidates(cwd, atQuery).then(apply).catch(() => {});
+      } else if (browse) {
         listDirEntries(cwd, dirPart)
           .then((entries) => apply(entries
             .filter((entry) => !/\s/.test(entry.relPath)
