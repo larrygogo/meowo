@@ -1382,6 +1382,9 @@ export function ChatWindow() {
   }, [menuWatchUntil]);
   const modeControls = chatUi?.mode_controls ?? [];
   const offsetRef = useRef(0);
+  // 轮询从 transcript 尾部累计读到的条目数，只增不减。「问题已了结」的收卡判定拿它
+  // 判断有没有新内容落盘，不受「加载更早」前插旧历史影响（见 observeTranscriptForDismiss 调用处）。
+  const tailGrowthRef = useRef(0);
   // 已加载窗口首行在 transcript 里的字节偏移：「加载更早」向上翻页的上界
   //（后端整读/翻页响应里的 earliest）。0 = 还没首读或已翻到文件头。
   const earliestRef = useRef(0);
@@ -1665,6 +1668,7 @@ export function ChatWindow() {
         return sameHistoryMeta(prev, merged) ? prev : merged;
       });
       setItems((prev) => next.items.length || reset ? reduceChatEvents(prev, next.items, reset) : prev);
+      tailGrowthRef.current += next.items.length;
       if (!emptyReset) {
         const acks = next.items.filter((item): item is PromptAck => item.type === "prompt_queued");
         if (reset) setQueueAcks(acks);
@@ -1877,7 +1881,11 @@ export function ChatWindow() {
     const baseline = questionTranscriptBaseline.current;
     if (!watchedQuestion || !baseline) return;
     const observation = {
-      count: items.length,
+      // 只数轮询从尾部读到的新条目：「加载更早」往头部前插旧历史也会让 items 变长，
+      // 拿 items.length 判「答案已送达」会在用户往上翻的那一刻把挂起中的题面撤掉，
+      // 手机只剩「没认出选项」的兜底卡（2026-11-05 实拍：题面 36s 就从后端表里消失，
+      // hook 却还挂着）。
+      count: tailGrowthRef.current,
       // 提问只可能发生在回合中（UserPromptSubmit 已把状态写成 running，且先于题面事件
       // 落库）；确证离开 running = 回合已结束 = 问题必已了结（作答或取消）。
       // history 未加载时是 **null（未知）** 而非 false——见 observeTranscriptForDismiss。

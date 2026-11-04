@@ -3431,6 +3431,62 @@ describe("ChatWindow", () => {
     expect(screen.queryByText(/已选「/)).toBeNull();
   });
 
+  /** 提问挂着时往上翻「加载更早」：前插的旧历史不是「答案已送达」，题面卡必须留着。
+   *  此前收卡判定数 items.length，一翻就把题面从后端表里撤掉，手机只剩「没认出选项」
+   *  的兜底卡（2026-11-05 实拍）。 */
+  it("提问挂着时加载更早的对话，题面卡不被误收", async () => {
+    window.history.replaceState({}, "", "/?sessionId=34");
+    const truncated = {
+      sessionId: 34, title: "长会话提问", status: "running", provider: "claude", cwd: "C:/repo",
+      supported: true, offset: 500, reset: false, pendingReview: null, connected: true, ptyManaged: true,
+      hasMore: true, earliest: 120,
+      items: [{ type: "user_text", id: "recent", timestamp: null, text: "最近的消息" }],
+    };
+    const incremental = { ...truncated, items: [], hasMore: false, earliest: 0 };
+    let firstRead = true;
+    invoke.mockImplementation((command: string, args: { before?: number }) => {
+      if (command === "get_chat_history") {
+        if (args?.before === 120) {
+          return Promise.resolve({
+            ...truncated, hasMore: false, earliest: 0,
+            items: [
+              { type: "user_text", id: "old-1", timestamp: null, text: "更早的消息一" },
+              { type: "user_text", id: "old-2", timestamp: null, text: "更早的消息二" },
+            ],
+          });
+        }
+        if (firstRead) { firstRead = false; return Promise.resolve(truncated); }
+        return Promise.resolve(incremental);
+      }
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await screen.findByText("最近的消息");
+    const payload = {
+      sessionId: 34, requestId: "request-scroll", provider: "claude", toolName: "AskUserQuestion",
+      description: null,
+      input: JSON.stringify({
+        questions: [{ header: "测试", question: "往上翻时卡还在吗？", multiSelect: false, options: [{ label: "在" }, { label: "不在" }] }],
+      }),
+      permissionSuggestions: [],
+    };
+    act(() => { eventListeners.get("interactive-question")?.({ payload }); });
+    expect(await screen.findByText(/往上翻时卡还在吗/)).toBeTruthy();
+    // 跳过 1.5s 的静置期：之后任何「transcript 增长」都会被当成答案已送达。
+    const realNow = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow + 5_000);
+    try {
+      fireEvent.click(await screen.findByRole("button", { name: "加载更早的对话" }));
+      expect(await screen.findByText("更早的消息二", { selector: ".chat-text" })).toBeTruthy();
+      expect(screen.getByText(/往上翻时卡还在吗/)).toBeTruthy();
+      expect(invoke).not.toHaveBeenCalledWith("dismiss_interactive_question", expect.anything());
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   /** 题面卡的「仅收起」留一条可再展开的折叠条（7C-2 尾）；但挂起在别处了结后，折叠条
    *  必须自己撤掉——否则它永远挂着，点开是一张已死的卡，去 resolve 一个不存在的请求
    *  （复核实测）。存活以轮询 pending_interaction 回的 question 为准。 */
