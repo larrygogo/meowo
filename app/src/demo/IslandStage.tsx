@@ -10,6 +10,7 @@ import { makeSession, type Item } from "./data";
 import type { DemoLang } from "./strings";
 
 /// 刘海宽高（逻辑点），取 14 寸 MacBook Pro 的比例。
+// 菜单栏两头都少放：审批提醒比胶囊宽（520），左边菜单项、右边状态图标多了都会被它盖住。
 const NOTCH = { width: 184, height: 32 };
 const PANEL_WIDTH = 600 + ISLAND_EAR * 2;
 
@@ -24,7 +25,7 @@ const SCRIPT: [Phase, number][] = [
 
 const COPY = {
   zh: {
-    menu: ["Meowo", "文件", "编辑", "显示"],
+    menu: ["Meowo", "文件", "编辑"],
     clock: "11月5日 周四 14:08",
     sessions: [
       { title: "重构登录页表单校验", project: "web-app", provider: "claude" as const },
@@ -34,7 +35,7 @@ const COPY = {
     alertDetail: null,
   },
   en: {
-    menu: ["Meowo", "File", "Edit", "View"],
+    menu: ["Meowo", "File", "Edit"],
     clock: "Thu Nov 5  2:08 PM",
     sessions: [
       { title: "Refactor login form validation", project: "web-app", provider: "claude" as const },
@@ -79,7 +80,6 @@ export function IslandStage({ lang = "zh" }: { lang?: DemoLang }) {
           {copy.menu.map((m, i) => <span key={m} className={i === 0 ? "is-app" : undefined}>{m}</span>)}
         </span>
         <span className="isd-status">
-          <i className="isd-icon is-wifi" />
           <i className="isd-icon is-battery" />
           <span>{copy.clock}</span>
         </span>
