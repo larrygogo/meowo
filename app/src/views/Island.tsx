@@ -23,7 +23,8 @@ export const ISLAND_ALERT_SIZE = { width: 520 + ISLAND_EAR * 2, height: 68 } as 
 /// 胶囊上最多摆几个会话图标，再多折成「+N」。
 const MAX_AGENTS = 4;
 
-type Counts = { pending: number; error: number; running: number; waiting: number };
+export type IslandCounts = { pending: number; error: number; running: number; waiting: number };
+type Counts = IslandCounts;
 
 export function liveSessions(items: readonly Item[]): Item[] {
   return items.filter((item) => !item.archived && item.connected);
@@ -36,6 +37,45 @@ export function islandCounts(items: readonly Item[]): Counts {
     if (tone === "pending" || tone === "error" || tone === "running" || tone === "waiting") counts[tone] += 1;
   }
   return counts;
+}
+
+/// macOS 菜单栏图标右边富文本的一段（macos/status_title.rs 画）：文字或 SF Symbol，颜色是系统语义色名。
+export type MenubarSegment =
+  | { kind: "text"; text: string; color: string }
+  | { kind: "symbol"; name: string; color: string };
+
+/// 菜单栏上会话标题最多几个字，再长省略。
+const MENUBAR_TITLE_MAX = 16;
+
+/// macOS 菜单栏图标右边显示什么（用户 2026-11-05：「像 QQ 音乐那种」）：像 QQ 音乐显示歌词那样，
+/// 显示最要紧的那个会话的标题和状态词，其余会话折成「+N」；没有会话时显示额度。
+///
+/// 只用菜单栏主文字色（label），不用彩色和发灰的次要色：颜色只放在眼睛上（眼睛就是状态灯），
+/// 文字前也不再放状态图标。实拍过绿眼睛 + 灰勾 + 白标题 + 灰状态词，用户嫌「太不和谐」。
+/// 显示的会话就是决定眼睛神态的那个（tone 同 islandTone）：眼睛绿了，文字就得是在跑的那个。
+export function menubarSegments(
+  sessions: readonly Item[],
+  tone: IslandTone,
+  quotaUsedPct: number | null,
+  labels: { toneLabel: Record<string, string>; untitled: string },
+): MenubarSegment[] {
+  const ordered = byUrgency(sessions);
+  const focus = ordered.find((item) => cardTone(item) === tone) ?? ordered[0];
+  if (focus) {
+    const state = labels.toneLabel[cardTone(focus)] ?? "";
+    const chars = Array.from(sessionTitle(focus, labels.untitled));
+    const title = chars.length > MENUBAR_TITLE_MAX ? `${chars.slice(0, MENUBAR_TITLE_MAX).join("")}…` : chars.join("");
+    const more = ordered.length > 1 ? `  +${ordered.length - 1}` : "";
+    return [{ kind: "text", text: `${title}${state ? ` · ${state}` : ""}${more}`, color: "label" }];
+  }
+  if (quotaUsedPct != null && Number.isFinite(quotaUsedPct)) {
+    const used = Math.round(Math.min(100, Math.max(0, quotaUsedPct)));
+    return [
+      { kind: "symbol", name: "gauge.medium", color: "label" },
+      { kind: "text", text: ` ${used}%`, color: "label" },
+    ];
+  }
+  return [];
 }
 
 /// 岛的整体情绪：要人处理的优先（出错 > 待处理），其次在跑，再次跑完等输入。眼睛据此变色、变动作。

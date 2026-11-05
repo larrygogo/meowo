@@ -155,10 +155,8 @@ pub(crate) struct IslandHost {
 pub(crate) fn island_host(app: tauri::AppHandle) -> IslandHost {
     #[cfg(target_os = "macos")]
     {
-        let (notch, changed) = crate::macos::notch::refresh();
-        if changed {
-            crate::macos::menubar::refresh_tray_icon(&app);
-        }
+        let _ = &app;
+        let (notch, _) = crate::macos::notch::refresh();
         match notch {
             Some(n) => IslandHost { kind: "notch", notch_width: n.width, notch_height: n.height },
             None => IslandHost { kind: "menubar", notch_width: 0.0, notch_height: 0.0 },
@@ -169,6 +167,20 @@ pub(crate) fn island_host(app: tauri::AppHandle) -> IslandHost {
         let _ = app;
         IslandHost { kind: "floating", notch_width: 0.0, notch_height: 0.0 }
     }
+}
+
+/// 菜单栏图标的状态（macOS）：tone 是眼睛的神态（Island.tsx 的 islandTone），segments 是图标右边
+/// 富文本的一段段（文字 / SF Symbol + 颜色，见 macos::status_title）。Windows 托盘不画这些，空操作。
+#[tauri::command]
+pub(crate) fn set_menubar_status(app: tauri::AppHandle, tone: String, segments: serde_json::Value) {
+    #[cfg(target_os = "macos")]
+    {
+        let segments: Vec<crate::macos::status_title::Segment> =
+            serde_json::from_value(segments).unwrap_or_default();
+        crate::macos::menubar::set_status(&app, &tone, &segments);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, tone, segments);
 }
 
 /// 显示 / 隐藏岛（macOS 菜单栏落点：收起时藏起来，展开、提醒时再显示）。`focus` 见

@@ -185,6 +185,10 @@ pub enum AttentionDetails {
     /// 编号选项（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）。选项行带框线，
     /// 以 ● 焦点做相对移动；「Allow for this session」只记本会话。
     FramedBox,
+    /// 方括号编号表单：`? 问题` + `[1] 选项`（单选，`→` 为光标）或 `[ ] 选项` / `[✓] 选项`
+    /// （多选），数字键直接选中 / 勾选；末页是 `[1] Submit` / `[2] Cancel` 的确认页
+    /// （kimi 2.4.1 AskUserQuestion 表单，2026-11-05 真机取证）。
+    BracketForm,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。

@@ -3,4 +3,5 @@ pub mod menubar;
 pub mod notch;
 pub mod notify;
 pub mod panel;
+pub mod status_title;
 pub mod terminal;

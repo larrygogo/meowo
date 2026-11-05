@@ -627,3 +627,63 @@ more
     expect(modeFromScreen("⏸ plan mode on", [])).toBeNull();
   });
 });
+
+// kimi 2.4.1 的 AskUserQuestion 表单（2026-11-05 真机取证，pywinpty + pyte 重建的屏幕原文）。
+// 此前 kimi 只识别审批面板，提问在对话页不出卡片（用户实拍）。
+describe("kimi 提问表单", () => {
+  const RULE = " " + "─".repeat(60);
+  const screen = (...body: string[]) => [RULE, "  question", ...body, RULE, " Ask When Needed  K3 thinking: high"].join("\n");
+
+  it("单选题：每个选项一个按钮，发数字键；Other 要打字，不出按钮", () => {
+    const attention = terminalAttention(screen(
+      "   Q1    Submit",
+      "  ? 喜欢哪种颜色？",
+      "   → [1] 红色",
+      "     [2] 绿色",
+      "     [3] 蓝色",
+      "     [4] Other",
+      "   ↑↓ select  1-4 / ↵ choose  ←/→/tab switch  esc cancel",
+    ), [], false, false, grammar("kimi"));
+    expect(attention?.id).toBe("kimi:question");
+    expect(attention?.text).toBe("喜欢哪种颜色？");
+    expect(attention?.details).toBeUndefined();
+    expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([["红色", "1"], ["绿色", "2"], ["蓝色", "3"]]);
+  });
+
+  it("多选题：数字键按位置勾选，已勾的带 ✓；末尾一个 Tab 去下一页", () => {
+    const attention = terminalAttention(screen(
+      "  (✓) 颜色   水果    Submit",
+      "  ? 喜欢哪些水果？",
+      "   [ ] 苹果",
+      "   [✓] 香蕉",
+      "   [ ] 橙子",
+      "   [ ] Other",
+      "   ↑↓ select  1-4 / ↵ toggle  ←/→/tab switch  esc cancel",
+    ), [], false, false, grammar("kimi"));
+    expect(attention?.id).toBe("kimi:question");
+    expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([
+      ["苹果", "1"], ["✓ 香蕉", "2"], ["橙子", "3"], ["Next ⇥", "\t"],
+    ]);
+  });
+
+  it("确认页：列出已选答案，Submit / Cancel 发数字键（1 直接提交，真机确认）", () => {
+    const attention = terminalAttention(screen(
+      "  (✓) 颜色  (✓) 水果   Submit",
+      "  Review your answer before submit",
+      "   Q  喜欢哪种颜色？",
+      "   →  红色",
+      "  Ready to submit your answers?",
+      "   → [1] Submit",
+      "     [2] Cancel",
+      "   ↑↓ select  1/2 choose  ↵ confirm  ←/→/tab switch  esc cancel",
+    ), [], false, false, grammar("kimi"));
+    expect(attention?.id).toBe("kimi:question");
+    expect(attention?.text).toBe("喜欢哪种颜色？\n红色\nReady to submit your answers?");
+    expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([["Submit", "1"], ["Cancel", "2"]]);
+  });
+
+  it("审批面板的提示行（↑/↓ … · ↵ confirm）不会被认成提问", () => {
+    const prompt = [RULE, "  ▶ Run this command?", "    ls", "  1. Approve once", "  2. Reject", "  ↑/↓ select · 1/2 choose · ↵ confirm", RULE].join("\n");
+    expect(terminalAttention(prompt, [], false, false, grammar("kimi"))?.id).toBe("kimi:command-approval");
+  });
+});

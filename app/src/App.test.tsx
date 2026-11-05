@@ -473,6 +473,8 @@ describe("App · macOS 灵动岛", () => {
     expect(container.querySelector(".isl-notch-gap")).toBeTruthy();
     // 刘海落点不能拖，也没有极简模式。
     expect(container.querySelector(".isl-strip")).toBeNull();
+    // 菜单栏图标的神态与文字由这里推（没会话：空闲、无文字）。
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_menubar_status", { tone: "idle", segments: [] }));
   });
 
   it("没刘海：平时藏着，点菜单栏的迷你岛在图标下展开面板，再点收起", async () => {
@@ -483,10 +485,17 @@ describe("App · macOS 灵动岛", () => {
     expect(layoutCalls()).toHaveLength(0);
     await act(async () => { emitTrayToggle(); });
     await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
-    expect(visibleCalls()).toContainEqual({ visible: true, focus: true });
+    await waitFor(() => expect(visibleCalls()).toContainEqual({ visible: true, focus: true }));
     // 面板上没有极简模式按钮（只有 Windows 有）。
     expect(screen.queryByRole("button", { name: zh.island.stripOn })).toBeNull();
+    // 收起 = 藏窗口；面板内容留在窗口里，下次一显示就是画好的（不闪空玻璃）。
     await act(async () => { emitTrayToggle(); });
-    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
+    await waitFor(() => expect(visibleCalls().at(-1)).toEqual({ visible: false, focus: false }));
+    expect(container.querySelector(".isl-panel")).toBeTruthy();
+    // 刚收起的半秒内再点图标（按下时已经算「点了外面」收起过），不再弹开。
+    const shown = visibleCalls().length;
+    await act(async () => { emitTrayToggle(); });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(visibleCalls()).toHaveLength(shown);
   });
 });

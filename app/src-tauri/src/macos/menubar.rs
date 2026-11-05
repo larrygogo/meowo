@@ -11,330 +11,49 @@ use crate::macos::{notch, panel};
 const MENUBAR_ICON_RGBA: &[u8] = include_bytes!("../../icons/menubar-template.rgba");
 const MENUBAR_ICON_SIZE: u32 = 36;
 
-// ── 状态图标：运行/待办的 SF Symbol + 数字，拼成动态单色模板图 ──
-// 离线（Swift）把数字 0-9 + arrow.triangle.2.circlepath(运行) + hand.raised.fill(待办)
-// 渲染成定高 36 的 alpha 掩码并拼接成图集；运行时按计数切片拼接，set_icon 动态更新。
-const GLYPH_H: usize = 36;
-/// 各字形宽度，顺序：0-9、运行、待办。须与 menubar-glyphs.bin 的生成顺序一致。
-const GLYPH_W: [usize; 12] = [15, 9, 14, 14, 15, 14, 15, 13, 15, 15, 31, 21];
-const GLYPH_RUN: usize = 10;
-const GLYPH_WAIT: usize = 11;
-/// 定高 alpha 图集（按 GLYPH_W 顺序拼接，每字形 GLYPH_H*W 字节）。
-const GLYPH_ATLAS: &[u8] = include_bytes!("../../icons/menubar-glyphs.bin");
+/// 菜单栏图标的神态（眼睛，见 tray_anim.rs）。由前端经 set_menubar_status 推来：前端能看到
+/// 所有连着的会话（含另一个 Meowo 实例开的）和各家额度，watch 线程只数本实例的会话——
+/// dev 与安装版并存时算出 0，图标就一直不动（2026-11-05 Mac 实测）。
+static MOOD: Mutex<crate::tray_anim::Mood> = Mutex::new(crate::tray_anim::Mood::Idle);
 
-const SYM_NUM_GAP: usize = 5; // 图标与其数字之间（留一点呼吸间隔）
-const DIGIT_GAP: usize = 1; // 数字之间
-const PAIR_GAP: usize = 16; // 运行组与待办组之间（两个状态间留明显间隔）
-
-// ── 状态徽章：彩色圆/胶囊 + 内嵌深色数字（单字→正圆，多字/99+→胶囊）──
-const H_BADGE: f32 = 34.0; // 徽章高（画布 GLYPH_H=36，上下各留 1px）
-const BADGE_GAP: usize = 10; // 运行徽章与待交互徽章之间
-const PAD_X: usize = 7; // 徽章内水平内边距（内容两侧）
-const INNER_GAP: usize = 1; // 徽章内数字/加号之间
-const INK: [u8; 3] = [0x1a, 0x1a, 0x1b]; // 徽章内数字/加号 深色墨（在绿/黄上都够对比）
-const RUN_RGB: [u8; 3] = [0x34, 0xd3, 0x99]; // 运行 绿 #34d399（同 .dot-run/.dot-active）
-const WAIT_RGB: [u8; 3] = [0xfb, 0xbf, 0x24]; // 待交互 黄 #fbbf24（同 .dot-wait）
-
-const GLYPH_PLUS: usize = 12; // 合成「+」字形（不在图集，运行时画）；数字超 99 显示 99+
-const PLUS_W: usize = 15; // 「+」占位宽
-const PLUS_ARM: f32 = 7.5; // 「+」臂半长（中心到端点）
-const PLUS_TH: f32 = 3.0; // 「+」笔画半宽
-
-/// 徽章内容宽（数字 + 可选「+」，含内部间隔）。
-fn content_w(glyphs: &[usize]) -> usize {
-    glyphs
-        .iter()
-        .enumerate()
-        .map(|(i, &g)| {
-            (if i > 0 { INNER_GAP } else { 0 }) + if g == GLYPH_PLUS { PLUS_W } else { GLYPH_W[g] }
-        })
-        .sum()
+/// 前端推来的整体状态与标题（一段段文字和 SF Symbol，前端拼好，status_title.rs 画成富文本）。
+pub fn set_status(app: &AppHandle, tone: &str, segments: &[crate::macos::status_title::Segment]) {
+    *MOOD.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Mood::parse(tone);
+    crate::macos::status_title::apply(app, segments);
 }
 
-/// 徽章外宽：内容 + 两侧内边距，最小为 H_BADGE（单字符即成正圆）。
-fn badge_w(glyphs: &[usize]) -> usize {
-    (content_w(glyphs) + 2 * PAD_X).max(H_BADGE as usize)
-}
-
-/// 在 [x0, x0+w) 内画一个竖向居中的圆角胶囊（圆角=高/2；w==高时即正圆），填充 color，1px 软边抗锯齿。
-fn fill_round_rect(rgba: &mut [u8], total: usize, x0: usize, w: usize, color: [u8; 3]) {
-    let cx = x0 as f32 + w as f32 / 2.0;
-    let cy = GLYPH_H as f32 / 2.0;
-    let hw = w as f32 / 2.0;
-    let hh = H_BADGE / 2.0;
-    let r = hh; // 圆角半径 = 半高
-    for y in 0..GLYPH_H {
-        for c in 0..w {
-            let px = x0 + c;
-            let dx = ((px as f32 + 0.5 - cx).abs() - (hw - r)).max(0.0);
-            let dy = ((y as f32 + 0.5 - cy).abs() - (hh - r)).max(0.0);
-            let dist = (dx * dx + dy * dy).sqrt() - r;
-            let a = (0.5 - dist).clamp(0.0, 1.0);
-            if a > 0.0 {
-                let i = (y * total + px) * 4;
-                rgba[i] = color[0];
-                rgba[i + 1] = color[1];
-                rgba[i + 2] = color[2];
-                rgba[i + 3] = (a * 255.0) as u8;
-            }
-        }
-    }
-}
-
-/// straight-alpha 的 source-over：把不透明色 rgb（覆盖度 src_a∈[0,1]）叠加到 rgba[i..i+4] 上。
-/// out_a = src_a + dst_a·(1-src_a)；RGB 按输出 alpha 归一，避免徽章半透明边缘处 max/预乘导致发灰。
-fn blend_over(rgba: &mut [u8], i: usize, rgb: [u8; 3], src_a: f32) {
-    let dst_a = rgba[i + 3] as f32 / 255.0;
-    let out_a = src_a + dst_a * (1.0 - src_a);
-    if out_a <= 0.0 {
-        return;
-    }
-    for k in 0..3 {
-        let v = (rgb[k] as f32 * src_a + rgba[i + k] as f32 * dst_a * (1.0 - src_a)) / out_a;
-        rgba[i + k] = v.round().clamp(0.0, 255.0) as u8;
-    }
-    rgba[i + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
-}
-
-/// 把一个数字字形（图集 alpha）以 rgb 墨色叠加到已画的徽章上（居中于定高 36 的格）。
-fn blit_glyph(rgba: &mut [u8], total: usize, x0: usize, idx: usize, rgb: [u8; 3]) {
-    let off = glyph_offset(idx);
-    let w = GLYPH_W[idx];
-    for y in 0..GLYPH_H {
-        for c in 0..w {
-            let ga = GLYPH_ATLAS[off + y * w + c] as f32 / 255.0;
-            if ga > 0.0 {
-                blend_over(rgba, (y * total + x0 + c) * 4, rgb, ga);
-            }
-        }
-    }
-}
-
-/// 画一个竖向居中的「+」（rgb 墨色，叠加到徽章上），横竖臂各 0.5px 软边抗锯齿。
-fn blit_plus(rgba: &mut [u8], total: usize, x0: usize, rgb: [u8; 3]) {
-    let cx = x0 as f32 + PLUS_W as f32 / 2.0;
-    let cy = GLYPH_H as f32 / 2.0;
-    for y in 0..GLYPH_H {
-        for c in 0..PLUS_W {
-            let px = x0 + c;
-            let dx = (px as f32 + 0.5 - cx).abs();
-            let dy = (y as f32 + 0.5 - cy).abs();
-            let cov_h =
-                (PLUS_ARM + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_TH + 0.5 - dy).clamp(0.0, 1.0);
-            let cov_v =
-                (PLUS_TH + 0.5 - dx).clamp(0.0, 1.0) * (PLUS_ARM + 0.5 - dy).clamp(0.0, 1.0);
-            let a = cov_h.max(cov_v);
-            if a > 0.0 {
-                blend_over(rgba, (y * total + px) * 4, rgb, a);
-            }
-        }
-    }
-}
-
-fn glyph_offset(idx: usize) -> usize {
-    (0..idx).map(|i| GLYPH_H * GLYPH_W[i]).sum()
-}
-
-/// 把一组（图标 + 多位数字）追加进拼接序列，元素为 (字形下标, 前置间隔)。
-fn push_pair(out: &mut Vec<(usize, usize)>, sym: usize, n: usize) {
-    out.push((sym, if out.is_empty() { 0 } else { PAIR_GAP }));
-    // 数字最多显示两位；超过 99 显示 99+（末尾追加合成「+」字形）。
-    for (i, ch) in n.min(99).to_string().bytes().enumerate() {
-        out.push((
-            (ch - b'0') as usize,
-            if i == 0 { SYM_NUM_GAP } else { DIGIT_GAP },
-        ));
-    }
-    if n > 99 {
-        out.push((GLYPH_PLUS, DIGIT_GAP));
-    }
-}
-
-/// (运行, 待办) → 字形拼接序列（运行组在前）；全零返回空 = 回落 app logo。纯函数，便于单测。
-fn status_seq(running: usize, waiting: usize) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    if running > 0 {
-        push_pair(&mut out, GLYPH_RUN, running);
-    }
-    if waiting > 0 {
-        push_pair(&mut out, GLYPH_WAIT, waiting);
-    }
-    out
-}
-
-/// 把 (运行, 待办) 拼成菜单栏**彩色徽章** RGBA：运行绿徽 / 待交互黄徽，内嵌深色数字。
-/// 单字符→正圆，多字符/99+→胶囊。数字色相对徽章固定（不随菜单栏明暗）。全零返回 None（回落 logo）。
-fn render_status_rgba(running: usize, waiting: usize) -> Option<(Vec<u8>, u32, u32)> {
-    // 复用 status_seq（含 99+ 封顶）的扁平序列，切成 [(色标记, 字形们)] 组；徽章自己排版，忽略其 gap。
-    let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
-    for (idx, _gap) in status_seq(running, waiting) {
-        if idx == GLYPH_RUN || idx == GLYPH_WAIT {
-            groups.push((idx, Vec::new()));
-        } else if let Some(g) = groups.last_mut() {
-            g.1.push(idx);
-        }
-    }
-    if groups.is_empty() {
-        return None;
-    }
-    let total: usize =
-        groups.iter().map(|(_, g)| badge_w(g)).sum::<usize>() + BADGE_GAP * (groups.len() - 1);
-    let mut rgba = vec![0u8; total * GLYPH_H * 4];
-    let mut x = 0;
-    for (i, (marker, glyphs)) in groups.iter().enumerate() {
-        if i > 0 {
-            x += BADGE_GAP;
-        }
-        let bw = badge_w(glyphs);
-        let color = if *marker == GLYPH_RUN {
-            RUN_RGB
-        } else {
-            WAIT_RGB
-        };
-        fill_round_rect(&mut rgba, total, x, bw, color);
-        // 内容（数字/加号）在徽章内水平居中。
-        let mut gx = x + (bw - content_w(glyphs)) / 2;
-        for (j, &g) in glyphs.iter().enumerate() {
-            if j > 0 {
-                gx += INNER_GAP;
-            }
-            if g == GLYPH_PLUS {
-                blit_plus(&mut rgba, total, gx, INK);
-                gx += PLUS_W;
-            } else {
-                blit_glyph(&mut rgba, total, gx, g, INK);
-                gx += GLYPH_W[g];
-            }
-        }
-        x += bw;
-    }
-    Some((rgba, total as u32, GLYPH_H as u32))
-}
-
-// ── 迷你岛：没刘海的 Mac 上，菜单栏图标就是灵动岛（用户 2026-11-05 定的：屏幕上不画岛，
-//    在菜单栏模拟一个，不放在屏幕正中）。黑色圆角胶囊，左边一双白眼睛，右边每种状态一个
-//    小色点 + 白色数字。──
-const MINI_PAD: usize = 11; // 胶囊左右内边距
-const MINI_RADIUS: f32 = 11.0; // 胶囊圆角
-const EYE_W: f32 = 5.0;
-const EYE_H: f32 = 13.0;
-const EYE_GAP: usize = 5; // 两只眼睛之间
-const MINI_GROUP_GAP: usize = 9; // 眼睛与第一组、组与组之间
-const MINI_DOT: f32 = 11.0; // 状态色点直径
-const MINI_DOT_GAP: usize = 4; // 色点与数字之间
-const MINI_BG: [u8; 3] = [0, 0, 0];
-const MINI_INK: [u8; 3] = [0xf5, 0xf5, 0xf7];
-
-/// 圆角矩形（SDF 抗锯齿），以 (cx, cy) 为中心、宽高 w×h、圆角 r，source-over 叠加。
-/// 参数就是一个矩形的几何加颜色，拆成结构体反而难读。
-#[allow(clippy::too_many_arguments)]
-fn fill_rrect(rgba: &mut [u8], total: usize, cx: f32, cy: f32, w: f32, h: f32, r: f32, rgb: [u8; 3]) {
-    let x0 = (cx - w / 2.0).floor().max(0.0) as usize;
-    let x1 = ((cx + w / 2.0).ceil() as usize).min(total);
-    let y0 = (cy - h / 2.0).floor().max(0.0) as usize;
-    let y1 = ((cy + h / 2.0).ceil() as usize).min(GLYPH_H);
-    for y in y0..y1 {
-        for x in x0..x1 {
-            let dx = ((x as f32 + 0.5 - cx).abs() - (w / 2.0 - r)).max(0.0);
-            let dy = ((y as f32 + 0.5 - cy).abs() - (h / 2.0 - r)).max(0.0);
-            let a = (0.5 - ((dx * dx + dy * dy).sqrt() - r)).clamp(0.0, 1.0);
-            if a > 0.0 {
-                blend_over(rgba, (y * total + x) * 4, rgb, a);
-            }
-        }
-    }
-}
-
-/// 一组「色点 + 数字」的数字字形（最多两位，超 99 加「+」）。
-fn mini_digits(n: usize) -> Vec<usize> {
-    let mut out: Vec<usize> = n.min(99).to_string().bytes().map(|ch| (ch - b'0') as usize).collect();
-    if n > 99 {
-        out.push(GLYPH_PLUS);
-    }
-    out
-}
-
-/// 迷你岛 RGBA：(运行, 待办) 都为 0 时只有眼睛。纯函数，便于单测。
-fn render_mini_island_rgba(running: usize, waiting: usize) -> (Vec<u8>, u32, u32) {
-    let groups: Vec<([u8; 3], Vec<usize>)> = [(RUN_RGB, running), (WAIT_RGB, waiting)]
-        .into_iter()
-        .filter(|(_, n)| *n > 0)
-        .map(|(rgb, n)| (rgb, mini_digits(n)))
-        .collect();
-    let eyes_w = EYE_W as usize * 2 + EYE_GAP;
-    let groups_w: usize = groups
-        .iter()
-        .map(|(_, g)| MINI_GROUP_GAP + MINI_DOT as usize + MINI_DOT_GAP + content_w(g))
-        .sum();
-    let total = MINI_PAD * 2 + eyes_w + groups_w;
-    let mut rgba = vec![0u8; total * GLYPH_H * 4];
-    let cy = GLYPH_H as f32 / 2.0;
-    fill_rrect(&mut rgba, total, total as f32 / 2.0, cy, total as f32, GLYPH_H as f32, MINI_RADIUS, MINI_BG);
-    let mut x = MINI_PAD as f32;
-    for _ in 0..2 {
-        fill_rrect(&mut rgba, total, x + EYE_W / 2.0, cy, EYE_W, EYE_H, EYE_W / 2.0, MINI_INK);
-        x += EYE_W + EYE_GAP as f32;
-    }
-    let mut gx = MINI_PAD + eyes_w;
-    for (rgb, glyphs) in &groups {
-        gx += MINI_GROUP_GAP;
-        fill_rrect(&mut rgba, total, gx as f32 + MINI_DOT / 2.0, cy, MINI_DOT, MINI_DOT, MINI_DOT / 2.0, *rgb);
-        gx += MINI_DOT as usize + MINI_DOT_GAP;
-        for (j, &g) in glyphs.iter().enumerate() {
-            if j > 0 {
-                gx += INNER_GAP;
-            }
-            if g == GLYPH_PLUS {
-                blit_plus(&mut rgba, total, gx, MINI_INK);
-                gx += PLUS_W;
-            } else {
-                blit_glyph(&mut rgba, total, gx, g, MINI_INK);
-                gx += GLYPH_W[g];
-            }
-        }
-    }
-    (rgba, total as u32, GLYPH_H as u32)
-}
-
-/// 最近一次的 (运行, 待办)：落点在「有刘海 / 没刘海」之间切换时要按它重画图标，
-/// 不能等下一次状态变化。
-static LAST_COUNTS: Mutex<(usize, usize)> = Mutex::new((0, 0));
-
-/// 落点变了（插拔外接屏、合盖）后重画菜单栏图标。
-pub fn refresh_tray_icon(app: &AppHandle) {
-    let (running, waiting) = *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
-    update_tray_status(app, running, waiting);
-}
-
-/// 按 (运行, 待办) 更新菜单栏图标。
-/// - 没刘海：图标就是迷你岛（见上）。
-/// - 有刘海：状态已经画在刘海两侧的岛上，图标回到原来的样子：有计数 → 彩色徽章（非模板）；
-///   全零 → 单色 logo（模板）。
-///
-/// set_icon_with_as_template 原子换图标+模板态（避免闪烁）；清掉标题文字。
+/// watch 线程每轮的计数。菜单栏现在全由前端推（见 MOOD），这里不再动图标；入口留着是因为
+/// watch.rs 的统计同时喂 Windows 托盘提示，两边共用一处计数。
 pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
-    *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner()) = (running, waiting);
-    let Some(tray) = app.tray_by_id("meowo-tray") else {
-        return;
-    };
-    if notch::cached().is_none() {
-        let (rgba, w, h) = render_mini_island_rgba(running, waiting);
-        let _ = tray.set_icon_with_as_template(Some(tauri::image::Image::new(&rgba, w, h)), false);
-        let _ = tray.set_title(None::<&str>);
-        return;
-    }
-    match render_status_rgba(running, waiting) {
-        Some((rgba, w, h)) => {
-            let _ =
-                tray.set_icon_with_as_template(Some(tauri::image::Image::new(&rgba, w, h)), false);
+    let _ = (app, running, waiting);
+}
+
+/// 图标动画线程：约 10 帧/秒算一帧，和上一帧一样就不重发（空闲时只有眨眼那一下在变）。
+fn spawn_icon_animator(app: AppHandle) {
+    std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let mut last: Vec<u8> = Vec::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let Some(tray) = app.tray_by_id("meowo-tray") else {
+                continue;
+            };
+            let mood = *MOOD.lock().unwrap_or_else(|e| e.into_inner());
+            // 在跑 / 要你处理 / 出错的眼睛上色（用户要「有颜色」），其余用模板图跟菜单栏深浅色。
+            let tint = crate::tray_anim::tint(mood);
+            let frame = crate::tray_anim::render_rgba(start.elapsed().as_secs_f32(), mood, tint);
+            if frame == last {
+                continue;
+            }
+            let image = tauri::image::Image::new(
+                &frame,
+                crate::tray_anim::WIDTH as u32,
+                crate::tray_anim::HEIGHT as u32,
+            );
+            let _ = tray.set_icon_with_as_template(Some(image), tint.is_none());
+            last = frame;
         }
-        None => {
-            let logo =
-                tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);
-            let _ = tray.set_icon_with_as_template(Some(logo), true);
-        }
-    }
-    let _ = tray.set_title(None::<&str>);
+    });
 }
 
 /// 托盘右键菜单（打开对话窗口 / 使用引导 / 设置 / 官网 / 退出），按语言构建；
@@ -466,20 +185,18 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    spawn_icon_animator(app.clone());
     Ok(())
 }
 
 /// 单击菜单栏图标：
 /// - 有刘海：岛就在刘海上，图标和 Windows 托盘一样打开对话窗口（轻量模式下展开岛）。
-/// - 没刘海：图标本身就是迷你岛，点它在下方展开 / 收起岛的面板（前端 island-tray-toggle）。
+/// - 没刘海：点它在下方弹出 / 收起岛的面板（前端 island-tray-toggle）。
 ///
 /// 托盘事件在主线程，这里可以直接重新探测刘海。
 fn on_left_click(app: &AppHandle) {
     use tauri::Emitter;
-    let (has_notch, changed) = notch::refresh();
-    if changed {
-        refresh_tray_icon(app);
-    }
+    let (has_notch, _) = notch::refresh();
     if has_notch.is_some() && crate::load_settings().chat_enabled {
         crate::open_latest_chat_window(app);
         return;
@@ -553,115 +270,5 @@ mod tests {
         assert!(!track_regular_close(&mut set, "chat"));
         // 最后一个窗口关闭 → 归零，切回 Accessory。
         assert!(track_regular_close(&mut set, "about"));
-    }
-
-    #[test]
-    fn status_seq_groups_and_gaps() {
-        // 全空闲 → 空（回落 logo）
-        assert_eq!(status_seq(0, 0), Vec::<(usize, usize)>::new());
-        // 运行组在前、待办组在后；组间 PAIR_GAP，图标→数字 SYM_NUM_GAP。
-        assert_eq!(
-            status_seq(3, 2),
-            vec![
-                (GLYPH_RUN, 0),
-                (3, SYM_NUM_GAP),
-                (GLYPH_WAIT, PAIR_GAP),
-                (2, SYM_NUM_GAP)
-            ]
-        );
-        // 多位数：首位 SYM_NUM_GAP，后续 DIGIT_GAP。
-        assert_eq!(
-            status_seq(12, 0),
-            vec![(GLYPH_RUN, 0), (1, SYM_NUM_GAP), (2, DIGIT_GAP)]
-        );
-        // 仅待办：待办组打头，前置间隔为 0。
-        assert_eq!(status_seq(0, 5), vec![(GLYPH_WAIT, 0), (5, SYM_NUM_GAP)]);
-    }
-
-    /// 迷你岛：空闲时只有眼睛；有计数时变宽，胶囊四角透明、中间是不透明黑底。
-    #[test]
-    fn mini_island_grows_with_counts_and_keeps_round_corners() {
-        let (idle, idle_w, h) = render_mini_island_rgba(0, 0);
-        assert_eq!(h as usize, GLYPH_H);
-        assert_eq!(idle.len(), idle_w as usize * GLYPH_H * 4);
-        let (_, busy_w, _) = render_mini_island_rgba(3, 1);
-        assert!(busy_w > idle_w);
-        let (big, big_w, _) = render_mini_island_rgba(120, 0);
-        // 左上角在圆角外：透明。正中：黑底不透明。
-        assert_eq!(big[3], 0);
-        let mid = ((GLYPH_H / 2) * big_w as usize + big_w as usize / 2) * 4;
-        assert_eq!(big[mid + 3], 255);
-    }
-
-    #[test]
-    fn status_seq_caps_at_99_plus() {
-        // 恰好 99：两位数，无「+」。
-        assert_eq!(
-            status_seq(99, 0),
-            vec![(GLYPH_RUN, 0), (9, SYM_NUM_GAP), (9, DIGIT_GAP)]
-        );
-        // 超过 99：显示 99 + 合成「+」。
-        assert_eq!(
-            status_seq(150, 0),
-            vec![
-                (GLYPH_RUN, 0),
-                (9, SYM_NUM_GAP),
-                (9, DIGIT_GAP),
-                (GLYPH_PLUS, DIGIT_GAP)
-            ]
-        );
-        // 待交互超 99 同样封顶。
-        assert_eq!(
-            status_seq(0, 100),
-            vec![
-                (GLYPH_WAIT, 0),
-                (9, SYM_NUM_GAP),
-                (9, DIGIT_GAP),
-                (GLYPH_PLUS, DIGIT_GAP)
-            ]
-        );
-    }
-
-    #[test]
-    fn render_status_none_when_idle_else_sized() {
-        assert!(render_status_rgba(0, 0).is_none());
-        let (rgba, w, h) = render_status_rgba(3, 2).unwrap();
-        assert_eq!(h, GLYPH_H as u32);
-        assert_eq!(rgba.len(), (w as usize) * GLYPH_H * 4);
-        // 图集长度自洽：等于各字形 H*W 之和。
-        assert_eq!(
-            GLYPH_ATLAS.len(),
-            GLYPH_W.iter().map(|w| GLYPH_H * w).sum::<usize>()
-        );
-    }
-
-    // 扫描：是否存在一个「不透明且 RGB≈target」的像素（容差 8）。
-    fn has_opaque_rgb(rgba: &[u8], target: [u8; 3]) -> bool {
-        rgba.chunks_exact(4).any(|p| {
-            p[3] > 200
-                && (p[0] as i32 - target[0] as i32).abs() <= 8
-                && (p[1] as i32 - target[1] as i32).abs() <= 8
-                && (p[2] as i32 - target[2] as i32).abs() <= 8
-        })
-    }
-
-    #[test]
-    fn render_badge_fill_and_ink() {
-        // 运行 2：含绿色徽章填充 + 深色数字墨。
-        let (run, _, h) = render_status_rgba(2, 0).unwrap();
-        assert_eq!(h, GLYPH_H as u32);
-        assert!(has_opaque_rgb(&run, RUN_RGB), "缺绿色徽章");
-        assert!(has_opaque_rgb(&run, INK), "缺深色数字墨");
-        // 待交互 3：含黄色徽章。
-        let (wait, _, _) = render_status_rgba(0, 3).unwrap();
-        assert!(has_opaque_rgb(&wait, WAIT_RGB), "缺黄色徽章");
-    }
-
-    #[test]
-    fn single_digit_is_circle_multi_is_pill() {
-        // 单字符徽章 = 正圆（宽 = H_BADGE）；两位数徽章更宽（胶囊）。
-        assert_eq!(badge_w(&[2]), H_BADGE as usize);
-        assert!(badge_w(&[9, 9]) > H_BADGE as usize);
-        assert!(badge_w(&[9, 9, GLYPH_PLUS]) > badge_w(&[9, 9]));
     }
 }

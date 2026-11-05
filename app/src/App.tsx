@@ -19,11 +19,12 @@ import type { IslandCompactStyle } from "./api";
 import { type Item, type Tab } from "./views/sticker/types";
 import { Island, IslandStrip, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT, ISLAND_STRIP_SIZE } from "./views/Island";
 import { IslandPanel } from "./views/island/IslandPanel";
-import { liveIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
-import { byUrgency } from "./views/Island";
+import { liveIslandUsage, orderIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
+import { byUrgency, islandCounts, islandTone, menubarSegments } from "./views/Island";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
+import { useT } from "./i18n";
 import { FLOATING_HOST, isMac, type IslandHost } from "./platform";
 import { reconcileRows, sameRefs, type RowCache as SharedRowCache } from "./rowCache";
 import { reconcilePendings, type PendingRegistry } from "./views/sticker/pending";
@@ -497,7 +498,10 @@ export function App() {
   // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
   const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
   useEffect(() => {
-    document.documentElement.style.setProperty("--isl-safe-top", `${safeTopOf(host)}px`);
+    const root = document.documentElement;
+    root.style.setProperty("--isl-safe-top", `${safeTopOf(host)}px`);
+    // 没刘海时面板按 macOS 菜单栏弹出面板画（styles.css 的 :root.island-menubar）。
+    root.classList.toggle("island-menubar", host.kind === "menubar");
   }, [host]);
   useSettingsEffect((settings) => {
     setChatEnabled(settings.chat_enabled ?? true);
@@ -519,13 +523,46 @@ export function App() {
     () => liveIslandUsage(usage, quotaProviders, activeProviders),
     [usage, quotaProviders, activeProviders],
   );
+  // macOS 菜单栏图标：眼睛的神态 + 右边的富文本（menubar.rs / tray_anim.rs / status_title.rs）。
+  // 由这里推而不是后端自己数：这里看得到所有连着的会话（含另一个 Meowo 实例开的）和额度。
+  // 额度不限「正在用的」那几家：没会话在跑时也要显示（用户要空闲时也有信息）。
+  const t = useT();
+  const menubarRef = useRef("");
+  useEffect(() => {
+    if (!isMac()) return;
+    const tone = islandTone(islandCounts(stripSessions));
+    const quota = orderIslandUsage(usage, quotaProviders, activeProviders)[0];
+    const segments = menubarSegments(stripSessions, tone, quota?.pct ?? null, {
+      toneLabel: t.island.toneLabel,
+      untitled: t.sticker.waitingFirstInput,
+    });
+    const key = JSON.stringify([tone, segments]);
+    if (key === menubarRef.current) return;
+    menubarRef.current = key;
+    invoke("set_menubar_status", { tone, segments }).catch(() => {});
+  }, [stripSessions, usage, quotaProviders, activeProviders, t]);
 
-  // 摆窗口。菜单栏落点平时藏着，只有提醒、展开时才摆到图标下方显示出来（不抢键盘；展开时
-  // grow 再给焦点）。
-  const layout = useCallback(async (width: number, height: number, centerRatio: number | null = null) => {
-    await invoke("island_layout", { width, height, centerRatio });
-    if (hostRef.current.kind === "menubar") await invoke("island_set_visible", { visible: true, focus: false });
+  const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
+    invoke("island_layout", { width, height, centerRatio }), []);
+  // 菜单栏落点平时藏着，提醒、展开时摆到图标下方再显示。要等新内容画上去再显示：窗口底下的系统
+  // 毛玻璃是一显示就整块出现的，先显示的话会先闪一块空玻璃（2026-11-05 Mac 录屏）。
+  // 藏着的窗口里 WebView 可能停了 requestAnimationFrame，所以再挂一个 80ms 的定时器兜底，谁先到用谁。
+  // 菜单栏落点收起时面板内容本来就留在窗口里（见渲染处），这里多半只是等尺寸变化画完。
+  const showWhenPainted = useCallback((focus: boolean) => {
+    let done = false;
+    const show = () => {
+      if (done) return;
+      done = true;
+      invoke("island_set_visible", { visible: true, focus }).catch(() => {});
+    };
+    window.setTimeout(show, 80);
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(show));
+    }
   }, []);
+  // 最近一次收起面板的时刻。菜单栏落点下点图标关面板：按下时「点了外面」先把面板收了，松手时
+  // 图标的点击才到，不挡一下就又展开了（录屏里关了又弹开）。
+  const lastCollapseRef = useRef(0);
   const alertHeight = () => ISLAND_ALERT_SIZE.height + safeTopOf(hostRef.current);
   const layoutCompact = useCallback(async (centerRatio: number | null = null) => {
     const h = hostRef.current;
@@ -609,12 +646,12 @@ export function App() {
     islandModeRef.current = mode;
     setIslandMode(mode);
     // macOS 的岛是非激活面板：展开时让它成为 key，Esc 和「点外面收起」（失焦）才接得到。
-    if (isMac()) invoke("island_set_visible", { visible: true, focus: true }).catch(() => {});
+    if (isMac()) showWhenPainted(true);
     // 展开过就不算「临时露出」了：收起时按极简模式回到细条。
     setStripPeek(false);
     transitioningRef.current = false;
     loadStrip();
-  }, [layout, loadStrip, setStripPeek]);
+  }, [layout, loadStrip, setStripPeek, showWhenPainted]);
 
   const expand = useCallback(() => {
     const mode = islandModeRef.current;
@@ -648,9 +685,11 @@ export function App() {
     setAlert(next);
     islandModeRef.current = "alert";
     setIslandMode("alert");
-    layout(ISLAND_ALERT_SIZE.width, alertHeight()).catch((err) => console.error("[island] 弹出提醒失败：", err));
+    layout(ISLAND_ALERT_SIZE.width, alertHeight())
+      .then(() => { if (hostRef.current.kind === "menubar") showWhenPainted(false); })
+      .catch((err) => console.error("[island] 弹出提醒失败：", err));
     armAlertTimer(islandAlertMsRef.current);
-  }, [layout, armAlertTimer]);
+  }, [layout, armAlertTimer, showWhenPainted]);
   pumpAlertRef.current = pumpAlert;
   // 鼠标停在提醒上：倒计时暂停，提醒一直留着；移开后再留 ISLAND_ALERT_LINGER_MS 给人去点。
   // 此前停上去会触发「悬停展开」，提醒被换成面板，还没看完就没了（用户反馈）。
@@ -688,6 +727,16 @@ export function App() {
   const collapse = useCallback(() => {
     const mode = islandModeRef.current;
     if (mode !== "expanded") return;
+    lastCollapseRef.current = Date.now();
+    // 菜单栏落点：直接藏起窗口，不播收回动画。系统毛玻璃不跟着内容淡出，播动画就会剩一块空玻璃。
+    if (hostRef.current.kind === "menubar") {
+      islandModeRef.current = "compact";
+      setIslandMode("compact");
+      layoutCompact()
+        .catch((err) => console.error("[island] 收起失败：", err))
+        .finally(() => pumpAlert());
+      return;
+    }
     setClosing(true);
     // 先播收回动画（缩回胶囊轮廓），播完再把窗口缩小。
     window.setTimeout(() => {
@@ -785,7 +834,8 @@ export function App() {
   useEffect(() => {
     const un = listen("island-tray-toggle", () => {
       if (islandModeRef.current === "expanded") collapse();
-      else expand();
+      // 刚因为按下图标（算「点了外面」）收起的，这次点击是来关面板的，不再展开。
+      else if (Date.now() - lastCollapseRef.current > 500) expand();
     });
     return () => {
       un.then((f) => f());
@@ -943,7 +993,9 @@ export function App() {
   if (!bootReady) {
     return null;
   }
-  if (islandMode === "expanded") {
+  // 菜单栏落点收起时窗口是藏着的，但里面照样留着面板：下次点图标直接显示，不用等重新渲染
+  // （藏着的 WebView 可能不画，先显示再画就会闪一块空玻璃）。
+  if (islandMode === "expanded" || (host.kind === "menubar" && islandMode === "compact")) {
     return (
       <div
         className={`island-shell${closing ? " is-leaving" : " is-entering"}`}

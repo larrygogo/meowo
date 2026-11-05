@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
-import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
+import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
@@ -467,5 +467,25 @@ describe("IslandPanel 展开面板", () => {
   it("只有一页时不出箭头", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: zh.island.nextPage })).toBeNull();
+  });
+});
+
+describe("macOS 菜单栏富文本", () => {
+  const labels = { toneLabel: zh.island.toneLabel, untitled: "未命名" };
+  it("显示决定眼睛神态的那个会话：标题 · 状态词，其余折成 +N，只用主文字色", () => {
+    const sessions = [mk({ task_title: "跑着的" }), mk({ task_title: "跑完的", status: "waiting", unread: true })];
+    // 眼睛按 islandTone 是「在跑」（绿）：文字就得是在跑的那个，不是排在前面的未读跑完。
+    expect(menubarSegments(sessions, "running", 12, labels)).toEqual([
+      { kind: "text", text: `跑着的 · ${zh.island.toneLabel.running}  +1`, color: "label" },
+    ]);
+  });
+  it("标题太长省略；没会话显示额度；都没有就空", () => {
+    const long = menubarSegments([mk({ task_title: "一二三四五六七八九十一二三四五六七八" })], "running", null, labels);
+    expect(long[0].kind === "text" && long[0].text.startsWith("一二三四五六七八九十一二三四五六… · ")).toBe(true);
+    expect(menubarSegments([], "idle", 90.4, labels)).toEqual([
+      { kind: "symbol", name: "gauge.medium", color: "label" },
+      { kind: "text", text: " 90%", color: "label" },
+    ]);
+    expect(menubarSegments([], "idle", null, labels)).toEqual([]);
   });
 });
