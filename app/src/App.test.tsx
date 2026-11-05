@@ -483,10 +483,17 @@ describe("App · macOS 灵动岛", () => {
     expect(layoutCalls()).toHaveLength(0);
     await act(async () => { emitTrayToggle(); });
     await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
-    expect(visibleCalls()).toContainEqual({ visible: true, focus: true });
+    await waitFor(() => expect(visibleCalls()).toContainEqual({ visible: true, focus: true }));
     // 面板上没有极简模式按钮（只有 Windows 有）。
     expect(screen.queryByRole("button", { name: zh.island.stripOn })).toBeNull();
+    // 收起 = 藏窗口；面板内容留在窗口里，下次一显示就是画好的（不闪空玻璃）。
     await act(async () => { emitTrayToggle(); });
-    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
+    await waitFor(() => expect(visibleCalls().at(-1)).toEqual({ visible: false, focus: false }));
+    expect(container.querySelector(".isl-panel")).toBeTruthy();
+    // 刚收起的半秒内再点图标（按下时已经算「点了外面」收起过），不再弹开。
+    const shown = visibleCalls().length;
+    await act(async () => { emitTrayToggle(); });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(visibleCalls()).toHaveLength(shown);
   });
 });

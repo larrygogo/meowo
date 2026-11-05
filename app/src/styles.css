@@ -6980,7 +6980,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 
 /* macOS 没刘海：岛藏在菜单栏图标里，点开的面板按系统菜单栏弹出面板画（用户 2026-11-05 嫌贴着
    菜单栏的黑板「太丑」）：与菜单栏留缝（notch.rs 摆位）、四角圆、底下垫系统深色毛玻璃（notch.rs
-   的 HudWindow，圆角 14 与这里一致），不要 Windows 那对往外弯的耳朵；淡入弹出，不从胶囊长出来。 */
+   的 HudWindow，圆角 14 与这里一致），不要 Windows 那对往外弯的耳朵。也不播展开/收起动画：
+   毛玻璃是窗口一显示就整块出现、一藏就整块消失的，内容淡入淡出会先后露出一块空玻璃（Mac 录屏）。
+   App 等内容画好再显示窗口、收起时直接藏窗口。 */
 :root.island-menubar .isl-stage, :root.island-menubar .island-shell { --isl-ear: 0px; }
 :root.island-menubar .isl-notch::before, :root.island-menubar .isl-notch::after { display: none; }
 :root.island-menubar .isl-panel, :root.island-menubar .isl-notch.is-alert {
@@ -6988,17 +6990,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   background: rgba(0, 0, 0, 0.32);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
 }
-:root.island-menubar .isl-notch.is-alert { animation: isl-pop-in 0.16s ease-out; }
-:root.island-menubar .island-shell.is-entering { animation: isl-pop-in 0.16s ease-out; }
-:root.island-menubar .island-shell.is-leaving { animation: isl-pop-out 0.12s ease-in forwards; }
-@keyframes isl-pop-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes isl-pop-out {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(-4px) scale(0.98); }
-}
+:root.island-menubar .isl-notch.is-alert,
+:root.island-menubar .island-shell.is-entering,
+:root.island-menubar .island-shell.is-leaving { animation: none; }
 /* macOS 菜单栏右上角本来就有日期和时间，面板上不再画一遍。 */
 :root.platform-macos .isl-panel-meta { display: none; }
 
