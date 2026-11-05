@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 const getLiveSessionsCounts = vi.fn();
 const getLiveSessionsPage = vi.fn();
+const setSettingsMock = vi.fn((_s: Record<string, unknown>) => Promise.resolve());
 let emitBoardChanged: () => void = () => {};
 let emitIslandAlert: (e: { payload: unknown }) => void = () => {};
 let emitRecallSticker: () => void = () => {};
@@ -91,6 +92,7 @@ vi.mock("./api", () => ({
           : null,
       };
     }),
+  setSettings: (s: Record<string, unknown>) => setSettingsMock(s),
   getSettings: () =>
     Promise.resolve({
       notifications_enabled: true,
@@ -435,6 +437,26 @@ describe("App", () => {
     await expandIsland();
     act(() => { window.dispatchEvent(new Event("blur")); });
     await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
+  });
+
+  // 极简模式（用户 2026-11-05 要求）：收起时只在顶边留一条细条，点它展开；面板标题栏的按钮切换。
+  it("极简模式收起成顶边细条，点它展开；面板按钮能切回来", async () => {
+    extraSettings = { island_strip: true };
+    setSettingsMock.mockClear();
+    const { container } = render(<App />);
+    const strip = await waitFor(() => {
+      const el = container.querySelector(".isl-strip");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(layoutCalls()).toContainEqual({ width: 160, height: 8, centerRatio: 0.5 });
+    expect(container.querySelector(".isl-notch.is-compact")).toBeNull();
+    fireEvent.pointerDown(strip, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(strip, { button: 0, pointerId: 1, screenX: 100 });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: zh.island.stripOff }));
+    await waitFor(() => expect(setSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ island_strip: false })));
+    expect(screen.getByRole("button", { name: zh.island.stripOn })).toBeTruthy();
   });
 
   it("展开着的时候不弹提醒（人就在看面板）", async () => {

@@ -741,6 +741,8 @@ export type Settings = {
   sticker_color: string;
   /** 灵动岛（Windows）收起时显示什么。 */
   island_compact: IslandCompactStyle;
+  /** 灵动岛极简模式：收起时只在屏幕顶边留一条细条。 */
+  island_strip: boolean;
   /** 哪些事让灵动岛弹提醒：waiting / approval（含计划确认、屏幕上挂着交互）/ question / error。 */
   island_alerts: string[];
   /** 提醒停留秒数（4 / 6 / 10）。 */

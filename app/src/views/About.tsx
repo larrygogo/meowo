@@ -673,6 +673,7 @@ function AppearanceSection() {
   const uiScale = settings?.ui_scale ?? SETTINGS_DEFAULTS.ui_scale;
   const stickerStyle = settings?.sticker_style ?? SETTINGS_DEFAULTS.sticker_style;
   const islandCompact = settings?.island_compact ?? SETTINGS_DEFAULTS.island_compact;
+  const islandStrip = settings?.island_strip ?? SETTINGS_DEFAULTS.island_strip;
   const islandAlerts = settings?.island_alerts ?? SETTINGS_DEFAULTS.island_alerts;
   const islandAlertSeconds = settings?.island_alert_seconds ?? SETTINGS_DEFAULTS.island_alert_seconds;
   const stickerColor = settings?.sticker_color ?? SETTINGS_DEFAULTS.sticker_color;
@@ -773,6 +774,13 @@ function AppearanceSection() {
       {IS_WIN && <>
         <div className="sec-caption">{t.settings.islandGroup}</div>
         <div className="row-card">
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandStrip}</div>
+              <div className="row-desc">{t.settings.islandStripDesc}</div>
+            </div>
+            <Switch checked={islandStrip} onChange={() => patch({ island_strip: !islandStrip })} label={t.settings.islandStrip} />
+          </div>
           <div className="row">
             <div className="row-text">
               <div className="row-label">{t.settings.islandCompact}</div>

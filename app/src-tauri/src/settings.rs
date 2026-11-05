@@ -200,6 +200,10 @@ pub(crate) struct Settings {
     /// 灵动岛（Windows）收起时显示什么：counts（状态计数，默认）/ focus（最要紧的会话）/ minimal（只有色点）。
     #[serde(default = "default_island_compact")]
     pub(crate) island_compact: String,
+    /// 灵动岛极简模式：收起时只在屏幕顶边留一条细条，点它展开（用户 2026-11-05 要求）。
+    /// 缺省关闭，兼容老 settings.json。
+    #[serde(default)]
+    pub(crate) island_strip: bool,
     /// 哪些事让灵动岛弹提醒：waiting（跑完）/ approval（含计划确认、屏幕上挂着交互）/ question / error。缺省全开。
     #[serde(default = "default_island_alerts")]
     pub(crate) island_alerts: Vec<String>,
@@ -310,6 +314,7 @@ impl Default for Settings {
             sticker_style: default_sticker_style(),
             sticker_color: default_sticker_color(),
             island_compact: default_island_compact(),
+            island_strip: false,
             island_alerts: default_island_alerts(),
             island_alert_seconds: default_island_alert_seconds(),
             sticker_quota_providers: default_sticker_quota_providers(),

@@ -5,6 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   getLiveSessionsCounts,
   getLiveSessionsPage,
+  getSettings,
+  setSettings,
   openNewSessionWindow,
   LiveSession,
   LiveSessionCounts,
@@ -16,7 +18,7 @@ import { useBoardRefresh } from "./hooks/useBoardRefresh";
 import { useSettingsEffect } from "./hooks/useSettings";
 import type { IslandCompactStyle } from "./api";
 import { type Item, type Tab } from "./views/sticker/types";
-import { Island, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT } from "./views/Island";
+import { Island, IslandStrip, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT, ISLAND_STRIP_SIZE } from "./views/Island";
 import { IslandPanel } from "./views/island/IslandPanel";
 import { liveIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
 import { byUrgency } from "./views/Island";
@@ -473,8 +475,13 @@ export function App() {
   const islandAlertMsRef = useRef(ISLAND_ALERT_MS_DEFAULT);
   // 轻量模式（对话功能关闭）时面板不放「打开对话窗口」，与贴纸底栏、托盘菜单同一规则。
   const [chatEnabled, setChatEnabled] = useState(true);
+  // 极简模式：收起时只留顶边一条细条（用户 2026-11-05 要求）。ref 给布局回调同步读。
+  const [islandStrip, setIslandStrip] = useState(false);
+  const islandStripRef = useRef(false);
+  islandStripRef.current = islandStrip;
   useSettingsEffect((settings) => {
     setChatEnabled(settings.chat_enabled ?? true);
+    setIslandStrip(settings.island_strip ?? false);
     if (settings.island_compact) setIslandCompact(settings.island_compact);
     if (Array.isArray(settings.sticker_quota_providers)) setQuotaProviders(settings.sticker_quota_providers);
     if (Array.isArray(settings.island_alerts)) islandAlertsRef.current = settings.island_alerts;
@@ -496,7 +503,28 @@ export function App() {
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
     invoke("island_layout", { width, height, centerRatio }), []);
   const layoutCompact = useCallback((centerRatio: number | null = null) =>
-    layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio), [layout]);
+    islandStripRef.current
+      ? layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio)
+      : layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio), [layout]);
+
+  // 极简模式开关一变（面板上点、设置页改、启动时读到设置），收起着的岛立刻换形。
+  // 启动摆放（bootReady 之前）自己按设置摆，这里不抢。
+  useEffect(() => {
+    if (isMacPanel() || !bootReady || islandModeRef.current !== "compact" || transitioningRef.current) return;
+    layoutCompact().catch(() => {});
+  }, [islandStrip, bootReady, layoutCompact]);
+
+  // 面板上的极简模式按钮：先本地切（按钮立刻反映），再写回设置；写失败退回原值。
+  const toggleStrip = useCallback(() => {
+    const next = !islandStripRef.current;
+    setIslandStrip(next);
+    getSettings()
+      .then((s) => setSettings({ ...s, island_strip: next }))
+      .catch((err) => {
+        console.error("[island] 保存极简模式失败：", err);
+        setIslandStrip(!next);
+      });
+  }, []);
 
   /// 切到一个更大的形态：先把窗口放大（刘海居中，屏幕位置不动），再换内容、播动画。
   /// 顺序反过来会让内容先在小窗口里挤一帧（W-4 同一课）。
@@ -722,6 +750,13 @@ export function App() {
     (async () => {
       try {
         const s = await initStickerWindowState();
+        // 先读极简模式再摆：否则开机先摆成胶囊、设置到了再缩成细条，闪一下。
+        const settings = await getSettings().catch(() => null);
+        if (cancelled) return;
+        if (settings?.island_strip) {
+          islandStripRef.current = true;
+          setIslandStrip(true);
+        }
         if (cancelled) return;
         applyPinned(s.pinned);
         await layoutCompact(s.island_center ?? 0.5);
@@ -844,7 +879,10 @@ export function App() {
     return (
       <div
         className={`island-shell${closing ? " is-leaving" : " is-entering"}`}
-        style={{ "--island-pill-w": `${pillWidth}px`, "--island-pill-h": `${ISLAND_PILL_HEIGHT}px` } as React.CSSProperties}
+        // 收回动画缩向收起后的形状：极简模式缩成细条，否则缩回胶囊。
+        style={(islandStrip
+          ? { "--island-pill-w": `${ISLAND_STRIP_SIZE.width}px`, "--island-pill-h": `${ISLAND_STRIP_SIZE.height}px` }
+          : { "--island-pill-w": `${pillWidth}px`, "--island-pill-h": `${ISLAND_PILL_HEIGHT}px` }) as React.CSSProperties}
       >
         <IslandPanel
           sessions={stripSessions}
@@ -865,9 +903,14 @@ export function App() {
             invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
             collapse();
           }}
+          strip={islandStrip}
+          onToggleStrip={toggleStrip}
         />
       </div>
     );
+  }
+  if (islandMode === "compact" && islandStrip) {
+    return <IslandStrip sessions={stripSessions} onPointerDownDrag={onPillPointerDown} onActivate={expand} />;
   }
   return (
     <Island

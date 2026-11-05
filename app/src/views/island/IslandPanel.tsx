@@ -12,6 +12,16 @@ import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandPa
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
 
+/** 极简模式图标：一条贴顶的细线。 */
+function StripIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <path d="M8 8h8" strokeWidth="3" />
+    </svg>
+  );
+}
+
 /// 每页列几个会话。面板去掉「全部」按钮后，多于这个数的会话翻页看（左右箭头 / 圆点）。
 const MAX_ROWS = 3;
 
@@ -40,6 +50,8 @@ export function IslandPanel({
   onNewSession,
   onOpenChat,
   onOpenSettings,
+  strip = false,
+  onToggleStrip,
 }: {
   sessions: readonly Item[];
   usage: Record<string, ProviderUsage>;
@@ -56,6 +68,10 @@ export function IslandPanel({
   onOpenChat?: () => void;
   /** 打开设置。 */
   onOpenSettings?: () => void;
+  /** 当前是否极简模式（收起成细条）。 */
+  strip?: boolean;
+  /** 切换极简模式。 */
+  onToggleStrip?: () => void;
 }) {
   const t = useT();
   const now = useNow();
@@ -132,6 +148,18 @@ export function IslandPanel({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onOpenSettings}
             ><GearIcon /></button>
+          )}
+          {/* 极简模式开关放在标题栏空位上（用户 2026-11-05 指定位置）。 */}
+          {onToggleStrip && (
+            <button
+              type="button"
+              className={`isl-btn is-ghost is-icon${strip ? " is-on" : ""}`}
+              title={strip ? t.island.stripOff : t.island.stripOn}
+              aria-label={strip ? t.island.stripOff : t.island.stripOn}
+              aria-pressed={strip}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onToggleStrip}
+            ><StripIcon /></button>
           )}
           <span className="isl-panel-meta">
             {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}

@@ -49,6 +49,8 @@ export const zh = {
     moreAlerts: (n: number) => `还有 ${n} 条`,
     prevPage: "上一页",
     nextPage: "下一页",
+    stripOn: "切换到极简模式",
+    stripOff: "退出极简模式",
   },
   sticker: {
     openChatWindow: "打开对话窗口",
@@ -1228,7 +1230,10 @@ export const zh = {
     islandGroup: "灵动岛",
     islandCompact: "收起时显示",
     islandCompactDesc: "灵动岛缩成胶囊时的内容",
-    islandCompactOptions: { counts: "概览", focus: "最要紧的会话", minimal: "极简" } as Record<string, string>,
+    // 「极简」这个名字让给了下面的极简模式（细条），这一档改叫「圆点」。
+    islandCompactOptions: { counts: "概览", focus: "最要紧的会话", minimal: "圆点" } as Record<string, string>,
+    islandStrip: "极简模式",
+    islandStripDesc: "收起时只在屏幕顶边留一条细条，点它展开",
     islandAlerts: "自动弹出提醒",
     islandAlertsDesc: "这些事发生时，灵动岛展开几秒告诉你",
     islandAlertKinds: { waiting: "会话跑完", approval: "等待审批", question: "有提问", error: "出错" } as Record<string, string>,

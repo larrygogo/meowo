@@ -87,6 +87,39 @@ function AlertIcon({ kind }: { kind: string }) {
   );
 }
 
+/** 极简模式的细条：宽度与高度（逻辑像素）。贴着屏幕顶边，鼠标甩到顶上就能点到。 */
+export const ISLAND_STRIP_SIZE = { width: 160, height: 8 } as const;
+
+/** 极简模式收起时的细条（用户 2026-11-05 要求）：只留一条，颜色跟整体状态走，点一下展开。 */
+export function IslandStrip({
+  sessions,
+  onPointerDownDrag,
+  onActivate,
+}: {
+  sessions: readonly Item[];
+  onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
+  onActivate: () => void;
+}) {
+  const t = useT();
+  const tone = islandTone(islandCounts(sessions));
+  return (
+    <div
+      className="isl-strip"
+      data-tone={tone}
+      role="button"
+      tabIndex={0}
+      aria-label={t.island.ariaLabel}
+      onPointerDown={onPointerDownDrag}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onActivate();
+        }
+      }}
+    />
+  );
+}
+
 export function Island({
   sessions,
   compactStyle,

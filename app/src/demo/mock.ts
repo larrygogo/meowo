@@ -37,6 +37,7 @@ export const store: Store = {
     sticker_style: "flat",
     sticker_color: "neutral",
     island_compact: "counts",
+    island_strip: false,
     island_alerts: ["waiting", "approval", "question", "error"],
     island_alert_seconds: 6,
     sticker_quota_providers: ["claude", "codex"],
