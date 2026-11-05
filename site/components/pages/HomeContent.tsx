@@ -30,7 +30,7 @@ const CONTENT: Record<Lang, Content> = {
       eyebrow: "// AI 编程代理工作台",
       h1a: "多开 AI 编程，",
       accent: "一切尽在计划之中",
-      lead: "本地优先的 AI 编程代理工作台。展开是桌面贴纸，收起是电子红绿灯，点一下直达对应终端。",
+      lead: "本地优先的 AI 编程代理工作台。所有会话的状态常驻屏幕顶部，点一下直达对应会话。",
       github: "GitHub",
       note: "开源 · MIT · Windows 与 macOS · 无需预装 AI CLI",
     },
@@ -41,8 +41,8 @@ const CONTENT: Record<Lang, Content> = {
     ],
     chat: {
       eyebrow: "对话窗口",
-      title: "打开卡片，是完整的结构化对话",
-      body: "点开任意一张会话卡片，就进入这个会话的对话窗口：消息、工具调用、子任务各就各位，不用在终端滚屏里翻找。等批准的命令、弹出的选择菜单，都变成可以直接点的按钮。",
+      title: "点开会话，是完整的结构化对话",
+      body: "点开任意一个会话，就进入它的对话窗口：消息、工具调用、子任务各就各位，不用在终端滚屏里翻找。等批准的命令、弹出的选择菜单，都变成可以直接点的按钮。",
       checks: [
         "工具调用折叠成一行摘要，展开看完整输入输出；子任务有独立时间线",
         "Agent 拆解任务后，待办清单实时显示在对话里，进度跟着刷新",
@@ -55,12 +55,12 @@ const CONTENT: Record<Lang, Content> = {
     featGridHead: { eyebrow: "完整工作流", title: "从会话到环境，一处管理" },
     platHead: { eyebrow: "平台", title: "Windows 和 macOS，各自顺手" },
     win: {
-      title: "Windows · 桌面贴纸",
-      body: "钉在桌面一角的常驻贴纸，拖到屏幕边缘就收成一条红绿灯。",
+      title: "Windows · 灵动岛",
+      body: "停在屏幕顶部的一条胶囊，谁在跑、谁在等你一眼可见。",
       checks: [
-        "拖到屏幕左 / 右 / 顶边缩成状态条，鼠标悬停展开",
-        "可以置顶；重启后沿用上次的窗口位置和吸附边",
-        "鼠标停在托盘图标上，能看到待交互和运行中的会话数",
+        "点一下展开面板，看会话和各家额度",
+        "会话需要你时弹出提醒，点头像直接打开会话",
+        "极简模式只留一条细线，鼠标移上去变回胶囊",
       ],
     },
     mac: {
@@ -78,7 +78,7 @@ const CONTENT: Record<Lang, Content> = {
       eyebrow: "// AI coding agent workbench",
       h1a: "Run AI coding in parallel,",
       accent: "all under control",
-      lead: "A local-first workbench for AI coding agents. A sticker when expanded, an electronic traffic light when collapsed — one click jumps to the terminal.",
+      lead: "A local-first workbench for AI coding agents. Every session's status stays at the top of your screen — one click takes you to it.",
       github: "GitHub",
       note: "Open source · MIT · Windows & macOS · no AI CLI needed upfront",
     },
@@ -89,8 +89,8 @@ const CONTENT: Record<Lang, Content> = {
     ],
     chat: {
       eyebrow: "Chat window",
-      title: "Open a card for the full structured conversation",
-      body: "Open any session card and you're in that session's chat window: messages, tool calls and subagents all in place — no scrolling terminal output. Commands awaiting approval and popup menus become buttons you can just click.",
+      title: "Open a session for the full structured conversation",
+      body: "Open any session and you're in its chat window: messages, tool calls and subagents all in place — no scrolling terminal output. Commands awaiting approval and popup menus become buttons you can just click.",
       checks: [
         "Tool calls fold into one-line summaries; expand for full I/O — subagents get their own timeline",
         "When the agent breaks a task down, its todo list shows live in the conversation",
@@ -103,12 +103,12 @@ const CONTENT: Record<Lang, Content> = {
     featGridHead: { eyebrow: "Full workflow", title: "From sessions to environment, managed in one place" },
     platHead: { eyebrow: "Platforms", title: "Feels native on Windows and macOS" },
     win: {
-      title: "Windows · Desktop sticker",
-      body: "A resident sticker pinned to a desktop corner; drag it to a screen edge and it folds into a traffic light.",
+      title: "Windows · Island",
+      body: "A slim pill at the top of the screen that shows who's running and who's waiting on you.",
       checks: [
-        "Drag to the left / right / top edge to shrink into a status strip; hover to expand",
-        "Pin on top; remembers last position and snap edge across restarts",
-        "Hover the tray icon to see needs-you and running counts",
+        "Click it to expand a panel with sessions and quota",
+        "Pops an alert when a session needs you; click an icon to open it",
+        "Minimal mode leaves just a thin strip; hover to bring the pill back",
       ],
     },
     mac: {
