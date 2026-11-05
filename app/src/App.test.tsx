@@ -459,6 +459,29 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: zh.island.stripOn })).toBeTruthy();
   });
 
+  it("极简模式：鼠标移上细条变回胶囊，移开缩回细条", async () => {
+    extraSettings = { island_strip: true };
+    let over = true;
+    vi.mocked(invoke).mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "cursor_over_window" ? over : undefined) as never);
+    const { container } = render(<App />);
+    const strip = await waitFor(() => {
+      const el = container.querySelector(".isl-strip");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    fireEvent.pointerEnter(strip);
+    await waitFor(() => expect(container.querySelector(".isl-notch.is-compact")).toBeTruthy());
+    expect(container.querySelector(".isl-strip")).toBeNull();
+    expect(layoutCalls().at(-1)).toMatchObject({ height: 46 });
+    // 光标还在上面：一直是胶囊。
+    await new Promise((r) => setTimeout(r, 450));
+    expect(container.querySelector(".isl-notch.is-compact")).toBeTruthy();
+    over = false;
+    await waitFor(() => expect(container.querySelector(".isl-strip")).toBeTruthy());
+    expect(layoutCalls().at(-1)).toMatchObject({ width: 160, height: 8 });
+  });
+
   it("展开着的时候不弹提醒（人就在看面板）", async () => {
     render(<App />);
     await expandIsland();

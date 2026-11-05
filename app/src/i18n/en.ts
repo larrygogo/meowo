@@ -1118,7 +1118,7 @@ export const en: Dict = {
     islandCompactDesc: "What the island shows when it shrinks to a pill",
     islandCompactOptions: { counts: "Overview", focus: "Most urgent", minimal: "Dots" } as Record<string, string>,
     islandStrip: "Minimal mode",
-    islandStripDesc: "When collapsed, keep only a thin bar at the top edge; click it to expand",
+    islandStripDesc: "When collapsed, keep only a thin bar at the top edge; hover it to bring the pill back",
     islandAlerts: "Pop-up alerts",
     islandAlertsDesc: "The island expands for a few seconds when these happen",
     islandAlertKinds: { waiting: "Session finished", approval: "Needs approval", question: "Has a question", error: "Error" } as Record<string, string>,

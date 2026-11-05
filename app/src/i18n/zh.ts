@@ -1233,7 +1233,7 @@ export const zh = {
     // 「极简」这个名字让给了下面的极简模式（细条），这一档改叫「圆点」。
     islandCompactOptions: { counts: "概览", focus: "最要紧的会话", minimal: "圆点" } as Record<string, string>,
     islandStrip: "极简模式",
-    islandStripDesc: "收起时只在屏幕顶边留一条细条，点它展开",
+    islandStripDesc: "收起时只在屏幕顶边留一条细条，鼠标移上去变回胶囊",
     islandAlerts: "自动弹出提醒",
     islandAlertsDesc: "这些事发生时，灵动岛展开几秒告诉你",
     islandAlertKinds: { waiting: "会话跑完", approval: "等待审批", question: "有提问", error: "出错" } as Record<string, string>,

@@ -479,6 +479,13 @@ export function App() {
   const [islandStrip, setIslandStrip] = useState(false);
   const islandStripRef = useRef(false);
   islandStripRef.current = islandStrip;
+  // 极简模式下鼠标停在细条上：临时变回正常胶囊，移开再缩回细条（用户 2026-11-05 要求）。
+  const [stripPeek, setStripPeekState] = useState(false);
+  const stripPeekRef = useRef(false);
+  const setStripPeek = useCallback((peek: boolean) => {
+    stripPeekRef.current = peek;
+    setStripPeekState(peek);
+  }, []);
   useSettingsEffect((settings) => {
     setChatEnabled(settings.chat_enabled ?? true);
     setIslandStrip(settings.island_strip ?? false);
@@ -503,7 +510,7 @@ export function App() {
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
     invoke("island_layout", { width, height, centerRatio }), []);
   const layoutCompact = useCallback((centerRatio: number | null = null) =>
-    islandStripRef.current
+    islandStripRef.current && !stripPeekRef.current
       ? layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio)
       : layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio), [layout]);
 
@@ -512,7 +519,31 @@ export function App() {
   useEffect(() => {
     if (isMacPanel() || !bootReady || islandModeRef.current !== "compact" || transitioningRef.current) return;
     layoutCompact().catch(() => {});
-  }, [islandStrip, bootReady, layoutCompact]);
+  }, [islandStrip, stripPeek, bootReady, layoutCompact]);
+
+  // 胶囊临时露出期间轮询真实光标，连续两次在窗口外才缩回细条。不用 DOM 的 pointerleave：
+  // 细条长成胶囊时窗口在改尺寸，会误报一串假 leave/enter（展开态收回用轮询同一个理由）。
+  useEffect(() => {
+    if (isMacPanel() || !islandStrip || !stripPeek || islandMode !== "compact") return;
+    let outCount = 0;
+    const id = window.setInterval(() => {
+      if (draggingRef.current) {
+        outCount = 0;
+        return;
+      }
+      invoke<boolean>("cursor_over_window")
+        .then((over) => {
+          if (over) {
+            outCount = 0;
+            return;
+          }
+          outCount += 1;
+          if (outCount >= 2) setStripPeek(false);
+        })
+        .catch(() => {});
+    }, 180);
+    return () => window.clearInterval(id);
+  }, [islandStrip, stripPeek, islandMode, setStripPeek]);
 
   // 面板上的极简模式按钮：先本地切（按钮立刻反映），再写回设置；写失败退回原值。
   const toggleStrip = useCallback(() => {
@@ -548,9 +579,11 @@ export function App() {
     // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是新形态，不会去缩窗口。
     islandModeRef.current = mode;
     setIslandMode(mode);
+    // 展开过就不算「临时露出」了：收起时按极简模式回到细条。
+    setStripPeek(false);
     transitioningRef.current = false;
     loadStrip();
-  }, [layout, loadStrip]);
+  }, [layout, loadStrip, setStripPeek]);
 
   const expand = useCallback(() => {
     const mode = islandModeRef.current;
@@ -909,8 +942,15 @@ export function App() {
       </div>
     );
   }
-  if (islandMode === "compact" && islandStrip) {
-    return <IslandStrip sessions={stripSessions} onPointerDownDrag={onPillPointerDown} onActivate={expand} />;
+  if (islandMode === "compact" && islandStrip && !stripPeek) {
+    return (
+      <IslandStrip
+        sessions={stripSessions}
+        onPointerDownDrag={onPillPointerDown}
+        onActivate={expand}
+        onHover={() => setStripPeek(true)}
+      />
+    );
   }
   return (
     <Island
