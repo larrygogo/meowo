@@ -106,6 +106,30 @@ fn blink(t: f32, period: f32) -> f32 {
     }
 }
 
+/// 眼睛的颜色：在跑绿、要你处理橙、出错红（与灵动岛同色）；空闲和跑完等你不上色，
+/// 用模板图跟菜单栏深浅色。
+pub(crate) fn tint(mood: Mood) -> Option<[u8; 3]> {
+    match mood {
+        Mood::Running => Some([0x30, 0xd1, 0x58]),
+        Mood::Pending => Some([0xff, 0x9f, 0x0a]),
+        Mood::Error => Some([0xff, 0x45, 0x3a]),
+        Mood::Idle | Mood::Waiting => None,
+    }
+}
+
+/// 带颜色的一帧：tint 为 None 时是黑色 + alpha（模板图），否则按 tint 上色。
+pub(crate) fn render_rgba(t: f32, mood: Mood, tint: Option<[u8; 3]>) -> Vec<u8> {
+    let mut rgba = render(t, mood);
+    if let Some([r, g, b]) = tint {
+        for px in rgba.chunks_exact_mut(4) {
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+        }
+    }
+    rgba
+}
+
 /// 某一时刻（秒）的一帧，黑色 + alpha 的 RGBA（模板图只看 alpha）。
 pub(crate) fn render(t: f32, mood: Mood) -> Vec<u8> {
     let mut c = Canvas::new();

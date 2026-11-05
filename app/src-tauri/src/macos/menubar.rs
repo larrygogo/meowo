@@ -16,13 +16,10 @@ const MENUBAR_ICON_SIZE: u32 = 36;
 /// dev 与安装版并存时算出 0，图标就一直不动（2026-11-05 Mac 实测）。
 static MOOD: Mutex<crate::tray_anim::Mood> = Mutex::new(crate::tray_anim::Mood::Idle);
 
-/// 前端推来的整体状态与标题文字（运行数、待处理数、额度，前端拼好）。
-pub fn set_status(app: &AppHandle, tone: &str, title: &str) {
+/// 前端推来的整体状态与标题（一段段文字和 SF Symbol，前端拼好，status_title.rs 画成富文本）。
+pub fn set_status(app: &AppHandle, tone: &str, segments: &[crate::macos::status_title::Segment]) {
     *MOOD.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Mood::parse(tone);
-    if let Some(tray) = app.tray_by_id("meowo-tray") {
-        let title = title.trim();
-        let _ = tray.set_title((!title.is_empty()).then_some(title));
-    }
+    crate::macos::status_title::apply(app, segments);
 }
 
 /// watch 线程每轮的计数。菜单栏现在全由前端推（见 MOOD），这里不再动图标；入口留着是因为
@@ -42,7 +39,9 @@ fn spawn_icon_animator(app: AppHandle) {
                 continue;
             };
             let mood = *MOOD.lock().unwrap_or_else(|e| e.into_inner());
-            let frame = crate::tray_anim::render(start.elapsed().as_secs_f32(), mood);
+            // 在跑 / 要你处理 / 出错的眼睛上色（用户要「有颜色」），其余用模板图跟菜单栏深浅色。
+            let tint = crate::tray_anim::tint(mood);
+            let frame = crate::tray_anim::render_rgba(start.elapsed().as_secs_f32(), mood, tint);
             if frame == last {
                 continue;
             }
@@ -51,7 +50,7 @@ fn spawn_icon_animator(app: AppHandle) {
                 crate::tray_anim::WIDTH as u32,
                 crate::tray_anim::HEIGHT as u32,
             );
-            let _ = tray.set_icon_with_as_template(Some(image), true);
+            let _ = tray.set_icon_with_as_template(Some(image), tint.is_none());
             last = frame;
         }
     });

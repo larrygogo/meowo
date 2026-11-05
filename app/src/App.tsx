@@ -20,10 +20,11 @@ import { type Item, type Tab } from "./views/sticker/types";
 import { Island, IslandStrip, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT, ISLAND_STRIP_SIZE } from "./views/Island";
 import { IslandPanel } from "./views/island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
-import { byUrgency, islandCounts, islandTone, menubarTitle } from "./views/Island";
+import { byUrgency, islandCounts, islandTone, menubarSegments } from "./views/Island";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
+import { useT } from "./i18n";
 import { FLOATING_HOST, isMac, type IslandHost } from "./platform";
 import { reconcileRows, sameRefs, type RowCache as SharedRowCache } from "./rowCache";
 import { reconcilePendings, type PendingRegistry } from "./views/sticker/pending";
@@ -522,21 +523,24 @@ export function App() {
     () => liveIslandUsage(usage, quotaProviders, activeProviders),
     [usage, quotaProviders, activeProviders],
   );
-  // macOS 菜单栏图标：眼睛的神态 + 右边的运行数、待处理数、额度（menubar.rs / tray_anim.rs）。
+  // macOS 菜单栏图标：眼睛的神态 + 右边的富文本（menubar.rs / tray_anim.rs / status_title.rs）。
   // 由这里推而不是后端自己数：这里看得到所有连着的会话（含另一个 Meowo 实例开的）和额度。
   // 额度不限「正在用的」那几家：没会话在跑时也要显示（用户要空闲时也有信息）。
+  const t = useT();
   const menubarRef = useRef("");
   useEffect(() => {
     if (!isMac()) return;
-    const counts = islandCounts(stripSessions);
-    const tone = islandTone(counts);
+    const tone = islandTone(islandCounts(stripSessions));
     const quota = orderIslandUsage(usage, quotaProviders, activeProviders)[0];
-    const title = menubarTitle(counts, quota?.pct ?? null);
-    const key = `${tone}|${title}`;
+    const segments = menubarSegments(stripSessions, quota?.pct ?? null, {
+      toneLabel: t.island.toneLabel,
+      untitled: t.sticker.waitingFirstInput,
+    });
+    const key = JSON.stringify([tone, segments]);
     if (key === menubarRef.current) return;
     menubarRef.current = key;
-    invoke("set_menubar_status", { tone, title }).catch(() => {});
-  }, [stripSessions, usage, quotaProviders, activeProviders]);
+    invoke("set_menubar_status", { tone, segments }).catch(() => {});
+  }, [stripSessions, usage, quotaProviders, activeProviders, t]);
 
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
     invoke("island_layout", { width, height, centerRatio }), []);

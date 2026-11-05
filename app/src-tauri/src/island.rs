@@ -169,14 +169,18 @@ pub(crate) fn island_host(app: tauri::AppHandle) -> IslandHost {
     }
 }
 
-/// 菜单栏图标的状态（macOS）：tone 是整体神态（Island.tsx 的 islandTone），title 是图标右边的文字
-/// （运行数、待处理数、额度）。Windows 托盘不画这些，空操作。
+/// 菜单栏图标的状态（macOS）：tone 是眼睛的神态（Island.tsx 的 islandTone），segments 是图标右边
+/// 富文本的一段段（文字 / SF Symbol + 颜色，见 macos::status_title）。Windows 托盘不画这些，空操作。
 #[tauri::command]
-pub(crate) fn set_menubar_status(app: tauri::AppHandle, tone: String, title: String) {
+pub(crate) fn set_menubar_status(app: tauri::AppHandle, tone: String, segments: serde_json::Value) {
     #[cfg(target_os = "macos")]
-    crate::macos::menubar::set_status(&app, &tone, &title);
+    {
+        let segments: Vec<crate::macos::status_title::Segment> =
+            serde_json::from_value(segments).unwrap_or_default();
+        crate::macos::menubar::set_status(&app, &tone, &segments);
+    }
     #[cfg(not(target_os = "macos"))]
-    let _ = (app, tone, title);
+    let _ = (app, tone, segments);
 }
 
 /// 显示 / 隐藏岛（macOS 菜单栏落点：收起时藏起来，展开、提醒时再显示）。`focus` 见

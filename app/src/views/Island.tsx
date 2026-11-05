@@ -39,18 +39,52 @@ export function islandCounts(items: readonly Item[]): Counts {
   return counts;
 }
 
-/// macOS 菜单栏图标右边的文字（用户 2026-11-05 选的「计数和额度都显示」）：▶ 在跑、● 要你处理
-/// （审批/提问/出错）、✓ 跑完等你、最后是额度已用百分比。为 0 的项不写，全空就不显示文字。
-export function menubarTitle(counts: IslandCounts, quotaUsedPct: number | null): string {
-  const parts: string[] = [];
-  if (counts.running > 0) parts.push(`▶${counts.running}`);
-  const needs = counts.pending + counts.error;
-  if (needs > 0) parts.push(`●${needs}`);
-  if (counts.waiting > 0) parts.push(`✓${counts.waiting}`);
-  if (quotaUsedPct != null && Number.isFinite(quotaUsedPct)) {
-    parts.push(`${Math.round(Math.min(100, Math.max(0, quotaUsedPct)))}%`);
+/// macOS 菜单栏图标右边富文本的一段（macos/status_title.rs 画）：文字或 SF Symbol，颜色是系统语义色名。
+export type MenubarSegment =
+  | { kind: "text"; text: string; color: string }
+  | { kind: "symbol"; name: string; color: string };
+
+const MENUBAR_TONE: Record<string, { symbol: string; color: string }> = {
+  running: { symbol: "play.fill", color: "green" },
+  pending: { symbol: "exclamationmark.circle.fill", color: "orange" },
+  error: { symbol: "xmark.octagon.fill", color: "red" },
+  waiting: { symbol: "checkmark.circle.fill", color: "secondary" },
+};
+/// 菜单栏上会话标题最多几个字，再长省略。
+const MENUBAR_TITLE_MAX = 16;
+
+/// macOS 菜单栏图标右边显示什么（用户 2026-11-05：「像 QQ 音乐那种」「能动，还有颜色」）：
+/// 像 QQ 音乐显示歌词那样，显示最要紧的那个会话——状态图标 + 标题 + 着色的状态词，其余会话
+/// 折成「+N」；没有会话时显示额度（按用量变色）。都没有就空着，只剩眼睛。
+export function menubarSegments(
+  sessions: readonly Item[],
+  quotaUsedPct: number | null,
+  labels: { toneLabel: Record<string, string>; untitled: string },
+): MenubarSegment[] {
+  const ordered = byUrgency(sessions);
+  const focus = ordered[0];
+  if (focus) {
+    const tone = cardTone(focus);
+    const style = MENUBAR_TONE[tone] ?? { symbol: "circle.fill", color: "secondary" };
+    const chars = Array.from(sessionTitle(focus, labels.untitled));
+    const title = chars.length > MENUBAR_TITLE_MAX ? `${chars.slice(0, MENUBAR_TITLE_MAX).join("")}…` : chars.join("");
+    const out: MenubarSegment[] = [
+      { kind: "symbol", name: style.symbol, color: style.color },
+      { kind: "text", text: ` ${title} `, color: "label" },
+      { kind: "text", text: labels.toneLabel[tone] ?? "", color: style.color },
+    ];
+    if (ordered.length > 1) out.push({ kind: "text", text: `  +${ordered.length - 1}`, color: "secondary" });
+    return out;
   }
-  return parts.join(" ");
+  if (quotaUsedPct != null && Number.isFinite(quotaUsedPct)) {
+    const used = Math.round(Math.min(100, Math.max(0, quotaUsedPct)));
+    const color = used >= 85 ? "red" : used >= 60 ? "orange" : "label";
+    return [
+      { kind: "symbol", name: "gauge.medium", color: "secondary" },
+      { kind: "text", text: ` ${used}%`, color },
+    ];
+  }
+  return [];
 }
 
 /// 岛的整体情绪：要人处理的优先（出错 > 待处理），其次在跑，再次跑完等输入。眼睛据此变色、变动作。

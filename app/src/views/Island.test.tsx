@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
-import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarTitle } from "./Island";
+import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
@@ -470,10 +470,22 @@ describe("IslandPanel 展开面板", () => {
   });
 });
 
-describe("macOS 菜单栏文字", () => {
-  it("在跑、要你处理、跑完等你、额度依次排，为 0 的不写", () => {
-    expect(menubarTitle({ running: 3, pending: 1, error: 1, waiting: 2 }, 11.4)).toBe("▶3 ●2 ✓2 11%");
-    expect(menubarTitle({ running: 0, pending: 0, error: 0, waiting: 0 }, 40)).toBe("40%");
-    expect(menubarTitle({ running: 0, pending: 0, error: 0, waiting: 0 }, null)).toBe("");
+describe("macOS 菜单栏富文本", () => {
+  const labels = { toneLabel: zh.island.toneLabel, untitled: "未命名" };
+  it("显示最要紧的会话：状态图标 + 标题 + 着色状态词，其余折成 +N", () => {
+    const segs = menubarSegments([mk({ task_title: "跑着的" }), mk({ task_title: "要批的", pending_review: "approval" })], 12, labels);
+    expect(segs[0]).toEqual({ kind: "symbol", name: "exclamationmark.circle.fill", color: "orange" });
+    expect(segs[1]).toEqual({ kind: "text", text: " 要批的 ", color: "label" });
+    expect(segs[2]).toEqual({ kind: "text", text: zh.island.toneLabel.pending, color: "orange" });
+    expect(segs[3]).toEqual({ kind: "text", text: "  +1", color: "secondary" });
+  });
+  it("标题太长省略；没会话显示额度，按用量变色；都没有就空", () => {
+    const long = menubarSegments([mk({ task_title: "一二三四五六七八九十一二三四五六七八" })], null, labels);
+    expect(long[1]).toEqual({ kind: "text", text: " 一二三四五六七八九十一二三四五六… ", color: "label" });
+    expect(menubarSegments([], 90.4, labels)).toEqual([
+      { kind: "symbol", name: "gauge.medium", color: "secondary" },
+      { kind: "text", text: " 90%", color: "red" },
+    ]);
+    expect(menubarSegments([], null, labels)).toEqual([]);
   });
 });
