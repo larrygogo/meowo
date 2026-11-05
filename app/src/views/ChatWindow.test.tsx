@@ -5252,6 +5252,61 @@ describe("ChatWindow", () => {
     expect(invoke.mock.calls.some(([command]) => command === "stop_managed_terminal")).toBe(false);
   });
 
+  /// 交接/第一句话不等认领：有的 CLI 要收到第一条消息才报 SessionStart（认领靠它），等认领就
+  /// 卡死，用户自己敲一句后又补发一遍（2026-11-05 Mac 实测）。临时 id 的终端就绪就发，
+  /// 发送途中认领成真 id 也不再发第二遍。
+  it("复制到新会话：终端就绪就用临时 id 发交接语，认领后不重发", async () => {
+    window.history.replaceState({}, "", "/?sessionId=61");
+    let claimed = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      const sid = Number(args?.sessionId);
+      if (command === "get_chat_history") {
+        if (sid === 61) return Promise.resolve({
+          sessionId: 61, title: "换引擎", status: "running", provider: "claude", cwd: "C:/repo",
+          supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "Opus",
+          connected: true, predecessorId: null, supersededBy: null,
+        });
+        if (sid === 90) return Promise.resolve({
+          sessionId: 90, title: "认领后", status: "running", provider: "codex", cwd: "C:/repo",
+          supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+          connected: true, predecessorId: null, supersededBy: null,
+        });
+        return Promise.reject(new Error("no session"));
+      }
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "copy_session_to_provider") {
+        return Promise.resolve({ tempId: -5, handoffPath: "C:/tmp/meowo-handoff/1-61/handoff.md" });
+      }
+      if (command === "managed_terminal_pending_launch") return Promise.resolve(sid === -5 ? { provider: "codex", cwd: "C:/repo" } : null);
+      if (command === "managed_terminal_binding") return Promise.resolve(claimed ? 90 : null);
+      if (command === "managed_terminal_snapshot") {
+        // 首帧画出输入框，之后安静：700ms 后判就绪。
+        const data = Number(args?.since ?? 0) === 0 ? btoa("codex> ") : "";
+        return Promise.resolve({ sessionId: sid, active: true, managed: true, data, startOffset: 0, endOffset: 7, exited: false, exitCode: null });
+      }
+      if (command === "write_managed_terminal") {
+        // 这一句会触发 CLI 的 hook，认领随即完成。
+        claimed = true;
+        return Promise.resolve();
+      }
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "更多模型…" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "默认模型" }));
+
+    const handoffWrites = () => invoke.mock.calls.filter(([command, args]) =>
+      command === "write_managed_terminal" && String((args as { data: string }).data).includes("handoff.md"));
+    await waitFor(() => expect(handoffWrites().length).toBeGreaterThan(0), { timeout: 4_000 });
+    expect((handoffWrites()[0][1] as { sessionId: number }).sessionId).toBe(-5);
+    await waitFor(() => expect(screen.getByText("认领后")).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(handoffWrites()).toHaveLength(1);
+  });
+
   /// 分叉会话（对照 Kimi 会话菜单）：标题菜单里给入口，调 fork_session 后切到返回的临时会话；
   /// 运行中置灰（回合到一半分出去的上下文是残缺的）。
   it.each(["waiting", "running"])("分叉会话:标题菜单入口(%s)", async (status) => {
