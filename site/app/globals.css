@@ -1516,3 +1516,85 @@ code.inline {
 @media (max-width: 900px) {
   .theme-showcase { grid-template-columns: 1fr; }
 }
+
+/* ---------- 灵动岛示意（IslandMock）：屏幕顶部一块纯黑的岛，上面收起胶囊、下面点开的面板 ---------- */
+.im-screen {
+  width: min(100%, 720px);
+  height: 340px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--hairline);
+  background: linear-gradient(160deg, #24435f 0%, #2f6a8f 45%, #6f9fb8 100%);
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+.im-island {
+  width: min(100% - 24px, 520px);
+  align-self: flex-start;
+  background: #000;
+  color: #f5f5f7;
+  /* 首页 hero 整段居中对齐，岛里的列表要靠左。 */
+  text-align: left;
+  border-radius: 0 0 26px 26px;
+  padding: 0 20px 14px;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+}
+.im-pill {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 46px;
+}
+.im-ring { position: relative; display: grid; place-items: center; width: 26px; height: 26px; }
+.im-ring svg { position: absolute; inset: 0; }
+.im-ring em { font-style: normal; font-size: 10px; font-weight: 700; }
+.im-eyes { display: inline-flex; gap: 5px; }
+.im-eyes i {
+  width: 7px;
+  height: 12px;
+  border-radius: 4px;
+  background: #f5f5f7;
+  animation: im-blink 4s infinite;
+}
+@keyframes im-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  97% { transform: scaleY(0.15); }
+}
+.im-clock { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.im-agents { margin-left: auto; display: inline-flex; gap: 8px; }
+.im-avatar { position: relative; display: inline-grid; place-items: center; flex: none; }
+.im-avatar svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.im-avatar i { font-style: normal; font-size: 11px; font-weight: 800; }
+.im-avatar.is-run .im-arc { stroke: #30d158; }
+.im-avatar.is-run svg { animation: im-spin 1.4s linear infinite; }
+.im-avatar.is-pend .im-arc { stroke: #ff9f0a; }
+@keyframes im-spin { to { transform: rotate(270deg); } }
+.im-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid #000;
+  background: #d29922;
+}
+.im-panel { border-top: 1px solid #1c1c1e; padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.im-head { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.im-head b span { color: #ff9f0a; }
+.im-chip { margin-left: auto; font-size: 12px; color: #d1d1d6; background: #1c1c1e; border-radius: 12px; padding: 3px 10px; }
+.im-row { display: flex; align-items: center; gap: 12px; background: #1c1c1e; border-radius: 14px; padding: 8px 12px; }
+.im-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.im-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.im-meta { font-size: 11px; color: #8e8e93; }
+.im-state { flex: none; font-size: 12px; font-weight: 600; color: #d1d1d6; }
+.im-state.is-run { color: #30d158; }
+.im-state.is-pend { color: #ff9f0a; }
+@media (max-width: 640px) {
+  .im-screen { height: 320px; }
+  .im-clock { display: none; }
+  .im-island { padding: 0 12px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .im-eyes i, .im-avatar.is-run svg { animation: none; }
+}

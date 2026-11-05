@@ -8,9 +8,7 @@ import CheckItem from "@/components/CheckItem";
 import FeatureGrid from "@/components/FeatureGrid";
 import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
-import DemoFrame from "@/components/DemoFrame";
-import ThemeShowcase from "@/components/ThemeShowcase";
-import { ChatWindowMock } from "@/components/screenshots";
+import { ChatWindowMock, IslandMock } from "@/components/screenshots";
 
 type SemTone = "err" | "warn" | "ok";
 
@@ -64,12 +62,12 @@ const CONTENT: Record<Lang, Content> = {
       ],
     },
     mac: {
-      title: "macOS · 菜单栏面板",
-      body: "菜单栏图标弹出的原生面板，失焦自动收起，不占 Dock。",
+      title: "macOS · 灵动岛",
+      body: "有刘海的 Mac 上包住刘海，没刘海时收进菜单栏。",
       checks: [
-        "左键点图标弹出面板，失焦自动收起",
-        "菜单栏图标上显示运行中和待交互的会话数",
-        "Apple 芯片与 Intel 各自独立包，已签名公证，双击打开",
+        "有刘海时，额度和会话头像分在刘海两侧",
+        "没刘海时，点菜单栏图标在下方弹出面板",
+        "菜单栏上一双会动的眼睛，旁边显示最要紧的会话",
       ],
     },
   },
@@ -112,12 +110,12 @@ const CONTENT: Record<Lang, Content> = {
       ],
     },
     mac: {
-      title: "macOS · Menu-bar panel",
-      body: "A native panel from the menu-bar icon that auto-hides on blur — no Dock space taken.",
+      title: "macOS · Island",
+      body: "Wraps around the notch on Macs that have one; tucks into the menu bar on those that don't.",
       checks: [
-        "Left-click the icon for the panel; it hides when it loses focus",
-        "The menu-bar icon shows running and needs-you counts",
-        "Separate Apple silicon and Intel builds, signed & notarized, double-click to open",
+        "With a notch, quota and session icons sit on either side of it",
+        "Without one, click the menu-bar icon for a panel right below it",
+        "A pair of animated eyes in the menu bar, next to your most urgent session",
       ],
     },
   },
@@ -130,7 +128,7 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
 
   return (
     <main>
-      {/* Hero：mono eyebrow + display + 双 CTA + 贴纸舞台 */}
+      {/* Hero：mono eyebrow + display + 双 CTA + 灵动岛示意 */}
       <section className="hero">
         <div className="container">
           <span className="eyebrow">{c.hero.eyebrow}</span>
@@ -160,8 +158,8 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
           </p>
           <div className="hero-stage">
             <div className="stage">
-              {/* 实时演示：iframe 里是真实贴纸 UI 的录屏动画（见 DemoFrame） */}
-              <DemoFrame lang={lang} />
+              {/* 灵动岛示意（0.8.0 起两个平台的贴纸都换成了灵动岛；原来的贴纸录屏 DemoFrame 不再用） */}
+              <IslandMock lang={lang} />
             </div>
           </div>
         </div>
@@ -220,19 +218,6 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
               {d.featuresMore} <ArrowRightIcon />
             </Link>
           </div>
-        </div>
-      </section>
-
-      {/* 主题互动块：配色/风格/明暗实时切换的活贴纸 */}
-      <section className="section">
-        <div className="container">
-          <div className="section-head">
-            <span className="eyebrow">{d.theme.eyebrowHome}</span>
-            <h2 className="h1">{d.theme.headingHome}</h2>
-            <p className="lead">{d.theme.subHome}</p>
-          </div>
-          <ThemeShowcase lang={lang} />
-          <p className="note-center">{d.theme.extra}</p>
         </div>
       </section>
 

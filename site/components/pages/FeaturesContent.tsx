@@ -3,16 +3,13 @@ import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
 import AccountCard, { type AcctRow } from "@/components/AccountCard";
 import CheckItem from "@/components/CheckItem";
-import ThemeShowcase from "@/components/ThemeShowcase";
-import { StickerWindow, ChatWindowMock, MenuButtonsMock } from "@/components/screenshots";
-import type { CardData } from "@/components/screenshots/StickerWindow";
-import { getDict, type Lang } from "@/lib/i18n";
+import { ChatWindowMock, IslandMock, MenuButtonsMock } from "@/components/screenshots";
+import { type Lang } from "@/lib/i18n";
 
 type Sec = { eyebrow: string; title: string; body: string; checks: string[] };
 
 type Content = {
   head: { eyebrow: string; title: string; lead: string };
-  showcaseCards: CardData[];
   overview: { eyebrow: string; title: string };
   s4: Sec;
   s5: Sec;
@@ -29,12 +26,6 @@ type Content = {
 const CONTENT: Record<Lang, Content> = {
   zh: {
     head: { eyebrow: "功能", title: "一个工作台，管理完整流程", lead: "从安装、登录 AI 编程代理，到查看状态、处理提醒、续接会话与切换账号，整个流程都在一个桌面工作台完成。" },
-    showcaseCards: [
-      { title: "重构吸边状态机", repo: "meowo", provider: "claude", state: "running", pct: 62, aiText: "把状态机拆成 3 个纯函数，正在补吸附边界单测。", time: "刚刚", model: "claude-opus-4" },
-      { title: "接入账号用量面板", repo: "autopilot", provider: "codex", state: "waiting", pct: 43, aiText: "要应用这 3 处修改吗？(y/n)", time: "刚刚" },
-      { title: "升级 tauri 到 2.3", repo: "cc-relay", provider: "kimi", state: "idle", aiText: "已更新 Cargo.toml，等你确认几处 breaking change。", time: "12 分钟前" },
-      { title: "修复 statusline 兼容性", repo: "clawmo-ios", provider: "claude", state: "stopped", aiText: "兼容性修好并已合并，收工。", time: "3 小时前" },
-    ],
     overview: { eyebrow: "概览", title: "功能一览" },
     s5: {
       eyebrow: "菜单按钮化",
@@ -57,18 +48,12 @@ const CONTENT: Record<Lang, Content> = {
       { title: "按工具覆盖", body: "不同 AI 工具可以使用不同代理，也可以让其中一部分保持直连，互不影响。" },
       { title: "常见格式直接填写", body: "支持 HTTP、SOCKS5 及带认证的代理，包括 host:port:user:pass。工具不支持某种协议时会明确提示。" },
     ],
-    platHead: { eyebrow: "平台", title: "Windows 和 macOS 的形态不同" },
+    platHead: { eyebrow: "平台", title: "两个平台都是灵动岛，落点不同" },
     win: { title: "Windows · 灵动岛", body: "停在屏幕顶部的一条胶囊，谁在跑、谁在等你一眼可见。", checks: ["点一下展开面板，看会话和各家额度", "会话需要你时弹出提醒，点头像直接打开会话", "极简模式只留一条细线，鼠标移上去变回胶囊"] },
-    mac: { title: "macOS · 菜单栏面板", body: "菜单栏图标弹出的原生面板，失焦自动收起，不占 Dock。", checks: ["左键点图标弹出原生面板，失焦自动收起，不占 Dock", "菜单栏图标上显示运行中和待交互的会话数", "universal 包，已签名公证，双击打开"] },
+    mac: { title: "macOS · 灵动岛", body: "有刘海的 Mac 上包住刘海，没刘海时收进菜单栏。", checks: ["有刘海时，额度和会话头像分在刘海两侧", "没刘海时，点菜单栏图标在下方弹出面板", "菜单栏上一双会动的眼睛，旁边显示最要紧的会话"] },
   },
   en: {
     head: { eyebrow: "Features", title: "One workbench, the whole flow", lead: "From installing and signing into AI coding agents to checking status, handling alerts, resuming sessions, and switching accounts — the whole flow lives in one desktop workbench." },
-    showcaseCards: [
-      { title: "Refactor edge-snap state machine", repo: "meowo", provider: "claude", state: "running", pct: 62, aiText: "Split the state machine into 3 pure functions; adding boundary tests.", time: "just now", model: "claude-opus-4" },
-      { title: "Wire up the usage panel", repo: "autopilot", provider: "codex", state: "waiting", pct: 43, aiText: "Apply these 3 changes? (y/n)", time: "just now" },
-      { title: "Bump tauri to 2.3", repo: "cc-relay", provider: "kimi", state: "idle", aiText: "Updated Cargo.toml; a few breaking changes to confirm.", time: "12 min ago" },
-      { title: "Fix statusline compatibility", repo: "clawmo-ios", provider: "claude", state: "stopped", aiText: "Compatibility fixed and merged. Done.", time: "3 hr ago" },
-    ],
     overview: { eyebrow: "Overview", title: "Feature list" },
     s5: {
       eyebrow: "Menus as buttons",
@@ -91,15 +76,14 @@ const CONTENT: Record<Lang, Content> = {
       { title: "Per-tool override", body: "Different AI tools can use different proxies, or some can stay direct — independently." },
       { title: "Common formats accepted", body: "Supports HTTP, SOCKS5, and authenticated proxies including host:port:user:pass. If a tool doesn't support a protocol, it says so clearly." },
     ],
-    platHead: { eyebrow: "Platform", title: "Different forms on Windows and macOS" },
+    platHead: { eyebrow: "Platform", title: "An island on both platforms, placed to fit each" },
     win: { title: "Windows · Island", body: "A slim pill at the top of the screen that shows who's running and who's waiting on you.", checks: ["Click it to expand a panel with sessions and quota", "Pops an alert when a session needs you; click an icon to open it", "Minimal mode leaves just a thin strip; hover to bring the pill back"] },
-    mac: { title: "macOS · Menu-bar panel", body: "A native panel from the menu-bar icon that auto-hides on blur — no Dock space taken.", checks: ["Left-click the icon for a native panel that auto-hides on blur, no Dock space", "The menu-bar icon shows running and needs-you counts", "Universal build, signed & notarized, double-click to open"] },
+    mac: { title: "macOS · Island", body: "Wraps around the notch on Macs that have one; tucks into the menu bar on those that don't.", checks: ["With a notch, quota and session icons sit on either side of it", "Without one, click the menu-bar icon for a panel right below it", "A pair of animated eyes in the menu bar, next to your most urgent session"] },
   },
 };
 
 export default function FeaturesContent({ lang }: { lang: Lang }) {
   const c = CONTENT[lang];
-  const d = getDict(lang);
   return (
     <main>
       <section className="pagehead">
@@ -110,12 +94,12 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
         </div>
       </section>
 
-      {/* 会话卡片 mock：macOS 菜单栏面板的样子（Windows 已换成灵动岛，见下方平台段） */}
+      {/* 灵动岛示意（0.8.0 起两个平台的贴纸都换成了灵动岛） */}
       <section className="section-sm">
         <div className="container">
           <Reveal>
             <div className="stage">
-              <StickerWindow lang={lang} activeTab="all" cards={c.showcaseCards} />
+              <IslandMock lang={lang} />
             </div>
           </Reveal>
         </div>
@@ -206,19 +190,6 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
               </Reveal>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* 主题互动块 */}
-      <section className="section">
-        <div className="container">
-          <div className="section-head">
-            <span className="eyebrow">{d.theme.eyebrowFeat}</span>
-            <h2 className="h1">{d.theme.headingFeat}</h2>
-            <p className="lead">{d.theme.subFeat}</p>
-          </div>
-          <ThemeShowcase lang={lang} />
-          <p className="note-center">{d.theme.extra}</p>
         </div>
       </section>
 
