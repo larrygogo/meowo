@@ -188,7 +188,8 @@ export function Ring({ size, stroke, value, color, track, children, className }:
 
 /// 环色：照参考图用各家品牌色（Claude 橙、Codex 紫……），跑完的会话也是一整圈亮色，不再是
 /// 死气沉沉的灰。要人处理（琥珀）、出错（红）、在跑（绿）换成状态色，一眼能从一排图标里挑出来。
-/// 在跑用绿是用户要求（2026-11-05）：品牌色的弧看不出「正在跑」，Meowo 里绿色一直就是在跑。
+/// 在跑用绿是用户要求（2026-11-05）：品牌色的弧看不出「正在跑」。绿用对话窗侧栏状态点同一个
+/// --cc-ok-vivid，岛上和侧栏同一个会话颜色要一样（用户要求）。
 const BRAND_COLORS: Record<string, string> = {
   claude: "#d97757",
   codex: "#a970ff",
@@ -197,7 +198,7 @@ const BRAND_COLORS: Record<string, string> = {
   opencode: "#c7c7cc",
 };
 const STATE_COLORS: Record<string, string> = {
-  running: "var(--isl-ok)",
+  running: "var(--cc-ok-vivid)",
   pending: "var(--isl-warn)",
   error: "var(--isl-err)",
 };
@@ -216,7 +217,7 @@ function arcOf(item: Item, tone: string): number | null | undefined {
 }
 
 /// 会话图标：深灰圆底座里放 agent logo，外面一圈很淡的品牌色底轨，亮弧按 arcOf 画。
-/// 角标：要处理「!」、出错「×」、跑完但你还没看过的亮一个小蓝点（未读）。
+/// 角标：要处理「!」、出错「×」、跑完在等你的亮一个琥珀小点（与对话窗侧栏的等待点同色同规则）。
 export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number; tip?: string }) {
   const tone = cardTone(item);
   const color = ringColor(item, tone);
@@ -224,7 +225,7 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
   const arc = arcOf(item, tone);
   const { Icon } = agentAssets(item.provider);
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
-  const unread = tone === "waiting" && item.unread === true;
+  const waiting = tone === "waiting";
   return (
     // data-session-id：收起胶囊上点图标直接打开这个会话（App 的按下处理按它分流）。
     <span className="isl-agent" data-tone={tone} data-session-id={item.session.id} title={tip}>
@@ -232,7 +233,7 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
         <span className="isl-agent-logo" style={tintStyle(item.provider)}><Icon /></span>
       </Ring>
       {badge && <span className={`isl-agent-badge is-${tone}`}>{badge}</span>}
-      {unread && <span className="isl-agent-badge is-unread" aria-hidden="true" />}
+      {waiting && <span className="isl-agent-badge is-waiting" aria-hidden="true" />}
     </span>
   );
 }

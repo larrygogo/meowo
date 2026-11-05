@@ -219,8 +219,8 @@ describe("Island 收起", () => {
     expect(container.querySelector(".isl-agent-badge")?.textContent).toBe("!");
   });
 
-  // 用户嫌整圈亮色环又重又看不出状态：跑完的不画亮弧，没看过的亮小蓝点（未读）；在跑才有亮弧。
-  it("会话图标：跑完不画亮弧、没看过的亮蓝点；在跑才有亮弧", () => {
+  // 用户嫌整圈亮色环又重又看不出状态：跑完的不画亮弧，亮一个琥珀等待点（与对话窗侧栏同规则）；在跑才有亮弧。
+  it("会话图标：跑完不画亮弧、亮等待点；在跑才有亮弧", () => {
     const done = mk({ status: "waiting", unread: true });
     const seen = mk({ status: "waiting", unread: false });
     const running = mk({ todo_done: 1, todo_total: 4 });
@@ -229,7 +229,7 @@ describe("Island 收起", () => {
     const arcStroke = (el: Element) => el.querySelectorAll("circle")[1]?.getAttribute("stroke");
     const byTone = (tone: string) => agents.filter((a) => a.getAttribute("data-tone") === tone);
     expect(byTone("waiting").map(arcStroke)).toEqual(["transparent", "transparent"]);
-    expect(container.querySelectorAll(".isl-agent-badge.is-unread")).toHaveLength(1);
+    expect(container.querySelectorAll(".isl-agent-badge.is-waiting")).toHaveLength(2);
     expect(arcStroke(byTone("running")[0])).not.toBe("transparent");
   });
 
