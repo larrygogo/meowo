@@ -439,7 +439,8 @@ describe("IslandPanel 展开面板", () => {
     const onOpenChat = vi.fn();
     const onOpenSettings = vi.fn();
     renderPanel({ onOpenChat, onOpenSettings });
-    fireEvent.click(screen.getByRole("button", { name: zh.sticker.openChatWindow }));
+    // 没有会话时空态也有一颗同名主按钮，这里点标题栏那颗。
+    fireEvent.click(screen.getAllByRole("button", { name: zh.sticker.openChatWindow })[0]);
     fireEvent.click(screen.getByRole("button", { name: zh.sticker.openSettings }));
     expect(onOpenChat).toHaveBeenCalledOnce();
     expect(onOpenSettings).toHaveBeenCalledOnce();
