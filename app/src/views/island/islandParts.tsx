@@ -240,19 +240,19 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
 /// 额度环中间翻一次的间隔。
 export const USAGE_FLIP_MS = 3_500;
 
-/// 额度一律显示「剩余」，像电量：环满 = 还宽裕。此前显示已用，用了 4% 时环几乎是空的，
-/// 一眼看去像「快没了」（用户嫌怪）。颜色也按剩余：宽裕绿、不到四成琥珀、不到一成五红。
-export function remainingOf(usedPct: number): number {
-  return Math.round(Math.min(100, Math.max(0, 100 - usedPct)));
+/// 额度显示「已用」：环越满越接近上限。曾改成显示剩余（像电量），用户又要回已用（2026-11-05），
+/// 别再改回剩余。颜色按已用：用到六成琥珀、八成五红，其余绿。
+export function usedOf(usedPct: number): number {
+  return Math.round(Math.min(100, Math.max(0, usedPct)));
 }
 
-export function remainingColor(remaining: number): string {
-  if (remaining <= 15) return "var(--isl-err)";
-  if (remaining <= 40) return "var(--isl-warn)";
+export function usedColor(used: number): string {
+  if (used >= 85) return "var(--isl-err)";
+  if (used >= 60) return "var(--isl-warn)";
   return "var(--isl-ok)";
 }
 
-/// 额度环（收起胶囊上的小环）：中间是剩余百分比，右下角是哪家的 logo（与右边会话图标的角标同一种
+/// 额度环（收起胶囊上的小环）：中间是已用百分比，右下角是哪家的 logo（与右边会话图标的角标同一种
 /// 做法）。几家都有额度时每隔几秒淡入淡出换下一家。尺寸、粗细与会话图标的环一致，底轨中性灰。
 /// 没有数据时不渲染（调用方判断）。
 export function UsageRing({ entries, size = 32 }: {
@@ -268,14 +268,14 @@ export function UsageRing({ entries, size = 32 }: {
   }, [entries.length]);
   const entry = entries[index % Math.max(1, entries.length)] ?? entries[0];
   const provider = entry?.provider ?? "";
-  const remaining = remainingOf(entry?.pct ?? 0);
+  const used = usedOf(entry?.pct ?? 0);
   const { Icon } = agentAssets(provider);
   return (
     <span className="isl-usage-wrap" data-provider={provider}>
       {/* key 随家换：换家时整块重挂，淡入动画重播。 */}
       <span key={provider} className="isl-usage-swap">
-        <Ring size={size} stroke={3} value={remaining / 100} color={remainingColor(remaining)} track="var(--isl-track)" className="isl-usage">
-          <span className="isl-usage-val">{remaining}</span>
+        <Ring size={size} stroke={3} value={used / 100} color={usedColor(used)} track="var(--isl-track)" className="isl-usage">
+          <span className="isl-usage-val">{used}</span>
         </Ring>
         {provider && <span className="isl-usage-badge" style={tintStyle(provider)}><Icon /></span>}
       </span>

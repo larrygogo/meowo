@@ -8,7 +8,7 @@ import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
-import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandParts";
+import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
 
@@ -36,8 +36,8 @@ function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
 }
 
 /// 叠环里每一圈的颜色，按泳道排序后的位置取（最外圈第一个）。仿 Apple 健康的三环：每圈一个
-/// 固定色相，靠颜色把图例和圈对上。不再按剩余量变色：几圈都是绿的就分不清谁是谁。
-/// 余量告急改由图例里的数字变色提示。避开琥珀和红，那两个在 Meowo 里是「要处理 / 出错」。
+/// 固定色相，靠颜色把图例和圈对上。不再按用量变色：几圈都是绿的就分不清谁是谁。
+/// 快用完改由图例里的数字变色提示。避开琥珀和红，那两个在 Meowo 里是「要处理 / 出错」。
 const LANE_COLORS = ["var(--isl-ok)", "#64d2ff", "#bf5af2", "#5e5ce6"];
 
 /// 叠环：一家一个，每档额度一圈，外大内小。用户要求（2026-11-05）：此前每档一个独立的环，
@@ -58,7 +58,7 @@ function StackedRings({ lanes }: { lanes: UsageLane[] }) {
             key={`${lane.kind}-${lane.label ?? i}`}
             size={size}
             stroke={STACK_STROKE}
-            value={remainingOf(lane.used_pct as number) / 100}
+            value={usedOf(lane.used_pct as number) / 100}
             color={color}
             track={`color-mix(in srgb, ${color} 22%, #000)`}
           />
@@ -258,16 +258,16 @@ export function IslandPanel({
                     {providerLabel(provider)}
                   </span>
                   <StackedRings lanes={shownLanes(usage[provider])} />
-                  {/* 图例：色点对应上面的圈，后面是这档的名字和剩余量。快用完时数字变琥珀 / 红。 */}
+                  {/* 图例：色点对应上面的圈，后面是这档的名字和已用量。快用完时数字变琥珀 / 红。 */}
                   <div className="isl-usage-lanes">
                     {shownLanes(usage[provider]).map((lane, i) => {
-                      const left = remainingOf(lane.used_pct as number);
+                      const used = usedOf(lane.used_pct as number);
                       return (
                         <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell" title={laneName(lane)}>
                           <i className="isl-usage-key" style={{ background: LANE_COLORS[i % LANE_COLORS.length] }} />
                           <span className="isl-usage-name">{laneName(lane)}</span>
-                          <span className="isl-usage-left" style={left <= 40 ? { color: remainingColor(left) } : undefined}>
-                            {left}<small>%</small>
+                          <span className="isl-usage-left" style={used >= 60 ? { color: usedColor(used) } : undefined}>
+                            {used}<small>%</small>
                           </span>
                         </div>
                       );
