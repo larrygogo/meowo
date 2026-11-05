@@ -6801,8 +6801,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-agent-badge.is-pending { background: var(--isl-warn); }
 .isl-agent-badge.is-error { background: var(--isl-err); color: #fff; }
 /* 跑完但还没看过：右下角一个小蓝点（「未读」的通用颜色）。曾用绿点，用户读成「已完成 / 在跑」——
-   Meowo 里绿色一直是在跑、正常的意思，未读不能再占它。 */
-.isl-agent-badge.is-unread { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--isl-blue); }
+   Meowo 里绿色一直是在跑、正常的意思，未读不能再占它。颜色用对话窗侧栏未读点同一个
+   --cc-accent（用户要求两边统一，2026-11-05），别换回岛自己的 --isl-blue。 */
+.isl-agent-badge.is-unread { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--cc-accent); }
 
 /* 提醒 */
 .isl-notch.is-alert {
