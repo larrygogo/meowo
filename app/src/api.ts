@@ -725,7 +725,7 @@ export type Settings = {
   card_menu_mode: CardMenuMode;
   /** 是否在卡片显示对话预览（你的提问 + AI 回复两行）。缺省开启。 */
   preview_enabled: boolean;
-  /** 点击穿透（W-8，仅 Windows）：鼠标穿过贴纸直达下层窗口，按住 Alt 临时恢复交互。 */
+  /** 已停用的「点击穿透」（灵动岛上打开会点不动，2026-11-05 移除），只为兼容旧配置保留。 */
   click_through_enabled: boolean;
   /** 终端（PTY 画面）字号（px，10–18）。缺省 12。 */
   terminal_font_size: number;

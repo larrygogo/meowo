@@ -1653,6 +1653,39 @@ button.stab {
 /* 窗口与设置：桌面上的置顶贴纸 + 菜单栏/托盘图标（带计数徽章） */
 .obm-desktop { position: relative; width: 240px; height: 150px; display: grid; place-items: center; }
 .obm-desktop .obm-panel-pinned { width: 200px; }
+/* Windows 引导的灵动岛示意：纯黑刘海贴顶，下面接展开面板（与真实岛同色，不跟主题变）。 */
+.obm-desktop-island { place-items: start center; }
+.obm-island { display: flex; flex-direction: column; align-items: center; }
+.obm-island-pill {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  width: 92px;
+  height: 20px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 0 0 10px 10px;
+  background: #000;
+}
+.obm-island-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 180px;
+  margin-top: 6px;
+  padding: 12px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  background: #000;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+}
+.obm-island-row { display: flex; align-items: center; gap: 8px; }
+.obm-island-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.obm-island-dot.is-run { background: var(--cc-ok-vivid); }
+.obm-island-dot.is-wait { background: var(--cc-warn-vivid); }
+.obm-island-dot.is-off { background: #8e8e93; }
+.obm-island-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.22); }
 .obm-tray {
   position: absolute;
   top: 0;

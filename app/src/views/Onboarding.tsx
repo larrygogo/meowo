@@ -65,6 +65,25 @@ function HeroBoard({ t }: { t: Dict }) {
   );
 }
 
+/** Windows 的窗口示意：屏幕顶部的胶囊，下面是悬停展开的黑色面板。 */
+function HeroIsland() {
+  return (
+    <div className="obm-desktop obm-desktop-island">
+      <div className="obm-island">
+        <span className="obm-island-pill">
+          <i className="obm-island-dot is-run" />
+          <i className="obm-island-dot is-wait" />
+        </span>
+        <span className="obm-island-panel">
+          <i className="obm-island-row"><i className="obm-island-dot is-run" /><i className="obm-island-bar" /></i>
+          <i className="obm-island-row"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /></i>
+          <i className="obm-island-row"><i className="obm-island-dot is-off" /><i className="obm-island-bar" /></i>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function HeroWindow() {
   return (
     <div className="obm-desktop">
@@ -186,9 +205,10 @@ export function Onboarding() {
     { title: t.onboarding.connect.title, points: t.onboarding.connect.points },
     { title: t.onboarding.progress.title, points: t.onboarding.progress.points },
     { hero: <HeroBoard t={t} />, title: t.onboarding.board.title, points: t.onboarding.board.points },
-    // 吸边仅 Windows 有（macOS 是菜单栏面板），要点按平台拼接——不教的话用户误吸附后
-    // 只会以为「窗口不见了」。
-    { hero: <HeroWindow />, title: t.onboarding.window.title, points: IS_MAC ? t.onboarding.window.points : [...t.onboarding.window.points, t.onboarding.window.snapPoint] },
+    // Windows 是灵动岛（2026-11-04 起替换贴纸与吸边），macOS 仍是菜单栏面板，按平台选要点和示意图。
+    IS_MAC
+      ? { hero: <HeroWindow />, title: t.onboarding.window.title, points: t.onboarding.window.points }
+      : { hero: <HeroIsland />, title: t.onboarding.window.title, points: t.onboarding.window.islandPoints },
   ];
   const total = steps.length;
   const isFirst = step === 0;

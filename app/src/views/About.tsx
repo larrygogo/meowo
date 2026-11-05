@@ -681,8 +681,6 @@ function AppearanceSection() {
   const termBack = settings?.terminal_scrollback ?? SETTINGS_DEFAULTS.terminal_scrollback;
   const chatWidth = settings?.chat_content_width ?? SETTINGS_DEFAULTS.chat_content_width;
   const turnFolding = settings?.chat_turn_folding ?? SETTINGS_DEFAULTS.chat_turn_folding;
-  const clickThroughOn = settings?.click_through_enabled ?? false;
-  const toggleClickThrough = () => patch({ click_through_enabled: !clickThroughOn });
   // 滑杆草稿（拖动中本地显示，松手才提交）：见 useSliderDraft。
   const opacityDraft = useSliderDraft((v) => void patch({ opacity: v }));
   const termFontDraft = useSliderDraft((v) => void patch({ terminal_font_size: v }));
@@ -764,14 +762,8 @@ function AppearanceSection() {
             aria-label={t.settings.opacity}
           />
         </div>
-        {/* 点击穿透(W-8)仅 Windows 实装(macOS 面板失焦自隐、无此问题),按平台显示。 */}
-        {IS_WIN && <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.clickThrough}</div>
-            <div className="row-desc">{t.settings.clickThroughDesc}</div>
-          </div>
-          <Switch checked={clickThroughOn} onChange={toggleClickThrough} label={t.settings.clickThrough} />
-        </div>}
+        {/* 点击穿透已移除：只在 Windows 有，而 Windows 换成灵动岛后打开它岛就点不动了
+            （2026-11-05）。settings 字段留着只为读旧配置不报错。 */}
       </div>
 
       {/* 灵动岛只在 Windows（2026-11-04 起替换贴边缩略条），macOS 仍是菜单栏面板。 */}

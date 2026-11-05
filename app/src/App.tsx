@@ -713,7 +713,7 @@ export function App() {
     };
   }, [startDrag]);
 
-  // 托盘「找回贴纸」：岛本来就在顶上，找回就是打开完整列表。
+  // 托盘单击 / 菜单「打开会话列表」：岛本来就在顶上，打开的就是完整列表。
   useEffect(() => {
     if (isMacPanel()) return;
     const un = listen("recall-sticker", () => showAll());

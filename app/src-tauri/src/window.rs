@@ -572,75 +572,6 @@ pub(crate) fn show_sticker(window: tauri::WebviewWindow) {
     }
 }
 
-/// 点击穿透（W-8）：开启后贴纸不接收任何鼠标事件——opacity 可低至 25%，几乎看不见的
-/// 置顶窗若照常吃掉鼠标就是桌面地雷。按住 Alt 临时恢复交互：穿透窗收不到键鼠，
-/// 修饰键状态只能全局拿——WH_KEYBOARD_LL 钩子方案更重，这里 50ms 轮询
-/// GetAsyncKeyState（读左键/修饰键的同一原语）。仅 Windows 实装：
-/// macOS 面板失焦自隐、无此问题，设置项也只对 Windows 显示。
-#[cfg(target_os = "windows")]
-static CLICK_THROUGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// 当前实际套用到窗口的 ignore 状态：轮询线程据此做变化检测，不重复调窗口 API。
-#[cfg(target_os = "windows")]
-static IGNORE_APPLIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// 期望的 ignore 状态：穿透开启且未按 Alt。纯函数便于单测。
-#[cfg(target_os = "windows")]
-fn desired_ignore(click_through: bool, alt_down: bool) -> bool {
-    click_through && !alt_down
-}
-
-#[cfg(target_os = "windows")]
-fn set_ignore(app: &tauri::AppHandle, ignore: bool) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.set_ignore_cursor_events(ignore);
-    }
-    IGNORE_APPLIED.store(ignore, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// 设置项「点击穿透」的生效口：开机（lib.rs setup）与 set_settings 各调一次。
-/// 非 Windows 为 no-op（见上，功能本身只实装 Windows）。
-pub(crate) fn apply_click_through(app: &tauri::AppHandle, enabled: bool) {
-    #[cfg(target_os = "windows")]
-    {
-        use std::sync::atomic::Ordering;
-        CLICK_THROUGH.store(enabled, Ordering::Relaxed);
-        // 立即套用一个确定状态；若此刻正按着 Alt，轮询线程下一拍（≤50ms）会再翻回来。
-        let desired = desired_ignore(enabled, false);
-        if desired != IGNORE_APPLIED.load(Ordering::Relaxed) {
-            set_ignore(app, desired);
-        }
-        start_click_through_watch(app);
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (app, enabled);
-    }
-}
-
-/// Alt 轮询线程（全进程只起一次）：穿透开启期间按住 Alt → 临时恢复交互，松开即回穿透。
-#[cfg(target_os = "windows")]
-fn start_click_through_watch(app: &tauri::AppHandle) {
-    static START: std::sync::Once = std::sync::Once::new();
-    START.call_once(|| {
-        let app = app.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            use std::sync::atomic::Ordering;
-            let desired = desired_ignore(CLICK_THROUGH.load(Ordering::Relaxed), alt_down());
-            if desired != IGNORE_APPLIED.load(Ordering::Relaxed) {
-                set_ignore(&app, desired);
-            }
-        });
-    });
-}
-
-/// 左右 Alt 任一是否按下（VK_MENU = 0x12；返回值高位置 1 即 i16 为负表示当前按下）。
-#[cfg(target_os = "windows")]
-fn alt_down() -> bool {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-    unsafe { GetAsyncKeyState(0x12) < 0 }
-}
-
 /// macOS 面板的「保持打开」（W-12）：前端贴纸 pin 按钮在面板模式下切换失焦自动收起。
 /// 跨平台注册（处理器表不做 cfg 分支），非 macOS 为空操作——贴纸 pin 在那边另有语义
 /// （always-on-top），不会调到这条命令。
@@ -944,7 +875,10 @@ pub(crate) fn build_tray_menu(
     } else {
         None
     };
-    let recall = MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?;
+    // Windows 的贴纸已换成灵动岛（2026-11-04），岛恒在屏幕顶上谈不上「找回」，
+    // 这一项实际做的是展开完整会话列表（App.tsx 的 recall-sticker 监听）。
+    let recall_key = if cfg!(target_os = "windows") { "tray.sessions" } else { "tray.recall" };
+    let recall = MenuItemBuilder::with_id("recall", tr(lang, recall_key)).build(app)?;
     let guide = MenuItemBuilder::with_id("guide", tr(lang, "tray.guide")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
@@ -1171,9 +1105,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// 托盘左键开合主界面（贴纸窗）：可见且聚焦 → 隐藏；可见未聚焦 → 聚焦（用户在找它）；
 /// 隐藏/最小化 → 显示并聚焦。贴纸 skipTaskbar，藏起来后任务栏没有入口，左键必须可逆，
 /// 不能像旧行为（左键只开对话窗）那样把「找回贴纸」只留在右键菜单深处。
-/// 折叠态例外：吸附成贴边细条时窗口仍「可见」却几乎不持焦，落进聚焦分支等于给
-/// skipTaskbar 的 28px 细条赋焦、屏幕零可见变化——改走 recall_sticker 展开带到眼前，
-/// 与「单击 = 开合主界面」语义自洽。
+/// Windows 例外：灵动岛恒可见却几乎不持焦，可见未聚焦时改走 recall_sticker 打开完整列表。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
     let Some(w) = app.get_webview_window("main") else {
@@ -1186,8 +1118,9 @@ pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
         let _ = w.set_focus();
     } else if w.is_focused().unwrap_or(false) {
         let _ = w.hide();
-    } else if crate::settings::load_settings().sticker_window.snap_edge.is_some() {
-        // 调用点已在托盘单击消抖子线程，读设置文件不堵消息泵（同双击分支的线程纪律）。
+    } else if cfg!(target_os = "windows") {
+        // 灵动岛恒可见、几乎不持焦，落进聚焦分支屏幕零变化；改为展开完整列表。
+        // 吸边细条已删（2026-11-04），旧版留在 settings 里的 snap_edge 不再作数。
         recall_sticker(app);
     } else {
         let _ = w.set_focus();
@@ -1280,21 +1213,6 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
             app.exit(0);
         }
     });
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod click_through_tests {
-    use super::desired_ignore;
-
-    /// 穿透的期望 ignore 状态：仅「开关开 且 未按 Alt」时穿透；按住 Alt 临时恢复交互，
-    /// 开关关闭时无论 Alt 如何都不穿透。
-    #[test]
-    fn desired_ignore_combines_switch_and_alt() {
-        assert!(desired_ignore(true, false));
-        assert!(!desired_ignore(true, true), "按住 Alt 临时恢复交互");
-        assert!(!desired_ignore(false, false));
-        assert!(!desired_ignore(false, true));
-    }
 }
 
 
