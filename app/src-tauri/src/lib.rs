@@ -13,6 +13,9 @@ mod envpath;
 mod fsutil;
 mod git;
 mod island;
+// 只有 macOS 的菜单栏用；放在 macos 模块外是为了 Windows 开发机上也能跑单测。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod tray_anim;
 #[cfg(target_os = "windows")]
 mod openwith;
 mod ports;
