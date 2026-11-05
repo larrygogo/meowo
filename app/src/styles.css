@@ -6925,10 +6925,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 .isl-dots-nav button.is-on { width: 16px; background: var(--isl-text-2); }
 
-/* 展开/收回：面板与完整列表都从胶囊轮廓长出来；收回时缩回去，播完 App 再缩窗口。
-   完整列表（原贴纸）保留主题色，只把顶边改平、贴住屏幕顶。 */
+/* 展开/收回：面板从胶囊轮廓长出来；收回时缩回去，播完 App 再缩窗口。 */
 .island-shell { height: 100%; }
-.island-shell.is-full .sticker { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 .island-shell.is-entering { animation: island-unfold 0.26s cubic-bezier(0.2, 0.9, 0.3, 1); }
 .island-shell.is-leaving { animation: island-fold 0.18s ease-in forwards; }
 @keyframes island-unfold {

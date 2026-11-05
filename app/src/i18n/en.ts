@@ -1486,7 +1486,7 @@ export const en: Dict = {
         "The island sits at the top of the screen; drag it left or right.",
         "Hover to expand it and see the most urgent sessions and quota.",
         "It pops an alert when a session needs you.",
-        "Click the tray icon for the full session list; right-click for Settings.",
+        "Click the tray icon to open the chat window; right-click for Settings.",
       ],
       reopenHint: "Reopen this guide anytime from the tray icon or Settings.",
     },

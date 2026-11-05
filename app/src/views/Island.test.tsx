@@ -346,7 +346,6 @@ describe("IslandPanel 展开面板", () => {
         usage={{}}
         quotaProviders={["claude"]}
         onOpenSession={noop}
-        onShowAll={noop}
         onMeasure={noop}
         onPointerDownDrag={noop}
         {...props}

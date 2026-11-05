@@ -108,6 +108,25 @@ pub(crate) fn pull_on_screen(window: &tauri::WebviewWindow, force: bool) {
     }
 }
 
+/// 灵动岛展开后「点外面才收起」（用户 2026-11-05 要求，原来是光标移开就收）：鼠标任一键
+/// 正按着、且光标不在窗口里。点到别的窗口时岛会失焦，前端另有 blur 兜；点桌面空白处、
+/// 任务栏这些地方岛不一定拿过焦点，只能问全局按键状态。非 Windows 恒为 false（不收回）。
+#[tauri::command]
+pub(crate) fn mouse_pressed_outside_window(window: tauri::WebviewWindow) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+        // VK_LBUTTON / VK_RBUTTON / VK_MBUTTON；返回值最高位为 1（i16 为负）= 此刻按着。
+        let pressed = [0x01, 0x02, 0x04].iter().any(|vk| unsafe { GetAsyncKeyState(*vk) } < 0);
+        pressed && !cursor_over_window(window)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        false
+    }
+}
+
 /// 真实光标是否在主窗口外接矩形内。用于展开态下判定是否该收回——DOM 的 mouseleave 在
 /// 窗口缩放时会误报一串假 leave/enter，不可信；改问 GetCursorPos vs 窗口物理矩形。
 /// 取不到坐标/尺寸时一律当作"在内"，避免误折叠。非 Windows 暂恒为 true（不收回）。
