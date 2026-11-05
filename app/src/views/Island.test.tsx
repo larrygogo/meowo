@@ -448,6 +448,18 @@ describe("IslandPanel 展开面板", () => {
     expect(screen.queryByRole("button", { name: zh.sticker.openChatWindow })).toBeNull();
   });
 
+  it("没有会话时空态主按钮是打开对话窗口；轻量模式退回新建会话", () => {
+    const onOpenChat = vi.fn();
+    const onNewSession = vi.fn();
+    const { container } = renderPanel({ onOpenChat, onNewSession });
+    fireEvent.click(container.querySelector(".isl-empty .isl-btn")!);
+    expect(onOpenChat).toHaveBeenCalledOnce();
+    expect(onNewSession).not.toHaveBeenCalled();
+    cleanup();
+    const lite = renderPanel({ onNewSession });
+    expect(lite.container.querySelector(".isl-empty .isl-btn")?.textContent).toContain(zh.sticker.newSession);
+  });
+
   it("只有一页时不出箭头", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: zh.island.nextPage })).toBeNull();

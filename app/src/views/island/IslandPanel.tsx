@@ -173,7 +173,11 @@ export function IslandPanel({
               {rows.length === 0 && (
                 <div className="isl-empty">
                   <span>{t.island.idle}</span>
-                  {onNewSession && (
+                  {/* 标题栏已有「新建会话」，空态的主按钮改成打开对话窗口（用户 2026-11-05 要求）；
+                      轻量模式没有对话窗口，才退回新建。 */}
+                  {onOpenChat ? (
+                    <button type="button" className="isl-btn is-primary" onClick={onOpenChat}>{t.sticker.openChatWindow}</button>
+                  ) : onNewSession && (
                     <button type="button" className="isl-btn is-primary" onClick={onNewSession}>＋ {t.sticker.newSession}</button>
                   )}
                 </div>
