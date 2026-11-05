@@ -1248,6 +1248,8 @@ pub fn run() {
             island::island_drag_update,
             island::island_drag_end,
             island::island_cursor,
+            island::island_host,
+            island::island_set_visible,
             diaglog::export_diag_log,
             file_mention_candidates,
             list_file_openers,
@@ -1356,7 +1358,8 @@ pub fn run() {
                 // nspanel 是 macOS-only crate，无法放进跨平台 Builder 链，故在此运行时注册。
                 app.handle().plugin(tauri_nspanel::init())?;
                 crate::macos::panel::convert_main_to_panel(app.handle());
-                crate::macos::panel::setup_resign_listener(app.handle());
+                // 先探一次刘海：菜单栏图标第一次画的时候就要知道该画迷你岛还是徽章。
+                crate::macos::notch::refresh();
                 crate::macos::menubar::setup_tray(app.handle())?;
                 {
                     let boot = crate::load_settings();

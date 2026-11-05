@@ -13,7 +13,6 @@ import {
   PageCursor,
 
 } from "./api";
-import { Sticker } from "./views/Sticker";
 import { useBoardRefresh } from "./hooks/useBoardRefresh";
 import { useSettingsEffect } from "./hooks/useSettings";
 import type { IslandCompactStyle } from "./api";
@@ -25,7 +24,7 @@ import { byUrgency } from "./views/Island";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
-import { isMacPanel } from "./platform";
+import { FLOATING_HOST, isMac, type IslandHost } from "./platform";
 import { reconcileRows, sameRefs, type RowCache as SharedRowCache } from "./rowCache";
 import { reconcilePendings, type PendingRegistry } from "./views/sticker/pending";
 import { pushEscLayer } from "./escLayers";
@@ -86,10 +85,11 @@ export function App() {
   // 启动显示闸门（W-4/W-17）：贴纸几何（尺寸/吸附边/置顶）在 settings.json，需一次 IPC 读取；
   // 读完并完成「沿用折叠 / 还原正常尺寸」之前不渲染内容、不显示窗口——否则闪一帧
   // 「默认尺寸大框里的错误内容」。后端 show_after_grace 兜底不变。
-  const [bootReady, setBootReady] = useState(isMacPanel());
+  const [bootReady, setBootReady] = useState(false);
   // 贴纸窗口以 visible:false 创建（tauri.conf.json），首帧渲染后再显示，消除启动瞬间的白框闪烁。
-  // 不抢焦点（窗口配置 focus:false，开机自启同理）；macOS 面板模式显隐归 menubar 管，这里不越权。
-  useShowWhenReady({ focus: false, enabled: !isMacPanel(), ready: bootReady });
+  // 不抢焦点（窗口配置 focus:false，开机自启同理）。macOS 的岛是非激活面板，显隐走
+  // island_set_visible（普通 show 会让它成为 key、吃掉前台应用的键盘），这里不管。
+  useShowWhenReady({ focus: false, enabled: !isMac(), ready: bootReady });
   const [items, setItems] = useState<Item[]>([]);
   const [counts, setCounts] = useState<LiveSessionCounts>({
     total: 0,
@@ -156,8 +156,6 @@ export function App() {
       .catch(() => {});
   }, []);
   useEffect(() => {
-    // macOS 面板模式没有吸边/折叠，缩略条永不渲染，这 2×200 条的查询是纯浪费。
-    if (isMacPanel()) return;
     loadStrip();
   }, [loadStrip]);
 
@@ -320,7 +318,7 @@ export function App() {
     // 折叠条数据独立刷新（不随 tab）——但只在非 normal 态：正常态下缩略条不渲染，
     // 每次 board-changed 都跟着拉 2×200 条只为一个折叠时才用的计数，不值。挂载时和
     // 折叠动作发起时（doCollapse）各拉一次，保证真折叠的那一刻数据是新的。
-    if (!isMacPanel()) loadStrip();
+    loadStrip();
   }, [filter, search, loadPage, loadStrip]);
 
   // board-changed 订阅 + leading/trailing 节流统一在 useBoardRefresh：每次刷新是
@@ -449,7 +447,7 @@ export function App() {
   //   expanded 悬停/点击展开的黑色面板（最要紧的会话 + 额度）
   // 原来还有一种「完整列表」（原贴纸），2026-11-05 用户定案删掉，会话列表看对话窗口侧栏。
   // 窗口几何由 island.rs 管，按当前中心点对称改尺寸；刘海在窗口里水平居中，窗口长大时它在
-  // 屏幕上不挪位，展开动画从它的轮廓长出来。macOS 仍是菜单栏面板，下面每段都先判 isMacPanel()。
+  // 屏幕上不挪位，展开动画从它的轮廓长出来。macOS 2026-11-05 起也是灵动岛，落点见 IslandHost。
   const [islandMode, setIslandMode] = useState<IslandMode>("compact");
   const islandModeRef = useRef<IslandMode>("compact");
   islandModeRef.current = islandMode;
@@ -486,6 +484,21 @@ export function App() {
     stripPeekRef.current = peek;
     setStripPeekState(peek);
   }, []);
+  // 岛落在哪（见 platform.ts 的 IslandHost）。Windows 恒为 floating；macOS 启动时探一次，之后
+  // 每几秒再探，插拔外接屏、合盖开盖后跟着换。ref 给布局回调同步读。
+  const [host, setHostState] = useState<IslandHost>(FLOATING_HOST);
+  const hostRef = useRef<IslandHost>(FLOATING_HOST);
+  const setHost = useCallback((next: IslandHost) => {
+    hostRef.current = next;
+    setHostState(next);
+  }, []);
+  // 极简模式只在 Windows 有：刘海本身就是那条「细条」，菜单栏落点平时根本不显示。
+  const stripOn = islandStrip && host.kind === "floating";
+  // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
+  const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--isl-safe-top", `${safeTopOf(host)}px`);
+  }, [host]);
   useSettingsEffect((settings) => {
     setChatEnabled(settings.chat_enabled ?? true);
     setIslandStrip(settings.island_strip ?? false);
@@ -507,24 +520,40 @@ export function App() {
     [usage, quotaProviders, activeProviders],
   );
 
-  const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
-    invoke("island_layout", { width, height, centerRatio }), []);
-  const layoutCompact = useCallback((centerRatio: number | null = null) =>
-    islandStripRef.current && !stripPeekRef.current
-      ? layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio)
-      : layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio), [layout]);
+  // 摆窗口。菜单栏落点平时藏着，只有提醒、展开时才摆到图标下方显示出来（不抢键盘；展开时
+  // grow 再给焦点）。
+  const layout = useCallback(async (width: number, height: number, centerRatio: number | null = null) => {
+    await invoke("island_layout", { width, height, centerRatio });
+    if (hostRef.current.kind === "menubar") await invoke("island_set_visible", { visible: true, focus: false });
+  }, []);
+  const alertHeight = () => ISLAND_ALERT_SIZE.height + safeTopOf(hostRef.current);
+  const layoutCompact = useCallback(async (centerRatio: number | null = null) => {
+    const h = hostRef.current;
+    // 菜单栏落点：收起 = 藏起来，状态看菜单栏上的迷你岛。
+    if (h.kind === "menubar") {
+      await invoke("island_set_visible", { visible: false, focus: false });
+      return;
+    }
+    if (h.kind === "floating" && islandStripRef.current && !stripPeekRef.current) {
+      await layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio);
+      return;
+    }
+    // 有刘海：高度就是刘海高，和菜单栏齐平。
+    const height = h.kind === "notch" ? h.notchHeight : ISLAND_PILL_HEIGHT;
+    await layout(pillWidthRef.current + ISLAND_EAR * 2, height, centerRatio);
+  }, [layout]);
 
   // 极简模式开关一变（面板上点、设置页改、启动时读到设置），收起着的岛立刻换形。
   // 启动摆放（bootReady 之前）自己按设置摆，这里不抢。
   useEffect(() => {
-    if (isMacPanel() || !bootReady || islandModeRef.current !== "compact" || transitioningRef.current) return;
+    if (!bootReady || islandModeRef.current !== "compact" || transitioningRef.current) return;
     layoutCompact().catch(() => {});
-  }, [islandStrip, stripPeek, bootReady, layoutCompact]);
+  }, [stripOn, stripPeek, bootReady, layoutCompact]);
 
   // 胶囊临时露出期间轮询真实光标，连续两次在窗口外才缩回细条。不用 DOM 的 pointerleave：
   // 细条长成胶囊时窗口在改尺寸，会误报一串假 leave/enter（展开态收回用轮询同一个理由）。
   useEffect(() => {
-    if (isMacPanel() || !islandStrip || !stripPeek || islandMode !== "compact") return;
+    if (!stripOn || !stripPeek || islandMode !== "compact") return;
     let outCount = 0;
     const id = window.setInterval(() => {
       if (draggingRef.current) {
@@ -543,7 +572,7 @@ export function App() {
         .catch(() => {});
     }, 180);
     return () => window.clearInterval(id);
-  }, [islandStrip, stripPeek, islandMode, setStripPeek]);
+  }, [stripOn, stripPeek, islandMode, setStripPeek]);
 
   // 面板上的极简模式按钮：先本地切（按钮立刻反映），再写回设置；写失败退回原值。
   const toggleStrip = useCallback(() => {
@@ -579,6 +608,8 @@ export function App() {
     // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是新形态，不会去缩窗口。
     islandModeRef.current = mode;
     setIslandMode(mode);
+    // macOS 的岛是非激活面板：展开时让它成为 key，Esc 和「点外面收起」（失焦）才接得到。
+    if (isMac()) invoke("island_set_visible", { visible: true, focus: true }).catch(() => {});
     // 展开过就不算「临时露出」了：收起时按极简模式回到细条。
     setStripPeek(false);
     transitioningRef.current = false;
@@ -587,7 +618,7 @@ export function App() {
 
   const expand = useCallback(() => {
     const mode = islandModeRef.current;
-    if (isMacPanel() || mode === "expanded" || draggingRef.current) return;
+    if (mode === "expanded" || draggingRef.current) return;
     void grow("expanded", ISLAND_PANEL_WIDTH, panelHeightRef.current);
   }, [grow]);
 
@@ -617,7 +648,7 @@ export function App() {
     setAlert(next);
     islandModeRef.current = "alert";
     setIslandMode("alert");
-    layout(ISLAND_ALERT_SIZE.width, ISLAND_ALERT_SIZE.height).catch((err) => console.error("[island] 弹出提醒失败：", err));
+    layout(ISLAND_ALERT_SIZE.width, alertHeight()).catch((err) => console.error("[island] 弹出提醒失败：", err));
     armAlertTimer(islandAlertMsRef.current);
   }, [layout, armAlertTimer]);
   pumpAlertRef.current = pumpAlert;
@@ -634,7 +665,6 @@ export function App() {
   }, [armAlertTimer]);
 
   useEffect(() => {
-    if (isMacPanel()) return;
     const un = listen<IslandAlertEvent>("island-alert", (event) => {
       const mode = islandModeRef.current;
       if (mode === "expanded") return;
@@ -657,7 +687,7 @@ export function App() {
 
   const collapse = useCallback(() => {
     const mode = islandModeRef.current;
-    if (isMacPanel() || mode !== "expanded") return;
+    if (mode !== "expanded") return;
     setClosing(true);
     // 先播收回动画（缩回胶囊轮廓），播完再把窗口缩小。
     window.setTimeout(() => {
@@ -694,6 +724,8 @@ export function App() {
     let dragging = false;
     let frame = 0;
     const move = (event: PointerEvent) => {
+      // macOS 的岛钉在刘海上或菜单栏图标下，不能拖：按下松开一律当点击。
+      if (isMac()) return;
       if (!dragging && Math.abs(event.screenX - startX) > 3) {
         dragging = true;
         draggingRef.current = true;
@@ -743,23 +775,58 @@ export function App() {
   // 托盘找回（轻量模式下单击托盘、通知定位失败的兜底）：Windows 贴纸已删（2026-11-05 用户
   // 定案），岛本来就在顶上，找回就是展开面板。
   useEffect(() => {
-    if (isMacPanel()) return;
     const un = listen("recall-sticker", () => expand());
     return () => {
       un.then((f) => f());
     };
   }, [expand]);
 
+  // macOS 没刘海时，菜单栏图标就是迷你岛：点它展开 / 收起面板（menubar.rs 的 on_left_click）。
+  useEffect(() => {
+    const un = listen("island-tray-toggle", () => {
+      if (islandModeRef.current === "expanded") collapse();
+      else expand();
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [expand, collapse]);
+
+  // macOS：几秒问一次落点。插上外接屏、合盖、开盖后，有没有刘海会变；变了就收起回胶囊、
+  // 按新落点重摆（菜单栏落点下是藏起来）。
+  useEffect(() => {
+    if (!isMac()) return;
+    const id = window.setInterval(() => {
+      invoke<IslandHost>("island_host")
+        .then((next) => {
+          const cur = hostRef.current;
+          if (next.kind === cur.kind && next.notchWidth === cur.notchWidth && next.notchHeight === cur.notchHeight) return;
+          setHost(next);
+          if (alertTimerRef.current != null) {
+            window.clearTimeout(alertTimerRef.current);
+            alertTimerRef.current = null;
+          }
+          setAlert(null);
+          islandModeRef.current = "compact";
+          setIslandMode("compact");
+          layoutCompact()
+            .then(() => (next.kind === "notch" ? invoke("island_set_visible", { visible: true, focus: false }) : undefined))
+            .catch(() => {});
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [setHost, layoutCompact]);
+
   // 换显示器缩放（拖到另一块屏、系统改缩放）：按当前形态的逻辑尺寸重摆一次。
   useEffect(() => {
-    if (isMacPanel()) return;
     let un: (() => void) | undefined;
     try {
       getCurrentWindow()
         .onScaleChanged(() => {
           const mode = islandModeRef.current;
           if (mode === "expanded") layout(ISLAND_PANEL_WIDTH, panelHeightRef.current).catch(() => {});
-          else if (mode === "alert") layout(ISLAND_ALERT_SIZE.width, ISLAND_ALERT_SIZE.height).catch(() => {});
+          else if (mode === "alert") layout(ISLAND_ALERT_SIZE.width, alertHeight()).catch(() => {});
           else layoutCompact().catch(() => {});
         })
         .then((f) => { un = f; })
@@ -771,14 +838,8 @@ export function App() {
   }, [layout, layoutCompact]);
 
   // 启动：读 settings 的位置与置顶偏好，按记住的横向位置把胶囊贴顶摆好再显示（bootReady 闸门，
-  // 几何落地前不渲染、不显示，W-4/W-17）。macOS 面板只取 pin 偏好，异步套用不挡首帧。
+  // 几何落地前不渲染、不显示，W-4/W-17）。macOS 先探落点（有没有刘海）再摆。
   useEffect(() => {
-    if (isMacPanel()) {
-      initStickerWindowState()
-        .then((s) => applyPinned(s.pinned))
-        .catch(() => {});
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
@@ -790,9 +851,15 @@ export function App() {
           islandStripRef.current = true;
           setIslandStrip(true);
         }
+        if (isMac()) {
+          const found = await invoke<IslandHost>("island_host").catch(() => null);
+          if (found) setHost(found);
+        }
         if (cancelled) return;
         applyPinned(s.pinned);
         await layoutCompact(s.island_center ?? 0.5);
+        // 刘海落点摆好就显示（不抢键盘）；菜单栏落点平时藏着，等点图标。
+        if (hostRef.current.kind === "notch") await invoke("island_set_visible", { visible: true, focus: false });
       } catch (err) {
         console.error("[island] 启动摆放失败：", err);
       } finally {
@@ -812,7 +879,7 @@ export function App() {
   // 这类岛可能从没拿过焦点的地方，blur 不来，再轮询全局「鼠标按着且在窗口外」兜底。
   // 60ms 一拍：一次普通点击按下约 100ms，间隔再长会漏。
   useEffect(() => {
-    if (isMacPanel() || islandMode !== "expanded" || closing) return;
+    if (islandMode !== "expanded" || closing) return;
     const onBlur = () => {
       if (!draggingRef.current) collapse();
     };
@@ -838,7 +905,7 @@ export function App() {
 
   // 展开态的键盘出口：Esc 收回（P2-12 同一课）。注册 Esc 层，展开的面板本身就是一层浮层。
   useEffect(() => {
-    if (isMacPanel() || islandMode !== "expanded") return;
+    if (islandMode !== "expanded") return;
     const popLayer = pushEscLayer();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
@@ -873,49 +940,20 @@ export function App() {
   }, [collapse, layoutCompact, pumpAlert]);
   openSessionRef.current = openSession;
 
-  if (!isMacPanel() && !bootReady) {
+  if (!bootReady) {
     return null;
-  }
-  // 有新版本：贴纸不再弹浮动条，改为齿轮按钮上的红点提示(安装入口在设置→关于)。
-  const hasUpdate = upStatus === "available" || upStatus === "downloading" || upStatus === "ready";
-  const sticker = (
-    <Sticker
-      filter={filter}
-      onFilterChange={pickFilter}
-      data={items}
-      counts={counts}
-      total={totalFor(filter, counts)}
-      hasMore={!reachedEnd}
-      loadMore={loadMore}
-      loadingMore={loadingMore}
-      hasUpdate={hasUpdate}
-      updateStatus={upStatus}
-      search={search}
-      onSearchChange={changeSearch}
-      onArchiveOptimistic={onArchiveOptimistic}
-      onArchiveFailed={onArchiveFailed}
-      onArchiveUndo={onArchiveUndo}
-      initialLoading={initialLoading}
-      loadError={loadError}
-      onRetry={retryLoad}
-      switching={switching}
-      // 岛恒置顶：贴纸自己的置顶开关不再起作用（Sticker 在 snapped 时跳过 setAlwaysOnTop）。
-      snapped={!isMacPanel()}
-      pinned={pinned}
-      onTogglePin={togglePin}
-    />
-  );
-  if (isMacPanel()) {
-    return <div style={{ height: "100%" }}>{sticker}</div>;
   }
   if (islandMode === "expanded") {
     return (
       <div
         className={`island-shell${closing ? " is-leaving" : " is-entering"}`}
         // 收回动画缩向收起后的形状：极简模式缩成细条，否则缩回胶囊。
-        style={(islandStrip
+        style={(stripOn
           ? { "--island-pill-w": `${ISLAND_STRIP_SIZE.width}px`, "--island-pill-h": `${ISLAND_STRIP_SIZE.height}px` }
-          : { "--island-pill-w": `${pillWidth}px`, "--island-pill-h": `${ISLAND_PILL_HEIGHT}px` }) as React.CSSProperties}
+          : {
+            "--island-pill-w": `${pillWidth}px`,
+            "--island-pill-h": `${host.kind === "notch" ? host.notchHeight : ISLAND_PILL_HEIGHT}px`,
+          }) as React.CSSProperties}
       >
         <IslandPanel
           sessions={stripSessions}
@@ -936,13 +974,13 @@ export function App() {
             invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
             collapse();
           }}
-          strip={islandStrip}
-          onToggleStrip={toggleStrip}
+          strip={stripOn}
+          onToggleStrip={host.kind === "floating" ? toggleStrip : undefined}
         />
       </div>
     );
   }
-  if (islandMode === "compact" && islandStrip && !stripPeek) {
+  if (islandMode === "compact" && stripOn && !stripPeek) {
     return (
       <IslandStrip
         sessions={stripSessions}
@@ -964,6 +1002,7 @@ export function App() {
       onOpenSession={openSession}
       onPointerDownDrag={onPillPointerDown}
       onAlertHover={onAlertHover}
+      notch={host.kind === "notch" ? { width: host.notchWidth, height: host.notchHeight } : undefined}
     />
   );
 }

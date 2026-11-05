@@ -9,12 +9,13 @@ let emitBoardChanged: () => void = () => {};
 let emitIslandAlert: (e: { payload: unknown }) => void = () => {};
 let emitRecallSticker: () => void = () => {};
 const unlisten = vi.fn();
-// Windows 贴纸已删（2026-11-05），会话列表（Sticker）只剩 macOS 菜单栏面板在用：
-// 测列表逻辑的用例切到面板模式跑，其余默认走灵动岛。
-let macPanel = false;
+let emitTrayToggle: () => void = () => {};
+// 贴纸 2026-11-05 在两个平台都删了，App 只剩灵动岛。macOS 用例把 isMac 打开，落点由
+// island_host 的 mock 返回值决定（刘海 / 菜单栏）。
+let mac = false;
 vi.mock("./platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./platform")>()),
-  isMacPanel: () => macPanel,
+  isMac: () => mac,
 }));
 // 个别用例要改设置（如灵动岛的提醒开关）：合进 getSettings mock 的返回值。
 let extraSettings: Record<string, unknown> = {};
@@ -124,6 +125,7 @@ vi.mock("@tauri-apps/api/event", () => ({
     if (event === "board-changed") emitBoardChanged = cb as () => void;
     if (event === "recall-sticker") emitRecallSticker = cb as unknown as () => void;
     if (event === "island-alert") emitIslandAlert = cb;
+    if (event === "island-tray-toggle") emitTrayToggle = cb as unknown as () => void;
     return Promise.resolve(unlisten);
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -160,7 +162,7 @@ beforeEach(() => {
   extraSettings = {};
   pillRectWidth = 0;
   resizeObservers.length = 0;
-  macPanel = false;
+  mac = false;
 });
 afterEach(() => cleanup());
 
@@ -180,13 +182,6 @@ const seedWindowState = (s: {
 };
 const EMPTY_WS = { normal_width: null, normal_height: null, snap_edge: null, pinned: false, x: null, y: null, island_center: null };
 
-/** 在 macOS 面板模式下渲染会话列表（Windows 已没有列表，见 macPanel 注释）。 */
-const renderList = async () => {
-  macPanel = true;
-  const result = render(<App />);
-  await waitFor(() => expect(document.querySelector(".sticker")).toBeTruthy());
-  return result;
-};
 /** 托盘找回 = 展开灵动岛面板。 */
 const expandIsland = async () => {
   await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
@@ -203,46 +198,6 @@ describe("App", () => {
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
   });
 
-  // 回归：冷启动首页未落地前不能闪「还没有会话」假空态，必须显示加载占位。
-  it("初始加载中显示加载占位，落地后再切到正常空态", async () => {
-    let resolvePage: (v: unknown[]) => void = () => {};
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
-      if (search === null) return Promise.resolve([]); // 折叠条查询不挂起
-      return new Promise((r) => { resolvePage = r as (v: unknown[]) => void; });
-    });
-    await renderList();
-    await waitFor(() => expect(screen.getByText(zh.sticker.loading)).toBeTruthy());
-    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
-    resolvePage([]);
-    await waitFor(() => expect(screen.getByText(zh.empty.allTitle)).toBeTruthy());
-    expect(screen.queryByText(zh.sticker.loading)).toBeNull();
-  });
-
-  // 回归：首页加载失败曾只 console.error，用户看到「还没有会话」。现在必须显示
-  // 「加载失败 + 重试」，且点重试会重新发起首页加载，成功后回到正常空态。
-  it("初始加载失败显示错误与重试，重试成功后恢复正常", async () => {
-    let failFirst = true;
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
-      if (search === null) return Promise.resolve([]);
-      if (failFirst) {
-        failFirst = false;
-        return Promise.reject(new Error("boom"));
-      }
-      return Promise.resolve([]);
-    });
-    await renderList();
-    await waitFor(() => expect(screen.getByText(zh.sticker.loadFailed)).toBeTruthy());
-    expect(screen.queryByText(zh.empty.allTitle)).toBeNull();
-
-    const callsBefore = getLiveSessionsPage.mock.calls.filter(([, s]) => s === "").length;
-    fireEvent.click(screen.getByTestId("empty-retry-cta"));
-    await waitFor(() =>
-      expect(getLiveSessionsPage.mock.calls.filter(([, s]) => s === "").length).toBeGreaterThan(callsBefore)
-    );
-    await waitFor(() => expect(screen.getByText(zh.empty.allTitle)).toBeTruthy());
-    expect(screen.queryByText(zh.sticker.loadFailed)).toBeNull();
-  });
-
   it("收到 board-changed 后重新拉取 counts 和第 0 页", async () => {
     render(<App />);
     await waitFor(() => expect(getLiveSessionsCounts).toHaveBeenCalledTimes(1));
@@ -251,41 +206,6 @@ describe("App", () => {
     await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "", null, 100));
   });
 
-  // T-12：「正在启动」占位卡（后端合成的负 id 占位项）随首页进列表；同 provider+cwd
-  // 且 started_at 不早于占位的真实会话出现时对账撤卡（增量刷新也不留残影）。
-  it("pending 占位卡（负 id）在真实会话出现时对账撤下", async () => {
-    const startedAt = Date.now();
-    const pendingRow = {
-      session: { id: -1, project_id: 0, cc_session_id: "", status: "running", started_at: startedAt, last_event_at: startedAt, ended_at: null },
-      project_name: "proj", task_title: "", current_activity: null, column: "doing",
-      todo_done: 0, todo_total: 0, todos: [], pid: null, archived: false, archived_at: null,
-      cwd: "C:/work/proj", context_pct: null, context_window: null, model: null, note: null,
-      pending_review: null, last_ai_text: null, last_user_text: null, provider: "codex",
-      profile: null, predecessor_id: null,
-      connected: true, pty_managed: true, endable: true, background: false, errored: false,
-      error_label: null, error_raw: null, busy_subagents: 0, preview: null,
-      profile_name: null, foreign: false,
-    };
-    const realRow = {
-      ...pendingRow,
-      session: { ...pendingRow.session, id: 42, cc_session_id: "real-42", started_at: startedAt + 500, last_event_at: startedAt + 500 },
-      task_title: "真实会话",
-    };
-    // 折叠条查询 search=null → 空；看板查询 search="" → 先只给占位行。
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) =>
-      Promise.resolve(search === null ? [] : [pendingRow]));
-    await renderList();
-    await screen.findByTestId("stk-starting-card");
-    // 认领完成：后端不再上报占位，真实行（同 provider+cwd、started_at 更晚）进首页。
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) =>
-      Promise.resolve(search === null ? [] : [realRow]));
-    emitBoardChanged();
-    await waitFor(() => expect(screen.queryByTestId("stk-starting-card")).toBeNull());
-    await screen.findByText("真实会话");
-  });
-
-  // 回归（DEV 实拍）：展开时窗口先长大，胶囊的测量回调恰在这时触发，按胶囊宽度把窗口又缩了
-  // 回去，列表被挤进 36px 高的窗口里。形态切换进行中，测量不得改窗口尺寸。
   it("展开途中胶囊测量回调触发，不会把窗口缩回胶囊大小", async () => {
     let finishExpand: () => void = () => {};
     vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown) => {
@@ -492,70 +412,6 @@ describe("App", () => {
     expect(screen.queryByText("不该弹出来")).toBeNull();
   });
 
-  it("清空搜索时恢复搜索前的列表顺序", async () => {
-    const mk = (id: number, title: string, lastEventAt: number) => ({
-      session: {
-        id,
-        cc_session_id: `s-${id}`,
-        status: "running" as const,
-        last_event_at: lastEventAt,
-        started_at: 0,
-        ended_at: null,
-        project_id: 1,
-      },
-      project_name: "p",
-      task_title: title,
-      current_activity: null,
-      column: "todo" as const,
-      todo_done: 0,
-      todo_total: 0,
-      todos: [],
-      pid: null,
-      connected: true,
-      archived: false,
-      archived_at: null,
-      cwd: "/p",
-      errored: false,
-      error_label: null,
-      error_raw: null,
-      preview: null,
-      note: null,
-      context_pct: null,
-      context_window: null,
-      model: null,
-      pending_review: null,
-      last_ai_text: null,
-      last_user_text: null,
-      provider: "claude" as const,
-    });
-    const original = [mk(2, "B", 2000), mk(1, "A", 1000)];
-    getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
-    let emptySearchCalls = 0;
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
-      if (search === null) return Promise.resolve([]);
-      if (search === "A") return Promise.resolve([original[1]]);
-      emptySearchCalls += 1;
-      if (emptySearchCalls === 1) return Promise.resolve(original);
-      // 模拟清空后的刷新尚未返回：原列表应从缓存立即恢复，不能依赖这次响应。
-      return new Promise(() => {});
-    });
-
-    const { container } = await renderList();
-    const titles = () =>
-      Array.from(container.querySelectorAll(".stk-title")).map((el) => el.textContent);
-    await waitFor(() => expect(titles()).toEqual(["B", "A"]));
-
-    // 按 aria-label 定位搜索按钮，不吃底栏按钮增减的位置变化。
-    fireEvent.click(container.querySelector('.stk-bar-actions [aria-label="搜索会话"]')!);
-    fireEvent.change(container.querySelector(".stk-search-in")!, { target: { value: "A" } });
-    await waitFor(() => expect(getLiveSessionsPage).toHaveBeenCalledWith("all", "A", null, 100));
-    await waitFor(() => expect(titles()).toEqual(["A"]));
-
-    fireEvent.click(container.querySelector(".stk-search-x")!);
-    await waitFor(() => expect(titles()).toEqual(["B", "A"]));
-  });
-
-  // 启动：按 settings 记住的横向位置把胶囊贴顶摆好（缺省居中 0.5），再显示窗口。
   it("启动把胶囊贴顶摆放：没记过位置时居中", async () => {
     render(<App />);
     await waitFor(() =>
@@ -597,131 +453,40 @@ describe("App", () => {
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("set_sticker_window_state", expect.anything());
   });
 
-  // 回归：running tab 下刷新时，若某会话已从 running 迁移到 waiting，后端 running 分页不再返回它；
-  // 旧合并逻辑会保留 prev 中的该会话（状态仍是旧 running），导致它错误地继续显示在 running tab 下。
-  it("running tab 刷新时，状态迁出 running 的会话应从列表移除", async () => {
-    localStorage.setItem("meowo-tab", "running");
-    const mk = (id: number, status: "running" | "waiting", title: string) => ({
-      session: {
-        id,
-        cc_session_id: `s-${id}`,
-        status,
-        last_event_at: 1000 - id,
-        started_at: 0,
-        ended_at: null,
-        project_id: 1,
-      },
-      project_name: "p",
-      task_title: title,
-      current_activity: null,
-      column: "todo" as const,
-      todo_done: 0,
-      todo_total: 0,
-      todos: [],
-      pid: null,
-      connected: true,
-      archived: false,
-      archived_at: null,
-      cwd: "/p",
-      errored: false,
-      error_label: null,
-      error_raw: null,
-      preview: null,
-      note: null,
-      context_pct: null,
-      context_window: null,
-      model: null,
-      pending_review: null,
-      last_ai_text: null,
-      last_user_text: null,
-      provider: "claude" as const,
-    });
+});
 
-    getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
-    // tab 页按序返回；折叠条调用（search===null，独立于 tab）返回 []，不消耗序列。
-    const tabPages = [
-      [mk(1, "running", "A"), mk(2, "running", "B")],
-      [mk(1, "running", "A")], // B 已迁出 running
-    ];
-    let ti = 0;
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
-      if (search === null) return Promise.resolve([]);
-      return Promise.resolve(tabPages[Math.min(ti++, tabPages.length - 1)]);
-    });
+describe("App · macOS 灵动岛", () => {
+  const seedHost = (host: { kind: string; notchWidth: number; notchHeight: number }) => {
+    vi.mocked(invoke).mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "get_sticker_window_state" ? EMPTY_WS : cmd === "island_host" ? host : undefined)
+    );
+  };
+  const visibleCalls = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "island_set_visible").map(([, args]) => args);
 
-    await renderList();
-    await waitFor(() => expect(screen.getByText("A")).toBeTruthy());
-    await waitFor(() => expect(screen.getByText("B")).toBeTruthy());
-
-    emitBoardChanged();
-    await waitFor(() => expect(screen.queryByText("B")).toBeFalsy());
-    expect(screen.getByText("A")).toBeTruthy();
+  it("有刘海：胶囊高度等于刘海高，内容分到刘海两侧，摆好后不抢焦点地显示", async () => {
+    mac = true;
+    seedHost({ kind: "notch", notchWidth: 180, notchHeight: 32 });
+    const { container } = render(<App />);
+    await waitFor(() => expect(layoutCalls().some((args) => (args as { height: number }).height === 32)).toBe(true));
+    await waitFor(() => expect(visibleCalls()).toContainEqual({ visible: true, focus: false }));
+    await waitFor(() => expect(container.querySelector(".isl-notch.is-split")).toBeTruthy());
+    expect(container.querySelector(".isl-notch-gap")).toBeTruthy();
+    // 刘海落点不能拖，也没有极简模式。
+    expect(container.querySelector(".isl-strip")).toBeNull();
   });
 
-  // 回归：已存在会话的 last_event_at 变化时（如恢复断开的旧会话），board-changed 刷新应按
-  // 新顺序重排；旧合并逻辑按 prev 数组的原位置合并，只有全新会话才 prepend 到最前，已存在
-  // 会话不会因排序键变化而移动——用户须手动切 tab 才能看到它跳到最前。
-  it("board-changed 刷新时，已存在会话应按新 last_event_at 重新排序（如恢复的旧会话跳到最前）", async () => {
-    localStorage.setItem("meowo-tab", "all");
-    const mk = (id: number, lastEventAt: number, title: string) => ({
-      session: {
-        id,
-        cc_session_id: `s-${id}`,
-        status: "running" as const,
-        last_event_at: lastEventAt,
-        started_at: 0,
-        ended_at: null,
-        project_id: 1,
-      },
-      project_name: "p",
-      task_title: title,
-      current_activity: null,
-      column: "todo" as const,
-      todo_done: 0,
-      todo_total: 0,
-      todos: [],
-      pid: null,
-      connected: true,
-      archived: false,
-      archived_at: null,
-      cwd: "/p",
-      errored: false,
-      error_label: null,
-      error_raw: null,
-      preview: null,
-      note: null,
-      context_pct: null,
-      context_window: null,
-      model: null,
-      pending_review: null,
-      last_ai_text: null,
-      last_user_text: null,
-      provider: "claude" as const,
-    });
-
-    getLiveSessionsCounts.mockResolvedValue({ total: 2, running: 2, waiting: 0, archived: 0 });
-    // 首页：B（last_event_at 更晚）排前，A（旧）排后；board-changed 后 A 恢复排最前。
-    // tab 页按序返回；折叠条调用（search===null）返回 []，不消耗序列。
-    const tabPages = [
-      [mk(2, 2000, "B"), mk(1, 1000, "A")],
-      [mk(1, 3000, "A"), mk(2, 2000, "B")],
-    ];
-    let ti = 0;
-    getLiveSessionsPage.mockImplementation((_f: string, search: string | null) => {
-      if (search === null) return Promise.resolve([]);
-      return Promise.resolve(tabPages[Math.min(ti++, tabPages.length - 1)]);
-    });
-
-    await renderList();
-    await waitFor(() => {
-      const titles = Array.from(document.querySelectorAll(".stk-title")).map((el) => el.textContent);
-      expect(titles).toEqual(["B", "A"]);
-    });
-
-    emitBoardChanged();
-    await waitFor(() => {
-      const titles = Array.from(document.querySelectorAll(".stk-title")).map((el) => el.textContent);
-      expect(titles).toEqual(["A", "B"]);
-    });
+  it("没刘海：平时藏着，点菜单栏的迷你岛在图标下展开面板，再点收起", async () => {
+    mac = true;
+    seedHost({ kind: "menubar", notchWidth: 0, notchHeight: 0 });
+    const { container } = render(<App />);
+    await waitFor(() => expect(visibleCalls()).toContainEqual({ visible: false, focus: false }));
+    expect(layoutCalls()).toHaveLength(0);
+    await act(async () => { emitTrayToggle(); });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    expect(visibleCalls()).toContainEqual({ visible: true, focus: true });
+    // 面板上没有极简模式按钮（只有 Windows 有）。
+    expect(screen.queryByRole("button", { name: zh.island.stripOn })).toBeNull();
+    await act(async () => { emitTrayToggle(); });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
   });
 });

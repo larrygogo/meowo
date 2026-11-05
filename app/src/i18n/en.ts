@@ -1494,6 +1494,13 @@ export const en: Dict = {
         "It pops an alert when a session needs you.",
         "Click the tray icon to open the chat window; right-click for Settings.",
       ],
+      macIslandPoints: [
+        "On a Mac with a notch, the island wraps around the notch.",
+        "Without a notch, the menu-bar icon is a mini island; click it to expand.",
+        "One icon per session: green arc = running, yellow dot = waiting on you.",
+        "Click an icon to open that session; click elsewhere on the island to expand it.",
+        "It pops an alert when a session needs you.",
+      ],
       reopenHint: "Reopen this guide anytime from the tray icon or Settings.",
     },
   },

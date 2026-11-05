@@ -726,61 +726,21 @@ function AppearanceSection() {
         </div>
       </div>
 
-      {/* 贴纸专属的几项单独成组：此前与外观模式、界面缩放混在一张卡里，分不清哪些只管贴纸。
-          Windows 已删贴纸只剩灵动岛（2026-11-05 用户定案），这一组只在其它平台显示。 */}
-      {!IS_WIN && <>
-      <div className="sec-caption">{t.settings.stickerGroup}</div>
-      <div className="row-card">
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.stickerStyle}</div>
-            <div className="row-desc">{t.settings.stickerStyleDesc}</div>
-          </div>
-          <Segmented value={stickerStyle} options={stickerStyleOptions(t)} onChange={(v) => patch({ sticker_style: v })} label={t.settings.stickerStyle} />
-        </div>
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.stickerColor}</div>
-            <div className="row-desc">{t.settings.stickerColorDesc}</div>
-          </div>
-          <SwatchPicker value={stickerColor} onChange={(v) => patch({ sticker_color: v })} label={t.settings.stickerColor} names={t.settings.colorNames} />
-        </div>
-        <div className="row row-col">
-          <div className="row-head">
-            <div className="row-text">
-              <div className="row-label">{t.settings.opacity}</div>
-              <div className="row-desc">{t.settings.opacityDesc}</div>
-            </div>
-            <span className="row-val">{opacityShown}%</span>
-          </div>
-          <input
-            type="range"
-            className="slider"
-            min={OPACITY_MIN}
-            max={OPACITY_MAX}
-            value={opacityShown}
-            style={{ background: `linear-gradient(90deg, var(--cc-accent) ${fill}%, var(--cc-border) ${fill}%)` }}
-            onChange={(e) => opacityDraft.change(Number(e.target.value))}
-            onPointerUp={(e) => opacityDraft.release(Number((e.target as HTMLInputElement).value))}
-            aria-label={t.settings.opacity}
-          />
-        </div>
-        {/* 点击穿透已移除：只在 Windows 有，而 Windows 换成灵动岛后打开它岛就点不动了
-            （2026-11-05）。settings 字段留着只为读旧配置不报错。 */}
-      </div>
-      </>}
+      {/* 贴纸专属的一组（风格、配色、不透明度）随贴纸一起删了：Windows 2026-11-05 先删，macOS
+          同日也换成灵动岛。settings 字段留着只为读旧配置不报错。 */}
 
-      {/* 灵动岛只在 Windows（2026-11-04 起替换贴边缩略条），macOS 仍是菜单栏面板。 */}
-      {IS_WIN && <>
+      {/* 灵动岛：Windows 2026-11-04 起、macOS 2026-11-05 起（替换贴纸）。极简模式只有 Windows 有：
+          macOS 有刘海时刘海本身就是那一条，没刘海时岛平时藏在菜单栏图标里。 */}
+      {(IS_WIN || IS_MAC) && <>
         <div className="sec-caption">{t.settings.islandGroup}</div>
         <div className="row-card">
-          <div className="row">
+          {IS_WIN && <div className="row">
             <div className="row-text">
               <div className="row-label">{t.settings.islandStrip}</div>
               <div className="row-desc">{t.settings.islandStripDesc}</div>
             </div>
             <Switch checked={islandStrip} onChange={() => patch({ island_strip: !islandStrip })} label={t.settings.islandStrip} />
-          </div>
+          </div>}
           <div className="row">
             <div className="row-text">
               <div className="row-label">{t.settings.islandCompact}</div>

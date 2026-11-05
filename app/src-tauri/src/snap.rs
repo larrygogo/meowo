@@ -120,7 +120,11 @@ pub(crate) fn mouse_pressed_outside_window(window: tauri::WebviewWindow) -> bool
         let pressed = [0x01, 0x02, 0x04].iter().any(|vk| unsafe { GetAsyncKeyState(*vk) } < 0);
         pressed && !cursor_over_window(window)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::notch::mouse_buttons_pressed() && !cursor_over_window(window)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = window;
         false
@@ -148,9 +152,15 @@ pub(crate) fn cursor_over_window(window: tauri::WebviewWindow) -> bool {
             && p.y >= pos.y
             && p.y < pos.y + sz.height as i32
     }
+    // macOS（2026-11-05 起也是灵动岛）走 tauri 的跨平台光标位置，与窗口物理矩形比。
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = window;
-        true
+        let (Ok(p), Ok(pos), Ok(sz)) = (window.cursor_position(), window.outer_position(), window.outer_size()) else {
+            return true;
+        };
+        p.x >= f64::from(pos.x)
+            && p.x < f64::from(pos.x) + f64::from(sz.width)
+            && p.y >= f64::from(pos.y)
+            && p.y < f64::from(pos.y) + f64::from(sz.height)
     }
 }

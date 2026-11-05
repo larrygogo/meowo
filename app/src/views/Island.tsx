@@ -136,6 +136,7 @@ export function Island({
   onPointerDownDrag,
   onAlertHover,
   alertQueued = 0,
+  notch,
 }: {
   sessions: readonly Item[];
   compactStyle: IslandCompactStyle;
@@ -154,6 +155,9 @@ export function Island({
   onAlertHover?: (hovering: boolean) => void;
   /** 提醒队列里还排着几条（不含正在弹的）。 */
   alertQueued?: number;
+  /** macOS 有刘海时刘海的宽高（逻辑点）。给了就把收起的内容分到刘海左右两翼，中间留空：
+   *  刘海是摄像头，那块什么也画不出来。 */
+  notch?: { width: number; height: number };
 }) {
   const t = useT();
   const now = useNow();
@@ -173,7 +177,7 @@ export function Island({
     const observer = new ResizeObserver(report);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [alert, compactStyle, onMeasure]);
+  }, [alert, compactStyle, onMeasure, notch?.width, notch?.height]);
 
   const alertLabel = (event: IslandAlertEvent) => {
     switch (event.kind) {
@@ -189,7 +193,62 @@ export function Island({
     ? alert.kind === "error" ? "error" : alert.kind === "waiting" ? "waiting" : "pending"
     : tone;
 
+  // 刘海两翼（macOS 有刘海时）：左翼放额度环和眼睛，右翼放会话。时间不放，菜单栏右上角本来就有。
+  // 图标缩到能塞进刘海高度（约 32~38pt）。
+  const notchWings = (): [React.ReactNode, React.ReactNode] => {
+    if (compactStyle === "minimal") {
+      return [
+        <Eyes key="eyes" tone={tone} small />,
+        <span key="dots" className="isl-dots">
+          {liveSessions(sessions).slice(0, 6).map((item) => (
+            <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
+          ))}
+        </span>,
+      ];
+    }
+    if (compactStyle === "focus") {
+      const focus = ordered[0];
+      return [
+        <Eyes key="eyes" tone={tone} small />,
+        focus
+          ? <span key="focus" className={`isl-state is-${cardTone(focus)}`}>{t.island.toneLabel[cardTone(focus)] ?? ""}</span>
+          : null,
+      ];
+    }
+    const shown = ordered.slice(0, MAX_AGENTS);
+    const more = ordered.length - shown.length;
+    return [
+      <>
+        {usages.length > 0 && <UsageRing entries={usages} size={22} />}
+        <Eyes tone={tone} small />
+      </>,
+      shown.length > 0 ? (
+        <span className="isl-agents">
+          {shown.map((item) => (
+            <AgentRing
+              key={item.session.id}
+              item={item}
+              size={22}
+              tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${t.island.toneLabel[cardTone(item)] ?? ""}`}
+            />
+          ))}
+          {more > 0 && <span className="isl-more">+{more}</span>}
+        </span>
+      ) : null,
+    ];
+  };
+
   const compact = () => {
+    if (notch) {
+      const [left, right] = notchWings();
+      return (
+        <>
+          <span className="isl-wing is-left">{left}</span>
+          <span className="isl-notch-gap" aria-hidden="true" />
+          <span className="isl-wing is-right">{right}</span>
+        </>
+      );
+    }
     if (compactStyle === "minimal") {
       return (
         <>
@@ -245,7 +304,10 @@ export function Island({
     <div className="isl-stage">
       <div
         ref={notchRef}
-        className={`isl-notch ${alert ? "is-alert" : "is-compact"}`}
+        className={`isl-notch ${alert ? "is-alert" : "is-compact"}${notch && !alert ? " is-split" : ""}`}
+        style={notch && !alert
+          ? { "--isl-notch-w": `${notch.width}px`, "--isl-notch-h": `${notch.height}px` } as React.CSSProperties
+          : undefined}
         data-tone={alertTone}
         role="button"
         tabIndex={0}

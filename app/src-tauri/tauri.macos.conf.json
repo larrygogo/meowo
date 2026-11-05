@@ -5,18 +5,16 @@
       {
         "label": "main",
         "title": "Meowo",
-        "width": 340,
-        "height": 440,
-        "minWidth": 320,
-        "minHeight": 80,
+        "width": 200,
+        "height": 38,
         "transparent": true,
         "decorations": false,
         "maximizable": false,
         "alwaysOnTop": false,
         "skipTaskbar": true,
-        "resizable": true,
+        "resizable": false,
         "focus": false,
-        "shadow": true,
+        "shadow": false,
         "visible": false
       }
     ]
