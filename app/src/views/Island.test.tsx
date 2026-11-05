@@ -472,20 +472,20 @@ describe("IslandPanel 展开面板", () => {
 
 describe("macOS 菜单栏富文本", () => {
   const labels = { toneLabel: zh.island.toneLabel, untitled: "未命名" };
-  it("显示最要紧的会话：状态图标 + 标题 + 着色状态词，其余折成 +N", () => {
-    const segs = menubarSegments([mk({ task_title: "跑着的" }), mk({ task_title: "要批的", pending_review: "approval" })], 12, labels);
-    expect(segs[0]).toEqual({ kind: "symbol", name: "exclamationmark.circle.fill", color: "orange" });
-    expect(segs[1]).toEqual({ kind: "text", text: " 要批的 ", color: "label" });
-    expect(segs[2]).toEqual({ kind: "text", text: zh.island.toneLabel.pending, color: "orange" });
-    expect(segs[3]).toEqual({ kind: "text", text: "  +1", color: "secondary" });
-  });
-  it("标题太长省略；没会话显示额度，按用量变色；都没有就空", () => {
-    const long = menubarSegments([mk({ task_title: "一二三四五六七八九十一二三四五六七八" })], null, labels);
-    expect(long[1]).toEqual({ kind: "text", text: " 一二三四五六七八九十一二三四五六… ", color: "label" });
-    expect(menubarSegments([], 90.4, labels)).toEqual([
-      { kind: "symbol", name: "gauge.medium", color: "secondary" },
-      { kind: "text", text: " 90%", color: "red" },
+  it("显示决定眼睛神态的那个会话：标题 · 状态词，其余折成 +N，只用主文字色", () => {
+    const sessions = [mk({ task_title: "跑着的" }), mk({ task_title: "跑完的", status: "waiting", unread: true })];
+    // 眼睛按 islandTone 是「在跑」（绿）：文字就得是在跑的那个，不是排在前面的未读跑完。
+    expect(menubarSegments(sessions, "running", 12, labels)).toEqual([
+      { kind: "text", text: `跑着的 · ${zh.island.toneLabel.running}  +1`, color: "label" },
     ]);
-    expect(menubarSegments([], null, labels)).toEqual([]);
+  });
+  it("标题太长省略；没会话显示额度；都没有就空", () => {
+    const long = menubarSegments([mk({ task_title: "一二三四五六七八九十一二三四五六七八" })], "running", null, labels);
+    expect(long[0].kind === "text" && long[0].text.startsWith("一二三四五六七八九十一二三四五六… · ")).toBe(true);
+    expect(menubarSegments([], "idle", 90.4, labels)).toEqual([
+      { kind: "symbol", name: "gauge.medium", color: "label" },
+      { kind: "text", text: " 90%", color: "label" },
+    ]);
+    expect(menubarSegments([], "idle", null, labels)).toEqual([]);
   });
 });

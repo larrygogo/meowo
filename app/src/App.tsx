@@ -532,7 +532,7 @@ export function App() {
     if (!isMac()) return;
     const tone = islandTone(islandCounts(stripSessions));
     const quota = orderIslandUsage(usage, quotaProviders, activeProviders)[0];
-    const segments = menubarSegments(stripSessions, quota?.pct ?? null, {
+    const segments = menubarSegments(stripSessions, tone, quota?.pct ?? null, {
       toneLabel: t.island.toneLabel,
       untitled: t.sticker.waitingFirstInput,
     });

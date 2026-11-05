@@ -44,44 +44,35 @@ export type MenubarSegment =
   | { kind: "text"; text: string; color: string }
   | { kind: "symbol"; name: string; color: string };
 
-const MENUBAR_TONE: Record<string, { symbol: string; color: string }> = {
-  running: { symbol: "play.fill", color: "green" },
-  pending: { symbol: "exclamationmark.circle.fill", color: "orange" },
-  error: { symbol: "xmark.octagon.fill", color: "red" },
-  waiting: { symbol: "checkmark.circle.fill", color: "secondary" },
-};
 /// 菜单栏上会话标题最多几个字，再长省略。
 const MENUBAR_TITLE_MAX = 16;
 
-/// macOS 菜单栏图标右边显示什么（用户 2026-11-05：「像 QQ 音乐那种」「能动，还有颜色」）：
-/// 像 QQ 音乐显示歌词那样，显示最要紧的那个会话——状态图标 + 标题 + 着色的状态词，其余会话
-/// 折成「+N」；没有会话时显示额度（按用量变色）。都没有就空着，只剩眼睛。
+/// macOS 菜单栏图标右边显示什么（用户 2026-11-05：「像 QQ 音乐那种」）：像 QQ 音乐显示歌词那样，
+/// 显示最要紧的那个会话的标题和状态词，其余会话折成「+N」；没有会话时显示额度。
+///
+/// 只用菜单栏主文字色（label），不用彩色和发灰的次要色：颜色只放在眼睛上（眼睛就是状态灯），
+/// 文字前也不再放状态图标。实拍过绿眼睛 + 灰勾 + 白标题 + 灰状态词，用户嫌「太不和谐」。
+/// 显示的会话就是决定眼睛神态的那个（tone 同 islandTone）：眼睛绿了，文字就得是在跑的那个。
 export function menubarSegments(
   sessions: readonly Item[],
+  tone: IslandTone,
   quotaUsedPct: number | null,
   labels: { toneLabel: Record<string, string>; untitled: string },
 ): MenubarSegment[] {
   const ordered = byUrgency(sessions);
-  const focus = ordered[0];
+  const focus = ordered.find((item) => cardTone(item) === tone) ?? ordered[0];
   if (focus) {
-    const tone = cardTone(focus);
-    const style = MENUBAR_TONE[tone] ?? { symbol: "circle.fill", color: "secondary" };
+    const state = labels.toneLabel[cardTone(focus)] ?? "";
     const chars = Array.from(sessionTitle(focus, labels.untitled));
     const title = chars.length > MENUBAR_TITLE_MAX ? `${chars.slice(0, MENUBAR_TITLE_MAX).join("")}…` : chars.join("");
-    const out: MenubarSegment[] = [
-      { kind: "symbol", name: style.symbol, color: style.color },
-      { kind: "text", text: ` ${title} `, color: "label" },
-      { kind: "text", text: labels.toneLabel[tone] ?? "", color: style.color },
-    ];
-    if (ordered.length > 1) out.push({ kind: "text", text: `  +${ordered.length - 1}`, color: "secondary" });
-    return out;
+    const more = ordered.length > 1 ? `  +${ordered.length - 1}` : "";
+    return [{ kind: "text", text: `${title}${state ? ` · ${state}` : ""}${more}`, color: "label" }];
   }
   if (quotaUsedPct != null && Number.isFinite(quotaUsedPct)) {
     const used = Math.round(Math.min(100, Math.max(0, quotaUsedPct)));
-    const color = used >= 85 ? "red" : used >= 60 ? "orange" : "label";
     return [
-      { kind: "symbol", name: "gauge.medium", color: "secondary" },
-      { kind: "text", text: ` ${used}%`, color },
+      { kind: "symbol", name: "gauge.medium", color: "label" },
+      { kind: "text", text: ` ${used}%`, color: "label" },
     ];
   }
   return [];
