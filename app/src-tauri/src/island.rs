@@ -75,10 +75,23 @@ pub(crate) fn island_layout(
     #[cfg(target_os = "macos")]
     {
         let _ = center_ratio;
-        return crate::macos::notch::layout(&app, &window, width, height);
+        crate::macos::notch::layout(&app, &window, width, height)
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = &app;
+    {
+        let _ = &app;
+        layout_floating(window, width, height, center_ratio)
+    }
+}
+
+/// Windows：贴所在显示器工作区的顶边，按中心点对称改尺寸。
+#[cfg(not(target_os = "macos"))]
+fn layout_floating(
+    window: tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    center_ratio: Option<f64>,
+) -> Result<(), String> {
     let monitor = window
         .current_monitor()
         .ok()

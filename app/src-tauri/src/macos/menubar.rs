@@ -226,6 +226,8 @@ const MINI_BG: [u8; 3] = [0, 0, 0];
 const MINI_INK: [u8; 3] = [0xf5, 0xf5, 0xf7];
 
 /// 圆角矩形（SDF 抗锯齿），以 (cx, cy) 为中心、宽高 w×h、圆角 r，source-over 叠加。
+/// 参数就是一个矩形的几何加颜色，拆成结构体反而难读。
+#[allow(clippy::too_many_arguments)]
 fn fill_rrect(rgba: &mut [u8], total: usize, cx: f32, cy: f32, w: f32, h: f32, r: f32, rgb: [u8; 3]) {
     let x0 = (cx - w / 2.0).floor().max(0.0) as usize;
     let x1 = ((cx + w / 2.0).ceil() as usize).min(total);
@@ -308,6 +310,7 @@ pub fn refresh_tray_icon(app: &AppHandle) {
 /// - 没刘海：图标就是迷你岛（见上）。
 /// - 有刘海：状态已经画在刘海两侧的岛上，图标回到原来的样子：有计数 → 彩色徽章（非模板）；
 ///   全零 → 单色 logo（模板）。
+///
 /// set_icon_with_as_template 原子换图标+模板态（避免闪烁）；清掉标题文字。
 pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
     *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner()) = (running, waiting);
@@ -469,6 +472,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 /// 单击菜单栏图标：
 /// - 有刘海：岛就在刘海上，图标和 Windows 托盘一样打开对话窗口（轻量模式下展开岛）。
 /// - 没刘海：图标本身就是迷你岛，点它在下方展开 / 收起岛的面板（前端 island-tray-toggle）。
+///
 /// 托盘事件在主线程，这里可以直接重新探测刘海。
 fn on_left_click(app: &AppHandle) {
     use tauri::Emitter;
