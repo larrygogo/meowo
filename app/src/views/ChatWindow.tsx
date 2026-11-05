@@ -1668,7 +1668,8 @@ export function ChatWindow() {
         return sameHistoryMeta(prev, merged) ? prev : merged;
       });
       setItems((prev) => next.items.length || reset ? reduceChatEvents(prev, next.items, reset) : prev);
-      tailGrowthRef.current += next.items.length;
+      // reset 整读回来的是全量历史，不是新落盘的内容，计进去同样会误判「答案已送达」。
+      if (!reset) tailGrowthRef.current += next.items.length;
       if (!emptyReset) {
         const acks = next.items.filter((item): item is PromptAck => item.type === "prompt_queued");
         if (reset) setQueueAcks(acks);
