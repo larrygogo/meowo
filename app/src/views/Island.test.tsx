@@ -422,6 +422,9 @@ describe("IslandPanel 展开面板", () => {
     expect(cells[1].textContent).toContain(zh.account.laneWeekly);
     // 已用 79% → 剩 21。
     expect(cells[1].textContent).toContain("21");
+    // 一家只画一个叠环，每档一圈（用户要求，仿 Apple 健康三环）。
+    expect(container.querySelectorAll(".isl-usage-stack")).toHaveLength(1);
+    expect(container.querySelectorAll(".isl-usage-stack > .isl-ring")).toHaveLength(2);
   });
 
   it("左右箭头翻页，到头绕回", () => {

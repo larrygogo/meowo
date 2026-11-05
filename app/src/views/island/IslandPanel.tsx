@@ -35,6 +35,39 @@ function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
     .sort((a, b) => LANE_ORDER.indexOf(a.kind) - LANE_ORDER.indexOf(b.kind));
 }
 
+/// 叠环里每一圈的颜色，按泳道排序后的位置取（最外圈第一个）。仿 Apple 健康的三环：每圈一个
+/// 固定色相，靠颜色把图例和圈对上。不再按剩余量变色：几圈都是绿的就分不清谁是谁。
+/// 余量告急改由图例里的数字变色提示。避开琥珀和红，那两个在 Meowo 里是「要处理 / 出错」。
+const LANE_COLORS = ["var(--isl-ok)", "#64d2ff", "#bf5af2", "#5e5ce6"];
+
+/// 叠环：一家一个，每档额度一圈，外大内小。用户要求（2026-11-05）：此前每档一个独立的环，
+/// 一家三档就横排三个环，面板挤、标签被截断（「Fable · 每周」只露一半）。
+const STACK_SIZE = 64;
+const STACK_STROKE = 6;
+const STACK_GAP = 1.5;
+
+function StackedRings({ lanes }: { lanes: UsageLane[] }) {
+  return (
+    <span className="isl-usage-stack" style={{ width: STACK_SIZE, height: STACK_SIZE }}>
+      {lanes.map((lane, i) => {
+        const size = STACK_SIZE - i * 2 * (STACK_STROKE + STACK_GAP);
+        if (size <= STACK_STROKE * 2) return null;
+        const color = LANE_COLORS[i % LANE_COLORS.length];
+        return (
+          <Ring
+            key={`${lane.kind}-${lane.label ?? i}`}
+            size={size}
+            stroke={STACK_STROKE}
+            value={remainingOf(lane.used_pct as number) / 100}
+            color={color}
+            track={`color-mix(in srgb, ${color} 22%, #000)`}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
 function providerLabel(provider: string): string {
   return provider ? provider[0].toUpperCase() + provider.slice(1) : provider;
 }
@@ -224,15 +257,18 @@ export function IslandPanel({
                     <span className="isl-usage-head-logo" style={tintStyle(provider)}><Icon /></span>
                     {providerLabel(provider)}
                   </span>
+                  <StackedRings lanes={shownLanes(usage[provider])} />
+                  {/* 图例：色点对应上面的圈，后面是这档的名字和剩余量。快用完时数字变琥珀 / 红。 */}
                   <div className="isl-usage-lanes">
                     {shownLanes(usage[provider]).map((lane, i) => {
                       const left = remainingOf(lane.used_pct as number);
                       return (
-                        <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell">
-                          <Ring size={50} stroke={4.5} value={left / 100} color={remainingColor(left)} track="var(--isl-track)">
-                            <span className="isl-mid-val">{left}<small>%</small></span>
-                          </Ring>
-                          <span className="isl-side-sub">{laneName(lane)}</span>
+                        <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell" title={laneName(lane)}>
+                          <i className="isl-usage-key" style={{ background: LANE_COLORS[i % LANE_COLORS.length] }} />
+                          <span className="isl-usage-name">{laneName(lane)}</span>
+                          <span className="isl-usage-left" style={left <= 40 ? { color: remainingColor(left) } : undefined}>
+                            {left}<small>%</small>
+                          </span>
                         </div>
                       );
                     })}
