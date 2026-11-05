@@ -32,7 +32,7 @@ const FLOW = ` Claude Code 会话
  ~/.meowo/board.db（SQLite，WAL）
    ▲
    │  文件监听 + 去抖刷新
- meowo-app（Tauri 贴纸，React 前端）`;
+ meowo-app（Tauri 桌面应用，React 前端）`;
 
 const FLOW_EN = ` Claude Code session
    │  fires hooks (SessionStart / UserPromptSubmit / PostToolUse / Stop …)
@@ -44,7 +44,7 @@ const FLOW_EN = ` Claude Code session
  ~/.meowo/board.db (SQLite, WAL)
    ▲
    │  file watch + debounced refresh
- meowo-app (Tauri sticker, React front end)`;
+ meowo-app (Tauri desktop app, React front end)`;
 
 function EnDocs() {
   return (

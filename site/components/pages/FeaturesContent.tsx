@@ -58,7 +58,7 @@ const CONTENT: Record<Lang, Content> = {
       { title: "常见格式直接填写", body: "支持 HTTP、SOCKS5 及带认证的代理，包括 host:port:user:pass。工具不支持某种协议时会明确提示。" },
     ],
     platHead: { eyebrow: "平台", title: "Windows 和 macOS 的形态不同" },
-    win: { title: "Windows · 桌面贴纸", body: "钉在桌面一角的常驻贴纸，拖到屏幕边缘就收成一条红绿灯。", checks: ["拖到屏幕左 / 右 / 顶边会缩成一条红绿灯，鼠标悬停展开", "可以置顶；重启后沿用上次的窗口位置和吸附边", "鼠标停在托盘图标上，能看到待交互和运行中的会话数"] },
+    win: { title: "Windows · 灵动岛", body: "停在屏幕顶部的一条胶囊，谁在跑、谁在等你一眼可见。", checks: ["点一下展开面板，看会话和各家额度", "会话需要你时弹出提醒，点头像直接打开会话", "极简模式只留一条细线，鼠标移上去变回胶囊"] },
     mac: { title: "macOS · 菜单栏面板", body: "菜单栏图标弹出的原生面板，失焦自动收起，不占 Dock。", checks: ["左键点图标弹出原生面板，失焦自动收起，不占 Dock", "菜单栏图标上显示运行中和待交互的会话数", "universal 包，已签名公证，双击打开"] },
   },
   en: {
@@ -92,7 +92,7 @@ const CONTENT: Record<Lang, Content> = {
       { title: "Common formats accepted", body: "Supports HTTP, SOCKS5, and authenticated proxies including host:port:user:pass. If a tool doesn't support a protocol, it says so clearly." },
     ],
     platHead: { eyebrow: "Platform", title: "Different forms on Windows and macOS" },
-    win: { title: "Windows · Desktop sticker", body: "A resident sticker pinned to a desktop corner; drag it to a screen edge and it folds into a traffic light.", checks: ["Drag to the left / right / top edge to shrink into a traffic light; hover to expand", "Pin on top; remembers last position and snap edge across restarts", "Hover the tray icon to see needs-you and running counts"] },
+    win: { title: "Windows · Island", body: "A slim pill at the top of the screen that shows who's running and who's waiting on you.", checks: ["Click it to expand a panel with sessions and quota", "Pops an alert when a session needs you; click an icon to open it", "Minimal mode leaves just a thin strip; hover to bring the pill back"] },
     mac: { title: "macOS · Menu-bar panel", body: "A native panel from the menu-bar icon that auto-hides on blur — no Dock space taken.", checks: ["Left-click the icon for a native panel that auto-hides on blur, no Dock space", "The menu-bar icon shows running and needs-you counts", "Universal build, signed & notarized, double-click to open"] },
   },
 };
@@ -110,7 +110,7 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
         </div>
       </section>
 
-      {/* 贴纸 mock 展示 */}
+      {/* 会话卡片 mock：macOS 菜单栏面板的样子（Windows 已换成灵动岛，见下方平台段） */}
       <section className="section-sm">
         <div className="container">
           <Reveal>

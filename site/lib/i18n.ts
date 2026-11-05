@@ -104,7 +104,7 @@ const ZH: Dict = {
     switchTo: "English",
   },
   footer: {
-    tagline: "本地优先的 AI 编程代理桌面工作台。展开是桌面贴纸，收起是电子红绿灯。少切终端，少输命令。",
+    tagline: "本地优先的 AI 编程代理桌面工作台。会话状态常驻屏幕顶部，少切终端，少输命令。",
     cols: [
       {
         title: "产品",
@@ -134,7 +134,7 @@ const ZH: Dict = {
     tip: "名字来自猫叫 meow，中文译作「喵呜」🐱",
   },
   cta: {
-    title: "把多开 AI 编程，收进桌面一角",
+    title: "把多开 AI 编程，收在屏幕顶上",
     subtitle: "少切终端，少输命令。每个会话的状态、配额与待办，一切尽在计划之中。",
     download: "下载最新版",
     star: "在 GitHub 上 Star",
@@ -147,7 +147,7 @@ const ZH: Dict = {
     { title: "多账号 + API 中转", body: "同一个工具保存多个官方账号，一键切换，凭据与会话历史各自独立；也可以按模型填入中转地址与密钥接入 API 中转。两种接入互斥，配置中转期间仍走官方账号。" },
     { title: "本地优先", body: "会话与设置只写进本机 ~/.meowo/ 的 SQLite，reporter 与 app 只通过这个本地文件通信。没有自己的服务器，不上传会话内容，断网也照常工作。" },
     { title: "一键安装、登录与接入", body: "Claude Code、Codex、Kimi、Gemini CLI、OpenCode 直接在应用内一键安装并发起登录，所需 hooks 自动接入；检测到连接缺失时，再点一下就修好。" },
-    { title: "用量与上下文监控", body: "贴纸底栏实时显示 5 小时 / 7 天配额的使用比例，越接近上限颜色越偏红；每张卡片显示会话上下文用量。限额将至你有预判，不会被突然中断打个措手不及。" },
+    { title: "用量与上下文监控", body: "Windows 的灵动岛和 macOS 的菜单栏面板实时显示 5 小时 / 7 天配额用了多少，越接近上限颜色越偏红。每个会话还显示上下文用量。限额将至你有预判，不会被突然中断打个措手不及。" },
   ],
   sticker: {
     tabs: { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" },
@@ -164,8 +164,8 @@ const ZH: Dict = {
     subHome: "下面这块就是活的，点点看它怎么变。",
     eyebrowFeat: "外观",
     headingFeat: "多种风格与配色，随手切换",
-    subFeat: "7 种贴纸配色、扁平与立体两种风格、深浅主题——点点下面这块试试。",
-    extra: "另外还能调整不透明度（配合系统毛玻璃透出桌面）与界面密度。",
+    subFeat: "macOS 面板有 7 种配色、扁平与立体两种风格，两个平台都有深浅主题。点点下面这块试试。",
+    extra: "macOS 面板还能调不透明度（配合系统毛玻璃透出桌面），两个平台都能调界面密度。",
     color: "配色",
     style: "风格",
     theme: "明暗",
@@ -195,7 +195,7 @@ const EN: Dict = {
     switchTo: "中文",
   },
   footer: {
-    tagline: "A local-first desktop workbench for AI coding agents. A sticker when expanded, an electronic traffic light when collapsed. Fewer terminal switches, fewer commands.",
+    tagline: "A local-first desktop workbench for AI coding agents. Session status stays at the top of your screen. Fewer terminal switches, fewer commands.",
     cols: [
       {
         title: "Product",
@@ -225,7 +225,7 @@ const EN: Dict = {
     tip: "Named after a cat's “meow”, written 喵呜 in Chinese 🐱",
   },
   cta: {
-    title: "Tuck your parallel AI coding into a corner of your desktop",
+    title: "Keep your parallel AI coding at the top of your screen",
     subtitle: "Fewer terminal switches, fewer commands. Every session's status, quota, and to-dos — all under control.",
     download: "Download latest",
     star: "Star on GitHub",
@@ -238,7 +238,7 @@ const EN: Dict = {
     { title: "Multiple accounts + API relay", body: "Keep several official accounts per tool, switch in one click, each with its own credentials and history. Or fill in a relay address and key per model to use an API relay — mutually exclusive, and the official account keeps serving while you configure." },
     { title: "Local-first", body: "Sessions and settings live only in ~/.meowo/ as local SQLite; the reporter and the app talk only through that file. No Meowo server, no uploaded conversations — works just fine offline." },
     { title: "One-click install, sign-in & connect", body: "Install Claude Code, Codex, Kimi, Gemini CLI, or OpenCode right in the app and start the login; the required hooks are wired automatically. Detect a broken connection? One more click repairs it." },
-    { title: "Quota & context monitoring", body: "The sticker's bottom bar tracks 5-hour / 7-day quota live, turning redder near the cap; every card shows context usage. You see limits coming — no sudden interruption catching you off guard." },
+    { title: "Quota & context monitoring", body: "The island on Windows and the menu-bar panel on macOS track 5-hour / 7-day quota live, turning redder near the cap; every session shows context usage. You see limits coming — no sudden interruption catching you off guard." },
   ],
   sticker: {
     tabs: { all: "All", waiting: "Needs you", running: "Running", archived: "Archived" },
@@ -255,8 +255,8 @@ const EN: Dict = {
     subHome: "The block below is live — click around and watch it change.",
     eyebrowFeat: "Appearance",
     headingFeat: "Styles and colors, switched on a whim",
-    subFeat: "7 sticker colors, flat or dimensional styles, dark or light — try the live block below.",
-    extra: "You can also tune opacity (to let the frosted desktop show through) and UI density.",
+    subFeat: "7 colors and flat or dimensional styles for the macOS panel, dark or light on both platforms — try the live block below.",
+    extra: "The macOS panel also takes an opacity setting (to let the frosted desktop show through); UI density works on both platforms.",
     color: "Color",
     style: "Style",
     theme: "Theme",
