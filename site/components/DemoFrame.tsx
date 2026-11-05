@@ -8,7 +8,8 @@ import type { Lang } from "@/lib/i18n";
 
 const DW = 880;
 
-export default function DemoFrame({ lang }: { lang: Lang }) {
+/// page：嵌哪段演示。island = 灵动岛（0.8.0 起首页与功能页用这个）；demo = 旧的贴纸演示。
+export default function DemoFrame({ lang, page = "island" }: { lang: Lang; page?: "island" | "demo" }) {
   const wrap = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
 
@@ -30,7 +31,7 @@ export default function DemoFrame({ lang }: { lang: Lang }) {
       <iframe
         ref={frame}
         className="hero-demo-frame"
-        src={`/demo/embed-demo.html?lang=${lang}`}
+        src={`/demo/embed-${page}.html?lang=${lang}`}
         title="Meowo demo"
         loading="lazy"
         scrolling="no"

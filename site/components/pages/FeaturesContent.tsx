@@ -3,7 +3,8 @@ import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
 import AccountCard, { type AcctRow } from "@/components/AccountCard";
 import CheckItem from "@/components/CheckItem";
-import { ChatWindowMock, IslandMock, MenuButtonsMock } from "@/components/screenshots";
+import { ChatWindowMock, MenuButtonsMock } from "@/components/screenshots";
+import DemoFrame from "@/components/DemoFrame";
 import { type Lang } from "@/lib/i18n";
 
 type Sec = { eyebrow: string; title: string; body: string; checks: string[] };
@@ -94,12 +95,12 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
         </div>
       </section>
 
-      {/* 灵动岛示意（0.8.0 起两个平台的贴纸都换成了灵动岛） */}
+      {/* 灵动岛演示：iframe 里是应用真实的灵动岛组件 + 假数据（app/src/demo/IslandStage.tsx） */}
       <section className="section-sm">
         <div className="container">
           <Reveal>
             <div className="stage">
-              <IslandMock lang={lang} />
+              <DemoFrame lang={lang} />
             </div>
           </Reveal>
         </div>

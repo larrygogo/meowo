@@ -8,7 +8,8 @@ import CheckItem from "@/components/CheckItem";
 import FeatureGrid from "@/components/FeatureGrid";
 import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
-import { ChatWindowMock, IslandMock } from "@/components/screenshots";
+import { ChatWindowMock } from "@/components/screenshots";
+import DemoFrame from "@/components/DemoFrame";
 
 type SemTone = "err" | "warn" | "ok";
 
@@ -158,8 +159,8 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
           </p>
           <div className="hero-stage">
             <div className="stage">
-              {/* 灵动岛示意（0.8.0 起两个平台的贴纸都换成了灵动岛；原来的贴纸录屏 DemoFrame 不再用） */}
-              <IslandMock lang={lang} />
+              {/* 灵动岛演示：iframe 里是应用真实的灵动岛组件 + 假数据（app/src/demo/IslandStage.tsx） */}
+              <DemoFrame lang={lang} />
             </div>
           </div>
         </div>

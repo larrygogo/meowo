@@ -12,7 +12,11 @@ export default defineConfig({
     outDir: resolve(__dirname, "../site/public/demo"),
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(__dirname, "embed-demo.html"),
+      // 贴纸演示（旧，官网已不再引用）与灵动岛演示（0.8.0 起官网 hero 用这个）。
+      input: {
+        demo: resolve(__dirname, "embed-demo.html"),
+        island: resolve(__dirname, "embed-island.html"),
+      },
     },
   },
 });

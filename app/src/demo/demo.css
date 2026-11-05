@@ -138,3 +138,72 @@
   from { opacity: 0.9; transform: scale(0.25); }
   to { opacity: 0; transform: scale(1); }
 }
+
+/* ===== 灵动岛演示舞台（embed-island.html）：一块带刘海的 Mac 屏幕，岛包住刘海 ===== */
+.isd-desktop {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  font-family: "Inter Variable", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.isd-wallpaper {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(700px 420px at 20% 110%, #f2a65a 0%, transparent 60%),
+    radial-gradient(800px 500px at 95% 100%, #c2577a 0%, transparent 62%),
+    radial-gradient(900px 520px at 60% -20%, #2d4f8f 0%, transparent 70%),
+    linear-gradient(180deg, #1f3566 0%, #5a3f7a 55%, #b8607a 100%);
+}
+/* 菜单栏：半透明，高度与刘海齐平（32） */
+.isd-menubar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: rgba(20, 22, 38, 0.32);
+  backdrop-filter: blur(20px);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+}
+.isd-menu { display: flex; gap: 18px; }
+.isd-menu .is-app { font-weight: 700; }
+.isd-status { display: flex; align-items: center; gap: 14px; font-variant-numeric: tabular-nums; }
+.isd-icon { display: inline-block; width: 16px; height: 11px; border-radius: 3px; border: 1.5px solid rgba(255, 255, 255, 0.85); }
+.isd-icon.is-wifi { width: 14px; height: 10px; border-radius: 10px 10px 2px 2px; border-bottom: 0; }
+.isd-icon.is-battery { width: 22px; background: linear-gradient(90deg, rgba(255, 255, 255, 0.85) 70%, transparent 70%); }
+/* 背景里一扇编辑器窗口，只为让桌面不空 */
+.isd-window {
+  position: absolute;
+  left: 120px;
+  top: 150px;
+  width: 640px;
+  height: 400px;
+  border-radius: 12px;
+  background: rgba(24, 24, 30, 0.86);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.isd-window-bar { display: flex; gap: 8px; padding: 12px 14px; }
+.isd-window-bar i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.isd-window-bar i:nth-child(2) { background: #febc2e; }
+.isd-window-bar i:nth-child(3) { background: #28c840; }
+.isd-window-body { display: flex; flex-direction: column; gap: 14px; padding: 22px 28px; }
+.isd-window-body span { height: 9px; width: 78%; border-radius: 5px; background: rgba(255, 255, 255, 0.1); }
+.isd-window-body span.is-short { width: 46%; }
+/* 岛：贴屏幕顶边水平居中，内容由真实组件画 */
+.isd-island {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  filter: drop-shadow(0 14px 30px rgba(0, 0, 0, 0.35));
+}
+.isd-island .isl-stage { height: auto; }
+/* macOS 上面板不画日期时间（菜单栏右上角本来就有）；演示里的宿主平台 mock 成了 windows，这里照 macOS 藏掉。 */
+.isd-island .isl-panel-meta { display: none; }
