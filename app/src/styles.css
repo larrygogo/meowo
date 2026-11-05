@@ -6703,6 +6703,27 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   white-space: nowrap;
   cursor: pointer;
 }
+/* macOS 有刘海：内容分到刘海左右两翼，中间空出刘海宽（摄像头那块画不出东西）。两翼用 1fr 等宽，
+   整块才能以刘海为中心对称——窗口按刘海中心摆，两翼一宽一窄的话空档就对不上刘海。
+   高度就是刘海高，和菜单栏齐平；圆角也收小，贴近真刘海的弧度。 */
+.isl-notch.is-compact.is-split {
+  display: grid;
+  grid-template-columns: 1fr var(--isl-notch-w) 1fr;
+  width: max-content;
+  height: var(--isl-notch-h);
+  gap: 0;
+  padding: 0 10px;
+  border-radius: 0 0 12px 12px;
+}
+.isl-wing { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.isl-wing.is-left { justify-content: flex-start; padding-right: 10px; }
+.isl-wing.is-right { justify-content: flex-end; padding-left: 10px; }
+.isl-notch.is-split .isl-agents { gap: 6px; }
+.isl-notch.is-split .isl-agent-logo { width: 16px; height: 16px; }
+.isl-notch.is-split .isl-agent-logo svg, .isl-notch.is-split .isl-agent-logo img { width: 11px !important; height: 11px !important; }
+.isl-notch.is-split .isl-agent-badge.is-waiting { width: 7px; height: 7px; right: -1px; bottom: -1px; }
+.isl-notch.is-split .isl-usage-val { font-size: 8px; }
+.isl-notch.is-split .isl-usage-badge { display: none; }
 .isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
 .isl-agents { display: flex; align-items: center; gap: 9px; }
 .isl-more { font-size: 12px; font-weight: 600; color: var(--isl-dim); }
@@ -6827,6 +6848,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   cursor: pointer;
   animation: isl-grow 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
+/* 刘海下面才画得出东西：提醒的内容从刘海底下开始（--isl-safe-top 由 App 按刘海高设，Windows 为 0）。 */
+.isl-notch.is-alert { padding-top: var(--isl-safe-top, 0px); }
 @keyframes isl-grow {
   from { clip-path: inset(0 28% 34% 28% round 0 0 22px 22px); }
   to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
@@ -6868,7 +6891,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 展开面板 */
 .isl-panel {
   width: calc(100% - var(--isl-ear) * 2);
-  padding: 14px 22px 12px;
+  padding: calc(14px + var(--isl-safe-top, 0px)) 22px 12px;
   border-radius: 0 0 26px 26px;
 }
 .isl-panel-head { display: flex; align-items: center; gap: 10px; cursor: grab; }

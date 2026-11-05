@@ -64,6 +64,29 @@ fn monitor_at(window: &tauri::WebviewWindow, x: f64, y: f64) -> Option<tauri::wi
 /// 位置），否则保持当前中心（形态切换）。
 #[tauri::command]
 pub(crate) fn island_layout(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    center_ratio: Option<f64>,
+) -> Result<(), String> {
+    // macOS：落点只有刘海或菜单栏图标下方，不记横向位置；窗口层级由 panel.rs 定（高过菜单栏），
+    // 这里不能再 set_always_on_top，那会把层级打回 Floating、钻到菜单栏底下。
+    #[cfg(target_os = "macos")]
+    {
+        let _ = center_ratio;
+        crate::macos::notch::layout(&app, &window, width, height)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = &app;
+        layout_floating(window, width, height, center_ratio)
+    }
+}
+
+/// Windows：贴所在显示器工作区的顶边，按中心点对称改尺寸。
+#[cfg(not(target_os = "macos"))]
+fn layout_floating(
     window: tauri::WebviewWindow,
     width: f64,
     height: f64,
@@ -115,6 +138,53 @@ pub(crate) fn island_cursor(window: tauri::WebviewWindow) -> Option<(f64, f64)> 
     let cx = f64::from(pos.x) + f64::from(size.width) / 2.0;
     let cy = f64::from(pos.y) + f64::from(size.height) / 2.0;
     Some(((cursor.x - cx) / scale, (cursor.y - cy) / scale))
+}
+
+/// 岛落在哪：Windows 恒为 floating（顶边，可左右拖）；macOS 有刘海为 notch（钉在刘海上），
+/// 没刘海为 menubar（屏幕上不画，菜单栏图标是迷你岛）。前端几秒问一次，插拔外接屏、合盖后跟着换。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct IslandHost {
+    kind: &'static str,
+    /// 刘海宽高（逻辑点），只有 notch 时非零。
+    notch_width: f64,
+    notch_height: f64,
+}
+
+#[tauri::command]
+pub(crate) fn island_host(app: tauri::AppHandle) -> IslandHost {
+    #[cfg(target_os = "macos")]
+    {
+        let (notch, changed) = crate::macos::notch::refresh();
+        if changed {
+            crate::macos::menubar::refresh_tray_icon(&app);
+        }
+        match notch {
+            Some(n) => IslandHost { kind: "notch", notch_width: n.width, notch_height: n.height },
+            None => IslandHost { kind: "menubar", notch_width: 0.0, notch_height: 0.0 },
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        IslandHost { kind: "floating", notch_width: 0.0, notch_height: 0.0 }
+    }
+}
+
+/// 显示 / 隐藏岛（macOS 菜单栏落点：收起时藏起来，展开、提醒时再显示）。`focus` 见
+/// macos::panel::set_visible。Windows 岛恒可见，用不上，按普通窗口显隐处理。
+#[tauri::command]
+pub(crate) fn island_set_visible(app: tauri::AppHandle, window: tauri::WebviewWindow, visible: bool, focus: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        crate::macos::panel::set_visible(&app, visible, focus);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, focus);
+        let _ = if visible { window.show() } else { window.hide() };
+    }
 }
 
 /// 开始左右拖：记下光标与窗口的起点。

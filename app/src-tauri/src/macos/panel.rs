@@ -1,42 +1,19 @@
 // tauri-nspanel v2 分支基于已弃用的 cocoa crate；其常量与 panel_delegate! 宏在 -D warnings 下会触发
 // deprecated 与 unexpected_cfgs(cargo-clippy) 告警。这些来自上游、我们无法消除，按需放行。
 #![allow(deprecated, unexpected_cfgs)]
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_nspanel::{
     cocoa::appkit::NSWindowCollectionBehavior,
     panel_delegate, ManagerExt, WebviewWindowExt,
 };
-use tauri_plugin_positioner::{Position, WindowExt};
 
 #[allow(non_upper_case_globals)]
 const NS_NONACTIVATING_PANEL: i32 = 1 << 7; // NSWindowStyleMaskNonActivatingPanel
-/// NSWindowStyleMaskResizable。`set_style_mask` 是 `setStyleMask:` 的直传——**整体替换**
-/// 而非按位或，只传 NonActivatingPanel 会把 tao 建窗时设好的 Resizable 位一起抹掉，
-/// 于是 macOS 用户拖不动贴纸边框（而 tauri.macos.conf.json 明写 `resizable: true`
-/// 并给了 minWidth/minHeight，Windows 上是能拖的）。
-#[allow(non_upper_case_globals)]
-const NS_RESIZABLE: i32 = 1 << 3;
-/// NSFloatingWindowLevel。贴纸常驻最前只需压过普通应用窗口（level 0）；早先用
-/// `NSMainMenuWindowLevel + 1`（25，即 NSStatusWindowLevel）比菜单栏（24）还高，
-/// 贴纸被拖到屏幕顶部时会盖住整条状态栏。Floating（3）在普通窗口之上、菜单栏之下。
-/// cocoa 0.26 只导出了 NSMainMenuWindowLevel，这里手写数值。
-const NS_FLOATING_WINDOW_LEVEL: i32 = 3;
+/// NSMainMenuWindowLevel（24）+ 3：压过菜单栏，岛才能盖在刘海两侧的菜单栏上。
+/// 同类刘海应用的通行取值；再高就压过系统弹出菜单了。cocoa 0.26 没导出，手写数值。
+const NS_ISLAND_WINDOW_LEVEL: i32 = 27;
 
 const RESIGN_EVENT: &str = "menubar_panel_did_resign_key";
-
-/// 「保持打开」（W-12）：贴纸 pin 按钮在 macOS 面板上的语义——面板层级本就常驻最前，
-/// pin 不再是 always-on-top，而是「失焦不自动收起」。状态由前端 pin 偏好（localStorage）
-/// 经 set_panel_keep_open 命令推入；内存标志即可，不另进 settings.rs（pin 偏好本来就
-/// 存在前端，两个平台同一份 PIN_KEY）。
-static KEEP_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// 前端 pin 切换的推入口（window::set_panel_keep_open 命令的 macOS 实现）。
-pub fn set_keep_open(open: bool) {
-    KEEP_OPEN.store(open, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// 贴纸毛玻璃圆角，须与 CSS `:root.platform-macos .sticker` 的 border-radius 一致。
-const GLASS_RADIUS: f64 = 16.0;
 
 /// 把已存在的 main 窗口原地转成 NonactivatingPanel，并接好失焦 -> emit 事件。
 pub fn convert_main_to_panel(app: &AppHandle) {
@@ -45,21 +22,9 @@ pub fn convert_main_to_panel(app: &AppHandle) {
         None => return,
     };
 
-    // 玻璃质感：在透明窗后垫一层 NSVisualEffectView(毛玻璃)，圆角与 CSS .sticker 一致。
-    // backdrop-filter 在透明 Tauri 窗里模糊不到桌面，必须用原生特效。state=Active：非激活面板也保持磨砂
-    // (不随失焦变暗)。转 panel 前应用，特效随 contentView 保留。
-    // 材质用 Popover（系统菜单栏弹出面板同款）而非 HudWindow：HUD 是深色专用，浅色主题下
-    // 发黑；Popover 按窗口 NSAppearance 出深/浅两套，外观由 set_appearance 跟应用主题同步。
-    // CSS 侧 :root.platform-macos .sticker 只铺一层薄着色，材质默认就透出来（贴纸不透明度
-    // 设置在 macOS 上调的是着色浓淡）。
-    let _ = window.set_effects(tauri::utils::config::WindowEffectsConfig {
-        effects: vec![tauri::utils::WindowEffect::Popover],
-        state: Some(tauri::utils::WindowEffectState::Active),
-        radius: Some(GLASS_RADIUS),
-        color: None,
-        // tauri 2.12 新增的字段，只作用于 Liquid Glass 特效。这里用的是 Popover，填 false 保持原样。
-        interactive: false,
-    });
+    // 灵动岛（2026-11-05 起 macOS 也取消贴纸）是纯黑实心形状，窗口透明只为露出耳朵外的桌面，
+    // 不再垫贴纸那层 Popover 毛玻璃，也不要系统阴影（岛自己画）。
+    let _ = window.set_shadow(false);
 
     let panel = match window.to_panel() {
         Ok(p) => p,
@@ -76,16 +41,19 @@ pub fn convert_main_to_panel(app: &AppHandle) {
         }
     }));
 
-    panel.set_level(NS_FLOATING_WINDOW_LEVEL);
-    panel.set_style_mask(NS_NONACTIVATING_PANEL | NS_RESIZABLE);
+    // 岛要包住刘海、压在菜单栏之上，层级得高过菜单栏（24）。贴纸那会儿刻意用 Floating（3）
+    // 不盖菜单栏，现在反过来。尺寸全由程序给，不要 Resizable。
+    panel.set_level(NS_ISLAND_WINDOW_LEVEL);
+    panel.set_style_mask(NS_NONACTIVATING_PANEL);
     panel.set_collection_behaviour(
         NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
             | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary
-            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary,
+            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
+            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorIgnoresCycle,
     );
     panel.set_delegate(delegate);
 
-    // 启动即隐藏，等托盘点击再显示。
+    // 启动先藏着：前端探明落点（有没有刘海）、摆好位置后自己调 island_set_visible 显示。
     panel.order_out(None);
 }
 
@@ -127,48 +95,22 @@ pub fn set_appearance(app: &AppHandle, theme: Option<&str>) {
     }
 }
 
-/// 失焦自动隐藏的监听器（在 setup 里调用一次）。
-pub fn setup_resign_listener(app: &AppHandle) {
-    let handle = app.clone();
-    app.listen_any(RESIGN_EVENT, move |_| {
-        // 保持打开（pin）时不自动收起（W-12）；托盘点击的显式收起不受影响（toggle_panel）。
-        if KEEP_OPEN.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-        if let Ok(panel) = handle.get_webview_panel("main") {
-            panel.order_out(None);
-        }
-    });
-}
-
-/// 托盘点击：可见则收起，不可见则定位到图标下方再显示。
-pub fn toggle_panel(app: &AppHandle) {
-    let panel = match app.get_webview_panel("main") {
-        Ok(p) => p,
-        Err(_) => return,
+/// 显示 / 隐藏岛。`focus` = 显示时顺手成为 key window：展开的面板要接 Esc、失焦收起；
+/// 收起的胶囊不能抢键盘（非激活面板成了 key 照样会吃掉前台应用的输入），只摆到最前。
+pub fn set_visible(app: &AppHandle, visible: bool, focus: bool) {
+    let Ok(panel) = app.get_webview_panel("main") else {
+        return;
     };
-    if panel.is_visible() {
+    if !visible {
         panel.order_out(None);
-        return;
+    } else if focus {
+        panel.show();
+    } else {
+        panel.order_front_regardless();
     }
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.move_window(Position::TrayCenter); // 先定位
-    }
-    panel.show(); // 后显示
 }
 
-/// 托盘菜单「找回贴纸」：只在面板隐藏时定位到图标下方再显示——「找回」是单向带到眼前，
-/// 面板已可见时不动作（不能像 toggle 那样反而把它收掉）。与 Windows 托盘菜单同项对齐。
+/// 「找回」：通知点击落空等兜底入口。贴纸没了，找回就是让岛展开面板（前端 recall-sticker 监听）。
 pub fn recall_panel(app: &AppHandle) {
-    let panel = match app.get_webview_panel("main") {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-    if panel.is_visible() {
-        return;
-    }
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.move_window(Position::TrayCenter);
-    }
-    panel.show();
+    let _ = app.emit_to("main", "recall-sticker", ());
 }

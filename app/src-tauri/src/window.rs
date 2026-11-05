@@ -572,14 +572,10 @@ pub(crate) fn show_sticker(window: tauri::WebviewWindow) {
     }
 }
 
-/// macOS 面板的「保持打开」（W-12）：前端贴纸 pin 按钮在面板模式下切换失焦自动收起。
-/// 跨平台注册（处理器表不做 cfg 分支），非 macOS 为空操作——贴纸 pin 在那边另有语义
-/// （always-on-top），不会调到这条命令。
+/// macOS 贴纸面板的「保持打开」（W-12）。macOS 贴纸已换成灵动岛（2026-11-05），面板不再
+/// 失焦自动隐藏；命令留着只为旧前端调用不报错，空操作。
 #[tauri::command]
 pub(crate) fn set_panel_keep_open(open: bool) {
-    #[cfg(target_os = "macos")]
-    crate::macos::panel::set_keep_open(open);
-    #[cfg(not(target_os = "macos"))]
     let _ = open;
 }
 
