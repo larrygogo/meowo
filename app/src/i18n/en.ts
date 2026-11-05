@@ -1486,9 +1486,11 @@ export const en: Dict = {
         "Hit the pin in the toolbar to keep it always on top.",
         "Recall the sticker or open Settings from the tray / menu bar icon.",
       ],
+      islandTitle: "The island and chat window",
       islandPoints: [
         "The island sits at the top of the screen; drag it left or right.",
-        "Hover to expand it and see the most urgent sessions and quota.",
+        "One icon per session: green arc = running, yellow dot = waiting on you.",
+        "Click an icon to open that session; click elsewhere on the island to expand it.",
         "It pops an alert when a session needs you.",
         "Click the tray icon to open the chat window; right-click for Settings.",
       ],
