@@ -53,6 +53,8 @@ pub fn convert_main_to_panel(app: &AppHandle) {
     );
     panel.set_delegate(delegate);
 
+    // 岛的配色写死成深色，面板外观（决定毛玻璃深浅）也钉成深色，不等前端推主题。
+    set_appearance(app, Some("dark"));
     // 启动先藏着：前端探明落点（有没有刘海）、摆好位置后自己调 island_set_visible 显示。
     panel.order_out(None);
 }

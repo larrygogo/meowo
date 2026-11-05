@@ -583,8 +583,13 @@ pub(crate) fn set_panel_keep_open(open: bool) {
 /// None（前端 theme=system）跟随系统。非 macOS 空操作，前端只在 macOS 贴纸窗调用。
 #[tauri::command]
 pub(crate) fn set_panel_appearance(app: tauri::AppHandle, theme: Option<String>) {
+    // 灵动岛（2026-11-05 起 macOS 也是）的白字黑底配色写死在 CSS 里，不跟主题：弹出面板的毛玻璃
+    // 也只能是深色，浅色材质上白字看不清。前端还会照旧推主题，这里一律钉成深色。
     #[cfg(target_os = "macos")]
-    crate::macos::panel::set_appearance(&app, theme.as_deref());
+    {
+        let _ = theme;
+        crate::macos::panel::set_appearance(&app, Some("dark"));
+    }
     #[cfg(not(target_os = "macos"))]
     let _ = (app, theme);
 }

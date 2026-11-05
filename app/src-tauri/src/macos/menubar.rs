@@ -211,90 +211,8 @@ fn render_status_rgba(running: usize, waiting: usize) -> Option<(Vec<u8>, u32, u
     Some((rgba, total as u32, GLYPH_H as u32))
 }
 
-// ── 迷你岛：没刘海的 Mac 上，菜单栏图标就是灵动岛（用户 2026-11-05 定的：屏幕上不画岛，
-//    在菜单栏模拟一个，不放在屏幕正中）。黑色圆角胶囊，左边一双白眼睛，右边每种状态一个
-//    小色点 + 白色数字。──
-const MINI_PAD: usize = 11; // 胶囊左右内边距
-const MINI_RADIUS: f32 = 11.0; // 胶囊圆角
-const EYE_W: f32 = 5.0;
-const EYE_H: f32 = 13.0;
-const EYE_GAP: usize = 5; // 两只眼睛之间
-const MINI_GROUP_GAP: usize = 9; // 眼睛与第一组、组与组之间
-const MINI_DOT: f32 = 11.0; // 状态色点直径
-const MINI_DOT_GAP: usize = 4; // 色点与数字之间
-const MINI_BG: [u8; 3] = [0, 0, 0];
-const MINI_INK: [u8; 3] = [0xf5, 0xf5, 0xf7];
-
-/// 圆角矩形（SDF 抗锯齿），以 (cx, cy) 为中心、宽高 w×h、圆角 r，source-over 叠加。
-/// 参数就是一个矩形的几何加颜色，拆成结构体反而难读。
-#[allow(clippy::too_many_arguments)]
-fn fill_rrect(rgba: &mut [u8], total: usize, cx: f32, cy: f32, w: f32, h: f32, r: f32, rgb: [u8; 3]) {
-    let x0 = (cx - w / 2.0).floor().max(0.0) as usize;
-    let x1 = ((cx + w / 2.0).ceil() as usize).min(total);
-    let y0 = (cy - h / 2.0).floor().max(0.0) as usize;
-    let y1 = ((cy + h / 2.0).ceil() as usize).min(GLYPH_H);
-    for y in y0..y1 {
-        for x in x0..x1 {
-            let dx = ((x as f32 + 0.5 - cx).abs() - (w / 2.0 - r)).max(0.0);
-            let dy = ((y as f32 + 0.5 - cy).abs() - (h / 2.0 - r)).max(0.0);
-            let a = (0.5 - ((dx * dx + dy * dy).sqrt() - r)).clamp(0.0, 1.0);
-            if a > 0.0 {
-                blend_over(rgba, (y * total + x) * 4, rgb, a);
-            }
-        }
-    }
-}
-
-/// 一组「色点 + 数字」的数字字形（最多两位，超 99 加「+」）。
-fn mini_digits(n: usize) -> Vec<usize> {
-    let mut out: Vec<usize> = n.min(99).to_string().bytes().map(|ch| (ch - b'0') as usize).collect();
-    if n > 99 {
-        out.push(GLYPH_PLUS);
-    }
-    out
-}
-
-/// 迷你岛 RGBA：(运行, 待办) 都为 0 时只有眼睛。纯函数，便于单测。
-fn render_mini_island_rgba(running: usize, waiting: usize) -> (Vec<u8>, u32, u32) {
-    let groups: Vec<([u8; 3], Vec<usize>)> = [(RUN_RGB, running), (WAIT_RGB, waiting)]
-        .into_iter()
-        .filter(|(_, n)| *n > 0)
-        .map(|(rgb, n)| (rgb, mini_digits(n)))
-        .collect();
-    let eyes_w = EYE_W as usize * 2 + EYE_GAP;
-    let groups_w: usize = groups
-        .iter()
-        .map(|(_, g)| MINI_GROUP_GAP + MINI_DOT as usize + MINI_DOT_GAP + content_w(g))
-        .sum();
-    let total = MINI_PAD * 2 + eyes_w + groups_w;
-    let mut rgba = vec![0u8; total * GLYPH_H * 4];
-    let cy = GLYPH_H as f32 / 2.0;
-    fill_rrect(&mut rgba, total, total as f32 / 2.0, cy, total as f32, GLYPH_H as f32, MINI_RADIUS, MINI_BG);
-    let mut x = MINI_PAD as f32;
-    for _ in 0..2 {
-        fill_rrect(&mut rgba, total, x + EYE_W / 2.0, cy, EYE_W, EYE_H, EYE_W / 2.0, MINI_INK);
-        x += EYE_W + EYE_GAP as f32;
-    }
-    let mut gx = MINI_PAD + eyes_w;
-    for (rgb, glyphs) in &groups {
-        gx += MINI_GROUP_GAP;
-        fill_rrect(&mut rgba, total, gx as f32 + MINI_DOT / 2.0, cy, MINI_DOT, MINI_DOT, MINI_DOT / 2.0, *rgb);
-        gx += MINI_DOT as usize + MINI_DOT_GAP;
-        for (j, &g) in glyphs.iter().enumerate() {
-            if j > 0 {
-                gx += INNER_GAP;
-            }
-            if g == GLYPH_PLUS {
-                blit_plus(&mut rgba, total, gx, MINI_INK);
-                gx += PLUS_W;
-            } else {
-                blit_glyph(&mut rgba, total, gx, g, MINI_INK);
-                gx += GLYPH_W[g];
-            }
-        }
-    }
-    (rgba, total as u32, GLYPH_H as u32)
-}
+// 没刘海时的菜单栏图标：曾画成黑色迷你岛（黑方块 + 白眼睛），实拍像个暂停键、和旁边的系统图标
+// 格格不入（用户 2026-11-05 嫌丑），回到原来的单色 logo / 彩色计数徽章，两种落点同一种图标。
 
 /// 最近一次的 (运行, 待办)：落点在「有刘海 / 没刘海」之间切换时要按它重画图标，
 /// 不能等下一次状态变化。
@@ -306,23 +224,13 @@ pub fn refresh_tray_icon(app: &AppHandle) {
     update_tray_status(app, running, waiting);
 }
 
-/// 按 (运行, 待办) 更新菜单栏图标。
-/// - 没刘海：图标就是迷你岛（见上）。
-/// - 有刘海：状态已经画在刘海两侧的岛上，图标回到原来的样子：有计数 → 彩色徽章（非模板）；
-///   全零 → 单色 logo（模板）。
-///
+/// 按 (运行, 待办) 更新菜单栏图标：有计数 → 彩色徽章（非模板）；全零 → 单色 logo（模板）。
 /// set_icon_with_as_template 原子换图标+模板态（避免闪烁）；清掉标题文字。
 pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
     *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner()) = (running, waiting);
     let Some(tray) = app.tray_by_id("meowo-tray") else {
         return;
     };
-    if notch::cached().is_none() {
-        let (rgba, w, h) = render_mini_island_rgba(running, waiting);
-        let _ = tray.set_icon_with_as_template(Some(tauri::image::Image::new(&rgba, w, h)), false);
-        let _ = tray.set_title(None::<&str>);
-        return;
-    }
     match render_status_rgba(running, waiting) {
         Some((rgba, w, h)) => {
             let _ =
@@ -471,7 +379,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 /// 单击菜单栏图标：
 /// - 有刘海：岛就在刘海上，图标和 Windows 托盘一样打开对话窗口（轻量模式下展开岛）。
-/// - 没刘海：图标本身就是迷你岛，点它在下方展开 / 收起岛的面板（前端 island-tray-toggle）。
+/// - 没刘海：点它在下方弹出 / 收起岛的面板（前端 island-tray-toggle）。
 ///
 /// 托盘事件在主线程，这里可以直接重新探测刘海。
 fn on_left_click(app: &AppHandle) {
@@ -576,21 +484,6 @@ mod tests {
         );
         // 仅待办：待办组打头，前置间隔为 0。
         assert_eq!(status_seq(0, 5), vec![(GLYPH_WAIT, 0), (5, SYM_NUM_GAP)]);
-    }
-
-    /// 迷你岛：空闲时只有眼睛；有计数时变宽，胶囊四角透明、中间是不透明黑底。
-    #[test]
-    fn mini_island_grows_with_counts_and_keeps_round_corners() {
-        let (idle, idle_w, h) = render_mini_island_rgba(0, 0);
-        assert_eq!(h as usize, GLYPH_H);
-        assert_eq!(idle.len(), idle_w as usize * GLYPH_H * 4);
-        let (_, busy_w, _) = render_mini_island_rgba(3, 1);
-        assert!(busy_w > idle_w);
-        let (big, big_w, _) = render_mini_island_rgba(120, 0);
-        // 左上角在圆角外：透明。正中：黑底不透明。
-        assert_eq!(big[3], 0);
-        let mid = ((GLYPH_H / 2) * big_w as usize + big_w as usize / 2) * 4;
-        assert_eq!(big[mid + 3], 255);
     }
 
     #[test]

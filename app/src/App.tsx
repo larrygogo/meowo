@@ -497,7 +497,10 @@ export function App() {
   // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
   const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
   useEffect(() => {
-    document.documentElement.style.setProperty("--isl-safe-top", `${safeTopOf(host)}px`);
+    const root = document.documentElement;
+    root.style.setProperty("--isl-safe-top", `${safeTopOf(host)}px`);
+    // 没刘海时面板按 macOS 菜单栏弹出面板画（styles.css 的 :root.island-menubar）。
+    root.classList.toggle("island-menubar", host.kind === "menubar");
   }, [host]);
   useSettingsEffect((settings) => {
     setChatEnabled(settings.chat_enabled ?? true);
