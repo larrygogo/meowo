@@ -875,10 +875,13 @@ pub(crate) fn build_tray_menu(
     } else {
         None
     };
-    // Windows 的贴纸已换成灵动岛（2026-11-04），岛恒在屏幕顶上谈不上「找回」，
-    // 这一项实际做的是展开完整会话列表（App.tsx 的 recall-sticker 监听）。
-    let recall_key = if cfg!(target_os = "windows") { "tray.sessions" } else { "tray.recall" };
-    let recall = MenuItemBuilder::with_id("recall", tr(lang, recall_key)).build(app)?;
+    // Windows 的贴纸已换成灵动岛（2026-11-04），岛恒在屏幕顶上谈不上「找回」；完整列表
+    // 由托盘单击打开（toggle_main_window），菜单里不再重复放一项（用户 2026-11-05 实拍定案）。
+    let recall = if cfg!(target_os = "windows") {
+        None
+    } else {
+        Some(MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?)
+    };
     let guide = MenuItemBuilder::with_id("guide", tr(lang, "tray.guide")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
@@ -887,7 +890,10 @@ pub(crate) fn build_tray_menu(
     if let Some(chat) = &chat {
         builder = builder.item(chat);
     }
-    builder.items(&[&recall, &guide, &settings, &website, &quit]).build()
+    if let Some(recall) = &recall {
+        builder = builder.item(recall);
+    }
+    builder.items(&[&guide, &settings, &website, &quit]).build()
 }
 
 /// 切语言/改设置后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。

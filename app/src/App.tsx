@@ -472,7 +472,10 @@ export function App() {
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
   const islandAlertsRef = useRef<string[] | null>(null);
   const islandAlertMsRef = useRef(ISLAND_ALERT_MS_DEFAULT);
+  // 轻量模式（对话功能关闭）时面板不放「打开对话窗口」，与贴纸底栏、托盘菜单同一规则。
+  const [chatEnabled, setChatEnabled] = useState(true);
   useSettingsEffect((settings) => {
+    setChatEnabled(settings.chat_enabled ?? true);
     if (settings.island_compact) setIslandCompact(settings.island_compact);
     if (Array.isArray(settings.sticker_quota_providers)) setQuotaProviders(settings.sticker_quota_providers);
     if (Array.isArray(settings.island_alerts)) islandAlertsRef.current = settings.island_alerts;
@@ -713,7 +716,7 @@ export function App() {
     };
   }, [startDrag]);
 
-  // 托盘单击 / 菜单「打开会话列表」：岛本来就在顶上，打开的就是完整列表。
+  // 托盘单击：岛本来就在顶上，打开的就是完整列表。
   useEffect(() => {
     if (isMacPanel()) return;
     const un = listen("recall-sticker", () => showAll());
@@ -896,6 +899,14 @@ export function App() {
             onPointerDownDrag={onPanelHeadPointerDown}
             onNewSession={() => {
               openNewSessionWindow().catch((err) => console.error("[island] 打开新建会话失败：", err));
+              collapse();
+            }}
+            onOpenChat={chatEnabled ? () => {
+              invoke("open_latest_chat").catch((err) => console.error("[island] 打开对话窗口失败：", err));
+              collapse();
+            } : undefined}
+            onOpenSettings={() => {
+              invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
               collapse();
             }}
           />

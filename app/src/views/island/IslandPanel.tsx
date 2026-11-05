@@ -1,6 +1,6 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
 // 前几页：会话，按要紧程度每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
-// 各 agent 的额度。完整列表（搜索、菜单、归档……）不塞进这里，从托盘「打开会话列表」进。
+// 各 agent 的额度。完整列表（搜索、菜单、归档……）不塞进这里，单击托盘图标打开。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
@@ -10,6 +10,7 @@ import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
 import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
+import { ChatIcon, GearIcon } from "../sticker/icons";
 
 /// 每页列几个会话。面板去掉「全部」按钮后，多于这个数的会话翻页看（左右箭头 / 圆点）。
 const MAX_ROWS = 3;
@@ -37,12 +38,14 @@ export function IslandPanel({
   onPointerDownDrag,
   initialPage = 0,
   onNewSession,
+  onOpenChat,
+  onOpenSettings,
 }: {
   sessions: readonly Item[];
   usage: Record<string, ProviderUsage>;
   quotaProviders: readonly string[];
   onOpenSession: (sessionId: number) => void;
-  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「打开会话列表」进。保留参数兼容调用方。 */
+  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只单击托盘图标打开。保留参数兼容调用方。 */
   onShowAll?: () => void;
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;
@@ -51,6 +54,10 @@ export function IslandPanel({
   initialPage?: number;
   /** 新建会话（标题旁的「＋」与空态按钮）。 */
   onNewSession?: () => void;
+  /** 打开对话窗口。轻量模式（对话功能关闭）时不传，按钮不出现。 */
+  onOpenChat?: () => void;
+  /** 打开设置。 */
+  onOpenSettings?: () => void;
 }) {
   const t = useT();
   const now = useNow();
@@ -106,6 +113,27 @@ export function IslandPanel({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onNewSession}
             >＋ {t.sticker.newSession}</button>
+          )}
+          {/* 托盘菜单去掉「打开会话列表」后，对话窗与设置在岛上也要有入口（用户 2026-11-05 要求）。 */}
+          {onOpenChat && (
+            <button
+              type="button"
+              className="isl-btn is-ghost is-icon"
+              title={t.sticker.openChatWindow}
+              aria-label={t.sticker.openChatWindow}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpenChat}
+            ><ChatIcon /></button>
+          )}
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="isl-btn is-ghost is-icon"
+              title={t.sticker.openSettings}
+              aria-label={t.sticker.openSettings}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpenSettings}
+            ><GearIcon /></button>
           )}
           <span className="isl-panel-meta">
             {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}

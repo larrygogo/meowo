@@ -6851,6 +6851,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-btn.is-dark { height: 26px; padding: 0 12px; font-size: 12px; }
 .isl-btn.is-ghost { height: 24px; padding: 0 10px; font-size: 12px; background: var(--isl-chip); color: var(--isl-text-2); }
 .isl-btn.is-ghost:hover { background: var(--isl-chip-hover); color: var(--isl-text); }
+.isl-btn.is-ghost.is-icon { width: 24px; padding: 0; }
 
 /* 展开面板 */
 .isl-panel {

@@ -436,6 +436,19 @@ describe("IslandPanel 展开面板", () => {
     expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(1);
   });
 
+  it("面板标题栏有打开对话窗口和设置；轻量模式不传对话回调就不出那颗", () => {
+    const onOpenChat = vi.fn();
+    const onOpenSettings = vi.fn();
+    renderPanel({ onOpenChat, onOpenSettings });
+    fireEvent.click(screen.getByRole("button", { name: zh.sticker.openChatWindow }));
+    fireEvent.click(screen.getByRole("button", { name: zh.sticker.openSettings }));
+    expect(onOpenChat).toHaveBeenCalledOnce();
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    cleanup();
+    renderPanel({ onOpenSettings });
+    expect(screen.queryByRole("button", { name: zh.sticker.openChatWindow })).toBeNull();
+  });
+
   it("只有一页时不出箭头", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: zh.island.nextPage })).toBeNull();
