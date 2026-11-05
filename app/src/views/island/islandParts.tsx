@@ -187,7 +187,8 @@ export function Ring({ size, stroke, value, color, track, children, className }:
 }
 
 /// 环色：照参考图用各家品牌色（Claude 橙、Codex 紫……），跑完的会话也是一整圈亮色，不再是
-/// 死气沉沉的灰。只有要人处理（琥珀）和出错（红）换成状态色，一眼能从一排图标里挑出来。
+/// 死气沉沉的灰。要人处理（琥珀）、出错（红）、在跑（绿）换成状态色，一眼能从一排图标里挑出来。
+/// 在跑用绿是用户要求（2026-11-05）：品牌色的弧看不出「正在跑」，Meowo 里绿色一直就是在跑。
 const BRAND_COLORS: Record<string, string> = {
   claude: "#d97757",
   codex: "#a970ff",
@@ -196,6 +197,7 @@ const BRAND_COLORS: Record<string, string> = {
   opencode: "#c7c7cc",
 };
 const STATE_COLORS: Record<string, string> = {
+  running: "var(--isl-ok)",
   pending: "var(--isl-warn)",
   error: "var(--isl-err)",
 };

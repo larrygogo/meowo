@@ -6787,6 +6787,16 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-ring-stack { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
 .isl-ring-caption { font-size: 10px; color: var(--isl-dim); }
 .isl-agent { position: relative; display: inline-flex; flex: none; }
+/* 收起胶囊上的图标点一下就打开对应会话，悬停时放大一点、底座提亮，让人知道它能点（用户要求，2026-11-05）。
+   面板行里的图标不加：整行已有悬停底色，图标再动就晃眼。 */
+.isl-agents .isl-agent { cursor: pointer; transition: transform 0.15s ease; }
+.isl-agents .isl-agent .isl-agent-logo { transition: background-color 0.15s ease; }
+.isl-agents .isl-agent:hover { transform: scale(1.12); }
+.isl-agents .isl-agent:hover .isl-agent-logo { background: color-mix(in srgb, var(--isl-chip) 70%, #fff); }
+@media (prefers-reduced-motion: reduce) {
+  .isl-agents .isl-agent { transition: none; }
+  .isl-agents .isl-agent:hover { transform: none; }
+}
 /* 深灰圆底座：logo 不再直接贴在黑底上发散；与外圈之间留一道缝。 */
 .isl-agent-logo { width: 23px; height: 23px; border-radius: 50%; background: var(--isl-chip); display: grid; place-items: center; }
 /* logo 要几乎撑满环内（参考图），原始 11~13px 的徽标在 32px 的环里只占一小点，环里空空的。 */
