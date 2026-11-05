@@ -139,71 +139,191 @@
   to { opacity: 0; transform: scale(1); }
 }
 
-/* ===== 灵动岛演示舞台（embed-island.html）：一块带刘海的 Mac 屏幕，岛包住刘海 ===== */
-.isd-desktop {
+/* ===== 灵动岛演示舞台（embed-island.html）：一块 Windows 桌面，岛悬在屏幕顶边 ===== */
+.isw-desktop {
   position: fixed;
   inset: 0;
   overflow: hidden;
-  font-family: "Inter Variable", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Segoe UI Variable", "Segoe UI", "Inter Variable", "Microsoft YaHei", "PingFang SC", sans-serif;
 }
-.isd-wallpaper {
+/* 壁纸：深蓝底上几道柔和的蓝色光带（Windows 11 默认壁纸的意思，不照搬） */
+.isw-wallpaper {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(700px 420px at 20% 110%, #f2a65a 0%, transparent 60%),
-    radial-gradient(800px 500px at 95% 100%, #c2577a 0%, transparent 62%),
-    radial-gradient(900px 520px at 60% -20%, #2d4f8f 0%, transparent 70%),
-    linear-gradient(180deg, #1f3566 0%, #5a3f7a 55%, #b8607a 100%);
+    radial-gradient(520px 300px at 70% 62%, rgba(120, 170, 255, 0.55) 0%, transparent 70%),
+    radial-gradient(420px 260px at 58% 72%, rgba(60, 110, 230, 0.6) 0%, transparent 70%),
+    radial-gradient(700px 420px at 30% 20%, rgba(40, 70, 160, 0.55) 0%, transparent 70%),
+    linear-gradient(160deg, #0b1a3d 0%, #142c66 50%, #0d1f4a 100%);
 }
-/* 菜单栏：半透明，高度与刘海齐平（32） */
-.isd-menubar {
+/* Windows Terminal 窗口：里面是 agent 正在干活的输出 */
+.isw-term {
   position: absolute;
-  inset: 0 0 auto 0;
-  height: 32px;
+  left: 70px;
+  top: 112px;
+  width: 560px;
+  height: 330px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(12, 12, 12, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.isw-term-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  background: rgba(20, 22, 38, 0.32);
-  backdrop-filter: blur(20px);
-  color: rgba(255, 255, 255, 0.92);
-  font-size: 13px;
+  height: 34px;
+  background: #1f1f1f;
 }
-.isd-menu { display: flex; gap: 18px; }
-.isd-menu .is-app { font-weight: 700; }
-.isd-status { display: flex; align-items: center; gap: 14px; font-variant-numeric: tabular-nums; }
-.isd-icon { display: inline-block; width: 16px; height: 11px; border-radius: 3px; border: 1.5px solid rgba(255, 255, 255, 0.85); }
-.isd-icon.is-wifi { width: 14px; height: 10px; border-radius: 10px 10px 2px 2px; border-bottom: 0; }
-.isd-icon.is-battery { width: 22px; background: linear-gradient(90deg, rgba(255, 255, 255, 0.85) 70%, transparent 70%); }
-/* 背景里一扇编辑器窗口，只为让桌面不空 */
-.isd-window {
-  position: absolute;
-  left: 120px;
-  top: 150px;
-  width: 640px;
-  height: 400px;
-  border-radius: 12px;
-  background: rgba(24, 24, 30, 0.86);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+.isw-term-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 14px;
+  background: #0c0c0c;
+  color: #e6e6e6;
+  font-size: 12px;
 }
-.isd-window-bar { display: flex; gap: 8px; padding: 12px 14px; }
-.isd-window-bar i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
-.isd-window-bar i:nth-child(2) { background: #febc2e; }
-.isd-window-bar i:nth-child(3) { background: #28c840; }
-.isd-window-body { display: flex; flex-direction: column; gap: 14px; padding: 22px 28px; }
-.isd-window-body span { height: 9px; width: 78%; border-radius: 5px; background: rgba(255, 255, 255, 0.1); }
-.isd-window-body span.is-short { width: 46%; }
+.isw-term-glyph { font-family: "JetBrains Mono", Consolas, monospace; font-size: 10px; color: #8ab4ff; font-weight: 700; }
+.isw-term-ctl { display: flex; height: 100%; }
+.isw-term-ctl i {
+  width: 40px;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 11px;
+  color: #cfcfcf;
+}
+.isw-term-body {
+  padding: 12px 16px;
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.75;
+  color: #cccccc;
+  white-space: pre;
+}
+.isw-term-body .is-prompt { color: #cccccc; }
+.isw-term-body .is-user { color: #ffffff; background: rgba(255, 255, 255, 0.06); }
+.isw-term-body .is-ai { color: #e8e8e8; }
+.isw-term-body .is-tool { color: #e8e8e8; }
+.isw-term-body .is-dim { color: #8a8a8a; }
+.isw-term-body .is-ok { color: #4ec98a; }
+.isw-term-body .is-spin { color: #e2925b; }
 /* 岛：贴屏幕顶边水平居中，内容由真实组件画 */
-.isd-island {
+.isw-island {
   position: absolute;
   top: 0;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   justify-content: center;
-  filter: drop-shadow(0 14px 30px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 12px 26px rgba(0, 0, 0, 0.4));
+  z-index: 5;
 }
-.isd-island .isl-stage { height: auto; }
-/* macOS 上面板不画日期时间（菜单栏右上角本来就有）；演示里的宿主平台 mock 成了 windows，这里照 macOS 藏掉。 */
-.isd-island .isl-panel-meta { display: none; }
+/* 任务栏：底部 48 高，云母质感，应用图标居中，右边托盘时间 */
+.isw-taskbar {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 32, 44, 0.82);
+  backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  z-index: 6;
+}
+.isw-apps { display: flex; gap: 6px; }
+.isw-app {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+}
+.isw-app.is-active { background: rgba(255, 255, 255, 0.08); }
+.isw-app.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: #7cb6ff;
+}
+/* 搜索：放大镜 */
+.isw-app.is-search::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #e8eaf0;
+  transform: translate(-2px, -2px);
+}
+.isw-app.is-search::after {
+  content: "";
+  position: absolute;
+  width: 7px;
+  height: 2px;
+  background: #e8eaf0;
+  transform: translate(6px, 6px) rotate(45deg);
+}
+/* 文件夹 */
+.isw-app.is-folder::before {
+  content: "";
+  width: 22px;
+  height: 16px;
+  border-radius: 2px 4px 3px 3px;
+  background: linear-gradient(180deg, #ffd666 0%, #f5b829 100%);
+  box-shadow: inset 0 3px 0 #e6a817;
+}
+/* 浏览器：一个蓝绿渐变的圆 */
+.isw-app.is-browser::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: conic-gradient(from 200deg, #2fc4ff, #1f7ae0, #35d07f, #2fc4ff);
+}
+.isw-app.is-term b {
+  width: 22px;
+  height: 18px;
+  border-radius: 3px;
+  background: #2b2b2b;
+  border: 1px solid #555;
+  color: #e6e6e6;
+  font: 700 8px/16px "JetBrains Mono", Consolas, monospace;
+  text-align: center;
+}
+.isw-app.is-meowo img { width: 24px; height: 24px; border-radius: 5px; }
+.isw-tray {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #f0f2f6;
+}
+.isw-tray-icons { display: flex; gap: 10px; }
+.isw-tray-icons i {
+  width: 14px;
+  height: 10px;
+  border: 1.5px solid #e8eaf0;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+}
+.isw-tray-icons i.is-vol { width: 8px; height: 10px; border-radius: 0 6px 6px 0; border: 1.5px solid #e8eaf0; border-left-width: 5px; }
+.isw-tray-clock { display: flex; flex-direction: column; align-items: flex-end; font-size: 11px; line-height: 1.35; }
+.isw-tray-clock b { font-weight: 400; }
+/* 假鼠标：Windows 白色箭头 */
+.isw-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 20;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
