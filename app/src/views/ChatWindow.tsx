@@ -4095,6 +4095,9 @@ export function ChatWindow() {
             ? t.chat.approvalTitle
           : terminalAttention.id === "claude:plan-approval"
             ? t.chat.planTitle
+          // 「<agent>:question」：屏幕上识别出的提问表单（kimi）。
+          : terminalAttention.id.endsWith(":question")
+            ? t.chat.questionTitle
           : terminalAttention.options?.length && terminalAttention.id.startsWith("provider:")
             ? t.chat.trustPromptTitle
             : t.chat.terminalPromptTitle}

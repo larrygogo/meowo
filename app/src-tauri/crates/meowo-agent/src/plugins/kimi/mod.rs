@@ -381,7 +381,22 @@ impl AgentPlugin for Kimi {
     /// 为 false），broker 审批桥对它关闭——屏幕识别是 GUI 给出**可操作**审批的唯一通道。
     /// 按键提示行是面板的稳定签名；提示行被裁掉时退回标题行。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
-        &[crate::chat_ui::AttentionPattern {
+        &[
+        // 提问表单（AskUserQuestion，kimi 2.4.1 真机取证 2026-11-05）。底部按键提示行是签名，
+        // 三种页各一种：单选题 `1-3 / ↵ choose`、多选题 `1-4 / ↵ toggle`、确认页
+        // `1/2 choose  ↵ confirm`，后面都跟 `←/→/tab switch`（多页签表单独有）。注意和审批面板
+        // 的提示行不同：审批是 `↑/↓ select · … · ↵ confirm`（带斜杠与圆点），不会串。
+        // 此前 kimi 只声明了审批，提问在对话页不出卡片（用户实拍）。
+        crate::chat_ui::AttentionPattern {
+            id: "kimi:question",
+            patterns: &[
+                r"↑↓ select\s+(?:1-\d+ / ↵ (?:choose|toggle)|1/2 choose\s+↵ confirm)\s+←/→/tab switch",
+            ],
+            // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
+            last: true,
+            details: crate::chat_ui::AttentionDetails::BracketForm,
+        },
+        crate::chat_ui::AttentionPattern {
             id: "kimi:command-approval",
             patterns: &[
                 r"↑/↓ select · [\d/]+ choose · ↵ confirm",
@@ -392,7 +407,8 @@ impl AgentPlugin for Kimi {
             // 面板——用户看着 A 批准了 B。
             last: true,
             details: crate::chat_ui::AttentionDetails::ArrowPanel,
-        }]
+        },
+        ]
     }
 
     fn id(&self) -> AgentId {

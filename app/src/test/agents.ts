@@ -120,7 +120,7 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
  * 未取证的 provider 为空（不做整句识别）。
  */
-const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" }[]> = {
+const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" }[]> = {
   claude: [
     {
       id: "claude:long-session-resume",
@@ -139,6 +139,12 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
     },
   ],
   kimi: [
+    {
+      id: "kimi:question",
+      patterns: ["↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"],
+      last: true,
+      details: "bracket_form",
+    },
     {
       id: "kimi:command-approval",
       patterns: [

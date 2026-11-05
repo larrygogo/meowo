@@ -23,8 +23,9 @@ export type TerminalAttentionOption = {
 /// 审批详情区的屏幕文法风格（后端 `AttentionDetails` 的镜像，插件随 AttentionPattern 声明）：
 /// proceed_box = 「Do you want to proceed?」框式（光标移动选择、记住=持久规则）；
 /// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）；
-/// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。缺省/none = 不做结构化拆解。
-export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box";
+/// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。
+/// bracket_form = 方括号编号表单（kimi 提问：`[1] 选项` / `[✓] 选项`，数字键直选）。缺省/none = 不做结构化拆解。
+export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form";
 export type TerminalAttention = { id: string; text: string; options?: TerminalAttentionOption[]; details?: AttentionDetailsStyle };
 
 export function visibleTerminalText(text: string): string {
@@ -328,6 +329,57 @@ const MARKED_NUMBERED_OPTION = /^\s*[❯›>▶]\s*\d+[.)]\s+/;
 
 /// 取正则的**最后一次**匹配。TUI 重绘不清屏,上一份面板留在缓冲上方:首个匹配会把
 /// 标题/命令锁在残影上,而按键打给的是屏幕最下方的活动面板。传入的正则必须带 g。
+/// 方括号编号表单（kimi 2.4.1 的 AskUserQuestion，2026-11-05 真机取证）。命中行是表单底部的
+/// 按键提示，表单从它往上到最近一条 ─── 分隔线。三种页：
+///   单选题  `? 问题` + `→ [1] 红色` …          数字键选中，自动跳到下一题 / 确认页
+///   多选题  `? 问题` + `[ ] 苹果` / `[✓] 香蕉` 数字键（按位置）勾选/取消，Tab 去下一页
+///   确认页  `Review your answer…` + `[1] Submit` / `[2] Cancel`，数字键 1 直接提交
+/// 选项按钮一律发数字键（相对移动用不上，也不会因光标位置算错）。`Other` 要现场打字，
+/// 卡片上完成不了，不出按钮——要写自定义答案就去终端。
+function parseBracketForm(visible: string, matchIndex: number): { text: string; options: TerminalAttentionOption[] } | null {
+  const lines = visible.split("\n");
+  const matchedLine = visible.slice(0, matchIndex).split("\n").length - 1;
+  let top = matchedLine;
+  while (top > 0 && !/^\s*─{3,}\s*$/.test(lines[top - 1])) top -= 1;
+  const block = lines.slice(top, matchedLine);
+  const options: TerminalAttentionOption[] = [];
+  let multi = false;
+  let checkboxPosition = 0;
+  let question = "";
+  const review: string[] = [];
+  for (const line of block) {
+    const asked = line.match(/^\s*\?\s+(.+?)\s*$/);
+    if (asked) {
+      question = asked[1];
+      continue;
+    }
+    const numbered = line.match(/^\s*(?:→\s*)?\[(\d+)\]\s+(.+?)\s*$/);
+    if (numbered) {
+      if (!/^other$/i.test(numbered[2])) options.push({ label: numbered[2], input: numbered[1], kind: "choice" });
+      continue;
+    }
+    const checkbox = line.match(/^\s*(?:→\s*)?\[([ ✓✔x])\]\s+(.+?)\s*$/i);
+    if (checkbox) {
+      multi = true;
+      checkboxPosition += 1;
+      if (!/^other$/i.test(checkbox[2])) {
+        const checked = checkbox[1] !== " ";
+        options.push({ label: checked ? `✓ ${checkbox[2]}` : checkbox[2], input: String(checkboxPosition), kind: "choice", selected: checked });
+      }
+      continue;
+    }
+    // 确认页列出已选的答案：`Q  问题` / `→  答案`。
+    const answered = line.match(/^\s*(?:Q|→)\s{2,}(.+?)\s*$/);
+    if (answered) review.push(answered[1]);
+    if (/ready to submit/i.test(line)) question = line.trim();
+  }
+  if (options.length === 0) return null;
+  // 多选题按数字只是勾选，去下一页要按 Tab（表单的 ←/→/tab switch）。
+  if (multi) options.push({ label: "Next ⇥", input: "\t", kind: "submit" });
+  const text = [review.join("\n"), question].filter(Boolean).join("\n");
+  return { text, options };
+}
+
 function lastMatch(pattern: RegExp, text: string): (RegExpMatchArray & { index: number }) | null {
   let last: (RegExpMatchArray & { index: number }) | null = null;
   for (const match of text.matchAll(pattern)) {
@@ -522,6 +574,12 @@ export function terminalAttention(
     while (bottom < lines.length - 1 && !/^\s*╰/.test(lines[bottom])) bottom += 1;
     const box = lines.slice(top, bottom + 1).join("\n");
     return { id: best.id, text: box, details: detailsStyle, options: detectFramedNumberedMenu(box)?.options };
+  }
+  if (detailsStyle === "bracket_form") {
+    const form = parseBracketForm(visible, best.index);
+    // 解析不出选项（表单还没画完）就不出卡：空卡只会收走输入框又给不了动作。
+    // details 不往外带：这不是命令审批，走通用的终端提示卡（按钮 = 发对应按键）。
+    return form ? { id: best.id, text: form.text, options: form.options } : null;
   }
   const approvalCard = detailsStyle !== "none";
   // 面板式的详情从标题行(▶ Run this command?)起取:best 可能命中面板底部的
