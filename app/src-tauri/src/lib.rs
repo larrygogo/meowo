@@ -130,7 +130,7 @@ use settings::{
     mark_onboarding_seen, open_link, open_url, set_autostart, set_keep_awake, set_push_paused,
     set_settings, set_sticker_window_state, set_workspace_order,
 };
-use snap::cursor_over_window;
+use snap::{cursor_over_window, mouse_pressed_outside_window};
 // 出屏救援（setup 里开机把贴纸拉回可视区）只在 Windows 做：macOS 面板位置归 menubar 管。
 #[cfg(target_os = "windows")]
 use snap::pull_on_screen;
@@ -1292,6 +1292,7 @@ pub fn run() {
             open_link,
             open_url,
             cursor_over_window,
+            mouse_pressed_outside_window,
             get_accounts,
             refresh_usage,
             host_os,

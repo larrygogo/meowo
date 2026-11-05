@@ -65,7 +65,7 @@ function HeroBoard({ t }: { t: Dict }) {
   );
 }
 
-/** Windows 的窗口示意：屏幕顶部的胶囊，下面是悬停展开的黑色面板。 */
+/** Windows 的窗口示意：屏幕顶部的胶囊，下面是点开后的黑色面板。 */
 function HeroIsland() {
   return (
     <div className="obm-desktop obm-desktop-island">
@@ -196,7 +196,8 @@ export function Onboarding() {
   useShowWhenReady();
   const [step, setStep] = useState(0);
 
-  // 5 步:欢迎(含语言/外观两项就地设置) → 连接 AI CLI → Meowo 如何读到进度 → 看板与卡片 → 窗口行为。
+  // macOS 5 步:欢迎(含语言/外观两项就地设置) → 连接 AI CLI → Meowo 如何读到进度 → 看板与卡片 → 窗口行为。
+  // Windows 4 步:最后两步换成一步「灵动岛与对话窗口」。
   // 其余配置项全用默认值,设置页随时可改——配置型步骤与设置页重复,已删。
   // 「连接 AI CLI」不能省：此前引导只字未提装 agent/登录，用户走完面对一块空看板。
   // 「如何读到进度」同理（S-12）：hooks 改写 CLI 配置曾全程零告知，必须明写备份与移除方式。
@@ -204,11 +205,14 @@ export function Onboarding() {
     { hero: <HeroWelcome />, title: t.onboarding.welcome.title, desc: t.onboarding.welcome.desc, body: <WelcomeConfig t={t} /> },
     { title: t.onboarding.connect.title, points: t.onboarding.connect.points },
     { title: t.onboarding.progress.title, points: t.onboarding.progress.points },
-    { hero: <HeroBoard t={t} />, title: t.onboarding.board.title, points: t.onboarding.board.points },
-    // Windows 是灵动岛（2026-11-04 起替换贴纸与吸边），macOS 仍是菜单栏面板，按平台选要点和示意图。
-    IS_MAC
-      ? { hero: <HeroWindow />, title: t.onboarding.window.title, points: t.onboarding.window.points }
-      : { hero: <HeroIsland />, title: t.onboarding.window.title, points: t.onboarding.window.islandPoints },
+    // Windows 是灵动岛（2026-11-04 起替换贴纸与吸边，2026-11-05 贴纸彻底删除），macOS 仍是菜单栏
+    // 面板。Windows 上没有卡片了，「看板与卡片」那一步照搬会教错，合进灵动岛这一步。
+    ...(IS_MAC
+      ? [
+        { hero: <HeroBoard t={t} />, title: t.onboarding.board.title, points: t.onboarding.board.points },
+        { hero: <HeroWindow />, title: t.onboarding.window.title, points: t.onboarding.window.points },
+      ]
+      : [{ hero: <HeroIsland />, title: t.onboarding.window.islandTitle, points: t.onboarding.window.islandPoints }]),
   ];
   const total = steps.length;
   const isFirst = step === 0;

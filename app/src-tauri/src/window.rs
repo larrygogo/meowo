@@ -833,12 +833,18 @@ pub(crate) fn recall_center(window: tauri::WebviewWindow, pinned: bool) -> Resul
     Ok(())
 }
 
-/// 托盘「找回贴纸」：唤起主窗口并通知前端执行完整找回（岛展开成完整列表 + 置顶）。
+/// 托盘「找回贴纸」：唤起主窗口并通知前端执行找回。
+/// Windows 上主窗口是灵动岛（贴纸已删，2026-11-05 用户定案）：只把岛显示出来并让前端展开
+/// 面板，不做下面的改尺寸 + 居中——那会把岛拽到屏幕正中，前端没活着时就一直停在那里。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
+        if cfg!(target_os = "windows") {
+            let _ = w.emit("recall-sticker", ());
+            return;
+        }
         // 原生层几何救援，不依赖 webview 活着：WebView2 浏览器进程崩溃后窗口 JS 全灭，
         // 下面 emit 的事件无人处理，「找回」就彻底失灵（实拍：吸附细条卡在屏边，重启
         // 才恢复）。窗口还是细条尺寸就先撑回正常最小尺寸，再居中主屏；前端若活着，
@@ -875,10 +881,13 @@ pub(crate) fn build_tray_menu(
     } else {
         None
     };
-    // Windows 的贴纸已换成灵动岛（2026-11-04），岛恒在屏幕顶上谈不上「找回」，
-    // 这一项实际做的是展开完整会话列表（App.tsx 的 recall-sticker 监听）。
-    let recall_key = if cfg!(target_os = "windows") { "tray.sessions" } else { "tray.recall" };
-    let recall = MenuItemBuilder::with_id("recall", tr(lang, recall_key)).build(app)?;
+    // Windows 的贴纸已删、只剩灵动岛（2026-11-05 用户定案），岛恒在屏幕顶上谈不上「找回」，
+    // 菜单里不放这一项（用户实拍定案）。
+    let recall = if cfg!(target_os = "windows") {
+        None
+    } else {
+        Some(MenuItemBuilder::with_id("recall", tr(lang, "tray.recall")).build(app)?)
+    };
     let guide = MenuItemBuilder::with_id("guide", tr(lang, "tray.guide")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(lang, "tray.settings")).build(app)?;
     let website = MenuItemBuilder::with_id("website", tr(lang, "tray.website")).build(app)?;
@@ -887,7 +896,10 @@ pub(crate) fn build_tray_menu(
     if let Some(chat) = &chat {
         builder = builder.item(chat);
     }
-    builder.items(&[&recall, &guide, &settings, &website, &quit]).build()
+    if let Some(recall) = &recall {
+        builder = builder.item(recall);
+    }
+    builder.items(&[&guide, &settings, &website, &quit]).build()
 }
 
 /// 切语言/改设置后让已存在的系统 UI 跟上：重建托盘菜单、改已开设置窗口的标题。
@@ -1105,9 +1117,19 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// 托盘左键开合主界面（贴纸窗）：可见且聚焦 → 隐藏；可见未聚焦 → 聚焦（用户在找它）；
 /// 隐藏/最小化 → 显示并聚焦。贴纸 skipTaskbar，藏起来后任务栏没有入口，左键必须可逆，
 /// 不能像旧行为（左键只开对话窗）那样把「找回贴纸」只留在右键菜单深处。
-/// Windows 例外：灵动岛恒可见却几乎不持焦，可见未聚焦时改走 recall_sticker 打开完整列表。
+/// Windows 例外：贴纸已删，只剩灵动岛（2026-11-05 用户定案），单击改为打开对话窗口；
+/// 对话功能关闭（轻量模式）时没有对话窗，退而把岛显示出来并展开面板。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
+    if cfg!(target_os = "windows") {
+        // 调用点已在托盘单击消抖子线程，读设置文件不堵消息泵。
+        if crate::settings::load_settings().chat_enabled {
+            open_latest_chat_window(app);
+        } else {
+            recall_sticker(app);
+        }
+        return;
+    }
     let Some(w) = app.get_webview_window("main") else {
         return;
     };
@@ -1118,10 +1140,6 @@ pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
         let _ = w.set_focus();
     } else if w.is_focused().unwrap_or(false) {
         let _ = w.hide();
-    } else if cfg!(target_os = "windows") {
-        // 灵动岛恒可见、几乎不持焦，落进聚焦分支屏幕零变化；改为展开完整列表。
-        // 吸边细条已删（2026-11-04），旧版留在 settings 里的 snap_edge 不再作数。
-        recall_sticker(app);
     } else {
         let _ = w.set_focus();
     }

@@ -1,6 +1,6 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
 // 前几页：会话，按要紧程度每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
-// 各 agent 的额度。完整列表（搜索、菜单、归档……）不塞进这里，从托盘「打开会话列表」进。
+// 各 agent 的额度。搜索、菜单、归档这些在对话窗口侧栏里，单击托盘图标打开。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
@@ -8,8 +8,19 @@ import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { byUrgency, sessionTitle } from "../Island";
-import { AgentRing, Ring, remainingColor, remainingOf, useNow } from "./islandParts";
+import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
+import { ChatIcon, GearIcon } from "../sticker/icons";
+
+/** 极简模式图标：一条贴顶的细线。 */
+function StripIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <path d="M8 8h8" strokeWidth="3" />
+    </svg>
+  );
+}
 
 /// 每页列几个会话。面板去掉「全部」按钮后，多于这个数的会话翻页看（左右箭头 / 圆点）。
 const MAX_ROWS = 3;
@@ -22,6 +33,39 @@ function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
   return usage.lanes
     .filter((lane) => lane.used_pct != null)
     .sort((a, b) => LANE_ORDER.indexOf(a.kind) - LANE_ORDER.indexOf(b.kind));
+}
+
+/// 叠环里每一圈的颜色，按泳道排序后的位置取（最外圈第一个）。仿 Apple 健康的三环：每圈一个
+/// 固定色相，靠颜色把图例和圈对上。不再按用量变色：几圈都是绿的就分不清谁是谁。
+/// 快用完改由图例里的数字变色提示。避开琥珀和红，那两个在 Meowo 里是「要处理 / 出错」。
+const LANE_COLORS = ["var(--isl-ok)", "#64d2ff", "#bf5af2", "#5e5ce6"];
+
+/// 叠环：一家一个，每档额度一圈，外大内小。用户要求（2026-11-05）：此前每档一个独立的环，
+/// 一家三档就横排三个环，面板挤、标签被截断（「Fable · 每周」只露一半）。
+const STACK_SIZE = 64;
+const STACK_STROKE = 6;
+const STACK_GAP = 1.5;
+
+function StackedRings({ lanes }: { lanes: UsageLane[] }) {
+  return (
+    <span className="isl-usage-stack" style={{ width: STACK_SIZE, height: STACK_SIZE }}>
+      {lanes.map((lane, i) => {
+        const size = STACK_SIZE - i * 2 * (STACK_STROKE + STACK_GAP);
+        if (size <= STACK_STROKE * 2) return null;
+        const color = LANE_COLORS[i % LANE_COLORS.length];
+        return (
+          <Ring
+            key={`${lane.kind}-${lane.label ?? i}`}
+            size={size}
+            stroke={STACK_STROKE}
+            value={usedOf(lane.used_pct as number) / 100}
+            color={color}
+            track={`color-mix(in srgb, ${color} 22%, #000)`}
+          />
+        );
+      })}
+    </span>
+  );
 }
 
 function providerLabel(provider: string): string {
@@ -37,13 +81,15 @@ export function IslandPanel({
   onPointerDownDrag,
   initialPage = 0,
   onNewSession,
+  onOpenChat,
+  onOpenSettings,
+  strip = false,
+  onToggleStrip,
 }: {
   sessions: readonly Item[];
   usage: Record<string, ProviderUsage>;
   quotaProviders: readonly string[];
   onOpenSession: (sessionId: number) => void;
-  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「打开会话列表」进。保留参数兼容调用方。 */
-  onShowAll?: () => void;
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
@@ -51,6 +97,14 @@ export function IslandPanel({
   initialPage?: number;
   /** 新建会话（标题旁的「＋」与空态按钮）。 */
   onNewSession?: () => void;
+  /** 打开对话窗口。轻量模式（对话功能关闭）时不传，按钮不出现。 */
+  onOpenChat?: () => void;
+  /** 打开设置。 */
+  onOpenSettings?: () => void;
+  /** 当前是否极简模式（收起成细条）。 */
+  strip?: boolean;
+  /** 切换极简模式。 */
+  onToggleStrip?: () => void;
 }) {
   const t = useT();
   const now = useNow();
@@ -107,6 +161,39 @@ export function IslandPanel({
               onClick={onNewSession}
             >＋ {t.sticker.newSession}</button>
           )}
+          {/* 托盘菜单去掉「打开会话列表」后，对话窗与设置在岛上也要有入口（用户 2026-11-05 要求）。 */}
+          {onOpenChat && (
+            <button
+              type="button"
+              className="isl-btn is-ghost is-icon"
+              title={t.sticker.openChatWindow}
+              aria-label={t.sticker.openChatWindow}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpenChat}
+            ><ChatIcon /></button>
+          )}
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="isl-btn is-ghost is-icon"
+              title={t.sticker.openSettings}
+              aria-label={t.sticker.openSettings}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpenSettings}
+            ><GearIcon /></button>
+          )}
+          {/* 极简模式开关放在标题栏空位上（用户 2026-11-05 指定位置）。 */}
+          {onToggleStrip && (
+            <button
+              type="button"
+              className={`isl-btn is-ghost is-icon${strip ? " is-on" : ""}`}
+              title={strip ? t.island.stripOff : t.island.stripOn}
+              aria-label={strip ? t.island.stripOff : t.island.stripOn}
+              aria-pressed={strip}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onToggleStrip}
+            ><StripIcon /></button>
+          )}
           <span className="isl-panel-meta">
             {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}
             <b>{now.toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false })}</b>
@@ -119,7 +206,11 @@ export function IslandPanel({
               {rows.length === 0 && (
                 <div className="isl-empty">
                   <span>{t.island.idle}</span>
-                  {onNewSession && (
+                  {/* 标题栏已有「新建会话」，空态的主按钮改成打开对话窗口（用户 2026-11-05 要求）；
+                      轻量模式没有对话窗口，才退回新建。 */}
+                  {onOpenChat ? (
+                    <button type="button" className="isl-btn is-primary" onClick={onOpenChat}>{t.sticker.openChatWindow}</button>
+                  ) : onNewSession && (
                     <button type="button" className="isl-btn is-primary" onClick={onNewSession}>＋ {t.sticker.newSession}</button>
                   )}
                 </div>
@@ -166,15 +257,18 @@ export function IslandPanel({
                     <span className="isl-usage-head-logo" style={tintStyle(provider)}><Icon /></span>
                     {providerLabel(provider)}
                   </span>
+                  <StackedRings lanes={shownLanes(usage[provider])} />
+                  {/* 图例：色点对应上面的圈，后面是这档的名字和已用量。快用完时数字变琥珀 / 红。 */}
                   <div className="isl-usage-lanes">
                     {shownLanes(usage[provider]).map((lane, i) => {
-                      const left = remainingOf(lane.used_pct as number);
+                      const used = usedOf(lane.used_pct as number);
                       return (
-                        <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell">
-                          <Ring size={50} stroke={4.5} value={left / 100} color={remainingColor(left)} track="var(--isl-track)">
-                            <span className="isl-mid-val">{left}<small>%</small></span>
-                          </Ring>
-                          <span className="isl-side-sub">{laneName(lane)}</span>
+                        <div key={`${lane.kind}-${lane.label ?? i}`} className="isl-usage-cell" title={laneName(lane)}>
+                          <i className="isl-usage-key" style={{ background: LANE_COLORS[i % LANE_COLORS.length] }} />
+                          <span className="isl-usage-name">{laneName(lane)}</span>
+                          <span className="isl-usage-left" style={used >= 60 ? { color: usedColor(used) } : undefined}>
+                            {used}<small>%</small>
+                          </span>
                         </div>
                       );
                     })}

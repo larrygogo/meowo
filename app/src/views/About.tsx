@@ -673,6 +673,7 @@ function AppearanceSection() {
   const uiScale = settings?.ui_scale ?? SETTINGS_DEFAULTS.ui_scale;
   const stickerStyle = settings?.sticker_style ?? SETTINGS_DEFAULTS.sticker_style;
   const islandCompact = settings?.island_compact ?? SETTINGS_DEFAULTS.island_compact;
+  const islandStrip = settings?.island_strip ?? SETTINGS_DEFAULTS.island_strip;
   const islandAlerts = settings?.island_alerts ?? SETTINGS_DEFAULTS.island_alerts;
   const islandAlertSeconds = settings?.island_alert_seconds ?? SETTINGS_DEFAULTS.island_alert_seconds;
   const stickerColor = settings?.sticker_color ?? SETTINGS_DEFAULTS.sticker_color;
@@ -725,7 +726,9 @@ function AppearanceSection() {
         </div>
       </div>
 
-      {/* 贴纸专属的几项单独成组：此前与外观模式、界面缩放混在一张卡里，分不清哪些只管贴纸。 */}
+      {/* 贴纸专属的几项单独成组：此前与外观模式、界面缩放混在一张卡里，分不清哪些只管贴纸。
+          Windows 已删贴纸只剩灵动岛（2026-11-05 用户定案），这一组只在其它平台显示。 */}
+      {!IS_WIN && <>
       <div className="sec-caption">{t.settings.stickerGroup}</div>
       <div className="row-card">
         <div className="row">
@@ -765,11 +768,19 @@ function AppearanceSection() {
         {/* 点击穿透已移除：只在 Windows 有，而 Windows 换成灵动岛后打开它岛就点不动了
             （2026-11-05）。settings 字段留着只为读旧配置不报错。 */}
       </div>
+      </>}
 
       {/* 灵动岛只在 Windows（2026-11-04 起替换贴边缩略条），macOS 仍是菜单栏面板。 */}
       {IS_WIN && <>
         <div className="sec-caption">{t.settings.islandGroup}</div>
         <div className="row-card">
+          <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandStrip}</div>
+              <div className="row-desc">{t.settings.islandStripDesc}</div>
+            </div>
+            <Switch checked={islandStrip} onChange={() => patch({ island_strip: !islandStrip })} label={t.settings.islandStrip} />
+          </div>
           <div className="row">
             <div className="row-text">
               <div className="row-label">{t.settings.islandCompact}</div>

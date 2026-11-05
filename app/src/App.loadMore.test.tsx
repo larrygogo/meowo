@@ -6,6 +6,11 @@ import { act, render, cleanup, waitFor } from "@testing-library/react";
 
 const getLiveSessionsCounts = vi.fn();
 const getLiveSessionsPage = vi.fn();
+// Windows 贴纸已删（2026-11-05），会话列表只剩 macOS 菜单栏面板在用：本文件在面板模式下跑。
+vi.mock("./platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./platform")>()),
+  isMacPanel: () => true,
+}));
 
 // 捕获最近一次渲染传给 Sticker 的 props（只关心 loadMore 与 data）。
 let stickerProps: { loadMore?: () => void; data?: unknown[] } = {};
@@ -73,11 +78,10 @@ import { App } from "./App";
 import { invoke } from "@tauri-apps/api/core";
 
 let emitRecallSticker: () => void = () => {};
-/** Windows 上贴纸已换成灵动岛：启动是收起的胶囊，Sticker 要展开后才挂载（托盘「找回贴纸」= 展开）。 */
+/** 面板模式下 Sticker 直接挂载。 */
 const renderExpanded = async () => {
   render(<App />);
-  await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
-  await act(async () => { emitRecallSticker(); });
+  await waitFor(() => expect(stickerProps.loadMore).toBeTruthy());
 };
 
 const mk = (id: number) => ({

@@ -187,7 +187,9 @@ export function Ring({ size, stroke, value, color, track, children, className }:
 }
 
 /// 环色：照参考图用各家品牌色（Claude 橙、Codex 紫……），跑完的会话也是一整圈亮色，不再是
-/// 死气沉沉的灰。只有要人处理（琥珀）和出错（红）换成状态色，一眼能从一排图标里挑出来。
+/// 死气沉沉的灰。要人处理（琥珀）、出错（红）、在跑（绿）换成状态色，一眼能从一排图标里挑出来。
+/// 在跑用绿是用户要求（2026-11-05）：品牌色的弧看不出「正在跑」。绿用对话窗侧栏状态点同一个
+/// --cc-ok-vivid，岛上和侧栏同一个会话颜色要一样（用户要求）。
 const BRAND_COLORS: Record<string, string> = {
   claude: "#d97757",
   codex: "#a970ff",
@@ -196,6 +198,7 @@ const BRAND_COLORS: Record<string, string> = {
   opencode: "#c7c7cc",
 };
 const STATE_COLORS: Record<string, string> = {
+  running: "var(--cc-ok-vivid)",
   pending: "var(--isl-warn)",
   error: "var(--isl-err)",
 };
@@ -214,7 +217,7 @@ function arcOf(item: Item, tone: string): number | null | undefined {
 }
 
 /// 会话图标：深灰圆底座里放 agent logo，外面一圈很淡的品牌色底轨，亮弧按 arcOf 画。
-/// 角标：要处理「!」、出错「×」、跑完但你还没看过的亮一个小蓝点（未读）。
+/// 角标：要处理「!」、出错「×」、跑完在等你的亮一个琥珀小点（与对话窗侧栏的等待点同色同规则）。
 export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number; tip?: string }) {
   const tone = cardTone(item);
   const color = ringColor(item, tone);
@@ -222,7 +225,7 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
   const arc = arcOf(item, tone);
   const { Icon } = agentAssets(item.provider);
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
-  const unread = tone === "waiting" && item.unread === true;
+  const waiting = tone === "waiting";
   return (
     // data-session-id：收起胶囊上点图标直接打开这个会话（App 的按下处理按它分流）。
     <span className="isl-agent" data-tone={tone} data-session-id={item.session.id} title={tip}>
@@ -230,7 +233,7 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
         <span className="isl-agent-logo" style={tintStyle(item.provider)}><Icon /></span>
       </Ring>
       {badge && <span className={`isl-agent-badge is-${tone}`}>{badge}</span>}
-      {unread && <span className="isl-agent-badge is-unread" aria-hidden="true" />}
+      {waiting && <span className="isl-agent-badge is-waiting" aria-hidden="true" />}
     </span>
   );
 }
@@ -238,19 +241,19 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
 /// 额度环中间翻一次的间隔。
 export const USAGE_FLIP_MS = 3_500;
 
-/// 额度一律显示「剩余」，像电量：环满 = 还宽裕。此前显示已用，用了 4% 时环几乎是空的，
-/// 一眼看去像「快没了」（用户嫌怪）。颜色也按剩余：宽裕绿、不到四成琥珀、不到一成五红。
-export function remainingOf(usedPct: number): number {
-  return Math.round(Math.min(100, Math.max(0, 100 - usedPct)));
+/// 额度显示「已用」：环越满越接近上限。曾改成显示剩余（像电量），用户又要回已用（2026-11-05），
+/// 别再改回剩余。颜色按已用：用到六成琥珀、八成五红，其余绿。
+export function usedOf(usedPct: number): number {
+  return Math.round(Math.min(100, Math.max(0, usedPct)));
 }
 
-export function remainingColor(remaining: number): string {
-  if (remaining <= 15) return "var(--isl-err)";
-  if (remaining <= 40) return "var(--isl-warn)";
+export function usedColor(used: number): string {
+  if (used >= 85) return "var(--isl-err)";
+  if (used >= 60) return "var(--isl-warn)";
   return "var(--isl-ok)";
 }
 
-/// 额度环（收起胶囊上的小环）：中间是剩余百分比，右下角是哪家的 logo（与右边会话图标的角标同一种
+/// 额度环（收起胶囊上的小环）：中间是已用百分比，右下角是哪家的 logo（与右边会话图标的角标同一种
 /// 做法）。几家都有额度时每隔几秒淡入淡出换下一家。尺寸、粗细与会话图标的环一致，底轨中性灰。
 /// 没有数据时不渲染（调用方判断）。
 export function UsageRing({ entries, size = 32 }: {
@@ -266,14 +269,14 @@ export function UsageRing({ entries, size = 32 }: {
   }, [entries.length]);
   const entry = entries[index % Math.max(1, entries.length)] ?? entries[0];
   const provider = entry?.provider ?? "";
-  const remaining = remainingOf(entry?.pct ?? 0);
+  const used = usedOf(entry?.pct ?? 0);
   const { Icon } = agentAssets(provider);
   return (
     <span className="isl-usage-wrap" data-provider={provider}>
       {/* key 随家换：换家时整块重挂，淡入动画重播。 */}
       <span key={provider} className="isl-usage-swap">
-        <Ring size={size} stroke={3} value={remaining / 100} color={remainingColor(remaining)} track="var(--isl-track)" className="isl-usage">
-          <span className="isl-usage-val">{remaining}</span>
+        <Ring size={size} stroke={3} value={used / 100} color={usedColor(used)} track="var(--isl-track)" className="isl-usage">
+          <span className="isl-usage-val">{used}</span>
         </Ring>
         {provider && <span className="isl-usage-badge" style={tintStyle(provider)}><Icon /></span>}
       </span>
