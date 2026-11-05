@@ -1167,8 +1167,6 @@ export const zh = {
     openSystemSettings: "打开系统设置",
     attentionFlash: "任务栏提醒",
     attentionFlashDesc: "有会话需要关注时高亮任务栏图标。关闭「桌面通知」后仍生效。",
-    clickThrough: "点击穿透",
-    clickThroughDesc: "鼠标穿过贴纸直达下层窗口。按住 Alt 临时恢复交互。",
     autoUpdate: "自动更新",
     autoUpdateDesc: "自动检查并下载新版本，准备好后由你确认重启",
     resumeTerm: "默认终端",
@@ -1197,7 +1195,7 @@ export const zh = {
     notifySound: "通知提示音",
     notifySoundDesc: "系统通知弹出时响一声",
     chatFeature: "对话窗口功能",
-    chatFeatureDesc: "关闭进入轻量模式：只保留贴纸，一切在终端进行",
+    chatFeatureDesc: "关闭进入轻量模式：只保留看板，一切在终端进行",
     cardMenu: "卡片菜单",
     cardMenuDesc: "星标、便签等操作的打开方式",
     cardMenuContext: "右键菜单",
@@ -1210,7 +1208,7 @@ export const zh = {
     themeSystem: "跟随系统",
     fontSize: "界面缩放",
     // 间距/徽标已随字号同比缩放（--sp/--fs 阶梯整梯乘 --cc-ui），叫「字体大小」名不副实。
-    fontSizeDesc: "调整贴纸与对话窗的字号与间距",
+    fontSizeDesc: "调整看板与对话窗的字号与间距",
     fontSizeSmall: "小",
     fontSizeNormal: "中",
     fontSizeLarge: "大",
@@ -1562,7 +1560,7 @@ export const zh = {
     website: "官方网站",
     source: "源码仓库",
     open: "打开",
-    blurb: "喵呜！常驻桌面贴纸，实时显示 AI 编程会话进度。",
+    blurb: "喵呜！常驻桌面，实时显示 AI 编程会话进度。",
     feedback: "意见反馈",
     changelog: "更新日志",
     guide: "使用引导",
@@ -1581,7 +1579,7 @@ export const zh = {
     stepOf: (i: number, n: number) => `第 ${i} 步，共 ${n} 步`,
     welcome: {
       title: "欢迎使用 Meowo",
-      desc: "常驻桌面贴纸，汇总各 CLI 的会话进度。谁在跑、谁在等待输入，一眼可见。",
+      desc: "常驻桌面，汇总各 CLI 的会话进度。谁在跑、谁在等待输入，一眼可见。",
     },
     // 看板不会自己变出会话：得先装 agent 并登录。缺了这一步，用户走完引导面对的还是空看板。
     connect: {
@@ -1619,9 +1617,14 @@ export const zh = {
         "点底栏图钉让贴纸始终置顶。",
         "从托盘 / 菜单栏图标随时找回贴纸、打开设置。",
       ],
-      // 仅 Windows 追加（Onboarding 按平台拼接）：吸边是最有辨识度的窗口能力，却一直
-      // 没人教——用户误吸附后以为「窗口不见了」，是实拍过的求助场景。
-      snapPoint: "拖到屏幕边缘可收成缩略条，悬停展开、拖离恢复。",
+      // Windows 用这组（贴纸已换成灵动岛，2026-11-04）：拖拽只能左右、恒置顶没有图钉、
+      // 托盘单击打开完整列表，上面那组照搬会教错。
+      islandPoints: [
+        "灵动岛停在屏幕顶部，左右拖动换位置。",
+        "鼠标移上去展开，看最要紧的会话和额度。",
+        "会话需要你时，岛会弹出提醒。",
+        "单击托盘图标打开完整会话列表，右键打开设置。",
+      ],
       reopenHint: "以后可从托盘图标或设置页重新打开本引导。",
     },
   },

@@ -1,6 +1,6 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
 // 前几页：会话，按要紧程度每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
-// 各 agent 的额度。完整列表（搜索、菜单、归档……）不塞进这里，从托盘「找回贴纸」进。
+// 各 agent 的额度。完整列表（搜索、菜单、归档……）不塞进这里，从托盘「打开会话列表」进。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
@@ -42,7 +42,7 @@ export function IslandPanel({
   usage: Record<string, ProviderUsage>;
   quotaProviders: readonly string[];
   onOpenSession: (sessionId: number) => void;
-  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「找回贴纸」进。保留参数兼容调用方。 */
+  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「打开会话列表」进。保留参数兼容调用方。 */
   onShowAll?: () => void;
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;

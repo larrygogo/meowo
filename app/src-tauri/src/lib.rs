@@ -1376,12 +1376,6 @@ pub fn run() {
                 #[cfg(target_os = "windows")]
                 island::spawn_fullscreen_watch(app.handle().clone());
             }
-            // 点击穿透（W-8）：开机按持久化设置生效一次；之后由 set_settings 热更新。
-            // 非 Windows 为 no-op。
-            crate::window::apply_click_through(
-                app.handle(),
-                crate::settings::load_settings().click_through_enabled,
-            );
             // 前端 island_layout 摆好位置之前，若贴纸落在所有显示器之外（多屏拔插/分辨率变化）则救回，避免「找不到」。
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {

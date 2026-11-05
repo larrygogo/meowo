@@ -175,10 +175,8 @@ pub(crate) struct Settings {
     /// 是否显示卡片 hover「轻推」预览（最近一条 AI 正文）。缺省开启，兼容老 settings.json。
     #[serde(default = "default_true")]
     pub(crate) preview_enabled: bool,
-    /// 点击穿透（W-8）：贴纸不接收任何鼠标事件，点击直达下层窗口。opacity 可低至 25%，
-    /// 几乎看不见的置顶窗若照常吃掉鼠标是桌面地雷。按住 Alt 临时恢复交互（window.rs
-    /// 全局轮询修饰键——穿透窗收不到键鼠，前端 DOM 方案不可行）。仅 Windows 实装：
-    /// macOS 面板失焦自隐、无此问题。缺省关闭，兼容老 settings.json。
+    /// 已停用的「点击穿透」（W-8）。功能只在 Windows 有，Windows 换成灵动岛后打开它
+    /// 岛就点不动了，2026-11-05 移除；字段留着让旧 settings.json 照常读写，不再生效。
     #[serde(default)]
     pub(crate) click_through_enabled: bool,
     /// 终端（PTY 画面）字号（px）。缺省 12，兼容老 settings.json。
@@ -369,6 +367,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "notify.pushTest") => "Phone push is working",
         ("en", "tray.chat") => "Open chat window",
         ("en", "tray.recall") => "Recall sticker",
+        ("en", "tray.sessions") => "Show session list",
         ("en", "tray.guide") => "Getting started",
         ("en", "tray.settings") => "Settings",
         ("en", "tray.website") => "Website",
@@ -409,6 +408,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "notify.pushTest") => "手机推送已接通",
         (_, "tray.chat") => "打开对话窗口",
         (_, "tray.recall") => "找回贴纸",
+        (_, "tray.sessions") => "打开会话列表",
         (_, "tray.guide") => "使用引导",
         (_, "tray.settings") => "设置",
         (_, "tray.website") => "官方网站",
@@ -839,8 +839,6 @@ pub(crate) async fn set_settings(
     // 通知贴纸窗口实时套用新设置。与 get_settings 同一出口收敛:事件载荷不含远程 token
     // （前端快照写回由 preserve_independently_managed_fields 兜底,不丢 token）。
     let _ = app.emit("settings-changed", without_remote_token(settings.clone()));
-    // 点击穿透热生效（W-8；非 Windows 平台为 no-op，见 window::apply_click_through）。
-    crate::window::apply_click_through(&app, settings.click_through_enabled);
     // 远程访问开关/端口热生效（fire-and-forget，内部自行读最新 settings 并比对差异）。
     crate::remote::apply(&app);
     Ok(())
