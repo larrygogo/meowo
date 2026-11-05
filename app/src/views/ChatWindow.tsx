@@ -2449,23 +2449,26 @@ export function ChatWindow() {
     }
   };
 
-  /// 交接注入：切换产生的新会话被认领成真 id、chatUi 就绪后，等终端可写再把
-  /// 「请读交接文件」发进去。启动交互（目录信任等）拦路时亮出注意力卡、保留待注入
+  /// 交接注入：新建会话的第一句话、复制到其他引擎时的「请读交接文件」，等终端可写再发进去。
+  /// 不等认领成真 id：临时 id 就精确对应这次启动的终端。认领靠 CLI 的 SessionStart hook，
+  /// 有的 CLI 要等收到第一条消息才报，于是第一句话等认领、认领等消息，卡死到用户自己在终端
+  /// 敲一句，认领完成后第一句话又补发一遍（2026-11-05 Mac 实测）。启动交互（目录信任等）拦路时亮出注意力卡、保留待注入
   /// 记账，用户处理完（attention 清除）本 effect 重跑续注。任何失败都把注入语落回
   /// 输入框当草稿——宁可让用户多按一次回车，不能让交接静默丢失。
   const handoffInjectingRef = useRef(false);
   useEffect(() => {
     const pending = handoffRef.current;
-    if (!pending || sessionId <= 0 || handoffInjectingRef.current) return;
+    if (!pending || handoffInjectingRef.current) return;
     // 过期防污染：拖过 10 分钟（比如用户一直没处理信任提示就去干别的）不再自动注入。
     if (Date.now() - pending.at > 600_000) { handoffRef.current = null; return; }
-    if (history?.provider !== pending.expectProvider || !chatUi) return;
-    // 只认复制产生的那条会话：binding 认领时记下的真 id。
-    if (pending.realId !== sessionId) return;
+    if (provider !== pending.expectProvider || !chatUi) return;
+    // 只认这次启动的那条会话：认领前是临时 id，认领后是 binding 记下的真 id。
+    if (sessionId !== pending.tempId && sessionId !== pending.realId) return;
     if (terminalAttention) return; // 等用户处理完启动交互，attention 清除后重跑
     let cancelled = false;
     const injectPrompt = pending.prompt;
     handoffInjectingRef.current = true;
+    let sending = false;
     (async () => {
       try {
         const startup = await waitForTerminalReady(
@@ -2480,11 +2483,14 @@ export function ChatWindow() {
           setTerminalAttention(startup);
           return;
         }
-        await submitToTerminal(sessionId, injectPrompt, undefined, { message: pending.failMessage });
-        if (cancelled) return;
+        // 发出前就记为已发：用临时 id 发的途中往往正好认领成真 id（这一句就会触发 hook），
+        // 本 effect 换成真 id 重跑，记账还在就会再发一遍。
         handoffRef.current = null;
+        sending = true;
+        await submitToTerminal(sessionId, injectPrompt, undefined, { message: pending.failMessage });
       } catch (error) {
-        if (cancelled) return;
+        // 已经开始发了：即便会话已换成真 id，失败也要把这句话落回输入框，不能静默丢。
+        if (cancelled && !sending) return;
         handoffRef.current = null;
         setPrompt(injectPrompt);
         setSendError(formatBackendError(error, t.locale));
@@ -2494,7 +2500,7 @@ export function ChatWindow() {
     })();
     return () => { cancelled = true; handoffInjectingRef.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t/attentionGrammar 随渲染变化，注入只由会话代际与就绪信号驱动
-  }, [sessionId, history?.provider, history?.predecessorId, chatUi, terminalAttention]);
+  }, [sessionId, provider, history?.predecessorId, chatUi, terminalAttention]);
 
   const composerDraft = { prompt, attachments };
   /// override：重发一条失败的消息（气泡上的「重发」），内容取自它当时的草稿而不是输入框。
