@@ -1253,6 +1253,7 @@ pub fn run() {
             island::island_cursor,
             island::island_host,
             island::island_set_visible,
+            island::set_menubar_status,
             diaglog::export_diag_log,
             file_mention_candidates,
             list_file_openers,

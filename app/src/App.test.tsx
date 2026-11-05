@@ -473,6 +473,8 @@ describe("App · macOS 灵动岛", () => {
     expect(container.querySelector(".isl-notch-gap")).toBeTruthy();
     // 刘海落点不能拖，也没有极简模式。
     expect(container.querySelector(".isl-strip")).toBeNull();
+    // 菜单栏图标的神态与文字由这里推（没会话：空闲、无文字）。
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_menubar_status", { tone: "idle", title: "" }));
   });
 
   it("没刘海：平时藏着，点菜单栏的迷你岛在图标下展开面板，再点收起", async () => {

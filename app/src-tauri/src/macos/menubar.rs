@@ -11,54 +11,48 @@ use crate::macos::{notch, panel};
 const MENUBAR_ICON_RGBA: &[u8] = include_bytes!("../../icons/menubar-template.rgba");
 const MENUBAR_ICON_SIZE: u32 = 36;
 
-/// 最近一次的 (运行, 待办)。watch 线程写，图标动画线程读。
-static LAST_COUNTS: Mutex<(usize, usize)> = Mutex::new((0, 0));
+/// 菜单栏图标的神态（眼睛，见 tray_anim.rs）。由前端经 set_menubar_status 推来：前端能看到
+/// 所有连着的会话（含另一个 Meowo 实例开的）和各家额度，watch 线程只数本实例的会话——
+/// dev 与安装版并存时算出 0，图标就一直不动（2026-11-05 Mac 实测）。
+static MOOD: Mutex<crate::tray_anim::Mood> = Mutex::new(crate::tray_anim::Mood::Idle);
 
-/// 落点变了（插拔外接屏、合盖）后重设菜单栏图标。图标两种落点同一种，这里只是按最近计数重发一次。
-pub fn refresh_tray_icon(app: &AppHandle) {
-    let (running, waiting) = *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
-    update_tray_status(app, running, waiting);
+/// 前端推来的整体状态与标题文字（运行数、待处理数、额度，前端拼好）。
+pub fn set_status(app: &AppHandle, tone: &str, title: &str) {
+    *MOOD.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Mood::parse(tone);
+    if let Some(tray) = app.tray_by_id("meowo-tray") {
+        let title = title.trim();
+        let _ = tray.set_title((!title.is_empty()).then_some(title));
+    }
 }
 
-/// 按 (运行, 待办) 更新菜单栏：图标的动画交给 [`spawn_icon_animator`]（见 tray_anim.rs），
-/// 这里只记下计数、更新标题：有会话要你处理时图标右边显示数量（系统菜单栏字体，自动跟深浅色），
-/// 没有就不显示文字。原来的彩色计数徽章静止不动、和系统图标风格也不搭（用户 2026-11-05 要「灵动」）。
+/// watch 线程每轮的计数。菜单栏现在全由前端推（见 MOOD），这里不再动图标；入口留着是因为
+/// watch.rs 的统计同时喂 Windows 托盘提示，两边共用一处计数。
 pub fn update_tray_status(app: &AppHandle, running: usize, waiting: usize) {
-    *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner()) = (running, waiting);
-    let Some(tray) = app.tray_by_id("meowo-tray") else {
-        return;
-    };
-    let title = (waiting > 0).then(|| waiting.min(99).to_string());
-    let _ = tray.set_title(title.as_deref());
+    let _ = (app, running, waiting);
 }
 
-/// 图标动画线程：有会话在跑或要你处理时约 10 帧/秒重画图标；都没有时回到静止 logo 并歇着，
-/// 不白白每秒重画十次。
+/// 图标动画线程：约 10 帧/秒算一帧，和上一帧一样就不重发（空闲时只有眨眼那一下在变）。
 fn spawn_icon_animator(app: AppHandle) {
     std::thread::spawn(move || {
         let start = std::time::Instant::now();
-        let mut idle_drawn = true; // 建托盘时已经是静止 logo
+        let mut last: Vec<u8> = Vec::new();
         loop {
-            let (running, waiting) = *LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+            std::thread::sleep(std::time::Duration::from_millis(100));
             let Some(tray) = app.tray_by_id("meowo-tray") else {
-                std::thread::sleep(std::time::Duration::from_millis(500));
                 continue;
             };
-            if running == 0 && waiting == 0 {
-                if !idle_drawn {
-                    let logo = tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);
-                    let _ = tray.set_icon_with_as_template(Some(logo), true);
-                    idle_drawn = true;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(250));
+            let mood = *MOOD.lock().unwrap_or_else(|e| e.into_inner());
+            let frame = crate::tray_anim::render(start.elapsed().as_secs_f32(), mood);
+            if frame == last {
                 continue;
             }
-            idle_drawn = false;
-            let t = start.elapsed().as_secs_f32();
-            let rgba = crate::tray_anim::render(t, running > 0, waiting > 0);
-            let size = crate::tray_anim::SIZE as u32;
-            let _ = tray.set_icon_with_as_template(Some(tauri::image::Image::new(&rgba, size, size)), true);
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            let image = tauri::image::Image::new(
+                &frame,
+                crate::tray_anim::WIDTH as u32,
+                crate::tray_anim::HEIGHT as u32,
+            );
+            let _ = tray.set_icon_with_as_template(Some(image), true);
+            last = frame;
         }
     });
 }
@@ -203,10 +197,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 /// 托盘事件在主线程，这里可以直接重新探测刘海。
 fn on_left_click(app: &AppHandle) {
     use tauri::Emitter;
-    let (has_notch, changed) = notch::refresh();
-    if changed {
-        refresh_tray_icon(app);
-    }
+    let (has_notch, _) = notch::refresh();
     if has_notch.is_some() && crate::load_settings().chat_enabled {
         crate::open_latest_chat_window(app);
         return;

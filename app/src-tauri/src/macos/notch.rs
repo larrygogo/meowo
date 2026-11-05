@@ -157,7 +157,7 @@ const POPOVER_RADIUS: f64 = 14.0;
 /// 每次摆位都重设毛玻璃会闪。
 static STYLED_AS_POPOVER: Mutex<Option<bool>> = Mutex::new(None);
 
-/// 按落点切换窗口外观：弹出面板垫系统深色毛玻璃（HudWindow 材质）+ 阴影；刘海是纯黑实心，
+/// 按落点切换窗口外观：弹出面板垫系统深色毛玻璃（HudWindow 材质）；刘海是纯黑实心，
 /// 去掉材质和阴影，否则刘海周围一圈发灰。
 fn apply_style(window: &tauri::WebviewWindow, popover: bool) {
     let mut styled = STYLED_AS_POPOVER.lock().unwrap_or_else(|e| e.into_inner());
@@ -173,7 +173,10 @@ fn apply_style(window: &tauri::WebviewWindow, popover: bool) {
             color: None,
             interactive: false,
         });
-        let _ = window.set_shadow(true);
+        // 不要系统阴影：透明窗口的阴影按显示那一刻窗口里画着的东西算，面板刚弹出、内容还没画好时
+        // 阴影按旧形状算，顶上留一道黑边，过一会儿系统重算才消失（2026-11-05 Mac 实拍）。
+        // 面板边缘靠 CSS 那圈细描边。
+        let _ = window.set_shadow(false);
     } else {
         let _ = window.set_effects(None::<tauri::utils::config::WindowEffectsConfig>);
         let _ = window.set_shadow(false);

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
-import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
+import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarTitle } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
@@ -467,5 +467,13 @@ describe("IslandPanel 展开面板", () => {
   it("只有一页时不出箭头", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: zh.island.nextPage })).toBeNull();
+  });
+});
+
+describe("macOS 菜单栏文字", () => {
+  it("在跑、要你处理、跑完等你、额度依次排，为 0 的不写", () => {
+    expect(menubarTitle({ running: 3, pending: 1, error: 1, waiting: 2 }, 11.4)).toBe("▶3 ●2 ✓2 11%");
+    expect(menubarTitle({ running: 0, pending: 0, error: 0, waiting: 0 }, 40)).toBe("40%");
+    expect(menubarTitle({ running: 0, pending: 0, error: 0, waiting: 0 }, null)).toBe("");
   });
 });

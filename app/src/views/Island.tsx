@@ -23,7 +23,8 @@ export const ISLAND_ALERT_SIZE = { width: 520 + ISLAND_EAR * 2, height: 68 } as 
 /// 胶囊上最多摆几个会话图标，再多折成「+N」。
 const MAX_AGENTS = 4;
 
-type Counts = { pending: number; error: number; running: number; waiting: number };
+export type IslandCounts = { pending: number; error: number; running: number; waiting: number };
+type Counts = IslandCounts;
 
 export function liveSessions(items: readonly Item[]): Item[] {
   return items.filter((item) => !item.archived && item.connected);
@@ -36,6 +37,20 @@ export function islandCounts(items: readonly Item[]): Counts {
     if (tone === "pending" || tone === "error" || tone === "running" || tone === "waiting") counts[tone] += 1;
   }
   return counts;
+}
+
+/// macOS 菜单栏图标右边的文字（用户 2026-11-05 选的「计数和额度都显示」）：▶ 在跑、● 要你处理
+/// （审批/提问/出错）、✓ 跑完等你、最后是额度已用百分比。为 0 的项不写，全空就不显示文字。
+export function menubarTitle(counts: IslandCounts, quotaUsedPct: number | null): string {
+  const parts: string[] = [];
+  if (counts.running > 0) parts.push(`▶${counts.running}`);
+  const needs = counts.pending + counts.error;
+  if (needs > 0) parts.push(`●${needs}`);
+  if (counts.waiting > 0) parts.push(`✓${counts.waiting}`);
+  if (quotaUsedPct != null && Number.isFinite(quotaUsedPct)) {
+    parts.push(`${Math.round(Math.min(100, Math.max(0, quotaUsedPct)))}%`);
+  }
+  return parts.join(" ");
 }
 
 /// 岛的整体情绪：要人处理的优先（出错 > 待处理），其次在跑，再次跑完等输入。眼睛据此变色、变动作。
