@@ -16,8 +16,20 @@ use tauri::State;
 pub(crate) struct ChatMtimes {
     entries: std::collections::HashMap<i64, ChatMtimeEntry>,
     tick: u64,
-    /// errored 的节流缓存:(采样时刻, 值)。见 [`ERRORED_SAMPLE_MS`]。
-    errored: std::collections::HashMap<i64, (i64, bool)>,
+    /// transcript 采样的节流缓存:(采样时刻, 结果)。见 [`TRANSCRIPT_SAMPLE_MS`]。
+    samples: std::collections::HashMap<i64, (i64, TranscriptSample)>,
+}
+
+/// 对话窗从 transcript 分析器取的两样东西,一起节流。
+#[derive(Clone, Default)]
+struct TranscriptSample {
+    errored: bool,
+    /// agent 自己起的标题(claude 的 ai-title / custom-title)。None = 还没起或该 agent 不从
+    /// transcript 取标题,此时顶栏用 DB 标题。
+    title: Option<String>,
+    /// 采样时 DB 里的标题。DB 标题一变(改名)缓存立刻作废:改名会往 transcript 追加
+    /// custom-title,不作废的话顶栏要拿着旧 ai-title 再撑最多 5 秒,侧栏却已是新名。
+    db_title: Option<String>,
 }
 
 #[derive(Clone)]
@@ -83,23 +95,29 @@ impl ChatMtimes {
         }
     }
 
-    fn errored_cached(&self, session_id: i64, now_ms: i64) -> Option<bool> {
-        self.errored
+    fn sample_cached(
+        &self,
+        session_id: i64,
+        now_ms: i64,
+        db_title: Option<&str>,
+    ) -> Option<TranscriptSample> {
+        self.samples
             .get(&session_id)
-            .filter(|(sampled_at, _)| now_ms.saturating_sub(*sampled_at) < ERRORED_SAMPLE_MS)
-            .map(|(_, value)| *value)
+            .filter(|(sampled_at, _)| now_ms.saturating_sub(*sampled_at) < TRANSCRIPT_SAMPLE_MS)
+            .filter(|(_, value)| value.db_title.as_deref() == db_title)
+            .map(|(_, value)| value.clone())
     }
 
-    fn put_errored(&mut self, session_id: i64, now_ms: i64, value: bool) {
-        self.errored.insert(session_id, (now_ms, value));
-        if self.errored.len() > Self::CAP {
+    fn put_sample(&mut self, session_id: i64, now_ms: i64, value: TranscriptSample) {
+        self.samples.insert(session_id, (now_ms, value));
+        if self.samples.len() > Self::CAP {
             let oldest = self
-                .errored
+                .samples
                 .iter()
                 .min_by_key(|(_, (sampled_at, _))| *sampled_at)
                 .map(|(id, _)| *id);
             if let Some(id) = oldest {
-                self.errored.remove(&id);
+                self.samples.remove(&id);
             }
         }
     }
@@ -124,10 +142,11 @@ struct LiveSignals {
     screen_state: Option<&'static str>,
 }
 
-/// errored 的重采样间隔:transcript 分析走共享 mtime 缓存,但 agent 流式输出期间文件
-/// 每轮都在变,每轮全采样等于对同一批新增字节做两遍解析(分析器 + 聊天增量各一遍),
-/// 且解析在与侧栏共享的缓存锁内。错误徽标容忍 ~5s 延迟,换掉数倍的重复解析。
-const ERRORED_SAMPLE_MS: i64 = 5_000;
+/// transcript 采样(错误徽标 + agent 起的标题)的重采样间隔:分析走共享 mtime 缓存,但 agent
+/// 流式输出期间文件每轮都在变,每轮全采样等于对同一批新增字节做两遍解析(分析器 + 聊天增量
+/// 各一遍),且解析在与侧栏共享的缓存锁内。错误徽标与 claude 首次起标题都容忍 ~5s 延迟,
+/// 换掉数倍的重复解析;改名不吃这个延迟(见 TranscriptSample::db_title)。
+const TRANSCRIPT_SAMPLE_MS: i64 = 5_000;
 
 /// get_chat_history 的读取请求：尾部增量记账（offset）、整段读取（full，仅接续段历史等
 /// 静态内容用）、向上翻页的上界（before = 当前已加载窗口首行的字节偏移）。
@@ -243,7 +262,7 @@ fn load_chat_history(
         predecessor_id: header.predecessor_id,
         superseded_by: header.superseded_by,
     };
-    // errored 与侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
+    // errored 与标题都和侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
     // 5s 节流:agent 流式输出期间 transcript 每轮都在变,每轮全采样会对同一批新增字节
     // 做两遍解析(分析器 + 下面的聊天增量各一遍)且解析持共享缓存锁;错误徽标容忍 ~5s 延迟。
     {
@@ -251,24 +270,36 @@ fn load_chat_history(
         let cached = chat_mtimes
             .lock()
             .ok()
-            .and_then(|seen| seen.errored_cached(session_id, now_ms));
-        history.errored = match cached {
+            .and_then(|seen| seen.sample_cached(session_id, now_ms, header.title.as_deref()));
+        let sample = match cached {
             Some(value) => value,
             None => {
-                let value = super::session_query::analyze_transcript(
+                let info = super::session_query::analyze_transcript(
                     tx_cache,
                     &history.provider,
                     history.cwd.as_deref(),
                     &header.cc_session_id,
-                )
-                .map(|info| info.error.is_some())
-                .unwrap_or(false);
+                );
+                let value = TranscriptSample {
+                    errored: info.as_ref().is_some_and(|info| info.error.is_some()),
+                    title: info
+                        .and_then(|info| info.title)
+                        .filter(|_| super::agent_resolves_transcript_title(&history.provider)),
+                    db_title: header.title.clone(),
+                };
                 if let Ok(mut seen) = chat_mtimes.lock() {
-                    seen.put_errored(session_id, now_ms, value);
+                    seen.put_sample(session_id, now_ms, value.clone());
                 }
                 value
             }
         };
+        history.errored = sample.errored;
+        // 侧栏/看板列表显示的是 transcript 里 claude 起的标题(live_item 覆盖 task_title),
+        // DB 要等这一回合的 Stop hook 才同步。顶栏只读 DB 时首回合内两边对不上
+        // (2026-11-04 手机实拍:顶栏是首条 prompt,侧栏已是 ai-title)。
+        if let Some(title) = sample.title {
+            history.title = title;
+        }
     }
     let spec = meowo_agent::by_id(&history.provider)
         .and_then(|agent| agent.telemetry())
@@ -1184,6 +1215,24 @@ mod tests {
         cache.put_if_current(7, version_a, base, any_path(), None);
         assert_eq!(cache.get(7).map(|entry| entry.mtime), Some(newer));
         assert_eq!(cache.get(7).and_then(|entry| entry.plan).as_deref(), Some("计划"));
+    }
+
+    /// 改名不该吃 5 秒节流：DB 标题一变，缓存里的旧 transcript 标题就得作废，
+    /// 否则顶栏拿旧 ai-title 盖掉刚改的名字（PR #131 审查发现的回退）。
+    #[test]
+    fn transcript_sample_expires_on_time_or_when_db_title_changes() {
+        let mut cache = ChatMtimes::default();
+        let sample = TranscriptSample {
+            errored: false,
+            title: Some("ai 起的".into()),
+            db_title: Some("首条 prompt".into()),
+        };
+        cache.put_sample(7, 1_000, sample);
+        let hit = cache.sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS - 1, Some("首条 prompt"));
+        assert_eq!(hit.and_then(|s| s.title).as_deref(), Some("ai 起的"));
+        assert!(cache.sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS, Some("首条 prompt")).is_none());
+        assert!(cache.sample_cached(7, 1_001, Some("新名字")).is_none());
+        assert!(cache.sample_cached(7, 1_001, None).is_none());
     }
 
     #[test]
