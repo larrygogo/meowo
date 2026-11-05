@@ -103,7 +103,9 @@ pub fn apply(app: &AppHandle, segments: &[Segment]) {
     let Some(tray) = app.tray_by_id("meowo-tray") else {
         return;
     };
-    let _ = tray.with_inner_tray_icon(|inner| {
+    // with_inner_tray_icon 要求闭包 'static（可能被派到主线程上跑）：不能借用 segments，拷一份挪进去。
+    let segments = segments.to_vec();
+    let _ = tray.with_inner_tray_icon(move |inner| {
         let Some(item) = inner.ns_status_item() else {
             return;
         };
@@ -115,7 +117,7 @@ pub fn apply(app: &AppHandle, segments: &[Segment]) {
             if button.is_null() {
                 return;
             }
-            let title = build(segments);
+            let title = build(&segments);
             let _: () = msg_send![button, setAttributedTitle: title];
             let _: () = msg_send![title, release];
         }
