@@ -3,7 +3,7 @@ import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
 import AccountCard, { type AcctRow } from "@/components/AccountCard";
 import CheckItem from "@/components/CheckItem";
-import { ChatWindowMock, MenuButtonsMock } from "@/components/screenshots";
+import { MenuButtonsMock } from "@/components/screenshots";
 import DemoFrame from "@/components/DemoFrame";
 import { type Lang } from "@/lib/i18n";
 
@@ -130,7 +130,8 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
               </ul>
             </div>
             <div className="split-media">
-              <ChatWindowMock lang={lang} />
+              {/* 对话窗口演示：iframe 里是应用真实的 ChatWindow + 假会话（app/src/demo/chatEmbed.tsx） */}
+              <DemoFrame lang={lang} page="chat" />
             </div>
           </div>
         </div>

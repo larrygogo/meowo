@@ -16,6 +16,8 @@ export default defineConfig({
       input: {
         demo: resolve(__dirname, "embed-demo.html"),
         island: resolve(__dirname, "embed-island.html"),
+        // 官网「对话窗口」一段：真实 ChatWindow + 假会话（src/demo/chatEmbed.tsx）。
+        chat: resolve(__dirname, "embed-chat.html"),
       },
     },
   },

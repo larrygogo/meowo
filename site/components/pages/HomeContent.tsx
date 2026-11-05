@@ -8,7 +8,6 @@ import CheckItem from "@/components/CheckItem";
 import FeatureGrid from "@/components/FeatureGrid";
 import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
-import { ChatWindowMock } from "@/components/screenshots";
 import DemoFrame from "@/components/DemoFrame";
 
 type SemTone = "err" | "warn" | "ok";
@@ -200,7 +199,8 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
               </ul>
             </div>
             <div className="split-media">
-              <ChatWindowMock lang={lang} />
+              {/* 对话窗口演示：iframe 里是应用真实的 ChatWindow + 假会话（app/src/demo/chatEmbed.tsx） */}
+              <DemoFrame lang={lang} page="chat" />
             </div>
           </div>
         </div>

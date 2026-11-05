@@ -327,3 +327,10 @@
   pointer-events: none;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
+
+/* ===== 对话窗演示（embed-chat.html）：真实 ChatWindow 撑满 iframe ===== */
+.demo-chat-frame {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
