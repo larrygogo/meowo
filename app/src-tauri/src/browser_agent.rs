@@ -150,9 +150,74 @@ fn capture_jpeg(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-#[cfg(not(windows))]
+/// macOS：WKWebView 的 takeSnapshotWithConfiguration:completionHandler: 拿 NSImage，
+/// 经 NSBitmapImageRep 转成 JPEG。回调在主线程，这里在 broker 线程上等结果。
+/// （未经本机编译：Windows 开发机编不到 cfg(macos)，靠 CI 的 macOS 任务把关。）
+#[cfg(target_os = "macos")]
+fn capture_jpeg(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
+    use block2::RcBlock;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
+    webview
+        .with_webview(move |platform| {
+            let wk = platform.inner() as *mut AnyObject;
+            if wk.is_null() {
+                let _ = tx.send(Err("拿不到网页视图".into()));
+                return;
+            }
+            let done = tx.clone();
+            let handler = RcBlock::new(move |image: *mut AnyObject, _error: *mut AnyObject| {
+                let result = unsafe { jpeg_from_nsimage(image) };
+                let _ = done.send(result);
+            });
+            unsafe {
+                let _: () = msg_send![
+                    wk,
+                    takeSnapshotWithConfiguration: std::ptr::null_mut::<AnyObject>(),
+                    completionHandler: &*handler
+                ];
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+    /// NSImage → TIFF → NSBitmapImageRep → JPEG（NSBitmapImageFileTypeJPEG = 3）。
+    unsafe fn jpeg_from_nsimage(image: *mut AnyObject) -> Result<Vec<u8>, String> {
+        if image.is_null() {
+            return Err("截图失败（面板浏览器可能被收起了）".into());
+        }
+        let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+        if tiff.is_null() {
+            return Err("截图转码失败".into());
+        }
+        let rep: *mut AnyObject = msg_send![class!(NSBitmapImageRep), imageRepWithData: tiff];
+        if rep.is_null() {
+            return Err("截图转码失败".into());
+        }
+        let props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
+        let data: *mut AnyObject =
+            msg_send![rep, representationUsingType: 3usize, properties: props];
+        if data.is_null() {
+            return Err("截图转码失败".into());
+        }
+        let len: usize = msg_send![data, length];
+        let ptr: *const u8 = msg_send![data, bytes];
+        if ptr.is_null() || len == 0 {
+            return Err("截图是空的".into());
+        }
+        Ok(std::slice::from_raw_parts(ptr, len).to_vec())
+    }
+
+    let bytes = rx
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| "截图超时".to_string())??;
+    Ok(bytes)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn capture_jpeg(_webview: &tauri::Webview) -> Result<Vec<u8>, String> {
-    Err("面板浏览器截图暂时只支持 Windows".into())
+    Err("面板浏览器截图暂不支持这个平台".into())
 }
 
 /// 找到（必要时新建）这个会话给 agent 用的浏览器页签。
