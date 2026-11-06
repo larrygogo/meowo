@@ -169,6 +169,16 @@ pub enum BrokerRequest {
         token: String,
         request: ApprovalRequest,
     },
+    /// 面板浏览器的 agent 操作：agent 里的 `meowo-reporter mcp` 把 MCP 工具调用原样转过来，
+    /// 由 app 侧解释执行（browser_agent.rs）。只认 scoped token——会话归属就从它来，
+    /// agent 只能操作自己会话的面板浏览器。回包是一段 JSON：`{"ok":true,"text":…}` 或
+    /// `{"ok":false,"error":…}`，写完即关连接。
+    Browser {
+        token: String,
+        tool: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
 }
 
 impl From<LegacyHandshake> for BrokerRequest {

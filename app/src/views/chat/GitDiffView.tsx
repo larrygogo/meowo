@@ -1,7 +1,9 @@
 import {
   Fragment,
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -11,6 +13,7 @@ import {
   type MutableRefObject,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
@@ -39,7 +42,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
 import { buildFileTree, diffLineClass, touchedByPath, type FileTreeNode } from "./gitDiff";
-import { diffLineAnchors, type DiffLineAnchor, type ReviewComment } from "./diffComments";
+import { diffLineAnchors, diffLineNumbers, type DiffLineAnchor, type ReviewComment } from "./diffComments";
 import { highlightLines, languageForPath } from "./highlight";
 
 /** 后端对二进制 diff 给的占位行（见 git.rs untracked_file_diff / GitFileDiffDto 注释）。 */
@@ -150,7 +153,11 @@ function useFileOpeners(cwd: string, rel: string | null): FileOpenerDto[] {
   return openers;
 }
 
-type PathMenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void };
+export type PathMenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; /** 右侧的快捷键提示。 */ hint?: string };
+
+/** 路径菜单里的「添加到对话」：把相对路径插进输入框（ChatWindow 经 SidePanel 提供，照 Kimi Code
+ *  文件树的同名项）。没人提供（手机页、老的 GitDiffView 面板）就不出这一项。 */
+export const PathMentionContext = createContext<((rel: string) => void) | null>(null);
 
 /** 预览里高亮首个命中片段（大小写不敏感；找不到原样返回）。 */
 function markMatch(text: string, query: string): ReactNode {
@@ -179,8 +186,13 @@ function buildPathMenuItems(
   rel: string,
   openers: FileOpenerDto[],
   t: Dict,
+  mention: ((rel: string) => void) | null = null,
 ): (PathMenuItem | "sep")[] {
+  const head: (PathMenuItem | "sep")[] = mention
+    ? [{ key: "mention", label: t.chat.filesMention, icon: <MentionIcon />, onSelect: () => mention(rel) }, "sep"]
+    : [];
   return [
+    ...head,
     {
       key: "copy",
       label: t.chat.diffCopyPath,
@@ -211,7 +223,7 @@ function buildPathMenuItems(
 
 /** 路径操作菜单：fixed 定位 + 钳位，点外/Esc/失焦/滚动关闭，roving focus——
  *  行为对齐 CardContextMenu（那份注释里的踩坑理由这里全部适用，不再复述）。 */
-function PathMenu({ x, y, items, onClose }: {
+export function PathMenu({ x, y, items, onClose }: {
   x: number;
   y: number;
   items: (PathMenuItem | "sep")[];
@@ -306,6 +318,7 @@ function PathMenu({ x, y, items, onClose }: {
           >
             {item.icon}
             {item.label}
+            {item.hint && <kbd className="ctx-hint">{item.hint}</kbd>}
           </button>
         ),
       )}
@@ -318,6 +331,7 @@ function PathMenu({ x, y, items, onClose }: {
 function OpenSplitButton({ cwd, rel }: { cwd: string; rel: string }) {
   const t = useT();
   const openers = useFileOpeners(cwd, rel);
+  const mention = useContext(PathMentionContext);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const primary = openers[0] ?? null;
@@ -352,7 +366,7 @@ function OpenSplitButton({ cwd, rel }: { cwd: string; rel: string }) {
         </svg>
       </button>
       {menu && (
-        <PathMenu x={menu.x} y={menu.y} items={buildPathMenuItems(cwd, rel, openers, t)} onClose={() => setMenu(null)} />
+        <PathMenu x={menu.x} y={menu.y} items={buildPathMenuItems(cwd, rel, openers, t, mention)} onClose={() => setMenu(null)} />
       )}
     </div>
   );
@@ -370,10 +384,142 @@ function PathContextMenu({ cwd, rel, isDir, x, y, onClose }: {
 }) {
   const t = useT();
   const openers = useFileOpeners(cwd, isDir ? null : rel);
-  return <PathMenu x={x} y={y} items={buildPathMenuItems(cwd, rel, openers, t)} onClose={onClose} />;
+  const mention = useContext(PathMentionContext);
+  return <PathMenu x={x} y={y} items={buildPathMenuItems(cwd, rel, openers, t, mention)} onClose={onClose} />;
 }
 
 type FetchEntry<T> = { loading: boolean; error: string | null; data: T | null };
+
+/** 面板里几处小开关（换行、文件树位置/宽度/显隐）记在 localStorage；隐私模式下读写会抛，抛了就是不记。 */
+function readPref(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function savePref(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch { /* 只是不记 */ }
+}
+
+/** 代码和 diff 的自动换行，「文件」「更改」共用一个开关：Kimi Code 两处各有一个，但想要换行的人两处都想要。 */
+const WRAP_KEY = "meowo-code-wrap";
+function useWrapPref(): [boolean, () => void] {
+  const [wrap, setWrap] = useState(() => readPref(WRAP_KEY) === "1");
+  const toggle = () => setWrap((prev) => {
+    savePref(WRAP_KEY, prev ? "0" : "1");
+    return !prev;
+  });
+  return [wrap, toggle];
+}
+
+/// 正在看的文件被 agent 改了没有：面板可见时每 5 秒在后台重拉一次，和眼前显示的比。
+/// 不一样就把新结果先攒着，表头的「刷新」亮成橙色，点了才换（照 Kimi Code：正看着的内容
+/// 不自己跳走）。`bump` 变了（改动清单刷新过）立刻查一次。返回攒着的新结果，没有为 null。
+const STALE_POLL_MS = 5000;
+function useStaleWatch<T>(
+  key: string | null,
+  current: T | null,
+  fetcher: () => Promise<T>,
+  same: (a: T, b: T) => boolean,
+  live: boolean,
+  bump: unknown,
+): T | null {
+  const [fresh, setFresh] = useState<{ key: string; base: T; data: T } | null>(null);
+  const latest = useRef({ key, current, fetcher, same, live });
+  latest.current = { key, current, fetcher, same, live };
+  const check = useCallback(() => {
+    const { key: k, current: base, fetcher: fetch, same: eq, live: on } = latest.current;
+    if (!on || !k || base == null || document.hidden) return;
+    fetch()
+      .then((data) => {
+        const now = latest.current;
+        if (now.key === k && now.current === base && !eq(base, data)) setFresh({ key: k, base, data });
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!live || !key || current == null) return;
+    const timer = window.setInterval(check, STALE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [live, key, current, check]);
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    check();
+  }, [bump, check]);
+  return fresh && fresh.key === key && fresh.base === current ? fresh.data : null;
+}
+
+/** 表头的「刷新」：平时是个灰图标，内容过期时亮成带字的橙色按钮。 */
+function RefreshButton({ stale, onClick }: { stale: boolean; onClick: () => void }) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      className={"chat-diff-iconbtn chat-diff-refresh" + (stale ? " is-stale" : "")}
+      aria-label={stale ? t.chat.previewStale : t.chat.previewRefresh}
+      data-tip={stale ? t.chat.previewStale : t.chat.previewRefresh}
+      onClick={onClick}
+    >
+      <RefreshIcon />
+      {stale && <span>{t.chat.previewRefresh}</span>}
+    </button>
+  );
+}
+
+function WrapButton({ wrap, onToggle }: { wrap: boolean; onToggle: () => void }) {
+  const t = useT();
+  return (
+    <button type="button" className="chat-diff-iconbtn" aria-pressed={wrap} aria-label={t.chat.codeWrap} data-tip={t.chat.codeWrap} onClick={onToggle}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 6h16M4 12h13a3 3 0 0 1 0 6h-4" /><path d="M15 16l-2 2 2 2" /><path d="M4 18h5" />
+      </svg>
+    </button>
+  );
+}
+
+/** 树行悬停时右端的「…」：和右键同一份路径菜单，照 Kimi Code 的文件树（不知道能右键的人也找得到）。 */
+function RowMore({ label, open, onOpen }: { label: string; open: boolean; onOpen: (x: number, y: number) => void }) {
+  return (
+    <button
+      type="button"
+      className="chat-diff-tree-more"
+      aria-label={label}
+      data-tip={label}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      onClick={(event) => {
+        event.stopPropagation();
+        const rect = event.currentTarget.getBoundingClientRect();
+        onOpen(rect.left, rect.bottom + 2);
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="18" cy="12" r="1.6" /></svg>
+    </button>
+  );
+}
+
+/** 压成一行的 JSON（接口回包、构建产物常见）预览时展开成缩进格式，照 Kimi Code 的文件预览。
+ *  本来就分行的不动（行号要和编辑器里一致），截断了的解析不了也不动。 */
+function prettyJson(rel: string, text: string, truncated: boolean): string {
+  if (truncated || extKeyOf(rel) !== "json" || text.trim().includes("\n")) return text;
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+/** 文件树侧栏的宽度（照 Kimi Code：默认 224，160–400）、位置和显隐。 */
+const TREE_OPEN_KEY = "meowo-file-tree-open";
+const TREE_POS_KEY = "meowo-file-tree-position";
+const TREE_WIDTH_KEY = "meowo-file-tree-width";
+const TREE_WIDTH_MIN = 160;
+const TREE_WIDTH_MAX = 400;
+const TREE_WIDTH_DEFAULT = 224;
+function clampTreeWidth(width: number): number {
+  return Math.round(Math.max(TREE_WIDTH_MIN, Math.min(TREE_WIDTH_MAX, width)));
+}
 
 /**
  * 「文件 / 更改」停靠面板：挂在 .chat-body 行内的右列（对话区收缩让位，非覆盖层）。
@@ -433,6 +579,9 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
       // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
       // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。
       if (document.querySelector(".chat-modal-overlay")) return;
+      // 面板里的菜单（文件右键菜单）开着时 Esc 只关菜单。这里挂在捕获段，不让开的话
+      // 先收起的是整个面板。
+      if (document.querySelector('.chat-diff-panel [role="menu"]')) return;
       event.stopPropagation();
       if (escOverrideRef.current) escOverrideRef.current();
       else onCollapse();
@@ -534,7 +683,7 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef }: {
+export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false }: {
   cwd: string;
   summary: GitDiffSummaryDto;
   comments: readonly ReviewComment[];
@@ -543,6 +692,8 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
   onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
   onRemoveComment: (id: string) => void;
   escOverrideRef: MutableRefObject<(() => void) | null>;
+  /** 面板正显示着：这时才在后台查打开的文件过期没有。 */
+  live?: boolean;
 }) {
   const t = useT();
   // 当前查看的文件（null = 文件树形态）；diff 结果按路径缓存，往返切换不重复拉取。
@@ -572,13 +723,27 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
     event.preventDefault();
     setCtxMenu({ x: event.clientX, y: event.clientY, rel, isDir });
   };
+  // 行尾「…」：和右键同一份菜单。手机页没有路径菜单，已删除的文件盘上没东西，都不出。
+  const rowMore = (rel: string, isDir: boolean) =>
+    remoteUi() ? null : (
+      <RowMore label={t.chat.filesMore} open={ctxMenu?.rel === rel} onOpen={(x, y) => setCtxMenu({ x, y, rel, isDir })} />
+    );
 
-  // summary 每次刷新（面板重新可见时会重拉）都作废缓存：agent 随时在提交/改写文件，
-  // 旧 diff 相对旧清单、旧图片是改写前的字节，继续用会展示过期内容。images 与 entries
-  // 必须一起清——只清 entries 会让「改过的图重开仍显旧图」（与文本 diff 同一类 stale）。
+  // summary 每次刷新（面板重新可见、「更改」开着时 5 秒轮询到变化）都作废缓存：agent 随时
+  // 在提交/改写文件，旧 diff 相对旧清单、旧图片是改写前的字节。images 与 entries 必须一起清，
+  // 只清 entries 会让「改过的图重开仍显旧图」。正在看的那个留着：换不换交给表头的「刷新」
+  // （useStaleWatch），不然轮询一到眼前的 diff 就闪一下重新加载。
+  const selectedRef = useRef(selectedPath);
+  selectedRef.current = selectedPath;
   useEffect(() => {
-    setEntries(new Map());
-    setImages(new Map());
+    const keep = selectedRef.current;
+    const prune = <T,>(prev: Map<string, T>): Map<string, T> => {
+      const kept = keep ? prev.get(keep) : undefined;
+      if (prev.size === 0 || (prev.size === 1 && kept !== undefined)) return prev;
+      return kept !== undefined && keep ? new Map([[keep, kept]]) : new Map();
+    };
+    setEntries(prune);
+    setImages(prune);
   }, [summary]);
 
   const fileByPath = useMemo(() => new Map(summary.files.map((file) => [file.path, file])), [summary.files]);
@@ -625,11 +790,12 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
   // 已缓存（含加载中/失败）的路径跳过，失败结果回树后重新点开即重试。
   useEffect(() => {
     if (!selectedPath || entries.has(selectedPath)) return;
+    // 清单里可能已经没有它了（看着的时候被提交了，点了「刷新」）：照样拉，拉回空 diff
+    // 就是「已是最新」的提示，不能停在加载中。
     const file = fileByPath.get(selectedPath);
-    if (!file) return;
     const path = selectedPath;
     setEntries((prev) => new Map(prev).set(path, { loading: true, error: null, data: null }));
-    getGitFileDiff(cwd, path, file.status === "U")
+    getGitFileDiff(cwd, path, file?.status === "U")
       .then((data) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: null, data })))
       .catch((error) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: formatBackendError(error, t.locale), data: null })));
   }, [selectedPath, entries, cwd, fileByPath]);
@@ -693,6 +859,39 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
     [activeDiff],
   );
   const anchors = useMemo(() => (activeDiff ? diffLineAnchors(activeDiff.diff) : []), [activeDiff]);
+  // 旧/新两列行号（照 Kimi Code 的改动视图），槽宽按最大行号的位数。
+  const lineNos = useMemo(() => (activeDiff ? diffLineNumbers(activeDiff.diff) : []), [activeDiff]);
+  const lnDigits = useMemo(() => {
+    let max = 0;
+    for (const no of lineNos) if (no) max = Math.max(max, no.old ?? 0, no.new ?? 0);
+    return String(max).length;
+  }, [lineNos]);
+  const [wrap, toggleWrap] = useWrapPref();
+  const staleDiff = useStaleWatch(
+    selectedPath,
+    activeDiff,
+    () => getGitFileDiff(cwd, selectedPath ?? "", fileByPath.get(selectedPath ?? "")?.status === "U"),
+    (a, b) => a.diff === b.diff && a.truncated === b.truncated,
+    live,
+    summary,
+  );
+  // 有攒着的新 diff 就直接换上；没有（手动点的）就丢掉缓存重拉，图片一并重读。
+  const refreshSelected = () => {
+    if (!selectedPath) return;
+    const path = selectedPath;
+    setEntries((prev) => {
+      const next = new Map(prev);
+      if (staleDiff) next.set(path, { loading: false, error: null, data: staleDiff });
+      else next.delete(path);
+      return next;
+    });
+    setImages((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Map(prev);
+      next.delete(path);
+      return next;
+    });
+  };
   const commentCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const comment of comments) counts.set(comment.path, (counts.get(comment.path) ?? 0) + 1);
@@ -724,40 +923,45 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
     nodes.map((node) =>
       node.children ? (
         <div key={node.path}>
-          <button
-            type="button"
-            className="chat-diff-tree-dir"
-            style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
-            onClick={() => toggleDir(node.path)}
-            onContextMenu={(event) => openCtxMenu(event, node.path, true)}
-          >
-            <svg
-              className={collapsed.has(node.path) ? "chat-diff-chev is-collapsed" : "chat-diff-chev"}
-              width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+          <div className="chat-diff-tree-row">
+            <button
+              type="button"
+              className="chat-diff-tree-dir"
+              style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
+              onClick={() => toggleDir(node.path)}
+              onContextMenu={(event) => openCtxMenu(event, node.path, true)}
             >
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-            <FolderIcon />
-            <span className="chat-diff-path">{node.name}</span>
-          </button>
+              <svg
+                className={collapsed.has(node.path) ? "chat-diff-chev is-collapsed" : "chat-diff-chev"}
+                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              <FolderIcon />
+              <span className="chat-diff-path">{node.name}</span>
+            </button>
+            {rowMore(node.path, true)}
+          </div>
           {!collapsed.has(node.path) && renderTree(node.children, depth + 1)}
         </div>
       ) : (
-        <button
-          key={node.path}
-          type="button"
-          className="chat-diff-tree-file"
-          style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
-          onClick={() => node.file && setSelectedPath(node.file.path)}
-          onContextMenu={node.file && node.file.status !== "D" ? (event) => openCtxMenu(event, node.file!.path, false) : undefined}
-        >
-          {node.file && <StatusBadge status={node.file.status} />}
-          <span className="chat-diff-path">{node.name}</span>
-          {node.file && <LineCounts file={fileByPath.get(node.file.path)} />}
-          {node.file && commentCounts.get(node.file.path) && (
-            <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(node.file.path)!)}>{commentCounts.get(node.file.path)}</span>
-          )}
-        </button>
+        <div key={node.path} className="chat-diff-tree-row">
+          <button
+            type="button"
+            className="chat-diff-tree-file"
+            style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
+            onClick={() => node.file && setSelectedPath(node.file.path)}
+            onContextMenu={node.file && node.file.status !== "D" ? (event) => openCtxMenu(event, node.file!.path, false) : undefined}
+          >
+            {node.file && <StatusBadge status={node.file.status} />}
+            <span className="chat-diff-path">{node.name}</span>
+            {node.file && <LineCounts file={fileByPath.get(node.file.path)} />}
+            {node.file && commentCounts.get(node.file.path) && (
+              <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(node.file.path)!)}>{commentCounts.get(node.file.path)}</span>
+            )}
+          </button>
+          {node.file && node.file.status !== "D" && rowMore(node.file.path, false)}
+        </div>
       ),
     );
 
@@ -791,8 +995,12 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
     return (
       <>
         <div className="chat-diff-scroll">
-          {/* min-width 钉住横向宽度（+4ch 给符号列/内边距），理由见 estimateMaxColumns。 */}
-          <pre className="chat-diff-text" style={{ minWidth: `max(100%, ${diffMaxCols + 4}ch)` }}>
+          {/* min-width 钉住横向宽度（符号列、两列行号和内边距另加），理由见 estimateMaxColumns。
+              换行时不钉，宽度跟着面板走。 */}
+          <pre
+            className={"chat-diff-text is-diff" + (wrap ? " is-wrap" : "")}
+            style={{ "--ln-w": `${lnDigits}ch`, minWidth: wrap ? undefined : `max(100%, ${diffMaxCols + 12 + 2 * lnDigits}ch)` } as CSSProperties}
+          >
             {fileDiff.diff.split("\n").map((line, index) => {
               const cls = diffLineClass(line);
               const html = highlightedDiff?.[index];
@@ -817,8 +1025,10 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
                         onClick={() => { setEditing(anchor); setCommentDraft(""); }}
                       >+</button>
                     )}
+                    <span className="chat-diff-ln is-old">{lineNos[index]?.old ?? ""}</span>
+                    <span className="chat-diff-ln is-new">{lineNos[index]?.new ?? ""}</span>
                     <span className="chat-diff-sign">{sign || " "}</span>
-                    <span dangerouslySetInnerHTML={{ __html: html || " " }} />
+                    <span className="chat-diff-code" dangerouslySetInnerHTML={{ __html: html || " " }} />
                   </div>
                   {lineComments.map((comment) => (
                     <div key={comment.id} className="chat-diff-cmt">
@@ -860,7 +1070,18 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
 
   if (!summary.gitAvailable) return <div className="chat-diff-empty">{t.chat.diffNoGit}</div>;
   if (!summary.isRepo) return <div className="chat-diff-empty">{t.chat.diffNoRepo}</div>;
-  if (summary.files.length === 0) return <div className="chat-diff-empty">{t.chat.diffNoChanges}</div>;
+  if (summary.files.length === 0) {
+    return (
+      <div className="chat-diff-empty">
+        <div className="chat-diff-clean">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" /><path d="M8 12.5l2.8 2.8L16 10" />
+          </svg>
+          {t.chat.diffNoChanges}
+        </div>
+      </div>
+    );
+  }
   if (selectedPath) {
     return (
       <>
@@ -868,6 +1089,10 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
           <BackButton label={t.chat.diffBack} onClick={() => setSelectedPath(null)} />
           {selected && <StatusBadge status={selected.status} />}
           <span className="chat-diff-path" data-tip={selectedPath}>{selectedPath}</span>
+          <span className="chat-diff-tools">
+            {activeDiff && activeDiff.diff.trim() !== BINARY_PLACEHOLDER && <WrapButton wrap={wrap} onToggle={toggleWrap} />}
+            <RefreshButton stale={!!staleDiff} onClick={refreshSelected} />
+          </span>
           {selected && selected.status !== "D" && !remoteUi() && <OpenSplitButton cwd={cwd} rel={selectedPath} />}
         </div>
         {fileView}
@@ -928,21 +1153,23 @@ function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, o
       {filterSession && visibleFiles.length === 0
         ? <div className="chat-diff-empty">{scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
         : <div className="chat-diff-tree">{layout === "tree" ? renderTree(tree, 0) : listedFiles.map((file) => (
-          <button
-            key={file.path}
-            type="button"
-            className="chat-diff-tree-file is-flat"
-            data-tip={file.path}
-            onClick={() => setSelectedPath(file.path)}
-            onContextMenu={file.status !== "D" ? (event) => openCtxMenu(event, file.path, false) : undefined}
-          >
-            <StatusBadge status={file.status} />
-            <span className="chat-diff-path">{file.path}</span>
-            <LineCounts file={file} />
-            {commentCounts.get(file.path) && (
-              <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(file.path)!)}>{commentCounts.get(file.path)}</span>
-            )}
-          </button>
+          <div key={file.path} className="chat-diff-tree-row">
+            <button
+              type="button"
+              className="chat-diff-tree-file is-flat"
+              data-tip={file.path}
+              onClick={() => setSelectedPath(file.path)}
+              onContextMenu={file.status !== "D" ? (event) => openCtxMenu(event, file.path, false) : undefined}
+            >
+              <StatusBadge status={file.status} />
+              <span className="chat-diff-path">{file.path}</span>
+              <LineCounts file={file} />
+              {commentCounts.get(file.path) && (
+                <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(file.path)!)}>{commentCounts.get(file.path)}</span>
+              )}
+            </button>
+            {file.status !== "D" && rowMore(file.path, false)}
+          </div>
         ))}</div>}
       {ctxMenu && (
         <PathContextMenu
@@ -979,8 +1206,58 @@ function cappedCache<T>(prev: Map<string, T>, key: string, value: T): Map<string
 }
 
 /** 「文件」页签：可搜索（文件名 + 内容）的懒加载目录树 + 单文件文本查看（返回行 + pre 文本）。 */
-function FilesView({ cwd }: { cwd: string }) {
+export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显示着：这时才在后台查打开的文件过期没有。 */ live?: boolean }) {
   const t = useT();
+  // 文件树当侧栏（照 Kimi Code 的文件页）：宽面板时可收起、放左边或右边、拖动调宽，三样都记住。
+  // 窄面板照旧逐级进出，这几样不起作用（CSS 只在 ≥560px 的容器查询里认它们）。
+  const [treeOpen, setTreeOpen] = useState(() => readPref(TREE_OPEN_KEY) !== "0");
+  const [treeRight, setTreeRight] = useState(() => readPref(TREE_POS_KEY) === "right");
+  const [treeWidth, setTreeWidth] = useState(() => clampTreeWidth(Number(readPref(TREE_WIDTH_KEY)) || TREE_WIDTH_DEFAULT));
+  const toggleTree = () => setTreeOpen((prev) => {
+    savePref(TREE_OPEN_KEY, prev ? "0" : "1");
+    return !prev;
+  });
+  const setTreeSide = (right: boolean) => {
+    setTreeRight(right);
+    savePref(TREE_POS_KEY, right ? "right" : "left");
+  };
+  const [posMenu, setPosMenu] = useState<{ x: number; y: number } | null>(null);
+  // 拖分隔条调宽：树在右边时往左拖是变宽。
+  const resizeDrag = useRef<{ x: number; width: number } | null>(null);
+  const onResizeDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    resizeDrag.current = { x: event.clientX, width: treeWidth };
+  };
+  const onResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeDrag.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.x;
+    setTreeWidth(clampTreeWidth(drag.width + (treeRight ? -dx : dx)));
+  };
+  const onResizeUp = () => {
+    if (!resizeDrag.current) return;
+    resizeDrag.current = null;
+    savePref(TREE_WIDTH_KEY, String(treeWidth));
+  };
+  // 键盘调宽同 Kimi：←/→ 每次 16px，按住 Shift 48px。
+  const onResizeKey = (event: ReactKeyboardEvent) => {
+    const step = event.shiftKey ? 48 : 16;
+    const delta = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+    if (!delta) return;
+    event.preventDefault();
+    const next = clampTreeWidth(treeWidth + (treeRight ? -delta : delta));
+    setTreeWidth(next);
+    savePref(TREE_WIDTH_KEY, String(next));
+  };
+  const [wrap, toggleWrap] = useWrapPref();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   // 目录清单与文件文本都按 rel 路径缓存：折叠/回退再展开不重复拉取。
   const [dirs, setDirs] = useState<Map<string, FetchEntry<DirEntryDto[]>>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -1053,13 +1330,22 @@ function FilesView({ cwd }: { cwd: string }) {
 
   // 打开文件的逐行高亮 HTML（useMemo 按文件对象缓存；二进制/未打开为 null）。
   const selectedFile = selectedPath ? files.get(selectedPath)?.data ?? null : null;
-  const highlightedFile = useMemo(() => {
-    if (!selectedFile || selectedFile.binary) return null;
-    return highlightLines(selectedFile.text.split("\n"), languageForPath(selectedFile.relPath));
-  }, [selectedFile]);
-  const fileMaxCols = useMemo(
-    () => (selectedFile && !selectedFile.binary ? estimateMaxColumns(selectedFile.text.split("\n")) : 0),
+  const displayText = useMemo(
+    () => (selectedFile && !selectedFile.binary ? prettyJson(selectedFile.relPath, selectedFile.text, selectedFile.truncated) : null),
     [selectedFile],
+  );
+  const highlightedFile = useMemo(() => {
+    if (!selectedFile || displayText == null) return null;
+    return highlightLines(displayText.split("\n"), languageForPath(selectedFile.relPath));
+  }, [selectedFile, displayText]);
+  const fileMaxCols = useMemo(() => (displayText != null ? estimateMaxColumns(displayText.split("\n")) : 0), [displayText]);
+  const staleFile = useStaleWatch(
+    selectedPath,
+    selectedFile,
+    () => readFileText(cwd, selectedPath ?? ""),
+    (a, b) => a.text === b.text && a.binary === b.binary && a.truncated === b.truncated,
+    live,
+    null,
   );
 
   // 跳行滚动：等文件加载 + 高亮渲染完成后再滚（children 与行号一一对应）。
@@ -1068,8 +1354,9 @@ function FilesView({ cwd }: { cwd: string }) {
     preRef.current?.children[target.line - 1]?.scrollIntoView({ block: "center" });
   }, [target, selectedPath, highlightedFile]);
 
-  const fetchDir = (rel: string) => {
-    setDirs((prev) => new Map(prev).set(rel, { loading: true, error: null, data: null }));
+  // quiet：刷新已经显示着的目录时不先切回「加载中」，免得整棵树闪一下。
+  const fetchDir = (rel: string, quiet = false) => {
+    if (!quiet) setDirs((prev) => new Map(prev).set(rel, { loading: true, error: null, data: null }));
     listDirEntries(cwd, rel)
       .then((data) => setDirs((prev) => new Map(prev).set(rel, { loading: false, error: null, data })))
       .catch((error) => setDirs((prev) => new Map(prev).set(rel, { loading: false, error: formatBackendError(error, t.locale), data: null })));
@@ -1093,17 +1380,23 @@ function FilesView({ cwd }: { cwd: string }) {
     });
   };
 
-  const fetchText = (rel: string) => {
-    if (files.has(rel)) return;
-    setFiles((prev) => cappedCache(prev, rel, { loading: true, error: null, data: null }));
+  // 根目录和展开着的目录都重拉一遍（agent 新建/删掉的文件）。
+  const refreshTree = () => {
+    for (const rel of ["", ...expanded]) fetchDir(rel, !!dirs.get(rel)?.data);
+  };
+
+  // force：手动刷新。已经有内容的不先切回「加载中」，拉回来直接换。
+  const fetchText = (rel: string, force = false) => {
+    if (files.has(rel) && !force) return;
+    if (!force || !files.get(rel)?.data) setFiles((prev) => cappedCache(prev, rel, { loading: true, error: null, data: null }));
     readFileText(cwd, rel)
       .then((data) => setFiles((prev) => cappedCache(prev, rel, { loading: false, error: null, data })))
       .catch((error) => setFiles((prev) => cappedCache(prev, rel, { loading: false, error: formatBackendError(error, t.locale), data: null })));
   };
 
-  const fetchImage = (rel: string) => {
-    if (images.has(rel)) return;
-    setImages((prev) => cappedCache(prev, rel, { loading: true, error: null, data: null }));
+  const fetchImage = (rel: string, force = false) => {
+    if (images.has(rel) && !force) return;
+    if (!force || !images.get(rel)?.data) setImages((prev) => cappedCache(prev, rel, { loading: true, error: null, data: null }));
     readImagePreview(cwd, rel)
       .then((data) => setImages((prev) => cappedCache(prev, rel, { loading: false, error: null, data })))
       .catch((error) => setImages((prev) => cappedCache(prev, rel, { loading: false, error: formatBackendError(error, t.locale), data: null })));
@@ -1139,6 +1432,15 @@ function FilesView({ cwd }: { cwd: string }) {
   };
 
   const indent = (depth: number) => ({ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` });
+  // 手机页没有路径菜单（全是在桌面上开程序/定位文件的动作），也就不出「…」。
+  const rowMore = (rel: string, isDir: boolean) =>
+    remoteUi() ? null : (
+      <RowMore
+        label={t.chat.filesMore}
+        open={ctxMenu?.rel === rel}
+        onOpen={(x, y) => setCtxMenu({ x, y, rel, isDir })}
+      />
+    );
 
   const renderDir = (rel: string, depth: number): ReactNode => {
     const dir = dirs.get(rel);
@@ -1151,38 +1453,43 @@ function FilesView({ cwd }: { cwd: string }) {
     return (dir.data ?? []).map((entry) =>
       entry.isDir ? (
         <div key={entry.relPath}>
-          <button
-            type="button"
-            className="chat-diff-tree-dir"
-            style={indent(depth)}
-            onClick={() => toggleDir(entry.relPath)}
-            onContextMenu={(event) => openCtxMenu(event, entry.relPath, true)}
-          >
-            <svg
-              className={expanded.has(entry.relPath) ? "chat-diff-chev" : "chat-diff-chev is-collapsed"}
-              width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+          <div className="chat-diff-tree-row">
+            <button
+              type="button"
+              className="chat-diff-tree-dir"
+              style={indent(depth)}
+              onClick={() => toggleDir(entry.relPath)}
+              onContextMenu={(event) => openCtxMenu(event, entry.relPath, true)}
             >
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-            <FolderIcon />
-            <span className="chat-diff-path">{entry.name}</span>
-          </button>
+              <svg
+                className={expanded.has(entry.relPath) ? "chat-diff-chev" : "chat-diff-chev is-collapsed"}
+                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              <FolderIcon />
+              <span className="chat-diff-path">{entry.name}</span>
+            </button>
+            {rowMore(entry.relPath, true)}
+          </div>
           {expanded.has(entry.relPath) && renderDir(entry.relPath, depth + 1)}
         </div>
       ) : (
-        <button
-          key={entry.relPath}
-          type="button"
-          // 并排时树与预览同屏，正在看的那个文件要在树上标出来。
-          className={"chat-diff-tree-file" + (entry.relPath === selectedPath ? " is-selected" : "")}
-          aria-current={entry.relPath === selectedPath ? "true" : undefined}
-          style={indent(depth)}
-          onClick={() => openFile(entry.relPath)}
-          onContextMenu={(event) => openCtxMenu(event, entry.relPath, false)}
-        >
-          <FileIcon />
-          <span className="chat-diff-path">{entry.name}</span>
-        </button>
+        <div key={entry.relPath} className="chat-diff-tree-row">
+          <button
+            type="button"
+            // 并排时树与预览同屏，正在看的那个文件要在树上标出来。
+            className={"chat-diff-tree-file" + (entry.relPath === selectedPath ? " is-selected" : "")}
+            aria-current={entry.relPath === selectedPath ? "true" : undefined}
+            style={indent(depth)}
+            onClick={() => openFile(entry.relPath)}
+            onContextMenu={(event) => openCtxMenu(event, entry.relPath, false)}
+          >
+            <FileIcon />
+            <span className="chat-diff-path">{entry.name}</span>
+          </button>
+          {rowMore(entry.relPath, false)}
+        </div>
       ),
     );
   };
@@ -1209,6 +1516,7 @@ function FilesView({ cwd }: { cwd: string }) {
             const collapsed = collapsedHits.has(group.relPath);
             return (
               <div key={group.relPath}>
+                <div className="chat-diff-tree-row">
                 <button
                   type="button"
                   className="chat-diff-tree-file"
@@ -1235,6 +1543,8 @@ function FilesView({ cwd }: { cwd: string }) {
                     <span className="chat-diff-hit-count">{group.totalLineMatches}</span>
                   )}
                 </button>
+                {rowMore(group.relPath, group.isDir)}
+                </div>
                 {hasLines && !collapsed &&
                   group.lines.map((lineHit) => (
                     <button
@@ -1268,6 +1578,16 @@ function FilesView({ cwd }: { cwd: string }) {
       setSourceMode(source);
       if (source) fetchText(selectedPath);
       else if (kind === "image") fetchImage(selectedPath);
+    };
+    // 源码视图（高亮 + 行号）才有换行和复制全文；图片、md 渲染没有。
+    const codeView = !!selectedFile && !selectedFile.binary && (sourceMode || kind === null);
+    const refreshFile = () => {
+      if (staleFile) {
+        setFiles((prev) => cappedCache(prev, selectedPath, { loading: false, error: null, data: staleFile }));
+        return;
+      }
+      if (kind === "image" && !sourceMode) fetchImage(selectedPath, true);
+      else fetchText(selectedPath, true);
     };
     const content = (() => {
       // 图片预览通道：独立缓存与占位（过大/失败给文字，不落到「二进制」歧义提示）。
@@ -1307,11 +1627,15 @@ function FilesView({ cwd }: { cwd: string }) {
           <div className="chat-diff-scroll">
             {/* 行号槽宽按最大行号位数走（--ln-w），右对齐 + 右描边，不可选中。
                 min-width 钉住横向宽度（+8ch 给行号槽/间距），理由见 estimateMaxColumns。 */}
-            <pre ref={preRef} className="chat-diff-text is-code" style={{ "--ln-w": `${String((highlightedFile ?? []).length).length}ch`, minWidth: `max(100%, ${fileMaxCols + 8}ch)` } as CSSProperties}>
+            <pre
+              ref={preRef}
+              className={"chat-diff-text is-code" + (wrap ? " is-wrap" : "")}
+              style={{ "--ln-w": `${String((highlightedFile ?? []).length).length}ch`, minWidth: wrap ? undefined : `max(100%, ${fileMaxCols + 8}ch)` } as CSSProperties}
+            >
               {(highlightedFile ?? []).map((html, index) => (
                 <div key={index} className={target && selectedPath === target.rel && index + 1 === target.line ? "is-target" : undefined}>
                   <span className="chat-diff-ln">{index + 1}</span>
-                  <span dangerouslySetInnerHTML={{ __html: html || " " }} />
+                  <span className="chat-diff-code" dangerouslySetInnerHTML={{ __html: html || " " }} />
                 </div>
               ))}
             </pre>
@@ -1324,6 +1648,16 @@ function FilesView({ cwd }: { cwd: string }) {
       <>
         <div className="chat-diff-filehead">
           <BackButton label={t.chat.diffBack} onClick={() => setSelectedPath(null)} />
+          <button
+            type="button"
+            className="chat-diff-iconbtn chat-files-treetoggle"
+            aria-pressed={treeOpen}
+            aria-label={treeOpen ? t.chat.filesTreeHide : t.chat.filesTreeShow}
+            data-tip={treeOpen ? t.chat.filesTreeHide : t.chat.filesTreeShow}
+            onClick={toggleTree}
+          >
+            <TreePaneIcon right={treeRight} />
+          </button>
           <span className="chat-diff-path" data-tip={selectedPath}>{selectedPath}</span>
           {showModeToggle && (
             <div className="chat-diff-tabs">
@@ -1335,6 +1669,24 @@ function FilesView({ cwd }: { cwd: string }) {
               </button>
             </div>
           )}
+          <span className="chat-diff-tools">
+            {codeView && <WrapButton wrap={wrap} onToggle={toggleWrap} />}
+            {codeView && (
+              <button
+                type="button"
+                className="chat-diff-iconbtn"
+                aria-label={copied ? t.chat.codeCopied : t.chat.filesCopyAll}
+                data-tip={copied ? t.chat.codeCopied : t.chat.filesCopyAll}
+                onClick={() => {
+                  if (!selectedFile) return;
+                  navigator.clipboard?.writeText(selectedFile.text).then(() => setCopied(true), () => {});
+                }}
+              >
+                {copied ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            )}
+            <RefreshButton stale={!!staleFile} onClick={refreshFile} />
+          </span>
           <OpenSplitButton cwd={cwd} rel={selectedPath} />
         </div>
         {content}
@@ -1342,8 +1694,38 @@ function FilesView({ cwd }: { cwd: string }) {
     );
   }
   return (
-    <div className={"chat-files" + (selectedPath ? " has-selection" : "")}>
+    <div
+      className={"chat-files" + (selectedPath ? " has-selection" : "") + (treeRight ? " is-tree-right" : "") + (selectedPath && !treeOpen ? " is-tree-hidden" : "")}
+      style={{ "--tree-w": `${treeWidth}px` } as CSSProperties}
+    >
       <div className="chat-files-browse">
+      <div className="chat-files-head">
+        <FolderIcon />
+        <span className="chat-files-root" data-tip={cwd}>{folderName(cwd)}</span>
+        <button type="button" className="chat-diff-iconbtn" aria-label={t.chat.filesRefreshTree} data-tip={t.chat.filesRefreshTree} onClick={refreshTree}>
+          <RefreshIcon />
+        </button>
+        <button
+          type="button"
+          className="chat-diff-iconbtn chat-files-posbtn"
+          aria-label={t.chat.filesTreePosition}
+          data-tip={t.chat.filesTreePosition}
+          aria-haspopup="menu"
+          aria-expanded={!!posMenu}
+          onClick={(event) => {
+            if (posMenu) {
+              setPosMenu(null);
+              return;
+            }
+            const rect = event.currentTarget.getBoundingClientRect();
+            setPosMenu({ x: rect.left, y: rect.bottom + 4 });
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+          </svg>
+        </button>
+      </div>
       <input
         type="text"
         className="chat-diff-search"
@@ -1358,7 +1740,33 @@ function FilesView({ cwd }: { cwd: string }) {
       />
       {searchActive ? searchView : <div className="chat-diff-tree">{renderDir("", 0)}</div>}
       </div>
+      <div
+        className="chat-files-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t.chat.filesTreeResize}
+        aria-valuenow={treeWidth}
+        aria-valuemin={TREE_WIDTH_MIN}
+        aria-valuemax={TREE_WIDTH_MAX}
+        tabIndex={0}
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        onPointerCancel={onResizeUp}
+        onKeyDown={onResizeKey}
+      />
       <div className="chat-files-preview">{preview}</div>
+      {posMenu && (
+        <PathMenu
+          x={posMenu.x}
+          y={posMenu.y}
+          items={[
+            { key: "left", label: t.chat.filesTreeLeft, icon: treeRight ? <span className="ctx-check" /> : <CheckIcon />, onSelect: () => setTreeSide(false) },
+            { key: "right", label: t.chat.filesTreeRight, icon: treeRight ? <CheckIcon /> : <span className="ctx-check" />, onSelect: () => setTreeSide(true) },
+          ]}
+          onClose={() => setPosMenu(null)}
+        />
+      )}
       {ctxMenu && (
         <PathContextMenu
           cwd={cwd}
@@ -1410,6 +1818,39 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
       {label}
     </button>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg className="ctx-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
+  );
+}
+
+function MentionIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9" />
+    </svg>
+  );
+}
+
+/** 文件树显隐按钮：一个窗格、竖线画在树所在的那一侧。 */
+function TreePaneIcon({ right }: { right: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" /><path d={right ? "M15 4v16" : "M9 4v16"} />
+    </svg>
   );
 }
 

@@ -17,6 +17,27 @@ pub struct ModelPreset {
     pub label: &'static str,
 }
 
+/// 怎么把一个 stdio MCP 服务器交给这个 agent（宿主的面板浏览器 browser_agent.rs 用）。
+/// 放在插件里声明：宿主不按 agent 身份分支（见宿主 lib.rs 的 host_code_does_not_branch_on_agent_identity）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpAttach {
+    /// 启动参数指向一份 `{"mcpServers": {…}}` JSON 文件：`<file_flag> <文件>`。`allow_flag` 有值时
+    /// 再跟 `<allow_flag> <工具全名…>` 放行工具，全名 = `allow_prefix` + 服务器名 + `__` + 工具名
+    /// （claude 的 `--mcp-config` / `--allowedTools mcp__<server>__<tool>`）。配置写成文件而不是
+    /// 内联 JSON：Windows 上 agent 常是 `.cmd` 包装，命令行里的双引号会被 cmd 拆坏。
+    ConfigFileArg {
+        file_flag: &'static str,
+        allow_flag: Option<&'static str>,
+        allow_prefix: &'static str,
+    },
+    /// 配置覆盖参数：`<flag> mcp_servers.<名>.command='<路径>'` 与 `<flag> mcp_servers.<名>.args=[…]`，
+    /// 值是 TOML 单引号字符串，同样避开双引号（codex 的 `-c`）。
+    TomlOverride { flag: &'static str },
+    /// 没有临时挂 MCP 的启动参数，只能写进数据目录下的 JSON 文件（`mcpServers` 键）。
+    /// 多账号时每个账号的数据目录各写一份（kimi 2.x 的 `mcp.json`）。
+    DataDirJson { rel: &'static str },
+}
+
 /// 分叉会话的方式（对照 Kimi 桌面版会话菜单的「分叉会话」：从这里另开一条线试别的方向，
 /// 原会话原样保留）。各家 CLI 都有原生分叉，带着完整上下文（工具结果、思考），比渲染出来的
 /// 交接摘要保真，故不走 handoff。
@@ -88,6 +109,11 @@ pub trait AgentPlugin: Sync {
 
     /// 分叉会话的方式（见 [`ForkMode`]）。None = 不支持，前端不给入口。
     fn fork_mode(&self) -> Option<ForkMode> {
+        None
+    }
+
+    /// 怎么把 MCP 服务器交给它（见 [`McpAttach`]）。None = 不支持，面板浏览器的工具给不了它。
+    fn mcp_attach(&self) -> Option<McpAttach> {
         None
     }
 

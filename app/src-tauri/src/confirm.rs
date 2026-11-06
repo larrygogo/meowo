@@ -153,17 +153,17 @@ pub(crate) async fn ask(
         .visible(false);
     // 模态的所属关系:请求窗口设为 owner(Windows)/父窗(macOS)。任务栏与最小化行为
     // 跟随父窗,且点击被禁用的父窗时系统会把焦点弹回本窗(配合下方 set_enabled)。
-    // 拿不到对应 WebviewWindow(理论上不发生)就退化为独立置顶窗,不拦流程。
-    #[cfg(any(windows, target_os = "macos"))]
-    let builder = match parent
-        .as_ref()
-        .and_then(|window| app.get_webview_window(window.label()))
-    {
-        Some(parent) => builder.parent(&parent).map_err(|error| {
-            confirms.remove(id);
-            error.to_string()
-        })?,
-        None => builder.center(),
+    // 直接用窗口句柄挂：对话窗面板开着浏览器页签时，chat 窗口里有两个 webview，
+    // 按 WebviewWindow 去查会落空。拿不到句柄就退化为独立置顶窗,不拦流程。
+    #[cfg(windows)]
+    let builder = match parent.as_ref().map(|window| window.hwnd()) {
+        Some(Ok(handle)) => builder.owner_raw(handle),
+        _ => builder.center(),
+    };
+    #[cfg(target_os = "macos")]
+    let builder = match parent.as_ref().map(|window| window.ns_window()) {
+        Some(Ok(handle)) => builder.parent_raw(handle),
+        _ => builder.center(),
     };
     // macOS:无边框窗口不自动圆角,设透明由前端 .app-confirm.is-window 的 border-radius
     // 呈现(同设置/更新窗口)。

@@ -4,14 +4,14 @@
 // 完整列表仍是 Sticker；形态切换的窗口尺寸由 App 驱动（island.rs 按中心点对称改尺寸）。
 // 刘海纯黑、贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接——耳朵在刘海左右各占 ISLAND_EAR，
 // 窗口宽度要把它算进去。胶囊在窗口里水平居中：窗口长大时它不挪位，展开动画从它的轮廓长出来。
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
 import { useSettingsEffect } from "../hooks/useSettings";
 import { cardTone, readSidebarGroupMode, readSidebarSortMode, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
 import { sidebarDirGroups } from "./sidebarDrag";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
-import { AgentRing, Clock, Eyes, UsageRing, useNow, type IslandTone } from "./island/islandParts";
+import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, useEyeCue, useNow, type IslandTone } from "./island/islandParts";
 
 export type { IslandTone } from "./island/islandParts";
 export type IslandCompactStyle = "counts" | "focus" | "minimal";
@@ -246,6 +246,13 @@ export function Island({
   const tone = islandTone(counts);
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
   const listed = useSidebarOrder(sessions);
+  // 眼睛的神态：整体状态 + 正在用的那家额度 + 忙不忙 + 一闪而过的表情（跑完、新会话、鼠标移上来）。
+  const { cue, poke } = useEyeCue(sessions);
+  const eyes = { tone, cue, quotaPct: usages[0]?.pct ?? null, busy: counts.running >= EYES_BUSY_AT, errors: counts.error };
+  const lastWink = useRef(0);
+  // 鼠标在岛上停一会儿（没点开）就害羞脸红；移开就取消。
+  const blushTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(blushTimer.current), []);
 
   // 收起态的宽度随内容变（会话个数、标题长短），实测后上报。提醒形态尺寸固定，不量。
   useLayoutEffect(() => {
@@ -279,7 +286,7 @@ export function Island({
   const notchWings = (): [React.ReactNode, React.ReactNode] => {
     if (compactStyle === "minimal") {
       return [
-        <Eyes key="eyes" tone={tone} small />,
+        <Eyes key="eyes" {...eyes} small />,
         <span key="dots" className="isl-dots">
           {liveSessions(sessions).slice(0, 6).map((item) => (
             <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
@@ -290,7 +297,7 @@ export function Island({
     if (compactStyle === "focus") {
       const focus = ordered[0];
       return [
-        <Eyes key="eyes" tone={tone} small />,
+        <Eyes key="eyes" {...eyes} small />,
         focus
           ? <span key="focus" className={`isl-state is-${cardTone(focus)}`}>{t.island.toneLabel[cardTone(focus)] ?? ""}</span>
           : null,
@@ -301,7 +308,7 @@ export function Island({
     return [
       <>
         {usages.length > 0 && <UsageRing entries={usages} size={22} />}
-        <Eyes tone={tone} small />
+        <Eyes {...eyes} small />
       </>,
       shown.length > 0 ? (
         <span className="isl-agents">
@@ -333,7 +340,7 @@ export function Island({
     if (compactStyle === "minimal") {
       return (
         <>
-          <Eyes tone={tone} />
+          <Eyes {...eyes} />
           <span className="isl-dots">
             {liveSessions(sessions).slice(0, 6).map((item) => (
               <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
@@ -346,7 +353,7 @@ export function Island({
       const focus = ordered[0];
       return (
         <>
-          <Eyes tone={tone} />
+          <Eyes {...eyes} />
           {focus ? (
             <span className="isl-focus">
               <span className="isl-focus-title">{sessionTitle(focus, t.sticker.waitingFirstInput)}</span>
@@ -362,7 +369,7 @@ export function Island({
     return (
       <>
         {usages.length > 0 && <UsageRing entries={usages} />}
-        <Eyes tone={tone} />
+        <Eyes {...eyes} />
         <Clock now={now} locale={t.locale} />
         {shown.length > 0 && (
           <span className="isl-agents">
@@ -395,8 +402,23 @@ export function Island({
         aria-label={t.island.ariaLabel}
         // 只点击展开，悬停不展开（用户要求，2026-11-04）。提醒在场时悬停是「我在看」：
         // 留住提醒、暂停倒计时。
-        onPointerEnter={() => { if (alert) onAlertHover?.(true); }}
-        onPointerLeave={() => { if (alert) onAlertHover?.(false); }}
+        // 收起时鼠标移上来，眼睛冲你眨一下（隔 8 秒以上才再眨，来回划过不至于一直眨）。
+        onPointerEnter={() => {
+          if (alert) {
+            onAlertHover?.(true);
+          } else if (Date.now() - lastWink.current > 8_000) {
+            lastWink.current = Date.now();
+            poke("wink");
+          }
+          if (!alert) {
+            window.clearTimeout(blushTimer.current);
+            blushTimer.current = window.setTimeout(() => poke("blush"), EYES_BLUSH_AFTER_MS);
+          }
+        }}
+        onPointerLeave={() => {
+          window.clearTimeout(blushTimer.current);
+          if (alert) onAlertHover?.(false);
+        }}
         onPointerDown={onPointerDownDrag}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -407,7 +429,7 @@ export function Island({
       >
         {alert ? (
           <>
-            <Eyes tone={alertTone} small />
+            <Eyes tone={alertTone} cue={cue} small />
             <span className={`isl-alert-icon is-${alertTone}`}><AlertIcon kind={alert.kind} /></span>
             <span className="isl-alert-text">
               <span className="isl-alert-title-row">

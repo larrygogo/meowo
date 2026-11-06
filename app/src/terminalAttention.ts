@@ -210,9 +210,19 @@ function detectCursorMenu(
   visible: string,
 ): { index: number; lines: string[]; focused: number; title: string } | null {
   const lines = visible.split("\n");
-  const hintLine = lines.findIndex((line) => MENU_HINT.test(line));
+  const lastIndex = (pred: (line: string, index: number) => boolean): number => {
+    for (let index = lines.length - 1; index >= 0; index -= 1) if (pred(lines[index], index)) return index;
+    return -1;
+  };
+  const hintLine = lastIndex((line) => MENU_HINT.test(line));
   if (hintLine < 0) return null;
-  const focusedLine = lines.findIndex((line) => /^\s*[❯›]\s+\S/.test(line));
+  // 光标认离提示行最近的那个 ❯：先找提示行下面的（kimi 的提示在选项上方），没有再往上找
+  // （提示是页脚的菜单）。不能取整屏第一个 ❯——kimi 2.5 把聊天记录里用户发过的话也画成
+  // 「❯ hi」，会话里有历史时第一个 ❯ 是用户消息，选项就成了「hi / Error: …」，GUI 点选的
+  // 模型永远对不上（2026-11-06 真机取证，kimi 2.5.1，一轮报错后 /model）。
+  const isCursor = (line: string) => /^\s*[❯›]\s+\S/.test(line);
+  const below = lines.findIndex((line, index) => index > hintLine && isCursor(line));
+  const focusedLine = below >= 0 ? below : lastIndex((line, index) => index < hintLine && isCursor(line));
   if (focusedLine < 0) return null;
   // 文本起始列：带光标的行要跨过标记本身，才能和其余项对齐比较。
   const textIndent = (line: string): number => {

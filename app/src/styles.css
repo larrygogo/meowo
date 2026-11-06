@@ -1199,6 +1199,8 @@ button.stab {
 /* 置灰项（终端右键菜单的「复制/粘贴」按现场可用性定格）：不藏位、只降 opacity，
    菜单结构稳定，肌肉记忆不被打乱；禁用钮不吃 hover 高亮。 */
 .ctx-item:disabled { opacity: 0.4; cursor: default; }
+/* 单选菜单项前的勾（没选中的项放同宽空位，文字对齐）。 */
+.ctx-item .ctx-check { flex: none; display: inline-block; width: 14px; height: 14px; }
 .ctx-item:disabled:hover { background: transparent; }
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
 /* 「结束会话」：平时同普通项，hover/键盘聚焦才显破坏性的红（与对话窗标题栏 .chat-end
@@ -4641,6 +4643,18 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 :root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-body.is-diff-max .chat-diff-panel {
   --cc-bg: #1f1f1f;
 }
+/* 会话信息栏停靠时和右侧面板同一张卡：同底色、上边线（与顶栏分开）+ 左边线（与对话区分开）。
+   之前只有左边线、用的窗口底色，和顶栏连成一片（实拍「这里需要有个边框」）。 */
+:root:not(.platform-macos) .session-info.is-docked {
+  --chat-card-bg: var(--cc-panel-bg);
+  background: var(--chat-card-bg);
+  border-top: var(--hairline) solid var(--cc-border);
+  border-left: var(--hairline) solid var(--cc-border);
+}
+:root:not(.platform-macos) .chat-window.is-terminal .session-info.is-docked,
+:root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .session-info.is-docked {
+  --chat-card-bg: #1f1f1f;
+}
 /* --cc-syn-* 的终端压深已并入 .chat-window.is-terminal 统一变量块，面板不再单独特调。 */
 .chat-diff-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); }
 /* 面板页签（文件/更改）：与标题栏 .chat-view-tabs 同款分段控件。 */
@@ -4648,6 +4662,82 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tabs { flex: 0 0 auto; display: flex; padding: var(--sp-3); border-radius: var(--radius-md); background: var(--fill-hover); }
 .chat-diff-tabs button { display: inline-flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-tabs button.is-active { color: var(--cc-text); background: var(--cc-bg); box-shadow: var(--shadow-sm); }
+/* 面板里的终端占满面板剩余高度；退出提示贴底，不挡最后几行输出。 */
+.chat-diff-panel .shell-term { flex: 1; }
+.shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 2; padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-sm); color: #9ba19e; background: rgba(31, 31, 31, 0.92); font-size: var(--text-xs); pointer-events: none; }
+.shell-term-exit.is-error { color: #f0a0a0; }
+/* 会话信息栏（同 Kimi Code 的 SessionInfoTabs）：面板收起时停靠在对话右侧，窄窗改成浮层。 */
+.session-info { display: flex; flex-direction: column; gap: var(--sp-14); padding: var(--sp-14) var(--sp-10); color: var(--cc-text); font-size: var(--text-xs); overflow-y: auto; }
+.session-info.is-docked { flex: 0 0 240px; min-height: 0; border-left: var(--hairline) solid var(--cc-border); background: var(--cc-window-bg); }
+.session-info.is-floating { position: fixed; top: 56px; right: 12px; z-index: 40; width: 260px; max-height: calc(100vh - 80px); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-bg); box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35)); }
+.session-info-section { display: flex; flex-direction: column; gap: 2px; }
+.session-info-section h3 { margin: 0 0 var(--sp-4); padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; }
+.session-info-row { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: var(--sp-6) var(--sp-8); border: 0; border-radius: var(--radius-sm); color: var(--cc-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.session-info-row:hover { background: var(--fill-hover); }
+.session-info-row svg { flex: none; color: var(--cc-text-faint); }
+.session-info-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-info-row.is-more .session-info-label { color: var(--cc-text-faint); }
+.session-info-row kbd, .session-info-diff { flex: none; color: var(--cc-text-faint); font: inherit; font-variant-numeric: tabular-nums; }
+/* 默认宽度是可用宽度的一半（useDiffPanelWidth），旧面板的 40vw 上限会把它压回去；
+   改成给对话区留 320px。 */
+.chat-diff-panel.side-panel { max-width: calc(100% - 320px); }
+/* 右侧面板的页签栏（照 Kimi Code：28px 高、最宽 168px、标题省略、横向滚动不显示滚动条）。 */
+.side-panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.side-panel-tabs::-webkit-scrollbar { display: none; }
+/* 两端还有页签时渐隐，提示可以滚过去。 */
+.side-panel-tabs.has-right { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.side-panel-tabs.has-left { mask-image: linear-gradient(to right, transparent, #000 28px); }
+.side-panel-tabs.has-left.has-right { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+/* 空间不够先压窄（最窄 72px，标题省略），压到底还放不下才横向滚动——同浏览器页签。 */
+.side-panel-tab { position: relative; flex: 0 1 auto; min-width: 72px; display: inline-flex; align-items: center; gap: var(--sp-6); height: 28px; max-width: 168px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; touch-action: none; }
+.side-panel-tab:hover { color: var(--cc-text); background: var(--fill-hover); }
+.side-panel-tab.is-active { color: var(--cc-text); background: var(--fill-selected); }
+.side-panel-tab svg { flex: none; }
+.side-panel-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 叉号常显（同 Kimi），没激活的页签淡一点：之前悬停才显示，页签右侧白留一块空位。 */
+.side-panel-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-sm); opacity: 0.55; }
+.side-panel-tab:hover .side-panel-tab-close, .side-panel-tab.is-active .side-panel-tab-close { opacity: 1; }
+.side-panel-tab-close:hover { background: var(--fill-hover); }
+.side-panel-tab.is-dragging { opacity: 0.5; }
+.side-panel-drop-line { position: absolute; width: 2px; border-radius: 1px; background: var(--cc-accent-text); pointer-events: none; }
+/* 没有页签时的启动列表（Kimi 的「快速打开」）。 */
+.side-panel-launcher { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-12) var(--sp-10); }
+.side-panel-launcher p { margin: 0 0 var(--sp-6); padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }
+.side-panel-launcher button { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-8); border: 0; border-radius: var(--radius-sm); color: var(--cc-text); background: transparent; font: inherit; font-size: var(--text-sm, 13px); text-align: left; cursor: pointer; }
+.side-panel-launcher button:hover { background: var(--fill-hover); }
+.side-panel-launcher span { flex: 1; }
+.side-panel-launcher kbd, .ctx-hint { margin-left: auto; padding-left: var(--sp-12); color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); }
+.side-panel-pending { flex: 1; background: #121212; }
+.side-panel-empty { margin: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
+/* 面板浏览器：地址栏 + 占位区域。真正的网页是后端叠在占位区域上的原生 webview。 */
+.browser-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.browser-pane-bar { flex: none; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-6) var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }
+.browser-pane-bar .chat-diff-action:disabled { opacity: 0.35; cursor: default; }
+.browser-pane-bar .chat-diff-action.is-loading svg { animation: browser-pane-spin 0.9s linear infinite; }
+@keyframes browser-pane-spin { to { transform: rotate(360deg); } }
+.browser-pane-url { flex: 1; min-width: 0; height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: var(--cc-bg); font: inherit; font-size: var(--text-xs); }
+.browser-pane-url:focus { outline: none; border-color: var(--cc-accent-text); }
+.browser-pane-error { flex: none; padding: var(--sp-6) var(--sp-10); color: var(--cc-err-text); font-size: var(--text-xs); }
+/* agent 操作提示条：在工具栏下方，网页之上（不压在原生视图上，原生视图在它下面开始）。 */
+.browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: color-mix(in srgb, var(--cc-accent-text) 12%, transparent); font-size: var(--text-xs); }
+.browser-pane-agent.is-paused { background: var(--fill-hover); color: var(--cc-text-faint); }
+.browser-pane-agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-accent-text); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
+.browser-pane-agent.is-paused .browser-pane-agent-dot { animation: none; background: var(--cc-text-faint); }
+.browser-pane-agent button { margin-left: auto; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
+.side-panel-tab-agent { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-accent-text); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
+/* 呼吸只变颜色、不变透明度：灯压在图标上，半透明时会透出下面的线条（实拍）。
+   暗相是强调色和底色按比例混出来的实色，始终不透明。 */
+@keyframes browser-agent-pulse { 50% { background-color: color-mix(in srgb, var(--cc-accent-text) 40%, var(--cc-bg)); } }
+/* 面板收起时 agent 在操作浏览器：标题栏的面板开关右上角亮一个点。 */
+.chat-panel-toggle { position: relative; }
+.chat-panel-agent-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-accent-text); box-shadow: 0 0 0 2px var(--cc-bg); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent, .chat-panel-agent-dot { animation: none; } }
+.browser-pane-view { position: relative; flex: 1; min-height: 0; background: var(--cc-bg); }
+.browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
+.browser-pane-start ul { margin: var(--sp-14) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); }
+.browser-pane-start button { padding: var(--sp-4) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: transparent; font: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; cursor: pointer; }
+.browser-pane-start button:hover { background: var(--fill-hover); }
+@media (prefers-reduced-motion: reduce) { .browser-pane-bar .chat-diff-action.is-loading svg { animation: none; } }
 .chat-diff-spacer { flex: 1; }
 /* 「更改」页签顶部的分支行：整行宽度、超长省略（分支名在头行会挤到换行，移到这里）。 */
 .chat-diff-branchline { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); margin: var(--sp-8) var(--sp-8) 0; padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }
@@ -4691,6 +4781,15 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-back { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-6); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-back:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-diff-filehead .chat-diff-path { font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 表头右侧的小图标钮（换行 / 复制 / 刷新），「打开」分体钮跟在后面。 */
+.chat-diff-tools { flex: none; margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); }
+.chat-diff-tools + .chat-diff-open { margin-left: 0; }
+.chat-diff-iconbtn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-4); min-width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-diff-iconbtn:hover { background: var(--fill-hover); color: var(--cc-text); }
+.chat-diff-iconbtn[aria-pressed="true"] { background: var(--fill-selected); color: var(--cc-text); }
+/* 内容过期：「刷新」亮成橙色带字（照 Kimi Code），点了才换上新内容。 */
+.chat-diff-refresh.is-stale { padding: 0 var(--sp-6); color: var(--cc-warn); background: color-mix(in srgb, var(--cc-warn) 14%, transparent); }
+.chat-diff-refresh.is-stale:hover { color: var(--cc-warn); background: color-mix(in srgb, var(--cc-warn) 22%, transparent); }
 /* diff 内容：pre 宽随最长行（max-content）撑开，横向滚动由容器承担，
    行背景色因此能铺满可视宽而不是断在窗口边。 */
 .chat-diff-scroll { flex: 1; min-height: 0; overflow: auto; }
@@ -4711,6 +4810,15 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-text .is-meta { color: var(--cc-text-faint); }
 /* diff 行的符号列（+/−/空）：定宽、不可选中，正文因此与行号槽一样对齐。 */
 .chat-diff-sign { display: inline-block; width: 18px; text-align: center; user-select: none; }
+/* 「更改」的两列行号（旧 / 新）：比文件预览的单列紧一点，只在新行号右侧描一道线隔开代码。 */
+.chat-diff-row .chat-diff-ln { padding: 0 var(--sp-4) 0 var(--sp-6); margin-right: 0; border-right: 0; }
+.chat-diff-row .chat-diff-ln.is-new { margin-right: var(--sp-2); border-right: var(--hairline) solid var(--cc-border); }
+/* 自动换行：不再按最长行撑宽，长行在面板里折下来，行号/符号列钉在左边、折行和正文对齐。 */
+.chat-diff-text.is-wrap { width: auto; }
+.chat-diff-text.is-wrap > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-diff-text.is-wrap > .chat-diff-row, .chat-diff-text.is-wrap.is-code > div { display: flex; align-items: flex-start; }
+.chat-diff-text.is-wrap .chat-diff-ln, .chat-diff-text.is-wrap .chat-diff-sign { flex: none; }
+.chat-diff-text.is-wrap .chat-diff-code { flex: 1; min-width: 0; }
 .chat-diff-text .is-add .chat-diff-sign { color: var(--cc-ok-vivid); }
 .chat-diff-text .is-del .chat-diff-sign { color: var(--cc-err-vivid); }
 /* 行评论（diffComments.ts）：悬停行时左缘内边距里冒出「+」，平时不占位也不抢眼。 */
@@ -4761,6 +4869,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-panel .hljs-strong { font-weight: 700; }
 .chat-diff-empty { flex: 1; display: grid; place-items: center; padding: var(--sp-24); color: var(--cc-text-dim); font-size: var(--text-xs); text-align: center; }
 .chat-diff-empty.is-error { color: var(--cc-err); }
+.chat-diff-clean { display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); }
+.chat-diff-clean svg { color: var(--cc-ok-vivid); }
 .chat-diff-truncated { flex: 0 0 auto; padding: var(--sp-6) var(--sp-12); border-top: var(--hairline) solid var(--cc-border); color: var(--cc-warn); font-size: var(--text-xs); }
 /* 文件树形态：顶部搜索框（侧栏搜索同款幽灵形态），下面目录树。 */
 .chat-diff-search { flex: 0 0 auto; width: calc(100% - 2 * var(--sp-8)); margin: var(--sp-8) var(--sp-8) var(--sp-4); padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid transparent; border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text); font-size: var(--text-xs); outline: none; }
@@ -4784,11 +4894,24 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-files.has-selection > .chat-files-browse { display: none; }
 .chat-files .chat-diff-tree-file.is-selected { color: var(--cc-text); background: var(--fill-selected); }
 .chat-files:not(.has-selection) > .chat-files-preview { display: none; }
+/* 文件页头：工作区名 + 刷新文件树 + 文件树位置（位置只在并排时有意义）。 */
+.chat-files-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8) 0 var(--sp-12); color: var(--cc-text-dim); font-size: var(--text-xs); }
+.chat-files-head > svg { flex: none; }
+.chat-files-root { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font-weight: 600; }
+.chat-files .chat-files-posbtn, .chat-files .chat-files-treetoggle, .chat-files > .chat-files-resizer { display: none; }
 @container diff-panel (min-width: 560px) {
-  /* 选择器与上面窄面板的显隐规则同特异性，才压得过它们。 */
-  .chat-files > .chat-files-browse, .chat-files.has-selection > .chat-files-browse { display: flex; flex: 0 0 clamp(200px, 34%, 300px); border-right: var(--hairline) solid var(--cc-border); }
+  /* 选择器与上面窄面板的显隐规则同特异性，才压得过它们。宽度是拖出来的（--tree-w，160–400），
+     再给预览留至少一半。 */
+  .chat-files > .chat-files-browse, .chat-files.has-selection > .chat-files-browse { display: flex; flex: 0 0 var(--tree-w, 224px); max-width: 50%; }
   .chat-files > .chat-files-preview, .chat-files:not(.has-selection) > .chat-files-preview { display: flex; }
   .chat-files .chat-files-preview .chat-diff-back { display: none; }
+  .chat-files .chat-files-posbtn, .chat-files .chat-files-treetoggle { display: inline-flex; }
+  /* 分隔条：一道细线，两侧各放宽 3px 好抓。 */
+  .chat-files > .chat-files-resizer { display: block; flex: 0 0 var(--hairline); position: relative; z-index: 1; background: var(--cc-border); cursor: col-resize; outline: none; }
+  .chat-files-resizer::before { content: ""; position: absolute; inset: 0 -3px; }
+  .chat-files-resizer:hover, .chat-files-resizer:focus-visible { background: var(--cc-accent); }
+  .chat-files.is-tree-right { flex-direction: row-reverse; }
+  .chat-files.is-tree-hidden > .chat-files-browse, .chat-files.is-tree-hidden > .chat-files-resizer { display: none; }
 }
 .chat-diff-tree { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 0 var(--sp-8) var(--sp-8); }
 .chat-diff-tree-dir, .chat-diff-tree-file { width: 100%; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); cursor: pointer; text-align: left; }
@@ -4800,6 +4923,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-chev { transition: transform var(--dur-fast) var(--ease-out); }
 .chat-diff-chev.is-collapsed { transform: rotate(-90deg); }
 .chat-diff-tree-dir:hover, .chat-diff-tree-file:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 树行右端悬停出的「…」（和右键同一份菜单）：鼠标移到它上面时行底色别掉。 */
+.chat-diff-tree-row { position: relative; }
+.chat-diff-tree-row:hover > .chat-diff-tree-dir, .chat-diff-tree-row:hover > .chat-diff-tree-file { background: var(--fill-hover); color: var(--cc-text); }
+.chat-diff-tree-more { position: absolute; right: var(--sp-4); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; opacity: 0; }
+.chat-diff-tree-row:hover > .chat-diff-tree-more, .chat-diff-tree-more:focus-visible, .chat-diff-tree-more[aria-expanded="true"] { opacity: 1; }
+.chat-diff-tree-more:hover { background: var(--fill-selected); color: var(--cc-text); }
+/* 「…」出来时行内容给它让位：改动行尾的 +12 −3、搜索结果的命中数不被盖住。 */
+.chat-diff-tree-row:hover > button:has(~ .chat-diff-tree-more), .chat-diff-tree-row:focus-within > button:has(~ .chat-diff-tree-more) { padding-right: 30px; }
 .chat-diff-tree-file.is-active { background: var(--fill-selected); color: var(--cc-text); }
 /* 应用图标（系统「打开方式」清单提取的 PNG）：菜单条目与「打开」主键共用。 */
 .path-app-ico { display: block; flex: 0 0 auto; width: 14px; height: 14px; border-radius: var(--r-3); }
@@ -6769,6 +6900,31 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-eyes[data-mode="happy"] .isl-eye-pair { animation: isl-giggle 2.4s ease-in-out infinite; }
 @keyframes isl-giggle { 0%, 70%, 100% { transform: translateY(0); } 80% { transform: translateY(-1.5px); } 90% { transform: translateY(0); } }
 .isl-eyes[data-tone="running"] .isl-spark.is-r { animation-delay: 1.3s; }
+/* 一闪而过的表情（星星眼、吓一跳）：从小弹到大再回落一点，像「咦！」。 */
+.isl-eye-pop { transform-box: fill-box; transform-origin: center; animation: isl-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes isl-pop { from { transform: scale(0.4); } to { transform: scale(1); } }
+.isl-eyes[data-mode="star"] .isl-eye-pair { animation: isl-giggle 1.2s ease-in-out infinite; }
+.isl-spark.is-star { color: var(--isl-warn); font-size: 9px; animation: isl-twinkle 0.8s ease-in-out infinite; }
+/* 抓狂（多个出错）：「> <」左右抖，旁边冒红色「#」。 */
+.isl-eyes[data-mode="frustrated"] .isl-eye-pair { animation: isl-shake 0.5s ease-in-out infinite; }
+@keyframes isl-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-1px); } 75% { transform: translateX(1px); } }
+.isl-spark.is-err { color: var(--isl-err); font-size: 10px; animation: isl-twinkle 0.9s ease-in-out infinite; }
+/* 打哈欠：眼睛挤紧，慢慢缩一下再舒开，眼角挂一滴泪。 */
+.isl-eyes[data-mode="yawn"] .isl-eye-squeeze { transform-box: fill-box; transform-origin: center; animation: isl-yawn 1.8s ease-in-out; }
+@keyframes isl-yawn { 0% { transform: scaleY(1.4); } 40%, 70% { transform: scaleY(0.8); } 100% { transform: scaleY(1); } }
+.isl-tear { position: absolute; left: 3px; bottom: -1px; width: 3px; height: 4px; border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%; background: #8fd3ff; animation: isl-fade-in 0.6s ease; }
+/* 可怜巴巴（待处理放久了）：水汪汪的大眼睛，高光一闪一闪，轻轻晃。 */
+.isl-glint { fill: #fff; }
+.isl-eye-plead { transform-box: fill-box; transform-origin: center bottom; animation: isl-plead 2.4s ease-in-out infinite; }
+@keyframes isl-plead { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-3deg); } 60% { transform: rotate(3deg); } }
+/* 害羞：^ ^ 下面两团粉红。 */
+.isl-cheeks { fill: #ff7aa8; opacity: 0.75; animation: isl-fade-in 0.5s ease; }
+/* 额度用光：两只蚊香圈慢慢转。 */
+.isl-spiral { transform-box: fill-box; transform-origin: center; animation: isl-spin-plain 1.6s linear infinite; }
+@keyframes isl-spin-plain { to { transform: rotate(360deg); } }
+/* 发愁时右上角的一滴汗：淡蓝色，慢慢往下滑、消失，再来一滴。 */
+.isl-sweat { position: absolute; right: 0; top: 0; z-index: 1; width: 4px; height: 6px; border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%; background: #8fd3ff; animation: isl-sweat 2.2s ease-in infinite; }
+@keyframes isl-sweat { 0% { opacity: 0; transform: translateY(-2px); } 20% { opacity: 0.95; } 80% { opacity: 0.9; transform: translateY(5px); } 100% { opacity: 0; transform: translateY(7px); } }
 @keyframes isl-look {
   0%, 18% { transform: translateX(0); }
   28%, 44% { transform: translateX(-2px); }
@@ -7016,7 +7172,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .isl-eye-pair, .isl-zz, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
+  .isl-eye-pair, .isl-zz, .isl-spark, .isl-eye-pop, .isl-spiral, .isl-sweat, .isl-eye-plead, .isl-eye-squeeze, .isl-cheeks, .isl-tear, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
   .isl-ring-arc { transition: none !important; }
   .isl-usage-swap { animation: none !important; }
 }

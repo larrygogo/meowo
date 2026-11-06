@@ -179,6 +179,10 @@ pub(crate) struct Settings {
     /// 岛就点不动了，2026-11-05 移除；字段留着让旧 settings.json 照常读写，不再生效。
     #[serde(default)]
     pub(crate) click_through_enabled: bool,
+    /// 允许 agent 操作对话窗面板里的浏览器（browser_agent.rs）。开着时托管会话启动会挂上
+    /// Meowo 的浏览器 MCP 服务器。默认开（用户要求「像 Kimi Code 那样 agent 能自己操作」）。
+    #[serde(default = "default_true")]
+    pub(crate) browser_agent: bool,
     /// 终端（PTY 画面）字号（px）。缺省 12，兼容老 settings.json。
     #[serde(default = "default_terminal_font_size")]
     pub(crate) terminal_font_size: u32,
@@ -307,6 +311,7 @@ impl Default for Settings {
             card_menu_mode: default_card_menu_mode(),
             preview_enabled: true,
             click_through_enabled: false,
+            browser_agent: true,
             terminal_font_size: default_terminal_font_size(),
             terminal_line_height: default_terminal_line_height(),
             terminal_scrollback: default_terminal_scrollback(),
@@ -828,6 +833,11 @@ pub(crate) async fn set_settings(
         // 否则用户改了代理还得重启 Meowo 才作数。best-effort：写不进去不影响 Meowo 自己的设置已保存。
         let reports = crate::proxy::apply_to_agent_configs();
         let _ = io_app.emit("proxy-applied", &reports);
+        // 「允许 Agent 操作面板浏览器」开关同步到 kimi 的 mcp.json（claude/codex 走启动参数，
+        // 下次启动自然生效）。dev 构建不碰全局配置，同 hooks 自动接线。
+        if crate::setup::auto_wire_enabled() {
+            crate::browser_agent::sync_mcp_files();
+        }
         Ok(settings)
     })
     .await

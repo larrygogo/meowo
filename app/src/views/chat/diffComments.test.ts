@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { diffLineAnchors, formatReviewComments, type ReviewComment } from "./diffComments";
+import { diffLineAnchors, diffLineNumbers, formatReviewComments, type ReviewComment } from "./diffComments";
+
+describe("diffLineNumbers", () => {
+  it("删除行只有旧行号、新增行只有新行号、上下文两边都有；头部行没有", () => {
+    const diff = ["diff --git a/x b/x", "--- a/x", "+++ b/x", "@@ -10,3 +20,3 @@", " keep", "-old", "+new", " tail"].join("\n");
+    expect(diffLineNumbers(diff)).toEqual([
+      null, null, null, null,
+      { old: 10, new: 20 },
+      { old: 11, new: null },
+      { old: null, new: 21 },
+      { old: 12, new: 22 },
+    ]);
+  });
+});
 
 describe("diffLineAnchors", () => {
   it("按 hunk 头起算行号:删除行记旧文件行号,新增与上下文行记新文件行号", () => {

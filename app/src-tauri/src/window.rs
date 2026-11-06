@@ -38,7 +38,7 @@ pub(crate) fn show_after_grace(window: &tauri::WebviewWindow, focus: bool) {
             } else {
                 // focus:false 的窗口（贴纸主窗口）显示也不能激活——普通 show 在
                 // Windows 上会抢焦点（W-7），走 SW_SHOWNOACTIVATE 路径。
-                show_window_no_activate(&w);
+                show_window_no_activate(&w.as_ref().window());
             }
         }
     });
@@ -525,7 +525,7 @@ pub(crate) fn open_chat_window_quiet(app: tauri::AppHandle, session_id: i64) {
 /// 切换无打断，仍走切会话召唤。查询失败按「不在眼前」处理：宁可多召唤一次，
 /// 不可让审批悄悄没入后台。
 pub(crate) fn chat_window_in_view(app: &tauri::AppHandle) -> bool {
-    app.get_webview_window("chat")
+    app.get_window("chat")
         .is_some_and(|w| w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false))
 }
 
@@ -535,7 +535,7 @@ pub(crate) fn chat_window_in_view(app: &tauri::AppHandle) -> bool {
 ///
 /// Windows 上原生 `ShowWindow` 之后**必须**再补一次 `window.show()` 同步 tao 的标志位，
 /// 否则贴纸会在后续某次窗口标志变更时凭空消失，详见函数内注释。
-pub(crate) fn show_window_no_activate(window: &tauri::WebviewWindow) {
+pub(crate) fn show_window_no_activate(window: &tauri::Window) {
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
@@ -568,7 +568,7 @@ pub(crate) fn show_window_no_activate(window: &tauri::WebviewWindow) {
 #[tauri::command]
 pub(crate) fn show_sticker(window: tauri::WebviewWindow) {
     if window.label() == "main" {
-        show_window_no_activate(&window);
+        show_window_no_activate(&window.as_ref().window());
     }
 }
 
@@ -599,7 +599,7 @@ pub(crate) fn set_panel_appearance(app: tauri::AppHandle, theme: Option<String>)
 /// 就被拒——窗口显示了却垫在当前前台窗口身后，用户看到的就是「点了没反应」
 /// （实拍：dev/安装版并存时双击托盘「呼不出」对话窗，其实它开在另一实例的对话窗底下）。
 /// 走 AttachThreadInput 的 force_foreground（点卡片拉终端置前的同一套）强置前。
-fn raise_window(window: &tauri::WebviewWindow) {
+fn raise_window(window: &tauri::Window) {
     #[cfg(target_os = "windows")]
     if let Ok(handle) = window.hwnd() {
         crate::terminal::force_foreground(handle.0 as _);
@@ -703,7 +703,9 @@ pub(crate) fn open_chat_window_target(
     #[cfg(target_os = "macos")]
     crate::macos::menubar::settings_window_will_open(app, "chat");
 
-    if let Some(w) = app.get_webview_window("chat") {
+    // 用 get_window 而不是 get_webview_window：面板里开了浏览器页签后 chat 窗口不再是
+    // 「单 webview 窗口」，后者会返回 None，这里就会去再建一个同名窗口然后报错。
+    if let Some(w) = app.get_window("chat") {
         use tauri::Emitter;
         // emit 失败绝不能静默：窗口会照常聚焦，但停留在旧会话——用户点了卡片 A，
         // 看到的却是会话 B，比不弹窗更具误导性。
@@ -781,6 +783,16 @@ pub(crate) fn open_chat_window_target(
             ptys.reset_viewer();
             #[cfg(target_os = "macos")]
             crate::macos::menubar::settings_window_did_close(&app_handle, "chat");
+            // 面板里开的普通终端只属于这扇窗：窗没了就再没人能看到或关掉它们。只在真正
+            // 销毁时收，CloseRequested 之后窗口可能还在（被拦下或改成隐藏）。
+            if matches!(e, tauri::WindowEvent::Destroyed) {
+                if let Some(shells) = app_handle.try_state::<crate::shell_terminal::ShellTerminals>() {
+                    shells.kill_all();
+                }
+                if let Some(panes) = app_handle.try_state::<crate::browser_pane::BrowserPanes>() {
+                    panes.clear();
+                }
+            }
         }
     });
     // 置前兜底：真正 show 由前端首帧触发（useShowWhenReady），距点击已过去数秒
@@ -792,7 +804,7 @@ pub(crate) fn open_chat_window_target(
         std::thread::spawn(move || {
             for _ in 0..300 {
                 if w.is_visible().unwrap_or(false) {
-                    raise_window(&w);
+                    raise_window(&w.as_ref().window());
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));

@@ -149,7 +149,7 @@ const LINE_HEIGHTS: Record<string, number> = { compact: 1.1, normal: 1.22, relax
 /// 再发一次 resize（TUI 那头是重画一遍）。缓存上次**生效**的值当首帧初值，改过字号的
 /// 用户从此不再吃这一次抖动；缓存读写全套 try/catch——它只是优化，坏了退回默认即可。
 const TERM_STYLE_KEY = "meowo-term-style";
-function termStyleCache(): { size: number; line: number } {
+export function termStyleCache(): { size: number; line: number } {
   try {
     const raw = JSON.parse(localStorage.getItem(TERM_STYLE_KEY) || "null");
     const size = Number(raw?.size);

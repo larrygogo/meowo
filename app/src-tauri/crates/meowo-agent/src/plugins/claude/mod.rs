@@ -315,6 +315,15 @@ impl AgentPlugin for Claude {
         &["--resume"]
     }
     /// `--resume <id> --fork-session`：恢复时换新 session id，原会话不动（`claude --help`，2.1.314）。
+    /// 面板浏览器的 MCP 服务器怎么交给它（见 [`crate::McpAttach`]）。
+    fn mcp_attach(&self) -> Option<crate::McpAttach> {
+        Some(crate::McpAttach::ConfigFileArg {
+            file_flag: "--mcp-config",
+            allow_flag: Some("--allowedTools"),
+            allow_prefix: "mcp__",
+        })
+    }
+
     fn fork_mode(&self) -> Option<crate::ForkMode> {
         Some(crate::ForkMode::Args {
             before: &["--resume"],

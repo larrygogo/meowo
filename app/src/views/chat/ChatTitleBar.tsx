@@ -30,7 +30,7 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
 
 export function ChatTitleBar({
   leading, title, archive, end, cwd, gitSummary, changesOpen, panelOpen, terminalOn,
-  onToggleChanges, onTogglePanel, onToggleTerminal, onError,
+  onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, info = null,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
   leading: ReactNode;
@@ -50,6 +50,10 @@ export function ChatTitleBar({
   onTogglePanel: () => void;
   onToggleTerminal: () => void;
   onError: (message: string) => void;
+  /** 面板收起着，但 agent 正在操作这个会话的面板浏览器：开关上亮一个点（同 Kimi Code）。 */
+  panelAgentBusy?: boolean;
+  /** 会话信息栏开关（面板收起时才有，同 Kimi Code 的「显示 / 隐藏会话信息」）。 */
+  info?: { open: boolean; onToggle: () => void } | null;
 }) {
   const t = useT();
   const pullRequest = usePullRequest(cwd, gitSummary?.isRepo ? gitSummary.branch : null);
@@ -106,18 +110,33 @@ export function ChatTitleBar({
       )}
       {/* 侧边面板（文件 / 改动停靠面板）开合，回到上次看的页签；不是仓库就只有文件页。
           远程不放行文件页，面板只能经改动入口打开。 */}
+      {info && (
+        <button
+          type="button"
+          className={"chat-todo-btn" + (info.open ? " is-active" : "")}
+          data-tip={info.open ? t.chat.sessionInfoHide : t.chat.sessionInfoShow}
+          aria-label={info.open ? t.chat.sessionInfoHide : t.chat.sessionInfoShow}
+          aria-pressed={info.open}
+          onClick={info.onToggle}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+            <path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" />
+          </svg>
+        </button>
+      )}
       {!remoteUi() && cwd && (
         <button
           type="button"
-          className={"chat-todo-btn" + (panelOpen ? " is-active" : "")}
-          data-tip={t.chat.togglePanel}
-          aria-label={t.chat.togglePanel}
+          className={"chat-todo-btn chat-panel-toggle" + (panelOpen ? " is-active" : "")}
+          data-tip={panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
+          aria-label={panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
           aria-pressed={panelOpen}
           onClick={onTogglePanel}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
             <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
           </svg>
+          {panelAgentBusy && <span className="chat-panel-agent-dot" aria-hidden="true" />}
         </button>
       )}
     </header>

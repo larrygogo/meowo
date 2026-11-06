@@ -172,15 +172,22 @@ pub(crate) fn island_host(app: tauri::AppHandle) -> IslandHost {
 /// 菜单栏图标的状态（macOS）：tone 是眼睛的神态（Island.tsx 的 islandTone），segments 是图标右边
 /// 富文本的一段段（文字 / SF Symbol + 颜色，见 macos::status_title）。Windows 托盘不画这些，空操作。
 #[tauri::command]
-pub(crate) fn set_menubar_status(app: tauri::AppHandle, tone: String, segments: serde_json::Value) {
+pub(crate) fn set_menubar_status(
+    app: tauri::AppHandle,
+    tone: String,
+    segments: serde_json::Value,
+    // 灵动岛眼睛此刻的表情（islandParts.tsx 的 EyeMode）：菜单栏的眼睛照着画，两边同一个神态。
+    // 旧前端不传 → None，菜单栏按 tone 的老画法。
+    mood: Option<String>,
+) {
     #[cfg(target_os = "macos")]
     {
         let segments: Vec<crate::macos::status_title::Segment> =
             serde_json::from_value(segments).unwrap_or_default();
-        crate::macos::menubar::set_status(&app, &tone, &segments);
+        crate::macos::menubar::set_status(&app, &tone, mood.as_deref(), &segments);
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (app, tone, segments);
+    let _ = (app, tone, segments, mood);
 }
 
 /// 显示 / 隐藏岛（macOS 菜单栏落点：收起时藏起来，展开、提醒时再显示）。`focus` 见
@@ -303,7 +310,7 @@ pub(crate) fn spawn_fullscreen_watch(app: tauri::AppHandle) {
                         }
                     }
                     FullscreenAction::Show => {
-                        crate::window::show_window_no_activate(&window);
+                        crate::window::show_window_no_activate(&window.as_ref().window());
                         hidden_by_us = false;
                     }
                     FullscreenAction::Nothing => {}

@@ -30,6 +30,7 @@ export const store: Store = {
     card_menu_mode: "button",
     preview_enabled: true,
     click_through_enabled: false,
+    browser_agent: true,
     terminal_font_size: 12,
     terminal_line_height: "normal",
     terminal_scrollback: 5000,
@@ -84,9 +85,18 @@ function mkAccount(provider: string, fiveH: number, sevenD: number): ProviderAcc
   };
 }
 
-export function installMocks(): void {
-  mockWindows("main");
+/// 某段演示额外要的接口（对话窗演示要会话历史、审批等）：返回 undefined 表示不管，落回下面的公共表。
+type ExtraMock = (cmd: string, args: unknown) => unknown;
+let extraMock: ExtraMock | null = null;
+export function setExtraMock(fn: ExtraMock): void {
+  extraMock = fn;
+}
+
+export function installMocks(windowLabel = "main"): void {
+  mockWindows(windowLabel);
   mockIPC((cmd, args) => {
+    const extra = extraMock?.(cmd, args);
+    if (extra !== undefined) return extra;
     switch (cmd) {
       case "host_os":
         return "windows";
