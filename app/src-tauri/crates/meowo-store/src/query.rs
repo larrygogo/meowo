@@ -119,9 +119,10 @@ pub struct LiveSession {
     ///（点开可回看链上历史各段）；None = 普通会话。
     #[cfg_attr(test, ts(type = "number | null"))]
     pub predecessor_id: Option<i64>,
-    /// 手动排序键（[`MANUAL_KEY`]）：只给分页游标用，不下发前端。
-    #[serde(skip)]
-    #[cfg_attr(test, ts(skip))]
+    /// 手动排序键（[`MANUAL_KEY`]，越大越靠前）：分页游标用，也下发前端——灵动岛上的会话头像
+    /// 要和对话窗侧栏同一个顺序（用户 2026-11-06 实拍问「为什么不是会话的顺序」），而岛是按状态
+    /// 分别取的两页，拼起来后只能靠这个键重排。
+    #[cfg_attr(test, ts(type = "number"))]
     pub manual_key: i64,
 }
 

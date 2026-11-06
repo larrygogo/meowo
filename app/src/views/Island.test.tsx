@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
-import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments } from "./Island";
+import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments, sidebarOrder } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYE_CUE_MS, EYES_BLUSH_AFTER_MS, EYES_DROWSY_AFTER_MS, EYES_PLEAD_AFTER_MS, EYES_YAWN_MS, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
@@ -278,6 +278,71 @@ describe("眼睛", () => {
   });
 });
 
+describe("岛上会话头像的顺序跟侧栏一致", () => {
+  const ids = (items: Item[]) => items.map((item) => item.session.id);
+
+  it("默认按手动排序键倒序，置顶在前；不按要紧程度", () => {
+    const running = mk({ manual_key: 300 } as Partial<Item>);
+    const pending = mk({ pending_review: "approval", manual_key: 100 } as Partial<Item>);
+    const waiting = mk({ status: "waiting", manual_key: 200 } as Partial<Item>);
+    const all = [pending, waiting, running];
+    expect(ids(sidebarOrder(all, new Set(), "manual"))).toEqual([running.session.id, waiting.session.id, pending.session.id]);
+    expect(ids(sidebarOrder(all, new Set([pending.session.cc_session_id]), "manual"))[0]).toBe(pending.session.id);
+  });
+
+  it("侧栏选了「最近活跃」就按最后动静排", () => {
+    const old = mk({ lastEventAt: 1_000, manual_key: 900 } as Partial<Item>);
+    const fresh = mk({ lastEventAt: 9_000, manual_key: 100 } as Partial<Item>);
+    expect(ids(sidebarOrder([old, fresh], new Set(), "recent"))).toEqual([fresh.session.id, old.session.id]);
+  });
+
+  it("侧栏手动排序 + 按工作区分组：先按拖出来的工作区顺序，再按组内顺序", () => {
+    const a1 = mk({ cwd: "/w/A", manual_key: 100 } as Partial<Item>);
+    const b1 = mk({ cwd: "/w/B", manual_key: 200 } as Partial<Item>);
+    const a2 = mk({ cwd: "/w/A", manual_key: 50 } as Partial<Item>);
+    // 工作区 A 拖到了 B 上面：b1 的排序键虽大，也排在 A 组之后。
+    expect(ids(sidebarOrder([b1, a1, a2], new Set(), "manual", "dir", ["/w/A", "/w/B"])))
+      .toEqual([a1.session.id, a2.session.id, b1.session.id]);
+    // 没拖过的工作区（不在顺序里）放最上面，与侧栏的 applyGroupOrder 同一规矩。
+    const c1 = mk({ cwd: "/w/C", manual_key: 10 } as Partial<Item>);
+    expect(ids(sidebarOrder([b1, a1, c1], new Set(), "manual", "dir", ["/w/A", "/w/B"])))
+      .toEqual([c1.session.id, a1.session.id, b1.session.id]);
+    // 不分组时仍是扁平顺序。
+    expect(ids(sidebarOrder([b1, a1], new Set(), "manual", "none", ["/w/A", "/w/B"]))).toEqual([b1.session.id, a1.session.id]);
+  });
+
+  it("侧栏最近活动 + 按工作区分组：组序随组内第一条，不看拖出来的顺序", () => {
+    const x = mk({ cwd: "/w/A", lastEventAt: 9_000 } as Partial<Item>);
+    const y = mk({ cwd: "/w/B", lastEventAt: 5_000 } as Partial<Item>);
+    const z = mk({ cwd: "/w/A", lastEventAt: 1_000 } as Partial<Item>);
+    expect(ids(sidebarOrder([z, y, x], new Set(), "recent", "dir", ["/w/B", "/w/A"])))
+      .toEqual([x.session.id, z.session.id, y.session.id]);
+  });
+
+  it("胶囊读侧栏存的分组方式和设置里的工作区顺序", async () => {
+    const a1 = mk({ cwd: "/w/A", manual_key: 100 } as Partial<Item>);
+    const b1 = mk({ cwd: "/w/B", manual_key: 200 } as Partial<Item>);
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "get_settings" ? { workspace_order: ["/w/A", "/w/B"] } : null));
+    try {
+      const { container } = renderIsland({ sessions: [b1, a1] });
+      const shown = () => Array.from(container.querySelectorAll(".isl-agents .isl-agent")).map((el) => Number(el.getAttribute("data-session-id")));
+      await vi.waitFor(() => expect(shown()).toEqual([a1.session.id, b1.session.id]));
+    } finally {
+      localStorage.removeItem("meowo-chat-sidebar-group-mode");
+      invoke.mockImplementation(() => Promise.resolve(null));
+    }
+  });
+
+  it("胶囊上的头像按这个顺序摆", () => {
+    const running = mk({ provider: "claude", manual_key: 300 } as Partial<Item>);
+    const pending = mk({ provider: "kimi", pending_review: "approval", manual_key: 100 } as Partial<Item>);
+    const { container } = renderIsland({ sessions: [pending, running] });
+    const shown = Array.from(container.querySelectorAll(".isl-agents .isl-agent")).map((el) => Number(el.getAttribute("data-session-id")));
+    expect(shown).toEqual([running.session.id, pending.session.id]);
+  });
+});
+
 describe("岛上一闪而过的表情", () => {
   const eyeMode = (container: HTMLElement) => container.querySelector(".isl-eyes")?.getAttribute("data-mode");
   const islandWith = (sessions: Item[]) => (
@@ -493,7 +558,7 @@ describe("IslandPanel 展开面板", () => {
     );
 
   it("会话多于 3 个时翻页看：每页 3 个，最后是用量页", () => {
-    const sessions = Array.from({ length: 5 }, (_, i) => mk({ task_title: `第${i + 1}个`, lastEventAt: 10_000 - i }));
+    const sessions = Array.from({ length: 5 }, (_, i) => mk({ task_title: `第${i + 1}个`, lastEventAt: 10_000 - i, manual_key: 500 - i } as Partial<Item>));
     const usage = { claude: { lanes: [lane("five_hour", 43)], note: null } } as unknown as Record<string, ProviderUsage>;
     const { container } = renderPanel({ sessions, usage });
     const titles = () => [...container.querySelectorAll(".isl-row-title")].map((el) => el.textContent);
@@ -506,16 +571,19 @@ describe("IslandPanel 展开面板", () => {
     expect(screen.getByText(zh.island.panelUsage)).toBeTruthy();
   });
 
-  it("最多列 3 个最要紧的会话，点一行打开它", () => {
+  it("每页 3 个，和侧栏同一个顺序（不按要紧程度），点一行打开它", () => {
     const onOpenSession = vi.fn();
-    const pending = mk({ pending_review: "approval", task_title: "要批的" });
-    const sessions = [mk(), mk(), mk(), pending];
+    const pending = mk({ pending_review: "approval", task_title: "要批的", manual_key: 100 } as Partial<Item>);
+    const top = mk({ task_title: "排第一", manual_key: 400 } as Partial<Item>);
+    const sessions = [mk({ manual_key: 300 } as Partial<Item>), mk({ manual_key: 200 } as Partial<Item>), pending, top];
     const { container } = renderPanel({ sessions, onOpenSession });
     const rows = container.querySelectorAll(".isl-row");
     expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toContain("要批的");
+    expect(rows[0].textContent).toContain("排第一");
+    // 要批的手动排序键最小，排到第二页去了。
+    expect(container.textContent).not.toContain("要批的");
     fireEvent.click(rows[0]);
-    expect(onOpenSession).toHaveBeenCalledWith(pending.session.id);
+    expect(onOpenSession).toHaveBeenCalledWith(top.session.id);
   });
 
   it("新建会话：标题旁的按钮与空态按钮都能开", () => {

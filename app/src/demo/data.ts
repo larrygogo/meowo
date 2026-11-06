@@ -72,5 +72,6 @@ export function makeSession(p: {
     foreign: false,
     // demo 无跨 provider 接续链（不渲染链徽标）。
     predecessor_id: null,
+    manual_key: id,
   };
 }

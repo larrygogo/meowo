@@ -4,10 +4,12 @@
 // 完整列表仍是 Sticker；形态切换的窗口尺寸由 App 驱动（island.rs 按中心点对称改尺寸）。
 // 刘海纯黑、贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接——耳朵在刘海左右各占 ISLAND_EAR，
 // 窗口宽度要把它算进去。胶囊在窗口里水平居中：窗口长大时它不挪位，展开动画从它的轮廓长出来。
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
-import { cardTone } from "./sticker/helpers";
+import { useSettingsEffect } from "../hooks/useSettings";
+import { cardTone, readSidebarGroupMode, readSidebarSortMode, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
+import { sidebarDirGroups } from "./sidebarDrag";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, useEyeCue, useNow, type IslandTone } from "./island/islandParts";
 
@@ -101,6 +103,44 @@ export function byUrgency(items: readonly Item[]): Item[] {
   return liveSessions(items)
     .filter((item) => urgency(item) < 9)
     .sort((a, b) => urgency(a) - urgency(b) || b.session.last_event_at - a.session.last_event_at);
+}
+
+/// 岛上会话头像的排列：和对话窗侧栏同一个顺序（用户 2026-11-06 实拍：岛上的顺序和侧栏对不上）。
+/// 置顶的在前；其余按侧栏选的排序方式，「最近活跃」按最后动静，默认的手动排序按 manual_key（没拖过
+/// 就是创建时间倒序）。侧栏按工作区分组时，再按侧栏同一个组序（sidebarDirGroups：手动排序用拖出来的
+/// 工作区顺序，最近活动随组内第一条）分组后摊平——只排扁平顺序的话，工作区 A 拖到 B 上面后，
+/// B 里排序键更大的会话仍会排在 A 的前面，和侧栏对不上（代码审查指出）。
+/// 只排连着的、有状态的会话，与 byUrgency 取同一批。
+/// 要紧程度仍决定眼睛神态和「聚焦」样式显示哪个会话，只是不再决定头像的先后。
+export function sidebarOrder(
+  items: readonly Item[],
+  starred: ReadonlySet<string>,
+  sortMode: SidebarSortMode,
+  groupMode: SidebarGroupMode = "none",
+  workspaceOrder: readonly string[] = [],
+): Item[] {
+  const recent = sortMode === "recent";
+  const key = (item: Item) => (recent ? item.session.last_event_at : item.manual_key ?? item.session.started_at * 1024);
+  const flat = byUrgency(items).sort((a, b) =>
+    Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
+    || key(b) - key(a)
+    || b.session.id - a.session.id);
+  if (groupMode !== "dir") return flat;
+  return sidebarDirGroups(flat, sortMode, workspaceOrder).flatMap((group) => group.items);
+}
+
+/// 岛上按侧栏顺序排会话：收起的胶囊和展开面板共用（用户 2026-11-06：面板里的列表也要和侧栏一致）。
+/// 工作区的手动顺序在设置里（workspace_order），侧栏拖分组头写入后广播 settings-changed，岛跟着收。
+/// 排序 / 分组方式只存在对话窗的 localStorage 里；岛窗口与它同源（同一个 Tauri 应用的页面），
+/// 读到的是同一份。岛跟着会话列表的轮询重读重算，慢一拍无妨。
+export function useSidebarOrder(sessions: readonly Item[]): Item[] {
+  const { starred } = useStarred();
+  const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
+  useSettingsEffect((settings) => setWorkspaceOrder(settings?.workspace_order ?? []));
+  return useMemo(
+    () => sidebarOrder(sessions, starred, readSidebarSortMode(), readSidebarGroupMode(), workspaceOrder),
+    [sessions, starred, workspaceOrder],
+  );
 }
 
 export function focusSession(items: readonly Item[]): Item | null {
@@ -205,6 +245,7 @@ export function Island({
   const counts = useMemo(() => islandCounts(sessions), [sessions]);
   const tone = islandTone(counts);
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
+  const listed = useSidebarOrder(sessions);
   // 眼睛的神态：整体状态 + 正在用的那家额度 + 忙不忙 + 一闪而过的表情（跑完、新会话、鼠标移上来）。
   const { cue, poke } = useEyeCue(sessions);
   const eyes = { tone, cue, quotaPct: usages[0]?.pct ?? null, busy: counts.running >= EYES_BUSY_AT, errors: counts.error };
@@ -262,8 +303,8 @@ export function Island({
           : null,
       ];
     }
-    const shown = ordered.slice(0, MAX_AGENTS);
-    const more = ordered.length - shown.length;
+    const shown = listed.slice(0, MAX_AGENTS);
+    const more = listed.length - shown.length;
     return [
       <>
         {usages.length > 0 && <UsageRing entries={usages} size={22} />}
@@ -323,8 +364,8 @@ export function Island({
       );
     }
     // 概览（默认）：额度环 · 眼睛 · 时间 · 每个会话一颗带进度环的 agent 图标。
-    const shown = ordered.slice(0, MAX_AGENTS);
-    const more = ordered.length - shown.length;
+    const shown = listed.slice(0, MAX_AGENTS);
+    const more = listed.length - shown.length;
     return (
       <>
         {usages.length > 0 && <UsageRing entries={usages} />}
