@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto } from "../../api";
 import type { ReviewComment } from "./diffComments";
-import { GitDiffView } from "./GitDiffView";
+import { ChangesView, FilesView, GitDiffView, PathMentionContext } from "./GitDiffView";
 import { markRemoteUi } from "../../remoteMode";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -221,4 +221,96 @@ describe("GitDiffView 文件页：树与预览同时在场（对照 Kimi）", ()
     expect(row.getAttribute("aria-current")).toBe("true");
     expect(within(files.querySelector(".chat-files-browse") as HTMLElement).getByText("b.ts")).toBeTruthy();
   });
+
+  it("更改：旧/新两列行号，自动换行开关记住；没有改动时说工作区干净", async () => {
+    localStorage.removeItem("meowo-code-wrap");
+    const { container } = render(<ChangesHarness />);
+    fireEvent.click(screen.getByRole("button", { name: /a\.ts/ }));
+    await waitFor(() => expect(container.querySelector(".chat-diff-row")).toBeTruthy());
+    const rows = Array.from(container.querySelectorAll(".chat-diff-row"));
+    const nos = rows.map((row) => [row.querySelector(".is-old")?.textContent, row.querySelector(".is-new")?.textContent]);
+    expect(nos).toEqual([["10", "10"], ["11", ""], ["", "11"]]);
+    const wrap = screen.getByRole("button", { name: "自动换行" });
+    fireEvent.click(wrap);
+    expect(container.querySelector("pre")!.className).toContain("is-wrap");
+    expect(localStorage.getItem("meowo-code-wrap")).toBe("1");
+    cleanup();
+    render(<ChangesHarness summary={{ ...summary, files: [] }} />);
+    expect(screen.getByText("工作区干净，无改动")).toBeTruthy();
+  });
+
+  it("更改：面板可见时后台发现打开的文件变了，刷新亮成橙色，点了才换", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let diff = DIFF;
+      vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff, truncated: false } : []));
+      const { container } = render(<ChangesHarness live />);
+      fireEvent.click(screen.getByRole("button", { name: /a\.ts/ }));
+      await waitFor(() => expect(container.querySelector("pre")?.textContent).toContain("new"));
+      expect(screen.getByRole("button", { name: "刷新" }).className).not.toContain("is-stale");
+      diff = DIFF.replace("+new", "+newer");
+      await vi.advanceTimersByTimeAsync(5100);
+      const stale = await screen.findByRole("button", { name: "文件有更新，点击刷新" });
+      expect(stale.className).toContain("is-stale");
+      // 没点之前眼前的内容不动。
+      expect(container.querySelector("pre")?.textContent).not.toContain("newer");
+      fireEvent.click(stale);
+      await waitFor(() => expect(container.querySelector("pre")?.textContent).toContain("newer"));
+      expect(screen.getByRole("button", { name: "刷新" }).className).not.toContain("is-stale");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("文件：树行「…」里有添加到对话；压成一行的 JSON 展开显示；文件树位置记住", async () => {
+    localStorage.removeItem("meowo-file-tree-position");
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "list_dir_entries") return [{ name: "data.json", relPath: "data.json", isDir: false }];
+      if (command === "read_file_text") return { relPath: "data.json", text: '{"a":1,"b":[2]}', truncated: false, binary: false };
+      return [];
+    });
+    const mention = vi.fn();
+    const { container } = render(
+      <PathMentionContext.Provider value={mention}>
+        <FilesView cwd="C:epo" />
+      </PathMentionContext.Provider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /添加到对话/ }));
+    expect(mention).toHaveBeenCalledWith("data.json");
+
+    fireEvent.click(screen.getByText("data.json"));
+    await waitFor(() => expect(container.querySelector(".chat-files-preview pre")?.textContent).toContain('"a": 1'));
+    expect(container.querySelectorAll(".chat-files-preview pre > div").length).toBeGreaterThan(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "文件树位置" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /放在右侧/ }));
+    expect(container.querySelector(".chat-files")!.className).toContain("is-tree-right");
+    expect(localStorage.getItem("meowo-file-tree-position")).toBe("right");
+  });
+
+  it("文件：分隔条用键盘调宽，夹在 160–400 之间", async () => {
+    localStorage.removeItem("meowo-file-tree-width");
+    localStorage.removeItem("meowo-file-tree-position");
+    vi.mocked(invoke).mockResolvedValue([]);
+    const { container } = render(<FilesView cwd="C:epo" />);
+    const bar = screen.getByRole("separator", { name: "调整文件树宽度" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("224");
+    fireEvent.keyDown(bar, { key: "ArrowRight", shiftKey: true });
+    expect(bar.getAttribute("aria-valuenow")).toBe("272");
+    for (let i = 0; i < 10; i += 1) fireEvent.keyDown(bar, { key: "ArrowRight", shiftKey: true });
+    expect(bar.getAttribute("aria-valuenow")).toBe("400");
+    expect((container.querySelector(".chat-files") as HTMLElement).style.getPropertyValue("--tree-w")).toBe("400px");
+    expect(localStorage.getItem("meowo-file-tree-width")).toBe("400");
+  });
 });
+
+function ChangesHarness({ summary: sum = summary, live = false }: { summary?: GitDiffSummaryDto; live?: boolean }) {
+  if (!live) {
+    vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
+  }
+  return (
+    <ChangesView cwd="C:epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
+      onAddComment={() => {}} onRemoveComment={() => {}} escOverrideRef={{ current: null }} live={live} />
+  );
+}

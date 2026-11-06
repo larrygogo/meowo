@@ -1199,6 +1199,8 @@ button.stab {
 /* 置灰项（终端右键菜单的「复制/粘贴」按现场可用性定格）：不藏位、只降 opacity，
    菜单结构稳定，肌肉记忆不被打乱；禁用钮不吃 hover 高亮。 */
 .ctx-item:disabled { opacity: 0.4; cursor: default; }
+/* 单选菜单项前的勾（没选中的项放同宽空位，文字对齐）。 */
+.ctx-item .ctx-check { flex: none; display: inline-block; width: 14px; height: 14px; }
 .ctx-item:disabled:hover { background: transparent; }
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
 /* 「结束会话」：平时同普通项，hover/键盘聚焦才显破坏性的红（与对话窗标题栏 .chat-end
@@ -4779,6 +4781,15 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-back { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-6); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-back:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-diff-filehead .chat-diff-path { font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 表头右侧的小图标钮（换行 / 复制 / 刷新），「打开」分体钮跟在后面。 */
+.chat-diff-tools { flex: none; margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); }
+.chat-diff-tools + .chat-diff-open { margin-left: 0; }
+.chat-diff-iconbtn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-4); min-width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-diff-iconbtn:hover { background: var(--fill-hover); color: var(--cc-text); }
+.chat-diff-iconbtn[aria-pressed="true"] { background: var(--fill-selected); color: var(--cc-text); }
+/* 内容过期：「刷新」亮成橙色带字（照 Kimi Code），点了才换上新内容。 */
+.chat-diff-refresh.is-stale { padding: 0 var(--sp-6); color: var(--cc-warn); background: color-mix(in srgb, var(--cc-warn) 14%, transparent); }
+.chat-diff-refresh.is-stale:hover { color: var(--cc-warn); background: color-mix(in srgb, var(--cc-warn) 22%, transparent); }
 /* diff 内容：pre 宽随最长行（max-content）撑开，横向滚动由容器承担，
    行背景色因此能铺满可视宽而不是断在窗口边。 */
 .chat-diff-scroll { flex: 1; min-height: 0; overflow: auto; }
@@ -4799,6 +4810,15 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-text .is-meta { color: var(--cc-text-faint); }
 /* diff 行的符号列（+/−/空）：定宽、不可选中，正文因此与行号槽一样对齐。 */
 .chat-diff-sign { display: inline-block; width: 18px; text-align: center; user-select: none; }
+/* 「更改」的两列行号（旧 / 新）：比文件预览的单列紧一点，只在新行号右侧描一道线隔开代码。 */
+.chat-diff-row .chat-diff-ln { padding: 0 var(--sp-4) 0 var(--sp-6); margin-right: 0; border-right: 0; }
+.chat-diff-row .chat-diff-ln.is-new { margin-right: var(--sp-2); border-right: var(--hairline) solid var(--cc-border); }
+/* 自动换行：不再按最长行撑宽，长行在面板里折下来，行号/符号列钉在左边、折行和正文对齐。 */
+.chat-diff-text.is-wrap { width: auto; }
+.chat-diff-text.is-wrap > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-diff-text.is-wrap > .chat-diff-row, .chat-diff-text.is-wrap.is-code > div { display: flex; align-items: flex-start; }
+.chat-diff-text.is-wrap .chat-diff-ln, .chat-diff-text.is-wrap .chat-diff-sign { flex: none; }
+.chat-diff-text.is-wrap .chat-diff-code { flex: 1; min-width: 0; }
 .chat-diff-text .is-add .chat-diff-sign { color: var(--cc-ok-vivid); }
 .chat-diff-text .is-del .chat-diff-sign { color: var(--cc-err-vivid); }
 /* 行评论（diffComments.ts）：悬停行时左缘内边距里冒出「+」，平时不占位也不抢眼。 */
@@ -4849,6 +4869,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-panel .hljs-strong { font-weight: 700; }
 .chat-diff-empty { flex: 1; display: grid; place-items: center; padding: var(--sp-24); color: var(--cc-text-dim); font-size: var(--text-xs); text-align: center; }
 .chat-diff-empty.is-error { color: var(--cc-err); }
+.chat-diff-clean { display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); }
+.chat-diff-clean svg { color: var(--cc-ok-vivid); }
 .chat-diff-truncated { flex: 0 0 auto; padding: var(--sp-6) var(--sp-12); border-top: var(--hairline) solid var(--cc-border); color: var(--cc-warn); font-size: var(--text-xs); }
 /* 文件树形态：顶部搜索框（侧栏搜索同款幽灵形态），下面目录树。 */
 .chat-diff-search { flex: 0 0 auto; width: calc(100% - 2 * var(--sp-8)); margin: var(--sp-8) var(--sp-8) var(--sp-4); padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid transparent; border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text); font-size: var(--text-xs); outline: none; }
@@ -4872,11 +4894,24 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-files.has-selection > .chat-files-browse { display: none; }
 .chat-files .chat-diff-tree-file.is-selected { color: var(--cc-text); background: var(--fill-selected); }
 .chat-files:not(.has-selection) > .chat-files-preview { display: none; }
+/* 文件页头：工作区名 + 刷新文件树 + 文件树位置（位置只在并排时有意义）。 */
+.chat-files-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8) 0 var(--sp-12); color: var(--cc-text-dim); font-size: var(--text-xs); }
+.chat-files-head > svg { flex: none; }
+.chat-files-root { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font-weight: 600; }
+.chat-files .chat-files-posbtn, .chat-files .chat-files-treetoggle, .chat-files > .chat-files-resizer { display: none; }
 @container diff-panel (min-width: 560px) {
-  /* 选择器与上面窄面板的显隐规则同特异性，才压得过它们。 */
-  .chat-files > .chat-files-browse, .chat-files.has-selection > .chat-files-browse { display: flex; flex: 0 0 clamp(200px, 34%, 300px); border-right: var(--hairline) solid var(--cc-border); }
+  /* 选择器与上面窄面板的显隐规则同特异性，才压得过它们。宽度是拖出来的（--tree-w，160–400），
+     再给预览留至少一半。 */
+  .chat-files > .chat-files-browse, .chat-files.has-selection > .chat-files-browse { display: flex; flex: 0 0 var(--tree-w, 224px); max-width: 50%; }
   .chat-files > .chat-files-preview, .chat-files:not(.has-selection) > .chat-files-preview { display: flex; }
   .chat-files .chat-files-preview .chat-diff-back { display: none; }
+  .chat-files .chat-files-posbtn, .chat-files .chat-files-treetoggle { display: inline-flex; }
+  /* 分隔条：一道细线，两侧各放宽 3px 好抓。 */
+  .chat-files > .chat-files-resizer { display: block; flex: 0 0 var(--hairline); position: relative; z-index: 1; background: var(--cc-border); cursor: col-resize; outline: none; }
+  .chat-files-resizer::before { content: ""; position: absolute; inset: 0 -3px; }
+  .chat-files-resizer:hover, .chat-files-resizer:focus-visible { background: var(--cc-accent); }
+  .chat-files.is-tree-right { flex-direction: row-reverse; }
+  .chat-files.is-tree-hidden > .chat-files-browse, .chat-files.is-tree-hidden > .chat-files-resizer { display: none; }
 }
 .chat-diff-tree { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 0 var(--sp-8) var(--sp-8); }
 .chat-diff-tree-dir, .chat-diff-tree-file { width: 100%; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); cursor: pointer; text-align: left; }
@@ -4888,6 +4923,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-chev { transition: transform var(--dur-fast) var(--ease-out); }
 .chat-diff-chev.is-collapsed { transform: rotate(-90deg); }
 .chat-diff-tree-dir:hover, .chat-diff-tree-file:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 树行右端悬停出的「…」（和右键同一份菜单）：鼠标移到它上面时行底色别掉。 */
+.chat-diff-tree-row { position: relative; }
+.chat-diff-tree-row:hover > .chat-diff-tree-dir, .chat-diff-tree-row:hover > .chat-diff-tree-file { background: var(--fill-hover); color: var(--cc-text); }
+.chat-diff-tree-more { position: absolute; right: var(--sp-4); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; opacity: 0; }
+.chat-diff-tree-row:hover > .chat-diff-tree-more, .chat-diff-tree-more:focus-visible, .chat-diff-tree-more[aria-expanded="true"] { opacity: 1; }
+.chat-diff-tree-more:hover { background: var(--fill-selected); color: var(--cc-text); }
 .chat-diff-tree-file.is-active { background: var(--fill-selected); color: var(--cc-text); }
 /* 应用图标（系统「打开方式」清单提取的 PNG）：菜单条目与「打开」主键共用。 */
 .path-app-ico { display: block; flex: 0 0 auto; width: 14px; height: 14px; border-radius: var(--r-3); }

@@ -4,7 +4,7 @@ import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
-import { ChangesView, FilesView, PathMenu, type PathMenuItem } from "./GitDiffView";
+import { ChangesView, FilesView, PathMenu, PathMentionContext, type PathMenuItem } from "./GitDiffView";
 import type { PanelState, PanelTab } from "./panelTabs";
 import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
@@ -26,6 +26,8 @@ type Props = {
   touchedPaths: readonly string[];
   turnTouchedPaths: readonly string[];
   browserSuggestions: readonly string[];
+  /** 文件/改动的路径菜单里「添加到对话」：把相对路径插进输入框。 */
+  onMention?: (rel: string) => void;
 };
 
 /**
@@ -207,6 +209,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         }
         return null;
       })}
+      <PathMentionContext.Provider value={props.onMention ?? null}>
       {active?.type === "diff" && (isRepo && summary
         ? (
           <ChangesView
@@ -219,10 +222,12 @@ export const SidePanel = memo(function SidePanel(props: Props) {
             onAddComment={props.onAddComment}
             onRemoveComment={props.onRemoveComment}
             escOverrideRef={escOverrideRef}
+            live={!collapsed}
           />
         )
         : <p className="side-panel-empty">{t.chat.diffNoRepo}</p>)}
-      {active?.type === "files" && <FilesView key={cwd} cwd={cwd} />}
+      {active?.type === "files" && <FilesView key={cwd} cwd={cwd} live={!collapsed} />}
+      </PathMentionContext.Provider>
     </aside>
   );
 });

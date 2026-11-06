@@ -968,6 +968,25 @@ export function ChatWindow() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [diffCwd, panelState.visible]);
+  // 「更改」页签开着时每 5 秒重拉一次摘要（照 Kimi Code 的改动面板：agent 一边改，列表一边动）。
+  // 内容没变就不换对象，免得 ChangesView 每 5 秒作废一遍缓存。
+  const diffTabShown = panelState.visible && panelState.tabs.some((tab) => tab.key === panelState.active && tab.type === "diff");
+  useEffect(() => {
+    if (!diffCwd || !diffTabShown) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      getGitDiffSummary(diffCwd)
+        .then((result) => {
+          if (!cancelled) setGitSummary((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [diffCwd, diffTabShown]);
   // 恢复/接管时的权限改选："" = 沿用会话存的选择；选了具体档就随本次恢复下发，
   // 后端按选项维度合并写回，成为会话新的持久形态——覆盖「当年不是以跳过权限新建、
   // 恢复时想切过去」的场景（存量会话同样适用）。没声明权限类选项的 agent 不显示。
@@ -1285,6 +1304,12 @@ export function ChatWindow() {
       el.setSelectionRange(at, at);
     });
   };
+  // 面板路径菜单的「添加到对话」：认 @ 补全的 agent 插 `@路径`，其余插裸路径（agent 一样读得懂）。
+  // SidePanel 是 memo 的，经 ref 拿最新的 insertIntoPrompt，回调本身保持稳定。
+  const insertIntoPromptRef = useRef(insertIntoPrompt);
+  insertIntoPromptRef.current = insertIntoPrompt;
+  const mentionPrefix = chatUi?.attachment_mention ? "@" : "";
+  const mentionPath = useCallback((rel: string) => insertIntoPromptRef.current(`${mentionPrefix}${rel} `), [mentionPrefix]);
   const pickStarter = (text: string) => {
     setPrompt(text);
     // 预填后光标放到末尾:斜杠命令接着打参数,@ 接着触发文件补全。
@@ -5175,6 +5200,7 @@ export function ChatWindow() {
                 touchedPaths={touchedPaths}
                 turnTouchedPaths={turnTouchedPaths}
                 browserSuggestions={browserSuggestions}
+                onMention={mentionPath}
               />
             )}
           </Suspense>
