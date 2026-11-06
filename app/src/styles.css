@@ -4700,7 +4700,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .browser-pane-agent button { margin-left: auto; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
 .side-panel-tab-agent { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-accent-text); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
 @keyframes browser-agent-pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent { animation: none; } }
+/* 面板收起时 agent 在操作浏览器：标题栏的面板开关右上角亮一个点。 */
+.chat-panel-toggle { position: relative; }
+.chat-panel-agent-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-accent-text); box-shadow: 0 0 0 2px var(--cc-bg); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent, .chat-panel-agent-dot { animation: none; } }
 .browser-pane-view { position: relative; flex: 1; min-height: 0; background: var(--cc-bg); }
 .browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 .browser-pane-start ul { margin: var(--sp-14) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); }

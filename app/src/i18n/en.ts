@@ -657,6 +657,7 @@ export const en: Dict = {
     browserAgentPaused: "You took over; the agent is paused",
     browserAgentTakeOver: "Take over",
     browserAgentResume: "Hand back",
+    browserAgentBusyTip: "Agent is using the browser",
     browserCopyUrl: "Copy address",
     shellBusyTitle: "Close running terminals?",
     shellBusyMessage: "Programs are still running in these terminals. Closing will stop them.",

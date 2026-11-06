@@ -30,7 +30,7 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
 
 export function ChatTitleBar({
   leading, title, archive, end, cwd, gitSummary, changesOpen, panelOpen, terminalOn,
-  onToggleChanges, onTogglePanel, onToggleTerminal, onError,
+  onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
   leading: ReactNode;
@@ -50,6 +50,8 @@ export function ChatTitleBar({
   onTogglePanel: () => void;
   onToggleTerminal: () => void;
   onError: (message: string) => void;
+  /** 面板收起着，但 agent 正在操作这个会话的面板浏览器：开关上亮一个点（同 Kimi Code）。 */
+  panelAgentBusy?: boolean;
 }) {
   const t = useT();
   const pullRequest = usePullRequest(cwd, gitSummary?.isRepo ? gitSummary.branch : null);
@@ -109,15 +111,16 @@ export function ChatTitleBar({
       {!remoteUi() && cwd && (
         <button
           type="button"
-          className={"chat-todo-btn" + (panelOpen ? " is-active" : "")}
-          data-tip={t.chat.togglePanel}
-          aria-label={t.chat.togglePanel}
+          className={"chat-todo-btn chat-panel-toggle" + (panelOpen ? " is-active" : "")}
+          data-tip={panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
+          aria-label={panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
           aria-pressed={panelOpen}
           onClick={onTogglePanel}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
             <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
           </svg>
+          {panelAgentBusy && <span className="chat-panel-agent-dot" aria-hidden="true" />}
         </button>
       )}
     </header>

@@ -490,6 +490,24 @@ pub(crate) fn reassign_panels(from: i64, to: i64) {
 /// MCP 服务器在 agent 那边的名字；claude 里工具名就是 `mcp__meowo__browser_*`。
 const SERVER_NAME: &str = "meowo";
 
+/// claude 免审批的浏览器工具：打开、读、点、填这些照 Kimi Code 直接做，用户随时能接管。
+/// `browser_evaluate` 不在里面——它能在已登录的网站上跑任意脚本，照常走 claude 自己的审批。
+/// 和 meowo-reporter mcp.rs 的工具清单对应，加工具时两边一起改。
+const AUTO_ALLOWED: &[&str] = &[
+    "browser_open",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_select",
+    "browser_press",
+    "browser_scroll",
+    "browser_wait_for",
+    "browser_back",
+    "browser_forward",
+    "browser_reload",
+];
+
 /// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。
 /// - claude：`--mcp-config <文件>` 挂上服务器，`--allowedTools mcp__meowo` 放行这组工具——
 ///   和 Kimi Code 一样 agent 直接操作，用户随时能在页签上「接管」。配置写成文件而不是内联
@@ -505,12 +523,15 @@ pub(crate) fn launch_args(provider: &str) -> Vec<String> {
     };
     match provider {
         "claude" => match claude_config_file(&reporter) {
-            Some(path) => vec![
-                "--mcp-config".into(),
-                path,
-                "--allowedTools".into(),
-                format!("mcp__{SERVER_NAME}"),
-            ],
+            Some(path) => {
+                let mut args = vec!["--mcp-config".into(), path, "--allowedTools".into()];
+                args.extend(
+                    AUTO_ALLOWED
+                        .iter()
+                        .map(|tool| format!("mcp__{SERVER_NAME}__{tool}")),
+                );
+                args
+            }
             None => Vec::new(),
         },
         "codex" if !reporter.contains('\'') => vec![
@@ -836,6 +857,12 @@ mod tests {
         sync_kimi_mcp_in(&dir, true, Some("C:/m/meowo-reporter.exe"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn evaluate_is_not_auto_allowed() {
+        assert!(!AUTO_ALLOWED.contains(&"browser_evaluate"));
+        assert!(AUTO_ALLOWED.contains(&"browser_click"));
     }
 
     #[test]

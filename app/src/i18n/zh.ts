@@ -715,6 +715,7 @@ export const zh = {
     browserAgentPaused: "你已接管，Agent 暂时不能操作",
     browserAgentTakeOver: "接管",
     browserAgentResume: "交还",
+    browserAgentBusyTip: "Agent 正在操作浏览器",
     browserCopyUrl: "复制网址",
     shellBusyTitle: "关闭正在运行的终端？",
     shellBusyMessage: "这些终端里还有程序在跑，关闭会把它们一起结束。",
