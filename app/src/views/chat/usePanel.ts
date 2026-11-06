@@ -21,7 +21,7 @@ export type PanelActions = ReturnType<typeof usePanel>["actions"];
  * 页签清单按会话存在 localStorage；终端和浏览器的进程在后端，这里按编号对上号：
  * 切到一个没有活进程的终端 / 浏览器页签（新开的，或应用重启过），就按存下的目录 / 网址重新起一个。
  */
-export function usePanel(sessionId: number, cwd: string | null, onError: (message: string) => void) {
+export function usePanel(sessionId: number, cwd: string | null, onError: (message: string) => void, ended = false) {
   const t = useT();
   const [panel, setPanel] = useState<{ sessionId: number; state: PanelState }>(() => ({ sessionId, state: loadPanel(sessionId) }));
   // 换会话：先存旧会话的（保存 effect 已经在每次变化时存过），再读新会话的。
@@ -111,12 +111,24 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     });
   });
 
+  // ── 会话已经结束：进程早没了的终端 / 浏览器页签直接去掉，不再按记录重新打开 ──
+  // 实拍：会话结束后 dev 重启过，面板记录还在，一点开就把网页和终端又全开了回来。
+  // 只去掉「起过、现在没了」的；结束后用户自己新开的（编号还是空的）照常起。
+  useEffect(() => {
+    if (remoteUi() || !ended || !liveLoaded) return;
+    const stale = state.tabs.filter((tab) => (tab.type === "term" && tab.shellId !== null && !shells.has(tab.shellId))
+      || (tab.type === "browser" && tab.paneId !== null && !panes.has(tab.paneId)));
+    if (stale.length > 0) update((prev) => closeTabs(prev, stale.map((tab) => tab.key)));
+  }, [ended, liveLoaded, state.tabs, shells, panes, update]);
+
   // ── 切到没有活进程的终端 / 浏览器页签：按存下的目录 / 网址起一个 ──
   const spawning = useRef(new Set<string>());
   const active = activeTab(state);
   useEffect(() => {
     if (remoteUi() || !liveLoaded || !state.visible || !active) return;
     if (spawning.current.has(active.key)) return;
+    // 已结束的会话不补开旧进程（上面的 effect 会把这种页签去掉）。
+    if (ended && ((active.type === "term" && active.shellId !== null) || (active.type === "browser" && active.paneId !== null))) return;
     const owner = sessionId;
     const key = active.key;
     if (active.type === "term" && (active.shellId === null || !shells.has(active.shellId))) {
@@ -140,7 +152,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
         .catch((e) => onError(formatBackendError(e, t.locale)))
         .finally(() => spawning.current.delete(key));
     }
-  }, [active, state.visible, liveLoaded, shells, panes, sessionId, cwd, update, onError, t.locale]);
+  }, [active, state.visible, liveLoaded, shells, panes, sessionId, cwd, update, onError, t.locale, ended]);
 
   // ── 关闭：终端里还有程序在跑先确认（参照 Kimi Code「关闭正在运行的终端？」）──
   const close = useCallback(async (keys: readonly string[]) => {

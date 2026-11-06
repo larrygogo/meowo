@@ -108,4 +108,29 @@ describe("面板与后端进程对号", () => {
     expect(result.current.state).toEqual({ tabs: [], active: null, visible: false, expanded: false });
     expect(loadPanel(1).tabs).toHaveLength(0);
   });
+
+  it("已结束的会话：进程早没了的终端和浏览器页签直接去掉，不再重新打开；之后手动新开的照常能起", async () => {
+    savePanel(1, {
+      tabs: [
+        { key: "w", type: "browser", paneId: 5, url: "https://example.com/", title: "" },
+        { key: "t", type: "term", shellId: 3, cwd: "C:\\repo" },
+        { key: "f", type: "files" },
+      ],
+      active: "w",
+      visible: true,
+      expanded: false,
+    });
+    invoke.mockImplementation(async (cmd: string, args?: { owner?: number }) => {
+      if (cmd.endsWith("_list")) return [];
+      if (cmd === "shell_terminal_open") return { id: 8, owner: args?.owner, title: "pwsh", exited: false };
+      return null;
+    });
+    const { result } = renderHook(() => usePanel(1, "C:\\repo", () => {}, true));
+    await waitFor(() => expect(result.current.state.tabs.map((tab) => tab.type)).toEqual(["files"]));
+    expect(invoke).not.toHaveBeenCalledWith("browser_pane_open", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("shell_terminal_open", expect.anything());
+    act(() => result.current.actions.newTerminal());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("shell_terminal_open", expect.objectContaining({ owner: 1 })));
+    await waitFor(() => expect(result.current.state.tabs.map((tab) => tab.type)).toEqual(["files", "term"]));
+  });
 });

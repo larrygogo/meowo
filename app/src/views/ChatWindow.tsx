@@ -832,7 +832,9 @@ export function ChatWindow() {
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
   // 右侧面板：改动、文件、终端、浏览器同一排页签，按会话各存一份（照 Kimi Code，
   // 模型见 chat/panelTabs.ts，状态与动作见 chat/usePanel.ts）。
-  const panel = usePanel(sessionId, cwd, setSendError);
+  // 会话已结束（库里 ended 且进程不在了）：面板不再补开它旧的终端和浏览器。
+  const sessionEnded = history?.status === "ended" && !history?.connected;
+  const panel = usePanel(sessionId, cwd, setSendError, sessionEnded);
   const panelActions = panel.actions;
   const panelState = panel.state;
   // 面板宽度：拖拽 / 键盘调宽与持久化见 chat/useDiffPanelWidth（全局一份，不分会话）。

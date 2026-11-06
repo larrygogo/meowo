@@ -934,6 +934,16 @@ pub(crate) fn spawn_liveness_watch(
                     .end_orphaned_idle(RESUME_GRACE_MS, now_ms(), &pty_live)
                     .unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &agent_pids, now_ms());
+                // 会话结束 → 面板里它开的终端和浏览器一起关（用户要求）。托管 PTY 的退出在
+                // pty.rs 的 finalize_exit 里已经处理；这里兜住其余结束路径（进程死了由本轮
+                // 收尾、外部终端里跑的会话等）：上一轮还活着、这一轮没了、库里已是 ended、
+                // 也没被本 GUI 托管着（就地重启中的不算）。
+                for id in last.iter().filter(|id| !alive.contains(id)) {
+                    let ended = store.get_session(*id).is_ok_and(|session| session.status == "ended");
+                    if ended && !pty_live.contains(id) {
+                        crate::browser_agent::close_session_panels(&app, *id);
+                    }
+                }
                 if alive != last || reaped > 0 || orphaned > 0 {
                     emit_board_changed(&app, "liveness");
                     last = alive;
