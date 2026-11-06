@@ -161,8 +161,42 @@ fn schedule_idle(app: &tauri::AppHandle, id: u32) {
         if idle {
             let panes = app.state::<BrowserPanes>();
             browser_pane::update(&app, &panes.panes, id, |info| info.agent_active = false);
+            // agent 停手了，页面上的 agent 鼠标也淡出。
+            let _ = eval(&app, id, "H.hideCursor()");
         }
     });
+}
+
+/// 每个页签上 agent 鼠标最后停在哪（视口坐标）。跳到新页面后鼠标元素没了，从这里接着画，
+/// 不会每次都从角落飞过来。
+fn cursor_positions() -> &'static Mutex<std::collections::HashMap<u32, (f64, f64)>> {
+    static MAP: OnceLock<Mutex<std::collections::HashMap<u32, (f64, f64)>>> = OnceLock::new();
+    MAP.get_or_init(Default::default)
+}
+
+/// 让页面上的 agent 鼠标移到元素上，等动画走完再动手（用户要求「能看到 agent 的鼠标」，
+/// 同 Kimi Code 的 browserControlPointer）。鼠标只是画出来的，不影响真正的点击。
+fn point(app: &tauri::AppHandle, id: u32, r: &str) -> Result<(), String> {
+    let last = cursor_positions()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&id).copied());
+    let place = match last {
+        Some((x, y)) => format!("H.place({x}, {y}), "),
+        None => String::new(),
+    };
+    let at = eval(app, id, &format!("({place}H.point({}))", js_str(r)))?;
+    if let (Some(x), Some(y)) = (
+        at.get("x").and_then(Value::as_f64),
+        at.get("y").and_then(Value::as_f64),
+    ) {
+        if let Ok(mut map) = cursor_positions().lock() {
+            map.insert(id, (x, y));
+        }
+    }
+    // 和页面里鼠标的移动动画（CURSOR_MOVE_MS）对齐，再多留一点让人看清落点。
+    std::thread::sleep(Duration::from_millis(480));
+    Ok(())
 }
 
 fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<String, String> {
@@ -210,10 +244,12 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
         "browser_snapshot" => snapshot(app, id),
         "browser_click" => {
             let r = ref_arg(args)?;
+            point(app, id, &r)?;
             act(app, id, &format!("H.click({})", js_str(&r)))
         }
         "browser_type" => {
             let r = ref_arg(args)?;
+            point(app, id, &r)?;
             let text = str_arg("text").unwrap_or_default();
             let submit = args.get("submit").and_then(Value::as_bool).unwrap_or(false);
             act(
@@ -224,6 +260,7 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
         }
         "browser_select" => {
             let r = ref_arg(args)?;
+            point(app, id, &r)?;
             let value = str_arg("value").unwrap_or_default();
             act(
                 app,
@@ -239,7 +276,13 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
             let dy = args.get("dy").and_then(Value::as_f64).unwrap_or(600.0);
             let target = str_arg("ref");
             let expr = match target {
-                Some(r) => format!("H.scrollTo({})", js_str(&r)),
+                Some(r) => {
+                    if !r.chars().all(|c| c.is_ascii_alphanumeric()) {
+                        return Err(format!("元素编号无效：{r}"));
+                    }
+                    point(app, id, &r)?;
+                    format!("H.scrollTo({})", js_str(&r))
+                }
                 None => format!("(window.scrollBy(0, {dy}), 'scrolled')"),
             };
             act(app, id, &expr)
@@ -505,7 +548,7 @@ pub(crate) fn sync_kimi_mcp() {
 }
 
 /// 页面里的辅助对象。每次 eval 都带上，已有就跳过。
-const HELPER: &str = r#"
+const HELPER: &str = r##"
 if (!window.__meowoAgent) window.__meowoAgent = (() => {
   let next = 1;
   const INTERACTIVE = 'a[href],button,input,textarea,select,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[role=combobox],[role=textbox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
@@ -574,11 +617,68 @@ if (!window.__meowoAgent) window.__meowoAgent = (() => {
   const center = (el) => {
     el.scrollIntoView({ block: 'center', inline: 'center' });
     const r = el.getBoundingClientRect();
-    return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true, view: window };
+    // 和 agent 鼠标落点同一个位置（宽元素取靠左 40px 处，不在一整行的正中间点）。
+    return { clientX: Math.round(r.left + Math.min(r.width / 2, 40)), clientY: Math.round(r.top + r.height / 2), bubbles: true, cancelable: true, view: window };
+  };
+  // ── agent 鼠标：画在一个封闭 shadow root 里，网页样式碰不到它，它也不接收点击 ──
+  const CURSOR_ID = '__meowo_agent_cursor';
+  const CURSOR_MOVE_MS = 420;
+  let cursorRoot = null;
+  const cursor = () => {
+    let host = document.getElementById(CURSOR_ID);
+    if (host && cursorRoot) return { host, root: cursorRoot, fresh: false };
+    if (host) host.remove();
+    host = document.createElement('div');
+    host.id = CURSOR_ID;
+    host.setAttribute('style', 'all: initial; position: fixed; inset: 0 auto auto 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;');
+    cursorRoot = host.attachShadow({ mode: 'closed' });
+    cursorRoot.innerHTML = '<style>'
+      + '.c{position:fixed;left:0;top:0;transform:translate(-100px,-100px);transition:transform ' + CURSOR_MOVE_MS + 'ms cubic-bezier(.22,.9,.3,1),opacity .25s;opacity:0;will-change:transform;}'
+      + '.c.on{opacity:1}'
+      + '.c svg{display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}'
+      + '.tag{position:absolute;left:16px;top:18px;padding:2px 6px;border-radius:6px;background:#55d6ae;color:#0b1f18;font:600 11px/1.4 system-ui,sans-serif;white-space:nowrap}'
+      + '.r{position:fixed;left:0;top:0;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid #55d6ae;opacity:.9;animation:r .5s ease-out forwards}'
+      + '@keyframes r{from{transform:var(--at) scale(.3);opacity:.9}to{transform:var(--at) scale(1.6);opacity:0}}'
+      + '</style><div class="c"><svg width="22" height="24" viewBox="0 0 22 24"><path d="M2 2l7.5 19 2.6-7.4L19.5 11z" fill="#55d6ae" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg><span class="tag">Agent</span></div>';
+    (document.body || document.documentElement).appendChild(host);
+    return { host, root: cursorRoot, fresh: true };
+  };
+  const moveCursor = (x, y, animate) => {
+    const { root } = cursor();
+    const c = root.querySelector('.c');
+    if (!animate) c.style.transition = 'none';
+    c.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+    c.classList.add('on');
+    if (!animate) { c.getBoundingClientRect(); c.style.transition = ''; }
+  };
+  // 新页面上先把鼠标放回上次的位置（不带动画），再从那里移到目标。
+  const place = (x, y) => { if (cursor().fresh) moveCursor(x, y, false); };
+  const point = (ref) => {
+    const el = find(ref);
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = el.getBoundingClientRect();
+    const x = Math.round(r.left + Math.min(r.width / 2, 40));
+    const y = Math.round(r.top + r.height / 2);
+    moveCursor(x, y, true);
+    return { x, y };
+  };
+  const ripple = (x, y) => {
+    const { root } = cursor();
+    const dot = document.createElement('div');
+    dot.className = 'r';
+    dot.style.setProperty('--at', 'translate(' + x + 'px,' + y + 'px)');
+    root.appendChild(dot);
+    setTimeout(() => dot.remove(), 600);
+  };
+  const hideCursor = () => {
+    const host = document.getElementById(CURSOR_ID);
+    if (host && cursorRoot) cursorRoot.querySelector('.c').classList.remove('on');
+    return 'hidden';
   };
   const click = (ref) => {
     const el = find(ref);
     const at = center(el);
+    ripple(at.clientX, at.clientY);
     for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
       el.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type, at));
     }
@@ -628,9 +728,9 @@ if (!window.__meowoAgent) window.__meowoAgent = (() => {
     return '已按下 ' + key;
   };
   const scrollTo = (ref) => { center(find(ref)); return '已滚动到 ' + ref; };
-  return { snapshot, click, type, select, press, scrollTo };
+  return { snapshot, click, type, select, press, scrollTo, place, point, hideCursor };
 })()
-"#;
+"##;
 
 #[cfg(test)]
 mod tests {
