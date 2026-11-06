@@ -103,13 +103,13 @@ export function BrowserPane({ info, visible, suggestions }: {
   return (
     <div className="browser-pane" style={visible ? undefined : { display: "none" }}>
       <form className="browser-pane-bar" onSubmit={submit}>
-        <button type="button" className="chat-diff-action" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank} onClick={() => act("back")}>
+        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank} onClick={() => act("back")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
         </button>
-        <button type="button" className="chat-diff-action" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank} onClick={() => act("forward")}>
+        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank} onClick={() => act("forward")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5l7 7-7 7" /></svg>
         </button>
-        <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip={t.chat.browserReload} disabled={blank} onClick={() => act("reload")}>
+        <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip-placement="top" data-tip={t.chat.browserReload} disabled={blank} onClick={() => act("reload")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
         </button>
         <input
@@ -131,7 +131,7 @@ export function BrowserPane({ info, visible, suggestions }: {
             }
           }}
         />
-        <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip={t.chat.browserOpenExternal} disabled={blank} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
+        <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>
         </button>
       </form>
