@@ -543,15 +543,24 @@ fn claude_config_file(reporter: &str) -> Option<String> {
 /// 会话令牌，工具列表是空的（见 meowo-reporter 的 mcp.rs），不会添乱。
 /// 只在自动接线开着时调（dev 构建默认不碰全局配置，同 hooks）。
 pub(crate) fn sync_kimi_mcp() {
-    let home = std::env::var_os("KIMI_CODE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| meowo_agent::home_dir().map(|home| home.join(".kimi-code")));
-    let Some(home) = home.filter(|dir| dir.is_dir()) else {
-        return;
-    };
-    let path = home.join("mcp.json");
-    let enabled = crate::settings::load_settings().browser_agent;
+    // 默认账号 + Meowo 里建的每个 kimi 账号：多账号靠 KIMI_CODE_HOME 整个换数据目录，
+    // 只登记默认目录的话，非默认账号启动的会话拿不到这组工具。
+    let settings = crate::settings::load_settings();
+    let mut homes: Vec<std::path::PathBuf> = Vec::new();
+    homes.extend(crate::profile::data_dir("kimi", None));
+    for profile in settings.profiles.get("kimi").into_iter().flatten() {
+        homes.extend(crate::profile::data_dir("kimi", Some(&profile.id)));
+    }
+    homes.sort();
+    homes.dedup();
     let reporter = crate::setup::sibling_reporter();
+    for home in homes.into_iter().filter(|dir| dir.is_dir()) {
+        sync_kimi_mcp_in(&home, settings.browser_agent, reporter.as_deref());
+    }
+}
+
+fn sync_kimi_mcp_in(home: &std::path::Path, enabled: bool, reporter: Option<&str>) {
+    let path = home.join("mcp.json");
     let mut root: Value = match std::fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice(&bytes) {
             Ok(value) => value,
@@ -571,7 +580,7 @@ pub(crate) fn sync_kimi_mcp() {
     let Some(servers) = servers else { return };
     let changed = match (enabled, reporter) {
         (true, Some(reporter)) => {
-            let entry = server_entry(&reporter);
+            let entry = server_entry(reporter);
             if servers.get(SERVER_NAME) == Some(&entry) {
                 false
             } else {
@@ -799,6 +808,34 @@ mod tests {
         assert_eq!(ref_arg(&json!({ "ref": "e12" })).unwrap(), "e12");
         assert!(ref_arg(&json!({ "ref": "e1\"]; alert(1); //" })).is_err());
         assert!(ref_arg(&json!({})).is_err());
+    }
+
+    /// kimi 的 mcp.json：开着就加 meowo 一项、关了就摘掉，别的服务器原样保留；
+    /// 用户手写坏了的文件不碰。
+    #[test]
+    fn kimi_mcp_entry_is_merged_and_removed_without_touching_others() {
+        let dir = std::env::temp_dir().join(format!("meowo-kimi-mcp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"other":{"command":"x"}},"keep":1}"#,
+        )
+        .unwrap();
+        let read = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
+        sync_kimi_mcp_in(&dir, true, Some("C:/m/meowo-reporter.exe"));
+        let root = read();
+        assert_eq!(root["mcpServers"]["meowo"]["args"], json!(["mcp"]));
+        assert_eq!(root["mcpServers"]["other"]["command"], "x");
+        assert_eq!(root["keep"], 1);
+        sync_kimi_mcp_in(&dir, false, Some("C:/m/meowo-reporter.exe"));
+        let root = read();
+        assert!(root["mcpServers"].get("meowo").is_none());
+        assert_eq!(root["mcpServers"]["other"]["command"], "x");
+        std::fs::write(&path, "{broken").unwrap();
+        sync_kimi_mcp_in(&dir, true, Some("C:/m/meowo-reporter.exe"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
