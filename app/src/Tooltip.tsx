@@ -8,7 +8,7 @@ const SHOW_DELAY = 320; // 悬停多久才弹：原生 title 约 500ms 偏迟钝
 const GAP = 7; // 提示框与锚点元素的垂直间距
 const MARGIN = 6; // 距窗口边的最小余量（贴纸窗仅 360px 宽，需夹边防溢出）
 
-type Tip = { text: string; rect: DOMRect } | null;
+type Tip = { text: string; rect: DOMRect; above?: boolean } | null;
 
 export function TooltipLayer() {
   const [tip, setTip] = useState<Tip>(null);
@@ -58,7 +58,7 @@ export function TooltipLayer() {
       setTip(null); // 先撤掉上一个，切换元素时不串显旧文案
       timer.current = window.setTimeout(() => {
         if (anchor.current !== el) return;
-        setTip({ text: el.getAttribute("data-tip") || "", rect: el.getBoundingClientRect() });
+        setTip({ text: el.getAttribute("data-tip") || "", rect: el.getBoundingClientRect(), above: el.getAttribute("data-tip-placement") === "top" });
       }, SHOW_DELAY);
     };
     const onOver = (e: MouseEvent) => show(e.target);
@@ -92,7 +92,7 @@ export function TooltipLayer() {
       clear();
       timer.current = window.setTimeout(() => {
         if (anchor.current !== el) return;
-        setTip({ text: el.getAttribute("data-tip") || "", rect: el.getBoundingClientRect() });
+        setTip({ text: el.getAttribute("data-tip") || "", rect: el.getBoundingClientRect(), above: el.getAttribute("data-tip-placement") === "top" });
       }, 500);
     };
     const onPointerEnd = (e: PointerEvent) => {
@@ -162,7 +162,9 @@ export function TooltipLayer() {
     const below = rect.bottom + GAP;
     const above = rect.top - GAP - bh;
     let top = below;
-    if (below + bh > vh - MARGIN && above >= MARGIN) top = above;
+    // data-tip-placement="top"：优先往上弹。面板浏览器工具栏下面紧贴着原生网页视图，
+    // 往下弹的提示会被它盖住看不见。
+    if ((tip.above || below + bh > vh - MARGIN) && above >= MARGIN) top = above;
     top = Math.max(MARGIN, Math.min(top, vh - bh - MARGIN));
     box.style.left = `${Math.round(left)}px`;
     box.style.top = `${Math.round(top)}px`;

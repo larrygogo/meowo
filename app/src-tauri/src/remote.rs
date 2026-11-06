@@ -1713,6 +1713,23 @@ mod tests {
             "capture_screen_region",
             // 本机各 agent 装了哪些技能/MCP/钩子（设置 › 扩展页），手机用不着，不外露。
             "list_agent_extensions",
+            // 对话窗面板里的普通 shell：在宿主上开进程、往里敲命令，宿主执行类。
+            "shell_terminal_open",
+            "shell_terminal_list",
+            "shell_terminal_attach",
+            "shell_terminal_detach",
+            "shell_terminal_write",
+            "shell_terminal_resize",
+            "shell_terminal_close",
+            "shell_terminal_busy",
+            // 面板浏览器：在宿主上开网页（子 webview），同属宿主执行类。
+            "browser_pane_open",
+            "browser_pane_list",
+            "browser_pane_set_bounds",
+            "browser_pane_navigate",
+            "browser_pane_action",
+            "browser_pane_close",
+            "browser_pane_set_agent_paused",
         ];
         for cmd in FORBIDDEN {
             assert!(

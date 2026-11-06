@@ -4,9 +4,16 @@ use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod attach;
+mod mcp;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // agent 拉起的 MCP 服务器（面板浏览器工具）。长驻读 stdin，必须在 run() 一次性读完
+    // stdin 之前分流。
+    if args.first().is_some_and(|arg| arg == "mcp") {
+        mcp::run();
+        return;
+    }
     if args.first().is_some_and(|arg| arg == "attach") {
         if let Err(error) = attach::run(&args) {
             eprintln!("Meowo attach failed: {error}");

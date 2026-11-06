@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { activityTone } from "./activity";
 import { appConfirm } from "./confirm";
 import type { AgentDescriptor as AgentDescriptorDto } from "./generated/contracts/AgentDescriptor";
@@ -384,6 +384,80 @@ export function resizeManagedTerminal(sessionId: number, cols: number, rows: num
   return invoke("resize_managed_terminal", { sessionId, cols, rows });
 }
 
+/** 对话窗右侧面板的「终端」页签：会话目录下的普通 shell（后端 shell_terminal.rs）。
+ *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
+export type ShellTerminalInfo = {
+  id: number; owner: number; title: string; exited: boolean;
+  /** 前端轮询补上的：shell 底下正在跑的程序名（node、python…），空闲时没有。 */
+  running?: string;
+};
+/** replay = 前端已显示过的历史，重放时不能再答里面的终端查询。 */
+export type ShellTerminalEvent = { kind: "output"; data: string; replay: boolean } | { kind: "exit"; code: number | null };
+export function openShellTerminal(owner: number, cwd: string, cols: number, rows: number): Promise<ShellTerminalInfo> {
+  return invoke("shell_terminal_open", { owner, cwd, cols, rows });
+}
+export function listShellTerminals(owner: number): Promise<ShellTerminalInfo[]> {
+  return invoke("shell_terminal_list", { owner });
+}
+/** 挂上输出通道；第一帧是历史输出回放。返回代次，卸载时交给 detachShellTerminal。 */
+export function attachShellTerminal(id: number, onEvent: (event: ShellTerminalEvent) => void): Promise<number> {
+  const channel = new Channel<ShellTerminalEvent>();
+  channel.onmessage = onEvent;
+  return invoke("shell_terminal_attach", { id, onEvent: channel });
+}
+export function detachShellTerminal(id: number, generation: number): Promise<void> {
+  return invoke("shell_terminal_detach", { id, generation });
+}
+export function writeShellTerminal(id: number, data: string): Promise<void> {
+  return invoke("shell_terminal_write", { id, data });
+}
+export function resizeShellTerminal(id: number, cols: number, rows: number): Promise<void> {
+  return invoke("shell_terminal_resize", { id, cols, rows });
+}
+export function closeShellTerminal(id: number): Promise<void> {
+  return invoke("shell_terminal_close", { id });
+}
+/** 这些终端里还在跑的程序；只返回不空闲的那些。关页签前用来确认。 */
+export type ShellBusy = { id: number; title: string; processes: { pid: number; name: string }[] };
+export function shellTerminalBusy(ids: number[]): Promise<ShellBusy[]> {
+  return invoke("shell_terminal_busy", { ids });
+}
+
+/** 对话窗右侧面板的「浏览器」页签：chat 窗口里叠的原生子 webview（后端 browser_pane.rs）。
+ *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
+export type BrowserPaneInfo = {
+  id: number; owner: number; url: string; title: string; loading: boolean;
+  /** agent 正在操作（最近几秒调过浏览器工具）。 */
+  agentActive: boolean;
+  /** 用户点了「接管」，agent 的操作会被拒绝。 */
+  agentPaused: boolean;
+  /** 页面缩放比例（1 = 100%）。 */
+  zoom: number;
+};
+export function openBrowserPane(owner: number, url?: string): Promise<BrowserPaneInfo> {
+  return invoke("browser_pane_open", { owner, url: url ?? null });
+}
+export function listBrowserPanes(owner: number): Promise<BrowserPaneInfo[]> {
+  return invoke("browser_pane_list", { owner });
+}
+/** 占位区域的位置（CSS 像素，相对窗口内容区）；visible=false 只藏不动。 */
+export function setBrowserPaneBounds(id: number, rect: { x: number; y: number; width: number; height: number }, visible: boolean): Promise<void> {
+  return invoke("browser_pane_set_bounds", { id, ...rect, visible });
+}
+export function navigateBrowserPane(id: number, url: string): Promise<void> {
+  return invoke("browser_pane_navigate", { id, url });
+}
+export function browserPaneAction(id: number, action: "back" | "forward" | "reload" | "print" | "zoom_in" | "zoom_out" | "zoom_reset"): Promise<void> {
+  return invoke("browser_pane_action", { id, action });
+}
+/** 「接管」/「交还」：接管后 agent 的浏览器操作一律拒绝。 */
+export function setBrowserPaneAgentPaused(id: number, paused: boolean): Promise<void> {
+  return invoke("browser_pane_set_agent_paused", { id, paused });
+}
+export function closeBrowserPane(id: number): Promise<void> {
+  return invoke("browser_pane_close", { id });
+}
+
 /**
  * 取 PTY 当前**生效**的网格尺寸 `[cols, rows]`；未知（会话不在/后台旁路/尚未设过）为 `[0, 0]`。
  *
@@ -732,6 +806,7 @@ export type Settings = {
   preview_enabled: boolean;
   /** 已停用的「点击穿透」（灵动岛上打开会点不动，2026-11-05 移除），只为兼容旧配置保留。 */
   click_through_enabled: boolean;
+  browser_agent: boolean;
   /** 终端（PTY 画面）字号（px，10–18）。缺省 12。 */
   terminal_font_size: number;
   /** 终端行高预设：compact / normal（默认，1.22）/ relaxed。 */

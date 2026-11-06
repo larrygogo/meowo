@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openLink, revealTerminalPath } from "../api";
 import { remoteUi } from "../remoteMode";
+import { openInPanel } from "./chat/panelLinks";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
@@ -374,6 +375,8 @@ export const components: Components = {
         data-tip={href}
         onClick={(event) => {
           event.preventDefault();
+          // 本机地址（dev server）在右侧面板的浏览器里打开，其余交给系统浏览器。
+          if (openInPanel(href)) return;
           void openLink(href).catch(() => {});
         }}
       >

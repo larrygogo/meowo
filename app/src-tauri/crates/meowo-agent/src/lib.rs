@@ -78,7 +78,7 @@ pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
 pub use registry::{
-    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, ModelCatalogEntry, ModelPreset,
+    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpAttach, ModelCatalogEntry, ModelPreset,
     DEFAULT_ID,
 };
 pub use relay::{

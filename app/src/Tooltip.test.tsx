@@ -30,6 +30,33 @@ describe("TooltipLayer", () => {
     }
   });
 
+  it("data-tip-placement=top 时往上弹（面板浏览器工具栏下面是原生网页，往下弹会被盖住）", () => {
+    vi.useFakeTimers();
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, left: 100, right: 140, width: 40, height, x: 100, y: top, toJSON: () => ({}) }) as DOMRect;
+    const sizes = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    try {
+      render(
+        <>
+          <button data-tip="后退" data-tip-placement="top">up</button>
+          <button data-tip="刷新">down</button>
+          <TooltipLayer />
+        </>,
+      );
+      for (const [label, expectAbove] of [["up", true], ["down", false]] as const) {
+        const btn = screen.getByText(label);
+        btn.getBoundingClientRect = () => rect(200, 28);
+        fireEvent.mouseOver(btn);
+        act(() => void vi.advanceTimersByTime(400));
+        const top = parseInt(screen.getByRole("tooltip").style.top, 10);
+        expect(expectAbove ? top < 200 : top > 228).toBe(true);
+        fireEvent.mouseOut(btn, { relatedTarget: document.body });
+      }
+    } finally {
+      sizes.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("键盘聚焦带 data-tip 的元素，延迟后弹出提示，失焦后消失", () => {
     vi.useFakeTimers();
     // 聚焦弹提示门控在键盘模态（data-im="kbd"，见 input-modality）。

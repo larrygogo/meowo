@@ -2,6 +2,8 @@ mod account;
 mod agent_updates;
 #[cfg(any(target_os = "macos", test))]
 mod app_bundle;
+mod browser_agent;
+mod browser_pane;
 mod bgpty;
 mod chat;
 mod confirm;
@@ -48,6 +50,7 @@ mod proc;
 pub mod profile;
 mod session_command;
 mod session_query;
+mod shell_terminal;
 mod snap_layout;
 mod terminal;
 mod watch;
@@ -1263,6 +1266,21 @@ pub fn run() {
             editors::open_folder_in,
             reveal_path_in_file_manager,
             reveal_terminal_path,
+            browser_pane::browser_pane_open,
+            browser_pane::browser_pane_list,
+            browser_pane::browser_pane_set_bounds,
+            browser_pane::browser_pane_navigate,
+            browser_pane::browser_pane_action,
+            browser_pane::browser_pane_close,
+            browser_pane::browser_pane_set_agent_paused,
+            shell_terminal::shell_terminal_open,
+            shell_terminal::shell_terminal_list,
+            shell_terminal::shell_terminal_attach,
+            shell_terminal::shell_terminal_detach,
+            shell_terminal::shell_terminal_write,
+            shell_terminal::shell_terminal_resize,
+            shell_terminal::shell_terminal_close,
+            shell_terminal::shell_terminal_busy,
             rename_session,
             set_archived,
             move_session_rank,
@@ -1421,12 +1439,18 @@ pub fn run() {
             // 后启动者必然静默抢线（wiring 的 bundled.or(claimed)），dev 一开安装版的接线就被
             // 改指 target/debug——把槽位留给安装版。手动「修复连接」不经此门，仍可显式接线。
             if setup::auto_wire_enabled() {
-                std::thread::spawn(setup::apply_all);
+                std::thread::spawn(|| {
+                    setup::apply_all();
+                    browser_agent::sync_mcp_files();
+                });
             } else {
                 eprintln!("Meowo dev: 跳过启动自动接线(hooks/statusline)；需要时用设置页「修复连接」或设 MEOWO_DEV_WIRE=1");
             }
             // 远程访问桥（手机浏览器）：manage 生命周期状态后按 settings 决定是否启动。
             // 默认关闭时 apply 是 no-op，不监听任何端口。
+            app.manage(shell_terminal::ShellTerminals::default());
+            app.manage(browser_pane::BrowserPanes::default());
+            browser_agent::init(app.handle());
             app.manage(remote::RemoteRuntime::default());
             remote::apply(app.handle());
             // 先起合流线程：其余几个 spawn_* 都经 emit_board_changed 发事件，晚起会让它们的
@@ -1573,6 +1597,8 @@ mod tests {
         const HOST_SOURCES: &[(&str, &str)] = &[
             ("app_bundle.rs", include_str!("app_bundle.rs")),
             ("bgpty.rs", include_str!("bgpty.rs")),
+            ("browser_agent.rs", include_str!("browser_agent.rs")),
+            ("browser_pane.rs", include_str!("browser_pane.rs")),
             ("chat.rs", include_str!("chat.rs")),
             ("confirm.rs", include_str!("confirm.rs")),
             ("detect.rs", include_str!("detect.rs")),
@@ -1587,6 +1613,7 @@ mod tests {
             ("remote.rs", include_str!("remote.rs")),
             ("session_command.rs", include_str!("session_command.rs")),
             ("session_query.rs", include_str!("session_query.rs")),
+            ("shell_terminal.rs", include_str!("shell_terminal.rs")),
             ("settings.rs", include_str!("settings.rs")),
             ("snap.rs", include_str!("snap.rs")),
             ("snap_layout.rs", include_str!("snap_layout.rs")),

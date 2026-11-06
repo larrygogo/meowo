@@ -769,6 +769,18 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
     if let Ok(mut subscribers) = managed.subscribers.lock() {
         subscribers.clear();
     }
+    // 会话结束，面板里它开的终端和浏览器一起关（用户要求）。等一会儿再判：就地重启
+    // （切模型、接管换参数）也会先走这里退出，紧接着起新进程——那种不算结束，
+    // 不能把用户的 dev server 一并杀掉。没认领的临时会话（负 id）一样要关：在信任页
+    // 就退出、CLI 秒退时，它名下的面板没有别的地方会收。
+    let watcher = broker.clone();
+    let panel_app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if !watcher.is_managed(session_id) {
+            crate::browser_agent::close_session_panels(&panel_app, session_id);
+        }
+    });
     if session_id < 0 {
         if let Ok(mut pending) = broker.attach.pending.lock() {
             pending.retain(|_, id| *id != session_id);
@@ -1374,7 +1386,7 @@ impl PtyBroker {
             SummonAction::Hold => {
                 // 不切窗只召唤：请求已由调用方先入表，pending-approval 事件让前端
                 // 点亮侧栏徽标（approvalAwaitingIds），闪烁提醒有事发生。
-                if let Some(window) = app.get_webview_window("chat") {
+                if let Some(window) = app.get_window("chat") {
                     let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
                 }
                 return ApprovalHold::Desktop;
@@ -1386,7 +1398,7 @@ impl PtyBroker {
         // quiet：唤醒不抢焦点——用户可能正在外部终端里打字（实拍反馈），召唤注意力
         // 交给下面的任务栏闪烁；卡片可答性不依赖焦点（请求在表里，注册后轮询可取）。
         crate::window::open_chat_window_quiet(app.clone(), session_id);
-        if let Some(window) = app.get_webview_window("chat") {
+        if let Some(window) = app.get_window("chat") {
             let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
         }
         // 等前端完成 session 切换并显式注册。窗口可见只能证明 WebView 存在，不能证明它已监听
@@ -1520,6 +1532,9 @@ impl PtyBroker {
         };
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
+        // 面板浏览器的 MCP 服务器（browser_agent.rs）。只加在托管 PTY 上：只有这里的 agent
+        // 环境带 Meowo 的会话令牌，服务器才有工具可给。
+        command.args(crate::browser_agent::launch_args(provider));
         if let Some(cwd) = cwd.filter(|c| !c.trim().is_empty()) {
             command.cwd(cwd);
         }
@@ -2961,6 +2976,9 @@ impl PtyBroker {
                 BrokerRequest::Approval { token, request } => {
                     self.handle_approval(&token, request, stream)
                 }
+                BrokerRequest::Browser { token, tool, args } => {
+                    self.handle_browser(&token, &tool, &args, stream)
+                }
                 BrokerRequest::Attach { .. } => unreachable!(),
             };
         };
@@ -3249,6 +3267,9 @@ impl PtyBroker {
         if let Ok(mut bindings) = self.attach.bindings.lock() {
             bindings.insert(temp_id, real_id);
         }
+        // 新会话在认领前（还是临时编号）就可能开了面板终端 / 浏览器：归属跟着换到真实编号，
+        // 否则换号后页签消失、进程还在跑却没处关。
+        crate::browser_agent::reassign_panels(temp_id, real_id);
         // 占位卡使命达成：真实会话行已由 hook 落库（先于 claim），看板下一次刷新用真实卡
         // 顶替——元数据此刻摘除，占位与真卡不会同屏并存（前端另有 provider/cwd 对账兜底）。
         if let Ok(mut map) = self.attach.pending_launches.lock() {
@@ -3351,6 +3372,8 @@ impl PtyBroker {
         if let Ok(mut bindings) = self.attach.bindings.lock() {
             bindings.insert(temp_id, new_sid);
         }
+        // /clear 换代：对话窗跟着切到新会话，面板里开着的终端 / 浏览器也跟过去。
+        crate::browser_agent::reassign_panels(old_sid, new_sid);
         // DB 收尾 best-effort（与首次认领的 launch_args 落库同款容错）：失败只丢同卡
         // 折叠与选项回放，不阻断换绑——PTY 归属是主语义，必须先落。
         // 「旧段结束 + 启动选项复制 + 接续链成对写入」在 store 层一个事务里原子完成
@@ -3370,6 +3393,34 @@ impl PtyBroker {
         }
         drop(managed);
         Ok(())
+    }
+
+    /// agent 操作面板浏览器（见 browser_agent.rs）。只认 scoped token：会话归属从签发时
+    /// 绑定的会话来（临时负 id 按 claim 后的绑定换成真实 id），agent 碰不到别的会话的浏览器。
+    /// full token 没有会话归属，拒绝。
+    fn handle_browser(
+        &self,
+        token: &str,
+        tool: &str,
+        args: &serde_json::Value,
+        mut stream: TcpStream,
+    ) -> Result<(), String> {
+        let Some(TokenLevel::Scoped(owner)) = self.token_level(token) else {
+            let reply = serde_json::json!({ "ok": false, "error": "Meowo 浏览器通道认证失败" });
+            let _ = stream.write_all(reply.to_string().as_bytes());
+            return Err("浏览器通道认证失败".into());
+        };
+        let session_id = self.binding(owner).unwrap_or(owner);
+        // 操作可能要等页面加载十几秒；连接已认证，放开读超时。
+        stream.set_read_timeout(None).ok();
+        let reply = match crate::browser_agent::handle(session_id, tool, args) {
+            Ok(mut body) => {
+                body["ok"] = serde_json::json!(true);
+                body
+            }
+            Err(error) => serde_json::json!({ "ok": false, "error": error }),
+        };
+        stream.write_all(reply.to_string().as_bytes()).map_err(|e| e.to_string())
     }
 
     fn handle_approval(
@@ -3523,7 +3574,7 @@ impl PtyBroker {
                         }
                         SummonAction::Ready | SummonAction::Hold => {}
                     }
-                    if let Some(window) = app.get_webview_window("chat") {
+                    if let Some(window) = app.get_window("chat") {
                         let _ =
                             window.request_user_attention(Some(tauri::UserAttentionType::Critical));
                     }

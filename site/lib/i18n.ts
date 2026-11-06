@@ -147,7 +147,7 @@ const ZH: Dict = {
     { title: "多账号 + API 中转", body: "同一个工具保存多个官方账号，一键切换，凭据与会话历史各自独立；也可以按模型填入中转地址与密钥接入 API 中转。两种接入互斥，配置中转期间仍走官方账号。" },
     { title: "本地优先", body: "会话与设置只写进本机 ~/.meowo/ 的 SQLite，reporter 与 app 只通过这个本地文件通信。没有自己的服务器，不上传会话内容，断网也照常工作。" },
     { title: "一键安装、登录与接入", body: "Claude Code、Codex、Kimi、Gemini CLI、OpenCode 直接在应用内一键安装并发起登录，所需 hooks 自动接入；检测到连接缺失时，再点一下就修好。" },
-    { title: "用量与上下文监控", body: "Windows 的灵动岛和 macOS 的菜单栏面板实时显示 5 小时 / 7 天配额用了多少，越接近上限颜色越偏红。每个会话还显示上下文用量。限额将至你有预判，不会被突然中断打个措手不及。" },
+    { title: "用量与上下文监控", body: "灵动岛实时显示 5 小时 / 7 天配额用了多少，越接近上限颜色越偏红。每个会话还显示上下文用量。限额将至你有预判，不会被突然中断打个措手不及。" },
   ],
   sticker: {
     tabs: { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" },
@@ -238,7 +238,7 @@ const EN: Dict = {
     { title: "Multiple accounts + API relay", body: "Keep several official accounts per tool, switch in one click, each with its own credentials and history. Or fill in a relay address and key per model to use an API relay — mutually exclusive, and the official account keeps serving while you configure." },
     { title: "Local-first", body: "Sessions and settings live only in ~/.meowo/ as local SQLite; the reporter and the app talk only through that file. No Meowo server, no uploaded conversations — works just fine offline." },
     { title: "One-click install, sign-in & connect", body: "Install Claude Code, Codex, Kimi, Gemini CLI, or OpenCode right in the app and start the login; the required hooks are wired automatically. Detect a broken connection? One more click repairs it." },
-    { title: "Quota & context monitoring", body: "The island on Windows and the menu-bar panel on macOS track 5-hour / 7-day quota live, turning redder near the cap; every session shows context usage. You see limits coming — no sudden interruption catching you off guard." },
+    { title: "Quota & context monitoring", body: "The island tracks 5-hour / 7-day quota live, turning redder near the cap; every session shows context usage. You see limits coming — no sudden interruption catching you off guard." },
   ],
   sticker: {
     tabs: { all: "All", waiting: "Needs you", running: "Running", archived: "Archived" },
