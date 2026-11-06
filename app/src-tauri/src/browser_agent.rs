@@ -459,6 +459,32 @@ pub(crate) fn close_session_panels(app: &tauri::AppHandle, session_id: i64) {
     );
 }
 
+/// 会话换了编号（新会话认领真实编号、/clear 换代）：面板里的终端和浏览器跟着换归属，
+/// 再通知前端把页签记录也挪过去（broker 的 handle_claim 调）。
+pub(crate) fn reassign_panels(from: i64, to: i64) {
+    use tauri::Emitter;
+    if from == to {
+        return;
+    }
+    let Some(app) = APP.get() else { return };
+    if let Some(shells) = app.try_state::<crate::shell_terminal::ShellTerminals>() {
+        shells.reassign_owner(from, to);
+    }
+    if let Some(panes) = app.try_state::<BrowserPanes>() {
+        panes.reassign_owner(from, to);
+    }
+    if let Ok(mut map) = agent_panes().lock() {
+        if let Some(id) = map.remove(&from) {
+            map.insert(to, id);
+        }
+    }
+    let _ = app.emit_to(
+        tauri::EventTarget::webview("chat"),
+        "panel-session-moved",
+        serde_json::json!({ "from": from, "to": to }),
+    );
+}
+
 // ── 把 MCP 服务器交给 agent ─────────────────────────────
 
 /// MCP 服务器在 agent 那边的名字；claude 里工具名就是 `mcp__meowo__browser_*`。

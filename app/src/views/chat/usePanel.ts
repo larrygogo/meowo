@@ -9,7 +9,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import {
-  activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, moveTab, newTabKey, openSingleton,
+  activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, movePanel, moveTab, newTabKey, openSingleton,
   savePanel, setVisible, updateTab, type PanelState, type PanelTab,
 } from "./panelTabs";
 
@@ -50,6 +50,8 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   // 会话的，这个会话的终端 / 浏览器页签在里面对不上号，会被当成「进程没了」再起一个；
   // 等本会话清单回来，原来那个又被当成没人认领补成页签——每切回来一次多一个（实拍）。
   const [liveFor, setLiveFor] = useState<number | null>(null);
+  // 会话换了编号后要重新取一次本会话的进程清单（见 panel-session-moved）。
+  const [reloadTick, setReloadTick] = useState(0);
   const liveLoaded = liveFor === sessionId;
   useEffect(() => {
     if (remoteUi()) return;
@@ -79,7 +81,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
       .catch(() => { if (!cancelled) setLiveFor(sessionId); });
     return () => { cancelled = true; };
   // cwd 只在补页签时兜底用，不因它重拉。
-  }, [sessionId, update]);
+  }, [sessionId, update, reloadTick]);
 
   // agent 第一次用浏览器时后端自己建的页签（browser_agent.rs）：加进这个会话的面板并切过去，
   // 用户能看着它操作。不是正在看的会话就等切过去时由列表补上。
@@ -94,6 +96,16 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   });
   // 会话结束或被关闭（标记完成）：后端已经关了它的终端和浏览器（browser_agent.rs 的
   // close_session_panels），这里清掉页签和记录（用户要求「会话结束了就同步关闭里面的窗口」）。
+  // 会话换了编号（新会话认领真实编号、/clear 换代）：后端已把进程归属换过去，这里把页签
+  // 记录也挪过去。对话窗还没切过去的，切过去时按新编号读到；已经切过去的当场重读。
+  useTauriEvent<{ from: number; to: number }>("panel-session-moved", ({ payload: { from, to } }) => {
+    if (from === sessionId) savePanel(from, stateRef.current);
+    movePanel(from, to);
+    if (to !== sessionId) return;
+    setPanel({ sessionId, state: loadPanel(sessionId) });
+    setLiveFor(null);
+    setReloadTick((tick) => tick + 1);
+  });
   useTauriEvent<number>("panel-session-closed", ({ payload: closed }) => {
     forgetPanel(closed);
     if (closed !== sessionId) return;

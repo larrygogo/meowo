@@ -348,6 +348,15 @@ impl ShellTerminals {
         Ok(info)
     }
 
+    /// 会话换了编号（新会话认领、/clear 换代）：终端归属跟过去。
+    pub(crate) fn reassign_owner(&self, from: i64, to: i64) {
+        if let Ok(mut map) = self.shells.lock() {
+            for shell in map.values_mut().filter(|shell| shell.owner == from) {
+                shell.owner = to;
+            }
+        }
+    }
+
     /// 会话结束 / 关闭时收掉它在面板里开的所有终端（连同终端里跑着的程序）。
     pub(crate) fn close_owner(&self, owner: i64) {
         let drained: Vec<ShellPty> = match self.shells.lock() {
@@ -591,7 +600,9 @@ mod tests {
         let shells = ShellTerminals::default();
         shells.open(1, &cwd, 80, 24).unwrap();
         shells.open(1, &cwd, 80, 24).unwrap();
-        let keep = shells.open(2, &cwd, 80, 24).unwrap();
+        let keep = shells.open(-2, &cwd, 80, 24).unwrap();
+        // 新会话认领真实编号：-2 → 2，之后按 2 关。
+        shells.reassign_owner(-2, 2);
         shells.close_owner(1);
         let left: Vec<u32> = shells.shells.lock().unwrap().keys().copied().collect();
         assert_eq!(left, vec![keep.id]);

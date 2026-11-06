@@ -3266,6 +3266,9 @@ impl PtyBroker {
         if let Ok(mut bindings) = self.attach.bindings.lock() {
             bindings.insert(temp_id, real_id);
         }
+        // 新会话在认领前（还是临时编号）就可能开了面板终端 / 浏览器：归属跟着换到真实编号，
+        // 否则换号后页签消失、进程还在跑却没处关。
+        crate::browser_agent::reassign_panels(temp_id, real_id);
         // 占位卡使命达成：真实会话行已由 hook 落库（先于 claim），看板下一次刷新用真实卡
         // 顶替——元数据此刻摘除，占位与真卡不会同屏并存（前端另有 provider/cwd 对账兜底）。
         if let Ok(mut map) = self.attach.pending_launches.lock() {
@@ -3368,6 +3371,8 @@ impl PtyBroker {
         if let Ok(mut bindings) = self.attach.bindings.lock() {
             bindings.insert(temp_id, new_sid);
         }
+        // /clear 换代：对话窗跟着切到新会话，面板里开着的终端 / 浏览器也跟过去。
+        crate::browser_agent::reassign_panels(old_sid, new_sid);
         // DB 收尾 best-effort（与首次认领的 launch_args 落库同款容错）：失败只丢同卡
         // 折叠与选项回放，不阻断换绑——PTY 归属是主语义，必须先落。
         // 「旧段结束 + 启动选项复制 + 接续链成对写入」在 store 层一个事务里原子完成

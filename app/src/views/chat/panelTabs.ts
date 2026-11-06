@@ -188,6 +188,15 @@ export function savePanel(sessionId: number, state: PanelState, storage: Storage
   } catch { /* 存不下就只在内存里，下次打开从空面板开始 */ }
 }
 
+/** 会话换了编号（新会话认领、/clear 换代）：面板记录挪到新编号。新编号已有页签就不覆盖。 */
+export function movePanel(from: number, to: number, storage: Storage | null = safeStorage()): void {
+  if (!storage || from === to) return;
+  const moved = loadPanel(from, storage);
+  if (moved.tabs.length === 0 && !moved.visible) return;
+  if (loadPanel(to, storage).tabs.length === 0) savePanel(to, moved, storage);
+  forgetPanel(from, storage);
+}
+
 /** 会话结束 / 关闭后，它的面板记录作废（后端已经把终端和浏览器关了）。 */
 export function forgetPanel(sessionId: number, storage: Storage | null = safeStorage()): void {
   try { storage?.removeItem(STORE_PREFIX + sessionId); } catch { /* 删不掉就留着，下次打开时页签会按记录重新起 */ }

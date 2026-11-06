@@ -48,6 +48,15 @@ pub(crate) struct BrowserPanes {
 }
 
 impl BrowserPanes {
+    /// 会话换了编号（新会话认领、/clear 换代）：浏览器归属跟过去。
+    pub(crate) fn reassign_owner(&self, from: i64, to: i64) {
+        if let Ok(mut map) = self.panes.lock() {
+            for info in map.values_mut().filter(|info| info.owner == from) {
+                info.owner = to;
+            }
+        }
+    }
+
     /// 会话结束 / 关闭时关掉它在面板里开的所有浏览器。
     pub(crate) fn close_owner(&self, app: &tauri::AppHandle, owner: i64) {
         let ids: Vec<u32> = match self.panes.lock() {

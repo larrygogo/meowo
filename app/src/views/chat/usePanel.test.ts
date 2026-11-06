@@ -133,4 +133,26 @@ describe("面板与后端进程对号", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("shell_terminal_open", expect.objectContaining({ owner: 1 })));
     await waitFor(() => expect(result.current.state.tabs.map((tab) => tab.type)).toEqual(["files", "term"]));
   });
+
+  it("新会话认领真实编号后，认领前开的终端跟过去，不丢也不重开", async () => {
+    let owner = -5;
+    invoke.mockImplementation(async (cmd: string, args?: { owner?: number }) => {
+      if (cmd === "shell_terminal_list") return args?.owner === owner ? [{ id: 3, owner, title: "pwsh", exited: false }] : [];
+      if (cmd === "browser_pane_list") return [];
+      return null;
+    });
+    savePanel(-5, { tabs: [{ key: "t", type: "term", shellId: 3, cwd: "C:/repo" }], active: "t", visible: true, expanded: false });
+    const { result, rerender } = renderHook(({ id }) => usePanel(id, "C:/repo", () => {}), { initialProps: { id: -5 } });
+    await waitFor(() => expect(result.current.shells.has(3)).toBe(true));
+    await waitFor(() => expect(handlers.has("panel-session-moved")).toBe(true));
+    // 后端在认领时已把归属换到 7，再发事件。
+    owner = 7;
+    act(() => handlers.get("panel-session-moved")?.({ payload: { from: -5, to: 7 } }));
+    act(() => rerender({ id: 7 }));
+    expect(result.current.state.tabs).toMatchObject([{ type: "term", shellId: 3 }]);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("shell_terminal_list", { owner: 7 }));
+    await waitFor(() => expect(result.current.shells.has(3)).toBe(true));
+    expect(invoke).not.toHaveBeenCalledWith("shell_terminal_open", expect.anything());
+    expect(loadPanel(-5).tabs).toHaveLength(0);
+  });
 });
