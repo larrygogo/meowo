@@ -597,6 +597,11 @@ export function revealPathInFileManager(cwd: string, rel: string): Promise<void>
   return invoke("reveal_path_in_file_manager", { cwd, rel });
 }
 
+/** 在系统文件管理器里定位终端里点到的路径（不限会话目录内，路径须存在；相对路径按 cwd 解析）。 */
+export function revealTerminalPath(cwd: string, path: string): Promise<void> {
+  return invoke("reveal_terminal_path", { cwd, path });
+}
+
 /** 对话内容全文搜索的一条命中（后端 chat.rs 的 TranscriptSearchHit，serde camelCase）。 */
 export type TranscriptSearchHit = {
   sessionId: number;
