@@ -4641,6 +4641,18 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 :root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-body.is-diff-max .chat-diff-panel {
   --cc-bg: #1f1f1f;
 }
+/* 会话信息栏停靠时和右侧面板同一张卡：同底色、上边线（与顶栏分开）+ 左边线（与对话区分开）。
+   之前只有左边线、用的窗口底色，和顶栏连成一片（实拍「这里需要有个边框」）。 */
+:root:not(.platform-macos) .session-info.is-docked {
+  --chat-card-bg: var(--cc-panel-bg);
+  background: var(--chat-card-bg);
+  border-top: var(--hairline) solid var(--cc-border);
+  border-left: var(--hairline) solid var(--cc-border);
+}
+:root:not(.platform-macos) .chat-window.is-terminal .session-info.is-docked,
+:root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .session-info.is-docked {
+  --chat-card-bg: #1f1f1f;
+}
 /* --cc-syn-* 的终端压深已并入 .chat-window.is-terminal 统一变量块，面板不再单独特调。 */
 .chat-diff-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); }
 /* 面板页签（文件/更改）：与标题栏 .chat-view-tabs 同款分段控件。 */
