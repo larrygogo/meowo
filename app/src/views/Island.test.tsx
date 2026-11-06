@@ -6,7 +6,7 @@ import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
-import { Eyes, EYE_CUE_MS, EYES_DROWSY_AFTER_MS, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
+import { Eyes, EYE_CUE_MS, EYES_BLUSH_AFTER_MS, EYES_DROWSY_AFTER_MS, EYES_PLEAD_AFTER_MS, EYES_YAWN_MS, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
 import type { ProviderUsage } from "../api";
@@ -192,11 +192,38 @@ describe("眼睛", () => {
     act(() => { vi.advanceTimersByTime(EYES_DROWSY_AFTER_MS + 1_000); });
     expect(mode(container)).toBe("drowsy");
     act(() => { vi.advanceTimersByTime(EYES_SLEEP_AFTER_MS - EYES_DROWSY_AFTER_MS); });
+    expect(mode(container)).toBe("yawn");
+    act(() => { vi.advanceTimersByTime(EYES_YAWN_MS); });
     expect(mode(container)).toBe("sleep");
     expect(container.querySelector(".isl-zz")).toBeTruthy();
     rerender(<Eyes tone="running" />);
     expect(mode(container)).toBe("surprised");
     act(() => { vi.advanceTimersByTime(1_000); });
+    expect(mode(container)).toBe("open");
+  });
+
+  it("睡着前打个哈欠", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 6, 14, 0));
+    const { container } = render(<Eyes tone="idle" />);
+    act(() => { vi.advanceTimersByTime(EYES_SLEEP_AFTER_MS + 100); });
+    expect(mode(container)).toBe("yawn");
+    expect(container.querySelector(".isl-tear")).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(EYES_YAWN_MS); });
+    expect(mode(container)).toBe("sleep");
+  });
+
+  it("多个出错抓狂；待处理放一分钟没人管就可怜巴巴", () => {
+    vi.useFakeTimers();
+    const { container, rerender } = render(<Eyes tone="error" errors={1} />);
+    expect(mode(container)).toBe("dead");
+    rerender(<Eyes tone="error" errors={2} />);
+    expect(mode(container)).toBe("frustrated");
+    rerender(<Eyes tone="pending" />);
+    expect(mode(container)).toBe("wide");
+    act(() => { vi.advanceTimersByTime(EYES_PLEAD_AFTER_MS + 100); });
+    expect(mode(container)).toBe("plead");
+    rerender(<Eyes tone="running" />);
     expect(mode(container)).toBe("open");
   });
 
@@ -264,6 +291,23 @@ describe("岛上一闪而过的表情", () => {
     expect(eyeMode(container)).toBe("open");
     rerender(islandWith([a, mk()]));
     expect(eyeMode(container)).toBe("surprised");
+  });
+
+  it("鼠标在岛上停一会儿就害羞，移开前不点就一直等", () => {
+    vi.useFakeTimers();
+    const { container } = render(islandWith([mk()]));
+    const notch = container.querySelector(".isl-notch")!;
+    fireEvent.pointerEnter(notch);
+    act(() => { vi.advanceTimersByTime(EYES_BLUSH_AFTER_MS + 100); });
+    expect(eyeMode(container)).toBe("blush");
+    expect(container.querySelector(".isl-cheeks")).toBeTruthy();
+    // 移开得早就不脸红。
+    act(() => { vi.advanceTimersByTime(EYE_CUE_MS.blush + 100); });
+    fireEvent.pointerLeave(notch);
+    fireEvent.pointerEnter(notch);
+    fireEvent.pointerLeave(notch);
+    act(() => { vi.advanceTimersByTime(EYES_BLUSH_AFTER_MS + 100); });
+    expect(eyeMode(container)).toBe("open");
   });
 
   it("鼠标移上岛眨一只眼", () => {

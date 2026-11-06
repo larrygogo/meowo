@@ -4,12 +4,12 @@
 // 完整列表仍是 Sticker；形态切换的窗口尺寸由 App 驱动（island.rs 按中心点对称改尺寸）。
 // 刘海纯黑、贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接——耳朵在刘海左右各占 ISLAND_EAR，
 // 窗口宽度要把它算进去。胶囊在窗口里水平居中：窗口长大时它不挪位，展开动画从它的轮廓长出来。
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
 import { cardTone } from "./sticker/helpers";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
-import { AgentRing, Clock, Eyes, EYES_BUSY_AT, UsageRing, useEyeCue, useNow, type IslandTone } from "./island/islandParts";
+import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, useEyeCue, useNow, type IslandTone } from "./island/islandParts";
 
 export type { IslandTone } from "./island/islandParts";
 export type IslandCompactStyle = "counts" | "focus" | "minimal";
@@ -207,8 +207,11 @@ export function Island({
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
   // 眼睛的神态：整体状态 + 正在用的那家额度 + 忙不忙 + 一闪而过的表情（跑完、新会话、鼠标移上来）。
   const { cue, poke } = useEyeCue(sessions);
-  const eyes = { tone, cue, quotaPct: usages[0]?.pct ?? null, busy: counts.running >= EYES_BUSY_AT };
+  const eyes = { tone, cue, quotaPct: usages[0]?.pct ?? null, busy: counts.running >= EYES_BUSY_AT, errors: counts.error };
   const lastWink = useRef(0);
+  // 鼠标在岛上停一会儿（没点开）就害羞脸红；移开就取消。
+  const blushTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(blushTimer.current), []);
 
   // 收起态的宽度随内容变（会话个数、标题长短），实测后上报。提醒形态尺寸固定，不量。
   useLayoutEffect(() => {
@@ -366,8 +369,15 @@ export function Island({
             lastWink.current = Date.now();
             poke("wink");
           }
+          if (!alert) {
+            window.clearTimeout(blushTimer.current);
+            blushTimer.current = window.setTimeout(() => poke("blush"), EYES_BLUSH_AFTER_MS);
+          }
         }}
-        onPointerLeave={() => { if (alert) onAlertHover?.(false); }}
+        onPointerLeave={() => {
+          window.clearTimeout(blushTimer.current);
+          if (alert) onAlertHover?.(false);
+        }}
         onPointerDown={onPointerDownDrag}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {

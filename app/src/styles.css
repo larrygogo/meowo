@@ -6774,6 +6774,20 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 @keyframes isl-pop { from { transform: scale(0.4); } to { transform: scale(1); } }
 .isl-eyes[data-mode="star"] .isl-eye-pair { animation: isl-giggle 1.2s ease-in-out infinite; }
 .isl-spark.is-star { color: var(--isl-warn); font-size: 9px; animation: isl-twinkle 0.8s ease-in-out infinite; }
+/* 抓狂（多个出错）：「> <」左右抖，旁边冒红色「#」。 */
+.isl-eyes[data-mode="frustrated"] .isl-eye-pair { animation: isl-shake 0.5s ease-in-out infinite; }
+@keyframes isl-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-1px); } 75% { transform: translateX(1px); } }
+.isl-spark.is-err { color: var(--isl-err); font-size: 10px; animation: isl-twinkle 0.9s ease-in-out infinite; }
+/* 打哈欠：眼睛挤紧，慢慢缩一下再舒开，眼角挂一滴泪。 */
+.isl-eyes[data-mode="yawn"] .isl-eye-squeeze { transform-box: fill-box; transform-origin: center; animation: isl-yawn 1.8s ease-in-out; }
+@keyframes isl-yawn { 0% { transform: scaleY(1.4); } 40%, 70% { transform: scaleY(0.8); } 100% { transform: scaleY(1); } }
+.isl-tear { position: absolute; left: 3px; bottom: -1px; width: 3px; height: 4px; border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%; background: #8fd3ff; animation: isl-fade-in 0.6s ease; }
+/* 可怜巴巴（待处理放久了）：水汪汪的大眼睛，高光一闪一闪，轻轻晃。 */
+.isl-glint { fill: #fff; }
+.isl-eye-plead { transform-box: fill-box; transform-origin: center bottom; animation: isl-plead 2.4s ease-in-out infinite; }
+@keyframes isl-plead { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-3deg); } 60% { transform: rotate(3deg); } }
+/* 害羞：^ ^ 下面两团粉红。 */
+.isl-cheeks { fill: #ff7aa8; opacity: 0.75; animation: isl-fade-in 0.5s ease; }
 /* 额度用光：两只蚊香圈慢慢转。 */
 .isl-spiral { transform-box: fill-box; transform-origin: center; animation: isl-spin-plain 1.6s linear infinite; }
 @keyframes isl-spin-plain { to { transform: rotate(360deg); } }
@@ -7027,7 +7041,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .isl-eye-pair, .isl-zz, .isl-spark, .isl-eye-pop, .isl-spiral, .isl-sweat, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
+  .isl-eye-pair, .isl-zz, .isl-spark, .isl-eye-pop, .isl-spiral, .isl-sweat, .isl-eye-plead, .isl-eye-squeeze, .isl-cheeks, .isl-tear, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
   .isl-ring-arc { transition: none !important; }
   .isl-usage-swap { animation: none !important; }
 }

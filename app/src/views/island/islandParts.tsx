@@ -18,9 +18,12 @@ export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
 /// - 额度用到八成五以上：眉头往下耷拉，旁边挂一滴汗；用光了：眼睛转成蚊香圈
 /// - 同时跑三个以上：眼皮压低、眼角往里收，一副专注的样子
 /// - 闲着超过 6 分钟（或后半夜闲着）：眼皮半耷拉犯困；超过 10 分钟睡着，眼睛合成两道线，冒「z」
-/// 一闪而过的表情由 cue 给（见 useEyeCue）：有会话刚跑完冒星星眼，新开了会话吓一跳，鼠标移上岛眨一只眼。
-/// 从睡着里醒过来也吓一跳。
-export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = false }: {
+/// - 同时两个以上出错：眼睛挤成「> <」，抓狂地抖
+/// - 待处理放了一分钟没人管：水汪汪的大眼睛往上望，可怜巴巴
+/// 一闪而过的表情由 cue 给（见 useEyeCue）：有会话刚跑完冒星星眼，新开了会话吓一跳，鼠标移上岛眨一只眼，
+/// 在岛上停一会儿就害羞脸红。从睡着里醒过来也吓一跳，睡着前打个哈欠。
+/// 睁眼时的随机小动作还有：一只眼睁大（好奇）、在跑时眼珠往上看（想事情）。
+export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = false, errors = 0 }: {
   tone: IslandTone;
   small?: boolean;
   cue?: EyeCue | null;
@@ -28,28 +31,35 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
   quotaPct?: number | null;
   /** 同时在跑的会话多（≥ EYES_BUSY_AT）。 */
   busy?: boolean;
+  /** 出错的会话数。 */
+  errors?: number;
 }) {
   const sleep = useSleepStage(tone === "idle");
-  const woke = useWakeStartle(sleep === "asleep");
+  const woke = useRiseFlash(sleep !== "asleep", 900);
+  const yawning = useRiseFlash(sleep === "asleep", EYES_YAWN_MS);
+  const pleading = useAfter(tone === "pending", EYES_PLEAD_AFTER_MS);
   const exhausted = quotaPct != null && quotaPct >= 100;
   const worried = quotaPct != null && quotaPct >= EYES_WORRY_AT;
   // 要人处理的（出错、待处理）和额度用光压过一切；一闪而过的表情压过常驻的神态。
-  const mode: EyeMode = tone === "error" ? "dead"
-    : tone === "pending" ? "wide"
+  const mode: EyeMode = tone === "error" ? (errors >= 2 ? "frustrated" : "dead")
+    : tone === "pending" ? (pleading ? "plead" : "wide")
     : exhausted ? "dizzy"
-    : cue === "star" || cue === "surprised" ? cue
+    : cue === "star" || cue === "surprised" || cue === "blush" ? cue
     : woke ? "surprised"
+    : yawning ? "yawn"
     : tone === "waiting" ? "happy"
     : worried ? "worried"
     : busy && tone === "running" ? "focus"
     : sleep === "asleep" ? "sleep"
     : sleep === "drowsy" ? "drowsy"
     : "open";
-  const fidget = useFidget(mode === "open");
+  const fidget = useFidget(mode === "open", tone === "running");
   const winking = mode === "open" && (cue === "wink" || fidget === "wink");
+  const curious = mode === "open" && fidget === "curious";
   const looking = mode === "open" || mode === "wide" || mode === "worried" || mode === "focus" || mode === "drowsy";
-  const cursor = useCursorLook(looking && fidget !== "glance");
-  const look = fidget === "glance" ? GLANCE_LOOK : cursor;
+  const scripted = fidget === "glance" ? GLANCE_LOOK : fidget === "ponder" ? PONDER_LOOK : null;
+  const cursor = useCursorLook(looking && !scripted);
+  const look = scripted ?? cursor;
   const blink = useBlink(mode === "open" || mode === "worried" || mode === "focus" || mode === "drowsy");
   const clip = useId().replace(/[^a-zA-Z0-9]/g, "");
   const lids = LIDS[mode];
@@ -58,17 +68,39 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
   return (
     <span className={`isl-eyes${small ? " is-small" : ""}`} data-tone={tone} data-mode={mode} aria-hidden="true">
       {sparks && <span className="isl-spark is-l">+</span>}
-      {!small && mode === "wide" && <span className="isl-spark is-l is-warn">!</span>}
+      {!small && (mode === "wide" || mode === "plead") && <span className="isl-spark is-l is-warn">!</span>}
       <svg className="isl-eye-pair" width={small ? 20 : 26} height={small ? 13 : 16} viewBox="0 0 26 16">
         {mode === "dead" ? (
           <g fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
             <path d="M3 4.5l7 7M10 4.5l-7 7" />
             <path d="M16 4.5l7 7M23 4.5l-7 7" />
           </g>
-        ) : mode === "happy" ? (
+        ) : mode === "frustrated" || mode === "yawn" ? (
+          <g className="isl-eye-squeeze" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3.5 4.5 L9.5 8 L3.5 11.5" />
+            <path d="M22.5 4.5 L16.5 8 L22.5 11.5" />
+          </g>
+        ) : mode === "plead" ? (
+          <g className="isl-eye-plead">
+            {[6.5, 19.5].map((cx) => (
+              <g key={cx}>
+                <ellipse className="isl-sclera" cx={cx} cy={8} rx={5.8} ry={7} />
+                <circle className="isl-pupil" cx={cx} cy={7} r={3.7} />
+                <circle className="isl-glint" cx={cx + 1.3} cy={5.4} r={1.25} />
+                <circle className="isl-glint" cx={cx - 1.2} cy={8.6} r={0.6} />
+              </g>
+            ))}
+          </g>
+        ) : mode === "happy" || mode === "blush" ? (
           <g fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
             <path d={HAPPY_ARC[0]} />
             <path d={HAPPY_ARC[1]} />
+            {mode === "blush" && (
+              <g className="isl-cheeks" stroke="none">
+                <ellipse cx={4} cy={13.6} rx={2.8} ry={1.4} />
+                <ellipse cx={22} cy={13.6} rx={2.8} ry={1.4} />
+              </g>
+            )}
           </g>
         ) : mode === "sleep" ? (
           <g fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
@@ -107,12 +139,13 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
               <path key={cx} d={HAPPY_ARC[1]} fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" />
             ) : (
               <g key={cx} clipPath={lids ? `url(#${clip}-${i})` : undefined}>
-                <ellipse className="isl-sclera" cx={cx} cy={8} rx={mode === "wide" ? 5.6 : 5} ry={mode === "wide" ? 7.2 : 6.6} />
+                {/* 好奇：左眼睁大一圈，像歪头打量。 */}
+                <ellipse className="isl-sclera" cx={cx} cy={8} rx={mode === "wide" ? 5.6 : curious && i === 0 ? 6 : 5} ry={mode === "wide" ? 7.2 : curious && i === 0 ? 7.6 : 6.6} />
                 <circle
                   className="isl-pupil"
                   cx={cx}
                   cy={8}
-                  r={mode === "wide" ? 1.9 : 2.5}
+                  r={mode === "wide" ? 1.9 : curious && i === 0 ? 2 : 2.5}
                   style={{ transform: `translate(${look.x * 2.2}px, ${look.y * 2.6}px)` }}
                 />
               </g>
@@ -124,13 +157,23 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
       {!small && mode === "star" && <span className="isl-spark is-r is-star">✦</span>}
       {!small && mode === "worried" && <span className="isl-sweat" />}
       {!small && mode === "sleep" && <span className="isl-zz">z</span>}
+      {!small && mode === "yawn" && <span className="isl-tear" />}
+      {!small && mode === "frustrated" && <span className="isl-spark is-r is-err">#</span>}
     </span>
   );
 }
 
-type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep" | "drowsy" | "star" | "surprised" | "worried" | "focus" | "dizzy";
-/** 一闪而过的表情：会话刚跑完、新开了会话、鼠标移上岛。 */
-export type EyeCue = "star" | "surprised" | "wink";
+type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep" | "drowsy" | "star" | "surprised" | "worried" | "focus" | "dizzy"
+  | "frustrated" | "plead" | "blush" | "yawn";
+/** 一闪而过的表情：会话刚跑完、新开了会话、鼠标移上岛、在岛上停了一会儿。 */
+export type EyeCue = "star" | "surprised" | "wink" | "blush";
+
+/// 待处理放多久没人管就开始可怜巴巴。
+export const EYES_PLEAD_AFTER_MS = 60_000;
+/// 鼠标在岛上停多久开始害羞。
+export const EYES_BLUSH_AFTER_MS = 1_500;
+/// 睡着前那个哈欠多长。
+export const EYES_YAWN_MS = 1_800;
 
 /// 额度用到多少开始发愁（与额度环变红同一档，见 usedColor）。
 export const EYES_WORRY_AT = 85;
@@ -139,6 +182,8 @@ export const EYES_BUSY_AT = 3;
 
 const HAPPY_ARC = ["M2.5 10.5 Q6.5 3.5 10.5 10.5", "M15.5 10.5 Q19.5 3.5 23.5 10.5"] as const;
 const GLANCE_LOOK = { x: -1, y: 0.2 };
+/** 想事情：眼珠往右上方看。 */
+const PONDER_LOOK = { x: 0.7, y: -1 };
 
 /// 眼皮：每只眼一个可见区域（多边形以上被眼皮盖住）。发愁是外眼角往下耷拉，专注是内眼角往下压，
 /// 犯困是眼皮平着盖住上半截。用裁剪而不是画黑色眼皮：菜单栏弹出的提醒底是半透明的，黑块会露馅。
@@ -172,7 +217,7 @@ function spiralPath(cx: number, cy: number): string {
 
 /// 岛上一闪而过的表情：盯着会话列表，有会话从「在跑」变成「跑完」就冒一下星星眼，冒出新会话就吓
 /// 一跳。第一次拿到列表不算（启动时一下子出现一堆会话不是「新开的」）。poke 给鼠标移上岛眨眼用。
-export const EYE_CUE_MS: Record<EyeCue, number> = { star: 2_400, surprised: 1_200, wink: 600 };
+export const EYE_CUE_MS: Record<EyeCue, number> = { star: 2_400, surprised: 1_200, wink: 600, blush: 2_400 };
 export function useEyeCue(sessions: readonly Item[]): { cue: EyeCue | null; poke: (cue: EyeCue) => void } {
   const [cue, setCue] = useState<EyeCue | null>(null);
   const timer = useRef(0);
@@ -267,11 +312,12 @@ function useBlink(active: boolean): boolean {
   return blink;
 }
 
-/// 睁着眼时隔 18~40 秒自己做个小动作：一半眨一只眼，一半往旁边瞟一眼（瞟的时候不跟鼠标）。
+/// 睁着眼时隔 18~40 秒自己做个小动作：眨一只眼、往旁边瞟一眼、一只眼睁大（好奇）；在跑时还会
+/// 往上看（想事情）。做动作时眼珠不跟鼠标。
 /// 只盯着鼠标转太像监控摄像头，偶尔走个神才像活的。
-type Fidget = "wink" | "glance";
-const FIDGET_MS: Record<Fidget, number> = { wink: 500, glance: 900 };
-function useFidget(active: boolean): Fidget | null {
+type Fidget = "wink" | "glance" | "curious" | "ponder";
+const FIDGET_MS: Record<Fidget, number> = { wink: 500, glance: 900, curious: 1_400, ponder: 1_600 };
+function useFidget(active: boolean, running: boolean): Fidget | null {
   const [fidget, setFidget] = useState<Fidget | null>(null);
   useEffect(() => {
     if (!active) return;
@@ -279,7 +325,8 @@ function useFidget(active: boolean): Fidget | null {
     const schedule = () => {
       timer = window.setTimeout(() => {
         if (document.visibilityState !== "visible") { schedule(); return; }
-        const next: Fidget = Math.random() < 0.5 ? "wink" : "glance";
+        const pool: Fidget[] = running ? ["wink", "glance", "curious", "ponder", "ponder"] : ["wink", "glance", "curious"];
+        const next = pool[Math.floor(Math.random() * pool.length)];
         setFidget(next);
         timer = window.setTimeout(() => { setFidget(null); schedule(); }, FIDGET_MS[next]);
       }, 18_000 + Math.random() * 22_000);
@@ -289,7 +336,7 @@ function useFidget(active: boolean): Fidget | null {
       window.clearTimeout(timer);
       setFidget(null);
     };
-  }, [active]);
+  }, [active, running]);
   return fidget;
 }
 
@@ -315,19 +362,31 @@ function useSleepStage(idle: boolean): SleepStage {
   return stage;
 }
 
-/// 从睡着里被叫醒（睡着 → 不睡）时吓一跳，0.9 秒。
-function useWakeStartle(asleep: boolean): boolean {
-  const [startled, setStartled] = useState(false);
-  const was = useRef(asleep);
+/// 某个条件从假变真的那一下，亮 ms 毫秒（醒来吓一跳、睡着前打哈欠）。挂载时本来就是真的不算。
+function useRiseFlash(active: boolean, ms: number): boolean {
+  const [flash, setFlash] = useState(false);
+  const was = useRef(active);
   useEffect(() => {
-    const wasAsleep = was.current;
-    was.current = asleep;
-    if (!wasAsleep || asleep) return;
-    setStartled(true);
-    const id = window.setTimeout(() => setStartled(false), 900);
+    const before = was.current;
+    was.current = active;
+    if (before || !active) return;
+    setFlash(true);
+    const id = window.setTimeout(() => setFlash(false), ms);
     return () => window.clearTimeout(id);
-  }, [asleep]);
-  return startled;
+  }, [active, ms]);
+  return flash;
+}
+
+/// 条件连续成立满 ms 毫秒后变真；一断就复位（待处理放久了没人管）。
+function useAfter(active: boolean, ms: number): boolean {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    setDone(false);
+    if (!active) return;
+    const id = window.setTimeout(() => setDone(true), ms);
+    return () => window.clearTimeout(id);
+  }, [active, ms]);
+  return done;
 }
 
 /// 环形进度。value 为 0..1；null = 不定进度（转圈的一段弧）。
