@@ -386,7 +386,11 @@ export function resizeManagedTerminal(sessionId: number, cols: number, rows: num
 
 /** 对话窗右侧面板的「终端」页签：会话目录下的普通 shell（后端 shell_terminal.rs）。
  *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
-export type ShellTerminalInfo = { id: number; owner: number; title: string; exited: boolean };
+export type ShellTerminalInfo = {
+  id: number; owner: number; title: string; exited: boolean;
+  /** 前端轮询补上的：shell 底下正在跑的程序名（node、python…），空闲时没有。 */
+  running?: string;
+};
 /** replay = 前端已显示过的历史，重放时不能再答里面的终端查询。 */
 export type ShellTerminalEvent = { kind: "output"; data: string; replay: boolean } | { kind: "exit"; code: number | null };
 export function openShellTerminal(owner: number, cwd: string, cols: number, rows: number): Promise<ShellTerminalInfo> {

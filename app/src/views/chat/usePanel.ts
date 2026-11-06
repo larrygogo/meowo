@@ -226,6 +226,48 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     }),
   }), [update, close, cwd]);
 
+  // 终端页签标题显示正在跑的程序（同 Kimi Code：前台程序名，空闲时是 shell 名）。
+  // 面板开着、有终端时每 3 秒查一次（就是关页签前那个「忙不忙」的接口，进程快照一次几毫秒）。
+  const termIds = state.tabs.flatMap((tab) => (tab.type === "term" && tab.shellId !== null ? [tab.shellId] : [])).join(",");
+  useEffect(() => {
+    // 等本会话的进程清单到了再查，否则第一轮结果对不上号被丢掉，要干等 3 秒。
+    if (remoteUi() || !state.visible || !termIds || !liveLoaded) return;
+    const ids = termIds.split(",").map(Number);
+    let cancelled = false;
+    const poll = () => {
+      shellTerminalBusy(ids)
+        .then((busy) => {
+          if (cancelled) return;
+          const running = new Map(busy.map((item) => {
+            // 进程按 pid 排，取最后一个：npm run dev 这种一路套下去，最后起的才是真正在跑的那个。
+            const last = item.processes[item.processes.length - 1]?.name ?? "";
+            return [item.id, last.replace(/\.exe$/i, "")] as const;
+          }));
+          setShells((prev) => {
+            let changed = false;
+            const next = new Map(prev);
+            for (const id of ids) {
+              const info = prev.get(id);
+              if (!info) continue;
+              const name = running.get(id) || undefined;
+              if (info.running !== name) {
+                next.set(id, { ...info, running: name });
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [state.visible, termIds, liveLoaded]);
+
   return { state, active, shells, panes, actions };
 }
 
@@ -237,7 +279,10 @@ export function tabTitle(tab: PanelTab, shells: ReadonlyMap<number, ShellTermina
     case "files":
       return t.chat.filesTab;
     case "term":
-      return (tab.shellId !== null ? shells.get(tab.shellId)?.title : null) || t.chat.shellTab;
+    {
+      const info = tab.shellId !== null ? shells.get(tab.shellId) : undefined;
+      return info?.running || info?.title || t.chat.shellTab;
+    }
     case "browser": {
       const info = tab.paneId !== null ? panes.get(tab.paneId) : undefined;
       const title = (info?.title || tab.title).trim();

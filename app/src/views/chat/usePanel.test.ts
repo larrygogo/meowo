@@ -155,4 +155,25 @@ describe("面板与后端进程对号", () => {
     expect(invoke).not.toHaveBeenCalledWith("shell_terminal_open", expect.anything());
     expect(loadPanel(-5).tabs).toHaveLength(0);
   });
+
+  it("终端页签标题显示正在跑的程序，空闲时回到 shell 名", async () => {
+    let busy: unknown[] = [{ id: 3, title: "pwsh", processes: [{ pid: 10, name: "cmd.exe" }, { pid: 11, name: "node.exe" }] }];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "shell_terminal_list") return [{ id: 3, owner: 1, title: "pwsh", exited: false }];
+      if (cmd === "browser_pane_list") return [];
+      if (cmd === "shell_terminal_busy") return busy;
+      return null;
+    });
+    savePanel(1, { tabs: [{ key: "t", type: "term", shellId: 3, cwd: "C:/repo" }], active: "t", visible: true, expanded: false });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { result } = renderHook(() => usePanel(1, "C:/repo", () => {}));
+      await waitFor(() => expect(result.current.shells.get(3)?.running).toBe("node"));
+      busy = [];
+      await act(async () => { vi.advanceTimersByTime(3100); });
+      await waitFor(() => expect(result.current.shells.get(3)?.running).toBeUndefined());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
