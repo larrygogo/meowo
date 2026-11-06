@@ -705,12 +705,12 @@ const AUTO_ALLOWED: &[&str] = &[
     "browser_screenshot",
 ];
 
-/// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。
-/// - claude：`--mcp-config <文件>` 挂上服务器，`--allowedTools mcp__meowo` 放行这组工具——
-///   和 Kimi Code 一样 agent 直接操作，用户随时能在页签上「接管」。配置写成文件而不是内联
-///   JSON：Windows 上 claude 常是 `.cmd` 包装，命令行里的双引号会被 cmd 拆坏。
-/// - codex：`-c` 覆盖配置，值用 TOML 单引号字符串，同样避开双引号。
-/// - kimi 没有临时挂 MCP 的参数，走它的 `mcp.json`（见 sync_kimi_mcp）；其余 agent 暂不支持。
+/// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。各 agent 怎么接
+/// 由插件的 `mcp_attach()` 声明（meowo_agent::McpAttach）：
+/// - ConfigFileArg：启动参数指向配置文件，可选同时放行 AUTO_ALLOWED 里的工具——和 Kimi Code 一样
+///   agent 直接操作，用户随时能在页签上「接管」。
+/// - TomlOverride：配置覆盖参数，值用 TOML 单引号字符串。
+/// - DataDirJson：没有启动参数可用，走数据目录里的配置文件（见 sync_mcp_files），这里不追加。
 pub(crate) fn launch_args(provider: &str) -> Vec<String> {
     if !crate::settings::load_settings().browser_agent {
         return Vec::new();
@@ -718,23 +718,35 @@ pub(crate) fn launch_args(provider: &str) -> Vec<String> {
     let Some(reporter) = crate::setup::sibling_reporter() else {
         return Vec::new();
     };
-    match provider {
-        "claude" => match claude_config_file(&reporter) {
-            Some(path) => {
-                let mut args = vec!["--mcp-config".into(), path, "--allowedTools".into()];
+    let Some(plugin) = meowo_agent::by_id(provider) else {
+        return Vec::new();
+    };
+    // 怎么交给它由插件声明（McpAttach），宿主不按 agent 身份分支。
+    match plugin.mcp_attach() {
+        Some(meowo_agent::McpAttach::ConfigFileArg {
+            file_flag,
+            allow_flag,
+            allow_prefix,
+        }) => {
+            let Some(path) = config_file(plugin.id().as_str(), &reporter) else {
+                return Vec::new();
+            };
+            let mut args = vec![file_flag.to_string(), path];
+            if let Some(flag) = allow_flag {
+                args.push(flag.to_string());
                 args.extend(
                     AUTO_ALLOWED
                         .iter()
-                        .map(|tool| format!("mcp__{SERVER_NAME}__{tool}")),
+                        .map(|tool| format!("{allow_prefix}{SERVER_NAME}__{tool}")),
                 );
-                args
             }
-            None => Vec::new(),
-        },
-        "codex" if !reporter.contains('\'') => vec![
-            "-c".into(),
+            args
+        }
+        // TOML 单引号字符串里不能再有单引号；路径带单引号的极少见，那就不挂。
+        Some(meowo_agent::McpAttach::TomlOverride { flag }) if !reporter.contains('\'') => vec![
+            flag.to_string(),
             format!("mcp_servers.{SERVER_NAME}.command='{reporter}'"),
-            "-c".into(),
+            flag.to_string(),
             format!("mcp_servers.{SERVER_NAME}.args=['mcp']"),
         ],
         _ => Vec::new(),
@@ -745,40 +757,46 @@ fn server_entry(reporter: &str) -> Value {
     json!({ "type": "stdio", "command": reporter, "args": ["mcp"] })
 }
 
-/// `~/.meowo/mcp/claude-browser.json`，每次启动按当前 reporter 路径重写一遍。
-fn claude_config_file(reporter: &str) -> Option<String> {
+/// `~/.meowo/mcp/<agent>-browser.json`，每次启动按当前 reporter 路径重写一遍。
+fn config_file(agent: &str, reporter: &str) -> Option<String> {
     let dir = crate::setup::meowo_dir().join("mcp");
     std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("claude-browser.json");
+    let path = dir.join(format!("{agent}-browser.json"));
     let body = json!({ "mcpServers": { SERVER_NAME: server_entry(reporter) } });
     std::fs::write(&path, serde_json::to_vec_pretty(&body).ok()?).ok()?;
     Some(path.to_string_lossy().into_owned())
 }
 
-/// kimi（Kimi Code CLI 2.x）只从 `~/.kimi-code/mcp.json` 等文件读 MCP，没有启动参数。
+/// 没有启动参数可用、只读数据目录里 MCP 配置文件的 agent（McpAttach::DataDirJson，如 kimi 2.x）。
 /// 开关开着就登记 `meowo` 这一项，关了就摘掉；文件里别的服务器原样保留。
 /// 这份文件 Kimi Code 桌面版和外部终端里的 kimi 也会读——服务器在那些地方拿不到 Meowo 的
 /// 会话令牌，工具列表是空的（见 meowo-reporter 的 mcp.rs），不会添乱。
 /// 只在自动接线开着时调（dev 构建默认不碰全局配置，同 hooks）。
-pub(crate) fn sync_kimi_mcp() {
-    // 默认账号 + Meowo 里建的每个 kimi 账号：多账号靠 KIMI_CODE_HOME 整个换数据目录，
-    // 只登记默认目录的话，非默认账号启动的会话拿不到这组工具。
+pub(crate) fn sync_mcp_files() {
     let settings = crate::settings::load_settings();
-    let mut homes: Vec<std::path::PathBuf> = Vec::new();
-    homes.extend(crate::profile::data_dir("kimi", None));
-    for profile in settings.profiles.get("kimi").into_iter().flatten() {
-        homes.extend(crate::profile::data_dir("kimi", Some(&profile.id)));
-    }
-    homes.sort();
-    homes.dedup();
     let reporter = crate::setup::sibling_reporter();
-    for home in homes.into_iter().filter(|dir| dir.is_dir()) {
-        sync_kimi_mcp_in(&home, settings.browser_agent, reporter.as_deref());
+    for plugin in meowo_agent::all() {
+        let Some(meowo_agent::McpAttach::DataDirJson { rel }) = plugin.mcp_attach() else {
+            continue;
+        };
+        // 默认账号 + Meowo 里建的每个账号：多账号整个换数据目录（kimi 的 KIMI_CODE_HOME），
+        // 只登记默认目录的话，非默认账号启动的会话拿不到这组工具。
+        let agent = plugin.id().as_str();
+        let mut homes: Vec<std::path::PathBuf> = Vec::new();
+        homes.extend(crate::profile::data_dir(agent, None));
+        for profile in settings.profiles.get(agent).into_iter().flatten() {
+            homes.extend(crate::profile::data_dir(agent, Some(&profile.id)));
+        }
+        homes.sort();
+        homes.dedup();
+        for home in homes.into_iter().filter(|dir| dir.is_dir()) {
+            sync_mcp_file(&home.join(rel), settings.browser_agent, reporter.as_deref());
+        }
     }
 }
 
-fn sync_kimi_mcp_in(home: &std::path::Path, enabled: bool, reporter: Option<&str>) {
-    let path = home.join("mcp.json");
+fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) {
+    let path = path.to_path_buf();
     let mut root: Value = match std::fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice(&bytes) {
             Ok(value) => value,
@@ -1041,17 +1059,21 @@ mod tests {
         )
         .unwrap();
         let read = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
-        sync_kimi_mcp_in(&dir, true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&dir.join("mcp.json"), true, Some("C:/m/meowo-reporter.exe"));
         let root = read();
         assert_eq!(root["mcpServers"]["meowo"]["args"], json!(["mcp"]));
         assert_eq!(root["mcpServers"]["other"]["command"], "x");
         assert_eq!(root["keep"], 1);
-        sync_kimi_mcp_in(&dir, false, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(
+            &dir.join("mcp.json"),
+            false,
+            Some("C:/m/meowo-reporter.exe"),
+        );
         let root = read();
         assert!(root["mcpServers"].get("meowo").is_none());
         assert_eq!(root["mcpServers"]["other"]["command"], "x");
         std::fs::write(&path, "{broken").unwrap();
-        sync_kimi_mcp_in(&dir, true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&dir.join("mcp.json"), true, Some("C:/m/meowo-reporter.exe"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
         let _ = std::fs::remove_dir_all(&dir);
     }

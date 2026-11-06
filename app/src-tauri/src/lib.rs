@@ -1440,7 +1440,7 @@ pub fn run() {
             if setup::auto_wire_enabled() {
                 std::thread::spawn(|| {
                     setup::apply_all();
-                    browser_agent::sync_kimi_mcp();
+                    browser_agent::sync_mcp_files();
                 });
             } else {
                 eprintln!("Meowo dev: 跳过启动自动接线(hooks/statusline)；需要时用设置页「修复连接」或设 MEOWO_DEV_WIRE=1");
@@ -1596,6 +1596,8 @@ mod tests {
         const HOST_SOURCES: &[(&str, &str)] = &[
             ("app_bundle.rs", include_str!("app_bundle.rs")),
             ("bgpty.rs", include_str!("bgpty.rs")),
+            ("browser_agent.rs", include_str!("browser_agent.rs")),
+            ("browser_pane.rs", include_str!("browser_pane.rs")),
             ("chat.rs", include_str!("chat.rs")),
             ("confirm.rs", include_str!("confirm.rs")),
             ("detect.rs", include_str!("detect.rs")),
@@ -1610,6 +1612,7 @@ mod tests {
             ("remote.rs", include_str!("remote.rs")),
             ("session_command.rs", include_str!("session_command.rs")),
             ("session_query.rs", include_str!("session_query.rs")),
+            ("shell_terminal.rs", include_str!("shell_terminal.rs")),
             ("settings.rs", include_str!("settings.rs")),
             ("snap.rs", include_str!("snap.rs")),
             ("snap_layout.rs", include_str!("snap_layout.rs")),

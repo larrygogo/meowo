@@ -836,7 +836,7 @@ pub(crate) async fn set_settings(
         // 「允许 Agent 操作面板浏览器」开关同步到 kimi 的 mcp.json（claude/codex 走启动参数，
         // 下次启动自然生效）。dev 构建不碰全局配置，同 hooks 自动接线。
         if crate::setup::auto_wire_enabled() {
-            crate::browser_agent::sync_kimi_mcp();
+            crate::browser_agent::sync_mcp_files();
         }
         Ok(settings)
     })
