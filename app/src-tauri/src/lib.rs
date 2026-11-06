@@ -64,7 +64,7 @@ use chat::{
 };
 use fsutil::{
     list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
-    reveal_path_in_file_manager, search_project_files, file_mention_candidates,
+    reveal_path_in_file_manager, reveal_terminal_path, search_project_files, file_mention_candidates,
 };
 use git::{git_diff_summary, git_file_diff, git_pull_request};
 use handoff::{copy_session_to_provider, get_session_lineage};
@@ -1265,6 +1265,7 @@ pub fn run() {
             editors::list_folder_editors,
             editors::open_folder_in,
             reveal_path_in_file_manager,
+            reveal_terminal_path,
             browser_pane::browser_pane_open,
             browser_pane::browser_pane_list,
             browser_pane::browser_pane_set_bounds,

@@ -660,6 +660,86 @@ pub(crate) async fn reveal_path_in_file_manager(cwd: String, rel: String) -> Res
         .map_err(|e| e.to_string())?
 }
 
+/// 在系统文件管理器里定位终端里 Ctrl+点击、或对话里点击的路径。与上面那个不同，不限制在 cwd 内：路径是
+/// 用户自己终端里打印出来的（编译产物、日志、别的项目），实拍点安装包路径报「路径超出工作
+/// 目录」（2026-11-06）。只让文件管理器选中它，不打开也不运行，所以放开包含校验；仍要求
+/// 路径存在。相对路径按会话 cwd 解析。手机端不桥接（remote.rs 的禁用名单）。
+#[tauri::command]
+pub(crate) async fn reveal_terminal_path(cwd: String, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = resolve_terminal_path(&cwd, &path)?;
+        reveal_target(&target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 终端里点到的路径：绝对路径照用，相对路径接在 cwd 后面；`..`/`.` 按字面折叠，不跟随链接
+/// （与 reveal_path_blocking 的字面判断同理：选中的是链接本身）。目标不存在就报「路径不存在」。
+fn resolve_terminal_path(cwd: &str, path: &str) -> Result<PathBuf, String> {
+    use std::path::Component;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    let expanded = expand_terminal_path(path.trim(), home.as_deref());
+    let raw = expanded.as_path();
+    let joined = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        let dir = cwd.trim();
+        if dir.is_empty() {
+            return Err("目录不存在".into());
+        }
+        Path::new(dir).join(raw)
+    };
+    let mut out = PathBuf::new();
+    for comp in joined.components() {
+        match comp {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if std::fs::symlink_metadata(&out).is_err() {
+        return Err("路径不存在".into());
+    }
+    Ok(out)
+}
+
+/// 终端里打印的路径有两种写法 Path 不认，原样拼到 cwd 后面必然「路径不存在」：
+/// - `~`、`~/…`、`~\…`：前端 scanLineForFilePaths 把它当锚定路径收进命中（claude 常打印
+///   `~/.claude/settings.json`），不展开就成了 `<cwd>/~/.claude/…`；
+/// - Windows 上 Git Bash / MSYS 风格的 `/c/Users/…`：没有盘符不算绝对路径，join 后变成
+///   `C:\c\Users\…`。单字母首段按盘符改写成 `C:\Users\…`。
+///
+/// `~user` 不展开（Windows 上没有对应语义），照旧按相对路径走。
+fn expand_terminal_path(path: &str, home: Option<&Path>) -> PathBuf {
+    if let Some(home) = home {
+        if path == "~" {
+            return home.to_path_buf();
+        }
+        if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+            return home.join(rest);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let bytes = path.as_bytes();
+        if bytes.len() >= 2
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && (bytes.len() == 2 || bytes[2] == b'/')
+        {
+            let drive = (bytes[1] as char).to_ascii_uppercase();
+            let rest = path.get(3..).unwrap_or("").replace('/', "\\");
+            return PathBuf::from(format!("{drive}:\\{rest}"));
+        }
+    }
+    PathBuf::from(path)
+}
+
 fn reveal_path_blocking(cwd: &str, rel: &str) -> Result<(), String> {
     let target = match resolve_inside(cwd, rel) {
         Ok(target) => target,
@@ -671,25 +751,29 @@ fn reveal_path_blocking(cwd: &str, rel: &str) -> Result<(), String> {
         Err(e) if e == "路径超出工作目录" => resolve_inside_lexically(cwd, rel).ok_or(e)?,
         Err(e) => return Err(e),
     };
+    reveal_target(&target)
+}
+
+fn reveal_target(target: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         // `/select,路径` 是单个 argv：explorer 语法如此，含空格也无需引号
         // （CreateProcess 的 argv 不会被二次拆分）。
         std::process::Command::new("explorer")
-            .arg(format!("/select,{}", display_path(&target)))
+            .arg(format!("/select,{}", display_path(target)))
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
     }
     #[cfg(target_os = "macos")]
     {
-        spawn_detached(std::process::Command::new("open").arg("-R").arg(&target))?;
+        spawn_detached(std::process::Command::new("open").arg("-R").arg(target))?;
         Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         // Linux 文件管理器无统一「选中」协议：退而求其次打开父目录。
-        let parent = target.parent().unwrap_or(target.as_path());
+        let parent = target.parent().unwrap_or(target);
         spawn_detached(std::process::Command::new("xdg-open").arg(parent))?;
         Ok(())
     }
@@ -797,6 +881,61 @@ mod tests {
         );
         // 越界被拦。
         assert!(file_mention_candidates_blocking(cwd, "../").is_err());
+    }
+
+    /// 终端里点到的路径：cwd 外的绝对路径也认（实拍：点编译产物路径报越界），相对路径按 cwd
+    /// 解析、`..` 可以走出 cwd；不存在的照样报「路径不存在」。
+    #[test]
+    fn resolve_terminal_path_allows_outside_cwd() {
+        let cwd = TempDir::new();
+        let other = TempDir::new();
+        std::fs::write(other.0.join("setup.exe"), "x").unwrap();
+        std::fs::create_dir_all(cwd.0.join("src")).unwrap();
+        let cwd_s = cwd.path();
+        let abs = other.0.join("setup.exe");
+        assert_eq!(resolve_terminal_path(cwd_s, abs.to_str().unwrap()).unwrap(), abs);
+        assert_eq!(resolve_terminal_path(cwd_s, "src").unwrap(), cwd.0.join("src"));
+        let up = format!("../{}/setup.exe", other.0.file_name().unwrap().to_str().unwrap());
+        assert_eq!(resolve_terminal_path(cwd_s, &up).unwrap(), abs);
+        assert_eq!(resolve_terminal_path(cwd_s, "不存在.txt").unwrap_err(), "路径不存在");
+        assert_eq!(resolve_terminal_path("", "src").unwrap_err(), "目录不存在");
+    }
+
+    /// `~` 展开成主目录（前端把 `~/…` 当锚定路径可点，后端不展开就拼成 `<cwd>/~/…`）；
+    /// `~user` 不展开。
+    #[test]
+    fn expand_terminal_path_expands_home() {
+        let home = Path::new("/h/me");
+        assert_eq!(expand_terminal_path("~", Some(home)), home.to_path_buf());
+        assert_eq!(
+            expand_terminal_path("~/.claude/settings.json", Some(home)),
+            home.join(".claude/settings.json")
+        );
+        assert_eq!(expand_terminal_path("~\\.claude", Some(home)), home.join(".claude"));
+        assert_eq!(expand_terminal_path("~bob/x", Some(home)), PathBuf::from("~bob/x"));
+        assert_eq!(expand_terminal_path("~/x", None), PathBuf::from("~/x"));
+        assert_eq!(expand_terminal_path("src/a.ts", Some(home)), PathBuf::from("src/a.ts"));
+    }
+
+    /// Git Bash 风格 `/c/Users/…` 在 Windows 上按盘符改写，不再被拼成 `C:\c\Users\…`。
+    #[cfg(windows)]
+    #[test]
+    fn expand_terminal_path_converts_msys_drive() {
+        assert_eq!(
+            expand_terminal_path("/c/Users/me/a.txt", None),
+            PathBuf::from("C:\\Users\\me\\a.txt")
+        );
+        assert_eq!(expand_terminal_path("/d", None), PathBuf::from("D:\\"));
+        assert_eq!(expand_terminal_path("/d/", None), PathBuf::from("D:\\"));
+        // 多字母首段不是盘符，照旧。
+        assert_eq!(expand_terminal_path("/cd/x", None), PathBuf::from("/cd/x"));
+        // 端到端：真实存在的目录写成 MSYS 形式，经 resolve 能找到，不被拼到 cwd 下。
+        let dir = TempDir::new();
+        let p = dir.0.to_str().unwrap().replace('\\', "/");
+        let (drive, rest) = p.split_once(':').unwrap();
+        let msys = format!("/{}{}", drive.to_ascii_lowercase(), rest);
+        let cwd = TempDir::new();
+        assert_eq!(resolve_terminal_path(cwd.path(), &msys).unwrap(), dir.0);
     }
 
     /// 字面包含判断：目录里指向外部的链接本身算在内（定位只选中链接），`..` 越界与不存在仍拒。

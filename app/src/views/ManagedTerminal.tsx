@@ -22,7 +22,7 @@ import {
   registerTerminalViewer,
   managedTerminalGrid,
   resizeManagedTerminal,
-  revealPathInFileManager,
+  revealTerminalPath,
   startManagedTerminal,
   takeoverManagedTerminal,
   unregisterTerminalViewer,
@@ -631,8 +631,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     }));
     // 文件路径 link provider:终端里最高频的可点内容,此前一律不可点(T-4)。识别口径见
     // scanLineForFilePaths(保守:至少要一个路径分隔符)。Ctrl+点击在系统文件管理器中
-    // 定位(reveal_path_in_file_manager,与「文件」页同一通道,根 = 会话 cwd;路径越出
-    // cwd 或不存在时后端报错,经 setError 可见)。cwd 晚到/缺席时点击报「目录不存在」,
+    // 定位(reveal_terminal_path:相对路径按会话 cwd 解析;不限在 cwd 内——终端里常打印
+    // 编译产物、别的项目的路径,实拍点安装包路径报「路径超出工作目录」;不存在时后端报错,
+    // 经 setError 可见)。cwd 晚到/缺席时点击报「目录不存在」,
     // 故 cwd 未知干脆不注册。远程模式该命令不在桥白名单(宿主执行类),整条通道不装。
     if (!remoteUi()) {
       terminal.registerLinkProvider({
@@ -668,7 +669,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
             text: hit.text,
             activate: (event: MouseEvent, linkText: string) => {
               if (!event.ctrlKey && !event.metaKey) return;
-              void revealPathInFileManager(cwd, linkText).catch((e) => setError(formatBackendError(e, t.locale)));
+              void revealTerminalPath(cwd, linkText).catch((e) => setError(formatBackendError(e, t.locale)));
             },
             hover: () => setLinkHint((isMac() ? t.chat.terminalPathHintMac : t.chat.terminalPathHint)),
             leave: () => setLinkHint(null),

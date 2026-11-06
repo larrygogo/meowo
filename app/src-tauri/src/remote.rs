@@ -1689,6 +1689,8 @@ mod tests {
             // 在宿主上开窗。
             "open_session_admin",
             "reveal_path_in_file_manager",
+            // 终端路径定位不限 cwd，更不能让手机端触发。
+            "reveal_terminal_path",
             "open_attached_terminal",
             "open_chat_window",
             "confirm_dialog",

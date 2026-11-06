@@ -399,9 +399,9 @@ describe("ManagedTerminal", () => {
     const click = (init: Partial<MouseEvent>) => init as MouseEvent;
     // 普通点击留给 TUI 鼠标交互与选区(与 URL 同一纪律)。
     links![0].activate(click({}), "src/main.ts");
-    expect(invoke).not.toHaveBeenCalledWith("reveal_path_in_file_manager", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("reveal_terminal_path", expect.anything());
     links![0].activate(click({ ctrlKey: true }), "src/main.ts");
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("reveal_path_in_file_manager", { cwd: "/repo", rel: "src/main.ts" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("reveal_terminal_path", { cwd: "/repo", path: "src/main.ts" }));
     // 悬停提示指向文件管理器,离开即收。
     act(() => links![0].hover!());
     expect(await screen.findByText("Ctrl+点击在文件管理器中显示")).toBeTruthy();

@@ -389,6 +389,8 @@ export const zh = {
     // 选中正文后的气泡：把这段话引进输入框，接着写回应。
     codeCopy: "复制",
     codeCopied: "已复制",
+    codeRevealPath: "点击在文件夹中显示",
+    codeOpenLink: "点击在浏览器中打开",
     codeWrap: "自动换行",
     codeUnwrap: "取消换行",
     tableCopy: "复制表格",
@@ -1054,7 +1056,6 @@ export const zh = {
     // 会话仍在本应用里跑：两边同时恢复会写乱同一份会话。
     resumeCommandCopiedLive: "已复制，先在这里结束会话再运行",
     copyFailed: "复制失败，请重试",
-    quoteSelection: "引用",
     undoComposerBusy: "终端输入框里有未发送的内容，清空后再撤回",
     // 菜单式撤回（claude /rewind）每一步核对屏幕，选中项或引文与要撤的消息对不上就退出菜单。
     undoMenuMismatch: "撤回菜单与所选消息对不上，已取消",
