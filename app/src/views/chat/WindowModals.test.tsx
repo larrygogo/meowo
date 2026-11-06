@@ -152,8 +152,9 @@ describe("ShortcutSheet 快捷键速查表", () => {
     const onClose = vi.fn();
     render(<ShortcutSheet onClose={onClose} />);
     const dialog = screen.getByRole("dialog", { name: zh.chat.shortcutsTitle });
-    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(14);
+    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(15);
     expect(dialog.textContent).toContain("Ctrl+Shift+F");
+    expect(dialog.textContent).toContain("Ctrl+`");
     expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote);
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);

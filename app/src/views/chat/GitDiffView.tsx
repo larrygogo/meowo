@@ -29,7 +29,9 @@ import {
   type GitFileDiffDto,
   type ImagePreviewDto,
   type SearchResultDto,
+  type ShellTerminalInfo,
 } from "../../api";
+import { ShellTerminal } from "./ShellTerminal";
 import { FileMarkdown } from "./FileMarkdown";
 import { useMenuPopup } from "../menu";
 import { folderName } from "../../paths";
@@ -382,9 +384,11 @@ type FetchEntry<T> = { loading: boolean; error: string | null; data: T | null };
  * 可能上千行的文件 DOM 做全量 reconcile；父层回调已换稳定引用配合生效。
  */
 export const GitDiffView = memo(GitDiffViewImpl);
-export type DiffPanelTab = "changes" | "files";
+/** `shell:<id>` = 「终端」页签，id 是后端 shell_terminal 的编号。 */
+export type DiffPanelTab = "changes" | "files" | `shell:${number}`;
+const NO_SHELLS: readonly ShellTerminalInfo[] = [];
 
-function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange }: {
+function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, shells = NO_SHELLS, onNewShell, onCloseShell }: {
   /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
   summary: GitDiffSummaryDto | null;
@@ -407,11 +411,16 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
   /** ChatWindow 顶栏直达入口需要受控切页；独立使用时保留内部状态。 */
   activeTab?: DiffPanelTab;
   onTabChange?: (tab: DiffPanelTab) => void;
+  /** 本会话在面板里开的普通终端（见 ShellTerminal）；不传 = 不出终端页签和「+」。 */
+  shells?: readonly ShellTerminalInfo[];
+  onNewShell?: () => void;
+  onCloseShell?: (id: number) => void;
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo;
   const [internalTab, setInternalTab] = useState<DiffPanelTab>(changesAvailable ? "changes" : "files");
   const tab = activeTab ?? internalTab;
+  const shellTab = tab.startsWith("shell:") && shells.some((shell) => tab === `shell:${shell.id}`);
   const selectTab = (next: DiffPanelTab) => {
     setInternalTab(next);
     onTabChange?.(next);
@@ -430,6 +439,8 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // 焦点在终端里时 Esc 是给 shell 的（vim、less、补全菜单都要它），不收面板。
+      if (event.target instanceof Element && event.target.closest(".shell-term")) return;
       // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
       // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。
       if (document.querySelector(".chat-modal-overlay")) return;
@@ -467,7 +478,7 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
         )}
         {!remoteUi() && <div className="chat-diff-tabs">
           {/* 远程只放行改动列表（remote.rs 模块头「例外」），「文件」页签要读任意文件，不给。 */}
-          {!remoteUi() && <button type="button" className={tab === "files" || !changesAvailable ? "is-active" : ""} onClick={() => selectTab("files")}>
+          {!remoteUi() && <button type="button" className={tab === "files" || (!changesAvailable && !shellTab) ? "is-active" : ""} onClick={() => selectTab("files")}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
@@ -480,6 +491,35 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
                 <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
               </svg>
               {t.chat.diffChangesTab}
+            </button>
+          )}
+          {shells.map((shell) => (
+            <button
+              key={shell.id}
+              type="button"
+              className={"chat-diff-shell-tab" + (tab === `shell:${shell.id}` ? " is-active" : "") + (shell.exited ? " is-exited" : "")}
+              onClick={() => selectTab(`shell:${shell.id}`)}
+              // 中键关页签，浏览器和编辑器的通行习惯。
+              onAuxClick={(event) => { if (event.button === 1) onCloseShell?.(shell.id); }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 17l6-6-6-6" /><path d="M12 19h8" />
+              </svg>
+              {shell.title}
+              <span
+                role="button"
+                tabIndex={-1}
+                className="chat-diff-shell-close"
+                aria-label={t.chat.shellClose}
+                onClick={(event) => { event.stopPropagation(); onCloseShell?.(shell.id); }}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </span>
+            </button>
+          ))}
+          {onNewShell && (
+            <button type="button" className="chat-diff-shell-new" data-tip={t.chat.shellNew} aria-label={t.chat.shellNew} onClick={onNewShell}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </button>
           )}
         </div>}
@@ -513,8 +553,10 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
           </svg>
         </button>}
       </header>
+      {/* 终端常驻挂载、只切显隐：切去「文件」再回来，屏幕和滚动位置都还在。 */}
+      {!remoteUi() && shells.map((shell) => <ShellTerminal key={shell.id} id={shell.id} visible={!collapsed && tab === `shell:${shell.id}`} />)}
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
-      {tab === "changes" && changesAvailable && summary
+      {shellTab ? null : tab === "changes" && changesAvailable && summary
         ? (
           <ChangesView
             key={cwd}

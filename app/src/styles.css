@@ -4648,6 +4648,20 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tabs { flex: 0 0 auto; display: flex; padding: var(--sp-3); border-radius: var(--radius-md); background: var(--fill-hover); }
 .chat-diff-tabs button { display: inline-flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-tabs button.is-active { color: var(--cc-text); background: var(--cc-bg); box-shadow: var(--shadow-sm); }
+/* 终端页签可以开很多个：页签组允许收窄、横向滚动，页签本身仍不收缩（CJK 不被挤成竖排）。 */
+.chat-diff-tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.chat-diff-tabs::-webkit-scrollbar { display: none; }
+.chat-diff-tabs button { flex: 0 0 auto; }
+.chat-diff-shell-tab { padding-right: var(--sp-4) !important; }
+.chat-diff-shell-tab.is-exited { opacity: 0.6; }
+.chat-diff-shell-close { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: var(--radius-sm); color: var(--cc-text-faint); }
+.chat-diff-shell-close:hover { color: var(--cc-text); background: var(--fill-hover); }
+.chat-diff-tabs .chat-diff-shell-new { padding: var(--sp-4) var(--sp-6); }
+.chat-diff-tabs .chat-diff-shell-new:hover { color: var(--cc-text); }
+/* 面板里的终端占满面板剩余高度；退出提示贴底，不挡最后几行输出。 */
+.chat-diff-panel .shell-term { flex: 1; }
+.shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 2; padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-sm); color: #9ba19e; background: rgba(31, 31, 31, 0.92); font-size: var(--text-xs); pointer-events: none; }
+.shell-term-exit.is-error { color: #f0a0a0; }
 .chat-diff-spacer { flex: 1; }
 /* 「更改」页签顶部的分支行：整行宽度、超长省略（分支名在头行会挤到换行，移到这里）。 */
 .chat-diff-branchline { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); margin: var(--sp-8) var(--sp-8) 0; padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }

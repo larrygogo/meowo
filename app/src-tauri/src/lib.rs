@@ -48,6 +48,7 @@ mod proc;
 pub mod profile;
 mod session_command;
 mod session_query;
+mod shell_terminal;
 mod snap_layout;
 mod terminal;
 mod watch;
@@ -1262,6 +1263,13 @@ pub fn run() {
             editors::list_folder_editors,
             editors::open_folder_in,
             reveal_path_in_file_manager,
+            shell_terminal::shell_terminal_open,
+            shell_terminal::shell_terminal_list,
+            shell_terminal::shell_terminal_attach,
+            shell_terminal::shell_terminal_detach,
+            shell_terminal::shell_terminal_write,
+            shell_terminal::shell_terminal_resize,
+            shell_terminal::shell_terminal_close,
             rename_session,
             set_archived,
             move_session_rank,
@@ -1426,6 +1434,7 @@ pub fn run() {
             }
             // 远程访问桥（手机浏览器）：manage 生命周期状态后按 settings 决定是否启动。
             // 默认关闭时 apply 是 no-op，不监听任何端口。
+            app.manage(shell_terminal::ShellTerminals::default());
             app.manage(remote::RemoteRuntime::default());
             remote::apply(app.handle());
             // 先起合流线程：其余几个 spawn_* 都经 emit_board_changed 发事件，晚起会让它们的

@@ -781,6 +781,13 @@ pub(crate) fn open_chat_window_target(
             ptys.reset_viewer();
             #[cfg(target_os = "macos")]
             crate::macos::menubar::settings_window_did_close(&app_handle, "chat");
+            // 面板里开的普通终端只属于这扇窗：窗没了就再没人能看到或关掉它们。只在真正
+            // 销毁时收，CloseRequested 之后窗口可能还在（被拦下或改成隐藏）。
+            if matches!(e, tauri::WindowEvent::Destroyed) {
+                if let Some(shells) = app_handle.try_state::<crate::shell_terminal::ShellTerminals>() {
+                    shells.kill_all();
+                }
+            }
         }
     });
     // 置前兜底：真正 show 由前端首帧触发（useShowWhenReady），距点击已过去数秒

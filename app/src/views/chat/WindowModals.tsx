@@ -251,6 +251,7 @@ export function shortcutGroups(t: ReturnType<typeof useT>): { title: string; row
         ["Ctrl+F", t.chat.shortcutSearch],
         ["Alt+↑ / Alt+↓", t.chat.shortcutPrevNext],
         ["Ctrl+Shift+F", t.chat.searchTranscript],
+        ["Ctrl+`", t.chat.shortcutShell],
         ["?", t.chat.shortcutSheet],
       ],
     },

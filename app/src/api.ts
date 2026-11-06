@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { activityTone } from "./activity";
 import { appConfirm } from "./confirm";
 import type { AgentDescriptor as AgentDescriptorDto } from "./generated/contracts/AgentDescriptor";
@@ -382,6 +382,35 @@ export function writeManagedTerminal(sessionId: number, data: string): Promise<v
 }
 export function resizeManagedTerminal(sessionId: number, cols: number, rows: number): Promise<void> {
   return invoke("resize_managed_terminal", { sessionId, cols, rows });
+}
+
+/** 对话窗右侧面板的「终端」页签：会话目录下的普通 shell（后端 shell_terminal.rs）。
+ *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
+export type ShellTerminalInfo = { id: number; owner: number; title: string; exited: boolean };
+export type ShellTerminalEvent = { kind: "output"; data: string } | { kind: "exit"; code: number | null };
+export function openShellTerminal(owner: number, cwd: string, cols: number, rows: number): Promise<ShellTerminalInfo> {
+  return invoke("shell_terminal_open", { owner, cwd, cols, rows });
+}
+export function listShellTerminals(owner: number): Promise<ShellTerminalInfo[]> {
+  return invoke("shell_terminal_list", { owner });
+}
+/** 挂上输出通道；第一帧是历史输出回放。返回代次，卸载时交给 detachShellTerminal。 */
+export function attachShellTerminal(id: number, onEvent: (event: ShellTerminalEvent) => void): Promise<number> {
+  const channel = new Channel<ShellTerminalEvent>();
+  channel.onmessage = onEvent;
+  return invoke("shell_terminal_attach", { id, onEvent: channel });
+}
+export function detachShellTerminal(id: number, generation: number): Promise<void> {
+  return invoke("shell_terminal_detach", { id, generation });
+}
+export function writeShellTerminal(id: number, data: string): Promise<void> {
+  return invoke("shell_terminal_write", { id, data });
+}
+export function resizeShellTerminal(id: number, cols: number, rows: number): Promise<void> {
+  return invoke("shell_terminal_resize", { id, cols, rows });
+}
+export function closeShellTerminal(id: number): Promise<void> {
+  return invoke("shell_terminal_close", { id });
 }
 
 /**

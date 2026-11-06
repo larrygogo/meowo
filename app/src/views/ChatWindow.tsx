@@ -9,7 +9,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, closeShellTerminal, listShellTerminals, openShellTerminal, type ShellTerminalInfo, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -155,6 +155,7 @@ function pickFilesViaInput(): Promise<File[]> {
 }
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
+const NO_SHELLS: readonly ShellTerminalInfo[] = [];
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
 /// 据此保留旧引用即可跳过整窗重渲染。
@@ -845,6 +846,59 @@ export function ChatWindow() {
     setDiffCollapsed(false);
   }, []);
   const changeDiffTab = useCallback((tab: DiffPanelTab) => setDiffTab(tab), []);
+  // 面板「终端」页签：进程在后端常驻（shell_terminal.rs），这里只是本会话的页签清单。
+  // 换会话时从后端重新取，切回来还是那几个终端，里面跑着的 dev server 不受影响。
+  const [shells, setShells] = useState<readonly ShellTerminalInfo[]>(NO_SHELLS);
+  useEffect(() => {
+    setShells(NO_SHELLS);
+    if (remoteUi()) return;
+    let cancelled = false;
+    listShellTerminals(sessionId)
+      .then((list) => { if (!cancelled) setShells(list.length > 0 ? list : NO_SHELLS); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionId]);
+  // 上一个会话的终端页签不能留在这个会话的面板上。
+  useEffect(() => {
+    setDiffTab((tab) => (tab.startsWith("shell:") && !shells.some((shell) => tab === `shell:${shell.id}`) ? "changes" : tab));
+  }, [shells]);
+  const newShell = useCallback(() => {
+    if (!cwd) return;
+    openShellTerminal(sessionId, cwd, 80, 24)
+      .then((info) => {
+        setShells((list) => [...list, info]);
+        setDiffTab(`shell:${info.id}`);
+        setDiffOpen(true);
+        setDiffCollapsed(false);
+      })
+      .catch((e) => setSendError(formatBackendError(e, t.locale)));
+  }, [cwd, sessionId, t.locale]);
+  const closeShell = useCallback((id: number) => {
+    void closeShellTerminal(id).catch(() => {});
+    const at = shells.findIndex((shell) => shell.id === id);
+    const next = shells.filter((shell) => shell.id !== id);
+    setShells(next.length > 0 ? next : NO_SHELLS);
+    // 关的是正在看的那个：落到相邻的终端，一个都不剩就回「更改」。
+    const neighbor = next[Math.min(at, next.length - 1)];
+    setDiffTab((tab) => (tab !== `shell:${id}` ? tab : neighbor ? `shell:${neighbor.id}` : "changes"));
+  }, [shells]);
+  // Ctrl+` 开合面板终端（VS Code、Kimi Code 同一个键）：面板正显示终端就收起；
+  // 有终端就切过去；一个都没有就新开一个。手机端没有终端页签。
+  useEffect(() => {
+    if (remoteUi()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || e.code !== "Backquote") return;
+      e.preventDefault();
+      if (diffOpen && !diffCollapsed && diffTab.startsWith("shell:")) { collapseDiffPanel(); return; }
+      const last = shells[shells.length - 1];
+      if (!last) { newShell(); return; }
+      setDiffTab(`shell:${last.id}`);
+      setDiffOpen(true);
+      setDiffCollapsed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shells, diffOpen, diffCollapsed, diffTab, newShell, collapseDiffPanel]);
   /// 标题栏开合停靠面板：tab = 点了哪个入口（改动胶囊为 "changes"，侧边面板开关为 null）。
   /// 面板正开着且就是这个入口（侧边面板开关不挑页签）→ 收起；否则打开到该页签。侧边面板开关
   /// 回到上次的页签，不是仓库时只有文件页。
@@ -5091,6 +5145,9 @@ export function ChatWindow() {
             turnTouchedPaths={turnTouchedPaths}
             activeTab={diffTab}
             onTabChange={changeDiffTab}
+            shells={shells}
+            onNewShell={remoteUi() ? undefined : newShell}
+            onCloseShell={closeShell}
           />
           </Suspense>
         </>

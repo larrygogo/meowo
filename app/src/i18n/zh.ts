@@ -688,6 +688,11 @@ export const zh = {
     diffRestore: "还原对话区",
     filesTab: "文件",
     diffChangesTab: "更改",
+    shellTab: "终端",
+    shellNew: "新建终端",
+    shortcutShell: "打开或收起面板终端",
+    shellClose: "关闭终端",
+    shellExited: "进程已退出（{code}）",
     diffSearchPlaceholder: "按名称搜索文件…",
     // 改动列表（对照 Kimi）：文件数、列表 / 树形切换、状态方块的读屏名。
     diffFileCount: (n: number) => `${n} 个文件`,
