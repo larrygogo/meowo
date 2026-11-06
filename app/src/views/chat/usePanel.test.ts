@@ -176,4 +176,25 @@ describe("面板与后端进程对号", () => {
       vi.useRealTimers();
     }
   });
+
+  it("「agent 正在操作」只认本会话开着的浏览器页签；关掉后不再亮", async () => {
+    const pane = { id: 5, owner: 1, url: "https://example.com/", title: "", loading: false, agentActive: true, agentPaused: false, zoom: 1 };
+    invoke.mockImplementation(async (cmd: string, args?: { owner?: number }) => {
+      if (cmd === "browser_pane_list") return args?.owner === 1 ? [pane] : [];
+      if (cmd === "shell_terminal_list") return [];
+      return null;
+    });
+    savePanel(1, { tabs: [{ key: "w", type: "browser", paneId: 5, url: pane.url, title: "" }], active: "w", visible: false, expanded: false });
+    const { result, rerender } = renderHook(({ id }) => usePanel(id, "C:/repo", () => {}), { initialProps: { id: 1 } });
+    await waitFor(() => expect(result.current.agentBusy).toBe(true));
+    // 切到别的会话：不串过去。
+    act(() => rerender({ id: 2 }));
+    expect(result.current.agentBusy).toBe(false);
+    act(() => rerender({ id: 1 }));
+    await waitFor(() => expect(result.current.agentBusy).toBe(true));
+    // 关掉这个页签：不再亮。
+    await act(async () => { result.current.actions.close("w"); });
+    await waitFor(() => expect(result.current.agentBusy).toBe(false));
+    expect(result.current.panes.has(5)).toBe(false);
+  });
 });

@@ -108,6 +108,9 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   });
   useTauriEvent<number>("panel-session-closed", ({ payload: closed }) => {
     forgetPanel(closed);
+    // 后端已经关了这个会话的进程，本地缓存里它们的状态也作废。
+    setPanes((prev) => new Map([...prev].filter(([, info]) => info.owner !== closed)));
+    setShells((prev) => new Map([...prev].filter(([, info]) => info.owner !== closed)));
     if (closed !== sessionId) return;
     setPanel({ sessionId, state: EMPTY_PANEL });
   });
@@ -186,6 +189,11 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
       if (tab.type === "term" && tab.shellId !== null) void closeShellTerminal(tab.shellId).catch(() => {});
       if (tab.type === "browser" && tab.paneId !== null) void closeBrowserPane(tab.paneId).catch(() => {});
     }
+    // 关掉的进程从本地缓存里删掉：留着的话，关之前那份「agent 正在操作」会一直亮在标题栏上（实拍）。
+    const closedPanes = new Set(tabs.flatMap((tab) => (tab.type === "browser" && tab.paneId !== null ? [tab.paneId] : [])));
+    const closedShells = new Set(shellIds);
+    if (closedPanes.size > 0) setPanes((prev) => new Map([...prev].filter(([id]) => !closedPanes.has(id))));
+    if (closedShells.size > 0) setShells((prev) => new Map([...prev].filter(([id]) => !closedShells.has(id))));
     update((prev) => closeTabs(prev, keys));
   }, [t, update]);
 
@@ -268,7 +276,12 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     };
   }, [state.visible, termIds, liveLoaded]);
 
-  return { state, active, shells, panes, actions };
+  // agent 正在操作「这个会话面板里开着的」浏览器——只认当前页签对得上号的，
+  // 别的会话残留的、已经关掉的都不算（实拍：关掉后标题栏的点一直亮着、切会话会串）。
+  const agentBusy = liveLoaded && state.tabs.some((tab) => tab.type === "browser" && tab.paneId !== null
+    && panes.get(tab.paneId)?.owner === sessionId && !!panes.get(tab.paneId)?.agentActive);
+
+  return { state, active, shells, panes, actions, agentBusy };
 }
 
 /** 页签上显示的名字。 */

@@ -3860,7 +3860,7 @@ export function ChatWindow() {
         // 正在看改动时再点就收起面板。
         onToggleChanges={() => (panelState.visible && (remoteUi() || panel.active?.type === "diff") ? panelActions.hide() : panelActions.openDiff())}
         onTogglePanel={panelActions.toggle}
-        panelAgentBusy={!panelState.visible && [...panel.panes.values()].some((pane) => pane.agentActive)}
+        panelAgentBusy={!panelState.visible && panel.agentBusy}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
       />
