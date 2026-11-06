@@ -16,7 +16,7 @@ afterEach(() => {
   setPanelLinkHandler(null);
 });
 
-const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, agentActive: false, agentPaused: false, ...over });
+const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, agentActive: false, agentPaused: false, zoom: 1, ...over });
 
 describe("面板浏览器", () => {
   it("页签名：标题优先，其次主机名，空白页叫新标签页", () => {
@@ -64,6 +64,17 @@ describe("面板浏览器", () => {
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: false });
     rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("「…」菜单：显示当前缩放，能放大、打印", () => {
+    render(<BrowserPane info={pane({ zoom: 1.25 })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("menuitem", { name: /重置缩放/ }).textContent).toContain("125%");
+    fireEvent.click(screen.getByRole("menuitem", { name: "放大" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_action", { id: 5, action: "zoom_in" });
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /打印/ }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_action", { id: 5, action: "print" });
   });
 
   it("卸载时把原生视图藏起来（它不会跟着 DOM 消失）", () => {

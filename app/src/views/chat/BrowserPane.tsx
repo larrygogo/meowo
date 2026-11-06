@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { browserPaneAction, navigateBrowserPane, openLink, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
+import { PathMenu, type PathMenuItem } from "./GitDiffView";
 
 /**
  * 这些元素出现且和浏览器区域重叠时，原生 webview 要先藏起来：它是叠在页面上的原生视图，
@@ -96,7 +97,8 @@ export function BrowserPane({ info, visible, suggestions }: {
     const text = (draft ?? "").trim();
     if (text) go(text);
   };
-  const act = (action: "back" | "forward" | "reload") => {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const act = (action: Parameters<typeof browserPaneAction>[1]) => {
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
 
@@ -134,7 +136,39 @@ export function BrowserPane({ info, visible, suggestions }: {
         <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>
         </button>
+        {/* 「…」菜单：缩放、打印、复制网址。网页里 Ctrl+F / Ctrl+P / Ctrl+滚轮这些 WebView2
+            自带的快捷键本来就能用（只有主界面关了浏览器快捷键），这里补个找得到的入口。 */}
+        <button
+          type="button"
+          className="chat-diff-action"
+          data-tip-placement="top"
+          aria-label={t.chat.browserMore}
+          data-tip={t.chat.browserMore}
+          aria-haspopup="menu"
+          disabled={blank}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMenu(menu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
+        </button>
       </form>
+      {menu && (
+        <PathMenu
+          x={Math.max(4, menu.x)}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { key: "zoom_out", label: t.chat.browserZoomOut, icon: null, onSelect: () => act("zoom_out") },
+            { key: "zoom_reset", label: t.chat.browserZoomReset, icon: null, hint: `${Math.round((info.zoom ?? 1) * 100)}%`, onSelect: () => act("zoom_reset") },
+            { key: "zoom_in", label: t.chat.browserZoomIn, icon: null, onSelect: () => act("zoom_in") },
+            "sep",
+            { key: "print", label: t.chat.browserPrint, icon: null, hint: "Ctrl+P", onSelect: () => act("print") },
+            { key: "copy", label: t.chat.browserCopyUrl, icon: null, onSelect: () => void navigator.clipboard?.writeText(info.url).catch(() => {}) },
+          ] satisfies (PathMenuItem | "sep")[]}
+        />
+      )}
       {/* agent 操作时的提示与接管（同 Kimi Code「你可以随时查看 Agent 的操作并接管」）。 */}
       {(info.agentActive || info.agentPaused) && (
         <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">

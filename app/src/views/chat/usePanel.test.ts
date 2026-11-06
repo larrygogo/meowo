@@ -21,7 +21,7 @@ afterEach(() => {
 
 // 会话 1 有一个浏览器页签（后端编号 5）和一个终端（后端编号 3）；会话 2 什么都没有。
 const panes: Record<number, unknown[]> = {
-  1: [{ id: 5, owner: 1, url: "https://example.com/", title: "Example", loading: false, agentActive: false, agentPaused: false }],
+  1: [{ id: 5, owner: 1, url: "https://example.com/", title: "Example", loading: false, agentActive: false, agentPaused: false, zoom: 1 }],
   2: [],
 };
 const shells: Record<number, unknown[]> = { 1: [{ id: 3, owner: 1, title: "pwsh", exited: false }], 2: [] };
@@ -41,7 +41,7 @@ describe("面板与后端进程对号", () => {
     invoke.mockImplementation(async (cmd: string, args?: { owner?: number }) => {
       if (cmd === "browser_pane_list") return panes[args?.owner ?? 0] ?? [];
       if (cmd === "shell_terminal_list") return shells[args?.owner ?? 0] ?? [];
-      if (cmd === "browser_pane_open") return { id: 99, owner: args?.owner, url: "about:blank", title: "", loading: false, agentActive: false, agentPaused: false };
+      if (cmd === "browser_pane_open") return { id: 99, owner: args?.owner, url: "about:blank", title: "", loading: false, agentActive: false, agentPaused: false, zoom: 1 };
       if (cmd === "shell_terminal_open") return { id: 98, owner: args?.owner, title: "pwsh", exited: false };
       return null;
     });
@@ -63,7 +63,7 @@ describe("面板与后端进程对号", () => {
     savePanel(1, { tabs: [{ key: "w", type: "browser", paneId: 5, url: "https://example.com/", title: "" }], active: "w", visible: true, expanded: false });
     invoke.mockImplementation(async (cmd: string, args?: { owner?: number; url?: string }) => {
       if (cmd === "browser_pane_list" || cmd === "shell_terminal_list") return [];
-      if (cmd === "browser_pane_open") return { id: 7, owner: args?.owner, url: args?.url, title: "", loading: true, agentActive: false, agentPaused: false };
+      if (cmd === "browser_pane_open") return { id: 7, owner: args?.owner, url: args?.url, title: "", loading: true, agentActive: false, agentPaused: false, zoom: 1 };
       return null;
     });
     const { result } = renderHook(() => usePanel(1, "C:\\repo", () => {}));

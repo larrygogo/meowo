@@ -39,6 +39,8 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) agent_active: bool,
     /// 用户点了「接管」：agent 的浏览器操作一律拒绝，直到用户交还。
     pub(crate) agent_paused: bool,
+    /// 页面缩放比例（1.0 = 100%），「…」菜单里调。
+    pub(crate) zoom: f64,
 }
 
 #[derive(Default)]
@@ -202,6 +204,10 @@ pub(crate) async fn browser_pane_open(
 
 /// 在 chat 窗口里建一个藏着的浏览器子 webview 并登记。前端的「新建浏览器」和 agent
 /// 第一次用浏览器（browser_agent.rs）共用。不能在主线程上调：add_child 要回主线程等结果。
+/// 同时开着的面板浏览器上限（同 Kimi Code 的 16）。每个都是一个 WebView2 实例，
+/// 多个会话各开几个很快就吃掉几个 G 内存。
+const MAX_PANES: usize = 16;
+
 pub(crate) fn open_pane(
     app: &tauri::AppHandle,
     window: &tauri::Window,
@@ -209,6 +215,9 @@ pub(crate) fn open_pane(
     owner: i64,
     url: Option<&str>,
 ) -> Result<BrowserPaneInfo, String> {
+    if state.panes.lock().map(|map| map.len()).unwrap_or(0) >= MAX_PANES {
+        return Err("browser_pane/too_many".into());
+    }
     let app = app.clone();
     let target = match url.map(str::trim).filter(|u| !u.is_empty()) {
         Some(raw) => parse_target(&app, raw)?,
@@ -227,6 +236,7 @@ pub(crate) fn open_pane(
         loading: target.as_str() != BLANK,
         agent_active: false,
         agent_paused: false,
+        zoom: 1.0,
     };
     state
         .panes
@@ -341,17 +351,47 @@ pub(crate) async fn browser_pane_navigate(
 #[tauri::command]
 pub(crate) async fn browser_pane_action(
     app: tauri::AppHandle,
+    state: tauri::State<'_, BrowserPanes>,
     id: u32,
     action: String,
 ) -> Result<(), String> {
     let webview = webview(&app, id)?;
+    // 缩放档位同 Chromium（Ctrl+滚轮也能缩，WebView2 自带）。
+    const STEPS: &[f64] = &[0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+    let zoom_to = |next: f64| -> Result<(), String> {
+        webview.set_zoom(next).map_err(|e| e.to_string())?;
+        update(&app, &state.panes, id, |info| info.zoom = next);
+        Ok(())
+    };
+    let current = state
+        .panes
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&id).map(|info| info.zoom))
+        .unwrap_or(1.0);
     match action.as_str() {
-        "back" => webview.eval("history.back()"),
-        "forward" => webview.eval("history.forward()"),
-        "reload" => webview.reload(),
-        _ => return Err("browser_pane/bad_action".into()),
+        "back" => webview.eval("history.back()").map_err(|e| e.to_string()),
+        "forward" => webview.eval("history.forward()").map_err(|e| e.to_string()),
+        "reload" => webview.reload().map_err(|e| e.to_string()),
+        "print" => webview.print().map_err(|e| e.to_string()),
+        "zoom_in" => zoom_to(
+            STEPS
+                .iter()
+                .copied()
+                .find(|step| *step > current + 0.001)
+                .unwrap_or(current),
+        ),
+        "zoom_out" => zoom_to(
+            STEPS
+                .iter()
+                .rev()
+                .copied()
+                .find(|step| *step < current - 0.001)
+                .unwrap_or(current),
+        ),
+        "zoom_reset" => zoom_to(1.0),
+        _ => Err("browser_pane/bad_action".into()),
     }
-    .map_err(|e| e.to_string())
 }
 
 /// 「接管」/「交还」：接管后 agent 的浏览器操作一律拒绝，用户自己操作页面不受影响。

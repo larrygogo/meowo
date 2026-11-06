@@ -431,6 +431,8 @@ export type BrowserPaneInfo = {
   agentActive: boolean;
   /** 用户点了「接管」，agent 的操作会被拒绝。 */
   agentPaused: boolean;
+  /** 页面缩放比例（1 = 100%）。 */
+  zoom: number;
 };
 export function openBrowserPane(owner: number, url?: string): Promise<BrowserPaneInfo> {
   return invoke("browser_pane_open", { owner, url: url ?? null });
@@ -445,7 +447,7 @@ export function setBrowserPaneBounds(id: number, rect: { x: number; y: number; w
 export function navigateBrowserPane(id: number, url: string): Promise<void> {
   return invoke("browser_pane_navigate", { id, url });
 }
-export function browserPaneAction(id: number, action: "back" | "forward" | "reload"): Promise<void> {
+export function browserPaneAction(id: number, action: "back" | "forward" | "reload" | "print" | "zoom_in" | "zoom_out" | "zoom_reset"): Promise<void> {
   return invoke("browser_pane_action", { id, action });
 }
 /** 「接管」/「交还」：接管后 agent 的浏览器操作一律拒绝。 */

@@ -192,7 +192,13 @@ fn pane_for(
         }
     }
     let window = chat_window(app, session_id)?;
-    let info = browser_pane::open_pane(app, &window, panes, session_id, None)?;
+    let info = browser_pane::open_pane(app, &window, panes, session_id, None).map_err(|e| {
+        if e == "browser_pane/too_many" {
+            "面板浏览器开太多了（最多 16 个），请用户先关掉一些页签".to_string()
+        } else {
+            e
+        }
+    })?;
     remember(session_id, info.id);
     announce(app, &info);
     Ok(info.id)
