@@ -21,6 +21,7 @@ import { Island, IslandStrip, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT,
 import { IslandPanel } from "./views/island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
 import { byUrgency, islandCounts, islandTone, menubarSegments } from "./views/Island";
+import { EYES_BUSY_AT, useEyeCue, useEyeMode } from "./views/island/islandParts";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
@@ -528,6 +529,16 @@ export function App() {
   // 额度不限「正在用的」那几家：没会话在跑时也要显示（用户要空闲时也有信息）。
   const t = useT();
   const menubarRef = useRef("");
+  // 菜单栏的眼睛和灵动岛上的同一个表情（useEyeMode 同一套规则，输入也和 Island.tsx 一致）。
+  const menubarCounts = useMemo(() => islandCounts(stripSessions), [stripSessions]);
+  const { cue: menubarCue } = useEyeCue(stripSessions);
+  const menubarMood = useEyeMode({
+    tone: islandTone(menubarCounts),
+    cue: menubarCue,
+    quotaPct: islandUsages[0]?.pct ?? null,
+    busy: menubarCounts.running >= EYES_BUSY_AT,
+    errors: menubarCounts.error,
+  });
   useEffect(() => {
     if (!isMac()) return;
     const tone = islandTone(islandCounts(stripSessions));
@@ -536,11 +547,11 @@ export function App() {
       toneLabel: t.island.toneLabel,
       untitled: t.sticker.waitingFirstInput,
     });
-    const key = JSON.stringify([tone, segments]);
+    const key = JSON.stringify([tone, segments, menubarMood]);
     if (key === menubarRef.current) return;
     menubarRef.current = key;
-    invoke("set_menubar_status", { tone, segments }).catch(() => {});
-  }, [stripSessions, usage, quotaProviders, activeProviders, t]);
+    invoke("set_menubar_status", { tone, segments, mood: menubarMood }).catch(() => {});
+  }, [stripSessions, usage, quotaProviders, activeProviders, t, menubarMood]);
 
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
     invoke("island_layout", { width, height, centerRatio }), []);

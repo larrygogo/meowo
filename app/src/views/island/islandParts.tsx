@@ -34,25 +34,7 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
   /** 出错的会话数。 */
   errors?: number;
 }) {
-  const sleep = useSleepStage(tone === "idle");
-  const woke = useRiseFlash(sleep !== "asleep", 900);
-  const yawning = useRiseFlash(sleep === "asleep", EYES_YAWN_MS);
-  const pleading = useAfter(tone === "pending", EYES_PLEAD_AFTER_MS);
-  const exhausted = quotaPct != null && quotaPct >= 100;
-  const worried = quotaPct != null && quotaPct >= EYES_WORRY_AT;
-  // 要人处理的（出错、待处理）和额度用光压过一切；一闪而过的表情压过常驻的神态。
-  const mode: EyeMode = tone === "error" ? (errors >= 2 ? "frustrated" : "dead")
-    : tone === "pending" ? (pleading ? "plead" : "wide")
-    : exhausted ? "dizzy"
-    : cue === "star" || cue === "surprised" || cue === "blush" ? cue
-    : woke ? "surprised"
-    : yawning ? "yawn"
-    : tone === "waiting" ? "happy"
-    : worried ? "worried"
-    : busy && tone === "running" ? "focus"
-    : sleep === "asleep" ? "sleep"
-    : sleep === "drowsy" ? "drowsy"
-    : "open";
+  const mode = useEyeMode({ tone, cue, quotaPct, busy, errors });
   const fidget = useFidget(mode === "open", tone === "running");
   const winking = mode === "open" && (cue === "wink" || fidget === "wink");
   const curious = mode === "open" && fidget === "curious";
@@ -163,7 +145,39 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
   );
 }
 
-type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep" | "drowsy" | "star" | "surprised" | "worried" | "focus" | "dizzy"
+/**
+ * 眼睛此刻的表情。灵动岛的 Eyes 和 macOS 菜单栏的眼睛（App.tsx 推给 tray_anim.rs）共用这一套，
+ * 两边同一个神态。
+ */
+export function useEyeMode({ tone, cue = null, quotaPct = null, busy = false, errors = 0 }: {
+  tone: IslandTone;
+  cue?: EyeCue | null;
+  quotaPct?: number | null;
+  busy?: boolean;
+  errors?: number;
+}): EyeMode {
+  const sleep = useSleepStage(tone === "idle");
+  const woke = useRiseFlash(sleep !== "asleep", 900);
+  const yawning = useRiseFlash(sleep === "asleep", EYES_YAWN_MS);
+  const pleading = useAfter(tone === "pending", EYES_PLEAD_AFTER_MS);
+  const exhausted = quotaPct != null && quotaPct >= 100;
+  const worried = quotaPct != null && quotaPct >= EYES_WORRY_AT;
+  // 要人处理的（出错、待处理）和额度用光压过一切；一闪而过的表情压过常驻的神态。
+  return tone === "error" ? (errors >= 2 ? "frustrated" : "dead")
+    : tone === "pending" ? (pleading ? "plead" : "wide")
+    : exhausted ? "dizzy"
+    : cue === "star" || cue === "surprised" || cue === "blush" ? cue
+    : woke ? "surprised"
+    : yawning ? "yawn"
+    : tone === "waiting" ? "happy"
+    : worried ? "worried"
+    : busy && tone === "running" ? "focus"
+    : sleep === "asleep" ? "sleep"
+    : sleep === "drowsy" ? "drowsy"
+    : "open";
+}
+
+export type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep" | "drowsy" | "star" | "surprised" | "worried" | "focus" | "dizzy"
   | "frustrated" | "plead" | "blush" | "yawn";
 /** 一闪而过的表情：会话刚跑完、新开了会话、鼠标移上岛、在岛上停了一会儿。 */
 export type EyeCue = "star" | "surprised" | "wink" | "blush";

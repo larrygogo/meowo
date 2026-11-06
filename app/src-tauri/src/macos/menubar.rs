@@ -15,10 +15,13 @@ const MENUBAR_ICON_SIZE: u32 = 36;
 /// 所有连着的会话（含另一个 Meowo 实例开的）和各家额度，watch 线程只数本实例的会话——
 /// dev 与安装版并存时算出 0，图标就一直不动（2026-11-05 Mac 实测）。
 static MOOD: Mutex<crate::tray_anim::Mood> = Mutex::new(crate::tray_anim::Mood::Idle);
+/// 灵动岛眼睛的表情（同由前端推来）。颜色仍按 MOOD（tone），神态按它画。
+static FACE: Mutex<crate::tray_anim::Face> = Mutex::new(crate::tray_anim::Face::Auto);
 
 /// 前端推来的整体状态与标题（一段段文字和 SF Symbol，前端拼好，status_title.rs 画成富文本）。
-pub fn set_status(app: &AppHandle, tone: &str, segments: &[crate::macos::status_title::Segment]) {
+pub fn set_status(app: &AppHandle, tone: &str, mood: Option<&str>, segments: &[crate::macos::status_title::Segment]) {
     *MOOD.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Mood::parse(tone);
+    *FACE.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Face::parse(mood);
     crate::macos::status_title::apply(app, segments);
 }
 
@@ -39,9 +42,10 @@ fn spawn_icon_animator(app: AppHandle) {
                 continue;
             };
             let mood = *MOOD.lock().unwrap_or_else(|e| e.into_inner());
+            let face = *FACE.lock().unwrap_or_else(|e| e.into_inner());
             // 在跑 / 要你处理 / 出错的眼睛上色（用户要「有颜色」），其余用模板图跟菜单栏深浅色。
             let tint = crate::tray_anim::tint(mood);
-            let frame = crate::tray_anim::render_rgba(start.elapsed().as_secs_f32(), mood, tint);
+            let frame = crate::tray_anim::render_rgba(start.elapsed().as_secs_f32(), mood, face, tint);
             if frame == last {
                 continue;
             }
