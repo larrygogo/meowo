@@ -56,6 +56,7 @@ import { sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
 import { localUrlsIn } from "./chat/BrowserPane";
 import { usePanel } from "./chat/usePanel";
+import { SessionInfo } from "./chat/SessionInfo";
 import { ApprovalScopeTags } from "./chat/ApprovalScopeTags";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
 import { ChatCwdContext } from "./chat/ToolActivity";
@@ -158,6 +159,22 @@ function pickFilesViaInput(): Promise<File[]> {
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
 const NO_URLS: readonly string[] = [];
+const SESSION_INFO_KEY = "meowo-session-info";
+const SESSION_INFO_WIDE_QUERY = "(min-width: 1100px)";
+
+/** 媒体查询是否命中（随窗口缩放更新）。测试环境没有 matchMedia 时按不命中。 */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(query).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const list = window.matchMedia(query);
+    const update = () => setMatches(list.matches);
+    update();
+    list.addEventListener?.("change", update);
+    return () => list.removeEventListener?.("change", update);
+  }, [query]);
+  return matches;
+}
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
 /// 据此保留旧引用即可跳过整窗重渲染。
@@ -837,6 +854,20 @@ export function ChatWindow() {
   const panel = usePanel(sessionId, cwd, setSendError, sessionEnded);
   const panelActions = panel.actions;
   const panelState = panel.state;
+  // 会话信息栏（chat/SessionInfo）：面板收起时露出来。开关全局一份、默认开（同 Kimi）；
+  // 窗口窄于 1100px 放不下停靠的一列，改成点按钮弹浮层。
+  const [infoOn, setInfoOn] = useState(() => {
+    try { return localStorage.getItem(SESSION_INFO_KEY) !== "0"; } catch { return true; }
+  });
+  const [infoFloating, setInfoFloating] = useState(false);
+  const infoWide = useMediaQuery(SESSION_INFO_WIDE_QUERY);
+  const toggleInfo = () => {
+    if (!infoWide) { setInfoFloating((open) => !open); return; }
+    setInfoOn((on) => {
+      try { localStorage.setItem(SESSION_INFO_KEY, on ? "0" : "1"); } catch { /* 存不下就只在本次有效 */ }
+      return !on;
+    });
+  };
   // 面板宽度：拖拽 / 键盘调宽与持久化见 chat/useDiffPanelWidth（全局一份，不分会话）。
   const diffResize = useDiffPanelWidth();
   // 对话里点本机地址（dev server）在面板浏览器里开（见 panelLinks）。
@@ -3861,6 +3892,7 @@ export function ChatWindow() {
         onToggleChanges={() => (panelState.visible && (remoteUi() || panel.active?.type === "diff") ? panelActions.hide() : panelActions.openDiff())}
         onTogglePanel={panelActions.toggle}
         panelAgentBusy={!panelState.visible && panel.agentBusy}
+        info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
       />
@@ -5080,6 +5112,18 @@ export function ChatWindow() {
       {/* 「查看改动」停靠面板：与 .chat-main 并列的右列，对话区收缩让位（非覆盖层）。
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
+      {/* 会话信息栏：面板收起时露出来（同 Kimi Code）。够宽停靠，窄了从标题栏按钮弹浮层。 */}
+      {!remoteUi() && cwd && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
+        <SessionInfo
+          mode={infoWide ? "docked" : "floating"}
+          state={panelState}
+          actions={panelActions}
+          shells={panel.shells}
+          panes={panel.panes}
+          summary={gitSummary}
+          onClose={infoWide ? undefined : () => setInfoFloating(false)}
+        />
+      )}
       {cwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div

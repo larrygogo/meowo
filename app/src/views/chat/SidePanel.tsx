@@ -2,46 +2,14 @@ import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardE
 import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
-import { isMac } from "../../platform";
 import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
 import { ChangesView, FilesView, PathMenu, type PathMenuItem } from "./GitDiffView";
-import type { PanelState, PanelTab, PanelTabType } from "./panelTabs";
+import type { PanelState, PanelTab } from "./panelTabs";
+import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
 import { tabTitle, type PanelActions } from "./usePanel";
 
-/** 快捷键（与 usePanel 的窗口级监听同一套；照 Kimi Code 1.3.1）。 */
-export const PANEL_SHORTCUTS: Record<PanelTabType, string> = {
-  diff: "Ctrl+Shift+G",
-  browser: "Ctrl+T",
-  term: "Ctrl+`",
-  files: "Ctrl+Shift+E",
-};
-const mod = (combo: string) => (isMac() ? combo.replace("Ctrl+", "⌘") : combo);
-
-const ICONS: Record<PanelTabType, ReactNode> = {
-  diff: (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-      <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-    </svg>
-  ),
-  files: (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
-  ),
-  term: (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 17l6-6-6-6" /><path d="M12 19h8" />
-    </svg>
-  ),
-  browser: (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" />
-    </svg>
-  ),
-};
 const CLOSE_ICON = <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>;
 
 type Props = {
