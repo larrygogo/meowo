@@ -46,9 +46,12 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   // ── 后端进程的实时信息 ──
   const [shells, setShells] = useState<ReadonlyMap<number, ShellTerminalInfo>>(new Map());
   const [panes, setPanes] = useState<ReadonlyMap<number, BrowserPaneInfo>>(new Map());
-  const [liveLoaded, setLiveLoaded] = useState(false);
+  // 已经从后端取到进程清单的是哪个会话。必须按会话记：换会话的那一帧，清单还是上一个
+  // 会话的，这个会话的终端 / 浏览器页签在里面对不上号，会被当成「进程没了」再起一个；
+  // 等本会话清单回来，原来那个又被当成没人认领补成页签——每切回来一次多一个（实拍）。
+  const [liveFor, setLiveFor] = useState<number | null>(null);
+  const liveLoaded = liveFor === sessionId;
   useEffect(() => {
-    setLiveLoaded(false);
     if (remoteUi()) return;
     let cancelled = false;
     Promise.all([listShellTerminals(sessionId), listBrowserPanes(sessionId)])
@@ -71,9 +74,9 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
           }
           return next;
         });
-        setLiveLoaded(true);
+        setLiveFor(sessionId);
       })
-      .catch(() => setLiveLoaded(true));
+      .catch(() => { if (!cancelled) setLiveFor(sessionId); });
     return () => { cancelled = true; };
   // cwd 只在补页签时兜底用，不因它重拉。
   }, [sessionId, update]);
