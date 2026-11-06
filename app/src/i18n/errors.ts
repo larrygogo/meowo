@@ -55,6 +55,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "browser_pane/too_many", exact: true, zh: "浏览器页签开太多了（最多 16 个），先关掉一些", en: "Too many browser tabs (16 max). Close some first." },
   { m: "browser_pane/not_found", exact: true, zh: "这个浏览器页签已经关掉了", en: "This browser tab has been closed" },
   { m: "shell_terminal/not_found", exact: true, zh: "这个终端已经关掉了", en: "This terminal has been closed" },
+  { m: "shell_terminal/exited", exact: true, zh: "这个终端里的程序已经退出了", en: "The program in this terminal has exited" },
   { m: "editor/spawn_failed", tail: true, zh: "编辑器没能打开", en: "Couldn't open the editor" },
   // ── 手机推送（push.rs）──
   { m: "push/invalid_url", exact: true, zh: "推送地址无效，请从 Bark App 里复制", en: "Invalid push URL; copy it from the Bark app" },

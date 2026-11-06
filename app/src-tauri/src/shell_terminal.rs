@@ -156,7 +156,9 @@ struct ShellPty {
     owner: i64,
     title: String,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// 输入交给每个终端自己的写线程：PTY 写满（shell 不读输入时粘一大段）会阻塞，
+    /// 在命令里直接写就会卡住调用它的线程，还攥着全部终端共用的表锁。通道保证按键顺序。
+    input: std::sync::mpsc::Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     /// shell 自己的 pid：判断「终端里有没有程序在跑」和关闭时收子孙进程都靠它。
     pid: Option<u32>,
@@ -281,7 +283,16 @@ impl ShellTerminals {
         // slave 端不放掉的话，shell 退出后 reader 读不到 EOF，退出事件永远不来。
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let (input, inbox) = std::sync::mpsc::channel::<Vec<u8>>();
+        // 终端关掉时 ShellPty 连同 Sender 一起 drop，recv 失败，线程自己退出。
+        std::thread::spawn(move || {
+            while let Ok(bytes) = inbox.recv() {
+                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_err() {
+                    break;
+                }
+            }
+        });
         let killer = child.clone_killer();
         let pid = child.process_id();
         let output = Arc::new(Mutex::new(Output {
@@ -335,7 +346,7 @@ impl ShellTerminals {
             owner,
             title,
             master: pair.master,
-            writer,
+            input,
             killer,
             pid,
             output,
@@ -376,13 +387,12 @@ impl ShellTerminals {
     }
 
     fn write(&self, id: u32, data: &str) -> Result<(), String> {
-        let mut map = self.shells.lock().map_err(|e| e.to_string())?;
-        let shell = map.get_mut(&id).ok_or("shell_terminal/not_found")?;
+        let map = self.shells.lock().map_err(|e| e.to_string())?;
+        let shell = map.get(&id).ok_or("shell_terminal/not_found")?;
         shell
-            .writer
-            .write_all(data.as_bytes())
-            .map_err(|e| e.to_string())?;
-        shell.writer.flush().map_err(|e| e.to_string())
+            .input
+            .send(data.as_bytes().to_vec())
+            .map_err(|_| "shell_terminal/exited".to_string())
     }
 
     fn close(&self, id: u32) {

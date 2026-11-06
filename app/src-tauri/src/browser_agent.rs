@@ -42,6 +42,11 @@ fn agent_panes() -> &'static Mutex<std::collections::HashMap<i64, u32>> {
 /// broker 收到 `BrokerRequest::Browser` 后调这里。返回给 agent 的文字；出错返回原因。
 /// 返回给 agent 的内容：`{"text": …}`，截图另带 `{"image": base64, "mime": …}`。
 pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value, String> {
+    // 开关关掉后，已经在跑的会话手上还挂着这组工具（启动参数/配置文件是开的时候给的），
+    // 每次调用都要再看一眼，不然「关掉」管不住正在跑的 agent。
+    if !crate::settings::load_settings().browser_agent {
+        return Err("用户在 Meowo 设置里关掉了「允许 agent 操作面板浏览器」，这组工具现在不能用。".into());
+    }
     let app = APP.get().ok_or("Meowo 还没启动完")?;
     let panes = app.state::<BrowserPanes>();
     let id = pane_for(app, &panes, session_id, tool == "browser_open")?;

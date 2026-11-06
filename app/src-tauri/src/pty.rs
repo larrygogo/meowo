@@ -769,6 +769,18 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
     if let Ok(mut subscribers) = managed.subscribers.lock() {
         subscribers.clear();
     }
+    // 会话结束，面板里它开的终端和浏览器一起关（用户要求）。等一会儿再判：就地重启
+    // （切模型、接管换参数）也会先走这里退出，紧接着起新进程——那种不算结束，
+    // 不能把用户的 dev server 一并杀掉。没认领的临时会话（负 id）一样要关：在信任页
+    // 就退出、CLI 秒退时，它名下的面板没有别的地方会收。
+    let watcher = broker.clone();
+    let panel_app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if !watcher.is_managed(session_id) {
+            crate::browser_agent::close_session_panels(&panel_app, session_id);
+        }
+    });
     if session_id < 0 {
         if let Ok(mut pending) = broker.attach.pending.lock() {
             pending.retain(|_, id| *id != session_id);
@@ -796,17 +808,6 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
         // 秒级——「结束会话」的 UI 反馈没有理由等一笔迟早会自愈的库写入。
         // app 级 emit：不绑窗口 label，监听方按 session_id 过滤。
         let _ = app.emit("pty-exit", PtyExit { session_id, code, forced });
-        // 会话结束，面板里它开的终端和浏览器一起关（用户要求）。等一会儿再判：就地重启
-        // （切模型、接管换参数）也会先走这里退出，紧接着起新进程——那种不算结束，
-        // 不能把用户的 dev server 一并杀掉。
-        let watcher = broker.clone();
-        let panel_app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            if !watcher.is_managed(session_id) {
-                crate::browser_agent::close_session_panels(&panel_app, session_id);
-            }
-        });
         match crate::open_store(&crate::db_path()) {
             Ok(store) => {
                 if let Err(error) = store.end_session(session_id, crate::now_ms()) {

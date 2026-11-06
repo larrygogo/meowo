@@ -307,7 +307,12 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
         });
         // 新 kimi 账号的数据目录也登记面板浏览器的 MCP 服务器（同 hooks 接线，见 wire_profile）。
         // 放在 update_settings 之外：登记要读设置，锁里读会自锁。
-        if created.is_ok() && matches!(plugin.mcp_attach(), Some(meowo_agent::McpAttach::DataDirJson { .. })) {
+        // 同启动和改设置时一样受 auto_wire_enabled 管：开发版不能把自己 target/ 下的
+        // reporter 路径写进全局的 mcp.json，不然安装版的 kimi 会话也会去调开发版。
+        if created.is_ok()
+            && crate::setup::auto_wire_enabled()
+            && matches!(plugin.mcp_attach(), Some(meowo_agent::McpAttach::DataDirJson { .. }))
+        {
             crate::browser_agent::sync_mcp_files();
         }
         created
