@@ -4658,7 +4658,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 右侧面板的页签栏（照 Kimi Code：28px 高、最宽 168px、标题省略、横向滚动不显示滚动条）。 */
 .side-panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .side-panel-tabs::-webkit-scrollbar { display: none; }
-.side-panel-tab { position: relative; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-6); height: 28px; max-width: 168px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; touch-action: none; }
+/* 两端还有页签时渐隐，提示可以滚过去。 */
+.side-panel-tabs.has-right { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.side-panel-tabs.has-left { mask-image: linear-gradient(to right, transparent, #000 28px); }
+.side-panel-tabs.has-left.has-right { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+/* 空间不够先压窄（最窄 72px，标题省略），压到底还放不下才横向滚动——同浏览器页签。 */
+.side-panel-tab { position: relative; flex: 0 1 auto; min-width: 72px; display: inline-flex; align-items: center; gap: var(--sp-6); height: 28px; max-width: 168px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; touch-action: none; }
 .side-panel-tab:hover { color: var(--cc-text); background: var(--fill-hover); }
 .side-panel-tab.is-active { color: var(--cc-text); background: var(--fill-selected); }
 .side-panel-tab svg { flex: none; }

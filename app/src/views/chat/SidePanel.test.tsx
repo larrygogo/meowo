@@ -116,4 +116,26 @@ describe("右侧面板", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(actions.hide).toHaveBeenCalledTimes(1);
   });
+
+  it("页签放不下时：滚轮横向滚动，出现「全部页签」按钮可以跳到任意页签", () => {
+    const widths = { scrollWidth: 600, clientWidth: 200 };
+    const restore = (["scrollWidth", "clientWidth"] as const).map((key) => {
+      const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, key);
+      Object.defineProperty(HTMLElement.prototype, key, { configurable: true, get() { return this.classList?.contains("side-panel-tabs") ? widths[key] : 0; } });
+      return () => original && Object.defineProperty(HTMLElement.prototype, key, original);
+    });
+    try {
+      const actions = renderPanel();
+      const bar = screen.getByRole("tablist");
+      expect(bar.className).toContain("has-right");
+      fireEvent.wheel(bar, { deltaY: 120 });
+      expect(bar.scrollLeft).toBe(120);
+      fireEvent.click(screen.getByRole("button", { name: "全部页签" }));
+      expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["更改", "pwsh当前", "Vite App"]);
+      fireEvent.click(screen.getByRole("menuitem", { name: /Vite App/ }));
+      expect(actions.activate).toHaveBeenCalledWith("w");
+    } finally {
+      restore.forEach((undo) => undo());
+    }
+  });
 });

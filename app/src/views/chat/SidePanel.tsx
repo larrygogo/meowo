@@ -97,6 +97,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
     };
   }, [collapsed, actions]);
 
+  const [overflowing, setOverflowing] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; items: (PathMenuItem | "sep")[] } | null>(null);
   const launchItems = (): PathMenuItem[] => {
     const open = new Set(state.tabs.map((tab) => tab.type));
@@ -139,8 +140,35 @@ export const SidePanel = memo(function SidePanel(props: Props) {
           closeLabel={t.chat.tabClose}
           agentBusy={(tab) => tab.type === "browser" && tab.paneId !== null && !!panes.get(tab.paneId)?.agentActive}
           agentLabel={t.chat.browserAgentActive}
+          onOverflow={setOverflowing}
         />
         <span className="chat-diff-spacer" data-tauri-drag-region />
+        {/* 页签放不下时：列出全部页签，点哪个跳到哪个。 */}
+        {overflowing && (
+          <button
+            type="button"
+            className="chat-diff-action"
+            data-tip={t.chat.panelAllTabs}
+            aria-label={t.chat.panelAllTabs}
+            aria-haspopup="menu"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setMenu(menu ? null : {
+                x: rect.right - 240,
+                y: rect.bottom + 4,
+                items: state.tabs.map((tab) => ({
+                  key: tab.key,
+                  label: tabTitle(tab, shells, panes, t),
+                  icon: ICONS[tab.type],
+                  hint: tab.key === state.active ? t.chat.panelCurrentTab : undefined,
+                  onSelect: () => actions.activate(tab.key),
+                })),
+              });
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+        )}
         <button
           type="button"
           className="chat-diff-action"
@@ -237,7 +265,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
  *
  * 拖动用 pointer 事件自己做：对话窗开着 Tauri 的文件拖放，WebView2 上 HTML5 拖放会被它截走。
  */
-function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, agentLabel }: {
+function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, agentLabel, onOverflow }: {
   state: PanelState;
   actions: PanelActions;
   title: (tab: PanelTab) => string;
@@ -246,11 +274,44 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
   /** 这个页签此刻是不是 agent 在操作（浏览器页签上亮一个点）。 */
   agentBusy: (tab: PanelTab) => boolean;
   agentLabel: string;
+  /** 页签放不下（需要横向滚动）时通知外面，好显示「全部页签」按钮。 */
+  onOverflow: (overflowing: boolean) => void;
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   /** 拖动中：被拖的页签、落点下标、指示线位置（相对页签栏内容的坐标，随横向滚动走）。 */
   const [drag, setDrag] = useState<{ key: string; index: number; x: number; top: number; height: number } | null>(null);
   const dragRef = useRef<{ key: string; startX: number; moved: boolean; pointerId: number } | null>(null);
+
+  // 放不下时：两端渐隐提示还有内容；竖向滚轮转成横向滚动（之前滚动条隐藏、滚轮又只会
+  // 上下滚，后面的页签根本看不到，实拍反馈）。
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const onOverflowRef = useRef(onOverflow);
+  onOverflowRef.current = onOverflow;
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const measure = () => {
+      const left = bar.scrollLeft > 1;
+      const right = bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1;
+      setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+      onOverflowRef.current(left || right);
+    };
+    const wheel = (event: WheelEvent) => {
+      if (bar.scrollWidth <= bar.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      bar.scrollLeft += event.deltaY;
+    };
+    measure();
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    resize?.observe(bar);
+    bar.addEventListener("scroll", measure);
+    bar.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      resize?.disconnect();
+      bar.removeEventListener("scroll", measure);
+      bar.removeEventListener("wheel", wheel);
+    };
+  }, [state.tabs]);
 
   // 当前页签滚进可见区域（页签多到横向滚动时）。
   useEffect(() => {
@@ -321,7 +382,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
   };
 
   return (
-    <div ref={barRef} className="side-panel-tabs" role="tablist">
+    <div ref={barRef} className={"side-panel-tabs" + (edges.left ? " has-left" : "") + (edges.right ? " has-right" : "")} role="tablist">
       {state.tabs.map((tab, index) => {
         const isActive = tab.key === state.active;
         const name = title(tab);

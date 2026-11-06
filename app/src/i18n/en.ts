@@ -646,6 +646,8 @@ export const en: Dict = {
     browserOpenExternal: "Open in system browser",
     browserStartHint: "Enter an address above. Local links (localhost) in the chat open here too.",
     panelLabel: "Side panel",
+    panelAllTabs: "All tabs",
+    panelCurrentTab: "Current",
     panelLaunch: "Open",
     tabClose: "Close",
     tabCloseOthers: "Close others",

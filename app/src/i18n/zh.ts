@@ -704,6 +704,8 @@ export const zh = {
     browserOpenExternal: "在系统浏览器打开",
     browserStartHint: "在上方输入网址。对话里的本机地址（localhost）点一下也会在这里打开。",
     panelLabel: "右侧面板",
+    panelAllTabs: "全部页签",
+    panelCurrentTab: "当前",
     panelLaunch: "可打开",
     tabClose: "关闭",
     tabCloseOthers: "关闭其他",
