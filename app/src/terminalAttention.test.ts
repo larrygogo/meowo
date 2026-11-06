@@ -219,6 +219,35 @@ describe("terminalAttention", () => {
     expect(menu?.options?.[1].focused).toBe(true);
   });
 
+  /// kimi 2.5 把聊天记录里的用户消息也画成「❯ hi」。会话有历史时，菜单光标不是屏幕上第一个 ❯，
+  /// 得认提示行下面那个（2026-11-06 真机抓屏，kimi 2.5.1：一轮报错后发 /model）。
+  it("kimi 菜单上方有「❯ 用户消息」时仍认出模型列表", () => {
+    const screen = [
+      "\x1b[2J ❯ hi",
+      "   Error: [provider.auth_error] A valid API key is required",
+      "   If this persists, run `/export-debug-zip` and share the file with us for diagnosis.",
+      " ────────────────────────────────────────",
+      "  Select a model  (type to search)",
+      "  Tab toggle provider · ↑↓ navigate · Enter select · Alt+S session-only · Esc cancel",
+      "  Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.",
+      "   All   Kimi Code   反向推理",
+      "     K3                                           Kimi Code",
+      "     K3.1 Pro                                     Kimi Code",
+      "   ❯ DeepSeek V4.1 Flash 1017 (local TensorFold)  反向推理 ← current",
+      "  Thinking  (←→ to switch)",
+      "     Low    [ High ]    Max",
+    ].join("\r\n");
+    const menu = terminalAttention(screen, [], false, true);
+    expect(menu?.id).toBe("interactive:cursor-menu");
+    expect(menu?.text).toBe("Select a model  (type to search)");
+    expect(menu?.options?.map((option) => option.label)).toEqual([
+      "K3  Kimi Code",
+      "K3.1 Pro  Kimi Code",
+      "DeepSeek V4.1 Flash 1017 (local TensorFold)  反向推理 ← current",
+    ]);
+    expect(menu?.options?.[1].input).toBe("\x1b[A\r");
+  });
+
   /// claude:* 整句规则带 provider 门控:别家 agent 的输出**引用**同一句话(讨论审批流程、
   /// cat 含该句的脚本)不得误弹 Claude 审批卡片锁住输入框。
   it("claude 专有整句规则只对 claude 会话生效", () => {
