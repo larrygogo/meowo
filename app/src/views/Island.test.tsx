@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
-import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments } from "./Island";
+import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments, sidebarOrder } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
@@ -204,6 +204,33 @@ describe("眼睛", () => {
       expect(transform).toBe("translate(2.2px, 2.6px)");
     });
     invoke.mockImplementation(() => Promise.resolve(null));
+  });
+});
+
+describe("岛上会话头像的顺序跟侧栏一致", () => {
+  const ids = (items: Item[]) => items.map((item) => item.session.id);
+
+  it("默认按手动排序键倒序，置顶在前；不按要紧程度", () => {
+    const running = mk({ manual_key: 300 } as Partial<Item>);
+    const pending = mk({ pending_review: "approval", manual_key: 100 } as Partial<Item>);
+    const waiting = mk({ status: "waiting", manual_key: 200 } as Partial<Item>);
+    const all = [pending, waiting, running];
+    expect(ids(sidebarOrder(all, new Set(), null))).toEqual([running.session.id, waiting.session.id, pending.session.id]);
+    expect(ids(sidebarOrder(all, new Set([pending.session.cc_session_id]), "manual"))[0]).toBe(pending.session.id);
+  });
+
+  it("侧栏选了「最近活跃」就按最后动静排", () => {
+    const old = mk({ lastEventAt: 1_000, manual_key: 900 } as Partial<Item>);
+    const fresh = mk({ lastEventAt: 9_000, manual_key: 100 } as Partial<Item>);
+    expect(ids(sidebarOrder([old, fresh], new Set(), "recent"))).toEqual([fresh.session.id, old.session.id]);
+  });
+
+  it("胶囊上的头像按这个顺序摆", () => {
+    const running = mk({ provider: "claude", manual_key: 300 } as Partial<Item>);
+    const pending = mk({ provider: "kimi", pending_review: "approval", manual_key: 100 } as Partial<Item>);
+    const { container } = renderIsland({ sessions: [pending, running] });
+    const shown = Array.from(container.querySelectorAll(".isl-agents .isl-agent")).map((el) => Number(el.getAttribute("data-session-id")));
+    expect(shown).toEqual([running.session.id, pending.session.id]);
   });
 });
 

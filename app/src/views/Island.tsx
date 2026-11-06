@@ -7,7 +7,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
-import { cardTone } from "./sticker/helpers";
+import { cardTone, SIDEBAR_SORT_MODE_KEY, useStarred } from "./sticker/helpers";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { AgentRing, Clock, Eyes, UsageRing, useNow, type IslandTone } from "./island/islandParts";
 
@@ -101,6 +101,27 @@ export function byUrgency(items: readonly Item[]): Item[] {
   return liveSessions(items)
     .filter((item) => urgency(item) < 9)
     .sort((a, b) => urgency(a) - urgency(b) || b.session.last_event_at - a.session.last_event_at);
+}
+
+/// 岛上会话头像的排列：和对话窗侧栏同一个顺序（用户 2026-11-06 实拍：岛上的顺序和侧栏对不上）。
+/// 置顶的在前；其余按侧栏选的排序方式，「最近活跃」按最后动静，默认的手动排序按 manual_key（没拖过
+/// 就是创建时间倒序）。只排连着的、有状态的会话，与 byUrgency 取同一批。
+/// 要紧程度仍决定眼睛神态和「聚焦」样式显示哪个会话，只是不再决定头像的先后。
+export function sidebarOrder(items: readonly Item[], starred: ReadonlySet<string>, sortMode: string | null): Item[] {
+  const recent = sortMode === "recent";
+  const key = (item: Item) => (recent ? item.session.last_event_at : item.manual_key ?? item.session.started_at * 1024);
+  return byUrgency(items).sort((a, b) =>
+    Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
+    || key(b) - key(a)
+    || b.session.id - a.session.id);
+}
+
+function readSidebarSortMode(): string | null {
+  try {
+    return localStorage.getItem(SIDEBAR_SORT_MODE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function focusSession(items: readonly Item[]): Item | null {
@@ -205,6 +226,9 @@ export function Island({
   const counts = useMemo(() => islandCounts(sessions), [sessions]);
   const tone = islandTone(counts);
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
+  const { starred } = useStarred();
+  // 排序方式在对话窗里改；岛跟着会话列表的轮询重算，慢一拍无妨。
+  const listed = useMemo(() => sidebarOrder(sessions, starred, readSidebarSortMode()), [sessions, starred]);
 
   // 收起态的宽度随内容变（会话个数、标题长短），实测后上报。提醒形态尺寸固定，不量。
   useLayoutEffect(() => {
@@ -255,8 +279,8 @@ export function Island({
           : null,
       ];
     }
-    const shown = ordered.slice(0, MAX_AGENTS);
-    const more = ordered.length - shown.length;
+    const shown = listed.slice(0, MAX_AGENTS);
+    const more = listed.length - shown.length;
     return [
       <>
         {usages.length > 0 && <UsageRing entries={usages} size={22} />}
@@ -316,8 +340,8 @@ export function Island({
       );
     }
     // 概览（默认）：额度环 · 眼睛 · 时间 · 每个会话一颗带进度环的 agent 图标。
-    const shown = ordered.slice(0, MAX_AGENTS);
-    const more = ordered.length - shown.length;
+    const shown = listed.slice(0, MAX_AGENTS);
+    const more = listed.length - shown.length;
     return (
       <>
         {usages.length > 0 && <UsageRing entries={usages} />}

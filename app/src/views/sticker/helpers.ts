@@ -70,6 +70,9 @@ export function loadStarred(): Set<string> {
   }
 }
 
+/** 对话窗侧栏的排序方式（"manual" 手动/创建时间 | "recent" 最近活跃）的存储键。灵动岛照它排会话头像。 */
+export const SIDEBAR_SORT_MODE_KEY = "meowo-chat-sidebar-sort-mode";
+
 /** 置顶集变更的同窗口广播事件名。storage 事件只发给**其他**窗口（浏览器语义），
  *  同窗口内的会话侧栏 ↔ 对话窗标题菜单要靠它互相通知。 */
 export const STARRED_CHANGED_EVENT = "meowo-starred-changed";

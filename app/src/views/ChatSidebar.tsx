@@ -13,7 +13,7 @@ import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
-import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, useStarred } from "./sticker/helpers";
+import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, SIDEBAR_SORT_MODE_KEY, useStarred } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
@@ -31,7 +31,7 @@ const DIR_LIMIT = 24;
 /** 旧的布尔分组开关键（只有「按目录」一档时代的遗产）。只读不写：迁移到 GROUP_MODE_KEY。 */
 const GROUPED_KEY = "meowo-chat-sidebar-grouped";
 const GROUP_MODE_KEY = "meowo-chat-sidebar-group-mode";
-const SORT_MODE_KEY = "meowo-chat-sidebar-sort-mode";
+const SORT_MODE_KEY = SIDEBAR_SORT_MODE_KEY;
 const FOLDED_KEY = "meowo-chat-sidebar-folded-dirs";
 
 /** 分组方式（Claude Code 侧栏 Group by 同款）：不分组 / 按目录 / 按日期 / 按状态。 */
