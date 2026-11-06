@@ -2,8 +2,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string, _args?: unknown) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-import { cleanup, fireEvent, render } from "@testing-library/react";
-import { ChatMarkdown, codeLinkKind } from "./ChatMarkdown";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { ChatMarkdown, codeLinkKind, stripLineSuffix } from "./ChatMarkdown";
 
 afterEach(() => {
   cleanup();
@@ -32,6 +32,24 @@ describe("行内代码里的网址和路径", () => {
     expect(invoke).toHaveBeenCalledWith("reveal_terminal_path", { cwd: "", path });
     fireEvent.click(codes[1]);
     expect(invoke).toHaveBeenCalledWith("open_link", expect.objectContaining({ url: "https://github.com/x/y/pull/1" }));
+  });
+
+  it("带行号的路径：定位前剥掉 :行[:列] 与 (行,列)", () => {
+    expect(stripLineSuffix("C:\\repo\\src\\main.ts:42")).toBe("C:\\repo\\src\\main.ts");
+    expect(stripLineSuffix("/home/me/app/a.ts:10:5")).toBe("/home/me/app/a.ts");
+    expect(stripLineSuffix("C:\\repo\\a.cpp(12,5)")).toBe("C:\\repo\\a.cpp");
+    expect(stripLineSuffix("C:\\repo\\a.cpp(12)")).toBe("C:\\repo\\a.cpp");
+    expect(stripLineSuffix("C:\\repo\\v1.2")).toBe("C:\\repo\\v1.2");
+    const { container } = render(<ChatMarkdown text={"`/home/me/app/a.ts:10:5`"} />);
+    fireEvent.click(container.querySelector("code.chat-md-link-code")!);
+    expect(invoke).toHaveBeenCalledWith("reveal_terminal_path", { cwd: "", path: "/home/me/app/a.ts" });
+  });
+
+  it("定位失败就地提示，不静默", async () => {
+    invoke.mockImplementationOnce(() => Promise.reject("路径不存在"));
+    const { container } = render(<ChatMarkdown text={"`C:\\gone\\a.exe`"} />);
+    fireEvent.click(container.querySelector("code.chat-md-link-code")!);
+    await waitFor(() => expect(container.querySelector(".chat-md-link-error")?.textContent).toBe("路径不存在"));
   });
 
   it("拖选文字松手不算点击", () => {

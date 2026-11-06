@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { openLink, revealTerminalPath } from "../api";
 import { remoteUi } from "../remoteMode";
 import { useT } from "../i18n";
+import { formatBackendError } from "../i18n/errors";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
 // --cc-syn-* 主题变量全部现成，不另引第二套高亮引擎——两处不分叉。
 import { highlightCode, languageForFence } from "./chat/highlight";
@@ -260,25 +261,47 @@ export function codeLinkKind(text: string): "url" | "path" | null {
   return null;
 }
 
+/// 回复里的路径常带行号（`src/main.ts:42`、`a.ts:10:5`、MSVC 风格 `a.cpp(12,5)`），CODE_PATH
+/// 照收，但后端按字面查存在性，带着行号必报「路径不存在」。定位只看文件，行号剥掉再交给后端
+///（终端那边 scanLineForFilePaths 的段字符集本来就不含冒号/括号，行号进不了命中）。
+export function stripLineSuffix(path: string): string {
+  return path.replace(/(?::\d+(?::\d+)?|\(\d+(?:,\d+)?\))$/, "");
+}
+
 function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
   const t = useT();
+  // 点了打不开（路径已删、被移走）要说出来：这里没有 toast，静默吞掉就是「点了没反应」，
+  // 必然引来连点。错误就地跟在链接后面，几秒后自收。
+  const [failed, setFailed] = useState<string | null>(null);
+  const timerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
   const open = () => {
     // 拖选这段文字（想复制）松手时也会触发 click：有选区就当是在选字，不打开。
     if (window.getSelection()?.toString()) return;
     const value = text.trim();
-    void (kind === "url" ? openLink(value) : revealTerminalPath("", value)).catch(() => {});
+    void (kind === "url" ? openLink(value) : revealTerminalPath("", stripLineSuffix(value))).then(
+      () => setFailed(null),
+      (e) => {
+        setFailed(formatBackendError(e, t.locale));
+        window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => setFailed(null), 4000);
+      },
+    );
   };
   return (
-    <code
-      className="chat-md-link-code"
-      role="link"
-      tabIndex={0}
-      data-tip={kind === "url" ? t.chat.codeOpenLink : t.chat.codeRevealPath}
-      onClick={open}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") open();
-      }}
-    >{text}</code>
+    <>
+      <code
+        className="chat-md-link-code"
+        role="link"
+        tabIndex={0}
+        data-tip={kind === "url" ? t.chat.codeOpenLink : t.chat.codeRevealPath}
+        onClick={open}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") open();
+        }}
+      >{text}</code>
+      {failed && <span className="chat-md-link-error" role="status">{failed}</span>}
+    </>
   );
 }
 

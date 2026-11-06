@@ -6104,6 +6104,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 行内代码里的网址/本地路径（ChatMarkdown 的 LinkCode）：保留代码底色，加虚下划线表示能点，悬停变链接色。 */
 .chat-md code.chat-md-link-code { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .chat-md code.chat-md-link-code:hover, .chat-md code.chat-md-link-code:focus-visible { color: var(--cc-accent); outline: none; }
+.chat-md .chat-md-link-error { margin-left: 6px; font-size: 0.9em; color: var(--cc-err-text); }
 /* 表格外壳：表格自己横滚，「复制表格」压在右下角一行，弱色不抢正文。 */
 .chat-md-table { margin: 0 0 var(--sp-12); display: flex; flex-direction: column; }
 .chat-md-table > table { margin-bottom: var(--sp-4); }
