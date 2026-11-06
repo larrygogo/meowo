@@ -66,17 +66,19 @@ fn respond(message: &Value, channel: Option<&(String, String)>) -> Option<Value>
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let (text, is_error) = match channel {
+            let (content, is_error) = match channel {
                 Some(channel) => match call(channel, name, args) {
-                    Ok(text) => (text, false),
-                    Err(error) => (error, true),
+                    Ok(content) => (content, false),
+                    Err(error) => (vec![json!({ "type": "text", "text": error })], true),
                 },
                 None => (
-                    "只有在 Meowo 里托管的会话才能用面板浏览器".to_string(),
+                    vec![
+                        json!({ "type": "text", "text": "只有在 Meowo 里托管的会话才能用面板浏览器" }),
+                    ],
                     true,
                 ),
             };
-            json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+            json!({ "content": content, "isError": is_error })
         }
         _ => {
             return Some(
@@ -87,7 +89,12 @@ fn respond(message: &Value, channel: Option<&(String, String)>) -> Option<Value>
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-fn call((endpoint, token): &(String, String), tool: &str, args: Value) -> Result<String, String> {
+/// 转给 Meowo 执行，回来的是 MCP 的 content 列表：文字一段，截图另加一张图。
+fn call(
+    (endpoint, token): &(String, String),
+    tool: &str,
+    args: Value,
+) -> Result<Vec<Value>, String> {
     let addr = endpoint
         .to_socket_addrs()
         .ok()
@@ -116,11 +123,7 @@ fn call((endpoint, token): &(String, String), tool: &str, args: Value) -> Result
     let value: Value =
         serde_json::from_str(&reply).map_err(|_| "Meowo 的回应无法解析".to_string())?;
     if value.get("ok").and_then(Value::as_bool) == Some(true) {
-        Ok(value
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string())
+        Ok(content_of(&value))
     } else {
         Err(value
             .get("error")
@@ -128,6 +131,19 @@ fn call((endpoint, token): &(String, String), tool: &str, args: Value) -> Result
             .unwrap_or("操作失败")
             .to_string())
     }
+}
+
+fn content_of(value: &Value) -> Vec<Value> {
+    let mut content = Vec::new();
+    if let (Some(data), Some(mime)) = (
+        value.get("image").and_then(Value::as_str),
+        value.get("mime").and_then(Value::as_str),
+    ) {
+        content.push(json!({ "type": "image", "data": data, "mimeType": mime }));
+    }
+    let text = value.get("text").and_then(Value::as_str).unwrap_or("");
+    content.push(json!({ "type": "text", "text": text }));
+    content
 }
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -195,6 +211,7 @@ fn tools() -> Vec<Value> {
             json!({ "text": { "type": "string" }, "seconds": { "type": "number" } }),
             &[],
         ),
+        tool("browser_screenshot", "截下面板浏览器当前的画面（图片）。要看排版、样式、颜色、图表这些快照文字表达不了的东西时用。", json!({}), &[]),
         tool("browser_back", "后退。", json!({}), &[]),
         tool("browser_forward", "前进。", json!({}), &[]),
         tool("browser_reload", "刷新页面。", json!({}), &[]),
@@ -248,6 +265,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn screenshot_reply_becomes_image_content() {
+        let content = content_of(
+            &json!({ "ok": true, "text": "截图", "image": "QUJD", "mime": "image/jpeg" }),
+        );
+        assert_eq!(
+            content[0],
+            json!({ "type": "image", "data": "QUJD", "mimeType": "image/jpeg" })
+        );
+        assert_eq!(content[1]["text"], "截图");
+        assert_eq!(content_of(&json!({ "ok": true, "text": "t" })).len(), 1);
     }
 
     #[test]

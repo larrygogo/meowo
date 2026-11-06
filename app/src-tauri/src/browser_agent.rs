@@ -40,7 +40,8 @@ fn agent_panes() -> &'static Mutex<std::collections::HashMap<i64, u32>> {
 }
 
 /// broker 收到 `BrokerRequest::Browser` 后调这里。返回给 agent 的文字；出错返回原因。
-pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<String, String> {
+/// 返回给 agent 的内容：`{"text": …}`，截图另带 `{"image": base64, "mime": …}`。
+pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value, String> {
     let app = APP.get().ok_or("Meowo 还没启动完")?;
     let panes = app.state::<BrowserPanes>();
     let id = pane_for(app, &panes, session_id, tool == "browser_open")?;
@@ -54,9 +55,104 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<String
         return Err("用户接管了面板浏览器，暂时不能操作。等用户在页签上点「交还」后再试。".into());
     }
     mark_active(app, &panes, id);
-    let result = run(app, id, tool, args);
+    let result = if tool == "browser_screenshot" {
+        screenshot(app, id)
+    } else {
+        run(app, id, tool, args).map(|text| json!({ "text": text }))
+    };
     schedule_idle(app, id);
     result
+}
+
+/// 截下面板浏览器当前的画面（JPEG）。agent 读快照只拿得到文字，看排版、样式、图表得靠它。
+fn screenshot(app: &tauri::AppHandle, id: u32) -> Result<Value, String> {
+    let webview = browser_pane::webview(app, id)?;
+    let bytes = capture_jpeg(&webview)?;
+    use base64::Engine;
+    let title = eval(app, id, "document.title + '\n' + location.href")
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default();
+    Ok(json!({
+        "text": format!("面板浏览器截图（{} KB）
+    {title}", bytes.len() / 1024),
+        "image": base64::engine::general_purpose::STANDARD.encode(&bytes),
+        "mime": "image/jpeg",
+    }))
+}
+
+/// WebView2 的 CapturePreview：截的是网页本身的渲染结果（不含面板外的界面），网页被
+/// 菜单挡着时也截得到。回调在主线程，这里在 broker 线程上等结果。
+#[cfg(windows)]
+fn capture_jpeg(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
+    use webview2_com::CapturePreviewCompletedHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG;
+    use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
+    use windows::Win32::UI::Shell::SHCreateMemStream;
+
+    fn read_all(stream: &IStream) -> windows::core::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut chunk = vec![0u8; 64 * 1024];
+        unsafe {
+            stream.Seek(0, STREAM_SEEK_SET, None)?;
+            loop {
+                let mut read = 0u32;
+                let _ = stream.Read(
+                    chunk.as_mut_ptr().cast(),
+                    chunk.len() as u32,
+                    Some(&mut read),
+                );
+                if read == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..read as usize]);
+            }
+        }
+        Ok(bytes)
+    }
+
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
+    let fail = tx.clone();
+    webview
+        .with_webview(move |platform| {
+            let started = (|| -> windows::core::Result<()> {
+                let core = unsafe { platform.controller().CoreWebView2()? };
+                let stream = unsafe { SHCreateMemStream(None) }
+                    .ok_or_else(windows::core::Error::from_thread)?;
+                let reader = stream.clone();
+                let handler = CapturePreviewCompletedHandler::create(Box::new(move |result| {
+                    let _ = tx.send(
+                        result
+                            .and_then(|_| read_all(&reader))
+                            .map_err(|e| e.to_string()),
+                    );
+                    Ok(())
+                }));
+                unsafe {
+                    core.CapturePreview(
+                        COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
+                        &stream,
+                        &handler,
+                    )
+                }
+            })();
+            if let Err(error) = started {
+                let _ = fail.send(Err(error.to_string()));
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    let bytes = rx
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| "截图超时".to_string())??;
+    if bytes.is_empty() {
+        return Err("截图是空的（面板浏览器可能被收起了）".into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn capture_jpeg(_webview: &tauri::Webview) -> Result<Vec<u8>, String> {
+    Err("面板浏览器截图暂时只支持 Windows".into())
 }
 
 /// 找到（必要时新建）这个会话给 agent 用的浏览器页签。
@@ -535,6 +631,7 @@ const AUTO_ALLOWED: &[&str] = &[
     "browser_back",
     "browser_forward",
     "browser_reload",
+    "browser_screenshot",
 ];
 
 /// 托管会话启动时追加的参数（pty.rs 的 start_spawned，外部终端启动不走这里）。

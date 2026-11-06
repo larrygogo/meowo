@@ -3413,7 +3413,10 @@ impl PtyBroker {
         // 操作可能要等页面加载十几秒；连接已认证，放开读超时。
         stream.set_read_timeout(None).ok();
         let reply = match crate::browser_agent::handle(session_id, tool, args) {
-            Ok(text) => serde_json::json!({ "ok": true, "text": text }),
+            Ok(mut body) => {
+                body["ok"] = serde_json::json!(true);
+                body
+            }
             Err(error) => serde_json::json!({ "ok": false, "error": error }),
         };
         stream.write_all(reply.to_string().as_bytes()).map_err(|e| e.to_string())
