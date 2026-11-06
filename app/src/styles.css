@@ -4648,22 +4648,36 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tabs { flex: 0 0 auto; display: flex; padding: var(--sp-3); border-radius: var(--radius-md); background: var(--fill-hover); }
 .chat-diff-tabs button { display: inline-flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-tabs button.is-active { color: var(--cc-text); background: var(--cc-bg); box-shadow: var(--shadow-sm); }
-/* 终端页签可以开很多个：页签组允许收窄、横向滚动，页签本身仍不收缩（CJK 不被挤成竖排）。 */
-.chat-diff-tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-.chat-diff-tabs::-webkit-scrollbar { display: none; }
-.chat-diff-tabs button { flex: 0 0 auto; }
-.chat-diff-shell-tab { padding-right: var(--sp-4) !important; }
-.chat-diff-shell-tab.is-exited { opacity: 0.6; }
-.chat-diff-shell-close { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: var(--radius-sm); color: var(--cc-text-faint); }
-.chat-diff-shell-close:hover { color: var(--cc-text); background: var(--fill-hover); }
-.chat-diff-tabs .chat-diff-shell-new { padding: var(--sp-4) var(--sp-6); }
-.chat-diff-tabs .chat-diff-shell-new:hover { color: var(--cc-text); }
 /* 面板里的终端占满面板剩余高度；退出提示贴底，不挡最后几行输出。 */
 .chat-diff-panel .shell-term { flex: 1; }
 .shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 2; padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-sm); color: #9ba19e; background: rgba(31, 31, 31, 0.92); font-size: var(--text-xs); pointer-events: none; }
 .shell-term-exit.is-error { color: #f0a0a0; }
-/* 浏览器页签名可能是很长的网页标题：截断，悬停看完整网址。 */
-.chat-diff-tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+/* 默认宽度是可用宽度的一半（useDiffPanelWidth），旧面板的 40vw 上限会把它压回去；
+   改成给对话区留 320px。 */
+.chat-diff-panel.side-panel { max-width: calc(100% - 320px); }
+/* 右侧面板的页签栏（照 Kimi Code：28px 高、最宽 168px、标题省略、横向滚动不显示滚动条）。 */
+.side-panel-tabs { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.side-panel-tabs::-webkit-scrollbar { display: none; }
+.side-panel-tab { position: relative; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-6); height: 28px; max-width: 168px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; touch-action: none; }
+.side-panel-tab:hover { color: var(--cc-text); background: var(--fill-hover); }
+.side-panel-tab.is-active { color: var(--cc-text); background: var(--fill-selected); }
+.side-panel-tab svg { flex: none; }
+.side-panel-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.side-panel-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-sm); opacity: 0; }
+.side-panel-tab:hover .side-panel-tab-close, .side-panel-tab.is-active .side-panel-tab-close { opacity: 1; }
+.side-panel-tab-close:hover { background: var(--fill-hover); }
+.side-panel-tab.is-dragging { opacity: 0.5; }
+.side-panel-tab.is-drop-before::before, .side-panel-drop-end { content: ""; position: absolute; left: -2px; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--cc-accent-text); }
+.side-panel-drop-end { position: relative; left: 0; flex: none; height: 20px; }
+/* 没有页签时的启动列表（Kimi 的「快速打开」）。 */
+.side-panel-launcher { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-12) var(--sp-10); }
+.side-panel-launcher p { margin: 0 0 var(--sp-6); padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }
+.side-panel-launcher button { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-8); border: 0; border-radius: var(--radius-sm); color: var(--cc-text); background: transparent; font: inherit; font-size: var(--text-sm, 13px); text-align: left; cursor: pointer; }
+.side-panel-launcher button:hover { background: var(--fill-hover); }
+.side-panel-launcher span { flex: 1; }
+.side-panel-launcher kbd, .ctx-hint { margin-left: auto; padding-left: var(--sp-12); color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); }
+.side-panel-pending { flex: 1; background: #121212; }
+.side-panel-empty { margin: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 /* 面板浏览器：地址栏 + 占位区域。真正的网页是后端叠在占位区域上的原生 webview。 */
 .browser-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .browser-pane-bar { flex: none; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-6) var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }

@@ -29,11 +29,7 @@ import {
   type GitFileDiffDto,
   type ImagePreviewDto,
   type SearchResultDto,
-  type ShellTerminalInfo,
-  type BrowserPaneInfo,
 } from "../../api";
-import { ShellTerminal } from "./ShellTerminal";
-import { BrowserPane, browserTabTitle } from "./BrowserPane";
 import { FileMarkdown } from "./FileMarkdown";
 import { useMenuPopup } from "../menu";
 import { folderName } from "../../paths";
@@ -154,7 +150,7 @@ function useFileOpeners(cwd: string, rel: string | null): FileOpenerDto[] {
   return openers;
 }
 
-type PathMenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void };
+export type PathMenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; /** 右侧的快捷键提示。 */ hint?: string };
 
 /** 预览里高亮首个命中片段（大小写不敏感；找不到原样返回）。 */
 function markMatch(text: string, query: string): ReactNode {
@@ -215,7 +211,7 @@ function buildPathMenuItems(
 
 /** 路径操作菜单：fixed 定位 + 钳位，点外/Esc/失焦/滚动关闭，roving focus——
  *  行为对齐 CardContextMenu（那份注释里的踩坑理由这里全部适用，不再复述）。 */
-function PathMenu({ x, y, items, onClose }: {
+export function PathMenu({ x, y, items, onClose }: {
   x: number;
   y: number;
   items: (PathMenuItem | "sep")[];
@@ -310,6 +306,7 @@ function PathMenu({ x, y, items, onClose }: {
           >
             {item.icon}
             {item.label}
+            {item.hint && <kbd className="ctx-hint">{item.hint}</kbd>}
           </button>
         ),
       )}
@@ -386,24 +383,9 @@ type FetchEntry<T> = { loading: boolean; error: string | null; data: T | null };
  * 可能上千行的文件 DOM 做全量 reconcile；父层回调已换稳定引用配合生效。
  */
 export const GitDiffView = memo(GitDiffViewImpl);
-/** `shell:<id>` = 「终端」页签，id 是后端 shell_terminal 的编号。 */
-/** `web:<id>` = 「浏览器」页签，id 是后端 browser_pane 的编号。 */
-export type DiffPanelTab = "changes" | "files" | `shell:${number}` | `web:${number}`;
-const NO_SHELLS: readonly ShellTerminalInfo[] = [];
-const NO_BROWSERS: readonly BrowserPaneInfo[] = [];
-const NO_URLS: readonly string[] = [];
-const TERMINAL_ICON = (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M4 17l6-6-6-6" /><path d="M12 19h8" />
-  </svg>
-);
-const GLOBE_ICON = (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" />
-  </svg>
-);
+export type DiffPanelTab = "changes" | "files";
 
-function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, shells = NO_SHELLS, onNewShell, onCloseShell, browsers = NO_BROWSERS, onNewBrowser, onCloseBrowser, browserSuggestions = NO_URLS }: {
+function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange }: {
   /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
   summary: GitDiffSummaryDto | null;
@@ -426,25 +408,11 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
   /** ChatWindow 顶栏直达入口需要受控切页；独立使用时保留内部状态。 */
   activeTab?: DiffPanelTab;
   onTabChange?: (tab: DiffPanelTab) => void;
-  /** 本会话在面板里开的普通终端（见 ShellTerminal）；不传 = 不出终端页签和「+」。 */
-  shells?: readonly ShellTerminalInfo[];
-  onNewShell?: () => void;
-  onCloseShell?: (id: number) => void;
-  /** 本会话在面板里开的浏览器页签（见 BrowserPane）。 */
-  browsers?: readonly BrowserPaneInfo[];
-  onNewBrowser?: () => void;
-  onCloseBrowser?: (id: number) => void;
-  /** 起始页上列出的本机地址（对话里出现过的 dev server）。 */
-  browserSuggestions?: readonly string[];
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo;
   const [internalTab, setInternalTab] = useState<DiffPanelTab>(changesAvailable ? "changes" : "files");
   const tab = activeTab ?? internalTab;
-  const shellTab = tab.startsWith("shell:") && shells.some((shell) => tab === `shell:${shell.id}`);
-  const webTab = tab.startsWith("web:") && browsers.some((pane) => tab === `web:${pane.id}`);
-  const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
-  const closeNewMenu = useCallback(() => setNewMenu(null), []);
   const selectTab = (next: DiffPanelTab) => {
     setInternalTab(next);
     onTabChange?.(next);
@@ -463,16 +431,12 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      // 焦点在终端里时 Esc 是给 shell 的（vim、less、补全菜单都要它），不收面板。
-      if (event.target instanceof Element && event.target.closest(".shell-term")) return;
-      // 地址栏里的 Esc 只撤销输入（BrowserPane 自己处理）。
-      if (event.target instanceof Element && event.target.closest(".browser-pane-url")) return;
-      // 面板里的菜单（「+」新建页签、文件右键菜单）开着时 Esc 只关菜单。这里挂在捕获段，
-      // 不让开的话先收起的是整个面板（实测：开着「+」菜单按 Esc，面板没了）。
-      if (document.querySelector('.chat-diff-panel [role="menu"]')) return;
       // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
       // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。
       if (document.querySelector(".chat-modal-overlay")) return;
+      // 面板里的菜单（文件右键菜单）开着时 Esc 只关菜单。这里挂在捕获段，不让开的话
+      // 先收起的是整个面板。
+      if (document.querySelector('.chat-diff-panel [role="menu"]')) return;
       event.stopPropagation();
       if (escOverrideRef.current) escOverrideRef.current();
       else onCollapse();
@@ -507,7 +471,7 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
         )}
         {!remoteUi() && <div className="chat-diff-tabs">
           {/* 远程只放行改动列表（remote.rs 模块头「例外」），「文件」页签要读任意文件，不给。 */}
-          {!remoteUi() && <button type="button" className={tab === "files" || (!changesAvailable && !shellTab && !webTab) ? "is-active" : ""} onClick={() => selectTab("files")}>
+          {!remoteUi() && <button type="button" className={tab === "files" || !changesAvailable ? "is-active" : ""} onClick={() => selectTab("files")}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
@@ -520,65 +484,6 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
                 <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
               </svg>
               {t.chat.diffChangesTab}
-            </button>
-          )}
-          {shells.map((shell) => (
-            <button
-              key={shell.id}
-              type="button"
-              className={"chat-diff-shell-tab" + (tab === `shell:${shell.id}` ? " is-active" : "") + (shell.exited ? " is-exited" : "")}
-              onClick={() => selectTab(`shell:${shell.id}`)}
-              // 中键关页签，浏览器和编辑器的通行习惯。
-              onAuxClick={(event) => { if (event.button === 1) onCloseShell?.(shell.id); }}
-            >
-              {TERMINAL_ICON}
-              {shell.title}
-              <span
-                role="button"
-                tabIndex={-1}
-                className="chat-diff-shell-close"
-                aria-label={t.chat.shellClose}
-                onClick={(event) => { event.stopPropagation(); onCloseShell?.(shell.id); }}
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-              </span>
-            </button>
-          ))}
-          {browsers.map((pane) => (
-            <button
-              key={pane.id}
-              type="button"
-              className={"chat-diff-shell-tab chat-diff-web-tab" + (tab === `web:${pane.id}` ? " is-active" : "")}
-              data-tip={pane.url === "about:blank" ? undefined : pane.url}
-              onClick={() => selectTab(`web:${pane.id}`)}
-              onAuxClick={(event) => { if (event.button === 1) onCloseBrowser?.(pane.id); }}
-            >
-              {GLOBE_ICON}
-              <span className="chat-diff-tab-name">{browserTabTitle(pane, t.chat.browserNewTab)}</span>
-              <span
-                role="button"
-                tabIndex={-1}
-                className="chat-diff-shell-close"
-                aria-label={t.chat.browserClose}
-                onClick={(event) => { event.stopPropagation(); onCloseBrowser?.(pane.id); }}
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-              </span>
-            </button>
-          ))}
-          {(onNewShell || onNewBrowser) && (
-            <button
-              type="button"
-              className="chat-diff-shell-new"
-              data-tip={t.chat.panelNewTab}
-              aria-label={t.chat.panelNewTab}
-              aria-haspopup="menu"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setNewMenu(newMenu ? null : { x: rect.left, y: rect.bottom + 4 });
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </button>
           )}
         </div>}
@@ -612,23 +517,8 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
           </svg>
         </button>}
       </header>
-      {newMenu && (
-        <PathMenu
-          x={newMenu.x}
-          y={newMenu.y}
-          onClose={closeNewMenu}
-          items={[
-            ...(onNewShell ? [{ key: "shell", label: t.chat.shellNew, icon: TERMINAL_ICON, onSelect: onNewShell }] : []),
-            ...(onNewBrowser ? [{ key: "web", label: t.chat.browserNew, icon: GLOBE_ICON, onSelect: onNewBrowser }] : []),
-          ]}
-        />
-      )}
-      {/* 浏览器同样常驻挂载：原生视图的显隐由 BrowserPane 按 visible 下发。 */}
-      {!remoteUi() && browsers.map((pane) => <BrowserPane key={pane.id} info={pane} visible={!collapsed && tab === `web:${pane.id}`} suggestions={browserSuggestions} />)}
-      {/* 终端常驻挂载、只切显隐：切去「文件」再回来，屏幕和滚动位置都还在。 */}
-      {!remoteUi() && shells.map((shell) => <ShellTerminal key={shell.id} id={shell.id} visible={!collapsed && tab === `shell:${shell.id}`} />)}
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
-      {shellTab || webTab ? null : tab === "changes" && changesAvailable && summary
+      {tab === "changes" && changesAvailable && summary
         ? (
           <ChangesView
             key={cwd}
@@ -648,7 +538,7 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef }: {
+export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef }: {
   cwd: string;
   summary: GitDiffSummaryDto;
   comments: readonly ReviewComment[];
@@ -1093,7 +983,7 @@ function cappedCache<T>(prev: Map<string, T>, key: string, value: T): Map<string
 }
 
 /** 「文件」页签：可搜索（文件名 + 内容）的懒加载目录树 + 单文件文本查看（返回行 + pre 文本）。 */
-function FilesView({ cwd }: { cwd: string }) {
+export function FilesView({ cwd }: { cwd: string }) {
   const t = useT();
   // 目录清单与文件文本都按 rel 路径缓存：折叠/回退再展开不重复拉取。
   const [dirs, setDirs] = useState<Map<string, FetchEntry<DirEntryDto[]>>>(new Map());

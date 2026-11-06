@@ -1277,6 +1277,7 @@ pub fn run() {
             shell_terminal::shell_terminal_write,
             shell_terminal::shell_terminal_resize,
             shell_terminal::shell_terminal_close,
+            shell_terminal::shell_terminal_busy,
             rename_session,
             set_archived,
             move_session_rank,

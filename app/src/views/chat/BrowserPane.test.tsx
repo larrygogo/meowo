@@ -3,9 +3,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string, _args?: unknown) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-import type { BrowserPaneInfo, GitDiffSummaryDto } from "../../api";
+import type { BrowserPaneInfo } from "../../api";
 import { BrowserPane, browserTabTitle, localUrlsIn, occluded } from "./BrowserPane";
-import { GitDiffView } from "./GitDiffView";
 import { isLocalDevUrl, openInPanel, setPanelLinkHandler } from "./panelLinks";
 
 // jsdom 没有 ResizeObserver；这里只关心下发了什么，不关心尺寸变化。
@@ -60,26 +59,6 @@ describe("面板浏览器", () => {
     invoke.mockClear();
     unmount();
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_bounds", expect.objectContaining({ id: 5, visible: false }));
-  });
-
-  it("面板「+」菜单里可以新建浏览器，页签可以关", () => {
-    const summary: GitDiffSummaryDto = { gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null, files: [] };
-    const onNewBrowser = vi.fn();
-    const onCloseBrowser = vi.fn();
-    render(
-      <GitDiffView
-        cwd={"C:\repo"} summary={summary} width={420} collapsed={false} maximized={false}
-        onCollapse={() => {}} onToggleMaximize={() => {}} comments={[]} onAddComment={() => {}} onRemoveComment={() => {}}
-        touchedPaths={[]} activeTab="web:5" browsers={[pane({ title: "Vite App" })]}
-        onNewBrowser={onNewBrowser} onCloseBrowser={onCloseBrowser}
-      />,
-    );
-    expect(screen.getByRole("button", { name: /Vite App/ }).className).toContain("is-active");
-    fireEvent.click(screen.getByLabelText("关闭页签"));
-    expect(onCloseBrowser).toHaveBeenCalledWith(5);
-    fireEvent.click(screen.getByRole("button", { name: "新建页签" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "新建浏览器" }));
-    expect(onNewBrowser).toHaveBeenCalledTimes(1);
   });
 });
 

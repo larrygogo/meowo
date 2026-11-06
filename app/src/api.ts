@@ -413,6 +413,11 @@ export function resizeShellTerminal(id: number, cols: number, rows: number): Pro
 export function closeShellTerminal(id: number): Promise<void> {
   return invoke("shell_terminal_close", { id });
 }
+/** 这些终端里还在跑的程序；只返回不空闲的那些。关页签前用来确认。 */
+export type ShellBusy = { id: number; title: string; processes: { pid: number; name: string }[] };
+export function shellTerminalBusy(ids: number[]): Promise<ShellBusy[]> {
+  return invoke("shell_terminal_busy", { ids });
+}
 
 /** 对话窗右侧面板的「浏览器」页签：chat 窗口里叠的原生子 webview（后端 browser_pane.rs）。
  *  手机端不给，这些命令都不在 remote.rs 白名单里。 */

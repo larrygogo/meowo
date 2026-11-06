@@ -7,9 +7,11 @@ import { useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent a
 /** 改动/文件停靠面板的宽度持久化键（localStorage 既有 meowo-* 命名惯例）。 */
 const DIFF_WIDTH_KEY = "meowo-diff-panel-width";
 /** 面板宽度下限保面板可用；上限按 .chat-body 实测宽给对话区留 CHAT_MIN_WIDTH。 */
-export const DIFF_PANEL_MIN_WIDTH = 280;
-const DIFF_PANEL_DEFAULT_WIDTH = 400;
-const CHAT_MIN_WIDTH = 360;
+// 照 Kimi Code：面板最窄 320，对话区至少留 320；没调过宽度时默认占可用宽度的一半。
+export const DIFF_PANEL_MIN_WIDTH = 320;
+const CHAT_MIN_WIDTH = 320;
+/** 没调过宽度时的默认值：窗口宽减去左侧栏后的一半。挂载时 .chat-body 还没量，按窗口估。 */
+const defaultWidth = () => Math.max(DIFF_PANEL_MIN_WIDTH, Math.round((window.innerWidth - 280) / 2));
 /** 键盘调宽的步进。 */
 const KEY_STEP = 24;
 
@@ -23,7 +25,7 @@ export function useDiffPanelWidth() {
   // 面板宽度随会话持久化；折叠只藏不改宽，再展开原宽回来。
   const [width, setWidth] = useState(() => {
     const stored = Number(localStorage.getItem(DIFF_WIDTH_KEY));
-    return Number.isFinite(stored) && stored >= DIFF_PANEL_MIN_WIDTH ? stored : DIFF_PANEL_DEFAULT_WIDTH;
+    return Number.isFinite(stored) && stored >= DIFF_PANEL_MIN_WIDTH ? stored : defaultWidth();
   });
 
   // 拖拽分栏柄：pointer capture 挂在柄上，移出窗口也不丢事件；宽度上限按

@@ -70,12 +70,96 @@ impl Output {
     }
 }
 
+/// 结束一个 shell：先收它的子孙进程（shell 里跑着的 dev server 之类），再杀 shell。
+/// 只杀 shell 的话，从它起的进程可能成孤儿继续占着端口。
+fn stop(shell: &mut ShellPty) {
+    if let Some(pid) = shell.pid {
+        super::proc::kill_descendants(pid);
+    }
+    let _ = shell.killer.kill();
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ShellProcess {
+    pid: u32,
+    name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ShellBusy {
+    id: u32,
+    title: String,
+    processes: Vec<ShellProcess>,
+}
+
+/// 进程表：pid -> (父 pid, 进程名)。
+fn process_table() -> HashMap<u32, (u32, String)> {
+    #[cfg(target_os = "windows")]
+    {
+        super::proc::snapshot_processes()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut map = HashMap::new();
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,ppid=,comm="])
+            .output()
+        else {
+            return map;
+        };
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut it = line.split_whitespace();
+            let (Some(pid), Some(ppid)) = (
+                it.next().and_then(|p| p.parse().ok()),
+                it.next().and_then(|p| p.parse().ok()),
+            ) else {
+                continue;
+            };
+            let name = it.collect::<Vec<_>>().join(" ");
+            let name = std::path::Path::new(&name)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(name);
+            map.insert(pid, (ppid, name));
+        }
+        map
+    }
+}
+
+/// shell 底下正在跑的程序（不含 shell 自己）。空 = 终端空闲，可以直接关。
+fn running_under(root: u32, table: &HashMap<u32, (u32, String)>) -> Vec<ShellProcess> {
+    let parents: HashMap<u32, u32> = table.iter().map(|(pid, (ppid, _))| (*pid, *ppid)).collect();
+    let mut list: Vec<ShellProcess> = super::proc::descendant_pids(&parents, root)
+        .into_iter()
+        .map(|pid| ShellProcess {
+            pid,
+            name: table
+                .get(&pid)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_default(),
+        })
+        // ConPTY 自己的宿主不算「用户在跑的程序」。
+        .filter(|p| {
+            !matches!(
+                p.name.to_ascii_lowercase().as_str(),
+                "conhost.exe" | "openconsole.exe"
+            )
+        })
+        .collect();
+    list.sort_by_key(|p| p.pid);
+    list
+}
+
 struct ShellPty {
     owner: i64,
     title: String,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// shell 自己的 pid：判断「终端里有没有程序在跑」和关闭时收子孙进程都靠它。
+    pid: Option<u32>,
     output: Arc<Mutex<Output>>,
 }
 
@@ -108,7 +192,7 @@ impl ShellTerminals {
             Err(_) => return,
         };
         for mut shell in drained {
-            let _ = shell.killer.kill();
+            stop(&mut shell);
         }
     }
 }
@@ -199,6 +283,7 @@ impl ShellTerminals {
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let killer = child.clone_killer();
+        let pid = child.process_id();
         let output = Arc::new(Mutex::new(Output {
             backlog: Vec::new(),
             channel: None,
@@ -252,6 +337,7 @@ impl ShellTerminals {
             master: pair.master,
             writer,
             killer,
+            pid,
             output,
         };
         let info = ShellTerminals::info(id, &shell);
@@ -275,9 +361,52 @@ impl ShellTerminals {
     fn close(&self, id: u32) {
         let removed = self.shells.lock().ok().and_then(|mut map| map.remove(&id));
         if let Some(mut shell) = removed {
-            let _ = shell.killer.kill();
+            stop(&mut shell);
         }
     }
+}
+
+/// 关页签前问一句：这些终端里还有没有程序在跑（参照 Kimi Code 的「关闭正在运行的终端？」）。
+/// 只返回有程序在跑的那些；已经退出或空闲的不出现。
+#[tauri::command]
+pub(crate) async fn shell_terminal_busy(
+    state: tauri::State<'_, ShellTerminals>,
+    ids: Vec<u32>,
+) -> Result<Vec<ShellBusy>, String> {
+    let roots: Vec<(u32, u32, String)> = {
+        let map = state.shells.lock().map_err(|e| e.to_string())?;
+        ids.iter()
+            .filter_map(|id| {
+                let shell = map.get(id)?;
+                let exited = shell
+                    .output
+                    .lock()
+                    .map(|o| o.exit.is_some())
+                    .unwrap_or(true);
+                if exited {
+                    return None;
+                }
+                Some((*id, shell.pid?, shell.title.clone()))
+            })
+            .collect()
+    };
+    if roots.is_empty() {
+        return Ok(Vec::new());
+    }
+    let table = tauri::async_runtime::spawn_blocking(process_table)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(roots
+        .into_iter()
+        .filter_map(|(id, pid, title)| {
+            let processes = running_under(pid, &table);
+            (!processes.is_empty()).then_some(ShellBusy {
+                id,
+                title,
+                processes,
+            })
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -416,6 +545,25 @@ mod tests {
         // 从没挂过前端：全是新输出。
         out.delivered = 0;
         assert_eq!(out.split_for_attach().0, &b""[..]);
+    }
+
+    #[test]
+    fn busy_lists_programs_under_the_shell_but_not_the_console_host() {
+        let table: HashMap<u32, (u32, String)> = [
+            (10, (1, "pwsh.exe".to_string())),
+            (11, (10, "node.exe".to_string())),
+            (12, (11, "esbuild.exe".to_string())),
+            (13, (10, "conhost.exe".to_string())),
+            (20, (1, "other.exe".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        let names: Vec<String> = running_under(10, &table)
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, ["node.exe", "esbuild.exe"]);
+        assert!(running_under(20, &table).is_empty());
     }
 
     #[test]

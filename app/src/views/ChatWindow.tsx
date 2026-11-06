@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, closeShellTerminal, listShellTerminals, openShellTerminal, type ShellTerminalInfo, closeBrowserPane, listBrowserPanes, openBrowserPane, type BrowserPaneInfo, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -55,7 +55,7 @@ import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
 import { sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
 import { localUrlsIn } from "./chat/BrowserPane";
-import type { DiffPanelTab } from "./chat/GitDiffView";
+import { usePanel } from "./chat/usePanel";
 import { ApprovalScopeTags } from "./chat/ApprovalScopeTags";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
 import { ChatCwdContext } from "./chat/ToolActivity";
@@ -73,6 +73,7 @@ const ManagedTerminal = lazy(() => import("./ManagedTerminal").then((m) => ({ de
 // 静态 import 时这 43KB 白白压在手机首屏 chunk 里——那是首屏 brotli 体积的四分之一。
 // 桌面端下方 effect 预取，点开无感；手机端点开时现取。
 const GitDiffView = lazy(() => import("./chat/GitDiffView").then((m) => ({ default: m.GitDiffView })));
+const SidePanel = lazy(() => import("./chat/SidePanel").then((m) => ({ default: m.SidePanel })));
 import { WindowControls } from "./WindowControls";
 import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
@@ -156,8 +157,6 @@ function pickFilesViaInput(): Promise<File[]> {
 }
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
-const NO_SHELLS: readonly ShellTerminalInfo[] = [];
-const NO_BROWSERS: readonly BrowserPaneInfo[] = [];
 const NO_URLS: readonly string[] = [];
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
@@ -279,6 +278,7 @@ export function ChatWindow() {
     void import("./ManagedTerminal");
     // 改动面板同理:本地文件几毫秒,预取掉首次点开「查看改动」的白屏。
     void import("./chat/GitDiffView");
+    void import("./chat/SidePanel");
   }, []);
   // 软拦非阻断提示:pendingReview 但屏幕没识别出卡片时,发送照常、亮这条横幅(见 withSendGuard)。
   const [softPromptNotice, setSoftPromptNotice] = useState(false);
@@ -830,144 +830,46 @@ export function ChatWindow() {
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [diffTab, setDiffTab] = useState<DiffPanelTab>("changes");
-  // 折叠/最大化都只在面板已挂载（diffOpen）后才有意义；折叠不卸载——面板内的
-  // 打开文件、树展开与 diff/目录缓存全部保留，再展开时原样回来。换会话照旧整体重置。
-  const [diffCollapsed, setDiffCollapsed] = useState(false);
-  const [diffMaximized, setDiffMaximized] = useState(false);
-  // 面板宽度：拖拽 / 键盘调宽与持久化见 chat/useDiffPanelWidth。
+  // 右侧面板：改动、文件、终端、浏览器同一排页签，按会话各存一份（照 Kimi Code，
+  // 模型见 chat/panelTabs.ts，状态与动作见 chat/usePanel.ts）。
+  const panel = usePanel(sessionId, cwd, setSendError);
+  const panelActions = panel.actions;
+  const panelState = panel.state;
+  // 面板宽度：拖拽 / 键盘调宽与持久化见 chat/useDiffPanelWidth（全局一份，不分会话）。
   const diffResize = useDiffPanelWidth();
-  // 稳定引用给 memo 的 GitDiffView:内联箭头函数每次击键换新引用,面板即使折叠也要
-  // 对几千行文件 DOM 做全量 reconcile,还连带 Esc 层监听每渲染拆装一次。
-  const collapseDiffPanel = useCallback(() => {
-    setDiffCollapsed(true);
-    setDiffMaximized(false);
-  }, []);
-  const toggleDiffMaximize = useCallback(() => {
-    setDiffMaximized((max) => !max);
-    setDiffCollapsed(false);
-  }, []);
-  const changeDiffTab = useCallback((tab: DiffPanelTab) => setDiffTab(tab), []);
-  // 面板「终端」页签：进程在后端常驻（shell_terminal.rs），这里只是本会话的页签清单。
-  // 换会话时从后端重新取，切回来还是那几个终端，里面跑着的 dev server 不受影响。
-  const [shells, setShells] = useState<readonly ShellTerminalInfo[]>(NO_SHELLS);
-  useEffect(() => {
-    setShells(NO_SHELLS);
-    if (remoteUi()) return;
-    let cancelled = false;
-    listShellTerminals(sessionId)
-      .then((list) => { if (!cancelled) setShells(list.length > 0 ? list : NO_SHELLS); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [sessionId]);
-  // 浏览器页签同理：原生子 webview 在后端常驻，换会话只是藏起来。
-  const [browsers, setBrowsers] = useState<readonly BrowserPaneInfo[]>(NO_BROWSERS);
-  useEffect(() => {
-    setBrowsers(NO_BROWSERS);
-    if (remoteUi()) return;
-    let cancelled = false;
-    listBrowserPanes(sessionId)
-      .then((list) => { if (!cancelled) setBrowsers(list.length > 0 ? list : NO_BROWSERS); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [sessionId]);
-  // 网址、标题、加载中由后端在页面跳转时推过来。
-  useTauriEvent<BrowserPaneInfo>("browser-pane-state", ({ payload: info }) => {
-    setBrowsers((list) => (list.some((pane) => pane.id === info.id) ? list.map((pane) => (pane.id === info.id ? info : pane)) : list));
-  });
-  // 上一个会话的终端/浏览器页签不能留在这个会话的面板上。
-  useEffect(() => {
-    setDiffTab((tab) => {
-      if (tab.startsWith("shell:") && !shells.some((shell) => tab === `shell:${shell.id}`)) return "changes";
-      if (tab.startsWith("web:") && !browsers.some((pane) => tab === `web:${pane.id}`)) return "changes";
-      return tab;
-    });
-  }, [shells, browsers]);
-  const newBrowser = useCallback((url?: string) => {
-    openBrowserPane(sessionId, url)
-      .then((info) => {
-        setBrowsers((list) => [...list, info]);
-        setDiffTab(`web:${info.id}`);
-        setDiffOpen(true);
-        setDiffCollapsed(false);
-      })
-      .catch((e) => setSendError(formatBackendError(e, t.locale)));
-  }, [sessionId, t.locale]);
-  const newBlankBrowser = useCallback(() => newBrowser(), [newBrowser]);
-  const closeBrowser = useCallback((id: number) => {
-    void closeBrowserPane(id).catch(() => {});
-    const at = browsers.findIndex((pane) => pane.id === id);
-    const next = browsers.filter((pane) => pane.id !== id);
-    setBrowsers(next.length > 0 ? next : NO_BROWSERS);
-    const neighbor = next[Math.min(at, next.length - 1)];
-    setDiffTab((tab) => (tab !== `web:${id}` ? tab : neighbor ? `web:${neighbor.id}` : "changes"));
-  }, [browsers]);
-  // 对话里点本机地址（dev server）在面板浏览器里开（见 panelLinks）：已经开着同一个
-  // 地址就切过去，不重复开。
-  const browsersRef = useRef(browsers);
-  browsersRef.current = browsers;
+  // 对话里点本机地址（dev server）在面板浏览器里开（见 panelLinks）。
   useEffect(() => {
     if (remoteUi()) return;
-    setPanelLinkHandler((url) => {
-      const same = browsersRef.current.find((pane) => pane.url.replace(/\/$/, "") === url.replace(/\/$/, ""));
-      if (same) {
-        setDiffTab(`web:${same.id}`);
-        setDiffOpen(true);
-        setDiffCollapsed(false);
-      } else {
-        newBrowser(url);
-      }
-    });
+    setPanelLinkHandler(panelActions.openUrl);
     return () => setPanelLinkHandler(null);
-  }, [newBrowser]);
-  const newShell = useCallback(() => {
-    if (!cwd) return;
-    openShellTerminal(sessionId, cwd, 80, 24)
-      .then((info) => {
-        setShells((list) => [...list, info]);
-        setDiffTab(`shell:${info.id}`);
-        setDiffOpen(true);
-        setDiffCollapsed(false);
-      })
-      .catch((e) => setSendError(formatBackendError(e, t.locale)));
-  }, [cwd, sessionId, t.locale]);
-  const closeShell = useCallback((id: number) => {
-    void closeShellTerminal(id).catch(() => {});
-    const at = shells.findIndex((shell) => shell.id === id);
-    const next = shells.filter((shell) => shell.id !== id);
-    setShells(next.length > 0 ? next : NO_SHELLS);
-    // 关的是正在看的那个：落到相邻的终端，一个都不剩就回「更改」。
-    const neighbor = next[Math.min(at, next.length - 1)];
-    setDiffTab((tab) => (tab !== `shell:${id}` ? tab : neighbor ? `shell:${neighbor.id}` : "changes"));
-  }, [shells]);
-  // Ctrl+` 开合面板终端（VS Code、Kimi Code 同一个键）：面板正显示终端就收起；
-  // 有终端就切过去；一个都没有就新开一个。手机端没有终端页签。
+  }, [panelActions]);
+  // 面板快捷键（照 Kimi Code）：Ctrl+Shift+B 开合面板，Ctrl+Shift+G 改动，Ctrl+Shift+E 文件
+  // （正在看就收起），Ctrl+T 新浏览器，Ctrl+` 面板终端，Ctrl+W 关当前页签，Ctrl+(Shift+)Tab 切换。
+  // 焦点在终端里时这些键 xterm 自己吃掉（Ctrl+W 是删词、Ctrl+T 是换字），只有 Ctrl+` 被放行。
+  const isRepoRef = useRef(false);
+  isRepoRef.current = !!gitSummary?.isRepo;
+  const panelStateRef = useRef(panelState);
+  panelStateRef.current = panelState;
   useEffect(() => {
     if (remoteUi()) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || e.code !== "Backquote") return;
-      e.preventDefault();
-      if (diffOpen && !diffCollapsed && diffTab.startsWith("shell:")) { collapseDiffPanel(); return; }
-      const last = shells[shells.length - 1];
-      if (!last) { newShell(); return; }
-      setDiffTab(`shell:${last.id}`);
-      setDiffOpen(true);
-      setDiffCollapsed(false);
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.isComposing) return;
+      const visible = panelStateRef.current.visible;
+      const hasActive = panelStateRef.current.active !== null;
+      let handled = true;
+      if (e.shiftKey && e.code === "KeyB") panelActions.toggle();
+      else if (e.shiftKey && e.code === "KeyG") { if (isRepoRef.current) panelActions.openDiff(); }
+      else if (e.shiftKey && e.code === "KeyE") panelActions.toggleFiles();
+      else if (!e.shiftKey && e.code === "KeyT") panelActions.newBrowser();
+      else if (!e.shiftKey && e.code === "Backquote") panelActions.toggleTerminal();
+      else if (!e.shiftKey && e.code === "KeyW" && visible && hasActive) panelActions.close(panelStateRef.current.active as string);
+      else if (e.code === "Tab" && visible) panelActions.cycle(e.shiftKey ? -1 : 1);
+      else handled = false;
+      if (handled) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shells, diffOpen, diffCollapsed, diffTab, newShell, collapseDiffPanel]);
-  /// 标题栏开合停靠面板：tab = 点了哪个入口（改动胶囊为 "changes"，侧边面板开关为 null）。
-  /// 面板正开着且就是这个入口（侧边面板开关不挑页签）→ 收起；否则打开到该页签。侧边面板开关
-  /// 回到上次的页签，不是仓库时只有文件页。
-  const toggleDock = (tab: DiffPanelTab | null) => {
-    if (diffOpen && !diffCollapsed && (tab === null || diffTab === tab)) { collapseDiffPanel(); return; }
-    if (tab) setDiffTab(tab);
-    else if (!gitSummary?.isRepo) setDiffTab("files");
-    setDiffOpen(true);
-    setDiffCollapsed(false);
-  };
+  }, [panelActions]);
   const diffCwd = cwd;
   // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
   // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
@@ -1015,17 +917,6 @@ export function ChatWindow() {
   const turnTouchedPaths = useMemo(() => (turnTouchedKey ? turnTouchedKey.split("\0") : NO_TOUCHED_PATHS), [turnTouchedKey]);
   // 会话可访问的目录（审批卡的范围标签用）。memo 稳住引用，审批卡不必每帧重算。
   const diffDirs = useMemo(() => (cwd ? [cwd] : []), [cwd]);
-  const previousDiffCwdRef = useRef(cwd);
-  useEffect(() => {
-    const previous = previousDiffCwdRef.current;
-    previousDiffCwdRef.current = cwd;
-    // 首次拿到 cwd 不是切换：此时用户可能已经点开面板，不能误关。
-    if (previous === cwd || previous === null) return;
-    setDiffOpen(false);
-    setDiffCollapsed(false);
-    setDiffMaximized(false);
-    setDiffTab("changes");
-  }, [cwd]);
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
     let cancelled = false;
@@ -1037,13 +928,13 @@ export function ChatWindow() {
   // 面板每次转为可见都重拉摘要:agent 随时在提交/改文件,进窗时拉的那份清单会过期
   // ——点开「更改」看到的是已提交文件的空 diff(实拍反馈)。git status 毫秒级,不设节流。
   useEffect(() => {
-    if (!diffCwd || !diffOpen || diffCollapsed) return;
+    if (!diffCwd || !panelState.visible) return;
     let cancelled = false;
     getGitDiffSummary(diffCwd)
       .then((result) => { if (!cancelled) setGitSummary(result); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [diffCwd, diffOpen, diffCollapsed]);
+  }, [diffCwd, panelState.visible]);
   // 恢复/接管时的权限改选："" = 沿用会话存的选择；选了具体档就随本次恢复下发，
   // 后端按选项维度合并写回，成为会话新的持久形态——覆盖「当年不是以跳过权限新建、
   // 恢复时想切过去」的场景（存量会话同样适用）。没声明权限类选项的 agent 不显示。
@@ -3868,7 +3759,7 @@ export function ChatWindow() {
           </div>
         </>
       )}
-      <div className={"chat-body" + (diffOpen && (diffMaximized || remoteUi()) && !diffCollapsed ? " is-diff-max" : "")}>
+      <div className={"chat-body" + (panelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
       {/* 停靠侧栏 + 分栏柄：柄落在侧栏与主列的缝隙里，拖拽调宽（用户要求：侧栏可拖）。
           窄窗抽屉形态与收起态不渲染（柄在停靠布局里才有意义）。键盘同规：separator
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
@@ -3960,11 +3851,13 @@ export function ChatWindow() {
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
         cwd={cwd}
         gitSummary={gitSummary}
-        changesOpen={diffOpen && !diffCollapsed && diffTab === "changes"}
-        panelOpen={diffOpen && !diffCollapsed}
+        changesOpen={panelState.visible && panel.active?.type === "diff"}
+        panelOpen={panelState.visible}
         terminalOn={view === "terminal"}
-        onToggleChanges={() => toggleDock("changes")}
-        onTogglePanel={() => toggleDock(null)}
+        // 改动胶囊：打开或切到改动页签（同 Kimi 的 Ctrl+Shift+G）。它是带按下态的开关，
+        // 正在看改动时再点就收起面板。
+        onToggleChanges={() => (panelState.visible && (remoteUi() || panel.active?.type === "diff") ? panelActions.hide() : panelActions.openDiff())}
+        onTogglePanel={panelActions.toggle}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
       />
@@ -5184,10 +5077,10 @@ export function ChatWindow() {
       {/* 「查看改动」停靠面板：与 .chat-main 并列的右列，对话区收缩让位（非覆盖层）。
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
-      {diffOpen && cwd && (
+      {cwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div
-            className={"chat-diff-resizer" + (diffCollapsed ? " is-hidden" : "")}
+            className={"chat-diff-resizer" + (panelState.visible && !panelState.expanded ? "" : " is-hidden")}
             role="separator"
             aria-orientation="vertical"
             aria-label={t.chat.diffResize}
@@ -5201,30 +5094,42 @@ export function ChatWindow() {
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
           <Suspense fallback={null}>
-          <GitDiffView
-            cwd={cwd}
-            summary={gitSummary}
-            width={diffResize.width}
-            collapsed={diffCollapsed}
-            // 手机屏放不下并排两栏：远程恒按最大化铺满，收起即回到对话。
-            maximized={diffMaximized || remoteUi()}
-            onCollapse={collapseDiffPanel}
-            onToggleMaximize={toggleDiffMaximize}
-            comments={sessionReviewComments}
-            onAddComment={addReviewComment}
-            onRemoveComment={removeReviewComment}
-            touchedPaths={touchedPaths}
-            turnTouchedPaths={turnTouchedPaths}
-            activeTab={diffTab}
-            onTabChange={changeDiffTab}
-            shells={shells}
-            onNewShell={remoteUi() ? undefined : newShell}
-            onCloseShell={closeShell}
-            browsers={browsers}
-            onNewBrowser={remoteUi() ? undefined : newBlankBrowser}
-            onCloseBrowser={closeBrowser}
-            browserSuggestions={browserSuggestions}
-          />
+          {remoteUi()
+            ? (
+              // 手机上只有改动一页、恒铺满全屏，收起即回到对话（远程不给文件、终端、浏览器）。
+              <GitDiffView
+                cwd={cwd}
+                summary={gitSummary}
+                width={diffResize.width}
+                collapsed={!panelState.visible}
+                maximized
+                onCollapse={panelActions.hide}
+                onToggleMaximize={panelActions.toggleExpanded}
+                comments={sessionReviewComments}
+                onAddComment={addReviewComment}
+                onRemoveComment={removeReviewComment}
+                touchedPaths={touchedPaths}
+                turnTouchedPaths={turnTouchedPaths}
+                activeTab="changes"
+              />
+            )
+            : (
+              <SidePanel
+                state={panelState}
+                actions={panelActions}
+                shells={panel.shells}
+                panes={panel.panes}
+                cwd={cwd}
+                summary={gitSummary}
+                width={diffResize.width}
+                comments={sessionReviewComments}
+                onAddComment={addReviewComment}
+                onRemoveComment={removeReviewComment}
+                touchedPaths={touchedPaths}
+                turnTouchedPaths={turnTouchedPaths}
+                browserSuggestions={browserSuggestions}
+              />
+            )}
           </Suspense>
         </>
       )}

@@ -73,6 +73,10 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
       if (event.type !== "keydown") return true;
       // Ctrl+` 是对话窗开合面板终端的键：xterm 吃掉 keydown 会拦住冒泡，放行才收得起来。
       if (event.ctrlKey && !event.altKey && !event.metaKey && event.code === "Backquote") return false;
+      // 面板快捷键同理放行：Ctrl+Shift+B/G/E 开合面板、切改动 / 文件，Ctrl+(Shift+)Tab 切页签。
+      // 这几个在 shell 里没有用处；Ctrl+W（删词）、Ctrl+T（换字）是 shell 的，不放。
+      if (event.ctrlKey && !event.altKey && event.shiftKey && ["KeyB", "KeyG", "KeyE"].includes(event.code)) return false;
+      if (event.ctrlKey && !event.altKey && event.code === "Tab") return false;
       const paste = ((event.ctrlKey || event.metaKey) && !event.altKey && event.code === "KeyV")
         || (event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "Insert");
       if (paste) return false;

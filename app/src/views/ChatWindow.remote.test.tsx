@@ -26,6 +26,11 @@ vi.mock("./chat/GitDiffView", () => ({
     : <div>工作区没有改动</div>,
 }));
 
+vi.mock("./chat/SidePanel", () => ({
+  SidePanel: ({ state }: { state: { tabs: { key: string; type: string }[]; active: string | null } }) =>
+    state.tabs.find((tab) => tab.key === state.active)?.type === "diff" ? <div>工作区没有改动</div> : <div>面板启动列表</div>,
+}));
+
 import { ChatWindow } from "./ChatWindow";
 import { markRemoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 
@@ -113,10 +118,13 @@ describe("ChatWindow 远程门控", () => {
     await waitFor(() => expect(screen.getAllByText("门控用例").length).toBeGreaterThan(0));
 
     expect(screen.getByRole("button", { name: "终端" })).toBeTruthy();
-    // 标题栏右侧照 Kimi：侧边面板开关打开停靠面板（是仓库时落在改动页签；页签切换由
-    // GitDiffView 自己的测试覆盖，这里它是替身），分支改动胶囊同样开合这块面板。
+    // 标题栏右侧照 Kimi：侧边面板开关打开面板；还没开过页签时面板里是启动列表
+    // （页签本身由 SidePanel / panelTabs 的测试覆盖，这里它是替身）。
     fireEvent.click(await screen.findByRole("button", { name: "侧边面板" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "侧边面板" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(await screen.findByText("面板启动列表")).toBeTruthy();
+    // 分支改动胶囊打开改动页签。
+    fireEvent.click(screen.getByRole("button", { name: "查看改动" }));
     expect(await screen.findByText("工作区没有改动")).toBeTruthy();
     expect(screen.getByRole("button", { name: "查看改动" }).getAttribute("aria-pressed")).toBe("true");
     // 胶囊再点一次收起面板。
