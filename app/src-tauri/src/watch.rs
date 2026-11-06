@@ -881,13 +881,13 @@ pub(crate) fn show_session_notification(
 fn flash_chat_window_if_unfocused(app: &tauri::AppHandle) {
     use tauri::Manager;
     let any_focused = app
-        .webview_windows()
+        .windows()
         .values()
         .any(|w| w.is_focused().unwrap_or(false));
     if any_focused {
         return;
     }
-    if let Some(w) = app.get_webview_window("chat") {
+    if let Some(w) = app.get_window("chat") {
         let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
     }
 }
@@ -934,6 +934,16 @@ pub(crate) fn spawn_liveness_watch(
                     .end_orphaned_idle(RESUME_GRACE_MS, now_ms(), &pty_live)
                     .unwrap_or(0);
                 let (alive, reaped) = reap_and_alive_ids(&store, &agent_pids, now_ms());
+                // 会话结束 → 面板里它开的终端和浏览器一起关（用户要求）。托管 PTY 的退出在
+                // pty.rs 的 finalize_exit 里已经处理；这里兜住其余结束路径（进程死了由本轮
+                // 收尾、外部终端里跑的会话等）：上一轮还活着、这一轮没了、库里已是 ended、
+                // 也没被本 GUI 托管着（就地重启中的不算）。
+                for id in last.iter().filter(|id| !alive.contains(id)) {
+                    let ended = store.get_session(*id).is_ok_and(|session| session.status == "ended");
+                    if ended && !pty_live.contains(id) {
+                        crate::browser_agent::close_session_panels(&app, *id);
+                    }
+                }
                 if alive != last || reaped > 0 || orphaned > 0 {
                     emit_board_changed(&app, "liveness");
                     last = alive;
@@ -968,7 +978,7 @@ pub(crate) fn spawn_liveness_watch(
                 // 「用户正在看」的两个分量：对话窗聚焦 + 它停在哪些会话上。
                 // 取不到窗口/状态时按「没在看」处理——宁可多弹一条，不可漏掉需关注。
                 let chat_focused = app
-                    .get_webview_window("chat")
+                    .get_window("chat")
                     .and_then(|window| window.is_focused().ok())
                     .unwrap_or(false);
                 let viewed = app

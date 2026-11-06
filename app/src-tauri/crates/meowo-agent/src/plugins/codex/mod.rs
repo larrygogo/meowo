@@ -253,6 +253,11 @@ impl AgentPlugin for Codex {
         &["resume"]
     }
     /// `codex fork <SESSION_ID>`：起交互界面并分叉出新线程（`codex fork --help`，0.166）。
+    /// 面板浏览器的 MCP 服务器怎么交给它（见 [`crate::McpAttach`]）。
+    fn mcp_attach(&self) -> Option<crate::McpAttach> {
+        Some(crate::McpAttach::TomlOverride { flag: "-c" })
+    }
+
     fn fork_mode(&self) -> Option<crate::ForkMode> {
         Some(crate::ForkMode::Args {
             before: &["fork"],

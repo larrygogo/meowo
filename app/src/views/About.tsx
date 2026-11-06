@@ -366,6 +366,7 @@ function SessionsSection() {
   useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
   const previewOn = settings?.preview_enabled ?? true;
   const togglePreview = () => patch({ preview_enabled: !previewOn });
+  const browserAgentOn = settings?.browser_agent ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
@@ -439,6 +440,13 @@ function SessionsSection() {
             <div className="row-desc">{t.settings.previewDesc}</div>
           </div>
           <Switch checked={previewOn} onChange={togglePreview} label={t.settings.preview} />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.browserAgent}</div>
+            <div className="row-desc">{t.settings.browserAgentDesc}</div>
+          </div>
+          <Switch checked={browserAgentOn} onChange={() => patch({ browser_agent: !browserAgentOn })} label={t.settings.browserAgent} />
         </div>
         <div className="row">
           <div className="row-text">

@@ -30,6 +30,7 @@ export const store: Store = {
     card_menu_mode: "button",
     preview_enabled: true,
     click_through_enabled: false,
+    browser_agent: true,
     terminal_font_size: 12,
     terminal_line_height: "normal",
     terminal_scrollback: 5000,

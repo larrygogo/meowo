@@ -438,6 +438,13 @@ impl AgentPlugin for Kimi {
     /// `kimi fork -y --cwd <目录> <id>` 是非交互的：复制出新会话就退出，打印
     /// `Forked to session_<新id> ("Fork: <标题>") in 499ms`（2.4.0 实测）；会话按工作目录查找，
     /// 不带 --cwd 在别的目录下跑会报 not found。之后按 `-r <新id>` 打开。
+    /// 面板浏览器的 MCP 服务器怎么交给它（见 [`crate::McpAttach`]）。
+    fn mcp_attach(&self) -> Option<crate::McpAttach> {
+        // Kimi Code 2.x 没有临时挂 MCP 的启动参数，只读 `<数据目录>/mcp.json` 等文件
+        // （2026-11-06 查 kimi.exe 内嵌源码：resolveKimiHome(...) + "mcp.json"）。
+        Some(crate::McpAttach::DataDirJson { rel: "mcp.json" })
+    }
+
     fn fork_mode(&self) -> Option<crate::ForkMode> {
         Some(crate::ForkMode::Command {
             args: &["fork", "-y"],

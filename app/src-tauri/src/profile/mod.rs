@@ -282,7 +282,7 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
         let agent = plugin.id();
         let spec = plugin.profile().ok_or("该 agent 不支持多账号")?;
 
-        crate::settings::update_settings(|s| {
+        let created = crate::settings::update_settings(|s| {
             let existing = s.profiles.entry(provider.clone()).or_default();
             let id = unique_id(existing, &slug(&name));
             let root = profile_root(&provider, &id);
@@ -304,7 +304,18 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
                 },
             });
             Ok(id)
-        })
+        });
+        // 新 kimi 账号的数据目录也登记面板浏览器的 MCP 服务器（同 hooks 接线，见 wire_profile）。
+        // 放在 update_settings 之外：登记要读设置，锁里读会自锁。
+        // 同启动和改设置时一样受 auto_wire_enabled 管：开发版不能把自己 target/ 下的
+        // reporter 路径写进全局的 mcp.json，不然安装版的 kimi 会话也会去调开发版。
+        if created.is_ok()
+            && crate::setup::auto_wire_enabled()
+            && matches!(plugin.mcp_attach(), Some(meowo_agent::McpAttach::DataDirJson { .. }))
+        {
+            crate::browser_agent::sync_mcp_files();
+        }
+        created
     })
     .await
     .map_err(|e| e.to_string())?
@@ -539,7 +550,8 @@ fn merge_dir_no_overwrite(src: &std::path::Path, dst: &std::path::Path) -> Resul
 ///   不会被 claude 的 transcript 扫描（按 `<sid>.jsonl` 命名）误认。
 fn merge_jsonl_no_loss(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
     let read = |p: &std::path::Path| {
-        std::fs::read(p).map_err(|e| coded("profile/read-file-failed", format!("{}: {e}", p.display())))
+        std::fs::read(p)
+            .map_err(|e| coded("profile/read-file-failed", format!("{}: {e}", p.display())))
     };
     let src = read(from)?;
     let dst = read(to)?;
@@ -571,13 +583,13 @@ fn merge_jsonl_no_loss(from: &std::path::Path, to: &std::path::Path) -> Result<(
 
 /// history.jsonl 特判：把源文件里**目标还没有的行**追加到目标末尾（按整行去重，保住两边历史）。
 fn merge_history_jsonl(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
-    let existing =
-        std::fs::read_to_string(dst).map_err(|e| coded("profile/read-file-failed", format!("history.jsonl: {e}")))?;
+    let existing = std::fs::read_to_string(dst)
+        .map_err(|e| coded("profile/read-file-failed", format!("history.jsonl: {e}")))?;
     // mut + insert 判重：源文件**自己**也可能有重复行（两个 profile 从同一份历史分叉出来，
     // 各自又追加过同样的命令）。只对着目标查的话，那些行会被原样追加两遍。
     let mut known: std::collections::HashSet<&str> = existing.lines().collect();
-    let incoming =
-        std::fs::read_to_string(src).map_err(|e| coded("profile/read-file-failed", format!("history.jsonl: {e}")))?;
+    let incoming = std::fs::read_to_string(src)
+        .map_err(|e| coded("profile/read-file-failed", format!("history.jsonl: {e}")))?;
     let mut append = String::new();
     // 目标末尾没有换行时先补一个，否则追加的第一行会黏在既有末行上。
     if !existing.is_empty() && !existing.ends_with('\n') {

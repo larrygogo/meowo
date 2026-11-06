@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openLink } from "../api";
+import { openInPanel } from "./chat/panelLinks";
 import { useT } from "../i18n";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
 // --cc-syn-* 主题变量全部现成，不另引第二套高亮引擎——两处不分叉。
@@ -309,6 +310,8 @@ export const components: Components = {
         data-tip={href}
         onClick={(event) => {
           event.preventDefault();
+          // 本机地址（dev server）在右侧面板的浏览器里打开，其余交给系统浏览器。
+          if (openInPanel(href)) return;
           void openLink(href).catch(() => {});
         }}
       >

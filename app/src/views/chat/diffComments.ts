@@ -62,3 +62,28 @@ function joinPath(dir: string, rel: string): string {
   const sep = dir.includes("\\") ? "\\" : "/";
   return dir.replace(/[\\/]+$/, "") + sep + (sep === "\\" ? rel.replace(/\//g, "\\") : rel);
 }
+
+export type DiffLineNumbers = { old: number | null; new: number | null };
+
+/// 「更改」页 diff 左侧的两列行号（旧文件 / 新文件，对照 Kimi Code 的改动视图）：
+/// 删除行只有旧行号，新增行只有新行号，上下文行两边都有。meta/hunk 头/空行记 null（不出行号槽）。
+export function diffLineNumbers(diff: string): (DiffLineNumbers | null)[] {
+  let oldNo = 0;
+  let newNo = 0;
+  return diff.split("\n").map((line) => {
+    const cls = diffLineClass(line);
+    if (cls === "is-hunk") {
+      const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (match) {
+        oldNo = Number(match[1]);
+        newNo = Number(match[2]);
+      }
+      return null;
+    }
+    if (cls === "is-meta" || line === "" || oldNo + newNo === 0) return null;
+    if (cls === "is-del") return { old: oldNo++, new: null };
+    if (cls === "is-add") return { old: null, new: newNo++ };
+    if (line.startsWith("\\")) return { old: null, new: null };
+    return { old: oldNo++, new: newNo++ };
+  });
+}
