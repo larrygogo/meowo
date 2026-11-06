@@ -49,6 +49,11 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 用编辑器打开目录（editors.rs）──
   { m: "editor/dir_missing", exact: true, zh: "项目目录不存在", en: "Project directory not found" },
   { m: "editor/not_found", exact: true, zh: "没找到这个编辑器，可能已卸载", en: "Editor not found; it may have been uninstalled" },
+  // 对话窗右侧面板（browser_pane.rs / shell_terminal.rs）。
+  { m: "browser_pane/blocked_url", exact: true, zh: "面板浏览器只能打开 http/https 网页", en: "The panel browser only opens http/https pages" },
+  { m: "browser_pane/bad_url", exact: true, zh: "网址格式不对", en: "That doesn't look like a valid address" },
+  { m: "browser_pane/not_found", exact: true, zh: "这个浏览器页签已经关掉了", en: "This browser tab has been closed" },
+  { m: "shell_terminal/not_found", exact: true, zh: "这个终端已经关掉了", en: "This terminal has been closed" },
   { m: "editor/spawn_failed", tail: true, zh: "编辑器没能打开", en: "Couldn't open the editor" },
   // ── 手机推送（push.rs）──
   { m: "push/invalid_url", exact: true, zh: "推送地址无效，请从 Bark App 里复制", en: "Invalid push URL; copy it from the Bark app" },

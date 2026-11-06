@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ close: vi.fn(() => Promise.resolve()), setTitle: vi.fn(() => Promise.resolve()) }),
+  getCurrentWindow: () => ({ close: vi.fn(() => Promise.resolve()), setTitle: vi.fn(() => Promise.resolve()), onDragDropEvent: () => Promise.resolve(() => {}) }),
 }));
 vi.mock("./ManagedTerminal", () => ({
   ManagedTerminal: (props: { sessionId: number }) => <div>PTY {props.sessionId}</div>,

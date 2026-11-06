@@ -387,7 +387,8 @@ export function resizeManagedTerminal(sessionId: number, cols: number, rows: num
 /** 对话窗右侧面板的「终端」页签：会话目录下的普通 shell（后端 shell_terminal.rs）。
  *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
 export type ShellTerminalInfo = { id: number; owner: number; title: string; exited: boolean };
-export type ShellTerminalEvent = { kind: "output"; data: string } | { kind: "exit"; code: number | null };
+/** replay = 前端已显示过的历史，重放时不能再答里面的终端查询。 */
+export type ShellTerminalEvent = { kind: "output"; data: string; replay: boolean } | { kind: "exit"; code: number | null };
 export function openShellTerminal(owner: number, cwd: string, cols: number, rows: number): Promise<ShellTerminalInfo> {
   return invoke("shell_terminal_open", { owner, cwd, cols, rows });
 }
@@ -411,6 +412,29 @@ export function resizeShellTerminal(id: number, cols: number, rows: number): Pro
 }
 export function closeShellTerminal(id: number): Promise<void> {
   return invoke("shell_terminal_close", { id });
+}
+
+/** 对话窗右侧面板的「浏览器」页签：chat 窗口里叠的原生子 webview（后端 browser_pane.rs）。
+ *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
+export type BrowserPaneInfo = { id: number; owner: number; url: string; title: string; loading: boolean };
+export function openBrowserPane(owner: number, url?: string): Promise<BrowserPaneInfo> {
+  return invoke("browser_pane_open", { owner, url: url ?? null });
+}
+export function listBrowserPanes(owner: number): Promise<BrowserPaneInfo[]> {
+  return invoke("browser_pane_list", { owner });
+}
+/** 占位区域的位置（CSS 像素，相对窗口内容区）；visible=false 只藏不动。 */
+export function setBrowserPaneBounds(id: number, rect: { x: number; y: number; width: number; height: number }, visible: boolean): Promise<void> {
+  return invoke("browser_pane_set_bounds", { id, ...rect, visible });
+}
+export function navigateBrowserPane(id: number, url: string): Promise<void> {
+  return invoke("browser_pane_navigate", { id, url });
+}
+export function browserPaneAction(id: number, action: "back" | "forward" | "reload"): Promise<void> {
+  return invoke("browser_pane_action", { id, action });
+}
+export function closeBrowserPane(id: number): Promise<void> {
+  return invoke("browser_pane_close", { id });
 }
 
 /**

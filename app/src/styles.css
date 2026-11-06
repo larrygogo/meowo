@@ -4662,6 +4662,23 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-panel .shell-term { flex: 1; }
 .shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 2; padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-sm); color: #9ba19e; background: rgba(31, 31, 31, 0.92); font-size: var(--text-xs); pointer-events: none; }
 .shell-term-exit.is-error { color: #f0a0a0; }
+/* 浏览器页签名可能是很长的网页标题：截断，悬停看完整网址。 */
+.chat-diff-tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+/* 面板浏览器：地址栏 + 占位区域。真正的网页是后端叠在占位区域上的原生 webview。 */
+.browser-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.browser-pane-bar { flex: none; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-6) var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }
+.browser-pane-bar .chat-diff-action:disabled { opacity: 0.35; cursor: default; }
+.browser-pane-bar .chat-diff-action.is-loading svg { animation: browser-pane-spin 0.9s linear infinite; }
+@keyframes browser-pane-spin { to { transform: rotate(360deg); } }
+.browser-pane-url { flex: 1; min-width: 0; height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: var(--cc-bg); font: inherit; font-size: var(--text-xs); }
+.browser-pane-url:focus { outline: none; border-color: var(--cc-accent-text); }
+.browser-pane-error { flex: none; padding: var(--sp-6) var(--sp-10); color: var(--cc-err-text); font-size: var(--text-xs); }
+.browser-pane-view { position: relative; flex: 1; min-height: 0; background: var(--cc-bg); }
+.browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
+.browser-pane-start ul { margin: var(--sp-14) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); }
+.browser-pane-start button { padding: var(--sp-4) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: transparent; font: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; cursor: pointer; }
+.browser-pane-start button:hover { background: var(--fill-hover); }
+@media (prefers-reduced-motion: reduce) { .browser-pane-bar .chat-diff-action.is-loading svg { animation: none; } }
 .chat-diff-spacer { flex: 1; }
 /* 「更改」页签顶部的分支行：整行宽度、超长省略（分支名在头行会挤到换行，移到这里）。 */
 .chat-diff-branchline { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); margin: var(--sp-8) var(--sp-8) 0; padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }

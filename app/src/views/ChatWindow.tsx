@@ -3,13 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
 // Tauri 事件反而直接给**源路径**,附件协议正好只要路径)。
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, closeShellTerminal, listShellTerminals, openShellTerminal, type ShellTerminalInfo, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow, closeShellTerminal, listShellTerminals, openShellTerminal, type ShellTerminalInfo, closeBrowserPane, listBrowserPanes, openBrowserPane, type BrowserPaneInfo, refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -54,6 +53,8 @@ import { UserMessageNav } from "./chat/UserMessageNav";
 import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
 import { sessionTouchedPaths } from "./chat/gitDiff";
+import { setPanelLinkHandler } from "./chat/panelLinks";
+import { localUrlsIn } from "./chat/BrowserPane";
 import type { DiffPanelTab } from "./chat/GitDiffView";
 import { ApprovalScopeTags } from "./chat/ApprovalScopeTags";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
@@ -156,6 +157,8 @@ function pickFilesViaInput(): Promise<File[]> {
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
 const NO_SHELLS: readonly ShellTerminalInfo[] = [];
+const NO_BROWSERS: readonly BrowserPaneInfo[] = [];
+const NO_URLS: readonly string[] = [];
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
 /// 据此保留旧引用即可跳过整窗重渲染。
@@ -858,10 +861,66 @@ export function ChatWindow() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [sessionId]);
-  // 上一个会话的终端页签不能留在这个会话的面板上。
+  // 浏览器页签同理：原生子 webview 在后端常驻，换会话只是藏起来。
+  const [browsers, setBrowsers] = useState<readonly BrowserPaneInfo[]>(NO_BROWSERS);
   useEffect(() => {
-    setDiffTab((tab) => (tab.startsWith("shell:") && !shells.some((shell) => tab === `shell:${shell.id}`) ? "changes" : tab));
-  }, [shells]);
+    setBrowsers(NO_BROWSERS);
+    if (remoteUi()) return;
+    let cancelled = false;
+    listBrowserPanes(sessionId)
+      .then((list) => { if (!cancelled) setBrowsers(list.length > 0 ? list : NO_BROWSERS); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionId]);
+  // 网址、标题、加载中由后端在页面跳转时推过来。
+  useTauriEvent<BrowserPaneInfo>("browser-pane-state", ({ payload: info }) => {
+    setBrowsers((list) => (list.some((pane) => pane.id === info.id) ? list.map((pane) => (pane.id === info.id ? info : pane)) : list));
+  });
+  // 上一个会话的终端/浏览器页签不能留在这个会话的面板上。
+  useEffect(() => {
+    setDiffTab((tab) => {
+      if (tab.startsWith("shell:") && !shells.some((shell) => tab === `shell:${shell.id}`)) return "changes";
+      if (tab.startsWith("web:") && !browsers.some((pane) => tab === `web:${pane.id}`)) return "changes";
+      return tab;
+    });
+  }, [shells, browsers]);
+  const newBrowser = useCallback((url?: string) => {
+    openBrowserPane(sessionId, url)
+      .then((info) => {
+        setBrowsers((list) => [...list, info]);
+        setDiffTab(`web:${info.id}`);
+        setDiffOpen(true);
+        setDiffCollapsed(false);
+      })
+      .catch((e) => setSendError(formatBackendError(e, t.locale)));
+  }, [sessionId, t.locale]);
+  const newBlankBrowser = useCallback(() => newBrowser(), [newBrowser]);
+  const closeBrowser = useCallback((id: number) => {
+    void closeBrowserPane(id).catch(() => {});
+    const at = browsers.findIndex((pane) => pane.id === id);
+    const next = browsers.filter((pane) => pane.id !== id);
+    setBrowsers(next.length > 0 ? next : NO_BROWSERS);
+    const neighbor = next[Math.min(at, next.length - 1)];
+    setDiffTab((tab) => (tab !== `web:${id}` ? tab : neighbor ? `web:${neighbor.id}` : "changes"));
+  }, [browsers]);
+  // 对话里点本机地址（dev server）在面板浏览器里开（见 panelLinks）：已经开着同一个
+  // 地址就切过去，不重复开。
+  const browsersRef = useRef(browsers);
+  browsersRef.current = browsers;
+  useEffect(() => {
+    if (remoteUi()) return;
+    setPanelLinkHandler((url) => {
+      const same = browsersRef.current.find((pane) => pane.url.replace(/\/$/, "") === url.replace(/\/$/, ""));
+      if (same) {
+        setDiffTab(`web:${same.id}`);
+        setDiffOpen(true);
+        setDiffCollapsed(false);
+      } else {
+        newBrowser(url);
+      }
+    });
+    return () => setPanelLinkHandler(null);
+  }, [newBrowser]);
   const newShell = useCallback(() => {
     if (!cwd) return;
     openShellTerminal(sessionId, cwd, 80, 24)
@@ -936,6 +995,16 @@ export function ChatWindow() {
   // 那部分历史不在里面。
   const touchedKey = useMemo(() => sessionTouchedPaths(items, cwd).join("\0"), [items, cwd]);
   const touchedPaths = useMemo(() => (touchedKey ? touchedKey.split("\0") : NO_TOUCHED_PATHS), [touchedKey]);
+  // 浏览器起始页的建议地址：最近 200 条里出现过的本机地址。拼成字符串当键，
+  // 每轮轮询 items 换新引用时不让面板跟着重渲染。
+  const browserSuggestionKey = useMemo(() => {
+    const texts: string[] = [];
+    for (const item of items.slice(-200)) {
+      if (item.type === "user_text" || item.type === "assistant_text" || item.type === "tool_result") texts.push(item.text);
+    }
+    return localUrlsIn(texts).join("\n");
+  }, [items]);
+  const browserSuggestions = useMemo(() => (browserSuggestionKey ? browserSuggestionKey.split("\n") : NO_URLS), [browserSuggestionKey]);
   // 「本轮」= 最后一条用户消息之后（对照 Kimi 的「本轮改动」）：跑着时是当前这轮，停下后是
   // 刚答完的那轮。回答「它刚才改了什么」，不必在整个会话的改动里自己挑。
   const turnTouchedKey = useMemo(() => {
@@ -3156,9 +3225,12 @@ export function ChatWindow() {
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
-    // 非 Tauri 环境(测试/浏览器)下 getCurrentWebview 会抛错,吞掉即可(同 setTitle 的写法)。
-    let webview: ReturnType<typeof getCurrentWebview>;
-    try { webview = getCurrentWebview(); } catch { return; }
+    // 非 Tauri 环境(测试/浏览器)下 getCurrentWindow 会抛错,吞掉即可(同 setTitle 的写法)。
+    // 挂在窗口上而不是 webview 上：面板开了浏览器页签后 chat 窗口里有两个 webview，
+    // Tauri 就把拖放事件改发给窗口（tauri 2.12.5 manager/window.rs 的 emit_to_window），
+    // webview 上的监听收不到。窗口上的监听在只有一个 webview 时也照样收得到。
+    let webview: ReturnType<typeof getCurrentWindow>;
+    try { webview = getCurrentWindow(); } catch { return; }
     webview.onDragDropEvent((event) => {
       if (event.payload.type === "over") return;
       // 新建页开着时对话主区是藏起来的：拖进来的东西不能暗挂到旧会话的 composer 上。
@@ -5148,6 +5220,10 @@ export function ChatWindow() {
             shells={shells}
             onNewShell={remoteUi() ? undefined : newShell}
             onCloseShell={closeShell}
+            browsers={browsers}
+            onNewBrowser={remoteUi() ? undefined : newBlankBrowser}
+            onCloseBrowser={closeBrowser}
+            browserSuggestions={browserSuggestions}
           />
           </Suspense>
         </>

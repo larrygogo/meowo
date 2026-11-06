@@ -1374,7 +1374,7 @@ impl PtyBroker {
             SummonAction::Hold => {
                 // 不切窗只召唤：请求已由调用方先入表，pending-approval 事件让前端
                 // 点亮侧栏徽标（approvalAwaitingIds），闪烁提醒有事发生。
-                if let Some(window) = app.get_webview_window("chat") {
+                if let Some(window) = app.get_window("chat") {
                     let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
                 }
                 return ApprovalHold::Desktop;
@@ -1386,7 +1386,7 @@ impl PtyBroker {
         // quiet：唤醒不抢焦点——用户可能正在外部终端里打字（实拍反馈），召唤注意力
         // 交给下面的任务栏闪烁；卡片可答性不依赖焦点（请求在表里，注册后轮询可取）。
         crate::window::open_chat_window_quiet(app.clone(), session_id);
-        if let Some(window) = app.get_webview_window("chat") {
+        if let Some(window) = app.get_window("chat") {
             let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
         }
         // 等前端完成 session 切换并显式注册。窗口可见只能证明 WebView 存在，不能证明它已监听
@@ -3523,7 +3523,7 @@ impl PtyBroker {
                         }
                         SummonAction::Ready | SummonAction::Hold => {}
                     }
-                    if let Some(window) = app.get_webview_window("chat") {
+                    if let Some(window) = app.get_window("chat") {
                         let _ =
                             window.request_user_attention(Some(tauri::UserAttentionType::Critical));
                     }

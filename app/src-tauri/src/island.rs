@@ -303,7 +303,7 @@ pub(crate) fn spawn_fullscreen_watch(app: tauri::AppHandle) {
                         }
                     }
                     FullscreenAction::Show => {
-                        crate::window::show_window_no_activate(&window);
+                        crate::window::show_window_no_activate(&window.as_ref().window());
                         hidden_by_us = false;
                     }
                     FullscreenAction::Nothing => {}

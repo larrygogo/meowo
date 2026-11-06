@@ -67,7 +67,9 @@ describe("面板里的终端页签", () => {
     expect(onCloseShell).toHaveBeenCalledWith(7);
     // 点叉不应顺带切到那个页签。
     expect(onTabChange).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "新建终端" }));
+    // 「+」先弹菜单，选「新建终端」才开。
+    fireEvent.click(screen.getByRole("button", { name: "新建页签" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "新建终端" }));
     expect(onNewShell).toHaveBeenCalledTimes(1);
   });
 

@@ -1719,6 +1719,13 @@ mod tests {
             "shell_terminal_write",
             "shell_terminal_resize",
             "shell_terminal_close",
+            // 面板浏览器：在宿主上开网页（子 webview），同属宿主执行类。
+            "browser_pane_open",
+            "browser_pane_list",
+            "browser_pane_set_bounds",
+            "browser_pane_navigate",
+            "browser_pane_action",
+            "browser_pane_close",
         ];
         for cmd in FORBIDDEN {
             assert!(

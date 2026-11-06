@@ -881,13 +881,13 @@ pub(crate) fn show_session_notification(
 fn flash_chat_window_if_unfocused(app: &tauri::AppHandle) {
     use tauri::Manager;
     let any_focused = app
-        .webview_windows()
+        .windows()
         .values()
         .any(|w| w.is_focused().unwrap_or(false));
     if any_focused {
         return;
     }
-    if let Some(w) = app.get_webview_window("chat") {
+    if let Some(w) = app.get_window("chat") {
         let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
     }
 }
@@ -968,7 +968,7 @@ pub(crate) fn spawn_liveness_watch(
                 // 「用户正在看」的两个分量：对话窗聚焦 + 它停在哪些会话上。
                 // 取不到窗口/状态时按「没在看」处理——宁可多弹一条，不可漏掉需关注。
                 let chat_focused = app
-                    .get_webview_window("chat")
+                    .get_window("chat")
                     .and_then(|window| window.is_focused().ok())
                     .unwrap_or(false);
                 let viewed = app

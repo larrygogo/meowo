@@ -19,7 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 const setTitleMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ close: vi.fn(() => Promise.resolve()), setTitle: setTitleMock }),
+  getCurrentWindow: () => ({ close: vi.fn(() => Promise.resolve()), setTitle: setTitleMock, onDragDropEvent: () => Promise.resolve(() => {}) }),
 }));
 // 记录挂载次数：切 tab 不应重建终端（重建=dispose+new Terminal+全量 backlog 重放）。
 const terminalMounts = vi.hoisted(() => ({ count: 0 }));

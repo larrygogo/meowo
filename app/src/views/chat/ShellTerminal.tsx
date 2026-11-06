@@ -8,7 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { attachShellTerminal, detachShellTerminal, openLink, resizeShellTerminal, writeShellTerminal } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
-import { termStyleCache } from "../ManagedTerminal";
+import { stripTerminalReplies, termStyleCache } from "../ManagedTerminal";
 
 function decodeBase64(data: string): Uint8Array {
   const binary = atob(data);
@@ -87,15 +87,25 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
 
     let disposed = false;
     let generation: number | null = null;
+    // 重放已显示过的历史时，里面 shell 当初发的终端查询（设备属性 ESC[c 等）会被 xterm
+    // 再答一遍。那些早就答过了，再答的话答案会当成键盘输入落进 shell，提示符后面多出
+    // 一串 `[?1;2c`（实拍：每切回一次页签多一串）。重放窗口里只剔应答，用户按键照发。
+    let replaying = 0;
     const input = terminal.onData((data) => {
-      void writeShellTerminal(id, data).catch((e) => setError(formatBackendError(e, t.locale)));
+      const payload = replaying > 0 ? stripTerminalReplies(data) : data;
+      if (!payload) return;
+      void writeShellTerminal(id, payload).catch((e) => setError(formatBackendError(e, t.locale)));
     });
     const resize = terminal.onResize(({ cols, rows }) => {
       void resizeShellTerminal(id, cols, rows).catch(() => {});
     });
     attachShellTerminal(id, (event) => {
       if (disposed) return;
-      if (event.kind === "output") terminal.write(decodeBase64(event.data));
+      if (event.kind === "output" && event.replay) {
+        replaying += 1;
+        // write 的回调在这段解析完才触发，期间 xterm 同步发出的应答都落在窗口里。
+        terminal.write(decodeBase64(event.data), () => { replaying -= 1; });
+      } else if (event.kind === "output") terminal.write(decodeBase64(event.data));
       else setExitCode(event.code);
     })
       .then((gen) => {

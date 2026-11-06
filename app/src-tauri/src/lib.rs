@@ -2,6 +2,7 @@ mod account;
 mod agent_updates;
 #[cfg(any(target_os = "macos", test))]
 mod app_bundle;
+mod browser_pane;
 mod bgpty;
 mod chat;
 mod confirm;
@@ -1263,6 +1264,12 @@ pub fn run() {
             editors::list_folder_editors,
             editors::open_folder_in,
             reveal_path_in_file_manager,
+            browser_pane::browser_pane_open,
+            browser_pane::browser_pane_list,
+            browser_pane::browser_pane_set_bounds,
+            browser_pane::browser_pane_navigate,
+            browser_pane::browser_pane_action,
+            browser_pane::browser_pane_close,
             shell_terminal::shell_terminal_open,
             shell_terminal::shell_terminal_list,
             shell_terminal::shell_terminal_attach,
@@ -1435,6 +1442,7 @@ pub fn run() {
             // 远程访问桥（手机浏览器）：manage 生命周期状态后按 settings 决定是否启动。
             // 默认关闭时 apply 是 no-op，不监听任何端口。
             app.manage(shell_terminal::ShellTerminals::default());
+            app.manage(browser_pane::BrowserPanes::default());
             app.manage(remote::RemoteRuntime::default());
             remote::apply(app.handle());
             // 先起合流线程：其余几个 spawn_* 都经 emit_board_changed 发事件，晚起会让它们的

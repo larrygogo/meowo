@@ -30,6 +30,10 @@ pub(crate) enum ShellTerminalEvent {
     /// base64 编码的原始字节：PTY 输出可能在多字节字符中间断开，按字符串传会被替换成乱码。
     Output {
         data: String,
+        /// 这段是前端已经显示过的历史，重新挂上时再放一遍。里面可能有 shell 当初发的
+        /// 终端查询（如设备属性 `ESC[c`），那时已经答过了；重放时前端不能再答，否则答案
+        /// 会当成键盘输入落进 shell，提示符后面多出一串 `[?1;2c`（2026-11-06 实拍）。
+        replay: bool,
     },
     Exit {
         code: Option<u32>,
@@ -52,6 +56,18 @@ struct Output {
     /// 把新挂上的通道顺手摘掉（React 重挂时先挂新的、后卸旧的）。
     channel: Option<(u64, Channel<ShellTerminalEvent>)>,
     exit: Option<Option<u32>>,
+    /// 累计产出的字节数，和其中已经送到过前端的字节数。两者之差是没人看时攒下的新输出，
+    /// 重新挂上时这部分照常当实时输出处理（里面的终端查询还没人答）。
+    produced: u64,
+    delivered: u64,
+}
+
+impl Output {
+    /// 挂上新通道时要发的两段：已经显示过的（重放）和还没显示过的（当实时）。
+    fn split_for_attach(&self) -> (&[u8], &[u8]) {
+        let unseen = (self.produced - self.delivered).min(self.backlog.len() as u64) as usize;
+        self.backlog.split_at(self.backlog.len() - unseen)
+    }
 }
 
 struct ShellPty {
@@ -187,6 +203,8 @@ impl ShellTerminals {
             backlog: Vec::new(),
             channel: None,
             exit: None,
+            produced: 0,
+            delivered: 0,
         }));
 
         let id = {
@@ -207,10 +225,13 @@ impl ShellTerminals {
                     break;
                 };
                 append_backlog(&mut out.backlog, &buf[..n]);
+                out.produced += n as u64;
                 if let Some((_, channel)) = &out.channel {
                     let _ = channel.send(ShellTerminalEvent::Output {
                         data: encode(&buf[..n]),
+                        replay: false,
                     });
+                    out.delivered = out.produced;
                 }
             }
         });
@@ -297,11 +318,16 @@ pub(crate) fn shell_terminal_attach(
         *next
     };
     let mut out = output.lock().map_err(|e| e.to_string())?;
-    if !out.backlog.is_empty() {
-        let _ = on_event.send(ShellTerminalEvent::Output {
-            data: encode(&out.backlog),
-        });
+    let (seen, unseen) = out.split_for_attach();
+    for (part, replay) in [(seen, true), (unseen, false)] {
+        if !part.is_empty() {
+            let _ = on_event.send(ShellTerminalEvent::Output {
+                data: encode(part),
+                replay,
+            });
+        }
     }
+    out.delivered = out.produced;
     if let Some(code) = out.exit {
         let _ = on_event.send(ShellTerminalEvent::Exit { code });
     }
@@ -370,6 +396,27 @@ pub(crate) fn shell_terminal_close(state: tauri::State<'_, ShellTerminals>, id: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attach_splits_seen_history_from_new_output() {
+        let history = b"prompt> \x1b[c";
+        let mut out = Output {
+            backlog: history.to_vec(),
+            channel: None,
+            exit: None,
+            produced: history.len() as u64,
+            delivered: history.len() as u64,
+        };
+        // 全部显示过：整段都是重放，里面的 ESC[c 不能再答。
+        assert_eq!(out.split_for_attach(), (&history[..], &b""[..]));
+        // 没人看时又来了 4 个字节：这 4 个字节当实时输出。
+        out.backlog.extend_from_slice(b"log\n");
+        out.produced += 4;
+        assert_eq!(out.split_for_attach(), (&history[..], &b"log\n"[..]));
+        // 从没挂过前端：全是新输出。
+        out.delivered = 0;
+        assert_eq!(out.split_for_attach().0, &b""[..]);
+    }
 
     #[test]
     fn backlog_keeps_only_the_tail() {
