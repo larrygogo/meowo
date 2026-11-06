@@ -467,6 +467,9 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
       if (event.target instanceof Element && event.target.closest(".shell-term")) return;
       // 地址栏里的 Esc 只撤销输入（BrowserPane 自己处理）。
       if (event.target instanceof Element && event.target.closest(".browser-pane-url")) return;
+      // 面板里的菜单（「+」新建页签、文件右键菜单）开着时 Esc 只关菜单。这里挂在捕获段，
+      // 不让开的话先收起的是整个面板（实测：开着「+」菜单按 Esc，面板没了）。
+      if (document.querySelector('.chat-diff-panel [role="menu"]')) return;
       // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
       // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。
       if (document.querySelector(".chat-modal-overlay")) return;

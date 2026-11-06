@@ -73,6 +73,15 @@ describe("面板里的终端页签", () => {
     expect(onNewShell).toHaveBeenCalledTimes(1);
   });
 
+  it("「+」菜单开着时 Esc 只关菜单，不收面板", () => {
+    const { onCollapse } = renderPanel("changes");
+    fireEvent.click(screen.getByRole("button", { name: "新建页签" }));
+    const item = screen.getByRole("menuitem", { name: "新建终端" });
+    fireEvent.keyDown(item, { key: "Escape" });
+    expect(onCollapse).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("焦点在终端里按 Esc 交给 shell，不收面板", () => {
     const { onCollapse } = renderPanel("shell:3");
     fireEvent.keyDown(screen.getByLabelText("shell-input-3"), { key: "Escape" });
