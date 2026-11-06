@@ -247,6 +247,10 @@ export function useEyeCue(sessions: readonly Item[]): { cue: EyeCue | null; poke
     for (const item of sessions) {
       if (!item.archived && item.connected) next.set(item.session.id, cardTone(item));
     }
+    // 空列表不当基线、也不覆盖基线：App 的 stripSessions 初值是 []，拿它当基线会让第一次真实拉取
+    // 里的会话全算「新开的」，启动就吓一跳；拉取偶尔回空时同理，覆盖掉旧基线下一次又全体吓一跳。
+    // 代价是真从零个会话开出第一个时不吓，可以接受。
+    if (next.size === 0) return;
     const before = prev.current;
     prev.current = next;
     if (!before) return;
@@ -383,7 +387,13 @@ function useRiseFlash(active: boolean, ms: number): boolean {
   useEffect(() => {
     const before = was.current;
     was.current = active;
-    if (before || !active) return;
+    // 条件在闪现期间变回假时，上一轮 cleanup 已经把收回计时器清了，这里不收就永远亮着
+    // （刚睡着打哈欠时开新会话 → 一直打哈欠；刚醒又睡着 → 一直吓一跳）。
+    if (!active) {
+      setFlash(false);
+      return;
+    }
+    if (before) return;
     setFlash(true);
     const id = window.setTimeout(() => setFlash(false), ms);
     return () => window.clearTimeout(id);

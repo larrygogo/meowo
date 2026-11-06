@@ -186,18 +186,9 @@ pub(crate) fn render_face(t: f32, mood: Mood, face: Face) -> Vec<u8> {
         }
     };
     match face {
-        Face::Auto => return render(t, mood),
-        Face::Open => {
-            let open = blink(t, 4.0);
-            for cx in EYES_X {
-                if open < 0.4 {
-                    c.line((cx - 4.5, EYE_CY), (cx + 4.5, EYE_CY), 1.0);
-                } else {
-                    c.ring(cx, EYE_CY, 11.0, 14.0 * open, 1.8);
-                    c.disc(cx, EYE_CY, 2.8);
-                }
-            }
-        }
+        // 「普通睁眼」是岛上在跑（会话不多）和空闲醒着时的默认神态，前端现在总会传表情，这里要是
+        // 自己画固定眼珠，菜单栏就丢了在跑时眼珠左右扫的动画，所以和 Auto 一样回落到按 tone 的老画法。
+        Face::Auto | Face::Open => return render(t, mood),
         Face::Dead => {
             for cx in EYES_X {
                 c.line((cx - 4.0, EYE_CY - 4.0), (cx + 4.0, EYE_CY + 4.0), 1.6);
@@ -434,10 +425,18 @@ mod tests {
                 assert_ne!(a, b, "{:?} 和 {:?} 画得一样", faces[i], faces[j]);
             }
         }
-        // 没给表情就按 tone 的老画法。
+        // 没给表情、或普通睁眼，都按 tone 的老画法；在跑时眼珠照样左右扫。
         assert_eq!(
             render_face(0.5, Mood::Running, Face::Auto),
             render(0.5, Mood::Running)
+        );
+        assert_eq!(
+            render_face(0.5, Mood::Running, Face::Open),
+            render(0.5, Mood::Running)
+        );
+        assert_ne!(
+            render_face(0.5, Mood::Running, Face::Open),
+            render_face(1.0, Mood::Running, Face::Open)
         );
         assert_eq!(Face::parse(Some("dizzy")), Face::Dizzy);
         assert_eq!(Face::parse(Some("whatever")), Face::Auto);

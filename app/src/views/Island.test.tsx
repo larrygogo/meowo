@@ -213,6 +213,18 @@ describe("眼睛", () => {
     expect(mode(container)).toBe("sleep");
   });
 
+  it("打哈欠时开了新会话：醒来吓一跳后回到睁眼，不会一直打哈欠", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 6, 14, 0));
+    const { container, rerender } = render(<Eyes tone="idle" />);
+    act(() => { vi.advanceTimersByTime(EYES_SLEEP_AFTER_MS + 100); });
+    expect(mode(container)).toBe("yawn");
+    rerender(<Eyes tone="running" />);
+    expect(mode(container)).toBe("surprised");
+    act(() => { vi.advanceTimersByTime(EYES_YAWN_MS + 1_000); });
+    expect(mode(container)).toBe("open");
+  });
+
   it("多个出错抓狂；待处理放一分钟没人管就可怜巴巴", () => {
     vi.useFakeTimers();
     const { container, rerender } = render(<Eyes tone="error" errors={1} />);
@@ -290,6 +302,21 @@ describe("岛上一闪而过的表情", () => {
     const { container, rerender } = render(islandWith([a]));
     expect(eyeMode(container)).toBe("open");
     rerender(islandWith([a, mk()]));
+    expect(eyeMode(container)).toBe("surprised");
+  });
+
+  it("启动时列表从空到有不算新开；拉取偶尔回空也不重置基线", () => {
+    vi.useFakeTimers();
+    const a = mk();
+    const b = mk();
+    // App 的 stripSessions 初值是 []，第一次真实拉取才拿到会话。
+    const { container, rerender } = render(islandWith([]));
+    rerender(islandWith([a, b]));
+    expect(eyeMode(container)).toBe("open");
+    rerender(islandWith([]));
+    rerender(islandWith([a, b]));
+    expect(eyeMode(container)).toBe("open");
+    rerender(islandWith([a, b, mk()]));
     expect(eyeMode(container)).toBe("surprised");
   });
 
