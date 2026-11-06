@@ -200,7 +200,7 @@ fn tools() -> Vec<Value> {
         tool("browser_reload", "刷新页面。", json!({}), &[]),
         tool(
             "browser_evaluate",
-            "在页面里执行一段 JavaScript 表达式，返回结果（会转成 JSON）。读不到快照里的内容时用。",
+            "在页面里执行一段 JavaScript 表达式，返回结果（会转成 JSON）。可以用 await（如 await fetch(...).then(r => r.json())），最多等 15 秒。读不到快照里的内容时用。",
             json!({ "expression": { "type": "string" } }),
             &["expression"],
         ),

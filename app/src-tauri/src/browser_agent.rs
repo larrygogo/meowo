@@ -324,11 +324,40 @@ fn run(app: &tauri::AppHandle, id: u32, tool: &str, args: &Value) -> Result<Stri
         }
         "browser_evaluate" => {
             let expr = str_arg("expression").ok_or("缺少 expression")?;
-            let value = eval(
+            // 支持异步表达式（await fetch(...) 这类）：eval_with_callback 不等 Promise，直接拿
+            // 只会得到 {}。先在页面里把结果（同步的也一样）存进一个槽位，再轮询取回。
+            let slot = format!(
+                "e{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            );
+            eval(
                 app,
                 id,
-                &format!("(() => {{ const v = ({expr}); return v === undefined ? null : v; }})()"),
+                &format!(
+                    "(() => {{ const box = (window.__meowoEval = window.__meowoEval || {{}});                      Promise.resolve().then(async () => ({expr})).then(                        (v) => {{ box['{slot}'] = {{ ok: true, value: v === undefined ? null : v }}; }},                        (e) => {{ box['{slot}'] = {{ ok: false, error: String(e && e.message || e) }}; }});                      return true; }})()"
+                ),
             )?;
+            let deadline = Instant::now() + EVAL_TIMEOUT;
+            let value = loop {
+                let got = eval(app, id, &format!("(() => {{ const box = window.__meowoEval || {{}}; const r = box['{slot}']; if (r) delete box['{slot}']; return r || null; }})()"))?;
+                if !got.is_null() {
+                    if got.get("ok").and_then(Value::as_bool) == Some(true) {
+                        break got.get("value").cloned().unwrap_or(Value::Null);
+                    }
+                    return Err(got
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("脚本出错")
+                        .to_string());
+                }
+                if Instant::now() >= deadline {
+                    return Err("脚本 15 秒内没有返回结果".into());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
             Ok(match value {
                 Value::String(s) => s,
                 other => other.to_string(),
