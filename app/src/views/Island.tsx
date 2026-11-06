@@ -129,6 +129,20 @@ export function sidebarOrder(
   return sidebarDirGroups(flat, sortMode, workspaceOrder).flatMap((group) => group.items);
 }
 
+/// 岛上按侧栏顺序排会话：收起的胶囊和展开面板共用（用户 2026-11-06：面板里的列表也要和侧栏一致）。
+/// 工作区的手动顺序在设置里（workspace_order），侧栏拖分组头写入后广播 settings-changed，岛跟着收。
+/// 排序 / 分组方式只存在对话窗的 localStorage 里；岛窗口与它同源（同一个 Tauri 应用的页面），
+/// 读到的是同一份。岛跟着会话列表的轮询重读重算，慢一拍无妨。
+export function useSidebarOrder(sessions: readonly Item[]): Item[] {
+  const { starred } = useStarred();
+  const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
+  useSettingsEffect((settings) => setWorkspaceOrder(settings?.workspace_order ?? []));
+  return useMemo(
+    () => sidebarOrder(sessions, starred, readSidebarSortMode(), readSidebarGroupMode(), workspaceOrder),
+    [sessions, starred, workspaceOrder],
+  );
+}
+
 export function focusSession(items: readonly Item[]): Item | null {
   return byUrgency(items)[0] ?? null;
 }
@@ -231,16 +245,7 @@ export function Island({
   const counts = useMemo(() => islandCounts(sessions), [sessions]);
   const tone = islandTone(counts);
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
-  const { starred } = useStarred();
-  // 工作区的手动顺序在设置里（workspace_order），侧栏拖分组头写入后广播 settings-changed，岛跟着收。
-  const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
-  useSettingsEffect((settings) => setWorkspaceOrder(settings?.workspace_order ?? []));
-  // 排序 / 分组方式只存在对话窗的 localStorage 里；岛窗口与它同源（同一个 Tauri 应用的页面），
-  // 读到的是同一份。岛跟着会话列表的轮询重读重算，慢一拍无妨。
-  const listed = useMemo(
-    () => sidebarOrder(sessions, starred, readSidebarSortMode(), readSidebarGroupMode(), workspaceOrder),
-    [sessions, starred, workspaceOrder],
-  );
+  const listed = useSidebarOrder(sessions);
 
   // 收起态的宽度随内容变（会话个数、标题长短），实测后上报。提醒形态尺寸固定，不量。
   useLayoutEffect(() => {

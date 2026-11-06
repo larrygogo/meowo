@@ -418,7 +418,7 @@ describe("IslandPanel 展开面板", () => {
     );
 
   it("会话多于 3 个时翻页看：每页 3 个，最后是用量页", () => {
-    const sessions = Array.from({ length: 5 }, (_, i) => mk({ task_title: `第${i + 1}个`, lastEventAt: 10_000 - i }));
+    const sessions = Array.from({ length: 5 }, (_, i) => mk({ task_title: `第${i + 1}个`, lastEventAt: 10_000 - i, manual_key: 500 - i } as Partial<Item>));
     const usage = { claude: { lanes: [lane("five_hour", 43)], note: null } } as unknown as Record<string, ProviderUsage>;
     const { container } = renderPanel({ sessions, usage });
     const titles = () => [...container.querySelectorAll(".isl-row-title")].map((el) => el.textContent);
@@ -431,16 +431,19 @@ describe("IslandPanel 展开面板", () => {
     expect(screen.getByText(zh.island.panelUsage)).toBeTruthy();
   });
 
-  it("最多列 3 个最要紧的会话，点一行打开它", () => {
+  it("每页 3 个，和侧栏同一个顺序（不按要紧程度），点一行打开它", () => {
     const onOpenSession = vi.fn();
-    const pending = mk({ pending_review: "approval", task_title: "要批的" });
-    const sessions = [mk(), mk(), mk(), pending];
+    const pending = mk({ pending_review: "approval", task_title: "要批的", manual_key: 100 } as Partial<Item>);
+    const top = mk({ task_title: "排第一", manual_key: 400 } as Partial<Item>);
+    const sessions = [mk({ manual_key: 300 } as Partial<Item>), mk({ manual_key: 200 } as Partial<Item>), pending, top];
     const { container } = renderPanel({ sessions, onOpenSession });
     const rows = container.querySelectorAll(".isl-row");
     expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toContain("要批的");
+    expect(rows[0].textContent).toContain("排第一");
+    // 要批的手动排序键最小，排到第二页去了。
+    expect(container.textContent).not.toContain("要批的");
     fireEvent.click(rows[0]);
-    expect(onOpenSession).toHaveBeenCalledWith(pending.session.id);
+    expect(onOpenSession).toHaveBeenCalledWith(top.session.id);
   });
 
   it("新建会话：标题旁的按钮与空态按钮都能开", () => {

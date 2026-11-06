@@ -1,5 +1,5 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
-// 前几页：会话，按要紧程度每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
+// 前几页：会话，和侧栏同一个顺序每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
 // 各 agent 的额度。搜索、菜单、归档这些在对话窗口侧栏里，单击托盘图标打开。
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
@@ -7,7 +7,7 @@ import { agentAssets, tintStyle } from "../../providers";
 import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
-import { byUrgency, sessionTitle } from "../Island";
+import { sessionTitle, useSidebarOrder } from "../Island";
 import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
@@ -110,7 +110,9 @@ export function IslandPanel({
   const now = useNow();
   const panelRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(initialPage);
-  const ordered = useMemo(() => byUrgency(sessions), [sessions]);
+  // 和侧栏、收起的胶囊同一个顺序（用户 2026-11-06：要一致）。原来按要紧程度排，
+  // 待处理的会话会在列表里跳来跳去，和侧栏对不上。
+  const ordered = useSidebarOrder(sessions);
   // 会话分页：每页 MAX_ROWS 个，至少一页（空态也占一页）；用量页排在最后。
   const sessionPages = Math.max(1, Math.ceil(ordered.length / MAX_ROWS));
   // 用量页按「显示配额」的设置顺序排，设置里没有的殿后。
