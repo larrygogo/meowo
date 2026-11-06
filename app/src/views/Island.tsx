@@ -4,10 +4,12 @@
 // 完整列表仍是 Sticker；形态切换的窗口尺寸由 App 驱动（island.rs 按中心点对称改尺寸）。
 // 刘海纯黑、贴屏幕顶边，两上角向外凹成「耳朵」与屏幕边相接——耳朵在刘海左右各占 ISLAND_EAR，
 // 窗口宽度要把它算进去。胶囊在窗口里水平居中：窗口长大时它不挪位，展开动画从它的轮廓长出来。
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
-import { cardTone, SIDEBAR_SORT_MODE_KEY, useStarred } from "./sticker/helpers";
+import { useSettingsEffect } from "../hooks/useSettings";
+import { cardTone, readSidebarGroupMode, readSidebarSortMode, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
+import { sidebarDirGroups } from "./sidebarDrag";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { AgentRing, Clock, Eyes, UsageRing, useNow, type IslandTone } from "./island/islandParts";
 
@@ -105,23 +107,26 @@ export function byUrgency(items: readonly Item[]): Item[] {
 
 /// 岛上会话头像的排列：和对话窗侧栏同一个顺序（用户 2026-11-06 实拍：岛上的顺序和侧栏对不上）。
 /// 置顶的在前；其余按侧栏选的排序方式，「最近活跃」按最后动静，默认的手动排序按 manual_key（没拖过
-/// 就是创建时间倒序）。只排连着的、有状态的会话，与 byUrgency 取同一批。
+/// 就是创建时间倒序）。侧栏按工作区分组时，再按侧栏同一个组序（sidebarDirGroups：手动排序用拖出来的
+/// 工作区顺序，最近活动随组内第一条）分组后摊平——只排扁平顺序的话，工作区 A 拖到 B 上面后，
+/// B 里排序键更大的会话仍会排在 A 的前面，和侧栏对不上（代码审查指出）。
+/// 只排连着的、有状态的会话，与 byUrgency 取同一批。
 /// 要紧程度仍决定眼睛神态和「聚焦」样式显示哪个会话，只是不再决定头像的先后。
-export function sidebarOrder(items: readonly Item[], starred: ReadonlySet<string>, sortMode: string | null): Item[] {
+export function sidebarOrder(
+  items: readonly Item[],
+  starred: ReadonlySet<string>,
+  sortMode: SidebarSortMode,
+  groupMode: SidebarGroupMode = "none",
+  workspaceOrder: readonly string[] = [],
+): Item[] {
   const recent = sortMode === "recent";
   const key = (item: Item) => (recent ? item.session.last_event_at : item.manual_key ?? item.session.started_at * 1024);
-  return byUrgency(items).sort((a, b) =>
+  const flat = byUrgency(items).sort((a, b) =>
     Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
     || key(b) - key(a)
     || b.session.id - a.session.id);
-}
-
-function readSidebarSortMode(): string | null {
-  try {
-    return localStorage.getItem(SIDEBAR_SORT_MODE_KEY);
-  } catch {
-    return null;
-  }
+  if (groupMode !== "dir") return flat;
+  return sidebarDirGroups(flat, sortMode, workspaceOrder).flatMap((group) => group.items);
 }
 
 export function focusSession(items: readonly Item[]): Item | null {
@@ -227,8 +232,15 @@ export function Island({
   const tone = islandTone(counts);
   const ordered = useMemo(() => byUrgency(sessions), [sessions]);
   const { starred } = useStarred();
-  // 排序方式在对话窗里改；岛跟着会话列表的轮询重算，慢一拍无妨。
-  const listed = useMemo(() => sidebarOrder(sessions, starred, readSidebarSortMode()), [sessions, starred]);
+  // 工作区的手动顺序在设置里（workspace_order），侧栏拖分组头写入后广播 settings-changed，岛跟着收。
+  const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
+  useSettingsEffect((settings) => setWorkspaceOrder(settings?.workspace_order ?? []));
+  // 排序 / 分组方式只存在对话窗的 localStorage 里；岛窗口与它同源（同一个 Tauri 应用的页面），
+  // 读到的是同一份。岛跟着会话列表的轮询重读重算，慢一拍无妨。
+  const listed = useMemo(
+    () => sidebarOrder(sessions, starred, readSidebarSortMode(), readSidebarGroupMode(), workspaceOrder),
+    [sessions, starred, workspaceOrder],
+  );
 
   // 收起态的宽度随内容变（会话个数、标题长短），实测后上报。提醒形态尺寸固定，不量。
   useLayoutEffect(() => {

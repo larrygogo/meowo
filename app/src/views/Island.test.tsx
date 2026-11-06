@@ -215,7 +215,7 @@ describe("岛上会话头像的顺序跟侧栏一致", () => {
     const pending = mk({ pending_review: "approval", manual_key: 100 } as Partial<Item>);
     const waiting = mk({ status: "waiting", manual_key: 200 } as Partial<Item>);
     const all = [pending, waiting, running];
-    expect(ids(sidebarOrder(all, new Set(), null))).toEqual([running.session.id, waiting.session.id, pending.session.id]);
+    expect(ids(sidebarOrder(all, new Set(), "manual"))).toEqual([running.session.id, waiting.session.id, pending.session.id]);
     expect(ids(sidebarOrder(all, new Set([pending.session.cc_session_id]), "manual"))[0]).toBe(pending.session.id);
   });
 
@@ -223,6 +223,44 @@ describe("岛上会话头像的顺序跟侧栏一致", () => {
     const old = mk({ lastEventAt: 1_000, manual_key: 900 } as Partial<Item>);
     const fresh = mk({ lastEventAt: 9_000, manual_key: 100 } as Partial<Item>);
     expect(ids(sidebarOrder([old, fresh], new Set(), "recent"))).toEqual([fresh.session.id, old.session.id]);
+  });
+
+  it("侧栏手动排序 + 按工作区分组：先按拖出来的工作区顺序，再按组内顺序", () => {
+    const a1 = mk({ cwd: "/w/A", manual_key: 100 } as Partial<Item>);
+    const b1 = mk({ cwd: "/w/B", manual_key: 200 } as Partial<Item>);
+    const a2 = mk({ cwd: "/w/A", manual_key: 50 } as Partial<Item>);
+    // 工作区 A 拖到了 B 上面：b1 的排序键虽大，也排在 A 组之后。
+    expect(ids(sidebarOrder([b1, a1, a2], new Set(), "manual", "dir", ["/w/A", "/w/B"])))
+      .toEqual([a1.session.id, a2.session.id, b1.session.id]);
+    // 没拖过的工作区（不在顺序里）放最上面，与侧栏的 applyGroupOrder 同一规矩。
+    const c1 = mk({ cwd: "/w/C", manual_key: 10 } as Partial<Item>);
+    expect(ids(sidebarOrder([b1, a1, c1], new Set(), "manual", "dir", ["/w/A", "/w/B"])))
+      .toEqual([c1.session.id, a1.session.id, b1.session.id]);
+    // 不分组时仍是扁平顺序。
+    expect(ids(sidebarOrder([b1, a1], new Set(), "manual", "none", ["/w/A", "/w/B"]))).toEqual([b1.session.id, a1.session.id]);
+  });
+
+  it("侧栏最近活动 + 按工作区分组：组序随组内第一条，不看拖出来的顺序", () => {
+    const x = mk({ cwd: "/w/A", lastEventAt: 9_000 } as Partial<Item>);
+    const y = mk({ cwd: "/w/B", lastEventAt: 5_000 } as Partial<Item>);
+    const z = mk({ cwd: "/w/A", lastEventAt: 1_000 } as Partial<Item>);
+    expect(ids(sidebarOrder([z, y, x], new Set(), "recent", "dir", ["/w/B", "/w/A"])))
+      .toEqual([x.session.id, z.session.id, y.session.id]);
+  });
+
+  it("胶囊读侧栏存的分组方式和设置里的工作区顺序", async () => {
+    const a1 = mk({ cwd: "/w/A", manual_key: 100 } as Partial<Item>);
+    const b1 = mk({ cwd: "/w/B", manual_key: 200 } as Partial<Item>);
+    localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
+    invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "get_settings" ? { workspace_order: ["/w/A", "/w/B"] } : null));
+    try {
+      const { container } = renderIsland({ sessions: [b1, a1] });
+      const shown = () => Array.from(container.querySelectorAll(".isl-agents .isl-agent")).map((el) => Number(el.getAttribute("data-session-id")));
+      await vi.waitFor(() => expect(shown()).toEqual([a1.session.id, b1.session.id]));
+    } finally {
+      localStorage.removeItem("meowo-chat-sidebar-group-mode");
+      invoke.mockImplementation(() => Promise.resolve(null));
+    }
   });
 
   it("胶囊上的头像按这个顺序摆", () => {

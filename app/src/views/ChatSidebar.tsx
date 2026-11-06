@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyGroupOrder, moveNextTo, usePointerReorder, useSessionDrag } from "./sidebarDrag";
+import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
@@ -13,7 +13,7 @@ import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
-import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, SIDEBAR_SORT_MODE_KEY, useStarred } from "./sticker/helpers";
+import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, readSidebarSortMode, SIDEBAR_GROUP_MODE_KEY, SIDEBAR_SORT_MODE_KEY, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
@@ -28,24 +28,20 @@ const PAGE_LIMIT = 60;
 /** 目录下拉里最多列几个工作目录（后端按最近活跃排序，超出的靠搜索/滚动够不着的本就是冷目录）。 */
 const DIR_LIMIT = 24;
 
-/** 旧的布尔分组开关键（只有「按目录」一档时代的遗产）。只读不写：迁移到 GROUP_MODE_KEY。 */
-const GROUPED_KEY = "meowo-chat-sidebar-grouped";
-const GROUP_MODE_KEY = "meowo-chat-sidebar-group-mode";
+const GROUP_MODE_KEY = SIDEBAR_GROUP_MODE_KEY;
 const SORT_MODE_KEY = SIDEBAR_SORT_MODE_KEY;
 const FOLDED_KEY = "meowo-chat-sidebar-folded-dirs";
 
 /** 分组方式（Claude Code 侧栏 Group by 同款）：不分组 / 按目录 / 按日期 / 按状态。 */
-type GroupMode = "none" | "dir";
+type GroupMode = SidebarGroupMode;
 
 /** 排序方式（对照 Kimi Code 侧栏：手动排序 / 按最近活动）：
  *  - manual：手动排序，默认。后端按手动键分页，没拖过的按创建时间倒序，新会话在最上面；
  *    桌面按住拖、手机长按后拖都能调位置（见 sidebarDrag）。
  *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
  *  - name：按名称，前端排**已加载的这一页**。 */
-type SortMode = "manual" | "recent";
+type SortMode = SidebarSortMode;
 
-/** 无 cwd 的会话归到同一组（后端 cwd 可空:ping 型/早期数据）。以 NUL 开头，不可能与路径撞车。 */
-const NO_DIR = String.fromCharCode(0) + "no-dir";
 
 /** 组头汇总点的召唤强度序:待处理（Agent 正卡着等你决定）> 出错 > 在等 > 在跑（用户 2026-10-29
  *  定，对照 Kimi 的优先级，取代此前「出错排第一」）。组折起来时用户只剩这一个点可看,
@@ -54,7 +50,7 @@ const TONE_RANK: Record<SessionTone, number> = {
   pending: 4, error: 3, waiting: 2, running: 1, offline: 0, ended: 0,
 };
 
-type DirGroup = { key: string; cwd: string | null; label: string; items: LiveSession[] };
+type DirGroup = SidebarDirGroup<LiveSession>;
 
 
 /** 就地编辑输入框。草稿是**本组件的**局部状态：此前草稿放在 ChatSidebar 里，每次按键
@@ -79,33 +75,6 @@ function EditorInput({ initial, placeholder, onSubmit, onCancel }: {
       onBlur={() => onSubmit(value)}
     />
   );
-}
-
-/**
- * 按 cwd 分组,**组序由已有排序派生**:组按「组内第一条会话的位置」排,组内保持原顺序。
- * 于是后端的 connected-first + 时间倒序原样透过来——正在跑的会话所在目录自然浮到最上面,
- * 用户原来靠什么找会话,分组后还靠什么找。另起一套组排序(按目录名/会话数)会打乱这一点。
- */
-function groupByDir(items: LiveSession[]): DirGroup[] {
-  const groups: DirGroup[] = [];
-  const index = new Map<string, DirGroup>();
-  for (const item of items) {
-    const key = item.cwd ? pathKey(item.cwd) : NO_DIR;
-    let group = index.get(key);
-    if (!group) {
-      group = { key, cwd: item.cwd, label: folderName(item.cwd), items: [] };
-      index.set(key, group);
-      groups.push(group);
-    }
-    group.items.push(item);
-  }
-  return groups;
-}
-
-/** 工作区顺序存进设置用的键：pathKey 会按本机平台改斜杠方向，桌面（Windows）与手机算出来的
- *  不一样，存下来的顺序在另一端就对不上。统一成正斜杠再存、再比。 */
-function orderKey(groupKey: string): string {
-  return groupKey.replace(/\\/g, "/");
 }
 
 /** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
@@ -319,21 +288,11 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     });
   }, [dirs]);
   // 分组方式默认不分组:不用的人一个像素都感知不到。旧布尔开关(只有按目录一档)自动迁移。
-  const [groupMode, setGroupMode] = useState<GroupMode>(() => {
-    const stored = localStorage.getItem(GROUP_MODE_KEY);
-    if (stored === "none" || stored === "dir") return stored;
-    // 按日期 / 按状态分组已去掉（对照 Kimi 只留两种视图），存着旧值的回到平铺列表。
-    if (stored === "date" || stored === "state") return "none";
-    return localStorage.getItem(GROUPED_KEY) === "1" ? "dir" : "none";
-  });
+  const [groupMode, setGroupMode] = useState<GroupMode>(readSidebarGroupMode);
   // 排序方式默认「创建时间」，同分组一样落盘。不默认「最近活跃」：几个会话同时在跑时，
   // 每来一条事件就换一次位置，列表顶部一直在跳，点都点不准（用户反馈）。按创建时间，
   // 新会话出现在顶上，之后位置不动。
-  const [sortMode, setSortMode] = useState<SortMode>(() => {
-    const stored = localStorage.getItem(SORT_MODE_KEY);
-    // 旧版的「创建时间」并入手动排序（没拖过时两者顺序完全一样）；「按名称」已去掉，同样回到手动排序。
-    return stored === "recent" ? stored : "manual";
-  });
+  const [sortMode, setSortMode] = useState<SortMode>(readSidebarSortMode);
   // 「创建时间」交给后端分页（后端按 started_at 倒序扫），否则只能重排已加载的一页：
   // 新建但一直没动的会话可能根本不在第一页。load 是稳定回调，读 ref。
   const sortModeRef = useRef(sortMode);
@@ -763,8 +722,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
 
   const groups = useMemo(() => {
     if (!ordered || groupMode !== "dir") return null;
-    // 手动排序时组序也归用户（对照 Kimi 可拖的分组头）；按最近活动时组序随组内会话的位置。
-    return sortMode === "manual" ? applyGroupOrder(groupByDir(ordered), workspaceOrder, (group) => orderKey(group.key)) : groupByDir(ordered);
+    return sidebarDirGroups(ordered, sortMode, workspaceOrder);
   }, [groupMode, ordered, sortMode, workspaceOrder]);
   // 拖分组头调整工作区顺序（手动排序、按工作区分组、非多选态；手机长按后拖）。落下即本地先排，
   // 再把整份顺序写进设置；写失败报错并回到设置里原来的顺序。
