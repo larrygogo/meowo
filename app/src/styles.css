@@ -4699,7 +4699,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .browser-pane-agent.is-paused .browser-pane-agent-dot { animation: none; background: var(--cc-text-faint); }
 .browser-pane-agent button { margin-left: auto; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
 .side-panel-tab-agent { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-accent-text); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
-@keyframes browser-agent-pulse { 50% { opacity: 0.35; } }
+/* 呼吸只变颜色、不变透明度：灯压在图标上，半透明时会透出下面的线条（实拍）。
+   暗相是强调色和底色按比例混出来的实色，始终不透明。 */
+@keyframes browser-agent-pulse { 50% { background-color: color-mix(in srgb, var(--cc-accent-text) 40%, var(--cc-bg)); } }
 /* 面板收起时 agent 在操作浏览器：标题栏的面板开关右上角亮一个点。 */
 .chat-panel-toggle { position: relative; }
 .chat-panel-agent-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-accent-text); box-shadow: 0 0 0 2px var(--cc-bg); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
