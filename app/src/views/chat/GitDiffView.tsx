@@ -723,6 +723,11 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     event.preventDefault();
     setCtxMenu({ x: event.clientX, y: event.clientY, rel, isDir });
   };
+  // 行尾「…」：和右键同一份菜单。手机页没有路径菜单，已删除的文件盘上没东西，都不出。
+  const rowMore = (rel: string, isDir: boolean) =>
+    remoteUi() ? null : (
+      <RowMore label={t.chat.filesMore} open={ctxMenu?.rel === rel} onOpen={(x, y) => setCtxMenu({ x, y, rel, isDir })} />
+    );
 
   // summary 每次刷新（面板重新可见、「更改」开着时 5 秒轮询到变化）都作废缓存：agent 随时
   // 在提交/改写文件，旧 diff 相对旧清单、旧图片是改写前的字节。images 与 entries 必须一起清，
@@ -918,40 +923,45 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     nodes.map((node) =>
       node.children ? (
         <div key={node.path}>
-          <button
-            type="button"
-            className="chat-diff-tree-dir"
-            style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
-            onClick={() => toggleDir(node.path)}
-            onContextMenu={(event) => openCtxMenu(event, node.path, true)}
-          >
-            <svg
-              className={collapsed.has(node.path) ? "chat-diff-chev is-collapsed" : "chat-diff-chev"}
-              width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+          <div className="chat-diff-tree-row">
+            <button
+              type="button"
+              className="chat-diff-tree-dir"
+              style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
+              onClick={() => toggleDir(node.path)}
+              onContextMenu={(event) => openCtxMenu(event, node.path, true)}
             >
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-            <FolderIcon />
-            <span className="chat-diff-path">{node.name}</span>
-          </button>
+              <svg
+                className={collapsed.has(node.path) ? "chat-diff-chev is-collapsed" : "chat-diff-chev"}
+                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              <FolderIcon />
+              <span className="chat-diff-path">{node.name}</span>
+            </button>
+            {rowMore(node.path, true)}
+          </div>
           {!collapsed.has(node.path) && renderTree(node.children, depth + 1)}
         </div>
       ) : (
-        <button
-          key={node.path}
-          type="button"
-          className="chat-diff-tree-file"
-          style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
-          onClick={() => node.file && setSelectedPath(node.file.path)}
-          onContextMenu={node.file && node.file.status !== "D" ? (event) => openCtxMenu(event, node.file!.path, false) : undefined}
-        >
-          {node.file && <StatusBadge status={node.file.status} />}
-          <span className="chat-diff-path">{node.name}</span>
-          {node.file && <LineCounts file={fileByPath.get(node.file.path)} />}
-          {node.file && commentCounts.get(node.file.path) && (
-            <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(node.file.path)!)}>{commentCounts.get(node.file.path)}</span>
-          )}
-        </button>
+        <div key={node.path} className="chat-diff-tree-row">
+          <button
+            type="button"
+            className="chat-diff-tree-file"
+            style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
+            onClick={() => node.file && setSelectedPath(node.file.path)}
+            onContextMenu={node.file && node.file.status !== "D" ? (event) => openCtxMenu(event, node.file!.path, false) : undefined}
+          >
+            {node.file && <StatusBadge status={node.file.status} />}
+            <span className="chat-diff-path">{node.name}</span>
+            {node.file && <LineCounts file={fileByPath.get(node.file.path)} />}
+            {node.file && commentCounts.get(node.file.path) && (
+              <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(node.file.path)!)}>{commentCounts.get(node.file.path)}</span>
+            )}
+          </button>
+          {node.file && node.file.status !== "D" && rowMore(node.file.path, false)}
+        </div>
       ),
     );
 
@@ -1143,21 +1153,23 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
       {filterSession && visibleFiles.length === 0
         ? <div className="chat-diff-empty">{scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
         : <div className="chat-diff-tree">{layout === "tree" ? renderTree(tree, 0) : listedFiles.map((file) => (
-          <button
-            key={file.path}
-            type="button"
-            className="chat-diff-tree-file is-flat"
-            data-tip={file.path}
-            onClick={() => setSelectedPath(file.path)}
-            onContextMenu={file.status !== "D" ? (event) => openCtxMenu(event, file.path, false) : undefined}
-          >
-            <StatusBadge status={file.status} />
-            <span className="chat-diff-path">{file.path}</span>
-            <LineCounts file={file} />
-            {commentCounts.get(file.path) && (
-              <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(file.path)!)}>{commentCounts.get(file.path)}</span>
-            )}
-          </button>
+          <div key={file.path} className="chat-diff-tree-row">
+            <button
+              type="button"
+              className="chat-diff-tree-file is-flat"
+              data-tip={file.path}
+              onClick={() => setSelectedPath(file.path)}
+              onContextMenu={file.status !== "D" ? (event) => openCtxMenu(event, file.path, false) : undefined}
+            >
+              <StatusBadge status={file.status} />
+              <span className="chat-diff-path">{file.path}</span>
+              <LineCounts file={file} />
+              {commentCounts.get(file.path) && (
+                <span className="chat-diff-cmt-count" aria-label={t.chat.reviewComments(commentCounts.get(file.path)!)}>{commentCounts.get(file.path)}</span>
+              )}
+            </button>
+            {file.status !== "D" && rowMore(file.path, false)}
+          </div>
         ))}</div>}
       {ctxMenu && (
         <PathContextMenu
@@ -1504,6 +1516,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
             const collapsed = collapsedHits.has(group.relPath);
             return (
               <div key={group.relPath}>
+                <div className="chat-diff-tree-row">
                 <button
                   type="button"
                   className="chat-diff-tree-file"
@@ -1530,6 +1543,8 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
                     <span className="chat-diff-hit-count">{group.totalLineMatches}</span>
                   )}
                 </button>
+                {rowMore(group.relPath, group.isDir)}
+                </div>
                 {hasLines && !collapsed &&
                   group.lines.map((lineHit) => (
                     <button

@@ -272,7 +272,8 @@ describe("GitDiffView 文件页：树与预览同时在场（对照 Kimi）", ()
     const mention = vi.fn();
     const { container } = render(
       <PathMentionContext.Provider value={mention}>
-        <FilesView cwd="C:epo" />
+        <FilesView cwd="C:
+epo" />
       </PathMentionContext.Provider>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "更多操作" }));
@@ -289,11 +290,31 @@ describe("GitDiffView 文件页：树与预览同时在场（对照 Kimi）", ()
     expect(localStorage.getItem("meowo-file-tree-position")).toBe("right");
   });
 
+  it("更改列表和文件搜索结果的行尾也有「…」；已删除的文件没有", async () => {
+    const withDeleted: GitDiffSummaryDto = { ...summary, files: [...summary.files, { path: "gone.ts", status: "D", additions: 0, deletions: 3 }] };
+    render(<ChangesHarness summary={withDeleted} />);
+    expect(screen.getAllByRole("button", { name: "更多操作" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("menuitem", { name: /复制路径/ })).toBeTruthy();
+    cleanup();
+
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "search_project_files") return { files: [{ relPath: "src/a.ts", isDir: false, lines: [{ line: 3, preview: "const needle = 1;" }], totalLineMatches: 1 }], truncated: false };
+      return [];
+    });
+    render(<FilesView cwd="C:\\repo" />);
+    fireEvent.change(screen.getByPlaceholderText("搜索文件名或内容…"), { target: { value: "needle" } });
+    await screen.findByText("src/a.ts");
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("menuitem", { name: /在文件管理器中显示|定位/ })).toBeTruthy();
+  });
+
   it("文件：分隔条用键盘调宽，夹在 160–400 之间", async () => {
     localStorage.removeItem("meowo-file-tree-width");
     localStorage.removeItem("meowo-file-tree-position");
     vi.mocked(invoke).mockResolvedValue([]);
-    const { container } = render(<FilesView cwd="C:epo" />);
+    const { container } = render(<FilesView cwd="C:
+epo" />);
     const bar = screen.getByRole("separator", { name: "调整文件树宽度" });
     expect(bar.getAttribute("aria-valuenow")).toBe("224");
     fireEvent.keyDown(bar, { key: "ArrowRight", shiftKey: true });
@@ -310,7 +331,8 @@ function ChangesHarness({ summary: sum = summary, live = false }: { summary?: Gi
     vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
   }
   return (
-    <ChangesView cwd="C:epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
+    <ChangesView cwd="C:
+epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
       onAddComment={() => {}} onRemoveComment={() => {}} escOverrideRef={{ current: null }} live={live} />
   );
 }

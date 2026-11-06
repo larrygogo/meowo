@@ -4929,6 +4929,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tree-more { position: absolute; right: var(--sp-4); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; opacity: 0; }
 .chat-diff-tree-row:hover > .chat-diff-tree-more, .chat-diff-tree-more:focus-visible, .chat-diff-tree-more[aria-expanded="true"] { opacity: 1; }
 .chat-diff-tree-more:hover { background: var(--fill-selected); color: var(--cc-text); }
+/* 「…」出来时行内容给它让位：改动行尾的 +12 −3、搜索结果的命中数不被盖住。 */
+.chat-diff-tree-row:hover > button:has(~ .chat-diff-tree-more), .chat-diff-tree-row:focus-within > button:has(~ .chat-diff-tree-more) { padding-right: 30px; }
 .chat-diff-tree-file.is-active { background: var(--fill-selected); color: var(--cc-text); }
 /* 应用图标（系统「打开方式」清单提取的 PNG）：菜单条目与「打开」主键共用。 */
 .path-app-ico { display: block; flex: 0 0 auto; width: 14px; height: 14px; border-radius: var(--r-3); }
