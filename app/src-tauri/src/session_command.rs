@@ -94,6 +94,8 @@ pub(crate) async fn set_archived(
             {
                 eprintln!("标记完成后结束会话 {session_id} 失败: {error}");
             }
+            // 会话关了，面板里它开的终端和浏览器也关（会话本来就没在跑时上面不会触发退出收尾）。
+            crate::browser_agent::close_session_panels(&app, session_id);
         }
         super::watch::emit_board_changed(&app, "set_archived");
         Ok(())

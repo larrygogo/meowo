@@ -9,7 +9,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import {
-  activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, keysToClose, loadPanel, moveTab, newTabKey, openSingleton,
+  activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, moveTab, newTabKey, openSingleton,
   savePanel, setVisible, updateTab, type PanelState, type PanelTab,
 } from "./panelTabs";
 
@@ -91,6 +91,13 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
       if (existing) return activate(prev, existing.key);
       return addTab(prev, { key: newTabKey("browser"), type: "browser", paneId: info.id, url: info.url, title: info.title });
     });
+  });
+  // 会话结束或被关闭（标记完成）：后端已经关了它的终端和浏览器（browser_agent.rs 的
+  // close_session_panels），这里清掉页签和记录（用户要求「会话结束了就同步关闭里面的窗口」）。
+  useTauriEvent<number>("panel-session-closed", ({ payload: closed }) => {
+    forgetPanel(closed);
+    if (closed !== sessionId) return;
+    setPanel({ sessionId, state: EMPTY_PANEL });
   });
   useTauriEvent<BrowserPaneInfo>("browser-pane-state", ({ payload: info }) => {
     setPanes((prev) => (prev.has(info.id) ? new Map(prev).set(info.id, info) : prev));

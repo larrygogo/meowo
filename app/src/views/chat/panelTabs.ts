@@ -166,7 +166,8 @@ export function loadPanel(sessionId: number, storage: Storage | null = safeStora
       return tab;
     });
     const active = tabs.some((tab) => tab.key === raw.active) ? (raw.active as string) : tabs[0]?.key ?? null;
-    return { tabs, active, visible: !!raw.visible && tabs.length > 0, expanded: !!raw.expanded && tabs.length > 0 };
+    // 开合按会话记（用户要求）：没有页签、只开着启动列表的面板也记成开着。
+    return { tabs, active, visible: !!raw.visible, expanded: !!raw.expanded && tabs.length > 0 };
   } catch {
     return EMPTY_PANEL;
   }
@@ -176,7 +177,8 @@ export function savePanel(sessionId: number, state: PanelState, storage: Storage
   if (!storage) return;
   const key = STORE_PREFIX + sessionId;
   try {
-    if (state.tabs.length === 0) {
+    // 没有页签且关着 = 和从没开过一样，不留记录。
+    if (state.tabs.length === 0 && !state.visible) {
       storage.removeItem(key);
       return;
     }
@@ -184,6 +186,11 @@ export function savePanel(sessionId: number, state: PanelState, storage: Storage
     storage.setItem(key, JSON.stringify(stored));
     evict(storage);
   } catch { /* 存不下就只在内存里，下次打开从空面板开始 */ }
+}
+
+/** 会话结束 / 关闭后，它的面板记录作废（后端已经把终端和浏览器关了）。 */
+export function forgetPanel(sessionId: number, storage: Storage | null = safeStorage()): void {
+  try { storage?.removeItem(STORE_PREFIX + sessionId); } catch { /* 删不掉就留着，下次打开时页签会按记录重新起 */ }
 }
 
 function evict(storage: Storage): void {

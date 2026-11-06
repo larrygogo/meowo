@@ -348,6 +348,24 @@ impl ShellTerminals {
         Ok(info)
     }
 
+    /// 会话结束 / 关闭时收掉它在面板里开的所有终端（连同终端里跑着的程序）。
+    pub(crate) fn close_owner(&self, owner: i64) {
+        let drained: Vec<ShellPty> = match self.shells.lock() {
+            Ok(mut map) => {
+                let ids: Vec<u32> = map
+                    .iter()
+                    .filter(|(_, shell)| shell.owner == owner)
+                    .map(|(id, _)| *id)
+                    .collect();
+                ids.into_iter().filter_map(|id| map.remove(&id)).collect()
+            }
+            Err(_) => return,
+        };
+        for mut shell in drained {
+            stop(&mut shell);
+        }
+    }
+
     fn write(&self, id: u32, data: &str) -> Result<(), String> {
         let mut map = self.shells.lock().map_err(|e| e.to_string())?;
         let shell = map.get_mut(&id).ok_or("shell_terminal/not_found")?;
@@ -564,6 +582,21 @@ mod tests {
             .collect();
         assert_eq!(names, ["node.exe", "esbuild.exe"]);
         assert!(running_under(20, &table).is_empty());
+    }
+
+    /// 会话结束只收它自己的终端，别的会话的不动。
+    #[test]
+    fn close_owner_only_closes_that_sessions_shells() {
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let shells = ShellTerminals::default();
+        shells.open(1, &cwd, 80, 24).unwrap();
+        shells.open(1, &cwd, 80, 24).unwrap();
+        let keep = shells.open(2, &cwd, 80, 24).unwrap();
+        shells.close_owner(1);
+        let left: Vec<u32> = shells.shells.lock().unwrap().keys().copied().collect();
+        assert_eq!(left, vec![keep.id]);
+        shells.close_owner(2);
+        assert!(shells.shells.lock().unwrap().is_empty());
     }
 
     #[test]

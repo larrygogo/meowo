@@ -439,6 +439,26 @@ fn js_str(text: &str) -> String {
     json!(text).to_string()
 }
 
+/// 会话结束或被关闭（标记完成）时，把它在面板里开的终端和浏览器一起关掉（用户要求），
+/// 再通知前端清掉这个会话的面板页签。
+pub(crate) fn close_session_panels(app: &tauri::AppHandle, session_id: i64) {
+    use tauri::Emitter;
+    if let Some(shells) = app.try_state::<crate::shell_terminal::ShellTerminals>() {
+        shells.close_owner(session_id);
+    }
+    if let Some(panes) = app.try_state::<BrowserPanes>() {
+        panes.close_owner(app, session_id);
+    }
+    if let Ok(mut map) = agent_panes().lock() {
+        map.remove(&session_id);
+    }
+    let _ = app.emit_to(
+        tauri::EventTarget::webview("chat"),
+        "panel-session-closed",
+        session_id,
+    );
+}
+
 // ── 把 MCP 服务器交给 agent ─────────────────────────────
 
 /// MCP 服务器在 agent 那边的名字；claude 里工具名就是 `mcp__meowo__browser_*`。

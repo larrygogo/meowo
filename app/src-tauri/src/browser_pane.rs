@@ -48,6 +48,29 @@ pub(crate) struct BrowserPanes {
 }
 
 impl BrowserPanes {
+    /// 会话结束 / 关闭时关掉它在面板里开的所有浏览器。
+    pub(crate) fn close_owner(&self, app: &tauri::AppHandle, owner: i64) {
+        let ids: Vec<u32> = match self.panes.lock() {
+            Ok(mut map) => {
+                let ids: Vec<u32> = map
+                    .values()
+                    .filter(|info| info.owner == owner)
+                    .map(|info| info.id)
+                    .collect();
+                for id in &ids {
+                    map.remove(id);
+                }
+                ids
+            }
+            Err(_) => return,
+        };
+        for id in ids {
+            if let Ok(webview) = webview(app, id) {
+                let _ = webview.close();
+            }
+        }
+    }
+
     /// chat 窗口销毁时调用：子 webview 已随窗口没了，表里的记录也作废。
     pub(crate) fn clear(&self) {
         if let Ok(mut panes) = self.panes.lock() {

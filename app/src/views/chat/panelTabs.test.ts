@@ -74,8 +74,14 @@ describe("面板页签模型", () => {
     expect(loadPanel(8, storage)).toEqual(EMPTY_PANEL);
     storage.setItem("meowo-panel-tabs.v1:9", "{not json");
     expect(loadPanel(9, storage)).toEqual(EMPTY_PANEL);
-    // 没有页签就不留记录。
+    // 没有页签、面板也关着，就不留记录。
     savePanel(7, EMPTY_PANEL, storage);
     expect(storage.getItem("meowo-panel-tabs.v1:7")).toBeNull();
+    // 只开着启动列表（一个页签都没有）的面板也记成开着。
+    savePanel(7, { tabs: [], active: null, visible: true, expanded: false }, storage);
+    expect(loadPanel(7, storage)).toEqual({ tabs: [], active: null, visible: true, expanded: false });
+    // 有页签但关着：页签留着，面板关着。
+    savePanel(7, { ...with3(), visible: false }, storage);
+    expect(loadPanel(7, storage)).toMatchObject({ visible: false, active: "b" });
   });
 });
