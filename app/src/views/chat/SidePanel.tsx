@@ -237,7 +237,8 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
   closeLabel: string;
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
-  const [drag, setDrag] = useState<{ key: string; index: number } | null>(null);
+  /** 拖动中：被拖的页签、落点下标、指示线位置（相对页签栏内容的坐标，随横向滚动走）。 */
+  const [drag, setDrag] = useState<{ key: string; index: number; x: number; top: number; height: number } | null>(null);
   const dragRef = useRef<{ key: string; startX: number; moved: boolean; pointerId: number } | null>(null);
 
   // 当前页签滚进可见区域（页签多到横向滚动时）。
@@ -253,6 +254,22 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
     });
     return at < 0 ? nodes.length : at;
   };
+  // 指示线落在两个页签的缝正中；首尾两端贴着页签外沿，再往里收 1px，不被滚动容器裁掉
+  // （实拍：插到第一个位置时线画在容器外看不见，插到末尾时线飘在叉号空位外面）。
+  const dropLine = (index: number) => {
+    const bar = barRef.current;
+    const nodes = Array.from(bar?.querySelectorAll<HTMLElement>(".side-panel-tab") ?? []);
+    const ref = nodes[Math.min(index, nodes.length - 1)];
+    if (!bar || !ref) return { index, x: 0, top: 0, height: 0 };
+    let x: number;
+    if (index <= 0) x = ref.offsetLeft + 1;
+    else if (index >= nodes.length) x = ref.offsetLeft + ref.offsetWidth - 1;
+    else {
+      const prev = nodes[index - 1];
+      x = (prev.offsetLeft + prev.offsetWidth + ref.offsetLeft) / 2;
+    }
+    return { index, x: Math.max(1, Math.min(x, bar.scrollWidth - 1)), top: ref.offsetTop + 4, height: ref.offsetHeight - 8 };
+  };
   const onPointerDown = (tab: PanelTab) => (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     dragRef.current = { key: tab.key, startX: event.clientX, moved: false, pointerId: event.pointerId };
@@ -265,7 +282,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
       current.moved = true;
       event.currentTarget.setPointerCapture(current.pointerId);
     }
-    setDrag({ key: current.key, index: dropIndex(event.clientX) });
+    setDrag({ key: current.key, ...dropLine(dropIndex(event.clientX)) });
   };
   const onPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const current = dragRef.current;
@@ -304,7 +321,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
             role="tab"
             aria-selected={isActive}
             tabIndex={isActive ? 0 : -1}
-            className={"side-panel-tab" + (isActive ? " is-active" : "") + (drag?.key === tab.key ? " is-dragging" : "") + (drag && drag.index === index && drag.key !== tab.key ? " is-drop-before" : "")}
+            className={"side-panel-tab" + (isActive ? " is-active" : "") + (drag?.key === tab.key ? " is-dragging" : "")}
             title={tab.type === "browser" ? tab.url : name}
             onClick={() => { if (!dragRef.current?.moved) actions.activate(tab.key); }}
             onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); actions.close(tab.key); } }}
@@ -330,7 +347,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
           </button>
         );
       })}
-      {drag && drag.index === state.tabs.length && <span className="side-panel-drop-end" />}
+      {drag && <span className="side-panel-drop-line" style={{ left: drag.x - 1, top: drag.top, height: drag.height }} />}
     </div>
   );
 }

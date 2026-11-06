@@ -4656,19 +4656,19 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    改成给对话区留 320px。 */
 .chat-diff-panel.side-panel { max-width: calc(100% - 320px); }
 /* 右侧面板的页签栏（照 Kimi Code：28px 高、最宽 168px、标题省略、横向滚动不显示滚动条）。 */
-.side-panel-tabs { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.side-panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .side-panel-tabs::-webkit-scrollbar { display: none; }
 .side-panel-tab { position: relative; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-6); height: 28px; max-width: 168px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font: inherit; font-size: var(--text-xs); white-space: nowrap; cursor: pointer; touch-action: none; }
 .side-panel-tab:hover { color: var(--cc-text); background: var(--fill-hover); }
 .side-panel-tab.is-active { color: var(--cc-text); background: var(--fill-selected); }
 .side-panel-tab svg { flex: none; }
 .side-panel-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.side-panel-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-sm); opacity: 0; }
+/* 叉号常显（同 Kimi），没激活的页签淡一点：之前悬停才显示，页签右侧白留一块空位。 */
+.side-panel-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-sm); opacity: 0.55; }
 .side-panel-tab:hover .side-panel-tab-close, .side-panel-tab.is-active .side-panel-tab-close { opacity: 1; }
 .side-panel-tab-close:hover { background: var(--fill-hover); }
 .side-panel-tab.is-dragging { opacity: 0.5; }
-.side-panel-tab.is-drop-before::before, .side-panel-drop-end { content: ""; position: absolute; left: -2px; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--cc-accent-text); }
-.side-panel-drop-end { position: relative; left: 0; flex: none; height: 20px; }
+.side-panel-drop-line { position: absolute; width: 2px; border-radius: 1px; background: var(--cc-accent-text); pointer-events: none; }
 /* 没有页签时的启动列表（Kimi 的「快速打开」）。 */
 .side-panel-launcher { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-12) var(--sp-10); }
 .side-panel-launcher p { margin: 0 0 var(--sp-6); padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); }
