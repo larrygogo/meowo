@@ -16,7 +16,7 @@ afterEach(() => {
   setPanelLinkHandler(null);
 });
 
-const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, ...over });
+const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, agentActive: false, agentPaused: false, ...over });
 
 describe("面板浏览器", () => {
   it("页签名：标题优先，其次主机名，空白页叫新标签页", () => {
@@ -52,6 +52,18 @@ describe("面板浏览器", () => {
     fireEvent.change(input, { target: { value: "github.com" } });
     fireEvent.submit(input.closest("form")!);
     expect(invoke).toHaveBeenCalledWith("browser_pane_navigate", { id: 5, url: "github.com" });
+  });
+
+  it("agent 操作时显示提示，可以接管；接管后可以交还", () => {
+    const { rerender } = render(<BrowserPane info={pane({ agentActive: true })} visible suggestions={[]} />);
+    expect(screen.getByRole("status").textContent).toContain("Agent 正在操作");
+    fireEvent.click(screen.getByRole("button", { name: "接管" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: true });
+    rerender(<BrowserPane info={pane({ agentPaused: true })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "交还" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: false });
+    rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("卸载时把原生视图藏起来（它不会跟着 DOM 消失）", () => {

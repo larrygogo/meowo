@@ -1520,6 +1520,9 @@ impl PtyBroker {
         };
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
+        // 面板浏览器的 MCP 服务器（browser_agent.rs）。只加在托管 PTY 上：只有这里的 agent
+        // 环境带 Meowo 的会话令牌，服务器才有工具可给。
+        command.args(crate::browser_agent::launch_args(provider));
         if let Some(cwd) = cwd.filter(|c| !c.trim().is_empty()) {
             command.cwd(cwd);
         }
@@ -2961,6 +2964,9 @@ impl PtyBroker {
                 BrokerRequest::Approval { token, request } => {
                     self.handle_approval(&token, request, stream)
                 }
+                BrokerRequest::Browser { token, tool, args } => {
+                    self.handle_browser(&token, &tool, &args, stream)
+                }
                 BrokerRequest::Attach { .. } => unreachable!(),
             };
         };
@@ -3370,6 +3376,31 @@ impl PtyBroker {
         }
         drop(managed);
         Ok(())
+    }
+
+    /// agent 操作面板浏览器（见 browser_agent.rs）。只认 scoped token：会话归属从签发时
+    /// 绑定的会话来（临时负 id 按 claim 后的绑定换成真实 id），agent 碰不到别的会话的浏览器。
+    /// full token 没有会话归属，拒绝。
+    fn handle_browser(
+        &self,
+        token: &str,
+        tool: &str,
+        args: &serde_json::Value,
+        mut stream: TcpStream,
+    ) -> Result<(), String> {
+        let Some(TokenLevel::Scoped(owner)) = self.token_level(token) else {
+            let reply = serde_json::json!({ "ok": false, "error": "Meowo 浏览器通道认证失败" });
+            let _ = stream.write_all(reply.to_string().as_bytes());
+            return Err("浏览器通道认证失败".into());
+        };
+        let session_id = self.binding(owner).unwrap_or(owner);
+        // 操作可能要等页面加载十几秒；连接已认证，放开读超时。
+        stream.set_read_timeout(None).ok();
+        let reply = match crate::browser_agent::handle(session_id, tool, args) {
+            Ok(text) => serde_json::json!({ "ok": true, "text": text }),
+            Err(error) => serde_json::json!({ "ok": false, "error": error }),
+        };
+        stream.write_all(reply.to_string().as_bytes()).map_err(|e| e.to_string())
     }
 
     fn handle_approval(

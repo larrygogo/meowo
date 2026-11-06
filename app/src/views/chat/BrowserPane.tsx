@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { browserPaneAction, navigateBrowserPane, openLink, setBrowserPaneBounds, type BrowserPaneInfo } from "../../api";
+import { browserPaneAction, navigateBrowserPane, openLink, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 
@@ -135,6 +135,16 @@ export function BrowserPane({ info, visible, suggestions }: {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>
         </button>
       </form>
+      {/* agent 操作时的提示与接管（同 Kimi Code「你可以随时查看 Agent 的操作并接管」）。 */}
+      {(info.agentActive || info.agentPaused) && (
+        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
+          <span className="browser-pane-agent-dot" aria-hidden="true" />
+          <span>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</span>
+          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
+            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
+          </button>
+        </div>
+      )}
       {error && <div className="browser-pane-error" role="alert">{error}</div>}
       <div ref={hostRef} className="browser-pane-view">
         {blank && (

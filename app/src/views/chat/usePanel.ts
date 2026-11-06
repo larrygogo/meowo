@@ -78,6 +78,17 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   // cwd 只在补页签时兜底用，不因它重拉。
   }, [sessionId, update]);
 
+  // agent 第一次用浏览器时后端自己建的页签（browser_agent.rs）：加进这个会话的面板并切过去，
+  // 用户能看着它操作。不是正在看的会话就等切过去时由列表补上。
+  useTauriEvent<BrowserPaneInfo>("browser-pane-created", ({ payload: info }) => {
+    if (info.owner !== sessionId) return;
+    setPanes((prev) => new Map(prev).set(info.id, info));
+    update((prev) => {
+      const existing = prev.tabs.find((tab) => tab.type === "browser" && tab.paneId === info.id);
+      if (existing) return activate(prev, existing.key);
+      return addTab(prev, { key: newTabKey("browser"), type: "browser", paneId: info.id, url: info.url, title: info.title });
+    });
+  });
   useTauriEvent<BrowserPaneInfo>("browser-pane-state", ({ payload: info }) => {
     setPanes((prev) => (prev.has(info.id) ? new Map(prev).set(info.id, info) : prev));
     // 网址和标题也记进页签，应用重启后按它重新打开。

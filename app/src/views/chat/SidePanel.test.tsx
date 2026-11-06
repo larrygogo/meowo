@@ -26,7 +26,7 @@ afterEach(cleanup);
 
 const summary: GitDiffSummaryDto = { gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null, files: [] };
 const shells = new Map<number, ShellTerminalInfo>([[3, { id: 3, owner: 1, title: "pwsh", exited: false }]]);
-const panes = new Map<number, BrowserPaneInfo>([[5, { id: 5, owner: 1, url: "http://localhost:5173/", title: "Vite App", loading: false }]]);
+const panes = new Map<number, BrowserPaneInfo>([[5, { id: 5, owner: 1, url: "http://localhost:5173/", title: "Vite App", loading: false, agentActive: true, agentPaused: false }]]);
 const full: PanelState = {
   tabs: [
     { key: "d", type: "diff" },
@@ -61,6 +61,9 @@ describe("右侧面板", () => {
     expect(screen.getByTestId("shell-3").dataset.visible).toBe("true");
     expect(screen.getByTestId("web-5").dataset.visible).toBe("false");
     expect(screen.queryByText("改动内容")).toBeNull();
+    // agent 正在操作的浏览器页签上亮一个点。
+    expect(tabs[2].querySelector(".side-panel-tab-agent")).not.toBeNull();
+    expect(tabs[1].querySelector(".side-panel-tab-agent")).toBeNull();
   });
 
   it("点页签切换，叉和中键关闭，键盘 → 切到下一个、Alt+→ 挪位置", () => {

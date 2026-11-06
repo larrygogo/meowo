@@ -1727,6 +1727,7 @@ mod tests {
             "browser_pane_navigate",
             "browser_pane_action",
             "browser_pane_close",
+            "browser_pane_set_agent_paused",
         ];
         for cmd in FORBIDDEN {
             assert!(

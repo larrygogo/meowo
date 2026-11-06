@@ -2,6 +2,7 @@ mod account;
 mod agent_updates;
 #[cfg(any(target_os = "macos", test))]
 mod app_bundle;
+mod browser_agent;
 mod browser_pane;
 mod bgpty;
 mod chat;
@@ -1270,6 +1271,7 @@ pub fn run() {
             browser_pane::browser_pane_navigate,
             browser_pane::browser_pane_action,
             browser_pane::browser_pane_close,
+            browser_pane::browser_pane_set_agent_paused,
             shell_terminal::shell_terminal_open,
             shell_terminal::shell_terminal_list,
             shell_terminal::shell_terminal_attach,
@@ -1436,7 +1438,10 @@ pub fn run() {
             // 后启动者必然静默抢线（wiring 的 bundled.or(claimed)），dev 一开安装版的接线就被
             // 改指 target/debug——把槽位留给安装版。手动「修复连接」不经此门，仍可显式接线。
             if setup::auto_wire_enabled() {
-                std::thread::spawn(setup::apply_all);
+                std::thread::spawn(|| {
+                    setup::apply_all();
+                    browser_agent::sync_kimi_mcp();
+                });
             } else {
                 eprintln!("Meowo dev: 跳过启动自动接线(hooks/statusline)；需要时用设置页「修复连接」或设 MEOWO_DEV_WIRE=1");
             }
@@ -1444,6 +1449,7 @@ pub fn run() {
             // 默认关闭时 apply 是 no-op，不监听任何端口。
             app.manage(shell_terminal::ShellTerminals::default());
             app.manage(browser_pane::BrowserPanes::default());
+            browser_agent::init(app.handle());
             app.manage(remote::RemoteRuntime::default());
             remote::apply(app.handle());
             // 先起合流线程：其余几个 spawn_* 都经 emit_board_changed 发事件，晚起会让它们的

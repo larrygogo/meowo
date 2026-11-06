@@ -29,18 +29,22 @@ const BLANK: &str = "about:blank";
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserPaneInfo {
-    id: u32,
+    pub(crate) id: u32,
     /// 归属的会话 id。
-    owner: i64,
+    pub(crate) owner: i64,
     url: String,
     title: String,
-    loading: bool,
+    pub(crate) loading: bool,
+    /// agent 正在操作这个页签（最近几秒内调过浏览器工具）。前端据此在页签和工具栏上提示。
+    pub(crate) agent_active: bool,
+    /// 用户点了「接管」：agent 的浏览器操作一律拒绝，直到用户交还。
+    pub(crate) agent_paused: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct BrowserPanes {
     next_id: Mutex<u32>,
-    panes: Arc<Mutex<HashMap<u32, BrowserPaneInfo>>>,
+    pub(crate) panes: Arc<Mutex<HashMap<u32, BrowserPaneInfo>>>,
 }
 
 impl BrowserPanes {
@@ -52,7 +56,7 @@ impl BrowserPanes {
     }
 }
 
-fn label_of(id: u32) -> String {
+pub(crate) fn label_of(id: u32) -> String {
     format!("chat-browser-{id}")
 }
 
@@ -111,7 +115,7 @@ pub(crate) fn allowed(url: &Url, dev_url: Option<&Url>) -> bool {
     true
 }
 
-fn emit_state(app: &tauri::AppHandle, info: &BrowserPaneInfo) {
+pub(crate) fn emit_state(app: &tauri::AppHandle, info: &BrowserPaneInfo) {
     let _ = app.emit_to(
         tauri::EventTarget::webview("chat"),
         "browser-pane-state",
@@ -119,7 +123,7 @@ fn emit_state(app: &tauri::AppHandle, info: &BrowserPaneInfo) {
     );
 }
 
-fn update(
+pub(crate) fn update(
     app: &tauri::AppHandle,
     panes: &Arc<Mutex<HashMap<u32, BrowserPaneInfo>>>,
     id: u32,
@@ -134,12 +138,12 @@ fn update(
     emit_state(app, &info);
 }
 
-fn webview(app: &tauri::AppHandle, id: u32) -> Result<tauri::Webview, String> {
+pub(crate) fn webview(app: &tauri::AppHandle, id: u32) -> Result<tauri::Webview, String> {
     app.get_webview(&label_of(id))
         .ok_or_else(|| "browser_pane/not_found".to_string())
 }
 
-fn parse_target(app: &tauri::AppHandle, raw: &str) -> Result<Url, String> {
+pub(crate) fn parse_target(app: &tauri::AppHandle, raw: &str) -> Result<Url, String> {
     let text = normalize_input(raw).ok_or("browser_pane/bad_url")?;
     let url = Url::parse(&text).map_err(|_| "browser_pane/bad_url".to_string())?;
     if !allowed(&url, app.config().build.dev_url.as_ref()) {
@@ -161,7 +165,20 @@ pub(crate) async fn browser_pane_open(
     if window.label() != "chat" {
         return Err("browser_pane/not_chat_window".into());
     }
-    let target = match url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+    open_pane(&app, &window, &state, owner, url.as_deref())
+}
+
+/// 在 chat 窗口里建一个藏着的浏览器子 webview 并登记。前端的「新建浏览器」和 agent
+/// 第一次用浏览器（browser_agent.rs）共用。不能在主线程上调：add_child 要回主线程等结果。
+pub(crate) fn open_pane(
+    app: &tauri::AppHandle,
+    window: &tauri::Window,
+    state: &BrowserPanes,
+    owner: i64,
+    url: Option<&str>,
+) -> Result<BrowserPaneInfo, String> {
+    let app = app.clone();
+    let target = match url.map(str::trim).filter(|u| !u.is_empty()) {
         Some(raw) => parse_target(&app, raw)?,
         None => Url::parse(BLANK).map_err(|e| e.to_string())?,
     };
@@ -176,6 +193,8 @@ pub(crate) async fn browser_pane_open(
         url: target.to_string(),
         title: String::new(),
         loading: target.as_str() != BLANK,
+        agent_active: false,
+        agent_paused: false,
     };
     state
         .panes
@@ -301,6 +320,22 @@ pub(crate) async fn browser_pane_action(
         _ => return Err("browser_pane/bad_action".into()),
     }
     .map_err(|e| e.to_string())
+}
+
+/// 「接管」/「交还」：接管后 agent 的浏览器操作一律拒绝，用户自己操作页面不受影响。
+#[tauri::command]
+pub(crate) fn browser_pane_set_agent_paused(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BrowserPanes>,
+    id: u32,
+    paused: bool,
+) {
+    update(&app, &state.panes, id, |info| {
+        info.agent_paused = paused;
+        if paused {
+            info.agent_active = false;
+        }
+    });
 }
 
 #[tauri::command]

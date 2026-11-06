@@ -131,7 +131,15 @@ export const SidePanel = memo(function SidePanel(props: Props) {
       aria-label={t.chat.panelLabel}
     >
       <header className="chat-diff-head" data-tauri-drag-region>
-        <TabBar state={state} actions={actions} title={(tab) => tabTitle(tab, shells, panes, t)} onContextMenu={tabMenu} closeLabel={t.chat.tabClose} />
+        <TabBar
+          state={state}
+          actions={actions}
+          title={(tab) => tabTitle(tab, shells, panes, t)}
+          onContextMenu={tabMenu}
+          closeLabel={t.chat.tabClose}
+          agentBusy={(tab) => tab.type === "browser" && tab.paneId !== null && !!panes.get(tab.paneId)?.agentActive}
+          agentLabel={t.chat.browserAgentActive}
+        />
         <span className="chat-diff-spacer" data-tauri-drag-region />
         <button
           type="button"
@@ -229,12 +237,15 @@ export const SidePanel = memo(function SidePanel(props: Props) {
  *
  * 拖动用 pointer 事件自己做：对话窗开着 Tauri 的文件拖放，WebView2 上 HTML5 拖放会被它截走。
  */
-function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
+function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, agentLabel }: {
   state: PanelState;
   actions: PanelActions;
   title: (tab: PanelTab) => string;
   onContextMenu: (tab: PanelTab, x: number, y: number) => void;
   closeLabel: string;
+  /** 这个页签此刻是不是 agent 在操作（浏览器页签上亮一个点）。 */
+  agentBusy: (tab: PanelTab) => boolean;
+  agentLabel: string;
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   /** 拖动中：被拖的页签、落点下标、指示线位置（相对页签栏内容的坐标，随横向滚动走）。 */
@@ -334,6 +345,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel }: {
           >
             {ICONS[tab.type]}
             <span className="side-panel-tab-name">{name}</span>
+            {agentBusy(tab) && <span className="side-panel-tab-agent" title={agentLabel} aria-label={agentLabel} />}
             <span
               role="button"
               tabIndex={-1}

@@ -421,7 +421,13 @@ export function shellTerminalBusy(ids: number[]): Promise<ShellBusy[]> {
 
 /** 对话窗右侧面板的「浏览器」页签：chat 窗口里叠的原生子 webview（后端 browser_pane.rs）。
  *  手机端不给，这些命令都不在 remote.rs 白名单里。 */
-export type BrowserPaneInfo = { id: number; owner: number; url: string; title: string; loading: boolean };
+export type BrowserPaneInfo = {
+  id: number; owner: number; url: string; title: string; loading: boolean;
+  /** agent 正在操作（最近几秒调过浏览器工具）。 */
+  agentActive: boolean;
+  /** 用户点了「接管」，agent 的操作会被拒绝。 */
+  agentPaused: boolean;
+};
 export function openBrowserPane(owner: number, url?: string): Promise<BrowserPaneInfo> {
   return invoke("browser_pane_open", { owner, url: url ?? null });
 }
@@ -437,6 +443,10 @@ export function navigateBrowserPane(id: number, url: string): Promise<void> {
 }
 export function browserPaneAction(id: number, action: "back" | "forward" | "reload"): Promise<void> {
   return invoke("browser_pane_action", { id, action });
+}
+/** 「接管」/「交还」：接管后 agent 的浏览器操作一律拒绝。 */
+export function setBrowserPaneAgentPaused(id: number, paused: boolean): Promise<void> {
+  return invoke("browser_pane_set_agent_paused", { id, paused });
 }
 export function closeBrowserPane(id: number): Promise<void> {
   return invoke("browser_pane_close", { id });
@@ -785,6 +795,7 @@ export type Settings = {
   preview_enabled: boolean;
   /** 已停用的「点击穿透」（灵动岛上打开会点不动，2026-11-05 移除），只为兼容旧配置保留。 */
   click_through_enabled: boolean;
+  browser_agent: boolean;
   /** 终端（PTY 画面）字号（px，10–18）。缺省 12。 */
   terminal_font_size: number;
   /** 终端行高预设：compact / normal（默认，1.22）/ relaxed。 */
