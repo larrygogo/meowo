@@ -19,7 +19,6 @@ import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
-import { appendQuote, SelectionQuote } from "./chat/SelectionQuote";
 import { copyPlainText } from "./chat/clipboard";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
 import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
@@ -3979,20 +3978,6 @@ export function ChatWindow() {
           </section>
         )}
       </main>
-      {view === "chat" && <SelectionQuote
-        container={scrollRef}
-        label={t.chat.quoteSelection}
-        onQuote={(text) => {
-          setPrompt((current) => appendQuote(current, text));
-          // 光标落到末尾的空行上，接着写追问。
-          window.requestAnimationFrame(() => {
-            const input = promptInputRef.current;
-            if (!input) return;
-            input.focus();
-            input.setSelectionRange(input.value.length, input.value.length);
-          });
-        }}
-      />}
       </EchoActionsContext.Provider>
       </EchoPhaseContext.Provider>
       </ChatActionsContext.Provider>

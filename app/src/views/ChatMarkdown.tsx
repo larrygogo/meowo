@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { openLink } from "../api";
+import { openLink, revealTerminalPath } from "../api";
+import { remoteUi } from "../remoteMode";
 import { useT } from "../i18n";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
 // --cc-syn-* 主题变量全部现成，不另引第二套高亮引擎——两处不分叉。
@@ -246,6 +247,41 @@ function CopyableTable({ children }: { children?: ReactNode }) {
   );
 }
 
+/// 行内代码里的网址和本地绝对路径可以点（用户 2026-11-06：回复里给的安装包路径想点开）。
+/// 网址在默认浏览器打开；路径在文件管理器里选中，不打开也不运行（.exe 点一下就装上太危险）。
+/// 路径只认绝对路径：`C:\…`、`\\server\…`，或至少两段的 `/a/b`。单段的 `/model` 是斜杠命令，不算。
+const CODE_URL = /^https?:\/\/[^\s<>"]+$/i;
+const CODE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/[^/\s]+\/)[^\n<>"|?*]*$/;
+export function codeLinkKind(text: string): "url" | "path" | null {
+  const value = text.trim();
+  if (!value || value.includes("\n")) return null;
+  if (CODE_URL.test(value)) return "url";
+  if (CODE_PATH.test(value)) return "path";
+  return null;
+}
+
+function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
+  const t = useT();
+  const open = () => {
+    // 拖选这段文字（想复制）松手时也会触发 click：有选区就当是在选字，不打开。
+    if (window.getSelection()?.toString()) return;
+    const value = text.trim();
+    void (kind === "url" ? openLink(value) : revealTerminalPath("", value)).catch(() => {});
+  };
+  return (
+    <code
+      className="chat-md-link-code"
+      role="link"
+      tabIndex={0}
+      data-tip={kind === "url" ? t.chat.codeOpenLink : t.chat.codeRevealPath}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") open();
+      }}
+    >{text}</code>
+  );
+}
+
 /// react-markdown 默认的 urlTransform 会把非 http(s)/mailto 的 src 置空（防 javascript:）。
 /// 图片降级成文件名 chip 需要**看得到原路径**，被置空就只剩一个没名字的空 chip（复核指出）。
 /// 这里放行相对路径与本地绝对路径，仍挡掉可执行 scheme——渲染层从不把它当链接点开，
@@ -271,6 +307,12 @@ export const components: Components = {
     // 文件头「不要换成 dangerouslySetInnerHTML 方案」的禁令针对的是**渲染消息里的
     // 原始 HTML**（XSS 面）；这里的 HTML 由 hljs 从纯文本转义生成（文本全部经它
     // 转义、只插入无属性值注入面的 span），与那条禁令不冲突。
+    // 行内代码（没有语言类、不带换行）里是网址或本地路径就做成可点的。手机端的路径对着的是
+    // 电脑上的文件，点了也打不开，只给网址。
+    if (!className && !text.includes("\n")) {
+      const kind = codeLinkKind(text);
+      if (kind === "url" || (kind === "path" && !remoteUi())) return <LinkCode text={text} kind={kind} />;
+    }
     const tag = /language-([\w+-]+)/.exec(className ?? "")?.[1];
     const lang = tag ? languageForFence(tag) : null;
     if (!lang || text.length > HIGHLIGHT_MAX_CHARS || text.split("\n").length > HIGHLIGHT_MAX_LINES) {

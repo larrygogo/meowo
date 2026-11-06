@@ -364,6 +364,8 @@ export const en: Dict = {
     // Bubble after selecting text: pull the quote into the composer and keep writing.
     codeCopy: "Copy",
     codeCopied: "Copied",
+    codeRevealPath: "Click to show in folder",
+    codeOpenLink: "Click to open in browser",
     codeWrap: "Wrap lines",
     codeUnwrap: "No wrap",
     tableCopy: "Copy table",
@@ -907,7 +909,6 @@ export const en: Dict = {
     sideQuestionClose: "Close aside",
     resumeCommandCopiedLive: "Copied. End the session here before running it",
     copyFailed: "Copy failed. Try again.",
-    quoteSelection: "Quote",
     undoComposerBusy: "The terminal input box has unsent text. Clear it, then undo.",
     undoMenuMismatch: "The undo menu didn't match the selected message. Cancelled.",
     effortRejected: (line: string) => `Thinking level unchanged: ${line}`,

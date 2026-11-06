@@ -6101,6 +6101,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-md blockquote { margin: 0 0 var(--sp-12); padding: var(--sp-2) var(--sp-12); border-left: 3px solid var(--cc-border); color: var(--cc-text-dim); }
 .chat-md hr { margin: var(--sp-14) 0; border: 0; border-top: var(--hairline) solid var(--cc-border); }
 .chat-md a { color: var(--cc-accent); text-decoration: underline; text-underline-offset: 2px; }
+/* 行内代码里的网址/本地路径（ChatMarkdown 的 LinkCode）：保留代码底色，加虚下划线表示能点，悬停变链接色。 */
+.chat-md code.chat-md-link-code { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.chat-md code.chat-md-link-code:hover, .chat-md code.chat-md-link-code:focus-visible { color: var(--cc-accent); outline: none; }
 /* 表格外壳：表格自己横滚，「复制表格」压在右下角一行，弱色不抢正文。 */
 .chat-md-table { margin: 0 0 var(--sp-12); display: flex; flex-direction: column; }
 .chat-md-table > table { margin-bottom: var(--sp-4); }
@@ -6612,10 +6615,6 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 :is(.chat-tool-code, .chat-tool-output) .hljs-punctuation, :is(.chat-tool-code, .chat-tool-output) .hljs-operator, :is(.chat-tool-code, .chat-tool-output) .hljs-tag { color: var(--cc-text-dim); }
 :is(.chat-tool-code, .chat-tool-output) .hljs-subst { color: var(--cc-text); }
 
-/* 选区「引用」浮条（SelectionQuote）：浮在选区上方居中，样式随下拉菜单的弹层面板。 */
-.chat-quote-pop { position: fixed; z-index: 60; transform: translateX(-50%); padding: var(--sp-2); background: var(--cc-menu-bg); border: 1px solid color-mix(in srgb, var(--cc-border) 82%, transparent); border-radius: var(--r-12); box-shadow: var(--cc-shadow-popup); animation: dd-pop var(--dur-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
-.chat-quote-button { display: inline-flex; align-items: center; gap: var(--sp-6); height: 28px; padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
-.chat-quote-button:hover, .chat-quote-button:focus-visible { background: var(--fill-hover); }
 /* 非目录分组的组头行：多选态在行尾放整组勾选圈，组头按钮仍占满剩余宽度。 */
 .chat-sidebar-group-row { display: flex; align-items: center; gap: var(--sp-4); }
 .chat-sidebar-group-row > .chat-sidebar-group-head { flex: 1 1 auto; min-width: 0; }
