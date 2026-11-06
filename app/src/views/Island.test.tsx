@@ -6,7 +6,7 @@ import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone, menubarSegments } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
-import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
+import { Eyes, EYE_CUE_MS, EYES_DROWSY_AFTER_MS, EYES_SLEEP_AFTER_MS, UsageRing, usedColor, usedOf, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
 import type { ProviderUsage } from "../api";
@@ -184,15 +184,47 @@ describe("眼睛", () => {
     expect(mode(render(<Eyes tone="waiting" />).container)).toBe("happy");
   });
 
-  it("闲着超过 10 分钟睡着、冒 z；一有会话就醒", () => {
+  it("闲着 6 分钟犯困、10 分钟睡着冒 z；一有会话就醒，醒时吓一跳", () => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 6, 14, 0));
     const { container, rerender } = render(<Eyes tone="idle" />);
     expect(mode(container)).toBe("open");
-    act(() => { vi.advanceTimersByTime(EYES_SLEEP_AFTER_MS + 1_000); });
+    act(() => { vi.advanceTimersByTime(EYES_DROWSY_AFTER_MS + 1_000); });
+    expect(mode(container)).toBe("drowsy");
+    act(() => { vi.advanceTimersByTime(EYES_SLEEP_AFTER_MS - EYES_DROWSY_AFTER_MS); });
     expect(mode(container)).toBe("sleep");
     expect(container.querySelector(".isl-zz")).toBeTruthy();
     rerender(<Eyes tone="running" />);
+    expect(mode(container)).toBe("surprised");
+    act(() => { vi.advanceTimersByTime(1_000); });
     expect(mode(container)).toBe("open");
+  });
+
+  it("后半夜一闲下来就犯困", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 6, 2, 30));
+    expect(mode(render(<Eyes tone="idle" />).container)).toBe("drowsy");
+  });
+
+  it("额度到八成五发愁挂汗，用光转蚊香圈；要处理和出错仍然优先", () => {
+    const { container, rerender } = render(<Eyes tone="running" quotaPct={90} />);
+    expect(mode(container)).toBe("worried");
+    expect(container.querySelector(".isl-sweat")).toBeTruthy();
+    rerender(<Eyes tone="running" quotaPct={100} />);
+    expect(mode(container)).toBe("dizzy");
+    rerender(<Eyes tone="pending" quotaPct={100} />);
+    expect(mode(container)).toBe("wide");
+    rerender(<Eyes tone="running" quotaPct={40} busy />);
+    expect(mode(container)).toBe("focus");
+  });
+
+  it("一闪而过的表情：星星眼、吓一跳压过常驻神态，但压不过要处理", () => {
+    const { container, rerender } = render(<Eyes tone="waiting" cue="star" />);
+    expect(mode(container)).toBe("star");
+    rerender(<Eyes tone="idle" cue="surprised" />);
+    expect(mode(container)).toBe("surprised");
+    rerender(<Eyes tone="pending" cue="star" />);
+    expect(mode(container)).toBe("wide");
   });
 
   it("瞳孔朝鼠标的方向转", async () => {
@@ -204,6 +236,43 @@ describe("眼睛", () => {
       expect(transform).toBe("translate(2.2px, 2.6px)");
     });
     invoke.mockImplementation(() => Promise.resolve(null));
+  });
+});
+
+describe("岛上一闪而过的表情", () => {
+  const eyeMode = (container: HTMLElement) => container.querySelector(".isl-eyes")?.getAttribute("data-mode");
+  const islandWith = (sessions: Item[]) => (
+    <Island sessions={sessions} compactStyle="counts" alert={null} usages={[]} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} />
+  );
+
+  it("有会话跑完冒星星眼，过一会儿回到 ^ ^", () => {
+    vi.useFakeTimers();
+    const a = mk();
+    const { container, rerender } = render(islandWith([a]));
+    expect(eyeMode(container)).toBe("open");
+    const done = { ...a, session: { ...a.session, status: "waiting" }, screen_state: "idle" } as unknown as Item;
+    rerender(islandWith([done]));
+    expect(eyeMode(container)).toBe("star");
+    act(() => { vi.advanceTimersByTime(EYE_CUE_MS.star + 100); });
+    expect(eyeMode(container)).toBe("happy");
+  });
+
+  it("新开了会话吓一跳；第一次拿到列表不算", () => {
+    vi.useFakeTimers();
+    const a = mk();
+    const { container, rerender } = render(islandWith([a]));
+    expect(eyeMode(container)).toBe("open");
+    rerender(islandWith([a, mk()]));
+    expect(eyeMode(container)).toBe("surprised");
+  });
+
+  it("鼠标移上岛眨一只眼", () => {
+    vi.useFakeTimers();
+    const { container } = render(islandWith([mk()]));
+    fireEvent.pointerEnter(container.querySelector(".isl-notch")!);
+    expect(container.querySelectorAll(".isl-eye-open ellipse")).toHaveLength(1);
+    act(() => { vi.advanceTimersByTime(EYE_CUE_MS.wink + 100); });
+    expect(container.querySelectorAll(".isl-eye-open ellipse")).toHaveLength(2);
   });
 });
 

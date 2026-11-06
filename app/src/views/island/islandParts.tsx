@@ -1,6 +1,6 @@
 // 灵动岛的零件：眼睛、带进度环的 agent 图标、额度环、时钟。收起胶囊、提醒、展开面板共用。
 // 视觉照用户给的参考图（2026-11-04）：纯黑底、白字、环形进度、状态用颜色而不是文字堆叠。
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { agentAssets, tintStyle } from "../../providers";
 import { cardTone } from "../sticker/helpers";
@@ -8,25 +8,56 @@ import type { Item } from "../sticker/types";
 
 export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
 
-/// 两只眼睛（Meowo 标志）。用户要求「做得有趣些」（2026-11-04）：
-/// - 在跑 / 闲着：白眼珠黑瞳孔，瞳孔跟着屏幕上的鼠标转，不定时眨眼（偶尔连眨两下）；在跑时旁边冒小「+」
+/// 两只眼睛（Meowo 标志）。用户要求「做得有趣些」（2026-11-04），又要「更多可能性的表情」（2026-11-06）。
+/// 常驻的神态跟着整体状态走：
+/// - 在跑 / 闲着：白眼珠黑瞳孔，瞳孔跟着屏幕上的鼠标转，不定时眨眼（偶尔连眨两下）；在跑时旁边冒小「+」。
+///   隔一阵会自己做个小动作：眨一只眼，或左右瞟一眼
 /// - 要处理：睁大、轻轻弹跳，旁边一个琥珀「!」（眼白始终是白的，用户要求）
 /// - 出错：红色「× ×」
 /// - 跑完等输入：眯成「^ ^」
-/// - 闲着超过 10 分钟：睡着，眼睛合成两道线，冒「z」
-export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolean }) {
-  const sleepy = useSleepy(tone === "idle");
+/// - 额度用到八成五以上：眉头往下耷拉，旁边挂一滴汗；用光了：眼睛转成蚊香圈
+/// - 同时跑三个以上：眼皮压低、眼角往里收，一副专注的样子
+/// - 闲着超过 6 分钟（或后半夜闲着）：眼皮半耷拉犯困；超过 10 分钟睡着，眼睛合成两道线，冒「z」
+/// 一闪而过的表情由 cue 给（见 useEyeCue）：有会话刚跑完冒星星眼，新开了会话吓一跳，鼠标移上岛眨一只眼。
+/// 从睡着里醒过来也吓一跳。
+export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = false }: {
+  tone: IslandTone;
+  small?: boolean;
+  cue?: EyeCue | null;
+  /** 正在用的那家额度已用百分比；null = 没有数据。 */
+  quotaPct?: number | null;
+  /** 同时在跑的会话多（≥ EYES_BUSY_AT）。 */
+  busy?: boolean;
+}) {
+  const sleep = useSleepStage(tone === "idle");
+  const woke = useWakeStartle(sleep === "asleep");
+  const exhausted = quotaPct != null && quotaPct >= 100;
+  const worried = quotaPct != null && quotaPct >= EYES_WORRY_AT;
+  // 要人处理的（出错、待处理）和额度用光压过一切；一闪而过的表情压过常驻的神态。
   const mode: EyeMode = tone === "error" ? "dead"
-    : tone === "waiting" ? "happy"
-    : sleepy ? "sleep"
     : tone === "pending" ? "wide"
+    : exhausted ? "dizzy"
+    : cue === "star" || cue === "surprised" ? cue
+    : woke ? "surprised"
+    : tone === "waiting" ? "happy"
+    : worried ? "worried"
+    : busy && tone === "running" ? "focus"
+    : sleep === "asleep" ? "sleep"
+    : sleep === "drowsy" ? "drowsy"
     : "open";
-  const looking = mode === "open" || mode === "wide";
-  const look = useCursorLook(looking);
-  const blink = useBlink(mode === "open");
+  const fidget = useFidget(mode === "open");
+  const winking = mode === "open" && (cue === "wink" || fidget === "wink");
+  const looking = mode === "open" || mode === "wide" || mode === "worried" || mode === "focus" || mode === "drowsy";
+  const cursor = useCursorLook(looking && fidget !== "glance");
+  const look = fidget === "glance" ? GLANCE_LOOK : cursor;
+  const blink = useBlink(mode === "open" || mode === "worried" || mode === "focus" || mode === "drowsy");
+  const clip = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const lids = LIDS[mode];
+  // 在跑时冒的小「+」只配睁眼和专注：发愁、蚊香圈旁边再冒「+」就乱了。
+  const sparks = !small && tone === "running" && (mode === "open" || mode === "focus");
   return (
     <span className={`isl-eyes${small ? " is-small" : ""}`} data-tone={tone} data-mode={mode} aria-hidden="true">
-      {!small && tone === "running" && <span className="isl-spark is-l">+</span>}
+      {sparks && <span className="isl-spark is-l">+</span>}
       {!small && mode === "wide" && <span className="isl-spark is-l is-warn">!</span>}
       <svg className="isl-eye-pair" width={small ? 20 : 26} height={small ? 13 : 16} viewBox="0 0 26 16">
         {mode === "dead" ? (
@@ -36,18 +67,46 @@ export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolea
           </g>
         ) : mode === "happy" ? (
           <g fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
-            <path d="M2.5 10.5 Q6.5 3.5 10.5 10.5" />
-            <path d="M15.5 10.5 Q19.5 3.5 23.5 10.5" />
+            <path d={HAPPY_ARC[0]} />
+            <path d={HAPPY_ARC[1]} />
           </g>
         ) : mode === "sleep" ? (
           <g fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
             <path d="M2.5 9 Q6.5 11.5 10.5 9" />
             <path d="M15.5 9 Q19.5 11.5 23.5 9" />
           </g>
-        ) : (
-          <g className={`isl-eye-open${blink ? " is-blink" : ""}`}>
+        ) : mode === "star" ? (
+          <g className="isl-eye-pop" fill="currentColor">
+            <path d={starPath(6.5, 8)} />
+            <path d={starPath(19.5, 8)} />
+          </g>
+        ) : mode === "dizzy" ? (
+          <g fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round">
+            <path className="isl-spiral" d={spiralPath(6.5, 8)} />
+            <path className="isl-spiral" d={spiralPath(19.5, 8)} />
+          </g>
+        ) : mode === "surprised" ? (
+          <g className="isl-eye-pop">
             {[6.5, 19.5].map((cx) => (
               <g key={cx}>
+                <circle className="isl-sclera" cx={cx} cy={8} r={6.4} />
+                <circle className="isl-pupil" cx={cx} cy={8} r={1.4} />
+              </g>
+            ))}
+          </g>
+        ) : (
+          <g className={`isl-eye-open${blink ? " is-blink" : ""}`}>
+            {lids && (
+              <defs>
+                {lids.map((points, i) => (
+                  <clipPath key={i} id={`${clip}-${i}`}><polygon points={points} /></clipPath>
+                ))}
+              </defs>
+            )}
+            {[6.5, 19.5].map((cx, i) => winking && i === 1 ? (
+              <path key={cx} d={HAPPY_ARC[1]} fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" />
+            ) : (
+              <g key={cx} clipPath={lids ? `url(#${clip}-${i})` : undefined}>
                 <ellipse className="isl-sclera" cx={cx} cy={8} rx={mode === "wide" ? 5.6 : 5} ry={mode === "wide" ? 7.2 : 6.6} />
                 <circle
                   className="isl-pupil"
@@ -61,13 +120,87 @@ export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolea
           </g>
         )}
       </svg>
-      {!small && tone === "running" && <span className="isl-spark is-r">+</span>}
+      {sparks && <span className="isl-spark is-r">+</span>}
+      {!small && mode === "star" && <span className="isl-spark is-r is-star">✦</span>}
+      {!small && mode === "worried" && <span className="isl-sweat" />}
       {!small && mode === "sleep" && <span className="isl-zz">z</span>}
     </span>
   );
 }
 
-type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep";
+type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep" | "drowsy" | "star" | "surprised" | "worried" | "focus" | "dizzy";
+/** 一闪而过的表情：会话刚跑完、新开了会话、鼠标移上岛。 */
+export type EyeCue = "star" | "surprised" | "wink";
+
+/// 额度用到多少开始发愁（与额度环变红同一档，见 usedColor）。
+export const EYES_WORRY_AT = 85;
+/// 同时跑几个会话算忙。
+export const EYES_BUSY_AT = 3;
+
+const HAPPY_ARC = ["M2.5 10.5 Q6.5 3.5 10.5 10.5", "M15.5 10.5 Q19.5 3.5 23.5 10.5"] as const;
+const GLANCE_LOOK = { x: -1, y: 0.2 };
+
+/// 眼皮：每只眼一个可见区域（多边形以上被眼皮盖住）。发愁是外眼角往下耷拉，专注是内眼角往下压，
+/// 犯困是眼皮平着盖住上半截。用裁剪而不是画黑色眼皮：菜单栏弹出的提醒底是半透明的，黑块会露馅。
+const LIDS: Partial<Record<EyeMode, [string, string]>> = {
+  worried: ["-1,6.5 13,0.6 13,18 -1,18", "13,0.6 27,6.5 27,18 13,18"],
+  focus: ["-1,1.6 13,5.2 13,18 -1,18", "13,5.2 27,1.6 27,18 13,18"],
+  drowsy: ["-1,7.4 13,7.4 13,18 -1,18", "13,7.4 27,7.4 27,18 13,18"],
+};
+
+/** 五角星，外径 6.2。 */
+function starPath(cx: number, cy: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i < 10; i += 1) {
+    const r = i % 2 === 0 ? 6.2 : 2.6;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(2)} ${(cy + r * Math.sin(a)).toFixed(2)}`);
+  }
+  return `M${pts.join("L")}Z`;
+}
+
+/** 蚊香圈：从中心往外绕两圈半。 */
+function spiralPath(cx: number, cy: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i <= 40; i += 1) {
+    const a = (i / 40) * Math.PI * 5;
+    const r = 0.4 + (i / 40) * 5.4;
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(2)} ${(cy + r * Math.sin(a)).toFixed(2)}`);
+  }
+  return `M${pts.join("L")}`;
+}
+
+/// 岛上一闪而过的表情：盯着会话列表，有会话从「在跑」变成「跑完」就冒一下星星眼，冒出新会话就吓
+/// 一跳。第一次拿到列表不算（启动时一下子出现一堆会话不是「新开的」）。poke 给鼠标移上岛眨眼用。
+export const EYE_CUE_MS: Record<EyeCue, number> = { star: 2_400, surprised: 1_200, wink: 600 };
+export function useEyeCue(sessions: readonly Item[]): { cue: EyeCue | null; poke: (cue: EyeCue) => void } {
+  const [cue, setCue] = useState<EyeCue | null>(null);
+  const timer = useRef(0);
+  const prev = useRef<Map<number, string> | null>(null);
+  const poke = useCallback((next: EyeCue) => {
+    window.clearTimeout(timer.current);
+    setCue(next);
+    timer.current = window.setTimeout(() => setCue(null), EYE_CUE_MS[next]);
+  }, []);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => {
+    const next = new Map<number, string>();
+    for (const item of sessions) {
+      if (!item.archived && item.connected) next.set(item.session.id, cardTone(item));
+    }
+    const before = prev.current;
+    prev.current = next;
+    if (!before) return;
+    let fired: EyeCue | null = null;
+    for (const [id, tone] of next) {
+      const was = before.get(id);
+      if (was === "running" && tone === "waiting") fired = "star";
+      else if (was === undefined && !fired) fired = "surprised";
+    }
+    if (fired) poke(fired);
+  }, [sessions, poke]);
+  return { cue, poke };
+}
 
 /// 鼠标相对岛中心的方向，归一到 -1..1。只在需要「看」的时候轮询（110ms 一次，瞳孔有 CSS 过渡，
 /// 看着是连续转的）。页面不可见时暂停。island_cursor 只读光标与窗口位置，很便宜。
@@ -134,17 +267,67 @@ function useBlink(active: boolean): boolean {
   return blink;
 }
 
-/// 闲着超过 10 分钟就「睡着」。一有会话（不再闲着）立刻醒。
-export const EYES_SLEEP_AFTER_MS = 10 * 60_000;
-function useSleepy(idle: boolean): boolean {
-  const [sleepy, setSleepy] = useState(false);
+/// 睁着眼时隔 18~40 秒自己做个小动作：一半眨一只眼，一半往旁边瞟一眼（瞟的时候不跟鼠标）。
+/// 只盯着鼠标转太像监控摄像头，偶尔走个神才像活的。
+type Fidget = "wink" | "glance";
+const FIDGET_MS: Record<Fidget, number> = { wink: 500, glance: 900 };
+function useFidget(active: boolean): Fidget | null {
+  const [fidget, setFidget] = useState<Fidget | null>(null);
   useEffect(() => {
-    setSleepy(false);
-    if (!idle) return;
-    const id = window.setTimeout(() => setSleepy(true), EYES_SLEEP_AFTER_MS);
-    return () => window.clearTimeout(id);
+    if (!active) return;
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        if (document.visibilityState !== "visible") { schedule(); return; }
+        const next: Fidget = Math.random() < 0.5 ? "wink" : "glance";
+        setFidget(next);
+        timer = window.setTimeout(() => { setFidget(null); schedule(); }, FIDGET_MS[next]);
+      }, 18_000 + Math.random() * 22_000);
+    };
+    schedule();
+    return () => {
+      window.clearTimeout(timer);
+      setFidget(null);
+    };
+  }, [active]);
+  return fidget;
+}
+
+/// 闲着超过 6 分钟犯困，超过 10 分钟睡着。后半夜（0~5 点）一闲下来就犯困。一有会话（不再闲着）立刻醒。
+export const EYES_DROWSY_AFTER_MS = 6 * 60_000;
+export const EYES_SLEEP_AFTER_MS = 10 * 60_000;
+type SleepStage = "awake" | "drowsy" | "asleep";
+function useSleepStage(idle: boolean): SleepStage {
+  const [stage, setStage] = useState<SleepStage>("awake");
+  useEffect(() => {
+    if (!idle) {
+      setStage("awake");
+      return;
+    }
+    setStage(new Date().getHours() < 5 ? "drowsy" : "awake");
+    const drowsy = window.setTimeout(() => setStage("drowsy"), EYES_DROWSY_AFTER_MS);
+    const asleep = window.setTimeout(() => setStage("asleep"), EYES_SLEEP_AFTER_MS);
+    return () => {
+      window.clearTimeout(drowsy);
+      window.clearTimeout(asleep);
+    };
   }, [idle]);
-  return sleepy;
+  return stage;
+}
+
+/// 从睡着里被叫醒（睡着 → 不睡）时吓一跳，0.9 秒。
+function useWakeStartle(asleep: boolean): boolean {
+  const [startled, setStartled] = useState(false);
+  const was = useRef(asleep);
+  useEffect(() => {
+    const wasAsleep = was.current;
+    was.current = asleep;
+    if (!wasAsleep || asleep) return;
+    setStartled(true);
+    const id = window.setTimeout(() => setStartled(false), 900);
+    return () => window.clearTimeout(id);
+  }, [asleep]);
+  return startled;
 }
 
 /// 环形进度。value 为 0..1；null = 不定进度（转圈的一段弧）。

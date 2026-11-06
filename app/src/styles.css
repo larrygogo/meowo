@@ -6769,6 +6769,17 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-eyes[data-mode="happy"] .isl-eye-pair { animation: isl-giggle 2.4s ease-in-out infinite; }
 @keyframes isl-giggle { 0%, 70%, 100% { transform: translateY(0); } 80% { transform: translateY(-1.5px); } 90% { transform: translateY(0); } }
 .isl-eyes[data-tone="running"] .isl-spark.is-r { animation-delay: 1.3s; }
+/* 一闪而过的表情（星星眼、吓一跳）：从小弹到大再回落一点，像「咦！」。 */
+.isl-eye-pop { transform-box: fill-box; transform-origin: center; animation: isl-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes isl-pop { from { transform: scale(0.4); } to { transform: scale(1); } }
+.isl-eyes[data-mode="star"] .isl-eye-pair { animation: isl-giggle 1.2s ease-in-out infinite; }
+.isl-spark.is-star { color: var(--isl-warn); font-size: 9px; animation: isl-twinkle 0.8s ease-in-out infinite; }
+/* 额度用光：两只蚊香圈慢慢转。 */
+.isl-spiral { transform-box: fill-box; transform-origin: center; animation: isl-spin-plain 1.6s linear infinite; }
+@keyframes isl-spin-plain { to { transform: rotate(360deg); } }
+/* 发愁时右上角的一滴汗：淡蓝色，慢慢往下滑、消失，再来一滴。 */
+.isl-sweat { position: absolute; right: 0; top: 0; z-index: 1; width: 4px; height: 6px; border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%; background: #8fd3ff; animation: isl-sweat 2.2s ease-in infinite; }
+@keyframes isl-sweat { 0% { opacity: 0; transform: translateY(-2px); } 20% { opacity: 0.95; } 80% { opacity: 0.9; transform: translateY(5px); } 100% { opacity: 0; transform: translateY(7px); } }
 @keyframes isl-look {
   0%, 18% { transform: translateX(0); }
   28%, 44% { transform: translateX(-2px); }
@@ -7016,7 +7027,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 }
 @media (prefers-reduced-motion: reduce) {
   .isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
-  .isl-eye-pair, .isl-zz, .isl-spark, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
+  .isl-eye-pair, .isl-zz, .isl-spark, .isl-eye-pop, .isl-spiral, .isl-sweat, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
   .isl-ring-arc { transition: none !important; }
   .isl-usage-swap { animation: none !important; }
 }
