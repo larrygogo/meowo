@@ -231,15 +231,12 @@ fn waived(i: &Value) -> Option<&str> {
 }
 
 /// 这一条要 leader 亲自验收。agent 自己永远勾不上它，Stop hook 不该为它拦人；关卡 C 接受时由 Meowo 勾上
-/// （answer_gate）。以结构化字段 `by: "leader"` 为准（skill 要求写它）；没写时退回看 check 文字里同时有
-/// 「leader」和「验收」——只认固定连写「由 leader 验收」时，实测旧条目「视觉与交互由 leader 在真机验收」
-/// 认不出、被白拦（做空审查第 1 轮）。
+/// （answer_gate）。**只认结构化字段 `by: "leader"`**，不看 check 文字。做空审查两轮来回：只认固定连写
+/// 「由 leader 验收」时旧措辞认不出；放宽成「同时含 leader 和验收」后，描述 lead 流程本身的条目
+/// （本任务自己的验收 #3 就引用了这几个字）都被当成 leader 条目，Stop 放过、关卡 C 还会代勾。
+/// 代勾等于替 leader 签字，宁可多拦几次也不能误判；只写了文字的旧条目回到原来的行为（会被拦）。
 fn needs_leader(i: &Value) -> bool {
-    if let Some(by) = i.get("by").and_then(Value::as_str) {
-        return by.trim().eq_ignore_ascii_case("leader");
-    }
-    let check = i.get("check").and_then(Value::as_str).unwrap_or("").to_lowercase();
-    check.contains("leader") && check.contains("验收")
+    i.get("by").and_then(Value::as_str).is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
 }
 
 fn item_line(i: &Value) -> String {
@@ -352,7 +349,12 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
     }
     let lead = task.parent()?;
     let items = acceptance(&task).unwrap_or_default();
-    let fail: Vec<String> = failing(&items).iter().map(|i| format!("  {}", item_line(i))).collect();
+    // 与 Stop、面板同口径：豁免项不进分母，leader 条目单独说「不用你勾」，免得恢复会话的 agent 去推进
+    // 自己勾不上的条目（做空审查第 2 轮）。
+    let open = failing(&items);
+    let fail: Vec<String> = open.iter().filter(|i| !needs_leader(i)).map(|i| format!("  {}", item_line(i))).collect();
+    let leader_n = open.len() - fail.len();
+    let live = items.iter().filter(|i| waived(i).is_none()).count();
     let mut parts = vec![
         format!(
             "[lead] 这个项目有进行中的任务：{}（phase: {phase}）。如果用户这次说的事与它有关，就按 lead skill 的流程继续推进，不要等用户说“继续”；无关就正常处理用户的请求。",
@@ -360,10 +362,11 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
         ),
         format!("## SPEC.md\n{}", truncate(&read(&task.join("SPEC.md")), 4000)),
         format!(
-            "## 未通过的验收项（{}/{}）\n{}",
+            "## 未通过的验收项（{}/{}）\n{}{}",
             fail.len(),
-            items.len(),
-            if fail.is_empty() { "  无".to_owned() } else { fail.join("\n") }
+            live,
+            if fail.is_empty() { "  无".to_owned() } else { fail.join("\n") },
+            if leader_n > 0 { format!("\n  另有 {leader_n} 条待 leader 验收（by: leader），不用你勾，关卡 C 接受时会勾上") } else { String::new() }
         ),
         format!("## progress.md（最近部分）\n{}", tail(&read(&task.join("progress.md")), 2500)),
     ];
@@ -609,8 +612,11 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
     // （做空审查第二轮 L5）。
     let valid = match fixed_choices(&g.kind) {
         Some(fixed) => fixed.contains(&answer.choice.as_str()),
-        // Q 是访谈：开放式问题常常没有合适的选项，允许选 other 只写意见（意见必填）。
-        None if g.kind == "Q" && answer.choice == "other" => !answer.note.trim().is_empty(),
+        // Q 是访谈：开放式问题常常没有合适的选项，允许选 other 只写意见（意见必填）。agent 自己写了 id 为
+        // other 的选项时，它就是普通选项（前端也不再追加「其他」）。
+        None if g.kind == "Q" && answer.choice == "other" && !g.options.iter().any(|o| o.id == "other") => {
+            !answer.note.trim().is_empty()
+        }
         None => g.options.iter().any(|o| o.id == answer.choice),
     };
     if !valid {
@@ -635,7 +641,8 @@ fn mark_leader_checks(task: &Path) {
     let path = task.join("acceptance.json");
     let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(&read(&path)) else { return };
     let mut changed = false;
-    for i in items.iter_mut().filter(|i| i.is_object() && needs_leader(i)) {
+    // 豁免项不勾：leader 已经决定不看它，再写一个「leader 已验收」就是错误的记录（做空审查第 2 轮）。
+    for i in items.iter_mut().filter(|i| i.is_object() && needs_leader(i) && waived(i).is_none()) {
         if i.get("passes") != Some(&Value::Bool(true)) {
             i["passes"] = json!(true);
             i["verified_by"] = json!("leader");

@@ -230,4 +230,10 @@ describe("验收清单与新关卡", () => {
     await act(async () => { fireEvent.click(submit); });
     expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "other", "按周统计");
   });
+
+  it("agent 自己写了 id 为 other 的选项时不再追加「其他」", () => {
+    render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [{ id: "other", label: "别的城市", detail: "", recommended: false }] })} onAnswered={() => {}} />);
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+    expect(screen.queryByLabelText("其他（写在意见里）")).toBeNull();
+  });
 });

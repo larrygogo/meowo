@@ -182,7 +182,9 @@ function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): { id: strin
   if (gate.kind === "D") return [{ id: "approve", label: t.chat.leadGateApprove }, { id: "done", label: t.chat.leadGateDone }, { id: "deny", label: t.chat.leadGateDeny }];
   const own = gate.options.map((o) => ({ id: o.id, label: o.label, recommended: o.recommended, detail: o.detail }));
   // Q 是访谈：开放式问题常常没有合适的选项，留一个「其他」只写意见作答（做空审查第 1 轮：选项为空时卡片提交不了）。
-  return gate.kind === "Q" ? [...own, { id: "other", label: t.chat.leadGateOther }] : own;
+  // agent 自己写了 id 为 other 的选项就不再追加，免得 key 重复、语义打架（做空审查第 2 轮）。
+  const addOther = gate.kind === "Q" && !own.some((o) => o.id === "other");
+  return addOther ? [...own, { id: "other", label: t.chat.leadGateOther }] : own;
 }
 
 /// 关卡卡片。修改 / 驳回必须写意见（agent 要知道改什么）；B 可选附意见。
@@ -201,7 +203,8 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
     if (el && !expanded) setOverflows(el.scrollHeight > el.clientHeight + 1);
   }, [gate.summary, expanded]);
   const choices = gateChoices(gate, t);
-  const needsNote = choice === "revise" || choice === "reject" || (gate.kind === "Q" && choice === "other");
+  const ownOther = gate.options.some((o) => o.id === "other");
+  const needsNote = choice === "revise" || choice === "reject" || (gate.kind === "Q" && choice === "other" && !ownOther);
   const submit = () => {
     if (!choice || busy || (needsNote && !note.trim())) return;
     setBusy(true);
@@ -245,7 +248,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
       <textarea
         className="lead-gate-note"
         rows={2}
-        placeholder={gate.kind === "Q" && choice === "other" ? t.chat.leadGateAnswerRequired : needsNote ? t.chat.leadGateNoteRequired : t.chat.leadGateNoteOptional}
+        placeholder={gate.kind === "Q" && choice === "other" && !ownOther ? t.chat.leadGateAnswerRequired : needsNote ? t.chat.leadGateNoteRequired : t.chat.leadGateNoteOptional}
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
