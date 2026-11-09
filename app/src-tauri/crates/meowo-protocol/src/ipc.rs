@@ -654,6 +654,18 @@ pub struct GitChangedFileDto {
     pub additions: Option<u32>,
     #[serde(default)]
     pub deletions: Option<u32>,
+    /// 暂存区相对 HEAD 的状态字母（porcelain 的 X：M/A/D/T）；没暂存为 None。
+    /// 「更改」面板按 VS Code 源代码管理分「暂存的更改」「更改」两组（用户要求 2026-11-09），
+    /// `status` 合一的字母分不出来。「已提交未合并」清单里恒为 None。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub index_status: Option<String>,
+    /// 工作区相对暂存区的状态字母（porcelain 的 Y：M/D/T；未跟踪记 "U"）；没有工作区改动为 None。
+    /// 部分暂存（MM）的文件两个字段都有值，两组里都出现。
+    /// 两个字段在 TS 里是可选的：手机页可能先于安装版更新，旧后端不下发，前端按「全是未暂存」处理。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub worktree_status: Option<String>,
 }
 
 /// 对话页「Diff」按钮的可见性与弹层文件列表的数据源。

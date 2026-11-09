@@ -168,14 +168,26 @@ const BASE_REF_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 /// 「更改」面板的仓库清单。`touched` 是会话编辑 / 写入过的文件（绝对路径），按各自所在仓库
 /// 归组；工作目录所在仓库排第一。会话还没动过文件、工作目录又不是仓库时，列工作目录下一层
 /// 当前有改动的仓库（用户要求，2026-11-09：只列会话动过的，不混入别的会话或手动的改动）。
+/// `commands` 是会话最近跑过的命令文本：agent 常用命令 cd 进 worktree 干活（编辑工具没碰过那边的
+/// 文件，touched 认不出），命令里出现过路径的相关仓库也上榜（用户要求 2026-11-09，见 command_mentioned_roots）。
 #[tauri::command]
-pub(crate) async fn git_changes_overview(cwd: String, touched: Vec<String>) -> Result<Vec<RepoChangesDto>, String> {
-    tauri::async_runtime::spawn_blocking(move || changes_overview_blocking(&cwd, &touched))
-        .await
-        .map_err(|e| e.to_string())?
+pub(crate) async fn git_changes_overview(
+    cwd: String,
+    touched: Vec<String>,
+    commands: Option<Vec<String>>,
+) -> Result<Vec<RepoChangesDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        changes_overview_blocking(&cwd, &touched, commands.as_deref().unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result<Vec<RepoChangesDto>, String> {
+pub(crate) fn changes_overview_blocking(
+    cwd: &str,
+    touched: &[String],
+    commands: &[String],
+) -> Result<Vec<RepoChangesDto>, String> {
     let dir = cwd.trim();
     if dir.is_empty() || !Path::new(dir).is_dir() {
         return Err("目录不存在".into());
@@ -201,6 +213,20 @@ pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result
             }
         }
     }
+    // 候选只取相关仓库（本仓库的 worktree + 下一层仓库）：命令里提到的任意路径都上榜的话，
+    // `cat C:/别的项目/x` 也会拉进一个无关仓库；别的会话建的 worktree 没在本会话命令里出现，不上榜。
+    if roots.len() < MAX_REPOS && !commands.is_empty() {
+        let candidates: Vec<String> = related_roots(dir)
+            .into_iter()
+            .filter(|root| !roots.iter().any(|known| same_path(known, root)))
+            .collect();
+        for root in command_mentioned_roots(dir, &candidates, commands) {
+            if roots.len() >= MAX_REPOS {
+                break;
+            }
+            roots.push(root);
+        }
+    }
     let mut out: Vec<RepoChangesDto> = roots
         .iter()
         .filter_map(|root| repo_changes(root, cwd_root.as_deref().is_some_and(|c| same_path(c, root))))
@@ -220,10 +246,12 @@ pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result
 /// 结果按目录缓存 CHILD_CACHE_TTL：codex / gemini 会话认不出改过的文件（touched 恒空），会一直
 /// 走这条路，workspace 下二十几个仓库挨个跑完整的 repo_changes 要好几秒（做空实测 6.7 秒，超过
 /// 5 秒的轮询间隔）。
+/// changed_children 的缓存。放在外面是为了让写操作（暂存 / 提交 / 放弃）之后能清掉，见 invalidate_caches。
+static CHILD_CACHE: TtlCache<Vec<String>> = std::sync::Mutex::new(None);
+
 fn changed_children(dir: &str) -> Vec<String> {
-    static CACHE: TtlCache<Vec<String>> = std::sync::Mutex::new(None);
     let key = norm_slashes(dir).to_lowercase();
-    if let Ok(cache) = CACHE.lock() {
+    if let Ok(cache) = CHILD_CACHE.lock() {
         if let Some((at, hit)) = cache.as_ref().and_then(|map| map.get(&key)) {
             if at.elapsed() < CHILD_CACHE_TTL {
                 return hit.clone();
@@ -238,7 +266,7 @@ fn changed_children(dir: &str) -> Vec<String> {
         })
         .take(MAX_REPOS)
         .collect();
-    if let Ok(mut cache) = CACHE.lock() {
+    if let Ok(mut cache) = CHILD_CACHE.lock() {
         cache.get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), changed.clone()));
     }
     changed
@@ -263,6 +291,88 @@ pub(crate) fn related_roots(cwd: &str) -> Vec<String> {
         }
     }
     out.extend(child_repos(cwd));
+    out
+}
+
+/// 命令文本里提到过的候选仓库，按首次出现的顺序。
+///
+/// 做法是把命令切成「像路径的词」，再看每个词本身或它在某个 `/` 处截断的前缀是不是某个候选的
+/// 写法——而不是拿每个候选去全文 find：会话开在 workspace 时候选可达上百个，300 条 × 4KB 的命令
+/// 逐个全文扫一遍会拖慢 5 秒一轮的轮询。只在 `/` 处截断，`meowo-x` 就不会命中 `meowo-x2`。
+/// 候选的写法：绝对路径（正反斜杠、Windows 不分大小写）、Git Bash 的 `/c/...`、相对 cwd 的
+/// `../x`、`./x`、`x/y`（agent 在 Windows 上多半跑在 Git Bash 里，三种都见过）。
+fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]) -> Vec<String> {
+    let fold = |text: &str| {
+        // 反斜杠归一成正斜杠，连写的 `//`（JSON 里转义过的 `\\`）收成一个。
+        let mut out = String::with_capacity(text.len());
+        for ch in text.chars() {
+            let ch = if ch == '\\' { '/' } else { ch };
+            if ch == '/' && out.ends_with('/') {
+                continue;
+            }
+            out.push(ch);
+        }
+        if cfg!(target_os = "windows") {
+            out.to_lowercase()
+        } else {
+            out
+        }
+    };
+    let cwd_norm = fold(&norm_slashes(cwd));
+    let mut needles: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (index, root) in candidates.iter().enumerate() {
+        let abs = fold(&norm_slashes(root));
+        for form in path_spellings(&abs, &cwd_norm) {
+            needles.entry(form).or_insert(index);
+        }
+    }
+    let mut hits: Vec<usize> = Vec::new();
+    // 词的左边界：空白、引号、shell 运算符、`=`（`--dir=x`）、括号。右边界同理，外加 `/` 处截断。
+    let is_delim = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '=' | ',');
+    for command in commands {
+        let text = fold(command);
+        for word in text.split(is_delim).filter(|w| !w.is_empty()) {
+            let word = word.trim_end_matches('/');
+            // 从长到短试：候选之间可能嵌套（仓库里的 `.claude/worktrees/x`），取最具体的那个。
+            let mut prefixes = std::iter::once(word).chain(word.rmatch_indices('/').map(|(at, _)| &word[..at]));
+            if let Some(index) = prefixes.find_map(|prefix| needles.get(prefix).copied()) {
+                if !hits.contains(&index) {
+                    hits.push(index);
+                }
+            }
+        }
+    }
+    hits.into_iter().map(|index| candidates[index].clone()).collect()
+}
+
+/// 一个仓库根（已 fold 过的绝对路径）在命令里可能的写法。
+fn path_spellings(abs: &str, cwd: &str) -> Vec<String> {
+    let mut out = vec![abs.to_string()];
+    // `C:/x` ↔ Git Bash 的 `/c/x`。
+    let bytes = abs.as_bytes();
+    if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/' {
+        out.push(format!("/{}{}", (bytes[0] as char).to_ascii_lowercase(), &abs[2..]));
+    }
+    // 相对 cwd：数公共前缀段，剩下的 cwd 段各算一个 `..`。不在同一个盘上就没有相对写法。
+    let root_segs: Vec<&str> = abs.split('/').collect();
+    let cwd_segs: Vec<&str> = cwd.split('/').collect();
+    let common = root_segs.iter().zip(&cwd_segs).take_while(|(a, b)| a == b).count();
+    // Unix 路径首段是空串（根 `/`），只共享根不算「附近」，不给相对写法。
+    let min_common = if root_segs[0].is_empty() { 2 } else { 1 };
+    if common >= min_common {
+        let ups = cwd_segs.len() - common;
+        let rest = root_segs[common..].join("/");
+        // rest 为空 = 仓库是 cwd 的上级，相对写法只剩 `..`，太常见，不认。
+        if !rest.is_empty() {
+            let mut parts = vec![".."; ups];
+            parts.push(rest.as_str());
+            let rel = parts.join("/");
+            if ups == 0 {
+                out.push(format!("./{rel}"));
+            }
+            out.push(rel);
+        }
+    }
     out
 }
 
@@ -393,6 +503,9 @@ fn parse_name_status_z(bytes: &[u8]) -> Vec<GitChangedFileDto> {
                 status: (letter as char).to_string(),
                 additions: None,
                 deletions: None,
+                // 已提交的改动不分暂存区 / 工作区（只读段，没有暂存、放弃操作）。
+                index_status: None,
+                worktree_status: None,
             })
         })
         .collect()
@@ -659,16 +772,280 @@ fn parse_pull_request(json: &str) -> Option<PullRequestDto> {
     })
 }
 
+// ═══ 写操作：暂存 / 取消暂存 / 放弃 / 提交（用户要求 2026-11-09：面板照 VS Code 源代码管理能直接操作）═══
+
+/// 一次 git 调用里路径参数最多拼这么多字节：Windows 命令行上限 32K 字符，「全部暂存」几百个
+/// 文件一次塞进去会 spawn 失败，分批跑。
+const MAX_PATHSPEC_BYTES: usize = 16 * 1024;
+
+/// 环境变量覆盖：Some 设值、None 删掉。正式命令恒为空，测试用它隔离用户的全局 git 配置。
+type GitEnv<'a> = &'a [(&'a str, Option<&'a str>)];
+
+/// 暂存：`git add`。paths 相对仓库根，必须是当前有工作区改动的文件。
+#[tauri::command]
+pub(crate) async fn git_stage(cwd: String, paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || stage_blocking(&cwd, &paths))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 取消暂存：`git restore --staged`；仓库还没有提交（没有 HEAD 可恢复）时用 `git rm --cached`。
+#[tauri::command]
+pub(crate) async fn git_unstage(cwd: String, paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || unstage_blocking(&cwd, &paths))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 放弃工作区改动：已跟踪的恢复成暂存区内容，未跟踪的删文件。不可恢复，确认由前端负责。
+#[tauri::command]
+pub(crate) async fn git_discard(cwd: String, paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || discard_blocking(&cwd, &paths))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 提交暂存的改动，返回新提交的短 SHA。`all` = 先 `git add -A`（一个都没暂存时的「提交全部」，
+/// 照 VS Code 的默认做法，含未跟踪文件）。
+#[tauri::command]
+pub(crate) async fn git_commit(cwd: String, message: String, all: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || commit_blocking(&cwd, &message, all, &[]))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn stage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
+    let dir = existing_dir(cwd)?;
+    listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
+    let result = run_pathspec_batches(dir, &["add"], paths);
+    invalidate_caches();
+    result
+}
+
+fn unstage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
+    let dir = existing_dir(cwd)?;
+    listed_changes(dir, paths, |f| f.index_status.is_some())?;
+    let has_head = git_output(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok_and(|o| o.status.success());
+    // 没有 HEAD 时 restore --staged 无处可恢复会报错。rm --cached 只动暂存区、不碰工作区文件；
+    // -f 是因为「已暂存又改过」（AM）的文件暂存区和工作区、HEAD 都不一样，不加会被拒。
+    let args: &[&str] = if has_head { &["restore", "--staged"] } else { &["rm", "--cached", "-q", "-f"] };
+    let result = run_pathspec_batches(dir, args, paths);
+    invalidate_caches();
+    result
+}
+
+fn discard_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
+    let dir = existing_dir(cwd)?;
+    let files = listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
+    let (untracked, tracked): (Vec<_>, Vec<_>) =
+        files.iter().partition(|f| f.worktree_status.as_deref() == Some("U"));
+    let tracked: Vec<String> = tracked.iter().map(|f| f.path.clone()).collect();
+    let result = (|| {
+        // --worktree 只恢复工作区（到暂存区的内容）：已暂存的那部分改动是用户挑好的，不跟着丢。
+        run_pathspec_batches(dir, &["restore", "--worktree"], &tracked)?;
+        // porcelain 的路径相对仓库根；cwd 按约定就是仓库根，保险起见还是以 git 认的根为准。
+        let root = repo_root(dir).unwrap_or_else(|| dir.to_string());
+        for file in untracked {
+            // 不 canonicalize：未跟踪的符号链接要删的是链接本身，跟过去会删到链接指向的文件。
+            // 路径已在 listed_changes 里挡掉了绝对路径和 `..`，git 也不会穿过符号链接目录列文件。
+            let full = Path::new(&root).join(&file.path);
+            let meta = std::fs::symlink_metadata(&full).map_err(|e| format!("git/failed: {e}"))?;
+            // 只删文件：-uall 下目录不会作为条目出现，真碰上目录也不递归删。
+            if meta.is_dir() {
+                return Err(format!("git/failed: {} 是目录", file.path));
+            }
+            std::fs::remove_file(&full).map_err(|e| format!("git/failed: {e}"))?;
+        }
+        Ok(())
+    })();
+    invalidate_caches();
+    result
+}
+
+fn commit_blocking(cwd: &str, message: &str, all: bool, env: GitEnv) -> Result<String, String> {
+    let dir = existing_dir(cwd)?;
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("git/empty_message".into());
+    }
+    let run = |args: &[&str], stdin: Option<&[u8]>| git_run(dir, args, env, stdin).map_err(|e| format!("git/failed: {e}"));
+    let result = (|| {
+        if all {
+            let added = run(&["add", "-A"], None)?;
+            if !added.status.success() {
+                return Err(classify_git_failure(&added));
+            }
+        }
+        // 先用退出码判「没东西可提交」「没配身份」：git 的提示文字会随用户的语言设置本地化，
+        // 光靠匹配英文输出认不全。diff --cached --quiet 有差异时退出码 1。
+        // 合并进行中（MERGE_HEAD）没有差异也能提交合并结果，不拦。
+        let staged = run(&["diff", "--cached", "--quiet"], None)?;
+        match staged.status.code() {
+            Some(1) => {}
+            Some(0) => {
+                let merging = run(&["rev-parse", "-q", "--verify", "MERGE_HEAD"], None)?.status.success();
+                if !merging {
+                    return Err("git/nothing_to_commit".into());
+                }
+            }
+            _ => return Err(classify_git_failure(&staged)),
+        }
+        for ident in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
+            if !run(&["var", ident], None)?.status.success() {
+                return Err("git/identity".into());
+            }
+        }
+        // 信息走 stdin（-F -）：多行、引号、开头是 `-` 都不用操心转义。不加 --no-verify，
+        // 用户的提交钩子照跑，钩子失败按 git/failed 带出它的输出。
+        let committed = run(&["commit", "-F", "-"], Some(message.as_bytes()))?;
+        if !committed.status.success() {
+            return Err(classify_git_failure(&committed));
+        }
+        let head = run(&["rev-parse", "--short", "HEAD"], None)?;
+        Ok(stdout_text(&head.stdout).trim().to_string())
+    })();
+    invalidate_caches();
+    result
+}
+
+fn existing_dir(cwd: &str) -> Result<&str, String> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !Path::new(dir).is_dir() {
+        return Err("目录不存在".into());
+    }
+    Ok(dir)
+}
+
+/// 写操作的路径收口：每个 path 都得逐字是此刻改动清单里满足 `want` 的一项（前端只会给清单里的，
+/// 手机远程端传什么都进得来——不收口就能借「放弃」删任意文件）。绝对路径、含 `..` 的直接拒。
+fn listed_changes(
+    dir: &str,
+    paths: &[String],
+    want: fn(&GitChangedFileDto) -> bool,
+) -> Result<Vec<GitChangedFileDto>, String> {
+    if paths.iter().any(|p| unsafe_rel_path(p)) {
+        return Err("git/not_in_changes".into());
+    }
+    let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-uall"])
+        .map_err(|e| format!("git/failed: {e}"))?;
+    if !status.status.success() {
+        return Err(classify_git_failure(&status));
+    }
+    let files = parse_porcelain_z(&status.stdout);
+    paths
+        .iter()
+        .map(|path| {
+            files
+                .iter()
+                .find(|f| f.path == *path && want(f))
+                .cloned()
+                .ok_or_else(|| "git/not_in_changes".to_string())
+        })
+        .collect()
+}
+
+fn unsafe_rel_path(path: &str) -> bool {
+    path.is_empty()
+        || path.starts_with(['/', '\\'])
+        || Path::new(path).is_absolute()
+        // `C:foo` 这种盘符相对路径 is_absolute 认不出。
+        || path.as_bytes().get(1) == Some(&b':')
+        || path.split(['/', '\\']).any(|seg| seg == "..")
+}
+
+/// `git <args> -- <pathspec…>`，路径多时分批。`:(top,literal)` 同 git_file_diff：从仓库根算、
+/// 方括号星号不当通配符（不然暂存 `app/[id]/page.tsx` 会把 `app/i/page.tsx` 一起暂存了）。
+fn run_pathspec_batches(dir: &str, args: &[&str], paths: &[String]) -> Result<(), String> {
+    let specs: Vec<String> = paths.iter().map(|p| format!(":(top,literal){p}")).collect();
+    let mut start = 0;
+    while start < specs.len() {
+        let mut end = start;
+        let mut bytes = 0;
+        while end < specs.len() && (end == start || bytes + specs[end].len() < MAX_PATHSPEC_BYTES) {
+            bytes += specs[end].len() + 1;
+            end += 1;
+        }
+        let mut argv: Vec<&str> = args.to_vec();
+        argv.push("--");
+        argv.extend(specs[start..end].iter().map(String::as_str));
+        let output = git_output(dir, &argv).map_err(|e| format!("git/failed: {e}"))?;
+        if !output.status.success() {
+            return Err(classify_git_failure(&output));
+        }
+        start = end;
+    }
+    Ok(())
+}
+
+/// git 失败归类成「git/代码」（前端 i18n/errors.ts 映射成中英文提示）。index.lock 出现在路径里，
+/// 不受语言设置影响；其余几条英文匹配是兜底，主判据在 commit_blocking 里按退出码先判了。
+fn classify_git_failure(output: &std::process::Output) -> String {
+    let stderr = stdout_text(&output.stderr);
+    let stdout = stdout_text(&output.stdout);
+    let both = format!("{stderr}\n{stdout}");
+    if both.contains("index.lock") {
+        return "git/locked".into();
+    }
+    if both.contains("Please tell me who you are") || both.contains("user.email") || both.contains("unable to auto-detect email") {
+        return "git/identity".into();
+    }
+    if both.contains("nothing to commit") || both.contains("no changes added to commit") {
+        return "git/nothing_to_commit".into();
+    }
+    // 钩子失败的输出可能只在 stdout（lint 工具多半打 stdout）。只带最后几行，错误提示别撑爆界面。
+    let source = if stderr.trim().is_empty() { &stdout } else { &stderr };
+    let lines: Vec<&str> = source.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(6)..].join("\n");
+    format!("git/failed: {tail}")
+}
+
+/// 写操作之后清掉会让列表滞后的缓存：「下一层有改动的仓库」缓存 30 秒，提交 / 放弃之后某个仓库
+/// 可能已经干净了（或刚暂存的状态要立刻反映）。默认分支名的缓存不受写操作影响，不清。
+fn invalidate_caches() {
+    if let Ok(mut cache) = CHILD_CACHE.lock() {
+        *cache = None;
+    }
+}
+
 fn git_output(dir: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    git_run(dir, args, &[], None)
+}
+
+/// spawn git 的唯一出口。stdin 给了就喂进去（提交信息），用单独线程写：提交钩子先跑、git 后读
+/// stdin，信息又长时，同步写满管道会和钩子写满 stdout 互相等死。
+fn git_run(dir: &str, args: &[&str], env: GitEnv, stdin: Option<&[u8]>) -> std::io::Result<std::process::Output> {
+    use std::process::Stdio;
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(args);
+    for (key, value) in env {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
     // Windows：GUI 进程 spawn 控制台子进程会闪现 conhost 黑窗，压掉。
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    command.output()
+    let Some(input) = stdin else {
+        return command.output();
+    };
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let mut pipe = child.stdin.take();
+    let input = input.to_vec();
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        if let Some(pipe) = pipe.as_mut() {
+            let _ = pipe.write_all(&input);
+        }
+        // 线程结束时 pipe 被 drop，git 读到 EOF。
+    });
+    let output = child.wait_with_output();
+    let _ = writer.join();
+    output
 }
 
 /// git 输出解码走 fsutil 的统一口径（严格 UTF-8 → GBK → lossy）：GBK 源码文件
@@ -688,6 +1065,22 @@ fn truncate_utf8(mut text: String, cap: usize) -> (String, bool) {
     }
     text.truncate(end);
     (text, true)
+}
+
+/// porcelain 的 X / Y 拆成「暂存区」「工作区」两个状态（「更改」面板的两组）。
+/// 冲突中的条目（UU/AA/DD/AU…）的 Y 位 `U` 表示「未合并」，与未跟踪的 "U" 撞字母：放弃更改按
+/// "U" 走删文件，冲突文件绝不能被当成未跟踪删掉，所以冲突一律只记工作区 "M"、不记暂存区——
+/// 能暂存（= 标记冲突已解决），放弃时 git restore 会自己拒绝未合并的路径。
+fn split_porcelain_xy(x: u8, y: u8) -> (Option<String>, Option<String>) {
+    if x == b'?' && y == b'?' {
+        return (None, Some("U".into()));
+    }
+    let unmerged = x == b'U' || y == b'U' || (x == b'A' && y == b'A') || (x == b'D' && y == b'D');
+    if unmerged {
+        return (None, Some("M".into()));
+    }
+    let letter = |b: u8| (b != b' ' && b != b'?').then(|| (b as char).to_string());
+    (letter(x), letter(y))
 }
 
 /// 解析 `git status --porcelain -z --no-renames` 输出：每个条目是 `XY <path>\0`。
@@ -722,11 +1115,14 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<GitChangedFileDto> {
             }
             (other as char).to_string()
         };
+        let (index_status, worktree_status) = split_porcelain_xy(x, y);
         files.push(GitChangedFileDto {
             path,
             status,
             additions: None,
             deletions: None,
+            index_status,
+            worktree_status,
         });
     }
     files
@@ -936,11 +1332,11 @@ mod tests {
         let b = sb.repo("b");
         std::fs::write(b.join("x.txt"), "changed\n").unwrap();
         let parent = s(&sb.0);
-        let repos = changes_overview_blocking(&parent, &[]).unwrap();
+        let repos = changes_overview_blocking(&parent, &[], &[]).unwrap();
         assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b"]);
         assert!(!repos[0].is_cwd_repo);
         let touched = [s(&a.join("README.md"))];
-        let repos = changes_overview_blocking(&parent, &touched).unwrap();
+        let repos = changes_overview_blocking(&parent, &touched, &[]).unwrap();
         assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["a"]);
     }
 
@@ -952,7 +1348,7 @@ mod tests {
         let wt = sb.0.join("meowo-feat");
         sb.git(&main, &["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
         std::fs::write(wt.join("new.rs"), "fn main() {}\n").unwrap();
-        let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("new.rs"))]).unwrap();
+        let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("new.rs"))], &[]).unwrap();
         assert_eq!(repos.len(), 2);
         assert!(repos[0].is_cwd_repo);
         assert_eq!(repos[0].name, "meowo");
@@ -974,7 +1370,7 @@ mod tests {
         let wt = main.join(".claude").join("worktrees").join("feat");
         sb.git(&main, &["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
         std::fs::write(wt.join("a.ts"), "x\n").unwrap();
-        let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("a.ts"))]).unwrap();
+        let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("a.ts"))], &[]).unwrap();
         assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["main", "feat"]);
         assert_eq!(repos[1].summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.ts"]);
     }
@@ -1029,6 +1425,276 @@ mod tests {
         // 没 base 时这份改动已经提交，相对 HEAD 是空的。
         assert!(git_file_diff_blocking(&s(&repo), "README.md", false, None).unwrap().diff.is_empty());
         assert_eq!(git_file_diff_blocking(&s(&repo), "README.md", false, Some("--output=x")).unwrap_err(), "git/bad_base");
+    }
+
+    // ─── 写操作 ───
+
+    /// 测试里的 git 写操作和提交都隔离掉用户的全局 / 系统配置（钩子、签名、身份），不读也不动真实配置。
+    fn isolated_env(sb: &Sandbox, identity: bool) -> Vec<(&'static str, Option<String>)> {
+        let empty = sb.0.join("empty.gitconfig");
+        std::fs::write(&empty, "").unwrap();
+        let mut env: Vec<(&'static str, Option<String>)> = vec![
+            ("GIT_CONFIG_GLOBAL", Some(s(&empty))),
+            ("GIT_CONFIG_NOSYSTEM", Some("1".into())),
+            ("HOME", Some(s(&sb.0))),
+            ("USERPROFILE", Some(s(&sb.0))),
+            ("EMAIL", None),
+        ];
+        for key in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] {
+            env.push((key, identity.then(|| if key.ends_with("EMAIL") { "t@t".into() } else { "t".into() })));
+        }
+        env
+    }
+
+    fn commit_isolated(sb: &Sandbox, dir: &Path, message: &str, all: bool, identity: bool) -> Result<String, String> {
+        let env = isolated_env(sb, identity);
+        let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        commit_blocking(&s(dir), message, all, &env)
+    }
+
+    fn statuses(dir: &Path) -> Vec<(String, Option<String>, Option<String>)> {
+        let output = git_output(&s(dir), &["status", "--porcelain", "-z", "--no-renames", "-uall"]).unwrap();
+        parse_porcelain_z(&output.stdout)
+            .into_iter()
+            .map(|f| (f.path, f.index_status, f.worktree_status))
+            .collect()
+    }
+
+    fn st(path: &str, index: Option<&str>, worktree: Option<&str>) -> (String, Option<String>, Option<String>) {
+        (path.into(), index.map(Into::into), worktree.map(Into::into))
+    }
+
+    #[test]
+    fn porcelain_z_splits_index_and_worktree_status() {
+        let raw = b"MM both.rs\0M  staged.rs\0 M wip.rs\0?? new.rs\0A  added.rs\0 D gone.rs\0UU conflict.rs\0";
+        let got: Vec<_> = parse_porcelain_z(raw)
+            .into_iter()
+            .map(|f| (f.path, f.status, f.index_status, f.worktree_status))
+            .collect();
+        let row = |p: &str, s: &str, i: Option<&str>, w: Option<&str>| (p.to_string(), s.to_string(), i.map(Into::into), w.map(Into::into));
+        assert_eq!(
+            got,
+            vec![
+                row("both.rs", "M", Some("M"), Some("M")),
+                row("staged.rs", "M", Some("M"), None),
+                row("wip.rs", "M", None, Some("M")),
+                row("new.rs", "U", None, Some("U")),
+                row("added.rs", "A", Some("A"), None),
+                row("gone.rs", "D", None, Some("D")),
+                // 冲突文件不能记成未跟踪的 "U"（放弃会按未跟踪删文件）。
+                row("conflict.rs", "U", None, Some("M")),
+            ]
+        );
+    }
+
+    /// 真仓库里部分暂存：暂存一版、再改一版，两个字段都有值。
+    #[test]
+    fn partially_staged_file_has_both_statuses() {
+        let sb = Sandbox::new("partial");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "one\n").unwrap();
+        stage_blocking(&s(&repo), &["README.md".into()]).unwrap();
+        std::fs::write(repo.join("README.md"), "two\n").unwrap();
+        let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+        let file = &summary.files[0];
+        assert_eq!((file.index_status.as_deref(), file.worktree_status.as_deref()), (Some("M"), Some("M")));
+    }
+
+    #[test]
+    fn stage_unstage_and_discard_round_trip() {
+        let sb = Sandbox::new("stage");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        std::fs::create_dir_all(repo.join("dir")).unwrap();
+        std::fs::write(repo.join("dir").join("new.txt"), "n\n").unwrap();
+        let dir = s(&repo);
+        stage_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
+        assert_eq!(statuses(&repo), vec![st("README.md", Some("M"), None), st("dir/new.txt", Some("A"), None)]);
+        // 已暂存、没有工作区改动的文件不能再「暂存」，也不能「放弃」（清单里它只在暂存组）。
+        assert_eq!(stage_blocking(&dir, &["README.md".into()]).unwrap_err(), "git/not_in_changes");
+        assert_eq!(discard_blocking(&dir, &["README.md".into()]).unwrap_err(), "git/not_in_changes");
+        unstage_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
+        assert_eq!(statuses(&repo), vec![st("README.md", None, Some("M")), st("dir/new.txt", None, Some("U"))]);
+        // 放弃：已跟踪的恢复，未跟踪的删文件（目录留着）。
+        discard_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
+        assert!(statuses(&repo).is_empty());
+        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap().trim(), "hi");
+        assert!(!repo.join("dir").join("new.txt").exists());
+        assert!(repo.join("dir").is_dir());
+    }
+
+    /// 放弃只丢工作区那一层：部分暂存的文件放弃后回到暂存区的内容。
+    #[test]
+    fn discard_keeps_staged_content() {
+        let sb = Sandbox::new("discard-staged");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "staged\n").unwrap();
+        stage_blocking(&s(&repo), &["README.md".into()]).unwrap();
+        std::fs::write(repo.join("README.md"), "later\n").unwrap();
+        discard_blocking(&s(&repo), &["README.md".into()]).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap().replace("\r\n", "\n"), "staged\n");
+        assert_eq!(statuses(&repo), vec![st("README.md", Some("M"), None)]);
+    }
+
+    /// 清单外的路径一律拒，包括 `..`、绝对路径、干净的已跟踪文件——放弃不能被借去删任意文件。
+    #[test]
+    fn write_ops_reject_paths_outside_change_list() {
+        let sb = Sandbox::new("reject");
+        let repo = sb.repo("r");
+        std::fs::write(sb.0.join("outside.txt"), "keep\n").unwrap();
+        let dir = s(&repo);
+        let abs = s(&sb.0.join("outside.txt"));
+        for path in ["README.md", "../outside.txt", abs.as_str(), "nope.txt", ""] {
+            assert_eq!(discard_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
+            assert_eq!(stage_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
+            assert_eq!(unstage_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
+        }
+        assert!(sb.0.join("outside.txt").exists());
+        assert!(repo.join("README.md").exists());
+    }
+
+    /// 还没有任何提交的仓库：取消暂存走 rm --cached，文件留在工作区。
+    #[test]
+    fn unstage_works_before_first_commit() {
+        let sb = Sandbox::new("unborn");
+        let repo = sb.0.join("r");
+        std::fs::create_dir_all(&repo).unwrap();
+        sb.git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+        stage_blocking(&s(&repo), &["a.txt".into()]).unwrap();
+        assert_eq!(statuses(&repo), vec![st("a.txt", Some("A"), None)]);
+        unstage_blocking(&s(&repo), &["a.txt".into()]).unwrap();
+        assert_eq!(statuses(&repo), vec![st("a.txt", None, Some("U"))]);
+        assert!(repo.join("a.txt").exists());
+    }
+
+    #[test]
+    fn commit_staged_and_commit_all() {
+        let sb = Sandbox::new("commit");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "n\n").unwrap();
+        assert_eq!(commit_isolated(&sb, &repo, "  \n ", false, true).unwrap_err(), "git/empty_message");
+        // 没暂存、不是「全部」：没东西可提交。
+        assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/nothing_to_commit");
+        // 只提交暂存的那一个，未跟踪的留着。
+        stage_blocking(&s(&repo), &["README.md".into()]).unwrap();
+        let sha = commit_isolated(&sb, &repo, "第一行\n\n第二段 \"引号\"", false, true).unwrap();
+        assert!(is_commit_sha(&sha), "{sha}");
+        assert_eq!(statuses(&repo), vec![st("new.txt", None, Some("U"))]);
+        let log = git_output(&s(&repo), &["log", "-1", "--format=%B"]).unwrap();
+        assert_eq!(stdout_text(&log.stdout).trim(), "第一行\n\n第二段 \"引号\"");
+        // 提交全部：未跟踪的也进去。
+        commit_isolated(&sb, &repo, "all", true, true).unwrap();
+        assert!(statuses(&repo).is_empty());
+        assert_eq!(commit_isolated(&sb, &repo, "again", true, true).unwrap_err(), "git/nothing_to_commit");
+    }
+
+    #[test]
+    fn commit_without_identity_reports_identity() {
+        let sb = Sandbox::new("ident");
+        let repo = sb.repo("r");
+        // useConfigOnly：不许 git 拿系统用户名 / 主机名凑一个身份（CI 机器的主机名可能带域名，凑得出来）。
+        sb.git(&repo, &["config", "user.useConfigOnly", "true"]);
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        assert_eq!(commit_isolated(&sb, &repo, "x", true, false).unwrap_err(), "git/identity");
+    }
+
+    /// agent 正在跑 git（index.lock 在）：暂存 / 提交都报 git/locked，不是一串原始报错。
+    #[test]
+    fn index_lock_reports_locked() {
+        let sb = Sandbox::new("lock");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        std::fs::write(repo.join(".git").join("index.lock"), "").unwrap();
+        assert_eq!(stage_blocking(&s(&repo), &["README.md".into()]).unwrap_err(), "git/locked");
+        assert_eq!(commit_isolated(&sb, &repo, "x", true, true).unwrap_err(), "git/locked");
+        std::fs::remove_file(repo.join(".git").join("index.lock")).unwrap();
+    }
+
+    /// 提交钩子失败：git/failed 带出钩子的输出。
+    #[test]
+    fn failing_hook_is_reported_with_output() {
+        let sb = Sandbox::new("hook");
+        let repo = sb.repo("r");
+        let hook = repo.join(".git").join("hooks").join("pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\necho lint broke >&2\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        let err = commit_isolated(&sb, &repo, "x", true, true).unwrap_err();
+        assert!(err.starts_with("git/failed: ") && err.contains("lint broke"), "{err}");
+    }
+
+    /// 命令里提到的 worktree 上榜：主仓库 + 两个 worktree，只有命令里出现过的 wt1 进清单；
+    /// `wt1x` 这个前缀相同的名字不误命中。
+    #[test]
+    fn overview_lists_worktrees_mentioned_in_commands() {
+        let sb = Sandbox::new("cmds");
+        let main_dir = sb.repo("main");
+        for name in ["wt1", "wt2", "wt1x"] {
+            let path = sb.0.join(name);
+            sb.git(&main_dir, &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()]);
+        }
+        // 用 git 自己认的根当 cwd 和命令里的路径（macOS 临时目录有 /private 软链，两种写法不一样）。
+        let main = repo_root(&s(&main_dir)).unwrap();
+        let wt1 = repo_root(&s(&sb.0.join("wt1"))).unwrap();
+        let names = |commands: &[&str]| -> Vec<String> {
+            let commands: Vec<String> = commands.iter().map(|c| c.to_string()).collect();
+            changes_overview_blocking(&main, &[], &commands).unwrap().into_iter().map(|r| r.name).collect()
+        };
+        assert_eq!(names(&[]), ["main"]);
+        assert_eq!(names(&["cargo test"]), ["main"]);
+        let back = wt1.replace('/', "\\");
+        assert_eq!(names(&[&format!("cd {wt1} && cargo test")]), ["main", "wt1"]);
+        assert_eq!(names(&[&format!("cd \"{back}\"; ls")]), ["main", "wt1"]);
+        assert_eq!(names(&["git -C ../wt1 status"]), ["main", "wt1"]);
+        assert_eq!(names(&["cat ../wt1/src/a.rs"]), ["main", "wt1"]);
+        // 只提到 wt1x：wt1 不上榜，wt1x 上榜。
+        assert_eq!(names(&["cd ../wt1x && ls"]), ["main", "wt1x"]);
+        assert_eq!(names(&["echo ../wt1-backup ../wt12"]), ["main"]);
+        // 命令识别的顺序：先出现的先列。
+        assert_eq!(names(&["cd ../wt2", "cd ../wt1"]), ["main", "wt2", "wt1"]);
+        if cfg!(target_os = "windows") {
+            // Git Bash 写法：C:/Users/... → /c/Users/...（大小写不敏感）。
+            let bash = format!("/{}{}", wt1[..1].to_ascii_lowercase(), &wt1[2..]);
+            assert_eq!(names(&[&format!("cd {bash}")]), ["main", "wt1"]);
+            assert_eq!(names(&[&format!("cd {}", wt1.to_uppercase())]), ["main", "wt1"]);
+        }
+    }
+
+    /// 仓库里面的 worktree（.claude/worktrees/x）用相对 cwd 的写法提到也认。
+    #[test]
+    fn overview_recognizes_relative_nested_worktree_in_commands() {
+        let sb = Sandbox::new("cmds-nested");
+        let main_dir = sb.repo("main");
+        std::fs::write(main_dir.join(".gitignore"), ".claude/\n").unwrap();
+        sb.commit(&main_dir, "ignore");
+        let wt = main_dir.join(".claude").join("worktrees").join("x");
+        sb.git(&main_dir, &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()]);
+        let main = repo_root(&s(&main_dir)).unwrap();
+        let names = |command: &str| -> Vec<String> {
+            changes_overview_blocking(&main, &[], &[command.to_string()]).unwrap().into_iter().map(|r| r.name).collect()
+        };
+        assert_eq!(names("cd .claude/worktrees/x && git status"), ["main", "x"]);
+        assert_eq!(names("cd ./.claude/worktrees/x"), ["main", "x"]);
+        assert_eq!(names("ls .claude/worktrees"), ["main"]);
+    }
+
+    #[test]
+    fn path_spellings_cover_relative_and_git_bash_forms() {
+        let forms = path_spellings("c:/w/meowo-wt", "c:/w/meowo");
+        assert!(forms.contains(&"/c/w/meowo-wt".to_string()), "{forms:?}");
+        assert!(forms.contains(&"../meowo-wt".to_string()), "{forms:?}");
+        let forms = path_spellings("c:/w/meowo/.claude/worktrees/x", "c:/w/meowo");
+        assert!(forms.contains(&".claude/worktrees/x".to_string()) && forms.contains(&"./.claude/worktrees/x".to_string()));
+        // 不同盘没有相对写法。
+        assert_eq!(path_spellings("d:/x", "c:/w").len(), 2);
+        // Unix 只共享根 `/` 不给相对写法。
+        assert_eq!(path_spellings("/opt/x", "/home/me"), ["/opt/x"]);
     }
 
     #[test]

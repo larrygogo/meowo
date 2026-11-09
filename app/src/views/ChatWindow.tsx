@@ -967,8 +967,27 @@ export function ChatWindow() {
   const [repoChanges, setRepoChanges] = useState<RepoChangesDto[] | null>(null);
   const diffCwdRef = useRef(diffCwd);
   diffCwdRef.current = diffCwd;
+  // 「更改」「文件」共用的选中仓库（SourceControl）。
+  const [scmRoot, setScmRoot] = useState<string | null>(null);
+  // 认出过的仓库 / worktree 粘住：命令和编辑记录会随翻页滑出加载窗口，滑出去就又认不出来，
+  // 列表里的 worktree 忽隐忽现。按会话记着，下次拉清单时当作「碰过的路径」一并交给后端。
+  const usedRootsRef = useRef<Set<string>>(new Set());
   // 换会话也清：同一个工作目录的两个会话改的仓库不同，不清会先露出上一个会话的仓库分组。
-  useEffect(() => setRepoChanges(null), [diffCwd, sessionId]);
+  useEffect(() => {
+    setRepoChanges(null);
+    setScmRoot(null);
+    usedRootsRef.current = new Set();
+  }, [diffCwd, sessionId]);
+  // 会话最近的命令文本（用户要求 2026-11-09）：agent 常 cd 进 worktree 用命令干活，编辑工具一次没碰过，
+  // 只认编辑记录就看不到这个 worktree。后端按命令里出现的路径认（绝对 / 相对 / Git Bash 写法）。
+  const commandsKey = useMemo(() => {
+    const out: string[] = [];
+    for (let i = items.length - 1; i >= 0 && out.length < 300; i--) {
+      const item = items[i];
+      if (item.type === "tool_use" && item.detail?.kind === "command" && item.detail.command) out.push(item.detail.command.slice(0, 4096));
+    }
+    return out.reverse().join("\u0001");
+  }, [items]);
   // 上一轮还没回来就不发下一轮：仓库多时一轮可能超过 5 秒，不拦会越积越多（做空复现）。
   // 在途时又要拉（会话又改了文件、面板刚打开）：记一笔，这一轮回来后用最新参数补拉一次。只挡不记
   // 的话，被取消的那轮结果作废、新的又被挡掉，就再也不拉了（做空复现：入口因此又消失）。
@@ -980,8 +999,10 @@ export function ChatWindow() {
     if (repoChangesInflightRef.current) { repoChangesAgainRef.current = true; return; }
     repoChangesInflightRef.current = true;
     const forCwd = diffCwd;
-    getGitChangesOverview(diffCwd, touchedKey ? touchedKey.split("\0") : [])
+    const touched = [...(touchedKey ? touchedKey.split("\0") : []), ...usedRootsRef.current];
+    getGitChangesOverview(diffCwd, touched, commandsKey ? commandsKey.split("\u0001") : [])
       .then((result) => {
+        if (forCwd === diffCwdRef.current) for (const repo of result) if (!repo.isCwdRepo) usedRootsRef.current.add(repo.root);
         // 被取消的只要还是同一个会话目录就照收：只是参数旧了一点，下面会补拉新的。
         if ((!cancelled() || forCwd === diffCwdRef.current)) setRepoChanges((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
       })
@@ -993,8 +1014,14 @@ export function ChatWindow() {
           loadRepoChangesRef.current(() => forCwd !== diffCwdRef.current);
         }
       });
-  }, [diffCwd, touchedKey]);
+  }, [diffCwd, touchedKey, commandsKey]);
   loadRepoChangesRef.current = loadRepoChanges;
+  // git 写操作（暂存 / 提交 / 放弃）之后立刻重拉，不等 5 秒轮询。
+  const refreshChanges = useCallback(() => {
+    if (!diffCwd) return;
+    getGitDiffSummary(diffCwd).then(setGitSummary).catch(() => {});
+    loadRepoChangesRef.current(() => false);
+  }, [diffCwd]);
   // 工作目录不是仓库（会话开在 workspace 这种父目录）时，面板没开也先拉一次：标题栏胶囊、Ctrl+Shift+G、
   // 面板「+」菜单这些入口都靠它才知道有没有改动可看（做空复现：此前全只认工作目录本身是不是仓库，
   // 这种会话根本打不开「更改」）。会话又改了文件（touched 变了）隔 2 秒再拉。
@@ -5330,6 +5357,9 @@ export function ChatWindow() {
                 touchedPaths={touchedPaths}
                 turnTouchedPaths={turnTouchedPaths}
                 activeTab="changes"
+                selectedRoot={scmRoot}
+                onSelectRoot={setScmRoot}
+                onChanged={refreshChanges}
               />
             )
             : (
@@ -5349,6 +5379,9 @@ export function ChatWindow() {
                 turnTouchedPaths={turnTouchedPaths}
                 browserSuggestions={browserSuggestions}
                 onMention={mentionPath}
+                selectedRoot={scmRoot}
+                onSelectRoot={setScmRoot}
+                onChanged={refreshChanges}
               />
             )}
           </Suspense>

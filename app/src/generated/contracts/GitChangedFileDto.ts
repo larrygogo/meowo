@@ -16,4 +16,16 @@ status: string,
  * 相对 HEAD 的增删行数（`git diff --numstat`；未跟踪文件按行数全记为新增）。
  * 二进制、仓库还没有提交、未跟踪文件过大或过多时数不出来，为 None，前端不显示。
  */
-additions: number | null, deletions: number | null, };
+additions: number | null, deletions: number | null, 
+/**
+ * 暂存区相对 HEAD 的状态字母（porcelain 的 X：M/A/D/T）；没暂存为 None。
+ * 「更改」面板按 VS Code 源代码管理分「暂存的更改」「更改」两组（用户要求 2026-11-09），
+ * `status` 合一的字母分不出来。「已提交未合并」清单里恒为 None。
+ */
+indexStatus?: string | null, 
+/**
+ * 工作区相对暂存区的状态字母（porcelain 的 Y：M/D/T；未跟踪记 "U"）；没有工作区改动为 None。
+ * 部分暂存（MM）的文件两个字段都有值，两组里都出现。
+ * 两个字段在 TS 里是可选的：手机页可能先于安装版更新，旧后端不下发，前端按「全是未暂存」处理。
+ */
+worktreeStatus?: string | null, };

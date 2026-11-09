@@ -43,6 +43,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
 import { buildFileTree, diffLineClass, normPath, touchedByPath, type FileTreeNode } from "./gitDiff";
+import { SourceControl } from "./SourceControl";
 import { diffLineAnchors, diffLineNumbers, type DiffLineAnchor, type ReviewComment } from "./diffComments";
 import { highlightLines, languageForPath } from "./highlight";
 
@@ -375,7 +376,7 @@ function OpenSplitButton({ cwd, rel }: { cwd: string; rel: string }) {
 
 /** 树行/结果行右键菜单：按需拉该文件类型的打开方式清单（目录不拉——只有
  *  复制/定位/系统默认三项）；清单异步到位后条目就地补齐（有扩展名缓存，通常瞬时）。 */
-function PathContextMenu({ cwd, rel, isDir, x, y, onClose }: {
+export function PathContextMenu({ cwd, rel, isDir, x, y, onClose }: {
   cwd: string;
   rel: string;
   isDir: boolean;
@@ -480,7 +481,7 @@ function WrapButton({ wrap, onToggle }: { wrap: boolean; onToggle: () => void })
 }
 
 /** 树行悬停时右端的「…」：和右键同一份路径菜单，照 Kimi Code 的文件树（不知道能右键的人也找得到）。 */
-function RowMore({ label, open, onOpen }: { label: string; open: boolean; onOpen: (x: number, y: number) => void }) {
+export function RowMore({ label, open, onOpen }: { label: string; open: boolean; onOpen: (x: number, y: number) => void }) {
   return (
     <button
       type="button"
@@ -531,11 +532,11 @@ function clampTreeWidth(width: number): number {
 export const GitDiffView = memo(GitDiffViewImpl);
 export type DiffPanelTab = "changes" | "files";
 
-function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange }: {
+function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, selectedRoot = null, onSelectRoot, onChanged }: {
   /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
   summary: GitDiffSummaryDto | null;
-  /** 多仓库「更改」（见 RepoChanges）；null = 还没拉到，按 summary 单仓库显示。 */
+  /** 多仓库「更改」（见 SourceControl）；null = 还没拉到，按 summary 单仓库显示。 */
   repos?: readonly RepoChangesDto[] | null;
   /** 停靠宽度（px，ChatWindow 侧的分栏柄拖动改写）；最大化时忽略（面板占满整宽）。 */
   width: number;
@@ -556,6 +557,10 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
   /** ChatWindow 顶栏直达入口需要受控切页；独立使用时保留内部状态。 */
   activeTab?: DiffPanelTab;
   onTabChange?: (tab: DiffPanelTab) => void;
+  /** 选中的仓库（见 SourceControl）。 */
+  selectedRoot?: string | null;
+  onSelectRoot?: (root: string) => void;
+  onChanged?: () => void;
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo || (repos?.length ?? 0) > 0;
@@ -668,10 +673,13 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
       {tab === "changes" && ((repos && repos.length > 0) || (changesAvailable && summary?.isRepo))
         ? (
-          <RepoChanges
+          <SourceControl
             key={cwd}
             cwd={cwd}
             repos={repos && repos.length > 0 ? repos : singleRepo(cwd, summary!)}
+            selectedRoot={selectedRoot}
+            onSelectRoot={onSelectRoot ?? (() => {})}
+            onChanged={onChanged ?? (() => {})}
             comments={comments}
             touchedPaths={touchedPaths}
             turnTouchedPaths={turnTouchedPaths}
@@ -697,7 +705,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   escOverrideRef: MutableRefObject<(() => void) | null>;
   /** 面板正显示着：这时才在后台查打开的文件过期没有。 */
   live?: boolean;
-  /** 「已提交未合并」段：单文件 diff 看 diffBase..HEAD（见 RepoChanges）。 */
+  /** 「已提交未合并」段：单文件 diff 看 diffBase..HEAD（见 SourceControl）。 */
   diffBase?: string | null;
   /** cwd 不是会话目录本身时的会话目录（手机远程页收口用）。 */
   sessionCwd?: string | null;
@@ -1201,168 +1209,16 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   );
 }
 
-/// 「更改」的多仓库形态（用户要求 2026-11-09）：会话开在父目录、agent 新开 worktree 去改、改完又
-/// 提交时，单仓库的 ChangesView 都是一片空白。按仓库分组列出，每组分「未提交」与「已提交未合并」；
-/// 点文件进到那一段自己的 ChangesView，返回回到分组列表。只有一个仓库、且只有未提交一段时，
-/// 直接就是原来的 ChangesView（目录树、搜索、本会话 / 本轮筛选都在）。
-///
-/// 打开的文件记在这里（open），不在 ChangesView 里：5 秒轮询会让面板在两种形态之间切（agent 刚提交
-/// 出现已提交段，或首屏先用单仓库摘要、overview 到了才分组），子组件重挂会把正在看的文件踢回列表
-/// （做空复现）。外层记着，换了形态照样把它打开。
-type RepoSection = { key: string; repo: RepoChangesDto; kind: "work" | "committed"; summary: GitDiffSummaryDto; base: string | null };
-
 /** 本会话改过这个文件吗：仓库根是准的，严格按「根/相对路径」比（touchedByPath 允许面板目录在根下面，
  *  那是给单仓库子目录用的宽松规则，在多仓库里会把别的仓库的同名文件算进来，做空复现）。 */
-function touchedInRoot(touched: readonly string[], root: string, rel: string): boolean {
+export function touchedInRoot(touched: readonly string[], root: string, rel: string): boolean {
   const full = `${normPath(root)}/${normPath(rel)}`;
   return touched.some((path) => normPath(path) === full);
 }
 
-/** 只有单仓库摘要、overview 还没到时，把摘要包成一个仓库交给 RepoChanges（形态不变，不重挂）。 */
+/** 只有单仓库摘要、overview 还没到时，把摘要包成一个仓库交给 SourceControl（形态不变，不重挂）。 */
 export function singleRepo(cwd: string, summary: GitDiffSummaryDto): RepoChangesDto[] {
   return [{ root: cwd, name: folderName(cwd), isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] }];
-}
-
-export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false }: {
-  cwd: string;
-  repos: readonly RepoChangesDto[];
-  comments: readonly ReviewComment[];
-  touchedPaths: readonly string[];
-  turnTouchedPaths: readonly string[];
-  /** dir：评论所在仓库（非工作目录仓库的评论要记在它自己的根下，插入输入框时才拼得出对的路径）。 */
-  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">, dir: string) => void;
-  onRemoveComment: (id: string) => void;
-  escOverrideRef: MutableRefObject<(() => void) | null>;
-  live?: boolean;
-}) {
-  const t = useT();
-  const sections = useMemo<RepoSection[]>(() => repos.flatMap((repo) => {
-    // key 用归一路径：首屏用单仓库摘要包出来的根是会话目录原样（可能是反斜杠），overview 到了是
-    // 正斜杠，同一个仓库 key 不同就会重挂、把打开的文件踢走（做空复现）。
-    const id = normPath(repo.root);
-    const out: RepoSection[] = [{ key: `${id}\u0000work`, repo, kind: "work", summary: repo.summary, base: null }];
-    if (repo.base && repo.committed.length > 0) {
-      out.push({ key: `${id}\u0000committed`, repo, kind: "committed", summary: { ...repo.summary, files: repo.committed, ahead: null, behind: null }, base: repo.base });
-    }
-    return out;
-  }), [repos]);
-  const [open, setOpen] = useState<{ key: string; path: string } | null>(null);
-  const [search, setSearch] = useState("");
-  const [onlySession, setOnlySession] = useState(false);
-  // 单文件 diff、图片预览、路径菜单、评论都按仓库根算：改动清单的路径是相对仓库根的，工作目录
-  // 是仓库子目录时按它算会对不上（做空复现：已提交段点进去 diff 是空的）。
-  const dirOf = (repo: RepoChangesDto) => repo.root;
-  // 逐字比较：手机桥的会话目录校验是逐字的（库里存的原串），归一后相等但写法不同（斜杠方向）
-  // 也要带上 sessionCwd 交给后端按相关仓库收口，否则被拒（做空复现：本机 18 个仓库里 11 个是这样）。
-  const sessionCwdOf = (dir: string) => (dir === cwd ? null : cwd);
-  const viewProps = (dir: string) => ({
-    comments: comments.filter((comment) => normPath(comment.dir) === normPath(dir)),
-    touchedPaths,
-    turnTouchedPaths,
-    onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => onAddComment(comment, dir),
-    onRemoveComment,
-    escOverrideRef,
-    live,
-  });
-  const single = sections.length === 1 && sections[0].kind === "work";
-  const opened = open ? sections.find((section) => section.key === open.key) : undefined;
-  if (single && !(opened && open?.path)) {
-    const section = sections[0];
-    const dir = dirOf(section.repo);
-    return (
-      <ChangesView
-        key={`single\u0000${normPath(dir)}`}
-        cwd={dir}
-        summary={section.summary}
-        sessionCwd={sessionCwdOf(dir)}
-        initialPath={open?.key === section.key ? open.path : null}
-        onSelectPath={(path) => setOpen(path ? { key: section.key, path } : null)}
-        {...viewProps(dir)}
-      />
-    );
-  }
-  if (open && opened) {
-    const dir = dirOf(opened.repo);
-    return (
-      <ChangesView
-        key={`open\u0000${open.key}`}
-        cwd={dir}
-        summary={opened.summary}
-        diffBase={opened.base}
-        sessionCwd={sessionCwdOf(dir)}
-        initialPath={open.path}
-        onBack={() => setOpen(null)}
-        onSelectPath={(path) => { if (path) setOpen({ key: open.key, path }); }}
-        {...viewProps(dir)}
-      />
-    );
-  }
-  // 分组形态也给搜索与「本会话」筛选（单仓库在分支上一有提交就进这里，不能把这两样丢了）。
-  const query = search.trim().toLowerCase();
-  const touched = touchedPaths.length > 0;
-  const visible = (section: RepoSection) => section.summary.files.filter((file) =>
-    (!query || file.path.toLowerCase().includes(query))
-    && (!onlySession || touchedInRoot(touchedPaths, section.repo.root, file.path)));
-  // 空的段、空的仓库都不列（用户要求 2026-11-09）：工作目录仓库两段都写「没有改动」时，真有改动的
-  // worktree 被挤到下面，用户看不懂这是在分什么。全空时给一句总的空态。
-  const shown = repos.flatMap((repo) => {
-    const parts = sections
-      .filter((section) => section.repo === repo)
-      .map((section) => ({ section, files: visible(section) }))
-      .filter((part) => part.files.length > 0);
-    return parts.length > 0 ? [{ repo, parts }] : [];
-  });
-  return (
-    <div className="chat-repos" data-testid="repo-changes">
-      <input
-        type="text"
-        className="chat-diff-search"
-        placeholder={t.chat.diffSearchPlaceholder}
-        value={search}
-        onChange={(event) => {
-          if ((event.nativeEvent as InputEvent).isComposing) return;
-          setSearch(event.target.value);
-        }}
-        onCompositionEnd={(event) => setSearch(event.currentTarget.value)}
-      />
-      {touched && (
-        <div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
-          <button type="button" aria-pressed={!onlySession} onClick={() => setOnlySession(false)}>{t.chat.diffScopeAll}</button>
-          <button type="button" aria-pressed={onlySession} data-tip={t.chat.diffOnlySessionTip} onClick={() => setOnlySession(true)}>
-            {t.chat.diffScopeSession(sections.reduce((sum, section) => sum + section.summary.files.filter((file) => touchedInRoot(touchedPaths, section.repo.root, file.path)).length, 0))}
-          </button>
-        </div>
-      )}
-      <div className="chat-diff-tree">
-        {shown.length === 0
-          ? <div className="chat-diff-empty">{query ? t.chat.diffSearchNoResults : onlySession ? t.chat.diffNoSessionChanges : t.chat.diffNoChanges}</div>
-          : shown.map(({ repo, parts }) => (
-          <section key={repo.root} className="chat-repo">
-            <div className="chat-repo-head" data-tip={repo.root}>
-              <span className="chat-repo-name">{repo.name}</span>
-              {repo.summary.branch && <span className="chat-repo-branch">· {repo.summary.branch}</span>}
-            </div>
-            {parts.map(({ section, files }) => (
-              <div key={section.key} className="chat-repo-section">
-                <div className="chat-repo-label">
-                  {section.kind === "work" ? t.chat.changesUncommitted : t.chat.changesCommitted(repo.baseLabel ?? "main")}
-                </div>
-                {files.map((file) => (
-                  <div key={file.path} className="chat-diff-tree-row">
-                    <button type="button" className="chat-diff-tree-file is-flat" data-tip={file.path} onClick={() => setOpen({ key: section.key, path: file.path })}>
-                      <StatusBadge status={file.status} />
-                      <span className="chat-diff-path">{file.path}</span>
-                      <LineCounts file={file} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </section>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 /// 文件/图片缓存的上限。面板折叠时**不卸载**（打开的文件、树展开、diff 缓存全部保留，
@@ -1974,15 +1830,15 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const DIFF_LAYOUT_KEY = "meowo-diff-layout";
-function readDiffLayout(): "list" | "tree" {
+export function readDiffLayout(): "list" | "tree" {
   try { return localStorage.getItem(DIFF_LAYOUT_KEY) === "tree" ? "tree" : "list"; } catch { return "list"; }
 }
-function saveDiffLayout(layout: "list" | "tree") {
+export function saveDiffLayout(layout: "list" | "tree") {
   try { localStorage.setItem(DIFF_LAYOUT_KEY, layout); } catch { /* 隐私模式：只是不记 */ }
 }
 
 /** 文件或合计的 `+12 −3`；后端数不出来（二进制等）时两项都是 null，不占位。 */
-function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
+export function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
   if (!file || file.additions == null || file.deletions == null) return null;
   return (
     <span className="chat-diff-lines">
@@ -2034,7 +1890,7 @@ function TreePaneIcon({ right }: { right: boolean }) {
   );
 }
 
-function FolderIcon() {
+export function FolderIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -2042,7 +1898,7 @@ function FolderIcon() {
   );
 }
 
-function FileIcon() {
+export function FileIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
@@ -2052,7 +1908,7 @@ function FileIcon() {
 
 /* ——「打开」按钮与路径菜单的小图标（与全库同款 lucide 线稿风）—— */
 
-function OpenIcon() {
+export function OpenIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

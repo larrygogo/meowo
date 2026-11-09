@@ -14,7 +14,7 @@ vi.mock("./BrowserPane", () => ({
 vi.mock("./GitDiffView", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./GitDiffView")>()),
   ChangesView: () => <div>改动内容</div>,
-  FilesView: () => <div>文件内容</div>,
+  FilesView: ({ cwd }: { cwd: string }) => <div data-testid="files" data-cwd={cwd}>文件内容</div>,
 }));
 
 import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";
@@ -47,6 +47,7 @@ function renderPanel(state: PanelState = full) {
     <SidePanel
       state={state} actions={actions} shells={shells} panes={panes} cwd={"C:\\repo"} summary={summary} width={420}
       comments={[]} onAddComment={() => {}} onRemoveComment={() => {}} touchedPaths={[]} turnTouchedPaths={[]} browserSuggestions={[]}
+      selectedRoot={null} onSelectRoot={() => {}} onChanged={() => {}}
     />,
   );
   return actions;
@@ -109,9 +110,34 @@ describe("右侧面板", () => {
         summary={{ ...summary, isRepo: false, branch: null }} width={420}
         repos={[{ root: "C:/w/meowo-feat", name: "meowo-feat", isCwdRepo: false, summary, base: null, baseLabel: null, committed: [] }]}
         comments={[]} onAddComment={() => {}} onRemoveComment={() => {}} touchedPaths={[]} turnTouchedPaths={[]} browserSuggestions={[]}
+      selectedRoot={null} onSelectRoot={() => {}} onChanged={() => {}}
       />,
     );
     expect(screen.getByRole("navigation", { name: "可打开" }).textContent).toContain("更改");
+  });
+
+  /// 用户要求（2026-11-09）：会话开在主目录、改动在 worktree 里时，「文件」跟着「更改」选中的仓库走。
+  it("「文件」浏览「更改」里选中的 worktree；「更改」里点别的仓库会通知上层切换", () => {
+    const actions = {
+      activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), newBrowser: vi.fn(),
+      show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
+    } satisfies PanelActions;
+    const repos = [
+      { root: "C:/repo", name: "repo", isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] },
+      { root: "C:/repo-wt", name: "repo-wt", isCwdRepo: false, summary, base: null, baseLabel: null, committed: [] },
+    ];
+    const onSelectRoot = vi.fn();
+    const props = { actions, shells, panes, cwd: "C:\\repo", summary, width: 420, repos, comments: [], onAddComment: () => {}, onRemoveComment: () => {},
+      touchedPaths: [], turnTouchedPaths: [], browserSuggestions: [], onSelectRoot, onChanged: () => {} };
+    const files: PanelState = { tabs: [{ key: "f", type: "files" }, { key: "d", type: "diff" }], active: "f", visible: true, expanded: false };
+    const { rerender } = render(<SidePanel {...props} state={files} selectedRoot="C:/repo-wt" />);
+    expect(screen.getByTestId("files").getAttribute("data-cwd")).toBe("C:/repo-wt");
+    // 选回工作目录所在仓库：浏览工作目录本身（它可能是仓库的子目录）。
+    rerender(<SidePanel {...props} state={files} selectedRoot="C:/repo" />);
+    expect(screen.getByTestId("files").getAttribute("data-cwd")).toBe("C:\\repo");
+    rerender(<SidePanel {...props} state={{ ...files, active: "d" }} selectedRoot="C:/repo" />);
+    fireEvent.click(screen.getByRole("button", { name: /repo-wt/ }));
+    expect(onSelectRoot).toHaveBeenCalledWith("C:/repo-wt");
   });
 
   it("一个页签都没有时显示启动列表", () => {

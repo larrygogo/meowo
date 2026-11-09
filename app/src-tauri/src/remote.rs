@@ -38,6 +38,14 @@
 //! （`git::related_roots`）；单文件 diff 带 `sessionCwd` 时按这份清单收口，带 `base` 时文件
 //! 必须在「已提交未合并」清单里、base 必须等于 overview 算出的那个。
 //!
+//! 例外（2026-11-09 用户决定：手机与桌面能力一致）：「更改」面板的写操作 `git_stage` /
+//! `git_unstage` / `git_discard` / `git_commit` 放行。不扩大风险面：手机本就能经
+//! `write_managed_terminal` 往 PTY 写任意按键（等于在宿主执行任意命令）。收口与 `git_file_diff`
+//! 同一套——目录必须是会话目录或它的相关仓库（`related_roots`）；暂存 / 取消暂存 / 放弃的路径
+//! 必须在该仓库此刻的改动清单里，由命令本身校验（`git/not_in_changes`），远程端不能借「放弃」
+//! 删任意文件。`git_changes_overview` 的 `commands` 只是会话命令文本，用来在相关仓库里挑本会话
+//! 用过的那些，不会把相关仓库之外的目录带进来。
+//!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
 //! 读 `.lead/active` 指向的任务目录（slug 只允许字母数字与 `.-_`，拒绝 `..`），只写该目录下的
@@ -161,6 +169,11 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "git_diff_summary",
     "git_changes_overview",
     "git_file_diff",
+    // 「更改」面板写操作（2026-11-09 用户决定放行，收口见模块头「例外」一节）
+    "git_stage",
+    "git_unstage",
+    "git_discard",
+    "git_commit",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -854,7 +867,49 @@ bridged_args!(GitFileDiffArgs {
     #[serde(default)]
     session_cwd: Option<String>
 });
-bridged_args!(GitChangesOverviewArgs { cwd: String, touched: Vec<String> });
+bridged_args!(GitChangesOverviewArgs {
+    cwd: String,
+    touched: Vec<String>,
+    #[serde(default)]
+    commands: Option<Vec<String>>
+});
+bridged_args!(GitPathsArgs {
+    cwd: String,
+    paths: Vec<String>,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(GitCommitArgs {
+    cwd: String,
+    message: String,
+    all: bool,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+
+/// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
+/// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
+async fn ensure_git_repo_dir(app: &tauri::AppHandle, cwd: &str, session_cwd: Option<&str>) -> Result<(), String> {
+    match session_cwd {
+        Some(session_cwd) => {
+            ensure_session_dir(app, session_cwd).await?;
+            let (s, c) = (session_cwd.to_string(), cwd.to_string());
+            tauri::async_runtime::spawn_blocking(move || related_repo_gate(&s, &c))
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        None => ensure_session_dir(app, cwd).await,
+    }
+}
+
+/// cwd 是不是 session_cwd 的相关仓库（不查库的那一半，单测直接钉）。
+fn related_repo_gate(session_cwd: &str, cwd: &str) -> Result<(), String> {
+    if crate::git::is_related_root(session_cwd, cwd) {
+        Ok(())
+    } else {
+        Err("remote/not_session_dir".into())
+    }
+}
 
 /// 单文件 diff 的路径收口：必须逐字是改动清单里的一项；要读盘（untracked）的只认 U 条目。
 fn changed_file_listed(
@@ -1148,6 +1203,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             let cwd = a.cwd.clone();
+            let commands = a.commands.unwrap_or_default();
             let result = tauri::async_runtime::spawn_blocking(move || {
                 let related = crate::git::related_roots(&cwd);
                 // 先把落在相关仓库之外的路径滤掉，别替远程端在无关仓库里白跑一遍 git。
@@ -1156,7 +1212,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     .into_iter()
                     .filter(|path| related.iter().any(|root| crate::git::path_under(path, root)))
                     .collect();
-                crate::git::changes_overview_blocking(&cwd, &touched).map(|repos| {
+                crate::git::changes_overview_blocking(&cwd, &touched, &commands).map(|repos| {
                     repos
                         .into_iter()
                         .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))
@@ -1172,23 +1228,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "git_file_diff" => {
             let a = args!(GitFileDiffArgs);
-            // 目录收口：带 sessionCwd 时，它必须是会话目录、a.cwd 必须是它的相关仓库；不带就是
-            // 老规矩，a.cwd 本身得是会话目录。
-            let gate = match &a.session_cwd {
-                Some(session_cwd) => match ensure_session_dir(app, session_cwd).await {
-                    Ok(()) => {
-                        let (s, c) = (session_cwd.clone(), a.cwd.clone());
-                        tauri::async_runtime::spawn_blocking(move || crate::git::is_related_root(&s, &c))
-                            .await
-                            .unwrap_or(false)
-                            .then_some(())
-                            .ok_or_else(|| "remote/not_session_dir".to_string())
-                    }
-                    Err(e) => Err(e),
-                },
-                None => ensure_session_dir(app, &a.cwd).await,
-            };
-            if let Err(e) = gate {
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
                 return reply::<()>(Err(e));
             }
             // 路径必须是这个目录此刻的改动文件：untracked 分支直接读盘，不收口就是任意文件读
@@ -1214,6 +1254,35 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err("remote/not_changed_file".into()));
             }
             reply(crate::git::git_file_diff(a.cwd, a.path, a.untracked, a.base).await)
+        }
+        // 写操作：目录收口同 git_file_diff；路径必须在改动清单里由命令自己校验。
+        "git_stage" => {
+            let a = args!(GitPathsArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_stage(a.cwd, a.paths).await)
+        }
+        "git_unstage" => {
+            let a = args!(GitPathsArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_unstage(a.cwd, a.paths).await)
+        }
+        "git_discard" => {
+            let a = args!(GitPathsArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_discard(a.cwd, a.paths).await)
+        }
+        "git_commit" => {
+            let a = args!(GitCommitArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_commit(a.cwd, a.message, a.all).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -1846,7 +1915,8 @@ mod tests {
             // 读内容的全文搜索仍拒：手机 `@` 补全走只回名字的 file_mention_candidates。
             "search_project_files",
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
-            // ensure_session_dir + changed_file_listed，由各自的单测钉住；其余 git_* 仍拒。
+            // ensure_session_dir + changed_file_listed，由各自的单测钉住；「更改」面板写操作
+            // 2026-11-09 放行（模块头「例外」）；git_pull_request 等其余 git_* 仍拒。
             "set_autostart",
             "clipboard_text",
             "clipboard_set_image",
@@ -2090,6 +2160,38 @@ mod tests {
         assert!(serde_json::from_str::<A>(r#"{"sessionId":7,"extra":1}"#).is_err());
     }
 
+    /// 写操作的目录收口：会话目录的 worktree 放行，旁边一个无关仓库拒绝（手机端不能借「放弃」
+    /// 动别的项目）。
+    #[test]
+    fn git_write_gate_rejects_unrelated_repo() {
+        let root = std::env::temp_dir().join(format!("meowo-remote-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let init = |name: &str| {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            git(&dir, &["init", "-q", "-b", "main"]);
+            git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init"]);
+            dir
+        };
+        let main = init("main");
+        let other = init("other");
+        let wt = root.join("main-wt");
+        git(&main, &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+        let s = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        assert!(related_repo_gate(&s(&main), &s(&wt)).is_ok());
+        assert_eq!(related_repo_gate(&s(&main), &s(&other)).unwrap_err(), "remote/not_session_dir");
+        assert_eq!(related_repo_gate(&s(&main), &s(&root)).unwrap_err(), "remote/not_session_dir");
+        // 老手机页不带 commands 也照样能解析。
+        assert!(parse::<GitChangesOverviewArgs>(br#"{"cwd":"C:/w","touched":[]}"#).is_ok());
+        assert!(parse::<GitPathsArgs>(br#"{"cwd":"C:/w","paths":[],"force":true}"#).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 参数契约的机制性防护（头注 2026-08-31 反例的兜底）：每条白名单臂一份样例
     /// payload，逐键镜像 api.ts 对应 invoke 的实参对象——含可选/条件包含的键（凡可能
     /// 出现在 payload 的键样例里都有），断言能反序列化进该臂结构体，即「这一发不 400」。
@@ -2104,6 +2206,8 @@ mod tests {
             status: status.into(),
             additions: None,
             deletions: None,
+            index_status: None,
+            worktree_status: None,
         };
         let summary = GitDiffSummaryDto {
             git_available: true,
@@ -2183,7 +2287,16 @@ mod tests {
             .map(|_| ()),
             // api.ts（getGitChangesOverview）
             "git_changes_overview" => parse::<GitChangesOverviewArgs>(
-                br#"{"cwd":"C:/work","touched":["C:/work/app/src/a.ts"]}"#,
+                br#"{"cwd":"C:/work","touched":["C:/work/app/src/a.ts"],"commands":["cd ../work-wt && git status"]}"#,
+            )
+            .map(|_| ()),
+            // api.ts（gitStage / gitUnstage / gitDiscard / gitCommit）
+            "git_stage" | "git_unstage" | "git_discard" => parse::<GitPathsArgs>(
+                br#"{"cwd":"C:/work-wt","paths":["src/a.ts","new.md"],"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "git_commit" => parse::<GitCommitArgs>(
+                br#"{"cwd":"C:/work-wt","message":"feat: x\n\nbody","all":true,"sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）

@@ -4958,11 +4958,75 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 多仓库「更改」的分组（RepoChanges）：组标题「仓库名 分支」，段标题「未提交 / 已提交未合并」。 */
 /* 外层要接住面板的高度（单仓库的 ChangesView 直接铺在面板的纵向 flex 里），不然里面的
    .chat-diff-tree 拿不到上限、overflow 不起作用，文件多了整列被面板裁掉滚不动（用户实拍 2026-11-09）。 */
-.chat-repos { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.chat-repo + .chat-repo { margin-top: var(--sp-12); }
-.chat-repo-head { display: flex; align-items: baseline; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); font-weight: 600; color: var(--cc-text); }
-.chat-repo-branch { font-weight: 400; font-size: var(--text-xs); color: var(--cc-text-dim); }
-.chat-repo-label { padding: var(--sp-6) var(--sp-8) var(--sp-2); font-size: var(--text-xs); color: var(--cc-text-faint); }
+/* 「更改」= VS Code 源代码管理样式（用户要求 2026-11-09，对照其截图）：存储库列表 → 提交框 → 分组平铺文件。 */
+.scm { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding-bottom: var(--sp-8); }
+.scm-section-title { padding: var(--sp-6) var(--sp-12) var(--sp-2); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.02em; color: var(--cc-text-faint); user-select: none; }
+.scm-repos { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-4) var(--sp-4); border-bottom: var(--hairline) solid var(--cc-border); }
+.scm-repo { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; height: 26px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.scm-repo:hover { background: var(--fill-hover); color: var(--cc-text); }
+.scm-repo.is-selected { background: var(--fill-selected); color: var(--cc-text); }
+.scm-repo > svg { flex: 0 0 auto; color: var(--cc-text-faint); }
+.scm-repo-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-repo-branch { flex: 0 1 auto; min-width: 0; margin-left: auto; display: inline-flex; align-items: center; gap: var(--sp-4); font-size: var(--text-xs); color: var(--cc-text-faint); overflow: hidden; white-space: nowrap; }
+.scm-repo-branch > span { overflow: hidden; text-overflow: ellipsis; }
+.scm-dirty { color: var(--cc-warn-vivid); }
+.scm-div { flex: 0 0 auto; font-style: normal; font-size: var(--text-xs); font-variant-numeric: tabular-nums; color: var(--cc-text-dim); }
+
+.scm-commit { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8) var(--sp-8) var(--sp-4); }
+.scm-commit-input { width: 100%; min-height: 30px; max-height: 160px; resize: vertical; padding: var(--sp-6) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: var(--cc-surface); color: var(--cc-text); font: inherit; font-size: var(--text-sm); line-height: 1.4; outline: none; field-sizing: content; }
+.scm-commit-input:focus { border-color: var(--cc-accent); }
+.scm-commit-input::placeholder { color: var(--cc-text-faint); }
+.scm-commit-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: 28px; border: 0; border-radius: var(--radius-sm); background: var(--cc-accent); color: #fff; font: inherit; font-size: var(--text-sm); font-weight: 500; cursor: pointer; }
+.scm-commit-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-accent) 88%, #000); }
+.scm-commit-btn:disabled { opacity: 0.45; cursor: default; }
+.scm-error { color: var(--cc-err); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.scm-notice { color: var(--cc-text-dim); font-size: var(--text-xs); }
+
+.scm-tools { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding-right: var(--sp-8); }
+.scm-tools .chat-diff-search { flex: 1; width: auto; min-width: 0; margin-right: 0; }
+.scm-tools .chat-diff-layout button { padding: 0 var(--sp-6); }
+
+.scm-groups { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-4); }
+.scm-group-head { display: flex; align-items: center; gap: var(--sp-4); height: 26px; padding-right: var(--sp-6); border-radius: var(--radius-sm); }
+.scm-group-head:hover { background: var(--fill-hover); }
+.scm-group-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-4); height: 100%; padding: 0 var(--sp-4); border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-xs); font-weight: 600; text-align: left; cursor: pointer; }
+.scm-group-toggle > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-chevron { flex: 0 0 auto; color: var(--cc-text-faint); transition: transform 0.12s ease; }
+.scm-chevron.is-open { transform: rotate(90deg); }
+.scm-count { flex: 0 0 auto; min-width: 18px; height: 16px; padding: 0 5px; display: inline-grid; place-items: center; border-radius: 8px; background: var(--fill-selected); color: var(--cc-text-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.scm-group-actions, .scm-row-actions { flex: 0 0 auto; display: none; align-items: center; gap: 1px; }
+.scm-group-head:hover .scm-group-actions, .scm-group-head:focus-within .scm-group-actions { display: inline-flex; }
+.scm-icon-btn { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
+.scm-icon-btn:hover:not(:disabled) { background: var(--fill-selected); color: var(--cc-text); }
+.scm-icon-btn:disabled { opacity: 0.4; cursor: default; }
+
+.scm-row { position: relative; display: flex; align-items: center; gap: var(--sp-2); min-height: 24px; padding-right: var(--sp-6); border-radius: var(--radius-sm); }
+.scm-row:hover, .scm-row:focus-within { background: var(--fill-hover); }
+.scm-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-6); height: 24px; padding: 0 var(--sp-4); border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.scm-row-main > svg { flex: 0 0 auto; color: var(--cc-text-faint); }
+.scm-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-name.is-deleted { text-decoration: line-through; color: var(--cc-text-dim); }
+.scm-dir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.scm-row:hover .scm-row-actions, .scm-row:focus-within .scm-row-actions { display: inline-flex; }
+.scm-row .chat-diff-tree-more { position: static; transform: none; opacity: 0; display: none; }
+.scm-row:hover .chat-diff-tree-more, .scm-row:focus-within .chat-diff-tree-more, .scm-row .chat-diff-tree-more[aria-expanded="true"] { display: grid; opacity: 1; }
+.scm-letters { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-6); }
+.scm-status { width: 12px; text-align: center; font-size: var(--text-xs); font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; color: var(--cc-text-dim); }
+.scm-status.is-m, .scm-status.is-t { color: var(--cc-warn-vivid); }
+.scm-status.is-a, .scm-status.is-u { color: var(--cc-ok-vivid); }
+.scm-status.is-d { color: var(--cc-err-vivid); }
+.scm-empty { padding: var(--sp-6) var(--sp-12); font-size: var(--text-xs); color: var(--cc-text-faint); }
+.scm-empty.is-clean { padding: var(--sp-16) var(--sp-12); text-align: center; }
+
+.scm-discard-list { margin: 0; padding: 0 0 0 var(--sp-16); max-height: 160px; overflow-y: auto; font-size: var(--text-xs); color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
+.scm-discard-list .is-more { list-style: none; margin-left: calc(-1 * var(--sp-16)); color: var(--cc-text-faint); font-family: inherit; }
+.scm-discard-note { font-size: var(--text-xs); color: var(--cc-err); }
+.chat-modal .ns-btn.is-danger { border-color: transparent; background: var(--cc-err-vivid); color: #fff; }
+.chat-modal .ns-btn.is-danger:hover { background: color-mix(in srgb, var(--cc-err-vivid) 85%, #000); }
+/* 触屏没有悬停：行内操作常驻，不然手机上点不到暂存 / 放弃。 */
+@media (hover: none) {
+  .scm-row-actions, .scm-group-actions { display: inline-flex; }
+}
 .chat-diff-tree-row { position: relative; }
 .chat-diff-tree-row:hover > .chat-diff-tree-dir, .chat-diff-tree-row:hover > .chat-diff-tree-file { background: var(--fill-hover); color: var(--cc-text); }
 .chat-diff-tree-more { position: absolute; right: var(--sp-4); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; opacity: 0; }

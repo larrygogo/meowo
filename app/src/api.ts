@@ -634,8 +634,28 @@ export function getGitFileDiff(cwd: string, path: string, untracked: boolean, ba
 }
 
 /// 「更改」面板的仓库清单（多仓库 + 已提交未合并），见 git.rs 的 git_changes_overview。
-export function getGitChangesOverview(cwd: string, touched: readonly string[]): Promise<RepoChangesDto[]> {
-  return invoke("git_changes_overview", { cwd, touched });
+/// commands：会话最近的命令文本。agent 常常 cd 进 worktree 用命令干活，编辑工具一次没碰过它，
+/// 后端据命令里出现的路径把这些 worktree 也列出来（用户要求 2026-11-09）。为空不传（老桥不认）。
+export function getGitChangesOverview(cwd: string, touched: readonly string[], commands: readonly string[] = []): Promise<RepoChangesDto[]> {
+  return invoke("git_changes_overview", { cwd, touched, ...(commands.length > 0 ? { commands } : {}) });
+}
+
+/// 「更改」面板的 git 写操作（用户要求 2026-11-09，对照 VS Code 源代码管理）。paths 相对仓库根，
+/// 必须在当前改动清单里。sessionCwd 规则同 getGitFileDiff。
+const withSession = (sessionCwd?: string | null) => (sessionCwd ? { sessionCwd } : {});
+export function gitStage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
+  return invoke("git_stage", { cwd, paths, ...withSession(sessionCwd) });
+}
+export function gitUnstage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
+  return invoke("git_unstage", { cwd, paths, ...withSession(sessionCwd) });
+}
+/// 放弃工作区改动：已跟踪的恢复到暂存区内容，未跟踪的删除。调用方负责先确认。
+export function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
+  return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) });
+}
+/// all：没有暂存的更改时提交全部（含未跟踪）。返回新提交的短 SHA。
+export function gitCommit(cwd: string, message: string, all: boolean, sessionCwd?: string | null): Promise<string> {
+  return invoke("git_commit", { cwd, message, all, ...withSession(sessionCwd) });
 }
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
