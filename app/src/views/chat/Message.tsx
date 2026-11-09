@@ -572,8 +572,7 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
     const { body, images } = splitUserText(parts.text);
     if (parts.local) {
       // 只剩免责声明（写给模型的 caveat）的那条：对人零信息量，整条不渲染。
-      if (!parts.commands.length && !parts.stdout.length && !parts.notifications.length
-        && !parts.crossMessages.length && !parts.records.length && !parts.text) return null;
+      if (!parts.commands.length && !parts.blocks.length && !parts.crossMessages.length && !parts.text) return null;
       return (
         <article className="chat-message is-user is-command" data-msg-id={item.id}>
           {parts.commands.map((command, index) => (
@@ -593,40 +592,27 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
           ))}
           {images.length > 0 && <ImageRow images={images} />}
           {body && <div className="chat-text">{body}</div>}
-          {/* 命令输出默认收起：/clear 之类没什么可看，/cost、/status 却能刷一屏。 */}
-          {parts.stdout.map((out, index) => (
-            <RememberedDetails className="chat-tool chat-command-out" memoryKey={`cmd:${item.id}:${index}`} key={index}>
-              <summary>
-                <span className="chat-tool-name">{t.chat.commandOutput}</span>
-                <span className="chat-tool-summary">{stripAnsi(out)}</span>
-                <span className="chat-tool-chevron">›</span>
-              </summary>
-              <pre>{stripAnsi(out)}</pre>
-            </RememberedDetails>
-          ))}
-          {/* 不认识的机器记录（兜底）：默认收起，摘要写标签名，展开看原文。 */}
-          {parts.records.map((record, index) => (
-            <RememberedDetails className="chat-tool chat-command-out" memoryKey={`record:${item.id}:${index}`} key={`record-${index}`}>
-              <summary>
-                <span className="chat-tool-name">{t.chat.systemRecord}</span>
-                <span className="chat-tool-summary">{record.tag}</span>
-                <span className="chat-tool-chevron">›</span>
-              </summary>
-              <pre>{record.body}</pre>
-            </RememberedDetails>
-          ))}
-          {/* 后台任务通知默认收起：整段是 XML+JSON 的机器记录，一行摘要（通知自带的
-              <summary>，如「Agent "/code-review" finished」）足够定位，想看细节再展开。 */}
-          {parts.notifications.map((note, index) => (
-            <RememberedDetails className="chat-tool chat-command-out" memoryKey={`notify:${item.id}:${index}`} key={`notify-${index}`}>
-              <summary>
-                <span className="chat-tool-name">{t.chat.taskNotification}</span>
-                <span className="chat-tool-summary">{/<summary>([\s\S]*?)<\/summary>/.exec(note)?.[1]?.trim() || note}</span>
-                <span className="chat-tool-chevron">›</span>
-              </summary>
-              <pre>{note}</pre>
-            </RememberedDetails>
-          ))}
+          {/* 机器记录一律默认收起、按原文顺序排（命令输出 /cost、/status 能刷一屏；通知是整段
+              XML+JSON；兜底的系统记录、hook 反馈同理），一行摘要足够定位，想看细节再展开。
+              记忆键按类别各自计数，沿用旧前缀，用户此前展开过的不因改版全部收回。 */}
+          {(() => {
+            const seen: Record<string, number> = {};
+            return parts.blocks.map((block) => {
+              const n = (seen[block.kind] = (seen[block.kind] ?? -1) + 1);
+              const prefix = { stdout: "cmd", notification: "notify", record: "record", hook: "hook" }[block.kind];
+              const label = { stdout: t.chat.commandOutput, notification: t.chat.taskNotification, record: t.chat.systemRecord, hook: t.chat.hookFeedback }[block.kind];
+              return (
+                <RememberedDetails className="chat-tool chat-command-out" memoryKey={`${prefix}:${item.id}:${n}`} key={`${prefix}-${n}`}>
+                  <summary>
+                    <span className="chat-tool-name">{label}</span>
+                    <span className="chat-tool-summary">{stripAnsi(block.summary)}</span>
+                    <span className="chat-tool-chevron">›</span>
+                  </summary>
+                  <pre>{stripAnsi(block.body)}</pre>
+                </RememberedDetails>
+              );
+            });
+          })()}
         </article>
       );
     }

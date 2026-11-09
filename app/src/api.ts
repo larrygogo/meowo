@@ -933,7 +933,7 @@ export type Settings = {
   workspace_order: string[];
   /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
   keep_awake_while_running: boolean;
-  /** 有 Lead 关卡在等你拍板时也防止休眠（默认开）。 */
+  /** 有 Lead 关卡待拍板时也防止休眠（默认开）。 */
   keep_awake_for_lead_gate: boolean;
   /** 系统通知带提示音（关掉只静音，通知照弹）。 */
   notification_sound: boolean;

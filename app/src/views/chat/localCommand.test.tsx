@@ -9,6 +9,9 @@ function userText(text: string): ChatItem {
   return { type: "user_text", id: "u1", timestamp: null, text } as unknown as ChatItem;
 }
 
+/// 本机 transcript 原样（972badab…jsonl）：Stop hook 拦截写成「空壳通知 + system-reminder」一对。
+const STOP_HOOK = '<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>\n<system-reminder>\nStop hook blocking error from command "Stop": [lead] leader 已在 Meowo 里回答关卡 A：选择 confirm。\n读 gate.json 确认。\n</system-reminder>';
+
 describe("parseUserText", () => {
   /// 输入框里 `! 命令` 的落盘形态（实拍）：命令一条、输出一条，都是 user 消息。
   it("`!` 命令：命令成徽章，stdout / stderr 成输出，空的 stderr 不收", () => {
@@ -160,6 +163,46 @@ describe("parseUserText", () => {
     expect(parts.notifications[0]).toContain('Agent "/code-review" finished');
     expect(parts.text).toBe("");
   });
+
+  it("Stop hook 的空壳通知与 system-reminder 合成一个 hook 块，摘要是原因首行", () => {
+    const parts = parseUserText(STOP_HOOK);
+    expect(parts.blocks).toHaveLength(1);
+    expect(parts.blocks[0].kind).toBe("hook");
+    expect(parts.blocks[0].summary).toBe("[lead] leader 已在 Meowo 里回答关卡 A：选择 confirm。");
+    expect(parts.blocks[0].body).toContain("读 gate.json 确认。");
+    // 只出现一半也认：单独的 blocking error（SessionStart 等）、单独的空壳通知。
+    const lone = parseUserText('<system-reminder>SessionStart hook blocking error from command "x": 配置缺失</system-reminder>');
+    expect(lone.blocks).toEqual([{ kind: "hook", summary: "配置缺失", body: 'SessionStart hook blocking error from command "x": 配置缺失' }]);
+    // 同步拦截形态：后端把 isMeta 的「Stop hook feedback:\n原因」包成 <hook-feedback> 送来（IMG_2095）。
+    const plain = parseUserText("<hook-feedback>\nStop hook feedback:\n[lead] 任务 x 还在实施阶段\n#1 a\n</hook-feedback>");
+    expect(plain.text).toBe("");
+    expect(plain.blocks).toEqual([{ kind: "hook", summary: "[lead] 任务 x 还在实施阶段", body: "Stop hook feedback:\n[lead] 任务 x 还在实施阶段\n#1 a" }]);
+    // exit 2 形态：原因前带「[命令]: 」，摘要要剥掉它（本机 rewake 样本，做空审查第 1 条）。
+    const exit2 = parseUserText('<hook-feedback>\nStop hook feedback:\n[bash "C:/x/rewake/hook.sh"]: LEAD GATE ANSWER: PURPLE-42\n</hook-feedback>');
+    expect(exit2.blocks[0]).toMatchObject({ kind: "hook", summary: "LEAD GATE ANSWER: PURPLE-42" });
+    // 事件名带匹配器、命令名带引号：仍合成一行（做空审查第 3 条）。
+    const odd = parseUserText('<task-notification><summary>PreToolUse:Bash hook feedback</summary></task-notification><system-reminder>PreToolUse:Bash hook blocking error from command "node "C:\\x.js"": 禁止 rm</system-reminder>');
+    expect(odd.blocks).toEqual([{ kind: "hook", summary: "禁止 rm", body: 'PreToolUse:Bash hook blocking error from command "node "C:\\x.js"": 禁止 rm' }]);
+    const shell = parseUserText("<task-notification><summary>Stop hook feedback</summary></task-notification>");
+    expect(shell.blocks).toEqual([{ kind: "hook", summary: "Stop hook feedback", body: "Stop hook feedback" }]);
+  });
+
+  it("blocks 按原文顺序排列，与摘取趟次无关", () => {
+    const forward = parseUserText("<task-notification><task-id>t</task-id><summary>A done</summary></task-notification><system-reminder>after</system-reminder>");
+    expect(forward.blocks.map((b) => b.kind)).toEqual(["notification", "record"]);
+    const backward = parseUserText("<system-reminder>before</system-reminder><task-notification><task-id>t</task-id><summary>A done</summary></task-notification>");
+    expect(backward.blocks.map((b) => b.kind)).toEqual(["record", "notification"]);
+    // 同文重复的两段各占各的位置，不被合并或丢掉。
+    const twice = parseUserText("<command-name>/x</command-name><local-command-stdout>same</local-command-stdout><system-reminder>mid</system-reminder><local-command-stdout>same</local-command-stdout>");
+    expect(twice.blocks.map((b) => b.kind)).toEqual(["stdout", "record", "stdout"]);
+  });
+
+  it("系统记录摘要取正文首行；正文只有嵌套标签时写成「标签: 内容」", () => {
+    expect(parseUserText("<system-reminder>\n\n第一行\n第二行</system-reminder>").blocks[0].summary).toBe("第一行");
+    // 本机 transcript 扫到 9 条这种形态。
+    expect(parseUserText("<system-reminder>\n<tools-used-before-summary>Bash</tools-used-before-summary>\n</system-reminder>").blocks[0].summary)
+      .toBe("tools-used-before-summary: Bash");
+  });
 });
 
 describe("Message 渲染本地命令", () => {
@@ -206,8 +249,26 @@ describe("Message 渲染本地命令", () => {
     render(<Message item={userText("<user-memory-input>记住：用中文回复</user-memory-input>")} />);
     const details = screen.getByText("系统记录").closest("details");
     expect(details?.hasAttribute("open")).toBe(false);
-    expect(screen.getByText("user-memory-input")).toBeTruthy();
+    // 摘要是正文首行，不是标签名（只写 `system-reminder` 对人零信息量，实拍 IMG_2093）。
+    expect(details?.querySelector(".chat-tool-summary")?.textContent).toBe("记住：用中文回复");
     expect(document.querySelector(".chat-message.is-command")).toBeTruthy();
+  });
+
+  /// 实拍 IMG_2093：原文是「空壳通知 + system-reminder」一对，曾渲染成反序的两行，原因藏在第二行。
+  it("Stop hook 拦截只渲染一行「Hook 反馈」，摘要直接是原因", () => {
+    render(<Message item={userText(STOP_HOOK)} />);
+    const rows = document.querySelectorAll(".chat-command-out");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector(".chat-tool-name")?.textContent).toBe("Hook 反馈");
+    expect(rows[0].querySelector(".chat-tool-summary")?.textContent).toBe("[lead] leader 已在 Meowo 里回答关卡 A：选择 confirm。");
+    expect(screen.queryByText("后台任务通知")).toBeNull();
+    expect(screen.queryByText("系统记录")).toBeNull();
+  });
+
+  it("同一条消息里的多行按原文顺序渲染", () => {
+    render(<Message item={userText('<task-notification><task-id>t1</task-id><summary>Agent "x" finished</summary></task-notification>\n<system-reminder>\n记得收尾\n</system-reminder>')} />);
+    const names = [...document.querySelectorAll(".chat-command-out .chat-tool-name")].map((el) => el.textContent);
+    expect(names).toEqual(["后台任务通知", "系统记录"]);
   });
 
   it("只剩免责声明的那条整条不渲染", () => {

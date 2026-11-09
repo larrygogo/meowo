@@ -5213,6 +5213,15 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-crossmsg-more:hover { color: var(--cc-text); }
 .chat-command-out summary { min-height: calc(30px * var(--cc-ui)); padding: 0 var(--sp-10); }
 .chat-command-out pre { padding: var(--sp-8) var(--sp-10); }
+/* 标签列等宽：一条消息里常并排几行（通知 + 系统记录、多段命令输出），标签宽度随字数走时
+   摘要列起点参差（实拍 IMG_2093：「系统记录」4 字、「后台任务通知」6 字，摘要错开两个字）。
+   宽度取最长的中文标签；英文标签更长，按语言单独给。 */
+.chat-command-out .chat-tool-name { min-width: 6em; }
+:root:lang(en) .chat-command-out .chat-tool-name { min-width: 8.5em; }
+/* 单行：通用 `.chat-tool > summary` 允许换行，摘要一长就整段掉到第二行、箭头再掉到第三行
+   （手机宽度实测，与工具行「chevron 被挤成单独一行」同一个坑）。摘要按剩余宽度截断。 */
+.chat-command-out > summary { flex-wrap: nowrap; }
+.chat-command-out .chat-tool-summary { flex: 1 1 0%; }
 .chat-tool { position: relative; margin: var(--sp-1) var(--sp-6); border: 0; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; }
 .chat-tool summary { min-height: calc(38px * var(--cc-ui)); padding: 0 var(--sp-11) 0 var(--sp-14); display: flex; align-items: center; gap: var(--sp-9); cursor: pointer; font-size: var(--text-base); list-style: none; border-radius: var(--radius-md); }
 .chat-tool summary::-webkit-details-marker { display: none; }
@@ -5745,6 +5754,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .lead-check.is-pass .lead-check-mark { color: var(--cc-ok-vivid); }
 .lead-check-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .lead-check.is-open .lead-check-text { display: block; -webkit-line-clamp: unset; }
+/* 卡片正文区 .chat-approval-copy 是限高（44vh）的纵向 flex 列，子项默认可收缩：摘要带
+   overflow:hidden，min-height 退化成 0，被压成半行；选项和意见框也跟着被裁（实拍 IMG_2094，
+   手机上展开后仍只剩一行）。子项不许收缩，超高时交给正文区自己滚动。 */
+.lead-gate-card .chat-approval-copy > * { flex-shrink: 0; }
+/* 正文区高度上限放到整张卡的上限（70vh）为止：44vh 在手机上连收起态的「摘要 + 三个选项 +
+   意见框」都放不下，第二个选项落在滚动区底边外，看着像被裁掉。copy 自带 min-height:0，
+   卡片到顶时由它收缩并滚动，提交按钮始终可见。 */
+.lead-gate-card .chat-approval-copy { max-height: none; }
 .lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
 .lead-gate-summary.is-expanded { max-height: none; }
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */

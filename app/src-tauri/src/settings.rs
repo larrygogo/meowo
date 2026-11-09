@@ -427,7 +427,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "notify.pending.approval") => "需要你批准工具调用",
         (_, "notify.pending.question") => "会话在问你问题",
         (_, "notify.pending.plan") => "计划待批准",
-        (_, "notify.pending.gate") => "Lead 关卡等你拍板",
+        (_, "notify.pending.gate") => "Lead 关卡待拍板",
         (_, "notify.blocked") => "Agent 正在等待输入",
         (_, "notify.open") => "打开会话",
         (_, "notify.pushTest") => "手机推送已接通",
