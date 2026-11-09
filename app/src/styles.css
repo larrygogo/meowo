@@ -5015,7 +5015,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-status { width: 12px; text-align: center; font-size: var(--text-xs); font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; color: var(--cc-text-dim); }
 .scm-status.is-m, .scm-status.is-t { color: var(--cc-warn-vivid); }
 .scm-status.is-a, .scm-status.is-u { color: var(--cc-ok-vivid); }
-.scm-status.is-d { color: var(--cc-err-vivid); }
+.scm-status.is-d, .scm-status.is-conflict { color: var(--cc-err-vivid); }
 .scm-empty { padding: var(--sp-6) var(--sp-12); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .scm-empty.is-clean { padding: var(--sp-16) var(--sp-12); text-align: center; }
 

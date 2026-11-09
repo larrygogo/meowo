@@ -156,7 +156,42 @@ describe("做空第 1 轮", () => {
     expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.change(container.querySelector(".chat-diff-search")!, { target: { value: "a.ts" } });
     expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("列表开着筛选，不能提交全部。先暂存要提交的文件，或清除筛选")).toBeTruthy();
+    expect(screen.getByText("筛选藏起了会被一起提交的文件。清除筛选后再提交")).toBeTruthy();
+  });
+
+  /// 做空第 2 轮：筛选下点「提交」（有暂存），被筛掉的暂存文件也进了提交。
+  it("筛选藏起了暂存文件时「提交」也禁用；没藏的时候可以提交", () => {
+    renderScm([repo({ summary: summary([file("agent.ts", "M", null), file("secret.env", "A", null)]) })], { touchedPaths: ["C:/w/meowo/agent.ts", "C:/w/meowo/secret.env"], turnTouchedPaths: ["C:/w/meowo/agent.ts"] });
+    fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: /本会话/ }));
+    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /本轮/ }));
+    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /// 做空第 2 轮：筛选按钮没了（touchedPaths 变空）时还停在「本会话」，面板一片空又清不掉筛选。
+  it("筛选按钮消失时退回「全部」", () => {
+    const props = { cwd: "C:/w/meowo", selectedRoot: null, onSelectRoot: () => {}, onChanged: () => {}, comments: [], turnTouchedPaths: [],
+      onAddComment: () => {}, onRemoveComment: () => {}, escOverrideRef: { current: null } };
+    const repos = [repo({ summary: summary([file("a.ts", null, "M"), file("b.ts", null, "M")]) })];
+    const { rerender } = render(<SourceControl {...props} repos={repos} touchedPaths={["C:/w/meowo/a.ts"]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本会话/ }));
+    expect(screen.queryByText("b.ts")).toBeNull();
+    rerender(<SourceControl {...props} repos={repos} touchedPaths={[]} />);
+    expect(screen.getByText("b.ts")).toBeTruthy();
+  });
+
+  it("冲突文件显示 !，没有暂存 / 放弃按钮，整组操作跳过它；「提交全部」把显示的文件交给后端", async () => {
+    renderScm([repo({ summary: summary([file("c.txt", null, "!"), file("a.ts", null, "M")]) })]);
+    const row = screen.getByText("c.txt").closest(".scm-row") as HTMLElement;
+    expect(row.querySelector(".scm-status")?.textContent).toBe("!");
+    expect(within(row).queryByRole("button", { name: "暂存更改" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "放弃更改" })).toBeNull();
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "全部暂存" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_stage", { cwd: "C:/w/meowo", paths: ["a.ts"] }));
+    fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: /^提交/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_commit", { cwd: "C:/w/meowo", message: "x", all: true, paths: ["c.txt", "a.ts"] }));
   });
 
   /// 确认框开着时选中的 worktree 从列表消失：此前确认后放弃的是主仓库的同名文件。
@@ -172,6 +207,8 @@ describe("做空第 1 轮", () => {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(invoke).not.toHaveBeenCalledWith("git_discard", expect.anything());
+    // 照实说没执行（做空第 2 轮：此前确认框关掉就什么都没有了）。
+    expect(screen.getByRole("alert").textContent).toBe("meowo-wt 已不在列表里，没有放弃任何文件");
   });
 
   it("有冲突时提交报 git/conflict 的文案", async () => {
@@ -196,7 +233,7 @@ describe("提交框", () => {
     fireEvent.change(input, { target: { value: "修好了" } });
     expect((button() as HTMLButtonElement).disabled).toBe(false);
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_commit", { cwd: "C:/w/meowo", message: "修好了", all: true }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_commit", { cwd: "C:/w/meowo", message: "修好了", all: true, paths: ["a.ts"] }));
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
     expect(screen.getByText("已提交 abc1234")).toBeTruthy();
     rerender(

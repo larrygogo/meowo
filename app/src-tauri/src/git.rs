@@ -808,15 +808,26 @@ pub(crate) async fn git_discard(cwd: String, paths: Vec<String>) -> Result<(), S
 /// 提交暂存的改动，返回新提交的短 SHA。`all` = 先 `git add -A`（一个都没暂存时的「提交全部」，
 /// 照 VS Code 的默认做法，含未跟踪文件）。
 #[tauri::command]
-pub(crate) async fn git_commit(cwd: String, message: String, all: bool) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || commit_blocking(&cwd, &message, all, &[]))
+///
+/// `paths`：「提交全部」时界面上显示的那些文件。带了就只暂存它们（还得都在此刻的改动清单里），
+/// 列表是几秒前轮询的，agent 正在写的、还没显示出来的文件不跟着进提交（做空第 2 轮）。不带 = 此刻全部。
+pub(crate) async fn git_commit(cwd: String, message: String, all: bool, paths: Option<Vec<String>>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || commit_blocking(&cwd, &message, all, paths.as_deref(), &[]))
         .await
         .map_err(|e| e.to_string())?
 }
 
+/// 冲突文件不许暂存 / 放弃：要先在终端或编辑器里解决（见 split_porcelain_xy 的 "!"）。
+fn refuse_conflicts(files: &[GitChangedFileDto]) -> Result<(), String> {
+    if files.iter().any(|f| f.worktree_status.as_deref() == Some("!")) {
+        return Err("git/conflict".into());
+    }
+    Ok(())
+}
+
 fn stage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
-    listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
+    refuse_conflicts(&listed_changes(dir, paths, |f| f.worktree_status.is_some())?)?;
     let result = run_pathspec_batches(dir, &["add"], paths);
     invalidate_caches();
     result
@@ -837,6 +848,7 @@ fn unstage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
 fn discard_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     let files = listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
+    refuse_conflicts(&files)?;
     let (untracked, tracked): (Vec<_>, Vec<_>) =
         files.iter().partition(|f| f.worktree_status.as_deref() == Some("U"));
     let tracked: Vec<String> = tracked.iter().map(|f| f.path.clone()).collect();
@@ -862,7 +874,7 @@ fn discard_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
     result
 }
 
-fn commit_blocking(cwd: &str, message: &str, all: bool, env: GitEnv) -> Result<String, String> {
+fn commit_blocking(cwd: &str, message: &str, all: bool, shown: Option<&[String]>, env: GitEnv) -> Result<String, String> {
     let dir = existing_dir(cwd)?;
     let message = message.trim();
     if message.is_empty() {
@@ -884,11 +896,17 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, env: GitEnv) -> Result<S
         if all {
             // 只暂存列表里显示的那些文件，不用 `add -A`：未跟踪的嵌套仓库（.claude/worktrees/x）
             // 在列表里不显示，`add -A` 却会把它当 gitlink 提交进去（做空复现）。范围与界面一致。
-            let status = run(&["status", "--porcelain", "-z", "--no-renames", "-uall"], None)?;
-            if !status.status.success() {
-                return Err(classify_git_failure(&status));
-            }
-            let files = parse_porcelain_z(&status.stdout);
+            let files = match shown {
+                Some(shown) => listed_changes(dir, shown, |f| f.worktree_status.is_some())?,
+                None => {
+                    let status = run(&["status", "--porcelain", "-z", "--no-renames", "-uall"], None)?;
+                    if !status.status.success() {
+                        return Err(classify_git_failure(&status));
+                    }
+                    parse_porcelain_z(&status.stdout)
+                }
+            };
+            refuse_conflicts(&files)?;
             let paths: Vec<String> = files.iter().filter(|f| f.worktree_status.is_some()).map(|f| f.path.clone()).collect();
             staged_by_us = files
                 .iter()
@@ -1104,7 +1122,10 @@ fn split_porcelain_xy(x: u8, y: u8) -> (Option<String>, Option<String>) {
     }
     let unmerged = x == b'U' || y == b'U' || (x == b'A' && y == b'A') || (x == b'D' && y == b'D');
     if unmerged {
-        return (None, Some("M".into()));
+        // 冲突单独标 "!"（VS Code 同样单列）：标成 M 时用户分不出来，点「暂存」= git 当它已解决，
+        // 带冲突标记的内容随后被提交（做空第 2 轮复现）。不能用 porcelain 的 U，会和未跟踪撞字母、
+        // 放弃时被当未跟踪文件删掉。暂存 / 放弃对它一律拒绝（git/conflict）。
+        return (None, Some("!".into()));
     }
     let letter = |b: u8| (b != b' ' && b != b'?').then(|| (b as char).to_string());
     (letter(x), letter(y))
@@ -1476,7 +1497,7 @@ mod tests {
     fn commit_isolated(sb: &Sandbox, dir: &Path, message: &str, all: bool, identity: bool) -> Result<String, String> {
         let env = isolated_env(sb, identity);
         let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
-        commit_blocking(&s(dir), message, all, &env)
+        commit_blocking(&s(dir), message, all, None, &env)
     }
 
     fn statuses(dir: &Path) -> Vec<(String, Option<String>, Option<String>)> {
@@ -1509,7 +1530,7 @@ mod tests {
                 row("added.rs", "A", Some("A"), None),
                 row("gone.rs", "D", None, Some("D")),
                 // 冲突文件不能记成未跟踪的 "U"（放弃会按未跟踪删文件）。
-                row("conflict.rs", "U", None, Some("M")),
+                row("conflict.rs", "U", None, Some("!")),
             ]
         );
     }
@@ -1657,6 +1678,29 @@ mod tests {
         assert!(!git(&["merge", "-q", "other"]).status.success());
         assert_eq!(commit_isolated(&sb, &repo, "x", true, true).unwrap_err(), "git/conflict");
         assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/conflict");
+        // 做空第 2 轮复现：先点「暂存」，git 就当冲突已解决，之后的提交检查拦不住。暂存 / 放弃都要拒。
+        assert_eq!(statuses(&repo), vec![st("README.md", None, Some("!"))]);
+        assert_eq!(stage_blocking(&s(&repo), &["README.md".into()]).unwrap_err(), "git/conflict");
+        assert_eq!(discard_blocking(&s(&repo), &["README.md".into()]).unwrap_err(), "git/conflict");
+        assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/conflict");
+    }
+
+    /// 做空第 2 轮：「提交全部」按界面上显示的文件收口，列表外（agent 刚写出、还没轮询到）的不进提交。
+    #[test]
+    fn commit_all_only_commits_shown_files() {
+        let sb = Sandbox::new("shown");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        std::fs::write(repo.join("late.log"), "x\n").unwrap();
+        let env = isolated_env(&sb, true);
+        let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        commit_blocking(&s(&repo), "shown", true, Some(&["README.md".to_string()]), &env).unwrap();
+        assert_eq!(statuses(&repo), vec![st("late.log", None, Some("U"))]);
+        // 列表里的文件已经不在改动清单里（被别人提交了）：拒绝，前端刷新后再来。
+        assert_eq!(
+            commit_blocking(&s(&repo), "x", true, Some(&["README.md".to_string()]), &env).unwrap_err(),
+            "git/not_in_changes"
+        );
     }
 
     /// 做空复现：未跟踪的嵌套仓库（Claude Code 的 .claude/worktrees/x）列表里不显示，

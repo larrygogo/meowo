@@ -653,9 +653,10 @@ export function gitUnstage(cwd: string, paths: readonly string[], sessionCwd?: s
 export function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
   return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) });
 }
-/// all：没有暂存的更改时提交全部（含未跟踪）。返回新提交的短 SHA。
-export function gitCommit(cwd: string, message: string, all: boolean, sessionCwd?: string | null): Promise<string> {
-  return invoke("git_commit", { cwd, message, all, ...withSession(sessionCwd) });
+/// all：没有暂存的更改时提交全部（含未跟踪）。paths：「提交全部」时界面上显示的文件，后端只提交它们
+///（列表外、agent 刚写出来的不跟着进）。返回新提交的短 SHA。
+export function gitCommit(cwd: string, message: string, all: boolean, sessionCwd?: string | null, paths?: readonly string[]): Promise<string> {
+  return invoke("git_commit", { cwd, message, all, ...(all && paths ? { paths } : {}), ...withSession(sessionCwd) });
 }
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */

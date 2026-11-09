@@ -884,6 +884,8 @@ bridged_args!(GitCommitArgs {
     message: String,
     all: bool,
     #[serde(default)]
+    paths: Option<Vec<String>>,
+    #[serde(default)]
     session_cwd: Option<String>
 });
 
@@ -1282,7 +1284,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::git::git_commit(a.cwd, a.message, a.all).await)
+            reply(crate::git::git_commit(a.cwd, a.message, a.all, a.paths).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -2296,7 +2298,7 @@ mod tests {
             )
             .map(|_| ()),
             "git_commit" => parse::<GitCommitArgs>(
-                br#"{"cwd":"C:/work-wt","message":"feat: x\n\nbody","all":true,"sessionCwd":"C:/work"}"#,
+                br#"{"cwd":"C:/work-wt","message":"feat: x\n\nbody","all":true,"paths":["a.ts"],"sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）

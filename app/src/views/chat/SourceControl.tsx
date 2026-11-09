@@ -80,7 +80,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const repo = pickRepo(repos, selectedRoot);
   const [open, setOpen] = useState<{ root: string; kind: GroupKind; path: string } | null>(null);
   const [search, setSearch] = useState("");
-  const [scope, setScope] = useState<"all" | "session" | "turn">("all");
+  const [scopeChoice, setScope] = useState<"all" | "session" | "turn">("all");
   const [layout, setLayoutState] = useState<"list" | "tree">(readDiffLayout);
   const setLayout = (next: "list" | "tree") => { setLayoutState(next); saveDiffLayout(next); };
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set(["committed"]));
@@ -106,6 +106,10 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const committed: Row[] = repo.base ? repo.committed.map((file) => ({ file, letter: file.status })) : [];
 
   const repoComments = comments.filter((comment) => sameRoot(comment.dir, root));
+  // 筛选按钮只在认得出本会话改了什么时出现；按钮没了（/clear 换代、编辑记录滑出加载窗口）就退回「全部」，
+  // 不然列表一片空、提交被禁、又找不到清除筛选的入口（做空第 2 轮复现）。
+  const hasSession = touchedPaths.length > 0;
+  const scope = hasSession ? scopeChoice : "all";
 
   if (open && sameRoot(open.root, root)) {
     const summary = open.kind === "committed"
@@ -154,7 +158,10 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     setConfirmDiscard(null);
     if (!pending) return;
     // 仓库已经不在列表里（worktree 被删、被挤出上限）：作废这次确认，不拿别的仓库顶上。
-    if (!repos.some((item) => sameRoot(item.root, pending.root))) return;
+    if (!repos.some((item) => sameRoot(item.root, pending.root))) {
+      setError(t.chat.scmRepoGone(pending.name));
+      return;
+    }
     const target = pending.root;
     void run(() => gitDiscard(target, pending.files.map((file) => file.path), target === cwd ? null : cwd));
   };
@@ -163,12 +170,17 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const commitAll = staged.length === 0;
   // 开着搜索或「本会话 / 本轮」筛选时不许「提交全部」：列表只露出一部分，全部提交会带上看不见的文件
   //（做空复现：筛到只剩 agent 改的那个，隐藏的 secret.env 一起进了提交）。先暂存要提交的，或清掉筛选。
-  const filtering = !!search.trim() || scope !== "all";
-  const commitBlockedByFilter = commitAll && filtering;
+  // 「提交」提交整个暂存区，「提交全部」提交整个「更改」组：筛选藏起了其中任何一个都不许提交（做空第 2 轮：
+  // 只拦了「提交全部」，筛选下点「提交」把被筛掉的暂存文件也提交了）。
+  const query0 = search.trim().toLowerCase();
+  const visibleNow = (rows: readonly Row[]) => rows.filter((row) =>
+    (!query0 || row.file.path.toLowerCase().includes(query0))
+    && (scope === "all" || touchedInRoot(scope === "turn" ? turnTouchedPaths : touchedPaths, root, row.file.path)));
+  const commitBlockedByFilter = commitAll ? visibleNow(work).length < work.length : visibleNow(staged).length < staged.length;
   const canCommit = !busy && !!message.trim() && (staged.length > 0 || work.length > 0) && !commitBlockedByFilter;
   const commit = () => {
     if (!canCommit) return;
-    void run(() => gitCommit(root, message, commitAll, sessionCwd), (sha) => {
+    void run(() => gitCommit(root, message, commitAll, sessionCwd, commitAll ? work.map((row) => row.file.path) : undefined), (sha) => {
       setMessage("");
       setNotice(t.chat.scmCommitted1(String(sha)));
     });
@@ -194,6 +206,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const rowActions = (kind: GroupKind, row: Row) => {
     if (kind === "committed") return null;
     const deleted = row.letter === "D";
+    // 冲突文件（"!"）不给暂存 / 放弃：暂存等于告诉 git 已解决，后端也会拒（git/conflict）。
+    const conflict = row.letter === "!";
     return (
       <span className="scm-row-actions">
         {!remoteUi() && !deleted && (
@@ -202,13 +216,13 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             <OpenIcon />
           </button>
         )}
-        {kind === "work" && (
+        {kind === "work" && !conflict && (
           <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscard} data-tip={t.chat.scmDiscard} disabled={busy}
             onClick={() => askDiscard([row.file])}>
             <DiscardIcon />
           </button>
         )}
-        {kind === "work"
+        {conflict ? null : kind === "work"
           ? <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStage} data-tip={t.chat.scmStage} disabled={busy} onClick={() => void stage([row])}><PlusIcon /></button>
           : <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstage} data-tip={t.chat.scmUnstage} disabled={busy} onClick={() => void unstage([row])}><MinusIcon /></button>}
       </span>
@@ -236,7 +250,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         )}
         <span className="scm-letters">
           <LineCounts file={row.file} />
-          <span className={`scm-status is-${row.letter.toLowerCase()}`} data-tip={t.chat.diffStatusName[row.letter] ?? row.letter}>{row.letter}</span>
+          <span className={`scm-status is-${row.letter === "!" ? "conflict" : row.letter.toLowerCase()}`} data-tip={t.chat.diffStatusName[row.letter] ?? row.letter}>{row.letter}</span>
         </span>
       </div>
     );
@@ -288,7 +302,6 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   };
 
   const nothing = staged.length === 0 && work.length === 0 && committed.length === 0;
-  const hasSession = touchedPaths.length > 0;
 
   return (
     <div className="scm" data-testid="source-control">
@@ -330,13 +343,13 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           }}
         />
         <button type="button" className="scm-commit-btn" disabled={!canCommit}
-          data-tip={commitBlockedByFilter ? t.chat.scmCommitAllFiltered : commitAll ? t.chat.scmCommitAllTip : undefined} onClick={commit}>
+          data-tip={commitBlockedByFilter ? t.chat.scmCommitFiltered : commitAll ? t.chat.scmCommitAllTip : undefined} onClick={commit}>
           <CheckIcon />
           {commitAll ? t.chat.scmCommitAll : t.chat.scmCommit}
         </button>
         {error && <div className="scm-error" role="alert">{error}</div>}
         {notice && <div className="scm-notice" role="status">{notice}</div>}
-        {commitBlockedByFilter && !!message.trim() && <div className="scm-notice">{t.chat.scmCommitAllFiltered}</div>}
+        {commitBlockedByFilter && !!message.trim() && <div className="scm-notice">{t.chat.scmCommitFiltered}</div>}
       </div>
 
       <div className="scm-tools">
@@ -378,8 +391,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstageAll} data-tip={t.chat.scmUnstageAll} disabled={busy} onClick={() => void unstage(shown)}><MinusIcon /></button>
         ))}
         {group("work", t.chat.scmChanges, work, (shown) => <>
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscardAll} data-tip={t.chat.scmDiscardAll} disabled={busy} onClick={() => askDiscard(shown.map((row) => row.file))}><DiscardIcon /></button>
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={t.chat.scmStageAll} disabled={busy} onClick={() => void stage(shown)}><PlusIcon /></button>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscardAll} data-tip={t.chat.scmDiscardAll} disabled={busy} onClick={() => askDiscard(shown.filter((row) => row.letter !== "!").map((row) => row.file))}><DiscardIcon /></button>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={t.chat.scmStageAll} disabled={busy} onClick={() => void stage(shown.filter((row) => row.letter !== "!"))}><PlusIcon /></button>
         </>)}
         {group("committed", t.chat.scmCommitted(repo.baseLabel ?? "main"), committed, null)}
       </div>
