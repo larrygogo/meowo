@@ -4956,6 +4956,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tree-dir:hover, .chat-diff-tree-file:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 树行右端悬停出的「…」（和右键同一份菜单）：鼠标移到它上面时行底色别掉。 */
 /* 多仓库「更改」的分组（RepoChanges）：组标题「仓库名 分支」，段标题「未提交 / 已提交未合并」。 */
+/* 外层要接住面板的高度（单仓库的 ChangesView 直接铺在面板的纵向 flex 里），不然里面的
+   .chat-diff-tree 拿不到上限、overflow 不起作用，文件多了整列被面板裁掉滚不动（用户实拍 2026-11-09）。 */
+.chat-repos { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .chat-repo + .chat-repo { margin-top: var(--sp-12); }
 .chat-repo-head { display: flex; align-items: baseline; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); font-weight: 600; color: var(--cc-text); }
 .chat-repo-branch { font-weight: 400; font-size: var(--text-xs); color: var(--cc-text-dim); }

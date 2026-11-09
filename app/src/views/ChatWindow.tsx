@@ -967,7 +967,8 @@ export function ChatWindow() {
   const [repoChanges, setRepoChanges] = useState<RepoChangesDto[] | null>(null);
   const diffCwdRef = useRef(diffCwd);
   diffCwdRef.current = diffCwd;
-  useEffect(() => setRepoChanges(null), [diffCwd]);
+  // 换会话也清：同一个工作目录的两个会话改的仓库不同，不清会先露出上一个会话的仓库分组。
+  useEffect(() => setRepoChanges(null), [diffCwd, sessionId]);
   // 上一轮还没回来就不发下一轮：仓库多时一轮可能超过 5 秒，不拦会越积越多（做空复现）。
   // 在途时又要拉（会话又改了文件、面板刚打开）：记一笔，这一轮回来后用最新参数补拉一次。只挡不记
   // 的话，被取消的那轮结果作废、新的又被挡掉，就再也不拉了（做空复现：入口因此又消失）。
@@ -1768,6 +1769,11 @@ export function ChatWindow() {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
     openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
   } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
+  // 新建会话页 / 会话管理页盖住主区时，右侧面板跟着让位（用户实拍 2026-11-09：新建页还挂着上一个
+  // 会话的「更改」）。只把可见性压成收起、不卸载：回到会话时终端、浏览器、打开的文件原样还在；
+  // 走 visible=false 而不是藏 DOM，面板里的浏览器是原生 webview，只有收起态才会把它藏掉。
+  const pageCovered = adminOpen || !!newSessionOpen;
+  const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
 
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
@@ -3980,7 +3986,7 @@ export function ChatWindow() {
           </div>
         </>
       )}
-      <div className={"chat-body" + (panelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
+      <div className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
       {/* 停靠侧栏 + 分栏柄：柄落在侧栏与主列的缝隙里，拖拽调宽（用户要求：侧栏可拖）。
           窄窗抽屉形态与收起态不渲染（柄在停靠布局里才有意义）。键盘同规：separator
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
@@ -5303,7 +5309,7 @@ export function ChatWindow() {
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
       {/* 会话信息栏：面板收起时露出来（同 Kimi Code）。够宽停靠，窄了从标题栏按钮弹浮层。 */}
-      {!remoteUi() && cwd && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
+      {!remoteUi() && cwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
         <SessionInfo
           mode={infoWide ? "docked" : "floating"}
           state={panelState}
@@ -5317,7 +5323,7 @@ export function ChatWindow() {
       {cwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div
-            className={"chat-diff-resizer" + (panelState.visible && !panelState.expanded ? "" : " is-hidden")}
+            className={"chat-diff-resizer" + (shownPanelState.visible && !panelState.expanded ? "" : " is-hidden")}
             role="separator"
             aria-orientation="vertical"
             aria-label={t.chat.diffResize}
@@ -5339,7 +5345,7 @@ export function ChatWindow() {
                 summary={gitSummary}
                 repos={repoChanges}
                 width={diffResize.width}
-                collapsed={!panelState.visible}
+                collapsed={!shownPanelState.visible}
                 maximized
                 onCollapse={panelActions.hide}
                 onToggleMaximize={panelActions.toggleExpanded}
@@ -5353,7 +5359,7 @@ export function ChatWindow() {
             )
             : (
               <SidePanel
-                state={panelState}
+                state={shownPanelState}
                 actions={panelActions}
                 shells={panel.shells}
                 panes={panel.panes}
