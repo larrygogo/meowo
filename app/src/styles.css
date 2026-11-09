@@ -5370,6 +5370,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-review-bar button.is-primary { border-color: transparent; background: var(--cc-text); color: var(--cc-window-bg); }
 .chat-review-bar button.is-primary:hover { background: color-mix(in srgb, var(--cc-text) 85%, var(--cc-window-bg)); }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }
+/* flex-basis 100% 是给对话窗输入框（横向换行）用的，让附件条独占一行。新建会话页的输入卡
+   是纵向排列，100% 就成了「高度占满整张卡」：附件条被撑高、× 浮在缩略图上方很远，
+   工具栏被挤出卡片压到「最近会话」上（2026-11-09 实拍）。 */
+.nsp-composer .chat-attachments { flex: none; }
 /* 与图片缩略图（76×56）同高同圆角：两种附件排在一行不再一高一矮、一方一扁。
    右侧 26px 内边距给悬浮 × 留位（× 统一悬浮右上角，见下方按钮规则）。 */
 /* 文件卡片统一定宽（长名省略），与图片缩略图同高同圆角。右侧 24px 给悬浮 × 留位。
@@ -5413,7 +5417,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-attachment.is-image { position: relative; width: auto; max-width: none; height: auto; padding: 0; border: 0; background: transparent; }
 /* 缩略图容器按钮：压过 `.chat-compose button` 的 accent 皮肤（同 slash-item / model-button
    的老坑）——否则被强制 38px 高 + 14px 内边距 + accent 底，图片被按钮裁没。 */
-.chat-compose .chat-image-thumb-btn { width: auto; height: auto; min-height: 0; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; overflow: hidden; cursor: zoom-in; }
+:is(.chat-compose, .nsp-composer) .chat-image-thumb-btn { width: auto; height: auto; min-height: 0; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; overflow: hidden; cursor: zoom-in; }
 .chat-attachment.is-image .chat-image-thumb { width: 76px; height: 56px; border-radius: var(--radius-md); box-shadow: none; }
 /* 工具行按钮统一 28px 高 + 常规小圆角（用户不要药丸/纯圆）：附件、模型、模式一排等高。 */
 .chat-compose .chat-attach-button { width: var(--icon-button-md); height: var(--icon-button-md); padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-text-dim); background: transparent; }
