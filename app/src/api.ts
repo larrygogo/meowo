@@ -1214,8 +1214,14 @@ export function newSession(cwd: string, provider: AgentId, options?: Record<stri
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
-export function recentCwds(limit: number): Promise<string[]> {
-  return invoke("recent_cwds", { limit });
+/// 从工作空间列表里移除（只是不显示；之后又在这里开会话会自动回来）。
+export function hideWorkspace(cwd: string): Promise<void> {
+  return invoke("hide_workspace", { cwd });
+}
+
+/// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。
+export function recentCwds(limit: number, includeHidden = false): Promise<string[]> {
+  return invoke("recent_cwds", { limit, ...(includeHidden ? { includeHidden } : {}) });
 }
 
 export type SwitchStarted = SwitchStartedDto;

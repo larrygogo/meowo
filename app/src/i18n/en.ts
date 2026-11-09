@@ -902,6 +902,8 @@ export const en: Dict = {
     crossMessageUnknown: "Another session",
     taskNotification: "Background task notification",
     changesUncommitted: "Uncommitted",
+    wsHide: "Remove from list",
+    wsHideTip: "Only hides it here. The folder and its sessions stay; it comes back when you start a new session in it",
     changesCommitted: (base: string) => `Committed, not merged · vs ${base}`,
     changesRepoClean: "No changes",
     systemRecord: "System record",

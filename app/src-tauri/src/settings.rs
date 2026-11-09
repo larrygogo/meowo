@@ -218,6 +218,10 @@ pub(crate) struct Settings {
     /// 提醒停留秒数（前端给 4 / 6 / 10 三档）。缺省 6。
     #[serde(default = "default_island_alert_seconds")]
     pub(crate) island_alert_seconds: u32,
+    /// 从列表里移除的工作空间：归一后的目录 → 移除时刻（毫秒）。只是不显示，磁盘不动（用户要求，
+    /// 2026-11-09）；之后这个目录里又有了新会话就自动回来。由 hide_workspace 单独维护。
+    #[serde(default)]
+    pub(crate) hidden_workspaces: std::collections::BTreeMap<String, i64>,
     /// 在贴纸底栏显示配额的 provider key 列表（如 "claude"/"kimi"/"codex"）。
     /// 缺省 ["claude"]，旧 settings.json 无此字段时反序列化给默认，不 panic。
     #[serde(default = "default_sticker_quota_providers")]
@@ -330,6 +334,7 @@ impl Default for Settings {
             island_strip: false,
             island_alerts: default_island_alerts(),
             island_alert_seconds: default_island_alert_seconds(),
+            hidden_workspaces: Default::default(),
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
             proxy: crate::proxy::ProxySettings::default(),
@@ -822,6 +827,8 @@ fn preserve_independently_managed_fields(incoming: &mut Settings, current: &Sett
     // 贴纸窗口几何（W-17）由贴纸窗经 set_sticker_window_state 独立维护；设置窗不编辑它，
     // 一次外观保存不得把窗口打开期间的移动/吸附/pin 变更用旧快照盖掉。
     incoming.sticker_window = current.sticker_window.clone();
+    // 隐藏的工作空间由 hide_workspace 独立维护，设置窗的旧快照不得把它盖掉。
+    incoming.hidden_workspaces = current.hidden_workspaces.clone();
 }
 
 #[tauri::command]

@@ -975,6 +975,8 @@ export const zh = {
     crossMessageUnknown: "另一个会话",
     taskNotification: "后台任务通知",
     changesUncommitted: "未提交",
+    wsHide: "从列表中移除",
+    wsHideTip: "只是不在这里显示，文件夹和其中的会话都不动；之后在这里新建会话会自动回来",
     changesCommitted: (base: string) => `已提交未合并 · 相对 ${base}`,
     changesRepoClean: "没有改动",
     systemRecord: "系统记录",

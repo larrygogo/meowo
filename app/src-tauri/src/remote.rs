@@ -100,6 +100,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "get_session_lineage",
     "search_chat_transcripts",
     "recent_cwds",
+    "hide_workspace",
     "rename_session",
     "set_archived",
     "set_session_note",
@@ -827,7 +828,12 @@ bridged_args!(GetSessionAdminPageArgs {
 
 bridged_args!(SearchChatTranscriptsArgs { query: String });
 
-bridged_args!(RecentCwdsArgs { limit: usize });
+bridged_args!(RecentCwdsArgs {
+    limit: usize,
+    #[serde(default)]
+    include_hidden: Option<bool>
+});
+bridged_args!(HideWorkspaceArgs { cwd: String });
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
@@ -1076,7 +1082,15 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "recent_cwds" => {
             let a = args!(RecentCwdsArgs);
-            reply(crate::session_query::recent_cwds(state, a.limit).await)
+            reply(crate::session_query::recent_cwds(state, a.limit, a.include_hidden).await)
+        }
+        "hide_workspace" => {
+            let a = args!(HideWorkspaceArgs);
+            // 只许移除会话用过的目录（与 git 只读命令同一道收口），手机端不能往设置里写任意串。
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::session_query::hide_workspace(a.cwd).await)
         }
         "get_session_admin_page" => {
             let a = args!(GetSessionAdminPageArgs);
@@ -2149,7 +2163,8 @@ mod tests {
                 parse::<SearchChatTranscriptsArgs>(br#"{"query":"login"}"#).map(|_| ())
             }
             // api.ts:946
-            "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8}"#).map(|_| ()),
+            "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8,"includeHidden":true}"#).map(|_| ()),
+            "hide_workspace" => parse::<HideWorkspaceArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
             // api.ts getSessionAdminPage：五个键恒发，status / updatedBeforeDays 空值发 null。
             "get_session_admin_page" => parse::<GetSessionAdminPageArgs>(
                 br#"{"workspaces":["C:/repo"],"status":"open","updatedBeforeDays":7,"page":0,"pageSize":20}"#,

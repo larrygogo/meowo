@@ -90,7 +90,7 @@ use managed_terminal::{
 use session_command::is_safe_id;
 use session_command::{move_session_rank, rename_session, set_archived, set_session_note};
 use session_command::{session_launch_selections, set_session_launch_selection};
-use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, recent_cwds};
+use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace, recent_cwds};
 #[cfg(test)]
 use session_query::{
     live_sessions_blocking, session_connected, tab_class, LiveContext, PageReq,
@@ -1361,6 +1361,7 @@ pub fn run() {
             repair_provider_hooks,
             open_install_log,
             recent_cwds,
+            hide_workspace,
             open_new_session_window,
             window::open_session_admin,
             open_latest_chat

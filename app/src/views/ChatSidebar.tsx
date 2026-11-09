@@ -1290,6 +1290,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           <WorkspaceDirectory
             options={workspaceOptions}
             onFilter={(cwd) => { setDirFilter(cwd); setArchivedView(false); setWorkspacesView(false); }}
+            onHidden={refreshDirs}
           />
         </nav>
       ) : (
