@@ -901,6 +901,7 @@ export const en: Dict = {
     crossMessage: "Session message",
     crossMessageUnknown: "Another session",
     taskNotification: "Background task notification",
+    systemRecord: "System record",
     sidebarApproval: "Pending approval",
     sidebarExpand: "Expand session list",
     sidebarEmpty: "No sessions yet",

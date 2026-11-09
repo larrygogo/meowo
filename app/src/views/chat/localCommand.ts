@@ -25,6 +25,8 @@ export type UserTextParts = {
   notifications: string[];
   /** 跨会话消息，按出现顺序。 */
   crossMessages: CrossMessage[];
+  /** 不认识的机器记录（标签名 + 原文），按出现顺序。见 parseUserText 末尾的兜底。 */
+  records: { tag: string; body: string }[];
   /** 这条消息里出现过本地命令/系统注入包裹——渲染层据此切换形态。 */
   local: boolean;
 };
@@ -33,7 +35,7 @@ export type UserTextParts = {
  *  forked-skill-launch 是后台技能启动的机器记录（JSON），对人零信息量，直接丢。
  *  bash-input / bash-stdout / bash-stderr：输入框里 `! 命令` 直接执行时，Claude Code 把命令和
  *  输出各写成一条 user 消息（实拍：对话页原样摊出 `<bash-input>ssh-copy-id …</bash-input>`）。 */
-const TAGS = ["local-command-caveat", "local-command-stdout", "command-name", "command-message", "command-args", "task-notification", "forked-skill-launch", "bash-input", "bash-stdout", "bash-stderr"] as const;
+const TAGS = ["local-command-caveat", "local-command-stdout", "local-command-stderr", "command-name", "command-message", "command-args", "task-notification", "forked-skill-launch", "bash-input", "bash-stdout", "bash-stderr"] as const;
 const PAIR = new RegExp(`<(${TAGS.join("|")})>([\\s\\S]*?)<\\/\\1>`, "g");
 // 流式写入/截断会留下没配对的半个标签。正文里留一个孤零零的 `</command-args>` 比留着
 // 整段 XML 好不到哪去，收尾时一并抹掉。
@@ -57,11 +59,34 @@ const CROSS_ATTR = /([\w-]+)="([^"]*)"/g;
 const CROSS_LEAD = /[^\n]*Another Claude session sent a message[^\n]*:[ \t]*\n?/g;
 const CROSS_NOTE = /This came from another Claude session[\s\S]*$/;
 
+// 兜底：Claude Code 自己判断「这条 user 消息不是人打的」只看它是不是以一个标签开头
+// （2.1.319 源码：`^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user…\])`）。它往
+// transcript 里写的机器标签不止上面那几个（源码里还有 mcp-resource-update、user-memory-input、
+// fork-boilerplate、channel/wake 等），一个个补总有漏的（用户反馈「加过很多次每次都有新的」）。
+// 照它的规则：以标签开头、且标签名带 `-` 或 `_`（它的机器标签全是这种写法，普通 HTML 标签
+// 很少这样命名）的，整条收成可展开的「系统记录」。只认开头：用户在正文里提到标签不受影响。
+const MACHINE_LEAD = /^\s*<[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+[\s>]/;
+// 结束标签也可能带属性（实拍 `</pasted_content id="a99c">`；源码里 system-reminder 同样有带 id 的闭合）。
+const MACHINE_BLOCK = /<([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)(?:\s[^>]*)?>([\s\S]*?)<\/\1(?:\s[^>]*)?>/g;
+const PASTED = /<pasted_content\b[^>]*>([\s\S]*?)<\/pasted_content\b[^>]*>/g;
+
 export function parseUserText(raw: string): UserTextParts {
-  const parts: UserTextParts = { text: "", commands: [], stdout: [], notifications: [], crossMessages: [], local: false };
+  const parts: UserTextParts = { text: "", commands: [], stdout: [], notifications: [], crossMessages: [], records: [], local: false };
+  // 大段粘贴：外面包着 <pasted_content id="…">，里面是用户自己粘进来的正文——是人说的话，
+  // 剥掉外壳照常当正文显示，不能被下面的兜底收成「系统记录」（真实记录扫描发现）。
+  if (raw.includes("<pasted_content")) raw = raw.replace(PASTED, (_match, body: string) => body.trim()).trim();
   if (!raw.includes("<command-name>") && !raw.includes("<local-command-")
     && !raw.includes("<task-notification>") && !raw.includes("<cross-session-message")
     && !raw.includes("<bash-")) {
+    // 名单之外的机器记录：兜底收成「系统记录」，不当用户说的话摊开（见 MACHINE_LEAD）。
+    if (MACHINE_LEAD.test(raw)) {
+      parts.local = true;
+      parts.text = raw.replace(MACHINE_BLOCK, (_match, tag: string, body: string) => {
+        parts.records.push({ tag, body: body.replace(ANSI, "").trim() });
+        return "";
+      }).trim();
+      return parts;
+    }
     parts.text = raw;
     return parts;
   }
@@ -100,6 +125,7 @@ export function parseUserText(raw: string): UserTextParts {
         break;
       case "bash-stdout":
       case "bash-stderr":
+      case "local-command-stderr":
       case "local-command-stdout": {
         // 终端转义剥掉后，被颜色码「挡住」而幸存的前导缩进/对齐空白要保留（剥完再 trim
         // 会把对齐空格吃掉）。trim 只用来判空——纯控制码的一段不该收成空输出块。
@@ -122,7 +148,11 @@ export function parseUserText(raw: string): UserTextParts {
   const cleaned = parts.notifications.length
     ? rest.replace(/\[SYSTEM NOTIFICATION - NOT USER INPUT\][\s\S]*?(?=\n\s*\n|$)/, "")
     : rest;
-  parts.text = cleaned.replace(STRAY, "").trim();
+  // 已知标签处理完还剩下的机器标签（通知后面跟着的 <system-reminder> 一类）：同样收成系统记录。
+  parts.text = cleaned.replace(STRAY, "").replace(MACHINE_BLOCK, (_match, tag: string, body: string) => {
+    parts.records.push({ tag, body: body.replace(ANSI, "").trim() });
+    return "";
+  }).trim();
   // 技能/后台命令的另一种落盘形态：命令行是**裸文本**（无 <command-name> 包裹），
   // 旁边跟着 caveat/stdout/forked-skill-launch。把首行的「/xxx [args]」提升为命令，
   // 与 <command-name> 形态同样渲染成徽章（实拍反馈「/code-review 没渲染好」）。

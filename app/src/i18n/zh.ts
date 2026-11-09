@@ -974,6 +974,7 @@ export const zh = {
     crossMessage: "会话消息",
     crossMessageUnknown: "另一个会话",
     taskNotification: "后台任务通知",
+    systemRecord: "系统记录",
     sidebarApproval: "待批准",
     sidebarExpand: "展开会话列表",
     sidebarEmpty: "暂无会话",

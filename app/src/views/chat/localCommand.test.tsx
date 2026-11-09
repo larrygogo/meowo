@@ -23,6 +23,32 @@ describe("parseUserText", () => {
     expect(parseUserText("<bash-stdout></bash-stdout><bash-stderr>Permission denied</bash-stderr>").stdout).toEqual(["Permission denied"]);
   });
 
+  /// 兜底（照 Claude Code 源码的判定）：名单外、以机器标签开头的整条收成系统记录。
+  it("名单之外的机器标签收成系统记录，正文里提到的标签不受影响", () => {
+    const update = parseUserText('<mcp-resource-update server="docs" uri="file:///a.md"><reason>changed</reason></mcp-resource-update>');
+    expect(update.local).toBe(true);
+    expect(update.records).toEqual([{ tag: "mcp-resource-update", body: "<reason>changed</reason>" }]);
+    expect(update.text).toBe("");
+    const ide = parseUserText("<ide_selection>The user selected lines 1-3</ide_selection>");
+    expect(ide.records.map((r) => r.tag)).toEqual(["ide_selection"]);
+    // 普通 HTML 标签开头、或标签出现在正文中间：都是用户说的话。
+    expect(parseUserText("<div> 为什么不居中").local).toBe(false);
+    expect(parseUserText("看看 <user-memory-input> 这个标签是干嘛的").local).toBe(false);
+    // 斜杠命令的错误输出与标准输出同样收成「命令输出」。
+    expect(parseUserText("<command-name>/x</command-name><local-command-stderr>boom</local-command-stderr>").stdout).toEqual(["boom"]);
+  });
+
+  /// 真实记录扫描发现的两类漏网。
+  it("粘贴的大段正文剥掉 <pasted_content> 外壳当用户的话；通知后面跟的 system-reminder 收成记录", () => {
+    const pasted = parseUserText('  <pasted_content id="859d">\n完整链路：先查 token\n</pasted_content>');
+    expect(pasted.local).toBe(false);
+    expect(pasted.text).toBe("完整链路：先查 token");
+    const mixed = parseUserText("<task-notification> <summary>Stop hook feedback</summary> </task-notification> <system-reminder> Stop hook blocking error</system-reminder>");
+    expect(mixed.notifications).toHaveLength(1);
+    expect(mixed.records).toEqual([{ tag: "system-reminder", body: "Stop hook blocking error" }]);
+    expect(mixed.text).toBe("");
+  });
+
   it("普通消息原样透过，不进本地命令形态", () => {
     const parts = parseUserText("帮我看看 <div> 这个标签");
     expect(parts.local).toBe(false);
@@ -174,6 +200,14 @@ describe("Message 渲染本地命令", () => {
     const details = screen.getByText("命令输出").closest("details");
     expect(details?.hasAttribute("open")).toBe(false);
     expect(document.body.textContent).not.toMatch(/bash-(stdout|stderr)/);
+  });
+
+  it("名单之外的机器记录渲染成折叠的「系统记录」，不摊原文", () => {
+    render(<Message item={userText("<user-memory-input>记住：用中文回复</user-memory-input>")} />);
+    const details = screen.getByText("系统记录").closest("details");
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(screen.getByText("user-memory-input")).toBeTruthy();
+    expect(document.querySelector(".chat-message.is-command")).toBeTruthy();
   });
 
   it("只剩免责声明的那条整条不渲染", () => {
