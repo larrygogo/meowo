@@ -18,6 +18,29 @@ static DRAG: Mutex<Option<(f64, i32)>> = Mutex::new(None);
 /// 窗口藏掉），白担风险（审查发现）。
 static STYLE_SET: AtomicBool = AtomicBool::new(false);
 
+/// 岛的「本位」中心（物理 x）：用户拖到哪、启动还原到哪，它就在哪。展开面板 / 提醒比胶囊宽，
+/// 贴边时会被钳进工作区、中心往里偏；此前收起按「当前中心」摆，胶囊就跟着往里跳一截、
+/// 从此停在新位置（做空复现：拖到最右，展开一次左移 184px）。形态切换一律按本位摆。
+static HOME: Mutex<Option<f64>> = Mutex::new(None);
+
+/// 形态切换用哪个中心：有本位、且本位在窗口所在屏上就用本位；否则（启动还原前、显示器被拔
+/// 掉窗口被系统挪到别的屏）用窗口当前中心并记为新本位。
+fn home_center(work: Work, current: f64) -> f64 {
+    let mut home = HOME.lock().unwrap_or_else(|e| e.into_inner());
+    let on_screen = |c: f64| c >= f64::from(work.x) && c <= f64::from(work.x + work.w);
+    match *home {
+        Some(c) if on_screen(c) => c,
+        _ => {
+            *home = Some(current);
+            current
+        }
+    }
+}
+
+fn set_home(center: f64) {
+    *HOME.lock().unwrap_or_else(|e| e.into_inner()) = Some(center);
+}
+
 /// 松手时记下的位置：中心比例 + 所在显示器名。
 #[derive(serde::Serialize)]
 pub(crate) struct IslandSpot {
@@ -99,11 +122,15 @@ pub(crate) fn island_layout(
     let phys_w = ((width.clamp(1.0, 4000.0) * scale).round() as i32).max(1);
     let phys_h = ((height.clamp(1.0, 4000.0) * scale).round() as i32).clamp(1, work.h.max(1));
     let center = match center_ratio {
-        Some(r) if r.is_finite() => f64::from(work.x) + r.clamp(0.0, 1.0) * f64::from(work.w),
+        Some(r) if r.is_finite() => {
+            let c = f64::from(work.x) + r.clamp(0.0, 1.0) * f64::from(work.w);
+            set_home(c);
+            c
+        }
         _ => {
             let pos = window.outer_position().map_err(|e| e.to_string())?;
             let size = window.outer_size().map_err(|e| e.to_string())?;
-            f64::from(pos.x) + f64::from(size.width) / 2.0
+            home_center(work, f64::from(pos.x) + f64::from(size.width) / 2.0)
         }
     };
     let (x, y) = place(work, center, phys_w);
@@ -180,6 +207,8 @@ pub(crate) fn island_drag_update(window: tauri::WebviewWindow) -> Result<(), Str
     };
     let center = f64::from(start_left) + (cursor.x - start_cursor) + f64::from(w) / 2.0;
     let (x, y) = place(work_of(&monitor), center, w);
+    // 拖到哪本位就在哪（取钳过之后的真实中心：拖出屏幕边也只停在边上）。
+    set_home(f64::from(x) + f64::from(w) / 2.0);
     window
         .set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())
@@ -398,6 +427,23 @@ mod tests {
         // 退出全屏：只恢复我们藏的。
         assert_eq!(fullscreen_action(false, true, false), FullscreenAction::Show);
         assert_eq!(fullscreen_action(false, false, false), FullscreenAction::Nothing);
+    }
+
+    #[test]
+    fn edge_island_returns_to_its_spot_after_a_wider_form() {
+        // 拖到最右：胶囊 260 宽、中心 2430。展开成 628 宽会被钳进工作区，收起要回到 2430。
+        let work = Work { x: 0, y: 0, w: 2560, h: 1400 };
+        set_home(2430.0);
+        let (panel_x, _) = place(work, home_center(work, 0.0), 628);
+        assert_eq!(panel_x, 2560 - 628);
+        // 收起时窗口当前中心已是面板的中心，但按本位摆。
+        let panel_center = f64::from(panel_x) + 314.0;
+        let (pill_x, _) = place(work, home_center(work, panel_center), 260);
+        assert_eq!(pill_x, 2300);
+        // 本位不在窗口所在屏上（那块屏被拔了）：改用当前中心，不把岛钳到新屏边上。
+        let other = Work { x: -1920, y: 0, w: 1920, h: 1040 };
+        assert_eq!(home_center(other, -960.0), -960.0);
+        *HOME.lock().unwrap() = None;
     }
 
     #[test]
