@@ -2563,3 +2563,29 @@ mod debug_fingerprint_tests {
         assert_eq!(of(&store, "sessions"), before);
     }
 }
+
+#[cfg(test)]
+mod debug_fingerprint_watcher_tests {
+    use super::*;
+
+    /// db-watcher 用同一个持久连接既算指纹又读 data_version：算指纹的全表查询不能让这个连接停在旧快照上，
+    /// 否则 data_version 不再变化，监听器从此不发事件，e2e 反而会把「空闲时有人写库」放过去。
+    #[test]
+    fn data_version_still_moves_after_fingerprint() {
+        let dir = std::env::temp_dir().join(format!("meowo-fp-probe-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let db = dir.join("b.db");
+        let _ = std::fs::remove_file(&db);
+        let watcher = Store::open(&db).unwrap();
+        let writer = Store::open(&db).unwrap();
+        let v0 = watcher.data_version().unwrap();
+        watcher.debug_table_fingerprint().unwrap();
+        writer.set_session_note("s", "x", 1).unwrap();
+        let v1 = watcher.data_version().unwrap();
+        watcher.debug_table_fingerprint().unwrap();
+        writer.set_session_note("s", "y", 2).unwrap();
+        let v2 = watcher.data_version().unwrap();
+        assert!(v1 != v0 && v2 != v1, "v0={v0} v1={v1} v2={v2}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
