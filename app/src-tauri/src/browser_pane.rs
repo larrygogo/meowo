@@ -15,6 +15,8 @@
 //! - 手机端不给：命令全列进 remote.rs 的拒绝清单。
 //!
 //! 生命周期同面板终端：页签跟着会话走，换会话前端只是把它藏起来；关页签才销毁。
+//! agent 用过的页签不真藏，而是挪到窗口外接着渲染（见 `Placement`）：agent 多数时候是在
+//! 面板收起、用户看不到的时候操作网页，藏起来的页面不渲染，滚动检测和截图都会失灵。
 //! 子 webview 随 chat 窗口一起销毁，窗口销毁时这里只清表。
 
 use std::collections::HashMap;
@@ -22,9 +24,56 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
-use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl};
+use tauri::{
+    Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url, WebviewBuilder, WebviewUrl,
+};
 
 const BLANK: &str = "about:blank";
+
+/// 从没在面板里显示过的页签给页面的视口（逻辑像素）。agent 新开的页签常常一次都没露过面，
+/// 以前建出来是 1×1，页面里量到 `innerWidth×innerHeight = 2x2`（2026-11-09 实测，150% 缩放），
+/// 要求「滚到底才能点」的页面（Discord OAuth 授权页）永远判不到底。
+pub(crate) const DEFAULT_VIEWPORT: (f64, f64) = (1280.0, 800.0);
+
+/// 原生视图现在摆在哪。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Placement {
+    /// `hide()` 藏起来了。WebView2 收到 `SetIsVisible(false)` 后页面进入
+    /// `document.hidden`：requestAnimationFrame、IntersectionObserver 都停，CapturePreview
+    /// 永远不回调。光把尺寸改大不够——2026-11-09 用 wry 0.57.1 单独实测三种摆法：
+    /// 藏着 1×1 → `2x2 / hidden / rAF 不走 / 截图无回调`；藏着 1280×800 →
+    /// `1280x800 / hidden / rAF 不走 / 截图无回调`；挪到窗口外但可见 →
+    /// `1280x800 / visible / rAF 正常 / 截图 15KB`。macOS 26.6（WKWebView）同样只有挪到窗口外
+    /// 能保持 visible + rAF，旧做法视口是 1×1；但 takeSnapshot 隐藏时也能截到图。锁屏时
+    /// WebKit 把整个窗口判为不可见，连正常显示的视图也 hidden，那种情况这里管不了。
+    #[default]
+    Hidden,
+    /// 仍然「可见」，按原尺寸挪到窗口内容区外面（被父窗口裁掉，用户看不到）。页面照常渲染，
+    /// 滚动检测、IntersectionObserver、截图都正常。agent 在用的页签收起时摆这里。
+    Parked,
+    /// 显示在面板占位区域上。
+    OnScreen,
+}
+
+/// 收起后视口的下限（逻辑像素）。面板可以拖得很窄，或者布局变动时量到一个瞬时的小矩形；
+/// 原样沿用就又回到「视口太小」的老问题（窄到页面切手机版、滚到底判不出来）。
+const MIN_PARKED_VIEWPORT: (f64, f64) = (480.0, 480.0);
+
+/// 面板里量到的尺寸 → 收起后给页面的视口：按面板尺寸来，排版不跳；太小的维度抬到下限。
+pub(crate) fn parked_viewport((width, height): (f64, f64)) -> (f64, f64) {
+    (
+        width.max(MIN_PARKED_VIEWPORT.0),
+        height.max(MIN_PARKED_VIEWPORT.1),
+    )
+}
+
+/// 挪到窗口外时的位置和大小：保持视口尺寸，整块放到内容区左边外侧。
+pub(crate) fn parked_rect((width, height): (f64, f64)) -> Rect {
+    Rect {
+        position: LogicalPosition::new(-(width + 64.0), 0.0).into(),
+        size: LogicalSize::new(width, height).into(),
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +90,17 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) agent_paused: bool,
     /// 页面缩放比例（1.0 = 100%），「…」菜单里调。
     pub(crate) zoom: f64,
+    // 以下三项只在后端用，不发给前端。
+    /// 原生视图眼下摆在哪。
+    #[serde(skip)]
+    placement: Placement,
+    /// 收起时给页面留的视口：上一次在面板里显示时的尺寸（经 `parked_viewport` 抬到下限），
+    /// 没显示过就是 DEFAULT_VIEWPORT。
+    #[serde(skip)]
+    viewport: (f64, f64),
+    /// agent 用过这个页签：收起时挪到窗口外接着渲染，而不是藏起来。见 `Placement`。
+    #[serde(skip)]
+    keep_rendering: bool,
 }
 
 #[derive(Default)]
@@ -237,6 +297,9 @@ pub(crate) fn open_pane(
         agent_active: false,
         agent_paused: false,
         zoom: 1.0,
+        placement: Placement::Hidden,
+        viewport: DEFAULT_VIEWPORT,
+        keep_rendering: false,
     };
     state
         .panes
@@ -274,11 +337,9 @@ pub(crate) fn open_pane(
             }
             NewWindowResponse::Deny
         });
-    let created = window.add_child(
-        builder,
-        LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(1.0, 1.0),
-    );
+    // 一出生就是正常视口大小（摆在窗口外），页面第一次排版就拿到合理的 innerWidth/innerHeight。
+    let parked = parked_rect(DEFAULT_VIEWPORT);
+    let created = window.add_child(builder, parked.position, parked.size);
     match created {
         Ok(webview) => {
             let _ = webview.hide();
@@ -310,11 +371,58 @@ pub(crate) fn browser_pane_list(
     list
 }
 
-/// 前端占位区域的位置（CSS 像素，相对窗口内容区左上角）。visible=false 时只藏不动：
-/// 页签切走、面板收起、换会话、有菜单或弹窗盖过来，原生视图都得让开。
+/// 让原生视图从面板上让开。agent 用过的挪到窗口外接着渲染，其余的藏起来，
+/// 不让一堆后台页签白白占着渲染。
+/// 调用方持有 panes 锁：agent 的 keep_rendering 在 broker 线程上，「看 placement → 下发」
+/// 在锁里做完，agent 那边才不会把用户刚显示出来的页签挪走。（前端自己连发的 hide/show
+/// 两次 invoke 谁先拿到锁不归这里管，那是改动前就有的先后问题。）这些 setter 只往主线程
+/// 事件队列里投消息、不等结果，锁里调不会卡住主线程（调用方都不在主线程上）。
+fn conceal(webview: &tauri::Webview, info: &mut BrowserPaneInfo) -> Result<(), String> {
+    let target = if info.keep_rendering {
+        Placement::Parked
+    } else {
+        Placement::Hidden
+    };
+    if info.placement == target {
+        return Ok(());
+    }
+    if target == Placement::Parked {
+        webview
+            .set_bounds(parked_rect(info.viewport))
+            .map_err(|e| e.to_string())?;
+        webview.show().map_err(|e| e.to_string())?;
+    } else {
+        webview.hide().map_err(|e| e.to_string())?;
+    }
+    // 下发都成功了才记：记早了，失败后 keep_rendering 会以为它还在屏上而跳过。
+    info.placement = target;
+    Ok(())
+}
+
+/// agent 要操作这个页签：从此收起时也保持渲染；眼下是藏着的就挪到窗口外露出来
+/// （面板收起是常态，agent 多数时候是在用户看不到面板时操作网页）。
+pub(crate) fn keep_rendering(
+    app: &tauri::AppHandle,
+    state: &BrowserPanes,
+    id: u32,
+) -> Result<(), String> {
+    let webview = webview(app, id)?;
+    let mut map = state.panes.lock().map_err(|e| e.to_string())?;
+    let info = map.get_mut(&id).ok_or("browser_pane/not_found")?;
+    info.keep_rendering = true;
+    if info.placement == Placement::OnScreen {
+        return Ok(());
+    }
+    conceal(&webview, info)
+}
+
+/// 前端占位区域的位置（CSS 像素，相对窗口内容区左上角）。visible=false 时让开：
+/// 页签切走、面板收起、换会话、有菜单或弹窗盖过来，原生视图都得让开（见 `conceal`）。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn browser_pane_set_bounds(
     app: tauri::AppHandle,
+    state: tauri::State<'_, BrowserPanes>,
     id: u32,
     x: f64,
     y: f64,
@@ -323,16 +431,22 @@ pub(crate) async fn browser_pane_set_bounds(
     visible: bool,
 ) -> Result<(), String> {
     let webview = webview(&app, id)?;
+    let mut map = state.panes.lock().map_err(|e| e.to_string())?;
+    let info = map.get_mut(&id).ok_or("browser_pane/not_found")?;
     if !visible || width < 1.0 || height < 1.0 {
-        return webview.hide().map_err(|e| e.to_string());
+        return conceal(&webview, info);
     }
+    // 记下面板里的尺寸，收起后 agent 接着用时页面视口不变，排版不会跳。
+    info.viewport = parked_viewport((width, height));
     webview
-        .set_position(LogicalPosition::new(x, y))
+        .set_bounds(Rect {
+            position: LogicalPosition::new(x, y).into(),
+            size: LogicalSize::new(width, height).into(),
+        })
         .map_err(|e| e.to_string())?;
-    webview
-        .set_size(LogicalSize::new(width, height))
-        .map_err(|e| e.to_string())?;
-    webview.show().map_err(|e| e.to_string())
+    webview.show().map_err(|e| e.to_string())?;
+    info.placement = Placement::OnScreen;
+    Ok(())
 }
 
 #[tauri::command]
@@ -452,6 +566,33 @@ mod tests {
             Some("https://www.bing.com/search?q=tauri+%E5%AD%90+webview")
         );
         assert_eq!(normalize_input("   "), None);
+    }
+
+    #[test]
+    fn parked_viewport_follows_the_panel_but_never_gets_tiny() {
+        // 正常宽度的面板：原样沿用，收起前后排版一致。
+        assert_eq!(parked_viewport((520.0, 700.0)), (520.0, 700.0));
+        assert_eq!(parked_viewport((1600.0, 900.0)), (1600.0, 900.0));
+        // 拖得很窄或布局变动时量到的瞬时小矩形：抬到下限，不回到 2×2 那种视口。
+        assert_eq!(parked_viewport((120.0, 700.0)), (480.0, 700.0));
+        assert_eq!(parked_viewport((1.0, 1.0)), (480.0, 480.0));
+    }
+
+    #[test]
+    fn parked_rect_keeps_the_viewport_and_sits_outside_the_window() {
+        let rect = parked_rect(DEFAULT_VIEWPORT);
+        let size = rect.size.to_logical::<f64>(1.5);
+        let position = rect.position.to_logical::<f64>(1.5);
+        assert_eq!((size.width, size.height), (1280.0, 800.0));
+        // 整块在内容区左侧外面：右边缘 < 0，用户看不到。
+        assert!(position.x + size.width < 0.0);
+        assert_eq!(position.y, 0.0);
+
+        let rect = parked_rect((520.0, 700.0));
+        let size = rect.size.to_logical::<f64>(1.0);
+        let position = rect.position.to_logical::<f64>(1.0);
+        assert_eq!((size.width, size.height), (520.0, 700.0));
+        assert!(position.x + size.width < 0.0);
     }
 
     #[test]

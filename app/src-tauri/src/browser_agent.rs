@@ -59,6 +59,12 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value,
     if paused {
         return Err("用户接管了面板浏览器，暂时不能操作。等用户在页签上点「交还」后再试。".into());
     }
+    // 面板收起时页签是藏着的：页面进 document.hidden、视口可能只有 2×2，滚动检测、
+    // IntersectionObserver、截图全不工作（2026-11-09 Discord 授权页实测）。先让它接着渲染。
+    // 放在接管检查之后：被拒的调用不该改动页签。挪不动也照常执行，快照、点击这些不靠可见。
+    if let Err(error) = browser_pane::keep_rendering(app, &panes, id) {
+        eprintln!("[browser] 页签 {id} 保持渲染失败：{error}");
+    }
     mark_active(app, &panes, id);
     let result = if tool == "browser_screenshot" {
         screenshot(app, id)
