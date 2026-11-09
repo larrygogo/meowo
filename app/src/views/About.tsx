@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
+import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -209,6 +209,21 @@ function GeneralSection() {
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   const keepAwakeOn = settings?.keep_awake_while_running ?? true;
+  const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
+  const toggleLeadAwake = () => patch({ keep_awake_for_lead_gate: !leadAwakeOn });
+  const [leadOn, setLeadOn] = useState<boolean | null>(null);
+  const [leadError, setLeadError] = useState<string | null>(null);
+  useEffect(() => {
+    leadWorkflowInstalled().then(setLeadOn).catch(() => setLeadOn(false));
+  }, []);
+  const toggleLead = () => {
+    if (leadOn === null) return;
+    const next = !leadOn;
+    setLeadError(null);
+    setLeadWorkflow(next)
+      .then(() => setLeadOn(next))
+      .catch((e) => setLeadError(formatBackendError(e, t.locale)));
+  };
   const toggleKeepAwake = () => patch({ keep_awake_while_running: !keepAwakeOn });
   const soundOn = settings?.notification_sound ?? true;
   const toggleSound = () => patch({ notification_sound: !soundOn });
@@ -266,6 +281,26 @@ function GeneralSection() {
             <div className="row-desc">{t.settings.keepAwakeDesc}</div>
           </div>
           <Switch checked={keepAwakeOn} onChange={toggleKeepAwake} label={t.settings.keepAwake} />
+        </div>}
+      </div>
+
+      {/* Lead 工作流（2026-11-09）：开关状态以「是否真的装着」为准。 */}
+      <div className="sec-caption">{t.settings.leadGroup}</div>
+      <div className="row-card">
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.leadWorkflow}</div>
+            <div className="row-desc">{t.settings.leadWorkflowDesc}</div>
+            {leadError && <div className="row-desc is-error" role="alert">{leadError}</div>}
+          </div>
+          <Switch checked={!!leadOn} onChange={toggleLead} label={t.settings.leadWorkflow} />
+        </div>
+        {(IS_WIN || IS_MAC) && leadOn && <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.leadKeepAwake}</div>
+            <div className="row-desc">{t.settings.leadKeepAwakeDesc}</div>
+          </div>
+          <Switch checked={leadAwakeOn} onChange={toggleLeadAwake} label={t.settings.leadKeepAwake} />
         </div>}
       </div>
 

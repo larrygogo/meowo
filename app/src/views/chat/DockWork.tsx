@@ -12,8 +12,9 @@ import { useT } from "../../i18n";
 import { latestPlan, PlanPanel } from "./PlanPanel";
 import { collectBackgroundTasks, TasksDockPanel } from "./TasksPanel";
 import { TodoListItems, type TodoRow } from "./TodoPanel";
+import { LeadGateCard, LeadPanel, LeadPill, useLeadTask } from "./LeadPanel";
 
-type Panel = "plan" | "todos" | "tasks" | "subagents";
+type Panel = "plan" | "todos" | "tasks" | "subagents" | "lead";
 
 /// 入口按需出现（对照 Kimi 的 ChatDock）：计划只在有计划、开着计划模式或正等计划审批时出；
 /// 后台 Bash/子代理只在确实派过时出——常驻的空入口点开只有「暂无」，是噪音。
@@ -58,8 +59,10 @@ function TodosIcon({ className, size }: { className: string; size?: number }) {
   );
 }
 
-export function DockWork({ sessionId, items, history, loading }: {
+export function DockWork({ sessionId, cwd, items, history, loading }: {
   sessionId: number;
+  /// 会话工作目录：Lead 入口据此读 `.lead/active`（为空时不显示 Lead）。
+  cwd?: string | null;
   items: ChatItem[];
   history: Pick<ChatHistory, "plan" | "agentModes" | "pendingReview" | "todos"> | null;
   loading: boolean;
@@ -67,6 +70,7 @@ export function DockWork({ sessionId, items, history, loading }: {
   const t = useT();
   const [panel, setPanel] = useState<Panel | null>(null);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
+  const [leadTask, refreshLead] = useLeadTask(cwd);
 
   // claude 新版任务列表(TaskCreate/TaskUpdate)从时间线累积重建:CC 对这类 harness
   // 内部工具**不触发 PostToolUse hook**(实测:reporter 手喂事件能落库,真调用不触发),
@@ -131,6 +135,11 @@ export function DockWork({ sessionId, items, history, loading }: {
   const close = () => setPanel(null);
   return (
     <>
+      {panel === "lead" && leadTask && <LeadPanel task={leadTask} onClose={close} />}
+      {/* 关卡在等 leader 时常驻显示（不必先点开 Lead 面板）：这是 leader 要做的决定。 */}
+      {cwd && leadTask?.gate?.status === "pending" && (
+        <LeadGateCard key={leadTask.gate.id} cwd={cwd} gate={leadTask.gate} onAnswered={refreshLead} />
+      )}
       {panel === "plan" && showPlan && <PlanPanel plan={currentPlan} pending={planPending} onClose={close} />}
       {panel === "todos" && todos.length > 0 && (
         <div className="dock-work-panel panel-todos">
@@ -148,6 +157,7 @@ export function DockWork({ sessionId, items, history, loading }: {
       )}
       {!loading && (
         <div className="dock-workbar">
+          {leadTask && <LeadPill task={leadTask} active={panel === "lead"} onClick={() => toggle("lead")} />}
           {showPlan && (
             <button type="button" className={"ui-pill" + (panel === "plan" ? " is-active" : "")} onClick={() => toggle("plan")}>
               <svg className="ui-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { type AgentId, type LiveSession, agentName, getSessionAdminPage, listSubdirectories } from "../../api";
+import { type AgentId, type LiveSession, agentName, getSessionAdminPage, listSubdirectories, savePastedAttachment } from "../../api";
+import { formatBackendError } from "../../i18n/errors";
+import { type Attachment, attachmentOf, base64OfBuffer } from "./drafts";
+import { ImageRef } from "./Message";
 import { fmtShortAgo } from "../sticker/helpers";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
@@ -30,14 +33,20 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   onMoreSessions?: (cwd: string) => void;
   /** 拖进窗口的路径（nonce 区分同一路径的两次拖入）。是文件夹就设为工作区。 */
   droppedPath?: { path: string; nonce: number } | null;
-  /** 启动成功：临时负 id、用的 agent、第一句话（可为空）。 */
-  onLaunched: (tempId: number, provider: AgentId, message: string) => void;
+  /** 启动成功：临时负 id、用的 agent、第一句话（可为空）及粘进来的附件。 */
+  onLaunched: (tempId: number, provider: AgentId, message: string, attachments: Attachment[]) => void;
 }) {
   const t = useT();
   const form = useNewSessionForm(normalizePath(prefill.cwd ?? ""), (prefill.provider ?? null) as AgentId | null);
   const { cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError, agents, avail, opts, setOpts,
     activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, warn, needLogin } = form;
   const [message, setMessage] = useState("");
+  // 粘进来的截图/文件（用户反馈：新建页粘不了图，只能等会话起来再贴一次）。和对话页同一套
+  // 落盘与附件形状，发出去后交给对话页的发送通道，原生贴图 / 附路径降级都在那边。
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // 还在落盘的粘贴数：大截图写盘要一会儿，「Ctrl+V 紧接回车」会在图回来之前就把会话发出去，
+  // 图静默丢掉（做空复现）。落盘期间先不让发。
+  const [pasting, setPasting] = useState(0);
   const textRef = useRef<HTMLTextAreaElement>(null);
   // 打开即可打字：九成场景目录已按最近一次预填好，第一步就是写第一句话。
   useEffect(() => textRef.current?.focus(), []);
@@ -75,12 +84,27 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   }
 
   async function submit() {
+    if (pasting > 0) return;
     if (!cwd.trim()) { setError(t.newSession.workspaceRequired); return; }
     const launched = await form.launch();
     // 旧后端桌面命令不回临时 id（null）：会话照样起来、reveal 照样切过去，只是第一句话
     // 没法记到它身上——放回输入框不现实（页面随即关掉），宁可不清空让用户看见。
-    if (launched?.tempId != null) onLaunched(launched.tempId, provider, message.trim());
+    if (launched?.tempId != null) onLaunched(launched.tempId, provider, message.trim(), attachments);
   }
+
+  const pasteFiles = async (files: File[]) => {
+    setPasting((count) => count + 1);
+    const results = await Promise.allSettled(files.map(async (file) => {
+      const path = await savePastedAttachment(file.name || "pasted.png", base64OfBuffer(await file.arrayBuffer()));
+      return { ...attachmentOf(path), size: file.size };
+    }));
+    setPasting((count) => count - 1);
+    const fresh = results.flatMap((entry) => (entry.status === "fulfilled" ? [entry.value] : []));
+    const failed = results.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+    if (failed) setError(formatBackendError(failed.reason, t.locale));
+    // 上限与对话页一致（12）：多出来的在那边也发不出去。
+    setAttachments((current) => [...current, ...fresh].slice(0, 12));
+  };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // IME 合成中的回车是选候选词，不是发送。
@@ -124,7 +148,25 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
             disabled={busy}
             onChange={(event) => setMessage(event.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData?.files ?? []);
+              if (files.length === 0) return; // 纯文本粘贴照常走默认行为
+              // 有文件就整次接管：默认行为会把文件名当正文粘进输入框。
+              event.preventDefault();
+              void pasteFiles(files);
+            }}
           />
+          {attachments.length > 0 && (
+            <div className="chat-attachments nsp-attachments" data-testid="nsp-attachments">
+              {attachments.map((file) => (
+                <div className={"chat-attachment" + (file.image ? " is-image" : "")} key={file.path} data-tip={file.path}>
+                  {file.image ? <ImageRef path={file.path} /> : <span className="chat-file-name">{file.name}</span>}
+                  <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} disabled={busy}
+                    onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="nsp-bar">
             <div className="nsp-chips">
               {/* 底部这排与对话页 composer 的权限 / 模型胶囊同一套（PillSelect）：短名上胶囊、
@@ -182,7 +224,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
               data-testid="nsp-send"
               aria-label={busy ? t.newSession.launching : t.newSession.start}
               data-tip={busy ? t.newSession.launching : t.newSession.start}
-              disabled={busy || (avail?.length ?? 0) === 0}
+              disabled={busy || pasting > 0 || (avail?.length ?? 0) === 0}
               onClick={() => void submit()}
             >
               {busy ? <span className="nsp-spin" aria-hidden="true" /> : (

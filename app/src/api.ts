@@ -12,6 +12,7 @@ import type { LiveSessionCounts } from "./generated/contracts/LiveSessionCounts"
 import type { WorktreeStatusDto } from "./generated/contracts/WorktreeStatusDto";
 import type { WorktreeRemovalDto } from "./generated/contracts/WorktreeRemovalDto";
 import type { CleanableWorktreeDto } from "./generated/contracts/CleanableWorktreeDto";
+import type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 import type { Session as SessionDto } from "./generated/contracts/Session";
 import type { Todo as TodoRowDto } from "./generated/contracts/Todo";
 import type { ModelPreset } from "./generated/contracts/ModelPreset";
@@ -101,7 +102,7 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
   todos: Todo[];
   column: "todo" | "doing" | "done";
   /** 待审批子态:回合中途等用户介入(批准工具/回答提问/批准计划);无则 null。 */
-  pending_review: "approval" | "question" | "plan" | null;
+  pending_review: "approval" | "question" | "plan" | "gate" | null;
   /** agent 身份（如 "claude"）。DB 里可能存着本版本不认识的 id，故不是联合类型。 */
   provider: AgentId;
 } & {
@@ -653,6 +654,31 @@ export function fileMentionCandidates(cwd: string, query: string): Promise<strin
   return invoke("file_mention_candidates", { cwd, query });
 }
 
+export type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
+export type { LeadGateDto } from "./generated/contracts/LeadGateDto";
+export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
+
+/// Lead 工作流：会话 cwd 所在项目的任务快照；没有任务为 null（入口据此隐藏）。
+/// 手机端经远程桥放行（remote.rs 模块头「例外（2026-11-09）」），参数改动须同步 AnswerLeadGateArgs 等桥臂结构体。
+export function leadTaskSnapshot(cwd: string): Promise<LeadTaskDto | null> {
+  return invoke("lead_task_snapshot", { cwd });
+}
+
+/// Lead 工作流是否已装进 Claude Code（以实际安装为准，不另存设置）。
+export function leadWorkflowInstalled(): Promise<boolean> {
+  return invoke("lead_workflow_installed");
+}
+
+/// 打开 = 把 lead skill、做空子代理、hook 装进 ~/.claude；关闭 = 卸载干净。
+export function setLeadWorkflow(enabled: boolean): Promise<void> {
+  return invoke("set_lead_workflow", { enabled });
+}
+
+/// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
+export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string): Promise<void> {
+  return invoke("answer_lead_gate", { cwd, gateId, choice, note });
+}
+
 /** 文件面板「打开」菜单：能打开该文件的应用清单（Windows 为系统「打开方式」推荐列表，
  *  含图标；其余平台为探测到的编辑器）。目录返回空；系统默认应用不在其中，前端恒列。 */
 export function listFileOpeners(cwd: string, rel: string): Promise<FileOpenerDto[]> {
@@ -875,6 +901,8 @@ export type Settings = {
   workspace_order: string[];
   /** 有会话在跑时防止电脑休眠（只拦系统休眠，不拦息屏）。 */
   keep_awake_while_running: boolean;
+  /** 有 Lead 关卡在等你拍板时也防止休眠（默认开）。 */
+  keep_awake_for_lead_gate: boolean;
   /** 系统通知带提示音（关掉只静音，通知照弹）。 */
   notification_sound: boolean;
   /** 回合结束后把最终回答之前的工作过程收成一行（对照 Kimi「消息自动折叠」）。 */

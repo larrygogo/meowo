@@ -34,6 +34,11 @@
 //! 改动清单里，未跟踪读盘只认状态为 U 的条目。手机端因此只能看 agent 工作目录里
 //! 「改了什么」，不能借它读任意文件。
 //!
+//! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
+//! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
+//! 读 `.lead/active` 指向的任务目录（slug 只允许字母数字与 `.-_`，拒绝 `..`），只写该目录下的
+//! `gate.json`。通用的 `read_file_text` 仍拒。
+//!
 //! 注意：白名单内的 `write_managed_terminal` 本身就等于「在宿主机上执行任意命令」
 //! （往 agent CLI 的 PTY 写任意按键）——这是产品功能（远程发消息/打断/答题），
 //! 不是疏漏；它成立的前提正是上面的 token 门 + 网络层假设。
@@ -152,6 +157,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "git_file_diff",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
+    // Lead 工作流（模块头「例外（2026-11-09）」）
+    "lead_task_snapshot",
+    "answer_lead_gate",
     // 只读杂项
     "get_settings",
     "host_os",
@@ -818,6 +826,8 @@ bridged_args!(RecentCwdsArgs { limit: usize });
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
+bridged_args!(LeadTaskSnapshotArgs { cwd: String });
+bridged_args!(AnswerLeadGateArgs { cwd: String, gate_id: String, choice: String, note: String });
 bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
 
 bridged_args!(GitFileDiffArgs {
@@ -1078,6 +1088,20 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::git::git_diff_summary(a.cwd).await)
+        }
+        "lead_task_snapshot" => {
+            let a = args!(LeadTaskSnapshotArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::lead::lead_task_snapshot(a.cwd).await)
+        }
+        "answer_lead_gate" => {
+            let a = args!(AnswerLeadGateArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note).await)
         }
         "file_mention_candidates" => {
             let a = args!(FileMentionCandidatesArgs);
@@ -2185,6 +2209,8 @@ mod tests {
             "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),
             // api.ts fileMentionCandidates
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
+            "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,
             )

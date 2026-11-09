@@ -5385,8 +5385,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    :not(.chat-image-thumb-btn)：图片附件的缩略图容器也是 <button>（ImageRef），
    这套绝对定位是「移除 ×」专属——不排除的话缩略图按钮被抽出文档流，
    芯片塌成 0×0，附件条只剩一条 2px 的缝（实拍反馈「显示不出来」的根因）。 */
-.chat-compose .chat-attachment button:not(.chat-image-thumb-btn) { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; min-height: 0; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(0, 0, 0, 0.55); font-size: var(--text-xs); line-height: 1; cursor: pointer; }
-.chat-compose .chat-attachment button:not(.chat-image-thumb-btn):hover { color: #fff; background: rgba(0, 0, 0, 0.78); }
+:is(.chat-compose, .nsp-composer) .chat-attachment button:not(.chat-image-thumb-btn) { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; min-height: 0; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(0, 0, 0, 0.55); font-size: var(--text-xs); line-height: 1; cursor: pointer; }
+:is(.chat-compose, .nsp-composer) .chat-attachment button:not(.chat-image-thumb-btn):hover { color: #fff; background: rgba(0, 0, 0, 0.78); }
 /* 图片附件：缩略图本体即卡片（点开进灯箱，ImageRef），移除钮悬浮右上角。
    宽度回落为内容宽（文件卡的 220px 定宽不适用于 76px 缩略图）。 */
 /* 图片附件左下角的「标注」：悬停才出，不和右上角的 × 抢位置。 */
@@ -5639,6 +5639,36 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .dock-work-close { width: var(--icon-button-sm); height: var(--icon-button-sm); padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-base); cursor: pointer; }
 .dock-work-close:hover { background: var(--fill-hover); color: var(--cc-text); }
 .dock-work-body { overflow-y: auto; padding: var(--sp-8) var(--sp-16) var(--sp-16); }
+
+/* Lead 工作流：进度条、分页签、验收清单、关卡卡片。沿用 dock-work-panel 的毛玻璃壳与 Kimi 式留白。 */
+.lead-pill-dot { width: 6px; height: 6px; margin-left: var(--sp-4); border-radius: 50%; background: var(--cc-warn-vivid); }
+.lead-meter { height: 3px; margin: 0 var(--sp-16); border-radius: 2px; background: var(--fill-selected); overflow: hidden; }
+.lead-meter-fill { display: block; height: 100%; background: var(--cc-ok-vivid); transition: width 0.3s ease; }
+.lead-tabs { display: flex; gap: var(--sp-4); padding: var(--sp-8) var(--sp-16) 0; }
+.lead-tab { padding: var(--sp-4) var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); cursor: pointer; }
+.lead-tab.is-active { background: var(--fill-selected); color: var(--cc-text); }
+.lead-checks { margin: 0; padding: 0; list-style: none; }
+.lead-check { display: grid; grid-template-columns: 16px auto 1fr; gap: var(--sp-8); align-items: baseline; padding: var(--sp-4) 0; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: 1.5; }
+.lead-check.is-pass { color: var(--cc-text-faint); }
+.lead-check.is-pass .lead-check-mark { color: var(--cc-ok-vivid); }
+.lead-check-id { color: var(--cc-text-faint); font-variant-numeric: tabular-nums; }
+.lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
+.lead-gate-summary.is-expanded { max-height: none; }
+/* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */
+.lead-gate-summary strong::before { content: none; }
+/* 收起时底部渐隐，不要半行字被齐刷刷切掉（实拍）。 */
+.lead-gate-summary:not(.is-expanded) { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+/* 审批卡外壳里的按钮会被统一成按钮条，展开钮要保持成文字链接（实拍）。 */
+.chat-approval .lead-gate-more { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); font-weight: 400; }
+.lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); cursor: pointer; }
+.lead-gate-options { display: flex; flex-direction: column; gap: var(--sp-4); margin: var(--sp-8) 0; }
+.lead-gate-option { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-11); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); cursor: pointer; }
+.lead-gate-option.is-picked { border-color: var(--cc-accent); background: color-mix(in srgb, var(--cc-accent) 8%, transparent); }
+.lead-gate-option input { margin: 0; }
+.lead-gate-option-detail { flex-basis: 100%; padding-left: 22px; color: var(--cc-text-dim); font-size: var(--text-xs); }
+.lead-gate-rec { padding: 0 var(--sp-6, 6px); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--cc-ok-vivid) 16%, transparent); color: var(--cc-ok-vivid); font-size: var(--text-xs); }
+.lead-gate-note { width: 100%; box-sizing: border-box; padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); resize: vertical; }
+.lead-gate-error { margin-top: var(--sp-4); color: var(--cc-warn); font-size: var(--text-xs); }
 .chat-plan-doc { font-size: var(--text-base); line-height: var(--leading-body); }
 .chat-plan-doc h1 { font-size: calc(20px * var(--cc-ui)); }
 .chat-plan-doc h2 { font-size: calc(16px * var(--cc-ui)); }

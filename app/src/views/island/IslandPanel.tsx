@@ -143,7 +143,7 @@ export function IslandPanel({
       case "opus": return t.account.laneOpus;
       case "model_weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
       case "balance": return t.account.laneBalance;
-      default: return t.island.usageLane.other;
+      default: return t.island.usageOther;
     }
   };
 

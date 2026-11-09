@@ -559,13 +559,66 @@ fn island_preview(last_ai_text: Option<&str>) -> Option<String> {
     const MAX_CHARS: usize = 80;
     let line = last_ai_text?
         .lines()
-        .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>', ' ']).trim())
-        .find(|l| !l.is_empty())?;
+        .map(|l| strip_emphasis(strip_line_marker(l.trim()).trim()))
+        // 只有符号没有字的行（分隔线 `---`、空标题 `##`、孤零零的 `**`）跳过，取下一行。
+        .find(|l| l.chars().any(char::is_alphanumeric))?;
+    let line = line.as_str();
     if line.chars().count() <= MAX_CHARS {
         Some(line.to_string())
     } else {
         Some(line.chars().take(MAX_CHARS).collect::<String>() + "…")
     }
+}
+
+/// 剥掉 Markdown 行首的标题 / 引用 / 列表 / 任务框标记。只认「标记 + 空白」：此前把行首所有
+/// `#-*>` 一并剥掉，「**改好了**」剩下「改好了**」、「-1 个失败」丢了负号（审查发现）。
+fn strip_line_marker(line: &str) -> &str {
+    let mut rest = line;
+    loop {
+        let trimmed = rest.trim_start();
+        let spaced = |s: &str| s.starts_with([' ', '\t']);
+        let after = trimmed
+            .strip_prefix('>')
+            .or_else(|| {
+                let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
+                (hashes > 0 && hashes <= 6 && spaced(&trimmed[hashes..])).then(|| &trimmed[hashes..])
+            })
+            .or_else(|| ['-', '*', '+'].iter().find_map(|m| trimmed.strip_prefix(*m).filter(|r| spaced(r))))
+            .or_else(|| ["[ ]", "[x]", "[X]"].iter().find_map(|m| trimmed.strip_prefix(m).filter(|r| spaced(r))));
+        match after {
+            Some(next) => rest = next,
+            None => return trimmed,
+        }
+    }
+}
+
+/// 去掉成对的加粗记号 `**字**`（中间不含 `*`、不贴空白），岛上只显示文字。只认成对的：
+/// `n**2`、`__init__.py` 这类正文里的符号原样保留（做空复现：一律替换会把它们删坏）。
+fn strip_emphasis(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find("**") {
+        let inner_from = start + 2;
+        let close = rest[inner_from..].find("**").map(|i| inner_from + i);
+        match close {
+            Some(end)
+                if end > inner_from
+                    && !rest[inner_from..end].contains('*')
+                    && !rest[inner_from..end].starts_with(char::is_whitespace)
+                    && !rest[inner_from..end].ends_with(char::is_whitespace) =>
+            {
+                out.push_str(&rest[..start]);
+                out.push_str(&rest[inner_from..end]);
+                rest = &rest[end + 2..];
+            }
+            _ => {
+                out.push_str(&rest[..inner_from]);
+                rest = &rest[inner_from..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 灵动岛提醒：只发主窗口。发不出去（窗口未建/已关）静默，系统通知与推送照常。
@@ -1109,12 +1162,14 @@ pub(crate) fn spawn_liveness_watch(
                             let key = match s.pending_review.as_deref() {
                                 Some("question") => "notify.pending.question",
                                 Some("plan") => "notify.pending.plan",
+                                Some("gate") => "notify.pending.gate",
                                 _ => "notify.pending.approval",
                             };
                             if fired {
                                 let kind = match s.pending_review.as_deref() {
                                     Some("question") => "question",
                                     Some("plan") => "plan",
+                                    Some("gate") => "question",
                                     _ => "approval",
                                 };
                                 emit_island_alert(&app, s.session.id, kind, &display_title, &s.project_name, None);
@@ -1604,6 +1659,14 @@ mod tests {
             Some("改好了")
         );
         assert_eq!(island_preview(Some("- 第一条")).as_deref(), Some("第一条"));
+        assert_eq!(island_preview(Some("**改好了**，测试全过")).as_deref(), Some("改好了，测试全过"));
+        assert_eq!(island_preview(Some("-1 个失败")).as_deref(), Some("-1 个失败"));
+        assert_eq!(island_preview(Some("> ## 结论")).as_deref(), Some("结论"));
+        assert_eq!(island_preview(Some("#3 号问题修好了")).as_deref(), Some("#3 号问题修好了"));
+        assert_eq!(island_preview(Some("改了 __init__.py 和 n**2")).as_deref(), Some("改了 __init__.py 和 n**2"));
+        assert_eq!(island_preview(Some("---\n**\n## \n真正的第一句")).as_deref(), Some("真正的第一句"));
+        assert_eq!(island_preview(Some("- [x] 测试全过")).as_deref(), Some("测试全过"));
+        assert_eq!(island_preview(Some("-\t列表项")).as_deref(), Some("列表项"));
         let long = "字".repeat(100);
         let cut = island_preview(Some(&long)).unwrap();
         assert_eq!(cut.chars().count(), 81);

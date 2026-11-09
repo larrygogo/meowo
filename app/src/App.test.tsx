@@ -175,12 +175,13 @@ const seedWindowState = (s: {
   x: number | null;
   y: number | null;
   island_center?: number | null;
+  island_monitor?: string | null;
 }) => {
   vi.mocked(invoke).mockImplementation((cmd: string) =>
     Promise.resolve(cmd === "get_sticker_window_state" ? s : undefined)
   );
 };
-const EMPTY_WS = { normal_width: null, normal_height: null, snap_edge: null, pinned: false, x: null, y: null, island_center: null };
+const EMPTY_WS = { normal_width: null, normal_height: null, snap_edge: null, pinned: false, x: null, y: null, island_center: null, island_monitor: null };
 
 /** 托盘找回 = 展开灵动岛面板。 */
 const expandIsland = async () => {
@@ -240,6 +241,76 @@ describe("App", () => {
     await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("island_drag_begin");
     expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null });
+  });
+
+  const pillOf = async (container: HTMLElement) => waitFor(() => {
+    const el = container.querySelector(".isl-notch");
+    expect(el).toBeTruthy();
+    return el as HTMLElement;
+  });
+  const clickPill = (pill: HTMLElement) => {
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 100 });
+  };
+  /// 让展开（628 宽的 island_layout）挂起，由用例决定何时成功或失败。
+  const holdGrow = () => {
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    const gate = { resolve: () => {}, reject: () => {} } as { resolve: () => void; reject: () => void };
+    vi.mocked(invoke).mockImplementation(((cmd: string, args?: Record<string, unknown>) =>
+      cmd === "island_layout" && (args as { width: number }).width === 628
+        ? new Promise<void>((resolve, reject) => { gate.resolve = resolve; gate.reject = () => reject(new Error("boom")); })
+        : base(cmd, args)) as typeof invoke);
+    return gate;
+  };
+
+  // 审查复现：失去指针捕获 / 触控手势被系统接管（pointercancel）不是点击。
+  it("指针被系统取消时不当成点击，胶囊不展开", async () => {
+    const { container } = render(<App />);
+    const pill = await pillOf(container);
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerCancel(pill, { button: 0, pointerId: 1, screenX: 100 });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(container.querySelector(".isl-panel")).toBeNull();
+    expect(layoutCalls()).not.toContainEqual({ width: 628, height: 250, centerRatio: null });
+  });
+
+  // 审查复现：展开在等窗口长大时来了提醒，提醒尺寸盖掉展开尺寸，面板被截在提醒高度里。
+  it("展开途中到达的提醒不弹，窗口停在面板尺寸", async () => {
+    const gate = holdGrow();
+    const { container } = render(<App />);
+    clickPill(await pillOf(container));
+    await waitFor(() => expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null }));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 7, kind: "approval", title: "修登录页", project: "web", detail: null } });
+    });
+    await act(async () => { gate.resolve(); });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    expect(layoutCalls().at(-1)).toEqual({ width: 628, height: 250, centerRatio: null });
+    expect(layoutCalls().some((args) => (args as { width: number }).width === 548)).toBe(false);
+  });
+
+  it("展开失败时，途中到达的提醒回到胶囊上补弹", async () => {
+    const gate = holdGrow();
+    const { container } = render(<App />);
+    clickPill(await pillOf(container));
+    await waitFor(() => expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null }));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 7, kind: "approval", title: "修登录页", project: "web", detail: null } });
+    });
+    await act(async () => { gate.reject(); });
+    expect(await screen.findByText("修登录页")).toBeTruthy();
+  });
+
+  // 审查复现：收起动画途中点托盘找回（= 展开），旧的收起定时器到点照样把面板缩回胶囊。
+  it("收起途中托盘找回，面板不被旧的收起定时器缩回去", async () => {
+    const { container } = render(<App />);
+    clickPill(await pillOf(container));
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    fireEvent.keyDown(window, { key: "Escape" });
+    await act(async () => { emitRecallSticker(); });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(container.querySelector(".isl-panel")).toBeTruthy();
+    expect(layoutCalls().at(-1)).toEqual({ width: 628, height: 250, centerRatio: null });
   });
 
   // 点胶囊上的会话图标直接打开那个会话；点胶囊别处才展开面板。
@@ -436,7 +507,7 @@ describe("App", () => {
     render(<App />);
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_sticker_window_state", {
-        state: { normal_width: 420, normal_height: 500, snap_edge: "top", pinned: true, x: null, y: null, island_center: null },
+        state: { normal_width: 420, normal_height: 500, snap_edge: "top", pinned: true, x: null, y: null, island_center: null, island_monitor: null },
       })
     );
     expect(localStorage.getItem("meowo-normal-size")).toBeNull();
