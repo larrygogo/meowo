@@ -29,9 +29,18 @@ describe("贴纸看板：空闲刷新回归", () => {
     await waitIdle();
 
     const before = (await readCount()) ?? 0;
+    const startedAt = await browser.execute(() => Date.now());
     // 空闲观察 6 秒。修复后 db-watcher 仅在真实写入时才发事件，纯空闲应几乎为 0。
     await browser.pause(6_000);
     const after = (await readCount()) ?? 0;
+    if (after - before > 2) {
+      // 失败时带上观察窗口内每次事件的来源，直接看出是谁在刷。
+      const reasons = await browser.execute((since: number) => {
+        const list = (window as unknown as { __MEOWO_BOARD_REASONS__?: { t: number; reason: string }[] }).__MEOWO_BOARD_REASONS__ ?? [];
+        return list.filter((r) => r.t >= since).map((r) => `+${r.t - since}ms ${r.reason}`);
+      }, startedAt);
+      throw new Error(`空闲 6 秒内收到 ${after - before} 次 board-changed（上限 2）：\n  ${reasons.join("\n  ")}`);
+    }
 
     // 阈值给到 2：容忍 liveness 5s 轮询在存活集变化时至多 1 次合法刷新及边界抖动。
     // 修复前此处会是几十次（每 1~2s 一次）。

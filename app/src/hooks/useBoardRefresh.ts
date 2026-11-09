@@ -42,10 +42,13 @@ export function useBoardRefresh(doRefresh: () => void): () => void {
     else timerRef.current = window.setTimeout(fire, BOARD_REFRESH_THROTTLE_MS - since);
   }, []);
 
-  useTauriEvent("board-changed", () => {
+  useTauriEvent<string>("board-changed", (event) => {
     if (import.meta.env.VITE_E2E === "1") {
-      const w = window as typeof window & { __MEOWO_BOARD_CHANGED__?: number };
+      const w = window as typeof window & { __MEOWO_BOARD_CHANGED__?: number; __MEOWO_BOARD_REASONS__?: { t: number; reason: string }[] };
       w.__MEOWO_BOARD_CHANGED__ = (w.__MEOWO_BOARD_CHANGED__ ?? 0) + 1;
+      // 记下每次事件的来源（后端 emit_board_changed 的 reason）：e2e 失败时直接看到是谁在刷，
+      // 不用再临时加诊断（#156 合并后空闲多刷 2 次，只有计数时查不出来源）。
+      (w.__MEOWO_BOARD_REASONS__ ??= []).push({ t: Date.now(), reason: String(event.payload ?? "") });
     }
     refresh();
   });

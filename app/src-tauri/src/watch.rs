@@ -167,6 +167,9 @@ pub(crate) fn run_db_watch_loop(
     // 基线 → 被误判无变更而丢掉那次刷新。留 None 则首个相关事件必发一次（版本必 != None），既补上
     // 重建间隙的写入、又只多一次无害刷新；此后正常门控，不影响掐断自持循环。
     let mut last_version: Option<i64> = None;
+    // e2e 构建：记下各表指纹，每次发事件时把变化的表写进 reason，查「空闲时谁在写库」。
+    #[cfg(feature = "e2e")]
+    let mut last_fp: Vec<(String, String)> = vconn.as_ref().and_then(|s| s.debug_table_fingerprint().ok()).unwrap_or_default();
     let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
         let Ok(ev) = res else { return false };
         ev.paths.iter().any(|p| {
@@ -223,6 +226,20 @@ pub(crate) fn run_db_watch_loop(
                 None => true,
             };
             if changed {
+                #[cfg(feature = "e2e")]
+                {
+                    let fp = vconn.as_ref().and_then(|s| s.debug_table_fingerprint().ok()).unwrap_or_default();
+                    let diff: Vec<String> = fp
+                        .iter()
+                        .filter(|(t, v)| last_fp.iter().find(|(lt, _)| lt == t).map(|(_, lv)| lv) != Some(v))
+                        .map(|(t, v)| format!("{t}={v}"))
+                        .collect();
+                    last_fp = fp;
+                    // reason 是 &'static str：e2e 构建里泄漏这几十字节换取可读的诊断，生产构建不编译这段。
+                    let reason: &'static str = Box::leak(format!("db-watcher [{}]", diff.join(" ")).into_boxed_str());
+                    emit_board_changed(app, reason);
+                }
+                #[cfg(not(feature = "e2e"))]
                 emit_board_changed(app, "db-watcher");
             }
         }

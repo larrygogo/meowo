@@ -376,6 +376,38 @@ impl Store {
         Ok(())
     }
 
+    /// 诊断用：每张用户表的「行数/内容哈希」，按表名排序，形如 `("events", "12/9f3a…")`。
+    /// 只给 e2e 构建的 db-watcher 用，对比前后两次就知道空闲时是哪张表在被写。
+    /// 哈希覆盖全部行的全部列：只看行数和最大 rowid 时，原地 UPDATE（upsert 同一行）完全看不出来，
+    /// 实测人为每秒改同一行时诊断输出为空（2026-11-10 验证）。e2e 的库很小，全表扫描可以接受。
+    pub fn debug_table_fingerprint(&self) -> Result<Vec<(String, String)>, StoreError> {
+        use std::hash::{Hash, Hasher};
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?;
+        let names: Vec<String> = stmt.query_map([], |r| r.get(0))?.filter_map(Result::ok).collect();
+        let mut out = Vec::new();
+        for name in names {
+            let mut stmt = self.conn.prepare(&format!("SELECT * FROM \"{}\"", name.replace('"', "\"\"")))?;
+            let cols = stmt.column_count();
+            let mut rows = stmt.query([])?;
+            let (mut count, mut hasher) = (0u64, std::collections::hash_map::DefaultHasher::new());
+            while let Some(row) = rows.next()? {
+                count += 1;
+                for i in 0..cols {
+                    match row.get_ref(i)? {
+                        rusqlite::types::ValueRef::Null => 0u8.hash(&mut hasher),
+                        rusqlite::types::ValueRef::Integer(v) => v.hash(&mut hasher),
+                        rusqlite::types::ValueRef::Real(v) => v.to_bits().hash(&mut hasher),
+                        rusqlite::types::ValueRef::Text(v) | rusqlite::types::ValueRef::Blob(v) => v.hash(&mut hasher),
+                    }
+                }
+            }
+            out.push((name, format!("{count}/{:08x}", hasher.finish() as u32)));
+        }
+        Ok(out)
+    }
+
     /// `PRAGMA data_version`：一个整数，仅当**别的连接**向本库提交过写入时才变化（本连接自身的
     /// 写入不改它，纯读也不改）。跨调用比较须用**同一个持久连接**才有意义。
     /// db-watcher 用它把「真实写入」与「app 读库时新开 WAL 连接触碰 -wal/-shm 文件」的空事件区分开：
@@ -2504,5 +2536,56 @@ mod title_lock_tests {
             store.session_title(sid).unwrap().as_deref(),
             Some("CLI 里改的")
         );
+    }
+}
+
+#[cfg(test)]
+mod debug_fingerprint_tests {
+    use super::*;
+
+    /// e2e 诊断靠它指出空闲时被写的表：原地更新同一行（行数、rowid 都不变）也必须让指纹变化
+    /// （2026-11-10 实测：只看行数和最大 rowid 时，每秒改同一行的写入方诊断输出为空）。
+    #[test]
+    fn fingerprint_changes_on_in_place_update() {
+        let store = Store::open_in_memory().unwrap();
+        let of = |store: &Store, table: &str| {
+            store.debug_table_fingerprint().unwrap().into_iter().find(|(t, _)| t == table).map(|(_, v)| v)
+        };
+        store.set_session_note("s1", "第一版", 1).unwrap();
+        let a = of(&store, "session_notes").unwrap();
+        store.set_session_note("s1", "第二版", 2).unwrap();
+        let b = of(&store, "session_notes").unwrap();
+        assert_ne!(a, b);
+        assert!(a.starts_with("1/") && b.starts_with("1/"), "{a} {b}");
+        // 没写的表指纹不变
+        let before = of(&store, "sessions");
+        store.set_session_note("s1", "第三版", 3).unwrap();
+        assert_eq!(of(&store, "sessions"), before);
+    }
+}
+
+#[cfg(test)]
+mod debug_fingerprint_watcher_tests {
+    use super::*;
+
+    /// db-watcher 用同一个持久连接既算指纹又读 data_version：算指纹的全表查询不能让这个连接停在旧快照上，
+    /// 否则 data_version 不再变化，监听器从此不发事件，e2e 反而会把「空闲时有人写库」放过去。
+    #[test]
+    fn data_version_still_moves_after_fingerprint() {
+        let dir = std::env::temp_dir().join(format!("meowo-fp-probe-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let db = dir.join("b.db");
+        let _ = std::fs::remove_file(&db);
+        let watcher = Store::open(&db).unwrap();
+        let writer = Store::open(&db).unwrap();
+        let v0 = watcher.data_version().unwrap();
+        watcher.debug_table_fingerprint().unwrap();
+        writer.set_session_note("s", "x", 1).unwrap();
+        let v1 = watcher.data_version().unwrap();
+        watcher.debug_table_fingerprint().unwrap();
+        writer.set_session_note("s", "y", 2).unwrap();
+        let v2 = watcher.data_version().unwrap();
+        assert!(v1 != v0 && v2 != v1, "v0={v0} v1={v1} v2={v2}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
