@@ -5,6 +5,7 @@ import AccountCard, { type AcctRow } from "@/components/AccountCard";
 import CheckItem from "@/components/CheckItem";
 import { MenuButtonsMock } from "@/components/screenshots";
 import DemoFrame from "@/components/DemoFrame";
+import AgentMatrix from "@/components/AgentMatrix";
 import { type Lang } from "@/lib/i18n";
 
 type Sec = { eyebrow: string; title: string; body: string; checks: string[] };
@@ -12,6 +13,7 @@ type Sec = { eyebrow: string; title: string; body: string; checks: string[] };
 type Content = {
   head: { eyebrow: string; title: string; lead: string };
   overview: { eyebrow: string; title: string };
+  matrixHead: { eyebrow: string; title: string; lead: string };
   s4: Sec;
   panel: Sec;
   mobile: Sec;
@@ -32,6 +34,7 @@ const CONTENT: Record<Lang, Content> = {
   zh: {
     head: { eyebrow: "功能", title: "一个工作台，管理完整流程", lead: "从安装、登录 AI 编程代理，到开会话、批审批、看改动、切账号，再到离开电脑用手机接着推进，整个流程都在 Meowo 里完成。" },
     overview: { eyebrow: "概览", title: "功能一览" },
+    matrixHead: { eyebrow: "五家 Agent", title: "各家能做什么，摆在一张表里", lead: "Meowo 支持的五家 CLI 能力不完全一样：有的能在对话窗里直接答题，有的读得到额度，有的能存多个账号。下面逐项对照。" },
     s5: {
       eyebrow: "菜单按钮化",
       title: "终端弹的菜单，在这里变成按钮",
@@ -65,14 +68,14 @@ const CONTENT: Record<Lang, Content> = {
       body: "在设置里开启手机远程，手机扫码就能打开 Meowo 的手机页，不用装 App。看对话、发消息、批审批，和在电脑前一样。",
       checks: ["命令审批和 Agent 的提问，在手机上直接处理", "新建、分叉会话，输入框打 @ 引用文件", "看托管终端的画面和这次的改动", "会话需要你时，经 Bark 推送到手机", "手机上能开关电脑的「运行时防止休眠」和推送", "能导出对话，能添加到主屏幕当 App 用", "局域网或 Tailscale 下可用；推荐只绑定 Tailscale 网卡"],
     },
-    acctHead: { eyebrow: "账号", title: "官方多账号一键切，也支持 API 中转", lead: "同一个工具保存多个官方账号，随时切换；没有官方账号时按模型接入 API 中转。两种接入方式互斥，配置中转期间仍走官方账号。" },
-    acct1: { title: "官方多账号", body: "每个账号有独立的登录凭据与会话历史，互不影响。切换后配额读数、登录状态立刻跟着走。", rows: [{ av: "工", bg: "#d97757", name: "Claude · 工作", badge: "使用中", cls: "on" }, { av: "个", bg: "#5b8db8", name: "Claude · 个人", badge: "切换到此账号", cls: "off" }] },
+    acctHead: { eyebrow: "账号", title: "官方多账号一键切，也支持 API 中转", lead: "同一个 Agent 可以存多个官方账号，随时切换（Gemini CLI 只有一个账号）；没有官方账号时，按模型接入 API 中转。两种方式二选一：启用中转后走中转，官方额度不再适用。" },
+    acct1: { title: "官方多账号", body: "每个账号有独立的登录凭据与会话历史，互不影响。切换后额度读数、登录状态立刻跟着走；Claude Code、Codex、Kimi 正在跑的会话，会问你要不要一起切过去。", rows: [{ av: "工", bg: "#d97757", name: "Claude · 工作", badge: "使用中", cls: "on" }, { av: "个", bg: "#5b8db8", name: "Claude · 个人", badge: "切换到此账号", cls: "off" }] },
     acct2: { title: "API 中转", body: "为模型填入中转地址、模型名与密钥即可启用；可从推荐项选择，也能填中转商提供的任意模型 ID。", rows: [{ av: "↳", bg: "#7a5bb8", name: "Opus · 7 天", badge: "中转", cls: "relay" }, { av: "官", bg: "#0f9e78", name: "Sonnet · 官方账号", badge: "官方", cls: "on" }] },
     proxyHead: { eyebrow: "网络与代理", title: "每个 AI 工具，走适合自己的网络路径", lead: "一份默认规则覆盖日常使用，需要时再按 AI 工具单独设置。Meowo 发起的用量查询、CLI 安装和新会话会复用对应配置。" },
     proxy: [
       { title: "全局默认", body: "选择直连、跟随系统环境变量或自定义代理，未单独设置的 AI 工具自动跟随。" },
       { title: "按工具覆盖", body: "不同 AI 工具可以使用不同代理，也可以让其中一部分保持直连，互不影响。" },
-      { title: "常见格式直接填写", body: "支持 HTTP、SOCKS5 及带认证的代理，包括 host:port:user:pass。工具不支持某种协议时会明确提示。" },
+      { title: "常见格式直接填写", body: "支持 HTTP 和带认证的代理，包括 host:port:user:pass。SOCKS 只有 Kimi 和 Gemini CLI 认，给其他几家填了会当场提示。" },
     ],
     platHead: { eyebrow: "平台", title: "两个平台都是灵动岛，落点不同" },
     win: { title: "Windows · 灵动岛", body: "停在屏幕顶部的一条胶囊，谁在跑、谁在等你一眼可见。", checks: ["点一下展开面板，看会话和各家额度", "会话需要你时弹出提醒，点头像直接打开会话", "极简模式只留一条细线，鼠标移上去变回胶囊"] },
@@ -81,6 +84,7 @@ const CONTENT: Record<Lang, Content> = {
   en: {
     head: { eyebrow: "Features", title: "One workbench, the whole flow", lead: "From installing and signing into AI coding agents to starting sessions, approving commands, reviewing changes and switching accounts, then keeping things moving from your phone, the whole flow lives in Meowo." },
     overview: { eyebrow: "Overview", title: "Feature list" },
+    matrixHead: { eyebrow: "Five agents", title: "What each agent can do, in one table", lead: "The five CLIs Meowo supports don't all do the same things: some can answer questions right in the chat window, some report quota, some keep several accounts. Here they are side by side." },
     s5: {
       eyebrow: "Menus as buttons",
       title: "Terminal menus, turned into buttons",
@@ -114,14 +118,14 @@ const CONTENT: Record<Lang, Content> = {
       body: "Turn on phone access in Settings and scan the QR code to open Meowo's phone page. No app to install. Read the conversation, send messages and approve commands just like at your desk.",
       checks: ["Handle command approvals and the agent's questions right on your phone", "Start and fork sessions; type @ in the composer to reference a file", "See the managed terminal and this session's changes", "Get a push on your phone through Bark when a session needs you", "Toggle the computer's keep-awake and push settings from your phone", "Export a conversation, or add the page to your home screen as an app", "Works over your LAN or Tailscale; binding to the Tailscale interface only is recommended"],
     },
-    acctHead: { eyebrow: "Accounts", title: "Switch official accounts in a click, or use an API relay", lead: "Keep multiple official accounts per tool and switch anytime; without one, connect an API relay per model. The two are mutually exclusive, and you keep using the official account while configuring the relay." },
-    acct1: { title: "Official accounts", body: "Each account has its own login credentials and session history. After switching, quota readouts and login state follow immediately.", rows: [{ av: "W", bg: "#d97757", name: "Claude · Work", badge: "In use", cls: "on" }, { av: "P", bg: "#5b8db8", name: "Claude · Personal", badge: "Switch to this", cls: "off" }] },
+    acctHead: { eyebrow: "Accounts", title: "Switch official accounts in a click, or use an API relay", lead: "Keep several official accounts per agent and switch anytime (Gemini CLI has just one); without one, connect an API relay per model. It's one or the other: once the relay is on, requests go through it and the official quota no longer applies." },
+    acct1: { title: "Official accounts", body: "Each account has its own login credentials and session history. After switching, quota readouts and login state follow immediately; for Claude Code, Codex and Kimi, Meowo asks whether running sessions should switch too.", rows: [{ av: "W", bg: "#d97757", name: "Claude · Work", badge: "In use", cls: "on" }, { av: "P", bg: "#5b8db8", name: "Claude · Personal", badge: "Switch to this", cls: "off" }] },
     acct2: { title: "API relay", body: "Fill in the relay address, model name, and key to enable it; pick from suggestions or enter any model ID your relay provides.", rows: [{ av: "↳", bg: "#7a5bb8", name: "Opus · 7-day", badge: "Relay", cls: "relay" }, { av: "O", bg: "#0f9e78", name: "Sonnet · Official", badge: "Official", cls: "on" }] },
     proxyHead: { eyebrow: "Network & proxy", title: "Each AI tool takes the network path that suits it", lead: "One default rule covers everyday use; set per-tool when needed. Meowo's usage queries, CLI installs, and new sessions reuse the matching config." },
     proxy: [
       { title: "Global default", body: "Choose direct, follow system env vars, or a custom proxy; tools without their own setting follow it." },
       { title: "Per-tool override", body: "Different AI tools can use different proxies, or some can stay direct, each set independently." },
-      { title: "Common formats accepted", body: "Supports HTTP, SOCKS5, and authenticated proxies including host:port:user:pass. If a tool doesn't support a protocol, it says so clearly." },
+      { title: "Common formats accepted", body: "Supports HTTP and authenticated proxies, including host:port:user:pass. Only Kimi and Gemini CLI accept SOCKS; enter one for the others and Meowo tells you right away." },
     ],
     platHead: { eyebrow: "Platform", title: "An island on both platforms, placed to fit each" },
     win: { title: "Windows · Island", body: "A slim pill at the top of the screen that shows who's running and who's waiting on you.", checks: ["Click it to expand a panel with sessions and quota", "Pops an alert when a session needs you; click an icon to open it", "Minimal mode leaves just a thin strip; hover to bring the pill back"] },
@@ -138,6 +142,18 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
           <span className="eyebrow">{c.head.eyebrow}</span>
           <h1 className="h1">{c.head.title}</h1>
           <p className="lead">{c.head.lead}</p>
+        </div>
+      </section>
+
+      {/* 五家 Agent 能力对照（首页「看能力对照」跳到这里） */}
+      <section className="section-sm" id="agents">
+        <div className="container">
+          <div className="section-head">
+            <span className="eyebrow">{c.matrixHead.eyebrow}</span>
+            <h2 className="h1">{c.matrixHead.title}</h2>
+            <p className="lead">{c.matrixHead.lead}</p>
+          </div>
+          <AgentMatrix lang={lang} />
         </div>
       </section>
 

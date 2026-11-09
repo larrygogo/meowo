@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:e2e": "node e2e/run.mjs",
     "demo:webp": "node scripts/record-demo.mjs",
-    "demo:build": "vite build -c vite.demo.config.ts",
+    "demo:build": "vite build -c vite.demo.config.ts && vite build -c vite.mascot.config.ts",
     "build:mobile": "vite build -c vite.mobile.config.ts"
   },
   "dependencies": {

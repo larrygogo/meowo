@@ -1,189 +1,253 @@
 import Link from "next/link";
 import { REPO } from "@/lib/site";
-import { getLatestRelease } from "@/lib/release";
+import { getLatestRelease, getReleaseStats } from "@/lib/release";
 import { getDict, withLang, type Lang } from "@/lib/i18n";
 import { ArrowRightIcon, GitHubIcon } from "@/components/icons";
 import DownloadButton from "@/components/DownloadButton";
-import CheckItem from "@/components/CheckItem";
-import FeatureGrid from "@/components/FeatureGrid";
 import Reveal from "@/components/Reveal";
 import CtaBand from "@/components/CtaBand";
 import DemoFrame from "@/components/DemoFrame";
+import Mascot, { type EyesCue, type EyesTone } from "@/components/Mascot";
+import { AgentLogo, type ProviderId } from "@/components/SupportedAgents";
 
-type SemTone = "err" | "warn" | "ok";
-type Sec = { eyebrow: string; title: string; body: string; checks: string[] };
+// 首页（2026-11-09 用户定的第二版方向）：
+// - 主张是「完整工作台」，灵动岛是招牌视觉；
+// - 内容按「一天里多开 AI 编程」的时间线讲，每一格配应用里的真实界面；
+// - 视觉保留深色，灵动岛那双眼睛做贯穿全站的吉祥物（Mascot = 真实 Eyes 组件），
+//   每个时间点的表情跟着那一刻的状态走，状态色参与配色，不再用打勾清单。
+// 只写已发版（≤0.8.1）的能力；各家 Agent 能力不一样的地方要写清楚是哪几家。
 
-type Content = {
-  hero: { eyebrow: string; h1a: string; accent: string; lead: string; github: string; note: string };
-  sem: { tone: SemTone; label: string; text: string }[]; // 三色状态语义条：红 / 黄 / 绿
-  chat: Sec;
-  panel: Sec;
-  mobile: Sec;
-  featGridHead: { eyebrow: string; title: string };
-  platHead: { eyebrow: string; title: string };
-  win: { title: string; body: string; checks: string[] };
-  mac: { title: string; body: string; checks: string[] };
+/** 时间线一格的状态色：运行中 / 等你处理 / 跑完 / 额度告急。 */
+type NodeTone = "run" | "warn" | "done" | "err";
+type Demo = "chat" | "island-alert" | "mobile" | "panel";
+type Node = {
+  time: string;
+  tone: NodeTone;
+  eyes: { tone: EyesTone; cue?: EyesCue; quota?: number; busy?: boolean };
+  label: string;
+  title: string;
+  body: string;
+  demo?: Demo;
 };
 
-// 首页主张（2026-11-09 用户定）：完整工作台——对话窗、托管终端、手机远程、五家 agent 都在一处；
-// 灵动岛是招牌视觉，放在 Hero 演示里，不再是主张本身。只写已发版的能力。
+type Content = {
+  hero: { eyebrow: string; h1a: string; accent: string; lead: string; github: string; note: string; works: string };
+  day: { eyebrow: string; title: string; lead: string };
+  nodes: Node[];
+  agents: { eyebrow: string; title: string; body: string; more: string };
+  trust: { eyebrow: string; title: string; cells: { big: string; title: string; body: string }[]; releases: (count: number, since: string) => { big: string; title: string; body: string } };
+  platHead: { eyebrow: string; title: string };
+  plats: { title: string; body: string }[];
+  more: string;
+};
+
+const AGENTS: { id: ProviderId; name: string }[] = [
+  { id: "claude", name: "Claude Code" },
+  { id: "codex", name: "Codex" },
+  { id: "kimi", name: "Kimi Code" },
+  { id: "gemini", name: "Gemini CLI" },
+  { id: "opencode", name: "OpenCode" },
+];
+
 const CONTENT: Record<Lang, Content> = {
   zh: {
     hero: {
       eyebrow: "// AI 编程代理工作台",
       h1a: "多开 AI 编程，",
       accent: "一切尽在计划之中",
-      lead: "Claude Code、Codex、Kimi、Gemini CLI、OpenCode 的会话都在一个对话窗里跑。灵动岛常驻屏幕顶部，谁在等你一眼可见；离开电脑，手机上也能接着推进。",
+      lead: "五家 AI 编程 CLI 的会话在一个对话窗里跑。灵动岛替你盯着，谁要你处理就叫你；人走开了，手机接着批。",
       github: "GitHub",
       note: "开源 · MIT · Windows 与 macOS · 无需预装 AI CLI",
+      works: "支持",
     },
-    sem: [
-      { tone: "err", label: "ERROR · 出错", text: "有会话出错停住了，红色第一时间跳出来，不会被其他窗口盖过去。" },
-      { tone: "warn", label: "WAITING · 等你处理", text: "有会话在等你批准或回答，黄色提醒，灵动岛会弹出来告诉你。" },
-      { tone: "ok", label: "RUNNING · 运行中", text: "其余会话正常推进，绿色表示不用管，安心做手头的事。" },
+    day: {
+      eyebrow: "一天里的 Meowo",
+      title: "开着好几个 Agent 写代码，是这样过的",
+      lead: "下面每一格都是应用里的真实界面，数据是演示用的。",
+    },
+    nodes: [
+      {
+        time: "09:00", tone: "run", eyes: { tone: "running", cue: "surprised" }, label: "开工",
+        title: "三个会话，一起开",
+        body: "在对话窗里选好 Agent 和目录，写下第一句话就开聊。Claude 重构登录页，Kimi 修支付回调，Codex 补单测，各跑各的。工具调用折成一行，终端弹的菜单变成按钮，不用在终端里翻屏。",
+        demo: "chat",
+      },
+      {
+        time: "10:30", tone: "warn", eyes: { tone: "pending" }, label: "等你批准",
+        title: "有人要你点头，灵动岛会叫你",
+        body: "Kimi 要跑一条需要批准的命令。灵动岛从屏幕顶部弹出提醒，你在写别的也看得见，点「打开」就回到那个会话的审批卡。卡片标出这次会碰到哪里：工作区外的路径、删文件、联网。",
+        demo: "island-alert",
+      },
+      {
+        time: "12:30", tone: "run", eyes: { tone: "running", busy: true }, label: "离开工位",
+        title: "吃饭路上，手机上批掉",
+        body: "在设置里开好手机远程，手机扫一次码就配对，不用装 App。会话需要你时经 Bark 推到手机，点开就是同一个对话：批审批、答提问、回一句「继续」，会话不用等你回来。",
+        demo: "mobile",
+      },
+      {
+        time: "14:00", tone: "done", eyes: { tone: "waiting" }, label: "回到电脑",
+        title: "看看它到底改了什么",
+        body: "右侧面板的「更改」页签列出这次动过的文件，点开看 diff。哪行不对，就在那一行写评论，一键放进输入框发给 Agent。终端、文件、浏览器也在同一排页签里；Claude Code、Codex、Kimi 的会话还能自己操作这个浏览器，验证改动。",
+        demo: "panel",
+      },
+      {
+        time: "17:30", tone: "err", eyes: { tone: "running", quota: 92 }, label: "额度见底",
+        title: "额度快用完，眼睛先发愁",
+        body: "灵动岛的额度环显示 Claude Code、Codex、Kimi 的 5 小时和 7 天额度，Opus 这类模型单独的周额度也算在内。快用完时环变红，眼睛跟着发愁。同一个 Agent 可以存多个账号一键切换（Gemini CLI 除外），也可以按模型接 API 中转。",
+      },
+      {
+        time: "19:00", tone: "done", eyes: { tone: "running", cue: "star" }, label: "收工",
+        title: "跑完的会话，明天接着看",
+        body: "会话跑完，岛上那个头像亮起一个点，眼睛冒星星。做完的会话收进「已完成」，随时找回。还有会话没跑完？开着「运行时防止休眠」，电脑不会睡，屏幕照常熄灭。",
+      },
     ],
-    chat: {
-      eyebrow: "对话窗口",
-      title: "会话在这里跑，不用翻终端",
-      body: "选好 Agent 和目录，写下第一句话就开聊。消息、工具调用、子任务各就各位，等批准的命令、Agent 的提问、终端弹的菜单，都变成可以直接点的按钮。",
-      checks: [
-        "工具调用折叠成一行，展开看完整输入输出；子任务有独立时间线",
-        "审批卡标出这次操作碰到哪里：工作区外的路径、删文件、联网",
-        "Agent 的选择题直接在卡片上作答；信任确认、模型菜单也是按钮",
-        "可以贴图片，也能截图后框出位置、写好说明再发",
-        "会话跑在托管终端里，随时切到终端视图亲手操作",
-      ],
+    agents: {
+      eyebrow: "五家 Agent",
+      title: "装哪家都行，一起用也行",
+      body: "没装也没关系：在设置里一键安装、登录（Gemini CLI 填 API Key），hooks 自动接好。各家 CLI 能力不完全一样，比如额度读数、多账号、Agent 操作浏览器，功能页有逐项对照。",
+      more: "看能力对照",
     },
-    panel: {
-      eyebrow: "右侧面板",
-      title: "改动、文件、终端、浏览器，就在对话旁边",
-      body: "对话窗右侧是一排页签。看 Agent 改了什么、翻项目文件、开个终端跑命令、在浏览器里看效果，都不用离开这个会话。",
-      checks: [
-        "改动页看 diff，对某一行写评论，一键放进输入框发给 Agent",
-        "文件页浏览项目、预览文件，菜单里把路径添加到对话",
-        "在会话目录里开终端，可以开多个",
-        "浏览器打开 localhost；Agent 能自己点击、输入、截图，你看得到它的鼠标，随时接管",
-        "每个会话记住自己开了哪些页签，快捷键一键打开改动、文件、浏览器",
-        "标题栏显示分支和 Pull Request，一键用编辑器打开项目",
+    trust: {
+      eyebrow: "本地优先",
+      title: "你的会话，留在你的电脑上",
+      cells: [
+        { big: "0", title: "台自己的服务器", body: "会话和设置只存在本机的 ~/.meowo/。只有你开了 Bark 推送时，推送内容会经过 Bark 的服务器。" },
+        { big: "MIT", title: "开源，构建可查", body: "源码和发版流程都在 GitHub 上。安装包由 GitHub Actions 从公开源码构建，应用内更新有 minisign 签名校验。" },
       ],
+      releases: (count, since) => ({ big: String(count), title: "个版本", body: `从 ${since.slice(0, 4)} 年 ${Number(since.slice(5, 7))} 月起持续发版，每一版都写了更新说明。` }),
     },
-    mobile: {
-      eyebrow: "手机远程",
-      title: "离开电脑，会话照样往前走",
-      body: "在设置里开启手机远程，手机扫码就能打开 Meowo 的手机页，不用装 App。看对话、发消息、批审批，和在电脑前一样。",
-      checks: [
-        "命令审批和 Agent 的提问，在手机上直接处理",
-        "新建、分叉会话，输入框打 @ 引用文件",
-        "看托管终端的画面和这次的改动",
-        "会话需要你时，经 Bark 推送到手机",
-        "局域网或 Tailscale 下可用，能添加到主屏幕",
-      ],
-    },
-    featGridHead: { eyebrow: "完整工作流", title: "从安装到收尾，一处管理" },
-    platHead: { eyebrow: "平台", title: "Windows 和 macOS，都是灵动岛" },
-    win: {
-      title: "Windows · 灵动岛",
-      body: "停在屏幕顶部的一条胶囊，谁在跑、谁在等你一眼可见。",
-      checks: [
-        "点一下展开面板，看会话和各家额度，也能新建会话",
-        "会话需要你时弹出提醒，点头像直接打开会话",
-        "可以左右拖动位置；极简模式只留一条细线",
-      ],
-    },
-    mac: {
-      title: "macOS · 灵动岛",
-      body: "有刘海的 Mac 上包住刘海，没刘海时收进菜单栏。",
-      checks: [
-        "有刘海时，额度和会话头像分在刘海两侧",
-        "没刘海时，点菜单栏图标在下方弹出面板",
-        "菜单栏上一双会动的眼睛，旁边显示最要紧的会话",
-      ],
-    },
+    platHead: { eyebrow: "平台", title: "Windows 和 macOS，都是这双眼睛" },
+    plats: [
+      { title: "Windows", body: "停在屏幕顶部的一条胶囊。点开看会话和额度，能左右拖动换位置，也能收成一道细线。全屏程序在前台时自动藏起来。" },
+      { title: "macOS", body: "有刘海的 Mac 上，岛包住刘海；没刘海时住在菜单栏，点图标弹出面板。菜单栏图标也是这双眼睛，表情和岛上一样。" },
+    ],
+    more: "查看全部功能",
   },
   en: {
     hero: {
       eyebrow: "// AI coding agent workbench",
       h1a: "Run AI coding in parallel,",
       accent: "all under control",
-      lead: "Claude Code, Codex, Kimi, Gemini CLI and OpenCode sessions all run in one chat window. The island at the top of your screen shows who's waiting on you, and your phone keeps things moving when you step away.",
+      lead: "Sessions from five AI coding CLIs run in one chat window. The island keeps watch and calls you when something needs you; step away, and your phone takes the approvals.",
       github: "GitHub",
       note: "Open source · MIT · Windows & macOS · no AI CLI needed upfront",
+      works: "Works with",
     },
-    sem: [
-      { tone: "err", label: "ERROR", text: "A session errored out and stopped. Red jumps out first, never buried under other windows." },
-      { tone: "warn", label: "WAITING", text: "A session is waiting for your approval or answer. Amber reminds you, and the island pops up to tell you." },
-      { tone: "ok", label: "RUNNING", text: "Everything else is making progress. Green means leave it alone and focus on your work." },
+    day: {
+      eyebrow: "A day with Meowo",
+      title: "What a day with several agents running looks like",
+      lead: "Every frame below is the real app UI, with demo data.",
+    },
+    nodes: [
+      {
+        time: "09:00", tone: "run", eyes: { tone: "running", cue: "surprised" }, label: "Kickoff",
+        title: "Three sessions, all at once",
+        body: "Pick an agent and a folder in the chat window and type your first message. Claude refactors the login page, Kimi fixes a payment callback, Codex fills in tests, each on its own. Tool calls fold into one line and terminal menus become buttons, so there's no scrolling through a terminal.",
+        demo: "chat",
+      },
+      {
+        time: "10:30", tone: "warn", eyes: { tone: "pending" }, label: "Needs approval",
+        title: "When someone needs a yes, the island calls you",
+        body: "Kimi wants to run a command that needs approval. The island drops an alert from the top of the screen, visible while you work on something else; click Open to jump to that session’s approval card. The card shows what the action touches: paths outside the workspace, file deletion, network.",
+        demo: "island-alert",
+      },
+      {
+        time: "12:30", tone: "run", eyes: { tone: "running", busy: true }, label: "Away from desk",
+        title: "Approve it from your phone at lunch",
+        body: "Turn on phone access in Settings and scan the QR code once to pair. No app to install. When a session needs you, Bark pushes it to your phone and opens the same conversation: approve, answer a question, or say “go on”. The session doesn't wait for you to get back.",
+        demo: "mobile",
+      },
+      {
+        time: "14:00", tone: "done", eyes: { tone: "waiting" }, label: "Back at the desk",
+        title: "See what it actually changed",
+        body: "The Changes tab in the right panel lists the files touched; open one to see the diff. If a line looks wrong, comment on it and drop the comment into the composer for the agent. Terminal, Files and Browser share the same row of tabs, and Claude Code, Codex and Kimi sessions can drive that browser themselves to check their work.",
+        demo: "panel",
+      },
+      {
+        time: "17:30", tone: "err", eyes: { tone: "running", quota: 92 }, label: "Quota running low",
+        title: "Quota almost gone? The eyes worry first",
+        body: "The island's quota ring shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including per-model weekly quota such as Opus. Near the limit the ring turns red and the eyes start to worry. Keep several accounts per agent and switch in one click (except Gemini CLI), or connect an API relay per model.",
+      },
+      {
+        time: "19:00", tone: "done", eyes: { tone: "running", cue: "star" }, label: "Wrap-up",
+        title: "Finished sessions wait for tomorrow",
+        body: "When a session finishes, its icon on the island lights up and the eyes go starry. Finished sessions move to Done, ready to bring back. Something still running? With keep-awake on, the computer won't sleep, though the screen still turns off.",
+      },
     ],
-    chat: {
-      eyebrow: "Chat window",
-      title: "Sessions run here, no terminal scrolling",
-      body: "Pick an agent and a folder, then type your first message. Messages, tool calls and subagents each have their place, and pending commands, the agent's questions and terminal menus all become buttons you can click.",
-      checks: [
-        "Tool calls fold into one line; expand for full input and output. Subagents get their own timeline",
-        "Approval cards show what the action touches: paths outside the workspace, file deletion, network",
-        "Answer the agent's multiple-choice questions on the card; trust prompts and model menus are buttons too",
-        "Paste images, or take a screenshot, mark it up and add a note before sending",
-        "Sessions run in a managed terminal; switch to the terminal view and type yourself anytime",
-      ],
+    agents: {
+      eyebrow: "Five agents",
+      title: "Use any of them, or all of them together",
+      body: "Not installed yet? Install and sign in from Settings in one click (Gemini CLI takes an API key), and the hooks are wired for you. The CLIs don't all support the same things, such as quota readouts, multiple accounts or the agent driving the browser; the features page compares them item by item.",
+      more: "Compare agents",
     },
-    panel: {
-      eyebrow: "Right panel",
-      title: "Changes, files, terminal and browser, right next to the chat",
-      body: "A row of tabs sits on the right of the chat window. See what the agent changed, browse project files, run a command in a terminal, or check the result in a browser without leaving the session.",
-      checks: [
-        "The Changes tab shows the diff. Comment on a line and drop it into the composer for the agent",
-        "The Files tab browses and previews the project; add a path to the chat from the menu",
-        "Open terminals in the session folder, as many as you like",
-        "The browser opens localhost. The agent can click, type and take screenshots there; you see its cursor and can take over anytime",
-        "Each session remembers its tabs; shortcuts open Changes, Files and Browser in one keystroke",
-        "The title bar shows the branch and pull request, and opens the project in your editor",
+    trust: {
+      eyebrow: "Local-first",
+      title: "Your sessions stay on your computer",
+      cells: [
+        { big: "0", title: "servers of our own", body: "Sessions and settings live only in ~/.meowo/ on your machine. The one exception: if you turn on Bark push, the push message goes through Bark's server." },
+        { big: "MIT", title: "Open source, verifiable builds", body: "The source and the release process are on GitHub. Installers are built by GitHub Actions from the public source, and in-app updates are verified with a minisign signature." },
       ],
+      releases: (count, since) => ({
+        big: String(count),
+        title: "releases",
+        body: `Shipping steadily since ${new Date(`${since}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}, each with written release notes.`,
+      }),
     },
-    mobile: {
-      eyebrow: "Phone access",
-      title: "Step away, and your sessions keep moving",
-      body: "Turn on phone access in Settings and scan the QR code to open Meowo's phone page. No app to install. Read the conversation, send messages and approve commands just like at your desk.",
-      checks: [
-        "Handle command approvals and the agent's questions right on your phone",
-        "Start and fork sessions; type @ in the composer to reference a file",
-        "See the managed terminal and this session's changes",
-        "Get a push on your phone through Bark when a session needs you",
-        "Works over your LAN or Tailscale, and can be added to your home screen",
-      ],
-    },
-    featGridHead: { eyebrow: "Full workflow", title: "From setup to wrap-up, all in one place" },
-    platHead: { eyebrow: "Platforms", title: "An island on both Windows and macOS" },
-    win: {
-      title: "Windows · Island",
-      body: "A slim pill at the top of the screen that shows who's running and who's waiting on you.",
-      checks: [
-        "Click it to expand a panel with sessions and quota, or start a new session",
-        "Pops an alert when a session needs you; click an icon to open it",
-        "Drag it sideways; minimal mode leaves just a thin strip",
-      ],
-    },
-    mac: {
-      title: "macOS · Island",
-      body: "Wraps around the notch on Macs that have one; tucks into the menu bar on those that don't.",
-      checks: [
-        "With a notch, quota and session icons sit on either side of it",
-        "Without one, click the menu-bar icon for a panel right below it",
-        "A pair of animated eyes in the menu bar, next to your most urgent session",
-      ],
-    },
+    platHead: { eyebrow: "Platforms", title: "The same eyes on Windows and macOS" },
+    plats: [
+      { title: "Windows", body: "A slim pill at the top of the screen. Click it for sessions and quota, drag it sideways, or shrink it to a thin strip. It hides while a full-screen app is in front." },
+      { title: "macOS", body: "On a Mac with a notch, the island wraps the notch; without one, it lives in the menu bar and opens a panel on click. The menu-bar icon is the same pair of eyes, with the same expressions." },
+    ],
+    more: "See all features",
   },
 };
 
+function NodeDemo({ demo, lang }: { demo: Demo; lang: Lang }) {
+  if (demo === "mobile") {
+    return (
+      <div className="tl-demo tl-demo-phone">
+        {/* 手机远程页的真实布局（app/src/demo/mobileEmbed.tsx） */}
+        <div className="phone-shell">
+          <DemoFrame lang={lang} page="mobile" />
+        </div>
+      </div>
+    );
+  }
+  if (demo === "chat") {
+    return (
+      <div className="tl-demo tl-demo-chat">
+        {/* 真实 ChatWindow + 假会话（app/src/demo/chatEmbed.tsx） */}
+        <DemoFrame lang={lang} page="chat" />
+      </div>
+    );
+  }
+  return (
+    <div className="tl-demo">
+      {demo === "panel" ? (
+        // 真实 ChatWindow，右侧面板开着更改页签（app/src/demo/panelEmbed.tsx）
+        <DemoFrame lang={lang} page="panel" />
+      ) : (
+        // 真实灵动岛组件，定格在审批提醒那一刻（IslandStage scene="alert"）
+        <DemoFrame lang={lang} page="island" scene="alert" />
+      )}
+    </div>
+  );
+}
+
 export default async function HomeContent({ lang }: { lang: Lang }) {
-  const release = await getLatestRelease();
+  const [release, stats] = await Promise.all([getLatestRelease(), getReleaseStats()]);
   const d = getDict(lang);
   const c = CONTENT[lang];
+  const trustCells = stats ? [...c.trust.cells, c.trust.releases(stats.count, stats.since)] : c.trust.cells;
 
   return (
     <main>
-      {/* Hero：mono eyebrow + display + 双 CTA + 灵动岛示意 */}
+      {/* Hero：吉祥物眼睛（跟着鼠标看）+ 主张 + 双 CTA + 支持的五家 + 灵动岛演示 */}
       <section className="hero">
         <div className="container">
+          <div className="hero-eyes">
+            <Mascot tone="running" size={132} />
+          </div>
           <span className="eyebrow">{c.hero.eyebrow}</span>
           <h1 className="h-display">
             {c.hero.h1a}
@@ -209,6 +273,15 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
             {c.hero.note}
             {release ? ` · ${release.tag}` : ""}
           </p>
+          <div className="hero-agents" aria-label={c.hero.works}>
+            <span className="hero-agents-label">{c.hero.works}</span>
+            {AGENTS.map((a) => (
+              <span key={a.id} className="hero-agent">
+                <AgentLogo id={a.id} size={22} />
+                {a.name}
+              </span>
+            ))}
+          </div>
           <div className="hero-stage">
             <div className="stage">
               {/* 灵动岛演示：iframe 里是应用真实的灵动岛组件 + 假数据（app/src/demo/IslandStage.tsx） */}
@@ -218,18 +291,77 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
         </div>
       </section>
 
-      {/* 三色状态语义条 */}
-      <section className="section-sm section-sunken">
+      {/* 一天的时间线：左边时间 + 那一刻的眼睛表情，右边说明 + 真实界面 */}
+      <section className="section">
         <div className="container">
-          <div className="sem-strip">
-            {c.sem.map((s) => (
-              <Reveal key={s.label}>
-                <div className={`sem sem-${s.tone}`}>
-                  <span className="sem-tag">
-                    <span className="sem-dot" />
-                    {s.label}
+          <div className="section-head">
+            <span className="eyebrow">{c.day.eyebrow}</span>
+            <h2 className="h1">{c.day.title}</h2>
+            <p className="lead">{c.day.lead}</p>
+          </div>
+          <ol className="tl">
+            {c.nodes.map((n) => (
+              <li key={n.time} className="tl-node" data-tone={n.tone}>
+                <div className="tl-rail">
+                  <time className="tl-time">{n.time}</time>
+                  <span className="tl-eyes">
+                    <Mascot tone={n.eyes.tone} cue={n.eyes.cue} quota={n.eyes.quota} busy={n.eyes.busy} size={64} />
                   </span>
-                  <p>{s.text}</p>
+                </div>
+                <div className="tl-body">
+                  <span className="tl-label">{n.label}</span>
+                  <h3 className="tl-title">{n.title}</h3>
+                  <p className="tl-text">{n.body}</p>
+                  {n.demo && (
+                    <Reveal>
+                      <NodeDemo demo={n.demo} lang={lang} />
+                    </Reveal>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      {/* 五家 Agent */}
+      <section className="section section-sunken">
+        <div className="container">
+          <div className="agents-band">
+            <div>
+              <span className="eyebrow">{c.agents.eyebrow}</span>
+              <h2 className="h1">{c.agents.title}</h2>
+              <p className="lead">{c.agents.body}</p>
+              <Link className="btn btn-ghost agents-more" href={`${withLang(lang, "/features")}#agents`}>
+                {c.agents.more} <ArrowRightIcon />
+              </Link>
+            </div>
+            <ul className="agents-list">
+              {AGENTS.map((a) => (
+                <li key={a.id}>
+                  <AgentLogo id={a.id} size={36} />
+                  <span>{a.name}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* 本地优先 / 可信 */}
+      <section className="section">
+        <div className="container">
+          <div className="section-head">
+            <span className="eyebrow">{c.trust.eyebrow}</span>
+            <h2 className="h1">{c.trust.title}</h2>
+          </div>
+          <div className="trust">
+            {trustCells.map((t) => (
+              <Reveal key={t.title}>
+                <div className="trust-cell">
+                  <div className="trust-big">{t.big}</div>
+                  <div className="trust-title">{t.title}</div>
+                  <p>{t.body}</p>
                 </div>
               </Reveal>
             ))}
@@ -237,111 +369,27 @@ export default async function HomeContent({ lang }: { lang: Lang }) {
         </div>
       </section>
 
-      {/* 对话窗口 */}
-      <section className="section">
-        <div className="container">
-          <div className="split">
-            <div className="split-text">
-              <span className="eyebrow">{c.chat.eyebrow}</span>
-              <h2 className="h2">{c.chat.title}</h2>
-              <p className="lead">{c.chat.body}</p>
-              <ul className="checklist">
-                {c.chat.checks.map((x) => (
-                  <CheckItem key={x}>{x}</CheckItem>
-                ))}
-              </ul>
-            </div>
-            <div className="split-media">
-              {/* 对话窗口演示：iframe 里是应用真实的 ChatWindow + 假会话（app/src/demo/chatEmbed.tsx） */}
-              <DemoFrame lang={lang} page="chat" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 右侧面板：演示 1180 宽，放半栏字会小到看不清，所以整宽大图 + 要点排在图下 */}
-      <section className="section section-sunken">
-        <div className="container">
-          <div className="section-head">
-            <span className="eyebrow">{c.panel.eyebrow}</span>
-            <h2 className="h1">{c.panel.title}</h2>
-            <p className="lead">{c.panel.body}</p>
-          </div>
-          <Reveal>
-            <div className="stage wide-demo">
-              {/* iframe 里是真实 ChatWindow，右侧面板开着改动页签（app/src/demo/panelEmbed.tsx） */}
-              <DemoFrame lang={lang} page="panel" />
-            </div>
-          </Reveal>
-          <ul className="checklist wide-checks">
-            {c.panel.checks.map((x) => (
-              <CheckItem key={x}>{x}</CheckItem>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      {/* 手机远程 */}
-      <section className="section">
-        <div className="container">
-          <div className="split rev">
-            <div className="split-media">
-              {/* iframe 里是手机远程页的真实布局 + 同一段假会话（app/src/demo/mobileEmbed.tsx） */}
-              <div className="phone-shell">
-                <DemoFrame lang={lang} page="mobile" />
-              </div>
-            </div>
-            <div className="split-text">
-              <span className="eyebrow">{c.mobile.eyebrow}</span>
-              <h2 className="h2">{c.mobile.title}</h2>
-              <p className="lead">{c.mobile.body}</p>
-              <ul className="checklist">
-                {c.mobile.checks.map((x) => (
-                  <CheckItem key={x}>{x}</CheckItem>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 特性网格 */}
-      <section className="section section-sunken">
-        <div className="container">
-          <div className="section-head">
-            <span className="eyebrow">{c.featGridHead.eyebrow}</span>
-            <h2 className="h1">{c.featGridHead.title}</h2>
-          </div>
-          <FeatureGrid lang={lang} />
-          <div className="center-cta">
-            <Link className="btn btn-ghost" href={withLang(lang, "/features")}>
-              {d.featuresMore} <ArrowRightIcon />
-            </Link>
-          </div>
-        </div>
-      </section>
-
       {/* 平台 */}
-      <section className="section">
+      <section className="section section-sunken">
         <div className="container">
           <div className="section-head">
             <span className="eyebrow">{c.platHead.eyebrow}</span>
             <h2 className="h1">{c.platHead.title}</h2>
           </div>
           <div className="grid grid-2">
-            {[c.win, c.mac].map((pl) => (
+            {c.plats.map((pl) => (
               <Reveal key={pl.title}>
                 <div className="fcard plat-card">
                   <h3>{pl.title}</h3>
                   <p>{pl.body}</p>
-                  <ul className="checklist">
-                    {pl.checks.map((x) => (
-                      <CheckItem key={x}>{x}</CheckItem>
-                    ))}
-                  </ul>
                 </div>
               </Reveal>
             ))}
+          </div>
+          <div className="center-cta">
+            <Link className="btn btn-ghost" href={withLang(lang, "/features")}>
+              {c.more} <ArrowRightIcon />
+            </Link>
           </div>
         </div>
       </section>

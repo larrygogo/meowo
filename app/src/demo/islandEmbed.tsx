@@ -13,6 +13,7 @@ import "./demo.css";
 
 const params = new URLSearchParams(location.search);
 const lang: DemoLang = params.get("lang") === "en" ? "en" : "zh";
+const scene = params.get("scene") === "alert" ? "alert" : undefined;
 
 localStorage.clear();
 const FIXED_NOW = 1_780_000_000_000;
@@ -26,7 +27,7 @@ bootAppearance({ scale: true });
   await detectHostOs();
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <I18nProvider initial={lang}>
-      <IslandStage lang={lang} />
+      <IslandStage lang={lang} scene={scene} />
     </I18nProvider>,
   );
 })();

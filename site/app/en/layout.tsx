@@ -54,6 +54,8 @@ export default function EnRootLayout({
         <Nav />
         {children}
         <Footer />
+        {/* 吉祥物眼睛（components/Mascot.tsx）：应用里真实的 Eyes 组件，异步加载不挡首屏 */}
+        <script type="module" src="/mascot/meowo-eyes.js" async />
       </body>
     </html>
   );
