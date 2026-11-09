@@ -5641,13 +5641,15 @@ describe("ChatWindow", () => {
     onWrite?: (args: { sessionId: number; data: string }) => void;
   }) {
     let launched = false;
+    // 每次新建依次拿 -9、-10…；只有 -9 会认领成 71。
+    let nextTemp = -9;
     // 屏幕回显写进去的正文：提交前会核对正文确实落进了输入框。
     let typed = "";
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
       if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
       if (command === "check_provider_hooks") return Promise.resolve("installed");
-      if (command === "new_session") { launched = true; return Promise.resolve(-9); }
+      if (command === "new_session") { launched = true; return Promise.resolve(nextTemp--); }
       if (command === "managed_terminal_binding") {
         return Promise.resolve(launched && (args as { sessionId: number }).sessionId === -9 && state.claimed() ? 71 : null);
       }
@@ -5734,6 +5736,51 @@ describe("ChatWindow", () => {
     act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
     expect(await screen.findByText("修一下登录页")).toBeTruthy();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "修一下登录页" }), { timeout: 8_000 });
+  }, 20_000);
+
+  it("新建会话页:写入途中切走、随后发送失败,回到认领后的真 id 能看到失败气泡", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let claimed = false;
+    mockFirstPromptLaunch({ claimed: () => claimed, ready: () => true });
+    // 正文写进去了，提交那一下过一会儿失败（PTY 断了）。
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      const data = (args as { data?: string } | undefined)?.data;
+      if (command === "write_managed_terminal" && data !== undefined && data.length === 1 && data.charCodeAt(0) === 13) {
+        return new Promise((_, reject) => setTimeout(() => reject("pty/closed"), 800));
+      }
+      return base(command, args);
+    });
+    await sendFirstPrompt("修一下登录页");
+    await waitFor(() => expect(writesOf()).toContain("修一下登录页"), { timeout: 8_000 });
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 5 }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 5 })));
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    // 人在会话 5：不往它的输入框里塞。
+    expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).value).toBe("");
+    // 错误条也不该挂在不相干的会话 5 上。
+    expect(document.querySelector(".chat-send-error")).toBeNull();
+    claimed = true;
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
+    // 回到真 id 先查一次认领关系，回执才搬过来。
+    expect(await screen.findByText(zh.chat.echoFailed, undefined, { timeout: 3_000 })).toBeTruthy();
+    expect(screen.getByText("修一下登录页")).toBeTruthy();
+  }, 20_000);
+
+  it("新建会话页:第一个还没发出去就开第二个,第一个的第一句话转成失败气泡而不是一直发送中", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    mockFirstPromptLaunch({ claimed: () => false, ready: () => false });
+    await sendFirstPrompt("A的第一句");
+    expect(await screen.findByText("A的第一句")).toBeTruthy();
+    act(() => eventListeners.get("chat-new-session")?.({ payload: null }));
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    fireEvent.change(input, { target: { value: "B的第一句" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: -9 }));
+    await waitFor(() => expect(screen.getByText("A的第一句")).toBeTruthy());
+    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
   }, 20_000);
 
   it("新建会话页:切走后过期,不把第一句话塞进正在看的别的会话", async () => {
