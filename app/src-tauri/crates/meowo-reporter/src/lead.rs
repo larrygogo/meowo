@@ -533,7 +533,27 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
 
 /// 会话 cwd 所在项目的任务快照；没有任务返回 None。只读 `.lead` 下约定的文件。
 pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
-    let task = find_task(Some(cwd))?;
+    snapshot_for(cwd, None)
+}
+
+/// 任务归属的会话（`.owner` 里的 cc_session_id）；还没认领为空串。
+fn owner_of(task: &Path) -> String {
+    read(&task.join(".owner")).trim().to_owned()
+}
+
+/// 这个任务给 session 看吗：没认领的谁都看得到；认领了只给认领它的会话。session 为 None = 不过滤。
+fn visible_to(task: &Path, session: Option<&str>) -> bool {
+    let owner = owner_of(task);
+    match session {
+        Some(sid) => owner.is_empty() || owner == sid,
+        None => true,
+    }
+}
+
+/// 同 snapshot，但只给任务归属的会话看（用户反馈 2026-11-09：同一项目的另一个会话里也冒出了别的会话的
+/// Lead 入口和关卡卡片）。没认领的任务（还在访谈、写规格）照旧给项目里所有会话看。
+pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
+    let task = find_task(Some(cwd)).filter(|task| visible_to(task, session))?;
     let checks = acceptance(&task)
         .unwrap_or_default()
         .iter()
@@ -551,7 +571,11 @@ pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
         decisions: tail(&read(&task.join("decisions.md")), 6000),
         progress: tail(&read(&task.join("progress.md")), 6000),
         gate: read_gate(&task).filter(|g| g.status != "consumed").or_else(|| {
-            project_gates(cwd).into_iter().map(|(_, g)| g).find(|g| g.status == "pending")
+            project_gates(cwd)
+                .into_iter()
+                .filter(|(t, _)| visible_to(t, session))
+                .map(|(_, g)| g)
+                .find(|g| g.status == "pending")
         }),
     })
 }

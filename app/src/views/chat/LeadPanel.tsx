@@ -17,24 +17,25 @@ import { ApprovalCard } from "./ApprovalCard";
 const POLL_MS = 4000;
 
 /// 拉取会话 cwd 所在项目的 Lead 任务；没有任务为 null。cwd 为空（会话还没起来）时不请求。
-export function useLeadTask(cwd: string | null | undefined): [LeadTaskDto | null, () => void] {
+/// session：当前会话的 cc_session_id。还不知道（会话历史没到）时先不查，免得别的会话的任务闪一下。
+export function useLeadTask(cwd: string | null | undefined, session?: string | null): [LeadTaskDto | null, () => void] {
   const [task, setTask] = useState<LeadTaskDto | null>(null);
   const seq = useRef(0);
   const refresh = useCallback(() => {
-    if (!cwd) {
+    if (!cwd || !session) {
       setTask(null);
       return;
     }
     const mine = ++seq.current;
-    leadTaskSnapshot(cwd)
+    leadTaskSnapshot(cwd, session)
       .then((next) => { if (mine === seq.current) setTask(next); })
       // 读失败（手机远程中继抖一下、后端偶发异常）保留上一次的数据：卡片若因此卸载，leader 在手机上
       // 写了一半的驳回意见会丢（做空审查 M3）。真没有任务时后端返回的是 null，不是报错。
       .catch(() => {});
-  }, [cwd]);
+  }, [cwd, session]);
   useEffect(() => {
     refresh();
-    if (!cwd) return;
+    if (!cwd || !session) return;
     const timer = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(timer);
   }, [cwd, refresh]);

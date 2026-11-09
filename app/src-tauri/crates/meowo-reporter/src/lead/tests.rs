@@ -296,6 +296,23 @@ fn gate_answer_is_checked_and_idempotent() {
     assert!(read_gate(&t).is_none());
 }
 
+/// 用户反馈（2026-11-09）：同一项目的另一个会话里也看到了别的会话的 Lead。认领了的任务只给认领它的会话。
+#[test]
+fn snapshot_is_only_for_the_owning_session() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let cwd = root.to_str().unwrap();
+    // 还没认领：谁都看得到。
+    assert!(snapshot_for(cwd, Some("other")).is_some());
+    fs::write(t.join(".owner"), "mine\n").unwrap();
+    assert!(snapshot_for(cwd, Some("mine")).is_some());
+    assert!(snapshot_for(cwd, Some("other")).is_none());
+    // 不带会话 = 不过滤（看板、防休眠等宿主内部用）。
+    assert!(snapshot(cwd).is_some());
+}
+
 #[test]
 fn snapshot_reads_task_only_inside_project() {
     let e = env();

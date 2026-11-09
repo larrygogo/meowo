@@ -669,8 +669,8 @@ export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
 
 /// Lead 工作流：会话 cwd 所在项目的任务快照；没有任务为 null（入口据此隐藏）。
 /// 手机端经远程桥放行（remote.rs 模块头「例外（2026-11-09）」），参数改动须同步 AnswerLeadGateArgs 等桥臂结构体。
-export function leadTaskSnapshot(cwd: string): Promise<LeadTaskDto | null> {
-  return invoke("lead_task_snapshot", { cwd });
+export function leadTaskSnapshot(cwd: string, session?: string | null): Promise<LeadTaskDto | null> {
+  return invoke("lead_task_snapshot", { cwd, ...(session ? { session } : {}) });
 }
 
 /// Lead 工作流是否已装进 Claude Code（以实际安装为准，不另存设置）。

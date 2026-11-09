@@ -837,7 +837,11 @@ bridged_args!(HideWorkspaceArgs { cwd: String });
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
-bridged_args!(LeadTaskSnapshotArgs { cwd: String });
+bridged_args!(LeadTaskSnapshotArgs {
+    cwd: String,
+    #[serde(default)]
+    session: Option<String>
+});
 bridged_args!(AnswerLeadGateArgs { cwd: String, gate_id: String, choice: String, note: String });
 bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
 
@@ -1118,7 +1122,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             if let Err(e) = ensure_session_dir(app, &a.cwd).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::lead::lead_task_snapshot(a.cwd).await)
+            reply(crate::lead::lead_task_snapshot(a.cwd, a.session).await)
         }
         "answer_lead_gate" => {
             let a = args!(AnswerLeadGateArgs);
@@ -2296,7 +2300,7 @@ mod tests {
             "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),
             // api.ts fileMentionCandidates
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
-            "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
             "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,

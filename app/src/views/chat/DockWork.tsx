@@ -59,10 +59,12 @@ function TodosIcon({ className, size }: { className: string; size?: number }) {
   );
 }
 
-export function DockWork({ sessionId, cwd, items, history, loading }: {
+export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading }: {
   sessionId: number;
   /// 会话工作目录：Lead 入口据此读 `.lead/active`（为空时不显示 Lead）。
   cwd?: string | null;
+  /// 会话的 cc_session_id：Lead 任务只给认领它的会话看。
+  ccSessionId?: string | null;
   items: ChatItem[];
   history: Pick<ChatHistory, "plan" | "agentModes" | "pendingReview" | "todos"> | null;
   loading: boolean;
@@ -70,7 +72,7 @@ export function DockWork({ sessionId, cwd, items, history, loading }: {
   const t = useT();
   const [panel, setPanel] = useState<Panel | null>(null);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
-  const [leadTask, refreshLead] = useLeadTask(cwd);
+  const [leadTask, refreshLead] = useLeadTask(cwd, ccSessionId);
 
   // claude 新版任务列表(TaskCreate/TaskUpdate)从时间线累积重建:CC 对这类 harness
   // 内部工具**不触发 PostToolUse hook**(实测:reporter 手喂事件能落库,真调用不触发),
