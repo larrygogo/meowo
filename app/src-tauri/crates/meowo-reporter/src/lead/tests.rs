@@ -607,3 +607,32 @@ fn resume_injects_the_sessions_own_task_over_active() {
     fs::write(mine.join("progress.md"), "phase: done\n").unwrap();
     assert!(ctx("ME").contains("别人的任务"));
 }
+
+/// /code-review 第 1、2、8 条：会话先认领 A（A 挂着已作答的关卡），又认领 B，B 做完后恢复。
+/// 登记表指着 B，但注入、答复、唤醒都要落在 A 上。
+#[test]
+fn resume_reaches_answer_on_earlier_claimed_task() {
+    use std::time::Duration;
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let a = make_with(&root, "design", &[json!(false)], SLUG);
+    claim_as(&e, &root, "ME", "Edit", json!({"file_path": a.join("progress.md").to_string_lossy()}));
+    write_gate(&a, "gA", "B", "pending");
+    answer_gate(&a, "gA", &ans("1", "")).unwrap();
+    let b = root.join(".lead/20261110-b");
+    fs::create_dir_all(&b).unwrap();
+    fs::write(b.join("progress.md"), "phase: done\n").unwrap();
+    claim_as(&e, &root, "ME", "Edit", json!({"file_path": b.join("progress.md").to_string_lossy()}));
+    assert_eq!(owner(&b).as_deref(), Some("ME"), "登记表现在指着 B");
+    let ctx = call(&e, "session", json!({"session_id": "ME", "cwd": root})).unwrap()["hookSpecificOutput"]
+        ["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(ctx.contains(SLUG) && ctx.contains("选择 1"), "注入 A 和 A 的答复");
+    let start = json!({"session_id": "ME", "cwd": root, "hook_event_name": "SessionStart"});
+    let out = wait(&start, &e.reg, Duration::from_millis(20), Duration::from_secs(5));
+    assert_eq!(out.exit, 2, "wait 也落在 A 上");
+    assert!(own_task(root.to_str().unwrap(), "").is_none(), "空会话 id 不匹配未认领的任务");
+}
