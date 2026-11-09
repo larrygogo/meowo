@@ -5543,6 +5543,95 @@ describe("ChatWindow", () => {
     }), { timeout: 3_000 });
   }, 15_000);
 
+  /// 先上屏(用户要求):发出第一句话跳到新会话,终端还没就绪、甚至还没认领成真 id 时,
+  /// 这句话就以「发送中」气泡出现,不再对着「会话正在启动…」干等。粘进来的附件随正文走
+  /// 对话页同一条发送路(非图片附件走附路径)。
+  it("新建会话页:第一句话先上屏,认领后不丢不重复,就绪后连同附件发进去", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let launched = false;
+    let claimed = false;
+    let ready = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "check_provider_hooks") return Promise.resolve("installed");
+      if (command === "new_session") { launched = true; return Promise.resolve(-9); }
+      if (command === "managed_terminal_binding") return Promise.resolve(launched && claimed ? 71 : null);
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 71, title: "新会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+        connected: true, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "save_pasted_attachment") return Promise.resolve(`C:/tmp/meowo-paste/1-0/${(args as { fileName: string }).fileName}`);
+      if (command === "managed_terminal_snapshot") return Promise.resolve(ready
+        ? { sessionId: 71, active: true, managed: true, data: b64utf8("claude ready"), startOffset: 0, endOffset: 64, exited: false, exitCode: null }
+        : { sessionId: 71, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    const file = { name: "notes.txt", size: 3, arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    await waitFor(() => expect(screen.getByTestId("nsp-attachments").textContent).toContain("notes.txt"));
+    fireEvent.change(input, { target: { value: "修一下登录页" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    // 还是临时 id、终端也没画出东西:气泡已经在了,空态文案不出现。
+    expect(await screen.findByText("修一下登录页")).toBeTruthy();
+    expect(screen.queryByText(zh.chat.emptyStarting)).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", expect.anything());
+    // 认领成真 id:回执跟着搬过去,只有一条。
+    claimed = true;
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 71 })));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(screen.getAllByText("修一下登录页")).toHaveLength(1);
+    ready = true;
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+      sessionId: 71, data: "@C:/tmp/meowo-paste/1-0/notes.txt 修一下登录页",
+      // claude 声明了 attachment_mention:附件以 @路径 原生附加在正文前。
+    }), { timeout: 8_000 });
+    expect(screen.getAllByText("修一下登录页")).toHaveLength(1);
+  }, 15_000);
+
+  it("新建会话页:第一句话发不出去时收掉气泡,原文退回输入框并说原因", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let launched = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "check_provider_hooks") return Promise.resolve("installed");
+      if (command === "new_session") { launched = true; return Promise.resolve(-9); }
+      if (command === "managed_terminal_binding") return Promise.resolve(launched ? 71 : null);
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 71, title: "新会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+        connected: true, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      // CLI 一起来就退出:等就绪那一步报错。
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 71, active: false, managed: true, data: "", startOffset: 0, endOffset: 0, exited: true, exitCode: 1, exitTail: "boom",
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    fireEvent.change(input, { target: { value: "修一下登录页" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    const composer = await screen.findByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(composer.value).toBe("修一下登录页"), { timeout: 8_000 });
+    expect(screen.queryByText("修一下登录页", { selector: ".chat-user-text, .chat-user-text *" })).toBeNull();
+    expect(document.querySelector(".chat-send-error")?.textContent ?? "").toContain("boom");
+  }, 15_000);
+
   /// 已被接替的旧段只读:composer 禁用、上方挂「已切换引擎」横幅(向它续话会让接续链
   /// 分叉),唯一动作是「前往新会话」——直接切到链尾。
   it("已被接替的会话禁发,横幅引导前往新会话", async () => {

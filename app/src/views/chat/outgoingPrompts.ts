@@ -270,6 +270,14 @@ export function createOutgoingStore() {
       if (!list?.some((prompt) => prompt.id === id)) return;
       put(sessionId, list.map((prompt) => (prompt.id === id ? { ...prompt, ...patch } : prompt)));
     },
+    /// 临时负 id 认领成真 id：同一个 PTY 换了编号，回执跟着搬过去。新建会话页的第一句话
+    /// 在认领前就上屏了，不搬的话认领那一刻气泡消失，等 transcript 落盘才又冒出来。
+    move(from: number, to: number) {
+      const list = bySession.get(from);
+      if (!list || from === to) return;
+      bySession.delete(from);
+      put(to, [...(bySession.get(to) ?? EMPTY), ...list]);
+    },
     /// 只撤界面上的回执：消息已经写进终端，CLI 照样会处理它。
     dismiss(sessionId: number, id: number) {
       const list = bySession.get(sessionId);

@@ -1234,7 +1234,9 @@ export function ChatWindow() {
   // 待注入的第一句话：复制到其他引擎的交接提示，或新建会话页里写下的第一句话。记下要发的话、
   // 目标 provider 与临时 id，新会话认领成真 id（realId，binding 轮询里记下）、终端就绪后由注入
   // effect 消费。ref 而非 state：注入是流程记账，不驱动渲染。
-  const handoffRef = useRef<{ prompt: string; failMessage: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null } | null>(null);
+  // attachments / echoId 只有新建会话页的第一句话带：它先以「发送中」气泡上屏（echoId 是那条回执），
+  // 附件随正文走对话页同一条发送路。
+  const handoffRef = useRef<{ prompt: string; failMessage: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null; attachments?: Attachment[]; echoId?: number } | null>(null);
   // 当前会话 provider 的 descriptor：切换入口的可见性由后端下发的能力位决定
   //（supports_chat_export），前端不判 id——守卫测试盯着。
   const currentAgentDescriptor = provider
@@ -1532,6 +1534,7 @@ export function ChatWindow() {
       draftsRef.current.delete(from);
       // 终端输入框里残留的图片占位也属于同一个 PTY,跟着换编号。
       if (partialImageDraftsRef.current.delete(from)) partialImageDraftsRef.current.add(id);
+      outgoingStore.move(from, id);
       claimedRef.current = { from, to: id };
     } else {
       draftsRef.current.set(from, {
@@ -2530,14 +2533,34 @@ export function ChatWindow() {
   useEffect(() => {
     const pending = handoffRef.current;
     if (!pending || handoffInjectingRef.current) return;
+    // 回执可能在临时 id 下，也可能已随认领搬到真 id 下：两边都试（不在的那边是空操作）。
+    const settleEcho = (patch: { phase: "pending" | "failed"; at?: number } | null) => {
+      if (pending.echoId == null) return;
+      for (const sid of [pending.tempId, pending.realId]) {
+        if (sid == null) continue;
+        if (patch) outgoingStore.update(sid, pending.echoId, patch);
+        else outgoingStore.dismiss(sid, pending.echoId);
+      }
+    };
+    // 落回输入框：宁可让用户多按一次回车，不能让第一句话（和粘进来的图）静默丢失。
+    const giveBack = () => {
+      settleEcho(null);
+      setPrompt(pending.prompt);
+      if (pending.attachments?.length) setAttachments(pending.attachments);
+    };
     // 过期防污染：拖过 10 分钟（比如用户一直没处理信任提示就去干别的）不再自动注入。
-    if (Date.now() - pending.at > 600_000) { handoffRef.current = null; return; }
+    if (Date.now() - pending.at > 600_000) {
+      handoffRef.current = null;
+      if (pending.echoId != null) giveBack();
+      return;
+    }
     if (provider !== pending.expectProvider || !chatUi) return;
     // 只认这次启动的那条会话：认领前是临时 id，认领后是 binding 记下的真 id。
     if (sessionId !== pending.tempId && sessionId !== pending.realId) return;
     if (terminalAttention) return; // 等用户处理完启动交互，attention 清除后重跑
     let cancelled = false;
     const injectPrompt = pending.prompt;
+    const injectFiles = pending.attachments ?? [];
     handoffInjectingRef.current = true;
     let sending = false;
     (async () => {
@@ -2558,12 +2581,24 @@ export function ChatWindow() {
         // 本 effect 换成真 id 重跑，记账还在就会再发一遍。
         handoffRef.current = null;
         sending = true;
-        await submitToTerminal(sessionId, injectPrompt, undefined, { message: pending.failMessage });
+        // 带附件：和对话页同一套——全是图片且 CLI 支持就原生贴图，否则把路径附进正文。
+        const clipMarker = !remoteUi() && chatUi.clipboard_image_paste;
+        let sent = false;
+        if (clipMarker && injectFiles.length > 0 && injectFiles.every((file) => file.image)) {
+          const result = await sendWithClipboardImages(injectPrompt, clipMarker, chatUi.clipboard_paste_input ?? "\x16", injectFiles, "\r", true);
+          if (result === "blocked") throw new Error(pending.failMessage);
+          sent = result === "sent";
+        }
+        if (!sent) {
+          const text = promptWithAttachments(injectPrompt, injectFiles, t.chat.attachmentInstruction, chatUi.attachment_mention ?? false);
+          await submitToTerminal(sessionId, text, undefined, { message: pending.failMessage });
+        }
+        settleEcho({ phase: "pending", at: Date.now() });
       } catch (error) {
         // 已经开始发了：即便会话已换成真 id，失败也要把这句话落回输入框，不能静默丢。
         if (cancelled && !sending) return;
         handoffRef.current = null;
-        setPrompt(injectPrompt);
+        giveBack();
         setSendError(formatBackendError(error, t.locale));
       } finally {
         handoffInjectingRef.current = false;
@@ -3859,10 +3894,20 @@ export function ChatWindow() {
             droppedPath={newSessionDrop}
             onOpenSession={selectSession}
             onMoreSessions={openAdminFor}
-            onLaunched={(tempId, launchedProvider, message) => {
+            onLaunched={(tempId, launchedProvider, message, files) => {
               // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
-              if (message) {
-                handoffRef.current = { prompt: message, failMessage: t.newSession.firstPromptFailed, expectProvider: launchedProvider, at: Date.now(), tempId, realId: null };
+              // 先上屏（用户要求）：跳过去就能看见自己发的话标着「发送中」，不再对着「正在启动…」
+              // 干等终端起来；发不出去时收掉气泡、原文和附件退回输入框。
+              if (message || files.length > 0) {
+                const echoId = outgoingStore.add(tempId, {
+                  kind: "echo",
+                  text: message || t.chat.queuedAttachmentOnly,
+                  attachmentOnly: !message,
+                  anchor: anchorFrom([], undefined),
+                  phase: "sending",
+                  draft: { prompt: message, attachments: files },
+                });
+                handoffRef.current = { prompt: message, failMessage: t.newSession.firstPromptFailed, expectProvider: launchedProvider, at: Date.now(), tempId, realId: null, attachments: files, echoId };
               }
               selectSession(tempId);
             }}
