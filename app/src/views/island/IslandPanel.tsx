@@ -72,6 +72,10 @@ function providerLabel(provider: string): string {
   return provider ? provider[0].toUpperCase() + provider.slice(1) : provider;
 }
 
+/// 加号用 SVG（与对话窗工作区头部的新建按钮同一个形状）：全角「＋」拼在文案里会被读屏念出来，
+/// 按钮名也就不是「新建会话」了（审查 2026-11-09）。
+const PLUS = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
+
 export function IslandPanel({
   sessions,
   usage,
@@ -158,10 +162,10 @@ export function IslandPanel({
           {onNewSession && (
             <button
               type="button"
-              className="isl-btn is-ghost"
+              className="isl-btn is-ghost isl-new"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onNewSession}
-            >＋ {t.sticker.newSession}</button>
+            >{PLUS}{t.sticker.newSession}</button>
           )}
           {/* 托盘菜单去掉「打开会话列表」后，对话窗与设置在岛上也要有入口（用户 2026-11-05 要求）。 */}
           {onOpenChat && (
@@ -197,7 +201,7 @@ export function IslandPanel({
             ><StripIcon /></button>
           )}
           <span className="isl-panel-meta">
-            {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}
+            <span className="isl-panel-meta-date">{now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}</span>
             <b>{now.toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false })}</b>
           </span>
         </div>
@@ -213,7 +217,7 @@ export function IslandPanel({
                   {onOpenChat ? (
                     <button type="button" className="isl-btn is-primary" onClick={onOpenChat}>{t.sticker.openChatWindow}</button>
                   ) : onNewSession && (
-                    <button type="button" className="isl-btn is-primary" onClick={onNewSession}>＋ {t.sticker.newSession}</button>
+                    <button type="button" className="isl-btn is-primary isl-new" onClick={onNewSession}>{PLUS}{t.sticker.newSession}</button>
                   )}
                 </div>
               )}
