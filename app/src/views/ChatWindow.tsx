@@ -2810,7 +2810,9 @@ export function ChatWindow() {
       return sendText(promptWithAttachments(outgoingPrompt, attachments, t.chat.attachmentInstruction, chatUi?.attachment_mention ?? false), submitInput, true);
     };
     const sent = await sendQueueRef.current.enqueue(sid, deliver);
-    outgoingStore.update(sid, outgoingId, sent ? { phase: "pending", at: Date.now() } : { phase: "failed" });
+    // 按回执编号结算，不按发出时的会话 id：临时 id 下发的，写入途中认领成真 id，回执已随认领搬到
+    // 真 id 下，按旧 id 找会落空，气泡永远停在「发送中」（实拍 2026-11-09，消息其实已送达）。
+    outgoingStore.settle(outgoingId, sent ? { phase: "pending", at: Date.now() } : { phase: "failed" });
     // 失败时人还在这个会话、输入框也空着：直接退回输入框（原因在上方错误条里），不多留一个
     // 失败气泡让人再点一次。切走了或已经在写新内容，就留着失败气泡，由用户决定重发还是放回。
     if (!sent && isCurrentOperation() && !promptRef.current.trim() && attachmentsRef.current.length === 0) {
