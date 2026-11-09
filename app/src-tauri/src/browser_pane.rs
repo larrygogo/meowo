@@ -53,14 +53,16 @@ pub(crate) enum Placement {
     OnScreen,
 }
 
-/// 收起时该摆到哪：agent 在用的页签要接着渲染，挪到窗口外；其余的照旧藏起来，
-/// 不让一堆后台页签白白占着渲染。
-pub(crate) fn concealed_placement(keep_rendering: bool) -> Placement {
-    if keep_rendering {
-        Placement::Parked
-    } else {
-        Placement::Hidden
-    }
+/// 收起后视口的下限（逻辑像素）。面板可以拖得很窄，或者布局变动时量到一个瞬时的小矩形；
+/// 原样沿用就又回到「视口太小」的老问题（窄到页面切手机版、滚到底判不出来）。
+const MIN_PARKED_VIEWPORT: (f64, f64) = (480.0, 480.0);
+
+/// 面板里量到的尺寸 → 收起后给页面的视口：按面板尺寸来，排版不跳；太小的维度抬到下限。
+pub(crate) fn parked_viewport((width, height): (f64, f64)) -> (f64, f64) {
+    (
+        width.max(MIN_PARKED_VIEWPORT.0),
+        height.max(MIN_PARKED_VIEWPORT.1),
+    )
 }
 
 /// 挪到窗口外时的位置和大小：保持视口尺寸，整块放到内容区左边外侧。
@@ -86,10 +88,12 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) agent_paused: bool,
     /// 页面缩放比例（1.0 = 100%），「…」菜单里调。
     pub(crate) zoom: f64,
-    /// 以下只在后端用，不发给前端。
+    // 以下三项只在后端用，不发给前端。
+    /// 原生视图眼下摆在哪。
     #[serde(skip)]
     placement: Placement,
-    /// 收起时给页面留的视口：上一次在面板里显示时的尺寸，没显示过就是 DEFAULT_VIEWPORT。
+    /// 收起时给页面留的视口：上一次在面板里显示时的尺寸（经 `parked_viewport` 抬到下限），
+    /// 没显示过就是 DEFAULT_VIEWPORT。
     #[serde(skip)]
     viewport: (f64, f64),
     /// agent 用过这个页签：收起时挪到窗口外接着渲染，而不是藏起来。见 `Placement`。
@@ -365,24 +369,30 @@ pub(crate) fn browser_pane_list(
     list
 }
 
-/// 让原生视图从面板上让开。agent 在用的挪到窗口外接着渲染，其余的藏起来。
-/// 调用方持有 panes 锁：前端的 set_bounds 和 agent 的 keep_rendering 在不同线程上，
-/// 「看状态 → 下发」要在锁里做完，不然前端刚显示出来又被 agent 那边挪走。这些 setter
-/// 只往主线程事件队列里投消息、不等结果，锁里调不会卡住主线程（调用方都不在主线程上）。
+/// 让原生视图从面板上让开。agent 用过的挪到窗口外接着渲染，其余的藏起来，
+/// 不让一堆后台页签白白占着渲染。
+/// 调用方持有 panes 锁：agent 的 keep_rendering 在 broker 线程上，「看 placement → 下发」
+/// 在锁里做完，agent 那边才不会把用户刚显示出来的页签挪走。（前端自己连发的 hide/show
+/// 两次 invoke 谁先拿到锁不归这里管，那是改动前就有的先后问题。）这些 setter 只往主线程
+/// 事件队列里投消息、不等结果，锁里调不会卡住主线程（调用方都不在主线程上）。
 fn conceal(webview: &tauri::Webview, info: &mut BrowserPaneInfo) -> Result<(), String> {
-    let target = concealed_placement(info.keep_rendering);
+    let target = if info.keep_rendering {
+        Placement::Parked
+    } else {
+        Placement::Hidden
+    };
     if info.placement == target {
         return Ok(());
     }
-    match target {
-        Placement::Parked => {
-            webview
-                .set_bounds(parked_rect(info.viewport))
-                .map_err(|e| e.to_string())?;
-            webview.show().map_err(|e| e.to_string())?;
-        }
-        _ => webview.hide().map_err(|e| e.to_string())?,
+    if target == Placement::Parked {
+        webview
+            .set_bounds(parked_rect(info.viewport))
+            .map_err(|e| e.to_string())?;
+        webview.show().map_err(|e| e.to_string())?;
+    } else {
+        webview.hide().map_err(|e| e.to_string())?;
     }
+    // 下发都成功了才记：记早了，失败后 keep_rendering 会以为它还在屏上而跳过。
     info.placement = target;
     Ok(())
 }
@@ -425,15 +435,16 @@ pub(crate) async fn browser_pane_set_bounds(
         return conceal(&webview, info);
     }
     // 记下面板里的尺寸，收起后 agent 接着用时页面视口不变，排版不会跳。
-    info.viewport = (width, height);
-    info.placement = Placement::OnScreen;
+    info.viewport = parked_viewport((width, height));
     webview
         .set_bounds(Rect {
             position: LogicalPosition::new(x, y).into(),
             size: LogicalSize::new(width, height).into(),
         })
         .map_err(|e| e.to_string())?;
-    webview.show().map_err(|e| e.to_string())
+    webview.show().map_err(|e| e.to_string())?;
+    info.placement = Placement::OnScreen;
+    Ok(())
 }
 
 #[tauri::command]
@@ -556,11 +567,13 @@ mod tests {
     }
 
     #[test]
-    fn agent_panes_keep_rendering_when_concealed() {
-        // agent 用过的页签收起时挪到窗口外、保持可见，页面不进 document.hidden。
-        assert_eq!(concealed_placement(true), Placement::Parked);
-        // 用户自己开的页签照旧藏起来，后台页签不白占渲染。
-        assert_eq!(concealed_placement(false), Placement::Hidden);
+    fn parked_viewport_follows_the_panel_but_never_gets_tiny() {
+        // 正常宽度的面板：原样沿用，收起前后排版一致。
+        assert_eq!(parked_viewport((520.0, 700.0)), (520.0, 700.0));
+        assert_eq!(parked_viewport((1600.0, 900.0)), (1600.0, 900.0));
+        // 拖得很窄或布局变动时量到的瞬时小矩形：抬到下限，不回到 2×2 那种视口。
+        assert_eq!(parked_viewport((120.0, 700.0)), (480.0, 700.0));
+        assert_eq!(parked_viewport((1.0, 1.0)), (480.0, 480.0));
     }
 
     #[test]
