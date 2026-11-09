@@ -29,7 +29,7 @@ import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
-import { anchorFrom, echoItemId, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
+import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
 import { ANCHOR_PX, countsAsUnseen, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
@@ -4040,7 +4040,7 @@ export function ChatWindow() {
                   kind: "echo",
                   text: message || t.chat.queuedAttachmentOnly,
                   attachmentOnly: !message,
-                  anchor: anchorFrom([], undefined),
+                  anchor: freshAnchor(),
                   phase: "sending",
                   draft: { prompt: message, attachments: files },
                 });
