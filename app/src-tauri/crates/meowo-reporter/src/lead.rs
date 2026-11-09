@@ -144,6 +144,36 @@ fn find_task(cwd: Option<&str>) -> Option<PathBuf> {
     task.is_dir().then_some(task)
 }
 
+/// Git Bash 写法 `/c/Users/...` 换成 `C:/Users/...`（只在 Windows）：agent 在 Windows 上多半跑在 Git Bash 里，
+/// 写进度时命令里是这种路径，原样当路径用解析不到，任务一直认领不上，Lead 面板就停在别的任务上
+///（用户 2026-11-09：Lead 面板的内容更新有很大延迟）。
+fn windows_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let drive = cfg!(windows)
+        && bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b'/';
+    if drive {
+        format!("{}:/{}", (bytes[1] as char).to_ascii_uppercase(), &path[3..])
+    } else {
+        path.to_owned()
+    }
+}
+
+/// 本会话认领的、还没做完的任务里最近更新的那个。`.lead/active` 全项目只有一个，同一项目几个会话
+/// 各做各的任务时它指着别人的（或早就做完的）任务；面板只看它，就一直停在那个任务上，看着像更新
+/// 很慢（用户 2026-11-09）。认领了的优先，没有再退回 active。
+fn own_task(cwd: &str, sid: &str) -> Option<PathBuf> {
+    let lead = project_root(Path::new(cwd)).join(".lead");
+    std::fs::read_dir(&lead)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|task| task.is_dir() && owner_of(task) == sid && phase_of(task) != "done")
+        .max_by_key(|task| std::fs::metadata(task.join("progress.md")).and_then(|m| m.modified()).ok())
+}
+
 fn task_of_session(sid: &str, registry: &Path) -> Option<PathBuf> {
     let t = load_map(registry).get(sid)?.as_str()?.to_owned();
     let task = PathBuf::from(t);
@@ -341,7 +371,7 @@ fn claim(data: &Value, registry: &Path) {
     let cwd = data.get("cwd").and_then(Value::as_str);
     // 第一个解析得到、确实是 `.lead/<slug>` 目录的引用就是被写的任务。
     let task = find_task_refs(&text.replace('\\', "/")).into_iter().find_map(|r| {
-        let mut p = PathBuf::from(&r);
+        let mut p = PathBuf::from(windows_path(&r));
         if !p.is_absolute() {
             p = Path::new(cwd?).join(p);
         }
@@ -555,7 +585,9 @@ fn visible_to(task: &Path, session: Option<&str>) -> bool {
 /// 同 snapshot，但只给任务归属的会话看（用户反馈 2026-11-09：同一项目的另一个会话里也冒出了别的会话的
 /// Lead 入口和关卡卡片）。没认领的任务（还在访谈、写规格）照旧给项目里所有会话看。
 pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
-    let task = find_task(Some(cwd)).filter(|task| visible_to(task, session))?;
+    let task = session
+        .and_then(|sid| own_task(cwd, sid))
+        .or_else(|| find_task(Some(cwd)).filter(|task| visible_to(task, session)))?;
     let checks = acceptance(&task)
         .unwrap_or_default()
         .iter()

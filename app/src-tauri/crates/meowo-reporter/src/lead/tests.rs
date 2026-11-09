@@ -318,6 +318,53 @@ fn claim_by_any_write_into_the_task_dir() {
 }
 
 /// 用户反馈（2026-11-09）：同一项目的另一个会话里也看到了别的会话的 Lead。认领了的任务只给认领它的会话。
+/// 用户 2026-11-09：Lead 面板更新有很大延迟。active 指着别人的旧任务，本会话认领的新任务进度
+/// 一直不上面板。认领了的、没做完的、最近更新的优先。
+#[test]
+fn snapshot_prefers_the_sessions_own_latest_task() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let lead = root.join(".lead");
+    let mk = |slug: &str, phase: &str, owner: &str| {
+        let t = lead.join(slug);
+        fs::create_dir_all(&t).unwrap();
+        fs::write(t.join("progress.md"), format!("phase: {phase}\n")).unwrap();
+        fs::write(t.join("acceptance.json"), "[]").unwrap();
+        if !owner.is_empty() {
+            fs::write(t.join(".owner"), owner).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    mk("20261109-old", "verify", "");
+    mk("20261109-mine-a", "verify", "me");
+    mk("20261109-done", "done", "me");
+    mk("20261109-mine-b", "implement", "me");
+    fs::write(lead.join("active"), "20261109-old").unwrap();
+    let cwd = root.to_str().unwrap();
+    assert_eq!(snapshot_for(cwd, Some("me")).unwrap().slug, "20261109-mine-b");
+    // 别的会话没认领任何任务：照旧看 active。
+    assert_eq!(snapshot_for(cwd, Some("other")).unwrap().slug, "20261109-old");
+}
+
+/// Git Bash 写法的路径（`/c/Users/...`）也能认领（Windows）。
+#[test]
+fn claim_accepts_git_bash_drive_paths() {
+    if !cfg!(windows) {
+        return;
+    }
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let win = t.to_string_lossy().replace('\\', "/");
+    let bash = format!("/{}{}", win[..1].to_ascii_lowercase(), &win[2..]);
+    let cmd = json!({"session_id": "s9", "cwd": "C:/Windows", "tool_name": "Bash",
+        "tool_input": {"command": format!("cd {bash} && cat >> progress.md <<'EOF'\n- x\nEOF")}});
+    call(&e, "claim", cmd);
+    assert_eq!(owner(&t).as_deref(), Some("s9"));
+}
+
 #[test]
 fn snapshot_is_only_for_the_owning_session() {
     let e = env();
