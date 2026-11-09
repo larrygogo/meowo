@@ -705,6 +705,8 @@ pub struct WorktreeStatusDto {
     pub reason: Option<String>,
     /// 原因附带的数量（如没提交的文件数、共用目录的会话数）。
     pub count: Option<u32>,
+    /// 可清理时：被 git 忽略、又不是构建产物的文件（`.env`、`.lead/` 等），删除前列给用户看。
+    pub ignored: Vec<String>,
 }
 
 /// 占着 worktree 目录的进程（删除前列给用户确认）。

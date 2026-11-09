@@ -22,6 +22,11 @@ export function worktreeApplicable(status: WorktreeStatusDto | null): boolean {
   return status == null || status.eligible || !NOT_APPLICABLE.has(status.reason ?? "");
 }
 
+/** 被 git 忽略、只在本地的文件（.env、.lead/ 等）：删 worktree 时一起没掉，确认框里必须说出来。 */
+function ignoredNote(t: Dict, ignored: string[] | undefined): string {
+  return ignored && ignored.length > 0 ? "\n\n" + t.worktree.ignoredNote(ignored.join("\n")) : "";
+}
+
 /** 不可清理的原因 → 一句人话。 */
 export function worktreeReasonText(t: Dict, status: WorktreeStatusDto): string {
   const r = t.worktree.reason;
@@ -39,6 +44,7 @@ export function worktreeReasonText(t: Dict, status: WorktreeStatusDto): string {
     case "shared_session": return r.shared_session(n);
     case "nested_repo": return r.nested_repo(n);
     case "hidden_changes": return r.hidden_changes(n);
+    case "query_failed": return r.query_failed;
     case "detached": return r.detached;
     case "locked": return r.locked;
     default: return r.unknown;
@@ -55,7 +61,8 @@ export function useWorktreeStatus(sessionId: number | null): WorktreeStatusDto |
     worktreeStatus(sessionId)
       .then((s) => { if (alive) setStatus(s); })
       .catch(() => {
-        if (alive) setStatus({ path: null, branch: null, prNumber: null, eligible: false, reason: "not_repo", count: null });
+        // 查询失败不能当成「不是 worktree」藏掉菜单项：置灰并说明（规格要求常驻、置灰、写原因）。
+        if (alive) setStatus({ path: null, branch: null, prNumber: null, eligible: false, reason: "query_failed", count: null, ignored: [] });
       });
     return () => { alive = false; };
   }, [sessionId]);
@@ -74,11 +81,11 @@ export type RemovalOutcome =
 export async function runWorktreeRemoval(
   t: Dict,
   sessionId: number,
-  status: Pick<WorktreeStatusDto, "path" | "branch">,
+  status: Pick<WorktreeStatusDto, "path" | "branch" | "ignored">,
   askFirst = true,
 ): Promise<RemovalOutcome> {
   if (askFirst) {
-    const yes = await appConfirm(t.worktree.confirmMessage(status.path ?? "", status.branch ?? ""), {
+    const yes = await appConfirm(t.worktree.confirmMessage(status.path ?? "", status.branch ?? "") + ignoredNote(t, status.ignored), {
       title: t.worktree.confirmTitle,
       danger: true,
       confirmLabel: t.worktree.remove,
@@ -88,8 +95,9 @@ export async function runWorktreeRemoval(
   try {
     // 后端只结束用户在确认框里看过的那批进程：确认后又冒出新进程时它会再返回占用清单，
     // 这里就再问一次（最多三轮，防止有进程不停地重新拉起）。
+    const expected = status.path ?? "";
     let confirmed: number[] = [];
-    let result = await removeSessionWorktree(sessionId, confirmed);
+    let result = await removeSessionWorktree(sessionId, expected, confirmed);
     for (let round = 0; !result.removed && result.blockers.length > 0; round += 1) {
       if (round >= 3) return { kind: "failed", message: t.worktree.busyLoop };
       const names = result.blockers.map((p) => `${p.name} (${p.pid})`).join("\n");
@@ -100,7 +108,7 @@ export async function runWorktreeRemoval(
       });
       if (!kill) return { kind: "cancelled" };
       confirmed = result.blockers.map((p) => p.pid);
-      result = await removeSessionWorktree(sessionId, confirmed);
+      result = await removeSessionWorktree(sessionId, expected, confirmed);
     }
     if (!result.removed) return { kind: "failed", message: t.worktree.reason.unknown };
     return { kind: "removed", branchDeleted: result.branchDeleted };
@@ -127,7 +135,8 @@ export async function runBatchCleanup(t: Dict): Promise<string> {
     }
     const lines = ready.map((item) => {
       const name = item.sessionIds.map((id) => titles.get(id)).find(Boolean);
-      return `• ${name ? `${name} — ` : ""}${item.status.path ?? ""} (${item.status.branch ?? ""})`;
+      const extra = item.status.ignored.length > 0 ? `\n    ${t.worktree.ignoredInline(item.status.ignored.join(", "))}` : "";
+      return `• ${name ? `${name} — ` : ""}${item.status.path ?? ""} (${item.status.branch ?? ""})${extra}`;
     });
     const yes = await appConfirm(t.worktree.batchMessage(lines.join("\n"), all.length - ready.length), {
       title: t.worktree.batchTitle,

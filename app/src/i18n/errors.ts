@@ -77,6 +77,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/shared_session", exact: true, zh: "还有进行中的会话在用这个目录", en: "An open session is using this folder" },
   { m: "worktree/detached", exact: true, zh: "当前不在任何分支上", en: "Not on a branch" },
   { m: "worktree/locked", exact: true, zh: "这个 worktree 被锁定了", en: "This worktree is locked" },
+  { m: "worktree/target_changed", exact: true, zh: "目录和确认时看到的不一样了，没有删除，请重新检查", en: "The folder no longer matches what you confirmed. Nothing was deleted; check again." },
+  { m: "worktree/partial_removed", tail: true, zh: "删到一半失败：目录里部分文件已经删掉，本地分支保留", en: "Deletion failed partway: some files in the folder were deleted; the local branch was kept" },
   { m: "worktree/still_exists", exact: true, zh: "删完后目录还在，请手动检查", en: "The folder is still there after deleting; check it manually" },
   { m: "worktree/unlink_failed", tail: true, zh: "拆除目录里的链接失败", en: "Couldn't remove links inside the folder" },
   { m: "worktree/remove_failed", tail: true, zh: "删除目录失败（目录里的链接已拆掉，链接指向的内容没动）", en: "Couldn't delete the folder (links inside it were removed; what they pointed to is untouched)" },

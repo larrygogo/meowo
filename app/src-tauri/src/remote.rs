@@ -874,6 +874,7 @@ bridged_args!(WorktreeStatusArgs { session_id: i64 });
 
 bridged_args!(RemoveSessionWorktreeArgs {
     session_id: i64,
+    expected_path: String,
     confirmed_pids: Vec<u32>
 });
 
@@ -1155,6 +1156,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     app.clone(),
                     state,
                     a.session_id,
+                    a.expected_path,
                     a.confirmed_pids,
                 )
                 .await,
@@ -2093,7 +2095,7 @@ mod tests {
             // api.ts worktreeStatus / removeSessionWorktree
             "worktree_status" => parse::<WorktreeStatusArgs>(br#"{"sessionId":7}"#).map(|_| ()),
             "remove_session_worktree" => parse::<RemoveSessionWorktreeArgs>(
-                br#"{"sessionId":7,"confirmedPids":[]}"#,
+                br#"{"sessionId":7,"expectedPath":"C:/w/wt","confirmedPids":[]}"#,
             )
             .map(|_| ()),
             // api.ts:390

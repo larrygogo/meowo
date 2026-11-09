@@ -320,6 +320,11 @@ fn merged(head: String) -> impl Fn(&Path) -> PrLookup {
     }
 }
 
+/// 测试里「用户在确认框看到的目录」就是此刻解析出的 worktree 根目录。
+fn top_of(dir: &Path) -> String {
+    run(dir, &["rev-parse", "--show-toplevel"])
+}
+
 fn nobody(_: &str) -> u32 {
     0
 }
@@ -332,7 +337,8 @@ fn 删除已合并的_worktree_只拆链接不伤主仓库() {
     let status = status_for_dir(&fx.wt, &nobody, &merged(head.clone()));
     assert!(status.eligible, "应可清理: {status:?}");
 
-    let result = remove_dir_worktree(&fx.wt, &nobody, &merged(head), &[]).expect("删除成功");
+    let result = remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &merged(head), &[])
+        .expect("删除成功");
     assert!(result.removed);
     assert!(result.branch_deleted);
     assert!(!fx.wt.exists(), "worktree 目录应已删除");
@@ -361,7 +367,8 @@ fn 不满足条件时拒绝删除且原样保留() {
     let fx = fixture("dirty");
     let head = run(&fx.wt, &["rev-parse", "HEAD"]);
     std::fs::write(fx.wt.join("a.txt"), "changed\n").unwrap();
-    let err = remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), &[]).unwrap_err();
+    let err = remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &merged(head.clone()), &[])
+        .unwrap_err();
     assert_eq!(err, "worktree/dirty");
     assert!(fx.wt.join("a.txt").exists());
     assert!(fx.wt.join("node_modules").exists(), "链接也不该被拆");
@@ -375,7 +382,7 @@ fn 不满足条件时拒绝删除且原样保留() {
         head_oid: head.clone(),
     };
     assert_eq!(
-        remove_dir_worktree(&fx.wt, &nobody, &open, &[]).unwrap_err(),
+        remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &open, &[]).unwrap_err(),
         "worktree/pr_open"
     );
     assert!(fx.wt.exists());
@@ -423,8 +430,8 @@ fn 有进程占着目录时先列出来_确认后结束进程再删() {
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    let first =
-        remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), &[]).expect("返回占用清单");
+    let first = remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &merged(head.clone()), &[])
+        .expect("返回占用清单");
     assert!(!first.removed);
     assert!(
         first.blockers.iter().any(|p| p.pid == child.id()),
@@ -449,14 +456,21 @@ fn 有进程占着目录时先列出来_确认后结束进程再删() {
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(500));
     let seen: Vec<u32> = first.blockers.iter().map(|p| p.pid).collect();
-    let again =
-        remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), &seen).expect("再问一次");
+    let again = remove_dir_worktree(
+        &fx.wt,
+        &top_of(&fx.wt),
+        &nobody,
+        &merged(head.clone()),
+        &seen,
+    )
+    .expect("再问一次");
     assert!(!again.removed, "有没确认过的进程时不能删");
     assert!(again.blockers.iter().any(|p| p.pid == late.id()));
     assert!(fx.wt.exists());
 
     let all: Vec<u32> = again.blockers.iter().map(|p| p.pid).collect();
-    let second = remove_dir_worktree(&fx.wt, &nobody, &merged(head), &all).expect("确认后删除");
+    let second = remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &merged(head), &all)
+        .expect("确认后删除");
     assert!(second.removed);
     assert!(!fx.wt.exists());
     let _ = child.kill();
@@ -478,13 +492,14 @@ fn probe_real_worktree() {
     let status = status_for_dir(&dir, &nobody, &gh_pr_lookup);
     println!("判定: {status:?}");
     assert!(status.eligible, "真实环境下应可清理");
-    let first = remove_dir_worktree(&dir, &nobody, &gh_pr_lookup, &[]).expect("删除");
+    let first =
+        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &gh_pr_lookup, &[]).expect("删除");
     let pids: Vec<u32> = first.blockers.iter().map(|p| p.pid).collect();
     println!("占用: {:?}", first.blockers);
     let result = if first.removed {
         first
     } else {
-        remove_dir_worktree(&dir, &nobody, &gh_pr_lookup, &pids).expect("删除")
+        remove_dir_worktree(&dir, &top_of(&dir), &nobody, &gh_pr_lookup, &pids).expect("删除")
     };
     println!("结果: {result:?}");
     assert!(result.removed && !dir.exists());
@@ -680,7 +695,7 @@ fn bare_仓库布局下删对仓库_不碰旁边仓库的同名分支() {
     run(&wt, &["config", "user.email", "t@t"]);
     let head = run(&wt, &["rev-parse", "HEAD"]);
 
-    let result = remove_dir_worktree(&wt, &nobody, &merged(head), &[]).expect("删除");
+    let result = remove_dir_worktree(&wt, &top_of(&wt), &nobody, &merged(head), &[]).expect("删除");
     assert!(result.removed && result.branch_deleted);
     assert!(!wt.exists());
     assert!(
@@ -702,4 +717,67 @@ fn 锁定的_worktree_不可清理() {
     let fx = fixture("locked");
     run(&fx.main, &["worktree", "lock", fx.wt.to_str().unwrap()]);
     assert_eq!(reason_of(&fx).as_deref(), Some("locked"));
+}
+
+// ═══ 第二轮做空验证复现的场景 ═══
+
+#[test]
+fn 子模块侧分支上的本地提交_不可清理() {
+    let fx = fixture("subside");
+    let sub = add_submodule(&fx, "libs");
+    run(&sub, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(sub.join("side.txt"), "x\n").unwrap();
+    run(&sub, &["add", "."]);
+    run(&sub, &["commit", "-qm", "side only"]);
+    run(&sub, &["checkout", "-q", "main"]);
+    assert_eq!(reason_of(&fx).as_deref(), Some("submodule_unpushed"));
+}
+
+#[test]
+fn 子模块里有_stash_不可清理() {
+    let fx = fixture("substash");
+    let sub = add_submodule(&fx, "libs");
+    std::fs::write(sub.join("s.txt"), "changed\n").unwrap();
+    run(&sub, &["stash", "-q"]);
+    assert_eq!(reason_of(&fx).as_deref(), Some("submodule_unpushed"));
+}
+
+#[test]
+fn 可清理时列出被忽略的本地文件_构建产物不列() {
+    let fx = fixture("ignored");
+    let exclude = fx.main.join(".git").join("info").join("exclude");
+    std::fs::write(&exclude, ".lead/\n.env\ntarget/\n").unwrap();
+    std::fs::create_dir_all(fx.wt.join(".lead")).unwrap();
+    std::fs::write(fx.wt.join(".lead").join("product.md"), "facts\n").unwrap();
+    std::fs::write(fx.wt.join(".env"), "KEY=1\n").unwrap();
+    std::fs::create_dir_all(fx.wt.join("target")).unwrap();
+    std::fs::write(fx.wt.join("target").join("x.o"), "o").unwrap();
+    let head = run(&fx.wt, &["rev-parse", "HEAD"]);
+    let status = status_for_dir(&fx.wt, &nobody, &merged(head));
+    assert!(status.eligible, "{status:?}");
+    assert!(
+        status.ignored.iter().any(|p| p == ".env"),
+        "{:?}",
+        status.ignored
+    );
+    assert!(
+        status.ignored.iter().any(|p| p.starts_with(".lead")),
+        "{:?}",
+        status.ignored
+    );
+    assert!(!status
+        .ignored
+        .iter()
+        .any(|p| p.contains("target") || p.contains("node_modules")));
+}
+
+#[test]
+fn 确认时看到的目录和此刻解析出的不一致时拒绝() {
+    let fx = fixture("target");
+    let head = run(&fx.wt, &["rev-parse", "HEAD"]);
+    let other = fx.main.to_string_lossy().into_owned();
+    let err = remove_dir_worktree(&fx.wt, &other, &nobody, &merged(head), &[]).unwrap_err();
+    assert_eq!(err, "worktree/target_changed");
+    assert!(fx.wt.join("a.txt").exists());
+    assert!(fx.wt.join("node_modules").exists());
 }

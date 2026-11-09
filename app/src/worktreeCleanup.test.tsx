@@ -15,13 +15,13 @@ import { zh } from "./i18n/zh";
 import type { LiveSession, WorktreeStatusDto } from "./api";
 
 const eligible: WorktreeStatusDto = {
-  path: "C:/w/meowo-feat", branch: "feat/x", prNumber: 12, eligible: true, reason: null, count: null,
+  path: "C:/w/meowo-feat", branch: "feat/x", prNumber: 12, eligible: true, reason: null, count: null, ignored: [],
 };
 const dirty: WorktreeStatusDto = {
-  path: "C:/w/meowo-feat", branch: "feat/x", prNumber: 12, eligible: false, reason: "dirty", count: 3,
+  path: "C:/w/meowo-feat", branch: "feat/x", prNumber: 12, eligible: false, reason: "dirty", count: 3, ignored: [],
 };
 const mainCheckout: WorktreeStatusDto = {
-  path: "C:/w/meowo", branch: "main", prNumber: null, eligible: false, reason: "not_worktree", count: null,
+  path: "C:/w/meowo", branch: "main", prNumber: null, eligible: false, reason: "not_worktree", count: null, ignored: [],
 };
 
 /** 按命令名分派的 invoke 假实现；confirm_dialog 默认同意。 */
@@ -58,7 +58,7 @@ describe("撤销条上的「删除 worktree」按钮", () => {
     const confirm = calls("confirm_dialog")[0] as { message: string };
     expect(confirm.message).toContain("C:/w/meowo-feat");
     expect(confirm.message).toContain("feat/x");
-    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 7, confirmedPids: [] }]);
+    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 7, expectedPath: "C:/w/meowo-feat", confirmedPids: [] }]);
   });
 
   it("不可清理时不出现", async () => {
@@ -84,8 +84,8 @@ describe("撤销条上的「删除 worktree」按钮", () => {
     expect(confirms).toHaveLength(2);
     expect(confirms[1].message).toContain("node.exe (4321)");
     expect(calls("remove_session_worktree")).toEqual([
-      { sessionId: 7, confirmedPids: [] },
-      { sessionId: 7, confirmedPids: [4321] },
+      { sessionId: 7, expectedPath: "C:/w/meowo-feat", confirmedPids: [] },
+      { sessionId: 7, expectedPath: "C:/w/meowo-feat", confirmedPids: [4321] },
     ]);
   });
 
@@ -104,10 +104,24 @@ describe("撤销条上的「删除 worktree」按钮", () => {
     expect(confirms).toHaveLength(3);
     expect(confirms[2].message).toContain("bash.exe (2)");
     expect(calls("remove_session_worktree")).toEqual([
-      { sessionId: 7, confirmedPids: [] },
-      { sessionId: 7, confirmedPids: [1] },
-      { sessionId: 7, confirmedPids: [1, 2] },
+      { sessionId: 7, expectedPath: "C:/w/meowo-feat", confirmedPids: [] },
+      { sessionId: 7, expectedPath: "C:/w/meowo-feat", confirmedPids: [1] },
+      { sessionId: 7, expectedPath: "C:/w/meowo-feat", confirmedPids: [1, 2] },
     ]);
+  });
+
+  it("会一起删掉的被忽略本地文件，在确认框里列出来", async () => {
+    mockInvoke({
+      worktree_status: () => ({ ...eligible, ignored: [".env", ".lead/"] }),
+      remove_session_worktree: () => ({ removed: true, blockers: [], branchDeleted: true }),
+    });
+    render(<WorktreeRemoveButton t={zh} sessionId={7} className="b" />);
+    fireEvent.click(await screen.findByRole("button", { name: "删除 worktree" }));
+    await screen.findByText("worktree 已删除");
+    const confirm = calls("confirm_dialog")[0] as { message: string };
+    expect(confirm.message).toContain("被 git 忽略的本地文件");
+    expect(confirm.message).toContain(".env");
+    expect(confirm.message).toContain(".lead/");
   });
 
   it("后端拒绝时显示原因而不是抛错", async () => {
@@ -155,6 +169,15 @@ describe("已完成会话菜单里的「删除 worktree」", () => {
     await waitFor(() => expect(item.getAttribute("aria-disabled")).toBe("false"));
     fireEvent.click(item);
     await waitFor(() => expect(done).toHaveBeenCalledWith({ kind: "removed", branchDeleted: false }));
+  });
+
+  it("查询失败时不藏掉这一项，置灰并说明", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "worktree_status" ? Promise.reject("db locked") : Promise.resolve());
+    menu();
+    const item = await screen.findByRole("menuitem", { name: "删除 worktree" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("note").textContent).toBe("检查失败，稍后再试");
   });
 
   it("主检出这类根本不是 worktree 的，不出现这一项", async () => {
@@ -250,7 +273,7 @@ describe("侧栏「已完成」页的批量清理（手机端也走这里）", (
     fireEvent.click(screen.getByRole("tab", { name: "已完成" }));
     fireEvent.click(await screen.findByRole("button", { name: "清理已合并 worktree" }));
     expect(await screen.findByText("删除了 1 个 worktree")).toBeTruthy();
-    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 5, confirmedPids: [] }]);
+    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 5, expectedPath: "C:/w/meowo-feat", confirmedPids: [] }]);
   });
 });
 

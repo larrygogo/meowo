@@ -18,4 +18,8 @@ reason: string | null,
 /**
  * 原因附带的数量（如没提交的文件数、共用目录的会话数）。
  */
-count: number | null, };
+count: number | null, 
+/**
+ * 可清理时：被 git 忽略、又不是构建产物的文件（`.env`、`.lead/` 等），删除前列给用户看。
+ */
+ignored: Array<string>, };

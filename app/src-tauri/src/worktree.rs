@@ -273,11 +273,29 @@ fn submodule_dirs(top: &Path) -> Option<Vec<PathBuf>> {
 
 /// 每个子模块：HEAD 必须在它的远端分支里（不管父仓库记录的是不是同一个提交——父仓库干净时
 /// 子模块里也可能有只在本地的提交，做空验证复现过），工作区必须干净。任何一步查不清楚都算 Unpushed。
+///
+/// 不只看 HEAD：在 linked worktree 里初始化的子模块，整个仓库放在 `.git/worktrees/<id>/modules/`
+/// 下，`git worktree remove` 会连它的所有本地分支和 stash 一起删（第二轮做空验证复现：
+/// 侧分支上的本地提交和 stash 删后在哪都找不到）。所以每个本地分支都要在远端找得到，且不能有 stash。
 fn submodule_state(subs: &[PathBuf]) -> SubmoduleState {
     let mut worst = SubmoduleState::Clean;
     for sub in subs {
-        match git(sub, &["branch", "-r", "--contains", "HEAD"]) {
-            Some(s) if !s.is_empty() => {}
+        let Some(heads) = git(
+            sub,
+            &["for-each-ref", "--format=%(objectname)", "refs/heads"],
+        ) else {
+            return SubmoduleState::Unpushed;
+        };
+        let tips =
+            std::iter::once("HEAD").chain(heads.lines().map(str::trim).filter(|l| !l.is_empty()));
+        for tip in tips {
+            match git(sub, &["branch", "-r", "--contains", tip]) {
+                Some(s) if !s.is_empty() => {}
+                _ => return SubmoduleState::Unpushed,
+            }
+        }
+        match git(sub, &["stash", "list"]) {
+            Some(s) if s.is_empty() => {}
             _ => return SubmoduleState::Unpushed,
         }
         match git(sub, &["status", "--porcelain", "--untracked-files=all"]) {
@@ -433,6 +451,7 @@ pub(crate) fn status_for_dir(
         eligible: false,
         reason: Some(reason.to_string()),
         count: None,
+        ignored: Vec::new(),
     };
     if !dir.is_dir() {
         return refuse(Some(dir.to_string_lossy().into_owned()), "dir_missing");
@@ -442,6 +461,12 @@ pub(crate) fn status_for_dir(
     };
     let facts = gather_facts(&lay, other_sessions(&norm(&lay.top)), pr_lookup);
     let verdict = evaluate(&facts);
+    // 只在可删时才列：不可删时用户看到的是原因，这份清单只服务于删除前的确认框。
+    let ignored = if verdict.is_none() {
+        notable_ignored(&lay.top)
+    } else {
+        Vec::new()
+    };
     WorktreeStatusDto {
         path: Some(dunce::simplified(&lay.top).to_string_lossy().into_owned()),
         branch: facts.branch.clone(),
@@ -452,7 +477,64 @@ pub(crate) fn status_for_dir(
         eligible: verdict.is_none(),
         reason: verdict.map(|(r, _)| r.to_string()),
         count: verdict.and_then(|(_, c)| c),
+        ignored,
     }
+}
+
+/// 构建产物和依赖目录：被忽略很正常，删了能重新生成，不必在确认框里吓人。
+const REBUILDABLE: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "dist-mobile",
+    "build",
+    "out",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".cache",
+    ".parcel-cache",
+    ".svelte-kit",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "coverage",
+    ".gradle",
+    ".dart_tool",
+    "bin",
+    "obj",
+];
+
+/// 被 git 忽略、但不是构建产物的文件（如 `.env`、`CLAUDE.local.md`、`.lead/`）：判定里不算改动，
+/// 删 worktree 时会一起没掉，而且只在本地、哪儿都找不回来（第二轮做空验证提出）。
+/// 列给确认框看，不静默删。最多 20 条；查不出来返回空（不影响判定，只少一句提醒）。
+fn notable_ignored(top: &Path) -> Vec<String> {
+    let Some(list) = git(
+        top,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    list.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter(|l| {
+            !l.trim_end_matches('/')
+                .split('/')
+                .any(|part| REBUILDABLE.contains(&part))
+        })
+        .take(20)
+        .map(str::to_string)
+        .collect()
 }
 
 // ═══ 占用进程 ═══
@@ -777,8 +859,13 @@ fn refusal_error(reason: &str) -> &'static str {
 /// 删除主流程。有占用进程时：只有当它们全都在 `confirmed_pids`（用户在确认框里看过的那批）
 /// 里，才结束它们继续删；否则什么都不动，返回此刻的占用清单让用户再确认一次——
 /// 不能结束用户没看到名字的进程（比如两次调用之间刚在这个目录开的终端）。
+///
+/// `expected_top`：用户在确认框里看到的那个 worktree 目录。此刻重新解析出的目录和它对不上就拒绝——
+/// 比如嵌套 worktree 上次删到一半、`.git` 没了，会话目录会被解析成外层 worktree，
+/// 不能拿用户对内层的确认去删外层（第二轮做空验证推演）。
 pub(crate) fn remove_dir_worktree(
     dir: &Path,
+    expected_top: &str,
     other_sessions: &dyn Fn(&str) -> u32,
     pr_lookup: &dyn Fn(&Path) -> PrLookup,
     confirmed_pids: &[u32],
@@ -786,6 +873,10 @@ pub(crate) fn remove_dir_worktree(
     let status = status_for_dir(dir, other_sessions, pr_lookup);
     if !status.eligible {
         return Err(refusal_error(status.reason.as_deref().unwrap_or_default()).into());
+    }
+    let resolved = status.path.as_deref().map(|p| norm(Path::new(p)));
+    if resolved != Some(norm(Path::new(expected_top))) {
+        return Err("worktree/target_changed".into());
     }
     let lay = layout(dir).ok_or("worktree/not_repo")?;
     let top = lay.top.clone();
@@ -821,10 +912,17 @@ pub(crate) fn remove_dir_worktree(
         .map_err(|e| format!("worktree/git_failed: {e}"))?;
     if !out.status.success() {
         // git 删不掉就停下报错，不自己动手递归删：那会绕过 git 自己的保护（锁定、找错仓库）。
-        return Err(format!(
-            "worktree/remove_failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        // 但 git 一旦开始删就不回头（源码注释原话 "there's no going back from here"），
+        // 中途失败时目录多半已经少了文件：如实说，并 prune 掉悬空的 worktree 记录。分支不删。
+        let _ = git_repo(&lay.common, &["worktree", "prune"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if top.join(".git").exists() {
+            return Err(format!("worktree/remove_failed: {stderr}"));
+        }
+        if top.exists() {
+            return Err(format!("worktree/partial_removed: {stderr}"));
+        }
+        // 目录已经没了：git 报错但实际删完了，按成功收尾（继续删分支）。
     }
     // git 说删好了但还剩空壳（极少见，比如杀软刚放开句柄）：这时里面只可能是空目录。
     if top.exists() {
@@ -896,6 +994,7 @@ pub(crate) async fn remove_session_worktree(
     app: tauri::AppHandle,
     state: State<'_, super::AppState>,
     session_id: i64,
+    expected_path: String,
     confirmed_pids: Vec<u32>,
 ) -> Result<WorktreeRemovalDto, String> {
     let db_path = state.db_path.clone();
@@ -904,6 +1003,7 @@ pub(crate) async fn remove_session_worktree(
         // 同一个 worktree 下其他已归档会话不算「在用」：它们本来就会跟着一起显示「目录已删除」。
         remove_dir_worktree(
             &dir,
+            &expected_path,
             &|top| count_other_sessions(&db_path, &[session_id], top),
             &gh_pr_lookup,
             &confirmed_pids,
