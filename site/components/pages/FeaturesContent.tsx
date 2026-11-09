@@ -58,9 +58,9 @@ const CONTENT: Record<Lang, Content> = {
     },
     panel: {
       eyebrow: "右侧面板",
-      title: "改动、文件、终端、浏览器，就在对话旁边",
+      title: "更改、文件、终端、浏览器，就在对话旁边",
       body: "对话窗右侧是一排页签，可以拖动排序、右键批量关闭。每个会话记住自己开了哪些页签；会话结束或归档后，它开的终端和浏览器一起关掉。",
-      checks: ["改动页看 diff，左侧有新旧两列行号；对某一行写评论，一键放进输入框发给 Agent", "文件页浏览项目、预览文件；文件在后台被改了会提示刷新，菜单里能把路径添加到对话", "在会话目录里开终端，可以开多个；关掉还有程序在跑的终端时先问一句", "浏览器有地址栏、前进后退、缩放；对话里的 localhost 链接直接在面板里打开", "claude、codex、kimi 会话能自己操作这个浏览器：打开网页、点击、输入、读内容、截图。你看得到它的鼠标，随时点「接管」，设置里也能关掉", "快捷键：Ctrl+Shift+G 改动，Ctrl+Shift+E 文件，Ctrl+Shift+B 浏览器"],
+      checks: ["「更改」页签看 diff，左侧有新旧两列行号；对某一行写评论，一键放进输入框发给 Agent", "文件页浏览项目、预览文件；文件在后台被改了会提示刷新，菜单里能把路径添加到对话", "在会话目录里开终端，可以开多个；关掉还有程序在跑的终端时先问一句", "浏览器有地址栏、前进后退、缩放；对话里的 localhost 链接直接在面板里打开", "claude、codex、kimi 会话能自己操作这个浏览器：打开网页、点击、输入、读内容、截图。你看得到它的鼠标，随时点「接管」，设置里也能关掉", "快捷键：Ctrl+Shift+G 改动，Ctrl+Shift+E 文件，Ctrl+Shift+B 浏览器"],
     },
     mobile: {
       eyebrow: "手机远程",
@@ -209,7 +209,7 @@ export default function FeaturesContent({ lang }: { lang: Lang }) {
           </div>
           <Reveal>
             <div className="stage wide-demo">
-              {/* iframe 里是真实 ChatWindow，右侧面板开着改动页签（app/src/demo/panelEmbed.tsx） */}
+              {/* iframe 里是真实 ChatWindow，右侧面板开着更改页签（app/src/demo/panelEmbed.tsx） */}
               <DemoFrame lang={lang} page="panel" />
             </div>
           </Reveal>

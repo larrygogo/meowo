@@ -10,13 +10,13 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   </p>
   <p><a href="README.md">中文</a> · <b>English</b> · <a href="https://meowo.io/en">Website meowo.io</a></p>
-  <p>Start sessions, follow the conversation, approve commands, review changes, open a terminal or a browser — all inside Meowo's chat window.<br/>The island at the top of your screen shows who's running and who's waiting on you. Away from your desk? Keep things moving from your phone.</p>
+  <p>Start sessions, follow the conversation, approve commands, review changes, open a terminal or a browser, all inside Meowo's chat window.<br/>The island at the top of your screen shows who's running and who's waiting on you. Away from your desk? Keep things moving from your phone.</p>
   <img src="docs/images/island.en.webp" alt="Meowo island: quota and per-session status when collapsed, an alert when a session needs approval, and the session list when expanded" width="760" />
 </div>
 
 ## Download
 
-Get it from **[meowo.io](https://meowo.io/en)** — the page picks the right installer for your system. Or download straight from [GitHub Releases](https://github.com/larrygogo/meowo/releases/latest):
+Get it from **[meowo.io](https://meowo.io/en)**; the page picks the right installer for your system. Or download straight from [GitHub Releases](https://github.com/larrygogo/meowo/releases/latest):
 
 | Platform | Installer | Notes |
 |----------|-----------|-------|
@@ -64,14 +64,28 @@ No AI CLI needed upfront: once Meowo is open, install and sign in from Settings 
 
 ### Accounts, quota and network
 
-- Keep several official accounts per agent and switch in one click; running sessions switch with you.
+- Claude Code, Codex, Kimi and OpenCode can keep several official accounts and switch in one click; for Claude Code, Codex and Kimi, running sessions can switch along. Gemini CLI has a single account and signs in with an API key.
 - No official account? Connect an API relay per model.
-- Shows 5-hour / 7-day quota plus per-model weekly quota (such as Opus), turning red near the limit.
-- Set a global default proxy or one per agent; HTTP, SOCKS5 and authenticated proxies are supported.
+- Shows 5-hour / 7-day quota for Claude Code, Codex and Kimi, plus per-model weekly quota (such as Opus), turning red near the limit.
+- Set a global default proxy or one per agent; HTTP and authenticated proxies are supported, and only Kimi and Gemini CLI accept SOCKS.
+
+### How the five agents differ
+
+The CLIs don't all support the same things. Taken from each plugin's declared capabilities in 0.8.1 (full comparison on the [features page](https://meowo.io/en/features#agents)):
+
+| | Claude Code | Codex | Kimi Code | Gemini CLI | OpenCode |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Sign in from Meowo | one click | one click | one click | API key | one click |
+| Answer questions on the card | ✓ | – | ✓ | – | – |
+| Agent drives the panel browser | ✓ | ✓ | ✓ | – | – |
+| Quota readout | with official sign-in | with ChatGPT sign-in | ✓ | – | – |
+| Context usage | ✓ | ✓ | ✓ | – | – |
+| Multiple accounts | ✓ | ✓ | ✓ | – | ✓ |
+| SOCKS proxy | – | – | ✓ | ✓ | – |
 
 ### Local-first
 
-Session data and settings live only in `~/.meowo/` on your machine (SQLite). Meowo has no server of its own, uploads no conversations, and works offline. Sessions you start in your own terminal show up too.
+Session data and settings live only in `~/.meowo/` on your machine (SQLite). Meowo has no server of its own, uploads no conversations, and works offline. The one exception is optional Bark push: if you turn it on, the project name and session title in each push go through Bark's server. Sessions you start in your own terminal show up too.
 
 ## How it works
 
