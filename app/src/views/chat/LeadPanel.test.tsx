@@ -219,4 +219,15 @@ describe("验收清单与新关卡", () => {
     expect(screen.getByText("关卡 Q 回答问题 · 选机制")).toBeTruthy();
     expect(screen.getByLabelText(/方案一/)).toBeTruthy(); // 标签里还含「推荐」和说明
   });
+
+  it("关卡 Q 没有选项时也能选「其他」只写意见作答，意见必填", async () => {
+    answer.mockResolvedValue(undefined);
+    render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [] })} onAnswered={() => {}} />);
+    fireEvent.click(screen.getByLabelText("其他（写在意见里）"));
+    const submit = screen.getByRole("button", { name: "提交" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText("写下你的回答（必填）"), { target: { value: "按周统计" } });
+    await act(async () => { fireEvent.click(submit); });
+    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "other", "按周统计");
+  });
 });

@@ -60,7 +60,7 @@ leader 用这个流程，是要你在**速度、深度、广度、高度**四个
 - `acceptance.json`：验收清单，格式为 `[{"id":1,"check":"……","passes":false}]`。
   - 每一条都必须能实际检查，比如命令、测试、浏览器操作或可观察的行为，不能写成"体验好"这种空话。
   - 完整档至少有一条深度类（根因或防回归）、一条广度类（同类场景、其他平台或入口）的验收项；动到热路径时再加一条性能类（改动前后的实测数字，不劣于预算）。
-  - 审美和业务判断类的条目，check 里写明「由 leader 验收」。你不用勾它，关卡 C 被接受时 Meowo 会自动勾上（`verified_by: "leader"`），Stop hook 也不会为它拦你。
+  - 审美和业务判断类的条目，加字段 `"by": "leader"`，check 里也写明「由 leader 验收」。你不用勾它，Stop hook 也不会为它拦你；关卡 C 被接受时它会被勾上（`passes: true`、`verified_by: "leader"`）。
 - `decisions.md`：表格列为 日期 | 决策 | 理由 | 谁定的 | 推翻条件
 - `progress.md`：第一行写 `phase: <interview|spec|design|implement|verify|done|blocked>`，下面按时间记录做了什么、卡在哪里、试过哪些失败的路
 
@@ -127,12 +127,12 @@ leader 可能在手机上、隔几个小时才回答，所以关卡写成文件�
    五种 type：
    - **A** 确认规格：options 写空数组，固定选项 confirm / revise。
    - **B** 拍板单向门：options 由你写，每个方案一个。
-   - **C** 看证据验收：options 写空数组，固定选项 accept / reject。accept 时 Meowo 自动勾上「由 leader 验收」的条目。
+   - **C** 看证据验收：options 写空数组，固定选项 accept / reject。在 Meowo 里 accept 时，Meowo 自动勾上 `by: "leader"` 的条目。
    - **D** 授权或操作：options 写空数组，固定选项 approve（允许）/ done（我已完成你要我做的操作）/ deny（不允许）。summary 写清楚要做什么、影响和代价、怎么撤回；要 leader 亲手操作的，写清楚步骤。
-   - **Q** 访谈提问：options 由你写，推荐的标 recommended；leader 也可能只在意见里写答案。
+   - **Q** 访谈提问：options 由你写，推荐的标 recommended；开放式问题可以不写选项。Meowo 会多给一个「其他」（choice 为 `other`），leader 选它时答案在意见里。
 2. 把 progress.md 的 phase 改成对应阶段：A 是 spec，B 是 design，C 是 verify，D 和 Q 保持当前阶段。然后**结束本轮**，不要轮询，不要 sleep。在同一轮里，可以先把不依赖答复的事做完再结束。
 3. leader 在 Meowo 里作答后，你会被自动唤醒，收到一条 `[lead] leader 已在 Meowo 里回答关卡…` 的消息（会话重开时，这条消息会出现在注入的上下文里）。这时读 gate.json 的 answer，确认确实是 answered 状态，把答复和理由记进 decisions.md，把 gate.json 的 status 改成 `consumed`，再按答复继续。revise、reject、deny 带的意见要照着改；revise 或 reject 改完再重新发起关卡。
-4. leader 也可能直接在终端里回答：那就由你把答复写进 gate.json 的 answer，status 直接改成 consumed。
+4. leader 也可能直接在终端里回答：那就由你把答复写进 gate.json 的 answer，status 直接改成 consumed。如果是在终端里接受了关卡 C（"可以""就这样吧"之类），还要由你把 `by: "leader"` 的条目改成 `passes: true`、`verified_by: "leader"`；leader 明确说某条不看了，就按豁免处理，写明出处。
 
 ## 学习闭环（贯穿全程）
 

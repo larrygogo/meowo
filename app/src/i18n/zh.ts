@@ -727,6 +727,8 @@ export const zh = {
     leadGateApprove: "允许",
     leadGateDone: "我已完成",
     leadGateDeny: "不允许",
+    leadGateOther: "其他（写在意见里）",
+    leadGateAnswerRequired: "写下你的回答（必填）",
     leadGateRecommended: "推荐",
     leadGateSubmit: "提交",
     leadGateSending: "提交中…",

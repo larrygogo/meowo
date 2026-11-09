@@ -230,11 +230,16 @@ fn waived(i: &Value) -> Option<&str> {
     i.get("waived").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
 }
 
-/// 这一条要 leader 亲自验收（skill 约定 check 里写「由 leader 验收」）。agent 自己永远勾不上它，
-/// Stop hook 不该为它拦人；关卡 C 接受时由 Meowo 勾上（answer_gate）。容忍空格与大小写。
+/// 这一条要 leader 亲自验收。agent 自己永远勾不上它，Stop hook 不该为它拦人；关卡 C 接受时由 Meowo 勾上
+/// （answer_gate）。以结构化字段 `by: "leader"` 为准（skill 要求写它）；没写时退回看 check 文字里同时有
+/// 「leader」和「验收」——只认固定连写「由 leader 验收」时，实测旧条目「视觉与交互由 leader 在真机验收」
+/// 认不出、被白拦（做空审查第 1 轮）。
 fn needs_leader(i: &Value) -> bool {
-    let check: String = i.get("check").and_then(Value::as_str).unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
-    check.to_lowercase().contains("由leader验收")
+    if let Some(by) = i.get("by").and_then(Value::as_str) {
+        return by.trim().eq_ignore_ascii_case("leader");
+    }
+    let check = i.get("check").and_then(Value::as_str).unwrap_or("").to_lowercase();
+    check.contains("leader") && check.contains("验收")
 }
 
 fn item_line(i: &Value) -> String {
@@ -489,7 +494,8 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
     let task = task_of_session(sid, registry)?; // 按会话找任务：不依赖工作目录
     // verify 也拦：做空之后修问题就在这个阶段，此前只拦 implement，修到一半停下没人管（审查 2026-11-09）。
-    if !["implement", "verify"].contains(&phase_of(&task).as_str()) {
+    let phase = phase_of(&task);
+    if !["implement", "verify"].contains(&phase.as_str()) {
         return None;
     }
     if read_gate(&task).is_some_and(|g| g.status != "consumed") {
@@ -525,7 +531,8 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
     let reason = format!(
-        "[lead] 任务 {slug} 还在实施阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。",
+        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。",
+        if phase == "verify" { "验证" } else { "实施" },
         fail.len(),
         list.join("\n")
     );
@@ -602,6 +609,8 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
     // （做空审查第二轮 L5）。
     let valid = match fixed_choices(&g.kind) {
         Some(fixed) => fixed.contains(&answer.choice.as_str()),
+        // Q 是访谈：开放式问题常常没有合适的选项，允许选 other 只写意见（意见必填）。
+        None if g.kind == "Q" && answer.choice == "other" => !answer.note.trim().is_empty(),
         None => g.options.iter().any(|o| o.id == answer.choice),
     };
     if !valid {
