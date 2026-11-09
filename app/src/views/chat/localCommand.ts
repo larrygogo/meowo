@@ -14,6 +14,11 @@ export type LocalCommandCall = { name: string; args: string };
  *  fromName 是对方的会话名，mode 是它的权限模式（bypass 等）；两者缺失时留空串。 */
 export type CrossMessage = { fromName: string; mode: string; text: string };
 
+/** 渲染用的机器记录行（命令输出 / 后台任务通知 / 系统记录 / hook 反馈），**按原文出现顺序**。
+ *  此前渲染层按类别分组（先全部记录、再全部通知），通知后面跟着的 system-reminder 反而排到
+ *  通知上面（实拍 IMG_2093）。summary 是收起时那一行的摘要，body 是展开后的原文。 */
+export type MachineBlock = { kind: "stdout" | "notification" | "record" | "hook"; summary: string; body: string };
+
 export type UserTextParts = {
   /** 剥掉本地命令包裹后剩下的正文（用户真正打的字）。 */
   text: string;
@@ -27,6 +32,8 @@ export type UserTextParts = {
   crossMessages: CrossMessage[];
   /** 不认识的机器记录（标签名 + 原文），按出现顺序。见 parseUserText 末尾的兜底。 */
   records: { tag: string; body: string }[];
+  /** 上面 stdout / notifications / records 按原文顺序合成的渲染列表，hook 拦截那一对已合并。 */
+  blocks: MachineBlock[];
   /** 这条消息里出现过本地命令/系统注入包裹——渲染层据此切换形态。 */
   local: boolean;
 };
@@ -70,22 +77,87 @@ const MACHINE_LEAD = /^\s*<[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+[\s>]/;
 const MACHINE_BLOCK = /<([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)(?:\s[^>]*)?>([\s\S]*?)<\/\1(?:\s[^>]*)?>/g;
 const PASTED = /<pasted_content\b[^>]*>([\s\S]*?)<\/pasted_content\b[^>]*>/g;
 
+// hook 拦截（Stop hook exit 2 / decision:block）时 Claude Code 往 transcript 写的是**一对**：
+// 只有 <summary>Stop hook feedback</summary> 的空壳通知 + 紧跟的 <system-reminder>，后者才是
+// 正文「Stop hook blocking error from command "<命令>": <原因>」（本机 transcript 扫描：11 条
+// 全是这个形态，SessionStart 等事件同句式）。分开渲染就成了「后台任务通知 Stop hook feedback」
+// +「系统记录 system-reminder」两行，真正有用的原因藏在第二行展开里（实拍 IMG_2093）。
+const HOOK_FEEDBACK = /^<summary>\s*\w+ hook feedback\s*<\/summary>$/i;
+const HOOK_ERROR = /^\w+ hook blocking error from command "[^"]*":\s*([\s\S]*)$/;
+// 同步拦截（decision:block）的形态：isMeta 行、正文是无标签的「Stop hook feedback:\n<原因>」
+// （2.1.319 实拍 IMG_2095，曾显示成用户气泡）。后端按 isMeta 认出后包成 <hook-feedback> 送来。
+const HOOK_PLAIN = /^\w+ hook feedback:\s*([\s\S]*)$/;
+const NOTE_SUMMARY = /<summary>([\s\S]*?)<\/summary>/;
+
+function firstLine(text: string): string {
+  return text.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+/** 收起态的一行摘要。通知用自带的 <summary>（如「Agent "/code-review" finished」）；系统记录
+ *  用正文首行——只写标签名 `system-reminder` 对人零信息量。正文只是嵌套的机器标签时
+ *  （`<tools-used-before-summary>Bash</…>`，本机扫到 9 条）写成「标签: 内容」。 */
+function blockSummary(kind: MachineBlock["kind"], body: string, tag: string): string {
+  if (kind === "notification") return NOTE_SUMMARY.exec(body)?.[1]?.trim() || firstLine(body);
+  if (kind === "record") return firstLine(body.replace(MACHINE_BLOCK, (_m, inner: string, text: string) => `${inner}: ${text.trim()}`)) || tag;
+  return firstLine(body);
+}
+
+/** 把 hook 拦截的「空壳通知 + system-reminder」合成一行 hook 反馈；只出现一半时也认。 */
+function mergeHookBlocks(blocks: MachineBlock[]): MachineBlock[] {
+  const out: MachineBlock[] = [];
+  let shell = false; // 上一行是不是还没配上原因的空壳通知
+  for (const block of blocks) {
+    const error = block.kind === "record" ? HOOK_ERROR.exec(block.body) ?? HOOK_PLAIN.exec(block.body) : null;
+    if (error) {
+      if (shell) out.pop();
+      out.push({ kind: "hook", summary: firstLine(error[1]) || firstLine(block.body), body: block.body });
+      shell = false;
+    } else if (block.kind === "notification" && HOOK_FEEDBACK.test(block.body)) {
+      out.push({ kind: "hook", summary: block.summary, body: block.summary });
+      shell = true;
+    } else {
+      out.push(block);
+      shell = false;
+    }
+  }
+  return out;
+}
+
 export function parseUserText(raw: string): UserTextParts {
-  const parts: UserTextParts = { text: "", commands: [], stdout: [], notifications: [], crossMessages: [], records: [], local: false };
+  const parts: UserTextParts = { text: "", commands: [], stdout: [], notifications: [], crossMessages: [], records: [], blocks: [], local: false };
   // 大段粘贴：外面包着 <pasted_content id="…">，里面是用户自己粘进来的正文——是人说的话，
   // 剥掉外壳照常当正文显示，不能被下面的兜底收成「系统记录」（真实记录扫描发现）。
   if (raw.includes("<pasted_content")) raw = raw.replace(PASTED, (_match, body: string) => body.trim()).trim();
+  // 渲染顺序按各块在原文里的位置排：下面分几趟正则摘取（已知标签一趟、兜底标签一趟），
+  // 摘取顺序不等于原文顺序。按匹配原文回查位置，同文重复的块依次取下一个没用过的位置。
+  const source = raw;
+  const used = new Set<number>();
+  const placed: { at: number; kind: MachineBlock["kind"]; tag: string; body: string }[] = [];
+  const place = (match: string, kind: MachineBlock["kind"], tag: string, body: string) => {
+    let at = source.indexOf(match);
+    while (at >= 0 && used.has(at)) at = source.indexOf(match, at + 1);
+    // 回查不到（STRAY 抹过半截标签后与原文对不上）就排到最后，不丢。
+    if (at >= 0) used.add(at);
+    placed.push({ at: at < 0 ? Number.MAX_SAFE_INTEGER : at, kind, tag, body });
+  };
+  const finish = () => {
+    placed.sort((a, b) => a.at - b.at);
+    parts.blocks = mergeHookBlocks(placed.map((p) => ({ kind: p.kind, summary: blockSummary(p.kind, p.body, p.tag), body: p.body })));
+    return parts;
+  };
   if (!raw.includes("<command-name>") && !raw.includes("<local-command-")
     && !raw.includes("<task-notification>") && !raw.includes("<cross-session-message")
     && !raw.includes("<bash-")) {
     // 名单之外的机器记录：兜底收成「系统记录」，不当用户说的话摊开（见 MACHINE_LEAD）。
     if (MACHINE_LEAD.test(raw)) {
       parts.local = true;
-      parts.text = raw.replace(MACHINE_BLOCK, (_match, tag: string, body: string) => {
-        parts.records.push({ tag, body: body.replace(ANSI, "").trim() });
+      parts.text = raw.replace(MACHINE_BLOCK, (match: string, tag: string, body: string) => {
+        const record = { tag, body: body.replace(ANSI, "").trim() };
+        parts.records.push(record);
+        place(match, "record", tag, record.body);
         return "";
       }).trim();
-      return parts;
+      return finish();
     }
     parts.text = raw;
     return parts;
@@ -104,7 +176,7 @@ export function parseUserText(raw: string): UserTextParts {
   if (parts.crossMessages.length > 0) {
     raw = raw.replace(CROSS_LEAD, "").replace(CROSS_NOTE, "");
   }
-  const rest = raw.replace(PAIR, (_match, tag: string, body: string) => {
+  const rest = raw.replace(PAIR, (match: string, tag: string, body: string) => {
     const value = body.trim();
     switch (tag) {
       case "command-name":
@@ -130,11 +202,17 @@ export function parseUserText(raw: string): UserTextParts {
         // 终端转义剥掉后，被颜色码「挡住」而幸存的前导缩进/对齐空白要保留（剥完再 trim
         // 会把对齐空格吃掉）。trim 只用来判空——纯控制码的一段不该收成空输出块。
         const stripped = value.replace(ANSI, "");
-        if (stripped.trim()) parts.stdout.push(stripped);
+        if (stripped.trim()) {
+          parts.stdout.push(stripped);
+          place(match, "stdout", tag, stripped);
+        }
         break;
       }
       case "task-notification":
-        if (value) parts.notifications.push(value);
+        if (value) {
+          parts.notifications.push(value);
+          place(match, "notification", tag, value);
+        }
         break;
       // command-message 是命令的短描述（"clear" 之于 /clear），与命令名重复；
       // caveat 是写给模型的免责声明、forked-skill-launch 是机器记录，对人零信息量。都丢。
@@ -149,8 +227,10 @@ export function parseUserText(raw: string): UserTextParts {
     ? rest.replace(/\[SYSTEM NOTIFICATION - NOT USER INPUT\][\s\S]*?(?=\n\s*\n|$)/, "")
     : rest;
   // 已知标签处理完还剩下的机器标签（通知后面跟着的 <system-reminder> 一类）：同样收成系统记录。
-  parts.text = cleaned.replace(STRAY, "").replace(MACHINE_BLOCK, (_match, tag: string, body: string) => {
-    parts.records.push({ tag, body: body.replace(ANSI, "").trim() });
+  parts.text = cleaned.replace(STRAY, "").replace(MACHINE_BLOCK, (match: string, tag: string, body: string) => {
+    const record = { tag, body: body.replace(ANSI, "").trim() };
+    parts.records.push(record);
+    place(match, "record", tag, record.body);
     return "";
   }).trim();
   // 技能/后台命令的另一种落盘形态：命令行是**裸文本**（无 <command-name> 包裹），
@@ -167,5 +247,5 @@ export function parseUserText(raw: string): UserTextParts {
       parts.text = restLines.join("\n").trim();
     }
   }
-  return parts;
+  return finish();
 }

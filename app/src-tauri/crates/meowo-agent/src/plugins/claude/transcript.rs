@@ -399,6 +399,13 @@ fn is_image_scale_note(v: &serde_json::Value, content: Option<&serde_json::Value
         && text.matches('[').count() == 1
 }
 
+/// 行首是「<事件名> hook feedback:」（事件名是 Stop、SubagentStop 这类纯字母数字）。
+fn is_hook_feedback(text: &str) -> bool {
+    text.trim_start()
+        .split_once(" hook feedback:")
+        .is_some_and(|(event, _)| !event.is_empty() && event.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
 /// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
 /// `</pasted_content id="6bad">`（2.1.296 实测，id 是 4 位 hex）。这对标签是写给模型的，
 /// 不剥的话对话页会把它们当正文显示（用户实拍反馈）。只剥「整行就是标签、且开闭 id
@@ -526,6 +533,24 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                     .is_some_and(|text| text.trim_start().starts_with("<system-reminder>"))
             {
                 return Vec::new();
+            }
+            // hook 同步拦截（Stop hook 的 decision:block / exit 2）的反馈：isMeta 的 user 行，
+            // 正文是**无标签**的纯文本「Stop hook feedback:\n<原因>」（2.1.319 实拍 IMG_2095）。
+            // 前端的机器标签兜底认不出，就以用户气泡出现、像是用户自己发的。原因对人有用（hook
+            // 为什么拦下 agent），不丢：包一层机器标签交给前端收成「Hook 反馈」折叠行。
+            // 限 isMeta + 行首锚定：用户自己打这句话不受影响（见 transcript 引用污染的教训）。
+            if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true) {
+                if let Some(text) = content
+                    .and_then(|x| x.as_str())
+                    .filter(|text| is_hook_feedback(text))
+                {
+                    return vec![TranscriptEvent::UserMessage {
+                        id: base_id.to_string(),
+                        timestamp,
+                        text: format!("<hook-feedback>\n{}\n</hook-feedback>", text.trim()),
+                        interjected: false,
+                    }];
+                }
             }
             if let Some(text) = content
                 .and_then(|x| x.as_str())
@@ -2406,6 +2431,28 @@ mod tests {
             parse_transcript_events(cross).as_slice(),
             [TranscriptEvent::UserMessage { .. }]
         ));
+    }
+
+    /// 样本取自 2.1.319 真机（实拍 IMG_2095）：Stop hook 同步拦截的反馈行，无任何标签。
+    #[test]
+    fn chat_parser_wraps_meta_hook_feedback() {
+        let line = r#"{"type":"user","uuid":"h1","isMeta":true,"message":{"role":"user","content":"Stop hook feedback:\n[lead] 任务 x 还在实施阶段\n#1 a"}}"#;
+        match parse_transcript_events(line).as_slice() {
+            [TranscriptEvent::UserMessage { text, .. }] => {
+                assert_eq!(text, "<hook-feedback>\nStop hook feedback:\n[lead] 任务 x 还在实施阶段\n#1 a\n</hook-feedback>");
+            }
+            other => panic!("{other:?}"),
+        }
+        // 用户自己打的同一句（非 isMeta）、或 isMeta 但不在行首：原样不动。
+        for line in [
+            r#"{"type":"user","uuid":"h2","message":{"role":"user","content":"Stop hook feedback: 是什么"}}"#,
+            r#"{"type":"user","uuid":"h3","isMeta":true,"message":{"role":"user","content":"看下 Stop hook feedback: 这行"}}"#,
+        ] {
+            match parse_transcript_events(line).as_slice() {
+                [TranscriptEvent::UserMessage { text, .. }] => assert!(!text.contains("<hook-feedback>")),
+                other => panic!("{other:?}"),
+            }
+        }
     }
 
     /// 样本取自 2.1.304 真机：大图缩放说明行。
