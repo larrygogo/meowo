@@ -995,6 +995,8 @@ code.inline {
 }
 .prose {
   max-width: 720px;
+  /* 网格子项默认 min-width:auto，代码块的长行会把整列撑宽，手机上文档页横向溢出到 744px（实测） */
+  min-width: 0;
 }
 .prose h2 {
   font-size: 26px;
