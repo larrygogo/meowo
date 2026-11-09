@@ -287,7 +287,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
               <span className="scm-repo-name">{item.name}</span>
               <span className="scm-repo-branch">
                 <BranchIcon />
-                <span>{item.summary.branch ?? "HEAD"}{dirty && <span className="scm-dirty" aria-label={t.chat.scmDirty}>*</span>}</span>
+                <span>{item.summary.branch ?? "HEAD"}</span>
+                {dirty && <span className="scm-dirty" aria-label={t.chat.scmDirty}>*</span>}
               </span>
               {!!item.summary.ahead && <em className="scm-div" data-tip={t.chat.diffAheadTip(item.summary.ahead)}>↑{item.summary.ahead}</em>}
               {!!item.summary.behind && <em className="scm-div" data-tip={t.chat.diffBehindTip(item.summary.behind)}>↓{item.summary.behind}</em>}
