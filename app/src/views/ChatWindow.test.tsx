@@ -5543,6 +5543,266 @@ describe("ChatWindow", () => {
     }), { timeout: 3_000 });
   }, 15_000);
 
+  /// 先上屏(用户要求):发出第一句话跳到新会话,终端还没就绪、甚至还没认领成真 id 时,
+  /// 这句话就以「发送中」气泡出现,不再对着「会话正在启动…」干等。粘进来的附件随正文走
+  /// 对话页同一条发送路(非图片附件走附路径)。
+  it("新建会话页:第一句话先上屏,认领后不丢不重复,就绪后连同附件发进去", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let launched = false;
+    let claimed = false;
+    let ready = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "check_provider_hooks") return Promise.resolve("installed");
+      if (command === "new_session") { launched = true; return Promise.resolve(-9); }
+      if (command === "managed_terminal_binding") return Promise.resolve(launched && claimed ? 71 : null);
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 71, title: "新会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+        connected: true, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "save_pasted_attachment") return Promise.resolve(`C:/tmp/meowo-paste/1-0/${(args as { fileName: string }).fileName}`);
+      if (command === "managed_terminal_snapshot") return Promise.resolve(ready
+        ? { sessionId: 71, active: true, managed: true, data: b64utf8("claude ready"), startOffset: 0, endOffset: 64, exited: false, exitCode: null }
+        : { sessionId: 71, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    const file = { name: "notes.txt", size: 3, arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    await waitFor(() => expect(screen.getByTestId("nsp-attachments").textContent).toContain("notes.txt"));
+    fireEvent.change(input, { target: { value: "修一下登录页" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    // 还是临时 id、终端也没画出东西:气泡已经在了,空态文案不出现。
+    expect(await screen.findByText("修一下登录页")).toBeTruthy();
+    expect(screen.queryByText(zh.chat.emptyStarting)).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", expect.anything());
+    // 认领成真 id:回执跟着搬过去,只有一条。
+    claimed = true;
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 71 })));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(screen.getAllByText("修一下登录页")).toHaveLength(1);
+    ready = true;
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
+      sessionId: 71, data: "@C:/tmp/meowo-paste/1-0/notes.txt 修一下登录页",
+      // claude 声明了 attachment_mention:附件以 @路径 原生附加在正文前。
+    }), { timeout: 8_000 });
+    expect(screen.getAllByText("修一下登录页")).toHaveLength(1);
+  }, 15_000);
+
+  it("新建会话页:第一句话发不出去时收掉气泡,原文退回输入框并说原因", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let launched = false;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "check_provider_hooks") return Promise.resolve("installed");
+      if (command === "new_session") { launched = true; return Promise.resolve(-9); }
+      if (command === "managed_terminal_binding") return Promise.resolve(launched ? 71 : null);
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 71, title: "新会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
+        connected: true, predecessorId: null, supersededBy: null,
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      // CLI 一起来就退出:等就绪那一步报错。
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 71, active: false, managed: true, data: "", startOffset: 0, endOffset: 0, exited: true, exitCode: 1, exitTail: "boom",
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    fireEvent.change(input, { target: { value: "修一下登录页" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    const composer = await screen.findByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(composer.value).toBe("修一下登录页"), { timeout: 8_000 });
+    expect(screen.queryByText("修一下登录页", { selector: ".chat-user-text, .chat-user-text *" })).toBeNull();
+    expect(document.querySelector(".chat-send-error")?.textContent ?? "").toContain("boom");
+  }, 15_000);
+
+  /// 做空复现过的几种时序:认领发生在写入途中、等就绪时又发一句、启动中切走再回来、
+  /// 切走后过期。共用一套 mock:binding/就绪/历史由各用例的开关控制。
+  function mockFirstPromptLaunch(state: {
+    claimed: () => boolean;
+    ready: () => boolean;
+    items?: () => unknown[];
+    onWrite?: (args: { sessionId: number; data: string }) => void;
+  }) {
+    let launched = false;
+    // 每次新建依次拿 -9、-10…；只有 -9 会认领成 71。
+    let nextTemp = -9;
+    // 屏幕回显写进去的正文：提交前会核对正文确实落进了输入框。
+    let typed = "";
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "recent_cwds") return Promise.resolve(["C:/repo"]);
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "check_provider_hooks") return Promise.resolve("installed");
+      if (command === "new_session") { launched = true; return Promise.resolve(nextTemp--); }
+      if (command === "managed_terminal_binding") {
+        return Promise.resolve(launched && (args as { sessionId: number }).sessionId === -9 && state.claimed() ? 71 : null);
+      }
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "claude", cwd: "C:/repo" });
+      if (command === "get_chat_history") {
+        const id = (args as { sessionId: number }).sessionId;
+        return Promise.resolve({
+          sessionId: id, title: id === 71 ? "新会话" : `别的会话${id}`, status: id === 71 ? "running" : "waiting", provider: "claude", cwd: "C:/repo",
+          supported: true, offset: 0, reset: false, pendingReview: null, items: id === 71 ? (state.items?.() ?? []) : [], model: null,
+          connected: true, predecessorId: null, supersededBy: null,
+        });
+      }
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
+      if (command === "write_managed_terminal") {
+        const write = args as { sessionId: number; data: string };
+        if (write.data.length > 1) typed += " " + write.data;
+        state.onWrite?.(write);
+        return Promise.resolve();
+      }
+      if (command === "managed_terminal_snapshot") {
+        const sid = Number((args as { sessionId: number }).sessionId);
+        return Promise.resolve(state.ready()
+          ? { sessionId: sid, active: true, managed: true, data: b64utf8("claude ready" + typed), startOffset: 0, endOffset: 64 + typed.length, exited: false, exitCode: null }
+          : { sessionId: sid, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      }
+      return Promise.resolve();
+    });
+  }
+  async function sendFirstPrompt(text: string) {
+    render(<ChatWindow />);
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+  }
+  const writesOf = () => invoke.mock.calls
+    .filter(([command]) => command === "write_managed_terminal")
+    .map(([, args]) => (args as { data: string }).data);
+
+  it("新建会话页:写入途中认领成真 id,气泡照样结算,落盘后只剩一条", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let wrote = false;
+    let submitted = false;
+    mockFirstPromptLaunch({
+      claimed: () => wrote,
+      ready: () => true,
+      items: () => (submitted ? [{ type: "user_text", id: "u1", timestamp: null, text: "修一下登录页" }] : []),
+      onWrite: ({ data }) => { wrote = true; if (data === "\r") submitted = true; },
+    });
+    await sendFirstPrompt("修一下登录页");
+    await waitFor(() => expect(writesOf()).toContain("\r"), { timeout: 8_000 });
+    await waitFor(() => expect(document.querySelectorAll(".chat-user-text")).toHaveLength(1), { timeout: 5_000 });
+    expect(document.querySelector(".is-sending")).toBeNull();
+  }, 20_000);
+
+  it("新建会话页:等就绪时又发一句,第二句排在第一句话后面", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let ready = false;
+    mockFirstPromptLaunch({ claimed: () => true, ready: () => ready });
+    await sendFirstPrompt("第一句");
+    const composer = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 71 })));
+    fireEvent.change(composer, { target: { value: "第二句" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(writesOf()).not.toContain("第二句");
+    ready = true;
+    await waitFor(() => expect(writesOf()).toContain("第二句"), { timeout: 10_000 });
+    const writes = writesOf();
+    expect(writes.indexOf("第一句")).toBeGreaterThanOrEqual(0);
+    expect(writes.indexOf("第一句")).toBeLessThan(writes.indexOf("第二句"));
+  }, 25_000);
+
+  it("新建会话页:启动中切走、认领后再回来,第一句话照样上屏并发出去", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let claimed = false;
+    mockFirstPromptLaunch({ claimed: () => claimed, ready: () => claimed });
+    await sendFirstPrompt("修一下登录页");
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 5 }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 5 })));
+    claimed = true;
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
+    expect(await screen.findByText("修一下登录页")).toBeTruthy();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "修一下登录页" }), { timeout: 8_000 });
+  }, 20_000);
+
+  it("新建会话页:写入途中切走、随后发送失败,回到认领后的真 id 能看到失败气泡", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let claimed = false;
+    mockFirstPromptLaunch({ claimed: () => claimed, ready: () => true });
+    // 正文写进去了，提交那一下过一会儿失败（PTY 断了）。
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      const data = (args as { data?: string } | undefined)?.data;
+      if (command === "write_managed_terminal" && data !== undefined && data.length === 1 && data.charCodeAt(0) === 13) {
+        return new Promise((_, reject) => setTimeout(() => reject("pty/closed"), 800));
+      }
+      return base(command, args);
+    });
+    await sendFirstPrompt("修一下登录页");
+    await waitFor(() => expect(writesOf()).toContain("修一下登录页"), { timeout: 8_000 });
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 5 }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 5 })));
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    // 人在会话 5：不往它的输入框里塞。
+    expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).value).toBe("");
+    // 错误条也不该挂在不相干的会话 5 上。
+    expect(document.querySelector(".chat-send-error")).toBeNull();
+    claimed = true;
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
+    // 回到真 id 先查一次认领关系，回执才搬过来。
+    expect(await screen.findByText(zh.chat.echoFailed, undefined, { timeout: 3_000 })).toBeTruthy();
+    expect(screen.getByText("修一下登录页")).toBeTruthy();
+  }, 20_000);
+
+  it("新建会话页:第一个还没发出去就开第二个,第一个的第一句话转成失败气泡而不是一直发送中", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    mockFirstPromptLaunch({ claimed: () => false, ready: () => false });
+    await sendFirstPrompt("A的第一句");
+    expect(await screen.findByText("A的第一句")).toBeTruthy();
+    act(() => eventListeners.get("chat-new-session")?.({ payload: null }));
+    const input = await screen.findByTestId("nsp-input");
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("repo"));
+    fireEvent.change(input, { target: { value: "B的第一句" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: -9 }));
+    await waitFor(() => expect(screen.getByText("A的第一句")).toBeTruthy());
+    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
+  }, 20_000);
+
+  it("新建会话页:切走后过期,不把第一句话塞进正在看的别的会话", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    mockFirstPromptLaunch({ claimed: () => false, ready: () => false });
+    await sendFirstPrompt("修一下登录页");
+    act(() => eventListeners.get("chat-session-changed")?.({ payload: 5 }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 5 })));
+    const realNow = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow + 11 * 60_000);
+    try {
+      act(() => eventListeners.get("chat-session-changed")?.({ payload: 6 }));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 6 })));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const composer = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+      expect(composer.value).toBe("");
+      expect(writesOf()).not.toContain("修一下登录页");
+    } finally {
+      clock.mockRestore();
+    }
+  }, 20_000);
+
   /// 已被接替的旧段只读:composer 禁用、上方挂「已切换引擎」横幅(向它续话会让接续链
   /// 分叉),唯一动作是「前往新会话」——直接切到链尾。
   it("已被接替的会话禁发,横幅引导前往新会话", async () => {

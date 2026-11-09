@@ -219,6 +219,12 @@ const EMPTY_MARKERS: string[] = [];
 /** 终端就绪等待超过这么多秒才上横幅（之前只有发送钮转圈，见横幅处注释）。 */
 const TERMINAL_WAIT_NOTICE_S = 20;
 
+/// 新建会话页发出的第一句话：回执编号、它落在哪个会话（临时 id → 认领后的真 id），以及
+/// 发完（成功/失败/过期）才放行的闸门——后面再发的消息排在它之后。
+type FirstEcho = { tempId: number; realId: number | null; echoId: number; done: Promise<void>; release: () => void };
+/// 插件没声明贴图键时的兜底（Ctrl-V），与 sendPrompt 里同一个值。
+const CLIPBOARD_PASTE_FALLBACK = String.fromCharCode(0x16);
+
 export function ChatWindow() {
   const t = useT();
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
@@ -1234,7 +1240,24 @@ export function ChatWindow() {
   // 待注入的第一句话：复制到其他引擎的交接提示，或新建会话页里写下的第一句话。记下要发的话、
   // 目标 provider 与临时 id，新会话认领成真 id（realId，binding 轮询里记下）、终端就绪后由注入
   // effect 消费。ref 而非 state：注入是流程记账，不驱动渲染。
-  const handoffRef = useRef<{ prompt: string; failMessage: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null } | null>(null);
+  // attachments / echoId 只有新建会话页的第一句话带：它先以「发送中」气泡上屏（echoId 是那条回执），
+  // 附件随正文走对话页同一条发送路。
+  const firstEchoRef = useRef<FirstEcho | null>(null);
+  // 新建页起过、还没在本窗口认领的临时 id。启动中切走时 binding 轮询不在它身上跑，回执会
+  // 一直挂在临时 id 下——发送中的、失败的都一样，回到真 id 看不见（做空复现）。
+  const unclaimedTempsRef = useRef(new Set<number>());
+  const handoffRef = useRef<{ prompt: string; failMessage: string; expectProvider: AgentId; at: number; tempId: number; realId: number | null; attachments?: Attachment[]; echoId?: number } | null>(null);
+  /// handoffRef 只有一个槽：还没发出去的第一句话要被新的注入顶掉时（连开两个新会话、
+  /// 或在它身上复制到其他引擎），先结算成失败气泡、放行闸门。不然它永远「发送中」，
+  /// 那条会话后面每条消息都要先空等 60 秒（做空复现）。
+  const abandonFirstPrompt = () => {
+    const first = firstEchoRef.current;
+    if (!first) return;
+    outgoingStore.settle(first.echoId, { phase: "failed" });
+    firstEchoRef.current = null;
+    first.release();
+    if (handoffRef.current?.echoId === first.echoId) handoffRef.current = null;
+  };
   // 当前会话 provider 的 descriptor：切换入口的可见性由后端下发的能力位决定
   //（supports_chat_export），前端不判 id——守卫测试盯着。
   const currentAgentDescriptor = provider
@@ -1532,6 +1555,9 @@ export function ChatWindow() {
       draftsRef.current.delete(from);
       // 终端输入框里残留的图片占位也属于同一个 PTY,跟着换编号。
       if (partialImageDraftsRef.current.delete(from)) partialImageDraftsRef.current.add(id);
+      outgoingStore.move(from, id);
+      unclaimedTempsRef.current.delete(from);
+      if (firstEchoRef.current?.tempId === from) firstEchoRef.current.realId = id;
       claimedRef.current = { from, to: id };
     } else {
       draftsRef.current.set(from, {
@@ -2471,6 +2497,7 @@ export function ChatWindow() {
     setSendError("");
     try {
       const started = await copySessionToProvider(sessionId, target.id, model ? { model } : undefined);
+      abandonFirstPrompt();
       handoffRef.current = { prompt: t.chat.handoffPrompt(started.handoffPath), failMessage: t.chat.handoffInjectFailed, expectProvider: target.id, at: Date.now(), tempId: started.tempId, realId: null };
       resetTo(started.tempId);
     } catch (error) {
@@ -2527,17 +2554,66 @@ export function ChatWindow() {
   /// 记账，用户处理完（attention 清除）本 effect 重跑续注。任何失败都把注入语落回
   /// 输入框当草稿——宁可让用户多按一次回车，不能让交接静默丢失。
   const handoffInjectingRef = useRef(false);
+  // 切走后再回来时补认领用：变一下让注入 effect 重跑。
+  const [handoffClaimTick, setHandoffClaimTick] = useState(0);
+  // 启动中切走、认领后才从列表回到真 id：binding 轮询只在临时 id 上跑，没人记下真 id，
+  // 第一句话不发、失败气泡也看不见（做空复现）。回到真 id 时挨个查新建页起过的临时 id，
+  // 认领成了这条的，回执（发送中、失败的都算）搬过来，第一句话补记真 id 后重跑注入。
+  useEffect(() => {
+    if (sessionId <= 0 || unclaimedTempsRef.current.size === 0) return;
+    let stale = false;
+    for (const temp of [...unclaimedTempsRef.current]) {
+      void managedTerminalBinding(temp).then((id) => {
+        if (stale || id == null) return;
+        unclaimedTempsRef.current.delete(temp);
+        outgoingStore.move(temp, id);
+        const first = firstEchoRef.current;
+        if (first?.tempId === temp) first.realId = id;
+        if (handoffRef.current?.tempId === temp) handoffRef.current.realId = id;
+        if (id === sessionId) setHandoffClaimTick((tick) => tick + 1);
+      }).catch(() => {});
+    }
+    return () => { stale = true; };
+  }, [sessionId]);
   useEffect(() => {
     const pending = handoffRef.current;
     if (!pending || handoffInjectingRef.current) return;
+    const first = pending.echoId != null ? firstEchoRef.current : null;
+    // 发不出去：人还在这条会话、输入框也空着，就收掉气泡把原文和附件放回输入框（合并，
+    // 不冲掉别的草稿）；否则留成失败气泡，由用户点「重发 / 放回输入框」。此前一律
+    // setPrompt 覆盖，切走后失败或过期时会把第一句话塞进正在看的另一个会话（做空复现）。
+    // 返回人是否还在这条会话上：不在就只留失败气泡，错误条也不挂到别的会话上。
+    const fail = (): boolean => {
+      if (!first) { setPrompt(pending.prompt); return true; }
+      const here = activeSessionRef.current === first.tempId || activeSessionRef.current === first.realId;
+      if (here && !promptRef.current.trim() && attachmentsRef.current.length === 0) {
+        outgoingStore.settle(first.echoId, null);
+        setPrompt(pending.prompt);
+        if (pending.attachments?.length) setAttachments(pending.attachments);
+      } else {
+        outgoingStore.settle(first.echoId, { phase: "failed" });
+      }
+      return here;
+    };
+    const finish = () => {
+      if (first && firstEchoRef.current === first) { firstEchoRef.current = null; first.release(); }
+    };
     // 过期防污染：拖过 10 分钟（比如用户一直没处理信任提示就去干别的）不再自动注入。
-    if (Date.now() - pending.at > 600_000) { handoffRef.current = null; return; }
+    if (Date.now() - pending.at > 600_000) {
+      handoffRef.current = null;
+      if (first) outgoingStore.settle(first.echoId, { phase: "failed" });
+      finish();
+      return;
+    }
+    // 回到真 id、但还不知道它是不是这条第一句话的会话：等下面的补认领 effect 查完再说。
+    if (first && sessionId > 0 && sessionId !== first.tempId && first.realId == null && unclaimedTempsRef.current.has(first.tempId)) return;
     if (provider !== pending.expectProvider || !chatUi) return;
     // 只认这次启动的那条会话：认领前是临时 id，认领后是 binding 记下的真 id。
     if (sessionId !== pending.tempId && sessionId !== pending.realId) return;
     if (terminalAttention) return; // 等用户处理完启动交互，attention 清除后重跑
     let cancelled = false;
     const injectPrompt = pending.prompt;
+    const injectFiles = pending.attachments ?? [];
     handoffInjectingRef.current = true;
     let sending = false;
     (async () => {
@@ -2552,26 +2628,50 @@ export function ChatWindow() {
         if (startup !== "ready") {
           terminalEverShownRef.current = true;
           setTerminalAttention(startup);
+          // 卡在启动交互（信任/登录）：先放行排在后面的消息——它们会撞上同一个交互、马上报
+          // 原因，不用空等 60 秒（做空复现）。第一句话仍留着，交互处理完 effect 重跑续发。
+          first?.release();
           return;
         }
         // 发出前就记为已发：用临时 id 发的途中往往正好认领成真 id（这一句就会触发 hook），
         // 本 effect 换成真 id 重跑，记账还在就会再发一遍。
         handoffRef.current = null;
         sending = true;
-        await submitToTerminal(sessionId, injectPrompt, undefined, { message: pending.failMessage });
+        // 带附件：和对话页同一套——全是图片且 CLI 支持就原生贴图，否则把路径附进正文。
+        const clipMarker = !remoteUi() && chatUi.clipboard_image_paste;
+        let sent = false;
+        if (clipMarker && injectFiles.length > 0 && injectFiles.every((file) => file.image)) {
+          const result = await sendWithClipboardImages(injectPrompt, clipMarker, chatUi.clipboard_paste_input ?? CLIPBOARD_PASTE_FALLBACK, injectFiles, "\r", true);
+          if (result === "blocked") throw new Error(pending.failMessage);
+          sent = result === "sent";
+        }
+        if (!sent) {
+          const text = promptWithAttachments(injectPrompt, injectFiles, t.chat.attachmentInstruction, chatUi.attachment_mention ?? false);
+          await submitToTerminal(sessionId, text, undefined, { message: pending.failMessage });
+        }
+        // 按回执编号结算：发送途中认领成真 id 时回执已搬走，按会话找会落空（做空复现：
+        // 气泡永远停在「发送中」，落盘后显示两条）。
+        if (first) outgoingStore.settle(first.echoId, { phase: "pending", at: Date.now() });
+        // 原生贴图途中认领成真 id：残图标记跟着搬到了真 id，sendWithClipboardImages 清的却是
+        // 临时 id，真 id 从此被当成「有残图」拦住所有发送（做空复现）。
+        if (first?.realId != null && partialImageDraftsRef.current.delete(first.realId) && activeSessionRef.current === first.realId) {
+          setImageDraftBlocked(false);
+        }
+        finish();
       } catch (error) {
         // 已经开始发了：即便会话已换成真 id，失败也要把这句话落回输入框，不能静默丢。
         if (cancelled && !sending) return;
         handoffRef.current = null;
-        setPrompt(injectPrompt);
-        setSendError(formatBackendError(error, t.locale));
+        const here = fail();
+        finish();
+        if (here) setSendError(formatBackendError(error, t.locale));
       } finally {
         handoffInjectingRef.current = false;
       }
     })();
     return () => { cancelled = true; handoffInjectingRef.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t/attentionGrammar 随渲染变化，注入只由会话代际与就绪信号驱动
-  }, [sessionId, provider, history?.predecessorId, chatUi, terminalAttention]);
+  }, [sessionId, provider, history?.predecessorId, chatUi, terminalAttention, handoffClaimTick]);
 
   const composerDraft = { prompt, attachments };
   /// override：重发一条失败的消息（气泡上的「重发」），内容取自它当时的草稿而不是输入框。
@@ -2679,6 +2779,12 @@ export function ChatWindow() {
     // 远程跳过:clipboard_set_image 是 /rpc 拒绝项,必 404 再回退——省掉每张图两发白请求。
     const clipMarker = !remoteUi() && chatUi?.clipboard_image_paste;
     const deliver = async (): Promise<boolean> => {
+      // 第一句话还在等终端就绪时又发了一句：排在它后面，不然 agent 先收到第二句（做空复现）。
+      // 设上限防第一句话卡死时把后面的消息一起拖住。
+      const first = firstEchoRef.current;
+      if (first && (sid === first.tempId || sid === first.realId)) {
+        await Promise.race([first.done, new Promise((resolve) => window.setTimeout(resolve, 60_000))]);
+      }
       if (clipMarker && attachments.length > 0 && attachments.every((file) => file.image)) {
         const result = await sendWithClipboardImages(prompt.trim(), clipMarker, chatUi?.clipboard_paste_input ?? "\x16", attachments, submitInput, true);
         if (result === "sent") return true;
@@ -3859,10 +3965,25 @@ export function ChatWindow() {
             droppedPath={newSessionDrop}
             onOpenSession={selectSession}
             onMoreSessions={openAdminFor}
-            onLaunched={(tempId, launchedProvider, message) => {
+            onLaunched={(tempId, launchedProvider, message, files) => {
+              unclaimedTempsRef.current.add(tempId);
+              abandonFirstPrompt();
               // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
-              if (message) {
-                handoffRef.current = { prompt: message, failMessage: t.newSession.firstPromptFailed, expectProvider: launchedProvider, at: Date.now(), tempId, realId: null };
+              // 先上屏（用户要求）：跳过去就能看见自己发的话标着「发送中」，不再对着「正在启动…」
+              // 干等终端起来；发不出去时收掉气泡、原文和附件退回输入框。
+              if (message || files.length > 0) {
+                const echoId = outgoingStore.add(tempId, {
+                  kind: "echo",
+                  text: message || t.chat.queuedAttachmentOnly,
+                  attachmentOnly: !message,
+                  anchor: anchorFrom([], undefined),
+                  phase: "sending",
+                  draft: { prompt: message, attachments: files },
+                });
+                handoffRef.current = { prompt: message, failMessage: t.newSession.firstPromptFailed, expectProvider: launchedProvider, at: Date.now(), tempId, realId: null, attachments: files, echoId };
+                let release = () => {};
+                const done = new Promise<void>((resolve) => { release = resolve; });
+                firstEchoRef.current = { tempId, realId: null, echoId, done, release };
               }
               selectSession(tempId);
             }}

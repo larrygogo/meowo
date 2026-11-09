@@ -190,6 +190,8 @@ const FAILED_KEY_PREFIX = "meowo-outgoing-failed:";
 type StoredFailed = Pick<OutgoingPrompt, "kind" | "text" | "attachmentOnly" | "at" | "draft">;
 
 function readFailed(sessionId: number): StoredFailed[] {
+  // 负数临时 id 每次启动都从 -1 往下重新数：存过的失败回执会串进重启后同号的新会话（做空复现）。
+  if (sessionId < 0) return [];
   try {
     const raw = localStorage.getItem(FAILED_KEY_PREFIX + sessionId);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
@@ -202,6 +204,7 @@ function readFailed(sessionId: number): StoredFailed[] {
 }
 
 function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
+  if (sessionId < 0) return; // 同 readFailed：临时 id 不落盘，认领搬到真 id 后再存
   try {
     const failed: StoredFailed[] = list.filter((prompt) => prompt.phase === "failed")
       .map(({ kind, text, attachmentOnly, at, draft }) => ({ kind, text, attachmentOnly, at, draft }));
@@ -270,6 +273,25 @@ export function createOutgoingStore() {
       if (!list?.some((prompt) => prompt.id === id)) return;
       put(sessionId, list.map((prompt) => (prompt.id === id ? { ...prompt, ...patch } : prompt)));
     },
+    /// 临时负 id 认领成真 id：同一个 PTY 换了编号，回执跟着搬过去。新建会话页的第一句话
+    /// 在认领前就上屏了，不搬的话认领那一刻气泡消失，等 transcript 落盘才又冒出来。
+    move(from: number, to: number) {
+      const list = bySession.get(from);
+      if (!list || from === to) return;
+      bySession.delete(from);
+      put(to, [...(bySession.get(to) ?? EMPTY), ...list]);
+    },
+    /// 按回执编号推进或撤掉（patch 为 null），不管它此刻挂在哪个会话下：编号全局唯一，
+    /// 认领搬家后按会话找会落空。
+    settle(id: number, patch: Partial<Pick<OutgoingPrompt, "phase" | "at">> | null) {
+      for (const [sessionId, list] of bySession) {
+        if (!list.some((prompt) => prompt.id === id)) continue;
+        put(sessionId, patch
+          ? list.map((prompt) => (prompt.id === id ? { ...prompt, ...patch } : prompt))
+          : list.filter((prompt) => prompt.id !== id));
+        return;
+      }
+    },
     /// 只撤界面上的回执：消息已经写进终端，CLI 照样会处理它。
     dismiss(sessionId: number, id: number) {
       const list = bySession.get(sessionId);
@@ -290,7 +312,8 @@ export function createOutgoingStore() {
     reset() {
       bySession.clear();
       hydrated.clear();
-      nextId = 0;
+      // 编号不清零：上一个用例没跑完的异步流程会按编号结算回执（settle），清零后撞号会
+      // 改到下一个用例的回执上。编号只要唯一，从几开始无所谓。
       listeners.forEach((listener) => listener());
     },
   };

@@ -196,4 +196,15 @@ describe("createOutgoingStore 失败回执持久化", () => {
     second.dismiss(7, restored[0].id);
     expect(createOutgoingStore().get(7)).toEqual([]);
   });
+  it("负数临时 id 的失败回执不落盘，认领搬到真 id 后才存（编号跨重启复用，存了会串号）", () => {
+    localStorage.clear();
+    const first = createOutgoingStore();
+    const id = first.add(-1, { kind: "echo", text: "第一句", attachmentOnly: false, anchor: anchorFrom([], null), phase: "sending", draft: { prompt: "第一句", attachments: [] } });
+    first.settle(id, { phase: "failed" });
+    expect(first.get(-1).map((prompt) => prompt.phase)).toEqual(["failed"]);
+    expect(createOutgoingStore().get(-1)).toEqual([]);
+    first.move(-1, 71);
+    expect(createOutgoingStore().get(71).map((prompt) => [prompt.text, prompt.phase])).toEqual([["第一句", "failed"]]);
+    expect(createOutgoingStore().get(-1)).toEqual([]);
+  });
 });

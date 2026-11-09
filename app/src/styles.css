@@ -5354,8 +5354,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    :not(.chat-image-thumb-btn)：图片附件的缩略图容器也是 <button>（ImageRef），
    这套绝对定位是「移除 ×」专属——不排除的话缩略图按钮被抽出文档流，
    芯片塌成 0×0，附件条只剩一条 2px 的缝（实拍反馈「显示不出来」的根因）。 */
-.chat-compose .chat-attachment button:not(.chat-image-thumb-btn) { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; min-height: 0; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(0, 0, 0, 0.55); font-size: var(--text-xs); line-height: 1; cursor: pointer; }
-.chat-compose .chat-attachment button:not(.chat-image-thumb-btn):hover { color: #fff; background: rgba(0, 0, 0, 0.78); }
+:is(.chat-compose, .nsp-composer) .chat-attachment button:not(.chat-image-thumb-btn) { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; min-height: 0; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(0, 0, 0, 0.55); font-size: var(--text-xs); line-height: 1; cursor: pointer; }
+:is(.chat-compose, .nsp-composer) .chat-attachment button:not(.chat-image-thumb-btn):hover { color: #fff; background: rgba(0, 0, 0, 0.78); }
 /* 图片附件：缩略图本体即卡片（点开进灯箱，ImageRef），移除钮悬浮右上角。
    宽度回落为内容宽（文件卡的 220px 定宽不适用于 76px 缩略图）。 */
 /* 图片附件左下角的「标注」：悬停才出，不和右上角的 × 抢位置。 */
