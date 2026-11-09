@@ -395,6 +395,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={t.chat.scmStageAll} disabled={busy} onClick={() => void stage(shown.filter((row) => row.letter !== "!"))}><PlusIcon /></button>
         </>)}
         {group("committed", t.chat.scmCommitted(repo.baseLabel ?? "main"), committed, null)}
+        {/* 没选中过的仓库后端只给了文件清单：行数和「本分支已提交」正在拉。 */}
+        {repo.detailed === false && <div className="scm-empty">{t.chat.scmLoadingDetail}</div>}
       </div>
 
       {ctxMenu && <PathContextMenu cwd={root} rel={ctxMenu.rel} isDir={false} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />}

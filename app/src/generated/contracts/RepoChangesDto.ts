@@ -35,4 +35,10 @@ baseLabel: string | null,
 /**
  * 本分支相对基准已提交的改动（`git diff base HEAD`）。
  */
-committed: Array<GitChangedFileDto>, };
+committed: Array<GitChangedFileDto>, 
+/**
+ * 这份是不是完整的：仓库多时只给选中的那个算增删行数和「本分支已提交」，其余只跑一次
+ * `git status`（文件清单有、行数为空、committed 为空），点到它时再拉（用户要求 2026-11-09：
+ * 先显示目录，具体内容点击后异步）。旧后端不下发，按完整处理。
+ */
+detailed?: boolean, };

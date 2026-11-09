@@ -928,6 +928,7 @@ export const en: Dict = {
     scmOpenFile: "Open File",
     scmDirty: "Has uncommitted changes",
     scmNoChanges: "No changes",
+    scmLoadingDetail: "Loading line counts and commits for this repository…",
     scmDiscardTitle: (n: number) => (n === 1 ? "Discard changes to this file?" : `Discard changes to ${n} files?`),
     scmDiscardNote: "This can't be undone. Untracked files will be deleted.",
     scmDiscardMore: (n: number) => `${n} more files`,

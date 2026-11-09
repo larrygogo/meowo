@@ -969,6 +969,8 @@ export function ChatWindow() {
   diffCwdRef.current = diffCwd;
   // 「更改」「文件」共用的选中仓库（SourceControl）。
   const [scmRoot, setScmRoot] = useState<string | null>(null);
+  const scmRootRef = useRef(scmRoot);
+  scmRootRef.current = scmRoot;
   // 认出过的仓库 / worktree 粘住：命令和编辑记录会随翻页滑出加载窗口，滑出去就又认不出来，
   // 列表里的 worktree 忽隐忽现。按会话记着，下次拉清单时当作「碰过的路径」一并交给后端。
   const usedRootsRef = useRef<Set<string>>(new Set());
@@ -1001,7 +1003,7 @@ export function ChatWindow() {
     const forCwd = diffCwd;
     // 粘住的仓库排最前：后端最多查 MAX_ROOT_LOOKUPS 个不同目录，排在编辑过的文件后面会被截掉（做空）。
     const touched = [...usedRootsRef.current, ...(touchedKey ? touchedKey.split("\0") : [])];
-    getGitChangesOverview(diffCwd, touched, commandsKey ? commandsKey.split("\u0001") : [])
+    getGitChangesOverview(diffCwd, touched, commandsKey ? commandsKey.split("\u0001") : [], scmRootRef.current ?? "")
       .then((result) => {
         if (forCwd === diffCwdRef.current) for (const repo of result) if (!repo.isCwdRepo) usedRootsRef.current.add(repo.root);
         // 被取消的只要还是同一个会话目录就照收：只是参数旧了一点，下面会补拉新的。
@@ -1017,6 +1019,11 @@ export function ChatWindow() {
       });
   }, [diffCwd, touchedKey, commandsKey]);
   loadRepoChangesRef.current = loadRepoChanges;
+  // 换了选中的仓库：它多半还只有分支和文件清单（没选中的仓库后端不算行数和已提交段），立刻补拉完整的。
+  useEffect(() => {
+    if (scmRoot == null) return;
+    loadRepoChangesRef.current(() => false);
+  }, [scmRoot]);
   // git 写操作（暂存 / 提交 / 放弃）之后立刻重拉，不等 5 秒轮询。
   const refreshChanges = useCallback(() => {
     if (!diffCwd) return;
@@ -1035,7 +1042,11 @@ export function ChatWindow() {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [cwdNotRepo, loadRepoChanges]);
   // 各入口与标题栏用的摘要：工作目录是仓库就是它自己；不是的话取第一个仓库（规格终态 6）。
-  const effectiveSummary = gitSummary?.isRepo ? gitSummary : (repoChanges?.[0]?.summary ?? gitSummary);
+  // 不是仓库时取选中的那个（只有它带增删行数），没选过就是第一个。
+  const pickedRepo = repoChanges && !gitSummary?.isRepo
+    ? repoChanges.find((repo) => scmRoot != null && repo.root.replace(/\\/g, "/").toLowerCase() === scmRoot.replace(/\\/g, "/").toLowerCase()) ?? repoChanges[0]
+    : undefined;
+  const effectiveSummary = gitSummary?.isRepo ? gitSummary : (pickedRepo?.summary ?? gitSummary);
   effectiveSummaryRef.current = effectiveSummary;
   isRepoRef.current = !!effectiveSummary?.isRepo;
   useEffect(() => {

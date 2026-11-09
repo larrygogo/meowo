@@ -636,8 +636,10 @@ export function getGitFileDiff(cwd: string, path: string, untracked: boolean, ba
 /// 「更改」面板的仓库清单（多仓库 + 已提交未合并），见 git.rs 的 git_changes_overview。
 /// commands：会话最近的命令文本。agent 常常 cd 进 worktree 用命令干活，编辑工具一次没碰过它，
 /// 后端据命令里出现的路径把这些 worktree 也列出来（用户要求 2026-11-09）。为空不传（老桥不认）。
-export function getGitChangesOverview(cwd: string, touched: readonly string[], commands: readonly string[] = []): Promise<RepoChangesDto[]> {
-  return invoke("git_changes_overview", { cwd, touched, ...(commands.length > 0 ? { commands } : {}) });
+/// detail：只给哪个仓库算完整内容（增删行数、「本分支已提交」），空串 = 默认那个；其余仓库只给分支和
+/// 文件清单，点到时再拉（用户要求 2026-11-09：先显示目录，内容点击后异步）。
+export function getGitChangesOverview(cwd: string, touched: readonly string[], commands: readonly string[] = [], detail?: string | null): Promise<RepoChangesDto[]> {
+  return invoke("git_changes_overview", { cwd, touched, ...(commands.length > 0 ? { commands } : {}), ...(detail != null ? { detail } : {}) });
 }
 
 /// 「更改」面板的 git 写操作（用户要求 2026-11-09，对照 VS Code 源代码管理）。paths 相对仓库根，

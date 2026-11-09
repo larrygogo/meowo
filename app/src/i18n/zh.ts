@@ -1001,6 +1001,7 @@ export const zh = {
     scmOpenFile: "打开文件",
     scmDirty: "有未提交的更改",
     scmNoChanges: "没有更改",
+    scmLoadingDetail: "正在加载这个仓库的行数和已提交内容…",
     scmDiscardTitle: (n: number) => (n === 1 ? "放弃这个文件的更改？" : `放弃 ${n} 个文件的更改？`),
     scmDiscardNote: "放弃后无法恢复。未跟踪的文件会被删除。",
     scmDiscardMore: (n: number) => `还有 ${n} 个文件`,

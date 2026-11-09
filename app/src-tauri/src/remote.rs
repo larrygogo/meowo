@@ -871,7 +871,9 @@ bridged_args!(GitChangesOverviewArgs {
     cwd: String,
     touched: Vec<String>,
     #[serde(default)]
-    commands: Option<Vec<String>>
+    commands: Option<Vec<String>>,
+    #[serde(default)]
+    detail: Option<String>
 });
 bridged_args!(GitPathsArgs {
     cwd: String,
@@ -1206,6 +1208,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             }
             let cwd = a.cwd.clone();
             let commands = a.commands.unwrap_or_default();
+            let detail = a.detail;
             let result = tauri::async_runtime::spawn_blocking(move || {
                 let related = crate::git::related_roots(&cwd);
                 // 先把落在相关仓库之外的路径滤掉，别替远程端在无关仓库里白跑一遍 git。
@@ -1214,7 +1217,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     .into_iter()
                     .filter(|path| related.iter().any(|root| crate::git::path_under(path, root)))
                     .collect();
-                crate::git::changes_overview_blocking(&cwd, &touched, &commands).map(|repos| {
+                crate::git::changes_overview_detail(&cwd, &touched, &commands, detail.as_deref()).map(|repos| {
                     repos
                         .into_iter()
                         .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))
@@ -2289,7 +2292,7 @@ mod tests {
             .map(|_| ()),
             // api.ts（getGitChangesOverview）
             "git_changes_overview" => parse::<GitChangesOverviewArgs>(
-                br#"{"cwd":"C:/work","touched":["C:/work/app/src/a.ts"],"commands":["cd ../work-wt && git status"]}"#,
+                br#"{"cwd":"C:/work","touched":["C:/work/app/src/a.ts"],"commands":["cd ../work-wt && git status"],"detail":"C:/work-wt"}"#,
             )
             .map(|_| ()),
             // api.ts（gitStage / gitUnstage / gitDiscard / gitCommit）

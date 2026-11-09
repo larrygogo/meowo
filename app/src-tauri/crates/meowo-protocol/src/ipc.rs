@@ -710,6 +710,16 @@ pub struct RepoChangesDto {
     pub base_label: Option<String>,
     /// 本分支相对基准已提交的改动（`git diff base HEAD`）。
     pub committed: Vec<GitChangedFileDto>,
+    /// 这份是不是完整的：仓库多时只给选中的那个算增删行数和「本分支已提交」，其余只跑一次
+    /// `git status`（文件清单有、行数为空、committed 为空），点到它时再拉（用户要求 2026-11-09：
+    /// 先显示目录，具体内容点击后异步）。旧后端不下发，按完整处理。
+    #[serde(default = "detailed_default")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub detailed: bool,
+}
+
+fn detailed_default() -> bool {
+    true
 }
 
 /// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。

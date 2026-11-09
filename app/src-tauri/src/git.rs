@@ -21,6 +21,12 @@ pub(crate) async fn git_diff_summary(cwd: String) -> Result<GitDiffSummaryDto, S
 }
 
 fn git_diff_summary_blocking(cwd: &str) -> Result<GitDiffSummaryDto, String> {
+    summary_blocking(cwd, true)
+}
+
+/// counts = 补增删行数（`diff --numstat`，未跟踪文件还要逐个读盘数行）。仓库清单里没选中的仓库
+/// 不数，只要分支、↑↓、文件清单（见 RepoChangesDto::detailed）。
+fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String> {
     let dir = cwd.trim();
     if dir.is_empty() || !Path::new(dir).is_dir() {
         return Err("目录不存在".into());
@@ -58,7 +64,9 @@ fn git_diff_summary_blocking(cwd: &str) -> Result<GitDiffSummaryDto, String> {
         return Err("git status 执行失败".into());
     }
     let mut files = parse_porcelain_z(&status.stdout);
-    fill_line_counts(dir, &mut files);
+    if counts {
+        fill_line_counts(dir, &mut files);
+    }
     let (ahead, behind) = match upstream_divergence(dir) {
         Some((ahead, behind)) => (Some(ahead), Some(behind)),
         None => (None, None),
@@ -168,23 +176,40 @@ const BASE_REF_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 /// 当前有改动的仓库（用户要求，2026-11-09：只列会话动过的，不混入别的会话或手动的改动）。
 /// `commands` 是会话最近跑过的命令文本：agent 常用命令 cd 进 worktree 干活（编辑工具没碰过那边的
 /// 文件，touched 认不出），命令里出现过路径的相关仓库也上榜（用户要求 2026-11-09，见 command_mentioned_roots）。
+///
+/// `detail`：只给哪个仓库算完整内容（增删行数、「本分支已提交」）。空串 = 默认那个（工作目录所在仓库，
+/// 没有就第一个）；不带 = 全部都算（旧前端）。仓库多时每 5 秒一轮全算太重（用户要求 2026-11-09：
+/// 先显示目录，具体内容点击后异步）。
 #[tauri::command]
 pub(crate) async fn git_changes_overview(
     cwd: String,
     touched: Vec<String>,
     commands: Option<Vec<String>>,
+    detail: Option<String>,
 ) -> Result<Vec<RepoChangesDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        changes_overview_blocking(&cwd, &touched, commands.as_deref().unwrap_or_default())
+        changes_overview_detail(&cwd, &touched, commands.as_deref().unwrap_or_default(), detail.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+/// 全部都算完整内容（测试用；命令与桥都走 changes_overview_detail）。
+#[cfg(test)]
 pub(crate) fn changes_overview_blocking(
     cwd: &str,
     touched: &[String],
     commands: &[String],
+) -> Result<Vec<RepoChangesDto>, String> {
+    changes_overview_detail(cwd, touched, commands, None)
+}
+
+/// 见 git_changes_overview 的 `detail`。
+pub(crate) fn changes_overview_detail(
+    cwd: &str,
+    touched: &[String],
+    commands: &[String],
+    detail: Option<&str>,
 ) -> Result<Vec<RepoChangesDto>, String> {
     let dir = cwd.trim();
     if dir.is_empty() || !Path::new(dir).is_dir() {
@@ -221,17 +246,34 @@ pub(crate) fn changes_overview_blocking(
         // 仓库个数不设上限（用户 2026-11-09：主目录下有改动的仓库常常多于 8 个，截掉的就看不到）。
         roots.extend(command_mentioned_roots(dir, &candidates, commands));
     }
-    let mut out: Vec<RepoChangesDto> = roots
+    let mut list: Vec<(String, bool)> = roots
         .iter()
-        .filter_map(|root| repo_changes(root, cwd_root.as_deref().is_some_and(|c| same_path(c, root))))
+        .map(|root| (root.clone(), cwd_root.as_deref().is_some_and(|c| same_path(c, root))))
         .collect();
-    if out.is_empty() && cwd_root.is_none() {
-        out = changed_children(dir)
-            .into_iter()
-            .filter_map(|root| repo_changes(&root, false))
-            .filter(|repo| !repo.summary.files.is_empty())
-            .collect();
+    let fallback = list.is_empty() && cwd_root.is_none();
+    if fallback {
+        list = changed_children(dir).into_iter().map(|root| (root, false)).collect();
     }
+    // 要算完整内容的那一个：点名的在清单里就用它，否则工作目录所在仓库，再否则第一个（与前端 pickRepo 一致）。
+    let full_at = detail.map(|want| {
+        list.iter()
+            .position(|(root, _)| !want.is_empty() && same_path(root, want))
+            .or_else(|| list.iter().position(|(_, is_cwd)| *is_cwd))
+            .unwrap_or(0)
+    });
+    let out: Vec<RepoChangesDto> = list
+        .iter()
+        .enumerate()
+        .filter_map(|(at, (root, is_cwd))| {
+            if full_at.is_none_or(|full| full == at) {
+                repo_changes(root, *is_cwd)
+            } else {
+                repo_changes_light(root, *is_cwd)
+            }
+        })
+        // 兜底列的是「此刻有改动的」：粗筛缓存 30 秒，期间改干净了的不列。
+        .filter(|repo| !fallback || !repo.summary.files.is_empty())
+        .collect();
     Ok(out)
 }
 
@@ -425,6 +467,29 @@ pub(crate) fn repo_changes(root: &str, is_cwd_repo: bool) -> Option<RepoChangesD
         base,
         base_label,
         committed,
+        detailed: true,
+    })
+}
+
+/// 仓库清单里没选中的仓库：只跑 status（分支、↑↓、文件清单），不数行数、不算「本分支已提交」。
+fn repo_changes_light(root: &str, is_cwd_repo: bool) -> Option<RepoChangesDto> {
+    let summary = summary_blocking(root, false).ok()?;
+    if !summary.is_repo {
+        return None;
+    }
+    let name = Path::new(root)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.to_string());
+    Some(RepoChangesDto {
+        root: root.to_string(),
+        name,
+        is_cwd_repo,
+        summary,
+        base: None,
+        base_label: None,
+        committed: Vec::new(),
+        detailed: false,
     })
 }
 
@@ -1926,6 +1991,37 @@ mod tests {
         }
         let repos = changes_overview_blocking(&s(&ws), &[], &[]).unwrap();
         assert_eq!(repos.len(), 11);
+    }
+
+    /// 用户 2026-11-09：先显示目录，具体内容点击后异步。只有点名（或默认）的那个仓库算行数和已提交段。
+    #[test]
+    fn overview_details_only_the_selected_repo() {
+        let sb = Sandbox::new("detail");
+        let ws = sb.0.join("ws");
+        for name in ["a", "b", "c"] {
+            let dir = ws.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            sb.git(&dir, &["init", "-q", "-b", "main"]);
+            std::fs::write(dir.join("x.txt"), "1\n2\n").unwrap();
+        }
+        let cwd = s(&ws);
+        let shape = |detail: Option<&str>| -> Vec<(String, bool, bool)> {
+            changes_overview_detail(&cwd, &[], &[], detail)
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.name, r.detailed, r.summary.files[0].additions.is_some()))
+                .collect()
+        };
+        let row = |n: &str, d: bool| (n.to_string(), d, d);
+        // 不带 detail（旧前端）：全算。
+        assert_eq!(shape(None), [row("a", true), row("b", true), row("c", true)]);
+        // 空串：默认第一个（工作目录不是仓库）。
+        assert_eq!(shape(Some("")), [row("a", true), row("b", false), row("c", false)]);
+        // 点名 b：只有 b 算，其余照样列出（分支、文件清单都在）。
+        let b = s(&ws.join("b"));
+        assert_eq!(shape(Some(&b)), [row("a", false), row("b", true), row("c", false)]);
+        // 点名的已不在清单里：退回默认。
+        assert_eq!(shape(Some("C:/gone")), [row("a", true), row("b", false), row("c", false)]);
     }
 
     #[test]

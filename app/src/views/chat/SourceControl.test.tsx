@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const DIFF = ["diff --git a/src/a.ts b/src/a.ts", "--- a/src/a.ts", "+++ b/src/a.ts", "@@ -10,2 +10,2 @@", " keep", "-old", "+new"].join("\n");
 const file = (path: string, indexStatus: string | null, worktreeStatus: string | null) => ({
-  path, status: indexStatus ?? worktreeStatus ?? "M", additions: 1, deletions: 0, indexStatus, worktreeStatus,
+  path, status: indexStatus ?? worktreeStatus ?? "M", additions: 1 as number | null, deletions: 0 as number | null, indexStatus, worktreeStatus,
 });
 const summary = (files: ReturnType<typeof file>[], branch = "main"): GitDiffSummaryDto =>
   ({ gitAvailable: true, isRepo: true, branch, ahead: 2, behind: 1, files });
@@ -220,6 +220,15 @@ describe("做空第 1 轮", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: /^提交/ }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "有未解决的合并冲突，先在终端或编辑器里解决再提交");
+  });
+});
+
+describe("先显示目录，内容异步", () => {
+  /// 用户 2026-11-09：没选中的仓库后端只给文件清单，选中后补拉行数和已提交段，期间提示正在加载。
+  it("选中的仓库还没拉到完整内容时：文件清单照常显示，提示加载中", () => {
+    renderScm([repo({ detailed: false, summary: summary([{ ...file("a.ts", null, "M"), additions: null, deletions: null }]) })]);
+    expect(screen.getByText("a.ts")).toBeTruthy();
+    expect(screen.getByText(/加载/)).toBeTruthy();
   });
 });
 
