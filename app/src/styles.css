@@ -4955,6 +4955,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-chev.is-collapsed { transform: rotate(-90deg); }
 .chat-diff-tree-dir:hover, .chat-diff-tree-file:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 树行右端悬停出的「…」（和右键同一份菜单）：鼠标移到它上面时行底色别掉。 */
+/* 多仓库「更改」的分组（RepoChanges）：组标题「仓库名 分支」，段标题「未提交 / 已提交未合并」。 */
+.chat-repo + .chat-repo { margin-top: var(--sp-12); }
+.chat-repo-head { display: flex; align-items: baseline; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); font-weight: 600; color: var(--cc-text); }
+.chat-repo-branch { font-weight: 400; font-size: var(--text-xs); color: var(--cc-text-dim); }
+.chat-repo-label { padding: var(--sp-6) var(--sp-8) var(--sp-2); font-size: var(--text-xs); color: var(--cc-text-faint); }
+.chat-repo-empty { padding: var(--sp-2) var(--sp-8) var(--sp-4); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .chat-diff-tree-row { position: relative; }
 .chat-diff-tree-row:hover > .chat-diff-tree-dir, .chat-diff-tree-row:hover > .chat-diff-tree-file { background: var(--fill-hover); color: var(--cc-text); }
 .chat-diff-tree-more { position: absolute; right: var(--sp-4); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; opacity: 0; }

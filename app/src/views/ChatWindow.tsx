@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -958,6 +958,18 @@ export function ChatWindow() {
   const turnTouchedPaths = useMemo(() => (turnTouchedKey ? turnTouchedKey.split("\0") : NO_TOUCHED_PATHS), [turnTouchedKey]);
   // 会话可访问的目录（审批卡的范围标签用）。memo 稳住引用，审批卡不必每帧重算。
   const diffDirs = useMemo(() => (cwd ? [cwd] : []), [cwd]);
+  // 多仓库「更改」（用户要求 2026-11-09）：会话改过的文件可能在别的仓库 / 新开的 worktree 里，
+  // 工作目录也可能是父目录。面板可见时拉一次、「更改」开着时随 5 秒轮询一起刷新；内容没变不换对象。
+  const [repoChanges, setRepoChanges] = useState<RepoChangesDto[] | null>(null);
+  useEffect(() => setRepoChanges(null), [diffCwd]);
+  const loadRepoChanges = useCallback((cancelled: () => boolean) => {
+    if (!diffCwd) return;
+    getGitChangesOverview(diffCwd, touchedKey ? touchedKey.split("\0") : [])
+      .then((result) => {
+        if (!cancelled()) setRepoChanges((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
+      })
+      .catch(() => {});
+  }, [diffCwd, touchedKey]);
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
     let cancelled = false;
@@ -974,8 +986,9 @@ export function ChatWindow() {
     getGitDiffSummary(diffCwd)
       .then((result) => { if (!cancelled) setGitSummary(result); })
       .catch(() => {});
+    loadRepoChanges(() => cancelled);
     return () => { cancelled = true; };
-  }, [diffCwd, panelState.visible]);
+  }, [diffCwd, panelState.visible, loadRepoChanges]);
   // 「更改」页签开着时每 5 秒重拉一次摘要（照 Kimi Code 的改动面板：agent 一边改，列表一边动）。
   // 内容没变就不换对象，免得 ChangesView 每 5 秒作废一遍缓存。
   const diffTabShown = panelState.visible && panelState.tabs.some((tab) => tab.key === panelState.active && tab.type === "diff");
@@ -989,12 +1002,13 @@ export function ChatWindow() {
           if (!cancelled) setGitSummary((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
         })
         .catch(() => {});
+      loadRepoChanges(() => cancelled);
     }, 5000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [diffCwd, diffTabShown]);
+  }, [diffCwd, diffTabShown, loadRepoChanges]);
   // 恢复/接管时的权限改选："" = 沿用会话存的选择；选了具体档就随本次恢复下发，
   // 后端按选项维度合并写回，成为会话新的持久形态——覆盖「当年不是以跳过权限新建、
   // 恢复时想切过去」的场景（存量会话同样适用）。没声明权限类选项的 agent 不显示。
@@ -5281,6 +5295,7 @@ export function ChatWindow() {
               <GitDiffView
                 cwd={cwd}
                 summary={gitSummary}
+                repos={repoChanges}
                 width={diffResize.width}
                 collapsed={!panelState.visible}
                 maximized
@@ -5302,6 +5317,7 @@ export function ChatWindow() {
                 panes={panel.panes}
                 cwd={cwd}
                 summary={gitSummary}
+                repos={repoChanges}
                 width={diffResize.width}
                 comments={sessionReviewComments}
                 onAddComment={addReviewComment}

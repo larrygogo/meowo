@@ -1,10 +1,10 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";
+import type { BrowserPaneInfo, GitDiffSummaryDto, RepoChangesDto, ShellTerminalInfo } from "../../api";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
-import { ChangesView, FilesView, PathMenu, PathMentionContext, type PathMenuItem } from "./GitDiffView";
+import { ChangesView, FilesView, PathMenu, PathMentionContext, RepoChanges, type PathMenuItem } from "./GitDiffView";
 import type { PanelState, PanelTab } from "./panelTabs";
 import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
@@ -19,6 +19,8 @@ type Props = {
   panes: ReadonlyMap<number, BrowserPaneInfo>;
   cwd: string;
   summary: GitDiffSummaryDto | null;
+  /** 多仓库「更改」（见 RepoChanges）；null = 还没拉到，按 summary 单仓库显示。 */
+  repos?: readonly RepoChangesDto[] | null;
   width: number;
   comments: readonly ReviewComment[];
   onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
@@ -210,7 +212,22 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         return null;
       })}
       <PathMentionContext.Provider value={props.onMention ?? null}>
-      {active?.type === "diff" && (isRepo && summary
+      {active?.type === "diff" && (props.repos && props.repos.length > 0
+        ? (
+          <RepoChanges
+            key={cwd}
+            cwd={cwd}
+            repos={props.repos}
+            comments={props.comments}
+            touchedPaths={props.touchedPaths}
+            turnTouchedPaths={props.turnTouchedPaths}
+            onAddComment={props.onAddComment}
+            onRemoveComment={props.onRemoveComment}
+            escOverrideRef={escOverrideRef}
+            live={!collapsed}
+          />
+        )
+        : isRepo && summary
         ? (
           <ChangesView
             key={cwd}

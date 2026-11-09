@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import type { GitDiffSummaryDto } from "../../api";
+import type { GitDiffSummaryDto, RepoChangesDto } from "../../api";
 import type { ReviewComment } from "./diffComments";
-import { ChangesView, FilesView, GitDiffView, PathMentionContext } from "./GitDiffView";
+import { ChangesView, FilesView, GitDiffView, PathMentionContext, RepoChanges } from "./GitDiffView";
 import { markRemoteUi } from "../../remoteMode";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -336,3 +336,53 @@ epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
       onAddComment={() => {}} onRemoveComment={() => {}} escOverrideRef={{ current: null }} live={live} />
   );
 }
+
+
+/// 多仓库「更改」（用户要求 2026-11-09）：会话开在父目录、agent 新开 worktree 并提交后也看得到改动。
+describe("RepoChanges", () => {
+  const repo = (over: Partial<RepoChangesDto>): RepoChangesDto => ({
+    root: "C:/w/meowo", name: "meowo", isCwdRepo: true, summary, base: null, baseLabel: null, committed: [], ...over,
+  });
+  const renderRepos = (repos: RepoChangesDto[]) => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
+    return render(
+      <RepoChanges cwd="C:/w/meowo" repos={repos} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
+        onAddComment={() => {}} onRemoveComment={() => {}} escOverrideRef={{ current: null }} />,
+    );
+  };
+
+  it("只有工作目录仓库、只有未提交时与原来一样：不出分组标题", () => {
+    const { container } = renderRepos([repo({})]);
+    expect(container.querySelector("[data-testid=repo-changes]")).toBeNull();
+    expect(container.querySelector(".chat-repo-head")).toBeNull();
+    expect(screen.getByText("src/a.ts")).toBeTruthy();
+  });
+
+  it("多仓库按「仓库名 分支」分组，分未提交 / 已提交未合并两段；点已提交段的文件带 base 拉 diff，返回回到分组", async () => {
+    const worktree = repo({
+      root: "C:/w/meowo-feat",
+      name: "meowo-feat",
+      isCwdRepo: false,
+      summary: { ...summary, branch: "feat/x", files: [{ path: "wip.rs", status: "U", additions: 3, deletions: 0 }] },
+      base: "0123abcd",
+      baseLabel: "main",
+      committed: [{ path: "done.rs", status: "A", additions: 2, deletions: 0 }],
+    });
+    const { container } = renderRepos([repo({ summary: { ...summary, files: [] } }), worktree]);
+    const heads = [...container.querySelectorAll(".chat-repo-head")].map((el) => el.textContent);
+    expect(heads).toEqual(["meowomain", "meowo-featfeat/x"]);
+    const labels = [...container.querySelectorAll(".chat-repo-label")].map((el) => el.textContent);
+    expect(labels).toEqual(["未提交", "未提交", "已提交未合并 · 相对 main"]);
+    expect(screen.getByText("没有改动")).toBeTruthy();
+    fireEvent.click(screen.getByText("done.rs"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_file_diff", {
+      cwd: "C:/w/meowo-feat", path: "done.rs", untracked: false, base: "0123abcd", sessionCwd: "C:/w/meowo",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(container.querySelector("[data-testid=repo-changes]")).toBeTruthy();
+    fireEvent.click(screen.getByText("wip.rs"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_file_diff", {
+      cwd: "C:/w/meowo-feat", path: "wip.rs", untracked: true, sessionCwd: "C:/w/meowo",
+    }));
+  });
+});

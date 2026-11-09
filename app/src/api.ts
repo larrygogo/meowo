@@ -36,6 +36,7 @@ import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
+import type { RepoChangesDto } from "./generated/contracts/RepoChangesDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
 import type { FileTextDto } from "./generated/contracts/FileTextDto";
 import type { FileOpenerDto } from "./generated/contracts/FileOpenerDto";
@@ -45,6 +46,7 @@ import type { SearchLineHitDto } from "./generated/contracts/SearchLineHitDto";
 import type { SearchResultDto } from "./generated/contracts/SearchResultDto";
 
 export type {
+  RepoChangesDto,
   GitDiffSummaryDto,
   GitFileDiffDto,
   DirEntryDto,
@@ -625,8 +627,15 @@ export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
 }
 
 /** 单个文件的 diff（untracked=true 时由后端读盘合成伪 diff，见 GitFileDiffDto 注释）。 */
-export function getGitFileDiff(cwd: string, path: string, untracked: boolean): Promise<GitFileDiffDto> {
-  return invoke("git_file_diff", { cwd, path, untracked });
+/// base：「已提交未合并」段的文件，看 base..HEAD。sessionCwd：cwd 不是会话目录本身（别的仓库、
+/// worktree）时带上会话目录，手机远程页据此收口。两者没有就不传（老桥不认识的字段会被拒）。
+export function getGitFileDiff(cwd: string, path: string, untracked: boolean, base?: string | null, sessionCwd?: string | null): Promise<GitFileDiffDto> {
+  return invoke("git_file_diff", { cwd, path, untracked, ...(base ? { base } : {}), ...(sessionCwd ? { sessionCwd } : {}) });
+}
+
+/// 「更改」面板的仓库清单（多仓库 + 已提交未合并），见 git.rs 的 git_changes_overview。
+export function getGitChangesOverview(cwd: string, touched: readonly string[]): Promise<RepoChangesDto[]> {
+  return invoke("git_changes_overview", { cwd, touched });
 }
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
