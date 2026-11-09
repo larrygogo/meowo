@@ -97,17 +97,6 @@ impl Tui {
         strip(&self.buf.lock().unwrap())
     }
 
-    fn wait_for(&self, needle: &str, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            if self.screen().contains(needle) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        false
-    }
-
     fn tail(&self) -> String {
         let s = self.screen();
         s.chars().rev().take(800).collect::<Vec<_>>().into_iter().rev().collect()
@@ -121,6 +110,35 @@ fn write_gate(task: &Path, id: &str) {
         "status": "pending", "answer": null
     });
     std::fs::write(task.join("gate.json"), gate.to_string()).unwrap();
+}
+
+/// 以 transcript 为准等 agent 的回复（抓屏不可靠：--resume 后会重绘历史，30 分钟版本里抓屏误判过一次
+/// 「已唤醒」并提前杀掉了进程）。返回该回复在 assistant 消息里出现的次数。
+fn transcript_count(sid: &str, needle: &str) -> u32 {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
+    let mut n = 0;
+    let Ok(dirs) = std::fs::read_dir(PathBuf::from(home).join(".claude/projects")) else { return 0 };
+    for d in dirs.flatten() {
+        let Ok(text) = std::fs::read_to_string(d.path().join(format!("{sid}.jsonl"))) else { continue };
+        for line in text.lines() {
+            let Ok(o) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if o["type"] == "assistant" && o["message"]["content"].to_string().contains(needle) {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+fn wait_transcript(sid: &str, needle: &str, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if transcript_count(sid, needle) > 0 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    false
 }
 
 fn registry_sid(db: &Path) -> Option<String> {
@@ -183,7 +201,8 @@ fn probe_gate_delivery_hold_and_after_restart() {
     println!("[probe] 关卡挂起 {hang}s …");
     std::thread::sleep(Duration::from_secs(hang));
     meowo_reporter::lead::answer_gate(&task, "B-1", &LeadGateAnswerDto { choice: "2".into(), note: String::new() }).unwrap();
-    let woke1 = tui.wait_for("选择=2", Duration::from_secs(120));
+    let sid = claimed.clone().unwrap();
+    let woke1 = wait_transcript(&sid, "选择=2", Duration::from_secs(120));
     println!("[probe] 第一段（挂 {hang}s 后作答）：{}\n{}", if woke1 { "已唤醒" } else { "未唤醒" }, tui.tail());
 
     // ---------- 第二段：进程死后作答 ----------
@@ -193,32 +212,15 @@ fn probe_gate_delivery_hold_and_after_restart() {
     let _ = tui.child.kill();
     std::thread::sleep(Duration::from_secs(3));
     meowo_reporter::lead::answer_gate(&task, "B-2", &LeadGateAnswerDto { choice: "1".into(), note: String::new() }).unwrap();
-    let sid = claimed.unwrap();
-    let sid_for_count = sid.clone();
-    let tui2 = Tui::spawn(&work, &db, &settings_file, &["--resume".into(), sid]);
-    let woke2 = tui2.wait_for("选择=1", Duration::from_secs(180));
+    let tui2 = Tui::spawn(&work, &db, &settings_file, &["--resume".into(), sid.clone()]);
+    let woke2 = wait_transcript(&sid, "选择=1", Duration::from_secs(180));
+    // 再等一会儿：确认之后的 Stop 不会把同一个答复再送一次
+    std::thread::sleep(Duration::from_secs(20));
     println!("[probe] 第二段（进程死后作答，--resume 恢复）：{}\n{}", if woke2 { "已唤醒" } else { "未唤醒" }, tui2.tail());
     let mut tui2 = tui2;
     let _ = tui2.child.kill();
     std::thread::sleep(Duration::from_secs(2));
-    // 以 transcript 为准数唤醒次数（屏幕在 --resume 后会重绘历史，抓屏不可靠）。真机实测踩过：
-    // 同一答复被连唤醒两次——每个答复必须恰好唤醒一次。
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
-    let mut replies = (0, 0);
-    for d in std::fs::read_dir(PathBuf::from(home).join(".claude/projects")).unwrap().flatten() {
-        let f = d.path().join(format!("{sid_for_count}.jsonl"));
-        if let Ok(text) = std::fs::read_to_string(&f) {
-            for line in text.lines() {
-                let Ok(o) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-                if o["type"] != "assistant" {
-                    continue;
-                }
-                let t = o["message"]["content"].to_string();
-                replies.0 += t.contains("选择=2") as u32;
-                replies.1 += t.contains("选择=1") as u32;
-            }
-        }
-    }
+    let replies = (transcript_count(&sid, "选择=2"), transcript_count(&sid, "选择=1"));
     println!("[probe] transcript 里的答复次数：选择=2 ×{}，选择=1 ×{}", replies.0, replies.1);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(woke1, "挂起后作答没有唤醒");
