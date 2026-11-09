@@ -856,7 +856,7 @@ pub struct LeadCheckDto {
     /// 豁免原因（leader 决定不做/不验）；有值时这一条不算未通过，面板单独显示。
     #[serde(default)]
     pub waived: Option<String>,
-    /// 要 leader 亲自验收（check 里写了「由 leader 验收」）；关卡 C 接受时自动勾上。
+    /// 要 leader 亲自验收：只看条目上的 `by: "leader"` 字段，不看 check 文字；关卡 C 接受时自动勾上。
     #[serde(default)]
     pub leader: bool,
 }

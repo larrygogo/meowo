@@ -534,7 +534,7 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
     let reason = format!(
-        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。",
+        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。某条只能由 leader 验收：给它加 \"by\": \"leader\"，就不会再为它拦你。",
         if phase == "verify" { "验证" } else { "实施" },
         fail.len(),
         list.join("\n")
@@ -549,10 +549,10 @@ use meowo_protocol::ipc::{LeadCheckDto, LeadGateAnswerDto, LeadGateDto, LeadGate
 /// A 确认规格 / B 拍板单向门 / C 看证据验收 / D 需要授权或亲手操作 / Q 访谈提问。
 /// D、Q 是 2026-11-09 审查补的：「要不要开云主机」「请在面板里登录」只能 blocked 干等，手机上收不到卡片；
 /// 访谈问题也只能在终端答。
-pub const GATE_KINDS: [&str; 5] = ["A", "B", "C", "D", "Q"];
+const GATE_KINDS: [&str; 5] = ["A", "B", "C", "D", "Q"];
 
 /// 固定选项的关卡（A、C、D）；B、Q 的选项由 agent 写。
-pub fn fixed_choices(kind: &str) -> Option<&'static [&'static str]> {
+fn fixed_choices(kind: &str) -> Option<&'static [&'static str]> {
     match kind {
         "A" => Some(&["confirm", "revise"]),
         "C" => Some(&["accept", "reject"]),
@@ -603,9 +603,16 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
     if g.id != gate_id {
         return Err("lead/gate_changed".into());
     }
+    let accepts_c = g.kind == "C" && answer.choice == "accept";
     match g.status.as_str() {
         "pending" => {}
-        "answered" if g.answer.as_ref() == Some(answer) => return Ok(()),
+        "answered" if g.answer.as_ref() == Some(answer) => {
+            // 手机断线重发同一答案：上次勾 leader 条目若失败（文件被杀毒或编辑器占用），这里补一次。幂等。
+            if accepts_c {
+                mark_leader_checks(task);
+            }
+            return Ok(());
+        }
         _ => return Err("lead/gate_closed".into()),
     }
     // 选项必须是这个关卡的：A 只有 confirm/revise，C 只有 accept/reject，B 是 agent 写的方案 id
@@ -622,16 +629,17 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
     if !valid {
         return Err("lead/gate_bad_choice".into());
     }
+    // 先勾 leader 条目、再写 answered：后台 wait 一看到 answered 就会唤醒 agent，顺序反过来时 agent
+    // 可能读到还没勾的清单，再按旧内容写回，leader 的签字就丢了（PR #156 审查）。尽力而为，失败不挡作答。
+    if accepts_c {
+        mark_leader_checks(task);
+    }
     v["status"] = json!("answered");
     v["answer"] = serde_json::to_value(answer).map_err(|e| e.to_string())?;
     let tmp = task.join("gate.json.tmp");
     let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    if g.kind == "C" && answer.choice == "accept" {
-        mark_leader_checks(task); // 尽力而为：失败不影响作答本身，agent 醒来还能自己补
-    }
-    Ok(())
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
 /// 关卡 C 被接受：「由 leader 验收」的条目就是这次验收的对象，勾上并记 `verified_by`。

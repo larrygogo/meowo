@@ -9,6 +9,6 @@ export type LeadCheckDto = { id: string, check: string, passes: boolean,
  */
 waived: string | null, 
 /**
- * 要 leader 亲自验收（check 里写了「由 leader 验收」）；关卡 C 接受时自动勾上。
+ * 要 leader 亲自验收：只看条目上的 `by: "leader"` 字段，不看 check 文字；关卡 C 接受时自动勾上。
  */
 leader: boolean, };

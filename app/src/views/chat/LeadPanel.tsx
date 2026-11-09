@@ -48,15 +48,16 @@ export function gateWaiting(task: LeadTaskDto | null): boolean {
 }
 
 /// 进度不算豁免项：leader 已经决定不做的条目留在分母里，任务就永远差几条（实测三个任务带红收工）。
+/// 已通过的条目即使还挂着豁免原因（先豁免、后来又做完了），也按通过算，与后端 failing() 一致（PR #156 审查）。
 export function leadProgress(task: LeadTaskDto): { passed: number; total: number } {
-  const live = task.checks.filter((c) => !c.waived);
+  const live = task.checks.filter((c) => c.passes || !c.waived);
   return { passed: live.filter((c) => c.passes).length, total: live.length };
 }
 
 /// 排序权重：还要 agent 做的 → 等 leader 验收的 → 已通过 → 已豁免。同组保持原顺序。
 function checkRank(c: LeadTaskDto["checks"][number]): number {
-  if (c.waived) return 3;
   if (c.passes) return 2;
+  if (c.waived) return 3;
   return c.leader ? 1 : 0;
 }
 
@@ -146,17 +147,17 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
             : (
               <ul className="lead-checks">
                 {checks.map((c) => {
-                  const state = c.waived ? "waived" : c.passes ? "pass" : "pending";
-                  const label = c.waived ? t.chat.leadCheckWaived : c.passes ? t.chat.leadCheckPass : t.chat.leadCheckPending;
+                  const state = c.passes ? "pass" : c.waived ? "waived" : "pending";
+                  const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived : t.chat.leadCheckPending;
                   return (
                     <li key={c.id} className={"lead-check is-" + state + (open.has(c.id) ? " is-open" : "")}
-                      title={c.waived ? `${c.check}
-${t.chat.leadCheckWaivedReason(c.waived)}` : c.check}
+                      title={state === "waived" ? `${c.check}
+${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
                       onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
                       <span className="lead-check-mark" aria-label={label}>{CHECK_ICONS[state]}</span>
                       <span className="lead-check-body">
                         <span className="lead-check-text">{c.check}</span>
-                        {c.waived && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived)}</span>}
+                        {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
                         {!c.waived && !c.passes && c.leader && <span className="lead-check-note is-leader">{t.chat.leadCheckLeader}</span>}
                       </span>
                     </li>
@@ -176,15 +177,17 @@ ${t.chat.leadCheckWaivedReason(c.waived)}` : c.check}
 });
 
 /// A、C、D 的选项固定（与 reporter 的 fixed_choices 一致，后端会再校验一次）；B、Q 用 agent 写进 gate.json 的选项。
-function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): { id: string; label: string; recommended?: boolean; detail?: string }[] {
-  if (gate.kind === "A") return [{ id: "confirm", label: t.chat.leadGateConfirm }, { id: "revise", label: t.chat.leadGateRevise }];
-  if (gate.kind === "C") return [{ id: "accept", label: t.chat.leadGateAccept }, { id: "reject", label: t.chat.leadGateReject }];
+type GateChoice = { id: string; label: string; recommended?: boolean; detail?: string; requiresNote?: boolean };
+
+function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): GateChoice[] {
+  if (gate.kind === "A") return [{ id: "confirm", label: t.chat.leadGateConfirm }, { id: "revise", label: t.chat.leadGateRevise, requiresNote: true }];
+  if (gate.kind === "C") return [{ id: "accept", label: t.chat.leadGateAccept }, { id: "reject", label: t.chat.leadGateReject, requiresNote: true }];
   if (gate.kind === "D") return [{ id: "approve", label: t.chat.leadGateApprove }, { id: "done", label: t.chat.leadGateDone }, { id: "deny", label: t.chat.leadGateDeny }];
   const own = gate.options.map((o) => ({ id: o.id, label: o.label, recommended: o.recommended, detail: o.detail }));
   // Q 是访谈：开放式问题常常没有合适的选项，留一个「其他」只写意见作答（做空审查第 1 轮：选项为空时卡片提交不了）。
   // agent 自己写了 id 为 other 的选项就不再追加，免得 key 重复、语义打架（做空审查第 2 轮）。
   const addOther = gate.kind === "Q" && !own.some((o) => o.id === "other");
-  return addOther ? [...own, { id: "other", label: t.chat.leadGateOther }] : own;
+  return addOther ? [...own, { id: "other", label: t.chat.leadGateOther, requiresNote: true }] : own;
 }
 
 /// 关卡卡片。修改 / 驳回必须写意见（agent 要知道改什么）；B 可选附意见。
@@ -203,8 +206,10 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
     if (el && !expanded) setOverflows(el.scrollHeight > el.clientHeight + 1);
   }, [gate.summary, expanded]);
   const choices = gateChoices(gate, t);
-  const ownOther = gate.options.some((o) => o.id === "other");
-  const needsNote = choice === "revise" || choice === "reject" || (gate.kind === "Q" && choice === "other" && !ownOther);
+  // 哪个选项要求写意见由 gateChoices 一处决定，这里和提示语都只读这个标记（PR #156 审查：条件写了三遍）。
+  const picked = choices.find((c) => c.id === choice);
+  const needsNote = picked?.requiresNote === true;
+  const answering = gate.kind === "Q" && needsNote;
   const submit = () => {
     if (!choice || busy || (needsNote && !note.trim())) return;
     setBusy(true);
@@ -248,7 +253,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
       <textarea
         className="lead-gate-note"
         rows={2}
-        placeholder={gate.kind === "Q" && choice === "other" && !ownOther ? t.chat.leadGateAnswerRequired : needsNote ? t.chat.leadGateNoteRequired : t.chat.leadGateNoteOptional}
+        placeholder={answering ? t.chat.leadGateAnswerRequired : needsNote ? t.chat.leadGateNoteRequired : t.chat.leadGateNoteOptional}
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />

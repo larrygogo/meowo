@@ -666,6 +666,8 @@ fn waived_and_leader_items_do_not_block() {
     let v = call(&e, "stop", work.clone()).unwrap();
     let reason = v["reason"].as_str().unwrap();
     assert!(reason.contains("gate.json") && !reason.contains("再提问") && reason.contains("实施阶段"), "{reason}");
+    // 旧条目只在文字里写了「由 leader 验收」：提示 agent 补上 by 字段
+    assert!(reason.contains(r#""by": "leader""#), "{reason}");
     fs::write(t.join("progress.md"), "phase: verify
 ").unwrap();
     let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
@@ -772,4 +774,8 @@ fn accepting_gate_c_marks_leader_checks() {
     fs::write(t.join("acceptance.json"), "{坏").unwrap();
     write_gate(&t, "c3", "C", "pending");
     answer_gate(&t, "c3", &ans("accept", "")).unwrap();
+    // PR #156 审查：第一次勾失败（清单读不了），手机重发同一答案时补勾
+    fs::write(t.join("acceptance.json"), json!([{"id": 1, "check": "看视觉", "passes": false, "by": "leader"}]).to_string()).unwrap();
+    answer_gate(&t, "c3", &ans("accept", "")).unwrap();
+    assert_eq!(read_items()[0]["verified_by"], json!("leader"));
 }

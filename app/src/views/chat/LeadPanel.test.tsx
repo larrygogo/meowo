@@ -183,6 +183,9 @@ describe("纯函数", () => {
       { id: "3", check: "由 leader 验收", passes: false, waived: null, leader: true },
     ];
     expect(leadProgress(task({ checks }))).toEqual({ passed: 1, total: 2 });
+    // 先豁免、后来又做完的条目按通过算（与后端一致）
+    const done = [{ id: "1", check: "a", passes: true, waived: "曾经不做", leader: false }];
+    expect(leadProgress(task({ checks: done }))).toEqual({ passed: 1, total: 1 });
   });
 });
 
