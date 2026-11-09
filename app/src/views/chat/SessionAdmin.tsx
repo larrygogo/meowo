@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useT } from "../../i18n";
 import { getSessionAdminPage, recentCwds, setArchived, type LiveSession } from "../../api";
+import { runBatchCleanup } from "../../worktreeCleanup";
 import { folderName, pathKey } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { CheckIcon } from "../sticker/icons";
@@ -297,6 +298,17 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     });
   };
 
+  /// 批量清理已合并的 worktree（用户定：攒多了要能一次清掉）。清单整体确认一次，之后逐个删；
+  /// 某个 worktree 有程序占着时，runWorktreeRemoval 仍会单独问——结束哪个程序必须让用户看到名字。
+  const [cleaning, setCleaning] = useState(false);
+  const cleanWorktrees = async () => {
+    setCleaning(true);
+    const text = await runBatchCleanup(t);
+    setCleaning(false);
+    load(applied, page, pageSize);
+    if (text) setToast({ text, undo: null });
+  };
+
   const statusOptions = useMemo(() => [
     { value: "all" as Status, label: t.admin.statusAll },
     { value: "open" as Status, label: t.admin.statusOpen, dot: "open" as const },
@@ -328,6 +340,12 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
             <span className="sa-f-actions">
               <button type="button" className="sa-btn-q sa-btn-q--primary" onClick={() => query(draft)}>{t.admin.query}</button>
               <button type="button" className="sa-btn-q" onClick={() => { setDraft(DEFAULT_FILTERS); query(DEFAULT_FILTERS); }}>{t.admin.reset}</button>
+              {/* 只在看「已完成」时出现：清理对象就是已完成会话的 worktree。 */}
+              {applied.status === "done" && (
+                <button type="button" className="sa-btn-q" disabled={cleaning} onClick={() => void cleanWorktrees()}>
+                  {cleaning ? t.worktree.batchScanning : t.worktree.batch}
+                </button>
+              )}
             </span>
           </div>
           {selected.size > 0 && (

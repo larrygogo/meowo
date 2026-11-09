@@ -26,6 +26,14 @@ pub(crate) async fn start_managed_terminal(
                 return Err("会话仍在外部终端运行，不能重复接管".into());
             }
             let cwd = store.session_cwd(session_id).map_err(|e| e.to_string())?;
+            // 目录被删了（worktree 清理掉等）：不然 PTY spawn 会报一个看不懂的系统错误
+            // （Windows 上是「目录名称无效」），前端已有「项目目录不存在」的双语映射。
+            if cwd
+                .as_deref()
+                .is_some_and(|c| !c.trim().is_empty() && !std::path::Path::new(c).is_dir())
+            {
+                return Err("目录不存在".into());
+            }
             let provider = store
                 .session_provider(session_id)
                 .map_err(|e| e.to_string())?;

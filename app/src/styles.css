@@ -1208,6 +1208,18 @@ button.stab {
 .ctx-item-danger:hover, .ctx-item-danger:focus-visible { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
 .ctx-item-danger:hover svg, .ctx-item-danger:focus-visible svg { color: var(--cc-err-vivid); }
 .ctx-sep { height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
+/* 「删除 worktree」不可删时：aria-disabled 而不是 disabled（要能聚焦，读屏才念得到下面的原因），
+   外观与 :disabled 一致；原因写在项下方，和菜单项文字左缘对齐（图标 14px + gap）。 */
+.ctx-item.is-disabled { opacity: 0.4; cursor: default; }
+.ctx-item.is-disabled:hover, .ctx-item.is-disabled:focus-visible { background: transparent; color: var(--cc-text); }
+.ctx-item.is-disabled:hover svg, .ctx-item.is-disabled:focus-visible svg { color: var(--cc-text-faint); }
+.ctx-note {
+  max-width: 220px;
+  padding: 0 var(--sp-10) var(--sp-6) calc(var(--sp-10) + 14px + var(--sp-8));
+  color: var(--cc-text-faint);
+  font-size: calc(10.5px * var(--cc-ui));
+  line-height: 1.45;
+}
 /* 卡片菜单按钮（card_menu_mode=button 时替代右键触发）：常显小圆角图标钮——
    为触屏等无 hover 环境而生，不能做 hover 才浮现。 */
 .stk-menu-btn {
@@ -3852,6 +3864,9 @@ select.ns-input {
 /* 7S-8：正文原是 11px + dim——它说的是「继续会发生什么」（要杀掉几个会话、要删什么），
    却是整窗最小最淡的一行字，比按钮标签还难读。这句是做决定的依据，给它正文的分量。 */
 .app-confirm p { margin: 0 0 var(--sp-12); color: var(--cc-text); font-size: var(--fs-12-5); line-height: 1.6; }
+/* 正文里的换行要留住：删除 worktree 的确认要逐行列出占用程序和会一起删掉的本地文件，
+   折成一行就读不清（2026-11-09 真机走查实拍）。没有换行的正文不受影响。 */
+.app-confirm p > span { white-space: pre-line; overflow-wrap: anywhere; }
 .app-confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
 /* --r-7 是真实存在的 token：此前写成不存在的 --r-8，border-radius 解析失败退成直角。 */
 .app-confirm-actions button { min-width: 76px; padding: var(--sp-6) var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-7); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--fs-11); cursor: pointer; }
@@ -4071,6 +4086,8 @@ select.ns-input {
 .sa-pg:disabled { opacity: .38; cursor: default; background: transparent; }
 .sa-ellipsis { padding: 0 var(--sp-2); color: var(--cc-text-faint); font-size: var(--text-sm); }
 .sa-toast { position: absolute; left: 50%; bottom: var(--sp-16); transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: var(--cc-shadow-popup); color: var(--cc-text); font-size: var(--text-sm); white-space: nowrap; z-index: 20; }
+/* 批量清理 worktree 的结果要逐行列出失败项：多行时换行显示，限宽不撑出窗口。 */
+.sa-toast > span { white-space: pre-line; max-width: min(560px, 80vw); }
 /* Windows/Linux：主内容列（标题行 + 正文 + 输入框）平铺在外壳里（对照 Kimi，用户 2026-10-29
    定：取代此前四周留白 + 圆角 + 阴影的浮起卡片）。顶栏与侧栏用较深的窗口底色，主列稍亮一档，
    两者之间只用一条细线分隔——常驻区域靠底色差与细线分层，阴影只留给浮层。
@@ -4297,6 +4314,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 便签：一行截断（完整内容进 title）。写了看不见的备忘等于没写。 */
 .chat-sidebar-note { display: flex; align-items: center; gap: var(--sp-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-sidebar-note svg { flex: 0 0 auto; width: 10px; height: 10px; }
+/* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。 */
+.chat-sidebar-gone { align-self: flex-start; margin-top: 2px; padding: 0 var(--sp-6); border: 1px dashed var(--cc-border); border-radius: var(--r-sm); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.5; white-space: nowrap; }
 /* 就地编辑（重命名/便签）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
 .chat-sidebar-edit { width: 100%; min-width: 0; padding: var(--sp-2) var(--sp-5); border: var(--hairline) solid var(--cc-accent-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; font-size: var(--text-xs); }
 .chat-sidebar-edit:focus { outline: none; border-color: var(--cc-accent); }
@@ -4452,9 +4471,21 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-deep-title { display: flex; align-items: baseline; gap: var(--sp-6); min-width: 0; font-size: var(--text-xs); }
 .chat-sidebar-deep-excerpt { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 /* 归档撤销条:中性提示 + 内嵌撤销按钮(与错误条同位,互斥渲染)。 */
-.chat-sidebar-error.is-undo { display: flex; align-items: center; gap: var(--sp-8); color: var(--cc-text-dim); }
+.chat-sidebar-error.is-undo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6) var(--sp-8); color: var(--cc-text-dim); }
+/* 侧栏窄：撤销条多了「删除 worktree」后，文字被挤成三行、「撤销」被压成两行竖排（2026-11-09 真机走查实拍）。
+   有两个按钮时文字独占一行、按钮排到下一行；只有「撤销」时保持原来的单行。按钮一律不折字。 */
+.chat-sidebar-error.is-undo:has(> button + button) > span { flex: 1 1 100%; }
+.chat-sidebar-error.is-undo > button { white-space: nowrap; }
 .chat-sidebar-error.is-undo button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); color: var(--cc-text); background: var(--fill-selected); font-size: var(--text-xs); cursor: pointer; }
 .chat-sidebar-error.is-undo button:hover { background: var(--fill-selected-hover); }
+/* 批量清理 worktree 的结果：失败项逐行列出，按钮顶对齐不随多行居中。 */
+.chat-sidebar-error.is-multiline { align-items: flex-start; }
+.chat-sidebar-error.is-multiline span { flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; }
+/* 「已完成」页顶部的批量清理入口：轻量文字按钮，不和会话条目抢视觉。 */
+.chat-sidebar-cleanbar { display: flex; justify-content: flex-end; padding: var(--sp-4) var(--sp-10) var(--sp-2); }
+.chat-sidebar-cleanbar button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
+.chat-sidebar-cleanbar button:hover:not(:disabled) { background: var(--fill-selected); color: var(--cc-text); }
+.chat-sidebar-cleanbar button:disabled { cursor: default; }
 .chat-scroll {
   flex: 1;
   overflow: auto;

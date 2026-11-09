@@ -256,6 +256,53 @@ export const zh = {
     relayPinnedModel: (model: string) => `由中转固定为 ${model}`,
   },
   // 会话管理页（对照 Kimi Code 的会话管理）。
+  // 已合并 worktree 的清理（归档后的撤销条、已完成会话的菜单、会话管理页批量清理）。
+  worktree: {
+    remove: "删除 worktree",
+    checking: "正在检查 worktree…",
+    removing: "正在删除…",
+    removed: "worktree 已删除",
+    removedKeepBranch: "worktree 已删除，本地分支没能删掉",
+    dirMissing: "目录已删除",
+    dirMissingTip: "这个会话的目录已经删掉了，没法再打开或恢复",
+    confirmTitle: "删除 worktree",
+    confirmMessage: (path: string, branch: string) =>
+      `将删除目录 ${path}，并删除本地分支 ${branch}。远端分支不动。\n\n这一步不能撤销。`,
+    busyTitle: "有程序占着这个目录",
+    busyMessage: (names: string) => `下面这些程序正在使用这个目录：\n${names}\n\n结束它们并继续删除吗？`,
+    busyConfirm: "结束并删除",
+    busyLoop: "一直有新程序在使用这个目录，先关掉它们再试",
+    ignoredNote: (list: string) => `下面这些被 git 忽略的本地文件也会一起删掉，删了找不回来：\n${list}`,
+    ignoredInline: (list: string) => `会一起删掉的本地忽略文件：${list}`,
+    batch: "清理已合并 worktree",
+    batchScanning: "正在检查已完成会话的 worktree…",
+    batchNone: "没有可以清理的 worktree",
+    batchTitle: "清理已合并的 worktree",
+    batchMessage: (list: string, skipped: number) =>
+      `将删除下面这些 worktree 和对应的本地分支，远端分支不动：\n${list}` +
+      (skipped > 0 ? `\n\n另有 ${skipped} 个不满足条件，不会删。` : ""),
+    batchDone: (ok: number, failed: number) =>
+      failed > 0 ? `删除了 ${ok} 个，${failed} 个失败` : `删除了 ${ok} 个 worktree`,
+    batchFailedItem: (path: string, reason: string) => `${path}：${reason}`,
+    reason: {
+      gh_unavailable: "没装 gh 或没登录，判断不了 PR 有没有合并",
+      no_pr: "这个分支没有 PR",
+      pr_open: "PR 还没合并",
+      pr_closed: "PR 已关闭，没有合并",
+      dirty: (n: number) => `还有 ${n} 个文件改动没提交`,
+      untracked: (n: number) => `还有 ${n} 个新文件没提交`,
+      unpushed: "有提交还没推到远端",
+      submodule_dirty: "子模块里有改动",
+      submodule_unpushed: "子模块里有提交还没推",
+      shared_session: (n: number) => `还有 ${n} 个进行中的会话在用这个目录`,
+      nested_repo: (n: number) => `目录里还有 ${n} 个别的仓库或 worktree`,
+      query_failed: "检查失败，稍后再试",
+      hidden_changes: (n: number) => `有 ${n} 个文件被标记成不跟踪改动，判断不了有没有改过`,
+      detached: "当前不在任何分支上",
+      locked: "这个 worktree 被锁定了",
+      unknown: "现在不能删除",
+    },
+  },
   admin: {
     title: "会话管理",
     subtitle: "管理所有会话，把任务完成的会话标记完成。旧会话按更新时间筛选，即可批量清理。",
@@ -927,6 +974,7 @@ export const zh = {
     crossMessage: "会话消息",
     crossMessageUnknown: "另一个会话",
     taskNotification: "后台任务通知",
+    systemRecord: "系统记录",
     sidebarApproval: "待批准",
     sidebarExpand: "展开会话列表",
     sidebarEmpty: "暂无会话",
@@ -951,8 +999,6 @@ export const zh = {
     sidebarUnfoldAll: "全部展开",
     sidebarSearchClear: "清空搜索",
     sidebarEmptySearch: "没有匹配的会话",
-    // 对话窗里的完成提示：侧栏「已完成」页就能找回，不必指向更深的设置页（贴纸仍用 sticker.archivedNotice）
-    archivedNotice: "已完成，可在侧栏「已完成」找回",
     // 对话内容全文搜索（显式动作：扫 transcript 文件，不随击键触发）。
     searchTranscripts: "搜索对话内容",
     searchTranscriptsRunning: "正在搜索对话内容…",

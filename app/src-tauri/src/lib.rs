@@ -56,6 +56,7 @@ mod snap_layout;
 mod terminal;
 mod watch;
 mod window;
+mod worktree;
 
 // run() 的 generate_handler 以裸标识符登记这些命令，须在 crate 根作用域可见。
 use chat::{
@@ -1250,6 +1251,9 @@ pub fn run() {
             set_lead_workflow,
             git_file_diff,
             git_pull_request,
+            worktree::worktree_status,
+            worktree::remove_session_worktree,
+            worktree::list_cleanable_worktrees,
             list_dir_entries,
             read_file_text,
             read_image_preview,

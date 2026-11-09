@@ -235,6 +235,52 @@ export const en: Dict = {
     // With relay enabled the model is pinned by the relay (backend --model wins): grey out and say so.
     relayPinnedModel: (model: string) => `Pinned to ${model} by the API relay`,
   },
+  worktree: {
+    remove: "Delete worktree",
+    checking: "Checking worktree…",
+    removing: "Deleting…",
+    removed: "Worktree deleted",
+    removedKeepBranch: "Worktree deleted, but the local branch couldn't be removed",
+    dirMissing: "Folder deleted",
+    dirMissingTip: "This session's folder has been deleted, so it can't be opened or resumed",
+    confirmTitle: "Delete worktree",
+    confirmMessage: (path: string, branch: string) =>
+      `This deletes the folder ${path} and the local branch ${branch}. The remote branch is kept.\n\nThis can't be undone.`,
+    busyTitle: "Programs are using this folder",
+    busyMessage: (names: string) => `These programs are using this folder:\n${names}\n\nEnd them and continue deleting?`,
+    busyConfirm: "End and delete",
+    busyLoop: "New programs keep using this folder. Close them and try again.",
+    ignoredNote: (list: string) => `These local files ignored by git will also be deleted and can't be recovered:\n${list}`,
+    ignoredInline: (list: string) => `Ignored local files that will be deleted: ${list}`,
+    batch: "Clean up merged worktrees",
+    batchScanning: "Checking worktrees of completed sessions…",
+    batchNone: "No worktrees to clean up",
+    batchTitle: "Clean up merged worktrees",
+    batchMessage: (list: string, skipped: number) =>
+      `These worktrees and their local branches will be deleted. Remote branches are kept:\n${list}` +
+      (skipped > 0 ? `\n\n${skipped} more don't qualify and will be kept.` : ""),
+    batchDone: (ok: number, failed: number) =>
+      failed > 0 ? `Deleted ${ok}, ${failed} failed` : `Deleted ${ok} worktree${ok === 1 ? "" : "s"}`,
+    batchFailedItem: (path: string, reason: string) => `${path}: ${reason}`,
+    reason: {
+      gh_unavailable: "gh isn't installed or signed in, so the PR status is unknown",
+      no_pr: "This branch has no PR",
+      pr_open: "The PR isn't merged yet",
+      pr_closed: "The PR was closed without merging",
+      dirty: (n: number) => `${n} changed file${n === 1 ? "" : "s"} not committed`,
+      untracked: (n: number) => `${n} new file${n === 1 ? "" : "s"} not committed`,
+      unpushed: "Some commits haven't been pushed",
+      submodule_dirty: "A submodule has changes",
+      submodule_unpushed: "A submodule has commits that haven't been pushed",
+      shared_session: (n: number) => `${n} open session${n === 1 ? " is" : "s are"} using this folder`,
+      nested_repo: (n: number) => `${n} other repo${n === 1 ? "" : "s"} or worktree${n === 1 ? "" : "s"} inside this folder`,
+      query_failed: "Check failed. Try again later.",
+      hidden_changes: (n: number) => `${n} file${n === 1 ? " is" : "s are"} marked to hide changes, so changes can't be checked`,
+      detached: "Not on a branch",
+      locked: "This worktree is locked",
+      unknown: "Can't be deleted right now",
+    },
+  },
   admin: {
     title: "Session management",
     subtitle: "Manage all sessions and mark finished ones done. Filter old sessions by last update to clean them up in bulk.",
@@ -855,6 +901,7 @@ export const en: Dict = {
     crossMessage: "Session message",
     crossMessageUnknown: "Another session",
     taskNotification: "Background task notification",
+    systemRecord: "System record",
     sidebarApproval: "Pending approval",
     sidebarExpand: "Expand session list",
     sidebarEmpty: "No sessions yet",
@@ -889,7 +936,6 @@ export const en: Dict = {
     dropToAttach: "Drop to attach",
     dropToTerminal: "Drop to insert path",
     sidebarEmptySearch: "No matching sessions",
-    archivedNotice: "Done. Find it under the Done tab in the sidebar",
     sidebarLoading: "Loading sessions…",
     // First-load failure row (P1-1): never degrade to the empty state — a backend fault
     // must not read as "all sessions gone".

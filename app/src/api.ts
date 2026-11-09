@@ -9,6 +9,9 @@ import type { LaunchChoice } from "./generated/contracts/LaunchChoice";
 import type { LaunchOption } from "./generated/contracts/LaunchOption";
 import type { LiveSession as LiveSessionDto } from "./generated/contracts/LiveSession";
 import type { LiveSessionCounts } from "./generated/contracts/LiveSessionCounts";
+import type { WorktreeStatusDto } from "./generated/contracts/WorktreeStatusDto";
+import type { WorktreeRemovalDto } from "./generated/contracts/WorktreeRemovalDto";
+import type { CleanableWorktreeDto } from "./generated/contracts/CleanableWorktreeDto";
 import type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 import type { Session as SessionDto } from "./generated/contracts/Session";
 import type { Todo as TodoRowDto } from "./generated/contracts/Todo";
@@ -152,6 +155,8 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
    * id 已被后端加高位偏移防撞——即使漏禁某个入口，本库无此行，命令落空成 no-op。
    */
   foreign: boolean;
+  /** 已归档会话的工作目录已不在磁盘上（worktree 被清理等）。可选：旧后端不带。 */
+  cwd_missing?: boolean;
 };
 
 export type { LiveSessionCounts };
@@ -579,6 +584,24 @@ export function setPushPaused(paused: boolean): Promise<void> {
 export function setArchived(sessionId: number, archived: boolean): Promise<void> {
   return invoke("set_archived", { sessionId, archived });
 }
+
+/** 会话所在 worktree 能不能清理（PR 已合并、无改动、无未推提交…）。判定全在桌面端，手机端经桥拿同一份。 */
+export function worktreeStatus(sessionId: number): Promise<WorktreeStatusDto> {
+  return invoke("worktree_status", { sessionId });
+}
+/**
+ * 删除会话所在 worktree 和本地分支。有进程占用时，只有它们全在 confirmedPids（用户看过名字的那批）里
+ * 才结束它们继续删；否则什么都不动，返回此刻的占用清单。
+ */
+export function removeSessionWorktree(sessionId: number, expectedPath: string, confirmedPids: number[]): Promise<WorktreeRemovalDto> {
+  // expectedPath：用户在确认框里看到的目录；后端此刻解析出的对不上就拒绝，不拿这次确认去删别处。
+  return invoke("remove_session_worktree", { sessionId, expectedPath, confirmedPids });
+}
+/** 已归档会话所在的 worktree（去重）及各自判定，批量清理用。 */
+export function listCleanableWorktrees(): Promise<CleanableWorktreeDto[]> {
+  return invoke("list_cleanable_worktrees");
+}
+export type { WorktreeStatusDto, WorktreeRemovalDto, CleanableWorktreeDto };
 
 /** 给会话挂 / 改便签（纯本地备忘，键为 cc_session_id）。 */
 export function setSessionNote(ccSessionId: string, note: string): Promise<void> {

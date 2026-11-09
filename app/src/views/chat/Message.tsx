@@ -573,7 +573,7 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
     if (parts.local) {
       // 只剩免责声明（写给模型的 caveat）的那条：对人零信息量，整条不渲染。
       if (!parts.commands.length && !parts.stdout.length && !parts.notifications.length
-        && !parts.crossMessages.length && !parts.text) return null;
+        && !parts.crossMessages.length && !parts.records.length && !parts.text) return null;
       return (
         <article className="chat-message is-user is-command" data-msg-id={item.id}>
           {parts.commands.map((command, index) => (
@@ -602,6 +602,17 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
                 <span className="chat-tool-chevron">›</span>
               </summary>
               <pre>{stripAnsi(out)}</pre>
+            </RememberedDetails>
+          ))}
+          {/* 不认识的机器记录（兜底）：默认收起，摘要写标签名，展开看原文。 */}
+          {parts.records.map((record, index) => (
+            <RememberedDetails className="chat-tool chat-command-out" memoryKey={`record:${item.id}:${index}`} key={`record-${index}`}>
+              <summary>
+                <span className="chat-tool-name">{t.chat.systemRecord}</span>
+                <span className="chat-tool-summary">{record.tag}</span>
+                <span className="chat-tool-chevron">›</span>
+              </summary>
+              <pre>{record.body}</pre>
             </RememberedDetails>
           ))}
           {/* 后台任务通知默认收起：整段是 XML+JSON 的机器记录，一行摘要（通知自带的

@@ -818,6 +818,10 @@ describe("ChatSidebar", () => {
       expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 2, archived: true });
       // 侧栏取的是 "all"（不含已归档）：点完当场消失，不等下一轮刷新。
       await waitFor(() => expect(screen.queryByRole("button", { name: /旧任务/ })).toBeNull());
+      // 不再弹「已完成，可在侧栏『已完成』找回 · 撤销」条（用户要求）。
+      await new Promise((r) => setTimeout(r, 30));
+      expect(screen.queryByText(/可在侧栏「已完成」找回/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "撤销" })).toBeNull();
     });
 
     /// 已归档 = 已收纳，列表里就不该再有它——正开着它的对话也一样，且右边要跟着换走，

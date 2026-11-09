@@ -56,6 +56,7 @@ import { RunBadge } from "./sticker/RunBadge";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { EmptyState } from "./sticker/EmptyState";
 import { UsageScreen } from "./sticker/UsageScreen";
+import { WorktreeRemoveButton } from "../worktreeCleanup";
 
 type FocusNoticeKind = FocusSessionResult | "connecting" | "failed" | "background" | "archived" | "resuming" | "foreign" | "opened";
 
@@ -430,18 +431,30 @@ export function Sticker({
   const [archivedToasts, setArchivedToasts] = useState<{ key: number; item: Item }[]>([]);
   const archiveToastIdRef = useRef(0);
   // 各 toast 的消失定时器：卸载时统一清掉，不让回调打在已卸载的组件上。
-  const archiveToastTimersRef = useRef<Set<number>>(new Set());
+  // key → 定时器：toast 上的「删除 worktree」被点下时要按 key 暂停它的消失（见 holdArchivedToast）。
+  const archiveToastTimersRef = useRef<Map<number, number>>(new Map());
+  const scheduleArchivedToastDismiss = (key: number) => {
+    const old = archiveToastTimersRef.current.get(key);
+    if (old != null) window.clearTimeout(old);
+    const timer = window.setTimeout(() => {
+      archiveToastTimersRef.current.delete(key);
+      setArchivedToasts((cur) => cur.filter((toast) => toast.key !== key));
+    }, 6_000);
+    archiveToastTimersRef.current.set(key, timer);
+  };
   const pushArchivedToast = (item: Item) => {
     archiveToastIdRef.current += 1;
     const key = archiveToastIdRef.current;
     // 7B-9：连续归档时曾无上限堆叠，四条就盖住半张贴纸。只留最近两条——更早的那次
     // 撤销窗口本来也快到点了，超时清理由各自的定时器照旧负责（找不到即空转）。
     setArchivedToasts((cur) => [...cur, { key, item }].slice(-2));
-    const timer = window.setTimeout(() => {
-      archiveToastTimersRef.current.delete(timer);
-      setArchivedToasts((cur) => cur.filter((toast) => toast.key !== key));
-    }, 6_000);
-    archiveToastTimersRef.current.add(timer);
+    scheduleArchivedToastDismiss(key);
+  };
+  // 删除 worktree 要过两道确认、可能还要等进程退出，6s 不够：期间暂停该条 toast 的消失。
+  const holdArchivedToast = (key: number) => {
+    const timer = archiveToastTimersRef.current.get(key);
+    if (timer != null) window.clearTimeout(timer);
+    archiveToastTimersRef.current.delete(key);
   };
   useEffect(() => {
     const timers = archiveToastTimersRef.current;
@@ -1634,6 +1647,14 @@ export function Sticker({
                   <button type="button" className="stk-focus-btn" onClick={() => undoArchiveToast(key, item)}>
                     {t.sticker.archiveUndo}
                   </button>
+                  <WorktreeRemoveButton
+                    t={t}
+                    sessionId={item.session.id}
+                    className="stk-focus-btn"
+                    textClassName="stk-focus-text"
+                    onEngage={() => holdArchivedToast(key)}
+                    onSettled={() => scheduleArchivedToastDismiss(key)}
+                  />
                 </div>
               </div>
               <button

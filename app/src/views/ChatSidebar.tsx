@@ -21,6 +21,7 @@ import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
+import { WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -562,6 +563,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   const [notingId, setNotingId] = useState<number | null>(null);
   // 动作失败必须可见:静默吞掉的话,用户点了「重命名」只会看到名字没变,以为是自己没点上。
   const [actionError, setActionError] = useState<string | null>(null);
+  // 批量清理 worktree 的进行状态与结果（结果可能多行：失败项逐行列出），8s 后自动收起。
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cleanResult) return;
+    const timer = window.setTimeout(() => setCleanResult(null), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [cleanResult]);
   useEffect(() => {
     if (!actionError) return;
     const timer = window.setTimeout(() => setActionError(null), 4_000);
@@ -593,7 +602,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   };
   // 归档动作(单条/批量)与撤销条统一走 useSessionActions(C-13):与对话窗标题菜单同一条
   // set_archived、同一个「下一条」取序(按当前可见顺序取当前条之后的第一条)、同一个 8s 撤销窗。
-  const { archiveUndo, archive: archiveSessions, undoArchive } = useSessionActions({
+  const { archive: archiveSessions } = useSessionActions({
     onNavigate: onSelect,
     onError: setActionError,
   });
@@ -1078,6 +1087,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
             </span>
           )}
+          {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
+          {!noting && item.cwd_missing && (
+            <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>
+          )}
           {/* 便签写完要看得见，否则「添加便签」等于写进黑洞。编辑中的那条让位给输入框。 */}
           {!noting && item.note && (
             <span className="chat-sidebar-note" data-tip={item.note}><NoteIcon />{item.note}</span>
@@ -1331,6 +1344,24 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             )}
           </div>
         )}
+        {/* 已完成页顶部：批量清理已合并 worktree。手机端只有侧栏没有会话管理页，批量入口放在这里
+            两端都够得着（用户定：手机端同样提供）。 */}
+        {archivedView && !workspacesView && sessions !== null && sessions.length > 0 && (
+          <div className="chat-sidebar-cleanbar">
+            <button
+              type="button"
+              disabled={cleaning}
+              onClick={() => {
+                setCleaning(true);
+                void runBatchCleanup(t).then((text) => {
+                  setCleaning(false);
+                  if (text) setCleanResult(text);
+                  void loadRef.current("refresh");
+                });
+              }}
+            >{cleaning ? t.worktree.batchScanning : t.worktree.batch}</button>
+          </div>
+        )}
         {renderedGroups
           ? renderedGroups.map(({ group, isFolded, canCollapse, idleCount, shown }) => {
               // 组头汇总点:折起来时它是这一组唯一的状态出口,取组内最强的召唤。
@@ -1444,15 +1475,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       )}
       {/* G-16：全侧栏唯一的读屏汇总播报源（视觉隐藏），取代每条会话一个 role=status。 */}
       <div className="chat-sidebar-sronly" role="status">{liveSummary}</div>
-      {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
-      {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
-      {/* 归档撤销条:8s 内可一键取回并跳回该会话(批量归档整批撤销)。 */}
-      {archiveUndo != null && !actionError && (
-        <div className="chat-sidebar-error is-undo" role="status">
-          <span>{archiveUndo.length > 1 ? `${t.chat.archivedNotice} × ${archiveUndo.length}` : t.chat.archivedNotice}</span>
-          <button type="button" onClick={() => undoArchive({ onUndone: (ids) => { void loadRef.current("refresh"); onSelect(ids[0]); }, errorMessage: t.chat.sidebarActionFailed })}>{t.sticker.archiveUndo}</button>
+      {cleanResult && !actionError && (
+        <div className="chat-sidebar-error is-undo is-multiline" role="status">
+          <span>{cleanResult}</span>
+          <button type="button" onClick={() => setCleanResult(null)}>{t.dialog.ok}</button>
         </div>
       )}
+      {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
+      {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}
       {selectedIds.size > 0 && (
         <div className="chat-sidebar-batch" role="toolbar" aria-label={t.chat.selectedCount(selectedIds.size)}>
@@ -1483,6 +1513,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           // 被 supervisor 拉回来（endable 已内含排除）。远程同样放行:stop_managed_terminal
           // 已进 /rpc 白名单(remote.rs 头注释记录了放行理由)。
           onEndSession={ctxItem.endable ? () => endSession(ctxItem) : null}
+          worktreeSessionId={ctxItem.archived && !ctxItem.foreign && !ctxItem.cwd_missing ? ctxItem.session.id : null}
+          onWorktreeDone={(outcome: RemovalOutcome) => {
+            if (outcome.kind === "failed") setActionError(outcome.message);
+            else if (outcome.kind === "removed") {
+              if (!outcome.branchDeleted) setActionError(t.worktree.removedKeepBranch);
+              void loadRef.current("refresh");
+            }
+          }}
           onClose={() => setCtxMenu(null)}
         />
       )}

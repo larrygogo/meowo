@@ -194,6 +194,11 @@ pub(crate) struct LiveItem {
     /// PTY/审批/收尾都归安装版，本实例只有观察权。id 已加 [`FOREIGN_ID_OFFSET`] 防撞：
     /// 即使某个操作入口漏禁，本库也无此行，落空成 no-op 而不是改错会话。
     foreign: bool,
+    /// 会话工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉）。前端据此在卡片上标
+    /// 「目录已删除」，并把打开/恢复改成提示——否则点下去只会得到一个看不懂的启动失败。
+    /// 只对已归档会话检查：进行中会话的目录没了是另一回事，照旧走原来的报错路径；
+    /// 而且归档列表很长时每次刷新都 stat 一遍没必要扩大到全部会话。
+    cwd_missing: bool,
 }
 
 /// profile id → 展示名。查不到（profile 已删）回退 id 本身。纯函数便于单测。
@@ -627,6 +632,12 @@ fn cwd_key(dir: &str) -> String {
     dir.replace('\\', "/").trim_end_matches('/').to_lowercase()
 }
 
+/// 记过工作目录、但磁盘上已经没有这个目录。没记录 cwd 的老会话不算「已删除」。
+fn cwd_is_missing(cwd: Option<&str>) -> bool {
+    cwd.map(str::trim)
+        .is_some_and(|c| !c.is_empty() && !Path::new(c).is_dir())
+}
+
 /// 工作目录的末段名（卡片上的仓库名）。两种斜杠都认。
 fn cwd_basename(cwd: &str) -> &str {
     cwd.trim_end_matches(['/', '\\'])
@@ -740,6 +751,7 @@ fn pending_placeholder_item(
         busy_subagents: 0,
         unread: false,
         foreign: false,
+        cwd_missing: false,
     }
 }
 
@@ -1146,6 +1158,7 @@ fn enrich(
         return None;
     }
     let unread = crate::watch::is_unread(session.session.id);
+    let cwd_missing = session.archived && cwd_is_missing(session.cwd.as_deref());
     Some(LiveItem {
         inner: session,
         connected,
@@ -1172,6 +1185,7 @@ fn enrich(
         unread,
         // 外库标记由 foreign_live_items 在聚合时置真，本库路径恒为 false。
         foreign: false,
+        cwd_missing,
     })
 }
 

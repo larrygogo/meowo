@@ -99,6 +99,12 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "rename_session",
     "set_archived",
     "set_session_note",
+    // 已合并 worktree 的清理（2026-11-09 用户决定手机端同样提供）：只收会话 id 不收路径，
+    // 能删的只有某条会话自己的 worktree，判定（PR 已合并、无改动、无未推提交…）全在桌面端做，
+    // 和桌面端同一套；占用进程要用户确认后才结束。
+    "worktree_status",
+    "remove_session_worktree",
+    "list_cleanable_worktrees",
     // 侧栏手动排序（手机长按拖动）：只改顺序，不碰会话内容与其它设置。
     "move_session_rank",
     "set_workspace_order",
@@ -874,6 +880,14 @@ bridged_args!(SetArchivedArgs {
     archived: bool
 });
 
+bridged_args!(WorktreeStatusArgs { session_id: i64 });
+
+bridged_args!(RemoveSessionWorktreeArgs {
+    session_id: i64,
+    expected_path: String,
+    confirmed_pids: Vec<u32>
+});
+
 bridged_args!(MoveSessionRankArgs {
     session_id: i64,
     #[serde(default)]
@@ -1155,6 +1169,24 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(SetPushPausedArgs);
             reply(crate::settings::set_push_paused(app.clone(), a.paused).await)
         }
+        "worktree_status" => {
+            let a = args!(WorktreeStatusArgs);
+            reply(crate::worktree::worktree_status(state, a.session_id).await)
+        }
+        "remove_session_worktree" => {
+            let a = args!(RemoveSessionWorktreeArgs);
+            reply(
+                crate::worktree::remove_session_worktree(
+                    app.clone(),
+                    state,
+                    a.session_id,
+                    a.expected_path,
+                    a.confirmed_pids,
+                )
+                .await,
+            )
+        }
+        "list_cleanable_worktrees" => reply(crate::worktree::list_cleanable_worktrees(state).await),
         "set_archived" => {
             let a = args!(SetArchivedArgs);
             reply(
@@ -2084,6 +2116,12 @@ mod tests {
             "set_archived" => {
                 parse::<SetArchivedArgs>(br#"{"sessionId":7,"archived":true}"#).map(|_| ())
             }
+            // api.ts worktreeStatus / removeSessionWorktree
+            "worktree_status" => parse::<WorktreeStatusArgs>(br#"{"sessionId":7}"#).map(|_| ()),
+            "remove_session_worktree" => parse::<RemoveSessionWorktreeArgs>(
+                br#"{"sessionId":7,"expectedPath":"C:/w/wt","confirmedPids":[]}"#,
+            )
+            .map(|_| ()),
             // api.ts:390
             "stop_managed_terminal" => {
                 parse::<StopManagedTerminalArgs>(br#"{"sessionId":7}"#).map(|_| ())
@@ -2214,7 +2252,8 @@ mod tests {
             | "get_settings"
             | "host_os"
             | "file_access_token"
-            | "get_accounts" => parse::<serde::de::IgnoredAny>(br#"{}"#).map(|_| ()),
+            | "get_accounts"
+            | "list_cleanable_worktrees" => parse::<serde::de::IgnoredAny>(br#"{}"#).map(|_| ()),
             // 白名单新增项必须补样例——落到此臂是样例漏写，不是命令坏了。
             _ => Err(format!("{cmd} 在 sample_payload_parse_check 缺 payload 样例")),
         }
