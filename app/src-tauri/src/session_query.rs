@@ -136,19 +136,82 @@ fn runtime_of(
         .unwrap_or_default()
 }
 
+/// 工作空间清单（会话用过的目录，最近活跃的在前）。默认去掉「从列表里移除」过、之后再没用过的
+/// （见 hide_workspace）；会话管理页要能按它们筛会话，传 include_hidden。
 #[tauri::command]
 pub(crate) async fn recent_cwds(
     state: State<'_, super::AppState>,
     limit: usize,
+    include_hidden: Option<bool>,
 ) -> Result<Vec<String>, String> {
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        super::open_store(&db_path)?
-            .recent_cwds(limit)
-            .map_err(|error| error.to_string())
+        let store = super::open_store(&db_path)?;
+        if include_hidden.unwrap_or(false) {
+            return store.recent_cwds(limit).map_err(|error| error.to_string());
+        }
+        let hidden = crate::settings::load_settings().hidden_workspaces;
+        let rows = store
+            .recent_cwds_with_last(limit.saturating_add(hidden.len()))
+            .map_err(|error| error.to_string())?;
+        Ok(visible_workspaces(rows, &hidden, limit))
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// 工作空间的归一键：斜杠统一、去尾斜杠、不分大小写（Windows 路径；库里历史数据斜杠方向不一）。
+pub(crate) fn workspace_key(cwd: &str) -> String {
+    cwd.trim().replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+/// 去掉移除之后再没用过的目录：最近一次活跃不晚于移除时刻就不显示。纯函数便于单测。
+fn visible_workspaces(
+    rows: Vec<(String, i64)>,
+    hidden: &std::collections::BTreeMap<String, i64>,
+    limit: usize,
+) -> Vec<String> {
+    rows.into_iter()
+        .filter(|(cwd, last)| hidden.get(&workspace_key(cwd)).is_none_or(|hidden_at| last > hidden_at))
+        .map(|(cwd, _)| cwd)
+        .take(limit)
+        .collect()
+}
+
+/// 从工作空间列表里移除一个目录（只是不显示，磁盘上的目录和其中的会话都不动）。
+#[tauri::command]
+pub(crate) async fn hide_workspace(cwd: String) -> Result<(), String> {
+    let key = workspace_key(&cwd);
+    if key.is_empty() {
+        return Err("目录为空".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::settings::update_settings(|settings| {
+            settings.hidden_workspaces.insert(key, crate::now_ms());
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod hidden_workspace_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_workspace_stays_hidden_until_used_again() {
+        let mut hidden = std::collections::BTreeMap::new();
+        hidden.insert(workspace_key("C:\\Work\\Old\\"), 100);
+        let rows = vec![("C:/work/old".to_string(), 90), ("C:/work/new".to_string(), 80)];
+        // 移除之后没再用过：不显示；大小写、斜杠方向、尾斜杠不同也认得。
+        assert_eq!(visible_workspaces(rows, &hidden, 10), vec!["C:/work/new".to_string()]);
+        // 之后又在这个目录开了会话：回来。
+        let rows = vec![("C:/work/old".to_string(), 150), ("C:/work/new".to_string(), 80)];
+        assert_eq!(visible_workspaces(rows, &hidden, 10), vec!["C:/work/old".to_string(), "C:/work/new".to_string()]);
+        // 过滤后再按 limit 截。
+        assert_eq!(visible_workspaces(vec![("a".into(), 1), ("b".into(), 2)], &Default::default(), 1), vec!["a".to_string()]);
+    }
 }
 
 #[derive(serde::Serialize)]

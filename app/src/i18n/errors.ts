@@ -38,6 +38,14 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/http_", tail: true, zh: "远程请求失败", en: "Remote request failed" },
   // 远程服务启动时绑定端口失败（remote.rs serve）。占用多半是另一个 Meowo 实例开着远程。
   { m: "remote/port_in_use", exact: true, zh: "端口被其它程序占用，换个端口或关掉占用它的程序", en: "The port is in use; pick another or close the program using it" },
+  // 「更改」面板的 git 写操作（git.rs git_stage / git_unstage / git_discard / git_commit）。
+  { m: "git/locked", exact: true, zh: "另一个 git 操作正在进行（可能是 agent 在跑），稍后再试", en: "Another git operation is in progress (maybe the agent). Try again shortly." },
+  { m: "git/identity", exact: true, zh: "还没配置 git 用户名和邮箱，先在终端里运行 git config 设置", en: "Git user name and email aren't set. Run git config in a terminal first." },
+  { m: "git/conflict", exact: true, zh: "有未解决的合并冲突，先在终端或编辑器里解决再提交", en: "There are unresolved merge conflicts. Resolve them in a terminal or editor first." },
+  { m: "git/nothing_to_commit", exact: true, zh: "没有可提交的更改", en: "Nothing to commit" },
+  { m: "git/empty_message", exact: true, zh: "请填写提交信息", en: "Enter a commit message" },
+  { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里，刷新后再试", en: "The file is no longer in the change list. Refresh and try again." },
+  { m: "git/failed", tail: true, zh: "git 操作失败", en: "Git operation failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
   // ── 诊断日志（diaglog.rs）──
   { m: "diag/bad_extension", exact: true, zh: "只能导出成 .txt 或 .log 文件", en: "Export only to .txt or .log files" },

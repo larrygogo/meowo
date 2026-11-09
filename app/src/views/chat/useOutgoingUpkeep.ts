@@ -71,7 +71,8 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
     setStuck((prev) => { const next = new Set(prev); next.delete(id); return next; });
     const input = running() ? chatUi?.queue_input ?? "\r" : "\r";
     void writeManagedTerminal(sessionId, input)
-      .then(() => outgoingStore.update(sessionId, id, { phase: "pending", at: Date.now() }))
+      // 按回执编号结算：途中认领成真 id 时回执已搬走（同 ChatWindow 的 sendPrompt）。
+      .then(() => outgoingStore.settle(id, { phase: "pending", at: Date.now() }))
       .catch(onError);
   };
   return { stuck, submit };

@@ -2,11 +2,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeadGateDto, LeadTaskDto } from "../../api";
 
-const snapshot = vi.fn<(cwd: string) => Promise<LeadTaskDto | null>>();
+const snapshot = vi.fn<(cwd: string, session?: string | null) => Promise<LeadTaskDto | null>>();
 const answer = vi.fn<(cwd: string, gateId: string, choice: string, note: string) => Promise<void>>();
 vi.mock("../../api", async (importActual) => ({
   ...(await importActual<typeof import("../../api")>()),
-  leadTaskSnapshot: (cwd: string) => snapshot(cwd),
+  leadTaskSnapshot: (cwd: string, session?: string | null) => snapshot(cwd, session),
   answerLeadGate: (cwd: string, gateId: string, choice: string, note: string) => answer(cwd, gateId, choice, note),
 }));
 
@@ -53,9 +53,15 @@ afterEach(cleanup);
 describe("Lead 入口", () => {
   it("项目里没有任务（快照为 null）时不出入口", async () => {
     snapshot.mockResolvedValue(null);
-    render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
-    await waitFor(() => expect(snapshot).toHaveBeenCalledWith("C:/repo"));
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
+    // 带上会话 id：认领了的任务只给认领它的会话看（用户反馈 2026-11-09）。
+    await waitFor(() => expect(snapshot).toHaveBeenCalledWith("C:/repo", "cc-1"));
     expect(screen.queryByRole("button", { name: /Lead/ })).toBeNull();
+  });
+
+  it("还不知道会话 id（历史没到）时不请求：免得别的会话的任务闪一下", () => {
+    render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+    expect(snapshot).not.toHaveBeenCalled();
   });
 
   it("没有 cwd 时不请求、不出入口", () => {
@@ -66,30 +72,36 @@ describe("Lead 入口", () => {
 
   it("读快照失败（文件损坏、目录不是会话目录）按没有任务处理，不崩", async () => {
     snapshot.mockRejectedValue("lead/no_task");
-    render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
     await waitFor(() => expect(snapshot).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: /Lead/ })).toBeNull();
   });
 
   it("有任务时入口显示验收进度，点开面板显示阶段与逐条验收", async () => {
     snapshot.mockResolvedValue(task());
-    render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
     const pill = await screen.findByRole("button", { name: /Lead.*1\/2/ });
     fireEvent.click(pill);
     expect(screen.getByText("实施中")).toBeTruthy();
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
     expect(screen.getByText("手机能用")).toBeTruthy();
+    // 用户选定的样式（2026-11-09）：没通过的排前面、不显示 #编号；点一条展开全文。
+    const rows = [...document.querySelectorAll(".lead-check")];
+    expect(rows.map((row) => row.textContent)).toEqual(["手机能用", "测试全过"]);
+    expect(document.body.textContent).not.toContain("#1");
+    fireEvent.click(rows[0]);
+    expect(rows[0].className).toContain("is-open");
     fireEvent.click(screen.getByRole("tab", { name: "规格" }));
     expect(screen.getByText(/目的：演示/)).toBeTruthy();
   });
 
   it("关卡挂起时不用点开面板，卡片直接出现；答完后的关卡不再显示卡片", async () => {
     snapshot.mockResolvedValue(task({ gate: gate("B") }));
-    const { unmount } = render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+    const { unmount } = render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
     expect(await screen.findByText(/关卡 B 拍板 · 选机制/)).toBeTruthy();
     unmount();
     snapshot.mockResolvedValue(task({ gate: gate("B", { status: "answered", answer: { choice: "1", note: "" } }) }));
-    render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
     await screen.findByRole("button", { name: /Lead/ });
     expect(screen.queryByText(/关卡 B 拍板/)).toBeNull();
     // 已答复、agent 还没接手：入口上要看得出来（第二轮 M2 的降级提示）
@@ -103,7 +115,7 @@ describe("网络抖动", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       snapshot.mockResolvedValue(task({ gate: gate("C") }));
-      render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+      render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
       const note = await screen.findByPlaceholderText("附加意见（可选）");
       fireEvent.change(note, { target: { value: "截图第二张对不上" } });
       snapshot.mockRejectedValue("network");

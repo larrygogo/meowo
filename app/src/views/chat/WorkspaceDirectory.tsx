@@ -2,20 +2,21 @@
 /// 图标 + 名称，下面一行是路径；点一下就在这个工作区新建会话，悬停出现「⋯」，右键出同一个菜单。
 ///
 /// Meowo 没有单独的工作区登记表：工作区就是会话用过的目录（recent_cwds，最近用过的在前）。
-/// 所以 Kimi 的「重命名 / 移除工作区」这里不做——没有可改的记录。菜单里换成 Meowo 用得上的：
-/// 只看这个工作区的会话（切回进行中并按它筛选）、打开文件夹（桌面）。
+/// 所以 Kimi 的「重命名」这里不做——没有可改的记录。菜单里换成 Meowo 用得上的：
+/// 只看这个工作区的会话（切回进行中并按它筛选）、打开文件夹（桌面）、从列表中移除（用户要求，
+/// 2026-11-09：只是不显示，磁盘不动；之后又在这里开会话会自动回来，见 hide_workspace）。
 
 import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../../i18n";
-import { openNewSessionWindow, openProjectDir } from "../../api";
+import { hideWorkspace, openNewSessionWindow, openProjectDir } from "../../api";
 import { remoteUi } from "../../remoteMode";
 import { useMenuPopup } from "../menu";
 
 /// 工作区菜单：工作空间页签的目录行与会话列表的分组头共用。「⋯」按钮在按钮下方打开，右键
 /// 在鼠标处打开（对照 Kimi 的 onContextmenu）。关闭（点外 / Esc / 滚动）走 useMenuPopup 的
 /// useDismissable，与其它弹层同一套。
-export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) => void) | null) {
+export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) => void) | null, onHide: ((cwd: string) => void) | null = null) {
   const t = useT();
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   // 右键打开时的鼠标位置；null = 从「⋯」按钮打开，用 hook 按按钮算的坐标。
@@ -58,6 +59,9 @@ export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) =>
           {!remoteUi() && (
             <button type="button" role="menuitem" className="dd-item" onClick={() => pick(() => void openProjectDir(cwd).catch(() => {}))}>{t.sticker.openProjectDir}</button>
           )}
+          {onHide && (
+            <button type="button" role="menuitem" className="dd-item" data-tip={t.chat.wsHideTip} onClick={() => pick(() => onHide(cwd))}>{t.chat.wsHide}</button>
+          )}
         </div>
       )}
     </div>
@@ -67,8 +71,8 @@ export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) =>
 
 const MORE = <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="18" cy="12" r="1.6" /></svg>;
 
-function WorkspaceRow({ cwd, label, onFilter }: { cwd: string; label: string; onFilter: (cwd: string) => void }) {
-  const menu = useWorkspaceMenu(cwd, onFilter);
+function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: string; onFilter: (cwd: string) => void; onHide: (cwd: string) => void }) {
+  const menu = useWorkspaceMenu(cwd, onFilter, onHide);
   const create = () => void openNewSessionWindow({ cwd }).catch(() => {});
   return (
     <div
@@ -108,13 +112,24 @@ async function addWorkspace() {
   if (typeof picked === "string") void openNewSessionWindow({ cwd: picked }).catch(() => {});
 }
 
-export function WorkspaceDirectory({ options, onFilter }: {
+export function WorkspaceDirectory({ options, onFilter, onHidden }: {
   /// 工作区（侧栏筛选同一份清单：已按路径归一去重，同名目录带上一级消歧）。
   options: readonly { value: string; label: string }[];
   /// 「只看这个工作区的会话」：切回进行中并按它筛选。
   onFilter: (cwd: string) => void;
+  /// 移除成功后让上层重拉清单。
+  onHidden?: () => void;
 }) {
   const t = useT();
+  // 先在本地摘掉（点了立刻消失），后端失败再放回来。
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  const hide = (cwd: string) => {
+    setGone((prev) => new Set(prev).add(cwd));
+    hideWorkspace(cwd)
+      .then(() => onHidden?.())
+      .catch(() => setGone((prev) => { const next = new Set(prev); next.delete(cwd); return next; }));
+  };
+  const shown = options.filter((option) => !gone.has(option.value));
   return (
     <>
       <button type="button" className="chat-ws-add" onClick={() => void addWorkspace()}>
@@ -123,9 +138,9 @@ export function WorkspaceDirectory({ options, onFilter }: {
         </svg>
         <span>{t.chat.wsAdd}</span>
       </button>
-      {options.length === 0
+      {shown.length === 0
         ? <div className="chat-sidebar-empty">{t.chat.wsEmpty}</div>
-        : options.map((option) => <WorkspaceRow key={option.value} cwd={option.value} label={option.label} onFilter={onFilter} />)}
+        : shown.map((option) => <WorkspaceRow key={option.value} cwd={option.value} label={option.label} onFilter={onFilter} onHide={hide} />)}
     </>
   );
 }

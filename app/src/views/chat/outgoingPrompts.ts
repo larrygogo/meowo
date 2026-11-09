@@ -35,6 +35,10 @@ export type OutgoingAnchor = {
   priorItemIds: ReadonlySet<string>;
   /// 入队时 hook 记的最近用户输入：只在没有 transcript 时拿来比对。
   priorUserText: string | null;
+  /// 新建会话页发出的第一句话：会话在它之前一条记录都没有，记录里的用户消息全是它之后的。
+  /// 空锚点原本退回「尾部 12 条」，agent 一跑十几步命令，第一句就被挤出尾部，回显永远对不上，
+  /// 气泡挂成「未确认送达」叠在真消息下面（用户实拍 2026-11-09）。
+  fresh?: boolean;
 };
 
 export type OutgoingPrompt = {
@@ -90,6 +94,9 @@ export function anchorFrom(items: readonly ChatItem[], lastUserText: string | nu
   };
 }
 
+/// 新会话第一句话的锚点：见 OutgoingAnchor.fresh。
+export const freshAnchor = (): OutgoingAnchor => ({ ...anchorFrom([], null), fresh: true });
+
 type UserTextItem = Extract<ChatItem, { type: "user_text" }>;
 
 /// 入队之后才出现的用户消息。锚点还在窗口里就取它之后的全部；被挤出去了按入队时的
@@ -97,6 +104,7 @@ type UserTextItem = Extract<ChatItem, { type: "user_text" }>;
 /// 短插话（ok/继续）不能子串命中上一回合的旧消息。
 function newUserTexts(items: readonly ChatItem[], anchor: OutgoingAnchor): UserTextItem[] {
   const isNew = (item: ChatItem): item is UserTextItem => item.type === "user_text" && !anchor.priorItemIds.has(item.id);
+  if (anchor.fresh) return items.filter(isNew);
   const at = anchor.lastItemId == null ? -1 : items.findIndex((item) => item.id === anchor.lastItemId);
   if (at >= 0) return items.slice(at + 1).filter(isNew);
   const tail = new Set(items.slice(-12));
@@ -148,7 +156,9 @@ export function reconcileOutgoing(
       && collapse(evidence.lastUserText) !== collapse(prompt.anchor.priorUserText ?? "");
     const hookMatch = hookChanged && (prompt.attachmentOnly || collapse(evidence.lastUserText ?? "").includes(needle));
     // 未确认的回显：后面又有新消息落盘，说明这条的去向已经被后续事实盖过，收起。
-    const overtaken = prompt.phase === "uncertain" && candidates.length > 0;
+    // 新会话的第一句话：记录里出现任何用户消息就说明它已提交（会话从它开始），不必等超时；
+    // 第一句被翻页挤出加载窗口时文本对不上，也照样收起，但不占用候选（留给后发的消息认领）。
+    const overtaken = (prompt.phase === "uncertain" || !!prompt.anchor.fresh) && candidates.length > 0;
     if (match || hookMatch || overtaken) {
       if (match) used.add(match.id);
       changed = true;

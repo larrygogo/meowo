@@ -423,6 +423,21 @@ describe("Island 收起", () => {
     expect(container.querySelector(".isl-agent-badge")?.textContent).toBe("!");
   });
 
+  // 用户要求（2026-11-09）：运行中外圈旋转（有待办也转），待交互整圈黄，出错整圈红。
+  it("会话图标：运行中转圈、待交互整圈黄、出错整圈红", () => {
+    const running = mk({ todo_done: 1, todo_total: 4 });
+    const pending = mk({ pending_review: "approval" });
+    const failed = mk({ errored: true, error_label: "boom" } as Partial<Item>);
+    const { container } = renderIsland({ sessions: [running, pending, failed] });
+    const agentOf = (tone: string) => container.querySelector(`.isl-agent[data-tone="${tone}"]`)!;
+    const arcStroke = (el: Element) => el.querySelectorAll("circle")[1]?.getAttribute("stroke");
+    expect(agentOf("running").querySelector(".isl-ring.is-spin")).toBeTruthy();
+    expect(arcStroke(agentOf("pending"))).toBe("var(--isl-pending)");
+    expect(agentOf("pending").querySelector(".isl-ring.is-spin")).toBeNull();
+    expect(arcStroke(agentOf("error"))).toBe("var(--isl-err)");
+    expect(agentOf("error").querySelector(".isl-ring.is-spin")).toBeNull();
+  });
+
   // 用户嫌整圈亮色环又重又看不出状态：跑完的不画亮弧，亮一个琥珀等待点（与对话窗侧栏同规则）；在跑才有亮弧。
   it("会话图标：跑完不画亮弧、亮等待点；在跑才有亮弧", () => {
     const done = mk({ status: "waiting", unread: true });

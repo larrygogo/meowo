@@ -45,7 +45,7 @@ pub fn run(mode: &str, raw: &str, registry: &Path) -> Output {
 }
 
 fn run_inner(mode: &str, raw: &str, registry: &Path) -> Output {
-    if mode == "claim" && !raw.contains("progress.md") {
+    if mode == "claim" && !raw.contains(".lead") {
         return Output::default(); // 快速路径：绝大多数工具调用直接返回
     }
     let Ok(Value::Object(data)) = serde_json::from_str::<Value>(raw) else {
@@ -144,6 +144,36 @@ fn find_task(cwd: Option<&str>) -> Option<PathBuf> {
     task.is_dir().then_some(task)
 }
 
+/// Git Bash 写法 `/c/Users/...` 换成 `C:/Users/...`（只在 Windows）：agent 在 Windows 上多半跑在 Git Bash 里，
+/// 写进度时命令里是这种路径，原样当路径用解析不到，任务一直认领不上，Lead 面板就停在别的任务上
+///（用户 2026-11-09：Lead 面板的内容更新有很大延迟）。
+fn windows_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let drive = cfg!(windows)
+        && bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b'/';
+    if drive {
+        format!("{}:/{}", (bytes[1] as char).to_ascii_uppercase(), &path[3..])
+    } else {
+        path.to_owned()
+    }
+}
+
+/// 本会话认领的、还没做完的任务里最近更新的那个。`.lead/active` 全项目只有一个，同一项目几个会话
+/// 各做各的任务时它指着别人的（或早就做完的）任务；面板只看它，就一直停在那个任务上，看着像更新
+/// 很慢（用户 2026-11-09）。认领了的优先，没有再退回 active。
+fn own_task(cwd: &str, sid: &str) -> Option<PathBuf> {
+    let lead = project_root(Path::new(cwd)).join(".lead");
+    std::fs::read_dir(&lead)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|task| task.is_dir() && owner_of(task) == sid && phase_of(task) != "done")
+        .max_by_key(|task| std::fs::metadata(task.join("progress.md")).and_then(|m| m.modified()).ok())
+}
+
 fn task_of_session(sid: &str, registry: &Path) -> Option<PathBuf> {
     let t = load_map(registry).get(sid)?.as_str()?.to_owned();
     let task = PathBuf::from(t);
@@ -224,11 +254,15 @@ fn is_write(name: &str, input: &Value) -> bool {
     }
 }
 
-/// 在规范化文本里找 `[<路径>/].lead/<slug>/progress.md`，返回整段路径。
-/// 相对路径（Bash 里 `echo x >> .lead/a/progress.md`）也要认：`.lead` 前是 `/` 或词元边界。
-fn find_progress_path(text: &str) -> Option<String> {
+/// 在规范化文本里找所有 `[<路径>/].lead/<slug>` 任务目录引用，按出现顺序返回整段路径。
+/// 不再要求后面跟着 `/progress.md`：写进度的方式常常不带这串路径（先 `cd .../.lead/<slug>` 再
+/// `cat >> progress.md`、用 Write 写 SPEC.md），只认 progress.md 时任务一直认领不上，`.owner` 全是空的，
+/// 同项目每个会话都显示同一个 Lead（用户实拍 2026-11-09）。相对路径（`.lead/a/…`）也认：`.lead` 前是
+/// `/` 或词元边界；slug 后面得是 `/`、词元边界或结尾，`.lead/active` 这类文件交给调用方按「是不是目录」筛掉。
+fn find_task_refs(text: &str) -> Vec<String> {
     let needle = ".lead/";
-    let boundary = |c: char| c.is_whitespace() || "\"'<>|=:".contains(c);
+    let boundary = |c: char| c.is_whitespace() || "\"'<>|=:;&()".contains(c);
+    let mut out = Vec::new();
     let mut from = 0;
     while let Some(off) = text[from..].find(needle) {
         let at = from + off;
@@ -239,7 +273,8 @@ fn find_progress_path(text: &str) -> Option<String> {
         }
         let after = &text[at + needle.len()..];
         let slug: String = after.chars().take_while(|c| is_word(*c) || *c == '.' || *c == '-').collect();
-        if !(slug_ok(&slug) && after[slug.len()..].starts_with("/progress.md")) {
+        let next = after[slug.len()..].chars().next();
+        if !slug_ok(&slug) || !next.is_none_or(|c| c == '/' || boundary(c)) {
             continue;
         }
         let before = &text[..at];
@@ -253,9 +288,9 @@ fn find_progress_path(text: &str) -> Option<String> {
             let drive = s >= 2 && before[..s].ends_with(':') && before[..s - 1].chars().next_back().is_some_and(|c| c.is_ascii_alphabetic());
             if drive { s - 2 } else { s }
         });
-        return Some(text[start..at + needle.len() + slug.len() + "/progress.md".len()].to_owned());
+        out.push(text[start..at + needle.len() + slug.len()].to_owned());
     }
-    None
+    out
 }
 
 fn contains_stop_word(text: &str) -> bool {
@@ -327,26 +362,23 @@ fn claim(data: &Value, registry: &Path) {
     if !is_write(name, &input) {
         return;
     }
-    // 编辑类工具直接用 file_path（路径可能带空格，文本搜索会截断）；命令类才在命令文本里找。
-    let path = match name {
-        "Write" | "Edit" | "MultiEdit" => input
-            .get("file_path")
-            .and_then(Value::as_str)
-            .map(|p| p.replace('\\', "/"))
-            .filter(|p| p.ends_with("/progress.md")),
-        _ => input.get("command").and_then(Value::as_str).and_then(|c| find_progress_path(&c.replace('\\', "/"))),
+    // 编辑类工具看 file_path（任务目录下的任意文件都算），命令类在命令文本里找任务目录引用。
+    let text = match name {
+        "Write" | "Edit" | "MultiEdit" => input.get("file_path").and_then(Value::as_str),
+        _ => input.get("command").and_then(Value::as_str),
     };
-    let Some(path) = path else { return };
-    let mut p = PathBuf::from(&path);
-    if !p.is_absolute() {
-        if let Some(cwd) = data.get("cwd").and_then(Value::as_str) {
-            p = Path::new(cwd).join(p);
+    let Some(text) = text else { return };
+    let cwd = data.get("cwd").and_then(Value::as_str);
+    // 第一个解析得到、确实是 `.lead/<slug>` 目录的引用就是被写的任务。
+    let task = find_task_refs(&text.replace('\\', "/")).into_iter().find_map(|r| {
+        let mut p = PathBuf::from(windows_path(&r));
+        if !p.is_absolute() {
+            p = Path::new(cwd?).join(p);
         }
-    }
-    let Some(task) = p.parent().and_then(|t| t.canonicalize().ok()).map(strip_verbatim) else { return };
-    if !task.is_dir() || task.parent().and_then(Path::file_name).is_none_or(|n| n != ".lead") {
-        return;
-    }
+        let task = p.canonicalize().ok().map(strip_verbatim)?;
+        (task.is_dir() && task.parent().and_then(Path::file_name).is_some_and(|n| n == ".lead")).then_some(task)
+    });
+    let Some(task) = task else { return };
     let _ = std::fs::write(task.join(".owner"), sid);
     let key = task.to_string_lossy().into_owned();
     let mut reg: BTreeMap<String, Value> = load_map(registry)
@@ -533,7 +565,29 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
 
 /// 会话 cwd 所在项目的任务快照；没有任务返回 None。只读 `.lead` 下约定的文件。
 pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
-    let task = find_task(Some(cwd))?;
+    snapshot_for(cwd, None)
+}
+
+/// 任务归属的会话（`.owner` 里的 cc_session_id）；还没认领为空串。
+fn owner_of(task: &Path) -> String {
+    read(&task.join(".owner")).trim().to_owned()
+}
+
+/// 这个任务给 session 看吗：没认领的谁都看得到；认领了只给认领它的会话。session 为 None = 不过滤。
+fn visible_to(task: &Path, session: Option<&str>) -> bool {
+    let owner = owner_of(task);
+    match session {
+        Some(sid) => owner.is_empty() || owner == sid,
+        None => true,
+    }
+}
+
+/// 同 snapshot，但只给任务归属的会话看（用户反馈 2026-11-09：同一项目的另一个会话里也冒出了别的会话的
+/// Lead 入口和关卡卡片）。没认领的任务（还在访谈、写规格）照旧给项目里所有会话看。
+pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
+    let task = session
+        .and_then(|sid| own_task(cwd, sid))
+        .or_else(|| find_task(Some(cwd)).filter(|task| visible_to(task, session)))?;
     let checks = acceptance(&task)
         .unwrap_or_default()
         .iter()
@@ -551,7 +605,11 @@ pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
         decisions: tail(&read(&task.join("decisions.md")), 6000),
         progress: tail(&read(&task.join("progress.md")), 6000),
         gate: read_gate(&task).filter(|g| g.status != "consumed").or_else(|| {
-            project_gates(cwd).into_iter().map(|(_, g)| g).find(|g| g.status == "pending")
+            project_gates(cwd)
+                .into_iter()
+                .filter(|(t, _)| visible_to(t, session))
+                .map(|(_, g)| g)
+                .find(|g| g.status == "pending")
         }),
     })
 }

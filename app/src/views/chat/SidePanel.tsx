@@ -1,10 +1,13 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";
+import type { BrowserPaneInfo, GitDiffSummaryDto, RepoChangesDto, ShellTerminalInfo } from "../../api";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
-import { ChangesView, FilesView, PathMenu, PathMentionContext, type PathMenuItem } from "./GitDiffView";
+import { FilesView, PathMenu, PathMentionContext, singleRepo, type PathMenuItem } from "./GitDiffView";
+import { pickRepo, SourceControl } from "./SourceControl";
+
+const sameDir = (a: string, b: string) => a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 import type { PanelState, PanelTab } from "./panelTabs";
 import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
@@ -19,15 +22,22 @@ type Props = {
   panes: ReadonlyMap<number, BrowserPaneInfo>;
   cwd: string;
   summary: GitDiffSummaryDto | null;
+  /** 多仓库「更改」（见 SourceControl）；null = 还没拉到，按 summary 单仓库显示。 */
+  repos?: readonly RepoChangesDto[] | null;
   width: number;
   comments: readonly ReviewComment[];
-  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">, dir: string) => void;
   onRemoveComment: (id: string) => void;
   touchedPaths: readonly string[];
   turnTouchedPaths: readonly string[];
   browserSuggestions: readonly string[];
   /** 文件/改动的路径菜单里「添加到对话」：把相对路径插进输入框。 */
   onMention?: (rel: string) => void;
+  /** 「更改」「文件」共用的选中仓库（会话开在主目录、改动在 worktree 里时两边一起切过去，用户要求 2026-11-09）。 */
+  selectedRoot: string | null;
+  onSelectRoot: (root: string) => void;
+  /** git 写操作之后立刻重拉清单。 */
+  onChanged: () => void;
 };
 
 /**
@@ -41,7 +51,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
   const t = useT();
   const collapsed = !state.visible;
   const active = state.tabs.find((tab) => tab.key === state.active) ?? null;
-  const isRepo = !!summary?.isRepo;
+  const isRepo = !!summary?.isRepo || (props.repos?.length ?? 0) > 0;
   // 评论框开着时 Esc 只关评论框（同 GitDiffView）。
   const escOverrideRef = useRef<(() => void) | null>(null);
 
@@ -210,13 +220,16 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         return null;
       })}
       <PathMentionContext.Provider value={props.onMention ?? null}>
-      {active?.type === "diff" && (isRepo && summary
+      {active?.type === "diff" && ((props.repos && props.repos.length > 0) || (summary?.isRepo)
         ? (
-          <ChangesView
+          <SourceControl
             key={cwd}
             cwd={cwd}
-            summary={summary}
-            comments={props.comments.filter((comment) => comment.dir === cwd)}
+            repos={props.repos && props.repos.length > 0 ? props.repos : singleRepo(cwd, summary!)}
+            selectedRoot={props.selectedRoot}
+            onSelectRoot={props.onSelectRoot}
+            onChanged={props.onChanged}
+            comments={props.comments}
             touchedPaths={props.touchedPaths}
             turnTouchedPaths={props.turnTouchedPaths}
             onAddComment={props.onAddComment}
@@ -226,7 +239,29 @@ export const SidePanel = memo(function SidePanel(props: Props) {
           />
         )
         : <p className="side-panel-empty">{t.chat.diffNoRepo}</p>)}
-      {active?.type === "files" && <FilesView key={cwd} cwd={cwd} live={!collapsed} />}
+      {active?.type === "files" && (() => {
+        // 「文件」跟着「更改」选中的仓库走：worktree 不在工作目录下，不切过去就看不到它的文件。
+        // 选的是工作目录所在仓库（或显式选了「工作目录」）就浏览工作目录本身——它可能是仓库的子目录，
+        // 也可能根本不是仓库（会话开在 workspace）。顶上一排可切换，与「更改」共用同一个选中（做空：此前
+        // 「文件」里切不了，工作目录不是仓库时还再也回不去）。
+        const others = (props.repos ?? []).filter((repo) => !repo.isCwdRepo);
+        const workdirPicked = !props.selectedRoot || sameDir(props.selectedRoot, cwd);
+        const picked = !workdirPicked && props.repos && props.repos.length > 0 ? pickRepo(props.repos, props.selectedRoot) : null;
+        const root = picked && !picked.isCwdRepo ? picked.root : cwd;
+        return (
+          <>
+            {others.length > 0 && (
+              <div className="files-roots" role="group" aria-label={t.chat.filesRepoSwitch}>
+                <button type="button" aria-pressed={root === cwd} data-tip={cwd} onClick={() => props.onSelectRoot(cwd)}>{t.chat.filesWorkdir}</button>
+                {others.map((repo) => (
+                  <button key={repo.root} type="button" aria-pressed={root !== cwd && sameDir(repo.root, root)} data-tip={repo.root} onClick={() => props.onSelectRoot(repo.root)}>{repo.name}</button>
+                ))}
+              </div>
+            )}
+            <FilesView key={root} cwd={root} live={!collapsed} />
+          </>
+        );
+      })()}
       </PathMentionContext.Provider>
     </aside>
   );

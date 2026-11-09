@@ -241,22 +241,21 @@ fn shell_write_detection() {
 }
 
 #[test]
-fn progress_path_extraction() {
-    assert_eq!(
-        find_progress_path(r#"echo x >> "C:/p/.lead/a-1/progress.md""#).as_deref(),
-        Some("C:/p/.lead/a-1/progress.md")
-    );
-    // 相对路径（Bash 里常见）
-    assert_eq!(find_progress_path("echo x >> .lead/x/progress.md").as_deref(), Some(".lead/x/progress.md"));
-    // 命令里用引号包住的带空格路径
-    assert_eq!(find_progress_path(r#"echo x >> "C:/a b/.lead/x/progress.md""#).as_deref(), Some("C:/a b/.lead/x/progress.md"));
-    assert_eq!(find_progress_path("echo x >> 'C:/a b/.lead/x/progress.md'").as_deref(), Some("C:/a b/.lead/x/progress.md"));
-    // 不带引号的盘符路径
-    assert_eq!(find_progress_path("echo x >> C:/p/.lead/x/progress.md").as_deref(), Some("C:/p/.lead/x/progress.md"));
-    // 不是 .lead 目录本身（如 foo.lead/）不认
-    assert!(find_progress_path("/x/foo.lead/a/progress.md").is_none());
-    assert!(find_progress_path("/.lead/../progress.md").is_none());
-    assert!(find_progress_path("/.lead/a/SPEC.md").is_none());
+fn task_ref_extraction() {
+    assert_eq!(find_task_refs(r#"echo x >> "C:/p/.lead/a-1/progress.md""#), vec!["C:/p/.lead/a-1".to_string()]);
+    assert_eq!(find_task_refs("echo x >> .lead/x/progress.md"), vec![".lead/x".to_string()]);
+    // 带空格的路径在引号里
+    assert_eq!(find_task_refs(r#"echo x >> "C:/a b/.lead/x/progress.md""#), vec!["C:/a b/.lead/x".to_string()]);
+    assert_eq!(find_task_refs("echo x >> 'C:/a b/.lead/x/progress.md'"), vec!["C:/a b/.lead/x".to_string()]);
+    // 盘符的冒号不是边界
+    assert_eq!(find_task_refs("echo x >> C:/p/.lead/x/progress.md"), vec!["C:/p/.lead/x".to_string()]);
+    // 先 cd 进任务目录再写（实拍：认领不上的主要原因）
+    assert_eq!(find_task_refs("cd /c/w/.lead/20261109-x && cat >> progress.md"), vec!["/c/w/.lead/20261109-x".to_string()]);
+    // 不是 `.lead` 目录、跳出目录的不算
+    assert!(find_task_refs("/x/foo.lead/a/progress.md").is_empty());
+    assert!(find_task_refs("/.lead/../progress.md").is_empty());
+    // `.lead/active` 也会被列出来，由调用方按「是不是目录」筛掉
+    assert_eq!(find_task_refs("echo x > .lead/active"), vec![".lead/active".to_string()]);
 }
 
 fn write_gate(t: &Path, id: &str, kind: &str, status: &str) {
@@ -294,6 +293,92 @@ fn gate_answer_is_checked_and_idempotent() {
     // 格式坏的关卡 / 未知类型 → 视为没有关卡
     fs::write(t.join("gate.json"), json!({"id": "x", "type": "Z", "status": "pending"}).to_string()).unwrap();
     assert!(read_gate(&t).is_none());
+}
+
+/// 实拍（2026-11-09）：写进度时先 cd 进任务目录、或写的是 SPEC.md，任务一直认领不上，`.owner` 全空。
+#[test]
+fn claim_by_any_write_into_the_task_dir() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let task = t.to_string_lossy().replace('\\', "/");
+    let bash = json!({"session_id": "s1", "cwd": root, "tool_name": "Bash",
+        "tool_input": {"command": format!("cd {task} && cat >> progress.md <<'EOF'\n- x\nEOF")}});
+    call(&e, "claim", bash);
+    assert_eq!(owner(&t).as_deref(), Some("s1"));
+    let write = json!({"session_id": "s2", "cwd": root, "tool_name": "Write",
+        "tool_input": {"file_path": format!("{task}/SPEC.md"), "content": "x"}});
+    call(&e, "claim", write);
+    assert_eq!(owner(&t).as_deref(), Some("s2"));
+    // 只读不算认领
+    let read = json!({"session_id": "s3", "cwd": root, "tool_name": "Bash", "tool_input": {"command": format!("cat {task}/SPEC.md")}});
+    call(&e, "claim", read);
+    assert_eq!(owner(&t).as_deref(), Some("s2"));
+}
+
+/// 用户反馈（2026-11-09）：同一项目的另一个会话里也看到了别的会话的 Lead。认领了的任务只给认领它的会话。
+/// 用户 2026-11-09：Lead 面板更新有很大延迟。active 指着别人的旧任务，本会话认领的新任务进度
+/// 一直不上面板。认领了的、没做完的、最近更新的优先。
+#[test]
+fn snapshot_prefers_the_sessions_own_latest_task() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let lead = root.join(".lead");
+    let mk = |slug: &str, phase: &str, owner: &str| {
+        let t = lead.join(slug);
+        fs::create_dir_all(&t).unwrap();
+        fs::write(t.join("progress.md"), format!("phase: {phase}\n")).unwrap();
+        fs::write(t.join("acceptance.json"), "[]").unwrap();
+        if !owner.is_empty() {
+            fs::write(t.join(".owner"), owner).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    mk("20261109-old", "verify", "");
+    mk("20261109-mine-a", "verify", "me");
+    mk("20261109-done", "done", "me");
+    mk("20261109-mine-b", "implement", "me");
+    fs::write(lead.join("active"), "20261109-old").unwrap();
+    let cwd = root.to_str().unwrap();
+    assert_eq!(snapshot_for(cwd, Some("me")).unwrap().slug, "20261109-mine-b");
+    // 别的会话没认领任何任务：照旧看 active。
+    assert_eq!(snapshot_for(cwd, Some("other")).unwrap().slug, "20261109-old");
+}
+
+/// Git Bash 写法的路径（`/c/Users/...`）也能认领（Windows）。
+#[test]
+fn claim_accepts_git_bash_drive_paths() {
+    if !cfg!(windows) {
+        return;
+    }
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let win = t.to_string_lossy().replace('\\', "/");
+    let bash = format!("/{}{}", win[..1].to_ascii_lowercase(), &win[2..]);
+    let cmd = json!({"session_id": "s9", "cwd": "C:/Windows", "tool_name": "Bash",
+        "tool_input": {"command": format!("cd {bash} && cat >> progress.md <<'EOF'\n- x\nEOF")}});
+    call(&e, "claim", cmd);
+    assert_eq!(owner(&t).as_deref(), Some("s9"));
+}
+
+#[test]
+fn snapshot_is_only_for_the_owning_session() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let cwd = root.to_str().unwrap();
+    // 还没认领：谁都看得到。
+    assert!(snapshot_for(cwd, Some("other")).is_some());
+    fs::write(t.join(".owner"), "mine\n").unwrap();
+    assert!(snapshot_for(cwd, Some("mine")).is_some());
+    assert!(snapshot_for(cwd, Some("other")).is_none());
+    // 不带会话 = 不过滤（看板、防休眠等宿主内部用）。
+    assert!(snapshot(cwd).is_some());
 }
 
 #[test]

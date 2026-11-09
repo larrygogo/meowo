@@ -7,10 +7,11 @@
 
 use meowo_protocol::ipc::{LeadGateAnswerDto, LeadTaskDto};
 
-/// 会话 cwd 所在项目的 Lead 任务快照；没有任务返回 None（前端据此隐藏入口）。
+/// 会话 cwd 所在项目的 Lead 任务快照；没有任务返回 None（前端据此隐藏入口）。`session` 是对话窗
+/// 当前会话的 cc_session_id：认领了的任务只给认领它的会话看（同项目的其它会话不该冒出它的入口）。
 #[tauri::command]
-pub(crate) async fn lead_task_snapshot(cwd: String) -> Result<Option<LeadTaskDto>, String> {
-    tauri::async_runtime::spawn_blocking(move || meowo_reporter::lead::snapshot(&cwd))
+pub(crate) async fn lead_task_snapshot(cwd: String, session: Option<String>) -> Result<Option<LeadTaskDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || meowo_reporter::lead::snapshot_for(&cwd, session.as_deref()))
         .await
         .map_err(|e| e.to_string())
 }

@@ -2760,8 +2760,8 @@ impl PtyBroker {
     /// 前端的收卡信号决定（作答/取消后 transcript 增长或回合结束），后端无从得知用户
     /// 何时答完，只能靠 TTL 兜底——与前端的 180s 兜底同一量级，早于它过期即可。
     pub(crate) fn interactive_question(&self, session_id: i64) -> Option<ApprovalRequest> {
-        // 挂起代答中的题面（request_id 仍在 approvals 表）豁免 TTL：代答等待期 300s
-        // 比 TTL 长，不豁免的话挂起中途题面就被 retain 清掉、轮询丢卡。
+        // 挂起代答中的题面（request_id 仍在 approvals 表）豁免 TTL：代答不限时，
+        // 远比 TTL 长，不豁免的话挂起中途题面就被 retain 清掉、轮询丢卡。
         // 先取 approvals 快照再锁 questions，两把锁不嵌套。
         let held: HashSet<String> = self
             .attach
@@ -3531,10 +3531,12 @@ impl PtyBroker {
             // 放弃探针语义与普通审批段同款:仅远端 Claimable 时「手机租约过期且再无
             // 消费者即回落 TUI」,桌面路径整个等待期保持可领取。
             let remote_only = matches!(hold, ApprovalHold::RemoteClaimable);
+            // 提问不限时（用户要求 2026-11-09）：等到作答、「去终端页」交还、取消或断连为止。
             let outcome = await_approval_outcome(
                 &rx,
                 &stream,
-                std::time::Instant::now() + std::time::Duration::from_secs(300),
+                std::time::Instant::now()
+                    + std::time::Duration::from_secs(meowo_protocol::broker::QUESTION_WAIT_SECS),
                 std::time::Duration::from_millis(500),
                 || {
                     store

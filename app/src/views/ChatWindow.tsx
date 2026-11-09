@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -29,7 +29,7 @@ import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
-import { anchorFrom, echoItemId, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
+import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
 import { ANCHOR_PX, countsAsUnseen, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
@@ -888,7 +888,8 @@ export function ChatWindow() {
   // （正在看就收起），Ctrl+T 新浏览器，Ctrl+` 面板终端，Ctrl+W 关当前页签，Ctrl+(Shift+)Tab 切换。
   // 焦点在终端里时这些键 xterm 自己吃掉（Ctrl+W 是删词、Ctrl+T 是换字），只有 Ctrl+` 被放行。
   const isRepoRef = useRef(false);
-  isRepoRef.current = !!gitSummary?.isRepo;
+  const effectiveSummaryRef = useRef<GitDiffSummaryDto | null>(null);
+  isRepoRef.current = !!effectiveSummaryRef.current?.isRepo;
   const panelStateRef = useRef(panelState);
   panelStateRef.current = panelState;
   useEffect(() => {
@@ -925,10 +926,13 @@ export function ChatWindow() {
       return next;
     });
   }, [sessionId]);
-  const addReviewComment = useCallback((comment: Omit<ReviewComment, "id" | "dir">) => {
-    if (!diffCwd) return;
+  // dir：评论所在仓库的根（多仓库「更改」里别的仓库 / worktree 的评论记在它自己下面，插入输入框时
+  // formatReviewComments 才会拼成绝对路径；记成会话目录的话 agent 会去会话目录下找这个相对路径）。
+  const addReviewComment = useCallback((comment: Omit<ReviewComment, "id" | "dir">, dir?: string) => {
+    const at = dir ?? diffCwd;
+    if (!at) return;
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setSessionReviewComments((list) => [...list, { ...comment, id, dir: diffCwd }]);
+    setSessionReviewComments((list) => [...list, { ...comment, id, dir: at }]);
   }, [diffCwd, setSessionReviewComments]);
   const removeReviewComment = useCallback((id: string) => {
     setSessionReviewComments((list) => list.filter((comment) => comment.id !== id));
@@ -958,6 +962,93 @@ export function ChatWindow() {
   const turnTouchedPaths = useMemo(() => (turnTouchedKey ? turnTouchedKey.split("\0") : NO_TOUCHED_PATHS), [turnTouchedKey]);
   // 会话可访问的目录（审批卡的范围标签用）。memo 稳住引用，审批卡不必每帧重算。
   const diffDirs = useMemo(() => (cwd ? [cwd] : []), [cwd]);
+  // 多仓库「更改」（用户要求 2026-11-09）：会话改过的文件可能在别的仓库 / 新开的 worktree 里，
+  // 工作目录也可能是父目录。面板可见时拉一次、「更改」开着时随 5 秒轮询一起刷新；内容没变不换对象。
+  const [repoChanges, setRepoChanges] = useState<RepoChangesDto[] | null>(null);
+  const diffCwdRef = useRef(diffCwd);
+  diffCwdRef.current = diffCwd;
+  // 「更改」「文件」共用的选中仓库（SourceControl）。
+  const [scmRoot, setScmRoot] = useState<string | null>(null);
+  const scmRootRef = useRef(scmRoot);
+  scmRootRef.current = scmRoot;
+  // 认出过的仓库 / worktree 粘住：命令和编辑记录会随翻页滑出加载窗口，滑出去就又认不出来，
+  // 列表里的 worktree 忽隐忽现。按会话记着，下次拉清单时当作「碰过的路径」一并交给后端。
+  const usedRootsRef = useRef<Set<string>>(new Set());
+  // 换会话也清：同一个工作目录的两个会话改的仓库不同，不清会先露出上一个会话的仓库分组。
+  useEffect(() => {
+    setRepoChanges(null);
+    setScmRoot(null);
+    usedRootsRef.current = new Set();
+  }, [diffCwd, sessionId]);
+  // 会话最近的命令文本（用户要求 2026-11-09）：agent 常 cd 进 worktree 用命令干活，编辑工具一次没碰过，
+  // 只认编辑记录就看不到这个 worktree。后端按命令里出现的路径认（绝对 / 相对 / Git Bash 写法）。
+  const commandsKey = useMemo(() => {
+    const out: string[] = [];
+    for (let i = items.length - 1; i >= 0 && out.length < 300; i--) {
+      const item = items[i];
+      if (item.type === "tool_use" && item.detail?.kind === "command" && item.detail.command) out.push(item.detail.command.slice(0, 4096));
+    }
+    return out.reverse().join("\u0001");
+  }, [items]);
+  // 上一轮还没回来就不发下一轮：仓库多时一轮可能超过 5 秒，不拦会越积越多（做空复现）。
+  // 在途时又要拉（会话又改了文件、面板刚打开）：记一笔，这一轮回来后用最新参数补拉一次。只挡不记
+  // 的话，被取消的那轮结果作废、新的又被挡掉，就再也不拉了（做空复现：入口因此又消失）。
+  const repoChangesInflightRef = useRef(false);
+  const repoChangesAgainRef = useRef(false);
+  const loadRepoChangesRef = useRef<(cancelled: () => boolean) => void>(() => {});
+  const loadRepoChanges = useCallback((cancelled: () => boolean) => {
+    if (!diffCwd) return;
+    if (repoChangesInflightRef.current) { repoChangesAgainRef.current = true; return; }
+    repoChangesInflightRef.current = true;
+    const forCwd = diffCwd;
+    // 粘住的仓库排最前：后端最多查 MAX_ROOT_LOOKUPS 个不同目录，排在编辑过的文件后面会被截掉（做空）。
+    const touched = [...usedRootsRef.current, ...(touchedKey ? touchedKey.split("\0") : [])];
+    getGitChangesOverview(diffCwd, touched, commandsKey ? commandsKey.split("\u0001") : [], scmRootRef.current ?? "")
+      .then((result) => {
+        if (forCwd === diffCwdRef.current) for (const repo of result) if (!repo.isCwdRepo) usedRootsRef.current.add(repo.root);
+        // 被取消的只要还是同一个会话目录就照收：只是参数旧了一点，下面会补拉新的。
+        if ((!cancelled() || forCwd === diffCwdRef.current)) setRepoChanges((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
+      })
+      .catch(() => {})
+      .finally(() => {
+        repoChangesInflightRef.current = false;
+        if (repoChangesAgainRef.current) {
+          repoChangesAgainRef.current = false;
+          loadRepoChangesRef.current(() => forCwd !== diffCwdRef.current);
+        }
+      });
+  }, [diffCwd, touchedKey, commandsKey]);
+  loadRepoChangesRef.current = loadRepoChanges;
+  // 换了选中的仓库：它多半还只有分支和文件清单（没选中的仓库后端不算行数和已提交段），立刻补拉完整的。
+  useEffect(() => {
+    if (scmRoot == null) return;
+    loadRepoChangesRef.current(() => false);
+  }, [scmRoot]);
+  // git 写操作（暂存 / 提交 / 放弃）之后立刻重拉，不等 5 秒轮询。
+  const refreshChanges = useCallback(() => {
+    if (!diffCwd) return;
+    getGitDiffSummary(diffCwd).then(setGitSummary).catch(() => {});
+    loadRepoChangesRef.current(() => false);
+  }, [diffCwd]);
+  // 工作目录不是仓库（会话开在 workspace 这种父目录）时，面板没开也先拉一次：标题栏胶囊、Ctrl+Shift+G、
+  // 面板「+」菜单这些入口都靠它才知道有没有改动可看（做空复现：此前全只认工作目录本身是不是仓库，
+  // 这种会话根本打不开「更改」）。会话又改了文件（touched 变了）隔 2 秒再拉。
+  const cwdNotRepo = !!gitSummary && !gitSummary.isRepo;
+  useEffect(() => {
+    if (!cwdNotRepo) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => loadRepoChanges(() => cancelled), 2000);
+    loadRepoChanges(() => cancelled);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [cwdNotRepo, loadRepoChanges]);
+  // 各入口与标题栏用的摘要：工作目录是仓库就是它自己；不是的话取第一个仓库（规格终态 6）。
+  // 不是仓库时取选中的那个（只有它带增删行数），没选过就是第一个。
+  const pickedRepo = repoChanges && !gitSummary?.isRepo
+    ? repoChanges.find((repo) => scmRoot != null && repo.root.replace(/\\/g, "/").toLowerCase() === scmRoot.replace(/\\/g, "/").toLowerCase()) ?? repoChanges[0]
+    : undefined;
+  const effectiveSummary = gitSummary?.isRepo ? gitSummary : (pickedRepo?.summary ?? gitSummary);
+  effectiveSummaryRef.current = effectiveSummary;
+  isRepoRef.current = !!effectiveSummary?.isRepo;
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
     let cancelled = false;
@@ -974,8 +1065,9 @@ export function ChatWindow() {
     getGitDiffSummary(diffCwd)
       .then((result) => { if (!cancelled) setGitSummary(result); })
       .catch(() => {});
+    loadRepoChanges(() => cancelled);
     return () => { cancelled = true; };
-  }, [diffCwd, panelState.visible]);
+  }, [diffCwd, panelState.visible, loadRepoChanges]);
   // 「更改」页签开着时每 5 秒重拉一次摘要（照 Kimi Code 的改动面板：agent 一边改，列表一边动）。
   // 内容没变就不换对象，免得 ChangesView 每 5 秒作废一遍缓存。
   const diffTabShown = panelState.visible && panelState.tabs.some((tab) => tab.key === panelState.active && tab.type === "diff");
@@ -989,12 +1081,13 @@ export function ChatWindow() {
           if (!cancelled) setGitSummary((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
         })
         .catch(() => {});
+      loadRepoChanges(() => cancelled);
     }, 5000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [diffCwd, diffTabShown]);
+  }, [diffCwd, diffTabShown, loadRepoChanges]);
   // 恢复/接管时的权限改选："" = 沿用会话存的选择；选了具体档就随本次恢复下发，
   // 后端按选项维度合并写回，成为会话新的持久形态——覆盖「当年不是以跳过权限新建、
   // 恢复时想切过去」的场景（存量会话同样适用）。没声明权限类选项的 agent 不显示。
@@ -1290,8 +1383,8 @@ export function ChatWindow() {
     name: transcriptAgent.name,
     version: chatUi?.version ?? null,
     model: transcriptAgent.model,
-    branch: gitSummary?.isRepo ? gitSummary.branch : null,
-    changes: gitSummary?.isRepo ? gitSummary.files.length : 0,
+    branch: effectiveSummary?.isRepo ? effectiveSummary.branch : null,
+    changes: effectiveSummary?.isRepo ? effectiveSummary.files.length : 0,
   };
   // 评论拼成文字接在已打的字后面,光标放到末尾:用户可能还想补一句总的要求再发。
   const insertReviewComments = () => {
@@ -1715,6 +1808,11 @@ export function ChatWindow() {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
     openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
   } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
+  // 新建会话页 / 会话管理页盖住主区时，右侧面板跟着让位（用户实拍 2026-11-09：新建页还挂着上一个
+  // 会话的「更改」）。只把可见性压成收起、不卸载：回到会话时终端、浏览器、打开的文件原样还在；
+  // 走 visible=false 而不是藏 DOM，面板里的浏览器是原生 webview，只有收起态才会把它藏掉。
+  const pageCovered = adminOpen || !!newSessionOpen;
+  const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
 
   const refresh = useCallback(async () => {
     if (sessionId <= 0 || busyRef.current) {
@@ -1919,8 +2017,8 @@ export function ChatWindow() {
       return;
     }
     shownQuestionSessionRef.current = structuredQuestion.sessionId;
-    // 作答卡不吃 180s 过期：broker 挂着 300s，到点它自己降级（answerable 随轮询翻
-    // false，本 effect 因对象更换重跑，展示卡的 180s 从那一刻起算）。
+    // 作答卡不吃 180s 过期：broker 一直挂着等作答；交还终端后 answerable 随轮询翻
+    // false，本 effect 因对象更换重跑，展示卡的 180s 从那一刻起算。
     if (structuredQuestion.answerable) return;
     const timer = window.setTimeout(() => {
       setStructuredQuestion(null);
@@ -1930,33 +2028,8 @@ export function ChatWindow() {
     }, 180_000);
     return () => window.clearTimeout(timer);
   }, [structuredQuestion, sessionId, t]);
-  // 作答卡的剩余时间徽章：broker 侧挂起 300s，与审批倒计时同一课——到点降级不能像
-  // bug 一样凭空发生。从本窗口首见该 requestId 起本地计时（晚开窗只会显得更宽裕）。
-  const QUESTION_TIMEOUT_MS = 300_000;
-  const questionSeenRef = useRef<{ id: string; at: number } | null>(null);
-  const [questionNow, setQuestionNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!structuredQuestion?.answerable) {
-      questionSeenRef.current = null;
-      return;
-    }
-    if (questionSeenRef.current?.id !== structuredQuestion.requestId) {
-      questionSeenRef.current = { id: structuredQuestion.requestId, at: Date.now() };
-      setQuestionNow(Date.now());
-    }
-    const timer = window.setInterval(() => setQuestionNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [structuredQuestion]);
-  const questionCountdown = (() => {
-    if (!structuredQuestion?.answerable || !questionSeenRef.current) return null;
-    const left = Math.max(0, QUESTION_TIMEOUT_MS - (questionNow - questionSeenRef.current.at));
-    const totalSeconds = Math.floor(left / 1000);
-    return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-  })();
-  // 与审批倒计时同一课（useApprovalChannel 的 approvalTimedOut）：归零切「已超时」态，
-  // 卡片要等后端降级事件才收，定格 0:00 像 bug。
-  const questionTimedOut = !!structuredQuestion?.answerable && !!questionSeenRef.current
-    && questionNow - questionSeenRef.current.at >= QUESTION_TIMEOUT_MS;
+  // 作答卡不显示倒计时：提问不限时（用户要求 2026-11-09，broker 等待上限见 QUESTION_WAIT_SECS），
+  // 一直等到作答、「去终端页」交还或 agent 取消。
   // 「问题已了结」的收卡信号：判定逻辑见 observeTranscriptForDismiss。
   //
   // 计数**必须**读独立累积的 items state，不能读 history.offset/history.items——那两个
@@ -2796,7 +2869,9 @@ export function ChatWindow() {
       return sendText(promptWithAttachments(outgoingPrompt, attachments, t.chat.attachmentInstruction, chatUi?.attachment_mention ?? false), submitInput, true);
     };
     const sent = await sendQueueRef.current.enqueue(sid, deliver);
-    outgoingStore.update(sid, outgoingId, sent ? { phase: "pending", at: Date.now() } : { phase: "failed" });
+    // 按回执编号结算，不按发出时的会话 id：临时 id 下发的，写入途中认领成真 id，回执已随认领搬到
+    // 真 id 下，按旧 id 找会落空，气泡永远停在「发送中」（实拍 2026-11-09，消息其实已送达）。
+    outgoingStore.settle(outgoingId, sent ? { phase: "pending", at: Date.now() } : { phase: "failed" });
     // 失败时人还在这个会话、输入框也空着：直接退回输入框（原因在上方错误条里），不多留一个
     // 失败气泡让人再点一次。切走了或已经在写新内容，就留着失败气泡，由用户决定重发还是放回。
     if (!sent && isCurrentOperation() && !promptRef.current.trim() && attachmentsRef.current.length === 0) {
@@ -3925,7 +4000,7 @@ export function ChatWindow() {
           </div>
         </>
       )}
-      <div className={"chat-body" + (panelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
+      <div className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
       {/* 停靠侧栏 + 分栏柄：柄落在侧栏与主列的缝隙里，拖拽调宽（用户要求：侧栏可拖）。
           窄窗抽屉形态与收起态不渲染（柄在停靠布局里才有意义）。键盘同规：separator
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
@@ -3979,7 +4054,7 @@ export function ChatWindow() {
                   kind: "echo",
                   text: message || t.chat.queuedAttachmentOnly,
                   attachmentOnly: !message,
-                  anchor: anchorFrom([], undefined),
+                  anchor: freshAnchor(),
                   phase: "sending",
                   draft: { prompt: message, attachments: files },
                 });
@@ -4031,7 +4106,8 @@ export function ChatWindow() {
         archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
         cwd={cwd}
-        gitSummary={gitSummary}
+        prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
+        gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
         panelOpen={panelState.visible}
         terminalOn={view === "terminal"}
@@ -4332,14 +4408,14 @@ export function ChatWindow() {
       </ApprovalCard>}
       {/* AskUserQuestion 的作答卡（broker 挂起代答）：表单尚未渲染，卡片就是作答面——
           多选/多问题/自定义输入全部可答，提交后答案经 hook 直达模型。刻意没有「仅收起」：
-          收起等于让 hook 干等到 300s 超时（与 broker 审批卡同理），出口只有提交与
+          收起等于让 hook 一直干等（与 broker 审批卡同理），出口只有提交与
           「去终端作答」（交还终端表单）。两视图都渲染（用户要求）：broker 挂起期间终端
           画面上没有表单，终端视图不渲染卡的话用户对「agent 在等」毫无感知。 */}
       {structuredQuestions.length > 0 && !terminalAttention && !approval && questionAnswerable && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
         title={t.chat.questionTitle}
-        badge={questionTimedOut ? t.chat.approvalTimedOut : questionCountdown ? `${t.chat.questionPending} · ${questionCountdown}` : t.chat.questionPending}
+        badge={t.chat.questionPending}
         actions={<>
           {/* 远程：卡本身就是作答面，直接提交。卡内答不了时放行挂起，终端表单经屏幕识别
               变成作答卡回到手机上（此前一律「请在桌面端作答」，手机答不了题）。 */}
@@ -4518,7 +4594,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} items={items} history={history} loading={loading} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (
@@ -5247,21 +5323,21 @@ export function ChatWindow() {
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
       {/* 会话信息栏：面板收起时露出来（同 Kimi Code）。够宽停靠，窄了从标题栏按钮弹浮层。 */}
-      {!remoteUi() && cwd && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
+      {!remoteUi() && cwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
         <SessionInfo
           mode={infoWide ? "docked" : "floating"}
           state={panelState}
           actions={panelActions}
           shells={panel.shells}
           panes={panel.panes}
-          summary={gitSummary}
+          summary={effectiveSummary}
           onClose={infoWide ? undefined : () => setInfoFloating(false)}
         />
       )}
       {cwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div
-            className={"chat-diff-resizer" + (panelState.visible && !panelState.expanded ? "" : " is-hidden")}
+            className={"chat-diff-resizer" + (shownPanelState.visible && !panelState.expanded ? "" : " is-hidden")}
             role="separator"
             aria-orientation="vertical"
             aria-label={t.chat.diffResize}
@@ -5281,8 +5357,9 @@ export function ChatWindow() {
               <GitDiffView
                 cwd={cwd}
                 summary={gitSummary}
+                repos={repoChanges}
                 width={diffResize.width}
-                collapsed={!panelState.visible}
+                collapsed={!shownPanelState.visible}
                 maximized
                 onCollapse={panelActions.hide}
                 onToggleMaximize={panelActions.toggleExpanded}
@@ -5292,16 +5369,20 @@ export function ChatWindow() {
                 touchedPaths={touchedPaths}
                 turnTouchedPaths={turnTouchedPaths}
                 activeTab="changes"
+                selectedRoot={scmRoot}
+                onSelectRoot={setScmRoot}
+                onChanged={refreshChanges}
               />
             )
             : (
               <SidePanel
-                state={panelState}
+                state={shownPanelState}
                 actions={panelActions}
                 shells={panel.shells}
                 panes={panel.panes}
                 cwd={cwd}
                 summary={gitSummary}
+                repos={repoChanges}
                 width={diffResize.width}
                 comments={sessionReviewComments}
                 onAddComment={addReviewComment}
@@ -5310,6 +5391,9 @@ export function ChatWindow() {
                 turnTouchedPaths={turnTouchedPaths}
                 browserSuggestions={browserSuggestions}
                 onMention={mentionPath}
+                selectedRoot={scmRoot}
+                onSelectRoot={setScmRoot}
+                onChanged={refreshChanges}
               />
             )}
           </Suspense>

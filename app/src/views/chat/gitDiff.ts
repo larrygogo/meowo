@@ -78,7 +78,7 @@ export function buildFileTree(files: { path: string; status: string }[]): FileTr
 
 /** 路径比较用的统一形态：正斜杠、去尾斜杠、小写（Windows 路径不分大小写，大小写不同的
  *  同名文件在别的平台上几乎碰不到）。 */
-function normPath(path: string): string {
+export function normPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 

@@ -654,6 +654,18 @@ pub struct GitChangedFileDto {
     pub additions: Option<u32>,
     #[serde(default)]
     pub deletions: Option<u32>,
+    /// 暂存区相对 HEAD 的状态字母（porcelain 的 X：M/A/D/T）；没暂存为 None。
+    /// 「更改」面板按 VS Code 源代码管理分「暂存的更改」「更改」两组（用户要求 2026-11-09），
+    /// `status` 合一的字母分不出来。「已提交未合并」清单里恒为 None。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub index_status: Option<String>,
+    /// 工作区相对暂存区的状态字母（porcelain 的 Y：M/D/T；未跟踪记 "U"）；没有工作区改动为 None。
+    /// 部分暂存（MM）的文件两个字段都有值，两组里都出现。
+    /// 两个字段在 TS 里是可选的：手机页可能先于安装版更新，旧后端不下发，前端按「全是未暂存」处理。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub worktree_status: Option<String>,
 }
 
 /// 对话页「Diff」按钮的可见性与弹层文件列表的数据源。
@@ -674,6 +686,40 @@ pub struct GitDiffSummaryDto {
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub files: Vec<GitChangedFileDto>,
+}
+
+/// 「更改」面板里的一个仓库（用户要求 2026-11-09：会话开在父目录、或 agent 新开 worktree 去改、
+/// 改完又提交时，面板都要看得到）。工作目录所在仓库排第一。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct RepoChangesDto {
+    /// 仓库（或 worktree）根目录，正斜杠。单文件 diff 以它为 cwd。
+    pub root: String,
+    /// 根目录名，分组标题用。
+    pub name: String,
+    /// 是不是会话工作目录所在的仓库。
+    pub is_cwd_repo: bool,
+    /// 未提交的改动（与单仓库时的 git_diff_summary 同一份）。
+    pub summary: GitDiffSummaryDto,
+    /// 「已提交未合并」的基准提交（merge-base(HEAD, 默认分支) 的 SHA）。当前就在默认分支上、
+    /// 或找不到默认分支时为 None，committed 为空。
+    pub base: Option<String>,
+    /// 默认分支名（如 `main`），展示用。
+    pub base_label: Option<String>,
+    /// 本分支相对基准已提交的改动（`git diff base HEAD`）。
+    pub committed: Vec<GitChangedFileDto>,
+    /// 这份是不是完整的：仓库多时只给选中的那个算增删行数和「本分支已提交」，其余只跑一次
+    /// `git status`（文件清单有、行数为空、committed 为空），点到它时再拉（用户要求 2026-11-09：
+    /// 先显示目录，具体内容点击后异步）。旧后端不下发，按完整处理。
+    #[serde(default = "detailed_default")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub detailed: bool,
+}
+
+fn detailed_default() -> bool {
+    true
 }
 
 /// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。

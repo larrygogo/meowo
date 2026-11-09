@@ -176,7 +176,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   const [workspaceOptions, setWorkspaceOptions] = useState<{ value: string; label: string }[]>([]);
   useEffect(() => {
     let alive = true;
-    recentCwds(200).then((list) => {
+    recentCwds(200, true).then((list) => {
       if (!alive) return;
       const seen = new Set<string>();
       setWorkspaceOptions(list.filter((cwd) => {

@@ -33,6 +33,18 @@
 //! （store `is_session_dir`，逐字比较）；单文件 diff 的路径必须出现在该目录此刻的
 //! 改动清单里，未跟踪读盘只认状态为 U 的条目。手机端因此只能看 agent 工作目录里
 //! 「改了什么」，不能借它读任意文件。
+//! 2026-11-09 扩到多仓库（`git_changes_overview`，会话开在父目录、或 agent 新开 worktree 时）：
+//! 远程端只放行和会话目录**相关**的仓库——它所在仓库、该仓库的 worktree、它下一层的仓库
+//! （`git::related_roots`）；单文件 diff 带 `sessionCwd` 时按这份清单收口，带 `base` 时文件
+//! 必须在「已提交未合并」清单里、base 必须等于 overview 算出的那个。
+//!
+//! 例外（2026-11-09 用户决定：手机与桌面能力一致）：「更改」面板的写操作 `git_stage` /
+//! `git_unstage` / `git_discard` / `git_commit` 放行。不扩大风险面：手机本就能经
+//! `write_managed_terminal` 往 PTY 写任意按键（等于在宿主执行任意命令）。收口与 `git_file_diff`
+//! 同一套——目录必须是会话目录或它的相关仓库（`related_roots`）；暂存 / 取消暂存 / 放弃的路径
+//! 必须在该仓库此刻的改动清单里，由命令本身校验（`git/not_in_changes`），远程端不能借「放弃」
+//! 删任意文件。`git_changes_overview` 的 `commands` 只是会话命令文本，用来在相关仓库里挑本会话
+//! 用过的那些，不会把相关仓库之外的目录带进来。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
@@ -96,6 +108,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "get_session_lineage",
     "search_chat_transcripts",
     "recent_cwds",
+    "hide_workspace",
     "rename_session",
     "set_archived",
     "set_session_note",
@@ -154,7 +167,13 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "list_subdirectories",
     // 改动列表（只读，收口见模块头「例外」一节）
     "git_diff_summary",
+    "git_changes_overview",
     "git_file_diff",
+    // 「更改」面板写操作（2026-11-09 用户决定放行，收口见模块头「例外」一节）
+    "git_stage",
+    "git_unstage",
+    "git_discard",
+    "git_commit",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -822,19 +841,79 @@ bridged_args!(GetSessionAdminPageArgs {
 
 bridged_args!(SearchChatTranscriptsArgs { query: String });
 
-bridged_args!(RecentCwdsArgs { limit: usize });
+bridged_args!(RecentCwdsArgs {
+    limit: usize,
+    #[serde(default)]
+    include_hidden: Option<bool>
+});
+bridged_args!(HideWorkspaceArgs { cwd: String });
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
-bridged_args!(LeadTaskSnapshotArgs { cwd: String });
+bridged_args!(LeadTaskSnapshotArgs {
+    cwd: String,
+    #[serde(default)]
+    session: Option<String>
+});
 bridged_args!(AnswerLeadGateArgs { cwd: String, gate_id: String, choice: String, note: String });
 bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
 
 bridged_args!(GitFileDiffArgs {
     cwd: String,
     path: String,
-    untracked: bool
+    untracked: bool,
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    session_cwd: Option<String>
 });
+bridged_args!(GitChangesOverviewArgs {
+    cwd: String,
+    touched: Vec<String>,
+    #[serde(default)]
+    commands: Option<Vec<String>>,
+    #[serde(default)]
+    detail: Option<String>
+});
+bridged_args!(GitPathsArgs {
+    cwd: String,
+    paths: Vec<String>,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(GitCommitArgs {
+    cwd: String,
+    message: String,
+    all: bool,
+    #[serde(default)]
+    paths: Option<Vec<String>>,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+
+/// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
+/// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
+async fn ensure_git_repo_dir(app: &tauri::AppHandle, cwd: &str, session_cwd: Option<&str>) -> Result<(), String> {
+    match session_cwd {
+        Some(session_cwd) => {
+            ensure_session_dir(app, session_cwd).await?;
+            let (s, c) = (session_cwd.to_string(), cwd.to_string());
+            tauri::async_runtime::spawn_blocking(move || related_repo_gate(&s, &c))
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        None => ensure_session_dir(app, cwd).await,
+    }
+}
+
+/// cwd 是不是 session_cwd 的相关仓库（不查库的那一半，单测直接钉）。
+fn related_repo_gate(session_cwd: &str, cwd: &str) -> Result<(), String> {
+    if crate::git::is_related_root(session_cwd, cwd) {
+        Ok(())
+    } else {
+        Err("remote/not_session_dir".into())
+    }
+}
 
 /// 单文件 diff 的路径收口：必须逐字是改动清单里的一项；要读盘（untracked）的只认 U 条目。
 fn changed_file_listed(
@@ -1066,7 +1145,15 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "recent_cwds" => {
             let a = args!(RecentCwdsArgs);
-            reply(crate::session_query::recent_cwds(state, a.limit).await)
+            reply(crate::session_query::recent_cwds(state, a.limit, a.include_hidden).await)
+        }
+        "hide_workspace" => {
+            let a = args!(HideWorkspaceArgs);
+            // 只许移除会话用过的目录（与 git 只读命令同一道收口），手机端不能往设置里写任意串。
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::session_query::hide_workspace(a.cwd).await)
         }
         "get_session_admin_page" => {
             let a = args!(GetSessionAdminPageArgs);
@@ -1094,7 +1181,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             if let Err(e) = ensure_session_dir(app, &a.cwd).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::lead::lead_task_snapshot(a.cwd).await)
+            reply(crate::lead::lead_task_snapshot(a.cwd, a.session).await)
         }
         "answer_lead_gate" => {
             let a = args!(AnswerLeadGateArgs);
@@ -1114,21 +1201,93 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(ForkSessionArgs);
             reply(crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows).await)
         }
+        "git_changes_overview" => {
+            let a = args!(GitChangesOverviewArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            let cwd = a.cwd.clone();
+            let commands = a.commands.unwrap_or_default();
+            let detail = a.detail;
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let related = crate::git::related_roots(&cwd);
+                // 先把落在相关仓库之外的路径滤掉，别替远程端在无关仓库里白跑一遍 git。
+                let touched: Vec<String> = a
+                    .touched
+                    .into_iter()
+                    .filter(|path| related.iter().any(|root| crate::git::path_under(path, root)))
+                    .collect();
+                crate::git::changes_overview_detail(&cwd, &touched, &commands, detail.as_deref()).map(|repos| {
+                    repos
+                        .into_iter()
+                        .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .await
+            .map_err(|e| e.to_string());
+            match result {
+                Ok(inner) => reply(inner),
+                Err(e) => reply::<()>(Err(e)),
+            }
+        }
         "git_file_diff" => {
             let a = args!(GitFileDiffArgs);
-            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
                 return reply::<()>(Err(e));
             }
             // 路径必须是这个目录此刻的改动文件：untracked 分支直接读盘，不收口就是任意文件读
             // （`../` 或绝对路径）。多跑一次 status 的代价换这道门，手机上点一个文件才一次。
-            let listed = match crate::git::git_diff_summary(a.cwd.clone()).await {
-                Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
-                Err(e) => return reply::<()>(Err(e)),
+            // 带 base 的看「已提交未合并」段：文件要在那份清单里，base 也得是同一个 merge-base。
+            let listed = match &a.base {
+                Some(base) => {
+                    let (cwd, base, path) = (a.cwd.clone(), base.clone(), a.path.clone());
+                    tauri::async_runtime::spawn_blocking(move || {
+                        crate::git::repo_changes(&cwd, false).is_some_and(|repo| {
+                            repo.base.as_deref() == Some(base.as_str()) && repo.committed.iter().any(|f| f.path == path)
+                        })
+                    })
+                    .await
+                    .unwrap_or(false)
+                }
+                None => match crate::git::git_diff_summary(a.cwd.clone()).await {
+                    Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
+                    Err(e) => return reply::<()>(Err(e)),
+                },
             };
             if !listed {
                 return reply::<()>(Err("remote/not_changed_file".into()));
             }
-            reply(crate::git::git_file_diff(a.cwd, a.path, a.untracked).await)
+            reply(crate::git::git_file_diff(a.cwd, a.path, a.untracked, a.base).await)
+        }
+        // 写操作：目录收口同 git_file_diff；路径必须在改动清单里由命令自己校验。
+        "git_stage" => {
+            let a = args!(GitPathsArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_stage(a.cwd, a.paths).await)
+        }
+        "git_unstage" => {
+            let a = args!(GitPathsArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_unstage(a.cwd, a.paths).await)
+        }
+        "git_discard" => {
+            let a = args!(GitPathsArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_discard(a.cwd, a.paths).await)
+        }
+        "git_commit" => {
+            let a = args!(GitCommitArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_commit(a.cwd, a.message, a.all, a.paths).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -1761,7 +1920,8 @@ mod tests {
             // 读内容的全文搜索仍拒：手机 `@` 补全走只回名字的 file_mention_candidates。
             "search_project_files",
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
-            // ensure_session_dir + changed_file_listed，由各自的单测钉住；其余 git_* 仍拒。
+            // ensure_session_dir + changed_file_listed，由各自的单测钉住；「更改」面板写操作
+            // 2026-11-09 放行（模块头「例外」）；git_pull_request 等其余 git_* 仍拒。
             "set_autostart",
             "clipboard_text",
             "clipboard_set_image",
@@ -2005,6 +2165,38 @@ mod tests {
         assert!(serde_json::from_str::<A>(r#"{"sessionId":7,"extra":1}"#).is_err());
     }
 
+    /// 写操作的目录收口：会话目录的 worktree 放行，旁边一个无关仓库拒绝（手机端不能借「放弃」
+    /// 动别的项目）。
+    #[test]
+    fn git_write_gate_rejects_unrelated_repo() {
+        let root = std::env::temp_dir().join(format!("meowo-remote-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let init = |name: &str| {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            git(&dir, &["init", "-q", "-b", "main"]);
+            git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init"]);
+            dir
+        };
+        let main = init("main");
+        let other = init("other");
+        let wt = root.join("main-wt");
+        git(&main, &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+        let s = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        assert!(related_repo_gate(&s(&main), &s(&wt)).is_ok());
+        assert_eq!(related_repo_gate(&s(&main), &s(&other)).unwrap_err(), "remote/not_session_dir");
+        assert_eq!(related_repo_gate(&s(&main), &s(&root)).unwrap_err(), "remote/not_session_dir");
+        // 老手机页不带 commands 也照样能解析。
+        assert!(parse::<GitChangesOverviewArgs>(br#"{"cwd":"C:/w","touched":[]}"#).is_ok());
+        assert!(parse::<GitPathsArgs>(br#"{"cwd":"C:/w","paths":[],"force":true}"#).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 参数契约的机制性防护（头注 2026-08-31 反例的兜底）：每条白名单臂一份样例
     /// payload，逐键镜像 api.ts 对应 invoke 的实参对象——含可选/条件包含的键（凡可能
     /// 出现在 payload 的键样例里都有），断言能反序列化进该臂结构体，即「这一发不 400」。
@@ -2019,6 +2211,8 @@ mod tests {
             status: status.into(),
             additions: None,
             deletions: None,
+            index_status: None,
+            worktree_status: None,
         };
         let summary = GitDiffSummaryDto {
             git_available: true,
@@ -2082,7 +2276,8 @@ mod tests {
                 parse::<SearchChatTranscriptsArgs>(br#"{"query":"login"}"#).map(|_| ())
             }
             // api.ts:946
-            "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8}"#).map(|_| ()),
+            "recent_cwds" => parse::<RecentCwdsArgs>(br#"{"limit":8,"includeHidden":true}"#).map(|_| ()),
+            "hide_workspace" => parse::<HideWorkspaceArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
             // api.ts getSessionAdminPage：五个键恒发，status / updatedBeforeDays 空值发 null。
             "get_session_admin_page" => parse::<GetSessionAdminPageArgs>(
                 br#"{"workspaces":["C:/repo"],"status":"open","updatedBeforeDays":7,"page":0,"pageSize":20}"#,
@@ -2092,7 +2287,21 @@ mod tests {
             "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
             // api.ts:507（gitFileDiff）
             "git_file_diff" => parse::<GitFileDiffArgs>(
-                br#"{"cwd":"C:/repo","path":"src/a.ts","untracked":false}"#,
+                br#"{"cwd":"C:/repo-wt","path":"src/a.ts","untracked":false,"base":"0123abcd","sessionCwd":"C:/repo"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（getGitChangesOverview）
+            "git_changes_overview" => parse::<GitChangesOverviewArgs>(
+                br#"{"cwd":"C:/work","touched":["C:/work/app/src/a.ts"],"commands":["cd ../work-wt && git status"],"detail":"C:/work-wt"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（gitStage / gitUnstage / gitDiscard / gitCommit）
+            "git_stage" | "git_unstage" | "git_discard" => parse::<GitPathsArgs>(
+                br#"{"cwd":"C:/work-wt","paths":["src/a.ts","new.md"],"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "git_commit" => parse::<GitCommitArgs>(
+                br#"{"cwd":"C:/work-wt","message":"feat: x\n\nbody","all":true,"paths":["a.ts"],"sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）
@@ -2209,7 +2418,7 @@ mod tests {
             "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),
             // api.ts fileMentionCandidates
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
-            "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
             "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,

@@ -1845,6 +1845,23 @@ impl Store {
         Ok(out)
     }
 
+    /// 同 recent_cwds，另带各目录最近一次 last_event_at（隐藏的工作空间据此判断「之后又用过没有」）。
+    pub fn recent_cwds_with_last(&self, limit: usize) -> Result<Vec<(String, i64)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT cwd, MAX(last_event_at) FROM sessions \
+             WHERE cwd IS NOT NULL AND cwd <> '' \
+             GROUP BY cwd \
+             ORDER BY MAX(last_event_at) DESC \
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// `dir` 是否为某个会话的工作目录（逐字比较，前端传的就是库里存的串）。
     /// 远程桥放行 git 只读命令时拿它收口：手机端只能看会话自己目录里的改动，
     /// 不能借 git 命令把任意路径当仓库来读。

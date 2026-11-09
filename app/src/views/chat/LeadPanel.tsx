@@ -17,24 +17,25 @@ import { ApprovalCard } from "./ApprovalCard";
 const POLL_MS = 4000;
 
 /// 拉取会话 cwd 所在项目的 Lead 任务；没有任务为 null。cwd 为空（会话还没起来）时不请求。
-export function useLeadTask(cwd: string | null | undefined): [LeadTaskDto | null, () => void] {
+/// session：当前会话的 cc_session_id。还不知道（会话历史没到）时先不查，免得别的会话的任务闪一下。
+export function useLeadTask(cwd: string | null | undefined, session?: string | null): [LeadTaskDto | null, () => void] {
   const [task, setTask] = useState<LeadTaskDto | null>(null);
   const seq = useRef(0);
   const refresh = useCallback(() => {
-    if (!cwd) {
+    if (!cwd || !session) {
       setTask(null);
       return;
     }
     const mine = ++seq.current;
-    leadTaskSnapshot(cwd)
+    leadTaskSnapshot(cwd, session)
       .then((next) => { if (mine === seq.current) setTask(next); })
       // 读失败（手机远程中继抖一下、后端偶发异常）保留上一次的数据：卡片若因此卸载，leader 在手机上
       // 写了一半的驳回意见会丢（做空审查 M3）。真没有任务时后端返回的是 null，不是报错。
       .catch(() => {});
-  }, [cwd]);
+  }, [cwd, session]);
   useEffect(() => {
     refresh();
-    if (!cwd) return;
+    if (!cwd || !session) return;
     const timer = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(timer);
   }, [cwd, refresh]);
@@ -74,42 +75,73 @@ export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active:
   );
 }
 
+/// 标题行右侧的小进度环（用户选定 2026-11-09：进度并进标题行，去掉单独的细长进度条）。
+function LeadRing({ passed, total }: { passed: number; total: number }) {
+  const r = 6;
+  const c = 2 * Math.PI * r;
+  const done = total > 0 ? passed / total : 0;
+  return (
+    <svg className="lead-ring" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r={r} fill="none" stroke="var(--fill-selected)" strokeWidth="2" />
+      <circle cx="8" cy="8" r={r} fill="none" stroke="var(--cc-ok-vivid)" strokeWidth="2" strokeLinecap="round"
+        strokeDasharray={`${c * done} ${c}`} transform="rotate(-90 8 8)" />
+    </svg>
+  );
+}
+
+const CHECK_ICONS = {
+  pass: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>,
+  pending: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="7.5" /></svg>,
+};
+
 export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: LeadTaskDto; onClose: () => void }) {
   const t = useT();
   const { passed, total } = leadProgress(task);
   const [section, setSection] = useState<"checks" | "spec" | "decisions" | "progress">("checks");
+  // 展开看全文的验收项（默认两行截断）。
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  // 没通过的排前面：还要做的事一眼看到；同一组内保持原顺序。
+  const checks = [...task.checks].sort((a, b) => Number(a.passes) - Number(b.passes));
   return (
     <div className="dock-work-panel panel-lead">
       <div className="dock-work-head">
         <span className="dock-work-title">
           <LeadIcon className="dock-work-title-icon" />
           {t.chat.leadEntry}
-          <span className="dock-work-meta">{t.chat.leadPhase(task.phase)}</span>
+          <span className="dock-work-meta lead-phase">{t.chat.leadPhase(task.phase)}</span>
         </span>
-        <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
-      </div>
-      <div className="lead-meter" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={passed}
-        aria-label={t.chat.leadChecksProgress(passed, total)}>
-        <span className="lead-meter-fill" style={{ width: total ? `${(passed / total) * 100}%` : "0%" }} />
+        <span className="lead-head-end">
+          {total > 0 && (
+            <span className="lead-progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={passed}
+              aria-label={t.chat.leadChecksProgress(passed, total)}>
+              <LeadRing passed={passed} total={total} />
+              {passed}/{total}
+            </span>
+          )}
+          <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
+        </span>
       </div>
       <div className="lead-tabs" role="tablist">
         {(["checks", "spec", "decisions", "progress"] as const).map((key) => (
           <button key={key} type="button" role="tab" aria-selected={section === key}
             className={"lead-tab" + (section === key ? " is-active" : "")} onClick={() => setSection(key)}>
-            {key === "checks" ? t.chat.leadChecksProgress(passed, total) : t.chat.leadSection[key]}
+            {key === "checks" ? t.chat.leadSection.checks : t.chat.leadSection[key]}
           </button>
         ))}
       </div>
       <div className="dock-work-body">
         {section === "checks" && (
-          task.checks.length === 0
+          checks.length === 0
             ? <div className="chat-tasks-empty">{t.chat.leadChecksEmpty}</div>
             : (
               <ul className="lead-checks">
-                {task.checks.map((c) => (
-                  <li key={c.id} className={"lead-check" + (c.passes ? " is-pass" : "")}>
-                    <span className="lead-check-mark" aria-label={c.passes ? t.chat.leadCheckPass : t.chat.leadCheckPending}>{c.passes ? "✓" : "○"}</span>
-                    <span className="lead-check-id">#{c.id}</span>
+                {checks.map((c) => (
+                  <li key={c.id} className={"lead-check" + (c.passes ? " is-pass" : "") + (open.has(c.id) ? " is-open" : "")}
+                    title={c.check}
+                    onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
+                    <span className="lead-check-mark" aria-label={c.passes ? t.chat.leadCheckPass : t.chat.leadCheckPending}>
+                      {c.passes ? CHECK_ICONS.pass : CHECK_ICONS.pending}
+                    </span>
                     <span className="lead-check-text">{c.check}</span>
                   </li>
                 ))}

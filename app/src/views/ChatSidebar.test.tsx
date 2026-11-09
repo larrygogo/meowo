@@ -620,6 +620,29 @@ describe("ChatSidebar", () => {
     await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/reverse-bot-gui" }));
   });
 
+  /** 用户要求（2026-11-09）：工作区可以「从列表中移除」——只是不显示，磁盘不动；点了立刻消失，
+   *  后端记下后重拉清单。分组头上的同一个菜单不出这一项（那里移除了也看不出效果）。 */
+  it("工作空间页签:从列表中移除一个工作区,立刻消失并通知后端", async () => {
+    let listed = ["C:/w/meowo", "C:/w/old"];
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "recent_cwds") return Promise.resolve(listed);
+      if (command === "get_live_sessions_page") return Promise.resolve([session(1, "甲")]);
+      if (command === "hide_workspace") { listed = ["C:/w/meowo"]; return Promise.resolve(); }
+      void args;
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    await screen.findByRole("button", { name: /甲/ });
+    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    expect(screen.getByText("C:/w/old")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "从列表中移除" }));
+    expect(screen.queryByText("C:/w/old")).toBeNull();
+    expect(invoke).toHaveBeenCalledWith("hide_workspace", { cwd: "C:/w/old" });
+    await waitFor(() => expect(invoke.mock.calls.filter(([c]) => c === "recent_cwds").length).toBeGreaterThan(1));
+    expect(screen.getByText("C:/w/meowo")).toBeTruthy();
+  });
+
   /** 工作区右键菜单（对照 Kimi 的 onContextmenu）：工作空间页签的目录行、会话列表的分组头都能右键，
    *  菜单同一个；分组头上选「只看这个工作区的会话」即按它筛选。 */
   it("工作区右键菜单:目录行与分组头都能右键,分组头可按工作区筛选", async () => {

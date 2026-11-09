@@ -4,6 +4,7 @@ import {
   anchorFrom,
   createOutgoingStore,
   ECHO_CONFIRM_MS,
+  freshAnchor,
   INSERTED_LINGER_MS,
   reconcileOutgoing,
   type OutgoingKind,
@@ -48,6 +49,27 @@ describe("reconcileOutgoing", () => {
   it("落盘文本带图片占位前缀与附件指令时仍能认出（归一化后包含）", () => {
     const list = [prompt("echo", "看下这个  图", [])];
     expect(reconcileOutgoing(list, ev([user("u1", "[Image #1] 看下这个 图\n请读取并结合以下本地附件…")]))).toEqual([]);
+  });
+
+  /// 用户实拍（2026-11-09）：新建会话页带图发出的第一句话，agent 跑了十几步后才对账，
+  /// 它已不在尾部 12 条里，空锚点认不出，「未确认送达」的气泡叠在真消息下面。
+  it("新会话第一句话被挤出尾部也能认出", () => {
+    const first = user("u1", "[Image #1] [Image #2]1. 新建会话为什么\n2. 列表无法滚动");
+    const later = Array.from({ length: 20 }, (_, i) => reply(`a${i}`));
+    const list = [prompt("echo", "1. 新建会话为什么\n2. 列表无法滚动", [], { anchor: freshAnchor() })];
+    expect(reconcileOutgoing(list, ev([first, ...later]))).toEqual([]);
+    // 对照：普通空锚点仍只看尾部（保持既有水位线语义）。
+    const plain = [prompt("echo", "1. 新建会话为什么\n2. 列表无法滚动", [])];
+    expect(reconcileOutgoing(plain, ev([first, ...later]))).toBe(plain);
+  });
+
+  it("新会话第一句话不在加载窗口里：有后续用户消息就收起，且不占用它", () => {
+    const fresh = prompt("echo", "第一句", [], { anchor: freshAnchor() });
+    const second = prompt("echo", "第二句", [reply("a0")]);
+    const items = [reply("a0"), user("u2", "第二句")];
+    expect(reconcileOutgoing([fresh, second], ev(items))).toEqual([]);
+    // 还没有任何用户消息落盘时留着
+    expect(reconcileOutgoing([fresh], ev([]))).toEqual([fresh]);
   });
 
   /// 水位线：短插话「ok」不能子串命中入队之前的旧消息。

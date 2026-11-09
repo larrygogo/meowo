@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import type { GitDiffSummaryDto } from "../../api";
+import type { GitDiffSummaryDto, RepoChangesDto } from "../../api";
 import type { ReviewComment } from "./diffComments";
 import { ChangesView, FilesView, GitDiffView, PathMentionContext } from "./GitDiffView";
 import { markRemoteUi } from "../../remoteMode";
@@ -61,11 +61,11 @@ describe("GitDiffView 行数与本会话过滤", () => {
         turnTouchedPaths={["c:/repo/src/b.ts"]}
       />,
     );
-    const rowA = screen.getByRole("button", { name: /a\.ts/ });
+    const rowA = screen.getByRole("button", { name: /a\.ts/ }).closest(".scm-row")!;
     expect(rowA.textContent).toContain("+12");
     expect(rowA.textContent).toContain("−3");
     // 二进制数不出行数,不显示。
-    expect(screen.getByRole("button", { name: /logo\.png/ }).querySelector(".chat-diff-lines")).toBeNull();
+    expect(screen.getByRole("button", { name: /logo\.png/ }).closest(".scm-row")!.querySelector(".chat-diff-lines")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "本会话 2" }));
     expect(screen.queryByRole("button", { name: /logo\.png/ })).toBeNull();
@@ -112,7 +112,7 @@ describe("GitDiffView 行评论", () => {
     fireEvent.click(adds[1]);
     fireEvent.change(screen.getByPlaceholderText("写下对这一行的意见，Enter 添加"), { target: { value: "别删这行" } });
     fireEvent.keyDown(screen.getByPlaceholderText("写下对这一行的意见，Enter 添加"), { key: "Enter" });
-    expect(onAddComment).toHaveBeenCalledWith({ path: "src/a.ts", side: "old", line: 11, code: "old", text: "别删这行" });
+    expect(onAddComment).toHaveBeenCalledWith({ path: "src/a.ts", side: "old", line: 11, code: "old", text: "别删这行" }, "C:\\repo");
     expect(box.isConnected).toBe(false);
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -158,17 +158,20 @@ describe("GitDiffView 远程头行", () => {
   it("手机头行是「返回 + 更改」，返回即收起面板", async () => {
     markRemoteUi();
     const { onCollapse } = renderPanel();
-    expect(screen.queryByRole("button", { name: "收起面板" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "更改" })).toBeNull();
+    // 只看头行：下面「源代码管理」里有同名的「更改」分组标题。
+    const head = within(document.querySelector(".chat-diff-head") as HTMLElement);
+    expect(head.queryByRole("button", { name: "收起面板" })).toBeNull();
+    expect(head.queryByRole("button", { name: "更改" })).toBeNull();
     expect(document.querySelector(".chat-diff-title")?.textContent).toBe("更改");
-    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    fireEvent.click(head.getByRole("button", { name: "返回" }));
     expect(onCollapse).toHaveBeenCalled();
   });
 });
 
 describe("GitDiffView 列表 / 树形（对照 Kimi 改动面板）", () => {
   afterEach(() => localStorage.clear());
-  it("默认列表一行一个完整路径，行头是状态方块；切到树形按目录收拢并记住", () => {
+  // 2026-11-09 改成 VS Code 源代码管理样式：列表是「文件名 + 灰色目录」，状态是行尾字母（用户要求）。
+  it("默认列表一行一个文件（文件名 + 灰色目录），行尾是状态字母；切到树形按目录收拢并记住", () => {
     vi.mocked(invoke).mockResolvedValue([]);
     const props = {
       cwd: "C:\repo", width: 420, collapsed: false, maximized: false, onCollapse: () => {}, onToggleMaximize: () => {},
@@ -180,15 +183,15 @@ describe("GitDiffView 列表 / 树形（对照 Kimi 改动面板）", () => {
       { path: "README.md", status: "D", additions: 0, deletions: 3 },
     ];
     const { unmount } = render(<GitDiffView {...props} summary={{ ...summary, files }} />);
-    expect(screen.getByText("3 个文件")).toBeTruthy();
     expect(screen.getByRole("button", { name: "列表" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("app/src/views/chat/PillSelect.tsx")).toBeTruthy();
-    // 新增 / 未跟踪是「+」，删除是「−」，读屏报状态名。
-    expect(screen.getByRole("img", { name: "新文件，未跟踪" }).textContent).toBe("+");
-    expect(screen.getByRole("img", { name: "已删除" }).textContent).toBe("−");
+    const row = screen.getByText("PillSelect.tsx").closest(".scm-row")!;
+    expect(row.querySelector(".scm-dir")?.textContent).toBe("app/src/views/chat");
+    expect(row.querySelector(".scm-status")?.textContent).toBe("A");
+    expect(screen.getByText("README.md").closest(".scm-row")!.querySelector(".scm-status")?.textContent).toBe("D");
+    expect(screen.getByText("shot.png").closest(".scm-row")!.querySelector(".scm-status")?.textContent).toBe("U");
 
     fireEvent.click(screen.getByRole("button", { name: "树形" }));
-    expect(screen.queryByText("app/src/views/chat/PillSelect.tsx")).toBeNull();
+    expect(document.querySelector(".scm-dir")).toBeNull();
     expect(screen.getByText("PillSelect.tsx")).toBeTruthy();
     unmount();
     render(<GitDiffView {...props} summary={{ ...summary, files }} />);
@@ -336,3 +339,5 @@ epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
       onAddComment={() => {}} onRemoveComment={() => {}} escOverrideRef={{ current: null }} live={live} />
   );
 }
+
+

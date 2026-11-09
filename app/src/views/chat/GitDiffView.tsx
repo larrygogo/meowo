@@ -29,6 +29,7 @@ import {
   type FileOpenerDto,
   type FileTextDto,
   type GitDiffSummaryDto,
+  type RepoChangesDto,
   type GitFileDiffDto,
   type ImagePreviewDto,
   type SearchResultDto,
@@ -41,7 +42,8 @@ import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
-import { buildFileTree, diffLineClass, touchedByPath, type FileTreeNode } from "./gitDiff";
+import { buildFileTree, diffLineClass, normPath, touchedByPath, type FileTreeNode } from "./gitDiff";
+import { SourceControl } from "./SourceControl";
 import { diffLineAnchors, diffLineNumbers, type DiffLineAnchor, type ReviewComment } from "./diffComments";
 import { highlightLines, languageForPath } from "./highlight";
 
@@ -374,7 +376,7 @@ function OpenSplitButton({ cwd, rel }: { cwd: string; rel: string }) {
 
 /** 树行/结果行右键菜单：按需拉该文件类型的打开方式清单（目录不拉——只有
  *  复制/定位/系统默认三项）；清单异步到位后条目就地补齐（有扩展名缓存，通常瞬时）。 */
-function PathContextMenu({ cwd, rel, isDir, x, y, onClose }: {
+export function PathContextMenu({ cwd, rel, isDir, x, y, onClose }: {
   cwd: string;
   rel: string;
   isDir: boolean;
@@ -479,7 +481,7 @@ function WrapButton({ wrap, onToggle }: { wrap: boolean; onToggle: () => void })
 }
 
 /** 树行悬停时右端的「…」：和右键同一份路径菜单，照 Kimi Code 的文件树（不知道能右键的人也找得到）。 */
-function RowMore({ label, open, onOpen }: { label: string; open: boolean; onOpen: (x: number, y: number) => void }) {
+export function RowMore({ label, open, onOpen }: { label: string; open: boolean; onOpen: (x: number, y: number) => void }) {
   return (
     <button
       type="button"
@@ -530,10 +532,12 @@ function clampTreeWidth(width: number): number {
 export const GitDiffView = memo(GitDiffViewImpl);
 export type DiffPanelTab = "changes" | "files";
 
-function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange }: {
+function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, selectedRoot = null, onSelectRoot, onChanged }: {
   /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
   summary: GitDiffSummaryDto | null;
+  /** 多仓库「更改」（见 SourceControl）；null = 还没拉到，按 summary 单仓库显示。 */
+  repos?: readonly RepoChangesDto[] | null;
   /** 停靠宽度（px，ChatWindow 侧的分栏柄拖动改写）；最大化时忽略（面板占满整宽）。 */
   width: number;
   /** 折叠 = 整面板 display:none（不卸载，内部状态全保留）。 */
@@ -544,7 +548,7 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
   onToggleMaximize: () => void;
   /** 本会话攒着的改动评论（全部仓）；面板只显示激活仓的那些。 */
   comments: readonly ReviewComment[];
-  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">, dir: string) => void;
   onRemoveComment: (id: string) => void;
   /** 本会话编辑工具碰过的文件（见 sessionTouchedPaths）；空数组 = 认不出，不出过滤开关。 */
   touchedPaths: readonly string[];
@@ -553,9 +557,13 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
   /** ChatWindow 顶栏直达入口需要受控切页；独立使用时保留内部状态。 */
   activeTab?: DiffPanelTab;
   onTabChange?: (tab: DiffPanelTab) => void;
+  /** 选中的仓库（见 SourceControl）。 */
+  selectedRoot?: string | null;
+  onSelectRoot?: (root: string) => void;
+  onChanged?: () => void;
 }) {
   const t = useT();
-  const changesAvailable = !!summary?.isRepo;
+  const changesAvailable = !!summary?.isRepo || (repos?.length ?? 0) > 0;
   const [internalTab, setInternalTab] = useState<DiffPanelTab>(changesAvailable ? "changes" : "files");
   const tab = activeTab ?? internalTab;
   const selectTab = (next: DiffPanelTab) => {
@@ -663,13 +671,16 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
         </button>}
       </header>
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
-      {tab === "changes" && changesAvailable && summary
+      {tab === "changes" && ((repos && repos.length > 0) || (changesAvailable && summary?.isRepo))
         ? (
-          <ChangesView
+          <SourceControl
             key={cwd}
             cwd={cwd}
-            summary={summary}
-            comments={dirComments}
+            repos={repos && repos.length > 0 ? repos : singleRepo(cwd, summary!)}
+            selectedRoot={selectedRoot}
+            onSelectRoot={onSelectRoot ?? (() => {})}
+            onChanged={onChanged ?? (() => {})}
+            comments={comments}
             touchedPaths={touchedPaths}
             turnTouchedPaths={turnTouchedPaths}
             onAddComment={onAddComment}
@@ -683,7 +694,7 @@ function GitDiffViewImpl({ cwd, summary, width, collapsed, maximized, onCollapse
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false }: {
+export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, diffBase = null, sessionCwd = null, initialPath = null, onBack, onSelectPath }: {
   cwd: string;
   summary: GitDiffSummaryDto;
   comments: readonly ReviewComment[];
@@ -694,10 +705,23 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   escOverrideRef: MutableRefObject<(() => void) | null>;
   /** 面板正显示着：这时才在后台查打开的文件过期没有。 */
   live?: boolean;
+  /** 「已提交未合并」段：单文件 diff 看 diffBase..HEAD（见 SourceControl）。 */
+  diffBase?: string | null;
+  /** cwd 不是会话目录本身时的会话目录（手机远程页收口用）。 */
+  sessionCwd?: string | null;
+  /** 进来就打开的文件（从多仓库分组列表点进来）。 */
+  initialPath?: string | null;
+  /** 从文件页返回时交给外层（回到多仓库分组列表），不回本组件自己的列表。 */
+  onBack?: () => void;
+  /** 打开 / 关上的文件告诉外层：轮询让面板在单仓库与分组形态间切换时，外层据此把它重新打开。 */
+  onSelectPath?: (path: string | null) => void;
 }) {
   const t = useT();
   // 当前查看的文件（null = 文件树形态）；diff 结果按路径缓存，往返切换不重复拉取。
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(initialPath);
+  const onSelectPathRef = useRef(onSelectPath);
+  onSelectPathRef.current = onSelectPath;
+  useEffect(() => { onSelectPathRef.current?.(selectedPath); }, [selectedPath]);
   const [entries, setEntries] = useState<Map<string, FetchEntry<GitFileDiffDto>>>(new Map());
   // 图片改动的预览缓存(与 FilesView 的图片通道同款):git 对二进制只会说 "(binary file)",
   // 但图片完全可以直接把工作区当前版本渲染出来——「二进制文件,无法显示 diff」对一张
@@ -795,7 +819,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     const file = fileByPath.get(selectedPath);
     const path = selectedPath;
     setEntries((prev) => new Map(prev).set(path, { loading: true, error: null, data: null }));
-    getGitFileDiff(cwd, path, file?.status === "U")
+    getGitFileDiff(cwd, path, !diffBase && file?.status === "U", diffBase, sessionCwd)
       .then((data) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: null, data })))
       .catch((error) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: formatBackendError(error, t.locale), data: null })));
   }, [selectedPath, entries, cwd, fileByPath]);
@@ -870,7 +894,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   const staleDiff = useStaleWatch(
     selectedPath,
     activeDiff,
-    () => getGitFileDiff(cwd, selectedPath ?? "", fileByPath.get(selectedPath ?? "")?.status === "U"),
+    () => getGitFileDiff(cwd, selectedPath ?? "", !diffBase && fileByPath.get(selectedPath ?? "")?.status === "U", diffBase, sessionCwd),
     (a, b) => a.diff === b.diff && a.truncated === b.truncated,
     live,
     summary,
@@ -1086,7 +1110,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     return (
       <>
         <div className="chat-diff-filehead">
-          <BackButton label={t.chat.diffBack} onClick={() => setSelectedPath(null)} />
+          <BackButton label={t.chat.diffBack} onClick={() => (onBack ? onBack() : setSelectedPath(null))} />
           {selected && <StatusBadge status={selected.status} />}
           <span className="chat-diff-path" data-tip={selectedPath}>{selectedPath}</span>
           <span className="chat-diff-tools">
@@ -1183,6 +1207,18 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
       )}
     </>
   );
+}
+
+/** 本会话改过这个文件吗：仓库根是准的，严格按「根/相对路径」比（touchedByPath 允许面板目录在根下面，
+ *  那是给单仓库子目录用的宽松规则，在多仓库里会把别的仓库的同名文件算进来，做空复现）。 */
+export function touchedInRoot(touched: readonly string[], root: string, rel: string): boolean {
+  const full = `${normPath(root)}/${normPath(rel)}`;
+  return touched.some((path) => normPath(path) === full);
+}
+
+/** 只有单仓库摘要、overview 还没到时，把摘要包成一个仓库交给 SourceControl（形态不变，不重挂）。 */
+export function singleRepo(cwd: string, summary: GitDiffSummaryDto): RepoChangesDto[] {
+  return [{ root: cwd, name: folderName(cwd), isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] }];
 }
 
 /// 文件/图片缓存的上限。面板折叠时**不卸载**（打开的文件、树展开、diff 缓存全部保留，
@@ -1794,15 +1830,15 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const DIFF_LAYOUT_KEY = "meowo-diff-layout";
-function readDiffLayout(): "list" | "tree" {
+export function readDiffLayout(): "list" | "tree" {
   try { return localStorage.getItem(DIFF_LAYOUT_KEY) === "tree" ? "tree" : "list"; } catch { return "list"; }
 }
-function saveDiffLayout(layout: "list" | "tree") {
+export function saveDiffLayout(layout: "list" | "tree") {
   try { localStorage.setItem(DIFF_LAYOUT_KEY, layout); } catch { /* 隐私模式：只是不记 */ }
 }
 
 /** 文件或合计的 `+12 −3`；后端数不出来（二进制等）时两项都是 null，不占位。 */
-function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
+export function LineCounts({ file }: { file: { additions: number | null; deletions: number | null } | undefined }) {
   if (!file || file.additions == null || file.deletions == null) return null;
   return (
     <span className="chat-diff-lines">
@@ -1854,7 +1890,7 @@ function TreePaneIcon({ right }: { right: boolean }) {
   );
 }
 
-function FolderIcon() {
+export function FolderIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -1862,7 +1898,7 @@ function FolderIcon() {
   );
 }
 
-function FileIcon() {
+export function FileIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
@@ -1872,7 +1908,7 @@ function FileIcon() {
 
 /* ——「打开」按钮与路径菜单的小图标（与全库同款 lucide 线稿风）—— */
 
-function OpenIcon() {
+export function OpenIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

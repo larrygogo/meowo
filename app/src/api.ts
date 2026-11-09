@@ -36,6 +36,7 @@ import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
+import type { RepoChangesDto } from "./generated/contracts/RepoChangesDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
 import type { FileTextDto } from "./generated/contracts/FileTextDto";
 import type { FileOpenerDto } from "./generated/contracts/FileOpenerDto";
@@ -45,6 +46,7 @@ import type { SearchLineHitDto } from "./generated/contracts/SearchLineHitDto";
 import type { SearchResultDto } from "./generated/contracts/SearchResultDto";
 
 export type {
+  RepoChangesDto,
   GitDiffSummaryDto,
   GitFileDiffDto,
   DirEntryDto,
@@ -625,8 +627,38 @@ export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
 }
 
 /** 单个文件的 diff（untracked=true 时由后端读盘合成伪 diff，见 GitFileDiffDto 注释）。 */
-export function getGitFileDiff(cwd: string, path: string, untracked: boolean): Promise<GitFileDiffDto> {
-  return invoke("git_file_diff", { cwd, path, untracked });
+/// base：「已提交未合并」段的文件，看 base..HEAD。sessionCwd：cwd 不是会话目录本身（别的仓库、
+/// worktree）时带上会话目录，手机远程页据此收口。两者没有就不传（老桥不认识的字段会被拒）。
+export function getGitFileDiff(cwd: string, path: string, untracked: boolean, base?: string | null, sessionCwd?: string | null): Promise<GitFileDiffDto> {
+  return invoke("git_file_diff", { cwd, path, untracked, ...(base ? { base } : {}), ...(sessionCwd ? { sessionCwd } : {}) });
+}
+
+/// 「更改」面板的仓库清单（多仓库 + 已提交未合并），见 git.rs 的 git_changes_overview。
+/// commands：会话最近的命令文本。agent 常常 cd 进 worktree 用命令干活，编辑工具一次没碰过它，
+/// 后端据命令里出现的路径把这些 worktree 也列出来（用户要求 2026-11-09）。为空不传（老桥不认）。
+/// detail：只给哪个仓库算完整内容（增删行数、「本分支已提交」），空串 = 默认那个；其余仓库只给分支和
+/// 文件清单，点到时再拉（用户要求 2026-11-09：先显示目录，内容点击后异步）。
+export function getGitChangesOverview(cwd: string, touched: readonly string[], commands: readonly string[] = [], detail?: string | null): Promise<RepoChangesDto[]> {
+  return invoke("git_changes_overview", { cwd, touched, ...(commands.length > 0 ? { commands } : {}), ...(detail != null ? { detail } : {}) });
+}
+
+/// 「更改」面板的 git 写操作（用户要求 2026-11-09，对照 VS Code 源代码管理）。paths 相对仓库根，
+/// 必须在当前改动清单里。sessionCwd 规则同 getGitFileDiff。
+const withSession = (sessionCwd?: string | null) => (sessionCwd ? { sessionCwd } : {});
+export function gitStage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
+  return invoke("git_stage", { cwd, paths, ...withSession(sessionCwd) });
+}
+export function gitUnstage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
+  return invoke("git_unstage", { cwd, paths, ...withSession(sessionCwd) });
+}
+/// 放弃工作区改动：已跟踪的恢复到暂存区内容，未跟踪的删除。调用方负责先确认。
+export function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
+  return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) });
+}
+/// all：没有暂存的更改时提交全部（含未跟踪）。paths：「提交全部」时界面上显示的文件，后端只提交它们
+///（列表外、agent 刚写出来的不跟着进）。返回新提交的短 SHA。
+export function gitCommit(cwd: string, message: string, all: boolean, sessionCwd?: string | null, paths?: readonly string[]): Promise<string> {
+  return invoke("git_commit", { cwd, message, all, ...(all && paths ? { paths } : {}), ...withSession(sessionCwd) });
 }
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
@@ -660,8 +692,8 @@ export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
 
 /// Lead 工作流：会话 cwd 所在项目的任务快照；没有任务为 null（入口据此隐藏）。
 /// 手机端经远程桥放行（remote.rs 模块头「例外（2026-11-09）」），参数改动须同步 AnswerLeadGateArgs 等桥臂结构体。
-export function leadTaskSnapshot(cwd: string): Promise<LeadTaskDto | null> {
-  return invoke("lead_task_snapshot", { cwd });
+export function leadTaskSnapshot(cwd: string, session?: string | null): Promise<LeadTaskDto | null> {
+  return invoke("lead_task_snapshot", { cwd, ...(session ? { session } : {}) });
 }
 
 /// Lead 工作流是否已装进 Claude Code（以实际安装为准，不另存设置）。
@@ -1205,8 +1237,14 @@ export function newSession(cwd: string, provider: AgentId, options?: Record<stri
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
-export function recentCwds(limit: number): Promise<string[]> {
-  return invoke("recent_cwds", { limit });
+/// 从工作空间列表里移除（只是不显示；之后又在这里开会话会自动回来）。
+export function hideWorkspace(cwd: string): Promise<void> {
+  return invoke("hide_workspace", { cwd });
+}
+
+/// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。
+export function recentCwds(limit: number, includeHidden = false): Promise<string[]> {
+  return invoke("recent_cwds", { limit, ...(includeHidden ? { includeHidden } : {}) });
 }
 
 export type SwitchStarted = SwitchStartedDto;

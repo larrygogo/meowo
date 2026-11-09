@@ -5707,6 +5707,28 @@ describe("ChatWindow", () => {
     expect(document.querySelector(".is-sending")).toBeNull();
   }, 20_000);
 
+  /// 实拍（2026-11-09）：新会话还是临时 id 时又发一句，写入途中认领成真 id——回执随认领搬到真 id 下，
+  /// 发送结束却按临时 id 去结算，找不到它，气泡永远停在「发送中」（消息其实已经送达）。
+  it("新建会话页:临时 id 下发的第二句在写入途中认领,回执照样结算,不停在发送中", async () => {
+    window.history.replaceState({}, "", "/?newSession=1");
+    let claimed = false;
+    mockFirstPromptLaunch({
+      claimed: () => claimed,
+      ready: () => true,
+      onWrite: ({ data }) => { if (data === "第二句") claimed = true; },
+    });
+    await sendFirstPrompt("第一句");
+    await waitFor(() => expect(writesOf()).toContain("第一句"), { timeout: 8_000 });
+    const composer = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    fireEvent.change(composer, { target: { value: "第二句" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(writesOf()).toContain("第二句"), { timeout: 8_000 });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 71 })), { timeout: 5_000 });
+    await waitFor(() => expect(document.querySelector(".is-sending")).toBeNull(), { timeout: 8_000 });
+    // 对话里只有一条「第二句」气泡（消息导航里另有一个标签，不算）。
+    expect([...document.querySelectorAll(".chat-user-text")].filter((el) => el.textContent?.includes("第二句"))).toHaveLength(1);
+  }, 30_000);
+
   it("新建会话页:等就绪时又发一句,第二句排在第一句话后面", async () => {
     window.history.replaceState({}, "", "/?newSession=1");
     let ready = false;

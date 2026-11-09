@@ -68,7 +68,10 @@ use fsutil::{
     list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
     reveal_path_in_file_manager, reveal_terminal_path, search_project_files, file_mention_candidates,
 };
-use git::{git_diff_summary, git_file_diff, git_pull_request};
+use git::{
+    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_pull_request, git_stage,
+    git_unstage,
+};
 use lead::{answer_lead_gate, lead_task_snapshot, lead_workflow_installed, set_lead_workflow};
 use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
@@ -90,7 +93,7 @@ use managed_terminal::{
 use session_command::is_safe_id;
 use session_command::{move_session_rank, rename_session, set_archived, set_session_note};
 use session_command::{session_launch_selections, set_session_launch_selection};
-use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, recent_cwds};
+use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace, recent_cwds};
 #[cfg(test)]
 use session_query::{
     live_sessions_blocking, session_connected, tab_class, LiveContext, PageReq,
@@ -1245,12 +1248,17 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             macos::notify::open_notification_settings,
             git_diff_summary,
+            git_changes_overview,
             lead_task_snapshot,
             answer_lead_gate,
             lead_workflow_installed,
             set_lead_workflow,
             git_file_diff,
             git_pull_request,
+            git_stage,
+            git_unstage,
+            git_discard,
+            git_commit,
             worktree::worktree_status,
             worktree::remove_session_worktree,
             worktree::list_cleanable_worktrees,
@@ -1360,6 +1368,7 @@ pub fn run() {
             repair_provider_hooks,
             open_install_log,
             recent_cwds,
+            hide_workspace,
             open_new_session_window,
             window::open_session_admin,
             open_latest_chat

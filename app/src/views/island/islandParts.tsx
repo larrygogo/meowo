@@ -473,9 +473,11 @@ const BRAND_COLORS: Record<string, string> = {
   gemini: "#7b8cff",
   opencode: "#c7c7cc",
 };
+// 待交互用黄（--isl-pending），不用额度环的橙色警示（--isl-warn）：用户要求「待交互时圆环变黄色」
+// （2026-11-09），橙色在一排图标里和品牌橙（Claude）分不太开。
 const STATE_COLORS: Record<string, string> = {
   running: "var(--cc-ok-vivid)",
-  pending: "var(--isl-warn)",
+  pending: "var(--isl-pending)",
   error: "var(--isl-err)",
 };
 
@@ -484,11 +486,12 @@ function ringColor(item: Item, tone: string): string {
 }
 
 /// 亮弧只在有含义时出现（用户嫌整圈亮色环又重又看不出状态）：
-/// 要处理 / 出错整圈状态色；在跑有待办按完成比例、没待办转一小段；跑完不画亮弧（只剩淡淡的底轨）。
-/// 返回 undefined = 不画亮弧。
-function arcOf(item: Item, tone: string): number | null | undefined {
+/// 要处理（黄）/ 出错（红）整圈状态色；在跑一律是转圈的一段弧（用户要求「运行中外圈旋转」，
+/// 2026-11-09——此前有待办时按完成比例画一段静止的弧，看不出在跑）；跑完不画亮弧（只剩淡淡的底轨）。
+/// 返回 undefined = 不画亮弧，null = 转圈。
+function arcOf(tone: string): number | null | undefined {
   if (tone === "pending" || tone === "error") return 1;
-  if (tone === "running") return item.todo_total > 0 ? item.todo_done / item.todo_total : null;
+  if (tone === "running") return null;
   return undefined;
 }
 
@@ -498,14 +501,14 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
   const tone = cardTone(item);
   const color = ringColor(item, tone);
   const track = `color-mix(in srgb, ${color} 22%, #000)`;
-  const arc = arcOf(item, tone);
+  const arc = arcOf(tone);
   const { Icon } = agentAssets(item.provider);
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;
   const waiting = tone === "waiting";
   return (
     // data-session-id：收起胶囊上点图标直接打开这个会话（App 的按下处理按它分流）。
     <span className="isl-agent" data-tone={tone} data-session-id={item.session.id} title={tip}>
-      <Ring size={size} stroke={2.5} value={arc ?? 0} color={arc === undefined ? "transparent" : color} track={track}>
+      <Ring size={size} stroke={2.5} value={arc === undefined ? 0 : arc} color={arc === undefined ? "transparent" : color} track={track}>
         <span className="isl-agent-logo" style={tintStyle(item.provider)}><Icon /></span>
       </Ring>
       {badge && <span className={`isl-agent-badge is-${tone}`}>{badge}</span>}

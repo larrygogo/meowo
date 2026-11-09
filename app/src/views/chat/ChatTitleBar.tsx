@@ -29,7 +29,7 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
 }
 
 export function ChatTitleBar({
-  leading, title, archive, end, cwd, gitSummary, changesOpen, panelOpen, terminalOn,
+  leading, title, archive, end, cwd, prCwd, gitSummary, changesOpen, panelOpen, terminalOn,
   onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, info = null,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
@@ -41,6 +41,8 @@ export function ChatTitleBar({
   /** 「结束会话」；不可结束时不给。 */
   end: { busy: boolean; onClick: () => void } | null;
   cwd: string | null;
+  /** 查 PR 的目录：工作目录不是仓库时是第一个仓库（与标题栏分支同一个），见 ChatWindow。 */
+  prCwd?: string | null;
   gitSummary: GitDiffSummaryDto | null;
   /** 停靠面板开着且在改动页签 / 开着（任意页签）。 */
   changesOpen: boolean;
@@ -56,7 +58,7 @@ export function ChatTitleBar({
   info?: { open: boolean; onToggle: () => void } | null;
 }) {
   const t = useT();
-  const pullRequest = usePullRequest(cwd, gitSummary?.isRepo ? gitSummary.branch : null);
+  const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null);
   return (
     <header className="chat-bar" data-tauri-drag-region>
       {leading}
