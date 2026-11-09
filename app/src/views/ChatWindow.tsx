@@ -965,19 +965,35 @@ export function ChatWindow() {
   // 多仓库「更改」（用户要求 2026-11-09）：会话改过的文件可能在别的仓库 / 新开的 worktree 里，
   // 工作目录也可能是父目录。面板可见时拉一次、「更改」开着时随 5 秒轮询一起刷新；内容没变不换对象。
   const [repoChanges, setRepoChanges] = useState<RepoChangesDto[] | null>(null);
+  const diffCwdRef = useRef(diffCwd);
+  diffCwdRef.current = diffCwd;
   useEffect(() => setRepoChanges(null), [diffCwd]);
   // 上一轮还没回来就不发下一轮：仓库多时一轮可能超过 5 秒，不拦会越积越多（做空复现）。
+  // 在途时又要拉（会话又改了文件、面板刚打开）：记一笔，这一轮回来后用最新参数补拉一次。只挡不记
+  // 的话，被取消的那轮结果作废、新的又被挡掉，就再也不拉了（做空复现：入口因此又消失）。
   const repoChangesInflightRef = useRef(false);
+  const repoChangesAgainRef = useRef(false);
+  const loadRepoChangesRef = useRef<(cancelled: () => boolean) => void>(() => {});
   const loadRepoChanges = useCallback((cancelled: () => boolean) => {
-    if (!diffCwd || repoChangesInflightRef.current) return;
+    if (!diffCwd) return;
+    if (repoChangesInflightRef.current) { repoChangesAgainRef.current = true; return; }
     repoChangesInflightRef.current = true;
+    const forCwd = diffCwd;
     getGitChangesOverview(diffCwd, touchedKey ? touchedKey.split("\0") : [])
       .then((result) => {
-        if (!cancelled()) setRepoChanges((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
+        // 被取消的只要还是同一个会话目录就照收：只是参数旧了一点，下面会补拉新的。
+        if ((!cancelled() || forCwd === diffCwdRef.current)) setRepoChanges((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
       })
       .catch(() => {})
-      .finally(() => { repoChangesInflightRef.current = false; });
+      .finally(() => {
+        repoChangesInflightRef.current = false;
+        if (repoChangesAgainRef.current) {
+          repoChangesAgainRef.current = false;
+          loadRepoChangesRef.current(() => forCwd !== diffCwdRef.current);
+        }
+      });
   }, [diffCwd, touchedKey]);
+  loadRepoChangesRef.current = loadRepoChanges;
   // 工作目录不是仓库（会话开在 workspace 这种父目录）时，面板没开也先拉一次：标题栏胶囊、Ctrl+Shift+G、
   // 面板「+」菜单这些入口都靠它才知道有没有改动可看（做空复现：此前全只认工作目录本身是不是仓库，
   // 这种会话根本打不开「更改」）。会话又改了文件（touched 变了）隔 2 秒再拉。
@@ -4070,6 +4086,7 @@ export function ChatWindow() {
         archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
         cwd={cwd}
+        prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
         gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
         panelOpen={panelState.visible}

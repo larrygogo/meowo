@@ -654,7 +654,7 @@ export const en: Dict = {
     leadChecksEmpty: "No acceptance checks yet",
     leadCheckPass: "Passed",
     leadCheckPending: "Not passed",
-    leadSection: { spec: "Spec", decisions: "Decisions", progress: "Progress" },
+    leadSection: { checks: "Checks", spec: "Spec", decisions: "Decisions", progress: "Progress" },
     leadSectionEmpty: "Nothing here yet",
     leadGateWaiting: "Your call",
     leadGateAnswered: "Answered · waiting for the agent",

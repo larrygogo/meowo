@@ -1211,6 +1211,13 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
 /// （做空复现）。外层记着，换了形态照样把它打开。
 type RepoSection = { key: string; repo: RepoChangesDto; kind: "work" | "committed"; summary: GitDiffSummaryDto; base: string | null };
 
+/** 本会话改过这个文件吗：仓库根是准的，严格按「根/相对路径」比（touchedByPath 允许面板目录在根下面，
+ *  那是给单仓库子目录用的宽松规则，在多仓库里会把别的仓库的同名文件算进来，做空复现）。 */
+function touchedInRoot(touched: readonly string[], root: string, rel: string): boolean {
+  const full = `${normPath(root)}/${normPath(rel)}`;
+  return touched.some((path) => normPath(path) === full);
+}
+
 /** 只有单仓库摘要、overview 还没到时，把摘要包成一个仓库交给 RepoChanges（形态不变，不重挂）。 */
 export function singleRepo(cwd: string, summary: GitDiffSummaryDto): RepoChangesDto[] {
   return [{ root: cwd, name: folderName(cwd), isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] }];
@@ -1230,9 +1237,12 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
 }) {
   const t = useT();
   const sections = useMemo<RepoSection[]>(() => repos.flatMap((repo) => {
-    const out: RepoSection[] = [{ key: `${repo.root}\u0000work`, repo, kind: "work", summary: repo.summary, base: null }];
+    // key 用归一路径：首屏用单仓库摘要包出来的根是会话目录原样（可能是反斜杠），overview 到了是
+    // 正斜杠，同一个仓库 key 不同就会重挂、把打开的文件踢走（做空复现）。
+    const id = normPath(repo.root);
+    const out: RepoSection[] = [{ key: `${id}\u0000work`, repo, kind: "work", summary: repo.summary, base: null }];
     if (repo.base && repo.committed.length > 0) {
-      out.push({ key: `${repo.root}\u0000committed`, repo, kind: "committed", summary: { ...repo.summary, files: repo.committed, ahead: null, behind: null }, base: repo.base });
+      out.push({ key: `${id}\u0000committed`, repo, kind: "committed", summary: { ...repo.summary, files: repo.committed, ahead: null, behind: null }, base: repo.base });
     }
     return out;
   }), [repos]);
@@ -1242,7 +1252,9 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
   // 单文件 diff、图片预览、路径菜单、评论都按仓库根算：改动清单的路径是相对仓库根的，工作目录
   // 是仓库子目录时按它算会对不上（做空复现：已提交段点进去 diff 是空的）。
   const dirOf = (repo: RepoChangesDto) => repo.root;
-  const sessionCwdOf = (dir: string) => (normPath(dir) === normPath(cwd) ? null : cwd);
+  // 逐字比较：手机桥的会话目录校验是逐字的（库里存的原串），归一后相等但写法不同（斜杠方向）
+  // 也要带上 sessionCwd 交给后端按相关仓库收口，否则被拒（做空复现：本机 18 个仓库里 11 个是这样）。
+  const sessionCwdOf = (dir: string) => (dir === cwd ? null : cwd);
   const viewProps = (dir: string) => ({
     comments: comments.filter((comment) => normPath(comment.dir) === normPath(dir)),
     touchedPaths,
@@ -1259,7 +1271,7 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
     const dir = dirOf(section.repo);
     return (
       <ChangesView
-        key={`single\u0000${dir}`}
+        key={`single\u0000${normPath(dir)}`}
         cwd={dir}
         summary={section.summary}
         sessionCwd={sessionCwdOf(dir)}
@@ -1290,7 +1302,7 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
   const touched = touchedPaths.length > 0;
   const visible = (section: RepoSection) => section.summary.files.filter((file) =>
     (!query || file.path.toLowerCase().includes(query))
-    && (!onlySession || touchedByPath(touchedPaths, section.repo.root, file.path)));
+    && (!onlySession || touchedInRoot(touchedPaths, section.repo.root, file.path)));
   return (
     <div className="chat-repos" data-testid="repo-changes">
       <input
@@ -1308,7 +1320,7 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
         <div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
           <button type="button" aria-pressed={!onlySession} onClick={() => setOnlySession(false)}>{t.chat.diffScopeAll}</button>
           <button type="button" aria-pressed={onlySession} data-tip={t.chat.diffOnlySessionTip} onClick={() => setOnlySession(true)}>
-            {t.chat.diffScopeSession(sections.reduce((sum, section) => sum + section.summary.files.filter((file) => touchedByPath(touchedPaths, section.repo.root, file.path)).length, 0))}
+            {t.chat.diffScopeSession(sections.reduce((sum, section) => sum + section.summary.files.filter((file) => touchedInRoot(touchedPaths, section.repo.root, file.path)).length, 0))}
           </button>
         </div>
       )}

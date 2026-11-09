@@ -182,15 +182,13 @@ pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result
     }
     let cwd_root = repo_root(dir);
     let mut roots: Vec<String> = cwd_root.iter().cloned().collect();
-    // 5 秒轮询里每个文件都跑一次 rev-parse 会很重（做空实测 100 个文件 3 秒）：落在已认出仓库里的
-    // 文件直接跳过，同一目录只查一次，总共最多查 MAX_ROOT_LOOKUPS 个目录。
+    // 5 秒轮询里每个文件都跑一次 rev-parse 会很重（做空实测 100 个文件 3 秒）：同一目录只查一次，
+    // 总共最多查 MAX_ROOT_LOOKUPS 个目录。不能按「落在已认出的仓库里」跳过：Claude Code 默认把
+    // worktree 建在仓库里面（.claude/worktrees/<名字>），子模块、嵌套仓库同理，跳过就认不出（做空复现）。
     let mut looked: Vec<String> = Vec::new();
     for path in touched {
         if roots.len() >= MAX_REPOS || looked.len() >= MAX_ROOT_LOOKUPS {
             break;
-        }
-        if roots.iter().any(|known| path_under(path, known)) {
-            continue;
         }
         let Some(start) = existing_dir_of(path) else { continue };
         if looked.iter().any(|seen| same_path(seen, &start)) {
@@ -503,7 +501,9 @@ fn git_file_diff_blocking(cwd: &str, path: &str, untracked: bool, base: Option<&
     }
     // 改动清单里的路径都相对仓库根（porcelain / name-status 的口径），而 `-- path` 默认按 cwd
     // 解析：cwd 是仓库子目录时 diff 是空的（做空复现）。`:(top)` 让它从仓库根算。
-    let spec = format!(":(top){path}");
+    // literal：`app/[id]/page.tsx` 这类文件名里的 `[ ] * ?` 不当通配符（Next.js 动态路由，做空复现
+    // 一次拉回三个文件的 diff）。
+    let spec = format!(":(top,literal){path}");
     let output = match base {
         Some(base) => git_output(dir, &["diff", base, "HEAD", "--", &spec]),
         None => git_output(dir, &["diff", "HEAD", "--", &spec]),
@@ -962,6 +962,38 @@ mod tests {
         // 相关仓库（手机远程页的放行清单）同样认得这个 worktree。
         assert!(is_related_root(&s(&main), &s(&wt)));
         assert!(!is_related_root(&s(&main), &s(&sb.0)));
+    }
+
+    /// Claude Code 默认把 worktree 建在仓库里面（.claude/worktrees/<名字>）：也要单独认成一组。
+    #[test]
+    fn overview_recognizes_worktree_nested_inside_the_repo() {
+        let sb = Sandbox::new("nested");
+        let main = sb.repo("main");
+        std::fs::write(main.join(".gitignore"), ".claude/worktrees/\n").unwrap();
+        sb.commit(&main, "ignore");
+        let wt = main.join(".claude").join("worktrees").join("feat");
+        sb.git(&main, &["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
+        std::fs::write(wt.join("a.ts"), "x\n").unwrap();
+        let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("a.ts"))]).unwrap();
+        assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["main", "feat"]);
+        assert_eq!(repos[1].summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.ts"]);
+    }
+
+    /// 文件名里的方括号不当通配符。
+    #[test]
+    fn file_diff_treats_brackets_literally() {
+        let sb = Sandbox::new("brackets");
+        let repo = sb.repo("r");
+        for dir in ["[id]", "i", "d"] {
+            std::fs::create_dir_all(repo.join("app").join(dir)).unwrap();
+            std::fs::write(repo.join("app").join(dir).join("page.tsx"), "a\n").unwrap();
+        }
+        sb.commit(&repo, "pages");
+        for dir in ["[id]", "i", "d"] {
+            std::fs::write(repo.join("app").join(dir).join("page.tsx"), "b\n").unwrap();
+        }
+        let diff = git_file_diff_blocking(&s(&repo), "app/[id]/page.tsx", false, None).unwrap().diff;
+        assert_eq!(diff.matches("diff --git").count(), 1, "{diff}");
     }
 
     /// 已提交的进「已提交未合并」、没提交的进「未提交」；在默认分支上没有已提交段。

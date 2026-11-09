@@ -79,6 +79,12 @@ describe("Lead 入口", () => {
     expect(screen.getByText("实施中")).toBeTruthy();
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
     expect(screen.getByText("手机能用")).toBeTruthy();
+    // 用户选定的样式（2026-11-09）：没通过的排前面、不显示 #编号；点一条展开全文。
+    const rows = [...document.querySelectorAll(".lead-check")];
+    expect(rows.map((row) => row.textContent)).toEqual(["手机能用", "测试全过"]);
+    expect(document.body.textContent).not.toContain("#1");
+    fireEvent.click(rows[0]);
+    expect(rows[0].className).toContain("is-open");
     fireEvent.click(screen.getByRole("tab", { name: "规格" }));
     expect(screen.getByText(/目的：演示/)).toBeTruthy();
   });

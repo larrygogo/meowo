@@ -340,6 +340,24 @@ epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
 
 /// 多仓库「更改」（用户要求 2026-11-09）：会话开在父目录、agent 新开 worktree 并提交后也看得到改动。
 describe("RepoChanges", () => {
+  /// 做空第二轮复现：会话目录是反斜杠写法，仓库根是正斜杠——手机桥逐字校验会话目录，必须带 sessionCwd；
+  /// 首屏单仓库摘要（原样会话目录）换成 overview（正斜杠根）时打开的文件不能被踢走。
+  it("会话目录写法不同也带 sessionCwd；首屏摘要换成 overview 不踢走打开的文件", async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
+    const props = { cwd: "C:\\repo", comments: [], touchedPaths: [], turnTouchedPaths: [], onAddComment: () => {}, onRemoveComment: () => {}, escOverrideRef: { current: null } };
+    const first: RepoChangesDto = { root: "C:\\repo", name: "repo", isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] };
+    const { rerender } = render(<RepoChanges {...props} repos={[first]} />);
+    fireEvent.click(screen.getByText("src/a.ts"));
+    await screen.findByRole("button", { name: "返回" });
+    rerender(<RepoChanges {...props} repos={[{ ...first, root: "C:/repo" }]} />);
+    expect(await screen.findByRole("button", { name: "返回" })).toBeTruthy();
+    cleanup();
+    // 直接以正斜杠根打开：与会话目录逐字不同，要带 sessionCwd。
+    render(<RepoChanges {...props} repos={[{ ...first, root: "C:/repo" }]} />);
+    fireEvent.click(screen.getByText("src/a.ts"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_file_diff", expect.objectContaining({ cwd: "C:/repo", sessionCwd: "C:\\repo" })));
+  });
+
   /// 做空复现：agent 刚提交、出现已提交段时，面板从单仓库切到分组形态，正在看的文件被踢回列表。
   it("轮询让形态从单仓库切到分组时，正在看的文件不被踢走", async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
