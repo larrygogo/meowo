@@ -68,13 +68,13 @@ const CONTENT: Record<Lang, Content> = {
     nodes: [
       {
         time: "09:00", tone: "run", eyes: { tone: "running", cue: "surprised" }, label: "开工",
-        title: "开三个会话",
-        body: "在对话窗里选 Agent 和目录，输入第一句话，会话就开始了。这天的三个任务分给三家：Claude Code 重构登录页，Kimi 修支付回调，Codex 补单测。工具调用在对话里折叠成一行，终端弹出的菜单显示成按钮。",
+        title: "开多个会话",
+        body: "在对话窗里选 Agent 和目录，输入第一句话，会话就开始了。可以同时开多个会话，分给不同的 Agent，比如 Claude Code 重构登录页，Kimi 修支付回调，Codex 补单测。工具调用在对话里折叠成一行，终端弹出的菜单显示成按钮。",
         demo: "chat",
       },
       {
         time: "10:30", tone: "warn", eyes: { tone: "pending" }, label: "待批准",
-        title: "Kimi 要跑一条需要批准的命令",
+        title: "有会话要跑一条需要批准的命令",
         body: "灵动岛在屏幕顶部弹出提醒，点「打开」进入那个会话。审批卡上写着这条命令会动到什么，比如工作区外的路径、删除文件或联网。",
         demo: "island-alert",
       },
@@ -141,13 +141,13 @@ const CONTENT: Record<Lang, Content> = {
     nodes: [
       {
         time: "09:00", tone: "run", eyes: { tone: "running", cue: "surprised" }, label: "Start",
-        title: "Start three sessions",
-        body: "In the chat window, pick an agent and a folder and type the first message. Today's three tasks go to three agents: Claude Code refactors the login page, Kimi fixes a payment callback, Codex adds tests. Tool calls fold into one line in the conversation, and menus from the terminal show up as buttons.",
+        title: "Start several sessions",
+        body: "In the chat window, pick an agent and a folder and type the first message. You can run several sessions at once with different agents, for example Claude Code refactoring the login page, Kimi fixing a payment callback and Codex adding tests. Tool calls fold into one line in the conversation, and menus from the terminal show up as buttons.",
         demo: "chat",
       },
       {
         time: "10:30", tone: "warn", eyes: { tone: "pending" }, label: "Pending approval",
-        title: "Kimi wants to run a command that needs approval",
+        title: "A session wants to run a command that needs approval",
         body: "The island shows an alert at the top of the screen. Click Open to go to that session. The approval card lists what the command will touch, such as paths outside the workspace, deleted files or network access.",
         demo: "island-alert",
       },
