@@ -121,6 +121,8 @@ pub(crate) fn evaluate(f: &Facts) -> Option<(&'static str, Option<u32>)> {
 // ═══ git / gh ═══
 
 fn command(program: &str) -> Command {
+    // mut 只有 Windows 要用（设 creation_flags），macOS 上 clippy 会报 unused_mut（CI 实测）。
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut command = Command::new(program);
     // Windows：GUI 进程 spawn 控制台子进程会闪现 conhost 黑窗，压掉（同 git.rs）。
     #[cfg(target_os = "windows")]
