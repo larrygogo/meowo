@@ -4471,6 +4471,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-error.is-undo { display: flex; align-items: center; gap: var(--sp-8); color: var(--cc-text-dim); }
 .chat-sidebar-error.is-undo button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); color: var(--cc-text); background: var(--fill-selected); font-size: var(--text-xs); cursor: pointer; }
 .chat-sidebar-error.is-undo button:hover { background: var(--fill-selected-hover); }
+/* 批量清理 worktree 的结果：失败项逐行列出，按钮顶对齐不随多行居中。 */
+.chat-sidebar-error.is-multiline { align-items: flex-start; }
+.chat-sidebar-error.is-multiline span { flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; }
+/* 「已完成」页顶部的批量清理入口：轻量文字按钮，不和会话条目抢视觉。 */
+.chat-sidebar-cleanbar { display: flex; justify-content: flex-end; padding: var(--sp-4) var(--sp-10) var(--sp-2); }
+.chat-sidebar-cleanbar button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
+.chat-sidebar-cleanbar button:hover:not(:disabled) { background: var(--fill-selected); color: var(--cc-text); }
+.chat-sidebar-cleanbar button:disabled { cursor: default; }
 .chat-scroll {
   flex: 1;
   overflow: auto;

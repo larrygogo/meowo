@@ -69,6 +69,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/pr_closed", exact: true, zh: "PR 已关闭，没有合并", en: "The PR was closed without merging" },
   { m: "worktree/dirty", exact: true, zh: "还有文件改动没提交", en: "There are uncommitted changes" },
   { m: "worktree/untracked", exact: true, zh: "还有新文件没提交", en: "There are new files not committed" },
+  { m: "worktree/nested_repo", exact: true, zh: "目录里还有别的仓库或 worktree", en: "There are other repos or worktrees inside this folder" },
+  { m: "worktree/hidden_changes", exact: true, zh: "有文件被标记成不跟踪改动，判断不了有没有改过", en: "Some files are marked to hide changes, so changes can't be checked" },
   { m: "worktree/unpushed", exact: true, zh: "有提交还没推到远端", en: "Some commits haven't been pushed" },
   { m: "worktree/submodule_dirty", exact: true, zh: "子模块里有改动", en: "A submodule has changes" },
   { m: "worktree/submodule_unpushed", exact: true, zh: "子模块里有提交还没推", en: "A submodule has commits that haven't been pushed" },
@@ -77,7 +79,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/locked", exact: true, zh: "这个 worktree 被锁定了", en: "This worktree is locked" },
   { m: "worktree/still_exists", exact: true, zh: "删完后目录还在，请手动检查", en: "The folder is still there after deleting; check it manually" },
   { m: "worktree/unlink_failed", tail: true, zh: "拆除目录里的链接失败", en: "Couldn't remove links inside the folder" },
-  { m: "worktree/remove_failed", tail: true, zh: "删除目录失败", en: "Couldn't delete the folder" },
+  { m: "worktree/remove_failed", tail: true, zh: "删除目录失败（目录里的链接已拆掉，链接指向的内容没动）", en: "Couldn't delete the folder (links inside it were removed; what they pointed to is untouched)" },
   { m: "worktree/git_failed", tail: true, zh: "git 没能运行", en: "Couldn't run git" },
   { m: "worktree/probe_restore", tail: true, zh: "检查占用时改名后没能改回，请手动检查目录", en: "The folder was renamed during the check and couldn't be restored; check it manually" },
   // ── 手机推送（push.rs）──

@@ -2,20 +2,25 @@
 //!
 //! 起因（2026-11-09 用户实拍）：并行开任务攒下 67 个 worktree，PR 合并后没人回头删；手工清理时
 //! 踩到 junction 删不掉留空壳、残留预览服务占着目录、子模块提交没推三个坑。规格见用户确认的
-//! 「只在条件全满足时可删，不提供强制删除」：判定宁可保守，也绝不误删。
+//! 「只在条件全满足时可删，不提供强制删除」：判定宁可保守，也绝不误删——任何一项查不清楚
+//! （git 命令失败、输出读不懂）都按「不能删」处理。
 //!
 //! 判定条件（全部满足才 eligible）：
 //! - 会话目录在一个 linked worktree 里（主检出永远不删）
 //! - 没有别的未归档会话也在这个 worktree 里
 //! - `gh` 查到当前分支的 PR 是 MERGED——用 PR 状态而不是提交祖先关系，squash 合并后
 //!   分支提交不在主干历史里，祖先判断会全部误判成「没合并」（这次清理里有 30+ 个这样的分支）
-//! - 子模块干净，且子模块当前提交在其远端存在
+//! - worktree 里没有嵌套的仓库或 worktree（Claude Code 的 `.claude/worktrees/` 通常被忽略，
+//!   status 看不见，`git worktree remove` 却会连它一起删）
+//! - 每个子模块干净，且子模块 HEAD 在它的远端存在
+//! - 没有被 skip-worktree / assume-unchanged 藏起来的文件（这类改动 status 看不见）
 //! - 工作区没有未提交改动和未跟踪文件（被忽略的文件不算，比如 node_modules、target）
-//! - 本地分支没有远端没有的提交：等于或落后于 PR 的 head 提交，或被某个远端分支包含
+//! - 本地 HEAD 等于 PR 的 head 提交或是它的祖先
 //!
 //! 删除顺序：再判定一次（状态可能变了）→ 查占用进程（有就停，等用户确认）→ 改名试探
 //! （改不动说明还有句柄，停手，一个文件都不动）→ 只拆链接不进入 → `git worktree remove`
-//! → 清残留 → prune → 删本地分支 → 确认目录真的没了。远端分支不动。
+//! （失败就停，不自己动手删）→ prune → 删本地分支 → 确认目录真的没了。远端分支不动。
+//! 所有作用在仓库上的 git 命令都用 `--git-dir=<公共 .git 目录>`，bare 仓库布局也不会找错仓库。
 
 use meowo_protocol::ipc::{
     CleanableWorktreeDto, WorktreeProcessDto, WorktreeRemovalDto, WorktreeStatusDto,
@@ -45,7 +50,7 @@ pub(crate) enum PrLookup {
 pub(crate) enum SubmoduleState {
     Clean,
     Dirty,
-    /// 子模块检出的提交在它的远端找不到：删了就丢了。
+    /// 子模块 HEAD 在它的远端找不到（或者查不清楚）：删了就可能丢了。
     Unpushed,
 }
 
@@ -56,7 +61,11 @@ pub(crate) struct Facts {
     pub(crate) branch: Option<String>,
     pub(crate) other_sessions: u32,
     pub(crate) pr: PrLookup,
+    /// worktree 里嵌套的仓库 / worktree 个数（子模块除外）。
+    pub(crate) nested: u32,
     pub(crate) submodules: SubmoduleState,
+    /// 被 skip-worktree / assume-unchanged 标记的文件数。
+    pub(crate) hidden: u32,
     pub(crate) dirty: u32,
     pub(crate) untracked: u32,
     pub(crate) unpushed: bool,
@@ -86,10 +95,16 @@ pub(crate) fn evaluate(f: &Facts) -> Option<(&'static str, Option<u32>)> {
             _ => return Some(("pr_open", None)),
         },
     }
+    if f.nested > 0 {
+        return Some(("nested_repo", Some(f.nested)));
+    }
     match f.submodules {
         SubmoduleState::Unpushed => return Some(("submodule_unpushed", None)),
         SubmoduleState::Dirty => return Some(("submodule_dirty", None)),
         SubmoduleState::Clean => {}
+    }
+    if f.hidden > 0 {
+        return Some(("hidden_changes", Some(f.hidden)));
     }
     if f.dirty > 0 {
         return Some(("dirty", Some(f.dirty)));
@@ -116,6 +131,7 @@ fn command(program: &str) -> Command {
     command
 }
 
+/// 在工作目录里跑 git。失败返回 None——调用方必须把 None 当成「查不清楚」，按不能删处理。
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let out = command("git").arg("-C").arg(dir).args(args).output().ok()?;
     out.status
@@ -123,14 +139,13 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn git_ok(dir: &Path, args: &[&str]) -> bool {
-    command("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// 对仓库本身跑 git（worktree 列表、删 worktree、删分支）。用 `--git-dir` 指向公共 .git 目录，
+/// 不靠「公共目录的上一级就是主检出」这种猜测——bare 仓库布局下那一级可能是别的仓库，
+/// 之前会因此在别的仓库里删掉同名分支（做空验证复现）。
+fn git_repo(common: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    let mut git_dir = std::ffi::OsString::from("--git-dir=");
+    git_dir.push(common.as_os_str());
+    command("git").arg(git_dir).args(args).output()
 }
 
 /// 真实的 `gh pr view`。不走 git.rs 的 60s 缓存：删除前要的是此刻的状态。
@@ -163,10 +178,10 @@ fn parse_pr_view(json: &str) -> Option<PrLookup> {
     })
 }
 
-/// worktree 根目录与主仓库根目录。不在 git 里返回 None。
+/// worktree 根目录与公共 .git 目录。不在 git 里返回 None。
 struct Layout {
     top: PathBuf,
-    main: PathBuf,
+    common: PathBuf,
     linked: bool,
 }
 
@@ -175,12 +190,11 @@ fn layout(dir: &Path) -> Option<Layout> {
     let git_dir = abs_from(dir, &git(dir, &["rev-parse", "--git-dir"])?);
     let common = abs_from(dir, &git(dir, &["rev-parse", "--git-common-dir"])?);
     let linked = norm(&git_dir) != norm(&common);
-    // 主仓库根 = 公共 .git 目录的上一级（bare 仓库不在本功能范围内，linked 判断照样成立）。
-    let main = common
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| top.clone());
-    Some(Layout { top, main, linked })
+    Some(Layout {
+        top,
+        common,
+        linked,
+    })
 }
 
 fn abs_from(base: &Path, p: &str) -> PathBuf {
@@ -212,9 +226,14 @@ pub(crate) fn is_under(child: &str, root: &str) -> bool {
     child == root || child.starts_with(&format!("{root}/"))
 }
 
-fn is_locked(main: &Path, top: &Path) -> bool {
-    let Some(list) = git(main, &["worktree", "list", "--porcelain"]) else {
-        return false;
+/// 读不到 worktree 列表时当作「锁着」：查不清楚就不删。
+fn is_locked(common: &Path, top: &Path) -> bool {
+    let Some(list) = git_repo(common, &["worktree", "list", "--porcelain"])
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    else {
+        return true;
     };
     let want = norm(top);
     let mut current: Option<String> = None;
@@ -230,43 +249,107 @@ fn is_locked(main: &Path, top: &Path) -> bool {
     false
 }
 
-fn submodule_state(top: &Path) -> SubmoduleState {
-    let Some(list) = git(top, &["submodule", "status", "--recursive"]) else {
-        return SubmoduleState::Clean;
-    };
+/// 已初始化子模块的绝对路径（递归）。`foreach` 跳过没初始化的；每行一个路径，带空格也不会被切开。
+/// 命令失败返回 None。
+fn submodule_dirs(top: &Path) -> Option<Vec<PathBuf>> {
+    let list = git(
+        top,
+        &[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            "git rev-parse --show-toplevel",
+        ],
+    )?;
+    Some(
+        list.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+    )
+}
+
+/// 每个子模块：HEAD 必须在它的远端分支里（不管父仓库记录的是不是同一个提交——父仓库干净时
+/// 子模块里也可能有只在本地的提交，做空验证复现过），工作区必须干净。任何一步查不清楚都算 Unpushed。
+fn submodule_state(subs: &[PathBuf]) -> SubmoduleState {
     let mut worst = SubmoduleState::Clean;
-    for line in list.lines() {
-        let Some(flag) = line.chars().next() else {
-            continue;
-        };
-        let mut parts = line[flag.len_utf8()..].split_whitespace();
-        let (Some(sha), Some(path)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        if flag == '-' {
-            continue; // 没初始化的子模块里什么都没有
+    for sub in subs {
+        match git(sub, &["branch", "-r", "--contains", "HEAD"]) {
+            Some(s) if !s.is_empty() => {}
+            _ => return SubmoduleState::Unpushed,
         }
-        let sub = top.join(path);
-        if flag == '+' || flag == 'U' {
-            // 检出的提交和父仓库记录的不一样：它要是只在本地，删了就没了。
-            let on_remote = git(&sub, &["branch", "-r", "--contains", sha])
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-            if !on_remote {
-                return SubmoduleState::Unpushed;
-            }
-            worst = SubmoduleState::Dirty;
-        }
-        if git(&sub, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty()) {
-            worst = SubmoduleState::Dirty;
+        match git(sub, &["status", "--porcelain", "--untracked-files=all"]) {
+            Some(s) if s.is_empty() => {}
+            Some(_) => worst = SubmoduleState::Dirty,
+            None => return SubmoduleState::Unpushed,
         }
     }
     worst
 }
 
-/// 未提交改动数 / 未跟踪文件数。子模块单独看（[`submodule_state`]），这里忽略。
+/// worktree 里嵌套的仓库和 worktree：除了自己的 `.git` 和已初始化子模块之外，任何位置出现
+/// `.git`（目录或文件）都算。不跟进链接（链接指向的是别处的东西，不会被删）。
+/// 读目录出错时返回 u32::MAX：查不清楚就不删。
+fn count_nested_repos(top: &Path, subs: &[PathBuf]) -> u32 {
+    let skip: Vec<String> = subs.iter().map(|p| norm(p)).collect();
+    let mut count = 0u32;
+    let mut stack = vec![top.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return u32::MAX;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else { return u32::MAX };
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                return u32::MAX;
+            };
+            if is_link(&meta) {
+                continue;
+            }
+            if entry.file_name() == ".git" {
+                if dir != top && !skip.contains(&norm(&dir)) {
+                    count += 1;
+                }
+                continue; // 不进 .git 目录本身
+            }
+            if meta.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    count
+}
+
+/// 被 skip-worktree（`S`）或 assume-unchanged（小写标记）的文件数：它们的改动 status 看不见。
+fn hidden_changes(top: &Path) -> u32 {
+    let Some(list) = git(top, &["ls-files", "-v"]) else {
+        return u32::MAX;
+    };
+    list.lines()
+        .filter(|l| {
+            l.chars()
+                .next()
+                .is_some_and(|c| c == 'S' || c.is_ascii_lowercase())
+        })
+        .count() as u32
+}
+
+/// 未提交改动数 / 未跟踪文件数。显式 `--untracked-files=all`：用户把 status.showUntrackedFiles
+/// 设成 no 时，新文件不会出现在默认输出里。子模块内容单独看（[`submodule_state`]），
+/// 但子模块指针变了要算作改动（`=dirty` 只忽略子模块里的脏内容）。
 fn worktree_changes(top: &Path) -> (u32, u32) {
-    let Some(list) = git(top, &["status", "--porcelain", "--ignore-submodules=all"]) else {
+    let Some(list) = git(
+        top,
+        &[
+            "status",
+            "--porcelain",
+            "--ignore-submodules=dirty",
+            "--untracked-files=all",
+        ],
+    ) else {
         return (u32::MAX, 0); // 读不到状态就当脏的：宁可不删
     };
     let mut dirty = 0;
@@ -281,21 +364,18 @@ fn worktree_changes(top: &Path) -> (u32, u32) {
     (dirty, untracked)
 }
 
-/// 本地分支上有没有「哪儿都找不到」的提交。PR 的 head 提交是合并时远端拿到的最后一个
-/// 版本：本地 HEAD 等于它或是它的祖先，说明本地没有多出来的东西。合并后远端分支常被
-/// 自动删掉，所以不能只看 upstream。
+/// 本地 HEAD 必须等于 PR 的 head 提交或是它的祖先：PR 合并时远端拿到的就是这个提交，
+/// 本地没有多出来的东西。不再用「某个远端分支包含 HEAD」兜底——分支名沿用旧名时，gh 会
+/// 拿到旧的已合并 PR，那时 HEAD 往往也在远端（刚推的新提交），兜底会把没合并的工作判成可删。
 fn has_unpushed(top: &Path, pr: &PrLookup) -> bool {
+    let PrLookup::Found { head_oid, .. } = pr else {
+        return true;
+    };
     let Some(head) = git(top, &["rev-parse", "HEAD"]) else {
         return true;
     };
-    if let PrLookup::Found { head_oid, .. } = pr {
-        if head.eq_ignore_ascii_case(head_oid)
-            || git_ok(top, &["merge-base", "--is-ancestor", "HEAD", head_oid])
-        {
-            return false;
-        }
-    }
-    !git(top, &["branch", "-r", "--contains", "HEAD"]).is_some_and(|s| !s.is_empty())
+    !(head.eq_ignore_ascii_case(head_oid)
+        || git(top, &["merge-base", "--is-ancestor", "HEAD", head_oid]).is_some())
 }
 
 fn gather_facts(lay: &Layout, other_sessions: u32, pr_lookup: &dyn Fn(&Path) -> PrLookup) -> Facts {
@@ -306,7 +386,9 @@ fn gather_facts(lay: &Layout, other_sessions: u32, pr_lookup: &dyn Fn(&Path) -> 
         branch,
         other_sessions,
         pr: PrLookup::Unavailable,
+        nested: 0,
         submodules: SubmoduleState::Clean,
+        hidden: 0,
         dirty: 0,
         untracked: 0,
         unpushed: false,
@@ -317,12 +399,21 @@ fn gather_facts(lay: &Layout, other_sessions: u32, pr_lookup: &dyn Fn(&Path) -> 
     if !facts.linked_worktree || facts.branch.is_none() || facts.other_sessions > 0 {
         return facts;
     }
-    facts.locked = is_locked(&lay.main, top);
+    facts.locked = is_locked(&lay.common, top);
     facts.pr = pr_lookup(top);
     if evaluate(&facts).is_some() {
         return facts;
     }
-    facts.submodules = submodule_state(top);
+    match submodule_dirs(top) {
+        Some(subs) => {
+            facts.nested = count_nested_repos(top, &subs);
+            facts.submodules = submodule_state(&subs);
+        }
+        // 连子模块都列不出来（比如 `git add` 了一个嵌套仓库却没有 .gitmodules 映射）：
+        // 里面可能有只在本地的提交，按不能删处理。
+        None => facts.submodules = SubmoduleState::Unpushed,
+    }
+    facts.hidden = hidden_changes(top);
     (facts.dirty, facts.untracked) = worktree_changes(top);
     facts.unpushed = has_unpushed(top, &facts.pr);
     facts
@@ -601,14 +692,8 @@ pub(crate) fn unlink_links(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-fn is_link(meta: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    meta.file_type().is_symlink() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(target_os = "windows"))]
+/// 只认真正的链接：符号链接和 junction（标准库对这两种 name-surrogate 重解析点都报 is_symlink）。
+/// 不看「带重解析属性」——OneDrive 的云文件、去重文件也带这个属性，它们是真内容，不是链接。
 fn is_link(meta: &std::fs::Metadata) -> bool {
     meta.file_type().is_symlink()
 }
@@ -630,7 +715,7 @@ fn remove_link(path: &Path, _meta: &std::fs::Metadata) -> std::io::Result<()> {
     std::fs::remove_file(path)
 }
 
-/// 不跟进链接的递归删除，用于 `git worktree remove` 之后清残留目录。
+/// 不跟进链接的递归删除。只用在 `git worktree remove` 已经成功、目录却还剩空壳的收尾上。
 fn remove_tree_no_follow(dir: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -678,8 +763,10 @@ fn refusal_error(reason: &str) -> &'static str {
         "no_pr" => "worktree/no_pr",
         "pr_open" => "worktree/pr_open",
         "pr_closed" => "worktree/pr_closed",
+        "nested_repo" => "worktree/nested_repo",
         "submodule_unpushed" => "worktree/submodule_unpushed",
         "submodule_dirty" => "worktree/submodule_dirty",
+        "hidden_changes" => "worktree/hidden_changes",
         "dirty" => "worktree/dirty",
         "untracked" => "worktree/untracked",
         "unpushed" => "worktree/unpushed",
@@ -687,12 +774,14 @@ fn refusal_error(reason: &str) -> &'static str {
     }
 }
 
-/// 删除主流程。`kill_processes = false` 且有占用进程时什么都不动，返回占用清单。
+/// 删除主流程。有占用进程时：只有当它们全都在 `confirmed_pids`（用户在确认框里看过的那批）
+/// 里，才结束它们继续删；否则什么都不动，返回此刻的占用清单让用户再确认一次——
+/// 不能结束用户没看到名字的进程（比如两次调用之间刚在这个目录开的终端）。
 pub(crate) fn remove_dir_worktree(
     dir: &Path,
     other_sessions: &dyn Fn(&str) -> u32,
     pr_lookup: &dyn Fn(&Path) -> PrLookup,
-    kill_processes: bool,
+    confirmed_pids: &[u32],
 ) -> Result<WorktreeRemovalDto, String> {
     let status = status_for_dir(dir, other_sessions, pr_lookup);
     if !status.eligible {
@@ -704,7 +793,7 @@ pub(crate) fn remove_dir_worktree(
 
     let blockers = processes_using(&top);
     if !blockers.is_empty() {
-        if !kill_processes {
+        if !blockers.iter().all(|p| confirmed_pids.contains(&p.pid)) {
             return Ok(WorktreeRemovalDto {
                 removed: false,
                 blockers,
@@ -728,32 +817,27 @@ pub(crate) fn remove_dir_worktree(
     let top_s = top.to_string_lossy().into_owned();
     // 单个 --force：允许删掉被忽略的文件和含子模块的 worktree（干不干净上面已经查过）；
     // 不用两个 --force，被 lock 的 worktree 仍然会被拒绝。
-    let out = command("git")
-        .arg("-C")
-        .arg(&lay.main)
-        .args(["worktree", "remove", "--force", &top_s])
-        .output()
+    let out = git_repo(&lay.common, &["worktree", "remove", "--force", &top_s])
         .map_err(|e| format!("worktree/git_failed: {e}"))?;
-    if !out.status.success() && !top.exists() {
-        // 目录已经没了但 git 报错：交给下面的 prune 收尾。
-    } else if !out.status.success() {
-        // git 没删干净（比如长路径）：用不跟进链接的方式清残留，再 prune。
-        remove_tree_no_follow(&top).map_err(|e| {
-            format!(
-                "worktree/remove_failed: {} {e}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )
-        })?;
+    if !out.status.success() {
+        // git 删不掉就停下报错，不自己动手递归删：那会绕过 git 自己的保护（锁定、找错仓库）。
+        return Err(format!(
+            "worktree/remove_failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
+    // git 说删好了但还剩空壳（极少见，比如杀软刚放开句柄）：这时里面只可能是空目录。
     if top.exists() {
         remove_tree_no_follow(&top).map_err(|e| format!("worktree/remove_failed: {e}"))?;
     }
-    let _ = git(&lay.main, &["worktree", "prune"]);
+    let _ = git_repo(&lay.common, &["worktree", "prune"]);
     if top.exists() {
         return Err("worktree/still_exists".into());
     }
     // squash 合并后 `-d` 会认为没合并而拒绝；没推的提交上面已经排除，这里用 -D。
-    let branch_deleted = git_ok(&lay.main, &["branch", "-D", &branch]);
+    let branch_deleted = git_repo(&lay.common, &["branch", "-D", &branch])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     Ok(WorktreeRemovalDto {
         removed: true,
         blockers: Vec::new(),
@@ -812,7 +896,7 @@ pub(crate) async fn remove_session_worktree(
     app: tauri::AppHandle,
     state: State<'_, super::AppState>,
     session_id: i64,
-    kill_processes: bool,
+    confirmed_pids: Vec<u32>,
 ) -> Result<WorktreeRemovalDto, String> {
     let db_path = state.db_path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -822,7 +906,7 @@ pub(crate) async fn remove_session_worktree(
             &dir,
             &|top| count_other_sessions(&db_path, &[session_id], top),
             &gh_pr_lookup,
-            kill_processes,
+            &confirmed_pids,
         )
     })
     .await

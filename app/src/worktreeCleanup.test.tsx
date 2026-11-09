@@ -58,7 +58,7 @@ describe("撤销条上的「删除 worktree」按钮", () => {
     const confirm = calls("confirm_dialog")[0] as { message: string };
     expect(confirm.message).toContain("C:/w/meowo-feat");
     expect(confirm.message).toContain("feat/x");
-    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 7, killProcesses: false }]);
+    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 7, confirmedPids: [] }]);
   });
 
   it("不可清理时不出现", async () => {
@@ -69,7 +69,7 @@ describe("撤销条上的「删除 worktree」按钮", () => {
     expect(screen.queryByRole("button", { name: "删除 worktree" })).toBeNull();
   });
 
-  it("有程序占着目录：列出程序名再问一次，同意后才带 killProcesses 重试", async () => {
+  it("有程序占着目录：列出程序名再问一次，同意后带上看过的 pid 重试", async () => {
     let round = 0;
     mockInvoke({
       worktree_status: () => eligible,
@@ -84,8 +84,29 @@ describe("撤销条上的「删除 worktree」按钮", () => {
     expect(confirms).toHaveLength(2);
     expect(confirms[1].message).toContain("node.exe (4321)");
     expect(calls("remove_session_worktree")).toEqual([
-      { sessionId: 7, killProcesses: false },
-      { sessionId: 7, killProcesses: true },
+      { sessionId: 7, confirmedPids: [] },
+      { sessionId: 7, confirmedPids: [4321] },
+    ]);
+  });
+
+  it("确认后又冒出新进程：再列一次给用户看，只带用户看过的 pid", async () => {
+    const rounds = [
+      { removed: false, blockers: [{ pid: 1, name: "node.exe" }], branchDeleted: false },
+      { removed: false, blockers: [{ pid: 1, name: "node.exe" }, { pid: 2, name: "bash.exe" }], branchDeleted: false },
+      { removed: true, blockers: [], branchDeleted: true },
+    ];
+    let i = 0;
+    mockInvoke({ worktree_status: () => eligible, remove_session_worktree: () => rounds[i++] });
+    render(<WorktreeRemoveButton t={zh} sessionId={7} className="b" />);
+    fireEvent.click(await screen.findByRole("button", { name: "删除 worktree" }));
+    expect(await screen.findByText("worktree 已删除")).toBeTruthy();
+    const confirms = calls("confirm_dialog") as { message: string }[];
+    expect(confirms).toHaveLength(3);
+    expect(confirms[2].message).toContain("bash.exe (2)");
+    expect(calls("remove_session_worktree")).toEqual([
+      { sessionId: 7, confirmedPids: [] },
+      { sessionId: 7, confirmedPids: [1] },
+      { sessionId: 7, confirmedPids: [1, 2] },
     ]);
   });
 
@@ -202,6 +223,34 @@ describe("会话管理页的批量清理", () => {
     render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
     await waitFor(() => expect(calls("get_session_admin_page").length).toBeGreaterThan(0));
     expect(screen.queryByRole("button", { name: "清理已合并 worktree" })).toBeNull();
+  });
+});
+
+describe("侧栏「已完成」页的批量清理（手机端也走这里）", () => {
+  it("已完成页有批量清理入口，结果显示在侧栏底部", async () => {
+    const done = {
+      session: { id: 5, cc_session_id: "cc-5", status: "ended", last_event_at: 1 },
+      project_name: "meowo", task_title: "旧功能", connected: false, pending_review: null,
+      cwd: "C:/w/meowo-old", provider: "claude", archived: true,
+    } as unknown as LiveSession;
+    invoke.mockImplementation((command: string) => {
+      switch (command) {
+        case "get_live_sessions_page": return Promise.resolve([done]);
+        case "list_cleanable_worktrees": return Promise.resolve([{ sessionIds: [5], status: eligible }]);
+        case "get_session_admin_page": return Promise.resolve({ items: [], total: 0 });
+        case "confirm_dialog": return Promise.resolve(true);
+        case "remove_session_worktree": return Promise.resolve({ removed: true, blockers: [], branchDeleted: true });
+        default: return Promise.resolve();
+      }
+    });
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    // 进行中页没有这个入口。
+    await screen.findByRole("tab", { name: "已完成" });
+    expect(screen.queryByRole("button", { name: "清理已合并 worktree" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "已完成" }));
+    fireEvent.click(await screen.findByRole("button", { name: "清理已合并 worktree" }));
+    expect(await screen.findByText("删除了 1 个 worktree")).toBeTruthy();
+    expect(calls("remove_session_worktree")).toEqual([{ sessionId: 5, confirmedPids: [] }]);
   });
 });
 

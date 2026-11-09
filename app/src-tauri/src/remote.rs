@@ -874,7 +874,7 @@ bridged_args!(WorktreeStatusArgs { session_id: i64 });
 
 bridged_args!(RemoveSessionWorktreeArgs {
     session_id: i64,
-    kill_processes: bool
+    confirmed_pids: Vec<u32>
 });
 
 bridged_args!(MoveSessionRankArgs {
@@ -1155,7 +1155,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     app.clone(),
                     state,
                     a.session_id,
-                    a.kill_processes,
+                    a.confirmed_pids,
                 )
                 .await,
             )
@@ -2093,7 +2093,7 @@ mod tests {
             // api.ts worktreeStatus / removeSessionWorktree
             "worktree_status" => parse::<WorktreeStatusArgs>(br#"{"sessionId":7}"#).map(|_| ()),
             "remove_session_worktree" => parse::<RemoveSessionWorktreeArgs>(
-                br#"{"sessionId":7,"killProcesses":false}"#,
+                br#"{"sessionId":7,"confirmedPids":[]}"#,
             )
             .map(|_| ()),
             // api.ts:390

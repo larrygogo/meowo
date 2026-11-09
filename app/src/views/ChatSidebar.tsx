@@ -21,7 +21,7 @@ import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
-import { WorktreeRemoveButton, type RemovalOutcome } from "../worktreeCleanup";
+import { WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -563,6 +563,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   const [notingId, setNotingId] = useState<number | null>(null);
   // 动作失败必须可见:静默吞掉的话,用户点了「重命名」只会看到名字没变,以为是自己没点上。
   const [actionError, setActionError] = useState<string | null>(null);
+  // 批量清理 worktree 的进行状态与结果（结果可能多行：失败项逐行列出），8s 后自动收起。
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cleanResult) return;
+    const timer = window.setTimeout(() => setCleanResult(null), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [cleanResult]);
   useEffect(() => {
     if (!actionError) return;
     const timer = window.setTimeout(() => setActionError(null), 4_000);
@@ -1336,6 +1344,24 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             )}
           </div>
         )}
+        {/* 已完成页顶部：批量清理已合并 worktree。手机端只有侧栏没有会话管理页，批量入口放在这里
+            两端都够得着（用户定：手机端同样提供）。 */}
+        {archivedView && !workspacesView && sessions !== null && sessions.length > 0 && (
+          <div className="chat-sidebar-cleanbar">
+            <button
+              type="button"
+              disabled={cleaning}
+              onClick={() => {
+                setCleaning(true);
+                void runBatchCleanup(t).then((text) => {
+                  setCleaning(false);
+                  if (text) setCleanResult(text);
+                  void loadRef.current("refresh");
+                });
+              }}
+            >{cleaning ? t.worktree.batchScanning : t.worktree.batch}</button>
+          </div>
+        )}
         {renderedGroups
           ? renderedGroups.map(({ group, isFolded, canCollapse, idleCount, shown }) => {
               // 组头汇总点:折起来时它是这一组唯一的状态出口,取组内最强的召唤。
@@ -1449,6 +1475,12 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       )}
       {/* G-16：全侧栏唯一的读屏汇总播报源（视觉隐藏），取代每条会话一个 role=status。 */}
       <div className="chat-sidebar-sronly" role="status">{liveSummary}</div>
+      {cleanResult && !actionError && (
+        <div className="chat-sidebar-error is-undo is-multiline" role="status">
+          <span>{cleanResult}</span>
+          <button type="button" onClick={() => setCleanResult(null)}>{t.dialog.ok}</button>
+        </div>
+      )}
       {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
       {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
       {/* 归档撤销条:8s 内可一键取回并跳回该会话(批量归档整批撤销)。 */}

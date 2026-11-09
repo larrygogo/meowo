@@ -7,11 +7,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useT } from "../../i18n";
-import { getSessionAdminPage, listCleanableWorktrees, recentCwds, setArchived, type LiveSession } from "../../api";
-import { appConfirm } from "../../confirm";
-import { formatBackendError } from "../../i18n/errors";
-import { runWorktreeRemoval } from "../../worktreeCleanup";
-import { UNNAMED_SESSION_SENTINEL } from "../sticker/types";
+import { getSessionAdminPage, recentCwds, setArchived, type LiveSession } from "../../api";
+import { runBatchCleanup } from "../../worktreeCleanup";
 import { folderName, pathKey } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { CheckIcon } from "../sticker/icons";
@@ -306,43 +303,10 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   const [cleaning, setCleaning] = useState(false);
   const cleanWorktrees = async () => {
     setCleaning(true);
-    try {
-      const all = await listCleanableWorktrees();
-      const ready = all.filter((item) => item.status.eligible);
-      if (ready.length === 0) {
-        setToast({ text: t.worktree.batchNone, undo: null });
-        return;
-      }
-      // 会话名：拉一页最近的已完成会话对上 id（最多 200 条），对不上的只显示目录。
-      const titles = new Map<number, string>();
-      const donePage = await getSessionAdminPage({ workspaces: [], status: "done", updatedBeforeDays: null, page: 0, pageSize: 200 }).catch(() => null);
-      for (const row of donePage?.items ?? []) {
-        if (row.task_title && row.task_title !== UNNAMED_SESSION_SENTINEL) titles.set(row.session.id, row.task_title);
-      }
-      const lines = ready.map((item) => {
-        const name = item.sessionIds.map((id) => titles.get(id)).find(Boolean);
-        return `• ${name ? `${name} — ` : ""}${item.status.path ?? ""} (${item.status.branch ?? ""})`;
-      });
-      const yes = await appConfirm(t.worktree.batchMessage(lines.join("\n"), all.length - ready.length), {
-        title: t.worktree.batchTitle,
-        danger: true,
-        confirmLabel: t.worktree.remove,
-      });
-      if (!yes) return;
-      let ok = 0;
-      const failures: string[] = [];
-      for (const item of ready) {
-        const outcome = await runWorktreeRemoval(t, item.sessionIds[0], item.status, false);
-        if (outcome.kind === "removed") ok += 1;
-        else if (outcome.kind === "failed") failures.push(t.worktree.batchFailedItem(item.status.path ?? "", outcome.message));
-      }
-      load(applied, page, pageSize);
-      setToast({ text: [t.worktree.batchDone(ok, failures.length), ...failures].join("\n"), undo: null });
-    } catch (error) {
-      setToast({ text: formatBackendError(error, t.locale), undo: null });
-    } finally {
-      setCleaning(false);
-    }
+    const text = await runBatchCleanup(t);
+    setCleaning(false);
+    load(applied, page, pageSize);
+    if (text) setToast({ text, undo: null });
   };
 
   const statusOptions = useMemo(() => [

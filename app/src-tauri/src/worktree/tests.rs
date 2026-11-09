@@ -18,6 +18,8 @@ fn good() -> Facts {
         untracked: 0,
         unpushed: false,
         locked: false,
+        nested: 0,
+        hidden: 0,
     }
 }
 
@@ -330,7 +332,7 @@ fn 删除已合并的_worktree_只拆链接不伤主仓库() {
     let status = status_for_dir(&fx.wt, &nobody, &merged(head.clone()));
     assert!(status.eligible, "应可清理: {status:?}");
 
-    let result = remove_dir_worktree(&fx.wt, &nobody, &merged(head), false).expect("删除成功");
+    let result = remove_dir_worktree(&fx.wt, &nobody, &merged(head), &[]).expect("删除成功");
     assert!(result.removed);
     assert!(result.branch_deleted);
     assert!(!fx.wt.exists(), "worktree 目录应已删除");
@@ -359,7 +361,7 @@ fn 不满足条件时拒绝删除且原样保留() {
     let fx = fixture("dirty");
     let head = run(&fx.wt, &["rev-parse", "HEAD"]);
     std::fs::write(fx.wt.join("a.txt"), "changed\n").unwrap();
-    let err = remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), true).unwrap_err();
+    let err = remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), &[]).unwrap_err();
     assert_eq!(err, "worktree/dirty");
     assert!(fx.wt.join("a.txt").exists());
     assert!(fx.wt.join("node_modules").exists(), "链接也不该被拆");
@@ -373,7 +375,7 @@ fn 不满足条件时拒绝删除且原样保留() {
         head_oid: head.clone(),
     };
     assert_eq!(
-        remove_dir_worktree(&fx.wt, &nobody, &open, true).unwrap_err(),
+        remove_dir_worktree(&fx.wt, &nobody, &open, &[]).unwrap_err(),
         "worktree/pr_open"
     );
     assert!(fx.wt.exists());
@@ -422,7 +424,7 @@ fn 有进程占着目录时先列出来_确认后结束进程再删() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     let first =
-        remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), false).expect("返回占用清单");
+        remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), &[]).expect("返回占用清单");
     assert!(!first.removed);
     assert!(
         first.blockers.iter().any(|p| p.pid == child.id()),
@@ -432,11 +434,35 @@ fn 有进程占着目录时先列出来_确认后结束进程再删() {
     );
     assert!(fx.wt.exists(), "没确认前什么都不动");
 
-    let second = remove_dir_worktree(&fx.wt, &nobody, &merged(head), true).expect("确认后删除");
+    // 确认之后又冒出一个新进程：用户没看到它的名字，不能顺手结束，要再问一次。
+    #[cfg(target_os = "windows")]
+    let mut late = StdCommand::new("cmd")
+        .args(["/c", "ping -n 60 127.0.0.1 >nul"])
+        .current_dir(&fx.wt)
+        .spawn()
+        .unwrap();
+    #[cfg(not(target_os = "windows"))]
+    let mut late = StdCommand::new("sleep")
+        .arg("60")
+        .current_dir(&fx.wt)
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let seen: Vec<u32> = first.blockers.iter().map(|p| p.pid).collect();
+    let again =
+        remove_dir_worktree(&fx.wt, &nobody, &merged(head.clone()), &seen).expect("再问一次");
+    assert!(!again.removed, "有没确认过的进程时不能删");
+    assert!(again.blockers.iter().any(|p| p.pid == late.id()));
+    assert!(fx.wt.exists());
+
+    let all: Vec<u32> = again.blockers.iter().map(|p| p.pid).collect();
+    let second = remove_dir_worktree(&fx.wt, &nobody, &merged(head), &all).expect("确认后删除");
     assert!(second.removed);
     assert!(!fx.wt.exists());
     let _ = child.kill();
     let _ = child.wait();
+    let _ = late.kill();
+    let _ = late.wait();
 }
 
 /// 真机探针：真实的 gh、真实的 worktree。默认不跑（会删东西），手动指定目录才跑：
@@ -452,7 +478,228 @@ fn probe_real_worktree() {
     let status = status_for_dir(&dir, &nobody, &gh_pr_lookup);
     println!("判定: {status:?}");
     assert!(status.eligible, "真实环境下应可清理");
-    let result = remove_dir_worktree(&dir, &nobody, &gh_pr_lookup, false).expect("删除");
+    let first = remove_dir_worktree(&dir, &nobody, &gh_pr_lookup, &[]).expect("删除");
+    let pids: Vec<u32> = first.blockers.iter().map(|p| p.pid).collect();
+    println!("占用: {:?}", first.blockers);
+    let result = if first.removed {
+        first
+    } else {
+        remove_dir_worktree(&dir, &nobody, &gh_pr_lookup, &pids).expect("删除")
+    };
     println!("结果: {result:?}");
     assert!(result.removed && !dir.exists());
+}
+
+// ═══ 做空验证复现过的误删场景（2026-11-09）═══
+
+fn reason_of(fx: &Fixture) -> Option<String> {
+    let head = run(&fx.wt, &["rev-parse", "HEAD"]);
+    status_for_dir(&fx.wt, &nobody, &merged(head)).reason
+}
+
+/// 子模块远端 + 在 worktree 里初始化好的子模块 `dir_name`。
+fn add_submodule(fx: &Fixture, dir_name: &str) -> PathBuf {
+    let root = fx.main.parent().unwrap();
+    let sub_remote = root.join(format!("sub-{}.git", dir_name.replace(' ', "-")));
+    let seed = root.join(format!("sub-seed-{}", dir_name.replace(' ', "-")));
+    StdCommand::new("git")
+        .args(["init", "-q", "--bare", "-b", "main"])
+        .arg(&sub_remote)
+        .output()
+        .unwrap();
+    StdCommand::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .arg(&seed)
+        .output()
+        .unwrap();
+    run(&seed, &["config", "user.name", "t"]);
+    run(&seed, &["config", "user.email", "t@t"]);
+    std::fs::write(seed.join("s.txt"), "s\n").unwrap();
+    run(&seed, &["add", "."]);
+    run(&seed, &["commit", "-qm", "sub"]);
+    run(&seed, &["push", "-q", sub_remote.to_str().unwrap(), "main"]);
+    run(
+        &fx.wt,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            sub_remote.to_str().unwrap(),
+            dir_name,
+        ],
+    );
+    run(&fx.wt, &["commit", "-qm", "add sub"]);
+    run(&fx.wt, &["push", "-q"]);
+    let sub = fx.wt.join(dir_name);
+    run(&sub, &["config", "user.name", "t"]);
+    run(&sub, &["config", "user.email", "t@t"]);
+    sub
+}
+
+#[test]
+fn 子模块里只在本地的提交_父仓库也提交推送了_仍不可清理() {
+    let fx = fixture("sublocal");
+    let sub = add_submodule(&fx, "libs");
+    std::fs::write(sub.join("local.txt"), "x\n").unwrap();
+    run(&sub, &["add", "."]);
+    run(&sub, &["commit", "-qm", "local only"]);
+    run(&fx.wt, &["add", "libs"]);
+    run(&fx.wt, &["commit", "-qm", "bump"]);
+    run(&fx.wt, &["push", "-q"]);
+    assert_eq!(reason_of(&fx).as_deref(), Some("submodule_unpushed"));
+}
+
+#[test]
+fn 带空格的子模块路径里有新文件_不可清理() {
+    let fx = fixture("subspace");
+    let sub = add_submodule(&fx, "lib sub");
+    std::fs::write(sub.join("new.txt"), "x\n").unwrap();
+    assert_eq!(reason_of(&fx).as_deref(), Some("submodule_dirty"));
+}
+
+#[test]
+fn 嵌套在忽略目录里的_worktree_不可清理() {
+    let fx = fixture("nested");
+    std::fs::write(fx.wt.join(".gitignore"), "node_modules\n.claude/\n").unwrap();
+    run(&fx.wt, &["add", ".gitignore"]);
+    run(&fx.wt, &["commit", "-qm", "ignore"]);
+    run(&fx.wt, &["push", "-q"]);
+    let nested = fx.wt.join(".claude").join("worktrees").join("n");
+    run(
+        &fx.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/nested",
+            nested.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(nested.join("work.txt"), "wip\n").unwrap();
+    assert_eq!(reason_of(&fx).as_deref(), Some("nested_repo"));
+}
+
+#[test]
+fn 直接_add_进来的嵌套仓库_不可清理() {
+    let fx = fixture("embedded");
+    let tool = fx.wt.join("tool");
+    StdCommand::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .arg(&tool)
+        .output()
+        .unwrap();
+    run(&tool, &["config", "user.name", "t"]);
+    run(&tool, &["config", "user.email", "t@t"]);
+    std::fs::write(tool.join("t.txt"), "t\n").unwrap();
+    run(&tool, &["add", "."]);
+    run(&tool, &["commit", "-qm", "local"]);
+    run(&fx.wt, &["add", "tool"]);
+    run(&fx.wt, &["commit", "-qm", "embed"]);
+    run(&fx.wt, &["push", "-q"]);
+    let reason = reason_of(&fx);
+    assert!(
+        matches!(
+            reason.as_deref(),
+            Some("nested_repo") | Some("submodule_unpushed")
+        ),
+        "{reason:?}"
+    );
+}
+
+#[test]
+fn 关掉未跟踪文件显示时_新文件仍算未提交() {
+    let fx = fixture("showuntracked");
+    run(&fx.wt, &["config", "status.showUntrackedFiles", "no"]);
+    std::fs::write(fx.wt.join("notes.md"), "n\n").unwrap();
+    assert_eq!(reason_of(&fx).as_deref(), Some("untracked"));
+}
+
+#[test]
+fn 被_skip_worktree_藏起来的改动_不可清理() {
+    let fx = fixture("skipwt");
+    std::fs::write(fx.wt.join("a.txt"), "local config\n").unwrap();
+    run(&fx.wt, &["update-index", "--skip-worktree", "a.txt"]);
+    assert_eq!(reason_of(&fx).as_deref(), Some("hidden_changes"));
+}
+
+#[test]
+fn 本地_head_不在_pr_head_之下时不可清理_即使已推到远端() {
+    // 分支名沿用旧名：gh 拿到的是旧的已合并 PR，本地有新提交且推上去了。
+    let fx = fixture("reuse");
+    let old_head = run(&fx.wt, &["rev-parse", "HEAD"]);
+    std::fs::write(fx.wt.join("c.txt"), "c\n").unwrap();
+    run(&fx.wt, &["add", "."]);
+    run(&fx.wt, &["commit", "-qm", "new work"]);
+    run(&fx.wt, &["push", "-q"]);
+    let status = status_for_dir(&fx.wt, &nobody, &merged(old_head));
+    assert_eq!(status.reason.as_deref(), Some("unpushed"));
+}
+
+#[test]
+fn bare_仓库布局下删对仓库_不碰旁边仓库的同名分支() {
+    let fx = fixture("bare");
+    let ws = fx.main.parent().unwrap().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    // ws 本身也是个仓库，并且有同名分支 feat/x——旧实现会在这里执行 branch -D。
+    StdCommand::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .arg(&ws)
+        .output()
+        .unwrap();
+    run(&ws, &["config", "user.name", "t"]);
+    run(&ws, &["config", "user.email", "t@t"]);
+    std::fs::write(ws.join("w.txt"), "w\n").unwrap();
+    run(&ws, &["add", "w.txt"]);
+    run(&ws, &["commit", "-qm", "ws"]);
+    run(&ws, &["branch", "feat/x"]);
+    std::fs::write(ws.join(".gitignore"), "*\n").unwrap();
+
+    let bare = ws.join("proj.git");
+    StdCommand::new("git")
+        .args(["clone", "-q", "--bare"])
+        .arg(&fx.remote)
+        .arg(&bare)
+        .output()
+        .unwrap();
+    let wt = ws.join("feat-x");
+    run(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/x",
+            wt.to_str().unwrap(),
+        ],
+    );
+    run(&wt, &["config", "user.name", "t"]);
+    run(&wt, &["config", "user.email", "t@t"]);
+    let head = run(&wt, &["rev-parse", "HEAD"]);
+
+    let result = remove_dir_worktree(&wt, &nobody, &merged(head), &[]).expect("删除");
+    assert!(result.removed && result.branch_deleted);
+    assert!(!wt.exists());
+    assert!(
+        run(&bare, &["branch", "--list", "feat/x"]).is_empty(),
+        "bare 仓库里的分支应删"
+    );
+    assert!(
+        !run(&ws, &["branch", "--list", "feat/x"]).is_empty(),
+        "旁边仓库的同名分支不能动"
+    );
+    assert!(
+        !run(&bare, &["worktree", "list"]).contains("feat-x"),
+        "不留 worktree 元数据"
+    );
+}
+
+#[test]
+fn 锁定的_worktree_不可清理() {
+    let fx = fixture("locked");
+    run(&fx.main, &["worktree", "lock", fx.wt.to_str().unwrap()]);
+    assert_eq!(reason_of(&fx).as_deref(), Some("locked"));
 }

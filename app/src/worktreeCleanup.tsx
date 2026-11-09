@@ -4,6 +4,8 @@
 // 手机端同一套：appConfirm 在手机浏览器里落到 window.confirm（mobile/transport.ts）。
 import { useEffect, useState } from "react";
 import {
+  getSessionAdminPage,
+  listCleanableWorktrees,
   removeSessionWorktree,
   worktreeStatus,
   type WorktreeStatusDto,
@@ -11,6 +13,7 @@ import {
 import { appConfirm } from "./confirm";
 import { formatBackendError } from "./i18n/errors";
 import type { Dict } from "./i18n/zh";
+import { UNNAMED_SESSION_SENTINEL } from "./views/sticker/types";
 
 /** 这些原因说明根本不是 worktree（或目录已经没了），菜单里不必出现「删除 worktree」这一项。 */
 const NOT_APPLICABLE = new Set(["not_worktree", "not_repo", "dir_missing"]);
@@ -34,6 +37,8 @@ export function worktreeReasonText(t: Dict, status: WorktreeStatusDto): string {
     case "submodule_dirty": return r.submodule_dirty;
     case "submodule_unpushed": return r.submodule_unpushed;
     case "shared_session": return r.shared_session(n);
+    case "nested_repo": return r.nested_repo(n);
+    case "hidden_changes": return r.hidden_changes(n);
     case "detached": return r.detached;
     case "locked": return r.locked;
     default: return r.unknown;
@@ -81,8 +86,12 @@ export async function runWorktreeRemoval(
     if (!yes) return { kind: "cancelled" };
   }
   try {
-    let result = await removeSessionWorktree(sessionId, false);
-    if (!result.removed && result.blockers.length > 0) {
+    // 后端只结束用户在确认框里看过的那批进程：确认后又冒出新进程时它会再返回占用清单，
+    // 这里就再问一次（最多三轮，防止有进程不停地重新拉起）。
+    let confirmed: number[] = [];
+    let result = await removeSessionWorktree(sessionId, confirmed);
+    for (let round = 0; !result.removed && result.blockers.length > 0; round += 1) {
+      if (round >= 3) return { kind: "failed", message: t.worktree.busyLoop };
       const names = result.blockers.map((p) => `${p.name} (${p.pid})`).join("\n");
       const kill = await appConfirm(t.worktree.busyMessage(names), {
         title: t.worktree.busyTitle,
@@ -90,12 +99,52 @@ export async function runWorktreeRemoval(
         confirmLabel: t.worktree.busyConfirm,
       });
       if (!kill) return { kind: "cancelled" };
-      result = await removeSessionWorktree(sessionId, true);
+      confirmed = result.blockers.map((p) => p.pid);
+      result = await removeSessionWorktree(sessionId, confirmed);
     }
     if (!result.removed) return { kind: "failed", message: t.worktree.reason.unknown };
     return { kind: "removed", branchDeleted: result.branchDeleted };
   } catch (error) {
     return { kind: "failed", message: formatBackendError(error, t.locale) };
+  }
+}
+
+/**
+ * 批量清理已完成会话的 worktree（会话管理页和侧栏「已完成」页共用；手机端走后者）。
+ * 清单整体确认一次，之后逐个删；某个 worktree 有程序占着时仍会单独问——结束哪个程序
+ * 必须让用户看到名字。返回给用户看的结果文字。
+ */
+export async function runBatchCleanup(t: Dict): Promise<string> {
+  try {
+    const all = await listCleanableWorktrees();
+    const ready = all.filter((item) => item.status.eligible);
+    if (ready.length === 0) return t.worktree.batchNone;
+    // 会话名：拉一页最近的已完成会话对上 id（最多 200 条），对不上的只显示目录。
+    const titles = new Map<number, string>();
+    const page = await getSessionAdminPage({ workspaces: [], status: "done", updatedBeforeDays: null, page: 0, pageSize: 200 }).catch(() => null);
+    for (const row of page?.items ?? []) {
+      if (row.task_title && row.task_title !== UNNAMED_SESSION_SENTINEL) titles.set(row.session.id, row.task_title);
+    }
+    const lines = ready.map((item) => {
+      const name = item.sessionIds.map((id) => titles.get(id)).find(Boolean);
+      return `• ${name ? `${name} — ` : ""}${item.status.path ?? ""} (${item.status.branch ?? ""})`;
+    });
+    const yes = await appConfirm(t.worktree.batchMessage(lines.join("\n"), all.length - ready.length), {
+      title: t.worktree.batchTitle,
+      danger: true,
+      confirmLabel: t.worktree.remove,
+    });
+    if (!yes) return "";
+    let ok = 0;
+    const failures: string[] = [];
+    for (const item of ready) {
+      const outcome = await runWorktreeRemoval(t, item.sessionIds[0], item.status, false);
+      if (outcome.kind === "removed") ok += 1;
+      else if (outcome.kind === "failed") failures.push(t.worktree.batchFailedItem(item.status.path ?? "", outcome.message));
+    }
+    return [t.worktree.batchDone(ok, failures.length), ...failures].join("\n");
+  } catch (error) {
+    return formatBackendError(error, t.locale);
   }
 }
 

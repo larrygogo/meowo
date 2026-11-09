@@ -588,9 +588,12 @@ export function setArchived(sessionId: number, archived: boolean): Promise<void>
 export function worktreeStatus(sessionId: number): Promise<WorktreeStatusDto> {
   return invoke("worktree_status", { sessionId });
 }
-/** 删除会话所在 worktree 和本地分支。killProcesses=false 时有进程占用就什么都不动，返回占用清单。 */
-export function removeSessionWorktree(sessionId: number, killProcesses: boolean): Promise<WorktreeRemovalDto> {
-  return invoke("remove_session_worktree", { sessionId, killProcesses });
+/**
+ * 删除会话所在 worktree 和本地分支。有进程占用时，只有它们全在 confirmedPids（用户看过名字的那批）里
+ * 才结束它们继续删；否则什么都不动，返回此刻的占用清单。
+ */
+export function removeSessionWorktree(sessionId: number, confirmedPids: number[]): Promise<WorktreeRemovalDto> {
+  return invoke("remove_session_worktree", { sessionId, confirmedPids });
 }
 /** 已归档会话所在的 worktree（去重）及各自判定，批量清理用。 */
 export function listCleanableWorktrees(): Promise<CleanableWorktreeDto[]> {
