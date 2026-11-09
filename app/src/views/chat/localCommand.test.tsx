@@ -10,6 +10,19 @@ function userText(text: string): ChatItem {
 }
 
 describe("parseUserText", () => {
+  /// 输入框里 `! 命令` 的落盘形态（实拍）：命令一条、输出一条，都是 user 消息。
+  it("`!` 命令：命令成徽章，stdout / stderr 成输出，空的 stderr 不收", () => {
+    const input = parseUserText("<bash-input>ssh-copy-id -i ~/.ssh/id_ed25519.pub reversegame@192.168.5.111</bash-input>");
+    expect(input.local).toBe(true);
+    expect(input.commands).toEqual([{ name: "!", args: "ssh-copy-id -i ~/.ssh/id_ed25519.pub reversegame@192.168.5.111" }]);
+    expect(input.text).toBe("");
+    const output = parseUserText("<bash-stdout>/usr/bin/ssh-copy-id: INFO: Source of key(s)\nWARNING: All keys were skipped</bash-stdout><bash-stderr></bash-stderr>");
+    expect(output.local).toBe(true);
+    expect(output.stdout).toEqual(["/usr/bin/ssh-copy-id: INFO: Source of key(s)\nWARNING: All keys were skipped"]);
+    expect(output.text).toBe("");
+    expect(parseUserText("<bash-stdout></bash-stdout><bash-stderr>Permission denied</bash-stderr>").stdout).toEqual(["Permission denied"]);
+  });
+
   it("普通消息原样透过，不进本地命令形态", () => {
     const parts = parseUserText("帮我看看 <div> 这个标签");
     expect(parts.local).toBe(false);
@@ -149,6 +162,18 @@ describe("Message 渲染本地命令", () => {
     expect(screen.getByText("/clear")).toBeTruthy();
     expect(screen.queryByText(/command-name/)).toBeNull();
     expect(document.querySelector(".chat-message.is-command")).toBeTruthy();
+  });
+
+  it("`!` 命令和它的输出不再摊出 <bash-input> 等标签原文", () => {
+    render(<Message item={userText("<bash-input>ssh-copy-id reversegame@192.168.5.111</bash-input>")} />);
+    expect(screen.getByText("!")).toBeTruthy();
+    expect(screen.getByText("ssh-copy-id reversegame@192.168.5.111")).toBeTruthy();
+    expect(screen.queryByText(/bash-input/)).toBeNull();
+    cleanup();
+    render(<Message item={userText("<bash-stdout>All keys were skipped</bash-stdout><bash-stderr></bash-stderr>")} />);
+    const details = screen.getByText("命令输出").closest("details");
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(document.body.textContent).not.toMatch(/bash-(stdout|stderr)/);
   });
 
   it("只剩免责声明的那条整条不渲染", () => {

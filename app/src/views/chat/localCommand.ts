@@ -30,8 +30,10 @@ export type UserTextParts = {
 };
 
 /** 本地命令/系统注入包裹用到的标签。只认这几个，其它尖括号照旧当正文（用户可能真在讲 XML）。
- *  forked-skill-launch 是后台技能启动的机器记录（JSON），对人零信息量，直接丢。 */
-const TAGS = ["local-command-caveat", "local-command-stdout", "command-name", "command-message", "command-args", "task-notification", "forked-skill-launch"] as const;
+ *  forked-skill-launch 是后台技能启动的机器记录（JSON），对人零信息量，直接丢。
+ *  bash-input / bash-stdout / bash-stderr：输入框里 `! 命令` 直接执行时，Claude Code 把命令和
+ *  输出各写成一条 user 消息（实拍：对话页原样摊出 `<bash-input>ssh-copy-id …</bash-input>`）。 */
+const TAGS = ["local-command-caveat", "local-command-stdout", "command-name", "command-message", "command-args", "task-notification", "forked-skill-launch", "bash-input", "bash-stdout", "bash-stderr"] as const;
 const PAIR = new RegExp(`<(${TAGS.join("|")})>([\\s\\S]*?)<\\/\\1>`, "g");
 // 流式写入/截断会留下没配对的半个标签。正文里留一个孤零零的 `</command-args>` 比留着
 // 整段 XML 好不到哪去，收尾时一并抹掉。
@@ -58,7 +60,8 @@ const CROSS_NOTE = /This came from another Claude session[\s\S]*$/;
 export function parseUserText(raw: string): UserTextParts {
   const parts: UserTextParts = { text: "", commands: [], stdout: [], notifications: [], crossMessages: [], local: false };
   if (!raw.includes("<command-name>") && !raw.includes("<local-command-")
-    && !raw.includes("<task-notification>") && !raw.includes("<cross-session-message")) {
+    && !raw.includes("<task-notification>") && !raw.includes("<cross-session-message")
+    && !raw.includes("<bash-")) {
     parts.text = raw;
     return parts;
   }
@@ -91,6 +94,12 @@ export function parseUserText(raw: string): UserTextParts {
           else parts.commands.push({ name: "", args: value });
         }
         break;
+      // `! 命令`：命令本身显示成徽章「! ssh-copy-id …」，和斜杠命令同一种样子。
+      case "bash-input":
+        if (value) parts.commands.push({ name: "!", args: value });
+        break;
+      case "bash-stdout":
+      case "bash-stderr":
       case "local-command-stdout": {
         // 终端转义剥掉后，被颜色码「挡住」而幸存的前导缩进/对齐空白要保留（剥完再 trim
         // 会把对齐空格吃掉）。trim 只用来判空——纯控制码的一段不该收成空输出块。
