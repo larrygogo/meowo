@@ -3864,6 +3864,9 @@ select.ns-input {
 /* 7S-8：正文原是 11px + dim——它说的是「继续会发生什么」（要杀掉几个会话、要删什么），
    却是整窗最小最淡的一行字，比按钮标签还难读。这句是做决定的依据，给它正文的分量。 */
 .app-confirm p { margin: 0 0 var(--sp-12); color: var(--cc-text); font-size: var(--fs-12-5); line-height: 1.6; }
+/* 正文里的换行要留住：删除 worktree 的确认要逐行列出占用程序和会一起删掉的本地文件，
+   折成一行就读不清（2026-11-09 真机走查实拍）。没有换行的正文不受影响。 */
+.app-confirm p > span { white-space: pre-line; overflow-wrap: anywhere; }
 .app-confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
 /* --r-7 是真实存在的 token：此前写成不存在的 --r-8，border-radius 解析失败退成直角。 */
 .app-confirm-actions button { min-width: 76px; padding: var(--sp-6) var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--r-7); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--fs-11); cursor: pointer; }
@@ -4468,7 +4471,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-deep-title { display: flex; align-items: baseline; gap: var(--sp-6); min-width: 0; font-size: var(--text-xs); }
 .chat-sidebar-deep-excerpt { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 /* 归档撤销条:中性提示 + 内嵌撤销按钮(与错误条同位,互斥渲染)。 */
-.chat-sidebar-error.is-undo { display: flex; align-items: center; gap: var(--sp-8); color: var(--cc-text-dim); }
+.chat-sidebar-error.is-undo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6) var(--sp-8); color: var(--cc-text-dim); }
+/* 侧栏窄：撤销条多了「删除 worktree」后，文字被挤成三行、「撤销」被压成两行竖排（2026-11-09 真机走查实拍）。
+   有两个按钮时文字独占一行、按钮排到下一行；只有「撤销」时保持原来的单行。按钮一律不折字。 */
+.chat-sidebar-error.is-undo:has(> button + button) > span { flex: 1 1 100%; }
+.chat-sidebar-error.is-undo > button { white-space: nowrap; }
 .chat-sidebar-error.is-undo button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); color: var(--cc-text); background: var(--fill-selected); font-size: var(--text-xs); cursor: pointer; }
 .chat-sidebar-error.is-undo button:hover { background: var(--fill-selected-hover); }
 /* 批量清理 worktree 的结果：失败项逐行列出，按钮顶对齐不随多行居中。 */
