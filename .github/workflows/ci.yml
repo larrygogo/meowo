@@ -15,6 +15,45 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # 前端：与平台无关，只在 Linux 上跑一次。Rust 部分要按平台编（cfg(macos) 代码只在 macOS 上
+  # 编得到），放在下面的 check 双矩阵里。两个 job 并行。
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: 安装 Bun
+        id: bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        # 版本与重试的理由见 check job 同名步骤。
+        continue-on-error: true
+        with:
+          bun-version-file: .bun-version
+      - name: 安装 Bun（重试）
+        if: steps.bun.outcome == 'failure'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - name: Bun 包缓存
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('app/bun.lock') }}
+      - name: 安装前端依赖
+        working-directory: app
+        run: bun install --frozen-lockfile
+      - name: 前端单测
+        working-directory: app
+        run: bunx vitest run
+      - name: Agent 桥接契约
+        run: node scripts/test-agent-contracts.mjs
+      - name: 构建前端(tsc + vite build)
+        working-directory: app
+        run: bun run build
+      - name: 构建移动端页面(dist-mobile)
+        working-directory: app
+        run: bun run build:mobile
+
   check:
     strategy:
       fail-fast: false
@@ -73,11 +112,9 @@ jobs:
       - name: 安装前端依赖
         working-directory: app
         run: bun install --frozen-lockfile
-      - name: 前端单测
-        working-directory: app
-        run: bunx vitest run
-      - name: Agent 桥接契约
-        run: node scripts/test-agent-contracts.mjs
+      # 前端产物在这里只为满足 Tauri 编译期校验（frontendDist / resources 必须存在，缺了
+      # cargo test / clippy 直接编不过）。前端单测、类型检查的结论归 frontend job，不在两个
+      # 平台各跑一遍（与平台无关，此前每个 PR 在 Windows、macOS 各花 2 分多钟重复跑）。
       - name: 构建前端(tsc + vite build)
         working-directory: app
         run: bun run build
