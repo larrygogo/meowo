@@ -603,9 +603,11 @@ describe("IslandPanel 展开面板", () => {
   it("新建会话：标题旁的按钮与空态按钮都能开", () => {
     const onNewSession = vi.fn();
     renderPanel({ onNewSession });
-    const buttons = screen.getAllByRole("button", { name: new RegExp(zh.sticker.newSession) });
+    // 按钮名就是「新建会话」：加号是 aria-hidden 的图标，不进可访问名称（审查 2026-11-09）。
+    const buttons = screen.getAllByRole("button", { name: zh.sticker.newSession });
     // 空态时两个：标题旁一个、空态里一个。
     expect(buttons).toHaveLength(2);
+    buttons.forEach((button) => expect(button.querySelector("svg[aria-hidden='true']")).toBeTruthy());
     buttons.forEach((button) => fireEvent.click(button));
     expect(onNewSession).toHaveBeenCalledTimes(2);
   });

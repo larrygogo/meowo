@@ -786,6 +786,15 @@ export function App() {
     }, ISLAND_LEAVE_MS);
   }, [layoutCompact, pumpAlert]);
 
+  // 面板标题行的动作（新建会话 / 打开对话窗 / 设置）：执行后收起面板。收起动画进行中（或菜单栏落点已经
+  // 收起）再点直接忽略：collapse 自己防住了重复收起，但动作本身会再执行一次，双击「新建会话」就开两次窗口，
+  // 后端两个线程还会抢着建同名窗口（审查 2026-11-09，从 chore/remove-edge-snap 移植）。
+  const panelAction = useCallback((run: () => void) => {
+    if (islandModeRef.current !== "expanded" || collapseTimerRef.current != null) return;
+    run();
+    collapse();
+  }, [collapse]);
+
   const onMeasure = useCallback((width: number) => {
     const next = Math.max(ISLAND_PILL_MIN_WIDTH, width);
     // 宽度没变就不动窗口：测量回调在窗口改尺寸、字体加载等时候都会触发，多数时候宽度根本没变。
@@ -1056,18 +1065,15 @@ export function App() {
           onOpenSession={openSession}
           onMeasure={onPanelMeasure}
           onPointerDownDrag={onPanelHeadPointerDown}
-          onNewSession={() => {
+          onNewSession={() => panelAction(() => {
             openNewSessionWindow().catch((err) => console.error("[island] 打开新建会话失败：", err));
-            collapse();
-          }}
-          onOpenChat={chatEnabled ? () => {
+          })}
+          onOpenChat={chatEnabled ? () => panelAction(() => {
             invoke("open_latest_chat").catch((err) => console.error("[island] 打开对话窗口失败：", err));
-            collapse();
-          } : undefined}
-          onOpenSettings={() => {
+          }) : undefined}
+          onOpenSettings={() => panelAction(() => {
             invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
-            collapse();
-          }}
+          })}
           strip={stripOn}
           onToggleStrip={host.kind === "floating" ? toggleStrip : undefined}
         />

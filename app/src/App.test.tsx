@@ -71,8 +71,9 @@ class MockResizeObserver {
 }
 vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
+const openNewSessionWindowMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("./api", () => ({
-  openNewSessionWindow: () => Promise.resolve(),
+  openNewSessionWindow: () => openNewSessionWindowMock(),
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
   // 与真实 api.ts 同款归一化：允许各测试继续用「裸数组」写 mock 数据，这里补上
   // { items, next_cursor } 包装（给满 limit → 用末项当游标；给不满 → 到底）。
@@ -227,6 +228,25 @@ describe("App", () => {
     await waitFor(() => expect(document.querySelector(".island-shell")).toBeTruthy());
     const calls = layoutCalls();
     expect(calls[calls.length - 1]).toEqual({ width: 628, height: 250, centerRatio: null });
+  });
+
+  // 审查 2026-11-09：collapse 防住了重复收起，但动作本身会再执行一次，双击「新建会话」就开两次窗口。
+  it("面板上快速连点两次新建会话，只开一次窗口", async () => {
+    openNewSessionWindowMock.mockClear();
+    const { container } = render(<App />);
+    const pill = await waitFor(() => {
+      const el = container.querySelector(".isl-notch");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 101 });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    const button = screen.getByRole("button", { name: zh.sticker.newSession });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(openNewSessionWindowMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
   });
 
   it("点一下胶囊（没拖动）就展开面板", async () => {
